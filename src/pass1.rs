@@ -1,4 +1,5 @@
 use crate::common::*;
+use crate::parser::AluminaVisitor;
 
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -259,6 +260,16 @@ impl<'syntax> AluminaVisitor<'syntax> for FirstPassVisitor<'syntax> {
         Ok(())
     }
 
+    fn visit_extern_function_declaration(&mut self, node: Node<'syntax>) -> Result<(), SyntaxError<'syntax>> {
+        let name = self.parse_name(node);
+        if self.add_symbol(name, SymbolItem::Function(node)).is_some() {
+            return Err(SyntaxError("duplicate symbol", node));
+        }
+
+        Ok(())
+    }
+
+
     fn visit_enum_item(&mut self, node: Node<'syntax>) -> Result<(), SyntaxError<'syntax>> {
         let name = self.parse_name(node);
         if self.add_symbol(name, SymbolItem::Field(node)).is_some() {
@@ -273,3 +284,4 @@ impl<'syntax> AluminaVisitor<'syntax> for FirstPassVisitor<'syntax> {
         self.parse_use_clause(node.child_by_field_name("argument").unwrap(), &prefix)
     }
 }
+

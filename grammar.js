@@ -78,7 +78,8 @@ module.exports = grammar({
         $.struct_definition,
         $.enum_definition,
         $.impl_block,
-        $.mod_definition
+        $.mod_definition,
+        $.extern_function_declaration
       ),
 
     mod_definition: ($) =>
@@ -96,21 +97,28 @@ module.exports = grammar({
       seq(
         optional($.attribute),
         "fn",
-        optional(field("placeholders", $.generic_argument_list)),
         field("name", $.identifier),
-        optional(field("type_arguments", $.type_arguments)),
+        optional(field("type_arguments", $.generic_argument_list)),
         $.parameter_list,
         optional(seq("->", field("return_type", $._type))),
         field("body", $.block)
+      ),
+
+    extern_function_declaration: ($) =>
+      seq(
+        optional($.attribute),
+        "extern",
+        "fn",
+        field("name", $.identifier),
+        ";"
       ),
 
     struct_definition: ($) =>
       seq(
         optional($.attribute),
         "struct",
-        optional(field("placeholders", $.generic_argument_list)),
         field("name", $.identifier),
-        optional(field("type_arguments", $.type_arguments)),
+        optional(field("type_arguments", $.generic_argument_list)),
         "{",
         field("body", repeat($._struct_item)),
         "}"

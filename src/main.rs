@@ -1,16 +1,19 @@
 mod common;
 mod pass1;
 
-use tree_sitter_alumina::language;
-
 use common::*;
 use pass1::FirstPassVisitor;
+use crate::parser::AluminaVisitor;
 
-const SOURCE_CODE: &str = include_str!("../../examples/minimal.alumina");
+const SOURCE_CODE: &str = include_str!("../examples/minimal.alumina");
+
+pub mod parser {
+    include!(concat!(env!("OUT_DIR"), "/parser.rs"));
+}
 
 fn main() {
     let mut parser = tree_sitter::Parser::new();
-    parser.set_language(language()).unwrap();
+    parser.set_language(parser::language()).unwrap();
 
     let parsed = parser.parse(SOURCE_CODE, None).unwrap();
     let root_node = parsed.root_node();
