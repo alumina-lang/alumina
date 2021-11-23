@@ -23,12 +23,14 @@ pub enum ScopeType {
 
 #[derive(Debug)]
 pub struct Scope<'syntax> {
-    r#type: ScopeType,
-    path: Path<'syntax>,
-    symbols: HashMap<&'syntax str, SymbolItem<'syntax>>,
-    children: Vec<Rc<RefCell<Scope<'syntax>>>>,
-    parent: Option<Weak<RefCell<Scope<'syntax>>>>,
+    pub r#type: ScopeType,
+    pub path: Path<'syntax>,
+    pub symbols: HashMap<&'syntax str, SymbolItem<'syntax>>,
+    pub children: Vec<Rc<RefCell<Scope<'syntax>>>>,
+    pub parent: Option<Weak<RefCell<Scope<'syntax>>>>,
 }
+
+
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};

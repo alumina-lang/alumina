@@ -77,7 +77,7 @@ module.exports = grammar({
         $.function_definition,
         $.struct_definition,
         $.enum_definition,
-        $.impl_block,
+        $.impl_block, 
         $.mod_definition,
         $.extern_function_declaration
       ),
@@ -184,11 +184,11 @@ module.exports = grammar({
     parameter_list: ($) =>
       seq("(", sepBy(",", $.parameter), optional(","), ")"),
 
-    pointer_of: ($) => seq("&", $._type),
+    pointer_of: ($) => seq("&", field("inner", $._type)),
 
-    slice_of: ($) => seq("[", $._type, "]"),
+    slice_of: ($) => seq("[", field("inner", $._type), "]"),
 
-    array_of: ($) => seq("[", $._type, ";", $.integer_literal, "]"),
+    array_of: ($) => seq("[", field("inner", $._type), ";", field("size", $.integer_literal), "]"),
 
     function_pointer: ($) =>
       seq(
@@ -205,6 +205,7 @@ module.exports = grammar({
         $.scoped_type_identifier,
         $._type_identifier,
         alias(choice(...primitive_types), $.primitive_type),
+        $.never_type,
         $.pointer_of,
         $.generic_type,
         $.slice_of,
@@ -213,7 +214,9 @@ module.exports = grammar({
         $.function_pointer
       ),
 
-    tuple_type: ($) => seq("(", sepBy(",", $._expression), optional(","), ")"),
+    never_type: ($) => "!",
+
+    tuple_type: ($) => seq("(", sepBy(",", field("element", $._type)), optional(","), ")"),
 
     block: ($) => seq("{", repeat($._statement), optional($._expression), "}"),
 

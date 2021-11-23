@@ -139,13 +139,17 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
     let grammar_path = manifest_dir.join("grammar.js");
-    Command::new("tree-sitter")
+    let result = Command::new("tree-sitter")
         .current_dir(&out_dir)
         .arg("generate")
         .arg("--no-bindings")
         .arg(&grammar_path)
         .status()
         .unwrap();
+
+    if !result.success() {
+        panic!("failed to generate the grammar");
+    }
     
     let src_dir = out_dir.join("src");
     let parser_path = src_dir.join("parser.c");
@@ -165,5 +169,5 @@ fn main() {
     let visitor = generate_visitor(node_types);
     File::create(parser_file).unwrap().write_all(visitor.as_bytes()).unwrap();
 
-    println!("cargo:rerun-if-changed={}", grammar_path.to_str().unwrap());
+    println!("cargo:rerun-if-changed=grammar.js");
 }

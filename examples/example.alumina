@@ -192,3 +192,84 @@ fn main() {
         b[i] = 1;
     }
 }
+
+
+enum enumy {
+    A1,
+    A2,
+    A3,
+}
+
+extern fn print(s: [u8]);
+
+struct slice<T> {
+    ptr: &T;
+    len: usize;
+    
+    fn new(len: usize) -> Self {
+        Self {
+            ptr: ::_jemalloc::malloc(size_of::<T>() * size) as &T
+        }
+    }
+
+    fn free(&self) {
+        ::_jemalloc::free(self.ptr)
+    }
+}
+
+struct inner_arc<T> {
+    data: T;
+    ref_count: usize;
+}
+
+struct arc<T> {
+    use a::{b,c,d::{e::f::g::h::i}};
+    ptr: &inner_arc<T>;
+
+    fn new(data: T) -> Self {
+        let ptr = ::_jemalloc::malloc(size_of::<inner_arc<T>>()) as &T
+        *ptr = inner_arc::<T> {
+            data: data,
+            ref_count: 1
+        };
+        Self { ptr: ptr }
+    } 
+
+    fn clone(self) -> Self {
+        self.ptr.ref_count += 1;
+        self
+    }
+
+    fn free(&self) {
+        self.ptr.ref_count -= 1;
+        if self.ptr.ref_count == 0 {
+            ::_jemalloc::free(self.ptr)
+        }
+    }
+}
+
+struct vector<T> {
+    data: [T];
+    capacity: usize;
+
+    fn new(capacity: usize) -> Self {
+        Self {
+            data: slice::<T> {
+                ptr: malloc(size_of::<T>() * capacity),
+                len: 0,
+            },
+            capacity: capacity,
+        }
+    }
+}
+
+fn main() {
+    let vector = vector::<u8>::new(10);
+    vector.append(0x00);
+    vector.append(0x01);
+    vector.append(0x02);
+    vector.data[i] = 0x03;
+
+    vector.free();
+}
+
