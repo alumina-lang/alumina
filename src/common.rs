@@ -115,3 +115,14 @@ impl Display for SyntaxError<'_> {
 }
 
 impl std::error::Error for SyntaxError<'_> {}
+
+#[derive(Debug)]
+pub struct GenericError(pub &'static str);
+
+impl Display for GenericError {
+    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(fmt, "{}", self.0)
+    }
+}
+
+impl std::error::Error for GenericError {}

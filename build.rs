@@ -133,7 +133,6 @@ fn generate_visitor(filename: PathBuf) -> String {
     output.to_string()
 }
 
-
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
@@ -150,24 +149,27 @@ fn main() {
     if !result.success() {
         panic!("failed to generate the grammar");
     }
-    
+
     let src_dir = out_dir.join("src");
     let parser_path = src_dir.join("parser.c");
     let mut c_config = cc::Build::new();
-    
+
     c_config.include(&src_dir);
     c_config
-    .flag_if_supported("-Wno-unused-parameter")
-    .flag_if_supported("-Wno-unused-but-set-variable")
-    .flag_if_supported("-Wno-trigraphs");
+        .flag_if_supported("-Wno-unused-parameter")
+        .flag_if_supported("-Wno-unused-but-set-variable")
+        .flag_if_supported("-Wno-trigraphs");
     c_config.file(&parser_path);
     c_config.compile("parser");
-    
+
     let parser_file = out_dir.join("parser.rs");
     let node_types = src_dir.join("node-types.json");
 
     let visitor = generate_visitor(node_types);
-    File::create(parser_file).unwrap().write_all(visitor.as_bytes()).unwrap();
+    File::create(parser_file)
+        .unwrap()
+        .write_all(visitor.as_bytes())
+        .unwrap();
 
     println!("cargo:rerun-if-changed=grammar.js");
 }

@@ -110,6 +110,8 @@ module.exports = grammar({
         "extern",
         "fn",
         field("name", $.identifier),
+        $.parameter_list,
+        optional(seq("->", field("return_type", $._type))),
         ";"
       ),
 
