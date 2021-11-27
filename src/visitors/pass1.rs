@@ -1,148 +1,17 @@
+use crate::common::SyntaxError;
+use crate::context::GlobalCtx;
+use crate::name_resolution::path::{Path, PathSegment};
+use crate::name_resolution::scope::{Item, Scope, ScopeType};
 use crate::parser::AluminaVisitor;
-use crate::{common::*, GlobalCtx, SymbolP};
 
 use std::collections::hash_map::Entry;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Formatter};
 use std::result::Result;
 use tree_sitter::Node;
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
-
-#[derive(Debug)]
-pub enum Item<'tcx> {
-    Function(SymbolP<'tcx>, Node<'tcx>),
-    Type(SymbolP<'tcx>, Node<'tcx>, Scope<'tcx>),
-    Module(Scope<'tcx>),
-    Impl(Scope<'tcx>),
-    Field(SymbolP<'tcx>, Node<'tcx>),
-    Alias(Path<'tcx>),
-}
-
-#[derive(Debug)]
-pub enum ScopeType {
-    Module,
-    Struct,
-    Impl,
-    Enum,
-}
-
-pub struct ScopeInner<'tcx> {
-    pub r#type: ScopeType,
-    pub path: Path<'tcx>,
-    pub items: HashMap<&'tcx str, Vec<Item<'tcx>>>,
-    pub parent: Option<Weak<RefCell<ScopeInner<'tcx>>>>,
-}
-
-impl<'tcx> Debug for ScopeInner<'tcx> {
-    fn fmt(&self, fmt: &mut Formatter) -> Result<(), std::fmt::Error> {
-        let mut builder = fmt.debug_struct(&format!("{:?}Scope({:?})", self.r#type, self.path));
-        for (name, items) in &self.items {
-            for item in items {
-                builder.field(name, item);
-            }
-        }
-        builder.finish()
-    }
-}
-
-#[derive(Clone)]
-pub struct Scope<'tcx>(pub Rc<RefCell<ScopeInner<'tcx>>>);
-
-impl<'tcx> From<Scope<'tcx>> for Weak<RefCell<ScopeInner<'tcx>>> {
-    fn from(scope: Scope<'tcx>) -> Self {
-        Rc::downgrade(&scope.0)
-    }
-}
-
-impl<'tcx> Debug for Scope<'tcx> {
-    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        self.0.borrow().fmt(fmt)
-    }
-}
-
-impl<'tcx> Scope<'tcx> {
-    pub fn new() -> Self {
-        Scope(Rc::new(RefCell::new(ScopeInner {
-            r#type: ScopeType::Module,
-            path: Path::root(),
-            items: HashMap::new(),
-            parent: None,
-        })))
-    }
-
-    pub fn with_parent(r#type: ScopeType, path: Path<'tcx>, parent: Scope<'tcx>) -> Self {
-        Scope(Rc::new(RefCell::new(ScopeInner {
-            r#type,
-            path,
-            items: HashMap::new(),
-            parent: Some(parent.into()),
-        })))
-    }
-
-    pub fn make_child(&self, r#type: ScopeType, name: &'tcx str) -> Self {
-        let new_path = self.0.borrow().path.extend(PathSegment(name));
-        Scope::with_parent(r#type, new_path, self.clone())
-    }
-
-    pub fn add_item(&self, name: &'tcx str, item: Item<'tcx>) -> Result<(), GenericError> {
-        let mut current_scope = self.0.borrow_mut();
-
-        // Duplicate names are generally not allowed, but we allow them for
-        // types and their impls.
-        match current_scope.items.entry(name) {
-            Entry::Vacant(entry) => {
-                entry.insert(vec![item]);
-                return Ok(());
-            }
-            Entry::Occupied(mut entry) => {
-                let existing = entry.get_mut();
-                if existing.len() == 1 {
-                    if (matches!(existing[0], Item::Type(_, _, _)) && matches!(item, Item::Impl(_)))
-                        || (matches!(existing[0], Item::Impl(_))
-                            && matches!(item, Item::Type(_, _, _)))
-                    {
-                        existing.push(item);
-                        return Ok(());
-                    }
-                }
-            }
-        }
-
-        Err(GenericError("duplicate item"))
-    }
-
-    fn root(&self) -> Self {
-        let mut current = self.clone();
-        while let Some(parent) = self.parent() {
-            current = parent;
-        }
-        current
-    }
-
-    fn parent(&self) -> Option<Self> {
-        self.0
-            .borrow()
-            .parent
-            .as_ref()
-            .map(|parent| Self(parent.upgrade().unwrap()))
-    }
-
-    fn resolve_scope(&self, path: &Path<'tcx>) -> Result<Scope<'tcx>, GenericError> {
-        let mut current_scope = self.0.borrow_mut();
-        let mut current_path = current_scope.path.clone();
-
-        if path.absolute {
-            return self.root().resolve_scope(&Path {
-                absolute: false,
-                segments: path.segments.clone(),
-            });
-        }
-
-        Ok(self.clone())
-    }
-}
 
 pub struct FirstPassVisitor<'tcx> {
     source: &'tcx str,
@@ -192,15 +61,18 @@ impl<'tcx> FirstPassVisitor<'tcx> {
 
     fn parse_use_path(&mut self, node: Node<'tcx>) -> Result<Path<'tcx>, SyntaxError<'tcx>> {
         let path = match node.kind() {
-            "super" => {
-                let current_path = self.current_scope.0.borrow().path.clone();
-                println!("{}", current_path);
-                if current_path.segments.len() == 1 {
-                    return Err(SyntaxError("super not allowed in root scope", node));
-                }
-                current_path.pop()
-            }
-            "crate" => self.root_scope.0.borrow().path.clone(),
+            "super" => self
+                .current_scope
+                .find_super()
+                .ok_or(SyntaxError("super not allowed", node))?
+                .path(),
+
+            "crate" => self
+                .current_scope
+                .find_crate()
+                .ok_or(SyntaxError("crate not allowed", node))?
+                .path(),
+
             "identifier" => {
                 let name = &self.source[node.byte_range()];
                 PathSegment(name).into()
@@ -287,6 +159,9 @@ impl<'tcx> AluminaVisitor<'tcx> for FirstPassVisitor<'tcx> {
             .map_err(|w| SyntaxError(w.0, node))?;
 
         self.current_scope = child_scope;
+        if let Some(f) = node.child_by_field_name("type_arguments") {
+            self.visit(f)?;
+        }
         self.visit_children_by_field(node, "body")?;
         self.pop_scope();
 
@@ -343,15 +218,6 @@ impl<'tcx> AluminaVisitor<'tcx> for FirstPassVisitor<'tcx> {
         Ok(())
     }
 
-    fn visit_function_definition(&mut self, node: Node<'tcx>) -> Result<(), SyntaxError<'tcx>> {
-        let name = self.parse_name(node);
-        self.current_scope
-            .add_item(name, Item::Function(self.context.make_symbol(), node))
-            .map_err(|w| SyntaxError(w.0, node))?;
-
-        Ok(())
-    }
-
     fn visit_struct_field(&mut self, node: Node<'tcx>) -> Result<(), SyntaxError<'tcx>> {
         let name = self.parse_name(node);
         self.current_scope
@@ -361,16 +227,75 @@ impl<'tcx> AluminaVisitor<'tcx> for FirstPassVisitor<'tcx> {
         Ok(())
     }
 
+    fn visit_function_definition(&mut self, node: Node<'tcx>) -> Result<(), SyntaxError<'tcx>> {
+        let name = self.parse_name(node);
+        let child_scope = self.current_scope.make_child(ScopeType::Function, name);
+
+        self.current_scope
+            .add_item(
+                name,
+                Item::Function(self.context.make_symbol(), node, child_scope.clone()),
+            )
+            .map_err(|w| SyntaxError(w.0, node))?;
+
+        self.current_scope = child_scope;
+        if let Some(f) = node.child_by_field_name("type_arguments") {
+            self.visit(f)?;
+        }
+        self.visit_children_by_field(node, "parameters")?;
+        self.pop_scope();
+
+        Ok(())
+    }
+
     fn visit_extern_function_declaration(
         &mut self,
         node: Node<'tcx>,
     ) -> Result<(), SyntaxError<'tcx>> {
         let name = self.parse_name(node);
+        let child_scope = self.current_scope.make_child(ScopeType::Function, name);
+
         self.current_scope
-            .add_item(name, Item::Function(self.context.make_symbol(), node))
+            .add_item(
+                name,
+                Item::Function(self.context.make_symbol(), node, child_scope.clone()),
+            )
+            .map_err(|w| SyntaxError(w.0, node))?;
+
+        self.current_scope = child_scope;
+        if let Some(f) = node.child_by_field_name("type_arguments") {
+            self.visit(f)?;
+        }
+        self.visit_children_by_field(node, "parameters")?;
+        self.pop_scope();
+
+        Ok(())
+    }
+
+    fn visit_generic_argument_list(&mut self, node: Node<'tcx>) -> Result<(), SyntaxError<'tcx>> {
+        let mut cursor = node.walk();
+        for argument in node.children_by_field_name("argument", &mut cursor) {
+            let name = &self.source[argument.byte_range()];
+            self.current_scope
+                .add_item(name, Item::Placeholder(self.context.make_symbol()))
+                .map_err(|w| SyntaxError(w.0, node))?;
+        }
+
+        Ok(())
+    }
+
+    fn visit_parameter(&mut self, node: Node<'tcx>) -> Result<(), SyntaxError<'tcx>> {
+        let name = self.parse_name(node);
+
+        self.current_scope
+            .add_item(name, Item::Field(self.context.make_symbol(), node))
             .map_err(|w| SyntaxError(w.0, node))?;
 
         Ok(())
+    }
+
+    fn visit_parameter_list(&mut self, node: Node<'tcx>) -> Result<(), SyntaxError<'tcx>> {
+        self.visit_children_by_field(node, "parameter")
     }
 
     fn visit_enum_item(&mut self, node: Node<'tcx>) -> Result<(), SyntaxError<'tcx>> {

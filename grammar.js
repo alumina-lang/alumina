@@ -106,7 +106,7 @@ module.exports = grammar({
         "fn",
         field("name", $.identifier),
         optional(field("type_arguments", $.generic_argument_list)),
-        $.parameter_list,
+        field("parameters", $.parameter_list),
         optional(seq("->", field("return_type", $._type))),
         field("body", $.block)
       ),
@@ -117,7 +117,7 @@ module.exports = grammar({
         "extern",
         "fn",
         field("name", $.identifier),
-        $.parameter_list,
+        field("parameters", $.parameter_list),
         optional(seq("->", field("return_type", $._type))),
         ";"
       ),
@@ -152,7 +152,6 @@ module.exports = grammar({
         optional($.attribute),
         "impl",
         field("name", $.identifier),
-        optional($.generic_argument_list),
         "{",
         field("body", repeat($._impl_item)),
         "}"
@@ -177,18 +176,18 @@ module.exports = grammar({
     scoped_use_list: ($) =>
       seq(field("path", optional($._path)), "::", field("list", $.use_list)),
 
-    parameter: ($) => seq($.identifier, ":", $._type),
+    parameter: ($) => seq(field("name", $.identifier), ":", $._type),
 
     generic_argument_list: ($) =>
       seq(
         "<",
-        sepBy(",", $.identifier),
+        sepBy(",", field("argument", $.identifier)),
         optional(","),
         alias(token(prec(1, ">")), ">")
       ),
 
     parameter_list: ($) =>
-      seq("(", sepBy(",", $.parameter), optional(","), ")"),
+      seq("(", sepBy(",", field("parameter", $.parameter)), optional(","), ")"),
 
     pointer_of: ($) => seq("&", field("inner", $._type)),
 
