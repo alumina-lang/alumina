@@ -82,6 +82,13 @@ module.exports = grammar({
         $.extern_function_declaration
       ),
 
+    _impl_item: ($) =>
+      choice(
+        $.use_declaration,
+        $.function_definition,
+        $.extern_function_declaration
+      ),      
+
     mod_definition: ($) =>
       seq(
         optional($.attribute),
@@ -122,7 +129,8 @@ module.exports = grammar({
         field("name", $.identifier),
         optional(field("type_arguments", $.generic_argument_list)),
         "{",
-        field("body", repeat($._struct_item)),
+        sepBy(",", field("body", $.struct_field)), 
+        optional(","),
         "}"
       ),
 
@@ -136,11 +144,8 @@ module.exports = grammar({
 
     enum_item: ($) => field("name", $.identifier),
 
-    _struct_item: ($) =>
-      choice($.struct_field, $.function_definition, $.use_declaration),
-
     struct_field: ($) =>
-      seq(field("name", $.identifier), ":", field("type", $._type), ";"),
+      seq(field("name", $.identifier), ":", field("type", $._type)),
 
     impl_block: ($) =>
       seq(
@@ -149,7 +154,7 @@ module.exports = grammar({
         field("name", $.identifier),
         optional($.generic_argument_list),
         "{",
-        repeat($.function_definition),
+        field("body", repeat($._impl_item)),
         "}"
       ),
 
@@ -172,8 +177,7 @@ module.exports = grammar({
     scoped_use_list: ($) =>
       seq(field("path", optional($._path)), "::", field("list", $.use_list)),
 
-    parameter: ($) =>
-      choice(seq($.identifier, ":", $._type), seq(optional("&"), "self")),
+    parameter: ($) => seq($.identifier, ":", $._type),
 
     generic_argument_list: ($) =>
       seq(

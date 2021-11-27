@@ -1,8 +1,9 @@
 use crate::parser::AluminaVisitor;
 use crate::{common::*, GlobalCtx, SymbolP};
 
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::fmt::Debug;
+use std::fmt::{Debug, Formatter};
 use std::result::Result;
 use tree_sitter::Node;
 
@@ -14,6 +15,7 @@ pub enum Item<'tcx> {
     Function(SymbolP<'tcx>, Node<'tcx>),
     Type(SymbolP<'tcx>, Node<'tcx>, Scope<'tcx>),
     Module(Scope<'tcx>),
+    Impl(Scope<'tcx>),
     Field(SymbolP<'tcx>, Node<'tcx>),
     Alias(Path<'tcx>),
 }
@@ -22,18 +24,30 @@ pub enum Item<'tcx> {
 pub enum ScopeType {
     Module,
     Struct,
+    Impl,
     Enum,
 }
 
-#[derive(Debug)]
 pub struct ScopeInner<'tcx> {
     pub r#type: ScopeType,
     pub path: Path<'tcx>,
-    pub items: HashMap<&'tcx str, Item<'tcx>>,
+    pub items: HashMap<&'tcx str, Vec<Item<'tcx>>>,
     pub parent: Option<Weak<RefCell<ScopeInner<'tcx>>>>,
 }
 
-#[derive(Debug, Clone)]
+impl<'tcx> Debug for ScopeInner<'tcx> {
+    fn fmt(&self, fmt: &mut Formatter) -> Result<(), std::fmt::Error> {
+        let mut builder = fmt.debug_struct(&format!("{:?}Scope({:?})", self.r#type, self.path));
+        for (name, items) in &self.items {
+            for item in items {
+                builder.field(name, item);
+            }
+        }
+        builder.finish()
+    }
+}
+
+#[derive(Clone)]
 pub struct Scope<'tcx>(pub Rc<RefCell<ScopeInner<'tcx>>>);
 
 impl<'tcx> From<Scope<'tcx>> for Weak<RefCell<ScopeInner<'tcx>>> {
@@ -42,11 +56,17 @@ impl<'tcx> From<Scope<'tcx>> for Weak<RefCell<ScopeInner<'tcx>>> {
     }
 }
 
+impl<'tcx> Debug for Scope<'tcx> {
+    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        self.0.borrow().fmt(fmt)
+    }
+}
+
 impl<'tcx> Scope<'tcx> {
-    pub fn new(r#type: ScopeType, path: Path<'tcx>) -> Self {
+    pub fn new() -> Self {
         Scope(Rc::new(RefCell::new(ScopeInner {
-            r#type,
-            path,
+            r#type: ScopeType::Module,
+            path: Path::root(),
             items: HashMap::new(),
             parent: None,
         })))
@@ -62,40 +82,82 @@ impl<'tcx> Scope<'tcx> {
     }
 
     pub fn make_child(&self, r#type: ScopeType, name: &'tcx str) -> Self {
-        let new_path = self.0.borrow().path.extend(PathSegment::Ident(name));
+        let new_path = self.0.borrow().path.extend(PathSegment(name));
         Scope::with_parent(r#type, new_path, self.clone())
     }
 
-    fn add_item(&self, name: &'tcx str, item: Item<'tcx>) -> Result<(), GenericError> {
+    pub fn add_item(&self, name: &'tcx str, item: Item<'tcx>) -> Result<(), GenericError> {
         let mut current_scope = self.0.borrow_mut();
 
-        match current_scope.items.insert(name, item) {
-            None => Ok(()),
-            Some(_) => Err(GenericError("duplicate name")),
+        // Duplicate names are generally not allowed, but we allow them for
+        // types and their impls.
+        match current_scope.items.entry(name) {
+            Entry::Vacant(entry) => {
+                entry.insert(vec![item]);
+                return Ok(());
+            }
+            Entry::Occupied(mut entry) => {
+                let existing = entry.get_mut();
+                if existing.len() == 1 {
+                    if (matches!(existing[0], Item::Type(_, _, _)) && matches!(item, Item::Impl(_)))
+                        || (matches!(existing[0], Item::Impl(_))
+                            && matches!(item, Item::Type(_, _, _)))
+                    {
+                        existing.push(item);
+                        return Ok(());
+                    }
+                }
+            }
         }
+
+        Err(GenericError("duplicate item"))
+    }
+
+    fn root(&self) -> Self {
+        let mut current = self.clone();
+        while let Some(parent) = self.parent() {
+            current = parent;
+        }
+        current
     }
 
     fn parent(&self) -> Option<Self> {
-        self.0.borrow().parent.as_ref().map(|parent| Self(parent.upgrade().unwrap()))
+        self.0
+            .borrow()
+            .parent
+            .as_ref()
+            .map(|parent| Self(parent.upgrade().unwrap()))
+    }
+
+    fn resolve_scope(&self, path: &Path<'tcx>) -> Result<Scope<'tcx>, GenericError> {
+        let mut current_scope = self.0.borrow_mut();
+        let mut current_path = current_scope.path.clone();
+
+        if path.absolute {
+            return self.root().resolve_scope(&Path {
+                absolute: false,
+                segments: path.segments.clone(),
+            });
+        }
+
+        Ok(self.clone())
     }
 }
 
 pub struct FirstPassVisitor<'tcx> {
     source: &'tcx str,
     context: &'tcx GlobalCtx<'tcx>,
-    pub root_scope: Scope<'tcx>,
+    root_scope: Scope<'tcx>,
     current_scope: Scope<'tcx>,
 }
 
 impl<'tcx> FirstPassVisitor<'tcx> {
-    pub fn new(context: &'tcx GlobalCtx<'tcx>, source: &'tcx str, root_module: Path<'tcx>) -> Self {
-        let scope = Scope::new(ScopeType::Module, root_module);
-
+    pub fn new(context: &'tcx GlobalCtx<'tcx>, source: &'tcx str, root_scope: Scope<'tcx>) -> Self {
         Self {
             context,
             source,
-            root_scope: scope.clone(),
-            current_scope: scope,
+            root_scope: root_scope.clone(),
+            current_scope: root_scope,
         }
     }
 }
@@ -141,12 +203,12 @@ impl<'tcx> FirstPassVisitor<'tcx> {
             "crate" => self.root_scope.0.borrow().path.clone(),
             "identifier" => {
                 let name = &self.source[node.byte_range()];
-                PathSegment::Ident(name).into()
+                PathSegment(name).into()
             }
             "scoped_identifier" => {
                 let subpath = self.parse_use_path(node.child_by_field_name("path").unwrap())?;
                 let name = &self.source[node.child_by_field_name("name").unwrap().byte_range()];
-                subpath.extend(PathSegment::Ident(name))
+                subpath.extend(PathSegment(name))
             }
             _ => return Err(SyntaxError("no.", node)),
         };
@@ -181,7 +243,7 @@ impl<'tcx> FirstPassVisitor<'tcx> {
             "identifier" => {
                 let alias = &self.source[node.byte_range()];
                 self.current_scope
-                    .add_item(alias, Item::Alias(prefix.extend(PathSegment::Ident(alias))))
+                    .add_item(alias, Item::Alias(prefix.extend(PathSegment(alias))))
                     .map_err(|w| SyntaxError(w.0, node))?;
             }
             "scoped_identifier" => {
@@ -190,7 +252,7 @@ impl<'tcx> FirstPassVisitor<'tcx> {
                 self.current_scope
                     .add_item(
                         name,
-                        Item::Alias(prefix.join_with(path.extend(PathSegment::Ident(name)))),
+                        Item::Alias(prefix.join_with(path.extend(PathSegment(name)))),
                     )
                     .map_err(|w| SyntaxError(w.0, node))?;
             }
@@ -222,6 +284,22 @@ impl<'tcx> AluminaVisitor<'tcx> for FirstPassVisitor<'tcx> {
                 name,
                 Item::Type(self.context.make_symbol(), node, child_scope.clone()),
             )
+            .map_err(|w| SyntaxError(w.0, node))?;
+
+        self.current_scope = child_scope;
+        self.visit_children_by_field(node, "body")?;
+        self.pop_scope();
+
+        Ok(())
+    }
+
+    fn visit_impl_block(&mut self, node: Node<'tcx>) -> Result<(), SyntaxError<'tcx>> {
+        let name = self.parse_name(node);
+
+        let child_scope = self.current_scope.make_child(ScopeType::Impl, name);
+
+        self.current_scope
+            .add_item(name, Item::Impl(child_scope.clone()))
             .map_err(|w| SyntaxError(w.0, node))?;
 
         self.current_scope = child_scope;

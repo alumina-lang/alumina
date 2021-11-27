@@ -1,43 +1,13 @@
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{Debug, Display, Formatter, write};
 use std::result::Result;
 use tree_sitter::Node;
 
 #[derive(PartialEq, Eq, Hash, Clone)]
-pub enum GenericArg<'a> {
-    Placeholder(&'a str),
-    Type(Path<'a>),
-}
-
-impl<'syntax> Display for GenericArg<'syntax> {
-    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        match self {
-            GenericArg::Placeholder(s) => write!(fmt, "{}", s),
-            GenericArg::Type(fqn) => write!(fmt, "{}", fqn),
-        }
-    }
-}
-
-#[derive(PartialEq, Eq, Hash, Clone)]
-pub enum PathSegment<'syntax> {
-    Ident(&'syntax str),
-    Generics(Vec<GenericArg<'syntax>>),
-}
+pub struct PathSegment<'syntax>(pub &'syntax str);
 
 impl<'syntax> Display for PathSegment<'syntax> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        match self {
-            PathSegment::Ident(s) => write!(fmt, "{}", s),
-            PathSegment::Generics(args) => {
-                write!(fmt, "<")?;
-                for (i, arg) in args.iter().enumerate() {
-                    if i > 0 {
-                        write!(fmt, ", ")?;
-                    }
-                    write!(fmt, "{}", arg)?;
-                }
-                write!(fmt, ">")
-            }
-        }
+        write!(fmt, "{}", self.0)
     }
 }
 
@@ -49,8 +19,11 @@ pub struct Path<'syntax> {
 
 impl<'syntax> Display for Path<'syntax> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        if self.absolute {
+            write!(fmt, "::")?;
+        }
         for (i, seg) in self.segments.iter().enumerate() {
-            if i > 0 || self.absolute {
+            if i > 0 {
                 write!(fmt, "::")?;
             }
             write!(fmt, "{}", seg)?;
@@ -61,7 +34,7 @@ impl<'syntax> Display for Path<'syntax> {
 
 impl<'syntax> Debug for Path<'syntax> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        Display::fmt(self, fmt)
+        write!(fmt, "\"{}\"", self)
     }
 }
 
@@ -75,6 +48,13 @@ impl<'syntax> From<PathSegment<'syntax>> for Path<'syntax> {
 }
 
 impl<'syntax> Path<'syntax> {
+    pub fn root() -> Self {
+        Self {
+            absolute: true,
+            segments: vec![],
+        }
+    }
+
     pub fn extend(&self, part: PathSegment<'syntax>) -> Self {
         Self {
             absolute: self.absolute,
