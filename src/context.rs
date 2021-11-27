@@ -3,7 +3,6 @@ use crate::types::{SymbolP, Ty, TyP};
 use bumpalo::Bump;
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
-use std::marker::PhantomData;
 
 trait Incrementable<T> {
     fn increment(&self) -> T;

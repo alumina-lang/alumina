@@ -110,14 +110,14 @@ impl<'tcx> Scope<'tcx> {
             }
             Entry::Occupied(mut entry) => {
                 let existing = entry.get_mut();
-                if existing.len() == 1 {
-                    if (matches!(existing[0], Item::Type(_, _, _)) && matches!(item, Item::Impl(_)))
+                if existing.len() == 1
+                    && ((matches!(existing[0], Item::Type(_, _, _))
+                        && matches!(item, Item::Impl(_)))
                         || (matches!(existing[0], Item::Impl(_))
-                            && matches!(item, Item::Type(_, _, _)))
-                    {
-                        existing.push(item);
-                        return Ok(());
-                    }
+                            && matches!(item, Item::Type(_, _, _))))
+                {
+                    existing.push(item);
+                    return Ok(());
                 }
             }
         }

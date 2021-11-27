@@ -9,12 +9,6 @@ use crate::context::GlobalCtx;
 use crate::name_resolution::scope::{Item, Scope, ScopeType};
 use crate::parser::AluminaVisitor;
 use crate::visitors::pass1::FirstPassVisitor;
-use bumpalo::Bump;
-use common::*;
-use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
-use std::fmt::{Debug, Formatter};
-use std::marker::PhantomData;
 
 // const SOURCE_CODE: &str = include_str!("../examples/minimal.alumina");
 const SOURCE_CODE: &str = include_str!("../examples/vector.alumina");

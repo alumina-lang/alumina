@@ -4,14 +4,8 @@ use crate::name_resolution::path::{Path, PathSegment};
 use crate::name_resolution::scope::{Item, Scope, ScopeType};
 use crate::parser::AluminaVisitor;
 
-use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
-use std::fmt::{Debug, Formatter};
 use std::result::Result;
 use tree_sitter::Node;
-
-use std::cell::RefCell;
-use std::rc::{Rc, Weak};
 
 pub struct FirstPassVisitor<'tcx> {
     source: &'tcx str,
