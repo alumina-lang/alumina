@@ -41,10 +41,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
 
-    use crate::{
-        types::{BuiltinType, SymbolP, Ty, TyP},
-        visitors::types::TypeVisitor,
-    };
+    use crate::{common::SyntaxError, types::{BuiltinType, SymbolP, Ty, TyP}, visitors::types::TypeVisitor};
 
     use super::*;
 
