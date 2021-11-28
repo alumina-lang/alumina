@@ -1,27 +1,24 @@
 use std::{
     cell::RefCell,
-    collections::{hash_map::Entry, HashMap},
     fmt::{Debug, Formatter},
     rc::{Rc, Weak},
 };
 
-use crate::{
-    common::{AluminaError, SyntaxError},
-    types::SymbolP,
-};
+use crate::{common::AluminaError, parser::ParseCtx, types::SymbolP};
+use indexmap::{map::Entry, IndexMap};
 use tree_sitter::Node;
 
 use super::path::{Path, PathSegment};
 
 #[derive(Debug, Clone)]
-pub enum Item<'tcx> {
-    Function(SymbolP<'tcx>, Node<'tcx>, Scope<'tcx>),
-    Type(SymbolP<'tcx>, Node<'tcx>, Scope<'tcx>),
-    Module(Scope<'tcx>),
-    Impl(Scope<'tcx>),
-    Placeholder(SymbolP<'tcx>),
-    Field(SymbolP<'tcx>, Node<'tcx>),
-    Alias(Path<'tcx>),
+pub enum Item<'gcx, 'src> {
+    Function(SymbolP<'gcx>, Node<'src>, Scope<'gcx, 'src>),
+    Type(SymbolP<'gcx>, Node<'src>, Scope<'gcx, 'src>),
+    Module(Scope<'gcx, 'src>),
+    Impl(Scope<'gcx, 'src>),
+    Placeholder(SymbolP<'gcx>),
+    Field(SymbolP<'gcx>, Node<'src>),
+    Alias(Path<'src>),
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -35,14 +32,20 @@ pub enum ScopeType {
     Enum,
 }
 
-pub struct ScopeInner<'tcx> {
+pub struct ScopeInner<'gcx, 'src> {
     pub r#type: ScopeType,
-    pub path: Path<'tcx>,
-    pub items: HashMap<&'tcx str, Vec<Item<'tcx>>>,
-    pub parent: Option<Weak<RefCell<ScopeInner<'tcx>>>>,
+    pub path: Path<'src>,
+
+    // We use IndexMap to preserve the order of items in the scope. While not important for
+    // name resolution, it is important for e.g. struct layout, function signature, generic
+    // parameter ordering, etc.
+    pub items: IndexMap<&'src str, Vec<Item<'gcx, 'src>>>,
+    pub parent: Option<Weak<RefCell<ScopeInner<'gcx, 'src>>>>,
+
+    parse_context: Option<ParseCtx<'gcx, 'src>>,
 }
 
-impl<'tcx> Debug for ScopeInner<'tcx> {
+impl<'gcx, 'src> Debug for ScopeInner<'gcx, 'src> {
     fn fmt(&self, fmt: &mut Formatter) -> Result<(), std::fmt::Error> {
         let mut builder = fmt.debug_struct(&format!("{:?}Scope({:?})", self.r#type, self.path));
         for (name, items) in &self.items {
@@ -55,35 +58,41 @@ impl<'tcx> Debug for ScopeInner<'tcx> {
 }
 
 #[derive(Clone)]
-pub struct Scope<'tcx>(pub Rc<RefCell<ScopeInner<'tcx>>>);
+pub struct Scope<'gcx, 'src>(pub Rc<RefCell<ScopeInner<'gcx, 'src>>>);
 
-impl<'tcx> From<Scope<'tcx>> for Weak<RefCell<ScopeInner<'tcx>>> {
-    fn from(scope: Scope<'tcx>) -> Self {
+impl<'gcx, 'src> From<Scope<'gcx, 'src>> for Weak<RefCell<ScopeInner<'gcx, 'src>>> {
+    fn from(scope: Scope<'gcx, 'src>) -> Self {
         Rc::downgrade(&scope.0)
     }
 }
 
-impl<'tcx> Debug for Scope<'tcx> {
+impl<'gcx, 'src> Debug for Scope<'gcx, 'src> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         self.0.borrow().fmt(fmt)
     }
 }
 
-impl<'tcx> Scope<'tcx> {
-    pub fn new() -> Self {
+impl<'gcx, 'src> Scope<'gcx, 'src> {
+    pub fn new_root() -> Self {
         Scope(Rc::new(RefCell::new(ScopeInner {
             r#type: ScopeType::Root,
             path: Path::root(),
-            items: HashMap::new(),
+            items: IndexMap::new(),
             parent: None,
+            parse_context: None,
         })))
     }
 
-    pub fn with_parent(r#type: ScopeType, path: Path<'tcx>, parent: Scope<'tcx>) -> Self {
+    pub fn parse_ctx(&self) -> Option<ParseCtx<'gcx, 'src>> {
+        self.0.borrow().parse_context.clone()
+    }
+
+    pub fn with_parent(r#type: ScopeType, path: Path<'src>, parent: Scope<'gcx, 'src>) -> Self {
         Scope(Rc::new(RefCell::new(ScopeInner {
             r#type,
             path,
-            items: HashMap::new(),
+            items: IndexMap::new(),
+            parse_context: parent.parse_ctx(),
             parent: Some(parent.into()),
         })))
     }
@@ -92,16 +101,32 @@ impl<'tcx> Scope<'tcx> {
         self.0.borrow().r#type
     }
 
-    pub fn path(&self) -> Path<'tcx> {
+    pub fn path(&self) -> Path<'src> {
         self.0.borrow().path.clone()
     }
 
-    pub fn make_child(&self, r#type: ScopeType, name: &'tcx str) -> Self {
+    pub fn new_child(&self, r#type: ScopeType, name: &'src str) -> Self {
         let new_path = self.0.borrow().path.extend(PathSegment(name));
         Scope::with_parent(r#type, new_path, self.clone())
     }
 
-    pub fn add_item(&self, name: &'tcx str, item: Item<'tcx>) -> Result<(), AluminaError> {
+    pub fn new_child_with_parse_ctx(
+        &self,
+        r#type: ScopeType,
+        name: &'src str,
+        parse_ctx: ParseCtx<'gcx, 'src>,
+    ) -> Self {
+        let new_path = self.0.borrow().path.extend(PathSegment(name));
+        Scope(Rc::new(RefCell::new(ScopeInner {
+            r#type,
+            path: new_path,
+            items: IndexMap::new(),
+            parent: Some(Rc::downgrade(&self.0)),
+            parse_context: Some(parse_ctx),
+        })))
+    }
+
+    pub fn add_item(&self, name: &'src str, item: Item<'gcx, 'src>) -> Result<(), AluminaError> {
         let mut current_scope = self.0.borrow_mut();
 
         // Duplicate names are generally not allowed, but we allow them for
@@ -113,14 +138,14 @@ impl<'tcx> Scope<'tcx> {
             }
             Entry::Occupied(mut entry) => {
                 let existing = entry.get_mut();
-                if existing.len() == 1 {
-                    if (matches!(existing[0], Item::Type(_, _, _)) && matches!(item, Item::Impl(_)))
+                if existing.len() == 1
+                    && ((matches!(existing[0], Item::Type(_, _, _))
+                        && matches!(item, Item::Impl(_)))
                         || (matches!(existing[0], Item::Impl(_))
-                            && matches!(item, Item::Type(_, _, _)))
-                    {
-                        existing.push(item);
-                        return Ok(());
-                    }
+                            && matches!(item, Item::Type(_, _, _))))
+                {
+                    existing.push(item);
+                    return Ok(());
                 }
             }
         }

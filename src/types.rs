@@ -1,10 +1,10 @@
 use std::hash::{Hash, Hasher};
 use std::{
     borrow::Borrow,
-    cell::{Cell, RefCell},
     fmt::{Debug, Formatter},
-    marker::PhantomData,
 };
+
+use once_cell::unsync::OnceCell;
 
 #[derive(Debug, PartialEq, Copy, Clone, Eq, Hash)]
 pub enum BuiltinType {
@@ -28,80 +28,118 @@ pub enum BuiltinType {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-pub enum Ty<'tcx> {
-    Placeholder(SymbolP<'tcx>),
-    NamedType(SymbolP<'tcx>),
+pub enum Ty<'gcx> {
+    Placeholder(SymbolP<'gcx>),
+    NamedType(SymbolP<'gcx>),
     Builtin(BuiltinType),
-    Pointer(TyP<'tcx>),
-    Array(TyP<'tcx>, usize),
-    Slice(TyP<'tcx>),
-    Tuple(&'tcx [TyP<'tcx>]),
-    Function(&'tcx [TyP<'tcx>], TyP<'tcx>),
+    Pointer(TyP<'gcx>),
+    Array(TyP<'gcx>, usize),
+    Slice(TyP<'gcx>),
+    Tuple(&'gcx [TyP<'gcx>]),
+    Function(&'gcx [TyP<'gcx>], TyP<'gcx>),
 }
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
-pub struct TyP<'tcx> {
-    inner: &'tcx Ty<'tcx>,
+#[derive(PartialEq, Eq, Copy, Clone, Hash)]
+pub struct TyP<'gcx> {
+    inner: &'gcx Ty<'gcx>,
 }
 
-impl<'tcx> TyP<'tcx> {
-    pub fn new(inner: &'tcx Ty<'tcx>) -> Self {
+impl<'gcx> TyP<'gcx> {
+    pub fn new(inner: &'gcx Ty<'gcx>) -> Self {
         TyP { inner }
     }
 }
+impl Debug for TyP<'_> {
+    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        self.inner.fmt(fmt)
+    }
+}
 
-impl<'tcx> Borrow<Ty<'tcx>> for TyP<'tcx> {
-    fn borrow(&self) -> &'_ Ty<'tcx> {
+impl<'gcx> Borrow<Ty<'gcx>> for TyP<'gcx> {
+    fn borrow(&self) -> &'_ Ty<'gcx> {
         self.inner
     }
 }
 
-pub enum Symbol<'tcx> {
-    Struct(Struct<'tcx>),
+#[derive(Debug)]
+pub enum Symbol<'gcx> {
+    Struct(Struct<'gcx>),
 }
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
-pub struct SymbolP<'tcx> {
-    inner: &'tcx SymbolInner<'tcx>,
+#[derive(PartialEq, Eq, Copy, Clone, Hash)]
+pub struct SymbolP<'gcx> {
+    pub inner: &'gcx SymbolCell<'gcx>,
 }
 
-impl<'tcx> SymbolP<'tcx> {
-    pub fn new(inner: &'tcx SymbolInner<'tcx>) -> Self {
+impl<'gcx> SymbolP<'gcx> {
+    pub fn new(inner: &'gcx SymbolCell<'gcx>) -> Self {
         SymbolP { inner }
+    }
+
+    pub fn assign(&self, value: Symbol<'gcx>) {
+        // Panic if we try to assign the same symbol twice
+        self.inner.contents.set(value).unwrap();
+    }
+
+    pub fn get(&self) -> &'gcx Symbol<'gcx> {
+        self.inner.contents.get().unwrap()
     }
 }
 
-pub struct SymbolInner<'tcx> {
-    pub id: usize,
-    pub contents: RefCell<Option<Symbol<'tcx>>>,
+impl Debug for SymbolP<'_> {
+    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        self.inner.fmt(fmt)
+    }
 }
 
-impl Hash for SymbolInner<'_> {
+/// SymbolCell is a wrapper that allows us to build recursive structures incrementally.
+/// This allows us to assign symbols to syntax early in name resolution and fill them in
+/// later.
+/// Symbols are immutable once they are assigned.
+pub struct SymbolCell<'gcx> {
+    pub id: usize,
+    pub debug_name: Option<&'gcx str>,
+    pub contents: OnceCell<Symbol<'gcx>>,
+}
+
+impl Hash for SymbolCell<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.id.hash(state);
     }
 }
 
-impl PartialEq for SymbolInner<'_> {
+/// Symbols have reference semantics. Two structs with the same fields
+/// are not considered equal.
+impl PartialEq for SymbolCell<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
 }
 
-impl Eq for SymbolInner<'_> {}
+impl Eq for SymbolCell<'_> {}
 
-impl Debug for SymbolInner<'_> {
+impl Debug for SymbolCell<'_> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(fmt, "Symbol({})", self.id)
+        if fmt.alternate() {
+            writeln!(fmt, "Symbol({} {:?}) {{", self.id, self.debug_name)?;
+            writeln!(fmt, "{:?}", self.contents.get())?;
+            writeln!(fmt, "}}")?;
+        } else {
+            write!(fmt, "Symbol({} {:?})", self.id, self.debug_name)?
+        }
+
+        Ok(())
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct Field<'tcx> {
-    name: String,
-    ty: Ty<'tcx>,
+#[derive(Debug, Clone, Copy)]
+pub struct Field<'gcx> {
+    pub symbol: SymbolP<'gcx>,
+    pub ty: TyP<'gcx>,
 }
 
-pub struct Struct<'tcx> {
-    fields: Vec<Field<'tcx>>,
+#[derive(Debug)]
+pub struct Struct<'gcx> {
+    pub placeholders: &'gcx [SymbolP<'gcx>],
+    pub fields: &'gcx [Field<'gcx>],
 }

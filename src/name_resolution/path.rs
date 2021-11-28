@@ -1,21 +1,21 @@
 use std::fmt::{Debug, Display, Formatter};
 
 #[derive(PartialEq, Eq, Hash, Clone)]
-pub struct PathSegment<'syntax>(pub &'syntax str);
+pub struct PathSegment<'src>(pub &'src str);
 
-impl<'syntax> Display for PathSegment<'syntax> {
+impl<'src> Display for PathSegment<'src> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         write!(fmt, "{}", self.0)
     }
 }
 
 #[derive(Default, PartialEq, Eq, Hash, Clone)]
-pub struct Path<'syntax> {
+pub struct Path<'src> {
     pub absolute: bool,
-    pub segments: Vec<PathSegment<'syntax>>,
+    pub segments: Vec<PathSegment<'src>>,
 }
 
-impl<'syntax> Display for Path<'syntax> {
+impl<'src> Display for Path<'src> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         if self.absolute {
             write!(fmt, "::")?;
@@ -30,14 +30,14 @@ impl<'syntax> Display for Path<'syntax> {
     }
 }
 
-impl<'syntax> Debug for Path<'syntax> {
+impl<'src> Debug for Path<'src> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         write!(fmt, "\"{}\"", self)
     }
 }
 
-impl<'syntax> From<PathSegment<'syntax>> for Path<'syntax> {
-    fn from(item: PathSegment<'syntax>) -> Self {
+impl<'src> From<PathSegment<'src>> for Path<'src> {
+    fn from(item: PathSegment<'src>) -> Self {
         Self {
             absolute: false,
             segments: vec![item],
@@ -45,7 +45,7 @@ impl<'syntax> From<PathSegment<'syntax>> for Path<'syntax> {
     }
 }
 
-impl<'syntax> Path<'syntax> {
+impl<'src> Path<'src> {
     pub fn root() -> Self {
         Self {
             absolute: true,
@@ -53,7 +53,7 @@ impl<'syntax> Path<'syntax> {
         }
     }
 
-    pub fn extend(&self, part: PathSegment<'syntax>) -> Self {
+    pub fn extend(&self, part: PathSegment<'src>) -> Self {
         Self {
             absolute: self.absolute,
             segments: self
@@ -65,7 +65,7 @@ impl<'syntax> Path<'syntax> {
         }
     }
 
-    pub fn join_with(&self, lhs: Path<'syntax>) -> Self {
+    pub fn join_with(&self, lhs: Path<'src>) -> Self {
         assert!(!lhs.absolute || self.absolute || self.segments.is_empty());
 
         Self {

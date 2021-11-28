@@ -1,3 +1,4 @@
+use crate::parser::ParseCtx;
 use crate::AluminaVisitor;
 use crate::{
     common::{SyntaxError, ToSyntaxError},
@@ -10,30 +11,26 @@ use crate::{
     visitors::ScopedPathVisitor,
 };
 
-pub struct TypeVisitor<'tcx> {
-    source: &'tcx str,
-    global_ctx: &'tcx GlobalCtx<'tcx>,
-    scope: Scope<'tcx>,
+pub struct TypeVisitor<'gcx, 'src> {
+    parse_ctx: ParseCtx<'gcx, 'src>,
+    scope: Scope<'gcx, 'src>,
 }
 
-impl<'tcx> TypeVisitor<'tcx> {
-    pub fn new(global_ctx: &'tcx GlobalCtx<'tcx>, source: &'tcx str, scope: Scope<'tcx>) -> Self {
+impl<'gcx, 'src> TypeVisitor<'gcx, 'src> {
+    pub fn new(scope: Scope<'gcx, 'src>) -> Self {
         TypeVisitor {
-            source,
-            global_ctx,
+            parse_ctx: scope
+                .parse_ctx()
+                .expect("cannot run on scope without parse context"),
             scope,
         }
     }
 
     fn visit_typeref(
         &mut self,
-        node: tree_sitter::Node<'tcx>,
-    ) -> Result<TyP<'tcx>, SyntaxError<'tcx>> {
-        let mut visitor = ScopedPathVisitor {
-            source: self.source,
-            scope: self.scope.clone(),
-            //global_ctx: self.global_ctx,
-        };
+        node: tree_sitter::Node<'src>,
+    ) -> Result<TyP<'gcx>, SyntaxError<'src>> {
+        let mut visitor = ScopedPathVisitor::new(self.scope.clone());
         let path = visitor.visit(node)?;
         let mut resolver = NameResolver::new();
 
@@ -41,8 +38,8 @@ impl<'tcx> TypeVisitor<'tcx> {
             .resolve_type_item(self.scope.clone(), &path)
             .to_syntax_error(node)?
         {
-            Item::Type(ty, _, _) => self.global_ctx.intern(Ty::NamedType(ty)),
-            Item::Placeholder(ty) => self.global_ctx.intern(Ty::Placeholder(ty)),
+            Item::Type(ty, _, _) => self.parse_ctx.intern(Ty::NamedType(ty)),
+            Item::Placeholder(ty) => self.parse_ctx.intern(Ty::Placeholder(ty)),
             _ => unreachable!(),
         };
 
@@ -50,11 +47,11 @@ impl<'tcx> TypeVisitor<'tcx> {
     }
 }
 
-impl<'tcx> AluminaVisitor<'tcx> for TypeVisitor<'tcx> {
-    type ReturnType = Result<TyP<'tcx>, SyntaxError<'tcx>>;
+impl<'gcx, 'src> AluminaVisitor<'src> for TypeVisitor<'gcx, 'src> {
+    type ReturnType = Result<TyP<'gcx>, SyntaxError<'src>>;
 
-    fn visit_primitive_type(&mut self, node: tree_sitter::Node<'tcx>) -> Self::ReturnType {
-        let builtin = match &self.source[node.byte_range()] {
+    fn visit_primitive_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let builtin = match self.parse_ctx.node_text(node) {
             "bool" => Ty::Builtin(BuiltinType::Bool),
             "u8" => Ty::Builtin(BuiltinType::U8),
             "u16" => Ty::Builtin(BuiltinType::U16),
@@ -73,34 +70,36 @@ impl<'tcx> AluminaVisitor<'tcx> for TypeVisitor<'tcx> {
             _ => unreachable!(),
         };
 
-        Ok(self.global_ctx.intern(builtin))
+        Ok(self.parse_ctx.intern(builtin))
     }
 
-    fn visit_never_type(&mut self, _node: tree_sitter::Node<'tcx>) -> Self::ReturnType {
-        Ok(self.global_ctx.intern(Ty::Builtin(BuiltinType::Never)))
+    fn visit_never_type(&mut self, _node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        Ok(self.parse_ctx.intern(Ty::Builtin(BuiltinType::Never)))
     }
 
-    fn visit_pointer_of(&mut self, node: tree_sitter::Node<'tcx>) -> Self::ReturnType {
+    fn visit_pointer_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let ty = self.visit(node.child_by_field_name("inner").unwrap())?;
 
-        Ok(self.global_ctx.intern(Ty::Pointer(ty)))
+        Ok(self.parse_ctx.intern(Ty::Pointer(ty)))
     }
 
-    fn visit_array_of(&mut self, node: tree_sitter::Node<'tcx>) -> Self::ReturnType {
+    fn visit_array_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let ty = self.visit(node.child_by_field_name("inner").unwrap())?;
-        let len = self.source[node.child_by_field_name("size").unwrap().byte_range()]
+        let len = self
+            .parse_ctx
+            .node_text(node.child_by_field_name("size").unwrap())
             .parse()
             .unwrap();
 
-        Ok(self.global_ctx.intern(Ty::Array(ty, len)))
+        Ok(self.parse_ctx.intern(Ty::Array(ty, len)))
     }
 
-    fn visit_slice_of(&mut self, node: tree_sitter::Node<'tcx>) -> Self::ReturnType {
+    fn visit_slice_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let ty = self.visit(node.child_by_field_name("inner").unwrap())?;
-        Ok(self.global_ctx.intern(Ty::Slice(ty)))
+        Ok(self.parse_ctx.intern(Ty::Slice(ty)))
     }
 
-    fn visit_tuple_type(&mut self, node: tree_sitter::Node<'tcx>) -> Self::ReturnType {
+    fn visit_tuple_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let mut cursor = node.walk();
         let elements = node
             .children_by_field_name("element", &mut cursor)
@@ -108,24 +107,24 @@ impl<'tcx> AluminaVisitor<'tcx> for TypeVisitor<'tcx> {
             .collect::<Result<Vec<_>, _>>()?;
 
         match &elements[..] {
-            [] => Ok(self.global_ctx.intern(Ty::Builtin(BuiltinType::Void))),
+            [] => Ok(self.parse_ctx.intern(Ty::Builtin(BuiltinType::Void))),
             [ty] => Ok(*ty),
             _ => {
-                let slice = self.global_ctx.arena.alloc_slice_copy(elements.as_slice());
-                Ok(self.global_ctx.intern(Ty::Tuple(slice)))
+                let slice = self.parse_ctx.alloc_slice(elements.as_slice());
+                Ok(self.parse_ctx.intern(Ty::Tuple(slice)))
             }
         }
     }
 
-    fn visit_scoped_type_identifier(&mut self, node: tree_sitter::Node<'tcx>) -> Self::ReturnType {
+    fn visit_scoped_type_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         self.visit_typeref(node)
     }
 
-    fn visit_type_identifier(&mut self, node: tree_sitter::Node<'tcx>) -> Self::ReturnType {
+    fn visit_type_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         self.visit_typeref(node)
     }
 
-    fn visit_function_pointer(&mut self, node: tree_sitter::Node<'tcx>) -> Self::ReturnType {
+    fn visit_function_pointer(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let mut cursor = node.walk();
         let elements = node
             .child_by_field_name("parameters")
@@ -137,11 +136,11 @@ impl<'tcx> AluminaVisitor<'tcx> for TypeVisitor<'tcx> {
         let type_node = if let Some(return_type_node) = node.child_by_field_name("return_type") {
             self.visit(return_type_node)?
         } else {
-            self.global_ctx.intern(Ty::Builtin(BuiltinType::Void))
+            self.parse_ctx.intern(Ty::Builtin(BuiltinType::Void))
         };
 
-        Ok(self.global_ctx.intern(Ty::Function(
-            self.global_ctx.arena.alloc_slice_copy(elements.as_slice()),
+        Ok(self.parse_ctx.intern(Ty::Function(
+            self.parse_ctx.alloc_slice(elements.as_slice()),
             type_node,
         )))
     }
@@ -160,37 +159,37 @@ mod tests {
 
     use super::*;
 
-    trait AsTyP<'tcx> {
-        fn as_typ(self, ctx: &'tcx GlobalCtx<'tcx>) -> TyP<'tcx>;
+    trait AsTyP<'gcx> {
+        fn as_typ(self, ctx: &'gcx GlobalCtx<'gcx>) -> TyP<'gcx>;
     }
 
-    impl<'tcx> AsTyP<'tcx> for Ty<'tcx> {
-        fn as_typ(self, ctx: &'tcx GlobalCtx<'tcx>) -> TyP<'tcx> {
+    impl<'gcx> AsTyP<'gcx> for Ty<'gcx> {
+        fn as_typ(self, ctx: &'gcx GlobalCtx<'gcx>) -> TyP<'gcx> {
             ctx.intern(self)
         }
     }
 
-    fn parse<'tcx>(global_ctx: &'tcx GlobalCtx<'tcx>, src: &'tcx str) -> Scope<'tcx> {
-        let parsed = global_ctx.arena.alloc(crate::parser::parse(src));
-        let root_node = parsed.root_node();
+    fn first_pass<'gcx, 'src>(
+        parse_ctx: &'src ParseCtx<'gcx, 'src>,
+    ) -> Result<Scope<'gcx, 'src>, SyntaxError<'src>> {
+        let root_scope = Scope::new_root();
 
-        let root_scope = Scope::new();
-        let module_scope = root_scope.make_child(ScopeType::Crate, "test");
+        let module_scope =
+            root_scope.new_child_with_parse_ctx(ScopeType::Crate, "test", parse_ctx.to_owned());
+
         root_scope
             .add_item("test", Item::Module(module_scope.clone()))
             .unwrap();
 
-        let mut visitor = FirstPassVisitor::new(global_ctx, src, module_scope);
-        visitor.visit(root_node).unwrap();
+        let mut visitor = FirstPassVisitor::new(module_scope);
+        visitor.visit(parse_ctx.root_node())?;
 
-        root_scope
+        Ok(root_scope)
     }
 
-    fn extract_type<'tcx>(
-        global_ctx: &'tcx GlobalCtx<'tcx>,
-        src: &'tcx str,
-        root_scope: Scope<'tcx>,
-    ) -> Result<TyP<'tcx>, SyntaxError<'tcx>> {
+    fn extract_type<'gcx, 'src>(
+        root_scope: Scope<'gcx, 'src>,
+    ) -> Result<TyP<'gcx>, SyntaxError<'src>> {
         let (scope, node) = match &(*root_scope.0).borrow().items["test"][..] {
             [Item::Module(scope)] => match &(*scope.0).borrow().items["a"][..] {
                 [Item::Type(_, _, scope)] => match &(*scope.0).borrow().items["b"][..] {
@@ -204,7 +203,7 @@ mod tests {
             _ => unreachable!(),
         };
 
-        let mut visitor = TypeVisitor::new(global_ctx, src, scope);
+        let mut visitor = TypeVisitor::new(scope);
         visitor.visit(node)
     }
 
@@ -224,17 +223,18 @@ mod tests {
         assert_eq!(typ1, typ2);
     }
 
-    fn test_parse_type<'tcx>(
-        global_ctx: &'tcx GlobalCtx<'tcx>,
+    fn test_parse_type<'gcx>(
+        global_ctx: &'gcx GlobalCtx<'gcx>,
         typedef: &str,
-        expected: TyP<'tcx>,
+        expected: TyP<'gcx>,
     ) {
         let src = global_ctx
             .arena
             .alloc_str(&format!("struct a {{ b: {}; }}", typedef));
 
-        let root_scope = parse(&global_ctx, src);
-        let result = extract_type(&global_ctx, src, root_scope).unwrap();
+        let parse_ctx = ParseCtx::from_source(global_ctx, src);
+        let root_scope = first_pass(&parse_ctx).unwrap();
+        let result = extract_type(root_scope).unwrap();
 
         assert_eq!(result, expected);
     }
@@ -284,6 +284,25 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_hof() {
+        let ctx = GlobalCtx::new();
+
+        test_parse_type(
+            &ctx,
+            "fn(u32) -> fn(u32) -> u32",
+            Ty::Function(
+                &[Ty::Builtin(BuiltinType::U32).as_typ(&ctx)],
+                Ty::Function(
+                    &[Ty::Builtin(BuiltinType::U32).as_typ(&ctx)],
+                    Ty::Builtin(BuiltinType::U32).as_typ(&ctx),
+                )
+                .as_typ(&ctx),
+            )
+            .as_typ(&ctx),
+        );
+    }
+
+    #[test]
     fn test_parse_type_tuple() {
         let ctx = GlobalCtx::new();
 
@@ -310,117 +329,6 @@ mod tests {
         let ctx = GlobalCtx::new();
 
         test_parse_type(&ctx, "(u32)", Ty::Builtin(BuiltinType::U32).as_typ(&ctx));
-    }
-
-    #[test]
-    fn test_referenced_type() {
-        let ctx = GlobalCtx::new();
-
-        let src = r"
-            mod foo {
-                struct bar {}
-            }
-
-            struct a {
-                b: foo::bar,
-            }
-            ";
-
-        let root_scope = parse(&ctx, src);
-        let result = extract_type(&ctx, src, root_scope).unwrap();
-        let symbol = ctx.get_symbol(0);
-
-        assert_eq!(result, Ty::NamedType(symbol).as_typ(&ctx));
-    }
-
-    #[test]
-    fn test_referenced_type_super() {
-        let ctx = GlobalCtx::new();
-
-        let src = r"
-        mod foo {
-            mod goo {
-                use super::bar;
-            }
-            struct bar {}
-        }
-
-        struct a {
-            b: foo::goo::bar,
-        }
-        ";
-
-        let root_scope = parse(&ctx, src);
-        let result = extract_type(&ctx, src, root_scope).unwrap();
-        let symbol = ctx.get_symbol(0);
-
-        assert_eq!(result, Ty::NamedType(symbol).as_typ(&ctx));
-    }
-
-    #[test]
-    fn test_infinite_loop() {
-        let ctx = GlobalCtx::new();
-
-        let src = r"
-        mod foo {
-            use super::bar::baz;
-        }
-
-        mod bar {
-            use super::foo::baz;
-        }
-
-        struct a {
-            b: foo::baz,
-        }
-        ";
-
-        let root_scope = parse(&ctx, src);
-        let err = extract_type(&ctx, src, root_scope).unwrap_err();
-
-        assert_matches!(err.kind, AluminaError::CycleDetected);
-    }
-
-    #[test]
-    fn test_referenced_type_crate() {
-        let ctx = GlobalCtx::new();
-
-        let src = r"
-        mod foo {
-            struct bar {}
-        }
-
-        struct a {
-            b: crate::foo::bar,
-        }
-        ";
-
-        let root_scope = parse(&ctx, src);
-        let result = extract_type(&ctx, src, root_scope).unwrap();
-        let symbol = ctx.get_symbol(0);
-
-        assert_eq!(result, Ty::NamedType(symbol).as_typ(&ctx));
-    }
-
-    #[test]
-    fn test_referenced_type_absolute() {
-        let ctx = GlobalCtx::new();
-
-        let src = r"
-        mod foo {
-            struct bar {}
-        }
-
-        struct a {
-            b: ::test::foo::bar,
-        }
-        ";
-
-        let root_scope = parse(&ctx, src);
-        let result = extract_type(&ctx, src, root_scope).unwrap();
-        let symbol = ctx.get_symbol(0);
-
-        assert_eq!(result, Ty::NamedType(symbol).as_typ(&ctx));
     }
 
     #[test]

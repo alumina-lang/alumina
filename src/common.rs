@@ -1,4 +1,4 @@
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::Debug;
 use std::result::Result;
 use thiserror::Error;
 use tree_sitter::Node;
@@ -19,20 +19,20 @@ pub enum AluminaError {
 
 #[derive(Debug, Error)]
 #[error("{} at {}:{}", .kind, .node.start_position().row, .node.start_position().column)]
-pub struct SyntaxError<'tcx> {
+pub struct SyntaxError<'src> {
     pub kind: AluminaError,
-    node: Node<'tcx>,
+    node: Node<'src>,
 }
 
 pub trait ToSyntaxError<T, E> {
-    fn to_syntax_error<'tcx>(self, node: Node<'tcx>) -> Result<T, SyntaxError<'tcx>>;
+    fn to_syntax_error<'src>(self, node: Node<'src>) -> Result<T, SyntaxError<'src>>;
 }
 
 impl<T, E> ToSyntaxError<T, E> for Result<T, E>
 where
     AluminaError: From<E>,
 {
-    fn to_syntax_error<'tcx>(self, node: Node<'tcx>) -> Result<T, SyntaxError<'tcx>> {
+    fn to_syntax_error<'src>(self, node: Node<'src>) -> Result<T, SyntaxError<'src>> {
         self.map_err(|e| SyntaxError {
             kind: e.into(),
             node,

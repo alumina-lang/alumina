@@ -1,41 +1,47 @@
 use crate::common::{AluminaError, SyntaxError, ToSyntaxError};
 use crate::name_resolution::path::{Path, PathSegment};
 use crate::name_resolution::scope::Scope;
+use crate::parser::ParseCtx;
 use crate::AluminaVisitor;
 
 pub mod pass1;
 pub mod types;
 
-struct ScopedPathVisitor<'tcx> {
-    source: &'tcx str,
-    scope: Scope<'tcx>, // global_ctx: &'tcx GlobalCtx<'tcx>
+struct ScopedPathVisitor<'gcx, 'src> {
+    parse_ctx: ParseCtx<'gcx, 'src>,
+    scope: Scope<'gcx, 'src>, // global_ctx: &'gcx GlobalCtx<'gcx>
 }
 
-impl<'tcx> ScopedPathVisitor<'tcx> {
-    fn new(source: &'tcx str, scope: Scope<'tcx>) -> Self {
-        Self { source, scope }
+impl<'gcx, 'src> ScopedPathVisitor<'gcx, 'src> {
+    fn new(scope: Scope<'gcx, 'src>) -> Self {
+        Self {
+            parse_ctx: scope
+                .parse_ctx()
+                .expect("cannot run on scope without parse context"),
+            scope,
+        }
     }
 }
 
-trait VisitorExt<'tcx> {
+trait VisitorExt<'src> {
     type ReturnType;
 
-    fn visit_children(&mut self, node: tree_sitter::Node<'tcx>) -> Self::ReturnType;
+    fn visit_children(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType;
 
     fn visit_children_by_field(
         &mut self,
-        node: tree_sitter::Node<'tcx>,
+        node: tree_sitter::Node<'src>,
         field: &'static str,
     ) -> Self::ReturnType;
 }
 
-impl<'tcx, T, E> VisitorExt<'tcx> for T
+impl<'src, T, E> VisitorExt<'src> for T
 where
-    T: AluminaVisitor<'tcx, ReturnType = Result<(), E>>,
+    T: AluminaVisitor<'src, ReturnType = Result<(), E>>,
 {
     type ReturnType = Result<(), E>;
 
-    fn visit_children(&mut self, node: tree_sitter::Node<'tcx>) -> Result<(), E> {
+    fn visit_children(&mut self, node: tree_sitter::Node<'src>) -> Result<(), E> {
         let mut cursor = node.walk();
         for node in node.children(&mut cursor) {
             self.visit(node)?;
@@ -46,7 +52,7 @@ where
 
     fn visit_children_by_field(
         &mut self,
-        node: tree_sitter::Node<'tcx>,
+        node: tree_sitter::Node<'src>,
         field: &'static str,
     ) -> Result<(), E> {
         let mut cursor = node.walk();
@@ -58,10 +64,10 @@ where
     }
 }
 
-impl<'tcx> AluminaVisitor<'tcx> for ScopedPathVisitor<'tcx> {
-    type ReturnType = Result<Path<'tcx>, SyntaxError<'tcx>>;
+impl<'gcx, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'gcx, 'src> {
+    type ReturnType = Result<Path<'src>, SyntaxError<'src>>;
 
-    fn visit_crate(&mut self, node: tree_sitter::Node<'tcx>) -> Self::ReturnType {
+    fn visit_crate(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         Ok(self
             .scope
             .find_crate()
@@ -70,7 +76,7 @@ impl<'tcx> AluminaVisitor<'tcx> for ScopedPathVisitor<'tcx> {
             .path())
     }
 
-    fn visit_super(&mut self, node: tree_sitter::Node<'tcx>) -> Self::ReturnType {
+    fn visit_super(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         Ok(self
             .scope
             .find_super()
@@ -79,32 +85,36 @@ impl<'tcx> AluminaVisitor<'tcx> for ScopedPathVisitor<'tcx> {
             .path())
     }
 
-    fn visit_identifier(&mut self, node: tree_sitter::Node<'tcx>) -> Self::ReturnType {
-        let name = &self.source[node.byte_range()];
+    fn visit_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let name = self.parse_ctx.node_text(node);
 
         Ok(PathSegment(name).into())
     }
 
-    fn visit_type_identifier(&mut self, node: tree_sitter::Node<'tcx>) -> Self::ReturnType {
-        let name = &self.source[node.byte_range()];
+    fn visit_type_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let name = self.parse_ctx.node_text(node);
 
         Ok(PathSegment(name).into())
     }
 
-    fn visit_scoped_identifier(&mut self, node: tree_sitter::Node<'tcx>) -> Self::ReturnType {
+    fn visit_scoped_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let subpath = match node.child_by_field_name("path") {
             Some(subnode) => self.visit(subnode)?,
             None => Path::root(),
         };
 
-        let name = &self.source[node.child_by_field_name("name").unwrap().byte_range()];
+        let name = self
+            .parse_ctx
+            .node_text(node.child_by_field_name("name").unwrap());
 
         Ok(subpath.extend(PathSegment(name)))
     }
 
-    fn visit_scoped_type_identifier(&mut self, node: tree_sitter::Node<'tcx>) -> Self::ReturnType {
+    fn visit_scoped_type_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let subpath = self.visit(node.child_by_field_name("path").unwrap())?;
-        let name = &self.source[node.child_by_field_name("name").unwrap().byte_range()];
+        let name = self
+            .parse_ctx
+            .node_text(node.child_by_field_name("name").unwrap());
 
         Ok(subpath.extend(PathSegment(name)))
     }
