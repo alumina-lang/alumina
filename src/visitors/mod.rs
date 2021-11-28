@@ -1,4 +1,4 @@
-use crate::common::SyntaxError;
+use crate::common::{AluminaError, SyntaxError, ToSyntaxError};
 use crate::name_resolution::path::{Path, PathSegment};
 use crate::name_resolution::scope::Scope;
 use crate::AluminaVisitor;
@@ -11,6 +11,53 @@ struct ScopedPathVisitor<'tcx> {
     scope: Scope<'tcx>, // global_ctx: &'tcx GlobalCtx<'tcx>
 }
 
+impl<'tcx> ScopedPathVisitor<'tcx> {
+    fn new(source: &'tcx str, scope: Scope<'tcx>) -> Self {
+        Self { source, scope }
+    }
+}
+
+trait VisitorExt<'tcx> {
+    type ReturnType;
+
+    fn visit_children(&mut self, node: tree_sitter::Node<'tcx>) -> Self::ReturnType;
+
+    fn visit_children_by_field(
+        &mut self,
+        node: tree_sitter::Node<'tcx>,
+        field: &'static str,
+    ) -> Self::ReturnType;
+}
+
+impl<'tcx, T, E> VisitorExt<'tcx> for T
+where
+    T: AluminaVisitor<'tcx, ReturnType = Result<(), E>>,
+{
+    type ReturnType = Result<(), E>;
+
+    fn visit_children(&mut self, node: tree_sitter::Node<'tcx>) -> Result<(), E> {
+        let mut cursor = node.walk();
+        for node in node.children(&mut cursor) {
+            self.visit(node)?;
+        }
+
+        Ok(())
+    }
+
+    fn visit_children_by_field(
+        &mut self,
+        node: tree_sitter::Node<'tcx>,
+        field: &'static str,
+    ) -> Result<(), E> {
+        let mut cursor = node.walk();
+        for node in node.children_by_field_name(field, &mut cursor) {
+            self.visit(node)?;
+        }
+
+        Ok(())
+    }
+}
+
 impl<'tcx> AluminaVisitor<'tcx> for ScopedPathVisitor<'tcx> {
     type ReturnType = Result<Path<'tcx>, SyntaxError<'tcx>>;
 
@@ -18,7 +65,8 @@ impl<'tcx> AluminaVisitor<'tcx> for ScopedPathVisitor<'tcx> {
         Ok(self
             .scope
             .find_crate()
-            .ok_or(SyntaxError("crate not allowed", node))?
+            .ok_or(AluminaError::CrateNotAllowed)
+            .to_syntax_error(node)?
             .path())
     }
 
@@ -26,7 +74,8 @@ impl<'tcx> AluminaVisitor<'tcx> for ScopedPathVisitor<'tcx> {
         Ok(self
             .scope
             .find_super()
-            .ok_or(SyntaxError("super not allowed", node))?
+            .ok_or(AluminaError::SuperNotAllowed)
+            .to_syntax_error(node)?
             .path())
     }
 

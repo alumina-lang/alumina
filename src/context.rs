@@ -1,4 +1,4 @@
-use crate::types::{SymbolP, Ty, TyP};
+use crate::types::{SymbolInner, SymbolP, Ty, TyP};
 
 use bumpalo::Bump;
 use std::cell::{Cell, RefCell};
@@ -43,6 +43,21 @@ impl<'tcx> GlobalCtx<'tcx> {
     }
 
     pub fn make_symbol(&'tcx self) -> SymbolP<'tcx> {
-        SymbolP::new(self.counter.increment())
+        let inner = self.arena.alloc(SymbolInner {
+            id: self.counter.increment(),
+            contents: RefCell::new(None),
+        });
+
+        SymbolP::new(inner)
+    }
+
+    #[cfg(test)]
+    pub fn get_symbol(&'tcx self, id: usize) -> SymbolP<'tcx> {
+        let inner = self.arena.alloc(SymbolInner {
+            id,
+            contents: RefCell::new(None),
+        });
+
+        SymbolP::new(inner)
     }
 }

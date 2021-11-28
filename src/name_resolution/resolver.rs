@@ -1,6 +1,9 @@
+use crate::{
+    common::AluminaError,
+    name_resolution::{path::Path, scope::Item},
+};
 use std::collections::HashSet;
-
-use crate::name_resolution::{path::Path, scope::Item};
+use thiserror::Error;
 
 use super::scope::{Scope, ScopeInner};
 
@@ -15,14 +18,18 @@ impl<'tcx> NameResolver<'tcx> {
         }
     }
 
-    pub fn resolve_scope(&mut self, scope: Scope<'tcx>, path: &Path<'tcx>) -> Option<Scope<'tcx>> {
+    pub fn resolve_scope(
+        &mut self,
+        scope: Scope<'tcx>,
+        path: &Path<'tcx>,
+    ) -> Result<Scope<'tcx>, AluminaError> {
         println!("resolve_scope({}, {})", scope.path(), path);
 
         if !self
             .seen_aliases
             .insert((1, scope.0.as_ptr(), path.clone()))
         {
-            return None;
+            return Err(AluminaError::CycleDetected);
         }
 
         if path.absolute {
@@ -36,7 +43,7 @@ impl<'tcx> NameResolver<'tcx> {
         }
 
         if path.segments.is_empty() {
-            return Some(scope);
+            return Ok(scope);
         }
 
         let remainder = Path {
@@ -66,25 +73,25 @@ impl<'tcx> NameResolver<'tcx> {
             return self.resolve_scope(parent, path);
         }
 
-        None
+        Err(AluminaError::UnresolvedPath(path.to_string()))
     }
 
     pub fn resolve_type_item(
         &mut self,
         scope: Scope<'tcx>,
         path: &Path<'tcx>,
-    ) -> Option<Item<'tcx>> {
+    ) -> Result<Item<'tcx>, AluminaError> {
         println!("resolve_type_item({}, {})", scope.path(), path);
 
         if !self
             .seen_aliases
             .insert((2, scope.0.as_ptr(), path.clone()))
         {
-            return None;
+            return Err(AluminaError::CycleDetected);
         }
 
         if path.segments.is_empty() {
-            return None;
+            return Err(AluminaError::UnresolvedPath(path.to_string()));
         }
 
         let containing_scope = self.resolve_scope(scope.clone(), &path.pop())?;
@@ -98,7 +105,7 @@ impl<'tcx> NameResolver<'tcx> {
         {
             match item {
                 Item::Type(_, _, _) | Item::Placeholder(_) => {
-                    return Some(item.clone());
+                    return Ok(item.clone());
                 }
                 Item::Alias(target) => {
                     return self.resolve_type_item(containing_scope.clone(), target);
@@ -111,6 +118,6 @@ impl<'tcx> NameResolver<'tcx> {
             return self.resolve_type_item(parent, path);
         }
 
-        None
+        Err(AluminaError::UnresolvedPath(path.to_string()))
     }
 }

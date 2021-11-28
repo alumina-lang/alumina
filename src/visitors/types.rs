@@ -1,6 +1,6 @@
 use crate::AluminaVisitor;
 use crate::{
-    common::SyntaxError,
+    common::{SyntaxError, ToSyntaxError},
     context::GlobalCtx,
     name_resolution::{
         resolver::NameResolver,
@@ -37,13 +37,16 @@ impl<'tcx> TypeVisitor<'tcx> {
         let path = visitor.visit(node)?;
         let mut resolver = NameResolver::new();
 
-        let res = match resolver.resolve_type_item(self.scope.clone(), &path) {
-            Some(Item::Type(ty, _, _)) => Ok(self.global_ctx.intern(Ty::StructOrEnum(ty))),
-            Some(Item::Placeholder(ty)) => Ok(self.global_ctx.intern(Ty::Placeholder(ty))),
-            None => Err(SyntaxError("unresolved type", node)),
+        let res = match resolver
+            .resolve_type_item(self.scope.clone(), &path)
+            .to_syntax_error(node)?
+        {
+            Item::Type(ty, _, _) => self.global_ctx.intern(Ty::NamedType(ty)),
+            Item::Placeholder(ty) => self.global_ctx.intern(Ty::Placeholder(ty)),
             _ => unreachable!(),
         };
-        res
+
+        Ok(res)
     }
 }
 
@@ -52,7 +55,6 @@ impl<'tcx> AluminaVisitor<'tcx> for TypeVisitor<'tcx> {
 
     fn visit_primitive_type(&mut self, node: tree_sitter::Node<'tcx>) -> Self::ReturnType {
         let builtin = match &self.source[node.byte_range()] {
-            "void" => Ty::Builtin(BuiltinType::Void),
             "bool" => Ty::Builtin(BuiltinType::Bool),
             "u8" => Ty::Builtin(BuiltinType::U8),
             "u16" => Ty::Builtin(BuiltinType::U16),
@@ -68,7 +70,7 @@ impl<'tcx> AluminaVisitor<'tcx> for TypeVisitor<'tcx> {
             "i128" => Ty::Builtin(BuiltinType::I128),
             "f32" => Ty::Builtin(BuiltinType::F32),
             "f64" => Ty::Builtin(BuiltinType::F64),
-            _ => return Err(SyntaxError("unknown type", node)),
+            _ => unreachable!(),
         };
 
         Ok(self.global_ctx.intern(builtin))
@@ -105,9 +107,14 @@ impl<'tcx> AluminaVisitor<'tcx> for TypeVisitor<'tcx> {
             .map(|child| self.visit(child))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let slice = self.global_ctx.arena.alloc_slice_copy(elements.as_slice());
-
-        Ok(self.global_ctx.intern(Ty::Tuple(slice)))
+        match &elements[..] {
+            [] => Ok(self.global_ctx.intern(Ty::Builtin(BuiltinType::Void))),
+            [ty] => Ok(*ty),
+            _ => {
+                let slice = self.global_ctx.arena.alloc_slice_copy(elements.as_slice());
+                Ok(self.global_ctx.intern(Ty::Tuple(slice)))
+            }
+        }
     }
 
     fn visit_scoped_type_identifier(&mut self, node: tree_sitter::Node<'tcx>) -> Self::ReturnType {
@@ -116,5 +123,326 @@ impl<'tcx> AluminaVisitor<'tcx> for TypeVisitor<'tcx> {
 
     fn visit_type_identifier(&mut self, node: tree_sitter::Node<'tcx>) -> Self::ReturnType {
         self.visit_typeref(node)
+    }
+
+    fn visit_function_pointer(&mut self, node: tree_sitter::Node<'tcx>) -> Self::ReturnType {
+        let mut cursor = node.walk();
+        let elements = node
+            .child_by_field_name("parameters")
+            .unwrap()
+            .children_by_field_name("parameter", &mut cursor)
+            .map(|child| self.visit(child))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let type_node = if let Some(return_type_node) = node.child_by_field_name("return_type") {
+            self.visit(return_type_node)?
+        } else {
+            self.global_ctx.intern(Ty::Builtin(BuiltinType::Void))
+        };
+
+        Ok(self.global_ctx.intern(Ty::Function(
+            self.global_ctx.arena.alloc_slice_copy(elements.as_slice()),
+            type_node,
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::assert_matches::assert_matches;
+
+    use crate::{
+        common::{AluminaError, SyntaxError},
+        name_resolution::scope::ScopeType,
+        types::{BuiltinType, SymbolP, Ty, TyP},
+        visitors::{pass1::FirstPassVisitor, types::TypeVisitor},
+    };
+
+    use super::*;
+
+    trait AsTyP<'tcx> {
+        fn as_typ(self, ctx: &'tcx GlobalCtx<'tcx>) -> TyP<'tcx>;
+    }
+
+    impl<'tcx> AsTyP<'tcx> for Ty<'tcx> {
+        fn as_typ(self, ctx: &'tcx GlobalCtx<'tcx>) -> TyP<'tcx> {
+            ctx.intern(self)
+        }
+    }
+
+    fn parse<'tcx>(global_ctx: &'tcx GlobalCtx<'tcx>, src: &'tcx str) -> Scope<'tcx> {
+        let parsed = global_ctx.arena.alloc(crate::parser::parse(src));
+        let root_node = parsed.root_node();
+
+        let root_scope = Scope::new();
+        let module_scope = root_scope.make_child(ScopeType::Crate, "test");
+        root_scope
+            .add_item("test", Item::Module(module_scope.clone()))
+            .unwrap();
+
+        let mut visitor = FirstPassVisitor::new(global_ctx, src, module_scope);
+        visitor.visit(root_node).unwrap();
+
+        root_scope
+    }
+
+    fn extract_type<'tcx>(
+        global_ctx: &'tcx GlobalCtx<'tcx>,
+        src: &'tcx str,
+        root_scope: Scope<'tcx>,
+    ) -> Result<TyP<'tcx>, SyntaxError<'tcx>> {
+        let (scope, node) = match &(*root_scope.0).borrow().items["test"][..] {
+            [Item::Module(scope)] => match &(*scope.0).borrow().items["a"][..] {
+                [Item::Type(_, _, scope)] => match &(*scope.0).borrow().items["b"][..] {
+                    [Item::Field(_, node)] => {
+                        (scope.clone(), node.child_by_field_name("type").unwrap())
+                    }
+                    _ => unreachable!(),
+                },
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        };
+
+        let mut visitor = TypeVisitor::new(global_ctx, src, scope);
+        visitor.visit(node)
+    }
+
+    #[test]
+    fn test_typ_eq() {
+        let ctx = GlobalCtx::new();
+
+        let ty1 = Ty::Builtin(BuiltinType::I32);
+        let ty2 = Ty::Builtin(BuiltinType::I32);
+
+        let ptr1 = Ty::Pointer(ctx.intern(ty1));
+        let ptr2 = Ty::Pointer(ctx.intern(ty2));
+
+        let typ1 = ctx.intern(ptr1);
+        let typ2 = ctx.intern(ptr2);
+
+        assert_eq!(typ1, typ2);
+    }
+
+    fn test_parse_type<'tcx>(
+        global_ctx: &'tcx GlobalCtx<'tcx>,
+        typedef: &str,
+        expected: TyP<'tcx>,
+    ) {
+        let src = global_ctx
+            .arena
+            .alloc_str(&format!("struct a {{ b: {}; }}", typedef));
+
+        let root_scope = parse(&global_ctx, src);
+        let result = extract_type(&global_ctx, src, root_scope).unwrap();
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_parse_type_builtin() {
+        let ctx = GlobalCtx::new();
+
+        test_parse_type(&ctx, "i32", Ty::Builtin(BuiltinType::I32).as_typ(&ctx));
+    }
+
+    #[test]
+    fn test_parse_type_array() {
+        let ctx = GlobalCtx::new();
+
+        test_parse_type(
+            &ctx,
+            "[u32; 16]",
+            Ty::Array(Ty::Builtin(BuiltinType::U32).as_typ(&ctx), 16).as_typ(&ctx),
+        );
+    }
+
+    #[test]
+    fn test_parse_type_pointer() {
+        let ctx = GlobalCtx::new();
+
+        test_parse_type(
+            &ctx,
+            "&i32",
+            Ty::Pointer(Ty::Builtin(BuiltinType::I32).as_typ(&ctx)).as_typ(&ctx),
+        );
+    }
+
+    #[test]
+    fn test_parse_function() {
+        let ctx = GlobalCtx::new();
+
+        test_parse_type(
+            &ctx,
+            "fn(u32) -> !",
+            Ty::Function(
+                &[Ty::Builtin(BuiltinType::U32).as_typ(&ctx)],
+                Ty::Builtin(BuiltinType::Never).as_typ(&ctx),
+            )
+            .as_typ(&ctx),
+        );
+    }
+
+    #[test]
+    fn test_parse_type_tuple() {
+        let ctx = GlobalCtx::new();
+
+        test_parse_type(
+            &ctx,
+            "(i32, u32)",
+            Ty::Tuple(&[
+                Ty::Builtin(BuiltinType::I32).as_typ(&ctx),
+                Ty::Builtin(BuiltinType::U32).as_typ(&ctx),
+            ])
+            .as_typ(&ctx),
+        );
+    }
+
+    #[test]
+    fn test_parse_type_empty_tuple() {
+        let ctx = GlobalCtx::new();
+
+        test_parse_type(&ctx, "()", Ty::Builtin(BuiltinType::Void).as_typ(&ctx));
+    }
+
+    #[test]
+    fn test_parse_type_single_element_tuple() {
+        let ctx = GlobalCtx::new();
+
+        test_parse_type(&ctx, "(u32)", Ty::Builtin(BuiltinType::U32).as_typ(&ctx));
+    }
+
+    #[test]
+    fn test_referenced_type() {
+        let ctx = GlobalCtx::new();
+
+        let src = r"
+            mod foo {
+                struct bar {}
+            }
+
+            struct a {
+                b: foo::bar,
+            }
+            ";
+
+        let root_scope = parse(&ctx, src);
+        let result = extract_type(&ctx, src, root_scope).unwrap();
+        let symbol = ctx.get_symbol(0);
+
+        assert_eq!(result, Ty::NamedType(symbol).as_typ(&ctx));
+    }
+
+    #[test]
+    fn test_referenced_type_super() {
+        let ctx = GlobalCtx::new();
+
+        let src = r"
+        mod foo {
+            mod goo {
+                use super::bar;
+            }
+            struct bar {}
+        }
+
+        struct a {
+            b: foo::goo::bar,
+        }
+        ";
+
+        let root_scope = parse(&ctx, src);
+        let result = extract_type(&ctx, src, root_scope).unwrap();
+        let symbol = ctx.get_symbol(0);
+
+        assert_eq!(result, Ty::NamedType(symbol).as_typ(&ctx));
+    }
+
+    #[test]
+    fn test_infinite_loop() {
+        let ctx = GlobalCtx::new();
+
+        let src = r"
+        mod foo {
+            use super::bar::baz;
+        }
+
+        mod bar {
+            use super::foo::baz;
+        }
+
+        struct a {
+            b: foo::baz,
+        }
+        ";
+
+        let root_scope = parse(&ctx, src);
+        let err = extract_type(&ctx, src, root_scope).unwrap_err();
+
+        assert_matches!(err.kind, AluminaError::CycleDetected);
+    }
+
+    #[test]
+    fn test_referenced_type_crate() {
+        let ctx = GlobalCtx::new();
+
+        let src = r"
+        mod foo {
+            struct bar {}
+        }
+
+        struct a {
+            b: crate::foo::bar,
+        }
+        ";
+
+        let root_scope = parse(&ctx, src);
+        let result = extract_type(&ctx, src, root_scope).unwrap();
+        let symbol = ctx.get_symbol(0);
+
+        assert_eq!(result, Ty::NamedType(symbol).as_typ(&ctx));
+    }
+
+    #[test]
+    fn test_referenced_type_absolute() {
+        let ctx = GlobalCtx::new();
+
+        let src = r"
+        mod foo {
+            struct bar {}
+        }
+
+        struct a {
+            b: ::test::foo::bar,
+        }
+        ";
+
+        let root_scope = parse(&ctx, src);
+        let result = extract_type(&ctx, src, root_scope).unwrap();
+        let symbol = ctx.get_symbol(0);
+
+        assert_eq!(result, Ty::NamedType(symbol).as_typ(&ctx));
+    }
+
+    #[test]
+    fn test_parse_complex_tuple() {
+        let ctx = GlobalCtx::new();
+
+        test_parse_type(
+            &ctx,
+            "(i32, [u32; 16], &i32)",
+            Ty::Tuple(&[
+                Ty::Builtin(BuiltinType::I32).as_typ(&ctx),
+                Ty::Array(Ty::Builtin(BuiltinType::U32).as_typ(&ctx), 16).as_typ(&ctx),
+                Ty::Pointer(Ty::Builtin(BuiltinType::I32).as_typ(&ctx)).as_typ(&ctx),
+            ])
+            .as_typ(&ctx),
+        );
+    }
+
+    #[test]
+    fn test_parse_type_never() {
+        let ctx = GlobalCtx::new();
+
+        test_parse_type(&ctx, "!", Ty::Builtin(BuiltinType::Never).as_typ(&ctx));
     }
 }

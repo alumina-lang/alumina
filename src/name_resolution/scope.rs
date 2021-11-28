@@ -5,7 +5,10 @@ use std::{
     rc::{Rc, Weak},
 };
 
-use crate::{common::GenericError, types::SymbolP};
+use crate::{
+    common::{AluminaError, SyntaxError},
+    types::SymbolP,
+};
 use tree_sitter::Node;
 
 use super::path::{Path, PathSegment};
@@ -98,7 +101,7 @@ impl<'tcx> Scope<'tcx> {
         Scope::with_parent(r#type, new_path, self.clone())
     }
 
-    pub fn add_item(&self, name: &'tcx str, item: Item<'tcx>) -> Result<(), GenericError> {
+    pub fn add_item(&self, name: &'tcx str, item: Item<'tcx>) -> Result<(), AluminaError> {
         let mut current_scope = self.0.borrow_mut();
 
         // Duplicate names are generally not allowed, but we allow them for
@@ -110,19 +113,19 @@ impl<'tcx> Scope<'tcx> {
             }
             Entry::Occupied(mut entry) => {
                 let existing = entry.get_mut();
-                if existing.len() == 1
-                    && ((matches!(existing[0], Item::Type(_, _, _))
-                        && matches!(item, Item::Impl(_)))
+                if existing.len() == 1 {
+                    if (matches!(existing[0], Item::Type(_, _, _)) && matches!(item, Item::Impl(_)))
                         || (matches!(existing[0], Item::Impl(_))
-                            && matches!(item, Item::Type(_, _, _))))
-                {
-                    existing.push(item);
-                    return Ok(());
+                            && matches!(item, Item::Type(_, _, _)))
+                    {
+                        existing.push(item);
+                        return Ok(());
+                    }
                 }
             }
         }
 
-        Err(GenericError("duplicate item"))
+        Err(AluminaError::DuplicateName(name.into()))
     }
 
     pub fn find_root(&self) -> Self {

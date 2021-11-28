@@ -35,7 +35,7 @@ const float_types = ["f32", "f64"];
 
 const primitive_types = integer_types
   .concat(float_types)
-  .concat(["bool", "str", "void"]);
+  .concat(["bool"]);
 
 function sepBy1(sep, rule) {
   return seq(rule, repeat(seq(sep, rule)));
@@ -132,7 +132,7 @@ module.exports = grammar({
         sepBy(",", field("body", $.struct_field)), 
         optional(","),
         "}"
-      ),
+      ),    
 
     enum_definition: ($) =>
       seq(
@@ -176,7 +176,7 @@ module.exports = grammar({
     scoped_use_list: ($) =>
       seq(field("path", optional($._path)), "::", field("list", $.use_list)),
 
-    parameter: ($) => seq(field("name", $.identifier), ":", $._type),
+    parameter: ($) => seq(field("name", $.identifier), ":", field("type", $._type)),
 
     generic_argument_list: ($) =>
       seq(
@@ -189,6 +189,9 @@ module.exports = grammar({
     parameter_list: ($) =>
       seq("(", sepBy(",", field("parameter", $.parameter)), optional(","), ")"),
 
+    parameter_type_list: ($) =>
+      seq("(", sepBy(",", field("parameter", $._type)), optional(","), ")"),
+
     pointer_of: ($) => seq("&", field("inner", $._type)),
 
     slice_of: ($) => seq("[", field("inner", $._type), "]"),
@@ -198,7 +201,7 @@ module.exports = grammar({
     function_pointer: ($) =>
       seq(
         "fn",
-        $.parameter_list,
+        field("parameters", $.parameter_type_list),
         optional(seq("->", field("return_type", $._type)))
       ),
 
