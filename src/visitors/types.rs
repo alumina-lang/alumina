@@ -2,7 +2,6 @@ use crate::parser::ParseCtx;
 use crate::AluminaVisitor;
 use crate::{
     common::{SyntaxError, ToSyntaxError},
-    context::GlobalCtx,
     name_resolution::{
         resolver::NameResolver,
         scope::{Item, Scope},
@@ -148,16 +147,16 @@ impl<'gcx, 'src> AluminaVisitor<'src> for TypeVisitor<'gcx, 'src> {
 
 #[cfg(test)]
 mod tests {
-    use std::assert_matches::assert_matches;
 
     use crate::{
-        common::{AluminaError, SyntaxError},
-        name_resolution::scope::ScopeType,
-        types::{BuiltinType, SymbolP, Ty, TyP},
+        common::SyntaxError,
+        context::GlobalCtx,
+        name_resolution::scope::{Item, Scope, ScopeType},
+        parser::AluminaVisitor,
+        parser::ParseCtx,
+        types::{BuiltinType, Ty, TyP},
         visitors::{pass1::FirstPassVisitor, types::TypeVisitor},
     };
-
-    use super::*;
 
     trait AsTyP<'gcx> {
         fn as_typ(self, ctx: &'gcx GlobalCtx<'gcx>) -> TyP<'gcx>;
