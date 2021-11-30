@@ -4,6 +4,8 @@ use crate::name_resolution::scope::Scope;
 use crate::parser::ParseCtx;
 use crate::AluminaVisitor;
 
+pub mod expressions;
+pub mod maker;
 pub mod pass1;
 pub mod types;
 

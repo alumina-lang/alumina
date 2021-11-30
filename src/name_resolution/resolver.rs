@@ -20,9 +20,9 @@ impl<'gcx, 'src> NameResolver<'gcx, 'src> {
     pub fn resolve_scope(
         &mut self,
         scope: Scope<'gcx, 'src>,
-        path: &Path<'src>,
+        path: Path<'src>,
     ) -> Result<Scope<'gcx, 'src>, AluminaError> {
-        println!("resolve_scope({}, {})", scope.path(), path);
+        println!("resolve_scope({:?}, {})", scope.path(), path);
 
         if !self
             .seen_aliases
@@ -34,7 +34,7 @@ impl<'gcx, 'src> NameResolver<'gcx, 'src> {
         if path.absolute {
             return self.resolve_scope(
                 scope.find_root(),
-                &Path {
+                Path {
                     absolute: false,
                     segments: path.segments.clone(),
                 },
@@ -50,19 +50,13 @@ impl<'gcx, 'src> NameResolver<'gcx, 'src> {
             segments: path.segments[1..].to_vec(),
         };
 
-        let inner = scope.0.borrow();
-        for item in inner
-            .items
-            .get(path.segments[0].0)
-            .iter()
-            .flat_map(|u| u.iter())
-        {
+        for item in scope.inner().items_with_name(path.segments[0].0) {
             match item {
                 Item::Module(child_scope) | Item::Impl(child_scope) => {
-                    return self.resolve_scope(child_scope.clone(), &remainder);
+                    return self.resolve_scope(child_scope.clone(), remainder);
                 }
                 Item::Alias(target) => {
-                    return self.resolve_scope(scope.clone(), &target.join_with(remainder));
+                    return self.resolve_scope(scope.clone(), target.join_with(remainder));
                 }
                 _ => {}
             }
@@ -78,9 +72,9 @@ impl<'gcx, 'src> NameResolver<'gcx, 'src> {
     pub fn resolve_type_item(
         &mut self,
         scope: Scope<'gcx, 'src>,
-        path: &Path<'src>,
+        path: Path<'src>,
     ) -> Result<Item<'gcx, 'src>, AluminaError> {
-        println!("resolve_type_item({}, {})", scope.path(), path);
+        println!("resolve_type_item({:?}, {})", scope.path(), path);
 
         if !self
             .seen_aliases
@@ -93,21 +87,18 @@ impl<'gcx, 'src> NameResolver<'gcx, 'src> {
             return Err(AluminaError::UnresolvedPath(path.to_string()));
         }
 
-        let containing_scope = self.resolve_scope(scope.clone(), &path.pop())?;
+        let containing_scope = self.resolve_scope(scope.clone(), path.pop())?;
 
-        let inner = containing_scope.0.borrow();
-        for item in inner
-            .items
-            .get(path.segments.last().unwrap().0)
-            .iter()
-            .flat_map(|u| u.iter())
+        for item in containing_scope
+            .inner()
+            .items_with_name(path.segments.last().unwrap().0)
         {
             match item {
                 Item::Type(_, _, _) | Item::Placeholder(_) => {
                     return Ok(item.clone());
                 }
                 Item::Alias(target) => {
-                    return self.resolve_type_item(containing_scope.clone(), target);
+                    return self.resolve_type_item(containing_scope.clone(), target.clone());
                 }
                 _ => {}
             }
@@ -126,11 +117,11 @@ mod tests {
     use std::assert_matches::assert_matches;
 
     use crate::{
+        ast::{Ty, TyP},
         common::{AluminaError, SyntaxError},
         context::GlobalCtx,
         name_resolution::scope::{Item, Scope, ScopeType},
         parser::ParseCtx,
-        types::{Ty, TyP},
         visitors::{pass1::FirstPassVisitor, types::TypeVisitor},
     };
 
@@ -142,7 +133,7 @@ mod tests {
 
     impl<'gcx> AsTyP<'gcx> for Ty<'gcx> {
         fn as_typ(self, ctx: &'gcx GlobalCtx<'gcx>) -> TyP<'gcx> {
-            ctx.intern(self)
+            ctx.intern_type(self)
         }
     }
 

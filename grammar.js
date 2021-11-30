@@ -77,7 +77,7 @@ module.exports = grammar({
         $.function_definition,
         $.struct_definition,
         $.enum_definition,
-        $.impl_block, 
+        $.impl_block,
         $.mod_definition,
         $.extern_function_declaration
       ),
@@ -87,7 +87,7 @@ module.exports = grammar({
         $.use_declaration,
         $.function_definition,
         $.extern_function_declaration
-      ),      
+      ),
 
     mod_definition: ($) =>
       seq(
@@ -129,10 +129,10 @@ module.exports = grammar({
         field("name", $.identifier),
         optional(field("type_arguments", $.generic_argument_list)),
         "{",
-        sepBy(",", field("body", $.struct_field)), 
+        sepBy(",", field("body", $.struct_field)),
         optional(","),
         "}"
-      ),    
+      ),
 
     enum_definition: ($) =>
       seq(
@@ -226,7 +226,7 @@ module.exports = grammar({
 
     tuple_type: ($) => seq("(", sepBy(",", field("element", $._type)), optional(","), ")"),
 
-    block: ($) => seq("{", repeat($._statement), optional($._expression), "}"),
+    block: ($) => seq("{", repeat(field("statements", $._statement)), optional(field("result", $._expression)), "}"),
 
     let_declaration: ($) =>
       seq(
@@ -289,6 +289,7 @@ module.exports = grammar({
         $.unary_expression,
         $.binary_expression,
         $.reference_expression,
+        $.range_expression,
         $.assignment_expression,
         $.compound_assignment_expr,
         $.type_cast_expression,
@@ -549,6 +550,16 @@ module.exports = grammar({
           )
         )
       ),
+
+    range_expression: $ => prec.left(PREC.range, choice(
+      prec.left(
+        PREC.range + 1,
+        seq($._expression, choice('..', '...', '..='), $._expression)
+      ),
+      seq($._expression, '..'),
+      seq('..', $._expression),
+      '..'
+    )),
 
     string_literal: ($) =>
       token(

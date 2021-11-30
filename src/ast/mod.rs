@@ -64,6 +64,7 @@ impl<'gcx> Borrow<Ty<'gcx>> for TyP<'gcx> {
 #[derive(Debug)]
 pub enum Symbol<'gcx> {
     Struct(Struct<'gcx>),
+    Function(Function<'gcx>),
 }
 
 #[derive(PartialEq, Eq, Copy, Clone, Hash)]
@@ -120,12 +121,14 @@ impl Eq for SymbolCell<'_> {}
 
 impl Debug for SymbolCell<'_> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        let debug_name = self.debug_name.unwrap_or("<unnamed>");
+
         if fmt.alternate() {
-            writeln!(fmt, "Symbol({} {:?}) {{", self.id, self.debug_name)?;
-            writeln!(fmt, "{:?}", self.contents.get())?;
+            writeln!(fmt, "{}${} {{", self.id, debug_name)?;
+            writeln!(fmt, "\t{:?}", self.contents.get())?;
             writeln!(fmt, "}}")?;
         } else {
-            write!(fmt, "Symbol({} {:?})", self.id, self.debug_name)?
+            write!(fmt, "{}${}", self.id, debug_name)?
         }
 
         Ok(())
@@ -133,7 +136,7 @@ impl Debug for SymbolCell<'_> {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Field<'gcx> {
+pub struct TypedSymbol<'gcx> {
     pub symbol: SymbolP<'gcx>,
     pub ty: TyP<'gcx>,
 }
@@ -141,5 +144,30 @@ pub struct Field<'gcx> {
 #[derive(Debug)]
 pub struct Struct<'gcx> {
     pub placeholders: &'gcx [SymbolP<'gcx>],
-    pub fields: &'gcx [Field<'gcx>],
+    pub associated_fns: &'gcx [SymbolP<'gcx>],
+    pub fields: &'gcx [TypedSymbol<'gcx>],
+}
+
+#[derive(Debug)]
+pub struct Function<'gcx> {
+    pub placeholders: &'gcx [SymbolP<'gcx>],
+    pub parameters: &'gcx [TypedSymbol<'gcx>],
+    pub return_type: TyP<'gcx>,
+    pub body: Option<ExpressionP<'gcx>>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+pub enum Statement<'gcx> {
+    Expression(ExpressionP<'gcx>),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+pub enum Expression<'gcx> {
+    Block(&'gcx [Statement<'gcx>], ExpressionP<'gcx>),
+    Void,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+pub struct ExpressionP<'gcx> {
+    pub inner: &'gcx Expression<'gcx>,
 }

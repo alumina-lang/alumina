@@ -1,10 +1,10 @@
 use std::{
-    cell::RefCell,
+    cell::{Ref, RefCell},
     fmt::{Debug, Formatter},
     rc::{Rc, Weak},
 };
 
-use crate::{common::AluminaError, parser::ParseCtx, types::SymbolP};
+use crate::{ast::SymbolP, common::AluminaError, parser::ParseCtx};
 use indexmap::{map::Entry, IndexMap};
 use tree_sitter::Node;
 
@@ -30,6 +30,7 @@ pub enum ScopeType {
     Function,
     Impl,
     Enum,
+    Block,
 }
 
 pub struct ScopeInner<'gcx, 'src> {
@@ -43,6 +44,22 @@ pub struct ScopeInner<'gcx, 'src> {
     pub parent: Option<Weak<RefCell<ScopeInner<'gcx, 'src>>>>,
 
     parse_context: Option<ParseCtx<'gcx, 'src>>,
+}
+
+impl<'gcx, 'src> ScopeInner<'gcx, 'src> {
+    pub fn all_items(&self) -> impl Iterator<Item = (&'src str, &'_ Item<'gcx, 'src>)> {
+        self.items
+            .iter()
+            .flat_map(|(n, its)| its.iter().map(|i| (*n, i)))
+    }
+
+    pub fn grouped_items(&self) -> impl Iterator<Item = (&'src str, &'_ [Item<'gcx, 'src>])> {
+        self.items.iter().map(|(n, its)| (*n, its.as_slice()))
+    }
+
+    pub fn items_with_name(&self, name: &str) -> impl Iterator<Item = &Item<'gcx, 'src>> {
+        self.items.get(name).into_iter().flat_map(|its| its.iter())
+    }
 }
 
 impl<'gcx, 'src> Debug for ScopeInner<'gcx, 'src> {
@@ -68,7 +85,7 @@ impl<'gcx, 'src> From<Scope<'gcx, 'src>> for Weak<RefCell<ScopeInner<'gcx, 'src>
 
 impl<'gcx, 'src> Debug for Scope<'gcx, 'src> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        self.0.borrow().fmt(fmt)
+        self.inner().fmt(fmt)
     }
 }
 
@@ -83,8 +100,12 @@ impl<'gcx, 'src> Scope<'gcx, 'src> {
         })))
     }
 
+    pub fn inner(&self) -> Ref<'_, ScopeInner<'gcx, 'src>> {
+        self.0.borrow()
+    }
+
     pub fn parse_ctx(&self) -> Option<ParseCtx<'gcx, 'src>> {
-        self.0.borrow().parse_context.clone()
+        self.inner().parse_context.clone()
     }
 
     pub fn with_parent(r#type: ScopeType, path: Path<'src>, parent: Scope<'gcx, 'src>) -> Self {
@@ -97,12 +118,8 @@ impl<'gcx, 'src> Scope<'gcx, 'src> {
         })))
     }
 
-    pub fn r#type(&self) -> ScopeType {
-        self.0.borrow().r#type
-    }
-
     pub fn path(&self) -> Path<'src> {
-        self.0.borrow().path.clone()
+        self.inner().path.clone()
     }
 
     pub fn new_child(&self, r#type: ScopeType, name: &'src str) -> Self {
@@ -116,7 +133,7 @@ impl<'gcx, 'src> Scope<'gcx, 'src> {
         name: &'src str,
         parse_ctx: ParseCtx<'gcx, 'src>,
     ) -> Self {
-        let new_path = self.0.borrow().path.extend(PathSegment(name));
+        let new_path = self.inner().path.extend(PathSegment(name));
         Scope(Rc::new(RefCell::new(ScopeInner {
             r#type,
             path: new_path,
@@ -128,6 +145,7 @@ impl<'gcx, 'src> Scope<'gcx, 'src> {
 
     pub fn add_item(&self, name: &'src str, item: Item<'gcx, 'src>) -> Result<(), AluminaError> {
         let mut current_scope = self.0.borrow_mut();
+        let scope_type = current_scope.r#type;
 
         // Duplicate names are generally not allowed, but we allow them for
         // types and their impls.
@@ -138,13 +156,21 @@ impl<'gcx, 'src> Scope<'gcx, 'src> {
             }
             Entry::Occupied(mut entry) => {
                 let existing = entry.get_mut();
-                if existing.len() == 1
+                if let ScopeType::Block = scope_type {
+                    // In linear scopes we allow shadowing.
+                    existing[0] = item;
+                } else if existing.len() == 1
                     && ((matches!(existing[0], Item::Type(_, _, _))
                         && matches!(item, Item::Impl(_)))
                         || (matches!(existing[0], Item::Impl(_))
                             && matches!(item, Item::Type(_, _, _))))
                 {
                     existing.push(item);
+                    existing.sort_by_key(|i| match i {
+                        Item::Type(_, _, _) => 0,
+                        Item::Impl(_) => 1,
+                        _ => unreachable!(),
+                    });
                     return Ok(());
                 }
             }
@@ -190,8 +216,7 @@ impl<'gcx, 'src> Scope<'gcx, 'src> {
     }
 
     pub fn parent(&self) -> Option<Self> {
-        self.0
-            .borrow()
+        self.inner()
             .parent
             .as_ref()
             .map(|parent| Self(parent.upgrade().unwrap()))

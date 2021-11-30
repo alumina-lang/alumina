@@ -1,12 +1,12 @@
 use crate::parser::ParseCtx;
 use crate::AluminaVisitor;
 use crate::{
+    ast::{BuiltinType, Ty, TyP},
     common::{SyntaxError, ToSyntaxError},
     name_resolution::{
         resolver::NameResolver,
         scope::{Item, Scope},
     },
-    types::{BuiltinType, Ty, TyP},
     visitors::ScopedPathVisitor,
 };
 
@@ -34,11 +34,11 @@ impl<'gcx, 'src> TypeVisitor<'gcx, 'src> {
         let mut resolver = NameResolver::new();
 
         let res = match resolver
-            .resolve_type_item(self.scope.clone(), &path)
+            .resolve_type_item(self.scope.clone(), path)
             .to_syntax_error(node)?
         {
-            Item::Type(ty, _, _) => self.parse_ctx.intern(Ty::NamedType(ty)),
-            Item::Placeholder(ty) => self.parse_ctx.intern(Ty::Placeholder(ty)),
+            Item::Type(ty, _, _) => self.parse_ctx.intern_type(Ty::NamedType(ty)),
+            Item::Placeholder(ty) => self.parse_ctx.intern_type(Ty::Placeholder(ty)),
             _ => unreachable!(),
         };
 
@@ -69,17 +69,17 @@ impl<'gcx, 'src> AluminaVisitor<'src> for TypeVisitor<'gcx, 'src> {
             _ => unreachable!(),
         };
 
-        Ok(self.parse_ctx.intern(builtin))
+        Ok(self.parse_ctx.intern_type(builtin))
     }
 
     fn visit_never_type(&mut self, _node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        Ok(self.parse_ctx.intern(Ty::Builtin(BuiltinType::Never)))
+        Ok(self.parse_ctx.intern_type(Ty::Builtin(BuiltinType::Never)))
     }
 
     fn visit_pointer_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let ty = self.visit(node.child_by_field_name("inner").unwrap())?;
 
-        Ok(self.parse_ctx.intern(Ty::Pointer(ty)))
+        Ok(self.parse_ctx.intern_type(Ty::Pointer(ty)))
     }
 
     fn visit_array_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -90,12 +90,12 @@ impl<'gcx, 'src> AluminaVisitor<'src> for TypeVisitor<'gcx, 'src> {
             .parse()
             .unwrap();
 
-        Ok(self.parse_ctx.intern(Ty::Array(ty, len)))
+        Ok(self.parse_ctx.intern_type(Ty::Array(ty, len)))
     }
 
     fn visit_slice_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let ty = self.visit(node.child_by_field_name("inner").unwrap())?;
-        Ok(self.parse_ctx.intern(Ty::Slice(ty)))
+        Ok(self.parse_ctx.intern_type(Ty::Slice(ty)))
     }
 
     fn visit_tuple_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -106,11 +106,11 @@ impl<'gcx, 'src> AluminaVisitor<'src> for TypeVisitor<'gcx, 'src> {
             .collect::<Result<Vec<_>, _>>()?;
 
         match &elements[..] {
-            [] => Ok(self.parse_ctx.intern(Ty::Builtin(BuiltinType::Void))),
+            [] => Ok(self.parse_ctx.intern_type(Ty::Builtin(BuiltinType::Void))),
             [ty] => Ok(*ty),
             _ => {
                 let slice = self.parse_ctx.alloc_slice(elements.as_slice());
-                Ok(self.parse_ctx.intern(Ty::Tuple(slice)))
+                Ok(self.parse_ctx.intern_type(Ty::Tuple(slice)))
             }
         }
     }
@@ -135,10 +135,10 @@ impl<'gcx, 'src> AluminaVisitor<'src> for TypeVisitor<'gcx, 'src> {
         let type_node = if let Some(return_type_node) = node.child_by_field_name("return_type") {
             self.visit(return_type_node)?
         } else {
-            self.parse_ctx.intern(Ty::Builtin(BuiltinType::Void))
+            self.parse_ctx.intern_type(Ty::Builtin(BuiltinType::Void))
         };
 
-        Ok(self.parse_ctx.intern(Ty::Function(
+        Ok(self.parse_ctx.intern_type(Ty::Function(
             self.parse_ctx.alloc_slice(elements.as_slice()),
             type_node,
         )))
@@ -149,12 +149,12 @@ impl<'gcx, 'src> AluminaVisitor<'src> for TypeVisitor<'gcx, 'src> {
 mod tests {
 
     use crate::{
+        ast::{BuiltinType, Ty, TyP},
         common::SyntaxError,
         context::GlobalCtx,
         name_resolution::scope::{Item, Scope, ScopeType},
         parser::AluminaVisitor,
         parser::ParseCtx,
-        types::{BuiltinType, Ty, TyP},
         visitors::{pass1::FirstPassVisitor, types::TypeVisitor},
     };
 
@@ -164,7 +164,7 @@ mod tests {
 
     impl<'gcx> AsTyP<'gcx> for Ty<'gcx> {
         fn as_typ(self, ctx: &'gcx GlobalCtx<'gcx>) -> TyP<'gcx> {
-            ctx.intern(self)
+            ctx.intern_type(self)
         }
     }
 
@@ -213,11 +213,11 @@ mod tests {
         let ty1 = Ty::Builtin(BuiltinType::I32);
         let ty2 = Ty::Builtin(BuiltinType::I32);
 
-        let ptr1 = Ty::Pointer(ctx.intern(ty1));
-        let ptr2 = Ty::Pointer(ctx.intern(ty2));
+        let ptr1 = Ty::Pointer(ctx.intern_type(ty1));
+        let ptr2 = Ty::Pointer(ctx.intern_type(ty2));
 
-        let typ1 = ctx.intern(ptr1);
-        let typ2 = ctx.intern(ptr2);
+        let typ1 = ctx.intern_type(ptr1);
+        let typ2 = ctx.intern_type(ptr2);
 
         assert_eq!(typ1, typ2);
     }

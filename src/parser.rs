@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use crate::{
+    ast::{Expression, ExpressionP, SymbolP, Ty, TyP},
     context::GlobalCtx,
-    types::{SymbolP, Ty, TyP},
 };
 
 include!(concat!(env!("OUT_DIR"), "/parser.rs"));
@@ -10,7 +10,7 @@ include!(concat!(env!("OUT_DIR"), "/parser.rs"));
 struct ParseCtxInner<'gcx, 'src> {
     global_ctx: &'gcx GlobalCtx<'gcx>,
     // filename: &'src str,
-    source: &'src str,
+    pub source: &'src str,
     tree: tree_sitter::Tree,
 }
 
@@ -33,6 +33,10 @@ impl<'gcx, 'src> ParseCtx<'gcx, 'src> {
         ParseCtx(Rc::new(inner))
     }
 
+    pub fn source(&self) -> &'src str {
+        self.0.source
+    }
+
     pub fn root_node(&'src self) -> tree_sitter::Node<'src> {
         self.0.tree.root_node()
     }
@@ -41,12 +45,26 @@ impl<'gcx, 'src> ParseCtx<'gcx, 'src> {
         self.0.global_ctx.make_symbol(debug_name)
     }
 
-    pub fn intern(&self, ty: Ty<'gcx>) -> TyP<'gcx> {
-        self.0.global_ctx.intern(ty)
+    pub fn intern_type(&self, ty: Ty<'gcx>) -> TyP<'gcx> {
+        self.0.global_ctx.intern_type(ty)
+    }
+
+    pub fn alloc_expr(&self, expr: Expression<'gcx>) -> ExpressionP<'gcx> {
+        ExpressionP {
+            inner: self.0.global_ctx.arena.alloc(expr),
+        }
     }
 
     pub fn alloc_slice<T: Copy>(&self, slice: &'_ [T]) -> &'gcx [T] {
         self.0.global_ctx.arena.alloc_slice_copy(slice)
+    }
+
+    pub fn alloc_range<I, T>(&self, iter: I) -> &'gcx [T]
+    where
+        I: IntoIterator<Item = T>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        self.0.global_ctx.arena.alloc_slice_fill_iter(iter)
     }
 
     pub fn node_text(&self, node: tree_sitter::Node<'src>) -> &'src str {

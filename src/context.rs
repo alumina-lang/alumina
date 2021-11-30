@@ -1,4 +1,4 @@
-use crate::types::{SymbolCell, SymbolP, Ty, TyP};
+use crate::ast::{SymbolCell, SymbolP, Ty, TyP};
 
 use bumpalo::Bump;
 use once_cell::unsync::OnceCell;
@@ -36,7 +36,7 @@ impl<'gcx> GlobalCtx<'gcx> {
         }
     }
 
-    pub fn intern(&'gcx self, ty: Ty<'gcx>) -> TyP<'gcx> {
+    pub fn intern_type(&'gcx self, ty: Ty<'gcx>) -> TyP<'gcx> {
         if let Some(key) = self.types.borrow().get(&ty) {
             return *key;
         }

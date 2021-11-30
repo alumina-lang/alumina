@@ -78,7 +78,7 @@ fn main() {
 
 ## Status 
 
-Bootstrap Alumina compiler is written in Rust and is currently actively developed.
+Bootstrap Alumina compiler is written in Rust and is currently actively developed. It will compile to C code.
 
 Finished:
 - Lexical analysis and parser (using Tree-Sitter)
@@ -87,9 +87,9 @@ Finished:
 
 TBD:
 - Function bodies and expressions
-- Codegen with LLVM
+- Codegen with C
 - Compiler driver for multi-file compilation
 
-After the compiler is somewhat functional, Alumina will be written as a self-hosted compiler (as this has always been my dream).
+After the compiler is somewhat functional, Alumina will be written as a self-hosted compiler with a LLVM backend (as this has always been my dream).
 
 
