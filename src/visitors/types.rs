@@ -1,3 +1,5 @@
+use crate::common::AluminaError;
+use crate::name_resolution::resolver::ItemResolution;
 use crate::parser::ParseCtx;
 use crate::AluminaVisitor;
 use crate::{
@@ -34,11 +36,18 @@ impl<'gcx, 'src> TypeVisitor<'gcx, 'src> {
         let mut resolver = NameResolver::new();
 
         let res = match resolver
-            .resolve_type_item(self.scope.clone(), path)
+            .resolve_item(self.scope.clone(), path)
             .to_syntax_error(node)?
         {
-            Item::Type(ty, _, _) => self.parse_ctx.intern_type(Ty::NamedType(ty)),
-            Item::Placeholder(ty) => self.parse_ctx.intern_type(Ty::Placeholder(ty)),
+            ItemResolution::Item(Item::Type(ty, _, _)) => {
+                self.parse_ctx.intern_type(Ty::NamedType(ty))
+            }
+            ItemResolution::Item(Item::Placeholder(ty)) => {
+                self.parse_ctx.intern_type(Ty::Placeholder(ty))
+            }
+            ItemResolution::Defered(_, _) => {
+                return Err(AluminaError::NoAssociatedTypes).to_syntax_error(node)
+            }
             _ => unreachable!(),
         };
 
@@ -174,7 +183,7 @@ mod tests {
         let root_scope = Scope::new_root();
 
         let module_scope =
-            root_scope.new_child_with_parse_ctx(ScopeType::Crate, "test", parse_ctx.to_owned());
+            root_scope.named_child_with_ctx(ScopeType::Crate, "test", parse_ctx.to_owned());
 
         root_scope
             .add_item("test", Item::Module(module_scope.clone()))

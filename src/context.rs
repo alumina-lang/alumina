@@ -5,7 +5,7 @@ use once_cell::unsync::OnceCell;
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 
-trait Incrementable<T> {
+pub trait Incrementable<T> {
     fn increment(&self) -> T;
 }
 
@@ -19,7 +19,7 @@ impl Incrementable<usize> for Cell<usize> {
 
 pub struct GlobalCtx<'gcx> {
     pub arena: Bump,
-    counter: Cell<usize>,
+    pub counter: Cell<usize>,
     types: RefCell<HashSet<TyP<'gcx>>>,
     #[cfg(test)]
     symbols: RefCell<Vec<SymbolP<'gcx>>>,

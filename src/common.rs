@@ -15,6 +15,9 @@ pub enum AluminaError {
     CrateNotAllowed,
     #[error("duplicate name {:?}", .0)]
     DuplicateName(String),
+
+    #[error("generic associated types are not supported, soz")]
+    NoAssociatedTypes,
 }
 
 #[derive(Debug, Error)]

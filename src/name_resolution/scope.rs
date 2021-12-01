@@ -4,7 +4,11 @@ use std::{
     rc::{Rc, Weak},
 };
 
-use crate::{ast::SymbolP, common::AluminaError, parser::ParseCtx};
+use crate::{
+    ast::{SymbolP, VariableP},
+    common::AluminaError,
+    parser::ParseCtx,
+};
 use indexmap::{map::Entry, IndexMap};
 use tree_sitter::Node;
 
@@ -19,6 +23,7 @@ pub enum Item<'gcx, 'src> {
     Placeholder(SymbolP<'gcx>),
     Field(SymbolP<'gcx>, Node<'src>),
     Alias(Path<'src>),
+    Variable(VariableP<'gcx>),
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -108,26 +113,33 @@ impl<'gcx, 'src> Scope<'gcx, 'src> {
         self.inner().parse_context.clone()
     }
 
-    pub fn with_parent(r#type: ScopeType, path: Path<'src>, parent: Scope<'gcx, 'src>) -> Self {
-        Scope(Rc::new(RefCell::new(ScopeInner {
-            r#type,
-            path,
-            items: IndexMap::new(),
-            parse_context: parent.parse_ctx(),
-            parent: Some(parent.into()),
-        })))
-    }
-
     pub fn path(&self) -> Path<'src> {
         self.inner().path.clone()
     }
 
-    pub fn new_child(&self, r#type: ScopeType, name: &'src str) -> Self {
+    pub fn named_child(&self, r#type: ScopeType, name: &'src str) -> Self {
         let new_path = self.0.borrow().path.extend(PathSegment(name));
-        Scope::with_parent(r#type, new_path, self.clone())
+
+        Scope(Rc::new(RefCell::new(ScopeInner {
+            r#type,
+            path: new_path,
+            items: IndexMap::new(),
+            parse_context: self.parse_ctx(),
+            parent: Some(Rc::downgrade(&self.0)),
+        })))
     }
 
-    pub fn new_child_with_parse_ctx(
+    pub fn anonymous_child(&self, r#type: ScopeType) -> Self {
+        Scope(Rc::new(RefCell::new(ScopeInner {
+            r#type,
+            path: self.path(),
+            items: IndexMap::new(),
+            parse_context: self.parse_ctx(),
+            parent: Some(Rc::downgrade(&self.0)),
+        })))
+    }
+
+    pub fn named_child_with_ctx(
         &self,
         r#type: ScopeType,
         name: &'src str,
@@ -159,6 +171,7 @@ impl<'gcx, 'src> Scope<'gcx, 'src> {
                 if let ScopeType::Block = scope_type {
                     // In linear scopes we allow shadowing.
                     existing[0] = item;
+                    return Ok(());
                 } else if existing.len() == 1
                     && ((matches!(existing[0], Item::Type(_, _, _))
                         && matches!(item, Item::Impl(_)))
@@ -210,7 +223,7 @@ impl<'gcx, 'src> Scope<'gcx, 'src> {
         // Function, struct, enum, ... are transparently scoped to their parent
         match self.0.borrow().r#type {
             ScopeType::Root | ScopeType::Crate => None,
-            ScopeType::Module | ScopeType::Impl => self.parent(),
+            ScopeType::Module => self.parent(),
             _ => self.parent().and_then(|p| p.find_super()),
         }
     }

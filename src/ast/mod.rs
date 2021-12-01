@@ -1,4 +1,5 @@
 use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
 use std::{
     borrow::Borrow,
     fmt::{Debug, Formatter},
@@ -65,6 +66,23 @@ impl<'gcx> Borrow<Ty<'gcx>> for TyP<'gcx> {
 pub enum Symbol<'gcx> {
     Struct(Struct<'gcx>),
     Function(Function<'gcx>),
+}
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+pub struct Variable<'gcx> {
+    pub id: usize,
+    pub _phantom: PhantomData<&'gcx ()>,
+}
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
+pub struct VariableP<'gcx> {
+    pub inner: &'gcx Variable<'gcx>,
+}
+
+impl<'gcx> VariableP<'gcx> {
+    pub fn new(inner: &'gcx Variable<'gcx>) -> Self {
+        VariableP { inner }
+    }
 }
 
 #[derive(PartialEq, Eq, Copy, Clone, Hash)]
@@ -157,17 +175,74 @@ pub struct Function<'gcx> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+pub struct LetDeclaration<'gcx> {
+    pub var: VariableP<'gcx>,
+    pub typ: Option<TyP<'gcx>>,
+    pub value: Option<ExpressionP<'gcx>>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum Statement<'gcx> {
     Expression(ExpressionP<'gcx>),
+    LetDeclaration(LetDeclaration<'gcx>),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+pub enum BinOp {
+    And,
+    Or,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Eq,
+    Neq,
+    Lt,
+    LEq,
+    Gt,
+    GEq,
+    LShift,
+    Rsh,
+    Plus,
+    Minus,
+    Mul,
+    Div,
+    Mod,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+pub enum UnOp {
+    Neg,
+    Not,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum Expression<'gcx> {
     Block(&'gcx [Statement<'gcx>], ExpressionP<'gcx>),
+    Binary(ExpressionP<'gcx>, BinOp, ExpressionP<'gcx>),
+    Call(ExpressionP<'gcx>, &'gcx [ExpressionP<'gcx>]),
+    Function(SymbolP<'gcx>),
+    Ref(ExpressionP<'gcx>),
+    Deref(ExpressionP<'gcx>),
+    Unary(UnOp, ExpressionP<'gcx>),
+    Variable(VariableP<'gcx>),
+    IntegerLiteral(&'gcx str),
+    Tuple(&'gcx [ExpressionP<'gcx>]),
+    Field(ExpressionP<'gcx>, &'gcx str),
+    TupleIndex(ExpressionP<'gcx>, usize),
+
+    // Generics support
+    DeferredFunction(SymbolP<'gcx>, &'gcx str),
+
     Void,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+#[derive(PartialEq, Eq, Clone, Hash, Copy)]
 pub struct ExpressionP<'gcx> {
     pub inner: &'gcx Expression<'gcx>,
+}
+
+impl Debug for ExpressionP<'_> {
+    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        self.inner.fmt(fmt)
+    }
 }

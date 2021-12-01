@@ -33,9 +33,7 @@ const integer_types = [
 
 const float_types = ["f32", "f64"];
 
-const primitive_types = integer_types
-  .concat(float_types)
-  .concat(["bool"]);
+const primitive_types = integer_types.concat(float_types).concat(["bool"]);
 
 function sepBy1(sep, rule) {
   return seq(rule, repeat(seq(sep, rule)));
@@ -176,7 +174,8 @@ module.exports = grammar({
     scoped_use_list: ($) =>
       seq(field("path", optional($._path)), "::", field("list", $.use_list)),
 
-    parameter: ($) => seq(field("name", $.identifier), ":", field("type", $._type)),
+    parameter: ($) =>
+      seq(field("name", $.identifier), ":", field("type", $._type)),
 
     generic_argument_list: ($) =>
       seq(
@@ -196,7 +195,14 @@ module.exports = grammar({
 
     slice_of: ($) => seq("[", field("inner", $._type), "]"),
 
-    array_of: ($) => seq("[", field("inner", $._type), ";", field("size", $.integer_literal), "]"),
+    array_of: ($) =>
+      seq(
+        "[",
+        field("inner", $._type),
+        ";",
+        field("size", $.integer_literal),
+        "]"
+      ),
 
     function_pointer: ($) =>
       seq(
@@ -224,14 +230,21 @@ module.exports = grammar({
 
     never_type: ($) => "!",
 
-    tuple_type: ($) => seq("(", sepBy(",", field("element", $._type)), optional(","), ")"),
+    tuple_type: ($) =>
+      seq("(", sepBy(",", field("element", $._type)), optional(","), ")"),
 
-    block: ($) => seq("{", repeat(field("statements", $._statement)), optional(field("result", $._expression)), "}"),
+    block: ($) =>
+      seq(
+        "{",
+        repeat(field("statements", $._statement)),
+        optional(field("result", $._expression)),
+        "}"
+      ),
 
     let_declaration: ($) =>
       seq(
         "let",
-        $.identifier,
+        field("name", $.identifier),
         optional(seq(":", field("type", $._type))),
         optional(seq("=", field("value", $._expression))),
         ";"
@@ -246,27 +259,31 @@ module.exports = grammar({
         ";"
       ),
 
-    _statement: ($) =>
-      choice($._declaration_statement, $._expression_statement),
+    _statement: ($) => choice($._declaration_statement, $.expression_statement),
 
     empty_statement: ($) => ";",
 
-    _declaration_statement: ($) => choice($.let_declaration, $.empty_statement),
+    _declaration_statement: ($) =>
+      choice($.let_declaration, $.use_declaration, $.empty_statement),
 
-    _expression_statement: ($) =>
-      choice(seq($._expression, ";"), prec(1, $._expression_ending_with_block)),
+    expression_statement: ($) =>
+      choice(
+        seq(field("inner", $._expression), ";"),
+        prec(1, field("inner", $._expression_ending_with_block))
+      ),
 
     return_expression: ($) =>
       choice(prec.left(seq("return", $._expression)), prec(-1, "return")),
 
-    arguments: ($) => seq("(", sepBy(",", $._expression), optional(","), ")"),
+    arguments: ($) =>
+      seq("(", sepBy(",", field("inner", $._expression)), optional(","), ")"),
 
     tuple_expression: ($) =>
       seq(
         "(",
-        seq($._expression, ","),
-        repeat(seq($._expression, ",")),
-        optional($._expression),
+        seq(field("element", $._expression), ","),
+        repeat(seq(field("element", $._expression), ",")),
+        optional(field("element", $._expression)),
         ")"
       ),
 
@@ -286,9 +303,12 @@ module.exports = grammar({
     _expression: ($) =>
       choice(
         $.return_expression,
+        $.break_expression,
+        $.continue_expression,
         $.unary_expression,
         $.binary_expression,
         $.reference_expression,
+        $.dereference_expression,
         $.range_expression,
         $.assignment_expression,
         $.compound_assignment_expr,
@@ -304,15 +324,19 @@ module.exports = grammar({
         alias(choice(...primitive_types), $.identifier),
         $.scoped_identifier,
         $.generic_function,
-        $._parenthesized_expression
+        $.parenthesized_expression
         // TODO: other kinds of expressions
       ),
 
     unary_expression: ($) =>
-      prec(PREC.unary, seq(choice("-", "*", "!"), $._expression)),
+      prec(PREC.unary, seq(field("operator", choice("-", "!")), field("value", $._expression))),
 
+    // Those two are special
     reference_expression: ($) =>
       prec(PREC.unary, seq("&", field("value", $._expression))),
+
+    dereference_expression: ($) =>
+      prec(PREC.unary, seq("*", field("value", $._expression))),
 
     binary_expression: ($) => {
       const table = [
@@ -483,7 +507,8 @@ module.exports = grammar({
         )
       ),
 
-    _parenthesized_expression: ($) => seq("(", $._expression, ")"),
+    parenthesized_expression: ($) =>
+      seq("(", field("inner", $._expression), ")"),
 
     _expression_ending_with_block: ($) =>
       choice(
@@ -507,18 +532,19 @@ module.exports = grammar({
     while_expression: ($) =>
       seq("while", field("condition", $._expression), field("body", $.block)),
 
+    break_expression: $ => prec.left(seq('break', optional($._expression))),
+
+    continue_expression: $ => 'continue',
+
     loop_expression: ($) => seq("loop", field("body", $.block)),
 
-    for_expression: ($) =>
-      seq(
-        "for",
-        field("start", $._expression),
-        ",",
-        field("stop", $._expression),
-        ",",
-        field("step", $._expression),
-        field("body", $.block)
-      ),
+    for_expression: $ => seq(
+      'for',
+      field("name", $.identifier),
+      'in',
+      field('value', $._expression),
+      field('body', $.block)
+    ),
 
     _literal: ($) =>
       choice(
@@ -526,7 +552,8 @@ module.exports = grammar({
         $.boolean_literal,
         $.integer_literal,
         $.float_literal,
-        $.ptr_literal
+        $.ptr_literal,
+        $.void_literal
       ),
 
     integer_literal: ($) =>
@@ -551,15 +578,19 @@ module.exports = grammar({
         )
       ),
 
-    range_expression: $ => prec.left(PREC.range, choice(
+    range_expression: ($) =>
       prec.left(
-        PREC.range + 1,
-        seq($._expression, choice('..', '...', '..='), $._expression)
+        PREC.range,
+        choice(
+          prec.left(
+            PREC.range + 1,
+            seq($._expression, choice("..", "...", "..="), $._expression)
+          ),
+          seq($._expression, ".."),
+          seq("..", $._expression),
+          ".."
+        )
       ),
-      seq($._expression, '..'),
-      seq('..', $._expression),
-      '..'
-    )),
 
     string_literal: ($) =>
       token(
@@ -588,6 +619,7 @@ module.exports = grammar({
 
     boolean_literal: ($) => choice("true", "false"),
     ptr_literal: ($) => choice("null"),
+    void_literal: ($) => choice("()"),
     identifier: ($) => /(r#)?[_\p{XID_Start}][_\p{XID_Continue}]*/,
   },
 });

@@ -1,0 +1,33 @@
+struct CString {
+    data: &u8,
+    length: usize,
+}
+
+impl CString {
+    fn new(from: [u8]) -> CString {
+        let data = malloc(from.length + 1) as &u8;
+        memcpy(data, from.ptr, from.length);
+        *(from[from.length]) = 0u8;
+
+        Self {
+            data: data,
+            length: from.length,
+        }
+    }
+
+    fn free(self: &Self) {
+        free(self.ptr);
+    }
+}
+
+
+extern fn memcpy(dst: &u8, src: &u8, len: usize) -> &u8;
+extern fn malloc(len: usize) -> &();
+extern fn puts(data: &u8);
+extern fn free(ptr: &());
+
+fn main() {
+    let s = CString::new("Hello world!");
+    puts(s.data);
+    s.free();
+}

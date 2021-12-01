@@ -1,19 +1,40 @@
 use crate::{
+    ast::SymbolP,
     common::AluminaError,
     name_resolution::{path::Path, scope::Item},
 };
-use std::collections::HashSet;
+use std::{borrow::Borrow, collections::HashSet};
 
-use super::scope::{Scope, ScopeInner};
+use super::{
+    path::PathSegment,
+    scope::{Scope, ScopeInner},
+};
 
 pub struct NameResolver<'gcx, 'src> {
     seen_aliases: HashSet<(u32, *const ScopeInner<'gcx, 'src>, Path<'src>)>,
+    depth: usize,
+}
+
+pub enum ScopeResolution<'gcx, 'src> {
+    Scope(Scope<'gcx, 'src>),
+    // It could happen that path is something like T::associated_fn where T
+    // is a generic placeholder. In this case we cannot statically resolve the path yet
+    // and we need to defer until monomorphization time.
+    Defered(SymbolP<'gcx>),
+}
+
+pub enum ItemResolution<'gcx, 'src> {
+    Item(Item<'gcx, 'src>),
+    // Only a single path segment can follow a placeholder (and it has to be an associated function)
+    // as we don't support nested structs.
+    Defered(SymbolP<'gcx>, PathSegment<'src>),
 }
 
 impl<'gcx, 'src> NameResolver<'gcx, 'src> {
     pub fn new() -> Self {
         NameResolver {
             seen_aliases: HashSet::new(),
+            depth: 0,
         }
     }
 
@@ -21,8 +42,13 @@ impl<'gcx, 'src> NameResolver<'gcx, 'src> {
         &mut self,
         scope: Scope<'gcx, 'src>,
         path: Path<'src>,
-    ) -> Result<Scope<'gcx, 'src>, AluminaError> {
-        println!("resolve_scope({:?}, {})", scope.path(), path);
+    ) -> Result<ScopeResolution<'gcx, 'src>, AluminaError> {
+        println!(
+            "resolve_scope({:?} {:?}, {})",
+            scope.inner().r#type,
+            scope.path(),
+            path
+        );
 
         if !self
             .seen_aliases
@@ -42,7 +68,7 @@ impl<'gcx, 'src> NameResolver<'gcx, 'src> {
         }
 
         if path.segments.is_empty() {
-            return Ok(scope);
+            return Ok(ScopeResolution::Scope(scope));
         }
 
         let remainder = Path {
@@ -52,6 +78,7 @@ impl<'gcx, 'src> NameResolver<'gcx, 'src> {
 
         for item in scope.inner().items_with_name(path.segments[0].0) {
             match item {
+                Item::Placeholder(sym) => return Ok(ScopeResolution::Defered(*sym)),
                 Item::Module(child_scope) | Item::Impl(child_scope) => {
                     return self.resolve_scope(child_scope.clone(), remainder);
                 }
@@ -69,12 +96,17 @@ impl<'gcx, 'src> NameResolver<'gcx, 'src> {
         Err(AluminaError::UnresolvedPath(path.to_string()))
     }
 
-    pub fn resolve_type_item(
+    pub fn resolve_item(
         &mut self,
         scope: Scope<'gcx, 'src>,
         path: Path<'src>,
-    ) -> Result<Item<'gcx, 'src>, AluminaError> {
-        println!("resolve_type_item({:?}, {})", scope.path(), path);
+    ) -> Result<ItemResolution<'gcx, 'src>, AluminaError> {
+        println!(
+            "resolve_item({:?} {:?}, {})",
+            scope.inner().r#type,
+            scope.path(),
+            path
+        );
 
         if !self
             .seen_aliases
@@ -87,25 +119,33 @@ impl<'gcx, 'src> NameResolver<'gcx, 'src> {
             return Err(AluminaError::UnresolvedPath(path.to_string()));
         }
 
-        let containing_scope = self.resolve_scope(scope.clone(), path.pop())?;
+        let last_segment = path.segments.last().unwrap();
+
+        let containing_scope = match self.resolve_scope(scope.clone(), path.pop())? {
+            ScopeResolution::Scope(scope) => scope,
+            ScopeResolution::Defered(symbol) => {
+                return Ok(ItemResolution::Defered(symbol, last_segment.clone()))
+            }
+        };
 
         for item in containing_scope
             .inner()
             .items_with_name(path.segments.last().unwrap().0)
         {
             match item {
-                Item::Type(_, _, _) | Item::Placeholder(_) => {
-                    return Ok(item.clone());
-                }
                 Item::Alias(target) => {
-                    return self.resolve_type_item(containing_scope.clone(), target.clone());
+                    return self.resolve_item(containing_scope.clone(), target.clone());
                 }
-                _ => {}
+                _ => return Ok(ItemResolution::Item(item.clone())),
             }
         }
 
-        if let Some(parent) = scope.parent() {
-            return self.resolve_type_item(parent, path);
+        // If path was already absolute, no sense in trying to resolve it again
+        // in parent scope.
+        if !path.absolute {
+            if let Some(parent) = scope.parent() {
+                return self.resolve_item(parent, path);
+            }
         }
 
         Err(AluminaError::UnresolvedPath(path.to_string()))
@@ -143,7 +183,7 @@ mod tests {
         let root_scope = Scope::new_root();
 
         let module_scope =
-            root_scope.new_child_with_parse_ctx(ScopeType::Crate, "test", parse_ctx.to_owned());
+            root_scope.named_child_with_ctx(ScopeType::Crate, "test", parse_ctx.to_owned());
 
         root_scope
             .add_item("test", Item::Module(module_scope.clone()))

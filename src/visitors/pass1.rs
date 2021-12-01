@@ -7,86 +7,7 @@ use crate::parser::{AluminaVisitor, ParseCtx};
 use std::result::Result;
 use tree_sitter::Node;
 
-use super::{ScopedPathVisitor, VisitorExt};
-
-pub struct UseClauseVisitor<'gcx, 'src> {
-    parse_ctx: ParseCtx<'gcx, 'src>,
-    prefix: Path<'src>,
-    scope: Scope<'gcx, 'src>,
-}
-
-impl<'gcx, 'src> UseClauseVisitor<'gcx, 'src> {
-    fn new(scope: Scope<'gcx, 'src>) -> Self {
-        Self {
-            prefix: Path::default(),
-            parse_ctx: scope
-                .parse_ctx()
-                .expect("cannot run on scope without parse context"),
-            scope,
-        }
-    }
-
-    fn parse_use_path(&mut self, node: Node<'src>) -> Result<Path<'src>, SyntaxError<'src>> {
-        let mut visitor = ScopedPathVisitor::new(self.scope.clone());
-        visitor.visit(node)
-    }
-}
-
-impl<'gcx, 'src> AluminaVisitor<'src> for UseClauseVisitor<'gcx, 'src> {
-    type ReturnType = Result<(), SyntaxError<'src>>;
-
-    fn visit_use_as_clause(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
-        let path = self.parse_use_path(node.child_by_field_name("path").unwrap())?;
-        let alias = self
-            .parse_ctx
-            .node_text(node.child_by_field_name("alias").unwrap());
-        self.scope
-            .add_item(alias, Item::Alias(self.prefix.join_with(path)))
-            .to_syntax_error(node)?;
-
-        Ok(())
-    }
-
-    fn visit_use_list(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
-        self.visit_children_by_field(node, "item")
-    }
-
-    fn visit_scoped_use_list(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
-        let suffix = self.parse_use_path(node.child_by_field_name("path").unwrap())?;
-        let new_prefix = self.prefix.join_with(suffix);
-        let old_prefix = std::mem::replace(&mut self.prefix, new_prefix);
-
-        self.visit(node.child_by_field_name("list").unwrap())?;
-        self.prefix = old_prefix;
-
-        Ok(())
-    }
-
-    fn visit_identifier(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
-        let alias = self.parse_ctx.node_text(node);
-        self.scope
-            .add_item(alias, Item::Alias(self.prefix.extend(PathSegment(alias))))
-            .to_syntax_error(node)?;
-
-        Ok(())
-    }
-
-    fn visit_scoped_identifier(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
-        let path = self.parse_use_path(node.child_by_field_name("path").unwrap())?;
-        let name = self
-            .parse_ctx
-            .node_text(node.child_by_field_name("name").unwrap());
-        self.scope
-            .add_item(
-                name,
-                Item::Alias(self.prefix.join_with(path.extend(PathSegment(name)))),
-            )
-            .to_syntax_error(node)?;
-
-        Ok(())
-    }
-}
-
+use super::{ScopedPathVisitor, UseClauseVisitor, VisitorExt};
 pub struct FirstPassVisitor<'gcx, 'src> {
     scope: Scope<'gcx, 'src>,
     parse_ctx: ParseCtx<'gcx, 'src>,
@@ -128,7 +49,7 @@ impl<'gcx, 'src> AluminaVisitor<'src> for FirstPassVisitor<'gcx, 'src> {
     fn visit_mod_definition(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
         let name = self.parse_name(node);
 
-        let child_scope = self.scope.new_child(ScopeType::Module, name);
+        let child_scope = self.scope.named_child(ScopeType::Module, name);
 
         self.scope
             .add_item(name, Item::Module(child_scope.clone()))
@@ -144,7 +65,7 @@ impl<'gcx, 'src> AluminaVisitor<'src> for FirstPassVisitor<'gcx, 'src> {
     fn visit_struct_definition(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
         let name = self.parse_name(node);
 
-        let child_scope = self.scope.new_child(ScopeType::Struct, name);
+        let child_scope = self.scope.named_child(ScopeType::Struct, name);
 
         self.scope
             .add_item(
@@ -170,7 +91,7 @@ impl<'gcx, 'src> AluminaVisitor<'src> for FirstPassVisitor<'gcx, 'src> {
     fn visit_impl_block(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
         let name = self.parse_name(node);
 
-        let child_scope = self.scope.new_child(ScopeType::Impl, name);
+        let child_scope = self.scope.named_child(ScopeType::Impl, name);
 
         self.scope
             .add_item(name, Item::Impl(child_scope.clone()))
@@ -186,7 +107,7 @@ impl<'gcx, 'src> AluminaVisitor<'src> for FirstPassVisitor<'gcx, 'src> {
     fn visit_enum_definition(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
         let name = self.parse_name(node);
 
-        let child_scope = self.scope.new_child(ScopeType::Enum, name);
+        let child_scope = self.scope.named_child(ScopeType::Enum, name);
         self.scope
             .add_item(
                 name,
@@ -219,7 +140,7 @@ impl<'gcx, 'src> AluminaVisitor<'src> for FirstPassVisitor<'gcx, 'src> {
 
     fn visit_function_definition(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
         let name = self.parse_name(node);
-        let child_scope = self.scope.new_child(ScopeType::Function, name);
+        let child_scope = self.scope.named_child(ScopeType::Function, name);
 
         self.scope
             .add_item(
@@ -247,7 +168,7 @@ impl<'gcx, 'src> AluminaVisitor<'src> for FirstPassVisitor<'gcx, 'src> {
         node: Node<'src>,
     ) -> Result<(), SyntaxError<'src>> {
         let name = self.parse_name(node);
-        let child_scope = self.scope.new_child(ScopeType::Function, name);
+        let child_scope = self.scope.named_child(ScopeType::Function, name);
 
         self.scope
             .add_item(

@@ -1,8 +1,8 @@
-use std::rc::Rc;
+use std::{marker::PhantomData, rc::Rc};
 
 use crate::{
-    ast::{Expression, ExpressionP, SymbolP, Ty, TyP},
-    context::GlobalCtx,
+    ast::{Expression, ExpressionP, SymbolP, Ty, TyP, Variable, VariableP},
+    context::{GlobalCtx, Incrementable},
 };
 
 include!(concat!(env!("OUT_DIR"), "/parser.rs"));
@@ -45,6 +45,14 @@ impl<'gcx, 'src> ParseCtx<'gcx, 'src> {
         self.0.global_ctx.make_symbol(debug_name)
     }
 
+    pub fn make_variable(&self) -> VariableP<'gcx> {
+        let inner = self.0.global_ctx.arena.alloc(Variable {
+            id: self.0.global_ctx.counter.increment(),
+            _phantom: PhantomData,
+        });
+        VariableP::new(inner)
+    }
+
     pub fn intern_type(&self, ty: Ty<'gcx>) -> TyP<'gcx> {
         self.0.global_ctx.intern_type(ty)
     }
@@ -53,6 +61,10 @@ impl<'gcx, 'src> ParseCtx<'gcx, 'src> {
         ExpressionP {
             inner: self.0.global_ctx.arena.alloc(expr),
         }
+    }
+
+    pub fn alloc_str(&self, slice: &'_ str) -> &'gcx str {
+        self.0.global_ctx.arena.alloc_str(slice)
     }
 
     pub fn alloc_slice<T: Copy>(&self, slice: &'_ [T]) -> &'gcx [T] {
