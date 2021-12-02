@@ -5,7 +5,6 @@ use crate::name_resolution::scope::ScopeType;
 use crate::parser::ParseCtx;
 use crate::AluminaVisitor;
 use crate::{
-    ast::{BuiltinType, Ty, TyP},
     common::{SyntaxError, ToSyntaxError},
     name_resolution::{
         resolver::NameResolver,
@@ -159,7 +158,7 @@ impl<'gcx, 'src> AluminaVisitor<'src> for ExpressionVisitor<'gcx, 'src> {
         Ok(self.parse_ctx.alloc_expr(Expr::Lit(Lit::Bool(value))))
     }
 
-    fn visit_void_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+    fn visit_void_literal(&mut self, _node: tree_sitter::Node<'src>) -> Self::ReturnType {
         Ok(self.parse_ctx.alloc_expr(Expr::Void))
     }
 

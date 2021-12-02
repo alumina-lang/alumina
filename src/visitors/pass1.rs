@@ -1,13 +1,12 @@
 use crate::common::{SyntaxError, ToSyntaxError};
 
-use crate::name_resolution::path::{Path, PathSegment};
 use crate::name_resolution::scope::{Item, Scope, ScopeType};
 use crate::parser::{AluminaVisitor, ParseCtx};
 
 use std::result::Result;
 use tree_sitter::Node;
 
-use super::{ScopedPathVisitor, UseClauseVisitor, VisitorExt};
+use super::{UseClauseVisitor, VisitorExt};
 pub struct FirstPassVisitor<'gcx, 'src> {
     scope: Scope<'gcx, 'src>,
     parse_ctx: ParseCtx<'gcx, 'src>,

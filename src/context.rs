@@ -55,7 +55,6 @@ impl<'gcx> GlobalCtx<'gcx> {
 
     pub fn make_symbol<T: AsRef<str>>(&'gcx self, debug_name: Option<T>) -> SymbolP<'gcx> {
         let debug_name = debug_name.map(|v| self.arena.alloc_str(v.as_ref()) as &str);
-
         let inner = self.arena.alloc(SymbolCell {
             id: self.make_id(),
             debug_name,

@@ -1,8 +1,8 @@
-use std::{marker::PhantomData, rc::Rc};
+use std::rc::Rc;
 
 use crate::{
     ast::{Expr, ExprP, NodeId, SymbolP, Ty, TyP},
-    context::{GlobalCtx, Incrementable},
+    context::GlobalCtx,
 };
 
 include!(concat!(env!("OUT_DIR"), "/parser.rs"));

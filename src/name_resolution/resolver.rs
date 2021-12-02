@@ -1,9 +1,9 @@
 use crate::{
-    ast::{NodeId, SymbolP},
+    ast::NodeId,
     common::AluminaError,
     name_resolution::{path::Path, scope::Item},
 };
-use std::{borrow::Borrow, collections::HashSet};
+use std::collections::HashSet;
 
 use super::{
     path::PathSegment,

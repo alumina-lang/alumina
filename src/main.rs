@@ -9,10 +9,9 @@ mod parser;
 mod utils;
 mod visitors;
 
-use ast::{Struct, Symbol, SymbolP};
-use common::SyntaxError;
+use ast::Symbol;
+
 use parser::ParseCtx;
-use visitors::types::TypeVisitor;
 
 use crate::ast::Function;
 use crate::context::GlobalCtx;
