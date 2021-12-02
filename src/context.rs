@@ -1,4 +1,4 @@
-use crate::ast::{SymbolCell, SymbolP, Ty, TyP};
+use crate::ast::{NodeId, SymbolCell, SymbolP, Ty, TyP};
 
 use bumpalo::Bump;
 use once_cell::unsync::OnceCell;
@@ -36,30 +36,36 @@ impl<'gcx> GlobalCtx<'gcx> {
         }
     }
 
+    pub fn make_id(&self) -> NodeId {
+        NodeId {
+            id: self.counter.increment(),
+        }
+    }
+
     pub fn intern_type(&'gcx self, ty: Ty<'gcx>) -> TyP<'gcx> {
         if let Some(key) = self.types.borrow().get(&ty) {
             return *key;
         }
 
         let inner = self.arena.alloc(ty);
-        let result = TyP::new(inner);
-        self.types.borrow_mut().insert(result);
-        result
+        self.types.borrow_mut().insert(inner);
+
+        inner
     }
 
     pub fn make_symbol<T: AsRef<str>>(&'gcx self, debug_name: Option<T>) -> SymbolP<'gcx> {
         let debug_name = debug_name.map(|v| self.arena.alloc_str(v.as_ref()) as &str);
 
         let inner = self.arena.alloc(SymbolCell {
-            id: self.counter.increment(),
+            id: self.make_id(),
             debug_name,
             contents: OnceCell::new(),
         });
 
         #[cfg(test)]
-        self.symbols.borrow_mut().push(SymbolP::new(inner));
+        self.symbols.borrow_mut().push(inner);
 
-        SymbolP::new(inner)
+        inner
     }
 
     #[cfg(test)]

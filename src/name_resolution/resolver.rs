@@ -1,5 +1,5 @@
 use crate::{
-    ast::SymbolP,
+    ast::{NodeId, SymbolP},
     common::AluminaError,
     name_resolution::{path::Path, scope::Item},
 };
@@ -15,19 +15,21 @@ pub struct NameResolver<'gcx, 'src> {
     depth: usize,
 }
 
+#[derive(Debug)]
 pub enum ScopeResolution<'gcx, 'src> {
     Scope(Scope<'gcx, 'src>),
     // It could happen that path is something like T::associated_fn where T
     // is a generic placeholder. In this case we cannot statically resolve the path yet
     // and we need to defer until monomorphization time.
-    Defered(SymbolP<'gcx>),
+    Defered(NodeId),
 }
 
+#[derive(Debug)]
 pub enum ItemResolution<'gcx, 'src> {
     Item(Item<'gcx, 'src>),
     // Only a single path segment can follow a placeholder (and it has to be an associated function)
     // as we don't support nested structs.
-    Defered(SymbolP<'gcx>, PathSegment<'src>),
+    Defered(NodeId, PathSegment<'src>),
 }
 
 impl<'gcx, 'src> NameResolver<'gcx, 'src> {
@@ -133,6 +135,7 @@ impl<'gcx, 'src> NameResolver<'gcx, 'src> {
             .items_with_name(path.segments.last().unwrap().0)
         {
             match item {
+                Item::Impl(_) => continue,
                 Item::Alias(target) => {
                     return self.resolve_item(containing_scope.clone(), target.clone());
                 }
@@ -167,16 +170,6 @@ mod tests {
 
     use crate::parser::AluminaVisitor;
 
-    trait AsTyP<'gcx> {
-        fn as_typ(self, ctx: &'gcx GlobalCtx<'gcx>) -> TyP<'gcx>;
-    }
-
-    impl<'gcx> AsTyP<'gcx> for Ty<'gcx> {
-        fn as_typ(self, ctx: &'gcx GlobalCtx<'gcx>) -> TyP<'gcx> {
-            ctx.intern_type(self)
-        }
-    }
-
     fn first_pass<'gcx, 'src>(
         parse_ctx: &'src ParseCtx<'gcx, 'src>,
     ) -> Result<Scope<'gcx, 'src>, SyntaxError<'src>> {
@@ -201,7 +194,7 @@ mod tests {
         let (scope, node) = match &(*root_scope.0).borrow().items["test"][..] {
             [Item::Module(scope)] => match &(*scope.0).borrow().items["a"][..] {
                 [Item::Type(_, _, scope)] => match &(*scope.0).borrow().items["b"][..] {
-                    [Item::Field(_, node)] => {
+                    [Item::Field(node)] => {
                         (scope.clone(), node.child_by_field_name("type").unwrap())
                     }
                     _ => unreachable!(),
@@ -234,7 +227,7 @@ mod tests {
         let result = extract_type(root_scope).unwrap();
         let symbol = ctx.get_symbol(0);
 
-        assert_eq!(result, Ty::NamedType(symbol).as_typ(&ctx));
+        assert_eq!(result, &Ty::NamedType(symbol));
     }
 
     #[test]
@@ -260,7 +253,7 @@ mod tests {
         let result = extract_type(root_scope).unwrap();
         let symbol = ctx.get_symbol(0);
 
-        assert_eq!(result, Ty::NamedType(symbol).as_typ(&ctx));
+        assert_eq!(result, &Ty::NamedType(symbol));
     }
 
     #[test]
@@ -309,7 +302,7 @@ mod tests {
         let result = extract_type(root_scope).unwrap();
         let symbol = ctx.get_symbol(0);
 
-        assert_eq!(result, Ty::NamedType(symbol).as_typ(&ctx));
+        assert_eq!(result, &Ty::NamedType(symbol));
     }
 
     #[test]
@@ -332,6 +325,6 @@ mod tests {
         let result = extract_type(root_scope).unwrap();
         let symbol = ctx.get_symbol(0);
 
-        assert_eq!(result, Ty::NamedType(symbol).as_typ(&ctx));
+        assert_eq!(result, &Ty::NamedType(symbol));
     }
 }

@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    ast::{SymbolP, VariableP},
+    ast::{NodeId, SymbolP},
     common::AluminaError,
     parser::ParseCtx,
 };
@@ -16,14 +16,18 @@ use super::path::{Path, PathSegment};
 
 #[derive(Debug, Clone)]
 pub enum Item<'gcx, 'src> {
+    Alias(Path<'src>),
+
     Function(SymbolP<'gcx>, Node<'src>, Scope<'gcx, 'src>),
     Type(SymbolP<'gcx>, Node<'src>, Scope<'gcx, 'src>),
     Module(Scope<'gcx, 'src>),
     Impl(Scope<'gcx, 'src>),
-    Placeholder(SymbolP<'gcx>),
-    Field(SymbolP<'gcx>, Node<'src>),
-    Alias(Path<'src>),
-    Variable(VariableP<'gcx>),
+    Placeholder(NodeId),
+
+    Field(Node<'src>),
+
+    Variable(NodeId),
+    Parameter(NodeId, Node<'src>),
 }
 
 #[derive(Debug, Copy, Clone)]

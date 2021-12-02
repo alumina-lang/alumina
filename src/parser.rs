@@ -1,7 +1,7 @@
 use std::{marker::PhantomData, rc::Rc};
 
 use crate::{
-    ast::{Expression, ExpressionP, SymbolP, Ty, TyP, Variable, VariableP},
+    ast::{Expr, ExprP, NodeId, SymbolP, Ty, TyP},
     context::{GlobalCtx, Incrementable},
 };
 
@@ -41,26 +41,20 @@ impl<'gcx, 'src> ParseCtx<'gcx, 'src> {
         self.0.tree.root_node()
     }
 
-    pub fn make_symbol<T: AsRef<str>>(&self, debug_name: Option<T>) -> SymbolP<'gcx> {
-        self.0.global_ctx.make_symbol(debug_name)
+    pub fn make_id(&self) -> NodeId {
+        self.0.global_ctx.make_id()
     }
 
-    pub fn make_variable(&self) -> VariableP<'gcx> {
-        let inner = self.0.global_ctx.arena.alloc(Variable {
-            id: self.0.global_ctx.counter.increment(),
-            _phantom: PhantomData,
-        });
-        VariableP::new(inner)
+    pub fn make_symbol<T: AsRef<str>>(&self, debug_name: Option<T>) -> SymbolP<'gcx> {
+        self.0.global_ctx.make_symbol(debug_name)
     }
 
     pub fn intern_type(&self, ty: Ty<'gcx>) -> TyP<'gcx> {
         self.0.global_ctx.intern_type(ty)
     }
 
-    pub fn alloc_expr(&self, expr: Expression<'gcx>) -> ExpressionP<'gcx> {
-        ExpressionP {
-            inner: self.0.global_ctx.arena.alloc(expr),
-        }
+    pub fn alloc_expr(&self, expr: Expr<'gcx>) -> ExprP<'gcx> {
+        self.0.global_ctx.arena.alloc(expr)
     }
 
     pub fn alloc_str(&self, slice: &'_ str) -> &'gcx str {

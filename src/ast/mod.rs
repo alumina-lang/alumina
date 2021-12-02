@@ -1,9 +1,23 @@
+use std::fmt::Display;
+use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
-use std::marker::PhantomData;
-use std::{
-    borrow::Borrow,
-    fmt::{Debug, Formatter},
-};
+
+#[derive(PartialEq, Copy, Clone, Eq, Hash)]
+pub struct NodeId {
+    pub id: usize,
+}
+
+impl Display for NodeId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "${}", self.id)
+    }
+}
+
+impl Debug for NodeId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(self, f)
+    }
+}
 
 use once_cell::unsync::OnceCell;
 
@@ -30,7 +44,8 @@ pub enum BuiltinType {
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum Ty<'gcx> {
-    Placeholder(SymbolP<'gcx>),
+    Placeholder(NodeId),
+    Extern(NodeId),
     NamedType(SymbolP<'gcx>),
     Builtin(BuiltinType),
     Pointer(TyP<'gcx>),
@@ -38,29 +53,10 @@ pub enum Ty<'gcx> {
     Slice(TyP<'gcx>),
     Tuple(&'gcx [TyP<'gcx>]),
     Function(&'gcx [TyP<'gcx>], TyP<'gcx>),
+    GenericType(SymbolP<'gcx>, &'gcx [TyP<'gcx>]),
 }
 
-#[derive(PartialEq, Eq, Copy, Clone, Hash)]
-pub struct TyP<'gcx> {
-    inner: &'gcx Ty<'gcx>,
-}
-
-impl<'gcx> TyP<'gcx> {
-    pub fn new(inner: &'gcx Ty<'gcx>) -> Self {
-        TyP { inner }
-    }
-}
-impl Debug for TyP<'_> {
-    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        self.inner.fmt(fmt)
-    }
-}
-
-impl<'gcx> Borrow<Ty<'gcx>> for TyP<'gcx> {
-    fn borrow(&self) -> &'_ Ty<'gcx> {
-        self.inner
-    }
-}
+pub type TyP<'gcx> = &'gcx Ty<'gcx>;
 
 #[derive(Debug)]
 pub enum Symbol<'gcx> {
@@ -68,46 +64,16 @@ pub enum Symbol<'gcx> {
     Function(Function<'gcx>),
 }
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
-pub struct Variable<'gcx> {
-    pub id: usize,
-    pub _phantom: PhantomData<&'gcx ()>,
-}
+pub type SymbolP<'gcx> = &'gcx SymbolCell<'gcx>;
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone, Hash)]
-pub struct VariableP<'gcx> {
-    pub inner: &'gcx Variable<'gcx>,
-}
-
-impl<'gcx> VariableP<'gcx> {
-    pub fn new(inner: &'gcx Variable<'gcx>) -> Self {
-        VariableP { inner }
-    }
-}
-
-#[derive(PartialEq, Eq, Copy, Clone, Hash)]
-pub struct SymbolP<'gcx> {
-    pub inner: &'gcx SymbolCell<'gcx>,
-}
-
-impl<'gcx> SymbolP<'gcx> {
-    pub fn new(inner: &'gcx SymbolCell<'gcx>) -> Self {
-        SymbolP { inner }
-    }
-
+impl<'gcx> SymbolCell<'gcx> {
     pub fn assign(&self, value: Symbol<'gcx>) {
         // Panic if we try to assign the same symbol twice
-        self.inner.contents.set(value).unwrap();
+        self.contents.set(value).unwrap();
     }
 
-    pub fn get(&self) -> &'gcx Symbol<'gcx> {
-        self.inner.contents.get().unwrap()
-    }
-}
-
-impl Debug for SymbolP<'_> {
-    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        self.inner.fmt(fmt)
+    pub fn get(&'gcx self) -> &'gcx Symbol<'gcx> {
+        self.contents.get().unwrap()
     }
 }
 
@@ -116,7 +82,7 @@ impl Debug for SymbolP<'_> {
 /// later.
 /// Symbols are immutable once they are assigned.
 pub struct SymbolCell<'gcx> {
-    pub id: usize,
+    pub id: NodeId,
     pub debug_name: Option<&'gcx str>,
     pub contents: OnceCell<Symbol<'gcx>>,
 }
@@ -142,11 +108,11 @@ impl Debug for SymbolCell<'_> {
         let debug_name = self.debug_name.unwrap_or("<unnamed>");
 
         if fmt.alternate() {
-            writeln!(fmt, "{}${} {{", self.id, debug_name)?;
+            writeln!(fmt, "{} ({}) {{", self.id, debug_name)?;
             writeln!(fmt, "\t{:?}", self.contents.get())?;
             writeln!(fmt, "}}")?;
         } else {
-            write!(fmt, "{}${}", self.id, debug_name)?
+            write!(fmt, "{} ({})", self.id, debug_name)?
         }
 
         Ok(())
@@ -154,36 +120,42 @@ impl Debug for SymbolCell<'_> {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct TypedSymbol<'gcx> {
-    pub symbol: SymbolP<'gcx>,
+pub struct Field<'gcx> {
+    pub name: &'gcx str,
     pub ty: TyP<'gcx>,
 }
 
 #[derive(Debug)]
 pub struct Struct<'gcx> {
-    pub placeholders: &'gcx [SymbolP<'gcx>],
+    pub placeholders: &'gcx [NodeId],
     pub associated_fns: &'gcx [SymbolP<'gcx>],
-    pub fields: &'gcx [TypedSymbol<'gcx>],
+    pub fields: &'gcx [Field<'gcx>],
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Parameter<'gcx> {
+    pub id: NodeId,
+    pub ty: TyP<'gcx>,
 }
 
 #[derive(Debug)]
 pub struct Function<'gcx> {
-    pub placeholders: &'gcx [SymbolP<'gcx>],
-    pub parameters: &'gcx [TypedSymbol<'gcx>],
+    pub placeholders: &'gcx [NodeId],
+    pub parameters: &'gcx [Parameter<'gcx>],
     pub return_type: TyP<'gcx>,
-    pub body: Option<ExpressionP<'gcx>>,
+    pub body: Option<ExprP<'gcx>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub struct LetDeclaration<'gcx> {
-    pub var: VariableP<'gcx>,
+    pub id: NodeId,
     pub typ: Option<TyP<'gcx>>,
-    pub value: Option<ExpressionP<'gcx>>,
+    pub value: Option<ExprP<'gcx>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum Statement<'gcx> {
-    Expression(ExpressionP<'gcx>),
+    Expression(ExprP<'gcx>),
     LetDeclaration(LetDeclaration<'gcx>),
 }
 
@@ -216,33 +188,39 @@ pub enum UnOp {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-pub enum Expression<'gcx> {
-    Block(&'gcx [Statement<'gcx>], ExpressionP<'gcx>),
-    Binary(ExpressionP<'gcx>, BinOp, ExpressionP<'gcx>),
-    Call(ExpressionP<'gcx>, &'gcx [ExpressionP<'gcx>]),
+pub enum Lit<'gcx> {
+    Str(&'gcx str),
+    Byte(u8),
+    Int(u128),
+    Float(&'gcx str),
+    Bool(bool),
+    Null,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+pub enum Expr<'gcx> {
+    Block(&'gcx [Statement<'gcx>], ExprP<'gcx>),
+    Binary(ExprP<'gcx>, BinOp, ExprP<'gcx>),
+    Call(ExprP<'gcx>, &'gcx [ExprP<'gcx>]),
     Function(SymbolP<'gcx>),
-    Ref(ExpressionP<'gcx>),
-    Deref(ExpressionP<'gcx>),
-    Unary(UnOp, ExpressionP<'gcx>),
-    Variable(VariableP<'gcx>),
-    IntegerLiteral(&'gcx str),
-    Tuple(&'gcx [ExpressionP<'gcx>]),
-    Field(ExpressionP<'gcx>, &'gcx str),
-    TupleIndex(ExpressionP<'gcx>, usize),
+    Ref(ExprP<'gcx>),
+    Deref(ExprP<'gcx>),
+    Unary(UnOp, ExprP<'gcx>),
+    Assign(ExprP<'gcx>, ExprP<'gcx>),
+    AssignOp(BinOp, ExprP<'gcx>, ExprP<'gcx>),
+    Local(NodeId),
+    Lit(Lit<'gcx>),
+    Tuple(&'gcx [ExprP<'gcx>]),
+    Field(ExprP<'gcx>, &'gcx str),
+    TupleIndex(ExprP<'gcx>, usize),
+    If(ExprP<'gcx>, ExprP<'gcx>, ExprP<'gcx>),
+    Cast(ExprP<'gcx>, TyP<'gcx>),
 
     // Generics support
-    DeferredFunction(SymbolP<'gcx>, &'gcx str),
+    DeferredFunction(NodeId, &'gcx str),
+    GenericFunction(ExprP<'gcx>, &'gcx [TyP<'gcx>]),
 
     Void,
 }
 
-#[derive(PartialEq, Eq, Clone, Hash, Copy)]
-pub struct ExpressionP<'gcx> {
-    pub inner: &'gcx Expression<'gcx>,
-}
-
-impl Debug for ExpressionP<'_> {
-    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        self.inner.fmt(fmt)
-    }
-}
+pub type ExprP<'gcx> = &'gcx Expr<'gcx>;

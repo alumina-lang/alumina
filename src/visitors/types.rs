@@ -48,7 +48,7 @@ impl<'gcx, 'src> TypeVisitor<'gcx, 'src> {
             ItemResolution::Defered(_, _) => {
                 return Err(AluminaError::NoAssociatedTypes).to_syntax_error(node)
             }
-            _ => unreachable!(),
+            a => panic!("unreachable: {:?}", a),
         };
 
         Ok(res)
@@ -132,6 +132,26 @@ impl<'gcx, 'src> AluminaVisitor<'src> for TypeVisitor<'gcx, 'src> {
         self.visit_typeref(node)
     }
 
+    fn visit_generic_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let base = self.visit_typeref(node.child_by_field_name("type").unwrap())?;
+        let arguments_node = node.child_by_field_name("type_arguments").unwrap();
+        let mut cursor = arguments_node.walk();
+        let arguments = arguments_node
+            .children_by_field_name("type", &mut cursor)
+            .map(|child| self.visit(child))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let base = match *base {
+            Ty::NamedType(ty) => ty,
+            _ => unreachable!(),
+        };
+
+        Ok(self.parse_ctx.intern_type(Ty::GenericType(
+            base,
+            self.parse_ctx.alloc_slice(arguments.as_slice()),
+        )))
+    }
+
     fn visit_function_pointer(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let mut cursor = node.walk();
         let elements = node
@@ -156,7 +176,6 @@ impl<'gcx, 'src> AluminaVisitor<'src> for TypeVisitor<'gcx, 'src> {
 
 #[cfg(test)]
 mod tests {
-
     use crate::{
         ast::{BuiltinType, Ty, TyP},
         common::SyntaxError,
@@ -166,16 +185,6 @@ mod tests {
         parser::ParseCtx,
         visitors::{pass1::FirstPassVisitor, types::TypeVisitor},
     };
-
-    trait AsTyP<'gcx> {
-        fn as_typ(self, ctx: &'gcx GlobalCtx<'gcx>) -> TyP<'gcx>;
-    }
-
-    impl<'gcx> AsTyP<'gcx> for Ty<'gcx> {
-        fn as_typ(self, ctx: &'gcx GlobalCtx<'gcx>) -> TyP<'gcx> {
-            ctx.intern_type(self)
-        }
-    }
 
     fn first_pass<'gcx, 'src>(
         parse_ctx: &'src ParseCtx<'gcx, 'src>,
@@ -201,7 +210,7 @@ mod tests {
         let (scope, node) = match &(*root_scope.0).borrow().items["test"][..] {
             [Item::Module(scope)] => match &(*scope.0).borrow().items["a"][..] {
                 [Item::Type(_, _, scope)] => match &(*scope.0).borrow().items["b"][..] {
-                    [Item::Field(_, node)] => {
+                    [Item::Field(node)] => {
                         (scope.clone(), node.child_by_field_name("type").unwrap())
                     }
                     _ => unreachable!(),
@@ -251,7 +260,7 @@ mod tests {
     fn test_parse_type_builtin() {
         let ctx = GlobalCtx::new();
 
-        test_parse_type(&ctx, "i32", Ty::Builtin(BuiltinType::I32).as_typ(&ctx));
+        test_parse_type(&ctx, "i32", &Ty::Builtin(BuiltinType::I32));
     }
 
     #[test]
@@ -261,7 +270,7 @@ mod tests {
         test_parse_type(
             &ctx,
             "[u32; 16]",
-            Ty::Array(Ty::Builtin(BuiltinType::U32).as_typ(&ctx), 16).as_typ(&ctx),
+            &Ty::Array(&Ty::Builtin(BuiltinType::U32), 16),
         );
     }
 
@@ -269,11 +278,7 @@ mod tests {
     fn test_parse_type_pointer() {
         let ctx = GlobalCtx::new();
 
-        test_parse_type(
-            &ctx,
-            "&i32",
-            Ty::Pointer(Ty::Builtin(BuiltinType::I32).as_typ(&ctx)).as_typ(&ctx),
-        );
+        test_parse_type(&ctx, "&i32", &Ty::Pointer(&Ty::Builtin(BuiltinType::I32)));
     }
 
     #[test]
@@ -283,11 +288,10 @@ mod tests {
         test_parse_type(
             &ctx,
             "fn(u32) -> !",
-            Ty::Function(
-                &[Ty::Builtin(BuiltinType::U32).as_typ(&ctx)],
-                Ty::Builtin(BuiltinType::Never).as_typ(&ctx),
-            )
-            .as_typ(&ctx),
+            &Ty::Function(
+                &[&Ty::Builtin(BuiltinType::U32)],
+                &Ty::Builtin(BuiltinType::Never),
+            ),
         );
     }
 
@@ -298,15 +302,13 @@ mod tests {
         test_parse_type(
             &ctx,
             "fn(u32) -> fn(u32) -> u32",
-            Ty::Function(
-                &[Ty::Builtin(BuiltinType::U32).as_typ(&ctx)],
-                Ty::Function(
-                    &[Ty::Builtin(BuiltinType::U32).as_typ(&ctx)],
-                    Ty::Builtin(BuiltinType::U32).as_typ(&ctx),
-                )
-                .as_typ(&ctx),
-            )
-            .as_typ(&ctx),
+            &Ty::Function(
+                &[&Ty::Builtin(BuiltinType::U32)],
+                &Ty::Function(
+                    &[&Ty::Builtin(BuiltinType::U32)],
+                    &Ty::Builtin(BuiltinType::U32),
+                ),
+            ),
         );
     }
 
@@ -317,11 +319,10 @@ mod tests {
         test_parse_type(
             &ctx,
             "(i32, u32)",
-            Ty::Tuple(&[
-                Ty::Builtin(BuiltinType::I32).as_typ(&ctx),
-                Ty::Builtin(BuiltinType::U32).as_typ(&ctx),
-            ])
-            .as_typ(&ctx),
+            &Ty::Tuple(&[
+                &Ty::Builtin(BuiltinType::I32),
+                &Ty::Builtin(BuiltinType::U32),
+            ]),
         );
     }
 
@@ -329,14 +330,14 @@ mod tests {
     fn test_parse_type_empty_tuple() {
         let ctx = GlobalCtx::new();
 
-        test_parse_type(&ctx, "()", Ty::Builtin(BuiltinType::Void).as_typ(&ctx));
+        test_parse_type(&ctx, "()", &Ty::Builtin(BuiltinType::Void));
     }
 
     #[test]
     fn test_parse_type_single_element_tuple() {
         let ctx = GlobalCtx::new();
 
-        test_parse_type(&ctx, "(u32)", Ty::Builtin(BuiltinType::U32).as_typ(&ctx));
+        test_parse_type(&ctx, "(u32)", &Ty::Builtin(BuiltinType::U32));
     }
 
     #[test]
@@ -346,12 +347,11 @@ mod tests {
         test_parse_type(
             &ctx,
             "(i32, [u32; 16], &i32)",
-            Ty::Tuple(&[
-                Ty::Builtin(BuiltinType::I32).as_typ(&ctx),
-                Ty::Array(Ty::Builtin(BuiltinType::U32).as_typ(&ctx), 16).as_typ(&ctx),
-                Ty::Pointer(Ty::Builtin(BuiltinType::I32).as_typ(&ctx)).as_typ(&ctx),
-            ])
-            .as_typ(&ctx),
+            &Ty::Tuple(&[
+                &Ty::Builtin(BuiltinType::I32),
+                &Ty::Array(&Ty::Builtin(BuiltinType::U32), 16),
+                &Ty::Pointer(&Ty::Builtin(BuiltinType::I32)),
+            ]),
         );
     }
 
@@ -359,6 +359,6 @@ mod tests {
     fn test_parse_type_never() {
         let ctx = GlobalCtx::new();
 
-        test_parse_type(&ctx, "!", Ty::Builtin(BuiltinType::Never).as_typ(&ctx));
+        test_parse_type(&ctx, "!", &Ty::Builtin(BuiltinType::Never));
     }
 }

@@ -129,10 +129,7 @@ impl<'gcx, 'src> AluminaVisitor<'src> for FirstPassVisitor<'gcx, 'src> {
     fn visit_struct_field(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
         let name = self.parse_name(node);
         self.scope
-            .add_item(
-                name,
-                Item::Field(self.parse_ctx.make_symbol(Some(name)), node),
-            )
+            .add_item(name, Item::Field(node))
             .to_syntax_error(node)?;
 
         Ok(())
@@ -196,10 +193,7 @@ impl<'gcx, 'src> AluminaVisitor<'src> for FirstPassVisitor<'gcx, 'src> {
         for argument in node.children_by_field_name("argument", &mut cursor) {
             let name = self.parse_ctx.node_text(argument);
             self.scope
-                .add_item(
-                    name,
-                    Item::Placeholder(self.parse_ctx.make_symbol(Some(name))),
-                )
+                .add_item(name, Item::Placeholder(self.parse_ctx.make_id()))
                 .to_syntax_error(node)?;
         }
 
@@ -210,10 +204,7 @@ impl<'gcx, 'src> AluminaVisitor<'src> for FirstPassVisitor<'gcx, 'src> {
         let name = self.parse_name(node);
 
         self.scope
-            .add_item(
-                name,
-                Item::Field(self.parse_ctx.make_symbol(Some(name)), node),
-            )
+            .add_item(name, Item::Parameter(self.parse_ctx.make_id(), node))
             .to_syntax_error(node)?;
 
         Ok(())
@@ -226,10 +217,7 @@ impl<'gcx, 'src> AluminaVisitor<'src> for FirstPassVisitor<'gcx, 'src> {
     fn visit_enum_item(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
         let name = self.parse_name(node);
         self.scope
-            .add_item(
-                name,
-                Item::Field(self.parse_ctx.make_symbol(Some(name)), node),
-            )
+            .add_item(name, Item::Field(node))
             .to_syntax_error(node)?;
 
         Ok(())

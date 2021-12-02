@@ -1,9 +1,8 @@
 use crate::{
-    ast::{BuiltinType, Function, Struct, Symbol, SymbolP, Ty, TypedSymbol},
+    ast::{BuiltinType, Field, Function, NodeId, Parameter, Struct, Symbol, SymbolP, Ty},
     common::SyntaxError,
     name_resolution::scope::{Item, Scope},
     parser::AluminaVisitor,
-    utils::NodeWrapper,
 };
 
 use super::{expressions::ExpressionVisitor, types::TypeVisitor};
@@ -43,23 +42,22 @@ impl<'gcx> Maker<'gcx> {
         scope: Scope<'gcx, 'src>,
         impl_scope: Option<Scope<'gcx, 'src>>,
     ) -> Result<(), SyntaxError<'src>> {
-        let mut placeholders: Vec<SymbolP<'gcx>> = Vec::new();
-
-        let mut fields: Vec<TypedSymbol<'gcx>> = Vec::new();
+        let mut placeholders: Vec<NodeId> = Vec::new();
+        let mut fields: Vec<Field<'gcx>> = Vec::new();
 
         let parse_ctx = scope.parse_ctx().unwrap();
 
-        for (_name, item) in scope.inner().all_items() {
+        for (name, item) in scope.inner().all_items() {
             match item {
                 Item::Placeholder(placeholder) => {
                     placeholders.push(*placeholder);
                 }
-                Item::Field(field_ref, node) => {
+                Item::Field(node) => {
                     let mut visitor = TypeVisitor::new(scope.clone());
                     let field_type = visitor.visit(node.child_by_field_name("type").unwrap())?;
 
-                    fields.push(TypedSymbol {
-                        symbol: *field_ref,
+                    fields.push(Field {
+                        name: parse_ctx.alloc_str(name),
                         ty: field_type,
                     });
                 }
@@ -92,8 +90,8 @@ impl<'gcx> Maker<'gcx> {
         scope: Scope<'gcx, 'src>,
         body: Option<tree_sitter::Node<'src>>,
     ) -> Result<(), SyntaxError<'src>> {
-        let mut placeholders: Vec<SymbolP<'gcx>> = Vec::new();
-        let mut parameters: Vec<TypedSymbol<'gcx>> = Vec::new();
+        let mut placeholders: Vec<NodeId> = Vec::new();
+        let mut parameters: Vec<Parameter<'gcx>> = Vec::new();
 
         let parse_ctx = scope.parse_ctx().unwrap();
 
@@ -102,12 +100,12 @@ impl<'gcx> Maker<'gcx> {
                 Item::Placeholder(placeholder) => {
                     placeholders.push(*placeholder);
                 }
-                Item::Field(field_ref, node) => {
+                Item::Parameter(id, node) => {
                     let field_type = TypeVisitor::new(scope.clone())
                         .visit(node.child_by_field_name("type").unwrap())?;
 
-                    parameters.push(TypedSymbol {
-                        symbol: *field_ref,
+                    parameters.push(Parameter {
+                        id: *id,
                         ty: field_type,
                     });
                 }

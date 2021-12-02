@@ -9,7 +9,7 @@ mod parser;
 mod utils;
 mod visitors;
 
-use ast::{Struct, Symbol, SymbolP, TypedSymbol};
+use ast::{Struct, Symbol, SymbolP};
 use common::SyntaxError;
 use parser::ParseCtx;
 use visitors::types::TypeVisitor;
@@ -65,9 +65,11 @@ fn compile(units: Vec<CompilationUnit>) {
     // To demonstrate we don't need the source code anymore
     drop(parse_contexts);
 
+    println!("{:#?}", maker.symbols);
+
     println!(
         "{:#?}",
-        match maker.symbols.last().unwrap().inner.contents.get().unwrap() {
+        match maker.symbols.last().unwrap().contents.get().unwrap() {
             Symbol::Function(Function { body, .. }) => body,
             _ => unreachable!(),
         }

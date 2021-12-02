@@ -92,7 +92,6 @@ module.exports = grammar({
         optional($.attribute),
         "mod",
         field("name", $.identifier),
-        optional($.generic_argument_list),
         "{",
         field("body", repeat($._top_level_item)),
         "}"
@@ -212,7 +211,7 @@ module.exports = grammar({
       ),
 
     type_arguments: ($) =>
-      seq(token(prec(1, "<")), sepBy1(",", $._type), optional(","), ">"),
+      seq(token(prec(1, "<")), sepBy1(",", field("type", $._type)), optional(","), ">"),
 
     _type: ($) =>
       choice(
@@ -406,7 +405,7 @@ module.exports = grammar({
         seq(field("function", $._expression), field("arguments", $.arguments))
       ),
 
-    struct_initializer_item: ($) => seq($.identifier, ":", $._expression),
+      struct_initializer_item: ($) => seq(field("field", $.identifier), ":", field("value", $._expression)),
 
     scoped_identifier: ($) =>
       seq(
@@ -486,7 +485,7 @@ module.exports = grammar({
       ),
 
     struct_initializer: ($) =>
-      seq("{", sepBy(",", $.struct_initializer_item), optional(","), "}"),
+      seq("{", sepBy(",", field("item", $.struct_initializer_item)), optional(","), "}"),
 
     struct_expression: ($) =>
       prec(
@@ -527,7 +526,7 @@ module.exports = grammar({
         optional(field("alternative", $.else_clause))
       ),
 
-    else_clause: ($) => seq("else", choice($.block, $.if_expression)),
+    else_clause: ($) => seq("else", field("inner", choice($.block, $.if_expression))),
 
     while_expression: ($) =>
       seq("while", field("condition", $._expression), field("body", $.block)),

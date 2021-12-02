@@ -18,6 +18,9 @@ pub enum AluminaError {
 
     #[error("generic associated types are not supported, soz")]
     NoAssociatedTypes,
+
+    #[error("invalid literal")]
+    InvalidLiteral,
 }
 
 #[derive(Debug, Error)]
