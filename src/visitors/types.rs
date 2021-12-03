@@ -14,20 +14,18 @@ use crate::{
 };
 
 pub struct TypeVisitor<'ast, 'src> {
-    parse_ctx: &'src ParseCtx<'ast, 'src>,
-    ast_ctx: &'ast AstCtx<'ast>,
+    ast: &'ast AstCtx<'ast>,
+    code: &'src ParseCtx<'src>,
     scope: Scope<'ast, 'src>,
 }
 
 impl<'ast, 'src> TypeVisitor<'ast, 'src> {
-    pub fn new(scope: Scope<'ast, 'src>) -> Self {
-        let parse_ctx = scope
-            .parse_ctx()
-            .expect("cannot run on scope without parse context");
-
+    pub fn new(ast: &'ast AstCtx<'ast>, scope: Scope<'ast, 'src>) -> Self {
         TypeVisitor {
-            parse_ctx,
-            ast_ctx: parse_ctx.ast_ctx,
+            ast,
+            code: scope
+                .code()
+                .expect("cannot run on scope without parse context"),
             scope,
         }
     }
@@ -45,10 +43,10 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
             .to_syntax_error(node)?
         {
             ItemResolution::Item(NamedItem::Type(ty, _, _)) => {
-                self.ast_ctx.intern_type(Ty::NamedType(ty))
+                self.ast.intern_type(Ty::NamedType(ty))
             }
             ItemResolution::Item(NamedItem::Placeholder(ty)) => {
-                self.ast_ctx.intern_type(Ty::Placeholder(ty))
+                self.ast.intern_type(Ty::Placeholder(ty))
             }
             ItemResolution::Defered(_, _) => {
                 return Err(AluminaError::NoAssociatedTypes).to_syntax_error(node)
@@ -64,7 +62,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
     type ReturnType = Result<TyP<'ast>, SyntaxError<'src>>;
 
     fn visit_primitive_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let builtin = match self.parse_ctx.node_text(node) {
+        let builtin = match self.code.node_text(node) {
             "bool" => Ty::Builtin(BuiltinType::Bool),
             "u8" => Ty::Builtin(BuiltinType::U8),
             "u16" => Ty::Builtin(BuiltinType::U16),
@@ -83,33 +81,33 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
             _ => unreachable!(),
         };
 
-        Ok(self.ast_ctx.intern_type(builtin))
+        Ok(self.ast.intern_type(builtin))
     }
 
     fn visit_never_type(&mut self, _node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        Ok(self.ast_ctx.intern_type(Ty::Builtin(BuiltinType::Never)))
+        Ok(self.ast.intern_type(Ty::Builtin(BuiltinType::Never)))
     }
 
     fn visit_pointer_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let ty = self.visit(node.child_by_field_name("inner").unwrap())?;
 
-        Ok(self.ast_ctx.intern_type(Ty::Pointer(ty)))
+        Ok(self.ast.intern_type(Ty::Pointer(ty)))
     }
 
     fn visit_array_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let ty = self.visit(node.child_by_field_name("inner").unwrap())?;
         let len = self
-            .parse_ctx
+            .code
             .node_text(node.child_by_field_name("size").unwrap())
             .parse()
             .unwrap();
 
-        Ok(self.ast_ctx.intern_type(Ty::Array(ty, len)))
+        Ok(self.ast.intern_type(Ty::Array(ty, len)))
     }
 
     fn visit_slice_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let ty = self.visit(node.child_by_field_name("inner").unwrap())?;
-        Ok(self.ast_ctx.intern_type(Ty::Slice(ty)))
+        Ok(self.ast.intern_type(Ty::Slice(ty)))
     }
 
     fn visit_tuple_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -120,11 +118,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
             .collect::<Result<Vec<_>, _>>()?;
 
         match &elements[..] {
-            [] => Ok(self.ast_ctx.intern_type(Ty::Builtin(BuiltinType::Void))),
+            [] => Ok(self.ast.intern_type(Ty::Builtin(BuiltinType::Void))),
             [ty] => Ok(*ty),
             _ => {
-                let slice = elements.alloc_on(self.ast_ctx);
-                Ok(self.ast_ctx.intern_type(Ty::Tuple(slice)))
+                let slice = elements.alloc_on(self.ast);
+                Ok(self.ast.intern_type(Ty::Tuple(slice)))
             }
         }
     }
@@ -152,8 +150,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
         };
 
         Ok(self
-            .ast_ctx
-            .intern_type(Ty::GenericType(base, arguments.alloc_on(self.ast_ctx))))
+            .ast
+            .intern_type(Ty::GenericType(base, arguments.alloc_on(self.ast))))
     }
 
     fn visit_function_pointer(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -168,12 +166,12 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
         let type_node = if let Some(return_type_node) = node.child_by_field_name("return_type") {
             self.visit(return_type_node)?
         } else {
-            self.ast_ctx.intern_type(Ty::Builtin(BuiltinType::Void))
+            self.ast.intern_type(Ty::Builtin(BuiltinType::Void))
         };
 
         Ok(self
-            .ast_ctx
-            .intern_type(Ty::Function(elements.alloc_on(self.ast_ctx), type_node)))
+            .ast
+            .intern_type(Ty::Function(elements.alloc_on(self.ast), type_node)))
     }
 }
 
@@ -190,24 +188,26 @@ mod tests {
     };
 
     fn first_pass<'ast, 'src>(
-        parse_ctx: &'src &'src ParseCtx<'ast, 'src>,
+        ast: &'ast AstCtx<'ast>,
+        code: &'src ParseCtx<'src>,
     ) -> Result<Scope<'ast, 'src>, SyntaxError<'src>> {
         let root_scope = Scope::new_root();
 
         let module_scope =
-            root_scope.named_child_with_ctx(ScopeType::Crate, "test", parse_ctx.to_owned());
+            root_scope.named_child_with_ctx(ScopeType::Crate, "test", code.to_owned());
 
         root_scope
             .add_item("test", NamedItem::Module(module_scope.clone()))
             .unwrap();
 
-        let mut visitor = FirstPassVisitor::new(module_scope);
-        visitor.visit(parse_ctx.root_node())?;
+        let mut visitor = FirstPassVisitor::new(ast, module_scope);
+        visitor.visit(code.root_node())?;
 
         Ok(root_scope)
     }
 
     fn extract_type<'ast, 'src>(
+        ast: &'ast AstCtx<'ast>,
         root_scope: Scope<'ast, 'src>,
     ) -> Result<TyP<'ast>, SyntaxError<'src>> {
         let (scope, node) = match &(*root_scope.0).borrow().items["test"][..] {
@@ -223,7 +223,7 @@ mod tests {
             _ => unreachable!(),
         };
 
-        let mut visitor = TypeVisitor::new(scope);
+        let mut visitor = TypeVisitor::new(ast, scope);
         visitor.visit(node)
     }
 
@@ -243,14 +243,14 @@ mod tests {
         assert_eq!(typ1, typ2);
     }
 
-    fn test_parse_type<'ast>(ast_ctx: &'ast AstCtx<'ast>, typedef: &str, expected: TyP<'ast>) {
-        let src = ast_ctx
+    fn test_parse_type<'ast>(ast: &'ast AstCtx<'ast>, typedef: &str, expected: TyP<'ast>) {
+        let src = ast
             .arena
             .alloc_str(&format!("struct a {{ b: {}; }}", typedef));
 
-        let parse_ctx = ParseCtx::from_source(ast_ctx, src);
-        let root_scope = first_pass(&parse_ctx).unwrap();
-        let result = extract_type(root_scope).unwrap();
+        let code = ParseCtx::from_source(src);
+        let root_scope = first_pass(ast, &code).unwrap();
+        let result = extract_type(ast, root_scope).unwrap();
 
         assert_eq!(result, expected);
     }

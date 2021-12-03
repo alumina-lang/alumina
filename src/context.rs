@@ -1,7 +1,6 @@
 use crate::ast::{AstId, ItemCell, ItemP, Ty, TyP};
-use crate::common::{Allocatable, ArenaAllocatable};
+use crate::common::{Allocatable, ArenaAllocatable, Incrementable};
 
-use crate::utils::Incrementable;
 use bumpalo::Bump;
 use once_cell::unsync::OnceCell;
 use std::cell::{Cell, RefCell};

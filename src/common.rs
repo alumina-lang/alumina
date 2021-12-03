@@ -15,10 +15,8 @@ pub enum AluminaError {
     CrateNotAllowed,
     #[error("duplicate name {:?}", .0)]
     DuplicateName(String),
-
     #[error("generic associated types are not supported, soz")]
     NoAssociatedTypes,
-
     #[error("invalid literal")]
     InvalidLiteral,
 }
@@ -63,3 +61,23 @@ macro_rules! impl_allocatable {
 }
 
 pub(crate) use impl_allocatable;
+
+pub trait Incrementable<T> {
+    fn increment(&self) -> T;
+}
+
+macro_rules! impl_incrementable {
+    ($($t:ty),*) => {
+        $(
+            impl Incrementable<$t> for ::std::cell::Cell<$t> {
+                fn increment(&self) -> $t {
+                    let old = self.get();
+                    self.set(old + 1);
+                    old
+                }
+            }
+        )*
+    };
+}
+
+impl_incrementable!(u8, u16, u32, u64, usize);

@@ -49,7 +49,7 @@ pub struct ScopeInner<'ast, 'src> {
     pub items: IndexMap<&'src str, Vec<NamedItem<'ast, 'src>>>,
     pub parent: Option<Weak<RefCell<ScopeInner<'ast, 'src>>>>,
 
-    parse_context: Option<&'src ParseCtx<'ast, 'src>>,
+    code: Option<&'src ParseCtx<'src>>,
 }
 
 impl<'ast, 'src> ScopeInner<'ast, 'src> {
@@ -102,7 +102,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             path: Path::root(),
             items: IndexMap::new(),
             parent: None,
-            parse_context: None,
+            code: None,
         })))
     }
 
@@ -110,8 +110,8 @@ impl<'ast, 'src> Scope<'ast, 'src> {
         self.0.borrow()
     }
 
-    pub fn parse_ctx(&self) -> Option<&'src ParseCtx<'ast, 'src>> {
-        self.inner().parse_context.clone()
+    pub fn code(&self) -> Option<&'src ParseCtx<'src>> {
+        self.inner().code.clone()
     }
 
     pub fn path(&self) -> Path<'src> {
@@ -125,7 +125,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             r#type,
             path: new_path,
             items: IndexMap::new(),
-            parse_context: self.parse_ctx(),
+            code: self.code(),
             parent: Some(Rc::downgrade(&self.0)),
         })))
     }
@@ -135,7 +135,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             r#type,
             path: self.path(),
             items: IndexMap::new(),
-            parse_context: self.parse_ctx(),
+            code: self.code(),
             parent: Some(Rc::downgrade(&self.0)),
         })))
     }
@@ -144,7 +144,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
         &self,
         r#type: ScopeType,
         name: &'src str,
-        parse_ctx: &'src ParseCtx<'ast, 'src>,
+        code: &'src ParseCtx<'src>,
     ) -> Self {
         let new_path = self.inner().path.extend(PathSegment(name));
         Scope(Rc::new(RefCell::new(ScopeInner {
@@ -152,7 +152,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             path: new_path,
             items: IndexMap::new(),
             parent: Some(Rc::downgrade(&self.0)),
-            parse_context: Some(parse_ctx),
+            code: Some(code),
         })))
     }
 

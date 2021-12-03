@@ -1,5 +1,6 @@
 use crate::common::{SyntaxError, ToSyntaxError};
 
+use crate::context::AstCtx;
 use crate::name_resolution::scope::{NamedItem, Scope, ScopeType};
 use crate::parser::{AluminaVisitor, ParseCtx};
 
@@ -8,15 +9,17 @@ use tree_sitter::Node;
 
 use super::{UseClauseVisitor, VisitorExt};
 pub struct FirstPassVisitor<'ast, 'src> {
+    ast: &'ast AstCtx<'ast>,
     scope: Scope<'ast, 'src>,
-    parse_ctx: &'src ParseCtx<'ast, 'src>,
+    code: &'src ParseCtx<'src>,
 }
 
 impl<'ast, 'src> FirstPassVisitor<'ast, 'src> {
-    pub fn new(scope: Scope<'ast, 'src>) -> Self {
+    pub fn new(ast: &'ast AstCtx<'ast>, scope: Scope<'ast, 'src>) -> Self {
         Self {
-            parse_ctx: scope
-                .parse_ctx()
+            ast,
+            code: scope
+                .code()
                 .expect("cannot run on scope without parse context"),
             scope,
         }
@@ -34,7 +37,7 @@ macro_rules! with_child_scope {
 impl<'ast, 'src> FirstPassVisitor<'ast, 'src> {
     fn parse_name(&self, node: Node<'src>) -> &'src str {
         let name_node = node.child_by_field_name("name").unwrap();
-        self.parse_ctx.node_text(name_node)
+        self.code.node_text(name_node)
     }
 }
 
@@ -69,11 +72,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         self.scope
             .add_item(
                 name,
-                NamedItem::Type(
-                    self.parse_ctx.ast_ctx.make_symbol(Some(name)),
-                    node,
-                    child_scope.clone(),
-                ),
+                NamedItem::Type(self.ast.make_symbol(Some(name)), node, child_scope.clone()),
             )
             .to_syntax_error(node)?;
 
@@ -110,11 +109,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         self.scope
             .add_item(
                 name,
-                NamedItem::Type(
-                    self.parse_ctx.ast_ctx.make_symbol(Some(name)),
-                    node,
-                    child_scope.clone(),
-                ),
+                NamedItem::Type(self.ast.make_symbol(Some(name)), node, child_scope.clone()),
             )
             .to_syntax_error(node)?;
 
@@ -141,11 +136,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         self.scope
             .add_item(
                 name,
-                NamedItem::Function(
-                    self.parse_ctx.ast_ctx.make_symbol(Some(name)),
-                    node,
-                    child_scope.clone(),
-                ),
+                NamedItem::Function(self.ast.make_symbol(Some(name)), node, child_scope.clone()),
             )
             .to_syntax_error(node)?;
 
@@ -169,11 +160,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         self.scope
             .add_item(
                 name,
-                NamedItem::Function(
-                    self.parse_ctx.ast_ctx.make_symbol(Some(name)),
-                    node,
-                    child_scope.clone(),
-                ),
+                NamedItem::Function(self.ast.make_symbol(Some(name)), node, child_scope.clone()),
             )
             .to_syntax_error(node)?;
 
@@ -190,9 +177,9 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     fn visit_generic_argument_list(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
         let mut cursor = node.walk();
         for argument in node.children_by_field_name("argument", &mut cursor) {
-            let name = self.parse_ctx.node_text(argument);
+            let name = self.code.node_text(argument);
             self.scope
-                .add_item(name, NamedItem::Placeholder(self.parse_ctx.make_id()))
+                .add_item(name, NamedItem::Placeholder(self.ast.make_id()))
                 .to_syntax_error(node)?;
         }
 
@@ -203,7 +190,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         let name = self.parse_name(node);
 
         self.scope
-            .add_item(name, NamedItem::Parameter(self.parse_ctx.make_id(), node))
+            .add_item(name, NamedItem::Parameter(self.ast.make_id(), node))
             .to_syntax_error(node)?;
 
         Ok(())

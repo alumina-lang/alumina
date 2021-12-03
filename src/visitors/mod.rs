@@ -1,6 +1,7 @@
 use tree_sitter::Node;
 
 use crate::common::{AluminaError, SyntaxError, ToSyntaxError};
+use crate::context::AstCtx;
 use crate::name_resolution::path::{Path, PathSegment};
 use crate::name_resolution::scope::{NamedItem, Scope};
 use crate::parser::ParseCtx;
@@ -8,20 +9,19 @@ use crate::AluminaVisitor;
 
 pub mod expressions;
 pub mod maker;
-pub mod mono;
 pub mod pass1;
 pub mod types;
 
 struct ScopedPathVisitor<'ast, 'src> {
-    parse_ctx: &'src ParseCtx<'ast, 'src>,
-    scope: Scope<'ast, 'src>, // ast_ctx: &'ast AstCtx<'ast>
+    code: &'src ParseCtx<'src>,
+    scope: Scope<'ast, 'src>, // ast: &'ast AstCtx<'ast>
 }
 
 impl<'ast, 'src> ScopedPathVisitor<'ast, 'src> {
     fn new(scope: Scope<'ast, 'src>) -> Self {
         Self {
-            parse_ctx: scope
-                .parse_ctx()
+            code: scope
+                .code()
                 .expect("cannot run on scope without parse context"),
             scope,
         }
@@ -91,13 +91,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
     }
 
     fn visit_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let name = self.parse_ctx.node_text(node);
+        let name = self.code.node_text(node);
 
         Ok(PathSegment(name).into())
     }
 
     fn visit_type_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let name = self.parse_ctx.node_text(node);
+        let name = self.code.node_text(node);
 
         Ok(PathSegment(name).into())
     }
@@ -109,7 +109,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
         };
 
         let name = self
-            .parse_ctx
+            .code
             .node_text(node.child_by_field_name("name").unwrap());
 
         Ok(subpath.extend(PathSegment(name)))
@@ -118,7 +118,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
     fn visit_scoped_type_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let subpath = self.visit(node.child_by_field_name("path").unwrap())?;
         let name = self
-            .parse_ctx
+            .code
             .node_text(node.child_by_field_name("name").unwrap());
 
         Ok(subpath.extend(PathSegment(name)))
@@ -126,7 +126,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
 }
 
 pub struct UseClauseVisitor<'ast, 'src> {
-    parse_ctx: &'src ParseCtx<'ast, 'src>,
+    code: &'src ParseCtx<'src>,
     prefix: Path<'src>,
     scope: Scope<'ast, 'src>,
 }
@@ -135,8 +135,8 @@ impl<'ast, 'src> UseClauseVisitor<'ast, 'src> {
     pub fn new(scope: Scope<'ast, 'src>) -> Self {
         Self {
             prefix: Path::default(),
-            parse_ctx: scope
-                .parse_ctx()
+            code: scope
+                .code()
                 .expect("cannot run on scope without parse context"),
             scope,
         }
@@ -154,7 +154,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
     fn visit_use_as_clause(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
         let path = self.parse_use_path(node.child_by_field_name("path").unwrap())?;
         let alias = self
-            .parse_ctx
+            .code
             .node_text(node.child_by_field_name("alias").unwrap());
         self.scope
             .add_item(alias, NamedItem::Alias(self.prefix.join_with(path)))
@@ -179,7 +179,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
     }
 
     fn visit_identifier(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
-        let alias = self.parse_ctx.node_text(node);
+        let alias = self.code.node_text(node);
         self.scope
             .add_item(
                 alias,
@@ -193,7 +193,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
     fn visit_scoped_identifier(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
         let path = self.parse_use_path(node.child_by_field_name("path").unwrap())?;
         let name = self
-            .parse_ctx
+            .code
             .node_text(node.child_by_field_name("name").unwrap());
         self.scope
             .add_item(

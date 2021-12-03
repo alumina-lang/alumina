@@ -171,19 +171,19 @@ mod tests {
     use crate::parser::AluminaVisitor;
 
     fn first_pass<'ast, 'src>(
-        parse_ctx: &'src ParseCtx<'ast, 'src>,
+        code: &'src ParseCtx<'src>,
     ) -> Result<Scope<'ast, 'src>, SyntaxError<'src>> {
         let root_scope = Scope::new_root();
 
         let module_scope =
-            root_scope.named_child_with_ctx(ScopeType::Crate, "test", parse_ctx.to_owned());
+            root_scope.named_child_with_ctx(ScopeType::Crate, "test", code.to_owned());
 
         root_scope
             .add_item("test", NamedItem::Module(module_scope.clone()))
             .unwrap();
 
         let mut visitor = FirstPassVisitor::new(module_scope);
-        visitor.visit(parse_ctx.root_node())?;
+        visitor.visit(code.root_node())?;
 
         Ok(root_scope)
     }
@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn test_referenced_type() {
         let ctx = AstCtx::new();
-        let parse_ctx = ParseCtx::from_source(
+        let code = ParseCtx::from_source(
             &ctx,
             "
         mod foo {
@@ -223,7 +223,7 @@ mod tests {
         }
         ",
         );
-        let root_scope = first_pass(&parse_ctx).unwrap();
+        let root_scope = first_pass(&code).unwrap();
         let result = extract_type(root_scope).unwrap();
         let symbol = ctx.get_symbol(0);
 
@@ -233,7 +233,7 @@ mod tests {
     #[test]
     fn test_referenced_type_super() {
         let ctx = AstCtx::new();
-        let parse_ctx = ParseCtx::from_source(
+        let code = ParseCtx::from_source(
             &ctx,
             r"
         mod foo {
@@ -249,7 +249,7 @@ mod tests {
         ",
         );
 
-        let root_scope = first_pass(&parse_ctx).unwrap();
+        let root_scope = first_pass(&code).unwrap();
         let result = extract_type(root_scope).unwrap();
         let symbol = ctx.get_symbol(0);
 
@@ -259,7 +259,7 @@ mod tests {
     #[test]
     fn test_infinite_loop() {
         let ctx = AstCtx::new();
-        let parse_ctx = ParseCtx::from_source(
+        let code = ParseCtx::from_source(
             &ctx,
             r"
         mod foo {
@@ -276,7 +276,7 @@ mod tests {
         ",
         );
 
-        let root_scope = first_pass(&parse_ctx).unwrap();
+        let root_scope = first_pass(&code).unwrap();
         let err = extract_type(root_scope).unwrap_err();
 
         assert_matches!(err.kind, AluminaError::CycleDetected);
@@ -285,7 +285,7 @@ mod tests {
     #[test]
     fn test_referenced_type_crate() {
         let ctx = AstCtx::new();
-        let parse_ctx = ParseCtx::from_source(
+        let code = ParseCtx::from_source(
             &ctx,
             r"
         mod foo {
@@ -298,7 +298,7 @@ mod tests {
         ",
         );
 
-        let root_scope = first_pass(&parse_ctx).unwrap();
+        let root_scope = first_pass(&code).unwrap();
         let result = extract_type(root_scope).unwrap();
         let symbol = ctx.get_symbol(0);
 
@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn test_referenced_type_absolute() {
         let ctx = AstCtx::new();
-        let parse_ctx = ParseCtx::from_source(
+        let code = ParseCtx::from_source(
             &ctx,
             r"
         mod foo {
@@ -321,7 +321,7 @@ mod tests {
         ",
         );
 
-        let root_scope = first_pass(&parse_ctx).unwrap();
+        let root_scope = first_pass(&code).unwrap();
         let result = extract_type(root_scope).unwrap();
         let symbol = ctx.get_symbol(0);
 

@@ -84,9 +84,12 @@ Finished:
 - Lexical analysis and parser (using Tree-Sitter)
 - Scope/name resolution
 - Basic type support
+- Lowering parse tree into AST (desugaring)
 
 TBD:
-- Function bodies and expressions
+- Lowering AST into IR (with type checking and semantic analysis)
+- Better error reporting
+- Debug information (spans)
 - Codegen with C
 - Compiler driver for multi-file compilation
 

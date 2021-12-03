@@ -1,3 +1,5 @@
+mod mono;
+
 use crate::{
     ast::{BinOp, BuiltinType, Lit, UnOp},
     common::impl_allocatable,

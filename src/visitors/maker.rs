@@ -1,6 +1,7 @@
 use crate::{
     ast::{self, AstId, BuiltinType, Field, Function, Item, ItemP, Parameter, Struct, Ty},
     common::{ArenaAllocatable, SyntaxError},
+    context::AstCtx,
     name_resolution::scope::{NamedItem, Scope},
     parser::AluminaVisitor,
 };
@@ -8,12 +9,14 @@ use crate::{
 use super::{expressions::ExpressionVisitor, types::TypeVisitor};
 
 pub struct Maker<'ast> {
+    ast: &'ast AstCtx<'ast>,
     pub symbols: Vec<ItemP<'ast>>,
 }
 
 impl<'ast> Maker<'ast> {
-    pub fn new() -> Self {
+    pub fn new(ast: &'ast AstCtx<'ast>) -> Self {
         Self {
+            ast,
             symbols: Vec::new(),
         }
     }
@@ -23,7 +26,6 @@ impl<'ast> Maker<'ast> {
         scope: Scope<'ast, 'src>,
     ) -> Result<&'ast [ItemP<'ast>], SyntaxError<'src>> {
         let mut associated_fns: Vec<ItemP<'ast>> = Vec::new();
-        let ast_ctx = scope.parse_ctx().unwrap().ast_ctx;
 
         for (_name, item) in scope.inner().all_items() {
             match item {
@@ -32,7 +34,7 @@ impl<'ast> Maker<'ast> {
             }
         }
 
-        let result = associated_fns.alloc_on(ast_ctx);
+        let result = associated_fns.alloc_on(self.ast);
         Ok(result)
     }
 
@@ -46,19 +48,17 @@ impl<'ast> Maker<'ast> {
         let mut placeholders: Vec<AstId> = Vec::new();
         let mut fields: Vec<Field<'ast>> = Vec::new();
 
-        let ast_ctx = scope.parse_ctx().unwrap().ast_ctx;
-
         for (name, item) in scope.inner().all_items() {
             match item {
                 NamedItem::Placeholder(placeholder) => {
                     placeholders.push(*placeholder);
                 }
                 NamedItem::Field(node) => {
-                    let mut visitor = TypeVisitor::new(scope.clone());
+                    let mut visitor = TypeVisitor::new(self.ast, scope.clone());
                     let field_type = visitor.visit(node.child_by_field_name("type").unwrap())?;
 
                     fields.push(Field {
-                        name: name.alloc_on(ast_ctx),
+                        name: name.alloc_on(self.ast),
                         ty: field_type,
                     });
                 }
@@ -68,12 +68,12 @@ impl<'ast> Maker<'ast> {
 
         let associated_fns = match impl_scope {
             Some(impl_scope) => self.resolve_associated_fns(impl_scope)?,
-            None => (&[]).alloc_on(ast_ctx),
+            None => (&[]).alloc_on(self.ast),
         };
 
         let result = Item::Struct(Struct {
-            placeholders: placeholders.alloc_on(ast_ctx),
-            fields: fields.alloc_on(ast_ctx),
+            placeholders: placeholders.alloc_on(self.ast),
+            fields: fields.alloc_on(self.ast),
             associated_fns,
         });
 
@@ -94,15 +94,13 @@ impl<'ast> Maker<'ast> {
         let mut placeholders: Vec<AstId> = Vec::new();
         let mut parameters: Vec<Parameter<'ast>> = Vec::new();
 
-        let ast_ctx = scope.parse_ctx().unwrap().ast_ctx;
-
         for (_name, item) in scope.inner().all_items() {
             match item {
                 NamedItem::Placeholder(placeholder) => {
                     placeholders.push(*placeholder);
                 }
                 NamedItem::Parameter(id, node) => {
-                    let field_type = TypeVisitor::new(scope.clone())
+                    let field_type = TypeVisitor::new(self.ast, scope.clone())
                         .visit(node.child_by_field_name("type").unwrap())?;
 
                     parameters.push(Parameter {
@@ -116,17 +114,17 @@ impl<'ast> Maker<'ast> {
 
         let return_type = node
             .child_by_field_name("return_type")
-            .map(|n| TypeVisitor::new(scope.clone()).visit(n))
+            .map(|n| TypeVisitor::new(self.ast, scope.clone()).visit(n))
             .transpose()?
-            .unwrap_or(ast_ctx.intern_type(Ty::Builtin(BuiltinType::Void)));
+            .unwrap_or(self.ast.intern_type(Ty::Builtin(BuiltinType::Void)));
 
         let function_body = body
-            .map(|body| ExpressionVisitor::new(scope.clone()).visit(body))
+            .map(|body| ExpressionVisitor::new(self.ast, scope.clone()).visit(body))
             .transpose()?;
 
         let result = Item::Function(Function {
-            placeholders: placeholders.alloc_on(ast_ctx),
-            parameters: parameters.alloc_on(ast_ctx),
+            placeholders: placeholders.alloc_on(self.ast),
+            parameters: parameters.alloc_on(self.ast),
             return_type,
             body: function_body,
         });

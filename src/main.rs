@@ -29,7 +29,7 @@ struct CompilationUnit {
 }
 
 fn compile(units: Vec<CompilationUnit>) {
-    let ctx = AstCtx::new();
+    let ast = AstCtx::new();
 
     let root_scope = Scope::new_root();
     let crate_scope = root_scope.named_child(ScopeType::Crate, "my_crate");
@@ -40,7 +40,7 @@ fn compile(units: Vec<CompilationUnit>) {
 
     let parse_contexts: Vec<_> = units
         .iter()
-        .map(|unit| ParseCtx::from_source(&ctx, &unit.source))
+        .map(|unit| ParseCtx::from_source(&unit.source))
         .collect();
 
     for (i, ctx) in parse_contexts.iter().enumerate() {
@@ -53,11 +53,11 @@ fn compile(units: Vec<CompilationUnit>) {
             .add_item(&units[i].name, NamedItem::Module(module_scope.clone()))
             .unwrap();
 
-        let mut visitor = FirstPassVisitor::new(module_scope.clone());
+        let mut visitor = FirstPassVisitor::new(&ast, module_scope.clone());
         visitor.visit(ctx.root_node()).unwrap();
     }
 
-    let mut maker = Maker::new();
+    let mut maker = Maker::new(&ast);
     maker.make(crate_scope).unwrap();
 
     // To demonstrate we don't need the source code anymore
