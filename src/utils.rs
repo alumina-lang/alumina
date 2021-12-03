@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{cell::Cell, fmt::Debug};
 use tree_sitter::Node;
 
 pub struct NodeWrapper<'t>(&'t str, Node<'t>, usize);
@@ -23,3 +23,23 @@ impl Debug for NodeWrapper<'_> {
         Ok(())
     }
 }
+
+pub trait Incrementable<T> {
+    fn increment(&self) -> T;
+}
+
+macro_rules! impl_incrementable {
+    ($($t:ty),*) => {
+        $(
+            impl Incrementable<$t> for Cell<$t> {
+                fn increment(&self) -> $t {
+                    let old = self.get();
+                    self.set(old + 1);
+                    old
+                }
+            }
+        )*
+    };
+}
+
+impl_incrementable!(u8, u16, u32, u64, usize);

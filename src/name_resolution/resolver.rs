@@ -1,7 +1,7 @@
 use crate::{
-    ast::NodeId,
+    ast::AstId,
     common::AluminaError,
-    name_resolution::{path::Path, scope::Item},
+    name_resolution::{path::Path, scope::NamedItem},
 };
 use std::collections::HashSet;
 
@@ -10,29 +10,29 @@ use super::{
     scope::{Scope, ScopeInner},
 };
 
-pub struct NameResolver<'gcx, 'src> {
-    seen_aliases: HashSet<(u32, *const ScopeInner<'gcx, 'src>, Path<'src>)>,
+pub struct NameResolver<'ast, 'src> {
+    seen_aliases: HashSet<(u32, *const ScopeInner<'ast, 'src>, Path<'src>)>,
     depth: usize,
 }
 
 #[derive(Debug)]
-pub enum ScopeResolution<'gcx, 'src> {
-    Scope(Scope<'gcx, 'src>),
+pub enum ScopeResolution<'ast, 'src> {
+    Scope(Scope<'ast, 'src>),
     // It could happen that path is something like T::associated_fn where T
     // is a generic placeholder. In this case we cannot statically resolve the path yet
     // and we need to defer until monomorphization time.
-    Defered(NodeId),
+    Defered(AstId),
 }
 
 #[derive(Debug)]
-pub enum ItemResolution<'gcx, 'src> {
-    Item(Item<'gcx, 'src>),
+pub enum ItemResolution<'ast, 'src> {
+    Item(NamedItem<'ast, 'src>),
     // Only a single path segment can follow a placeholder (and it has to be an associated function)
     // as we don't support nested structs.
-    Defered(NodeId, PathSegment<'src>),
+    Defered(AstId, PathSegment<'src>),
 }
 
-impl<'gcx, 'src> NameResolver<'gcx, 'src> {
+impl<'ast, 'src> NameResolver<'ast, 'src> {
     pub fn new() -> Self {
         NameResolver {
             seen_aliases: HashSet::new(),
@@ -42,9 +42,9 @@ impl<'gcx, 'src> NameResolver<'gcx, 'src> {
 
     pub fn resolve_scope(
         &mut self,
-        scope: Scope<'gcx, 'src>,
+        scope: Scope<'ast, 'src>,
         path: Path<'src>,
-    ) -> Result<ScopeResolution<'gcx, 'src>, AluminaError> {
+    ) -> Result<ScopeResolution<'ast, 'src>, AluminaError> {
         println!(
             "resolve_scope({:?} {:?}, {})",
             scope.inner().r#type,
@@ -80,11 +80,11 @@ impl<'gcx, 'src> NameResolver<'gcx, 'src> {
 
         for item in scope.inner().items_with_name(path.segments[0].0) {
             match item {
-                Item::Placeholder(sym) => return Ok(ScopeResolution::Defered(*sym)),
-                Item::Module(child_scope) | Item::Impl(child_scope) => {
+                NamedItem::Placeholder(sym) => return Ok(ScopeResolution::Defered(*sym)),
+                NamedItem::Module(child_scope) | NamedItem::Impl(child_scope) => {
                     return self.resolve_scope(child_scope.clone(), remainder);
                 }
-                Item::Alias(target) => {
+                NamedItem::Alias(target) => {
                     return self.resolve_scope(scope.clone(), target.join_with(remainder));
                 }
                 _ => {}
@@ -100,9 +100,9 @@ impl<'gcx, 'src> NameResolver<'gcx, 'src> {
 
     pub fn resolve_item(
         &mut self,
-        scope: Scope<'gcx, 'src>,
+        scope: Scope<'ast, 'src>,
         path: Path<'src>,
-    ) -> Result<ItemResolution<'gcx, 'src>, AluminaError> {
+    ) -> Result<ItemResolution<'ast, 'src>, AluminaError> {
         println!(
             "resolve_item({:?} {:?}, {})",
             scope.inner().r#type,
@@ -135,8 +135,8 @@ impl<'gcx, 'src> NameResolver<'gcx, 'src> {
             .items_with_name(path.segments.last().unwrap().0)
         {
             match item {
-                Item::Impl(_) => continue,
-                Item::Alias(target) => {
+                NamedItem::Impl(_) => continue,
+                NamedItem::Alias(target) => {
                     return self.resolve_item(containing_scope.clone(), target.clone());
                 }
                 _ => return Ok(ItemResolution::Item(item.clone())),
@@ -162,24 +162,24 @@ mod tests {
     use crate::{
         ast::{Ty, TyP},
         common::{AluminaError, SyntaxError},
-        context::GlobalCtx,
-        name_resolution::scope::{Item, Scope, ScopeType},
+        context::AstCtx,
+        name_resolution::scope::{NamedItem, Scope, ScopeType},
         parser::ParseCtx,
         visitors::{pass1::FirstPassVisitor, types::TypeVisitor},
     };
 
     use crate::parser::AluminaVisitor;
 
-    fn first_pass<'gcx, 'src>(
-        parse_ctx: &'src ParseCtx<'gcx, 'src>,
-    ) -> Result<Scope<'gcx, 'src>, SyntaxError<'src>> {
+    fn first_pass<'ast, 'src>(
+        parse_ctx: &'src ParseCtx<'ast, 'src>,
+    ) -> Result<Scope<'ast, 'src>, SyntaxError<'src>> {
         let root_scope = Scope::new_root();
 
         let module_scope =
             root_scope.named_child_with_ctx(ScopeType::Crate, "test", parse_ctx.to_owned());
 
         root_scope
-            .add_item("test", Item::Module(module_scope.clone()))
+            .add_item("test", NamedItem::Module(module_scope.clone()))
             .unwrap();
 
         let mut visitor = FirstPassVisitor::new(module_scope);
@@ -188,13 +188,13 @@ mod tests {
         Ok(root_scope)
     }
 
-    fn extract_type<'gcx, 'src>(
-        root_scope: Scope<'gcx, 'src>,
-    ) -> Result<TyP<'gcx>, SyntaxError<'src>> {
+    fn extract_type<'ast, 'src>(
+        root_scope: Scope<'ast, 'src>,
+    ) -> Result<TyP<'ast>, SyntaxError<'src>> {
         let (scope, node) = match &(*root_scope.0).borrow().items["test"][..] {
-            [Item::Module(scope)] => match &(*scope.0).borrow().items["a"][..] {
-                [Item::Type(_, _, scope)] => match &(*scope.0).borrow().items["b"][..] {
-                    [Item::Field(node)] => {
+            [NamedItem::Module(scope)] => match &(*scope.0).borrow().items["a"][..] {
+                [NamedItem::Type(_, _, scope)] => match &(*scope.0).borrow().items["b"][..] {
+                    [NamedItem::Field(node)] => {
                         (scope.clone(), node.child_by_field_name("type").unwrap())
                     }
                     _ => unreachable!(),
@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn test_referenced_type() {
-        let ctx = GlobalCtx::new();
+        let ctx = AstCtx::new();
         let parse_ctx = ParseCtx::from_source(
             &ctx,
             "
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn test_referenced_type_super() {
-        let ctx = GlobalCtx::new();
+        let ctx = AstCtx::new();
         let parse_ctx = ParseCtx::from_source(
             &ctx,
             r"
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn test_infinite_loop() {
-        let ctx = GlobalCtx::new();
+        let ctx = AstCtx::new();
         let parse_ctx = ParseCtx::from_source(
             &ctx,
             r"
@@ -284,7 +284,7 @@ mod tests {
 
     #[test]
     fn test_referenced_type_crate() {
-        let ctx = GlobalCtx::new();
+        let ctx = AstCtx::new();
         let parse_ctx = ParseCtx::from_source(
             &ctx,
             r"
@@ -307,7 +307,7 @@ mod tests {
 
     #[test]
     fn test_referenced_type_absolute() {
-        let ctx = GlobalCtx::new();
+        let ctx = AstCtx::new();
         let parse_ctx = ParseCtx::from_source(
             &ctx,
             r"

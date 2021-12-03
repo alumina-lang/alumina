@@ -1,17 +1,17 @@
 use crate::{
-    ast::{BuiltinType, Field, Function, NodeId, Parameter, Struct, Symbol, SymbolP, Ty},
-    common::SyntaxError,
-    name_resolution::scope::{Item, Scope},
+    ast::{self, AstId, BuiltinType, Field, Function, Item, ItemP, Parameter, Struct, Ty},
+    common::{ArenaAllocatable, SyntaxError},
+    name_resolution::scope::{NamedItem, Scope},
     parser::AluminaVisitor,
 };
 
 use super::{expressions::ExpressionVisitor, types::TypeVisitor};
 
-pub struct Maker<'gcx> {
-    pub symbols: Vec<SymbolP<'gcx>>,
+pub struct Maker<'ast> {
+    pub symbols: Vec<ItemP<'ast>>,
 }
 
-impl<'gcx> Maker<'gcx> {
+impl<'ast> Maker<'ast> {
     pub fn new() -> Self {
         Self {
             symbols: Vec::new(),
@@ -20,44 +20,45 @@ impl<'gcx> Maker<'gcx> {
 
     fn resolve_associated_fns<'src>(
         &self,
-        scope: Scope<'gcx, 'src>,
-    ) -> Result<&'gcx [SymbolP<'gcx>], SyntaxError<'src>> {
-        let mut associated_fns: Vec<SymbolP<'gcx>> = Vec::new();
-        let parse_ctx = scope.parse_ctx().unwrap();
+        scope: Scope<'ast, 'src>,
+    ) -> Result<&'ast [ItemP<'ast>], SyntaxError<'src>> {
+        let mut associated_fns: Vec<ItemP<'ast>> = Vec::new();
+        let ast_ctx = scope.parse_ctx().unwrap().ast_ctx;
 
         for (_name, item) in scope.inner().all_items() {
             match item {
-                Item::Function(symbol, _, _) => associated_fns.push(*symbol),
+                NamedItem::Function(symbol, _, _) => associated_fns.push(*symbol),
                 _ => {}
             }
         }
 
-        Ok(parse_ctx.alloc_slice(associated_fns.as_slice()))
+        let result = associated_fns.alloc_on(ast_ctx);
+        Ok(result)
     }
 
     fn make_struct<'src>(
         &mut self,
-        symbol: SymbolP<'gcx>,
+        symbol: ItemP<'ast>,
         _node: tree_sitter::Node<'src>,
-        scope: Scope<'gcx, 'src>,
-        impl_scope: Option<Scope<'gcx, 'src>>,
+        scope: Scope<'ast, 'src>,
+        impl_scope: Option<Scope<'ast, 'src>>,
     ) -> Result<(), SyntaxError<'src>> {
-        let mut placeholders: Vec<NodeId> = Vec::new();
-        let mut fields: Vec<Field<'gcx>> = Vec::new();
+        let mut placeholders: Vec<AstId> = Vec::new();
+        let mut fields: Vec<Field<'ast>> = Vec::new();
 
-        let parse_ctx = scope.parse_ctx().unwrap();
+        let ast_ctx = scope.parse_ctx().unwrap().ast_ctx;
 
         for (name, item) in scope.inner().all_items() {
             match item {
-                Item::Placeholder(placeholder) => {
+                NamedItem::Placeholder(placeholder) => {
                     placeholders.push(*placeholder);
                 }
-                Item::Field(node) => {
+                NamedItem::Field(node) => {
                     let mut visitor = TypeVisitor::new(scope.clone());
                     let field_type = visitor.visit(node.child_by_field_name("type").unwrap())?;
 
                     fields.push(Field {
-                        name: parse_ctx.alloc_str(name),
+                        name: name.alloc_on(ast_ctx),
                         ty: field_type,
                     });
                 }
@@ -67,12 +68,12 @@ impl<'gcx> Maker<'gcx> {
 
         let associated_fns = match impl_scope {
             Some(impl_scope) => self.resolve_associated_fns(impl_scope)?,
-            None => parse_ctx.alloc_slice(&[]),
+            None => (&[]).alloc_on(ast_ctx),
         };
 
-        let result = Symbol::Struct(Struct {
-            placeholders: parse_ctx.alloc_slice(placeholders.as_slice()),
-            fields: parse_ctx.alloc_slice(fields.as_slice()),
+        let result = Item::Struct(Struct {
+            placeholders: placeholders.alloc_on(ast_ctx),
+            fields: fields.alloc_on(ast_ctx),
             associated_fns,
         });
 
@@ -85,22 +86,22 @@ impl<'gcx> Maker<'gcx> {
 
     fn make_function_impl<'src>(
         &mut self,
-        symbol: SymbolP<'gcx>,
+        symbol: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
-        scope: Scope<'gcx, 'src>,
+        scope: Scope<'ast, 'src>,
         body: Option<tree_sitter::Node<'src>>,
     ) -> Result<(), SyntaxError<'src>> {
-        let mut placeholders: Vec<NodeId> = Vec::new();
-        let mut parameters: Vec<Parameter<'gcx>> = Vec::new();
+        let mut placeholders: Vec<AstId> = Vec::new();
+        let mut parameters: Vec<Parameter<'ast>> = Vec::new();
 
-        let parse_ctx = scope.parse_ctx().unwrap();
+        let ast_ctx = scope.parse_ctx().unwrap().ast_ctx;
 
         for (_name, item) in scope.inner().all_items() {
             match item {
-                Item::Placeholder(placeholder) => {
+                NamedItem::Placeholder(placeholder) => {
                     placeholders.push(*placeholder);
                 }
-                Item::Parameter(id, node) => {
+                NamedItem::Parameter(id, node) => {
                     let field_type = TypeVisitor::new(scope.clone())
                         .visit(node.child_by_field_name("type").unwrap())?;
 
@@ -117,15 +118,15 @@ impl<'gcx> Maker<'gcx> {
             .child_by_field_name("return_type")
             .map(|n| TypeVisitor::new(scope.clone()).visit(n))
             .transpose()?
-            .unwrap_or(parse_ctx.intern_type(Ty::Builtin(BuiltinType::Void)));
+            .unwrap_or(ast_ctx.intern_type(Ty::Builtin(BuiltinType::Void)));
 
         let function_body = body
             .map(|body| ExpressionVisitor::new(scope.clone()).visit(body))
             .transpose()?;
 
-        let result = Symbol::Function(Function {
-            placeholders: parse_ctx.alloc_slice(placeholders.as_slice()),
-            parameters: parse_ctx.alloc_slice(parameters.as_slice()),
+        let result = Item::Function(Function {
+            placeholders: placeholders.alloc_on(ast_ctx),
+            parameters: parameters.alloc_on(ast_ctx),
             return_type,
             body: function_body,
         });
@@ -139,10 +140,10 @@ impl<'gcx> Maker<'gcx> {
 
     fn make_type<'src>(
         &mut self,
-        symbol: SymbolP<'gcx>,
+        symbol: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
-        scope: Scope<'gcx, 'src>,
-        impl_scope: Option<Scope<'gcx, 'src>>,
+        scope: Scope<'ast, 'src>,
+        impl_scope: Option<Scope<'ast, 'src>>,
     ) -> Result<(), SyntaxError<'src>> {
         match node.kind() {
             "struct_definition" => self.make_struct(symbol, node, scope, impl_scope)?,
@@ -154,9 +155,9 @@ impl<'gcx> Maker<'gcx> {
 
     fn make_function<'src>(
         &mut self,
-        symbol: SymbolP<'gcx>,
+        symbol: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
-        scope: Scope<'gcx, 'src>,
+        scope: Scope<'ast, 'src>,
     ) -> Result<(), SyntaxError<'src>> {
         match node.kind() {
             "function_definition" => self.make_function_impl(
@@ -172,20 +173,20 @@ impl<'gcx> Maker<'gcx> {
         Ok(())
     }
 
-    pub fn make<'src>(&mut self, scope: Scope<'gcx, 'src>) -> Result<(), SyntaxError<'src>> {
+    pub fn make<'src>(&mut self, scope: Scope<'ast, 'src>) -> Result<(), SyntaxError<'src>> {
         for (_, item) in scope.inner().grouped_items() {
             match item {
-                [Item::Module(module)] => {
+                [NamedItem::Module(module)] => {
                     self.make(module.clone())?;
                 }
-                [Item::Type(symbol, node, scope), Item::Impl(impl_scope)] => {
+                [NamedItem::Type(symbol, node, scope), NamedItem::Impl(impl_scope)] => {
                     self.make_type(*symbol, *node, scope.clone(), Some(impl_scope.clone()))?;
                     self.make(impl_scope.clone())?;
                 }
-                [Item::Type(symbol, node, scope)] => {
+                [NamedItem::Type(symbol, node, scope)] => {
                     self.make_type(*symbol, *node, scope.clone(), None)?;
                 }
-                [Item::Function(symbol, node, scope)] => {
+                [NamedItem::Function(symbol, node, scope)] => {
                     self.make_function(*symbol, *node, scope.clone())?;
                 }
                 _ => {}

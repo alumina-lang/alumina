@@ -45,3 +45,21 @@ where
         })
     }
 }
+
+pub trait Allocatable {}
+
+pub trait ArenaAllocatable<'ctx, Allocator> {
+    type ReturnType;
+
+    fn alloc_on(self, allocator: &'ctx Allocator) -> Self::ReturnType;
+}
+
+macro_rules! impl_allocatable {
+    ($($t:ty),*) => {
+        $(
+            impl crate::common::Allocatable for $t {}
+        )*
+    }
+}
+
+pub(crate) use impl_allocatable;

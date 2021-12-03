@@ -3,23 +3,25 @@ use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 
 #[derive(PartialEq, Copy, Clone, Eq, Hash)]
-pub struct NodeId {
+pub struct AstId {
     pub id: usize,
 }
 
-impl Display for NodeId {
+impl Display for AstId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "${}", self.id)
     }
 }
 
-impl Debug for NodeId {
+impl Debug for AstId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         Display::fmt(self, f)
     }
 }
 
 use once_cell::unsync::OnceCell;
+
+use crate::common::impl_allocatable;
 
 #[derive(Debug, PartialEq, Copy, Clone, Eq, Hash)]
 pub enum BuiltinType {
@@ -43,36 +45,36 @@ pub enum BuiltinType {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-pub enum Ty<'gcx> {
-    Placeholder(NodeId),
-    Extern(NodeId),
-    NamedType(SymbolP<'gcx>),
+pub enum Ty<'ast> {
+    Placeholder(AstId),
+    Extern(AstId),
+    NamedType(ItemP<'ast>),
     Builtin(BuiltinType),
-    Pointer(TyP<'gcx>),
-    Array(TyP<'gcx>, usize),
-    Slice(TyP<'gcx>),
-    Tuple(&'gcx [TyP<'gcx>]),
-    Function(&'gcx [TyP<'gcx>], TyP<'gcx>),
-    GenericType(SymbolP<'gcx>, &'gcx [TyP<'gcx>]),
+    Pointer(TyP<'ast>),
+    Array(TyP<'ast>, usize),
+    Slice(TyP<'ast>),
+    Tuple(&'ast [TyP<'ast>]),
+    Function(&'ast [TyP<'ast>], TyP<'ast>),
+    GenericType(ItemP<'ast>, &'ast [TyP<'ast>]),
 }
 
-pub type TyP<'gcx> = &'gcx Ty<'gcx>;
+pub type TyP<'ast> = &'ast Ty<'ast>;
 
 #[derive(Debug)]
-pub enum Symbol<'gcx> {
-    Struct(Struct<'gcx>),
-    Function(Function<'gcx>),
+pub enum Item<'ast> {
+    Struct(Struct<'ast>),
+    Function(Function<'ast>),
 }
 
-pub type SymbolP<'gcx> = &'gcx SymbolCell<'gcx>;
+pub type ItemP<'ast> = &'ast ItemCell<'ast>;
 
-impl<'gcx> SymbolCell<'gcx> {
-    pub fn assign(&self, value: Symbol<'gcx>) {
+impl<'ast> ItemCell<'ast> {
+    pub fn assign(&self, value: Item<'ast>) {
         // Panic if we try to assign the same symbol twice
         self.contents.set(value).unwrap();
     }
 
-    pub fn get(&'gcx self) -> &'gcx Symbol<'gcx> {
+    pub fn get(&'ast self) -> &'ast Item<'ast> {
         self.contents.get().unwrap()
     }
 }
@@ -81,13 +83,13 @@ impl<'gcx> SymbolCell<'gcx> {
 /// This allows us to assign symbols to syntax early in name resolution and fill them in
 /// later.
 /// Symbols are immutable once they are assigned.
-pub struct SymbolCell<'gcx> {
-    pub id: NodeId,
-    pub debug_name: Option<&'gcx str>,
-    pub contents: OnceCell<Symbol<'gcx>>,
+pub struct ItemCell<'ast> {
+    pub id: AstId,
+    pub debug_name: Option<&'ast str>,
+    pub contents: OnceCell<Item<'ast>>,
 }
 
-impl Hash for SymbolCell<'_> {
+impl Hash for ItemCell<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.id.hash(state);
     }
@@ -95,15 +97,15 @@ impl Hash for SymbolCell<'_> {
 
 /// Symbols have reference semantics. Two structs with the same fields
 /// are not considered equal.
-impl PartialEq for SymbolCell<'_> {
+impl PartialEq for ItemCell<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
 }
 
-impl Eq for SymbolCell<'_> {}
+impl Eq for ItemCell<'_> {}
 
-impl Debug for SymbolCell<'_> {
+impl Debug for ItemCell<'_> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         let debug_name = self.debug_name.unwrap_or("<unnamed>");
 
@@ -120,43 +122,43 @@ impl Debug for SymbolCell<'_> {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Field<'gcx> {
-    pub name: &'gcx str,
-    pub ty: TyP<'gcx>,
+pub struct Field<'ast> {
+    pub name: &'ast str,
+    pub ty: TyP<'ast>,
 }
 
 #[derive(Debug)]
-pub struct Struct<'gcx> {
-    pub placeholders: &'gcx [NodeId],
-    pub associated_fns: &'gcx [SymbolP<'gcx>],
-    pub fields: &'gcx [Field<'gcx>],
+pub struct Struct<'ast> {
+    pub placeholders: &'ast [AstId],
+    pub associated_fns: &'ast [ItemP<'ast>],
+    pub fields: &'ast [Field<'ast>],
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Parameter<'gcx> {
-    pub id: NodeId,
-    pub ty: TyP<'gcx>,
+pub struct Parameter<'ast> {
+    pub id: AstId,
+    pub ty: TyP<'ast>,
 }
 
 #[derive(Debug)]
-pub struct Function<'gcx> {
-    pub placeholders: &'gcx [NodeId],
-    pub parameters: &'gcx [Parameter<'gcx>],
-    pub return_type: TyP<'gcx>,
-    pub body: Option<ExprP<'gcx>>,
+pub struct Function<'ast> {
+    pub placeholders: &'ast [AstId],
+    pub parameters: &'ast [Parameter<'ast>],
+    pub return_type: TyP<'ast>,
+    pub body: Option<ExprP<'ast>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-pub struct LetDeclaration<'gcx> {
-    pub id: NodeId,
-    pub typ: Option<TyP<'gcx>>,
-    pub value: Option<ExprP<'gcx>>,
+pub struct LetDeclaration<'ast> {
+    pub id: AstId,
+    pub typ: Option<TyP<'ast>>,
+    pub value: Option<ExprP<'ast>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-pub enum Statement<'gcx> {
-    Expression(ExprP<'gcx>),
-    LetDeclaration(LetDeclaration<'gcx>),
+pub enum Statement<'ast> {
+    Expression(ExprP<'ast>),
+    LetDeclaration(LetDeclaration<'ast>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
@@ -188,39 +190,49 @@ pub enum UnOp {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-pub enum Lit<'gcx> {
-    Str(&'gcx str),
+pub enum Lit<'ast> {
+    Str(&'ast str),
     Byte(u8),
     Int(u128),
-    Float(&'gcx str),
+    Float(&'ast str),
     Bool(bool),
     Null,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-pub enum Expr<'gcx> {
-    Block(&'gcx [Statement<'gcx>], ExprP<'gcx>),
-    Binary(ExprP<'gcx>, BinOp, ExprP<'gcx>),
-    Call(ExprP<'gcx>, &'gcx [ExprP<'gcx>]),
-    Function(SymbolP<'gcx>),
-    Ref(ExprP<'gcx>),
-    Deref(ExprP<'gcx>),
-    Unary(UnOp, ExprP<'gcx>),
-    Assign(ExprP<'gcx>, ExprP<'gcx>),
-    AssignOp(BinOp, ExprP<'gcx>, ExprP<'gcx>),
-    Local(NodeId),
-    Lit(Lit<'gcx>),
-    Tuple(&'gcx [ExprP<'gcx>]),
-    Field(ExprP<'gcx>, &'gcx str),
-    TupleIndex(ExprP<'gcx>, usize),
-    If(ExprP<'gcx>, ExprP<'gcx>, ExprP<'gcx>),
-    Cast(ExprP<'gcx>, TyP<'gcx>),
+pub enum Expr<'ast> {
+    Block(&'ast [Statement<'ast>], ExprP<'ast>),
+    Binary(ExprP<'ast>, BinOp, ExprP<'ast>),
+    Call(ExprP<'ast>, &'ast [ExprP<'ast>]),
+    Function(ItemP<'ast>),
+    Ref(ExprP<'ast>),
+    Deref(ExprP<'ast>),
+    Unary(UnOp, ExprP<'ast>),
+    Assign(ExprP<'ast>, ExprP<'ast>),
+    AssignOp(BinOp, ExprP<'ast>, ExprP<'ast>),
+    Local(AstId),
+    Lit(Lit<'ast>),
+    Tuple(&'ast [ExprP<'ast>]),
+    Field(ExprP<'ast>, &'ast str),
+    TupleIndex(ExprP<'ast>, usize),
+    If(ExprP<'ast>, ExprP<'ast>, ExprP<'ast>),
+    Cast(ExprP<'ast>, TyP<'ast>),
 
     // Generics support
-    DeferredFunction(NodeId, &'gcx str),
-    GenericFunction(ExprP<'gcx>, &'gcx [TyP<'gcx>]),
+    DeferredFunction(AstId, &'ast str),
+    GenericFunction(ExprP<'ast>, &'ast [TyP<'ast>]),
 
     Void,
 }
 
-pub type ExprP<'gcx> = &'gcx Expr<'gcx>;
+pub type ExprP<'ast> = &'ast Expr<'ast>;
+
+impl_allocatable!(
+    Expr<'_>,
+    Ty<'_>,
+    Statement<'_>,
+    Field<'_>,
+    Parameter<'_>,
+    ItemCell<'_>,
+    AstId
+);

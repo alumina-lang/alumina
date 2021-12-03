@@ -1,19 +1,19 @@
 use crate::common::{SyntaxError, ToSyntaxError};
 
-use crate::name_resolution::scope::{Item, Scope, ScopeType};
+use crate::name_resolution::scope::{NamedItem, Scope, ScopeType};
 use crate::parser::{AluminaVisitor, ParseCtx};
 
 use std::result::Result;
 use tree_sitter::Node;
 
 use super::{UseClauseVisitor, VisitorExt};
-pub struct FirstPassVisitor<'gcx, 'src> {
-    scope: Scope<'gcx, 'src>,
-    parse_ctx: ParseCtx<'gcx, 'src>,
+pub struct FirstPassVisitor<'ast, 'src> {
+    scope: Scope<'ast, 'src>,
+    parse_ctx: &'src ParseCtx<'ast, 'src>,
 }
 
-impl<'gcx, 'src> FirstPassVisitor<'gcx, 'src> {
-    pub fn new(scope: Scope<'gcx, 'src>) -> Self {
+impl<'ast, 'src> FirstPassVisitor<'ast, 'src> {
+    pub fn new(scope: Scope<'ast, 'src>) -> Self {
         Self {
             parse_ctx: scope
                 .parse_ctx()
@@ -31,14 +31,14 @@ macro_rules! with_child_scope {
     };
 }
 
-impl<'gcx, 'src> FirstPassVisitor<'gcx, 'src> {
+impl<'ast, 'src> FirstPassVisitor<'ast, 'src> {
     fn parse_name(&self, node: Node<'src>) -> &'src str {
         let name_node = node.child_by_field_name("name").unwrap();
         self.parse_ctx.node_text(name_node)
     }
 }
 
-impl<'gcx, 'src> AluminaVisitor<'src> for FirstPassVisitor<'gcx, 'src> {
+impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     type ReturnType = Result<(), SyntaxError<'src>>;
 
     fn visit_source_file(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
@@ -51,7 +51,7 @@ impl<'gcx, 'src> AluminaVisitor<'src> for FirstPassVisitor<'gcx, 'src> {
         let child_scope = self.scope.named_child(ScopeType::Module, name);
 
         self.scope
-            .add_item(name, Item::Module(child_scope.clone()))
+            .add_item(name, NamedItem::Module(child_scope.clone()))
             .to_syntax_error(node)?;
 
         with_child_scope!(self, child_scope, {
@@ -69,8 +69,8 @@ impl<'gcx, 'src> AluminaVisitor<'src> for FirstPassVisitor<'gcx, 'src> {
         self.scope
             .add_item(
                 name,
-                Item::Type(
-                    self.parse_ctx.make_symbol(Some(name)),
+                NamedItem::Type(
+                    self.parse_ctx.ast_ctx.make_symbol(Some(name)),
                     node,
                     child_scope.clone(),
                 ),
@@ -93,7 +93,7 @@ impl<'gcx, 'src> AluminaVisitor<'src> for FirstPassVisitor<'gcx, 'src> {
         let child_scope = self.scope.named_child(ScopeType::Impl, name);
 
         self.scope
-            .add_item(name, Item::Impl(child_scope.clone()))
+            .add_item(name, NamedItem::Impl(child_scope.clone()))
             .to_syntax_error(node)?;
 
         with_child_scope!(self, child_scope, {
@@ -110,8 +110,8 @@ impl<'gcx, 'src> AluminaVisitor<'src> for FirstPassVisitor<'gcx, 'src> {
         self.scope
             .add_item(
                 name,
-                Item::Type(
-                    self.parse_ctx.make_symbol(Some(name)),
+                NamedItem::Type(
+                    self.parse_ctx.ast_ctx.make_symbol(Some(name)),
                     node,
                     child_scope.clone(),
                 ),
@@ -128,7 +128,7 @@ impl<'gcx, 'src> AluminaVisitor<'src> for FirstPassVisitor<'gcx, 'src> {
     fn visit_struct_field(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
         let name = self.parse_name(node);
         self.scope
-            .add_item(name, Item::Field(node))
+            .add_item(name, NamedItem::Field(node))
             .to_syntax_error(node)?;
 
         Ok(())
@@ -141,8 +141,8 @@ impl<'gcx, 'src> AluminaVisitor<'src> for FirstPassVisitor<'gcx, 'src> {
         self.scope
             .add_item(
                 name,
-                Item::Function(
-                    self.parse_ctx.make_symbol(Some(name)),
+                NamedItem::Function(
+                    self.parse_ctx.ast_ctx.make_symbol(Some(name)),
                     node,
                     child_scope.clone(),
                 ),
@@ -169,8 +169,8 @@ impl<'gcx, 'src> AluminaVisitor<'src> for FirstPassVisitor<'gcx, 'src> {
         self.scope
             .add_item(
                 name,
-                Item::Function(
-                    self.parse_ctx.make_symbol(Some(name)),
+                NamedItem::Function(
+                    self.parse_ctx.ast_ctx.make_symbol(Some(name)),
                     node,
                     child_scope.clone(),
                 ),
@@ -192,7 +192,7 @@ impl<'gcx, 'src> AluminaVisitor<'src> for FirstPassVisitor<'gcx, 'src> {
         for argument in node.children_by_field_name("argument", &mut cursor) {
             let name = self.parse_ctx.node_text(argument);
             self.scope
-                .add_item(name, Item::Placeholder(self.parse_ctx.make_id()))
+                .add_item(name, NamedItem::Placeholder(self.parse_ctx.make_id()))
                 .to_syntax_error(node)?;
         }
 
@@ -203,7 +203,7 @@ impl<'gcx, 'src> AluminaVisitor<'src> for FirstPassVisitor<'gcx, 'src> {
         let name = self.parse_name(node);
 
         self.scope
-            .add_item(name, Item::Parameter(self.parse_ctx.make_id(), node))
+            .add_item(name, NamedItem::Parameter(self.parse_ctx.make_id(), node))
             .to_syntax_error(node)?;
 
         Ok(())
@@ -216,7 +216,7 @@ impl<'gcx, 'src> AluminaVisitor<'src> for FirstPassVisitor<'gcx, 'src> {
     fn visit_enum_item(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
         let name = self.parse_name(node);
         self.scope
-            .add_item(name, Item::Field(node))
+            .add_item(name, NamedItem::Field(node))
             .to_syntax_error(node)?;
 
         Ok(())

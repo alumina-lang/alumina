@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    ast::{NodeId, SymbolP},
+    ast::{AstId, ItemP},
     common::AluminaError,
     parser::ParseCtx,
 };
@@ -15,19 +15,16 @@ use tree_sitter::Node;
 use super::path::{Path, PathSegment};
 
 #[derive(Debug, Clone)]
-pub enum Item<'gcx, 'src> {
+pub enum NamedItem<'ast, 'src> {
     Alias(Path<'src>),
-
-    Function(SymbolP<'gcx>, Node<'src>, Scope<'gcx, 'src>),
-    Type(SymbolP<'gcx>, Node<'src>, Scope<'gcx, 'src>),
-    Module(Scope<'gcx, 'src>),
-    Impl(Scope<'gcx, 'src>),
-    Placeholder(NodeId),
-
+    Function(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
+    Type(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
+    Module(Scope<'ast, 'src>),
+    Impl(Scope<'ast, 'src>),
+    Placeholder(AstId),
     Field(Node<'src>),
-
-    Variable(NodeId),
-    Parameter(NodeId, Node<'src>),
+    Variable(AstId),
+    Parameter(AstId, Node<'src>),
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -42,36 +39,36 @@ pub enum ScopeType {
     Block,
 }
 
-pub struct ScopeInner<'gcx, 'src> {
+pub struct ScopeInner<'ast, 'src> {
     pub r#type: ScopeType,
     pub path: Path<'src>,
 
     // We use IndexMap to preserve the order of items in the scope. While not important for
     // name resolution, it is important for e.g. struct layout, function signature, generic
     // parameter ordering, etc.
-    pub items: IndexMap<&'src str, Vec<Item<'gcx, 'src>>>,
-    pub parent: Option<Weak<RefCell<ScopeInner<'gcx, 'src>>>>,
+    pub items: IndexMap<&'src str, Vec<NamedItem<'ast, 'src>>>,
+    pub parent: Option<Weak<RefCell<ScopeInner<'ast, 'src>>>>,
 
-    parse_context: Option<ParseCtx<'gcx, 'src>>,
+    parse_context: Option<&'src ParseCtx<'ast, 'src>>,
 }
 
-impl<'gcx, 'src> ScopeInner<'gcx, 'src> {
-    pub fn all_items(&self) -> impl Iterator<Item = (&'src str, &'_ Item<'gcx, 'src>)> {
+impl<'ast, 'src> ScopeInner<'ast, 'src> {
+    pub fn all_items(&self) -> impl Iterator<Item = (&'src str, &'_ NamedItem<'ast, 'src>)> {
         self.items
             .iter()
             .flat_map(|(n, its)| its.iter().map(|i| (*n, i)))
     }
 
-    pub fn grouped_items(&self) -> impl Iterator<Item = (&'src str, &'_ [Item<'gcx, 'src>])> {
+    pub fn grouped_items(&self) -> impl Iterator<Item = (&'src str, &'_ [NamedItem<'ast, 'src>])> {
         self.items.iter().map(|(n, its)| (*n, its.as_slice()))
     }
 
-    pub fn items_with_name(&self, name: &str) -> impl Iterator<Item = &Item<'gcx, 'src>> {
+    pub fn items_with_name(&self, name: &str) -> impl Iterator<Item = &NamedItem<'ast, 'src>> {
         self.items.get(name).into_iter().flat_map(|its| its.iter())
     }
 }
 
-impl<'gcx, 'src> Debug for ScopeInner<'gcx, 'src> {
+impl<'ast, 'src> Debug for ScopeInner<'ast, 'src> {
     fn fmt(&self, fmt: &mut Formatter) -> Result<(), std::fmt::Error> {
         let mut builder = fmt.debug_struct(&format!("{:?}Scope({:?})", self.r#type, self.path));
         for (name, items) in &self.items {
@@ -84,21 +81,21 @@ impl<'gcx, 'src> Debug for ScopeInner<'gcx, 'src> {
 }
 
 #[derive(Clone)]
-pub struct Scope<'gcx, 'src>(pub Rc<RefCell<ScopeInner<'gcx, 'src>>>);
+pub struct Scope<'ast, 'src>(pub Rc<RefCell<ScopeInner<'ast, 'src>>>);
 
-impl<'gcx, 'src> From<Scope<'gcx, 'src>> for Weak<RefCell<ScopeInner<'gcx, 'src>>> {
-    fn from(scope: Scope<'gcx, 'src>) -> Self {
+impl<'ast, 'src> From<Scope<'ast, 'src>> for Weak<RefCell<ScopeInner<'ast, 'src>>> {
+    fn from(scope: Scope<'ast, 'src>) -> Self {
         Rc::downgrade(&scope.0)
     }
 }
 
-impl<'gcx, 'src> Debug for Scope<'gcx, 'src> {
+impl<'ast, 'src> Debug for Scope<'ast, 'src> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         self.inner().fmt(fmt)
     }
 }
 
-impl<'gcx, 'src> Scope<'gcx, 'src> {
+impl<'ast, 'src> Scope<'ast, 'src> {
     pub fn new_root() -> Self {
         Scope(Rc::new(RefCell::new(ScopeInner {
             r#type: ScopeType::Root,
@@ -109,11 +106,11 @@ impl<'gcx, 'src> Scope<'gcx, 'src> {
         })))
     }
 
-    pub fn inner(&self) -> Ref<'_, ScopeInner<'gcx, 'src>> {
+    pub fn inner(&self) -> Ref<'_, ScopeInner<'ast, 'src>> {
         self.0.borrow()
     }
 
-    pub fn parse_ctx(&self) -> Option<ParseCtx<'gcx, 'src>> {
+    pub fn parse_ctx(&self) -> Option<&'src ParseCtx<'ast, 'src>> {
         self.inner().parse_context.clone()
     }
 
@@ -147,7 +144,7 @@ impl<'gcx, 'src> Scope<'gcx, 'src> {
         &self,
         r#type: ScopeType,
         name: &'src str,
-        parse_ctx: ParseCtx<'gcx, 'src>,
+        parse_ctx: &'src ParseCtx<'ast, 'src>,
     ) -> Self {
         let new_path = self.inner().path.extend(PathSegment(name));
         Scope(Rc::new(RefCell::new(ScopeInner {
@@ -159,7 +156,11 @@ impl<'gcx, 'src> Scope<'gcx, 'src> {
         })))
     }
 
-    pub fn add_item(&self, name: &'src str, item: Item<'gcx, 'src>) -> Result<(), AluminaError> {
+    pub fn add_item(
+        &self,
+        name: &'src str,
+        item: NamedItem<'ast, 'src>,
+    ) -> Result<(), AluminaError> {
         let mut current_scope = self.0.borrow_mut();
         let scope_type = current_scope.r#type;
 
@@ -177,15 +178,15 @@ impl<'gcx, 'src> Scope<'gcx, 'src> {
                     existing[0] = item;
                     return Ok(());
                 } else if existing.len() == 1
-                    && ((matches!(existing[0], Item::Type(_, _, _))
-                        && matches!(item, Item::Impl(_)))
-                        || (matches!(existing[0], Item::Impl(_))
-                            && matches!(item, Item::Type(_, _, _))))
+                    && ((matches!(existing[0], NamedItem::Type(_, _, _))
+                        && matches!(item, NamedItem::Impl(_)))
+                        || (matches!(existing[0], NamedItem::Impl(_))
+                            && matches!(item, NamedItem::Type(_, _, _))))
                 {
                     existing.push(item);
                     existing.sort_by_key(|i| match i {
-                        Item::Type(_, _, _) => 0,
-                        Item::Impl(_) => 1,
+                        NamedItem::Type(_, _, _) => 0,
+                        NamedItem::Impl(_) => 1,
                         _ => unreachable!(),
                     });
                     return Ok(());

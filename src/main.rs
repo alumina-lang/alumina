@@ -4,19 +4,18 @@ mod ast;
 mod codegen;
 mod common;
 mod context;
+mod ir;
 mod name_resolution;
 mod parser;
 mod utils;
 mod visitors;
 
-use ast::Symbol;
-
-use parser::ParseCtx;
+use ast::Item;
 
 use crate::ast::Function;
-use crate::context::GlobalCtx;
-use crate::name_resolution::scope::{Item, Scope, ScopeType};
-use crate::parser::AluminaVisitor;
+use crate::context::AstCtx;
+use crate::name_resolution::scope::{NamedItem, Scope, ScopeType};
+use crate::parser::{AluminaVisitor, ParseCtx};
 use crate::utils::NodeWrapper;
 use crate::visitors::maker::Maker;
 use crate::visitors::pass1::FirstPassVisitor;
@@ -30,13 +29,13 @@ struct CompilationUnit {
 }
 
 fn compile(units: Vec<CompilationUnit>) {
-    let ctx = GlobalCtx::new();
+    let ctx = AstCtx::new();
 
     let root_scope = Scope::new_root();
     let crate_scope = root_scope.named_child(ScopeType::Crate, "my_crate");
 
     root_scope
-        .add_item("my_crate", Item::Module(crate_scope.clone()))
+        .add_item("my_crate", NamedItem::Module(crate_scope.clone()))
         .unwrap();
 
     let parse_contexts: Vec<_> = units
@@ -51,7 +50,7 @@ fn compile(units: Vec<CompilationUnit>) {
             crate_scope.named_child_with_ctx(ScopeType::Module, &units[i].name, ctx.clone());
 
         crate_scope
-            .add_item(&units[i].name, Item::Module(module_scope.clone()))
+            .add_item(&units[i].name, NamedItem::Module(module_scope.clone()))
             .unwrap();
 
         let mut visitor = FirstPassVisitor::new(module_scope.clone());
@@ -69,7 +68,7 @@ fn compile(units: Vec<CompilationUnit>) {
     println!(
         "{:#?}",
         match maker.symbols.last().unwrap().contents.get().unwrap() {
-            Symbol::Function(Function { body, .. }) => body,
+            Item::Function(Function { body, .. }) => body,
             _ => unreachable!(),
         }
     );

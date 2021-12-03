@@ -1,5 +1,6 @@
 use crate::ast::{BinOp, Expr, ExprP, LetDeclaration, Lit, Statement, UnOp};
 use crate::common::AluminaError;
+use crate::common::ArenaAllocatable;
 use crate::name_resolution::resolver::ItemResolution;
 use crate::name_resolution::scope::ScopeType;
 use crate::parser::ParseCtx;
@@ -8,7 +9,7 @@ use crate::{
     common::{SyntaxError, ToSyntaxError},
     name_resolution::{
         resolver::NameResolver,
-        scope::{Item, Scope},
+        scope::{NamedItem, Scope},
     },
     visitors::ScopedPathVisitor,
 };
@@ -26,13 +27,13 @@ macro_rules! with_block_scope {
     }};
 }
 
-pub struct ExpressionVisitor<'gcx, 'src> {
-    parse_ctx: ParseCtx<'gcx, 'src>,
-    scope: Scope<'gcx, 'src>,
+pub struct ExpressionVisitor<'ast, 'src> {
+    parse_ctx: &'src ParseCtx<'ast, 'src>,
+    scope: Scope<'ast, 'src>,
 }
 
-impl<'gcx, 'src> ExpressionVisitor<'gcx, 'src> {
-    pub fn new(scope: Scope<'gcx, 'src>) -> Self {
+impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
+    pub fn new(scope: Scope<'ast, 'src>) -> Self {
         ExpressionVisitor {
             parse_ctx: scope
                 .parse_ctx()
@@ -44,7 +45,7 @@ impl<'gcx, 'src> ExpressionVisitor<'gcx, 'src> {
     fn visit_ref(
         &mut self,
         node: tree_sitter::Node<'src>,
-    ) -> Result<ExprP<'gcx>, SyntaxError<'src>> {
+    ) -> Result<ExprP<'ast>, SyntaxError<'src>> {
         let mut visitor = ScopedPathVisitor::new(self.scope.clone());
         let path = visitor.visit(node)?;
         let mut resolver = NameResolver::new();
@@ -53,25 +54,25 @@ impl<'gcx, 'src> ExpressionVisitor<'gcx, 'src> {
             .resolve_item(self.scope.clone(), path)
             .to_syntax_error(node)?
         {
-            ItemResolution::Item(Item::Function(fun, _, _)) => Expr::Function(fun),
-            ItemResolution::Item(Item::Variable(var)) => Expr::Local(var),
-            ItemResolution::Item(Item::Parameter(var, _)) => Expr::Local(var),
+            ItemResolution::Item(NamedItem::Function(fun, _, _)) => Expr::Function(fun),
+            ItemResolution::Item(NamedItem::Variable(var)) => Expr::Local(var),
+            ItemResolution::Item(NamedItem::Parameter(var, _)) => Expr::Local(var),
             ItemResolution::Defered(sym, name) => {
-                let name = self.parse_ctx.alloc_str(name.0);
+                let name = name.0.alloc_on(self.parse_ctx.ast_ctx);
                 Expr::DeferredFunction(sym, name)
             }
             a => panic!("{:?}", a),
         };
 
-        Ok(self.parse_ctx.alloc_expr(expr))
+        Ok((expr.alloc_on(self.parse_ctx.ast_ctx)))
     }
 }
 
-impl<'gcx, 'src> ExpressionVisitor<'gcx, 'src> {
+impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
     fn visit_statement(
         &mut self,
         node: tree_sitter::Node<'src>,
-    ) -> Result<Option<Statement<'gcx>>, SyntaxError<'src>> {
+    ) -> Result<Option<Statement<'ast>>, SyntaxError<'src>> {
         let result = match node.kind() {
             "empty_statement" => None,
             "let_declaration" => {
@@ -90,7 +91,7 @@ impl<'gcx, 'src> ExpressionVisitor<'gcx, 'src> {
                     .transpose()?;
 
                 self.scope
-                    .add_item(name, Item::Variable(id))
+                    .add_item(name, NamedItem::Variable(id))
                     .to_syntax_error(node)?;
 
                 let let_decl = LetDeclaration { id, typ, value };
@@ -112,8 +113,8 @@ impl<'gcx, 'src> ExpressionVisitor<'gcx, 'src> {
     }
 }
 
-impl<'gcx, 'src> AluminaVisitor<'src> for ExpressionVisitor<'gcx, 'src> {
-    type ReturnType = Result<ExprP<'gcx>, SyntaxError<'src>>;
+impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
+    type ReturnType = Result<ExprP<'ast>, SyntaxError<'src>>;
 
     fn visit_block(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let mut cursor = node.walk();
@@ -128,12 +129,14 @@ impl<'gcx, 'src> AluminaVisitor<'src> for ExpressionVisitor<'gcx, 'src> {
 
             match node.child_by_field_name("result") {
                 Some(return_expression) => self.visit(return_expression)?,
-                None => self.parse_ctx.alloc_expr(Expr::Void),
+                None => Expr::Void.alloc_on(self.parse_ctx.ast_ctx),
             }
         });
 
-        let result = Expr::Block(self.parse_ctx.alloc_range(statements), return_expression);
-        Ok(self.parse_ctx.alloc_expr(result))
+        let statements = statements.alloc_on(self.parse_ctx.ast_ctx);
+        let result = Expr::Block(statements, return_expression);
+
+        Ok(result.alloc_on(self.parse_ctx.ast_ctx))
     }
 
     fn visit_integer_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -144,7 +147,7 @@ impl<'gcx, 'src> AluminaVisitor<'src> for ExpressionVisitor<'gcx, 'src> {
             .map_err(|_| AluminaError::InvalidLiteral)
             .to_syntax_error(node)?;
 
-        Ok(self.parse_ctx.alloc_expr(Expr::Lit(Lit::Int(value))))
+        Ok(Expr::Lit(Lit::Int(value)).alloc_on(self.parse_ctx.ast_ctx))
     }
 
     fn visit_boolean_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -155,11 +158,11 @@ impl<'gcx, 'src> AluminaVisitor<'src> for ExpressionVisitor<'gcx, 'src> {
             .map_err(|_| AluminaError::InvalidLiteral)
             .to_syntax_error(node)?;
 
-        Ok(self.parse_ctx.alloc_expr(Expr::Lit(Lit::Bool(value))))
+        Ok(Expr::Lit(Lit::Bool(value)).alloc_on(self.parse_ctx.ast_ctx))
     }
 
     fn visit_void_literal(&mut self, _node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        Ok(self.parse_ctx.alloc_expr(Expr::Void))
+        Ok(Expr::Void.alloc_on(self.parse_ctx.ast_ctx))
     }
 
     fn visit_parenthesized_expression(
@@ -201,14 +204,14 @@ impl<'gcx, 'src> AluminaVisitor<'src> for ExpressionVisitor<'gcx, 'src> {
         };
         let rhs = self.visit(node.child_by_field_name("right").unwrap())?;
 
-        Ok(self.parse_ctx.alloc_expr(Expr::Binary(lhs, op, rhs)))
+        Ok(Expr::Binary(lhs, op, rhs).alloc_on(self.parse_ctx.ast_ctx))
     }
 
     fn visit_assignment_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let lhs = self.visit(node.child_by_field_name("left").unwrap())?;
         let rhs = self.visit(node.child_by_field_name("right").unwrap())?;
 
-        Ok(self.parse_ctx.alloc_expr(Expr::Assign(lhs, rhs)))
+        Ok(Expr::Assign(lhs, rhs).alloc_on(self.parse_ctx.ast_ctx))
     }
 
     fn visit_compound_assignment_expr(
@@ -235,8 +238,9 @@ impl<'gcx, 'src> AluminaVisitor<'src> for ExpressionVisitor<'gcx, 'src> {
             _ => unimplemented!(),
         };
         let rhs = self.visit(node.child_by_field_name("right").unwrap())?;
+        let result = Expr::AssignOp(op, lhs, rhs);
 
-        Ok(self.parse_ctx.alloc_expr(Expr::AssignOp(op, lhs, rhs)))
+        Ok(result.alloc_on(self.parse_ctx.ast_ctx))
     }
 
     fn visit_call_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -249,8 +253,10 @@ impl<'gcx, 'src> AluminaVisitor<'src> for ExpressionVisitor<'gcx, 'src> {
             arguments.push(self.visit(node)?);
         }
 
-        let result = Expr::Call(func, self.parse_ctx.alloc_range(arguments));
-        Ok(self.parse_ctx.alloc_expr(result))
+        let arguments = arguments.alloc_on(self.parse_ctx.ast_ctx);
+        let result = Expr::Call(func, arguments);
+
+        Ok(result.alloc_on(self.parse_ctx.ast_ctx))
     }
 
     fn visit_tuple_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -262,11 +268,12 @@ impl<'gcx, 'src> AluminaVisitor<'src> for ExpressionVisitor<'gcx, 'src> {
         }
 
         let result = match elements[..] {
-            [] => self.parse_ctx.alloc_expr(Expr::Void),
+            [] => Expr::Void.alloc_on(self.parse_ctx.ast_ctx),
             [e] => e,
-            _ => self
-                .parse_ctx
-                .alloc_expr(Expr::Tuple(self.parse_ctx.alloc_range(elements))),
+            _ => {
+                let elements = elements.alloc_on(self.parse_ctx.ast_ctx);
+                Expr::Tuple(elements).alloc_on(self.parse_ctx.ast_ctx)
+            }
         };
 
         Ok(result)
@@ -290,17 +297,17 @@ impl<'gcx, 'src> AluminaVisitor<'src> for ExpressionVisitor<'gcx, 'src> {
             "!" => UnOp::Not,
             _ => unimplemented!(),
         };
-        Ok(self.parse_ctx.alloc_expr(Expr::Unary(op, value)))
+        Ok((Expr::Unary(op, value).alloc_on(self.parse_ctx.ast_ctx)))
     }
 
     fn visit_reference_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let value = self.visit(node.child_by_field_name("value").unwrap())?;
-        Ok(self.parse_ctx.alloc_expr(Expr::Ref(value)))
+        Ok((Expr::Ref(value).alloc_on(self.parse_ctx.ast_ctx)))
     }
 
     fn visit_dereference_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let value = self.visit(node.child_by_field_name("value").unwrap())?;
-        Ok(self.parse_ctx.alloc_expr(Expr::Deref(value)))
+        Ok((Expr::Deref(value).alloc_on(self.parse_ctx.ast_ctx)))
     }
 
     fn visit_field_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -310,12 +317,12 @@ impl<'gcx, 'src> AluminaVisitor<'src> for ExpressionVisitor<'gcx, 'src> {
         let field_value = self.parse_ctx.node_text(field);
 
         let result = match field.kind() {
-            "identifier" => Expr::Field(value, self.parse_ctx.alloc_str(field_value)),
+            "identifier" => Expr::Field(value, field_value.alloc_on(self.parse_ctx.ast_ctx)),
             "integer_literal" => Expr::TupleIndex(value, field_value.parse().unwrap()),
             _ => unreachable!(),
         };
 
-        Ok(self.parse_ctx.alloc_expr(result))
+        Ok(result.alloc_on(self.parse_ctx.ast_ctx))
     }
 
     fn visit_if_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -323,12 +330,11 @@ impl<'gcx, 'src> AluminaVisitor<'src> for ExpressionVisitor<'gcx, 'src> {
         let consequence = self.visit(node.child_by_field_name("consequence").unwrap())?;
         let alternative = match node.child_by_field_name("alternative") {
             Some(node) => self.visit(node)?,
-            None => self.parse_ctx.alloc_expr(Expr::Void),
+            None => Expr::Void.alloc_on(self.parse_ctx.ast_ctx),
         };
 
-        Ok(self
-            .parse_ctx
-            .alloc_expr(Expr::If(condition, consequence, alternative)))
+        let result = Expr::If(condition, consequence, alternative);
+        Ok(result.alloc_on(self.parse_ctx.ast_ctx))
     }
 
     fn visit_generic_function(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -341,12 +347,11 @@ impl<'gcx, 'src> AluminaVisitor<'src> for ExpressionVisitor<'gcx, 'src> {
         let arguments = arguments_node
             .children_by_field_name("type", &mut cursor)
             .map(|child| type_visitor.visit(child))
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>()?
+            .alloc_on(self.parse_ctx.ast_ctx);
 
-        Ok(self.parse_ctx.alloc_expr(Expr::GenericFunction(
-            value,
-            self.parse_ctx.alloc_slice(arguments.as_slice()),
-        )))
+        let result = Expr::GenericFunction(value, arguments);
+        Ok(result.alloc_on(self.parse_ctx.ast_ctx))
     }
 
     fn visit_type_cast_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -354,7 +359,7 @@ impl<'gcx, 'src> AluminaVisitor<'src> for ExpressionVisitor<'gcx, 'src> {
         let typ = TypeVisitor::new(self.scope.clone())
             .visit(node.child_by_field_name("type").unwrap())?;
 
-        Ok(self.parse_ctx.alloc_expr(Expr::Cast(value, typ)))
+        Ok((Expr::Cast(value, typ).alloc_on(self.parse_ctx.ast_ctx)))
     }
 
     fn visit_struct_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -369,7 +374,7 @@ impl<'gcx, 'src> AluminaVisitor<'src> for ExpressionVisitor<'gcx, 'src> {
             value: None,
         })];
 
-        let temporary_p = self.parse_ctx.alloc_expr(Expr::Local(temporary));
+        let temporary_p = Expr::Local(temporary).alloc_on(self.parse_ctx.ast_ctx);
 
         with_block_scope!(self, {
             let mut cursor = initializer_node.walk();
@@ -377,22 +382,23 @@ impl<'gcx, 'src> AluminaVisitor<'src> for ExpressionVisitor<'gcx, 'src> {
             for node in initializer_node.children_by_field_name("item", &mut cursor) {
                 let field = self
                     .parse_ctx
-                    .node_text(node.child_by_field_name("field").unwrap());
+                    .node_text(node.child_by_field_name("field").unwrap())
+                    .alloc_on(self.parse_ctx.ast_ctx);
                 let value = self.visit(node.child_by_field_name("value").unwrap())?;
 
                 statements.push(Statement::Expression(
-                    self.parse_ctx.alloc_expr(Expr::Assign(
-                        self.parse_ctx
-                            .alloc_expr(Expr::Field(temporary_p, self.parse_ctx.alloc_str(field))),
+                    Expr::Assign(
+                        Expr::Field(temporary_p, field).alloc_on(self.parse_ctx.ast_ctx),
                         value,
-                    )),
+                    )
+                    .alloc_on(self.parse_ctx.ast_ctx),
                 ));
             }
         });
 
-        Ok(self.parse_ctx.alloc_expr(Expr::Block(
-            self.parse_ctx.alloc_range(statements),
-            temporary_p,
-        )))
+        Ok(
+            Expr::Block(statements.alloc_on(self.parse_ctx.ast_ctx), temporary_p)
+                .alloc_on(self.parse_ctx.ast_ctx),
+        )
     }
 }

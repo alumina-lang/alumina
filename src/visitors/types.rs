@@ -1,4 +1,5 @@
-use crate::common::AluminaError;
+use crate::common::{AluminaError, ArenaAllocatable};
+use crate::context::AstCtx;
 use crate::name_resolution::resolver::ItemResolution;
 use crate::parser::ParseCtx;
 use crate::AluminaVisitor;
@@ -7,22 +8,26 @@ use crate::{
     common::{SyntaxError, ToSyntaxError},
     name_resolution::{
         resolver::NameResolver,
-        scope::{Item, Scope},
+        scope::{NamedItem, Scope},
     },
     visitors::ScopedPathVisitor,
 };
 
-pub struct TypeVisitor<'gcx, 'src> {
-    parse_ctx: ParseCtx<'gcx, 'src>,
-    scope: Scope<'gcx, 'src>,
+pub struct TypeVisitor<'ast, 'src> {
+    parse_ctx: &'src ParseCtx<'ast, 'src>,
+    ast_ctx: &'ast AstCtx<'ast>,
+    scope: Scope<'ast, 'src>,
 }
 
-impl<'gcx, 'src> TypeVisitor<'gcx, 'src> {
-    pub fn new(scope: Scope<'gcx, 'src>) -> Self {
+impl<'ast, 'src> TypeVisitor<'ast, 'src> {
+    pub fn new(scope: Scope<'ast, 'src>) -> Self {
+        let parse_ctx = scope
+            .parse_ctx()
+            .expect("cannot run on scope without parse context");
+
         TypeVisitor {
-            parse_ctx: scope
-                .parse_ctx()
-                .expect("cannot run on scope without parse context"),
+            parse_ctx,
+            ast_ctx: parse_ctx.ast_ctx,
             scope,
         }
     }
@@ -30,7 +35,7 @@ impl<'gcx, 'src> TypeVisitor<'gcx, 'src> {
     fn visit_typeref(
         &mut self,
         node: tree_sitter::Node<'src>,
-    ) -> Result<TyP<'gcx>, SyntaxError<'src>> {
+    ) -> Result<TyP<'ast>, SyntaxError<'src>> {
         let mut visitor = ScopedPathVisitor::new(self.scope.clone());
         let path = visitor.visit(node)?;
         let mut resolver = NameResolver::new();
@@ -39,11 +44,11 @@ impl<'gcx, 'src> TypeVisitor<'gcx, 'src> {
             .resolve_item(self.scope.clone(), path)
             .to_syntax_error(node)?
         {
-            ItemResolution::Item(Item::Type(ty, _, _)) => {
-                self.parse_ctx.intern_type(Ty::NamedType(ty))
+            ItemResolution::Item(NamedItem::Type(ty, _, _)) => {
+                self.ast_ctx.intern_type(Ty::NamedType(ty))
             }
-            ItemResolution::Item(Item::Placeholder(ty)) => {
-                self.parse_ctx.intern_type(Ty::Placeholder(ty))
+            ItemResolution::Item(NamedItem::Placeholder(ty)) => {
+                self.ast_ctx.intern_type(Ty::Placeholder(ty))
             }
             ItemResolution::Defered(_, _) => {
                 return Err(AluminaError::NoAssociatedTypes).to_syntax_error(node)
@@ -55,8 +60,8 @@ impl<'gcx, 'src> TypeVisitor<'gcx, 'src> {
     }
 }
 
-impl<'gcx, 'src> AluminaVisitor<'src> for TypeVisitor<'gcx, 'src> {
-    type ReturnType = Result<TyP<'gcx>, SyntaxError<'src>>;
+impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
+    type ReturnType = Result<TyP<'ast>, SyntaxError<'src>>;
 
     fn visit_primitive_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let builtin = match self.parse_ctx.node_text(node) {
@@ -78,17 +83,17 @@ impl<'gcx, 'src> AluminaVisitor<'src> for TypeVisitor<'gcx, 'src> {
             _ => unreachable!(),
         };
 
-        Ok(self.parse_ctx.intern_type(builtin))
+        Ok(self.ast_ctx.intern_type(builtin))
     }
 
     fn visit_never_type(&mut self, _node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        Ok(self.parse_ctx.intern_type(Ty::Builtin(BuiltinType::Never)))
+        Ok(self.ast_ctx.intern_type(Ty::Builtin(BuiltinType::Never)))
     }
 
     fn visit_pointer_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let ty = self.visit(node.child_by_field_name("inner").unwrap())?;
 
-        Ok(self.parse_ctx.intern_type(Ty::Pointer(ty)))
+        Ok(self.ast_ctx.intern_type(Ty::Pointer(ty)))
     }
 
     fn visit_array_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -99,12 +104,12 @@ impl<'gcx, 'src> AluminaVisitor<'src> for TypeVisitor<'gcx, 'src> {
             .parse()
             .unwrap();
 
-        Ok(self.parse_ctx.intern_type(Ty::Array(ty, len)))
+        Ok(self.ast_ctx.intern_type(Ty::Array(ty, len)))
     }
 
     fn visit_slice_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let ty = self.visit(node.child_by_field_name("inner").unwrap())?;
-        Ok(self.parse_ctx.intern_type(Ty::Slice(ty)))
+        Ok(self.ast_ctx.intern_type(Ty::Slice(ty)))
     }
 
     fn visit_tuple_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -115,11 +120,11 @@ impl<'gcx, 'src> AluminaVisitor<'src> for TypeVisitor<'gcx, 'src> {
             .collect::<Result<Vec<_>, _>>()?;
 
         match &elements[..] {
-            [] => Ok(self.parse_ctx.intern_type(Ty::Builtin(BuiltinType::Void))),
+            [] => Ok(self.ast_ctx.intern_type(Ty::Builtin(BuiltinType::Void))),
             [ty] => Ok(*ty),
             _ => {
-                let slice = self.parse_ctx.alloc_slice(elements.as_slice());
-                Ok(self.parse_ctx.intern_type(Ty::Tuple(slice)))
+                let slice = elements.alloc_on(self.ast_ctx);
+                Ok(self.ast_ctx.intern_type(Ty::Tuple(slice)))
             }
         }
     }
@@ -146,10 +151,9 @@ impl<'gcx, 'src> AluminaVisitor<'src> for TypeVisitor<'gcx, 'src> {
             _ => unreachable!(),
         };
 
-        Ok(self.parse_ctx.intern_type(Ty::GenericType(
-            base,
-            self.parse_ctx.alloc_slice(arguments.as_slice()),
-        )))
+        Ok(self
+            .ast_ctx
+            .intern_type(Ty::GenericType(base, arguments.alloc_on(self.ast_ctx))))
     }
 
     fn visit_function_pointer(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -164,13 +168,12 @@ impl<'gcx, 'src> AluminaVisitor<'src> for TypeVisitor<'gcx, 'src> {
         let type_node = if let Some(return_type_node) = node.child_by_field_name("return_type") {
             self.visit(return_type_node)?
         } else {
-            self.parse_ctx.intern_type(Ty::Builtin(BuiltinType::Void))
+            self.ast_ctx.intern_type(Ty::Builtin(BuiltinType::Void))
         };
 
-        Ok(self.parse_ctx.intern_type(Ty::Function(
-            self.parse_ctx.alloc_slice(elements.as_slice()),
-            type_node,
-        )))
+        Ok(self
+            .ast_ctx
+            .intern_type(Ty::Function(elements.alloc_on(self.ast_ctx), type_node)))
     }
 }
 
@@ -179,23 +182,23 @@ mod tests {
     use crate::{
         ast::{BuiltinType, Ty, TyP},
         common::SyntaxError,
-        context::GlobalCtx,
-        name_resolution::scope::{Item, Scope, ScopeType},
+        context::AstCtx,
+        name_resolution::scope::{NamedItem, Scope, ScopeType},
         parser::AluminaVisitor,
         parser::ParseCtx,
         visitors::{pass1::FirstPassVisitor, types::TypeVisitor},
     };
 
-    fn first_pass<'gcx, 'src>(
-        parse_ctx: &'src ParseCtx<'gcx, 'src>,
-    ) -> Result<Scope<'gcx, 'src>, SyntaxError<'src>> {
+    fn first_pass<'ast, 'src>(
+        parse_ctx: &'src &'src ParseCtx<'ast, 'src>,
+    ) -> Result<Scope<'ast, 'src>, SyntaxError<'src>> {
         let root_scope = Scope::new_root();
 
         let module_scope =
             root_scope.named_child_with_ctx(ScopeType::Crate, "test", parse_ctx.to_owned());
 
         root_scope
-            .add_item("test", Item::Module(module_scope.clone()))
+            .add_item("test", NamedItem::Module(module_scope.clone()))
             .unwrap();
 
         let mut visitor = FirstPassVisitor::new(module_scope);
@@ -204,13 +207,13 @@ mod tests {
         Ok(root_scope)
     }
 
-    fn extract_type<'gcx, 'src>(
-        root_scope: Scope<'gcx, 'src>,
-    ) -> Result<TyP<'gcx>, SyntaxError<'src>> {
+    fn extract_type<'ast, 'src>(
+        root_scope: Scope<'ast, 'src>,
+    ) -> Result<TyP<'ast>, SyntaxError<'src>> {
         let (scope, node) = match &(*root_scope.0).borrow().items["test"][..] {
-            [Item::Module(scope)] => match &(*scope.0).borrow().items["a"][..] {
-                [Item::Type(_, _, scope)] => match &(*scope.0).borrow().items["b"][..] {
-                    [Item::Field(node)] => {
+            [NamedItem::Module(scope)] => match &(*scope.0).borrow().items["a"][..] {
+                [NamedItem::Type(_, _, scope)] => match &(*scope.0).borrow().items["b"][..] {
+                    [NamedItem::Field(node)] => {
                         (scope.clone(), node.child_by_field_name("type").unwrap())
                     }
                     _ => unreachable!(),
@@ -226,7 +229,7 @@ mod tests {
 
     #[test]
     fn test_typ_eq() {
-        let ctx = GlobalCtx::new();
+        let ctx = AstCtx::new();
 
         let ty1 = Ty::Builtin(BuiltinType::I32);
         let ty2 = Ty::Builtin(BuiltinType::I32);
@@ -240,16 +243,12 @@ mod tests {
         assert_eq!(typ1, typ2);
     }
 
-    fn test_parse_type<'gcx>(
-        global_ctx: &'gcx GlobalCtx<'gcx>,
-        typedef: &str,
-        expected: TyP<'gcx>,
-    ) {
-        let src = global_ctx
+    fn test_parse_type<'ast>(ast_ctx: &'ast AstCtx<'ast>, typedef: &str, expected: TyP<'ast>) {
+        let src = ast_ctx
             .arena
             .alloc_str(&format!("struct a {{ b: {}; }}", typedef));
 
-        let parse_ctx = ParseCtx::from_source(global_ctx, src);
+        let parse_ctx = ParseCtx::from_source(ast_ctx, src);
         let root_scope = first_pass(&parse_ctx).unwrap();
         let result = extract_type(root_scope).unwrap();
 
@@ -258,14 +257,14 @@ mod tests {
 
     #[test]
     fn test_parse_type_builtin() {
-        let ctx = GlobalCtx::new();
+        let ctx = AstCtx::new();
 
         test_parse_type(&ctx, "i32", &Ty::Builtin(BuiltinType::I32));
     }
 
     #[test]
     fn test_parse_type_array() {
-        let ctx = GlobalCtx::new();
+        let ctx = AstCtx::new();
 
         test_parse_type(
             &ctx,
@@ -276,14 +275,14 @@ mod tests {
 
     #[test]
     fn test_parse_type_pointer() {
-        let ctx = GlobalCtx::new();
+        let ctx = AstCtx::new();
 
         test_parse_type(&ctx, "&i32", &Ty::Pointer(&Ty::Builtin(BuiltinType::I32)));
     }
 
     #[test]
     fn test_parse_function() {
-        let ctx = GlobalCtx::new();
+        let ctx = AstCtx::new();
 
         test_parse_type(
             &ctx,
@@ -297,7 +296,7 @@ mod tests {
 
     #[test]
     fn test_parse_hof() {
-        let ctx = GlobalCtx::new();
+        let ctx = AstCtx::new();
 
         test_parse_type(
             &ctx,
@@ -314,7 +313,7 @@ mod tests {
 
     #[test]
     fn test_parse_type_tuple() {
-        let ctx = GlobalCtx::new();
+        let ctx = AstCtx::new();
 
         test_parse_type(
             &ctx,
@@ -328,21 +327,21 @@ mod tests {
 
     #[test]
     fn test_parse_type_empty_tuple() {
-        let ctx = GlobalCtx::new();
+        let ctx = AstCtx::new();
 
         test_parse_type(&ctx, "()", &Ty::Builtin(BuiltinType::Void));
     }
 
     #[test]
     fn test_parse_type_single_element_tuple() {
-        let ctx = GlobalCtx::new();
+        let ctx = AstCtx::new();
 
         test_parse_type(&ctx, "(u32)", &Ty::Builtin(BuiltinType::U32));
     }
 
     #[test]
     fn test_parse_complex_tuple() {
-        let ctx = GlobalCtx::new();
+        let ctx = AstCtx::new();
 
         test_parse_type(
             &ctx,
@@ -357,7 +356,7 @@ mod tests {
 
     #[test]
     fn test_parse_type_never() {
-        let ctx = GlobalCtx::new();
+        let ctx = AstCtx::new();
 
         test_parse_type(&ctx, "!", &Ty::Builtin(BuiltinType::Never));
     }
