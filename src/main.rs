@@ -3,7 +3,6 @@
 mod ast;
 mod codegen;
 mod common;
-mod context;
 mod ir;
 mod name_resolution;
 mod parser;
@@ -11,13 +10,16 @@ mod utils;
 mod visitors;
 
 use ast::Item;
+use ir::mono::MonoCtx;
+use ir::mono::Monomorphizer;
+use ir::IrCtx;
 
+use crate::ast::maker::Maker;
+use crate::ast::AstCtx;
 use crate::ast::Function;
-use crate::context::AstCtx;
 use crate::name_resolution::scope::{NamedItem, Scope, ScopeType};
 use crate::parser::{AluminaVisitor, ParseCtx};
 use crate::utils::NodeWrapper;
-use crate::visitors::maker::Maker;
 use crate::visitors::pass1::FirstPassVisitor;
 
 const SOURCE_CODE: &str = include_str!("../examples/minimal.alumina");
@@ -62,7 +64,7 @@ fn compile(units: Vec<CompilationUnit>) {
 
     // To demonstrate we don't need the source code anymore
     drop(parse_contexts);
-
+    /*
     println!("{:#?}", maker.symbols);
 
     println!(
@@ -72,6 +74,24 @@ fn compile(units: Vec<CompilationUnit>) {
             _ => unreachable!(),
         }
     );
+    */
+
+    let last = match maker.symbols.last().unwrap().contents.get().unwrap() {
+        Item::Function(Function { return_type, .. }) => return_type,
+        _ => unreachable!(),
+    };
+
+    let ir_ctx = IrCtx::new();
+
+    let mut mono_ctx = MonoCtx::new(&ir_ctx);
+    let mut monomorphizer = Monomorphizer::new(&mut mono_ctx);
+
+    monomorphizer.monomorphize_type(last).unwrap();
+    let items = mono_ctx.into_inner();
+
+    //drop(ast);
+
+    println!("{:#?}", items);
 }
 
 fn main() {

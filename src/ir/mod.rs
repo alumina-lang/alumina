@@ -1,15 +1,101 @@
-mod mono;
+pub mod mono;
 
 use crate::{
     ast::{BinOp, BuiltinType, Lit, UnOp},
-    common::impl_allocatable,
+    common::{impl_allocatable, Allocatable, ArenaAllocatable, Incrementable},
 };
 use std::{
+    cell::{Cell, RefCell},
+    collections::HashSet,
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
 };
 
+use bumpalo::Bump;
 use once_cell::unsync::OnceCell;
+
+pub struct IrCtx<'ir> {
+    pub arena: Bump,
+    pub counter: Cell<usize>,
+    types: RefCell<HashSet<TyP<'ir>>>,
+}
+
+impl<'ir> IrCtx<'ir> {
+    pub fn new() -> Self {
+        Self {
+            arena: Bump::new(),
+            counter: Cell::new(0),
+            types: RefCell::new(HashSet::new()),
+        }
+    }
+
+    pub fn make_id(&self) -> IrId {
+        IrId {
+            id: self.counter.increment(),
+        }
+    }
+
+    pub fn intern_type(&'ir self, ty: Ty<'ir>) -> TyP<'ir> {
+        if let Some(key) = self.types.borrow().get(&ty) {
+            return *key;
+        }
+
+        let inner = self.arena.alloc(ty);
+        self.types.borrow_mut().insert(inner);
+
+        inner
+    }
+
+    pub fn make_symbol(&'ir self) -> IRItemP<'ir> {
+        let inner = self.arena.alloc(IRItemCell {
+            id: self.make_id(),
+            contents: OnceCell::new(),
+        });
+
+        inner
+    }
+}
+
+impl<'ir, T: Allocatable> ArenaAllocatable<'ir, IrCtx<'ir>> for T
+where
+    T: 'ir,
+{
+    type ReturnType = &'ir T;
+
+    fn alloc_on(self, ctx: &'ir IrCtx<'ir>) -> Self::ReturnType {
+        ctx.arena.alloc(self)
+    }
+}
+
+impl<'ir, T: Allocatable + Copy> ArenaAllocatable<'ir, IrCtx<'ir>> for &'_ [T]
+where
+    T: 'ir,
+{
+    type ReturnType = &'ir [T];
+
+    fn alloc_on(self, ctx: &'ir IrCtx<'ir>) -> Self::ReturnType {
+        ctx.arena.alloc_slice_copy(self)
+    }
+}
+
+impl<'ir> ArenaAllocatable<'ir, IrCtx<'ir>> for &str {
+    type ReturnType = &'ir str;
+
+    fn alloc_on(self, ctx: &'ir IrCtx<'ir>) -> Self::ReturnType {
+        ctx.arena.alloc_str(self)
+    }
+}
+
+impl<'ir, T: Allocatable> ArenaAllocatable<'ir, IrCtx<'ir>> for Vec<T>
+where
+    T: 'ir,
+{
+    type ReturnType = &'ir [T];
+
+    fn alloc_on(self, ctx: &'ir IrCtx<'ir>) -> Self::ReturnType {
+        ctx.arena.alloc_slice_fill_iter(self)
+    }
+}
 
 #[derive(PartialEq, Copy, Clone, Eq, Hash)]
 pub struct IrId {
@@ -28,7 +114,7 @@ impl Debug for IrId {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+#[derive(Debug, PartialEq, Eq, Clone, Hash, Copy)]
 pub enum Ty<'ir> {
     Extern(IrId),
     NamedType(IRItemP<'ir>),
@@ -84,7 +170,6 @@ impl<'ir> IRItemCell<'ir> {
 }
 pub struct IRItemCell<'ir> {
     pub id: IrId,
-    pub debug_name: Option<&'ir str>,
     pub contents: OnceCell<IRItem<'ir>>,
 }
 
@@ -106,14 +191,12 @@ impl Eq for IRItemCell<'_> {}
 
 impl Debug for IRItemCell<'_> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        let debug_name = self.debug_name.unwrap_or("<unnamed>");
-
         if fmt.alternate() {
-            writeln!(fmt, "{} ({}) {{", self.id, debug_name)?;
+            writeln!(fmt, "{} {{", self.id)?;
             writeln!(fmt, "\t{:?}", self.contents.get())?;
             writeln!(fmt, "}}")?;
         } else {
-            write!(fmt, "{} ({})", self.id, debug_name)?
+            write!(fmt, "{}", self.id)?
         }
 
         Ok(())
@@ -162,4 +245,12 @@ pub struct Expr<'ir> {
 
 pub type ExprP<'ir> = &'ir Expr<'ir>;
 
-impl_allocatable!(Expr<'_>, Ty<'_>);
+impl_allocatable!(
+    Expr<'_>,
+    Ty<'_>,
+    Statement<'_>,
+    Field<'_>,
+    Parameter<'_>,
+    IRItemCell<'_>,
+    IrId
+);

@@ -1,6 +1,6 @@
 use crate::common::{SyntaxError, ToSyntaxError};
 
-use crate::context::AstCtx;
+use crate::ast::AstCtx;
 use crate::name_resolution::scope::{NamedItem, Scope, ScopeType};
 use crate::parser::{AluminaVisitor, ParseCtx};
 
@@ -72,7 +72,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         self.scope
             .add_item(
                 name,
-                NamedItem::Type(self.ast.make_symbol(Some(name)), node, child_scope.clone()),
+                NamedItem::Type(self.ast.make_symbol(), node, child_scope.clone()),
             )
             .to_syntax_error(node)?;
 
@@ -109,7 +109,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         self.scope
             .add_item(
                 name,
-                NamedItem::Type(self.ast.make_symbol(Some(name)), node, child_scope.clone()),
+                NamedItem::Type(self.ast.make_symbol(), node, child_scope.clone()),
             )
             .to_syntax_error(node)?;
 
@@ -136,7 +136,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         self.scope
             .add_item(
                 name,
-                NamedItem::Function(self.ast.make_symbol(Some(name)), node, child_scope.clone()),
+                NamedItem::Function(self.ast.make_symbol(), node, child_scope.clone()),
             )
             .to_syntax_error(node)?;
 
@@ -160,7 +160,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         self.scope
             .add_item(
                 name,
-                NamedItem::Function(self.ast.make_symbol(Some(name)), node, child_scope.clone()),
+                NamedItem::Function(self.ast.make_symbol(), node, child_scope.clone()),
             )
             .to_syntax_error(node)?;
 

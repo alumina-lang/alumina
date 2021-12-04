@@ -1,6 +1,101 @@
+pub mod expressions;
+pub mod maker;
+pub mod types;
+
+use crate::common::{Allocatable, ArenaAllocatable, Incrementable};
 use std::fmt::Display;
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
+
+use bumpalo::Bump;
+use once_cell::unsync::OnceCell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
+
+use crate::common::impl_allocatable;
+
+pub struct AstCtx<'ast> {
+    pub arena: Bump,
+    pub counter: Cell<usize>,
+    types: RefCell<HashSet<TyP<'ast>>>,
+}
+
+impl<'ast> AstCtx<'ast> {
+    pub fn new() -> Self {
+        Self {
+            arena: Bump::new(),
+            counter: Cell::new(0),
+            types: RefCell::new(HashSet::new()),
+        }
+    }
+
+    pub fn make_id(&self) -> AstId {
+        AstId {
+            id: self.counter.increment(),
+        }
+    }
+
+    pub fn intern_type(&'ast self, ty: Ty<'ast>) -> TyP<'ast> {
+        if let Some(key) = self.types.borrow().get(&ty) {
+            return *key;
+        }
+
+        let inner = self.arena.alloc(ty);
+        self.types.borrow_mut().insert(inner);
+
+        inner
+    }
+
+    pub fn make_symbol(&'ast self) -> ItemP<'ast> {
+        let inner = self.arena.alloc(ItemCell {
+            id: self.make_id(),
+            contents: OnceCell::new(),
+        });
+
+        inner
+    }
+}
+
+impl<'gcx, T: Allocatable> ArenaAllocatable<'gcx, AstCtx<'gcx>> for T
+where
+    T: 'gcx,
+{
+    type ReturnType = &'gcx T;
+
+    fn alloc_on(self, ctx: &'gcx AstCtx<'gcx>) -> Self::ReturnType {
+        ctx.arena.alloc(self)
+    }
+}
+
+impl<'gcx, T: Allocatable + Copy> ArenaAllocatable<'gcx, AstCtx<'gcx>> for &'_ [T]
+where
+    T: 'gcx,
+{
+    type ReturnType = &'gcx [T];
+
+    fn alloc_on(self, ctx: &'gcx AstCtx<'gcx>) -> Self::ReturnType {
+        ctx.arena.alloc_slice_copy(self)
+    }
+}
+
+impl<'gcx> ArenaAllocatable<'gcx, AstCtx<'gcx>> for &str {
+    type ReturnType = &'gcx str;
+
+    fn alloc_on(self, ctx: &'gcx AstCtx<'gcx>) -> Self::ReturnType {
+        ctx.arena.alloc_str(self)
+    }
+}
+
+impl<'gcx, T: Allocatable> ArenaAllocatable<'gcx, AstCtx<'gcx>> for Vec<T>
+where
+    T: 'gcx,
+{
+    type ReturnType = &'gcx [T];
+
+    fn alloc_on(self, ctx: &'gcx AstCtx<'gcx>) -> Self::ReturnType {
+        ctx.arena.alloc_slice_fill_iter(self)
+    }
+}
 
 #[derive(PartialEq, Copy, Clone, Eq, Hash)]
 pub struct AstId {
@@ -18,10 +113,6 @@ impl Debug for AstId {
         Display::fmt(self, f)
     }
 }
-
-use once_cell::unsync::OnceCell;
-
-use crate::common::impl_allocatable;
 
 #[derive(Debug, PartialEq, Copy, Clone, Eq, Hash)]
 pub enum BuiltinType {
@@ -85,7 +176,6 @@ impl<'ast> ItemCell<'ast> {
 /// Symbols are immutable once they are assigned.
 pub struct ItemCell<'ast> {
     pub id: AstId,
-    pub debug_name: Option<&'ast str>,
     pub contents: OnceCell<Item<'ast>>,
 }
 
@@ -107,14 +197,12 @@ impl Eq for ItemCell<'_> {}
 
 impl Debug for ItemCell<'_> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        let debug_name = self.debug_name.unwrap_or("<unnamed>");
-
         if fmt.alternate() {
-            writeln!(fmt, "{} ({}) {{", self.id, debug_name)?;
+            writeln!(fmt, "{} {{", self.id)?;
             writeln!(fmt, "\t{:?}", self.contents.get())?;
             writeln!(fmt, "}}")?;
         } else {
-            write!(fmt, "{} ({})", self.id, debug_name)?
+            write!(fmt, "{}", self.id)?
         }
 
         Ok(())

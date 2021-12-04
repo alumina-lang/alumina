@@ -1,5 +1,5 @@
+use crate::ast::AstCtx;
 use crate::common::{AluminaError, ArenaAllocatable};
-use crate::context::AstCtx;
 use crate::name_resolution::resolver::ItemResolution;
 use crate::parser::ParseCtx;
 use crate::AluminaVisitor;
@@ -146,7 +146,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
 
         let base = match *base {
             Ty::NamedType(ty) => ty,
-            _ => unreachable!(),
+            _ => return Err(AluminaError::UnexpectedGenericParams).to_syntax_error(node),
         };
 
         Ok(self
@@ -178,14 +178,16 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
 #[cfg(test)]
 mod tests {
     use crate::{
+        ast::AstCtx,
         ast::{BuiltinType, Ty, TyP},
         common::SyntaxError,
-        context::AstCtx,
         name_resolution::scope::{NamedItem, Scope, ScopeType},
         parser::AluminaVisitor,
         parser::ParseCtx,
-        visitors::{pass1::FirstPassVisitor, types::TypeVisitor},
+        visitors::pass1::FirstPassVisitor,
     };
+
+    use super::TypeVisitor;
 
     fn first_pass<'ast, 'src>(
         ast: &'ast AstCtx<'ast>,

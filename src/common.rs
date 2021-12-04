@@ -19,7 +19,16 @@ pub enum AluminaError {
     NoAssociatedTypes,
     #[error("invalid literal")]
     InvalidLiteral,
+    #[error("{} generic parameters expected, {} found" , .0, .1)]
+    GenericParamCountMismatch(usize, usize),
+    #[error("type expected here")]
+    TypeExpectedHere,
+    #[error("only enums and structs can have generic parameters")]
+    UnexpectedGenericParams,
+    #[error("type is recursive without indirection")]
+    RecursiveWithoutIndirection,
 }
+
 
 #[derive(Debug, Error)]
 #[error("{} at {}:{}", .kind, .node.start_position().row, .node.start_position().column)]
@@ -45,6 +54,8 @@ where
 }
 
 pub trait Allocatable {}
+
+impl<T: Allocatable> Allocatable for &'_ T {}
 
 pub trait ArenaAllocatable<'ctx, Allocator> {
     type ReturnType;

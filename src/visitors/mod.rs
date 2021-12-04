@@ -1,24 +1,21 @@
 use tree_sitter::Node;
 
+use crate::ast::AstCtx;
 use crate::common::{AluminaError, SyntaxError, ToSyntaxError};
-use crate::context::AstCtx;
 use crate::name_resolution::path::{Path, PathSegment};
 use crate::name_resolution::scope::{NamedItem, Scope};
 use crate::parser::ParseCtx;
 use crate::AluminaVisitor;
 
-pub mod expressions;
-pub mod maker;
 pub mod pass1;
-pub mod types;
 
-struct ScopedPathVisitor<'ast, 'src> {
+pub struct ScopedPathVisitor<'ast, 'src> {
     code: &'src ParseCtx<'src>,
     scope: Scope<'ast, 'src>, // ast: &'ast AstCtx<'ast>
 }
 
 impl<'ast, 'src> ScopedPathVisitor<'ast, 'src> {
-    fn new(scope: Scope<'ast, 'src>) -> Self {
+    pub fn new(scope: Scope<'ast, 'src>) -> Self {
         Self {
             code: scope
                 .code()

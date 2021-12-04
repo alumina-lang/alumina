@@ -45,13 +45,6 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
         scope: Scope<'ast, 'src>,
         path: Path<'src>,
     ) -> Result<ScopeResolution<'ast, 'src>, AluminaError> {
-        println!(
-            "resolve_scope({:?} {:?}, {})",
-            scope.inner().r#type,
-            scope.path(),
-            path
-        );
-
         if !self
             .seen_aliases
             .insert((1, scope.0.as_ptr(), path.clone()))
@@ -103,13 +96,6 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
         scope: Scope<'ast, 'src>,
         path: Path<'src>,
     ) -> Result<ItemResolution<'ast, 'src>, AluminaError> {
-        println!(
-            "resolve_item({:?} {:?}, {})",
-            scope.inner().r#type,
-            scope.path(),
-            path
-        );
-
         if !self
             .seen_aliases
             .insert((2, scope.0.as_ptr(), path.clone()))
@@ -160,9 +146,9 @@ mod tests {
     use std::assert_matches::assert_matches;
 
     use crate::{
+        ast::AstCtx,
         ast::{Ty, TyP},
         common::{AluminaError, SyntaxError},
-        context::AstCtx,
         name_resolution::scope::{NamedItem, Scope, ScopeType},
         parser::ParseCtx,
         visitors::{pass1::FirstPassVisitor, types::TypeVisitor},

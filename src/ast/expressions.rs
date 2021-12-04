@@ -1,10 +1,12 @@
+use crate::ast::AstCtx;
 use crate::ast::{BinOp, Expr, ExprP, LetDeclaration, Lit, Statement, UnOp};
 use crate::common::AluminaError;
 use crate::common::ArenaAllocatable;
-use crate::context::AstCtx;
 use crate::name_resolution::resolver::ItemResolution;
 use crate::name_resolution::scope::ScopeType;
 use crate::parser::ParseCtx;
+use crate::visitors::ScopedPathVisitor;
+use crate::visitors::UseClauseVisitor;
 use crate::AluminaVisitor;
 use crate::{
     common::{SyntaxError, ToSyntaxError},
@@ -12,11 +14,9 @@ use crate::{
         resolver::NameResolver,
         scope::{NamedItem, Scope},
     },
-    visitors::ScopedPathVisitor,
 };
 
 use super::types::TypeVisitor;
-use super::UseClauseVisitor;
 
 macro_rules! with_block_scope {
     ($self:ident, $body:expr) => {{
@@ -33,6 +33,7 @@ pub struct ExpressionVisitor<'ast, 'src> {
     code: &'src ParseCtx<'src>,
     scope: Scope<'ast, 'src>,
 }
+
 
 impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
     pub fn new(ast: &'ast AstCtx<'ast>, scope: Scope<'ast, 'src>) -> Self {

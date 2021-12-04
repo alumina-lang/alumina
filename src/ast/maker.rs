@@ -1,7 +1,7 @@
 use crate::{
+    ast::AstCtx,
     ast::{self, AstId, BuiltinType, Field, Function, Item, ItemP, Parameter, Struct, Ty},
     common::{ArenaAllocatable, SyntaxError},
-    context::AstCtx,
     name_resolution::scope::{NamedItem, Scope},
     parser::AluminaVisitor,
 };
@@ -19,6 +19,10 @@ impl<'ast> Maker<'ast> {
             ast,
             symbols: Vec::new(),
         }
+    }
+
+    pub fn into_inner(self) -> Vec<ItemP<'ast>> {
+        self.symbols
     }
 
     fn resolve_associated_fns<'src>(

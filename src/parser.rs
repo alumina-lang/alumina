@@ -1,9 +1,9 @@
 use std::{marker::PhantomData, rc::Rc};
 
 use crate::{
+    ast::AstCtx,
     ast::{AstId, Expr, ExprP, ItemP, Ty, TyP},
     common::{Allocatable, ArenaAllocatable},
-    context::AstCtx,
 };
 
 include!(concat!(env!("OUT_DIR"), "/parser.rs"));
