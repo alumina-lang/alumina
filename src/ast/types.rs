@@ -154,6 +154,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
             .intern_type(Ty::GenericType(base, arguments.alloc_on(self.ast))))
     }
 
+    fn visit_generic_type_with_turbofish(
+        &mut self,
+        node: tree_sitter::Node<'src>,
+    ) -> Self::ReturnType {
+        self.visit_generic_type(node)
+    }
+
     fn visit_function_pointer(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let mut cursor = node.walk();
         let elements = node

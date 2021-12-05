@@ -142,7 +142,7 @@ module.exports = grammar({
     enum_item: ($) => field("name", $.identifier),
 
     struct_field: ($) =>
-      seq(field("name", $.identifier), ":", field("type", $._type)),
+      seq(optional($.attribute), field("name", $.identifier), ":", field("type", $._type)),
 
     impl_block: ($) =>
       seq(
@@ -235,7 +235,7 @@ module.exports = grammar({
     block: ($) =>
       seq(
         "{",
-        repeat(field("statements", $._statement)),
+        repeat(field("statements", $.statement)),
         optional(field("result", $._expression)),
         "}"
       ),
@@ -258,7 +258,10 @@ module.exports = grammar({
         ";"
       ),
 
-    _statement: ($) => choice($._declaration_statement, $.expression_statement),
+    statement: ($) => seq(
+      optional($.attribute), 
+      field("inner", choice($._declaration_statement, $.expression_statement))
+    ),
 
     empty_statement: ($) => ";",
 
@@ -268,7 +271,7 @@ module.exports = grammar({
     expression_statement: ($) =>
       choice(
         seq(field("inner", $._expression), ";"),
-        prec(1, field("inner", $._expression_ending_with_block))
+        prec(-1, field("inner", $._expression_ending_with_block))
       ),
 
     return_expression: ($) =>
@@ -328,7 +331,7 @@ module.exports = grammar({
       ),
 
     unary_expression: ($) =>
-      prec(PREC.unary, seq(field("operator", choice("-", "!")), field("value", $._expression))),
+      prec(PREC.unary, seq(field("operator", choice("-", "!", "~")), field("value", $._expression))),
 
     // Those two are special
     reference_expression: ($) =>
@@ -381,7 +384,7 @@ module.exports = grammar({
       ),
 
     index_expression: ($) =>
-      prec(PREC.call, seq($._expression, "[", $._expression, "]")),
+      prec(PREC.call, seq(field("value", $._expression), "[", field("index", $._expression), "]")),
 
     compound_assignment_expr: ($) =>
       prec.left(

@@ -1,6 +1,5 @@
 use crate::{
-    ast::AstCtx,
-    ast::{self, AstId, BuiltinType, Field, Function, Item, ItemP, Parameter, Struct, Ty},
+    ast::{AstCtx, AstId, BuiltinType, Field, Function, Item, ItemP, Parameter, Struct, Ty},
     common::{ArenaAllocatable, SyntaxError},
     name_resolution::scope::{NamedItem, Scope},
     parser::AluminaVisitor,
@@ -8,12 +7,12 @@ use crate::{
 
 use super::{expressions::ExpressionVisitor, types::TypeVisitor};
 
-pub struct Maker<'ast> {
+pub struct AstItemMaker<'ast> {
     ast: &'ast AstCtx<'ast>,
-    pub symbols: Vec<ItemP<'ast>>,
+    symbols: Vec<ItemP<'ast>>,
 }
 
-impl<'ast> Maker<'ast> {
+impl<'ast> AstItemMaker<'ast> {
     pub fn new(ast: &'ast AstCtx<'ast>) -> Self {
         Self {
             ast,

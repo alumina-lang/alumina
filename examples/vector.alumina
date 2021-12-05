@@ -1,6 +1,8 @@
-mod alloc {
-    extern fn malloc(size: usize) -> &void;
-    extern fn free(ptr: &void);
+mod mem {
+    extern fn malloc(size: usize) -> &();
+    extern fn free(ptr: &());
+    extern fn sizeof() -> usize;
+    extern fn memcpy() -> usize;
 }
 
 struct vector<T> {
@@ -11,15 +13,15 @@ struct vector<T> {
 }
 
 impl vector {
-    use super::alloc::{malloc, free as free_};
+    use mem::{memcpy::malloc, free as dealloc};
 
-    fn new() -> vector<T> {
+    fn new<T>() -> vector<T> {
         with_capacity::<T>(0)
     }
 
     fn with_capacity<T>(capacity: usize) -> vector<T> {
-        vector<T> {
-            data: malloc(sizeof(T) * capacity) as &T,
+        vector::<T> {
+            data: malloc(sizeof::<T>() * capacity) as &T,
             length: 0,
             capacity: capacity,
         }
@@ -28,7 +30,7 @@ impl vector {
     fn push<T>(self: &vector<T>, value: T) {
         if self.length == self.capacity {
             let new_capacity = self.capacity * 2;
-            let new_ptr = malloc(sizeof(T) * new_capacity) as &T;
+            let new_ptr = malloc(sizeof::<T>() * new_capacity) as &T;
             memcpy(new_ptr, self.data, self.length);
             free(self.data);
             self.data = new_ptr;
@@ -48,7 +50,7 @@ impl vector {
     fn shrink_to_fit<T>(self: &vector<T>) {
         if self.length < self.capacity {
             let new_capacity = self.length;
-            let new_ptr = malloc(sizeof(T) * new_capacity) as &T;
+            let new_ptr = malloc(sizeof::<T>() * new_capacity) as &T;
             memcpy(new_ptr, self.data, self.length);
             free(self.data);
             self.data = new_ptr;
@@ -61,14 +63,14 @@ impl vector {
     }
 
     fn free<T>(self: &vector<T>) {
-        free_(self.data);
+        dealloc(self.data);
     }
 }
 
 
 
 fn main() {
-    let mut v = vector::new::<u8>();
+    let v = vector::new::<u8>();
     v.push(1);
     v.free();
 

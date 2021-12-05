@@ -27,8 +27,21 @@ pub enum AluminaError {
     UnexpectedGenericParams,
     #[error("type is recursive without indirection")]
     RecursiveWithoutIndirection,
+    #[error("type hint required")]
+    TypeHintRequired,
+    #[error("type mismatch")]
+    TypeMismatch,
+    #[error("invalid escape sequence")]
+    InvalidEscapeSequence,
+    #[error("cannot take address of a rvalue (yet)")]
+    CannotAddressRValue,
+    #[error("cannot perform {:?} between these two operands", .0)]
+    InvalidBinOp(crate::ast::BinOp),
+    #[error("cannot assign to rvalue")]
+    CannotAssignToRValue,
+    #[error("invalid cast")]
+    InvalidCast,
 }
-
 
 #[derive(Debug, Error)]
 #[error("{} at {}:{}", .kind, .node.start_position().row, .node.start_position().column)]

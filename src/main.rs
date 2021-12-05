@@ -14,9 +14,10 @@ use ir::mono::MonoCtx;
 use ir::mono::Monomorphizer;
 use ir::IrCtx;
 
-use crate::ast::maker::Maker;
+use crate::ast::maker::AstItemMaker;
 use crate::ast::AstCtx;
 use crate::ast::Function;
+use crate::ir::mono::MonomorphizeKey;
 use crate::name_resolution::scope::{NamedItem, Scope, ScopeType};
 use crate::parser::{AluminaVisitor, ParseCtx};
 use crate::utils::NodeWrapper;
@@ -59,11 +60,14 @@ fn compile(units: Vec<CompilationUnit>) {
         visitor.visit(ctx.root_node()).unwrap();
     }
 
-    let mut maker = Maker::new(&ast);
+    let mut maker = AstItemMaker::new(&ast);
     maker.make(crate_scope).unwrap();
+
+    let items = maker.into_inner();
 
     // To demonstrate we don't need the source code anymore
     drop(parse_contexts);
+
     /*
     println!("{:#?}", maker.symbols);
 
@@ -76,17 +80,20 @@ fn compile(units: Vec<CompilationUnit>) {
     );
     */
 
-    let last = match maker.symbols.last().unwrap().contents.get().unwrap() {
-        Item::Function(Function { return_type, .. }) => return_type,
-        _ => unreachable!(),
-    };
-
     let ir_ctx = IrCtx::new();
-
     let mut mono_ctx = MonoCtx::new(&ir_ctx);
-    let mut monomorphizer = Monomorphizer::new(&mut mono_ctx);
 
-    monomorphizer.monomorphize_type(last).unwrap();
+    for item in items {
+        println!("{:#?}", item);
+
+        let inner = item.get();
+        if !inner.is_generic() {
+            let mut monomorphizer = Monomorphizer::new(&mut mono_ctx);
+
+            monomorphizer.monomorphize(item).unwrap();
+        }
+    }
+
     let items = mono_ctx.into_inner();
 
     //drop(ast);

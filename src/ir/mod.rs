@@ -1,7 +1,7 @@
 pub mod mono;
 
 use crate::{
-    ast::{BinOp, BuiltinType, Lit, UnOp},
+    ast::{BinOp, BuiltinType, UnOp},
     common::{impl_allocatable, Allocatable, ArenaAllocatable, Incrementable},
 };
 use std::{
@@ -146,10 +146,30 @@ pub struct Parameter<'ir> {
 }
 
 #[derive(Debug)]
+pub struct FuncBodyCell<'ir> {
+    contents: OnceCell<ExprP<'ir>>,
+}
+
+impl<'ir> FuncBodyCell<'ir> {
+    pub fn new() -> Self {
+        Self {
+            contents: OnceCell::new(),
+        }
+    }
+
+    pub fn assign(&self, value: ExprP<'ir>) {
+        self.contents.set(value).unwrap();
+    }
+    pub fn get(&'ir self) -> ExprP<'ir> {
+        self.contents.get().unwrap()
+    }
+}
+
+#[derive(Debug)]
 pub struct Function<'ir> {
     pub parameters: &'ir [Parameter<'ir>],
     pub return_type: TyP<'ir>,
-    pub body: ExprP<'ir>,
+    pub body: FuncBodyCell<'ir>,
 }
 
 #[derive(Debug)]
@@ -170,7 +190,7 @@ impl<'ir> IRItemCell<'ir> {
 }
 pub struct IRItemCell<'ir> {
     pub id: IrId,
-    pub contents: OnceCell<IRItem<'ir>>,
+    contents: OnceCell<IRItem<'ir>>,
 }
 
 impl Hash for IRItemCell<'_> {
@@ -193,7 +213,7 @@ impl Debug for IRItemCell<'_> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         if fmt.alternate() {
             writeln!(fmt, "{} {{", self.id)?;
-            writeln!(fmt, "\t{:?}", self.contents.get())?;
+            writeln!(fmt, "\t{:#?}", self.contents.get())?;
             writeln!(fmt, "}}")?;
         } else {
             write!(fmt, "{}", self.id)?
@@ -210,6 +230,15 @@ pub enum Statement<'ir> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+pub enum Lit<'ast> {
+    Str(&'ast [u8]),
+    Int(u128),
+    Float(&'ast str),
+    Bool(bool),
+    Null,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum ExprKind<'ir> {
     Block(&'ir [Statement<'ir>], ExprP<'ir>),
     Binary(ExprP<'ir>, BinOp, ExprP<'ir>),
@@ -219,10 +248,8 @@ pub enum ExprKind<'ir> {
     Deref(ExprP<'ir>),
     Unary(UnOp, ExprP<'ir>),
     Assign(ExprP<'ir>, ExprP<'ir>),
-    AssignOp(BinOp, ExprP<'ir>, ExprP<'ir>),
     Local(IrId),
     Lit(Lit<'ir>),
-    Tuple(&'ir [ExprP<'ir>]),
     Field(ExprP<'ir>, &'ir str),
     TupleIndex(ExprP<'ir>, usize),
     If(ExprP<'ir>, ExprP<'ir>, ExprP<'ir>),
@@ -230,7 +257,7 @@ pub enum ExprKind<'ir> {
     Void,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+#[derive(Debug, PartialEq, Eq, Clone, Hash, Copy)]
 pub enum ValueType {
     LValue,
     RValue,
@@ -238,9 +265,27 @@ pub enum ValueType {
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub struct Expr<'ir> {
-    pub kind: ExprKind<'ir>,
     pub value_type: ValueType,
+    pub kind: ExprKind<'ir>,
     pub typ: TyP<'ir>,
+}
+
+impl<'ir> Expr<'ir> {
+    pub fn lvalue(kind: ExprKind<'ir>, typ: TyP<'ir>) -> Self {
+        Self {
+            kind,
+            value_type: ValueType::LValue,
+            typ,
+        }
+    }
+
+    pub fn rvalue(kind: ExprKind<'ir>, typ: TyP<'ir>) -> Self {
+        Self {
+            kind,
+            value_type: ValueType::RValue,
+            typ,
+        }
+    }
 }
 
 pub type ExprP<'ir> = &'ir Expr<'ir>;

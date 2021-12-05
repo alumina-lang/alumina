@@ -135,6 +135,37 @@ pub enum BuiltinType {
     F64,
 }
 
+impl BuiltinType {
+    pub fn is_integer(&self) -> bool {
+        match self {
+            BuiltinType::U8
+            | BuiltinType::I8
+            | BuiltinType::U16
+            | BuiltinType::I16
+            | BuiltinType::U32
+            | BuiltinType::I32
+            | BuiltinType::U64
+            | BuiltinType::I64
+            | BuiltinType::U128
+            | BuiltinType::I128
+            | BuiltinType::USize
+            | BuiltinType::ISize => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_float(&self) -> bool {
+        match self {
+            BuiltinType::F32 | BuiltinType::F64 => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_numeric(&self) -> bool {
+        self.is_integer() || self.is_float()
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum Ty<'ast> {
     Placeholder(AstId),
@@ -155,6 +186,15 @@ pub type TyP<'ast> = &'ast Ty<'ast>;
 pub enum Item<'ast> {
     Struct(Struct<'ast>),
     Function(Function<'ast>),
+}
+
+impl<'ast> Item<'ast> {
+    pub fn is_generic(&self) -> bool {
+        match self {
+            Item::Struct(Struct { placeholders, .. }) => !placeholders.is_empty(),
+            Item::Function(Function { placeholders, .. }) => !placeholders.is_empty(),
+        }
+    }
 }
 
 pub type ItemP<'ast> = &'ast ItemCell<'ast>;
@@ -263,7 +303,7 @@ pub enum BinOp {
     Gt,
     GEq,
     LShift,
-    Rsh,
+    RShift,
     Plus,
     Minus,
     Mul,
@@ -271,20 +311,42 @@ pub enum BinOp {
     Mod,
 }
 
+impl BinOp {
+    pub fn is_comparison(&self) -> bool {
+        match self {
+            BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::LEq | BinOp::Gt | BinOp::GEq => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_logical(&self) -> bool {
+        match self {
+            BinOp::And | BinOp::Or => true,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum UnOp {
     Neg,
     Not,
+    BitNot,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum Lit<'ast> {
-    Str(&'ast str),
-    Byte(u8),
-    Int(u128),
-    Float(&'ast str),
+    Str(&'ast [u8]),
+    Int(u128, Option<BuiltinType>),
+    Float(&'ast str, Option<BuiltinType>),
     Bool(bool),
     Null,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+pub struct FieldInitializer<'ast> {
+    pub name: &'ast str,
+    pub value: ExprP<'ast>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
@@ -301,8 +363,10 @@ pub enum Expr<'ast> {
     Local(AstId),
     Lit(Lit<'ast>),
     Tuple(&'ast [ExprP<'ast>]),
+    Struct(TyP<'ast>, &'ast [FieldInitializer<'ast>]),
     Field(ExprP<'ast>, &'ast str),
     TupleIndex(ExprP<'ast>, usize),
+    Index(ExprP<'ast>, ExprP<'ast>),
     If(ExprP<'ast>, ExprP<'ast>, ExprP<'ast>),
     Cast(ExprP<'ast>, TyP<'ast>),
 
@@ -322,5 +386,6 @@ impl_allocatable!(
     Field<'_>,
     Parameter<'_>,
     ItemCell<'_>,
+    FieldInitializer<'_>,
     AstId
 );
