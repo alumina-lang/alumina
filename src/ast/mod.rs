@@ -172,7 +172,7 @@ pub enum Ty<'ast> {
     Extern(AstId),
     NamedType(ItemP<'ast>),
     Builtin(BuiltinType),
-    Pointer(TyP<'ast>),
+    Pointer(TyP<'ast>, bool),
     Array(TyP<'ast>, usize),
     Slice(TyP<'ast>),
     Tuple(&'ast [TyP<'ast>]),
@@ -271,7 +271,7 @@ pub struct Parameter<'ast> {
 #[derive(Debug)]
 pub struct Function<'ast> {
     pub placeholders: &'ast [AstId],
-    pub parameters: &'ast [Parameter<'ast>],
+    pub args: &'ast [Parameter<'ast>],
     pub return_type: TyP<'ast>,
     pub body: Option<ExprP<'ast>>,
 }
@@ -354,7 +354,7 @@ pub enum Expr<'ast> {
     Block(&'ast [Statement<'ast>], ExprP<'ast>),
     Binary(ExprP<'ast>, BinOp, ExprP<'ast>),
     Call(ExprP<'ast>, &'ast [ExprP<'ast>]),
-    Function(ItemP<'ast>),
+    Fn(ItemP<'ast>),
     Ref(ExprP<'ast>),
     Deref(ExprP<'ast>),
     Unary(UnOp, ExprP<'ast>),
@@ -362,6 +362,9 @@ pub enum Expr<'ast> {
     AssignOp(BinOp, ExprP<'ast>, ExprP<'ast>),
     Local(AstId),
     Lit(Lit<'ast>),
+    Loop(ExprP<'ast>),
+    Break(Option<ExprP<'ast>>),
+    Continue,
     Tuple(&'ast [ExprP<'ast>]),
     Struct(TyP<'ast>, &'ast [FieldInitializer<'ast>]),
     Field(ExprP<'ast>, &'ast str),

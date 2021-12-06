@@ -39,8 +39,18 @@ pub enum AluminaError {
     InvalidBinOp(crate::ast::BinOp),
     #[error("cannot assign to rvalue")]
     CannotAssignToRValue,
+    #[error("cannot assign to const")]
+    CannotAssignToConst,
     #[error("invalid cast")]
     InvalidCast,
+    #[error("break outside of loop")]
+    BreakOutsideOfLoop,
+    #[error("continue outside of loop")]
+    ContinueOutsideOfLoop,
+    #[error("expected {} arguments, found {}", .0, .1)]
+    ParamCountMismatch(usize, usize),
+    #[error("tuple index out of bounds")]
+    TupleIndexOutOfBounds,
 }
 
 #[derive(Debug, Error)]

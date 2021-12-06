@@ -127,7 +127,7 @@ impl<'ast> AstItemMaker<'ast> {
 
         let result = Item::Function(Function {
             placeholders: placeholders.alloc_on(self.ast),
-            parameters: parameters.alloc_on(self.ast),
+            args: parameters.alloc_on(self.ast),
             return_type,
             body: function_body,
         });

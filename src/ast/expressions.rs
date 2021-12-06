@@ -33,6 +33,8 @@ pub struct ExpressionVisitor<'ast, 'src> {
     ast: &'ast AstCtx<'ast>,
     code: &'src ParseCtx<'src>,
     scope: Scope<'ast, 'src>,
+
+    in_a_loop: bool,
 }
 
 impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
@@ -43,6 +45,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                 .code()
                 .expect("cannot run on scope without parse context"),
             scope,
+            in_a_loop: false,
         }
     }
 
@@ -58,7 +61,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             .resolve_item(self.scope.clone(), path)
             .to_syntax_error(node)?
         {
-            ItemResolution::Item(NamedItem::Function(fun, _, _)) => Expr::Function(fun),
+            ItemResolution::Item(NamedItem::Function(fun, _, _)) => Expr::Fn(fun),
             ItemResolution::Item(NamedItem::Variable(var)) => Expr::Local(var),
             ItemResolution::Item(NamedItem::Parameter(var, _)) => Expr::Local(var),
             ItemResolution::Defered(sym, name) => {
@@ -140,10 +143,14 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             }
         });
 
-        let statements = statements.alloc_on(self.ast);
-        let result = Expr::Block(statements, return_expression);
+        let result = if statements.is_empty() {
+            return_expression
+        } else {
+            let statements = statements.alloc_on(self.ast);
+            Expr::Block(statements, return_expression).alloc_on(self.ast)
+        };
 
-        Ok(result.alloc_on(self.ast))
+        Ok(result)
     }
 
     fn visit_integer_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -411,7 +418,36 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         let typ = TypeVisitor::new(self.ast, self.scope.clone())
             .visit(node.child_by_field_name("type").unwrap())?;
 
-        Ok((Expr::Cast(value, typ).alloc_on(self.ast)))
+        Ok(Expr::Cast(value, typ).alloc_on(self.ast))
+    }
+
+    fn visit_loop_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        self.in_a_loop = true;
+        let body = self.visit(node.child_by_field_name("body").unwrap());
+        self.in_a_loop = false;
+        let body = body?;
+
+        Ok(Expr::Loop(body).alloc_on(self.ast))
+    }
+
+    fn visit_break_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        if !self.in_a_loop {
+            return Err(AluminaError::BreakOutsideOfLoop).to_syntax_error(node);
+        }
+
+        let inner = node
+            .child_by_field_name("inner")
+            .map(|n| self.visit(n))
+            .transpose()?;
+
+        Ok(Expr::Break(inner).alloc_on(self.ast))
+    }
+
+    fn visit_continue_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        if !self.in_a_loop {
+            return Err(AluminaError::ContinueOutsideOfLoop).to_syntax_error(node);
+        }
+        Ok(Expr::Continue.alloc_on(self.ast))
     }
 
     fn visit_struct_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {

@@ -1,3 +1,4 @@
+pub mod infer;
 pub mod mono;
 
 use crate::{
@@ -119,11 +120,35 @@ pub enum Ty<'ir> {
     Extern(IrId),
     NamedType(IRItemP<'ir>),
     Builtin(BuiltinType),
-    Pointer(TyP<'ir>),
+    Pointer(TyP<'ir>, bool),
     Array(TyP<'ir>, usize),
     Slice(TyP<'ir>),
     Tuple(&'ir [TyP<'ir>]),
     Function(&'ir [TyP<'ir>], TyP<'ir>),
+}
+
+impl<'ir> Ty<'ir> {
+    pub fn assignable_from(&self, other: &Ty<'ir>) -> bool {
+        match (self, other) {
+            _ if self == other => true,
+            (Ty::Pointer(a, true), Ty::Pointer(b, _)) if a == b => true,
+            (_, Ty::Builtin(BuiltinType::Never)) => true,
+            _ => false,
+        }
+    }
+
+    pub fn gcd(lhs: &Ty<'ir>, rhs: &Ty<'ir>) -> Ty<'ir> {
+        match (lhs, rhs) {
+            _ if lhs == rhs => *lhs,
+            (Ty::Pointer(a, false), Ty::Pointer(b, _)) if a == b => Ty::Pointer(a, false),
+            (Ty::Pointer(a, _), Ty::Pointer(b, false)) if a == b => Ty::Pointer(a, false),
+
+            (_, Ty::Builtin(BuiltinType::Never)) => *lhs,
+            (Ty::Builtin(BuiltinType::Never), _) => *rhs,
+
+            _ => Ty::Builtin(BuiltinType::Void),
+        }
+    }
 }
 
 pub type TyP<'ir> = &'ir Ty<'ir>;
@@ -167,7 +192,7 @@ impl<'ir> FuncBodyCell<'ir> {
 
 #[derive(Debug)]
 pub struct Function<'ir> {
-    pub parameters: &'ir [Parameter<'ir>],
+    pub args: &'ir [Parameter<'ir>],
     pub return_type: TyP<'ir>,
     pub body: FuncBodyCell<'ir>,
 }
@@ -227,6 +252,19 @@ impl Debug for IRItemCell<'_> {
 pub enum Statement<'ir> {
     Expression(ExprP<'ir>),
     LocalDef(IrId, TyP<'ir>),
+    Label(IrId),
+    Goto(IrId),
+}
+
+impl<'ir> Statement<'ir> {
+    pub fn pure(&self) -> bool {
+        match self {
+            Statement::Expression(expr) => expr.pure(),
+            Statement::LocalDef(_, _) => true,
+            Statement::Label(_) => true,
+            Statement::Goto(_) => false,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
@@ -243,7 +281,7 @@ pub enum ExprKind<'ir> {
     Block(&'ir [Statement<'ir>], ExprP<'ir>),
     Binary(ExprP<'ir>, BinOp, ExprP<'ir>),
     Call(ExprP<'ir>, &'ir [ExprP<'ir>]),
-    Function(IRItemP<'ir>),
+    Fn(IRItemP<'ir>),
     Ref(ExprP<'ir>),
     Deref(ExprP<'ir>),
     Unary(UnOp, ExprP<'ir>),
@@ -251,9 +289,11 @@ pub enum ExprKind<'ir> {
     Local(IrId),
     Lit(Lit<'ir>),
     Field(ExprP<'ir>, &'ir str),
+
     TupleIndex(ExprP<'ir>, usize),
     If(ExprP<'ir>, ExprP<'ir>, ExprP<'ir>),
     Cast(ExprP<'ir>, TyP<'ir>),
+    Unreachable,
     Void,
 }
 
@@ -266,6 +306,7 @@ pub enum ValueType {
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub struct Expr<'ir> {
     pub value_type: ValueType,
+    pub is_const: bool,
     pub kind: ExprKind<'ir>,
     pub typ: TyP<'ir>,
 }
@@ -275,6 +316,7 @@ impl<'ir> Expr<'ir> {
         Self {
             kind,
             value_type: ValueType::LValue,
+            is_const: false,
             typ,
         }
     }
@@ -283,7 +325,44 @@ impl<'ir> Expr<'ir> {
         Self {
             kind,
             value_type: ValueType::RValue,
+            is_const: false,
             typ,
+        }
+    }
+
+    pub fn const_lvalue(kind: ExprKind<'ir>, typ: TyP<'ir>) -> Self {
+        Self {
+            kind,
+            value_type: ValueType::LValue,
+            is_const: true,
+            typ,
+        }
+    }
+
+    pub fn diverges(&self) -> bool {
+        *self.typ == Ty::Builtin(BuiltinType::Never)
+    }
+
+    pub fn pure(&self) -> bool {
+        match self.kind {
+            ExprKind::Block(stmts, e) => stmts.iter().all(|s| s.pure()) && e.pure(),
+            ExprKind::Binary(a, _, b) => a.pure() && b.pure(),
+            ExprKind::Ref(inner) => inner.pure(),
+            ExprKind::Deref(inner) => inner.pure(),
+            ExprKind::Unary(_, inner) => inner.pure(),
+            ExprKind::If(a, b, c) => a.pure() && b.pure() && c.pure(),
+            ExprKind::Cast(inner, _) => inner.pure(),
+            ExprKind::Field(inner, _) => inner.pure(),
+            ExprKind::TupleIndex(inner, _) => inner.pure(),
+
+            ExprKind::Fn(_) => true,
+            ExprKind::Local(_) => true,
+            ExprKind::Lit(_) => true,
+            ExprKind::Void => true,
+
+            ExprKind::Unreachable => false, // ?
+            ExprKind::Call(_, _) => false,  // for now
+            ExprKind::Assign(_, _) => false,
         }
     }
 }

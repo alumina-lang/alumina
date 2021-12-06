@@ -90,8 +90,9 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
 
     fn visit_pointer_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let ty = self.visit(node.child_by_field_name("inner").unwrap())?;
+        let is_const = node.child_by_field_name("const").is_some();
 
-        Ok(self.ast.intern_type(Ty::Pointer(ty)))
+        Ok(self.ast.intern_type(Ty::Pointer(ty, is_const)))
     }
 
     fn visit_array_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {

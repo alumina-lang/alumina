@@ -51,6 +51,7 @@ module.exports = grammar({
 
   inline: ($) => [
     $._path,
+    $._non_special_token,
     $._type_identifier,
     $._field_identifier,
     $._expression_ending_with_block,
@@ -190,7 +191,7 @@ module.exports = grammar({
     parameter_type_list: ($) =>
       seq("(", sepBy(",", field("parameter", $._type)), optional(","), ")"),
 
-    pointer_of: ($) => seq("&", field("inner", $._type)),
+    pointer_of: ($) => seq("&", optional(field("const", "const")), field("inner", $._type)),
 
     slice_of: ($) => seq("[", field("inner", $._type), "]"),
 
@@ -534,7 +535,7 @@ module.exports = grammar({
     while_expression: ($) =>
       seq("while", field("condition", $._expression), field("body", $.block)),
 
-    break_expression: $ => prec.left(seq('break', optional($._expression))),
+    break_expression: $ => prec.right(seq('break', field("inner", optional($._expression)))),
 
     continue_expression: $ => 'continue',
 
