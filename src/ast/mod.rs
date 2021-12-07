@@ -180,6 +180,15 @@ pub enum Ty<'ast> {
     GenericType(ItemP<'ast>, &'ast [TyP<'ast>]),
 }
 
+impl<'ast> Ty<'ast> {
+    pub fn canonical_type(&'ast self) -> TyP<'ast> {
+        match self {
+            Ty::Pointer(inner, _) => inner.canonical_type(),
+            _ => self,
+        }
+    }
+}
+
 pub type TyP<'ast> = &'ast Ty<'ast>;
 
 #[derive(Debug)]
@@ -202,11 +211,27 @@ pub type ItemP<'ast> = &'ast ItemCell<'ast>;
 impl<'ast> ItemCell<'ast> {
     pub fn assign(&self, value: Item<'ast>) {
         // Panic if we try to assign the same symbol twice
-        self.contents.set(value).unwrap();
+        self.contents
+            .set(value)
+            .expect("assigning the same symbol twice");
     }
 
     pub fn get(&'ast self) -> &'ast Item<'ast> {
         self.contents.get().unwrap()
+    }
+
+    pub fn get_function(&'ast self) -> &'ast Function<'ast> {
+        match self.contents.get() {
+            Some(Item::Function(f)) => f,
+            _ => panic!("function expected"),
+        }
+    }
+
+    pub fn get_struct(&'ast self) -> &'ast Struct<'ast> {
+        match self.contents.get() {
+            Some(Item::Struct(s)) => s,
+            _ => panic!("struct expected"),
+        }
     }
 }
 
@@ -251,21 +276,28 @@ impl Debug for ItemCell<'_> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Field<'ast> {
+    pub id: AstId,
     pub name: &'ast str,
-    pub ty: TyP<'ast>,
+    pub typ: TyP<'ast>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct AssociatedFn<'ast> {
+    pub name: &'ast str,
+    pub item: ItemP<'ast>,
 }
 
 #[derive(Debug)]
 pub struct Struct<'ast> {
     pub placeholders: &'ast [AstId],
-    pub associated_fns: &'ast [ItemP<'ast>],
+    pub associated_fns: &'ast [AssociatedFn<'ast>],
     pub fields: &'ast [Field<'ast>],
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct Parameter<'ast> {
     pub id: AstId,
-    pub ty: TyP<'ast>,
+    pub typ: TyP<'ast>,
 }
 
 #[derive(Debug)]
@@ -350,11 +382,25 @@ pub struct FieldInitializer<'ast> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+pub struct DeferredFn<'ast> {
+    pub placeholder: AstId,
+    pub name: &'ast str,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+pub enum FnKind<'ast> {
+    Normal(ItemP<'ast>),
+    Defered(DeferredFn<'ast>),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum Expr<'ast> {
     Block(&'ast [Statement<'ast>], ExprP<'ast>),
-    Binary(ExprP<'ast>, BinOp, ExprP<'ast>),
+    Binary(BinOp, ExprP<'ast>, ExprP<'ast>),
     Call(ExprP<'ast>, &'ast [ExprP<'ast>]),
-    Fn(ItemP<'ast>),
+
+    Fn(FnKind<'ast>, Option<&'ast [TyP<'ast>]>),
+
     Ref(ExprP<'ast>),
     Deref(ExprP<'ast>),
     Unary(UnOp, ExprP<'ast>),
@@ -373,10 +419,6 @@ pub enum Expr<'ast> {
     If(ExprP<'ast>, ExprP<'ast>, ExprP<'ast>),
     Cast(ExprP<'ast>, TyP<'ast>),
 
-    // Generics support
-    DeferredFunction(AstId, &'ast str),
-    GenericFunction(ExprP<'ast>, &'ast [TyP<'ast>]),
-
     Void,
 }
 
@@ -390,5 +432,6 @@ impl_allocatable!(
     Parameter<'_>,
     ItemCell<'_>,
     FieldInitializer<'_>,
+    AssociatedFn<'_>,
     AstId
 );

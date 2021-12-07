@@ -272,7 +272,7 @@ module.exports = grammar({
     expression_statement: ($) =>
       choice(
         seq(field("inner", $._expression), ";"),
-        prec(-1, field("inner", $._expression_ending_with_block))
+        prec(1, field("inner", $._expression_ending_with_block))
       ),
 
     return_expression: ($) =>

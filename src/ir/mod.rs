@@ -1,3 +1,4 @@
+pub mod builder;
 pub mod infer;
 pub mod mono;
 
@@ -124,7 +125,7 @@ pub enum Ty<'ir> {
     Array(TyP<'ir>, usize),
     Slice(TyP<'ir>),
     Tuple(&'ir [TyP<'ir>]),
-    Function(&'ir [TyP<'ir>], TyP<'ir>),
+    Fn(&'ir [TyP<'ir>], TyP<'ir>),
 }
 
 impl<'ir> Ty<'ir> {
@@ -149,13 +150,20 @@ impl<'ir> Ty<'ir> {
             _ => Ty::Builtin(BuiltinType::Void),
         }
     }
+
+    pub fn canonical_type(&'ir self) -> TyP<'ir> {
+        match self {
+            Ty::Pointer(inner, _) => inner.canonical_type(),
+            _ => self,
+        }
+    }
 }
 
 pub type TyP<'ir> = &'ir Ty<'ir>;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Field<'ir> {
-    pub name: &'ir str,
+    pub id: IrId,
     pub ty: TyP<'ir>,
 }
 
@@ -207,10 +215,28 @@ pub type IRItemP<'ir> = &'ir IRItemCell<'ir>;
 
 impl<'ir> IRItemCell<'ir> {
     pub fn assign(&self, value: IRItem<'ir>) {
-        self.contents.set(value).unwrap();
+        // Panic if we try to assign the same symbol twice
+        self.contents
+            .set(value)
+            .expect("assigning the same symbol twice");
     }
+
     pub fn get(&'ir self) -> &'ir IRItem<'ir> {
         self.contents.get().unwrap()
+    }
+
+    pub fn get_function(&'ir self) -> &'ir Function<'ir> {
+        match self.contents.get() {
+            Some(IRItem::Function(f)) => f,
+            _ => panic!("function expected"),
+        }
+    }
+
+    pub fn get_struct(&'ir self) -> &'ir Struct<'ir> {
+        match self.contents.get() {
+            Some(IRItem::Struct(s)) => s,
+            _ => panic!("struct expected"),
+        }
     }
 }
 pub struct IRItemCell<'ir> {
@@ -238,7 +264,7 @@ impl Debug for IRItemCell<'_> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         if fmt.alternate() {
             writeln!(fmt, "{} {{", self.id)?;
-            writeln!(fmt, "\t{:#?}", self.contents.get())?;
+            writeln!(fmt, "\t{:?}", self.contents.get())?;
             writeln!(fmt, "}}")?;
         } else {
             write!(fmt, "{}", self.id)?
@@ -280,16 +306,17 @@ pub enum Lit<'ast> {
 pub enum ExprKind<'ir> {
     Block(&'ir [Statement<'ir>], ExprP<'ir>),
     Binary(ExprP<'ir>, BinOp, ExprP<'ir>),
+    AssignOp(ExprP<'ir>, BinOp, ExprP<'ir>),
     Call(ExprP<'ir>, &'ir [ExprP<'ir>]),
     Fn(IRItemP<'ir>),
     Ref(ExprP<'ir>),
     Deref(ExprP<'ir>),
     Unary(UnOp, ExprP<'ir>),
     Assign(ExprP<'ir>, ExprP<'ir>),
+    Index(ExprP<'ir>, ExprP<'ir>),
     Local(IrId),
     Lit(Lit<'ir>),
-    Field(ExprP<'ir>, &'ir str),
-
+    Field(ExprP<'ir>, IrId),
     TupleIndex(ExprP<'ir>, usize),
     If(ExprP<'ir>, ExprP<'ir>, ExprP<'ir>),
     Cast(ExprP<'ir>, TyP<'ir>),
@@ -347,9 +374,11 @@ impl<'ir> Expr<'ir> {
         match self.kind {
             ExprKind::Block(stmts, e) => stmts.iter().all(|s| s.pure()) && e.pure(),
             ExprKind::Binary(a, _, b) => a.pure() && b.pure(),
+            ExprKind::AssignOp(a, _, b) => a.pure() && b.pure(),
             ExprKind::Ref(inner) => inner.pure(),
             ExprKind::Deref(inner) => inner.pure(),
             ExprKind::Unary(_, inner) => inner.pure(),
+            ExprKind::Index(a, b) => a.pure() && b.pure(),
             ExprKind::If(a, b, c) => a.pure() && b.pure() && c.pure(),
             ExprKind::Cast(inner, _) => inner.pure(),
             ExprKind::Field(inner, _) => inner.pure(),

@@ -5,7 +5,7 @@ use crate::{
     parser::AluminaVisitor,
 };
 
-use super::{expressions::ExpressionVisitor, types::TypeVisitor};
+use super::{expressions::ExpressionVisitor, types::TypeVisitor, AssociatedFn};
 
 pub struct AstItemMaker<'ast> {
     ast: &'ast AstCtx<'ast>,
@@ -27,12 +27,15 @@ impl<'ast> AstItemMaker<'ast> {
     fn resolve_associated_fns<'src>(
         &self,
         scope: Scope<'ast, 'src>,
-    ) -> Result<&'ast [ItemP<'ast>], SyntaxError<'src>> {
-        let mut associated_fns: Vec<ItemP<'ast>> = Vec::new();
+    ) -> Result<&'ast [AssociatedFn<'ast>], SyntaxError<'src>> {
+        let mut associated_fns = Vec::new();
 
-        for (_name, item) in scope.inner().all_items() {
+        for (name, item) in scope.inner().all_items() {
             match item {
-                NamedItem::Function(symbol, _, _) => associated_fns.push(*symbol),
+                NamedItem::Function(symbol, _, _) => associated_fns.push(AssociatedFn {
+                    name: name.alloc_on(self.ast),
+                    item: *symbol,
+                }),
                 _ => {}
             }
         }
@@ -61,8 +64,9 @@ impl<'ast> AstItemMaker<'ast> {
                     let field_type = visitor.visit(node.child_by_field_name("type").unwrap())?;
 
                     fields.push(Field {
+                        id: self.ast.make_id(),
                         name: name.alloc_on(self.ast),
-                        ty: field_type,
+                        typ: field_type,
                     });
                 }
                 _ => {}
@@ -108,7 +112,7 @@ impl<'ast> AstItemMaker<'ast> {
 
                     parameters.push(Parameter {
                         id: *id,
-                        ty: field_type,
+                        typ: field_type,
                     });
                 }
                 _ => {}

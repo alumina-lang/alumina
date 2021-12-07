@@ -5,7 +5,7 @@ use tree_sitter::Node;
 
 #[derive(Debug, Error)]
 pub enum AluminaError {
-    #[error("could not resolve the path")]
+    #[error("could not resolve the path {}", .0)]
     UnresolvedPath(String),
     #[error("cycle detected while resolving names")]
     CycleDetected,
@@ -51,6 +51,16 @@ pub enum AluminaError {
     ParamCountMismatch(usize, usize),
     #[error("tuple index out of bounds")]
     TupleIndexOutOfBounds,
+    #[error("function expected")]
+    FunctionExpectedHere,
+    #[error("could not resolve item {:?}", .0)]
+    UnresolvedItem(String),
+    #[error("duplicate field {:?} in struct initializer", .0)]
+    DuplicateFieldInitializer(String),
+    #[error("expected a struct here")]
+    StructExpectedHere,
+    #[error("method {:?} not found", .0)]
+    MethodNotFound(String),
 }
 
 #[derive(Debug, Error)]

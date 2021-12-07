@@ -9,6 +9,8 @@ mod parser;
 mod utils;
 mod visitors;
 
+use std::thread;
+
 use ast::Item;
 use ir::mono::MonoCtx;
 use ir::mono::Monomorphizer;
@@ -23,8 +25,8 @@ use crate::parser::{AluminaVisitor, ParseCtx};
 use crate::utils::NodeWrapper;
 use crate::visitors::pass1::FirstPassVisitor;
 
-const SOURCE_CODE: &str = include_str!("../examples/minimal.alumina");
-// const SOURCE_CODE: &str = include_str!("../examples/vector.alumina");
+// const SOURCE_CODE: &str = include_str!("../examples/minimal.alumina");
+const SOURCE_CODE: &str = include_str!("../examples/vector.alumina");
 
 struct CompilationUnit {
     source: String,
@@ -102,6 +104,17 @@ fn compile(units: Vec<CompilationUnit>) {
 }
 
 fn main() {
+    // Spawn thread with explicit stack size
+    let child = thread::Builder::new()
+        .stack_size(10000000)
+        .spawn(run)
+        .unwrap();
+
+    // Wait for thread to join
+    child.join().unwrap();
+}
+
+fn run() {
     compile(vec![CompilationUnit {
         source: SOURCE_CODE.to_string(),
         name: "m".to_string(),

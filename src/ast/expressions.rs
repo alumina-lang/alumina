@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::ast::{AstCtx, FieldInitializer};
 use crate::ast::{BinOp, Expr, ExprP, LetDeclaration, Lit, Statement, UnOp};
 use crate::common::AluminaError;
@@ -17,7 +19,7 @@ use crate::{
 };
 
 use super::types::TypeVisitor;
-use super::BuiltinType;
+use super::{BuiltinType, DeferredFn, FnKind};
 
 macro_rules! with_block_scope {
     ($self:ident, $body:expr) => {{
@@ -35,6 +37,19 @@ pub struct ExpressionVisitor<'ast, 'src> {
     scope: Scope<'ast, 'src>,
 
     in_a_loop: bool,
+}
+macro_rules! suffixed_literals {
+    ($e:expr, $($suffix:literal => $typ:path),+) => {
+        match $e {
+            $(
+                v if v.ends_with($suffix) => (&v[..v.len() - $suffix.len()], Some($typ)),
+            )+
+            v => (v, None)
+        }
+    };
+    ($e:expr, $($suffix:literal => $typ:path,)+) => {
+        suffixed_literals!($e, $($suffix => $typ),+)
+    };
 }
 
 impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
@@ -61,12 +76,14 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             .resolve_item(self.scope.clone(), path)
             .to_syntax_error(node)?
         {
-            ItemResolution::Item(NamedItem::Function(fun, _, _)) => Expr::Fn(fun),
+            ItemResolution::Item(NamedItem::Function(fun, _, _)) => {
+                Expr::Fn(FnKind::Normal(fun), None)
+            }
             ItemResolution::Item(NamedItem::Variable(var)) => Expr::Local(var),
             ItemResolution::Item(NamedItem::Parameter(var, _)) => Expr::Local(var),
-            ItemResolution::Defered(sym, name) => {
+            ItemResolution::Defered(placeholder, name) => {
                 let name = name.0.alloc_on(self.ast);
-                Expr::DeferredFunction(sym, name)
+                Expr::Fn(FnKind::Defered(DeferredFn { placeholder, name }), None)
             }
             a => panic!("{:?} at {:?}", a, node),
         };
@@ -154,19 +171,20 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_integer_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let (remainder, kind) = match self.code.node_text(node) {
-            v if v.ends_with("u8") => (&v[..v.len() - 2], Some(BuiltinType::U8)),
-            v if v.ends_with("u16") => (&v[..v.len() - 3], Some(BuiltinType::U16)),
-            v if v.ends_with("u32") => (&v[..v.len() - 3], Some(BuiltinType::U32)),
-            v if v.ends_with("u64") => (&v[..v.len() - 3], Some(BuiltinType::U64)),
-            v if v.ends_with("i8") => (&v[..v.len() - 2], Some(BuiltinType::I8)),
-            v if v.ends_with("i16") => (&v[..v.len() - 3], Some(BuiltinType::I16)),
-            v if v.ends_with("i32") => (&v[..v.len() - 3], Some(BuiltinType::I32)),
-            v if v.ends_with("i64") => (&v[..v.len() - 3], Some(BuiltinType::I64)),
-            v if v.ends_with("usize") => (&v[..v.len() - 5], Some(BuiltinType::USize)),
-            v if v.ends_with("isize") => (&v[..v.len() - 5], Some(BuiltinType::ISize)),
-            v => (v, None),
-        };
+        let (remainder, kind) = suffixed_literals!(self.code.node_text(node),
+            "u8" => BuiltinType::U8,
+            "u16" => BuiltinType::U16,
+            "u32" => BuiltinType::U32,
+            "u64" => BuiltinType::U64,
+            "u128" => BuiltinType::U128,
+            "i8" => BuiltinType::I8,
+            "i16" => BuiltinType::I16,
+            "i32" => BuiltinType::I32,
+            "i64" => BuiltinType::I64,
+            "i128" => BuiltinType::I128,
+            "usize" => BuiltinType::USize,
+            "isize" => BuiltinType::ISize,
+        );
 
         let value = remainder
             .parse()
@@ -177,11 +195,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_float_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let (remainder, kind) = match self.code.node_text(node) {
-            v if v.ends_with("f32") => (&v[..v.len() - 3], Some(BuiltinType::F32)),
-            v if v.ends_with("f64") => (&v[..v.len() - 3], Some(BuiltinType::F64)),
-            v => (v, None),
-        };
+        let (remainder, kind) = suffixed_literals!(self.code.node_text(node),
+            "f32" => BuiltinType::U8,
+            "f64" => BuiltinType::U16,
+        );
 
         Ok(Expr::Lit(Lit::Float(remainder.alloc_on(self.ast), kind)).alloc_on(self.ast))
     }
@@ -254,7 +271,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         };
         let rhs = self.visit(node.child_by_field_name("right").unwrap())?;
 
-        Ok(Expr::Binary(lhs, op, rhs).alloc_on(self.ast))
+        Ok(Expr::Binary(op, lhs, rhs).alloc_on(self.ast))
     }
 
     fn visit_assignment_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -397,7 +414,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_generic_function(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let value = self.visit(node.child_by_field_name("function").unwrap())?;
+        let fn_kind = match self.visit(node.child_by_field_name("function").unwrap())? {
+            Expr::Fn(fn_kind, None) => fn_kind.clone(),
+            _ => return Err(AluminaError::FunctionExpectedHere).to_syntax_error(node),
+        };
 
         let mut type_visitor = TypeVisitor::new(self.ast, self.scope.clone());
 
@@ -409,7 +429,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             .collect::<Result<Vec<_>, _>>()?
             .alloc_on(self.ast);
 
-        let result = Expr::GenericFunction(value, arguments);
+        let result = Expr::Fn(fn_kind, Some(arguments));
         Ok(result.alloc_on(self.ast))
     }
 
@@ -456,19 +476,25 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
         let initializer_node = node.child_by_field_name("arguments").unwrap();
         let mut field_initializers = Vec::new();
+        let mut names = HashSet::new();
 
         with_block_scope!(self, {
             let mut cursor = initializer_node.walk();
 
             for node in initializer_node.children_by_field_name("item", &mut cursor) {
-                let field = self
+                let name = self
                     .code
-                    .node_text(node.child_by_field_name("field").unwrap())
-                    .alloc_on(self.ast);
+                    .node_text(node.child_by_field_name("field").unwrap());
+
+                if !names.insert(name) {
+                    return Err(AluminaError::DuplicateFieldInitializer(name.to_string()))
+                        .to_syntax_error(node);
+                }
+
                 let value = self.visit(node.child_by_field_name("value").unwrap())?;
 
                 field_initializers.push(FieldInitializer {
-                    name: field.alloc_on(self.ast),
+                    name: name.alloc_on(self.ast),
                     value,
                 });
             }

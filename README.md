@@ -4,7 +4,7 @@ Alumina is a C-like programming language with Rust-like syntax.
 
 It has the following conveniences over C:
 
-- Basic generics (no template specialization)
+- Generics (duck-typed, similar to C++ templates, but without specializations)
 - Lambdas (stateless only, closures are not supported)
 - Module system, namespaces and 2-pass compilation (no header files and forward declarations needed)
 - Block expressions

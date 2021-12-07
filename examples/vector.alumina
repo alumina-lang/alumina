@@ -1,26 +1,30 @@
 mod mem {
-    extern fn malloc(size: usize) -> &();
-    extern fn free(ptr: &());
-    extern fn sizeof() -> usize;
-    extern fn memcpy() -> usize;
+    fn malloc(size: usize) -> &() { loop{} }
+    fn free<T>(ptr: &T) { loop{} }
+    fn sizeof() -> usize { loop{} }
+    fn memcpy<T>(a: &T, b: &T, len: usize) -> usize { loop{} }
+}
+
+fn sizeof<T>() -> usize {
+    loop{}
 }
 
 struct vector<T> {
     data: &T,
     length: usize,
     capacity: usize,
-    ptr: fn(_: u32) -> u32
 }
 
+
 impl vector {
-    use mem::{memcpy::malloc, free as dealloc};
+    use mem::{memcpy, malloc};
 
     fn new<T>() -> vector<T> {
-        with_capacity::<T>(0)
+        with_capacity(0)
     }
 
     fn with_capacity<T>(capacity: usize) -> vector<T> {
-        vector::<T> {
+        vector {
             data: malloc(sizeof::<T>() * capacity) as &T,
             length: 0,
             capacity: capacity,
@@ -32,7 +36,7 @@ impl vector {
             let new_capacity = self.capacity * 2;
             let new_ptr = malloc(sizeof::<T>() * new_capacity) as &T;
             memcpy(new_ptr, self.data, self.length);
-            free(self.data);
+            mem::free(self.data);
             self.data = new_ptr;
             self.capacity = new_capacity;
         }
@@ -63,7 +67,7 @@ impl vector {
     }
 
     fn free<T>(self: &vector<T>) {
-        dealloc(self.data);
+        mem::free(self.data);
     }
 }
 
@@ -73,5 +77,4 @@ fn main() {
     let v = vector::new::<u8>();
     v.push(1);
     v.free();
-
 }
