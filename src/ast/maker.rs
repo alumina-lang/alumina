@@ -1,11 +1,11 @@
 use crate::{
     ast::{AstCtx, AstId, BuiltinType, Field, Function, Item, ItemP, Parameter, Struct, Ty},
-    common::{ArenaAllocatable, SyntaxError},
+    common::{ArenaAllocatable, SyntaxError, ToSyntaxError},
     name_resolution::scope::{NamedItem, Scope},
     parser::AluminaVisitor,
 };
 
-use super::{expressions::ExpressionVisitor, types::TypeVisitor, AssociatedFn};
+use super::{expressions::ExpressionVisitor, types::TypeVisitor, AssociatedFn, EnumMember, Enum};
 
 pub struct AstItemMaker<'ast> {
     ast: &'ast AstCtx<'ast>,
@@ -91,6 +91,49 @@ impl<'ast> AstItemMaker<'ast> {
         Ok(())
     }
 
+    fn make_enum<'src>(
+        &mut self,
+        symbol: ItemP<'ast>,
+        _node: tree_sitter::Node<'src>,
+        scope: Scope<'ast, 'src>,
+        impl_scope: Option<Scope<'ast, 'src>>,
+    ) -> Result<(), SyntaxError<'src>> {
+        let mut members = Vec::new();
+
+        for (_name, item) in scope.inner().all_items() {
+            match item {
+                NamedItem::EnumMember(_, id, node) => {
+                    let field_value = node
+                        .child_by_field_name("value")
+                        .map(|node| ExpressionVisitor::new(self.ast, scope.clone()).visit(node))
+                        .transpose()?;
+
+                    members.push(EnumMember {
+                        id: *id,
+                        value: field_value,
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        let associated_fns = match impl_scope {
+            Some(impl_scope) => self.resolve_associated_fns(impl_scope)?,
+            None => (&[]).alloc_on(self.ast),
+        };
+
+        let result = Item::Enum(Enum {
+            members: members.alloc_on(self.ast),
+            associated_fns,
+        });
+
+        symbol.assign(result);
+
+        self.symbols.push(symbol);
+
+        Ok(())
+    }
+
     fn make_function_impl<'src>(
         &mut self,
         symbol: ItemP<'ast>,
@@ -152,6 +195,7 @@ impl<'ast> AstItemMaker<'ast> {
     ) -> Result<(), SyntaxError<'src>> {
         match node.kind() {
             "struct_definition" => self.make_struct(symbol, node, scope, impl_scope)?,
+            "enum_definition" => self.make_enum(symbol, node, scope, impl_scope)?,
             _ => unimplemented!(),
         };
 

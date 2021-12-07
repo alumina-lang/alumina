@@ -25,8 +25,8 @@ use crate::parser::{AluminaVisitor, ParseCtx};
 use crate::utils::NodeWrapper;
 use crate::visitors::pass1::FirstPassVisitor;
 
-// const SOURCE_CODE: &str = include_str!("../examples/minimal.alumina");
-const SOURCE_CODE: &str = include_str!("../examples/vector.alumina");
+const SOURCE_CODE: &str = include_str!("../examples/minimal.alumina");
+//const SOURCE_CODE: &str = include_str!("../examples/vector.alumina");
 
 struct CompilationUnit {
     source: String,

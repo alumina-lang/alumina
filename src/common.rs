@@ -61,6 +61,12 @@ pub enum AluminaError {
     StructExpectedHere,
     #[error("method {:?} not found", .0)]
     MethodNotFound(String),
+    #[error("duplicate enum member")]
+    DuplicateEnumMember,
+    #[error("cannot be called as a method")]
+    NotAMethod,    
+    #[error("default case must be last in a switch expression")]
+    DefaultCaseMustBeLast,    
 }
 
 #[derive(Debug, Error)]
@@ -79,6 +85,15 @@ where
     AluminaError: From<E>,
 {
     fn to_syntax_error<'src>(self, node: Node<'src>) -> Result<T, SyntaxError<'src>> {
+        
+        let a = 1usize;
+        let b = 5;
+        match a {
+            b => {
+
+            }
+        }
+
         self.map_err(|e| SyntaxError {
             kind: e.into(),
             node,

@@ -5,12 +5,13 @@ Alumina is a C-like programming language with Rust-like syntax.
 It has the following conveniences over C:
 
 - Generics (duck-typed, similar to C++ templates, but without specializations)
+- [Unified call syntax](https://en.wikipedia.org/wiki/Uniform_Function_Call_Syntax) for functions in scope
 - Lambdas (stateless only, closures are not supported)
 - Module system, namespaces and 2-pass compilation (no header files and forward declarations needed)
 - Block expressions
-- Richer type system: slices, tuples, unit and never types
+- Richer type system: strong enums, slices, tuples, unit and never types. Also some type inference (though not full Hindley-Milner)
 
-Alumina can be thought of as Go without a garbage collector and runtime. Unlike C++, Rust and D is not a RAII language and requires manual memory management.
+Alumina can be thought of as Go without a garbage collector and runtime. Unlike C++, Rust and D is not a RAII language and requires manual memory management and is not memory-safe.
 
 ## Motivating example
 

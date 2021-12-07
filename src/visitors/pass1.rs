@@ -1,6 +1,6 @@
 use crate::common::{SyntaxError, ToSyntaxError};
 
-use crate::ast::AstCtx;
+use crate::ast::{AstCtx, ItemP};
 use crate::name_resolution::scope::{NamedItem, Scope, ScopeType};
 use crate::parser::{AluminaVisitor, ParseCtx};
 
@@ -12,6 +12,7 @@ pub struct FirstPassVisitor<'ast, 'src> {
     ast: &'ast AstCtx<'ast>,
     scope: Scope<'ast, 'src>,
     code: &'src ParseCtx<'src>,
+    enum_item: Option<ItemP<'ast>>
 }
 
 impl<'ast, 'src> FirstPassVisitor<'ast, 'src> {
@@ -22,6 +23,7 @@ impl<'ast, 'src> FirstPassVisitor<'ast, 'src> {
                 .code()
                 .expect("cannot run on scope without parse context"),
             scope,
+            enum_item: None
         }
     }
 }
@@ -106,19 +108,32 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         let name = self.parse_name(node);
 
         let child_scope = self.scope.named_child(ScopeType::Enum, name);
+        let sym = self.ast.make_symbol();
         self.scope
             .add_item(
                 name,
-                NamedItem::Type(self.ast.make_symbol(), node, child_scope.clone()),
+                NamedItem::Type(sym, node, child_scope.clone()),
             )
             .to_syntax_error(node)?;
 
         with_child_scope!(self, child_scope, {
+            self.enum_item = Some(sym);
             self.visit_children_by_field(node, "body")?;
         });
 
         Ok(())
     }
+
+    fn visit_enum_item(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
+        let name = self.parse_name(node);
+
+        self.scope
+            .add_item(name, NamedItem::EnumMember(self.enum_item.unwrap(), self.ast.make_id(), node))
+            .to_syntax_error(node)?;
+
+        Ok(())
+    }
+
 
     fn visit_struct_field(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
         let name = self.parse_name(node);
@@ -200,14 +215,6 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         self.visit_children_by_field(node, "parameter")
     }
 
-    fn visit_enum_item(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
-        let name = self.parse_name(node);
-        self.scope
-            .add_item(name, NamedItem::Field(node))
-            .to_syntax_error(node)?;
-
-        Ok(())
-    }
 
     fn visit_use_declaration(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
         let mut visitor = UseClauseVisitor::new(self.scope.clone());

@@ -1,6 +1,7 @@
 pub mod builder;
 pub mod infer;
 pub mod mono;
+pub mod const_eval;
 
 use crate::{
     ast::{BinOp, BuiltinType, UnOp},
@@ -206,9 +207,22 @@ pub struct Function<'ir> {
 }
 
 #[derive(Debug)]
+pub struct EnumMember<'ir> {
+    pub id: IrId,
+    pub value: ExprP<'ir>,
+}
+
+#[derive(Debug)]
+pub struct Enum<'ir> {
+    pub underlying_type: TyP<'ir>,
+    pub members: &'ir [EnumMember<'ir>],
+}
+
+#[derive(Debug)]
 pub enum IRItem<'ir> {
     Struct(Struct<'ir>),
     Function(Function<'ir>),
+    Enum(Enum<'ir>),
 }
 
 pub type IRItemP<'ir> = &'ir IRItemCell<'ir>;
@@ -219,6 +233,10 @@ impl<'ir> IRItemCell<'ir> {
         self.contents
             .set(value)
             .expect("assigning the same symbol twice");
+    }
+
+    pub fn try_get(&'ir self) -> Option<&'ir IRItem<'ir>> {
+        self.contents.get()
     }
 
     pub fn get(&'ir self) -> &'ir IRItem<'ir> {
@@ -236,6 +254,13 @@ impl<'ir> IRItemCell<'ir> {
         match self.contents.get() {
             Some(IRItem::Struct(s)) => s,
             _ => panic!("struct expected"),
+        }
+    }
+
+    pub fn get_enum(&'ir self) -> &'ir Enum<'ir> {
+        match self.contents.get() {
+            Some(IRItem::Enum(e)) => e,
+            _ => panic!("enum expected"),
         }
     }
 }
@@ -305,17 +330,19 @@ pub enum Lit<'ast> {
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum ExprKind<'ir> {
     Block(&'ir [Statement<'ir>], ExprP<'ir>),
-    Binary(ExprP<'ir>, BinOp, ExprP<'ir>),
-    AssignOp(ExprP<'ir>, BinOp, ExprP<'ir>),
+    Binary(BinOp, ExprP<'ir>, ExprP<'ir>),
+    AssignOp(BinOp, ExprP<'ir>, ExprP<'ir>),
     Call(ExprP<'ir>, &'ir [ExprP<'ir>]),
     Fn(IRItemP<'ir>),
     Ref(ExprP<'ir>),
     Deref(ExprP<'ir>),
+    Return(ExprP<'ir>),
     Unary(UnOp, ExprP<'ir>),
     Assign(ExprP<'ir>, ExprP<'ir>),
     Index(ExprP<'ir>, ExprP<'ir>),
     Local(IrId),
     Lit(Lit<'ir>),
+    ConstValue(const_eval::Value),
     Field(ExprP<'ir>, IrId),
     TupleIndex(ExprP<'ir>, usize),
     If(ExprP<'ir>, ExprP<'ir>, ExprP<'ir>),
@@ -373,8 +400,8 @@ impl<'ir> Expr<'ir> {
     pub fn pure(&self) -> bool {
         match self.kind {
             ExprKind::Block(stmts, e) => stmts.iter().all(|s| s.pure()) && e.pure(),
-            ExprKind::Binary(a, _, b) => a.pure() && b.pure(),
-            ExprKind::AssignOp(a, _, b) => a.pure() && b.pure(),
+            ExprKind::Binary(_, a,  b) => a.pure() && b.pure(),
+            ExprKind::AssignOp(_, a, b) => a.pure() && b.pure(),
             ExprKind::Ref(inner) => inner.pure(),
             ExprKind::Deref(inner) => inner.pure(),
             ExprKind::Unary(_, inner) => inner.pure(),
@@ -387,11 +414,13 @@ impl<'ir> Expr<'ir> {
             ExprKind::Fn(_) => true,
             ExprKind::Local(_) => true,
             ExprKind::Lit(_) => true,
+            ExprKind::ConstValue(_) => true,
             ExprKind::Void => true,
 
             ExprKind::Unreachable => false, // ?
             ExprKind::Call(_, _) => false,  // for now
             ExprKind::Assign(_, _) => false,
+            ExprKind::Return(_) => false,
         }
     }
 }
@@ -405,5 +434,6 @@ impl_allocatable!(
     Field<'_>,
     Parameter<'_>,
     IRItemCell<'_>,
+    EnumMember<'_>,
     IrId
 );

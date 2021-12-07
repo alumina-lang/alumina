@@ -7,8 +7,9 @@ use std::iter::{once, repeat};
 use once_cell::sync::{Lazy, OnceCell};
 
 use super::builder::ExpressionBuilder;
+use super::const_eval::{const_eval, numeric_of_kind, Value};
 use super::infer::TypeInferer;
-use super::IrCtx;
+use super::{Enum, IrCtx};
 use crate::ast::{expressions, BuiltinType};
 use crate::common::ArenaAllocatable;
 use crate::ir::{FuncBodyCell, ValueType};
@@ -69,7 +70,8 @@ pub struct LoopContext<'ir> {
 pub struct Monomorphizer<'a, 'ast, 'ir> {
     mono_ctx: &'a mut MonoCtx<'ast, 'ir>,
     replacements: HashMap<ast::AstId, ir::TyP<'ir>>,
-    slot_types: HashMap<ir::IrId, ir::TyP<'ir>>,
+    local_types: HashMap<ir::IrId, ir::TyP<'ir>>,
+    return_type: Option<ir::TyP<'ir>>,
     builder: ExpressionBuilder<'ir>,
     loop_contexts: Vec<LoopContext<'ir>>,
 }
@@ -78,61 +80,14 @@ pub struct Monomorphizer<'a, 'ast, 'ir> {
 pub struct MonomorphizeKey<'ast, 'ir>(pub ast::ItemP<'ast>, pub &'ir [ir::TyP<'ir>]);
 
 impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
-    fn make_tentative_child<'b>(&'b mut self) -> Monomorphizer<'b, 'ast, 'ir> {
-        let ir = self.mono_ctx.ir;
-
-        Monomorphizer {
-            mono_ctx: self.mono_ctx,
-            replacements: self.replacements.clone(),
-            slot_types: self.slot_types.clone(),
-            builder: ExpressionBuilder::new(ir),
-            loop_contexts: self.loop_contexts.clone(),
-        }
-    }
-
-    fn get_struct_field_map(
-        &mut self,
-        item: ir::IRItemP<'ir>,
-    ) -> HashMap<&'ast str, &'ir ir::Field<'ir>> {
-        let MonomorphizeKey(ast_item, _) = self.mono_ctx.reverse_lookup(item);
-        let ir_struct = item.get_struct();
-        let ast_struct = ast_item.get_struct();
-
-        ast_struct
-            .fields
-            .iter()
-            .map(|ast_f| {
-                ir_struct
-                    .fields
-                    .iter()
-                    .find(|ir_f| self.mono_ctx.map_id(ast_f.id) == ir_f.id)
-                    .map(|f| (ast_f.name, f))
-                    .unwrap()
-            })
-            .collect()
-    }
-
-    fn get_associated_fns(
-        &mut self,
-        item: ir::IRItemP<'ir>,
-    ) -> HashMap<&'ast str, ast::ItemP<'ast>> {
-        let MonomorphizeKey(ast_item, _) = self.mono_ctx.reverse_lookup(item);
-        let ast_struct = ast_item.get_struct();
-
-        ast_struct
-            .associated_fns
-            .iter()
-            .map(|f| (f.name, f.item))
-            .collect()
-    }
-
-    pub fn new(mono_ctx: &'a mut MonoCtx<'ast, 'ir>) -> Self {
+    pub fn new<'b>(mono_ctx: &'b mut MonoCtx<'ast, 'ir>) -> Monomorphizer<'b, 'ast, 'ir> {
         let ir = mono_ctx.ir;
         Monomorphizer {
             mono_ctx,
             replacements: HashMap::new(),
-            slot_types: HashMap::new(),
+            local_types: HashMap::new(),
             builder: ExpressionBuilder::new(ir),
+            return_type: None,
             loop_contexts: Vec::new(),
         }
     }
@@ -145,8 +100,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Monomorphizer {
             mono_ctx,
             replacements,
-            slot_types: HashMap::new(),
+            local_types: HashMap::new(),
             builder: ExpressionBuilder::new(ir),
+            return_type: None,
             loop_contexts: Vec::new(),
         }
     }
@@ -175,6 +131,82 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         };
 
         match key.0.get() {
+            ast::Item::Enum(en) => {
+                if key.1.len() != 0 {
+                    return Err(AluminaError::GenericParamCountMismatch(0, key.1.len()));
+                }
+
+                let mut members = Vec::new();
+                let mut child = Self::new(self.mono_ctx);
+                let mut type_hint = None;
+                let mut taken_values = HashSet::new();
+
+                println!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+
+                let (valued, non_valued): (Vec<_>, Vec<_>) =
+                    en.members.iter().copied().partition(|m| m.value.is_some());
+
+                for m in valued {
+                    let expr = child.lower_expr(m.value.unwrap(), type_hint)?;
+                    let value = const_eval(expr).expect("cannot const evaluate");
+                    let value_type = child
+                        .mono_ctx
+                        .ir
+                        .intern_type(ir::Ty::Builtin(value.type_kind()));
+
+                    if value_type != *type_hint.get_or_insert(value_type) {
+                        return Err(AluminaError::TypeMismatch);
+                    }
+
+                    if !taken_values.insert(value) {
+                        return Err(AluminaError::DuplicateEnumMember);
+                    }
+
+                    members.push(ir::EnumMember {
+                        id: child.mono_ctx.map_id(m.id),
+                        value: child.builder.const_value(value),
+                    });
+                }
+
+                // This monstrosity to populate non-valued members with arbitrary types using
+                // const-eval. It's bad, but it works.
+
+                let kind = match type_hint.get_or_insert(builtin!(child, I32)) {
+                    ir::Ty::Builtin(k) => *k,
+                    _ => unreachable!(),
+                };
+
+
+                let mut counter = numeric_of_kind!(kind, 0);
+                for m in non_valued {
+                    let next_non_taken = loop {
+                        if taken_values.insert(counter) {
+                            break counter;
+                        }
+                        counter = const_eval(self.builder.binary(
+                            ast::BinOp::Plus,
+                            self.builder.const_value(counter),
+                            self.builder.const_value(numeric_of_kind!(kind, 1)),
+                            type_hint.unwrap(),
+                        ))
+                        .unwrap();
+                    };
+
+                    members.push(ir::EnumMember {
+                        id: child.mono_ctx.map_id(m.id),
+                        value: self.builder.const_value(next_non_taken),
+                    });
+                }
+
+                println!("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
+
+                let res = ir::IRItem::Enum(ir::Enum {
+                    underlying_type: type_hint.unwrap(),
+                    members: members.alloc_on(child.mono_ctx.ir),
+                });
+
+                item.assign(res);
+            }
             ast::Item::Function(func) => {
                 if key.1.len() != func.placeholders.len() {
                     return Err(AluminaError::GenericParamCountMismatch(
@@ -198,14 +230,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .map(|p| {
                         let param = ir::Parameter {
                             id: child.mono_ctx.map_id(p.id),
-                            ty: child.monomorphize_type(p.typ)?,
+                            ty: child.lower_type(p.typ)?,
                         };
-                        child.slot_types.insert(param.id, param.ty);
+                        child.local_types.insert(param.id, param.ty);
                         Ok(param)
                     })
                     .collect::<Result<Vec<_>, AluminaError>>()?;
 
-                let return_type = child.monomorphize_type(func.return_type)?;
+                let return_type = child.lower_type(func.return_type)?;
                 let res = ir::IRItem::Function(ir::Function {
                     args: &parameters.alloc_on(child.mono_ctx.ir),
                     return_type,
@@ -217,7 +249,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 // function can be recursive and we need to be able to get the signature for
                 // typechecking purposes.
 
-                let body = child.monomorphize_expr(
+                child.return_type = Some(return_type);
+                let body = child.lower_expr(
                     func.body.expect("extern function not supported"),
                     Some(return_type),
                 )?;
@@ -251,7 +284,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .map(|f| {
                         Ok(ir::Field {
                             id: child.mono_ctx.map_id(f.id),
-                            ty: child.monomorphize_type(f.typ)?,
+                            ty: child.lower_type(f.typ)?,
                         })
                     })
                     .collect::<Result<Vec<_>, AluminaError>>()?;
@@ -266,27 +299,25 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(item)
     }
 
-    pub fn monomorphize_type(&mut self, typ: ast::TyP<'ast>) -> Result<ir::TyP<'ir>, AluminaError> {
+    pub fn lower_type(&mut self, typ: ast::TyP<'ast>) -> Result<ir::TyP<'ir>, AluminaError> {
         let result = match *typ {
             // TODO: can coalesce same usize == u64 depending on platform here I guess
             ast::Ty::Builtin(kind) => ir::Ty::Builtin(kind),
-            ast::Ty::Array(inner, len) => ir::Ty::Array(self.monomorphize_type(inner)?, len),
-            ast::Ty::Pointer(inner, is_const) => {
-                ir::Ty::Pointer(self.monomorphize_type(inner)?, is_const)
-            }
-            ast::Ty::Slice(inner) => ir::Ty::Slice(self.monomorphize_type(inner)?),
+            ast::Ty::Array(inner, len) => ir::Ty::Array(self.lower_type(inner)?, len),
+            ast::Ty::Pointer(inner, is_const) => ir::Ty::Pointer(self.lower_type(inner)?, is_const),
+            ast::Ty::Slice(inner) => ir::Ty::Slice(self.lower_type(inner)?),
             ast::Ty::Extern(id) => ir::Ty::Extern(self.mono_ctx.map_id(id)),
             ast::Ty::Function(args, ret) => ir::Ty::Fn(
                 args.iter()
-                    .map(|arg| self.monomorphize_type(arg))
+                    .map(|arg| self.lower_type(arg))
                     .collect::<Result<Vec<_>, _>>()?
                     .alloc_on(self.mono_ctx.ir),
-                self.monomorphize_type(ret)?,
+                self.lower_type(ret)?,
             ),
             ast::Ty::Tuple(items) => ir::Ty::Tuple(
                 items
                     .iter()
-                    .map(|arg| self.monomorphize_type(arg))
+                    .map(|arg| self.lower_type(arg))
                     .collect::<Result<Vec<_>, _>>()?
                     .alloc_on(self.mono_ctx.ir),
             ),
@@ -305,7 +336,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ast::Ty::GenericType(item, args) => {
                 let args = args
                     .iter()
-                    .map(|arg| self.monomorphize_type(arg))
+                    .map(|arg| self.lower_type(arg))
                     .collect::<Result<Vec<_>, _>>()?
                     .alloc_on(self.mono_ctx.ir);
 
@@ -319,576 +350,53 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(self.mono_ctx.ir.intern_type(result))
     }
 
-    pub fn monomorphize_stmt(
+    fn get_struct_field_map(
         &mut self,
-        stmt: &ast::Statement<'ast>,
-    ) -> Result<Vec<ir::Statement<'ir>>, AluminaError> {
-        let result = match stmt {
-            ast::Statement::Expression(expr) => {
-                let expr = self.monomorphize_expr(expr, None)?;
-                vec![ir::Statement::Expression(expr)]
-            }
-            ast::Statement::LetDeclaration(decl) => {
-                let id = self.mono_ctx.map_id(decl.id);
-                let type_hint = decl.typ.map(|t| self.monomorphize_type(t)).transpose()?;
-                let init = decl
-                    .value
-                    .map(|v| self.monomorphize_expr(v, type_hint))
-                    .transpose()?;
-                match (type_hint, init) {
-                    (None, None) => return Err(AluminaError::TypeHintRequired),
-                    (Some(ty), None) => {
-                        self.slot_types.insert(id, ty);
-                        vec![ir::Statement::LocalDef(id, ty)]
-                    }
-                    (_, Some(init)) => {
-                        match type_hint {
-                            Some(ty) if !ty.assignable_from(init.typ) => {
-                                return Err(AluminaError::TypeMismatch);
-                            }
-                            _ => {}
-                        };
+        item: ir::IRItemP<'ir>,
+    ) -> HashMap<&'ast str, &'ir ir::Field<'ir>> {
+        let MonomorphizeKey(ast_item, _) = self.mono_ctx.reverse_lookup(item);
+        let ir_struct = item.get_struct();
+        let ast_struct = ast_item.get_struct();
 
-                        self.slot_types.insert(id, init.typ);
-
-                        vec![
-                            ir::Statement::LocalDef(id, init.typ),
-                            ir::Statement::Expression(
-                                self.builder.assign(self.builder.local(id, init.typ), init),
-                            ),
-                        ]
-                    }
-                }
-            }
-        };
-
-        Ok(result)
-    }
-
-    pub fn monomorphize_block(
-        &mut self,
-        statements: &'ast [ast::Statement<'ast>],
-        ret: ast::ExprP<'ast>,
-        type_hint: Option<ir::TyP<'ir>>,
-    ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let statements = statements
+        ast_struct
+            .fields
             .iter()
-            .map(|stmt| self.monomorphize_stmt(stmt))
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
-
-        let ret = self.monomorphize_expr(ret, type_hint)?;
-
-        Ok(self.builder.block(statements, ret))
+            .map(|ast_f| {
+                ir_struct
+                    .fields
+                    .iter()
+                    .find(|ir_f| self.mono_ctx.map_id(ast_f.id) == ir_f.id)
+                    .map(|f| (ast_f.name, f))
+                    .unwrap()
+            })
+            .collect()
     }
 
-    pub fn monomorphize_lit(
+    fn get_associated_fns(
         &mut self,
-        ret: &ast::Lit<'ast>,
-        type_hint: Option<ir::TyP<'ir>>,
-    ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let (lit, ty) = match ret {
-            &ast::Lit::Bool(v) => (ir::Lit::Bool(v), ir::Ty::Builtin(ast::BuiltinType::Bool)),
-            &ast::Lit::Null => {
-                let ty = match type_hint {
-                    Some(ir::Ty::Pointer(inner, _)) => ir::Ty::Pointer(inner, true),
-                    _ => ir::Ty::Pointer(builtin!(self, Void), true),
-                };
+        item: ir::IRItemP<'ir>,
+    ) -> HashMap<&'ast str, ast::ItemP<'ast>> {
+        let MonomorphizeKey(ast_item, _) = self.mono_ctx.reverse_lookup(item);
+        let ast_struct = ast_item.get();
 
-                (ir::Lit::Null, ty)
-            }
-            &ast::Lit::Int(v, kind) => {
-                let ty = match (kind, type_hint) {
-                    (Some(t), _) => ir::Ty::Builtin(t),
-                    (None, Some(ir::Ty::Builtin(k))) if k.is_integer() => ir::Ty::Builtin(*k),
-                    _ => ir::Ty::Builtin(BuiltinType::I32),
-                };
-
-                (ir::Lit::Int(v), ty)
-            }
-            &ast::Lit::Float(v, kind) => {
-                let ty = match (kind, type_hint) {
-                    (Some(t), _) => ir::Ty::Builtin(t),
-                    (None, Some(ir::Ty::Builtin(k))) if k.is_float() => ir::Ty::Builtin(*k),
-                    _ => ir::Ty::Builtin(BuiltinType::I32),
-                };
-
-                (ir::Lit::Float(v.alloc_on(self.mono_ctx.ir)), ty)
-            }
-            _ => unimplemented!(),
-        };
-
-        Ok(
-            ir::Expr::rvalue(ir::ExprKind::Lit(lit), self.mono_ctx.ir.intern_type(ty))
-                .alloc_on(self.mono_ctx.ir),
-        )
+        match ast_struct {
+            ast::Item::Struct(s) => s.associated_fns.iter().map(|f| (f.name, f.item)).collect(),
+            ast::Item::Enum(e) => e.associated_fns.iter().map(|f| (f.name, f.item)).collect(),
+            _ => panic!("does not have associated fns"),
+        }
     }
 
-    pub fn monomorphize_deref(
-        &mut self,
-        inner: &ast::ExprP<'ast>,
-        type_hint: Option<ir::TyP<'ir>>,
-    ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let inner = self.monomorphize_expr(
-            inner,
-            type_hint.map(|ty| self.mono_ctx.ir.intern_type(ir::Ty::Pointer(ty, true))),
-        )?;
-        if inner.diverges() {
-            return Ok(inner);
+    fn make_tentative_child<'b>(&'b mut self) -> Monomorphizer<'b, 'ast, 'ir> {
+        let ir = self.mono_ctx.ir;
+
+        Monomorphizer {
+            mono_ctx: self.mono_ctx,
+            replacements: self.replacements.clone(),
+            local_types: self.local_types.clone(),
+            builder: ExpressionBuilder::new(ir),
+            return_type: self.return_type,
+            loop_contexts: self.loop_contexts.clone(),
         }
-
-        let result = match inner.typ {
-            ir::Ty::Pointer(_, _) => self.builder.deref(inner),
-            _ => return Err(AluminaError::TypeMismatch),
-        };
-
-        Ok(result.alloc_on(self.mono_ctx.ir))
-    }
-
-    pub fn monomorphize_ref(
-        &mut self,
-        inner: &ast::ExprP<'ast>,
-        type_hint: Option<ir::TyP<'ir>>,
-    ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let type_hint = match type_hint {
-            Some(ir::Ty::Pointer(inner, _)) => Some(*inner),
-            _ => None,
-        };
-
-        let inner = self.monomorphize_expr(inner, type_hint)?;
-        if inner.diverges() {
-            return Ok(inner);
-        }
-
-        let result = match inner.value_type {
-            ir::ValueType::LValue => self.builder.r#ref(inner),
-            _ => return Err(AluminaError::CannotAddressRValue),
-        };
-
-        Ok(result)
-    }
-
-    pub fn monomorphize_local(
-        &mut self,
-        id: ast::AstId,
-        _type_hint: Option<ir::TyP<'ir>>,
-    ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let id = self.mono_ctx.map_id(id);
-        let typ = self
-            .slot_types
-            .get(&id)
-            .copied()
-            .expect("local with unknown type");
-
-        Ok(self.builder.local(id, typ))
-    }
-
-    pub fn monomorphize_unary(
-        &mut self,
-        op: ast::UnOp,
-        inner: &ast::ExprP<'ast>,
-        type_hint: Option<ir::TyP<'ir>>,
-    ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let inner = self.monomorphize_expr(inner, type_hint)?;
-        if inner.diverges() {
-            return Ok(inner);
-        }
-
-        match (op, inner.typ) {
-            (ast::UnOp::Not, ir::Ty::Builtin(BuiltinType::Bool)) => {}
-            (ast::UnOp::BitNot, ir::Ty::Builtin(b)) if b.is_integer() => {}
-            (ast::UnOp::Neg, ir::Ty::Builtin(b)) if b.is_integer() || b.is_float() => {}
-            _ => return Err(AluminaError::TypeMismatch),
-        };
-
-        let result = ir::Expr::rvalue(ir::ExprKind::Unary(op, inner), inner.typ);
-
-        Ok(result.alloc_on(self.mono_ctx.ir))
-    }
-
-    fn typecheck_binary(
-        &mut self,
-        op: ast::BinOp,
-        lhs: ir::ExprP<'ir>,
-        rhs: ir::ExprP<'ir>,
-    ) -> Result<ir::TyP<'ir>, AluminaError> {
-        use ast::BinOp::*;
-        use ir::Ty::*;
-
-        let result_typ = match (lhs.typ, op, rhs.typ) {
-            // Integer builtin types
-            (
-                Builtin(l),
-                BitAnd | BitAnd | BitOr | BitXor | Eq | Neq | Lt | LEq | Gt | GEq | Plus | Minus
-                | Mul | Div | Mod,
-                Builtin(r),
-            ) if l == r && l.is_integer() => {
-                if op.is_comparison() {
-                    Builtin(BuiltinType::Bool)
-                } else {
-                    *lhs.typ
-                }
-            }
-
-            // Float builting types
-            (Builtin(l), Eq | Neq | Lt | LEq | Gt | GEq | Plus | Minus | Mul | Div, Builtin(r))
-                if l == r && l.is_float() =>
-            {
-                if op.is_comparison() {
-                    Builtin(BuiltinType::Bool)
-                } else {
-                    *lhs.typ
-                }
-            }
-
-            // Logical operators
-            (
-                Builtin(BuiltinType::Bool),
-                And | Or | BitXor | Eq | Neq,
-                Builtin(BuiltinType::Bool),
-            ) => Builtin(BuiltinType::Bool),
-
-            // Pointer comparison and pointer difference
-            (Pointer(l, _), Eq | Neq | Lt | LEq | Gt | GEq, Pointer(r, _)) if l == r => {
-                Builtin(BuiltinType::Bool)
-            }
-
-            (Pointer(l, l_const), Minus, Pointer(r, r_const)) if l == r && l_const == r_const => {
-                *lhs.typ
-            }
-
-            // Pointer arithmetic
-            (Pointer(l, _), Plus | Minus, Builtin(BuiltinType::ISize | BuiltinType::USize)) => {
-                *lhs.typ
-            }
-
-            _ => return Err(AluminaError::InvalidBinOp(op)),
-        };
-
-        Ok(self.mono_ctx.ir.intern_type(result_typ))
-    }
-
-    pub fn monomorphize_binary(
-        &mut self,
-        op: ast::BinOp,
-        lhs: &ast::ExprP<'ast>,
-        rhs: &ast::ExprP<'ast>,
-        type_hint: Option<ir::TyP<'ir>>,
-    ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        use ast::BinOp::*;
-        use ir::Ty::*;
-
-        let lhs = self.monomorphize_expr(
-            lhs,
-            match op {
-                Eq | Neq | GEq | LEq | Lt | Gt => None,
-                And | Or => Some(builtin!(self, Bool)),
-                _ => type_hint,
-            },
-        )?;
-
-        let rhs = self.monomorphize_expr(
-            rhs,
-            match op {
-                Plus | Minus => match lhs.typ {
-                    Pointer(_, _) => Some(builtin!(self, ISize)),
-                    _ => Some(lhs.typ),
-                },
-                LShift | RShift => Some(builtin!(self, USize)),
-                _ => Some(lhs.typ),
-            },
-        )?;
-
-        if lhs.diverges() || rhs.diverges() {
-            return Ok(self.builder.diverges([lhs, rhs]));
-        }
-
-        let result_typ = self.typecheck_binary(op, lhs, rhs)?;
-
-        let result = ir::Expr::rvalue(ir::ExprKind::Binary(lhs, op, rhs), result_typ);
-
-        Ok(result.alloc_on(self.mono_ctx.ir))
-    }
-
-    pub fn monomorphize_assign_op(
-        &mut self,
-        op: ast::BinOp,
-        lhs: &ast::ExprP<'ast>,
-        rhs: &ast::ExprP<'ast>,
-        _type_hint: Option<ir::TyP<'ir>>,
-    ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        use ast::BinOp::*;
-        use ir::Ty::*;
-
-        let lhs = self.monomorphize_expr(lhs, None)?;
-        let rhs = self.monomorphize_expr(
-            rhs,
-            match op {
-                Plus | Minus => match lhs.typ {
-                    Pointer(_, _) => Some(builtin!(self, ISize)),
-                    _ => Some(lhs.typ),
-                },
-                LShift | RShift => Some(builtin!(self, USize)),
-                _ => Some(lhs.typ),
-            },
-        )?;
-
-        if lhs.diverges() || rhs.diverges() {
-            return Ok(self.builder.diverges([lhs, rhs]));
-        }
-
-        if lhs.value_type != ir::ValueType::LValue {
-            return Err(AluminaError::CannotAssignToRValue);
-        }
-
-        if lhs.is_const {
-            return Err(AluminaError::CannotAssignToConst);
-        }
-
-        if !lhs.typ.assignable_from(rhs.typ) {
-            return Err(AluminaError::TypeMismatch);
-        }
-
-        self.typecheck_binary(op, lhs, rhs)?;
-
-        let result = ir::Expr::rvalue(ir::ExprKind::AssignOp(lhs, op, rhs), builtin!(self, Void));
-
-        Ok(result.alloc_on(self.mono_ctx.ir))
-    }
-
-    pub fn monomorphize_assign(
-        &mut self,
-        inner: ast::ExprP<'ast>,
-        rhs: ast::ExprP<'ast>,
-        _type_hint: Option<ir::TyP<'ir>>,
-    ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let lhs = self.monomorphize_expr(inner, None)?;
-        let rhs = self.monomorphize_expr(rhs, Some(lhs.typ))?;
-
-        if lhs.diverges() || rhs.diverges() {
-            return Ok(self.builder.diverges([lhs, rhs]));
-        }
-
-        if lhs.value_type != ir::ValueType::LValue {
-            return Err(AluminaError::CannotAssignToRValue);
-        }
-
-        if lhs.is_const {
-            return Err(AluminaError::CannotAssignToConst);
-        }
-
-        if !lhs.typ.assignable_from(rhs.typ) {
-            return Err(AluminaError::TypeMismatch);
-        }
-
-        Ok(self.builder.assign(lhs, rhs))
-    }
-
-    pub fn monomorphize_if(
-        &mut self,
-        cond: ast::ExprP<'ast>,
-        then: ast::ExprP<'ast>,
-        els: ast::ExprP<'ast>,
-        type_hint: Option<ir::TyP<'ir>>,
-    ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let cond = self.monomorphize_expr(cond, Some(builtin!(self, Bool)))?;
-        let then = self.monomorphize_expr(then, type_hint)?;
-        let els = self.monomorphize_expr(els, Some(then.typ))?;
-
-        if cond.diverges() {
-            return Ok(cond);
-        }
-
-        if !builtin!(self, Bool).assignable_from(cond.typ) {
-            return Err(AluminaError::TypeMismatch);
-        }
-
-        let gcd = ir::Ty::gcd(then.typ, els.typ);
-        if !gcd.assignable_from(then.typ) || !gcd.assignable_from(els.typ) {
-            return Err(AluminaError::TypeMismatch);
-        }
-
-        let result = ir::Expr::rvalue(
-            ir::ExprKind::If(cond, then, els),
-            self.mono_ctx.ir.intern_type(gcd),
-        );
-
-        Ok(result.alloc_on(self.mono_ctx.ir))
-    }
-
-    pub fn monomorphize_tuple(
-        &mut self,
-        exprs: &[ast::ExprP<'ast>],
-        type_hint: Option<ir::TyP<'ir>>,
-    ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let type_hints: Vec<_> = match type_hint {
-            Some(ir::Ty::Tuple(elems)) if elems.len() == exprs.len() => {
-                elems.iter().map(|t| Some(*t)).collect()
-            }
-            _ => repeat(None).take(exprs.len()).collect(),
-        };
-
-        let lowered = exprs
-            .iter()
-            .zip(type_hints.into_iter())
-            .map(|(expr, hint)| self.monomorphize_expr(expr, hint))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        if lowered.iter().any(|e| e.diverges()) {
-            return Ok(self.builder.diverges(lowered));
-        }
-
-        let element_types: Vec<_> = lowered.iter().map(|e| e.typ).collect();
-        let tuple_type = self
-            .mono_ctx
-            .ir
-            .intern_type(ir::Ty::Tuple(element_types.alloc_on(self.mono_ctx.ir)));
-
-        let temporary = self.mono_ctx.ir.make_id();
-        let local = self.builder.local(temporary, tuple_type);
-
-        let statements = once(ir::Statement::LocalDef(temporary, tuple_type))
-            .chain(lowered.into_iter().enumerate().map(|(i, e)| {
-                ir::Statement::Expression(
-                    self.builder
-                        .assign(self.builder.tuple_index(local, i, e.typ), e),
-                )
-            }))
-            .collect::<Vec<_>>();
-
-        Ok(self.builder.block(statements, local))
-    }
-
-    pub fn monomorphize_cast(
-        &mut self,
-        expr: ast::ExprP<'ast>,
-        target_type: ast::TyP<'ast>,
-        _type_hint: Option<ir::TyP<'ir>>,
-    ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let expr = self.monomorphize_expr(expr, None)?;
-        if expr.diverges() {
-            return Ok(expr);
-        }
-
-        let typ = self.monomorphize_type(target_type)?;
-
-        match (expr.typ, typ) {
-            // Numeric casts
-            (ir::Ty::Builtin(a), ir::Ty::Builtin(b)) if a.is_numeric() && b.is_numeric() => {}
-            (ir::Ty::Builtin(a), ir::Ty::Builtin(b)) if a.is_numeric() && b.is_numeric() => {}
-
-            // Pointer casts
-            (ir::Ty::Pointer(_, _), ir::Ty::Pointer(_, _)) => {}
-            (ir::Ty::Builtin(BuiltinType::USize), ir::Ty::Pointer(_, _)) => {}
-            (ir::Ty::Pointer(_, _), ir::Ty::Builtin(BuiltinType::USize)) => {}
-
-            _ => return Err(AluminaError::InvalidCast),
-        }
-
-        let result = ir::Expr::rvalue(ir::ExprKind::Cast(expr, typ), typ);
-
-        Ok(result.alloc_on(self.mono_ctx.ir))
-    }
-
-    pub fn monomorphize_loop(
-        &mut self,
-        body: ast::ExprP<'ast>,
-        type_hint: Option<ir::TyP<'ir>>,
-    ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let loop_result = self.mono_ctx.ir.make_id();
-        let break_label = self.mono_ctx.ir.make_id();
-        let continue_label = self.mono_ctx.ir.make_id();
-
-        self.loop_contexts.push(LoopContext {
-            loop_result,
-            type_hint,
-            break_label,
-            continue_label,
-        });
-
-        let body = self.monomorphize_expr(body, None);
-        self.loop_contexts.pop();
-
-        let body = body?;
-        if body.diverges() {
-            return Ok(body);
-        }
-
-        self.loop_contexts.pop();
-
-        let mut statements = vec![
-            ir::Statement::Label(continue_label),
-            ir::Statement::Expression(body),
-            ir::Statement::Goto(continue_label),
-            ir::Statement::Label(break_label),
-        ];
-
-        let result = match self.slot_types.get(&loop_result) {
-            None => self.builder.block(statements, self.builder.unreachable()),
-            Some(typ) => {
-                statements.insert(0, ir::Statement::LocalDef(loop_result, *typ));
-                self.builder
-                    .block(statements, self.builder.local(loop_result, *typ))
-            }
-        };
-
-        Ok(result)
-    }
-
-    pub fn monomorphize_break(
-        &mut self,
-        expr: Option<ast::ExprP<'ast>>,
-        type_hint: Option<ir::TyP<'ir>>,
-    ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let loop_context = self
-            .loop_contexts
-            .last()
-            .expect("break outside of loop")
-            .clone();
-
-        let expr = expr
-            .map(|e| self.monomorphize_expr(e, loop_context.type_hint))
-            .transpose()?;
-
-        if expr.map(|e| e.diverges()).unwrap_or(false) {
-            return Ok(expr.unwrap());
-        }
-
-        let break_typ = expr.map(|e| e.typ).unwrap_or(builtin!(self, Void));
-        let slot_type = match self.slot_types.entry(loop_context.loop_result) {
-            Entry::Vacant(v) => {
-                v.insert(break_typ);
-                break_typ
-            }
-            Entry::Occupied(o) => o.get(),
-        };
-
-        if !slot_type.assignable_from(break_typ) {
-            return Err(AluminaError::TypeMismatch);
-        }
-
-        let statements = [
-            ir::Statement::Expression(self.builder.assign(
-                self.builder.local(loop_context.loop_result, slot_type),
-                expr.unwrap_or(self.builder.void()),
-            )),
-            ir::Statement::Goto(loop_context.break_label),
-        ];
-
-        Ok(self.builder.block(statements, self.builder.unreachable()))
-    }
-
-    pub fn monomorphize_continue(
-        &mut self,
-        _type_hint: Option<ir::TyP<'ir>>,
-    ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let loop_context = self.loop_contexts.last().expect("continue outside of loop");
-
-        let statements = [ir::Statement::Goto(loop_context.continue_label)];
-
-        Ok(self.builder.block(statements, self.builder.unreachable()))
     }
 
     fn try_resolve_function(
@@ -905,7 +413,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         if let Some(generic_args) = generic_args {
             let generic_args = generic_args
                 .iter()
-                .map(|typ| self.monomorphize_type(typ))
+                .map(|typ| self.lower_type(typ))
                 .collect::<Result<Vec<_>, _>>()?
                 .alloc_on(self.mono_ctx.ir);
 
@@ -946,7 +454,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .iter()
                     .skip(self_count)
                     .zip(args.iter())
-                    .filter_map(|(p, e)| match child.monomorphize_expr(e, None) {
+                    .filter_map(|(p, e)| match child.lower_expr(e, None) {
                         Ok(e) => Some((p.typ, e.typ)),
                         Err(_) => None,
                     }),
@@ -982,7 +490,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         if let Some(generic_args) = generic_args {
             let generic_args = generic_args
                 .iter()
-                .map(|typ| self.monomorphize_type(typ))
+                .map(|typ| self.lower_type(typ))
                 .collect::<Result<Vec<_>, _>>()?
                 .alloc_on(self.mono_ctx.ir);
 
@@ -1015,7 +523,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .find(|i| i.name == f.name)
                     .map(|i| (f, i))
             })
-            .filter_map(|(p, e)| match child.monomorphize_expr(e.value, None) {
+            .filter_map(|(p, e)| match child.lower_expr(e.value, None) {
                 Ok(e) => Some((p.typ, e.typ)),
                 Err(_) => None,
             })
@@ -1068,22 +576,605 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
     }
 
-    pub fn monomorphize_method_call(
+    fn typecheck_binary(
+        &mut self,
+        op: ast::BinOp,
+        lhs: ir::ExprP<'ir>,
+        rhs: ir::ExprP<'ir>,
+    ) -> Result<ir::TyP<'ir>, AluminaError> {
+        use ast::BinOp::*;
+        use ir::Ty::*;
+
+        let result_typ = match (lhs.typ, op, rhs.typ) {
+            // Integer builtin types
+            (
+                Builtin(l),
+                BitAnd | BitAnd | BitOr | BitXor | Eq | Neq | Lt | LEq | Gt | GEq | Plus | Minus
+                | Mul | Div | Mod,
+                Builtin(r),
+            ) if l == r && l.is_integer() => {
+                if op.is_comparison() {
+                    Builtin(BuiltinType::Bool)
+                } else {
+                    *lhs.typ
+                }
+            }
+
+            (
+                NamedType(l),
+                Eq | Neq,
+                NamedType(r),
+            ) if l == r && matches!(l.get(), ir::IRItem::Enum(_)) => {
+                Builtin(BuiltinType::Bool)
+            }
+
+            (Builtin(l), LShift | RShift, Builtin(BuiltinType::USize)) if l.is_integer() => {
+                *lhs.typ
+            }
+
+            // Float builting types
+            (Builtin(l), Eq | Neq | Lt | LEq | Gt | GEq | Plus | Minus | Mul | Div, Builtin(r))
+                if l == r && l.is_float() =>
+            {
+                if op.is_comparison() {
+                    Builtin(BuiltinType::Bool)
+                } else {
+                    *lhs.typ
+                }
+            }
+
+            // Logical operators
+            (
+                Builtin(BuiltinType::Bool),
+                And | Or | BitXor | Eq | Neq,
+                Builtin(BuiltinType::Bool),
+            ) => Builtin(BuiltinType::Bool),
+
+            // Pointer comparison and pointer difference
+            (Pointer(l, _), Eq | Neq | Lt | LEq | Gt | GEq, Pointer(r, _)) if l == r => {
+                Builtin(BuiltinType::Bool)
+            }
+
+            (Pointer(l, l_const), Minus, Pointer(r, r_const)) if l == r && l_const == r_const => {
+                *lhs.typ
+            }
+
+            // Pointer arithmetic
+            (Pointer(l, _), Plus | Minus, Builtin(BuiltinType::ISize | BuiltinType::USize)) => {
+                *lhs.typ
+            }
+
+            _ => return Err(AluminaError::InvalidBinOp(op)),
+        };
+
+        Ok(self.mono_ctx.ir.intern_type(result_typ))
+    }
+
+    fn lower_stmt(
+        &mut self,
+        stmt: &ast::Statement<'ast>,
+    ) -> Result<Vec<ir::Statement<'ir>>, AluminaError> {
+        let result = match stmt {
+            ast::Statement::Expression(expr) => {
+                let expr = self.lower_expr(expr, None)?;
+                vec![ir::Statement::Expression(expr)]
+            }
+            ast::Statement::LetDeclaration(decl) => {
+                let id = self.mono_ctx.map_id(decl.id);
+                let type_hint = decl.typ.map(|t| self.lower_type(t)).transpose()?;
+                let init = decl
+                    .value
+                    .map(|v| self.lower_expr(v, type_hint))
+                    .transpose()?;
+                match (type_hint, init) {
+                    (None, None) => return Err(AluminaError::TypeHintRequired),
+                    (Some(ty), None) => {
+                        self.local_types.insert(id, ty);
+                        vec![ir::Statement::LocalDef(id, ty)]
+                    }
+                    (_, Some(init)) => {
+                        match type_hint {
+                            Some(ty) if !ty.assignable_from(init.typ) => {
+                                return Err(AluminaError::TypeMismatch);
+                            }
+                            _ => {}
+                        };
+
+                        self.local_types.insert(id, init.typ);
+
+                        vec![
+                            ir::Statement::LocalDef(id, init.typ),
+                            ir::Statement::Expression(
+                                self.builder.assign(self.builder.local(id, init.typ), init),
+                            ),
+                        ]
+                    }
+                }
+            }
+        };
+
+        Ok(result)
+    }
+
+    fn lower_block(
+        &mut self,
+        statements: &'ast [ast::Statement<'ast>],
+        ret: ast::ExprP<'ast>,
+        type_hint: Option<ir::TyP<'ir>>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let statements = statements
+            .iter()
+            .map(|stmt| self.lower_stmt(stmt))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+
+        let ret = self.lower_expr(ret, type_hint)?;
+
+        Ok(self.builder.block(statements, ret))
+    }
+
+    fn lower_lit(
+        &mut self,
+        ret: &ast::Lit<'ast>,
+        type_hint: Option<ir::TyP<'ir>>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let (lit, ty) = match ret {
+            &ast::Lit::Bool(v) => (ir::Lit::Bool(v), ir::Ty::Builtin(ast::BuiltinType::Bool)),
+            &ast::Lit::Null => {
+                let ty = match type_hint {
+                    Some(ir::Ty::Pointer(inner, _)) => ir::Ty::Pointer(inner, true),
+                    _ => ir::Ty::Pointer(builtin!(self, Void), true),
+                };
+
+                (ir::Lit::Null, ty)
+            }
+            &ast::Lit::Int(v, kind) => {
+                let ty = match (kind, type_hint) {
+                    (Some(t), _) => ir::Ty::Builtin(t),
+                    (None, Some(ir::Ty::Builtin(k))) if k.is_integer() => ir::Ty::Builtin(*k),
+                    _ => ir::Ty::Builtin(BuiltinType::I32),
+                };
+
+                (ir::Lit::Int(v), ty)
+            }
+            &ast::Lit::Float(v, kind) => {
+                let ty = match (kind, type_hint) {
+                    (Some(t), _) => ir::Ty::Builtin(t),
+                    (None, Some(ir::Ty::Builtin(k))) if k.is_float() => ir::Ty::Builtin(*k),
+                    _ => ir::Ty::Builtin(BuiltinType::I32),
+                };
+
+                (ir::Lit::Float(v.alloc_on(self.mono_ctx.ir)), ty)
+            }
+            _ => unimplemented!(),
+        };
+
+        Ok(
+            ir::Expr::rvalue(ir::ExprKind::Lit(lit), self.mono_ctx.ir.intern_type(ty))
+                .alloc_on(self.mono_ctx.ir),
+        )
+    }
+
+    fn lower_deref(
+        &mut self,
+        inner: &ast::ExprP<'ast>,
+        type_hint: Option<ir::TyP<'ir>>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let inner = self.lower_expr(
+            inner,
+            type_hint.map(|ty| self.mono_ctx.ir.intern_type(ir::Ty::Pointer(ty, true))),
+        )?;
+        if inner.diverges() {
+            return Ok(inner);
+        }
+
+        let result = match inner.typ {
+            ir::Ty::Pointer(_, _) => self.builder.deref(inner),
+            _ => return Err(AluminaError::TypeMismatch),
+        };
+
+        Ok(result.alloc_on(self.mono_ctx.ir))
+    }
+
+    fn lower_ref(
+        &mut self,
+        inner: &ast::ExprP<'ast>,
+        type_hint: Option<ir::TyP<'ir>>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let type_hint = match type_hint {
+            Some(ir::Ty::Pointer(inner, _)) => Some(*inner),
+            _ => None,
+        };
+
+        let inner = self.lower_expr(inner, type_hint)?;
+        if inner.diverges() {
+            return Ok(inner);
+        }
+
+        let result = match inner.value_type {
+            ir::ValueType::LValue => self.builder.r#ref(inner),
+            _ => return Err(AluminaError::CannotAddressRValue),
+        };
+
+        Ok(result)
+    }
+
+    fn lower_local(
+        &mut self,
+        id: ast::AstId,
+        _type_hint: Option<ir::TyP<'ir>>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let id = self.mono_ctx.map_id(id);
+        let typ = self
+            .local_types
+            .get(&id)
+            .copied()
+            .expect("local with unknown type");
+
+        Ok(self.builder.local(id, typ))
+    }
+
+    fn lower_unary(
+        &mut self,
+        op: ast::UnOp,
+        inner: &ast::ExprP<'ast>,
+        type_hint: Option<ir::TyP<'ir>>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let inner = self.lower_expr(inner, type_hint)?;
+        if inner.diverges() {
+            return Ok(inner);
+        }
+
+        match (op, inner.typ) {
+            (ast::UnOp::Not, ir::Ty::Builtin(BuiltinType::Bool)) => {}
+            (ast::UnOp::BitNot, ir::Ty::Builtin(b)) if b.is_integer() => {}
+            (ast::UnOp::Neg, ir::Ty::Builtin(b))
+                if (b.is_integer() && b.is_signed()) || b.is_float() => {}
+            _ => return Err(AluminaError::TypeMismatch),
+        };
+
+        let result = ir::Expr::rvalue(ir::ExprKind::Unary(op, inner), inner.typ);
+
+        Ok(result.alloc_on(self.mono_ctx.ir))
+    }
+
+    fn lower_binary(
+        &mut self,
+        op: ast::BinOp,
+        lhs: &ast::ExprP<'ast>,
+        rhs: &ast::ExprP<'ast>,
+        type_hint: Option<ir::TyP<'ir>>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        use ast::BinOp::*;
+        use ir::Ty::*;
+
+        let lhs = self.lower_expr(
+            lhs,
+            match op {
+                Eq | Neq | GEq | LEq | Lt | Gt => None,
+                And | Or => Some(builtin!(self, Bool)),
+                _ => type_hint,
+            },
+        )?;
+
+        let rhs = self.lower_expr(
+            rhs,
+            match op {
+                Plus | Minus => match lhs.typ {
+                    Pointer(_, _) => Some(builtin!(self, ISize)),
+                    _ => Some(lhs.typ),
+                },
+                LShift | RShift => Some(builtin!(self, USize)),
+                _ => Some(lhs.typ),
+            },
+        )?;
+
+        if lhs.diverges() || rhs.diverges() {
+            return Ok(self.builder.diverges([lhs, rhs]));
+        }
+
+        let result_typ = self.typecheck_binary(op, lhs, rhs)?;
+
+        Ok(self.builder.binary(op, lhs, rhs, result_typ))
+    }
+
+    fn lower_assign_op(
+        &mut self,
+        op: ast::BinOp,
+        lhs: &ast::ExprP<'ast>,
+        rhs: &ast::ExprP<'ast>,
+        _type_hint: Option<ir::TyP<'ir>>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        use ast::BinOp::*;
+        use ir::Ty::*;
+
+        let lhs = self.lower_expr(lhs, None)?;
+        let rhs = self.lower_expr(
+            rhs,
+            match op {
+                Plus | Minus => match lhs.typ {
+                    Pointer(_, _) => Some(builtin!(self, ISize)),
+                    _ => Some(lhs.typ),
+                },
+                LShift | RShift => Some(builtin!(self, USize)),
+                _ => Some(lhs.typ),
+            },
+        )?;
+
+        if lhs.diverges() || rhs.diverges() {
+            return Ok(self.builder.diverges([lhs, rhs]));
+        }
+
+        if lhs.value_type != ir::ValueType::LValue {
+            return Err(AluminaError::CannotAssignToRValue);
+        }
+
+        if lhs.is_const {
+            return Err(AluminaError::CannotAssignToConst);
+        }
+
+        if !lhs.typ.assignable_from(rhs.typ) {
+            return Err(AluminaError::TypeMismatch);
+        }
+
+        self.typecheck_binary(op, lhs, rhs)?;
+
+        let result = ir::Expr::rvalue(ir::ExprKind::AssignOp(op, lhs, rhs), builtin!(self, Void));
+
+        Ok(result.alloc_on(self.mono_ctx.ir))
+    }
+
+    fn lower_assign(
+        &mut self,
+        inner: ast::ExprP<'ast>,
+        rhs: ast::ExprP<'ast>,
+        _type_hint: Option<ir::TyP<'ir>>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let lhs = self.lower_expr(inner, None)?;
+        let rhs = self.lower_expr(rhs, Some(lhs.typ))?;
+
+        if lhs.diverges() || rhs.diverges() {
+            return Ok(self.builder.diverges([lhs, rhs]));
+        }
+
+        if lhs.value_type != ir::ValueType::LValue {
+            return Err(AluminaError::CannotAssignToRValue);
+        }
+
+        if lhs.is_const {
+            return Err(AluminaError::CannotAssignToConst);
+        }
+
+        if !lhs.typ.assignable_from(rhs.typ) {
+            return Err(AluminaError::TypeMismatch);
+        }
+
+        Ok(self.builder.assign(lhs, rhs))
+    }
+
+    fn lower_if(
+        &mut self,
+        cond: ast::ExprP<'ast>,
+        then: ast::ExprP<'ast>,
+        els: ast::ExprP<'ast>,
+        type_hint: Option<ir::TyP<'ir>>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let cond = self.lower_expr(cond, Some(builtin!(self, Bool)))?;
+        let then = self.lower_expr(then, type_hint)?;
+        let els = self.lower_expr(els, Some(then.typ))?;
+
+        if cond.diverges() {
+            return Ok(cond);
+        }
+
+        if !builtin!(self, Bool).assignable_from(cond.typ) {
+            return Err(AluminaError::TypeMismatch);
+        }
+
+        let gcd = ir::Ty::gcd(then.typ, els.typ);
+        if !gcd.assignable_from(then.typ) || !gcd.assignable_from(els.typ) {
+            return Err(AluminaError::TypeMismatch);
+        }
+
+        let result = ir::Expr::rvalue(
+            ir::ExprKind::If(cond, then, els),
+            self.mono_ctx.ir.intern_type(gcd),
+        );
+
+        Ok(result.alloc_on(self.mono_ctx.ir))
+    }
+
+    fn lower_tuple(
+        &mut self,
+        exprs: &[ast::ExprP<'ast>],
+        type_hint: Option<ir::TyP<'ir>>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let type_hints: Vec<_> = match type_hint {
+            Some(ir::Ty::Tuple(elems)) if elems.len() == exprs.len() => {
+                elems.iter().map(|t| Some(*t)).collect()
+            }
+            _ => repeat(None).take(exprs.len()).collect(),
+        };
+
+        let lowered = exprs
+            .iter()
+            .zip(type_hints.into_iter())
+            .map(|(expr, hint)| self.lower_expr(expr, hint))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        if lowered.iter().any(|e| e.diverges()) {
+            return Ok(self.builder.diverges(lowered));
+        }
+
+        let element_types: Vec<_> = lowered.iter().map(|e| e.typ).collect();
+        let tuple_type = self
+            .mono_ctx
+            .ir
+            .intern_type(ir::Ty::Tuple(element_types.alloc_on(self.mono_ctx.ir)));
+
+        let temporary = self.mono_ctx.ir.make_id();
+        let local = self.builder.local(temporary, tuple_type);
+
+        let statements = once(ir::Statement::LocalDef(temporary, tuple_type))
+            .chain(lowered.into_iter().enumerate().map(|(i, e)| {
+                ir::Statement::Expression(
+                    self.builder
+                        .assign(self.builder.tuple_index(local, i, e.typ), e),
+                )
+            }))
+            .collect::<Vec<_>>();
+
+        Ok(self.builder.block(statements, local))
+    }
+
+    fn lower_cast(
+        &mut self,
+        expr: ast::ExprP<'ast>,
+        target_type: ast::TyP<'ast>,
+        _type_hint: Option<ir::TyP<'ir>>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let expr = self.lower_expr(expr, None)?;
+        if expr.diverges() {
+            return Ok(expr);
+        }
+
+        let typ = self.lower_type(target_type)?;
+
+        match (expr.typ, typ) {
+            // Numeric casts
+            (ir::Ty::Builtin(a), ir::Ty::Builtin(b)) if a.is_numeric() && b.is_numeric() => {}
+            (ir::Ty::Builtin(a), ir::Ty::Builtin(b)) if a.is_numeric() && b.is_numeric() => {}
+
+            // Pointer casts
+            (ir::Ty::Pointer(_, _), ir::Ty::Pointer(_, _)) => {}
+            (ir::Ty::Builtin(BuiltinType::USize), ir::Ty::Pointer(_, _)) => {}
+            (ir::Ty::Pointer(_, _), ir::Ty::Builtin(BuiltinType::USize)) => {}
+
+            _ => return Err(AluminaError::InvalidCast),
+        }
+
+        let result = ir::Expr::rvalue(ir::ExprKind::Cast(expr, typ), typ);
+
+        Ok(result.alloc_on(self.mono_ctx.ir))
+    }
+
+    fn lower_loop(
+        &mut self,
+        body: ast::ExprP<'ast>,
+        type_hint: Option<ir::TyP<'ir>>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let loop_result = self.mono_ctx.ir.make_id();
+        let break_label = self.mono_ctx.ir.make_id();
+        let continue_label = self.mono_ctx.ir.make_id();
+
+        self.loop_contexts.push(LoopContext {
+            loop_result,
+            type_hint,
+            break_label,
+            continue_label,
+        });
+
+        let body = self.lower_expr(body, None);
+        self.loop_contexts.pop();
+
+        let body = body?;
+        if body.diverges() {
+            return Ok(body);
+        }
+
+        self.loop_contexts.pop();
+
+        let mut statements = vec![
+            ir::Statement::Label(continue_label),
+            ir::Statement::Expression(body),
+            ir::Statement::Goto(continue_label),
+            ir::Statement::Label(break_label),
+        ];
+
+        let result = match self.local_types.get(&loop_result) {
+            None => self.builder.block(statements, self.builder.unreachable()),
+            Some(typ) => {
+                statements.insert(0, ir::Statement::LocalDef(loop_result, *typ));
+                self.builder
+                    .block(statements, self.builder.local(loop_result, *typ))
+            }
+        };
+
+        Ok(result)
+    }
+
+    fn lower_break(
+        &mut self,
+        expr: Option<ast::ExprP<'ast>>,
+        type_hint: Option<ir::TyP<'ir>>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let loop_context = self
+            .loop_contexts
+            .last()
+            .expect("break outside of loop")
+            .clone();
+
+        let expr = expr
+            .map(|e| self.lower_expr(e, loop_context.type_hint))
+            .transpose()?;
+
+        if expr.map(|e| e.diverges()).unwrap_or(false) {
+            return Ok(expr.unwrap());
+        }
+
+        let break_typ = expr.map(|e| e.typ).unwrap_or(builtin!(self, Void));
+        let slot_type = match self.local_types.entry(loop_context.loop_result) {
+            Entry::Vacant(v) => {
+                v.insert(break_typ);
+                break_typ
+            }
+            Entry::Occupied(o) => o.get(),
+        };
+
+        if !slot_type.assignable_from(break_typ) {
+            return Err(AluminaError::TypeMismatch);
+        }
+
+        let statements = [
+            ir::Statement::Expression(self.builder.assign(
+                self.builder.local(loop_context.loop_result, slot_type),
+                expr.unwrap_or(self.builder.void()),
+            )),
+            ir::Statement::Goto(loop_context.break_label),
+        ];
+
+        Ok(self.builder.block(statements, self.builder.unreachable()))
+    }
+
+    fn lower_continue(
+        &mut self,
+        _type_hint: Option<ir::TyP<'ir>>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let loop_context = self.loop_contexts.last().expect("continue outside of loop");
+
+        let statements = [ir::Statement::Goto(loop_context.continue_label)];
+
+        Ok(self.builder.block(statements, self.builder.unreachable()))
+    }
+
+    fn lower_method_call(
         &mut self,
         self_arg: ast::ExprP<'ast>,
+        unified_fn: Option<ast::ItemP<'ast>>,
         name: &'ast str,
         args: &[ast::ExprP<'ast>],
         type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let ir_self_arg = self.monomorphize_expr(self_arg, None)?;
-        let item = match ir_self_arg.typ.canonical_type() {
-            ir::Ty::NamedType(item) => item,
-            _ => unimplemented!("method calls for non-named types"),
+        let ir_self_arg = self.lower_expr(self_arg, None)?;
+        let method = match ir_self_arg.typ.canonical_type() {
+            ir::Ty::NamedType(item) => self.get_associated_fns(item).get(name).copied(),
+            _ => None,
         };
 
-        let assoc_methods = self.get_associated_fns(item);
-        let method = assoc_methods
-            .get(name)
+        let method = method
+            .or(unified_fn)
             .ok_or_else(|| AluminaError::MethodNotFound(name.into()))?;
 
         let method =
@@ -1095,6 +1186,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ir::Ty::Fn(arg_types, return_type) => (arg_types, return_type),
             _ => unreachable!(),
         };
+
+        println!("!!!!!!!!!!!!!!!! {:?}", callee);
+
+        if arg_types.is_empty() {
+            return Err(AluminaError::NotAMethod);
+        }
 
         if arg_types.len() != args.len() + 1 {
             return Err(AluminaError::ParamCountMismatch(
@@ -1108,7 +1205,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .chain(
                 args.iter()
                     .zip(arg_types.iter().skip(1))
-                    .map(|(arg, ty)| self.monomorphize_expr(arg, Some(ty))),
+                    .map(|(arg, ty)| self.lower_expr(arg, Some(ty))),
             )
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -1131,7 +1228,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(result.alloc_on(self.mono_ctx.ir))
     }
 
-    pub fn monomorphize_call(
+    fn lower_call(
         &mut self,
         callee: ast::ExprP<'ast>,
         args: &[ast::ExprP<'ast>],
@@ -1148,27 +1245,23 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.builder.function(item)
             }
             ast::Expr::Fn(ast::FnKind::Defered(spec), generic_args) => {
-                let typ = self.replacements.get(&spec.placeholder).unwrap();
-                let struct_item = match typ {
-                    // TODO: support enums etc.
-                    ir::Ty::NamedType(item) => self.mono_ctx.reverse_lookup(item).0.get_struct(),
-                    _ => panic!("only named types can have associated functions (for now)"),
+                let typ = match self.replacements.get(&spec.placeholder) {
+                    Some(ir::Ty::NamedType(typ)) => typ,
+                    _ => unreachable!(),
                 };
 
-                let func = struct_item
-                    .associated_fns
-                    .iter()
-                    .find(|f| f.name == spec.name)
-                    .ok_or(AluminaError::UnresolvedItem(spec.name.to_string()))?
-                    .item;
+                let associated_fns = self.get_associated_fns(typ);
+                let func = associated_fns
+                    .get(spec.name)
+                    .ok_or(AluminaError::UnresolvedItem(spec.name.to_string()))?;
 
                 let item =
                     self.try_resolve_function(func, *generic_args, None, Some(args), type_hint)?;
 
                 self.builder.function(item)
             }
-            ast::Expr::Field(e, field) => {
-                return self.monomorphize_method_call(e, field, args, type_hint);
+            ast::Expr::Field(e, field, unified_fn) => {
+                return self.lower_method_call(e, *unified_fn, field, args, type_hint);
             }
             _ => unimplemented!(),
         };
@@ -1188,7 +1281,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let args = args
             .iter()
             .zip(arg_types.iter())
-            .map(|(arg, ty)| self.monomorphize_expr(arg, Some(ty)))
+            .map(|(arg, ty)| self.lower_expr(arg, Some(ty)))
             .collect::<Result<Vec<_>, _>>()?;
 
         for (expected, arg) in arg_types.iter().zip(args.iter()) {
@@ -1209,7 +1302,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(result.alloc_on(self.mono_ctx.ir))
     }
 
-    pub fn monomorphize_fn(
+    fn lower_fn(
         &mut self,
         kind: ast::FnKind<'ast>,
         generic_args: Option<&'ast [ast::TyP<'ast>]>,
@@ -1218,13 +1311,13 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         panic!()
     }
 
-    pub fn monomorphize_tuple_index(
+    fn lower_tuple_index(
         &mut self,
         tup: ast::ExprP<'ast>,
         index: usize,
         _type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let tup = self.monomorphize_expr(tup, None)?;
+        let tup = self.lower_expr(tup, None)?;
         let result = match tup.typ {
             ir::Ty::Tuple(types) => {
                 if types.len() <= index {
@@ -1244,13 +1337,13 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(result)
     }
 
-    pub fn monomorphize_field(
+    fn lower_field(
         &mut self,
         obj: ast::ExprP<'ast>,
         field: &'ast str,
         type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let obj = self.monomorphize_expr(obj, None)?;
+        let obj = self.lower_expr(obj, None)?;
 
         let result = match obj.typ.canonical_type() {
             ir::Ty::NamedType(item) => {
@@ -1266,24 +1359,24 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
                 self.builder.field(obj, field.id, field.ty)
             }
-            _ => return Err(AluminaError::TypeMismatch),
+            _ => return Err(AluminaError::StructExpectedHere),
         };
 
         Ok(result)
     }
 
-    pub fn monomorphize_index(
+    fn lower_index(
         &mut self,
         inner: ast::ExprP<'ast>,
         index: ast::ExprP<'ast>,
         type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let inner = self.monomorphize_expr(
+        let inner = self.lower_expr(
             inner,
             type_hint.map(|ty| self.mono_ctx.ir.intern_type(ir::Ty::Pointer(ty, true))),
         )?;
 
-        let index = self.monomorphize_expr(index, Some(builtin!(self, USize)))?;
+        let index = self.lower_expr(index, Some(builtin!(self, USize)))?;
 
         if inner.diverges() || index.diverges() {
             return Ok(self.builder.diverges([inner, index]));
@@ -1299,7 +1392,34 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(result)
     }
 
-    pub fn monomorphize_struct(
+    fn lower_return(
+        &mut self,
+        inner: Option<ast::ExprP<'ast>>,
+        type_hint: Option<ir::TyP<'ir>>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let inner = inner
+            .map(|inner| self.lower_expr(inner, self.return_type))
+            .transpose()?
+            .unwrap_or_else(|| self.builder.void());
+
+        if inner.diverges() {
+            return Ok(inner);
+        }
+
+        if !self
+            .return_type
+            .get_or_insert(inner.typ)
+            .assignable_from(inner.typ)
+        {
+            return Err(AluminaError::TypeMismatch);
+        }
+
+        let result = ir::Expr::rvalue(ir::ExprKind::Return(inner), builtin!(self, Never));
+
+        Ok(result.alloc_on(self.mono_ctx.ir))
+    }
+
+    fn lower_struct_expression(
         &mut self,
         typ: ast::TyP<'ast>,
         inits: &[ast::FieldInitializer<'ast>],
@@ -1318,7 +1438,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .iter()
             .map(|f| match field_map.get(&f.name) {
                 Some(field) => self
-                    .monomorphize_expr(f.value, Some(field.ty))
+                    .lower_expr(f.value, Some(field.ty))
                     .map(|i| (*field, i)),
                 None => Err(AluminaError::UnresolvedItem(f.name.to_string())),
             })
@@ -1351,44 +1471,65 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(self.builder.block(statements, local))
     }
 
-    pub fn monomorphize_expr(
+    fn lower_enum_value(
+        &mut self,
+        typ: ast::ItemP<'ast>,
+        id: ast::AstId,
+        type_hint: Option<ir::TyP<'ir>>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let item_cell = self.monomorphize(typ)?;
+        let ir_id = self.mono_ctx.map_id(id);
+        let result = match item_cell.try_get() {
+            Some(ir::IRItem::Enum(item)) => {
+                let typ = self.mono_ctx.ir.intern_type(ir::Ty::NamedType(item_cell));
+                ir::Expr::rvalue(
+                    ir::ExprKind::Cast(
+                        item.members.iter().find(|v| v.id == ir_id).unwrap().value,
+                        typ,
+                    ),
+                    typ,
+                )
+            }
+            _ => return Err(AluminaError::CycleDetected),
+        };
+
+        Ok(result.alloc_on(self.mono_ctx.ir))
+    }
+
+    fn lower_expr(
         &mut self,
         expr: ast::ExprP<'ast>,
         type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        println!("monomorphize_expr {:?}", expr);
+        println!("lower_expr {:?}", expr);
 
         let result = match expr {
             ast::Expr::Void => Ok(self.builder.void()),
-            ast::Expr::Block(statements, ret) => {
-                self.monomorphize_block(statements, ret, type_hint)
-            }
-            ast::Expr::Lit(lit) => self.monomorphize_lit(lit, type_hint),
-            ast::Expr::Deref(expr) => self.monomorphize_deref(expr, type_hint),
-            ast::Expr::Ref(expr) => self.monomorphize_ref(expr, type_hint),
-            ast::Expr::Local(id) => self.monomorphize_local(*id, type_hint),
-            ast::Expr::Unary(op, inner) => self.monomorphize_unary(*op, inner, type_hint),
-            ast::Expr::Assign(lhs, rhs) => self.monomorphize_assign(lhs, rhs, type_hint),
-            ast::Expr::If(cond, then, els) => self.monomorphize_if(cond, then, els, type_hint),
-            ast::Expr::Cast(expr, typ) => self.monomorphize_cast(expr, typ, type_hint),
-            ast::Expr::Loop(body) => self.monomorphize_loop(body, type_hint),
-            ast::Expr::Binary(op, lhs, rhs) => self.monomorphize_binary(*op, lhs, rhs, type_hint),
-            ast::Expr::AssignOp(op, lhs, rhs) => {
-                self.monomorphize_assign_op(*op, lhs, rhs, type_hint)
-            }
-            ast::Expr::Break(value) => self.monomorphize_break(*value, type_hint),
-            ast::Expr::Continue => self.monomorphize_continue(type_hint),
-            ast::Expr::Tuple(exprs) => self.monomorphize_tuple(exprs, type_hint),
-            ast::Expr::TupleIndex(tup, index) => {
-                self.monomorphize_tuple_index(tup, *index, type_hint)
-            }
-            ast::Expr::Field(tup, field) => self.monomorphize_field(tup, field, type_hint),
-            ast::Expr::Call(func, args) => self.monomorphize_call(func, args, type_hint),
+            ast::Expr::Block(statements, ret) => self.lower_block(statements, ret, type_hint),
+            ast::Expr::Lit(lit) => self.lower_lit(lit, type_hint),
+            ast::Expr::Deref(expr) => self.lower_deref(expr, type_hint),
+            ast::Expr::Ref(expr) => self.lower_ref(expr, type_hint),
+            ast::Expr::Local(id) => self.lower_local(*id, type_hint),
+            ast::Expr::Unary(op, inner) => self.lower_unary(*op, inner, type_hint),
+            ast::Expr::Assign(lhs, rhs) => self.lower_assign(lhs, rhs, type_hint),
+            ast::Expr::If(cond, then, els) => self.lower_if(cond, then, els, type_hint),
+            ast::Expr::Cast(expr, typ) => self.lower_cast(expr, typ, type_hint),
+            ast::Expr::Loop(body) => self.lower_loop(body, type_hint),
+            ast::Expr::Binary(op, lhs, rhs) => self.lower_binary(*op, lhs, rhs, type_hint),
+            ast::Expr::AssignOp(op, lhs, rhs) => self.lower_assign_op(*op, lhs, rhs, type_hint),
+            ast::Expr::Break(value) => self.lower_break(*value, type_hint),
+            ast::Expr::Continue => self.lower_continue(type_hint),
+            ast::Expr::Tuple(exprs) => self.lower_tuple(exprs, type_hint),
+            ast::Expr::TupleIndex(tup, index) => self.lower_tuple_index(tup, *index, type_hint),
+            ast::Expr::Field(tup, field, _) => self.lower_field(tup, field, type_hint),
+            ast::Expr::Call(func, args) => self.lower_call(func, args, type_hint),
+            ast::Expr::EnumValue(typ, id) => self.lower_enum_value(typ, *id, type_hint),
             ast::Expr::Struct(func, initializers) => {
-                self.monomorphize_struct(func, initializers, type_hint)
+                self.lower_struct_expression(func, initializers, type_hint)
             }
-            ast::Expr::Index(inner, index) => self.monomorphize_index(inner, index, type_hint),
-            ast::Expr::Fn(item, args) => self.monomorphize_fn(item.clone(), *args, type_hint),
+            ast::Expr::Index(inner, index) => self.lower_index(inner, index, type_hint),
+            ast::Expr::Return(inner) => self.lower_return(*inner, type_hint),
+            ast::Expr::Fn(item, args) => self.lower_fn(item.clone(), *args, type_hint),
             _ => panic!("unimplemented {:?}", expr),
         };
 

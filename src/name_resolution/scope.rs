@@ -23,11 +23,12 @@ pub enum NamedItem<'ast, 'src> {
     Impl(Scope<'ast, 'src>),
     Placeholder(AstId),
     Field(Node<'src>),
+    EnumMember(ItemP<'ast>, AstId, Node<'src>),
     Variable(AstId),
     Parameter(AstId, Node<'src>),
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ScopeType {
     Root,
     Crate,
@@ -104,6 +105,10 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             parent: None,
             code: None,
         })))
+    }
+
+    pub fn typ(&self) -> ScopeType {
+        self.0.borrow().r#type
     }
 
     pub fn inner(&self) -> Ref<'_, ScopeInner<'ast, 'src>> {

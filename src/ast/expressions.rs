@@ -4,6 +4,7 @@ use crate::ast::{AstCtx, FieldInitializer};
 use crate::ast::{BinOp, Expr, ExprP, LetDeclaration, Lit, Statement, UnOp};
 use crate::common::AluminaError;
 use crate::common::ArenaAllocatable;
+use crate::name_resolution::path::{Path, PathSegment};
 use crate::name_resolution::resolver::ItemResolution;
 use crate::name_resolution::scope::ScopeType;
 use crate::parser::ParseCtx;
@@ -81,6 +82,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             }
             ItemResolution::Item(NamedItem::Variable(var)) => Expr::Local(var),
             ItemResolution::Item(NamedItem::Parameter(var, _)) => Expr::Local(var),
+            ItemResolution::Item(NamedItem::EnumMember(typ, var, _)) => Expr::EnumValue(typ, var),
             ItemResolution::Defered(placeholder, name) => {
                 let name = name.0.alloc_on(self.ast);
                 Expr::Fn(FnKind::Defered(DeferredFn { placeholder, name }), None)
@@ -385,7 +387,17 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         let field_value = self.code.node_text(field);
 
         let result = match field.kind() {
-            "identifier" => Expr::Field(value, field_value.alloc_on(self.ast)),
+            "identifier" => {
+                let mut resolver = NameResolver::new();
+                let unified_fn = match resolver
+                    .resolve_item(self.scope.clone(), PathSegment(field_value).into())
+                {
+                    Ok(ItemResolution::Item(NamedItem::Function(item, _, _))) => Some(item),
+                    _ => None,
+                };
+
+                Expr::Field(value, field_value.alloc_on(self.ast), unified_fn)
+            }
             "integer_literal" => Expr::TupleIndex(value, field_value.parse().unwrap()),
             _ => unreachable!(),
         };
@@ -463,11 +475,69 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         Ok(Expr::Break(inner).alloc_on(self.ast))
     }
 
+    fn visit_return_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let inner = node
+            .child_by_field_name("inner")
+            .map(|n| self.visit(n))
+            .transpose()?;
+
+        Ok(Expr::Return(inner).alloc_on(self.ast))
+    }
+
     fn visit_continue_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         if !self.in_a_loop {
             return Err(AluminaError::ContinueOutsideOfLoop).to_syntax_error(node);
         }
         Ok(Expr::Continue.alloc_on(self.ast))
+    }
+
+    fn visit_switch_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let value = self.visit(node.child_by_field_name("value").unwrap())?;
+
+        let mut arms = Vec::new();
+        let mut default_arm = None;
+
+        let body = node.child_by_field_name("body").unwrap();
+        let mut cursor = body.walk();
+
+        // Switch is desugared into a series of if-else expressions
+        for arm in body.children_by_field_name("arm", &mut cursor) {
+            if default_arm.is_some() {
+                return Err(AluminaError::DefaultCaseMustBeLast).to_syntax_error(arm);
+            }
+
+            let pattern = arm.child_by_field_name("pattern").unwrap();
+            if let Some(expr) = pattern.child_by_field_name("value") {
+                arms.push((
+                    self.visit(expr)?,
+                    self.visit(arm.child_by_field_name("value").unwrap())?,
+                ))
+            } else {
+                default_arm = Some(self.visit(arm.child_by_field_name("value").unwrap())?);
+            }
+        }
+
+        let local_id = self.ast.make_id();
+        let local = Expr::Local(local_id).alloc_on(self.ast);
+        let stmts = vec![Statement::LetDeclaration(LetDeclaration {
+            id: local_id,
+            typ: None,
+            value: Some(value),
+        })];
+
+        let ret = arms.into_iter().rfold(
+            default_arm.unwrap_or(Expr::Void.alloc_on(self.ast)),
+            |acc, (pattern, value)| {
+                let cmp = Expr::Binary(BinOp::Eq, local, pattern);
+                let branch = Expr::If(cmp.alloc_on(self.ast), value, acc);
+
+                branch.alloc_on(self.ast)
+            },
+        );
+
+        let block = Expr::Block(stmts.alloc_on(self.ast), ret).alloc_on(self.ast);
+
+        Ok(block.alloc_on(self.ast))
     }
 
     fn visit_struct_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -502,6 +572,21 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
         Ok(Expr::Struct(typ, field_initializers.alloc_on(self.ast)).alloc_on(self.ast))
     }
+
+    fn visit_while_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let condition = self.visit(node.child_by_field_name("condition").unwrap())?;
+        
+        self.in_a_loop = true;
+        let body = self.visit(node.child_by_field_name("body").unwrap());
+        self.in_a_loop = false;
+        let body = body?;
+
+        let r#break = Expr::Break(None).alloc_on(self.ast);
+        let body = Expr::If(condition, body, r#break).alloc_on(self.ast);
+
+        Ok(Expr::Loop(body).alloc_on(self.ast))
+        
+    }   
 }
 
 fn parse_string_literal(lit: &str) -> Result<String, AluminaError> {

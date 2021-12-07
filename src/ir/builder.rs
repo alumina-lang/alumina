@@ -2,6 +2,8 @@ use core::panic;
 
 use crate::{ast::BuiltinType, common::ArenaAllocatable, ir::*};
 
+use super::const_eval::Value;
+
 pub struct ExpressionBuilder<'ir> {
     ir: &'ir IrCtx<'ir>,
 }
@@ -116,12 +118,29 @@ impl<'ir> ExpressionBuilder<'ir> {
         expr.alloc_on(self.ir)
     }
 
+    pub fn const_value(&self, val: Value) -> ExprP<'ir> {
+        let expr = Expr {
+            kind: ExprKind::ConstValue(val),
+            value_type: ValueType::RValue,
+            is_const: true,
+            typ: self.ir.intern_type(Ty::Builtin(val.type_kind())),
+        };
+
+        expr.alloc_on(self.ir)
+    }
+
     pub fn deref(&self, inner: ExprP<'ir>) -> ExprP<'ir> {
         let result = match inner.typ {
             Ty::Pointer(ty, false) => Expr::lvalue(ExprKind::Deref(inner), ty),
             Ty::Pointer(ty, true) => Expr::const_lvalue(ExprKind::Deref(inner), ty),
             _ => panic!("not a pointer"),
         };
+
+        result.alloc_on(self.ir)
+    }
+
+    pub fn binary(&self, op: BinOp, lhs: ExprP<'ir>, rhs: ExprP<'ir>, result_typ: TyP<'ir>) -> ExprP<'ir> {
+        let result = Expr::rvalue(ExprKind::Binary(op, lhs, rhs), result_typ);
 
         result.alloc_on(self.ir)
     }

@@ -7,7 +7,7 @@ use std::collections::HashSet;
 
 use super::{
     path::PathSegment,
-    scope::{Scope, ScopeInner},
+    scope::{Scope, ScopeInner, ScopeType},
 };
 
 pub struct NameResolver<'ast, 'src> {
@@ -76,6 +76,9 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
                 NamedItem::Placeholder(sym) => return Ok(ScopeResolution::Defered(*sym)),
                 NamedItem::Module(child_scope) | NamedItem::Impl(child_scope) => {
                     return self.resolve_scope(child_scope.clone(), remainder);
+                }
+                NamedItem::Type(_, _, scope ) if scope.typ() == ScopeType::Enum => {
+                    return self.resolve_scope(scope.clone(), remainder);
                 }
                 NamedItem::Alias(target) => {
                     return self.resolve_scope(scope.clone(), target.join_with(remainder));

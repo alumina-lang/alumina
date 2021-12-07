@@ -164,6 +164,18 @@ impl BuiltinType {
     pub fn is_numeric(&self) -> bool {
         self.is_integer() || self.is_float()
     }
+
+    pub fn is_signed(&self) -> bool {
+        match self {
+            BuiltinType::I8
+            | BuiltinType::I16
+            | BuiltinType::I32
+            | BuiltinType::I64
+            | BuiltinType::I128
+            | BuiltinType::ISize => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
@@ -193,6 +205,7 @@ pub type TyP<'ast> = &'ast Ty<'ast>;
 
 #[derive(Debug)]
 pub enum Item<'ast> {
+    Enum(Enum<'ast>),
     Struct(Struct<'ast>),
     Function(Function<'ast>),
 }
@@ -202,6 +215,7 @@ impl<'ast> Item<'ast> {
         match self {
             Item::Struct(Struct { placeholders, .. }) => !placeholders.is_empty(),
             Item::Function(Function { placeholders, .. }) => !placeholders.is_empty(),
+            Item::Enum(_) => false
         }
     }
 }
@@ -282,6 +296,12 @@ pub struct Field<'ast> {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct EnumMember<'ast> {
+    pub id: AstId,
+    pub value: Option<ExprP<'ast>>,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct AssociatedFn<'ast> {
     pub name: &'ast str,
     pub item: ItemP<'ast>,
@@ -292,6 +312,13 @@ pub struct Struct<'ast> {
     pub placeholders: &'ast [AstId],
     pub associated_fns: &'ast [AssociatedFn<'ast>],
     pub fields: &'ast [Field<'ast>],
+}
+
+
+#[derive(Debug)]
+pub struct Enum<'ast> {
+    pub associated_fns: &'ast [AssociatedFn<'ast>],
+    pub members: &'ast [EnumMember<'ast>],
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -407,13 +434,15 @@ pub enum Expr<'ast> {
     Assign(ExprP<'ast>, ExprP<'ast>),
     AssignOp(BinOp, ExprP<'ast>, ExprP<'ast>),
     Local(AstId),
+    EnumValue(ItemP<'ast>, AstId),
     Lit(Lit<'ast>),
     Loop(ExprP<'ast>),
     Break(Option<ExprP<'ast>>),
+    Return(Option<ExprP<'ast>>),
     Continue,
     Tuple(&'ast [ExprP<'ast>]),
     Struct(TyP<'ast>, &'ast [FieldInitializer<'ast>]),
-    Field(ExprP<'ast>, &'ast str),
+    Field(ExprP<'ast>, &'ast str, Option<ItemP<'ast>>),
     TupleIndex(ExprP<'ast>, usize),
     Index(ExprP<'ast>, ExprP<'ast>),
     If(ExprP<'ast>, ExprP<'ast>, ExprP<'ast>),
@@ -433,5 +462,6 @@ impl_allocatable!(
     ItemCell<'_>,
     FieldInitializer<'_>,
     AssociatedFn<'_>,
+    EnumMember<'_>,
     AstId
 );
