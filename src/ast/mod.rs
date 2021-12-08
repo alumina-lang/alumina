@@ -215,7 +215,7 @@ impl<'ast> Item<'ast> {
         match self {
             Item::Struct(Struct { placeholders, .. }) => !placeholders.is_empty(),
             Item::Function(Function { placeholders, .. }) => !placeholders.is_empty(),
-            Item::Enum(_) => false
+            Item::Enum(_) => false,
         }
     }
 }
@@ -313,7 +313,6 @@ pub struct Struct<'ast> {
     pub associated_fns: &'ast [AssociatedFn<'ast>],
     pub fields: &'ast [Field<'ast>],
 }
-
 
 #[derive(Debug)]
 pub struct Enum<'ast> {

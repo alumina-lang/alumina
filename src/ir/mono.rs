@@ -141,8 +141,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let mut type_hint = None;
                 let mut taken_values = HashSet::new();
 
-                println!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-
                 let (valued, non_valued): (Vec<_>, Vec<_>) =
                     en.members.iter().copied().partition(|m| m.value.is_some());
 
@@ -176,7 +174,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     _ => unreachable!(),
                 };
 
-
                 let mut counter = numeric_of_kind!(kind, 0);
                 for m in non_valued {
                     let next_non_taken = loop {
@@ -197,8 +194,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                         value: self.builder.const_value(next_non_taken),
                     });
                 }
-
-                println!("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
 
                 let res = ir::IRItem::Enum(ir::Enum {
                     underlying_type: type_hint.unwrap(),
@@ -560,8 +555,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             b_typ = *inner;
         }
 
-        println!("autoref: a = {}, b = {}", a, b);
-
         match a - b {
             0 => Ok(expr),
             -1 if matches!(expr.value_type, ValueType::LValue) => Ok(self.builder.r#ref(expr)),
@@ -600,11 +593,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 }
             }
 
-            (
-                NamedType(l),
-                Eq | Neq,
-                NamedType(r),
-            ) if l == r && matches!(l.get(), ir::IRItem::Enum(_)) => {
+            (NamedType(l), Eq | Neq, NamedType(r))
+                if l == r && matches!(l.get(), ir::IRItem::Enum(_)) =>
+            {
                 Builtin(BuiltinType::Bool)
             }
 
@@ -1187,8 +1178,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             _ => unreachable!(),
         };
 
-        println!("!!!!!!!!!!!!!!!! {:?}", callee);
-
         if arg_types.is_empty() {
             return Err(AluminaError::NotAMethod);
         }
@@ -1214,7 +1203,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
 
         for (expected, arg) in arg_types.iter().zip(args.iter()) {
-            println!("FFF {:?} {:?}", expected, arg.typ);
             if !expected.assignable_from(arg.typ) {
                 return Err(AluminaError::TypeMismatch);
             }
@@ -1501,8 +1489,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         expr: ast::ExprP<'ast>,
         type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        println!("lower_expr {:?}", expr);
-
         let result = match expr {
             ast::Expr::Void => Ok(self.builder.void()),
             ast::Expr::Block(statements, ret) => self.lower_block(statements, ret, type_hint),
@@ -1534,10 +1520,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         };
 
         let result = match result {
-            Ok(result) => {
-                println!("↳  {:?}", result);
-                result
-            }
+            Ok(result) => result,
             Err(e) => {
                 panic!("{:?} at {:?}", e, expr);
             }

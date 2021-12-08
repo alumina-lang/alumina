@@ -1,7 +1,7 @@
 pub mod builder;
+pub mod const_eval;
 pub mod infer;
 pub mod mono;
-pub mod const_eval;
 
 use crate::{
     ast::{BinOp, BuiltinType, UnOp},
@@ -400,7 +400,7 @@ impl<'ir> Expr<'ir> {
     pub fn pure(&self) -> bool {
         match self.kind {
             ExprKind::Block(stmts, e) => stmts.iter().all(|s| s.pure()) && e.pure(),
-            ExprKind::Binary(_, a,  b) => a.pure() && b.pure(),
+            ExprKind::Binary(_, a, b) => a.pure() && b.pure(),
             ExprKind::AssignOp(_, a, b) => a.pure() && b.pure(),
             ExprKind::Ref(inner) => inner.pure(),
             ExprKind::Deref(inner) => inner.pure(),

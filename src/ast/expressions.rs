@@ -575,7 +575,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
     fn visit_while_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let condition = self.visit(node.child_by_field_name("condition").unwrap())?;
-        
+
         self.in_a_loop = true;
         let body = self.visit(node.child_by_field_name("body").unwrap());
         self.in_a_loop = false;
@@ -585,8 +585,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         let body = Expr::If(condition, body, r#break).alloc_on(self.ast);
 
         Ok(Expr::Loop(body).alloc_on(self.ast))
-        
-    }   
+    }
 }
 
 fn parse_string_literal(lit: &str) -> Result<String, AluminaError> {

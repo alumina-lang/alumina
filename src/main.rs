@@ -49,7 +49,7 @@ fn compile(units: Vec<CompilationUnit>) {
         .collect();
 
     for (i, ctx) in parse_contexts.iter().enumerate() {
-        println!("{:?}", NodeWrapper::new(ctx.source(), ctx.root_node()));
+        //println!("{:?}", NodeWrapper::new(ctx.source(), ctx.root_node()));
 
         let module_scope =
             crate_scope.named_child_with_ctx(ScopeType::Module, &units[i].name, ctx.clone());
@@ -86,7 +86,7 @@ fn compile(units: Vec<CompilationUnit>) {
     let mut mono_ctx = MonoCtx::new(&ir_ctx);
 
     for item in items {
-        println!("{:#?}", item);
+        // println!("{:#?}", item);
 
         let inner = item.get();
         if !inner.is_generic() {
@@ -100,7 +100,12 @@ fn compile(units: Vec<CompilationUnit>) {
 
     //drop(ast);
 
-    println!("{:#?}", items);
+    let mut codegen = codegen::CCodegen::new();
+    for item in items {
+        codegen.write_item(item);
+    }
+
+    println!("{}", codegen.generate());
 }
 
 fn main() {

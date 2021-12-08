@@ -139,7 +139,13 @@ impl<'ir> ExpressionBuilder<'ir> {
         result.alloc_on(self.ir)
     }
 
-    pub fn binary(&self, op: BinOp, lhs: ExprP<'ir>, rhs: ExprP<'ir>, result_typ: TyP<'ir>) -> ExprP<'ir> {
+    pub fn binary(
+        &self,
+        op: BinOp,
+        lhs: ExprP<'ir>,
+        rhs: ExprP<'ir>,
+        result_typ: TyP<'ir>,
+    ) -> ExprP<'ir> {
         let result = Expr::rvalue(ExprKind::Binary(op, lhs, rhs), result_typ);
 
         result.alloc_on(self.ir)

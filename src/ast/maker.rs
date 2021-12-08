@@ -5,7 +5,7 @@ use crate::{
     parser::AluminaVisitor,
 };
 
-use super::{expressions::ExpressionVisitor, types::TypeVisitor, AssociatedFn, EnumMember, Enum};
+use super::{expressions::ExpressionVisitor, types::TypeVisitor, AssociatedFn, Enum, EnumMember};
 
 pub struct AstItemMaker<'ast> {
     ast: &'ast AstCtx<'ast>,

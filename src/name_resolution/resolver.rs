@@ -77,7 +77,7 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
                 NamedItem::Module(child_scope) | NamedItem::Impl(child_scope) => {
                     return self.resolve_scope(child_scope.clone(), remainder);
                 }
-                NamedItem::Type(_, _, scope ) if scope.typ() == ScopeType::Enum => {
+                NamedItem::Type(_, _, scope) if scope.typ() == ScopeType::Enum => {
                     return self.resolve_scope(scope.clone(), remainder);
                 }
                 NamedItem::Alias(target) => {

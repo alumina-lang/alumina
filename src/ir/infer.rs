@@ -1,7 +1,6 @@
-use std::collections::HashMap;
-use crate::{ast, ir};
 use super::mono::{MonoCtx, MonomorphizeKey};
-
+use crate::{ast, ir};
+use std::collections::HashMap;
 
 pub struct TypeInferer<'a, 'ast, 'ir> {
     mono_ctx: &'a MonoCtx<'ast, 'ir>,

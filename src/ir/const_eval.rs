@@ -5,7 +5,7 @@ use std::{
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub},
 };
 
-use super::{BuiltinType, UnOp, Lit, ExprKind, Ty};
+use super::{BuiltinType, ExprKind, Lit, Ty, UnOp};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Hash)]
 pub enum Value {
@@ -45,7 +45,7 @@ macro_rules! numeric_of_kind {
     };
 }
 
-pub (crate) use numeric_of_kind;
+pub(crate) use numeric_of_kind;
 
 impl Value {
     pub fn default(kind: BuiltinType) -> Self {
@@ -464,27 +464,25 @@ pub fn const_eval<'ast>(expr: crate::ir::ExprP<'ast>) -> Result<Value, ()> {
             }
         }
         ExprKind::ConstValue(value) => Ok(*value),
-        ExprKind::Lit(l) => {
-            match l {
-                Lit::Bool(b) => Ok(Value::Bool(*b)),
-                Lit::Int(i) => match expr.typ {
-                    Ty::Builtin(BuiltinType::U8) => Ok(Value::U8(*i as u8)),
-                    Ty::Builtin(BuiltinType::U16) => Ok(Value::U16(*i as u16)),
-                    Ty::Builtin(BuiltinType::U32) => Ok(Value::U32(*i as u32)),
-                    Ty::Builtin(BuiltinType::U64) => Ok(Value::U64(*i as u64)),
-                    Ty::Builtin(BuiltinType::U128) => Ok(Value::U128(*i as u128)),
-                    Ty::Builtin(BuiltinType::I8) => Ok(Value::I8(*i as i8)),
-                    Ty::Builtin(BuiltinType::I16) => Ok(Value::I16(*i as i16)),
-                    Ty::Builtin(BuiltinType::I32) => Ok(Value::I32(*i as i32)),
-                    Ty::Builtin(BuiltinType::I64) => Ok(Value::I64(*i as i64)),
-                    Ty::Builtin(BuiltinType::I128) => Ok(Value::I128(*i as i128)),
-                    Ty::Builtin(BuiltinType::USize) => Ok(Value::USize(*i as usize)),
-                    Ty::Builtin(BuiltinType::ISize) => Ok(Value::ISize(*i as isize)),
-                    _ => unreachable!()
-                },
-                _ => Err(()),
-            }
-        }
+        ExprKind::Lit(l) => match l {
+            Lit::Bool(b) => Ok(Value::Bool(*b)),
+            Lit::Int(i) => match expr.typ {
+                Ty::Builtin(BuiltinType::U8) => Ok(Value::U8(*i as u8)),
+                Ty::Builtin(BuiltinType::U16) => Ok(Value::U16(*i as u16)),
+                Ty::Builtin(BuiltinType::U32) => Ok(Value::U32(*i as u32)),
+                Ty::Builtin(BuiltinType::U64) => Ok(Value::U64(*i as u64)),
+                Ty::Builtin(BuiltinType::U128) => Ok(Value::U128(*i as u128)),
+                Ty::Builtin(BuiltinType::I8) => Ok(Value::I8(*i as i8)),
+                Ty::Builtin(BuiltinType::I16) => Ok(Value::I16(*i as i16)),
+                Ty::Builtin(BuiltinType::I32) => Ok(Value::I32(*i as i32)),
+                Ty::Builtin(BuiltinType::I64) => Ok(Value::I64(*i as i64)),
+                Ty::Builtin(BuiltinType::I128) => Ok(Value::I128(*i as i128)),
+                Ty::Builtin(BuiltinType::USize) => Ok(Value::USize(*i as usize)),
+                Ty::Builtin(BuiltinType::ISize) => Ok(Value::ISize(*i as isize)),
+                _ => unreachable!(),
+            },
+            _ => Err(()),
+        },
         _ => Err(()),
     }
 }
