@@ -49,7 +49,7 @@ fn compile(units: Vec<CompilationUnit>) {
         .collect();
 
     for (i, ctx) in parse_contexts.iter().enumerate() {
-        //println!("{:?}", NodeWrapper::new(ctx.source(), ctx.root_node()));
+        eprintln!("{:?}", NodeWrapper::new(ctx.source(), ctx.root_node()));
 
         let module_scope =
             crate_scope.named_child_with_ctx(ScopeType::Module, &units[i].name, ctx.clone());

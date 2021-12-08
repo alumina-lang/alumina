@@ -176,6 +176,13 @@ impl BuiltinType {
             _ => false,
         }
     }
+
+    pub fn is_void(&self) -> bool {
+        match self {
+            BuiltinType::Void => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
@@ -328,6 +335,8 @@ pub struct Parameter<'ast> {
 
 #[derive(Debug)]
 pub struct Function<'ast> {
+    pub name: Option<&'ast str>,
+    pub attributes: &'ast [Attribute],
     pub placeholders: &'ast [AstId],
     pub args: &'ast [Parameter<'ast>],
     pub return_type: TyP<'ast>,
@@ -383,6 +392,16 @@ impl BinOp {
             _ => false,
         }
     }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum AttributeKind {
+    Export
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct Attribute {
+    pub kind: AttributeKind,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
@@ -462,5 +481,6 @@ impl_allocatable!(
     FieldInitializer<'_>,
     AssociatedFn<'_>,
     EnumMember<'_>,
+    Attribute,
     AstId
 );

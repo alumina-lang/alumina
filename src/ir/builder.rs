@@ -83,6 +83,14 @@ impl<'ir> ExpressionBuilder<'ir> {
         .alloc_on(self.ir)
     }
 
+    pub fn assign_op(&self, op: BinOp, lhs: ExprP<'ir>, rhs: ExprP<'ir>) -> ExprP<'ir> {
+        Expr::rvalue(
+            ExprKind::AssignOp(op, lhs, rhs),
+            self.ir.intern_type(Ty::Builtin(BuiltinType::Void)),
+        )
+        .alloc_on(self.ir)
+    }
+
     pub fn void(&self) -> ExprP<'ir> {
         Expr::rvalue(
             ExprKind::Void,
@@ -147,6 +155,40 @@ impl<'ir> ExpressionBuilder<'ir> {
         result_typ: TyP<'ir>,
     ) -> ExprP<'ir> {
         let result = Expr::rvalue(ExprKind::Binary(op, lhs, rhs), result_typ);
+
+        result.alloc_on(self.ir)
+    }
+
+    pub fn ret(
+        &self,
+        inner: ExprP<'ir>,
+    ) -> ExprP<'ir> {
+        let result = Expr::rvalue(
+            ExprKind::Return(inner), 
+            self.ir.intern_type(Ty::Builtin(BuiltinType::Never))
+        );
+
+        result.alloc_on(self.ir)
+    }
+
+    pub fn cast(
+        &self,
+        expr: ExprP<'ir>,
+        typ: TyP<'ir>,
+    ) -> ExprP<'ir> {
+        let result = Expr::rvalue(ExprKind::Cast(expr), typ);
+
+        result.alloc_on(self.ir)
+    }
+
+
+    pub fn unary(
+        &self,
+        op: UnOp,
+        inner: ExprP<'ir>,
+        result_typ: TyP<'ir>,
+    ) -> ExprP<'ir> {
+        let result = Expr::rvalue(ExprKind::Unary(op, inner), result_typ);
 
         result.alloc_on(self.ir)
     }

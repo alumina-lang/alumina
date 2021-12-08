@@ -2,10 +2,10 @@ use crate::{
     ast::{AstCtx, AstId, BuiltinType, Field, Function, Item, ItemP, Parameter, Struct, Ty},
     common::{ArenaAllocatable, SyntaxError, ToSyntaxError},
     name_resolution::scope::{NamedItem, Scope},
-    parser::AluminaVisitor,
+    parser::{AluminaVisitor, ParseCtx},
 };
 
-use super::{expressions::ExpressionVisitor, types::TypeVisitor, AssociatedFn, Enum, EnumMember};
+use super::{expressions::ExpressionVisitor, types::TypeVisitor, AssociatedFn, Enum, EnumMember, Attribute, AttributeKind};
 
 pub struct AstItemMaker<'ast> {
     ast: &'ast AstCtx<'ast>,
@@ -134,8 +134,27 @@ impl<'ast> AstItemMaker<'ast> {
         Ok(())
     }
 
+    fn make_attribute<'src>(
+        &mut self,
+        code: &'src ParseCtx<'src>,
+        node: tree_sitter::Node<'src>,
+    ) -> Result<&'ast [Attribute], SyntaxError<'src>> {
+        let attribute = node.child_by_field_name("attribute").iter().flat_map(|n| {
+            let mut cursor = node.walk();
+            n.children_by_field_name("name", &mut cursor)
+                .map(|n| code.node_text(n))
+                .collect::<Vec<_>>()
+        }).filter_map(|name| match name {
+            "export" => Some(Attribute { kind: AttributeKind::Export }),
+            _ => None,
+        }).collect::<Vec<_>>().alloc_on(self.ast);
+
+        Ok(attribute)
+    }
+
     fn make_function_impl<'src>(
         &mut self,
+        name: &'src str,
         symbol: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
@@ -162,6 +181,7 @@ impl<'ast> AstItemMaker<'ast> {
             }
         }
 
+
         let return_type = node
             .child_by_field_name("return_type")
             .map(|n| TypeVisitor::new(self.ast, scope.clone()).visit(n))
@@ -173,6 +193,8 @@ impl<'ast> AstItemMaker<'ast> {
             .transpose()?;
 
         let result = Item::Function(Function {
+            name: Some(name.alloc_on(self.ast)),
+            attributes: self.make_attribute(scope.code().unwrap(), node)?,
             placeholders: placeholders.alloc_on(self.ast),
             args: parameters.alloc_on(self.ast),
             return_type,
@@ -204,18 +226,20 @@ impl<'ast> AstItemMaker<'ast> {
 
     fn make_function<'src>(
         &mut self,
+        name: &'src str,
         symbol: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
     ) -> Result<(), SyntaxError<'src>> {
         match node.kind() {
             "function_definition" => self.make_function_impl(
+                name,
                 symbol,
                 node,
                 scope,
                 Some(node.child_by_field_name("body").unwrap()),
             )?,
-            "extern_function_declaration" => self.make_function_impl(symbol, node, scope, None)?,
+            "extern_function_declaration" => self.make_function_impl(name, symbol, node, scope, None)?,
             _ => unimplemented!(),
         };
 
@@ -223,7 +247,7 @@ impl<'ast> AstItemMaker<'ast> {
     }
 
     pub fn make<'src>(&mut self, scope: Scope<'ast, 'src>) -> Result<(), SyntaxError<'src>> {
-        for (_, item) in scope.inner().grouped_items() {
+        for (name, item) in scope.inner().grouped_items() {
             match item {
                 [NamedItem::Module(module)] => {
                     self.make(module.clone())?;
@@ -236,7 +260,7 @@ impl<'ast> AstItemMaker<'ast> {
                     self.make_type(*symbol, *node, scope.clone(), None)?;
                 }
                 [NamedItem::Function(symbol, node, scope)] => {
-                    self.make_function(*symbol, *node, scope.clone())?;
+                    self.make_function(name, *symbol, *node, scope.clone())?;
                 }
                 _ => {}
             }

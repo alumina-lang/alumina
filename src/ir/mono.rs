@@ -9,6 +9,7 @@ use once_cell::sync::{Lazy, OnceCell};
 use super::builder::ExpressionBuilder;
 use super::const_eval::{const_eval, numeric_of_kind, Value};
 use super::infer::TypeInferer;
+use super::optimize::Optimizer;
 use super::{Enum, IrCtx};
 use crate::ast::{expressions, BuiltinType};
 use crate::common::ArenaAllocatable;
@@ -234,6 +235,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
                 let return_type = child.lower_type(func.return_type)?;
                 let res = ir::IRItem::Function(ir::Function {
+                    name: func.name.map(|n| n.alloc_on(child.mono_ctx.ir)),
+                    attributes: func.attributes.alloc_on(child.mono_ctx.ir),
                     args: &parameters.alloc_on(child.mono_ctx.ir),
                     return_type,
                     body: FuncBodyCell::new(),
@@ -245,16 +248,21 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 // typechecking purposes.
 
                 child.return_type = Some(return_type);
-                let body = child.lower_expr(
-                    func.body.expect("extern function not supported"),
-                    Some(return_type),
-                )?;
+                if let Some(body) = func.body {
+                    let body = child.lower_expr(
+                        body,
+                        Some(return_type),
+                    )?;
 
-                if !return_type.assignable_from(body.typ) {
-                    return Err(AluminaError::TypeMismatch);
+                    if !return_type.assignable_from(body.typ) {
+                        return Err(AluminaError::TypeMismatch);
+                    }
+
+                    let mut optimizer = Optimizer::new(child.mono_ctx.ir);
+                    let optimized = optimizer.optimize_func_body(body);
+
+                    item.get_function().body.assign(optimized);
                 }
-
-                item.get_function().body.assign(body);
             }
             ast::Item::Struct(s) => {
                 if key.1.len() != s.placeholders.len() {
@@ -461,8 +469,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
 
         let mut type_inferer = TypeInferer::new(self.mono_ctx, fun.placeholders.into());
-
-        print!("### SS: {:?} IP: {:?}", self_slot, infer_pairs);
 
         match type_inferer.try_infer(self_slot, infer_pairs) {
             Some(generic_args) => self.monomorphize_item(MonomorphizeKey(
@@ -912,9 +918,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         self.typecheck_binary(op, lhs, rhs)?;
 
-        let result = ir::Expr::rvalue(ir::ExprKind::AssignOp(op, lhs, rhs), builtin!(self, Void));
-
-        Ok(result.alloc_on(self.mono_ctx.ir))
+        Ok(self.builder.assign_op(op, lhs, rhs))
     }
 
     fn lower_assign(
@@ -963,6 +967,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         if !builtin!(self, Bool).assignable_from(cond.typ) {
             return Err(AluminaError::TypeMismatch);
         }
+
+        eprintln!("{:?}", type_hint);
+        eprintln!("{:?}", then.typ);
+        eprintln!("{:?}", els.typ);
 
         let gcd = ir::Ty::gcd(then.typ, els.typ);
         if !gcd.assignable_from(then.typ) || !gcd.assignable_from(els.typ) {
@@ -1046,9 +1054,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             _ => return Err(AluminaError::InvalidCast),
         }
 
-        let result = ir::Expr::rvalue(ir::ExprKind::Cast(expr, typ), typ);
-
-        Ok(result.alloc_on(self.mono_ctx.ir))
+        Ok(self.builder.cast(expr, typ))
     }
 
     fn lower_loop(
@@ -1074,8 +1080,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         if body.diverges() {
             return Ok(body);
         }
-
-        self.loop_contexts.pop();
 
         let mut statements = vec![
             ir::Statement::Label(continue_label),
@@ -1225,6 +1229,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         // Function calls are not completely referentially tranparent, as we do not support
         // pointers-to-method, so these need to be invoked directly. This allow us to switch on the
         // callee's expression kind to determine how to handle it.
+
         let callee = match callee {
             ast::Expr::Fn(ast::FnKind::Normal(item), generic_args) => {
                 let item =
@@ -1402,9 +1407,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             return Err(AluminaError::TypeMismatch);
         }
 
-        let result = ir::Expr::rvalue(ir::ExprKind::Return(inner), builtin!(self, Never));
-
-        Ok(result.alloc_on(self.mono_ctx.ir))
+        Ok(self.builder.ret(inner))
     }
 
     fn lower_struct_expression(
@@ -1473,7 +1476,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 ir::Expr::rvalue(
                     ir::ExprKind::Cast(
                         item.members.iter().find(|v| v.id == ir_id).unwrap().value,
-                        typ,
                     ),
                     typ,
                 )

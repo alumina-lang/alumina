@@ -68,7 +68,7 @@ module.exports = grammar({
         )
       ),
 
-    attribute: ($) => seq("#[", sepBy1(",", $.identifier), "]"),
+    attribute: ($) => seq("#[", sepBy1(",", field("name", $.identifier)), "]"),
 
     _top_level_item: ($) =>
       choice(
@@ -90,7 +90,7 @@ module.exports = grammar({
 
     mod_definition: ($) =>
       seq(
-        optional($.attribute),
+        optional(field("attribute", $.attribute)),
         "mod",
         field("name", $.identifier),
         "{",
@@ -100,7 +100,7 @@ module.exports = grammar({
 
     function_definition: ($) =>
       seq(
-        optional($.attribute),
+        optional(field("attribute", $.attribute)),
         "fn",
         field("name", $.identifier),
         optional(field("type_arguments", $.generic_argument_list)),
@@ -111,7 +111,7 @@ module.exports = grammar({
 
     extern_function_declaration: ($) =>
       seq(
-        optional($.attribute),
+        optional(field("attribute", $.attribute)),
         "extern",
         "fn",
         field("name", $.identifier),
@@ -122,7 +122,7 @@ module.exports = grammar({
 
     struct_definition: ($) =>
       seq(
-        optional($.attribute),
+        optional(field("attribute", $.attribute)),
         "struct",
         field("name", $.identifier),
         optional(field("type_arguments", $.generic_argument_list)),
@@ -134,7 +134,7 @@ module.exports = grammar({
 
     enum_definition: ($) =>
       seq(
-        optional($.attribute),
+        optional(field("attribute", $.attribute)),
         "enum",
         field("name", $.identifier),
         seq("{", sepBy(",", field("body", $.enum_item)), optional(","), "}")
@@ -148,7 +148,7 @@ module.exports = grammar({
 
     struct_field: ($) =>
       seq(
-        optional($.attribute),
+        optional(field("attribute", $.attribute)),
         field("name", $.identifier),
         ":",
         field("type", $._type)
@@ -156,7 +156,7 @@ module.exports = grammar({
 
     impl_block: ($) =>
       seq(
-        optional($.attribute),
+        optional(field("attribute", $.attribute)),
         "impl",
         field("name", $.identifier),
         "{",
@@ -276,7 +276,7 @@ module.exports = grammar({
 
     statement: ($) =>
       seq(
-        optional($.attribute),
+        optional(field("attribute", $.attribute)),
         field("inner", choice($._declaration_statement, $.expression_statement))
       ),
 
@@ -435,7 +435,7 @@ module.exports = grammar({
       ),
 
     type_cast_expression: ($) =>
-      seq(field("value", $._expression), "as", field("type", $._type)),
+      prec(1, seq(field("value", $._expression), "as", field("type", $._type))),
 
     call_expression: ($) =>
       prec(

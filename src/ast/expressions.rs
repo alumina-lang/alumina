@@ -140,7 +140,41 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
 
         Ok(result)
     }
+
+    fn extract_expression_ending_with_block(
+        &self,
+        last_node: Option<tree_sitter::Node<'src>>,
+        statements: &mut Vec<Statement<'ast>>,
+    ) -> ExprP<'ast> {
+        let last_node = match last_node {
+            Some(n) => n,
+            None => return Expr::Void.alloc_on(self.ast),
+        };
+
+        
+        let expression_node = match last_node.kind() {
+            "expression_statement" => last_node.child_by_field_name("inner").unwrap(),
+            _ => return Expr::Void.alloc_on(self.ast)
+        };
+
+        match expression_node.kind() {
+            "block" |
+            "if_expression" |
+            "switch_expression" |
+            "while_expression" |
+            "loop_expression"  |
+            "for_expression"  => {
+                match statements.pop() {
+                    Some(Statement::Expression(expr)) => expr,
+                    _ => unreachable!()
+                }
+            }
+            _ => Expr::Void.alloc_on(self.ast)
+        }
+    }
 }
+
+
 
 impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     type ReturnType = Result<ExprP<'ast>, SyntaxError<'src>>;
@@ -150,7 +184,9 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         let mut statements = Vec::new();
 
         let return_expression = with_block_scope!(self, {
+            let mut last_node = None;
             for node in node.children_by_field_name("statements", &mut cursor) {
+                last_node = Some(node.child_by_field_name("inner").unwrap());
                 if let Some(stmt) = self.visit_statement(node)? {
                     statements.push(stmt);
                 }
@@ -158,7 +194,12 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
             match node.child_by_field_name("result") {
                 Some(return_expression) => self.visit(return_expression)?,
-                None => Expr::Void.alloc_on(self.ast),
+                None => {
+                    // This is a bit of a hack to work around Tree-Sitter. _expression_ending_with_block nodes
+                    // are treated as statements even if they appear in the terminal positions. If they are
+                    // actually statements (semicolon), there is another empty_statement inserted, so it's fine.
+                    self.extract_expression_ending_with_block(last_node, &mut statements)
+                },
             }
         });
 

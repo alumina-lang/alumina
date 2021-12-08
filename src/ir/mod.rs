@@ -2,9 +2,10 @@ pub mod builder;
 pub mod const_eval;
 pub mod infer;
 pub mod mono;
+pub mod optimize;
 
 use crate::{
-    ast::{BinOp, BuiltinType, UnOp},
+    ast::{BinOp, BuiltinType, UnOp, Attribute},
     common::{impl_allocatable, Allocatable, ArenaAllocatable, Incrementable},
 };
 use std::{
@@ -158,6 +159,13 @@ impl<'ir> Ty<'ir> {
             _ => self,
         }
     }
+
+    pub fn is_void(&self) -> bool {
+        match self {
+            Ty::Builtin(BuiltinType::Void) => true,
+            _ => false,
+        }
+    }
 }
 
 pub type TyP<'ir> = &'ir Ty<'ir>;
@@ -181,7 +189,7 @@ pub struct Parameter<'ir> {
 
 #[derive(Debug)]
 pub struct FuncBodyCell<'ir> {
-    contents: OnceCell<ExprP<'ir>>,
+    contents: OnceCell<&'ir [Statement<'ir>]>,
 }
 
 impl<'ir> FuncBodyCell<'ir> {
@@ -191,16 +199,22 @@ impl<'ir> FuncBodyCell<'ir> {
         }
     }
 
-    pub fn assign(&self, value: ExprP<'ir>) {
+    pub fn assign(&self, value: &'ir [Statement<'ir>]) {
         self.contents.set(value).unwrap();
     }
-    pub fn get(&'ir self) -> ExprP<'ir> {
+    pub fn get(&'ir self) -> &'ir [Statement<'ir>] {
         self.contents.get().unwrap()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.contents.get().is_none()
     }
 }
 
 #[derive(Debug)]
 pub struct Function<'ir> {
+    pub name: Option<&'ir str>,
+    pub attributes: &'ir [Attribute],
     pub args: &'ir [Parameter<'ir>],
     pub return_type: TyP<'ir>,
     pub body: FuncBodyCell<'ir>,
@@ -346,7 +360,7 @@ pub enum ExprKind<'ir> {
     Field(ExprP<'ir>, IrId),
     TupleIndex(ExprP<'ir>, usize),
     If(ExprP<'ir>, ExprP<'ir>, ExprP<'ir>),
-    Cast(ExprP<'ir>, TyP<'ir>),
+    Cast(ExprP<'ir>),
     Unreachable,
     Void,
 }
@@ -397,29 +411,43 @@ impl<'ir> Expr<'ir> {
         *self.typ == Ty::Builtin(BuiltinType::Never)
     }
 
+    pub fn is_void(&self) -> bool {
+        match self.kind {
+            ExprKind::Void => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_unreachable(&self) -> bool {
+        match self.kind {
+            ExprKind::Unreachable => true,
+            _ => false,
+        }
+    }
+
     pub fn pure(&self) -> bool {
         match self.kind {
             ExprKind::Block(stmts, e) => stmts.iter().all(|s| s.pure()) && e.pure(),
             ExprKind::Binary(_, a, b) => a.pure() && b.pure(),
-            ExprKind::AssignOp(_, a, b) => a.pure() && b.pure(),
             ExprKind::Ref(inner) => inner.pure(),
             ExprKind::Deref(inner) => inner.pure(),
             ExprKind::Unary(_, inner) => inner.pure(),
             ExprKind::Index(a, b) => a.pure() && b.pure(),
             ExprKind::If(a, b, c) => a.pure() && b.pure() && c.pure(),
-            ExprKind::Cast(inner, _) => inner.pure(),
+            ExprKind::Cast(inner) => inner.pure(),
             ExprKind::Field(inner, _) => inner.pure(),
             ExprKind::TupleIndex(inner, _) => inner.pure(),
-
+            
             ExprKind::Fn(_) => true,
             ExprKind::Local(_) => true,
             ExprKind::Lit(_) => true,
             ExprKind::ConstValue(_) => true,
             ExprKind::Void => true,
-
+            
             ExprKind::Unreachable => false, // ?
             ExprKind::Call(_, _) => false,  // for now
             ExprKind::Assign(_, _) => false,
+            ExprKind::AssignOp(_, _, _) => false,
             ExprKind::Return(_) => false,
         }
     }
