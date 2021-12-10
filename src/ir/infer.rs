@@ -1,4 +1,7 @@
-use super::mono::{MonoCtx, MonomorphizeKey};
+use super::{
+    lang::LangTypeKind,
+    mono::{MonoCtx, MonomorphizeKey},
+};
 use crate::{ast, ir};
 use std::collections::HashMap;
 
@@ -31,14 +34,34 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                 }
                 inferred.insert(*id, tgt);
             }
-            (ast::Ty::Pointer(a1, a2), ir::Ty::Pointer(b1, b2)) => {
-                if a2 != b2 {
+            (ast::Ty::Pointer(a1, a_const), ir::Ty::Pointer(b1, b_const)) => {
+                // mut pointers coerce into const pointers
+                if !a_const && (a_const != b_const) {
                     return Err(());
                 }
                 self.match_slot(inferred, a1, b1)?;
             }
             (ast::Ty::Array(a1, a2), ir::Ty::Array(b1, b2)) => {
                 if a2 != b2 {
+                    return Err(());
+                }
+                self.match_slot(inferred, a1, b1)?;
+            }
+            (ast::Ty::Slice(a1, a_const), ir::Ty::NamedType(t)) => {
+                let lang_item_kind = self.mono_ctx.get_lang_type_kind(tgt);
+                if let Some(LangTypeKind::Slice(ir::Ty::Pointer(b1, b_const))) = lang_item_kind {
+                    // mut slices coerce into const slices
+                    if !a_const && (a_const != b_const) {
+                        return Err(());
+                    }
+                    self.match_slot(inferred, a1, b1)?;
+                }
+
+                return Err(());
+            }
+            // Special case for &[T; size] -> &[T] coercions
+            (ast::Ty::Slice(a1, a_const), ir::Ty::Pointer(ir::Ty::Array(b1, _), b_const)) => {
+                if !a_const && (a_const != b_const) {
                     return Err(());
                 }
                 self.match_slot(inferred, a1, b1)?;

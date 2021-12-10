@@ -420,14 +420,10 @@ impl BinOp {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-pub enum AttributeKind {
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum Attribute {
     Export,
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct Attribute {
-    pub kind: AttributeKind,
+    ForceInline,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
@@ -485,10 +481,12 @@ pub enum Expr<'ast> {
     Return(Option<ExprP<'ast>>),
     Continue,
     Tuple(&'ast [ExprP<'ast>]),
+    Array(&'ast [ExprP<'ast>]),
     Struct(TyP<'ast>, &'ast [FieldInitializer<'ast>]),
     Field(ExprP<'ast>, &'ast str, Option<ItemP<'ast>>),
     TupleIndex(ExprP<'ast>, usize),
     Index(ExprP<'ast>, ExprP<'ast>),
+    RangeIndex(ExprP<'ast>, Option<ExprP<'ast>>, Option<ExprP<'ast>>),
     If(ExprP<'ast>, ExprP<'ast>, ExprP<'ast>),
     Cast(ExprP<'ast>, TyP<'ast>),
 

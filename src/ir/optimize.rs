@@ -108,10 +108,6 @@ impl<'ir> Optimizer<'ir> {
                 builder.void(),
             ),
             ExprKind::Deref(inner) => builder.deref(self.optimize_expr(inner)),
-            ExprKind::Return(inner) if inner.ty.is_void() => builder.block(
-                [Statement::Expression(self.optimize_expr(inner))],
-                builder.void(),
-            ),
             ExprKind::Return(inner) => {
                 Expr::rvalue(ExprKind::Return(self.optimize_expr(inner)), expr.ty).alloc_on(self.ir)
             }

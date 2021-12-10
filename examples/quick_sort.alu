@@ -1,0 +1,72 @@
+fn write_number<T>(val: T) {
+    let buf: [u8; 16];
+    let buf: &mut [u8] = &buf;
+
+    let i: usize = buf.len - 1;
+    
+    loop {
+        buf[i] = (val % 10) as u8 + 48;
+        val /= 10;
+        if val == 0 {
+            std::io::print(buf[i..]);
+            break;
+        }
+        i -= 1;
+    }
+}
+
+fn print_slice<T>(arr: &[T]) {
+    std::io::print("[");
+    let i = 0usize;
+    while i < arr.len {
+        if i > 0 {
+            std::io::print(",");
+        }
+        write_number(arr[i]);
+        i += 1;
+    }
+    std::io::print("]\n");
+}
+
+fn quicksort<T>(arr: &mut [T]) {
+    if arr.len <= 1 {
+        return;
+    }
+    
+    let p = partition(arr);
+    quicksort(arr[..p]);
+    quicksort(arr[p+1..]);
+}
+
+fn partition<T>(arr: &mut [T]) -> usize {
+    use std::mem::swap;
+
+    let pivot = arr[arr.len - 1];
+
+    let i = 0usize;
+    let j = 0usize;
+    while j < arr.len - 1 {
+        if arr[j] <= pivot {
+            swap(&arr[i], &arr[j]);
+            i += 1;
+        }
+        j += 1;
+    }
+    swap(&arr[i], &arr[arr.len - 1]);
+    
+    i
+}
+
+
+#[export]
+fn main() {
+    let values = [1i64,7,34,8,3,23,8,1,435345,4,2];
+
+    std::io::print("Original: ");
+    print_slice(&values);
+
+    quicksort(&values);
+
+    std::io::print("Sorted:   ");
+    print_slice(&values);
+}

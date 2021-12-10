@@ -97,6 +97,12 @@ impl<'ir, 'gen> CodegenCtx<'ir, 'gen> {
             .or_insert_with(|| CName::Id(self.counter.increment()))
     }
 
+    pub fn get_name_with_hint(&'gen self, name: &str, id: IrId) -> CName<'gen> {
+        let mut map = self.id_map.borrow_mut();
+        *map.entry(id)
+            .or_insert_with(|| CName::Mangled(self.arena.alloc_str(name), self.counter.increment()))
+    }
+
     pub fn get_type(&self, typ: TyP<'ir>) -> CName<'gen> {
         let map = self.type_map.borrow();
         *map.get(typ)

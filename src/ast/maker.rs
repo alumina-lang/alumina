@@ -11,7 +11,7 @@ use super::{
     expressions::ExpressionVisitor,
     lang::{lang_item_kind, LangItemKind, LangItemMap},
     types::TypeVisitor,
-    AssociatedFn, Attribute, AttributeKind, Enum, EnumMember,
+    AssociatedFn, Attribute, Enum, EnumMember,
 };
 
 pub struct AstItemMaker<'ast> {
@@ -40,15 +40,15 @@ impl<'ast> AstItemMaker<'ast> {
         code: &'src ParseCtx<'src>,
         node: tree_sitter::Node<'src>,
     ) -> Result<&'ast [Attribute], SyntaxError<'src>> {
-        let attribute_node = match node.child_by_field_name("attribute") {
+        let attribute_node = match node.child_by_field_name("attributes") {
             Some(node) => node,
             None => return Ok([].alloc_on(self.ast)),
         };
 
         let mut cursor = attribute_node.walk();
         let result = attribute_node
-            .children_by_field_name("name", &mut cursor)
-            .map(|n| code.node_text(n))
+            .children(&mut cursor)
+            .map(|n| code.node_text(n.child_by_field_name("name").unwrap()))
             .filter_map(|s| match lang_item_kind(s) {
                 Some(kind) => {
                     // We allow lang items to be overriden.
@@ -58,9 +58,8 @@ impl<'ast> AstItemMaker<'ast> {
                 None => Some(s),
             })
             .filter_map(|name| match name {
-                "export" => Some(Attribute {
-                    kind: AttributeKind::Export,
-                }),
+                "export" => Some(Attribute::Export),
+                "force_inline" => Some(Attribute::ForceInline),
                 _ => None,
             })
             .collect::<Vec<_>>()

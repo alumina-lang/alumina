@@ -131,6 +131,8 @@ pub enum Ty<'ir> {
 }
 
 impl<'ir> Ty<'ir> {
+    /// Returns true if lhs < rhs on the stric type hierarchy (implicit coercions are not
+    /// considered).
     pub fn assignable_from(&self, other: &Ty<'ir>) -> bool {
         match (self, other) {
             _ if self == other => true,
@@ -166,6 +168,13 @@ impl<'ir> Ty<'ir> {
             _ => false,
         }
     }
+
+    pub fn is_never(&self) -> bool {
+        match self {
+            Ty::Builtin(BuiltinType::Never) => true,
+            _ => false,
+        }
+    }
 }
 
 pub type TyP<'ir> = &'ir Ty<'ir>;
@@ -178,6 +187,7 @@ pub struct Field<'ir> {
 
 #[derive(Debug)]
 pub struct Struct<'ir> {
+    pub name: Option<&'ir str>,
     pub fields: &'ir [Field<'ir>],
 }
 
@@ -228,6 +238,7 @@ pub struct EnumMember<'ir> {
 
 #[derive(Debug)]
 pub struct Enum<'ir> {
+    pub name: Option<&'ir str>,
     pub underlying_type: TyP<'ir>,
     pub members: &'ir [EnumMember<'ir>],
 }

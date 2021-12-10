@@ -43,19 +43,19 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
 
     pub fn resolve_scope(
         &mut self,
-        scope: Scope<'ast, 'src>,
+        self_scope: Scope<'ast, 'src>,
         path: Path<'ast>,
     ) -> Result<ScopeResolution<'ast, 'src>, AluminaErrorKind> {
         if !self
             .seen_aliases
-            .insert((1, scope.0.as_ptr(), path.clone()))
+            .insert((1, self_scope.0.as_ptr(), path.clone()))
         {
             return Err(AluminaErrorKind::CycleDetected);
         }
 
         if path.absolute {
             return self.resolve_scope(
-                scope.find_root(),
+                self_scope.find_root(),
                 Path {
                     absolute: false,
                     segments: path.segments.clone(),
@@ -64,7 +64,7 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
         }
 
         if path.segments.is_empty() {
-            return Ok(ScopeResolution::Scope(scope));
+            return Ok(ScopeResolution::Scope(self_scope));
         }
 
         let remainder = Path {
@@ -72,7 +72,7 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
             segments: path.segments[1..].to_vec(),
         };
 
-        for item in scope.inner().items_with_name(path.segments[0].0) {
+        for item in self_scope.inner().items_with_name(path.segments[0].0) {
             match item {
                 NamedItem::Placeholder(sym) => return Ok(ScopeResolution::Defered(*sym)),
                 NamedItem::Module(child_scope) | NamedItem::Impl(child_scope) => {
@@ -82,13 +82,13 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
                     return self.resolve_scope(scope.clone(), remainder);
                 }
                 NamedItem::Alias(target) => {
-                    return self.resolve_scope(scope.clone(), target.join_with(remainder));
+                    return self.resolve_scope(self_scope.clone(), target.join_with(remainder));
                 }
                 _ => {}
             }
         }
 
-        if let Some(parent) = scope.parent() {
+        if let Some(parent) = self_scope.parent() {
             return self.resolve_scope(parent, path);
         }
 
@@ -105,7 +105,7 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
 
     fn resolve_item_impl(
         &mut self,
-        original_scope: Scope<'ast, 'src>,
+        self_scope: Scope<'ast, 'src>,
         scope: Scope<'ast, 'src>,
         path: Path<'ast>,
     ) -> Result<ItemResolution<'ast, 'src>, AluminaErrorKind> {
@@ -137,13 +137,13 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
                 NamedItem::Impl(_) => continue,
                 NamedItem::Alias(target) => {
                     return self.resolve_item_impl(
-                        original_scope,
+                        self_scope,
                         containing_scope.clone(),
                         target.clone(),
                     );
                 }
                 NamedItem::Local(_) | NamedItem::Parameter(..) => {
-                    let original_func = original_scope.find_containing_function();
+                    let original_func = self_scope.find_containing_function();
                     let current_func = containing_scope.find_containing_function();
 
                     if original_func == current_func {
@@ -156,11 +156,9 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
             }
         }
 
-        // If path was already absolute, no sense in trying to resolve it again
-        // in parent scope.
-        if !path.absolute {
+        if containing_scope == scope {
             if let Some(parent) = scope.parent() {
-                return self.resolve_item_impl(original_scope, parent, path);
+                return self.resolve_item_impl(self_scope, parent, path);
             }
         }
 

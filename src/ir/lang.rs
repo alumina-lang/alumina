@@ -1,5 +1,5 @@
 use super::TyP;
 
 pub enum LangTypeKind<'ir> {
-    Slice(TyP<'ir>, bool),
+    Slice(TyP<'ir>),
 }

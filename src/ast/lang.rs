@@ -22,11 +22,12 @@ impl<'ast> LangItemMap<'ast> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LangItemKind {
-    SliceConst,
-    MakeSliceConst,
-    SliceMut,
-    MakeSliceMut,
+    Slice,
+    SliceNew,
     SliceEqual,
+    SliceIndex,
+    SliceRangeIndex,
+    SliceRangeIndexLower,
     SliceCoerce,
 }
 
@@ -34,12 +35,16 @@ pub fn lang_item_kind(name: &str) -> Option<LangItemKind> {
     static MAP: OnceCell<HashMap<&'static str, LangItemKind>> = OnceCell::new();
     MAP.get_or_init(|| {
         let mut map = HashMap::new();
-        map.insert("lang(slice_const)", LangItemKind::SliceConst);
-        map.insert("lang(make_slice_const)", LangItemKind::MakeSliceConst);
-        map.insert("lang(slice_mut)", LangItemKind::SliceMut);
-        map.insert("lang(make_slice_mut)", LangItemKind::MakeSliceMut);
+        map.insert("lang(slice)", LangItemKind::Slice);
+        map.insert("lang(slice_new)", LangItemKind::SliceNew);
         map.insert("lang(slice_equal)", LangItemKind::SliceEqual);
         map.insert("lang(slice_coerce)", LangItemKind::SliceCoerce);
+        map.insert("lang(slice_index)", LangItemKind::SliceIndex);
+        map.insert("lang(slice_range_index)", LangItemKind::SliceRangeIndex);
+        map.insert(
+            "lang(slice_range_index_lower)",
+            LangItemKind::SliceRangeIndexLower,
+        );
         map
     })
     .get(name)

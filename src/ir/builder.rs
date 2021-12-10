@@ -245,6 +245,15 @@ impl<'ir> ExpressionBuilder<'ir> {
         result.alloc_on(self.ir)
     }
 
+    pub fn const_index(&self, inner: ExprP<'ir>, index: usize) -> ExprP<'ir> {
+        let index = self.lit(
+            Lit::Int(index as u128),
+            self.ir.intern_type(Ty::Builtin(BuiltinType::USize)),
+        );
+
+        self.index(inner, index)
+    }
+
     pub fn field(&self, obj: ExprP<'ir>, field_id: IrId, typ: TyP<'ir>) -> ExprP<'ir> {
         let expr = Expr {
             kind: ExprKind::Field(obj, field_id),

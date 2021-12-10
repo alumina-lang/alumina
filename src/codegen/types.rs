@@ -117,15 +117,20 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
             Ty::NamedType(item) => match item.get() {
                 IRItem::Struct(s) => {
                     if !body_only {
-                        let name = self.ctx.get_name(item.id);
+                        let name = if let Some(name) = s.name {
+                            self.ctx.get_name_with_hint(name, item.id)
+                        } else {
+                            self.ctx.get_name(item.id)
+                        };
+
                         w!(self.type_decls, "typedef struct {0} {0};\n", name);
                         self.ctx.register_type(ty, name);
                     }
 
                     if !ref_only {
                         self.needs_body.insert(ty);
-                        for field in s.fields {
-                            self.add_type(field.ty, false)?;
+                        for f in s.fields {
+                            self.add_type(f.ty, false)?;
                         }
                     }
                 }

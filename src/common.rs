@@ -77,6 +77,8 @@ pub enum AluminaErrorKind {
     CannotReferenceLocal(String),
     #[error("missing lang item: {:?}", .0)]
     MissingLangItem(LangItemKind),
+    #[error("only slices can be range-indexed")]
+    RangeIndexNonSlice,
 }
 
 #[derive(Debug, Error)]

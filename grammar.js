@@ -68,9 +68,11 @@ module.exports = grammar({
         )
       ),
 
-
-    attribute_spec: ($) => seq($.identifier, "(", sepBy(",", $.identifier), ")"),
-    attribute: ($) => seq("#[", sepBy1(",", field("name", choice($.identifier, $.attribute_spec))), "]"),
+    attributes_spec: ($) =>
+      seq($.identifier, "(", sepBy(",", $.identifier), ")"),
+    attribute: ($) =>
+      seq("#[", field("name", choice($.identifier, $.attributes_spec)), "]"),
+    attributes: ($) => repeat1($.attribute),
 
     _top_level_item: ($) =>
       choice(
@@ -92,7 +94,7 @@ module.exports = grammar({
 
     mod_definition: ($) =>
       seq(
-        optional(field("attribute", $.attribute)),
+        optional(field("attributes", $.attributes)),
         "mod",
         field("name", $.identifier),
         "{",
@@ -102,7 +104,7 @@ module.exports = grammar({
 
     function_definition: ($) =>
       seq(
-        optional(field("attribute", $.attribute)),
+        optional(field("attributes", $.attributes)),
         "fn",
         field("name", $.identifier),
         optional(field("type_arguments", $.generic_argument_list)),
@@ -113,7 +115,7 @@ module.exports = grammar({
 
     extern_function_declaration: ($) =>
       seq(
-        optional(field("attribute", $.attribute)),
+        optional(field("attributes", $.attributes)),
         "extern",
         "fn",
         field("name", $.identifier),
@@ -124,7 +126,7 @@ module.exports = grammar({
 
     struct_definition: ($) =>
       seq(
-        optional(field("attribute", $.attribute)),
+        optional(field("attributes", $.attributes)),
         "struct",
         field("name", $.identifier),
         optional(field("type_arguments", $.generic_argument_list)),
@@ -136,7 +138,7 @@ module.exports = grammar({
 
     enum_definition: ($) =>
       seq(
-        optional(field("attribute", $.attribute)),
+        optional(field("attributes", $.attributes)),
         "enum",
         field("name", $.identifier),
         seq("{", sepBy(",", field("body", $.enum_item)), optional(","), "}")
@@ -150,7 +152,7 @@ module.exports = grammar({
 
     struct_field: ($) =>
       seq(
-        optional(field("attribute", $.attribute)),
+        optional(field("attributes", $.attributes)),
         field("name", $.identifier),
         ":",
         field("type", $._type)
@@ -158,7 +160,7 @@ module.exports = grammar({
 
     impl_block: ($) =>
       seq(
-        optional(field("attribute", $.attribute)),
+        optional(field("attributes", $.attributes)),
         "impl",
         field("name", $.identifier),
         "{",
@@ -220,6 +222,13 @@ module.exports = grammar({
         field("inner", $._type),
         ";",
         field("size", $.integer_literal),
+        "]"
+      ),
+
+    array_expression: ($) =>
+      seq(
+        "[",
+        choice(seq(sepBy(",", field("element", $._expression)), optional(","))),
         "]"
       ),
 
@@ -285,7 +294,7 @@ module.exports = grammar({
 
     statement: ($) =>
       seq(
-        optional(field("attribute", $.attribute)),
+        optional(field("attributes", $.attributes)),
         field("inner", choice($._declaration_statement, $.expression_statement))
       ),
 
@@ -340,7 +349,6 @@ module.exports = grammar({
         $.binary_expression,
         $.reference_expression,
         $.dereference_expression,
-        $.range_expression,
         $.assignment_expression,
         $.compound_assignment_expr,
         $.type_cast_expression,
@@ -348,6 +356,7 @@ module.exports = grammar({
         $.field_expression,
         $.index_expression,
         $.tuple_expression,
+        $.array_expression,
         $.closure_expression,
         $._expression_ending_with_block,
         $._literal,
@@ -425,8 +434,29 @@ module.exports = grammar({
         seq(
           field("value", $._expression),
           "[",
-          field("index", $._expression),
+          choice(
+            field("index", $._expression),
+            field("range", $.range_expression)
+          ),
           "]"
+        )
+      ),
+
+    range_expression: ($) =>
+      prec.left(
+        PREC.range,
+        choice(
+          prec.left(
+            PREC.range + 1,
+            seq(
+              field("lower", $._expression),
+              "..",
+              field("upper", $._expression)
+            )
+          ),
+          seq(field("lower", $._expression), ".."),
+          seq("..", field("upper", $._expression)),
+          ".."
         )
       ),
 
@@ -690,20 +720,6 @@ module.exports = grammar({
         "|",
         sepBy(",", field("parameter", choice($.parameter, $.identifier))),
         "|"
-      ),
-
-    range_expression: ($) =>
-      prec.left(
-        PREC.range,
-        choice(
-          prec.left(
-            PREC.range + 1,
-            seq($._expression, choice("..", "...", "..="), $._expression)
-          ),
-          seq($._expression, ".."),
-          seq("..", $._expression),
-          ".."
-        )
       ),
 
     string_literal: ($) =>

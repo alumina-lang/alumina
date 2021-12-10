@@ -1,5 +1,5 @@
 use crate::{
-    ast::{AttributeKind, BinOp, UnOp},
+    ast::{Attribute, BinOp, UnOp},
     codegen::CName,
     common::AluminaErrorKind,
     ir::{const_eval::Value, ExprKind, ExprP, Function, IrId, Statement, Ty},
@@ -26,10 +26,32 @@ pub fn write_function_signature<'ir, 'gen>(
 ) -> Result<(), AluminaErrorKind> {
     let name = ctx.get_name(id);
 
-    if is_static {
-        w!(buf, "\nstatic {} {}(", ctx.get_type(item.return_type), name);
+    let mut attributes = if item.attributes.contains(&Attribute::ForceInline) {
+        "__attribute__((always_inline)) inline ".to_string()
     } else {
-        w!(buf, "\n{} {}(", ctx.get_type(item.return_type), name);
+        "".to_string()
+    };
+
+    if item.return_type.is_never() {
+        attributes = format!("_Noreturn {}", attributes);
+    }
+
+    if is_static {
+        w!(
+            buf,
+            "\n{}static {} {}(",
+            attributes,
+            ctx.get_type(item.return_type),
+            name
+        );
+    } else {
+        w!(
+            buf,
+            "\n{}{} {}(",
+            attributes,
+            ctx.get_type(item.return_type),
+            name
+        );
     }
     for (idx, arg) in item.args.iter().enumerate() {
         let name = ctx.get_name(arg.id);
@@ -343,11 +365,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         id: IrId,
         item: &'ir Function<'ir>,
     ) -> Result<(), AluminaErrorKind> {
-        let should_export = item
-            .attributes
-            .iter()
-            .find(|a| matches!(a.kind, AttributeKind::Export))
-            .is_some();
+        let should_export = item.attributes.contains(&Attribute::Export);
 
         self.type_writer.add_type(item.return_type)?;
         for arg in item.args.iter() {
@@ -359,6 +377,10 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 .register_name(id, CName::Native(item.name.unwrap()));
             write_function_signature(self.ctx, &mut self.fn_decls, id, item, false)?;
         } else {
+            self.ctx.register_name(
+                id,
+                CName::Mangled(item.name.unwrap_or("anonymous"), self.ctx.make_id()),
+            );
             write_function_signature(self.ctx, &mut self.fn_decls, id, item, true)?;
         }
 
@@ -372,11 +394,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         id: IrId,
         item: &'ir Function<'ir>,
     ) -> Result<(), AluminaErrorKind> {
-        let should_export = item
-            .attributes
-            .iter()
-            .find(|a| matches!(a.kind, AttributeKind::Export))
-            .is_some();
+        let should_export = item.attributes.contains(&Attribute::Export);
 
         if item.body.is_empty() {
             return Ok(());

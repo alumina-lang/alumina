@@ -1,54 +1,86 @@
-mod _internal {
-    #[lang(slice_const)]
-    struct slice<T> {
-        ptr: &T,
+mod mem {
+    #[lang(slice)]
+    struct slice<Ptr> {
+        ptr: Ptr,
         len: usize,
     }
-
+    
     impl slice {
-        #[lang(make_slice_const)]
-        fn from_raw<T>(ptr: &T, len: usize) -> &[T] {
+        #[force_inline]
+        #[lang(slice_new)]
+        fn from_raw<Ptr>(ptr: Ptr, len: usize) -> slice<Ptr> {
             slice { ptr: ptr, len: len }
         }
     }
 
-    #[lang(slice_mut)]
-    struct mut_slice<T> {
-        ptr: &mut T,
-        len: usize,
-    }
+    mod _internal {
+        #[lang(slice_equal)]
+        fn slice_equal<Ptr>(a: slice<Ptr>, b: slice<Ptr>) -> bool {
+            use std::libc::memcmp;
+            if a.len != b.len {
+                return false;
+            }
+            memcmp(a.ptr, b.ptr, a.len) == 0
+        }
+    
+        #[force_inline]
+        #[lang(slice_index)]
+        fn slice_index<Ptr>(a: slice<Ptr>, idx: usize) -> Ptr {
+            a.ptr + idx
+        }
+        
+        #[force_inline]
+        #[lang(slice_range_index)]
+        fn slice_range_index<Ptr>(a: slice<Ptr>, lower: usize, upper: usize) -> slice<Ptr> {
+            slice::from_raw::<Ptr>(a.ptr + lower, upper - lower)
+        }
 
-    impl mut_slice {
-        #[lang(make_slice_mut)]
-        fn from_raw<T>(ptr: &mut T, len: usize) -> &mut [T] {
-            slice { ptr: ptr, len: len }
+        #[force_inline]
+        #[lang(slice_range_index_lower)]
+        fn slice_range_index_lower<Ptr>(a: slice<Ptr>, lower: usize) -> slice<Ptr> {
+            slice::from_raw::<Ptr>(a.ptr + lower, a.len - lower)
+        }        
+
+        #[force_inline]
+        #[lang(slice_coerce)]
+        fn slice_coerce<T>(a: slice<&mut T>) -> slice<&T> {
+            slice::from_raw::<&T>(a.ptr, a.len)
         }
     }
-
-    #[lang(slice_equal)]
-    fn slice_equal<T>(a: T, b: T) -> bool {
-        use std::libc::memcmp;
-        if a.len != b.len {
-            return false;
-        }
-        memcmp(a.ptr, b.ptr, a.len) == 0
+    
+    #[force_inline]
+    fn sizeof<T>() -> usize {
+        let dummy: T;
+        ((&dummy + 1) as usize) - (&dummy as usize)
     }
 
-    #[lang(slice_coerce)]
-    fn slice_coerce<T>(a: &mut [T]) -> &[T] {
-        let ret: &[T];
-        ret.ptr = a.ptr;
-        ret.len = a.len;
-        ret
+    fn alloc<T>(len: usize) -> &mut [T] {
+        let ret: &mut [T];
+        ret.ptr = libc::malloc(sizeof::<T>() * len) as &mut T;
+        ret.len = len;
+    }
+
+    fn swap<T>(a: &mut T, b: &mut T) {
+        let tmp = *a;
+        *a = *b;
+        *b = tmp;
+    }
+
+    fn copy<T>(dst: &mut T, src: &[T]) {
+        libc::memcpy(dst as &mut (), src.ptr as &(), src.len * sizeof::<T>());
+    }
+
+    fn free<T>(a: &mut [T]) {
+        libc::free(a.ptr as &());
     }
 }
 
 mod libc {
-    extern fn malloc(size: usize) -> &mut ();
     extern fn free(ptr: &mut ());
-    extern fn memcpy(dst: &mut (), src: &(), len: usize) -> &();
+    extern fn memcpy(dst: &mut (), src: &(), len: usize) -> &mut ();
     extern fn memcmp(ptr1: &(), ptr2: &(), len: usize) -> i32;
     extern fn write(fd: i32, buf: &(), len: usize) -> isize;
+    extern fn malloc(size: usize) -> &mut ();
 }
 
 mod io {

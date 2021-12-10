@@ -38,7 +38,8 @@ impl<'src> ParseCtx<'src> {
                 parser.set_language(language()).unwrap();
 
                 self.tree
-                    .set(parser.parse(self.source.as_str(), None).unwrap());
+                    .set(parser.parse(self.source.as_str(), None).unwrap())
+                    .unwrap();
                 self.root_node()
             }
         }

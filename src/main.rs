@@ -53,6 +53,7 @@ fn compile(source_files: Vec<SourceFile>) -> Result<(), AluminaError> {
         scope.set_code(ctx);
 
         let mut visitor = FirstPassVisitor::new(&ast, scope.clone());
+
         visitor.visit(ctx.root_node())?;
     }
 
@@ -97,6 +98,7 @@ fn main() {
         Ok(()) => {}
         Err(e) => {
             eprintln!("{}", e);
+            eprintln!("{}", e.backtrace().unwrap());
             std::process::exit(1);
         }
     }
