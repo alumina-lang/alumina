@@ -1,13 +1,6 @@
-use std::{marker::PhantomData, rc::Rc};
+use std::marker::PhantomData;
 
 use once_cell::unsync::OnceCell;
-
-use crate::{
-    ast::AstCtx,
-    ast::{AstId, Expr, ExprP, ItemP, Ty, TyP},
-    common::{Allocatable, ArenaAllocatable},
-    name_resolution::path::{Path, PathSegment},
-};
 
 include!(concat!(env!("OUT_DIR"), "/parser.rs"));
 

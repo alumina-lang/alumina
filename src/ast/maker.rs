@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     ast::{AstCtx, AstId, BuiltinType, Field, Function, Item, ItemP, Parameter, Struct, Ty},
-    common::{ArenaAllocatable, SyntaxError, ToSyntaxError},
+    common::{ArenaAllocatable, SyntaxError},
     name_resolution::scope::{NamedItem, Scope},
     parser::{AluminaVisitor, ParseCtx},
 };

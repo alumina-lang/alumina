@@ -136,12 +136,6 @@ where
     AluminaErrorKind: From<E>,
 {
     fn to_syntax_error<'src>(self, node: Node<'src>) -> Result<T, SyntaxError<'src>> {
-        let a = 1usize;
-        let b = 5;
-        match a {
-            b => {}
-        }
-
         self.map_err(|e| SyntaxError {
             kind: e.into(),
             node,

@@ -12,22 +12,19 @@ mod visitors;
 
 use std::error::Error;
 use std::path::PathBuf;
-use std::thread;
 
 use common::AluminaError;
-use common::AluminaErrorKind;
+
 use ir::mono::MonoCtx;
 use ir::mono::Monomorphizer;
 use ir::IrCtx;
-use name_resolution::path::Path;
 
 use crate::ast::maker::AstItemMaker;
 use crate::ast::AstCtx;
 
 use crate::name_resolution::pass1::FirstPassVisitor;
-use crate::name_resolution::scope::{NamedItem, Scope, ScopeType};
+use crate::name_resolution::scope::Scope;
 use crate::parser::{AluminaVisitor, ParseCtx};
-use crate::utils::NodeWrapper;
 
 struct SourceFile {
     filename: PathBuf,

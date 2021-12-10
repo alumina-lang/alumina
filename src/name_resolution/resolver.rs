@@ -1,8 +1,7 @@
 use crate::{
     ast::AstId,
-    common::{AluminaError, AluminaErrorKind},
+    common::AluminaErrorKind,
     name_resolution::{path::Path, scope::NamedItem},
-    parser::ParseCtx,
 };
 use std::collections::HashSet;
 

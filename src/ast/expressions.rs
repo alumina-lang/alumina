@@ -4,7 +4,7 @@ use crate::ast::{AstCtx, FieldInitializer};
 use crate::ast::{BinOp, Expr, ExprP, LetDeclaration, Lit, Statement, UnOp};
 use crate::common::AluminaErrorKind;
 use crate::common::ArenaAllocatable;
-use crate::name_resolution::path::{Path, PathSegment};
+use crate::name_resolution::path::PathSegment;
 use crate::name_resolution::resolver::ItemResolution;
 use crate::name_resolution::scope::ScopeType;
 use crate::parser::ParseCtx;

@@ -1,7 +1,4 @@
-use super::{
-    lang::LangTypeKind,
-    mono::{MonoCtx, MonomorphizeKey},
-};
+use super::{lang::LangTypeKind, mono::MonoCtx};
 use crate::{ast, ir};
 use std::collections::HashMap;
 
@@ -47,7 +44,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                 }
                 self.match_slot(inferred, a1, b1)?;
             }
-            (ast::Ty::Slice(a1, a_const), ir::Ty::NamedType(t)) => {
+            (ast::Ty::Slice(a1, a_const), ir::Ty::NamedType(_t)) => {
                 let lang_item_kind = self.mono_ctx.get_lang_type_kind(tgt);
                 if let Some(LangTypeKind::Slice(ir::Ty::Pointer(b1, b_const))) = lang_item_kind {
                     // mut slices coerce into const slices

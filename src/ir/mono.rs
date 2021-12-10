@@ -1,19 +1,17 @@
 use core::panic;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
-use std::hash::BuildHasher;
-use std::iter::{once, repeat};
 
-use once_cell::sync::{Lazy, OnceCell};
+use std::iter::{once, repeat};
 
 use super::builder::ExpressionBuilder;
 use super::const_eval::{const_eval, numeric_of_kind, Value};
 use super::infer::TypeInferer;
 use super::lang::LangTypeKind;
 use super::optimize::Optimizer;
-use super::{Enum, IrCtx, Lit};
+use super::Lit;
 use crate::ast::lang::{LangItemKind, LangItemMap};
-use crate::ast::{expressions, BuiltinType};
+use crate::ast::BuiltinType;
 use crate::common::{AluminaError, ArenaAllocatable};
 use crate::ir::{FuncBodyCell, ValueType};
 use crate::{ast, common::AluminaErrorKind, ir};
@@ -768,7 +766,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
 
             // Pointer arithmetic
-            (Pointer(l, _), Plus | Minus, Builtin(BuiltinType::ISize | BuiltinType::USize)) => {
+            (Pointer(_l, _), Plus | Minus, Builtin(BuiltinType::ISize | BuiltinType::USize)) => {
                 *lhs.ty
             }
 
@@ -1266,7 +1264,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     fn lower_break(
         &mut self,
         expr: Option<ast::ExprP<'ast>>,
-        type_hint: Option<ir::TyP<'ir>>,
+        _type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let loop_context = self
             .loop_contexts
@@ -1563,7 +1561,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         &mut self,
         obj: ast::ExprP<'ast>,
         field: &'ast str,
-        type_hint: Option<ir::TyP<'ir>>,
+        _type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let obj = self.lower_expr(obj, None)?;
 
@@ -1693,7 +1691,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     fn lower_return(
         &mut self,
         inner: Option<ast::ExprP<'ast>>,
-        type_hint: Option<ir::TyP<'ir>>,
+        _type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let inner = inner
             .map(|inner| self.lower_expr(inner, self.return_type))
@@ -1806,7 +1804,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         &mut self,
         typ: ast::ItemP<'ast>,
         id: ast::AstId,
-        type_hint: Option<ir::TyP<'ir>>,
+        _type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let item_cell = self.monomorphize(typ)?;
         let ir_id = self.mono_ctx.map_id(id);

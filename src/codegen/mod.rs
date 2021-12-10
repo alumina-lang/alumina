@@ -9,7 +9,7 @@ use std::{
 
 use crate::{
     common::{AluminaErrorKind, Incrementable},
-    ir::{Function, IRItem, IRItemP},
+    ir::{IRItem, IRItemP},
 };
 use bumpalo::Bump;
 

@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
-use crate::{ast::BuiltinType, common::ArenaAllocatable};
+use crate::common::ArenaAllocatable;
 
-use super::{builder::ExpressionBuilder, Expr, ExprKind, ExprP, IrCtx, IrId, Statement, Ty};
+use super::{builder::ExpressionBuilder, Expr, ExprKind, ExprP, IrCtx, IrId, Statement};
 
 pub struct Optimizer<'ir> {
     ir: &'ir IrCtx<'ir>,
