@@ -1,0 +1,62 @@
+mod _internal {
+    #[lang(slice_const)]
+    struct slice<T> {
+        ptr: &T,
+        len: usize,
+    }
+
+    impl slice {
+        #[lang(make_slice_const)]
+        fn from_raw<T>(ptr: &T, len: usize) -> &[T] {
+            slice { ptr: ptr, len: len }
+        }
+    }
+
+    #[lang(slice_mut)]
+    struct mut_slice<T> {
+        ptr: &mut T,
+        len: usize,
+    }
+
+    impl mut_slice {
+        #[lang(make_slice_mut)]
+        fn from_raw<T>(ptr: &mut T, len: usize) -> &mut [T] {
+            slice { ptr: ptr, len: len }
+        }
+    }
+
+    #[lang(slice_equal)]
+    fn slice_equal<T>(a: T, b: T) -> bool {
+        use std::libc::memcmp;
+        if a.len != b.len {
+            return false;
+        }
+        memcmp(a.ptr, b.ptr, a.len) == 0
+    }
+
+    #[lang(slice_coerce)]
+    fn slice_coerce<T>(a: &mut [T]) -> &[T] {
+        let ret: &[T];
+        ret.ptr = a.ptr;
+        ret.len = a.len;
+        ret
+    }
+}
+
+mod libc {
+    extern fn malloc(size: usize) -> &mut ();
+    extern fn free(ptr: &mut ());
+    extern fn memcpy(dst: &mut (), src: &(), len: usize) -> &();
+    extern fn memcmp(ptr1: &(), ptr2: &(), len: usize) -> i32;
+    extern fn write(fd: i32, buf: &(), len: usize) -> isize;
+}
+
+mod io {
+    fn print(s: &[u8]) {
+        libc::write(1, s.ptr as &(), s.len);
+    }
+}
+
+mod process {
+    extern fn exit(v: i32) -> !;
+}

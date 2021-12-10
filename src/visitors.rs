@@ -1,22 +1,22 @@
 use tree_sitter::Node;
 
 use crate::ast::AstCtx;
-use crate::common::{AluminaError, SyntaxError, ToSyntaxError};
+use crate::common::{AluminaErrorKind, ArenaAllocatable, SyntaxError, ToSyntaxError};
 use crate::name_resolution::path::{Path, PathSegment};
 use crate::name_resolution::scope::{NamedItem, Scope};
 use crate::parser::ParseCtx;
 use crate::AluminaVisitor;
 
-pub mod pass1;
-
 pub struct ScopedPathVisitor<'ast, 'src> {
+    ast: &'ast AstCtx<'ast>,
     code: &'src ParseCtx<'src>,
     scope: Scope<'ast, 'src>, // ast: &'ast AstCtx<'ast>
 }
 
 impl<'ast, 'src> ScopedPathVisitor<'ast, 'src> {
-    pub fn new(scope: Scope<'ast, 'src>) -> Self {
+    pub fn new(ast: &'ast AstCtx<'ast>, scope: Scope<'ast, 'src>) -> Self {
         Self {
+            ast,
             code: scope
                 .code()
                 .expect("cannot run on scope without parse context"),
@@ -25,7 +25,7 @@ impl<'ast, 'src> ScopedPathVisitor<'ast, 'src> {
     }
 }
 
-trait VisitorExt<'src> {
+pub trait VisitorExt<'src> {
     type ReturnType;
 
     fn visit_children(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType;
@@ -67,13 +67,13 @@ where
 }
 
 impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
-    type ReturnType = Result<Path<'src>, SyntaxError<'src>>;
+    type ReturnType = Result<Path<'ast>, SyntaxError<'src>>;
 
     fn visit_crate(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         Ok(self
             .scope
             .find_crate()
-            .ok_or(AluminaError::CrateNotAllowed)
+            .ok_or(AluminaErrorKind::CrateNotAllowed)
             .to_syntax_error(node)?
             .path())
     }
@@ -82,19 +82,19 @@ impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
         Ok(self
             .scope
             .find_super()
-            .ok_or(AluminaError::SuperNotAllowed)
+            .ok_or(AluminaErrorKind::SuperNotAllowed)
             .to_syntax_error(node)?
             .path())
     }
 
     fn visit_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let name = self.code.node_text(node);
+        let name = self.code.node_text(node).alloc_on(self.ast);
 
         Ok(PathSegment(name).into())
     }
 
     fn visit_type_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let name = self.code.node_text(node);
+        let name = self.code.node_text(node).alloc_on(self.ast);
 
         Ok(PathSegment(name).into())
     }
@@ -107,7 +107,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
 
         let name = self
             .code
-            .node_text(node.child_by_field_name("name").unwrap());
+            .node_text(node.child_by_field_name("name").unwrap())
+            .alloc_on(self.ast);
 
         Ok(subpath.extend(PathSegment(name)))
     }
@@ -116,21 +117,24 @@ impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
         let subpath = self.visit(node.child_by_field_name("path").unwrap())?;
         let name = self
             .code
-            .node_text(node.child_by_field_name("name").unwrap());
+            .node_text(node.child_by_field_name("name").unwrap())
+            .alloc_on(self.ast);
 
         Ok(subpath.extend(PathSegment(name)))
     }
 }
 
 pub struct UseClauseVisitor<'ast, 'src> {
+    ast: &'ast AstCtx<'ast>,
     code: &'src ParseCtx<'src>,
-    prefix: Path<'src>,
+    prefix: Path<'ast>,
     scope: Scope<'ast, 'src>,
 }
 
 impl<'ast, 'src> UseClauseVisitor<'ast, 'src> {
-    pub fn new(scope: Scope<'ast, 'src>) -> Self {
+    pub fn new(ast: &'ast AstCtx<'ast>, scope: Scope<'ast, 'src>) -> Self {
         Self {
+            ast,
             prefix: Path::default(),
             code: scope
                 .code()
@@ -139,8 +143,8 @@ impl<'ast, 'src> UseClauseVisitor<'ast, 'src> {
         }
     }
 
-    fn parse_use_path(&mut self, node: Node<'src>) -> Result<Path<'src>, SyntaxError<'src>> {
-        let mut visitor = ScopedPathVisitor::new(self.scope.clone());
+    fn parse_use_path(&mut self, node: Node<'src>) -> Result<Path<'ast>, SyntaxError<'src>> {
+        let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone());
         visitor.visit(node)
     }
 }
@@ -152,7 +156,9 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
         let path = self.parse_use_path(node.child_by_field_name("path").unwrap())?;
         let alias = self
             .code
-            .node_text(node.child_by_field_name("alias").unwrap());
+            .node_text(node.child_by_field_name("alias").unwrap())
+            .alloc_on(self.ast);
+
         self.scope
             .add_item(alias, NamedItem::Alias(self.prefix.join_with(path)))
             .to_syntax_error(node)?;
@@ -176,7 +182,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
     }
 
     fn visit_identifier(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
-        let alias = self.code.node_text(node);
+        let alias = self.code.node_text(node).alloc_on(self.ast);
         self.scope
             .add_item(
                 alias,
@@ -191,7 +197,9 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
         let path = self.parse_use_path(node.child_by_field_name("path").unwrap())?;
         let name = self
             .code
-            .node_text(node.child_by_field_name("name").unwrap());
+            .node_text(node.child_by_field_name("name").unwrap())
+            .alloc_on(self.ast);
+
         self.scope
             .add_item(
                 name,

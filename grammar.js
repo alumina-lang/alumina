@@ -68,7 +68,9 @@ module.exports = grammar({
         )
       ),
 
-    attribute: ($) => seq("#[", sepBy1(",", field("name", $.identifier)), "]"),
+
+    attribute_spec: ($) => seq($.identifier, "(", sepBy(",", $.identifier), ")"),
+    attribute: ($) => seq("#[", sepBy1(",", field("name", choice($.identifier, $.attribute_spec))), "]"),
 
     _top_level_item: ($) =>
       choice(
@@ -201,9 +203,16 @@ module.exports = grammar({
       seq("(", sepBy(",", field("parameter", $._type)), optional(","), ")"),
 
     pointer_of: ($) =>
-      seq("&", optional(field("const", "const")), field("inner", $._type)),
+      seq("&", optional(field("mut", "mut")), field("inner", $._type)),
 
-    slice_of: ($) => seq("[", field("inner", $._type), "]"),
+    slice_of: ($) =>
+      seq(
+        "&",
+        optional(field("mut", "mut")),
+        "[",
+        field("inner", $._type),
+        "]"
+      ),
 
     array_of: ($) =>
       seq(
@@ -532,19 +541,19 @@ module.exports = grammar({
       ),
 
     struct_expression: ($) =>
-        seq(
-          field(
-            "name",
-            choice(
-              $._type_identifier,
-              alias(
-                $.scoped_type_identifier_in_expression_position,
-                $.scoped_type_identifier
-              ),
-              $.generic_type_with_turbofish
-            )
-          ),
-          field("arguments", $.struct_initializer)
+      seq(
+        field(
+          "name",
+          choice(
+            $._type_identifier,
+            alias(
+              $.scoped_type_identifier_in_expression_position,
+              $.scoped_type_identifier
+            ),
+            $.generic_type_with_turbofish
+          )
+        ),
+        field("arguments", $.struct_initializer)
       ),
 
     parenthesized_expression: ($) =>
@@ -573,8 +582,8 @@ module.exports = grammar({
         field("pattern", $.pattern),
         "=>",
         choice(
-          seq(field('value', $._expression), ','),
-          field('value', prec(1, $._expression_ending_with_block))
+          seq(field("value", $._expression), ","),
+          field("value", prec(1, $._expression_ending_with_block))
         )
       ),
 
@@ -582,24 +591,30 @@ module.exports = grammar({
       seq(
         field("pattern", $.pattern),
         "=>",
-        field('value', $._expression),
-        optional(',')
+        field("value", $._expression),
+        optional(",")
       ),
 
     pattern: ($) => choice(field("value", $._expression), "_"),
 
     switch_expression: ($) =>
-      seq("switch", field("value", $._expression), field("body", $.switch_body)),
+      seq(
+        "switch",
+        field("value", $._expression),
+        field("body", $.switch_body)
+      ),
 
-    switch_body: ($) => seq(
-      '{',
-      optional(seq(
-        repeat(field("arm", $.switch_arm)),
-        field("arm", alias($.last_switch_arm, $.switch_arm))
-      )),
-      '}'
-
-    ),
+    switch_body: ($) =>
+      seq(
+        "{",
+        optional(
+          seq(
+            repeat(field("arm", $.switch_arm)),
+            field("arm", alias($.last_switch_arm, $.switch_arm))
+          )
+        ),
+        "}"
+      ),
 
     else_clause: ($) =>
       seq("else", field("inner", choice($.block, $.if_expression))),
@@ -659,7 +674,6 @@ module.exports = grammar({
       prec(
         PREC.closure,
         seq(
-          optional("move"),
           field("parameters", $.closure_parameters),
           choice(
             seq(
@@ -671,7 +685,12 @@ module.exports = grammar({
         )
       ),
 
-    closure_parameters: ($) => seq("|", sepBy(",", choice($.parameter)), "|"),
+    closure_parameters: ($) =>
+      seq(
+        "|",
+        sepBy(",", field("parameter", choice($.parameter, $.identifier))),
+        "|"
+      ),
 
     range_expression: ($) =>
       prec.left(

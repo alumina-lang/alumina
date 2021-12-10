@@ -1,21 +1,21 @@
 use std::fmt::{Debug, Display, Formatter};
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub struct PathSegment<'src>(pub &'src str);
+pub struct PathSegment<'ast>(pub &'ast str);
 
-impl<'src> Display for PathSegment<'src> {
+impl<'ast> Display for PathSegment<'ast> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         write!(fmt, "{}", self.0)
     }
 }
 
 #[derive(Default, PartialEq, Eq, Hash, Clone)]
-pub struct Path<'src> {
+pub struct Path<'ast> {
     pub absolute: bool,
-    pub segments: Vec<PathSegment<'src>>,
+    pub segments: Vec<PathSegment<'ast>>,
 }
 
-impl<'src> Display for Path<'src> {
+impl<'ast> Display for Path<'ast> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         if self.absolute {
             write!(fmt, "::")?;
@@ -30,14 +30,14 @@ impl<'src> Display for Path<'src> {
     }
 }
 
-impl<'src> Debug for Path<'src> {
+impl<'ast> Debug for Path<'ast> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         write!(fmt, "\"{}\"", self)
     }
 }
 
-impl<'src> From<PathSegment<'src>> for Path<'src> {
-    fn from(item: PathSegment<'src>) -> Self {
+impl<'ast> From<PathSegment<'ast>> for Path<'ast> {
+    fn from(item: PathSegment<'ast>) -> Self {
         Self {
             absolute: false,
             segments: vec![item],
@@ -45,7 +45,7 @@ impl<'src> From<PathSegment<'src>> for Path<'src> {
     }
 }
 
-impl<'src> Path<'src> {
+impl<'ast> Path<'ast> {
     pub fn root() -> Self {
         Self {
             absolute: true,
@@ -53,7 +53,7 @@ impl<'src> Path<'src> {
         }
     }
 
-    pub fn extend(&self, part: PathSegment<'src>) -> Self {
+    pub fn extend(&self, part: PathSegment<'ast>) -> Self {
         Self {
             absolute: self.absolute,
             segments: self
@@ -65,7 +65,7 @@ impl<'src> Path<'src> {
         }
     }
 
-    pub fn join_with(&self, lhs: Path<'src>) -> Self {
+    pub fn join_with(&self, lhs: Path<'ast>) -> Self {
         assert!(!lhs.absolute || self.absolute || self.segments.is_empty());
 
         Self {

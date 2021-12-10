@@ -1,10 +1,12 @@
+use std::backtrace::Backtrace;
 use std::fmt::Debug;
+use std::io;
 use std::result::Result;
 use thiserror::Error;
 use tree_sitter::Node;
 
 #[derive(Debug, Error)]
-pub enum AluminaError {
+pub enum AluminaErrorKind {
     #[error("could not resolve the path {}", .0)]
     UnresolvedPath(String),
     #[error("cycle detected while resolving names")]
@@ -29,14 +31,18 @@ pub enum AluminaError {
     RecursiveWithoutIndirection,
     #[error("type hint required")]
     TypeHintRequired,
-    #[error("type mismatch")]
-    TypeMismatch,
+    #[error("type mismatch: {} expected, {} found", .0, .1)]
+    TypeMismatch(String, String),
+    #[error("if branches have incompatible types ({}, {})", .0, .1)]
+    MismatchedBranchTypes(String, String),
     #[error("invalid escape sequence")]
     InvalidEscapeSequence,
     #[error("cannot take address of a rvalue (yet)")]
     CannotAddressRValue,
     #[error("cannot perform {:?} between these two operands", .0)]
     InvalidBinOp(crate::ast::BinOp),
+    #[error("cannot perform {:?} on operands", .0)]
+    InvalidUnOp(crate::ast::UnOp),
     #[error("cannot assign to rvalue")]
     CannotAssignToRValue,
     #[error("cannot assign to const")]
@@ -67,12 +73,55 @@ pub enum AluminaError {
     NotAMethod,
     #[error("default case must be last in a switch expression")]
     DefaultCaseMustBeLast,
+    #[error("cannot access {} in a nested function", .0)]
+    CannotReferenceLocal(String),
+    #[error("missing lang item: {:?}", .0)]
+    MissingLangItem(LangItemKind),
+}
+
+#[derive(Debug, Error)]
+pub enum AluminaError {
+    #[error("{} at {:?}", .kind, .span)]
+    Generic {
+        kind: AluminaErrorKind,
+        span: Option<String>,
+        backtrace: Backtrace, // automatically detected
+    },
+    #[error("{}", .source)]
+    Io {
+        #[from]
+        source: io::Error,
+    },
+}
+
+impl From<AluminaErrorKind> for AluminaError {
+    fn from(inner: AluminaErrorKind) -> Self {
+        Self::Generic {
+            kind: inner,
+            span: None,
+            backtrace: Backtrace::capture(),
+        }
+    }
+}
+
+impl<'src> From<SyntaxError<'src>> for AluminaError {
+    fn from(syntax: SyntaxError<'src>) -> Self {
+        Self::Generic {
+            kind: syntax.kind,
+            span: Some(format!(
+                "{}:{}",
+                syntax.node.start_position().row,
+                syntax.node.start_position().column
+            )),
+            backtrace: Backtrace::capture(),
+        }
+    }
 }
 
 #[derive(Debug, Error)]
 #[error("{} at {}:{}", .kind, .node.start_position().row, .node.start_position().column)]
 pub struct SyntaxError<'src> {
-    pub kind: AluminaError,
+    pub kind: AluminaErrorKind,
     node: Node<'src>,
 }
 
@@ -82,7 +131,7 @@ pub trait ToSyntaxError<T, E> {
 
 impl<T, E> ToSyntaxError<T, E> for Result<T, E>
 where
-    AluminaError: From<E>,
+    AluminaErrorKind: From<E>,
 {
     fn to_syntax_error<'src>(self, node: Node<'src>) -> Result<T, SyntaxError<'src>> {
         let a = 1usize;
@@ -117,6 +166,8 @@ macro_rules! impl_allocatable {
 }
 
 pub(crate) use impl_allocatable;
+
+use crate::ast::lang::LangItemKind;
 
 pub trait Incrementable<T> {
     fn increment(&self) -> T;

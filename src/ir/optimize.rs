@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::{ast::{BuiltinType}, common::ArenaAllocatable};
+use crate::{ast::BuiltinType, common::ArenaAllocatable};
 
 use super::{builder::ExpressionBuilder, Expr, ExprKind, ExprP, IrCtx, IrId, Statement, Ty};
 
@@ -39,15 +39,15 @@ impl<'ir> Optimizer<'ir> {
             ExprKind::Block(stmts, ret) => {
                 statements.extend(stmts.iter().cloned());
                 self.optimize_func_body_inner(ret, statements);
-            },
+            }
             _ => {
-                let statement = if expr.diverges() || expr.typ.is_void() {
+                let statement = if expr.diverges() || expr.ty.is_void() {
                     Statement::Expression(expr)
                 } else {
                     Statement::Expression(self.builder.ret(expr))
                 };
                 statements.push(statement);
-            },
+            }
         }
     }
 
@@ -55,12 +55,12 @@ impl<'ir> Optimizer<'ir> {
         let builder = ExpressionBuilder::new(self.ir);
 
         match expr.kind {
-            ExprKind::Local(_) if expr.typ.is_void() => self.builder.void(),
+            ExprKind::Local(_) if expr.ty.is_void() => self.builder.void(),
             ExprKind::Local(id) => {
                 self.used_ids.insert(id);
                 expr
             }
-            ExprKind::Assign(l, r) if l.typ.is_void() => builder.block(
+            ExprKind::Assign(l, r) if l.ty.is_void() => builder.block(
                 [
                     Statement::Expression(self.optimize_expr(l)),
                     Statement::Expression(self.optimize_expr(r)),
@@ -75,8 +75,8 @@ impl<'ir> Optimizer<'ir> {
                         new_stmts.push(stmt);
                     }
                 }
-                new_stmts.retain(|s| self.is_used(s));
                 let ret = self.optimize_expr(ret);
+                new_stmts.retain(|s| self.is_used(s));
 
                 self.builder.block(new_stmts, ret)
             }
@@ -84,13 +84,11 @@ impl<'ir> Optimizer<'ir> {
                 op,
                 self.optimize_expr(lhs),
                 self.optimize_expr(rhs),
-                expr.typ,
+                expr.ty,
             ),
-            ExprKind::AssignOp(op, lhs, rhs) => builder.assign_op(
-                op,
-                self.optimize_expr(lhs),
-                self.optimize_expr(rhs),
-            ),
+            ExprKind::AssignOp(op, lhs, rhs) => {
+                builder.assign_op(op, self.optimize_expr(lhs), self.optimize_expr(rhs))
+            }
             ExprKind::Call(callee, args) => {
                 let args = args
                     .iter()
@@ -99,31 +97,30 @@ impl<'ir> Optimizer<'ir> {
 
                 Expr::rvalue(
                     ExprKind::Call(self.optimize_expr(callee), args.alloc_on(self.ir)),
-                    expr.typ,
+                    expr.ty,
                 )
                 .alloc_on(self.ir)
             }
 
             ExprKind::Ref(inner) => builder.r#ref(self.optimize_expr(inner)),
-            ExprKind::Deref(inner) if inner.typ.is_void() => builder.block(
+            ExprKind::Deref(inner) if inner.ty.is_void() => builder.block(
                 [Statement::Expression(self.optimize_expr(inner))],
                 builder.void(),
             ),
             ExprKind::Deref(inner) => builder.deref(self.optimize_expr(inner)),
-            ExprKind::Return(inner) if inner.typ.is_void() => builder.block(
+            ExprKind::Return(inner) if inner.ty.is_void() => builder.block(
                 [Statement::Expression(self.optimize_expr(inner))],
                 builder.void(),
             ),
             ExprKind::Return(inner) => {
-                Expr::rvalue(ExprKind::Return(self.optimize_expr(inner)), expr.typ)
-                    .alloc_on(self.ir)
+                Expr::rvalue(ExprKind::Return(self.optimize_expr(inner)), expr.ty).alloc_on(self.ir)
             }
 
-            ExprKind::Unary(op, inner) => builder.unary(op, self.optimize_expr(inner), expr.typ),
+            ExprKind::Unary(op, inner) => builder.unary(op, self.optimize_expr(inner), expr.ty),
 
             ExprKind::If(cond, then, els) => Expr {
                 is_const: expr.is_const,
-                typ: expr.typ,
+                ty: expr.ty,
                 kind: ExprKind::If(
                     self.optimize_expr(cond),
                     self.optimize_expr(then),
@@ -132,30 +129,33 @@ impl<'ir> Optimizer<'ir> {
                 value_type: expr.value_type,
             }
             .alloc_on(self.ir),
-            ExprKind::Cast(inner) => builder.cast(self.optimize_expr(inner), expr.typ),
-            ExprKind::Index(lhs, rhs) => builder.index(
-                self.optimize_expr(lhs), 
-                self.optimize_expr(rhs)
-            ),
+            ExprKind::Cast(inner) => builder.cast(self.optimize_expr(inner), expr.ty),
+            ExprKind::Index(lhs, rhs) => {
+                builder.index(self.optimize_expr(lhs), self.optimize_expr(rhs))
+            }
 
-            ExprKind::TupleIndex(lhs, _) if expr.typ.is_void() => builder.block(
+            ExprKind::TupleIndex(lhs, _) if expr.ty.is_void() => builder.block(
                 [Statement::Expression(self.optimize_expr(lhs))],
                 self.builder.void(),
             ),
-            ExprKind::Field(lhs, _) if expr.typ.is_void() => builder.block(
+            ExprKind::Field(lhs, _) if expr.ty.is_void() => builder.block(
                 [Statement::Expression(self.optimize_expr(lhs))],
                 self.builder.void(),
             ),
 
             ExprKind::TupleIndex(lhs, idx) => {
-                builder.tuple_index(self.optimize_expr(lhs), idx, expr.typ)
+                builder.tuple_index(self.optimize_expr(lhs), idx, expr.ty)
             }
-            ExprKind::Field(lhs, id) => builder.field(self.optimize_expr(lhs), id, expr.typ),
+            ExprKind::Field(lhs, id) => builder.field(self.optimize_expr(lhs), id, expr.ty),
             ExprKind::Fn(_) => expr,
             ExprKind::Lit(_) => expr,
             ExprKind::ConstValue(_) => expr,
             ExprKind::Unreachable => expr,
             ExprKind::Void => expr,
+            ExprKind::Goto(label) => {
+                self.used_ids.insert(label);
+                expr
+            }
         }
     }
 
@@ -163,10 +163,6 @@ impl<'ir> Optimizer<'ir> {
         match stmt {
             Statement::Expression(expr) => Some(Statement::Expression(self.optimize_expr(expr))),
             Statement::LocalDef(_, ty) if ty.is_void() => None,
-            Statement::Goto(id) => {
-                self.used_ids.insert(*id);
-                Some(stmt.clone())
-            }
             _ => Some(stmt.clone()),
         }
     }

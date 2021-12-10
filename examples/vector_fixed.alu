@@ -1,0 +1,122 @@
+mod libc {
+    extern fn malloc(size: usize) -> &();
+    extern fn free(ptr: &());
+    extern fn memcpy(dst: &(), src: &const (), len: usize);
+    extern fn puts(_: &const u8) -> i32;
+    extern fn exit(v: i32) -> !;
+}
+
+mod math {
+    fn max<T>(a: T, b: T) -> T {
+        if a > b {
+            a
+        } else {
+            b
+        }
+    }
+}
+
+fn sizeof<T>() -> usize {
+    let foo: T;
+    ((&foo + 1) as usize) - (&foo as usize)
+}
+
+struct vector<T> {
+    data: &T,
+    length: usize,
+    capacity: usize,
+}
+
+impl vector {
+    use libc::{memcpy, malloc};
+
+    fn new<T>() -> vector<T> {
+        with_capacity(0)
+    }
+
+    fn with_capacity<T>(capacity: usize) -> vector<T> {
+        vector::<T> {
+            data: null,
+            length: 0,
+            capacity: capacity,
+        }
+    }
+
+    fn push<T>(self: &vector<T>, value: T) {
+        if self.length == self.capacity {
+            let new_capacity = math::max(self.capacity * 2, 1);
+            let new_ptr = malloc(sizeof::<T>() * new_capacity);
+            
+            if self.data != null {
+                memcpy(new_ptr, self.data as &(), self.length * sizeof::<T>());
+                libc::free(self.data as &());
+            }
+
+            self.data = new_ptr as &T;
+            self.capacity = new_capacity;
+        }
+
+        self.data[self.length] = value;
+        self.length += 1;
+    }
+
+    fn pop<T>(self: &vector<T>) -> T {
+        let value = self.data[self.length - 1];
+        self.length -= 1;
+        value
+    }
+
+    fn empty<T>(self: &vector<T>) -> bool {
+        self.length == 0
+    }
+
+    fn index<T>(self: &vector<T>, index: usize) -> &T {
+        &self.data[index]
+    }
+
+    fn destroy<T>(self: &vector<T>) {
+        libc::free(self.data as &());
+    }
+}
+
+fn write_number<T>(val: T) {
+    let buf: [u8; 32];
+    buf[31] = 0;
+    let i: usize = 30;
+    
+    loop {
+        buf[i] = (val % 10) as u8 + 48;
+        val /= 10;
+        if val == 0 {
+            libc::puts(&buf[i]);
+            break;
+        }
+        i -= 1;
+    }
+}
+
+#[export]
+fn main() {
+    let v = vector::new::<vector<i32>>();
+    
+    let i = 0;
+    while i < 10000 {
+        let child = vector::new::<i32>();
+        {
+            let i = 0;
+            while i < 10000 {
+                child.push(i);
+                i += 1;
+            }
+        }
+        v.push(child);
+        i += 1;
+    }
+
+    while !v.empty() {
+        let f = v.pop();
+        f.destroy();
+    }
+
+    v.destroy();
+}

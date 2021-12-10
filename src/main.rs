@@ -1,3 +1,4 @@
+#![feature(backtrace)]
 #![feature(assert_matches)]
 
 mod ast;
@@ -9,119 +10,94 @@ mod parser;
 mod utils;
 mod visitors;
 
+use std::error::Error;
+use std::path::PathBuf;
 use std::thread;
 
-use ast::Item;
+use common::AluminaError;
+use common::AluminaErrorKind;
 use ir::mono::MonoCtx;
 use ir::mono::Monomorphizer;
 use ir::IrCtx;
+use name_resolution::path::Path;
 
 use crate::ast::maker::AstItemMaker;
 use crate::ast::AstCtx;
-use crate::ast::Function;
-use crate::ir::mono::MonomorphizeKey;
+
+use crate::name_resolution::pass1::FirstPassVisitor;
 use crate::name_resolution::scope::{NamedItem, Scope, ScopeType};
 use crate::parser::{AluminaVisitor, ParseCtx};
 use crate::utils::NodeWrapper;
-use crate::visitors::pass1::FirstPassVisitor;
 
-const SOURCE_CODE: &str = include_str!("../examples/minimal.alumina");
-//const SOURCE_CODE: &str = include_str!("../examples/vector.alumina");
-
-struct CompilationUnit {
-    source: String,
-    name: String,
+struct SourceFile {
+    filename: PathBuf,
+    path: String,
 }
 
-fn compile(units: Vec<CompilationUnit>) {
+fn compile(source_files: Vec<SourceFile>) -> Result<(), AluminaError> {
     let ast = AstCtx::new();
-
     let root_scope = Scope::new_root();
-    let crate_scope = root_scope.named_child(ScopeType::Crate, "my_crate");
 
-    root_scope
-        .add_item("my_crate", NamedItem::Module(crate_scope.clone()))
-        .unwrap();
+    let source_files: Vec<_> = source_files
+        .into_iter()
+        .map(|source_file| {
+            let source = std::fs::read_to_string(source_file.filename)?;
+            let parse_tree = ParseCtx::from_source(source);
 
-    let parse_contexts: Vec<_> = units
-        .iter()
-        .map(|unit| ParseCtx::from_source(&unit.source))
-        .collect();
+            Ok((parse_tree, ast.parse_path(&source_file.path)))
+        })
+        .collect::<Result<_, AluminaError>>()?;
 
-    for (i, ctx) in parse_contexts.iter().enumerate() {
-        eprintln!("{:?}", NodeWrapper::new(ctx.source(), ctx.root_node()));
+    for (ctx, path) in &source_files {
+        let scope = root_scope.ensure_module(path.clone())?;
+        scope.set_code(ctx);
 
-        let module_scope =
-            crate_scope.named_child_with_ctx(ScopeType::Module, &units[i].name, ctx.clone());
-
-        crate_scope
-            .add_item(&units[i].name, NamedItem::Module(module_scope.clone()))
-            .unwrap();
-
-        let mut visitor = FirstPassVisitor::new(&ast, module_scope.clone());
-        visitor.visit(ctx.root_node()).unwrap();
+        let mut visitor = FirstPassVisitor::new(&ast, scope.clone());
+        visitor.visit(ctx.root_node())?;
     }
 
-    let mut maker = AstItemMaker::new(&ast);
-    maker.make(crate_scope).unwrap();
+    let mut item_maker = AstItemMaker::new(&ast);
+    item_maker.make(root_scope)?;
 
-    let items = maker.into_inner();
+    drop(source_files);
 
-    // To demonstrate we don't need the source code anymore
-    drop(parse_contexts);
-
-    /*
-    println!("{:#?}", maker.symbols);
-
-    println!(
-        "{:#?}",
-        match maker.symbols.last().unwrap().contents.get().unwrap() {
-            Item::Function(Function { body, .. }) => body,
-            _ => unreachable!(),
-        }
-    );
-    */
+    let (items, lang_items) = item_maker.into_inner();
 
     let ir_ctx = IrCtx::new();
-    let mut mono_ctx = MonoCtx::new(&ir_ctx);
+    let mut mono_ctx = MonoCtx::new(&ir_ctx, lang_items);
 
     for item in items {
-        // println!("{:#?}", item);
-
         let inner = item.get();
         if !inner.is_generic() {
             let mut monomorphizer = Monomorphizer::new(&mut mono_ctx);
 
-            monomorphizer.monomorphize(item).unwrap();
+            monomorphizer.monomorphize(item)?;
         }
     }
 
     let items = mono_ctx.into_inner();
+    println!("{}", codegen::codegen(&items[..])?);
 
-    //drop(ast);
-
-    let mut codegen = codegen::CCodegen::new();
-    for item in items {
-        codegen.write_item(item);
-    }
-
-    println!("{}", codegen.generate());
+    Ok(())
 }
 
 fn main() {
-    // Spawn thread with explicit stack size
-    let child = thread::Builder::new()
-        .stack_size(10000000)
-        .spawn(run)
-        .unwrap();
+    let res = compile(vec![
+        SourceFile {
+            filename: PathBuf::from("./stdlib/lib.alu"),
+            path: "std".to_string(),
+        },
+        SourceFile {
+            filename: PathBuf::from("./examples/minimal.alu"),
+            path: "hello_world".to_string(),
+        },
+    ]);
 
-    // Wait for thread to join
-    child.join().unwrap();
-}
-
-fn run() {
-    compile(vec![CompilationUnit {
-        source: SOURCE_CODE.to_string(),
-        name: "m".to_string(),
-    }]);
+    match res {
+        Ok(()) => {}
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    }
 }

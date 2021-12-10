@@ -25,18 +25,34 @@ impl<'ir> ExpressionBuilder<'ir> {
         use ExprKind::*;
         use Statement::*;
 
-        for stmt in iter {
-            match stmt {
-                Expression(expr) if expr.diverges() => return Err(expr),
-                Expression(Expr {
+        let mut iter = iter.into_iter();
+        'outer: loop {
+            match iter.next() {
+                Some(Expression(expr)) if expr.diverges() => {
+                    while let Some(stmt) = iter.next() {
+                        match stmt {
+                            // If there is a label after an unreachable expression, the remainder might not
+                            // actually be unreachable, as something might jump to it
+                            Label(_) => {
+                                target.push(Expression(expr));
+                                target.push(stmt);
+                                continue 'outer;
+                            }
+                            _ => {}
+                        }
+                    }
+                    return Err(expr);
+                }
+                Some(Expression(Expr {
                     kind: Block(stmts, ret),
                     ..
-                }) => {
+                })) => {
                     self.fill_block(target, stmts.into_iter().cloned())?;
                     target.push(Expression(ret))
                 }
-                Expression(expr) if expr.pure() => {}
-                _ => target.push(stmt),
+                Some(Expression(expr)) if expr.pure() => {}
+                Some(stmt) => target.push(stmt),
+                None => break,
             }
         }
 
@@ -59,7 +75,24 @@ impl<'ir> ExpressionBuilder<'ir> {
             return ret;
         }
 
-        Expr::rvalue(ExprKind::Block(merged.alloc_on(self.ir), ret), ret.typ).alloc_on(self.ir)
+        Expr::rvalue(ExprKind::Block(merged.alloc_on(self.ir), ret), ret.ty).alloc_on(self.ir)
+    }
+
+    pub fn call<I>(&self, callee: ExprP<'ir>, args: I, return_ty: TyP<'ir>) -> ExprP<'ir>
+    where
+        I: IntoIterator<Item = ExprP<'ir>>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        let result = Expr::rvalue(
+            ExprKind::Call(callee, self.ir.arena.alloc_slice_fill_iter(args)),
+            return_ty,
+        );
+
+        result.alloc_on(self.ir)
+    }
+
+    pub fn lit(&self, lit: Lit<'ir>, ty: TyP<'ir>) -> ExprP<'ir> {
+        Expr::rvalue(ExprKind::Lit(lit), ty).alloc_on(self.ir)
     }
 
     pub fn diverges(&self, exprs: impl IntoIterator<Item = ExprP<'ir>>) -> ExprP<'ir> {
@@ -79,6 +112,14 @@ impl<'ir> ExpressionBuilder<'ir> {
         Expr::rvalue(
             ExprKind::Assign(lhs, rhs),
             self.ir.intern_type(Ty::Builtin(BuiltinType::Void)),
+        )
+        .alloc_on(self.ir)
+    }
+
+    pub fn goto(&self, label: IrId) -> ExprP<'ir> {
+        Expr::rvalue(
+            ExprKind::Goto(label),
+            self.ir.intern_type(Ty::Builtin(BuiltinType::Never)),
         )
         .alloc_on(self.ir)
     }
@@ -120,7 +161,7 @@ impl<'ir> ExpressionBuilder<'ir> {
             kind: ExprKind::TupleIndex(tuple, index),
             value_type: tuple.value_type,
             is_const: tuple.is_const,
-            typ,
+            ty: typ,
         };
 
         expr.alloc_on(self.ir)
@@ -131,14 +172,14 @@ impl<'ir> ExpressionBuilder<'ir> {
             kind: ExprKind::ConstValue(val),
             value_type: ValueType::RValue,
             is_const: true,
-            typ: self.ir.intern_type(Ty::Builtin(val.type_kind())),
+            ty: self.ir.intern_type(Ty::Builtin(val.type_kind())),
         };
 
         expr.alloc_on(self.ir)
     }
 
     pub fn deref(&self, inner: ExprP<'ir>) -> ExprP<'ir> {
-        let result = match inner.typ {
+        let result = match inner.ty {
             Ty::Pointer(ty, false) => Expr::lvalue(ExprKind::Deref(inner), ty),
             Ty::Pointer(ty, true) => Expr::const_lvalue(ExprKind::Deref(inner), ty),
             _ => panic!("not a pointer"),
@@ -159,35 +200,22 @@ impl<'ir> ExpressionBuilder<'ir> {
         result.alloc_on(self.ir)
     }
 
-    pub fn ret(
-        &self,
-        inner: ExprP<'ir>,
-    ) -> ExprP<'ir> {
+    pub fn ret(&self, inner: ExprP<'ir>) -> ExprP<'ir> {
         let result = Expr::rvalue(
-            ExprKind::Return(inner), 
-            self.ir.intern_type(Ty::Builtin(BuiltinType::Never))
+            ExprKind::Return(inner),
+            self.ir.intern_type(Ty::Builtin(BuiltinType::Never)),
         );
 
         result.alloc_on(self.ir)
     }
 
-    pub fn cast(
-        &self,
-        expr: ExprP<'ir>,
-        typ: TyP<'ir>,
-    ) -> ExprP<'ir> {
+    pub fn cast(&self, expr: ExprP<'ir>, typ: TyP<'ir>) -> ExprP<'ir> {
         let result = Expr::rvalue(ExprKind::Cast(expr), typ);
 
         result.alloc_on(self.ir)
     }
 
-
-    pub fn unary(
-        &self,
-        op: UnOp,
-        inner: ExprP<'ir>,
-        result_typ: TyP<'ir>,
-    ) -> ExprP<'ir> {
+    pub fn unary(&self, op: UnOp, inner: ExprP<'ir>, result_typ: TyP<'ir>) -> ExprP<'ir> {
         let result = Expr::rvalue(ExprKind::Unary(op, inner), result_typ);
 
         result.alloc_on(self.ir)
@@ -198,7 +226,7 @@ impl<'ir> ExpressionBuilder<'ir> {
 
         let result = Expr::rvalue(
             ExprKind::Ref(inner),
-            self.ir.intern_type(Ty::Pointer(inner.typ, inner.is_const)),
+            self.ir.intern_type(Ty::Pointer(inner.ty, inner.is_const)),
         );
 
         result.alloc_on(self.ir)
@@ -206,7 +234,7 @@ impl<'ir> ExpressionBuilder<'ir> {
 
     pub fn index(&self, inner: ExprP<'ir>, index: ExprP<'ir>) -> ExprP<'ir> {
         let kind = ExprKind::Index(inner, index);
-        let result = match inner.typ {
+        let result = match inner.ty {
             Ty::Pointer(ty, false) => Expr::lvalue(kind, ty),
             Ty::Pointer(ty, true) => Expr::const_lvalue(kind, ty),
             Ty::Array(ty, _) if !inner.is_const => Expr::lvalue(kind, ty),
@@ -222,7 +250,7 @@ impl<'ir> ExpressionBuilder<'ir> {
             kind: ExprKind::Field(obj, field_id),
             value_type: obj.value_type,
             is_const: obj.is_const,
-            typ,
+            ty: typ,
         };
 
         expr.alloc_on(self.ir)

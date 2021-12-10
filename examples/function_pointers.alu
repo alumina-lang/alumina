@@ -1,0 +1,62 @@
+mod libc {
+    extern fn puts(_: &const u8) -> i32;
+}
+
+fn write_number<T>(val: T) {
+    let buf: [u8; 16];
+    buf[15] = 0;
+    let i: usize = 14;
+    
+    loop {
+        buf[i] = (val % 10) as u8 + 48;
+        val /= 10;
+        if val == 0 {
+            libc::puts(&buf[i]);
+            break;
+        }
+        i -= 1;
+    }
+}
+
+fn write_float<T>(val: T) {
+    let buf: [u8; 16];
+    buf[15] = 0;
+    let i: usize = 14;
+    
+    loop {
+        buf[i] = (val % 10) as u8 + 48;
+        val /= 10;
+        if val == 0 {
+            libc::puts(&buf[i]);
+            break;
+        }
+        i -= 1;
+    }
+}
+
+enum Bar {
+    A, B, C
+}
+
+struct Printer<T> {
+    print_fun: fn(T),
+}
+
+impl Printer {
+    fn new<T>(print_fun: fn(T)) -> Printer<T> {
+        Printer { print_fun: print_fun }
+    }
+
+    fn print<T>(self: &const Printer<T>, val: T) {
+        let a = self.print_fun;
+        a(val);
+    }
+}
+
+
+#[export]
+fn main(argc: i32, argv: &&u8) {
+    let pr = Printer::new(write_number::<f64>);
+
+    pr.print(54.3434);
+}

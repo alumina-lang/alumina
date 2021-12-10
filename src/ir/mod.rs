@@ -1,11 +1,12 @@
 pub mod builder;
 pub mod const_eval;
 pub mod infer;
+pub mod lang;
 pub mod mono;
 pub mod optimize;
 
 use crate::{
-    ast::{BinOp, BuiltinType, UnOp, Attribute},
+    ast::{Attribute, BinOp, BuiltinType, UnOp},
     common::{impl_allocatable, Allocatable, ArenaAllocatable, Incrementable},
 };
 use std::{
@@ -125,7 +126,6 @@ pub enum Ty<'ir> {
     Builtin(BuiltinType),
     Pointer(TyP<'ir>, bool),
     Array(TyP<'ir>, usize),
-    Slice(TyP<'ir>),
     Tuple(&'ir [TyP<'ir>]),
     Fn(&'ir [TyP<'ir>], TyP<'ir>),
 }
@@ -318,16 +318,14 @@ pub enum Statement<'ir> {
     Expression(ExprP<'ir>),
     LocalDef(IrId, TyP<'ir>),
     Label(IrId),
-    Goto(IrId),
 }
 
 impl<'ir> Statement<'ir> {
     pub fn pure(&self) -> bool {
         match self {
             Statement::Expression(expr) => expr.pure(),
-            Statement::LocalDef(_, _) => true,
-            Statement::Label(_) => true,
-            Statement::Goto(_) => false,
+            Statement::LocalDef(_, _) => false,
+            Statement::Label(_) => false,
         }
     }
 }
@@ -351,6 +349,7 @@ pub enum ExprKind<'ir> {
     Ref(ExprP<'ir>),
     Deref(ExprP<'ir>),
     Return(ExprP<'ir>),
+    Goto(IrId),
     Unary(UnOp, ExprP<'ir>),
     Assign(ExprP<'ir>, ExprP<'ir>),
     Index(ExprP<'ir>, ExprP<'ir>),
@@ -376,7 +375,7 @@ pub struct Expr<'ir> {
     pub value_type: ValueType,
     pub is_const: bool,
     pub kind: ExprKind<'ir>,
-    pub typ: TyP<'ir>,
+    pub ty: TyP<'ir>,
 }
 
 impl<'ir> Expr<'ir> {
@@ -385,7 +384,7 @@ impl<'ir> Expr<'ir> {
             kind,
             value_type: ValueType::LValue,
             is_const: false,
-            typ,
+            ty: typ,
         }
     }
 
@@ -394,7 +393,7 @@ impl<'ir> Expr<'ir> {
             kind,
             value_type: ValueType::RValue,
             is_const: false,
-            typ,
+            ty: typ,
         }
     }
 
@@ -403,12 +402,12 @@ impl<'ir> Expr<'ir> {
             kind,
             value_type: ValueType::LValue,
             is_const: true,
-            typ,
+            ty: typ,
         }
     }
 
     pub fn diverges(&self) -> bool {
-        *self.typ == Ty::Builtin(BuiltinType::Never)
+        *self.ty == Ty::Builtin(BuiltinType::Never)
     }
 
     pub fn is_void(&self) -> bool {
@@ -437,18 +436,19 @@ impl<'ir> Expr<'ir> {
             ExprKind::Cast(inner) => inner.pure(),
             ExprKind::Field(inner, _) => inner.pure(),
             ExprKind::TupleIndex(inner, _) => inner.pure(),
-            
+
             ExprKind::Fn(_) => true,
             ExprKind::Local(_) => true,
             ExprKind::Lit(_) => true,
             ExprKind::ConstValue(_) => true,
             ExprKind::Void => true,
-            
+
             ExprKind::Unreachable => false, // ?
             ExprKind::Call(_, _) => false,  // for now
             ExprKind::Assign(_, _) => false,
             ExprKind::AssignOp(_, _, _) => false,
             ExprKind::Return(_) => false,
+            ExprKind::Goto(_) => false,
         }
     }
 }

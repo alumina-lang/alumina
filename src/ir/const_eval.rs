@@ -466,7 +466,7 @@ pub fn const_eval<'ast>(expr: crate::ir::ExprP<'ast>) -> Result<Value, ()> {
         ExprKind::ConstValue(value) => Ok(*value),
         ExprKind::Lit(l) => match l {
             Lit::Bool(b) => Ok(Value::Bool(*b)),
-            Lit::Int(i) => match expr.typ {
+            Lit::Int(i) => match expr.ty {
                 Ty::Builtin(BuiltinType::U8) => Ok(Value::U8(*i as u8)),
                 Ty::Builtin(BuiltinType::U16) => Ok(Value::U16(*i as u16)),
                 Ty::Builtin(BuiltinType::U32) => Ok(Value::U32(*i as u32)),

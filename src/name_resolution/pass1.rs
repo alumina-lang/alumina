@@ -1,4 +1,4 @@
-use crate::common::{SyntaxError, ToSyntaxError};
+use crate::common::{ArenaAllocatable, SyntaxError, ToSyntaxError};
 
 use crate::ast::{AstCtx, ItemP};
 use crate::name_resolution::scope::{NamedItem, Scope, ScopeType};
@@ -7,7 +7,8 @@ use crate::parser::{AluminaVisitor, ParseCtx};
 use std::result::Result;
 use tree_sitter::Node;
 
-use super::{UseClauseVisitor, VisitorExt};
+use crate::visitors::{UseClauseVisitor, VisitorExt};
+
 pub struct FirstPassVisitor<'ast, 'src> {
     ast: &'ast AstCtx<'ast>,
     scope: Scope<'ast, 'src>,
@@ -37,9 +38,9 @@ macro_rules! with_child_scope {
 }
 
 impl<'ast, 'src> FirstPassVisitor<'ast, 'src> {
-    fn parse_name(&self, node: Node<'src>) -> &'src str {
+    fn parse_name(&self, node: Node<'src>) -> &'ast str {
         let name_node = node.child_by_field_name("name").unwrap();
-        self.code.node_text(name_node)
+        self.code.node_text(name_node).alloc_on(self.ast)
     }
 }
 
@@ -191,7 +192,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     fn visit_generic_argument_list(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
         let mut cursor = node.walk();
         for argument in node.children_by_field_name("argument", &mut cursor) {
-            let name = self.code.node_text(argument);
+            let name = self.code.node_text(argument).alloc_on(self.ast);
             self.scope
                 .add_item(name, NamedItem::Placeholder(self.ast.make_id()))
                 .to_syntax_error(node)?;
@@ -215,7 +216,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     }
 
     fn visit_use_declaration(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
-        let mut visitor = UseClauseVisitor::new(self.scope.clone());
+        let mut visitor = UseClauseVisitor::new(self.ast, self.scope.clone());
         visitor.visit(node.child_by_field_name("argument").unwrap())?;
 
         Ok(())

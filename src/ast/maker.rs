@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{
     ast::{AstCtx, AstId, BuiltinType, Field, Function, Item, ItemP, Parameter, Struct, Ty},
     common::{ArenaAllocatable, SyntaxError, ToSyntaxError},
@@ -5,11 +7,18 @@ use crate::{
     parser::{AluminaVisitor, ParseCtx},
 };
 
-use super::{expressions::ExpressionVisitor, types::TypeVisitor, AssociatedFn, Enum, EnumMember, Attribute, AttributeKind};
+use super::{
+    expressions::ExpressionVisitor,
+    lang::{lang_item_kind, LangItemKind, LangItemMap},
+    types::TypeVisitor,
+    AssociatedFn, Attribute, AttributeKind, Enum, EnumMember,
+};
 
 pub struct AstItemMaker<'ast> {
     ast: &'ast AstCtx<'ast>,
     symbols: Vec<ItemP<'ast>>,
+
+    lang_items: HashMap<LangItemKind, ItemP<'ast>>,
 }
 
 impl<'ast> AstItemMaker<'ast> {
@@ -17,11 +26,47 @@ impl<'ast> AstItemMaker<'ast> {
         Self {
             ast,
             symbols: Vec::new(),
+            lang_items: HashMap::new(),
         }
     }
 
-    pub fn into_inner(self) -> Vec<ItemP<'ast>> {
-        self.symbols
+    pub fn into_inner(self) -> (Vec<ItemP<'ast>>, LangItemMap<'ast>) {
+        (self.symbols, LangItemMap::new(self.lang_items))
+    }
+
+    fn get_attributes<'src>(
+        &mut self,
+        item: ItemP<'ast>,
+        code: &'src ParseCtx<'src>,
+        node: tree_sitter::Node<'src>,
+    ) -> Result<&'ast [Attribute], SyntaxError<'src>> {
+        let attribute_node = match node.child_by_field_name("attribute") {
+            Some(node) => node,
+            None => return Ok([].alloc_on(self.ast)),
+        };
+
+        let mut cursor = attribute_node.walk();
+        let result = attribute_node
+            .children_by_field_name("name", &mut cursor)
+            .map(|n| code.node_text(n))
+            .filter_map(|s| match lang_item_kind(s) {
+                Some(kind) => {
+                    // We allow lang items to be overriden.
+                    self.lang_items.insert(kind, item);
+                    None
+                }
+                None => Some(s),
+            })
+            .filter_map(|name| match name {
+                "export" => Some(Attribute {
+                    kind: AttributeKind::Export,
+                }),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .alloc_on(self.ast);
+
+        Ok(result)
     }
 
     fn resolve_associated_fns<'src>(
@@ -33,7 +78,7 @@ impl<'ast> AstItemMaker<'ast> {
         for (name, item) in scope.inner().all_items() {
             match item {
                 NamedItem::Function(symbol, _, _) => associated_fns.push(AssociatedFn {
-                    name: name.alloc_on(self.ast),
+                    name: name,
                     item: *symbol,
                 }),
                 _ => {}
@@ -46,8 +91,9 @@ impl<'ast> AstItemMaker<'ast> {
 
     fn make_struct<'src>(
         &mut self,
+        name: &'ast str,
         symbol: ItemP<'ast>,
-        _node: tree_sitter::Node<'src>,
+        node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         impl_scope: Option<Scope<'ast, 'src>>,
     ) -> Result<(), SyntaxError<'src>> {
@@ -65,7 +111,7 @@ impl<'ast> AstItemMaker<'ast> {
 
                     fields.push(Field {
                         id: self.ast.make_id(),
-                        name: name.alloc_on(self.ast),
+                        name: name,
                         typ: field_type,
                     });
                 }
@@ -79,8 +125,10 @@ impl<'ast> AstItemMaker<'ast> {
         };
 
         let result = Item::Struct(Struct {
+            name: Some(name),
             placeholders: placeholders.alloc_on(self.ast),
             fields: fields.alloc_on(self.ast),
+            attributes: self.get_attributes(symbol, scope.code().unwrap(), node)?,
             associated_fns,
         });
 
@@ -93,24 +141,33 @@ impl<'ast> AstItemMaker<'ast> {
 
     fn make_enum<'src>(
         &mut self,
+        name: &'ast str,
         symbol: ItemP<'ast>,
-        _node: tree_sitter::Node<'src>,
+        node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         impl_scope: Option<Scope<'ast, 'src>>,
     ) -> Result<(), SyntaxError<'src>> {
         let mut members = Vec::new();
 
-        for (_name, item) in scope.inner().all_items() {
+        for (name, item) in scope.inner().all_items() {
             match item {
                 NamedItem::EnumMember(_, id, node) => {
-                    let field_value = node
+                    let expr = node
                         .child_by_field_name("value")
-                        .map(|node| ExpressionVisitor::new(self.ast, scope.clone()).visit(node))
+                        .map(|node| {
+                            ExpressionVisitor::new(self.ast, scope.clone())
+                                .generate(node)
+                                .and_then(|(expr, additional_items)| {
+                                    self.symbols.extend(additional_items);
+                                    Ok(expr)
+                                })
+                        })
                         .transpose()?;
 
                     members.push(EnumMember {
+                        name: Some(name),
                         id: *id,
-                        value: field_value,
+                        value: expr,
                     });
                 }
                 _ => {}
@@ -123,7 +180,9 @@ impl<'ast> AstItemMaker<'ast> {
         };
 
         let result = Item::Enum(Enum {
+            name: Some(name),
             members: members.alloc_on(self.ast),
+            attributes: self.get_attributes(symbol, scope.code().unwrap(), node)?,
             associated_fns,
         });
 
@@ -134,27 +193,9 @@ impl<'ast> AstItemMaker<'ast> {
         Ok(())
     }
 
-    fn make_attribute<'src>(
-        &mut self,
-        code: &'src ParseCtx<'src>,
-        node: tree_sitter::Node<'src>,
-    ) -> Result<&'ast [Attribute], SyntaxError<'src>> {
-        let attribute = node.child_by_field_name("attribute").iter().flat_map(|n| {
-            let mut cursor = node.walk();
-            n.children_by_field_name("name", &mut cursor)
-                .map(|n| code.node_text(n))
-                .collect::<Vec<_>>()
-        }).filter_map(|name| match name {
-            "export" => Some(Attribute { kind: AttributeKind::Export }),
-            _ => None,
-        }).collect::<Vec<_>>().alloc_on(self.ast);
-
-        Ok(attribute)
-    }
-
     fn make_function_impl<'src>(
         &mut self,
-        name: &'src str,
+        name: &'ast str,
         symbol: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
@@ -181,7 +222,6 @@ impl<'ast> AstItemMaker<'ast> {
             }
         }
 
-
         let return_type = node
             .child_by_field_name("return_type")
             .map(|n| TypeVisitor::new(self.ast, scope.clone()).visit(n))
@@ -189,12 +229,19 @@ impl<'ast> AstItemMaker<'ast> {
             .unwrap_or(self.ast.intern_type(Ty::Builtin(BuiltinType::Void)));
 
         let function_body = body
-            .map(|body| ExpressionVisitor::new(self.ast, scope.clone()).visit(body))
+            .map(|body| {
+                ExpressionVisitor::new(self.ast, scope.clone())
+                    .generate(body)
+                    .and_then(|(expr, additional_items)| {
+                        self.symbols.extend(additional_items);
+                        Ok(expr)
+                    })
+            })
             .transpose()?;
 
         let result = Item::Function(Function {
-            name: Some(name.alloc_on(self.ast)),
-            attributes: self.make_attribute(scope.code().unwrap(), node)?,
+            name: Some(name),
+            attributes: self.get_attributes(symbol, scope.code().unwrap(), node)?,
             placeholders: placeholders.alloc_on(self.ast),
             args: parameters.alloc_on(self.ast),
             return_type,
@@ -210,14 +257,15 @@ impl<'ast> AstItemMaker<'ast> {
 
     fn make_type<'src>(
         &mut self,
+        name: &'ast str,
         symbol: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         impl_scope: Option<Scope<'ast, 'src>>,
     ) -> Result<(), SyntaxError<'src>> {
         match node.kind() {
-            "struct_definition" => self.make_struct(symbol, node, scope, impl_scope)?,
-            "enum_definition" => self.make_enum(symbol, node, scope, impl_scope)?,
+            "struct_definition" => self.make_struct(name, symbol, node, scope, impl_scope)?,
+            "enum_definition" => self.make_enum(name, symbol, node, scope, impl_scope)?,
             _ => unimplemented!(),
         };
 
@@ -226,7 +274,7 @@ impl<'ast> AstItemMaker<'ast> {
 
     fn make_function<'src>(
         &mut self,
-        name: &'src str,
+        name: &'ast str,
         symbol: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
@@ -239,7 +287,9 @@ impl<'ast> AstItemMaker<'ast> {
                 scope,
                 Some(node.child_by_field_name("body").unwrap()),
             )?,
-            "extern_function_declaration" => self.make_function_impl(name, symbol, node, scope, None)?,
+            "extern_function_declaration" => {
+                self.make_function_impl(name, symbol, node, scope, None)?
+            }
             _ => unimplemented!(),
         };
 
@@ -253,11 +303,17 @@ impl<'ast> AstItemMaker<'ast> {
                     self.make(module.clone())?;
                 }
                 [NamedItem::Type(symbol, node, scope), NamedItem::Impl(impl_scope)] => {
-                    self.make_type(*symbol, *node, scope.clone(), Some(impl_scope.clone()))?;
+                    self.make_type(
+                        name,
+                        *symbol,
+                        *node,
+                        scope.clone(),
+                        Some(impl_scope.clone()),
+                    )?;
                     self.make(impl_scope.clone())?;
                 }
                 [NamedItem::Type(symbol, node, scope)] => {
-                    self.make_type(*symbol, *node, scope.clone(), None)?;
+                    self.make_type(name, *symbol, *node, scope.clone(), None)?;
                 }
                 [NamedItem::Function(symbol, node, scope)] => {
                     self.make_function(name, *symbol, *node, scope.clone())?;

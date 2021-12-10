@@ -6,17 +6,18 @@ use std::{
 
 use crate::{
     ast::{AstId, ItemP},
-    common::AluminaError,
+    common::AluminaErrorKind,
     parser::ParseCtx,
 };
 use indexmap::{map::Entry, IndexMap};
+use once_cell::unsync::OnceCell;
 use tree_sitter::Node;
 
 use super::path::{Path, PathSegment};
 
 #[derive(Debug, Clone)]
 pub enum NamedItem<'ast, 'src> {
-    Alias(Path<'src>),
+    Alias(Path<'ast>),
     Function(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
     Type(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
     Module(Scope<'ast, 'src>),
@@ -24,7 +25,7 @@ pub enum NamedItem<'ast, 'src> {
     Placeholder(AstId),
     Field(Node<'src>),
     EnumMember(ItemP<'ast>, AstId, Node<'src>),
-    Variable(AstId),
+    Local(AstId),
     Parameter(AstId, Node<'src>),
 }
 
@@ -35,6 +36,7 @@ pub enum ScopeType {
     Module,
     Struct,
     Function,
+    Closure,
     Impl,
     Enum,
     Block,
@@ -42,29 +44,34 @@ pub enum ScopeType {
 
 pub struct ScopeInner<'ast, 'src> {
     pub r#type: ScopeType,
-    pub path: Path<'src>,
+    pub path: Path<'ast>,
 
     // We use IndexMap to preserve the order of items in the scope. While not important for
     // name resolution, it is important for e.g. struct layout, function signature, generic
     // parameter ordering, etc.
-    pub items: IndexMap<&'src str, Vec<NamedItem<'ast, 'src>>>,
+    pub items: IndexMap<&'ast str, Vec<NamedItem<'ast, 'src>>>,
     pub parent: Option<Weak<RefCell<ScopeInner<'ast, 'src>>>>,
 
-    code: Option<&'src ParseCtx<'src>>,
+    code: OnceCell<&'src ParseCtx<'src>>,
 }
 
 impl<'ast, 'src> ScopeInner<'ast, 'src> {
-    pub fn all_items(&self) -> impl Iterator<Item = (&'src str, &'_ NamedItem<'ast, 'src>)> {
+    pub fn all_items<'i>(&'i self) -> impl Iterator<Item = (&'ast str, &'i NamedItem<'ast, 'src>)> {
         self.items
             .iter()
             .flat_map(|(n, its)| its.iter().map(|i| (*n, i)))
     }
 
-    pub fn grouped_items(&self) -> impl Iterator<Item = (&'src str, &'_ [NamedItem<'ast, 'src>])> {
+    pub fn grouped_items<'i>(
+        &'i self,
+    ) -> impl Iterator<Item = (&'ast str, &'i [NamedItem<'ast, 'src>])> {
         self.items.iter().map(|(n, its)| (*n, its.as_slice()))
     }
 
-    pub fn items_with_name(&self, name: &str) -> impl Iterator<Item = &NamedItem<'ast, 'src>> {
+    pub fn items_with_name<'i>(
+        &'i self,
+        name: &str,
+    ) -> impl Iterator<Item = &'i NamedItem<'ast, 'src>> {
         self.items.get(name).into_iter().flat_map(|its| its.iter())
     }
 }
@@ -83,6 +90,12 @@ impl<'ast, 'src> Debug for ScopeInner<'ast, 'src> {
 
 #[derive(Clone)]
 pub struct Scope<'ast, 'src>(pub Rc<RefCell<ScopeInner<'ast, 'src>>>);
+
+impl<'ast, 'src> PartialEq for Scope<'ast, 'src> {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
 
 impl<'ast, 'src> From<Scope<'ast, 'src>> for Weak<RefCell<ScopeInner<'ast, 'src>>> {
     fn from(scope: Scope<'ast, 'src>) -> Self {
@@ -103,7 +116,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             path: Path::root(),
             items: IndexMap::new(),
             parent: None,
-            code: None,
+            code: OnceCell::new(),
         })))
     }
 
@@ -116,56 +129,49 @@ impl<'ast, 'src> Scope<'ast, 'src> {
     }
 
     pub fn code(&self) -> Option<&'src ParseCtx<'src>> {
-        self.inner().code.clone()
+        self.inner().code.get().map(|a| *a)
     }
 
-    pub fn path(&self) -> Path<'src> {
+    pub fn path(&self) -> Path<'ast> {
         self.inner().path.clone()
     }
 
-    pub fn named_child(&self, r#type: ScopeType, name: &'src str) -> Self {
+    pub fn named_child(&self, r#type: ScopeType, name: &'ast str) -> Self {
         let new_path = self.0.borrow().path.extend(PathSegment(name));
+        let code = self.0.borrow().code.clone();
 
         Scope(Rc::new(RefCell::new(ScopeInner {
             r#type,
             path: new_path,
             items: IndexMap::new(),
-            code: self.code(),
+            code,
             parent: Some(Rc::downgrade(&self.0)),
         })))
     }
 
     pub fn anonymous_child(&self, r#type: ScopeType) -> Self {
+        let code = self.0.borrow().code.clone();
+
         Scope(Rc::new(RefCell::new(ScopeInner {
             r#type,
             path: self.path(),
             items: IndexMap::new(),
-            code: self.code(),
+            code,
             parent: Some(Rc::downgrade(&self.0)),
         })))
     }
 
-    pub fn named_child_with_ctx(
-        &self,
-        r#type: ScopeType,
-        name: &'src str,
-        code: &'src ParseCtx<'src>,
-    ) -> Self {
-        let new_path = self.inner().path.extend(PathSegment(name));
-        Scope(Rc::new(RefCell::new(ScopeInner {
-            r#type,
-            path: new_path,
-            items: IndexMap::new(),
-            parent: Some(Rc::downgrade(&self.0)),
-            code: Some(code),
-        })))
+    pub fn set_code(&self, code: &'src ParseCtx<'src>) {
+        if let Err(_) = self.0.borrow().code.set(code) {
+            panic!("")
+        }
     }
 
     pub fn add_item(
         &self,
-        name: &'src str,
+        name: &'ast str,
         item: NamedItem<'ast, 'src>,
-    ) -> Result<(), AluminaError> {
+    ) -> Result<(), AluminaErrorKind> {
         let mut current_scope = self.0.borrow_mut();
         let scope_type = current_scope.r#type;
 
@@ -199,7 +205,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             }
         }
 
-        Err(AluminaError::DuplicateName(name.into()))
+        Err(AluminaErrorKind::DuplicateName(name.into()))
     }
 
     pub fn find_root(&self) -> Self {
@@ -238,10 +244,54 @@ impl<'ast, 'src> Scope<'ast, 'src> {
         }
     }
 
+    pub fn find_containing_function(&self) -> Option<Self> {
+        match self.0.borrow().r#type {
+            ScopeType::Closure | ScopeType::Function => Some(self.clone()),
+            _ => self.parent().and_then(|p| p.find_containing_function()),
+        }
+    }
+
     pub fn parent(&self) -> Option<Self> {
         self.inner()
             .parent
             .as_ref()
             .map(|parent| Self(parent.upgrade().unwrap()))
+    }
+
+    pub fn ensure_module(&self, path: Path<'ast>) -> Result<Scope<'ast, 'src>, AluminaErrorKind> {
+        if path.absolute {
+            return self.find_root().ensure_module(Path {
+                absolute: false,
+                segments: path.segments.clone(),
+            });
+        }
+
+        if path.segments.is_empty() {
+            return Ok(self.clone());
+        }
+
+        let remainder = Path {
+            absolute: false,
+            segments: path.segments[1..].to_vec(),
+        };
+
+        for item in self.inner().items_with_name(path.segments[0].0) {
+            match item {
+                NamedItem::Module(child_scope) => {
+                    return child_scope.ensure_module(remainder);
+                }
+                _ => {}
+            }
+        }
+
+        let scope_type = match self.parent() {
+            None => ScopeType::Crate,
+            Some(_) => ScopeType::Module,
+        };
+
+        let child_scope = self.named_child(scope_type, path.segments[0].0);
+        self.add_item(path.segments[0].0, NamedItem::Module(child_scope.clone()))?;
+
+        Ok(child_scope.ensure_module(remainder)?)
     }
 }

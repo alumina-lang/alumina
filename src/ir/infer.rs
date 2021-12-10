@@ -43,7 +43,6 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                 }
                 self.match_slot(inferred, a1, b1)?;
             }
-            (ast::Ty::Slice(a), ir::Ty::Slice(b)) => self.match_slot(inferred, a, b)?,
             (ast::Ty::Tuple(a), ir::Ty::Tuple(b)) => {
                 if a.len() != b.len() {
                     return Err(());

@@ -1,8 +1,10 @@
 pub mod expressions;
+pub mod lang;
 pub mod maker;
 pub mod types;
 
 use crate::common::{Allocatable, ArenaAllocatable, Incrementable};
+use crate::name_resolution::path::{Path, PathSegment};
 use std::fmt::Display;
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
@@ -53,6 +55,25 @@ impl<'ast> AstCtx<'ast> {
         });
 
         inner
+    }
+
+    pub fn parse_path(&'ast self, path: &str) -> Path<'ast> {
+        let segments: Vec<_> = path
+            .split("::")
+            .map(|s| PathSegment(s.alloc_on(self)))
+            .collect();
+
+        if segments[0].0.is_empty() {
+            Path {
+                absolute: true,
+                segments: segments.into_iter().skip(1).collect(),
+            }
+        } else {
+            Path {
+                absolute: false,
+                segments,
+            }
+        }
     }
 }
 
@@ -192,8 +213,8 @@ pub enum Ty<'ast> {
     NamedType(ItemP<'ast>),
     Builtin(BuiltinType),
     Pointer(TyP<'ast>, bool),
+    Slice(TyP<'ast>, bool),
     Array(TyP<'ast>, usize),
-    Slice(TyP<'ast>),
     Tuple(&'ast [TyP<'ast>]),
     Function(&'ast [TyP<'ast>], TyP<'ast>),
     GenericType(ItemP<'ast>, &'ast [TyP<'ast>]),
@@ -305,6 +326,7 @@ pub struct Field<'ast> {
 #[derive(Debug, Clone, Copy)]
 pub struct EnumMember<'ast> {
     pub id: AstId,
+    pub name: Option<&'ast str>,
     pub value: Option<ExprP<'ast>>,
 }
 
@@ -316,14 +338,18 @@ pub struct AssociatedFn<'ast> {
 
 #[derive(Debug)]
 pub struct Struct<'ast> {
+    pub name: Option<&'ast str>,
     pub placeholders: &'ast [AstId],
     pub associated_fns: &'ast [AssociatedFn<'ast>],
+    pub attributes: &'ast [Attribute],
     pub fields: &'ast [Field<'ast>],
 }
 
 #[derive(Debug)]
 pub struct Enum<'ast> {
+    pub name: Option<&'ast str>,
     pub associated_fns: &'ast [AssociatedFn<'ast>],
+    pub attributes: &'ast [Attribute],
     pub members: &'ast [EnumMember<'ast>],
 }
 
@@ -396,7 +422,7 @@ impl BinOp {
 
 #[derive(Debug, Copy, Clone)]
 pub enum AttributeKind {
-    Export
+    Export,
 }
 
 #[derive(Debug, Copy, Clone)]
