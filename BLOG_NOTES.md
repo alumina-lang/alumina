@@ -1,0 +1,1 @@
+- Funny, when learning how to program, "Hello World" is usually one of the first things you try, but when writing a compiler, it's usually the thing when most thing already work.

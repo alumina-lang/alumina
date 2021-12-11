@@ -9,7 +9,7 @@ mod mem {
         #[force_inline]
         #[lang(slice_new)]
         fn from_raw<Ptr>(ptr: Ptr, len: usize) -> slice<Ptr> {
-            slice { ptr: ptr, len: len }
+            slice::<Ptr> { ptr: ptr, len: len }
         }
     }
 
@@ -58,6 +58,7 @@ mod mem {
         let ret: &mut [T];
         ret.ptr = libc::malloc(sizeof::<T>() * len) as &mut T;
         ret.len = len;
+        ret
     }
 
     fn swap<T>(a: &mut T, b: &mut T) {
@@ -66,12 +67,12 @@ mod mem {
         *b = tmp;
     }
 
-    fn copy<T>(dst: &mut T, src: &[T]) {
+    fn copy_to<T>(src: &[T], dst: &mut T) {
         libc::memcpy(dst as &mut (), src.ptr as &(), src.len * sizeof::<T>());
     }
 
     fn free<T>(a: &mut [T]) {
-        libc::free(a.ptr as &());
+        libc::free(a.ptr as &mut ());
     }
 }
 
@@ -91,4 +92,23 @@ mod io {
 
 mod process {
     extern fn exit(v: i32) -> !;
+}
+
+
+mod math {
+    fn max<T>(a: T, b: T) -> T {
+        if a > b {
+            a
+        } else {
+            b
+        }
+    }
+
+    fn min<T>(a: T, b: T) -> T {
+        if a < b {
+            a
+        } else {
+            b
+        }
+    }
 }

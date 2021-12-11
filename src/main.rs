@@ -10,6 +10,7 @@ mod parser;
 mod utils;
 mod visitors;
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
 
@@ -22,6 +23,8 @@ use ir::IrCtx;
 use crate::ast::maker::AstItemMaker;
 use crate::ast::AstCtx;
 
+use crate::common::FileId;
+use crate::common::WithNoSpan;
 use crate::name_resolution::pass1::FirstPassVisitor;
 use crate::name_resolution::scope::Scope;
 use crate::parser::{AluminaVisitor, ParseCtx};
@@ -35,18 +38,26 @@ fn compile(source_files: Vec<SourceFile>) -> Result<(), AluminaError> {
     let ast = AstCtx::new();
     let root_scope = Scope::new_root();
 
+    let mut file_map: HashMap<FileId, PathBuf> = HashMap::new();
+    let mut file_counter = 0;
+
     let source_files: Vec<_> = source_files
         .into_iter()
         .map(|source_file| {
-            let source = std::fs::read_to_string(source_file.filename)?;
-            let parse_tree = ParseCtx::from_source(source);
+            let source = std::fs::read_to_string(&source_file.filename)?;
+            let file_id = FileId { id: file_counter };
+            file_counter += 1;
+
+            file_map.insert(file_id, source_file.filename);
+
+            let parse_tree = ParseCtx::from_source(file_id, source);
 
             Ok((parse_tree, ast.parse_path(&source_file.path)))
         })
         .collect::<Result<_, AluminaError>>()?;
 
     for (ctx, path) in &source_files {
-        let scope = root_scope.ensure_module(path.clone())?;
+        let scope = root_scope.ensure_module(path.clone()).with_no_span()?;
         scope.set_code(ctx);
 
         let mut visitor = FirstPassVisitor::new(&ast, scope.clone());

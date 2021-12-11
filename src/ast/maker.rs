@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     ast::{AstCtx, AstId, BuiltinType, Field, Function, Item, ItemP, Parameter, Struct, Ty},
-    common::{ArenaAllocatable, SyntaxError},
+    common::{AluminaError, ArenaAllocatable, WithSpanDuringParsing},
     name_resolution::scope::{NamedItem, Scope},
     parser::{AluminaVisitor, ParseCtx},
 };
@@ -11,7 +11,7 @@ use super::{
     expressions::ExpressionVisitor,
     lang::{lang_item_kind, LangItemKind, LangItemMap},
     types::TypeVisitor,
-    AssociatedFn, Attribute, Enum, EnumMember,
+    AssociatedFn, Attribute, Enum, EnumMember, Span,
 };
 
 pub struct AstItemMaker<'ast> {
@@ -39,7 +39,7 @@ impl<'ast> AstItemMaker<'ast> {
         item: ItemP<'ast>,
         code: &'src ParseCtx<'src>,
         node: tree_sitter::Node<'src>,
-    ) -> Result<&'ast [Attribute], SyntaxError<'src>> {
+    ) -> Result<&'ast [Attribute], AluminaError> {
         let attribute_node = match node.child_by_field_name("attributes") {
             Some(node) => node,
             None => return Ok([].alloc_on(self.ast)),
@@ -71,7 +71,7 @@ impl<'ast> AstItemMaker<'ast> {
     fn resolve_associated_fns<'src>(
         &self,
         scope: Scope<'ast, 'src>,
-    ) -> Result<&'ast [AssociatedFn<'ast>], SyntaxError<'src>> {
+    ) -> Result<&'ast [AssociatedFn<'ast>], AluminaError> {
         let mut associated_fns = Vec::new();
 
         for (name, item) in scope.inner().all_items() {
@@ -95,7 +95,7 @@ impl<'ast> AstItemMaker<'ast> {
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         impl_scope: Option<Scope<'ast, 'src>>,
-    ) -> Result<(), SyntaxError<'src>> {
+    ) -> Result<(), AluminaError> {
         let mut placeholders: Vec<AstId> = Vec::new();
         let mut fields: Vec<Field<'ast>> = Vec::new();
 
@@ -108,10 +108,17 @@ impl<'ast> AstItemMaker<'ast> {
                     let mut visitor = TypeVisitor::new(self.ast, scope.clone());
                     let field_type = visitor.visit(node.child_by_field_name("type").unwrap())?;
 
+                    let span = Span {
+                        start: node.start_byte(),
+                        end: node.end_byte(),
+                        file: scope.code().unwrap().file_id(),
+                    };
+
                     fields.push(Field {
                         id: self.ast.make_id(),
                         name: name,
                         typ: field_type,
+                        span: Some(span),
                     });
                 }
                 _ => {}
@@ -123,12 +130,19 @@ impl<'ast> AstItemMaker<'ast> {
             None => (&[]).alloc_on(self.ast),
         };
 
+        let span = Span {
+            start: node.start_byte(),
+            end: node.end_byte(),
+            file: scope.code().unwrap().file_id(),
+        };
+
         let result = Item::Struct(Struct {
             name: Some(name),
             placeholders: placeholders.alloc_on(self.ast),
             fields: fields.alloc_on(self.ast),
             attributes: self.get_attributes(symbol, scope.code().unwrap(), node)?,
             associated_fns,
+            span: Some(span),
         });
 
         symbol.assign(result);
@@ -145,7 +159,7 @@ impl<'ast> AstItemMaker<'ast> {
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         impl_scope: Option<Scope<'ast, 'src>>,
-    ) -> Result<(), SyntaxError<'src>> {
+    ) -> Result<(), AluminaError> {
         let mut members = Vec::new();
 
         for (name, item) in scope.inner().all_items() {
@@ -163,10 +177,17 @@ impl<'ast> AstItemMaker<'ast> {
                         })
                         .transpose()?;
 
+                    let span = Span {
+                        start: node.start_byte(),
+                        end: node.end_byte(),
+                        file: scope.code().unwrap().file_id(),
+                    };
+
                     members.push(EnumMember {
                         name: Some(name),
                         id: *id,
                         value: expr,
+                        span: Some(span),
                     });
                 }
                 _ => {}
@@ -178,11 +199,18 @@ impl<'ast> AstItemMaker<'ast> {
             None => (&[]).alloc_on(self.ast),
         };
 
+        let span = Span {
+            start: node.start_byte(),
+            end: node.end_byte(),
+            file: scope.code().unwrap().file_id(),
+        };
+
         let result = Item::Enum(Enum {
             name: Some(name),
             members: members.alloc_on(self.ast),
             attributes: self.get_attributes(symbol, scope.code().unwrap(), node)?,
             associated_fns,
+            span: Some(span),
         });
 
         symbol.assign(result);
@@ -199,7 +227,7 @@ impl<'ast> AstItemMaker<'ast> {
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         body: Option<tree_sitter::Node<'src>>,
-    ) -> Result<(), SyntaxError<'src>> {
+    ) -> Result<(), AluminaError> {
         let mut placeholders: Vec<AstId> = Vec::new();
         let mut parameters: Vec<Parameter<'ast>> = Vec::new();
 
@@ -212,9 +240,16 @@ impl<'ast> AstItemMaker<'ast> {
                     let field_type = TypeVisitor::new(self.ast, scope.clone())
                         .visit(node.child_by_field_name("type").unwrap())?;
 
+                    let span = Span {
+                        start: node.start_byte(),
+                        end: node.end_byte(),
+                        file: scope.code().unwrap().file_id(),
+                    };
+
                     parameters.push(Parameter {
                         id: *id,
                         typ: field_type,
+                        span: Some(span),
                     });
                 }
                 _ => {}
@@ -238,6 +273,12 @@ impl<'ast> AstItemMaker<'ast> {
             })
             .transpose()?;
 
+        let span = Span {
+            start: node.start_byte(),
+            end: node.end_byte(),
+            file: scope.code().unwrap().file_id(),
+        };
+
         let result = Item::Function(Function {
             name: Some(name),
             attributes: self.get_attributes(symbol, scope.code().unwrap(), node)?,
@@ -245,6 +286,7 @@ impl<'ast> AstItemMaker<'ast> {
             args: parameters.alloc_on(self.ast),
             return_type,
             body: function_body,
+            span: Some(span),
         });
 
         symbol.assign(result);
@@ -261,7 +303,7 @@ impl<'ast> AstItemMaker<'ast> {
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         impl_scope: Option<Scope<'ast, 'src>>,
-    ) -> Result<(), SyntaxError<'src>> {
+    ) -> Result<(), AluminaError> {
         match node.kind() {
             "struct_definition" => self.make_struct(name, symbol, node, scope, impl_scope)?,
             "enum_definition" => self.make_enum(name, symbol, node, scope, impl_scope)?,
@@ -277,7 +319,7 @@ impl<'ast> AstItemMaker<'ast> {
         symbol: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
-    ) -> Result<(), SyntaxError<'src>> {
+    ) -> Result<(), AluminaError> {
         match node.kind() {
             "function_definition" => self.make_function_impl(
                 name,
@@ -295,7 +337,7 @@ impl<'ast> AstItemMaker<'ast> {
         Ok(())
     }
 
-    pub fn make<'src>(&mut self, scope: Scope<'ast, 'src>) -> Result<(), SyntaxError<'src>> {
+    pub fn make<'src>(&mut self, scope: Scope<'ast, 'src>) -> Result<(), AluminaError> {
         for (name, item) in scope.inner().grouped_items() {
             match item {
                 [NamedItem::Module(module)] => {

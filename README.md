@@ -16,64 +16,64 @@ Alumina can be thought of as Go without a garbage collector and runtime. Unlike 
 
 <!-- totally not rust lmao -->
 ```rust
-mod alloc {
-    extern fn malloc(size: usize) -> &();
-    extern fn free(ptr: &());
-}
-
 struct vector<T> {
-    data: &T,
+    data: &mut [T],
     length: usize,
-    capacity: usize,
 }
 
 impl vector {
-    use super::alloc::{malloc, free as free_};
+    use std::mem::{slice, alloc, copy_to, free};
 
     fn new<T>() -> vector<T> {
-        with_capacity::<T>(0)
+        with_capacity(0)
     }
 
     fn with_capacity<T>(capacity: usize) -> vector<T> {
-        vector<T> {
-            data: malloc(sizeof::<T>() * capacity) as &T,
+        vector {
+            data: alloc::<T>(capacity),
             length: 0,
-            capacity: capacity,
         }
     }
 
-    fn push<T>(self: &vector<T>, value: T) {
-        if self.length == self.capacity {
-            let new_capacity = if self.capacity == 0 { 
-                1
-            } else {
-                self.capacity * 2
+    fn reserve<T>(self: &mut vector<T>, new_capacity: usize) {
+        if self.data.len < new_capacity {
+            self.data = {
+                let new_data = alloc::<T>(new_capacity);
+                self.data.copy_to(new_data.ptr);
+                self.data.free();
+                new_data
             };
+        }
+    }
 
-            let new_ptr = malloc(sizeof::<T>() * new_capacity) as &T;
-            memcpy(new_ptr, self.data, self.length);
-            free_(self.data);
-            self.data = new_ptr;
-            self.capacity = new_capacity;
+    fn push<T>(self: &mut vector<T>, value: T) {
+        use std::math::max;
+
+        if self.length == self.data.len {
+            self.reserve(max(self.data.len, 1) * 2);
         }
 
         self.data[self.length] = value;
         self.length += 1;
     }
 
-    fn index<T>(self: &vector<T>, index: usize) -> &T {
-        self.data + index
+    fn pop<T>(self: &mut vector<T>) -> T {
+        let value = self.data[self.length - 1];
+        self.length -= 1;
+        value
     }
 
-    fn free<T>(self: &vector<T>) {
-        free_(self.data);
+    fn destroy<T>(self: &mut vector<T>) {
+        self.data.free();
     }
 }
 
+
+#[export]
 fn main() {
-    let v = vector::new::<u8>();
+    let v: vector<u8> = vector::new();
     v.push(1);
-    v.free();
+    v.destroy();
 }
 ```
 
@@ -90,8 +90,7 @@ Finished:
 - Codegen with C
 
 TBD:
-- Better error reporting
-- Debug information (spans)
+- Better error reporting & diagnostics
 - Compiler driver for multi-file compilation
 - All the other housekeeping stuff
 

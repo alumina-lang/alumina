@@ -21,6 +21,8 @@ pub enum AluminaErrorKind {
     NoAssociatedTypes,
     #[error("invalid literal")]
     InvalidLiteral,
+    #[error("character literals must be exactly one byte")]
+    InvalidCharLiteral,
     #[error("{} generic parameters expected, {} found" , .0, .1)]
     GenericParamCountMismatch(usize, usize),
     #[error("type expected here")]
@@ -79,6 +81,8 @@ pub enum AluminaErrorKind {
     MissingLangItem(LangItemKind),
     #[error("only slices can be range-indexed")]
     RangeIndexNonSlice,
+    #[error("internal error")]
+    InternalError,
 }
 
 #[derive(Debug, Error)]
@@ -86,7 +90,7 @@ pub enum AluminaError {
     #[error("{} at {:?}", .kind, .span)]
     Generic {
         kind: AluminaErrorKind,
-        span: Option<String>,
+        span: Option<Span>,
         backtrace: Backtrace, // automatically detected
     },
     #[error("{}", .source)]
@@ -95,7 +99,7 @@ pub enum AluminaError {
         source: io::Error,
     },
 }
-
+/*
 impl From<AluminaErrorKind> for AluminaError {
     fn from(inner: AluminaErrorKind) -> Self {
         Self::Generic {
@@ -106,39 +110,96 @@ impl From<AluminaErrorKind> for AluminaError {
     }
 }
 
-impl<'src> From<SyntaxError<'src>> for AluminaError {
-    fn from(syntax: SyntaxError<'src>) -> Self {
-        Self::Generic {
-            kind: syntax.kind,
-            span: Some(format!(
-                "{}:{}",
-                syntax.node.start_position().row,
-                syntax.node.start_position().column
-            )),
-            backtrace: Backtrace::capture(),
-        }
-    }
+
+*/
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FileId {
+    pub id: usize,
 }
 
-#[derive(Debug, Error)]
-#[error("{} at {}:{}", .kind, .node.start_position().row, .node.start_position().column)]
-pub struct SyntaxError<'src> {
-    pub kind: AluminaErrorKind,
-    node: Node<'src>,
+pub trait WithSpanDuringParsing<T> {
+    fn with_span<'ast, 'src>(
+        self,
+        scope: &Scope<'ast, 'src>,
+        node: Node<'src>,
+    ) -> Result<T, AluminaError>;
 }
 
-pub trait ToSyntaxError<T, E> {
-    fn to_syntax_error<'src>(self, node: Node<'src>) -> Result<T, SyntaxError<'src>>;
-}
-
-impl<T, E> ToSyntaxError<T, E> for Result<T, E>
+impl<T, E> WithSpanDuringParsing<T> for Result<T, E>
 where
     AluminaErrorKind: From<E>,
 {
-    fn to_syntax_error<'src>(self, node: Node<'src>) -> Result<T, SyntaxError<'src>> {
-        self.map_err(|e| SyntaxError {
+    fn with_span<'ast, 'src>(
+        self,
+        scope: &Scope<'ast, 'src>,
+        node: Node<'src>,
+    ) -> Result<T, AluminaError> {
+        let span = Span {
+            start: node.start_byte(),
+            end: node.end_byte(),
+            file: scope.code().unwrap().file_id(),
+        };
+
+        self.map_err(|e| AluminaError::Generic {
             kind: e.into(),
-            node,
+            span: Some(span),
+            backtrace: Backtrace::capture(),
+        })
+    }
+}
+
+pub trait AddSpan<T> {
+    fn add_span(self, span: Option<Span>) -> Self;
+}
+
+impl<T> AddSpan<T> for Result<T, AluminaError> {
+    fn add_span(self, span: Option<Span>) -> Self {
+        self.map_err(|e| match e {
+            AluminaError::Generic {
+                kind,
+                span: None,
+                backtrace,
+            } => AluminaError::Generic {
+                kind,
+                span,
+                backtrace,
+            },
+            _ => e,
+        })
+    }
+}
+
+pub trait WithNoSpan<T> {
+    fn with_no_span(self) -> Result<T, AluminaError>;
+}
+
+impl<T, E> WithNoSpan<T> for Result<T, E>
+where
+    AluminaErrorKind: From<E>,
+{
+    fn with_no_span(self) -> Result<T, AluminaError> {
+        self.map_err(|e| AluminaError::Generic {
+            kind: e.into(),
+            span: None,
+            backtrace: Backtrace::capture(),
+        })
+    }
+}
+
+pub trait WithSpan<T> {
+    fn with_span(self, item: Option<Span>) -> Result<T, AluminaError>;
+}
+
+impl<T, E> WithSpan<T> for Result<T, E>
+where
+    AluminaErrorKind: From<E>,
+{
+    fn with_span(self, item: Option<Span>) -> Result<T, AluminaError> {
+        self.map_err(|e| AluminaError::Generic {
+            kind: e.into(),
+            span: item,
+            backtrace: Backtrace::capture(),
         })
     }
 }
@@ -164,6 +225,8 @@ macro_rules! impl_allocatable {
 pub(crate) use impl_allocatable;
 
 use crate::ast::lang::LangItemKind;
+use crate::ast::{ExprP, Span};
+use crate::name_resolution::scope::Scope;
 
 pub trait Incrementable<T> {
     fn increment(&self) -> T;

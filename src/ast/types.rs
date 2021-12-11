@@ -5,7 +5,7 @@ use crate::parser::ParseCtx;
 use crate::AluminaVisitor;
 use crate::{
     ast::{BuiltinType, Ty, TyP},
-    common::{SyntaxError, ToSyntaxError},
+    common::{AluminaError, WithSpanDuringParsing},
     name_resolution::{
         resolver::NameResolver,
         scope::{NamedItem, Scope},
@@ -30,17 +30,14 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
         }
     }
 
-    fn visit_typeref(
-        &mut self,
-        node: tree_sitter::Node<'src>,
-    ) -> Result<TyP<'ast>, SyntaxError<'src>> {
+    fn visit_typeref(&mut self, node: tree_sitter::Node<'src>) -> Result<TyP<'ast>, AluminaError> {
         let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone());
         let path = visitor.visit(node)?;
         let mut resolver = NameResolver::new();
 
         let res = match resolver
             .resolve_item(self.scope.clone(), path)
-            .to_syntax_error(node)?
+            .with_span(&self.scope, node)?
         {
             ItemResolution::Item(NamedItem::Type(ty, _, _)) => {
                 self.ast.intern_type(Ty::NamedType(ty))
@@ -49,7 +46,7 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
                 self.ast.intern_type(Ty::Placeholder(ty))
             }
             ItemResolution::Defered(_, _) => {
-                return Err(AluminaErrorKind::NoAssociatedTypes).to_syntax_error(node)
+                return Err(AluminaErrorKind::NoAssociatedTypes).with_span(&self.scope, node)
             }
             a => panic!("unreachable: {:?}", a),
         };
@@ -59,7 +56,7 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
 }
 
 impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
-    type ReturnType = Result<TyP<'ast>, SyntaxError<'src>>;
+    type ReturnType = Result<TyP<'ast>, AluminaError>;
 
     fn visit_primitive_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let builtin = match self.code.node_text(node) {
@@ -149,7 +146,9 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
 
         let base = match *base {
             Ty::NamedType(ty) => ty,
-            _ => return Err(AluminaErrorKind::UnexpectedGenericParams).to_syntax_error(node),
+            _ => {
+                return Err(AluminaErrorKind::UnexpectedGenericParams).with_span(&self.scope, node)
+            }
         };
 
         Ok(self
@@ -181,6 +180,6 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
 
         Ok(self
             .ast
-            .intern_type(Ty::Function(elements.alloc_on(self.ast), type_node)))
+            .intern_type(Ty::Fn(elements.alloc_on(self.ast), type_node)))
     }
 }

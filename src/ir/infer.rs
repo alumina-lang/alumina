@@ -71,7 +71,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                     self.match_slot(inferred, a, b)?;
                 }
             }
-            (ast::Ty::Function(a1, a2), ir::Ty::Fn(b1, b2)) => {
+            (ast::Ty::Fn(a1, a2), ir::Ty::Fn(b1, b2)) => {
                 for (a, b) in a1.iter().zip(b1.iter()) {
                     self.match_slot(inferred, a, b)?;
                 }

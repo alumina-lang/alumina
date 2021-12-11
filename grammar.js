@@ -671,6 +671,7 @@ module.exports = grammar({
     _literal: ($) =>
       choice(
         $.string_literal,
+        $.char_literal,
         $.boolean_literal,
         $.integer_literal,
         $.float_literal,
@@ -743,6 +744,25 @@ module.exports = grammar({
           '"'
         )
       ),
+
+    char_literal: ($) => token(
+      seq(
+        '\'',
+          choice(
+            seq(
+              "\\",
+              choice(
+                /[^xu]/,
+                /u[0-9a-fA-F]{4}/,
+                /u{[0-9a-fA-F]+}/,
+                /x[0-9a-fA-F]{2}/
+              )
+            ),
+            /[^"\\\n]+/
+          ),
+        '\''
+      )
+    ),
 
     super: ($) => "super",
     crate: ($) => "crate",

@@ -1,7 +1,7 @@
 use crate::{
     ast::{Attribute, BinOp, UnOp},
     codegen::CName,
-    common::AluminaErrorKind,
+    common::AluminaError,
     ir::{const_eval::Value, ExprKind, ExprP, Function, IrId, Statement, Ty},
 };
 
@@ -23,7 +23,7 @@ pub fn write_function_signature<'ir, 'gen>(
     id: IrId,
     item: &'ir Function<'ir>,
     is_static: bool,
-) -> Result<(), AluminaErrorKind> {
+) -> Result<(), AluminaError> {
     let name = ctx.get_name(id);
 
     let mut attributes = if item.attributes.contains(&Attribute::ForceInline) {
@@ -137,7 +137,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         w!(self.fn_bodies, "{}", " ".repeat(self.indent));
     }
 
-    pub fn write_stmt(&mut self, stmt: &Statement<'ir>) -> Result<(), AluminaErrorKind> {
+    pub fn write_stmt(&mut self, stmt: &Statement<'ir>) -> Result<(), AluminaError> {
         match stmt {
             Statement::Expression(e) => {
                 if !(e.is_void() && e.is_unreachable()) {
@@ -165,11 +165,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         Ok(())
     }
 
-    pub fn write_expr(
-        &mut self,
-        expr: ExprP<'ir>,
-        bare_block: bool,
-    ) -> Result<(), AluminaErrorKind> {
+    pub fn write_expr(&mut self, expr: ExprP<'ir>, bare_block: bool) -> Result<(), AluminaError> {
         self.type_writer.add_type(expr.ty)?;
 
         if bare_block {
@@ -364,7 +360,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         &mut self,
         id: IrId,
         item: &'ir Function<'ir>,
-    ) -> Result<(), AluminaErrorKind> {
+    ) -> Result<(), AluminaError> {
         let should_export = item.attributes.contains(&Attribute::Export);
 
         self.type_writer.add_type(item.return_type)?;
@@ -393,7 +389,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         &mut self,
         id: IrId,
         item: &'ir Function<'ir>,
-    ) -> Result<(), AluminaErrorKind> {
+    ) -> Result<(), AluminaError> {
         let should_export = item.attributes.contains(&Attribute::Export);
 
         if item.body.is_empty() {

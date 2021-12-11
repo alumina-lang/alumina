@@ -1,7 +1,7 @@
 use tree_sitter::Node;
 
 use crate::ast::AstCtx;
-use crate::common::{AluminaErrorKind, ArenaAllocatable, SyntaxError, ToSyntaxError};
+use crate::common::{AluminaError, AluminaErrorKind, ArenaAllocatable, WithSpanDuringParsing};
 use crate::name_resolution::path::{Path, PathSegment};
 use crate::name_resolution::scope::{NamedItem, Scope};
 use crate::parser::ParseCtx;
@@ -67,14 +67,14 @@ where
 }
 
 impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
-    type ReturnType = Result<Path<'ast>, SyntaxError<'src>>;
+    type ReturnType = Result<Path<'ast>, AluminaError>;
 
     fn visit_crate(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         Ok(self
             .scope
             .find_crate()
             .ok_or(AluminaErrorKind::CrateNotAllowed)
-            .to_syntax_error(node)?
+            .with_span(&self.scope, node)?
             .path())
     }
 
@@ -83,7 +83,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
             .scope
             .find_super()
             .ok_or(AluminaErrorKind::SuperNotAllowed)
-            .to_syntax_error(node)?
+            .with_span(&self.scope, node)?
             .path())
     }
 
@@ -143,16 +143,16 @@ impl<'ast, 'src> UseClauseVisitor<'ast, 'src> {
         }
     }
 
-    fn parse_use_path(&mut self, node: Node<'src>) -> Result<Path<'ast>, SyntaxError<'src>> {
+    fn parse_use_path(&mut self, node: Node<'src>) -> Result<Path<'ast>, AluminaError> {
         let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone());
         visitor.visit(node)
     }
 }
 
 impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
-    type ReturnType = Result<(), SyntaxError<'src>>;
+    type ReturnType = Result<(), AluminaError>;
 
-    fn visit_use_as_clause(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
+    fn visit_use_as_clause(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
         let path = self.parse_use_path(node.child_by_field_name("path").unwrap())?;
         let alias = self
             .code
@@ -161,16 +161,16 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
 
         self.scope
             .add_item(alias, NamedItem::Alias(self.prefix.join_with(path)))
-            .to_syntax_error(node)?;
+            .with_span(&self.scope, node)?;
 
         Ok(())
     }
 
-    fn visit_use_list(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
+    fn visit_use_list(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
         self.visit_children_by_field(node, "item")
     }
 
-    fn visit_scoped_use_list(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
+    fn visit_scoped_use_list(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
         let suffix = self.parse_use_path(node.child_by_field_name("path").unwrap())?;
         let new_prefix = self.prefix.join_with(suffix);
         let old_prefix = std::mem::replace(&mut self.prefix, new_prefix);
@@ -181,19 +181,19 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
         Ok(())
     }
 
-    fn visit_identifier(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
+    fn visit_identifier(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
         let alias = self.code.node_text(node).alloc_on(self.ast);
         self.scope
             .add_item(
                 alias,
                 NamedItem::Alias(self.prefix.extend(PathSegment(alias))),
             )
-            .to_syntax_error(node)?;
+            .with_span(&self.scope, node)?;
 
         Ok(())
     }
 
-    fn visit_scoped_identifier(&mut self, node: Node<'src>) -> Result<(), SyntaxError<'src>> {
+    fn visit_scoped_identifier(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
         let path = self.parse_use_path(node.child_by_field_name("path").unwrap())?;
         let name = self
             .code
@@ -205,7 +205,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
                 name,
                 NamedItem::Alias(self.prefix.join_with(path.extend(PathSegment(name)))),
             )
-            .to_syntax_error(node)?;
+            .with_span(&self.scope, node)?;
 
         Ok(())
     }

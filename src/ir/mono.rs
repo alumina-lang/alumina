@@ -11,8 +11,8 @@ use super::lang::LangTypeKind;
 use super::optimize::Optimizer;
 use super::Lit;
 use crate::ast::lang::{LangItemKind, LangItemMap};
-use crate::ast::BuiltinType;
-use crate::common::{AluminaError, ArenaAllocatable};
+use crate::ast::{BuiltinType, Span};
+use crate::common::{AddSpan, AluminaError, ArenaAllocatable, WithNoSpan, WithSpan};
 use crate::ir::{FuncBodyCell, ValueType};
 use crate::{ast, common::AluminaErrorKind, ir};
 
@@ -22,6 +22,15 @@ macro_rules! builtin {
             .mono_ctx
             .ir
             .intern_type(crate::ir::Ty::Builtin(crate::ast::BuiltinType::$name))
+    };
+}
+
+macro_rules! mismatch {
+    ($expected:expr, $actual:expr) => {
+        crate::common::AluminaErrorKind::TypeMismatch(
+            format!("{:?}", $expected),
+            format!("{:?}", $actual),
+        )
     };
 }
 
@@ -91,15 +100,6 @@ pub struct Monomorphizer<'a, 'ast, 'ir> {
     loop_contexts: Vec<LoopContext<'ir>>,
 }
 
-macro_rules! mismatch {
-    ($expected:expr, $actual:expr) => {
-        crate::common::AluminaErrorKind::TypeMismatch(
-            format!("{:?}", $expected),
-            format!("{:?}", $actual),
-        )
-    };
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MonomorphizeKey<'ast, 'ir>(pub ast::ItemP<'ast>, pub &'ir [ir::TyP<'ir>]);
 
@@ -157,7 +157,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         match key.0.get() {
             ast::Item::Enum(en) => {
                 if key.1.len() != 0 {
-                    return Err(AluminaErrorKind::GenericParamCountMismatch(0, key.1.len()))?;
+                    return Err(AluminaErrorKind::GenericParamCountMismatch(0, key.1.len()))
+                        .with_no_span();
                 }
 
                 let mut members = Vec::new();
@@ -180,11 +181,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                         .get_or_insert(value_type)
                         .assignable_from(value_type)
                     {
-                        return Err(mismatch!(type_hint.unwrap(), value_type).into());
+                        return Err(mismatch!(type_hint.unwrap(), value_type)).with_span(m.span);
                     }
 
                     if !taken_values.insert(value) {
-                        return Err(AluminaErrorKind::DuplicateEnumMember.into());
+                        return Err(AluminaErrorKind::DuplicateEnumMember).with_span(m.span);
                     }
 
                     members.push(ir::EnumMember {
@@ -235,8 +236,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     return Err(AluminaErrorKind::GenericParamCountMismatch(
                         func.placeholders.len(),
                         key.1.len(),
-                    )
-                    .into());
+                    ))
+                    .with_no_span();
                 }
 
                 let mut child = Self::with_replacements(
@@ -292,8 +293,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     return Err(AluminaErrorKind::GenericParamCountMismatch(
                         s.placeholders.len(),
                         key.1.len(),
-                    )
-                    .into());
+                    ))
+                    .with_no_span();
                 }
 
                 let mut child = Self::with_replacements(
@@ -336,7 +337,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         I: IntoIterator<Item = ir::TyP<'ir>>,
         I::IntoIter: ExactSizeIterator,
     {
-        let item = self.mono_ctx.lang_items.get(kind)?;
+        let item = self.mono_ctx.lang_items.get(kind).with_no_span()?;
         let args = self.mono_ctx.ir.arena.alloc_slice_fill_iter(generic_args);
         let key = MonomorphizeKey(item, args);
 
@@ -358,7 +359,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 ir::Ty::NamedType(item)
             }
             ast::Ty::Extern(id) => ir::Ty::Extern(self.mono_ctx.map_id(id)),
-            ast::Ty::Function(args, ret) => ir::Ty::Fn(
+            ast::Ty::Fn(args, ret) => ir::Ty::Fn(
                 args.iter()
                     .map(|arg| self.lower_type(arg))
                     .collect::<Result<Vec<_>, _>>()?
@@ -513,7 +514,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             _ => {}
         }
 
-        Err(mismatch!(lhs_typ, rhs.ty).into())
+        Err(mismatch!(lhs_typ, rhs.ty)).with_no_span()
     }
 
     fn try_resolve_function(
@@ -563,8 +564,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 return Err(AluminaErrorKind::ParamCountMismatch(
                     fun.args.len() - self_count,
                     args.len(),
-                )
-                .into());
+                ))
+                .with_no_span();
             }
 
             let mut child = self.make_tentative_child();
@@ -606,7 +607,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 item,
                 generic_args.alloc_on(self.mono_ctx.ir),
             )),
-            None => Err(AluminaErrorKind::TypeHintRequired.into()),
+            None => Err(AluminaErrorKind::TypeHintRequired).with_no_span(),
         }
     }
 
@@ -669,7 +670,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 item,
                 generic_args.alloc_on(self.mono_ctx.ir),
             )),
-            None => Err(AluminaErrorKind::TypeHintRequired.into()),
+            None => Err(AluminaErrorKind::TypeHintRequired).with_no_span(),
         }
     }
 
@@ -702,7 +703,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 }
                 Ok(expr)
             }
-            _ => Err(AluminaErrorKind::CannotAddressRValue.into()),
+            _ => Err(AluminaErrorKind::CannotAddressRValue).with_no_span(),
         }
     }
 
@@ -770,7 +771,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 *lhs.ty
             }
 
-            _ => return Err(AluminaErrorKind::InvalidBinOp(op).into()),
+            _ => return Err(AluminaErrorKind::InvalidBinOp(op)).with_no_span(),
         };
 
         Ok(self.mono_ctx.ir.intern_type(result_typ))
@@ -780,12 +781,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         &mut self,
         stmt: &ast::Statement<'ast>,
     ) -> Result<Vec<ir::Statement<'ir>>, AluminaError> {
-        let result = match stmt {
-            ast::Statement::Expression(expr) => {
+        let result = match &stmt.kind {
+            ast::StatementKind::Expression(expr) => {
                 let expr = self.lower_expr(expr, None)?;
                 vec![ir::Statement::Expression(expr)]
             }
-            ast::Statement::LetDeclaration(decl) => {
+            ast::StatementKind::LetDeclaration(decl) => {
                 let id = self.mono_ctx.map_id(decl.id);
                 let type_hint = decl.typ.map(|t| self.lower_type(t)).transpose()?;
                 let init = decl
@@ -793,7 +794,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .map(|v| self.lower_expr(v, type_hint))
                     .transpose()?;
                 match (type_hint, init) {
-                    (None, None) => return Err(AluminaErrorKind::TypeHintRequired.into()),
+                    (None, None) => {
+                        return Err(AluminaErrorKind::TypeHintRequired).with_span(stmt.span)
+                    }
                     (Some(ty), None) => {
                         self.local_types.insert(id, ty);
                         vec![ir::Statement::LocalDef(id, ty)]
@@ -915,6 +918,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         inner: &ast::ExprP<'ast>,
         type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let span = inner.span;
         let inner = self.lower_expr(
             inner,
             type_hint.map(|ty| self.mono_ctx.ir.intern_type(ir::Ty::Pointer(ty, true))),
@@ -925,7 +929,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let result = match inner.ty {
             ir::Ty::Pointer(_, _) => self.builder.deref(inner),
-            _ => return Err(mismatch!("pointer", inner.ty).into()),
+            _ => return Err(mismatch!("pointer", inner.ty)).with_no_span(),
         };
 
         Ok(result.alloc_on(self.mono_ctx.ir))
@@ -948,7 +952,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let result = match inner.value_type {
             ir::ValueType::LValue => self.builder.r#ref(inner),
-            _ => return Err(AluminaErrorKind::CannotAddressRValue.into()),
+            _ => return Err(AluminaErrorKind::CannotAddressRValue).with_no_span(),
         };
 
         Ok(result)
@@ -985,7 +989,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             (ast::UnOp::BitNot, ir::Ty::Builtin(b)) if b.is_integer() => {}
             (ast::UnOp::Neg, ir::Ty::Builtin(b))
                 if (b.is_integer() && b.is_signed()) || b.is_float() => {}
-            _ => return Err(AluminaErrorKind::InvalidUnOp(op).into()),
+            _ => return Err(AluminaErrorKind::InvalidUnOp(op)).with_no_span(),
         };
 
         let result = ir::Expr::rvalue(ir::ExprKind::Unary(op, inner), inner.ty);
@@ -1061,11 +1065,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
 
         if lhs.value_type != ir::ValueType::LValue {
-            return Err(AluminaErrorKind::CannotAssignToRValue.into());
+            return Err(AluminaErrorKind::CannotAssignToRValue).with_no_span();
         }
 
         if lhs.is_const {
-            return Err(AluminaErrorKind::CannotAssignToConst.into());
+            return Err(AluminaErrorKind::CannotAssignToConst).with_no_span();
         }
 
         let rhs = self.try_coerce(lhs.ty, rhs)?;
@@ -1089,11 +1093,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
 
         if lhs.value_type != ir::ValueType::LValue {
-            return Err(AluminaErrorKind::CannotAssignToRValue.into());
+            return Err(AluminaErrorKind::CannotAssignToRValue).with_no_span();
         }
 
         if lhs.is_const {
-            return Err(AluminaErrorKind::CannotAssignToConst.into());
+            return Err(AluminaErrorKind::CannotAssignToConst).with_no_span();
         }
 
         let rhs = self.try_coerce(lhs.ty, rhs)?;
@@ -1123,8 +1127,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             return Err(AluminaErrorKind::MismatchedBranchTypes(
                 format!("{:?}", then.ty),
                 format!("{:?}", els.ty),
-            )
-            .into());
+            ))
+            .with_no_span();
         }
 
         let result = ir::Expr::rvalue(
@@ -1212,7 +1216,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             (ir::Ty::Builtin(BuiltinType::USize), ir::Ty::Pointer(_, _)) => {}
             (ir::Ty::Pointer(_, _), ir::Ty::Builtin(BuiltinType::USize)) => {}
 
-            _ => return Err(AluminaErrorKind::InvalidCast.into()),
+            _ => return Err(AluminaErrorKind::InvalidCast).with_no_span(),
         }
 
         Ok(self.builder.cast(expr, typ))
@@ -1338,7 +1342,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let method = method
             .or(unified_fn)
-            .ok_or_else(|| AluminaErrorKind::MethodNotFound(name.into()))?;
+            .ok_or_else(|| AluminaErrorKind::MethodNotFound(name.into()))
+            .with_no_span()?;
 
         let method = self.try_resolve_function(
             method,
@@ -1357,16 +1362,20 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         };
 
         if arg_types.is_empty() {
-            return Err(AluminaErrorKind::NotAMethod.into());
+            return Err(AluminaErrorKind::NotAMethod).with_no_span();
         }
 
         if arg_types.len() != args.len() + 1 {
-            return Err(
-                AluminaErrorKind::ParamCountMismatch(arg_types.len() - 1, args.len()).into(),
-            );
+            return Err(AluminaErrorKind::ParamCountMismatch(
+                arg_types.len() - 1,
+                args.len(),
+            ))
+            .with_no_span();
         }
 
-        let ir_self_arg = self.autoref(ir_self_arg, arg_types[0])?;
+        let ir_self_arg = self
+            .autoref(ir_self_arg, arg_types[0])
+            .add_span(self_arg.span)?;
         let mut args = once(Ok(ir_self_arg))
             .chain(
                 args.iter()
@@ -1401,8 +1410,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         // pointers-to-method, so these need to be invoked directly. This allow us to switch on the
         // callee's expression kind to determine how to handle it.
 
-        let callee = match callee {
-            ast::Expr::Fn(ast::FnKind::Normal(item), generic_args) => {
+        let callee = match &callee.kind {
+            ast::ExprKind::Fn(ast::FnKind::Normal(item), generic_args) => {
                 let item = self.try_resolve_function(
                     item,
                     *generic_args,
@@ -1414,7 +1423,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
                 self.builder.function(item)
             }
-            ast::Expr::Fn(ast::FnKind::Defered(spec), generic_args) => {
+            ast::ExprKind::Fn(ast::FnKind::Defered(spec), generic_args) => {
                 let typ = match self.replacements.get(&spec.placeholder) {
                     Some(ir::Ty::NamedType(typ)) => typ,
                     _ => unreachable!(),
@@ -1423,7 +1432,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let associated_fns = self.get_associated_fns(typ);
                 let func = associated_fns
                     .get(spec.name)
-                    .ok_or(AluminaErrorKind::UnresolvedItem(spec.name.to_string()))?;
+                    .ok_or(AluminaErrorKind::UnresolvedItem(spec.name.to_string()))
+                    .with_no_span()?;
 
                 let item = self.try_resolve_function(
                     func,
@@ -1436,7 +1446,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
                 self.builder.function(item)
             }
-            ast::Expr::Field(e, field, unified_fn) => {
+            ast::ExprKind::Field(e, field, unified_fn) => {
                 // Methods are resolved in the following order - field has precedence, then associated
                 // functions, then free functions with UFCS. We never want UFCS to shadow native fields.
                 match self.lower_method_call(e, *unified_fn, field, args, type_hint)? {
@@ -1449,11 +1459,15 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let (arg_types, return_type) = match callee.ty {
             ir::Ty::Fn(arg_types, return_type) => (arg_types, return_type),
-            _ => return Err(AluminaErrorKind::FunctionExpectedHere.into()),
+            _ => return Err(AluminaErrorKind::FunctionExpectedHere).with_no_span(),
         };
 
         if arg_types.len() != args.len() {
-            return Err(AluminaErrorKind::ParamCountMismatch(arg_types.len(), args.len()).into());
+            return Err(AluminaErrorKind::ParamCountMismatch(
+                arg_types.len(),
+                args.len(),
+            ))
+            .with_no_span();
         }
 
         let mut args = args
@@ -1513,7 +1527,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let associated_fns = self.get_associated_fns(typ);
                 let func = associated_fns
                     .get(spec.name)
-                    .ok_or(AluminaErrorKind::UnresolvedItem(spec.name.to_string()))?;
+                    .ok_or(AluminaErrorKind::UnresolvedItem(spec.name.to_string()))
+                    .with_no_span()?;
 
                 let item = self.try_resolve_function(
                     func,
@@ -1537,15 +1552,16 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         index: usize,
         _type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let span = tup.span;
         let tup = self.lower_expr(tup, None)?;
         let result = match tup.ty {
             ir::Ty::Tuple(types) => {
                 if types.len() <= index {
-                    return Err(AluminaErrorKind::TupleIndexOutOfBounds.into());
+                    return Err(AluminaErrorKind::TupleIndexOutOfBounds).with_no_span();
                 }
                 self.builder.tuple_index(tup, index, types[index])
             }
-            _ => return Err(mismatch!("tuple", tup.ty).into()),
+            _ => return Err(mismatch!("tuple", tup.ty)).with_span(span),
         };
 
         // We want to typecheck even if it diverges, no point in trying to access
@@ -1563,6 +1579,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         field: &'ast str,
         _type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let obj_span = obj.span;
         let obj = self.lower_expr(obj, None)?;
 
         let result = match obj.ty.canonical_type() {
@@ -1570,7 +1587,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let field_map = self.get_struct_field_map(item);
                 let field = field_map
                     .get(field)
-                    .ok_or(AluminaErrorKind::UnresolvedItem(field.to_string()))?;
+                    .ok_or(AluminaErrorKind::UnresolvedItem(field.to_string()))
+                    .with_no_span()?;
 
                 let mut obj = obj;
                 while let ir::Ty::Pointer(_, _) = obj.ty {
@@ -1579,7 +1597,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
                 self.builder.field(obj, field.id, field.ty)
             }
-            _ => return Err(AluminaErrorKind::StructExpectedHere.into()),
+            _ => return Err(AluminaErrorKind::StructExpectedHere).with_span(obj_span),
         };
 
         Ok(result)
@@ -1591,6 +1609,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         index: ast::ExprP<'ast>,
         type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let inner_span = inner.span;
         let inner = self.lower_expr(
             inner,
             type_hint.map(|ty| self.mono_ctx.ir.intern_type(ir::Ty::Pointer(ty, true))),
@@ -1623,7 +1642,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     _ => {}
                 }
 
-                return Err(mismatch!("array or pointer", inner.ty).into());
+                return Err(mismatch!("array or pointer", inner.ty)).with_span(inner_span);
             }
         };
 
@@ -1682,7 +1701,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     }
                 }
             }
-            _ => return Err(AluminaErrorKind::RangeIndexNonSlice.into()),
+            _ => return Err(AluminaErrorKind::RangeIndexNonSlice).with_no_span(),
         };
 
         Ok(result)
@@ -1718,7 +1737,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ast::Ty::GenericType(item, generic_args) => {
                 self.try_resolve_struct(item, Some(generic_args), inits, type_hint)?
             }
-            _ => return Err(AluminaErrorKind::StructExpectedHere.into()),
+            _ => return Err(AluminaErrorKind::StructExpectedHere).with_no_span(),
         };
 
         let field_map = self.get_struct_field_map(item);
@@ -1729,7 +1748,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .lower_expr(f.value, Some(field.ty))
                     .and_then(|e| self.try_coerce(field.ty, e))
                     .map(|i| (*field, i)),
-                None => Err(AluminaErrorKind::UnresolvedItem(f.name.to_string()).into()),
+                None => Err(AluminaErrorKind::UnresolvedItem(f.name.to_string())).with_span(f.span),
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -1783,7 +1802,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 .mono_ctx
                 .ir
                 .intern_type(ir::Ty::Array(element_type, elements.len())),
-            None => return Err(AluminaErrorKind::TypeHintRequired.into()),
+            None => return Err(AluminaErrorKind::TypeHintRequired).with_no_span(),
         };
 
         let temporary = self.mono_ctx.ir.make_id();
@@ -1816,7 +1835,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     typ,
                 )
             }
-            _ => return Err(AluminaErrorKind::CycleDetected.into()),
+            _ => return Err(AluminaErrorKind::CycleDetected).with_no_span(),
         };
 
         Ok(result.alloc_on(self.mono_ctx.ir))
@@ -1827,37 +1846,37 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         expr: ast::ExprP<'ast>,
         type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let result = match expr {
-            ast::Expr::Void => Ok(self.builder.void()),
-            ast::Expr::Block(statements, ret) => self.lower_block(statements, ret, type_hint),
-            ast::Expr::Lit(lit) => self.lower_lit(lit, type_hint),
-            ast::Expr::Deref(expr) => self.lower_deref(expr, type_hint),
-            ast::Expr::Ref(expr) => self.lower_ref(expr, type_hint),
-            ast::Expr::Local(id) => self.lower_local(*id, type_hint),
-            ast::Expr::Unary(op, inner) => self.lower_unary(*op, inner, type_hint),
-            ast::Expr::Assign(lhs, rhs) => self.lower_assign(lhs, rhs, type_hint),
-            ast::Expr::If(cond, then, els) => self.lower_if(cond, then, els, type_hint),
-            ast::Expr::Cast(expr, typ) => self.lower_cast(expr, typ, type_hint),
-            ast::Expr::Loop(body) => self.lower_loop(body, type_hint),
-            ast::Expr::Binary(op, lhs, rhs) => self.lower_binary(*op, lhs, rhs, type_hint),
-            ast::Expr::AssignOp(op, lhs, rhs) => self.lower_assign_op(*op, lhs, rhs, type_hint),
-            ast::Expr::Break(value) => self.lower_break(*value, type_hint),
-            ast::Expr::Continue => self.lower_continue(type_hint),
-            ast::Expr::Tuple(exprs) => self.lower_tuple(exprs, type_hint),
-            ast::Expr::TupleIndex(tup, index) => self.lower_tuple_index(tup, *index, type_hint),
-            ast::Expr::Field(tup, field, _) => self.lower_field(tup, field, type_hint),
-            ast::Expr::Call(func, args) => self.lower_call(func, args, type_hint),
-            ast::Expr::Array(elements) => self.lower_array_expression(elements, type_hint),
-            ast::Expr::EnumValue(typ, id) => self.lower_enum_value(typ, *id, type_hint),
-            ast::Expr::Struct(func, initializers) => {
+        let result = match &expr.kind {
+            ast::ExprKind::Void => Ok(self.builder.void()),
+            ast::ExprKind::Block(statements, ret) => self.lower_block(statements, ret, type_hint),
+            ast::ExprKind::Lit(lit) => self.lower_lit(lit, type_hint),
+            ast::ExprKind::Deref(expr) => self.lower_deref(expr, type_hint),
+            ast::ExprKind::Ref(expr) => self.lower_ref(expr, type_hint),
+            ast::ExprKind::Local(id) => self.lower_local(*id, type_hint),
+            ast::ExprKind::Unary(op, inner) => self.lower_unary(*op, inner, type_hint),
+            ast::ExprKind::Assign(lhs, rhs) => self.lower_assign(lhs, rhs, type_hint),
+            ast::ExprKind::If(cond, then, els) => self.lower_if(cond, then, els, type_hint),
+            ast::ExprKind::Cast(expr, typ) => self.lower_cast(expr, typ, type_hint),
+            ast::ExprKind::Loop(body) => self.lower_loop(body, type_hint),
+            ast::ExprKind::Binary(op, lhs, rhs) => self.lower_binary(*op, lhs, rhs, type_hint),
+            ast::ExprKind::AssignOp(op, lhs, rhs) => self.lower_assign_op(*op, lhs, rhs, type_hint),
+            ast::ExprKind::Break(value) => self.lower_break(*value, type_hint),
+            ast::ExprKind::Continue => self.lower_continue(type_hint),
+            ast::ExprKind::Tuple(exprs) => self.lower_tuple(exprs, type_hint),
+            ast::ExprKind::TupleIndex(tup, index) => self.lower_tuple_index(tup, *index, type_hint),
+            ast::ExprKind::Field(tup, field, _) => self.lower_field(tup, field, type_hint),
+            ast::ExprKind::Call(func, args) => self.lower_call(func, args, type_hint),
+            ast::ExprKind::Array(elements) => self.lower_array_expression(elements, type_hint),
+            ast::ExprKind::EnumValue(typ, id) => self.lower_enum_value(typ, *id, type_hint),
+            ast::ExprKind::Struct(func, initializers) => {
                 self.lower_struct_expression(func, initializers, type_hint)
             }
-            ast::Expr::Index(inner, index) => self.lower_index(inner, index, type_hint),
-            ast::Expr::RangeIndex(inner, lower, upper) => {
+            ast::ExprKind::Index(inner, index) => self.lower_index(inner, index, type_hint),
+            ast::ExprKind::RangeIndex(inner, lower, upper) => {
                 self.lower_range_index(inner, *lower, *upper, type_hint)
             }
-            ast::Expr::Return(inner) => self.lower_return(*inner, type_hint),
-            ast::Expr::Fn(item, args) => self.lower_fn(item.clone(), *args, type_hint),
+            ast::ExprKind::Return(inner) => self.lower_return(*inner, type_hint),
+            ast::ExprKind::Fn(item, args) => self.lower_fn(item.clone(), *args, type_hint),
             _ => panic!("unimplemented {:?}", expr),
         };
         /*
@@ -1868,6 +1887,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     }
                 };
         */
-        result
+        result.add_span(expr.span)
     }
 }

@@ -3,7 +3,7 @@ pub mod lang;
 pub mod maker;
 pub mod types;
 
-use crate::common::{Allocatable, ArenaAllocatable, Incrementable};
+use crate::common::{Allocatable, ArenaAllocatable, FileId, Incrementable};
 use crate::name_resolution::path::{Path, PathSegment};
 use std::fmt::Display;
 use std::fmt::{Debug, Formatter};
@@ -216,7 +216,7 @@ pub enum Ty<'ast> {
     Slice(TyP<'ast>, bool),
     Array(TyP<'ast>, usize),
     Tuple(&'ast [TyP<'ast>]),
-    Function(&'ast [TyP<'ast>], TyP<'ast>),
+    Fn(&'ast [TyP<'ast>], TyP<'ast>),
     GenericType(ItemP<'ast>, &'ast [TyP<'ast>]),
 }
 
@@ -321,6 +321,7 @@ pub struct Field<'ast> {
     pub id: AstId,
     pub name: &'ast str,
     pub typ: TyP<'ast>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -328,6 +329,7 @@ pub struct EnumMember<'ast> {
     pub id: AstId,
     pub name: Option<&'ast str>,
     pub value: Option<ExprP<'ast>>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -343,6 +345,7 @@ pub struct Struct<'ast> {
     pub associated_fns: &'ast [AssociatedFn<'ast>],
     pub attributes: &'ast [Attribute],
     pub fields: &'ast [Field<'ast>],
+    pub span: Option<Span>,
 }
 
 #[derive(Debug)]
@@ -351,12 +354,14 @@ pub struct Enum<'ast> {
     pub associated_fns: &'ast [AssociatedFn<'ast>],
     pub attributes: &'ast [Attribute],
     pub members: &'ast [EnumMember<'ast>],
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct Parameter<'ast> {
     pub id: AstId,
     pub typ: TyP<'ast>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug)]
@@ -367,6 +372,7 @@ pub struct Function<'ast> {
     pub args: &'ast [Parameter<'ast>],
     pub return_type: TyP<'ast>,
     pub body: Option<ExprP<'ast>>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
@@ -377,9 +383,15 @@ pub struct LetDeclaration<'ast> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-pub enum Statement<'ast> {
+pub enum StatementKind<'ast> {
     Expression(ExprP<'ast>),
     LetDeclaration(LetDeclaration<'ast>),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+pub struct Statement<'ast> {
+    pub kind: StatementKind<'ast>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
@@ -446,6 +458,7 @@ pub enum Lit<'ast> {
 pub struct FieldInitializer<'ast> {
     pub name: &'ast str,
     pub value: ExprP<'ast>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
@@ -461,7 +474,7 @@ pub enum FnKind<'ast> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-pub enum Expr<'ast> {
+pub enum ExprKind<'ast> {
     Block(&'ast [Statement<'ast>], ExprP<'ast>),
     Binary(BinOp, ExprP<'ast>, ExprP<'ast>),
     Call(ExprP<'ast>, &'ast [ExprP<'ast>]),
@@ -491,6 +504,19 @@ pub enum Expr<'ast> {
     Cast(ExprP<'ast>, TyP<'ast>),
 
     Void,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+    pub file: FileId,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+pub struct Expr<'ast> {
+    pub kind: ExprKind<'ast>,
+    pub span: Option<Span>,
 }
 
 pub type ExprP<'ast> = &'ast Expr<'ast>;

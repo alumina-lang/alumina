@@ -8,7 +8,7 @@ use std::{
 };
 
 use crate::{
-    common::{AluminaErrorKind, Incrementable},
+    common::{AluminaError, Incrementable},
     ir::{IRItem, IRItemP},
 };
 use bumpalo::Bump;
@@ -132,7 +132,7 @@ impl Display for CName<'_> {
     }
 }
 
-pub fn codegen<'ir>(items: &[IRItemP<'ir>]) -> Result<String, AluminaErrorKind> {
+pub fn codegen<'ir>(items: &[IRItemP<'ir>]) -> Result<String, AluminaError> {
     let ctx = CodegenCtx::new();
     let type_writer = TypeWriter::new(&ctx);
     let mut function_writer = FunctionWriter::new(&ctx, &type_writer);

@@ -1,23 +1,10 @@
-mod mem {
-    fn malloc(size: usize) -> &() { loop{} }
-    fn free<T>(ptr: &T) { loop{} }
-    fn sizeof() -> usize { loop{} }
-    fn memcpy<T>(a: &T, b: &T, len: usize) -> usize { loop{} }
-}
-
-fn sizeof<T>() -> usize {
-    loop{}
-}
-
 struct vector<T> {
-    data: &T,
+    data: &mut [T],
     length: usize,
-    capacity: usize,
 }
-
 
 impl vector {
-    use mem::{memcpy, malloc};
+    use std::mem::{slice, alloc, copy_to, free};
 
     fn new<T>() -> vector<T> {
         with_capacity(0)
@@ -25,56 +12,48 @@ impl vector {
 
     fn with_capacity<T>(capacity: usize) -> vector<T> {
         vector {
-            data: malloc(sizeof::<T>() * capacity) as &T,
+            data: alloc::<T>(capacity),
             length: 0,
-            capacity: capacity,
         }
     }
 
-    fn push<T>(self: &vector<T>, value: T) {
-        if self.length == self.capacity {
-            let new_capacity = self.capacity * 2;
-            let new_ptr = malloc(sizeof::<T>() * new_capacity) as &T;
-            memcpy(new_ptr, self.data, self.length);
-            mem::free(self.data);
-            self.data = new_ptr;
-            self.capacity = new_capacity;
+    fn reserve<T>(self: &mut vector<T>, new_capacity: usize) {
+        if self.data.len < new_capacity {
+            self.data = {
+                let new_data = alloc::<T>(new_capacity);
+                self.data.copy_to(new_data.ptr);
+                self.data.free();
+                new_data
+            };
+        }
+    }
+
+    fn push<T>(self: &mut vector<T>, value: T) {
+        use std::math::max;
+
+        if self.length == self.data.len {
+            self.reserve(max(self.data.len, 1) * 2);
         }
 
         self.data[self.length] = value;
         self.length += 1;
     }
 
-    fn pop<T>(self: &vector<T>) -> T {
+    fn pop<T>(self: &mut vector<T>) -> T {
         let value = self.data[self.length - 1];
         self.length -= 1;
         value
     }
 
-    fn shrink_to_fit<T>(self: &vector<T>) {
-        if self.length < self.capacity {
-            let new_capacity = self.length;
-            let new_ptr = malloc(sizeof::<T>() * new_capacity) as &T;
-            memcpy(new_ptr, self.data, self.length);
-            free(self.data);
-            self.data = new_ptr;
-            self.capacity = new_capacity;
-        }
-    }
-
-    fn index<T>(self: &vector<T>, index: usize) -> &T {
-        &self.data[index]
-    }
-
-    fn free<T>(self: &vector<T>) {
-        mem::free(self.data);
+    fn destroy<T>(self: &mut vector<T>) {
+        self.data.free();
     }
 }
 
 
 #[export]
 fn main() {
-    let v = vector::new::<u8>();
+    let v: vector<u8> = vector::new();
     v.push(1);
-    v.free();
+    v.destroy();
 }

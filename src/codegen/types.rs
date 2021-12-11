@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::HashSet, fmt::Write};
 use crate::{
     ast::BuiltinType,
     codegen::w,
-    common::AluminaErrorKind,
+    common::AluminaError,
     ir::{IRItem, Ty, TyP},
 };
 
@@ -43,7 +43,7 @@ impl<'ir, 'gen> TypeWriter<'ir, 'gen> {
         }
     }
 
-    pub fn add_type(&self, ty: TyP<'ir>) -> Result<(), AluminaErrorKind> {
+    pub fn add_type(&self, ty: TyP<'ir>) -> Result<(), AluminaError> {
         self.inner.borrow_mut().add_type(ty, false)
     }
 
@@ -61,7 +61,7 @@ impl<'ir, 'gen> TypeWriter<'ir, 'gen> {
 }
 
 impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
-    fn add_type(&mut self, ty: TyP<'ir>, ref_only: bool) -> Result<(), AluminaErrorKind> {
+    fn add_type(&mut self, ty: TyP<'ir>, ref_only: bool) -> Result<(), AluminaError> {
         let body_only = match self.ctx.get_type_maybe(ty) {
             Some(_) if ref_only || self.needs_body.contains(ty) => return Ok(()),
             Some(_) => true,
@@ -181,7 +181,7 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
         Ok(())
     }
 
-    fn write_type_body(&mut self, ty: TyP<'ir>) -> Result<(), AluminaErrorKind> {
+    fn write_type_body(&mut self, ty: TyP<'ir>) -> Result<(), AluminaError> {
         if self.body_map.contains(&ty) {
             return Ok(());
         }
