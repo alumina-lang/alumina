@@ -1,10 +1,11 @@
+use std::io::print;
 struct vector<T> {
     data: &mut [T],
     length: usize,
 }
 
 impl vector {
-    use std::mem::{slice, alloc, copy_to, free};
+    use std::mem::{slice, alloc, copy_to};
 
     fn new<T>() -> vector<T> {
         with_capacity(0)
@@ -22,7 +23,7 @@ impl vector {
             self.data = {
                 let new_data = alloc::<T>(new_capacity);
                 self.data.copy_to(new_data.ptr);
-                self.data.free();
+                self.free();
                 new_data
             };
         }
@@ -45,15 +46,27 @@ impl vector {
         value
     }
 
-    fn destroy<T>(self: &mut vector<T>) {
+    fn empty<T>(self: &vector<T>) -> bool {
+        self.length == 0
+    }
+
+    fn free<T>(self: &mut vector<T>) {
+        use std::mem::free;
         self.data.free();
     }
 }
 
-
 #[export]
 fn main() {
-    let v: vector<u8> = vector::new();
-    v.push(1);
-    v.destroy();
+    let v: vector<&[u8]> = vector::new();
+    defer v.free();
+    
+    v.push("vector.\n");
+    v.push("a ");
+    v.push("am ");
+    v.push("I ");
+
+    while !v.empty() {
+        print(v.pop());
+    }
 }

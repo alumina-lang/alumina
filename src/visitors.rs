@@ -1,11 +1,11 @@
 use tree_sitter::Node;
 
 use crate::ast::AstCtx;
-use crate::common::{AluminaError, AluminaErrorKind, ArenaAllocatable, WithSpanDuringParsing};
+use crate::common::{AluminaError, ArenaAllocatable, CodeErrorKind, WithSpanDuringParsing};
 use crate::name_resolution::path::{Path, PathSegment};
 use crate::name_resolution::scope::{NamedItem, Scope};
+use crate::parser::AluminaVisitor;
 use crate::parser::ParseCtx;
-use crate::AluminaVisitor;
 
 pub struct ScopedPathVisitor<'ast, 'src> {
     ast: &'ast AstCtx<'ast>,
@@ -73,7 +73,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
         Ok(self
             .scope
             .find_crate()
-            .ok_or(AluminaErrorKind::CrateNotAllowed)
+            .ok_or(CodeErrorKind::CrateNotAllowed)
             .with_span(&self.scope, node)?
             .path())
     }
@@ -82,7 +82,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
         Ok(self
             .scope
             .find_super()
-            .ok_or(AluminaErrorKind::SuperNotAllowed)
+            .ok_or(CodeErrorKind::SuperNotAllowed)
             .with_span(&self.scope, node)?
             .path())
     }

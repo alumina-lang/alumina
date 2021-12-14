@@ -4,6 +4,7 @@ use tree_sitter::Node;
 pub struct NodeWrapper<'t>(&'t str, Node<'t>, usize);
 
 impl<'t> NodeWrapper<'t> {
+    #[allow(unused)]
     pub fn new(source: &'t str, node: Node<'t>) -> Self {
         Self(source, node, 0)
     }

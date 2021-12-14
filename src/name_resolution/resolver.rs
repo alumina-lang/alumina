@@ -1,6 +1,6 @@
 use crate::{
     ast::AstId,
-    common::AluminaErrorKind,
+    common::CodeErrorKind,
     name_resolution::{path::Path, scope::NamedItem},
 };
 use std::collections::HashSet;
@@ -12,7 +12,6 @@ use super::{
 
 pub struct NameResolver<'ast, 'src> {
     seen_aliases: HashSet<(u32, *const ScopeInner<'ast, 'src>, Path<'ast>)>,
-    depth: usize,
 }
 
 #[derive(Debug)]
@@ -36,7 +35,6 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
     pub fn new() -> Self {
         NameResolver {
             seen_aliases: HashSet::new(),
-            depth: 0,
         }
     }
 
@@ -44,12 +42,12 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
         &mut self,
         self_scope: Scope<'ast, 'src>,
         path: Path<'ast>,
-    ) -> Result<ScopeResolution<'ast, 'src>, AluminaErrorKind> {
+    ) -> Result<ScopeResolution<'ast, 'src>, CodeErrorKind> {
         if !self
             .seen_aliases
             .insert((1, self_scope.0.as_ptr(), path.clone()))
         {
-            return Err(AluminaErrorKind::CycleDetected);
+            return Err(CodeErrorKind::CycleDetected);
         }
 
         if path.absolute {
@@ -91,14 +89,14 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
             return self.resolve_scope(parent, path);
         }
 
-        Err(AluminaErrorKind::UnresolvedPath(path.to_string()))
+        Err(CodeErrorKind::UnresolvedPath(path.to_string()))
     }
 
     pub fn resolve_item(
         &mut self,
         scope: Scope<'ast, 'src>,
         path: Path<'ast>,
-    ) -> Result<ItemResolution<'ast, 'src>, AluminaErrorKind> {
+    ) -> Result<ItemResolution<'ast, 'src>, CodeErrorKind> {
         self.resolve_item_impl(scope.clone(), scope, path)
     }
 
@@ -107,16 +105,16 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
         self_scope: Scope<'ast, 'src>,
         scope: Scope<'ast, 'src>,
         path: Path<'ast>,
-    ) -> Result<ItemResolution<'ast, 'src>, AluminaErrorKind> {
+    ) -> Result<ItemResolution<'ast, 'src>, CodeErrorKind> {
         if !self
             .seen_aliases
             .insert((2, scope.0.as_ptr(), path.clone()))
         {
-            return Err(AluminaErrorKind::CycleDetected);
+            return Err(CodeErrorKind::CycleDetected);
         }
 
         if path.segments.is_empty() {
-            return Err(AluminaErrorKind::UnresolvedPath(path.to_string()));
+            return Err(CodeErrorKind::UnresolvedPath(path.to_string()));
         }
 
         let last_segment = path.segments.last().unwrap();
@@ -148,7 +146,7 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
                     if original_func == current_func {
                         return Ok(ItemResolution::Item(item.clone()));
                     } else {
-                        return Err(AluminaErrorKind::CannotReferenceLocal(path.to_string()));
+                        return Err(CodeErrorKind::CannotReferenceLocal(path.to_string()));
                     }
                 }
                 _ => return Ok(ItemResolution::Item(item.clone())),
@@ -161,6 +159,6 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
             }
         }
 
-        Err(AluminaErrorKind::UnresolvedPath(path.to_string()))
+        Err(CodeErrorKind::UnresolvedPath(path.to_string()))
     }
 }

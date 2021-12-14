@@ -2,46 +2,41 @@
 
 ## General
 
+- An actual CLI interafce for the compiler so it can compile more than one hardcoded file.
 - For loop
-- Equality comparison for slices
+- Macros
+- Equality comparison for slices (should be fixed, memcmp is not appropriate everywhere)
 - Whole const_eval thing
 - Global variables (+ static initialization)
 - Consts
-- Compile errrorrrsss (spans?)
-    - Tree-sitter ERROR nodes
+- Tree-sitter ERROR nodes. Currently a lot of syntactically invalid code is accepted if it is in nodes that parse tree visitors don't care about.
 - Force inlining in IR (especially for slice coercions - function call is an overkill)
     - Is this needed or let C compiler do it?
-    - It's easy tho? No it's not - simple substitution can lead to multiple evaluation.
 - impl for builtin types/arrays/...?
     - Now easier to do with lang items :)
-- Being able to take address of an rvalue (temporary name binding - important for method chaining)
-    - This is critical, but can be tough. We need to bind temporary to somewhere above the current scope.
-- `()` is not the only 0-sized type, also `[(); 0]`, structs with no fields, etc. How should this be handled?
-- Lambdas cannot bind placeholders, leading to a panic during monomorphization, example:
-
-  ```
-  fn generic<T>() {
-      let x = |x: T| -> T { x }; // panic: unbound placeholder
-  }
-  ```
-
-  Resolving closures at monomorphization time would also be better as we can statically inline @ call site them 
-  instead of having to pass them around as function pointers.
-
-## Investigate
-
-- What happens/should happen to UFCS associated function calls if they are renamed with `use` clause?
+- stack overflow in codegen stage because infinite size recursive structs are not rejected during monomorphization
+- Whole ZST/never type handling might still be buggy, in particular, uninitialized variables of `!` type might be problematic since lowering is quite liberal with making temporary variable declarations for various stuff.
+- compile flags support (cfg)
+- compiler warnings
 
 ## Std library
 
 - basic structure. how big should it be?
-- idioms for IO
-- string formatting
-- collections
+- these are definitely needed:
+  - standard and file IO
+  - string formatting
+  - collections
+  - math
+
+## Compiler architecture
+
+- Is IR low-level enough to eventually target LLVM?
+- Should monomorphization and type checking be separate stages? Can this even be done with the loose duck-typed language?
+- Will the compiler architecture scale to large programs? Is it possible to pre-compile the libraries at least to AST?
 
 ## Codegen
 
-- Statement expresssion ends witha void type -> C does not compile (issue with if/else if one branch is ! or () and the other is a value
+- Statement expresssion ends with a void type -> C does not compile (issue with if/else if one branch is `!` and the other is a value)
 
 ## Exploratory
 
@@ -56,15 +51,18 @@
       return (null, err); 
   }
   ```
-  Nah, that's ugly. 
+  Nah, that's ugly. Might need proper tagged unions at some point for Maybe/Either/...
 
 - tuple unpacking 
 - defer expressions? or at that point full RAII? probably not.
 - instead of specialization, there could be a const if/const match expression - wow that'd be amazing!
-- Rust-like macros?
 - generators? coroutines? lmao, not gonna happen
 
 
 ## Bikeshedding
 
-- `void` vs `()`. I don't like `()` too much as a type
+- `void` vs `()`. I don't like `()` too much
+
+## Tooling
+
+- Syntax highlighter for VS Code

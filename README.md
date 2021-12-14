@@ -1,6 +1,6 @@
 # Alumina
 
-Alumina is a C-like programming language with Rust-like syntax.
+Alumina is a C-like programming language with a Rust-like syntax.
 
 It has the following conveniences over C:
 
@@ -8,7 +8,9 @@ It has the following conveniences over C:
 - [Unified call syntax](https://en.wikipedia.org/wiki/Uniform_Function_Call_Syntax) for functions in scope
 - Block expressions, lambdas (stateless only, closures are not supported)
 - Module system, namespaces and 2-pass compilation (no header files and forward declarations needed)
-- Richer type system: strong enums, slices, tuples, unit and never types. Also some type inference (though not full Hindley-Milner)
+- Richer type system: strong enums, array slices, tuples, 0-sized types, never type.
+- Const evaluation (very limited at the moment)
+- Go-style defer expressions
 
 Alumina can be thought of as Go without a garbage collector and runtime. Unlike C++, Rust and D is not a RAII language and requires manual memory management and is not memory-safe.
 
@@ -22,7 +24,7 @@ struct vector<T> {
 }
 
 impl vector {
-    use std::mem::{slice, alloc, copy_to, free};
+    use std::mem::{slice, alloc, copy_to};
 
     fn new<T>() -> vector<T> {
         with_capacity(0)
@@ -40,7 +42,7 @@ impl vector {
             self.data = {
                 let new_data = alloc::<T>(new_capacity);
                 self.data.copy_to(new_data.ptr);
-                self.data.free();
+                self.free();
                 new_data
             };
         }
@@ -63,36 +65,52 @@ impl vector {
         value
     }
 
-    fn destroy<T>(self: &mut vector<T>) {
+    fn empty<T>(self: &vector<T>) -> bool {
+        self.length == 0
+    }
+
+    fn free<T>(self: &mut vector<T>) {
+        use std::mem::free;
         self.data.free();
     }
 }
 
+use std::io::print;
 
 #[export]
 fn main() {
-    let v: vector<u8> = vector::new();
-    v.push(1);
-    v.destroy();
+    let v: vector<&[u8]> = vector::new();
+    defer v.free();
+    
+    v.push("vector.\n");
+    v.push("a ");
+    v.push("am ");
+    v.push("I ");
+
+    while !v.empty() {
+        print(v.pop());
+    }
 }
 ```
 
 ## Status 
 
-Bootstrap Alumina compiler is written in Rust and is currently actively developed. It will compile to C code.
+Bootstrap Alumina compiler is written in Rust and is currently actively developed. It compiles to freestanding C11 code with GCC extensions.
 
 Finished:
 - Lexical analysis and parser (using Tree-Sitter)
 - Scope/name resolution
-- Basic type support
+- Type support
 - Lowering parse tree into AST (desugaring)
-- Lowering AST into IR (with type checking and semantic analysis)
-- Codegen with C
+- Lowering AST into IR (with monomorphization, type checking and semantic analysis)
+- Codegen to C
 
 TBD:
+- Stdlib is very barebones
+- Probably a lot of bugs and miscompilations
 - Better error reporting & diagnostics
-- Compiler driver for multi-file compilation
-- All the other housekeeping stuff
+- Compiler interface
+- Code cleanup, it's a big mess so far
 
 Full list of missing features, bugs and ideas for the future in [MISSING.md](./MISSING.md) 
 

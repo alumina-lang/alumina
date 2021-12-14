@@ -1,7 +1,7 @@
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 
-use crate::common::AluminaErrorKind;
+use crate::common::CodeErrorKind;
 
 use super::ItemP;
 
@@ -12,11 +12,11 @@ impl<'ast> LangItemMap<'ast> {
         Self(inner)
     }
 
-    pub fn get(&self, kind: LangItemKind) -> Result<ItemP<'ast>, AluminaErrorKind> {
+    pub fn get(&self, kind: LangItemKind) -> Result<ItemP<'ast>, CodeErrorKind> {
         self.0
             .get(&kind)
             .copied()
-            .ok_or_else(|| AluminaErrorKind::MissingLangItem(kind))
+            .ok_or_else(|| CodeErrorKind::MissingLangItem(kind))
     }
 }
 

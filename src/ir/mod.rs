@@ -1,13 +1,14 @@
 pub mod builder;
 pub mod const_eval;
+pub mod elide_zst;
 pub mod infer;
 pub mod lang;
 pub mod mono;
-pub mod optimize;
 
 use crate::{
     ast::{Attribute, BinOp, BuiltinType, UnOp},
     common::{impl_allocatable, Allocatable, ArenaAllocatable, Incrementable},
+    intrinsics::CodegenIntrinsicKind,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -120,12 +121,22 @@ impl Debug for IrId {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash, Copy)]
+pub enum UnqualifiedKind {
+    String(usize),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Hash, Copy)]
 pub enum Ty<'ir> {
     Extern(IrId),
     NamedType(IRItemP<'ir>),
     Builtin(BuiltinType),
     Pointer(TyP<'ir>, bool),
     Array(TyP<'ir>, usize),
+    // TODO: Remove this when you find a better way to do it
+    // Unqualified types are a bit of a hack in IR to support
+    // const strings in intrinsics and other places before they
+    // are coerced into a slice.
+    Unqualified(UnqualifiedKind),
     Tuple(&'ir [TyP<'ir>]),
     Fn(&'ir [TyP<'ir>], TyP<'ir>),
 }
@@ -162,17 +173,29 @@ impl<'ir> Ty<'ir> {
         }
     }
 
-    pub fn is_void(&self) -> bool {
-        match self {
-            Ty::Builtin(BuiltinType::Void) => true,
-            _ => false,
-        }
-    }
-
     pub fn is_never(&self) -> bool {
         match self {
             Ty::Builtin(BuiltinType::Never) => true,
             _ => false,
+        }
+    }
+
+    pub fn is_zero_sized(&self) -> bool {
+        match self {
+            Ty::Builtin(BuiltinType::Void) => true,
+            Ty::Builtin(BuiltinType::Never) => true, // or false? dunno, never type is weird
+            Ty::Builtin(_) => false,
+            Ty::Extern(_) => todo!(),
+            Ty::NamedType(inner) => match inner.get() {
+                IRItem::Struct(s) => s.fields.iter().all(|f| f.ty.is_zero_sized()),
+                IRItem::Enum(e) => e.underlying_type.is_zero_sized(),
+                IRItem::Function(_) => false,
+            },
+            Ty::Pointer(_, _) => false,
+            Ty::Array(inner, size) => *size == 0 || inner.is_zero_sized(),
+            Ty::Tuple(elems) => elems.iter().all(|e| e.is_zero_sized()),
+            Ty::Unqualified(UnqualifiedKind::String(len)) => *len == 0,
+            Ty::Fn(_, _) => false,
         }
     }
 }
@@ -197,28 +220,16 @@ pub struct Parameter<'ir> {
     pub ty: TyP<'ir>,
 }
 
-#[derive(Debug)]
-pub struct FuncBodyCell<'ir> {
-    contents: OnceCell<&'ir [Statement<'ir>]>,
+#[derive(Debug, Copy, Clone)]
+pub struct LocalDef<'ir> {
+    pub id: IrId,
+    pub typ: TyP<'ir>,
 }
 
-impl<'ir> FuncBodyCell<'ir> {
-    pub fn new() -> Self {
-        Self {
-            contents: OnceCell::new(),
-        }
-    }
-
-    pub fn assign(&self, value: &'ir [Statement<'ir>]) {
-        self.contents.set(value).unwrap();
-    }
-    pub fn get(&'ir self) -> &'ir [Statement<'ir>] {
-        self.contents.get().unwrap()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.contents.get().is_none()
-    }
+#[derive(Debug)]
+pub struct FuncBody<'ir> {
+    pub local_defs: &'ir [LocalDef<'ir>],
+    pub statements: &'ir [Statement<'ir>],
 }
 
 #[derive(Debug)]
@@ -227,7 +238,7 @@ pub struct Function<'ir> {
     pub attributes: &'ir [Attribute],
     pub args: &'ir [Parameter<'ir>],
     pub return_type: TyP<'ir>,
-    pub body: FuncBodyCell<'ir>,
+    pub body: OnceCell<FuncBody<'ir>>,
 }
 
 #[derive(Debug)]
@@ -281,13 +292,6 @@ impl<'ir> IRItemCell<'ir> {
             _ => panic!("struct expected"),
         }
     }
-
-    pub fn get_enum(&'ir self) -> &'ir Enum<'ir> {
-        match self.contents.get() {
-            Some(IRItem::Enum(e)) => e,
-            _ => panic!("enum expected"),
-        }
-    }
 }
 pub struct IRItemCell<'ir> {
     pub id: IrId,
@@ -324,10 +328,9 @@ impl Debug for IRItemCell<'_> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+#[derive(Debug, Clone)]
 pub enum Statement<'ir> {
     Expression(ExprP<'ir>),
-    LocalDef(IrId, TyP<'ir>),
     Label(IrId),
 }
 
@@ -335,13 +338,12 @@ impl<'ir> Statement<'ir> {
     pub fn pure(&self) -> bool {
         match self {
             Statement::Expression(expr) => expr.pure(),
-            Statement::LocalDef(_, _) => false,
             Statement::Label(_) => false,
         }
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+#[derive(Debug, Clone)]
 pub enum Lit<'ast> {
     Str(&'ast [u8]),
     Int(u128),
@@ -350,7 +352,7 @@ pub enum Lit<'ast> {
     Null,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+#[derive(Debug, Clone)]
 pub enum ExprKind<'ir> {
     Block(&'ir [Statement<'ir>], ExprP<'ir>),
     Binary(BinOp, ExprP<'ir>, ExprP<'ir>),
@@ -366,11 +368,12 @@ pub enum ExprKind<'ir> {
     Index(ExprP<'ir>, ExprP<'ir>),
     Local(IrId),
     Lit(Lit<'ir>),
-    ConstValue(const_eval::Value),
+    ConstValue(const_eval::Value<'ir>),
     Field(ExprP<'ir>, IrId),
     TupleIndex(ExprP<'ir>, usize),
     If(ExprP<'ir>, ExprP<'ir>, ExprP<'ir>),
     Cast(ExprP<'ir>),
+    CodegenIntrinsic(CodegenIntrinsicKind<'ir>),
     Unreachable,
     Void,
 }
@@ -381,7 +384,7 @@ pub enum ValueType {
     RValue,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+#[derive(Debug, Clone)]
 pub struct Expr<'ir> {
     pub value_type: ValueType,
     pub is_const: bool,
@@ -418,7 +421,14 @@ impl<'ir> Expr<'ir> {
     }
 
     pub fn diverges(&self) -> bool {
-        *self.ty == Ty::Builtin(BuiltinType::Never)
+        match self.value_type {
+            ValueType::LValue => false,
+            ValueType::RValue => match self.ty {
+                // _ => match self.ty {
+                Ty::Builtin(BuiltinType::Never) => true,
+                _ => false,
+            },
+        }
     }
 
     pub fn is_void(&self) -> bool {
@@ -454,6 +464,7 @@ impl<'ir> Expr<'ir> {
             ExprKind::ConstValue(_) => true,
             ExprKind::Void => true,
 
+            ExprKind::CodegenIntrinsic(_) => false,
             ExprKind::Unreachable => false, // ?
             ExprKind::Call(_, _) => false,  // for now
             ExprKind::Assign(_, _) => false,
@@ -474,5 +485,6 @@ impl_allocatable!(
     Parameter<'_>,
     IRItemCell<'_>,
     EnumMember<'_>,
+    LocalDef<'_>,
     IrId
 );

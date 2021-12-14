@@ -13,19 +13,7 @@ use crate::{
 };
 use bumpalo::Bump;
 
-use crate::{
-    ast::BuiltinType,
-    ir::{IrId, Ty, TyP},
-};
-
-#[derive(Debug)]
-struct Decl {
-    name: String,
-}
-
-fn is_elided(ty: &Ty<'_>) -> bool {
-    *ty == Ty::Builtin(BuiltinType::Void) || *ty == Ty::Builtin(BuiltinType::Never)
-}
+use crate::ir::{IrId, TyP};
 
 macro_rules! w {
     ($buf:expr, $($arg:tt)*) => (

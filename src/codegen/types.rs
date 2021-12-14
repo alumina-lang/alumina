@@ -9,11 +9,6 @@ use crate::{
 
 use super::{CName, CodegenCtx};
 
-#[derive(Debug)]
-struct Decl {
-    name: String,
-}
-
 struct TypeWriterInner<'ir, 'gen> {
     ctx: &'gen CodegenCtx<'ir, 'gen>,
 
@@ -25,14 +20,12 @@ struct TypeWriterInner<'ir, 'gen> {
 }
 
 pub struct TypeWriter<'ir, 'gen> {
-    ctx: &'gen CodegenCtx<'ir, 'gen>,
     inner: RefCell<TypeWriterInner<'ir, 'gen>>,
 }
 
 impl<'ir, 'gen> TypeWriter<'ir, 'gen> {
     pub fn new(ctx: &'gen CodegenCtx<'ir, 'gen>) -> Self {
         Self {
-            ctx,
             inner: RefCell::new(TypeWriterInner {
                 ctx,
                 type_decls: String::with_capacity(10 * 1024),
@@ -86,7 +79,10 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                     BuiltinType::Bool => "_Bool",
                     BuiltinType::Void => "void",
                     BuiltinType::Never => "void",
-                    _ => todo!(),
+
+                    BuiltinType::U128 => "unsigned __int128",
+                    BuiltinType::I128 => "__int128",
+                    //_ => todo!(),
                 });
 
                 self.ctx.register_type(ty, name);
@@ -105,7 +101,10 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
 
                 self.ctx.register_type(ty, name);
             }
-            Ty::Array(inner, _len) if !body_only => {
+            Ty::Array(inner, len) if !body_only => {
+                assert!(!inner.is_zero_sized());
+                assert!(*len > 0);
+
                 self.add_type(inner, false)?;
                 let name = self.ctx.get_type(inner).mangle(self.ctx.make_id());
 
@@ -129,7 +128,7 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
 
                     if !ref_only {
                         self.needs_body.insert(ty);
-                        for f in s.fields {
+                        for f in s.fields.iter().filter(|f| !f.ty.is_zero_sized()) {
                             self.add_type(f.ty, false)?;
                         }
                     }
@@ -142,7 +141,7 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                 _ => {}
             },
             Ty::Tuple(items) if !body_only => {
-                for elem in items.iter() {
+                for elem in items.iter().filter(|f| !f.is_zero_sized()) {
                     self.add_type(elem, false)?;
                 }
 
@@ -153,7 +152,7 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                 self.needs_body.insert(ty);
             }
             Ty::Fn(args, ret) if !body_only => {
-                for elem in args.iter() {
+                for elem in args.iter().filter(|f| !f.is_zero_sized()) {
                     self.add_type(elem, false)?;
                 }
                 self.add_type(ret, false)?;
@@ -167,7 +166,7 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                     self.ctx.get_type(ret),
                     name
                 );
-                for (i, elem) in args.iter().enumerate() {
+                for (i, elem) in args.iter().filter(|f| !f.is_zero_sized()).enumerate() {
                     if i > 0 {
                         w!(self.type_decls, ", ");
                     }
@@ -187,26 +186,29 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
         }
 
         match ty {
-            Ty::Array(a, len) => {
-                let name = self.ctx.get_type(ty);
-                let inner = self.ctx.get_type(a);
+            Ty::Array(inner, len) => {
+                assert!(!inner.is_zero_sized());
+                assert!(*len > 0);
 
-                self.write_type_body(a)?;
+                let name = self.ctx.get_type(ty);
+                let inner_name = self.ctx.get_type(inner);
+
+                self.write_type_body(inner)?;
 
                 w!(self.type_bodies, "struct {} {{\n", name);
-                w!(self.type_bodies, "  {} __data[{}];\n", inner, len);
+                w!(self.type_bodies, "  {} __data[{}];\n", inner_name, len);
                 w!(self.type_bodies, "}};\n");
             }
             Ty::NamedType(item) => match item.get() {
                 IRItem::Struct(s) => {
                     let name = self.ctx.get_type(ty);
 
-                    for f in s.fields {
+                    for f in s.fields.iter().filter(|f| !f.ty.is_zero_sized()) {
                         self.write_type_body(f.ty)?;
                     }
 
                     w!(self.type_bodies, "struct {} {{\n", name);
-                    for f in s.fields {
+                    for f in s.fields.iter().filter(|f| !f.ty.is_zero_sized()) {
                         w!(
                             self.type_bodies,
                             "  {} {};\n",
@@ -221,12 +223,12 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
             Ty::Tuple(items) => {
                 let name = self.ctx.get_type(ty);
 
-                for f in items.iter() {
+                for f in items.iter().filter(|f| !f.is_zero_sized()) {
                     self.write_type_body(f)?;
                 }
 
                 w!(self.type_bodies, "struct {} {{\n", name);
-                for (idx, f) in items.iter().enumerate() {
+                for (idx, f) in items.iter().enumerate().filter(|(_, f)| !f.is_zero_sized()) {
                     w!(self.type_bodies, "  {} _{};\n", self.ctx.get_type(f), idx);
                 }
                 w!(self.type_bodies, "}};\n");

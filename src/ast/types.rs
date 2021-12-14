@@ -1,8 +1,8 @@
 use crate::ast::AstCtx;
-use crate::common::{AluminaErrorKind, ArenaAllocatable};
+use crate::common::{ArenaAllocatable, CodeErrorKind};
 use crate::name_resolution::resolver::ItemResolution;
+use crate::parser::AluminaVisitor;
 use crate::parser::ParseCtx;
-use crate::AluminaVisitor;
 use crate::{
     ast::{BuiltinType, Ty, TyP},
     common::{AluminaError, WithSpanDuringParsing},
@@ -46,7 +46,7 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
                 self.ast.intern_type(Ty::Placeholder(ty))
             }
             ItemResolution::Defered(_, _) => {
-                return Err(AluminaErrorKind::NoAssociatedTypes).with_span(&self.scope, node)
+                return Err(CodeErrorKind::NoAssociatedTypes).with_span(&self.scope, node)
             }
             a => panic!("unreachable: {:?}", a),
         };
@@ -146,9 +146,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
 
         let base = match *base {
             Ty::NamedType(ty) => ty,
-            _ => {
-                return Err(AluminaErrorKind::UnexpectedGenericParams).with_span(&self.scope, node)
-            }
+            _ => return Err(CodeErrorKind::UnexpectedGenericParams).with_span(&self.scope, node),
         };
 
         Ok(self

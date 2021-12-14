@@ -1,4 +1,3 @@
-use std::backtrace::Backtrace;
 use std::fmt::Debug;
 use std::io;
 use std::result::Result;
@@ -6,7 +5,15 @@ use thiserror::Error;
 use tree_sitter::Node;
 
 #[derive(Debug, Error)]
-pub enum AluminaErrorKind {
+pub enum AluminaError {
+    #[error("code errors: {0:?}")]
+    CodeErrors(Vec<CodeError>),
+    #[error("io error: {0}")]
+    Io(#[from] io::Error),
+}
+
+#[derive(Debug, Error)]
+pub enum CodeErrorKind {
     #[error("could not resolve the path {}", .0)]
     UnresolvedPath(String),
     #[error("cycle detected while resolving names")]
@@ -49,8 +56,8 @@ pub enum AluminaErrorKind {
     CannotAssignToRValue,
     #[error("cannot assign to const")]
     CannotAssignToConst,
-    #[error("invalid cast")]
-    InvalidCast,
+    #[error("cannot cast {} into {}", .0, .1)]
+    InvalidCast(String, String),
     #[error("break outside of loop")]
     BreakOutsideOfLoop,
     #[error("continue outside of loop")]
@@ -83,35 +90,38 @@ pub enum AluminaErrorKind {
     RangeIndexNonSlice,
     #[error("internal error")]
     InternalError,
+    #[error("local with unknown type")]
+    LocalWithUnknownType,
+    #[error("unsupported ABI {}", .0)]
+    UnsupportedABI(String),
+    #[error("unknown intrinsic {}", .0)]
+    UnknownIntrinsic(String),
+    #[error("cannot take address of a compiler intrinsic")]
+    IntrinsicsAreSpecialMkay,
+    #[error("extern \"C\" functions cannot have generic parameters")]
+    ExternCGenericParams,
+    #[error("this expression is not evaluable at compile time")]
+    CannotConstEvaluate,
+    #[error("invalid value for enum variant")]
+    InvalidValueForEnumVariant,
+    #[error("{}", .0)]
+    ExplicitCompileFail(String),
+    #[error("cannot defer inside a defered expression")]
+    DeferInDefer,
+}
+
+#[derive(Debug)]
+pub enum Marker {
+    Span(Span),
+    Monomorphization,
 }
 
 #[derive(Debug, Error)]
-pub enum AluminaError {
-    #[error("{} at {:?}", .kind, .span)]
-    Generic {
-        kind: AluminaErrorKind,
-        span: Option<Span>,
-        backtrace: Backtrace, // automatically detected
-    },
-    #[error("{}", .source)]
-    Io {
-        #[from]
-        source: io::Error,
-    },
+#[error("{}", .kind)]
+pub struct CodeError {
+    pub kind: CodeErrorKind,
+    pub backtrace: Vec<Marker>,
 }
-/*
-impl From<AluminaErrorKind> for AluminaError {
-    fn from(inner: AluminaErrorKind) -> Self {
-        Self::Generic {
-            kind: inner,
-            span: None,
-            backtrace: Backtrace::capture(),
-        }
-    }
-}
-
-
-*/
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FileId {
@@ -128,7 +138,7 @@ pub trait WithSpanDuringParsing<T> {
 
 impl<T, E> WithSpanDuringParsing<T> for Result<T, E>
 where
-    AluminaErrorKind: From<E>,
+    CodeErrorKind: From<E>,
 {
     fn with_span<'ast, 'src>(
         self,
@@ -141,65 +151,72 @@ where
             file: scope.code().unwrap().file_id(),
         };
 
-        self.map_err(|e| AluminaError::Generic {
-            kind: e.into(),
-            span: Some(span),
-            backtrace: Backtrace::capture(),
+        self.map_err(|e| {
+            AluminaError::CodeErrors(vec![CodeError {
+                kind: e.into(),
+                backtrace: vec![Marker::Span(span)],
+            }])
         })
     }
 }
 
-pub trait AddSpan<T> {
-    fn add_span(self, span: Option<Span>) -> Self;
+pub trait CodeErrorBacktrace<T> {
+    fn append_span(self, span: Option<Span>) -> Self;
+    fn append_mono_marker(self) -> Self;
 }
 
-impl<T> AddSpan<T> for Result<T, AluminaError> {
-    fn add_span(self, span: Option<Span>) -> Self {
-        self.map_err(|e| match e {
-            AluminaError::Generic {
-                kind,
-                span: None,
-                backtrace,
-            } => AluminaError::Generic {
-                kind,
-                span,
-                backtrace,
-            },
+impl<T> CodeErrorBacktrace<T> for Result<T, AluminaError> {
+    fn append_span(self, span: Option<Span>) -> Self {
+        self.map_err(|mut e| match &mut e {
+            AluminaError::CodeErrors(errors) => {
+                for error in errors {
+                    error
+                        .backtrace
+                        .extend(span.iter().map(|s| Marker::Span(*s)));
+                }
+                e
+            }
+            _ => e,
+        })
+    }
+
+    fn append_mono_marker(self) -> Self {
+        self.map_err(|mut e| match &mut e {
+            AluminaError::CodeErrors(errors) => {
+                for error in errors {
+                    error.backtrace.push(Marker::Monomorphization);
+                }
+                e
+            }
             _ => e,
         })
     }
 }
 
-pub trait WithNoSpan<T> {
+pub trait CodeErrorBuilder<T> {
     fn with_no_span(self) -> Result<T, AluminaError>;
+    fn with_span(self, span: Option<Span>) -> Result<T, AluminaError>;
 }
 
-impl<T, E> WithNoSpan<T> for Result<T, E>
+impl<T, E> CodeErrorBuilder<T> for Result<T, E>
 where
-    AluminaErrorKind: From<E>,
+    CodeErrorKind: From<E>,
 {
     fn with_no_span(self) -> Result<T, AluminaError> {
-        self.map_err(|e| AluminaError::Generic {
-            kind: e.into(),
-            span: None,
-            backtrace: Backtrace::capture(),
+        self.map_err(|e| {
+            AluminaError::CodeErrors(vec![CodeError {
+                kind: e.into(),
+                backtrace: vec![],
+            }])
         })
     }
-}
 
-pub trait WithSpan<T> {
-    fn with_span(self, item: Option<Span>) -> Result<T, AluminaError>;
-}
-
-impl<T, E> WithSpan<T> for Result<T, E>
-where
-    AluminaErrorKind: From<E>,
-{
-    fn with_span(self, item: Option<Span>) -> Result<T, AluminaError> {
-        self.map_err(|e| AluminaError::Generic {
-            kind: e.into(),
-            span: item,
-            backtrace: Backtrace::capture(),
+    fn with_span(self, span: Option<Span>) -> Result<T, AluminaError> {
+        self.map_err(|e| {
+            AluminaError::CodeErrors(vec![CodeError {
+                kind: e.into(),
+                backtrace: span.iter().map(|s| Marker::Span(*s)).collect(),
+            }])
         })
     }
 }
@@ -225,7 +242,7 @@ macro_rules! impl_allocatable {
 pub(crate) use impl_allocatable;
 
 use crate::ast::lang::LangItemKind;
-use crate::ast::{ExprP, Span};
+use crate::ast::Span;
 use crate::name_resolution::scope::Scope;
 
 pub trait Incrementable<T> {

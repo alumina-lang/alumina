@@ -165,7 +165,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         Ok(())
     }
 
-    fn visit_extern_function_declaration(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
+    fn visit_extern_function(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
         let name = self.parse_name(node);
         let child_scope = self.scope.named_child(ScopeType::Function, name);
 

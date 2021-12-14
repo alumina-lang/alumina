@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     ast::{AstId, ItemP},
-    common::AluminaErrorKind,
+    common::CodeErrorKind,
     parser::ParseCtx,
 };
 use indexmap::{map::Entry, IndexMap};
@@ -171,7 +171,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
         &self,
         name: &'ast str,
         item: NamedItem<'ast, 'src>,
-    ) -> Result<(), AluminaErrorKind> {
+    ) -> Result<(), CodeErrorKind> {
         let mut current_scope = self.0.borrow_mut();
         let scope_type = current_scope.r#type;
 
@@ -205,7 +205,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             }
         }
 
-        Err(AluminaErrorKind::DuplicateName(name.into()))
+        Err(CodeErrorKind::DuplicateName(name.into()))
     }
 
     pub fn find_root(&self) -> Self {
@@ -258,7 +258,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             .map(|parent| Self(parent.upgrade().unwrap()))
     }
 
-    pub fn ensure_module(&self, path: Path<'ast>) -> Result<Scope<'ast, 'src>, AluminaErrorKind> {
+    pub fn ensure_module(&self, path: Path<'ast>) -> Result<Scope<'ast, 'src>, CodeErrorKind> {
         if path.absolute {
             return self.find_root().ensure_module(Path {
                 absolute: false,

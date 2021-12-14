@@ -1,14 +1,18 @@
+/// Const evaluation at the moment is very rudimentary and is there only to support the
+/// use case where enum members underlyng values are expressed as bitwise operations, as
+/// is commonly the case.
 use crate::ast::BinOp;
 use std::{
     cmp::Ordering,
+    fmt::{Display, Error, Formatter},
     num::Wrapping,
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub},
 };
 
-use super::{BuiltinType, ExprKind, Lit, Ty, UnOp};
+use super::{BuiltinType, ExprKind, ExprP, Lit, Ty, UnOp};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Hash)]
-pub enum Value {
+pub enum Value<'ir> {
     Void,
     Bool(bool),
     U8(u8),
@@ -23,6 +27,33 @@ pub enum Value {
     I128(i128),
     USize(usize),
     ISize(isize),
+    Str(&'ir [u8]),
+}
+
+impl Display for Value<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        match self {
+            Value::Void => write!(f, "void"),
+            Value::Bool(b) => write!(f, "{}", b),
+            Value::U8(b) => write!(f, "{}", b),
+            Value::U16(b) => write!(f, "{}", b),
+            Value::U32(b) => write!(f, "{}", b),
+            Value::U64(b) => write!(f, "{}", b),
+            Value::U128(b) => write!(f, "{}", b),
+            Value::I8(b) => write!(f, "{}", b),
+            Value::I16(b) => write!(f, "{}", b),
+            Value::I32(b) => write!(f, "{}", b),
+            Value::I64(b) => write!(f, "{}", b),
+            Value::I128(b) => write!(f, "{}", b),
+            Value::USize(b) => write!(f, "{}", b),
+            Value::ISize(_) => todo!(),
+            Value::Str(s) => {
+                let as_str = std::str::from_utf8(s).map_err(|_| Error)?;
+                write!(f, "{}", as_str)?;
+                Ok(())
+            }
+        }
+    }
 }
 
 macro_rules! numeric_of_kind {
@@ -47,49 +78,28 @@ macro_rules! numeric_of_kind {
 
 pub(crate) use numeric_of_kind;
 
-impl Value {
-    pub fn default(kind: BuiltinType) -> Self {
-        match kind {
-            BuiltinType::Void => Value::Void,
-            BuiltinType::Bool => Value::Bool(false),
-            BuiltinType::U8 => Value::U8(0),
-            BuiltinType::U16 => Value::U16(0),
-            BuiltinType::U32 => Value::U32(0),
-            BuiltinType::U64 => Value::U64(0),
-            BuiltinType::U128 => Value::U128(0),
-            BuiltinType::I8 => Value::I8(0),
-            BuiltinType::I16 => Value::I16(0),
-            BuiltinType::I32 => Value::I32(0),
-            BuiltinType::I64 => Value::I64(0),
-            BuiltinType::I128 => Value::I128(0),
-            BuiltinType::USize => Value::USize(0),
-            BuiltinType::ISize => Value::ISize(0),
-            BuiltinType::Never => unreachable!(),
-            BuiltinType::F32 => unreachable!(),
-            BuiltinType::F64 => unreachable!(),
-        }
-    }
-
-    pub fn type_kind(&self) -> BuiltinType {
+impl<'ir> Value<'ir> {
+    pub fn type_kind(&self) -> Option<BuiltinType> {
         match self {
-            Value::Void => BuiltinType::Void,
-            Value::Bool(_) => BuiltinType::Bool,
-            Value::U8(_) => BuiltinType::U8,
-            Value::U16(_) => BuiltinType::U16,
-            Value::U32(_) => BuiltinType::U32,
-            Value::U64(_) => BuiltinType::U64,
-            Value::U128(_) => BuiltinType::U128,
-            Value::I8(_) => BuiltinType::I8,
-            Value::I16(_) => BuiltinType::I16,
-            Value::I32(_) => BuiltinType::I32,
-            Value::I64(_) => BuiltinType::I64,
-            Value::I128(_) => BuiltinType::I128,
-            Value::USize(_) => BuiltinType::USize,
-            Value::ISize(_) => BuiltinType::ISize,
+            Value::Void => Some(BuiltinType::Void),
+            Value::Bool(_) => Some(BuiltinType::Bool),
+            Value::U8(_) => Some(BuiltinType::U8),
+            Value::U16(_) => Some(BuiltinType::U16),
+            Value::U32(_) => Some(BuiltinType::U32),
+            Value::U64(_) => Some(BuiltinType::U64),
+            Value::U128(_) => Some(BuiltinType::U128),
+            Value::I8(_) => Some(BuiltinType::I8),
+            Value::I16(_) => Some(BuiltinType::I16),
+            Value::I32(_) => Some(BuiltinType::I32),
+            Value::I64(_) => Some(BuiltinType::I64),
+            Value::I128(_) => Some(BuiltinType::I128),
+            Value::USize(_) => Some(BuiltinType::USize),
+            Value::ISize(_) => Some(BuiltinType::ISize),
+            _ => None,
         }
     }
 
-    fn equal(self, other: Value) -> Result<Value, ()> {
+    fn equal(self, other: Value) -> Result<Value<'ir>, ()> {
         match (self, other) {
             (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a == b)),
             (Value::U8(a), Value::U8(b)) => Ok(Value::Bool(a == b)),
@@ -128,9 +138,9 @@ impl Value {
     }
 }
 
-impl Add for Value {
-    type Output = Result<Value, ()>;
-    fn add(self, other: Value) -> Result<Value, ()> {
+impl<'ir> Add for Value<'ir> {
+    type Output = Result<Value<'ir>, ()>;
+    fn add(self, other: Value) -> Result<Value<'ir>, ()> {
         use Value::*;
 
         match (self, other) {
@@ -151,9 +161,9 @@ impl Add for Value {
     }
 }
 
-impl Sub for Value {
-    type Output = Result<Value, ()>;
-    fn sub(self, other: Value) -> Result<Value, ()> {
+impl<'ir> Sub for Value<'ir> {
+    type Output = Result<Value<'ir>, ()>;
+    fn sub(self, other: Value) -> Result<Value<'ir>, ()> {
         use Value::*;
 
         match (self, other) {
@@ -174,9 +184,9 @@ impl Sub for Value {
     }
 }
 
-impl Mul for Value {
-    type Output = Result<Value, ()>;
-    fn mul(self, other: Value) -> Result<Value, ()> {
+impl<'ir> Mul for Value<'ir> {
+    type Output = Result<Value<'ir>, ()>;
+    fn mul(self, other: Value) -> Result<Value<'ir>, ()> {
         use Value::*;
 
         match (self, other) {
@@ -197,9 +207,9 @@ impl Mul for Value {
     }
 }
 
-impl Shl<Value> for Value {
-    type Output = Result<Value, ()>;
-    fn shl(self, other: Value) -> Result<Value, ()> {
+impl<'ir> Shl<Value<'ir>> for Value<'ir> {
+    type Output = Result<Value<'ir>, ()>;
+    fn shl(self, other: Value) -> Result<Value<'ir>, ()> {
         use Value::*;
 
         let other = match other {
@@ -225,9 +235,9 @@ impl Shl<Value> for Value {
     }
 }
 
-impl Neg for Value {
-    type Output = Result<Value, ()>;
-    fn neg(self) -> Result<Value, ()> {
+impl<'ir> Neg for Value<'ir> {
+    type Output = Result<Value<'ir>, ()>;
+    fn neg(self) -> Result<Value<'ir>, ()> {
         use Value::*;
 
         match self {
@@ -242,9 +252,9 @@ impl Neg for Value {
     }
 }
 
-impl Not for Value {
-    type Output = Result<Value, ()>;
-    fn not(self) -> Result<Value, ()> {
+impl<'ir> Not for Value<'ir> {
+    type Output = Result<Value<'ir>, ()>;
+    fn not(self) -> Result<Value<'ir>, ()> {
         use Value::*;
 
         match self {
@@ -266,9 +276,9 @@ impl Not for Value {
     }
 }
 
-impl Shr<Value> for Value {
-    type Output = Result<Value, ()>;
-    fn shr(self, other: Value) -> Result<Value, ()> {
+impl<'ir> Shr<Value<'ir>> for Value<'ir> {
+    type Output = Result<Value<'ir>, ()>;
+    fn shr(self, other: Value) -> Result<Value<'ir>, ()> {
         use Value::*;
 
         let other = match other {
@@ -294,9 +304,9 @@ impl Shr<Value> for Value {
     }
 }
 
-impl BitOr for Value {
-    type Output = Result<Value, ()>;
-    fn bitor(self, other: Value) -> Result<Value, ()> {
+impl<'ir> BitOr for Value<'ir> {
+    type Output = Result<Value<'ir>, ()>;
+    fn bitor(self, other: Value) -> Result<Value<'ir>, ()> {
         use Value::*;
 
         match (self, other) {
@@ -317,9 +327,9 @@ impl BitOr for Value {
     }
 }
 
-impl BitXor for Value {
-    type Output = Result<Value, ()>;
-    fn bitxor(self, other: Value) -> Result<Value, ()> {
+impl<'ir> BitXor for Value<'ir> {
+    type Output = Result<Value<'ir>, ()>;
+    fn bitxor(self, other: Value) -> Result<Value<'ir>, ()> {
         use Value::*;
 
         match (self, other) {
@@ -340,9 +350,9 @@ impl BitXor for Value {
     }
 }
 
-impl BitAnd for Value {
-    type Output = Result<Value, ()>;
-    fn bitand(self, other: Value) -> Result<Value, ()> {
+impl<'ir> BitAnd for Value<'ir> {
+    type Output = Result<Value<'ir>, ()>;
+    fn bitand(self, other: Value) -> Result<Value<'ir>, ()> {
         use Value::*;
 
         match (self, other) {
@@ -363,9 +373,9 @@ impl BitAnd for Value {
     }
 }
 
-impl Div for Value {
-    type Output = Result<Value, ()>;
-    fn div(self, other: Value) -> Result<Value, ()> {
+impl<'ir> Div for Value<'ir> {
+    type Output = Result<Value<'ir>, ()>;
+    fn div(self, other: Value) -> Result<Value<'ir>, ()> {
         use Value::*;
 
         let result = match (self, other) {
@@ -388,9 +398,9 @@ impl Div for Value {
     }
 }
 
-impl Rem for Value {
-    type Output = Result<Value, ()>;
-    fn rem(self, other: Value) -> Result<Value, ()> {
+impl<'ir> Rem for Value<'ir> {
+    type Output = Result<Value<'ir>, ()>;
+    fn rem(self, other: Value) -> Result<Value<'ir>, ()> {
         use Value::*;
 
         let result = match (self, other) {
@@ -413,7 +423,7 @@ impl Rem for Value {
     }
 }
 
-pub fn const_eval<'ast>(expr: crate::ir::ExprP<'ast>) -> Result<Value, ()> {
+pub fn const_eval<'ast, 'ir>(expr: ExprP<'ir>) -> Result<Value<'ir>, ()> {
     match &expr.kind {
         ExprKind::Void => Ok(Value::Void),
         ExprKind::Binary(op, lhs, rhs) => {
@@ -481,6 +491,7 @@ pub fn const_eval<'ast>(expr: crate::ir::ExprP<'ast>) -> Result<Value, ()> {
                 Ty::Builtin(BuiltinType::ISize) => Ok(Value::ISize(*i as isize)),
                 _ => unreachable!(),
             },
+            Lit::Str(s) => Ok(Value::Str(*s)),
             _ => Err(()),
         },
         _ => Err(()),

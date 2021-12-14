@@ -1,8 +1,6 @@
-use std::marker::PhantomData;
-
-use once_cell::unsync::OnceCell;
-
 use crate::common::FileId;
+use once_cell::unsync::OnceCell;
+use std::marker::PhantomData;
 
 include!(concat!(env!("OUT_DIR"), "/parser.rs"));
 

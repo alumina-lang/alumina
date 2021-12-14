@@ -4,6 +4,7 @@ pub mod maker;
 pub mod types;
 
 use crate::common::{Allocatable, ArenaAllocatable, FileId, Incrementable};
+use crate::intrinsics::IntrinsicKind;
 use crate::name_resolution::path::{Path, PathSegment};
 use std::fmt::Display;
 use std::fmt::{Debug, Formatter};
@@ -57,7 +58,7 @@ impl<'ast> AstCtx<'ast> {
         inner
     }
 
-    pub fn parse_path(&'ast self, path: &str) -> Path<'ast> {
+    pub fn parse_path(&'ast self, path: &'_ str) -> Path<'ast> {
         let segments: Vec<_> = path
             .split("::")
             .map(|s| PathSegment(s.alloc_on(self)))
@@ -236,14 +237,18 @@ pub enum Item<'ast> {
     Enum(Enum<'ast>),
     Struct(Struct<'ast>),
     Function(Function<'ast>),
+    Intrinsic(Intrinsic),
 }
 
 impl<'ast> Item<'ast> {
-    pub fn is_generic(&self) -> bool {
+    pub fn should_compile(&self) -> bool {
         match self {
-            Item::Struct(Struct { placeholders, .. }) => !placeholders.is_empty(),
-            Item::Function(Function { placeholders, .. }) => !placeholders.is_empty(),
-            Item::Enum(_) => false,
+            Item::Function(Function {
+                placeholders,
+                attributes,
+                ..
+            }) => placeholders.is_empty() && attributes.contains(&Attribute::Export),
+            _ => false,
         }
     }
 }
@@ -365,6 +370,14 @@ pub struct Parameter<'ast> {
 }
 
 #[derive(Debug)]
+pub struct Intrinsic {
+    pub kind: IntrinsicKind,
+    pub span: Option<Span>,
+    pub generic_count: usize,
+    pub arg_count: usize,
+}
+
+#[derive(Debug)]
 pub struct Function<'ast> {
     pub name: Option<&'ast str>,
     pub attributes: &'ast [Attribute],
@@ -373,6 +386,7 @@ pub struct Function<'ast> {
     pub return_type: TyP<'ast>,
     pub body: Option<ExprP<'ast>>,
     pub span: Option<Span>,
+    pub closure: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
@@ -436,6 +450,7 @@ impl BinOp {
 pub enum Attribute {
     Export,
     ForceInline,
+    Intrinsic,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
@@ -492,6 +507,7 @@ pub enum ExprKind<'ast> {
     Loop(ExprP<'ast>),
     Break(Option<ExprP<'ast>>),
     Return(Option<ExprP<'ast>>),
+    Defer(ExprP<'ast>),
     Continue,
     Tuple(&'ast [ExprP<'ast>]),
     Array(&'ast [ExprP<'ast>]),

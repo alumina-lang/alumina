@@ -12,6 +12,7 @@ use syn::{parse_quote, TraitItem};
 #[derive(Deserialize)]
 struct Node {
     r#type: String,
+    named: bool,
 }
 
 fn sanitize_identifier(name: &str) -> String {
@@ -76,6 +77,7 @@ fn generate_visitor(filename: PathBuf) -> String {
 
     let (trait_fns, match_arms): (Vec<_>, Vec<_>) = parsed
         .iter()
+        .filter(|node| node.named)
         .map(|symbol| {
             let raw_name = &symbol.r#type;
             let sanitized_name = sanitize_identifier(&symbol.r#type);

@@ -95,10 +95,17 @@ impl<'ir> ExpressionBuilder<'ir> {
         Expr::rvalue(ExprKind::Lit(lit), ty).alloc_on(self.ir)
     }
 
+    pub fn codegen_intrinsic(&self, kind: CodegenIntrinsicKind<'ir>, ty: TyP<'ir>) -> ExprP<'ir> {
+        Expr::rvalue(ExprKind::CodegenIntrinsic(kind), ty).alloc_on(self.ir)
+    }
+
     pub fn diverges(&self, exprs: impl IntoIterator<Item = ExprP<'ir>>) -> ExprP<'ir> {
         let block = self.block(
             exprs.into_iter().map(|expr| Statement::Expression(expr)),
-            self.void(),
+            self.void(
+                self.ir.intern_type(Ty::Builtin(BuiltinType::Void)),
+                ValueType::RValue,
+            ),
         );
 
         // This is a bit of hack, helper function for blocks that diverge. To simplify the caller's code,
@@ -132,11 +139,13 @@ impl<'ir> ExpressionBuilder<'ir> {
         .alloc_on(self.ir)
     }
 
-    pub fn void(&self) -> ExprP<'ir> {
-        Expr::rvalue(
-            ExprKind::Void,
-            self.ir.intern_type(Ty::Builtin(BuiltinType::Void)),
-        )
+    pub fn void(&self, ty: TyP<'ir>, value_type: ValueType) -> ExprP<'ir> {
+        Expr {
+            kind: ExprKind::Void,
+            value_type,
+            is_const: true,
+            ty,
+        }
         .alloc_on(self.ir)
     }
 
@@ -167,12 +176,14 @@ impl<'ir> ExpressionBuilder<'ir> {
         expr.alloc_on(self.ir)
     }
 
-    pub fn const_value(&self, val: Value) -> ExprP<'ir> {
+    pub fn const_value(&self, val: Value<'ir>) -> ExprP<'ir> {
         let expr = Expr {
             kind: ExprKind::ConstValue(val),
             value_type: ValueType::RValue,
             is_const: true,
-            ty: self.ir.intern_type(Ty::Builtin(val.type_kind())),
+            ty: self
+                .ir
+                .intern_type(Ty::Builtin(val.type_kind().expect("unimplemented"))),
         };
 
         expr.alloc_on(self.ir)
@@ -239,7 +250,7 @@ impl<'ir> ExpressionBuilder<'ir> {
             Ty::Pointer(ty, true) => Expr::const_lvalue(kind, ty),
             Ty::Array(ty, _) if !inner.is_const => Expr::lvalue(kind, ty),
             Ty::Array(ty, _) if inner.is_const => Expr::const_lvalue(kind, ty),
-            _ => panic!("cannot index"),
+            _ => panic!("cannot index {:?}", inner.ty),
         };
 
         result.alloc_on(self.ir)
@@ -263,5 +274,53 @@ impl<'ir> ExpressionBuilder<'ir> {
         };
 
         expr.alloc_on(self.ir)
+    }
+}
+
+pub struct TypeBuilder<'ir> {
+    ir: &'ir IrCtx<'ir>,
+}
+
+impl<'ir> TypeBuilder<'ir> {
+    pub fn new(ir: &'ir IrCtx<'ir>) -> Self {
+        Self { ir }
+    }
+
+    pub fn builtin(&self, builtin: BuiltinType) -> TyP<'ir> {
+        self.ir.intern_type(Ty::Builtin(builtin))
+    }
+
+    pub fn pointer(&self, inner: TyP<'ir>, is_const: bool) -> TyP<'ir> {
+        self.ir.intern_type(Ty::Pointer(inner, is_const))
+    }
+
+    pub fn array(&self, inner: TyP<'ir>, size: usize) -> TyP<'ir> {
+        self.ir.intern_type(Ty::Array(inner, size))
+    }
+
+    pub fn named(&self, item: IRItemP<'ir>) -> TyP<'ir> {
+        self.ir.intern_type(Ty::NamedType(item))
+    }
+
+    pub fn r#extern(&self, id: IrId) -> TyP<'ir> {
+        self.ir.intern_type(Ty::Extern(id))
+    }
+
+    pub fn function<I>(&self, args: I, ret: TyP<'ir>) -> TyP<'ir>
+    where
+        I: IntoIterator<Item = TyP<'ir>>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        self.ir
+            .intern_type(Ty::Fn(self.ir.arena.alloc_slice_fill_iter(args), ret))
+    }
+
+    pub fn tuple<I>(&self, args: I) -> TyP<'ir>
+    where
+        I: IntoIterator<Item = TyP<'ir>>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        self.ir
+            .intern_type(Ty::Tuple(self.ir.arena.alloc_slice_fill_iter(args)))
     }
 }

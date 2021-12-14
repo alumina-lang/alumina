@@ -82,14 +82,14 @@ module.exports = grammar({
         $.enum_definition,
         $.impl_block,
         $.mod_definition,
-        $.extern_function_declaration
+        $.extern_function
       ),
 
     _impl_item: ($) =>
       choice(
         $.use_declaration,
         $.function_definition,
-        $.extern_function_declaration
+        $.extern_function
       ),
 
     mod_definition: ($) =>
@@ -113,12 +113,14 @@ module.exports = grammar({
         field("body", $.block)
       ),
 
-    extern_function_declaration: ($) =>
+    extern_function: ($) =>
       seq(
         optional(field("attributes", $.attributes)),
         "extern",
+        field("abi", $.string_literal),
         "fn",
         field("name", $.identifier),
+        optional(field("type_arguments", $.generic_argument_list)),
         field("parameters", $.parameter_list),
         optional(seq("->", field("return_type", $._type))),
         ";"
@@ -315,6 +317,8 @@ module.exports = grammar({
         prec(-1, "return")
       ),
 
+    defer_expression: ($) => prec.left(seq("defer", field("inner", $._expression))),
+
     arguments: ($) =>
       seq("(", sepBy(",", field("inner", $._expression)), optional(","), ")"),
 
@@ -343,6 +347,7 @@ module.exports = grammar({
     _expression: ($) =>
       choice(
         $.return_expression,
+        $.defer_expression,
         $.break_expression,
         $.continue_expression,
         $.unary_expression,
