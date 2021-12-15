@@ -14,6 +14,7 @@ const PREC = {
   or: 2,
   assign: 0,
   closure: -1,
+  et_cetera: -2,
 };
 
 const integer_types = [
@@ -33,7 +34,7 @@ const integer_types = [
 
 const float_types = ["f32", "f64"];
 
-const primitive_types = integer_types.concat(float_types).concat(["bool"]);
+const primitive_types = integer_types.concat(float_types).concat(["bool", "void"]);
 
 function sepBy1(sep, rule) {
   return seq(rule, repeat(seq(sep, rule)));
@@ -72,6 +73,7 @@ module.exports = grammar({
       seq($.identifier, "(", sepBy(",", $.identifier), ")"),
     attribute: ($) =>
       seq("#[", field("name", choice($.identifier, $.attributes_spec)), "]"),
+    
     attributes: ($) => repeat1($.attribute),
 
     _top_level_item: ($) =>
@@ -79,9 +81,11 @@ module.exports = grammar({
         $.use_declaration,
         $.function_definition,
         $.struct_definition,
+        $.static_declaration,
         $.enum_definition,
         $.impl_block,
         $.mod_definition,
+        $.macro_definition,
         $.extern_function
       ),
 
@@ -112,6 +116,21 @@ module.exports = grammar({
         optional(seq("->", field("return_type", $._type))),
         field("body", $.block)
       ),
+
+    macro_definition: ($) =>
+      seq(
+        optional(field("attributes", $.attributes)),
+        "macro",
+        field("name", $.identifier),
+        field("parameters", $.macro_parameter_list),
+        field("body", $.block)
+      ),
+      
+    macro_parameter_list: ($) =>
+      seq("(", sepBy(",", field("parameter", $.macro_parameter)), optional(","), ")"),
+
+    macro_parameter: ($) =>
+      seq(field("name", $.identifier), optional(field("et_cetera", "..."))),
 
     extern_function: ($) =>
       seq(
@@ -209,6 +228,13 @@ module.exports = grammar({
     pointer_of: ($) =>
       seq("&", optional(field("mut", "mut")), field("inner", $._type)),
 
+    dyn: ($) =>
+      seq(
+        "&",
+        optional(field("mut", "mut")),
+        "dyn",
+    ),
+
     slice_of: ($) =>
       seq(
         "&",
@@ -260,6 +286,7 @@ module.exports = grammar({
         $.slice_of,
         $.array_of,
         $.tuple_type,
+        $.dyn,
         $.function_pointer
       ),
 
@@ -285,6 +312,15 @@ module.exports = grammar({
         ";"
       ),
 
+    static_declaration: ($) =>
+      seq(
+        "static",
+        field("name", $.identifier),
+        optional(seq(":", field("type", $._type))),
+        optional(seq("=", field("init", $._expression))),
+        ";"
+      ),
+
     const_declaration: ($) =>
       seq(
         "const",
@@ -296,14 +332,18 @@ module.exports = grammar({
 
     statement: ($) =>
       seq(
-        optional(field("attributes", $.attributes)),
         field("inner", choice($._declaration_statement, $.expression_statement))
       ),
 
     empty_statement: ($) => ";",
 
     _declaration_statement: ($) =>
-      choice($.let_declaration, $.use_declaration, $.empty_statement),
+      choice(
+        $.let_declaration,
+        $.use_declaration,
+        $.macro_definition,
+        $.empty_statement
+      ),
 
     expression_statement: ($) =>
       choice(
@@ -362,6 +402,8 @@ module.exports = grammar({
         $.index_expression,
         $.tuple_expression,
         $.array_expression,
+        prec(1, $.macro_invocation),
+        $.et_cetera_expression,
         $.closure_expression,
         $._expression_ending_with_block,
         $._literal,
@@ -485,6 +527,15 @@ module.exports = grammar({
       prec(
         PREC.call,
         seq(field("function", $._expression), field("arguments", $.arguments))
+      ),
+
+    macro_invocation: $ => seq(
+        field('macro', choice(
+          $.scoped_identifier,
+          $.identifier,
+        )),
+        '!',
+        field("arguments", $.arguments)
       ),
 
     struct_initializer_item: ($) =>
@@ -663,6 +714,8 @@ module.exports = grammar({
     continue_expression: ($) => "continue",
 
     loop_expression: ($) => seq("loop", field("body", $.block)),
+
+    et_cetera_expression: ($) => prec.right(PREC.et_cetera, seq(field("inner", $._expression), "...")),
 
     for_expression: ($) =>
       seq(

@@ -61,6 +61,10 @@ impl<'ir> ZstElider<'ir> {
                 self.used_ids.insert(id);
                 expr
             }
+            ExprKind::Static(_) if expr.ty.is_zero_sized() => {
+                self.builder.void(expr.ty, expr.value_type)
+            }
+            ExprKind::Static(_) => expr,
             ExprKind::Assign(l, r) if l.ty.is_zero_sized() => {
                 let l = self.elide_zst_expr(l);
                 let r = self.elide_zst_expr(r);
@@ -134,17 +138,31 @@ impl<'ir> ZstElider<'ir> {
                         .alloc_on(self.ir)
                 }
             }
-
-            ExprKind::Ref(inner) if inner.ty.is_zero_sized() => builder.block(
-                [Statement::Expression(self.elide_zst_expr(inner))],
-                builder.lit(Lit::Int(0), expr.ty),
-            ),
-            ExprKind::Ref(inner) => builder.r#ref(self.elide_zst_expr(inner)),
-            ExprKind::Deref(inner) if inner.ty.is_zero_sized() => builder.block(
-                [Statement::Expression(self.elide_zst_expr(inner))],
-                builder.void(expr.ty, expr.value_type),
-            ),
-            ExprKind::Deref(inner) => builder.deref(self.elide_zst_expr(inner)),
+            ExprKind::Ref(inner) => {
+                let inner = self.elide_zst_expr(inner);
+                if inner.is_void() {
+                    // Special case for mutiple pointers to void
+                    builder.lit(Lit::Int(0), expr.ty)
+                } else if inner.ty.is_zero_sized() {
+                    builder.block(
+                        [Statement::Expression(inner)],
+                        builder.lit(Lit::Int(0), expr.ty),
+                    )
+                } else {
+                    builder.r#ref(inner)
+                }
+            }
+            ExprKind::Deref(inner) => {
+                let inner = self.elide_zst_expr(inner);
+                if inner.ty.is_zero_sized() {
+                    builder.block(
+                        [Statement::Expression(inner)],
+                        builder.void(expr.ty, expr.value_type),
+                    )
+                } else {
+                    builder.deref(inner)
+                }
+            }
             ExprKind::Return(inner) if inner.ty.is_zero_sized() => builder.block(
                 [Statement::Expression(self.elide_zst_expr(inner))],
                 builder.ret(builder.void(expr.ty, expr.value_type)),

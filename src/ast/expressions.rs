@@ -4,11 +4,14 @@ use crate::ast::{AstCtx, FieldInitializer};
 use crate::ast::{BinOp, Expr, ExprP, LetDeclaration, Lit, Statement, UnOp};
 use crate::common::ArenaAllocatable;
 use crate::common::CodeErrorKind;
+use crate::diagnostics::DiagnosticContext;
+use crate::name_resolution::pass1::FirstPassVisitor;
 use crate::name_resolution::path::PathSegment;
 use crate::name_resolution::resolver::ItemResolution;
 use crate::name_resolution::scope::ScopeType;
 use crate::parser::AluminaVisitor;
 use crate::parser::ParseCtx;
+
 use crate::visitors::ScopedPathVisitor;
 use crate::visitors::UseClauseVisitor;
 use crate::{
@@ -19,6 +22,7 @@ use crate::{
     },
 };
 
+use super::macros::{MacroExpander, MacroMaker};
 use super::types::TypeVisitor;
 use super::{
     AstId, BuiltinType, DeferredFn, ExprKind, FnKind, Function, Item, ItemP, Parameter, Span,
@@ -110,8 +114,11 @@ impl<'ast, 'src> Spannable<'ast, 'src> for StatementKind<'ast> {
 pub struct ExpressionVisitor<'ast, 'src> {
     ast: &'ast AstCtx<'ast>,
     code: &'src ParseCtx<'src>,
+    diag_ctx: DiagnosticContext,
     scope: Scope<'ast, 'src>,
     in_a_loop: bool,
+    in_a_macro: bool,
+    has_et_cetera: bool,
 }
 macro_rules! suffixed_literals {
     ($e:expr, $($suffix:literal => $typ:path),+) => {
@@ -128,14 +135,40 @@ macro_rules! suffixed_literals {
 }
 
 impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
-    pub fn new(ast: &'ast AstCtx<'ast>, scope: Scope<'ast, 'src>) -> Self {
+    pub fn new(
+        ast: &'ast AstCtx<'ast>,
+        diag_ctx: DiagnosticContext,
+        scope: Scope<'ast, 'src>,
+    ) -> Self {
         ExpressionVisitor {
             ast,
             code: scope
                 .code()
                 .expect("cannot run on scope without parse context"),
             scope,
+            diag_ctx,
             in_a_loop: false,
+            in_a_macro: false,
+            has_et_cetera: false,
+        }
+    }
+
+    pub fn new_for_macro(
+        ast: &'ast AstCtx<'ast>,
+        diag_ctx: DiagnosticContext,
+        scope: Scope<'ast, 'src>,
+        has_et_cetera: bool,
+    ) -> Self {
+        ExpressionVisitor {
+            ast,
+            code: scope
+                .code()
+                .expect("cannot run on scope without parse context"),
+            scope,
+            diag_ctx,
+            in_a_loop: false,
+            in_a_macro: true,
+            has_et_cetera,
         }
     }
 
@@ -150,20 +183,25 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
         let mut resolver = NameResolver::new();
 
         let expr = match resolver
-            .resolve_item(self.scope.clone(), path)
+            .resolve_item(self.scope.clone(), path.clone())
             .with_span(&self.scope, node)?
         {
             ItemResolution::Item(NamedItem::Function(fun, _, _)) => {
                 ExprKind::Fn(FnKind::Normal(fun), None)
             }
             ItemResolution::Item(NamedItem::Local(var)) => ExprKind::Local(var),
+            ItemResolution::Item(NamedItem::MacroParameter(var, _)) => ExprKind::Local(var),
             ItemResolution::Item(NamedItem::Parameter(var, _)) => ExprKind::Local(var),
+            ItemResolution::Item(NamedItem::Static(var, _)) => ExprKind::Static(var),
             ItemResolution::Item(NamedItem::EnumMember(typ, var, _)) => {
                 ExprKind::EnumValue(typ, var)
             }
             ItemResolution::Defered(placeholder, name) => {
                 let name = name.0.alloc_on(self.ast);
                 ExprKind::Fn(FnKind::Defered(DeferredFn { placeholder, name }), None)
+            }
+            ItemResolution::Item(NamedItem::Macro(_, _, _)) => {
+                return Err(CodeErrorKind::IsAMacro(path.to_string())).with_span(&self.scope, node)
             }
             a => panic!("{:?} at {:?}", a, node),
         };
@@ -218,6 +256,10 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                 StatementKind::Expression(self.visit(inner.child_by_field_name("inner").unwrap())?)
                     .alloc_with_span(self.ast, &self.scope, node),
             ),
+            "macro_definition" => {
+                FirstPassVisitor::new(self.ast, self.scope.clone()).visit(inner)?;
+                None
+            }
             _ => unimplemented!(),
         };
 
@@ -295,8 +337,12 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_closure_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let func = ClosureVisitor::new(self.ast, self.scope.anonymous_child(ScopeType::Closure))
-            .generate(node)?;
+        let func = ClosureVisitor::new(
+            self.ast,
+            self.diag_ctx.clone(),
+            self.scope.anonymous_child(ScopeType::Closure),
+        )
+        .generate(node)?;
 
         Ok(ExprKind::Fn(FnKind::Normal(func), None).alloc_with_span(self.ast, &self.scope, node))
     }
@@ -491,7 +537,6 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
         let result = match elements[..] {
             [] => ExprKind::Void.alloc_with_span(self.ast, &self.scope, node),
-            [e] => e,
             _ => {
                 let elements = elements.alloc_on(self.ast);
                 ExprKind::Tuple(elements).alloc_with_span(self.ast, &self.scope, node)
@@ -800,6 +845,58 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
         Ok(ExprKind::Loop(body).alloc_with_span(self.ast, &self.scope, node))
     }
+
+    fn visit_et_cetera_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        if !self.in_a_macro {
+            return Err(CodeErrorKind::EtCeteraOutsideOfMacro).with_span(&self.scope, node);
+        }
+
+        if !self.has_et_cetera {
+            return Err(CodeErrorKind::NoEtCeteraArgs).with_span(&self.scope, node);
+        }
+
+        let inner = self.visit(node.child_by_field_name("inner").unwrap())?;
+
+        Ok(ExprKind::EtCetera(inner).alloc_with_span(self.ast, &self.scope, node))
+    }
+
+    fn visit_macro_invocation(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone());
+        let path = visitor.visit(node.child_by_field_name("macro").unwrap())?;
+        let mut resolver = NameResolver::new();
+
+        let r#macro = match resolver
+            .resolve_item(self.scope.clone(), path.clone())
+            .with_span(&self.scope, node)?
+        {
+            ItemResolution::Item(NamedItem::Macro(symbol, node, scope)) => {
+                let mut macro_maker = MacroMaker::new(self.ast, self.diag_ctx.clone());
+                macro_maker.make(path.segments.last().unwrap().0, symbol, node, scope.clone())?;
+                symbol.get_macro()
+            }
+            _ => {
+                return Err(CodeErrorKind::NotAMacro(path.to_string())).with_span(&self.scope, node)
+            }
+        };
+
+        let mut arguments = Vec::new();
+        let arguments_node = node.child_by_field_name("arguments").unwrap();
+        let mut cursor = arguments_node.walk();
+        for node in arguments_node.children_by_field_name("inner", &mut cursor) {
+            arguments.push(self.visit(node)?);
+        }
+
+        let span = Span {
+            start: node.start_byte(),
+            end: node.end_byte(),
+            file: self.scope.code().unwrap().file_id(),
+        };
+
+        let expander = MacroExpander::new(self.ast, Some(span), r#macro, arguments);
+        let result = expander.expand()?;
+
+        Ok(result)
+    }
 }
 
 fn parse_string_literal(lit: &str) -> Result<String, CodeErrorKind> {
@@ -915,6 +1012,7 @@ fn parse_string_literal(lit: &str) -> Result<String, CodeErrorKind> {
 
 pub struct ClosureVisitor<'ast, 'src> {
     ast: &'ast AstCtx<'ast>,
+    diag_ctx: DiagnosticContext,
     code: &'src ParseCtx<'src>,
     scope: Scope<'ast, 'src>,
 
@@ -925,13 +1023,18 @@ pub struct ClosureVisitor<'ast, 'src> {
 }
 
 impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
-    pub fn new(ast: &'ast AstCtx<'ast>, scope: Scope<'ast, 'src>) -> Self {
+    pub fn new(
+        ast: &'ast AstCtx<'ast>,
+        diag_ctx: DiagnosticContext,
+        scope: Scope<'ast, 'src>,
+    ) -> Self {
         Self {
             ast,
             code: scope
                 .code()
                 .expect("cannot run on scope without parse context"),
             scope,
+            diag_ctx,
             parameters: Vec::new(),
             placeholders: Vec::new(),
             return_type: None,
@@ -1033,7 +1136,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
         self.visit(node.child_by_field_name("parameters").unwrap())?;
 
         self.body = Some(
-            ExpressionVisitor::new(self.ast, self.scope.clone())
+            ExpressionVisitor::new(self.ast, self.diag_ctx.clone(), self.scope.clone())
                 .generate(node.child_by_field_name("body").unwrap())?,
         );
 

@@ -60,6 +60,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
 
     fn visit_primitive_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let builtin = match self.code.node_text(node) {
+            "void" => Ty::Builtin(BuiltinType::Void),
             "bool" => Ty::Builtin(BuiltinType::Bool),
             "u8" => Ty::Builtin(BuiltinType::U8),
             "u16" => Ty::Builtin(BuiltinType::U16),
@@ -99,6 +100,12 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
         Ok(self.ast.intern_type(Ty::Slice(ty, !is_mut)))
     }
 
+    fn visit_dyn(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let is_mut = node.child_by_field_name("mut").is_some();
+
+        Ok(self.ast.intern_type(Ty::Dyn(!is_mut)))
+    }
+
     fn visit_array_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let ty = self.visit(node.child_by_field_name("inner").unwrap())?;
         let len = self
@@ -119,7 +126,6 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
 
         match &elements[..] {
             [] => Ok(self.ast.intern_type(Ty::Builtin(BuiltinType::Void))),
-            [ty] => Ok(*ty),
             _ => {
                 let slice = elements.alloc_on(self.ast);
                 Ok(self.ast.intern_type(Ty::Tuple(slice)))

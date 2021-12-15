@@ -12,6 +12,7 @@
 - Tree-sitter ERROR nodes. Currently a lot of syntactically invalid code is accepted if it is in nodes that parse tree visitors don't care about.
 - Force inlining in IR (especially for slice coercions - function call is an overkill)
     - Is this needed or let C compiler do it?
+    - It's needed for stuff like `alloca`
 - impl for builtin types/arrays/...?
     - Now easier to do with lang items :)
 - stack overflow in codegen stage because infinite size recursive structs are not rejected during monomorphization
@@ -43,7 +44,6 @@
 - concepts/protocols - should it be only for better error messages when substitution fails or
   should it also be used for typechecking non-monomorphized functions (e.g. you cannot call)
 - SFINAE/overloading?
-- vtables/dyn
 - error handling/try operator. Could settle for go-style, eg:
   ```
   let (val, err) = io_operation;

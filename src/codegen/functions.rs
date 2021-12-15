@@ -4,7 +4,7 @@ use crate::{
     common::AluminaError,
     intrinsics::CodegenIntrinsicKind,
     ir::{
-        const_eval::Value, Expr, ExprKind, ExprP, Function, IrId, LocalDef, Statement, Ty,
+        const_eval::Value, Expr, ExprKind, ExprP, Function, IrId, LocalDef, Statement, Static, Ty,
         ValueType,
     },
 };
@@ -32,6 +32,8 @@ pub fn write_function_signature<'ir, 'gen>(
 
     let mut attributes = if item.attributes.contains(&Attribute::ForceInline) {
         "__attribute__((always_inline)) inline ".to_string()
+    } else if item.attributes.contains(&Attribute::StaticConstructor) {
+        "__attribute__((constructor)) ".to_string()
     } else {
         "".to_string()
     };
@@ -178,8 +180,6 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
     }
 
     pub fn write_expr(&mut self, expr: &ExprP<'ir>, bare_block: bool) -> Result<(), AluminaError> {
-        self.type_writer.add_type(expr.ty)?;
-
         if bare_block {
             self.indent();
         }
@@ -249,21 +249,25 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             ExprKind::Local(id) => {
                 w!(self.fn_bodies, "{}", self.ctx.get_name(*id));
             }
+            ExprKind::Static(item) => {
+                w!(self.fn_bodies, "{}", self.ctx.get_name(item.id));
+            }
             ExprKind::Lit(ref l) => match l {
                 crate::ir::Lit::Str(v) => {
-                    w!(self.fn_bodies, "((const uint8_t[{}]){{", v.len());
-                    for (idx, c) in v.iter().enumerate() {
-                        if idx > 0 {
-                            w!(self.fn_bodies, ", ");
-                        }
-                        w!(self.fn_bodies, "{:#04x}", *c as u8);
+                    w!(self.fn_bodies, "\"");
+                    for (_idx, c) in v.iter().enumerate() {
+                        w!(self.fn_bodies, "\\x{:02x}", *c as u8);
                     }
-                    w!(self.fn_bodies, "}})");
+                    w!(self.fn_bodies, "\"");
                 }
                 crate::ir::Lit::Int(v) => {
+                    self.type_writer.add_type(expr.ty)?;
                     w!(self.fn_bodies, "(({}){})", self.ctx.get_type(expr.ty), v);
                 }
-                crate::ir::Lit::Float(_) => todo!(),
+                crate::ir::Lit::Float(v) => {
+                    self.type_writer.add_type(expr.ty)?;
+                    w!(self.fn_bodies, "(({}){})", self.ctx.get_type(expr.ty), v);
+                }
                 crate::ir::Lit::Bool(v) => {
                     w!(
                         self.fn_bodies,
@@ -275,6 +279,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                     );
                 }
                 crate::ir::Lit::Null => {
+                    self.type_writer.add_type(expr.ty)?;
                     w!(self.fn_bodies, "(({})0)", self.ctx.get_type(expr.ty));
                 }
             },
@@ -305,6 +310,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 }
             }
             ExprKind::ConstValue(v) => {
+                self.type_writer.add_type(expr.ty)?;
                 w!(self.fn_bodies, "(({})", self.ctx.get_type(expr.ty));
                 self.write_const_val(*v);
                 w!(self.fn_bodies, ")");
@@ -350,6 +356,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 w!(self.fn_bodies, ")");
             }
             ExprKind::Cast(inner) => {
+                self.type_writer.add_type(expr.ty)?;
                 w!(self.fn_bodies, "(({})", self.ctx.get_type(expr.ty));
                 self.write_expr(inner, false)?;
                 w!(self.fn_bodies, ")");
@@ -366,13 +373,16 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             }
             ExprKind::CodegenIntrinsic(kind) => match kind {
                 CodegenIntrinsicKind::SizeOfLike(n, typ) => {
+                    self.type_writer.add_type(typ)?;
                     w!(self.fn_bodies, "{}({})", n, self.ctx.get_type(typ));
                 }
                 CodegenIntrinsicKind::FunctionLike(n) => {
                     w!(self.fn_bodies, "{}", n);
                 }
             },
-            ExprKind::Void => {}
+            ExprKind::Void => {
+                // w!(self.fn_bodies, "{{ FAIL {:?} }}", expr);
+            }
         }
 
         if bare_block {
@@ -407,6 +417,28 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         }
 
         w!(self.fn_decls, ";");
+
+        Ok(())
+    }
+
+    pub fn write_static_decl(
+        &mut self,
+        id: IrId,
+        item: &'ir Static<'ir>,
+    ) -> Result<(), AluminaError> {
+        self.type_writer.add_type(item.typ)?;
+
+        self.ctx
+            .register_name(id, CName::Native(item.name.unwrap()));
+
+        if !item.typ.is_zero_sized() {
+            w!(
+                self.fn_decls,
+                "static {} {};",
+                self.ctx.get_type(item.typ),
+                self.ctx.get_name(id)
+            );
+        }
 
         Ok(())
     }

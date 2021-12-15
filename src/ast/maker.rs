@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::{
     ast::{AstCtx, AstId, BuiltinType, Field, Function, Item, ItemP, Parameter, Struct, Ty},
     common::{AluminaError, ArenaAllocatable, CodeErrorKind, WithSpanDuringParsing},
+    diagnostics::DiagnosticContext,
     intrinsics::intrinsic_kind,
     name_resolution::scope::{NamedItem, Scope},
     parser::{AluminaVisitor, ParseCtx},
@@ -11,21 +12,24 @@ use crate::{
 use super::{
     expressions::ExpressionVisitor,
     lang::{lang_item_kind, LangItemKind, LangItemMap},
+    macros::MacroMaker,
     types::TypeVisitor,
-    AssociatedFn, Attribute, Enum, EnumMember, Intrinsic, Span,
+    AssociatedFn, Attribute, Enum, EnumMember, Intrinsic, Span, Static,
 };
 
 pub struct AstItemMaker<'ast> {
     ast: &'ast AstCtx<'ast>,
+    diag_ctx: DiagnosticContext,
     symbols: Vec<ItemP<'ast>>,
 
     lang_items: HashMap<LangItemKind, ItemP<'ast>>,
 }
 
 impl<'ast> AstItemMaker<'ast> {
-    pub fn new(ast: &'ast AstCtx<'ast>) -> Self {
+    pub fn new(ast: &'ast AstCtx<'ast>, diag_ctx: DiagnosticContext) -> Self {
         Self {
             ast,
+            diag_ctx,
             symbols: Vec::new(),
             lang_items: HashMap::new(),
         }
@@ -168,7 +172,10 @@ impl<'ast> AstItemMaker<'ast> {
                 NamedItem::EnumMember(_, id, node) => {
                     let expr = node
                         .child_by_field_name("value")
-                        .map(|node| ExpressionVisitor::new(self.ast, scope.clone()).generate(node))
+                        .map(|node| {
+                            ExpressionVisitor::new(self.ast, self.diag_ctx.clone(), scope.clone())
+                                .generate(node)
+                        })
                         .transpose()?;
 
                     let span = Span {
@@ -257,7 +264,10 @@ impl<'ast> AstItemMaker<'ast> {
             .unwrap_or(self.ast.intern_type(Ty::Builtin(BuiltinType::Void)));
 
         let function_body = body
-            .map(|body| ExpressionVisitor::new(self.ast, scope.clone()).generate(body))
+            .map(|body| {
+                ExpressionVisitor::new(self.ast, self.diag_ctx.clone(), scope.clone())
+                    .generate(body)
+            })
             .transpose()?;
 
         let span = Span {
@@ -275,6 +285,51 @@ impl<'ast> AstItemMaker<'ast> {
             body: function_body,
             span: Some(span),
             closure: false,
+        });
+
+        symbol.assign(result);
+
+        self.symbols.push(symbol);
+
+        Ok(())
+    }
+
+    fn make_static<'src>(
+        &mut self,
+        name: &'ast str,
+        symbol: ItemP<'ast>,
+        node: tree_sitter::Node<'src>,
+        scope: Scope<'ast, 'src>,
+    ) -> Result<(), AluminaError> {
+        let typ = node
+            .child_by_field_name("type")
+            .map(|n| TypeVisitor::new(self.ast, scope.clone()).visit(n))
+            .transpose()?;
+
+        let init = node
+            .child_by_field_name("init")
+            .map(|body| {
+                ExpressionVisitor::new(self.ast, self.diag_ctx.clone(), scope.clone())
+                    .generate(body)
+            })
+            .transpose()?;
+
+        if typ.is_none() && init.is_none() {
+            return Err(CodeErrorKind::TypeHintRequired).with_span(&scope, node);
+        }
+
+        let span = Span {
+            start: node.start_byte(),
+            end: node.end_byte(),
+            file: scope.code().unwrap().file_id(),
+        };
+
+        let result = Item::Static(Static {
+            name: Some(name),
+            attributes: self.get_attributes(symbol, scope.code().unwrap(), node)?,
+            typ,
+            init,
+            span: Some(span),
         });
 
         symbol.assign(result);
@@ -413,6 +468,14 @@ impl<'ast> AstItemMaker<'ast> {
                 }
                 [NamedItem::Type(symbol, node, scope)] => {
                     self.make_type(name, *symbol, *node, scope.clone(), None)?;
+                }
+                [NamedItem::Static(symbol, node)] => {
+                    self.make_static(name, *symbol, *node, scope.clone())?;
+                }
+                [NamedItem::Macro(symbol, node, scope)] => {
+                    let mut macro_maker = MacroMaker::new(self.ast, self.diag_ctx.clone());
+                    macro_maker.make(name, *symbol, *node, scope.clone())?;
+                    self.symbols.push(symbol);
                 }
                 [NamedItem::Function(symbol, node, scope)] => {
                     match node.kind() {

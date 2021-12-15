@@ -47,11 +47,11 @@ impl<'ast, 'src> FirstPassVisitor<'ast, 'src> {
 impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     type ReturnType = Result<(), AluminaError>;
 
-    fn visit_source_file(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
+    fn visit_source_file(&mut self, node: Node<'src>) -> Self::ReturnType {
         self.visit_children(node)
     }
 
-    fn visit_mod_definition(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
+    fn visit_mod_definition(&mut self, node: Node<'src>) -> Self::ReturnType {
         let name = self.parse_name(node);
 
         let child_scope = self.scope.named_child(ScopeType::Module, name);
@@ -67,7 +67,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         Ok(())
     }
 
-    fn visit_struct_definition(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
+    fn visit_struct_definition(&mut self, node: Node<'src>) -> Self::ReturnType {
         let name = self.parse_name(node);
 
         let child_scope = self.scope.named_child(ScopeType::Struct, name);
@@ -89,7 +89,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         Ok(())
     }
 
-    fn visit_impl_block(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
+    fn visit_impl_block(&mut self, node: Node<'src>) -> Self::ReturnType {
         let name = self.parse_name(node);
 
         let child_scope = self.scope.named_child(ScopeType::Impl, name);
@@ -105,7 +105,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         Ok(())
     }
 
-    fn visit_enum_definition(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
+    fn visit_enum_definition(&mut self, node: Node<'src>) -> Self::ReturnType {
         let name = self.parse_name(node);
 
         let child_scope = self.scope.named_child(ScopeType::Enum, name);
@@ -122,7 +122,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         Ok(())
     }
 
-    fn visit_enum_item(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
+    fn visit_enum_item(&mut self, node: Node<'src>) -> Self::ReturnType {
         let name = self.parse_name(node);
 
         self.scope
@@ -135,7 +135,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         Ok(())
     }
 
-    fn visit_struct_field(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
+    fn visit_struct_field(&mut self, node: Node<'src>) -> Self::ReturnType {
         let name = self.parse_name(node);
         self.scope
             .add_item(name, NamedItem::Field(node))
@@ -144,7 +144,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         Ok(())
     }
 
-    fn visit_function_definition(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
+    fn visit_function_definition(&mut self, node: Node<'src>) -> Self::ReturnType {
         let name = self.parse_name(node);
         let child_scope = self.scope.named_child(ScopeType::Function, name);
 
@@ -165,7 +165,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         Ok(())
     }
 
-    fn visit_extern_function(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
+    fn visit_extern_function(&mut self, node: Node<'src>) -> Self::ReturnType {
         let name = self.parse_name(node);
         let child_scope = self.scope.named_child(ScopeType::Function, name);
 
@@ -186,7 +186,16 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         Ok(())
     }
 
-    fn visit_generic_argument_list(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
+    fn visit_static_declaration(&mut self, node: Node<'src>) -> Self::ReturnType {
+        let name = self.parse_name(node);
+        self.scope
+            .add_item(name, NamedItem::Static(self.ast.make_symbol(), node))
+            .with_span(&self.scope, node)?;
+
+        Ok(())
+    }
+
+    fn visit_generic_argument_list(&mut self, node: Node<'src>) -> Self::ReturnType {
         let mut cursor = node.walk();
         for argument in node.children_by_field_name("argument", &mut cursor) {
             let name = self.code.node_text(argument).alloc_on(self.ast);
@@ -198,7 +207,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         Ok(())
     }
 
-    fn visit_parameter(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
+    fn visit_parameter(&mut self, node: Node<'src>) -> Self::ReturnType {
         let name = self.parse_name(node);
 
         self.scope
@@ -208,13 +217,51 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         Ok(())
     }
 
-    fn visit_parameter_list(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
+    fn visit_macro_parameter(&mut self, node: Node<'src>) -> Self::ReturnType {
+        let name = self.parse_name(node);
+
+        self.scope
+            .add_item(
+                name,
+                NamedItem::MacroParameter(
+                    self.ast.make_id(),
+                    node.child_by_field_name("et_cetera").is_some(),
+                ),
+            )
+            .with_span(&self.scope, node)?;
+
+        Ok(())
+    }
+
+    fn visit_parameter_list(&mut self, node: Node<'src>) -> Self::ReturnType {
         self.visit_children_by_field(node, "parameter")
     }
 
-    fn visit_use_declaration(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
+    fn visit_macro_parameter_list(&mut self, node: Node<'src>) -> Self::ReturnType {
+        self.visit_children_by_field(node, "parameter")
+    }
+
+    fn visit_use_declaration(&mut self, node: Node<'src>) -> Self::ReturnType {
         let mut visitor = UseClauseVisitor::new(self.ast, self.scope.clone());
         visitor.visit(node.child_by_field_name("argument").unwrap())?;
+
+        Ok(())
+    }
+
+    fn visit_macro_definition(&mut self, node: Node<'src>) -> Self::ReturnType {
+        let name = self.parse_name(node);
+        let child_scope = self.scope.named_child(ScopeType::Macro, name);
+
+        self.scope
+            .add_item(
+                name,
+                NamedItem::Macro(self.ast.make_symbol(), node, child_scope.clone()),
+            )
+            .with_span(&self.scope, node)?;
+
+        with_child_scope!(self, child_scope, {
+            self.visit_children_by_field(node, "parameters")?;
+        });
 
         Ok(())
     }

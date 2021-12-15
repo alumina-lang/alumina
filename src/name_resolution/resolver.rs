@@ -139,11 +139,11 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
                         target.clone(),
                     );
                 }
-                NamedItem::Local(_) | NamedItem::Parameter(..) => {
+                NamedItem::Macro(_, _, _) | NamedItem::Local(_) | NamedItem::Parameter(..) => {
                     let original_func = self_scope.find_containing_function();
                     let current_func = containing_scope.find_containing_function();
 
-                    if original_func == current_func {
+                    if current_func.is_none() || (original_func == current_func) {
                         return Ok(ItemResolution::Item(item.clone()));
                     } else {
                         return Err(CodeErrorKind::CannotReferenceLocal(path.to_string()));

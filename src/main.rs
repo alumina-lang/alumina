@@ -2,11 +2,13 @@
 #![feature(assert_matches)]
 #![feature(bool_to_option)]
 #![feature(never_type)]
+#![feature(core_intrinsics)]
 
 mod ast;
 mod codegen;
 mod common;
 mod compiler;
+mod diagnostics;
 mod intrinsics;
 mod ir;
 mod name_resolution;
@@ -16,10 +18,13 @@ mod visitors;
 
 use compiler::Compiler;
 use compiler::SourceFile;
+use diagnostics::DiagnosticContext;
 use std::path::PathBuf;
 
 fn main() {
-    let mut compiler = Compiler::new(vec![
+    let diag_context = DiagnosticContext::new();
+    let mut compiler = Compiler::new(diag_context.clone());
+    let files = vec![
         SourceFile {
             filename: PathBuf::from("./stdlib/lib.alu"),
             path: "std".to_string(),
@@ -28,14 +33,16 @@ fn main() {
             filename: PathBuf::from("./examples/minimal.alu"),
             path: "hello_world".to_string(),
         },
-    ]);
+    ];
 
-    match compiler.compile() {
+    match compiler.compile(files) {
         Ok(program) => {
+            diag_context.print_error_report().unwrap();
             println!("{}", program);
         }
         Err(e) => {
-            compiler.print_error_report(e).unwrap();
+            diag_context.add_from_error(e).unwrap();
+            diag_context.print_error_report().unwrap();
             std::process::exit(1);
         }
     }

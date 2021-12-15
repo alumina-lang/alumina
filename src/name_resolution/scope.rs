@@ -19,6 +19,8 @@ use super::path::{Path, PathSegment};
 pub enum NamedItem<'ast, 'src> {
     Alias(Path<'ast>),
     Function(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
+    Static(ItemP<'ast>, Node<'src>),
+    Macro(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
     Type(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
     Module(Scope<'ast, 'src>),
     Impl(Scope<'ast, 'src>),
@@ -27,6 +29,7 @@ pub enum NamedItem<'ast, 'src> {
     EnumMember(ItemP<'ast>, AstId, Node<'src>),
     Local(AstId),
     Parameter(AstId, Node<'src>),
+    MacroParameter(AstId, bool),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -36,6 +39,7 @@ pub enum ScopeType {
     Module,
     Struct,
     Function,
+    Macro,
     Closure,
     Impl,
     Enum,

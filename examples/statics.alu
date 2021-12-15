@@ -1,0 +1,26 @@
+use std::io::{print, println};
+
+// Static variables are initialized in dependency order and if there
+// are cycles in the graph, a compile-time error will be produced.
+static global_var1: i32 = hello();
+static global_var2: i32 = global_var3 + 1;
+static global_var3: i32 = global_var4 + 1;
+static global_var4: i32 = global_var1 + 1;
+static global_var5: i32 = global_var6 + 1;
+static global_var6: i32 = if global_var2 > 2 { global_var2 } else { 0 };
+static global_var7: i32 = loop {
+    if global_var5 > 1000 {
+        break global_var5
+    }
+
+    global_var5 *= 2;
+};
+
+fn hello() -> i32 {
+    3
+}
+
+#[export]
+fn main() {
+    println!("{}", global_var7);
+}

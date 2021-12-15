@@ -63,27 +63,36 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
 
         match ty {
             Ty::Builtin(a) if !body_only => {
-                let name = CName::from_native(match a {
-                    BuiltinType::U8 => "uint8_t",
-                    BuiltinType::U16 => "uint16_t",
-                    BuiltinType::U32 => "uint32_t",
-                    BuiltinType::U64 => "uint64_t",
-                    BuiltinType::I8 => "int8_t",
-                    BuiltinType::I16 => "int16_t",
-                    BuiltinType::I32 => "int32_t",
-                    BuiltinType::I64 => "int64_t",
-                    BuiltinType::F32 => "float",
-                    BuiltinType::F64 => "double",
-                    BuiltinType::USize => "size_t",
-                    BuiltinType::ISize => "ptrdiff_t",
-                    BuiltinType::Bool => "_Bool",
-                    BuiltinType::Void => "void",
-                    BuiltinType::Never => "void",
-
-                    BuiltinType::U128 => "unsigned __int128",
-                    BuiltinType::I128 => "__int128",
-                    //_ => todo!(),
-                });
+                let name = match a {
+                    BuiltinType::U128 => {
+                        let name = CName::Mangled("uint128", self.ctx.make_id());
+                        w!(self.type_decls, "typedef unsigned __int128 {};\n", name);
+                        name
+                    }
+                    BuiltinType::I128 => {
+                        let name = CName::Mangled("int128", self.ctx.make_id());
+                        w!(self.type_decls, "typedef signed __int128 {};\n", name);
+                        name
+                    }
+                    _ => CName::from_native(match a {
+                        BuiltinType::U8 => "uint8_t",
+                        BuiltinType::U16 => "uint16_t",
+                        BuiltinType::U32 => "uint32_t",
+                        BuiltinType::U64 => "uint64_t",
+                        BuiltinType::I8 => "int8_t",
+                        BuiltinType::I16 => "int16_t",
+                        BuiltinType::I32 => "int32_t",
+                        BuiltinType::I64 => "int64_t",
+                        BuiltinType::F32 => "float",
+                        BuiltinType::F64 => "double",
+                        BuiltinType::USize => "size_t",
+                        BuiltinType::ISize => "ptrdiff_t",
+                        BuiltinType::Bool => "_Bool",
+                        BuiltinType::Void => "void",
+                        BuiltinType::Never => "void",
+                        _ => unreachable!(),
+                    }),
+                };
 
                 self.ctx.register_type(ty, name);
             }

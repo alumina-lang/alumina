@@ -125,7 +125,7 @@ pub enum UnqualifiedKind {
     String(usize),
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash, Copy)]
+#[derive(PartialEq, Eq, Clone, Hash, Copy)]
 pub enum Ty<'ir> {
     Extern(IrId),
     NamedType(IRItemP<'ir>),
@@ -139,6 +139,56 @@ pub enum Ty<'ir> {
     Unqualified(UnqualifiedKind),
     Tuple(&'ir [TyP<'ir>]),
     Fn(&'ir [TyP<'ir>], TyP<'ir>),
+}
+
+impl Debug for Ty<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Ty::Extern(id) => write!(f, "extern {}", id),
+            Ty::NamedType(cell) => {
+                let inner = cell.try_get();
+                match inner {
+                    Some(IRItem::Struct(s)) => {
+                        write!(f, "{} {{ ", s.name.unwrap_or("(unnamed)"))?;
+                        for field in s.fields {
+                            write!(f, "{:?} ", field.ty)?;
+                        }
+                        write!(f, "}}")
+                    }
+                    Some(IRItem::Enum(e)) => {
+                        write!(f, "{}", e.name.unwrap_or("(unnamed)"))
+                    }
+                    _ => write!(f, "ERROR"),
+                }
+            }
+            Ty::Builtin(builtin) => write!(f, "{:?}", builtin),
+            Ty::Pointer(ty, is_const) => {
+                write!(f, "&{}{:?}", if *is_const { "" } else { "mut " }, ty)
+            }
+            Ty::Array(ty, len) => write!(f, "[{:?}; {}]", ty, len),
+            Ty::Unqualified(kind) => write!(f, "unqualified {:?}", kind),
+            Ty::Tuple(tys) => {
+                write!(f, "(")?;
+                for (i, ty) in tys.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{:?}", ty)?;
+                }
+                write!(f, ")")
+            }
+            Ty::Fn(args, ret) => {
+                write!(f, "fn(")?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{:?}", arg)?;
+                }
+                write!(f, ") -> {:?}", ret)
+            }
+        }
+    }
 }
 
 impl<'ir> Ty<'ir> {
@@ -189,7 +239,8 @@ impl<'ir> Ty<'ir> {
             Ty::NamedType(inner) => match inner.get() {
                 IRItem::Struct(s) => s.fields.iter().all(|f| f.ty.is_zero_sized()),
                 IRItem::Enum(e) => e.underlying_type.is_zero_sized(),
-                IRItem::Function(_) => false,
+                IRItem::Static(_) => unreachable!(),
+                IRItem::Function(_) => unreachable!(),
             },
             Ty::Pointer(_, _) => false,
             Ty::Array(inner, size) => *size == 0 || inner.is_zero_sized(),
@@ -255,10 +306,18 @@ pub struct Enum<'ir> {
 }
 
 #[derive(Debug)]
+pub struct Static<'ir> {
+    pub name: Option<&'ir str>,
+    pub typ: TyP<'ir>,
+    pub init: Option<ExprP<'ir>>,
+}
+
+#[derive(Debug)]
 pub enum IRItem<'ir> {
     Struct(Struct<'ir>),
     Function(Function<'ir>),
     Enum(Enum<'ir>),
+    Static(Static<'ir>),
 }
 
 pub type IRItemP<'ir> = &'ir IRItemCell<'ir>;
@@ -290,6 +349,13 @@ impl<'ir> IRItemCell<'ir> {
         match self.contents.get() {
             Some(IRItem::Struct(s)) => s,
             _ => panic!("struct expected"),
+        }
+    }
+
+    pub fn get_static(&'ir self) -> &'ir Static<'ir> {
+        match self.contents.get() {
+            Some(IRItem::Static(s)) => s,
+            _ => panic!("static expected"),
         }
     }
 }
@@ -367,6 +433,7 @@ pub enum ExprKind<'ir> {
     Assign(ExprP<'ir>, ExprP<'ir>),
     Index(ExprP<'ir>, ExprP<'ir>),
     Local(IrId),
+    Static(IRItemP<'ir>),
     Lit(Lit<'ir>),
     ConstValue(const_eval::Value<'ir>),
     Field(ExprP<'ir>, IrId),
@@ -460,6 +527,7 @@ impl<'ir> Expr<'ir> {
 
             ExprKind::Fn(_) => true,
             ExprKind::Local(_) => true,
+            ExprKind::Static(_) => true,
             ExprKind::Lit(_) => true,
             ExprKind::ConstValue(_) => true,
             ExprKind::Void => true,

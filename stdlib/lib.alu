@@ -20,7 +20,7 @@ mod mem {
             if a.len != b.len {
                 return false;
             }
-            memcmp(a.ptr as &(), b.ptr as &(), a.len * size_of::<T>()) == 0
+            memcmp(a.ptr as &void, b.ptr as &void, a.len * size_of::<T>()) == 0
         }
     
         #[force_inline]
@@ -57,8 +57,17 @@ mod mem {
 
     #[force_inline]
     fn stack_alloc<T>(len: usize) -> &mut [T] {
+        // TODO: this is broken until inlining in IR is implemented, since __builtin_alloca_with_align
+        // cannot leave the function it was called in even if the function was force-inlined.
         let ret: &mut [T];
-        ret.ptr = intrinsics::aligned_alloca(size_of::<T>() * len, 16usize) as &mut T;
+        ret.ptr = intrinsics::aligned_alloca(
+            size_of::<T>() * len, 
+            if intrinsics::align_of::<T>() >= 8 {
+                intrinsics::align_of::<T>()
+            } else { 
+                8usize 
+            }
+        ) as &mut T;
         ret.len = len;
         ret
     }
@@ -80,38 +89,307 @@ mod mem {
     }
 
     fn copy_to<T>(src: &[T], dst: &mut T) {
-        libc::memcpy(dst as &mut (), src.ptr as &(), src.len * size_of::<T>());
+        libc::memcpy(dst as &mut void, src.ptr as &void, src.len * size_of::<T>());
     }
 
     fn free<T>(a: &mut [T]) {
-        libc::free(a.ptr as &mut ());
+        libc::free(a.ptr as &mut void);
+    }
+}
+
+mod _dyn {
+    #[lang(dyn_ptr)]
+    struct dyn_ptr<Ptr> {
+        ptr: Ptr,
+        type_id: usize,
+    }
+
+    impl dyn_ptr {
+        #[force_inline]
+        #[lang(dyn_ptr_new_const)]
+        fn from_const<T>(ptr: &T) -> dyn_ptr<&void> {
+            dyn_ptr::<&void> { 
+                ptr: ptr as &void,
+                type_id: intrinsics::type_id::<T>()
+            }
+        }
+
+        #[force_inline]
+        #[lang(dyn_ptr_new_mut)]
+        fn from_mut<T>(ptr: &mut T) -> dyn_ptr<&mut void> {
+            dyn_ptr::<&mut void> { 
+                ptr: ptr as &mut void,
+                type_id: intrinsics::type_id::<T>()
+            }
+        }
+
+        #[force_inline]
+        #[lang(dyn_ptr_downcast_const)]
+        fn downcast_const<T>(self: dyn_ptr<&()>) -> &T {
+            if self.type_id == intrinsics::type_id::<T>() {
+                self.ptr as &T
+            } else {
+                null
+            }
+        }
+
+        #[force_inline]
+        #[lang(dyn_ptr_downcast_mut)]
+        fn downcast_mut<T>(self: dyn_ptr<&mut ()>) -> &mut T {
+            if self.type_id == intrinsics::type_id::<T>() {
+                self.ptr as &mut T
+            } else {
+                null
+            }
+        }
+    }
+
+    #[force_inline]
+    #[lang(dyn_ptr_coerce)]
+    fn dyn_coerce(a: dyn_ptr<&mut void>) -> dyn_ptr<&void> {
+        dyn_ptr::<&void> { 
+            ptr: a.ptr,
+            type_id: a.type_id
+        }
+    }
+}
+
+mod rtti {
+    #[force_inline]
+    fn type_id<T>() -> usize {
+        intrinsics::type_id::<T>()
     }
 }
 
 mod libc {
-    extern "C" fn free(ptr: &mut ());
-    extern "C" fn memcpy(dst: &mut (), src: &(), len: usize) -> &mut ();
-    extern "C" fn memcmp(ptr1: &(), ptr2: &(), len: usize) -> i32;
-    extern "C" fn write(fd: i32, buf: &(), len: usize) -> isize;
-    extern "C" fn malloc(size: usize) -> &mut ();
+    extern "C" fn free(ptr: &mut void);
+    extern "C" fn memcpy(dst: &mut void, src: &void, len: usize) -> &mut void;
+    extern "C" fn memcmp(ptr1: &void, ptr2: &void, len: usize) -> i32;
+    extern "C" fn write(fd: i32, buf: &void, len: usize) -> isize;
+    extern "C" fn malloc(size: usize) -> &mut void;
+    extern "C" fn _exit(ret: i32) -> !;
 }
 
 mod io {
-    fn print(s: &[u8]) {
-        libc::write(1, s.ptr as &(), s.len);
+    mod _printf {
+        fn printf_integer<T>(val: T, printer: fn(&[u8])) {
+            let buf: [u8; 16];
+            let buf: &mut [u8] = &buf;
+        
+            let i: usize = buf.len - 1;
+            let negative = val < 0;
+            val = math::abs(val);
+    
+            loop {
+                buf[i] = (val % 10) as u8 + '0';
+                val /= 10;
+                if val == 0 {
+                    if negative {
+                        i -= 1;
+                        buf[i] = '-';
+                    }
+                    printer(buf[i..]);
+                    break;
+                }
+                i -= 1;
+            }
+        }
+
+        fn printf_float<T>(val: T, printer: fn(&[u8]), precision: usize) {
+            let trunc = val as i128;
+            printf_integer(trunc, printer);
+            printer(".");
+            let frac = math::abs((val - (trunc as T)));
+            
+            let buf: [u8; 16];
+            let buf: &mut [u8] = &buf;
+            
+            let i = 0usize;
+            while i < precision {
+                frac *= 10.0;
+                let digit = frac as u8;
+                buf[i] = digit + '0';
+                frac -= digit as T;
+                i += 1;
+            }
+            printer(buf[..precision]);
+        }
+        
+        fn printf_dyn(val: &dyn, printer: fn(&[u8])) {
+            use rtti::type_id;
+            use std::io::print;
+            use std::shed::write_number;
+        
+            switch val.type_id {
+                type_id::<&[u8]>() => printer(*(val.ptr as &&[u8])),
+                type_id::<u8>() => printf_integer(*(val.ptr as &u8), printer),
+                type_id::<u16>() => printf_integer(*(val.ptr as &u16), printer),
+                type_id::<u32>() => printf_integer(*(val.ptr as &u32), printer),
+                type_id::<u64>() => printf_integer(*(val.ptr as &u64), printer),
+                type_id::<u128>() => printf_integer(*(val.ptr as &u128), printer),
+                type_id::<i8>() => printf_integer(*(val.ptr as &i8), printer),
+                type_id::<i16>() => printf_integer(*(val.ptr as &i16), printer),
+                type_id::<i32>() => printf_integer(*(val.ptr as &i32), printer),
+                type_id::<i64>() => printf_integer(*(val.ptr as &i64), printer),
+                type_id::<i128>() => printf_integer(*(val.ptr as &i128), printer),
+                type_id::<usize>() => printf_integer(*(val.ptr as &usize), printer),
+                type_id::<isize>() => printf_integer(*(val.ptr as &isize), printer),
+                type_id::<f32>() => printf_float(*(val.ptr as &f32), printer, 12),
+                type_id::<f64>() => printf_float(*(val.ptr as &f64), printer, 12),
+                _ => panic!("argument type not supported")
+            }
+        }
+        
+        enum state {
+            NORMAL,
+            BRACE_OPEN,
+            BRACE_CLOSE,
+        }
+        
+        fn printf(fmt: &[u8], args: &[&dyn], printer: fn(&[u8]), newline: bool) {
+            let i = 0usize;
+            let buf: [u8; 64];
+            let buf: &mut [u8] = &buf;
+
+            let buf_pos = 0usize;
+
+            macro arg() {
+                if args.len == 0 {
+                    panic!("too few arguments");
+                }
+                let arg = args[0];
+                args = args[1..];
+                arg
+            } 
+
+            macro buf_append(val) {
+                buf[buf_pos] = val;
+                buf_pos += 1;
+                if buf_pos == buf.len {
+                    printer(buf);
+                    buf_pos = 0;
+                }
+            }
+            
+            let state = state::NORMAL;
+        
+            while i < fmt.len {
+                let ch = fmt[i];
+                state = switch state {
+                    state::NORMAL => {
+                        switch ch {
+                            '{' => state::BRACE_OPEN,
+                            '}' => state::BRACE_CLOSE,
+                            _ => {
+                                buf_append!(ch);
+                                state::NORMAL
+                            }
+                        }
+                    }
+                    state::BRACE_CLOSE => {
+                        switch ch {
+                           '}' => {
+                                buf_append!(ch);
+                            }
+                            _ => panic!("invalid format string")
+                        };
+                        state::NORMAL
+                    }
+                    state::BRACE_OPEN => {
+                        switch ch {
+                            '}' => {
+                                printer(buf[0..buf_pos]);
+                                printf_dyn(arg!(), printer);
+                                buf_pos = 0;
+                            }
+                            '{' => {
+                                buf_append!(ch);
+                            }
+                            _ => panic!("invalid format string")
+                        };
+                        state::NORMAL
+                    }
+                    _ => {
+                        // std::intrinsics::unreachable();
+                        state::NORMAL // TODO: remove after the codegen bug is fixed
+                    }
+                };
+                i += 1;
+            }
+            if newline {
+                buf_append!('\n');
+            }
+            printer(buf[0..buf_pos]);
+        
+            if args.len > 0 {
+                panic!("too many arguments");
+            }
+        }
+    }
+
+    macro print(fmt, expr...) {
+        _printf::printf(
+            fmt, 
+            &[(&expr as &dyn)...], 
+            |buf| {
+                libc::write(1, buf.ptr as &void, buf.len);
+            },
+            false
+        )
+    }
+
+    macro eprint(fmt, expr...) {
+        _printf::printf(
+            fmt, 
+            &[(&expr as &dyn)...], 
+            |buf| {
+                libc::write(2, buf.ptr as &void, buf.len);
+            },
+            false
+        )
+    }
+
+    macro println(fmt, expr...) {
+        _printf::printf(
+            fmt, 
+            &[(&expr as &dyn)...], 
+            |buf| {
+                libc::write(1, buf.ptr as &void, buf.len);
+            },
+            true
+        )
+    }
+
+    macro eprintln(fmt, expr...) {
+        _printf::printf(
+            fmt, 
+            &[(&expr as &dyn)...], 
+            |buf| {
+                libc::write(2, buf.ptr as &void, buf.len);
+            },
+            true
+        )
     }
 }
 
 mod process {
-    extern fn exit(v: i32) -> !;
+    extern "C" fn exit(v: i32) -> !;
 }
 
 mod intrinsics {
     extern "intrinsic" fn compile_fail(reason: &[u8]) -> !;
     extern "intrinsic" fn unreachable() -> !;
+    extern "intrinsic" fn trap() -> !;
     extern "intrinsic" fn size_of<T>() -> usize;
+    extern "intrinsic" fn type_id<T>() -> usize;
     extern "intrinsic" fn align_of<T>() -> usize;
-    extern "intrinsic" fn aligned_alloca(size: usize, align: usize) -> &mut ();
+    extern "intrinsic" fn aligned_alloca(size: usize, align: usize) -> &mut void;
+}
+
+
+macro panic(reason) {
+    io::eprintln!("panic: {}", reason);
+    libc::_exit(-1);
 }
 
 
@@ -133,35 +411,10 @@ mod math {
     }
 
     fn abs<T>(a: T) -> T {
-        if a < 0 {
-            -a
+        if a < (0 as T) {
+            (0 as T) - a
         } else {
             a
-        }
-    }
-}
-
-mod shed {
-    fn write_number<T>(val: T) {
-        let buf: [u8; 16];
-        let buf: &mut [u8] = &buf;
-    
-        let i: usize = buf.len - 1;
-        let negative = val < 0;
-        val = math::abs(val);
-
-        loop {
-            buf[i] = (val % 10) as u8 + 48;
-            val /= 10;
-            if val == 0 {
-                if negative {
-                    i -= 1;
-                    buf[i] = '-';
-                }
-                std::io::print(buf[i..]);
-                break;
-            }
-            i -= 1;
         }
     }
 }

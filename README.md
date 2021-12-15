@@ -8,7 +8,14 @@ It has the following conveniences over C:
 - [Unified call syntax](https://en.wikipedia.org/wiki/Uniform_Function_Call_Syntax) for functions in scope
 - Block expressions, lambdas (stateless only, closures are not supported)
 - Module system, namespaces and 2-pass compilation (no header files and forward declarations needed)
-- Richer type system: strong enums, array slices, tuples, 0-sized types, never type.
+- Richer type system: 
+    - strong enums, 
+    - array slices, 
+    - tuples, 
+    - 0-sized types (unit, 0-sized arrays, structs with no fields, ...), 
+    - never type, 
+    - opt-in RTTI type-erasure (`dyn` pointer)
+- Hygenic expression macros
 - Const evaluation (very limited at the moment)
 - Go-style defer expressions
 
@@ -18,26 +25,26 @@ Alumina can be thought of as Go without a garbage collector and runtime. Unlike 
 
 <!-- totally not rust lmao -->
 ```rust
-struct vector<T> {
+struct stack<T> {
     data: &mut [T],
     length: usize,
 }
 
-impl vector {
+impl stack {
     use std::mem::{slice, alloc, copy_to};
 
-    fn new<T>() -> vector<T> {
+    fn new<T>() -> stack<T> {
         with_capacity(0)
     }
 
-    fn with_capacity<T>(capacity: usize) -> vector<T> {
-        vector {
+    fn with_capacity<T>(capacity: usize) -> stack<T> {
+        stack {
             data: alloc::<T>(capacity),
             length: 0,
         }
     }
 
-    fn reserve<T>(self: &mut vector<T>, new_capacity: usize) {
+    fn reserve<T>(self: &mut stack<T>, new_capacity: usize) {
         if self.data.len < new_capacity {
             self.data = {
                 let new_data = alloc::<T>(new_capacity);
@@ -48,7 +55,7 @@ impl vector {
         }
     }
 
-    fn push<T>(self: &mut vector<T>, value: T) {
+    fn push<T>(self: &mut stack<T>, value: T) {
         use std::math::max;
 
         if self.length == self.data.len {
@@ -59,17 +66,17 @@ impl vector {
         self.length += 1;
     }
 
-    fn pop<T>(self: &mut vector<T>) -> T {
+    fn pop<T>(self: &mut stack<T>) -> T {
         let value = self.data[self.length - 1];
         self.length -= 1;
         value
     }
 
-    fn empty<T>(self: &vector<T>) -> bool {
+    fn empty<T>(self: &stack<T>) -> bool {
         self.length == 0
     }
 
-    fn free<T>(self: &mut vector<T>) {
+    fn free<T>(self: &mut stack<T>) {
         use std::mem::free;
         self.data.free();
     }
@@ -79,16 +86,16 @@ use std::io::print;
 
 #[export]
 fn main() {
-    let v: vector<&[u8]> = vector::new();
+    let v: stack<&[u8]> = stack::new();
     defer v.free();
     
-    v.push("vector.\n");
+    v.push("stack.\n");
     v.push("a ");
     v.push("am ");
     v.push("I ");
 
     while !v.empty() {
-        print(v.pop());
+        print!("{}", v.pop());
     }
 }
 ```

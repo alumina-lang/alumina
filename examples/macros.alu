@@ -1,0 +1,93 @@
+use std::io::print;
+use std::shed::write_number;
+use std::panic;
+
+macro buf_append(buf, buf_pos, val) {
+    buf[buf_pos] = val;
+    buf_pos += 1;
+    if buf_pos == buf.len {
+        print(buf);
+        buf_pos = 0;
+    }
+}
+
+macro pop_arg(args) {
+    if args.len == 0 {
+        panic!("too few arguments");
+    }
+    let arg = args[0];
+    args = args[1..];
+    arg
+}
+
+fn printf_impl(fmt: &[u8], args: &[&void]) {
+    let i = 0usize;
+    let buf: [u8; 32];
+    let buf: &mut [u8] = &buf;
+    
+    let buf_pos = 0usize;
+    let in_escape = false;
+
+    while i < fmt.len {
+        let ch = fmt[i];
+        if in_escape {
+            switch ch {
+                's' => {
+                    print(buf[0..buf_pos]);
+                    print(*(pop_arg!(args) as &&[u8]));
+                    buf_pos = 0;
+                } 
+                'd' => {
+                    print(buf[0..buf_pos]);
+                    write_number(*(pop_arg!(args) as &i32));
+                    buf_pos = 0;
+                }
+                '%' => {
+                    buf_append!(buf, buf_pos, ch);
+                }
+                _ => {
+                    panic!("unknown escape code")
+                }
+            }
+            in_escape = false;
+        } else {
+            if ch == '%' {
+                in_escape = true;
+            } else {
+                buf_append!(buf, buf_pos, ch);
+            }
+        }
+        i += 1;
+    }
+    print(buf[0..buf_pos]);
+
+    if args.len > 0 {
+        panic!("too many arguments");
+    }
+}
+
+macro printf(fmt, expr...) {
+    printf_impl(fmt, &[(&expr as &void)...])
+}
+
+
+#[export]
+fn main() {
+    let i = 99;
+    while i > 0 {
+        if i > 1 {
+            printf!("%d bottles of beer on the wall, %d bottles of beer on the wall,\n", i, i);
+            printf!("Take one down and pass it around, %d bottles of beer on the wall\n\n", i-1);
+        } else {
+            printf!("1 bottle of beer on the wall, 1 bottle of beer on the wall,\n");
+            printf!("Take one down and pass it around, no bottles of beer on the wall\n");
+        }
+        i -= 1
+    }
+}
+
+impl u8 {
+    fn to_digit(self) -> u8 {
+        self - 48
+    }
+}

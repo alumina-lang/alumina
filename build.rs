@@ -1,6 +1,6 @@
-use std::env;
 use std::path::PathBuf;
 use std::process::Command;
+use std::{env, iter::once};
 
 use quote::{format_ident, quote};
 use serde::Deserialize;
@@ -76,8 +76,12 @@ fn generate_visitor(filename: PathBuf) -> String {
     let parsed: Vec<Node> = from_reader(file).expect("could not parse the node types JSON");
 
     let (trait_fns, match_arms): (Vec<_>, Vec<_>) = parsed
-        .iter()
+        .into_iter()
         .filter(|node| node.named)
+        .chain(once(Node {
+            r#type: "ERROR".to_string(),
+            named: true,
+        }))
         .map(|symbol| {
             let raw_name = &symbol.r#type;
             let sanitized_name = sanitize_identifier(&symbol.r#type);

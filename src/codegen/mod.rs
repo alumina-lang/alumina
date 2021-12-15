@@ -128,6 +128,7 @@ pub fn codegen<'ir>(items: &[IRItemP<'ir>]) -> Result<String, AluminaError> {
     for item in items {
         match item.get() {
             IRItem::Function(f) => function_writer.write_function_decl(item.id, f)?,
+            IRItem::Static(t) => function_writer.write_static_decl(item.id, t)?,
             _ => {}
         }
     }

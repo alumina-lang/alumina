@@ -12,11 +12,15 @@ pub enum AluminaError {
     Io(#[from] io::Error),
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone)]
 pub enum CodeErrorKind {
+    // Errors
+    #[error("syntax error: unexpected {:?}", .0)]
+    ParseError(String),
+
     #[error("could not resolve the path {}", .0)]
     UnresolvedPath(String),
-    #[error("cycle detected while resolving names")]
+    #[error("cycle detected while resolving aliases")]
     CycleDetected,
     #[error("super not allowed in this context")]
     SuperNotAllowed,
@@ -42,16 +46,16 @@ pub enum CodeErrorKind {
     TypeHintRequired,
     #[error("type mismatch: {} expected, {} found", .0, .1)]
     TypeMismatch(String, String),
-    #[error("if branches have incompatible types ({}, {})", .0, .1)]
+    #[error("branches have incompatible types ({}, {})", .0, .1)]
     MismatchedBranchTypes(String, String),
     #[error("invalid escape sequence")]
     InvalidEscapeSequence,
     #[error("cannot take address of a rvalue (yet)")]
     CannotAddressRValue,
-    #[error("cannot perform {:?} between these two operands", .0)]
-    InvalidBinOp(crate::ast::BinOp),
-    #[error("cannot perform {:?} on operands", .0)]
-    InvalidUnOp(crate::ast::UnOp),
+    #[error("cannot perform {:?} between {} and {}", .0, .1, .2)]
+    InvalidBinOp(crate::ast::BinOp, String, String),
+    #[error("cannot perform {:?} on {}", .0, .1)]
+    InvalidUnOp(crate::ast::UnOp, String),
     #[error("cannot assign to rvalue")]
     CannotAssignToRValue,
     #[error("cannot assign to const")]
@@ -74,7 +78,7 @@ pub enum CodeErrorKind {
     DuplicateFieldInitializer(String),
     #[error("expected a struct here")]
     StructExpectedHere,
-    #[error("method {:?} not found", .0)]
+    #[error("method {} not found", .0)]
     MethodNotFound(String),
     #[error("duplicate enum member")]
     DuplicateEnumMember,
@@ -82,7 +86,7 @@ pub enum CodeErrorKind {
     NotAMethod,
     #[error("default case must be last in a switch expression")]
     DefaultCaseMustBeLast,
-    #[error("cannot access {} in a nested function", .0)]
+    #[error("cannot reference {:?} in a nested function", .0)]
     CannotReferenceLocal(String),
     #[error("missing lang item: {:?}", .0)]
     MissingLangItem(LangItemKind),
@@ -108,22 +112,46 @@ pub enum CodeErrorKind {
     ExplicitCompileFail(String),
     #[error("cannot defer inside a defered expression")]
     DeferInDefer,
+    #[error("`...` expressions can only be used in macros")]
+    EtCeteraOutsideOfMacro,
+    #[error("this macro does not have any `...` arguments")]
+    NoEtCeteraArgs,
+    #[error("macro can have at most one `...` parameter")]
+    MultipleEtCeteras,
+    #[error("recursive macro calls are not allowed")]
+    RecursiveMacroCall,
+    #[error("{} is not a macro", .0)]
+    NotAMacro(String),
+    #[error("not enough macro arguments, at least {} expected", .0)]
+    NotEnoughMacroArguments(usize),
+    #[error("nested `...` expansions are not supported (yet)")]
+    EtCeteraInEtCetera,
+    #[error("`...` expansion is not allowed in this position")]
+    CannotEtCeteraHere,
+    #[error("{} is a macro (hint: append `!`)", .0)]
+    IsAMacro(String),
+    #[error("cyclic dependency during static initialization")]
+    RecursiveStaticInitialization,
+
+    // Warnings
+    #[error("defer inside a loop: this defered statement will only be executed once")]
+    DeferInALoop,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Marker {
     Span(Span),
     Monomorphization,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone)]
 #[error("{}", .kind)]
 pub struct CodeError {
     pub kind: CodeErrorKind,
     pub backtrace: Vec<Marker>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FileId {
     pub id: usize,
 }

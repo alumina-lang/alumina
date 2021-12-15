@@ -1,6 +1,11 @@
-use crate::common::FileId;
+use crate::{
+    ast::Span,
+    common::{AluminaError, CodeError, CodeErrorKind, FileId, Marker},
+    utils::NodeWrapper,
+};
 use once_cell::unsync::OnceCell;
 use std::marker::PhantomData;
+use tree_sitter::{Query, QueryCursor};
 
 include!(concat!(env!("OUT_DIR"), "/parser.rs"));
 
@@ -41,6 +46,36 @@ impl<'src> ParseCtx<'src> {
                     .unwrap();
                 self.root_node()
             }
+        }
+    }
+
+    pub fn check_syntax_errors(
+        &'src self,
+        node: tree_sitter::Node<'src>,
+    ) -> Result<(), AluminaError> {
+        let mut cursor = QueryCursor::new();
+        let query = Query::new(language(), "(ERROR) @node").unwrap();
+        let matches = cursor.matches(&query, node, self.source.as_bytes());
+
+        let mut errors = Vec::new();
+        for m in matches {
+            let error_node = m.nodes_for_capture_index(0).next().unwrap();
+            eprintln!("{:?}", NodeWrapper::new(&self.source, error_node));
+
+            errors.push(CodeError {
+                kind: CodeErrorKind::ParseError(self.node_text(error_node).to_string()),
+                backtrace: vec![Marker::Span(Span {
+                    start: error_node.start_byte(),
+                    end: error_node.end_byte(),
+                    file: self.file_id,
+                })],
+            })
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(AluminaError::CodeErrors(errors))
         }
     }
 

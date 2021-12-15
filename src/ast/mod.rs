@@ -1,5 +1,6 @@
 pub mod expressions;
 pub mod lang;
+pub mod macros;
 pub mod maker;
 pub mod types;
 
@@ -214,6 +215,7 @@ pub enum Ty<'ast> {
     NamedType(ItemP<'ast>),
     Builtin(BuiltinType),
     Pointer(TyP<'ast>, bool),
+    Dyn(bool),
     Slice(TyP<'ast>, bool),
     Array(TyP<'ast>, usize),
     Tuple(&'ast [TyP<'ast>]),
@@ -237,6 +239,8 @@ pub enum Item<'ast> {
     Enum(Enum<'ast>),
     Struct(Struct<'ast>),
     Function(Function<'ast>),
+    Static(Static<'ast>),
+    Macro(Macro<'ast>),
     Intrinsic(Intrinsic),
 }
 
@@ -263,6 +267,10 @@ impl<'ast> ItemCell<'ast> {
             .expect("assigning the same symbol twice");
     }
 
+    pub fn try_get(&'ast self) -> Option<&'ast Item<'ast>> {
+        self.contents.get()
+    }
+
     pub fn get(&'ast self) -> &'ast Item<'ast> {
         self.contents.get().unwrap()
     }
@@ -278,6 +286,13 @@ impl<'ast> ItemCell<'ast> {
         match self.contents.get() {
             Some(Item::Struct(s)) => s,
             _ => panic!("struct expected"),
+        }
+    }
+
+    pub fn get_macro(&'ast self) -> &'ast Macro<'ast> {
+        match self.contents.get() {
+            Some(Item::Macro(m)) => m,
+            _ => panic!("macro expected"),
         }
     }
 }
@@ -377,6 +392,21 @@ pub struct Intrinsic {
     pub arg_count: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct MacroParameter {
+    pub id: AstId,
+    pub et_cetera: bool,
+    pub span: Option<Span>,
+}
+
+#[derive(Debug)]
+pub struct Macro<'ast> {
+    pub name: Option<&'ast str>,
+    pub args: &'ast [MacroParameter],
+    pub body: OnceCell<ExprP<'ast>>,
+    pub span: Option<Span>,
+}
+
 #[derive(Debug)]
 pub struct Function<'ast> {
     pub name: Option<&'ast str>,
@@ -387,6 +417,15 @@ pub struct Function<'ast> {
     pub body: Option<ExprP<'ast>>,
     pub span: Option<Span>,
     pub closure: bool,
+}
+
+#[derive(Debug)]
+pub struct Static<'ast> {
+    pub name: Option<&'ast str>,
+    pub attributes: &'ast [Attribute],
+    pub typ: Option<TyP<'ast>>,
+    pub init: Option<ExprP<'ast>>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
@@ -451,6 +490,7 @@ pub enum Attribute {
     Export,
     ForceInline,
     Intrinsic,
+    StaticConstructor,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
@@ -502,9 +542,11 @@ pub enum ExprKind<'ast> {
     Assign(ExprP<'ast>, ExprP<'ast>),
     AssignOp(BinOp, ExprP<'ast>, ExprP<'ast>),
     Local(AstId),
+    Static(ItemP<'ast>),
     EnumValue(ItemP<'ast>, AstId),
     Lit(Lit<'ast>),
     Loop(ExprP<'ast>),
+    EtCetera(ExprP<'ast>),
     Break(Option<ExprP<'ast>>),
     Return(Option<ExprP<'ast>>),
     Defer(ExprP<'ast>),
@@ -543,6 +585,7 @@ impl_allocatable!(
     Statement<'_>,
     Field<'_>,
     Parameter<'_>,
+    MacroParameter,
     ItemCell<'_>,
     FieldInitializer<'_>,
     AssociatedFn<'_>,
