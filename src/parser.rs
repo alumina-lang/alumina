@@ -60,8 +60,6 @@ impl<'src> ParseCtx<'src> {
         let mut errors = Vec::new();
         for m in matches {
             let error_node = m.nodes_for_capture_index(0).next().unwrap();
-            eprintln!("{:?}", NodeWrapper::new(&self.source, error_node));
-
             errors.push(CodeError {
                 kind: CodeErrorKind::ParseError(self.node_text(error_node).to_string()),
                 backtrace: vec![Marker::Span(Span {

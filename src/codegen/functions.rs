@@ -180,10 +180,6 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
     }
 
     pub fn write_expr(&mut self, expr: &ExprP<'ir>, bare_block: bool) -> Result<(), AluminaError> {
-        if bare_block {
-            self.indent();
-        }
-
         match &expr.kind {
             ExprKind::Binary(op, lhs, rhs) => {
                 w!(self.fn_bodies, "(");
@@ -290,22 +286,20 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                     }
 
                     if !ret.is_void() {
+                        self.indent();
                         self.write_expr(ret, true)?;
                     }
                 } else {
                     w!(self.fn_bodies, "({{\n");
-                    self.indent += 2;
                     for stmt in stmts.iter() {
                         self.write_stmt(stmt)?;
                     }
 
                     if !(ret.is_void() && ret.is_unreachable()) {
+                        self.indent();
                         self.write_expr(ret, false)?;
-                        w!(self.fn_bodies, ";");
+                        w!(self.fn_bodies, ";\n");
                     }
-
-                    self.indent -= 2;
-
                     w!(self.fn_bodies, "}})");
                 }
             }
@@ -381,7 +375,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 }
             },
             ExprKind::Void => {
-                // w!(self.fn_bodies, "{{ FAIL {:?} }}", expr);
+                w!(self.fn_bodies, "/* {:?} */", expr);
             }
         }
 

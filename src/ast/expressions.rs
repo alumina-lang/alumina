@@ -872,7 +872,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             ItemResolution::Item(NamedItem::Macro(symbol, node, scope)) => {
                 let mut macro_maker = MacroMaker::new(self.ast, self.diag_ctx.clone());
                 macro_maker.make(path.segments.last().unwrap().0, symbol, node, scope.clone())?;
-                symbol.get_macro()
+                symbol
             }
             _ => {
                 return Err(CodeErrorKind::NotAMacro(path.to_string())).with_span(&self.scope, node)
@@ -886,14 +886,28 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             arguments.push(self.visit(node)?);
         }
 
-        let span = Span {
-            start: node.start_byte(),
-            end: node.end_byte(),
-            file: self.scope.code().unwrap().file_id(),
-        };
+        let result = if self.in_a_macro {
+            ExprKind::DeferedMacro(r#macro, arguments.alloc_on(self.ast)).alloc_with_span(
+                self.ast,
+                &self.scope,
+                node,
+            )
+        } else {
+            let span = Span {
+                start: node.start_byte(),
+                end: node.end_byte(),
+                file: self.scope.code().unwrap().file_id(),
+            };
 
-        let expander = MacroExpander::new(self.ast, Some(span), r#macro, arguments);
-        let result = expander.expand()?;
+            let expander = MacroExpander::new(
+                self.ast,
+                self.diag_ctx.clone(),
+                Some(span),
+                r#macro,
+                arguments,
+            );
+            expander.expand()?
+        };
 
         Ok(result)
     }

@@ -309,10 +309,7 @@ mod io {
                         };
                         state::NORMAL
                     }
-                    _ => {
-                        // std::intrinsics::unreachable();
-                        state::NORMAL // TODO: remove after the codegen bug is fixed
-                    }
+                    _ => std::intrinsics::unreachable()
                 };
                 i += 1;
             }
@@ -386,12 +383,23 @@ mod intrinsics {
     extern "intrinsic" fn aligned_alloca(size: usize, align: usize) -> &mut void;
 }
 
-
-macro panic(reason) {
-    io::eprintln!("panic: {}", reason);
+macro panic(reason, args...) {
+    io::eprintln!(
+        concat!("panic at {}:{}:{} ", reason), 
+        file!(), 
+        line!(), 
+        column!(),
+        args...
+    );
     libc::_exit(-1);
 }
 
+#[builtin] macro line() {  }
+#[builtin] macro column() {  }
+#[builtin] macro file() {  }
+#[builtin] macro env(s) {  }
+#[builtin] macro include_bytes(file) {  }
+#[builtin] macro concat(lhs...) {  }
 
 mod math {
     fn max<T>(a: T, b: T) -> T {
@@ -417,4 +425,8 @@ mod math {
             a
         }
     }
+}
+
+impl u8 {
+    
 }

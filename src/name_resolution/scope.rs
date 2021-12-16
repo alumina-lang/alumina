@@ -133,7 +133,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
     }
 
     pub fn code(&self) -> Option<&'src ParseCtx<'src>> {
-        self.inner().code.get().map(|a| *a)
+        self.inner().code.get().copied()
     }
 
     pub fn path(&self) -> Path<'ast> {
@@ -153,6 +153,18 @@ impl<'ast, 'src> Scope<'ast, 'src> {
         })))
     }
 
+    pub fn named_child_without_code(&self, r#type: ScopeType, name: &'ast str) -> Self {
+        let new_path = self.0.borrow().path.extend(PathSegment(name));
+
+        Scope(Rc::new(RefCell::new(ScopeInner {
+            r#type,
+            path: new_path,
+            items: IndexMap::new(),
+            code: OnceCell::new(),
+            parent: Some(Rc::downgrade(&self.0)),
+        })))
+    }
+
     pub fn anonymous_child(&self, r#type: ScopeType) -> Self {
         let code = self.0.borrow().code.clone();
 
@@ -166,8 +178,8 @@ impl<'ast, 'src> Scope<'ast, 'src> {
     }
 
     pub fn set_code(&self, code: &'src ParseCtx<'src>) {
-        if let Err(_) = self.0.borrow().code.set(code) {
-            panic!("")
+        if self.0.borrow().code.set(code).is_err() {
+            panic!("{}", self.0.borrow().path);
         }
     }
 
@@ -280,11 +292,8 @@ impl<'ast, 'src> Scope<'ast, 'src> {
         };
 
         for item in self.inner().items_with_name(path.segments[0].0) {
-            match item {
-                NamedItem::Module(child_scope) => {
-                    return child_scope.ensure_module(remainder);
-                }
-                _ => {}
+            if let NamedItem::Module(child_scope) = item {
+                return child_scope.ensure_module(remainder);
             }
         }
 
@@ -293,9 +302,9 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             Some(_) => ScopeType::Module,
         };
 
-        let child_scope = self.named_child(scope_type, path.segments[0].0);
+        let child_scope = self.named_child_without_code(scope_type, path.segments[0].0);
         self.add_item(path.segments[0].0, NamedItem::Module(child_scope.clone()))?;
 
-        Ok(child_scope.ensure_module(remainder)?)
+        child_scope.ensure_module(remainder)
     }
 }

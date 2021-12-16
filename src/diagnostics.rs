@@ -69,23 +69,6 @@ impl DiagnosticContext {
         self.inner.borrow_mut().messages.push((Level::Note, err));
     }
 
-    fn line_and_column(&self, source: &str, byte_offset: usize) -> (usize, usize) {
-        let mut line = 1;
-        let mut column = 1;
-        for (i, c) in source.chars().enumerate() {
-            if i == byte_offset {
-                break;
-            }
-            if c == '\n' {
-                line += 1;
-                column = 1;
-            } else {
-                column += 1;
-            }
-        }
-        (line, column)
-    }
-
     pub fn print_error_report(&self) -> Result<(), AluminaError> {
         let inner = self.inner.borrow();
         let mut all_errors: Vec<_> = inner.messages.clone();
@@ -132,7 +115,7 @@ impl DiagnosticContext {
                         .entry(span.file)
                         .or_insert_with(|| std::fs::read_to_string(file_name).unwrap());
 
-                    let (line, column) = self.line_and_column(source, span.start);
+                    let (line, column) = line_and_column(source, span.start);
                     eprintln!(" --> {}:{}:{}", file_name.display(), line, column,);
                 } else {
                     eprintln!(" --> {{ unresolved location }}");
@@ -144,4 +127,21 @@ impl DiagnosticContext {
 
         Ok(())
     }
+}
+
+pub fn line_and_column(source: &str, byte_offset: usize) -> (usize, usize) {
+    let mut line = 1;
+    let mut column = 1;
+    for (i, c) in source.chars().enumerate() {
+        if i == byte_offset {
+            break;
+        }
+        if c == '\n' {
+            line += 1;
+            column = 1;
+        } else {
+            column += 1;
+        }
+    }
+    (line, column)
 }

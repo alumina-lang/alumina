@@ -132,6 +132,13 @@ pub enum CodeErrorKind {
     IsAMacro(String),
     #[error("cyclic dependency during static initialization")]
     RecursiveStaticInitialization,
+    #[error("can only do that in function scope")]
+    NotInAFunctionScope,
+    #[error("unknown builtin macro {}", .0)]
+    UnknownBuiltinMacro(String),
+
+    #[error("cannot determine source span")]
+    NoSpanInformation,
 
     // Warnings
     #[error("defer inside a loop: this defered statement will only be executed once")]

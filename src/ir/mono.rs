@@ -131,10 +131,11 @@ impl DeferContext<'_> {
 
 pub struct Monomorphizer<'a, 'ast, 'ir> {
     mono_ctx: &'a mut MonoCtx<'ast, 'ir>,
-    replacements: HashMap<ast::AstId, ir::TyP<'ir>>,
-    return_type: Option<ir::TyP<'ir>>,
     exprs: ExpressionBuilder<'ir>,
     types: TypeBuilder<'ir>,
+
+    replacements: HashMap<ast::AstId, ir::TyP<'ir>>,
+    return_type: Option<ir::TyP<'ir>>,
     loop_contexts: Vec<LoopContext<'ir>>,
     local_types: HashMap<ir::IrId, ir::TyP<'ir>>,
     local_defs: Vec<ir::LocalDef<'ir>>,
@@ -502,6 +503,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.monomorphize_static(item, s).append_mono_marker()?;
             }
             ast::Item::Macro(_) => {
+                unreachable!("macros should have been expanded by now");
+            }
+            ast::Item::BuiltinMacro(_) => {
                 unreachable!("macros should have been expanded by now");
             }
             ast::Item::Intrinsic(_) => {
@@ -909,10 +913,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .zip(args.iter())
                     .filter_map(|(p, e)| match child.lower_expr(e, None) {
                         Ok(e) => Some((p.typ, e.ty)),
-                        Err(e) => {
-                            eprintln!("tentative mono err: {}", e);
-                            None
-                        }
+                        Err(e) => None,
                     }),
             );
         }
@@ -1533,20 +1534,22 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
     fn lower_if(
         &mut self,
-        cond: ast::ExprP<'ast>,
+        cond_: ast::ExprP<'ast>,
         then: ast::ExprP<'ast>,
-        els: ast::ExprP<'ast>,
+        els_: ast::ExprP<'ast>,
         type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let cond = self.lower_expr(cond, Some(self.types.builtin(BuiltinType::Bool)))?;
+        let cond = self.lower_expr(cond_, Some(self.types.builtin(BuiltinType::Bool)))?;
         let then = self.lower_expr(then, type_hint)?;
-        let els = self.lower_expr(els, Some(then.ty))?;
+        let els = self.lower_expr(els_, Some(then.ty))?;
 
         if cond.diverges() {
             return Ok(cond);
         }
 
-        let cond = self.try_coerce(self.types.builtin(BuiltinType::Bool), cond)?;
+        let cond = self
+            .try_coerce(self.types.builtin(BuiltinType::Bool), cond)
+            .append_span(cond_.span)?;
 
         let gcd = ir::Ty::gcd(then.ty, els.ty);
         if !gcd.assignable_from(then.ty) || !gcd.assignable_from(els.ty) {
@@ -1554,15 +1557,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 format!("{:?}", then.ty),
                 format!("{:?}", els.ty),
             ))
-            .with_no_span();
+            .with_span(els_.span);
         }
 
-        let result = ir::Expr::rvalue(
-            ir::ExprKind::If(cond, then, els),
-            self.mono_ctx.ir.intern_type(gcd),
-        );
-
-        Ok(result.alloc_on(self.mono_ctx.ir))
+        Ok(self.exprs.if_then(cond, then, els))
     }
 
     fn lower_tuple(
@@ -2259,6 +2257,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         inner: Option<ast::ExprP<'ast>>,
         _type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        if self.return_type.is_none() {
+            return Err(CodeErrorKind::NotInAFunctionScope).with_no_span();
+        }
+
         let inner = inner
             .map(|inner| self.lower_expr(inner, self.return_type))
             .transpose()?
@@ -2275,6 +2277,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         inner: ast::ExprP<'ast>,
         _type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        if self.return_type.is_none() {
+            return Err(CodeErrorKind::NotInAFunctionScope).with_no_span();
+        }
+
         if !self.loop_contexts.is_empty() {
             self.mono_ctx.diag_ctx.add_warning(CodeError {
                 kind: CodeErrorKind::DeferInALoop,
@@ -2478,7 +2484,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ast::ExprKind::Return(inner) => self.lower_return(*inner, type_hint),
             ast::ExprKind::Fn(item, args) => self.lower_fn(item.clone(), *args, type_hint),
             ast::ExprKind::Static(item) => self.lower_static(*item, type_hint),
+
             ast::ExprKind::EtCetera(_) => panic!("macros should have been expanded by now"),
+            ast::ExprKind::DeferedMacro(_, _) => panic!("macros should have been expanded by now"),
         };
 
         result.append_span(expr.span)

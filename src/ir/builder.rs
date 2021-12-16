@@ -99,6 +99,15 @@ impl<'ir> ExpressionBuilder<'ir> {
         Expr::rvalue(ExprKind::Lit(lit), ty).alloc_on(self.ir)
     }
 
+    pub fn if_then(&self, cond: ExprP<'ir>, then: ExprP<'ir>, els: ExprP<'ir>) -> ExprP<'ir> {
+        let result = Expr::rvalue(
+            ExprKind::If(cond, then, els),
+            self.ir.intern_type(Ty::gcd(then.ty, els.ty)),
+        );
+
+        result.alloc_on(self.ir)
+    }
+
     pub fn codegen_intrinsic(&self, kind: CodegenIntrinsicKind<'ir>, ty: TyP<'ir>) -> ExprP<'ir> {
         Expr::rvalue(ExprKind::CodegenIntrinsic(kind), ty).alloc_on(self.ir)
     }

@@ -1,8 +1,5 @@
-#![feature(backtrace)]
-#![feature(assert_matches)]
 #![feature(bool_to_option)]
 #![feature(never_type)]
-#![feature(core_intrinsics)]
 
 mod ast;
 mod codegen;
@@ -27,11 +24,15 @@ fn main() {
     let files = vec![
         SourceFile {
             filename: PathBuf::from("./stdlib/lib.alu"),
-            path: "std".to_string(),
+            path: "::std".to_string(),
+        },
+        SourceFile {
+            filename: PathBuf::from("./stdlib/_prelude.alu"),
+            path: "".to_string(),
         },
         SourceFile {
             filename: PathBuf::from("./examples/minimal.alu"),
-            path: "hello_world".to_string(),
+            path: "::hello_world".to_string(),
         },
     ];
 

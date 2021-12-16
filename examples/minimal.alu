@@ -1,28 +1,70 @@
+struct stack<T> {
+    data: &mut [T],
+    length: usize,
+}
+
+struct result<T, E> {
+    ok: bool,
+    data: result_t<T, E>
+}
+
+impl result {
+    fn ok<T, E>(v: T) -> result<T, E> {
+        result::<T,E> {
+            ok: true,
+            data: result_t {
+                ok: v
+            }
+        }
+    }
+
+    fn err<T, E>(v: E) -> result<T, E> {
+        result::<T,E> {
+            ok: false,
+            data: result_t {
+                err: v
+            }
+        }
+    }
+
+    fn unwrap<T, E>(r: result<T, E>) -> T {
+        if !r.ok {
+            panic!("unwrap on error result")
+        }
+
+        r.data.ok
+    }
+}
+
+struct result_t<T, E> {
+    ok: T,
+    err: E
+}
+
+macro try(res) {
+    let res = res;
+    if !res.ok {
+        return result::err(res.data.err);
+    } 
+    
+    res.data.ok
+}
+
 use std::io::println;
 
-fn is_prime(v: i64) -> bool {
-    let i: i64 = 2;
-    while i < v {
-        if v % i == 0 {
-            return false;
-        }
-        i += 1;
-    }
-    true
+fn maybe_int() -> result<i32, ()> {
+    return result::err(());
 }
+
+fn maybe_as_i64() -> result<i64, ()> {
+    let val = try!(maybe_int()) as i64;
+    
+    return result::ok(val);
+}
+
+use std::concat;
 
 #[export]
 fn main() {
-    let i: i64 = 1;
-
-    macro inc() {
-        i += 1;
-    }
-
-    while i < 100 {
-        if is_prime(i) {
-            println!("{}", i);
-        }
-        inc!();
-    }
+    panic!("hello {}", 1)
 }

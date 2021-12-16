@@ -241,6 +241,7 @@ pub enum Item<'ast> {
     Function(Function<'ast>),
     Static(Static<'ast>),
     Macro(Macro<'ast>),
+    BuiltinMacro(BuiltinMacro),
     Intrinsic(Intrinsic),
 }
 
@@ -408,6 +409,22 @@ pub struct Macro<'ast> {
 }
 
 #[derive(Debug)]
+pub enum BuiltinMacroKind {
+    Env,
+    Concat,
+    Line,
+    Column,
+    File,
+    IncludeBytes,
+}
+
+#[derive(Debug)]
+pub struct BuiltinMacro {
+    pub kind: BuiltinMacroKind,
+    pub span: Option<Span>,
+}
+
+#[derive(Debug)]
 pub struct Function<'ast> {
     pub name: Option<&'ast str>,
     pub attributes: &'ast [Attribute],
@@ -533,6 +550,7 @@ pub enum ExprKind<'ast> {
     Block(&'ast [Statement<'ast>], ExprP<'ast>),
     Binary(BinOp, ExprP<'ast>, ExprP<'ast>),
     Call(ExprP<'ast>, &'ast [ExprP<'ast>]),
+    DeferedMacro(ItemP<'ast>, &'ast [ExprP<'ast>]),
 
     Fn(FnKind<'ast>, Option<&'ast [TyP<'ast>]>),
 
