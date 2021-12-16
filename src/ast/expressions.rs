@@ -23,6 +23,7 @@ use crate::{
 };
 
 use super::macros::{MacroExpander, MacroMaker};
+use super::maker::AstItemMaker;
 use super::types::TypeVisitor;
 use super::{
     AstId, BuiltinType, DeferredFn, ExprKind, FnKind, Function, Item, ItemP, Parameter, Span,
@@ -193,6 +194,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             ItemResolution::Item(NamedItem::MacroParameter(var, _)) => ExprKind::Local(var),
             ItemResolution::Item(NamedItem::Parameter(var, _)) => ExprKind::Local(var),
             ItemResolution::Item(NamedItem::Static(var, _)) => ExprKind::Static(var),
+            ItemResolution::Item(NamedItem::Const(var, _)) => ExprKind::Const(var),
             ItemResolution::Item(NamedItem::EnumMember(typ, var, _)) => {
                 ExprKind::EnumValue(typ, var)
             }
@@ -258,6 +260,22 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             ),
             "macro_definition" => {
                 FirstPassVisitor::new(self.ast, self.scope.clone()).visit(inner)?;
+                None
+            }
+            "const_declaration" => {
+                let name = self
+                    .code
+                    .node_text(inner.child_by_field_name("name").unwrap())
+                    .alloc_on(self.ast);
+                let item = NamedItem::Const(self.ast.make_symbol(), inner);
+                self.scope
+                    .add_item(name, item.clone())
+                    .with_span(&self.scope, inner)?;
+                AstItemMaker::new(self.ast, self.diag_ctx.clone()).make_item(
+                    self.scope.clone(),
+                    name,
+                    item,
+                )?;
                 None
             }
             _ => unimplemented!(),

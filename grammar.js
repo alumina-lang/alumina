@@ -86,7 +86,8 @@ module.exports = grammar({
         $.impl_block,
         $.mod_definition,
         $.macro_definition,
-        $.extern_function
+        $.extern_function,
+        $.const_declaration
       ),
 
     _impl_item: ($) =>
@@ -148,7 +149,7 @@ module.exports = grammar({
     struct_definition: ($) =>
       seq(
         optional(field("attributes", $.attributes)),
-        "struct",
+        field("kind", choice("struct", "union")),
         field("name", $.identifier),
         optional(field("type_arguments", $.generic_argument_list)),
         "{",
@@ -324,9 +325,9 @@ module.exports = grammar({
     const_declaration: ($) =>
       seq(
         "const",
-        $.identifier,
+        field("name", $.identifier),
         optional(seq(":", field("type", $._type))),
-        optional(seq("=", field("value", $._expression))),
+        seq("=", field("init", $._expression)),
         ";"
       ),
 
@@ -341,6 +342,7 @@ module.exports = grammar({
       choice(
         $.let_declaration,
         $.use_declaration,
+        $.const_declaration,
         $.macro_definition,
         $.empty_statement
       ),

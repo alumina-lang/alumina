@@ -1,0 +1,106 @@
+macro try(res) {
+    let res = res;
+    if res.is_ok {
+        res.inner.ok
+    } else {
+        return Result::err(res.inner.err)
+    }
+}
+
+struct Result<T, E> {
+    is_ok: bool,
+    inner: ResultT<T, E>
+}
+
+impl Result {
+    fn ok<T, E>(ok: T) -> Result<T, E> {
+        Result::<T, E> {
+            is_ok: true, 
+            inner: ResultT::<T, E> {
+                ok: ok
+            }
+        }
+    }
+
+    fn err<T, E>(err: E) -> Result<T, E> {
+        Result::<T, E> {
+            is_ok: false, 
+            inner: ResultT::<T, E> {
+                err: err
+            }
+        }
+    }
+
+    fn unwrap<T, E>(self: Result<T, E>) -> T {
+        if self.is_ok {
+            self.inner.ok
+        } else {
+            panic!("unwrap on an err value")
+        }
+    }
+
+    fn unwrap_err<T, E>(self: Result<T, E>) -> E {
+        if !self.is_ok {
+            self.inner.err
+        } else {
+            panic!("unwrap_err on an ok value")
+        }
+    }
+
+    fn map<T1, T2, E>(self: Result<T1, E>, func: fn(T1) -> T2) -> Result<T2, E> {
+        if self.is_ok {
+            Result::ok(func(self.inner.ok))
+        } else {
+            Result::err(self.inner.err)
+        }
+    }
+
+    fn map_err<T, E1, E2>(self: Result<T, E1>, func: fn(E1) -> E2) -> Result<T, E2> {
+        if self.is_ok {
+            Result::ok(self.inner.ok)
+        } else {
+            Result::err(func(self.inner.err))
+        }
+    }
+}
+
+union ResultT<T, E> {
+    ok: T,
+    err: E
+}
+
+struct Option<T> {
+    is_some: bool,
+    inner: T
+}
+
+impl Option {
+    fn some<T>(inner: T) -> Option<T> {
+        Option::<T> {
+            is_some: true, 
+            inner: inner
+        }
+    }
+
+    fn none<T>() -> Option<T> {
+        Option::<T> {
+            is_some: false
+        }
+    }
+
+    fn as_result<T, E>(self: Option<T>, err: E) -> Result<T, E> {
+        if self.is_some {
+            Result::ok(self.inner)
+        } else {
+            Result::err(err)
+        }
+    }
+
+    fn unwrap<T>(self: Option<T>) -> T {
+        if self.is_some {
+            self.inner
+        } else {
+            panic!("unwrap on a none value")
+        }
+    }
+}

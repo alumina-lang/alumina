@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    ast::{AstCtx, AstId, BuiltinType, Field, Function, Item, ItemP, Parameter, Struct, Ty},
+    ast::{AstCtx, AstId, BuiltinType, Field, Function, Item, ItemP, Parameter, StructOrUnion, Ty},
     common::{AluminaError, ArenaAllocatable, CodeErrorKind, WithSpanDuringParsing},
     diagnostics::DiagnosticContext,
     intrinsics::intrinsic_kind,
@@ -14,7 +14,7 @@ use super::{
     lang::{lang_item_kind, LangItemKind, LangItemMap},
     macros::MacroMaker,
     types::TypeVisitor,
-    AssociatedFn, Attribute, Enum, EnumMember, Intrinsic, Span, Static,
+    AssociatedFn, Attribute, Enum, EnumMember, Intrinsic, Span, StaticOrConst,
 };
 
 pub struct AstItemMaker<'ast> {
@@ -104,6 +104,8 @@ impl<'ast> AstItemMaker<'ast> {
         let mut placeholders: Vec<AstId> = Vec::new();
         let mut fields: Vec<Field<'ast>> = Vec::new();
 
+        let code = scope.code().unwrap();
+
         for (name, item) in scope.inner().all_items() {
             match item {
                 NamedItem::Placeholder(placeholder) => {
@@ -116,7 +118,7 @@ impl<'ast> AstItemMaker<'ast> {
                     let span = Span {
                         start: node.start_byte(),
                         end: node.end_byte(),
-                        file: scope.code().unwrap().file_id(),
+                        file: code.file_id(),
                     };
 
                     fields.push(Field {
@@ -130,6 +132,12 @@ impl<'ast> AstItemMaker<'ast> {
             }
         }
 
+        let is_union = match code.node_text(node.child_by_field_name("kind").unwrap()) {
+            "struct" => false,
+            "union" => true,
+            _ => unimplemented!(),
+        };
+
         let associated_fns = match impl_scope {
             Some(impl_scope) => self.resolve_associated_fns(impl_scope)?,
             None => (&[]).alloc_on(self.ast),
@@ -138,16 +146,17 @@ impl<'ast> AstItemMaker<'ast> {
         let span = Span {
             start: node.start_byte(),
             end: node.end_byte(),
-            file: scope.code().unwrap().file_id(),
+            file: code.file_id(),
         };
 
-        let result = Item::Struct(Struct {
+        let result = Item::StructOrUnion(StructOrUnion {
             name: Some(name),
             placeholders: placeholders.alloc_on(self.ast),
             fields: fields.alloc_on(self.ast),
-            attributes: self.get_attributes(symbol, scope.code().unwrap(), node)?,
+            attributes: self.get_attributes(symbol, code, node)?,
             associated_fns,
             span: Some(span),
+            is_union,
         });
 
         symbol.assign(result);
@@ -294,8 +303,9 @@ impl<'ast> AstItemMaker<'ast> {
         Ok(())
     }
 
-    fn make_static<'src>(
+    fn make_static_or_const<'src>(
         &mut self,
+        is_const: bool,
         name: &'ast str,
         symbol: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
@@ -324,12 +334,13 @@ impl<'ast> AstItemMaker<'ast> {
             file: scope.code().unwrap().file_id(),
         };
 
-        let result = Item::Static(Static {
+        let result = Item::StaticOrConst(StaticOrConst {
             name: Some(name),
             attributes: self.get_attributes(symbol, scope.code().unwrap(), node)?,
             typ,
             init,
             span: Some(span),
+            is_const,
         });
 
         symbol.assign(result);
@@ -450,50 +461,73 @@ impl<'ast> AstItemMaker<'ast> {
         Ok(())
     }
 
-    pub fn make<'src>(&mut self, scope: Scope<'ast, 'src>) -> Result<(), AluminaError> {
-        for (name, item) in scope.inner().grouped_items() {
-            match item {
-                [NamedItem::Module(module)] => {
-                    self.make(module.clone())?;
-                }
-                [NamedItem::Type(symbol, node, scope), NamedItem::Impl(impl_scope)] => {
-                    self.make_type(
+    pub fn make_item<'src>(
+        &mut self,
+        scope: Scope<'ast, 'src>,
+        name: &'ast str,
+        item: NamedItem<'ast, 'src>,
+    ) -> Result<(), AluminaError> {
+        self.make_item_group(scope, name, &[item])
+    }
+
+    fn make_item_group<'src>(
+        &mut self,
+        scope: Scope<'ast, 'src>,
+        name: &'ast str,
+        item_group: &[NamedItem<'ast, 'src>],
+    ) -> Result<(), AluminaError> {
+        match item_group {
+            [NamedItem::Module(module)] => {
+                self.make(module.clone())?;
+            }
+            [NamedItem::Type(symbol, node, scope), NamedItem::Impl(impl_scope)] => {
+                self.make_type(
+                    name,
+                    *symbol,
+                    *node,
+                    scope.clone(),
+                    Some(impl_scope.clone()),
+                )?;
+                self.make(impl_scope.clone())?;
+            }
+            [NamedItem::Type(symbol, node, scope)] => {
+                self.make_type(name, *symbol, *node, scope.clone(), None)?;
+            }
+            [NamedItem::Static(symbol, node)] => {
+                self.make_static_or_const(false, name, *symbol, *node, scope)?;
+            }
+            [NamedItem::Const(symbol, node)] => {
+                self.make_static_or_const(true, name, *symbol, *node, scope)?;
+            }
+            [NamedItem::Macro(symbol, node, scope)] => {
+                let mut macro_maker = MacroMaker::new(self.ast, self.diag_ctx.clone());
+                macro_maker.make(name, *symbol, *node, scope.clone())?;
+                self.symbols.push(symbol);
+            }
+            [NamedItem::Function(symbol, node, scope)] => {
+                match node.kind() {
+                    "function_definition" => self.make_function_regular(
                         name,
-                        *symbol,
+                        symbol,
                         *node,
                         scope.clone(),
-                        Some(impl_scope.clone()),
-                    )?;
-                    self.make(impl_scope.clone())?;
-                }
-                [NamedItem::Type(symbol, node, scope)] => {
-                    self.make_type(name, *symbol, *node, scope.clone(), None)?;
-                }
-                [NamedItem::Static(symbol, node)] => {
-                    self.make_static(name, *symbol, *node, scope.clone())?;
-                }
-                [NamedItem::Macro(symbol, node, scope)] => {
-                    let mut macro_maker = MacroMaker::new(self.ast, self.diag_ctx.clone());
-                    macro_maker.make(name, *symbol, *node, scope.clone())?;
-                    self.symbols.push(symbol);
-                }
-                [NamedItem::Function(symbol, node, scope)] => {
-                    match node.kind() {
-                        "function_definition" => self.make_function_regular(
-                            name,
-                            symbol,
-                            *node,
-                            scope.clone(),
-                            Some(node.child_by_field_name("body").unwrap()),
-                        )?,
-                        "extern_function" => {
-                            self.make_function_extern(name, symbol, *node, scope.clone())?
-                        }
-                        _ => unimplemented!(),
-                    };
-                }
-                _ => {}
+                        Some(node.child_by_field_name("body").unwrap()),
+                    )?,
+                    "extern_function" => {
+                        self.make_function_extern(name, symbol, *node, scope.clone())?
+                    }
+                    _ => unimplemented!(),
+                };
             }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
+    pub fn make<'src>(&mut self, scope: Scope<'ast, 'src>) -> Result<(), AluminaError> {
+        for (name, items) in scope.inner().grouped_items() {
+            self.make_item_group(scope.clone(), name, items)?;
         }
 
         Ok(())

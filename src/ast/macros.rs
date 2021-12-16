@@ -361,7 +361,9 @@ impl<'ast> MacroExpander<'ast> {
                 If(self.visit(condition)?, self.visit(then)?, self.visit(els)?)
             }
             Cast(inner, typ) => Cast(self.visit(inner)?, typ),
-            Continue | EnumValue(_, _) | Lit(_) | Void | Fn(_, _) | Static(_) => expr.kind.clone(),
+            Continue | EnumValue(_, _) | Lit(_) | Void | Fn(_, _) | Static(_) | Const(_) => {
+                expr.kind.clone()
+            }
         };
 
         let result = Expr {

@@ -27,6 +27,14 @@ fn main() {
             path: "::std".to_string(),
         },
         SourceFile {
+            filename: PathBuf::from("./stdlib/result.alu"),
+            path: "::std::result".to_string(),
+        },
+        SourceFile {
+            filename: PathBuf::from("./stdlib/random.alu"),
+            path: "::std::random".to_string(),
+        },
+        SourceFile {
             filename: PathBuf::from("./stdlib/_prelude.alu"),
             path: "".to_string(),
         },

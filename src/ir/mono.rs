@@ -214,12 +214,13 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 .map_err(|_| CodeErrorKind::CannotConstEvaluate)
                 .with_span(m.value.unwrap().span)?;
 
-            let value_type = child.types.builtin(
-                value
-                    .type_kind()
-                    .ok_or(CodeErrorKind::InvalidValueForEnumVariant)
-                    .with_span(m.value.unwrap().span)?,
-            );
+            let value_type = match value.type_kind() {
+                Some(ir::Ty::Builtin(b)) if b.is_integer() => self.types.builtin(b),
+                _ => {
+                    return Err(CodeErrorKind::InvalidValueForEnumVariant)
+                        .with_span(m.value.unwrap().span)?
+                }
+            };
 
             if !type_hint
                 .get_or_insert(value_type)
@@ -280,7 +281,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     fn monomorphize_struct(
         &mut self,
         item: ir::IRItemP<'ir>,
-        s: &ast::Struct<'ast>,
+        s: &ast::StructOrUnion<'ast>,
         generic_args: &'ir [ir::TyP<'ir>],
     ) -> Result<(), AluminaError> {
         if generic_args.len() != s.placeholders.len() {
@@ -311,43 +312,65 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             })
             .collect::<Result<Vec<_>, AluminaError>>()?;
 
-        let res = ir::IRItem::Struct(ir::Struct {
+        let res = ir::IRItem::StructOrUnion(ir::StructOrUnion {
             name: s.name.map(|n| n.alloc_on(child.mono_ctx.ir)),
             fields: fields.alloc_on(self.mono_ctx.ir),
+            is_union: s.is_union,
         });
         item.assign(res);
 
         Ok(())
     }
 
-    fn monomorphize_static(
+    fn monomorphize_static_or_const(
         &mut self,
         item: ir::IRItemP<'ir>,
-        s: &ast::Static<'ast>,
+        s: &ast::StaticOrConst<'ast>,
     ) -> Result<(), AluminaError> {
         let mut child = Self::new(self.mono_ctx);
 
         let typ = s.typ.map(|t| child.lower_type(t)).transpose()?;
         let mut init = s.init.map(|t| child.lower_expr(t, typ)).transpose()?;
 
-        let typ = typ.or(init.map(|i| i.ty)).unwrap();
-        let typ = child.try_coerce_type(typ)?;
+        if s.is_const {
+            // No try_coerce_type here, we want strings to remain unqualified in consts
+            let init = if let Some(typ) = typ {
+                child
+                    .try_coerce(typ, init.unwrap())
+                    .append_span(s.init.unwrap().span)?
+            } else {
+                init.unwrap()
+            };
 
-        if let Some(init) = &mut init {
-            *init = child.try_coerce(typ, init)?;
+            let value = ir::const_eval::const_eval(init)
+                .map_err(|_| CodeErrorKind::CannotConstEvaluate)
+                .with_span(s.init.unwrap().span)?;
+
+            let res = ir::IRItem::Const(ir::Const {
+                name: s.name.map(|n| n.alloc_on(child.mono_ctx.ir)),
+                value,
+            });
+
+            item.assign(res);
+        } else {
+            let typ = typ.or(init.map(|i| i.ty)).unwrap();
+            let typ = child.try_coerce_type(typ)?;
+            if let Some(init) = &mut init {
+                *init = child.try_coerce(typ, init)?;
+            }
+
+            let res = ir::IRItem::Static(ir::Static {
+                name: s.name.map(|n| n.alloc_on(child.mono_ctx.ir)),
+                typ,
+                init,
+            });
+            item.assign(res);
+
+            child
+                .mono_ctx
+                .static_local_defs
+                .insert(item, child.local_defs);
         }
-
-        let res = ir::IRItem::Static(ir::Static {
-            name: s.name.map(|n| n.alloc_on(child.mono_ctx.ir)),
-            typ,
-            init,
-        });
-        item.assign(res);
-
-        child
-            .mono_ctx
-            .static_local_defs
-            .insert(item, child.local_defs);
 
         Ok(())
     }
@@ -471,7 +494,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             indexmap::map::Entry::Occupied(entry) => {
                 if entry.get().try_get().is_none() {
                     match key.0.get() {
-                        ast::Item::Static(_) => {
+                        ast::Item::StaticOrConst(_) => {
                             return Err(CodeErrorKind::RecursiveStaticInitialization).with_no_span()
                         }
                         _ => {}
@@ -495,12 +518,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.monomorphize_function(item, func, key.1)
                     .append_mono_marker()?;
             }
-            ast::Item::Struct(s) => {
+            ast::Item::StructOrUnion(s) => {
                 self.monomorphize_struct(item, s, key.1)
+                    .append_span(s.span)
                     .append_mono_marker()?;
             }
-            ast::Item::Static(s) => {
-                self.monomorphize_static(item, s).append_mono_marker()?;
+            ast::Item::StaticOrConst(s) => {
+                self.monomorphize_static_or_const(item, s)
+                    .append_mono_marker()?;
             }
             ast::Item::Macro(_) => {
                 unreachable!("macros should have been expanded by now");
@@ -699,7 +724,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let ast_struct = ast_item.get();
 
         match ast_struct {
-            ast::Item::Struct(s) => s.associated_fns.iter().map(|f| (f.name, f.item)).collect(),
+            ast::Item::StructOrUnion(s) => {
+                s.associated_fns.iter().map(|f| (f.name, f.item)).collect()
+            }
             ast::Item::Enum(e) => e.associated_fns.iter().map(|f| (f.name, f.item)).collect(),
             _ => panic!("does not have associated fns"),
         }
@@ -894,6 +921,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             None => None,
         };
 
+        let mut tentative_errors = Vec::new();
         if let Some(args) = tentative_args {
             let self_count = self_expr.iter().count();
 
@@ -912,10 +940,23 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .skip(self_count)
                     .zip(args.iter())
                     .filter_map(|(p, e)| match child.lower_expr(e, None) {
-                        Ok(e) => Some((p.typ, e.ty)),
-                        Err(e) => None,
-                    }),
+                        Ok(e) => Some(Ok((p.typ, e.ty))),
+                        Err(AluminaError::CodeErrors(errors)) => {
+                            tentative_errors.extend(
+                                errors.into_iter().filter(|f| {
+                                    !matches!(f.kind, CodeErrorKind::TypeInferenceFailed)
+                                }),
+                            );
+                            None
+                        }
+                        Err(e) => Some(Err(e)),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
             );
+
+            if !tentative_errors.is_empty() {
+                return Err(AluminaError::CodeErrors(tentative_errors));
+            }
         }
 
         if let Some(args_hint) = args_hint {
@@ -941,7 +982,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 item,
                 generic_args.alloc_on(self.mono_ctx.ir),
             )),
-            None => Err(CodeErrorKind::TypeHintRequired).with_no_span(),
+            None => Err(CodeErrorKind::TypeInferenceFailed).with_no_span(),
         }
     }
 
@@ -980,6 +1021,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         // See notes in try_resolve_function. Same thing, but for struct fields (we match by name instead of position).
 
+        let mut tentative_errors = Vec::new();
         let mut child = self.make_tentative_child();
         let pairs: Vec<_> = r#struct
             .fields
@@ -991,10 +1033,22 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .map(|i| (f, i))
             })
             .filter_map(|(p, e)| match child.lower_expr(e.value, None) {
-                Ok(e) => Some((p.typ, e.ty)),
-                Err(_) => None,
+                Ok(e) => Some(Ok((p.typ, e.ty))),
+                Err(AluminaError::CodeErrors(errors)) => {
+                    tentative_errors.extend(
+                        errors
+                            .into_iter()
+                            .filter(|f| !matches!(f.kind, CodeErrorKind::TypeInferenceFailed)),
+                    );
+                    None
+                }
+                Err(e) => Some(Err(e)),
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
+
+        if !tentative_errors.is_empty() {
+            return Err(AluminaError::CodeErrors(tentative_errors));
+        }
 
         let mut type_inferer = TypeInferer::new(self.mono_ctx, r#struct.placeholders.into());
         let infer_result = type_inferer.try_infer(None, pairs);
@@ -1004,7 +1058,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 item,
                 generic_args.alloc_on(self.mono_ctx.ir),
             )),
-            None => Err(CodeErrorKind::TypeHintRequired).with_no_span(),
+            None => Err(CodeErrorKind::TypeInferenceFailed).with_no_span(),
         }
     }
 
@@ -1093,7 +1147,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.types.builtin(BuiltinType::Bool)
             }
 
-            (Builtin(l), LShift | RShift, Builtin(BuiltinType::USize)) if l.is_integer() => lhs.ty,
+            (Builtin(l), LShift | RShift, Builtin(r)) if l.is_integer() && r.is_integer() => lhs.ty,
 
             // Float builting types
             (Builtin(l), Eq | Neq | Lt | LEq | Gt | GEq | Plus | Minus | Mul | Div, Builtin(r))
@@ -1360,6 +1414,20 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let item_cell = self.monomorphize_item(MonomorphizeKey(item, &[]))?;
 
         Ok(self.exprs.static_var(item_cell))
+    }
+
+    fn lower_const(
+        &mut self,
+        item: ast::ItemP<'ast>,
+        _type_hint: Option<ir::TyP<'ir>>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let item_cell = self.monomorphize_item(MonomorphizeKey(item, &[]))?;
+        let value = match item_cell.get() {
+            ir::IRItem::Const(c) => c.value,
+            _ => unreachable!(),
+        };
+
+        Ok(self.exprs.const_value(value))
     }
 
     fn lower_unary(
@@ -2401,7 +2469,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let element_type = first_elem_type.or(element_type_hint);
         let array_type = match element_type {
             Some(element_type) => self.types.array(element_type, elements.len()),
-            None => return Err(CodeErrorKind::TypeHintRequired).with_no_span(),
+            None => return Err(CodeErrorKind::TypeInferenceFailed).with_no_span(),
         };
 
         let temporary = self.mono_ctx.ir.make_id();
@@ -2484,6 +2552,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ast::ExprKind::Return(inner) => self.lower_return(*inner, type_hint),
             ast::ExprKind::Fn(item, args) => self.lower_fn(item.clone(), *args, type_hint),
             ast::ExprKind::Static(item) => self.lower_static(*item, type_hint),
+            ast::ExprKind::Const(item) => self.lower_const(*item, type_hint),
 
             ast::ExprKind::EtCetera(_) => panic!("macros should have been expanded by now"),
             ast::ExprKind::DeferedMacro(_, _) => panic!("macros should have been expanded by now"),

@@ -20,6 +20,8 @@ use std::{
 use bumpalo::Bump;
 use once_cell::unsync::OnceCell;
 
+use self::const_eval::Value;
+
 pub struct IrCtx<'ir> {
     pub arena: Bump,
     pub counter: Cell<usize>,
@@ -148,7 +150,7 @@ impl Debug for Ty<'_> {
             Ty::NamedType(cell) => {
                 let inner = cell.try_get();
                 match inner {
-                    Some(IRItem::Struct(s)) => {
+                    Some(IRItem::StructOrUnion(s)) => {
                         write!(f, "{} {{ ", s.name.unwrap_or("(unnamed)"))?;
                         for field in s.fields {
                             write!(f, "{:?} ", field.ty)?;
@@ -237,10 +239,11 @@ impl<'ir> Ty<'ir> {
             Ty::Builtin(_) => false,
             Ty::Extern(_) => todo!(),
             Ty::NamedType(inner) => match inner.get() {
-                IRItem::Struct(s) => s.fields.iter().all(|f| f.ty.is_zero_sized()),
+                IRItem::StructOrUnion(s) => s.fields.iter().all(|f| f.ty.is_zero_sized()),
                 IRItem::Enum(e) => e.underlying_type.is_zero_sized(),
                 IRItem::Static(_) => unreachable!(),
                 IRItem::Function(_) => unreachable!(),
+                IRItem::Const(_) => unreachable!(),
             },
             Ty::Pointer(_, _) => false,
             Ty::Array(inner, size) => *size == 0 || inner.is_zero_sized(),
@@ -260,9 +263,10 @@ pub struct Field<'ir> {
 }
 
 #[derive(Debug)]
-pub struct Struct<'ir> {
+pub struct StructOrUnion<'ir> {
     pub name: Option<&'ir str>,
     pub fields: &'ir [Field<'ir>],
+    pub is_union: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -313,11 +317,18 @@ pub struct Static<'ir> {
 }
 
 #[derive(Debug)]
+pub struct Const<'ir> {
+    pub name: Option<&'ir str>,
+    pub value: Value<'ir>,
+}
+
+#[derive(Debug)]
 pub enum IRItem<'ir> {
-    Struct(Struct<'ir>),
+    StructOrUnion(StructOrUnion<'ir>),
     Function(Function<'ir>),
     Enum(Enum<'ir>),
     Static(Static<'ir>),
+    Const(Const<'ir>),
 }
 
 pub type IRItemP<'ir> = &'ir IRItemCell<'ir>;
@@ -345,9 +356,9 @@ impl<'ir> IRItemCell<'ir> {
         }
     }
 
-    pub fn get_struct(&'ir self) -> &'ir Struct<'ir> {
+    pub fn get_struct(&'ir self) -> &'ir StructOrUnion<'ir> {
         match self.contents.get() {
-            Some(IRItem::Struct(s)) => s,
+            Some(IRItem::StructOrUnion(s)) => s,
             _ => panic!("struct expected"),
         }
     }

@@ -1,0 +1,56 @@
+struct Pcg32  {
+    state: u64,
+    increment: u64,
+}
+
+impl Pcg32 {
+    fn step(self: &mut Pcg32) {
+        const MUTLIPLIER = 6364136223846793005u64;
+
+        self.state = self.state * MUTLIPLIER + self.increment;
+    }
+
+    fn from_seed(seed: u128) -> Pcg32 {
+        let pcg = Pcg32 { 
+            state: (seed >> 64) as u64,
+            increment: (seed as u64) | 1
+        };
+        
+        pcg.state = pcg.state + pcg.increment;
+        pcg.step();
+        pcg
+    }
+
+    fn next(self: &mut Pcg32) -> u32 {
+        let state = self.state;
+        self.step();
+        
+        const ROTATE: u32 = 59;
+        const XSHIFT: u32 = 18;
+        const SPARE: u32 = 27;
+
+        let rot = (state >> ROTATE) as u32;
+        let xsh = (((state >> XSHIFT) ^ state) >> SPARE) as u32;
+        
+        (xsh >> rot) | (xsh << (32u32 - rot))
+    }
+}
+
+static DEFAULT_RNG: Pcg32 = {
+    let seed: u128;
+    libc::getrandom(&seed as &mut void, mem::size_of::<u128>(), 0);
+    Pcg32::from_seed(seed)
+};
+
+fn range<Rng>(rng: &mut Rng, range: u32) -> u32 {
+    let t: u32 = (~range + 1) % range;
+
+    let m = loop {
+        let m = (rng.next() as u64) * (range as u64);
+        if m as u32 >= t {
+            break m
+        }
+    };
+
+    (m >> 32) as u32
+}

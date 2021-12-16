@@ -9,7 +9,7 @@ use std::{
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub},
 };
 
-use super::{BuiltinType, ExprKind, ExprP, Lit, Ty, UnOp};
+use super::{BuiltinType, ExprKind, ExprP, Lit, Ty, UnOp, UnqualifiedKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Hash)]
 pub enum Value<'ir> {
@@ -79,23 +79,23 @@ macro_rules! numeric_of_kind {
 pub(crate) use numeric_of_kind;
 
 impl<'ir> Value<'ir> {
-    pub fn type_kind(&self) -> Option<BuiltinType> {
+    pub fn type_kind<'a>(&'a self) -> Option<Ty<'ir>> {
         match self {
-            Value::Void => Some(BuiltinType::Void),
-            Value::Bool(_) => Some(BuiltinType::Bool),
-            Value::U8(_) => Some(BuiltinType::U8),
-            Value::U16(_) => Some(BuiltinType::U16),
-            Value::U32(_) => Some(BuiltinType::U32),
-            Value::U64(_) => Some(BuiltinType::U64),
-            Value::U128(_) => Some(BuiltinType::U128),
-            Value::I8(_) => Some(BuiltinType::I8),
-            Value::I16(_) => Some(BuiltinType::I16),
-            Value::I32(_) => Some(BuiltinType::I32),
-            Value::I64(_) => Some(BuiltinType::I64),
-            Value::I128(_) => Some(BuiltinType::I128),
-            Value::USize(_) => Some(BuiltinType::USize),
-            Value::ISize(_) => Some(BuiltinType::ISize),
-            _ => None,
+            Value::Void => Some(Ty::Builtin(BuiltinType::Void)),
+            Value::Bool(_) => Some(Ty::Builtin(BuiltinType::Bool)),
+            Value::U8(_) => Some(Ty::Builtin(BuiltinType::U8)),
+            Value::U16(_) => Some(Ty::Builtin(BuiltinType::U16)),
+            Value::U32(_) => Some(Ty::Builtin(BuiltinType::U32)),
+            Value::U64(_) => Some(Ty::Builtin(BuiltinType::U64)),
+            Value::U128(_) => Some(Ty::Builtin(BuiltinType::U128)),
+            Value::I8(_) => Some(Ty::Builtin(BuiltinType::I8)),
+            Value::I16(_) => Some(Ty::Builtin(BuiltinType::I16)),
+            Value::I32(_) => Some(Ty::Builtin(BuiltinType::I32)),
+            Value::I64(_) => Some(Ty::Builtin(BuiltinType::I64)),
+            Value::I128(_) => Some(Ty::Builtin(BuiltinType::I128)),
+            Value::USize(_) => Some(Ty::Builtin(BuiltinType::USize)),
+            Value::ISize(_) => Some(Ty::Builtin(BuiltinType::ISize)),
+            Value::Str(s) => Some(Ty::Unqualified(UnqualifiedKind::String(s.len()))),
         }
     }
 

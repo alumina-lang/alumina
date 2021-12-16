@@ -70,7 +70,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     fn visit_struct_definition(&mut self, node: Node<'src>) -> Self::ReturnType {
         let name = self.parse_name(node);
 
-        let child_scope = self.scope.named_child(ScopeType::Struct, name);
+        let child_scope = self.scope.named_child(ScopeType::StructOrUnion, name);
 
         self.scope
             .add_item(
@@ -262,6 +262,16 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         with_child_scope!(self, child_scope, {
             self.visit_children_by_field(node, "parameters")?;
         });
+
+        Ok(())
+    }
+
+    fn visit_const_declaration(&mut self, node: Node<'src>) -> Self::ReturnType {
+        let name = self.parse_name(node);
+
+        self.scope
+            .add_item(name, NamedItem::Const(self.ast.make_symbol(), node))
+            .with_span(&self.scope, node)?;
 
         Ok(())
     }

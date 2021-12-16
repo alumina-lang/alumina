@@ -6,45 +6,44 @@ It has the following conveniences over C:
 
 - Generics (duck-typed, similar to C++ templates, but without specializations)
 - [Unified call syntax](https://en.wikipedia.org/wiki/Uniform_Function_Call_Syntax) for functions in scope
-- Block expressions, lambdas (stateless only, closures are not supported)
+- Block expressions
+- Lambdas (stateless only, closures are not supported)
 - Module system, namespaces and 2-pass compilation (no header files and forward declarations needed)
 - Richer type system: 
     - strong enums, 
     - array slices, 
     - tuples, 
-    - 0-sized types (unit, 0-sized arrays, structs with no fields, ...), 
+    - first-class 0-sized types (unit/void, 0-sized arrays, structs with no fields, ...), 
     - never type, 
     - opt-in RTTI type-erasure (`dyn` pointer)
 - Hygenic expression macros
 - Const evaluation (very limited at the moment)
 - Go-style defer expressions
 
-Alumina can be thought of as Go without a garbage collector and runtime. Unlike C++, Rust and D is not a RAII language and requires manual memory management and is not memory-safe.
-
 ## Motivating example
 
 <!-- totally not rust lmao -->
 ```rust
-struct stack<T> {
+struct Stack<T> {
     data: &mut [T],
     length: usize,
 }
 
-impl stack {
+impl Stack {
     use std::mem::{slice, alloc, copy_to};
 
-    fn new<T>() -> stack<T> {
+    fn new<T>() -> Stack<T> {
         with_capacity(0)
     }
 
-    fn with_capacity<T>(capacity: usize) -> stack<T> {
-        stack {
+    fn with_capacity<T>(capacity: usize) -> Stack<T> {
+        Stack {
             data: alloc::<T>(capacity),
             length: 0,
         }
     }
 
-    fn reserve<T>(self: &mut stack<T>, new_capacity: usize) {
+    fn reserve<T>(self: &mut Stack<T>, new_capacity: usize) {
         if self.data.len < new_capacity {
             self.data = {
                 let new_data = alloc::<T>(new_capacity);
@@ -55,7 +54,7 @@ impl stack {
         }
     }
 
-    fn push<T>(self: &mut stack<T>, value: T) {
+    fn push<T>(self: &mut Stack<T>, value: T) {
         use std::math::max;
 
         if self.length == self.data.len {
@@ -66,17 +65,16 @@ impl stack {
         self.length += 1;
     }
 
-    fn pop<T>(self: &mut stack<T>) -> T {
-        let value = self.data[self.length - 1];
+    fn pop<T>(self: &mut Stack<T>) -> T {
         self.length -= 1;
-        value
+        self.data[self.length]
     }
 
-    fn empty<T>(self: &stack<T>) -> bool {
+    fn empty<T>(self: &Stack<T>) -> bool {
         self.length == 0
     }
 
-    fn free<T>(self: &mut stack<T>) {
+    fn free<T>(self: &mut Stack<T>) {
         use std::mem::free;
         self.data.free();
     }
@@ -86,10 +84,10 @@ use std::io::print;
 
 #[export]
 fn main() {
-    let v: stack<&[u8]> = stack::new();
+    let v: Stack<&[u8]> = Stack::new();
     defer v.free();
     
-    v.push("stack.\n");
+    v.push("Stack.\n");
     v.push("a ");
     v.push("am ");
     v.push("I ");
@@ -102,13 +100,13 @@ fn main() {
 
 ## Status 
 
-Bootstrap Alumina compiler is written in Rust and is currently actively developed. It compiles to freestanding C11 code with GCC extensions.
+Bootstrap Alumina compiler is written in Rust and is currently actively developed. It compiles to ugly C code with GCC extensions.
 
 Finished:
 - Lexical analysis and parser (using Tree-Sitter)
 - Scope/name resolution
 - Type support
-- Lowering parse tree into AST (desugaring)
+- Lowering parse tree into AST (desugaring, macro expansion, ...)
 - Lowering AST into IR (with monomorphization, type checking and semantic analysis)
 - Codegen to C
 

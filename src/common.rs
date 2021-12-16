@@ -44,6 +44,10 @@ pub enum CodeErrorKind {
     RecursiveWithoutIndirection,
     #[error("type hint required")]
     TypeHintRequired,
+    // This is a separate error type so that it can be filtered out during failed tentative
+    // monomorphization
+    #[error("type hint required (type inference)")]
+    TypeInferenceFailed,
     #[error("type mismatch: {} expected, {} found", .0, .1)]
     TypeMismatch(String, String),
     #[error("branches have incompatible types ({}, {})", .0, .1)]

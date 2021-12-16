@@ -304,10 +304,18 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 }
             }
             ExprKind::ConstValue(v) => {
-                self.type_writer.add_type(expr.ty)?;
-                w!(self.fn_bodies, "(({})", self.ctx.get_type(expr.ty));
-                self.write_const_val(*v);
-                w!(self.fn_bodies, ")");
+                if let Value::Str(val) = v {
+                    w!(self.fn_bodies, "\"");
+                    for (_idx, c) in val.iter().enumerate() {
+                        w!(self.fn_bodies, "\\x{:02x}", *c as u8);
+                    }
+                    w!(self.fn_bodies, "\"");
+                } else {
+                    self.type_writer.add_type(expr.ty)?;
+                    w!(self.fn_bodies, "(({})", self.ctx.get_type(expr.ty));
+                    self.write_const_val(*v);
+                    w!(self.fn_bodies, ")");
+                }
             }
             ExprKind::Field(inner, field) => {
                 self.write_expr(inner, false)?;

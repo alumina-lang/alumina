@@ -6,16 +6,17 @@
 - For loop
 - Equality comparison for slices (should be fixed, memcmp is not appropriate everywhere)
 - Whole const_eval thing
-- Consts
 - Force inlining in IR (especially for slice coercions - function call is an overkill)
     - Is this needed or let C compiler do it?
     - It's needed for stuff like `alloca`
 - impl for builtin types/arrays/...?
     - Now easier to do with lang items :)
 - stack overflow in codegen stage because infinite size recursive structs are not rejected during monomorphization
-- Whole ZST/never type handling might still be buggy, in particular, uninitialized variables of `!` type might be problematic since lowering is quite liberal with making temporary variable declarations for various stuff.
+- Whole ZST/never type handling might still be buggy, in particular, uninitialized variables of `!` type might be problematic since lowering is quite liberal with making temporary name bindings for various stuff.
 - compile flags support (cfg)
-- "return" and "defer" in static initialization
+- if tentative monomorphization fails (e.g. error), but type inference still succeeds, we are left with unpopulated symbols (maybe fixed, not sure)
+- hex integer literals
+- Switch is a bit cumbersome at the moment / improve?
 
 ## Std library
 
@@ -31,10 +32,6 @@
 - Is IR low-level enough to eventually target LLVM?
 - Should monomorphization and type checking be separate stages? Can this even be done with the loose duck-typed language?
 - Will the compiler architecture scale to large programs? Is it possible to pre-compile the libraries at least to AST?
-
-## Codegen
-
-- Statement expresssion ends with a void type -> C does not compile (issue with if/else if one branch is `!` and the other is a value)
 
 ## Exploratory
 
@@ -58,3 +55,8 @@
 ## Tooling
 
 - Syntax highlighter for VS Code
+
+
+## Bikeshedding
+
+- Name conventions (PascalCase, snake_case, ...)

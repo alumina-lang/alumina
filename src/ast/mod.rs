@@ -237,9 +237,9 @@ pub type TyP<'ast> = &'ast Ty<'ast>;
 #[derive(Debug)]
 pub enum Item<'ast> {
     Enum(Enum<'ast>),
-    Struct(Struct<'ast>),
+    StructOrUnion(StructOrUnion<'ast>),
     Function(Function<'ast>),
-    Static(Static<'ast>),
+    StaticOrConst(StaticOrConst<'ast>),
     Macro(Macro<'ast>),
     BuiltinMacro(BuiltinMacro),
     Intrinsic(Intrinsic),
@@ -283,9 +283,9 @@ impl<'ast> ItemCell<'ast> {
         }
     }
 
-    pub fn get_struct(&'ast self) -> &'ast Struct<'ast> {
+    pub fn get_struct(&'ast self) -> &'ast StructOrUnion<'ast> {
         match self.contents.get() {
-            Some(Item::Struct(s)) => s,
+            Some(Item::StructOrUnion(s)) => s,
             _ => panic!("struct expected"),
         }
     }
@@ -360,13 +360,14 @@ pub struct AssociatedFn<'ast> {
 }
 
 #[derive(Debug)]
-pub struct Struct<'ast> {
+pub struct StructOrUnion<'ast> {
     pub name: Option<&'ast str>,
     pub placeholders: &'ast [AstId],
     pub associated_fns: &'ast [AssociatedFn<'ast>],
     pub attributes: &'ast [Attribute],
     pub fields: &'ast [Field<'ast>],
     pub span: Option<Span>,
+    pub is_union: bool,
 }
 
 #[derive(Debug)]
@@ -437,12 +438,13 @@ pub struct Function<'ast> {
 }
 
 #[derive(Debug)]
-pub struct Static<'ast> {
+pub struct StaticOrConst<'ast> {
     pub name: Option<&'ast str>,
     pub attributes: &'ast [Attribute],
     pub typ: Option<TyP<'ast>>,
     pub init: Option<ExprP<'ast>>,
     pub span: Option<Span>,
+    pub is_const: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
@@ -561,6 +563,7 @@ pub enum ExprKind<'ast> {
     AssignOp(BinOp, ExprP<'ast>, ExprP<'ast>),
     Local(AstId),
     Static(ItemP<'ast>),
+    Const(ItemP<'ast>),
     EnumValue(ItemP<'ast>, AstId),
     Lit(Lit<'ast>),
     Loop(ExprP<'ast>),

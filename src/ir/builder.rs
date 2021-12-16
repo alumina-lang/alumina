@@ -190,13 +190,12 @@ impl<'ir> ExpressionBuilder<'ir> {
     }
 
     pub fn const_value(&self, val: Value<'ir>) -> ExprP<'ir> {
+        let value_kind = val.type_kind();
         let expr = Expr {
             kind: ExprKind::ConstValue(val),
             value_type: ValueType::RValue,
             is_const: true,
-            ty: self
-                .ir
-                .intern_type(Ty::Builtin(val.type_kind().expect("unimplemented"))),
+            ty: self.ir.intern_type(value_kind.expect("unimplemented")),
         };
 
         expr.alloc_on(self.ir)

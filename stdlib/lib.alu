@@ -168,11 +168,12 @@ mod libc {
     extern "C" fn write(fd: i32, buf: &void, len: usize) -> isize;
     extern "C" fn malloc(size: usize) -> &mut void;
     extern "C" fn _exit(ret: i32) -> !;
+    extern "C" fn getrandom(buf: &mut void, buflen: usize, flags: u32) -> isize;
 }
 
 mod io {
     mod _printf {
-        fn printf_integer<T>(val: T, printer: fn(&[u8])) {
+        fn printf_integer<T, S>(val: T, s: S, printer: fn(S, &[u8])) {
             let buf: [u8; 16];
             let buf: &mut [u8] = &buf;
         
@@ -188,17 +189,17 @@ mod io {
                         i -= 1;
                         buf[i] = '-';
                     }
-                    printer(buf[i..]);
+                    printer(s, buf[i..]);
                     break;
                 }
                 i -= 1;
             }
         }
 
-        fn printf_float<T>(val: T, printer: fn(&[u8]), precision: usize) {
+        fn printf_float<T, S>(val: T, s: S, printer: fn(S, &[u8]), precision: usize) {
             let trunc = val as i128;
-            printf_integer(trunc, printer);
-            printer(".");
+            printf_integer(trunc, s, printer);
+            printer(s, ".");
             let frac = math::abs((val - (trunc as T)));
             
             let buf: [u8; 16];
@@ -212,30 +213,28 @@ mod io {
                 frac -= digit as T;
                 i += 1;
             }
-            printer(buf[..precision]);
+            printer(s, buf[..precision]);
         }
         
-        fn printf_dyn(val: &dyn, printer: fn(&[u8])) {
+        fn printf_dyn<S>(val: &dyn, s: S, printer: fn(S, &[u8])) {
             use rtti::type_id;
-            use std::io::print;
-            use std::shed::write_number;
         
             switch val.type_id {
-                type_id::<&[u8]>() => printer(*(val.ptr as &&[u8])),
-                type_id::<u8>() => printf_integer(*(val.ptr as &u8), printer),
-                type_id::<u16>() => printf_integer(*(val.ptr as &u16), printer),
-                type_id::<u32>() => printf_integer(*(val.ptr as &u32), printer),
-                type_id::<u64>() => printf_integer(*(val.ptr as &u64), printer),
-                type_id::<u128>() => printf_integer(*(val.ptr as &u128), printer),
-                type_id::<i8>() => printf_integer(*(val.ptr as &i8), printer),
-                type_id::<i16>() => printf_integer(*(val.ptr as &i16), printer),
-                type_id::<i32>() => printf_integer(*(val.ptr as &i32), printer),
-                type_id::<i64>() => printf_integer(*(val.ptr as &i64), printer),
-                type_id::<i128>() => printf_integer(*(val.ptr as &i128), printer),
-                type_id::<usize>() => printf_integer(*(val.ptr as &usize), printer),
-                type_id::<isize>() => printf_integer(*(val.ptr as &isize), printer),
-                type_id::<f32>() => printf_float(*(val.ptr as &f32), printer, 12),
-                type_id::<f64>() => printf_float(*(val.ptr as &f64), printer, 12),
+                type_id::<&[u8]>() => printer(s, *(val.ptr as &&[u8])),
+                type_id::<u8>() => printf_integer(*(val.ptr as &u8), s, printer),
+                type_id::<u16>() => printf_integer(*(val.ptr as &u16), s, printer),
+                type_id::<u32>() => printf_integer(*(val.ptr as &u32), s, printer),
+                type_id::<u64>() => printf_integer(*(val.ptr as &u64), s, printer),
+                type_id::<u128>() => printf_integer(*(val.ptr as &u128), s, printer),
+                type_id::<i8>() => printf_integer(*(val.ptr as &i8), s, printer),
+                type_id::<i16>() => printf_integer(*(val.ptr as &i16), s, printer),
+                type_id::<i32>() => printf_integer(*(val.ptr as &i32), s, printer),
+                type_id::<i64>() => printf_integer(*(val.ptr as &i64), s, printer),
+                type_id::<i128>() => printf_integer(*(val.ptr as &i128), s, printer),
+                type_id::<usize>() => printf_integer(*(val.ptr as &usize), s, printer),
+                type_id::<isize>() => printf_integer(*(val.ptr as &isize), s, printer),
+                type_id::<f32>() => printf_float(*(val.ptr as &f32), s, printer, 12),
+                type_id::<f64>() => printf_float(*(val.ptr as &f64), s, printer, 12),
                 _ => panic!("argument type not supported")
             }
         }
@@ -246,7 +245,7 @@ mod io {
             BRACE_CLOSE,
         }
         
-        fn printf(fmt: &[u8], args: &[&dyn], printer: fn(&[u8]), newline: bool) {
+        fn printf<S>(fmt: &[u8], args: &[&dyn], s: S, printer: fn(S, &[u8])) {
             let i = 0usize;
             let buf: [u8; 64];
             let buf: &mut [u8] = &buf;
@@ -266,7 +265,7 @@ mod io {
                 buf[buf_pos] = val;
                 buf_pos += 1;
                 if buf_pos == buf.len {
-                    printer(buf);
+                    printer(s, buf);
                     buf_pos = 0;
                 }
             }
@@ -298,8 +297,8 @@ mod io {
                     state::BRACE_OPEN => {
                         switch ch {
                             '}' => {
-                                printer(buf[0..buf_pos]);
-                                printf_dyn(arg!(), printer);
+                                printer(s, buf[0..buf_pos]);
+                                printf_dyn(arg!(), s, printer);
                                 buf_pos = 0;
                             }
                             '{' => {
@@ -313,10 +312,10 @@ mod io {
                 };
                 i += 1;
             }
-            if newline {
-                buf_append!('\n');
+
+            if buf_pos > 0 {
+                printer(s, buf[0..buf_pos]);
             }
-            printer(buf[0..buf_pos]);
         
             if args.len > 0 {
                 panic!("too many arguments");
@@ -324,48 +323,34 @@ mod io {
         }
     }
 
-    macro print(fmt, expr...) {
+    macro print(fmt, args...) {
         _printf::printf(
             fmt, 
-            &[(&expr as &dyn)...], 
-            |buf| {
+            &[(&args as &dyn)...], 
+            (),
+            |s, buf| {
                 libc::write(1, buf.ptr as &void, buf.len);
-            },
-            false
+            }
         )
     }
 
-    macro eprint(fmt, expr...) {
+    macro eprint(fmt, args...) {
         _printf::printf(
             fmt, 
-            &[(&expr as &dyn)...], 
-            |buf| {
+            &[(&args as &dyn)...], 
+            (),
+            |s, buf| {
                 libc::write(2, buf.ptr as &void, buf.len);
-            },
-            false
+            }
         )
     }
 
-    macro println(fmt, expr...) {
-        _printf::printf(
-            fmt, 
-            &[(&expr as &dyn)...], 
-            |buf| {
-                libc::write(1, buf.ptr as &void, buf.len);
-            },
-            true
-        )
+    macro println(fmt, args...) {
+        print!(concat!(fmt, "\n"), args...)
     }
 
-    macro eprintln(fmt, expr...) {
-        _printf::printf(
-            fmt, 
-            &[(&expr as &dyn)...], 
-            |buf| {
-                libc::write(2, buf.ptr as &void, buf.len);
-            },
-            true
-        )
+    macro eprintln(fmt, args...) {
+        eprint!(concat!(fmt, "\n"), args...)
     }
 }
 
@@ -399,7 +384,7 @@ macro panic(reason, args...) {
 #[builtin] macro file() {  }
 #[builtin] macro env(s) {  }
 #[builtin] macro include_bytes(file) {  }
-#[builtin] macro concat(lhs...) {  }
+#[builtin] macro concat(parts...) {  }
 
 mod math {
     fn max<T>(a: T, b: T) -> T {

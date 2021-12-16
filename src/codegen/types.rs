@@ -123,7 +123,7 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                 self.needs_body.insert(ty);
             }
             Ty::NamedType(item) => match item.get() {
-                IRItem::Struct(s) => {
+                IRItem::StructOrUnion(s) => {
                     if !body_only {
                         let name = if let Some(name) = s.name {
                             self.ctx.get_name_with_hint(name, item.id)
@@ -131,7 +131,12 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                             self.ctx.get_name(item.id)
                         };
 
-                        w!(self.type_decls, "typedef struct {0} {0};\n", name);
+                        if s.is_union {
+                            w!(self.type_decls, "typedef union {0} {0};\n", name);
+                        } else {
+                            w!(self.type_decls, "typedef struct {0} {0};\n", name);
+                        }
+
                         self.ctx.register_type(ty, name);
                     }
 
@@ -183,6 +188,11 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                 }
                 w!(self.type_decls, ");\n");
             }
+            Ty::Unqualified(_) => {
+                // FIXME: unqualified string should not be given explicit types in
+                // codegen.
+                self.ctx.register_type(ty, CName::Id(self.ctx.make_id()));
+            }
             _ => {}
         };
 
@@ -209,14 +219,19 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                 w!(self.type_bodies, "}};\n");
             }
             Ty::NamedType(item) => match item.get() {
-                IRItem::Struct(s) => {
+                IRItem::StructOrUnion(s) => {
                     let name = self.ctx.get_type(ty);
 
                     for f in s.fields.iter().filter(|f| !f.ty.is_zero_sized()) {
                         self.write_type_body(f.ty)?;
                     }
 
-                    w!(self.type_bodies, "struct {} {{\n", name);
+                    if s.is_union {
+                        w!(self.type_bodies, "union {} {{\n", name);
+                    } else {
+                        w!(self.type_bodies, "struct {} {{\n", name);
+                    }
+
                     for f in s.fields.iter().filter(|f| !f.ty.is_zero_sized()) {
                         w!(
                             self.type_bodies,
