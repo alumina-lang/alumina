@@ -17,6 +17,7 @@ pub struct TypeVisitor<'ast, 'src> {
     ast: &'ast AstCtx<'ast>,
     code: &'src ParseCtx<'src>,
     scope: Scope<'ast, 'src>,
+    accept_protocol: bool,
 }
 
 impl<'ast, 'src> TypeVisitor<'ast, 'src> {
@@ -27,7 +28,23 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
                 .code()
                 .expect("cannot run on scope without parse context"),
             scope,
+            accept_protocol: false,
         }
+    }
+
+    pub fn parse_protocol_bounds(
+        &mut self,
+        node: tree_sitter::Node<'src>,
+    ) -> Result<&'ast [TyP<'ast>], AluminaError> {
+        let mut bounds = Vec::new();
+        let mut cursor = node.walk();
+
+        for bound in node.children_by_field_name("bound", &mut cursor) {
+            self.accept_protocol = true;
+            bounds.push(self.visit(bound)?);
+        }
+
+        Ok(bounds.alloc_on(self.ast))
     }
 
     fn visit_typeref(&mut self, node: tree_sitter::Node<'src>) -> Result<TyP<'ast>, AluminaError> {
@@ -42,8 +59,15 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
             ItemResolution::Item(NamedItem::Type(ty, _, _)) => {
                 self.ast.intern_type(Ty::NamedType(ty))
             }
-            ItemResolution::Item(NamedItem::Placeholder(ty)) => {
+            ItemResolution::Item(NamedItem::Placeholder(ty, _)) => {
                 self.ast.intern_type(Ty::Placeholder(ty))
+            }
+            ItemResolution::Item(NamedItem::Protocol(ty, _, _)) => {
+                if self.accept_protocol {
+                    self.ast.intern_type(Ty::Protocol(ty))
+                } else {
+                    return Err(CodeErrorKind::UnexpectedProtocol).with_span(&self.scope, node);
+                }
             }
             ItemResolution::Defered(_, _) => {
                 return Err(CodeErrorKind::NoAssociatedTypes).with_span(&self.scope, node)
@@ -83,10 +107,12 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
     }
 
     fn visit_never_type(&mut self, _node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        self.accept_protocol = false;
         Ok(self.ast.intern_type(Ty::Builtin(BuiltinType::Never)))
     }
 
     fn visit_pointer_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        self.accept_protocol = false;
         let ty = self.visit(node.child_by_field_name("inner").unwrap())?;
         let is_mut = node.child_by_field_name("mut").is_some();
 
@@ -94,6 +120,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
     }
 
     fn visit_slice_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        self.accept_protocol = false;
         let ty = self.visit(node.child_by_field_name("inner").unwrap())?;
         let is_mut = node.child_by_field_name("mut").is_some();
 
@@ -101,12 +128,14 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
     }
 
     fn visit_dyn(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        self.accept_protocol = false;
         let is_mut = node.child_by_field_name("mut").is_some();
 
         Ok(self.ast.intern_type(Ty::Dyn(!is_mut)))
     }
 
     fn visit_array_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        self.accept_protocol = false;
         let ty = self.visit(node.child_by_field_name("inner").unwrap())?;
         let len = self
             .code
@@ -118,6 +147,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
     }
 
     fn visit_tuple_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        self.accept_protocol = false;
         let mut cursor = node.walk();
         let elements = node
             .children_by_field_name("element", &mut cursor)
@@ -143,6 +173,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
 
     fn visit_generic_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let base = self.visit_typeref(node.child_by_field_name("type").unwrap())?;
+
+        self.accept_protocol = false;
         let arguments_node = node.child_by_field_name("type_arguments").unwrap();
         let mut cursor = arguments_node.walk();
         let arguments = arguments_node
@@ -152,6 +184,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
 
         let base = match *base {
             Ty::NamedType(ty) => ty,
+            Ty::Protocol(ty) => ty,
             _ => return Err(CodeErrorKind::UnexpectedGenericParams).with_span(&self.scope, node),
         };
 
@@ -168,6 +201,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
     }
 
     fn visit_function_pointer(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        self.accept_protocol = false;
+
         let mut cursor = node.walk();
         let elements = node
             .child_by_field_name("parameters")

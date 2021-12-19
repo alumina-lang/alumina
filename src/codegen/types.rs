@@ -123,7 +123,7 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                 self.needs_body.insert(ty);
             }
             Ty::NamedType(item) => match item.get() {
-                IRItem::StructOrUnion(s) => {
+                IRItem::StructLike(s) => {
                     if !body_only {
                         let name = if let Some(name) = s.name {
                             self.ctx.get_name_with_hint(name, item.id)
@@ -219,7 +219,7 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                 w!(self.type_bodies, "}};\n");
             }
             Ty::NamedType(item) => match item.get() {
-                IRItem::StructOrUnion(s) => {
+                IRItem::StructLike(s) => {
                     let name = self.ctx.get_type(ty);
 
                     for f in s.fields.iter().filter(|f| !f.ty.is_zero_sized()) {

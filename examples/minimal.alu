@@ -1,25 +1,15 @@
 use std::random::{DEFAULT_RNG as rng, range};
-use std::result::{Result, try};
+use std::result::{try, Result};
 
-fn try_get_number() -> Result<i32, ()> {
-    let val = rng.range(10) as i32;
-    
-    if val > 0 {
-        Result::ok(val)
-    } else {
-        Result::err(())
-    }
+protocol Equatable<T> {
+    fn equals(a: &T, b: &T) -> bool;
 }
 
-fn try_cast() -> Result<i64, ()> {
-    let value = try!(try_get_number());
-
-    Result::ok(value as i64)
+fn compare<T: Equatable<T>>(a: T, b: T) -> bool {
+    a == b
 }
 
 #[export]
 fn main() {
-    let ok = try_cast();
-
-    println!("value: {}", ok.unwrap());
+    println!("{}", if compare(4, 4) { "true" } else { "false" });
 }

@@ -80,8 +80,8 @@ pub enum CodeErrorKind {
     UnresolvedItem(String),
     #[error("duplicate field {:?} in struct initializer", .0)]
     DuplicateFieldInitializer(String),
-    #[error("expected a struct here")]
-    StructExpectedHere,
+    #[error("expected a struct-like type here")]
+    StructLikeExpectedHere,
     #[error("method {} not found", .0)]
     MethodNotFound(String),
     #[error("duplicate enum member")]
@@ -140,9 +140,17 @@ pub enum CodeErrorKind {
     NotInAFunctionScope,
     #[error("unknown builtin macro {}", .0)]
     UnknownBuiltinMacro(String),
+    #[error("associated functions for this type not supported yet")]
+    AssocFnNonNamedType,
+    #[error("{} is not a protocol", .0)]
+    NotAProtocol(String),
+    #[error("protocol is not expected here")]
+    UnexpectedProtocol,
 
     #[error("cannot determine source span")]
     NoSpanInformation,
+    #[error("cannot have an `impl` block without a corresponding type")]
+    NoFreeStandingImpl,
 
     // Warnings
     #[error("defer inside a loop: this defered statement will only be executed once")]

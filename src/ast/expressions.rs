@@ -26,8 +26,8 @@ use super::macros::{MacroExpander, MacroMaker};
 use super::maker::AstItemMaker;
 use super::types::TypeVisitor;
 use super::{
-    AstId, BuiltinType, DeferredFn, ExprKind, FnKind, Function, Item, ItemP, Parameter, Span,
-    StatementKind, Ty, TyP,
+    AstId, BuiltinType, DeferredFn, ExprKind, FnKind, Function, Item, ItemP, Parameter,
+    Placeholder, Span, StatementKind, Ty, TyP,
 };
 
 macro_rules! with_block_scope {
@@ -200,7 +200,9 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             }
             ItemResolution::Defered(placeholder, name) => {
                 let name = name.0.alloc_on(self.ast);
-                ExprKind::Fn(FnKind::Defered(DeferredFn { placeholder, name }), None)
+                let typ = self.ast.intern_type(Ty::Placeholder(placeholder));
+
+                ExprKind::Fn(FnKind::Defered(DeferredFn { typ, name }), None)
             }
             ItemResolution::Item(NamedItem::Macro(_, _, _)) => {
                 return Err(CodeErrorKind::IsAMacro(path.to_string())).with_span(&self.scope, node)
@@ -1049,7 +1051,7 @@ pub struct ClosureVisitor<'ast, 'src> {
     scope: Scope<'ast, 'src>,
 
     parameters: Vec<Parameter<'ast>>,
-    placeholders: Vec<AstId>,
+    placeholders: Vec<Placeholder<'ast>>,
     return_type: Option<TyP<'ast>>,
     body: Option<ExprP<'ast>>,
 }
@@ -1137,7 +1139,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
             .with_span(&self.scope, node)?;
 
         let placeholder = self.ast.make_id();
-        self.placeholders.push(placeholder);
+        self.placeholders.push(Placeholder {
+            id: placeholder,
+            bounds: [].alloc_on(self.ast),
+        });
 
         let span = Span {
             start: node.start_byte(),
@@ -1178,7 +1183,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
                 .transpose()?
                 .unwrap_or_else(|| {
                     let placeholder = self.ast.make_id();
-                    self.placeholders.push(placeholder);
+                    self.placeholders.push(Placeholder {
+                        id: placeholder,
+                        bounds: [].alloc_on(self.ast),
+                    });
                     self.ast.intern_type(Ty::Placeholder(placeholder))
                 }),
         );

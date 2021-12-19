@@ -24,8 +24,10 @@ pub enum NamedItem<'ast, 'src> {
     Macro(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
     Type(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
     Module(Scope<'ast, 'src>),
-    Impl(Scope<'ast, 'src>),
-    Placeholder(AstId),
+    Protocol(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
+    ProtocolFunction(Node<'src>, Scope<'ast, 'src>),
+    Impl(Node<'src>, Scope<'ast, 'src>),
+    Placeholder(AstId, Node<'src>),
     Field(Node<'src>),
     EnumMember(ItemP<'ast>, AstId, Node<'src>),
     Local(AstId),
@@ -38,7 +40,9 @@ pub enum ScopeType {
     Root,
     Crate,
     Module,
-    StructOrUnion,
+    Protocol,
+    StructLike,
+    TypeAlias,
     Function,
     Macro,
     Closure,
@@ -207,14 +211,14 @@ impl<'ast, 'src> Scope<'ast, 'src> {
                     return Ok(());
                 } else if existing.len() == 1
                     && ((matches!(existing[0], NamedItem::Type(_, _, _))
-                        && matches!(item, NamedItem::Impl(_)))
-                        || (matches!(existing[0], NamedItem::Impl(_))
+                        && matches!(item, NamedItem::Impl(_, _)))
+                        || (matches!(existing[0], NamedItem::Impl(_, _))
                             && matches!(item, NamedItem::Type(_, _, _))))
                 {
                     existing.push(item);
                     existing.sort_by_key(|i| match i {
                         NamedItem::Type(_, _, _) => 0,
-                        NamedItem::Impl(_) => 1,
+                        NamedItem::Impl(_, _) => 1,
                         _ => unreachable!(),
                     });
                     return Ok(());

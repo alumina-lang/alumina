@@ -211,6 +211,7 @@ impl BuiltinType {
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum Ty<'ast> {
     Placeholder(AstId),
+    Protocol(ItemP<'ast>),
     Extern(AstId),
     NamedType(ItemP<'ast>),
     Builtin(BuiltinType),
@@ -237,7 +238,8 @@ pub type TyP<'ast> = &'ast Ty<'ast>;
 #[derive(Debug)]
 pub enum Item<'ast> {
     Enum(Enum<'ast>),
-    StructOrUnion(StructOrUnion<'ast>),
+    StructLike(StructLike<'ast>),
+    Protocol(Protocol<'ast>),
     Function(Function<'ast>),
     StaticOrConst(StaticOrConst<'ast>),
     Macro(Macro<'ast>),
@@ -283,10 +285,17 @@ impl<'ast> ItemCell<'ast> {
         }
     }
 
-    pub fn get_struct(&'ast self) -> &'ast StructOrUnion<'ast> {
+    pub fn get_struct_like(&'ast self) -> &'ast StructLike<'ast> {
         match self.contents.get() {
-            Some(Item::StructOrUnion(s)) => s,
-            _ => panic!("struct expected"),
+            Some(Item::StructLike(s)) => s,
+            _ => panic!("struct or union expected"),
+        }
+    }
+
+    pub fn is_struct_like(&self) -> bool {
+        match self.contents.get() {
+            Some(Item::StructLike(_)) => true,
+            _ => false,
         }
     }
 
@@ -359,10 +368,35 @@ pub struct AssociatedFn<'ast> {
     pub item: ItemP<'ast>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Placeholder<'ast> {
+    pub id: AstId,
+    pub bounds: &'ast [TyP<'ast>],
+}
+
 #[derive(Debug)]
-pub struct StructOrUnion<'ast> {
+pub struct ProtocolFunction<'ast> {
+    pub name: &'ast str,
+    pub attributes: &'ast [Attribute],
+    pub placeholders: &'ast [Placeholder<'ast>],
+    pub args: &'ast [Parameter<'ast>],
+    pub return_type: TyP<'ast>,
+    pub span: Option<Span>,
+}
+
+#[derive(Debug)]
+pub struct Protocol<'ast> {
     pub name: Option<&'ast str>,
-    pub placeholders: &'ast [AstId],
+    pub placeholders: &'ast [Placeholder<'ast>],
+    pub methods: &'ast [ProtocolFunction<'ast>],
+    pub attributes: &'ast [Attribute],
+    pub span: Option<Span>,
+}
+
+#[derive(Debug)]
+pub struct StructLike<'ast> {
+    pub name: Option<&'ast str>,
+    pub placeholders: &'ast [Placeholder<'ast>],
     pub associated_fns: &'ast [AssociatedFn<'ast>],
     pub attributes: &'ast [Attribute],
     pub fields: &'ast [Field<'ast>],
@@ -429,7 +463,7 @@ pub struct BuiltinMacro {
 pub struct Function<'ast> {
     pub name: Option<&'ast str>,
     pub attributes: &'ast [Attribute],
-    pub placeholders: &'ast [AstId],
+    pub placeholders: &'ast [Placeholder<'ast>],
     pub args: &'ast [Parameter<'ast>],
     pub return_type: TyP<'ast>,
     pub body: Option<ExprP<'ast>>,
@@ -537,7 +571,7 @@ pub struct FieldInitializer<'ast> {
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub struct DeferredFn<'ast> {
-    pub placeholder: AstId,
+    pub typ: TyP<'ast>,
     pub name: &'ast str,
 }
 
@@ -609,8 +643,10 @@ impl_allocatable!(
     MacroParameter,
     ItemCell<'_>,
     FieldInitializer<'_>,
+    ProtocolFunction<'_>,
     AssociatedFn<'_>,
     EnumMember<'_>,
+    Placeholder<'_>,
     Attribute,
     AstId
 );

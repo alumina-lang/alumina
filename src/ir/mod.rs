@@ -150,7 +150,7 @@ impl Debug for Ty<'_> {
             Ty::NamedType(cell) => {
                 let inner = cell.try_get();
                 match inner {
-                    Some(IRItem::StructOrUnion(s)) => {
+                    Some(IRItem::StructLike(s)) => {
                         write!(f, "{} {{ ", s.name.unwrap_or("(unnamed)"))?;
                         for field in s.fields {
                             write!(f, "{:?} ", field.ty)?;
@@ -239,7 +239,7 @@ impl<'ir> Ty<'ir> {
             Ty::Builtin(_) => false,
             Ty::Extern(_) => todo!(),
             Ty::NamedType(inner) => match inner.get() {
-                IRItem::StructOrUnion(s) => s.fields.iter().all(|f| f.ty.is_zero_sized()),
+                IRItem::StructLike(s) => s.fields.iter().all(|f| f.ty.is_zero_sized()),
                 IRItem::Enum(e) => e.underlying_type.is_zero_sized(),
                 IRItem::Static(_) => unreachable!(),
                 IRItem::Function(_) => unreachable!(),
@@ -263,7 +263,7 @@ pub struct Field<'ir> {
 }
 
 #[derive(Debug)]
-pub struct StructOrUnion<'ir> {
+pub struct StructLike<'ir> {
     pub name: Option<&'ir str>,
     pub fields: &'ir [Field<'ir>],
     pub is_union: bool,
@@ -324,7 +324,7 @@ pub struct Const<'ir> {
 
 #[derive(Debug)]
 pub enum IRItem<'ir> {
-    StructOrUnion(StructOrUnion<'ir>),
+    StructLike(StructLike<'ir>),
     Function(Function<'ir>),
     Enum(Enum<'ir>),
     Static(Static<'ir>),
@@ -356,9 +356,9 @@ impl<'ir> IRItemCell<'ir> {
         }
     }
 
-    pub fn get_struct(&'ir self) -> &'ir StructOrUnion<'ir> {
+    pub fn get_struct_like(&'ir self) -> &'ir StructLike<'ir> {
         match self.contents.get() {
-            Some(IRItem::StructOrUnion(s)) => s,
+            Some(IRItem::StructLike(s)) => s,
             _ => panic!("struct expected"),
         }
     }
@@ -367,6 +367,13 @@ impl<'ir> IRItemCell<'ir> {
         match self.contents.get() {
             Some(IRItem::Static(s)) => s,
             _ => panic!("static expected"),
+        }
+    }
+
+    pub fn is_struct_like(&self) -> bool {
+        match self.contents.get() {
+            Some(IRItem::StructLike(_)) => true,
+            _ => false,
         }
     }
 }

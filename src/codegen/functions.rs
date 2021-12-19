@@ -42,22 +42,16 @@ pub fn write_function_signature<'ir, 'gen>(
         attributes = format!("_Noreturn {}", attributes);
     }
 
-    if is_static {
-        w!(
-            buf,
-            "\n{}static {} {}(",
-            attributes,
-            ctx.get_type(item.return_type),
-            name
-        );
+    let return_type = if item.return_type.is_zero_sized() {
+        ctx.get_type(&Ty::Builtin(BuiltinType::Void))
     } else {
-        w!(
-            buf,
-            "\n{}{} {}(",
-            attributes,
-            ctx.get_type(item.return_type),
-            name
-        );
+        ctx.get_type(item.return_type)
+    };
+
+    if is_static {
+        w!(buf, "\n{}static {} {}(", attributes, return_type, name);
+    } else {
+        w!(buf, "\n{}{} {}(", attributes, return_type, name);
     }
     for (idx, arg) in item
         .args

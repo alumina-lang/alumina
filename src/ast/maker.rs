@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    ast::{AstCtx, AstId, BuiltinType, Field, Function, Item, ItemP, Parameter, StructOrUnion, Ty},
+    ast::{AstCtx, AstId, BuiltinType, Field, Function, Item, ItemP, Parameter, StructLike, Ty},
     common::{AluminaError, ArenaAllocatable, CodeErrorKind, WithSpanDuringParsing},
     diagnostics::DiagnosticContext,
     intrinsics::intrinsic_kind,
@@ -14,7 +14,8 @@ use super::{
     lang::{lang_item_kind, LangItemKind, LangItemMap},
     macros::MacroMaker,
     types::TypeVisitor,
-    AssociatedFn, Attribute, Enum, EnumMember, Intrinsic, Span, StaticOrConst,
+    AssociatedFn, Attribute, Enum, EnumMember, Intrinsic, Placeholder, Protocol, ProtocolFunction,
+    Span, StaticOrConst,
 };
 
 pub struct AstItemMaker<'ast> {
@@ -101,15 +102,19 @@ impl<'ast> AstItemMaker<'ast> {
         scope: Scope<'ast, 'src>,
         impl_scope: Option<Scope<'ast, 'src>>,
     ) -> Result<(), AluminaError> {
-        let mut placeholders: Vec<AstId> = Vec::new();
+        let mut placeholders = Vec::new();
         let mut fields: Vec<Field<'ast>> = Vec::new();
 
         let code = scope.code().unwrap();
 
         for (name, item) in scope.inner().all_items() {
             match item {
-                NamedItem::Placeholder(placeholder) => {
-                    placeholders.push(*placeholder);
+                NamedItem::Placeholder(id, node) => {
+                    placeholders.push(Placeholder {
+                        id: *id,
+                        bounds: TypeVisitor::new(self.ast, scope.clone())
+                            .parse_protocol_bounds(*node)?,
+                    });
                 }
                 NamedItem::Field(node) => {
                     let mut visitor = TypeVisitor::new(self.ast, scope.clone());
@@ -149,7 +154,7 @@ impl<'ast> AstItemMaker<'ast> {
             file: code.file_id(),
         };
 
-        let result = Item::StructOrUnion(StructOrUnion {
+        let result = Item::StructLike(StructLike {
             name: Some(name),
             placeholders: placeholders.alloc_on(self.ast),
             fields: fields.alloc_on(self.ast),
@@ -162,6 +167,104 @@ impl<'ast> AstItemMaker<'ast> {
         symbol.assign(result);
 
         self.symbols.push(symbol);
+
+        Ok(())
+    }
+
+    fn make_protocol<'src>(
+        &mut self,
+        name: &'ast str,
+        symbol: ItemP<'ast>,
+        node: tree_sitter::Node<'src>,
+        scope: Scope<'ast, 'src>,
+    ) -> Result<(), AluminaError> {
+        let mut placeholders = Vec::new();
+        let mut methods = Vec::new();
+
+        let code = scope.code().unwrap();
+
+        for (name, item) in scope.inner().all_items() {
+            match item {
+                NamedItem::Placeholder(id, node) => {
+                    placeholders.push(Placeholder {
+                        id: *id,
+                        bounds: TypeVisitor::new(self.ast, scope.clone())
+                            .parse_protocol_bounds(*node)?,
+                    });
+                }
+                NamedItem::ProtocolFunction(node, scope) => {
+                    let mut function_placeholders = Vec::new();
+                    let mut parameters = Vec::new();
+
+                    for (name, item) in scope.inner().all_items() {
+                        match item {
+                            NamedItem::Placeholder(id, node) => {
+                                function_placeholders.push(Placeholder {
+                                    id: *id,
+                                    bounds: TypeVisitor::new(self.ast, scope.clone())
+                                        .parse_protocol_bounds(*node)?,
+                                });
+                            }
+                            NamedItem::Parameter(id, node) => {
+                                let field_type = TypeVisitor::new(self.ast, scope.clone())
+                                    .visit(node.child_by_field_name("type").unwrap())?;
+
+                                let span = Span {
+                                    start: node.start_byte(),
+                                    end: node.end_byte(),
+                                    file: scope.code().unwrap().file_id(),
+                                };
+
+                                parameters.push(Parameter {
+                                    id: *id,
+                                    typ: field_type,
+                                    span: Some(span),
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    let return_type = node
+                        .child_by_field_name("return_type")
+                        .map(|n| TypeVisitor::new(self.ast, scope.clone()).visit(n))
+                        .transpose()?
+                        .unwrap_or(self.ast.intern_type(Ty::Builtin(BuiltinType::Void)));
+
+                    let span = Span {
+                        start: node.start_byte(),
+                        end: node.end_byte(),
+                        file: code.file_id(),
+                    };
+
+                    methods.push(ProtocolFunction {
+                        name: name,
+                        placeholders: function_placeholders.alloc_on(self.ast),
+                        args: parameters.alloc_on(self.ast),
+                        return_type,
+                        attributes: self.get_attributes(symbol, code, *node)?,
+                        span: Some(span),
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        let span = Span {
+            start: node.start_byte(),
+            end: node.end_byte(),
+            file: code.file_id(),
+        };
+
+        let result = Item::Protocol(Protocol {
+            name: Some(name),
+            placeholders: placeholders.alloc_on(self.ast),
+            methods: methods.alloc_on(self.ast),
+            attributes: self.get_attributes(symbol, code, node)?,
+            span: Some(span),
+        });
+
+        symbol.assign(result);
 
         Ok(())
     }
@@ -238,13 +341,17 @@ impl<'ast> AstItemMaker<'ast> {
         scope: Scope<'ast, 'src>,
         body: Option<tree_sitter::Node<'src>>,
     ) -> Result<(), AluminaError> {
-        let mut placeholders: Vec<AstId> = Vec::new();
+        let mut placeholders = Vec::new();
         let mut parameters: Vec<Parameter<'ast>> = Vec::new();
 
         for (_name, item) in scope.inner().all_items() {
             match item {
-                NamedItem::Placeholder(placeholder) => {
-                    placeholders.push(*placeholder);
+                NamedItem::Placeholder(id, node) => {
+                    placeholders.push(Placeholder {
+                        id: *id,
+                        bounds: TypeVisitor::new(self.ast, scope.clone())
+                            .parse_protocol_bounds(*node)?,
+                    });
                 }
                 NamedItem::Parameter(id, node) => {
                     let field_type = TypeVisitor::new(self.ast, scope.clone())
@@ -372,7 +479,7 @@ impl<'ast> AstItemMaker<'ast> {
                 let mut parameters = Vec::new();
                 for (_name, item) in scope.inner().all_items() {
                     match item {
-                        NamedItem::Placeholder(_) => {
+                        NamedItem::Placeholder(_, _) => {
                             return Err(CodeErrorKind::ExternCGenericParams)
                                 .with_span(&scope, node);
                         }
@@ -420,7 +527,7 @@ impl<'ast> AstItemMaker<'ast> {
                         .inner()
                         .all_items()
                         .fold((0, 0), |(generic, args), item| match item.1 {
-                            NamedItem::Placeholder(_) => (generic + 1, args),
+                            NamedItem::Placeholder(_, _) => (generic + 1, args),
                             NamedItem::Parameter(_, _) => (generic, args + 1),
                             _ => (generic, args),
                         });
@@ -480,7 +587,10 @@ impl<'ast> AstItemMaker<'ast> {
             [NamedItem::Module(module)] => {
                 self.make(module.clone())?;
             }
-            [NamedItem::Type(symbol, node, scope), NamedItem::Impl(impl_scope)] => {
+            [NamedItem::Impl(node, scope)] => {
+                return Err(CodeErrorKind::NoFreeStandingImpl).with_span(scope, *node)
+            }
+            [NamedItem::Type(symbol, node, scope), NamedItem::Impl(_, impl_scope)] => {
                 self.make_type(
                     name,
                     *symbol,
@@ -492,6 +602,9 @@ impl<'ast> AstItemMaker<'ast> {
             }
             [NamedItem::Type(symbol, node, scope)] => {
                 self.make_type(name, *symbol, *node, scope.clone(), None)?;
+            }
+            [NamedItem::Protocol(symbol, node, scope)] => {
+                self.make_protocol(name, *symbol, *node, scope.clone())?;
             }
             [NamedItem::Static(symbol, node)] => {
                 self.make_static_or_const(false, name, *symbol, *node, scope)?;

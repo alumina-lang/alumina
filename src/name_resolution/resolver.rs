@@ -1,5 +1,5 @@
 use crate::{
-    ast::AstId,
+    ast::{AstId, ItemP},
     common::CodeErrorKind,
     name_resolution::{path::Path, scope::NamedItem},
 };
@@ -26,8 +26,6 @@ pub enum ScopeResolution<'ast, 'src> {
 #[derive(Debug)]
 pub enum ItemResolution<'ast, 'src> {
     Item(NamedItem<'ast, 'src>),
-    // Only a single path segment can follow a placeholder (and it has to be an associated function)
-    // as we don't support nested structs.
     Defered(AstId, PathSegment<'ast>),
 }
 
@@ -71,8 +69,8 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
 
         for item in self_scope.inner().items_with_name(path.segments[0].0) {
             match item {
-                NamedItem::Placeholder(sym) => return Ok(ScopeResolution::Defered(*sym)),
-                NamedItem::Module(child_scope) | NamedItem::Impl(child_scope) => {
+                NamedItem::Placeholder(sym, _) => return Ok(ScopeResolution::Defered(*sym)),
+                NamedItem::Module(child_scope) | NamedItem::Impl(_, child_scope) => {
                     return self.resolve_scope(child_scope.clone(), remainder);
                 }
                 NamedItem::Type(_, _, scope) if scope.typ() == ScopeType::Enum => {
@@ -131,7 +129,7 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
             .items_with_name(path.segments.last().unwrap().0)
         {
             match item {
-                NamedItem::Impl(_) => continue,
+                NamedItem::Impl(_, _) => continue,
                 NamedItem::Alias(target) => {
                     return self.resolve_item_impl(
                         self_scope,

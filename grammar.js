@@ -83,6 +83,8 @@ module.exports = grammar({
         $.struct_definition,
         $.static_declaration,
         $.enum_definition,
+        $.protocol_definition,
+        $.type_definition,
         $.impl_block,
         $.mod_definition,
         $.macro_definition,
@@ -105,6 +107,19 @@ module.exports = grammar({
         "{",
         field("body", repeat($._top_level_item)),
         "}"
+      ),
+
+    _protocol_item: ($) => choice($.protocol_function),
+
+    protocol_function: ($) =>
+      seq(
+        optional(field("attributes", $.attributes)),
+        "fn",
+        field("name", $.identifier),
+        optional(field("type_arguments", $.generic_argument_list)),
+        field("parameters", $.parameter_list),
+        optional(seq("->", field("return_type", $._type))),
+        ";"
       ),
 
     function_definition: ($) =>
@@ -156,6 +171,28 @@ module.exports = grammar({
         sepBy(",", field("body", $.struct_field)),
         optional(","),
         "}"
+      ),
+
+    protocol_definition: ($) =>
+      seq(
+        optional(field("attributes", $.attributes)),
+        field("kind", "protocol"),
+        field("name", $.identifier),
+        optional(field("type_arguments", $.generic_argument_list)),
+        "{",
+        field("body", repeat($._protocol_item)),
+        "}"
+      ),
+
+    type_definition: ($) =>
+      seq(
+        optional(field("attributes", $.attributes)),
+        "type",
+        field("name", $.identifier),
+        optional(field("type_arguments", $.generic_argument_list)),
+        "=",
+        field("inner", $._type),
+        ";"
       ),
 
     enum_definition: ($) =>
@@ -212,10 +249,15 @@ module.exports = grammar({
     parameter: ($) =>
       seq(field("name", $.identifier), ":", field("type", $._type)),
 
+    generic_argument: ($) => seq(
+        field("placeholder", $.identifier), 
+        optional(seq(":", sepBy("+", field("bound", $._type))))
+    ),
+
     generic_argument_list: ($) =>
       seq(
         "<",
-        sepBy(",", field("argument", $.identifier)),
+        sepBy(",", field("argument", $.generic_argument)),
         optional(","),
         alias(token(prec(1, ">")), ">")
       ),

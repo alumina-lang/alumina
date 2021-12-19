@@ -281,7 +281,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     fn monomorphize_struct(
         &mut self,
         item: ir::IRItemP<'ir>,
-        s: &ast::StructOrUnion<'ast>,
+        s: &ast::StructLike<'ast>,
         generic_args: &'ir [ir::TyP<'ir>],
     ) -> Result<(), AluminaError> {
         if generic_args.len() != s.placeholders.len() {
@@ -297,7 +297,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             s.placeholders
                 .iter()
                 .zip(generic_args.iter())
-                .map(|(&k, &v)| (k, v))
+                .map(|(&k, &v)| (k.id, v))
                 .collect(),
         );
 
@@ -312,7 +312,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             })
             .collect::<Result<Vec<_>, AluminaError>>()?;
 
-        let res = ir::IRItem::StructOrUnion(ir::StructOrUnion {
+        let res = ir::IRItem::StructLike(ir::StructLike {
             name: s.name.map(|n| n.alloc_on(child.mono_ctx.ir)),
             fields: fields.alloc_on(self.mono_ctx.ir),
             is_union: s.is_union,
@@ -333,7 +333,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let mut init = s.init.map(|t| child.lower_expr(t, typ)).transpose()?;
 
         if s.is_const {
-            // No try_coerce_type here, we want strings to remain unqualified in consts
+            // No try_qualify_type here, we want strings to remain unqualified in consts
             let init = if let Some(typ) = typ {
                 child
                     .try_coerce(typ, init.unwrap())
@@ -354,7 +354,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             item.assign(res);
         } else {
             let typ = typ.or(init.map(|i| i.ty)).unwrap();
-            let typ = child.try_coerce_type(typ)?;
+            let typ = child.try_qualify_type(typ)?;
             if let Some(init) = &mut init {
                 *init = child.try_coerce(typ, init)?;
             }
@@ -393,7 +393,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .placeholders
             .iter()
             .zip(generic_args.iter())
-            .map(|(&k, &v)| (k, v));
+            .map(|(&k, &v)| (k.id, v));
 
         let mut child = if func.closure {
             // Closures can bind the generic parameters of the enclosing function, so we need
@@ -518,7 +518,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.monomorphize_function(item, func, key.1)
                     .append_mono_marker()?;
             }
-            ast::Item::StructOrUnion(s) => {
+            ast::Item::StructLike(s) => {
                 self.monomorphize_struct(item, s, key.1)
                     .append_span(s.span)
                     .append_mono_marker()?;
@@ -536,6 +536,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ast::Item::Intrinsic(_) => {
                 unreachable!("intrinsics shouldn't be monomorphized");
             }
+            ast::Item::Protocol(_) => todo!(),
         };
 
         Ok(item)
@@ -686,9 +687,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
                 let key = MonomorphizeKey(item, args);
                 let item = self.monomorphize_item(key)?;
-
                 self.types.named(item)
             }
+            ast::Ty::Protocol(_) => todo!(),
         };
 
         Ok(result)
@@ -699,8 +700,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         item: ir::IRItemP<'ir>,
     ) -> HashMap<&'ast str, &'ir ir::Field<'ir>> {
         let MonomorphizeKey(ast_item, _) = self.mono_ctx.reverse_lookup(item);
-        let ir_struct = item.get_struct();
-        let ast_struct = ast_item.get_struct();
+        let ir_struct = item.get_struct_like();
+        let ast_struct = ast_item.get_struct_like();
 
         ast_struct
             .fields
@@ -716,20 +717,23 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .collect()
     }
 
+    fn get_associated_fns_ast(
+        &self,
+        item: ast::ItemP<'ast>,
+    ) -> HashMap<&'ast str, ast::ItemP<'ast>> {
+        match item.get() {
+            ast::Item::StructLike(s) => s.associated_fns.iter().map(|f| (f.name, f.item)).collect(),
+            ast::Item::Enum(e) => e.associated_fns.iter().map(|f| (f.name, f.item)).collect(),
+            _ => panic!("does not have associated fns"),
+        }
+    }
+
     fn get_associated_fns(
         &mut self,
         item: ir::IRItemP<'ir>,
     ) -> HashMap<&'ast str, ast::ItemP<'ast>> {
         let MonomorphizeKey(ast_item, _) = self.mono_ctx.reverse_lookup(item);
-        let ast_struct = ast_item.get();
-
-        match ast_struct {
-            ast::Item::StructOrUnion(s) => {
-                s.associated_fns.iter().map(|f| (f.name, f.item)).collect()
-            }
-            ast::Item::Enum(e) => e.associated_fns.iter().map(|f| (f.name, f.item)).collect(),
-            _ => panic!("does not have associated fns"),
-        }
+        self.get_associated_fns_ast(ast_item)
     }
 
     fn make_tentative_child<'b>(&'b mut self) -> Monomorphizer<'b, 'ast, 'ir> {
@@ -749,7 +753,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
     }
 
-    fn try_coerce_type(&mut self, typ: ir::TyP<'ir>) -> Result<ir::TyP<'ir>, AluminaError> {
+    fn try_qualify_type(&mut self, typ: ir::TyP<'ir>) -> Result<ir::TyP<'ir>, AluminaError> {
         if let ir::Ty::Unqualified(UnqualifiedKind::String(_)) = typ {
             return Ok(self.slice_of(self.types.builtin(BuiltinType::U8), true)?);
         }
@@ -975,7 +979,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             infer_pairs.push((fun.return_type, return_type_hint));
         }
 
-        let mut type_inferer = TypeInferer::new(self.mono_ctx, fun.placeholders.into());
+        let mut type_inferer = TypeInferer::new(
+            self.mono_ctx,
+            fun.placeholders.iter().map(|p| p.id).collect(),
+        );
 
         match type_inferer.try_infer(self_slot, infer_pairs) {
             Some(generic_args) => self.monomorphize_item(MonomorphizeKey(
@@ -988,12 +995,26 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
     fn try_resolve_struct(
         &mut self,
-        item: ast::ItemP<'ast>,
-        generic_args: Option<&[ast::TyP<'ast>]>,
+        typ: ast::TyP<'ast>,
         initializers: &[ast::FieldInitializer<'ast>],
         type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::IRItemP<'ir>, AluminaError> {
-        let r#struct = item.get_struct();
+        let (item, generic_args) = match typ {
+            ast::Ty::NamedType(item) => (*item, None),
+            ast::Ty::GenericType(item, generic_args) => (*item, Some(*generic_args)),
+            _ => {
+                let lowered = self.lower_type(typ)?;
+                match lowered {
+                    ir::Ty::NamedType(item) if item.is_struct_like() => return Ok(item),
+                    _ => return Err(CodeErrorKind::StructLikeExpectedHere).with_no_span(),
+                }
+            }
+        };
+
+        let r#struct = match item.get() {
+            ast::Item::StructLike(s) => s,
+            _ => return Err(CodeErrorKind::StructLikeExpectedHere).with_no_span(),
+        };
 
         if let Some(generic_args) = generic_args {
             let generic_args = generic_args
@@ -1050,7 +1071,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             return Err(AluminaError::CodeErrors(tentative_errors));
         }
 
-        let mut type_inferer = TypeInferer::new(self.mono_ctx, r#struct.placeholders.into());
+        let mut type_inferer = TypeInferer::new(
+            self.mono_ctx,
+            r#struct.placeholders.iter().map(|p| p.id).collect(),
+        );
         let infer_result = type_inferer.try_infer(None, pairs);
 
         match infer_result {
@@ -1221,7 +1245,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                         None
                     }
                     (None, Some(init)) => {
-                        let typ = self.try_coerce_type(init.ty)?;
+                        let typ = self.try_qualify_type(init.ty)?;
 
                         self.local_types.insert(id, typ);
                         self.local_defs.push(ir::LocalDef { id, typ: typ });
@@ -1381,7 +1405,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             return Ok(inner);
         }
 
-        let typ = self.try_coerce_type(inner.ty)?;
+        let typ = self.try_qualify_type(inner.ty)?;
         let inner = self.try_coerce(typ, inner)?;
 
         Ok(self.r#ref(inner))
@@ -1619,6 +1643,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .try_coerce(self.types.builtin(BuiltinType::Bool), cond)
             .append_span(cond_.span)?;
 
+        let then_typ = self.try_qualify_type(then.ty)?;
+        let els_typ = self.try_qualify_type(els.ty)?;
+
+        let then = self.try_coerce(then_typ, then)?;
+        let els = self.try_coerce(els_typ, els)?;
+
         let gcd = ir::Ty::gcd(then.ty, els.ty);
         if !gcd.assignable_from(then.ty) || !gcd.assignable_from(els.ty) {
             return Err(CodeErrorKind::MismatchedBranchTypes(
@@ -1785,7 +1815,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
 
         let break_typ = expr
-            .map(|e| self.try_coerce_type(e.ty))
+            .map(|e| self.try_qualify_type(e.ty))
             .unwrap_or(Ok(self.types.builtin(BuiltinType::Void)))?;
 
         let slot_type = match self.local_types.entry(loop_context.loop_result) {
@@ -1872,12 +1902,15 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let method = match ir_self_arg.ty.canonical_type() {
             ir::Ty::NamedType(item) => {
-                let fields = self.get_struct_field_map(item);
-                if fields.contains_key(name) {
-                    // This is not a method, but a field (e.g. a function pointer), go back to lower_call
-                    // and process it as usual.
-                    return Ok(None);
+                if let ir::IRItem::StructLike(_) = item.get() {
+                    let fields = self.get_struct_field_map(item);
+                    if fields.contains_key(name) {
+                        // This is not a method, but a field (e.g. a function pointer), go back to lower_call
+                        // and process it as usual.
+                        return Ok(None);
+                    }
                 }
+
                 self.get_associated_fns(item).get(name).copied()
             }
             _ => None,
@@ -1938,6 +1971,36 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(Some(self.exprs.call(callee, args, return_type)))
     }
 
+    fn resolve_defered_func(
+        &mut self,
+        spec: &ast::DeferredFn<'ast>,
+    ) -> Result<ast::ItemP<'ast>, AluminaError> {
+        let associated_fns = match spec.typ {
+            ast::Ty::Placeholder(id) => {
+                let typ = self
+                    .replacements
+                    .get(id)
+                    .ok_or(CodeErrorKind::AssocFnNonNamedType)
+                    .with_no_span()?;
+
+                match typ {
+                    ir::Ty::NamedType(typ) => self.get_associated_fns(typ),
+                    _ => return Err(CodeErrorKind::AssocFnNonNamedType).with_no_span(),
+                }
+            }
+            ast::Ty::NamedType(item) => self.get_associated_fns_ast(item),
+            ast::Ty::GenericType(item, _) => self.get_associated_fns_ast(item),
+            _ => return Err(CodeErrorKind::AssocFnNonNamedType).with_no_span(),
+        };
+
+        let func = associated_fns
+            .get(spec.name)
+            .ok_or(CodeErrorKind::UnresolvedItem(spec.name.to_string()))
+            .with_no_span()?;
+
+        Ok(func)
+    }
+
     fn lower_call(
         &mut self,
         callee: ast::ExprP<'ast>,
@@ -1966,17 +2029,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.exprs.function(item)
             }
             ast::ExprKind::Fn(ast::FnKind::Defered(spec), generic_args) => {
-                let typ = match self.replacements.get(&spec.placeholder) {
-                    Some(ir::Ty::NamedType(typ)) => typ,
-                    _ => unreachable!(),
-                };
-
-                let associated_fns = self.get_associated_fns(typ);
-                let func = associated_fns
-                    .get(spec.name)
-                    .ok_or(CodeErrorKind::UnresolvedItem(spec.name.to_string()))
-                    .with_no_span()?;
-
+                let func = self.resolve_defered_func(spec)?;
                 let item = self.try_resolve_function(
                     func,
                     *generic_args,
@@ -2061,16 +2114,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.exprs.function(item)
             }
             ast::FnKind::Defered(spec) => {
-                let typ = match self.replacements.get(&spec.placeholder) {
-                    Some(ir::Ty::NamedType(typ)) => typ,
-                    _ => unreachable!(),
-                };
-
-                let associated_fns = self.get_associated_fns(typ);
-                let func = associated_fns
-                    .get(spec.name)
-                    .ok_or(CodeErrorKind::UnresolvedItem(spec.name.to_string()))
-                    .with_no_span()?;
+                let func = self.resolve_defered_func(&spec)?;
 
                 let item = self.try_resolve_function(
                     func,
@@ -2123,7 +2167,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let obj_span = obj.span;
         let obj = self.lower_expr(obj, None)?;
-        let obj_type = self.try_coerce_type(obj.ty)?;
+        let obj_type = self.try_qualify_type(obj.ty)?;
         let obj = self.try_coerce(obj_type, obj)?;
 
         let result = match obj.ty.canonical_type() {
@@ -2141,7 +2185,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
                 self.exprs.field(obj, field.id, field.ty)
             }
-            _ => return Err(CodeErrorKind::StructExpectedHere).with_span(obj_span),
+            _ => return Err(CodeErrorKind::StructLikeExpectedHere).with_span(obj_span),
         };
 
         Ok(result)
@@ -2155,7 +2199,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let inner_span = inner.span;
         let inner = self.lower_expr(inner, type_hint.map(|ty| self.types.pointer(ty, true)))?;
-        let inner_type = self.try_coerce_type(inner.ty)?;
+        let inner_type = self.try_qualify_type(inner.ty)?;
         let inner = self.try_coerce(inner_type, inner)?;
 
         let index = self.lower_expr(index, Some(self.types.builtin(BuiltinType::USize)))?;
@@ -2204,7 +2248,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             // slice slices to another slice. It could also be an array, but wcyd
             type_hint,
         )?;
-        let inner_type = self.try_coerce_type(inner.ty)?;
+        let inner_type = self.try_qualify_type(inner.ty)?;
         let inner = self.try_coerce(inner_type, inner)?;
 
         let lower = lower
@@ -2398,13 +2442,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         inits: &[ast::FieldInitializer<'ast>],
         type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let item = match typ {
-            ast::Ty::NamedType(item) => self.try_resolve_struct(item, None, inits, type_hint)?,
-            ast::Ty::GenericType(item, generic_args) => {
-                self.try_resolve_struct(item, Some(generic_args), inits, type_hint)?
-            }
-            _ => return Err(CodeErrorKind::StructExpectedHere).with_no_span(),
-        };
+        let item = self.try_resolve_struct(typ, inits, type_hint)?;
 
         let field_map = self.get_struct_field_map(item);
         let lowered = inits
@@ -2456,7 +2494,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         for expr in elements {
             let expr = self.lower_expr(expr, first_elem_type.or(element_type_hint))?;
             if let None = first_elem_type {
-                let qualified = self.try_coerce_type(expr.ty)?;
+                let qualified = self.try_qualify_type(expr.ty)?;
                 first_elem_type = Some(qualified);
             }
             lowered.push(self.try_coerce(first_elem_type.unwrap(), expr)?);
