@@ -4,7 +4,7 @@ Alumina is a C-like programming language with a Rust-like syntax.
 
 It has the following conveniences over C:
 
-- Generics (duck-typed, similar to C++ templates, but without specializations)
+- Generics with protocols/concepts (duck-typed, similar to C++ templates)
 - [Unified call syntax](https://en.wikipedia.org/wiki/Uniform_Function_Call_Syntax) for functions in scope
 - Block expressions
 - Lambdas (stateless only, closures are not supported)

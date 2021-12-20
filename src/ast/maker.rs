@@ -193,17 +193,13 @@ impl<'ast> AstItemMaker<'ast> {
                     });
                 }
                 NamedItem::ProtocolFunction(node, scope) => {
-                    let mut function_placeholders = Vec::new();
                     let mut parameters = Vec::new();
 
-                    for (name, item) in scope.inner().all_items() {
+                    for (_, item) in scope.inner().all_items() {
                         match item {
-                            NamedItem::Placeholder(id, node) => {
-                                function_placeholders.push(Placeholder {
-                                    id: *id,
-                                    bounds: TypeVisitor::new(self.ast, scope.clone())
-                                        .parse_protocol_bounds(*node)?,
-                                });
+                            NamedItem::Placeholder(_, node) => {
+                                return Err(CodeErrorKind::ProtocolFnsCannotBeGeneric)
+                                    .with_span(scope, *node)
                             }
                             NamedItem::Parameter(id, node) => {
                                 let field_type = TypeVisitor::new(self.ast, scope.clone())
@@ -239,7 +235,6 @@ impl<'ast> AstItemMaker<'ast> {
 
                     methods.push(ProtocolFunction {
                         name: name,
-                        placeholders: function_placeholders.alloc_on(self.ast),
                         args: parameters.alloc_on(self.ast),
                         return_type,
                         attributes: self.get_attributes(symbol, code, *node)?,

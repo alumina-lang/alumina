@@ -1,15 +1,28 @@
 use std::random::{DEFAULT_RNG as rng, range};
 use std::result::{try, Result};
 
-protocol Equatable<T> {
+protocol Basic<T> {
+}
+
+protocol Equatable<T: Basic<T>> {
     fn equals(a: &T, b: &T) -> bool;
 }
 
 fn compare<T: Equatable<T>>(a: T, b: T) -> bool {
-    a == b
+    a.equals(&b)
+}
+
+struct Key {
+    value: u32
+}
+
+impl Key {
+    fn equals(self: &Key, other: &Key) -> bool {
+        self.value == other.value
+    }
 }
 
 #[export]
 fn main() {
-    println!("{}", if compare(4, 4) { "true" } else { "false" });
+    println!("{}", if compare(Key{ value: 1 }, Key{ value: 1 }) { "true" } else { "false" });
 }

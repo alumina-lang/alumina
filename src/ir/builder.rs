@@ -314,6 +314,10 @@ impl<'ir> TypeBuilder<'ir> {
         self.ir.intern_type(Ty::NamedType(item))
     }
 
+    pub fn protocol(&self, item: IRItemP<'ir>) -> TyP<'ir> {
+        self.ir.intern_type(Ty::Protocol(item))
+    }
+
     pub fn r#extern(&self, id: IrId) -> TyP<'ir> {
         self.ir.intern_type(Ty::Extern(id))
     }

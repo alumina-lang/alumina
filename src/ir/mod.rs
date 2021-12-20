@@ -131,6 +131,7 @@ pub enum UnqualifiedKind {
 pub enum Ty<'ir> {
     Extern(IrId),
     NamedType(IRItemP<'ir>),
+    Protocol(IRItemP<'ir>),
     Builtin(BuiltinType),
     Pointer(TyP<'ir>, bool),
     Array(TyP<'ir>, usize),
@@ -147,7 +148,7 @@ impl Debug for Ty<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Ty::Extern(id) => write!(f, "extern {}", id),
-            Ty::NamedType(cell) => {
+            Ty::Protocol(cell) | Ty::NamedType(cell) => {
                 let inner = cell.try_get();
                 match inner {
                     Some(IRItem::StructLike(s)) => {
@@ -159,6 +160,9 @@ impl Debug for Ty<'_> {
                     }
                     Some(IRItem::Enum(e)) => {
                         write!(f, "{}", e.name.unwrap_or("(unnamed)"))
+                    }
+                    Some(IRItem::Protocol(s)) => {
+                        write!(f, "{}", s.name.unwrap_or("(unnamed)"))
                     }
                     _ => write!(f, "ERROR"),
                 }
@@ -238,10 +242,12 @@ impl<'ir> Ty<'ir> {
             Ty::Builtin(BuiltinType::Never) => true, // or false? dunno, never type is weird
             Ty::Builtin(_) => false,
             Ty::Extern(_) => todo!(),
+            Ty::Protocol(_) => todo!(),
             Ty::NamedType(inner) => match inner.get() {
                 IRItem::StructLike(s) => s.fields.iter().all(|f| f.ty.is_zero_sized()),
                 IRItem::Enum(e) => e.underlying_type.is_zero_sized(),
                 IRItem::Static(_) => unreachable!(),
+                IRItem::Protocol(_) => unreachable!(),
                 IRItem::Function(_) => unreachable!(),
                 IRItem::Const(_) => unreachable!(),
             },
@@ -297,6 +303,19 @@ pub struct Function<'ir> {
 }
 
 #[derive(Debug)]
+pub struct Protocol<'ir> {
+    pub name: Option<&'ir str>,
+    pub methods: &'ir [ProtocolFunction<'ir>],
+}
+
+#[derive(Debug)]
+pub struct ProtocolFunction<'ir> {
+    pub name: &'ir str,
+    pub arg_types: &'ir [TyP<'ir>],
+    pub return_type: TyP<'ir>,
+}
+
+#[derive(Debug)]
 pub struct EnumMember<'ir> {
     pub id: IrId,
     pub value: ExprP<'ir>,
@@ -325,6 +344,7 @@ pub struct Const<'ir> {
 #[derive(Debug)]
 pub enum IRItem<'ir> {
     StructLike(StructLike<'ir>),
+    Protocol(Protocol<'ir>),
     Function(Function<'ir>),
     Enum(Enum<'ir>),
     Static(Static<'ir>),
@@ -353,6 +373,13 @@ impl<'ir> IRItemCell<'ir> {
         match self.contents.get() {
             Some(IRItem::Function(f)) => f,
             _ => panic!("function expected"),
+        }
+    }
+
+    pub fn get_protocol(&'ir self) -> &'ir Protocol<'ir> {
+        match self.contents.get() {
+            Some(IRItem::Protocol(p)) => p,
+            _ => panic!("protocol expected"),
         }
     }
 
@@ -571,6 +598,7 @@ impl_allocatable!(
     Parameter<'_>,
     IRItemCell<'_>,
     EnumMember<'_>,
+    ProtocolFunction<'_>,
     LocalDef<'_>,
     IrId
 );

@@ -378,7 +378,6 @@ pub struct Placeholder<'ast> {
 pub struct ProtocolFunction<'ast> {
     pub name: &'ast str,
     pub attributes: &'ast [Attribute],
-    pub placeholders: &'ast [Placeholder<'ast>],
     pub args: &'ast [Parameter<'ast>],
     pub return_type: TyP<'ast>,
     pub span: Option<Span>,
