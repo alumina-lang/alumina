@@ -1,28 +1,79 @@
 use std::random::{DEFAULT_RNG as rng, range};
 use std::result::{try, Result};
 
-protocol Basic<T> {
+protocol Equatable<Self> {
+    fn equals(lhs: &Self, rhs: &Self) -> bool;
 }
 
-protocol Equatable<T: Basic<T>> {
-    fn equals(a: &T, b: &T) -> bool;
+protocol Hasher<Self> {
+    fn new() -> Self;
+    fn write(self: &mut Self, val: &[u8]);
+    fn finish(self: &Self) -> u64;
 }
 
-fn compare<T: Equatable<T>>(a: T, b: T) -> bool {
-    a.equals(&b)
+protocol Hashable<Self, H: Hasher<H>> {
+    fn hash(a: &Self, hasher: &mut H);
 }
+
+struct Djb2Hasher {
+    hash: u64
+}
+
+impl Djb2Hasher {
+    fn new() -> Djb2Hasher {
+        Djb2Hasher {
+            hash: 5381
+        }
+    }
+    fn write(self: &mut Djb2Hasher, val: &[u8]) {
+        let i = 0usize;
+        while i < val.len {
+            self.hash = ((self.hash << 5) + self.hash) + (val[i] as u64);
+            i += 1
+        }
+    }
+    fn finish(self: &Djb2Hasher) -> u64 { self.hash }
+
+   // mixin Hasher<Djb2Hasher>;
+}
+
+struct HashMap<K: Hashable<K, Djb2Hasher> + Equatable<K>, V> {
+
+}
+
+impl HashMap {
+    fn new<K, V>() -> HashMap<K, V> {
+        HashMap::<K, V> {
+            
+        }
+    }
+
+    fn insert<K, V>(self: &mut HashMap<K, V>, key: K, val: V) {
+        let hasher = Djb2Hasher::new();
+        key.hash(&hasher);
+
+        println!("inserting key with hash {}", hasher.finish());
+    }
+}
+
 
 struct Key {
     value: u32
 }
 
 impl Key {
-    fn equals(self: &Key, other: &Key) -> bool {
-        self.value == other.value
+    fn equals(lhs: &Key, rhs: &Key) -> bool {
+        lhs.value == rhs.value
+    }
+    
+    fn hash<H: Hasher<H>>(a: &Key, hasher: &mut H) {
+        use std::mem::{slice, size_of};
+        hasher.write(slice::from_raw(&a.value as &u8, size_of::<u32>()));
     }
 }
 
 #[export]
 fn main() {
-    println!("{}", if compare(Key{ value: 1 }, Key{ value: 1 }) { "true" } else { "false" });
+    let hm = HashMap::new::<Key, i32>();
+    hm.insert(Key { value: 456 }, 1);
 }

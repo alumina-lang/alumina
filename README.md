@@ -113,11 +113,10 @@ Finished:
 TBD:
 - Stdlib is very barebones
 - Probably a lot of bugs and miscompilations
-- Better error reporting & diagnostics
 - Compiler interface
 - Code cleanup, it's a big mess so far
 
-Full list of missing features, bugs and ideas for the future in [MISSING.md](./MISSING.md) 
+Full list of missing features, open questions, bugs and ideas for the future in [MISSING.md](./MISSING.md) 
 
 After the compiler is somewhat functional, Alumina will be written as a self-hosted compiler with a LLVM backend (as this has always been my dream).
 

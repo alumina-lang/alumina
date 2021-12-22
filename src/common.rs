@@ -1,3 +1,4 @@
+use std::backtrace::Backtrace;
 use std::fmt::Debug;
 use std::io;
 use std::result::Result;
@@ -174,6 +175,7 @@ pub enum Marker {
 pub struct CodeError {
     pub kind: CodeErrorKind,
     pub backtrace: Vec<Marker>,
+    //pub code_backtrace: Backtrace,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

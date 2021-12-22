@@ -313,7 +313,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 protocol_bounds.push((bound, ty.clone()));
             }
         }
-        child.check_protocol_bounds(protocol_bounds)?;
+        child
+            .check_protocol_bounds(protocol_bounds)
+            .append_span(s.span)?;
 
         let fields = s
             .fields
@@ -367,7 +369,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 protocol_bounds.push((bound, ty.clone()));
             }
         }
-        child.check_protocol_bounds(protocol_bounds)?;
+        child
+            .check_protocol_bounds(protocol_bounds)
+            .append_span(s.span)?;
 
         let mut methods = Vec::new();
         for m in s.methods {
@@ -447,48 +451,70 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         };
 
         let associated_fns = self.get_associated_fns(named_type);
-        for fun in protocol.methods {
-            let item = match associated_fns.get(fun.name) {
+        for proto_fun in protocol.methods {
+            let item = match associated_fns.get(proto_fun.name) {
                 Some(fun) => fun,
                 None => {
                     return Ok(BoundCheckResult::DoesNotMatchBecause(format!(
                         "missing method `{}`",
-                        fun.name
+                        proto_fun.name
                     )))
                 }
             };
 
-            if item.get_function().placeholders.len() > 0 {
-                return Ok(BoundCheckResult::DoesNotMatchBecause(format!(
-                    "`{}` is a generic function",
-                    fun.name
-                )));
-            }
-
-            let monomorphized = self
-                .monomorphize_item(MonomorphizeKey(item, &[]))?
-                .get_function();
-
-            if monomorphized.args.len() != fun.arg_types.len() {
+            let candidate_fun = item.get_function();
+            if candidate_fun.args.len() != proto_fun.arg_types.len() {
                 return Ok(BoundCheckResult::DoesNotMatchBecause(format!(
                     "`{}` has wrong number of parameters",
-                    fun.name
+                    proto_fun.name
                 )));
             }
 
-            for (arg, expected) in monomorphized.args.iter().zip(fun.arg_types.iter()) {
+            // This is a place where type inference is kind of critical - protocol can be satisfied by a
+            // generic function and we need type inference to figure out the correct generic args and there
+            // is no way for the user to annotate them.
+            let mut type_inferer = TypeInferer::new(
+                self.mono_ctx,
+                candidate_fun.placeholders.iter().map(|p| p.id).collect(),
+            );
+
+            let infer_slots = candidate_fun
+                .args
+                .iter()
+                .zip(proto_fun.arg_types.iter())
+                .map(|(p, t)| (p.typ, *t))
+                .chain(once((candidate_fun.return_type, proto_fun.return_type)));
+
+            let generic_args = match type_inferer.try_infer(None, infer_slots) {
+                Some(placeholders) => placeholders,
+                None => {
+                    return Ok(BoundCheckResult::DoesNotMatchBecause(format!(
+                        "type hint would be needed for `{}`",
+                        proto_fun.name
+                    )));
+                }
+            };
+
+            let monomorphized = self
+                .monomorphize_item(MonomorphizeKey(
+                    item,
+                    generic_args.alloc_on(self.mono_ctx.ir),
+                ))?
+                .get_function();
+
+            for (arg, expected) in monomorphized.args.iter().zip(proto_fun.arg_types.iter()) {
                 if arg.ty != *expected {
                     return Ok(BoundCheckResult::DoesNotMatchBecause(format!(
                         "`{}` has parameters of wrong type",
-                        fun.name
+                        proto_fun.name
                     )));
                 }
             }
 
-            if monomorphized.return_type != fun.return_type {
+            if monomorphized.return_type != proto_fun.return_type {
                 return Ok(BoundCheckResult::DoesNotMatchBecause(format!(
                     "`{}` has a wrong return type",
-                    fun.name
+                    proto_fun.name
                 )));
             }
         }
@@ -589,7 +615,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 protocol_bounds.push((bound, ty.clone()));
             }
         }
-        child.check_protocol_bounds(protocol_bounds)?;
+        child
+            .check_protocol_bounds(protocol_bounds)
+            .append_span(func.span)?;
 
         let parameters = func
             .args

@@ -1,5 +1,6 @@
 #![feature(bool_to_option)]
 #![feature(never_type)]
+#![feature(backtrace)]
 
 mod ast;
 mod codegen;
