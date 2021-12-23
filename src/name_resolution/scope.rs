@@ -23,9 +23,9 @@ pub enum NamedItem<'ast, 'src> {
     Const(ItemP<'ast>, Node<'src>),
     Macro(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
     Type(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
+    Mixin(Node<'src>, Scope<'ast, 'src>),
     Module(Scope<'ast, 'src>),
     Protocol(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
-    ProtocolFunction(Node<'src>, Scope<'ast, 'src>),
     Impl(Node<'src>, Scope<'ast, 'src>),
     Placeholder(AstId, Node<'src>),
     Field(Node<'src>),
@@ -58,14 +58,16 @@ pub struct ScopeInner<'ast, 'src> {
     // We use IndexMap to preserve the order of items in the scope. While not important for
     // name resolution, it is important for e.g. struct layout, function signature, generic
     // parameter ordering, etc.
-    pub items: IndexMap<&'ast str, Vec<NamedItem<'ast, 'src>>>,
+    pub items: IndexMap<Option<&'ast str>, Vec<NamedItem<'ast, 'src>>>,
     pub parent: Option<Weak<RefCell<ScopeInner<'ast, 'src>>>>,
 
     code: OnceCell<&'src ParseCtx<'src>>,
 }
 
 impl<'ast, 'src> ScopeInner<'ast, 'src> {
-    pub fn all_items<'i>(&'i self) -> impl Iterator<Item = (&'ast str, &'i NamedItem<'ast, 'src>)> {
+    pub fn all_items<'i>(
+        &'i self,
+    ) -> impl Iterator<Item = (Option<&'ast str>, &'i NamedItem<'ast, 'src>)> {
         self.items
             .iter()
             .flat_map(|(n, its)| its.iter().map(|i| (*n, i)))
@@ -73,15 +75,18 @@ impl<'ast, 'src> ScopeInner<'ast, 'src> {
 
     pub fn grouped_items<'i>(
         &'i self,
-    ) -> impl Iterator<Item = (&'ast str, &'i [NamedItem<'ast, 'src>])> {
+    ) -> impl Iterator<Item = (Option<&'ast str>, &'i [NamedItem<'ast, 'src>])> {
         self.items.iter().map(|(n, its)| (*n, its.as_slice()))
     }
 
     pub fn items_with_name<'i>(
         &'i self,
-        name: &str,
+        name: &'ast str,
     ) -> impl Iterator<Item = &'i NamedItem<'ast, 'src>> {
-        self.items.get(name).into_iter().flat_map(|its| its.iter())
+        self.items
+            .get(&Some(name))
+            .into_iter()
+            .flat_map(|its| its.iter())
     }
 }
 
@@ -90,7 +95,7 @@ impl<'ast, 'src> Debug for ScopeInner<'ast, 'src> {
         let mut builder = fmt.debug_struct(&format!("{:?}Scope({:?})", self.r#type, self.path));
         for (name, items) in &self.items {
             for item in items {
-                builder.field(name, item);
+                builder.field(name.unwrap_or("<unnamed>"), item);
             }
         }
         builder.finish()
@@ -190,7 +195,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
 
     pub fn add_item(
         &self,
-        name: &'ast str,
+        name: Option<&'ast str>,
         item: NamedItem<'ast, 'src>,
     ) -> Result<(), CodeErrorKind> {
         let mut current_scope = self.0.borrow_mut();
@@ -205,7 +210,11 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             }
             Entry::Occupied(mut entry) => {
                 let existing = entry.get_mut();
-                if let ScopeType::Block = scope_type {
+                // Unnamed items do not generate name conflicts
+                if name.is_none() {
+                    existing.push(item);
+                    return Ok(());
+                } else if let ScopeType::Block = scope_type {
                     // In linear scopes we allow shadowing.
                     existing[0] = item;
                     return Ok(());
@@ -226,7 +235,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             }
         }
 
-        Err(CodeErrorKind::DuplicateName(name.into()))
+        Err(CodeErrorKind::DuplicateName(name.unwrap().into()))
     }
 
     pub fn find_root(&self) -> Self {
@@ -308,7 +317,10 @@ impl<'ast, 'src> Scope<'ast, 'src> {
         };
 
         let child_scope = self.named_child_without_code(scope_type, path.segments[0].0);
-        self.add_item(path.segments[0].0, NamedItem::Module(child_scope.clone()))?;
+        self.add_item(
+            Some(path.segments[0].0),
+            NamedItem::Module(child_scope.clone()),
+        )?;
 
         child_scope.ensure_module(remainder)
     }

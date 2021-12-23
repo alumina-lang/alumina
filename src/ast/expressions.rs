@@ -240,7 +240,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                     .transpose()?;
 
                 self.scope
-                    .add_item(name, NamedItem::Local(id))
+                    .add_item(Some(name), NamedItem::Local(id))
                     .with_span(&self.scope, inner)?;
 
                 let let_decl = LetDeclaration { id, typ, value };
@@ -271,11 +271,11 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                     .alloc_on(self.ast);
                 let item = NamedItem::Const(self.ast.make_symbol(), inner);
                 self.scope
-                    .add_item(name, item.clone())
+                    .add_item(Some(name), item.clone())
                     .with_span(&self.scope, inner)?;
                 AstItemMaker::new(self.ast, self.diag_ctx.clone()).make_item(
                     self.scope.clone(),
-                    name,
+                    Some(name),
                     item,
                 )?;
                 None
@@ -891,7 +891,12 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         {
             ItemResolution::Item(NamedItem::Macro(symbol, node, scope)) => {
                 let mut macro_maker = MacroMaker::new(self.ast, self.diag_ctx.clone());
-                macro_maker.make(path.segments.last().unwrap().0, symbol, node, scope.clone())?;
+                macro_maker.make(
+                    Some(path.segments.last().unwrap().0),
+                    symbol,
+                    node,
+                    scope.clone(),
+                )?;
                 symbol
             }
             _ => {
@@ -1109,7 +1114,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
         let id = self.ast.make_id();
 
         self.scope
-            .add_item(name, NamedItem::Parameter(id, node))
+            .add_item(Some(name), NamedItem::Parameter(id, node))
             .with_span(&self.scope, node)?;
 
         let field_type = TypeVisitor::new(self.ast, self.scope.clone())
@@ -1135,7 +1140,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
         let id = self.ast.make_id();
 
         self.scope
-            .add_item(name, NamedItem::Parameter(id, node))
+            .add_item(Some(name), NamedItem::Parameter(id, node))
             .with_span(&self.scope, node)?;
 
         let placeholder = self.ast.make_id();

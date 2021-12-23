@@ -160,7 +160,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
             .alloc_on(self.ast);
 
         self.scope
-            .add_item(alias, NamedItem::Alias(self.prefix.join_with(path)))
+            .add_item(Some(alias), NamedItem::Alias(self.prefix.join_with(path)))
             .with_span(&self.scope, node)?;
 
         Ok(())
@@ -185,7 +185,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
         let alias = self.code.node_text(node).alloc_on(self.ast);
         self.scope
             .add_item(
-                alias,
+                Some(alias),
                 NamedItem::Alias(self.prefix.extend(PathSegment(alias))),
             )
             .with_span(&self.scope, node)?;
@@ -202,7 +202,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
 
         self.scope
             .add_item(
-                name,
+                Some(name),
                 NamedItem::Alias(self.prefix.join_with(path.extend(PathSegment(name)))),
             )
             .with_span(&self.scope, node)?;

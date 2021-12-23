@@ -4,11 +4,11 @@ Alumina is a C-like programming language with a Rust-like syntax.
 
 It has the following conveniences over C:
 
-- Generics with protocols/concepts (duck-typed, similar to C++ templates)
+- Module system, namespaces and 2-pass compilation (no header files and forward declarations needed)
+- Generics, protocols and mixins (duck-typed, similar to C++ templates but without specialization/overloading/SFINAE)
 - [Unified call syntax](https://en.wikipedia.org/wiki/Uniform_Function_Call_Syntax) for functions in scope
 - Block expressions
-- Lambdas (stateless only, closures are not supported)
-- Module system, namespaces and 2-pass compilation (no header files and forward declarations needed)
+- Lambdas (static only, closures are not supported)
 - Richer type system: 
     - strong enums, 
     - array slices, 
@@ -118,6 +118,6 @@ TBD:
 
 Full list of missing features, open questions, bugs and ideas for the future in [MISSING.md](./MISSING.md) 
 
-After the compiler is somewhat functional, Alumina will be written as a self-hosted compiler with a LLVM backend (as this has always been my dream).
+After the compiler is reliable enough, Alumina will be written as a self-hosted compiler with a LLVM backend (as this has always been my dream).
 
 

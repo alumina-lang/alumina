@@ -147,12 +147,18 @@ pub enum CodeErrorKind {
     NotAProtocol(String),
     #[error("protocol is not expected here")]
     UnexpectedProtocol,
+    #[error("function must have a body")]
+    FunctionMustHaveBody,
     #[error("protocol functions cannot be generic themselves")]
     ProtocolFnsCannotBeGeneric,
+    #[error("protocol functions cannot be extern")]
+    ProtocolFnsCannotBeExtern,
     #[error("type parameter {} does not match protocol {}", .0, .1)]
     ProtocolMismatch(String, String),
     #[error("type parameter {} does not match protocol {} ({})", .0, .1, .2)]
     ProtocolMismatchDetail(String, String, String),
+    #[error("recursive protocol bounds are not supported")]
+    CyclicProtocolBound,
 
     #[error("cannot determine source span")]
     NoSpanInformation,

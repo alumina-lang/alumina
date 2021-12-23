@@ -47,7 +47,7 @@ impl<'ast> MacroMaker<'ast> {
 
     pub fn make<'src>(
         &mut self,
-        name: &'ast str,
+        name: Option<&'ast str>,
         symbol: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
@@ -92,15 +92,15 @@ impl<'ast> MacroMaker<'ast> {
         };
 
         if is_builtin {
-            let kind = match name {
+            let kind = match name.unwrap() {
                 "env" => BuiltinMacroKind::Env,
                 "include_bytes" => BuiltinMacroKind::IncludeBytes,
                 "concat" => BuiltinMacroKind::Concat,
                 "line" => BuiltinMacroKind::Line,
                 "column" => BuiltinMacroKind::Column,
                 "file" => BuiltinMacroKind::File,
-                _ => {
-                    return Err(CodeErrorKind::UnknownBuiltinMacro(name.to_string()))
+                s => {
+                    return Err(CodeErrorKind::UnknownBuiltinMacro(s.to_string()))
                         .with_span(&scope, node)
                 }
             };
@@ -139,7 +139,7 @@ impl<'ast> MacroMaker<'ast> {
         }
 
         let result = Item::Macro(Macro {
-            name: Some(name),
+            name,
             args: parameters.alloc_on(self.ast),
             body: OnceCell::new(),
             span: Some(span),
@@ -466,7 +466,6 @@ impl<'ast> MacroExpander<'ast> {
             }
             BuiltinMacroKind::IncludeBytes => {
                 assert_args!(self, 1);
-
                 todo!()
             }
             BuiltinMacroKind::Concat => {

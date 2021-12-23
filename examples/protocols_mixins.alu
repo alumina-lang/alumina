@@ -1,0 +1,116 @@
+protocol Equatable<Self> {
+    fn equals(lhs: &Self, rhs: &Self) -> bool {
+        use std::{mem::size_of, libc::memcmp};
+        memcmp(lhs as &void, rhs as &void, size_of::<Self>()) == 0
+    }
+    fn not_equals(lhs: &Self, rhs: &Self) -> bool {
+        !Self::equals(lhs, rhs)
+    }
+}
+
+protocol Hasher<Self> {
+    use std::mem::{size_of,slice::from_raw};
+
+    fn new() -> Self;
+    fn write(self: &mut Self, val: &[u8]);
+    fn write_u8(self: &mut Self, val: u8) {
+        self.write(from_raw(&val, size_of::<u8>()))
+    }
+    fn write_u16(self: &mut Self, val: u16) {
+        self.write(from_raw(&val as &u8, size_of::<u16>()))
+    }
+    fn write_u32(self: &mut Self, val: u32) {
+        self.write(from_raw(&val as &u8, size_of::<u32>()))
+    }
+    fn write_u64(self: &mut Self, val: u64) {
+        self.write(from_raw(&val as &u8, size_of::<u64>()))
+    }
+    fn write_u128(self: &mut Self, val: u128) {
+        self.write(from_raw(&val as &u8, size_of::<u128>()))
+    }
+    fn write_usize(self: &mut Self, val: usize) {
+        self.write(from_raw(&val as &u8, size_of::<usize>()))
+    }
+    fn write_i8(self: &mut Self, val: i8) {
+        self.write(from_raw(&val as &u8, size_of::<i8>()))
+    }
+    fn write_i16(self: &mut Self, val: i16) {
+        self.write(from_raw(&val as &u8, size_of::<i16>()))
+    }
+    fn write_i32(self: &mut Self, val: i32) {
+        self.write(from_raw(&val as &u8, size_of::<i32>()))
+    }
+    fn write_i64(self: &mut Self, val: i64) {
+        self.write(from_raw(&val as &u8, size_of::<i64>()))
+    }
+    fn write_i128(self: &mut Self, val: i128) {
+        self.write(from_raw(&val as &u8, size_of::<i128>()))
+    }
+    fn write_isize(self: &mut Self, val: isize) {
+        self.write(from_raw(&val as &u8, size_of::<isize>()))
+    }
+    fn finish(self: &Self) -> u64;
+}
+
+protocol Hashable<Self, H: Hasher<H>> {
+    fn hash(a: &Self, hasher: &mut H) {
+        use std::mem::{size_of,slice::from_raw};
+        hasher.write(from_raw(a as &u8, size_of::<Self>()));
+    }
+}
+
+struct Djb2Hasher {
+    hash: u64
+}
+
+impl Djb2Hasher {
+    mixin Hasher<Djb2Hasher>;
+
+    fn new() -> Djb2Hasher {
+        Djb2Hasher {
+            hash: 5381
+        }
+    }
+    fn write(self: &mut Djb2Hasher, val: &[u8]) {
+        let i = 0usize;
+        while i < val.len {
+            self.hash = ((self.hash << 5) + self.hash) + (val[i] as u64);
+            i += 1
+        }
+    }
+    fn finish(self: &Djb2Hasher) -> u64 { self.hash }
+
+}
+
+struct HashSet<K: Hashable<K, Djb2Hasher> + Equatable<K>> {}
+
+impl HashMap {
+    fn new<K>() -> HashMap<K> {
+        HashMap::<K> {}
+    }
+
+    fn insert<K, V>(self: &mut HashMap<K, V>, key: K, val: V) {
+        let hasher = Djb2Hasher::new();
+        key.hash(&hasher);
+
+        println!("inserting key with hash {}", hasher.finish());
+    }
+}
+
+
+struct Key {
+    value: u32
+}
+
+impl Key {
+    // By default these do raw memory comparison and hashing, but 
+    // can be easily overriden to do something more specific.
+    mixin Equatable<Key>;
+    mixin<H: Hasher<H>> Hashable<Key, H>;
+}
+
+#[export]
+fn main() {
+    let hm = HashMap::new::<Key, ()>();
+    hm.insert(Key { value: 456 }, ());
+}

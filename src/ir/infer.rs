@@ -29,7 +29,11 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                 if inferred.len() == self.placeholders.len() {
                     return Err(());
                 }
-                inferred.insert(*id, tgt);
+                if let Some(existing) = inferred.insert(*id, tgt) {
+                    if existing != tgt {
+                        return Err(());
+                    }
+                }
             }
             (ast::Ty::Pointer(a1, a_const), ir::Ty::Pointer(b1, b_const)) => {
                 // mut pointers coerce into const pointers

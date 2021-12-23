@@ -65,7 +65,7 @@ impl Compiler {
 
         let ir_ctx = IrCtx::new();
         let (items, lang_items) = item_maker.into_inner();
-        let mut mono_ctx = MonoCtx::new(&ir_ctx, self.diag_ctx.clone(), lang_items);
+        let mut mono_ctx = MonoCtx::new(&ast, &ir_ctx, self.diag_ctx.clone(), lang_items);
 
         for item in items {
             let inner = item.get();

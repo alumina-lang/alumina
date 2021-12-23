@@ -15,6 +15,7 @@ use super::infer::TypeInferer;
 use super::lang::LangTypeKind;
 use super::{FuncBody, IRItemP, Lit, LocalDef, UnqualifiedKind};
 use crate::ast::lang::{LangItemKind, LangItemMap};
+use crate::ast::rebind::Rebinder;
 use crate::ast::{Attribute, BuiltinType, Parameter};
 use crate::common::{
     AluminaError, ArenaAllocatable, CodeError, CodeErrorBacktrace, CodeErrorBuilder, Marker,
@@ -34,6 +35,9 @@ macro_rules! mismatch {
 }
 
 pub struct MonoCtx<'ast, 'ir> {
+    // TODO: get rid of AST ctx. Monomorphization is not supposed to create new AST nodes, though it
+    // currently does for mixin expansion (as it needs to create new generic methods).
+    ast: &'ast ast::AstCtx<'ast>,
     ir: &'ir ir::IrCtx<'ir>,
     diag_ctx: DiagnosticContext,
     id_map: HashMap<ast::AstId, ir::IrId>,
@@ -52,11 +56,13 @@ enum BoundCheckResult {
 
 impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
     pub fn new(
+        ast: &'ast ast::AstCtx<'ast>,
         ir: &'ir ir::IrCtx<'ir>,
         diag_ctx: DiagnosticContext,
         lang_items: LangItemMap<'ast>,
     ) -> Self {
         MonoCtx {
+            ast,
             ir,
             diag_ctx,
             id_map: HashMap::new(),
@@ -280,6 +286,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         item.assign(res);
 
+        for mixin in en.mixins {
+            self.expand_mixin(mixin)?;
+        }
+
         Ok(())
     }
 
@@ -335,6 +345,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         });
         item.assign(res);
 
+        for mixin in s.mixins {
+            self.expand_mixin(mixin)?;
+        }
+
         Ok(())
     }
 
@@ -374,12 +388,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .append_span(s.span)?;
 
         let mut methods = Vec::new();
-        for m in s.methods {
+        for m in s.associated_fns {
+            let fun = m.item.get_function();
+
             let mut param_types = Vec::new();
-            for p in m.args {
+            for p in fun.args {
                 param_types.push(child.lower_type(p.typ)?);
             }
-            let ret = child.lower_type(m.return_type)?;
+            let ret = child.lower_type(fun.return_type)?;
 
             methods.push(ir::ProtocolFunction {
                 name: m.name.alloc_on(child.mono_ctx.ir),
@@ -431,7 +447,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     ) -> Result<BoundCheckResult, AluminaError> {
         // TODO: this can be cached, as it's quite expensive to check
         let protocol = match bound {
-            ir::Ty::Protocol(protocol) => protocol.get_protocol(),
+            ir::Ty::Protocol(protocol) => match protocol.try_get() {
+                Some(ir::IRItem::Protocol(p)) => p,
+                None => return Err(CodeErrorKind::CyclicProtocolBound).with_no_span(),
+                _ => unreachable!(),
+            },
             _ => {
                 // Exact type match is not really that useful, but we allow it.
                 if bound == ty {
@@ -651,6 +671,87 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             let body = child.lower_function_body(body)?;
             item.get_function().body.set(body).unwrap();
         }
+
+        Ok(())
+    }
+
+    // Mixin expansion shouldn't really happen here, as it onyl touches the AST and does not
+    // create any IR. However, it happens here as all the AST items have surely been populated
+    // by now. In the future this should probably be a separate pass.
+    pub fn expand_mixin(&mut self, mixin: &ast::Mixin<'ast>) -> Result<(), AluminaError> {
+        let (protocol, generic_args) = match mixin.protocol {
+            ast::Ty::Protocol(item) => (item, vec![]),
+            ast::Ty::GenericType(item, args) => (item, args.iter().copied().collect()),
+            _ => {
+                return Err(CodeErrorKind::NotAProtocol(format!("{:?}", mixin.protocol)))
+                    .with_span(mixin.span)
+            }
+        };
+
+        let protocol = protocol.get_protocol();
+        if protocol.placeholders.len() != generic_args.len() {
+            return Err(CodeErrorKind::GenericParamCountMismatch(
+                protocol.placeholders.len(),
+                generic_args.len(),
+            ))
+            .with_span(mixin.span);
+        }
+
+        let mut rebinder = Rebinder::new(
+            self.mono_ctx.ast,
+            protocol
+                .placeholders
+                .iter()
+                .zip(generic_args.iter())
+                .map(|(a, b)| (a.id, *b))
+                .collect(),
+        );
+
+        let mut result = Vec::new();
+
+        for function in protocol.associated_fns {
+            let fun = function.item.get_function();
+            assert!(fun.placeholders.is_empty());
+
+            let body = match fun.body {
+                Some(body) => rebinder.visit_expr(body)?,
+                None => continue,
+            };
+
+            let new_func = self.mono_ctx.ast.make_symbol();
+            new_func.assign(ast::Item::Function(ast::Function {
+                name: fun.name,
+                attributes: fun.attributes,
+                placeholders: mixin.placeholders,
+                return_type: rebinder.visit_typ(fun.return_type)?,
+                args: fun
+                    .args
+                    .iter()
+                    .map(|p| {
+                        rebinder.visit_typ(p.typ).map(|typ| ast::Parameter {
+                            id: p.id,
+                            typ,
+                            span: p.span,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, AluminaError>>()?
+                    .alloc_on(self.mono_ctx.ast),
+                body: Some(body),
+                span: fun.span,
+                closure: fun.closure, // = false always
+            }));
+
+            result.push(ast::AssociatedFn {
+                name: function.name,
+                item: new_func,
+            })
+        }
+
+        mixin
+            .contents
+            .contents
+            .set(result.alloc_on(self.mono_ctx.ast))
+            .unwrap();
 
         Ok(())
     }
@@ -943,11 +1044,33 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         &self,
         item: ast::ItemP<'ast>,
     ) -> HashMap<&'ast str, ast::ItemP<'ast>> {
-        match item.get() {
-            ast::Item::StructLike(s) => s.associated_fns.iter().map(|f| (f.name, f.item)).collect(),
-            ast::Item::Enum(e) => e.associated_fns.iter().map(|f| (f.name, f.item)).collect(),
+        let mut associated_fns = HashMap::new();
+
+        let (fns, mixins) = match item.get() {
+            ast::Item::StructLike(s) => (s.associated_fns, s.mixins),
+            ast::Item::Enum(e) => (e.associated_fns, e.mixins),
             _ => panic!("does not have associated fns"),
+        };
+
+        associated_fns.extend(fns.iter().map(|f| (f.name, f.item)));
+
+        for mixin in mixins {
+            let mixin_fns = match mixin.contents.contents.get() {
+                Some(fns) => fns,
+                None => continue,
+            };
+
+            for fun in *mixin_fns {
+                // Mixin functions are weaker than native associated functions, so they can be
+                // shadowed. If there are multiple mixins with the same function name, the order
+                // is undefined (FIXME: make it predictable somehow)
+                if !associated_fns.contains_key(fun.name) {
+                    associated_fns.insert(fun.name, fun.item.clone());
+                }
+            }
         }
+
+        associated_fns
     }
 
     fn get_associated_fns(
@@ -975,6 +1098,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
     }
 
+    // TODO: get rid of unqualified types when feasible
     fn try_qualify_type(&mut self, typ: ir::TyP<'ir>) -> Result<ir::TyP<'ir>, AluminaError> {
         if let ir::Ty::Unqualified(UnqualifiedKind::String(_)) = typ {
             return Ok(self.slice_of(self.types.builtin(BuiltinType::U8), true)?);

@@ -17,9 +17,16 @@
 - if tentative monomorphization fails (e.g. error), but type inference still succeeds, we are left with unpopulated symbols (maybe fixed, not sure)
 - builtin protocols
 - mixins (default protocol implementations)
-- typedefs (e.g. `type HashSet<T> = HashMap<T, ()>`). 
+- generic-binding typedefs (e.g. `type HashSet<T> = HashMap<T, ()>`). 
   - This has been attempted and reverted because it was a big mess.
   - It sounds really simple to implement, but the naive approach leads to a bunch of issues (dependencies during AST construction, `impl` forwarding, whether IR should even be aware of them and if not, should they be handled in `mono`, name resolution needs another 'defered' type, ...). That's because they are in a way partial specializations of generic types.
+  - typedefs that don't bind generic parameters are already possible with `use X as Y`. 
+- extern/opaque types
+  - These types are unsized - they can only appear behind pointers and these pointers cannot be dereferenced.
+  - This is low priority, should be simple to implement, but extern types are pretty marginal.
+- dyn pointer downcasting
+  - Does this require special syntax?
+
 
 
 ## Grammar, parsing, AST

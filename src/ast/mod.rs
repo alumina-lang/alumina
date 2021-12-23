@@ -2,6 +2,7 @@ pub mod expressions;
 pub mod lang;
 pub mod macros;
 pub mod maker;
+pub mod rebind;
 pub mod types;
 
 use crate::common::{Allocatable, ArenaAllocatable, FileId, Incrementable};
@@ -292,6 +293,13 @@ impl<'ast> ItemCell<'ast> {
         }
     }
 
+    pub fn get_protocol(&'ast self) -> &'ast Protocol<'ast> {
+        match self.contents.get() {
+            Some(Item::Protocol(p)) => p,
+            _ => panic!("protocol expected"),
+        }
+    }
+
     pub fn is_struct_like(&self) -> bool {
         match self.contents.get() {
             Some(Item::StructLike(_)) => true,
@@ -368,6 +376,19 @@ pub struct AssociatedFn<'ast> {
     pub item: ItemP<'ast>,
 }
 
+#[derive(Debug, Clone)]
+pub struct MixinCell<'ast> {
+    pub contents: OnceCell<&'ast [AssociatedFn<'ast>]>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Mixin<'ast> {
+    pub placeholders: &'ast [Placeholder<'ast>],
+    pub protocol: TyP<'ast>,
+    pub span: Option<Span>,
+    pub contents: &'ast MixinCell<'ast>,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Placeholder<'ast> {
     pub id: AstId,
@@ -375,19 +396,10 @@ pub struct Placeholder<'ast> {
 }
 
 #[derive(Debug)]
-pub struct ProtocolFunction<'ast> {
-    pub name: &'ast str,
-    pub attributes: &'ast [Attribute],
-    pub args: &'ast [Parameter<'ast>],
-    pub return_type: TyP<'ast>,
-    pub span: Option<Span>,
-}
-
-#[derive(Debug)]
 pub struct Protocol<'ast> {
     pub name: Option<&'ast str>,
     pub placeholders: &'ast [Placeholder<'ast>],
-    pub methods: &'ast [ProtocolFunction<'ast>],
+    pub associated_fns: &'ast [AssociatedFn<'ast>],
     pub attributes: &'ast [Attribute],
     pub span: Option<Span>,
 }
@@ -397,6 +409,7 @@ pub struct StructLike<'ast> {
     pub name: Option<&'ast str>,
     pub placeholders: &'ast [Placeholder<'ast>],
     pub associated_fns: &'ast [AssociatedFn<'ast>],
+    pub mixins: &'ast [Mixin<'ast>],
     pub attributes: &'ast [Attribute],
     pub fields: &'ast [Field<'ast>],
     pub span: Option<Span>,
@@ -407,6 +420,7 @@ pub struct StructLike<'ast> {
 pub struct Enum<'ast> {
     pub name: Option<&'ast str>,
     pub associated_fns: &'ast [AssociatedFn<'ast>],
+    pub mixins: &'ast [Mixin<'ast>],
     pub attributes: &'ast [Attribute],
     pub members: &'ast [EnumMember<'ast>],
     pub span: Option<Span>,
@@ -638,11 +652,11 @@ impl_allocatable!(
     Ty<'_>,
     Statement<'_>,
     Field<'_>,
+    Mixin<'_>,
     Parameter<'_>,
     MacroParameter,
     ItemCell<'_>,
     FieldInitializer<'_>,
-    ProtocolFunction<'_>,
     AssociatedFn<'_>,
     EnumMember<'_>,
     Placeholder<'_>,

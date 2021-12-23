@@ -57,7 +57,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         let child_scope = self.scope.named_child(ScopeType::Module, name);
 
         self.scope
-            .add_item(name, NamedItem::Module(child_scope.clone()))
+            .add_item(Some(name), NamedItem::Module(child_scope.clone()))
             .with_span(&self.scope, node)?;
 
         with_child_scope!(self, child_scope, {
@@ -74,7 +74,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
 
         self.scope
             .add_item(
-                name,
+                Some(name),
                 NamedItem::Protocol(self.ast.make_symbol(), node, child_scope.clone()),
             )
             .with_span(&self.scope, node)?;
@@ -96,7 +96,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
 
         self.scope
             .add_item(
-                name,
+                Some(name),
                 NamedItem::Type(self.ast.make_symbol(), node, child_scope.clone()),
             )
             .with_span(&self.scope, node)?;
@@ -117,7 +117,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         let child_scope = self.scope.named_child(ScopeType::Impl, name);
 
         self.scope
-            .add_item(name, NamedItem::Impl(node, child_scope.clone()))
+            .add_item(Some(name), NamedItem::Impl(node, child_scope.clone()))
             .with_span(&self.scope, node)?;
 
         with_child_scope!(self, child_scope, {
@@ -133,7 +133,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         let child_scope = self.scope.named_child(ScopeType::Enum, name);
         let sym = self.ast.make_symbol();
         self.scope
-            .add_item(name, NamedItem::Type(sym, node, child_scope.clone()))
+            .add_item(Some(name), NamedItem::Type(sym, node, child_scope.clone()))
             .with_span(&self.scope, node)?;
 
         with_child_scope!(self, child_scope, {
@@ -149,7 +149,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
 
         self.scope
             .add_item(
-                name,
+                Some(name),
                 NamedItem::EnumMember(self.enum_item.unwrap(), self.ast.make_id(), node),
             )
             .with_span(&self.scope, node)?;
@@ -160,7 +160,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     fn visit_struct_field(&mut self, node: Node<'src>) -> Self::ReturnType {
         let name = self.parse_name(node);
         self.scope
-            .add_item(name, NamedItem::Field(node))
+            .add_item(Some(name), NamedItem::Field(node))
             .with_span(&self.scope, node)?;
 
         Ok(())
@@ -172,7 +172,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
 
         self.scope
             .add_item(
-                name,
+                Some(name),
                 NamedItem::Function(self.ast.make_symbol(), node, child_scope.clone()),
             )
             .with_span(&self.scope, node)?;
@@ -187,40 +187,17 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         Ok(())
     }
 
-    fn visit_protocol_function(&mut self, node: Node<'src>) -> Self::ReturnType {
-        let name = self.parse_name(node);
-        let child_scope = self.scope.named_child(ScopeType::Function, name);
+    fn visit_mixin(&mut self, node: Node<'src>) -> Self::ReturnType {
+        let child_scope = self.scope.anonymous_child(ScopeType::Function);
 
         self.scope
-            .add_item(name, NamedItem::ProtocolFunction(node, child_scope.clone()))
+            .add_item(None, NamedItem::Mixin(node, child_scope.clone()))
             .with_span(&self.scope, node)?;
 
         with_child_scope!(self, child_scope, {
             if let Some(f) = node.child_by_field_name("type_arguments") {
                 self.visit(f)?;
             }
-            self.visit_children_by_field(node, "parameters")?;
-        });
-
-        Ok(())
-    }
-
-    fn visit_extern_function(&mut self, node: Node<'src>) -> Self::ReturnType {
-        let name = self.parse_name(node);
-        let child_scope = self.scope.named_child(ScopeType::Function, name);
-
-        self.scope
-            .add_item(
-                name,
-                NamedItem::Function(self.ast.make_symbol(), node, child_scope.clone()),
-            )
-            .with_span(&self.scope, node)?;
-
-        with_child_scope!(self, child_scope, {
-            if let Some(f) = node.child_by_field_name("type_arguments") {
-                self.visit(f)?;
-            }
-            self.visit_children_by_field(node, "parameters")?;
         });
 
         Ok(())
@@ -229,7 +206,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     fn visit_static_declaration(&mut self, node: Node<'src>) -> Self::ReturnType {
         let name = self.parse_name(node);
         self.scope
-            .add_item(name, NamedItem::Static(self.ast.make_symbol(), node))
+            .add_item(Some(name), NamedItem::Static(self.ast.make_symbol(), node))
             .with_span(&self.scope, node)?;
 
         Ok(())
@@ -243,7 +220,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
                 .node_text(argument.child_by_field_name("placeholder").unwrap())
                 .alloc_on(self.ast);
             self.scope
-                .add_item(name, NamedItem::Placeholder(self.ast.make_id(), argument))
+                .add_item(
+                    Some(name),
+                    NamedItem::Placeholder(self.ast.make_id(), argument),
+                )
                 .with_span(&self.scope, node)?;
         }
 
@@ -254,7 +234,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         let name = self.parse_name(node);
 
         self.scope
-            .add_item(name, NamedItem::Parameter(self.ast.make_id(), node))
+            .add_item(Some(name), NamedItem::Parameter(self.ast.make_id(), node))
             .with_span(&self.scope, node)?;
 
         Ok(())
@@ -265,7 +245,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
 
         self.scope
             .add_item(
-                name,
+                Some(name),
                 NamedItem::MacroParameter(
                     self.ast.make_id(),
                     node.child_by_field_name("et_cetera").is_some(),
@@ -297,7 +277,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
 
         self.scope
             .add_item(
-                name,
+                Some(name),
                 NamedItem::Macro(self.ast.make_symbol(), node, child_scope.clone()),
             )
             .with_span(&self.scope, node)?;
@@ -313,7 +293,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         let name = self.parse_name(node);
 
         self.scope
-            .add_item(name, NamedItem::Const(self.ast.make_symbol(), node))
+            .add_item(Some(name), NamedItem::Const(self.ast.make_symbol(), node))
             .with_span(&self.scope, node)?;
 
         Ok(())

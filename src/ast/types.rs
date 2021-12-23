@@ -32,6 +32,11 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
         }
     }
 
+    pub fn with_protocol(mut self) -> Self {
+        self.accept_protocol = true;
+        self
+    }
+
     pub fn parse_protocol_bounds(
         &mut self,
         node: tree_sitter::Node<'src>,

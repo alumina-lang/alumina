@@ -1,1 +1,5 @@
+- Lifetimes are viral. Having them on structs will lead to them being everywhere.
+- Tree-sitter is pretty amazing, but has its quirks.
 - Funny, when learning how to program, "Hello World" is usually one of the first things you try, but when writing a compiler, it's usually the thing when most thing already work.
+- It's very hard to figure out where in which compilation stage should something happen
+- It pays to have a good framework for compile-time errors and warnings which makes it easy to throw errors liberally when something unexpected or not-yet-supported is encountered.

@@ -88,7 +88,6 @@ module.exports = grammar({
         $.impl_block,
         $.mod_definition,
         $.macro_definition,
-        $.extern_function,
         $.const_declaration
       ),
 
@@ -96,7 +95,7 @@ module.exports = grammar({
       choice(
         $.use_declaration,
         $.function_definition,
-        $.extern_function
+        $.mixin
       ),
 
     mod_definition: ($) =>
@@ -109,28 +108,29 @@ module.exports = grammar({
         "}"
       ),
 
-    _protocol_item: ($) => choice($.protocol_function),
-
-    protocol_function: ($) =>
-      seq(
-        optional(field("attributes", $.attributes)),
-        "fn",
-        field("name", $.identifier),
-        optional(field("type_arguments", $.generic_argument_list)),
-        field("parameters", $.parameter_list),
-        optional(seq("->", field("return_type", $._type))),
-        ";"
-      ),
+    _protocol_item: ($) => choice(
+      $.use_declaration,
+      $.function_definition
+    ),
 
     function_definition: ($) =>
       seq(
         optional(field("attributes", $.attributes)),
+        optional(
+          seq(
+            field("extern", "extern"),
+            field("abi", $.string_literal)
+          )
+        ),
         "fn",
         field("name", $.identifier),
         optional(field("type_arguments", $.generic_argument_list)),
         field("parameters", $.parameter_list),
         optional(seq("->", field("return_type", $._type))),
-        field("body", $.block)
+        choice(
+          field("body", $.block),
+          ";"
+        )
       ),
 
     macro_definition: ($) =>
@@ -147,19 +147,6 @@ module.exports = grammar({
 
     macro_parameter: ($) =>
       seq(field("name", $.identifier), optional(field("et_cetera", "..."))),
-
-    extern_function: ($) =>
-      seq(
-        optional(field("attributes", $.attributes)),
-        "extern",
-        field("abi", $.string_literal),
-        "fn",
-        field("name", $.identifier),
-        optional(field("type_arguments", $.generic_argument_list)),
-        field("parameters", $.parameter_list),
-        optional(seq("->", field("return_type", $._type))),
-        ";"
-      ),
 
     struct_definition: ($) =>
       seq(
@@ -182,6 +169,15 @@ module.exports = grammar({
         "{",
         field("body", repeat($._protocol_item)),
         "}"
+      ),
+
+    mixin: ($) =>
+      seq(
+        optional(field("attributes", $.attributes)),
+        "mixin",
+        optional(field("type_arguments", $.generic_argument_list)),
+        field("protocol", $._type),
+        ";"
       ),
 
     type_definition: ($) =>
