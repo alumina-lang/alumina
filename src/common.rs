@@ -19,6 +19,8 @@ pub enum CodeErrorKind {
     #[error("syntax error: unexpected {:?}", .0)]
     ParseError(String),
 
+    #[error("unexpected {:?} here", .0)]
+    Unexpected(String),
     #[error("could not resolve the path {}", .0)]
     UnresolvedPath(String),
     #[error("cycle detected while resolving aliases")]
@@ -159,6 +161,8 @@ pub enum CodeErrorKind {
     ProtocolMismatchDetail(String, String, String),
     #[error("recursive protocol bounds are not supported")]
     CyclicProtocolBound,
+    #[error("unimplemented: {}", .0)]
+    Unimplemented(String),
 
     #[error("cannot determine source span")]
     NoSpanInformation,

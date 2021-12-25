@@ -323,9 +323,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 protocol_bounds.push((bound, ty.clone()));
             }
         }
-        child
-            .check_protocol_bounds(protocol_bounds)
-            .append_span(s.span)?;
 
         let fields = s
             .fields
@@ -340,10 +337,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let res = ir::IRItem::StructLike(ir::StructLike {
             name: s.name.map(|n| n.alloc_on(child.mono_ctx.ir)),
-            fields: fields.alloc_on(self.mono_ctx.ir),
+            fields: fields.alloc_on(child.mono_ctx.ir),
             is_union: s.is_union,
         });
         item.assign(res);
+
+        child
+            .check_protocol_bounds(protocol_bounds)
+            .append_span(s.span)?;
 
         for mixin in s.mixins {
             self.expand_mixin(mixin)?;
@@ -383,9 +384,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 protocol_bounds.push((bound, ty.clone()));
             }
         }
-        child
-            .check_protocol_bounds(protocol_bounds)
-            .append_span(s.span)?;
 
         let mut methods = Vec::new();
         for m in s.associated_fns {
@@ -409,6 +407,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             methods: methods.alloc_on(child.mono_ctx.ir),
         });
         item.assign(res);
+
+        child
+            .check_protocol_bounds(protocol_bounds)
+            .append_span(s.span)?;
 
         Ok(())
     }
@@ -446,9 +448,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         ty: ir::TyP<'ir>,
     ) -> Result<BoundCheckResult, AluminaError> {
         // TODO: this can be cached, as it's quite expensive to check
-        let protocol = match bound {
+        let protocol_item = match bound {
             ir::Ty::Protocol(protocol) => match protocol.try_get() {
-                Some(ir::IRItem::Protocol(p)) => p,
+                Some(ir::IRItem::Protocol(p)) => protocol,
                 None => return Err(CodeErrorKind::CyclicProtocolBound).with_no_span(),
                 _ => unreachable!(),
             },
@@ -462,15 +464,47 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
         };
 
-        // TODO: Logic for builtin protocols
-        let named_type = match ty {
-            ir::Ty::NamedType(named_type) => *named_type,
-            _ => {
-                return Ok(BoundCheckResult::DoesNotMatch);
-            }
+        let ast_item = self.mono_ctx.reverse_lookup(protocol_item).0;
+        match self.mono_ctx.lang_items.reverse_get(ast_item) {
+            Some(LangItemKind::ProtoAny) => return Ok(BoundCheckResult::Matches),
+            Some(LangItemKind::ProtoFloatingPoint) => match ty {
+                ir::Ty::Builtin(k) if k.is_float() => return Ok(BoundCheckResult::Matches),
+                _ => return Ok(BoundCheckResult::DoesNotMatch),
+            },
+            Some(LangItemKind::ProtoInteger) => match ty {
+                ir::Ty::Builtin(k) if k.is_integer() => return Ok(BoundCheckResult::Matches),
+                _ => return Ok(BoundCheckResult::DoesNotMatch),
+            },
+            Some(LangItemKind::ProtoNumeric) => match ty {
+                ir::Ty::Builtin(k) if k.is_numeric() => return Ok(BoundCheckResult::Matches),
+                _ => return Ok(BoundCheckResult::DoesNotMatch),
+            },
+            Some(LangItemKind::ProtoSigned) => match ty {
+                ir::Ty::Builtin(k) if k.is_signed() => return Ok(BoundCheckResult::Matches),
+                _ => return Ok(BoundCheckResult::DoesNotMatch),
+            },
+            Some(LangItemKind::ProtoUnsigned) => match ty {
+                ir::Ty::Builtin(k) if k.is_integer() && !k.is_signed() => {
+                    return Ok(BoundCheckResult::Matches)
+                }
+                _ => return Ok(BoundCheckResult::DoesNotMatch),
+            },
+            Some(LangItemKind::ProtoPrimitive) => match ty {
+                ir::Ty::Builtin(k) => return Ok(BoundCheckResult::Matches),
+                _ => return Ok(BoundCheckResult::DoesNotMatch),
+            },
+            Some(LangItemKind::ProtoPointer) => match ty {
+                ir::Ty::Pointer(_, _) => return Ok(BoundCheckResult::Matches),
+                _ => return Ok(BoundCheckResult::DoesNotMatch),
+            },
+            Some(_) => panic!("unexpected builtin protocol"),
+            None => {}
         };
 
-        let associated_fns = self.get_associated_fns(named_type);
+        let protocol = protocol_item.get_protocol();
+        let ast_type = self.raise_type(ty)?;
+        let associated_fns = self.get_associated_fns(ast_type)?;
+
         for proto_fun in protocol.methods {
             let item = match associated_fns.get(proto_fun.name) {
                 Some(fun) => fun,
@@ -495,7 +529,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             // is no way for the user to annotate them.
             let mut type_inferer = TypeInferer::new(
                 self.mono_ctx,
-                candidate_fun.placeholders.iter().map(|p| p.id).collect(),
+                candidate_fun.placeholders.iter().copied().collect(),
             );
 
             let infer_slots = candidate_fun
@@ -635,9 +669,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 protocol_bounds.push((bound, ty.clone()));
             }
         }
-        child
-            .check_protocol_bounds(protocol_bounds)
-            .append_span(func.span)?;
 
         let parameters = func
             .args
@@ -662,6 +693,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         });
         item.assign(res);
 
+        // This happens after we assign the signature to avoid issues when calling recursively
+        child
+            .check_protocol_bounds(protocol_bounds)
+            .append_span(func.span)?;
+
         // We need the item to be assigned before we monomorphize the body, as the
         // function can be recursive and we need to be able to get the signature for
         // typechecking purposes.
@@ -679,6 +715,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     // create any IR. However, it happens here as all the AST items have surely been populated
     // by now. In the future this should probably be a separate pass.
     pub fn expand_mixin(&mut self, mixin: &ast::Mixin<'ast>) -> Result<(), AluminaError> {
+        if mixin.contents.contents.get().is_some() {
+            return Ok(());
+        }
+
         let (protocol, generic_args) = match mixin.protocol {
             ast::Ty::Protocol(item) => (item, vec![]),
             ast::Ty::GenericType(item, args) => (item, args.iter().copied().collect()),
@@ -966,7 +1006,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.slice_of(inner, is_const)?
             }
             ast::Ty::Dyn(is_const) => self.dyn_ptr_of(is_const)?,
-            ast::Ty::Extern(id) => self.types.r#extern(self.mono_ctx.map_id(id)),
             ast::Ty::Fn(args, ret) => {
                 let args = args
                     .iter()
@@ -988,11 +1027,28 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 .copied()
                 .expect("unbound placeholder"),
 
-            ast::Ty::NamedType(item) => {
-                let key = MonomorphizeKey(item, &[]);
-                let item = self.monomorphize_item(key)?;
-                self.types.named(item)
-            }
+            ast::Ty::NamedType(item) => match self.mono_ctx.lang_items.reverse_get(item) {
+                Some(LangItemKind::ImplBool) => self.types.builtin(BuiltinType::Bool),
+                Some(LangItemKind::ImplU8) => self.types.builtin(BuiltinType::U8),
+                Some(LangItemKind::ImplU16) => self.types.builtin(BuiltinType::U16),
+                Some(LangItemKind::ImplU32) => self.types.builtin(BuiltinType::U32),
+                Some(LangItemKind::ImplU64) => self.types.builtin(BuiltinType::U64),
+                Some(LangItemKind::ImplU128) => self.types.builtin(BuiltinType::U128),
+                Some(LangItemKind::ImplUsize) => self.types.builtin(BuiltinType::USize),
+                Some(LangItemKind::ImplI8) => self.types.builtin(BuiltinType::I8),
+                Some(LangItemKind::ImplI16) => self.types.builtin(BuiltinType::I16),
+                Some(LangItemKind::ImplI32) => self.types.builtin(BuiltinType::I32),
+                Some(LangItemKind::ImplI64) => self.types.builtin(BuiltinType::I64),
+                Some(LangItemKind::ImplI128) => self.types.builtin(BuiltinType::I128),
+                Some(LangItemKind::ImplIsize) => self.types.builtin(BuiltinType::ISize),
+                Some(LangItemKind::ImplF32) => self.types.builtin(BuiltinType::F32),
+                Some(LangItemKind::ImplF64) => self.types.builtin(BuiltinType::F64),
+                _ => {
+                    let key = MonomorphizeKey(item, &[]);
+                    let item = self.monomorphize_item(key)?;
+                    self.types.named(item)
+                }
+            },
             ast::Ty::GenericType(item, args) => {
                 let args = args
                     .iter()
@@ -1018,6 +1074,69 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(result)
     }
 
+    fn raise_type(&mut self, typ: ir::TyP<'ir>) -> Result<ast::TyP<'ast>, AluminaError> {
+        let result = match typ {
+            ir::Ty::Builtin(kind) => ast::Ty::Builtin(*kind),
+            ir::Ty::Array(inner, len) => {
+                let inner = self.raise_type(inner)?;
+                ast::Ty::Array(inner, *len)
+            }
+            ir::Ty::Pointer(inner, is_const) => {
+                let inner = self.raise_type(inner)?;
+                ast::Ty::Pointer(inner, *is_const)
+            }
+            ir::Ty::Fn(args, ret) => {
+                let args = args
+                    .iter()
+                    .map(|arg| self.raise_type(arg))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let ret = self.raise_type(ret)?;
+
+                ast::Ty::Fn(args.alloc_on(self.mono_ctx.ast), ret)
+            }
+            ir::Ty::Tuple(items) => {
+                let items = items
+                    .iter()
+                    .map(|arg| self.raise_type(arg))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                ast::Ty::Tuple(items.alloc_on(self.mono_ctx.ast))
+            }
+            ir::Ty::NamedType(item) => {
+                let item = self.mono_ctx.reverse_lookup(item);
+                if item.1.is_empty() {
+                    ast::Ty::NamedType(item.0)
+                } else {
+                    let args = item
+                        .1
+                        .iter()
+                        .map(|arg| self.raise_type(arg))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    ast::Ty::GenericType(item.0, args.alloc_on(self.mono_ctx.ast))
+                }
+            }
+            ir::Ty::Protocol(item) => {
+                let item = self.mono_ctx.reverse_lookup(item);
+                if item.1.is_empty() {
+                    ast::Ty::Protocol(item.0)
+                } else {
+                    let args = item
+                        .1
+                        .iter()
+                        .map(|arg| self.raise_type(arg))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    ast::Ty::GenericType(item.0, args.alloc_on(self.mono_ctx.ast))
+                }
+            }
+            ir::Ty::Unqualified(_) => {
+                return Err(CodeErrorKind::Unimplemented("unqualified type".to_string()))
+                    .with_no_span()
+            }
+        };
+
+        Ok(self.mono_ctx.ast.intern_type(result))
+    }
+
     fn get_struct_field_map(
         &mut self,
         item: ir::IRItemP<'ir>,
@@ -1040,11 +1159,36 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .collect()
     }
 
-    fn get_associated_fns_ast(
-        &self,
-        item: ast::ItemP<'ast>,
-    ) -> HashMap<&'ast str, ast::ItemP<'ast>> {
+    fn get_associated_fns(
+        &mut self,
+        typ: ast::TyP<'ast>,
+    ) -> Result<HashMap<&'ast str, ast::ItemP<'ast>>, AluminaError> {
         let mut associated_fns = HashMap::new();
+
+        let item = match typ {
+            ast::Ty::Builtin(kind) => match kind {
+                BuiltinType::Bool => self.mono_ctx.lang_items.get(LangItemKind::ImplBool),
+                BuiltinType::U8 => self.mono_ctx.lang_items.get(LangItemKind::ImplU8),
+                BuiltinType::U16 => self.mono_ctx.lang_items.get(LangItemKind::ImplU16),
+                BuiltinType::U32 => self.mono_ctx.lang_items.get(LangItemKind::ImplU32),
+                BuiltinType::U64 => self.mono_ctx.lang_items.get(LangItemKind::ImplU64),
+                BuiltinType::U128 => self.mono_ctx.lang_items.get(LangItemKind::ImplU128),
+                BuiltinType::USize => self.mono_ctx.lang_items.get(LangItemKind::ImplUsize),
+                BuiltinType::I8 => self.mono_ctx.lang_items.get(LangItemKind::ImplI8),
+                BuiltinType::I16 => self.mono_ctx.lang_items.get(LangItemKind::ImplI16),
+                BuiltinType::I32 => self.mono_ctx.lang_items.get(LangItemKind::ImplI32),
+                BuiltinType::I64 => self.mono_ctx.lang_items.get(LangItemKind::ImplI64),
+                BuiltinType::I128 => self.mono_ctx.lang_items.get(LangItemKind::ImplI128),
+                BuiltinType::ISize => self.mono_ctx.lang_items.get(LangItemKind::ImplIsize),
+                BuiltinType::F32 => self.mono_ctx.lang_items.get(LangItemKind::ImplF32),
+                BuiltinType::F64 => self.mono_ctx.lang_items.get(LangItemKind::ImplF64),
+                _ => return Ok(associated_fns),
+            }
+            .with_no_span()?,
+            ast::Ty::NamedType(item) => item,
+            ast::Ty::GenericType(item, _) => item,
+            _ => return Ok(associated_fns),
+        };
 
         let (fns, mixins) = match item.get() {
             ast::Item::StructLike(s) => (s.associated_fns, s.mixins),
@@ -1057,7 +1201,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         for mixin in mixins {
             let mixin_fns = match mixin.contents.contents.get() {
                 Some(fns) => fns,
-                None => continue,
+                None => {
+                    self.expand_mixin(mixin)?;
+                    mixin.contents.contents.get().unwrap()
+                }
             };
 
             for fun in *mixin_fns {
@@ -1070,15 +1217,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
         }
 
-        associated_fns
-    }
-
-    fn get_associated_fns(
-        &mut self,
-        item: ir::IRItemP<'ir>,
-    ) -> HashMap<&'ast str, ast::ItemP<'ast>> {
-        let MonomorphizeKey(ast_item, _) = self.mono_ctx.reverse_lookup(item);
-        self.get_associated_fns_ast(ast_item)
+        Ok(associated_fns)
     }
 
     fn make_tentative_child<'b>(&'b mut self) -> Monomorphizer<'b, 'ast, 'ir> {
@@ -1325,10 +1464,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             infer_pairs.push((fun.return_type, return_type_hint));
         }
 
-        let mut type_inferer = TypeInferer::new(
-            self.mono_ctx,
-            fun.placeholders.iter().map(|p| p.id).collect(),
-        );
+        let mut type_inferer =
+            TypeInferer::new(self.mono_ctx, fun.placeholders.iter().copied().collect());
 
         match type_inferer.try_infer(self_slot, infer_pairs) {
             Some(generic_args) => self.monomorphize_item(MonomorphizeKey(
@@ -1419,7 +1556,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let mut type_inferer = TypeInferer::new(
             self.mono_ctx,
-            r#struct.placeholders.iter().map(|p| p.id).collect(),
+            r#struct.placeholders.iter().copied().collect(),
         );
         let infer_result = type_inferer.try_infer(None, pairs);
 
@@ -1866,37 +2003,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         match maybe_result_typ {
             Ok(result_typ) => Ok(self.exprs.binary(op, lhs, rhs, result_typ)),
             Err(e) if op == Eq || op == Neq => {
-                let lhs_lang = self.mono_ctx.get_lang_type_kind(lhs.ty);
-                let rhs_lang = self.mono_ctx.get_lang_type_kind(rhs.ty);
-
-                match (lhs_lang, rhs_lang) {
-                    (_, Some(LangTypeKind::Slice(ir::Ty::Pointer(ty, _))))
-                    | (Some(LangTypeKind::Slice(ir::Ty::Pointer(ty, _))), _) => {
-                        let const_slice_ty = self.slice_of(ty, true)?;
-                        let lhs = self.try_coerce(const_slice_ty, lhs)?;
-                        let rhs = self.try_coerce(const_slice_ty, rhs)?;
-
-                        let item = self.monomorphize_lang_item(LangItemKind::SliceEqual, [*ty])?;
-                        let func = self.exprs.function(item);
-
-                        let mut expr = self.exprs.call(
-                            func,
-                            [lhs, rhs].into_iter(),
-                            item.get_function().return_type,
-                        );
-
-                        if op == Neq {
-                            expr = self.exprs.unary(
-                                ast::UnOp::Not,
-                                expr,
-                                self.types.builtin(BuiltinType::Bool),
-                            );
-                        }
-
-                        Ok(expr)
-                    }
-                    _ => return Err(e),
-                }
+                // TODO: Implement Equatable
+                return Err(e);
             }
             Err(e) => return Err(e),
         }
@@ -2246,23 +2354,24 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     ) -> Result<Option<ir::ExprP<'ir>>, AluminaError> {
         let ir_self_arg = self.lower_expr(self_arg, None)?;
 
-        let method = match ir_self_arg.ty.canonical_type() {
-            ir::Ty::NamedType(item) => {
-                if let ir::IRItem::StructLike(_) = item.get() {
-                    let fields = self.get_struct_field_map(item);
-                    if fields.contains_key(name) {
-                        // This is not a method, but a field (e.g. a function pointer), go back to lower_call
-                        // and process it as usual.
-                        return Ok(None);
-                    }
+        // Special case for struct fields (they have precedence over methods in .name resolution)
+        if let ir::Ty::NamedType(item) = ir_self_arg.ty.canonical_type() {
+            if let ir::IRItem::StructLike(_) = item.get() {
+                let fields = self.get_struct_field_map(item);
+                if fields.contains_key(name) {
+                    // This is not a method, but a field (e.g. a function pointer), go back to lower_call
+                    // and process it as usual.
+                    return Ok(None);
                 }
-
-                self.get_associated_fns(item).get(name).copied()
             }
-            _ => None,
         };
 
-        let method = method
+        let ast_type = self.raise_type(ir_self_arg.ty.canonical_type())?;
+
+        let method = self
+            .get_associated_fns(ast_type)?
+            .get(name)
+            .copied()
             .or(unified_fn)
             .ok_or_else(|| CodeErrorKind::MethodNotFound(name.into()))
             .with_no_span()?;
@@ -2321,23 +2430,19 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         &mut self,
         spec: &ast::DeferredFn<'ast>,
     ) -> Result<ast::ItemP<'ast>, AluminaError> {
-        let associated_fns = match spec.typ {
-            ast::Ty::Placeholder(id) => {
-                let typ = self
-                    .replacements
-                    .get(id)
-                    .ok_or(CodeErrorKind::AssocFnNonNamedType)
-                    .with_no_span()?;
+        let typ = if let ast::Ty::Placeholder(id) = spec.typ {
+            let typ = self
+                .replacements
+                .get(id)
+                .ok_or(CodeErrorKind::AssocFnNonNamedType)
+                .with_no_span()?;
 
-                match typ {
-                    ir::Ty::NamedType(typ) => self.get_associated_fns(typ),
-                    _ => return Err(CodeErrorKind::AssocFnNonNamedType).with_no_span(),
-                }
-            }
-            ast::Ty::NamedType(item) => self.get_associated_fns_ast(item),
-            ast::Ty::GenericType(item, _) => self.get_associated_fns_ast(item),
-            _ => return Err(CodeErrorKind::AssocFnNonNamedType).with_no_span(),
+            self.raise_type(typ)?
+        } else {
+            spec.typ
         };
+
+        let associated_fns = self.get_associated_fns(typ)?;
 
         let func = associated_fns
             .get(spec.name)

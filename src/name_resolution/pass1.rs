@@ -121,6 +121,9 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
             .with_span(&self.scope, node)?;
 
         with_child_scope!(self, child_scope, {
+            if let Some(f) = node.child_by_field_name("type_arguments") {
+                self.visit(f)?;
+            }
             self.visit_children_by_field(node, "body")?;
         });
 

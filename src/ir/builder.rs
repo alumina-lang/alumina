@@ -318,10 +318,6 @@ impl<'ir> TypeBuilder<'ir> {
         self.ir.intern_type(Ty::Protocol(item))
     }
 
-    pub fn r#extern(&self, id: IrId) -> TyP<'ir> {
-        self.ir.intern_type(Ty::Extern(id))
-    }
-
     pub fn function<I>(&self, args: I, ret: TyP<'ir>) -> TyP<'ir>
     where
         I: IntoIterator<Item = TyP<'ir>>,

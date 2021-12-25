@@ -51,7 +51,7 @@ impl<'ast> Rebinder<'ast> {
                     .alloc_on(self.ast),
             ),
 
-            Dyn(_) | Extern(_) | NamedType(_) | Builtin(_) | Protocol(_) => return Ok(typ),
+            Dyn(_) | NamedType(_) | Builtin(_) | Protocol(_) => return Ok(typ),
         };
 
         Ok(self.ast.intern_type(kind))

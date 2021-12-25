@@ -77,7 +77,10 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
             ItemResolution::Defered(_, _) => {
                 return Err(CodeErrorKind::NoAssociatedTypes).with_span(&self.scope, node)
             }
-            a => panic!("unreachable: {:?}", a),
+            ItemResolution::Item(named_item) => {
+                return Err(CodeErrorKind::Unexpected(format!("{}", named_item)))
+                    .with_span(&self.scope, node)
+            }
         };
 
         Ok(res)

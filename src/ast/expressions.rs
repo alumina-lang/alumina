@@ -207,7 +207,10 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             ItemResolution::Item(NamedItem::Macro(_, _, _)) => {
                 return Err(CodeErrorKind::IsAMacro(path.to_string())).with_span(&self.scope, node)
             }
-            a => panic!("{:?} at {:?}", a, node),
+            ItemResolution::Item(named_item) => {
+                return Err(CodeErrorKind::Unexpected(format!("{}", named_item)))
+                    .with_span(&self.scope, node)
+            }
         };
 
         Ok(expr.alloc_with_span(self.ast, &self.scope, node))

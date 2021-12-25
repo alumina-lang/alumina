@@ -26,6 +26,7 @@ pub struct AstItemMaker<'ast> {
     symbols: Vec<ItemP<'ast>>,
 
     lang_items: HashMap<LangItemKind, ItemP<'ast>>,
+    ambient_placeholders: Vec<Placeholder<'ast>>,
 }
 
 impl<'ast> AstItemMaker<'ast> {
@@ -35,6 +36,7 @@ impl<'ast> AstItemMaker<'ast> {
             diag_ctx,
             symbols: Vec::new(),
             lang_items: HashMap::new(),
+            ambient_placeholders: Vec::new(),
         }
     }
 
@@ -271,6 +273,26 @@ impl<'ast> AstItemMaker<'ast> {
         Ok(())
     }
 
+    fn make_impl<'src>(&mut self, scope: Scope<'ast, 'src>) -> Result<(), AluminaError> {
+        // Ambient placeholders on impl blocks
+        for (_, item) in scope.inner().all_items() {
+            match item {
+                NamedItem::Placeholder(id, node) => {
+                    self.ambient_placeholders.push(Placeholder {
+                        id: *id,
+                        bounds: TypeVisitor::new(self.ast, scope.clone())
+                            .parse_protocol_bounds(*node)?,
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        let res = self.make(scope);
+        self.ambient_placeholders.clear();
+        res
+    }
+
     fn make_enum<'src>(
         &mut self,
         name: Option<&'ast str>,
@@ -347,7 +369,7 @@ impl<'ast> AstItemMaker<'ast> {
         scope: Scope<'ast, 'src>,
         body: Option<tree_sitter::Node<'src>>,
     ) -> Result<(), AluminaError> {
-        let mut placeholders = Vec::new();
+        let mut placeholders = self.ambient_placeholders.clone();
         let mut parameters: Vec<Parameter<'ast>> = Vec::new();
         let code = scope.code().unwrap();
 
@@ -551,7 +573,7 @@ impl<'ast> AstItemMaker<'ast> {
                     scope.clone(),
                     Some(impl_scope.clone()),
                 )?;
-                self.make(impl_scope.clone())?;
+                self.make_impl(impl_scope.clone())?;
             }
             [NamedItem::Type(symbol, node, scope)] => {
                 self.make_type(name, *symbol, *node, scope.clone(), None)?;

@@ -12,8 +12,8 @@ struct Result<T, E> {
     inner: ResultT<T, E>
 }
 
-impl Result {
-    fn ok<T, E>(ok: T) -> Result<T, E> {
+impl Result<T, E> {
+    fn ok(ok: T) -> Result<T, E> {
         Result::<T, E> {
             is_ok: true, 
             inner: ResultT::<T, E> {
@@ -22,7 +22,7 @@ impl Result {
         }
     }
 
-    fn err<T, E>(err: E) -> Result<T, E> {
+    fn err(err: E) -> Result<T, E> {
         Result::<T, E> {
             is_ok: false, 
             inner: ResultT::<T, E> {
@@ -31,7 +31,7 @@ impl Result {
         }
     }
 
-    fn unwrap<T, E>(self: Result<T, E>) -> T {
+    fn unwrap(self: Result<T, E>) -> T {
         if self.is_ok {
             self.inner.ok
         } else {
@@ -39,7 +39,7 @@ impl Result {
         }
     }
 
-    fn unwrap_err<T, E>(self: Result<T, E>) -> E {
+    fn unwrap_err(self: Result<T, E>) -> E {
         if !self.is_ok {
             self.inner.err
         } else {
@@ -47,7 +47,7 @@ impl Result {
         }
     }
 
-    fn map<T1, T2, E>(self: Result<T1, E>, func: fn(T1) -> T2) -> Result<T2, E> {
+    fn map<Tm>(self: Result<T, E>, func: fn(T) -> Tm) -> Result<Tm, E> {
         if self.is_ok {
             Result::ok(func(self.inner.ok))
         } else {
@@ -55,7 +55,7 @@ impl Result {
         }
     }
 
-    fn map_err<T, E1, E2>(self: Result<T, E1>, func: fn(E1) -> E2) -> Result<T, E2> {
+    fn map_err<Em>(self: Result<T, E>, func: fn(E) -> Em) -> Result<T, Em> {
         if self.is_ok {
             Result::ok(self.inner.ok)
         } else {
@@ -74,21 +74,21 @@ struct Option<T> {
     inner: T
 }
 
-impl Option {
-    fn some<T>(inner: T) -> Option<T> {
+impl Option<T> {
+    fn some(inner: T) -> Option<T> {
         Option::<T> {
             is_some: true, 
             inner: inner
         }
     }
 
-    fn none<T>() -> Option<T> {
+    fn none() -> Option<T> {
         Option::<T> {
             is_some: false
         }
     }
 
-    fn as_result<T, E>(self: Option<T>, err: E) -> Result<T, E> {
+    fn as_result<E>(self: Option<T>, err: E) -> Result<T, E> {
         if self.is_some {
             Result::ok(self.inner)
         } else {
@@ -96,7 +96,7 @@ impl Option {
         }
     }
 
-    fn unwrap<T>(self: Option<T>) -> T {
+    fn unwrap(self: Option<T>) -> T {
         if self.is_some {
             self.inner
         } else {

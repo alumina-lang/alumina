@@ -129,7 +129,6 @@ pub enum UnqualifiedKind {
 
 #[derive(PartialEq, Eq, Clone, Hash, Copy)]
 pub enum Ty<'ir> {
-    Extern(IrId),
     NamedType(IRItemP<'ir>),
     Protocol(IRItemP<'ir>),
     Builtin(BuiltinType),
@@ -147,7 +146,6 @@ pub enum Ty<'ir> {
 impl Debug for Ty<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Ty::Extern(id) => write!(f, "extern {}", id),
             Ty::Protocol(cell) | Ty::NamedType(cell) => {
                 let inner = cell.try_get();
                 match inner {
@@ -241,7 +239,6 @@ impl<'ir> Ty<'ir> {
             Ty::Builtin(BuiltinType::Void) => true,
             Ty::Builtin(BuiltinType::Never) => true, // or false? dunno, never type is weird
             Ty::Builtin(_) => false,
-            Ty::Extern(_) => todo!(),
             Ty::Protocol(_) => todo!(),
             Ty::NamedType(inner) => match inner.get() {
                 IRItem::StructLike(s) => s.fields.iter().all(|f| f.ty.is_zero_sized()),
@@ -372,7 +369,7 @@ impl<'ir> IRItemCell<'ir> {
     pub fn get_function(&'ir self) -> &'ir Function<'ir> {
         match self.contents.get() {
             Some(IRItem::Function(f)) => f,
-            _ => panic!("function expected"),
+            _ => panic!("function expected: {:?}", self.contents.get()),
         }
     }
 

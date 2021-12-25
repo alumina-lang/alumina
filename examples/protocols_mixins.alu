@@ -1,71 +1,11 @@
-protocol Equatable<Self> {
-    fn equals(lhs: &Self, rhs: &Self) -> bool {
-        use std::{mem::size_of, libc::memcmp};
-        memcmp(lhs as &void, rhs as &void, size_of::<Self>()) == 0
-    }
-    fn not_equals(lhs: &Self, rhs: &Self) -> bool {
-        !Self::equals(lhs, rhs)
-    }
-}
-
-protocol Hasher<Self> {
-    use std::mem::{size_of,slice::from_raw};
-
-    fn new() -> Self;
-    fn write(self: &mut Self, val: &[u8]);
-    fn write_u8(self: &mut Self, val: u8) {
-        self.write(from_raw(&val, size_of::<u8>()))
-    }
-    fn write_u16(self: &mut Self, val: u16) {
-        self.write(from_raw(&val as &u8, size_of::<u16>()))
-    }
-    fn write_u32(self: &mut Self, val: u32) {
-        self.write(from_raw(&val as &u8, size_of::<u32>()))
-    }
-    fn write_u64(self: &mut Self, val: u64) {
-        self.write(from_raw(&val as &u8, size_of::<u64>()))
-    }
-    fn write_u128(self: &mut Self, val: u128) {
-        self.write(from_raw(&val as &u8, size_of::<u128>()))
-    }
-    fn write_usize(self: &mut Self, val: usize) {
-        self.write(from_raw(&val as &u8, size_of::<usize>()))
-    }
-    fn write_i8(self: &mut Self, val: i8) {
-        self.write(from_raw(&val as &u8, size_of::<i8>()))
-    }
-    fn write_i16(self: &mut Self, val: i16) {
-        self.write(from_raw(&val as &u8, size_of::<i16>()))
-    }
-    fn write_i32(self: &mut Self, val: i32) {
-        self.write(from_raw(&val as &u8, size_of::<i32>()))
-    }
-    fn write_i64(self: &mut Self, val: i64) {
-        self.write(from_raw(&val as &u8, size_of::<i64>()))
-    }
-    fn write_i128(self: &mut Self, val: i128) {
-        self.write(from_raw(&val as &u8, size_of::<i128>()))
-    }
-    fn write_isize(self: &mut Self, val: isize) {
-        self.write(from_raw(&val as &u8, size_of::<isize>()))
-    }
-    fn finish(self: &Self) -> u64;
-}
-
-protocol Hashable<Self, H: Hasher<H>> {
-    fn hash(a: &Self, hasher: &mut H) {
-        use std::mem::{size_of,slice::from_raw};
-        hasher.write(from_raw(a as &u8, size_of::<Self>()));
-    }
-}
+use std::hash::{Hasher, Hashable};
+use std::cmp::{Equatable, Comparable};
 
 struct Djb2Hasher {
     hash: u64
 }
 
 impl Djb2Hasher {
-    mixin Hasher<Djb2Hasher>;
-
     fn new() -> Djb2Hasher {
         Djb2Hasher {
             hash: 5381
@@ -79,17 +19,18 @@ impl Djb2Hasher {
         }
     }
     fn finish(self: &Djb2Hasher) -> u64 { self.hash }
-
+    
+    mixin Hasher<Djb2Hasher>;
 }
 
 struct HashSet<K: Hashable<K, Djb2Hasher> + Equatable<K>> {}
 
-impl HashMap {
-    fn new<K>() -> HashMap<K> {
-        HashMap::<K> {}
+impl HashSet {
+    fn new<K>() -> HashSet<K> {
+        HashSet::<K> {}
     }
 
-    fn insert<K, V>(self: &mut HashMap<K, V>, key: K, val: V) {
+    fn insert<K>(self: &mut HashSet<K>, key: K) {
         let hasher = Djb2Hasher::new();
         key.hash(&hasher);
 
@@ -97,20 +38,70 @@ impl HashMap {
     }
 }
 
-
-struct Key {
-    value: u32
+fn print_slice<T>(arr: &[T]) {
+    print!("[");
+    let i = 0usize;
+    while i < arr.len {
+        if i > 0 {
+            print!(", ");
+        }
+        print!("{}", arr[i]);
+        i += 1;
+    }
+    print!("]\n");
 }
 
-impl Key {
-    // By default these do raw memory comparison and hashing, but 
-    // can be easily overriden to do something more specific.
-    mixin Equatable<Key>;
-    mixin<H: Hasher<H>> Hashable<Key, H>;
+fn quicksort<T: Comparable<T>>(arr: &mut [T]) {
+    if arr.len <= 1 {
+        return;
+    }
+    
+    let p = partition(arr);
+    quicksort(arr[..p]);
+    quicksort(arr[p+1..]);
+}
+
+fn partition<T: Comparable<T>>(arr: &mut [T]) -> usize {
+    use std::mem::swap;
+
+    let pivot = arr[arr.len - 1];
+
+    let i = 0usize;
+    let j = 0usize;
+    while j < arr.len - 1 {
+        if arr[j].less_than_or_equal(&pivot) {
+            swap(&arr[i], &arr[j]);
+            i += 1;
+        }
+        j += 1;
+    }
+    swap(&arr[i], &arr[arr.len - 1]);
+    i
 }
 
 #[export]
 fn main() {
-    let hm = HashMap::new::<Key, ()>();
-    hm.insert(Key { value: 456 }, ());
+    let f : std::builtins::_u8;
+    f = 0;
+
+    let hm = HashSet::new::<u8>();
+    hm.insert(12);
+    hm.insert(13);
+    hm.insert(14);
+
+    let foo: &mut [&[u8]] = &[
+        "hello",
+        "hel",
+        "abracadabra",
+        "mordor",
+        "zblj",
+        "mor"
+    ];
+
+    print_slice(foo);
+    quicksort(foo);
+    print_slice(foo);
+
+    let hm = HashSet::new::<&[u8]>();
+    hm.insert(foo[0]);
 }

@@ -218,6 +218,7 @@ module.exports = grammar({
         optional(field("attributes", $.attributes)),
         "impl",
         field("name", $.identifier),
+        optional(field("type_arguments", $.generic_argument_list)),
         "{",
         field("body", repeat($._impl_item)),
         "}"

@@ -1,6 +1,6 @@
 use std::{
     cell::{Ref, RefCell},
-    fmt::{Debug, Formatter},
+    fmt::{Debug, Display, Formatter},
     rc::{Rc, Weak},
 };
 
@@ -33,6 +33,29 @@ pub enum NamedItem<'ast, 'src> {
     Local(AstId),
     Parameter(AstId, Node<'src>),
     MacroParameter(AstId, bool),
+}
+
+impl Display for NamedItem<'_, '_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NamedItem::Alias(_) => write!(f, "alias"),
+            NamedItem::Function(_, _, _) => write!(f, "function"),
+            NamedItem::Static(_, _) => write!(f, "static"),
+            NamedItem::Const(_, _) => write!(f, "const"),
+            NamedItem::Macro(_, _, _) => write!(f, "macro"),
+            NamedItem::Type(_, _, _) => write!(f, "type"),
+            NamedItem::Mixin(_, _) => write!(f, "mixin"),
+            NamedItem::Module(_) => write!(f, "module"),
+            NamedItem::Protocol(_, _, _) => write!(f, "protocol"),
+            NamedItem::Impl(_, _) => write!(f, "impl"),
+            NamedItem::Placeholder(_, _) => write!(f, "placeholder"),
+            NamedItem::Field(_) => write!(f, "field"),
+            NamedItem::EnumMember(_, _, _) => write!(f, "enum member"),
+            NamedItem::Local(_) => write!(f, "local"),
+            NamedItem::Parameter(_, _) => write!(f, "parameter"),
+            NamedItem::MacroParameter(_, _) => write!(f, "macro parameter"),
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]

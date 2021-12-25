@@ -40,6 +40,10 @@ fn main() {
             path: "".to_string(),
         },
         SourceFile {
+            filename: PathBuf::from("./stdlib/collections.alu"),
+            path: "::std::collections".to_string(),
+        },
+        SourceFile {
             filename: PathBuf::from("./examples/minimal.alu"),
             path: "::hello_world".to_string(),
         },

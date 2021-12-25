@@ -175,6 +175,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
 
     pub fn write_expr(&mut self, expr: &ExprP<'ir>, bare_block: bool) -> Result<(), AluminaError> {
         self.type_writer.add_type(expr.ty)?;
+
         match &expr.kind {
             ExprKind::Binary(op, lhs, rhs) => {
                 w!(self.fn_bodies, "(");

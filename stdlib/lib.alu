@@ -1,56 +1,98 @@
 
 mod proto {
-    protocol Primitive {}
-    protocol Numeric {}
-    protocol Integer {}
-    protocol FloatingPoint {}
-    protocol Signed {}
-    protocol Unsigned {}
-    protocol Pointer {}
+    // These are built-in marker protocols that cannot be implemented by user code,
+    // even though they contain no associated functions. They are handled specially
+    // by the compiler.
+    #[lang(proto_any)] protocol Any {}
+    #[lang(proto_primitive)] protocol Primitive {}
+    #[lang(proto_numeric)] protocol Numeric {}
+    #[lang(proto_integer)] protocol Integer {}
+    #[lang(proto_floating_point)] protocol FloatingPoint {}
+    #[lang(proto_signed)] protocol Signed {}
+    #[lang(proto_unsigned)] protocol Unsigned {}
+    #[lang(proto_pointer)] protocol Pointer {}
 }
 
 mod mem {
+    use proto::Pointer;
+
     #[lang(slice)]
-    struct slice<Ptr> {
+    struct slice<Ptr: Pointer> {
         ptr: Ptr,
         len: usize,
     }
     
     impl slice {
+        use std::cmp::{Equatable, Comparable, Ordering};
+        use std::hash::{Hasher};
+        use std::proto::Primitive;
+        use std::libc::{memcmp};
+
         #[force_inline]
         #[lang(slice_new)]
-        fn from_raw<Ptr>(ptr: Ptr, len: usize) -> slice<Ptr> {
+        fn from_raw<Ptr: Pointer>(ptr: Ptr, len: usize) -> slice<Ptr> {
             slice::<Ptr> { ptr: ptr, len: len }
         }
-    }
 
-    mod _internal {
-        use proto::Primitive; 
-        
-        #[lang(slice_equal)]
-        fn slice_equal<T: Primitive>(a: &[T], b: &[T]) -> bool {
-            use std::libc::memcmp;
-            if a.len != b.len {
+        // Equality and ordering comparison are implemented only for slices of 
+        // primitive types.
+        fn equals<T: Primitive>(lhs: &&[T], rhs: &&[T]) -> bool {
+            if lhs.len != rhs.len {
                 return false;
             }
-            memcmp(a.ptr as &void, b.ptr as &void, a.len * size_of::<T>()) == 0
+            memcmp(lhs.ptr as &void, rhs.ptr as &void, lhs.len * size_of::<T>()) == 0
         }
-    
+
+        fn compare<T: Primitive>(lhs: &&[T], rhs: &&[T]) -> Ordering {
+            use std::math::min;
+
+            let cmp = memcmp(lhs.ptr as &void, rhs.ptr as &void, min(lhs.len, rhs.len) * size_of::<T>());
+
+            if cmp < 0 {
+                Ordering::Less
+            } else if cmp > 0 {
+                Ordering::Greater
+            } else {
+                if lhs.len < rhs.len {
+                    Ordering::Less
+                } else if lhs.len > rhs.len {
+                    Ordering::Greater
+                } else {
+                    Ordering::Equal
+                }
+            }
+        }
+        
+        fn hash<T: Primitive, H: Hasher<H>>(self: &&[T], hasher: &mut H) {
+            hasher.write(from_raw(self.ptr as &u8, self.len * size_of::<T>()));
+        }
+
+        fn fmt<F: fmt::Formatter<F>>(self: &&[u8], f: &mut F) {
+            f.write(*self);
+        }
+        
+        mixin<T: Primitive> Equatable<slice<&T>>;
+        mixin<T: Primitive> Comparable<slice<&T>>;
+    }
+
+    mod internal {
+        use proto::{Primitive, Pointer}; 
+        
         #[force_inline]
         #[lang(slice_index)]
-        fn slice_index<Ptr>(a: slice<Ptr>, idx: usize) -> Ptr {
+        fn slice_index<Ptr: Pointer>(a: slice<Ptr>, idx: usize) -> Ptr {
             a.ptr + idx
         }
         
         #[force_inline]
         #[lang(slice_range_index)]
-        fn slice_range_index<Ptr>(a: slice<Ptr>, lower: usize, upper: usize) -> slice<Ptr> {
+        fn slice_range_index<Ptr: Pointer>(a: slice<Ptr>, lower: usize, upper: usize) -> slice<Ptr> {
             slice::from_raw::<Ptr>(a.ptr + lower, upper - lower)
         }
 
         #[force_inline]
         #[lang(slice_range_index_lower)]
-        fn slice_range_index_lower<Ptr>(a: slice<Ptr>, lower: usize) -> slice<Ptr> {
+        fn slice_range_index_lower<Ptr: Pointer>(a: slice<Ptr>, lower: usize) -> slice<Ptr> {
             slice::from_raw::<Ptr>(a.ptr + lower, a.len - lower)
         }        
 
@@ -101,8 +143,12 @@ mod mem {
         *b = tmp;
     }
 
-    fn copy_to<T>(src: &[T], dst: &mut T) {
+    fn copy_to_nonoverlapping<T>(src: &[T], dst: &mut T) {
         libc::memcpy(dst as &mut void, src.ptr as &void, src.len * size_of::<T>());
+    }
+
+    fn copy_to<T>(src: &[T], dst: &mut T) {
+        libc::memmove(dst as &mut void, src.ptr as &void, src.len * size_of::<T>());
     }
 
     fn free<T>(a: &mut [T]) {
@@ -111,8 +157,10 @@ mod mem {
 }
 
 mod _dyn {
+    use proto::{Primitive, Pointer}; 
+
     #[lang(dyn_ptr)]
-    struct dyn_ptr<Ptr> {
+    struct dyn_ptr<Ptr: Pointer> {
         ptr: Ptr,
         type_id: usize,
     }
@@ -177,6 +225,7 @@ mod rtti {
 mod libc {
     extern "C" fn free(ptr: &mut void);
     extern "C" fn memcpy(dst: &mut void, src: &void, len: usize) -> &mut void;
+    extern "C" fn memmove(dst: &mut void, src: &void, len: usize) -> &mut void;
     extern "C" fn memcmp(ptr1: &void, ptr2: &void, len: usize) -> i32;
     extern "C" fn write(fd: i32, buf: &void, len: usize) -> isize;
     extern "C" fn malloc(size: usize) -> &mut void;
@@ -184,16 +233,47 @@ mod libc {
     extern "C" fn getrandom(buf: &mut void, buflen: usize, flags: u32) -> isize;
 }
 
-mod io {
-    mod _printf {
-        fn printf_integer<T, S>(val: T, s: S, printer: fn(S, &[u8])) {
+mod fmt {
+    protocol Formatter<Self> {
+        fn write(self: &mut Self, buf: &[u8]);
+    }
+
+    protocol Formattable<Self, F: Formatter<F>> {
+        fn fmt(self: &Self, f: &mut F);
+    }
+
+    mod internal {
+        // Type-erased wrapper of a formattable object
+        struct _FormatArg<F: Formatter<F>> {
+            inner: &void,
+            format_func: fn(&void, &mut F)
+        }
+
+        fn _fmt_func<F: Formatter<F>, T: Formattable<T, F>>(ptr: &void, f: &mut F) {
+            T::fmt(ptr as &T, f);
+        }
+
+        impl _FormatArg {
+            fn new<F: Formatter<F>, T: Formattable<T, F>>(inner: &T) -> _FormatArg<F> {
+                _FormatArg::<F> {
+                    inner: inner as &void,
+                    format_func: _fmt_func::<F, T>,
+                }
+            }
+
+            fn fmt<F: Formatter<F>>(self: &_FormatArg<F>, f: &mut F) {
+                self.format_func(self.inner, f)
+            }
+        }
+
+        fn format_integer<T: proto::Integer, F: Formatter<F>>(val: T, fmt: &mut F) {
             let buf: [u8; 16];
             let buf: &mut [u8] = &buf;
         
             let i: usize = buf.len - 1;
             let negative = val < 0;
             val = math::abs(val);
-    
+
             loop {
                 buf[i] = (val % 10) as u8 + '0';
                 val /= 10;
@@ -202,17 +282,18 @@ mod io {
                         i -= 1;
                         buf[i] = '-';
                     }
-                    printer(s, buf[i..]);
+                    fmt.write(buf[i..]);
                     break;
                 }
                 i -= 1;
             }
         }
 
-        fn printf_float<T, S>(val: T, s: S, printer: fn(S, &[u8]), precision: usize) {
+        fn format_float<T: proto::FloatingPoint, F: Formatter<F>>(val: T, fmt: &mut F, precision: usize) {
             let trunc = val as i128;
-            printf_integer(trunc, s, printer);
-            printer(s, ".");
+            format_integer(trunc, fmt);
+            fmt.write(".");
+
             let frac = math::abs((val - (trunc as T)));
             
             let buf: [u8; 16];
@@ -226,39 +307,17 @@ mod io {
                 frac -= digit as T;
                 i += 1;
             }
-            printer(s, buf[..precision]);
+
+            fmt.write(buf[..precision]);
         }
-        
-        fn printf_dyn<S>(val: &dyn, s: S, printer: fn(S, &[u8])) {
-            use rtti::type_id;
-        
-            switch val.type_id {
-                type_id::<&[u8]>() => printer(s, *(val.ptr as &&[u8])),
-                type_id::<u8>() => printf_integer(*(val.ptr as &u8), s, printer),
-                type_id::<u16>() => printf_integer(*(val.ptr as &u16), s, printer),
-                type_id::<u32>() => printf_integer(*(val.ptr as &u32), s, printer),
-                type_id::<u64>() => printf_integer(*(val.ptr as &u64), s, printer),
-                type_id::<u128>() => printf_integer(*(val.ptr as &u128), s, printer),
-                type_id::<i8>() => printf_integer(*(val.ptr as &i8), s, printer),
-                type_id::<i16>() => printf_integer(*(val.ptr as &i16), s, printer),
-                type_id::<i32>() => printf_integer(*(val.ptr as &i32), s, printer),
-                type_id::<i64>() => printf_integer(*(val.ptr as &i64), s, printer),
-                type_id::<i128>() => printf_integer(*(val.ptr as &i128), s, printer),
-                type_id::<usize>() => printf_integer(*(val.ptr as &usize), s, printer),
-                type_id::<isize>() => printf_integer(*(val.ptr as &isize), s, printer),
-                type_id::<f32>() => printf_float(*(val.ptr as &f32), s, printer, 12),
-                type_id::<f64>() => printf_float(*(val.ptr as &f64), s, printer, 12),
-                _ => panic!("argument type not supported")
-            }
-        }
-        
-        enum state {
+
+        enum State {
             NORMAL,
             BRACE_OPEN,
             BRACE_CLOSE,
         }
         
-        fn printf<S>(fmt: &[u8], args: &[&dyn], s: S, printer: fn(S, &[u8])) {
+        fn printf<F: Formatter<F>>(fmt: &[u8], args: &[_FormatArg<F>], formatter: &mut F) {
             let i = 0usize;
             let buf: [u8; 64];
             let buf: &mut [u8] = &buf;
@@ -278,40 +337,40 @@ mod io {
                 buf[buf_pos] = val;
                 buf_pos += 1;
                 if buf_pos == buf.len {
-                    printer(s, buf);
+                    formatter.write(buf);
                     buf_pos = 0;
                 }
             }
             
-            let state = state::NORMAL;
+            let state = State::NORMAL;
         
             while i < fmt.len {
                 let ch = fmt[i];
                 state = switch state {
-                    state::NORMAL => {
+                    State::NORMAL => {
                         switch ch {
-                            '{' => state::BRACE_OPEN,
-                            '}' => state::BRACE_CLOSE,
+                            '{' => State::BRACE_OPEN,
+                            '}' => State::BRACE_CLOSE,
                             _ => {
                                 buf_append!(ch);
-                                state::NORMAL
+                                State::NORMAL
                             }
                         }
                     }
-                    state::BRACE_CLOSE => {
+                    State::BRACE_CLOSE => {
                         switch ch {
-                           '}' => {
+                        '}' => {
                                 buf_append!(ch);
                             }
                             _ => panic!("invalid format string")
                         };
-                        state::NORMAL
+                        State::NORMAL
                     }
-                    state::BRACE_OPEN => {
+                    State::BRACE_OPEN => {
                         switch ch {
                             '}' => {
-                                printer(s, buf[0..buf_pos]);
-                                printf_dyn(arg!(), s, printer);
+                                formatter.write(buf[0..buf_pos]);
+                                (arg!()).fmt(formatter);
                                 buf_pos = 0;
                             }
                             '{' => {
@@ -319,7 +378,7 @@ mod io {
                             }
                             _ => panic!("invalid format string")
                         };
-                        state::NORMAL
+                        State::NORMAL
                     }
                     _ => std::intrinsics::unreachable()
                 };
@@ -327,52 +386,77 @@ mod io {
             }
 
             if buf_pos > 0 {
-                printer(s, buf[0..buf_pos]);
+                formatter.write(buf[0..buf_pos]);
             }
         
             if args.len > 0 {
                 panic!("too many arguments");
             }
         }
-    }
 
-    macro print(fmt, args...) {
-        _printf::printf(
-            fmt, 
-            &[(&args as &dyn)...], 
-            (),
-            |s, buf| {
-                libc::write(1, buf.ptr as &void, buf.len);
-            }
-        )
-    }
-
-    macro eprint(fmt, args...) {
-        _printf::printf(
-            fmt, 
-            &[(&args as &dyn)...], 
-            (),
-            |s, buf| {
-                libc::write(2, buf.ptr as &void, buf.len);
-            }
-        )
-    }
-
-    macro println(fmt, args...) {
-        print!(concat!(fmt, "\n"), args...)
-    }
-
-    macro eprintln(fmt, args...) {
-        eprint!(concat!(fmt, "\n"), args...)
-    }
-
-    struct File {
-        fd: i32
-    }
-
-    impl File {
+        struct StringBufFormatter {
+            buffer: collections::Vector<u8>
+        }
         
+        impl StringBufFormatter {
+            fn new(size_hint: usize) -> StringBufFormatter {
+                StringBufFormatter {
+                    buffer: collections::Vector::with_capacity(size_hint)
+                }
+            }
+            
+            fn write(self: &mut StringBufFormatter, buf: &[u8]) {
+                self.buffer.extend(buf);
+            }
+        }
     }
+
+    macro write(formatter, fmt, arg...) {
+        internal::printf(
+            fmt, 
+            &[internal::_FormatArg::new(&arg)...], 
+            formatter
+        )
+    }
+
+    macro writeln(formatter, fmt, arg...) {
+        internal::printf(
+            concat!(fmt, "\n"), 
+            &[internal::_FormatArg::new(&arg)...], 
+            formatter
+        )
+    }
+
+    macro format(fmt, arg...) { 
+        let formatter = internal::StringBufFormatter::new(fmt.len);
+        fmt::write!(&formatter, fmt, arg...);
+        formatter.buffer
+    }
+}
+
+mod io {
+    mod internal {
+        struct StdIoFormatter {
+            fd: i32
+        }
+        
+        impl StdIoFormatter {
+            fn new(fd: i32) -> StdIoFormatter {
+                StdIoFormatter {
+                    fd: fd
+                }
+            }
+            
+            fn write(self: &mut StdIoFormatter, buf: &[u8]) {
+                libc::write(self.fd, buf.ptr as &void, buf.len);
+            }
+        }
+    }
+
+    macro print(fmt, arg...) { fmt::write!(&internal::StdIoFormatter::new(1), fmt, arg...)}
+    macro println(fmt, arg...) { fmt::writeln!(&internal::StdIoFormatter::new(1), fmt, arg...)}
+    macro eprint(fmt, arg...) { fmt::write!(&internal::StdIoFormatter::new(2), fmt, arg...)}
+    macro eprintln(fmt, arg...) { fmt::writeln!(&internal::StdIoFormatter::new(2), fmt, arg...)}
 }
 
 mod process {
@@ -408,7 +492,9 @@ macro panic(reason, args...) {
 #[builtin] macro concat(parts...) {  }
 
 mod math {
-    fn max<T>(a: T, b: T) -> T {
+    use proto::Numeric;
+
+    fn max<T: Numeric>(a: T, b: T) -> T {
         if a > b {
             a
         } else {
@@ -416,7 +502,7 @@ mod math {
         }
     }
 
-    fn min<T>(a: T, b: T) -> T {
+    fn min<T: Numeric>(a: T, b: T) -> T {
         if a < b {
             a
         } else {
@@ -424,11 +510,346 @@ mod math {
         }
     }
 
-    fn abs<T>(a: T) -> T {
+    fn abs<T: Numeric>(a: T) -> T {
         if a < (0 as T) {
             (0 as T) - a
         } else {
             a
         }
     }
+}
+
+mod cmp {
+    protocol Equatable<Self> {
+        fn equals(lhs: &Self, rhs: &Self) -> bool {
+            use std::{mem::size_of, libc::memcmp};
+            memcmp(lhs as &void, rhs as &void, size_of::<Self>()) == 0
+        }
+
+        #[force_inline]
+        fn not_equals(lhs: &Self, rhs: &Self) -> bool {
+            !Self::equals(lhs, rhs)
+        }
+    }
+    
+    enum Ordering {
+        Less = -1i8,
+        Equal = 0i8,
+        Greater = 1i8,
+    }
+    
+    protocol Comparable<Self: Equatable<Self>> {
+        use std::{mem::size_of, libc::memcmp};
+
+        fn compare(lhs: &Self, rhs: &Self) -> Ordering {
+            let ret = memcmp(lhs as &void, rhs as &void, size_of::<Self>());
+            if ret < 0 {
+                Ordering::Less
+            } else if ret == 0 {
+                Ordering::Equal
+            } else {
+                Ordering::Greater
+            }
+        }
+        
+        #[force_inline]
+        fn less_than(lhs: &Self, rhs: &Self) -> bool {
+            Self::compare(lhs, rhs) == Ordering::Less
+        }
+    
+        #[force_inline]
+        fn less_than_or_equal(lhs: &Self, rhs: &Self) -> bool {
+            Self::compare(lhs, rhs) != Ordering::Greater
+        }
+    
+        #[force_inline]
+        fn greater_than(lhs: &Self, rhs: &Self) -> bool {
+            Self::compare(lhs, rhs) == Ordering::Greater
+        }
+    
+        #[force_inline]
+        fn greater_than_or_equal(lhs: &Self, rhs: &Self) -> bool {
+            Self::compare(lhs, rhs) != Ordering::Less
+        }
+    }
+}
+
+mod hash {
+    protocol Hasher<Self> {
+        use std::mem::{size_of,slice::from_raw};
+    
+        fn new() -> Self;
+        fn write(self: &mut Self, val: &[u8]);
+        fn write_u8(self: &mut Self, val: u8) {
+            self.write(from_raw(&val, size_of::<u8>()))
+        }
+        fn write_u16(self: &mut Self, val: u16) {
+            self.write(from_raw(&val as &u8, size_of::<u16>()))
+        }
+        fn write_u32(self: &mut Self, val: u32) {
+            self.write(from_raw(&val as &u8, size_of::<u32>()))
+        }
+        fn write_u64(self: &mut Self, val: u64) {
+            self.write(from_raw(&val as &u8, size_of::<u64>()))
+        }
+        fn write_u128(self: &mut Self, val: u128) {
+            self.write(from_raw(&val as &u8, size_of::<u128>()))
+        }
+        fn write_usize(self: &mut Self, val: usize) {
+            self.write(from_raw(&val as &u8, size_of::<usize>()))
+        }
+        fn write_i8(self: &mut Self, val: i8) {
+            self.write(from_raw(&val as &u8, size_of::<i8>()))
+        }
+        fn write_i16(self: &mut Self, val: i16) {
+            self.write(from_raw(&val as &u8, size_of::<i16>()))
+        }
+        fn write_i32(self: &mut Self, val: i32) {
+            self.write(from_raw(&val as &u8, size_of::<i32>()))
+        }
+        fn write_i64(self: &mut Self, val: i64) {
+            self.write(from_raw(&val as &u8, size_of::<i64>()))
+        }
+        fn write_i128(self: &mut Self, val: i128) {
+            self.write(from_raw(&val as &u8, size_of::<i128>()))
+        }
+        fn write_isize(self: &mut Self, val: isize) {
+            self.write(from_raw(&val as &u8, size_of::<isize>()))
+        }
+        fn finish(self: &Self) -> u64;
+    }
+    
+    protocol Hashable<Self, H: Hasher<H>> {
+        fn hash(a: &Self, hasher: &mut H) {
+            use std::mem::{size_of,slice::from_raw};
+            hasher.write(from_raw(a as &u8, size_of::<Self>()));
+        }
+    }
+}
+
+mod builtins {
+    /// This module holds impl blocks for builtin types all items with #[lang(impl_X)] are
+    /// treated as X when lowering into IR, so they cannot actually exist as proper structs.
+    use cmp::{Equatable, Comparable, Ordering};
+    use hash::{Hashable, Hasher};
+    use fmt::{Formatter};
+
+    protocol _BuiltinComparable<Self: proto::Numeric> {
+        #[force_inline]
+        fn equals(lhs: &Self, rhs: &Self) -> bool {
+            *lhs == *rhs
+        }
+
+        #[force_inline]
+        fn compare(lhs: &Self, rhs: &Self) -> Ordering {
+            if *lhs < *rhs {
+                Ordering::Less
+            } else if *lhs == *rhs {
+                Ordering::Equal
+            } else {
+                Ordering::Greater
+            }
+        }
+    }
+
+    protocol _IntegerFormattable<Self: proto::Integer, F: Formatter<F>> {
+        fn fmt(self: &Self, formatter: &mut F) {
+            fmt::internal::format_integer(*self, formatter);
+        }
+    }
+
+    protocol _FloatFormattable<Self: proto::FloatingPoint, F: Formatter<F>> {
+        fn fmt(self: &Self, formatter: &mut F) {
+            fmt::internal::format_float(*self, formatter, 15);
+        }
+    }
+
+    #[lang(impl_bool)]
+    struct _bool {}
+    impl _bool {
+        mixin Equatable<bool>;
+
+        #[force_inline]
+        fn equals(lhs: &bool, rhs: &bool) -> bool {
+            *lhs == *rhs
+        }
+
+        fn hash<H: Hasher<H>>(self: &bool, hasher: &mut H) {
+            hasher.write_u8(*self as u8);
+        }
+
+        fn fmt<F: Formatter<F>>(self: &bool, formatter: &mut F)  {
+            formatter.write(if *self { "true" } else { "false" });
+        }
+    }
+
+    #[lang(impl_u8)]
+    struct _u8 {}
+    impl _u8 {
+        mixin _BuiltinComparable<u8>;
+        mixin Equatable<u8>;
+        mixin Comparable<u8>;
+        mixin<F: Formatter<F>> _IntegerFormattable<u8, F>;
+        fn hash<H: Hasher<H>>(self: &u8, hasher: &mut H) {
+            hasher.write_u8(*self);
+        }
+    }
+
+    #[lang(impl_u16)]
+    struct _u16 {}
+    impl _u16 {
+        mixin _BuiltinComparable<u16>;
+        mixin Equatable<u16>;
+        mixin Comparable<u16>;
+        mixin<F: Formatter<F>> _IntegerFormattable<u16, F>;
+        fn hash<H: Hasher<H>>(self: &u16, hasher: &mut H) {
+            hasher.write_u16(*self);
+        }
+    }
+
+    #[lang(impl_u32)]
+    struct _u32 {}
+    impl _u32 {
+        mixin _BuiltinComparable<u32>;
+        mixin Equatable<u32>;
+        mixin Comparable<u32>;
+        mixin<F: Formatter<F>> _IntegerFormattable<u32, F>;
+        fn hash<H: Hasher<H>>(self: &u32, hasher: &mut H) {
+            hasher.write_u32(*self);
+        }
+    }
+
+    #[lang(impl_u64)]
+    struct _u64 {}
+    impl _u64 {
+        mixin _BuiltinComparable<u64>;
+        mixin Equatable<u64>;
+        mixin Comparable<u64>;
+        mixin<F: Formatter<F>> _IntegerFormattable<u64, F>;
+        fn hash<H: Hasher<H>>(self: &u64, hasher: &mut H) {
+            hasher.write_u64(*self);
+        }
+    }
+
+    #[lang(impl_u128)]
+    struct _u128 {}
+    impl _u128 {
+        mixin _BuiltinComparable<u128>;
+        mixin Equatable<u128>;
+        mixin Comparable<u128>;
+        mixin<F: Formatter<F>> _IntegerFormattable<u128, F>;
+        fn hash<H: Hasher<H>>(self: &u128, hasher: &mut H) {
+            hasher.write_u128(*self);
+        }
+    }
+
+    #[lang(impl_usize)]
+    struct _usize {}
+    impl _usize {
+        mixin _BuiltinComparable<usize>;
+        mixin Equatable<usize>;
+        mixin Comparable<usize>;
+        mixin<F: Formatter<F>> _IntegerFormattable<usize, F>;
+        fn hash<H: Hasher<H>>(self: &usize, hasher: &mut H) {
+            hasher.write_usize(*self);
+        }
+    }
+
+    #[lang(impl_i8)]
+    struct _i8 {}
+    impl _i8 {
+        mixin _BuiltinComparable<i8>;
+        mixin Equatable<i8>;
+        mixin Comparable<i8>;
+        mixin<F: Formatter<F>> _IntegerFormattable<i8, F>;
+        fn hash<H: Hasher<H>>(self: &i8, hasher: &mut H) {
+            hasher.write_i8(*self);
+        }
+    }
+
+    #[lang(impl_i16)]
+    struct _i16 {}
+    impl _i16 {
+        mixin _BuiltinComparable<i16>;
+        mixin Equatable<i16>;
+        mixin Comparable<i16>;
+        mixin<F: Formatter<F>> _IntegerFormattable<i16, F>;
+        fn hash<H: Hasher<H>>(self: &i16, hasher: &mut H) {
+            hasher.write_i16(*self);
+        }
+    }
+
+    #[lang(impl_i32)]
+    struct _i32 {}
+    impl _i32 {
+        mixin _BuiltinComparable<i32>;
+        mixin Equatable<i32>;
+        mixin Comparable<i32>;
+        mixin<F: Formatter<F>> _IntegerFormattable<i32, F>;
+        fn hash<H: Hasher<H>>(self: &i32, hasher: &mut H) {
+            hasher.write_i32(*self);
+        }
+    }
+
+    #[lang(impl_i64)]
+    struct _i64 {}
+    impl _i64 {
+        mixin _BuiltinComparable<i64>;
+        mixin Equatable<i64>;
+        mixin Comparable<i64>;
+        mixin<F: Formatter<F>> _IntegerFormattable<i64, F>;
+        fn hash<H: Hasher<H>>(self: &i64, hasher: &mut H) {
+            hasher.write_i64(*self);
+        }
+    }
+
+    #[lang(impl_i128)]
+    struct _i128 {}
+    impl _i128 {
+        mixin _BuiltinComparable<i128>;
+        mixin Equatable<i128>;
+        mixin Comparable<i128>;
+        mixin<F: Formatter<F>> _IntegerFormattable<i128, F>;
+        fn hash<H: Hasher<H>>(self: &i128, hasher: &mut H) {
+            hasher.write_i128(*self);
+        }
+    }
+
+    #[lang(impl_isize)]
+    struct _isize {}
+    impl _isize {
+        mixin _BuiltinComparable<isize>;
+        mixin Equatable<isize>;
+        mixin Comparable<isize>;
+        mixin<F: Formatter<F>> _IntegerFormattable<isize, F>;
+        fn hash<H: Hasher<H>>(self: &isize, hasher: &mut H) {
+            hasher.write_isize(*self);
+        }
+    }
+
+    #[lang(impl_f32)]
+    struct _f32 {}
+    impl _f32 {
+        mixin _BuiltinComparable<f32>;
+        mixin Equatable<f32>;
+        mixin Comparable<f32>;
+        mixin<F: Formatter<F>> _FloatFormattable<f32, F>;
+        // Not hashable
+    }
+
+    #[lang(impl_f64)]
+    struct _f64 {}
+    impl _f64 {
+        mixin _BuiltinComparable<f64>;
+        mixin Equatable<f64>;
+        mixin Comparable<f64>;
+        mixin<F: Formatter<F>> _FloatFormattable<f64, F>;
+        // Not hashable
+    }
+}
+
+
+mod util {
+    #[force_inline]
+    fn identity<T>(t: T) -> T { t }
 }

@@ -1,3 +1,25 @@
+use std::random::{DEFAULT_RNG as rng, range};
+use std::result::{Result, try};
+
+fn try_get_number() -> Result<i32, ()> {
+    let val = rng.range_u32(10) as i32;
+    
+    if val > 0 {
+        Result::ok(val)
+    } else {
+        Result::err(())
+    }
+}
+
+fn try_cast() -> Result<i64, ()> {
+    let value = try!(try_get_number());
+
+    Result::ok(value as i64)
+}
+
 #[export]
 fn main() {
+    let ok = try_cast();
+
+    println!("value: {}", ok.unwrap());
 }

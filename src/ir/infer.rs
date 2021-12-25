@@ -4,11 +4,14 @@ use std::collections::HashMap;
 
 pub struct TypeInferer<'a, 'ast, 'ir> {
     mono_ctx: &'a MonoCtx<'ast, 'ir>,
-    placeholders: Vec<ast::AstId>,
+    placeholders: Vec<ast::Placeholder<'ast>>,
 }
 
 impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
-    pub fn new(mono_ctx: &'a MonoCtx<'ast, 'ir>, placeholders: Vec<ast::AstId>) -> Self {
+    pub fn new(
+        mono_ctx: &'a MonoCtx<'ast, 'ir>,
+        placeholders: Vec<ast::Placeholder<'ast>>,
+    ) -> Self {
         TypeInferer {
             mono_ctx,
             placeholders,
@@ -22,17 +25,16 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
         tgt: ir::TyP<'ir>,
     ) -> Result<(), ()> {
         match (src, tgt) {
-            (ast::Ty::Extern(_), _) | (ast::Ty::NamedType(_), _) | (ast::Ty::Builtin(_), _) => {
+            (ast::Ty::NamedType(_), _) | (ast::Ty::Builtin(_), _) => {
                 // those do not participate in inference
             }
             (ast::Ty::Placeholder(id), _) => {
-                if inferred.len() == self.placeholders.len() {
-                    return Err(());
-                }
-                if let Some(existing) = inferred.insert(*id, tgt) {
-                    if existing != tgt {
+                if let Some(existing) = inferred.get(&id) {
+                    if *existing != tgt {
                         return Err(());
                     }
+                } else {
+                    inferred.insert(*id, tgt);
                 }
             }
             (ast::Ty::Pointer(a1, a_const), ir::Ty::Pointer(b1, b_const)) => {
@@ -113,7 +115,12 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
         }
 
         if inferred.len() == self.placeholders.len() {
-            Some(self.placeholders.iter().map(|id| inferred[id]).collect())
+            Some(
+                self.placeholders
+                    .iter()
+                    .map(|placeholder| inferred[&placeholder.id])
+                    .collect(),
+            )
         } else {
             None
         }

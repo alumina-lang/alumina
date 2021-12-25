@@ -213,7 +213,6 @@ impl BuiltinType {
 pub enum Ty<'ast> {
     Placeholder(AstId),
     Protocol(ItemP<'ast>),
-    Extern(AstId),
     NamedType(ItemP<'ast>),
     Builtin(BuiltinType),
     Pointer(TyP<'ast>, bool),
