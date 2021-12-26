@@ -200,6 +200,9 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
     }
 
     fn write_type_body(&mut self, ty: TyP<'ir>) -> Result<(), AluminaError> {
+        if !self.needs_body.contains(&ty) {
+            return Ok(());
+        }
         if self.body_map.contains(&ty) {
             return Ok(());
         }
@@ -242,7 +245,7 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                     }
                     w!(self.type_bodies, "}};\n");
                 }
-                _ => todo!(),
+                _ => panic!("unimplemented: {:?}", ty),
             },
             Ty::Tuple(items) => {
                 let name = self.ctx.get_type(ty);

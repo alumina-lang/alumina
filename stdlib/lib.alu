@@ -15,11 +15,33 @@ mod proto {
 
 mod mem {
     use proto::Pointer;
+    use std::result::Option;
 
     #[lang(slice)]
     struct slice<Ptr: Pointer> {
         ptr: Ptr,
         len: usize,
+    }
+
+
+    struct SliceIterator<T> {
+        slice: &[T],
+        index: usize,
+    }
+
+    impl SliceIterator<T> {
+        #[force_inline]
+        fn next(self: &mut SliceIterator<T>) -> Option<T> {
+            if self.index < self.slice.len {
+                let result = self.slice[self.index];
+                self.index += 1;
+                Option::some(result)
+            } else {
+                Option::none()
+            }
+        }
+
+        mixin<T> iter::Iterator<SliceIterator<T>, T>;
     }
     
     impl slice {
@@ -32,6 +54,14 @@ mod mem {
         #[lang(slice_new)]
         fn from_raw<Ptr: Pointer>(ptr: Ptr, len: usize) -> slice<Ptr> {
             slice::<Ptr> { ptr: ptr, len: len }
+        }
+
+        #[force_inline]
+        fn iter<T>(self: &[T]) -> SliceIterator<T> {
+            SliceIterator::<T> { 
+                slice: self, 
+                index: 0 
+            }
         }
 
         // Equality and ordering comparison are implemented only for slices of 
@@ -110,6 +140,13 @@ mod mem {
         ret
     }
 
+    fn alloc_zeroed<T>(len: usize) -> &mut [T] {
+        let ret: &mut [T];
+        ret.ptr = libc::calloc(len, size_of::<T>()) as &mut T;
+        ret.len = len;
+        ret
+    }
+
     #[force_inline]
     fn stack_alloc<T>(len: usize) -> &mut [T] {
         // TODO: this is broken until inlining in IR is implemented, since __builtin_alloca_with_align
@@ -141,6 +178,11 @@ mod mem {
         let tmp = *a;
         *a = *b;
         *b = tmp;
+    }
+
+    fn replace<T>(a: &mut T, b: T) -> T {
+        swap(a, &b);
+        b
     }
 
     fn copy_to_nonoverlapping<T>(src: &[T], dst: &mut T) {
@@ -229,6 +271,7 @@ mod libc {
     extern "C" fn memcmp(ptr1: &void, ptr2: &void, len: usize) -> i32;
     extern "C" fn write(fd: i32, buf: &void, len: usize) -> isize;
     extern "C" fn malloc(size: usize) -> &mut void;
+    extern "C" fn calloc(num: usize, size: usize) -> &mut void;
     extern "C" fn _exit(ret: i32) -> !;
     extern "C" fn getrandom(buf: &mut void, buflen: usize, flags: u32) -> isize;
 }
@@ -267,7 +310,7 @@ mod fmt {
         }
 
         fn format_integer<T: proto::Integer, F: Formatter<F>>(val: T, fmt: &mut F) {
-            let buf: [u8; 16];
+            let buf: [u8; 40];
             let buf: &mut [u8] = &buf;
         
             let i: usize = buf.len - 1;
@@ -484,6 +527,12 @@ macro panic(reason, args...) {
     libc::_exit(-1);
 }
 
+macro assert(cond) {
+    if !cond {
+        panic!("assertion failed");
+    }
+}
+
 #[builtin] macro line() {  }
 #[builtin] macro column() {  }
 #[builtin] macro file() {  }
@@ -616,7 +665,7 @@ mod hash {
         fn write_isize(self: &mut Self, val: isize) {
             self.write(from_raw(&val as &u8, size_of::<isize>()))
         }
-        fn finish(self: &Self) -> u64;
+        fn finish(self: &mut Self) -> u64;
     }
     
     protocol Hashable<Self, H: Hasher<H>> {
@@ -693,6 +742,9 @@ mod builtins {
         fn hash<H: Hasher<H>>(self: &u8, hasher: &mut H) {
             hasher.write_u8(*self);
         }
+        fn rotate_left(self: u8, shift: usize) -> u8 {
+            (self << shift) | (self >> (8 - shift))
+        }
     }
 
     #[lang(impl_u16)]
@@ -704,6 +756,9 @@ mod builtins {
         mixin<F: Formatter<F>> _IntegerFormattable<u16, F>;
         fn hash<H: Hasher<H>>(self: &u16, hasher: &mut H) {
             hasher.write_u16(*self);
+        }
+        fn rotate_left(self: u16, shift: usize) -> u16 {
+            (self << shift) | (self >> (16 - shift))
         }
     }
 
@@ -717,6 +772,9 @@ mod builtins {
         fn hash<H: Hasher<H>>(self: &u32, hasher: &mut H) {
             hasher.write_u32(*self);
         }
+        fn rotate_left(self: u32, shift: usize) -> u32 {
+            (self << shift) | (self >> (32 - shift))
+        }
     }
 
     #[lang(impl_u64)]
@@ -729,6 +787,9 @@ mod builtins {
         fn hash<H: Hasher<H>>(self: &u64, hasher: &mut H) {
             hasher.write_u64(*self);
         }
+        fn rotate_left(self: u64, shift: usize) -> u64 {
+            (self << shift) | (self >> (64 - shift))
+        }
     }
 
     #[lang(impl_u128)]
@@ -740,6 +801,9 @@ mod builtins {
         mixin<F: Formatter<F>> _IntegerFormattable<u128, F>;
         fn hash<H: Hasher<H>>(self: &u128, hasher: &mut H) {
             hasher.write_u128(*self);
+        }
+        fn rotate_left(self: u128, shift: usize) -> u128 {
+            (self << shift) | (self >> (128 - shift))
         }
     }
 
@@ -852,4 +916,63 @@ mod builtins {
 mod util {
     #[force_inline]
     fn identity<T>(t: T) -> T { t }
+}
+
+mod iter {
+    use proto::Integer;
+    use result::Option;
+
+    protocol Iterator<Self, T> {
+        fn next(self: &mut Self) -> result::Option<T>;
+        fn iter(self: &mut Self) -> &mut Self {
+            self
+        }
+    }
+
+    protocol Iterable<Self, It: Iterator<It, T>, T> {
+        fn iter(self: Self) -> It;
+    }
+
+    struct Range<T: Integer> {
+        lower: T,
+        upper: T,
+    }
+
+    impl Range<T: Integer> {
+        #[force_inline]
+        fn iter(self: &Range<T>) -> RangeIter<T> {
+            RangeIter {
+                current: self.lower,
+                upper: self.upper,
+            }
+        }
+    }
+
+    struct RangeIter<T: Integer> {
+        current: T,
+        upper: T,
+    }
+    
+    impl RangeIter<T: Integer> {
+        #[force_inline]
+        fn next(self: &mut RangeIter<T>) -> Option<T> {
+            if self.current < self.upper {
+                let current = self.current;
+                self.current += 1;
+                Option::some(current)
+            } else {
+                Option::none()
+            }
+        }
+        
+        mixin<T: Integer> Iterator<RangeIter<T>, T>;
+    }
+    
+    #[force_inline]
+    fn range<T: Integer>(lower: T, upper: T) -> Range<T> {
+        Range {
+            lower: lower,
+            upper: upper,
+        }
+    }
 }

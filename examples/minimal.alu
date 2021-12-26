@@ -1,25 +1,33 @@
-use std::random::{DEFAULT_RNG as rng, range};
-use std::result::{Result, try};
-
-fn try_get_number() -> Result<i32, ()> {
-    let val = rng.range_u32(10) as i32;
-    
-    if val > 0 {
-        Result::ok(val)
-    } else {
-        Result::err(())
-    }
-}
-
-fn try_cast() -> Result<i64, ()> {
-    let value = try!(try_get_number());
-
-    Result::ok(value as i64)
-}
+use std::hash::{Hasher, Hashable};
+use std::cmp::{Equatable, Comparable};
+use std::collections::{HashMap, Vector};
+use std::fmt::format;
 
 #[export]
 fn main() {
-    let ok = try_cast();
+    let hm = HashMap::new::<&[u8], u64, std::hash::xxhash::Xxh64>();
+    defer hm.free();
 
-    println!("value: {}", ok.unwrap());
+    for i in std::iter::range(0u64, 0x100) {
+        let string = format!("hello, {}", i);
+        defer string.free();
+        hm.insert((string.as_slice(), i));
+    }
+
+    for elem in hm {
+        println!("{} => {}", elem.0, elem.1);
+    }
+
+    let slice: &[u8] = &[1,2,3,4,5];
+
+    for i in slice {
+        println!("yay, {}", i);
+    }
+
+    let vec = std::collections::Vector::from_slice(slice);
+    defer vec.free();
+
+    for i in vec {
+        println!("yay, {}", i);
+    }
 }

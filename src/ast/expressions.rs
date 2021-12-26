@@ -386,8 +386,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             "isize" => BuiltinType::ISize,
         );
 
-        let value = remainder
-            .parse()
+        let value = if remainder.starts_with("0x") {
+            u128::from_str_radix(remainder.trim_start_matches("0x"), 16)
+        } else {
+            remainder.parse()
+        };
+
+        let value = value
             .map_err(|_| CodeErrorKind::InvalidLiteral)
             .with_span(&self.scope, node)?;
 
@@ -752,6 +757,111 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         Ok(ExprKind::Continue.alloc_with_span(self.ast, &self.scope, node))
     }
 
+    fn visit_for_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let name = self
+            .code
+            .node_text(node.child_by_field_name("name").unwrap())
+            .alloc_on(self.ast);
+
+        let id = self.ast.make_id();
+        let iterator = self.ast.make_id();
+        let iterator_result = self.ast.make_id();
+
+        let iterable_node = node.child_by_field_name("value").unwrap();
+        let iterable = self.visit(iterable_node)?;
+
+        let body = with_block_scope!(self, {
+            self.scope
+                .add_item(Some(name), NamedItem::Local(id))
+                .with_span(&self.scope, node)?;
+
+            self.visit(node.child_by_field_name("body").unwrap())?
+        });
+
+        let mut resolver = NameResolver::new();
+        let unified_fn = match resolver.resolve_item(self.scope.clone(), PathSegment("iter").into())
+        {
+            Ok(ItemResolution::Item(NamedItem::Function(item, _, _))) => Some(item),
+            _ => None,
+        };
+
+        let loop_if = ExprKind::If(
+            ExprKind::Field(
+                ExprKind::Local(iterator_result).alloc_with_no_span(self.ast),
+                "is_some",
+                None,
+            )
+            .alloc_with_no_span(self.ast),
+            ExprKind::Block(
+                vec![StatementKind::LetDeclaration(LetDeclaration {
+                    id: id,
+                    typ: None,
+                    value: Some(
+                        ExprKind::Field(
+                            ExprKind::Local(iterator_result).alloc_with_no_span(self.ast),
+                            "inner",
+                            None,
+                        )
+                        .alloc_with_no_span(self.ast),
+                    ),
+                })
+                .alloc_with_no_span(self.ast)]
+                .alloc_on(self.ast),
+                body,
+            )
+            .alloc_with_no_span(self.ast),
+            ExprKind::Break(None).alloc_with_no_span(self.ast),
+        );
+
+        let loop_body = ExprKind::Loop(
+            ExprKind::Block(
+                vec![StatementKind::LetDeclaration(LetDeclaration {
+                    id: iterator_result,
+                    typ: None,
+                    value: Some(
+                        ExprKind::Call(
+                            ExprKind::Field(
+                                ExprKind::Local(iterator).alloc_with_no_span(self.ast),
+                                "next",
+                                None,
+                            )
+                            .alloc_with_no_span(self.ast),
+                            vec![].alloc_on(self.ast),
+                        )
+                        .alloc_with_no_span(self.ast),
+                    ),
+                })
+                .alloc_with_no_span(self.ast)]
+                .alloc_on(self.ast),
+                loop_if.alloc_with_no_span(self.ast),
+            )
+            .alloc_with_span(self.ast, &self.scope, node),
+        );
+
+        let result = ExprKind::Block(
+            vec![StatementKind::LetDeclaration(LetDeclaration {
+                id: iterator,
+                typ: None,
+                value: Some(
+                    ExprKind::Call(
+                        ExprKind::Field(iterable, "iter", unified_fn).alloc_with_span(
+                            self.ast,
+                            &self.scope,
+                            iterable_node,
+                        ),
+                        [].alloc_on(self.ast),
+                    )
+                    .alloc_with_span(self.ast, &self.scope, iterable_node),
+                ),
+            })
+            .alloc_with_span(self.ast, &self.scope, node)]
+            .alloc_on(self.ast),
+            loop_body.alloc_with_no_span(self.ast),
+        );
+
+        Ok(result.alloc_with_span(self.ast, &self.scope, node))
+    }
+
     fn visit_switch_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let value = self.visit(node.child_by_field_name("value").unwrap())?;
 
@@ -768,10 +878,17 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             }
 
             let pattern = arm.child_by_field_name("pattern").unwrap();
-            if let Some(expr) = pattern.child_by_field_name("value") {
+            let mut cursor = pattern.walk();
+
+            let alternatives = pattern
+                .children_by_field_name("value", &mut cursor)
+                .map(|child| self.visit(child))
+                .collect::<Result<Vec<_>, _>>()?;
+
+            if !alternatives.is_empty() {
                 arms.push((
                     arm,
-                    self.visit(expr)?,
+                    alternatives,
                     self.visit(arm.child_by_field_name("value").unwrap())?,
                 ))
             } else {
@@ -790,10 +907,27 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
         let ret = arms.into_iter().rfold(
             default_arm.unwrap_or(ExprKind::Void.alloc_with_no_span(self.ast)),
-            |acc, (arm_node, pattern, value)| {
+            |acc, (arm_node, alternatives, value)| {
                 // TODO: add spans here
-                let cmp = ExprKind::Binary(BinOp::Eq, local, pattern);
-                let branch = ExprKind::If(cmp.alloc_with_no_span(self.ast), value, acc);
+                let cmp = alternatives
+                    .into_iter()
+                    .fold(None, |acc, alternative| match acc {
+                        Some(acc) => Some(
+                            ExprKind::Binary(
+                                BinOp::Or,
+                                acc,
+                                ExprKind::Binary(BinOp::Eq, local, alternative)
+                                    .alloc_with_no_span(self.ast),
+                            )
+                            .alloc_with_no_span(self.ast),
+                        ),
+                        None => Some(
+                            ExprKind::Binary(BinOp::Eq, local, alternative)
+                                .alloc_with_no_span(self.ast),
+                        ),
+                    })
+                    .unwrap();
+                let branch = ExprKind::If(cmp, value, acc);
 
                 branch.alloc_with_span(self.ast, &self.scope, arm_node)
             },

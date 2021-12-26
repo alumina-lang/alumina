@@ -1,0 +1,63 @@
+use std::fmt::{Formattable, Formatter, write};
+
+struct PrintableSlice<T> {
+    inner: &[T]
+}
+
+impl PrintableSlice {
+    fn new<T>(inner: &[T]) -> PrintableSlice<T> {
+        PrintableSlice {
+            inner: inner
+        }
+    }
+
+    fn fmt<T: Formattable<T, F>, F: Formatter<F>>(self: &PrintableSlice<T>, formatter: &mut F) {
+        write!(formatter, "[");
+        let i = 0usize;
+        while i < self.inner.len {
+            if i > 0 {
+                write!(formatter, ", ");
+            }
+            self.inner[i].fmt(formatter);
+            i += 1;
+        }
+        write!(formatter, "]");
+    }
+}
+
+
+#[export]
+fn main() {
+    let words: &mut [&[u8]] = &[
+        "triarchy",
+        "vapography",
+        "episcope",
+        "amende",
+        "egestion",
+        "ginnel",
+        "tumid",
+        "yuft",
+        "mangabey",
+        "janker",
+        "jetavator",
+        "uranomancy",
+        "wearish",
+        "burgrave",
+        "yulo",
+        "venule",
+        "entropion",
+        "gleek",
+    ];
+
+    println!("Original: {}", PrintableSlice::new(words));
+    
+    use std::random::{DEFAULT_RNG, shuffle};
+    DEFAULT_RNG.shuffle(words);
+    println!("Shuffled: {}", PrintableSlice::new(words));
+    
+    std::collections::sort(words);
+    println!("Sorted:   {}", PrintableSlice::new(words));
+    
+
+
+}

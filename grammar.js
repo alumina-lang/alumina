@@ -722,7 +722,7 @@ module.exports = grammar({
         optional(",")
       ),
 
-    pattern: ($) => choice(field("value", $._expression), "_"),
+    pattern: ($) => choice(sepBy1(",", field("value", $._expression)), "_"),
 
     switch_expression: ($) =>
       seq(

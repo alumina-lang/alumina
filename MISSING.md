@@ -46,18 +46,21 @@
   - standard and file IO
   - string formatting
     - The pattern is well-established (Formattable protocol) and I'm very happy with it,
-      but it's quite bare-bones right now
+      but it's very very basic right now
   - heap-allocating collections
     - Vector is implemented, need at least a HashMap and HashSet. 
     - Maybe a heap? A VecDeque/ring buffer
     - No linked lists.
   - math
-
 - extras, nice to have:
+  - threading, atomics, ...
+    - This will definitely defer to pthread
+    - Need a good story for thread-local storage
   - network and unix sockets
   - random number generation
     - basic RNG is implemented, need a good way to make it generic over various integer lengths
   - date/time???? this is a big can of worms
+- compound assignment with pointer arithmetic is incorrect (ptr += 1 != ptr = ptr + 1)
 
 ## Diagnostics
 
@@ -89,6 +92,7 @@
 ## Tooling
 
 - Syntax highlighter for VS Code
+- rustdoc-like thing. This will have to wait until a self-hosted compiler
 
 
 ## Bikeshedding

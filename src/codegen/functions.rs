@@ -124,16 +124,16 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             ),
             Value::U8(val) => w!(self.fn_bodies, "{}", val),
             Value::U16(val) => w!(self.fn_bodies, "{}", val),
-            Value::U32(val) => w!(self.fn_bodies, "{}", val),
-            Value::U64(val) => w!(self.fn_bodies, "{}", val),
-            Value::U128(val) => w!(self.fn_bodies, "{}", val),
+            Value::U32(val) => w!(self.fn_bodies, "{}ULL", val),
+            Value::U64(val) => w!(self.fn_bodies, "{}ULL", val),
+            Value::U128(val) => w!(self.fn_bodies, "{}ULL", val),
             Value::I8(val) => w!(self.fn_bodies, "{}", val),
             Value::I16(val) => w!(self.fn_bodies, "{}", val),
-            Value::I32(val) => w!(self.fn_bodies, "{}", val),
-            Value::I64(val) => w!(self.fn_bodies, "{}", val),
-            Value::I128(val) => w!(self.fn_bodies, "{}", val),
-            Value::USize(val) => w!(self.fn_bodies, "{}", val),
-            Value::ISize(val) => w!(self.fn_bodies, "{}", val),
+            Value::I32(val) => w!(self.fn_bodies, "{}LL", val),
+            Value::I64(val) => w!(self.fn_bodies, "{}LL", val),
+            Value::I128(val) => w!(self.fn_bodies, "{}LL", val),
+            Value::USize(val) => w!(self.fn_bodies, "{}ULL", val),
+            Value::ISize(val) => w!(self.fn_bodies, "{}LL", val),
             _ => unimplemented!(),
         }
     }
@@ -254,7 +254,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 }
                 crate::ir::Lit::Int(v) => {
                     self.type_writer.add_type(expr.ty)?;
-                    w!(self.fn_bodies, "(({}){})", self.ctx.get_type(expr.ty), v);
+                    w!(self.fn_bodies, "(({}){}ULL)", self.ctx.get_type(expr.ty), v);
                 }
                 crate::ir::Lit::Float(v) => {
                     self.type_writer.add_type(expr.ty)?;

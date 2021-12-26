@@ -1,0 +1,142 @@
+const CHUNK_SIZE: usize = 32;
+const PRIME_1: u64 = 0x9E3779B185EBCA87;
+const PRIME_2: u64 = 0xC2B2AE3D27D4EB4F;
+const PRIME_3: u64 = 0x165667B19E3779F9;
+const PRIME_4: u64 = 0x85EBCA77C2B2AE63;
+const PRIME_5: u64 = 0x27D4EB2F165667C5;
+
+fn round(acc: u64, input: u64) -> u64 {
+    ((acc + (input * PRIME_2)).rotate_left(31)) * PRIME_1
+}
+
+fn merge_round(acc: u64, val: u64) -> u64 {
+    acc ^= round(0, val);
+    acc * PRIME_1 + PRIME_4
+}
+
+fn avalanche(input: u64) -> u64 {
+    input ^= input >> 33;
+    input = input * PRIME_2;
+    input ^= input >> 29;
+    input = input * PRIME_3;
+    input ^= input >> 32;
+    input
+}
+
+struct Xxh64 {
+    total_len: usize,
+    v1: u64,
+    v2: u64,
+    v3: u64,
+    v4: u64,
+    mem: [u64; 4],
+    mem_size: usize,
+}
+
+impl Xxh64 {
+    fn new() -> Xxh64 {
+        with_seed(0xdeadb33f)
+    }
+
+    fn with_seed(seed: u64) -> Xxh64 {
+        Xxh64 {
+            total_len: 0,
+            v1: seed + PRIME_1 + PRIME_2,
+            v2: seed + PRIME_2,
+            v3: seed,
+            v4: seed + PRIME_1,
+            mem: [0, 0, 0, 0],
+            mem_size: 0,
+        }
+    }
+
+     fn write(self: &mut Xxh64, input: &[u8]) {
+        use std::mem::copy_to_nonoverlapping;
+
+        self.total_len += input.len;
+
+        if (self.mem_size + input.len) < CHUNK_SIZE {
+            input.copy_to_nonoverlapping((&self.mem[0] as &mut u8) + self.mem_size);
+            self.mem_size += input.len;
+            return
+        }
+
+        if self.mem_size > 0 {
+            let fill_len = CHUNK_SIZE - self.mem_size;
+            input[0..fill_len].copy_to_nonoverlapping((&self.mem[0] as &mut u8) + self.mem_size);
+
+            self.v1 = round(self.v1, self.mem[0]);
+            self.v2 = round(self.v2, self.mem[1]);
+            self.v3 = round(self.v3, self.mem[2]);
+            self.v4 = round(self.v4, self.mem[3]);
+
+            input = input[fill_len..];
+            self.mem_size = 0;
+        }
+
+        if input.len >= CHUNK_SIZE {
+            loop {
+                self.v1 = round(self.v1, *(input.ptr as &u64));
+                input = input[8..];
+                self.v2 = round(self.v2, *(input.ptr as &u64));
+                input = input[8..];
+                self.v3 = round(self.v3, *(input.ptr as &u64));
+                input = input[8..];
+                self.v4 = round(self.v4, *(input.ptr as &u64));
+                input = input[8..];
+
+                if input.len < CHUNK_SIZE {
+                    break;
+                }
+            }
+        }
+
+        if input.len > 0 {
+            input.copy_to_nonoverlapping(&self.mem[0] as &mut u8);
+            self.mem_size = input.len;
+        }
+    }
+
+     fn finish(self: &mut Xxh64) -> u64 {
+        let result: u64;
+
+        if self.total_len >= CHUNK_SIZE {
+            result = (self.v1.rotate_left(1)) + 
+                (self.v2.rotate_left(7)) + 
+                (self.v3.rotate_left(12)) +
+                (self.v4.rotate_left(18));
+
+            result = merge_round(result, self.v1);
+            result = merge_round(result, self.v2);
+            result = merge_round(result, self.v3);
+            result = merge_round(result, self.v4);
+        } else {
+            result = self.v3 + PRIME_5;
+        }
+
+        result = result + (self.total_len as u64);
+
+        let remainder = std::mem::slice::from_raw(&self.mem[0] as &u8, self.mem_size);
+
+        while remainder.len >= 8 {
+            result ^= round(0, *(remainder.ptr as &u64));
+            remainder = remainder[8..];
+            result = (result.rotate_left(27)) * PRIME_1 + PRIME_4
+        }
+    
+        if remainder.len >= 4 {
+            result ^= (*(remainder.ptr as &u32) as u64) * PRIME_1;
+            remainder = remainder[4..];
+            result = (result.rotate_left(23)) * PRIME_2 + PRIME_3;
+        }
+    
+        for byte in remainder {
+            result ^= (byte as u64) * PRIME_5;
+            result = (result.rotate_left(11)) * PRIME_1;
+        }
+    
+        avalanche(result)
+    }
+
+    mixin std::hash::Hasher<Xxh64>;
+}

@@ -44,6 +44,10 @@ fn main() {
             path: "::std::collections".to_string(),
         },
         SourceFile {
+            filename: PathBuf::from("./stdlib/impl/xxhash.alu"),
+            path: "::std::hash::xxhash".to_string(),
+        },
+        SourceFile {
             filename: PathBuf::from("./examples/minimal.alu"),
             path: "::hello_world".to_string(),
         },
