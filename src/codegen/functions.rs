@@ -32,6 +32,8 @@ pub fn write_function_signature<'ir, 'gen>(
 
     let mut attributes = if item.attributes.contains(&Attribute::ForceInline) {
         "__attribute__((always_inline)) inline ".to_string()
+    } else if item.attributes.contains(&Attribute::Inline) {
+        "inline ".to_string()
     } else if item.attributes.contains(&Attribute::StaticConstructor) {
         "__attribute__((constructor)) ".to_string()
     } else {

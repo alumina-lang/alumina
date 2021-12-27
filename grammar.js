@@ -268,13 +268,6 @@ module.exports = grammar({
     pointer_of: ($) =>
       seq("&", optional(field("mut", "mut")), field("inner", $._type)),
 
-    dyn: ($) =>
-      seq(
-        "&",
-        optional(field("mut", "mut")),
-        "dyn",
-    ),
-
     slice_of: ($) =>
       seq(
         "&",
@@ -326,7 +319,6 @@ module.exports = grammar({
         $.slice_of,
         $.array_of,
         $.tuple_type,
-        $.dyn,
         $.function_pointer
       ),
 

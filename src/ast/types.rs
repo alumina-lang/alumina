@@ -135,13 +135,6 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
         Ok(self.ast.intern_type(Ty::Slice(ty, !is_mut)))
     }
 
-    fn visit_dyn(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        self.accept_protocol = false;
-        let is_mut = node.child_by_field_name("mut").is_some();
-
-        Ok(self.ast.intern_type(Ty::Dyn(!is_mut)))
-    }
-
     fn visit_array_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         self.accept_protocol = false;
         let ty = self.visit(node.child_by_field_name("inner").unwrap())?;

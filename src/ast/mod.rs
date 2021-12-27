@@ -216,7 +216,6 @@ pub enum Ty<'ast> {
     NamedType(ItemP<'ast>),
     Builtin(BuiltinType),
     Pointer(TyP<'ast>, bool),
-    Dyn(bool),
     Slice(TyP<'ast>, bool),
     Array(TyP<'ast>, usize),
     Tuple(&'ast [TyP<'ast>]),
@@ -553,6 +552,7 @@ impl BinOp {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Attribute {
     Export,
+    Inline,
     ForceInline,
     Intrinsic,
     StaticConstructor,

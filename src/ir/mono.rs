@@ -97,10 +97,6 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
             return Some(LangTypeKind::Slice(item.1[0]));
         }
 
-        if self.lang_items.get(LangItemKind::DynPtr).ok() == Some(item.0) {
-            return Some(LangTypeKind::Dyn(item.1[0]));
-        }
-
         return None;
     }
 
@@ -982,14 +978,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(self.types.named(item))
     }
 
-    fn dyn_ptr_of(&mut self, is_const: bool) -> Result<ir::TyP<'ir>, AluminaError> {
-        let ptr_type = self
-            .types
-            .pointer(self.types.builtin(BuiltinType::Void), is_const);
-        let item = self.monomorphize_lang_item(LangItemKind::DynPtr, [ptr_type])?;
-        Ok(self.types.named(item))
-    }
-
     pub fn lower_type(&mut self, typ: ast::TyP<'ast>) -> Result<ir::TyP<'ir>, AluminaError> {
         let result = match *typ {
             ast::Ty::Builtin(kind) => self.types.builtin(kind),
@@ -1005,7 +993,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let inner = self.lower_type(inner)?;
                 self.slice_of(inner, is_const)?
             }
-            ast::Ty::Dyn(is_const) => self.dyn_ptr_of(is_const)?,
             ast::Ty::Fn(args, ret) => {
                 let args = args
                     .iter()
@@ -1296,15 +1283,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     _ => {}
                 }
             }
-            // &mut dyn -> &dyn
-            (Some(LangTypeKind::Dyn(t1_ptr)), Some(LangTypeKind::Dyn(_))) => match t1_ptr {
-                ir::Ty::Pointer(_, true) => {
-                    let item = self.monomorphize_lang_item(LangItemKind::DynPtrCoerce, [])?;
-                    let func = self.exprs.function(item);
-                    return Ok(self.exprs.call(func, [rhs].into_iter(), lhs_typ));
-                }
-                _ => {}
-            },
             _ => {}
         }
 
@@ -1338,29 +1316,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                         [data, size_lit],
                         item.get_function().return_type,
                     ));
-                }
-                _ => {}
-            },
-            _ => {}
-        }
-
-        // &T -> &dyn
-        // &mut T -> &dyn
-        // &mut T -> &mut dyn
-        match (&lhs_lang, rhs.ty) {
-            (Some(LangTypeKind::Dyn(t1_ptr)), ir::Ty::Pointer(t2, t2_const)) => match t1_ptr {
-                ir::Ty::Pointer(_, t1_const) if (*t1_const || (!*t1_const && !*t2_const)) => {
-                    let item = if *t1_const {
-                        self.monomorphize_lang_item(LangItemKind::DynPtrNewConst, [*t2])?
-                    } else {
-                        self.monomorphize_lang_item(LangItemKind::DynPtrNewMut, [*t2])?
-                    };
-
-                    let func = self.exprs.function(item);
-
-                    return Ok(self
-                        .exprs
-                        .call(func, [rhs], item.get_function().return_type));
                 }
                 _ => {}
             },

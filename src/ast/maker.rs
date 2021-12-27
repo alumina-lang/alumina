@@ -69,6 +69,7 @@ impl<'ast> AstItemMaker<'ast> {
             })
             .filter_map(|name| match name {
                 "export" => Some(Attribute::Export),
+                "inline" => Some(Attribute::Inline),
                 "force_inline" => Some(Attribute::ForceInline),
                 _ => None,
             })

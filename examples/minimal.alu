@@ -2,32 +2,33 @@ use std::hash::{Hasher, Hashable};
 use std::cmp::{Equatable, Comparable};
 use std::collections::{HashMap, Vector};
 use std::fmt::format;
+use std::hash::xxhash::Xxh64;
+use std::iter::for_each;
+use std::random::DEFAULT_RNG;
 
 #[export]
 fn main() {
-    let hm = HashMap::new::<&[u8], u64, std::hash::xxhash::Xxh64>();
+    let vec = Vector::new::<Vector<u8>>();
+    defer vec.free();
+
+    for i in std::iter::range(0, 100) {
+        vec.push(format!("Hello, you are number {}", i));
+    }
+    defer {
+        // Format allocates heap memory, we need to free the values individually
+        for val in vec.as_slice_mut() {
+            val.free();
+        }
+    }
+
+    let hm = HashMap::new::<&[u8], u32, Xxh64>();
     defer hm.free();
 
-    for i in std::iter::range(0u64, 0x100) {
-        let string = format!("hello, {}", i);
-        defer string.free();
-        hm.insert((string.as_slice(), i));
+    for i in vec {
+        hm.insert((i.as_slice(), DEFAULT_RNG.next_u32()));
     }
 
     for elem in hm {
         println!("{} => {}", elem.0, elem.1);
-    }
-
-    let slice: &[u8] = &[1,2,3,4,5];
-
-    for i in slice {
-        println!("yay, {}", i);
-    }
-
-    let vec = std::collections::Vector::from_slice(slice);
-    defer vec.free();
-
-    for i in vec {
-        println!("yay, {}", i);
     }
 }

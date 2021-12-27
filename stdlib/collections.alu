@@ -44,6 +44,13 @@ impl Vector<T> {
         with_capacity(0)
     }
 
+    fn from_raw(data: &mut [T], length: usize) {
+        Vector {
+            data: data,
+            length: length,
+        }
+    }
+
     fn with_capacity(capacity: usize) -> Vector<T> {
         Vector {
             data: alloc::<T>(capacity),
@@ -117,8 +124,12 @@ impl Vector<T> {
         self.length == 0
     }
 
-    fn iter(self: &Vector<T>) -> mem::SliceIterator<T> {
-        self.as_slice().iter()
+    fn clear(self: &mut Vector<T>) {
+        self.length = 0;
+    }
+
+    fn iter(self: &Vector<T>) -> &[T] {
+        self.as_slice()
     }
 
     fn shrink_to_fit(self: &mut Vector<T>) {
@@ -277,10 +288,21 @@ mod hashmap {
             Option::some(item.item.1)
         }
 
-        fn remove(self: &HashMap<K, V, H>, key: K) -> Option<V> {
+        fn remove(self: &mut HashMap<K, V, H>, key: K) -> Option<V> {
             let item = try_option!(self._get_slot(key));
             item.state = State::Deleted;
             Option::some(item.item.1)
+        }
+
+        fn empty(self: &HashMap<K, V, H>) -> bool {
+            self.length == 0
+        }
+
+        fn clear(self: &mut HashMap<K, V, H>) {
+            for i in std::iter::range(0usize, self.buckets.len) {
+                self.buckets[i].state = State::Vacant;
+            }
+            self.length = 0;
         }
 
         fn iter(self: &HashMap<K, V, H>) -> HashMapIterator<K, V> {

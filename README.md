@@ -14,8 +14,7 @@ It has the following conveniences over C:
     - array slices, 
     - tuples, 
     - first-class 0-sized types (unit/void, 0-sized arrays, structs with no fields, ...), 
-    - never type, 
-    - opt-in RTTI type-erasure (`dyn` pointer)
+    - never type
 - Hygenic expression macros
 - Const evaluation (very limited at the moment)
 - Go-style defer expressions

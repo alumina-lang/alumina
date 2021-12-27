@@ -5,15 +5,18 @@ const PRIME_3: u64 = 0x165667B19E3779F9;
 const PRIME_4: u64 = 0x85EBCA77C2B2AE63;
 const PRIME_5: u64 = 0x27D4EB2F165667C5;
 
+#[inline]
 fn round(acc: u64, input: u64) -> u64 {
     ((acc + (input * PRIME_2)).rotate_left(31)) * PRIME_1
 }
 
+#[inline]
 fn merge_round(acc: u64, val: u64) -> u64 {
     acc ^= round(0, val);
     acc * PRIME_1 + PRIME_4
 }
 
+#[inline]
 fn avalanche(input: u64) -> u64 {
     input ^= input >> 33;
     input = input * PRIME_2;
@@ -34,10 +37,12 @@ struct Xxh64 {
 }
 
 impl Xxh64 {
+    #[inline]
     fn new() -> Xxh64 {
         with_seed(0xdeadb33f)
     }
 
+    #[inline]
     fn with_seed(seed: u64) -> Xxh64 {
         Xxh64 {
             total_len: 0,
@@ -131,12 +136,10 @@ impl Xxh64 {
         }
     
         for byte in remainder {
-            result ^= (byte as u64) * PRIME_5;
+            result ^= (*byte as u64) * PRIME_5;
             result = (result.rotate_left(11)) * PRIME_1;
         }
     
         avalanche(result)
     }
-
-    mixin std::hash::Hasher<Xxh64>;
 }

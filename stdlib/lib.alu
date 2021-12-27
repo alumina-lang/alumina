@@ -23,27 +23,6 @@ mod mem {
         len: usize,
     }
 
-
-    struct SliceIterator<T> {
-        slice: &[T],
-        index: usize,
-    }
-
-    impl SliceIterator<T> {
-        #[force_inline]
-        fn next(self: &mut SliceIterator<T>) -> Option<T> {
-            if self.index < self.slice.len {
-                let result = self.slice[self.index];
-                self.index += 1;
-                Option::some(result)
-            } else {
-                Option::none()
-            }
-        }
-
-        mixin<T> iter::Iterator<SliceIterator<T>, T>;
-    }
-    
     impl slice {
         use std::cmp::{Equatable, Comparable, Ordering};
         use std::hash::{Hasher};
@@ -57,10 +36,19 @@ mod mem {
         }
 
         #[force_inline]
-        fn iter<T>(self: &[T]) -> SliceIterator<T> {
-            SliceIterator::<T> { 
-                slice: self, 
-                index: 0 
+        fn iter<Ptr: Pointer>(self: slice<Ptr>) -> slice<Ptr> {
+            self
+        }
+
+        #[force_inline]
+        fn next<Ptr: Pointer>(self: &mut slice<Ptr>) -> Option<Ptr> {
+            if self.len > 0 {
+                let result = Option::some(self.ptr);
+                self.ptr = self.ptr + 1;
+                self.len -= 1;
+                result
+            } else {
+                Option::none()
             }
         }
 
@@ -195,65 +183,6 @@ mod mem {
 
     fn free<T>(a: &mut [T]) {
         libc::free(a.ptr as &mut void);
-    }
-}
-
-mod _dyn {
-    use proto::{Primitive, Pointer}; 
-
-    #[lang(dyn_ptr)]
-    struct dyn_ptr<Ptr: Pointer> {
-        ptr: Ptr,
-        type_id: usize,
-    }
-
-    impl dyn_ptr {
-        #[force_inline]
-        #[lang(dyn_ptr_new_const)]
-        fn from_const<T>(ptr: &T) -> dyn_ptr<&void> {
-            dyn_ptr::<&void> { 
-                ptr: ptr as &void,
-                type_id: intrinsics::type_id::<T>()
-            }
-        }
-
-        #[force_inline]
-        #[lang(dyn_ptr_new_mut)]
-        fn from_mut<T>(ptr: &mut T) -> dyn_ptr<&mut void> {
-            dyn_ptr::<&mut void> { 
-                ptr: ptr as &mut void,
-                type_id: intrinsics::type_id::<T>()
-            }
-        }
-
-        #[force_inline]
-        #[lang(dyn_ptr_downcast_const)]
-        fn downcast_const<T>(self: dyn_ptr<&()>) -> &T {
-            if self.type_id == intrinsics::type_id::<T>() {
-                self.ptr as &T
-            } else {
-                null
-            }
-        }
-
-        #[force_inline]
-        #[lang(dyn_ptr_downcast_mut)]
-        fn downcast_mut<T>(self: dyn_ptr<&mut ()>) -> &mut T {
-            if self.type_id == intrinsics::type_id::<T>() {
-                self.ptr as &mut T
-            } else {
-                null
-            }
-        }
-    }
-
-    #[force_inline]
-    #[lang(dyn_ptr_coerce)]
-    fn dyn_coerce(a: dyn_ptr<&mut void>) -> dyn_ptr<&void> {
-        dyn_ptr::<&void> { 
-            ptr: a.ptr,
-            type_id: a.type_id
-        }
     }
 }
 
@@ -629,46 +558,11 @@ mod hash {
     
         fn new() -> Self;
         fn write(self: &mut Self, val: &[u8]);
-        fn write_u8(self: &mut Self, val: u8) {
-            self.write(from_raw(&val, size_of::<u8>()))
-        }
-        fn write_u16(self: &mut Self, val: u16) {
-            self.write(from_raw(&val as &u8, size_of::<u16>()))
-        }
-        fn write_u32(self: &mut Self, val: u32) {
-            self.write(from_raw(&val as &u8, size_of::<u32>()))
-        }
-        fn write_u64(self: &mut Self, val: u64) {
-            self.write(from_raw(&val as &u8, size_of::<u64>()))
-        }
-        fn write_u128(self: &mut Self, val: u128) {
-            self.write(from_raw(&val as &u8, size_of::<u128>()))
-        }
-        fn write_usize(self: &mut Self, val: usize) {
-            self.write(from_raw(&val as &u8, size_of::<usize>()))
-        }
-        fn write_i8(self: &mut Self, val: i8) {
-            self.write(from_raw(&val as &u8, size_of::<i8>()))
-        }
-        fn write_i16(self: &mut Self, val: i16) {
-            self.write(from_raw(&val as &u8, size_of::<i16>()))
-        }
-        fn write_i32(self: &mut Self, val: i32) {
-            self.write(from_raw(&val as &u8, size_of::<i32>()))
-        }
-        fn write_i64(self: &mut Self, val: i64) {
-            self.write(from_raw(&val as &u8, size_of::<i64>()))
-        }
-        fn write_i128(self: &mut Self, val: i128) {
-            self.write(from_raw(&val as &u8, size_of::<i128>()))
-        }
-        fn write_isize(self: &mut Self, val: isize) {
-            self.write(from_raw(&val as &u8, size_of::<isize>()))
-        }
         fn finish(self: &mut Self) -> u64;
     }
     
     protocol Hashable<Self, H: Hasher<H>> {
+        #[inline]
         fn hash(a: &Self, hasher: &mut H) {
             use std::mem::{size_of,slice::from_raw};
             hasher.write(from_raw(a as &u8, size_of::<Self>()));
@@ -724,7 +618,7 @@ mod builtins {
         }
 
         fn hash<H: Hasher<H>>(self: &bool, hasher: &mut H) {
-            hasher.write_u8(*self as u8);
+            hasher.write(mem::slice::from_raw(self as &u8, 1));
         }
 
         fn fmt<F: Formatter<F>>(self: &bool, formatter: &mut F)  {
@@ -736,12 +630,10 @@ mod builtins {
     struct _u8 {}
     impl _u8 {
         mixin _BuiltinComparable<u8>;
+        mixin<H: Hasher<H>> Hashable<u8, H>;
         mixin Equatable<u8>;
         mixin Comparable<u8>;
         mixin<F: Formatter<F>> _IntegerFormattable<u8, F>;
-        fn hash<H: Hasher<H>>(self: &u8, hasher: &mut H) {
-            hasher.write_u8(*self);
-        }
         fn rotate_left(self: u8, shift: usize) -> u8 {
             (self << shift) | (self >> (8 - shift))
         }
@@ -751,12 +643,10 @@ mod builtins {
     struct _u16 {}
     impl _u16 {
         mixin _BuiltinComparable<u16>;
+        mixin<H: Hasher<H>> Hashable<u16, H>;
         mixin Equatable<u16>;
         mixin Comparable<u16>;
         mixin<F: Formatter<F>> _IntegerFormattable<u16, F>;
-        fn hash<H: Hasher<H>>(self: &u16, hasher: &mut H) {
-            hasher.write_u16(*self);
-        }
         fn rotate_left(self: u16, shift: usize) -> u16 {
             (self << shift) | (self >> (16 - shift))
         }
@@ -766,12 +656,10 @@ mod builtins {
     struct _u32 {}
     impl _u32 {
         mixin _BuiltinComparable<u32>;
+        mixin<H: Hasher<H>> Hashable<u32, H>;
         mixin Equatable<u32>;
         mixin Comparable<u32>;
         mixin<F: Formatter<F>> _IntegerFormattable<u32, F>;
-        fn hash<H: Hasher<H>>(self: &u32, hasher: &mut H) {
-            hasher.write_u32(*self);
-        }
         fn rotate_left(self: u32, shift: usize) -> u32 {
             (self << shift) | (self >> (32 - shift))
         }
@@ -781,12 +669,10 @@ mod builtins {
     struct _u64 {}
     impl _u64 {
         mixin _BuiltinComparable<u64>;
+        mixin<H: Hasher<H>> Hashable<u64, H>;
         mixin Equatable<u64>;
         mixin Comparable<u64>;
         mixin<F: Formatter<F>> _IntegerFormattable<u64, F>;
-        fn hash<H: Hasher<H>>(self: &u64, hasher: &mut H) {
-            hasher.write_u64(*self);
-        }
         fn rotate_left(self: u64, shift: usize) -> u64 {
             (self << shift) | (self >> (64 - shift))
         }
@@ -796,12 +682,10 @@ mod builtins {
     struct _u128 {}
     impl _u128 {
         mixin _BuiltinComparable<u128>;
+        mixin<H: Hasher<H>> Hashable<u128, H>;
         mixin Equatable<u128>;
         mixin Comparable<u128>;
         mixin<F: Formatter<F>> _IntegerFormattable<u128, F>;
-        fn hash<H: Hasher<H>>(self: &u128, hasher: &mut H) {
-            hasher.write_u128(*self);
-        }
         fn rotate_left(self: u128, shift: usize) -> u128 {
             (self << shift) | (self >> (128 - shift))
         }
@@ -811,104 +695,90 @@ mod builtins {
     struct _usize {}
     impl _usize {
         mixin _BuiltinComparable<usize>;
+        mixin<H: Hasher<H>> Hashable<usize, H>;
         mixin Equatable<usize>;
         mixin Comparable<usize>;
         mixin<F: Formatter<F>> _IntegerFormattable<usize, F>;
-        fn hash<H: Hasher<H>>(self: &usize, hasher: &mut H) {
-            hasher.write_usize(*self);
-        }
     }
 
     #[lang(impl_i8)]
     struct _i8 {}
     impl _i8 {
         mixin _BuiltinComparable<i8>;
+        mixin<H: Hasher<H>> Hashable<i8, H>;
         mixin Equatable<i8>;
         mixin Comparable<i8>;
         mixin<F: Formatter<F>> _IntegerFormattable<i8, F>;
-        fn hash<H: Hasher<H>>(self: &i8, hasher: &mut H) {
-            hasher.write_i8(*self);
-        }
     }
 
     #[lang(impl_i16)]
     struct _i16 {}
     impl _i16 {
         mixin _BuiltinComparable<i16>;
+        mixin<H: Hasher<H>> Hashable<i16, H>;
         mixin Equatable<i16>;
         mixin Comparable<i16>;
         mixin<F: Formatter<F>> _IntegerFormattable<i16, F>;
-        fn hash<H: Hasher<H>>(self: &i16, hasher: &mut H) {
-            hasher.write_i16(*self);
-        }
     }
 
     #[lang(impl_i32)]
     struct _i32 {}
     impl _i32 {
         mixin _BuiltinComparable<i32>;
+        mixin<H: Hasher<H>> Hashable<i32, H>;
         mixin Equatable<i32>;
         mixin Comparable<i32>;
         mixin<F: Formatter<F>> _IntegerFormattable<i32, F>;
-        fn hash<H: Hasher<H>>(self: &i32, hasher: &mut H) {
-            hasher.write_i32(*self);
-        }
     }
 
     #[lang(impl_i64)]
     struct _i64 {}
     impl _i64 {
         mixin _BuiltinComparable<i64>;
+        mixin<H: Hasher<H>> Hashable<i64, H>;
         mixin Equatable<i64>;
         mixin Comparable<i64>;
         mixin<F: Formatter<F>> _IntegerFormattable<i64, F>;
-        fn hash<H: Hasher<H>>(self: &i64, hasher: &mut H) {
-            hasher.write_i64(*self);
-        }
     }
 
     #[lang(impl_i128)]
     struct _i128 {}
     impl _i128 {
         mixin _BuiltinComparable<i128>;
+        mixin<H: Hasher<H>> Hashable<i128, H>;
         mixin Equatable<i128>;
         mixin Comparable<i128>;
         mixin<F: Formatter<F>> _IntegerFormattable<i128, F>;
-        fn hash<H: Hasher<H>>(self: &i128, hasher: &mut H) {
-            hasher.write_i128(*self);
-        }
     }
 
     #[lang(impl_isize)]
     struct _isize {}
     impl _isize {
         mixin _BuiltinComparable<isize>;
+        mixin<H: Hasher<H>> Hashable<isize, H>;
         mixin Equatable<isize>;
         mixin Comparable<isize>;
         mixin<F: Formatter<F>> _IntegerFormattable<isize, F>;
-        fn hash<H: Hasher<H>>(self: &isize, hasher: &mut H) {
-            hasher.write_isize(*self);
-        }
     }
 
     #[lang(impl_f32)]
     struct _f32 {}
     impl _f32 {
         mixin _BuiltinComparable<f32>;
+        // Not hashable
         mixin Equatable<f32>;
         mixin Comparable<f32>;
         mixin<F: Formatter<F>> _FloatFormattable<f32, F>;
-        // Not hashable
     }
 
     #[lang(impl_f64)]
     struct _f64 {}
     impl _f64 {
         mixin _BuiltinComparable<f64>;
+        // Not hashable
         mixin Equatable<f64>;
         mixin Comparable<f64>;
         mixin<F: Formatter<F>> _FloatFormattable<f64, F>;
-        // Not hashable
     }
 }
 
@@ -973,6 +843,17 @@ mod iter {
         Range {
             lower: lower,
             upper: upper,
+        }
+    }
+
+    fn for_each<T, I: Iterator<I, T>>(iterator: &mut I, func: fn(T)) {
+        loop {
+            let elem = iterator.next();
+            if elem.is_some {
+                func(elem.inner);
+            } else {
+                break;
+            }
         }
     }
 }
