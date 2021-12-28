@@ -26,8 +26,8 @@ use super::macros::{MacroExpander, MacroMaker};
 use super::maker::AstItemMaker;
 use super::types::TypeVisitor;
 use super::{
-    AstId, BuiltinType, DeferredFn, ExprKind, FnKind, Function, Item, ItemP, Parameter,
-    Placeholder, Span, StatementKind, Ty, TyP,
+    BuiltinType, Defered, ExprKind, FnKind, Function, Item, ItemP, Parameter, Placeholder, Span,
+    StatementKind, Ty, TyP,
 };
 
 macro_rules! with_block_scope {
@@ -198,11 +198,11 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             ItemResolution::Item(NamedItem::EnumMember(typ, var, _)) => {
                 ExprKind::EnumValue(typ, var)
             }
-            ItemResolution::Defered(placeholder, name) => {
+            ItemResolution::Defered(ty, name) => {
                 let name = name.0.alloc_on(self.ast);
-                let typ = self.ast.intern_type(Ty::Placeholder(placeholder));
+                let typ = self.ast.intern_type(ty);
 
-                ExprKind::Fn(FnKind::Defered(DeferredFn { typ, name }), None)
+                ExprKind::Defered(Defered { typ, name })
             }
             ItemResolution::Item(NamedItem::Macro(_, _, _)) => {
                 return Err(CodeErrorKind::IsAMacro(path.to_string())).with_span(&self.scope, node)
@@ -688,6 +688,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             .kind
         {
             ExprKind::Fn(fn_kind, None) => fn_kind.clone(),
+            ExprKind::Defered(def) => FnKind::Defered(def.clone()),
             _ => return Err(CodeErrorKind::FunctionExpectedHere).with_span(&self.scope, node),
         };
 
@@ -778,6 +779,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             self.visit(node.child_by_field_name("body").unwrap())?
         });
 
+        // TODO: This is a mess, it should not be so verbose to unsugar a simple for loop
         let mut resolver = NameResolver::new();
         let unified_fn = match resolver.resolve_item(self.scope.clone(), PathSegment("iter").into())
         {
@@ -794,7 +796,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             .alloc_with_no_span(self.ast),
             ExprKind::Block(
                 vec![StatementKind::LetDeclaration(LetDeclaration {
-                    id: id,
+                    id,
                     typ: None,
                     value: Some(
                         ExprKind::Field(
@@ -906,7 +908,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         .alloc_with_no_span(self.ast)];
 
         let ret = arms.into_iter().rfold(
-            default_arm.unwrap_or(ExprKind::Void.alloc_with_no_span(self.ast)),
+            default_arm.unwrap_or_else(|| ExprKind::Void.alloc_with_no_span(self.ast)),
             |acc, (arm_node, alternatives, value)| {
                 // TODO: add spans here
                 let cmp = alternatives

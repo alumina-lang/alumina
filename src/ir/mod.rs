@@ -55,12 +55,10 @@ impl<'ir> IrCtx<'ir> {
     }
 
     pub fn make_symbol(&'ir self) -> IRItemP<'ir> {
-        let inner = self.arena.alloc(IRItemCell {
+        self.arena.alloc(IRItemCell {
             id: self.make_id(),
             contents: OnceCell::new(),
-        });
-
-        inner
+        })
     }
 }
 
@@ -228,10 +226,7 @@ impl<'ir> Ty<'ir> {
     }
 
     pub fn is_never(&self) -> bool {
-        match self {
-            Ty::Builtin(BuiltinType::Never) => true,
-            _ => false,
-        }
+        matches!(self, Ty::Builtin(BuiltinType::Never))
     }
 
     pub fn is_zero_sized(&self) -> bool {
@@ -395,10 +390,7 @@ impl<'ir> IRItemCell<'ir> {
     }
 
     pub fn is_struct_like(&self) -> bool {
-        match self.contents.get() {
-            Some(IRItem::StructLike(_)) => true,
-            _ => false,
-        }
+        matches!(self.contents.get(), Some(IRItem::StructLike(_)))
     }
 }
 pub struct IRItemCell<'ir> {
@@ -532,26 +524,16 @@ impl<'ir> Expr<'ir> {
     pub fn diverges(&self) -> bool {
         match self.value_type {
             ValueType::LValue => false,
-            ValueType::RValue => match self.ty {
-                // _ => match self.ty {
-                Ty::Builtin(BuiltinType::Never) => true,
-                _ => false,
-            },
+            ValueType::RValue => matches!(self.ty, Ty::Builtin(BuiltinType::Never)),
         }
     }
 
     pub fn is_void(&self) -> bool {
-        match self.kind {
-            ExprKind::Void => true,
-            _ => false,
-        }
+        matches!(self.kind, ExprKind::Void)
     }
 
     pub fn is_unreachable(&self) -> bool {
-        match self.kind {
-            ExprKind::Unreachable => true,
-            _ => false,
-        }
+        matches!(self.kind, ExprKind::Unreachable)
     }
 
     pub fn pure(&self) -> bool {

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    ast::{DeferredFn, Expr, FieldInitializer, FnKind, Placeholder},
+    ast::{Expr, FieldInitializer, FnKind},
     common::{AluminaError, ArenaAllocatable},
 };
 
@@ -126,7 +126,7 @@ impl<'ast> Rebinder<'ast> {
             Field(a, name, assoc_fn) => Field(self.visit_expr(a)?, name, assoc_fn),
             Struct(ty, inits) => {
                 let inits: Vec<_> = inits
-                    .into_iter()
+                    .iter()
                     .map(|init| {
                         self.visit_expr(init.value).map(|value| FieldInitializer {
                             name: init.name,
@@ -151,10 +151,14 @@ impl<'ast> Rebinder<'ast> {
                 self.visit_expr(els)?,
             ),
             Cast(inner, typ) => Cast(self.visit_expr(inner)?, self.visit_typ(typ)?),
+            Defered(ref def) => Defered(crate::ast::Defered {
+                typ: self.visit_typ(def.typ)?,
+                name: def.name,
+            }),
             Fn(ref kind, generic_args) => {
                 let kind = match kind {
                     FnKind::Normal(_) => kind.clone(),
-                    FnKind::Defered(def) => FnKind::Defered(DeferredFn {
+                    FnKind::Defered(def) => FnKind::Defered(crate::ast::Defered {
                         typ: self.visit_typ(def.typ)?,
                         name: def.name,
                     }),

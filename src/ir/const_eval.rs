@@ -379,18 +379,18 @@ impl<'ir> Div for Value<'ir> {
         use Value::*;
 
         let result = match (self, other) {
-            (U8(a), U8(b)) => a.checked_div(b).map(|v| U8(v)),
-            (U16(a), U16(b)) => a.checked_div(b).map(|v| U16(v)),
-            (U32(a), U32(b)) => a.checked_div(b).map(|v| U32(v)),
-            (U64(a), U64(b)) => a.checked_div(b).map(|v| U64(v)),
-            (U128(a), U128(b)) => a.checked_div(b).map(|v| U128(v)),
-            (I8(a), I8(b)) => a.checked_div(b).map(|v| I8(v)),
-            (I16(a), I16(b)) => a.checked_div(b).map(|v| I16(v)),
-            (I32(a), I32(b)) => a.checked_div(b).map(|v| I32(v)),
-            (I64(a), I64(b)) => a.checked_div(b).map(|v| I64(v)),
-            (I128(a), I128(b)) => a.checked_div(b).map(|v| I128(v)),
-            (USize(a), USize(b)) => a.checked_div(b).map(|v| USize(v)),
-            (ISize(a), ISize(b)) => a.checked_div(b).map(|v| ISize(v)),
+            (U8(a), U8(b)) => a.checked_div(b).map(U8),
+            (U16(a), U16(b)) => a.checked_div(b).map(U16),
+            (U32(a), U32(b)) => a.checked_div(b).map(U32),
+            (U64(a), U64(b)) => a.checked_div(b).map(U64),
+            (U128(a), U128(b)) => a.checked_div(b).map(U128),
+            (I8(a), I8(b)) => a.checked_div(b).map(I8),
+            (I16(a), I16(b)) => a.checked_div(b).map(I16),
+            (I32(a), I32(b)) => a.checked_div(b).map(I32),
+            (I64(a), I64(b)) => a.checked_div(b).map(I64),
+            (I128(a), I128(b)) => a.checked_div(b).map(I128),
+            (USize(a), USize(b)) => a.checked_div(b).map(USize),
+            (ISize(a), ISize(b)) => a.checked_div(b).map(ISize),
             _ => None,
         };
 
@@ -404,18 +404,18 @@ impl<'ir> Rem for Value<'ir> {
         use Value::*;
 
         let result = match (self, other) {
-            (U8(a), U8(b)) => a.checked_rem(b).map(|v| U8(v)),
-            (U16(a), U16(b)) => a.checked_rem(b).map(|v| U16(v)),
-            (U32(a), U32(b)) => a.checked_rem(b).map(|v| U32(v)),
-            (U64(a), U64(b)) => a.checked_rem(b).map(|v| U64(v)),
-            (U128(a), U128(b)) => a.checked_rem(b).map(|v| U128(v)),
-            (I8(a), I8(b)) => a.checked_rem(b).map(|v| I8(v)),
-            (I16(a), I16(b)) => a.checked_rem(b).map(|v| I16(v)),
-            (I32(a), I32(b)) => a.checked_rem(b).map(|v| I32(v)),
-            (I64(a), I64(b)) => a.checked_rem(b).map(|v| I64(v)),
-            (I128(a), I128(b)) => a.checked_rem(b).map(|v| I128(v)),
-            (USize(a), USize(b)) => a.checked_rem(b).map(|v| USize(v)),
-            (ISize(a), ISize(b)) => a.checked_rem(b).map(|v| ISize(v)),
+            (U8(a), U8(b)) => a.checked_rem(b).map(U8),
+            (U16(a), U16(b)) => a.checked_rem(b).map(U16),
+            (U32(a), U32(b)) => a.checked_rem(b).map(U32),
+            (U64(a), U64(b)) => a.checked_rem(b).map(U64),
+            (U128(a), U128(b)) => a.checked_rem(b).map(U128),
+            (I8(a), I8(b)) => a.checked_rem(b).map(I8),
+            (I16(a), I16(b)) => a.checked_rem(b).map(I16),
+            (I32(a), I32(b)) => a.checked_rem(b).map(I32),
+            (I64(a), I64(b)) => a.checked_rem(b).map(I64),
+            (I128(a), I128(b)) => a.checked_rem(b).map(I128),
+            (USize(a), USize(b)) => a.checked_rem(b).map(USize),
+            (ISize(a), ISize(b)) => a.checked_rem(b).map(ISize),
             _ => None,
         };
 
@@ -423,7 +423,7 @@ impl<'ir> Rem for Value<'ir> {
     }
 }
 
-pub fn const_eval<'ast, 'ir>(expr: ExprP<'ir>) -> Result<Value<'ir>, ()> {
+pub fn const_eval(expr: ExprP<'_>) -> Result<Value<'_>, ()> {
     match &expr.kind {
         ExprKind::Void => Ok(Value::Void),
         ExprKind::Binary(op, lhs, rhs) => {

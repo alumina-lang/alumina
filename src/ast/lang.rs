@@ -16,7 +16,7 @@ impl<'ast> LangItemMap<'ast> {
         self.0
             .get(&kind)
             .copied()
-            .ok_or_else(|| CodeErrorKind::MissingLangItem(kind))
+            .ok_or(CodeErrorKind::MissingLangItem(kind))
     }
 
     pub fn reverse_get(&self, item: ItemP<'ast>) -> Option<LangItemKind> {

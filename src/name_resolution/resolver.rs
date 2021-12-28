@@ -1,5 +1,5 @@
 use crate::{
-    ast::{AstId, ItemP},
+    ast::Ty,
     common::CodeErrorKind,
     name_resolution::{path::Path, scope::NamedItem},
 };
@@ -7,7 +7,7 @@ use std::collections::HashSet;
 
 use super::{
     path::PathSegment,
-    scope::{Scope, ScopeInner, ScopeType},
+    scope::{Scope, ScopeInner},
 };
 
 pub struct NameResolver<'ast, 'src> {
@@ -17,16 +17,17 @@ pub struct NameResolver<'ast, 'src> {
 #[derive(Debug)]
 pub enum ScopeResolution<'ast, 'src> {
     Scope(Scope<'ast, 'src>),
-    // It could happen that path is something like T::associated_fn where T
-    // is a generic placeholder. In this case we cannot statically resolve the path yet
-    // and we need to defer until monomorphization time.
-    Defered(AstId),
+    // Defered scope resolution is used where we cannot determine the item type during
+    // the first pass, e.g. when resolving a T::associated_fn where T is not monomorphized yet,
+    // but also to be able to resolve mixin methods, enum members and other type-associated
+    // items (type is TBD).
+    Defered(Ty<'ast>),
 }
 
 #[derive(Debug)]
 pub enum ItemResolution<'ast, 'src> {
     Item(NamedItem<'ast, 'src>),
-    Defered(AstId, PathSegment<'ast>),
+    Defered(Ty<'ast>, PathSegment<'ast>),
 }
 
 impl<'ast, 'src> NameResolver<'ast, 'src> {
@@ -69,12 +70,14 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
 
         for item in self_scope.inner().items_with_name(path.segments[0].0) {
             match item {
-                NamedItem::Placeholder(sym, _) => return Ok(ScopeResolution::Defered(*sym)),
-                NamedItem::Module(child_scope) | NamedItem::Impl(_, child_scope) => {
-                    return self.resolve_scope(child_scope.clone(), remainder);
+                NamedItem::Placeholder(sym, _) if path.segments.len() == 1 => {
+                    return Ok(ScopeResolution::Defered(Ty::Placeholder(*sym)))
                 }
-                NamedItem::Type(_, _, scope) if scope.typ() == ScopeType::Enum => {
-                    return self.resolve_scope(scope.clone(), remainder);
+                NamedItem::Type(item, _, _) if path.segments.len() == 1 => {
+                    return Ok(ScopeResolution::Defered(Ty::NamedType(item)))
+                }
+                NamedItem::Module(child_scope) => {
+                    return self.resolve_scope(child_scope.clone(), remainder);
                 }
                 NamedItem::Alias(target) => {
                     return self.resolve_scope(self_scope.clone(), target.join_with(remainder));

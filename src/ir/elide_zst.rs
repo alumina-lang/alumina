@@ -85,7 +85,7 @@ impl<'ir> ZstElider<'ir> {
 
                 let ret = self.elide_zst_expr(ret);
                 statements.retain(|s| match s {
-                    Statement::Label(id) => self.used_ids.contains(&id),
+                    Statement::Label(id) => self.used_ids.contains(id),
                     _ => true,
                 });
                 builder.block(statements, ret)

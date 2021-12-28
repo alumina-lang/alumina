@@ -1,9 +1,22 @@
 use std::backtrace::Backtrace;
 use std::fmt::Debug;
 use std::io;
+use std::rc::Rc;
 use std::result::Result;
 use thiserror::Error;
 use tree_sitter::Node;
+
+macro_rules! ice {
+    ($why:literal) => {
+        return Err(CodeErrorKind::InternalError(
+            $why.to_string(),
+            std::rc::Rc::new(std::backtrace::Backtrace::capture()),
+        ))
+        .with_no_span()
+    };
+}
+
+pub(crate) use ice;
 
 #[derive(Debug, Error)]
 pub enum AluminaError {
@@ -99,8 +112,8 @@ pub enum CodeErrorKind {
     MissingLangItem(LangItemKind),
     #[error("only slices can be range-indexed")]
     RangeIndexNonSlice,
-    #[error("internal error")]
-    InternalError,
+    #[error("internal error: {}", .0)]
+    InternalError(String, Rc<Backtrace>),
     #[error("local with unknown type")]
     LocalWithUnknownType,
     #[error("unsupported ABI {}", .0)]
@@ -143,8 +156,6 @@ pub enum CodeErrorKind {
     NotInAFunctionScope,
     #[error("unknown builtin macro {}", .0)]
     UnknownBuiltinMacro(String),
-    #[error("associated functions for this type not supported yet")]
-    AssocFnNonNamedType,
     #[error("{} is not a protocol", .0)]
     NotAProtocol(String),
     #[error("protocol is not expected here")]

@@ -52,12 +52,10 @@ impl<'ast> AstCtx<'ast> {
     }
 
     pub fn make_symbol(&'ast self) -> ItemP<'ast> {
-        let inner = self.arena.alloc(ItemCell {
+        self.arena.alloc(ItemCell {
             id: self.make_id(),
             contents: OnceCell::new(),
-        });
-
-        inner
+        })
     }
 
     pub fn parse_path(&'ast self, path: &'_ str) -> Path<'ast> {
@@ -161,28 +159,25 @@ pub enum BuiltinType {
 
 impl BuiltinType {
     pub fn is_integer(&self) -> bool {
-        match self {
+        matches!(
+            self,
             BuiltinType::U8
-            | BuiltinType::I8
-            | BuiltinType::U16
-            | BuiltinType::I16
-            | BuiltinType::U32
-            | BuiltinType::I32
-            | BuiltinType::U64
-            | BuiltinType::I64
-            | BuiltinType::U128
-            | BuiltinType::I128
-            | BuiltinType::USize
-            | BuiltinType::ISize => true,
-            _ => false,
-        }
+                | BuiltinType::I8
+                | BuiltinType::U16
+                | BuiltinType::I16
+                | BuiltinType::U32
+                | BuiltinType::I32
+                | BuiltinType::U64
+                | BuiltinType::I64
+                | BuiltinType::U128
+                | BuiltinType::I128
+                | BuiltinType::USize
+                | BuiltinType::ISize
+        )
     }
 
     pub fn is_float(&self) -> bool {
-        match self {
-            BuiltinType::F32 | BuiltinType::F64 => true,
-            _ => false,
-        }
+        matches!(self, BuiltinType::F32 | BuiltinType::F64)
     }
 
     pub fn is_numeric(&self) -> bool {
@@ -190,22 +185,19 @@ impl BuiltinType {
     }
 
     pub fn is_signed(&self) -> bool {
-        match self {
+        matches!(
+            self,
             BuiltinType::I8
-            | BuiltinType::I16
-            | BuiltinType::I32
-            | BuiltinType::I64
-            | BuiltinType::I128
-            | BuiltinType::ISize => true,
-            _ => false,
-        }
+                | BuiltinType::I16
+                | BuiltinType::I32
+                | BuiltinType::I64
+                | BuiltinType::I128
+                | BuiltinType::ISize
+        )
     }
 
     pub fn is_void(&self) -> bool {
-        match self {
-            BuiltinType::Void => true,
-            _ => false,
-        }
+        matches!(self, BuiltinType::Void)
     }
 }
 
@@ -299,10 +291,7 @@ impl<'ast> ItemCell<'ast> {
     }
 
     pub fn is_struct_like(&self) -> bool {
-        match self.contents.get() {
-            Some(Item::StructLike(_)) => true,
-            _ => false,
-        }
+        matches!(self.contents.get(), Some(Item::StructLike(_)))
     }
 
     pub fn get_macro(&'ast self) -> &'ast Macro<'ast> {
@@ -363,7 +352,7 @@ pub struct Field<'ast> {
 #[derive(Debug, Clone, Copy)]
 pub struct EnumMember<'ast> {
     pub id: AstId,
-    pub name: Option<&'ast str>,
+    pub name: &'ast str,
     pub value: Option<ExprP<'ast>>,
     pub span: Option<Span>,
 }
@@ -535,17 +524,14 @@ pub enum BinOp {
 
 impl BinOp {
     pub fn is_comparison(&self) -> bool {
-        match self {
-            BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::LEq | BinOp::Gt | BinOp::GEq => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::LEq | BinOp::Gt | BinOp::GEq
+        )
     }
 
     pub fn is_logical(&self) -> bool {
-        match self {
-            BinOp::And | BinOp::Or => true,
-            _ => false,
-        }
+        matches!(self, BinOp::And | BinOp::Or)
     }
 }
 
@@ -582,7 +568,7 @@ pub struct FieldInitializer<'ast> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-pub struct DeferredFn<'ast> {
+pub struct Defered<'ast> {
     pub typ: TyP<'ast>,
     pub name: &'ast str,
 }
@@ -590,7 +576,7 @@ pub struct DeferredFn<'ast> {
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum FnKind<'ast> {
     Normal(ItemP<'ast>),
-    Defered(DeferredFn<'ast>),
+    Defered(Defered<'ast>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
@@ -598,6 +584,8 @@ pub enum ExprKind<'ast> {
     Block(&'ast [Statement<'ast>], ExprP<'ast>),
     Binary(BinOp, ExprP<'ast>, ExprP<'ast>),
     Call(ExprP<'ast>, &'ast [ExprP<'ast>]),
+
+    Defered(Defered<'ast>),
     DeferedMacro(ItemP<'ast>, &'ast [ExprP<'ast>]),
 
     Fn(FnKind<'ast>, Option<&'ast [TyP<'ast>]>),

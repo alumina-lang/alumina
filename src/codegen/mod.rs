@@ -120,7 +120,7 @@ impl Display for CName<'_> {
     }
 }
 
-pub fn codegen<'ir>(items: &[IRItemP<'ir>]) -> Result<String, AluminaError> {
+pub fn codegen(items: &[IRItemP<'_>]) -> Result<String, AluminaError> {
     let ctx = CodegenCtx::new();
     let type_writer = TypeWriter::new(&ctx);
     let mut function_writer = FunctionWriter::new(&ctx, &type_writer);
@@ -134,9 +134,8 @@ pub fn codegen<'ir>(items: &[IRItemP<'ir>]) -> Result<String, AluminaError> {
     }
 
     for item in items {
-        match item.get() {
-            IRItem::Function(f) => function_writer.write_function_body(item.id, f)?,
-            _ => {}
+        if let IRItem::Function(f) = item.get() {
+            function_writer.write_function_body(item.id, f)?
         }
     }
 

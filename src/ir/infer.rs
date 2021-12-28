@@ -29,7 +29,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                 // those do not participate in inference
             }
             (ast::Ty::Placeholder(id), _) => {
-                if let Some(existing) = inferred.get(&id) {
+                if let Some(existing) = inferred.get(id) {
                     if *existing != tgt {
                         return Err(());
                     }

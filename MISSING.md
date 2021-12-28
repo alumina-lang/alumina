@@ -8,10 +8,11 @@
 - Force inlining in IR (especially for slice coercions - function call is an overkill)
     - It's not a priority, since C compiler can inline perfectly fine, except in special cases like `alloca` where the allocated buffer cannot leave the stack frame. To have a good wrapper around `alloca`, it needs to be force-inlined except if done in a macro (but macros don't really have a good type parameter system, params can only be expressions).
 - impl for builtin types/arrays/...?
-    - Now easier to do with lang items :)
+    - Done for primitive types, tuples and arrays are TBD (need `const usize` generic args and variadics to do nicely)
 - stack overflow in codegen stage because infinite size recursive structs are not rejected during monomorphization
     - could be a similar issue with protocols, though these are more coservative vis-a-vis recursion
 - Whole ZST and divergence handling might still be buggy, in particular, uninitialized variables of `!` type might be problematic since lowering is quite liberal with making temporary name bindings for various stuff.
+    - It might be fine now, it's been a while since I last ran into a ZST bug
 - compile flags support (cfg)
 - if tentative monomorphization fails (e.g. error), but type inference still succeeds, we are left with unpopulated symbols (maybe fixed, not sure)
 - generic-binding typedefs (e.g. `type HashSet<T> = HashMap<T, ()>`). 
@@ -22,9 +23,6 @@
 - unqualified types gaps:
   - unqualified string in if/else does not coerce to a slice
   - probably other places too, since it's very ad-hoc
-- name resolution
-  - mixin methods should be resolvable via defered name resolution
-  - enum members and enum associated fns should be resolvable
 - operator overloading
   - forward ==, !=, >, <, >=, <= to Equatable/Comparable (dubious - is this desired or not)
 

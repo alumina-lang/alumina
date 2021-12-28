@@ -33,7 +33,7 @@ impl<'ir> ExpressionBuilder<'ir> {
         'outer: loop {
             match iter.next() {
                 Some(Expression(expr)) if expr.diverges() => {
-                    while let Some(stmt) = iter.next() {
+                    for stmt in iter.by_ref() {
                         match stmt {
                             // If there is a label after an unreachable expression, the remainder might not
                             // actually be unreachable, as something might jump to it
@@ -51,7 +51,7 @@ impl<'ir> ExpressionBuilder<'ir> {
                     kind: Block(stmts, ret),
                     ..
                 })) => {
-                    self.fill_block(target, stmts.into_iter().cloned())?;
+                    self.fill_block(target, stmts.iter().cloned())?;
                     target.push(Expression(ret))
                 }
                 Some(Expression(expr)) if expr.pure() => {}
@@ -114,7 +114,7 @@ impl<'ir> ExpressionBuilder<'ir> {
 
     pub fn diverges(&self, exprs: impl IntoIterator<Item = ExprP<'ir>>) -> ExprP<'ir> {
         let block = self.block(
-            exprs.into_iter().map(|expr| Statement::Expression(expr)),
+            exprs.into_iter().map(Statement::Expression),
             self.void(
                 self.ir.intern_type(Ty::Builtin(BuiltinType::Void)),
                 ValueType::RValue,

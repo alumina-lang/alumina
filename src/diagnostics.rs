@@ -8,6 +8,7 @@ use crate::common::{AluminaError, CodeError, FileId, Marker};
 enum Level {
     Error = 0,
     Warning = 1,
+    #[allow(dead_code)]
     Note = 2,
 }
 
@@ -65,6 +66,7 @@ impl DiagnosticContext {
         self.inner.borrow_mut().messages.push((Level::Warning, err));
     }
 
+    #[allow(dead_code)]
     pub fn add_note(&self, err: CodeError) {
         self.inner.borrow_mut().messages.push((Level::Note, err));
     }
@@ -91,7 +93,7 @@ impl DiagnosticContext {
                 Level::Note => "note".green(),
             };
 
-            let tagline = format!("{}: {}", level, error.kind.to_string()).bold();
+            let tagline = format!("{}: {}", level, error.kind).bold();
             eprintln!("{}", tagline);
 
             // An error can happen deep inside the code that we didn't write because most of the typechecking

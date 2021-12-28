@@ -1,7 +1,6 @@
 use crate::{
     ast::Span,
     common::{AluminaError, CodeError, CodeErrorKind, FileId, Marker},
-    utils::NodeWrapper,
 };
 use once_cell::unsync::OnceCell;
 use std::marker::PhantomData;

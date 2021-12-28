@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use once_cell::unsync::OnceCell;
 
 use crate::{
-    ast::{AstCtx, AstId, BuiltinType, Field, Function, Item, ItemP, Parameter, StructLike, Ty},
+    ast::{AstCtx, BuiltinType, Field, Function, Item, ItemP, Parameter, StructLike, Ty},
     common::{AluminaError, ArenaAllocatable, CodeErrorKind, WithSpanDuringParsing},
     diagnostics::DiagnosticContext,
     intrinsics::intrinsic_kind,
@@ -59,13 +59,13 @@ impl<'ast> AstItemMaker<'ast> {
         let result = attribute_node
             .children(&mut cursor)
             .map(|n| code.node_text(n.child_by_field_name("name").unwrap()))
-            .filter_map(|s| match lang_item_kind(s) {
+            .filter(|s| match lang_item_kind(s) {
                 Some(kind) => {
                     // We allow lang items to be overriden.
                     self.lang_items.insert(kind, item);
-                    None
+                    false
                 }
-                None => Some(s),
+                None => true,
             })
             .filter_map(|name| match name {
                 "export" => Some(Attribute::Export),
@@ -105,11 +105,11 @@ impl<'ast> AstItemMaker<'ast> {
     ) -> Result<&'ast [Mixin<'ast>], AluminaError> {
         let mut mixins = Vec::new();
 
-        for (name, item) in scope.inner().all_items() {
+        for (_name, item) in scope.inner().all_items() {
             match item {
                 NamedItem::Mixin(node, scope) => {
                     let mut placeholders = Vec::new();
-                    for (name, item) in scope.inner().all_items() {
+                    for (_name, item) in scope.inner().all_items() {
                         match item {
                             NamedItem::Placeholder(id, node) => {
                                 placeholders.push(Placeholder {
@@ -240,7 +240,7 @@ impl<'ast> AstItemMaker<'ast> {
         let mut placeholders = Vec::new();
         let code = scope.code().unwrap();
 
-        for (name, item) in scope.inner().all_items() {
+        for (_name, item) in scope.inner().all_items() {
             match item {
                 NamedItem::Placeholder(id, node) => {
                     placeholders.push(Placeholder {
@@ -264,7 +264,7 @@ impl<'ast> AstItemMaker<'ast> {
         let result = Item::Protocol(Protocol {
             name,
             placeholders: placeholders.alloc_on(self.ast),
-            associated_fns: associated_fns,
+            associated_fns,
             attributes: self.get_attributes(symbol, code, node)?,
             span: Some(span),
         });
@@ -322,7 +322,7 @@ impl<'ast> AstItemMaker<'ast> {
                     };
 
                     members.push(EnumMember {
-                        name,
+                        name: name.unwrap(),
                         id: *id,
                         value: expr,
                         span: Some(span),
@@ -432,7 +432,7 @@ impl<'ast> AstItemMaker<'ast> {
             Some("\"intrinsic\"") => {
                 let result = Item::Intrinsic(Intrinsic {
                     kind: intrinsic_kind(name.unwrap())
-                        .ok_or(CodeErrorKind::UnknownIntrinsic(name.unwrap().to_string()))
+                        .ok_or_else(|| CodeErrorKind::UnknownIntrinsic(name.unwrap().to_string()))
                         .with_span(&scope, node)?,
                     generic_count: placeholders.len(),
                     arg_count: parameters.len(),
@@ -450,7 +450,7 @@ impl<'ast> AstItemMaker<'ast> {
             .child_by_field_name("return_type")
             .map(|n| TypeVisitor::new(self.ast, scope.clone()).visit(n))
             .transpose()?
-            .unwrap_or(self.ast.intern_type(Ty::Builtin(BuiltinType::Void)));
+            .unwrap_or_else(|| self.ast.intern_type(Ty::Builtin(BuiltinType::Void)));
 
         let function_body = body
             .map(|body| {

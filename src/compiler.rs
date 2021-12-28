@@ -89,6 +89,6 @@ impl Compiler {
         // Dunno why the borrow checker is not letting me do that, it should be possible.
         // drop(ast);
 
-        Ok(codegen::codegen(&items[..])?)
+        codegen::codegen(&items[..])
     }
 }

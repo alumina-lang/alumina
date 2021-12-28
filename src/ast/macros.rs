@@ -6,7 +6,7 @@ use crate::{
     ast::{
         AstCtx, BuiltinMacro, BuiltinMacroKind, Expr, ExprKind, FieldInitializer, Item, ItemP, Lit,
     },
-    common::{AluminaError, ArenaAllocatable, CodeErrorKind},
+    common::{ice, AluminaError, ArenaAllocatable, CodeErrorKind},
     diagnostics::{line_and_column, DiagnosticContext},
     name_resolution::scope::{NamedItem, Scope},
 };
@@ -63,7 +63,7 @@ impl<'ast> MacroMaker<'ast> {
                         return Err(CodeErrorKind::RecursiveMacroCall).with_span(&scope, node);
                     }
                 }
-                Item::BuiltinMacro(m) => {
+                Item::BuiltinMacro(_) => {
                     return Ok(());
                 }
                 _ => unreachable!(),
@@ -198,7 +198,7 @@ impl<'ast> MacroExpander<'ast> {
         }
     }
 
-    pub fn expand(mut self) -> Result<ExprP<'ast>, AluminaError> {
+    pub fn expand(self) -> Result<ExprP<'ast>, AluminaError> {
         match self.r#macro.get() {
             Item::Macro(m) => self.expand_regular(m),
             Item::BuiltinMacro(BuiltinMacro { kind, .. }) => self.expand_builtin(kind),
@@ -338,7 +338,7 @@ impl<'ast> MacroExpander<'ast> {
             Field(a, name, assoc_fn) => Field(self.visit(a)?, name, assoc_fn),
             Struct(ty, inits) => {
                 let inits: Vec<_> = inits
-                    .into_iter()
+                    .iter()
                     .map(|init| {
                         self.visit(init.value).map(|value| FieldInitializer {
                             name: init.name,
@@ -361,9 +361,14 @@ impl<'ast> MacroExpander<'ast> {
                 If(self.visit(condition)?, self.visit(then)?, self.visit(els)?)
             }
             Cast(inner, typ) => Cast(self.visit(inner)?, typ),
-            Continue | EnumValue(_, _) | Lit(_) | Void | Fn(_, _) | Static(_) | Const(_) => {
-                expr.kind.clone()
-            }
+            Continue
+            | EnumValue(_, _)
+            | Lit(_)
+            | Void
+            | Fn(_, _)
+            | Defered(_)
+            | Static(_)
+            | Const(_) => expr.kind.clone(),
         };
 
         let result = Expr {
@@ -408,9 +413,9 @@ impl<'ast> MacroExpander<'ast> {
                 assert_args!(self, 1);
                 let name = string_arg!(self, 0);
 
-                let value = match std::str::from_utf8(name).map(|n| std::env::var(n)) {
+                let value = match std::str::from_utf8(name).map(std::env::var) {
                     Ok(Ok(v)) => self.ast.arena.alloc_slice_copy(v.as_bytes()),
-                    _ => return Err(CodeErrorKind::InternalError).with_span(self.invocation_span),
+                    _ => ice!("invalid UTF-8 in environment variable name"),
                 };
 
                 Ok(Expr {
