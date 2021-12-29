@@ -377,9 +377,15 @@ pub struct Mixin<'ast> {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct Bound<'ast> {
+    pub span: Option<Span>,
+    pub typ: TyP<'ast>,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct Placeholder<'ast> {
     pub id: AstId,
-    pub bounds: &'ast [TyP<'ast>],
+    pub bounds: &'ast [Bound<'ast>],
 }
 
 #[derive(Debug)]
@@ -644,6 +650,7 @@ impl_allocatable!(
     MacroParameter,
     ItemCell<'_>,
     FieldInitializer<'_>,
+    Bound<'_>,
     AssociatedFn<'_>,
     EnumMember<'_>,
     Placeholder<'_>,

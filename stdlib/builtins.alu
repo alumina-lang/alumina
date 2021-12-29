@@ -59,24 +59,24 @@ impl _bool {
 #[lang(impl_never)]
 struct _never {}
 impl _never {
-    mixin Equatable<bool>;
-    mixin Comparable<u8>;
-
     fn equals(lhs: &!, rhs: &!) -> bool {
         std::intrinsics::unreachable()
     }
-
+    
     fn compare(lhs: &!, rhs: &!) -> Ordering {
         std::intrinsics::unreachable()
     }
-
+    
     fn hash<H: Hasher<H>>(self: &!, hasher: &mut H) {
         std::intrinsics::unreachable()
     }
-
+    
     fn fmt<F: Formatter<F>>(self: &!, formatter: &mut F)  {
         std::intrinsics::unreachable()
     }
+
+    mixin Equatable<bool>;
+    mixin Comparable<u8>;
 }
 
 protocol _BuiltinComparable<Self: proto::Numeric> {
@@ -112,66 +112,71 @@ protocol _FloatFormattable<Self: proto::FloatingPoint, F: Formatter<F>> {
 #[lang(impl_u8)]
 struct _u8 {}
 impl _u8 {
+    fn rotate_left(self: u8, shift: usize) -> u8 {
+        (self << shift) | (self >> (8 - shift))
+    }
+
     mixin _BuiltinComparable<u8>;
     mixin<H: Hasher<H>> Hashable<u8, H>;
     mixin Equatable<u8>;
     mixin Comparable<u8>;
     mixin<F: Formatter<F>> _IntegerFormattable<u8, F>;
-    fn rotate_left(self: u8, shift: usize) -> u8 {
-        (self << shift) | (self >> (8 - shift))
-    }
 }
 
 #[lang(impl_u16)]
 struct _u16 {}
 impl _u16 {
+    fn rotate_left(self: u16, shift: usize) -> u16 {
+        (self << shift) | (self >> (16 - shift))
+    }
+
     mixin _BuiltinComparable<u16>;
     mixin<H: Hasher<H>> Hashable<u16, H>;
     mixin Equatable<u16>;
     mixin Comparable<u16>;
     mixin<F: Formatter<F>> _IntegerFormattable<u16, F>;
-    fn rotate_left(self: u16, shift: usize) -> u16 {
-        (self << shift) | (self >> (16 - shift))
-    }
 }
 
 #[lang(impl_u32)]
 struct _u32 {}
 impl _u32 {
+    fn rotate_left(self: u32, shift: usize) -> u32 {
+        (self << shift) | (self >> (32 - shift))
+    }
+
     mixin _BuiltinComparable<u32>;
     mixin<H: Hasher<H>> Hashable<u32, H>;
     mixin Equatable<u32>;
     mixin Comparable<u32>;
     mixin<F: Formatter<F>> _IntegerFormattable<u32, F>;
-    fn rotate_left(self: u32, shift: usize) -> u32 {
-        (self << shift) | (self >> (32 - shift))
-    }
 }
 
 #[lang(impl_u64)]
 struct _u64 {}
 impl _u64 {
+    fn rotate_left(self: u64, shift: usize) -> u64 {
+        (self << shift) | (self >> (64 - shift))
+    }
+
     mixin _BuiltinComparable<u64>;
     mixin<H: Hasher<H>> Hashable<u64, H>;
     mixin Equatable<u64>;
     mixin Comparable<u64>;
     mixin<F: Formatter<F>> _IntegerFormattable<u64, F>;
-    fn rotate_left(self: u64, shift: usize) -> u64 {
-        (self << shift) | (self >> (64 - shift))
-    }
 }
 
 #[lang(impl_u128)]
 struct _u128 {}
 impl _u128 {
+    fn rotate_left(self: u128, shift: usize) -> u128 {
+        (self << shift) | (self >> (128 - shift))
+    }
+    
     mixin _BuiltinComparable<u128>;
     mixin<H: Hasher<H>> Hashable<u128, H>;
     mixin Equatable<u128>;
     mixin Comparable<u128>;
     mixin<F: Formatter<F>> _IntegerFormattable<u128, F>;
-    fn rotate_left(self: u128, shift: usize) -> u128 {
-        (self << shift) | (self >> (128 - shift))
-    }
 }
 
 #[lang(impl_usize)]
@@ -268,6 +273,14 @@ impl _f64 {
 // is probably the best way without implementing it all inside the compiler
 // Also, who needs Rust-like macros when you have GitHub Copilot?
 
+macro _lexicographic_cmp(lhs, rhs) {
+    let cmp = lhs.compare(&rhs);
+    if cmp != Ordering::Equal {
+        return cmp;
+    }
+}
+
+
 #[lang(impl_tuple_1)]
 struct _tuple_1 {}
 impl _tuple_1 {
@@ -294,21 +307,29 @@ impl _tuple_1 {
 struct _tuple_2 {}
 impl _tuple_2 {
     #[inline]
-    fn equals<T1: Equatable<T1>, T2: Equatable<T2>>(lhs: &(T1, T2), rhs: &(T1, T2)) -> bool {
+    fn equals<
+        T1: Equatable<T1>, 
+        T2: Equatable<T2>
+    >(lhs: &(T1, T2), rhs: &(T1, T2)) -> bool {
         lhs.0.equals(&rhs.0) && lhs.1.equals(&rhs.1)
     }
 
     #[inline]
-    fn compare<T1: Comparable<T1>, T2: Comparable<T2>>(lhs: &(T1, T2), rhs: &(T1, T2)) -> Ordering {
-        let cmp = lhs.0.compare(&rhs.0);
-        if cmp != Ordering::Equal {
-            return cmp;
-        }
-        lhs.1.compare(&rhs.1)
+    fn compare<
+        T1: Comparable<T1>, 
+        T2: Comparable<T2>
+    >(lhs: &(T1, T2), rhs: &(T1, T2)) -> Ordering {
+        _lexicographic_cmp!(lhs.0, rhs.0);
+        _lexicographic_cmp!(lhs.1, lhs.1);
+        Ordering::Equal
     }
 
     #[inline]
-    fn hash<T1: Hashable<T1, H>, T2: Hashable<T2, H>, H: Hasher<H>>(lhs: &(T1, T2), h: &mut H) {
+    fn hash<
+        T1: Hashable<T1, H>, 
+        T2: Hashable<T2, H>, 
+        H: Hasher<H>
+    >(lhs: &(T1, T2), h: &mut H) {
         lhs.0.hash(h);
         lhs.1.hash(h);
     }
@@ -321,102 +342,153 @@ impl _tuple_2 {
 struct _tuple_3 {}
 impl _tuple_3 {
     #[inline]
-    fn equals<T1: Equatable<T1>, T2: Equatable<T2>, T3: Equatable<T3>>(lhs: &(T1, T2, T3), rhs: &(T1, T2, T3)) -> bool {
+    fn equals<
+        T1: Equatable<T1>,
+        T2: Equatable<T2>, 
+        T3: Equatable<T3>
+    >(lhs: &(T1, T2, T3), rhs: &(T1, T2, T3)) -> bool {
         lhs.0.equals(&rhs.0) && lhs.1.equals(&rhs.1) && lhs.2.equals(&rhs.2)
     }
 
     #[inline]
-    fn compare<T1: Comparable<T1>, T2: Comparable<T2>, T3: Comparable<T3>>(lhs: &(T1, T2, T3), rhs: &(T1, T2, T3)) -> Ordering {
-        let cmp = lhs.0.compare(&rhs.0);
-        if cmp != Ordering::Equal {
-            return cmp;
-        }
-        let cmp = lhs.1.compare(&rhs.1);
-        if cmp != Ordering::Equal {
-            return cmp;
-        }
-        lhs.2.compare(&rhs.2)
+    fn compare<
+        T1: Comparable<T1>, 
+        T2: Comparable<T2>, 
+        T3: Comparable<T3>
+    >(lhs: &(T1, T2, T3), rhs: &(T1, T2, T3)) -> Ordering {
+        _lexicographic_cmp!(lhs.0, rhs.0);
+        _lexicographic_cmp!(lhs.1, rhs.1);
+        _lexicographic_cmp!(lhs.2, rhs.2);
+        Ordering::Equal
     }
 
     #[inline]
-    fn hash<T1: Hashable<T1, H>, T2: Hashable<T2, H>, T3: Hashable<T3, H>, H: Hasher<H>>(lhs: &(T1, T2, T3), h: &mut H) {
+    fn hash<
+        T1: Hashable<T1, H>, 
+        T2: Hashable<T2, H>, 
+        T3: Hashable<T3, H>, 
+        H: Hasher<H>
+    >(lhs: &(T1, T2, T3), h: &mut H) {
         lhs.0.hash(h);
         lhs.1.hash(h);
         lhs.2.hash(h);
     }
 
-    mixin<T1: Equatable<T1>, T2: Equatable<T2>, T3: Equatable<T3>> Equatable<(T1, T2, T3)>;
-    mixin<T1: Comparable<T1>, T2: Comparable<T2>, T3: Comparable<T3>> Comparable<(T1, T2, T3)>;
+    mixin<
+        T1: Equatable<T1>, 
+        T2: Equatable<T2>, 
+        T3: Equatable<T3>
+    > Equatable<(T1, T2, T3)>;
+
+    mixin<
+        T1: Comparable<T1>,
+        T2: Comparable<T2>,
+        T3: Comparable<T3>
+    > Comparable<(T1, T2, T3)>;
 }
 
 #[lang(impl_tuple_4)]
 struct _tuple_4 {}
 impl _tuple_4 {
     #[inline]
-    fn equals<T1: Equatable<T1>, T2: Equatable<T2>, T3: Equatable<T3>, T4: Equatable<T4>>(lhs: &(T1, T2, T3, T4), rhs: &(T1, T2, T3, T4)) -> bool {
-        lhs.0.equals(&rhs.0) && lhs.1.equals(&rhs.1) && lhs.2.equals(&rhs.2) && lhs.3.equals(&rhs.3)
+    fn equals<
+        T1: Equatable<T1>,
+        T2: Equatable<T2>,
+        T3: Equatable<T3>,
+        T4: Equatable<T4>
+    >(lhs: &(T1, T2, T3, T4), rhs: &(T1, T2, T3, T4)) -> bool {
+        lhs.0.equals(&rhs.0) && 
+            lhs.1.equals(&rhs.1) && 
+            lhs.2.equals(&rhs.2) && 
+            lhs.3.equals(&rhs.3)
     }
 
     #[inline]
-    fn compare<T1: Comparable<T1>, T2: Comparable<T2>, T3: Comparable<T3>, T4: Comparable<T4>>(lhs: &(T1, T2, T3, T4), rhs: &(T1, T2, T3, T4)) -> Ordering {
-        let cmp = lhs.0.compare(&rhs.0);
-        if cmp != Ordering::Equal {
-            return cmp;
-        }
-        let cmp = lhs.1.compare(&rhs.1);
-        if cmp != Ordering::Equal {
-            return cmp;
-        }
-        let cmp = lhs.2.compare(&rhs.2);
-        if cmp != Ordering::Equal {
-            return cmp;
-        }
-        lhs.3.compare(&rhs.3)
+    fn compare<
+        T1: Comparable<T1>, 
+        T2: Comparable<T2>, 
+        T3: Comparable<T3>, 
+        T4: Comparable<T4>
+    >(lhs: &(T1, T2, T3, T4), rhs: &(T1, T2, T3, T4)) -> Ordering {
+        _lexicographic_cmp!(lhs.0, rhs.0);
+        _lexicographic_cmp!(lhs.1, rhs.1);
+        _lexicographic_cmp!(lhs.2, rhs.2);
+        _lexicographic_cmp!(lhs.3, rhs.3);
+        Ordering::Equal
     }
 
     #[inline]
-    fn hash<T1: Hashable<T1, H>, T2: Hashable<T2, H>, T3: Hashable<T3, H>, T4: Hashable<T4, H>, H: Hasher<H>>(lhs: &(T1, T2, T3, T4), h: &mut H) {
+    fn hash<
+        T1: Hashable<T1, H>, 
+        T2: Hashable<T2, H>, 
+        T3: Hashable<T3, H>,
+        T4: Hashable<T4, H>, 
+        H: Hasher<H>
+    >(lhs: &(T1, T2, T3, T4), h: &mut H) {
         lhs.0.hash(h);
         lhs.1.hash(h);
         lhs.2.hash(h);
         lhs.3.hash(h);
     }
 
-    mixin<T1: Equatable<T1>, T2: Equatable<T2>, T3: Equatable<T3>, T4: Equatable<T4>> Equatable<(T1, T2, T3, T4)>;
-    mixin<T1: Comparable<T1>, T2: Comparable<T2>, T3: Comparable<T3>, T4: Comparable<T4>> Comparable<(T1, T2, T3, T4)>;
+    mixin<
+        T1: Equatable<T1>, 
+        T2: Equatable<T2>, 
+        T3: Equatable<T3>, 
+        T4: Equatable<T4>
+    > Equatable<(T1, T2, T3, T4)>;
+
+    mixin<
+        T1: Comparable<T1>,
+        T2: Comparable<T2>,
+        T3: Comparable<T3>,
+        T4: Comparable<T4>
+    > Comparable<(T1, T2, T3, T4)>;
 }
 
 #[lang(impl_tuple_5)]
 struct _tuple_5 {}
 impl _tuple_5 {
     #[inline]
-    fn equals<T1: Equatable<T1>, T2: Equatable<T2>, T3: Equatable<T3>, T4: Equatable<T4>, T5: Equatable<T5>>(lhs: &(T1, T2, T3, T4, T5), rhs: &(T1, T2, T3, T4, T5)) -> bool {
-        lhs.0.equals(&rhs.0) && lhs.1.equals(&rhs.1) && lhs.2.equals(&rhs.2) && lhs.3.equals(&rhs.3) && lhs.4.equals(&rhs.4)
+    fn equals<
+        T1: Equatable<T1>, 
+        T2: Equatable<T2>, 
+        T3: Equatable<T3>, 
+        T4: Equatable<T4>, 
+        T5: Equatable<T5>
+    >(lhs: &(T1, T2, T3, T4, T5), rhs: &(T1, T2, T3, T4, T5)) -> bool {
+        lhs.0.equals(&rhs.0) && 
+            lhs.1.equals(&rhs.1) && 
+            lhs.2.equals(&rhs.2) && 
+            lhs.3.equals(&rhs.3) && 
+            lhs.4.equals(&rhs.4)
     }
 
     #[inline]
-    fn compare<T1: Comparable<T1>, T2: Comparable<T2>, T3: Comparable<T3>, T4: Comparable<T4>, T5: Comparable<T5>>(lhs: &(T1, T2, T3, T4, T5), rhs: &(T1, T2, T3, T4, T5)) -> Ordering {
-        let cmp = lhs.0.compare(&rhs.0);
-        if cmp != Ordering::Equal {
-            return cmp;
-        }
-        let cmp = lhs.1.compare(&rhs.1);
-        if cmp != Ordering::Equal {
-            return cmp;
-        }
-        let cmp = lhs.2.compare(&rhs.2);
-        if cmp != Ordering::Equal {
-            return cmp;
-        }
-        let cmp = lhs.3.compare(&rhs.3);
-        if cmp != Ordering::Equal {
-            return cmp;
-        }
-        lhs.4.compare(&rhs.4)
+    fn compare<
+        T1: Comparable<T1>, 
+        T2: Comparable<T2>, 
+        T3: Comparable<T3>, 
+        T4: Comparable<T4>, 
+        T5: Comparable<T5>
+    >(lhs: &(T1, T2, T3, T4, T5), rhs: &(T1, T2, T3, T4, T5)) -> Ordering {
+        _lexicographic_cmp!(lhs.0, rhs.0);
+        _lexicographic_cmp!(lhs.1, rhs.1);
+        _lexicographic_cmp!(lhs.2, rhs.2);
+        _lexicographic_cmp!(lhs.3, rhs.3);
+        _lexicographic_cmp!(lhs.4, rhs.4);
+        Ordering::Equal
     }
 
     #[inline]
-    fn hash<T1: Hashable<T1, H>, T2: Hashable<T2, H>, T3: Hashable<T3, H>, T4: Hashable<T4, H>, T5: Hashable<T5, H>, H: Hasher<H>>(lhs: &(T1, T2, T3, T4, T5), h: &mut H) {
+    fn hash<
+        T1: Hashable<T1, H>, 
+        T2: Hashable<T2, H>, 
+        T3: Hashable<T3, H>, 
+        T4: Hashable<T4, H>, 
+        T5: Hashable<T5, H>, 
+        H: Hasher<H>
+    >(lhs: &(T1, T2, T3, T4, T5), h: &mut H) {
         lhs.0.hash(h);
         lhs.1.hash(h);
         lhs.2.hash(h);
@@ -424,45 +496,77 @@ impl _tuple_5 {
         lhs.4.hash(h);
     }
 
-    mixin<T1: Equatable<T1>, T2: Equatable<T2>, T3: Equatable<T3>, T4: Equatable<T4>, T5: Equatable<T5>> Equatable<(T1, T2, T3, T4, T5)>;
-    mixin<T1: Comparable<T1>, T2: Comparable<T2>, T3: Comparable<T3>, T4: Comparable<T4>, T5: Comparable<T5>> Comparable<(T1, T2, T3, T4, T5)>;
+    mixin<
+        T1: Equatable<T1>, 
+        T2: Equatable<T2>, 
+        T3: Equatable<T3>, 
+        T4: Equatable<T4>,
+        T5: Equatable<T5>
+    > Equatable<(T1, T2, T3, T4, T5)>;
+
+    mixin<
+        T1: Comparable<T1>,
+        T2: Comparable<T2>,
+        T3: Comparable<T3>,
+        T4: Comparable<T4>,
+        T5: Comparable<T5>
+    > Comparable<(T1, T2, T3, T4, T5)>;
 }
 
 #[lang(impl_tuple_6)]
 struct _tuple_6 {}
 impl _tuple_6 {
     #[inline]
-    fn equals<T1: Equatable<T1>, T2: Equatable<T2>, T3: Equatable<T3>, T4: Equatable<T4>, T5: Equatable<T5>, T6: Equatable<T6>>(lhs: &(T1, T2, T3, T4, T5, T6), rhs: &(T1, T2, T3, T4, T5, T6)) -> bool {
-        lhs.0.equals(&rhs.0) && lhs.1.equals(&rhs.1) && lhs.2.equals(&rhs.2) && lhs.3.equals(&rhs.3) && lhs.4.equals(&rhs.4) && lhs.5.equals(&rhs.5)
+    fn equals<
+        T1: Equatable<T1>, 
+        T2: Equatable<T2>, 
+        T3: Equatable<T3>, 
+        T4: Equatable<T4>, 
+        T5: Equatable<T5>, 
+        T6: Equatable<T6>
+    >(
+        lhs: &(T1, T2, T3, T4, T5, T6), 
+        rhs: &(T1, T2, T3, T4, T5, T6)
+    ) -> bool {
+        lhs.0.equals(&rhs.0) && 
+            lhs.1.equals(&rhs.1) && 
+            lhs.2.equals(&rhs.2) && 
+            lhs.3.equals(&rhs.3) && 
+            lhs.4.equals(&rhs.4) && 
+            lhs.5.equals(&rhs.5)
     }
 
     #[inline]
-    fn compare<T1: Comparable<T1>, T2: Comparable<T2>, T3: Comparable<T3>, T4: Comparable<T4>, T5: Comparable<T5>, T6: Comparable<T6>>(lhs: &(T1, T2, T3, T4, T5, T6), rhs: &(T1, T2, T3, T4, T5, T6)) -> Ordering {
-        let cmp = lhs.0.compare(&rhs.0);
-        if cmp != Ordering::Equal {
-            return cmp;
-        }
-        let cmp = lhs.1.compare(&rhs.1);
-        if cmp != Ordering::Equal {
-            return cmp;
-        }
-        let cmp = lhs.2.compare(&rhs.2);
-        if cmp != Ordering::Equal {
-            return cmp;
-        }
-        let cmp = lhs.3.compare(&rhs.3);
-        if cmp != Ordering::Equal {
-            return cmp;
-        }
-        let cmp = lhs.4.compare(&rhs.4);
-        if cmp != Ordering::Equal {
-            return cmp;
-        }
-        lhs.5.compare(&rhs.5)
+    fn compare<
+        T1: Comparable<T1>, 
+        T2: Comparable<T2>, 
+        T3: Comparable<T3>, 
+        T4: Comparable<T4>, 
+        T5: Comparable<T5>, 
+        T6: Comparable<T6>
+    >(
+        lhs: &(T1, T2, T3, T4, T5, T6), 
+        rhs: &(T1, T2, T3, T4, T5, T6)
+    ) -> Ordering {
+        _lexicographic_cmp!(lhs.0, rhs.0);
+        _lexicographic_cmp!(lhs.1, rhs.1);
+        _lexicographic_cmp!(lhs.2, rhs.2);
+        _lexicographic_cmp!(lhs.3, rhs.3);
+        _lexicographic_cmp!(lhs.4, rhs.4);
+        _lexicographic_cmp!(lhs.5, rhs.5);
+        Ordering::Equal
     }
 
     #[inline]
-    fn hash<T1: Hashable<T1, H>, T2: Hashable<T2, H>, T3: Hashable<T3, H>, T4: Hashable<T4, H>, T5: Hashable<T5, H>, T6: Hashable<T6, H>, H: Hasher<H>>(lhs: &(T1, T2, T3, T4, T5, T6), h: &mut H) {
+    fn hash<
+        T1: Hashable<T1, H>, 
+        T2: Hashable<T2, H>, 
+        T3: Hashable<T3, H>, 
+        T4: Hashable<T4, H>, 
+        T5: Hashable<T5, H>, 
+        T6: Hashable<T6, H>, 
+        H: Hasher<H>
+    >(lhs: &(T1, T2, T3, T4, T5, T6), h: &mut H) {
         lhs.0.hash(h);
         lhs.1.hash(h);
         lhs.2.hash(h);
@@ -470,5 +574,208 @@ impl _tuple_6 {
         lhs.4.hash(h);
         lhs.5.hash(h);
     }
+
+    mixin<
+        T1: Equatable<T1>, 
+        T2: Equatable<T2>, 
+        T3: Equatable<T3>, 
+        T4: Equatable<T4>,
+        T5: Equatable<T5>,
+        T6: Equatable<T6>
+    > Equatable<(T1, T2, T3, T4, T5, T6)>;
+
+    mixin<
+        T1: Comparable<T1>,
+        T2: Comparable<T2>,
+        T3: Comparable<T3>,
+        T4: Comparable<T4>,
+        T5: Comparable<T5>,
+        T6: Comparable<T6>
+    > Comparable<(T1, T2, T3, T4, T5, T6)>;
 }
-        
+
+#[lang(impl_tuple_7)]
+struct _tuple_7 {}
+impl _tuple_7 {
+    #[inline]
+    fn equals<
+        T1: Equatable<T1>, 
+        T2: Equatable<T2>, 
+        T3: Equatable<T3>, 
+        T4: Equatable<T4>, 
+        T5: Equatable<T5>, 
+        T6: Equatable<T6>, 
+        T7: Equatable<T7>
+    >(
+        lhs: &(T1, T2, T3, T4, T5, T6, T7), 
+        rhs: &(T1, T2, T3, T4, T5, T6, T7)
+    ) -> bool {
+        lhs.0.equals(&rhs.0) && 
+            lhs.1.equals(&rhs.1) && 
+            lhs.2.equals(&rhs.2) && 
+            lhs.3.equals(&rhs.3) && 
+            lhs.4.equals(&rhs.4) && 
+            lhs.5.equals(&rhs.5) && 
+            lhs.6.equals(&rhs.6)
+    }
+
+    #[inline]
+    fn compare<
+        T1: Comparable<T1>, 
+        T2: Comparable<T2>, 
+        T3: Comparable<T3>, 
+        T4: Comparable<T4>, 
+        T5: Comparable<T5>, 
+        T6: Comparable<T6>, 
+        T7: Comparable<T7>
+    >(
+        lhs: &(T1, T2, T3, T4, T5, T6, T7), 
+        rhs: &(T1, T2, T3, T4, T5, T6, T7)
+    ) -> Ordering {
+        _lexicographic_cmp!(lhs.0, rhs.0);
+        _lexicographic_cmp!(lhs.1, rhs.1);
+        _lexicographic_cmp!(lhs.2, rhs.2);
+        _lexicographic_cmp!(lhs.3, rhs.3);
+        _lexicographic_cmp!(lhs.4, rhs.4);
+        _lexicographic_cmp!(lhs.5, rhs.5);
+        _lexicographic_cmp!(lhs.6, rhs.6);
+        Ordering::Equal
+    }
+
+    #[inline]
+    fn hash<
+        T1: Hashable<T1, H>, 
+        T2: Hashable<T2, H>, 
+        T3: Hashable<T3, H>, 
+        T4: Hashable<T4, H>, 
+        T5: Hashable<T5, H>, 
+        T6: Hashable<T6, H>, 
+        T7: Hashable<T7, H>, 
+        H: Hasher<H>
+    >(lhs: &(T1, T2, T3, T4, T5, T6, T7), h: &mut H) {
+        lhs.0.hash(h);
+        lhs.1.hash(h);
+        lhs.2.hash(h);
+        lhs.3.hash(h);
+        lhs.4.hash(h);
+        lhs.5.hash(h);
+        lhs.6.hash(h);
+    }
+
+    mixin<
+        T1: Equatable<T1>, 
+        T2: Equatable<T2>, 
+        T3: Equatable<T3>, 
+        T4: Equatable<T4>,
+        T5: Equatable<T5>,
+        T6: Equatable<T6>,
+        T7: Equatable<T7>
+    > Equatable<(T1, T2, T3, T4, T5, T6, T7)>;
+
+    mixin<
+        T1: Comparable<T1>,
+        T2: Comparable<T2>,
+        T3: Comparable<T3>,
+        T4: Comparable<T4>,
+        T5: Comparable<T5>,
+        T6: Comparable<T6>,
+        T7: Comparable<T7>
+    > Comparable<(T1, T2, T3, T4, T5, T6, T7)>;
+}
+
+#[lang(impl_tuple_8)]
+struct _tuple_8 {}
+impl _tuple_8 {
+    #[inline]
+    fn equals<
+        T1: Equatable<T1>, 
+        T2: Equatable<T2>, 
+        T3: Equatable<T3>, 
+        T4: Equatable<T4>, 
+        T5: Equatable<T5>, 
+        T6: Equatable<T6>, 
+        T7: Equatable<T7>, 
+        T8: Equatable<T8>
+    >(
+        lhs: &(T1, T2, T3, T4, T5, T6, T7, T8), 
+        rhs: &(T1, T2, T3, T4, T5, T6, T7, T8)
+    ) -> bool {
+        lhs.0.equals(&rhs.0) && 
+            lhs.1.equals(&rhs.1) && 
+            lhs.2.equals(&rhs.2) && 
+            lhs.3.equals(&rhs.3) && 
+            lhs.4.equals(&rhs.4) && 
+            lhs.5.equals(&rhs.5) && 
+            lhs.6.equals(&rhs.6) && 
+            lhs.7.equals(&rhs.7)
+    }
+
+    #[inline]
+    fn compare<
+        T1: Comparable<T1>, 
+        T2: Comparable<T2>, 
+        T3: Comparable<T3>, 
+        T4: Comparable<T4>, 
+        T5: Comparable<T5>, 
+        T6: Comparable<T6>, 
+        T7: Comparable<T7>, 
+        T8: Comparable<T8>
+    >(
+        lhs: &(T1, T2, T3, T4, T5, T6, T7, T8), 
+        rhs: &(T1, T2, T3, T4, T5, T6, T7, T8)
+    ) -> Ordering {
+        _lexicographic_cmp!(lhs.0, rhs.0);
+        _lexicographic_cmp!(lhs.1, rhs.1);
+        _lexicographic_cmp!(lhs.2, rhs.2);
+        _lexicographic_cmp!(lhs.3, rhs.3);
+        _lexicographic_cmp!(lhs.4, rhs.4);
+        _lexicographic_cmp!(lhs.5, rhs.5);
+        _lexicographic_cmp!(lhs.6, rhs.6);
+        _lexicographic_cmp!(lhs.7, rhs.7);
+        Ordering::Equal
+    }
+
+    #[inline]
+    fn hash<
+        T1: Hashable<T1, H>, 
+        T2: Hashable<T2, H>, 
+        T3: Hashable<T3, H>, 
+        T4: Hashable<T4, H>, 
+        T5: Hashable<T5, H>, 
+        T6: Hashable<T6, H>, 
+        T7: Hashable<T7, H>, 
+        T8: Hashable<T8, H>, 
+        H: Hasher<H>
+    >(lhs: &(T1, T2, T3, T4, T5, T6, T7, T8), h: &mut H) {
+        lhs.0.hash(h);
+        lhs.1.hash(h);
+        lhs.2.hash(h);
+        lhs.3.hash(h);
+        lhs.4.hash(h);
+        lhs.5.hash(h);
+        lhs.6.hash(h);
+        lhs.7.hash(h);
+    }
+
+    mixin<
+        T1: Equatable<T1>, 
+        T2: Equatable<T2>, 
+        T3: Equatable<T3>, 
+        T4: Equatable<T4>,
+        T5: Equatable<T5>,
+        T6: Equatable<T6>,
+        T7: Equatable<T7>,
+        T8: Equatable<T8>
+    > Equatable<(T1, T2, T3, T4, T5, T6, T7, T8)>;
+
+    mixin<
+        T1: Comparable<T1>,
+        T2: Comparable<T2>,
+        T3: Comparable<T3>,
+        T4: Comparable<T4>,
+        T5: Comparable<T5>,
+        T6: Comparable<T6>,
+        T7: Comparable<T7>,
+        T8: Comparable<T8>
+    > Comparable<(T1, T2, T3, T4, T5, T6, T7, T8)>;
+}

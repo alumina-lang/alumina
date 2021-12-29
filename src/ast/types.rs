@@ -13,6 +13,8 @@ use crate::{
     visitors::ScopedPathVisitor,
 };
 
+use super::{Bound, Span};
+
 pub struct TypeVisitor<'ast, 'src> {
     ast: &'ast AstCtx<'ast>,
     code: &'src ParseCtx<'src>,
@@ -40,13 +42,20 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
     pub fn parse_protocol_bounds(
         &mut self,
         node: tree_sitter::Node<'src>,
-    ) -> Result<&'ast [TyP<'ast>], AluminaError> {
+    ) -> Result<&'ast [Bound<'ast>], AluminaError> {
         let mut bounds = Vec::new();
         let mut cursor = node.walk();
 
         for bound in node.children_by_field_name("bound", &mut cursor) {
             self.accept_protocol = true;
-            bounds.push(self.visit(bound)?);
+            bounds.push(Bound {
+                span: Some(Span {
+                    start: node.start_byte(),
+                    end: node.end_byte(),
+                    file: self.scope.code().unwrap().file_id(),
+                }),
+                typ: self.visit(bound)?,
+            });
         }
 
         Ok(bounds.alloc_on(self.ast))

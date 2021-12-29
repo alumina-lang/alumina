@@ -315,8 +315,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let mut protocol_bounds = Vec::new();
         for (placeholder, ty) in s.placeholders.iter().zip(generic_args.iter()) {
             for bound in placeholder.bounds {
-                let bound = child.lower_type(bound)?;
-                protocol_bounds.push((bound, *ty));
+                let ir_bound = child.lower_type(bound.typ).append_span(bound.span)?;
+                protocol_bounds.push((bound.span, ir_bound, *ty));
             }
         }
 
@@ -376,8 +376,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let mut protocol_bounds = Vec::new();
         for (placeholder, ty) in s.placeholders.iter().zip(generic_args.iter()) {
             for bound in placeholder.bounds {
-                let bound = child.lower_type(bound)?;
-                protocol_bounds.push((bound, *ty));
+                let ir_bound = child.lower_type(bound.typ).append_span(bound.span)?;
+                protocol_bounds.push((bound.span, ir_bound, *ty));
             }
         }
 
@@ -413,17 +413,17 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
     fn check_protocol_bounds(
         &mut self,
-        bounds: Vec<(ir::TyP<'ir>, ir::TyP<'ir>)>,
+        bounds: Vec<(Option<ast::Span>, ir::TyP<'ir>, ir::TyP<'ir>)>,
     ) -> Result<(), AluminaError> {
-        for (bound, ty) in bounds {
-            match self.check_protocol_bound(bound, ty)? {
+        for (span, bound, ty) in bounds {
+            match self.check_protocol_bound(bound, ty).append_span(span)? {
                 BoundCheckResult::Matches => {}
                 BoundCheckResult::DoesNotMatch => {
                     return Err(CodeErrorKind::ProtocolMismatch(
                         format!("{:?}", ty),
                         format!("{:?}", bound),
                     ))
-                    .with_no_span()
+                    .with_span(span)
                 }
                 BoundCheckResult::DoesNotMatchBecause(detail) => {
                     return Err(CodeErrorKind::ProtocolMismatchDetail(
@@ -431,7 +431,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                         format!("{:?}", bound),
                         detail,
                     ))
-                    .with_no_span()
+                    .with_span(span)
                 }
             }
         }
@@ -660,8 +660,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let mut protocol_bounds = Vec::new();
         for (placeholder, ty) in func.placeholders.iter().zip(generic_args.iter()) {
             for bound in placeholder.bounds {
-                let bound = child.lower_type(bound)?;
-                protocol_bounds.push((bound, *ty));
+                let ir_bound = child.lower_type(bound.typ).append_span(bound.span)?;
+                protocol_bounds.push((bound.span, ir_bound, *ty));
             }
         }
 
