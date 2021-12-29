@@ -1,0 +1,474 @@
+/// This module holds impl blocks for builtin types all items with #[lang(impl_X)] are
+/// treated as X when lowering into IR, so they cannot actually exist as proper structs.
+
+use cmp::{Equatable, Comparable, Ordering};
+use hash::{Hashable, Hasher};
+use fmt::{Formatter};
+
+#[lang(impl_void)]
+struct _void {}
+impl _void {
+    mixin Equatable<void>;
+    mixin Comparable<void>;
+
+    #[force_inline]
+    fn equals(lhs: &void, rhs: &void) -> bool {
+        true
+    }
+
+    #[force_inline]
+    fn compare(lhs: &void, rhs: &void) -> Ordering {
+        Ordering::Equal
+    }
+
+    fn hash<H: Hasher<H>>(self: &void, hasher: &mut H) {
+    }
+}
+
+#[lang(impl_bool)]
+struct _bool {}
+impl _bool {
+    mixin Equatable<bool>;
+    mixin Comparable<u8>;
+
+    #[force_inline]
+    fn equals(lhs: &bool, rhs: &bool) -> bool {
+        *lhs == *rhs
+    }
+
+    #[force_inline]
+    fn compare(lhs: &bool, rhs: &bool) -> Ordering {
+        if !*lhs && *rhs {
+            Ordering::Less
+        } else if *lhs == *rhs {
+            Ordering::Equal
+        } else {
+            Ordering::Greater
+        }
+    }
+
+    fn hash<H: Hasher<H>>(self: &bool, hasher: &mut H) {
+        hasher.write(mem::slice::from_raw(self as &u8, 1));
+    }
+
+    fn fmt<F: Formatter<F>>(self: &bool, formatter: &mut F)  {
+        formatter.write(if *self { "true" } else { "false" });
+    }
+}
+
+#[lang(impl_never)]
+struct _never {}
+impl _never {
+    mixin Equatable<bool>;
+    mixin Comparable<u8>;
+
+    fn equals(lhs: &!, rhs: &!) -> bool {
+        std::intrinsics::unreachable()
+    }
+
+    fn compare(lhs: &!, rhs: &!) -> Ordering {
+        std::intrinsics::unreachable()
+    }
+
+    fn hash<H: Hasher<H>>(self: &!, hasher: &mut H) {
+        std::intrinsics::unreachable()
+    }
+
+    fn fmt<F: Formatter<F>>(self: &!, formatter: &mut F)  {
+        std::intrinsics::unreachable()
+    }
+}
+
+protocol _BuiltinComparable<Self: proto::Numeric> {
+    #[force_inline]
+    fn equals(lhs: &Self, rhs: &Self) -> bool {
+        *lhs == *rhs
+    }
+
+    #[force_inline]
+    fn compare(lhs: &Self, rhs: &Self) -> Ordering {
+        if *lhs < *rhs {
+            Ordering::Less
+        } else if *lhs == *rhs {
+            Ordering::Equal
+        } else {
+            Ordering::Greater
+        }
+    }
+}
+
+protocol _IntegerFormattable<Self: proto::Integer, F: Formatter<F>> {
+    fn fmt(self: &Self, formatter: &mut F) {
+        fmt::internal::format_integer(*self, formatter);
+    }
+}
+
+protocol _FloatFormattable<Self: proto::FloatingPoint, F: Formatter<F>> {
+    fn fmt(self: &Self, formatter: &mut F) {
+        fmt::internal::format_float(*self, formatter, 15);
+    }
+}
+
+#[lang(impl_u8)]
+struct _u8 {}
+impl _u8 {
+    mixin _BuiltinComparable<u8>;
+    mixin<H: Hasher<H>> Hashable<u8, H>;
+    mixin Equatable<u8>;
+    mixin Comparable<u8>;
+    mixin<F: Formatter<F>> _IntegerFormattable<u8, F>;
+    fn rotate_left(self: u8, shift: usize) -> u8 {
+        (self << shift) | (self >> (8 - shift))
+    }
+}
+
+#[lang(impl_u16)]
+struct _u16 {}
+impl _u16 {
+    mixin _BuiltinComparable<u16>;
+    mixin<H: Hasher<H>> Hashable<u16, H>;
+    mixin Equatable<u16>;
+    mixin Comparable<u16>;
+    mixin<F: Formatter<F>> _IntegerFormattable<u16, F>;
+    fn rotate_left(self: u16, shift: usize) -> u16 {
+        (self << shift) | (self >> (16 - shift))
+    }
+}
+
+#[lang(impl_u32)]
+struct _u32 {}
+impl _u32 {
+    mixin _BuiltinComparable<u32>;
+    mixin<H: Hasher<H>> Hashable<u32, H>;
+    mixin Equatable<u32>;
+    mixin Comparable<u32>;
+    mixin<F: Formatter<F>> _IntegerFormattable<u32, F>;
+    fn rotate_left(self: u32, shift: usize) -> u32 {
+        (self << shift) | (self >> (32 - shift))
+    }
+}
+
+#[lang(impl_u64)]
+struct _u64 {}
+impl _u64 {
+    mixin _BuiltinComparable<u64>;
+    mixin<H: Hasher<H>> Hashable<u64, H>;
+    mixin Equatable<u64>;
+    mixin Comparable<u64>;
+    mixin<F: Formatter<F>> _IntegerFormattable<u64, F>;
+    fn rotate_left(self: u64, shift: usize) -> u64 {
+        (self << shift) | (self >> (64 - shift))
+    }
+}
+
+#[lang(impl_u128)]
+struct _u128 {}
+impl _u128 {
+    mixin _BuiltinComparable<u128>;
+    mixin<H: Hasher<H>> Hashable<u128, H>;
+    mixin Equatable<u128>;
+    mixin Comparable<u128>;
+    mixin<F: Formatter<F>> _IntegerFormattable<u128, F>;
+    fn rotate_left(self: u128, shift: usize) -> u128 {
+        (self << shift) | (self >> (128 - shift))
+    }
+}
+
+#[lang(impl_usize)]
+struct _usize {}
+impl _usize {
+    mixin _BuiltinComparable<usize>;
+    mixin<H: Hasher<H>> Hashable<usize, H>;
+    mixin Equatable<usize>;
+    mixin Comparable<usize>;
+    mixin<F: Formatter<F>> _IntegerFormattable<usize, F>;
+}
+
+#[lang(impl_i8)]
+struct _i8 {}
+impl _i8 {
+    mixin _BuiltinComparable<i8>;
+    mixin<H: Hasher<H>> Hashable<i8, H>;
+    mixin Equatable<i8>;
+    mixin Comparable<i8>;
+    mixin<F: Formatter<F>> _IntegerFormattable<i8, F>;
+}
+
+#[lang(impl_i16)]
+struct _i16 {}
+impl _i16 {
+    mixin _BuiltinComparable<i16>;
+    mixin<H: Hasher<H>> Hashable<i16, H>;
+    mixin Equatable<i16>;
+    mixin Comparable<i16>;
+    mixin<F: Formatter<F>> _IntegerFormattable<i16, F>;
+}
+
+#[lang(impl_i32)]
+struct _i32 {}
+impl _i32 {
+    mixin _BuiltinComparable<i32>;
+    mixin<H: Hasher<H>> Hashable<i32, H>;
+    mixin Equatable<i32>;
+    mixin Comparable<i32>;
+    mixin<F: Formatter<F>> _IntegerFormattable<i32, F>;
+}
+
+#[lang(impl_i64)]
+struct _i64 {}
+impl _i64 {
+    mixin _BuiltinComparable<i64>;
+    mixin<H: Hasher<H>> Hashable<i64, H>;
+    mixin Equatable<i64>;
+    mixin Comparable<i64>;
+    mixin<F: Formatter<F>> _IntegerFormattable<i64, F>;
+}
+
+#[lang(impl_i128)]
+struct _i128 {}
+impl _i128 {
+    mixin _BuiltinComparable<i128>;
+    mixin<H: Hasher<H>> Hashable<i128, H>;
+    mixin Equatable<i128>;
+    mixin Comparable<i128>;
+    mixin<F: Formatter<F>> _IntegerFormattable<i128, F>;
+}
+
+#[lang(impl_isize)]
+struct _isize {}
+impl _isize {
+    mixin _BuiltinComparable<isize>;
+    mixin<H: Hasher<H>> Hashable<isize, H>;
+    mixin Equatable<isize>;
+    mixin Comparable<isize>;
+    mixin<F: Formatter<F>> _IntegerFormattable<isize, F>;
+}
+
+#[lang(impl_f32)]
+struct _f32 {}
+impl _f32 {
+    mixin _BuiltinComparable<f32>;
+    // Not hashable
+    mixin Equatable<f32>;
+    mixin Comparable<f32>;
+    mixin<F: Formatter<F>> _FloatFormattable<f32, F>;
+}
+
+#[lang(impl_f64)]
+struct _f64 {}
+impl _f64 {
+    mixin _BuiltinComparable<f64>;
+    // Not hashable
+    mixin Equatable<f64>;
+    mixin Comparable<f64>;
+    mixin<F: Formatter<F>> _FloatFormattable<f64, F>;
+}
+
+// hic sunt dracones, this is ugly af, but without variadic generics, this 
+// is probably the best way without implementing it all inside the compiler
+// Also, who needs Rust-like macros when you have GitHub Copilot?
+
+#[lang(impl_tuple_1)]
+struct _tuple_1 {}
+impl _tuple_1 {
+    #[inline]
+    fn equals<T1: Equatable<T1>>(lhs: &(T1,), rhs: &(T1,)) -> bool {
+        lhs.0.equals(&rhs.0)
+    }
+
+    #[inline]
+    fn compare<T1: Comparable<T1>>(lhs: &(T1,), rhs: &(T1,)) -> Ordering {
+        lhs.0.compare(&rhs.0)
+    }
+
+    #[inline]
+    fn hash<T1: Hashable<T1, H>, H: Hasher<H>>(lhs: &(T1,), h: &mut H) {
+        lhs.0.hash(h)
+    }
+
+    mixin<T1: Equatable<T1>> Equatable<(T1,)>;
+    mixin<T1: Comparable<T1>> Comparable<(T1,)>;
+}
+
+#[lang(impl_tuple_2)]
+struct _tuple_2 {}
+impl _tuple_2 {
+    #[inline]
+    fn equals<T1: Equatable<T1>, T2: Equatable<T2>>(lhs: &(T1, T2), rhs: &(T1, T2)) -> bool {
+        lhs.0.equals(&rhs.0) && lhs.1.equals(&rhs.1)
+    }
+
+    #[inline]
+    fn compare<T1: Comparable<T1>, T2: Comparable<T2>>(lhs: &(T1, T2), rhs: &(T1, T2)) -> Ordering {
+        let cmp = lhs.0.compare(&rhs.0);
+        if cmp != Ordering::Equal {
+            return cmp;
+        }
+        lhs.1.compare(&rhs.1)
+    }
+
+    #[inline]
+    fn hash<T1: Hashable<T1, H>, T2: Hashable<T2, H>, H: Hasher<H>>(lhs: &(T1, T2), h: &mut H) {
+        lhs.0.hash(h);
+        lhs.1.hash(h);
+    }
+
+    mixin<T1: Equatable<T1>, T2: Equatable<T2>> Equatable<(T1, T2)>;
+    mixin<T1: Comparable<T1>, T2: Comparable<T2>> Comparable<(T1, T2)>;
+}
+
+#[lang(impl_tuple_3)]
+struct _tuple_3 {}
+impl _tuple_3 {
+    #[inline]
+    fn equals<T1: Equatable<T1>, T2: Equatable<T2>, T3: Equatable<T3>>(lhs: &(T1, T2, T3), rhs: &(T1, T2, T3)) -> bool {
+        lhs.0.equals(&rhs.0) && lhs.1.equals(&rhs.1) && lhs.2.equals(&rhs.2)
+    }
+
+    #[inline]
+    fn compare<T1: Comparable<T1>, T2: Comparable<T2>, T3: Comparable<T3>>(lhs: &(T1, T2, T3), rhs: &(T1, T2, T3)) -> Ordering {
+        let cmp = lhs.0.compare(&rhs.0);
+        if cmp != Ordering::Equal {
+            return cmp;
+        }
+        let cmp = lhs.1.compare(&rhs.1);
+        if cmp != Ordering::Equal {
+            return cmp;
+        }
+        lhs.2.compare(&rhs.2)
+    }
+
+    #[inline]
+    fn hash<T1: Hashable<T1, H>, T2: Hashable<T2, H>, T3: Hashable<T3, H>, H: Hasher<H>>(lhs: &(T1, T2, T3), h: &mut H) {
+        lhs.0.hash(h);
+        lhs.1.hash(h);
+        lhs.2.hash(h);
+    }
+
+    mixin<T1: Equatable<T1>, T2: Equatable<T2>, T3: Equatable<T3>> Equatable<(T1, T2, T3)>;
+    mixin<T1: Comparable<T1>, T2: Comparable<T2>, T3: Comparable<T3>> Comparable<(T1, T2, T3)>;
+}
+
+#[lang(impl_tuple_4)]
+struct _tuple_4 {}
+impl _tuple_4 {
+    #[inline]
+    fn equals<T1: Equatable<T1>, T2: Equatable<T2>, T3: Equatable<T3>, T4: Equatable<T4>>(lhs: &(T1, T2, T3, T4), rhs: &(T1, T2, T3, T4)) -> bool {
+        lhs.0.equals(&rhs.0) && lhs.1.equals(&rhs.1) && lhs.2.equals(&rhs.2) && lhs.3.equals(&rhs.3)
+    }
+
+    #[inline]
+    fn compare<T1: Comparable<T1>, T2: Comparable<T2>, T3: Comparable<T3>, T4: Comparable<T4>>(lhs: &(T1, T2, T3, T4), rhs: &(T1, T2, T3, T4)) -> Ordering {
+        let cmp = lhs.0.compare(&rhs.0);
+        if cmp != Ordering::Equal {
+            return cmp;
+        }
+        let cmp = lhs.1.compare(&rhs.1);
+        if cmp != Ordering::Equal {
+            return cmp;
+        }
+        let cmp = lhs.2.compare(&rhs.2);
+        if cmp != Ordering::Equal {
+            return cmp;
+        }
+        lhs.3.compare(&rhs.3)
+    }
+
+    #[inline]
+    fn hash<T1: Hashable<T1, H>, T2: Hashable<T2, H>, T3: Hashable<T3, H>, T4: Hashable<T4, H>, H: Hasher<H>>(lhs: &(T1, T2, T3, T4), h: &mut H) {
+        lhs.0.hash(h);
+        lhs.1.hash(h);
+        lhs.2.hash(h);
+        lhs.3.hash(h);
+    }
+
+    mixin<T1: Equatable<T1>, T2: Equatable<T2>, T3: Equatable<T3>, T4: Equatable<T4>> Equatable<(T1, T2, T3, T4)>;
+    mixin<T1: Comparable<T1>, T2: Comparable<T2>, T3: Comparable<T3>, T4: Comparable<T4>> Comparable<(T1, T2, T3, T4)>;
+}
+
+#[lang(impl_tuple_5)]
+struct _tuple_5 {}
+impl _tuple_5 {
+    #[inline]
+    fn equals<T1: Equatable<T1>, T2: Equatable<T2>, T3: Equatable<T3>, T4: Equatable<T4>, T5: Equatable<T5>>(lhs: &(T1, T2, T3, T4, T5), rhs: &(T1, T2, T3, T4, T5)) -> bool {
+        lhs.0.equals(&rhs.0) && lhs.1.equals(&rhs.1) && lhs.2.equals(&rhs.2) && lhs.3.equals(&rhs.3) && lhs.4.equals(&rhs.4)
+    }
+
+    #[inline]
+    fn compare<T1: Comparable<T1>, T2: Comparable<T2>, T3: Comparable<T3>, T4: Comparable<T4>, T5: Comparable<T5>>(lhs: &(T1, T2, T3, T4, T5), rhs: &(T1, T2, T3, T4, T5)) -> Ordering {
+        let cmp = lhs.0.compare(&rhs.0);
+        if cmp != Ordering::Equal {
+            return cmp;
+        }
+        let cmp = lhs.1.compare(&rhs.1);
+        if cmp != Ordering::Equal {
+            return cmp;
+        }
+        let cmp = lhs.2.compare(&rhs.2);
+        if cmp != Ordering::Equal {
+            return cmp;
+        }
+        let cmp = lhs.3.compare(&rhs.3);
+        if cmp != Ordering::Equal {
+            return cmp;
+        }
+        lhs.4.compare(&rhs.4)
+    }
+
+    #[inline]
+    fn hash<T1: Hashable<T1, H>, T2: Hashable<T2, H>, T3: Hashable<T3, H>, T4: Hashable<T4, H>, T5: Hashable<T5, H>, H: Hasher<H>>(lhs: &(T1, T2, T3, T4, T5), h: &mut H) {
+        lhs.0.hash(h);
+        lhs.1.hash(h);
+        lhs.2.hash(h);
+        lhs.3.hash(h);
+        lhs.4.hash(h);
+    }
+
+    mixin<T1: Equatable<T1>, T2: Equatable<T2>, T3: Equatable<T3>, T4: Equatable<T4>, T5: Equatable<T5>> Equatable<(T1, T2, T3, T4, T5)>;
+    mixin<T1: Comparable<T1>, T2: Comparable<T2>, T3: Comparable<T3>, T4: Comparable<T4>, T5: Comparable<T5>> Comparable<(T1, T2, T3, T4, T5)>;
+}
+
+#[lang(impl_tuple_6)]
+struct _tuple_6 {}
+impl _tuple_6 {
+    #[inline]
+    fn equals<T1: Equatable<T1>, T2: Equatable<T2>, T3: Equatable<T3>, T4: Equatable<T4>, T5: Equatable<T5>, T6: Equatable<T6>>(lhs: &(T1, T2, T3, T4, T5, T6), rhs: &(T1, T2, T3, T4, T5, T6)) -> bool {
+        lhs.0.equals(&rhs.0) && lhs.1.equals(&rhs.1) && lhs.2.equals(&rhs.2) && lhs.3.equals(&rhs.3) && lhs.4.equals(&rhs.4) && lhs.5.equals(&rhs.5)
+    }
+
+    #[inline]
+    fn compare<T1: Comparable<T1>, T2: Comparable<T2>, T3: Comparable<T3>, T4: Comparable<T4>, T5: Comparable<T5>, T6: Comparable<T6>>(lhs: &(T1, T2, T3, T4, T5, T6), rhs: &(T1, T2, T3, T4, T5, T6)) -> Ordering {
+        let cmp = lhs.0.compare(&rhs.0);
+        if cmp != Ordering::Equal {
+            return cmp;
+        }
+        let cmp = lhs.1.compare(&rhs.1);
+        if cmp != Ordering::Equal {
+            return cmp;
+        }
+        let cmp = lhs.2.compare(&rhs.2);
+        if cmp != Ordering::Equal {
+            return cmp;
+        }
+        let cmp = lhs.3.compare(&rhs.3);
+        if cmp != Ordering::Equal {
+            return cmp;
+        }
+        let cmp = lhs.4.compare(&rhs.4);
+        if cmp != Ordering::Equal {
+            return cmp;
+        }
+        lhs.5.compare(&rhs.5)
+    }
+
+    #[inline]
+    fn hash<T1: Hashable<T1, H>, T2: Hashable<T2, H>, T3: Hashable<T3, H>, T4: Hashable<T4, H>, T5: Hashable<T5, H>, T6: Hashable<T6, H>, H: Hasher<H>>(lhs: &(T1, T2, T3, T4, T5, T6), h: &mut H) {
+        lhs.0.hash(h);
+        lhs.1.hash(h);
+        lhs.2.hash(h);
+        lhs.3.hash(h);
+        lhs.4.hash(h);
+        lhs.5.hash(h);
+    }
+}
+        

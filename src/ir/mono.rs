@@ -493,8 +493,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 ir::Ty::Pointer(_, _) => return Ok(BoundCheckResult::Matches),
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
-            Some(_) => ice!("unexpected builtin protocol"),
-            None => {}
+            Some(_) | None => {}
         };
 
         let protocol = protocol_item.get_protocol();
@@ -1015,21 +1014,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 .expect("unbound placeholder"),
 
             ast::Ty::NamedType(item) => match self.mono_ctx.lang_items.reverse_get(item) {
-                Some(LangItemKind::ImplBool) => self.types.builtin(BuiltinType::Bool),
-                Some(LangItemKind::ImplU8) => self.types.builtin(BuiltinType::U8),
-                Some(LangItemKind::ImplU16) => self.types.builtin(BuiltinType::U16),
-                Some(LangItemKind::ImplU32) => self.types.builtin(BuiltinType::U32),
-                Some(LangItemKind::ImplU64) => self.types.builtin(BuiltinType::U64),
-                Some(LangItemKind::ImplU128) => self.types.builtin(BuiltinType::U128),
-                Some(LangItemKind::ImplUsize) => self.types.builtin(BuiltinType::USize),
-                Some(LangItemKind::ImplI8) => self.types.builtin(BuiltinType::I8),
-                Some(LangItemKind::ImplI16) => self.types.builtin(BuiltinType::I16),
-                Some(LangItemKind::ImplI32) => self.types.builtin(BuiltinType::I32),
-                Some(LangItemKind::ImplI64) => self.types.builtin(BuiltinType::I64),
-                Some(LangItemKind::ImplI128) => self.types.builtin(BuiltinType::I128),
-                Some(LangItemKind::ImplIsize) => self.types.builtin(BuiltinType::ISize),
-                Some(LangItemKind::ImplF32) => self.types.builtin(BuiltinType::F32),
-                Some(LangItemKind::ImplF64) => self.types.builtin(BuiltinType::F64),
+                Some(LangItemKind::ImplBuiltin(kind)) => self.types.builtin(kind),
                 _ => {
                     let key = MonomorphizeKey(item, &[]);
                     let item = self.monomorphize_item(key)?;
@@ -1153,25 +1138,16 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let mut associated_fns = HashMap::new();
 
         let item = match typ {
-            ast::Ty::Builtin(kind) => match kind {
-                BuiltinType::Bool => self.mono_ctx.lang_items.get(LangItemKind::ImplBool),
-                BuiltinType::U8 => self.mono_ctx.lang_items.get(LangItemKind::ImplU8),
-                BuiltinType::U16 => self.mono_ctx.lang_items.get(LangItemKind::ImplU16),
-                BuiltinType::U32 => self.mono_ctx.lang_items.get(LangItemKind::ImplU32),
-                BuiltinType::U64 => self.mono_ctx.lang_items.get(LangItemKind::ImplU64),
-                BuiltinType::U128 => self.mono_ctx.lang_items.get(LangItemKind::ImplU128),
-                BuiltinType::USize => self.mono_ctx.lang_items.get(LangItemKind::ImplUsize),
-                BuiltinType::I8 => self.mono_ctx.lang_items.get(LangItemKind::ImplI8),
-                BuiltinType::I16 => self.mono_ctx.lang_items.get(LangItemKind::ImplI16),
-                BuiltinType::I32 => self.mono_ctx.lang_items.get(LangItemKind::ImplI32),
-                BuiltinType::I64 => self.mono_ctx.lang_items.get(LangItemKind::ImplI64),
-                BuiltinType::I128 => self.mono_ctx.lang_items.get(LangItemKind::ImplI128),
-                BuiltinType::ISize => self.mono_ctx.lang_items.get(LangItemKind::ImplIsize),
-                BuiltinType::F32 => self.mono_ctx.lang_items.get(LangItemKind::ImplF32),
-                BuiltinType::F64 => self.mono_ctx.lang_items.get(LangItemKind::ImplF64),
-                _ => return Ok(associated_fns),
-            }
-            .with_no_span()?,
+            ast::Ty::Builtin(kind) => self
+                .mono_ctx
+                .lang_items
+                .get(LangItemKind::ImplBuiltin(*kind))
+                .with_no_span()?,
+            ast::Ty::Tuple(items) => self
+                .mono_ctx
+                .lang_items
+                .get(LangItemKind::ImplTuple(items.len()))
+                .with_no_span()?,
             ast::Ty::NamedType(item) => item,
             ast::Ty::GenericType(item, _) => item,
             _ => return Ok(associated_fns),
@@ -2554,11 +2530,17 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let span = tup.span;
         let tup = self.lower_expr(tup, None)?;
-        let result = match tup.ty {
+        let result = match tup.ty.canonical_type() {
             ir::Ty::Tuple(types) => {
                 if types.len() <= index {
                     return Err(CodeErrorKind::TupleIndexOutOfBounds).with_no_span();
                 }
+
+                let mut tup = tup;
+                while let ir::Ty::Pointer(_, _) = tup.ty {
+                    tup = self.exprs.deref(tup);
+                }
+
                 self.exprs.tuple_index(tup, index, types[index])
             }
             _ => return Err(mismatch!("tuple", tup.ty)).with_span(span),

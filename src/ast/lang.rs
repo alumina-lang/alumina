@@ -1,9 +1,10 @@
 use once_cell::sync::OnceCell;
+use regex::Regex;
 use std::collections::HashMap;
 
 use crate::common::CodeErrorKind;
 
-use super::ItemP;
+use super::{BuiltinType, ItemP};
 
 pub struct LangItemMap<'ast>(HashMap<LangItemKind, ItemP<'ast>>);
 
@@ -46,64 +47,64 @@ pub enum LangItemKind {
     ProtoPointer,
     ProtoAny,
 
-    ImplBool,
-    ImplU8,
-    ImplU16,
-    ImplU32,
-    ImplU64,
-    ImplU128,
-    ImplUsize,
-    ImplI8,
-    ImplI16,
-    ImplI32,
-    ImplI64,
-    ImplI128,
-    ImplIsize,
-    ImplF32,
-    ImplF64,
+    ProtoEquatable,
+    ProtoComparable,
+
+    ImplBuiltin(BuiltinType),
+    ImplTuple(usize),
+}
+
+macro_rules! regex {
+    ($re:literal $(,)?) => {{
+        static RE: once_cell::sync::OnceCell<regex::Regex> = once_cell::sync::OnceCell::new();
+        RE.get_or_init(|| regex::Regex::new($re).unwrap())
+    }};
 }
 
 pub fn lang_item_kind(name: &str) -> Option<LangItemKind> {
-    static MAP: OnceCell<HashMap<&'static str, LangItemKind>> = OnceCell::new();
-    MAP.get_or_init(|| {
-        let mut map = HashMap::new();
-        map.insert("lang(slice)", LangItemKind::Slice);
-        map.insert("lang(slice_new)", LangItemKind::SliceNew);
-        map.insert("lang(slice_coerce)", LangItemKind::SliceCoerce);
-        map.insert("lang(slice_index)", LangItemKind::SliceIndex);
-        map.insert("lang(slice_range_index)", LangItemKind::SliceRangeIndex);
-        map.insert(
-            "lang(slice_range_index_lower)",
-            LangItemKind::SliceRangeIndexLower,
-        );
-        map.insert("lang(proto_primitive)", LangItemKind::ProtoPrimitive);
-        map.insert("lang(proto_numeric)", LangItemKind::ProtoNumeric);
-        map.insert("lang(proto_integer)", LangItemKind::ProtoInteger);
-        map.insert(
-            "lang(proto_floating_point)",
-            LangItemKind::ProtoFloatingPoint,
-        );
-        map.insert("lang(proto_signed)", LangItemKind::ProtoSigned);
-        map.insert("lang(proto_unsigned)", LangItemKind::ProtoUnsigned);
-        map.insert("lang(proto_pointer)", LangItemKind::ProtoPointer);
-        map.insert("lang(proto_any)", LangItemKind::ProtoAny);
-        map.insert("lang(impl_bool)", LangItemKind::ImplBool);
-        map.insert("lang(impl_u8)", LangItemKind::ImplU8);
-        map.insert("lang(impl_u16)", LangItemKind::ImplU16);
-        map.insert("lang(impl_u32)", LangItemKind::ImplU32);
-        map.insert("lang(impl_u64)", LangItemKind::ImplU64);
-        map.insert("lang(impl_u128)", LangItemKind::ImplU128);
-        map.insert("lang(impl_usize)", LangItemKind::ImplUsize);
-        map.insert("lang(impl_i8)", LangItemKind::ImplI8);
-        map.insert("lang(impl_i16)", LangItemKind::ImplI16);
-        map.insert("lang(impl_i32)", LangItemKind::ImplI32);
-        map.insert("lang(impl_i64)", LangItemKind::ImplI64);
-        map.insert("lang(impl_i128)", LangItemKind::ImplI128);
-        map.insert("lang(impl_isize)", LangItemKind::ImplIsize);
-        map.insert("lang(impl_f32)", LangItemKind::ImplF32);
-        map.insert("lang(impl_f64)", LangItemKind::ImplF64);
-        map
-    })
-    .get(name)
-    .copied()
+    match name {
+        "lang(slice)" => Some(LangItemKind::Slice),
+        "lang(slice_new)" => Some(LangItemKind::SliceNew),
+        "lang(slice_coerce)" => Some(LangItemKind::SliceCoerce),
+        "lang(slice_index)" => Some(LangItemKind::SliceIndex),
+        "lang(slice_range_index)" => Some(LangItemKind::SliceRangeIndex),
+        "lang(slice_range_index_lower)" => Some(LangItemKind::SliceRangeIndexLower),
+        "lang(proto_primitive)" => Some(LangItemKind::ProtoPrimitive),
+        "lang(proto_numeric)" => Some(LangItemKind::ProtoNumeric),
+        "lang(proto_integer)" => Some(LangItemKind::ProtoInteger),
+        "lang(proto_floating_point)" => Some(LangItemKind::ProtoFloatingPoint),
+        "lang(proto_signed)" => Some(LangItemKind::ProtoSigned),
+        "lang(proto_unsigned)" => Some(LangItemKind::ProtoUnsigned),
+        "lang(proto_pointer)" => Some(LangItemKind::ProtoPointer),
+        "lang(proto_any)" => Some(LangItemKind::ProtoAny),
+        "lang(proto_equatable)" => Some(LangItemKind::ProtoEquatable),
+        "lang(proto_comparable)" => Some(LangItemKind::ProtoComparable),
+
+        "lang(impl_never)" => Some(LangItemKind::ImplBuiltin(BuiltinType::Never)),
+        "lang(impl_void)" => Some(LangItemKind::ImplBuiltin(BuiltinType::Void)),
+        "lang(impl_bool)" => Some(LangItemKind::ImplBuiltin(BuiltinType::Bool)),
+        "lang(impl_u8)" => Some(LangItemKind::ImplBuiltin(BuiltinType::U8)),
+        "lang(impl_u16)" => Some(LangItemKind::ImplBuiltin(BuiltinType::U16)),
+        "lang(impl_u32)" => Some(LangItemKind::ImplBuiltin(BuiltinType::U32)),
+        "lang(impl_u64)" => Some(LangItemKind::ImplBuiltin(BuiltinType::U64)),
+        "lang(impl_u128)" => Some(LangItemKind::ImplBuiltin(BuiltinType::U128)),
+        "lang(impl_usize)" => Some(LangItemKind::ImplBuiltin(BuiltinType::USize)),
+        "lang(impl_i8)" => Some(LangItemKind::ImplBuiltin(BuiltinType::I8)),
+        "lang(impl_i16)" => Some(LangItemKind::ImplBuiltin(BuiltinType::I16)),
+        "lang(impl_i32)" => Some(LangItemKind::ImplBuiltin(BuiltinType::I32)),
+        "lang(impl_i64)" => Some(LangItemKind::ImplBuiltin(BuiltinType::I64)),
+        "lang(impl_i128)" => Some(LangItemKind::ImplBuiltin(BuiltinType::I128)),
+        "lang(impl_isize)" => Some(LangItemKind::ImplBuiltin(BuiltinType::ISize)),
+        "lang(impl_f32)" => Some(LangItemKind::ImplBuiltin(BuiltinType::F32)),
+        "lang(impl_f64)" => Some(LangItemKind::ImplBuiltin(BuiltinType::F64)),
+
+        t => {
+            if let Some(matches) = regex!(r"^lang\(impl_tuple_(\d+)\)$").captures(t) {
+                let n = matches[1].parse::<usize>().unwrap();
+                Some(LangItemKind::ImplTuple(n))
+            } else {
+                None
+            }
+        }
+    }
 }

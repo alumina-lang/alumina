@@ -36,6 +36,10 @@ fn main() {
             path: "::std::random".to_string(),
         },
         SourceFile {
+            filename: PathBuf::from("./stdlib/builtins.alu"),
+            path: "::std::builtins".to_string(),
+        },
+        SourceFile {
             filename: PathBuf::from("./stdlib/_prelude.alu"),
             path: "".to_string(),
         },

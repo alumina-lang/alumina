@@ -6,29 +6,18 @@ use std::hash::xxhash::Xxh64;
 use std::iter::for_each;
 use std::random::DEFAULT_RNG;
 
+fn hash_of<T: Hashable<T, Xxh64>>(value: T) -> u64 {
+    let hasher = Xxh64::new();
+    value.hash(&hasher);
+    hasher.finish()
+}
+
+struct foo {}
+
 #[export]
 fn main() {
-    let vec = Vector::new::<Vector<u8>>();
-    defer vec.free();
-
-    for i in std::iter::range(0, 100) {
-        vec.push(format!("Hello, you are number {}", i));
-    }
-    defer {
-        // Format allocates heap memory, we need to free the values individually
-        for val in vec.as_slice_mut() {
-            val.free();
-        }
-    }
-
-    let hm = HashMap::new::<&[u8], u32, Xxh64>();
-    defer hm.free();
-
-    for i in vec {
-        hm.insert((i.as_slice(), DEFAULT_RNG.next_u32()));
-    }
-
-    for elem in hm {
-        println!("{} => {}", elem.0, elem.1);
-    }
+    // These should all return the same value.
+    println!("{}", hash_of((1, 2, 3, 4)));
+    println!("{}", hash_of((1, 2, 3, 4, ())));
+    println!("{}", hash_of(((1, 2), (3, 4))));
 }

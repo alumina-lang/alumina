@@ -114,6 +114,8 @@ pub enum CodeErrorKind {
     RangeIndexNonSlice,
     #[error("internal error: {}", .0)]
     InternalError(String, Rc<Backtrace>),
+    // This error is a compiler bug if it happens on its own, but it can pop up when
+    // we abort early due to a previous error.
     #[error("local with unknown type")]
     LocalWithUnknownType,
     #[error("unsupported ABI {}", .0)]
