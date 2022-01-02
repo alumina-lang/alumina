@@ -1,9 +1,12 @@
+use std::proto::Unsigned;
+
 struct Pcg32  {
     state: u64,
     increment: u64,
 }
 
 impl Pcg32 {
+    #[inline]
     fn step(self: &mut Pcg32) {
         const MUTLIPLIER = 6364136223846793005u64;
         self.state = self.state * MUTLIPLIER + self.increment;
@@ -20,6 +23,7 @@ impl Pcg32 {
         pcg
     }
 
+    #[inline]
     fn next_u32(self: &mut Pcg32) -> u32 {
         let state = self.state;
         self.step();
@@ -28,10 +32,10 @@ impl Pcg32 {
         const XSHIFT: u32 = 18;
         const SPARE: u32 = 27;
 
-        let rot = (state >> ROTATE) as u32;
+        let rot = (state >> ROTATE) as usize;
         let xsh = (((state >> XSHIFT) ^ state) >> SPARE) as u32;
         
-        (xsh >> rot) | (xsh << (32u32 - rot))
+        xsh.rotate_right(rot)
     }
 
     mixin RandomNumberGenerator<Pcg32>;
@@ -44,34 +48,33 @@ static DEFAULT_RNG: Pcg32 = {
 };
 
 protocol RandomNumberGenerator<Self> {
-    // One of these two has to be implemented, otherwise we have infinite recursion
-
+    // One of these two has to be implemented, otherwise we have infinite recursio
+    #[inline]
     fn next_u32(self: &mut Self) -> u32 {
         self.next_u64() as u32
     }
 
+    #[inline]
     fn next_u64(self: &mut Self) -> u64 {
         (self.next_u32() as u64) << 32 | (self.next_u32() as u64)
     }
+}
 
-    fn range_u32(rng: &mut Self, range: u32) -> u32 {
-        let t: u32 = (~range + 1) % range;
-
-        let m = loop {
-            let m = (rng.next_u32() as u64) * (range as u64);
-            if m as u32 >= t {
-                break m
-            }
-        };
-
-        (m >> 32) as u32
-    }
+fn range<Rng: RandomNumberGenerator<Rng>, T: Unsigned>(rng: &mut Rng, range: u32) -> u32 {
+    let t: u32 = (~range + 1) % range;
+    let m = loop {
+        let m = (rng.next_u32() as u64) * (range as u64);
+        if t <= m as u32 {
+            break m
+        }
+    };
+    (m >> 32) as u32
 }
 
 fn shuffle<Rng: RandomNumberGenerator<Rng>, T>(rng: &mut Rng, slice: &mut [T]) {
     let i = 0usize;
     while i < slice.len {
-        let j = rng.range_u32((slice.len - i) as u32) as usize;
+        let j = rng.range((slice.len - i) as u32) as usize;
         std::mem::swap(&slice[i], &slice[j + i]);
         i += 1;
     }

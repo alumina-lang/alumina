@@ -54,7 +54,8 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
                     end: node.end_byte(),
                     file: self.scope.code().unwrap().file_id(),
                 }),
-                typ: self.visit(bound)?,
+                negated: bound.child_by_field_name("negated").is_some(),
+                typ: self.visit(bound.child_by_field_name("type").unwrap())?,
             });
         }
 

@@ -1,4 +1,4 @@
-use crate::common::{AluminaError, ArenaAllocatable, WithSpanDuringParsing};
+use crate::common::{AluminaError, ArenaAllocatable, CodeErrorKind, WithSpanDuringParsing};
 
 use crate::ast::{AstCtx, ItemP};
 use crate::name_resolution::scope::{NamedItem, Scope, ScopeType};
@@ -188,6 +188,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         });
 
         Ok(())
+    }
+
+    fn visit_type_definition(&mut self, node: Node<'src>) -> Self::ReturnType {
+        return Err(CodeErrorKind::Unimplemented("type aliases".to_string()))
+            .with_span(&self.scope, node);
     }
 
     fn visit_mixin(&mut self, node: Node<'src>) -> Self::ReturnType {

@@ -7,8 +7,6 @@
   so `consts` and enum members can have values that people usually put there + in as much as compiler intrinsics need them. 
 - Force inlining in IR (especially for slice coercions - function call is an overkill)
     - It's not a priority, since C compiler can inline perfectly fine, except in special cases like `alloca` where the allocated buffer cannot leave the stack frame. To have a good wrapper around `alloca`, it needs to be force-inlined except if done in a macro (but macros don't really have a good type parameter system, params can only be expressions).
-- impl for builtin types/arrays/...?
-    - Done for primitive types, tuples and arrays are TBD (need `const usize` generic args and variadics to do nicely)
 - stack overflow in codegen stage because infinite size recursive structs are not rejected during monomorphization
     - could be a similar issue with protocols, though these are more coservative vis-a-vis recursion
 - Whole ZST and divergence handling might still be buggy, in particular, uninitialized variables of `!` type might be problematic since lowering is quite liberal with making temporary name bindings for various stuff.
@@ -20,11 +18,17 @@
   - It sounds really simple to implement, but the naive approach leads to a bunch of issues (dependencies during AST construction, `impl` forwarding, whether IR should even be aware of them and if not, should they be handled in `mono`, name resolution needs another 'defered' type, ...). That's because they are in a way partial specializations of generic types.
   - typedefs that don't bind generic parameters are already possible with `use X as Y`.
   - It could be easier now with `rebind` in AST 
+  - Attempt #2 revealed a more fundamental issue - since `impl` blocks are only loosely bound to their, typedefs cannot effectively bind generic parameters for methods. E.g. `type HashMap<K, V> = HashMapImpl<K, V, SpecificHasher>` will still require `HashMap::new::<i32, i32, SpecificHasher>`. Not sure how to make this work, but here are a few ideas:
+    - get rid of impl-forwarding typedefs and only allow newtypes. Mixins could be extended to allow copying impls from general types (and not just protocols)
+    - forward impls, but allow typedefs to have their own impl blocks, which would shadow the ones from the underlyhing types (for the hashmap example, only constructors would need to be overriden, since the hasher can be inferred from the self parameter)
+    - leave things as-is and introduce additional constructors that allow overriding the "optional" generic parameters.
+    - do not have typedefs, use default generic parameters
 - unqualified types gaps:
   - unqualified string in if/else does not coerce to a slice
   - probably other places too, since it's very ad-hoc
-- operator overloading
-  - forward ==, !=, >, <, >=, <= to Equatable/Comparable (dubious - is this desired or not)
+- lambdas need to be better
+  - If they bind a generic placeholder, but are not otherwise generic, they will be monomorphized
+    only once, which is wrong.
 
 ## Grammar, parsing, AST
 
@@ -44,7 +48,7 @@
     - The pattern is well-established (Formattable protocol) and I'm very happy with it,
       but it's very very basic right now
   - heap-allocating collections
-    - Vector is implemented, need at least a HashMap and HashSet. 
+    - Vector and HashMap are implemented, but not yet polished need at least a HashSet more 
     - Maybe a heap? A VecDeque/ring buffer
     - No linked lists.
   - math
@@ -73,13 +77,11 @@
 
 ## Exploratory
 
-- SFINAE/overloading?
+- specialization/SFINAE/overloading?
   - I am leaning pretty strongly towards not having either of these. With protocols the language 
     is probably expressive enough to do string formatting and collections, which are a good litmus test if generics are any good.
 - tuple unpacking 
 - true variadic functions (certainly they'd be generic and variadic only pre-monomorphization, varargs is an abomination). This is hard to do, both from the syntax and `mono` perspective but the payoff is that tuples can have nice protocol implementations.
-- instead of specialization, there could be a const if/const match expression - wow that'd be amazing!
-  - Now easier with protocols 
 - generators? coroutines? lmao, not gonna happen
      
 

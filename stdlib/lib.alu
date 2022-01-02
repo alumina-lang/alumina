@@ -4,6 +4,7 @@ mod proto {
     // even though they contain no associated functions. They are handled specially
     // by the compiler.
     #[lang(proto_any)] protocol Any {}
+    #[lang(proto_zero_sized)] protocol ZeroSized {}
     #[lang(proto_primitive)] protocol Primitive {}
     #[lang(proto_numeric)] protocol Numeric {}
     #[lang(proto_integer)] protocol Integer {}
@@ -11,12 +12,21 @@ mod proto {
     #[lang(proto_signed)] protocol Signed {}
     #[lang(proto_unsigned)] protocol Unsigned {}
     #[lang(proto_pointer)] protocol Pointer {}
+    #[lang(proto_array)] protocol Array {}
+
+    // These are mostly useful as type inference guides
+    #[lang(proto_array_of)] protocol ArrayOf<T> {}
+    #[lang(proto_pointer_of)] protocol PointerOf<T> {}
 }
 
 mod mem {
     use proto::Pointer;
     use std::result::Option;
 
+    // Slice fat "pointers" are just regular structs that compiler handles in a special way with regards
+    // to syntax, implicit coercion and type inference. They are generic over the pointer-to-element type
+    // rather than the element type itself. This is an implementation detail to ensure that &mut [T] and 
+    // &[T] are distinguished without having to have two distinct types for mutable and const slices.
     #[lang(slice)]
     struct slice<Ptr: Pointer> {
         ptr: Ptr,
@@ -25,8 +35,8 @@ mod mem {
 
     impl slice {
         use std::cmp::{Equatable, Comparable, Ordering};
-        use std::hash::{Hasher};
-        use std::proto::Primitive;
+        use std::hash::{Hasher, Hashable};
+        use std::proto::{Primitive, PointerOf, ZeroSized};
         use std::libc::{memcmp};
 
         #[force_inline]
@@ -36,14 +46,14 @@ mod mem {
         }
 
         #[force_inline]
-        fn iter<Ptr: Pointer>(self: slice<Ptr>) -> slice<Ptr> {
-            self
+        fn iter<T, Ptr: PointerOf<T>>(self: &slice<Ptr>) -> slice<Ptr> {
+            *self
         }
 
         #[force_inline]
-        fn next<Ptr: Pointer>(self: &mut slice<Ptr>) -> Option<Ptr> {
+        fn next<T, Ptr: PointerOf<T>>(self: &mut slice<Ptr>) -> Option<T> {
             if self.len > 0 {
-                let result = Option::some(self.ptr);
+                let result = Option::some(*self.ptr);
                 self.ptr = self.ptr + 1;
                 self.len -= 1;
                 result
@@ -52,45 +62,76 @@ mod mem {
             }
         }
 
-        // Equality and ordering comparison are implemented only for slices of 
-        // primitive types.
-        fn equals<T: Primitive>(lhs: &&[T], rhs: &&[T]) -> bool {
+        fn equals<T: Equatable<T>, Ptr: PointerOf<T>>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> bool {
             if lhs.len != rhs.len {
                 return false;
             }
-            memcmp(lhs.ptr as &void, rhs.ptr as &void, lhs.len * size_of::<T>()) == 0
+            
+            if <T: ZeroSized> {
+                true
+            } else if <T: Primitive> {
+                // Optimization for slices of primitive types
+                memcmp(lhs.ptr as &void, rhs.ptr as &void, lhs.len * size_of::<T>()) == 0
+            } else {
+                let idx = 0usize;
+                while idx < lhs.len {
+                    if lhs[idx] != rhs[idx] {
+                        return false;
+                    }
+                    idx += 1;
+                }
+                true
+            }
         }
 
-        fn compare<T: Primitive>(lhs: &&[T], rhs: &&[T]) -> Ordering {
+        fn compare<T: Comparable<T>, Ptr: PointerOf<T>>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> Ordering {
             use std::math::min;
 
-            let cmp = memcmp(lhs.ptr as &void, rhs.ptr as &void, min(lhs.len, rhs.len) * size_of::<T>());
-
-            if cmp < 0 {
-                Ordering::Less
-            } else if cmp > 0 {
-                Ordering::Greater
-            } else {
-                if lhs.len < rhs.len {
+            if <T: ZeroSized> {
+                lhs.len.compare(&rhs.len)
+            } else if <T: u8> {
+                let cmp = memcmp(lhs.ptr as &void, rhs.ptr as &void, min(lhs.len, rhs.len) * size_of::<T>());
+                if cmp < 0 {
                     Ordering::Less
-                } else if lhs.len > rhs.len {
+                } else if cmp > 0 {
                     Ordering::Greater
                 } else {
-                    Ordering::Equal
+                    lhs.len.compare(&rhs.len)
                 }
+            } else {
+                let idx = 0usize;
+                let len = min(lhs.len, rhs.len);
+                while idx < len {
+                    let cmp = lhs[idx].compare(rhs[idx]);
+                    if cmp != Ordering::Equal {
+                        return cmp;
+                    }
+                    idx += 1;
+                }
+                lhs.len.compare(&rhs.len)
             }
         }
         
-        fn hash<T: Primitive, H: Hasher<H>>(self: &&[T], hasher: &mut H) {
-            hasher.write(from_raw(self.ptr as &u8, self.len * size_of::<T>()));
+        fn hash<T: Hashable<T, H>, Ptr: PointerOf<T>, H: Hasher<H>>(self: &slice<Ptr>, hasher: &mut H) {
+            if <T: ZeroSized> {
+                // no-op
+            } if <T: u8> {
+                hasher.write(*self);
+            } else {
+                let idx = 0usize;
+                while idx < self.len {
+                    self[idx].hash(hasher);
+                    idx += 1;
+                }
+            }
         }
 
-        fn fmt<F: fmt::Formatter<F>>(self: &&[u8], f: &mut F) {
+        fn fmt<Ptr: PointerOf<u8>, F: fmt::Formatter<F>>(self: &slice<Ptr>, f: &mut F) {
             f.write(*self);
         }
         
-        mixin<T: Primitive> Equatable<slice<&T>>;
-        mixin<T: Primitive> Comparable<slice<&T>>;
+        mixin<T: Equatable<T>, Ptr: PointerOf<T>> Equatable<slice<Ptr>>;
+        mixin<T: Comparable<T>, Ptr: PointerOf<T>> Comparable<slice<Ptr>>;
     }
 
     mod internal {
@@ -240,7 +281,7 @@ mod fmt {
 
         fn format_integer<T: proto::Integer, F: Formatter<F>>(val: T, fmt: &mut F) {
             let buf: [u8; 40];
-            let buf: &mut [u8] = &buf;
+            let buf = buf.as_slice_mut();
         
             let i: usize = buf.len - 1;
             let negative = val < 0;
@@ -269,7 +310,7 @@ mod fmt {
             let frac = math::abs((val - (trunc as T)));
             
             let buf: [u8; 16];
-            let buf: &mut [u8] = &buf;
+            let buf = buf.as_slice_mut();
             
             let i = 0usize;
             while i < precision {
@@ -292,7 +333,7 @@ mod fmt {
         fn printf<F: Formatter<F>>(fmt: &[u8], args: &[_FormatArg<F>], formatter: &mut F) {
             let i = 0usize;
             let buf: [u8; 64];
-            let buf: &mut [u8] = &buf;
+            let buf = buf.as_slice_mut();
 
             let buf_pos = 0usize;
 
@@ -378,7 +419,7 @@ mod fmt {
             }
             
             fn write(self: &mut StringBufFormatter, buf: &[u8]) {
-                self.buffer.extend(buf);
+                self.buffer.extend_from_slice(buf);
             }
         }
     }
@@ -445,7 +486,20 @@ mod intrinsics {
     extern "intrinsic" fn aligned_alloca(size: usize, align: usize) -> &mut void;
 }
 
+mod _panic {
+    static panicking: bool = false;
+}
+
+macro compile_fail(reason) {
+    intrinsics::compile_fail(reason);
+}
+
 macro panic(reason, args...) {
+    if _panic::panicking {
+        intrinsics::trap();
+    }
+
+    _panic::panicking = true;   
     io::eprintln!(
         concat!("panic at {}:{}:{} ", reason), 
         file!(), 
@@ -552,6 +606,44 @@ mod cmp {
             Self::compare(lhs, rhs) != Ordering::Less
         }
     }
+
+    mod internal {
+        #[force_inline]
+        #[lang(operator_eq)]
+        fn operator_eq<T: Equatable<T>>(lhs: &T, rhs: &T) -> bool {
+            lhs.equals(rhs)
+        }
+
+        #[force_inline]
+        #[lang(operator_neq)]
+        fn operator_neq<T: Equatable<T>>(lhs: &T, rhs: &T) -> bool {
+            lhs.not_equals(rhs)
+        }
+
+        #[force_inline]
+        #[lang(operator_lt)]
+        fn operator_lt<T: Comparable<T>>(lhs: &T, rhs: &T) -> bool {
+            lhs.less_than(rhs)
+        }
+
+        #[force_inline]
+        #[lang(operator_lte)]
+        fn operator_lte<T: Comparable<T>>(lhs: &T, rhs: &T) -> bool {
+            lhs.less_than_or_equal(rhs)
+        }
+
+        #[force_inline]
+        #[lang(operator_gt)]
+        fn operator_gt<T: Comparable<T>>(lhs: &T, rhs: &T) -> bool {
+            lhs.greater_than(rhs)
+        }
+
+        #[force_inline]
+        #[lang(operator_gte)]
+        fn operator_gte<T: Comparable<T>>(lhs: &T, rhs: &T) -> bool {
+            lhs.greater_than_or_equal(rhs)
+        }
+    }
 }
 
 mod hash {
@@ -570,6 +662,14 @@ mod hash {
             hasher.write(from_raw(a as &u8, size_of::<Self>()));
         }
     }
+
+    fn hash_of<T: Hashable<T, H>, H: Hasher<H>>(val: T) -> u64 {
+        let hasher = H::new();
+        val.hash(&hasher);
+        hasher.finish()
+    }
+
+    use std::hash::xxhash::Xxh64 as DefaultHash;
 }
 
 mod util {
@@ -583,13 +683,13 @@ mod iter {
 
     protocol Iterator<Self, T> {
         fn next(self: &mut Self) -> result::Option<T>;
-        fn iter(self: &mut Self) -> &mut Self {
-            self
+        fn iter(self: &Self) -> Self {
+            *self
         }
     }
 
     protocol Iterable<Self, It: Iterator<It, T>, T> {
-        fn iter(self: Self) -> It;
+        fn iter(self: &Self) -> It;
     }
 
     struct Range<T: Integer> {
@@ -632,17 +732,6 @@ mod iter {
         Range {
             lower: lower,
             upper: upper,
-        }
-    }
-
-    fn for_each<T, I: Iterator<I, T>>(iterator: &mut I, func: fn(T)) {
-        loop {
-            let elem = iterator.next();
-            if elem.is_some {
-                func(elem.inner);
-            } else {
-                break;
-            }
         }
     }
 }

@@ -429,12 +429,12 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         self.type_writer.add_type(item.typ)?;
 
         self.ctx
-            .register_name(id, CName::Native(item.name.unwrap()));
+            .register_name(id, CName::Mangled(item.name.unwrap(), id.id));
 
         if !item.typ.is_zero_sized() {
             w!(
                 self.fn_decls,
-                "static {} {};",
+                "\nstatic {} {};",
                 self.ctx.get_type(item.typ),
                 self.ctx.get_name(id)
             );

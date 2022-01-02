@@ -113,6 +113,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
         Ok(subpath.extend(PathSegment(name)))
     }
 
+    fn visit_generic_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        return Err(CodeErrorKind::GenericArgsInPath).with_span(&self.scope, node);
+    }
+
     fn visit_scoped_type_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let subpath = self.visit(node.child_by_field_name("path").unwrap())?;
         let name = self

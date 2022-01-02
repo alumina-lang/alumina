@@ -21,6 +21,7 @@ impl _void {
         Ordering::Equal
     }
 
+    #[force_inline]
     fn hash<H: Hasher<H>>(self: &void, hasher: &mut H) {
     }
 }
@@ -38,10 +39,10 @@ impl _bool {
 
     #[force_inline]
     fn compare(lhs: &bool, rhs: &bool) -> Ordering {
-        if !*lhs && *rhs {
-            Ordering::Less
-        } else if *lhs == *rhs {
+        if *lhs == *rhs {
             Ordering::Equal
+        } else if *rhs {
+            Ordering::Less
         } else {
             Ordering::Greater
         }
@@ -109,13 +110,22 @@ protocol _FloatFormattable<Self: proto::FloatingPoint, F: Formatter<F>> {
     }
 }
 
+protocol _BitOps<Self: proto::Unsigned> {
+    #[inline(always)]
+    fn rotate_left(self: Self, shift: usize) -> Self {
+        (self << shift) | (self >> ((8 * mem::size_of::<Self>()) - shift))
+    }
+
+    #[inline(always)]
+    fn rotate_right(self: Self, shift: usize) -> Self {
+        (self >> shift) | (self << ((8 * mem::size_of::<Self>()) - shift))
+    }
+}
+
 #[lang(impl_u8)]
 struct _u8 {}
 impl _u8 {
-    fn rotate_left(self: u8, shift: usize) -> u8 {
-        (self << shift) | (self >> (8 - shift))
-    }
-
+    mixin _BitOps<u8>;
     mixin _BuiltinComparable<u8>;
     mixin<H: Hasher<H>> Hashable<u8, H>;
     mixin Equatable<u8>;
@@ -126,10 +136,7 @@ impl _u8 {
 #[lang(impl_u16)]
 struct _u16 {}
 impl _u16 {
-    fn rotate_left(self: u16, shift: usize) -> u16 {
-        (self << shift) | (self >> (16 - shift))
-    }
-
+    mixin _BitOps<u16>;
     mixin _BuiltinComparable<u16>;
     mixin<H: Hasher<H>> Hashable<u16, H>;
     mixin Equatable<u16>;
@@ -140,10 +147,7 @@ impl _u16 {
 #[lang(impl_u32)]
 struct _u32 {}
 impl _u32 {
-    fn rotate_left(self: u32, shift: usize) -> u32 {
-        (self << shift) | (self >> (32 - shift))
-    }
-
+    mixin _BitOps<u32>;
     mixin _BuiltinComparable<u32>;
     mixin<H: Hasher<H>> Hashable<u32, H>;
     mixin Equatable<u32>;
@@ -154,10 +158,7 @@ impl _u32 {
 #[lang(impl_u64)]
 struct _u64 {}
 impl _u64 {
-    fn rotate_left(self: u64, shift: usize) -> u64 {
-        (self << shift) | (self >> (64 - shift))
-    }
-
+    mixin _BitOps<u64>;
     mixin _BuiltinComparable<u64>;
     mixin<H: Hasher<H>> Hashable<u64, H>;
     mixin Equatable<u64>;
@@ -168,10 +169,7 @@ impl _u64 {
 #[lang(impl_u128)]
 struct _u128 {}
 impl _u128 {
-    fn rotate_left(self: u128, shift: usize) -> u128 {
-        (self << shift) | (self >> (128 - shift))
-    }
-    
+    mixin _BitOps<u128>;
     mixin _BuiltinComparable<u128>;
     mixin<H: Hasher<H>> Hashable<u128, H>;
     mixin Equatable<u128>;
@@ -182,6 +180,7 @@ impl _u128 {
 #[lang(impl_usize)]
 struct _usize {}
 impl _usize {
+    mixin _BitOps<usize>;
     mixin _BuiltinComparable<usize>;
     mixin<H: Hasher<H>> Hashable<usize, H>;
     mixin Equatable<usize>;
@@ -279,7 +278,6 @@ macro _lexicographic_cmp(lhs, rhs) {
         return cmp;
     }
 }
-
 
 #[lang(impl_tuple_1)]
 struct _tuple_1 {}
@@ -778,4 +776,30 @@ impl _tuple_8 {
         T7: Comparable<T7>,
         T8: Comparable<T8>
     > Comparable<(T1, T2, T3, T4, T5, T6, T7, T8)>;
+}
+
+
+#[lang(impl_array)]
+struct _array {}
+impl _array {
+    use proto::ArrayOf;
+
+    // There are not const usize generics, so we cannot generically accept all
+    // possible arrays proper in this impl. Instead we accept slice as a self 
+    // parameter and rely on automatic slice coercion, which makes this mostly no-op.
+
+    #[force_inline]
+    fn as_slice<T, Arr: ArrayOf<T>>(self: &Arr) -> &[T] {
+        self
+    }
+
+    #[force_inline]
+    fn as_slice_mut<T, Arr: ArrayOf<T>>(self: &mut Arr) -> &mut [T] {
+        self
+    }
+
+    #[force_inline]
+    fn iter<T, Arr: ArrayOf<T>>(self: &Arr) -> &[T] {
+        self
+    }
 }

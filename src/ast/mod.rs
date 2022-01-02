@@ -376,8 +376,9 @@ pub struct Mixin<'ast> {
     pub contents: &'ast MixinCell<'ast>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Bound<'ast> {
+    pub negated: bool,
     pub span: Option<Span>,
     pub typ: TyP<'ast>,
 }
@@ -386,6 +387,7 @@ pub struct Bound<'ast> {
 pub struct Placeholder<'ast> {
     pub id: AstId,
     pub bounds: &'ast [Bound<'ast>],
+    pub default: Option<TyP<'ast>>,
 }
 
 #[derive(Debug)]
@@ -586,6 +588,12 @@ pub enum FnKind<'ast> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+pub struct StaticIfCondition<'ast> {
+    pub typ: TyP<'ast>,
+    pub bounds: &'ast [Bound<'ast>],
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum ExprKind<'ast> {
     Block(&'ast [Statement<'ast>], ExprP<'ast>),
     Binary(BinOp, ExprP<'ast>, ExprP<'ast>),
@@ -620,6 +628,7 @@ pub enum ExprKind<'ast> {
     Index(ExprP<'ast>, ExprP<'ast>),
     RangeIndex(ExprP<'ast>, Option<ExprP<'ast>>, Option<ExprP<'ast>>),
     If(ExprP<'ast>, ExprP<'ast>, ExprP<'ast>),
+    StaticIf(StaticIfCondition<'ast>, ExprP<'ast>, ExprP<'ast>),
     Cast(ExprP<'ast>, TyP<'ast>),
 
     Void,

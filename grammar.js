@@ -246,9 +246,15 @@ module.exports = grammar({
     parameter: ($) =>
       seq(field("name", $.identifier), ":", field("type", $._type)),
 
+    protocol_bound: ($) => seq(
+      optional(field("negated", "!")), 
+      field("type", $._type)
+    ),
+
     generic_argument: ($) => seq(
         field("placeholder", $.identifier), 
-        optional(seq(":", sepBy("+", field("bound", $._type))))
+        optional(seq(":", sepBy("+", field("bound", $.protocol_bound)))),
+        optional(seq("=", field("default", $._type)))
     ),
 
     generic_argument_list: ($) =>
@@ -688,10 +694,18 @@ module.exports = grammar({
         $.for_expression
       ),
 
+    type_check: ($) => seq(
+      field("lhs", $._type), 
+      ":", 
+      sepBy("+", field("bound", $.protocol_bound)),
+    ),
+
     if_expression: ($) =>
       seq(
-        "if",
-        field("condition", $._expression),
+        choice(
+          seq("if", field("condition", $._expression)),
+          seq("if", "<", field("type_check", $.type_check), ">"),
+        ),
         field("consequence", $.block),
         optional(field("alternative", $.else_clause))
       ),

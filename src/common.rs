@@ -1,5 +1,9 @@
 use std::backtrace::Backtrace;
+use std::borrow::BorrowMut;
+use std::cell::RefCell;
+use std::collections::HashSet;
 use std::fmt::Debug;
+use std::hash::Hash;
 use std::io;
 use std::rc::Rc;
 use std::result::Result;
@@ -168,14 +172,22 @@ pub enum CodeErrorKind {
     ProtocolFnsCannotBeGeneric,
     #[error("protocol functions cannot be extern")]
     ProtocolFnsCannotBeExtern,
-    #[error("type parameter {} does not match protocol {}", .0, .1)]
+    #[error("type parameter {} matches {}, which it should not", .0, .1)]
+    ProtocolMatch(String, String),
+    #[error("type parameter {} does not match {}", .0, .1)]
     ProtocolMismatch(String, String),
-    #[error("type parameter {} does not match protocol {} ({})", .0, .1, .2)]
+    #[error("type parameter {} does not match {} ({})", .0, .1, .2)]
     ProtocolMismatchDetail(String, String, String),
     #[error("recursive protocol bounds are not supported")]
     CyclicProtocolBound,
     #[error("unimplemented: {}", .0)]
     Unimplemented(String),
+    #[error("type aliases cannot have their own impl block")]
+    NoImplForTypedefs,
+    #[error(
+        "generic type parameters cannot be used in this context (did you mean to call a function?)"
+    )]
+    GenericArgsInPath,
 
     #[error("cannot determine source span")]
     NoSpanInformation,
@@ -185,6 +197,8 @@ pub enum CodeErrorKind {
     // Warnings
     #[error("defer inside a loop: this defered statement will only be executed once")]
     DeferInALoop,
+    #[error("duplicate function name {:?} (this function will shadow a previous one)", .0)]
+    DuplicateNameShadow(String),
 }
 
 #[derive(Debug, Clone)]
@@ -199,6 +213,15 @@ pub struct CodeError {
     pub kind: CodeErrorKind,
     pub backtrace: Vec<Marker>,
     //pub code_backtrace: Backtrace,
+}
+
+impl CodeError {
+    pub fn from_kind(kind: CodeErrorKind, span: Span) -> Self {
+        Self {
+            kind,
+            backtrace: vec![Marker::Span(span)],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -295,6 +318,40 @@ where
                 kind: e.into(),
                 backtrace: span.iter().map(|s| Marker::Span(*s)).collect(),
             }])
+        })
+    }
+}
+
+pub struct CycleGuardian<T: Eq + Hash + Clone> {
+    inner: Rc<RefCell<HashSet<T>>>,
+}
+
+pub struct CycleGuard<T: Eq + Hash + Clone> {
+    guardian: Rc<RefCell<HashSet<T>>>,
+    value: T,
+}
+
+impl<T: Eq + Hash + Clone> Drop for CycleGuard<T> {
+    fn drop(&mut self) {
+        (*self.guardian).borrow_mut().remove(&self.value);
+    }
+}
+
+impl<T: Eq + Hash + Clone> CycleGuardian<T> {
+    pub fn new() -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(HashSet::new())),
+        }
+    }
+
+    pub fn guard(&self, value: T) -> Result<CycleGuard<T>, ()> {
+        if !(*self.inner).borrow_mut().insert(value.clone()) {
+            return Err(());
+        }
+
+        Ok(CycleGuard {
+            guardian: self.inner.clone(),
+            value,
         })
     }
 }

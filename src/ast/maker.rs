@@ -1,10 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use once_cell::unsync::OnceCell;
 
 use crate::{
     ast::{AstCtx, BuiltinType, Field, Function, Item, ItemP, Parameter, StructLike, Ty},
-    common::{AluminaError, ArenaAllocatable, CodeErrorKind, WithSpanDuringParsing},
+    common::{
+        AluminaError, ArenaAllocatable, CodeError, CodeErrorKind, Marker, WithSpanDuringParsing,
+    },
     diagnostics::DiagnosticContext,
     intrinsics::intrinsic_kind,
     name_resolution::scope::{NamedItem, Scope, ScopeType},
@@ -44,6 +46,42 @@ impl<'ast> AstItemMaker<'ast> {
         (self.symbols, LangItemMap::new(self.lang_items))
     }
 
+    pub fn get_placeholders<'src>(
+        &self,
+        scope: &Scope<'ast, 'src>,
+    ) -> Result<&'ast [Placeholder<'ast>], AluminaError> {
+        let mut placeholders = self.ambient_placeholders.clone();
+        for (_name, item) in scope.inner().all_items() {
+            match item {
+                NamedItem::Placeholder(id, node) => {
+                    placeholders.push(Placeholder {
+                        id: *id,
+                        default: node
+                            .child_by_field_name("default")
+                            .map(|node| {
+                                // Default values for generic parameters are name-resolved in parent
+                                // scope to avoid cyclic references, like `struct Foo<T2 = T2>`. This
+                                // also disallows references to other generic parameters, which could
+                                // technically be allowed, but it complicates mono, so it's not allowed for
+                                // now. The complication is that default args need to be resolved quite
+                                // early in the monomorphization process to ensure that fully-specified
+                                // items and ones instantiated with default values result in the same item.
+                                TypeVisitor::new(self.ast, scope.parent().unwrap()).visit(node)
+                            })
+                            .transpose()?,
+                        // Unlike defaults, bounds can refer to self and this is in fact quite central
+                        // to how Alumina protocols work.
+                        bounds: TypeVisitor::new(self.ast, scope.clone())
+                            .parse_protocol_bounds(*node)?,
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        Ok(placeholders.alloc_on(self.ast))
+    }
+
     fn get_attributes<'src>(
         &mut self,
         item: ItemP<'ast>,
@@ -79,74 +117,65 @@ impl<'ast> AstItemMaker<'ast> {
         Ok(result)
     }
 
-    fn resolve_associated_fns<'src>(
+    fn resolve_associated_items<'src>(
         &self,
-        scope: Scope<'ast, 'src>,
-    ) -> Result<&'ast [AssociatedFn<'ast>], AluminaError> {
+        impl_scopes: &[Scope<'ast, 'src>],
+    ) -> Result<(&'ast [AssociatedFn<'ast>], &'ast [Mixin<'ast>]), AluminaError> {
         let mut associated_fns = Vec::new();
-
-        for (name, item) in scope.inner().all_items() {
-            match item {
-                NamedItem::Function(symbol, _, _) => associated_fns.push(AssociatedFn {
-                    name: name.unwrap(),
-                    item: *symbol,
-                }),
-                _ => {}
-            }
-        }
-
-        let result = associated_fns.alloc_on(self.ast);
-        Ok(result)
-    }
-
-    fn resolve_mixins<'src>(
-        &self,
-        scope: Scope<'ast, 'src>,
-    ) -> Result<&'ast [Mixin<'ast>], AluminaError> {
         let mut mixins = Vec::new();
+        let mut names = HashSet::new();
 
-        for (_name, item) in scope.inner().all_items() {
-            match item {
-                NamedItem::Mixin(node, scope) => {
-                    let mut placeholders = Vec::new();
-                    for (_name, item) in scope.inner().all_items() {
-                        match item {
-                            NamedItem::Placeholder(id, node) => {
-                                placeholders.push(Placeholder {
-                                    id: *id,
-                                    bounds: TypeVisitor::new(self.ast, scope.clone())
-                                        .parse_protocol_bounds(*node)?,
-                                });
+        for scope in impl_scopes {
+            for (name, item) in scope.inner().all_items() {
+                match item {
+                    NamedItem::Function(symbol, node, _) => {
+                        if let Some(name) = name {
+                            if !names.insert(name) {
+                                self.diag_ctx.add_warning(CodeError::from_kind(
+                                    CodeErrorKind::DuplicateNameShadow(name.to_string()),
+                                    Span {
+                                        start: node.start_byte(),
+                                        end: node.end_byte(),
+                                        file: scope.code().unwrap().file_id(),
+                                    },
+                                ));
                             }
-                            _ => {}
                         }
+                        associated_fns.push(AssociatedFn {
+                            name: name.unwrap(),
+                            item: *symbol,
+                        })
                     }
+                    NamedItem::Mixin(node, scope) => {
+                        let placeholders = self.get_placeholders(scope)?;
+                        let mut visitor = TypeVisitor::new(self.ast, scope.clone()).with_protocol();
+                        let protocol_type =
+                            visitor.visit(node.child_by_field_name("protocol").unwrap())?;
 
-                    let mut visitor = TypeVisitor::new(self.ast, scope.clone()).with_protocol();
-                    let protocol_type =
-                        visitor.visit(node.child_by_field_name("protocol").unwrap())?;
+                        let span = Span {
+                            start: node.start_byte(),
+                            end: node.end_byte(),
+                            file: scope.code().unwrap().file_id(),
+                        };
 
-                    let span = Span {
-                        start: node.start_byte(),
-                        end: node.end_byte(),
-                        file: scope.code().unwrap().file_id(),
-                    };
-
-                    mixins.push(Mixin {
-                        placeholders: placeholders.alloc_on(self.ast),
-                        protocol: protocol_type,
-                        contents: self.ast.arena.alloc(MixinCell {
-                            contents: OnceCell::new(),
-                        }),
-                        span: Some(span),
-                    });
+                        mixins.push(Mixin {
+                            placeholders,
+                            protocol: protocol_type,
+                            contents: self.ast.arena.alloc(MixinCell {
+                                contents: OnceCell::new(),
+                            }),
+                            span: Some(span),
+                        });
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
 
-        let result = mixins.alloc_on(self.ast);
-        Ok(result)
+        let associated_fns = associated_fns.alloc_on(self.ast);
+        let mixins = mixins.alloc_on(self.ast);
+
+        Ok((associated_fns, mixins))
     }
 
     fn make_struct_like<'src>(
@@ -155,22 +184,14 @@ impl<'ast> AstItemMaker<'ast> {
         symbol: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
-        impl_scope: Option<Scope<'ast, 'src>>,
+        impl_scopes: &[Scope<'ast, 'src>],
     ) -> Result<(), AluminaError> {
-        let mut placeholders = Vec::new();
         let mut fields: Vec<Field<'ast>> = Vec::new();
 
         let code = scope.code().unwrap();
 
         for (name, item) in scope.inner().all_items() {
             match item {
-                NamedItem::Placeholder(id, node) => {
-                    placeholders.push(Placeholder {
-                        id: *id,
-                        bounds: TypeVisitor::new(self.ast, scope.clone())
-                            .parse_protocol_bounds(*node)?,
-                    });
-                }
                 NamedItem::Field(node) => {
                     let mut visitor = TypeVisitor::new(self.ast, scope.clone());
                     let field_type = visitor.visit(node.child_by_field_name("type").unwrap())?;
@@ -192,19 +213,14 @@ impl<'ast> AstItemMaker<'ast> {
             }
         }
 
+        let placeholders = self.get_placeholders(&scope)?;
         let is_union = match code.node_text(node.child_by_field_name("kind").unwrap()) {
             "struct" => false,
             "union" => true,
             _ => unimplemented!(),
         };
 
-        let (associated_fns, mixins) = match impl_scope {
-            Some(impl_scope) => (
-                self.resolve_associated_fns(impl_scope.clone())?,
-                self.resolve_mixins(impl_scope)?,
-            ),
-            None => ((&[]).alloc_on(self.ast), (&[]).alloc_on(self.ast)),
-        };
+        let (associated_fns, mixins) = self.resolve_associated_items(impl_scopes)?;
 
         let span = Span {
             start: node.start_byte(),
@@ -214,7 +230,7 @@ impl<'ast> AstItemMaker<'ast> {
 
         let result = Item::StructLike(StructLike {
             name,
-            placeholders: placeholders.alloc_on(self.ast),
+            placeholders,
             fields: fields.alloc_on(self.ast),
             attributes: self.get_attributes(symbol, code, node)?,
             associated_fns,
@@ -237,21 +253,8 @@ impl<'ast> AstItemMaker<'ast> {
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
     ) -> Result<(), AluminaError> {
-        let mut placeholders = Vec::new();
         let code = scope.code().unwrap();
-
-        for (_name, item) in scope.inner().all_items() {
-            match item {
-                NamedItem::Placeholder(id, node) => {
-                    placeholders.push(Placeholder {
-                        id: *id,
-                        bounds: TypeVisitor::new(self.ast, scope.clone())
-                            .parse_protocol_bounds(*node)?,
-                    });
-                }
-                _ => {}
-            }
-        }
+        let placeholders = self.get_placeholders(&scope)?;
 
         let span = Span {
             start: node.start_byte(),
@@ -259,11 +262,11 @@ impl<'ast> AstItemMaker<'ast> {
             file: code.file_id(),
         };
 
-        let associated_fns = self.resolve_associated_fns(scope)?;
+        let (associated_fns, _) = self.resolve_associated_items(&[scope])?;
 
         let result = Item::Protocol(Protocol {
             name,
-            placeholders: placeholders.alloc_on(self.ast),
+            placeholders,
             associated_fns,
             attributes: self.get_attributes(symbol, code, node)?,
             span: Some(span),
@@ -276,19 +279,7 @@ impl<'ast> AstItemMaker<'ast> {
 
     fn make_impl<'src>(&mut self, scope: Scope<'ast, 'src>) -> Result<(), AluminaError> {
         // Ambient placeholders on impl blocks
-        for (_, item) in scope.inner().all_items() {
-            match item {
-                NamedItem::Placeholder(id, node) => {
-                    self.ambient_placeholders.push(Placeholder {
-                        id: *id,
-                        bounds: TypeVisitor::new(self.ast, scope.clone())
-                            .parse_protocol_bounds(*node)?,
-                    });
-                }
-                _ => {}
-            }
-        }
-
+        self.ambient_placeholders = self.get_placeholders(&scope)?.iter().cloned().collect();
         let res = self.make(scope);
         self.ambient_placeholders.clear();
         res
@@ -300,7 +291,7 @@ impl<'ast> AstItemMaker<'ast> {
         symbol: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
-        impl_scope: Option<Scope<'ast, 'src>>,
+        impl_scopes: &[Scope<'ast, 'src>],
     ) -> Result<(), AluminaError> {
         let mut members = Vec::new();
 
@@ -332,13 +323,7 @@ impl<'ast> AstItemMaker<'ast> {
             }
         }
 
-        let (associated_fns, mixins) = match impl_scope {
-            Some(impl_scope) => (
-                self.resolve_associated_fns(impl_scope.clone())?,
-                self.resolve_mixins(impl_scope)?,
-            ),
-            None => ((&[]).alloc_on(self.ast), (&[]).alloc_on(self.ast)),
-        };
+        let (associated_fns, mixins) = self.resolve_associated_items(impl_scopes)?;
 
         let span = Span {
             start: node.start_byte(),
@@ -370,7 +355,6 @@ impl<'ast> AstItemMaker<'ast> {
         scope: Scope<'ast, 'src>,
         body: Option<tree_sitter::Node<'src>>,
     ) -> Result<(), AluminaError> {
-        let mut placeholders = self.ambient_placeholders.clone();
         let mut parameters: Vec<Parameter<'ast>> = Vec::new();
         let code = scope.code().unwrap();
 
@@ -384,15 +368,10 @@ impl<'ast> AstItemMaker<'ast> {
             file: scope.code().unwrap().file_id(),
         };
 
+        let placeholders = self.get_placeholders(&scope)?;
+
         for (_name, item) in scope.inner().all_items() {
             match item {
-                NamedItem::Placeholder(id, node) => {
-                    placeholders.push(Placeholder {
-                        id: *id,
-                        bounds: TypeVisitor::new(self.ast, scope.clone())
-                            .parse_protocol_bounds(*node)?,
-                    });
-                }
                 NamedItem::Parameter(id, node) => {
                     let field_type = TypeVisitor::new(self.ast, scope.clone())
                         .visit(node.child_by_field_name("type").unwrap())?;
@@ -466,7 +445,7 @@ impl<'ast> AstItemMaker<'ast> {
         let result = Item::Function(Function {
             name,
             attributes: self.get_attributes(symbol, scope.code().unwrap(), node)?,
-            placeholders: placeholders.alloc_on(self.ast),
+            placeholders,
             args: parameters.alloc_on(self.ast),
             return_type,
             body: function_body,
@@ -533,11 +512,11 @@ impl<'ast> AstItemMaker<'ast> {
         symbol: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
-        impl_scope: Option<Scope<'ast, 'src>>,
+        impl_scopes: &[Scope<'ast, 'src>],
     ) -> Result<(), AluminaError> {
         match node.kind() {
-            "struct_definition" => self.make_struct_like(name, symbol, node, scope, impl_scope)?,
-            "enum_definition" => self.make_enum(name, symbol, node, scope, impl_scope)?,
+            "struct_definition" => self.make_struct_like(name, symbol, node, scope, impl_scopes)?,
+            "enum_definition" => self.make_enum(name, symbol, node, scope, impl_scopes)?,
             _ => unimplemented!(),
         };
 
@@ -566,18 +545,19 @@ impl<'ast> AstItemMaker<'ast> {
             [NamedItem::Impl(node, scope)] => {
                 return Err(CodeErrorKind::NoFreeStandingImpl).with_span(scope, *node)
             }
-            [NamedItem::Type(symbol, node, scope), NamedItem::Impl(_, impl_scope)] => {
-                self.make_type(
-                    name,
-                    *symbol,
-                    *node,
-                    scope.clone(),
-                    Some(impl_scope.clone()),
-                )?;
-                self.make_impl(impl_scope.clone())?;
-            }
-            [NamedItem::Type(symbol, node, scope)] => {
-                self.make_type(name, *symbol, *node, scope.clone(), None)?;
+            [NamedItem::Type(symbol, node, scope), rest @ ..] => {
+                let mut impl_scopes = Vec::with_capacity(rest.len());
+                for impl_item in rest {
+                    match impl_item {
+                        NamedItem::Impl(_, scope) => {
+                            self.make_impl(scope.clone())?;
+                            impl_scopes.push(scope.clone());
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+
+                self.make_type(name, *symbol, *node, scope.clone(), &impl_scopes[..])?;
             }
             [NamedItem::Protocol(symbol, node, scope)] => {
                 self.make_protocol(name, *symbol, *node, scope.clone())?;

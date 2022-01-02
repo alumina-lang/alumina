@@ -5,8 +5,10 @@ Alumina is a C-like programming language with a Rust-like syntax.
 It has the following conveniences over C:
 
 - Module system, namespaces and 2-pass compilation (no header files and forward declarations needed)
-- Generics, protocols and mixins (duck-typed, similar to C++ templates but without specialization/overloading/SFINAE)
+- Generics, protocols and mixins (duck-typed, similar to C++ template)
+    - Template specialization is possible with static if syntax
 - [Unified call syntax](https://en.wikipedia.org/wiki/Uniform_Function_Call_Syntax) for functions in scope
+- Limited operator overloading (via Equatable and Comparable protocols)
 - Block expressions
 - Lambdas (static only, closures are not supported)
 - Richer type system: 

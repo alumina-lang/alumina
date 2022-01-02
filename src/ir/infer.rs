@@ -1,5 +1,9 @@
 use super::{lang::LangTypeKind, mono::MonoCtx};
-use crate::{ast, ir};
+use crate::{
+    ast::{self, lang::LangItemKind, Placeholder},
+    ir,
+    name_resolution::scope::NamedItem,
+};
 use std::collections::HashMap;
 
 pub struct TypeInferer<'a, 'ast, 'ir> {
@@ -99,6 +103,32 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
         Ok(())
     }
 
+    fn match_protocol_bounds(
+        &self,
+        inferred: &mut HashMap<ast::AstId, ir::TyP<'ir>>,
+        placeholder: &Placeholder<'ast>,
+    ) {
+        if let Some(tgt) = inferred.get(&placeholder.id).copied() {
+            for bound in placeholder.bounds {
+                if let ast::Ty::GenericType(item, [src]) = bound.typ {
+                    match self.mono_ctx.lang_items.reverse_get(item) {
+                        Some(LangItemKind::ProtoArrayOf) => {
+                            if let ir::Ty::Array(tgt, _) = tgt {
+                                let _ = self.match_slot(inferred, src, tgt);
+                            }
+                        }
+                        Some(LangItemKind::ProtoPointerOf) => {
+                            if let ir::Ty::Pointer(tgt, _) = tgt {
+                                let _ = self.match_slot(inferred, src, tgt);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
     pub fn try_infer(
         &mut self,
         self_slot: Option<(ast::TyP<'ast>, ir::TyP<'ir>)>,
@@ -114,15 +144,25 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
             let _ = self.match_slot(&mut inferred, param, actual);
         }
 
-        if inferred.len() == self.placeholders.len() {
-            Some(
-                self.placeholders
-                    .iter()
-                    .map(|placeholder| inferred[&placeholder.id])
-                    .collect(),
-            )
-        } else {
-            None
+        for placeholder in self.placeholders.iter() {
+            self.match_protocol_bounds(&mut inferred, placeholder)
         }
+
+        let mut defaults_only = false;
+        let mut result = Vec::new();
+        for placeholder in self.placeholders.iter() {
+            if let Some(ty) = inferred.get(&placeholder.id) {
+                if defaults_only {
+                    return None;
+                }
+                result.push(*ty);
+            } else if placeholder.default.is_some() {
+                defaults_only = true;
+            } else {
+                return None;
+            }
+        }
+
+        Some(result)
     }
 }

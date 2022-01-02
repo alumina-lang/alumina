@@ -21,24 +21,24 @@ fn partition_by<T, K: Comparable<K>>(arr: &mut [T], key: fn(T) -> K) -> usize {
     let i = 0usize;
     let j = 0usize;
     while j < arr.len - 1 {
-        if key(arr[j]).less_than_or_equal(&key(pivot)) {
+        if key(arr[j]) <= key(pivot) {
             swap(&arr[i], &arr[j]);
             i += 1;
         }
         j += 1;
     }
     swap(&arr[i], &arr[arr.len - 1]);
-    
     i
 }
 
 struct Vector<T> {
-    data: &mut [T],
-    length: usize,
+    _data: &mut [T],
+    _length: usize,
 }
 
 impl Vector<T> {
     use std::mem::{slice, alloc, copy_to, copy_to_nonoverlapping};
+    use std::iter::{Iterator, Iterable};
 
     fn new() -> Vector<T> {
         with_capacity(0)
@@ -46,100 +46,118 @@ impl Vector<T> {
 
     fn from_raw(data: &mut [T], length: usize) {
         Vector {
-            data: data,
-            length: length,
+            _data: data,
+            _length: length,
         }
     }
 
     fn with_capacity(capacity: usize) -> Vector<T> {
         Vector {
-            data: alloc::<T>(capacity),
-            length: 0,
+            _data: alloc::<T>(capacity),
+            _length: 0,
         }
     }
 
     fn from_slice(slice: &[T]) -> Vector<T> {
         let vec = with_capacity::<T>(slice.len);
         slice.copy_to_nonoverlapping(vec.data.ptr);
-        vec.length = slice.len;
+        vec._length = slice.len;
+        vec
+    }
+
+    fn from_iter<I: Iterator<I, T>>(iter: &mut I) -> Vector<T> {
+        let vec = Vector::new::<T>();
+        vec.extend(iter);
         vec
     }
 
     fn reserve(self: &mut Vector<T>, new_capacity: usize) {
-        if self.data.len < new_capacity {
-            self.data = {
+        if self._data.len < new_capacity {
+            self._data = {
                 let new_data = alloc::<T>(new_capacity);
-                self.data.copy_to_nonoverlapping(new_data.ptr);
+                self._data.copy_to_nonoverlapping(new_data.ptr);
                 self.free();
                 new_data
             };
         }
     }
 
-    fn extend(self: &mut Vector<T>, value: &[T]) {
-        let new_length = self.length + value.len;
+    fn extend_from_slice(self: &mut Vector<T>, value: &[T]) {
+        let new_length = self._length + value.len;
         self.reserve(new_length);
-        value.copy_to(&self.data[self.length]);
-        self.length = new_length;
+        value.copy_to(&self._data[self._length]);
+        self._length = new_length;
+    }
+
+    fn extend<I: Iterator<I, T>>(self: &mut Vector<T>, iter: I) {
+        for item in iter {
+            self.push(item);
+        }
     }
 
     fn insert(self: &mut Vector<T>, index: usize, value: T) {
         use std::math::max;
 
-        if self.length == self.data.len {
-            self.reserve(max(self.data.len, 1) * 2);
+        if self._length == self._data.len {
+            self.reserve(max(self._data.len, 1) * 2);
         }
 
-        self.data[index].copy_to(&self.data[index + 1]);
-        self.data[index] = value;
+        self._data[index].copy_to(&self._data[index + 1]);
+        self._data[index] = value;
 
-        self.length += 1;
+        self._length += 1;
     }
 
     fn as_slice(self: &Vector<T>) -> &[T] {
-        self.data[0..self.length]
+        self._data[0..self._length]
     }
 
     fn as_slice_mut(self: &mut Vector<T>) -> &mut [T] {
-        self.data[0..self.length]
+        self._data[0..self._length]
     }
 
     fn push(self: &mut Vector<T>, value: T) {
         use std::math::max;
 
-        if self.length == self.data.len {
-            self.reserve(max(self.data.len, 1) * 2);
+        if self._length == self._data.len {
+            self.reserve(max(self._data.len, 1) * 2);
         }
 
-        self.data[self.length] = value;
-        self.length += 1;
+        self._data[self._length] = value;
+        self._length += 1;
     }
 
     fn pop(self: &mut Vector<T>) -> T {
-        self.length -= 1;
-        self.data[self.length]
+        self._length -= 1;
+        self._data[self._length]
     }
 
+    fn len(self: &Vector<T>) -> usize {
+        self._length
+    }
+
+    #[inline]
     fn empty(self: &Vector<T>) -> bool {
-        self.length == 0
+        self._length == 0
     }
 
     fn clear(self: &mut Vector<T>) {
-        self.length = 0;
+        self._length = 0;
     }
 
+    #[inline]
     fn iter(self: &Vector<T>) -> &[T] {
         self.as_slice()
     }
 
     fn shrink_to_fit(self: &mut Vector<T>) {
-        if self.data.len == self.length {
+        if self._data.len == self._length {
             return;
         }
 
-        self.data = {
-            let new_data = alloc::<T>(self.length);
-            self.data.copy_to_nonoverlapping(new_data.ptr);
+        self._data = {
+            let new_data = alloc::<T>(self._length);
+            self._data.copy_to_nonoverlapping(new_data.ptr);
             self.free();
             new_data
         };
@@ -147,14 +165,17 @@ impl Vector<T> {
 
     fn free(self: &mut Vector<T>) {
         use std::mem::free;
-        self.data.free();
+        self._data.free();
     }
 }
 
 mod hashmap {
-    use std::hash::{Hashable, Hasher};
+    use std::hash::{Hashable, Hasher, DefaultHash, hash_of};
     use std::result::{Option, try_option};
     use std::cmp::Equatable;
+    use std::iter::{Iterator, Iterable};
+
+    const INITIAL_SIZE: usize = 4;
 
     enum State {
         Vacant = 0u8,
@@ -167,21 +188,21 @@ mod hashmap {
         item: T
     }
 
-    struct HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H>> {
-        buckets: &mut [HashItem<(K, V)>],
-        length: usize,
+    struct HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
+        _buckets: &mut [HashItem<(K, V)>],
+        _length: usize,
     }
 
     struct HashMapIterator<K, V> {
-        buckets: &[HashItem<(K, V)>],
-        index: usize,
+        _buckets: &[HashItem<(K, V)>],
+        _index: usize,
     }
 
     impl HashMapIterator<K, V> {
         fn next(self: &mut HashMapIterator<K, V>) -> Option<(K, V)> {
-            while self.index < self.buckets.len {
-                let item = &self.buckets[self.index];
-                self.index += 1;
+            while self._index < self._buckets.len {
+                let item = &self._buckets[self._index];
+                self._index += 1;
                 if item.state == State::Occupied {
                     return Option::some(item.item);
                 }
@@ -189,10 +210,10 @@ mod hashmap {
             Option::none()
         }
 
-        mixin<K, V> iter::Iterator<HashMapIterator<K, V>, (K, V)>;
+        mixin<K, V> Iterator<HashMapIterator<K, V>, (K, V)>;
     }
 
-    impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H>> {
+    impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
         use std::mem::alloc_zeroed;
 
         fn new() -> HashMap<K, V, H> {
@@ -201,8 +222,8 @@ mod hashmap {
 
         fn with_capacity(capacity: usize) -> HashMap<K, V, H> {
             HashMap::<K, V, H> {
-                buckets: alloc_zeroed::<HashItem<(K, V)>>(capacity),
-                length: 0,
+                _buckets: alloc_zeroed::<HashItem<(K, V)>>(capacity),
+                _length: 0,
             }
         }
 
@@ -213,75 +234,81 @@ mod hashmap {
             }
 
             self.free();
-            self.buckets = new_map.buckets;
-            self.length = new_map.length;
+            self._buckets = new_map._buckets;
         }
 
-        fn insert(self: &mut HashMap<K, V, H>, item: (K, V)) -> Option<V> {
-            use State::{Vacant, Occupied, Deleted};
-
-            if self.buckets.len == 0 {
-                self.rehash(1);
+        fn _grow_if_needed(self: &mut HashMap<K, V, H>, new_length: usize) -> bool {            
+            if new_length * 3 > self._buckets.len * 2 { 
+                self.rehash(self._buckets.len * 2);
+                return true;
             }
 
-            let hasher = H::new();
-            item.0.hash(&hasher);
+            return false;
+        }
 
-            let initial_index = (hasher.finish() as usize) % self.buckets.len; 
+        fn _insert(self: &mut HashMap<K, V, H>, item: (K, V), grow: bool) -> Option<V> {
+            let initial_index = (hash_of::<K, H>(item.0) as usize) % self._buckets.len; 
             let index = initial_index;
 
             loop {
-                switch self.buckets[index].state {
-                    Vacant, Deleted => {
-                        if self.length * 2 > self.buckets.len {
-                            self.rehash(self.buckets.len * 2);
-                            return self.insert(item);
+                switch self._buckets[index].state {
+                    State::Vacant => {
+                        if grow && self._grow_if_needed(self._length + 1) {
+                            return self._insert(item, false);
                         }
-                        self.buckets[index].state = Occupied;
-                        self.buckets[index].item = item;
-                        self.length += 1;
+                        self._length += 1;
+                        self._buckets[index].state = State::Occupied;
+                        self._buckets[index].item = item;
                         return Option::none();
                     }
-                    Occupied => {
-                        if self.buckets[index].item.0.equals(&item.0) {
-                            return Option::some(std::mem::replace(&self.buckets[index].item.1, item.1));
+                    State::Occupied => {
+                        if self._buckets[index].item.0 == item.0 {
+                            return Option::some(std::mem::replace(&self._buckets[index].item.1, item.1));
                         }
                     }
                 }
-                index = (index + 1) % self.buckets.len;
+                index = (index + 1) % self._buckets.len;
                 if index == initial_index {
-                    self.rehash(self.buckets.len * 2);
-                    return self.insert(item);
+                    assert!(grow);
+
+                    // We wrapped around because of deleted items, we don't
+                    // need to grow the hashmap, but we need to get rid of the
+                    // tombstones by rehashing.
+                    self.rehash(self._buckets.len);
+                    return self._insert(item, false);
                 }
             }
         }
 
         fn _get_slot(self: &HashMap<K, V, H>, key: K) -> Option<&mut HashItem<(K, V)>> {
-            use State::{Vacant, Occupied, Deleted};
-
-            let hasher = H::new();
-            key.hash(&hasher);
-
-            let initial_index = (hasher.finish() as usize) % self.buckets.len; 
+            let initial_index = (hash_of::<K, H>(key) as usize) % self._buckets.len; 
             let index = initial_index;
+
             loop {
-                switch self.buckets[index].state {
-                    Vacant => {
+                switch self._buckets[index].state {
+                    State::Vacant => {
                         return Option::none();
                     }
-                    Occupied => {
-                        if self.buckets[index].item.0.equals(&key) {
-                            return Option::some(&self.buckets[index]);
+                    State::Occupied => {
+                        if self._buckets[index].item.0 == key {
+                            return Option::some(&self._buckets[index]);
                         }
                     }
-                    // If there is a tombstone, we need to continue searching
                 }
-                index = (index + 1) % self.buckets.len;
+                index = (index + 1) % self._buckets.len;
                 if index == initial_index {
                     // We can wrap around if all the buckets are Occupied or Deleted
                     return Option::none();
                 }
             }
+        }
+
+        fn insert(self: &mut HashMap<K, V, H>, item: (K, V)) -> Option<V> {
+            if self._buckets.len == 0 {
+                self.rehash(INITIAL_SIZE);
+            }
+
+            self._insert(item, true)
         }
 
         fn get(self: &HashMap<K, V, H>, key: K) -> Option<V> {
@@ -291,33 +318,151 @@ mod hashmap {
 
         fn remove(self: &mut HashMap<K, V, H>, key: K) -> Option<V> {
             let item = try_option!(self._get_slot(key));
+            self._length -= 1;
             item.state = State::Deleted;
             Option::some(item.item.1)
         }
 
+        #[inline]
+        fn len(self: &HashMap<K, V, H>) -> usize {
+            self._length
+        }
+
+        #[inline]
         fn empty(self: &HashMap<K, V, H>) -> bool {
-            self.length == 0
+            self._length == 0
         }
 
         fn clear(self: &mut HashMap<K, V, H>) {
-            for i in std::iter::range(0usize, self.buckets.len) {
-                self.buckets[i].state = State::Vacant;
+            for i in std::iter::range(0usize, self._buckets.len) {
+                self._buckets[i].state = State::Vacant;
             }
-            self.length = 0;
+            self._length = 0;
         }
 
         fn iter(self: &HashMap<K, V, H>) -> HashMapIterator<K, V> {
             HashMapIterator::<K, V> {
-                buckets: self.buckets,
-                index: 0,
+                _buckets: self._buckets,
+                _index: 0,
             }
         }
 
         fn free(self: &mut HashMap<K, V, H>) {
             use std::mem::free;
-            self.buckets.free();
+            self._buckets.free();
+        }
+    }
+
+    impl HashMap<
+        K: Hashable<K, H> + Equatable<K>, 
+        V,
+        I: Iterator<I, (K, V)>, 
+        H: Hasher<H> = DefaultHash
+    > {
+        fn from_iter(iter: I) -> HashMap<K, V, H> {
+            let map = HashMap::new::<K, V, H>();
+            map.extend(iter);
+            map
+        }
+
+        fn extend(self: &mut HashMap<K, V, H>, iter: I) {
+            for item in iter {
+                self.insert(item);
+            }
+        }
+    }
+}
+
+mod hashset {
+    use std::hash::{Hashable, Hasher, DefaultHash};
+    use std::result::{Option, try_option};
+    use std::iter::{Iterator, Iterable};
+    use std::cmp::Equatable;
+
+    struct HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
+        _inner: hashmap::HashMap<K, ()>
+    }
+
+    struct HashSetIterator<K> {
+        inner: hashmap::HashMapIterator<K, ()>
+    }
+
+    impl HashSetIterator<K> {
+        fn next(self: &mut HashSetIterator<K>) -> Option<K> {
+            let elem = try_option!(self.inner.next());
+            Option::some(elem.0)
+        }
+        mixin<K> Iterator<HashSetIterator<K>, K>;
+    }
+
+    impl HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
+        fn new() -> HashSet<K, H> {
+            with_capacity(0)
+        }
+
+        fn with_capacity(capacity: usize) -> HashSet<K, H> {
+            HashSet::<K, H> {
+                _inner: hashmap::HashMap::with_capacity::<K, (), H>(capacity)
+            }
+        }
+
+        #[inline]
+        fn insert(self: &mut HashSet<K, H>, item: K) -> bool {
+            !self._inner.insert((item, ())).is_some
+        }
+
+        #[inline]
+        fn remove(self: &mut HashSet<K, H>, item: K) -> bool {
+            self._inner.remove(item).is_some()
+        }
+
+        #[inline]
+        fn contains(self: &HashSet<K, H>, item: K) -> bool {
+            self._inner.get(item).is_some()
+        }
+
+        #[inline]
+        fn len(self: &HashSet<K, H>) -> usize {
+            self._inner.len()
+        }
+
+        #[inline]
+        fn empty(self: &HashSet<K, H>) -> bool {
+            self._inner.empty()
+        }
+
+        #[inline]
+        fn clear(self: &mut HashSet<K, H>) {
+            self._inner.clear();
+        }
+
+        #[inline]
+        fn iter(self: &HashSet<K, H>) -> HashSetIterator<K> {
+            HashSetIterator::<K> {
+                inner: self._inner.iter()
+            }
+        }
+
+        #[inline]
+        fn free(self: &mut HashSet<K, H>) {
+            self._inner.free();
+        }
+    }
+
+    impl HashSet<K: Hashable<K, H> + Equatable<K>, I: Iterator<I, K>, H: Hasher<H> = DefaultHash> {
+        fn from_iter(iter: I) -> HashSet<K, H> {
+            let set = HashSet::new::<K, H>();
+            set.extend(iter);
+            set
+        }
+
+        fn extend(self: &mut HashSet<K, H>, iter: I) {
+            for item in iter {
+                self.insert(item);
+            }
         }
     }
 }
 
 use hashmap::HashMap;
+use hashset::HashSet;

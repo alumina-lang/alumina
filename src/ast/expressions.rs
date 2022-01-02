@@ -27,7 +27,7 @@ use super::maker::AstItemMaker;
 use super::types::TypeVisitor;
 use super::{
     BuiltinType, Defered, ExprKind, FnKind, Function, Item, ItemP, Parameter, Placeholder, Span,
-    StatementKind, Ty, TyP,
+    StatementKind, StaticIfCondition, Ty, TyP,
 };
 
 macro_rules! with_block_scope {
@@ -671,15 +671,31 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_if_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let condition = self.visit(node.child_by_field_name("condition").unwrap())?;
         let consequence = self.visit(node.child_by_field_name("consequence").unwrap())?;
         let alternative = match node.child_by_field_name("alternative") {
             Some(node) => self.visit(node)?,
             None => ExprKind::Void.alloc_with_span(self.ast, &self.scope, node),
         };
 
-        let result = ExprKind::If(condition, consequence, alternative);
-        Ok(result.alloc_with_span(self.ast, &self.scope, node))
+        let condition = node
+            .child_by_field_name("condition")
+            .map(|n| self.visit(n))
+            .transpose()?;
+
+        let result = if let Some(condition) = condition {
+            ExprKind::If(condition, consequence, alternative)
+        } else {
+            let typecheck_node = node.child_by_field_name("type_check").unwrap();
+            let typ = TypeVisitor::new(self.ast, self.scope.clone())
+                .visit(typecheck_node.child_by_field_name("lhs").unwrap())?;
+            let bounds = TypeVisitor::new(self.ast, self.scope.clone())
+                .parse_protocol_bounds(typecheck_node)?;
+
+            let cond = StaticIfCondition { typ, bounds };
+            ExprKind::StaticIf(cond, consequence, alternative)
+        };
+
+        return Ok(result.alloc_with_span(self.ast, &self.scope, node));
     }
 
     fn visit_generic_function(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -689,7 +705,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         {
             ExprKind::Fn(fn_kind, None) => fn_kind.clone(),
             ExprKind::Defered(def) => FnKind::Defered(def.clone()),
-            _ => return Err(CodeErrorKind::FunctionExpectedHere).with_span(&self.scope, node),
+            _ => {
+                //panic!("wow");
+                return Err(CodeErrorKind::FunctionExpectedHere).with_span(&self.scope, node);
+            }
         };
 
         let mut type_visitor = TypeVisitor::new(self.ast, self.scope.clone());
@@ -1286,6 +1305,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
         self.placeholders.push(Placeholder {
             id: placeholder,
             bounds: [].alloc_on(self.ast),
+            default: None,
         });
 
         let span = Span {
@@ -1330,6 +1350,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
                     self.placeholders.push(Placeholder {
                         id: placeholder,
                         bounds: [].alloc_on(self.ast),
+                        default: None,
                     });
                     self.ast.intern_type(Ty::Placeholder(placeholder))
                 }),

@@ -1,6 +1,6 @@
 use crate::{
     ast::Ty,
-    common::CodeErrorKind,
+    common::{CodeErrorKind, CycleGuardian},
     name_resolution::{path::Path, scope::NamedItem},
 };
 use std::collections::HashSet;
@@ -11,7 +11,7 @@ use super::{
 };
 
 pub struct NameResolver<'ast, 'src> {
-    seen_aliases: HashSet<(u32, *const ScopeInner<'ast, 'src>, Path<'ast>)>,
+    cycle_guardian: CycleGuardian<(u32, *const ScopeInner<'ast, 'src>, Path<'ast>)>,
 }
 
 #[derive(Debug)]
@@ -33,7 +33,7 @@ pub enum ItemResolution<'ast, 'src> {
 impl<'ast, 'src> NameResolver<'ast, 'src> {
     pub fn new() -> Self {
         NameResolver {
-            seen_aliases: HashSet::new(),
+            cycle_guardian: CycleGuardian::new(),
         }
     }
 
@@ -42,12 +42,10 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
         self_scope: Scope<'ast, 'src>,
         path: Path<'ast>,
     ) -> Result<ScopeResolution<'ast, 'src>, CodeErrorKind> {
-        if !self
-            .seen_aliases
-            .insert((1, self_scope.0.as_ptr(), path.clone()))
-        {
-            return Err(CodeErrorKind::CycleDetected);
-        }
+        let _guard = self
+            .cycle_guardian
+            .guard((1, self_scope.0.as_ptr(), path.clone()))
+            .map_err(|_| CodeErrorKind::CycleDetected)?;
 
         if path.absolute {
             return self.resolve_scope(
@@ -107,12 +105,10 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
         scope: Scope<'ast, 'src>,
         path: Path<'ast>,
     ) -> Result<ItemResolution<'ast, 'src>, CodeErrorKind> {
-        if !self
-            .seen_aliases
-            .insert((2, scope.0.as_ptr(), path.clone()))
-        {
-            return Err(CodeErrorKind::CycleDetected);
-        }
+        let _guard = self
+            .cycle_guardian
+            .guard((1, scope.0.as_ptr(), path.clone()))
+            .map_err(|_| CodeErrorKind::CycleDetected)?;
 
         if path.segments.is_empty() {
             return Err(CodeErrorKind::UnresolvedPath(path.to_string()));

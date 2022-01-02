@@ -65,7 +65,6 @@ pub enum ScopeType {
     Module,
     Protocol,
     StructLike,
-    TypeAlias,
     Function,
     Macro,
     Closure,
@@ -241,19 +240,30 @@ impl<'ast, 'src> Scope<'ast, 'src> {
                     // In linear scopes we allow shadowing.
                     existing[0] = item;
                     return Ok(());
-                } else if existing.len() == 1
-                    && ((matches!(existing[0], NamedItem::Type(_, _, _))
+                } else {
+                    let (type_count, impl_count) =
+                        existing
+                            .iter()
+                            .fold((0, 0), |(type_count, impl_count), item| match item {
+                                NamedItem::Type(_, _, _) => (type_count + 1, impl_count),
+                                NamedItem::Impl(_, _) => (type_count, impl_count + 1),
+                                _ => (type_count, impl_count),
+                            });
+
+                    if ((type_count == 1 || impl_count > 0)
                         && matches!(item, NamedItem::Impl(_, _)))
-                        || (matches!(existing[0], NamedItem::Impl(_, _))
-                            && matches!(item, NamedItem::Type(_, _, _))))
-                {
-                    existing.push(item);
-                    existing.sort_by_key(|i| match i {
-                        NamedItem::Type(_, _, _) => 0,
-                        NamedItem::Impl(_, _) => 1,
-                        _ => unreachable!(),
-                    });
-                    return Ok(());
+                        || (type_count == 0
+                            && impl_count > 0
+                            && matches!(item, NamedItem::Type(_, _, _)))
+                    {
+                        existing.push(item);
+                        existing.sort_by_key(|i| match i {
+                            NamedItem::Type(_, _, _) => 0,
+                            NamedItem::Impl(_, _) => 1,
+                            _ => unreachable!(),
+                        });
+                        return Ok(());
+                    }
                 }
             }
         }

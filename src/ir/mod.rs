@@ -194,7 +194,7 @@ impl Debug for Ty<'_> {
 }
 
 impl<'ir> Ty<'ir> {
-    /// Returns true if lhs < rhs on the stric type hierarchy (implicit coercions are not
+    /// Returns true if lhs <= rhs on the stric type hierarchy (implicit coercions are not
     /// considered).
     pub fn assignable_from(&self, other: &Ty<'ir>) -> bool {
         match (self, other) {

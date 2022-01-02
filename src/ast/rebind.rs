@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    ast::{Expr, FieldInitializer, FnKind},
+    ast::{Bound, Expr, FieldInitializer, FnKind, StaticIfCondition},
     common::{AluminaError, ArenaAllocatable},
 };
 
@@ -175,6 +175,25 @@ impl<'ast> Rebinder<'ast> {
                 };
 
                 Fn(kind, generic_args)
+            }
+            StaticIf(ref cond, then, els) => {
+                let cond = StaticIfCondition {
+                    typ: self.visit_typ(cond.typ)?,
+                    bounds: cond
+                        .bounds
+                        .iter()
+                        .map(|b| {
+                            self.visit_typ(b.typ).map(|t| Bound {
+                                span: b.span,
+                                negated: b.negated,
+                                typ: t,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?
+                        .alloc_on(self.ast),
+                };
+
+                StaticIf(cond, self.visit_expr(then)?, self.visit_expr(els)?)
             }
             Local(_) | Continue | EnumValue(_, _) | Lit(_) | Void | Static(_) | Const(_) => {
                 expr.kind.clone()

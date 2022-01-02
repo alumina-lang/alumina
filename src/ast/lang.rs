@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::common::CodeErrorKind;
 
-use super::{BuiltinType, ItemP};
+use super::{BinOp, BuiltinType, ItemP};
 
 pub struct LangItemMap<'ast>(HashMap<LangItemKind, ItemP<'ast>>);
 
@@ -44,14 +44,21 @@ pub enum LangItemKind {
     ProtoFloatingPoint,
     ProtoSigned,
     ProtoUnsigned,
+    ProtoZeroSized,
     ProtoPointer,
+    ProtoArray,
     ProtoAny,
+    ProtoArrayOf,
+    ProtoPointerOf,
 
     ProtoEquatable,
     ProtoComparable,
 
     ImplBuiltin(BuiltinType),
     ImplTuple(usize),
+    ImplArray,
+
+    Operator(BinOp),
 }
 
 macro_rules! regex {
@@ -76,9 +83,13 @@ pub fn lang_item_kind(name: &str) -> Option<LangItemKind> {
         "lang(proto_signed)" => Some(LangItemKind::ProtoSigned),
         "lang(proto_unsigned)" => Some(LangItemKind::ProtoUnsigned),
         "lang(proto_pointer)" => Some(LangItemKind::ProtoPointer),
+        "lang(proto_zero_sized)" => Some(LangItemKind::ProtoZeroSized),
         "lang(proto_any)" => Some(LangItemKind::ProtoAny),
         "lang(proto_equatable)" => Some(LangItemKind::ProtoEquatable),
         "lang(proto_comparable)" => Some(LangItemKind::ProtoComparable),
+        "lang(proto_array)" => Some(LangItemKind::ProtoArray),
+        "lang(proto_array_of)" => Some(LangItemKind::ProtoArrayOf),
+        "lang(proto_pointer_of)" => Some(LangItemKind::ProtoPointerOf),
 
         "lang(impl_never)" => Some(LangItemKind::ImplBuiltin(BuiltinType::Never)),
         "lang(impl_void)" => Some(LangItemKind::ImplBuiltin(BuiltinType::Void)),
@@ -97,6 +108,15 @@ pub fn lang_item_kind(name: &str) -> Option<LangItemKind> {
         "lang(impl_isize)" => Some(LangItemKind::ImplBuiltin(BuiltinType::ISize)),
         "lang(impl_f32)" => Some(LangItemKind::ImplBuiltin(BuiltinType::F32)),
         "lang(impl_f64)" => Some(LangItemKind::ImplBuiltin(BuiltinType::F64)),
+
+        "lang(impl_array)" => Some(LangItemKind::ImplArray),
+
+        "lang(operator_eq)" => Some(LangItemKind::Operator(BinOp::Eq)),
+        "lang(operator_neq)" => Some(LangItemKind::Operator(BinOp::Neq)),
+        "lang(operator_lt)" => Some(LangItemKind::Operator(BinOp::Lt)),
+        "lang(operator_lte)" => Some(LangItemKind::Operator(BinOp::LEq)),
+        "lang(operator_gt)" => Some(LangItemKind::Operator(BinOp::Gt)),
+        "lang(operator_gte)" => Some(LangItemKind::Operator(BinOp::GEq)),
 
         t => {
             if let Some(matches) = regex!(r"^lang\(impl_tuple_(\d+)\)$").captures(t) {

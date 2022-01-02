@@ -52,7 +52,7 @@ fn main() {
             path: "::std::hash::xxhash".to_string(),
         },
         SourceFile {
-            filename: PathBuf::from("./examples/minimal.alu"),
+            filename: PathBuf::from("./minimal.alu"),
             path: "::hello_world".to_string(),
         },
     ];
