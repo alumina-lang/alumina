@@ -4,46 +4,38 @@ use once_cell::unsync::OnceCell;
 
 use crate::{
     ast::{AstCtx, BuiltinType, Field, Function, Item, ItemP, Parameter, StructLike, Ty},
-    common::{
-        AluminaError, ArenaAllocatable, CodeError, CodeErrorKind, Marker, WithSpanDuringParsing,
-    },
-    diagnostics::DiagnosticContext,
+    common::{AluminaError, ArenaAllocatable, CodeError, CodeErrorKind, WithSpanDuringParsing},
+    global_ctx::GlobalCtx,
     intrinsics::intrinsic_kind,
-    name_resolution::scope::{NamedItem, Scope, ScopeType},
+    name_resolution::scope::{NamedItem, NamedItemKind, Scope, ScopeType},
     parser::{AluminaVisitor, ParseCtx},
 };
 
 use super::{
-    expressions::ExpressionVisitor,
-    lang::{lang_item_kind, LangItemKind, LangItemMap},
-    macros::MacroMaker,
-    types::TypeVisitor,
-    AssociatedFn, Attribute, Enum, EnumMember, Intrinsic, Mixin, MixinCell, Placeholder, Protocol,
-    Span, StaticOrConst,
+    expressions::ExpressionVisitor, macros::MacroMaker, types::TypeVisitor, AssociatedFn,
+    Attribute, Enum, EnumMember, Intrinsic, Mixin, MixinCell, Placeholder, Protocol, Span,
+    StaticOrConst,
 };
 
 pub struct AstItemMaker<'ast> {
     ast: &'ast AstCtx<'ast>,
-    diag_ctx: DiagnosticContext,
+    global_ctx: GlobalCtx,
     symbols: Vec<ItemP<'ast>>,
-
-    lang_items: HashMap<LangItemKind, ItemP<'ast>>,
     ambient_placeholders: Vec<Placeholder<'ast>>,
 }
 
 impl<'ast> AstItemMaker<'ast> {
-    pub fn new(ast: &'ast AstCtx<'ast>, diag_ctx: DiagnosticContext) -> Self {
+    pub fn new(ast: &'ast AstCtx<'ast>, global_ctx: GlobalCtx) -> Self {
         Self {
             ast,
-            diag_ctx,
+            global_ctx,
             symbols: Vec::new(),
-            lang_items: HashMap::new(),
             ambient_placeholders: Vec::new(),
         }
     }
 
-    pub fn into_inner(self) -> (Vec<ItemP<'ast>>, LangItemMap<'ast>) {
-        (self.symbols, LangItemMap::new(self.lang_items))
+    pub fn into_inner(self) -> Vec<ItemP<'ast>> {
+        self.symbols
     }
 
     pub fn get_placeholders<'src>(
@@ -52,10 +44,10 @@ impl<'ast> AstItemMaker<'ast> {
     ) -> Result<&'ast [Placeholder<'ast>], AluminaError> {
         let mut placeholders = self.ambient_placeholders.clone();
         for (_name, item) in scope.inner().all_items() {
-            match item {
-                NamedItem::Placeholder(id, node) => {
+            match item.kind {
+                NamedItemKind::Placeholder(id, node) => {
                     placeholders.push(Placeholder {
-                        id: *id,
+                        id,
                         default: node
                             .child_by_field_name("default")
                             .map(|node| {
@@ -72,7 +64,7 @@ impl<'ast> AstItemMaker<'ast> {
                         // Unlike defaults, bounds can refer to self and this is in fact quite central
                         // to how Alumina protocols work.
                         bounds: TypeVisitor::new(self.ast, scope.clone())
-                            .parse_protocol_bounds(*node)?,
+                            .parse_protocol_bounds(node)?,
                     });
                 }
                 _ => {}
@@ -80,41 +72,6 @@ impl<'ast> AstItemMaker<'ast> {
         }
 
         Ok(placeholders.alloc_on(self.ast))
-    }
-
-    fn get_attributes<'src>(
-        &mut self,
-        item: ItemP<'ast>,
-        code: &'src ParseCtx<'src>,
-        node: tree_sitter::Node<'src>,
-    ) -> Result<&'ast [Attribute], AluminaError> {
-        let attribute_node = match node.child_by_field_name("attributes") {
-            Some(node) => node,
-            None => return Ok([].alloc_on(self.ast)),
-        };
-
-        let mut cursor = attribute_node.walk();
-        let result = attribute_node
-            .children(&mut cursor)
-            .map(|n| code.node_text(n.child_by_field_name("name").unwrap()))
-            .filter(|s| match lang_item_kind(s) {
-                Some(kind) => {
-                    // We allow lang items to be overriden.
-                    self.lang_items.insert(kind, item);
-                    false
-                }
-                None => true,
-            })
-            .filter_map(|name| match name {
-                "export" => Some(Attribute::Export),
-                "inline" => Some(Attribute::Inline),
-                "force_inline" => Some(Attribute::ForceInline),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .alloc_on(self.ast);
-
-        Ok(result)
     }
 
     fn resolve_associated_items<'src>(
@@ -127,11 +84,11 @@ impl<'ast> AstItemMaker<'ast> {
 
         for scope in impl_scopes {
             for (name, item) in scope.inner().all_items() {
-                match item {
-                    NamedItem::Function(symbol, node, _) => {
+                match &item.kind {
+                    NamedItemKind::Function(symbol, node, _) => {
                         if let Some(name) = name {
                             if !names.insert(name) {
-                                self.diag_ctx.add_warning(CodeError::from_kind(
+                                self.global_ctx.diag().add_warning(CodeError::from_kind(
                                     CodeErrorKind::DuplicateNameShadow(name.to_string()),
                                     Span {
                                         start: node.start_byte(),
@@ -143,11 +100,11 @@ impl<'ast> AstItemMaker<'ast> {
                         }
                         associated_fns.push(AssociatedFn {
                             name: name.unwrap(),
-                            item: *symbol,
+                            item: symbol,
                         })
                     }
-                    NamedItem::Mixin(node, scope) => {
-                        let placeholders = self.get_placeholders(scope)?;
+                    NamedItemKind::Mixin(node, scope) => {
+                        let placeholders = self.get_placeholders(&scope)?;
                         let mut visitor = TypeVisitor::new(self.ast, scope.clone()).with_protocol();
                         let protocol_type =
                             visitor.visit(node.child_by_field_name("protocol").unwrap())?;
@@ -185,14 +142,15 @@ impl<'ast> AstItemMaker<'ast> {
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         impl_scopes: &[Scope<'ast, 'src>],
+        attributes: &[Attribute],
     ) -> Result<(), AluminaError> {
         let mut fields: Vec<Field<'ast>> = Vec::new();
 
         let code = scope.code().unwrap();
 
         for (name, item) in scope.inner().all_items() {
-            match item {
-                NamedItem::Field(node) => {
+            match item.kind {
+                NamedItemKind::Field(node) => {
                     let mut visitor = TypeVisitor::new(self.ast, scope.clone());
                     let field_type = visitor.visit(node.child_by_field_name("type").unwrap())?;
 
@@ -232,7 +190,7 @@ impl<'ast> AstItemMaker<'ast> {
             name,
             placeholders,
             fields: fields.alloc_on(self.ast),
-            attributes: self.get_attributes(symbol, code, node)?,
+            attributes: attributes.alloc_on(self.ast),
             associated_fns,
             mixins,
             span: Some(span),
@@ -252,6 +210,7 @@ impl<'ast> AstItemMaker<'ast> {
         symbol: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
+        attributes: &[Attribute],
     ) -> Result<(), AluminaError> {
         let code = scope.code().unwrap();
         let placeholders = self.get_placeholders(&scope)?;
@@ -268,7 +227,7 @@ impl<'ast> AstItemMaker<'ast> {
             name,
             placeholders,
             associated_fns,
-            attributes: self.get_attributes(symbol, code, node)?,
+            attributes: attributes.alloc_on(self.ast),
             span: Some(span),
         });
 
@@ -292,16 +251,17 @@ impl<'ast> AstItemMaker<'ast> {
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         impl_scopes: &[Scope<'ast, 'src>],
+        attributes: &[Attribute],
     ) -> Result<(), AluminaError> {
         let mut members = Vec::new();
 
         for (name, item) in scope.inner().all_items() {
-            match item {
-                NamedItem::EnumMember(_, id, node) => {
-                    let expr = node
+            match item.kind {
+                NamedItemKind::EnumMember(_, id, node) => {
+                    let value = node
                         .child_by_field_name("value")
                         .map(|node| {
-                            ExpressionVisitor::new(self.ast, self.diag_ctx.clone(), scope.clone())
+                            ExpressionVisitor::new(self.ast, self.global_ctx.clone(), scope.clone())
                                 .generate(node)
                         })
                         .transpose()?;
@@ -314,8 +274,8 @@ impl<'ast> AstItemMaker<'ast> {
 
                     members.push(EnumMember {
                         name: name.unwrap(),
-                        id: *id,
-                        value: expr,
+                        id,
+                        value,
                         span: Some(span),
                     });
                 }
@@ -334,7 +294,7 @@ impl<'ast> AstItemMaker<'ast> {
         let result = Item::Enum(Enum {
             name,
             members: members.alloc_on(self.ast),
-            attributes: self.get_attributes(symbol, scope.code().unwrap(), node)?,
+            attributes: attributes.alloc_on(self.ast),
             associated_fns,
             mixins,
             span: Some(span),
@@ -354,6 +314,7 @@ impl<'ast> AstItemMaker<'ast> {
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         body: Option<tree_sitter::Node<'src>>,
+        attributes: &[Attribute],
     ) -> Result<(), AluminaError> {
         let mut parameters: Vec<Parameter<'ast>> = Vec::new();
         let code = scope.code().unwrap();
@@ -371,9 +332,9 @@ impl<'ast> AstItemMaker<'ast> {
         let placeholders = self.get_placeholders(&scope)?;
 
         for (_name, item) in scope.inner().all_items() {
-            match item {
-                NamedItem::Parameter(id, node) => {
-                    let field_type = TypeVisitor::new(self.ast, scope.clone())
+            match item.kind {
+                NamedItemKind::Parameter(id, node) => {
+                    let typ = TypeVisitor::new(self.ast, scope.clone())
                         .visit(node.child_by_field_name("type").unwrap())?;
 
                     let span = Span {
@@ -383,8 +344,8 @@ impl<'ast> AstItemMaker<'ast> {
                     };
 
                     parameters.push(Parameter {
-                        id: *id,
-                        typ: field_type,
+                        id,
+                        typ,
                         span: Some(span),
                     });
                 }
@@ -433,7 +394,7 @@ impl<'ast> AstItemMaker<'ast> {
 
         let function_body = body
             .map(|body| {
-                ExpressionVisitor::new(self.ast, self.diag_ctx.clone(), scope.clone())
+                ExpressionVisitor::new(self.ast, self.global_ctx.clone(), scope.clone())
                     .generate(body)
             })
             .transpose()?;
@@ -444,7 +405,7 @@ impl<'ast> AstItemMaker<'ast> {
 
         let result = Item::Function(Function {
             name,
-            attributes: self.get_attributes(symbol, scope.code().unwrap(), node)?,
+            attributes: attributes.alloc_on(self.ast),
             placeholders,
             args: parameters.alloc_on(self.ast),
             return_type,
@@ -466,6 +427,7 @@ impl<'ast> AstItemMaker<'ast> {
         symbol: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
+        attributes: &[Attribute],
     ) -> Result<(), AluminaError> {
         let typ = node
             .child_by_field_name("type")
@@ -475,7 +437,7 @@ impl<'ast> AstItemMaker<'ast> {
         let init = node
             .child_by_field_name("init")
             .map(|body| {
-                ExpressionVisitor::new(self.ast, self.diag_ctx.clone(), scope.clone())
+                ExpressionVisitor::new(self.ast, self.global_ctx.clone(), scope.clone())
                     .generate(body)
             })
             .transpose()?;
@@ -492,7 +454,7 @@ impl<'ast> AstItemMaker<'ast> {
 
         let result = Item::StaticOrConst(StaticOrConst {
             name,
-            attributes: self.get_attributes(symbol, scope.code().unwrap(), node)?,
+            attributes: attributes.alloc_on(self.ast),
             typ,
             init,
             span: Some(span),
@@ -513,10 +475,15 @@ impl<'ast> AstItemMaker<'ast> {
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         impl_scopes: &[Scope<'ast, 'src>],
+        attributes: &Vec<Attribute>,
     ) -> Result<(), AluminaError> {
         match node.kind() {
-            "struct_definition" => self.make_struct_like(name, symbol, node, scope, impl_scopes)?,
-            "enum_definition" => self.make_enum(name, symbol, node, scope, impl_scopes)?,
+            "struct_definition" => {
+                self.make_struct_like(name, symbol, node, scope, impl_scopes, attributes)?
+            }
+            "enum_definition" => {
+                self.make_enum(name, symbol, node, scope, impl_scopes, attributes)?
+            }
             _ => unimplemented!(),
         };
 
@@ -538,48 +505,79 @@ impl<'ast> AstItemMaker<'ast> {
         name: Option<&'ast str>,
         item_group: &[NamedItem<'ast, 'src>],
     ) -> Result<(), AluminaError> {
+        use NamedItem as NI;
+        use NamedItemKind::*;
         match item_group {
-            [NamedItem::Module(module)] => {
+            [NI {
+                kind: Module(module),
+                ..
+            }] => {
                 self.make(module.clone())?;
             }
-            [NamedItem::Impl(node, scope)] => {
-                return Err(CodeErrorKind::NoFreeStandingImpl).with_span(scope, *node)
-            }
-            [NamedItem::Type(symbol, node, scope), rest @ ..] => {
+            [NI {
+                kind: Impl(node, scope),
+                ..
+            }] => return Err(CodeErrorKind::NoFreeStandingImpl).with_span(scope, *node),
+            [NI {
+                kind: Type(symbol, node, scope),
+                attributes,
+            }, rest @ ..] => {
                 let mut impl_scopes = Vec::with_capacity(rest.len());
                 for impl_item in rest {
-                    match impl_item {
-                        NamedItem::Impl(_, scope) => {
+                    match &impl_item.kind {
+                        NamedItemKind::Impl(_, scope) => {
                             self.make_impl(scope.clone())?;
                             impl_scopes.push(scope.clone());
                         }
                         _ => unreachable!(),
                     }
                 }
-
-                self.make_type(name, *symbol, *node, scope.clone(), &impl_scopes[..])?;
+                self.make_type(
+                    name,
+                    *symbol,
+                    *node,
+                    scope.clone(),
+                    &impl_scopes[..],
+                    attributes,
+                )?;
             }
-            [NamedItem::Protocol(symbol, node, scope)] => {
-                self.make_protocol(name, *symbol, *node, scope.clone())?;
+            [NI {
+                kind: Protocol(symbol, node, scope),
+                attributes,
+            }] => {
+                self.make_protocol(name, *symbol, *node, scope.clone(), attributes)?;
                 self.make(scope.clone())?;
             }
-            [NamedItem::Static(symbol, node)] => {
-                self.make_static_or_const(false, name, *symbol, *node, scope)?;
+            [NI {
+                kind: Static(symbol, node),
+                attributes,
+            }] => {
+                self.make_static_or_const(false, name, *symbol, *node, scope, attributes)?;
             }
-            [NamedItem::Const(symbol, node)] => {
-                self.make_static_or_const(true, name, *symbol, *node, scope)?;
+            [NI {
+                kind: Const(symbol, node),
+                attributes,
+            }] => {
+                self.make_static_or_const(true, name, *symbol, *node, scope, attributes)?;
             }
-            [NamedItem::Macro(symbol, node, scope)] => {
-                let mut macro_maker = MacroMaker::new(self.ast, self.diag_ctx.clone());
-                macro_maker.make(name, *symbol, *node, scope.clone())?;
+            [NI {
+                kind: Macro(symbol, node, scope),
+                attributes,
+            }] => {
+                let mut macro_maker = MacroMaker::new(self.ast, self.global_ctx.clone());
+                macro_maker.make(name, *symbol, *node, scope.clone(), attributes)?;
                 self.symbols.push(symbol);
             }
-            [NamedItem::Function(symbol, node, scope)] => self.make_function(
+            [NI {
+                kind: Function(symbol, node, scope),
+                attributes,
+            }] => self.make_function(
                 name,
                 symbol,
                 *node,
                 scope.clone(),
                 node.child_by_field_name("body"),
+                attributes,
             )?,
             _ => {}
         }

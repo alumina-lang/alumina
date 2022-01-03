@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    ast::{AstId, ItemP},
+    ast::{AstId, Attribute, ItemP},
     common::CodeErrorKind,
     parser::ParseCtx,
 };
@@ -16,7 +16,7 @@ use tree_sitter::Node;
 use super::path::{Path, PathSegment};
 
 #[derive(Debug, Clone)]
-pub enum NamedItem<'ast, 'src> {
+pub enum NamedItemKind<'ast, 'src> {
     Alias(Path<'ast>),
     Function(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
     Static(ItemP<'ast>, Node<'src>),
@@ -27,33 +27,53 @@ pub enum NamedItem<'ast, 'src> {
     Module(Scope<'ast, 'src>),
     Protocol(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
     Impl(Node<'src>, Scope<'ast, 'src>),
+    EnumMember(ItemP<'ast>, AstId, Node<'src>),
+
     Placeholder(AstId, Node<'src>),
     Field(Node<'src>),
-    EnumMember(ItemP<'ast>, AstId, Node<'src>),
     Local(AstId),
     Parameter(AstId, Node<'src>),
     MacroParameter(AstId, bool),
 }
 
-impl Display for NamedItem<'_, '_> {
+impl Display for NamedItemKind<'_, '_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            NamedItem::Alias(_) => write!(f, "alias"),
-            NamedItem::Function(_, _, _) => write!(f, "function"),
-            NamedItem::Static(_, _) => write!(f, "static"),
-            NamedItem::Const(_, _) => write!(f, "const"),
-            NamedItem::Macro(_, _, _) => write!(f, "macro"),
-            NamedItem::Type(_, _, _) => write!(f, "type"),
-            NamedItem::Mixin(_, _) => write!(f, "mixin"),
-            NamedItem::Module(_) => write!(f, "module"),
-            NamedItem::Protocol(_, _, _) => write!(f, "protocol"),
-            NamedItem::Impl(_, _) => write!(f, "impl"),
-            NamedItem::Placeholder(_, _) => write!(f, "placeholder"),
-            NamedItem::Field(_) => write!(f, "field"),
-            NamedItem::EnumMember(_, _, _) => write!(f, "enum member"),
-            NamedItem::Local(_) => write!(f, "local"),
-            NamedItem::Parameter(_, _) => write!(f, "parameter"),
-            NamedItem::MacroParameter(_, _) => write!(f, "macro parameter"),
+            NamedItemKind::Alias(_) => write!(f, "alias"),
+            NamedItemKind::Function(_, _, _) => write!(f, "function"),
+            NamedItemKind::Static(_, _) => write!(f, "static"),
+            NamedItemKind::Const(_, _) => write!(f, "const"),
+            NamedItemKind::Macro(_, _, _) => write!(f, "macro"),
+            NamedItemKind::Type(_, _, _) => write!(f, "type"),
+            NamedItemKind::Mixin(_, _) => write!(f, "mixin"),
+            NamedItemKind::Module(_) => write!(f, "module"),
+            NamedItemKind::Protocol(_, _, _) => write!(f, "protocol"),
+            NamedItemKind::Impl(_, _) => write!(f, "impl"),
+            NamedItemKind::Placeholder(_, _) => write!(f, "placeholder"),
+            NamedItemKind::Field(_) => write!(f, "field"),
+            NamedItemKind::EnumMember(_, _, _) => write!(f, "enum member"),
+            NamedItemKind::Local(_) => write!(f, "local"),
+            NamedItemKind::Parameter(_, _) => write!(f, "parameter"),
+            NamedItemKind::MacroParameter(_, _) => write!(f, "macro parameter"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NamedItem<'ast, 'src> {
+    pub kind: NamedItemKind<'ast, 'src>,
+    pub attributes: Vec<Attribute>,
+}
+
+impl<'ast, 'src> NamedItem<'ast, 'src> {
+    pub fn new(kind: NamedItemKind<'ast, 'src>, attributes: Vec<Attribute>) -> Self {
+        Self { kind, attributes }
+    }
+
+    pub fn new_default(kind: NamedItemKind<'ast, 'src>) -> Self {
+        Self {
+            kind,
+            attributes: vec![],
         }
     }
 }
@@ -246,22 +266,22 @@ impl<'ast, 'src> Scope<'ast, 'src> {
                     let (type_count, impl_count) =
                         existing
                             .iter()
-                            .fold((0, 0), |(type_count, impl_count), item| match item {
-                                NamedItem::Type(_, _, _) => (type_count + 1, impl_count),
-                                NamedItem::Impl(_, _) => (type_count, impl_count + 1),
+                            .fold((0, 0), |(type_count, impl_count), item| match item.kind {
+                                NamedItemKind::Type(_, _, _) => (type_count + 1, impl_count),
+                                NamedItemKind::Impl(_, _) => (type_count, impl_count + 1),
                                 _ => (type_count, impl_count),
                             });
 
                     if ((type_count == 1 || impl_count > 0)
-                        && matches!(item, NamedItem::Impl(_, _)))
+                        && matches!(item.kind, NamedItemKind::Impl(_, _)))
                         || (type_count == 0
                             && impl_count > 0
-                            && matches!(item, NamedItem::Type(_, _, _)))
+                            && matches!(item.kind, NamedItemKind::Type(_, _, _)))
                     {
                         existing.push(item);
-                        existing.sort_by_key(|i| match i {
-                            NamedItem::Type(_, _, _) => 0,
-                            NamedItem::Impl(_, _) => 1,
+                        existing.sort_by_key(|i| match i.kind {
+                            NamedItemKind::Type(_, _, _) => 0,
+                            NamedItemKind::Impl(_, _) => 1,
                             _ => unreachable!(),
                         });
                         return Ok(());
@@ -322,7 +342,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
         };
 
         for item in self.inner().items_with_name(path.segments[0].0) {
-            if let NamedItem::Module(child_scope) = item {
+            if let NamedItemKind::Module(child_scope) = &item.kind {
                 return child_scope.ensure_module(remainder);
             }
         }
@@ -330,7 +350,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
         let child_scope = self.named_child_without_code(ScopeType::Module, path.segments[0].0);
         self.add_item(
             Some(path.segments[0].0),
-            NamedItem::Module(child_scope.clone()),
+            NamedItem::new_default(NamedItemKind::Module(child_scope.clone())),
         )?;
 
         child_scope.ensure_module(remainder)

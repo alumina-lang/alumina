@@ -2,32 +2,9 @@ use once_cell::sync::OnceCell;
 use regex::Regex;
 use std::collections::HashMap;
 
-use crate::common::CodeErrorKind;
-
 use super::{BinOp, BuiltinType, ItemP};
-
-pub struct LangItemMap<'ast>(HashMap<LangItemKind, ItemP<'ast>>);
-
-impl<'ast> LangItemMap<'ast> {
-    pub fn new(inner: HashMap<LangItemKind, ItemP<'ast>>) -> Self {
-        Self(inner)
-    }
-
-    pub fn get(&self, kind: LangItemKind) -> Result<ItemP<'ast>, CodeErrorKind> {
-        self.0
-            .get(&kind)
-            .copied()
-            .ok_or(CodeErrorKind::MissingLangItem(kind))
-    }
-
-    pub fn reverse_get(&self, item: ItemP<'ast>) -> Option<LangItemKind> {
-        self.0
-            .iter()
-            .find(|(_, v)| **v == item)
-            .map(|(k, _)| k)
-            .copied()
-    }
-}
+use crate::common::CodeErrorKind;
+use crate::utils::regex;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LangItemKind {
@@ -60,69 +37,66 @@ pub enum LangItemKind {
     Operator(BinOp),
 }
 
-macro_rules! regex {
-    ($re:literal $(,)?) => {{
-        static RE: once_cell::sync::OnceCell<regex::Regex> = once_cell::sync::OnceCell::new();
-        RE.get_or_init(|| regex::Regex::new($re).unwrap())
-    }};
-}
+impl TryFrom<&str> for LangItemKind {
+    type Error = CodeErrorKind;
 
-pub fn lang_item_kind(name: &str) -> Option<LangItemKind> {
-    match name {
-        "lang(slice)" => Some(LangItemKind::Slice),
-        "lang(slice_new)" => Some(LangItemKind::SliceNew),
-        "lang(slice_coerce)" => Some(LangItemKind::SliceCoerce),
-        "lang(slice_index)" => Some(LangItemKind::SliceIndex),
-        "lang(slice_range_index)" => Some(LangItemKind::SliceRangeIndex),
-        "lang(slice_range_index_lower)" => Some(LangItemKind::SliceRangeIndexLower),
-        "lang(proto_primitive)" => Some(LangItemKind::ProtoPrimitive),
-        "lang(proto_numeric)" => Some(LangItemKind::ProtoNumeric),
-        "lang(proto_integer)" => Some(LangItemKind::ProtoInteger),
-        "lang(proto_floating_point)" => Some(LangItemKind::ProtoFloatingPoint),
-        "lang(proto_signed)" => Some(LangItemKind::ProtoSigned),
-        "lang(proto_unsigned)" => Some(LangItemKind::ProtoUnsigned),
-        "lang(proto_pointer)" => Some(LangItemKind::ProtoPointer),
-        "lang(proto_zero_sized)" => Some(LangItemKind::ProtoZeroSized),
-        "lang(proto_any)" => Some(LangItemKind::ProtoAny),
-        "lang(proto_array)" => Some(LangItemKind::ProtoArray),
-        "lang(proto_tuple)" => Some(LangItemKind::ProtoTuple),
-        "lang(proto_callable)" => Some(LangItemKind::ProtoCallable),
-        "lang(proto_array_of)" => Some(LangItemKind::ProtoArrayOf),
-        "lang(proto_pointer_of)" => Some(LangItemKind::ProtoPointerOf),
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s {
+            "slice" => Ok(LangItemKind::Slice),
+            "slice_new" => Ok(LangItemKind::SliceNew),
+            "slice_coerce" => Ok(LangItemKind::SliceCoerce),
+            "slice_index" => Ok(LangItemKind::SliceIndex),
+            "slice_range_index" => Ok(LangItemKind::SliceRangeIndex),
+            "slice_range_index_lower" => Ok(LangItemKind::SliceRangeIndexLower),
+            "proto_primitive" => Ok(LangItemKind::ProtoPrimitive),
+            "proto_numeric" => Ok(LangItemKind::ProtoNumeric),
+            "proto_integer" => Ok(LangItemKind::ProtoInteger),
+            "proto_floating_point" => Ok(LangItemKind::ProtoFloatingPoint),
+            "proto_signed" => Ok(LangItemKind::ProtoSigned),
+            "proto_unsigned" => Ok(LangItemKind::ProtoUnsigned),
+            "proto_pointer" => Ok(LangItemKind::ProtoPointer),
+            "proto_zero_sized" => Ok(LangItemKind::ProtoZeroSized),
+            "proto_any" => Ok(LangItemKind::ProtoAny),
+            "proto_array" => Ok(LangItemKind::ProtoArray),
+            "proto_tuple" => Ok(LangItemKind::ProtoTuple),
+            "proto_callable" => Ok(LangItemKind::ProtoCallable),
+            "proto_array_of" => Ok(LangItemKind::ProtoArrayOf),
+            "proto_pointer_of" => Ok(LangItemKind::ProtoPointerOf),
 
-        "lang(impl_never)" => Some(LangItemKind::ImplBuiltin(BuiltinType::Never)),
-        "lang(impl_void)" => Some(LangItemKind::ImplBuiltin(BuiltinType::Void)),
-        "lang(impl_bool)" => Some(LangItemKind::ImplBuiltin(BuiltinType::Bool)),
-        "lang(impl_u8)" => Some(LangItemKind::ImplBuiltin(BuiltinType::U8)),
-        "lang(impl_u16)" => Some(LangItemKind::ImplBuiltin(BuiltinType::U16)),
-        "lang(impl_u32)" => Some(LangItemKind::ImplBuiltin(BuiltinType::U32)),
-        "lang(impl_u64)" => Some(LangItemKind::ImplBuiltin(BuiltinType::U64)),
-        "lang(impl_u128)" => Some(LangItemKind::ImplBuiltin(BuiltinType::U128)),
-        "lang(impl_usize)" => Some(LangItemKind::ImplBuiltin(BuiltinType::USize)),
-        "lang(impl_i8)" => Some(LangItemKind::ImplBuiltin(BuiltinType::I8)),
-        "lang(impl_i16)" => Some(LangItemKind::ImplBuiltin(BuiltinType::I16)),
-        "lang(impl_i32)" => Some(LangItemKind::ImplBuiltin(BuiltinType::I32)),
-        "lang(impl_i64)" => Some(LangItemKind::ImplBuiltin(BuiltinType::I64)),
-        "lang(impl_i128)" => Some(LangItemKind::ImplBuiltin(BuiltinType::I128)),
-        "lang(impl_isize)" => Some(LangItemKind::ImplBuiltin(BuiltinType::ISize)),
-        "lang(impl_f32)" => Some(LangItemKind::ImplBuiltin(BuiltinType::F32)),
-        "lang(impl_f64)" => Some(LangItemKind::ImplBuiltin(BuiltinType::F64)),
+            "impl_never" => Ok(LangItemKind::ImplBuiltin(BuiltinType::Never)),
+            "impl_void" => Ok(LangItemKind::ImplBuiltin(BuiltinType::Void)),
+            "impl_bool" => Ok(LangItemKind::ImplBuiltin(BuiltinType::Bool)),
+            "impl_u8" => Ok(LangItemKind::ImplBuiltin(BuiltinType::U8)),
+            "impl_u16" => Ok(LangItemKind::ImplBuiltin(BuiltinType::U16)),
+            "impl_u32" => Ok(LangItemKind::ImplBuiltin(BuiltinType::U32)),
+            "impl_u64" => Ok(LangItemKind::ImplBuiltin(BuiltinType::U64)),
+            "impl_u128" => Ok(LangItemKind::ImplBuiltin(BuiltinType::U128)),
+            "impl_usize" => Ok(LangItemKind::ImplBuiltin(BuiltinType::USize)),
+            "impl_i8" => Ok(LangItemKind::ImplBuiltin(BuiltinType::I8)),
+            "impl_i16" => Ok(LangItemKind::ImplBuiltin(BuiltinType::I16)),
+            "impl_i32" => Ok(LangItemKind::ImplBuiltin(BuiltinType::I32)),
+            "impl_i64" => Ok(LangItemKind::ImplBuiltin(BuiltinType::I64)),
+            "impl_i128" => Ok(LangItemKind::ImplBuiltin(BuiltinType::I128)),
+            "impl_isize" => Ok(LangItemKind::ImplBuiltin(BuiltinType::ISize)),
+            "impl_f32" => Ok(LangItemKind::ImplBuiltin(BuiltinType::F32)),
+            "impl_f64" => Ok(LangItemKind::ImplBuiltin(BuiltinType::F64)),
 
-        "lang(impl_array)" => Some(LangItemKind::ImplArray),
+            "impl_array" => Ok(LangItemKind::ImplArray),
 
-        "lang(operator_eq)" => Some(LangItemKind::Operator(BinOp::Eq)),
-        "lang(operator_neq)" => Some(LangItemKind::Operator(BinOp::Neq)),
-        "lang(operator_lt)" => Some(LangItemKind::Operator(BinOp::Lt)),
-        "lang(operator_lte)" => Some(LangItemKind::Operator(BinOp::LEq)),
-        "lang(operator_gt)" => Some(LangItemKind::Operator(BinOp::Gt)),
-        "lang(operator_gte)" => Some(LangItemKind::Operator(BinOp::GEq)),
+            "operator_eq" => Ok(LangItemKind::Operator(BinOp::Eq)),
+            "operator_neq" => Ok(LangItemKind::Operator(BinOp::Neq)),
+            "operator_lt" => Ok(LangItemKind::Operator(BinOp::Lt)),
+            "operator_lte" => Ok(LangItemKind::Operator(BinOp::LEq)),
+            "operator_gt" => Ok(LangItemKind::Operator(BinOp::Gt)),
+            "operator_gte" => Ok(LangItemKind::Operator(BinOp::GEq)),
 
-        t => {
-            if let Some(matches) = regex!(r"^lang\(impl_tuple_(\d+)\)$").captures(t) {
-                let n = matches[1].parse::<usize>().unwrap();
-                Some(LangItemKind::ImplTuple(n))
-            } else {
-                None
+            t => {
+                if let Some(matches) = regex!(r"^impl_tuple_(\d+)$").captures(t) {
+                    let n = matches[1].parse::<usize>().unwrap();
+                    Ok(LangItemKind::ImplTuple(n))
+                } else {
+                    Err(CodeErrorKind::UnknownLangItem(Some(t.to_string())))
+                }
             }
         }
     }

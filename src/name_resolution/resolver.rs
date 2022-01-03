@@ -1,12 +1,12 @@
 use crate::{
     ast::Ty,
     common::{CodeErrorKind, CycleGuardian},
-    name_resolution::{path::Path, scope::NamedItem},
+    name_resolution::{path::Path, scope::NamedItemKind},
 };
 
 use super::{
     path::PathSegment,
-    scope::{Scope, ScopeInner},
+    scope::{NamedItem, Scope, ScopeInner},
 };
 
 pub struct NameResolver<'ast, 'src> {
@@ -66,17 +66,17 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
         };
 
         for item in self_scope.inner().items_with_name(path.segments[0].0) {
-            match item {
-                NamedItem::Placeholder(sym, _) if path.segments.len() == 1 => {
+            match &item.kind {
+                NamedItemKind::Placeholder(sym, _) if path.segments.len() == 1 => {
                     return Ok(ScopeResolution::Defered(Ty::Placeholder(*sym)))
                 }
-                NamedItem::Type(item, _, _) if path.segments.len() == 1 => {
+                NamedItemKind::Type(item, _, _) if path.segments.len() == 1 => {
                     return Ok(ScopeResolution::Defered(Ty::NamedType(item)))
                 }
-                NamedItem::Module(child_scope) => {
+                NamedItemKind::Module(child_scope) => {
                     return self.resolve_scope(child_scope.clone(), remainder);
                 }
-                NamedItem::Alias(target) => {
+                NamedItemKind::Alias(target) => {
                     return self.resolve_scope(self_scope.clone(), target.join_with(remainder));
                 }
                 _ => {}
@@ -126,16 +126,18 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
             .inner()
             .items_with_name(path.segments.last().unwrap().0)
         {
-            match item {
-                NamedItem::Impl(_, _) => continue,
-                NamedItem::Alias(target) => {
+            match &item.kind {
+                NamedItemKind::Impl(_, _) => continue,
+                NamedItemKind::Alias(target) => {
                     return self.resolve_item_impl(
                         self_scope,
                         containing_scope.clone(),
                         target.clone(),
                     );
                 }
-                NamedItem::Macro(_, _, _) | NamedItem::Local(_) | NamedItem::Parameter(..) => {
+                NamedItemKind::Macro(_, _, _)
+                | NamedItemKind::Local(_)
+                | NamedItemKind::Parameter(..) => {
                     let original_func = self_scope.find_containing_function();
                     let current_func = containing_scope.find_containing_function();
 

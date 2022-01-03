@@ -2,7 +2,8 @@ const PREC = {
   range: 15,
   call: 14,
   field: 13,
-  unary: 11,
+  unary: 12,
+  cast: 11,
   multiplicative: 10,
   additive: 9,
   shift: 8,
@@ -34,7 +35,9 @@ const integer_types = [
 
 const float_types = ["f32", "f64"];
 
-const primitive_types = integer_types.concat(float_types).concat(["bool", "void"]);
+const primitive_types = integer_types
+  .concat(float_types)
+  .concat(["bool", "void"]);
 
 function sepBy1(sep, rule) {
   return seq(rule, repeat(seq(sep, rule)));
@@ -68,13 +71,23 @@ module.exports = grammar({
           seq("/*", /[^*]*\*+([^/*][^*]*\*+)*/, "/")
         )
       ),
-
-    attributes_spec: ($) =>
-      seq($.identifier, "(", sepBy(",", $.identifier), ")"),
-    attribute: ($) =>
-      seq("#[", field("name", choice($.identifier, $.attributes_spec)), "]"),
     
-    attributes: ($) => repeat1($.attribute),
+    
+    attributes: ($) => repeat1($.attribute_item),
+    attribute_item: ($) => seq("#", "[", field("inner", $.meta_item), "]"),
+    meta_item: ($) =>
+      seq(
+        field("name", $._path),
+        optional(
+          choice(
+            seq("=", field("value", $._literal)),
+            field("arguments", $.meta_arguments)
+          )
+        )
+      ),
+    meta_arguments: ($) =>
+      seq("(", sepBy(",", field("argument", choice($.meta_item, $._literal))), optional(","), ")"),
+
 
     _top_level_item: ($) =>
       choice(
@@ -92,11 +105,9 @@ module.exports = grammar({
       ),
 
     _impl_item: ($) =>
-      choice(
-        $.use_declaration,
-        $.function_definition,
-        $.mixin
-      ),
+      choice($.use_declaration, $.function_definition, $.mixin),
+
+    _protocol_item: ($) => choice($.use_declaration, $.function_definition),
 
     mod_definition: ($) =>
       seq(
@@ -108,29 +119,18 @@ module.exports = grammar({
         "}"
       ),
 
-    _protocol_item: ($) => choice(
-      $.use_declaration,
-      $.function_definition
-    ),
-
     function_definition: ($) =>
       seq(
         optional(field("attributes", $.attributes)),
         optional(
-          seq(
-            field("extern", "extern"),
-            field("abi", $.string_literal)
-          )
+          seq(field("extern", "extern"), field("abi", $.string_literal))
         ),
         "fn",
         field("name", $.identifier),
         optional(field("type_arguments", $.generic_argument_list)),
         field("parameters", $.parameter_list),
         optional(seq("->", field("return_type", $._type))),
-        choice(
-          field("body", $.block),
-          ";"
-        )
+        choice(field("body", $.block), ";")
       ),
 
     macro_definition: ($) =>
@@ -141,9 +141,14 @@ module.exports = grammar({
         field("parameters", $.macro_parameter_list),
         field("body", $.block)
       ),
-      
+
     macro_parameter_list: ($) =>
-      seq("(", sepBy(",", field("parameter", $.macro_parameter)), optional(","), ")"),
+      seq(
+        "(",
+        sepBy(",", field("parameter", $.macro_parameter)),
+        optional(","),
+        ")"
+      ),
 
     macro_parameter: ($) =>
       seq(field("name", $.identifier), optional(field("et_cetera", "..."))),
@@ -201,6 +206,7 @@ module.exports = grammar({
 
     enum_item: ($) =>
       seq(
+        optional(field("attributes", $.attributes)),
         field("name", $.identifier),
         optional(seq("=", field("value", $._expression)))
       ),
@@ -246,16 +252,15 @@ module.exports = grammar({
     parameter: ($) =>
       seq(field("name", $.identifier), ":", field("type", $._type)),
 
-    protocol_bound: ($) => seq(
-      optional(field("negated", "!")), 
-      field("type", $._type)
-    ),
+    protocol_bound: ($) =>
+      seq(optional(field("negated", "!")), field("type", $._type)),
 
-    generic_argument: ($) => seq(
-        field("placeholder", $.identifier), 
+    generic_argument: ($) =>
+      seq(
+        field("placeholder", $.identifier),
         optional(seq(":", sepBy("+", field("bound", $.protocol_bound)))),
         optional(seq("=", field("default", $._type)))
-    ),
+      ),
 
     generic_argument_list: ($) =>
       seq(
@@ -343,6 +348,7 @@ module.exports = grammar({
 
     let_declaration: ($) =>
       seq(
+        optional(field("attributes", $.attributes)),
         "let",
         field("name", $.identifier),
         optional(seq(":", field("type", $._type))),
@@ -352,6 +358,7 @@ module.exports = grammar({
 
     static_declaration: ($) =>
       seq(
+        optional(field("attributes", $.attributes)),
         "static",
         field("name", $.identifier),
         optional(seq(":", field("type", $._type))),
@@ -361,6 +368,7 @@ module.exports = grammar({
 
     const_declaration: ($) =>
       seq(
+        optional(field("attributes", $.attributes)),
         "const",
         field("name", $.identifier),
         optional(seq(":", field("type", $._type))),
@@ -385,9 +393,12 @@ module.exports = grammar({
       ),
 
     expression_statement: ($) =>
-      choice(
-        seq(field("inner", $._expression), ";"),
-        prec(1, field("inner", $._expression_ending_with_block))
+      seq(
+        optional(field("attributes", $.attributes)),
+        choice(
+          seq(field("inner", $._expression), ";"),
+          prec(1, field("inner", $._expression_ending_with_block))
+        )
       ),
 
     return_expression: ($) =>
@@ -396,7 +407,8 @@ module.exports = grammar({
         prec(-1, "return")
       ),
 
-    defer_expression: ($) => prec.left(seq("defer", field("inner", $._expression))),
+    defer_expression: ($) =>
+      prec.left(seq("defer", field("inner", $._expression))),
 
     arguments: ($) =>
       seq("(", sepBy(",", field("inner", $._expression)), optional(","), ")"),
@@ -560,7 +572,10 @@ module.exports = grammar({
       ),
 
     type_cast_expression: ($) =>
-      prec(1, seq(field("value", $._expression), "as", field("type", $._type))),
+      prec(
+        PREC.cast,
+        seq(field("value", $._expression), "as", field("type", $._type))
+      ),
 
     call_expression: ($) =>
       prec(
@@ -568,12 +583,10 @@ module.exports = grammar({
         seq(field("function", $._expression), field("arguments", $.arguments))
       ),
 
-    macro_invocation: $ => seq(
-        field('macro', choice(
-          $.scoped_identifier,
-          $.identifier,
-        )),
-        '!',
+    macro_invocation: ($) =>
+      seq(
+        field("macro", choice($.scoped_identifier, $.identifier)),
+        "!",
         field("arguments", $.arguments)
       ),
 
@@ -652,7 +665,6 @@ module.exports = grammar({
       choice(
         alias(choice(...primitive_types), $.identifier),
         $.super,
-        $.crate,
         $.identifier,
         $.scoped_identifier
       ),
@@ -694,17 +706,18 @@ module.exports = grammar({
         $.for_expression
       ),
 
-    type_check: ($) => seq(
-      field("lhs", $._type), 
-      ":", 
-      sepBy("+", field("bound", $.protocol_bound)),
-    ),
+    type_check: ($) =>
+      seq(
+        field("lhs", $._type),
+        ":",
+        sepBy("+", field("bound", $.protocol_bound))
+      ),
 
     if_expression: ($) =>
       seq(
         choice(
           seq("if", field("condition", $._expression)),
-          seq("when", field("type_check", $.type_check)),
+          seq("when", field("type_check", $.type_check))
         ),
         field("consequence", $.block),
         optional(field("alternative", $.else_clause))
@@ -762,7 +775,8 @@ module.exports = grammar({
 
     loop_expression: ($) => seq("loop", field("body", $.block)),
 
-    et_cetera_expression: ($) => prec.right(PREC.et_cetera, seq(field("inner", $._expression), "...")),
+    et_cetera_expression: ($) =>
+      prec.right(PREC.et_cetera, seq(field("inner", $._expression), "...")),
 
     for_expression: ($) =>
       seq(
@@ -850,9 +864,10 @@ module.exports = grammar({
         )
       ),
 
-    char_literal: ($) => token(
-      seq(
-        '\'',
+    char_literal: ($) =>
+      token(
+        seq(
+          "'",
           choice(
             seq(
               "\\",
@@ -865,12 +880,11 @@ module.exports = grammar({
             ),
             /[^"\\\n]+/
           ),
-        '\''
-      )
-    ),
+          "'"
+        )
+      ),
 
     super: ($) => "super",
-    crate: ($) => "crate",
 
     boolean_literal: ($) => choice("true", "false"),
     ptr_literal: ($) => choice("null"),

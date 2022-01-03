@@ -8,7 +8,7 @@ use crate::{
     common::{AluminaError, WithSpanDuringParsing},
     name_resolution::{
         resolver::NameResolver,
-        scope::{NamedItem, Scope},
+        scope::{NamedItemKind, Scope},
     },
     visitors::ScopedPathVisitor,
 };
@@ -71,28 +71,24 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
             .resolve_item(self.scope.clone(), path)
             .with_span(&self.scope, node)?
         {
-            ItemResolution::Item(NamedItem::Type(ty, _, _)) => {
-                self.ast.intern_type(Ty::NamedType(ty))
-            }
-            ItemResolution::Item(NamedItem::Placeholder(ty, _)) => {
-                self.ast.intern_type(Ty::Placeholder(ty))
-            }
-            ItemResolution::Item(NamedItem::Function(ty, _, _)) => {
-                self.ast.intern_type(Ty::NamedFunction(ty))
-            }
-            ItemResolution::Item(NamedItem::Protocol(ty, _, _)) => {
-                if self.accept_protocol {
-                    self.ast.intern_type(Ty::Protocol(ty))
-                } else {
-                    return Err(CodeErrorKind::UnexpectedProtocol).with_span(&self.scope, node);
+            ItemResolution::Item(item) => match item.kind {
+                NamedItemKind::Type(ty, _, _) => self.ast.intern_type(Ty::NamedType(ty)),
+                NamedItemKind::Placeholder(ty, _) => self.ast.intern_type(Ty::Placeholder(ty)),
+                NamedItemKind::Function(ty, _, _) => self.ast.intern_type(Ty::NamedFunction(ty)),
+                NamedItemKind::Protocol(ty, _, _) => {
+                    if self.accept_protocol {
+                        self.ast.intern_type(Ty::Protocol(ty))
+                    } else {
+                        return Err(CodeErrorKind::UnexpectedProtocol).with_span(&self.scope, node);
+                    }
                 }
-            }
+                kind => {
+                    return Err(CodeErrorKind::Unexpected(format!("{}", kind)))
+                        .with_span(&self.scope, node)
+                }
+            },
             ItemResolution::Defered(_, _) => {
                 return Err(CodeErrorKind::NoAssociatedTypes).with_span(&self.scope, node)
-            }
-            ItemResolution::Item(named_item) => {
-                return Err(CodeErrorKind::Unexpected(format!("{}", named_item)))
-                    .with_span(&self.scope, node)
             }
         };
 

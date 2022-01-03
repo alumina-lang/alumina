@@ -6,17 +6,17 @@ It has the following conveniences over C:
 
 - Module system, namespaces and 2-pass compilation (no header files and forward declarations needed)
 - Generics, protocols and mixins (duck-typed, similar to C++ template)
-    - Template specialization is possible with static if syntax
+  - Template specialization is possible with static if syntax
 - [Unified call syntax](https://en.wikipedia.org/wiki/Uniform_Function_Call_Syntax) for functions in scope
 - Limited operator overloading (via Equatable and Comparable protocols)
 - Block expressions
 - Lambdas (static only, closures are not supported)
-- Richer type system: 
-    - strong enums, 
-    - array slices, 
-    - tuples, 
-    - first-class 0-sized types (unit/void, function types, 0-sized arrays, structs with no fields, ...), 
-    - never type
+- Richer type system:
+  - strong enums,
+  - array slices,
+  - tuples,
+  - first-class 0-sized types (unit/void, function types, 0-sized arrays, structs with no fields, ...),
+  - never type
 - Hygenic expression macros
 - Const evaluation (very limited at the moment)
 - Go-style defer expressions
@@ -24,6 +24,7 @@ It has the following conveniences over C:
 ## Motivating example
 
 <!-- totally not rust lmao -->
+
 ```rust
 struct Stack<T> {
     data: &mut [T],
@@ -87,7 +88,7 @@ use std::io::print;
 fn main() {
     let v: Stack<&[u8]> = Stack::new();
     defer v.free();
-    
+
     v.push("Stack.\n");
     v.push("a ");
     v.push("am ");
@@ -99,11 +100,12 @@ fn main() {
 }
 ```
 
-## Status 
+## Status
 
 Bootstrap Alumina compiler is written in Rust and is currently actively developed. It compiles to ugly C code with GCC extensions.
 
 Finished:
+
 - Lexical analysis and parser (using Tree-Sitter)
 - Scope/name resolution
 - Type support
@@ -112,13 +114,12 @@ Finished:
 - Codegen to C
 
 TBD:
+
 - Stdlib is very barebones
 - Probably a lot of bugs and miscompilations
 - Compiler interface
 - Code cleanup, it's a big mess so far
 
-Full list of missing features, open questions, bugs and ideas for the future in [MISSING.md](./MISSING.md) 
+Full list of missing features, open questions, bugs and ideas for the future in [MISSING.md](./MISSING.md)
 
 After the compiler is reliable enough, Alumina will be written as a self-hosted compiler with a LLVM backend (as this has always been my dream).
-
-

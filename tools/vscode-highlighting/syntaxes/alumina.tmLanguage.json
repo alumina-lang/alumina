@@ -1,931 +1,936 @@
 {
-	"version": "https://github.com/dustypomerleau/alumina-syntax/commit/20462d50ff97338f42c6b64c3f421c634fd60734",
-	"name": "alumina",
-	"scopeName": "source.alumina",
-	"patterns": [
-		{
-			"comment": "attributes",
-			"name": "meta.attribute.alumina",
-			"begin": "(#)(\\!?)(\\[)",
-			"beginCaptures": {
-				"1": {
-					"name": "punctuation.definition.attribute.alumina"
-				},
-				"2": {
-					"name": "keyword.operator.attribute.inner.alumina"
-				},
-				"3": {
-					"name": "punctuation.brackets.attribute.alumina"
-				}
-			},
-			"end": "\\]",
-			"endCaptures": {
-				"0": {
-					"name": "punctuation.brackets.attribute.alumina"
-				}
-			},
-			"patterns": [
-				{
-					"include": "#block-comments"
-				},
-				{
-					"include": "#comments"
-				},
-				{
-					"include": "#keywords"
-				},
-				{
-					"include": "#lifetimes"
-				},
-				{
-					"include": "#punctuation"
-				},
-				{
-					"include": "#strings"
-				},
-				{
-					"include": "#gtypes"
-				},
-				{
-					"include": "#types"
-				}
-			]
-		},
-		{
-			"comment": "modules",
-			"match": "(mod)\\s+((?:r#(?!crate|[Ss]elf|super))?[a-z][A-Za-z0-9_]*)",
-			"captures": {
-				"1": {
-					"name": "storage.type.alumina"
-				},
-				"2": {
-					"name": "entity.name.module.alumina"
-				}
-			}
-		},
-		{
-			"comment": "use statements",
-			"name": "meta.use.alumina",
-			"begin": "\\b(use)\\s",
-			"beginCaptures": {
-				"1": {
-					"name": "keyword.other.alumina"
-				}
-			},
-			"end": ";",
-			"endCaptures": {
-				"0": {
-					"name": "punctuation.semi.alumina"
-				}
-			},
-			"patterns": [
-				{
-					"include": "#block-comments"
-				},
-				{
-					"include": "#comments"
-				},
-				{
-					"include": "#keywords"
-				},
-				{
-					"include": "#namespaces"
-				},
-				{
-					"include": "#punctuation"
-				},
-				{
-					"include": "#types"
-				},
-				{
-					"include": "#lvariables"
-				}
-			]
-		},
-		{
-			"include": "#block-comments"
-		},
-		{
-			"include": "#comments"
-		},
-		{
-			"include": "#lvariables"
-		},
-		{
-			"include": "#constants"
-		},
-		{
-			"include": "#gtypes"
-		},
-		{
-			"include": "#functions"
-		},
-		{
-			"include": "#types"
-		},
-		{
-			"include": "#keywords"
-		},
-		{
-			"include": "#lifetimes"
-		},
-		{
-			"include": "#macros"
-		},
-		{
-			"include": "#namespaces"
-		},
-		{
-			"include": "#punctuation"
-		},
-		{
-			"include": "#strings"
-		},
-		{
-			"include": "#variables"
-		}
-	],
-	"repository": {
-		"comments": {
-			"patterns": [
-				{
-					"comment": "documentation comments",
-					"name": "comment.line.documentation.alumina",
-					"match": "^\\s*///.*"
-				},
-				{
-					"comment": "line comments",
-					"name": "comment.line.double-slash.alumina",
-					"match": "\\s*//.*"
-				}
-			]
-		},
-		"block-comments": {
-			"patterns": [
-				{
-					"comment": "empty block comments",
-					"name": "comment.block.alumina",
-					"match": "/\\*\\*/"
-				},
-				{
-					"comment": "block documentation comments",
-					"name": "comment.block.documentation.alumina",
-					"begin": "/\\*\\*",
-					"end": "\\*/",
-					"patterns": [
-						{
-							"include": "#block-comments"
-						}
-					]
-				},
-				{
-					"comment": "block comments",
-					"name": "comment.block.alumina",
-					"begin": "/\\*(?!\\*)",
-					"end": "\\*/",
-					"patterns": [
-						{
-							"include": "#block-comments"
-						}
-					]
-				}
-			]
-		},
-		"constants": {
-			"patterns": [
-				{
-					"comment": "ALL CAPS constants",
-					"name": "constant.other.caps.alumina",
-					"match": "\\b[A-Z]{2}[A-Z0-9_]*\\b"
-				},
-				{
-					"comment": "constant declarations",
-					"match": "\\b(const)\\s+([A-Z][A-Za-z0-9_]*)\\b",
-					"captures": {
-						"1": {
-							"name": "storage.type.alumina"
-						},
-						"2": {
-							"name": "constant.other.caps.alumina"
-						}
-					}
-				},
-				{
-					"comment": "decimal integers and floats",
-					"name": "constant.numeric.decimal.alumina",
-					"match": "\\b\\d[\\d_]*(\\.?)[\\d_]*(?:(E)([+-])([\\d_]+))?(f32|f64|i128|i16|i32|i64|i8|isize|u128|u16|u32|u64|u8|usize)?\\b",
-					"captures": {
-						"1": {
-							"name": "punctuation.separator.dot.decimal.alumina"
-						},
-						"2": {
-							"name": "keyword.operator.exponent.alumina"
-						},
-						"3": {
-							"name": "keyword.operator.exponent.sign.alumina"
-						},
-						"4": {
-							"name": "constant.numeric.decimal.exponent.mantissa.alumina"
-						},
-						"5": {
-							"name": "entity.name.type.numeric.alumina"
-						}
-					}
-				},
-				{
-					"comment": "hexadecimal integers",
-					"name": "constant.numeric.hex.alumina",
-					"match": "\\b0x[\\da-fA-F_]+(i128|i16|i32|i64|i8|isize|u128|u16|u32|u64|u8|usize)?\\b",
-					"captures": {
-						"1": {
-							"name": "entity.name.type.numeric.alumina"
-						}
-					}
-				},
-				{
-					"comment": "octal integers",
-					"name": "constant.numeric.oct.alumina",
-					"match": "\\b0o[0-7_]+(i128|i16|i32|i64|i8|isize|u128|u16|u32|u64|u8|usize)?\\b",
-					"captures": {
-						"1": {
-							"name": "entity.name.type.numeric.alumina"
-						}
-					}
-				},
-				{
-					"comment": "binary integers",
-					"name": "constant.numeric.bin.alumina",
-					"match": "\\b0b[01_]+(i128|i16|i32|i64|i8|isize|u128|u16|u32|u64|u8|usize)?\\b",
-					"captures": {
-						"1": {
-							"name": "entity.name.type.numeric.alumina"
-						}
-					}
-				},
-				{
-					"comment": "booleans",
-					"name": "constant.language.bool.alumina",
-					"match": "\\b(true|false)\\b"
-				}
-			]
-		},
-		"escapes": {
-			"comment": "escapes: ASCII, byte, Unicode, quote, regex",
-			"name": "constant.character.escape.alumina",
-			"match": "(\\\\)(?:(?:(x[0-7][0-7a-fA-F])|(u(\\{)[\\da-fA-F]{4,6}(\\}))|.))",
-			"captures": {
-				"1": {
-					"name": "constant.character.escape.backslash.alumina"
-				},
-				"2": {
-					"name": "constant.character.escape.bit.alumina"
-				},
-				"3": {
-					"name": "constant.character.escape.unicode.alumina"
-				},
-				"4": {
-					"name": "constant.character.escape.unicode.punctuation.alumina"
-				},
-				"5": {
-					"name": "constant.character.escape.unicode.punctuation.alumina"
-				}
-			}
-		},
-		"functions": {
-			"patterns": [
-				{
-					"comment": "pub as a function",
-					"match": "\\b(pub)(\\()",
-					"captures": {
-						"1": {
-							"name": "keyword.other.alumina"
-						},
-						"2": {
-							"name": "punctuation.brackets.round.alumina"
-						}
-					}
-				},
-				{
-					"comment": "function definition",
-					"name": "meta.function.definition.alumina",
-					"begin": "\\b(fn)\\s+((?:r#(?!crate|[Ss]elf|super))?[A-Za-z0-9_]+)((\\()|(<))",
-					"beginCaptures": {
-						"1": {
-							"name": "keyword.other.fn.alumina"
-						},
-						"2": {
-							"name": "entity.name.function.alumina"
-						},
-						"4": {
-							"name": "punctuation.brackets.round.alumina"
-						},
-						"5": {
-							"name": "punctuation.brackets.angle.alumina"
-						}
-					},
-					"end": "\\{|;",
-					"endCaptures": {
-						"0": {
-							"name": "punctuation.brackets.curly.alumina"
-						}
-					},
-					"patterns": [
-						{
-							"include": "#block-comments"
-						},
-						{
-							"include": "#comments"
-						},
-						{
-							"include": "#keywords"
-						},
-						{
-							"include": "#lvariables"
-						},
-						{
-							"include": "#constants"
-						},
-						{
-							"include": "#gtypes"
-						},
-						{
-							"include": "#functions"
-						},
-						{
-							"include": "#lifetimes"
-						},
-						{
-							"include": "#macros"
-						},
-						{
-							"include": "#namespaces"
-						},
-						{
-							"include": "#punctuation"
-						},
-						{
-							"include": "#strings"
-						},
-						{
-							"include": "#types"
-						},
-						{
-							"include": "#variables"
-						}
-					]
-				},
-				{
-					"comment": "function/method calls, chaining",
-					"name": "meta.function.call.alumina",
-					"begin": "((?:r#(?!crate|[Ss]elf|super))?[A-Za-z0-9_]+)(\\()",
-					"beginCaptures": {
-						"1": {
-							"name": "entity.name.function.alumina"
-						},
-						"2": {
-							"name": "punctuation.brackets.round.alumina"
-						}
-					},
-					"end": "\\)",
-					"endCaptures": {
-						"0": {
-							"name": "punctuation.brackets.round.alumina"
-						}
-					},
-					"patterns": [
-						{
-							"include": "#block-comments"
-						},
-						{
-							"include": "#comments"
-						},
-						{
-							"include": "#keywords"
-						},
-						{
-							"include": "#lvariables"
-						},
-						{
-							"include": "#constants"
-						},
-						{
-							"include": "#gtypes"
-						},
-						{
-							"include": "#functions"
-						},
-						{
-							"include": "#lifetimes"
-						},
-						{
-							"include": "#macros"
-						},
-						{
-							"include": "#namespaces"
-						},
-						{
-							"include": "#punctuation"
-						},
-						{
-							"include": "#strings"
-						},
-						{
-							"include": "#types"
-						},
-						{
-							"include": "#variables"
-						}
-					]
-				},
-				{
-					"comment": "function/method calls with turbofish",
-					"name": "meta.function.call.alumina",
-					"begin": "((?:r#(?!crate|[Ss]elf|super))?[A-Za-z0-9_]+)(?=::<.*>\\()",
-					"beginCaptures": {
-						"1": {
-							"name": "entity.name.function.alumina"
-						}
-					},
-					"end": "\\)",
-					"endCaptures": {
-						"0": {
-							"name": "punctuation.brackets.round.alumina"
-						}
-					},
-					"patterns": [
-						{
-							"include": "#block-comments"
-						},
-						{
-							"include": "#comments"
-						},
-						{
-							"include": "#keywords"
-						},
-						{
-							"include": "#lvariables"
-						},
-						{
-							"include": "#constants"
-						},
-						{
-							"include": "#gtypes"
-						},
-						{
-							"include": "#functions"
-						},
-						{
-							"include": "#lifetimes"
-						},
-						{
-							"include": "#macros"
-						},
-						{
-							"include": "#namespaces"
-						},
-						{
-							"include": "#punctuation"
-						},
-						{
-							"include": "#strings"
-						},
-						{
-							"include": "#types"
-						},
-						{
-							"include": "#variables"
-						}
-					]
-				}
-			]
-		},
-		"keywords": {
-			"patterns": [
-				{
-					"comment": "control flow keywords",
-					"name": "keyword.control.alumina",
-					"match": "\\b(break|continue|do|else|for|if|loop|match|return|try|while|when)\\b"
-				},
-				{
-					"comment": "storage keywords",
-					"name": "keyword.other.alumina storage.type.alumina",
-					"match": "\\b(extern|let|macro|mod)\\b"
-				},
-				{
-					"comment": "const keyword",
-					"name": "storage.modifier.alumina",
-					"match": "\\b(const)\\b"
-				},
-				{
-					"comment": "type keyword",
-					"name": "keyword.declaration.type.alumina storage.type.alumina",
-					"match": "\\b(type)\\b"
-				},
-				{
-					"comment": "enum keyword",
-					"name": "keyword.declaration.enum.alumina storage.type.alumina",
-					"match": "\\b(enum)\\b"
-				},
-				{
-					"comment": "protocol keyword",
-					"name": "keyword.declaration.protocol.alumina storage.type.alumina",
-					"match": "\\b(protocol)\\b"
-				},
-				{
-					"comment": "struct keyword",
-					"name": "keyword.declaration.struct.alumina storage.type.alumina",
-					"match": "\\b(struct)\\b"
-				},
-				{
-					"comment": "storage modifiers",
-					"name": "storage.modifier.alumina",
-					"match": "\\b(static)\\b"
-				},
-				{
-					"comment": "other keywords",
-					"name": "keyword.other.alumina",
-					"match": "\\b(as|impl|in|union|unsafe|use)\\b"
-				},
-				{
-					"comment": "fn",
-					"name": "keyword.other.fn.alumina",
-					"match": "\\bfn\\b"
-				},
-				{
-					"comment": "mut",
-					"name": "storage.modifier.mut.alumina",
-					"match": "\\bmut\\b"
-				},
-				{
-					"comment": "logical operators",
-					"name": "keyword.operator.logical.alumina",
-					"match": "(\\^|\\||\\|\\||&&|<<|>>|!)(?!=)"
-				},
-				{
-					"comment": "logical AND, borrow references",
-					"name": "keyword.operator.borrow.and.alumina",
-					"match": "&(?![&=])"
-				},
-				{
-					"comment": "assignment operators",
-					"name": "keyword.operator.assignment.alumina",
-					"match": "(\\+=|-=|\\*=|/=|%=|\\^=|&=|\\|=|<<=|>>=)"
-				},
-				{
-					"comment": "single equal",
-					"name": "keyword.operator.assignment.equal.alumina",
-					"match": "(?<![<>])=(?!=|>)"
-				},
-				{
-					"comment": "comparison operators",
-					"name": "keyword.operator.comparison.alumina",
-					"match": "(=(=)?(?!>)|!=|<=|(?<!=)>=)"
-				},
-				{
-					"comment": "math operators",
-					"name": "keyword.operator.math.alumina",
-					"match": "(([+%]|(\\*(?!\\w)))(?!=))|(-(?!>))|(/(?!/))"
-				},
-				{
-					"comment": "less than, greater than (special case)",
-					"match": "(?:\\b|(?:(\\))|(\\])|(\\})))[ \\t]+([<>])[ \\t]+(?:\\b|(?:(\\()|(\\[)|(\\{)))",
-					"captures": {
-						"1": {
-							"name": "punctuation.brackets.round.alumina"
-						},
-						"2": {
-							"name": "punctuation.brackets.square.alumina"
-						},
-						"3": {
-							"name": "punctuation.brackets.curly.alumina"
-						},
-						"4": {
-							"name": "keyword.operator.comparison.alumina"
-						},
-						"5": {
-							"name": "punctuation.brackets.round.alumina"
-						},
-						"6": {
-							"name": "punctuation.brackets.square.alumina"
-						},
-						"7": {
-							"name": "punctuation.brackets.curly.alumina"
-						}
-					}
-				},
-				{
-					"comment": "namespace operator",
-					"name": "keyword.operator.namespace.alumina",
-					"match": "::"
-				},
-				{
-					"comment": "dereference asterisk",
-					"match": "(\\*)(?=\\w+)",
-					"captures": {
-						"1": {
-							"name": "keyword.operator.dereference.alumina"
-						}
-					}
-				},
-				{
-					"comment": "dot access",
-					"name": "keyword.operator.access.dot.alumina",
-					"match": "\\.(?!\\.)"
-				},
-				{
-					"comment": "ranges, range patterns",
-					"name": "keyword.operator.range.alumina",
-					"match": "\\.{2}(=|\\.)?"
-				},
-				{
-					"comment": "colon",
-					"name": "keyword.operator.key-value.alumina",
-					"match": ":(?!:)"
-				},
-				{
-					"comment": "dashrocket, skinny arrow",
-					"name": "keyword.operator.arrow.skinny.alumina",
-					"match": "->"
-				},
-				{
-					"comment": "hashrocket, fat arrow",
-					"name": "keyword.operator.arrow.fat.alumina",
-					"match": "=>"
-				}
-			]
-		},
-		"interpolations": {
-			"comment": "curly brace interpolations",
-			"name": "meta.interpolation.alumina",
-			"match": "({)[^\"{}]*(})",
-			"captures": {
-				"1": {
-					"name": "punctuation.definition.interpolation.alumina"
-				},
-				"2": {
-					"name": "punctuation.definition.interpolation.alumina"
-				}
-			}
-		},
-		"macros": {
-			"patterns": [
-				{
-					"comment": "macros",
-					"name": "meta.macro.alumina",
-					"match": "(([a-z_][A-Za-z0-9_]*!)|([A-Z_][A-Za-z0-9_]*!))",
-					"captures": {
-						"2": {
-							"name": "entity.name.function.macro.alumina"
-						},
-						"3": {
-							"name": "entity.name.type.macro.alumina"
-						}
-					}
-				}
-			]
-		},
-		"namespaces": {
-			"patterns": [
-				{
-					"comment": "namespace (non-type, non-function path segment)",
-					"match": "(?<![A-Za-z0-9_])([a-z0-9_]+)((?<!super|self)::)",
-					"captures": {
-						"1": {
-							"name": "entity.name.namespace.alumina"
-						},
-						"2": {
-							"name": "keyword.operator.namespace.alumina"
-						}
-					}
-				}
-			]
-		},
-		"types": {
-			"patterns": [
-				{
-					"comment": "numeric types",
-					"match": "(?<![A-Za-z])(f32|f64|i128|i16|i32|i64|i8|isize|u128|u16|u32|u64|u8|usize)\\b",
-					"captures": {
-						"1": {
-							"name": "entity.name.type.numeric.alumina"
-						}
-					}
-				},
-				{
-					"comment": "parameterized types",
-					"begin": "\\b([A-Z][A-Za-z0-9]*)(<)",
-					"beginCaptures": {
-						"1": {
-							"name": "entity.name.type.alumina"
-						},
-						"2": {
-							"name": "punctuation.brackets.angle.alumina"
-						}
-					},
-					"end": ">",
-					"endCaptures": {
-						"0": {
-							"name": "punctuation.brackets.angle.alumina"
-						}
-					},
-					"patterns": [
-						{
-							"include": "#block-comments"
-						},
-						{
-							"include": "#comments"
-						},
-						{
-							"include": "#keywords"
-						},
-						{
-							"include": "#lvariables"
-						},
-						{
-							"include": "#lifetimes"
-						},
-						{
-							"include": "#punctuation"
-						},
-						{
-							"include": "#types"
-						},
-						{
-							"include": "#variables"
-						}
-					]
-				},
-				{
-					"comment": "primitive types",
-					"name": "entity.name.type.primitive.alumina",
-					"match": "\\b(bool|char|void)\\b"
-				},
-				{
-					"comment": "protocol declarations",
-					"match": "\\b(protocol)\\s+([A-Z][A-Za-z0-9]*)\\b",
-					"captures": {
-						"1": {
-							"name": "keyword.declaration.protocol.alumina storage.type.alumina"
-						},
-						"2": {
-							"name": "entity.name.type.protocol.alumina"
-						}
-					}
-				},
-				{
-					"comment": "struct declarations",
-					"match": "\\b(struct)\\s+([A-Z][A-Za-z0-9]*)\\b",
-					"captures": {
-						"1": {
-							"name": "keyword.declaration.struct.alumina storage.type.alumina"
-						},
-						"2": {
-							"name": "entity.name.type.struct.alumina"
-						}
-					}
-				},
-				{
-					"comment": "enum declarations",
-					"match": "\\b(enum)\\s+([A-Z][A-Za-z0-9_]*)\\b",
-					"captures": {
-						"1": {
-							"name": "keyword.declaration.enum.alumina storage.type.alumina"
-						},
-						"2": {
-							"name": "entity.name.type.enum.alumina"
-						}
-					}
-				},
-				{
-					"comment": "type declarations",
-					"match": "\\b(type)\\s+([A-Z][A-Za-z0-9_]*)\\b",
-					"captures": {
-						"1": {
-							"name": "keyword.declaration.type.alumina storage.type.alumina"
-						},
-						"2": {
-							"name": "entity.name.type.declaration.alumina"
-						}
-					}
-				},
-				{
-					"comment": "types",
-					"name": "entity.name.type.alumina",
-					"match": "\\b[A-Z][A-Za-z0-9]*\\b(?!!)"
-				}
-			]
-		},
-		"punctuation": {
-			"patterns": [
-				{
-					"comment": "comma",
-					"name": "punctuation.comma.alumina",
-					"match": ","
-				},
-				{
-					"comment": "curly braces",
-					"name": "punctuation.brackets.curly.alumina",
-					"match": "[{}]"
-				},
-				{
-					"comment": "parentheses, round brackets",
-					"name": "punctuation.brackets.round.alumina",
-					"match": "[()]"
-				},
-				{
-					"comment": "semicolon",
-					"name": "punctuation.semi.alumina",
-					"match": ";"
-				},
-				{
-					"comment": "square brackets",
-					"name": "punctuation.brackets.square.alumina",
-					"match": "[\\[\\]]"
-				},
-				{
-					"comment": "angle brackets",
-					"name": "punctuation.brackets.angle.alumina",
-					"match": "(?<!=)[<>]"
-				}
-			]
-		},
-		"strings": {
-			"patterns": [
-				{
-					"comment": "double-quoted strings and byte strings",
-					"name": "string.quoted.double.alumina",
-					"begin": "(\")",
-					"beginCaptures": {
-						"1": {
-							"name": "string.quoted.byte.raw.alumina"
-						},
-						"2": {
-							"name": "punctuation.definition.string.alumina"
-						}
-					},
-					"end": "\"",
-					"endCaptures": {
-						"0": {
-							"name": "punctuation.definition.string.alumina"
-						}
-					},
-					"patterns": [
-						{
-							"include": "#escapes"
-						},
-						{
-							"include": "#interpolations"
-						}
-					]
-				},
-				{
-					"comment": "characters and bytes",
-					"name": "string.quoted.single.char.alumina",
-					"begin": "(')",
-					"beginCaptures": {
-						"1": {
-							"name": "string.quoted.byte.raw.alumina"
-						},
-						"2": {
-							"name": "punctuation.definition.char.alumina"
-						}
-					},
-					"end": "'",
-					"endCaptures": {
-						"0": {
-							"name": "punctuation.definition.char.alumina"
-						}
-					},
-					"patterns": [
-						{
-							"include": "#escapes"
-						}
-					]
-				}
-			]
-		},
-		"lvariables": {
-			"patterns": [
-				{
-					"comment": "self",
-					"name": "variable.language.self.alumina",
-					"match": "\\b[Ss]elf\\b"
-				},
-				{
-					"comment": "super",
-					"name": "variable.language.super.alumina",
-					"match": "\\bsuper\\b"
-				}
-			]
-		},
-		"variables": {
-			"patterns": [
-				{
-					"comment": "variables",
-					"name": "variable.other.alumina",
-					"match": "\\b(?<!(?<!\\.)\\.)(?:r#(?!([Ss]elf|super)))?[a-z0-9_]+\\b"
-				}
-			]
-		}
-	}
+  "version": "https://github.com/dustypomerleau/alumina-syntax/commit/20462d50ff97338f42c6b64c3f421c634fd60734",
+  "name": "alumina",
+  "scopeName": "source.alumina",
+  "patterns": [
+    {
+      "comment": "attributes",
+      "name": "meta.attribute.alumina",
+      "begin": "(#)(\\!?)(\\[)",
+      "beginCaptures": {
+        "1": {
+          "name": "punctuation.definition.attribute.alumina"
+        },
+        "2": {
+          "name": "keyword.operator.attribute.inner.alumina"
+        },
+        "3": {
+          "name": "punctuation.brackets.attribute.alumina"
+        }
+      },
+      "end": "\\]",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.brackets.attribute.alumina"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#block-comments"
+        },
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#keywords"
+        },
+        {
+          "include": "#lifetimes"
+        },
+        {
+          "include": "#punctuation"
+        },
+        {
+          "include": "#strings"
+        },
+        {
+          "include": "#gtypes"
+        },
+        {
+          "include": "#types"
+        }
+      ]
+    },
+    {
+      "comment": "modules",
+      "match": "(mod)\\s+((?:r#(?!crate|[Ss]elf|super))?[a-z][A-Za-z0-9_]*)",
+      "captures": {
+        "1": {
+          "name": "storage.type.alumina"
+        },
+        "2": {
+          "name": "entity.name.module.alumina"
+        }
+      }
+    },
+    {
+      "comment": "use statements",
+      "name": "meta.use.alumina",
+      "begin": "\\b(use)\\s",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.other.alumina"
+        }
+      },
+      "end": ";",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.semi.alumina"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#block-comments"
+        },
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#keywords"
+        },
+        {
+          "include": "#namespaces"
+        },
+        {
+          "include": "#punctuation"
+        },
+        {
+          "include": "#types"
+        },
+        {
+          "include": "#lvariables"
+        }
+      ]
+    },
+    {
+      "include": "#block-comments"
+    },
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#lvariables"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#gtypes"
+    },
+    {
+      "include": "#functions"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#lifetimes"
+    },
+    {
+      "include": "#macros"
+    },
+    {
+      "include": "#namespaces"
+    },
+    {
+      "include": "#punctuation"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#variables"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "comment": "documentation comments",
+          "name": "comment.line.documentation.alumina",
+          "match": "^\\s*///.*"
+        },
+        {
+          "comment": "line comments",
+          "name": "comment.line.double-slash.alumina",
+          "match": "\\s*//.*"
+        }
+      ]
+    },
+    "block-comments": {
+      "patterns": [
+        {
+          "comment": "empty block comments",
+          "name": "comment.block.alumina",
+          "match": "/\\*\\*/"
+        },
+        {
+          "comment": "block documentation comments",
+          "name": "comment.block.documentation.alumina",
+          "begin": "/\\*\\*",
+          "end": "\\*/",
+          "patterns": [
+            {
+              "include": "#block-comments"
+            }
+          ]
+        },
+        {
+          "comment": "block comments",
+          "name": "comment.block.alumina",
+          "begin": "/\\*(?!\\*)",
+          "end": "\\*/",
+          "patterns": [
+            {
+              "include": "#block-comments"
+            }
+          ]
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "comment": "ALL CAPS constants",
+          "name": "constant.other.caps.alumina",
+          "match": "\\b[A-Z]{2}[A-Z0-9_]*\\b"
+        },
+        {
+          "comment": "constant declarations",
+          "match": "\\b(const)\\s+([A-Z][A-Za-z0-9_]*)\\b",
+          "captures": {
+            "1": {
+              "name": "storage.type.alumina"
+            },
+            "2": {
+              "name": "constant.other.caps.alumina"
+            }
+          }
+        },
+        {
+          "comment": "decimal integers and floats",
+          "name": "constant.numeric.decimal.alumina",
+          "match": "\\b\\d[\\d_]*(\\.?)[\\d_]*(?:(E)([+-])([\\d_]+))?(f32|f64|i128|i16|i32|i64|i8|isize|u128|u16|u32|u64|u8|usize)?\\b",
+          "captures": {
+            "1": {
+              "name": "punctuation.separator.dot.decimal.alumina"
+            },
+            "2": {
+              "name": "keyword.operator.exponent.alumina"
+            },
+            "3": {
+              "name": "keyword.operator.exponent.sign.alumina"
+            },
+            "4": {
+              "name": "constant.numeric.decimal.exponent.mantissa.alumina"
+            },
+            "5": {
+              "name": "entity.name.type.numeric.alumina"
+            }
+          }
+        },
+        {
+          "comment": "hexadecimal integers",
+          "name": "constant.numeric.hex.alumina",
+          "match": "\\b0x[\\da-fA-F_]+(i128|i16|i32|i64|i8|isize|u128|u16|u32|u64|u8|usize)?\\b",
+          "captures": {
+            "1": {
+              "name": "entity.name.type.numeric.alumina"
+            }
+          }
+        },
+        {
+          "comment": "octal integers",
+          "name": "constant.numeric.oct.alumina",
+          "match": "\\b0o[0-7_]+(i128|i16|i32|i64|i8|isize|u128|u16|u32|u64|u8|usize)?\\b",
+          "captures": {
+            "1": {
+              "name": "entity.name.type.numeric.alumina"
+            }
+          }
+        },
+        {
+          "comment": "binary integers",
+          "name": "constant.numeric.bin.alumina",
+          "match": "\\b0b[01_]+(i128|i16|i32|i64|i8|isize|u128|u16|u32|u64|u8|usize)?\\b",
+          "captures": {
+            "1": {
+              "name": "entity.name.type.numeric.alumina"
+            }
+          }
+        },
+        {
+          "comment": "booleans",
+          "name": "constant.language.bool.alumina",
+          "match": "\\b(true|false)\\b"
+        }
+      ]
+    },
+    "escapes": {
+      "comment": "escapes: ASCII, byte, Unicode, quote, regex",
+      "name": "constant.character.escape.alumina",
+      "match": "(\\\\)(?:(?:(x[0-7][0-7a-fA-F])|(u(\\{)[\\da-fA-F]{4,6}(\\}))|.))",
+      "captures": {
+        "1": {
+          "name": "constant.character.escape.backslash.alumina"
+        },
+        "2": {
+          "name": "constant.character.escape.bit.alumina"
+        },
+        "3": {
+          "name": "constant.character.escape.unicode.alumina"
+        },
+        "4": {
+          "name": "constant.character.escape.unicode.punctuation.alumina"
+        },
+        "5": {
+          "name": "constant.character.escape.unicode.punctuation.alumina"
+        }
+      }
+    },
+    "functions": {
+      "patterns": [
+        {
+          "comment": "pub as a function",
+          "match": "\\b(pub)(\\()",
+          "captures": {
+            "1": {
+              "name": "keyword.other.alumina"
+            },
+            "2": {
+              "name": "punctuation.brackets.round.alumina"
+            }
+          }
+        },
+        {
+          "comment": "function definition",
+          "name": "meta.function.definition.alumina",
+          "begin": "\\b(fn)\\s+((?:r#(?!crate|[Ss]elf|super))?[A-Za-z0-9_]+)((\\()|(<))",
+          "beginCaptures": {
+            "1": {
+              "name": "keyword.other.fn.alumina"
+            },
+            "2": {
+              "name": "entity.name.function.alumina"
+            },
+            "4": {
+              "name": "punctuation.brackets.round.alumina"
+            },
+            "5": {
+              "name": "punctuation.brackets.angle.alumina"
+            }
+          },
+          "end": "\\{|;",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.brackets.curly.alumina"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#block-comments"
+            },
+            {
+              "include": "#comments"
+            },
+            {
+              "include": "#keywords"
+            },
+            {
+              "include": "#lvariables"
+            },
+            {
+              "include": "#constants"
+            },
+            {
+              "include": "#gtypes"
+            },
+            {
+              "include": "#functions"
+            },
+            {
+              "include": "#lifetimes"
+            },
+            {
+              "include": "#macros"
+            },
+            {
+              "include": "#namespaces"
+            },
+            {
+              "include": "#punctuation"
+            },
+            {
+              "include": "#strings"
+            },
+            {
+              "include": "#types"
+            },
+            {
+              "include": "#variables"
+            }
+          ]
+        },
+        {
+          "comment": "function/method calls, chaining",
+          "name": "meta.function.call.alumina",
+          "begin": "((?:r#(?!crate|[Ss]elf|super))?[A-Za-z0-9_]+)(\\()",
+          "beginCaptures": {
+            "1": {
+              "name": "entity.name.function.alumina"
+            },
+            "2": {
+              "name": "punctuation.brackets.round.alumina"
+            }
+          },
+          "end": "\\)",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.brackets.round.alumina"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#block-comments"
+            },
+            {
+              "include": "#comments"
+            },
+            {
+              "include": "#keywords"
+            },
+            {
+              "include": "#lvariables"
+            },
+            {
+              "include": "#constants"
+            },
+            {
+              "include": "#gtypes"
+            },
+            {
+              "include": "#functions"
+            },
+            {
+              "include": "#lifetimes"
+            },
+            {
+              "include": "#macros"
+            },
+            {
+              "include": "#namespaces"
+            },
+            {
+              "include": "#punctuation"
+            },
+            {
+              "include": "#strings"
+            },
+            {
+              "include": "#types"
+            },
+            {
+              "include": "#variables"
+            }
+          ]
+        },
+        {
+          "comment": "function/method calls with turbofish",
+          "name": "meta.function.call.alumina",
+          "begin": "((?:r#(?!crate|[Ss]elf|super))?[A-Za-z0-9_]+)(?=::<.*>\\()",
+          "beginCaptures": {
+            "1": {
+              "name": "entity.name.function.alumina"
+            }
+          },
+          "end": "\\)",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.brackets.round.alumina"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#block-comments"
+            },
+            {
+              "include": "#comments"
+            },
+            {
+              "include": "#keywords"
+            },
+            {
+              "include": "#lvariables"
+            },
+            {
+              "include": "#constants"
+            },
+            {
+              "include": "#gtypes"
+            },
+            {
+              "include": "#functions"
+            },
+            {
+              "include": "#lifetimes"
+            },
+            {
+              "include": "#macros"
+            },
+            {
+              "include": "#namespaces"
+            },
+            {
+              "include": "#punctuation"
+            },
+            {
+              "include": "#strings"
+            },
+            {
+              "include": "#types"
+            },
+            {
+              "include": "#variables"
+            }
+          ]
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "comment": "control flow keywords",
+          "name": "keyword.control.alumina",
+          "match": "\\b(break|continue|do|else|for|if|loop|match|return|try|while|when)\\b"
+        },
+        {
+          "comment": "storage keywords",
+          "name": "keyword.other.alumina storage.type.alumina",
+          "match": "\\b(extern|let|macro|mod)\\b"
+        },
+        {
+          "comment": "const keyword",
+          "name": "storage.modifier.alumina",
+          "match": "\\b(const)\\b"
+        },
+        {
+          "comment": "type keyword",
+          "name": "keyword.declaration.type.alumina storage.type.alumina",
+          "match": "\\b(type)\\b"
+        },
+        {
+          "comment": "enum keyword",
+          "name": "keyword.declaration.enum.alumina storage.type.alumina",
+          "match": "\\b(enum)\\b"
+        },
+        {
+          "comment": "protocol keyword",
+          "name": "keyword.declaration.protocol.alumina storage.type.alumina",
+          "match": "\\b(protocol)\\b"
+        },
+        {
+          "comment": "struct keyword",
+          "name": "keyword.declaration.struct.alumina storage.type.alumina",
+          "match": "\\b(struct)\\b"
+        },
+        {
+          "comment": "storage modifiers",
+          "name": "storage.modifier.alumina",
+          "match": "\\b(static)\\b"
+        },
+        {
+          "comment": "other keywords",
+          "name": "keyword.other.alumina",
+          "match": "\\b(as|impl|in|union|unsafe|use)\\b"
+        },
+        {
+          "comment": "fn",
+          "name": "keyword.other.fn.alumina",
+          "match": "\\bfn\\b"
+        },
+        {
+          "comment": "mixin",
+          "name": "keyword.other.mixin.alumina",
+          "match": "\\bmixin\\b"
+        },
+        {
+          "comment": "mut",
+          "name": "storage.modifier.mut.alumina",
+          "match": "\\bmut\\b"
+        },
+        {
+          "comment": "logical operators",
+          "name": "keyword.operator.logical.alumina",
+          "match": "(\\^|\\||\\|\\||&&|<<|>>|!)(?!=)"
+        },
+        {
+          "comment": "logical AND, borrow references",
+          "name": "keyword.operator.borrow.and.alumina",
+          "match": "&(?![&=])"
+        },
+        {
+          "comment": "assignment operators",
+          "name": "keyword.operator.assignment.alumina",
+          "match": "(\\+=|-=|\\*=|/=|%=|\\^=|&=|\\|=|<<=|>>=)"
+        },
+        {
+          "comment": "single equal",
+          "name": "keyword.operator.assignment.equal.alumina",
+          "match": "(?<![<>])=(?!=|>)"
+        },
+        {
+          "comment": "comparison operators",
+          "name": "keyword.operator.comparison.alumina",
+          "match": "(=(=)?(?!>)|!=|<=|(?<!=)>=)"
+        },
+        {
+          "comment": "math operators",
+          "name": "keyword.operator.math.alumina",
+          "match": "(([+%]|(\\*(?!\\w)))(?!=))|(-(?!>))|(/(?!/))"
+        },
+        {
+          "comment": "less than, greater than (special case)",
+          "match": "(?:\\b|(?:(\\))|(\\])|(\\})))[ \\t]+([<>])[ \\t]+(?:\\b|(?:(\\()|(\\[)|(\\{)))",
+          "captures": {
+            "1": {
+              "name": "punctuation.brackets.round.alumina"
+            },
+            "2": {
+              "name": "punctuation.brackets.square.alumina"
+            },
+            "3": {
+              "name": "punctuation.brackets.curly.alumina"
+            },
+            "4": {
+              "name": "keyword.operator.comparison.alumina"
+            },
+            "5": {
+              "name": "punctuation.brackets.round.alumina"
+            },
+            "6": {
+              "name": "punctuation.brackets.square.alumina"
+            },
+            "7": {
+              "name": "punctuation.brackets.curly.alumina"
+            }
+          }
+        },
+        {
+          "comment": "namespace operator",
+          "name": "keyword.operator.namespace.alumina",
+          "match": "::"
+        },
+        {
+          "comment": "dereference asterisk",
+          "match": "(\\*)(?=\\w+)",
+          "captures": {
+            "1": {
+              "name": "keyword.operator.dereference.alumina"
+            }
+          }
+        },
+        {
+          "comment": "dot access",
+          "name": "keyword.operator.access.dot.alumina",
+          "match": "\\.(?!\\.)"
+        },
+        {
+          "comment": "ranges, range patterns",
+          "name": "keyword.operator.range.alumina",
+          "match": "\\.{2}(=|\\.)?"
+        },
+        {
+          "comment": "colon",
+          "name": "keyword.operator.key-value.alumina",
+          "match": ":(?!:)"
+        },
+        {
+          "comment": "dashrocket, skinny arrow",
+          "name": "keyword.operator.arrow.skinny.alumina",
+          "match": "->"
+        },
+        {
+          "comment": "hashrocket, fat arrow",
+          "name": "keyword.operator.arrow.fat.alumina",
+          "match": "=>"
+        }
+      ]
+    },
+    "interpolations": {
+      "comment": "curly brace interpolations",
+      "name": "meta.interpolation.alumina",
+      "match": "({)[^\"{}]*(})",
+      "captures": {
+        "1": {
+          "name": "punctuation.definition.interpolation.alumina"
+        },
+        "2": {
+          "name": "punctuation.definition.interpolation.alumina"
+        }
+      }
+    },
+    "macros": {
+      "patterns": [
+        {
+          "comment": "macros",
+          "name": "meta.macro.alumina",
+          "match": "(([a-z_][A-Za-z0-9_]*!)|([A-Z_][A-Za-z0-9_]*!))",
+          "captures": {
+            "2": {
+              "name": "entity.name.function.macro.alumina"
+            },
+            "3": {
+              "name": "entity.name.type.macro.alumina"
+            }
+          }
+        }
+      ]
+    },
+    "namespaces": {
+      "patterns": [
+        {
+          "comment": "namespace (non-type, non-function path segment)",
+          "match": "(?<![A-Za-z0-9_])([a-z0-9_]+)((?<!super|self)::)",
+          "captures": {
+            "1": {
+              "name": "entity.name.namespace.alumina"
+            },
+            "2": {
+              "name": "keyword.operator.namespace.alumina"
+            }
+          }
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "comment": "numeric types",
+          "match": "(?<![A-Za-z])(f32|f64|i128|i16|i32|i64|i8|isize|u128|u16|u32|u64|u8|usize)\\b",
+          "captures": {
+            "1": {
+              "name": "entity.name.type.numeric.alumina"
+            }
+          }
+        },
+        {
+          "comment": "parameterized types",
+          "begin": "\\b([A-Z][A-Za-z0-9]*)(<)",
+          "beginCaptures": {
+            "1": {
+              "name": "entity.name.type.alumina"
+            },
+            "2": {
+              "name": "punctuation.brackets.angle.alumina"
+            }
+          },
+          "end": ">",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.brackets.angle.alumina"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#block-comments"
+            },
+            {
+              "include": "#comments"
+            },
+            {
+              "include": "#keywords"
+            },
+            {
+              "include": "#lvariables"
+            },
+            {
+              "include": "#lifetimes"
+            },
+            {
+              "include": "#punctuation"
+            },
+            {
+              "include": "#types"
+            },
+            {
+              "include": "#variables"
+            }
+          ]
+        },
+        {
+          "comment": "primitive types",
+          "name": "entity.name.type.primitive.alumina",
+          "match": "\\b(bool|char|void)\\b"
+        },
+        {
+          "comment": "protocol declarations",
+          "match": "\\b(protocol)\\s+([A-Z][A-Za-z0-9]*)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.protocol.alumina storage.type.alumina"
+            },
+            "2": {
+              "name": "entity.name.type.protocol.alumina"
+            }
+          }
+        },
+        {
+          "comment": "struct declarations",
+          "match": "\\b(struct)\\s+([A-Z][A-Za-z0-9]*)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.struct.alumina storage.type.alumina"
+            },
+            "2": {
+              "name": "entity.name.type.struct.alumina"
+            }
+          }
+        },
+        {
+          "comment": "enum declarations",
+          "match": "\\b(enum)\\s+([A-Z][A-Za-z0-9_]*)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.enum.alumina storage.type.alumina"
+            },
+            "2": {
+              "name": "entity.name.type.enum.alumina"
+            }
+          }
+        },
+        {
+          "comment": "type declarations",
+          "match": "\\b(type)\\s+([A-Z][A-Za-z0-9_]*)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.type.alumina storage.type.alumina"
+            },
+            "2": {
+              "name": "entity.name.type.declaration.alumina"
+            }
+          }
+        },
+        {
+          "comment": "types",
+          "name": "entity.name.type.alumina",
+          "match": "\\b[A-Z][A-Za-z0-9]*\\b(?!!)"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "comment": "comma",
+          "name": "punctuation.comma.alumina",
+          "match": ","
+        },
+        {
+          "comment": "curly braces",
+          "name": "punctuation.brackets.curly.alumina",
+          "match": "[{}]"
+        },
+        {
+          "comment": "parentheses, round brackets",
+          "name": "punctuation.brackets.round.alumina",
+          "match": "[()]"
+        },
+        {
+          "comment": "semicolon",
+          "name": "punctuation.semi.alumina",
+          "match": ";"
+        },
+        {
+          "comment": "square brackets",
+          "name": "punctuation.brackets.square.alumina",
+          "match": "[\\[\\]]"
+        },
+        {
+          "comment": "angle brackets",
+          "name": "punctuation.brackets.angle.alumina",
+          "match": "(?<!=)[<>]"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "comment": "double-quoted strings and byte strings",
+          "name": "string.quoted.double.alumina",
+          "begin": "(\")",
+          "beginCaptures": {
+            "1": {
+              "name": "string.quoted.byte.raw.alumina"
+            },
+            "2": {
+              "name": "punctuation.definition.string.alumina"
+            }
+          },
+          "end": "\"",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.alumina"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#escapes"
+            },
+            {
+              "include": "#interpolations"
+            }
+          ]
+        },
+        {
+          "comment": "characters and bytes",
+          "name": "string.quoted.single.char.alumina",
+          "begin": "(')",
+          "beginCaptures": {
+            "1": {
+              "name": "string.quoted.byte.raw.alumina"
+            },
+            "2": {
+              "name": "punctuation.definition.char.alumina"
+            }
+          },
+          "end": "'",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.char.alumina"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#escapes"
+            }
+          ]
+        }
+      ]
+    },
+    "lvariables": {
+      "patterns": [
+        {
+          "comment": "self",
+          "name": "variable.language.self.alumina",
+          "match": "\\b[Ss]elf\\b"
+        },
+        {
+          "comment": "super",
+          "name": "variable.language.super.alumina",
+          "match": "\\bsuper\\b"
+        }
+      ]
+    },
+    "variables": {
+      "patterns": [
+        {
+          "comment": "variables",
+          "name": "variable.other.alumina",
+          "match": "\\b(?<!(?<!\\.)\\.)(?:r#(?!([Ss]elf|super)))?[a-z0-9_]+\\b"
+        }
+      ]
+    }
+  }
 }

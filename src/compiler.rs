@@ -4,6 +4,7 @@ use crate::codegen;
 use crate::common::AluminaError;
 
 use crate::diagnostics::DiagnosticContext;
+use crate::global_ctx::GlobalCtx;
 use crate::ir::mono::MonoCtx;
 use crate::ir::mono::Monomorphizer;
 use crate::ir::IrCtx;
@@ -18,7 +19,7 @@ use crate::name_resolution::scope::Scope;
 use crate::parser::{AluminaVisitor, ParseCtx};
 
 pub struct Compiler {
-    diag_ctx: DiagnosticContext,
+    global_ctx: GlobalCtx,
 }
 
 #[derive(Debug)]
@@ -28,10 +29,8 @@ pub struct SourceFile {
 }
 
 impl Compiler {
-    pub fn new(diag_context: DiagnosticContext) -> Self {
-        Self {
-            diag_ctx: diag_context,
-        }
+    pub fn new(global_ctx: GlobalCtx) -> Self {
+        Self { global_ctx }
     }
 
     pub fn compile(&mut self, source_files: Vec<SourceFile>) -> Result<String, AluminaError> {
@@ -41,7 +40,10 @@ impl Compiler {
         let source_files: Vec<_> = source_files
             .iter()
             .map(|source_file| {
-                let file_id = self.diag_ctx.add_file(source_file.filename.clone());
+                let file_id = self
+                    .global_ctx
+                    .diag()
+                    .add_file(source_file.filename.clone());
                 let source = std::fs::read_to_string(&source_file.filename)?;
 
                 let parse_tree = ParseCtx::from_source(file_id, source);
@@ -59,14 +61,14 @@ impl Compiler {
             visitor.visit(ctx.root_node())?;
         }
 
-        let mut item_maker = AstItemMaker::new(&ast, self.diag_ctx.clone());
+        let mut item_maker = AstItemMaker::new(&ast, self.global_ctx.clone());
         item_maker.make(root_scope)?;
 
         drop(source_files);
 
         let ir_ctx = IrCtx::new();
-        let (items, lang_items) = item_maker.into_inner();
-        let mut mono_ctx = MonoCtx::new(&ast, &ir_ctx, self.diag_ctx.clone(), lang_items);
+        let items = item_maker.into_inner();
+        let mut mono_ctx = MonoCtx::new(&ast, &ir_ctx, self.global_ctx.clone());
 
         for item in items {
             let inner = item.get();

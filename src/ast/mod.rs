@@ -5,7 +5,8 @@ pub mod maker;
 pub mod rebind;
 pub mod types;
 
-use crate::common::{Allocatable, ArenaAllocatable, FileId, Incrementable};
+use self::lang::LangItemKind;
+use crate::common::{Allocatable, ArenaAllocatable, CodeErrorKind, FileId, Incrementable};
 use crate::intrinsics::IntrinsicKind;
 use crate::name_resolution::path::{Path, PathSegment};
 use std::fmt::Display;
@@ -15,7 +16,7 @@ use std::hash::{Hash, Hasher};
 use bumpalo::Bump;
 use once_cell::unsync::OnceCell;
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::common::impl_allocatable;
 
@@ -23,6 +24,7 @@ pub struct AstCtx<'ast> {
     pub arena: Bump,
     pub counter: Cell<usize>,
     types: RefCell<HashSet<TyP<'ast>>>,
+    lang_items: RefCell<HashMap<LangItemKind, ItemP<'ast>>>,
 }
 
 impl<'ast> AstCtx<'ast> {
@@ -31,6 +33,7 @@ impl<'ast> AstCtx<'ast> {
             arena: Bump::new(),
             counter: Cell::new(0),
             types: RefCell::new(HashSet::new()),
+            lang_items: RefCell::new(HashMap::new()),
         }
     }
 
@@ -38,6 +41,27 @@ impl<'ast> AstCtx<'ast> {
         AstId {
             id: self.counter.increment(),
         }
+    }
+
+    pub fn lang_item(&self, kind: LangItemKind) -> Result<ItemP<'ast>, CodeErrorKind> {
+        self.lang_items
+            .borrow()
+            .get(&kind)
+            .copied()
+            .ok_or(CodeErrorKind::MissingLangItem(kind))
+    }
+
+    pub fn lang_item_kind(&self, item: ItemP<'ast>) -> Option<LangItemKind> {
+        self.lang_items
+            .borrow()
+            .iter()
+            .find(|(_, v)| **v == item)
+            .map(|(k, _)| k)
+            .copied()
+    }
+
+    pub fn add_lang_item(&self, kind: LangItemKind, item: ItemP<'ast>) {
+        self.lang_items.borrow_mut().insert(kind, item);
     }
 
     pub fn intern_type(&'ast self, ty: Ty<'ast>) -> TyP<'ast> {
@@ -546,10 +570,20 @@ impl BinOp {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Cfg {
+    All(Vec<Cfg>),
+    Any(Vec<Cfg>),
+    Not(Box<Cfg>),
+    Simple(String),
+    KeyValue(String, String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Attribute {
     Export,
     Inline,
+    Builtin,
     ForceInline,
     Intrinsic,
     StaticConstructor,

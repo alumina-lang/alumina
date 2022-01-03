@@ -2,7 +2,6 @@
 
 ## General
 
-- An actual CLI interafce for the compiler so it can compile more than one hardcoded file.
 - Whole const_eval thing. It's very ad-hoc and messy. Full const-eval is not a priority, but it needs to be good enough
   so `consts` and enum members can have values that people usually put there + in as much as compiler intrinsics need them. 
 - Force inlining in IR (especially for slice coercions - function call is an overkill)

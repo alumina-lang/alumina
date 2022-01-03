@@ -7,14 +7,18 @@ pub mod mono;
 
 use crate::{
     ast::{Attribute, BinOp, BuiltinType, UnOp},
-    common::{impl_allocatable, Allocatable, ArenaAllocatable, Incrementable},
+    common::{
+        impl_allocatable, Allocatable, ArenaAllocatable, CodeError, CodeErrorKind, Incrementable,
+    },
     intrinsics::CodegenIntrinsicKind,
 };
 use std::{
+    backtrace::Backtrace,
     cell::{Cell, RefCell},
     collections::HashSet,
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
+    rc::Rc,
 };
 
 use bumpalo::Bump;
@@ -151,22 +155,22 @@ impl Debug for Ty<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Ty::Protocol(cell) | Ty::NamedType(cell) | Ty::NamedFunction(cell) => {
-                let inner = cell.try_get();
+                let inner = cell.get();
                 match inner {
-                    Some(IRItem::StructLike(s)) => {
+                    Ok(IRItem::StructLike(s)) => {
                         write!(f, "{} {{ ", s.name.unwrap_or("(unnamed)"))?;
                         for field in s.fields {
                             write!(f, "{:?} ", field.ty)?;
                         }
                         write!(f, "}}")
                     }
-                    Some(IRItem::Enum(e)) => {
+                    Ok(IRItem::Enum(e)) => {
                         write!(f, "{}", e.name.unwrap_or("(unnamed)"))
                     }
-                    Some(IRItem::Protocol(s)) => {
+                    Ok(IRItem::Protocol(s)) => {
                         write!(f, "{}", s.name.unwrap_or("(unnamed)"))
                     }
-                    Some(IRItem::Function(s)) => {
+                    Ok(IRItem::Function(s)) => {
                         write!(f, "{}", s.name.unwrap_or("(unnamed)"))
                     }
                     _ => write!(f, "ERROR"),
@@ -243,7 +247,7 @@ impl<'ir> Ty<'ir> {
             Ty::Builtin(BuiltinType::Never) => true, // or false? dunno, never type is weird
             Ty::Builtin(_) => false,
             Ty::Protocol(_) => todo!(),
-            Ty::NamedType(inner) => match inner.get() {
+            Ty::NamedType(inner) => match inner.get().unwrap() {
                 IRItem::StructLike(s) => s.fields.iter().all(|f| f.ty.is_zero_sized()),
                 IRItem::Enum(e) => e.underlying_type.is_zero_sized(),
                 IRItem::Static(_) => unreachable!(),
@@ -362,39 +366,65 @@ impl<'ir> IRItemCell<'ir> {
             .expect("assigning the same symbol twice");
     }
 
-    pub fn try_get(&'ir self) -> Option<&'ir IRItem<'ir>> {
-        self.contents.get()
-    }
-
-    pub fn get(&'ir self) -> &'ir IRItem<'ir> {
-        self.contents.get().unwrap()
-    }
-
-    pub fn get_function(&'ir self) -> &'ir Function<'ir> {
+    pub fn get(&'ir self) -> Result<&'ir IRItem<'ir>, CodeErrorKind> {
         match self.contents.get() {
-            Some(IRItem::Function(f)) => f,
-            _ => panic!("function expected: {:?}", self.contents.get()),
+            Some(item) => Ok(item),
+            None => Err(CodeErrorKind::UnpopulatedSymbol),
         }
     }
 
-    pub fn get_protocol(&'ir self) -> &'ir Protocol<'ir> {
+    pub fn get_function(&'ir self) -> Result<&'ir Function<'ir>, CodeErrorKind> {
         match self.contents.get() {
-            Some(IRItem::Protocol(p)) => p,
-            _ => panic!("protocol expected"),
+            Some(IRItem::Function(f)) => Ok(f),
+            Some(_) => Err(CodeErrorKind::InternalError(
+                "function expected".into(),
+                Rc::new(Backtrace::capture()),
+            )),
+            None => Err(CodeErrorKind::UnpopulatedSymbol),
         }
     }
 
-    pub fn get_struct_like(&'ir self) -> &'ir StructLike<'ir> {
+    pub fn get_protocol(&'ir self) -> Result<&'ir Protocol<'ir>, CodeErrorKind> {
         match self.contents.get() {
-            Some(IRItem::StructLike(s)) => s,
-            _ => panic!("struct expected"),
+            Some(IRItem::Protocol(p)) => Ok(p),
+            Some(_) => Err(CodeErrorKind::InternalError(
+                "protocol expected".into(),
+                Rc::new(Backtrace::capture()),
+            )),
+            None => Err(CodeErrorKind::UnpopulatedSymbol),
         }
     }
 
-    pub fn get_static(&'ir self) -> &'ir Static<'ir> {
+    pub fn get_struct_like(&'ir self) -> Result<&'ir StructLike<'ir>, CodeErrorKind> {
         match self.contents.get() {
-            Some(IRItem::Static(s)) => s,
-            _ => panic!("static expected"),
+            Some(IRItem::StructLike(p)) => Ok(p),
+            Some(_) => Err(CodeErrorKind::InternalError(
+                "struct expected".into(),
+                Rc::new(Backtrace::capture()),
+            )),
+            None => Err(CodeErrorKind::UnpopulatedSymbol),
+        }
+    }
+
+    pub fn get_static(&'ir self) -> Result<&'ir Static<'ir>, CodeErrorKind> {
+        match self.contents.get() {
+            Some(IRItem::Static(s)) => Ok(s),
+            Some(_) => Err(CodeErrorKind::InternalError(
+                "static expected".into(),
+                Rc::new(Backtrace::capture()),
+            )),
+            None => Err(CodeErrorKind::UnpopulatedSymbol),
+        }
+    }
+
+    pub fn get_const(&'ir self) -> Result<&'ir Const<'ir>, CodeErrorKind> {
+        match self.contents.get() {
+            Some(IRItem::Const(c)) => Ok(c),
+            Some(_) => Err(CodeErrorKind::InternalError(
+                "const expected".into(),
+                Rc::new(Backtrace::capture()),
+            )),
+            None => Err(CodeErrorKind::UnpopulatedSymbol),
         }
     }
 

@@ -5,7 +5,6 @@ use crate::ast::BinOp;
 use std::{
     cmp::Ordering,
     fmt::{Display, Error, Formatter},
-    num::Wrapping,
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub},
 };
 
@@ -144,18 +143,20 @@ impl<'ir> Add for Value<'ir> {
         use Value::*;
 
         match (self, other) {
-            (U8(a), U8(b)) => Ok(U8((Wrapping(a) + Wrapping(b)).0)),
-            (U16(a), U16(b)) => Ok(U16((Wrapping(a) + Wrapping(b)).0)),
-            (U32(a), U32(b)) => Ok(U32((Wrapping(a) + Wrapping(b)).0)),
-            (U64(a), U64(b)) => Ok(U64((Wrapping(a) + Wrapping(b)).0)),
-            (U128(a), U128(b)) => Ok(U128((Wrapping(a) + Wrapping(b)).0)),
-            (I8(a), I8(b)) => Ok(I8((Wrapping(a) + Wrapping(b)).0)),
-            (I16(a), I16(b)) => Ok(I16((Wrapping(a) + Wrapping(b)).0)),
-            (I32(a), I32(b)) => Ok(I32((Wrapping(a) + Wrapping(b)).0)),
-            (I64(a), I64(b)) => Ok(I64((Wrapping(a) + Wrapping(b)).0)),
-            (I128(a), I128(b)) => Ok(I128((Wrapping(a) + Wrapping(b)).0)),
-            (USize(a), USize(b)) => Ok(USize((Wrapping(a) + Wrapping(b)).0)),
-            (ISize(a), ISize(b)) => Ok(ISize((Wrapping(a) + Wrapping(b)).0)),
+            (U8(a), U8(b)) => Ok(U8(a.wrapping_add(b))),
+            (U16(a), U16(b)) => Ok(U16(a.wrapping_add(b))),
+            (U32(a), U32(b)) => Ok(U32(a.wrapping_add(b))),
+            (U64(a), U64(b)) => Ok(U64(a.wrapping_add(b))),
+            (U128(a), U128(b)) => Ok(U128(a.wrapping_add(b))),
+            (USize(a), USize(b)) => Ok(USize(a.wrapping_add(b))),
+
+            // Signed overflow is undefined behavior, so we reject it
+            (I8(a), I8(b)) => a.checked_add(b).map(I8).ok_or(()),
+            (I16(a), I16(b)) => a.checked_add(b).map(I16).ok_or(()),
+            (I32(a), I32(b)) => a.checked_add(b).map(I32).ok_or(()),
+            (I64(a), I64(b)) => a.checked_add(b).map(I64).ok_or(()),
+            (I128(a), I128(b)) => a.checked_add(b).map(I128).ok_or(()),
+            (ISize(a), ISize(b)) => a.checked_add(b).map(ISize).ok_or(()),
             _ => Err(()),
         }
     }
@@ -167,18 +168,20 @@ impl<'ir> Sub for Value<'ir> {
         use Value::*;
 
         match (self, other) {
-            (U8(a), U8(b)) => Ok(U8((Wrapping(a) - Wrapping(b)).0)),
-            (U16(a), U16(b)) => Ok(U16((Wrapping(a) - Wrapping(b)).0)),
-            (U32(a), U32(b)) => Ok(U32((Wrapping(a) - Wrapping(b)).0)),
-            (U64(a), U64(b)) => Ok(U64((Wrapping(a) - Wrapping(b)).0)),
-            (U128(a), U128(b)) => Ok(U128((Wrapping(a) - Wrapping(b)).0)),
-            (I8(a), I8(b)) => Ok(I8((Wrapping(a) - Wrapping(b)).0)),
-            (I16(a), I16(b)) => Ok(I16((Wrapping(a) - Wrapping(b)).0)),
-            (I32(a), I32(b)) => Ok(I32((Wrapping(a) - Wrapping(b)).0)),
-            (I64(a), I64(b)) => Ok(I64((Wrapping(a) - Wrapping(b)).0)),
-            (I128(a), I128(b)) => Ok(I128((Wrapping(a) - Wrapping(b)).0)),
-            (USize(a), USize(b)) => Ok(USize((Wrapping(a) - Wrapping(b)).0)),
-            (ISize(a), ISize(b)) => Ok(ISize((Wrapping(a) - Wrapping(b)).0)),
+            (U8(a), U8(b)) => Ok(U8(a.wrapping_sub(b))),
+            (U16(a), U16(b)) => Ok(U16(a.wrapping_sub(b))),
+            (U32(a), U32(b)) => Ok(U32(a.wrapping_sub(b))),
+            (U64(a), U64(b)) => Ok(U64(a.wrapping_sub(b))),
+            (U128(a), U128(b)) => Ok(U128(a.wrapping_sub(b))),
+            (USize(a), USize(b)) => Ok(USize(a.wrapping_sub(b))),
+
+            // Signed overflow is undefined behavior, so we reject it
+            (I8(a), I8(b)) => a.checked_sub(b).map(I8).ok_or(()),
+            (I16(a), I16(b)) => a.checked_sub(b).map(I16).ok_or(()),
+            (I32(a), I32(b)) => a.checked_sub(b).map(I32).ok_or(()),
+            (I64(a), I64(b)) => a.checked_sub(b).map(I64).ok_or(()),
+            (I128(a), I128(b)) => a.checked_sub(b).map(I128).ok_or(()),
+            (ISize(a), ISize(b)) => a.checked_sub(b).map(ISize).ok_or(()),
             _ => Err(()),
         }
     }
@@ -190,18 +193,20 @@ impl<'ir> Mul for Value<'ir> {
         use Value::*;
 
         match (self, other) {
-            (U8(a), U8(b)) => Ok(U8((Wrapping(a) * Wrapping(b)).0)),
-            (U16(a), U16(b)) => Ok(U16((Wrapping(a) * Wrapping(b)).0)),
-            (U32(a), U32(b)) => Ok(U32((Wrapping(a) * Wrapping(b)).0)),
-            (U64(a), U64(b)) => Ok(U64((Wrapping(a) * Wrapping(b)).0)),
-            (U128(a), U128(b)) => Ok(U128((Wrapping(a) * Wrapping(b)).0)),
-            (I8(a), I8(b)) => Ok(I8((Wrapping(a) * Wrapping(b)).0)),
-            (I16(a), I16(b)) => Ok(I16((Wrapping(a) * Wrapping(b)).0)),
-            (I32(a), I32(b)) => Ok(I32((Wrapping(a) * Wrapping(b)).0)),
-            (I64(a), I64(b)) => Ok(I64((Wrapping(a) * Wrapping(b)).0)),
-            (I128(a), I128(b)) => Ok(I128((Wrapping(a) * Wrapping(b)).0)),
-            (USize(a), USize(b)) => Ok(USize((Wrapping(a) * Wrapping(b)).0)),
-            (ISize(a), ISize(b)) => Ok(ISize((Wrapping(a) * Wrapping(b)).0)),
+            (U8(a), U8(b)) => Ok(U8(a.wrapping_mul(b))),
+            (U16(a), U16(b)) => Ok(U16(a.wrapping_mul(b))),
+            (U32(a), U32(b)) => Ok(U32(a.wrapping_mul(b))),
+            (U64(a), U64(b)) => Ok(U64(a.wrapping_mul(b))),
+            (U128(a), U128(b)) => Ok(U128(a.wrapping_mul(b))),
+            (USize(a), USize(b)) => Ok(USize(a.wrapping_mul(b))),
+
+            // Signed overflow is undefined behavior, so we reject it
+            (I8(a), I8(b)) => a.checked_mul(b).map(I8).ok_or(()),
+            (I16(a), I16(b)) => a.checked_mul(b).map(I16).ok_or(()),
+            (I32(a), I32(b)) => a.checked_mul(b).map(I32).ok_or(()),
+            (I64(a), I64(b)) => a.checked_mul(b).map(I64).ok_or(()),
+            (I128(a), I128(b)) => a.checked_mul(b).map(I128).ok_or(()),
+            (ISize(a), ISize(b)) => a.checked_mul(b).map(ISize).ok_or(()),
             _ => Err(()),
         }
     }

@@ -126,7 +126,7 @@ pub fn codegen(items: &[IRItemP<'_>]) -> Result<String, AluminaError> {
     let mut function_writer = FunctionWriter::new(&ctx, &type_writer);
 
     for item in items {
-        match item.get() {
+        match item.get().unwrap() {
             IRItem::Function(f) => function_writer.write_function_decl(item.id, f)?,
             IRItem::Static(t) => function_writer.write_static_decl(item.id, t)?,
             _ => {}
@@ -134,7 +134,7 @@ pub fn codegen(items: &[IRItemP<'_>]) -> Result<String, AluminaError> {
     }
 
     for item in items {
-        if let IRItem::Function(f) = item.get() {
+        if let IRItem::Function(f) = item.get().unwrap() {
             function_writer.write_function_body(item.id, f)?
         }
     }

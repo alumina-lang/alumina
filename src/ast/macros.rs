@@ -8,14 +8,17 @@ use crate::{
     },
     common::{ice, AluminaError, ArenaAllocatable, CodeErrorKind},
     diagnostics::{line_and_column, DiagnosticContext},
-    name_resolution::scope::{NamedItem, Scope},
+    global_ctx::GlobalCtx,
+    name_resolution::scope::{NamedItemKind, Scope},
 };
 
-use super::{expressions::ExpressionVisitor, AstId, ExprP, Macro, MacroParameter, Span, Statement};
+use super::{
+    expressions::ExpressionVisitor, AstId, Attribute, ExprP, Macro, MacroParameter, Span, Statement,
+};
 
 pub struct MacroMaker<'ast> {
     ast: &'ast AstCtx<'ast>,
-    diag_ctx: DiagnosticContext,
+    global_ctx: GlobalCtx,
 }
 
 macro_rules! assert_args {
@@ -41,8 +44,8 @@ macro_rules! string_arg {
 }
 
 impl<'ast> MacroMaker<'ast> {
-    pub fn new(ast: &'ast AstCtx<'ast>, diag_ctx: DiagnosticContext) -> Self {
-        Self { ast, diag_ctx }
+    pub fn new(ast: &'ast AstCtx<'ast>, global_ctx: GlobalCtx) -> Self {
+        Self { ast, global_ctx }
     }
 
     pub fn make<'src>(
@@ -51,6 +54,7 @@ impl<'ast> MacroMaker<'ast> {
         symbol: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
+        attributes: &Vec<Attribute>,
     ) -> Result<(), AluminaError> {
         use crate::common::WithSpanDuringParsing;
 
@@ -80,18 +84,7 @@ impl<'ast> MacroMaker<'ast> {
             file: code.file_id(),
         };
 
-        let is_builtin = match node.child_by_field_name("attributes") {
-            Some(attribute_node) => {
-                let mut cursor = attribute_node.walk();
-                let result = attribute_node
-                    .children(&mut cursor)
-                    .any(|n| code.node_text(n.child_by_field_name("name").unwrap()) == "builtin");
-                result
-            }
-            None => false,
-        };
-
-        if is_builtin {
+        if attributes.iter().any(|a| matches!(a, Attribute::Builtin)) {
             let kind = match name.unwrap() {
                 "env" => BuiltinMacroKind::Env,
                 "include_bytes" => BuiltinMacroKind::IncludeBytes,
@@ -114,11 +107,11 @@ impl<'ast> MacroMaker<'ast> {
         }
 
         for (_name, item) in scope.inner().all_items() {
-            match item {
-                NamedItem::MacroParameter(id, et_cetera) => {
-                    if has_et_cetera && *et_cetera {
+            match item.kind {
+                NamedItemKind::MacroParameter(id, et_cetera) => {
+                    if has_et_cetera && et_cetera {
                         return Err(CodeErrorKind::MultipleEtCeteras).with_span(&scope, node);
-                    } else if *et_cetera {
+                    } else if et_cetera {
                         has_et_cetera = true;
                     }
 
@@ -129,8 +122,8 @@ impl<'ast> MacroMaker<'ast> {
                     };
 
                     parameters.push(MacroParameter {
-                        id: *id,
-                        et_cetera: *et_cetera,
+                        id,
+                        et_cetera,
                         span: Some(span),
                     });
                 }
@@ -149,7 +142,7 @@ impl<'ast> MacroMaker<'ast> {
 
         let body = ExpressionVisitor::new_for_macro(
             self.ast,
-            self.diag_ctx.clone(),
+            self.global_ctx.clone(),
             scope.clone(),
             has_et_cetera,
         )
@@ -164,7 +157,7 @@ impl<'ast> MacroMaker<'ast> {
 
 pub struct MacroExpander<'ast> {
     ast: &'ast AstCtx<'ast>,
-    diag_ctx: DiagnosticContext,
+    global_ctx: GlobalCtx,
 
     r#macro: ItemP<'ast>,
     args: Vec<ExprP<'ast>>,
@@ -180,14 +173,14 @@ pub struct MacroExpander<'ast> {
 impl<'ast> MacroExpander<'ast> {
     pub fn new(
         ast: &'ast AstCtx<'ast>,
-        diag_ctx: DiagnosticContext,
+        global_ctx: GlobalCtx,
         invocation_span: Option<Span>,
         r#macro: ItemP<'ast>,
         arguments: Vec<ExprP<'ast>>,
     ) -> Self {
         Self {
             ast,
-            diag_ctx,
+            global_ctx,
             r#macro,
             args: arguments,
             invocation_span,
@@ -285,7 +278,7 @@ impl<'ast> MacroExpander<'ast> {
             DeferedMacro(item, args) => {
                 let child = MacroExpander::new(
                     self.ast,
-                    self.diag_ctx.clone(),
+                    self.global_ctx.clone(),
                     self.invocation_span,
                     item,
                     self.expand_args(args)?.to_vec(),
@@ -431,9 +424,15 @@ impl<'ast> MacroExpander<'ast> {
                 let (line, column) = self
                     .invocation_span
                     .and_then(|s| {
-                        self.diag_ctx.get_file_path(s.file).map(|filename| {
-                            line_and_column(&std::fs::read_to_string(filename).unwrap(), s.start)
-                        })
+                        self.global_ctx
+                            .diag()
+                            .get_file_path(s.file)
+                            .map(|filename| {
+                                line_and_column(
+                                    &std::fs::read_to_string(filename).unwrap(),
+                                    s.start,
+                                )
+                            })
                     })
                     .ok_or(CodeErrorKind::NoSpanInformation)
                     .with_span(self.invocation_span)?;
@@ -455,11 +454,14 @@ impl<'ast> MacroExpander<'ast> {
                 let filename = self
                     .invocation_span
                     .and_then(|s| {
-                        self.diag_ctx.get_file_path(s.file).map(|filename| {
-                            self.ast
-                                .arena
-                                .alloc_slice_copy(filename.to_string_lossy().as_bytes())
-                        })
+                        self.global_ctx
+                            .diag()
+                            .get_file_path(s.file)
+                            .map(|filename| {
+                                self.ast
+                                    .arena
+                                    .alloc_slice_copy(filename.to_string_lossy().as_bytes())
+                            })
                     })
                     .ok_or(CodeErrorKind::NoSpanInformation)
                     .with_span(self.invocation_span)?;

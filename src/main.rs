@@ -8,6 +8,7 @@ mod codegen;
 mod common;
 mod compiler;
 mod diagnostics;
+mod global_ctx;
 mod intrinsics;
 mod ir;
 mod name_resolution;
@@ -20,6 +21,7 @@ use common::AluminaError;
 use compiler::Compiler;
 use compiler::SourceFile;
 use diagnostics::DiagnosticContext;
+use global_ctx::GlobalCtx;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs::FileType;
@@ -108,8 +110,8 @@ fn get_sysroot(args: &Args) -> Result<Vec<SourceFile>, AluminaError> {
 fn main() {
     let args = Args::parse();
 
-    let diag_context = DiagnosticContext::new();
-    let mut compiler = Compiler::new(diag_context.clone());
+    let global_ctx = GlobalCtx::new();
+    let mut compiler = Compiler::new(global_ctx.clone());
 
     let mut files = get_sysroot(&args).unwrap();
     for (path, filename) in &args.modules {
@@ -121,7 +123,8 @@ fn main() {
 
     match compiler.compile(files) {
         Ok(program) => {
-            diag_context.print_error_report().unwrap();
+            let diag_ctx = global_ctx.diag();
+            diag_ctx.print_error_report().unwrap();
             match args.output {
                 Some(filename) => std::fs::write(filename, program).unwrap(),
                 None => {
@@ -130,8 +133,9 @@ fn main() {
             }
         }
         Err(e) => {
-            diag_context.add_from_error(e).unwrap();
-            diag_context.print_error_report().unwrap();
+            let diag_ctx = global_ctx.diag();
+            diag_ctx.add_from_error(e).unwrap();
+            diag_ctx.print_error_report().unwrap();
             std::process::exit(1);
         }
     }

@@ -126,6 +126,10 @@ pub enum CodeErrorKind {
     UnsupportedABI(String),
     #[error("unknown intrinsic {}", .0)]
     UnknownIntrinsic(String),
+    #[error("unknown lang item {:?}", .0)]
+    UnknownLangItem(Option<String>),
+    #[error("this cannot be a lang item")]
+    CannotBeALangItem,
     #[error("cannot take address of a compiler intrinsic")]
     IntrinsicsAreSpecialMkay,
     #[error("extern \"C\" functions cannot have generic parameters")]
@@ -168,7 +172,7 @@ pub enum CodeErrorKind {
     UnexpectedProtocol,
     #[error("function must have a body")]
     FunctionMustHaveBody,
-    #[error("protocol functions cannot be generic themselves")]
+    #[error("protocol functions cannot be generic (hint: move the generic parameters to the protocol itself)")]
     ProtocolFnsCannotBeGeneric,
     #[error("protocol functions cannot be extern")]
     ProtocolFnsCannotBeExtern,
@@ -184,6 +188,8 @@ pub enum CodeErrorKind {
     Unimplemented(String),
     #[error("type aliases cannot have their own impl block")]
     NoImplForTypedefs,
+    #[error("unpopulated symbol")]
+    UnpopulatedSymbol,
     #[error(
         "generic type parameters cannot be used in this context (did you mean to call a function?)"
     )]

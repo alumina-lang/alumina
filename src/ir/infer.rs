@@ -10,16 +10,19 @@ use crate::{
 use std::collections::HashMap;
 
 pub struct TypeInferer<'a, 'ast, 'ir> {
+    ast: &'ast ast::AstCtx<'ast>,
     mono_ctx: &'a mut MonoCtx<'ast, 'ir>,
     placeholders: Vec<ast::Placeholder<'ast>>,
 }
 
 impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
     pub fn new(
+        ast: &'ast ast::AstCtx<'ast>,
         mono_ctx: &'a mut MonoCtx<'ast, 'ir>,
         placeholders: Vec<ast::Placeholder<'ast>>,
     ) -> Self {
         TypeInferer {
+            ast,
             mono_ctx,
             placeholders,
         }
@@ -103,11 +106,12 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                 self.match_slot(inferred, a2, b2)?;
             }
             (ast::Ty::FunctionPointer(a1, a2), ir::Ty::NamedFunction(item)) => {
-                let fun = item.get_function();
-                for (a, b) in a1.iter().zip(fun.args.iter()) {
-                    self.match_slot(inferred, a, b.ty)?;
+                if let Ok(fun) = item.get_function() {
+                    for (a, b) in a1.iter().zip(fun.args.iter()) {
+                        self.match_slot(inferred, a, b.ty)?;
+                    }
+                    self.match_slot(inferred, a2, fun.return_type)?;
                 }
-                self.match_slot(inferred, a2, fun.return_type)?;
             }
             (ast::Ty::Generic(item, holders), ir::Ty::NamedType(t) | ir::Ty::NamedFunction(t)) => {
                 let mono_key = self.mono_ctx.reverse_lookup(t);
@@ -137,7 +141,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
         if let Some(tgt) = inferred.get(&placeholder.id).copied() {
             for bound in placeholder.bounds {
                 if let ast::Ty::Generic(item, [src]) = bound.typ {
-                    match self.mono_ctx.lang_items.reverse_get(item) {
+                    match self.ast.lang_item_kind(item) {
                         Some(LangItemKind::ProtoArrayOf) => {
                             if let ir::Ty::Array(tgt, _) = tgt {
                                 let _ = self.match_slot(inferred, src, tgt);
@@ -152,7 +156,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                     }
                 }
                 if let ast::Ty::Generic(item, [ast::Ty::Tuple(a1), a2]) = bound.typ {
-                    match self.mono_ctx.lang_items.reverse_get(item) {
+                    match self.ast.lang_item_kind(item) {
                         Some(LangItemKind::ProtoCallable) => match tgt {
                             ir::Ty::FunctionPointer(b1, b2) => {
                                 for (a, b) in a1.iter().zip(b1.iter()) {
@@ -161,11 +165,12 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                                 let _ = self.match_slot(inferred, a2, b2);
                             }
                             ir::Ty::NamedFunction(item) => {
-                                let fun = item.get_function();
-                                for (a, b) in a1.iter().zip(fun.args.iter()) {
-                                    let _ = self.match_slot(inferred, a, b.ty);
+                                if let Ok(fun) = item.get_function() {
+                                    for (a, b) in a1.iter().zip(fun.args.iter()) {
+                                        let _ = self.match_slot(inferred, a, b.ty);
+                                    }
+                                    let _ = self.match_slot(inferred, a2, fun.return_type);
                                 }
-                                let _ = self.match_slot(inferred, a2, fun.return_type);
                             }
                             _ => {}
                         },
