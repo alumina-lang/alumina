@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use std::iter::{once, repeat};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use indexmap::IndexMap;
 use once_cell::unsync::OnceCell;
@@ -43,9 +44,9 @@ pub struct MonoCtx<'ast, 'ir> {
     diag_ctx: DiagnosticContext,
     id_map: HashMap<ast::AstId, ir::IrId>,
     pub lang_items: LangItemMap<'ast>,
-    cycle_guardian: CycleGuardian<MonomorphizeKey<'ast, 'ir>>,
-    finished: IndexMap<MonomorphizeKey<'ast, 'ir>, ir::IRItemP<'ir>>,
-    reverse_map: HashMap<ir::IRItemP<'ir>, MonomorphizeKey<'ast, 'ir>>,
+    cycle_guardian: CycleGuardian<(ast::ItemP<'ast>, &'ir [ir::TyP<'ir>])>,
+    finished: IndexMap<MonoKey<'ast, 'ir>, ir::IRItemP<'ir>>,
+    reverse_map: HashMap<ir::IRItemP<'ir>, MonoKey<'ast, 'ir>>,
     intrinsics: CompilerIntrinsics<'ir>,
     static_local_defs: HashMap<ir::IRItemP<'ir>, Vec<LocalDef<'ir>>>,
     extra_items: Vec<IRItemP<'ir>>,
@@ -82,7 +83,7 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
         *self.id_map.entry(id).or_insert_with(|| self.ir.make_id())
     }
 
-    pub fn reverse_lookup(&self, item: ir::IRItemP<'ir>) -> MonomorphizeKey<'ast, 'ir> {
+    pub fn reverse_lookup(&self, item: ir::IRItemP<'ir>) -> MonoKey<'ast, 'ir> {
         self.reverse_map
             .get(&item)
             .cloned()
@@ -153,7 +154,22 @@ pub struct Monomorphizer<'a, 'ast, 'ir> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct MonomorphizeKey<'ast, 'ir>(pub ast::ItemP<'ast>, pub &'ir [ir::TyP<'ir>]);
+pub struct MonoKey<'ast, 'ir>(pub ast::ItemP<'ast>, pub &'ir [ir::TyP<'ir>], pub usize);
+
+impl<'ast, 'ir> MonoKey<'ast, 'ir> {
+    pub fn new(item: ast::ItemP<'ast>, tys: &'ir [ir::TyP<'ir>], unique: bool) -> Self {
+        static INDEX: AtomicUsize = AtomicUsize::new(0);
+        MonoKey(
+            item,
+            tys,
+            if unique {
+                INDEX.fetch_add(1, Ordering::SeqCst)
+            } else {
+                0
+            },
+        )
+    }
+}
 
 impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     pub fn new<'b>(mono_ctx: &'b mut MonoCtx<'ast, 'ir>) -> Monomorphizer<'b, 'ast, 'ir> {
@@ -187,13 +203,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             local_defs: Vec::new(),
             defer_context: None,
         }
-    }
-
-    pub fn monomorphize(
-        &mut self,
-        item: ast::ItemP<'ast>,
-    ) -> Result<ir::IRItemP<'ir>, AluminaError> {
-        self.monomorphize_item(MonomorphizeKey(item, &[]))
     }
 
     fn monomorphize_enum(
@@ -469,8 +478,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
         };
 
-        let MonomorphizeKey(ast_item, proto_generic_args) =
-            self.mono_ctx.reverse_lookup(protocol_item);
+        let MonoKey(ast_item, proto_generic_args, _) = self.mono_ctx.reverse_lookup(protocol_item);
         match self.mono_ctx.lang_items.reverse_get(ast_item) {
             Some(LangItemKind::ProtoAny) => return Ok(BoundCheckResult::Matches),
             Some(LangItemKind::ProtoZeroSized) => {
@@ -626,10 +634,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             };
 
             let monomorphized = self
-                .monomorphize_item(MonomorphizeKey(
-                    item,
-                    generic_args.alloc_on(self.mono_ctx.ir),
-                ))?
+                .monomorphize_item(item, generic_args.alloc_on(self.mono_ctx.ir))?
                 .get_function();
 
             for (arg, expected) in monomorphized.args.iter().zip(proto_fun.arg_types.iter()) {
@@ -896,19 +901,28 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(optimized)
     }
 
-    pub fn populate_default_parameters(
+    pub fn get_mono_key(
         &mut self,
-        key: MonomorphizeKey<'ast, 'ir>,
-    ) -> Result<MonomorphizeKey<'ast, 'ir>, AluminaError> {
-        let (placeholders, span) = match key.0.get() {
-            ast::Item::Function(f) => (f.placeholders, f.span),
+        item: ast::ItemP<'ast>,
+        generic_args: &'ir [ir::TyP<'ir>],
+    ) -> Result<MonoKey<'ast, 'ir>, AluminaError> {
+        let mut unique: bool = false;
+
+        let (placeholders, span) = match item.get() {
+            ast::Item::Function(f) => {
+                // Closures must always be monomorphized afresh whenever encountered as they
+                // can bind ambient types (e.g. generic parameters) that are not part of the
+                // MonoKey.
+                unique = f.closure;
+                (f.placeholders, f.span)
+            }
             ast::Item::StructLike(s) => (s.placeholders, s.span),
             ast::Item::Protocol(p) => (p.placeholders, p.span),
-            _ => return Ok(key),
+            _ => return Ok(MonoKey::new(item, generic_args, unique)),
         };
 
-        if placeholders.len() <= key.1.len() {
-            return Ok(key);
+        if placeholders.len() <= generic_args.len() {
+            return Ok(MonoKey::new(item, generic_args, unique));
         }
 
         // We cannot rely on the mono_ctx.finished map to bust cyclic references in default
@@ -916,12 +930,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let _guard = self
             .mono_ctx
             .cycle_guardian
-            .guard(key.clone())
+            .guard((item, generic_args))
             .map_err(|_| CodeErrorKind::CycleDetected)
             .with_no_span()?;
 
-        let mut args: Vec<_> = key.1.iter().copied().collect();
-        for idx in key.1.len()..placeholders.len() {
+        let mut args: Vec<_> = generic_args.iter().copied().collect();
+        for idx in generic_args.len()..placeholders.len() {
             match placeholders[idx].default {
                 Some(typ) => {
                     args.push(
@@ -930,18 +944,19 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                             .append_mono_marker()?,
                     );
                 }
-                None => return Ok(key),
+                None => return Ok(MonoKey::new(item, generic_args, unique)),
             }
         }
 
-        Ok(MonomorphizeKey(key.0, args.alloc_on(self.mono_ctx.ir)))
+        Ok(MonoKey::new(item, args.alloc_on(self.mono_ctx.ir), unique))
     }
 
     pub fn monomorphize_item(
         &mut self,
-        key: MonomorphizeKey<'ast, 'ir>,
+        item: ast::ItemP<'ast>,
+        generic_args: &'ir [ir::TyP<'ir>],
     ) -> Result<ir::IRItemP<'ir>, AluminaError> {
-        let key = self.populate_default_parameters(key)?;
+        let key = self.get_mono_key(item, generic_args)?;
 
         let item: ir::IRItemP = match self.mono_ctx.finished.entry(key.clone()) {
             // The cell may be empty at this point if we are dealing with recursive references
@@ -1071,9 +1086,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     {
         let item = self.mono_ctx.lang_items.get(kind).with_no_span()?;
         let args = self.mono_ctx.ir.arena.alloc_slice_fill_iter(generic_args);
-        let key = MonomorphizeKey(item, args);
-
-        self.monomorphize_item(key)
+        self.monomorphize_item(item, args)
     }
 
     fn slice_of(
@@ -1130,14 +1143,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ast::Ty::NamedType(item) => match self.mono_ctx.lang_items.reverse_get(item) {
                 Some(LangItemKind::ImplBuiltin(kind)) => self.types.builtin(kind),
                 _ => {
-                    let key = MonomorphizeKey(item, &[]);
-                    let item = self.monomorphize_item(key)?;
+                    let item = self.monomorphize_item(item, &[])?;
                     self.types.named(item)
                 }
             },
             ast::Ty::NamedFunction(item) => {
-                let key = MonomorphizeKey(item, &[]);
-                let item = self.monomorphize_item(key)?;
+                let item = self.monomorphize_item(item, &[])?;
                 self.types.named_function(item)
             }
             ast::Ty::Generic(item, args) => {
@@ -1147,8 +1158,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .collect::<Result<Vec<_>, _>>()?
                     .alloc_on(self.mono_ctx.ir);
 
-                let key = MonomorphizeKey(item, args);
-                let ir_item = self.monomorphize_item(key)?;
+                let ir_item = self.monomorphize_item(item, args)?;
                 match item.get() {
                     ast::Item::Protocol(_) => self.types.protocol(ir_item),
                     ast::Item::Function(_) => self.types.named_function(ir_item),
@@ -1156,8 +1166,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 }
             }
             ast::Ty::Protocol(item) => {
-                let key = MonomorphizeKey(item, &[]);
-                let item = self.monomorphize_item(key)?;
+                let item = self.monomorphize_item(item, &[])?;
                 self.types.protocol(item)
             }
         };
@@ -1236,7 +1245,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         &mut self,
         item: ir::IRItemP<'ir>,
     ) -> HashMap<&'ast str, &'ir ir::Field<'ir>> {
-        let MonomorphizeKey(ast_item, _) = self.mono_ctx.reverse_lookup(item);
+        let MonoKey(ast_item, _, _) = self.mono_ctx.reverse_lookup(item);
         let ir_struct = item.get_struct_like();
         let ast_struct = ast_item.get_struct_like();
 
@@ -1477,11 +1486,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 .collect::<Result<Vec<_>, _>>()?
                 .alloc_on(self.mono_ctx.ir);
 
-            return self.monomorphize_item(MonomorphizeKey(item, generic_args));
+            return self.monomorphize_item(item, generic_args);
         }
 
         if fun.placeholders.is_empty() {
-            return self.monomorphize_item(MonomorphizeKey(item, &[]));
+            return self.monomorphize_item(item, &[]);
         }
 
         // If the function is generic but no args are provided, we can try to infer the args
@@ -1553,10 +1562,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             TypeInferer::new(self.mono_ctx, fun.placeholders.iter().copied().collect());
 
         match type_inferer.try_infer(self_slot, infer_pairs) {
-            Some(generic_args) => self.monomorphize_item(MonomorphizeKey(
-                item,
-                generic_args.alloc_on(self.mono_ctx.ir),
-            )),
+            Some(generic_args) => {
+                self.monomorphize_item(item, generic_args.alloc_on(self.mono_ctx.ir))
+            }
             None => Err(CodeErrorKind::TypeInferenceFailed).with_no_span(),
         }
     }
@@ -1591,18 +1599,18 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 .collect::<Result<Vec<_>, _>>()?
                 .alloc_on(self.mono_ctx.ir);
 
-            return self.monomorphize_item(MonomorphizeKey(item, generic_args));
+            return self.monomorphize_item(item, generic_args);
         }
 
         // If the struct is not generic, we don't need to infer the args
         if r#struct.placeholders.is_empty() {
-            return self.monomorphize_item(MonomorphizeKey(item, &[]));
+            return self.monomorphize_item(item, &[]);
         }
 
         // If the parent of this expression expects a specific struct, we trust that this is
         // in fact the correct monomorphization.
         if let Some(ir::Ty::NamedType(hint_item)) = type_hint {
-            let MonomorphizeKey(ast_hint_item, _) = self.mono_ctx.reverse_lookup(hint_item);
+            let MonoKey(ast_hint_item, _, _) = self.mono_ctx.reverse_lookup(hint_item);
             if item == ast_hint_item {
                 return Ok(hint_item);
             }
@@ -1646,10 +1654,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let infer_result = type_inferer.try_infer(None, pairs);
 
         match infer_result {
-            Some(generic_args) => self.monomorphize_item(MonomorphizeKey(
-                item,
-                generic_args.alloc_on(self.mono_ctx.ir),
-            )),
+            Some(generic_args) => {
+                self.monomorphize_item(item, generic_args.alloc_on(self.mono_ctx.ir))
+            }
             None => Err(CodeErrorKind::TypeInferenceFailed).with_no_span(),
         }
     }
@@ -2003,7 +2010,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         item: ast::ItemP<'ast>,
         _type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let item_cell = self.monomorphize_item(MonomorphizeKey(item, &[]))?;
+        let item_cell = self.monomorphize_item(item, &[])?;
 
         Ok(self.exprs.static_var(item_cell))
     }
@@ -2013,7 +2020,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         item: ast::ItemP<'ast>,
         _type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let item_cell = self.monomorphize_item(MonomorphizeKey(item, &[]))?;
+        let item_cell = self.monomorphize_item(item, &[])?;
         let value = match item_cell.get() {
             ir::IRItem::Const(c) => c.value,
             _ => unreachable!(),
@@ -2664,6 +2671,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let (arg_types, return_type) = match callee.ty {
             ir::Ty::FunctionPointer(arg_types, return_type) => (*arg_types, *return_type),
             ir::Ty::NamedFunction(item) => {
+                if let None = item.try_get() {
+                    ice!("unpopulated symbol")
+                }
                 let fun = item.get_function();
                 fn_arg_types = fun.args.iter().map(|p| p.ty).collect();
                 (&fn_arg_types[..], fun.return_type)
@@ -3156,7 +3166,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         id: ast::AstId,
         _type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let item_cell = self.monomorphize_item(MonomorphizeKey(typ, &[]))?;
+        let item_cell = self.monomorphize_item(typ, &[])?;
         let ir_id = self.mono_ctx.map_id(id);
         let result = match item_cell.try_get() {
             Some(ir::IRItem::Enum(item)) => {

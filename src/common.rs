@@ -46,8 +46,6 @@ pub enum CodeErrorKind {
     CycleDetected,
     #[error("super not allowed in this context")]
     SuperNotAllowed,
-    #[error("crate not allowed in this context")]
-    CrateNotAllowed,
     #[error("duplicate name {:?}", .0)]
     DuplicateName(String),
     #[error("generic associated types are not supported, soz")]

@@ -77,7 +77,7 @@ impl Compiler {
             // emitted.
             if inner.should_compile() {
                 let mut monomorphizer = Monomorphizer::new(&mut mono_ctx);
-                monomorphizer.monomorphize(item)?;
+                monomorphizer.monomorphize_item(item, &[])?;
             }
         }
 

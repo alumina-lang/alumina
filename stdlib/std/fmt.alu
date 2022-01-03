@@ -1,31 +1,116 @@
 protocol Formatter<Self> {
     fn write(self: &mut Self, buf: &[u8]);
+    
+    fn write_byte(self: &mut Self, byte: u8) {
+        self.write(mem::slice::from_raw(&byte, 1));
+    }
 }
 
 protocol Formattable<Self, F: Formatter<F>> {
     fn fmt(self: &Self, f: &mut F);
 }
 
-macro write(formatter, fmt, arg...) {
+macro write(fmt, fmt_str, arg...) {
     internal::printf(
-        fmt, 
+        concat!(fmt_str), 
         &[internal::_FormatArg::new(&arg)...], 
-        formatter
+        fmt
     )
 }
 
-macro writeln(formatter, fmt, arg...) {
+macro writeln(fmt, fmt_str, arg...) {
     internal::printf(
-        concat!(fmt, "\n"), 
+        concat!(fmt_str, "\n"), 
         &[internal::_FormatArg::new(&arg)...], 
-        formatter
+        fmt
     )
 }
 
-macro format(fmt, arg...) { 
-    let formatter = internal::StringBufFormatter::new(fmt.len);
-    fmt::write!(&formatter, fmt, arg...);
-    formatter.buffer
+macro format(fmt_str, arg...) { 
+    let fmt = StringBufFormatter::new(fmt_str.len * 2);
+    fmt::write!(&fmt, fmt_str, arg...);
+    fmt.buffer
+}
+
+struct BufferedFormatter<F: Formatter<F>> {
+    buf: &mut [u8],
+    buf_pos: usize,
+    inner: &mut F
+}
+
+impl BufferedFormatter<F: Formatter<F>> {
+    fn new(buf: &mut [u8], inner: &mut F) -> BufferedFormatter<F> {
+        BufferedFormatter {
+            buf: buf,
+            buf_pos: 0,
+            inner: inner
+        }
+    }
+
+    #[inline]
+    fn write(self: &mut BufferedFormatter<F>, buf: &[u8]) {
+        use std::mem::copy_to_nonoverlapping;
+        
+        let fill_len = math::min(self.buf.len - self.buf_pos, buf.len);
+        if fill_len > 0 {
+            buf[0..fill_len].copy_to_nonoverlapping(&self.buf[self.buf_pos]);
+            self.buf_pos += fill_len;
+            buf = buf[fill_len..];
+        }
+
+        if self.buf_pos == self.buf.len {
+            self.inner.write(self.buf);
+            self.buf_pos = 0;
+        }
+
+        if buf.len >= self.buf.len {
+            self.inner.write(buf);
+        } else if buf.len > 0 {
+            buf.copy_to_nonoverlapping(&self.buf[0]);
+            self.buf_pos += buf.len;
+        }
+    }
+
+    #[inline]
+    fn write_byte(self: &mut BufferedFormatter<F>, byte: u8) {
+        if self.buf_pos == self.buf.len {
+            self.inner.write(self.buf);
+            self.buf_pos = 0;
+        }
+
+        self.buf[self.buf_pos] = byte;
+        self.buf_pos += 1;
+    }
+
+    #[inline]
+    fn flush(self: &mut BufferedFormatter<F>) {
+        if self.buf_pos > 0 {
+            self.inner.write(self.buf[0..self.buf_pos]);
+            self.buf_pos = 0;
+        }
+    }
+}
+
+struct StringBufFormatter {
+    buffer: collections::Vector<u8>
+}
+
+impl StringBufFormatter {
+    fn new(size_hint: usize) -> StringBufFormatter {
+        StringBufFormatter {
+            buffer: collections::Vector::with_capacity(size_hint)
+        }
+    }
+
+    #[inline]
+    fn write(self: &mut StringBufFormatter, buf: &[u8]) {
+        self.buffer.extend_from_slice(buf);
+    }
+
+    #[inline]
+    fn write_byte(self: &mut StringBufFormatter, byte: u8) {
+        self.buffer.push(byte);
+    }
 }
 
 mod internal {
@@ -35,15 +120,11 @@ mod internal {
         format_func: fn(&void, &mut F)
     }
 
-    fn _fmt_func<F: Formatter<F>, T: Formattable<T, F>>(ptr: &void, f: &mut F) {
-        T::fmt(ptr as &T, f);
-    }
-
     impl _FormatArg {
         fn new<F: Formatter<F>, T: Formattable<T, F>>(inner: &T) -> _FormatArg<F> {
             _FormatArg::<F> {
                 inner: inner as &void,
-                format_func: _fmt_func::<F, T>,
+                format_func: |ptr, f| T::fmt(ptr as &T, f),
             }
         }
 
@@ -103,51 +184,26 @@ mod internal {
         BRACE_CLOSE,
     }
     
-    fn printf<F: Formatter<F>>(fmt: &[u8], args: &[_FormatArg<F>], formatter: &mut F) {
+    fn printf<F: Formatter<F>>(fmt_str: &[u8], args: &[_FormatArg<F>], fmt: &mut F) {
         let i = 0usize;
-        let buf: [u8; 64];
-        let buf = buf.as_slice_mut();
 
-        let buf_pos = 0usize;
-
-        macro arg() {
-            if args.len == 0 {
-                panic!("too few arguments");
-            }
-            let arg = args[0];
-            args = args[1..];
-            arg
-        } 
-
-        macro buf_append(val) {
-            buf[buf_pos] = val;
-            buf_pos += 1;
-            if buf_pos == buf.len {
-                formatter.write(buf);
-                buf_pos = 0;
-            }
-        }
-        
         let state = State::NORMAL;
-    
-        while i < fmt.len {
-            let ch = fmt[i];
+        while i < fmt_str.len {
+            let ch = fmt_str[i];
             state = switch state {
                 State::NORMAL => {
                     switch ch {
                         '{' => State::BRACE_OPEN,
                         '}' => State::BRACE_CLOSE,
                         _ => {
-                            buf_append!(ch);
+                            fmt.write_byte(ch);
                             State::NORMAL
                         }
                     }
                 }
                 State::BRACE_CLOSE => {
                     switch ch {
-                    '}' => {
-                            buf_append!(ch);
-                        }
+                        '}' => fmt.write_byte(ch),
                         _ => panic!("invalid format string")
                     };
                     State::NORMAL
@@ -155,13 +211,13 @@ mod internal {
                 State::BRACE_OPEN => {
                     switch ch {
                         '}' => {
-                            formatter.write(buf[0..buf_pos]);
-                            (arg!()).fmt(formatter);
-                            buf_pos = 0;
-                        }
-                        '{' => {
-                            buf_append!(ch);
-                        }
+                            if args.len == 0 {
+                                panic!("too few arguments");
+                            }
+                            args[0].fmt(fmt);
+                            args = args[1..];
+                        },
+                        '{' => fmt.write_byte(ch),
                         _ => panic!("invalid format string")
                     };
                     State::NORMAL
@@ -171,28 +227,12 @@ mod internal {
             i += 1;
         }
 
-        if buf_pos > 0 {
-            formatter.write(buf[0..buf_pos]);
+        if state != State::NORMAL {
+            panic!("invalid format string");
         }
-    
+
         if args.len > 0 {
             panic!("too many arguments");
-        }
-    }
-
-    struct StringBufFormatter {
-        buffer: collections::Vector<u8>
-    }
-    
-    impl StringBufFormatter {
-        fn new(size_hint: usize) -> StringBufFormatter {
-            StringBufFormatter {
-                buffer: collections::Vector::with_capacity(size_hint)
-            }
-        }
-        
-        fn write(self: &mut StringBufFormatter, buf: &[u8]) {
-            self.buffer.extend_from_slice(buf);
         }
     }
 }

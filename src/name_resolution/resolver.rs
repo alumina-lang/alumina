@@ -3,7 +3,6 @@ use crate::{
     common::{CodeErrorKind, CycleGuardian},
     name_resolution::{path::Path, scope::NamedItem},
 };
-use std::collections::HashSet;
 
 use super::{
     path::PathSegment,

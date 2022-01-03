@@ -1,9 +1,40 @@
-macro print(fmt, arg...) { fmt::write!(&internal::StdIoFormatter::new(1), fmt, arg...)}
-macro println(fmt, arg...) { fmt::writeln!(&internal::StdIoFormatter::new(1), fmt, arg...)}
-macro eprint(fmt, arg...) { fmt::write!(&internal::StdIoFormatter::new(2), fmt, arg...)}
-macro eprintln(fmt, arg...) { fmt::writeln!(&internal::StdIoFormatter::new(2), fmt, arg...)}
+use internal::{print, println, eprint, eprintln};
 
 mod internal {
+    use fmt::{BufferedFormatter, write, writeln};
+
+    // We use a single static buffer for convenience stdio formatting macros.
+    // Once we have multi-threading, stdio formatting will have to be synchronized.
+    // Having a static buffer is also a concern if the macros recurse, as the buffer
+    // will be overwritten. Currently this only happens during a panic, which should
+    // be fine.
+    static FMT_BUF: [u8; 128];
+
+    macro print(fmt_str, arg...) { 
+        let fmt = StdIoFormatter::new(1);
+        let fmt = BufferedFormatter::new(&FMT_BUF, fmt);
+        write!(&fmt, fmt_str, arg...);
+        fmt.flush();
+    }
+    macro println(fmt_str, arg...) { 
+        let fmt = StdIoFormatter::new(1);
+        let fmt = BufferedFormatter::new(&FMT_BUF, &fmt);
+        writeln!(&fmt, fmt_str, arg...);
+        fmt.flush();
+    }
+    macro eprint(fmt_str, arg...) { 
+        let fmt = StdIoFormatter::new(2);
+        let fmt = BufferedFormatter::new(&FMT_BUF, &fmt);
+        write!(&fmt, fmt_str, arg...);
+        fmt.flush();
+    }
+    macro eprintln(fmt_str, arg...) { 
+        let fmt = StdIoFormatter::new(2);
+        let fmt = BufferedFormatter::new(&FMT_BUF, &fmt);
+        writeln!(&fmt, fmt_str, arg...);
+        fmt.flush();
+    }
+
     struct StdIoFormatter {
         fd: i32
     }
@@ -18,5 +49,7 @@ mod internal {
         fn write(self: &mut StdIoFormatter, buf: &[u8]) {
             libc::write(self.fd, buf.ptr as &void, buf.len);
         }
+
+        mixin fmt::Formatter<StdIoFormatter>;
     }
 }

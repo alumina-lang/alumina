@@ -29,8 +29,6 @@
 - lambdas need to be better
   - type inference does not cross the lambda boundary, requiring a lot of type annotations, which 
     kind of defeats the purpose of lambdas.
-  - If they bind a generic placeholder, but are not otherwise generic, they will be monomorphized
-    only once, which is wrong.
 
 ## Grammar, parsing, AST
 

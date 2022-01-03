@@ -12,10 +12,10 @@ impl Pcg32 {
         self.state = self.state * MUTLIPLIER + self.increment;
     }
 
-    fn from_seed(seed: u128) -> Pcg32 {
+    fn from_seed(seed: &[u8; 16]) -> Pcg32 {
         let pcg = Pcg32 { 
-            state: (seed >> 64) as u64,
-            increment: (seed as u64) | 1
+            state: *(&seed[0] as &u64),
+            increment: *(&seed[8] as &u64) | 1
         };
         
         pcg.state = pcg.state + pcg.increment;
@@ -42,9 +42,9 @@ impl Pcg32 {
 }
 
 static DEFAULT_RNG: Pcg32 = {
-    let seed: u128;
-    libc::getrandom(&seed as &mut void, mem::size_of::<u128>(), 0);
-    Pcg32::from_seed(seed)
+    let seed: [u8; 16];
+    libc::getrandom(&seed[0] as &mut void, 16, 0);
+    Pcg32::from_seed(&seed)
 };
 
 protocol RandomNumberGenerator<Self> {
