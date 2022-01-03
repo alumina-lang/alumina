@@ -51,7 +51,7 @@ struct Args {
     #[clap(long)]
     sysroot: PathBuf,
 
-    /// Modules to compile
+    /// Modules to compile (use 'module::name=filename.alu' syntax)
     #[clap(parse(try_from_str = parse_key_val))]
     modules: Vec<(String, PathBuf)>,
 }

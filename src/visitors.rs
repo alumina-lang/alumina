@@ -69,15 +69,6 @@ where
 impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
     type ReturnType = Result<Path<'ast>, AluminaError>;
 
-    fn visit_crate(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        Ok(self
-            .scope
-            .find_crate()
-            .ok_or(CodeErrorKind::CrateNotAllowed)
-            .with_span(&self.scope, node)?
-            .path())
-    }
-
     fn visit_super(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         Ok(self
             .scope

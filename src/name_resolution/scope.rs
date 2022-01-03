@@ -61,7 +61,6 @@ impl Display for NamedItem<'_, '_> {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ScopeType {
     Root,
-    Crate,
     Module,
     Protocol,
     StructLike,
@@ -282,29 +281,10 @@ impl<'ast, 'src> Scope<'ast, 'src> {
         current
     }
 
-    pub fn find_crate(&self) -> Option<Self> {
-        let mut current = self.clone();
-
-        loop {
-            let r#type = current.0.borrow().r#type;
-            if let ScopeType::Crate = r#type {
-                return Some(current);
-            }
-
-            if let Some(parent) = current.parent() {
-                current = parent;
-            } else {
-                break;
-            }
-        }
-
-        None
-    }
-
     pub fn find_super(&self) -> Option<Self> {
         // Function, struct, enum, ... are transparently scoped to their parent
         match self.0.borrow().r#type {
-            ScopeType::Root | ScopeType::Crate => None,
+            ScopeType::Root => None,
             ScopeType::Module => self.parent(),
             _ => self.parent().and_then(|p| p.find_super()),
         }
@@ -347,12 +327,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             }
         }
 
-        let scope_type = match self.parent() {
-            None => ScopeType::Crate,
-            Some(_) => ScopeType::Module,
-        };
-
-        let child_scope = self.named_child_without_code(scope_type, path.segments[0].0);
+        let child_scope = self.named_child_without_code(ScopeType::Module, path.segments[0].0);
         self.add_item(
             Some(path.segments[0].0),
             NamedItem::Module(child_scope.clone()),
