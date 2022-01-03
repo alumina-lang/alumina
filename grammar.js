@@ -704,7 +704,7 @@ module.exports = grammar({
       seq(
         choice(
           seq("if", field("condition", $._expression)),
-          seq("if", "<", field("type_check", $.type_check), ">"),
+          seq("when", field("type_check", $.type_check)),
         ),
         field("consequence", $.block),
         optional(field("alternative", $.else_clause))

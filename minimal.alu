@@ -1,26 +1,55 @@
-use std::compile_fail;
-use std::proto::Primitive;
+use std::fmt::{Formattable, Formatter, write};
 
-fn type_name<T>() -> &[u8] {
-    if <T: !Primitive> {
-        compile_fail!("only primitive types are supported");
+struct PrintableSlice<T> {
+    inner: &[T]
+}
+
+impl PrintableSlice {
+    fn new<T>(inner: &[T]) -> PrintableSlice<T> {
+        PrintableSlice {
+            inner: inner
+        }
     }
 
-    if <T: u8> {
-        "u8"
-    } else if <T: u16> {
-        "u16"
-    } else {
-        "something else, lol"
+    fn fmt<T: Formattable<T, F>, F: Formatter<F>>(self: &PrintableSlice<T>, formatter: &mut F) {
+        write!(formatter, "[ ");
+        for item in self.inner {
+            write!(formatter, "{} ", item);
+        }
+        write!(formatter, "]");
     }
-}   
+}
 
 
 #[export]
 fn main() {
-    println!("{}", type_name::<u8>());
-    println!("{}", type_name::<u16>());
+    let words: &mut [&[u8]] = &[
+        "amende",
+        "burgrave",
+        "egestion",
+        "entropion",
+        "episcope",
+        "ginnel",
+        "gleek",
+        "janker",
+        "jetavator",
+        "mangabey",
+        "triarchy",
+        "tumid",
+        "uranomancy",
+        "vapography",
+        "venule",
+        "wearish",
+        "yuft",
+        "yulo",
+    ];
+
+    println!("Original: {}", PrintableSlice::new(words));
     
-    // This would be a compile-time error
-    // println!("{}", type_name::<&u8>());
+    use std::random::{DEFAULT_RNG, shuffle};
+    DEFAULT_RNG.shuffle(words);
+    println!("Shuffled: {}", PrintableSlice::new(words));
+    
+    std::collections::sort(words);
+    println!("Sorted:   {}", PrintableSlice::new(words));
 }

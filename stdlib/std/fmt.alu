@@ -1,0 +1,198 @@
+protocol Formatter<Self> {
+    fn write(self: &mut Self, buf: &[u8]);
+}
+
+protocol Formattable<Self, F: Formatter<F>> {
+    fn fmt(self: &Self, f: &mut F);
+}
+
+macro write(formatter, fmt, arg...) {
+    internal::printf(
+        fmt, 
+        &[internal::_FormatArg::new(&arg)...], 
+        formatter
+    )
+}
+
+macro writeln(formatter, fmt, arg...) {
+    internal::printf(
+        concat!(fmt, "\n"), 
+        &[internal::_FormatArg::new(&arg)...], 
+        formatter
+    )
+}
+
+macro format(fmt, arg...) { 
+    let formatter = internal::StringBufFormatter::new(fmt.len);
+    fmt::write!(&formatter, fmt, arg...);
+    formatter.buffer
+}
+
+mod internal {
+    // Type-erased wrapper of a formattable object
+    struct _FormatArg<F: Formatter<F>> {
+        inner: &void,
+        format_func: fn(&void, &mut F)
+    }
+
+    fn _fmt_func<F: Formatter<F>, T: Formattable<T, F>>(ptr: &void, f: &mut F) {
+        T::fmt(ptr as &T, f);
+    }
+
+    impl _FormatArg {
+        fn new<F: Formatter<F>, T: Formattable<T, F>>(inner: &T) -> _FormatArg<F> {
+            _FormatArg::<F> {
+                inner: inner as &void,
+                format_func: _fmt_func::<F, T>,
+            }
+        }
+
+        fn fmt<F: Formatter<F>>(self: &_FormatArg<F>, f: &mut F) {
+            self.format_func(self.inner, f)
+        }
+    }
+
+    fn format_integer<T: proto::Integer, F: Formatter<F>>(val: T, fmt: &mut F) {
+        let buf: [u8; 40];
+        let buf = buf.as_slice_mut();
+    
+        let i: usize = buf.len - 1;
+        let negative = val < 0;
+        val = math::abs(val);
+
+        loop {
+            buf[i] = (val % 10) as u8 + '0';
+            val /= 10;
+            if val == 0 {
+                if negative {
+                    i -= 1;
+                    buf[i] = '-';
+                }
+                fmt.write(buf[i..]);
+                break;
+            }
+            i -= 1;
+        }
+    }
+
+    fn format_float<T: proto::FloatingPoint, F: Formatter<F>>(val: T, fmt: &mut F, precision: usize) {
+        let trunc = val as i128;
+        format_integer(trunc, fmt);
+        fmt.write(".");
+
+        let frac = math::abs((val - (trunc as T)));
+        
+        let buf: [u8; 16];
+        let buf = buf.as_slice_mut();
+        
+        let i = 0usize;
+        while i < precision {
+            frac *= 10.0;
+            let digit = frac as u8;
+            buf[i] = digit + '0';
+            frac -= digit as T;
+            i += 1;
+        }
+
+        fmt.write(buf[..precision]);
+    }
+
+    enum State {
+        NORMAL,
+        BRACE_OPEN,
+        BRACE_CLOSE,
+    }
+    
+    fn printf<F: Formatter<F>>(fmt: &[u8], args: &[_FormatArg<F>], formatter: &mut F) {
+        let i = 0usize;
+        let buf: [u8; 64];
+        let buf = buf.as_slice_mut();
+
+        let buf_pos = 0usize;
+
+        macro arg() {
+            if args.len == 0 {
+                panic!("too few arguments");
+            }
+            let arg = args[0];
+            args = args[1..];
+            arg
+        } 
+
+        macro buf_append(val) {
+            buf[buf_pos] = val;
+            buf_pos += 1;
+            if buf_pos == buf.len {
+                formatter.write(buf);
+                buf_pos = 0;
+            }
+        }
+        
+        let state = State::NORMAL;
+    
+        while i < fmt.len {
+            let ch = fmt[i];
+            state = switch state {
+                State::NORMAL => {
+                    switch ch {
+                        '{' => State::BRACE_OPEN,
+                        '}' => State::BRACE_CLOSE,
+                        _ => {
+                            buf_append!(ch);
+                            State::NORMAL
+                        }
+                    }
+                }
+                State::BRACE_CLOSE => {
+                    switch ch {
+                    '}' => {
+                            buf_append!(ch);
+                        }
+                        _ => panic!("invalid format string")
+                    };
+                    State::NORMAL
+                }
+                State::BRACE_OPEN => {
+                    switch ch {
+                        '}' => {
+                            formatter.write(buf[0..buf_pos]);
+                            (arg!()).fmt(formatter);
+                            buf_pos = 0;
+                        }
+                        '{' => {
+                            buf_append!(ch);
+                        }
+                        _ => panic!("invalid format string")
+                    };
+                    State::NORMAL
+                }
+                _ => std::intrinsics::unreachable()
+            };
+            i += 1;
+        }
+
+        if buf_pos > 0 {
+            formatter.write(buf[0..buf_pos]);
+        }
+    
+        if args.len > 0 {
+            panic!("too many arguments");
+        }
+    }
+
+    struct StringBufFormatter {
+        buffer: collections::Vector<u8>
+    }
+    
+    impl StringBufFormatter {
+        fn new(size_hint: usize) -> StringBufFormatter {
+            StringBufFormatter {
+                buffer: collections::Vector::with_capacity(size_hint)
+            }
+        }
+        
+        fn write(self: &mut StringBufFormatter, buf: &[u8]) {
+            self.buffer.extend_from_slice(buf);
+        }
+    }
+}

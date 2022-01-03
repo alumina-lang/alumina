@@ -237,6 +237,15 @@ impl<'ir> ZstElider<'ir> {
             }
         };
 
+        // Named function types are unit types, hence ZSTs, and will get elided away if e.g. stored
+        // in variables, passed as arguments, ... If this happens, we still need to make sure that
+        // codegen invokes it correctly.
+        if let crate::ir::Ty::NamedFunction(item) = result.ty {
+            if result.is_void() {
+                return builder.function(item);
+            }
+        }
+
         result
     }
 

@@ -1,0 +1,79 @@
+protocol Equatable<Self> {
+    fn equals(lhs: &Self, rhs: &Self) -> bool;
+
+    #[force_inline]
+    fn not_equals(lhs: &Self, rhs: &Self) -> bool {
+        !Self::equals(lhs, rhs)
+    }
+}
+
+enum Ordering {
+    Less = -1i8,
+    Equal = 0i8,
+    Greater = 1i8,
+}
+
+protocol Comparable<Self: Equatable<Self>> {
+    fn compare(lhs: &Self, rhs: &Self) -> Ordering;
+    
+    #[force_inline]
+    fn less_than(lhs: &Self, rhs: &Self) -> bool {
+        Self::compare(lhs, rhs) == Ordering::Less
+    }
+
+    #[force_inline]
+    fn less_than_or_equal(lhs: &Self, rhs: &Self) -> bool {
+        Self::compare(lhs, rhs) != Ordering::Greater
+    }
+
+    #[force_inline]
+    fn greater_than(lhs: &Self, rhs: &Self) -> bool {
+        Self::compare(lhs, rhs) == Ordering::Greater
+    }
+
+    #[force_inline]
+    fn greater_than_or_equal(lhs: &Self, rhs: &Self) -> bool {
+        Self::compare(lhs, rhs) != Ordering::Less
+    }
+}
+
+mod internal {
+    // This module contains the target functions for operator overloading 
+
+    #[force_inline]
+    #[lang(operator_eq)]
+    fn operator_eq<T: Equatable<T>>(lhs: &T, rhs: &T) -> bool {
+        lhs.equals(rhs)
+    }
+
+    #[force_inline]
+    #[lang(operator_neq)]
+    fn operator_neq<T: Equatable<T>>(lhs: &T, rhs: &T) -> bool {
+        lhs.not_equals(rhs)
+    }
+
+    #[force_inline]
+    #[lang(operator_lt)]
+    fn operator_lt<T: Comparable<T>>(lhs: &T, rhs: &T) -> bool {
+        lhs.less_than(rhs)
+    }
+
+    #[force_inline]
+    #[lang(operator_lte)]
+    fn operator_lte<T: Comparable<T>>(lhs: &T, rhs: &T) -> bool {
+        lhs.less_than_or_equal(rhs)
+    }
+
+    #[force_inline]
+    #[lang(operator_gt)]
+    fn operator_gt<T: Comparable<T>>(lhs: &T, rhs: &T) -> bool {
+        lhs.greater_than(rhs)
+    }
+
+    #[force_inline]
+    #[lang(operator_gte)]
+    fn operator_gte<T: Comparable<T>>(lhs: &T, rhs: &T) -> bool {
+        lhs.greater_than_or_equal(rhs)
+    }
+}
+

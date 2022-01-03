@@ -1,19 +1,22 @@
-use super::{lang::LangTypeKind, mono::MonoCtx};
+use super::{
+    lang::LangTypeKind,
+    mono::{MonoCtx, Monomorphizer},
+    UnqualifiedKind,
+};
 use crate::{
     ast::{self, lang::LangItemKind, Placeholder},
     ir,
-    name_resolution::scope::NamedItem,
 };
 use std::collections::HashMap;
 
 pub struct TypeInferer<'a, 'ast, 'ir> {
-    mono_ctx: &'a MonoCtx<'ast, 'ir>,
+    mono_ctx: &'a mut MonoCtx<'ast, 'ir>,
     placeholders: Vec<ast::Placeholder<'ast>>,
 }
 
 impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
     pub fn new(
-        mono_ctx: &'a MonoCtx<'ast, 'ir>,
+        mono_ctx: &'a mut MonoCtx<'ast, 'ir>,
         placeholders: Vec<ast::Placeholder<'ast>>,
     ) -> Self {
         TypeInferer {
@@ -23,16 +26,28 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
     }
 
     fn match_slot(
-        &self,
+        &mut self,
         inferred: &mut HashMap<ast::AstId, ir::TyP<'ir>>,
         src: ast::TyP<'ast>,
         tgt: ir::TyP<'ir>,
     ) -> Result<(), ()> {
         match (src, tgt) {
-            (ast::Ty::NamedType(_), _) | (ast::Ty::Builtin(_), _) => {
+            (ast::Ty::NamedFunction(_), _)
+            | (ast::Ty::NamedType(_), _)
+            | (ast::Ty::Builtin(_), _) => {
                 // those do not participate in inference
             }
             (ast::Ty::Placeholder(id), _) => {
+                let tgt = if let ir::Ty::Unqualified(UnqualifiedKind::String(_)) = tgt {
+                    // Unqualified types cannot be named explicitely, so it is almost certainly not
+                    // the right choice for inference. Use the type it coerces into instead.
+                    // TODO: This is ugly and bad, get rid of unqualified types altogether.
+                    let mut monomorphizer = Monomorphizer::new(self.mono_ctx);
+                    monomorphizer.try_qualify_type(tgt).unwrap()
+                } else {
+                    tgt
+                };
+
                 if let Some(existing) = inferred.get(id) {
                     if *existing != tgt {
                         return Err(());
@@ -81,13 +96,20 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                     self.match_slot(inferred, a, b)?;
                 }
             }
-            (ast::Ty::Fn(a1, a2), ir::Ty::Fn(b1, b2)) => {
+            (ast::Ty::FunctionPointer(a1, a2), ir::Ty::FunctionPointer(b1, b2)) => {
                 for (a, b) in a1.iter().zip(b1.iter()) {
                     self.match_slot(inferred, a, b)?;
                 }
                 self.match_slot(inferred, a2, b2)?;
             }
-            (ast::Ty::GenericType(item, holders), ir::Ty::NamedType(t)) => {
+            (ast::Ty::FunctionPointer(a1, a2), ir::Ty::NamedFunction(item)) => {
+                let fun = item.get_function();
+                for (a, b) in a1.iter().zip(fun.args.iter()) {
+                    self.match_slot(inferred, a, b.ty)?;
+                }
+                self.match_slot(inferred, a2, fun.return_type)?;
+            }
+            (ast::Ty::Generic(item, holders), ir::Ty::NamedType(t) | ir::Ty::NamedFunction(t)) => {
                 let mono_key = self.mono_ctx.reverse_lookup(t);
                 if mono_key.0 != *item {
                     return Err(());
@@ -104,13 +126,17 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
     }
 
     fn match_protocol_bounds(
-        &self,
+        &mut self,
         inferred: &mut HashMap<ast::AstId, ir::TyP<'ir>>,
         placeholder: &Placeholder<'ast>,
     ) {
+        // Matching protocol bounds is quite limited at the moment, it only works for certain
+        // builtin protocols and even there it only works in the reverse direction, e.g. if
+        // we have <A, B, C, F: Callable<(A, B), C>> and F is a known function/function pointer,
+        // we can infer A, B and C.
         if let Some(tgt) = inferred.get(&placeholder.id).copied() {
             for bound in placeholder.bounds {
-                if let ast::Ty::GenericType(item, [src]) = bound.typ {
+                if let ast::Ty::Generic(item, [src]) = bound.typ {
                     match self.mono_ctx.lang_items.reverse_get(item) {
                         Some(LangItemKind::ProtoArrayOf) => {
                             if let ir::Ty::Array(tgt, _) = tgt {
@@ -122,6 +148,27 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                                 let _ = self.match_slot(inferred, src, tgt);
                             }
                         }
+                        _ => {}
+                    }
+                }
+                if let ast::Ty::Generic(item, [ast::Ty::Tuple(a1), a2]) = bound.typ {
+                    match self.mono_ctx.lang_items.reverse_get(item) {
+                        Some(LangItemKind::ProtoCallable) => match tgt {
+                            ir::Ty::FunctionPointer(b1, b2) => {
+                                for (a, b) in a1.iter().zip(b1.iter()) {
+                                    let _ = self.match_slot(inferred, a, b);
+                                }
+                                let _ = self.match_slot(inferred, a2, b2);
+                            }
+                            ir::Ty::NamedFunction(item) => {
+                                let fun = item.get_function();
+                                for (a, b) in a1.iter().zip(fun.args.iter()) {
+                                    let _ = self.match_slot(inferred, a, b.ty);
+                                }
+                                let _ = self.match_slot(inferred, a2, fun.return_type);
+                            }
+                            _ => {}
+                        },
                         _ => {}
                     }
                 }
@@ -144,8 +191,9 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
             let _ = self.match_slot(&mut inferred, param, actual);
         }
 
-        for placeholder in self.placeholders.iter() {
-            self.match_protocol_bounds(&mut inferred, placeholder)
+        let placeholders: Vec<_> = self.placeholders.iter().cloned().collect();
+        for placeholder in placeholders {
+            self.match_protocol_bounds(&mut inferred, &placeholder)
         }
 
         let mut defaults_only = false;

@@ -165,7 +165,7 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                 self.ctx.register_type(ty, name);
                 self.needs_body.insert(ty);
             }
-            Ty::Fn(args, ret) if !body_only => {
+            Ty::FunctionPointer(args, ret) if !body_only => {
                 for elem in args.iter().filter(|f| !f.is_zero_sized()) {
                     self.add_type(elem, false)?;
                 }

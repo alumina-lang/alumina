@@ -1,6 +1,7 @@
 use std::cmp::Comparable;
+use std::proto::Callable;
 
-fn sort_by<T, K: Comparable<K>>(arr: &mut [T], key: fn(T) -> K) {
+fn sort_by<T, F: Callable<(T), K>, K: Comparable<K>>(arr: &mut [T], key: F) {
     if arr.len <= 1 {
         return;
     }
@@ -11,10 +12,10 @@ fn sort_by<T, K: Comparable<K>>(arr: &mut [T], key: fn(T) -> K) {
 }
 
 fn sort<T: Comparable<T>>(arr: &mut [T]) {
-    sort_by::<T, T>(arr, std::util::identity);
+    sort_by(arr, std::util::identity::<T>);
 }
 
-fn partition_by<T, K: Comparable<K>>(arr: &mut [T], key: fn(T) -> K) -> usize {
+fn partition_by<T, F: Callable<(T), K>, K: Comparable<K>>(arr: &mut [T], key: F) -> usize {
     use std::mem::swap;
 
     let pivot = arr[arr.len - 1];
@@ -171,7 +172,7 @@ impl Vector<T> {
 
 mod hashmap {
     use std::hash::{Hashable, Hasher, DefaultHash, hash_of};
-    use std::result::{Option, try_option};
+    use std::option::{Option, try};
     use std::cmp::Equatable;
     use std::iter::{Iterator, Iterable};
 
@@ -312,12 +313,12 @@ mod hashmap {
         }
 
         fn get(self: &HashMap<K, V, H>, key: K) -> Option<V> {
-            let item = try_option!(self._get_slot(key));
+            let item = try!(self._get_slot(key));
             Option::some(item.item.1)
         }
 
         fn remove(self: &mut HashMap<K, V, H>, key: K) -> Option<V> {
-            let item = try_option!(self._get_slot(key));
+            let item = try!(self._get_slot(key));
             self._length -= 1;
             item.state = State::Deleted;
             Option::some(item.item.1)
@@ -375,7 +376,7 @@ mod hashmap {
 
 mod hashset {
     use std::hash::{Hashable, Hasher, DefaultHash};
-    use std::result::{Option, try_option};
+    use std::option::{Option, try};
     use std::iter::{Iterator, Iterable};
     use std::cmp::Equatable;
 
@@ -389,7 +390,7 @@ mod hashset {
 
     impl HashSetIterator<K> {
         fn next(self: &mut HashSetIterator<K>) -> Option<K> {
-            let elem = try_option!(self.inner.next());
+            let elem = try!(self.inner.next());
             Option::some(elem.0)
         }
         mixin<K> Iterator<HashSetIterator<K>, K>;

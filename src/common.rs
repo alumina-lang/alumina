@@ -28,6 +28,8 @@ pub enum AluminaError {
     CodeErrors(Vec<CodeError>),
     #[error("io error: {0}")]
     Io(#[from] io::Error),
+    #[error("{0}")]
+    WalkDir(#[from] walkdir::Error),
 }
 
 #[derive(Debug, Error, Clone)]

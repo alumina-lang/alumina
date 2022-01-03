@@ -9,7 +9,7 @@ impl<'ast> Display for PathSegment<'ast> {
     }
 }
 
-#[derive(Default, PartialEq, Eq, Hash, Clone)]
+#[derive(Default, PartialEq, Eq, Hash, Clone, Debug)]
 pub struct Path<'ast> {
     pub absolute: bool,
     pub segments: Vec<PathSegment<'ast>>,
@@ -27,12 +27,6 @@ impl<'ast> Display for Path<'ast> {
             write!(fmt, "{}", seg)?;
         }
         Ok(())
-    }
-}
-
-impl<'ast> Debug for Path<'ast> {
-    fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(fmt, "\"{}\"", self)
     }
 }
 

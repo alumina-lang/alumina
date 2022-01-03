@@ -1,0 +1,56 @@
+use proto::Integer;
+use option::Option;
+
+protocol Iterator<Self, T> {
+    fn next(self: &mut Self) -> option::Option<T>;
+    fn iter(self: &Self) -> Self {
+        *self
+    }
+}
+
+protocol Iterable<Self, It: Iterator<It, T>, T> {
+    fn iter(self: &Self) -> It;
+}
+
+struct Range<T: Integer> {
+    lower: T,
+    upper: T,
+}
+
+impl Range<T: Integer> {
+    #[force_inline]
+    fn iter(self: &Range<T>) -> RangeIter<T> {
+        RangeIter {
+            current: self.lower,
+            upper: self.upper,
+        }
+    }
+}
+
+struct RangeIter<T: Integer> {
+    current: T,
+    upper: T,
+}
+
+impl RangeIter<T: Integer> {
+    #[force_inline]
+    fn next(self: &mut RangeIter<T>) -> Option<T> {
+        if self.current < self.upper {
+            let current = self.current;
+            self.current += 1;
+            Option::some(current)
+        } else {
+            Option::none()
+        }
+    }
+    
+    mixin<T: Integer> Iterator<RangeIter<T>, T>;
+}
+
+#[force_inline]
+fn range<T: Integer>(lower: T, upper: T) -> Range<T> {
+    Range {
+        lower: lower,
+        upper: upper,
+    }
+}

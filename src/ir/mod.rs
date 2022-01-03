@@ -138,13 +138,19 @@ pub enum Ty<'ir> {
     // are coerced into a slice.
     Unqualified(UnqualifiedKind),
     Tuple(&'ir [TyP<'ir>]),
-    Fn(&'ir [TyP<'ir>], TyP<'ir>),
+    FunctionPointer(&'ir [TyP<'ir>], TyP<'ir>),
+    // Named functions are a family of unit types, each representing
+    // a specific (monomorphized) function. They coerce into function
+    // pointers when arg and return types match. They are proper types,
+    // so they can be stored in variables, passed as arguments and as they
+    // are ZSTs, all writes and reads will be elided.
+    NamedFunction(IRItemP<'ir>),
 }
 
 impl Debug for Ty<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Ty::Protocol(cell) | Ty::NamedType(cell) => {
+            Ty::Protocol(cell) | Ty::NamedType(cell) | Ty::NamedFunction(cell) => {
                 let inner = cell.try_get();
                 match inner {
                     Some(IRItem::StructLike(s)) => {
@@ -158,6 +164,9 @@ impl Debug for Ty<'_> {
                         write!(f, "{}", e.name.unwrap_or("(unnamed)"))
                     }
                     Some(IRItem::Protocol(s)) => {
+                        write!(f, "{}", s.name.unwrap_or("(unnamed)"))
+                    }
+                    Some(IRItem::Function(s)) => {
                         write!(f, "{}", s.name.unwrap_or("(unnamed)"))
                     }
                     _ => write!(f, "ERROR"),
@@ -179,7 +188,7 @@ impl Debug for Ty<'_> {
                 }
                 write!(f, ")")
             }
-            Ty::Fn(args, ret) => {
+            Ty::FunctionPointer(args, ret) => {
                 write!(f, "fn(")?;
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
@@ -210,7 +219,6 @@ impl<'ir> Ty<'ir> {
             _ if lhs == rhs => *lhs,
             (Ty::Pointer(a, false), Ty::Pointer(b, _)) if a == b => Ty::Pointer(a, false),
             (Ty::Pointer(a, _), Ty::Pointer(b, false)) if a == b => Ty::Pointer(a, false),
-
             (_, Ty::Builtin(BuiltinType::Never)) => *lhs,
             (Ty::Builtin(BuiltinType::Never), _) => *rhs,
 
@@ -247,7 +255,8 @@ impl<'ir> Ty<'ir> {
             Ty::Array(inner, size) => *size == 0 || inner.is_zero_sized(),
             Ty::Tuple(elems) => elems.iter().all(|e| e.is_zero_sized()),
             Ty::Unqualified(UnqualifiedKind::String(len)) => *len == 0,
-            Ty::Fn(_, _) => false,
+            Ty::NamedFunction(_) => true,
+            Ty::FunctionPointer(_, _) => false,
         }
     }
 }

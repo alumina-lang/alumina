@@ -59,22 +59,24 @@ impl<'ast> AstCtx<'ast> {
     }
 
     pub fn parse_path(&'ast self, path: &'_ str) -> Path<'ast> {
+        let (path, absolute) = if path.starts_with("::") {
+            (path.strip_prefix("::").unwrap(), true)
+        } else {
+            (path, false)
+        };
+
         let segments: Vec<_> = path
             .split("::")
-            .map(|s| PathSegment(s.alloc_on(self)))
+            .filter_map(|s| {
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(PathSegment(s.alloc_on(self)))
+                }
+            })
             .collect();
 
-        if segments[0].0.is_empty() {
-            Path {
-                absolute: true,
-                segments: segments.into_iter().skip(1).collect(),
-            }
-        } else {
-            Path {
-                absolute: false,
-                segments,
-            }
-        }
+        Path { absolute, segments }
     }
 }
 
@@ -206,13 +208,14 @@ pub enum Ty<'ast> {
     Placeholder(AstId),
     Protocol(ItemP<'ast>),
     NamedType(ItemP<'ast>),
+    NamedFunction(ItemP<'ast>),
     Builtin(BuiltinType),
     Pointer(TyP<'ast>, bool),
     Slice(TyP<'ast>, bool),
     Array(TyP<'ast>, usize),
     Tuple(&'ast [TyP<'ast>]),
-    Fn(&'ast [TyP<'ast>], TyP<'ast>),
-    GenericType(ItemP<'ast>, &'ast [TyP<'ast>]),
+    FunctionPointer(&'ast [TyP<'ast>], TyP<'ast>),
+    Generic(ItemP<'ast>, &'ast [TyP<'ast>]),
 }
 
 impl<'ast> Ty<'ast> {

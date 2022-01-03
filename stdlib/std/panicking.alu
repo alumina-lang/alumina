@@ -1,0 +1,18 @@
+static _panicking: bool = false;
+
+macro panic(reason, args...) {
+    if _panicking {
+        // To avoid infinite recursion if panic handler panics again.
+        intrinsics::trap();
+    }
+    
+    _panicking = true;   
+    io::eprintln!(
+        concat!("panic at {}:{}:{} ", reason), 
+        file!(), 
+        line!(), 
+        column!(),
+        args...
+    );
+    libc::_exit(-1);
+}

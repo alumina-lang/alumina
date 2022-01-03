@@ -1,0 +1,23 @@
+protocol Hasher<Self> {
+    use std::mem::{size_of,slice::from_raw};
+
+    fn new() -> Self;
+    fn write(self: &mut Self, val: &[u8]);
+    fn finish(self: &mut Self) -> u64;
+}
+
+protocol Hashable<Self, H: Hasher<H>> {
+    #[inline]
+    fn hash(a: &Self, hasher: &mut H) {
+        use std::mem::{size_of,slice::from_raw};
+        hasher.write(from_raw(a as &u8, size_of::<Self>()));
+    }
+}
+
+fn hash_of<T: Hashable<T, H>, H: Hasher<H>>(val: T) -> u64 {
+    let hasher = H::new();
+    val.hash(&hasher);
+    hasher.finish()
+}
+
+use std::impl::xxhash::Xxh64 as DefaultHash;

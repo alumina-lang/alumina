@@ -21,6 +21,7 @@ pub struct Compiler {
     diag_ctx: DiagnosticContext,
 }
 
+#[derive(Debug)]
 pub struct SourceFile {
     pub filename: PathBuf,
     pub path: String,

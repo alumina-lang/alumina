@@ -198,7 +198,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
     }
 
     fn visit_scoped_identifier(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
-        let path = self.parse_use_path(node.child_by_field_name("path").unwrap())?;
+        let path = match node.child_by_field_name("path") {
+            Some(path) => self.parse_use_path(path)?,
+            None => Path::root(),
+        };
         let name = self
             .code
             .node_text(node.child_by_field_name("name").unwrap())

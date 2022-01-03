@@ -1,0 +1,206 @@
+use proto::Pointer;
+use std::option::Option;
+
+// Slice fat "pointers" are just regular structs that compiler handles in a special way with regards
+// to syntax, implicit coercion and type inference. They are generic over the pointer-to-element type
+// rather than the element type itself. This is an implementation detail to ensure that &mut [T] and 
+// &[T] are distinguished without having to have two distinct types for mutable and const slices.
+#[lang(slice)]
+struct slice<Ptr: Pointer> {
+    ptr: Ptr,
+    len: usize,
+}
+
+impl slice {
+    use std::cmp::{Equatable, Comparable, Ordering};
+    use std::hash::{Hasher, Hashable};
+    use std::proto::{Primitive, PointerOf, ZeroSized};
+    use std::libc::{memcmp};
+
+    #[force_inline]
+    #[lang(slice_new)]
+    fn from_raw<Ptr: Pointer>(ptr: Ptr, len: usize) -> slice<Ptr> {
+        slice::<Ptr> { ptr: ptr, len: len }
+    }
+
+    #[force_inline]
+    fn iter<T, Ptr: PointerOf<T>>(self: &slice<Ptr>) -> slice<Ptr> {
+        *self
+    }
+
+    #[force_inline]
+    fn next<T, Ptr: PointerOf<T>>(self: &mut slice<Ptr>) -> Option<T> {
+        if self.len > 0 {
+            let result = Option::some(*self.ptr);
+            self.ptr = self.ptr + 1;
+            self.len -= 1;
+            result
+        } else {
+            Option::none()
+        }
+    }
+
+    fn equals<T: Equatable<T>, Ptr: PointerOf<T>>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> bool {
+        if lhs.len != rhs.len {
+            return false;
+        }
+        
+        when T: ZeroSized {
+            true
+        } else when T: Primitive {
+            // Optimization for slices of primitive types
+            memcmp(lhs.ptr as &void, rhs.ptr as &void, lhs.len * size_of::<T>()) == 0
+        } else {
+            let idx = 0usize;
+            while idx < lhs.len {
+                if lhs[idx] != rhs[idx] {
+                    return false;
+                }
+                idx += 1;
+            }
+            true
+        }
+    }
+
+    fn compare<T: Comparable<T>, Ptr: PointerOf<T>>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> Ordering {
+        use std::math::min;
+
+        when T: ZeroSized {
+            lhs.len.compare(&rhs.len)
+        } else when T: u8 {
+            let cmp = memcmp(lhs.ptr as &void, rhs.ptr as &void, min(lhs.len, rhs.len) * size_of::<T>());
+            if cmp < 0 {
+                Ordering::Less
+            } else if cmp > 0 {
+                Ordering::Greater
+            } else {
+                lhs.len.compare(&rhs.len)
+            }
+        } else {
+            let idx = 0usize;
+            let len = min(lhs.len, rhs.len);
+            while idx < len {
+                let cmp = lhs[idx].compare(rhs[idx]);
+                if cmp != Ordering::Equal {
+                    return cmp;
+                }
+                idx += 1;
+            }
+            lhs.len.compare(&rhs.len)
+        }
+    }
+    
+    fn hash<T: Hashable<T, H>, Ptr: PointerOf<T>, H: Hasher<H>>(self: &slice<Ptr>, hasher: &mut H) {
+        when T: ZeroSized {
+            // no-op
+        } when T: u8 {
+            hasher.write(*self);
+        } else {
+            let idx = 0usize;
+            while idx < self.len {
+                self[idx].hash(hasher);
+                idx += 1;
+            }
+        }
+    }
+
+    fn fmt<Ptr: PointerOf<u8>, F: fmt::Formatter<F>>(self: &slice<Ptr>, f: &mut F) {
+        f.write(*self);
+    }
+    
+    mixin<T: Equatable<T>, Ptr: PointerOf<T>> Equatable<slice<Ptr>>;
+    mixin<T: Comparable<T>, Ptr: PointerOf<T>> Comparable<slice<Ptr>>;
+}
+
+mod internal {
+    use proto::{Primitive, Pointer}; 
+    
+    #[force_inline]
+    #[lang(slice_index)]
+    fn slice_index<Ptr: Pointer>(a: slice<Ptr>, idx: usize) -> Ptr {
+        a.ptr + idx
+    }
+    
+    #[force_inline]
+    #[lang(slice_range_index)]
+    fn slice_range_index<Ptr: Pointer>(a: slice<Ptr>, lower: usize, upper: usize) -> slice<Ptr> {
+        slice::from_raw::<Ptr>(a.ptr + lower, upper - lower)
+    }
+
+    #[force_inline]
+    #[lang(slice_range_index_lower)]
+    fn slice_range_index_lower<Ptr: Pointer>(a: slice<Ptr>, lower: usize) -> slice<Ptr> {
+        slice::from_raw::<Ptr>(a.ptr + lower, a.len - lower)
+    }        
+
+    #[force_inline]
+    #[lang(slice_coerce)]
+    fn slice_coerce<T>(a: slice<&mut T>) -> slice<&T> {
+        slice::from_raw::<&T>(a.ptr, a.len)
+    }
+}
+
+fn alloc<T>(len: usize) -> &mut [T] {
+    let ret: &mut [T];
+    ret.ptr = libc::malloc(size_of::<T>() * len) as &mut T;
+    ret.len = len;
+    ret
+}
+
+fn alloc_zeroed<T>(len: usize) -> &mut [T] {
+    let ret: &mut [T];
+    ret.ptr = libc::calloc(len, size_of::<T>()) as &mut T;
+    ret.len = len;
+    ret
+}
+
+#[force_inline]
+fn stack_alloc<T>(len: usize) -> &mut [T] {
+    // TODO: this is broken until inlining in IR is implemented, since __builtin_alloca_with_align
+    // cannot leave the function it was called in even if the function was force-inlined.
+    let ret: &mut [T];
+    ret.ptr = intrinsics::aligned_alloca(
+        size_of::<T>() * len, 
+        if intrinsics::align_of::<T>() >= 8 {
+            intrinsics::align_of::<T>()
+        } else { 
+            8usize 
+        }
+    ) as &mut T;
+    ret.len = len;
+    ret
+}
+
+#[force_inline]
+fn size_of<T>() -> usize {
+    intrinsics::size_of::<T>()
+}
+
+#[force_inline]
+fn align_of<T>() -> usize {
+    intrinsics::align_of::<T>()
+}
+
+fn swap<T>(a: &mut T, b: &mut T) {
+    let tmp = *a;
+    *a = *b;
+    *b = tmp;
+}
+
+fn replace<T>(a: &mut T, b: T) -> T {
+    swap(a, &b);
+    b
+}
+
+fn copy_to_nonoverlapping<T>(src: &[T], dst: &mut T) {
+    libc::memcpy(dst as &mut void, src.ptr as &void, src.len * size_of::<T>());
+}
+
+fn copy_to<T>(src: &[T], dst: &mut T) {
+    libc::memmove(dst as &mut void, src.ptr as &void, src.len * size_of::<T>());
+}
+
+fn free<T>(a: &mut [T]) {
+    libc::free(a.ptr as &mut void);
+}
+

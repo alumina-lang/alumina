@@ -1,3 +1,5 @@
+use std::fmt::{write, Formatter};
+
 macro try(res) {
     let res = res;
     if res.is_ok {
@@ -6,17 +8,6 @@ macro try(res) {
         return Result::err(res.inner.err)
     }
 }
-
-macro try_option(opt) {
-    let opt = opt;
-    if opt.is_some {
-        opt.inner
-    } else {
-        return Option::none()
-    }
-}
-
-use std::fmt::{write, Formatter};
 
 struct Result<T, E> {
     is_ok: bool,
@@ -96,58 +87,4 @@ impl Result<T, E> {
 union ResultT<T, E> {
     ok: T,
     err: E
-}
-
-struct Option<T> {
-    is_some: bool,
-    inner: T
-}
-
-impl Option<T> {
-    #[force_inline]
-    fn some(inner: T) -> Option<T> {
-        Option::<T> {
-            is_some: true, 
-            inner: inner
-        }
-    }
-
-    #[force_inline]
-    fn none() -> Option<T> {
-        Option::<T> {
-            is_some: false
-        }
-    }
-
-    fn as_result<E>(self: Option<T>, err: E) -> Result<T, E> {
-        if self.is_some {
-            Result::ok(self.inner)
-        } else {
-            Result::err(err)
-        }
-    }
-
-    fn unwrap(self: Option<T>) -> T {
-        if self.is_some {
-            self.inner
-        } else {
-            panic!("unwrap on a none value")
-        }
-    }
-
-    fn unwrap_or(self: Option<T>, val: T) -> T {
-        if self.is_some {
-            self.inner
-        } else {
-            val
-        }
-    }
-
-    fn fmt<F: Formatter<F>>(self: &Option<T>, formatter: &mut F) {
-        if self.is_some {
-            write!(formatter, "some({})", self.inner)
-        } else {
-            write!(formatter, "none")
-        }
-    }
 }

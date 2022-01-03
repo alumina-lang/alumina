@@ -1,0 +1,22 @@
+macro print(fmt, arg...) { fmt::write!(&internal::StdIoFormatter::new(1), fmt, arg...)}
+macro println(fmt, arg...) { fmt::writeln!(&internal::StdIoFormatter::new(1), fmt, arg...)}
+macro eprint(fmt, arg...) { fmt::write!(&internal::StdIoFormatter::new(2), fmt, arg...)}
+macro eprintln(fmt, arg...) { fmt::writeln!(&internal::StdIoFormatter::new(2), fmt, arg...)}
+
+mod internal {
+    struct StdIoFormatter {
+        fd: i32
+    }
+    
+    impl StdIoFormatter {
+        fn new(fd: i32) -> StdIoFormatter {
+            StdIoFormatter {
+                fd: fd
+            }
+        }
+        
+        fn write(self: &mut StdIoFormatter, buf: &[u8]) {
+            libc::write(self.fd, buf.ptr as &void, buf.len);
+        }
+    }
+}

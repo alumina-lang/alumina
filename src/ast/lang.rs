@@ -47,12 +47,11 @@ pub enum LangItemKind {
     ProtoZeroSized,
     ProtoPointer,
     ProtoArray,
+    ProtoTuple,
+    ProtoCallable,
     ProtoAny,
     ProtoArrayOf,
     ProtoPointerOf,
-
-    ProtoEquatable,
-    ProtoComparable,
 
     ImplBuiltin(BuiltinType),
     ImplTuple(usize),
@@ -85,9 +84,9 @@ pub fn lang_item_kind(name: &str) -> Option<LangItemKind> {
         "lang(proto_pointer)" => Some(LangItemKind::ProtoPointer),
         "lang(proto_zero_sized)" => Some(LangItemKind::ProtoZeroSized),
         "lang(proto_any)" => Some(LangItemKind::ProtoAny),
-        "lang(proto_equatable)" => Some(LangItemKind::ProtoEquatable),
-        "lang(proto_comparable)" => Some(LangItemKind::ProtoComparable),
         "lang(proto_array)" => Some(LangItemKind::ProtoArray),
+        "lang(proto_tuple)" => Some(LangItemKind::ProtoTuple),
+        "lang(proto_callable)" => Some(LangItemKind::ProtoCallable),
         "lang(proto_array_of)" => Some(LangItemKind::ProtoArrayOf),
         "lang(proto_pointer_of)" => Some(LangItemKind::ProtoPointerOf),
 

@@ -163,9 +163,7 @@ impl<'ir> ExpressionBuilder<'ir> {
     }
 
     pub fn function(&self, item: IRItemP<'ir>) -> ExprP<'ir> {
-        let func = item.get_function();
-        let args: Vec<_> = func.args.iter().map(|arg| arg.ty).collect();
-        let ty = Ty::Fn(args.alloc_on(self.ir), func.return_type);
+        let ty = Ty::NamedFunction(item);
 
         Expr::const_lvalue(ExprKind::Fn(item), self.ir.intern_type(ty)).alloc_on(self.ir)
     }
@@ -314,6 +312,10 @@ impl<'ir> TypeBuilder<'ir> {
         self.ir.intern_type(Ty::NamedType(item))
     }
 
+    pub fn named_function(&self, item: IRItemP<'ir>) -> TyP<'ir> {
+        self.ir.intern_type(Ty::NamedFunction(item))
+    }
+
     pub fn protocol(&self, item: IRItemP<'ir>) -> TyP<'ir> {
         self.ir.intern_type(Ty::Protocol(item))
     }
@@ -323,8 +325,10 @@ impl<'ir> TypeBuilder<'ir> {
         I: IntoIterator<Item = TyP<'ir>>,
         I::IntoIter: ExactSizeIterator,
     {
-        self.ir
-            .intern_type(Ty::Fn(self.ir.arena.alloc_slice_fill_iter(args), ret))
+        self.ir.intern_type(Ty::FunctionPointer(
+            self.ir.arena.alloc_slice_fill_iter(args),
+            ret,
+        ))
     }
 
     pub fn tuple<I>(&self, args: I) -> TyP<'ir>

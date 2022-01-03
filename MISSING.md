@@ -27,6 +27,8 @@
   - unqualified string in if/else does not coerce to a slice
   - probably other places too, since it's very ad-hoc
 - lambdas need to be better
+  - type inference does not cross the lambda boundary, requiring a lot of type annotations, which 
+    kind of defeats the purpose of lambdas.
   - If they bind a generic placeholder, but are not otherwise generic, they will be monomorphized
     only once, which is wrong.
 
@@ -48,7 +50,7 @@
     - The pattern is well-established (Formattable protocol) and I'm very happy with it,
       but it's very very basic right now
   - heap-allocating collections
-    - Vector and HashMap are implemented, but not yet polished need at least a HashSet more 
+    - Vector, HashMap, HashSet are implemented (very basic, probably do not perform very well)
     - Maybe a heap? A VecDeque/ring buffer
     - No linked lists.
   - math
@@ -60,7 +62,6 @@
   - random number generation
     - basic RNG is implemented, need a good way to make it generic over various integer lengths
   - date/time???? this is a big can of worms
-- compound assignment with pointer arithmetic is incorrect (ptr += 1 != ptr = ptr + 1)
 
 ## Diagnostics
 

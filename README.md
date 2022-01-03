@@ -15,7 +15,7 @@ It has the following conveniences over C:
     - strong enums, 
     - array slices, 
     - tuples, 
-    - first-class 0-sized types (unit/void, 0-sized arrays, structs with no fields, ...), 
+    - first-class 0-sized types (unit/void, function types, 0-sized arrays, structs with no fields, ...), 
     - never type
 - Hygenic expression macros
 - Const evaluation (very limited at the moment)

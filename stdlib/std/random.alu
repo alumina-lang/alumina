@@ -1,4 +1,4 @@
-use std::proto::Unsigned;
+use std::proto::{Unsigned, Integer};
 
 struct Pcg32  {
     state: u64,
@@ -60,22 +60,29 @@ protocol RandomNumberGenerator<Self> {
     }
 }
 
-fn range<Rng: RandomNumberGenerator<Rng>, T: Unsigned>(rng: &mut Rng, range: u32) -> u32 {
+fn uniform<Rng: RandomNumberGenerator<Rng>>(rng: &mut Rng, range: u32) -> u32 {
     let t: u32 = (~range + 1) % range;
     let m = loop {
         let m = (rng.next_u32() as u64) * (range as u64);
-        if t <= m as u32 {
+        if t <= (m as u32) {
             break m
         }
     };
     (m >> 32) as u32
 }
 
+fn range<Rng: RandomNumberGenerator<Rng>, T: Integer>(rng: &mut Rng, lower: T, upper: T) -> T {
+    assert!(lower < upper);
+    lower + (rng.uniform((upper - lower) as u32) as T)  
+}
+
 fn shuffle<Rng: RandomNumberGenerator<Rng>, T>(rng: &mut Rng, slice: &mut [T]) {
+    use std::mem::swap;
+
     let i = 0usize;
     while i < slice.len {
-        let j = rng.range((slice.len - i) as u32) as usize;
-        std::mem::swap(&slice[i], &slice[j + i]);
+        let j = rng.range(i, slice.len) as usize;
+        swap(&slice[i], &slice[j]);
         i += 1;
     }
 }

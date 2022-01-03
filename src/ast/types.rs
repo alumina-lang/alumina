@@ -77,6 +77,9 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
             ItemResolution::Item(NamedItem::Placeholder(ty, _)) => {
                 self.ast.intern_type(Ty::Placeholder(ty))
             }
+            ItemResolution::Item(NamedItem::Function(ty, _, _)) => {
+                self.ast.intern_type(Ty::NamedFunction(ty))
+            }
             ItemResolution::Item(NamedItem::Protocol(ty, _, _)) => {
                 if self.accept_protocol {
                     self.ast.intern_type(Ty::Protocol(ty))
@@ -195,13 +198,14 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
 
         let base = match *base {
             Ty::NamedType(ty) => ty,
+            Ty::NamedFunction(ty) => ty,
             Ty::Protocol(ty) => ty,
             _ => return Err(CodeErrorKind::UnexpectedGenericParams).with_span(&self.scope, node),
         };
 
         Ok(self
             .ast
-            .intern_type(Ty::GenericType(base, arguments.alloc_on(self.ast))))
+            .intern_type(Ty::Generic(base, arguments.alloc_on(self.ast))))
     }
 
     fn visit_generic_type_with_turbofish(
@@ -230,6 +234,6 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
 
         Ok(self
             .ast
-            .intern_type(Ty::Fn(elements.alloc_on(self.ast), type_node)))
+            .intern_type(Ty::FunctionPointer(elements.alloc_on(self.ast), type_node)))
     }
 }

@@ -80,12 +80,11 @@ impl _never {
     mixin Comparable<u8>;
 }
 
+// This mixin implements Equatable and Comparable for types that have natively implemented
+// equality and comparison operators.
 protocol _BuiltinComparable<Self: proto::Numeric> {
-    #[force_inline]
-    fn equals(lhs: &Self, rhs: &Self) -> bool {
-        *lhs == *rhs
-    }
-
+    #[force_inline] fn equals(lhs: &Self, rhs: &Self) -> bool { *lhs == *rhs }
+    #[force_inline] fn not_equals(lhs: &Self, rhs: &Self) -> bool { *lhs != *rhs }    
     #[force_inline]
     fn compare(lhs: &Self, rhs: &Self) -> Ordering {
         if *lhs < *rhs {
@@ -96,6 +95,11 @@ protocol _BuiltinComparable<Self: proto::Numeric> {
             Ordering::Greater
         }
     }
+
+    #[force_inline] fn less_than(lhs: &Self, rhs: &Self) -> bool { *lhs < *rhs }
+    #[force_inline] fn less_than_or_equal(lhs: &Self, rhs: &Self) -> bool { *lhs <= *rhs }
+    #[force_inline] fn greater_than(lhs: &Self, rhs: &Self) -> bool { *lhs > *rhs }
+    #[force_inline] fn greater_than_or_equal(lhs: &Self, rhs: &Self) -> bool { *lhs >= *rhs }
 }
 
 protocol _IntegerFormattable<Self: proto::Integer, F: Formatter<F>> {
@@ -128,8 +132,6 @@ impl _u8 {
     mixin _BitOps<u8>;
     mixin _BuiltinComparable<u8>;
     mixin<H: Hasher<H>> Hashable<u8, H>;
-    mixin Equatable<u8>;
-    mixin Comparable<u8>;
     mixin<F: Formatter<F>> _IntegerFormattable<u8, F>;
 }
 
@@ -139,8 +141,6 @@ impl _u16 {
     mixin _BitOps<u16>;
     mixin _BuiltinComparable<u16>;
     mixin<H: Hasher<H>> Hashable<u16, H>;
-    mixin Equatable<u16>;
-    mixin Comparable<u16>;
     mixin<F: Formatter<F>> _IntegerFormattable<u16, F>;
 }
 
@@ -150,8 +150,6 @@ impl _u32 {
     mixin _BitOps<u32>;
     mixin _BuiltinComparable<u32>;
     mixin<H: Hasher<H>> Hashable<u32, H>;
-    mixin Equatable<u32>;
-    mixin Comparable<u32>;
     mixin<F: Formatter<F>> _IntegerFormattable<u32, F>;
 }
 
@@ -161,8 +159,6 @@ impl _u64 {
     mixin _BitOps<u64>;
     mixin _BuiltinComparable<u64>;
     mixin<H: Hasher<H>> Hashable<u64, H>;
-    mixin Equatable<u64>;
-    mixin Comparable<u64>;
     mixin<F: Formatter<F>> _IntegerFormattable<u64, F>;
 }
 
@@ -172,8 +168,6 @@ impl _u128 {
     mixin _BitOps<u128>;
     mixin _BuiltinComparable<u128>;
     mixin<H: Hasher<H>> Hashable<u128, H>;
-    mixin Equatable<u128>;
-    mixin Comparable<u128>;
     mixin<F: Formatter<F>> _IntegerFormattable<u128, F>;
 }
 
@@ -183,8 +177,6 @@ impl _usize {
     mixin _BitOps<usize>;
     mixin _BuiltinComparable<usize>;
     mixin<H: Hasher<H>> Hashable<usize, H>;
-    mixin Equatable<usize>;
-    mixin Comparable<usize>;
     mixin<F: Formatter<F>> _IntegerFormattable<usize, F>;
 }
 
@@ -193,8 +185,6 @@ struct _i8 {}
 impl _i8 {
     mixin _BuiltinComparable<i8>;
     mixin<H: Hasher<H>> Hashable<i8, H>;
-    mixin Equatable<i8>;
-    mixin Comparable<i8>;
     mixin<F: Formatter<F>> _IntegerFormattable<i8, F>;
 }
 
@@ -203,8 +193,6 @@ struct _i16 {}
 impl _i16 {
     mixin _BuiltinComparable<i16>;
     mixin<H: Hasher<H>> Hashable<i16, H>;
-    mixin Equatable<i16>;
-    mixin Comparable<i16>;
     mixin<F: Formatter<F>> _IntegerFormattable<i16, F>;
 }
 
@@ -213,8 +201,6 @@ struct _i32 {}
 impl _i32 {
     mixin _BuiltinComparable<i32>;
     mixin<H: Hasher<H>> Hashable<i32, H>;
-    mixin Equatable<i32>;
-    mixin Comparable<i32>;
     mixin<F: Formatter<F>> _IntegerFormattable<i32, F>;
 }
 
@@ -223,8 +209,6 @@ struct _i64 {}
 impl _i64 {
     mixin _BuiltinComparable<i64>;
     mixin<H: Hasher<H>> Hashable<i64, H>;
-    mixin Equatable<i64>;
-    mixin Comparable<i64>;
     mixin<F: Formatter<F>> _IntegerFormattable<i64, F>;
 }
 
@@ -233,8 +217,6 @@ struct _i128 {}
 impl _i128 {
     mixin _BuiltinComparable<i128>;
     mixin<H: Hasher<H>> Hashable<i128, H>;
-    mixin Equatable<i128>;
-    mixin Comparable<i128>;
     mixin<F: Formatter<F>> _IntegerFormattable<i128, F>;
 }
 
@@ -243,8 +225,6 @@ struct _isize {}
 impl _isize {
     mixin _BuiltinComparable<isize>;
     mixin<H: Hasher<H>> Hashable<isize, H>;
-    mixin Equatable<isize>;
-    mixin Comparable<isize>;
     mixin<F: Formatter<F>> _IntegerFormattable<isize, F>;
 }
 
@@ -253,8 +233,6 @@ struct _f32 {}
 impl _f32 {
     mixin _BuiltinComparable<f32>;
     // Not hashable
-    mixin Equatable<f32>;
-    mixin Comparable<f32>;
     mixin<F: Formatter<F>> _FloatFormattable<f32, F>;
 }
 
@@ -263,8 +241,6 @@ struct _f64 {}
 impl _f64 {
     mixin _BuiltinComparable<f64>;
     // Not hashable
-    mixin Equatable<f64>;
-    mixin Comparable<f64>;
     mixin<F: Formatter<F>> _FloatFormattable<f64, F>;
 }
 

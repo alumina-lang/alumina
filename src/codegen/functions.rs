@@ -380,9 +380,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                     w!(self.fn_bodies, "{}", n);
                 }
             },
-            ExprKind::Void => {
-                w!(self.fn_bodies, "/* {:?} */", expr);
-            }
+            ExprKind::Void => {}
         }
 
         if bare_block {

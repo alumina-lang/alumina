@@ -458,7 +458,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 _ => unreachable!(),
             },
             _ => {
-                // Exact type match is not really that useful, but we allow it.
+                // Exact type match is not really that useful in generic bounds (as one can just use
+                // a specific type instead of a generic placeholder), but it can be very handy in
+                // when expressions to specialize behavior for specific types.
                 if bound == ty {
                     return Ok(BoundCheckResult::Matches);
                 } else {
@@ -478,6 +480,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     return Ok(BoundCheckResult::DoesNotMatch);
                 }
             }
+            Some(LangItemKind::ProtoTuple) => match ty {
+                ir::Ty::Builtin(BuiltinType::Void) | ir::Ty::Tuple(_) => {
+                    return Ok(BoundCheckResult::Matches)
+                }
+                _ => return Ok(BoundCheckResult::DoesNotMatch),
+            },
             Some(LangItemKind::ProtoFloatingPoint) => match ty {
                 ir::Ty::Builtin(k) if k.is_float() => return Ok(BoundCheckResult::Matches),
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
@@ -512,6 +520,48 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 ir::Ty::Array(_, _) => return Ok(BoundCheckResult::Matches),
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
+            Some(LangItemKind::ProtoCallable) => {
+                let proto_args = match proto_generic_args[0] {
+                    ir::Ty::Tuple(args) => *args,
+                    ir::Ty::Builtin(BuiltinType::Void) => &[],
+                    _ => unreachable!(),
+                };
+                let proto_ret = proto_generic_args[1];
+
+                let actual_args: Vec<_>;
+                let (args, ret) = match ty {
+                    ir::Ty::FunctionPointer(args, ret) => (*args, *ret),
+                    ir::Ty::NamedFunction(item) => {
+                        let fun = item.get_function();
+                        actual_args = fun.args.iter().map(|arg| arg.ty).collect();
+                        (&actual_args[..], fun.return_type)
+                    }
+                    _ => {
+                        return Ok(BoundCheckResult::DoesNotMatchBecause(
+                            "not a function".into(),
+                        ))
+                    }
+                };
+
+                if args.len() != proto_args.len() {
+                    return Ok(BoundCheckResult::DoesNotMatchBecause(
+                        "wrong number of arguments".into(),
+                    ));
+                }
+                for (a, b) in args.iter().zip(proto_args.iter()) {
+                    if *a != *b {
+                        return Ok(BoundCheckResult::DoesNotMatchBecause(
+                            "argument types do not match".into(),
+                        ));
+                    }
+                }
+                if ret != proto_ret {
+                    return Ok(BoundCheckResult::DoesNotMatchBecause(
+                        "return type does not match".into(),
+                    ));
+                }
+                return Ok(BoundCheckResult::Matches);
+            }
             Some(LangItemKind::ProtoArrayOf) => match ty {
                 ir::Ty::Array(k, _) if *k == proto_generic_args[0] => {
                     return Ok(BoundCheckResult::Matches)
@@ -730,7 +780,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let (protocol, generic_args) = match mixin.protocol {
             ast::Ty::Protocol(item) => (item, vec![]),
-            ast::Ty::GenericType(item, args) => (item, args.iter().copied().collect()),
+            ast::Ty::Generic(item, args) => (item, args.iter().copied().collect()),
             _ => {
                 return Err(CodeErrorKind::NotAProtocol(format!("{:?}", mixin.protocol)))
                     .with_span(mixin.span)
@@ -1051,7 +1101,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let inner = self.lower_type(inner)?;
                 self.slice_of(inner, is_const)?
             }
-            ast::Ty::Fn(args, ret) => {
+            ast::Ty::FunctionPointer(args, ret) => {
                 let args = args
                     .iter()
                     .map(|arg| self.lower_type(arg))
@@ -1085,7 +1135,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     self.types.named(item)
                 }
             },
-            ast::Ty::GenericType(item, args) => {
+            ast::Ty::NamedFunction(item) => {
+                let key = MonomorphizeKey(item, &[]);
+                let item = self.monomorphize_item(key)?;
+                self.types.named_function(item)
+            }
+            ast::Ty::Generic(item, args) => {
                 let args = args
                     .iter()
                     .map(|arg| self.lower_type(arg))
@@ -1094,10 +1149,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
                 let key = MonomorphizeKey(item, args);
                 let ir_item = self.monomorphize_item(key)?;
-                if let ast::Item::Protocol(_) = item.get() {
-                    self.types.protocol(ir_item)
-                } else {
-                    self.types.named(ir_item)
+                match item.get() {
+                    ast::Item::Protocol(_) => self.types.protocol(ir_item),
+                    ast::Item::Function(_) => self.types.named_function(ir_item),
+                    _ => self.types.named(ir_item),
                 }
             }
             ast::Ty::Protocol(item) => {
@@ -1121,14 +1176,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let inner = self.raise_type(inner)?;
                 ast::Ty::Pointer(inner, *is_const)
             }
-            ir::Ty::Fn(args, ret) => {
+            ir::Ty::FunctionPointer(args, ret) => {
                 let args = args
                     .iter()
                     .map(|arg| self.raise_type(arg))
                     .collect::<Result<Vec<_>, _>>()?;
                 let ret = self.raise_type(ret)?;
 
-                ast::Ty::Fn(args.alloc_on(self.mono_ctx.ast), ret)
+                ast::Ty::FunctionPointer(args.alloc_on(self.mono_ctx.ast), ret)
             }
             ir::Ty::Tuple(items) => {
                 let items = items
@@ -1138,17 +1193,21 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
                 ast::Ty::Tuple(items.alloc_on(self.mono_ctx.ast))
             }
-            ir::Ty::NamedType(item) => {
+            ir::Ty::NamedType(item) | ir::Ty::NamedFunction(item) => {
                 let item = self.mono_ctx.reverse_lookup(item);
                 if item.1.is_empty() {
-                    ast::Ty::NamedType(item.0)
+                    match typ {
+                        ir::Ty::NamedType(_) => ast::Ty::NamedType(item.0),
+                        ir::Ty::NamedFunction(_) => ast::Ty::NamedFunction(item.0),
+                        _ => unreachable!(),
+                    }
                 } else {
                     let args = item
                         .1
                         .iter()
                         .map(|arg| self.raise_type(arg))
                         .collect::<Result<Vec<_>, _>>()?;
-                    ast::Ty::GenericType(item.0, args.alloc_on(self.mono_ctx.ast))
+                    ast::Ty::Generic(item.0, args.alloc_on(self.mono_ctx.ast))
                 }
             }
             ir::Ty::Protocol(item) => {
@@ -1161,7 +1220,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                         .iter()
                         .map(|arg| self.raise_type(arg))
                         .collect::<Result<Vec<_>, _>>()?;
-                    ast::Ty::GenericType(item.0, args.alloc_on(self.mono_ctx.ast))
+                    ast::Ty::Generic(item.0, args.alloc_on(self.mono_ctx.ast))
                 }
             }
             ir::Ty::Unqualified(_) => {
@@ -1219,7 +1278,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 .with_no_span()?,
 
             ast::Ty::NamedType(item) => item,
-            ast::Ty::GenericType(item, _) => item,
+            ast::Ty::Generic(item, _) => item,
             _ => return Ok(associated_fns),
         };
 
@@ -1270,8 +1329,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
     }
 
-    // TODO: get rid of unqualified types when feasible
-    fn try_qualify_type(&mut self, typ: ir::TyP<'ir>) -> Result<ir::TyP<'ir>, AluminaError> {
+    pub fn try_qualify_type(&mut self, typ: ir::TyP<'ir>) -> Result<ir::TyP<'ir>, AluminaError> {
         if let ir::Ty::Unqualified(UnqualifiedKind::String(_)) = typ {
             return self.slice_of(self.types.builtin(BuiltinType::U8), true);
         }
@@ -1287,6 +1345,37 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         if lhs_typ.assignable_from(rhs.ty) {
             return Ok(rhs);
         }
+
+        match (lhs_typ, rhs.ty) {
+            (ir::Ty::FunctionPointer(args, ret), ir::Ty::NamedFunction(a)) => {
+                let fun = a.get_function();
+                if fun.args.len() != args.len() {
+                    return Err(mismatch!(lhs_typ, rhs.ty)).with_no_span();
+                }
+                // There is no co- and contra-variance, argument and return types must match
+                // exactly.
+                if fun.return_type != *ret {
+                    return Err(mismatch!(lhs_typ, rhs.ty)).with_no_span();
+                }
+                for (a, b) in fun.args.iter().zip(args.iter()) {
+                    if a.ty != *b {
+                        return Err(mismatch!(lhs_typ, rhs.ty)).with_no_span();
+                    }
+                }
+
+                // Named functions directly coerce into function pointers, we just need
+                // to change the type of the expression to avoid ZST issues in later stages
+                let result = ir::Expr {
+                    ty: lhs_typ,
+                    kind: rhs.kind.clone(),
+                    value_type: rhs.value_type,
+                    is_const: rhs.is_const,
+                };
+
+                return Ok(result.alloc_on(self.mono_ctx.ir));
+            }
+            _ => {}
+        };
 
         let lhs_lang = self.mono_ctx.get_lang_type_kind(lhs_typ);
         let rhs_lang = self.mono_ctx.get_lang_type_kind(rhs.ty);
@@ -1480,7 +1569,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     ) -> Result<ir::IRItemP<'ir>, AluminaError> {
         let (item, generic_args) = match typ {
             ast::Ty::NamedType(item) => (*item, None),
-            ast::Ty::GenericType(item, generic_args) => (*item, Some(*generic_args)),
+            ast::Ty::Generic(item, generic_args) => (*item, Some(*generic_args)),
             _ => {
                 let lowered = self.lower_type(typ)?;
                 match lowered {
@@ -2434,8 +2523,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let callee = self.exprs.function(method);
 
+        let fn_arg_types: Vec<_>;
         let (arg_types, return_type) = match callee.ty {
-            ir::Ty::Fn(arg_types, return_type) => (arg_types, return_type),
+            ir::Ty::FunctionPointer(arg_types, return_type) => (*arg_types, *return_type),
+            ir::Ty::NamedFunction(item) => {
+                let fun = item.get_function();
+                fn_arg_types = fun.args.iter().map(|p| p.ty).collect();
+                (&fn_arg_types[..], fun.return_type)
+            }
             _ => unreachable!(),
         };
 
@@ -2565,9 +2660,15 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             _ => self.lower_expr(callee, None)?,
         };
 
+        let fn_arg_types: Vec<_>;
         let (arg_types, return_type) = match callee.ty {
-            ir::Ty::Fn(arg_types, return_type) => (arg_types, return_type),
-            _ => return Err(CodeErrorKind::FunctionExpectedHere).with_no_span(),
+            ir::Ty::FunctionPointer(arg_types, return_type) => (*arg_types, *return_type),
+            ir::Ty::NamedFunction(item) => {
+                let fun = item.get_function();
+                fn_arg_types = fun.args.iter().map(|p| p.ty).collect();
+                (&fn_arg_types[..], fun.return_type)
+            }
+            _ => unreachable!("{:?}", callee.ty),
         };
 
         if arg_types.len() != args.len() {
@@ -2603,8 +2704,16 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         // TODO: Forward the type hint inside the function body.
 
+        let fn_arg_types: Vec<_>;
         let (args_hint, return_type_hint) = match type_hint {
-            Some(ir::Ty::Fn(args, ret)) => (Some(*args), Some(*ret)),
+            Some(ir::Ty::FunctionPointer(arg_types, return_type)) => {
+                (Some(*arg_types), Some(*return_type))
+            }
+            Some(ir::Ty::NamedFunction(item)) => {
+                let fun = item.get_function();
+                fn_arg_types = fun.args.iter().map(|p| p.ty).collect();
+                (Some(&fn_arg_types[..]), Some(fun.return_type))
+            }
             _ => (None, None),
         };
 

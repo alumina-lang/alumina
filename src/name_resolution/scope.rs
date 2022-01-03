@@ -211,7 +211,10 @@ impl<'ast, 'src> Scope<'ast, 'src> {
 
     pub fn set_code(&self, code: &'src ParseCtx<'src>) {
         if self.0.borrow().code.set(code).is_err() {
-            panic!("{}", self.0.borrow().path);
+            panic!(
+                "source code context is already set for {}",
+                self.0.borrow().path
+            );
         }
     }
 

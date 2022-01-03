@@ -34,7 +34,7 @@ impl<'ast> Rebinder<'ast> {
                     .collect::<Result<Vec<_>, _>>()?
                     .alloc_on(self.ast),
             ),
-            Fn(elems, ret) => Fn(
+            FunctionPointer(elems, ret) => FunctionPointer(
                 elems
                     .iter()
                     .map(|e| self.visit_typ(e))
@@ -43,7 +43,7 @@ impl<'ast> Rebinder<'ast> {
                 self.visit_typ(ret)?,
             ),
 
-            GenericType(item, args) => GenericType(
+            Generic(item, args) => Generic(
                 item,
                 args.iter()
                     .map(|e| self.visit_typ(e))
@@ -51,7 +51,7 @@ impl<'ast> Rebinder<'ast> {
                     .alloc_on(self.ast),
             ),
 
-            NamedType(_) | Builtin(_) | Protocol(_) => return Ok(typ),
+            NamedFunction(_) | NamedType(_) | Builtin(_) | Protocol(_) => return Ok(typ),
         };
 
         Ok(self.ast.intern_type(kind))
