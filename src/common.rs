@@ -74,6 +74,8 @@ pub enum CodeErrorKind {
     MismatchedBranchTypes(String, String),
     #[error("invalid escape sequence")]
     InvalidEscapeSequence,
+    #[error("invalid #[cfg(...)] attribute")]
+    InvalidCfgAttribute,
     #[error("cannot take address of a rvalue (yet)")]
     CannotAddressRValue,
     #[error("cannot perform {:?} between {} and {}", .0, .1, .2)]

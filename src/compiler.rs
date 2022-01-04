@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use crate::codegen;
 use crate::common::AluminaError;
 
-use crate::diagnostics::DiagnosticContext;
 use crate::global_ctx::GlobalCtx;
 use crate::ir::mono::MonoCtx;
 use crate::ir::mono::Monomorphizer;
@@ -57,7 +56,7 @@ impl Compiler {
 
             ctx.check_syntax_errors(ctx.root_node())?;
 
-            let mut visitor = FirstPassVisitor::new(&ast, scope.clone());
+            let mut visitor = FirstPassVisitor::new(self.global_ctx.clone(), &ast, scope.clone());
             visitor.visit(ctx.root_node())?;
         }
 

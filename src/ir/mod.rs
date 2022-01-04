@@ -7,9 +7,7 @@ pub mod mono;
 
 use crate::{
     ast::{Attribute, BinOp, BuiltinType, UnOp},
-    common::{
-        impl_allocatable, Allocatable, ArenaAllocatable, CodeError, CodeErrorKind, Incrementable,
-    },
+    common::{impl_allocatable, Allocatable, ArenaAllocatable, CodeErrorKind, Incrementable},
     intrinsics::CodegenIntrinsicKind,
 };
 use std::{

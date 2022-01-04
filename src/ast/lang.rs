@@ -1,8 +1,4 @@
-use once_cell::sync::OnceCell;
-use regex::Regex;
-use std::collections::HashMap;
-
-use super::{BinOp, BuiltinType, ItemP};
+use super::{BinOp, BuiltinType};
 use crate::common::CodeErrorKind;
 use crate::utils::regex;
 

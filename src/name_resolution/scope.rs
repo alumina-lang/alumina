@@ -62,18 +62,18 @@ impl Display for NamedItemKind<'_, '_> {
 #[derive(Debug, Clone)]
 pub struct NamedItem<'ast, 'src> {
     pub kind: NamedItemKind<'ast, 'src>,
-    pub attributes: Vec<Attribute>,
+    pub attributes: &'ast [Attribute],
 }
 
 impl<'ast, 'src> NamedItem<'ast, 'src> {
-    pub fn new(kind: NamedItemKind<'ast, 'src>, attributes: Vec<Attribute>) -> Self {
+    pub fn new(kind: NamedItemKind<'ast, 'src>, attributes: &'ast [Attribute]) -> Self {
         Self { kind, attributes }
     }
 
     pub fn new_default(kind: NamedItemKind<'ast, 'src>) -> Self {
         Self {
             kind,
-            attributes: vec![],
+            attributes: &[],
         }
     }
 }

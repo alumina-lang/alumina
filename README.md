@@ -2,13 +2,13 @@
 
 Alumina is a C-like programming language with a Rust-like syntax.
 
-It has the following conveniences over C:
+Non-exhaustive list of distinguishing features:
 
-- Module system, namespaces and 2-pass compilation (no header files and forward declarations needed)
-- Generics, protocols and mixins (duck-typed, similar to C++ template)
-  - Template specialization is possible with static if syntax
+- Module system and 2-pass compilation (no header files and forward declarations needed)
+- Generics, protocols and mixins (duck-typed, similar to C++ template but without overloading/SFINAE)
+  - Specialization is possible with [`when` expressions](./examples/when_expression.alu)
 - [Unified call syntax](https://en.wikipedia.org/wiki/Uniform_Function_Call_Syntax) for functions in scope
-- Limited operator overloading (via Equatable and Comparable protocols)
+- Limited operator overloading (via `Equatable` and `Comparable` protocols)
 - Block expressions
 - Lambdas (static only, closures are not supported)
 - Richer type system:
@@ -24,7 +24,6 @@ It has the following conveniences over C:
 ## Motivating example
 
 <!-- totally not rust lmao -->
-
 ```rust
 struct Stack<T> {
     data: &mut [T],
@@ -102,7 +101,7 @@ fn main() {
 
 ## Status
 
-Bootstrap Alumina compiler is written in Rust and is currently actively developed. It compiles to ugly C code with GCC extensions.
+Bootstrap Alumina compiler (`alumina-boot`) is written in Rust and is currently actively developed. It compiles to ugly C11 code with GCC extensions. It is currently at a point where it can be considered a functional compiler, but it is not by any means stable or complete.
 
 Finished:
 
@@ -115,11 +114,31 @@ Finished:
 
 TBD:
 
-- Stdlib is very barebones
+- Standard library contains only the bare essentials
 - Probably a lot of bugs and miscompilations
-- Compiler interface
-- Code cleanup, it's a big mess so far
+- Linux only
 
 Full list of missing features, open questions, bugs and ideas for the future in [MISSING.md](./MISSING.md)
 
 After the compiler is reliable enough, Alumina will be written as a self-hosted compiler with a LLVM backend (as this has always been my dream).
+
+
+## Try it out
+
+To compile `alumina-boot` compiler from source, these prerequisites are needed:
+  
+  - Nightly Rust toolchain (`rustup install nightly`)
+  - Tree-sitter CLI (`npm install -g tree-sitter-cli`)
+
+Then, run `cargo +nightly install --path .` to build and install the compiler. 
+
+To compile and run a simple program, try:
+
+```
+alumina-boot --sysroot ./stdlib hello_world=./examples/hello_world.alu -o hello_world.c
+cc hello_world.c -o hello_world
+./hello_world
+```
+
+See [examples](./examples) and [standard library](./stdlib) for a tour of the language, 
+documentation is TBD.

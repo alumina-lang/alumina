@@ -4,7 +4,7 @@ use crate::ast::{AstCtx, FieldInitializer};
 use crate::ast::{BinOp, Expr, ExprP, LetDeclaration, Lit, Statement, UnOp};
 use crate::common::ArenaAllocatable;
 use crate::common::CodeErrorKind;
-use crate::diagnostics::DiagnosticContext;
+
 use crate::global_ctx::GlobalCtx;
 use crate::name_resolution::pass1::FirstPassVisitor;
 use crate::name_resolution::path::PathSegment;
@@ -216,11 +216,16 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
         node: tree_sitter::Node<'src>,
     ) -> Result<Option<Statement<'ast>>, AluminaError> {
         let inner = node.child_by_field_name("inner").unwrap();
-        let attributes =
-            match AttributeVisitor::parse_attributes(self.ast, self.scope.clone(), inner, None)? {
-                Some(attributes) => attributes,
-                None => return Ok(None),
-            };
+        let attributes = match AttributeVisitor::parse_attributes(
+            self.global_ctx.clone(),
+            self.ast,
+            self.scope.clone(),
+            inner,
+            None,
+        )? {
+            Some(attributes) => attributes,
+            None => return Ok(None),
+        };
 
         let result = match inner.kind() {
             "empty_statement" => None,
@@ -265,7 +270,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                     .alloc_with_span(self.ast, &self.scope, node),
             ),
             "macro_definition" => {
-                FirstPassVisitor::new(self.ast, self.scope.clone())
+                FirstPassVisitor::new(self.global_ctx.clone(), self.ast, self.scope.clone())
                     .visit_macro_definition(inner)?;
                 None
             }
@@ -1111,7 +1116,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 }
 
-fn parse_string_literal(lit: &str) -> Result<String, CodeErrorKind> {
+pub fn parse_string_literal(lit: &str) -> Result<String, CodeErrorKind> {
     let mut result = String::with_capacity(lit.len());
 
     enum State {

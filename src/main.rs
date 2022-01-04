@@ -20,11 +20,11 @@ use clap::Parser;
 use common::AluminaError;
 use compiler::Compiler;
 use compiler::SourceFile;
-use diagnostics::DiagnosticContext;
+
 use global_ctx::GlobalCtx;
-use std::collections::HashMap;
+
 use std::error::Error;
-use std::fs::FileType;
+
 use std::path::PathBuf;
 use walkdir::WalkDir;
 
@@ -42,6 +42,22 @@ where
     Ok((s[..pos].parse()?, s[pos + 1..].parse()?))
 }
 
+fn parse_key_maybe_val<T, U>(
+    s: &str,
+) -> Result<(T, Option<U>), Box<dyn Error + Send + Sync + 'static>>
+where
+    T: std::str::FromStr,
+    T::Err: Error + Send + Sync + 'static,
+    U: std::str::FromStr,
+    U::Err: Error + Send + Sync + 'static,
+{
+    if let Some(pos) = s.find('=') {
+        Ok((s[..pos].parse()?, Some(s[pos + 1..].parse()?)))
+    } else {
+        Ok((s.parse()?, None))
+    }
+}
+
 #[derive(Parser, Debug)]
 #[clap(about, version, author)]
 struct Args {
@@ -56,6 +72,14 @@ struct Args {
     /// Modules to compile (use 'module::name=filename.alu' syntax)
     #[clap(parse(try_from_str = parse_key_val))]
     modules: Vec<(String, PathBuf)>,
+
+    /// Compile in debug mode
+    #[clap(long, short)]
+    debug: bool,
+
+    /// Conditional compilation options
+    #[clap(long, parse(try_from_str = parse_key_maybe_val), multiple_occurrences(true))]
+    cfg: Vec<(String, Option<String>)>,
 }
 
 fn get_sysroot(args: &Args) -> Result<Vec<SourceFile>, AluminaError> {
@@ -110,7 +134,7 @@ fn get_sysroot(args: &Args) -> Result<Vec<SourceFile>, AluminaError> {
 fn main() {
     let args = Args::parse();
 
-    let global_ctx = GlobalCtx::new();
+    let mut global_ctx = GlobalCtx::new();
     let mut compiler = Compiler::new(global_ctx.clone());
 
     let mut files = get_sysroot(&args).unwrap();
@@ -119,6 +143,18 @@ fn main() {
             filename: filename.clone(),
             path: path.clone(),
         });
+    }
+
+    for (key, value) in args.cfg {
+        if let Some(value) = value {
+            global_ctx.add_cfg(key, value)
+        } else {
+            global_ctx.add_flag(key)
+        }
+    }
+
+    if args.debug {
+        global_ctx.add_flag("debug");
     }
 
     match compiler.compile(files) {

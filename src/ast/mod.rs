@@ -570,15 +570,6 @@ impl BinOp {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Cfg {
-    All(Vec<Cfg>),
-    Any(Vec<Cfg>),
-    Not(Box<Cfg>),
-    Simple(String),
-    KeyValue(String, String),
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Attribute {
     Export,

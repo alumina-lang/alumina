@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use once_cell::unsync::OnceCell;
 
@@ -8,7 +8,7 @@ use crate::{
     global_ctx::GlobalCtx,
     intrinsics::intrinsic_kind,
     name_resolution::scope::{NamedItem, NamedItemKind, Scope, ScopeType},
-    parser::{AluminaVisitor, ParseCtx},
+    parser::AluminaVisitor,
 };
 
 use super::{
@@ -142,7 +142,7 @@ impl<'ast> AstItemMaker<'ast> {
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         impl_scopes: &[Scope<'ast, 'src>],
-        attributes: &[Attribute],
+        attributes: &'ast [Attribute],
     ) -> Result<(), AluminaError> {
         let mut fields: Vec<Field<'ast>> = Vec::new();
 
@@ -190,7 +190,7 @@ impl<'ast> AstItemMaker<'ast> {
             name,
             placeholders,
             fields: fields.alloc_on(self.ast),
-            attributes: attributes.alloc_on(self.ast),
+            attributes,
             associated_fns,
             mixins,
             span: Some(span),
@@ -210,7 +210,7 @@ impl<'ast> AstItemMaker<'ast> {
         symbol: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
-        attributes: &[Attribute],
+        attributes: &'ast [Attribute],
     ) -> Result<(), AluminaError> {
         let code = scope.code().unwrap();
         let placeholders = self.get_placeholders(&scope)?;
@@ -227,7 +227,7 @@ impl<'ast> AstItemMaker<'ast> {
             name,
             placeholders,
             associated_fns,
-            attributes: attributes.alloc_on(self.ast),
+            attributes,
             span: Some(span),
         });
 
@@ -251,7 +251,7 @@ impl<'ast> AstItemMaker<'ast> {
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         impl_scopes: &[Scope<'ast, 'src>],
-        attributes: &[Attribute],
+        attributes: &'ast [Attribute],
     ) -> Result<(), AluminaError> {
         let mut members = Vec::new();
 
@@ -294,7 +294,7 @@ impl<'ast> AstItemMaker<'ast> {
         let result = Item::Enum(Enum {
             name,
             members: members.alloc_on(self.ast),
-            attributes: attributes.alloc_on(self.ast),
+            attributes,
             associated_fns,
             mixins,
             span: Some(span),
@@ -314,7 +314,7 @@ impl<'ast> AstItemMaker<'ast> {
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         body: Option<tree_sitter::Node<'src>>,
-        attributes: &[Attribute],
+        attributes: &'ast [Attribute],
     ) -> Result<(), AluminaError> {
         let mut parameters: Vec<Parameter<'ast>> = Vec::new();
         let code = scope.code().unwrap();
@@ -405,7 +405,7 @@ impl<'ast> AstItemMaker<'ast> {
 
         let result = Item::Function(Function {
             name,
-            attributes: attributes.alloc_on(self.ast),
+            attributes,
             placeholders,
             args: parameters.alloc_on(self.ast),
             return_type,
@@ -427,7 +427,7 @@ impl<'ast> AstItemMaker<'ast> {
         symbol: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
-        attributes: &[Attribute],
+        attributes: &'ast [Attribute],
     ) -> Result<(), AluminaError> {
         let typ = node
             .child_by_field_name("type")
@@ -454,7 +454,7 @@ impl<'ast> AstItemMaker<'ast> {
 
         let result = Item::StaticOrConst(StaticOrConst {
             name,
-            attributes: attributes.alloc_on(self.ast),
+            attributes,
             typ,
             init,
             span: Some(span),
@@ -475,7 +475,7 @@ impl<'ast> AstItemMaker<'ast> {
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         impl_scopes: &[Scope<'ast, 'src>],
-        attributes: &Vec<Attribute>,
+        attributes: &'ast [Attribute],
     ) -> Result<(), AluminaError> {
         match node.kind() {
             "struct_definition" => {

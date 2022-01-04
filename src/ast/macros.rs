@@ -7,7 +7,7 @@ use crate::{
         AstCtx, BuiltinMacro, BuiltinMacroKind, Expr, ExprKind, FieldInitializer, Item, ItemP, Lit,
     },
     common::{ice, AluminaError, ArenaAllocatable, CodeErrorKind},
-    diagnostics::{line_and_column, DiagnosticContext},
+    diagnostics::line_and_column,
     global_ctx::GlobalCtx,
     name_resolution::scope::{NamedItemKind, Scope},
 };
@@ -54,7 +54,7 @@ impl<'ast> MacroMaker<'ast> {
         symbol: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
-        attributes: &Vec<Attribute>,
+        attributes: &'ast [Attribute],
     ) -> Result<(), AluminaError> {
         use crate::common::WithSpanDuringParsing;
 

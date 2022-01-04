@@ -1,8 +1,9 @@
 use tree_sitter::Node;
 
-use crate::ast::lang::LangItemKind;
+use crate::ast::expressions::parse_string_literal;
 use crate::ast::{AstCtx, Attribute, ItemP};
 use crate::common::{AluminaError, ArenaAllocatable, CodeErrorKind, WithSpanDuringParsing};
+
 use crate::global_ctx::GlobalCtx;
 use crate::name_resolution::path::{Path, PathSegment};
 use crate::name_resolution::scope::{NamedItem, NamedItemKind, Scope};
@@ -126,14 +127,14 @@ pub struct UseClauseVisitor<'ast, 'src> {
     code: &'src ParseCtx<'src>,
     prefix: Path<'ast>,
     scope: Scope<'ast, 'src>,
-    attributes: Vec<Attribute>,
+    attributes: &'ast [Attribute],
 }
 
 impl<'ast, 'src> UseClauseVisitor<'ast, 'src> {
     pub fn new(
         ast: &'ast AstCtx<'ast>,
         scope: Scope<'ast, 'src>,
-        attributes: Vec<Attribute>,
+        attributes: &'ast [Attribute],
     ) -> Self {
         Self {
             ast,
@@ -167,7 +168,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
                 Some(alias),
                 NamedItem::new(
                     NamedItemKind::Alias(self.prefix.join_with(path)),
-                    self.attributes.clone(),
+                    self.attributes,
                 ),
             )
             .with_span(&self.scope, node)?;
@@ -197,7 +198,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
                 Some(alias),
                 NamedItem::new(
                     NamedItemKind::Alias(self.prefix.extend(PathSegment(alias))),
-                    self.attributes.clone(),
+                    self.attributes,
                 ),
             )
             .with_span(&self.scope, node)?;
@@ -220,7 +221,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
                 Some(name),
                 NamedItem::new(
                     NamedItemKind::Alias(self.prefix.join_with(path.extend(PathSegment(name)))),
-                    self.attributes.clone(),
+                    self.attributes,
                 ),
             )
             .with_span(&self.scope, node)?;
@@ -230,6 +231,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
 }
 
 pub struct AttributeVisitor<'ast, 'src> {
+    global_ctx: GlobalCtx,
     ast: &'ast AstCtx<'ast>,
     code: &'src ParseCtx<'src>,
     scope: Scope<'ast, 'src>,
@@ -240,12 +242,14 @@ pub struct AttributeVisitor<'ast, 'src> {
 
 impl<'ast, 'src> AttributeVisitor<'ast, 'src> {
     pub fn parse_attributes(
+        global_ctx: GlobalCtx,
         ast: &'ast AstCtx<'ast>,
         scope: Scope<'ast, 'src>,
         node: Node<'src>,
         item: Option<ItemP<'ast>>,
-    ) -> Result<Option<Vec<Attribute>>, AluminaError> {
+    ) -> Result<Option<&'ast [Attribute]>, AluminaError> {
         let mut visitor = AttributeVisitor {
+            global_ctx,
             ast,
             code: scope
                 .code()
@@ -263,7 +267,7 @@ impl<'ast, 'src> AttributeVisitor<'ast, 'src> {
         if visitor.should_skip {
             Ok(None)
         } else {
-            Ok(Some(visitor.attributes))
+            Ok(Some(visitor.attributes.alloc_on(ast)))
         }
     }
 }
@@ -287,6 +291,12 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
             "builtin" => self.attributes.push(Attribute::Builtin),
             "export" => self.attributes.push(Attribute::Export),
             "force_inline" => self.attributes.push(Attribute::ForceInline),
+            "cfg" => {
+                let mut cfg_visitor = CfgVisitor::new(self.global_ctx.clone(), self.scope.clone());
+                if !cfg_visitor.visit(inner)? {
+                    self.should_skip = true;
+                }
+            }
             "lang" => {
                 let lang_type = inner
                     .child_by_field_name("arguments")
@@ -311,40 +321,119 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
     }
 }
 
-/*
-fn should_include<'src>(
-    global_ctx: &GlobalCtx,
-    code: &'src ParseCtx<'src>,
-    node: tree_sitter::Node<'src>,
-) -> Result<bool, AluminaError> {
-    let attribute_node = match node.child_by_field_name("attributes") {
-        Some(node) => node,
-        None => return Ok(true),
-    };
-
-    let cfg_regex = Regex::new(r"^\s*cfg\s*\(.*\)").unwrap();
-
-    let mut cursor = attribute_node.walk();
-    let result = attribute_node
-        .children(&mut cursor)
-        .map(|n| code.node_text(n.child_by_field_name("name").unwrap()))
-        .filter(|s| match lang_item_kind(s) {
-            Some(kind) => {
-                // We allow lang items to be overriden.
-                self.lang_items.insert(kind, item);
-                false
-            }
-            None => true,
-        })
-        .filter_map(|name| match name {
-            "export" => Some(Attribute::Export),
-            "inline" => Some(Attribute::Inline),
-            "force_inline" => Some(Attribute::ForceInline),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .alloc_on(self.ast);
-
-    Ok(result)
+#[derive(Debug, Clone, Copy)]
+enum State {
+    Single,
+    All,
+    Any,
+    Not,
 }
-*/
+
+pub struct CfgVisitor<'ast, 'src> {
+    global_ctx: GlobalCtx,
+    code: &'src ParseCtx<'src>,
+    scope: Scope<'ast, 'src>,
+    state: Vec<State>,
+}
+
+impl<'ast, 'src> CfgVisitor<'ast, 'src> {
+    pub fn new(global_ctx: GlobalCtx, scope: Scope<'ast, 'src>) -> Self {
+        CfgVisitor {
+            global_ctx,
+            code: scope
+                .code()
+                .expect("cannot run on scope without parse context"),
+            scope,
+            state: vec![],
+        }
+    }
+}
+
+impl<'ast, 'src> AluminaVisitor<'src> for CfgVisitor<'ast, 'src> {
+    type ReturnType = Result<bool, AluminaError>;
+
+    fn visit_meta_item(&mut self, node: Node<'src>) -> Self::ReturnType {
+        let name = self
+            .code
+            .node_text(node.child_by_field_name("name").unwrap());
+
+        if let Some(arguments) = node.child_by_field_name("arguments") {
+            let ret = match name {
+                "cfg" => {
+                    self.state.push(State::Single);
+                    self.visit(arguments)?
+                }
+                "all" => {
+                    self.state.push(State::All);
+                    self.visit(arguments)?
+                }
+                "any" => {
+                    self.state.push(State::Any);
+                    self.visit(arguments)?
+                }
+                "not" => {
+                    self.state.push(State::Not);
+                    self.visit(arguments)?
+                }
+                _ => return Err(CodeErrorKind::InvalidCfgAttribute).with_span(&self.scope, node),
+            };
+            self.state.pop();
+            Ok(ret)
+        } else {
+            let expected = node
+                .child_by_field_name("value")
+                .map(|n| self.code.node_text(n))
+                .map(|s| parse_string_literal(s))
+                .transpose()
+                .with_span(&self.scope, node)?;
+
+            let actual = self.global_ctx.cfg(name);
+
+            let matches = match (expected, actual) {
+                (Some(value), Some(Some(cfg))) => cfg == value,
+                (Some(_), Some(None)) => false,
+                (None, Some(_)) => true,
+                (_, None) => false,
+            };
+
+            Ok(matches)
+        }
+    }
+
+    fn visit_meta_arguments(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let mut cursor = node.walk();
+        let state = *self.state.last().unwrap();
+        let mut iter = node.children_by_field_name("argument", &mut cursor);
+
+        while let Some(child) = iter.next() {
+            let matches = self.visit(child)?;
+            match state {
+                State::Single | State::Not => {
+                    if iter.next().is_some() {
+                        return Err(CodeErrorKind::InvalidCfgAttribute)
+                            .with_span(&self.scope, node);
+                    }
+                    return Ok(matches == matches!(state, State::Single));
+                }
+                State::All => {
+                    if !matches {
+                        return Ok(false);
+                    }
+                }
+                State::Any => {
+                    if matches {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+
+        match state {
+            State::Single | State::Not => {
+                Err(CodeErrorKind::InvalidCfgAttribute).with_span(&self.scope, node)
+            }
+            State::All => Ok(true),
+            State::Any => Ok(false),
+        }
+    }
+}

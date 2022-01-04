@@ -80,13 +80,13 @@ module.exports = grammar({
         field("name", $._path),
         optional(
           choice(
-            seq("=", field("value", $._literal)),
+            seq("=", field("value", $.string_literal)),
             field("arguments", $.meta_arguments)
           )
         )
       ),
     meta_arguments: ($) =>
-      seq("(", sepBy(",", field("argument", choice($.meta_item, $._literal))), optional(","), ")"),
+      seq("(", sepBy(",", field("argument", choice($.meta_item, $.string_literal))), optional(","), ")"),
 
 
     _top_level_item: ($) =>
