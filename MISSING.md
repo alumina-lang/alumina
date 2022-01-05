@@ -32,6 +32,7 @@
   - Alternatively, allow pre-monomorphized types to be used as protocol bounds
   - This could be solved by `infer`. It needs to do the same thing as `check_protocol_bounds` - go through all the AST methods of the protocol in the bound and IR method of the type in the slot and
   match the slots on all of them. It's quite a lot of work and also `infer` will probably need to start looping until no more changes are made (e.g. in nested protocol bounds), but it would be quite awesome. By doing that, protocols would actually start *helping* type inference instead of making it harder.
+- How does Equatable and Comparable work for pointers? Autoref makes this quite complicated... Maybe it's better to simply not have that.
 
 ## Grammar, parsing, AST
 
@@ -47,6 +48,8 @@
 - tests
 - how portable should it be? I'm not sure if I'll have the grit to support anything other than `x86_64-unknown-linux-gnu` and maybe `aarch64`.
 - these are definitely needed:
+  - file IO and streams
+    - done
   - string formatting
     - The pattern is well-established (Formattable protocol) and I'm very happy with it,
       but it's very very basic right now
@@ -99,7 +102,6 @@
 - specialization/SFINAE/overloading?
   - I am leaning pretty strongly towards not having either of these. With protocols the language 
     is expressive enough to do string formatting and collections, which are a good litmus test if generics are any good.
-- tuple unpacking 
 - full Hindley-Milner type inference. Global type inference will pretty much require a full rewrite of `mono`, so whis would be a massive project, but it would also be super awesome to have
 - true variadic functions (certainly they'd be generic and variadic only pre-monomorphization, varargs is an abomination). This is hard to do, both from the syntax and `mono` perspective but the payoff is that tuples can have nice protocol implementations.
 - generators? coroutines? lmao, not gonna happen

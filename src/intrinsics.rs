@@ -1,7 +1,9 @@
-use crate::common::{CodeErrorBuilder, CodeErrorKind};
+use crate::ast::Span;
+use crate::common::{CodeError, CodeErrorBuilder, CodeErrorKind};
+use crate::global_ctx::GlobalCtx;
 use crate::ir::builder::TypeBuilder;
 use crate::ir::const_eval::Value;
-use crate::ir::{const_eval, Lit};
+use crate::ir::{const_eval, ValueType};
 use crate::{ast::BuiltinType, common::AluminaError};
 
 use crate::ir::{builder::ExpressionBuilder, ExprP, IrCtx, Ty, TyP};
@@ -17,6 +19,8 @@ pub enum IntrinsicKind {
     TypeId,
     Trap,
     CompileFail,
+    CompileWarn,
+    CompileNote,
     Unreachable,
     AlignedAlloca,
 }
@@ -30,6 +34,8 @@ pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
         map.insert("type_id", IntrinsicKind::TypeId);
         map.insert("trap", IntrinsicKind::Trap);
         map.insert("compile_fail", IntrinsicKind::CompileFail);
+        map.insert("compile_warn", IntrinsicKind::CompileWarn);
+        map.insert("compile_note", IntrinsicKind::CompileNote);
         map.insert("unreachable", IntrinsicKind::Unreachable);
         map.insert("aligned_alloca", IntrinsicKind::AlignedAlloca);
         map
@@ -58,16 +64,18 @@ pub enum CodegenIntrinsicKind<'ir> {
 
 pub struct CompilerIntrinsics<'ir> {
     ir: &'ir IrCtx<'ir>,
+    global_ctx: GlobalCtx,
     expressions: ExpressionBuilder<'ir>,
     types: TypeBuilder<'ir>,
 }
 
 impl<'ir> CompilerIntrinsics<'ir> {
-    pub fn new(ir: &'ir IrCtx<'ir>) -> Self {
+    pub fn new(global_ctx: GlobalCtx, ir: &'ir IrCtx<'ir>) -> Self {
         Self {
             ir,
             expressions: ExpressionBuilder::new(ir),
             types: TypeBuilder::new(ir),
+            global_ctx,
         }
     }
 
@@ -110,7 +118,45 @@ impl<'ir> CompilerIntrinsics<'ir> {
             .map_err(|_| CodeErrorKind::CannotConstEvaluate)
             .with_no_span()?;
 
-        Err(CodeErrorKind::ExplicitCompileFail(value.to_string())).with_no_span()
+        Err(CodeErrorKind::UserDefined(value.to_string())).with_no_span()
+    }
+
+    fn compile_warn(
+        &self,
+        reason: ExprP<'ir>,
+        span: Option<Span>,
+    ) -> Result<ExprP<'ir>, AluminaError> {
+        let value = const_eval::const_eval(reason)
+            .map_err(|_| CodeErrorKind::CannotConstEvaluate)
+            .with_no_span()?;
+
+        self.global_ctx.diag().add_warning(CodeError::from_kind(
+            CodeErrorKind::UserDefined(value.to_string()),
+            span,
+        ));
+
+        Ok(self
+            .expressions
+            .void(self.types.builtin(BuiltinType::Void), ValueType::RValue))
+    }
+
+    fn compile_note(
+        &self,
+        reason: ExprP<'ir>,
+        span: Option<Span>,
+    ) -> Result<ExprP<'ir>, AluminaError> {
+        let value = const_eval::const_eval(reason)
+            .map_err(|_| CodeErrorKind::CannotConstEvaluate)
+            .with_no_span()?;
+
+        self.global_ctx.diag().add_note(CodeError::from_kind(
+            CodeErrorKind::UserDefined(value.to_string()),
+            span,
+        ));
+
+        Ok(self
+            .expressions
+            .void(self.types.builtin(BuiltinType::Void), ValueType::RValue))
     }
 
     fn unreachable(&self) -> Result<ExprP<'ir>, AluminaError> {
@@ -163,6 +209,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
     pub fn invoke(
         &self,
         kind: IntrinsicKind,
+        span: Option<Span>,
         generic: &[TyP<'ir>],
         args: &[ExprP<'ir>],
     ) -> Result<ExprP<'ir>, AluminaError> {
@@ -174,6 +221,8 @@ impl<'ir> CompilerIntrinsics<'ir> {
             IntrinsicKind::TypeId => self.type_id(generic[0]),
             IntrinsicKind::Trap => self.trap(),
             IntrinsicKind::CompileFail => self.compile_fail(args[0]),
+            IntrinsicKind::CompileWarn => self.compile_warn(args[0], span),
+            IntrinsicKind::CompileNote => self.compile_note(args[0], span),
             IntrinsicKind::Unreachable => self.unreachable(),
             IntrinsicKind::AlignedAlloca => self.aligned_alloca(args[0], args[1]),
         }

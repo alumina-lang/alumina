@@ -22,6 +22,8 @@ pub enum LangItemKind {
     ProtoArray,
     ProtoTuple,
     ProtoCallable,
+    ProtoNamedFunction,
+    ProtoFunctionPointer,
     ProtoAny,
     ProtoArrayOf,
     ProtoPointerOf,
@@ -29,6 +31,8 @@ pub enum LangItemKind {
     ImplBuiltin(BuiltinType),
     ImplTuple(usize),
     ImplArray,
+
+    EntrypointGlue,
 
     Operator(BinOp),
 }
@@ -55,6 +59,8 @@ impl TryFrom<&str> for LangItemKind {
             "proto_any" => Ok(LangItemKind::ProtoAny),
             "proto_array" => Ok(LangItemKind::ProtoArray),
             "proto_tuple" => Ok(LangItemKind::ProtoTuple),
+            "proto_named_function" => Ok(LangItemKind::ProtoNamedFunction),
+            "proto_function_pointer" => Ok(LangItemKind::ProtoFunctionPointer),
             "proto_callable" => Ok(LangItemKind::ProtoCallable),
             "proto_array_of" => Ok(LangItemKind::ProtoArrayOf),
             "proto_pointer_of" => Ok(LangItemKind::ProtoPointerOf),
@@ -85,6 +91,8 @@ impl TryFrom<&str> for LangItemKind {
             "operator_lte" => Ok(LangItemKind::Operator(BinOp::LEq)),
             "operator_gt" => Ok(LangItemKind::Operator(BinOp::Gt)),
             "operator_gte" => Ok(LangItemKind::Operator(BinOp::GEq)),
+
+            "entrypoint_glue" => Ok(LangItemKind::EntrypointGlue),
 
             t => {
                 if let Some(matches) = regex!(r"^impl_tuple_(\d+)$").captures(t) {

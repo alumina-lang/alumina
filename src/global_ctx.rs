@@ -6,9 +6,16 @@ use std::{
 
 use crate::diagnostics::DiagnosticContext;
 
+#[derive(Copy, Clone)]
+pub enum OutputType {
+    Library,
+    Executable,
+}
+
 struct GlobalCtxInner {
     pub diag: DiagnosticContext,
     pub cfg: HashMap<String, Option<String>>,
+    pub output_type: OutputType,
 }
 
 #[derive(Clone)]
@@ -17,11 +24,12 @@ pub struct GlobalCtx {
 }
 
 impl GlobalCtx {
-    pub fn new() -> Self {
+    pub fn new(output_type: OutputType) -> Self {
         let mut result = Self {
             inner: Rc::new(RefCell::new(GlobalCtxInner {
                 diag: DiagnosticContext::new(),
                 cfg: HashMap::new(),
+                output_type,
             })),
         };
 
@@ -34,7 +42,20 @@ impl GlobalCtx {
             (std::mem::size_of::<usize>() * 8).to_string(),
         );
 
+        match output_type {
+            OutputType::Executable => {
+                result.add_cfg("output_type", "executable");
+            }
+            OutputType::Library => {
+                result.add_cfg("output_type", "library");
+            }
+        };
+
         result
+    }
+
+    pub fn should_generate_main_glue(&self) -> bool {
+        matches!(self.inner.borrow().output_type, OutputType::Executable)
     }
 
     pub fn diag(&self) -> Ref<'_, DiagnosticContext> {

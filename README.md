@@ -33,7 +33,7 @@ struct Stack<T> {
 }
 
 impl Stack {
-    use std::mem::{slice, alloc, copy_to};
+    use std::mem::{alloc, realloc, copy_to};
 
     fn new<T>() -> Stack<T> {
         with_capacity(0)
@@ -48,12 +48,7 @@ impl Stack {
 
     fn reserve<T>(self: &mut Stack<T>, new_capacity: usize) {
         if self.data.len < new_capacity {
-            self.data = {
-                let new_data = alloc::<T>(new_capacity);
-                self.data.copy_to(new_data.ptr);
-                self.free();
-                new_data
-            };
+            self.data = self.data.realloc(new_capacity);
         }
     }
 
@@ -83,9 +78,6 @@ impl Stack {
     }
 }
 
-use std::io::print;
-
-#[export]
 fn main() {
     let v: Stack<&[u8]> = Stack::new();
     defer v.free();

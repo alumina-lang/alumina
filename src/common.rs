@@ -1,5 +1,4 @@
 use std::backtrace::Backtrace;
-use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::fmt::Debug;
@@ -37,7 +36,6 @@ pub enum CodeErrorKind {
     // Errors
     #[error("syntax error: unexpected {:?}", .0)]
     ParseError(String),
-
     #[error("unexpected {:?} here", .0)]
     Unexpected(String),
     #[error("could not resolve the path {}", .0)]
@@ -141,11 +139,13 @@ pub enum CodeErrorKind {
     #[error("invalid value for enum variant")]
     InvalidValueForEnumVariant,
     #[error("{}", .0)]
-    ExplicitCompileFail(String),
+    UserDefined(String),
     #[error("cannot defer inside a defered expression")]
     DeferInDefer,
     #[error("`...` expressions can only be used in macros")]
     EtCeteraOutsideOfMacro,
+    #[error("`$` identifiers can only be used in macros")]
+    DollaredOutsideOfMacro,
     #[error("this macro does not have any `...` arguments")]
     NoEtCeteraArgs,
     #[error("macro can have at most one `...` parameter")]
@@ -188,6 +188,8 @@ pub enum CodeErrorKind {
     CyclicProtocolBound,
     #[error("unimplemented: {}", .0)]
     Unimplemented(String),
+    #[error("multiple `main` functions found")]
+    MultipleMainFunctions,
     #[error("type aliases cannot have their own impl block")]
     NoImplForTypedefs,
     #[error("unpopulated symbol")]
@@ -224,10 +226,10 @@ pub struct CodeError {
 }
 
 impl CodeError {
-    pub fn from_kind(kind: CodeErrorKind, span: Span) -> Self {
+    pub fn from_kind(kind: CodeErrorKind, span: Option<Span>) -> Self {
         Self {
             kind,
-            backtrace: vec![Marker::Span(span)],
+            backtrace: span.into_iter().map(|s| Marker::Span(s)).collect(),
         }
     }
 }

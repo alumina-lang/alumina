@@ -63,11 +63,11 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
         MonoCtx {
             ast,
             ir,
-            global_ctx,
+            global_ctx: global_ctx.clone(),
             id_map: HashMap::new(),
             finished: IndexMap::new(),
             reverse_map: HashMap::new(),
-            intrinsics: CompilerIntrinsics::new(ir),
+            intrinsics: CompilerIntrinsics::new(global_ctx, ir),
             extra_items: Vec::new(),
             static_local_defs: HashMap::new(),
             cycle_guardian: CycleGuardian::new(),
@@ -2503,6 +2503,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
     fn lower_intrinsic(
         &mut self,
+        span: Option<ast::Span>,
         callee: &ast::Intrinsic,
         generic_args: &[ast::TyP<'ast>],
         args: &[ast::ExprP<'ast>],
@@ -2535,7 +2536,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         self.mono_ctx
             .intrinsics
-            .invoke(callee.kind, &generic_args[..], &args[..])
+            .invoke(callee.kind, span, &generic_args[..], &args[..])
     }
 
     fn lower_method_call(
@@ -2668,7 +2669,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let callee = match &callee.kind {
             ast::ExprKind::Fn(ast::FnKind::Normal(item), generic_args) => {
                 if let ast::Item::Intrinsic(intrinsic) = item.get() {
-                    return self.lower_intrinsic(intrinsic, generic_args.unwrap_or(&[]), args);
+                    return self.lower_intrinsic(
+                        ast_callee.span,
+                        intrinsic,
+                        generic_args.unwrap_or(&[]),
+                        args,
+                    );
                 }
 
                 let item = self.try_resolve_function(

@@ -1,0 +1,36 @@
+use std::intrinsics::{aligned_alloca, size_of, align_of};
+use std::mem::slice;
+use std::proto::Callable;
+
+#[cfg(not(output_type = "library"))]
+{
+    macro argc_argv_to_slice($argc, $argv) {
+        let args = aligned_alloca(size_of::<&[u8]>() * ($argc as usize), align_of::<&[u8]>()) as &mut &[u8];
+        let args_ptr = args;
+        while *$argv != null {
+            *args_ptr = slice::from_raw(*$argv as &u8, libc::strlen(*$argv));
+            $argv += 1;
+            args_ptr += 1;
+        }
+        slice::from_raw(args as &&[u8], $argc as usize)
+    }
+
+    #[export]
+    #[lang(entrypoint_glue)]
+    fn main<UserMain>(argc: libc::c_int, argv: &&libc::c_char) -> libc::c_int {
+        let func: UserMain;
+        when UserMain: Callable<(&[&[u8]]), i32> {
+            func(argc_argv_to_slice!(argc, argv)) as libc::c_int
+        } else when UserMain: Callable<(&[&[u8]]), void> {
+            func(argc_argv_to_slice!(argc, argv));
+            0
+        } else when UserMain: Callable<(), i32> {
+            func() as libc::c_int
+        } else when UserMain: Callable<(), void> {
+            func();
+            0
+        } else {
+            compile_fail!("invalid signature for the main function")
+        }
+    }
+}

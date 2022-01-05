@@ -1,6 +1,11 @@
-on: [push]
+name: Build Alumina Boot
 
-name: build
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
 
 jobs:
   check:
@@ -18,9 +23,6 @@ jobs:
           override: true
           components: rustfmt, clippy
 
-      # `cargo check` command here will use installed `nightly`
-      # as it is set as an "override" for current directory
-
       - name: Run cargo fmt
         uses: actions-rs/cargo@v1
         with:
@@ -32,7 +34,34 @@ jobs:
         with:
           command: check
 
-      - name: Run cargo check
+      - name: Run cargo test
         uses: actions-rs/cargo@v1
         with:
           command: test
+  snapshot-tests:
+    name: Snapshot tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Tree-sitter
+        run: npm install -g tree-sitter-cli
+
+      - name: Install latest nightly
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          override: true
+
+      - name: Build Alumina
+        uses: actions-rs/cargo@v1
+        with:
+          command: build       
+
+      - name: Install Python dependencies
+        working-directory: tools/snapshot-tests
+        run: pip3 install -r requirements.txt
+
+      - name: Run PyTest
+        working-directory: tools/snapshot-tests
+        run: pytest snapshot.py
+

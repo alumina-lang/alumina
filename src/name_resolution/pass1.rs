@@ -10,6 +10,7 @@ use tree_sitter::Node;
 
 use crate::visitors::{AttributeVisitor, UseClauseVisitor, VisitorExt};
 
+use super::path::Path;
 use super::scope::NamedItem;
 
 pub struct FirstPassVisitor<'ast, 'src> {
@@ -18,6 +19,9 @@ pub struct FirstPassVisitor<'ast, 'src> {
     scope: Scope<'ast, 'src>,
     code: &'src ParseCtx<'src>,
     enum_item: Option<ItemP<'ast>>,
+
+    main_module_path: Option<Path<'ast>>,
+    main_candidate: Option<ItemP<'ast>>,
 }
 
 impl<'ast, 'src> FirstPassVisitor<'ast, 'src> {
@@ -30,7 +34,31 @@ impl<'ast, 'src> FirstPassVisitor<'ast, 'src> {
                 .expect("cannot run on scope without parse context"),
             scope,
             enum_item: None,
+            main_module_path: None,
+            main_candidate: None,
         }
+    }
+
+    pub fn with_main(
+        global_ctx: GlobalCtx,
+        ast: &'ast AstCtx<'ast>,
+        scope: Scope<'ast, 'src>,
+    ) -> Self {
+        Self {
+            global_ctx,
+            ast,
+            code: scope
+                .code()
+                .expect("cannot run on scope without parse context"),
+            main_module_path: Some(scope.path()),
+            scope,
+            enum_item: None,
+            main_candidate: None,
+        }
+    }
+
+    pub fn main_candidate(&self) -> Option<ItemP<'ast>> {
+        self.main_candidate
     }
 }
 
@@ -236,6 +264,15 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         let attributes = parse_attributes!(self, node, item);
 
         let name = self.parse_name(node);
+
+        if let Some(path) = self.main_module_path.as_ref() {
+            if &self.scope.path() == path && name == "main" {
+                if self.main_candidate.replace(item).is_some() {
+                    return Err(CodeErrorKind::MultipleMainFunctions).with_span(&self.scope, node);
+                }
+            }
+        }
+
         let child_scope = self.scope.named_child(ScopeType::Function, name);
 
         self.scope
@@ -359,7 +396,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     fn visit_use_declaration(&mut self, node: Node<'src>) -> Self::ReturnType {
         let attributes = parse_attributes!(self, node);
 
-        let mut visitor = UseClauseVisitor::new(self.ast, self.scope.clone(), attributes);
+        let mut visitor = UseClauseVisitor::new(self.ast, self.scope.clone(), attributes, false);
         visitor.visit(node.child_by_field_name("argument").unwrap())?;
 
         Ok(())

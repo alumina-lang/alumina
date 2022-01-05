@@ -160,7 +160,7 @@ module.exports = grammar({
       ),
 
     macro_parameter: ($) =>
-      seq(field("name", $.identifier), optional(field("et_cetera", "..."))),
+      seq(field("name", $.macro_identifier), optional(field("et_cetera", "..."))),
 
     struct_definition: ($) =>
       seq(
@@ -475,6 +475,7 @@ module.exports = grammar({
         $._expression_ending_with_block,
         $._literal,
         prec.left($.identifier),
+        prec.left($.macro_identifier),
         alias(choice(...primitive_types), $.identifier),
         $.scoped_identifier,
         $.generic_function,
@@ -675,6 +676,7 @@ module.exports = grammar({
       ),
 
     _type_identifier: ($) => alias($.identifier, $.type_identifier),
+    _type_identifier: ($) => alias($.identifier, $.type_identifier),
     _field_identifier: ($) => alias($.identifier, $.field_identifier),
 
     _path: ($) =>
@@ -682,6 +684,7 @@ module.exports = grammar({
         alias(choice(...primitive_types), $.identifier),
         $.super,
         $.identifier,
+        $.macro_identifier,
         $.scoped_identifier
       ),
 
@@ -905,6 +908,7 @@ module.exports = grammar({
     boolean_literal: ($) => choice("true", "false"),
     ptr_literal: ($) => choice("null"),
     void_literal: ($) => choice("()"),
-    identifier: ($) => /(r#)?[_\p{XID_Start}][_\p{XID_Continue}]*/,
+    identifier: ($) => /[_\p{XID_Start}][_\p{XID_Continue}]*/,
+    macro_identifier: ($) => /\$[_\p{XID_Start}][_\p{XID_Continue}]*/,
   },
 });

@@ -137,7 +137,12 @@ macro_rules! suffixed_literals {
 }
 
 impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
-    pub fn new(ast: &'ast AstCtx<'ast>, global_ctx: GlobalCtx, scope: Scope<'ast, 'src>) -> Self {
+    pub fn new(
+        ast: &'ast AstCtx<'ast>,
+        global_ctx: GlobalCtx,
+        scope: Scope<'ast, 'src>,
+        in_a_macro: bool,
+    ) -> Self {
         ExpressionVisitor {
             ast,
             code: scope
@@ -145,8 +150,8 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                 .expect("cannot run on scope without parse context"),
             scope,
             global_ctx,
+            in_a_macro,
             in_a_loop: false,
-            in_a_macro: false,
             has_et_cetera: false,
         }
     }
@@ -176,7 +181,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_ref(&mut self, node: tree_sitter::Node<'src>) -> Result<ExprP<'ast>, AluminaError> {
-        let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone());
+        let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone(), self.in_a_macro);
         let path = visitor.visit(node)?;
         let mut resolver = NameResolver::new();
 
@@ -232,7 +237,9 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             "let_declaration" => {
                 let typ = inner
                     .child_by_field_name("type")
-                    .map(|n| TypeVisitor::new(self.ast, self.scope.clone()).visit(n))
+                    .map(|n| {
+                        TypeVisitor::new(self.ast, self.scope.clone(), self.in_a_macro).visit(n)
+                    })
                     .transpose()?;
 
                 let value_id = self.ast.make_id();
@@ -311,7 +318,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                 statements
             }
             "use_declaration" => {
-                UseClauseVisitor::new(self.ast, self.scope.clone(), attributes)
+                UseClauseVisitor::new(self.ast, self.scope.clone(), attributes, self.in_a_macro)
                     .visit(inner.child_by_field_name("argument").unwrap())?;
                 vec![]
             }
@@ -336,7 +343,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                 self.scope
                     .add_item(Some(name), item.clone())
                     .with_span(&self.scope, inner)?;
-                AstItemMaker::new(self.ast, self.global_ctx.clone()).make_item(
+                AstItemMaker::new(self.ast, self.global_ctx.clone(), self.in_a_macro).make_item(
                     self.scope.clone(),
                     Some(name),
                     item,
@@ -422,6 +429,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             self.ast,
             self.global_ctx.clone(),
             self.scope.anonymous_child(ScopeType::Closure),
+            self.in_a_macro,
         )
         .generate(node)?;
 
@@ -654,6 +662,14 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         self.visit_ref(node)
     }
 
+    fn visit_macro_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        if !self.in_a_macro {
+            return Err(CodeErrorKind::DollaredOutsideOfMacro).with_span(&self.scope, node);
+        }
+
+        self.visit_ref(node)
+    }
+
     fn visit_scoped_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         self.visit_ref(node)
     }
@@ -751,9 +767,9 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             ExprKind::If(condition, consequence, alternative)
         } else {
             let typecheck_node = node.child_by_field_name("type_check").unwrap();
-            let typ = TypeVisitor::new(self.ast, self.scope.clone())
+            let typ = TypeVisitor::new(self.ast, self.scope.clone(), self.in_a_macro)
                 .visit(typecheck_node.child_by_field_name("lhs").unwrap())?;
-            let bounds = TypeVisitor::new(self.ast, self.scope.clone())
+            let bounds = TypeVisitor::new(self.ast, self.scope.clone(), self.in_a_macro)
                 .parse_protocol_bounds(typecheck_node)?;
 
             let cond = StaticIfCondition { typ, bounds };
@@ -776,7 +792,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             }
         };
 
-        let mut type_visitor = TypeVisitor::new(self.ast, self.scope.clone());
+        let mut type_visitor = TypeVisitor::new(self.ast, self.scope.clone(), self.in_a_macro);
 
         let arguments_node = node.child_by_field_name("type_arguments").unwrap();
         let mut cursor = arguments_node.walk();
@@ -792,7 +808,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
     fn visit_type_cast_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let value = self.visit(node.child_by_field_name("value").unwrap())?;
-        let typ = TypeVisitor::new(self.ast, self.scope.clone())
+        let typ = TypeVisitor::new(self.ast, self.scope.clone(), self.in_a_macro)
             .visit(node.child_by_field_name("type").unwrap())?;
 
         Ok(ExprKind::Cast(value, typ).alloc_with_span(self.ast, &self.scope, node))
@@ -1032,7 +1048,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_struct_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let typ = TypeVisitor::new(self.ast, self.scope.clone())
+        let typ = TypeVisitor::new(self.ast, self.scope.clone(), self.in_a_macro)
             .visit(node.child_by_field_name("name").unwrap())?;
 
         let initializer_node = node.child_by_field_name("arguments").unwrap();
@@ -1107,7 +1123,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_macro_invocation(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone());
+        let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone(), self.in_a_macro);
         let path = visitor.visit(node.child_by_field_name("macro").unwrap())?;
         let mut resolver = NameResolver::new();
 
@@ -1289,10 +1305,16 @@ pub struct ClosureVisitor<'ast, 'src> {
     placeholders: Vec<Placeholder<'ast>>,
     return_type: Option<TyP<'ast>>,
     body: Option<ExprP<'ast>>,
+    in_a_macro: bool,
 }
 
 impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
-    pub fn new(ast: &'ast AstCtx<'ast>, global_ctx: GlobalCtx, scope: Scope<'ast, 'src>) -> Self {
+    pub fn new(
+        ast: &'ast AstCtx<'ast>,
+        global_ctx: GlobalCtx,
+        scope: Scope<'ast, 'src>,
+        in_a_macro: bool,
+    ) -> Self {
         Self {
             ast,
             code: scope
@@ -1304,6 +1326,7 @@ impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
             placeholders: Vec::new(),
             return_type: None,
             body: None,
+            in_a_macro,
         }
     }
 
@@ -1346,7 +1369,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
             )
             .with_span(&self.scope, node)?;
 
-        let field_type = TypeVisitor::new(self.ast, self.scope.clone())
+        let field_type = TypeVisitor::new(self.ast, self.scope.clone(), self.in_a_macro)
             .visit(node.child_by_field_name("type").unwrap())?;
 
         let span = Span {
@@ -1411,13 +1434,20 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
         self.visit(node.child_by_field_name("parameters").unwrap())?;
 
         self.body = Some(
-            ExpressionVisitor::new(self.ast, self.global_ctx.clone(), self.scope.clone())
-                .generate(node.child_by_field_name("body").unwrap())?,
+            ExpressionVisitor::new(
+                self.ast,
+                self.global_ctx.clone(),
+                self.scope.clone(),
+                self.in_a_macro,
+            )
+            .generate(node.child_by_field_name("body").unwrap())?,
         );
 
         self.return_type = Some(
             node.child_by_field_name("return_type")
-                .map(|node| TypeVisitor::new(self.ast, self.scope.clone()).visit(node))
+                .map(|node| {
+                    TypeVisitor::new(self.ast, self.scope.clone(), self.in_a_macro).visit(node)
+                })
                 .transpose()?
                 .unwrap_or_else(|| {
                     let placeholder = self.ast.make_id();
