@@ -7,28 +7,28 @@ use fmt::{BufferedFormatter, write, writeln};
 // be fine.
 static FMT_BUF: [u8; 128];
 
-macro print(fmt_str, arg...) { 
+macro print($fmt_str, $arg...) { 
     let fmt = FileFormatter::new(&stdout);
     let fmt = BufferedFormatter::new(&FMT_BUF, &fmt);
-    write!(&fmt, fmt_str, arg...);
+    write!(&fmt, $fmt_str, $arg...);
     fmt.flush();
 }
-macro println(fmt_str, arg...) { 
+macro println($fmt_str, $arg...) { 
     let fmt = FileFormatter::new(&stdout);
     let fmt = BufferedFormatter::new(&FMT_BUF, &fmt);
-    writeln!(&fmt, fmt_str, arg...);
+    writeln!(&fmt, $fmt_str, $arg...);
     fmt.flush();
 }
-macro eprint(fmt_str, arg...) { 
+macro eprint($fmt_str, $arg...) { 
     let fmt = FileFormatter::new(&stderr);
     let fmt = BufferedFormatter::new(&FMT_BUF, &fmt);
-    write!(&fmt, fmt_str, arg...);
+    write!(&fmt, $fmt_str, $arg...);
     fmt.flush();
 }
-macro eprintln(fmt_str, arg...) { 
+macro eprintln($fmt_str, $arg...) { 
     let fmt = FileFormatter::new(&stderr);
     let fmt = BufferedFormatter::new(&FMT_BUF, &fmt);
-    writeln!(&fmt, fmt_str, arg...);
+    writeln!(&fmt, $fmt_str, $arg...);
     fmt.flush();
 }
 
@@ -196,8 +196,8 @@ impl OpenOptions {
     }
 }
 
-macro error_check(ret) {
-    let ret = ret;
+macro error_check($ret) {
+    let ret = $ret;
     if ret == -1 {
         return result::Result::err(Error::from_errno());
     }

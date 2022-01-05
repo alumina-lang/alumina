@@ -10,25 +10,25 @@ protocol Formattable<Self, F: Formatter<F> = internal::_NullFormatter> {
     fn fmt(self: &Self, f: &mut F);
 }
 
-macro write(fmt, fmt_str, arg...) {
+macro write($fmt, $fmt_str, $arg...) {
     internal::printf(
-        concat!(fmt_str), 
-        &[internal::_FormatArg::new(&arg)...], 
-        fmt
+        concat!($fmt_str), 
+        &[internal::_FormatArg::new(&$arg)...], 
+        $fmt
     )
 }
 
-macro writeln(fmt, fmt_str, arg...) {
+macro writeln($fmt, $fmt_str, $arg...) {
     internal::printf(
-        concat!(fmt_str, "\n"), 
-        &[internal::_FormatArg::new(&arg)...], 
-        fmt
+        concat!($fmt_str, "\n"), 
+        &[internal::_FormatArg::new(&$arg)...], 
+        $fmt
     )
 }
 
-macro format(fmt_str, arg...) { 
-    let fmt = collections::Vector::with_capacity::<u8>(fmt_str.len);
-    fmt::write!(&fmt, fmt_str, arg...);
+macro format($fmt_str, $arg...) { 
+    let fmt = collections::Vector::with_capacity::<u8>($fmt_str.len);
+    fmt::write!(&fmt, $fmt_str, $arg...);
     fmt
 }
 

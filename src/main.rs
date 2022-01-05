@@ -22,11 +22,10 @@ use compiler::Compiler;
 use compiler::SourceFile;
 
 use global_ctx::GlobalCtx;
+use global_ctx::OutputType;
 
 use std::error::Error;
 
-use std::io::BufReader;
-use std::io::BufWriter;
 use std::path::PathBuf;
 use walkdir::WalkDir;
 
@@ -71,13 +70,18 @@ struct Args {
     #[clap(long)]
     sysroot: PathBuf,
 
-    /// Modules to compile (use 'module::name=filename.alu' syntax)
+    /// Modules to compile (use 'module::name=filename.alu' syntax). If output type is executable,
+    /// main function is exepcted in the last module.
     #[clap(parse(try_from_str = parse_key_val))]
     modules: Vec<(String, PathBuf)>,
 
     /// Compile in debug mode
     #[clap(long, short)]
     debug: bool,
+
+    /// Whether a library should be output
+    #[clap(long)]
+    library: bool,
 
     /// Conditional compilation options
     #[clap(long, parse(try_from_str = parse_key_maybe_val), multiple_occurrences(true))]
@@ -136,7 +140,11 @@ fn get_sysroot(args: &Args) -> Result<Vec<SourceFile>, AluminaError> {
 fn main() {
     let args = Args::parse();
 
-    let mut global_ctx = GlobalCtx::new();
+    let mut global_ctx = GlobalCtx::new(if args.library {
+        OutputType::Library
+    } else {
+        OutputType::Executable
+    });
     let mut compiler = Compiler::new(global_ctx.clone());
 
     let mut files = get_sysroot(&args).unwrap();

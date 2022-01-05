@@ -22,15 +22,17 @@ pub struct AstItemMaker<'ast> {
     global_ctx: GlobalCtx,
     symbols: Vec<ItemP<'ast>>,
     ambient_placeholders: Vec<Placeholder<'ast>>,
+    in_a_macro: bool,
 }
 
 impl<'ast> AstItemMaker<'ast> {
-    pub fn new(ast: &'ast AstCtx<'ast>, global_ctx: GlobalCtx) -> Self {
+    pub fn new(ast: &'ast AstCtx<'ast>, global_ctx: GlobalCtx, in_a_macro: bool) -> Self {
         Self {
             ast,
             global_ctx,
             symbols: Vec::new(),
             ambient_placeholders: Vec::new(),
+            in_a_macro,
         }
     }
 
@@ -58,12 +60,13 @@ impl<'ast> AstItemMaker<'ast> {
                                 // now. The complication is that default args need to be resolved quite
                                 // early in the monomorphization process to ensure that fully-specified
                                 // items and ones instantiated with default values result in the same item.
-                                TypeVisitor::new(self.ast, scope.parent().unwrap()).visit(node)
+                                TypeVisitor::new(self.ast, scope.parent().unwrap(), self.in_a_macro)
+                                    .visit(node)
                             })
                             .transpose()?,
                         // Unlike defaults, bounds can refer to self and this is in fact quite central
                         // to how Alumina protocols work.
-                        bounds: TypeVisitor::new(self.ast, scope.clone())
+                        bounds: TypeVisitor::new(self.ast, scope.clone(), self.in_a_macro)
                             .parse_protocol_bounds(node)?,
                     });
                 }
@@ -90,11 +93,11 @@ impl<'ast> AstItemMaker<'ast> {
                             if !names.insert(name) {
                                 self.global_ctx.diag().add_warning(CodeError::from_kind(
                                     CodeErrorKind::DuplicateNameShadow(name.to_string()),
-                                    Span {
+                                    Some(Span {
                                         start: node.start_byte(),
                                         end: node.end_byte(),
                                         file: scope.code().unwrap().file_id(),
-                                    },
+                                    }),
                                 ));
                             }
                         }
@@ -105,7 +108,9 @@ impl<'ast> AstItemMaker<'ast> {
                     }
                     NamedItemKind::Mixin(node, scope) => {
                         let placeholders = self.get_placeholders(&scope)?;
-                        let mut visitor = TypeVisitor::new(self.ast, scope.clone()).with_protocol();
+                        let mut visitor =
+                            TypeVisitor::new(self.ast, scope.clone(), self.in_a_macro)
+                                .with_protocol();
                         let protocol_type =
                             visitor.visit(node.child_by_field_name("protocol").unwrap())?;
 
@@ -151,7 +156,7 @@ impl<'ast> AstItemMaker<'ast> {
         for (name, item) in scope.inner().all_items() {
             match item.kind {
                 NamedItemKind::Field(node) => {
-                    let mut visitor = TypeVisitor::new(self.ast, scope.clone());
+                    let mut visitor = TypeVisitor::new(self.ast, scope.clone(), self.in_a_macro);
                     let field_type = visitor.visit(node.child_by_field_name("type").unwrap())?;
 
                     let span = Span {
@@ -261,8 +266,13 @@ impl<'ast> AstItemMaker<'ast> {
                     let value = node
                         .child_by_field_name("value")
                         .map(|node| {
-                            ExpressionVisitor::new(self.ast, self.global_ctx.clone(), scope.clone())
-                                .generate(node)
+                            ExpressionVisitor::new(
+                                self.ast,
+                                self.global_ctx.clone(),
+                                scope.clone(),
+                                self.in_a_macro,
+                            )
+                            .generate(node)
                         })
                         .transpose()?;
 
@@ -334,7 +344,7 @@ impl<'ast> AstItemMaker<'ast> {
         for (_name, item) in scope.inner().all_items() {
             match item.kind {
                 NamedItemKind::Parameter(id, node) => {
-                    let typ = TypeVisitor::new(self.ast, scope.clone())
+                    let typ = TypeVisitor::new(self.ast, scope.clone(), self.in_a_macro)
                         .visit(node.child_by_field_name("type").unwrap())?;
 
                     let span = Span {
@@ -388,14 +398,19 @@ impl<'ast> AstItemMaker<'ast> {
 
         let return_type = node
             .child_by_field_name("return_type")
-            .map(|n| TypeVisitor::new(self.ast, scope.clone()).visit(n))
+            .map(|n| TypeVisitor::new(self.ast, scope.clone(), self.in_a_macro).visit(n))
             .transpose()?
             .unwrap_or_else(|| self.ast.intern_type(Ty::Builtin(BuiltinType::Void)));
 
         let function_body = body
             .map(|body| {
-                ExpressionVisitor::new(self.ast, self.global_ctx.clone(), scope.clone())
-                    .generate(body)
+                ExpressionVisitor::new(
+                    self.ast,
+                    self.global_ctx.clone(),
+                    scope.clone(),
+                    self.in_a_macro,
+                )
+                .generate(body)
             })
             .transpose()?;
 
@@ -431,14 +446,19 @@ impl<'ast> AstItemMaker<'ast> {
     ) -> Result<(), AluminaError> {
         let typ = node
             .child_by_field_name("type")
-            .map(|n| TypeVisitor::new(self.ast, scope.clone()).visit(n))
+            .map(|n| TypeVisitor::new(self.ast, scope.clone(), self.in_a_macro).visit(n))
             .transpose()?;
 
         let init = node
             .child_by_field_name("init")
             .map(|body| {
-                ExpressionVisitor::new(self.ast, self.global_ctx.clone(), scope.clone())
-                    .generate(body)
+                ExpressionVisitor::new(
+                    self.ast,
+                    self.global_ctx.clone(),
+                    scope.clone(),
+                    self.in_a_macro,
+                )
+                .generate(body)
             })
             .transpose()?;
 

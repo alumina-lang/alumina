@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use crate::codegen;
 use crate::common::AluminaError;
 
+use crate::common::ArenaAllocatable;
 use crate::global_ctx::GlobalCtx;
 use crate::ir::mono::MonoCtx;
 use crate::ir::mono::Monomorphizer;
@@ -36,6 +37,7 @@ impl Compiler {
         let ast = AstCtx::new();
         let root_scope = Scope::new_root();
 
+        let mut main_candidate = None;
         let source_files: Vec<_> = source_files
             .iter()
             .map(|source_file| {
@@ -50,17 +52,25 @@ impl Compiler {
             })
             .collect::<Result<_, AluminaError>>()?;
 
-        for (ctx, path) in &source_files {
+        for (idx, (ctx, path)) in source_files.iter().enumerate() {
             let scope = root_scope.ensure_module(path.clone()).with_no_span()?;
             scope.set_code(ctx);
 
             ctx.check_syntax_errors(ctx.root_node())?;
 
-            let mut visitor = FirstPassVisitor::new(self.global_ctx.clone(), &ast, scope.clone());
-            visitor.visit(ctx.root_node())?;
+            if idx == source_files.len() - 1 && self.global_ctx.should_generate_main_glue() {
+                let mut visitor =
+                    FirstPassVisitor::with_main(self.global_ctx.clone(), &ast, scope.clone());
+                visitor.visit(ctx.root_node())?;
+                main_candidate = visitor.main_candidate();
+            } else {
+                let mut visitor =
+                    FirstPassVisitor::new(self.global_ctx.clone(), &ast, scope.clone());
+                visitor.visit(ctx.root_node())?;
+            }
         }
 
-        let mut item_maker = AstItemMaker::new(&ast, self.global_ctx.clone());
+        let mut item_maker = AstItemMaker::new(&ast, self.global_ctx.clone(), false);
         item_maker.make(root_scope)?;
 
         drop(source_files);
@@ -79,6 +89,23 @@ impl Compiler {
             if inner.should_compile() {
                 let mut monomorphizer = Monomorphizer::new(&mut mono_ctx, false);
                 monomorphizer.monomorphize_item(item, &[])?;
+            }
+        }
+
+        // Main glue code
+        if self.global_ctx.should_generate_main_glue() {
+            if let Some(main_candidate) = main_candidate {
+                let mut monomorphizer = Monomorphizer::new(&mut mono_ctx, false);
+                let user_main = monomorphizer.monomorphize_item(main_candidate, &[])?;
+
+                let glue = ast
+                    .lang_item(crate::ast::lang::LangItemKind::EntrypointGlue)
+                    .with_no_span()?;
+                let mut monomorphizer = Monomorphizer::new(&mut mono_ctx, false);
+
+                let main_ty = ir_ctx.intern_type(crate::ir::Ty::NamedFunction(user_main));
+
+                monomorphizer.monomorphize_item(glue, [main_ty].alloc_on(&ir_ctx))?;
             }
         }
 

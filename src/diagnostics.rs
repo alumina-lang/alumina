@@ -6,10 +6,10 @@ use crate::common::{AluminaError, CodeError, FileId, Marker};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum Level {
-    Error = 0,
+    Error = 2,
     Warning = 1,
     #[allow(dead_code)]
-    Note = 2,
+    Note = 0,
 }
 
 struct DiagnosticContextInner {
@@ -66,7 +66,6 @@ impl DiagnosticContext {
         self.inner.borrow_mut().messages.push((Level::Warning, err));
     }
 
-    #[allow(dead_code)]
     pub fn add_note(&self, err: CodeError) {
         self.inner.borrow_mut().messages.push((Level::Note, err));
     }
@@ -74,14 +73,15 @@ impl DiagnosticContext {
     pub fn print_error_report(&self) -> Result<(), AluminaError> {
         let inner = self.inner.borrow();
         let mut all_errors: Vec<_> = inner.messages.clone();
-        all_errors.sort_by_key(|(_level, err)| {
+        all_errors.sort_by_key(|(level, err)| {
             err.backtrace
                 .iter()
                 .filter_map(|m| match m {
-                    Marker::Span(span) => Some((span.file, span.start)),
+                    Marker::Span(span) => Some((*level, Some((span.file, span.start)))),
                     _ => None,
                 })
                 .last()
+                .unwrap_or((*level, None))
         });
 
         let mut file_cache = HashMap::new();

@@ -20,10 +20,11 @@ pub struct TypeVisitor<'ast, 'src> {
     code: &'src ParseCtx<'src>,
     scope: Scope<'ast, 'src>,
     accept_protocol: bool,
+    in_a_macro: bool,
 }
 
 impl<'ast, 'src> TypeVisitor<'ast, 'src> {
-    pub fn new(ast: &'ast AstCtx<'ast>, scope: Scope<'ast, 'src>) -> Self {
+    pub fn new(ast: &'ast AstCtx<'ast>, scope: Scope<'ast, 'src>, in_a_macro: bool) -> Self {
         TypeVisitor {
             ast,
             code: scope
@@ -31,6 +32,7 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
                 .expect("cannot run on scope without parse context"),
             scope,
             accept_protocol: false,
+            in_a_macro,
         }
     }
 
@@ -63,7 +65,7 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
     }
 
     fn visit_typeref(&mut self, node: tree_sitter::Node<'src>) -> Result<TyP<'ast>, AluminaError> {
-        let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone());
+        let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone(), self.in_a_macro);
         let path = visitor.visit(node)?;
         let mut resolver = NameResolver::new();
 

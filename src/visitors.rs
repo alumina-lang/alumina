@@ -14,16 +14,18 @@ pub struct ScopedPathVisitor<'ast, 'src> {
     ast: &'ast AstCtx<'ast>,
     code: &'src ParseCtx<'src>,
     scope: Scope<'ast, 'src>, // ast: &'ast AstCtx<'ast>
+    in_a_macro: bool,
 }
 
 impl<'ast, 'src> ScopedPathVisitor<'ast, 'src> {
-    pub fn new(ast: &'ast AstCtx<'ast>, scope: Scope<'ast, 'src>) -> Self {
+    pub fn new(ast: &'ast AstCtx<'ast>, scope: Scope<'ast, 'src>, in_a_macro: bool) -> Self {
         Self {
             ast,
             code: scope
                 .code()
                 .expect("cannot run on scope without parse context"),
             scope,
+            in_a_macro,
         }
     }
 }
@@ -87,6 +89,16 @@ impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
         Ok(PathSegment(name).into())
     }
 
+    fn visit_macro_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        if !self.in_a_macro {
+            return Err(CodeErrorKind::DollaredOutsideOfMacro).with_span(&self.scope, node);
+        }
+
+        let name = self.code.node_text(node).alloc_on(self.ast);
+
+        Ok(PathSegment(name).into())
+    }
+
     fn visit_type_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let name = self.code.node_text(node).alloc_on(self.ast);
 
@@ -132,6 +144,7 @@ pub struct UseClauseVisitor<'ast, 'src> {
     prefix: Path<'ast>,
     scope: Scope<'ast, 'src>,
     attributes: &'ast [Attribute],
+    in_a_macro: bool,
 }
 
 impl<'ast, 'src> UseClauseVisitor<'ast, 'src> {
@@ -139,6 +152,7 @@ impl<'ast, 'src> UseClauseVisitor<'ast, 'src> {
         ast: &'ast AstCtx<'ast>,
         scope: Scope<'ast, 'src>,
         attributes: &'ast [Attribute],
+        in_a_macro: bool,
     ) -> Self {
         Self {
             ast,
@@ -148,11 +162,12 @@ impl<'ast, 'src> UseClauseVisitor<'ast, 'src> {
                 .expect("cannot run on scope without parse context"),
             scope,
             attributes,
+            in_a_macro,
         }
     }
 
     fn parse_use_path(&mut self, node: Node<'src>) -> Result<Path<'ast>, AluminaError> {
-        let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone());
+        let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone(), self.in_a_macro);
         visitor.visit(node)
     }
 }
