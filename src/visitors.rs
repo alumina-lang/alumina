@@ -112,7 +112,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
     }
 
     fn visit_scoped_type_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let subpath = self.visit(node.child_by_field_name("path").unwrap())?;
+        let subpath = match node.child_by_field_name("path") {
+            Some(subnode) => self.visit(subnode)?,
+            None => Path::root(),
+        };
+
         let name = self
             .code
             .node_text(node.child_by_field_name("name").unwrap())

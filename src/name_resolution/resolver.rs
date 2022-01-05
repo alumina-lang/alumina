@@ -73,6 +73,9 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
                 NamedItemKind::Type(item, _, _) if path.segments.len() == 1 => {
                     return Ok(ScopeResolution::Defered(Ty::NamedType(item)))
                 }
+                NamedItemKind::Protocol(_, _, child_scope) => {
+                    return self.resolve_scope(child_scope.clone(), remainder);
+                }
                 NamedItemKind::Module(child_scope) => {
                     return self.resolve_scope(child_scope.clone(), remainder);
                 }

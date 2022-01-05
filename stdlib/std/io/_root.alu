@@ -1,0 +1,251 @@
+#[cfg(target_os="linux")]
+{
+    use linux::{
+        print, println, eprint, eprintln,
+        Error, OpenOptions, File, 
+        stdin, stdout, stderr
+    }
+}
+ 
+protocol Readable<Self> {
+    use result::Result;
+    use option::Option;
+    use internal::default_read_exact;
+
+    fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize, Error>;
+    fn read_exact(self: &mut Self, buf: &mut [u8]) -> Result<(), Error> {
+        
+        self.default_read_exact(buf)
+    }
+}
+
+protocol Writable<Self> {
+    use result::Result;
+
+    fn write(self: &mut Self, buf: &[u8]) -> Result<usize, Error>;
+    fn flush(self: &mut Self) -> Result<(), Error>;
+    fn write_all(self: &mut Self, buf: &[u8]) -> Result<(), Error> {
+        use result::try;
+
+        while buf.len > 0 {
+            let written_bytes = try!(self.write(buf));
+            if written_bytes == 0 {
+                return Result::err(Error::eof());
+            }
+            buf = buf[written_bytes..];
+        }
+
+        Result::ok(())
+    }
+}
+
+protocol BufferedReadable<Self: Readable<Self>> {
+    use result::Result;
+
+    fn fill_buffer(self: &mut Self) -> Result<&[u8], Error>;
+    fn consume(self: &mut Self, amount: usize)
+}
+
+struct BufferedReader<R: Readable<R>> {
+    inner: &mut R,
+    buf: &mut [u8],
+    pos: usize,
+    cap: usize,
+}
+
+impl BufferedReader<R: Readable<R>> {
+    use std::mem::copy_to_nonoverlapping;
+    use internal::default_read_exact;
+    use std::result::{Result, try};
+
+    /// Create a BufferedReader with a heap-allocated buffer of the given size.
+    fn new(inner: &mut R, buf_size: usize) -> BufferedReader<R> {
+        from_slice(inner, mem::alloc::<u8>(buf_size))
+    }
+
+    /// Creates a BufferedReader from an existing-buffer, potentially 
+    /// avoiding a heap allocation.
+    fn from_slice(inner: &mut R, buf: &mut [u8]) -> BufferedReader<R> {
+        BufferedReader {
+            inner: inner,
+            buf: buf,
+            pos: 0,
+            cap: 0,
+        }
+    }
+
+    fn fill_buffer(self: &mut BufferedReader<R>) -> Result<&[u8], Error> {
+        if self.pos == self.cap {
+            self.cap = try!(self.inner.read(self.buf));
+            self.pos = 0;
+        }
+
+        Result::ok(self.buf[self.pos..self.cap] as &[u8])
+    }
+
+    fn consume(self: &mut BufferedReader<R>, amount: usize) {
+        self.pos = math::min(self.pos + amount, self.cap);
+    }
+
+    fn read(self: &mut BufferedReader<R>, buf: &mut [u8]) -> Result<usize, Error> {
+        let slice = try!(self.fill_buffer());
+        
+        let nread = math::min(buf.len, slice.len);
+        slice[..nread].copy_to_nonoverlapping(&buf[0]);
+        self.consume(nread);
+
+        Result::ok(nread)
+    }
+
+    fn read_exact(self: &mut BufferedReader<R>, buf: &mut [u8]) -> Result<(), Error> {
+        if self.cap - self.pos >= buf.len {
+            self.buf[self.pos..self.pos + buf.len].copy_to_nonoverlapping(&buf[0]);
+            self.consume(buf.len);
+            return Result::ok(());
+        }
+
+        self.default_read_exact(buf)
+    }
+
+    fn free(self: &mut BufferedReader<R>) {
+        use std::mem::free;
+        self.buf.free();
+    }
+
+    mixin<R: Readable<R>> Readable<BufferedReader<R>>;
+}
+
+
+// Extension methods
+
+fn read_byte<R: Readable<R>>(reader: &mut R) -> result::Result<u8, Error> {
+    use std::result::{try, Result};
+
+    let buf: [u8; 1];
+    try!(reader.read_exact(&buf));
+
+    Result::ok(buf[0])
+}
+
+fn read_until<R: BufferedReadable<R>>(r: &mut R, delim: u8, buf: &mut collections::Vector<u8>) -> result::Result<usize, Error> {
+    use result::{Result, try};
+
+    let read = 0usize;
+    loop {
+        let available = try!(r.fill_buffer());
+        let ret = internal::memchr(delim, available);
+        
+        let (done, used) = if ret.is_some {
+            buf.extend_from_slice(available[..ret.inner + 1]);
+            (true, ret.inner + 1)
+        } else {
+            buf.extend_from_slice(available);
+            (false, available.len)
+        };
+
+        r.consume(used);
+        read += used;
+        if done || used == 0 {
+            return Result::ok(read);
+        }
+    }
+}
+
+
+
+struct LineIterator<R: BufferedReadable<R>> {
+    line_buf: collections::Vector<u8>,
+    reader: &mut R,
+}
+
+/// An iterator over the lines of a buffered reader. The iterator maintains an internal
+/// heap-allocated buffer of the line's contents, which is reused between lines.
+impl LineIterator<R: BufferedReadable<R>> {
+    use std::result::Result;
+    use std::option::Option;
+    use std::iter::Iterator;
+
+    fn with_line_buffer(reader: &mut R, line_buf: collections::Vector<u8>) -> LineIterator<R> {
+        LineIterator {
+            reader: reader,
+            line_buf: line_buf
+        }
+    }
+
+    fn with_capacity(reader: &mut R, capacity: usize) -> LineIterator<R> {
+        with_line_buffer(reader, collections::Vector::with_capacity(capacity))
+    }
+
+    fn new(reader: &mut R) -> LineIterator<R> {
+        with_capacity(reader, 0)
+    }
+
+    fn next(self: &mut LineIterator<R>) -> Option<Result<&[u8], Error>> {
+        self.line_buf.clear();
+
+        let res = self.reader.read_until('\n', &self.line_buf);
+        if !res.is_ok {
+            return Option::some(Result::err(res.unwrap_err()));
+        }
+
+        if res.unwrap() == 0 {
+            return Option::none();
+        }
+
+        if self.line_buf.last() == Option::some('\n') {
+            self.line_buf.pop();
+            if self.line_buf.last() == Option::some('\r') {
+                self.line_buf.pop();
+            }
+        }
+        
+        Option::some(Result::ok(self.line_buf.as_slice()))
+    }
+
+    fn iter(self: &mut LineIterator<R>) -> &mut LineIterator<R> {
+        self
+    }
+
+    fn free(self: &mut LineIterator<R>) {
+        self.line_buf.free();
+    }
+
+    //mixin<R: BufferedReadable<R>> Iterator<LineIterator<R>, Result<&[u8], Error>>;
+}
+
+fn lines<R: BufferedReadable<R>>(reader: &mut R) -> LineIterator<R> {
+    LineIterator::new(reader)
+}
+
+
+mod internal {
+    use result::{Result, try};
+    use option::Option;
+
+    fn default_read_exact<T: Readable<T>>(self: &mut T, buf: &mut [u8]) -> Result<(), Error> {
+        while buf.len > 0 {
+            let read_bytes = try!(self.read(buf));
+            if read_bytes == 0 {
+                return Result::err(Error::eof());
+            }
+            buf = buf[read_bytes..];
+        }
+
+        Result::ok(())
+    }
+
+    
+    fn memchr(needle: u8, haystack: &[u8]) -> Option<usize> {
+        let p = libc::memchr(
+            haystack.ptr as &void,
+            needle as libc::c_int,
+            haystack.len,
+        );
+
+        if p == null { 
+            Option::none()
+        } else { 
+            Option::some(p as usize - (haystack.ptr as usize)) 
+        }
+    }
+}

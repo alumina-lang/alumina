@@ -45,7 +45,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                     // Unqualified types cannot be named explicitely, so it is almost certainly not
                     // the right choice for inference. Use the type it coerces into instead.
                     // TODO: This is ugly and bad, get rid of unqualified types altogether.
-                    let mut monomorphizer = Monomorphizer::new(self.mono_ctx);
+                    let mut monomorphizer = Monomorphizer::new(self.mono_ctx, true);
                     monomorphizer.try_qualify_type(tgt).unwrap()
                 } else {
                     tgt

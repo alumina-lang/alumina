@@ -1,0 +1,37 @@
+use std::cmp::Comparable;
+use std::proto::Callable;
+
+fn sort_by<T, F: Callable<(T), K>, K: Comparable<K>>(arr: &mut [T], key: F) {
+    if arr.len <= 1 {
+        return;
+    }
+    
+    let p = partition_by(arr, key);
+    sort_by(arr[..p], key);
+    sort_by(arr[p+1..], key);
+}
+
+fn sort<T: Comparable<T>>(arr: &mut [T]) {
+    sort_by(arr, std::util::identity::<T>);
+}
+
+fn partition_by<T, F: Callable<(T), K>, K: Comparable<K>>(arr: &mut [T], key: F) -> usize {
+    use std::mem::swap;
+
+    let pivot = arr[arr.len - 1];
+    let i = 0usize;
+    let j = 0usize;
+    while j < arr.len - 1 {
+        if key(arr[j]) <= key(pivot) {
+            swap(&arr[i], &arr[j]);
+            i += 1;
+        }
+        j += 1;
+    }
+    swap(&arr[i], &arr[arr.len - 1]);
+    i
+}
+
+use vector::Vector;
+use hashmap::HashMap;
+use hashset::HashSet;

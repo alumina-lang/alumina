@@ -101,7 +101,16 @@ module.exports = grammar({
         $.impl_block,
         $.mod_definition,
         $.macro_definition,
-        $.const_declaration
+        $.const_declaration,
+        $.top_level_block
+      ),
+
+    top_level_block: ($) =>
+      seq(
+        optional(field("attributes", $.attributes)),
+        "{",
+        repeat(field("items", $._top_level_item)),
+        "}"
       ),
 
     _impl_item: ($) =>
@@ -350,7 +359,14 @@ module.exports = grammar({
       seq(
         optional(field("attributes", $.attributes)),
         "let",
-        field("name", $.identifier),
+        choice(
+          field("name", $.identifier),
+          seq("(",
+            seq(field("element", $.identifier), ","),
+            repeat(seq(field("element", $.identifier), ",")),
+            optional(field("element", $.identifier)),
+          ")")
+        ),
         optional(seq(":", field("type", $._type))),
         optional(seq("=", field("value", $._expression))),
         ";"

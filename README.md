@@ -1,6 +1,6 @@
-# Alumina
+# The Alumina Programming Language
 
-Alumina is a C-like programming language with a Rust-like syntax.
+Alumina is a programming language. 
 
 Non-exhaustive list of distinguishing features:
 
@@ -20,6 +20,8 @@ Non-exhaustive list of distinguishing features:
 - Hygenic expression macros
 - Const evaluation (very limited at the moment)
 - Go-style defer expressions
+
+Alumina is heavily inspired by Rust, especially in terms of syntax and standard library API. Unlike Rust, however, Alumina is not memory-safe and it requires manual memory management.
 
 ## Motivating example
 
@@ -114,9 +116,8 @@ Finished:
 
 TBD:
 
-- Standard library contains only the bare essentials
+- Standard library is only usable on Linux-like targets
 - Probably a lot of bugs and miscompilations
-- Linux only
 
 Full list of missing features, open questions, bugs and ideas for the future in [MISSING.md](./MISSING.md)
 

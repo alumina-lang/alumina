@@ -30,6 +30,8 @@
     kind of defeats the purpose of lambdas.
 - "any/don't care" in protocol bounds. Especially for things like `Hashable` and `Formattable`, it would be great if users didn't need to introduce a new generic parameter for the hasher and formatter (since that complicates type inference). 
   - Alternatively, allow pre-monomorphized types to be used as protocol bounds
+  - This could be solved by `infer`. It needs to do the same thing as `check_protocol_bounds` - go through all the AST methods of the protocol in the bound and IR method of the type in the slot and
+  match the slots on all of them. It's quite a lot of work and also `infer` will probably need to start looping until no more changes are made (e.g. in nested protocol bounds), but it would be quite awesome. By doing that, protocols would actually start *helping* type inference instead of making it harder.
 
 ## Grammar, parsing, AST
 
@@ -45,7 +47,6 @@
 - tests
 - how portable should it be? I'm not sure if I'll have the grit to support anything other than `x86_64-unknown-linux-gnu` and maybe `aarch64`.
 - these are definitely needed:
-  - standard and file IO
   - string formatting
     - The pattern is well-established (Formattable protocol) and I'm very happy with it,
       but it's very very basic right now
@@ -77,8 +78,11 @@
 
 ## Compiler architecture
 
-- Is IR low-level enough to eventually target LLVM?
-  - IMO it should be mostly OK, modulo a few gaps, where we depend on C semantics:
+- Is IR low-level enough to eventually use LLVM as backend?
+  - IMO it should be mostly OK, modulo a few gaps:
+    - ABI awareness. Not sure how much of this LLVM gives you
+    - Copying and passing structs by value needs to be explicit
+    - Expressions need to be flattened into SSA form (should be easy enough)
     - Type casts need to be explicit
     - Spaghetti gotos need to be converted to LLVM basic blocks
 - Should monomorphization and type checking be separate stages? Can this even be done with the loose duck-typed language?

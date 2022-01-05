@@ -1,13 +1,245 @@
+// "FFI" interfaces to libc. It assumes glibc on Linux
+// Mostly copied/adapted from Rust's libc crate (https://github.com/rust-lang/libc)
+
+use i8 as c_schar;
+use u8 as c_uchar;
+use i16 as c_short;
+use u16 as c_ushort;
+use i32 as c_int;
+use u32 as c_uint;
+use f32 as c_float;
+use f64 as c_double;
+use i64 as c_longlong;
+use u64 as c_ulonglong;
+use i64 as intmax_t;
+use u64 as uintmax_t;
+use usize as size_t;
+use isize as ptrdiff_t;
+use isize as intptr_t;
+use usize as uintptr_t;
+use isize as ssize_t;
+
+#[cfg(target_os="linux")]
+{
+    #[cfg(target_arch = "x86")]
+    {
+        use i32 as c_long;
+        use u32 as c_ulong;
+        use i8 as c_char;
+        use i32 as wchar_t;
+        use i32 as clock_t;
+        use i32 as time_t;
+    }
+
+    #[cfg(target_arch = "arm")]
+    {
+        use i32 as c_long;
+        use u32 as c_ulong;
+        use u8 as c_char;
+        use u32 as wchar_t;
+        use i32 as clock_t;
+        use i32 as time_t;
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    {
+
+        use i8 as c_char;
+        use i32 as wchar_t;
+        use i64 as clock_t;
+        use i64 as time_t;
+
+        #[cfg(target_pointer_width = "32")]
+        {
+            use i32 as c_long;
+            use u32 as c_ulong;
+        }
+
+        #[cfg(not(target_pointer_width = "32"))]
+        {
+            use i64 as c_long;
+            use u64 as c_ulong;
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        use u8 as c_char;
+        use u32 as wchar_t;
+
+        #[cfg(target_pointer_width = "32")]
+        {
+            use i32 as c_long;
+            use u32 as c_ulong;
+            use i32 as clock_t;
+            use i32 as time_t;
+        }
+
+        #[cfg(not(target_pointer_width = "32"))]
+        {
+            use i64 as c_long;
+            use u64 as c_ulong;
+            use i64 as clock_t;
+            use i64 as time_t;
+        }
+    }
+
+    use i32 as pid_t;
+    use u32 as uid_t;
+    use u32 as gid_t;
+    use u32 as mode_t;
+    use u32 as in_addr_t;
+    use u16 as in_port_t;
+    use isize as sighandler_t;
+    use c_int as clockid_t;
+}
+
+#[cfg(target_os="windows")]
+{
+    use i8 as c_char;
+    use i32 as c_long;
+    use u32 as c_ulong;
+    use u16 as wchar_t;
+}
+
+
 extern "C" fn free(ptr: &mut void);
-extern "C" fn memcpy(dst: &mut void, src: &void, len: usize) -> &mut void;
-extern "C" fn memmove(dst: &mut void, src: &void, len: usize) -> &mut void;
-extern "C" fn memcmp(ptr1: &void, ptr2: &void, len: usize) -> i32;
-extern "C" fn malloc(size: usize) -> &mut void;
-extern "C" fn calloc(num: usize, size: usize) -> &mut void;
-extern "C" fn _exit(ret: i32) -> !;
+extern "C" fn memcpy(dst: &mut void, src: &void, len: size_t) -> &mut void;
+extern "C" fn memmove(dst: &mut void, src: &void, len: size_t) -> &mut void;
+extern "C" fn memcmp(ptr1: &void, ptr2: &void, len: size_t) -> c_int;
+extern "C" fn memchr(ptr: &void, ptr2: c_int, count: size_t) -> &void;
+extern "C" fn malloc(size: size_t) -> &mut void;
+extern "C" fn realloc(ptr: &mut void, size: size_t) -> &mut void;
+extern "C" fn calloc(num: size_t, size: size_t) -> &mut void;
+extern "C" fn exit(ret: c_int) -> !;
+extern "C" fn _exit(ret: c_int) -> !;
 
 #[cfg(target_os="linux")]
-extern "C" fn getrandom(buf: &mut void, buflen: usize, flags: u32) -> isize;
+{
+    struct timespec {
+        tv_sec: time_t,
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
+        tv_nsec: i64,
+        #[cfg(not(all(target_arch = "x86_64", target_pointer_width = "32")))]
+        tv_nsec: c_long,
+    }
 
-#[cfg(target_os="linux")]
-extern "C" fn write(fd: i32, buf: &void, len: usize) -> isize;
+    extern "C" fn getrandom(buf: &mut void, buflen: size_t, flags: c_uint) -> ssize_t;
+    extern "C" fn write(fd: c_int, buf: &void, len: size_t) -> ssize_t;
+    extern "C" fn read(fd: c_int, buf: &mut void, len: size_t) -> ssize_t;
+    extern "C" fn open(path: &c_char, oflag: c_int, mode: mode_t) -> c_int;
+    extern "C" fn close(fd: c_int) -> c_int;
+    extern "C" fn fsync(fd: c_int) -> c_int;
+    extern "C" fn execv(prog: &c_char, argv: &&c_char) -> c_int;
+    extern "C" fn execve(prog: &c_char, argv: &&c_char, envp: &&c_char) -> c_int;
+    extern "C" fn kill(pid: pid_t, sig: c_int) -> c_int;
+    extern "C" fn sleep(secs: c_uint) -> c_uint;
+    extern "C" fn nanosleep(rqtp: &timespec, rmtp: &mut timespec) -> c_int;
+    extern "C" fn fork() -> pid_t;
+
+    extern "C" fn __errno_location() -> &mut c_int;
+    extern "C" fn __xpg_strerror_r(errnum: c_int, buf: &mut c_char, buflen: size_t) -> c_int;
+    use __xpg_strerror_r as strerror_r;
+
+    const EXIT_FAILURE: c_int = 1;
+    const EXIT_SUCCESS: c_int = 0;
+
+    const STDIN_FILENO: c_int = 0;
+    const STDOUT_FILENO: c_int = 1;
+    const STDERR_FILENO: c_int = 2;
+
+    const SIGHUP: c_int = 1;
+    const SIGINT: c_int = 2;
+    const SIGQUIT: c_int = 3;
+    const SIGILL: c_int = 4;
+    const SIGABRT: c_int = 6;
+    const SIGFPE: c_int = 8;
+    const SIGKILL: c_int = 9;
+    const SIGSEGV: c_int = 11;
+    const SIGPIPE: c_int = 13;
+    const SIGALRM: c_int = 14;
+    const SIGTERM: c_int = 15;
+
+    const O_RDONLY: c_int = 0;
+    const O_WRONLY: c_int = 1;
+    const O_RDWR: c_int = 2;
+    const O_ACCMODE: c_int = 3;
+    const O_TRUNC: c_int = 512;
+    const O_CLOEXEC: c_int = 0x80000;
+    const O_APPEND: c_int = 1024;
+    const O_CREAT: c_int = 64;
+    const O_EXCL: c_int = 128;
+    const O_NOCTTY: c_int = 256;
+    const O_NONBLOCK: c_int = 2048;
+    const O_SYNC: c_int = 1052672;
+    const O_RSYNC: c_int = 1052672;
+    const O_DSYNC: c_int = 4096;
+    const O_FSYNC: c_int = 0x101000;
+    const O_NOATIME: c_int = 0x40000;
+    const O_PATH: c_int = 0x200000;
+    const O_DIRECTORY: c_int = 0x10000;
+    const O_TMPFILE: c_int = 0x400000 | O_DIRECTORY;
+
+    const CLOCK_REALTIME: clockid_t = 0;
+    const CLOCK_MONOTONIC: clockid_t = 1;
+    const CLOCK_PROCESS_CPUTIME_ID: clockid_t = 2;
+    const CLOCK_THREAD_CPUTIME_ID: clockid_t = 3;
+    const CLOCK_MONOTONIC_RAW: clockid_t = 4;
+    const CLOCK_REALTIME_COARSE: clockid_t = 5;
+    const CLOCK_MONOTONIC_COARSE: clockid_t = 6;
+    const CLOCK_BOOTTIME: clockid_t = 7;
+    const CLOCK_REALTIME_ALARM: clockid_t = 8;
+    const CLOCK_BOOTTIME_ALARM: clockid_t = 9;
+    const CLOCK_TAI: clockid_t = 11;
+
+    const EPERM: c_int = 1;
+    const ENOENT: c_int = 2;
+    const ESRCH: c_int = 3;
+    const EINTR: c_int = 4;
+    const EIO: c_int = 5;
+    const ENXIO: c_int = 6;
+    const E2BIG: c_int = 7;
+    const ENOEXEC: c_int = 8;
+    const EBADF: c_int = 9;
+    const ECHILD: c_int = 10;
+    const EAGAIN: c_int = 11;
+    const ENOMEM: c_int = 12;
+    const EACCES: c_int = 13;
+    const EFAULT: c_int = 14;
+    const ENOTBLK: c_int = 15;
+    const EBUSY: c_int = 16;
+    const EEXIST: c_int = 17;
+    const EXDEV: c_int = 18;
+    const ENODEV: c_int = 19;
+    const ENOTDIR: c_int = 20;
+    const EISDIR: c_int = 21;
+    const EINVAL: c_int = 22;
+    const ENFILE: c_int = 23;
+    const EMFILE: c_int = 24;
+    const ENOTTY: c_int = 25;
+    const ETXTBSY: c_int = 26;
+    const EFBIG: c_int = 27;
+    const ENOSPC: c_int = 28;
+    const ESPIPE: c_int = 29;
+    const EROFS: c_int = 30;
+    const EMLINK: c_int = 31;
+    const EPIPE: c_int = 32;
+    const EDOM: c_int = 33;
+    const ERANGE: c_int = 34;
+    const EWOULDBLOCK: c_int = EAGAIN;
+    const EBFONT: c_int = 59;
+    const ENOSTR: c_int = 60;
+    const ENODATA: c_int = 61;
+    const ETIME: c_int = 62;
+    const ENOSR: c_int = 63;
+    const ENONET: c_int = 64;
+    const ENOPKG: c_int = 65;
+    const EREMOTE: c_int = 66;
+    const ENOLINK: c_int = 67;
+    const EADV: c_int = 68;
+    const ESRMNT: c_int = 69;
+    const ECOMM: c_int = 70;
+    const EPROTO: c_int = 71;
+    const EDOTDOT: c_int = 73;
+}
+

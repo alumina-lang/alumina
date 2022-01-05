@@ -77,13 +77,13 @@ impl Compiler {
             // only the functions that are transitively called from the entry point will be
             // emitted.
             if inner.should_compile() {
-                let mut monomorphizer = Monomorphizer::new(&mut mono_ctx);
+                let mut monomorphizer = Monomorphizer::new(&mut mono_ctx, false);
                 monomorphizer.monomorphize_item(item, &[])?;
             }
         }
 
         // Finally generate static initialization code
-        let mut monomorphizer = Monomorphizer::new(&mut mono_ctx);
+        let mut monomorphizer = Monomorphizer::new(&mut mono_ctx, false);
         monomorphizer.generate_static_constructor()?;
 
         let items = mono_ctx.into_inner();

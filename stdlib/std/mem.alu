@@ -105,7 +105,7 @@ impl slice {
     }
 
     fn fmt<Ptr: PointerOf<u8>, F: fmt::Formatter<F>>(self: &slice<Ptr>, f: &mut F) {
-        f.write(*self);
+        f.write_str(*self);
     }
     
     mixin<T: Equatable<T>, Ptr: PointerOf<T>> Equatable<slice<Ptr>>;
@@ -142,14 +142,33 @@ mod internal {
 
 fn alloc<T>(len: usize) -> &mut [T] {
     let ret: &mut [T];
-    ret.ptr = libc::malloc(size_of::<T>() * len) as &mut T;
+    ret.ptr = when T: proto::ZeroSized {
+        null as &mut T
+    } else {
+        libc::malloc(size_of::<T>() * len) as &mut T
+    };
+    ret.len = len;
+    ret
+}
+
+fn realloc<T>(slice: &mut [T], len: usize) -> &mut [T] {
+    let ret: &mut [T];
+    ret.ptr = when T: proto::ZeroSized {
+        null as &mut T
+    } else {
+        libc::realloc(slice.ptr as &mut void, size_of::<T>() * len) as &mut T
+    };
     ret.len = len;
     ret
 }
 
 fn alloc_zeroed<T>(len: usize) -> &mut [T] {
     let ret: &mut [T];
-    ret.ptr = libc::calloc(len, size_of::<T>()) as &mut T;
+    ret.ptr = when T: proto::ZeroSized {
+        null as &mut T
+    } else {
+        libc::calloc(len, size_of::<T>()) as &mut T
+    };
     ret.len = len;
     ret
 }

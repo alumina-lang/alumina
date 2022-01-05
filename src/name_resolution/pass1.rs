@@ -92,6 +92,12 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         Ok(())
     }
 
+    fn visit_top_level_block(&mut self, node: Node<'src>) -> Self::ReturnType {
+        let _ = parse_attributes!(self, node);
+
+        self.visit_children_by_field(node, "items")
+    }
+
     fn visit_protocol_definition(&mut self, node: Node<'src>) -> Self::ReturnType {
         let item = self.ast.make_symbol();
         let attributes = parse_attributes!(self, node, item);

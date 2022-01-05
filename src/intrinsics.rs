@@ -1,5 +1,6 @@
 use crate::common::{CodeErrorBuilder, CodeErrorKind};
 use crate::ir::builder::TypeBuilder;
+use crate::ir::const_eval::Value;
 use crate::ir::{const_eval, Lit};
 use crate::{ast::BuiltinType, common::AluminaError};
 
@@ -71,6 +72,10 @@ impl<'ir> CompilerIntrinsics<'ir> {
     }
 
     fn size_of(&self, ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
+        if ty.is_zero_sized() {
+            return Ok(self.expressions.const_value(Value::USize(0)));
+        }
+
         Ok(self.expressions.codegen_intrinsic(
             CodegenIntrinsicKind::SizeOfLike("sizeof", ty),
             self.types.builtin(BuiltinType::USize),
@@ -78,6 +83,10 @@ impl<'ir> CompilerIntrinsics<'ir> {
     }
 
     fn align_of(&self, ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
+        if ty.is_zero_sized() {
+            return Ok(self.expressions.const_value(Value::USize(1)));
+        }
+
         Ok(self.expressions.codegen_intrinsic(
             CodegenIntrinsicKind::SizeOfLike("_Alignof", ty),
             self.types.builtin(BuiltinType::USize),
@@ -91,11 +100,9 @@ impl<'ir> CompilerIntrinsics<'ir> {
         // This will obviously not be stable between compilations, but for
         // now it's fine since we always monomorphize everything. Needs to be
         // retought if incremental compilation is ever implemented.
-        let id = interned as *const Ty<'ir> as u64;
+        let id = interned as *const Ty<'ir> as usize;
 
-        Ok(self
-            .expressions
-            .lit(Lit::Int(id as u128), self.types.builtin(BuiltinType::USize)))
+        Ok(self.expressions.const_value(Value::USize(id)))
     }
 
     fn compile_fail(&self, reason: ExprP<'ir>) -> Result<ExprP<'ir>, AluminaError> {

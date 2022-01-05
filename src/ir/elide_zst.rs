@@ -155,7 +155,7 @@ impl<'ir> ZstElider<'ir> {
             }
             ExprKind::Deref(inner) => {
                 let inner = self.elide_zst_expr(inner);
-                if inner.ty.is_zero_sized() {
+                if expr.ty.is_zero_sized() {
                     builder.block(
                         [Statement::Expression(inner)],
                         builder.void(expr.ty, expr.value_type),
@@ -164,13 +164,16 @@ impl<'ir> ZstElider<'ir> {
                     builder.deref(inner)
                 }
             }
-            ExprKind::Return(inner) if inner.ty.is_zero_sized() => builder.block(
-                [Statement::Expression(self.elide_zst_expr(inner))],
-                builder.ret(builder.void(expr.ty, expr.value_type)),
-            ),
             ExprKind::Return(inner) => {
-                Expr::rvalue(ExprKind::Return(self.elide_zst_expr(inner)), expr.ty)
-                    .alloc_on(self.ir)
+                let inner = self.elide_zst_expr(inner);
+                if inner.ty.is_zero_sized() {
+                    builder.block(
+                        [Statement::Expression(self.elide_zst_expr(inner))],
+                        builder.ret(builder.void(expr.ty, expr.value_type)),
+                    )
+                } else {
+                    builder.ret(inner)
+                }
             }
             ExprKind::Unary(op, inner) => builder.unary(op, self.elide_zst_expr(inner), expr.ty),
             ExprKind::If(cond, then, els) => {
@@ -254,6 +257,10 @@ impl<'ir> ZstElider<'ir> {
             Statement::Expression(expr) => {
                 let expr = self.elide_zst_expr(expr);
                 if expr.is_void() {
+                    return;
+                }
+
+                if expr.pure() {
                     return;
                 }
 

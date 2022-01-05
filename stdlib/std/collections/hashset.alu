@@ -1,0 +1,88 @@
+use std::hash::{Hashable, Hasher, DefaultHash};
+use std::option::{Option, try};
+use std::iter::{Iterator, Iterable};
+use std::cmp::Equatable;
+
+struct HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
+    _inner: hashmap::HashMap<K, ()>
+}
+
+struct HashSetIterator<K> {
+    inner: hashmap::HashMapIterator<K, ()>
+}
+
+impl HashSetIterator<K> {
+    fn next(self: &mut HashSetIterator<K>) -> Option<K> {
+        let elem = try!(self.inner.next());
+        Option::some(elem.0)
+    }
+    mixin<K> Iterator<HashSetIterator<K>, K>;
+}
+
+impl HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
+    fn new() -> HashSet<K, H> {
+        with_capacity(0)
+    }
+
+    fn with_capacity(capacity: usize) -> HashSet<K, H> {
+        HashSet::<K, H> {
+            _inner: hashmap::HashMap::with_capacity::<K, (), H>(capacity)
+        }
+    }
+
+    #[inline]
+    fn insert(self: &mut HashSet<K, H>, item: K) -> bool {
+        !self._inner.insert((item, ())).is_some
+    }
+
+    #[inline]
+    fn remove(self: &mut HashSet<K, H>, item: K) -> bool {
+        self._inner.remove(item).is_some()
+    }
+
+    #[inline]
+    fn contains(self: &HashSet<K, H>, item: K) -> bool {
+        self._inner.get(item).is_some()
+    }
+
+    #[inline]
+    fn len(self: &HashSet<K, H>) -> usize {
+        self._inner.len()
+    }
+
+    #[inline]
+    fn empty(self: &HashSet<K, H>) -> bool {
+        self._inner.empty()
+    }
+
+    #[inline]
+    fn clear(self: &mut HashSet<K, H>) {
+        self._inner.clear();
+    }
+
+    #[inline]
+    fn iter(self: &HashSet<K, H>) -> HashSetIterator<K> {
+        HashSetIterator::<K> {
+            inner: self._inner.iter()
+        }
+    }
+
+    #[inline]
+    fn free(self: &mut HashSet<K, H>) {
+        self._inner.free();
+    }
+}
+
+impl HashSet<K: Hashable<K, H> + Equatable<K>, I: Iterator<I, K>, H: Hasher<H> = DefaultHash> {
+    fn from_iter(iter: I) -> HashSet<K, H> {
+        let set = HashSet::new::<K, H>();
+        set.extend(iter);
+        set
+    }
+
+    fn extend(self: &mut HashSet<K, H>, iter: I) {
+        for item in iter {
+            self.insert(item);
+        }
+    }
+}

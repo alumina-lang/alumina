@@ -25,6 +25,8 @@ use global_ctx::GlobalCtx;
 
 use std::error::Error;
 
+use std::io::BufReader;
+use std::io::BufWriter;
 use std::path::PathBuf;
 use walkdir::WalkDir;
 
@@ -156,6 +158,8 @@ fn main() {
     if args.debug {
         global_ctx.add_flag("debug");
     }
+
+    //BufReader
 
     match compiler.compile(files) {
         Ok(program) => {

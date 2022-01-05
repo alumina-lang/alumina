@@ -1,0 +1,155 @@
+
+struct Vector<T> {
+    _data: &mut [T],
+    _length: usize,
+}
+
+impl Vector<T> {
+    use std::mem::{slice, alloc, realloc, copy_to, copy_to_nonoverlapping};
+    use std::iter::{Iterator, Iterable};
+    use std::option::Option;
+
+    fn new() -> Vector<T> {
+        with_capacity(0)
+    }
+
+    fn from_raw(data: &mut [T], length: usize) {
+        Vector {
+            _data: data,
+            _length: length,
+        }
+    }
+
+    fn with_capacity(capacity: usize) -> Vector<T> {
+        Vector {
+            _data: alloc::<T>(capacity),
+            _length: 0,
+        }
+    }
+
+    fn from_slice(slice: &[T]) -> Vector<T> {
+        let vec = with_capacity::<T>(slice.len);
+        slice.copy_to_nonoverlapping(vec.data.ptr);
+        vec._length = slice.len;
+        vec
+    }
+
+    fn from_iter<I: Iterator<I, T>>(iter: &mut I) -> Vector<T> {
+        let vec = Vector::new::<T>();
+        vec.extend(iter);
+        vec
+    }
+
+    fn reserve(self: &mut Vector<T>, new_capacity: usize) {
+        if self._data.len < new_capacity {
+            self._data = self._data.realloc(new_capacity);
+        }
+    }
+
+    fn extend_from_slice(self: &mut Vector<T>, value: &[T]) {
+        let new_length = self._length + value.len;
+        self.reserve(new_length);
+        value.copy_to(&self._data[self._length]);
+        self._length = new_length;
+    }
+
+    fn extend<I: Iterator<I, T>>(self: &mut Vector<T>, iter: I) {
+        for item in iter {
+            self.push(item);
+        }
+    }
+
+    fn insert(self: &mut Vector<T>, index: usize, value: T) {
+        use std::math::max;
+
+        if self._length == self._data.len {
+            self.reserve(max(self._data.len, 1) * 2);
+        }
+
+        self._data[index..self._length].copy_to(&self._data[index + 1]);
+        self._data[index] = value;
+
+        self._length += 1;
+    }
+
+    fn as_slice(self: &Vector<T>) -> &[T] {
+        self._data[0..self._length]
+    }
+
+    fn as_slice_mut(self: &mut Vector<T>) -> &mut [T] {
+        self._data[0..self._length]
+    }
+
+    fn push(self: &mut Vector<T>, value: T) {
+        use std::math::max;
+
+        if self._length == self._data.len {
+            self.reserve(max(self._data.len, 1) * 2);
+        }
+
+        self._data[self._length] = value;
+        self._length += 1;
+    }
+
+    fn pop(self: &mut Vector<T>) -> T {
+        self._length -= 1;
+        self._data[self._length]
+    }
+
+    fn first(self: &mut Vector<T>) -> Option<T> {
+        if self._length == 0 {
+            Option::none()
+        } else {
+            Option::some(self._data[0])
+        }
+    }
+
+    fn last(self: &mut Vector<T>) -> Option<T> {
+        if self._length == 0 {
+            Option::none()
+        } else {
+            Option::some(self._data[self._length - 1])
+        }
+    }
+
+    fn len(self: &Vector<T>) -> usize {
+        self._length
+    }
+
+    #[inline]
+    fn empty(self: &Vector<T>) -> bool {
+        self._length == 0
+    }
+
+    fn clear(self: &mut Vector<T>) {
+        self._length = 0;
+    }
+
+    #[inline]
+    fn iter(self: &Vector<T>) -> &[T] {
+        self.as_slice()
+    }
+
+    fn shrink_to_fit(self: &mut Vector<T>) {
+        if self._length < self._data.len  {
+            self._data = self._data.realloc(self._length);
+        }
+    }
+
+    fn free(self: &mut Vector<T>) {
+        use std::mem::free;
+        self._data.free();
+    }
+}
+
+impl Vector {
+    use std::fmt::{Formatter, Formattable};
+
+    fn write_str(self: &mut Vector<u8>, buf: &[u8]) {
+        self.extend_from_slice(buf);
+    }
+
+    fn write_char(self: &mut Vector<u8>, c: u8) {
+        self.push(c);
+    }
+}

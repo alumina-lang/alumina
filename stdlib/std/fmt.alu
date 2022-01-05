@@ -1,12 +1,12 @@
 protocol Formatter<Self> {
-    fn write(self: &mut Self, buf: &[u8]);
+    fn write_str(self: &mut Self, buf: &[u8]);
     
-    fn write_byte(self: &mut Self, byte: u8) {
-        self.write(mem::slice::from_raw(&byte, 1));
+    fn write_char(self: &mut Self, byte: u8) {
+        self.write_str(mem::slice::from_raw(&byte, 1));
     }
 }
 
-protocol Formattable<Self, F: Formatter<F>> {
+protocol Formattable<Self, F: Formatter<F> = internal::_NullFormatter> {
     fn fmt(self: &Self, f: &mut F);
 }
 
@@ -27,9 +27,9 @@ macro writeln(fmt, fmt_str, arg...) {
 }
 
 macro format(fmt_str, arg...) { 
-    let fmt = StringBufFormatter::new(fmt_str.len * 2);
+    let fmt = collections::Vector::with_capacity::<u8>(fmt_str.len);
     fmt::write!(&fmt, fmt_str, arg...);
-    fmt.buffer
+    fmt
 }
 
 struct BufferedFormatter<F: Formatter<F>> {
@@ -48,7 +48,7 @@ impl BufferedFormatter<F: Formatter<F>> {
     }
 
     #[inline]
-    fn write(self: &mut BufferedFormatter<F>, buf: &[u8]) {
+    fn write_str(self: &mut BufferedFormatter<F>, buf: &[u8]) {
         use std::mem::copy_to_nonoverlapping;
         
         let fill_len = math::min(self.buf.len - self.buf_pos, buf.len);
@@ -59,12 +59,12 @@ impl BufferedFormatter<F: Formatter<F>> {
         }
 
         if self.buf_pos == self.buf.len {
-            self.inner.write(self.buf);
+            self.inner.write_str(self.buf);
             self.buf_pos = 0;
         }
 
         if buf.len >= self.buf.len {
-            self.inner.write(buf);
+            self.inner.write_str(buf);
         } else if buf.len > 0 {
             buf.copy_to_nonoverlapping(&self.buf[0]);
             self.buf_pos += buf.len;
@@ -72,9 +72,9 @@ impl BufferedFormatter<F: Formatter<F>> {
     }
 
     #[inline]
-    fn write_byte(self: &mut BufferedFormatter<F>, byte: u8) {
+    fn write_char(self: &mut BufferedFormatter<F>, byte: u8) {
         if self.buf_pos == self.buf.len {
-            self.inner.write(self.buf);
+            self.inner.write_str(self.buf);
             self.buf_pos = 0;
         }
 
@@ -85,35 +85,19 @@ impl BufferedFormatter<F: Formatter<F>> {
     #[inline]
     fn flush(self: &mut BufferedFormatter<F>) {
         if self.buf_pos > 0 {
-            self.inner.write(self.buf[0..self.buf_pos]);
+            self.inner.write_str(self.buf[0..self.buf_pos]);
             self.buf_pos = 0;
         }
     }
 }
 
-struct StringBufFormatter {
-    buffer: collections::Vector<u8>
-}
-
-impl StringBufFormatter {
-    fn new(size_hint: usize) -> StringBufFormatter {
-        StringBufFormatter {
-            buffer: collections::Vector::with_capacity(size_hint)
-        }
-    }
-
-    #[inline]
-    fn write(self: &mut StringBufFormatter, buf: &[u8]) {
-        self.buffer.extend_from_slice(buf);
-    }
-
-    #[inline]
-    fn write_byte(self: &mut StringBufFormatter, byte: u8) {
-        self.buffer.push(byte);
-    }
-}
-
 mod internal {
+    struct _NullFormatter {}
+    impl _NullFormatter {
+        fn write_str(self: &mut _NullFormatter, buf: &[u8]) { }
+        fn write_char(self: &mut _NullFormatter, byte: u8) {}
+    }
+
     // Type-erased wrapper of a formattable object
     struct _FormatArg<F: Formatter<F>> {
         inner: &void,
@@ -149,7 +133,7 @@ mod internal {
                     i -= 1;
                     buf[i] = '-';
                 }
-                fmt.write(buf[i..]);
+                fmt.write_str(buf[i..]);
                 break;
             }
             i -= 1;
@@ -159,7 +143,7 @@ mod internal {
     fn format_float<T: proto::FloatingPoint, F: Formatter<F>>(val: T, fmt: &mut F, precision: usize) {
         let trunc = val as i128;
         format_integer(trunc, fmt);
-        fmt.write(".");
+        fmt.write_char('.');
 
         let frac = math::abs((val - (trunc as T)));
         
@@ -175,7 +159,7 @@ mod internal {
             i += 1;
         }
 
-        fmt.write(buf[..precision]);
+        fmt.write_str(buf[..precision]);
     }
 
     enum State {
@@ -196,14 +180,14 @@ mod internal {
                         '{' => State::BRACE_OPEN,
                         '}' => State::BRACE_CLOSE,
                         _ => {
-                            fmt.write_byte(ch);
+                            fmt.write_char(ch);
                             State::NORMAL
                         }
                     }
                 }
                 State::BRACE_CLOSE => {
                     switch ch {
-                        '}' => fmt.write_byte(ch),
+                        '}' => fmt.write_char(ch),
                         _ => panic!("invalid format string")
                     };
                     State::NORMAL
@@ -217,7 +201,7 @@ mod internal {
                             args[0].fmt(fmt);
                             args = args[1..];
                         },
-                        '{' => fmt.write_byte(ch),
+                        '{' => fmt.write_char(ch),
                         _ => panic!("invalid format string")
                     };
                     State::NORMAL

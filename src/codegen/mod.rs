@@ -142,6 +142,11 @@ pub fn codegen(items: &[IRItemP<'_>]) -> Result<String, AluminaError> {
     let mut buf = String::with_capacity(10 * 1024);
     writeln!(buf, "#include <stdint.h>").unwrap();
     writeln!(buf, "#include <stddef.h>").unwrap();
+    writeln!(
+        buf,
+        "#pragma clang diagnostic ignored \"-Wparentheses-equality\""
+    )
+    .unwrap();
 
     type_writer.write(&mut buf);
     function_writer.write(&mut buf);

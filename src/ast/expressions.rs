@@ -214,7 +214,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
     fn visit_statement(
         &mut self,
         node: tree_sitter::Node<'src>,
-    ) -> Result<Option<Statement<'ast>>, AluminaError> {
+    ) -> Result<Vec<Statement<'ast>>, AluminaError> {
         let inner = node.child_by_field_name("inner").unwrap();
         let attributes = match AttributeVisitor::parse_attributes(
             self.global_ctx.clone(),
@@ -224,55 +224,105 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             None,
         )? {
             Some(attributes) => attributes,
-            None => return Ok(None),
+            None => return Ok(vec![]),
         };
 
         let result = match inner.kind() {
-            "empty_statement" => None,
+            "empty_statement" => vec![],
             "let_declaration" => {
-                let name = self
-                    .code
-                    .node_text(inner.child_by_field_name("name").unwrap())
-                    .alloc_on(self.ast);
-
-                let id = self.ast.make_id();
                 let typ = inner
                     .child_by_field_name("type")
                     .map(|n| TypeVisitor::new(self.ast, self.scope.clone()).visit(n))
                     .transpose()?;
 
-                // We need to visit the init expression before we add the name to the scope to ensure
-                // we cannot refer to ourselves during init.
+                let value_id = self.ast.make_id();
                 let value = inner
                     .child_by_field_name("value")
                     .map(|n| self.visit(n))
                     .transpose()?;
 
-                self.scope
-                    .add_item(Some(name), NamedItem::new_default(NamedItemKind::Local(id)))
-                    .with_span(&self.scope, inner)?;
+                let let_decl = LetDeclaration {
+                    id: value_id,
+                    typ,
+                    value,
+                };
 
-                let let_decl = LetDeclaration { id, typ, value };
+                let mut statements = Vec::new();
+                if let Some(name) = inner.child_by_field_name("name") {
+                    let name = self.code.node_text(name).alloc_on(self.ast);
 
-                Some(StatementKind::LetDeclaration(let_decl).alloc_with_span(
-                    self.ast,
-                    &self.scope,
-                    node,
-                ))
+                    self.scope
+                        .add_item(
+                            Some(name),
+                            NamedItem::new_default(NamedItemKind::Local(value_id)),
+                        )
+                        .with_span(&self.scope, inner)?;
+
+                    statements.push(StatementKind::LetDeclaration(let_decl).alloc_with_span(
+                        self.ast,
+                        &self.scope,
+                        node,
+                    ));
+                } else {
+                    // Tuple unpacking
+                    let mut cursor = inner.walk();
+                    for (idx, elem) in inner
+                        .children_by_field_name("element", &mut cursor)
+                        .enumerate()
+                    {
+                        let name = self.code.node_text(elem).alloc_on(self.ast);
+                        let elem_id = self.ast.make_id();
+
+                        let rhs = ExprKind::TupleIndex(
+                            ExprKind::Local(value_id).alloc_with_span(self.ast, &self.scope, elem),
+                            idx,
+                        )
+                        .alloc_with_span(self.ast, &self.scope, elem);
+
+                        let elem_decl = LetDeclaration {
+                            id: elem_id,
+                            typ: None,
+                            value: Some(rhs),
+                        };
+
+                        statements.push(StatementKind::LetDeclaration(elem_decl).alloc_with_span(
+                            self.ast,
+                            &self.scope,
+                            node,
+                        ));
+
+                        self.scope
+                            .add_item(
+                                Some(name),
+                                NamedItem::new_default(NamedItemKind::Local(elem_id)),
+                            )
+                            .with_span(&self.scope, inner)?;
+                    }
+
+                    statements.insert(
+                        0,
+                        StatementKind::LetDeclaration(let_decl).alloc_with_span(
+                            self.ast,
+                            &self.scope,
+                            node,
+                        ),
+                    );
+                }
+                statements
             }
             "use_declaration" => {
                 UseClauseVisitor::new(self.ast, self.scope.clone(), attributes)
                     .visit(inner.child_by_field_name("argument").unwrap())?;
-                None
+                vec![]
             }
-            "expression_statement" => Some(
-                StatementKind::Expression(self.visit(inner.child_by_field_name("inner").unwrap())?)
-                    .alloc_with_span(self.ast, &self.scope, node),
-            ),
+            "expression_statement" => vec![StatementKind::Expression(
+                self.visit(inner.child_by_field_name("inner").unwrap())?,
+            )
+            .alloc_with_span(self.ast, &self.scope, node)],
             "macro_definition" => {
                 FirstPassVisitor::new(self.global_ctx.clone(), self.ast, self.scope.clone())
                     .visit_macro_definition(inner)?;
-                None
+                vec![]
             }
             "const_declaration" => {
                 let name = self
@@ -291,7 +341,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                     Some(name),
                     item,
                 )?;
-                None
+                vec![]
             }
             _ => unimplemented!(),
         };
@@ -339,9 +389,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             let mut last_node = None;
             for node in node.children_by_field_name("statements", &mut cursor) {
                 last_node = Some(node.child_by_field_name("inner").unwrap());
-                if let Some(stmt) = self.visit_statement(node)? {
-                    statements.push(stmt);
-                }
+                statements.extend(self.visit_statement(node)?);
             }
 
             match node.child_by_field_name("result") {
@@ -398,6 +446,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
         let value = if remainder.starts_with("0x") {
             u128::from_str_radix(remainder.trim_start_matches("0x"), 16)
+        } else if remainder.starts_with("0o") {
+            u128::from_str_radix(remainder.trim_start_matches("0o"), 8)
+        } else if remainder.starts_with("0b") {
+            u128::from_str_radix(remainder.trim_start_matches("0b"), 2)
         } else {
             remainder.parse()
         };

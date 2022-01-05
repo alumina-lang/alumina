@@ -1,0 +1,28 @@
+
+use std::io::{stdin, BufferedReader, lines};
+use std::collections::Vector;
+use std::fmt::write;
+
+#[export]
+fn main() {
+    let br = BufferedReader::new(&stdin, 60 * 1024);
+    defer br.free();
+
+    let lines_iter = br.lines();
+    defer lines_iter.free();
+    
+    let padded: Vector<u8> = Vector::new();
+    defer padded.free();
+
+    let i = 1;
+    for line in lines_iter {
+        padded.clear();
+        write!(&padded, "{}", i);
+        while padded.len() < 4 {
+            padded.insert(0, ' ');
+        }
+
+        println!("{} | {}", padded.as_slice(), line.unwrap());
+        i += 1;
+    }
+}

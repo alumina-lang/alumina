@@ -1,5 +1,3 @@
-use std::fmt::{write, Formatter};
-
 macro try(res) {
     let res = res;
     if res.is_ok {
@@ -20,6 +18,8 @@ union ResultT<T, E> {
 }
 
 impl Result<T, E> {
+    use std::fmt::{write, Formatter, Formattable};
+
     #[force_inline]
     fn ok(ok: T) -> Result<T, E> {
         Result::<T, E> {
@@ -44,7 +44,11 @@ impl Result<T, E> {
         if self.is_ok {
             self.inner.ok
         } else {
-            panic!("unwrap on an err value")
+            when E: Formattable<E> {
+                panic!("unwrap on an err value: {}", self.inner.err)
+            } else {
+                panic!("unwrap on an err value")
+            }
         }
     }
 
@@ -60,7 +64,11 @@ impl Result<T, E> {
         if !self.is_ok {
             self.inner.err
         } else {
-            panic!("unwrap_err on an ok value")
+            when T: Formattable<T> {
+                panic!("unwrap_err on a ok value: {}", self.inner.ok)
+            } else {
+                panic!("unwrap_err on a ok value")
+            }
         }
     }
 
@@ -79,13 +87,41 @@ impl Result<T, E> {
             Result::err(func(self.inner.err))
         }
     }
+}
 
-    fn fmt<F: Formatter<F>>(self: &Result<T, E>, formatter: &mut F) {
+impl Result {
+    use std::fmt::{write, Formatter, Formattable};
+    use std::hash::{Hashable, Hasher};
+    use std::cmp::{Equatable};
+
+    fn fmt<T: Formattable<T, F>, E: Formattable<E, F>, F: Formatter<F>>(self: &Result<T, E>, formatter: &mut F) {
         if self.is_ok {
             write!(formatter, "ok({})", self.inner.ok)
         } else {
             write!(formatter, "err({})", self.inner.err)
         }
     }
-}
 
+    #[inline]
+    fn hash<T: Hashable<T, H>, E: Hashable<E, H>, H: Hasher<H>>(self: &Result<T, E>, hasher: &mut H) {
+        self.is_ok.hash(hasher);
+        if self.is_ok {
+            self.inner.ok.hash(hasher);
+        } else {
+            self.inner.err.hash(hasher);
+        }
+    }
+
+    #[inline]
+    fn equals<T: Equatable<T>, E: Equatable<E>>(lhs: &Result<T, E>, rhs: &Result<T, E>) -> bool {
+        if lhs.is_ok && rhs.is_ok {
+            lhs.inner.ok.equals(&rhs.inner.ok)
+        } else if !lhs.is_ok && !rhs.is_ok {
+            lhs.inner.err.equals(&rhs.inner.err)
+        } else {
+            false
+        }
+    }
+
+    mixin<T: Equatable<T>, E: Equatable<E>> Equatable<Result<T, E>>;
+}

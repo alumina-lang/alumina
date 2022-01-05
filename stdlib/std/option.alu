@@ -1,5 +1,3 @@
-use std::fmt::{write, Formatter};
-
 macro try(opt) {
     let opt = opt;
     if opt.is_some {
@@ -62,11 +60,47 @@ impl Option<T> {
         std::mem::replace(self, Option::none())
     }
 
-    fn fmt<F: Formatter<F>>(self: &Option<T>, formatter: &mut F) {
+    
+}
+
+impl Option {
+    use std::cmp::{Equatable, Comparable, Ordering};
+    use std::fmt::{write, Formatter, Formattable};
+    
+    #[inline]
+    fn equals<T: Equatable<T>>(lhs: &Option<T>, rhs: &Option<T>) -> bool {
+        if lhs.is_some {
+            if rhs.is_some {
+                lhs.inner.equals(&rhs.inner)
+            } else {
+                false
+            }
+        } else {
+            !rhs.is_some
+        }
+    }
+
+    #[inline]
+    fn compare<T: Comparable<T>>(lhs: &Option<T>, rhs: &Option<T>) -> Ordering {
+        if lhs.is_some {
+            if rhs.is_some {
+                lhs.inner.compare(&rhs.inner)
+            } else {
+                Ordering::Greater
+            }
+        } else {
+            Ordering::Less
+        }
+    }
+
+    fn fmt<T: Formattable<T, F>, F: Formatter<F>>(self: &Option<T>, formatter: &mut F) {
         if self.is_some {
             write!(formatter, "some({})", self.inner)
         } else {
             write!(formatter, "none")
         }
     }
+
+    mixin<T: Equatable<T>> Equatable<Option<T>;
+    mixin<T: Comparable<T>> Comparable<Option<T>;
 }
