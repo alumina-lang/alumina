@@ -80,6 +80,7 @@ test-fix: $(ALUMINA_BOOT)
 clean:
 	rm -rf $(BUILD_ROOT)/
 
+# Some convenience symlinks
 alumina-boot: $(ALUMINA_BOOT)
 	ln -sf $(ALUMINA_BOOT) $@
 

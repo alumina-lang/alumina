@@ -106,7 +106,7 @@ Finished:
 - Lowering AST into IR (with monomorphization, type checking and semantic analysis)
 - Codegen to C
 
-TBD:
+To be done:
 
 - Standard library is only usable on Linux-like targets
 - Probably a lot of bugs and miscompilations
@@ -128,10 +128,11 @@ To compile `alumina-boot` compiler from source, these prerequisites are needed:
 Additionally, to compile `aluminac`, Tree-sitter runtime library (`libtree-sitter.a`/`libtree-sitter.so`) is needed:
 
 ```bash
-https://github.com/tree-sitter/tree-sitter
+git clone https://github.com/tree-sitter/tree-sitter
 cd tree-sitter
 make
 sudo make install
+# sudo ldconfig
 ```
 
 ## Building
@@ -141,10 +142,10 @@ To compile `alumina-boot` compiler from source, run:
 make alumina-boot
 ```
 
-Now you are able to compile Aluimina code, e.g.
+Now you are able to compile Alumina code, e.g.
 
 ```
-./build/alumina-boot --sysroot ./stdlib hello_world=./examples/hello_world.alu -o hello_world.c
+./alumina-boot --sysroot ./stdlib hello_world=./examples/hello_world.alu -o hello_world.c
 cc hello_world.c -o hello_world
 ./hello_world
 ```
