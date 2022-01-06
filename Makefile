@@ -1,0 +1,91 @@
+BUILD_ROOT = build
+SYSROOT = ./stdlib
+
+ifdef RELEASE
+	BUILD_DIR = $(BUILD_ROOT)/release
+	CARGO_FLAGS = --release
+	CARGO_TARGET_DIR = target/release
+	CFLAGS += -O3
+	ALUMINA_FLAGS = --sysroot $(SYSROOT) --timings 
+else
+	BUILD_DIR = $(BUILD_ROOT)/debug
+	CARGO_FLAGS = 
+	CARGO_TARGET_DIR = target/debug
+	ALUMINA_FLAGS = --sysroot $(SYSROOT) --debug --timings 
+endif
+
+ALUMINA_BOOT = $(BUILD_DIR)/alumina-boot
+ALUMINAC = $(BUILD_DIR)/aluminac
+CODEGEN = $(BUILD_DIR)/aluminac-generate
+
+# If grammar changes, we need to rebuild the world
+COMMON_SOURCES = common/grammar.js 
+BOOTSTRAP_SOURCES = $(shell find src/alumina-boot/ -type f)
+SYSROOT_FILES = $(shell find $(SYSROOT) -type f -name '*.alu')
+ALU_LIBRARIES = $(shell find libraries/ -type f -name '*.alu')
+
+SELFHOSTED_SOURCES = $(shell find src/aluminac/ -type f -name '*.alu') 
+CODEGEN_SOURCES = $(shell find tools/tree-sitter-codegen/ -type f -name '*.alu')
+
+ALU_DEPS = $(ALUMINA_BOOT) $(SYSROOT_FILES) $(ALU_LIBRARIES)
+
+# Ensure build directory exists, but do not pollute all the rules with it
+$(BUILD_DIR)/.build:
+	mkdir -p $(BUILD_DIR)
+	touch $@
+
+# alumina-boot is entirely built by cargo, it is here in the Makefile just so it can 
+# be a dependency and gets rebuilt if sources change.
+$(ALUMINA_BOOT): $(BOOTSTRAP_SOURCES) $(COMMON_SOURCES) $(BUILD_DIR)/.build
+	cargo build $(CARGO_FLAGS)
+	cp $(CARGO_TARGET_DIR)/alumina-boot $(ALUMINA_BOOT)
+
+# Compile tree sitter grammar to C. Bootstrap compiler does it by itself in the Cargo
+# build script, but for aluminac, we need to do it in the Makefile.
+$(BUILD_DIR)/src/parser.c: common/grammar.js
+	cd $(BUILD_DIR) && tree-sitter generate --no-bindings $(abspath common/grammar.js)
+
+$(BUILD_DIR)/parser.o: $(BUILD_DIR)/src/parser.c
+	$(CC) $(CFLAGS) -I $(BUILD_DIR)/src -c $(BUILD_DIR)/src/parser.c -o $@
+
+# Codegen util for aluminac
+$(CODEGEN).c: $(ALU_DEPS) $(CODEGEN_SOURCES) 
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --output $@ \
+		$(foreach src,$(ALU_LIBRARIES),$(subst /,::,$(basename $(subst libraries/,,$(src))))=$(src)) \
+		$(foreach src,$(CODEGEN_SOURCES),$(subst /,::,$(basename $(src)))=$(src))
+
+$(CODEGEN): $(CODEGEN).c $(BUILD_DIR)/parser.o
+	$(CC) $(CFLAGS) -o $@ $(BUILD_DIR)/parser.o $(CODEGEN).c -ltree-sitter
+
+src/aluminac/node_kinds.alu: $(CODEGEN)
+	$(CODEGEN) > $@
+
+# The actual self-hosted compiler
+$(ALUMINAC).c: $(ALU_DEPS) $(SELFHOSTED_SOURCES) src/aluminac/node_kinds.alu
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --output $@ \
+		$(foreach src,$(ALU_LIBRARIES),$(subst /,::,$(basename $(subst libraries/,,$(src))))=$(src)) \
+		$(foreach src,$(SELFHOSTED_SOURCES),$(subst /,::,$(basename $(src)))=$(src))
+
+$(ALUMINAC): $(ALUMINAC).c $(BUILD_DIR)/parser.o
+	$(CC) $(CFLAGS) -o $@ $(BUILD_DIR)/parser.o $(ALUMINAC).c -ltree-sitter
+
+.PHONY: test test-fix
+test: $(ALUMINA_BOOT)
+	cd tools/snapshot-tests/ && pytest snapshot.py
+
+test-fix: $(ALUMINA_BOOT)
+	cd tools/snapshot-tests/ && pytest snapshot.py --snapshot-update
+
+.PHONY: clean all
+clean:
+	rm -rf $(BUILD_ROOT)/
+
+# Some convenience symlinks
+alumina-boot: $(ALUMINA_BOOT)
+	ln -sf $(ALUMINA_BOOT) $@
+
+aluminac: $(ALUMINAC)
+	ln -sf $(ALUMINAC) $@
+
+.DEFAULT_GOAL := all
+all: alumina-boot aluminac

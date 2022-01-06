@@ -107,6 +107,10 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     }
 
     fn _get_slot(self: &HashMap<K, V, H>, key: K) -> Option<&mut HashItem<(K, V)>> {
+        if self._length == 0 {
+            return Option::none();
+        }
+
         let initial_index = (hash_of::<K, H>(key) as usize) % self._buckets.len; 
         let index = initial_index;
 
@@ -140,6 +144,11 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     fn get(self: &HashMap<K, V, H>, key: K) -> Option<V> {
         let item = try!(self._get_slot(key));
         Option::some(item.item.1)
+    }
+
+    fn get_mut(self: &mut HashMap<K, V, H>, key: K) -> Option<&mut V> {
+        let item = try!(self._get_slot(key));
+        Option::some(&item.item.1)
     }
 
     fn remove(self: &mut HashMap<K, V, H>, key: K) -> Option<V> {

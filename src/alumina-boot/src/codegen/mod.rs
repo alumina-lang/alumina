@@ -25,7 +25,7 @@ pub(crate) use w;
 
 use self::{functions::FunctionWriter, types::TypeWriter};
 
-#[derive(Clone, Debug, Copy)]
+#[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub enum CName<'gen> {
     Native(&'gen str),
     Mangled(&'gen str, usize),

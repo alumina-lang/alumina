@@ -143,7 +143,7 @@ fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    let grammar_path = manifest_dir.join("grammar.js");
+    let grammar_path = manifest_dir.join("../../common/grammar.js");
     let result = Command::new("tree-sitter")
         .current_dir(&out_dir)
         .arg("generate")

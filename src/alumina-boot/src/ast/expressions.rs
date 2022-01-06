@@ -876,7 +876,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                 .add_item(Some(name), NamedItem::new_default(NamedItemKind::Local(id)))
                 .with_span(&self.scope, node)?;
 
-            self.visit(node.child_by_field_name("body").unwrap())?
+            self.in_a_loop = true;
+            let ret = self.visit(node.child_by_field_name("body").unwrap());
+            self.in_a_loop = false;
+            ret?
         });
 
         // TODO: This is a mess, it should not be so verbose to unsugar a simple for loop
