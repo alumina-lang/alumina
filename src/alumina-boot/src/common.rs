@@ -232,6 +232,13 @@ impl CodeError {
             backtrace: span.into_iter().map(|s| Marker::Span(s)).collect(),
         }
     }
+
+    pub fn freeform(s: impl ToString) -> Self {
+        Self {
+            kind: CodeErrorKind::UserDefined(s.to_string()),
+            backtrace: vec![],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

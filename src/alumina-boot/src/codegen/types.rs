@@ -102,6 +102,8 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                 let inner = self.ctx.get_type(inner);
                 let name = inner.mangle(self.ctx.make_id());
 
+                assert!(inner != name);
+
                 if *is_const {
                     w!(self.type_decls, "typedef const {} *{};\n", inner, name);
                 } else {

@@ -209,9 +209,9 @@ struct File {
 }
 
 impl File {
-    use result::Result;
+    use result::{Result, try};
     use ffi::CString;
-
+    
     /// Opens file in read-only mode.
     fn open(path: &[u8]) -> Result<File, Error> {
         open_with(path, OpenOptions::new().read(true))
@@ -239,6 +239,22 @@ impl File {
         ));
 
         Result::ok(File { fd: fd })
+    }
+
+    fn read_to_string(path: &[u8]) -> Result<collections::Vector<u8>, Error> {
+        let string = collections::Vector::new::<u8>();
+        let string_writer = StringWriter::new(&string);
+
+        let file = try!(File::open(path));
+        defer file.close();
+
+        let ret = copy(&file, &string_writer);
+        if ret.is_ok {
+            Result::ok(string)
+        } else {
+            string.free();
+            Result::err(ret.unwrap_err())
+        }
     }
 
     fn from_fd(fd: libc::c_int) -> File {

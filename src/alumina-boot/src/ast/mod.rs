@@ -571,6 +571,11 @@ impl BinOp {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CodegenType {
+    CMain,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Attribute {
     Export,
     Inline,
@@ -578,6 +583,7 @@ pub enum Attribute {
     ForceInline,
     Intrinsic,
     StaticConstructor,
+    Codegen(CodegenType),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]

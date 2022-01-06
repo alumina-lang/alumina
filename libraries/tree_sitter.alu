@@ -1,0 +1,365 @@
+// Alumina bindings for the Tree-Sitter library
+
+use std::libc::c_char;
+use std::ffi::CString;
+use std::fmt::{Formatter, write};
+use std::result::Result;
+use std::option::Option;
+
+use u16 as TSSymbol;
+use u16 as TSFieldId;
+
+// Todo: make those extern types
+struct TSParser {}
+struct TSLanguage {}
+struct TSTree {}
+struct TSQuery {}
+struct TSQueryCursor {}
+
+struct TSPoint {
+    row: u32,
+    column: u32,
+}  
+
+enum TSInputEncoding {
+    UTF8 = 0i32,
+    UTF16 = 1i32,
+}  
+
+enum TSSymbolType {
+    Regular = 0i32,
+    Anonymous = 1i32,
+    Auxiliary = 2i32,
+}  
+
+struct TSInput{
+    payload: &void,
+    read: fn(&void, u32, TSPoint, &mut u32) -> &c_char,
+    encoding: TSInputEncoding
+}   
+
+struct TSNode {
+    context: [u32; 4],
+    id: &void,
+    tree: &TSTree,
+}
+
+struct TSTreeCursor {
+    tree: &void,
+    id: &void,
+    context: [u32; 2],
+}
+
+extern "C" fn ts_parser_new() -> &mut TSParser;
+extern "C" fn ts_parser_delete(self: &mut TSParser);
+extern "C" fn ts_tree_delete(self: &mut TSTree);
+
+extern "C" fn ts_parser_set_language(self: &mut TSParser, language: &TSLanguage) -> bool;
+extern "C" fn ts_parser_parse(self: &mut TSParser, old_tree: &TSTree, input: TSInput) -> &mut TSTree;
+extern "C" fn ts_tree_root_node(self: &TSTree) -> TSNode;
+extern "C" fn ts_node_string(self: TSNode) -> &c_char;
+extern "C" fn ts_node_symbol(self: TSNode) -> TSSymbol;
+
+extern "C" fn ts_node_is_null(self: TSNode) -> bool;
+extern "C" fn ts_node_is_named(self: TSNode) -> bool;
+extern "C" fn ts_node_is_missing(self: TSNode) -> bool;
+extern "C" fn ts_node_is_extra(self: TSNode) -> bool;
+extern "C" fn ts_node_has_changes(self: TSNode) -> bool;
+extern "C" fn ts_node_has_error(self: TSNode) -> bool;
+extern "C" fn ts_node_start_byte(self: TSNode) -> u32;
+extern "C" fn ts_node_end_byte(self: TSNode) -> u32;
+extern "C" fn ts_node_start_point(self: TSNode) -> TSPoint;
+extern "C" fn ts_node_end_point(self: TSNode) -> TSPoint;
+extern "C" fn ts_node_child_by_field_id(self: TSNode, field: TSFieldId) -> TSNode;
+
+extern "C" fn ts_tree_cursor_new(self: TSNode) -> TSTreeCursor;
+extern "C" fn ts_tree_cursor_delete(self: &mut TSTreeCursor);
+extern "C" fn ts_tree_cursor_reset(self: &mut TSTreeCursor, node: TSNode);
+extern "C" fn ts_tree_cursor_current_node(self: &TSTreeCursor) -> TSNode;
+extern "C" fn ts_tree_cursor_current_field_id(self: &TSTreeCursor) -> TSFieldId;
+extern "C" fn ts_tree_cursor_goto_parent(self: &mut TSTreeCursor) -> bool;
+extern "C" fn ts_tree_cursor_goto_next_sibling(self: &mut TSTreeCursor) -> bool;
+extern "C" fn ts_tree_cursor_goto_first_child(self: &mut TSTreeCursor) -> bool;
+extern "C" fn ts_tree_cursor_goto_first_child_for_byte(self: &mut TSTreeCursor, byte: u32) -> i64;
+extern "C" fn ts_tree_cursor_goto_first_child_for_point(self: &mut TSTreeCursor, point: TSPoint) -> i64;
+extern "C" fn ts_tree_cursor_copy(self: &TSTreeCursor) -> TSTreeCursor;
+
+
+extern "C" fn ts_language_symbol_count(self: &TSLanguage) -> u32;
+extern "C" fn ts_language_field_count(self: &TSLanguage) -> u32;
+
+extern "C" fn ts_language_symbol_type(self: &TSLanguage, id: TSSymbol) -> TSSymbolType;
+
+extern "C" fn ts_language_symbol_name(self: &TSLanguage, id: TSSymbol) -> &c_char;
+extern "C" fn ts_language_field_name_for_id(self: &TSLanguage, id: TSFieldId) -> &c_char;
+
+impl TSLanguage {
+    fn symbol_name(self: &TSLanguage, id: TSSymbol) -> &[u8] {
+        let name = ts_language_symbol_name(self, id);
+        CString::as_slice(name)
+    }
+
+    fn symbol_type(self: &TSLanguage, id: TSSymbol) -> TSSymbolType {
+        ts_language_symbol_type(self, id)
+    }
+
+    fn field_name(self: &TSLanguage, id: TSFieldId) -> &[u8] {
+        let name = ts_language_field_name_for_id(self, id);
+        CString::as_slice(name)
+    }
+
+    fn symbols(self: &TSLanguage) -> std::iter::Range<TSSymbol> {
+        range(1 as TSSymbol, ts_language_symbol_count(self) as TSSymbol)
+    }
+
+    fn fields(self: &TSLanguage) -> std::iter::Range<TSFieldId> {
+        range(1 as TSFieldId, ts_language_field_count(self) as TSFieldId)
+    }
+}
+
+fn default_read(payload: &void, byte_offset: u32, point: TSPoint, read_size: &mut u32) -> &c_char {
+    let slice = *(payload as &&[u8]);
+    let remaining = slice[byte_offset as usize..];
+    *read_size = remaining.len as u32;
+    return remaining.ptr as &c_char;
+}
+
+struct Parser {
+    inner: &mut TSParser
+}
+
+enum Error {
+    VersionMismatch
+}
+
+impl Error {
+    fn fmt<F: Formatter<F>>(self: &Error, f: &mut F) {
+        switch *self {
+            Error::VersionMismatch => write!(f, "Version mismatch"),
+        }
+    }
+}
+
+impl Parser {
+    fn new() -> Parser {
+        Parser {
+            inner: ts_parser_new()
+        }
+    }
+
+    fn parse(self: &mut Parser, text: &[u8]) -> Tree {
+        let input = TSInput {
+            payload: &text as &void,
+            read: default_read,
+            encoding: TSInputEncoding::UTF8
+        };
+
+        Tree {
+            inner: ts_parser_parse(self.inner, null, input)
+        }
+    }
+
+    fn set_language(self: &mut Parser, language: &TSLanguage) -> Result<(), Error> {
+        if ts_parser_set_language(self.inner, language) {
+            Result::ok(())
+        } else {
+            Result::err(Error::VersionMismatch)
+        }
+    }
+
+    fn free(self: &mut Parser) {
+        ts_parser_delete(self.inner);
+    }
+}
+
+struct Tree {
+    inner: &mut TSTree
+}
+
+impl Tree {
+    fn root_node(self: &Tree) -> Option<Node> {
+        Node::from_raw(ts_tree_root_node(self.inner))
+    }
+
+    fn free(self: &mut Tree) {
+        ts_tree_delete(self.inner);
+    }
+}
+
+impl TSTreeCursor {
+    fn node(self: &TSTreeCursor) -> Node {
+        Node { inner: ts_tree_cursor_current_node(self) }
+    }
+
+    fn field_id(self: &TSTreeCursor) -> Option<TSFieldId> {
+        let id = ts_tree_cursor_current_field_id(self);
+        if id == 0 {
+            Option::none()
+        } else {
+            Option::some(id)
+        }
+    }
+
+    fn goto_first_child(self: &mut TSTreeCursor) -> bool {
+       ts_tree_cursor_goto_first_child(self) 
+    }
+
+    fn goto_parent(self: &mut TSTreeCursor) -> bool {
+        ts_tree_cursor_goto_parent(self)
+    }
+
+    fn goto_next_sibling(self: &mut TSTreeCursor) -> bool {
+        ts_tree_cursor_goto_next_sibling(self)
+    }
+
+    fn goto_first_child_for_byte(self: &mut TSTreeCursor, index: usize) -> Option<usize> {
+        let result =
+            ts_tree_cursor_goto_first_child_for_byte(self, index as u32);
+        if result < 0 {
+            Option::none()
+        } else {
+            Option::some(result as usize)
+        }
+    }
+
+    fn goto_first_child_for_point(self: &mut TSTreeCursor, point: TSPoint) -> Option<usize> {
+        let result =
+            ts_tree_cursor_goto_first_child_for_point(self, point);
+        if result < 0 {
+            Option::none()
+        } else {
+            Option::some(result as usize)
+        }
+    }
+
+    fn reset(self: &mut TSTreeCursor, node: TSNode) {
+        ts_tree_cursor_reset(self, node)
+    }
+
+    fn free(self: &mut TSTreeCursor) {
+        ts_tree_cursor_delete(self)
+    }
+}
+
+struct ChildrenIterator {
+    cursor: &mut TSTreeCursor,
+    field_id: Option<TSFieldId>,
+    done: bool
+}
+
+impl ChildrenIterator {
+    fn next(self: &mut ChildrenIterator) -> Option<Node> {
+        while !self.done {
+            if self.field_id.is_some {
+                while self.cursor.field_id() != self.field_id {
+                    if !self.cursor.goto_next_sibling() {
+                        self.done = true;
+                        return Option::none()
+                    }
+                }
+            }
+
+            let result = self.cursor.node();
+            if !self.cursor.goto_next_sibling() {
+                self.done = true;
+            }
+            return Option::some(result);
+        }
+        Option::none()
+    }
+
+    fn iter(self: &ChildrenIterator) -> ChildrenIterator {
+        *self
+    }
+}
+
+struct Node {
+    inner: TSNode
+}
+
+impl Node {
+    fn from_raw(raw: TSNode) -> Option<Node> {
+        if ts_node_is_null(raw) {
+            Option::none()
+        } else {
+            Option::some(Node {
+                inner: raw
+            })
+        }
+    }
+
+    fn walk(self: &Node) -> TSTreeCursor {
+        ts_tree_cursor_new(self.inner)
+    }
+
+    fn start_byte(self: &Node) -> usize {
+        ts_node_start_byte(self.inner) as usize
+    }
+
+    fn end_byte(self: &Node) -> usize {
+        ts_node_end_byte(self.inner) as usize
+    }
+
+    fn is_named(self: &Node) -> bool {
+        ts_node_is_named(self.inner)
+    }
+
+    fn is_missing(self: &Node) -> bool {
+        ts_node_is_missing(self.inner)
+    }
+
+    fn is_extra(self: &Node) -> bool {
+        ts_node_is_extra(self.inner)
+    }
+
+    fn has_changes(self: &Node) -> bool {
+        ts_node_has_changes(self.inner)
+    }
+
+    fn has_error(self: &Node) -> bool {
+        ts_node_has_error(self.inner)
+    }
+
+    fn symbol(self: &Node) -> TSSymbol {
+        ts_node_symbol(self.inner)
+    }
+
+    fn text(self: &Node, source: &[u8]) -> &[u8] {
+        let start = self.start_byte();
+        let end = self.end_byte();
+        source[start..end]
+    }
+
+    fn children(self: &Node, cursor: &mut TSTreeCursor) -> ChildrenIterator {
+        cursor.reset(self.inner);
+        cursor.goto_first_child();
+
+        ChildrenIterator {
+            cursor: cursor,
+            field_id: Option::none(),
+            done: false
+        }
+    }
+
+    fn children_by_field_id(self: &Node, field_id: TSFieldId, cursor: &mut TSTreeCursor) -> ChildrenIterator {
+        cursor.reset(self.inner);
+        cursor.goto_first_child();
+
+        ChildrenIterator {
+            cursor: cursor,
+            field_id: Option::some(field_id),
+            done: false
+        }
+    }
+
+    fn child_by_field_id(self: &Node, field_id: TSFieldId) -> Option<Node> {
+        from_raw(ts_node_child_by_field_id(self.inner, field_id))
+    }
+
+    fn fmt<F: Formatter<F>>(self: &Node, f: &mut F) {
+        let string = ts_node_string(self.inner);
+        defer std::libc::free(string as &mut void);
+
+        write!(f, "{}", CString::as_slice(string));
+    }
+}

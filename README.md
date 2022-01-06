@@ -1,6 +1,6 @@
 # The Alumina Programming Language
 
-Alumina is a programming language. 
+Alumina is a general-purpose programming language. 
 
 Non-exhaustive list of distinguishing features:
 
@@ -23,9 +23,9 @@ Non-exhaustive list of distinguishing features:
 
 Alumina is heavily inspired by Rust, especially in terms of syntax and standard library API. Unlike Rust, however, Alumina is not memory-safe and it requires manual memory management.
 
-## Motivating example
+# Motivating example
 
-<!-- totally not rust lmao -->
+<!-- github, add syntax highlighting for Alumina pls -->
 ```rust
 struct Stack<T> {
     data: &mut [T],
@@ -93,9 +93,9 @@ fn main() {
 }
 ```
 
-## Status
+# Status
 
-Bootstrap Alumina compiler (`alumina-boot`) is written in Rust and is currently actively developed. It compiles to ugly C11 code with GCC extensions. It is currently at a point where it can be considered a functional compiler, but it is not by any means stable or complete.
+Bootstrap Alumina compiler ([`alumina-boot`](./aluminac)) is written in Rust and is currently actively developed. It compiles to ugly C11 code with GCC extensions. It is currently at a point where it can be considered a functional compiler, but it is not by any means stable, reliable or complete.
 
 Finished:
 
@@ -111,27 +111,62 @@ TBD:
 - Standard library is only usable on Linux-like targets
 - Probably a lot of bugs and miscompilations
 
+A self-hosted compiler ([`aluminac`](./aluminac)) is also being written. It is in very early stages (is only able to parse source at the moment). It will eventually have a LLVM backend.
+
 Full list of missing features, open questions, bugs and ideas for the future in [MISSING.md](./MISSING.md)
 
-After the compiler is reliable enough, Alumina will be written as a self-hosted compiler with a LLVM backend (as this has always been my dream).
+# Try it out
 
-
-## Try it out
+## Prerequisites
 
 To compile `alumina-boot` compiler from source, these prerequisites are needed:
   
+  - A C compiler (GCC/clang)
   - Nightly Rust toolchain (`rustup install nightly`)
   - Tree-sitter CLI (`npm install -g tree-sitter-cli`)
 
-Then, run `cargo +nightly install --path .` to build and install the compiler. 
+Additionally, to compile `aluminac`, Tree-sitter runtime library (`libtree-sitter.a`/`libtree-sitter.so`) is needed:
 
-To compile and run a simple program, try:
+```bash
+https://github.com/tree-sitter/tree-sitter
+cd tree-sitter
+make
+sudo make install
+```
+
+## Building
+  
+To compile `alumina-boot` compiler from source, run:
+```
+make alumina-boot
+```
+
+Now you are able to compile Aluimina code, e.g.
 
 ```
-alumina-boot --sysroot ./stdlib hello_world=./examples/hello_world.alu -o hello_world.c
+./build/alumina-boot --sysroot ./stdlib hello_world=./examples/hello_world.alu -o hello_world.c
 cc hello_world.c -o hello_world
 ./hello_world
 ```
 
-See [examples](./examples) and [standard library](./stdlib) for a tour of the language, 
-documentation is TBD.
+To compile the self-hosted compiler, run:
+```
+make alumina-boot
+```
+
+See [examples](./examples), [standard library](./stdlib) and the [self-hosted compiler](./aluminac) for a tour of the language, documentation is TBD.
+
+# Contributing
+
+Issues, pull requests, and feature requests are most welcome. There is not a good test suite at the moment, but there are regression tests that run all the examples in the `examples` folders. These tests are run with 
+
+```
+make test
+```
+
+If the snapshot need to be updated, run 
+
+```
+make test-fix
+```
+

@@ -17,6 +17,10 @@ impl CString {
         CString { ptr: ptr }
     }
 
+    fn as_slice(ptr: &libc::c_char) -> &[u8] {
+        mem::slice::from_raw(ptr as &u8, libc::strlen(ptr) as usize)
+    }
+
     fn free(self: &mut CString) {
         libc::free(self.ptr as &mut void);
     }

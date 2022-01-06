@@ -38,6 +38,31 @@ protocol Writable<Self> {
     }
 }
 
+struct StringWriter {
+    string: &mut collections::Vector<u8>,
+}
+
+impl StringWriter {
+    use result::Result;
+
+    fn new(string: &mut collections::Vector<u8>) -> StringWriter {
+        StringWriter {
+            string: string
+        }
+    }
+
+    fn write(self: &mut StringWriter, buf: &[u8]) -> Result<usize, Error> {
+        self.string.extend_from_slice(buf);
+        Result::ok(buf.len)
+    }
+
+    fn flush(self: &mut StringWriter) -> Result<(), Error> {
+        Result::ok(())
+    }
+
+    mixin Writable<StringWriter>
+}
+
 protocol BufferedReadable<Self: Readable<Self>> {
     use result::Result;
 
@@ -116,6 +141,22 @@ impl BufferedReader<R: Readable<R>> {
 
 
 // Extension methods
+fn copy<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D) -> result::Result<(), Error> {
+    use result::try;
+
+    let buf: [u8; 1024];
+    let buf = buf.as_slice_mut();
+
+    loop {
+        let n = try!(src.read(buf));
+        if n == 0 {
+            break;
+        }
+        try!(dst.write_all(buf[0..n]));
+    }
+
+    dst.flush()
+}
 
 fn read_byte<R: Readable<R>>(reader: &mut R) -> result::Result<u8, Error> {
     use std::result::{try, Result};
@@ -149,8 +190,6 @@ fn read_until<R: BufferedReadable<R>>(r: &mut R, delim: u8, buf: &mut collection
         }
     }
 }
-
-
 
 struct LineIterator<R: BufferedReadable<R>> {
     line_buf: collections::Vector<u8>,

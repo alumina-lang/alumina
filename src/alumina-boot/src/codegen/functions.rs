@@ -1,5 +1,5 @@
 use crate::{
-    ast::{Attribute, BinOp, BuiltinType, UnOp},
+    ast::{Attribute, BinOp, BuiltinType, CodegenType, UnOp},
     codegen::CName,
     common::AluminaError,
     intrinsics::CodegenIntrinsicKind,
@@ -402,6 +402,13 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             self.type_writer.add_type(arg.ty)?;
         }
 
+        if item
+            .attributes
+            .contains(&Attribute::Codegen(CodegenType::CMain))
+        {
+            return Ok(());
+        }
+
         if item.body.get().is_none() || should_export {
             self.ctx
                 .register_name(id, CName::Native(item.name.unwrap()));
@@ -452,7 +459,20 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             return Ok(());
         }
 
-        write_function_signature(self.ctx, &mut self.fn_bodies, id, item, !should_export)?;
+        if item
+            .attributes
+            .contains(&Attribute::Codegen(CodegenType::CMain))
+        {
+            // Clang expects an exact signature
+            w!(
+                self.fn_bodies,
+                "int main(int {}, char **{})",
+                self.ctx.get_name(item.args[0].id),
+                self.ctx.get_name(item.args[1].id)
+            );
+        } else {
+            write_function_signature(self.ctx, &mut self.fn_bodies, id, item, !should_export)?;
+        }
 
         let body = item.body.get().unwrap();
         w!(self.fn_bodies, "{{\n");

@@ -1,0 +1,88 @@
+use std::result::{Result, try};
+use tree_sitter::{TSLanguage, Node, Parser, TSTreeCursor, TSFieldId};
+use node_kinds::{NodeVisitor, FieldKind};
+use common::{NodeVisitorExt, child_by, Error};
+use std::io::File;
+
+extern "C" fn tree_sitter_alumina() -> &TSLanguage;
+
+struct SampleVisitor {
+    cursor: &mut TSTreeCursor,
+    source: &[u8]
+}
+
+impl SampleVisitor {
+    fn new(source: &[u8], cursor: &mut TSTreeCursor) -> SampleVisitor {
+        SampleVisitor {
+            cursor: cursor,
+            source: source
+        }
+    }
+
+    fn visit_source_file(self: &mut SampleVisitor, node: Node) -> Result<(), Error> {
+        self.visit_children(node)
+    }
+
+    fn visit_function_definition(self: &mut SampleVisitor, node: Node) -> Result<(), Error> {
+        let name = child_by!(node, FieldKind::Name).unwrap();
+
+        println!("function: {}", name.text(self.source));
+        Result::ok(())
+    } 
+
+    fn visit_macro_definition(self: &mut SampleVisitor, node: Node) -> Result<(), Error> {
+        let name = child_by!(node, FieldKind::Name).unwrap();
+
+        println!("function: {}", name.text(self.source));
+        Result::ok(())
+    }
+
+    fn visit_struct_definition(self: &mut SampleVisitor, node: Node) -> Result<(), Error> {
+        let name = child_by!(node, FieldKind::Name).unwrap();
+
+        println!("function: {}", name.text(self.source));
+        Result::ok(())
+    }
+
+    fn visit_impl_block(self: &mut SampleVisitor, node: Node) -> Result<(), Error> {
+        let name = child_by!(node, FieldKind::Name).unwrap();
+
+        println!("impl: {}", name.text(self.source));
+        Result::ok(())
+    }
+    
+    fn visit_protocol_definition(self: &mut SampleVisitor, node: Node) -> Result<(), Error> {
+        let name = child_by!(node, FieldKind::Name).unwrap();
+
+        println!("protocol: {}", name.text(self.source));
+        Result::ok(())
+    }
+
+    fn visit_use_declaration(self: &mut SampleVisitor, node: Node) -> Result<(), Error> {
+        Result::ok(())
+    }
+    
+    mixin NodeVisitor<SampleVisitor, Result<(), Error>>;
+    mixin NodeVisitorExt<SampleVisitor, Result<(), Error>>;
+}
+
+fn main() {
+    let parser = Parser::new();
+    defer parser.free();
+
+    parser.set_language(tree_sitter_alumina()).unwrap()
+    let source = std::io::File::read_to_string("./src/aluminac/main.alu").unwrap();
+    defer source.free();
+    
+    let tree = parser.parse(source.as_slice());
+    defer tree.free();
+    
+    let root_node = tree.root_node().unwrap();
+    let cursor = root_node.walk();
+    defer cursor.free();
+
+    let visitor = SampleVisitor::new(source.as_slice(), &cursor);
+    visitor.visit(root_node);
+}
+
+

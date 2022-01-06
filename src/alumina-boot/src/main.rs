@@ -18,6 +18,7 @@ mod visitors;
 
 use clap::Parser;
 use common::AluminaError;
+use common::CodeError;
 use compiler::Compiler;
 use compiler::SourceFile;
 
@@ -27,6 +28,7 @@ use global_ctx::OutputType;
 use std::error::Error;
 
 use std::path::PathBuf;
+use std::time::Instant;
 use walkdir::WalkDir;
 
 /// Parse a single key-value pair
@@ -78,6 +80,10 @@ struct Args {
     /// Compile in debug mode
     #[clap(long, short)]
     debug: bool,
+
+    /// Collect timings
+    #[clap(long)]
+    timings: bool,
 
     /// Whether a library should be output
     #[clap(long)]
@@ -138,13 +144,16 @@ fn get_sysroot(args: &Args) -> Result<Vec<SourceFile>, AluminaError> {
 }
 
 fn main() {
+    let start_time = Instant::now();
     let args = Args::parse();
 
-    let mut global_ctx = GlobalCtx::new(if args.library {
+    let output_type = if args.library {
         OutputType::Library
     } else {
         OutputType::Executable
-    });
+    };
+
+    let mut global_ctx = GlobalCtx::new(output_type);
     let mut compiler = Compiler::new(global_ctx.clone());
 
     let mut files = get_sysroot(&args).unwrap();
@@ -167,11 +176,18 @@ fn main() {
         global_ctx.add_flag("debug");
     }
 
-    //BufReader
-
-    match compiler.compile(files) {
+    match compiler.compile(files, start_time) {
         Ok(program) => {
             let diag_ctx = global_ctx.diag();
+            if args.timings {
+                for (stage, duration) in compiler.timings() {
+                    diag_ctx.add_note(CodeError::freeform(format!(
+                        "compiler timings: stage {:?} took {}ms",
+                        stage,
+                        duration.as_millis()
+                    )));
+                }
+            }
             diag_ctx.print_error_report().unwrap();
             match args.output {
                 Some(filename) => std::fs::write(filename, program).unwrap(),

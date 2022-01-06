@@ -1,0 +1,45 @@
+use std::result::{Result, try};
+use tree_sitter::{Node, TSFieldId};
+use node_kinds::{FieldKind};
+
+macro child_by($node, $field) {
+    $node.child_by_field_id($field as TSFieldId)
+}
+
+macro children_by($node, $field, $cursor) {
+    $node.children_by_field_id($field as TSFieldId, $cursor)
+}
+
+protocol NodeVisitorExt<Self, ReturnType> {
+    fn visit_children(self: &mut Self, node: Node) -> ReturnType {
+        when ReturnType: () {
+            for node in node.children(self.cursor) {
+                self.visit(node);
+            }
+        } else when ReturnType: Result<(), Error> {
+            for node in node.children(self.cursor) {
+                try!(self.visit(node));
+            }
+            Result::ok(())
+        } else {
+            std::compile_fail!("unsupported return type");
+        }
+    }
+
+    fn visit_children_by_field(self: &mut Self, node: Node, field: FieldKind) -> ReturnType {
+        when ReturnType: () {
+            for node in children_by!(node, field, self.cursor) {
+                self.visit(node);
+            }
+        } else when ReturnType: Result<(), Error> {
+            for node in children_by!(node, field, self.cursor) {
+                try!(self.visit(node));
+            }
+            Result::ok(())
+        } else {
+            std::compile_fail!("unsupported return type");
+        }
+    }
+}
+
+struct Error {}
