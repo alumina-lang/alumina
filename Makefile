@@ -35,11 +35,15 @@ $(BUILD_DIR)/.build:
 	mkdir -p $(BUILD_DIR)
 	touch $@
 
+## ----------------- Bootstrap compiler (alumina-boot) -----------------
+
 # alumina-boot is entirely built by cargo, it is here in the Makefile just so it can 
 # be a dependency and gets rebuilt if sources change.
 $(ALUMINA_BOOT): $(BOOTSTRAP_SOURCES) $(COMMON_SOURCES) $(BUILD_DIR)/.build
 	cargo build $(CARGO_FLAGS)
 	cp $(CARGO_TARGET_DIR)/alumina-boot $(ALUMINA_BOOT)
+
+## --------------------------- Stdlib tests ----------------------------
 
 # Stdlib tests
 $(STDLIB_TESTS).c: $(ALUMINA_BOOT) $(SYSROOT_FILES)
@@ -47,7 +51,9 @@ $(STDLIB_TESTS).c: $(ALUMINA_BOOT) $(SYSROOT_FILES)
 
 $(STDLIB_TESTS): $(STDLIB_TESTS).c
 	$(CC) $(CFLAGS) -o $@ $(STDLIB_TESTS).c
-	
+
+## ------------------ Self-hosted compiler (aluminac) ------------------
+
 # Compile tree sitter grammar to C. Bootstrap compiler does it by itself in the Cargo
 # build script, but for aluminac, we need to do it in the Makefile.
 $(BUILD_DIR)/src/parser.c: common/grammar.js
@@ -77,22 +83,11 @@ $(ALUMINAC).c: $(ALU_DEPS) $(SELFHOSTED_SOURCES) src/aluminac/node_kinds.alu
 $(ALUMINAC): $(ALUMINAC).c $(BUILD_DIR)/parser.o
 	$(CC) $(CFLAGS) -o $@ $(BUILD_DIR)/parser.o $(ALUMINAC).c -ltree-sitter
 
-.PHONY: test test-fix
-test: $(ALUMINA_BOOT) $(STDLIB_TESTS)
-	$(STDLIB_TESTS)
-	cd tools/snapshot-tests/ && pytest snapshot.py
+## ------------------------------ Various ------------------------------
 
-test-fix: $(ALUMINA_BOOT)
-	cd tools/snapshot-tests/ && pytest snapshot.py --snapshot-update
-
-.PHONY: clean all minimal
+.PHONY: clean all
 clean:
 	rm -rf $(BUILD_ROOT)/
-
-minimal: $(ALUMINA_BOOT)
-	RUST_BACKTRACE=1 $(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --output foo.c minimal=./minimal.alu
-	cc -O0 foo.c
-	./a.out
 
 # Some convenience symlinks
 alumina-boot: $(ALUMINA_BOOT)
@@ -101,5 +96,23 @@ alumina-boot: $(ALUMINA_BOOT)
 aluminac: $(ALUMINAC)
 	ln -sf $(ALUMINAC) $@
 
+.PHONY: test test-fix
+test: alumina-boot $(STDLIB_TESTS)
+	$(STDLIB_TESTS) --include-std
+	cd tools/snapshot-tests/ && pytest snapshot.py
+
+test-fix: $(ALUMINA_BOOT)
+	cd tools/snapshot-tests/ && pytest snapshot.py --snapshot-update
+
 .DEFAULT_GOAL := all
 all: alumina-boot aluminac
+
+## ------------------ Ad-hoc manual testing shortcuts ------------------
+
+quickrun: $(ALUMINA_BOOT) $(SYSROOT_FILES) quick.alu
+	RUST_BACKTRACE=1 $(ALUMINA_BOOT) $(ALUMINA_FLAGS) --output quick.c quick=./quick.alu
+	cc -o quickrun -O0 quick.c
+
+quicktest: $(ALUMINA_BOOT) $(SYSROOT_FILES) quick.alu
+	RUST_BACKTRACE=1 $(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --output quick.c quick=./quick.alu
+	cc -o quicktest -O0 quick.c

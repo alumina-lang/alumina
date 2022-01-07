@@ -139,7 +139,7 @@ impl Compiler {
             // only the functions that are transitively called from the entry point will be
             // emitted.
             if inner.should_compile() {
-                let mut monomorphizer = Monomorphizer::new(&mut mono_ctx, false);
+                let mut monomorphizer = Monomorphizer::new(&mut mono_ctx, false, None);
                 monomorphizer.monomorphize_item(item, &[])?;
             }
         }
@@ -147,13 +147,13 @@ impl Compiler {
         // Main glue code
         if self.global_ctx.should_generate_main_glue() {
             if let Some(main_candidate) = main_candidate {
-                let mut monomorphizer = Monomorphizer::new(&mut mono_ctx, false);
+                let mut monomorphizer = Monomorphizer::new(&mut mono_ctx, false, None);
                 let user_main = monomorphizer.monomorphize_item(main_candidate, &[])?;
 
                 let glue = ast
                     .lang_item(crate::ast::lang::LangItemKind::EntrypointGlue)
                     .with_no_span()?;
-                let mut monomorphizer = Monomorphizer::new(&mut mono_ctx, false);
+                let mut monomorphizer = Monomorphizer::new(&mut mono_ctx, false, None);
 
                 let main_ty = ir_ctx.intern_type(crate::ir::Ty::NamedFunction(user_main));
 
@@ -162,7 +162,7 @@ impl Compiler {
         }
 
         // Finally generate static initialization code
-        let mut monomorphizer = Monomorphizer::new(&mut mono_ctx, false);
+        let mut monomorphizer = Monomorphizer::new(&mut mono_ctx, false, None);
         monomorphizer.generate_static_constructor()?;
 
         timing!(self, cur_time, Stage::Mono);

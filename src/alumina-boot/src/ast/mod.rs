@@ -599,8 +599,10 @@ pub enum CodegenType {
 pub enum Attribute {
     Export,
     Test,
+    Cold,
     TestMain,
     Inline,
+    NoInline,
     Builtin,
     ForceInline,
     Intrinsic,

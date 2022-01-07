@@ -143,6 +143,17 @@ fn get_sysroot(args: &Args) -> Result<Vec<SourceFile>, AluminaError> {
     Ok(result)
 }
 
+#[test]
+fn must_pass() {}
+
+#[test]
+#[ignore]
+fn ignored() {}
+
+#[test]
+#[should_panic]
+fn does_not_actually_panic() {}
+
 fn main() {
     let start_time = Instant::now();
     let args = Args::parse();

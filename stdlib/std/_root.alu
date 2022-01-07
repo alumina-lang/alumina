@@ -8,9 +8,26 @@ macro assert($cond) {
     }
 }
 
-macro debug_assert($cond) {
+macro assert_eq($lhs, $rhs) {
+    internal::assert_eq(file!(), line!(), column!(), $lhs, $rhs);
+}
+
+macro assert_ne($lhs, $rhs) {
+    internal::assert_ne(file!(), line!(), column!(), $lhs, $rhs);
+}
+
+macro debug_assert($cond) { #[cfg(debug)] assert!($cond); }
+macro debug_assert_eq($lhs, $rhs) { #[cfg(debug)] assert_eq!($lhs, $rhs); }
+macro debug_assert_ne($lhs, $rhs) { #[cfg(debug)] assert_ne!($lhs, $rhs); }
+
+
+/// Satisy the typechecker if the code is unreachable. Note that when compiled 
+/// in release mode, this will cause UB if ever reached.
+macro unreachable() {
     #[cfg(debug)]
-    assert!($cond);
+    panic!("reached unreachable code");
+    #[cfg(not(debug))]
+    std::intrinsics::unreachable();
 }
 
 #[builtin] macro line() {  }
@@ -19,6 +36,43 @@ macro debug_assert($cond) {
 #[builtin] macro env($s) {  }
 #[builtin] macro include_bytes($file) {  }
 #[builtin] macro concat($parts...) {  }
+
+mod internal {
+    use panicking::internal::{panic_impl, PanicFormatter};
+    use fmt::{Formattable, internal::FormatArg};
+
+    // These are in a function instead of a macro so we can typecheck and display a nice
+    // error message if the argument is Formattable.
+
+    fn assert_eq<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T)  {
+        if lhs != rhs {
+            when T: Formattable<T> {
+                panic_impl("assertion failed ({} != {}))", file, line, column, &[
+                    FormatArg::new(&lhs),
+                    FormatArg::new(&rhs)
+                ])
+            }
+            else {
+                panic_impl("assertion failed (does not equal))", file, line, column, &[])
+            }
+
+        }
+    }
+
+    fn assert_ne<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T)  {
+        if !(lhs == rhs) {
+            when T: Formattable<T> {
+                panic_impl("assertion failed ({} == {}))", file, line, column, &[
+                    FormatArg::new(&lhs),
+                    FormatArg::new(&rhs)
+                ])
+            }
+            else {
+                panic_impl("assertion failed (equals))", file, line, column, &[])
+            }
+        }
+    }
+}
 
 mod util {
     #[force_inline]

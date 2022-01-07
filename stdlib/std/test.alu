@@ -1,15 +1,15 @@
 // This unit testing mini-framework is in std for convenience's sake, eventually it should be
 // extracted. Nothing prevents you from writing your own framework, just compile with 
-// --cfg custom_test_framework and use the test support glue in std::runtime.
+// --cfg custom_test_framework and use the test support glue in std::runtime to get the test
+// cases.
 
 #[cfg(all(test, not(custom_test_framework))] 
 {
     use std::io::{File, StringWriter, anonymous_pipe, copy_to, Error};
     use std::result::{Result, try};
-    use std::collections::{Vector, free_all};
-    use std::runtime::internal::{test_cases, TestCaseMeta};
-
-    static TEST_CASES = std::runtime::internal::test_cases();
+    use std::option::Option;
+    use std::collections::{Vector, free_all, sort_by};
+    use std::runtime::internal::{TEST_CASES, TestCaseMeta};
 
     struct TestResult {
         test: TestCaseMeta,
@@ -25,11 +25,30 @@
         }
     }
 
-    fn run_test(test: TestCaseMeta) -> TestResult {
+    fn should_fail(test: &TestCaseMeta) -> bool {
+        for attr in test.attributes {
+            if attr == "(should_fail)" {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn ignored(test: &TestCaseMeta) -> bool {
+        for attr in test.attributes {
+            if attr == "(ignore)" {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn run(test: &TestCaseMeta) -> TestResult {
         // stdio redirection
         let (rx_err, tx_err) = anonymous_pipe().unwrap();
         let (rx_out, tx_out) = anonymous_pipe().unwrap();
     
+        let should_fail = test.should_fail();
         let pid = std::libc::fork();
         if pid == 0 {
             rx_err.close();
@@ -44,6 +63,10 @@
             tx_out.close();
 
             test.test();
+
+            if should_fail {
+                eprintln!("note: test function completed successfully")
+            }
             std::libc::exit(0);
         }
 
@@ -51,9 +74,6 @@
         tx_out.close();
         defer rx_out.close();
         defer rx_err.close();
-
-        let status: libc::c_int;
-        std::libc::waitpid(pid, &status, 0);
 
         let stdout : Vector<u8> = Vector::new();
         let stderr : Vector<u8> = Vector::new();
@@ -64,27 +84,115 @@
         rx_out.copy_to(&stdout_writer).unwrap();
         rx_err.copy_to(&stderr_writer).unwrap();
         
+        let status: libc::c_int;
+        std::libc::waitpid(pid, &status, 0);
+        
         TestResult {
-            test: test,
-            success: status == 0,
+            test: *test,
+            success: should_fail ^ (status == 0),
             stdout: stdout,
             stderr: stderr,
         }
     }
 
+    enum State {
+        Normal, 
+        Prefix,
+        Filter
+    }
+
+    fn print_help_string(args: &[&[u8]]) -> ! {
+        eprintln!("usage: {} [--include-std] [--prefix <PREFIX>] [--filter <FILTER>]", args[0]);
+        libc::exit(1);
+    }
+
+    fn filter_tests(args: &[&[u8]]) -> (Vector<TestCaseMeta>, usize) {
+        use string::{starts_with, contains};
+
+        let state = State::Normal;
+        
+        let include_std = false;
+        let prefix: Option<&[u8]> = Option::none();
+        let filter: Option<&[u8]> = Option::none();
+
+        for arg in args[1..] {
+            state = switch state {
+                State::Normal => switch arg {
+                    "--prefix", "-p" => State::Prefix,
+                    "--filter", "-f" => State::Filter,
+                    "--include-std" => {
+                        include_std = true;
+                        State::Normal
+                    }
+                    _ => print_help_string(args)
+                },
+                State::Prefix => {
+                    prefix = Option::some(arg);
+                    State::Normal
+                },
+                State::Filter => {
+                    filter = Option::some(arg);
+                    State::Normal
+                },
+                _ => unreachable!()
+            };
+        }
+
+        if state != State::Normal {
+            print_help_string(args);
+        }
+
+        let test_cases: Vector<TestCaseMeta> = Vector::new();
+        defer test_cases.free();
+
+        for test in TEST_CASES {
+            if !include_std && test.path.starts_with("::std") {
+                continue
+            }
+
+            if prefix.is_some && !test.path[2..].starts_with(prefix.inner) {
+                continue
+            }
+
+            if filter.is_some && !test.name.contains(filter.inner) {
+                continue
+            }
+
+            test_cases.push(test);
+        }
+
+        test_cases
+            .as_slice_mut()
+            .sort_by(|m: TestCaseMeta| -> (&[u8], &[u8]) { 
+                (m.path, m.name) 
+            });
+
+        let filtered_count = TEST_CASES.len - test_cases.len();
+
+        (test_cases.move(), filtered_count)
+    }
+
     #[test_main]
-    fn main() -> i32 {
-        let test_cases : &[TestCaseMeta] = TEST_CASES.as_slice();
+    fn main(args: &[&[u8]]) -> i32 {
         let results: Vector<TestResult> = Vector::new();
-        defer results.free_all()
+        defer results.free_all();
 
         let num_failed = 0;
         let num_passed = 0;
+        let num_ignored = 0;
 
-        eprintln!("running {} tests", test_cases.len);
+        let (test_cases, filtered_count) = filter_tests(args)
+        defer test_cases.free();
+
+        eprintln!("running {} tests ({} filtered out)", test_cases.len(), filtered_count);
         for test in test_cases {
-            eprint!("test {}::{} ... ", test.path, test.name);
-            let result = run_test(test);
+            eprint!("test {}::{} ... ", test.path[2..], test.name);
+            if test.ignored() {
+                eprintln!("\x1b[0;33mignored\x1b[0m.");
+                num_ignored += 1;
+                continue;
+            }
+            let result = test.run();
             results.push(result);
 
             if result.success {
@@ -103,33 +211,47 @@
             for result in results {
                 if !result.success {
                     if result.stdout.len() > 0 {
-                        eprintln!("---- {}::{} stdout ----", result.test.path, result.test.name);
+                        eprintln!("---- {}::{} stdout ----", result.test.path[2..], result.test.name);
                         eprintln!("{}", result.stdout.as_slice());
                         eprintln!("");
                     }
                     
                     if result.stderr.len() > 0 {
-                        eprintln!("---- {}::{} stderr ----", result.test.path, result.test.name);
+                        eprintln!("---- {}::{} stderr ----", result.test.path[2..], result.test.name);
                         eprintln!("{}", result.stderr.as_slice());
                         eprintln!("");
                     }
                 }
             }
-            eprintln!("test result: \x1b[0;31mFAILED\x1b[0m. {} passed; {} failed; finished in {} ms", 
+            eprintln!("test result: \x1b[0;31mFAILED\x1b[0m. {} passed; {} failed; {} ignored; finished in {} ms", 
                 num_passed, 
                 num_failed, 
+                num_ignored,
                 0
             );
             1
         } else {
             eprintln!("");
-            eprintln!("test result: \x1b[0;32mok\x1b[0m. {} passed; {} failed; finished in {} ms", 
+            eprintln!("test result: \x1b[0;32mok\x1b[0m. {} passed; {} failed; {} ignored; finished in {} ms", 
                 num_passed, 
                 num_failed, 
+                num_ignored, 
                 0
             );
             0
         }
+    }
+    
+    // Quis testabitur ipsos testes
+    #[test]
+    fn regular_test() {
+    }
 
-    }   
+    #[test(ignore)]
+    fn ignored_test() {}
+
+    #[test(should_fail)]
+    fn should_fail_test() {
+        panic!("oops")
+    }
 }

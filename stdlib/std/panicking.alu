@@ -1,18 +1,56 @@
-static _panicking: bool = false;
+
 
 macro panic($reason, $args...) {
-    if _panicking {
-        // To avoid infinite recursion if panic handler panics again.
-        intrinsics::trap();
-    }
-    
-    _panicking = true;
-    io::eprintln!(
-        concat!("panic at {}:{}:{} ", $reason), 
+    internal::panic_impl(
+        concat!($reason), 
         file!(), 
         line!(), 
         column!(),
-        $args...
-    );
-    libc::_exit(-1);
+        &[internal::FormatArg::new(&$args)...]
+    )
+}
+
+mod internal {
+    use fmt::internal::FormatArg;
+
+    // Small formatter with as few dependencies as possible. No buffering, etc.
+    struct PanicFormatter {}
+    impl PanicFormatter {
+        #[inline]
+        fn write_str(self: &mut PanicFormatter, buf: &[u8]) {
+            libc::write(libc::STDERR_FILENO, buf.ptr as &void, buf.len);
+        }
+        #[inline]
+        fn write_char(self: &mut PanicFormatter, byte: u8) {
+            libc::write(libc::STDERR_FILENO, &byte as &void, 1);
+        }
+    }
+    
+    static PANICKING: bool = false;
+
+    #[cold]
+    #[no_inline]
+    fn panic_impl(
+        fmt_str: &[u8], 
+        file: &[u8], 
+        line: i32, 
+        column: i32, 
+        args: &[FormatArg<PanicFormatter>]
+    ) -> ! {
+        if PANICKING {
+            intrinsics::trap();
+        }
+        PANICKING = true;
+
+        let formatter = PanicFormatter {};
+        fmt::internal::printf("panic at {}:{}:{}: ", &[
+            FormatArg::new(&file), 
+            FormatArg::new(&line), 
+            FormatArg::new(&column), 
+        ], &formatter);
+        fmt::internal::printf(fmt_str, args, &formatter);
+        formatter.write_char('\n');
+
+        libc::_exit(-1);
+    }
 }
