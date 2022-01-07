@@ -4,7 +4,6 @@ use std::collections::{HashMap, HashSet};
 
 use std::iter::{once, repeat};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use indexmap::IndexMap;
 use once_cell::unsync::OnceCell;
@@ -940,8 +939,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             statements: statements.alloc_on(self.mono_ctx.ir),
             local_defs: self.local_defs.alloc_on(self.mono_ctx.ir),
         };
-
-        //return Ok(function_body);
 
         let elider = ZstElider::new(self.mono_ctx.ir);
         let optimized = elider.elide_zst_func_body(function_body);
