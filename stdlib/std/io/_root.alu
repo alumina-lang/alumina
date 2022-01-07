@@ -136,6 +136,12 @@ impl BufferedReader<R: Readable<R>> {
         self.buf.free();
     }
 
+    fn move(self: &mut BufferedReader<R>) -> BufferedReader<R> {
+        let ret = *self;
+        self.buf = mem::slice::empty();
+        ret
+    }
+
     mixin<R: Readable<R>> Readable<BufferedReader<R>>;
 }
 
@@ -246,6 +252,13 @@ impl LineIterator<R: BufferedReadable<R>> {
 
     fn free(self: &mut LineIterator<R>) {
         self.line_buf.free();
+    }
+
+    fn move(self: &mut LineIterator<R>) -> LineIterator<R> {
+        LineIterator::<R> {
+            reader: self.reader,
+            line_buf: self.line_buf.move()
+        }
     }
 }
 

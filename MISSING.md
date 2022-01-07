@@ -33,6 +33,9 @@
   - This could be solved by `infer`. It needs to do the same thing as `check_protocol_bounds` - go through all the AST methods of the protocol in the bound and IR method of the type in the slot and
   match the slots on all of them. It's quite a lot of work and also `infer` will probably need to start looping until no more changes are made (e.g. in nested protocol bounds), but it would be quite awesome. By doing that, protocols would actually start *helping* type inference instead of making it harder.
 - How does Equatable and Comparable work for pointers? Autoref makes this quite complicated... Maybe it's better to simply not have that.
+- Some limited pattern matching in macros (optional arguments)
+- Tuple unpacking in for expressions
+- Ability to define types in function scope (especially for ENums, very useful for state machines). Simple in theory, but the same caveats apply as with lambdas: these can bind generic placeholders, so they need to be monomorphized carefully.
 
 ## Grammar, parsing, AST
 

@@ -1,6 +1,17 @@
 use proto::Pointer;
 use std::option::Option;
 
+// Freable protocol is used for types that can be "freed". Usually these types contain something that
+// is heap-allocated.
+protocol Freeable<Self> {
+    fn free(self: &mut Self);
+}
+
+// "Move semantics"
+protocol Movable<Self> {
+    fn move(self: &mut Self) -> Self;
+}
+
 // Slice fat "pointers" are just regular structs that compiler handles in a special way with regards
 // to syntax, implicit coercion and type inference. They are generic over the pointer-to-element type
 // rather than the element type itself. This is an implementation detail to ensure that &mut [T] and 
@@ -16,6 +27,11 @@ impl slice {
     use std::hash::{Hasher, Hashable};
     use std::proto::{Primitive, PointerOf, ZeroSized};
     use std::libc::{memcmp};
+
+    #[force_inline]
+    fn empty<Ptr: Pointer>() -> slice<Ptr> {
+        slice::<Ptr> { ptr: null, len: 0 }
+    }
 
     #[force_inline]
     #[lang(slice_new)]

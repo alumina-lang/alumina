@@ -186,6 +186,13 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
         use std::mem::free;
         self._buckets.free();
     }
+
+    fn move(self: &mut HashMap<K, V, H>) -> HashMap<K, V, H> {
+        let ret = *self;
+        self._buckets = mem::slice::empty();
+        self._length = 0;
+        ret
+    }
 }
 
 impl HashMap<

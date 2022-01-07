@@ -37,6 +37,16 @@ snapshots['test_examples[builder.alu] run_stderr'] = b''
 
 snapshots['test_examples[builder.alu] run_stdout'] = b'5\n'
 
+snapshots['test_examples[defer_and_move.alu] compile_ret'] = 0
+
+snapshots['test_examples[defer_and_move.alu] compile_stderr'] = None
+
+snapshots['test_examples[defer_and_move.alu] run_ret'] = 0
+
+snapshots['test_examples[defer_and_move.alu] run_stderr'] = b''
+
+snapshots['test_examples[defer_and_move.alu] run_stdout'] = b'moved: Hello, world!\noriginal: \n'
+
 snapshots['test_examples[file_io.alu] compile_ret'] = 0
 
 snapshots['test_examples[file_io.alu] compile_stderr'] = None
@@ -173,7 +183,7 @@ snapshots['test_examples[result.alu] compile_stderr'] = None
 
 snapshots['test_examples[result.alu] run_ret'] = 255
 
-snapshots['test_examples[result.alu] run_stderr'] = b'panic at ../../stdlib/std/result.alu:50:17 unwrap on an err value\n'
+snapshots['test_examples[result.alu] run_stderr'] = b'panic at ../../stdlib/std/result.alu:50:17: unwrap on an err value\n'
 
 snapshots['test_examples[result.alu] run_stdout'] = b''
 
@@ -196,6 +206,16 @@ snapshots['test_examples[statics.alu] run_ret'] = 0
 snapshots['test_examples[statics.alu] run_stderr'] = b''
 
 snapshots['test_examples[statics.alu] run_stdout'] = b'1792\n'
+
+snapshots['test_examples[tests.alu] compile_ret'] = 0
+
+snapshots['test_examples[tests.alu] compile_stderr'] = None
+
+snapshots['test_examples[tests.alu] run_ret'] = 0
+
+snapshots['test_examples[tests.alu] run_stderr'] = b''
+
+snapshots['test_examples[tests.alu] run_stdout'] = b''
 
 snapshots['test_examples[vector.alu] compile_ret'] = 0
 

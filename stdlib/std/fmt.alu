@@ -13,7 +13,7 @@ protocol Formattable<Self, F: Formatter<F> = internal::_NullFormatter> {
 macro write($fmt, $fmt_str, $arg...) {
     internal::printf(
         concat!($fmt_str), 
-        &[internal::_FormatArg::new(&$arg)...], 
+        &[internal::FormatArg::new(&$arg)...], 
         $fmt
     )
 }
@@ -21,7 +21,7 @@ macro write($fmt, $fmt_str, $arg...) {
 macro writeln($fmt, $fmt_str, $arg...) {
     internal::printf(
         concat!($fmt_str, "\n"), 
-        &[internal::_FormatArg::new(&$arg)...], 
+        &[internal::FormatArg::new(&$arg)...], 
         $fmt
     )
 }
@@ -99,20 +99,20 @@ mod internal {
     }
 
     // Type-erased wrapper of a formattable object
-    struct _FormatArg<F: Formatter<F>> {
+    struct FormatArg<F: Formatter<F>> {
         inner: &void,
         format_func: fn(&void, &mut F)
     }
 
-    impl _FormatArg {
-        fn new<F: Formatter<F>, T: Formattable<T, F>>(inner: &T) -> _FormatArg<F> {
-            _FormatArg::<F> {
+    impl FormatArg {
+        fn new<F: Formatter<F>, T: Formattable<T, F>>(inner: &T) -> FormatArg<F> {
+            FormatArg::<F> {
                 inner: inner as &void,
                 format_func: |ptr, f| T::fmt(ptr as &T, f),
             }
         }
 
-        fn fmt<F: Formatter<F>>(self: &_FormatArg<F>, f: &mut F) {
+        fn fmt<F: Formatter<F>>(self: &FormatArg<F>, f: &mut F) {
             self.format_func(self.inner, f)
         }
     }
@@ -168,7 +168,7 @@ mod internal {
         BRACE_CLOSE,
     }
     
-    fn printf<F: Formatter<F>>(fmt_str: &[u8], args: &[_FormatArg<F>], fmt: &mut F) {
+    fn printf<F: Formatter<F>>(fmt_str: &[u8], args: &[FormatArg<F>], fmt: &mut F) {
         let i = 0usize;
 
         let state = State::NORMAL;

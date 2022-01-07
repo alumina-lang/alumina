@@ -338,6 +338,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
 
         match name {
             "inline" => self.attributes.push(Attribute::Inline),
+            "cold" => self.attributes.push(Attribute::Cold),
+            "no_inline" => self.attributes.push(Attribute::NoInline),
             "builtin" => self.attributes.push(Attribute::Builtin),
             "export" => self.attributes.push(Attribute::Export),
             "force_inline" => self.attributes.push(Attribute::ForceInline),

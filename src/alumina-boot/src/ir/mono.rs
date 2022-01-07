@@ -4,7 +4,6 @@ use std::collections::{HashMap, HashSet};
 
 use std::iter::{once, repeat};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use indexmap::IndexMap;
 use once_cell::unsync::OnceCell;
@@ -36,6 +35,12 @@ macro_rules! mismatch {
     };
 }
 
+struct TestCasesStatics<'ir> {
+    test_cases_array: ir::IRItemP<'ir>,
+    #[allow(dead_code)]
+    attributes_array: ir::IRItemP<'ir>,
+}
+
 pub struct MonoCtx<'ast, 'ir> {
     ast: &'ast ast::AstCtx<'ast>,
     ir: &'ir ir::IrCtx<'ir>,
@@ -48,6 +53,7 @@ pub struct MonoCtx<'ast, 'ir> {
     intrinsics: CompilerIntrinsics<'ir>,
     static_local_defs: HashMap<ir::IRItemP<'ir>, Vec<LocalDef<'ir>>>,
     extra_items: Vec<IRItemP<'ir>>,
+    test_cases_statics: Option<TestCasesStatics<'ir>>,
 }
 enum BoundCheckResult {
     Matches,
@@ -73,6 +79,7 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
             static_local_defs: HashMap::new(),
             cycle_guardian: CycleGuardian::new(),
             tests: HashMap::new(),
+            test_cases_statics: None,
         }
     }
 
@@ -145,6 +152,8 @@ pub struct Monomorphizer<'a, 'ast, 'ir> {
     exprs: ExpressionBuilder<'ir>,
     types: TypeBuilder<'ir>,
 
+    current_item: Option<IRItemP<'ir>>,
+
     replacements: HashMap<ast::AstId, ir::TyP<'ir>>,
     return_type: Option<ir::TyP<'ir>>,
     loop_contexts: Vec<LoopContext<'ir>>,
@@ -159,7 +168,7 @@ pub struct Monomorphizer<'a, 'ast, 'ir> {
 pub struct MonoKey<'ast, 'ir>(
     pub ast::ItemP<'ast>,
     pub &'ir [ir::TyP<'ir>],
-    pub usize,
+    pub Option<ir::IrId>,
     pub bool,
 );
 
@@ -167,20 +176,10 @@ impl<'ast, 'ir> MonoKey<'ast, 'ir> {
     pub fn new(
         item: ast::ItemP<'ast>,
         tys: &'ir [ir::TyP<'ir>],
-        unique: bool,
+        index: Option<ir::IrId>,
         tentative: bool,
     ) -> Self {
-        static INDEX: AtomicUsize = AtomicUsize::new(0);
-        MonoKey(
-            item,
-            tys,
-            if unique {
-                INDEX.fetch_add(1, Ordering::SeqCst)
-            } else {
-                0
-            },
-            tentative,
-        )
+        MonoKey(item, tys, index, tentative)
     }
 }
 
@@ -188,6 +187,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     pub fn new<'b>(
         mono_ctx: &'b mut MonoCtx<'ast, 'ir>,
         tentative: bool,
+        parent_item: Option<IRItemP<'ir>>,
     ) -> Monomorphizer<'b, 'ast, 'ir> {
         let ir = mono_ctx.ir;
         Monomorphizer {
@@ -201,6 +201,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             local_defs: Vec::new(),
             defer_context: None,
             tentative,
+            current_item: parent_item,
         }
     }
 
@@ -208,6 +209,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         mono_ctx: &'b mut MonoCtx<'ast, 'ir>,
         replacements: HashMap<ast::AstId, ir::TyP<'ir>>,
         tentative: bool,
+        parent_item: Option<IRItemP<'ir>>,
     ) -> Monomorphizer<'b, 'ast, 'ir> {
         let ir = mono_ctx.ir;
         Monomorphizer {
@@ -221,6 +223,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             local_defs: Vec::new(),
             defer_context: None,
             tentative,
+            current_item: parent_item,
         }
     }
 
@@ -239,7 +242,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
 
         let mut members = Vec::new();
-        let mut child = Self::new(self.mono_ctx, self.tentative);
+        let mut child = Self::new(self.mono_ctx, self.tentative, self.current_item);
         let mut type_hint = None;
         let mut taken_values = HashSet::new();
 
@@ -349,7 +352,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         generic_args: &'ir [ir::TyP<'ir>],
     ) -> Result<(), AluminaError> {
         let replacements = self.resolve_placeholders(s.placeholders, generic_args)?;
-        let mut child = Self::with_replacements(self.mono_ctx, replacements, self.tentative);
+        let mut child = Self::with_replacements(
+            self.mono_ctx,
+            replacements,
+            self.tentative,
+            self.current_item,
+        );
 
         let mut protocol_bounds = Vec::new();
         for (placeholder, ty) in s.placeholders.iter().zip(generic_args.iter()) {
@@ -396,7 +404,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     ) -> Result<(), AluminaError> {
         let replacements = self.resolve_placeholders(s.placeholders, generic_args)?;
 
-        let mut child = Self::with_replacements(self.mono_ctx, replacements, self.tentative);
+        let mut child = Self::with_replacements(
+            self.mono_ctx,
+            replacements,
+            self.tentative,
+            self.current_item,
+        );
 
         // Protocols can have their own protocol bounds, yay!
         let mut protocol_bounds = Vec::new();
@@ -684,7 +697,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         item: ir::IRItemP<'ir>,
         s: &ast::StaticOrConst<'ast>,
     ) -> Result<(), AluminaError> {
-        let mut child = Self::new(self.mono_ctx, self.tentative);
+        let mut child = Self::new(self.mono_ctx, self.tentative, self.current_item);
 
         let typ = s.typ.map(|t| child.lower_type(t)).transpose()?;
         let mut init = s.init.map(|t| child.lower_expr(t, typ)).transpose()?;
@@ -747,7 +760,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             replacements.extend(self.replacements.iter().map(|(k, v)| (*k, *v)));
         }
 
-        let mut child = Self::with_replacements(self.mono_ctx, replacements, self.tentative);
+        let mut child = Self::with_replacements(
+            self.mono_ctx,
+            replacements,
+            self.tentative,
+            self.current_item,
+        );
 
         let mut protocol_bounds = Vec::new();
         for (placeholder, ty) in func.placeholders.iter().zip(generic_args.iter()) {
@@ -922,8 +940,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             local_defs: self.local_defs.alloc_on(self.mono_ctx.ir),
         };
 
-        //return Ok(function_body);
-
         let elider = ZstElider::new(self.mono_ctx.ir);
         let optimized = elider.elide_zst_func_body(function_body);
 
@@ -936,23 +952,25 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         generic_args: &'ir [ir::TyP<'ir>],
         tentative: bool,
     ) -> Result<MonoKey<'ast, 'ir>, AluminaError> {
-        let mut unique: bool = false;
+        let mut index = None;
 
         let (placeholders, span) = match item.get() {
             ast::Item::Function(f) => {
                 // Closures must always be monomorphized afresh whenever encountered as they
                 // can bind ambient types (e.g. generic parameters) that are not part of the
                 // MonoKey.
-                unique = unique | f.closure;
+                if f.closure {
+                    index = self.current_item.map(|i| i.id);
+                }
                 (f.placeholders, f.span)
             }
             ast::Item::StructLike(s) => (s.placeholders, s.span),
             ast::Item::Protocol(p) => (p.placeholders, p.span),
-            _ => return Ok(MonoKey::new(item, generic_args, unique, tentative)),
+            _ => return Ok(MonoKey::new(item, generic_args, index, tentative)),
         };
 
         if placeholders.len() <= generic_args.len() {
-            return Ok(MonoKey::new(item, generic_args, unique, tentative));
+            return Ok(MonoKey::new(item, generic_args, index, tentative));
         }
 
         // We cannot rely on the mono_ctx.finished map to bust cyclic references in default
@@ -974,14 +992,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                             .append_mono_marker()?,
                     );
                 }
-                None => return Ok(MonoKey::new(item, generic_args, unique, tentative)),
+                None => return Ok(MonoKey::new(item, generic_args, index, tentative)),
             }
         }
 
         Ok(MonoKey::new(
             item,
             args.alloc_on(self.mono_ctx.ir),
-            unique,
+            index,
             tentative,
         ))
     }
@@ -1028,6 +1046,20 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
         };
 
+        let old_item = std::mem::replace(&mut self.current_item, Some(item));
+        let ret = self.monomorphize_item_type(key, item, signature_only);
+        self.current_item = old_item;
+        ret?;
+
+        Ok(item)
+    }
+
+    pub fn monomorphize_item_type(
+        &mut self,
+        key: MonoKey<'ast, 'ir>,
+        item: ir::IRItemP<'ir>,
+        signature_only: bool,
+    ) -> Result<(), AluminaError> {
         match key.0.get() {
             ast::Item::Enum(en) => {
                 self.monomorphize_enum(item, en, key.1)
@@ -1071,7 +1103,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
         };
 
-        Ok(item)
+        Ok(())
     }
 
     pub fn generate_static_constructor(&mut self) -> Result<(), AluminaError> {
@@ -1089,7 +1121,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .map(|(v, s)| {
                 (
                     ir::Statement::Expression(
-                        self.exprs.assign(self.exprs.static_var(v), s.init.unwrap()),
+                        self.exprs
+                            .assign(self.exprs.static_var(v, s.typ), s.init.unwrap()),
                     ),
                     self.mono_ctx.static_local_defs.get(v).unwrap().clone(),
                 )
@@ -1395,6 +1428,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             loop_contexts: self.loop_contexts.clone(),
             local_defs: self.local_defs.clone(),
             defer_context: self.defer_context.clone(),
+            current_item: self.current_item,
             tentative: true,
         }
     }
@@ -2077,8 +2111,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         _type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let item_cell = self.monomorphize_item(item, &[])?;
+        let item = item_cell.get_static().with_no_span()?;
 
-        Ok(self.exprs.static_var(item_cell))
+        Ok(self.exprs.static_var(item_cell, item.typ))
     }
 
     fn lower_const(
@@ -2555,12 +2590,17 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
     }
 
-    fn generate_test_cases(&mut self) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let meta_item = self.monomorphize_lang_item(LangItemKind::TestCaseMeta, [])?;
-        let meta_type = self.types.named(meta_item);
-        let meta_new = self.monomorphize_lang_item(LangItemKind::TestCaseMetaNew, [])?;
-
-        let array_type = self.types.array(meta_type, self.mono_ctx.tests.len());
+    fn array_of<I>(
+        &mut self,
+        element_type: ir::TyP<'ir>,
+        elems: I,
+    ) -> Result<ir::ExprP<'ir>, AluminaError>
+    where
+        I: IntoIterator<Item = ir::ExprP<'ir>>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        let iter = elems.into_iter();
+        let array_type = self.types.array(element_type, iter.len());
         let temporary = self.mono_ctx.ir.make_id();
         let local = self.exprs.local(temporary, array_type);
         self.local_defs.push(ir::LocalDef {
@@ -2568,11 +2608,80 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             typ: array_type,
         });
 
+        let mut statements = vec![];
+        for (idx, elem) in iter.enumerate() {
+            let stmt = ir::Statement::Expression(
+                self.exprs.assign(self.exprs.const_index(local, idx), elem),
+            );
+            statements.push(stmt);
+        }
+
+        Ok(self
+            .exprs
+            .block(statements, self.exprs.local(temporary, array_type)))
+    }
+
+    fn generate_test_cases_inner(&mut self) -> Result<(), AluminaError> {
+        // This is bigger and badder than it ought to be, which is probably why people don't usually
+        // do this in the compiler.
+        // It basically creates two static arrays, one which holds all the test attributes contatenated
+        // and the other that has the TestCaseMeta objects. TestCaseMeta object contains a slice of the
+        // attributes array.
+        let tests = self.mono_ctx.tests.clone();
+
         let string_slice = self.slice_of(self.types.builtin(BuiltinType::U8), true)?;
+        let attrs_static = self.mono_ctx.ir.make_symbol();
+
+        let string_slice_ptr = self.types.pointer(string_slice, true);
+        let string_slice_slice = self.slice_of(string_slice, true)?;
+
+        let mut slices = vec![];
+        let mut attrs = vec![];
+
+        let len = tests.iter().map(|(_, m)| m.attributes.len()).sum();
+        let attrs_static_ty = self.types.array(string_slice, len);
+        let attrs_static_expr = self.exprs.static_var(attrs_static, attrs_static_ty);
+
+        for (_, metadata) in tests.iter() {
+            let start_index = self.exprs.const_value(Value::USize(attrs.len()));
+            for attr in &metadata.attributes {
+                let elem = self.exprs.const_value(Value::Str(
+                    self.mono_ctx
+                        .ir
+                        .arena
+                        .alloc_slice_copy(attr.to_string().as_bytes()),
+                ));
+                attrs.push(self.try_coerce(string_slice, elem)?)
+            }
+            let end_index = self.exprs.const_value(Value::USize(attrs.len()));
+            slices.push((start_index, end_index));
+        }
+
+        let res = self.array_of(string_slice, attrs)?;
+        attrs_static.assign(ir::IRItem::Static(ir::Static {
+            name: None,
+            typ: res.ty,
+            init: Some(res),
+        }));
+
+        self.mono_ctx.static_local_defs.insert(
+            attrs_static,
+            std::mem::replace(&mut self.local_defs, vec![]),
+        );
+
+        let test_cases_static = self.mono_ctx.ir.make_symbol();
+
+        let meta_item = self.monomorphize_lang_item(LangItemKind::TestCaseMeta, [])?;
+        let meta_type = self.types.named(meta_item);
+        let meta_new = self.monomorphize_lang_item(LangItemKind::TestCaseMetaNew, [])?;
+
         let fn_ptr_type = self.types.function([], self.types.void());
 
-        let mut statements = vec![];
-        for (idx, (func, meta)) in self.mono_ctx.tests.clone().iter().enumerate() {
+        let attrs_ref = self.r#ref(attrs_static_expr);
+        let attrs_as_slice = self.try_coerce(string_slice_slice, attrs_ref)?;
+
+        let mut test_cases = vec![];
+        for ((start_index, end_index), (func, meta)) in slices.into_iter().zip(tests.iter()) {
             let name_arg = self.exprs.const_value(Value::Str(
                 self.mono_ctx
                     .ir
@@ -2587,25 +2696,78 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .alloc_slice_copy(meta.path.to_string().as_bytes()),
             ));
 
+            let item =
+                self.monomorphize_lang_item(LangItemKind::SliceRangeIndex, [string_slice_ptr])?;
+            let attr_slice = self.exprs.call(
+                self.exprs.function(item),
+                [attrs_as_slice, start_index, end_index].into_iter(),
+                string_slice_slice,
+            );
+
             let fn_ptr_arg = self.exprs.function(func);
             let args = [
                 self.try_coerce(string_slice, path_arg)?,
                 self.try_coerce(string_slice, name_arg)?,
+                self.try_coerce(string_slice_slice, attr_slice)?,
                 self.try_coerce(fn_ptr_type, fn_ptr_arg)?,
             ];
-            let stmt = ir::Statement::Expression(
-                self.exprs.assign(
-                    self.exprs.const_index(local, idx),
-                    self.exprs
-                        .call(self.exprs.function(meta_new), args, meta_type),
-                ),
+
+            test_cases.push(
+                self.exprs
+                    .call(self.exprs.function(meta_new), args, meta_type),
             );
-            statements.push(stmt);
         }
 
-        Ok(self
-            .exprs
-            .block(statements, self.exprs.local(temporary, array_type)))
+        let res = self.array_of(meta_type, test_cases)?;
+        test_cases_static.assign(ir::IRItem::Static(ir::Static {
+            name: None,
+            typ: res.ty,
+            init: Some(res),
+        }));
+
+        self.mono_ctx.static_local_defs.insert(
+            test_cases_static,
+            std::mem::replace(&mut self.local_defs, vec![]),
+        );
+
+        self.mono_ctx.test_cases_statics.replace(TestCasesStatics {
+            attributes_array: attrs_static,
+            test_cases_array: test_cases_static,
+        });
+
+        let dummy1 = self.mono_ctx.ast.make_symbol();
+        let dummy2 = self.mono_ctx.ast.make_symbol();
+
+        self.mono_ctx
+            .finished
+            .insert(MonoKey::new(dummy1, &[], None, false), test_cases_static);
+        self.mono_ctx
+            .finished
+            .insert(MonoKey::new(dummy2, &[], None, false), attrs_static);
+
+        Ok(())
+    }
+
+    fn generate_test_cases(&mut self) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let meta_item = self.monomorphize_lang_item(LangItemKind::TestCaseMeta, [])?;
+        let meta_type = self.types.named(meta_item);
+        let meta_slice_type = self.slice_of(meta_type, true)?;
+
+        if self.mono_ctx.test_cases_statics.is_none() {
+            let mut child = Self::new(self.mono_ctx, self.tentative, self.current_item);
+            child.generate_test_cases_inner()?;
+        }
+
+        let test_cases_static = self
+            .mono_ctx
+            .test_cases_statics
+            .as_ref()
+            .unwrap()
+            .test_cases_array;
+        let item = test_cases_static.get_static().unwrap();
+        let ret = self.r#ref(self.exprs.static_var(test_cases_static, item.typ));
+
+        self.try_coerce(meta_slice_type, ret)
     }
 
     fn lower_method_call(
@@ -2617,6 +2779,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<Option<ir::ExprP<'ir>>, AluminaError> {
         let ir_self_arg = self.lower_expr(self_arg, None)?;
+        let ir_self_arg_type = self.try_qualify_type(ir_self_arg.ty)?;
+        let ir_self_arg = self.try_coerce(ir_self_arg_type, ir_self_arg)?;
 
         // Special case for struct fields (they have precedence over methods in .name resolution)
         if let ir::Ty::NamedType(item) = ir_self_arg.ty.canonical_type() {
@@ -3253,28 +3417,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             return Ok(self.exprs.diverges(lowered.into_iter()));
         }
 
-        let element_type = first_elem_type.or(element_type_hint);
-        let array_type = match element_type {
-            Some(element_type) => self.types.array(element_type, elements.len()),
-            None => return Err(CodeErrorKind::TypeInferenceFailed).with_no_span(),
-        };
+        let element_type = first_elem_type
+            .or(element_type_hint)
+            .ok_or(CodeErrorKind::TypeInferenceFailed)
+            .with_no_span()?;
 
-        let temporary = self.mono_ctx.ir.make_id();
-        let local = self.exprs.local(temporary, array_type);
-        self.local_defs.push(ir::LocalDef {
-            id: temporary,
-            typ: array_type,
-        });
-
-        let statements = lowered
-            .into_iter()
-            .enumerate()
-            .map(|(idx, e)| {
-                ir::Statement::Expression(self.exprs.assign(self.exprs.const_index(local, idx), e))
-            })
-            .collect::<Vec<_>>();
-
-        Ok(self.exprs.block(statements, local))
+        self.array_of(element_type, lowered)
     }
 
     fn lower_enum_value(

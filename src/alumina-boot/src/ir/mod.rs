@@ -256,7 +256,7 @@ impl<'ir> Ty<'ir> {
             Ty::Pointer(_, _) => false,
             Ty::Array(inner, size) => *size == 0 || inner.is_zero_sized(),
             Ty::Tuple(elems) => elems.iter().all(|e| e.is_zero_sized()),
-            Ty::Unqualified(UnqualifiedKind::String(len)) => *len == 0,
+            Ty::Unqualified(_) => false,
             Ty::NamedFunction(_) => true,
             Ty::FunctionPointer(_, _) => false,
         }

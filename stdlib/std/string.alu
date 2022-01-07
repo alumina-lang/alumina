@@ -1,0 +1,116 @@
+use std::option::Option;
+
+fn starts_with(self: &[u8], prefix: &[u8]) -> bool {
+    if self.len < prefix.len {
+        return false;
+    }
+    self[..prefix.len] == prefix
+}
+
+fn ends_with(self: &[u8], suffix: &[u8]) -> bool {
+    if self.len < suffix.len {
+        return false;
+    }
+    self[self.len - suffix.len..] == suffix
+}
+
+fn find(self: &[u8], needle: &[u8]) -> Option<usize> {
+    let ret = libc::memmem(
+        self.ptr as &void, 
+        self.len, 
+        needle.ptr as &void, 
+        needle.len
+    )
+
+    if ret == null {
+        Option::none()
+    } else {
+        Option::some(((ret as &u8) - self.ptr) as usize)
+    }
+}
+
+fn contains(self: &[u8], needle: &[u8]) -> bool {
+    self.find(needle).is_some
+}
+
+fn parse_integer<T: proto::Integer>(s: &[u8]) -> Option<T> {
+    if s.len == 0 {
+        return Option::none();
+    }
+
+    let negative = if s[0] == '-' {
+        when T: proto::Signed {
+            s = s[1..];
+            true
+        } else {
+            return Option::none();
+        }
+    } else {
+        false
+    };
+
+    let result: T = 0;
+    for ch in s {
+        if ch >= '0' && ch <= '9' {
+            // TODO: check for overflow
+            result = result * 10 + ((ch - '0') as T);
+        } else {
+            return Option::none();
+        }
+    }
+
+    if negative {
+        Option::some((0 as T) - result)
+    } else {
+        Option::some(result)
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use std::{assert, assert_eq, assert_ne};
+    
+    #[test]
+    fn starts_with_positive() {
+        assert!("".starts_with(""))
+        assert!("hello world".starts_with("hello world"))
+        assert!("hello world".starts_with("hello"))
+        assert!("hello world".starts_with(""))
+    }
+
+    #[test]
+    fn starts_with_negative() {
+        assert!(!"".starts_with("world"))
+        assert!(!"hello world".starts_with("world"))
+        assert!(!"hello world".starts_with("hello world hello world"))
+    }
+
+    #[test]
+    fn find_positive() {
+        assert_ne!("needle".find("needle"), Option::some(0usize));
+        assert_eq!("needle".find("dle"), Option::some(3usize));
+        assert_eq!("needle".find(""), Option::some(0usize));
+        assert_eq!("".find(""), Option::some(0usize));
+    }
+
+    #[test]
+    fn find_negative() {
+        assert_eq!("needle".find("weedle"), Option::none());
+        assert_eq!("needle".find("superlongstring"), Option::none());
+    }
+
+    #[test]
+    fn parse_integer_positive() {
+        assert_eq!(parse_integer::<usize>("24601"), Option::some(24601usize));
+        assert_eq!(parse_integer::<isize>("-24601"), Option::some(-24601isize));
+        assert_eq!(parse_integer::<u8>("512"), Option::some(0u8));
+    }
+
+    #[test]
+    fn parse_integer_negative() {
+        assert_eq!(parse_integer::<usize>(""), Option::none());
+        assert_eq!(parse_integer::<usize>("abcdes"), Option::none());
+        assert_eq!(parse_integer::<usize>("-243"), Option::none());
+    }
+}

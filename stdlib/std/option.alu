@@ -66,6 +66,7 @@ impl Option<T> {
 impl Option {
     use std::cmp::{Equatable, Comparable, Ordering};
     use std::fmt::{write, Formatter, Formattable};
+    use std::mem::{Freeable, Movable};
     
     #[inline]
     fn equals<T: Equatable<T>>(lhs: &Option<T>, rhs: &Option<T>) -> bool {
@@ -101,6 +102,20 @@ impl Option {
         }
     }
 
+    fn move<T: Movable<T>>(self: &mut Option<T>) -> Option<T> {
+        if self.is_some {
+            Option::some(self.inner.move())
+        } else {
+            Option::none()
+        }
+    }
+
+    fn free<T: Freeable<T>>(self: &mut Option<T>) {
+        if self.is_some {
+            self.inner.free();
+        }
+    }
+
     mixin<T: Equatable<T>> Equatable<Option<T>;
     mixin<T: Comparable<T>> Comparable<Option<T>;
 }
@@ -110,8 +125,6 @@ mod tests {
     #[test]
     fn option_ok() {
         let opt = Option::some(42);
-
         assert!(opt.unwrap() == 42);
     }
-
 }

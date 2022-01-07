@@ -3,7 +3,7 @@ import subprocess
 from pathlib import Path
 
 BUILD_DIR = "./build"
-COMPILER_PATH = "../../target/debug/alumina-boot"
+COMPILER_PATH = "../../alumina-boot"
 CORPUS = "../../examples/"
 
 # For examples that accept some stdins

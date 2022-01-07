@@ -93,6 +93,7 @@ impl Result {
     use std::fmt::{write, Formatter, Formattable};
     use std::hash::{Hashable, Hasher};
     use std::cmp::{Equatable};
+    use std::mem::{Freeable, Movable};
 
     fn fmt<T: Formattable<T, F>, E: Formattable<E, F>, F: Formatter<F>>(self: &Result<T, E>, formatter: &mut F) {
         if self.is_ok {
@@ -120,6 +121,22 @@ impl Result {
             lhs.inner.err.equals(&rhs.inner.err)
         } else {
             false
+        }
+    }
+
+    fn move<T: Movable<T>, E: Movable<E>>(self: &mut Result<T, E>) -> Result<T, E> {
+        if self.is_ok {
+            Result::ok(self.inner.ok.move())
+        } else {
+            Result::err(self.inner.err.move())
+        }
+    }
+
+    fn free<T: Freeable<T>, E: Freeable<E>>(self: &mut Result<T, E>) {
+        if self.is_ok {
+            self.inner.ok.free();
+        } else {
+            self.inner.err.free();
         }
     }
 

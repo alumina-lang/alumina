@@ -1,0 +1,33 @@
+// Compile with `--cfg test` and run the compiled output.
+// Test runner source is currently part of stdlib (std::test), but will eventually be 
+// extracted.
+
+use std::proto::Numeric;
+
+fn plus<T: Numeric>(a: T, b: T) -> T {
+    a + b
+}
+
+fn my_panic() -> ! {
+    std::libc::_exit(1337);
+}
+
+fn main() {
+}
+
+
+#[cfg(test)]
+mod tests {
+    use std::assert_eq;
+
+    #[test]
+    fn test_arithmetic() {
+        assert_eq!(plus(1, 1), 2);
+        assert_eq!(plus(2, 2), 4);
+    }
+
+    #[test(should_fail)]
+    fn test_panic() {
+        my_panic();
+    }
+}

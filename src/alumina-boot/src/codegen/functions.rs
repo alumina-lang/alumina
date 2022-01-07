@@ -32,6 +32,8 @@ pub fn write_function_signature<'ir, 'gen>(
 
     let mut attributes = if item.attributes.contains(&Attribute::ForceInline) {
         "__attribute__((always_inline)) inline ".to_string()
+    } else if item.attributes.contains(&Attribute::NoInline) {
+        "__attribute__((noinline)) ".to_string()
     } else if item.attributes.contains(&Attribute::Inline) {
         "inline ".to_string()
     } else if item.attributes.contains(&Attribute::StaticConstructor) {
@@ -39,6 +41,10 @@ pub fn write_function_signature<'ir, 'gen>(
     } else {
         "".to_string()
     };
+
+    if item.attributes.contains(&Attribute::Cold) {
+        attributes = format!("__attribute__((cold)) {}", attributes);
+    }
 
     if item.return_type.is_never() {
         attributes = format!("_Noreturn {}", attributes);
@@ -433,8 +439,9 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
     ) -> Result<(), AluminaError> {
         self.type_writer.add_type(item.typ)?;
 
-        self.ctx
-            .register_name(id, CName::Mangled(item.name.unwrap(), id.id));
+        if let Some(name) = item.name {
+            self.ctx.register_name(id, CName::Mangled(name, id.id));
+        }
 
         if !item.typ.is_zero_sized() {
             w!(

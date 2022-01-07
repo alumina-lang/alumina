@@ -141,6 +141,7 @@ impl<'ir> ZstElider<'ir> {
             }
             ExprKind::Ref(inner) => {
                 let inner = self.elide_zst_expr(inner);
+
                 if inner.is_void() {
                     // Special case for mutiple pointers to void
                     builder.lit(Lit::Int(0), expr.ty)

@@ -17,8 +17,8 @@ impl<'ir> ExpressionBuilder<'ir> {
         Expr::lvalue(ExprKind::Local(id), typ).alloc_on(self.ir)
     }
 
-    pub fn static_var(&self, item: IRItemP<'ir>) -> ExprP<'ir> {
-        Expr::lvalue(ExprKind::Static(item), item.get_static().unwrap().typ).alloc_on(self.ir)
+    pub fn static_var(&self, item: IRItemP<'ir>, typ: TyP<'ir>) -> ExprP<'ir> {
+        Expr::lvalue(ExprKind::Static(item), typ).alloc_on(self.ir)
     }
 
     fn fill_block(
