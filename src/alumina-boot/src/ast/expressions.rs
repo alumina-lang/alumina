@@ -485,19 +485,16 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_string_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let s = parse_string_literal(self.code.node_text(node))
-            .with_span(&self.scope, node)?
-            .as_str()
-            .alloc_on(self.ast);
+        let s = parse_string_literal(self.code.node_text(node)).with_span(&self.scope, node)?;
 
-        let s = self.ast.arena.alloc_slice_copy(s.as_bytes());
+        let s = self.ast.arena.alloc_slice_copy(&s);
         Ok(ExprKind::Lit(Lit::Str(s)).alloc_with_span(self.ast, &self.scope, node))
     }
 
     fn visit_char_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let val = match parse_string_literal(self.code.node_text(node))
             .with_span(&self.scope, node)?
-            .as_bytes()
+            .as_slice()
         {
             [v] => *v,
             _ => return Err(CodeErrorKind::InvalidCharLiteral).with_span(&self.scope, node),
@@ -1187,8 +1184,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 }
 
-pub fn parse_string_literal(lit: &str) -> Result<String, CodeErrorKind> {
-    let mut result = String::with_capacity(lit.len());
+pub fn parse_string_literal(lit: &str) -> Result<Vec<u8>, CodeErrorKind> {
+    let mut result = Vec::<u8>::with_capacity(lit.len());
 
     enum State {
         Normal,
@@ -1202,90 +1199,93 @@ pub fn parse_string_literal(lit: &str) -> Result<String, CodeErrorKind> {
     let mut state = State::Normal;
     let mut buf = String::with_capacity(4);
 
-    for ch in lit[1..lit.len() - 1].chars() {
+    for ch in lit[1..lit.len() - 1].bytes() {
         state = match state {
             State::Normal => match ch {
-                '\\' => State::Escape,
+                b'\\' => State::Escape,
                 _ => {
                     result.push(ch);
                     State::Normal
                 }
             },
             State::Escape => match ch {
-                '\\' => {
-                    result.push('\\');
+                b'\\' => {
+                    result.push(b'\\');
                     State::Normal
                 }
-                'n' => {
-                    result.push('\n');
+                b'n' => {
+                    result.push(b'\n');
                     State::Normal
                 }
-                'r' => {
-                    result.push('\r');
+                b'r' => {
+                    result.push(b'\r');
                     State::Normal
                 }
-                't' => {
-                    result.push('\t');
+                b't' => {
+                    result.push(b'\t');
                     State::Normal
                 }
-                '\'' => {
-                    result.push('\'');
+                b'\'' => {
+                    result.push(b'\'');
                     State::Normal
                 }
-                '"' => {
-                    result.push('"');
+                b'"' => {
+                    result.push(b'"');
                     State::Normal
                 }
-                'x' => State::Hex,
-                'u' => State::UnicodeStart,
+                b'x' => State::Hex,
+                b'u' => State::UnicodeStart,
                 _ => {
                     return Err(CodeErrorKind::InvalidEscapeSequence);
                 }
             },
             State::Hex => {
-                if buf.len() == 2 {
+                if buf.len() == 1 {
+                    buf.push(ch as char);
                     let ch = u8::from_str_radix(&buf, 16).unwrap();
-                    result.push(ch as char);
+                    result.push(ch);
                     buf.clear();
                     State::Normal
                 } else {
-                    buf.push(ch);
+                    buf.push(ch as char);
                     State::Hex
                 }
             }
             State::UnicodeStart => match ch {
-                '{' => State::UnicodeLong,
+                b'{' => State::UnicodeLong,
                 _ => {
-                    buf.push(ch);
+                    buf.push(ch as char);
                     State::UnicodeShort
                 }
             },
             State::UnicodeShort => {
-                if buf.len() == 4 {
+                if buf.len() == 3 {
+                    buf.push(ch as char);
                     let ch = u32::from_str_radix(&buf, 16).unwrap();
-                    result.push(
-                        ch.try_into()
-                            .map_err(|_| CodeErrorKind::InvalidEscapeSequence)?,
-                    );
+                    let utf8 = char::from_u32(ch)
+                        .ok_or(CodeErrorKind::InvalidEscapeSequence)?
+                        .to_string();
+
+                    result.extend(utf8.as_bytes());
                     buf.clear();
                     State::Normal
                 } else {
-                    buf.push(ch);
+                    buf.push(ch as char);
                     State::UnicodeShort
                 }
             }
             State::UnicodeLong => match ch {
-                '}' => {
+                b'}' => {
                     let ch = u32::from_str_radix(&buf, 16).unwrap();
-                    result.push(
-                        ch.try_into()
-                            .map_err(|_| CodeErrorKind::InvalidEscapeSequence)?,
-                    );
+                    let utf8 = char::from_u32(ch)
+                        .ok_or(CodeErrorKind::InvalidEscapeSequence)?
+                        .to_string();
+                    result.extend(utf8.as_bytes());
                     buf.clear();
                     State::Normal
                 }
                 _ => {
-                    buf.push(ch);
+                    buf.push(ch as char);
                     State::UnicodeShort
                 }
             },

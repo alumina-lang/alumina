@@ -20,11 +20,19 @@ use std::collections::{HashMap, HashSet};
 
 use crate::common::impl_allocatable;
 
+#[derive(Clone)]
+pub struct TestMetadata<'ast> {
+    pub path: Path<'ast>,
+    pub name: Path<'ast>,
+    pub attributes: Vec<String>,
+}
+
 pub struct AstCtx<'ast> {
     pub arena: Bump,
     pub counter: Cell<usize>,
     types: RefCell<HashSet<TyP<'ast>>>,
     lang_items: RefCell<HashMap<LangItemKind, ItemP<'ast>>>,
+    test_metadata: RefCell<HashMap<ItemP<'ast>, TestMetadata<'ast>>>,
 }
 
 impl<'ast> AstCtx<'ast> {
@@ -34,6 +42,7 @@ impl<'ast> AstCtx<'ast> {
             counter: Cell::new(0),
             types: RefCell::new(HashSet::new()),
             lang_items: RefCell::new(HashMap::new()),
+            test_metadata: RefCell::new(HashMap::new()),
         }
     }
 
@@ -62,6 +71,14 @@ impl<'ast> AstCtx<'ast> {
 
     pub fn add_lang_item(&self, kind: LangItemKind, item: ItemP<'ast>) {
         self.lang_items.borrow_mut().insert(kind, item);
+    }
+
+    pub fn add_test_metadata(&'ast self, item: ItemP<'ast>, metadata: TestMetadata<'ast>) {
+        self.test_metadata.borrow_mut().insert(item, metadata);
+    }
+
+    pub fn test_metadata(&self, item: ItemP<'ast>) -> Option<TestMetadata<'ast>> {
+        self.test_metadata.borrow().get(&item).cloned()
     }
 
     pub fn intern_type(&'ast self, ty: Ty<'ast>) -> TyP<'ast> {
@@ -272,7 +289,10 @@ impl<'ast> Item<'ast> {
                 placeholders,
                 attributes,
                 ..
-            }) => placeholders.is_empty() && attributes.contains(&Attribute::Export),
+            }) => {
+                attributes.contains(&Attribute::Test)
+                    || placeholders.is_empty() && attributes.contains(&Attribute::Export)
+            }
             _ => false,
         }
     }
@@ -578,6 +598,8 @@ pub enum CodegenType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Attribute {
     Export,
+    Test,
+    TestMain,
     Inline,
     Builtin,
     ForceInline,

@@ -17,13 +17,13 @@ use super::lang::LangTypeKind;
 use super::{FuncBody, IRItemP, Lit, LocalDef, UnqualifiedKind};
 use crate::ast::lang::LangItemKind;
 use crate::ast::rebind::Rebinder;
-use crate::ast::{Attribute, BuiltinType};
+use crate::ast::{Attribute, BuiltinType, TestMetadata};
 use crate::common::{
     ice, AluminaError, ArenaAllocatable, CodeError, CodeErrorBacktrace, CodeErrorBuilder,
     CycleGuardian, Marker,
 };
 use crate::global_ctx::GlobalCtx;
-use crate::intrinsics::CompilerIntrinsics;
+use crate::intrinsics::{CompilerIntrinsics, IntrinsicKind};
 use crate::ir::ValueType;
 use crate::{ast, common::CodeErrorKind, ir};
 
@@ -44,6 +44,7 @@ pub struct MonoCtx<'ast, 'ir> {
     cycle_guardian: CycleGuardian<(ast::ItemP<'ast>, &'ir [ir::TyP<'ir>])>,
     finished: IndexMap<MonoKey<'ast, 'ir>, ir::IRItemP<'ir>>,
     reverse_map: HashMap<ir::IRItemP<'ir>, MonoKey<'ast, 'ir>>,
+    tests: HashMap<ir::IRItemP<'ir>, TestMetadata<'ast>>,
     intrinsics: CompilerIntrinsics<'ir>,
     static_local_defs: HashMap<ir::IRItemP<'ir>, Vec<LocalDef<'ir>>>,
     extra_items: Vec<IRItemP<'ir>>,
@@ -71,6 +72,7 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
             extra_items: Vec::new(),
             static_local_defs: HashMap::new(),
             cycle_guardian: CycleGuardian::new(),
+            tests: HashMap::new(),
         }
     }
 
@@ -1034,6 +1036,16 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ast::Item::Function(func) => {
                 self.monomorphize_function(item, func, key.1, signature_only)
                     .append_mono_marker()?;
+
+                if !self.tentative && func.attributes.contains(&ast::Attribute::Test) {
+                    let fun = item.get_function().unwrap();
+                    if !fun.args.is_empty() || fun.return_type != self.types.void() {
+                        return Err(CodeErrorKind::InvalidTestCaseSignature).with_span(func.span);
+                    }
+
+                    let metadata = self.mono_ctx.ast.test_metadata(key.0).unwrap();
+                    self.mono_ctx.tests.insert(item, metadata);
+                }
             }
             ast::Item::StructLike(s) => {
                 self.monomorphize_struct(item, s, key.1)
@@ -2534,9 +2546,66 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .map(|e| self.lower_expr(e, None))
             .collect::<Result<Vec<_>, _>>()?;
 
-        self.mono_ctx
-            .intrinsics
-            .invoke(callee.kind, span, &generic_args[..], &args[..])
+        match callee.kind {
+            IntrinsicKind::TestCases => self.generate_test_cases(),
+            _ => self
+                .mono_ctx
+                .intrinsics
+                .invoke(callee.kind, span, &generic_args[..], &args[..]),
+        }
+    }
+
+    fn generate_test_cases(&mut self) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let meta_item = self.monomorphize_lang_item(LangItemKind::TestCaseMeta, [])?;
+        let meta_type = self.types.named(meta_item);
+        let meta_new = self.monomorphize_lang_item(LangItemKind::TestCaseMetaNew, [])?;
+
+        let array_type = self.types.array(meta_type, self.mono_ctx.tests.len());
+        let temporary = self.mono_ctx.ir.make_id();
+        let local = self.exprs.local(temporary, array_type);
+        self.local_defs.push(ir::LocalDef {
+            id: temporary,
+            typ: array_type,
+        });
+
+        let string_slice = self.slice_of(self.types.builtin(BuiltinType::U8), true)?;
+        let fn_ptr_type = self.types.function([], self.types.void());
+
+        let mut statements = vec![];
+        for (idx, (func, meta)) in self.mono_ctx.tests.clone().iter().enumerate() {
+            let name_arg = self.exprs.const_value(Value::Str(
+                self.mono_ctx
+                    .ir
+                    .arena
+                    .alloc_slice_copy(meta.name.to_string().as_bytes()),
+            ));
+
+            let path_arg = self.exprs.const_value(Value::Str(
+                self.mono_ctx
+                    .ir
+                    .arena
+                    .alloc_slice_copy(meta.path.to_string().as_bytes()),
+            ));
+
+            let fn_ptr_arg = self.exprs.function(func);
+            let args = [
+                self.try_coerce(string_slice, path_arg)?,
+                self.try_coerce(string_slice, name_arg)?,
+                self.try_coerce(fn_ptr_type, fn_ptr_arg)?,
+            ];
+            let stmt = ir::Statement::Expression(
+                self.exprs.assign(
+                    self.exprs.const_index(local, idx),
+                    self.exprs
+                        .call(self.exprs.function(meta_new), args, meta_type),
+                ),
+            );
+            statements.push(stmt);
+        }
+
+        Ok(self
+            .exprs
+            .block(statements, self.exprs.local(temporary, array_type)))
     }
 
     fn lower_method_call(

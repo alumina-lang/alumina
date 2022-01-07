@@ -33,6 +33,8 @@ pub enum LangItemKind {
     ImplArray,
 
     EntrypointGlue,
+    TestCaseMeta,
+    TestCaseMetaNew,
 
     Operator(BinOp),
 }
@@ -93,6 +95,8 @@ impl TryFrom<&str> for LangItemKind {
             "operator_gte" => Ok(LangItemKind::Operator(BinOp::GEq)),
 
             "entrypoint_glue" => Ok(LangItemKind::EntrypointGlue),
+            "test_case_meta" => Ok(LangItemKind::TestCaseMeta),
+            "test_case_meta_new" => Ok(LangItemKind::TestCaseMetaNew),
 
             t => {
                 if let Some(matches) = regex!(r"^impl_tuple_(\d+)$").captures(t) {

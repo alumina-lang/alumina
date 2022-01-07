@@ -242,13 +242,15 @@ impl File {
     }
 
     fn read_to_string(path: &[u8]) -> Result<collections::Vector<u8>, Error> {
+        use std::io::copy_to;
+
         let string = collections::Vector::new::<u8>();
         let string_writer = StringWriter::new(&string);
 
         let file = try!(File::open(path));
         defer file.close();
 
-        let ret = copy(&file, &string_writer);
+        let ret = file.copy_to(&string_writer);
         if ret.is_ok {
             Result::ok(string)
         } else {
@@ -288,6 +290,13 @@ impl File {
 
     mixin Readable<File>;
     mixin Writable<File>;
+}
+
+fn anonymous_pipe() -> result::Result<(File, File), Error> {
+    let fds: [libc::c_int; 2];
+    error_check!(libc::pipe2(&fds[0], 0));
+
+    result::Result::ok((File::from_fd(fds[0]), File::from_fd(fds[1])))
 }
 
 static stdout : File = File::from_fd(libc::STDOUT_FILENO);

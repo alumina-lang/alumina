@@ -23,6 +23,7 @@ pub enum IntrinsicKind {
     CompileNote,
     Unreachable,
     AlignedAlloca,
+    TestCases,
 }
 
 pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
@@ -38,6 +39,7 @@ pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
         map.insert("compile_note", IntrinsicKind::CompileNote);
         map.insert("unreachable", IntrinsicKind::Unreachable);
         map.insert("aligned_alloca", IntrinsicKind::AlignedAlloca);
+        map.insert("test_cases", IntrinsicKind::TestCases);
         map
     })
     .get(name)
@@ -225,6 +227,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
             IntrinsicKind::CompileNote => self.compile_note(args[0], span),
             IntrinsicKind::Unreachable => self.unreachable(),
             IntrinsicKind::AlignedAlloca => self.aligned_alloca(args[0], args[1]),
+            _ => unimplemented!(),
         }
     }
 }

@@ -1,6 +1,6 @@
 use crate::common::{AluminaError, ArenaAllocatable, CodeErrorKind, WithSpanDuringParsing};
 
-use crate::ast::{AstCtx, ItemP};
+use crate::ast::{AstCtx, Attribute, ItemP};
 use crate::global_ctx::GlobalCtx;
 use crate::name_resolution::scope::{NamedItemKind, Scope, ScopeType};
 use crate::parser::{AluminaVisitor, ParseCtx};
@@ -266,7 +266,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         let name = self.parse_name(node);
 
         if let Some(path) = self.main_module_path.as_ref() {
-            if &self.scope.path() == path && name == "main" {
+            if self.global_ctx.cfg("test").is_some() {
+                if attributes.contains(&Attribute::TestMain)
+                    && self.main_candidate.replace(item).is_some()
+                {
+                    return Err(CodeErrorKind::MultipleMainFunctions).with_span(&self.scope, node);
+                }
+            } else if &self.scope.path() == path && name == "main" {
                 if self.main_candidate.replace(item).is_some() {
                     return Err(CodeErrorKind::MultipleMainFunctions).with_span(&self.scope, node);
                 }

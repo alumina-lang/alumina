@@ -4,6 +4,33 @@ mod internal {
     use std::mem::slice;
     use std::proto::Callable;
 
+    #[cfg(test)]
+    {
+        // Minimal support for testing in the compiler. During AST construction, compiler will collect 
+        // all the methods with #[test] attribute and make them available via this intrinsic. Function
+        // actually returns a non-zero-sized array, but we cannot really express it in the signature, as
+        // the number of returned items will vary.
+        extern "intrinsic" fn test_cases() -> [TestCaseMeta; 0];
+
+        #[lang(test_case_meta)]
+        struct TestCaseMeta { 
+            path: &[u8],
+            name: &[u8],
+            test: fn(),
+        }
+
+        impl TestCaseMeta {
+            #[lang(test_case_meta_new)]
+            fn new(path: &[u8], name: &[u8], test: fn()) -> TestCaseMeta {
+                TestCaseMeta {
+                    path: path,
+                    name: name,
+                    test: test,
+                }
+            }
+        }
+    }
+
     macro argc_argv_to_slice($argc, $argv) {
         let argc = $argc as usize;
         let argv = $argv as &&u8;

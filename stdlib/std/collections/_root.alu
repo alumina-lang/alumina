@@ -1,6 +1,15 @@
 use std::cmp::Comparable;
 use std::proto::Callable;
 
+/// Helper for collections that own heap-allocated objects. This is used to
+/// be able to do `defer col.free_all()` without much boilerplate.
+fn free_all<T>(col: &mut T) {
+    for i in col {
+        i.free();
+    }
+    col.free();
+}
+
 fn sort_by<T, F: Callable<(T), K>, K: Comparable<K>>(arr: &mut [T], key: F) {
     if arr.len <= 1 {
         return;
