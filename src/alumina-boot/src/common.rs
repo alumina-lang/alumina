@@ -203,6 +203,10 @@ pub enum CodeErrorKind {
     NoSpanInformation,
     #[error("cannot have an `impl` block without a corresponding type")]
     NoFreeStandingImpl,
+    #[error("this item cannot be a test")]
+    CannotBeATest,
+    #[error("test cases must have 0 parameters and return void")]
+    InvalidTestCaseSignature,
 
     // Warnings
     #[error("defer inside a loop: this defered statement will only be executed once")]

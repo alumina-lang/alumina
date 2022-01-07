@@ -95,7 +95,7 @@ fn main() {
 
 # Status
 
-Bootstrap Alumina compiler ([`alumina-boot`](./aluminac)) is written in Rust and is currently actively developed. It compiles to ugly C11 code with GCC extensions. It is currently at a point where it can be considered a functional compiler, but it is not by any means stable, reliable or complete.
+Bootstrap Alumina compiler ([`alumina-boot`](./src/alumina-boot)) is written in Rust and is currently actively developed. It compiles to ugly C11 code with GCC extensions. It is currently at a point where it can be considered a functional compiler, but it is not by any means stable, reliable or complete.
 
 Finished:
 
@@ -111,7 +111,7 @@ To be done:
 - Standard library is only usable on Linux-like targets
 - Probably a lot of bugs and miscompilations
 
-A self-hosted compiler ([`aluminac`](./aluminac)) is also being written. It is in very early stages (is only able to parse source at the moment). It will eventually have a LLVM backend.
+A self-hosted compiler ([`aluminac`](./src/aluminac)) is also being written. It is in very early stages (is only able to parse source at the moment). It will eventually have a LLVM backend.
 
 Full list of missing features, open questions, bugs and ideas for the future in [MISSING.md](./MISSING.md)
 
@@ -152,10 +152,10 @@ cc hello_world.c -o hello_world
 
 To compile the self-hosted compiler, run:
 ```
-make alumina-boot
+make aluminac
 ```
 
-See [examples](./examples), [standard library](./stdlib) and the [self-hosted compiler](./aluminac) for a tour of the language, documentation is TBD.
+See [examples](./examples), [standard library](./stdlib) and the [self-hosted compiler](./src/aluminac) for a tour of the language, documentation is TBD.
 
 # Contributing
 

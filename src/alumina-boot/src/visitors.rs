@@ -1,7 +1,7 @@
 use tree_sitter::Node;
 
 use crate::ast::expressions::parse_string_literal;
-use crate::ast::{AstCtx, Attribute, CodegenType, ItemP};
+use crate::ast::{AstCtx, Attribute, CodegenType, ItemP, TestMetadata};
 use crate::common::{AluminaError, ArenaAllocatable, CodeErrorKind, WithSpanDuringParsing};
 
 use crate::global_ctx::GlobalCtx;
@@ -257,6 +257,7 @@ pub struct AttributeVisitor<'ast, 'src> {
     item: Option<ItemP<'ast>>,
     attributes: Vec<Attribute>,
     should_skip: bool,
+    test_attributes: Vec<String>,
 }
 
 impl<'ast, 'src> AttributeVisitor<'ast, 'src> {
@@ -277,11 +278,14 @@ impl<'ast, 'src> AttributeVisitor<'ast, 'src> {
             item,
             attributes: Vec::new(),
             should_skip: false,
+            test_attributes: Vec::new(),
         };
 
         if let Some(node) = node.child_by_field_name("attributes") {
             visitor.visit(node)?;
         }
+
+        visitor.finalize(node)?;
 
         if visitor.should_skip {
             Ok(None)
@@ -289,13 +293,40 @@ impl<'ast, 'src> AttributeVisitor<'ast, 'src> {
             Ok(Some(visitor.attributes.alloc_on(ast)))
         }
     }
+
+    fn finalize(&mut self, node: tree_sitter::Node<'src>) -> Result<(), AluminaError> {
+        if !self.test_attributes.is_empty() {
+            self.ast.add_test_metadata(
+                self.item
+                    .ok_or(CodeErrorKind::CannotBeATest)
+                    .with_span(&self.scope, node)?,
+                TestMetadata {
+                    attributes: std::mem::replace(&mut self.test_attributes, vec![]),
+                    path: self.scope.path(),
+                    name: Path::from(PathSegment(
+                        self.code
+                            .node_text(
+                                node.child_by_field_name("name")
+                                    .ok_or(CodeErrorKind::CannotBeATest)
+                                    .with_span(&self.scope, node)?,
+                            )
+                            .alloc_on(self.ast),
+                    )),
+                },
+            );
+            self.attributes.push(Attribute::Test);
+        }
+
+        Ok(())
+    }
 }
 
 impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
     type ReturnType = Result<(), AluminaError>;
 
     fn visit_attributes(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        self.visit_children(node)
+        self.visit_children(node)?;
+        Ok(())
     }
 
     fn visit_attribute_item(&mut self, node: Node<'src>) -> Self::ReturnType {
@@ -310,6 +341,16 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
             "builtin" => self.attributes.push(Attribute::Builtin),
             "export" => self.attributes.push(Attribute::Export),
             "force_inline" => self.attributes.push(Attribute::ForceInline),
+            "test_main" => self.attributes.push(Attribute::TestMain),
+            "test" => {
+                self.test_attributes.push(
+                    inner
+                        .child_by_field_name("arguments")
+                        .map(|s| self.code.node_text(s))
+                        .unwrap_or("")
+                        .to_string(),
+                );
+            }
             "cfg" => {
                 let mut cfg_visitor = CfgVisitor::new(self.global_ctx.clone(), self.scope.clone());
                 if !cfg_visitor.visit(inner)? {
@@ -421,7 +462,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for CfgVisitor<'ast, 'src> {
             let actual = self.global_ctx.cfg(name);
 
             let matches = match (expected, actual) {
-                (Some(value), Some(Some(cfg))) => cfg == value,
+                (Some(value), Some(Some(cfg))) => cfg == std::str::from_utf8(&value).unwrap(),
                 (Some(_), Some(None)) => false,
                 (None, Some(_)) => true,
                 (_, None) => false,

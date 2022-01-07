@@ -17,6 +17,7 @@ endif
 ALUMINA_BOOT = $(BUILD_DIR)/alumina-boot
 ALUMINAC = $(BUILD_DIR)/aluminac
 CODEGEN = $(BUILD_DIR)/aluminac-generate
+STDLIB_TESTS = $(BUILD_DIR)/stdlib-tests
 
 # If grammar changes, we need to rebuild the world
 COMMON_SOURCES = common/grammar.js 
@@ -40,6 +41,13 @@ $(ALUMINA_BOOT): $(BOOTSTRAP_SOURCES) $(COMMON_SOURCES) $(BUILD_DIR)/.build
 	cargo build $(CARGO_FLAGS)
 	cp $(CARGO_TARGET_DIR)/alumina-boot $(ALUMINA_BOOT)
 
+# Stdlib tests
+$(STDLIB_TESTS).c: $(ALUMINA_BOOT) $(SYSROOT_FILES)
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --output $@
+
+$(STDLIB_TESTS): $(STDLIB_TESTS).c
+	$(CC) $(CFLAGS) -o $@ $(STDLIB_TESTS).c
+	
 # Compile tree sitter grammar to C. Bootstrap compiler does it by itself in the Cargo
 # build script, but for aluminac, we need to do it in the Makefile.
 $(BUILD_DIR)/src/parser.c: common/grammar.js
@@ -70,15 +78,21 @@ $(ALUMINAC): $(ALUMINAC).c $(BUILD_DIR)/parser.o
 	$(CC) $(CFLAGS) -o $@ $(BUILD_DIR)/parser.o $(ALUMINAC).c -ltree-sitter
 
 .PHONY: test test-fix
-test: $(ALUMINA_BOOT)
+test: $(ALUMINA_BOOT) $(STDLIB_TESTS)
+	$(STDLIB_TESTS)
 	cd tools/snapshot-tests/ && pytest snapshot.py
 
 test-fix: $(ALUMINA_BOOT)
 	cd tools/snapshot-tests/ && pytest snapshot.py --snapshot-update
 
-.PHONY: clean all
+.PHONY: clean all minimal
 clean:
 	rm -rf $(BUILD_ROOT)/
+
+minimal: $(ALUMINA_BOOT)
+	RUST_BACKTRACE=1 $(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --output foo.c minimal=./minimal.alu
+	cc -O0 foo.c
+	./a.out
 
 # Some convenience symlinks
 alumina-boot: $(ALUMINA_BOOT)

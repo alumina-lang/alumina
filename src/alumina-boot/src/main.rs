@@ -143,6 +143,19 @@ fn get_sysroot(args: &Args) -> Result<Vec<SourceFile>, AluminaError> {
     Ok(result)
 }
 
+#[test]
+fn test_1() {
+    panic!("oops")
+}
+
+#[test]
+fn test_2_with_long_nae() {}
+
+#[test]
+fn test_3() {
+    std::thread::sleep(std::time::Duration::from_millis(100));
+}
+
 fn main() {
     let start_time = Instant::now();
     let args = Args::parse();

@@ -296,6 +296,10 @@ impl<'ir> TypeBuilder<'ir> {
         Self { ir }
     }
 
+    pub fn void(&self) -> TyP<'ir> {
+        self.ir.intern_type(Ty::Builtin(BuiltinType::Void))
+    }
+
     pub fn builtin(&self, builtin: BuiltinType) -> TyP<'ir> {
         self.ir.intern_type(Ty::Builtin(builtin))
     }

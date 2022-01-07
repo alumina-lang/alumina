@@ -1,0 +1,134 @@
+// This unit testing mini-framework is in std for convenience's sake, eventually it should be
+// extracted. Nothing prevents you from writing your own framework, just compile with 
+// --cfg custom_test_framework and use the test support glue in std::runtime.
+
+#[cfg(all(test, not(custom_test_framework))] 
+{
+    use std::io::{File, StringWriter, anonymous_pipe, copy_to, Error};
+    use std::result::{Result, try};
+    use std::collections::{Vector, free_all};
+    use std::runtime::internal::{test_cases, TestCaseMeta};
+
+    static TEST_CASES = std::runtime::internal::test_cases();
+
+    struct TestResult {
+        test: TestCaseMeta,
+        success: bool,
+        stdout: Vector<u8>,
+        stderr: Vector<u8>,
+    }
+
+    impl TestResult {
+        fn free(self: &mut TestResult) {
+            self.stdout.free();
+            self.stderr.free();
+        }
+    }
+
+    fn run_test(test: TestCaseMeta) -> TestResult {
+        // stdio redirection
+        let (rx_err, tx_err) = anonymous_pipe().unwrap();
+        let (rx_out, tx_out) = anonymous_pipe().unwrap();
+    
+        let pid = std::libc::fork();
+        if pid == 0 {
+            rx_err.close();
+            rx_out.close();
+
+            let dev_zero = std::io::File::open("/dev/null").unwrap();
+            std::libc::dup2(dev_zero.fd, libc::STDIN_FILENO);
+            std::libc::dup2(tx_err.fd, libc::STDERR_FILENO);
+            std::libc::dup2(tx_out.fd, libc::STDOUT_FILENO);
+            dev_zero.close();
+            tx_err.close();
+            tx_out.close();
+
+            test.test();
+            std::libc::exit(0);
+        }
+
+        tx_err.close();
+        tx_out.close();
+        defer rx_out.close();
+        defer rx_err.close();
+
+        let status: libc::c_int;
+        std::libc::waitpid(pid, &status, 0);
+
+        let stdout : Vector<u8> = Vector::new();
+        let stderr : Vector<u8> = Vector::new();
+
+        let stdout_writer = StringWriter::new(&stdout);
+        let stderr_writer = StringWriter::new(&stderr);
+
+        rx_out.copy_to(&stdout_writer).unwrap();
+        rx_err.copy_to(&stderr_writer).unwrap();
+        
+        TestResult {
+            test: test,
+            success: status == 0,
+            stdout: stdout,
+            stderr: stderr,
+        }
+    }
+
+    #[test_main]
+    fn main() -> i32 {
+        let test_cases : &[TestCaseMeta] = TEST_CASES.as_slice();
+        let results: Vector<TestResult> = Vector::new();
+        defer results.free_all()
+
+        let num_failed = 0;
+        let num_passed = 0;
+
+        eprintln!("running {} tests", test_cases.len);
+        for test in test_cases {
+            eprint!("test {}::{} ... ", test.path, test.name);
+            let result = run_test(test);
+            results.push(result);
+
+            if result.success {
+                eprintln!("\x1b[0;32mok\x1b[0m.");
+                num_passed += 1;
+            } else {
+                eprintln!("\x1b[0;31mFAILED\x1b[0m.");
+                num_failed += 1;
+            }
+        }
+
+        if num_failed > 0 {
+            eprintln!("");
+            eprintln!("failures:");
+            eprintln!("");
+            for result in results {
+                if !result.success {
+                    if result.stdout.len() > 0 {
+                        eprintln!("---- {}::{} stdout ----", result.test.path, result.test.name);
+                        eprintln!("{}", result.stdout.as_slice());
+                        eprintln!("");
+                    }
+
+                    if result.stderr.len() > 0 {
+                        eprintln!("---- {}::{} stderr ----", result.test.path, result.test.name);
+                        eprintln!("{}", result.stderr.as_slice());
+                        eprintln!("");
+                    }
+                }
+            }
+            eprintln!("test result: \x1b[0;31mFAILED\x1b[0m. {} passed; {} failed; finished in {} ms", 
+                num_passed, 
+                num_failed, 
+                0
+            );
+            1
+        } else {
+            eprintln!("test result: \x1b[0;32mok\x1b[0m. {} passed; {} failed; finished in {} ms", 
+                num_passed, 
+                num_failed, 
+                0
+            );
+            0
+        }
+
+    }   
+}
