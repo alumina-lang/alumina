@@ -60,7 +60,9 @@ impl Option<T> {
         std::mem::replace(self, Option::none())
     }
 
-    
+    fn move(self: &mut Option<T>) -> Option<T> {
+        std::mem::replace(self, Option::none())
+    }
 }
 
 impl Option {
@@ -102,14 +104,6 @@ impl Option {
         }
     }
 
-    fn move<T: Movable<T>>(self: &mut Option<T>) -> Option<T> {
-        if self.is_some {
-            Option::some(self.inner.move())
-        } else {
-            Option::none()
-        }
-    }
-
     fn free<T: Freeable<T>>(self: &mut Option<T>) {
         if self.is_some {
             self.inner.free();
@@ -125,6 +119,105 @@ mod tests {
     #[test]
     fn option_ok() {
         let opt = Option::some(42);
-        assert!(opt.unwrap() == 42);
+        assert!(opt.is_some);
+        assert_eq!(opt.inner, 42);
+    }
+
+    #[test]
+    fn option_none() {
+        let opt = Option::none::<i32>();
+        assert!(!opt.is_some);
+    }
+
+    #[test]
+    fn option_equals() {
+        let opt1 = Option::some(42);
+        let opt2 = Option::some(42);
+        let opt3 = Option::some(43);
+        assert!(opt1.equals(&opt2));
+        assert!(!opt1.equals(&opt3));
+    }
+
+    #[test]
+    fn option_compare() {
+        use cmp::Ordering;
+
+        let opt1 = Option::some(42);
+        let opt2 = Option::some(42);
+        let opt3 = Option::some(43);
+        assert!(opt1.compare(&opt2) == Ordering::Equal);
+        assert!(opt1.compare(&opt3) == Ordering::Less);
+    }
+
+    #[test]
+    fn option_fmt() {
+        use fmt::format_in;
+        let buf: [u8; 100];
+
+        let opt1 = Option::some(42);
+        let opt2 = Option::none::<i32>();
+        assert!(format_in!(&buf, "{}", opt1) == "some(42)");
+        assert!(format_in!(&buf, "{}", opt2) == "none");
+    }
+
+
+    #[test]
+    fn option_iter() {
+        let opt1 = Option::some(42);
+        let opt2 = Option::none::<i32>();
+        
+        let iter = opt1.iter();
+        assert!(iter.next() == opt1);
+        assert!(iter.next() == opt2);
+    }
+
+    #[test]
+    fn option_as_result() {
+        let opt1 = Option::some(42);
+        let opt2 = Option::none::<i32>();
+
+        assert!(opt1.as_result(0) == result::Result::ok(42));
+        assert!(opt2.as_result(0) == result::Result::err(0));
+    }
+/*
+    #[test]
+    fn option_move() {
+        let opt1 = Option::some(42);
+        let opt2 = Option::none::<i32>();
+
+        assert!(opt1.move() == Option::some(42));
+        assert!(opt2.move() == Option::none::<i32>());
+    }
+
+    #[test]
+    fn option_free() {
+        let mut opt1 = Option::some(42);
+        let mut opt2 = Option::none::<i32>();
+
+        opt1.free();
+        opt2.free();
+    }
+*/
+    #[test]
+    fn option_unwrap() {
+        let opt1 = Option::some(42);
+        
+        assert!(opt1.unwrap() == 42);
+    }
+
+    #[test(should_fail)]
+    fn option_unwrap_none() {
+        let opt2 = Option::none::<i32>();
+
+        opt2.unwrap();
+    }
+
+    #[test]
+    fn option_unwrap_or() {
+        let opt1 = Option::some(42);
+        let opt2 = Option::none::<i32>();
+
+        assert!(opt1.unwrap_or(0) == 42);
+        assert!(opt2.unwrap_or(0) == 0);
     }
 }

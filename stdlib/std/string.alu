@@ -1,5 +1,9 @@
 use std::option::Option;
 
+fn is_whitespace(c: u8) -> bool {
+    c == 0x20 || c == 0x85 || c == 0xa0 || (c >= 0x09 && c <= 0x0D)
+}
+
 fn starts_with(self: &[u8], prefix: &[u8]) -> bool {
     if self.len < prefix.len {
         return false;
@@ -31,6 +35,26 @@ fn find(self: &[u8], needle: &[u8]) -> Option<usize> {
 
 fn contains(self: &[u8], needle: &[u8]) -> bool {
     self.find(needle).is_some
+}
+
+fn trim_start(self: &[u8]) -> &[u8] {
+    let i = 0usize;
+    while i < self.len && self[i].is_whitespace() {
+        i += 1;
+    }
+    self[i..]
+}
+
+fn trim_end(self: &[u8]) -> &[u8] {
+    let i = self.len;
+    while i > 0 && self[i - 1].is_whitespace() {
+        i -= 1;
+    }
+    self[..i]
+}
+
+fn trim(self: &[u8]) -> &[u8] {
+    self.trim_start().trim_end()
 }
 
 fn parse_integer<T: proto::Integer>(s: &[u8]) -> Option<T> {
@@ -112,5 +136,35 @@ mod tests {
         assert_eq!(parse_integer::<usize>(""), Option::none());
         assert_eq!(parse_integer::<usize>("abcdes"), Option::none());
         assert_eq!(parse_integer::<usize>("-243"), Option::none());
+    }
+
+    #[test]
+    fn test_trim_start() {
+        assert_eq!("".trim_start(), "")
+        assert_eq!("hello world".trim_start(), "hello world")
+        assert_eq!("  hello world".trim_start(), "hello world")
+        assert_eq!("\t\t\thello world".trim_start(), "hello world")
+        assert_eq!("\n\n\nhello world".trim_start(), "hello world")
+        assert_eq!("\r\r\rhello world".trim_start(), "hello world")
+    }
+
+    #[test]
+    fn test_trim_end() {
+        assert_eq!("".trim_end(), "")
+        assert_eq!("hello world".trim_end(), "hello world")
+        assert_eq!("hello world  ".trim_end(), "hello world")
+        assert_eq!("hello world\t\t\t".trim_end(), "hello world")
+        assert_eq!("hello world\n\n\n".trim_end(), "hello world")
+        assert_eq!("hello world\r\r\r".trim_end(), "hello world")
+    }
+
+    #[test]
+    fn test_trim() {
+        assert_eq!("".trim(), "")
+        assert_eq!("hello world".trim(), "hello world")
+        assert_eq!("  hello world".trim(), "hello world")
+        assert_eq!("\t\t\thello world".trim(), "hello world")
+        assert_eq!("\n\n\nhello world".trim(), "hello world")
+        assert_eq!("\r\r\rhello world".trim(), "hello world")
     }
 }

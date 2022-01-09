@@ -4,7 +4,7 @@ use std::iter::{Iterator, Iterable};
 use std::cmp::Equatable;
 
 struct HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
-    _inner: hashmap::HashMap<K, ()>
+    _inner: hashmap::HashMap<K, (), H>
 }
 
 struct HashSetIterator<K> {
@@ -31,17 +31,17 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
 
     #[inline]
     fn insert(self: &mut HashSet<K, H>, item: K) -> bool {
-        !self._inner.insert((item, ())).is_some
+        !self._inner.insert(item, ()).is_some
     }
 
     #[inline]
     fn remove(self: &mut HashSet<K, H>, item: K) -> bool {
-        self._inner.remove(item).is_some()
+        self._inner.remove(item).is_some
     }
 
     #[inline]
     fn contains(self: &HashSet<K, H>, item: K) -> bool {
-        self._inner.get(item).is_some()
+        self._inner.get(item).is_some
     }
 
     #[inline]
@@ -73,21 +73,173 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
 
     fn move(self: &mut HashSet<K, H>) -> HashSet<K, H> {
         HashSet::<K, H> {
-            inner: self.inner.move()
+            _inner: self._inner.move()
         }
     }
 }
 
 impl HashSet<K: Hashable<K, H> + Equatable<K>, I: Iterator<I, K>, H: Hasher<H> = DefaultHash> {
-    fn from_iter(iter: I) -> HashSet<K, H> {
+    fn from_iter(iter: &mut I) -> HashSet<K, H> {
         let set = HashSet::new::<K, H>();
         set.extend(iter);
         set
     }
 
-    fn extend(self: &mut HashSet<K, H>, iter: I) {
-        for item in iter {
-            self.insert(item);
+    fn extend(self: &mut HashSet<K, H>, iter: &mut I) {
+        loop {
+            let item = iter.next();
+            if item.is_some {
+                self.insert(item.inner);
+            } else {
+                break;
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hashmap::tests::DummyHasher;
+
+    #[test]
+    fn test_hashset_new() {
+        let set = HashSet::new::<i32>();
+        defer set.free(); 
+
+        assert!(set.empty());
+        assert_eq!(set.len(), 0);
+    }
+
+    #[test]
+    fn test_hashset_with_capacity() {
+        let set = HashSet::with_capacity::<i32>(10);
+        defer set.free(); 
+
+        assert!(set.empty());
+        assert_eq!(set.len(), 0);
+    }
+
+    #[test]
+    fn test_hashset_insert() {
+        let set = HashSet::new::<i32>();
+        defer set.free(); 
+
+        assert!(set.insert(1));
+        assert!(!set.insert(1));
+        assert_eq!(set.len(), 1);
+    }
+
+    #[test]
+    fn test_hashset_remove() {
+        let set = HashSet::new::<i32>();
+        defer set.free(); 
+
+        assert!(set.insert(1));
+        assert!(set.remove(1));
+        assert!(!set.remove(1));
+        assert!(set.empty());
+    }
+
+    #[test]
+    fn test_hashset_contains() {
+        let set = HashSet::new::<i32>();
+        defer set.free(); 
+
+        assert!(!set.contains(1));
+        assert!(set.insert(1));
+        assert!(set.contains(1));
+    }
+
+    #[test]
+    fn test_hashset_len() {
+        let set = HashSet::new::<i32>();
+        defer set.free(); 
+
+        assert_eq!(set.len(), 0);
+        assert!(set.insert(1));
+        assert_eq!(set.len(), 1);
+        assert!(set.insert(2));
+    }
+
+    #[test]
+    fn test_hashset_empty() {
+        let set = HashSet::new::<i32>();
+        defer set.free(); 
+
+        assert!(set.empty());
+        assert!(set.insert(1));
+        assert!(!set.empty());
+        assert!(set.remove(1));
+        assert!(set.empty());
+    }
+
+    #[test]
+    fn test_hashset_clear() {
+        let set = HashSet::new::<i32>();
+        defer set.free(); 
+
+        assert!(set.insert(1));
+        assert!(set.insert(2));
+        assert!(set.insert(3));
+        assert_eq!(set.len(), 3);
+        set.clear();
+        assert!(set.empty());
+    }
+
+    #[test]
+    fn test_hashset_iter() {
+        let set = HashSet::with_capacity::<i32, DummyHasher>(10);
+        defer set.free(); 
+
+        assert!(set.insert(1));
+        assert!(set.insert(2));
+        assert!(set.insert(3));
+        let iter = set.iter();
+        assert_eq!(iter.next(), Option::some(1));
+        assert_eq!(iter.next(), Option::some(2));
+        assert_eq!(iter.next(), Option::some(3));
+        assert_eq!(iter.next(), Option::none());
+    }
+
+    #[test]
+    fn test_hashset_move() {
+        let set = HashSet::new::<i32>();
+        defer set.free(); 
+
+        assert!(set.insert(1));
+        assert!(set.insert(2));
+        assert!(set.insert(3));
+
+        let set2 = set.move();
+        defer set2.free(); 
+
+        assert_eq!(set2.len(), 3);
+        assert!(set2.contains(1));
+        assert!(set2.contains(2));
+        assert!(set2.contains(3));
+        assert!(set.empty());
+    }
+
+    #[test]
+    fn test_hashset_from_iter() {
+        let set: HashSet<i32> = HashSet::from_iter(&[1, 2, 3].iter());
+        defer set.free(); 
+
+        assert_eq!(set.len(), 3);
+        assert!(set.contains(1));
+        assert!(set.contains(2));
+        assert!(set.contains(3));
+    }
+
+    #[test]
+    fn test_hashset_extend() {
+        let set = HashSet::new::<i32>();
+        defer set.free(); 
+
+        set.extend(&[1, 2, 3].iter());
+        assert_eq!(set.len(), 3);
+        assert!(set.contains(1));
+        assert!(set.contains(2));
+        assert!(set.contains(3));
     }
 }

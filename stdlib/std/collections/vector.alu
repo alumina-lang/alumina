@@ -53,7 +53,7 @@ impl Vector<T> {
         self._length = new_length;
     }
 
-    fn extend<I: Iterator<I, T>>(self: &mut Vector<T>, iter: I) {
+    fn extend<I: Iterator<I, T>>(self: &mut Vector<T>, iter: &mut I) {
         for item in iter {
             self.push(item);
         }
@@ -91,9 +91,13 @@ impl Vector<T> {
         self._length += 1;
     }
 
-    fn pop(self: &mut Vector<T>) -> T {
-        self._length -= 1;
-        self._data[self._length]
+    fn pop(self: &mut Vector<T>) -> Option<T> {
+        if self._length == 0 {
+            Option::none()
+        } else {
+            self._length -= 1;
+            Option::some(self._data[self._length])
+        }
     }
 
     fn first(self: &mut Vector<T>) -> Option<T> {
@@ -110,6 +114,13 @@ impl Vector<T> {
         } else {
             Option::some(self._data[self._length - 1])
         }
+    }
+
+    fn remove(self: &mut Vector<T>, index: usize) -> T {
+        let value = self._data[index];
+        self._data[index + 1..self._length].copy_to(&self._data[index]);
+        self._length -= 1;
+        value
     }
 
     fn len(self: &Vector<T>) -> usize {
@@ -158,5 +169,156 @@ impl Vector {
 
     fn write_char(self: &mut Vector<u8>, c: u8) {
         self.push(c);
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use std::option::Option;
+
+    #[test]
+    fn test_vector_new() {
+        let vec = Vector::new::<i32>();
+        defer vec.free();
+
+        assert_eq!(vec.len(), 0);
+    }
+
+    #[test]
+    fn test_vector_from_slice() {
+        let vec = Vector::from_slice(&[1, 2, 3]);
+        defer vec.free();
+
+        assert_eq!(vec.len(), 3);
+        assert_eq!(vec.as_slice(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn test_vector_from_iter() {
+        let vec : Vector<i32> = Vector::from_iter(&[1, 2, 3].iter());
+        defer vec.free();
+
+        assert_eq!(vec.len(), 3);
+        assert_eq!(vec.as_slice(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn test_vector_reserve() {
+        let vec = Vector::new::<i32>();
+        defer vec.free();
+
+        vec.reserve(10);
+        assert_eq!(vec.len(), 0);
+        assert_eq!(vec.as_slice(), &[]);
+    }
+
+    #[test]
+    fn test_vector_extend_from_slice() {
+        let vec = Vector::new::<i32>();
+        defer vec.free();
+
+        vec.extend_from_slice(&[1, 2, 3]);
+        assert_eq!(vec.len(), 3);
+        assert_eq!(vec.as_slice(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn test_vector_extend() {
+        let vec = Vector::new::<i32>();
+        defer vec.free();
+
+        vec.extend(&[1, 2, 3].iter());
+        assert_eq!(vec.len(), 3);
+        assert_eq!(vec.as_slice(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn test_vector_insert() {
+        let vec = Vector::new::<i32>();
+        defer vec.free();
+
+        vec.insert(0, 1);
+        assert_eq!(vec.len(), 1);
+        assert_eq!(vec.as_slice(), &[1]);
+        vec.insert(0, 2);
+        assert_eq!(vec.len(), 2);
+        assert_eq!(vec.as_slice(), &[2, 1]);
+        vec.insert(1, 3);
+        assert_eq!(vec.len(), 3);
+        assert_eq!(vec.as_slice(), &[2, 3, 1]);
+    }
+
+    #[test]
+    fn test_vector_as_slice() {
+        let vec = Vector::from_slice(&[1, 2, 3]);
+        defer vec.free();
+
+        assert_eq!(vec.as_slice(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn test_vector_as_slice_mut() {
+        let vec = Vector::from_slice(&[1, 2, 3]);
+        defer vec.free();
+
+        assert_eq!(vec.as_slice_mut(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn test_vector_push() {
+        let vec = Vector::new::<i32>();
+        defer vec.free();
+
+        vec.push(1);
+        assert_eq!(vec.len(), 1);
+        assert_eq!(vec.as_slice(), &[1]);
+        vec.push(2);
+        assert_eq!(vec.len(), 2);
+        assert_eq!(vec.as_slice(), &[1, 2]);
+        vec.push(3);
+        assert_eq!(vec.len(), 3);
+        assert_eq!(vec.as_slice(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn test_vector_pop() {
+        let vec = Vector::from_slice(&[1, 2, 3]);
+        defer vec.free();
+
+        assert_eq!(vec.pop(), Option::some(3));
+        assert_eq!(vec.len(), 2);
+        assert_eq!(vec.pop(), Option::some(2));
+        assert_eq!(vec.len(), 1);
+        assert_eq!(vec.pop(), Option::some(1));
+        assert_eq!(vec.len(), 0);
+        assert_eq!(vec.pop(), Option::none());
+        assert_eq!(vec.len(), 0);
+    }
+
+    #[test]
+    fn test_vector_remove() {
+        let vec = Vector::from_slice(&[1, 2, 3]);
+        defer vec.free();
+
+        assert_eq!(vec.remove(0), 1);
+        assert_eq!(vec.len(), 2);
+        assert_eq!(vec.remove(0), 2);
+        assert_eq!(vec.len(), 1);
+        assert_eq!(vec.remove(0), 3);
+        assert_eq!(vec.len(), 0);
+    }
+
+    #[test]
+    fn test_vector_move() {
+        let vec = Vector::from_slice(&[1, 2, 3]);
+        defer vec.free();
+        
+        let vec2 = vec.move();
+        defer vec2.free();
+        
+        assert_eq!(vec.len(), 0);
+        assert_eq!(vec2.len(), 3);
+        assert_eq!(vec2.as_slice(), &[1, 2, 3]);
     }
 }

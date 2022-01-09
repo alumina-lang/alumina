@@ -140,42 +140,48 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
         // we can infer A, B and C.
         if let Some(tgt) = inferred.get(&placeholder.id).copied() {
             for bound in placeholder.bounds {
-                if let ast::Ty::Generic(item, [src]) = bound.typ {
-                    match self.ast.lang_item_kind(item) {
-                        Some(LangItemKind::ProtoArrayOf) => {
+                let (item, args) = match bound.typ {
+                    ast::Ty::Generic(item, args) => (item, args),
+                    _ => continue,
+                };
+
+                match self.ast.lang_item_kind(item) {
+                    Some(LangItemKind::ProtoArrayOf) => {
+                        if let [src] = args {
                             if let ir::Ty::Array(tgt, _) = tgt {
                                 let _ = self.match_slot(inferred, src, tgt);
                             }
                         }
-                        Some(LangItemKind::ProtoPointerOf) => {
+                    }
+                    Some(LangItemKind::ProtoPointerOf) => {
+                        if let [src] = args {
                             if let ir::Ty::Pointer(tgt, _) = tgt {
                                 let _ = self.match_slot(inferred, src, tgt);
                             }
                         }
-                        _ => {}
                     }
-                }
-                if let ast::Ty::Generic(item, [ast::Ty::Tuple(a1), a2]) = bound.typ {
-                    match self.ast.lang_item_kind(item) {
-                        Some(LangItemKind::ProtoCallable) => match tgt {
-                            ir::Ty::FunctionPointer(b1, b2) => {
-                                for (a, b) in a1.iter().zip(b1.iter()) {
-                                    let _ = self.match_slot(inferred, a, b);
-                                }
-                                let _ = self.match_slot(inferred, a2, b2);
-                            }
-                            ir::Ty::NamedFunction(item) => {
-                                if let Ok(fun) = item.get_function() {
-                                    for (a, b) in a1.iter().zip(fun.args.iter()) {
-                                        let _ = self.match_slot(inferred, a, b.ty);
+                    Some(LangItemKind::ProtoCallable) => {
+                        if let [ast::Ty::Tuple(a1), a2] = args {
+                            match tgt {
+                                ir::Ty::FunctionPointer(b1, b2) => {
+                                    for (a, b) in a1.iter().zip(b1.iter()) {
+                                        let _ = self.match_slot(inferred, a, b);
                                     }
-                                    let _ = self.match_slot(inferred, a2, fun.return_type);
+                                    let _ = self.match_slot(inferred, a2, b2);
                                 }
+                                ir::Ty::NamedFunction(item) => {
+                                    if let Ok(fun) = item.get_function() {
+                                        for (a, b) in a1.iter().zip(fun.args.iter()) {
+                                            let _ = self.match_slot(inferred, a, b.ty);
+                                        }
+                                        let _ = self.match_slot(inferred, a2, fun.return_type);
+                                    }
+                                }
+                                _ => {}
                             }
-                            _ => {}
-                        },
-                        _ => {}
+                        }
                     }
+                    _ => {}
                 }
             }
         }

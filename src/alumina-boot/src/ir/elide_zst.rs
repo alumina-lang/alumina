@@ -250,6 +250,10 @@ impl<'ir> ZstElider<'ir> {
             }
         }
 
+        if result.is_void() && result.ty.is_never() {
+            return builder.unreachable();
+        }
+
         result
     }
 

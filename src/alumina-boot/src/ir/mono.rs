@@ -667,10 +667,28 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 }
             };
 
-            let monomorphized = self
-                .monomorphize_item_full(item, generic_args.alloc_on(self.mono_ctx.ir), true)?
-                .get_function()
-                .with_no_span()?;
+            let monomorphized = match self.monomorphize_item_full(
+                item,
+                generic_args.alloc_on(self.mono_ctx.ir),
+                true,
+            ) {
+                Ok(mono) => mono.get_function().with_no_span()?,
+                Err(AluminaError::CodeErrors(code))
+                    if code.iter().all(|c| {
+                        matches!(
+                            c.kind,
+                            CodeErrorKind::ProtocolMismatch(_, _)
+                                | CodeErrorKind::ProtocolMismatchDetail(_, _, _)
+                        )
+                    }) =>
+                {
+                    return Ok(BoundCheckResult::DoesNotMatchBecause(format!(
+                        "`{}` does not match the protocol bounds",
+                        proto_fun.name
+                    )));
+                }
+                Err(e) => return Err(e),
+            };
 
             for (arg, expected) in monomorphized.args.iter().zip(proto_fun.arg_types.iter()) {
                 if arg.ty != *expected {

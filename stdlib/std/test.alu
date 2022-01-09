@@ -8,14 +8,17 @@
     use std::io::{File, StringWriter, anonymous_pipe, copy_to, Error};
     use std::result::{Result, try};
     use std::option::Option;
+    use std::process::{Command, Stdio};
     use std::collections::{Vector, free_all, sort_by};
     use std::runtime::internal::{TEST_CASES, TestCaseMeta};
+    use std::time::{Instant, Duration};
 
     struct TestResult {
         test: TestCaseMeta,
         success: bool,
         stdout: Vector<u8>,
         stderr: Vector<u8>,
+        status: i32
     }
 
     impl TestResult {
@@ -44,54 +47,32 @@
     }
 
     fn run(test: &TestCaseMeta) -> TestResult {
-        // stdio redirection
-        let (rx_err, tx_err) = anonymous_pipe().unwrap();
-        let (rx_out, tx_out) = anonymous_pipe().unwrap();
-    
         let should_fail = test.should_fail();
-        let pid = std::libc::fork();
-        if pid == 0 {
-            rx_err.close();
-            rx_out.close();
-
-            let dev_zero = std::io::File::open("/dev/null").unwrap();
-            std::libc::dup2(dev_zero.fd, libc::STDIN_FILENO);
-            std::libc::dup2(tx_err.fd, libc::STDERR_FILENO);
-            std::libc::dup2(tx_out.fd, libc::STDOUT_FILENO);
-            dev_zero.close();
-            tx_err.close();
-            tx_out.close();
-
+        let child = Command::fork()
+            .stdin(Stdio::Null)
+            .stdout(Stdio::Piped)
+            .stderr(Stdio::Piped)
+            .spawn()
+            .unwrap();
+    
+        if !child.is_some {
             test.test();
-
             if should_fail {
                 eprintln!("note: test function completed successfully")
             }
-            std::libc::exit(0);
+            process::exit(0);
         }
 
-        tx_err.close();
-        tx_out.close();
-        defer rx_out.close();
-        defer rx_err.close();
+        let child = child.unwrap();
+        let output = child.wait_with_output().unwrap();
+        defer output.free();
 
-        let stdout : Vector<u8> = Vector::new();
-        let stderr : Vector<u8> = Vector::new();
-
-        let stdout_writer = StringWriter::new(&stdout);
-        let stderr_writer = StringWriter::new(&stderr);
-
-        rx_out.copy_to(&stdout_writer).unwrap();
-        rx_err.copy_to(&stderr_writer).unwrap();
-        
-        let status: libc::c_int;
-        std::libc::waitpid(pid, &status, 0);
-        
         TestResult {
             test: *test,
-            success: should_fail ^ (status == 0),
-            stdout: stdout,
-            stderr: stderr,
+            success: should_fail ^ (output.status == 0),
+            stdout: output.stdout.move(),
+            stderr: output.stderr.move(),
+            status: output.status
         }
     }
 
@@ -103,7 +84,7 @@
 
     fn print_help_string(args: &[&[u8]]) -> ! {
         eprintln!("usage: {} [--include-std] [--prefix <PREFIX>] [--filter <FILTER>]", args[0]);
-        libc::exit(1);
+        process::exit(1);
     }
 
     fn filter_tests(args: &[&[u8]]) -> (Vector<TestCaseMeta>, usize) {
@@ -174,6 +155,8 @@
 
     #[test_main]
     fn main(args: &[&[u8]]) -> i32 {
+        let start_time = Instant::now();
+
         let results: Vector<TestResult> = Vector::new();
         defer results.free_all();
 
@@ -204,18 +187,23 @@
             }
         }
 
+        let elapsed_ms = (Instant::now().since(&start_time).unwrap().as_secs_f64() * 1000.0) as u32;
+
         if num_failed > 0 {
             eprintln!("");
             eprintln!("failures:");
             eprintln!("");
             for result in results {
                 if !result.success {
+                    if result.status != 0 {
+                        eprintln!("{}::{} exited with status: {}", result.test.path[2..], result.test.name, result.status);
+                        eprintln!("");
+                    }
                     if result.stdout.len() > 0 {
                         eprintln!("---- {}::{} stdout ----", result.test.path[2..], result.test.name);
                         eprintln!("{}", result.stdout.as_slice());
                         eprintln!("");
                     }
-                    
                     if result.stderr.len() > 0 {
                         eprintln!("---- {}::{} stderr ----", result.test.path[2..], result.test.name);
                         eprintln!("{}", result.stderr.as_slice());
@@ -223,20 +211,20 @@
                     }
                 }
             }
-            eprintln!("test result: \x1b[0;31mFAILED\x1b[0m. {} passed; {} failed; {} ignored; finished in {} ms", 
+            eprintln!("test result: \x1b[0;31mFAILED\x1b[0m. {} passed; {} failed; {} ignored; finished in {}ms", 
                 num_passed, 
                 num_failed, 
                 num_ignored,
-                0
+                elapsed_ms
             );
             1
         } else {
             eprintln!("");
-            eprintln!("test result: \x1b[0;32mok\x1b[0m. {} passed; {} failed; {} ignored; finished in {} ms", 
+            eprintln!("test result: \x1b[0;32mok\x1b[0m. {} passed; {} failed; {} ignored; finished in {}ms", 
                 num_passed, 
                 num_failed, 
                 num_ignored, 
-                0
+                elapsed_ms
             );
             0
         }

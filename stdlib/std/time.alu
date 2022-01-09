@@ -1,0 +1,147 @@
+const NANOS_PER_SEC: u32 = 1000000000;
+const NANOS_PER_MILLI: u32 = 1000000;
+const NANOS_PER_MICRO: u32 = 1000;
+const MILLIS_PER_SEC: u64 = 1000;
+const MICROS_PER_SEC: u64 = 1000000;
+
+fn sleep(duration: Duration) {
+    let spec = libc::timespec {
+        tv_sec: duration.secs as libc::time_t,
+        tv_nsec: util::cast(duration.nanos),
+    };
+    libc::nanosleep(&spec, null);
+}
+
+struct Instant {
+    spec: libc::timespec
+}
+
+impl Instant {
+    fn now() -> Instant {
+        let spec: libc::timespec;
+        libc::clock_gettime(libc::CLOCK_MONOTONIC, &spec);
+        Instant { spec: spec }
+    }
+
+    fn since(self: &Instant, other: &Instant) -> option::Option<Duration> {
+        if self >= other {
+            let (secs, nsec) = if self.spec.tv_nsec >= other.spec.tv_nsec {
+                ((self.spec.tv_sec - other.spec.tv_sec) as u64, (self.spec.tv_nsec - other.spec.tv_nsec) as u32)
+            } else {
+                (
+                    (self.spec.tv_sec - other.spec.tv_sec - 1) as u64,
+                    self.spec.tv_nsec as u32 + (NANOS_PER_SEC as u32) - other.spec.tv_nsec as u32,
+                )
+            };
+
+            option::Option::some(Duration::new(secs, nsec))
+        } else {
+            option::Option::none()
+        }
+    }
+
+    fn add(lhs: &Instant, rhs: &Duration) {
+        let secs = lhs.spec.tv_sec + rhs.secs;
+
+        let nsec = rhs.nanos + lhs.spec.tv_nsec as u32;
+        if nsec >= NANOS_PER_SEC as u32 {
+            nsec -= NANOS_PER_SEC as u32;
+            secs += 1;
+        }
+
+        Instant { 
+            spec: libc::timespec {
+                tv_sec: secs,
+                tv_nsec: util::cast(nsec) 
+            } 
+        }
+    }
+
+    fn sub(lhs: &Instant, rhs: &Duration) {
+        let secs = lhs.spec.tv_sec - rhs.secs;
+
+        let nsec = rhs.nanos  as i32 + lhs.spec.tv_nsec as i32;
+        if nsec < 0 {
+            nsec += NANOS_PER_SEC as u32;
+            secs -= 1;
+        }
+
+        Instant { 
+            spec: libc::timespec {
+                tv_sec: secs,
+                tv_nsec: util::cast(nsec) 
+            } 
+        }
+    }
+
+    fn equal(lhs: &Instant, rhs: &Instant) -> bool {
+        lhs.spec.tv_sec == rhs.spec.tv_sec && lhs.spec.tv_nsec == rhs.spec.tv_nsec
+    }
+
+    fn compare(lhs: &Instant, rhs: &Instant) -> cmp::Ordering {
+        cmp::lexicographic_cmp!(&lhs.spec.tv_sec, &rhs.spec.tv_sec);
+        lhs.spec.tv_nsec.compare(&rhs.spec.tv_nsec)
+    }
+
+    mixin cmp::Comparable<Instant>;
+    mixin cmp::Equatable<Instant>;
+}
+
+struct Duration {
+    secs: u64,
+    nanos: u32,
+}
+
+impl Duration {
+    fn new(secs: u64, nanos: u32) -> Duration {
+        Duration { secs: secs, nanos: nanos }
+    }
+
+    #[inline]
+    fn from_secs(secs: u64) -> Duration {
+        Duration { secs: secs, nanos: 0 }
+    }
+
+
+    #[inline]
+    fn from_millis(millis: u64) -> Duration {
+        Duration {
+            secs: millis / MILLIS_PER_SEC,
+            nanos: ((millis % MILLIS_PER_SEC) as u32) * NANOS_PER_MILLI,
+        }
+    }
+
+
+    #[inline]
+    fn from_micros(micros: u64) -> Duration {
+        Duration {
+            secs: micros / MICROS_PER_SEC,
+            nanos: ((micros % MICROS_PER_SEC) as u32) * NANOS_PER_MICRO,
+        }
+    }
+
+    #[inline]
+    fn from_nanos(nanos: u64) -> Duration {
+        Duration {
+            secs: nanos / (NANOS_PER_SEC as u64),
+            nanos: (nanos % (NANOS_PER_SEC as u64)) as u32,
+        }
+    }
+
+    #[inline]
+    fn as_secs_f64(self: &Duration) -> f64 {
+        (self.secs as f64) + (self.nanos as f64) / (NANOS_PER_SEC as f64)
+    }
+
+    fn equals(lhs: &Duration, rhs: &Duration) -> bool {
+        lhs.secs == rhs.secs && lhs.nanos == rhs.nanos
+    }
+
+    fn compare(lhs: &Duration, rhs: &Duration) -> cmp::Ordering {
+        cmp::lexicographic_cmp!(&lhs.secs, &rhs.secs);
+        lhs.nanos.compare(&rhs.nanos)
+    }
+
+    mixin cmp::Comparable<Duration>;
+    mixin cmp::Equatable<Duration>;
+}

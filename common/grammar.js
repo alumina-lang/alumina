@@ -800,7 +800,14 @@ module.exports = grammar({
     for_expression: ($) =>
       seq(
         "for",
-        field("name", $.identifier),
+        choice(
+          field("name", $.identifier),
+          seq("(",
+            seq(field("element", $.identifier), ","),
+            repeat(seq(field("element", $.identifier), ",")),
+            optional(field("element", $.identifier)),
+          ")")
+        ),
         "in",
         field("value", $._expression),
         field("body", $.block)

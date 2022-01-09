@@ -1,0 +1,402 @@
+use io::Error;
+use io::linux::error_check;
+
+struct Command {
+    _name: option::Option<&[u8]>,
+    _args: &[&[u8]],
+    _stdin: Stdio,
+    _stdout: Stdio,
+    _stderr: Stdio
+}
+
+struct Output {
+    status: i32,
+    stdout: collections::Vector<u8>,
+    stderr: collections::Vector<u8>,
+}
+
+impl Output {
+    fn move(self: &mut Output) -> Output {
+        Output {
+            status: self.status,
+            stdout: self.stdout.move(),
+            stderr: self.stderr.move()
+        }
+    }
+
+    fn free(self: &mut Output) {
+        self.stdout.free();
+        self.stderr.free();
+    }
+}
+
+struct Child {
+    pid: libc::pid_t,
+    stdin: option::Option<io::File>,
+    stdout: option::Option<io::File>,
+    stderr: option::Option<io::File>,
+}
+
+impl Child {
+    use option::Option;
+    use result::{Result, try};
+    use collections::Vector;
+
+    fn from_pid(pid: libc::pid_t) -> Child {
+        Child {
+            pid: pid,
+            stdin: Option::none(),
+            stdout: Option::none(),
+            stderr: Option::none()
+        }
+    }
+
+    fn wait_with_output(self: &mut Child) -> Result<Output, Error> {
+        let stdin = self.stdin.move();
+        if stdin.is_some {
+            try!(stdin.inner.close());
+        }
+
+        let stdout : Vector<u8> = Vector::new();
+        defer stdout.free();
+        
+        let stderr : Vector<u8> = Vector::new();
+        defer stderr.free();
+
+        if self.stdout.is_some {
+            let stdout_v: Vector<u8> = Vector::new();
+            try!(self.stdout.inner.read_to_end(&stdout));
+            self.stdout = Option::none();
+        }
+
+        if self.stderr.is_some {
+            let stderr_v: Vector<u8> = Vector::new();
+            try!(self.stderr.inner.read_to_end(&stderr));
+            self.stderr = Option::none();
+        }
+
+        let status: libc::c_int = 0;
+        error_check!(libc::waitpid(self.pid, &status, 0));
+       
+        let res = Output {
+            status: status as i32,
+            stdout: stdout.move(),
+            stderr: stderr.move()
+        };
+
+        Result::ok(res)
+    }
+
+    fn wait(self: &mut Child) -> Result<i32, Error> {
+        let stdin = self.stdin.move();
+        if stdin.is_some {
+            try!(stdin.inner.close());
+        }
+
+        let status: libc::c_int = 0;
+        error_check!(libc::waitpid(self.pid, &status, 0));
+       
+        Result::ok(status as i32)
+    }
+
+    fn kill(self: &mut Child) -> Result<(), Error> {
+        let ret = error_check!(libc::kill(self.pid, libc::SIGKILL));
+        Result::ok(())
+    }
+
+    fn close(self: &mut Child) -> Result<(), Error> {
+        let stdin = self.stdin.move();
+        if stdin.is_some {
+            try!(stdin.inner.close());
+        }
+
+        let stdout = self.stdout.move();
+        if stdout.is_some {
+            try!(stdout.inner.close());
+        }
+
+        let stderr = self.stderr.move();
+        if stderr.is_some {
+            try!(stderr.inner.close());
+        }
+
+        Result::ok(())
+    }
+}
+
+impl Command {
+    use result::{Result, try};
+    use io::{File, OpenOptions};
+    use option::Option;
+    use ffi::CString;
+    use collections::{Vector, free_all};
+
+    fn new(name: &[u8]) -> Command {
+        Command {
+            _name: Option::some(name),
+            _args: mem::slice::empty(),
+            _stdin: Stdio::Inherit,
+            _stdout: Stdio::Inherit,
+            _stderr: Stdio::Inherit
+        }
+    }
+
+    fn fork() -> Command {
+        Command {
+            _name: Option::none(),
+            _args: mem::slice::empty(),
+            _stdin: Stdio::Inherit,
+            _stdout: Stdio::Inherit,
+            _stderr: Stdio::Inherit
+        }
+    }
+
+    fn args(self: &mut Command, args: &[&[u8]]) -> &mut Command {
+        self._args = args;
+        self
+    }
+
+    fn stdin(self: &mut Command, stdin: Stdio) -> &mut Command {
+        self._stdin = stdin;
+        self
+    }
+
+    fn stdout(self: &mut Command, stdout: Stdio) -> &mut Command {
+        self._stdout = stdout;
+        self
+    }
+
+    fn stderr(self: &mut Command, stderr: Stdio) -> &mut Command {
+        self._stderr = stderr;
+        self
+    }
+
+    fn _exec(self: &Command) -> Result<!, Error> {
+        let name = CString::new(self._name.unwrap());
+        defer name.free();
+
+        let argv : Vector<CString> = Vector::with_capacity(self._args.len + 2);
+        defer argv.free_all();
+
+        argv.push(CString::new(self._name.unwrap()));
+        for arg in self._args {
+            argv.push(CString::new(arg));
+        }
+        argv.push(CString::null());
+
+        error_check!(libc::execv(name.ptr as &libc::c_char, argv.as_slice().ptr as &&libc::c_char));
+        unreachable!()
+    }
+
+    fn _after_fork(
+        self: &Command,
+        stdin_rx: &option::Option<io::File>,
+        stdin_tx: &option::Option<io::File>,
+        stdout_rx: &option::Option<io::File>,
+        stdout_tx: &option::Option<io::File>,
+        stderr_rx: &option::Option<io::File>,
+        stderr_tx: &option::Option<io::File>,
+    ) -> Result<(), Error> {
+        switch self._stdin {
+            Stdio::Piped => {
+                try!(stdin_tx.unwrap().close());
+                error_check!(libc::dup2(stdin_rx.unwrap().fd, libc::STDIN_FILENO));
+            },
+            Stdio::Null => {
+                let dev_zero = try!(File::open("/dev/null"));
+                error_check!(libc::dup2(dev_zero.fd, libc::STDIN_FILENO));
+                try!(dev_zero.close());
+            },
+            _ => {}
+        };
+
+        switch self._stdout {
+            Stdio::Piped => {
+                try!(stdout_rx.unwrap().close());
+                error_check!(libc::dup2(stdout_tx.unwrap().fd, libc::STDOUT_FILENO));
+            },
+            Stdio::Null => {
+                let dev_zero = try!(File::open_with("/dev/null", OpenOptions::new().write(true)));
+                error_check!(std::libc::dup2(dev_zero.fd, libc::STDOUT_FILENO));
+                try!(dev_zero.close());
+            },
+            _ => {}
+        };
+
+        switch self._stderr {
+            Stdio::Piped => {
+                stderr_rx.unwrap().close().unwrap();
+                error_check!(libc::dup2(stderr_tx.unwrap().fd, libc::STDERR_FILENO));
+            },
+            Stdio::Null => {
+                let dev_zero = try!(File::open_with("/dev/null", OpenOptions::new().write(true)));
+                error_check!(libc::dup2(dev_zero.fd, libc::STDERR_FILENO));
+                dev_zero.close().unwrap();
+            },
+            _ => {}
+        };
+
+        if self._name.is_some {
+            try!(self._exec())
+        }
+
+        Result::ok(())
+    }
+
+    fn spawn(self: &Command) -> Result<Option<Child>, Error> {
+        let (stdin_rx, stdin_tx) = if self._stdin == Stdio::Piped {
+            let (rx, tx) = try!(io::anonymous_pipe());
+            defer rx.close();
+
+            (Option::some(rx), Option::some(tx))
+        } else {
+            (Option::none(), Option::none())
+        };
+
+        let (stdout_rx, stdout_tx) = if self._stdout == Stdio::Piped {
+            let (rx, tx) = try!(io::anonymous_pipe());
+            defer tx.close();
+
+            (Option::some(rx), Option::some(tx))
+        } else {
+            (Option::none(), Option::none())
+        };
+
+        let (stderr_rx, stderr_tx) = if self._stderr == Stdio::Piped {
+            let (rx, tx) = try!(io::anonymous_pipe());
+            defer tx.close();
+
+            (Option::some(rx), Option::some(tx))
+        } else {
+            (Option::none(), Option::none())
+        };
+
+        let (fail_rx, fail_tx) = try!(io::anonymous_pipe());
+        defer fail_rx.close();
+
+        let pid = error_check!(std::libc::fork());
+        if pid == 0 {
+            fail_rx.close().unwrap();
+
+            let res = _after_fork(
+                self,
+                &stdin_rx,
+                &stdin_tx,
+                &stdout_rx,
+                &stdout_tx,
+                &stderr_rx,
+                &stderr_tx,
+            );
+
+            // Since we are already in the child process, we can't just bail here, we need to
+            // send the error to the parent process via the pipe.
+            if !res.is_ok {
+                fail_tx.write_all(
+                    mem::slice::from_raw(&res.inner.err as &u8, mem::size_of::<Error>())
+                ).unwrap();
+                libc::_exit(1);
+            } else {
+                fail_tx.close().unwrap();
+            }
+
+            // We have forked
+            Result::ok(Option::none())
+        } else {
+            fail_tx.close().unwrap();
+            
+            let exec_err: Error;
+            if fail_rx.read_exact(
+                mem::slice::from_raw(&exec_err as &mut u8, mem::size_of::<Error>())
+            ).is_ok {
+                if stdin_tx.is_some {
+                    try!(stdin_tx.unwrap().close());
+                }
+                if stdout_rx.is_some {
+                    try!(stdout_rx.unwrap().close());
+                }
+                if stderr_rx.is_some {
+                    try!(stderr_rx.unwrap().close());
+                }
+                return Result::err(exec_err);
+            }
+
+            Result::ok(Option::some(Child {
+                pid: pid,
+                stdin: stdin_tx,
+                stdout: stdout_rx,
+                stderr: stderr_rx,
+            }))
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn test_spawn() {
+        let child = Command::new("/bin/echo")
+            .args(&["Hello, World!"])
+            .stdout(Stdio::Piped)
+            .stderr(Stdio::Piped)
+            .spawn()
+            .unwrap()
+            .unwrap();
+
+        let output = child.wait_with_output().unwrap();
+        defer output.free();
+
+        assert_eq!(output.status, 0);
+        assert_eq!(output.stdout.as_slice(), "Hello, World!\n");
+        assert_eq!(output.stderr.as_slice(), &[]);
+    }
+
+    #[test]
+    fn spawn_fails_on_exec_failure() {
+        let child = Command::new("some nonexistent program hopefully")
+            .stdout(Stdio::Piped)
+            .stderr(Stdio::Piped)
+            .spawn();
+
+        assert!(!child.is_ok);
+        assert_eq!(child.unwrap_err().errno, libc::ENOENT);
+    }
+
+    
+    #[test]
+    fn test_kill() {
+        let child = Command::new("/usr/bin/sleep")
+            .args(&["10000"])
+            .spawn()
+            .unwrap()
+            .unwrap();
+
+        child.kill().unwrap();
+        
+        let status = child.wait().unwrap();
+        assert_eq!(status, libc::SIGKILL);
+    }
+
+
+    #[test]
+    fn test_fork() {
+        let child = Command::fork()
+            .stdout(Stdio::Piped)
+            .stderr(Stdio::Piped)
+            .spawn()
+            .unwrap();
+
+        if !child.is_some {
+            print!("Hello");
+            eprint!("World");
+            exit(123);
+        } else {
+            let output = child.inner.wait_with_output().unwrap();
+            defer output.free();
+            
+            assert_eq!((output.status & 0xff00) >> 8, 123);
+            assert_eq!(output.stdout.as_slice(), "Hello");
+            assert_eq!(output.stderr.as_slice(), "World");
+        }
+    }
+}

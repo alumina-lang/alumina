@@ -134,12 +134,28 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             Value::U16(val) => w!(self.fn_bodies, "{}", val),
             Value::U32(val) => w!(self.fn_bodies, "{}ULL", val),
             Value::U64(val) => w!(self.fn_bodies, "{}ULL", val),
-            Value::U128(val) => w!(self.fn_bodies, "{}ULL", val),
+            Value::U128(val) => {
+                w!(
+                    self.fn_bodies,
+                    "((({0}){1}ULL) << 64)|(({0}){2}ULL)",
+                    self.ctx.get_type(&Ty::Builtin(BuiltinType::U128)),
+                    (val >> 64) as u64,
+                    (val & 0xffff_ffff_ffff_ffff) as u64
+                );
+            }
             Value::I8(val) => w!(self.fn_bodies, "{}", val),
             Value::I16(val) => w!(self.fn_bodies, "{}", val),
             Value::I32(val) => w!(self.fn_bodies, "{}LL", val),
             Value::I64(val) => w!(self.fn_bodies, "{}LL", val),
-            Value::I128(val) => w!(self.fn_bodies, "{}LL", val),
+            Value::I128(val) => {
+                w!(
+                    self.fn_bodies,
+                    "((({0}){1}ULL) << 64)|(({0}){2}ULL)",
+                    self.ctx.get_type(&Ty::Builtin(BuiltinType::U128)),
+                    ((val as u128) >> 64) as u64,
+                    ((val as u128) & 0xffff_ffff_ffff_ffff) as u64
+                );
+            }
             Value::USize(val) => w!(self.fn_bodies, "{}ULL", val),
             Value::ISize(val) => w!(self.fn_bodies, "{}LL", val),
             _ => unimplemented!(),
@@ -262,7 +278,22 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 }
                 crate::ir::Lit::Int(v) => {
                     self.type_writer.add_type(expr.ty)?;
-                    w!(self.fn_bodies, "(({}){}ULL)", self.ctx.get_type(expr.ty), v);
+                    if matches!(
+                        expr.ty,
+                        Ty::Builtin(BuiltinType::U128) | Ty::Builtin(BuiltinType::I128)
+                    ) {
+                        self.type_writer.add_type(&Ty::Builtin(BuiltinType::U128))?;
+                        w!(
+                            self.fn_bodies,
+                            "({0})(((({1}){2}ULL) << 64)|(({1}){3}ULL))",
+                            self.ctx.get_type(expr.ty),
+                            self.ctx.get_type(&Ty::Builtin(BuiltinType::U128)),
+                            (v >> 64) as u64,
+                            (v & 0xffff_ffff_ffff_ffff) as u64
+                        );
+                    } else {
+                        w!(self.fn_bodies, "(({}){}ULL)", self.ctx.get_type(expr.ty), v);
+                    }
                 }
                 crate::ir::Lit::Float(v) => {
                     self.type_writer.add_type(expr.ty)?;

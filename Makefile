@@ -96,7 +96,11 @@ alumina-boot: $(ALUMINA_BOOT)
 aluminac: $(ALUMINAC)
 	ln -sf $(ALUMINAC) $@
 
-.PHONY: test test-fix
+.PHONY: std-test test test-fix
+
+std-test: alumina-boot $(STDLIB_TESTS)
+	$(STDLIB_TESTS) --include-std
+
 test: alumina-boot $(STDLIB_TESTS)
 	$(STDLIB_TESTS) --include-std
 	cd tools/snapshot-tests/ && pytest snapshot.py

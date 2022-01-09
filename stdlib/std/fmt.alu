@@ -32,6 +32,50 @@ macro format($fmt_str, $arg...) {
     fmt
 }
 
+macro format_in($buf, $fmt_str, $arg...) { 
+    let fmt = SliceFormatter::new($buf);
+    fmt::write!(&fmt, $fmt_str, $arg...);
+    fmt.get()
+}
+
+struct SliceFormatter {
+    buf: &mut [u8],
+    buf_pos: usize
+}
+
+impl SliceFormatter {
+    fn new(buf: &mut [u8]) -> SliceFormatter {
+        SliceFormatter {
+            buf: buf,
+            buf_pos: 0
+        }
+    }
+
+    #[inline]
+    fn write_str(self: &mut SliceFormatter, buf: &[u8]) {
+        use mem::copy_to;
+        if self.buf_pos + buf.len > self.buf.len {
+            panic!("buffer overflow");
+        }
+        buf.copy_to(&self.buf[self.buf_pos]);
+        self.buf_pos += buf.len;
+    }
+
+    #[inline]
+    fn write_char(self: &mut SliceFormatter, byte: u8) {
+        if self.buf_pos >= self.buf.len {
+            panic!("buffer overflow");
+        }
+        self.buf[self.buf_pos] = byte;
+        self.buf_pos += 1;
+    }
+
+    #[inline]
+    fn get(self: &SliceFormatter) -> &[u8] {
+        self.buf[..self.buf_pos]
+    }
+}
+
 struct BufferedFormatter<F: Formatter<F>> {
     buf: &mut [u8],
     buf_pos: usize,
@@ -122,16 +166,41 @@ mod internal {
         let buf = buf.as_slice_mut();
     
         let i: usize = buf.len - 1;
-        let negative = val < 0;
-        val = math::abs(val);
+        let negative = when T: proto::Signed {
+            if val < 0 {
+                if val == T::min_value() {
+                    val = T::max_value();
+                    
+                    // Absolute value of T::min_value() cannot be represented,
+                    // so we do one manual step;
+                    let digit = (((val % 10) + 1) % 10);
+                    buf[i] = digit as u8 + '0';
+                    val /= 10;
+                    if digit == 0 {
+                        val += 1;
+                    }
+                    i -= 1;
+                } else {
+                    val = -val;
+                }
+                true
+            } else {
+                false
+            }   
+        } else {
+            false
+        };
 
         loop {
             buf[i] = (val % 10) as u8 + '0';
             val /= 10;
+            
             if val == 0 {
-                if negative {
-                    i -= 1;
-                    buf[i] = '-';
+                when T: proto::Signed {
+                    if negative {
+                        i -= 1;
+                        buf[i] = '-';
+                    }
                 }
                 fmt.write_str(buf[i..]);
                 break;
@@ -218,5 +287,23 @@ mod internal {
         if args.len > 0 {
             panic!("too many arguments");
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    static BUF: [u8; 1024];
+    
+    #[test]
+    fn test_format_integer() {
+        assert_eq!(format_in!(&BUF, "hello {}", u8::max_value()), "hello 255");
+        assert_eq!(format_in!(&BUF, "hello {}", -23847), "hello -23847");
+        assert_eq!(format_in!(&BUF, "hello {}", i64::min_value()), "hello -9223372036854775808");
+        assert_eq!(
+            format_in!(&BUF, "hello {}", i128::min_value()), 
+            "hello -170141183460469231731687303715884105728"
+        );
+        //assert_eq!(format_in!(&BUF, "hello {}", i64::min_value() as i128), "hello -9223372036854775808");
     }
 }

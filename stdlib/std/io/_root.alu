@@ -8,13 +8,21 @@
 }
  
 protocol Readable<Self> {
-    use result::Result;
+    use result::{Result, try};
     use option::Option;
+    use collections::Vector;
     use internal::default_read_exact;
 
     fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize, Error>;
     fn read_exact(self: &mut Self, buf: &mut [u8]) -> Result<(), Error> {
         self.default_read_exact(buf)
+    }
+
+    fn read_to_end(self: &mut Self, buf: &mut Vector<u8>) -> Result<usize, Error> {
+        let writer = StringWriter::new(buf);
+        let read = try!(self.copy_to(&writer));
+
+        Result::ok(read as usize)
     }
 }
 
@@ -147,21 +155,24 @@ impl BufferedReader<R: Readable<R>> {
 
 
 // Extension methods
-fn copy_to<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D) -> result::Result<(), Error> {
-    use result::try;
+fn copy_to<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D) -> result::Result<u64, Error> {
+    use result::{Result, try};
 
     let buf: [u8; 1024];
     let buf = buf.as_slice_mut();
+    let read = 0u64;
 
     loop {
         let n = try!(src.read(buf));
+        read += n as u64;
         if n == 0 {
             break;
         }
         try!(dst.write_all(buf[0..n]));
     }
 
-    dst.flush()
+    try!(dst.flush());
+    Result::ok(read)
 }
 
 fn read_byte<R: Readable<R>>(reader: &mut R) -> result::Result<u8, Error> {

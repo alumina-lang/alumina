@@ -303,7 +303,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                                 Some(name),
                                 NamedItem::new_default(NamedItemKind::Local(elem_id)),
                             )
-                            .with_span(&self.scope, inner)?;
+                            .with_span(&self.scope, elem)?;
                     }
 
                     statements.insert(
@@ -856,28 +856,77 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_for_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let name = self
-            .code
-            .node_text(node.child_by_field_name("name").unwrap())
-            .alloc_on(self.ast);
-
-        let id = self.ast.make_id();
-        let iterator = self.ast.make_id();
-        let iterator_result = self.ast.make_id();
-
         let iterable_node = node.child_by_field_name("value").unwrap();
         let iterable = self.visit(iterable_node)?;
 
-        let body = with_block_scope!(self, {
-            self.scope
-                .add_item(Some(name), NamedItem::new_default(NamedItemKind::Local(id)))
-                .with_span(&self.scope, node)?;
+        let iterator = self.ast.make_id();
+        let iterator_result = self.ast.make_id();
 
-            self.in_a_loop = true;
-            let ret = self.visit(node.child_by_field_name("body").unwrap());
-            self.in_a_loop = false;
-            ret?
-        });
+        let id = self.ast.make_id();
+
+        let body = if let Some(name) = node.child_by_field_name("name") {
+            let name = self.code.node_text(name).alloc_on(self.ast);
+
+            with_block_scope!(self, {
+                self.scope
+                    .add_item(Some(name), NamedItem::new_default(NamedItemKind::Local(id)))
+                    .with_span(&self.scope, node)?;
+
+                self.in_a_loop = true;
+                let ret = self.visit(node.child_by_field_name("body").unwrap());
+                self.in_a_loop = false;
+                ret?
+            })
+        } else {
+            // Tuple unpacking, i.e. `for (a, b) in ...`
+            with_block_scope!(self, {
+                let mut statements = Vec::new();
+                let mut cursor = node.walk();
+
+                for (idx, elem) in node
+                    .children_by_field_name("element", &mut cursor)
+                    .enumerate()
+                {
+                    let name = self.code.node_text(elem).alloc_on(self.ast);
+                    let elem_id = self.ast.make_id();
+
+                    let rhs = ExprKind::TupleIndex(
+                        ExprKind::Local(id).alloc_with_span(self.ast, &self.scope, elem),
+                        idx,
+                    )
+                    .alloc_with_span(self.ast, &self.scope, elem);
+
+                    let elem_decl = LetDeclaration {
+                        id: elem_id,
+                        typ: None,
+                        value: Some(rhs),
+                    };
+
+                    statements.push(StatementKind::LetDeclaration(elem_decl).alloc_with_span(
+                        self.ast,
+                        &self.scope,
+                        node,
+                    ));
+
+                    self.scope
+                        .add_item(
+                            Some(name),
+                            NamedItem::new_default(NamedItemKind::Local(elem_id)),
+                        )
+                        .with_span(&self.scope, elem)?;
+                }
+
+                self.in_a_loop = true;
+                let ret = self.visit(node.child_by_field_name("body").unwrap());
+                self.in_a_loop = false;
+
+                ExprKind::Block(statements.alloc_on(self.ast), ret?).alloc_with_span(
+                    self.ast,
+                    &self.scope,
+                    node,
+                )
+            })
+        };
 
         // TODO: This is a mess, it should not be so verbose to unsugar a simple for loop
         let mut resolver = NameResolver::new();

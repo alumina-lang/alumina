@@ -1,7 +1,7 @@
 /// This module holds impl blocks for builtin types all items with #[lang(impl_X)] are
 /// treated as X when lowering into IR, so they cannot actually exist as proper structs.
 
-use cmp::{Equatable, Comparable, Ordering};
+use cmp::{Equatable, Comparable, Ordering, lexicographic_cmp};
 use hash::{Hashable, Hasher};
 use fmt::{Formatter};
 
@@ -133,6 +133,16 @@ impl _u8 {
     mixin _BuiltinComparable<u8>;
     mixin<H: Hasher<H>> Hashable<u8, H>;
     mixin<F: Formatter<F>> _IntegerFormattable<u8, F>;
+
+    #[force_inline]
+    fn max_value() -> u8 {
+        0xffu8
+    }
+
+    #[force_inline]
+    fn min_value() -> u8 {
+        0u8
+    }
 }
 
 #[lang(impl_u16)]
@@ -142,6 +152,16 @@ impl _u16 {
     mixin _BuiltinComparable<u16>;
     mixin<H: Hasher<H>> Hashable<u16, H>;
     mixin<F: Formatter<F>> _IntegerFormattable<u16, F>;
+
+    #[force_inline]
+    fn max_value() -> u16 {
+        0xffffu16
+    }
+
+    #[force_inline]
+    fn min_value() -> u16 {
+        0u16
+    }
 }
 
 #[lang(impl_u32)]
@@ -151,6 +171,16 @@ impl _u32 {
     mixin _BuiltinComparable<u32>;
     mixin<H: Hasher<H>> Hashable<u32, H>;
     mixin<F: Formatter<F>> _IntegerFormattable<u32, F>;
+
+    #[force_inline]
+    fn max_value() -> u32 {
+        0xffffffffu32
+    }
+
+    #[force_inline]
+    fn min_value() -> u32 {
+        0u32
+    }
 }
 
 #[lang(impl_u64)]
@@ -160,6 +190,16 @@ impl _u64 {
     mixin _BuiltinComparable<u64>;
     mixin<H: Hasher<H>> Hashable<u64, H>;
     mixin<F: Formatter<F>> _IntegerFormattable<u64, F>;
+
+    #[force_inline]
+    fn max_value() -> u64 {
+        0xffffffffffffffffu64
+    }
+
+    #[force_inline]
+    fn min_value() -> u64 {
+        0u64
+    }
 }
 
 #[lang(impl_u128)]
@@ -169,6 +209,16 @@ impl _u128 {
     mixin _BuiltinComparable<u128>;
     mixin<H: Hasher<H>> Hashable<u128, H>;
     mixin<F: Formatter<F>> _IntegerFormattable<u128, F>;
+
+    #[force_inline]
+    fn max_value() -> u128 {
+        0xffffffffffffffffffffffffffffffffu128
+    }
+
+    #[force_inline]
+    fn min_value() -> u128 {
+        0u128
+    }
 }
 
 #[lang(impl_usize)]
@@ -178,6 +228,30 @@ impl _usize {
     mixin _BuiltinComparable<usize>;
     mixin<H: Hasher<H>> Hashable<usize, H>;
     mixin<F: Formatter<F>> _IntegerFormattable<usize, F>;
+
+    #[force_inline]
+    fn max_value() -> usize {
+        #[cfg(target_pointer_width = "32")]
+        {
+            u32::max_value() as usize
+        }
+        #[cfg(target_pointer_width = "64")]
+        {
+            u64::max_value() as usize
+        }        
+    }
+
+    #[force_inline]
+    fn min_value() -> usize {
+        #[cfg(target_pointer_width = "32")]
+        {
+            u32::min_value() as usize
+        }
+        #[cfg(target_pointer_width = "64")]
+        {
+            u64::min_value() as usize
+        }   
+    }
 }
 
 #[lang(impl_i8)]
@@ -186,6 +260,16 @@ impl _i8 {
     mixin _BuiltinComparable<i8>;
     mixin<H: Hasher<H>> Hashable<i8, H>;
     mixin<F: Formatter<F>> _IntegerFormattable<i8, F>;
+
+    #[force_inline]
+    fn max_value() -> i8 {
+        0x7fu8 as i8
+    }
+
+    #[force_inline]
+    fn min_value() -> i8 {
+        0x80u8 as i8
+    }
 }
 
 #[lang(impl_i16)]
@@ -194,6 +278,16 @@ impl _i16 {
     mixin _BuiltinComparable<i16>;
     mixin<H: Hasher<H>> Hashable<i16, H>;
     mixin<F: Formatter<F>> _IntegerFormattable<i16, F>;
+
+    #[force_inline]
+    fn max_value() -> i16 {
+        0x7fffu16 as i16
+    }
+
+    #[force_inline]
+    fn min_value() -> i16 {
+        0x8000u16 as i16
+    }
 }
 
 #[lang(impl_i32)]
@@ -202,6 +296,16 @@ impl _i32 {
     mixin _BuiltinComparable<i32>;
     mixin<H: Hasher<H>> Hashable<i32, H>;
     mixin<F: Formatter<F>> _IntegerFormattable<i32, F>;
+
+    #[force_inline]
+    fn max_value() -> i32 {
+        0x7fffffffu32 as i32
+    }
+
+    #[force_inline]
+    fn min_value() -> i32 {
+        0x80000000u32 as i32
+    }
 }
 
 #[lang(impl_i64)]
@@ -210,6 +314,16 @@ impl _i64 {
     mixin _BuiltinComparable<i64>;
     mixin<H: Hasher<H>> Hashable<i64, H>;
     mixin<F: Formatter<F>> _IntegerFormattable<i64, F>;
+
+    #[force_inline]
+    fn max_value() -> i64 {
+        0x7fffffffffffffffu64 as i64
+    }
+
+    #[force_inline]
+    fn min_value() -> i64 {
+        0x8000000000000000u64 as i64
+    }
 }
 
 #[lang(impl_i128)]
@@ -218,6 +332,16 @@ impl _i128 {
     mixin _BuiltinComparable<i128>;
     mixin<H: Hasher<H>> Hashable<i128, H>;
     mixin<F: Formatter<F>> _IntegerFormattable<i128, F>;
+
+    #[force_inline]
+    fn max_value() -> i128 {
+        0x7fffffffffffffffffffffffffffffffu128 as i128
+    }
+
+    #[force_inline]
+    fn min_value() -> i128 {
+        0x80000000000000000000000000000000u128 as i128
+    }
 }
 
 #[lang(impl_isize)]
@@ -226,6 +350,30 @@ impl _isize {
     mixin _BuiltinComparable<isize>;
     mixin<H: Hasher<H>> Hashable<isize, H>;
     mixin<F: Formatter<F>> _IntegerFormattable<isize, F>;
+
+    #[force_inline]
+    fn max_value() -> isize {
+        #[cfg(target_pointer_width = "32")]
+        {
+            i32::max_value() as isize
+        }
+        #[cfg(target_pointer_width = "64")]
+        {
+            i64::max_value() as isize
+        }
+    }
+
+    #[force_inline]
+    fn min_value() -> isize {
+        #[cfg(target_pointer_width = "32")]
+        {
+            i32::min_value() as isize
+        }
+        #[cfg(target_pointer_width = "64")]
+        {
+            i64::min_value() as isize
+        }
+    }
 }
 
 #[lang(impl_f32)]
@@ -248,12 +396,7 @@ impl _f64 {
 // is probably the best way without implementing it all inside the compiler
 // Also, who needs Rust-like macros when you have GitHub Copilot?
 
-macro _lexicographic_cmp($lhs, $rhs) {
-    let cmp = $lhs.compare(&$rhs);
-    if cmp != Ordering::Equal {
-        return cmp;
-    }
-}
+
 
 #[lang(impl_tuple_1)]
 struct _tuple_1 {}
@@ -293,8 +436,8 @@ impl _tuple_2 {
         T1: Comparable<T1>, 
         T2: Comparable<T2>
     >(lhs: &(T1, T2), rhs: &(T1, T2)) -> Ordering {
-        _lexicographic_cmp!(lhs.0, rhs.0);
-        _lexicographic_cmp!(lhs.1, lhs.1);
+        lexicographic_cmp!(lhs.0, rhs.0);
+        lexicographic_cmp!(lhs.1, lhs.1);
         Ordering::Equal
     }
 
@@ -330,9 +473,9 @@ impl _tuple_3 {
         T2: Comparable<T2>, 
         T3: Comparable<T3>
     >(lhs: &(T1, T2, T3), rhs: &(T1, T2, T3)) -> Ordering {
-        _lexicographic_cmp!(lhs.0, rhs.0);
-        _lexicographic_cmp!(lhs.1, rhs.1);
-        _lexicographic_cmp!(lhs.2, rhs.2);
+        lexicographic_cmp!(lhs.0, rhs.0);
+        lexicographic_cmp!(lhs.1, rhs.1);
+        lexicographic_cmp!(lhs.2, rhs.2);
         Ordering::Equal
     }
 
@@ -384,10 +527,10 @@ impl _tuple_4 {
         T3: Comparable<T3>, 
         T4: Comparable<T4>
     >(lhs: &(T1, T2, T3, T4), rhs: &(T1, T2, T3, T4)) -> Ordering {
-        _lexicographic_cmp!(lhs.0, rhs.0);
-        _lexicographic_cmp!(lhs.1, rhs.1);
-        _lexicographic_cmp!(lhs.2, rhs.2);
-        _lexicographic_cmp!(lhs.3, rhs.3);
+        lexicographic_cmp!(lhs.0, rhs.0);
+        lexicographic_cmp!(lhs.1, rhs.1);
+        lexicographic_cmp!(lhs.2, rhs.2);
+        lexicographic_cmp!(lhs.3, rhs.3);
         Ordering::Equal
     }
 
@@ -446,11 +589,11 @@ impl _tuple_5 {
         T4: Comparable<T4>, 
         T5: Comparable<T5>
     >(lhs: &(T1, T2, T3, T4, T5), rhs: &(T1, T2, T3, T4, T5)) -> Ordering {
-        _lexicographic_cmp!(lhs.0, rhs.0);
-        _lexicographic_cmp!(lhs.1, rhs.1);
-        _lexicographic_cmp!(lhs.2, rhs.2);
-        _lexicographic_cmp!(lhs.3, rhs.3);
-        _lexicographic_cmp!(lhs.4, rhs.4);
+        lexicographic_cmp!(lhs.0, rhs.0);
+        lexicographic_cmp!(lhs.1, rhs.1);
+        lexicographic_cmp!(lhs.2, rhs.2);
+        lexicographic_cmp!(lhs.3, rhs.3);
+        lexicographic_cmp!(lhs.4, rhs.4);
         Ordering::Equal
     }
 
@@ -522,12 +665,12 @@ impl _tuple_6 {
         lhs: &(T1, T2, T3, T4, T5, T6), 
         rhs: &(T1, T2, T3, T4, T5, T6)
     ) -> Ordering {
-        _lexicographic_cmp!(lhs.0, rhs.0);
-        _lexicographic_cmp!(lhs.1, rhs.1);
-        _lexicographic_cmp!(lhs.2, rhs.2);
-        _lexicographic_cmp!(lhs.3, rhs.3);
-        _lexicographic_cmp!(lhs.4, rhs.4);
-        _lexicographic_cmp!(lhs.5, rhs.5);
+        lexicographic_cmp!(lhs.0, rhs.0);
+        lexicographic_cmp!(lhs.1, rhs.1);
+        lexicographic_cmp!(lhs.2, rhs.2);
+        lexicographic_cmp!(lhs.3, rhs.3);
+        lexicographic_cmp!(lhs.4, rhs.4);
+        lexicographic_cmp!(lhs.5, rhs.5);
         Ordering::Equal
     }
 
@@ -606,13 +749,13 @@ impl _tuple_7 {
         lhs: &(T1, T2, T3, T4, T5, T6, T7), 
         rhs: &(T1, T2, T3, T4, T5, T6, T7)
     ) -> Ordering {
-        _lexicographic_cmp!(lhs.0, rhs.0);
-        _lexicographic_cmp!(lhs.1, rhs.1);
-        _lexicographic_cmp!(lhs.2, rhs.2);
-        _lexicographic_cmp!(lhs.3, rhs.3);
-        _lexicographic_cmp!(lhs.4, rhs.4);
-        _lexicographic_cmp!(lhs.5, rhs.5);
-        _lexicographic_cmp!(lhs.6, rhs.6);
+        lexicographic_cmp!(lhs.0, rhs.0);
+        lexicographic_cmp!(lhs.1, rhs.1);
+        lexicographic_cmp!(lhs.2, rhs.2);
+        lexicographic_cmp!(lhs.3, rhs.3);
+        lexicographic_cmp!(lhs.4, rhs.4);
+        lexicographic_cmp!(lhs.5, rhs.5);
+        lexicographic_cmp!(lhs.6, rhs.6);
         Ordering::Equal
     }
 
@@ -698,14 +841,14 @@ impl _tuple_8 {
         lhs: &(T1, T2, T3, T4, T5, T6, T7, T8), 
         rhs: &(T1, T2, T3, T4, T5, T6, T7, T8)
     ) -> Ordering {
-        _lexicographic_cmp!(lhs.0, rhs.0);
-        _lexicographic_cmp!(lhs.1, rhs.1);
-        _lexicographic_cmp!(lhs.2, rhs.2);
-        _lexicographic_cmp!(lhs.3, rhs.3);
-        _lexicographic_cmp!(lhs.4, rhs.4);
-        _lexicographic_cmp!(lhs.5, rhs.5);
-        _lexicographic_cmp!(lhs.6, rhs.6);
-        _lexicographic_cmp!(lhs.7, rhs.7);
+        lexicographic_cmp!(lhs.0, rhs.0);
+        lexicographic_cmp!(lhs.1, rhs.1);
+        lexicographic_cmp!(lhs.2, rhs.2);
+        lexicographic_cmp!(lhs.3, rhs.3);
+        lexicographic_cmp!(lhs.4, rhs.4);
+        lexicographic_cmp!(lhs.5, rhs.5);
+        lexicographic_cmp!(lhs.6, rhs.6);
+        lexicographic_cmp!(lhs.7, rhs.7);
         Ordering::Equal
     }
 
@@ -777,5 +920,30 @@ impl _array {
     #[force_inline]
     fn iter<T, Arr: ArrayOf<T>>(self: &Arr) -> &[T] {
         self
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn unsigned_num_limits() {
+        assert_eq!(u8::max_value() + 1, u8::min_value());
+        assert_eq!(u16::max_value() + 1, u16::min_value());
+        assert_eq!(u32::max_value() + 1, u32::min_value());
+        assert_eq!(u64::max_value() + 1, u64::min_value());
+        assert_eq!(usize::max_value() + 1, usize::min_value());
+        assert_eq!(u128::max_value() + 1, u128::min_value());
+    }
+
+    #[test]
+    fn signed_num_limits() {
+        // Signed overflow is UB, so we round-trip via unsigned equivalent
+        assert_eq!((i8::max_value() as u8 + 1) as i8, i8::min_value());
+        assert_eq!((i16::max_value() as u16 + 1) as i16, i16::min_value());
+        assert_eq!((i32::max_value() as u32 + 1) as i32, i32::min_value());
+        assert_eq!((i64::max_value() as u64 + 1) as i64, i64::min_value());
+        assert_eq!((isize::max_value() as usize + 1) as isize, isize::min_value());
+        assert_eq!((i128::max_value() as u128 + 1) as i128, i128::min_value());
     }
 }
