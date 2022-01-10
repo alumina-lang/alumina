@@ -1,4 +1,3 @@
-use std::backtrace::Backtrace;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::fmt::Debug;
@@ -13,6 +12,7 @@ macro_rules! ice {
     ($why:literal) => {
         return Err(CodeErrorKind::InternalError(
             $why.to_string(),
+            #[cfg(nightly)]
             std::rc::Rc::new(std::backtrace::Backtrace::capture()),
         ))
         .with_no_span()
@@ -117,7 +117,7 @@ pub enum CodeErrorKind {
     #[error("only slices can be range-indexed")]
     RangeIndexNonSlice,
     #[error("internal error: {}", .0)]
-    InternalError(String, Rc<Backtrace>),
+    InternalError(String, #[cfg(nightly)] Rc<Backtrace>),
     // This error is a compiler bug if it happens on its own, but it can pop up when
     // we abort early due to a previous error.
     #[error("local with unknown type")]

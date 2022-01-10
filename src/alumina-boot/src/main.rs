@@ -1,7 +1,4 @@
-#![feature(bool_to_option)]
-#![feature(never_type)]
-#![feature(backtrace)]
-#![feature(core_intrinsics)]
+#![cfg_attr(feature = "backtrace", feature(nightly))]
 
 mod ast;
 mod codegen;

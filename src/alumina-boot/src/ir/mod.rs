@@ -11,13 +11,14 @@ use crate::{
     intrinsics::CodegenIntrinsicKind,
 };
 use std::{
-    backtrace::Backtrace,
     cell::{Cell, RefCell},
     collections::HashSet,
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
-    rc::Rc,
 };
+
+#[cfg(nightly)]
+use std::{backtrace::Backtrace, rc::Rc};
 
 use bumpalo::Bump;
 use once_cell::unsync::OnceCell;
@@ -376,6 +377,7 @@ impl<'ir> IRItemCell<'ir> {
             Some(IRItem::Function(f)) => Ok(f),
             Some(_) => Err(CodeErrorKind::InternalError(
                 "function expected".into(),
+                #[cfg(nightly)]
                 Rc::new(Backtrace::capture()),
             )),
             None => Err(CodeErrorKind::UnpopulatedSymbol),
@@ -387,6 +389,7 @@ impl<'ir> IRItemCell<'ir> {
             Some(IRItem::Protocol(p)) => Ok(p),
             Some(_) => Err(CodeErrorKind::InternalError(
                 "protocol expected".into(),
+                #[cfg(nightly)]
                 Rc::new(Backtrace::capture()),
             )),
             None => Err(CodeErrorKind::UnpopulatedSymbol),
@@ -398,6 +401,7 @@ impl<'ir> IRItemCell<'ir> {
             Some(IRItem::StructLike(p)) => Ok(p),
             Some(_) => Err(CodeErrorKind::InternalError(
                 "struct expected".into(),
+                #[cfg(nightly)]
                 Rc::new(Backtrace::capture()),
             )),
             None => Err(CodeErrorKind::UnpopulatedSymbol),
@@ -409,6 +413,7 @@ impl<'ir> IRItemCell<'ir> {
             Some(IRItem::Static(s)) => Ok(s),
             Some(_) => Err(CodeErrorKind::InternalError(
                 "static expected".into(),
+                #[cfg(nightly)]
                 Rc::new(Backtrace::capture()),
             )),
             None => Err(CodeErrorKind::UnpopulatedSymbol),
@@ -420,6 +425,7 @@ impl<'ir> IRItemCell<'ir> {
             Some(IRItem::Const(c)) => Ok(c),
             Some(_) => Err(CodeErrorKind::InternalError(
                 "const expected".into(),
+                #[cfg(nightly)]
                 Rc::new(Backtrace::capture()),
             )),
             None => Err(CodeErrorKind::UnpopulatedSymbol),

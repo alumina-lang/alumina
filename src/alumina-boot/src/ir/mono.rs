@@ -1,9 +1,12 @@
+#[cfg(nightly)]
 use std::backtrace::Backtrace;
+#[cfg(nightly)]
+use std::rc::Rc;
+
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
 use std::iter::{once, repeat};
-use std::rc::Rc;
 
 use indexmap::IndexMap;
 use once_cell::unsync::OnceCell;
@@ -1245,6 +1248,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 .ok_or_else(|| {
                     CodeErrorKind::InternalError(
                         "unbound placeholder".to_string(),
+                        #[cfg(nightly)]
                         Rc::new(Backtrace::capture()),
                     )
                 })
