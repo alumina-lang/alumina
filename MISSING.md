@@ -34,7 +34,6 @@
   match the slots on all of them. It's quite a lot of work and also `infer` will probably need to start looping until no more changes are made (e.g. in nested protocol bounds), but it would be quite awesome. By doing that, protocols would actually start *helping* type inference instead of making it harder.
 - How does Equatable and Comparable work for pointers? Autoref makes this quite complicated... Maybe it's better to simply not have that.
 - Some limited pattern matching in macros (optional arguments)
-- Tuple unpacking in for expressions
 - Ability to define types in function scope (especially for ENums, very useful for state machines). Simple in theory, but the same caveats apply as with lambdas: these can bind generic placeholders, so they need to be monomorphized carefully.
 
 ## Grammar, parsing, AST
@@ -53,14 +52,17 @@
 - these are definitely needed:
   - file IO and streams
     - done
+  - process/exec
+    - done
   - string formatting
     - The pattern is well-established (Formattable protocol) and I'm very happy with it,
       but it's very very basic right now
+    - formatting for floats is especially terrible, needs to be musch better
   - heap-allocating collections
     - Vector, HashMap, HashSet are implemented (very basic, probably do not perform very well)
-    - Maybe a heap? A VecDeque/ring buffer
-    - No linked lists.
   - math
+    - abs/truns/frac/round/sin/cos/... are missing
+
 - extras, nice to have:
   - threading, atomics, ...
     - This will definitely defer to pthread (what about Windows?)
@@ -69,6 +71,7 @@
   - random number generation
     - basic RNG is implemented, need a good way to make it generic over various integer lengths
   - date/time???? this is a big can of worms
+  - regexes? probably not, maybe a PCRE wrapper outside stdlib
 
 ## Optimizations
 
