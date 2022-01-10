@@ -220,24 +220,4 @@ mod tests {
 
         assert!(end > start);
     }
-
-    #[test]
-    fn test_duration_and_sleep() {
-        // This is obviously not a great test, but it exercises both
-        // sleep and the precise timer and helps us catch order-of-magnitude
-        // errors in converison.
-
-        let start = Instant::now();
-        sleep(Duration::from_millis(20));
-        let end = Instant::now();
-
-        let actual = end.since(&start).unwrap().as_secs_f64();
-        let expected = 0.02;
-
-        // We tolerate a 29% deviation, as short sleeps are imprecise.
-        let eta = math::abs((expected - actual)/(expected));
-        eprintln!("actual: {}, expected: {}, eta: {}", actual, expected, eta);
-        
-        assert!(eta < 0.2);
-    }
 }
