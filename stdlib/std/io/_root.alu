@@ -1,12 +1,12 @@
-#[cfg(target_os="linux")]
+#[cfg(any(target_os="linux", target_os="macos", target_os="android"))]
 {
-    use linux::{
+    use unix::{
         print, println, eprint, eprintln,
-        Error, OpenOptions, File, 
+        Error, OpenOptions, File,
         stdin, stdout, stderr, anonymous_pipe
     }
 }
- 
+
 protocol Readable<Self> {
     use result::{Result, try};
     use option::Option;
@@ -95,7 +95,7 @@ impl BufferedReader<R: Readable<R>> {
         from_slice(inner, mem::alloc::<u8>(buf_size))
     }
 
-    /// Creates a BufferedReader from an existing-buffer, potentially 
+    /// Creates a BufferedReader from an existing-buffer, potentially
     /// avoiding a heap allocation.
     fn from_slice(inner: &mut R, buf: &mut [u8]) -> BufferedReader<R> {
         BufferedReader {
@@ -121,7 +121,7 @@ impl BufferedReader<R: Readable<R>> {
 
     fn read(self: &mut BufferedReader<R>, buf: &mut [u8]) -> Result<usize, Error> {
         let slice = try!(self.fill_buffer());
-        
+
         let nread = math::min(buf.len, slice.len);
         slice[..nread].copy_to_nonoverlapping(&buf[0]);
         self.consume(nread);
@@ -191,7 +191,7 @@ fn read_until<R: BufferedReadable<R>>(r: &mut R, delim: u8, buf: &mut collection
     loop {
         let available = try!(r.fill_buffer());
         let ret = internal::memchr(delim, available);
-        
+
         let (done, used) = if ret.is_some {
             buf.extend_from_slice(available[..ret.inner + 1]);
             (true, ret.inner + 1)
@@ -253,7 +253,7 @@ impl LineIterator<R: BufferedReadable<R>> {
                 self.line_buf.pop();
             }
         }
-        
+
         Option::some(Result::ok(self.line_buf.as_slice()))
     }
 
@@ -294,7 +294,7 @@ mod internal {
         Result::ok(())
     }
 
-    
+
     fn memchr(needle: u8, haystack: &[u8]) -> Option<usize> {
         let p = libc::memchr(
             haystack.ptr as &void,
@@ -302,10 +302,10 @@ mod internal {
             haystack.len,
         );
 
-        if p == null { 
+        if p == null {
             Option::none()
-        } else { 
-            Option::some(p as usize - (haystack.ptr as usize)) 
+        } else {
+            Option::some(p as usize - (haystack.ptr as usize))
         }
     }
 }

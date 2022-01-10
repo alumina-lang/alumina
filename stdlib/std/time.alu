@@ -12,79 +12,141 @@ fn sleep(duration: Duration) {
     libc::nanosleep(&spec, null);
 }
 
-struct Instant {
-    spec: libc::timespec
+#[cfg(not(target_os = "macos"))]
+{
+    struct Instant {
+        spec: libc::timespec
+    }
+
+    impl Instant {
+        fn now() -> Instant {
+            let spec: libc::timespec;
+            libc::clock_gettime(libc::CLOCK_MONOTONIC, &spec);
+            Instant { spec: spec }
+        }
+
+        fn since(self: &Instant, other: &Instant) -> option::Option<Duration> {
+            if *self >= *other {
+                let (secs, nsec) = if self.spec.tv_nsec >= other.spec.tv_nsec {
+                    ((self.spec.tv_sec - other.spec.tv_sec) as u64, (self.spec.tv_nsec - other.spec.tv_nsec) as u32)
+                } else {
+                    (
+                        (self.spec.tv_sec - other.spec.tv_sec - 1) as u64,
+                        self.spec.tv_nsec as u32 + (NANOS_PER_SEC as u32) - other.spec.tv_nsec as u32,
+                    )
+                };
+
+                option::Option::some(Duration::new(secs, nsec))
+            } else {
+                option::Option::none()
+            }
+        }
+
+        fn add(lhs: &Instant, rhs: &Duration) {
+            let secs = lhs.spec.tv_sec + rhs.secs;
+
+            let nsec = rhs.nanos + lhs.spec.tv_nsec as u32;
+            if nsec >= NANOS_PER_SEC as u32 {
+                nsec -= NANOS_PER_SEC as u32;
+                secs += 1;
+            }
+
+            Instant {
+                spec: libc::timespec {
+                    tv_sec: secs,
+                    tv_nsec: util::cast(nsec)
+                }
+            }
+        }
+
+        fn sub(lhs: &Instant, rhs: &Duration) {
+            let secs = lhs.spec.tv_sec - rhs.secs;
+
+            let nsec = rhs.nanos  as i32 + lhs.spec.tv_nsec as i32;
+            if nsec < 0 {
+                nsec += NANOS_PER_SEC as u32;
+                secs -= 1;
+            }
+
+            Instant {
+                spec: libc::timespec {
+                    tv_sec: secs,
+                    tv_nsec: util::cast(nsec)
+                }
+            }
+        }
+
+        fn equals(lhs: &Instant, rhs: &Instant) -> bool {
+            lhs.spec.tv_sec == rhs.spec.tv_sec && lhs.spec.tv_nsec == rhs.spec.tv_nsec
+        }
+
+        fn compare(lhs: &Instant, rhs: &Instant) -> cmp::Ordering {
+            cmp::lexicographic_cmp!(&lhs.spec.tv_sec, &rhs.spec.tv_sec);
+            lhs.spec.tv_nsec.compare(&rhs.spec.tv_nsec)
+        }
+
+        mixin cmp::Comparable<Instant>;
+        mixin cmp::Equatable<Instant>;
+    }
 }
 
-impl Instant {
-    fn now() -> Instant {
-        let spec: libc::timespec;
-        libc::clock_gettime(libc::CLOCK_MONOTONIC, &spec);
-        Instant { spec: spec }
+#[cfg(target_os = "macos")]
+{
+    struct mach_timebase_info_t {
+        numer: u32,
+        denom: u32,
+    }
+    use libc::c_int as kern_return_t;
+
+    struct Instant {
+        inner: u64
     }
 
-    fn since(self: &Instant, other: &Instant) -> option::Option<Duration> {
-        if self >= other {
-            let (secs, nsec) = if self.spec.tv_nsec >= other.spec.tv_nsec {
-                ((self.spec.tv_sec - other.spec.tv_sec) as u64, (self.spec.tv_nsec - other.spec.tv_nsec) as u32)
+    extern "C" fn mach_absolute_time() -> u64;
+    extern "C" fn mach_timebase_info(info: &mut mach_timebase_info_t) -> kern_return_t;
+
+    static TIMEBASE: mach_timebase_info_t = {
+        let v: mach_timebase_info_t;
+        mach_timebase_info(&v);
+        v
+    };
+
+    impl Instant {
+        fn now() -> Instant {
+
+            Instant { inner: mach_absolute_time() }
+        }
+
+        fn since(self: &Instant, other: &Instant) -> option::Option<Duration> {
+            if *self >= *other  {
+                let diff = self.inner - other.inner;
+                let nanos = ((diff as u128) * (TIMEBASE.numer as u128) / (TIMEBASE.denom as u128)) as u64;
+
+                option::Option::some(Duration::new(nanos / (NANOS_PER_SEC as u64), (nanos % (NANOS_PER_SEC as u64)) as u32))
             } else {
-                (
-                    (self.spec.tv_sec - other.spec.tv_sec - 1) as u64,
-                    self.spec.tv_nsec as u32 + (NANOS_PER_SEC as u32) - other.spec.tv_nsec as u32,
-                )
-            };
-
-            option::Option::some(Duration::new(secs, nsec))
-        } else {
-            option::Option::none()
-        }
-    }
-
-    fn add(lhs: &Instant, rhs: &Duration) {
-        let secs = lhs.spec.tv_sec + rhs.secs;
-
-        let nsec = rhs.nanos + lhs.spec.tv_nsec as u32;
-        if nsec >= NANOS_PER_SEC as u32 {
-            nsec -= NANOS_PER_SEC as u32;
-            secs += 1;
+                option::Option::none()
+            }
         }
 
-        Instant { 
-            spec: libc::timespec {
-                tv_sec: secs,
-                tv_nsec: util::cast(nsec) 
-            } 
-        }
-    }
-
-    fn sub(lhs: &Instant, rhs: &Duration) {
-        let secs = lhs.spec.tv_sec - rhs.secs;
-
-        let nsec = rhs.nanos  as i32 + lhs.spec.tv_nsec as i32;
-        if nsec < 0 {
-            nsec += NANOS_PER_SEC as u32;
-            secs -= 1;
+        fn add(lhs: &Instant, rhs: &Duration) {
+            panic!("")
         }
 
-        Instant { 
-            spec: libc::timespec {
-                tv_sec: secs,
-                tv_nsec: util::cast(nsec) 
-            } 
+        fn sub(lhs: &Instant, rhs: &Duration) {
+            panic!("")
         }
-    }
 
-    fn equal(lhs: &Instant, rhs: &Instant) -> bool {
-        lhs.spec.tv_sec == rhs.spec.tv_sec && lhs.spec.tv_nsec == rhs.spec.tv_nsec
-    }
+        fn equals(lhs: &Instant, rhs: &Instant) -> bool {
+            lhs.inner == rhs.inner
+        }
 
-    fn compare(lhs: &Instant, rhs: &Instant) -> cmp::Ordering {
-        cmp::lexicographic_cmp!(&lhs.spec.tv_sec, &rhs.spec.tv_sec);
-        lhs.spec.tv_nsec.compare(&rhs.spec.tv_nsec)
-    }
+        fn compare(lhs: &Instant, rhs: &Instant) -> cmp::Ordering {
+            lhs.inner.compare(&rhs.inner)
+        }
 
-    mixin cmp::Comparable<Instant>;
-    mixin cmp::Equatable<Instant>;
+        mixin cmp::Comparable<Instant>;
+        mixin cmp::Equatable<Instant>;
+    }
 }
 
 struct Duration {
@@ -144,4 +206,36 @@ impl Duration {
 
     mixin cmp::Comparable<Duration>;
     mixin cmp::Equatable<Duration>;
+}
+
+
+#[cfg(test)]
+
+mod tests {
+
+    #[test]
+    fn test_monotonish() {
+        let start = Instant::now();
+        let end = Instant::now();
+
+        assert!(end > start);
+    }
+
+    #[test]
+    fn test_duration_and_sleep() {
+        // This is obviously not a great test, but it exercises both
+        // sleep and the precise timer and helps us catch order-of-magnitude
+        // errors in converison.
+
+        let start = Instant::now();
+        sleep(Duration::from_millis(20));
+        let end = Instant::now();
+
+        let actual = end.since(&start).unwrap().as_secs_f64();
+        let expected = 0.02;
+
+        // We tolerate a 29% deviation, as short sleeps are imprecise.
+        let eta = math::abs((expected - actual)/(expected));
+        assert!(eta < 0.2);
+    }
 }
