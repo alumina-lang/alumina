@@ -198,6 +198,8 @@ pub enum CodeErrorKind {
         "generic type parameters cannot be used in this context (did you mean to call a function?)"
     )]
     GenericArgsInPath,
+    #[error("invalid type operator")]
+    InvalidTypeOperator,
 
     #[error("cannot determine source span")]
     NoSpanInformation,

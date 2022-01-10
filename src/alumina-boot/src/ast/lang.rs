@@ -32,6 +32,10 @@ pub enum LangItemKind {
     ImplTuple(usize),
     ImplArray,
 
+    TypeopSignedOf,
+    TypeopUnsignedOf,
+    TypeopDerefOf,
+
     EntrypointGlue,
     TestCaseMeta,
     TestCaseMetaNew,
@@ -93,6 +97,10 @@ impl TryFrom<&str> for LangItemKind {
             "operator_lte" => Ok(LangItemKind::Operator(BinOp::LEq)),
             "operator_gt" => Ok(LangItemKind::Operator(BinOp::Gt)),
             "operator_gte" => Ok(LangItemKind::Operator(BinOp::GEq)),
+
+            "typeop_signed_of" => Ok(LangItemKind::TypeopSignedOf),
+            "typeop_unsigned_of" => Ok(LangItemKind::TypeopUnsignedOf),
+            "typeop_deref_of" => Ok(LangItemKind::TypeopDerefOf),
 
             "entrypoint_glue" => Ok(LangItemKind::EntrypointGlue),
             "test_case_meta" => Ok(LangItemKind::TestCaseMeta),

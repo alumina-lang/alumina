@@ -1267,6 +1267,107 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .collect::<Result<Vec<_>, _>>()?
                     .alloc_on(self.mono_ctx.ir);
 
+                match self.mono_ctx.ast.lang_item_kind(item) {
+                    Some(LangItemKind::TypeopDerefOf) => {
+                        if args.len() != 1 {
+                            return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
+                        }
+                        if let ir::Ty::Pointer(ty, _) = args[0] {
+                            return Ok(ty);
+                        }
+                        return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
+                    }
+                    Some(LangItemKind::TypeopSignedOf) => {
+                        if args.len() != 1 {
+                            return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
+                        }
+                        match args[0] {
+                            ir::Ty::Builtin(BuiltinType::U8) => {
+                                return Ok(self.types.builtin(BuiltinType::I8))
+                            }
+                            ir::Ty::Builtin(BuiltinType::U16) => {
+                                return Ok(self.types.builtin(BuiltinType::I16))
+                            }
+                            ir::Ty::Builtin(BuiltinType::U32) => {
+                                return Ok(self.types.builtin(BuiltinType::I32))
+                            }
+                            ir::Ty::Builtin(BuiltinType::U64) => {
+                                return Ok(self.types.builtin(BuiltinType::I64))
+                            }
+                            ir::Ty::Builtin(BuiltinType::U128) => {
+                                return Ok(self.types.builtin(BuiltinType::I128))
+                            }
+                            ir::Ty::Builtin(BuiltinType::USize) => {
+                                return Ok(self.types.builtin(BuiltinType::ISize))
+                            }
+                            ir::Ty::Builtin(BuiltinType::I8) => {
+                                return Ok(self.types.builtin(BuiltinType::I8))
+                            }
+                            ir::Ty::Builtin(BuiltinType::I16) => {
+                                return Ok(self.types.builtin(BuiltinType::I16))
+                            }
+                            ir::Ty::Builtin(BuiltinType::I32) => {
+                                return Ok(self.types.builtin(BuiltinType::I32))
+                            }
+                            ir::Ty::Builtin(BuiltinType::I64) => {
+                                return Ok(self.types.builtin(BuiltinType::I64))
+                            }
+                            ir::Ty::Builtin(BuiltinType::I128) => {
+                                return Ok(self.types.builtin(BuiltinType::I128))
+                            }
+                            ir::Ty::Builtin(BuiltinType::ISize) => {
+                                return Ok(self.types.builtin(BuiltinType::ISize))
+                            }
+                            _ => return Err(CodeErrorKind::InvalidTypeOperator).with_no_span(),
+                        }
+                    }
+                    Some(LangItemKind::TypeopUnsignedOf) => {
+                        if args.len() != 1 {
+                            return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
+                        }
+                        match args[0] {
+                            ir::Ty::Builtin(BuiltinType::I8) => {
+                                return Ok(self.types.builtin(BuiltinType::U8))
+                            }
+                            ir::Ty::Builtin(BuiltinType::I16) => {
+                                return Ok(self.types.builtin(BuiltinType::U16))
+                            }
+                            ir::Ty::Builtin(BuiltinType::I32) => {
+                                return Ok(self.types.builtin(BuiltinType::U32))
+                            }
+                            ir::Ty::Builtin(BuiltinType::I64) => {
+                                return Ok(self.types.builtin(BuiltinType::U64))
+                            }
+                            ir::Ty::Builtin(BuiltinType::I128) => {
+                                return Ok(self.types.builtin(BuiltinType::U128))
+                            }
+                            ir::Ty::Builtin(BuiltinType::ISize) => {
+                                return Ok(self.types.builtin(BuiltinType::USize))
+                            }
+                            ir::Ty::Builtin(BuiltinType::U8) => {
+                                return Ok(self.types.builtin(BuiltinType::U8))
+                            }
+                            ir::Ty::Builtin(BuiltinType::U16) => {
+                                return Ok(self.types.builtin(BuiltinType::U16))
+                            }
+                            ir::Ty::Builtin(BuiltinType::U32) => {
+                                return Ok(self.types.builtin(BuiltinType::U32))
+                            }
+                            ir::Ty::Builtin(BuiltinType::U64) => {
+                                return Ok(self.types.builtin(BuiltinType::U64))
+                            }
+                            ir::Ty::Builtin(BuiltinType::U128) => {
+                                return Ok(self.types.builtin(BuiltinType::U128))
+                            }
+                            ir::Ty::Builtin(BuiltinType::USize) => {
+                                return Ok(self.types.builtin(BuiltinType::USize))
+                            }
+                            _ => return Err(CodeErrorKind::InvalidTypeOperator).with_no_span(),
+                        }
+                    }
+                    _ => {}
+                };
+
                 let ir_item = self.monomorphize_item(item, args)?;
                 match item.get() {
                     ast::Item::Protocol(_) => self.types.protocol(ir_item),

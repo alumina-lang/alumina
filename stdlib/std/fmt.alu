@@ -161,57 +161,58 @@ mod internal {
         }
     }
 
-    fn format_integer<T: proto::Integer, F: Formatter<F>>(val: T, fmt: &mut F) {
-        let buf: [u8; 40];
+    static DIGITS: [u8; 16] = [
+        '0', '1', '2', '3', 
+        '4', '5', '6', '7', 
+        '8', '9', 'a', 'b',
+        'c', 'd', 'e', 'f'
+    ]; 
+
+    fn format_integer<T: proto::Integer, F: Formatter<F>>(val: T, radix: u16, pad: usize, fmt: &mut F) {
+        assert!(radix >= 2 && radix <= 16);
+        
+        let buf: [u8; 128];
         let buf = buf.as_slice_mut();
     
-        let i: usize = buf.len - 1;
-        let negative = when T: proto::Signed {
+        
+        let (negative, val) = when T: proto::Signed {
             if val < 0 {
-                if val == T::min_value() {
-                    val = T::max_value();
-                    
-                    // Absolute value of T::min_value() cannot be represented,
-                    // so we do one manual step;
-                    let digit = (((val % 10) + 1) % 10);
-                    buf[i] = digit as u8 + '0';
-                    val /= 10;
-                    if digit == 0 {
-                        val += 1;
-                    }
-                    i -= 1;
-                } else {
-                    val = -val;
-                }
-                true
+                // If val == T::min_value(), negation overflows, so we do this trick,
+                // manual 2's complement negation, but widening to the unsigned type,
+                // before adding 1.
+                (true, ((~val) as builtins::unsigned_of<T>) + 1)
             } else {
-                false
+                (false, val as builtins::unsigned_of<T>)
             }   
         } else {
-            false
+            (false, val as builtins::unsigned_of<T>)
         };
 
+        let i: usize = 0;
         loop {
-            buf[i] = (val % 10) as u8 + '0';
-            val /= 10;
+            buf[buf.len - i - 1] = DIGITS[(val % (radix as builtins::unsigned_of<T>)) as usize];
+            val /= radix as builtins::unsigned_of<T>;
             
             if val == 0 {
                 when T: proto::Signed {
                     if negative {
-                        i -= 1;
-                        buf[i] = '-';
+                        fmt.write_char('-');
                     }
                 }
-                fmt.write_str(buf[i..]);
+                while i + 1 < pad {
+                    fmt.write_char('0');
+                    pad -= 1;
+                }
+                fmt.write_str(buf[buf.len - i - 1..]);
                 break;
             }
-            i -= 1;
+            i += 1;
         }
     }
 
     fn format_float<T: proto::FloatingPoint, F: Formatter<F>>(val: T, fmt: &mut F, precision: usize) {
         let trunc = val as i128;
-        format_integer(trunc, fmt);
+        format_integer(trunc, 10, 0, fmt);
         fmt.write_char('.');
 
         let frac = math::abs((val - (trunc as T)));
@@ -288,6 +289,67 @@ mod internal {
             panic!("too many arguments");
         }
     }
+
+    struct NumFormatAdapter<T: proto::Unsigned> {
+        radix: u16,
+        _pad: usize,
+        value: T
+    }
+
+    impl NumFormatAdapter<T: proto::Unsigned> {
+        fn fmt<F: Formatter<F>>(self: &NumFormatAdapter<T>, fmt: &mut F) {
+            format_integer(self.value, self.radix, self._pad, fmt);
+        }
+
+        fn hex(self: NumFormatAdapter<T>) -> NumFormatAdapter<T> {
+            NumFormatAdapter { radix: 16, _pad: self._pad, value: self.value }
+        }
+
+        fn oct(self: NumFormatAdapter<T>) -> NumFormatAdapter<T> {
+            NumFormatAdapter { radix: 8, _pad: self._pad, value: self.value }
+        }
+
+        fn bin(self: NumFormatAdapter<T>) -> NumFormatAdapter<T> {
+            NumFormatAdapter { radix: 2, _pad: self._pad, value: self.value }
+        }
+
+        fn pad(self: NumFormatAdapter<T>, pad: usize) -> NumFormatAdapter<T> {
+            NumFormatAdapter { radix: self.radix, _pad: pad, value: self.value }
+        }
+    }
+
+    struct RepeatAdapter<T: Formattable<T>> {
+        times: usize,
+        inner: T
+    }
+
+    impl RepeatAdapter {
+        fn fmt<T: Formattable<T, F>, F: Formatter<F>>(self: &RepeatAdapter<T>, fmt: &mut F) {
+            for i in range(0usize, self.times) {
+                self.inner.fmt(fmt);
+            }
+        }
+    }
+}
+
+fn hex<T: proto::Unsigned>(val: T) -> internal::NumFormatAdapter<T> {
+    internal::NumFormatAdapter { radix: 16, _pad: 0, value: val }
+}
+
+fn bin<T: proto::Unsigned>(val: T) -> internal::NumFormatAdapter<T> {
+    internal::NumFormatAdapter { radix: 2, _pad: 0, value: val }
+}
+
+fn oct<T: proto::Unsigned>(val: T) -> internal::NumFormatAdapter<T> {
+    internal::NumFormatAdapter { radix: 8, _pad: 0, value: val }
+}
+
+fn pad<T: proto::Unsigned>(val: T, pad: usize) -> internal::NumFormatAdapter<T> {
+    internal::NumFormatAdapter { radix: 10, _pad: pad, value: val }
+}
+
+fn repeat<T: Formattable<T>>(times: usize, inner: T) -> internal::RepeatAdapter<T> {
+    internal::RepeatAdapter { times: times, inner: inner }
 }
 
 
@@ -297,13 +359,36 @@ mod tests {
     
     #[test]
     fn test_format_integer() {
-        assert_eq!(format_in!(&BUF, "hello {}", u8::max_value()), "hello 255");
-        assert_eq!(format_in!(&BUF, "hello {}", -23847), "hello -23847");
-        assert_eq!(format_in!(&BUF, "hello {}", i64::min_value()), "hello -9223372036854775808");
+        assert_eq!(format_in!(&BUF, "{}", u8::max_value()), "255");
+        assert_eq!(format_in!(&BUF, "{}", -23847), "-23847");
+        assert_eq!(format_in!(&BUF, "{}", i64::min_value()), "-9223372036854775808");
         assert_eq!(
-            format_in!(&BUF, "hello {}", i128::min_value()), 
-            "hello -170141183460469231731687303715884105728"
+            format_in!(&BUF, "{}", i128::min_value()), 
+            "-170141183460469231731687303715884105728"
         );
-        //assert_eq!(format_in!(&BUF, "hello {}", i64::min_value() as i128), "hello -9223372036854775808");
+    }
+
+    #[test]
+    fn test_format_radix() {
+        assert_eq!(format_in!(&BUF, "{}", 255u32.hex()), "ff");
+        assert_eq!(format_in!(&BUF, "{}", 255u32.bin()), "11111111");
+        assert_eq!(format_in!(&BUF, "{}", 255u32.oct()), "377");
+    }
+
+    #[test]
+    fn test_format_zero_pad() {
+        assert_eq!(format_in!(&BUF, "{}", 255u32.pad(4)), "0255");
+        assert_eq!(format_in!(&BUF, "{}", 255u32.pad(8)), "00000255");
+    }
+
+    #[test]
+    fn test_format_radix_and_pad() {
+        assert_eq!(format_in!(&BUF, "{}", 15u8.pad(2).hex()), "0f");
+        assert_eq!(format_in!(&BUF, "{}", 15u8.hex().pad(2)), "0f");
+    }
+
+    #[test]
+    fn test_format_repeat() {
+        assert_eq!(format_in!(&BUF, "{}", repeat(3, "world")), "worldworldworld");
     }
 }

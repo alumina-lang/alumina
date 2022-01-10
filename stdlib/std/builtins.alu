@@ -104,7 +104,7 @@ protocol _BuiltinComparable<Self: proto::Numeric> {
 
 protocol _IntegerFormattable<Self: proto::Integer, F: Formatter<F>> {
     fn fmt(self: &Self, formatter: &mut F) {
-        fmt::internal::format_integer(*self, formatter);
+        fmt::internal::format_integer(*self, 10, 0, formatter);
     }
 }
 
@@ -923,6 +923,15 @@ impl _array {
     }
 }
 
+#[lang(typeop_signed_of)]
+struct signed_of<T: proto::Integer> {}
+
+#[lang(typeop_unsigned_of)]
+struct unsigned_of<T: proto::Integer> {}
+
+#[lang(typeop_deref_of)]
+struct deref_of<T: proto::Pointer> {}
+
 
 #[cfg(test)]
 mod tests {
@@ -945,5 +954,56 @@ mod tests {
         assert_eq!((i64::max_value() as u64 + 1) as i64, i64::min_value());
         assert_eq!((isize::max_value() as usize + 1) as isize, isize::min_value());
         assert_eq!((i128::max_value() as u128 + 1) as i128, i128::min_value());
+    }
+
+    #[test]
+    fn test_signed_of() {
+        use rtti::type_id;
+        
+        assert_eq!(type_id::<signed_of<u8>>(), type_id::<i8>());
+        assert_eq!(type_id::<signed_of<u16>>(), type_id::<i16>());
+        assert_eq!(type_id::<signed_of<u32>>(), type_id::<i32>());
+        assert_eq!(type_id::<signed_of<u64>>(), type_id::<i64>());
+        assert_eq!(type_id::<signed_of<usize>>(), type_id::<isize>());
+        assert_eq!(type_id::<signed_of<u128>>(), type_id::<i128>());
+     
+        assert_eq!(type_id::<signed_of<i8>>(), type_id::<i8>());
+        assert_eq!(type_id::<signed_of<i16>>(), type_id::<i16>());
+        assert_eq!(type_id::<signed_of<i32>>(), type_id::<i32>());
+        assert_eq!(type_id::<signed_of<i64>>(), type_id::<i64>());
+        assert_eq!(type_id::<signed_of<isize>>(), type_id::<isize>());
+        assert_eq!(type_id::<signed_of<i128>>(), type_id::<i128>());
+    }
+
+    #[test]
+    fn test_unsigned_of() {
+        use rtti::type_id;
+        
+        assert_eq!(type_id::<unsigned_of<u8>>(), type_id::<u8>());
+        assert_eq!(type_id::<unsigned_of<u16>>(), type_id::<u16>());
+        assert_eq!(type_id::<unsigned_of<u32>>(), type_id::<u32>());
+        assert_eq!(type_id::<unsigned_of<u64>>(), type_id::<u64>());
+        assert_eq!(type_id::<unsigned_of<usize>>(), type_id::<usize>());
+        assert_eq!(type_id::<unsigned_of<u128>>(), type_id::<u128>());
+
+        assert_eq!(type_id::<unsigned_of<i8>>(), type_id::<u8>());
+        assert_eq!(type_id::<unsigned_of<i16>>(), type_id::<u16>());
+        assert_eq!(type_id::<unsigned_of<i32>>(), type_id::<u32>());
+        assert_eq!(type_id::<unsigned_of<i64>>(), type_id::<u64>());
+        assert_eq!(type_id::<unsigned_of<isize>>(), type_id::<usize>());
+        assert_eq!(type_id::<unsigned_of<i128>>(), type_id::<u128>());
+    }
+
+    #[test]
+    fn test_deref_of() {
+        use rtti::type_id;
+        
+        assert_eq!(type_id::<deref_of<&u8>>(), type_id::<u8>());
+        assert_eq!(type_id::<deref_of<&mut u8>>(), type_id::<u8>());
+
+        assert_eq!(type_id::<deref_of<deref_of<&&u8>>>(), type_id::<u8>());
+        assert_eq!(type_id::<deref_of<deref_of<&&mut u8>>>(), type_id::<u8>());
+        assert_eq!(type_id::<deref_of<deref_of<&mut &mut u8>>>(), type_id::<u8>());
+        assert_eq!(type_id::<deref_of<deref_of<&mut &u8>>>(), type_id::<u8>());
     }
 }

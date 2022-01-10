@@ -812,9 +812,9 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_loop_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        self.in_a_loop = true;
+        let was_in_a_loop = std::mem::replace(&mut self.in_a_loop, true);
         let body = self.visit(node.child_by_field_name("body").unwrap());
-        self.in_a_loop = false;
+        self.in_a_loop = was_in_a_loop;
         let body = body?;
 
         Ok(ExprKind::Loop(body).alloc_with_span(self.ast, &self.scope, node))
@@ -872,9 +872,9 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                     .add_item(Some(name), NamedItem::new_default(NamedItemKind::Local(id)))
                     .with_span(&self.scope, node)?;
 
-                self.in_a_loop = true;
+                let was_in_a_loop = std::mem::replace(&mut self.in_a_loop, true);
                 let ret = self.visit(node.child_by_field_name("body").unwrap());
-                self.in_a_loop = false;
+                self.in_a_loop = was_in_a_loop;
                 ret?
             })
         } else {
@@ -916,9 +916,9 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                         .with_span(&self.scope, elem)?;
                 }
 
-                self.in_a_loop = true;
+                let was_in_a_loop = std::mem::replace(&mut self.in_a_loop, true);
                 let ret = self.visit(node.child_by_field_name("body").unwrap());
-                self.in_a_loop = false;
+                self.in_a_loop = was_in_a_loop;
 
                 ExprKind::Block(statements.alloc_on(self.ast), ret?).alloc_with_span(
                     self.ast,
@@ -1145,9 +1145,9 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     fn visit_while_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let condition = self.visit(node.child_by_field_name("condition").unwrap())?;
 
-        self.in_a_loop = true;
+        let was_in_a_loop = std::mem::replace(&mut self.in_a_loop, true);
         let body = self.visit(node.child_by_field_name("body").unwrap());
-        self.in_a_loop = false;
+        self.in_a_loop = was_in_a_loop;
         let body = body?;
 
         let r#break = ExprKind::Break(None).alloc_with_span(self.ast, &self.scope, node);
