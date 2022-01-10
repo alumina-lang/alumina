@@ -7,25 +7,25 @@ use fmt::{BufferedFormatter, write, writeln};
 // be fine.
 static FMT_BUF: [u8; 128];
 
-macro print($fmt_str, $arg...) { 
+macro print($fmt_str, $arg...) {
     let fmt = FileFormatter::new(&stdout);
     let fmt = BufferedFormatter::new(&FMT_BUF, &fmt);
     write!(&fmt, $fmt_str, $arg...);
     fmt.flush();
 }
-macro println($fmt_str, $arg...) { 
+macro println($fmt_str, $arg...) {
     let fmt = FileFormatter::new(&stdout);
     let fmt = BufferedFormatter::new(&FMT_BUF, &fmt);
     writeln!(&fmt, $fmt_str, $arg...);
     fmt.flush();
 }
-macro eprint($fmt_str, $arg...) { 
+macro eprint($fmt_str, $arg...) {
     let fmt = FileFormatter::new(&stderr);
     let fmt = BufferedFormatter::new(&FMT_BUF, &fmt);
     write!(&fmt, $fmt_str, $arg...);
     fmt.flush();
 }
-macro eprintln($fmt_str, $arg...) { 
+macro eprintln($fmt_str, $arg...) {
     let fmt = FileFormatter::new(&stderr);
     let fmt = BufferedFormatter::new(&FMT_BUF, &fmt);
     writeln!(&fmt, $fmt_str, $arg...);
@@ -42,7 +42,7 @@ impl FileFormatter {
             file: file
         }
     }
-    
+
     fn write_str(self: &mut FileFormatter, buf: &[u8]) {
         self.file.write_all(buf);
     }
@@ -54,7 +54,7 @@ impl FileFormatter {
 enum ErrorKind {
     UnexpectedEof,
     Os
-} 
+}
 
 struct Error {
     kind: ErrorKind,
@@ -67,7 +67,7 @@ impl Error {
     fn from_errno() -> Error {
         Error {
             kind: ErrorKind::Os,
-            errno: *libc::__errno_location(),
+            errno: *libc::__errno(),
         }
     }
 
@@ -84,11 +84,11 @@ impl Error {
             ErrorKind::Os => {
                 let buf: [u8; 128];
                 let buf = buf.as_slice_mut();
-                
+
                 if libc::strerror_r(self.errno, buf.ptr as &mut libc::c_char, 128) < 0 {
                     panic!("strerror_r failed");
                 }
-                
+
                 let len = 0usize;
                 while len < 128 && buf[len] != 0 {
                     len += 1;
@@ -98,7 +98,7 @@ impl Error {
                 f.write_str(buf[0..len]);
             }
         }
-        
+
     }
 }
 
@@ -211,7 +211,7 @@ struct File {
 impl File {
     use result::{Result, try};
     use ffi::CString;
-    
+
     /// Opens file in read-only mode.
     fn open(path: &[u8]) -> Result<File, Error> {
         open_with(path, OpenOptions::new().read(true))
@@ -226,14 +226,14 @@ impl File {
     fn open_with(path: &[u8], opts: &OpenOptions) -> Result<File, Error> {
         let path = CString::new(path);
         defer path.free();
-        
+
         let flags = libc::O_CLOEXEC
             | opts.get_access_mode()
             | opts.get_creation_mode()
             | (opts._custom_flags as libc::c_int & ~libc::O_ACCMODE);
 
         let fd = error_check!(libc::open(
-            path.ptr, 
+            path.ptr,
             flags,
             opts._mode as libc::mode_t
         ));
@@ -273,10 +273,10 @@ impl File {
         let ret = libc::fsync(self.fd);
         // Some files (notably stdout) do not support fsync,
         // this is not an error.
-        if ret == -1 && *libc::__errno_location() != libc::EINVAL {
+        if ret == -1 && *libc::__errno() != libc::EINVAL {
             return Result::err(Error::from_errno());
         }
-        Result::ok(())        
+        Result::ok(())
     }
 
     fn close(self: &mut File) -> Result<(), Error> {
@@ -290,7 +290,13 @@ impl File {
 
 fn anonymous_pipe() -> result::Result<(File, File), Error> {
     let fds: [libc::c_int; 2];
+
+    #[cfg(target_os = "linux")]
     error_check!(libc::pipe2(&fds[0], libc::O_CLOEXEC));
+    #[cfg(not(target_os = "linux"))]
+    error_check!(libc::pipe(&fds[0]));
+
+    // TODO: add fcntl to O_CLOEXEC
 
     result::Result::ok((File::from_fd(fds[0]), File::from_fd(fds[1])))
 }

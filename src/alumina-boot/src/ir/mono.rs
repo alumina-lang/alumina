@@ -1,9 +1,12 @@
+#[cfg(nightly)]
 use std::backtrace::Backtrace;
+#[cfg(nightly)]
+use std::rc::Rc;
+
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
 use std::iter::{once, repeat};
-use std::rc::Rc;
 
 use indexmap::IndexMap;
 use once_cell::unsync::OnceCell;
@@ -1245,6 +1248,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 .ok_or_else(|| {
                     CodeErrorKind::InternalError(
                         "unbound placeholder".to_string(),
+                        #[cfg(nightly)]
                         Rc::new(Backtrace::capture()),
                     )
                 })
@@ -3237,7 +3241,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let inner_span = inner.span;
-        let inner = self.lower_expr(inner, type_hint.map(|ty| self.types.pointer(ty, true)))?;
+        let inner = self.lower_expr(inner, type_hint.map(|ty| self.types.array(ty, 0)))?;
         let inner_type = self.try_qualify_type(inner.ty)?;
         let inner = self.try_coerce(inner_type, inner)?;
 
@@ -3250,7 +3254,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let index = self.try_coerce(self.types.builtin(BuiltinType::USize), index)?;
 
         let result = match inner.ty {
-            ir::Ty::Array(_, _) | ir::Ty::Pointer(_, _) => self.exprs.index(inner, index),
+            ir::Ty::Array(_, _) => self.exprs.index(inner, index),
             _ => {
                 let inner_lang = self.mono_ctx.get_lang_type_kind(inner.ty);
                 if let Some(LangTypeKind::Slice(ptr_ty)) = inner_lang {
@@ -3263,7 +3267,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     )));
                 }
 
-                return Err(mismatch!("array or pointer", inner.ty)).with_span(inner_span);
+                return Err(mismatch!("array or slice", inner.ty)).with_span(inner_span);
             }
         };
 

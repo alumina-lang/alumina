@@ -108,8 +108,9 @@ Finished:
 
 To be done:
 
-- Standard library is only usable on Linux-like targets
+- Standard library is only usable on Unixes (Linux is best supported, some limited support for MacOS and Android)
 - Probably a lot of bugs and miscompilations
+- Better error messages and warnings. Currently they are not terrible, but not great either.
 
 A self-hosted compiler ([`aluminac`](./src/aluminac)) is also being written. It is in very early stages (is only able to parse source at the moment). It will eventually have a LLVM backend.
 
@@ -121,8 +122,8 @@ Full list of missing features, open questions, bugs and ideas for the future in 
 
 To compile `alumina-boot` compiler from source, these prerequisites are needed:
   
-  - A C compiler (GCC/clang)
-  - Nightly Rust toolchain (`rustup install nightly`)
+  - A C compiler (GCC or Clang) and Make
+  - A Rust toolchain (`rustup install stable`)
   - Tree-sitter CLI (`npm install -g tree-sitter-cli`)
 
 Additionally, to compile `aluminac`, Tree-sitter runtime library (`libtree-sitter.a`/`libtree-sitter.so`) is needed:
@@ -168,7 +169,7 @@ See [examples](./examples), [standard library](./stdlib) and the [self-hosted co
 
 # Contributing
 
-Issues, pull requests, and feature requests are most welcome. There is not a good test suite at the moment, but there are regression tests that run all the examples in the `examples` folders. These tests are run with 
+Issues, pull requests, and feature requests are most welcome. Standard library is somewhat covered with tests, and there are also regression tests that run all the examples in the `examples` folders. These tests are run with 
 
 ```
 make test
@@ -180,3 +181,4 @@ If the snapshot need to be updated, run
 make test-fix
 ```
 
+Standard library contrinutions are especially welcome!

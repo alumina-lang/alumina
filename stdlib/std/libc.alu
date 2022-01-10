@@ -19,6 +19,43 @@ use isize as intptr_t;
 use usize as uintptr_t;
 use isize as ssize_t;
 
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+{
+    use i32 as pid_t;
+    use u32 as uid_t;
+    use u32 as gid_t;
+    use u32 as in_addr_t;
+    use u16 as in_port_t;
+    use isize as sighandler_t;
+}
+#[cfg(any(target_os="linux", target_os="android"))]
+{
+    use c_int as clockid_t;
+}
+
+#[cfg(target_os="macos")]
+{
+    use i8 as c_char;
+    use i32 as wchar_t;
+    use c_ulong as clock_t;
+    use c_long as time_t;
+    use u16 as mode_t;
+    use i64 as c_long;
+    use u64 as c_ulong;
+    use c_uint as clockid_t;
+}
+
+#[cfg(target_os="android")]
+{
+    use u8 as c_char;
+    use u32 as wchar_t;
+    use i64 as c_long;
+    use u64 as c_ulong;
+    use u32 as mode_t;
+    use c_long as clock_t;
+    use c_long as time_t;
+}
+
 #[cfg(target_os="linux")]
 {
     #[cfg(target_arch = "x86")]
@@ -84,14 +121,7 @@ use isize as ssize_t;
         }
     }
 
-    use i32 as pid_t;
-    use u32 as uid_t;
-    use u32 as gid_t;
     use u32 as mode_t;
-    use u32 as in_addr_t;
-    use u16 as in_port_t;
-    use isize as sighandler_t;
-    use c_int as clockid_t;
 }
 
 #[cfg(target_os="windows")]
@@ -114,10 +144,9 @@ extern "C" fn realloc(ptr: &mut void, size: size_t) -> &mut void;
 extern "C" fn calloc(num: size_t, size: size_t) -> &mut void;
 extern "C" fn exit(ret: c_int) -> !;
 extern "C" fn _exit(ret: c_int) -> !;
+extern "C" fn strlen(s: &c_char) -> size_t;
 
-extern "C" fn strlen(s: &c_char) -> c_ulong;
-
-#[cfg(target_os="linux")]
+#[cfg(any(target_os="linux", target_os="macos", target_os="android"))]
 {
     struct timespec {
         tv_sec: time_t,
@@ -140,16 +169,39 @@ extern "C" fn strlen(s: &c_char) -> c_ulong;
     extern "C" fn nanosleep(rqtp: &timespec, rmtp: &mut timespec) -> c_int;
     extern "C" fn fork() -> pid_t;
 
-    extern "C" fn pipe2(fds: &mut c_int, flags: c_int) -> c_int;
+    extern "C" fn pipe(fds: &mut c_int) -> c_int;
+
+    #[cfg(any(target_os="linux", target_os="android"))]
+    {
+        extern "C" fn pipe2(fds: &mut c_int, flags: c_int) -> c_int;
+    }
+
     extern "C" fn dup2(oldfd: c_int, newfd: c_int) -> c_int;
     extern "C" fn waitpid(pid: pid_t, wstatus: &mut c_int, options: c_int) -> pid_t;
 
     extern "C" fn clock_getres(clk_id: clockid_t, tp: &mut timespec) -> c_int;
     extern "C" fn clock_gettime(clk_id: clockid_t, tp: &mut timespec) -> c_int;
 
-    extern "C" fn __errno_location() -> &mut c_int;
-    extern "C" fn __xpg_strerror_r(errnum: c_int, buf: &mut c_char, buflen: size_t) -> c_int;
-    use __xpg_strerror_r as strerror_r;
+    #[cfg(target_os="linux")]
+    {
+        extern "C" fn __errno_location() -> &mut c_int;
+        extern "C" fn __xpg_strerror_r(errnum: c_int, buf: &mut c_char, buflen: size_t) -> c_int;
+        use __xpg_strerror_r as strerror_r;
+        use __errno_location as __errno;
+    }
+
+    #[cfg(target_os="android")]
+    {
+        extern "C" fn __errno() -> &mut c_int;
+        extern "C" fn strerror_r(errnum: c_int, buf: &mut c_char, buflen: size_t) -> c_int;
+    }
+
+    #[cfg(target_os="macos")]
+    {
+        extern "C" fn __error() -> &mut c_int;
+        extern "C" fn strerror_r(errnum: c_int, buf: &mut c_char, buflen: size_t) -> c_int;
+        use __error as __errno;
+    }
 
     const EXIT_FAILURE: c_int = 1;
     const EXIT_SUCCESS: c_int = 0;
@@ -252,4 +304,3 @@ extern "C" fn strlen(s: &c_char) -> c_ulong;
     const EPROTO: c_int = 71;
     const EDOTDOT: c_int = 73;
 }
-

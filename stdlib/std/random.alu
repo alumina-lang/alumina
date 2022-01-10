@@ -13,11 +13,11 @@ impl Pcg32 {
     }
 
     fn from_seed(seed: &[u8; 16]) -> Pcg32 {
-        let pcg = Pcg32 { 
-            state: *(&seed[0] as &u64),
-            increment: *(&seed[8] as &u64) | 1
+        let pcg = Pcg32 {
+            state: *(&(*seed)[0] as &u64),
+            increment: *(&(*seed)[8] as &u64) | 1
         };
-        
+
         pcg.state = pcg.state + pcg.increment;
         pcg.step();
         pcg
@@ -27,14 +27,14 @@ impl Pcg32 {
     fn next_u32(self: &mut Pcg32) -> u32 {
         let state = self.state;
         self.step();
-        
+
         const ROTATE: u32 = 59;
         const XSHIFT: u32 = 18;
         const SPARE: u32 = 27;
 
         let rot = (state >> ROTATE) as usize;
         let xsh = (((state >> XSHIFT) ^ state) >> SPARE) as u32;
-        
+
         xsh.rotate_right(rot)
     }
 
@@ -43,7 +43,11 @@ impl Pcg32 {
 
 static DEFAULT_RNG: Pcg32 = {
     let seed: [u8; 16];
+    #[cfg(any(target_os = "linux", target_os="android"))]
     libc::getrandom(&seed[0] as &mut void, 16, 0);
+    #[cfg(not(any(target_os = "linux", target_os="android")))]
+    compile_fail!("DEFAULT_RNG is not supported");
+
     Pcg32::from_seed(&seed)
 };
 
@@ -73,7 +77,7 @@ fn uniform<Rng: RandomNumberGenerator<Rng>>(rng: &mut Rng, range: u32) -> u32 {
 
 fn range<Rng: RandomNumberGenerator<Rng>, T: Integer>(rng: &mut Rng, lower: T, upper: T) -> T {
     assert!(lower < upper);
-    lower + (rng.uniform((upper - lower) as u32) as T)  
+    lower + (rng.uniform((upper - lower) as u32) as T)
 }
 
 fn shuffle<Rng: RandomNumberGenerator<Rng>, T>(rng: &mut Rng, slice: &mut [T]) {

@@ -19,10 +19,18 @@ fn ends_with(self: &[u8], suffix: &[u8]) -> bool {
 }
 
 fn find(self: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.len == 0 {
+        return Option::some(0usize);
+    }
+
+    if self.len == 0 {
+        return Option::none();
+    }
+
     let ret = libc::memmem(
-        self.ptr as &void, 
-        self.len, 
-        needle.ptr as &void, 
+        self.ptr as &void,
+        self.len,
+        needle.ptr as &void,
         needle.len
     )
 
@@ -94,7 +102,7 @@ fn parse_integer<T: proto::Integer>(s: &[u8]) -> Option<T> {
 #[cfg(test)]
 mod tests {
     use std::{assert, assert_eq, assert_ne};
-    
+
     #[test]
     fn starts_with_positive() {
         assert!("".starts_with(""))
