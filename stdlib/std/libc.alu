@@ -19,14 +19,18 @@ use isize as intptr_t;
 use usize as uintptr_t;
 use isize as ssize_t;
 
-#[cfg(any(target_os="macos", target_os="linux", target_os="android"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
 {
-use i32 as pid_t;
-use u32 as uid_t;
-use u32 as gid_t;
-use u32 as in_addr_t;
-use u16 as in_port_t;
-use isize as sighandler_t;
+    use i32 as pid_t;
+    use u32 as uid_t;
+    use u32 as gid_t;
+    use u32 as in_addr_t;
+    use u16 as in_port_t;
+    use isize as sighandler_t;
+}
+#[cfg(any(target_os="linux", target_os="android"))]
+{
+    use c_int as clockid_t;
 }
 
 #[cfg(target_os="macos")]
@@ -39,6 +43,17 @@ use isize as sighandler_t;
     use i64 as c_long;
     use u64 as c_ulong;
     use c_uint as clockid_t;
+}
+
+#[cfg(target_os="android")]
+{
+    use u8 as c_char;
+    use u32 as wchar_t;
+    use i64 as c_long;
+    use u64 as c_ulong;
+    use u32 as mode_t;
+    use c_long as clock_t;
+    use c_long as time_t;
 }
 
 #[cfg(target_os="linux")]
@@ -107,7 +122,6 @@ use isize as sighandler_t;
     }
 
     use u32 as mode_t;
-    use c_int as clockid_t;
 }
 
 #[cfg(target_os="windows")]
@@ -130,7 +144,7 @@ extern "C" fn realloc(ptr: &mut void, size: size_t) -> &mut void;
 extern "C" fn calloc(num: size_t, size: size_t) -> &mut void;
 extern "C" fn exit(ret: c_int) -> !;
 extern "C" fn _exit(ret: c_int) -> !;
-extern "C" fn strlen(s: &c_char) -> c_ulong;
+extern "C" fn strlen(s: &c_char) -> size_t;
 
 #[cfg(any(target_os="linux", target_os="macos", target_os="android"))]
 {
