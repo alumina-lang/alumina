@@ -195,7 +195,7 @@ snapshots['test_examples[sorting_fun.alu] run_ret'] = 0
 
 snapshots['test_examples[sorting_fun.alu] run_stderr'] = b''
 
-snapshots['test_examples[sorting_fun.alu] run_stdout'] = b'Original: [ amende burgrave egestion entropion episcope ginnel gleek janker jetavator mangabey triarchy tumid uranomancy vapography venule wearish yuft yulo ]\nShuffled: [ ginnel burgrave triarchy tumid mangabey jetavator vapography entropion amende janker gleek yulo wearish yuft uranomancy episcope egestion venule ]\nSorted:   [ amende burgrave egestion entropion episcope ginnel gleek janker jetavator mangabey triarchy tumid uranomancy vapography venule wearish yuft yulo ]\n'
+snapshots['test_examples[sorting_fun.alu] run_stdout'] = b'Original: [ amende burgrave egestion entropion episcope ginnel gleek janker jetavator mangabey triarchy tumid uranomancy vapography venule wearish yuft yulo ]\nShuffled: [ uranomancy ginnel tumid episcope mangabey venule triarchy amende egestion yulo jetavator janker entropion wearish vapography burgrave gleek yuft ]\nSorted:   [ amende burgrave egestion entropion episcope ginnel gleek janker jetavator mangabey triarchy tumid uranomancy vapography venule wearish yuft yulo ]\n'
 
 snapshots['test_examples[statics.alu] compile_ret'] = 0
 

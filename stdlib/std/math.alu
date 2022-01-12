@@ -1,4 +1,4 @@
-use proto::{Numeric, Unsigned};
+use proto::{Numeric, Unsigned, Integer};
 
 #[inline]
 fn max<T: Numeric>(a: T, b: T) -> T {
@@ -27,6 +27,19 @@ fn abs<T: Numeric>(a: T) -> T {
             -a
         } else {
             a
+        }
+    }
+}
+
+#[inline]
+fn widening_abs<T: Integer>(a: T) -> builtins::unsigned_of<T> {
+    when T: Unsigned {
+        a
+    } else {
+        if a < 0 {
+            ((~a) as builtins::unsigned_of<T>) + 1
+        } else {
+            a as builtins::unsigned_of<T>
         }
     }
 }

@@ -31,6 +31,7 @@ use isize as ssize_t;
 #[cfg(any(target_os="linux", target_os="android"))]
 {
     use c_int as clockid_t;
+    use i64 as off64_t;
 }
 
 #[cfg(target_os="macos")]
@@ -43,6 +44,7 @@ use isize as ssize_t;
     use i64 as c_long;
     use u64 as c_ulong;
     use c_uint as clockid_t;
+    use i64 as off_t;
 }
 
 #[cfg(target_os="android")]
@@ -54,10 +56,17 @@ use isize as ssize_t;
     use u32 as mode_t;
     use c_long as clock_t;
     use c_long as time_t;
+    use c_long as off_t;
 }
 
 #[cfg(target_os="linux")]
 {
+    #[cfg(target_pointer_width = "32")]
+    use i64 as off_t;
+    
+    #[cfg(target_pointer_width = "64")]
+    use i32 as off_t;
+
     #[cfg(target_arch = "x86")]
     {
         use i32 as c_long;
@@ -80,7 +89,6 @@ use isize as ssize_t;
 
     #[cfg(target_arch = "x86_64")]
     {
-
         use i8 as c_char;
         use i32 as wchar_t;
         use i64 as clock_t;
@@ -135,6 +143,7 @@ use isize as ssize_t;
 
 extern "C" fn free(ptr: &mut void);
 extern "C" fn memcpy(dst: &mut void, src: &void, len: size_t) -> &mut void;
+extern "C" fn memset(dst: &mut void, ch: c_int, len: size_t) -> &mut void;
 extern "C" fn memmove(dst: &mut void, src: &void, len: size_t) -> &mut void;
 extern "C" fn memcmp(ptr1: &void, ptr2: &void, len: size_t) -> c_int;
 extern "C" fn memchr(ptr: &void, ptr2: c_int, count: size_t) -> &void;
@@ -160,6 +169,11 @@ extern "C" fn strlen(s: &c_char) -> size_t;
     extern "C" fn write(fd: c_int, buf: &void, len: size_t) -> ssize_t;
     extern "C" fn read(fd: c_int, buf: &mut void, len: size_t) -> ssize_t;
     extern "C" fn open(path: &c_char, oflag: c_int, mode: mode_t) -> c_int;
+    extern "C" fn lseek(fd: c_int, offset: off_t, whence: c_int) -> off_t;
+    
+    #[cfg(not(target_os="macos"))]
+    extern "C" fn lseek64(fd: c_int, offset: off64_t, whence: c_int) -> off64_t;
+
     extern "C" fn close(fd: c_int) -> c_int;
     extern "C" fn fsync(fd: c_int) -> c_int;
     extern "C" fn execv(prog: &c_char, argv: &&c_char) -> c_int;
@@ -172,9 +186,7 @@ extern "C" fn strlen(s: &c_char) -> size_t;
     extern "C" fn pipe(fds: &mut c_int) -> c_int;
 
     #[cfg(any(target_os="linux", target_os="android"))]
-    {
-        extern "C" fn pipe2(fds: &mut c_int, flags: c_int) -> c_int;
-    }
+    extern "C" fn pipe2(fds: &mut c_int, flags: c_int) -> c_int;
 
     extern "C" fn dup2(oldfd: c_int, newfd: c_int) -> c_int;
     extern "C" fn waitpid(pid: pid_t, wstatus: &mut c_int, options: c_int) -> pid_t;
@@ -210,6 +222,7 @@ extern "C" fn strlen(s: &c_char) -> size_t;
     const STDOUT_FILENO: c_int = 1;
     const STDERR_FILENO: c_int = 2;
 
+    
     const SIGHUP: c_int = 1;
     const SIGINT: c_int = 2;
     const SIGQUIT: c_int = 3;
@@ -221,7 +234,11 @@ extern "C" fn strlen(s: &c_char) -> size_t;
     const SIGPIPE: c_int = 13;
     const SIGALRM: c_int = 14;
     const SIGTERM: c_int = 15;
-
+    
+    const SEEK_SET: c_int = 0;
+    const SEEK_CUR: c_int = 1;
+    const SEEK_END: c_int = 2;
+    
     const O_RDONLY: c_int = 0;
     const O_WRONLY: c_int = 1;
     const O_RDWR: c_int = 2;

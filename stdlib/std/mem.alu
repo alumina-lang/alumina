@@ -40,19 +40,19 @@ impl slice {
     }
 
     #[force_inline]
-    fn iter<T, Ptr: PointerOf<T>>(self: &slice<Ptr>) -> slice<Ptr> {
-        *self
+    fn iter<Ptr: Pointer>(self: &slice<Ptr>) -> SliceIterator<Ptr> {
+        SliceIterator::new(*self)
     }
 
-    #[force_inline]
-    fn next<T, Ptr: PointerOf<T>>(self: &mut slice<Ptr>) -> Option<T> {
-        if self.len > 0 {
-            let result = Option::some(*self.ptr);
-            self.ptr = self.ptr + 1;
-            self.len -= 1;
-            result
+    fn fill<T>(slice: &mut [T], value: T) {
+        when T: ZeroSized {
+            // nop
+        } else when T: u8 {
+            libc::memset(slice.ptr as &mut void, value as libc::c_int, slice.len);
         } else {
-            Option::none()
+            for i in range(0, slice.len) {
+                slice[i] = value;
+            }
         }
     }
 
@@ -128,24 +128,61 @@ impl slice {
     mixin<T: Comparable<T>, Ptr: PointerOf<T>> Comparable<slice<Ptr>>;
 }
 
+struct SliceIterator<Ptr: Pointer> {
+    inner: slice<Ptr>,
+}
+
+impl SliceIterator {
+    use std::proto::{PointerOf};
+
+    #[force_inline]
+    fn new<Ptr: Pointer>(inner: slice<Ptr>) -> SliceIterator<Ptr> {
+        SliceIterator { inner: inner }
+    }
+
+    #[force_inline]
+    fn iter<Ptr: Pointer>(self: &SliceIterator<Ptr>) -> SliceIterator<Ptr> {
+        *self
+    }
+
+    #[force_inline]
+    fn next<T, Ptr: PointerOf<T>>(self: &mut SliceIterator<Ptr>) -> Option<T> {
+        if self.inner.len > 0 {
+            let result = Option::some(*self.inner.ptr);
+            self.inner.ptr = self.inner.ptr + 1;
+            self.inner.len -= 1;
+            result
+        } else {
+            Option::none()
+        }
+    }
+}
+
 mod internal {
     use proto::{Primitive, Pointer}; 
     
     #[force_inline]
     #[lang(slice_index)]
     fn slice_index<Ptr: Pointer>(a: slice<Ptr>, idx: usize) -> Ptr {
+        debug_assert!(idx < a.len);
+
         a.ptr + idx
     }
     
     #[force_inline]
     #[lang(slice_range_index)]
     fn slice_range_index<Ptr: Pointer>(a: slice<Ptr>, lower: usize, upper: usize) -> slice<Ptr> {
+        debug_assert!(lower <= upper);
+        debug_assert!(upper <= a.len);
+
         slice::from_raw::<Ptr>(a.ptr + lower, upper - lower)
     }
 
     #[force_inline]
     #[lang(slice_range_index_lower)]
     fn slice_range_index_lower<Ptr: Pointer>(a: slice<Ptr>, lower: usize) -> slice<Ptr> {
+        debug_assert!(lower <= a.len);
+
         slice::from_raw::<Ptr>(a.ptr + lower, a.len - lower)
     }        
 
@@ -197,7 +234,7 @@ fn stack_alloc<T>(len: usize) -> &mut [T] {
     ret.ptr = intrinsics::aligned_alloca(
         size_of::<T>() * len, 
         if intrinsics::align_of::<T>() >= 8 {
-            intrinsics::align_of::<T>()
+            8 * intrinsics::align_of::<T>()
         } else { 
             8usize 
         }
@@ -227,11 +264,11 @@ fn replace<T>(a: &mut T, b: T) -> T {
     b
 }
 
-fn copy_to_nonoverlapping<T>(src: &[T], dst: &mut T) {
+fn copy_nonoverlapping<T>(src: &[T], dst: &mut T) {
     libc::memcpy(dst as &mut void, src.ptr as &void, src.len * size_of::<T>());
 }
 
-fn copy_to<T>(src: &[T], dst: &mut T) {
+fn copy<T>(src: &[T], dst: &mut T) {
     libc::memmove(dst as &mut void, src.ptr as &void, src.len * size_of::<T>());
 }
 
@@ -239,3 +276,27 @@ fn free<T>(a: &mut [T]) {
     libc::free(a.ptr as &mut void);
 }
 
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn size_of_zst() {
+        assert_eq!(size_of::<()>(), 0usize);
+        assert_eq!(size_of::<[u8; 0]>(), 0usize);
+        assert_eq!(size_of::<((), (), ())>(), 0usize);
+    }
+
+    #[test]
+    fn align_of_zst() {
+        assert_eq!(align_of::<()>(), 1usize);
+        assert_eq!(align_of::<[u8; 0]>(), 1usize);
+        assert_eq!(align_of::<((), (), ())>(), 1usize);
+    }
+
+    #[test]
+    fn test_fill() {
+        let a: [u8; 10];
+        a.as_slice_mut().fill('a');
+
+        assert_eq!(a.as_slice(), "aaaaaaaaaa");
+    }
+}

@@ -239,7 +239,13 @@ module.exports = grammar({
         "}"
       ),
 
-    use_declaration: ($) => seq("use", field("argument", $._use_clause), ";"),
+    use_declaration: ($) => 
+      seq(
+        optional(field("attributes", $.attributes)),
+        "use", 
+        field("argument", $._use_clause), 
+        ";"
+      ),
 
     _use_clause: ($) =>
       choice($._path, $.use_as_clause, $.use_list, $.scoped_use_list),

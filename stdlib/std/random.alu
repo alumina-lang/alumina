@@ -1,4 +1,32 @@
-use std::proto::{Unsigned, Integer};
+use std::proto::{Unsigned, Integer, FloatingPoint};
+
+protocol RandomNumberGenerator<Self> {
+    fn next_u32(self: &mut Self) -> u32;
+    fn next_u64(self: &mut Self) -> u64;
+
+    fn fill_bytes(self: &mut Self, dest: &mut [u8]) {
+        let i = 0usize;
+        while dest.len >= 8 {
+            let val = self.next_u64();
+            for i in range(0, 8) {
+                dest[i] = *((&val as &u8) + i);
+            }
+            dest = dest[8..];
+        }
+
+        if dest.len > 4 {
+            let val = self.next_u64();
+            for i in range(0, dest.len) {
+                dest[i] = *((&val as &u8) + i);
+            }
+        } else {
+            let val = self.next_u32();
+            for i in range(0, dest.len) {
+                dest[i] = *((&val as &u8) + i);
+            }
+        }
+    }
+}
 
 struct Pcg32  {
     state: u64,
@@ -13,11 +41,15 @@ impl Pcg32 {
     }
 
     fn from_seed(seed: &[u8; 16]) -> Pcg32 {
-        let pcg = Pcg32 {
-            state: *(&(*seed)[0] as &u64),
-            increment: *(&(*seed)[8] as &u64) | 1
-        };
+        use std::mem::copy_nonoverlapping;
 
+        let seed = seed.as_slice();
+        let pcg: Pcg32;
+
+        seed[0..8].copy_nonoverlapping(&pcg.state as &mut u8);
+        seed[8..16].copy_nonoverlapping(&pcg.increment as &mut u8);
+        pcg.increment = pcg.increment | 1;
+        
         pcg.state = pcg.state + pcg.increment;
         pcg.step();
         pcg
@@ -38,46 +70,143 @@ impl Pcg32 {
         xsh.rotate_right(rot)
     }
 
+    #[inline]
+    fn next_u64(self: &mut Pcg32) -> u64 {
+        (self.next_u32() as u64) << 32 | (self.next_u32() as u64)
+    }
+
     mixin RandomNumberGenerator<Pcg32>;
 }
 
-static DEFAULT_RNG: Pcg32 = {
-    let seed: [u8; 16];
-    #[cfg(any(target_os = "linux", target_os="android"))]
-    libc::getrandom(&seed[0] as &mut void, 16, 0);
-    #[cfg(not(any(target_os = "linux", target_os="android")))]
-    compile_fail!("DEFAULT_RNG is not supported");
-
-    Pcg32::from_seed(&seed)
-};
-
-protocol RandomNumberGenerator<Self> {
-    // One of these two has to be implemented, otherwise we have infinite recursio
-    #[inline]
-    fn next_u32(self: &mut Self) -> u32 {
-        self.next_u64() as u32
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+{
+    struct OsRng {
+        #[cfg(not(target_os = "linux"))]
+        file: io::File
     }
 
-    #[inline]
-    fn next_u64(self: &mut Self) -> u64 {
-        (self.next_u32() as u64) << 32 | (self.next_u32() as u64)
+    impl OsRng {
+        use mem::{size_of, slice};
+
+        #[cfg(not(target_os = "linux"))]
+        fn new() -> OsRng {
+            OsRng {
+                file: io::File::open("/dev/urandom").unwrap()
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        fn new() -> OsRng {
+            OsRng {}
+        }
+
+        fn next_u32(self: &mut OsRng) -> u32 {
+            let ret: u32;
+            self.fill_bytes(slice::from_raw(&ret as &mut u8, size_of::<u32>()));
+            ret
+        }
+
+        fn next_u64(self: &mut OsRng) -> u64 {
+            let ret: u64;
+            self.fill_bytes(slice::from_raw(&ret as &mut u8, size_of::<u64>()));
+            ret
+        }
+
+        fn fill_bytes(self: &mut OsRng, dest: &mut [u8]) {
+            #[cfg(not(target_os = "linux"))]
+            self.file.read_exact(dest).unwrap();
+            #[cfg(target_os = "linux")]
+            libc::getrandom(dest.ptr as &mut void, dest.len, 0);
+        }
+
+        fn close(self: &mut OsRng) {
+            #[cfg(not(target_os = "linux"))]
+            self.file.close().unwrap();
+        }
+
+        mixin RandomNumberGenerator<OsRng>;
+    }
+
+
+    static DEFAULT_RNG: Pcg32 = internal::seed_default_rng();
+
+    mod internal {
+        fn seed_default_rng() -> Pcg32 {
+            let seed: [u8; 16];
+            let seeder = OsRng::new();
+            defer seeder.close();
+
+            seeder.fill_bytes(&seed);
+            Pcg32::from_seed(&seed)
+        }
+    }
+
+}
+
+fn next<Rng: RandomNumberGenerator<Rng>, T: Unsigned>(rng: &mut Rng) -> T {
+    when T: u128 {
+        ((rng.next_u64() as u128)  << 64) | (rng.next_u64() as u128)
+    } else when T: u64 {
+        rng.next_u64()
+    } else when T: usize {
+        let x: T;
+        #[cfg(target_pointer_width = "32")]
+        x = rng.next_u32() as usize;
+        #[cfg(target_pointer_width = "64")]
+        x = rng.next_u64() as usize;
+        x
+    } else {
+        rng.next_u32() as T
     }
 }
 
-fn uniform<Rng: RandomNumberGenerator<Rng>>(rng: &mut Rng, range: u32) -> u32 {
-    let t: u32 = (~range + 1) % range;
-    let m = loop {
-        let m = (rng.next_u32() as u64) * (range as u64);
-        if t <= m as u32 {
-            break m
+fn uniform<Rng: RandomNumberGenerator<Rng>, T: Unsigned>(rng: &mut Rng, range: T) -> T {
+    debug_assert!(range > 0);
+
+    loop {
+        let x = next::<Rng, T>(rng);
+        let r = x % range;
+        if x - r <= ~range {
+            return r;
         }
-    };
-    (m >> 32) as u32
+    }
+}
+
+fn float<Rng: RandomNumberGenerator<Rng>, T: FloatingPoint>(rng: &mut Rng) -> T {
+    when T: f32 {
+        let scale = 1.0f32 / ((1u32 << 24) as f32);
+        let x = rng.next_u32() >> 8;
+        (x as f32) * scale
+    } else when T: f64 {
+        let scale = 1.0f64 / ((1u64 << 53) as f64);
+        let x = rng.next_u64() >> 11;
+        (x as f64) * scale
+    } 
 }
 
 fn range<Rng: RandomNumberGenerator<Rng>, T: Integer>(rng: &mut Rng, lower: T, upper: T) -> T {
-    assert!(lower < upper);
-    lower + (rng.uniform((upper - lower) as u32) as T)
+    use builtins::unsigned_of;
+
+    debug_assert!(lower < upper);
+
+    let range = (upper as unsigned_of<T>) - (lower as unsigned_of<T>);
+    let ret = (lower as unsigned_of<T>) + uniform(rng, range);
+
+    ret as T
+}
+
+fn range_inclusive<Rng: RandomNumberGenerator<Rng>, T: Integer>(rng: &mut Rng, lower: T, upper: T) -> T {
+    use builtins::unsigned_of;
+
+    debug_assert!(lower <= upper);
+
+    let range = ((upper as unsigned_of<T>) - (lower as unsigned_of<T>)) + 1;
+    if range == 0 {
+        next::<Rng, unsigned_of<T>>(rng) as T
+    } else {
+        let ret = (lower as unsigned_of<T>) + uniform(rng, range);        
+        ret as T
+    }
 }
 
 fn shuffle<Rng: RandomNumberGenerator<Rng>, T>(rng: &mut Rng, slice: &mut [T]) {
@@ -85,8 +214,55 @@ fn shuffle<Rng: RandomNumberGenerator<Rng>, T>(rng: &mut Rng, slice: &mut [T]) {
 
     let i = 0usize;
     while i < slice.len {
-        let j = rng.range(i, slice.len) as usize;
+        let j = rng.range(i, slice.len);
         swap(&slice[i], &slice[j]);
         i += 1;
+    }
+}
+
+fn choice<Rng: RandomNumberGenerator<Rng>, T>(rng: &mut Rng, slice: &[T]) -> T {
+    debug_assert!(slice.len > 0);
+
+    slice[rng.uniform(slice.len)]
+}
+
+#[cfg(test)]
+mod tests {
+    static SEED: [u8; 16];
+
+    #[test]
+    fn test_float() {
+        let rng = Pcg32::from_seed(&SEED)
+        let _: f32 = rng.float();
+        let _: f64 = rng.float();
+    }
+
+    #[test]
+    fn test_range() {
+        let rng = Pcg32::from_seed(&SEED)
+        let _: i32 = rng.range(-10i32, 10i32);
+        let _: i64 = rng.range(-10i64, 10i64);
+        let _: i128 = rng.range(-10i128, 10i128);
+        let _: usize = rng.range(0usize, 10usize);
+    }
+
+    #[test]
+    fn test_range_inclusive() {
+        let rng = Pcg32::from_seed(&SEED)
+        let _: i32 = rng.range_inclusive(-10i32, 10i32);
+        let _: i64 = rng.range_inclusive(-10i64, 10i64);
+        let _: i128 = rng.range_inclusive(-10i128, 10i128);
+        let _: usize = rng.range_inclusive(0usize, 10usize);
+    }
+
+    #[test]
+    fn test_shuffle() {
+        let rng = Pcg32::from_seed(&SEED)
+        let v = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+        rng.shuffle(v.as_slice_mut());
+
+        assert_ne!(v.as_slice(), &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        collections::sort(v.as_slice_mut());
+        assert_eq!(v.as_slice(), &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     }
 }

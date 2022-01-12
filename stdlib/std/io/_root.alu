@@ -18,11 +18,31 @@ protocol Readable<Self> {
         self.default_read_exact(buf)
     }
 
-    fn read_to_end(self: &mut Self, buf: &mut Vector<u8>) -> Result<usize, Error> {
-        let writer = StringWriter::new(buf);
-        let read = try!(self.copy_to(&writer));
+    fn read_to_end(self: &mut Self, buf: &mut Vector<u8>) -> Result<usize, Error> {;
+        let start_len = buf.len();
+        let start_cap = buf.capacity();
 
-        Result::ok(read as usize)
+        loop {
+            if buf.capacity() == buf.len() {
+                buf.reserve(32);
+            }
+            let read = try!(self.read(buf.spare_capacity()));
+            if read == 0 {
+                return Result::ok(buf.len() - start_len);
+            } else {
+                buf.resize(buf.len() + read);
+            }
+
+            if buf.capacity() == buf.len() && buf.capacity() == start_cap {
+                let probe: [u8; 32];
+                let read = try!(self.read(probe.as_slice_mut()));
+                if read == 0 {
+                    return Result::ok(buf.len() - start_len);
+                } else {
+                    buf.extend_from_slice(probe.as_slice()[..read])
+                }
+            }
+        }
     }
 }
 
@@ -43,6 +63,27 @@ protocol Writable<Self> {
         }
 
         Result::ok(())
+    }
+}
+
+enum SeekFrom {
+    Beginning,
+    Current,
+    End
+}
+
+protocol Seekable<Self> {
+    use result::{Result, try};
+
+    fn seek(self: &mut Self, whence: SeekFrom, offset: i64) -> Result<i64, Error>;
+    fn rewind(self: &mut Self) -> Result<(), Error> {
+        try!(self.seek(SeekFrom::Beginning, 0));
+        
+        Result::ok(())
+    }
+
+    fn position(self: &mut Self) -> Result<u64, Error> {
+        self.seek(SeekFrom::Current, 0)
     }
 }
 
@@ -68,7 +109,7 @@ impl StringWriter {
         Result::ok(())
     }
 
-    mixin Writable<StringWriter>
+    mixin Writable<StringWriter>;
 }
 
 protocol BufferedReadable<Self: Readable<Self>> {
@@ -86,7 +127,7 @@ struct BufferedReader<R: Readable<R>> {
 }
 
 impl BufferedReader<R: Readable<R>> {
-    use std::mem::copy_to_nonoverlapping;
+    use std::mem::copy_nonoverlapping;
     use internal::default_read_exact;
     use std::result::{Result, try};
 
@@ -123,7 +164,7 @@ impl BufferedReader<R: Readable<R>> {
         let slice = try!(self.fill_buffer());
 
         let nread = math::min(buf.len, slice.len);
-        slice[..nread].copy_to_nonoverlapping(&buf[0]);
+        slice[..nread].copy_nonoverlapping(&buf[0]);
         self.consume(nread);
 
         Result::ok(nread)
@@ -131,7 +172,7 @@ impl BufferedReader<R: Readable<R>> {
 
     fn read_exact(self: &mut BufferedReader<R>, buf: &mut [u8]) -> Result<(), Error> {
         if self.cap - self.pos >= buf.len {
-            self.buf[self.pos..self.pos + buf.len].copy_to_nonoverlapping(&buf[0]);
+            self.buf[self.pos..self.pos + buf.len].copy_nonoverlapping(&buf[0]);
             self.consume(buf.len);
             return Result::ok(());
         }
@@ -153,9 +194,34 @@ impl BufferedReader<R: Readable<R>> {
     mixin<R: Readable<R>> Readable<BufferedReader<R>>;
 }
 
+impl BufferedReader<R: Seekable<R>> {
+    use result::{Result, try};
+
+    fn seek(self: &mut BufferedReader<R>, whence: SeekFrom, offset: i64) -> Result<i64, Error> {
+        let res = if whence == SeekFrom::Current {
+            let remainder = (self.cap - self.pos) as i64;
+            let res = try!(self.inner.seek(SeekFrom::Current, offset - remainder));
+            res
+        } else {
+            try!(self.inner.seek(whence, offset))
+        };
+
+        self.cap = 0;
+        self.pos = 0;
+
+        Result::ok(res)
+    }
+
+    fn position(self: &mut BufferedReader<R>) -> Result<u64, ()> {
+        self.seek(SeekFrom::Current, 0)
+    }
+
+    mixin<R: Seekable<R>> Seekable<BufferedReader<R>>;
+}
+
 
 // Extension methods
-fn copy_to<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D) -> result::Result<u64, Error> {
+fn copy<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D) -> result::Result<u64, Error> {
     use result::{Result, try};
 
     let buf: [u8; 1024];
@@ -171,7 +237,6 @@ fn copy_to<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D) -> result::
         try!(dst.write_all(buf[0..n]));
     }
 
-    try!(dst.flush());
     Result::ok(read)
 }
 
@@ -308,4 +373,10 @@ mod internal {
             Option::some(p as usize - (haystack.ptr as usize))
         }
     }
+}
+
+
+#[cfg(test)]
+mod tests {
+
 }

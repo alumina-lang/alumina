@@ -33,7 +33,7 @@ struct Stack<T> {
 }
 
 impl Stack {
-    use std::mem::{alloc, realloc, copy_to};
+    use std::mem::{alloc, realloc, copy};
 
     fn new<T>() -> Stack<T> {
         with_capacity(0)

@@ -5,7 +5,7 @@ struct Vector<T> {
 }
 
 impl Vector<T> {
-    use std::mem::{slice, alloc, realloc, copy_to, copy_to_nonoverlapping};
+    use std::mem::{slice, alloc, realloc, copy, copy_nonoverlapping};
     use std::iter::{Iterator, Iterable};
     use std::option::Option;
 
@@ -29,7 +29,7 @@ impl Vector<T> {
 
     fn from_slice(slice: &[T]) -> Vector<T> {
         let vec = with_capacity::<T>(slice.len);
-        slice.copy_to_nonoverlapping(vec._data.ptr);
+        slice.copy_nonoverlapping(vec._data.ptr);
         vec._length = slice.len;
         vec
     }
@@ -40,36 +40,49 @@ impl Vector<T> {
         vec
     }
 
-    fn reserve(self: &mut Vector<T>, new_capacity: usize) {
-        if self._data.len < new_capacity {
-            self._data = self._data.realloc(new_capacity);
+    fn reserve(self: &mut Vector<T>, additional: usize) {
+        if self._length + additional > self._data.len {
+            self._data = self._data.realloc(
+                math::max(self._length * 2, self._length + additional)
+            );
         }
     }
 
     fn extend_from_slice(self: &mut Vector<T>, value: &[T]) {
-        let new_length = self._length + value.len;
-        self.reserve(new_length);
-        value.copy_to(&self._data[self._length]);
-        self._length = new_length;
+        self.reserve(value.len);
+
+        value.copy(&self._data[self._length]);
+        self._length += value.len;
     }
 
     fn extend<I: Iterator<I, T>>(self: &mut Vector<T>, iter: &mut I) {
-        for item in iter {
-            self.push(item);
+        loop {
+            let item = iter.next();
+            if item.is_some {
+                self.push(item.inner);
+            } else {
+                break;
+            }
         }
     }
 
     fn insert(self: &mut Vector<T>, index: usize, value: T) {
-        use std::math::max;
+        self.reserve(1);
 
-        if self._length == self._data.len {
-            self.reserve(max(self._data.len, 1) * 2);
+        if index < self._length {
+            self._data[index..self._length].copy(&self._data[index + 1]);
         }
-
-        self._data[index..self._length].copy_to(&self._data[index + 1]);
         self._data[index] = value;
 
         self._length += 1;
+    }
+
+    fn get(self: &Vector<T>, index: usize) -> Option<T> {
+        if index < self._length {
+            Option::some(self._data[index])
+        } else {
+            Option::none()
+        }
     }
 
     fn as_slice(self: &Vector<T>) -> &[T] {
@@ -81,11 +94,7 @@ impl Vector<T> {
     }
 
     fn push(self: &mut Vector<T>, value: T) {
-        use std::math::max;
-
-        if self._length == self._data.len {
-            self.reserve(max(self._data.len, 1) * 2);
-        }
+        self.reserve(1);
 
         self._data[self._length] = value;
         self._length += 1;
@@ -118,13 +127,21 @@ impl Vector<T> {
 
     fn remove(self: &mut Vector<T>, index: usize) -> T {
         let value = self._data[index];
-        self._data[index + 1..self._length].copy_to(&self._data[index]);
+        self._data[index + 1..self._length].copy(&self._data[index]);
         self._length -= 1;
         value
     }
 
     fn len(self: &Vector<T>) -> usize {
         self._length
+    }
+
+    fn capacity(self: &Vector<T>) -> usize {
+        self._data.len
+    }
+
+    fn spare_capacity(self: &mut Vector<T>) -> &mut [T] {
+        self._data[self._length..]
     }
 
     #[inline]
@@ -136,9 +153,15 @@ impl Vector<T> {
         self._length = 0;
     }
 
+    fn resize(self: &mut Vector<T>, new_size: usize) {
+        debug_assert!(new_size <= self._data.len);
+
+        self._length = new_size;
+    }
+
     #[inline]
-    fn iter(self: &Vector<T>) -> &[T] {
-        self.as_slice()
+    fn iter(self: &Vector<T>) -> mem::SliceIterator<&T> {
+        self.as_slice().iter()
     }
 
     fn shrink_to_fit(self: &mut Vector<T>) {
@@ -307,6 +330,27 @@ mod tests {
         assert_eq!(vec.len(), 1);
         assert_eq!(vec.remove(0), 3);
         assert_eq!(vec.len(), 0);
+    }
+
+    #[test]
+    fn test_vector_clear() {
+        let vec = Vector::from_slice(&[1, 2, 3]);
+        defer vec.free();
+
+        vec.clear();
+        assert_eq!(vec.len(), 0);
+        assert_eq!(vec.as_slice(), &[]);
+    }
+
+    #[test]
+    fn test_vector_get() {
+        let vec = Vector::from_slice(&[1, 2, 3]);
+        defer vec.free();
+
+        assert_eq!(vec.get(0), Option::some(1));
+        assert_eq!(vec.get(1), Option::some(2));
+        assert_eq!(vec.get(2), Option::some(3));
+        assert_eq!(vec.get(3), Option::none());
     }
 
     #[test]

@@ -66,6 +66,8 @@ fn trim(self: &[u8]) -> &[u8] {
 }
 
 fn parse_integer<T: proto::Integer>(s: &[u8]) -> Option<T> {
+    use builtins::unsigned_of;
+
     if s.len == 0 {
         return Option::none();
     }
@@ -81,18 +83,39 @@ fn parse_integer<T: proto::Integer>(s: &[u8]) -> Option<T> {
         false
     };
 
-    let result: T = 0;
+    let result: unsigned_of<T> = 0;
     for ch in s {
         if ch >= '0' && ch <= '9' {
-            // TODO: check for overflow
-            result = result * 10 + ((ch - '0') as T);
+            let a = result * 10;
+            if a / 10 != result {
+                return Option::none();
+            } 
+            let b = a + ((ch - '0') as unsigned_of<T>);
+            if b < a {
+                return Option::none();
+            }
+            result = b;
         } else {
             return Option::none();
         }
     }
 
-    if negative {
-        Option::some((0 as T) - result)
+    when T: proto::Signed {
+        // We only need to check for unsigned-to-signed conversion overflow, other
+        // cases have already been handled.
+        if negative {
+            if result > (T::max_value() as unsigned_of<T>) + 1 {
+                Option::none()
+            } else {
+                Option::some(-(result as T))
+            }
+        } else {
+            if result > T::max_value() as unsigned_of<T> {
+                Option::none()
+            } else {
+                Option::some(result as T)
+            }
+        }
     } else {
         Option::some(result)
     }
@@ -102,6 +125,11 @@ fn parse_integer<T: proto::Integer>(s: &[u8]) -> Option<T> {
 #[cfg(test)]
 mod tests {
     use std::{assert, assert_eq, assert_ne};
+
+    #[test]
+    fn test_trim1() {
+        parse_integer::<u8>("123");
+    }
 
     #[test]
     fn starts_with_positive() {
@@ -120,7 +148,7 @@ mod tests {
 
     #[test]
     fn find_positive() {
-        assert_ne!("needle".find("needle"), Option::some(0usize));
+        assert_eq!("needle".find("needle"), Option::some(0usize));
         assert_eq!("needle".find("dle"), Option::some(3usize));
         assert_eq!("needle".find(""), Option::some(0usize));
         assert_eq!("".find(""), Option::some(0usize));
@@ -133,17 +161,40 @@ mod tests {
     }
 
     #[test]
-    fn parse_integer_positive() {
+    fn test_parse_integer() {
+        assert_eq!(parse_integer::<usize>("0"), Option::some(0usize));
+        assert_eq!(parse_integer::<isize>("0"), Option::some(0isize));
+        
+        assert_eq!(parse_integer::<usize>("-0"), Option::none());
+        assert_eq!(parse_integer::<isize>("-0"), Option::some(0isize));
+
         assert_eq!(parse_integer::<usize>("24601"), Option::some(24601usize));
         assert_eq!(parse_integer::<isize>("-24601"), Option::some(-24601isize));
-        assert_eq!(parse_integer::<u8>("512"), Option::some(0u8));
-    }
 
-    #[test]
-    fn parse_integer_negative() {
         assert_eq!(parse_integer::<usize>(""), Option::none());
         assert_eq!(parse_integer::<usize>("abcdes"), Option::none());
-        assert_eq!(parse_integer::<usize>("-243"), Option::none());
+        assert_eq!(parse_integer::<usize>("-243"), Option::none());  
+
+        // Unsigned overflow
+        assert_eq!(parse_integer::<u8>("256"), Option::none());
+        assert_eq!(parse_integer::<u8>("255"), Option::some(255u8));
+
+        assert_eq!(parse_integer::<u16>("65535"), Option::some(0xffffu16));
+        assert_eq!(parse_integer::<u16>("65536"), Option::none());
+
+        // Signed overflow
+        assert_eq!(parse_integer::<i8>("127"), Option::some(127i8));  
+        assert_eq!(parse_integer::<i8>("128"), Option::none());  
+        assert_eq!(parse_integer::<i8>("-128"), Option::some(-128i8));  
+        assert_eq!(parse_integer::<i8>("-129"), Option::none());  
+        assert_eq!(
+            parse_integer::<i128>("170141183460469231731687303715884105727"),
+            Option::some(170141183460469231731687303715884105727i128)
+        );
+        assert_eq!(
+            parse_integer::<i128>("170141183460469231731687303715884105728"),
+            Option::none()
+        );
     }
 
     #[test]
@@ -170,8 +221,8 @@ mod tests {
     fn test_trim() {
         assert_eq!("".trim(), "")
         assert_eq!("hello world".trim(), "hello world")
-        assert_eq!("  hello world".trim(), "hello world")
-        assert_eq!("\t\t\thello world".trim(), "hello world")
+        assert_eq!("  hello world   ".trim(), "hello world")
+        assert_eq!("\t\t\thello world \n\t ".trim(), "hello world")
         assert_eq!("\n\n\nhello world".trim(), "hello world")
         assert_eq!("\r\r\rhello world".trim(), "hello world")
     }

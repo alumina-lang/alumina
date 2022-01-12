@@ -30,10 +30,17 @@ use crate::ir::ValueType;
 use crate::{ast, common::CodeErrorKind, ir};
 
 macro_rules! mismatch {
-    ($expected:expr, $actual:expr) => {
+    ($self:expr, $expected:literal, $actual:expr) => {
         crate::common::CodeErrorKind::TypeMismatch(
-            format!("{:?}", $expected),
-            format!("{:?}", $actual),
+            format!("{}", $expected),
+            $self.mono_ctx.type_name($actual).unwrap(),
+        )
+    };
+
+    ($self:expr, $expected:expr, $actual:expr) => {
+        crate::common::CodeErrorKind::TypeMismatch(
+            $self.mono_ctx.type_name($expected).unwrap(),
+            $self.mono_ctx.type_name($actual).unwrap(),
         )
     };
 }
@@ -120,6 +127,109 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
             })
             .chain(self.extra_items)
             .collect()
+    }
+
+    pub fn type_name(&self, typ: ir::TyP<'ir>) -> Result<String, AluminaError> {
+        use ir::Ty::*;
+        use std::fmt::Write;
+
+        let mut f = String::new();
+
+        match typ {
+            Protocol(cell) | NamedType(cell) | NamedFunction(cell) => {
+                let MonoKey(cell, args, _, _) = self.reverse_lookup(cell);
+
+                if let Some(LangTypeKind::Slice(ir::Ty::Pointer(inner, is_const))) =
+                    self.get_lang_type_kind(typ)
+                {
+                    if *is_const {
+                        let _ = write!(f, "&[{}]", self.type_name(*inner)?);
+                    } else {
+                        let _ = write!(f, "&mut [{}]", self.type_name(*inner)?);
+                    }
+                    return Ok(f);
+                }
+
+                let _ = match cell.get() {
+                    ast::Item::Enum(e) => write!(f, "{}", e.name.unwrap_or("{{anonymous}}")),
+                    ast::Item::StructLike(e) => write!(f, "{}", e.name.unwrap_or("{{anonymous}}")),
+                    ast::Item::Protocol(e) => write!(f, "{}", e.name.unwrap_or("{{anonymous}}")),
+                    ast::Item::Function(e) => write!(f, "{}", e.name.unwrap_or("{{anonymous}}")),
+                    _ => unreachable!(),
+                };
+
+                if args.len() > 0 {
+                    let _ = write!(f, "<");
+                    for (idx, arg) in args.iter().enumerate() {
+                        if idx > 0 {
+                            let _ = write!(f, ", {}", self.type_name(arg)?);
+                        } else {
+                            let _ = write!(f, "{}", self.type_name(arg)?);
+                        }
+                    }
+                    let _ = write!(f, ">");
+                }
+            }
+            Builtin(builtin) => {
+                let _ = match builtin {
+                    BuiltinType::Void => write!(f, "void"),
+                    BuiltinType::Never => write!(f, "!"),
+                    BuiltinType::Bool => write!(f, "bool"),
+                    BuiltinType::U8 => write!(f, "u8"),
+                    BuiltinType::U16 => write!(f, "u16"),
+                    BuiltinType::U32 => write!(f, "u32"),
+                    BuiltinType::U64 => write!(f, "u64"),
+                    BuiltinType::U128 => write!(f, "u128"),
+                    BuiltinType::USize => write!(f, "usize"),
+                    BuiltinType::ISize => write!(f, "isize"),
+                    BuiltinType::I8 => write!(f, "i8"),
+                    BuiltinType::I16 => write!(f, "i16"),
+                    BuiltinType::I32 => write!(f, "i32"),
+                    BuiltinType::I64 => write!(f, "i64"),
+                    BuiltinType::I128 => write!(f, "i128"),
+                    BuiltinType::F32 => write!(f, "f32"),
+                    BuiltinType::F64 => write!(f, "f64"),
+                };
+            }
+            Pointer(ty, is_const) => {
+                if *is_const {
+                    let _ = write!(f, "&{}", self.type_name(*ty)?);
+                } else {
+                    let _ = write!(f, "&mut {}", self.type_name(*ty)?);
+                }
+            }
+            Array(ty, len) => {
+                let _ = write!(f, "[{:?}; {}]", ty, len);
+            }
+            Unqualified(kind) => {
+                let _ = write!(f, "{{unqualified {:?}}}", kind);
+            }
+            Tuple(tys) => {
+                let _ = write!(f, "(");
+                for (i, ty) in tys.iter().enumerate() {
+                    if i > 0 {
+                        let _ = write!(f, ", ");
+                    }
+                    let _ = write!(f, "{}", self.type_name(ty)?);
+                }
+                let _ = write!(f, ")");
+            }
+            FunctionPointer(args, ret) => {
+                let _ = write!(f, "fn(");
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        let _ = write!(f, ", ");
+                    }
+                    let _ = write!(f, "{}", self.type_name(arg)?);
+                }
+                let _ = write!(f, ")");
+                if **ret != Builtin(BuiltinType::Void) {
+                    let _ = write!(f, " -> {}", self.type_name(ret)?);
+                }
+            }
+        };
+
+        Ok(f)
     }
 }
 
@@ -270,7 +380,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 .get_or_insert(value_type)
                 .assignable_from(value_type)
             {
-                return Err(mismatch!(type_hint.unwrap(), value_type)).with_span(m.span);
+                return Err(mismatch!(self, type_hint.unwrap(), value_type)).with_span(m.span);
             }
 
             if !taken_values.insert(value) {
@@ -462,23 +572,23 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 BoundCheckResult::Matches => {
                     if negated {
                         return Err(CodeErrorKind::ProtocolMatch(
-                            format!("{:?}", ty),
-                            format!("{:?}", bound),
+                            self.mono_ctx.type_name(ty).unwrap(),
+                            self.mono_ctx.type_name(bound).unwrap(),
                         ))
                         .with_span(span);
                     }
                 }
                 BoundCheckResult::DoesNotMatch if !negated => {
                     return Err(CodeErrorKind::ProtocolMismatch(
-                        format!("{:?}", ty),
-                        format!("{:?}", bound),
+                        self.mono_ctx.type_name(ty).unwrap(),
+                        self.mono_ctx.type_name(bound).unwrap(),
                     ))
                     .with_span(span)
                 }
                 BoundCheckResult::DoesNotMatchBecause(detail) if !negated => {
                     return Err(CodeErrorKind::ProtocolMismatchDetail(
-                        format!("{:?}", ty),
-                        format!("{:?}", bound),
+                        self.mono_ctx.type_name(ty).unwrap(),
+                        self.mono_ctx.type_name(bound).unwrap(),
                         detail,
                     ))
                     .with_span(span)
@@ -680,7 +790,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     if code.iter().all(|c| {
                         matches!(
                             c.kind,
-                            CodeErrorKind::ProtocolMismatch(_, _)
+                            CodeErrorKind::ProtocolMatch(_, _)
+                                | CodeErrorKind::ProtocolMismatch(_, _)
                                 | CodeErrorKind::ProtocolMismatchDetail(_, _, _)
                         )
                     }) =>
@@ -974,6 +1085,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         tentative: bool,
     ) -> Result<MonoKey<'ast, 'ir>, AluminaError> {
         let mut index = None;
+
+        if tentative {
+            index = self.current_item.map(|i| i.id)
+        }
 
         let (placeholders, span) = match item.get() {
             ast::Item::Function(f) => {
@@ -1577,16 +1692,16 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             (ir::Ty::FunctionPointer(args, ret), ir::Ty::NamedFunction(a)) => {
                 let fun = a.get_function().with_no_span()?;
                 if fun.args.len() != args.len() {
-                    return Err(mismatch!(lhs_typ, rhs.ty)).with_no_span();
+                    return Err(mismatch!(self, lhs_typ, rhs.ty)).with_no_span();
                 }
                 // There is no co- and contra-variance, argument and return types must match
                 // exactly.
                 if fun.return_type != *ret {
-                    return Err(mismatch!(lhs_typ, rhs.ty)).with_no_span();
+                    return Err(mismatch!(self, lhs_typ, rhs.ty)).with_no_span();
                 }
                 for (a, b) in fun.args.iter().zip(args.iter()) {
                     if a.ty != *b {
-                        return Err(mismatch!(lhs_typ, rhs.ty)).with_no_span();
+                        return Err(mismatch!(self, lhs_typ, rhs.ty)).with_no_span();
                     }
                 }
 
@@ -1682,7 +1797,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             _ => {}
         }
 
-        Err(mismatch!(lhs_typ, rhs.ty)).with_no_span()
+        Err(mismatch!(self, lhs_typ, rhs.ty)).with_no_span()
     }
 
     fn try_resolve_function(
@@ -2006,8 +2121,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             _ => {
                 return Err(CodeErrorKind::InvalidBinOp(
                     op,
-                    format!("{:?}", lhs.ty),
-                    format!("{:?}", rhs.ty),
+                    self.mono_ctx.type_name(lhs.ty).unwrap(),
+                    self.mono_ctx.type_name(rhs.ty).unwrap(),
                 ))
                 .with_no_span()
             }
@@ -2173,7 +2288,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let result = match inner.ty {
             ir::Ty::Pointer(_, _) => self.exprs.deref(inner),
-            _ => return Err(mismatch!("pointer", inner.ty)).with_no_span(),
+            _ => return Err(mismatch!(self, "pointer", inner.ty)).with_no_span(),
         };
 
         Ok(result.alloc_on(self.mono_ctx.ir))
@@ -2267,8 +2382,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             (ast::UnOp::Neg, ir::Ty::Builtin(b))
                 if (b.is_integer() && b.is_signed()) || b.is_float() => {}
             _ => {
-                return Err(CodeErrorKind::InvalidUnOp(op, format!("{:?}", inner.ty)))
-                    .with_no_span()
+                return Err(CodeErrorKind::InvalidUnOp(
+                    op,
+                    self.mono_ctx.type_name(inner.ty).unwrap(),
+                ))
+                .with_no_span()
             }
         };
 
@@ -2443,8 +2561,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let gcd = ir::Ty::gcd(then.ty, els.ty);
         if !gcd.assignable_from(then.ty) || !gcd.assignable_from(els.ty) {
             return Err(CodeErrorKind::MismatchedBranchTypes(
-                format!("{:?}", then.ty),
-                format!("{:?}", els.ty),
+                self.mono_ctx.type_name(then.ty).unwrap(),
+                self.mono_ctx.type_name(els.ty).unwrap(),
             ))
             .with_span(els_.span);
         }
@@ -2560,8 +2678,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
             _ => {
                 return Err(CodeErrorKind::InvalidCast(
-                    format!("{:?}", expr.ty),
-                    format!("{:?}", typ),
+                    self.mono_ctx.type_name(expr.ty).unwrap(),
+                    self.mono_ctx.type_name(typ).unwrap(),
                 ))
                 .with_no_span()
             }
@@ -2706,6 +2824,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         match callee.kind {
             IntrinsicKind::TestCases => self.generate_test_cases(),
+            IntrinsicKind::TypeName => {
+                let typ = generic_args[0];
+                let name = self.mono_ctx.type_name(typ)?;
+
+                Ok(self.exprs.const_value(Value::Str(
+                    self.mono_ctx.ir.arena.alloc_slice_copy(name.as_bytes()),
+                )))
+            }
             _ => self
                 .mono_ctx
                 .intrinsics
@@ -3190,7 +3316,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
                 self.exprs.tuple_index(tup, index, types[index])
             }
-            _ => return Err(mismatch!("tuple", tup.ty)).with_span(span),
+            _ => return Err(mismatch!(self, "tuple", tup.ty)).with_span(span),
         };
 
         // We want to typecheck even if it diverges, no point in trying to access
@@ -3267,7 +3393,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     )));
                 }
 
-                return Err(mismatch!("array or slice", inner.ty)).with_span(inner_span);
+                return Err(mismatch!(self, "array or slice", inner.ty)).with_span(inner_span);
             }
         };
 

@@ -471,8 +471,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
     fn visit_float_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let (remainder, kind) = suffixed_literals!(self.code.node_text(node),
-            "f32" => BuiltinType::U8,
-            "f64" => BuiltinType::U16,
+            "f32" => BuiltinType::F32,
+            "f64" => BuiltinType::F64,
         );
 
         Ok(

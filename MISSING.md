@@ -10,7 +10,8 @@
     - could be a similar issue with protocols, though these are more coservative vis-a-vis recursion
 - Whole ZST and divergence handling might still be buggy, in particular, uninitialized variables of `!` type might be problematic since lowering is quite liberal with making temporary name bindings for various stuff.
     - It might be fine now, it's been a while since I last ran into a ZST bug
-- if tentative monomorphization fails (e.g. error), but type inference still succeeds, we are left with unpopulated symbols (maybe fixed, not sure)
+- if tentative monomorphization fails (e.g. error), but type inference still succeeds, we are left with unpopulated symbols
+    - this is now especially an issue with `when` expressions which do tentative mono during proto bound checking
 - generic-binding typedefs (e.g. `type HashSet<T> = HashMap<T, ()>`). 
   - This has been attempted and reverted because it was a big mess.
   - It sounds really simple to implement, but the naive approach leads to a bunch of issues (dependencies during AST construction, `impl` forwarding, whether IR should even be aware of them and if not, should they be handled in `mono`, name resolution needs another 'defered' type, ...). That's because they are in a way partial specializations of generic types.
@@ -35,6 +36,7 @@
 - How does Equatable and Comparable work for pointers? Autoref makes this quite complicated... Maybe it's better to simply not have that.
 - Some limited pattern matching in macros (optional arguments)
 - Ability to define types in function scope (especially for ENums, very useful for state machines). Simple in theory, but the same caveats apply as with lambdas: these can bind generic placeholders, so they need to be monomorphized carefully.
+- Some bug with ambient impl placeholders and mixins. Not sure yet.
 
 ## Grammar, parsing, AST
 
@@ -57,9 +59,10 @@
   - string formatting
     - The pattern is well-established (Formattable protocol) and I'm very happy with it,
       but it's very very basic right now
-    - formatting for floats is especially terrible, needs to be musch better
+    - formatting for floats is especially terrible, needs to be much better
   - heap-allocating collections
     - Vector, HashMap, HashSet are implemented (very basic, probably do not perform very well)
+    - Vector might actually be pretty ok
   - math
     - abs/truns/frac/round/sin/cos/... are missing
 

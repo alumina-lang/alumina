@@ -376,12 +376,71 @@ impl _isize {
     }
 }
 
+protocol _FloatOps<Self> {
+    #[inline]
+    fn nan() -> Self {
+        (0.0 as Self) / (0.0 as Self)
+    }
+
+    #[inline]
+    fn infinity() -> Self {
+        (1.0 as Self) / (0.0 as Self)
+    }
+
+    #[inline]
+    fn neg_infinity() -> Self {
+        (-1.0 as Self) / (0.0 as Self)
+    }
+
+    #[inline]
+    fn is_nan(self: Self) -> bool {
+        self != self
+    }
+
+    #[inline]
+    fn is_infinite(self: Self) -> bool {
+        !self.is_nan() && !self.is_finite()
+    }
+
+    #[inline]
+    fn is_finite(self: Self) -> bool {
+        !self.is_nan() && self < Self::infinity() && self > Self::neg_infinity()
+    }
+}
+
 #[lang(impl_f32)]
 struct _f32 {}
 impl _f32 {
     mixin _BuiltinComparable<f32>;
     // Not hashable
     mixin<F: Formatter<F>> _FloatFormattable<f32, F>;
+    mixin _FloatOps<f32>;
+
+    #[force_inline]
+    fn is_sign_negative(self: f32) -> bool {
+        let as_bits: u64 = util::transmute(self);
+        as_bits & 0x80000000u64 != 0
+    }
+
+    #[force_inline]
+    fn max_value() -> f32 {
+        3.40282347e+38f32
+    }
+
+    #[force_inline]
+    fn min_value() -> f32 {
+        -3.40282347e+38f32
+    }
+
+    #[force_inline]
+    fn min_positive() -> f32 {
+        1.17549435e-38f32
+    }
+
+    #[force_inline]
+    fn epsilon() -> f32 {
+        1.19209290e-07f32
+    }
 }
 
 #[lang(impl_f64)]
@@ -390,13 +449,38 @@ impl _f64 {
     mixin _BuiltinComparable<f64>;
     // Not hashable
     mixin<F: Formatter<F>> _FloatFormattable<f64, F>;
+    mixin _FloatOps<f64>;
+
+    #[force_inline]
+    fn is_sign_negative(self: f64) -> bool {
+        let as_bits: u64 = util::transmute(self);
+        as_bits & 0x8000000000000000u64 != 0
+    }
+
+    #[force_inline]
+    fn max_value() -> f64 {
+        1.7976931348623157e+308f64
+    }
+
+    #[force_inline]
+    fn min_value() -> f64 {
+        -1.7976931348623157e+308f64
+    }
+
+    #[force_inline]
+    fn min_positive() -> f64 {
+        2.2250738585072014e-308f64
+    }
+
+    #[force_inline]
+    fn epsilon() -> f64 {
+        2.2204460492503131e-16f64
+    }
 }
 
 // hic sunt dracones, this is ugly af, but without variadic generics, this 
 // is probably the best way without implementing it all inside the compiler
 // Also, who needs Rust-like macros when you have GitHub Copilot?
-
-
 
 #[lang(impl_tuple_1)]
 struct _tuple_1 {}
@@ -918,8 +1002,8 @@ impl _array {
     }
 
     #[force_inline]
-    fn iter<T, Arr: ArrayOf<T>>(self: &Arr) -> &[T] {
-        self
+    fn iter<T, Arr: ArrayOf<T>>(self: &Arr) -> mem::SliceIterator<&T> {
+        self.as_slice().iter()
     }
 }
 

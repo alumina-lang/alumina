@@ -45,7 +45,7 @@ mod internal {
     // error message if the argument is Formattable.
 
     fn assert_eq<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T)  {
-        if lhs != rhs {
+        if !(lhs == rhs) {
             when T: Formattable<T> {
                 panic_impl("assertion failed ({} != {}))", file, line, column, &[
                     FormatArg::new(&lhs),
@@ -60,7 +60,7 @@ mod internal {
     }
 
     fn assert_ne<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T)  {
-        if !(lhs == rhs) {
+        if lhs == rhs {
             when T: Formattable<T> {
                 panic_impl("assertion failed ({} == {}))", file, line, column, &[
                     FormatArg::new(&lhs),
@@ -75,9 +75,10 @@ mod internal {
 }
 
 mod util {
-    #[force_inline]
-    fn identity<T>(t: T) -> T { t }
-
-    #[force_inline]
-    fn cast<T1, T2>(t: T1) -> T2 { t as T2 }
+    #[force_inline] fn identity<T>(t: T) -> T { t }
+    
+    // This function is mostly useful as a type inference guide (when the target type
+    // is not easily expressible).
+    #[force_inline] fn cast<T1, T2>(t: T1) -> T2 { t as T2 }
+    #[force_inline] fn transmute<T1, T2>(t: T1) -> T2 { *(&t as &T2) }
 }

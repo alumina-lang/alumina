@@ -11,7 +11,7 @@ macro panic($reason, $args...) {
 }
 
 mod internal {
-    use fmt::internal::FormatArg;
+    use fmt::internal::{printf, FormatArg};
 
     // Small formatter with as few dependencies as possible. No buffering, etc.
     struct PanicFormatter {}
@@ -43,12 +43,12 @@ mod internal {
         PANICKING = true;
 
         let formatter = PanicFormatter {};
-        fmt::internal::printf("panic at {}:{}:{}: ", &[
-            FormatArg::new(&file), 
-            FormatArg::new(&line), 
-            FormatArg::new(&column), 
-        ], &formatter);
-        fmt::internal::printf(fmt_str, args, &formatter);
+        printf(
+            "panic at {}:{}:{}: ", 
+            &[FormatArg::new(&file), FormatArg::new(&line), FormatArg::new(&column)], 
+            &formatter
+        );
+        printf(fmt_str, args, &formatter);
         formatter.write_char('\n');
 
         libc::_exit(-1);

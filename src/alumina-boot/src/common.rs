@@ -34,17 +34,17 @@ pub enum AluminaError {
 #[derive(Debug, Error, Clone)]
 pub enum CodeErrorKind {
     // Errors
-    #[error("syntax error: unexpected {:?}", .0)]
+    #[error("syntax error: unexpected `{}`", .0)]
     ParseError(String),
-    #[error("unexpected {:?} here", .0)]
+    #[error("unexpected `{}` here", .0)]
     Unexpected(String),
-    #[error("could not resolve the path {}", .0)]
+    #[error("could not resolve the path `{}`", .0)]
     UnresolvedPath(String),
     #[error("cycle detected while resolving aliases")]
     CycleDetected,
     #[error("super not allowed in this context")]
     SuperNotAllowed,
-    #[error("duplicate name {:?}", .0)]
+    #[error("duplicate name `{}`", .0)]
     DuplicateName(String),
     #[error("generic associated types are not supported, soz")]
     NoAssociatedTypes,
@@ -66,25 +66,23 @@ pub enum CodeErrorKind {
     // monomorphization
     #[error("type hint required (type inference)")]
     TypeInferenceFailed,
-    #[error("type mismatch: {} expected, {} found", .0, .1)]
+    #[error("type mismatch: `{}` expected, `{}` found", .0, .1)]
     TypeMismatch(String, String),
-    #[error("branches have incompatible types ({}, {})", .0, .1)]
+    #[error("branches have incompatible types (`{}`, `{}`)", .0, .1)]
     MismatchedBranchTypes(String, String),
     #[error("invalid escape sequence")]
     InvalidEscapeSequence,
-    #[error("invalid #[cfg(...)] attribute")]
+    #[error("invalid `#[cfg(...)]` attribute")]
     InvalidCfgAttribute,
-    #[error("cannot take address of a rvalue (yet)")]
-    CannotAddressRValue,
-    #[error("cannot perform {:?} between {} and {}", .0, .1, .2)]
+    #[error("cannot perform {:?} between `{}` and `{}`", .0, .1, .2)]
     InvalidBinOp(crate::ast::BinOp, String, String),
-    #[error("cannot perform {:?} on {}", .0, .1)]
+    #[error("cannot perform {:?} on `{}`", .0, .1)]
     InvalidUnOp(crate::ast::UnOp, String),
     #[error("cannot assign to rvalue")]
     CannotAssignToRValue,
     #[error("cannot assign to const")]
     CannotAssignToConst,
-    #[error("cannot cast {} into {}", .0, .1)]
+    #[error("cannot cast `{}` into `{}`", .0, .1)]
     InvalidCast(String, String),
     #[error("break outside of loop")]
     BreakOutsideOfLoop,
@@ -96,13 +94,13 @@ pub enum CodeErrorKind {
     TupleIndexOutOfBounds,
     #[error("function expected")]
     FunctionExpectedHere,
-    #[error("could not resolve item {:?}", .0)]
+    #[error("could not resolve item `{}`", .0)]
     UnresolvedItem(String),
-    #[error("duplicate field {:?} in struct initializer", .0)]
+    #[error("duplicate field `{}` in struct initializer", .0)]
     DuplicateFieldInitializer(String),
     #[error("expected a struct-like type here")]
     StructLikeExpectedHere,
-    #[error("method {} not found", .0)]
+    #[error("method `{}` not found", .0)]
     MethodNotFound(String),
     #[error("duplicate enum member")]
     DuplicateEnumMember,
@@ -110,7 +108,7 @@ pub enum CodeErrorKind {
     NotAMethod,
     #[error("default case must be last in a switch expression")]
     DefaultCaseMustBeLast,
-    #[error("cannot reference {:?} in a nested function", .0)]
+    #[error("cannot reference `{}` in a nested function", .0)]
     CannotReferenceLocal(String),
     #[error("missing lang item: {:?}", .0)]
     MissingLangItem(LangItemKind),
@@ -122,9 +120,9 @@ pub enum CodeErrorKind {
     // we abort early due to a previous error.
     #[error("local with unknown type")]
     LocalWithUnknownType,
-    #[error("unsupported ABI {}", .0)]
+    #[error("unsupported ABI {:?}", .0)]
     UnsupportedABI(String),
-    #[error("unknown intrinsic {}", .0)]
+    #[error("unknown intrinsic `{}`", .0)]
     UnknownIntrinsic(String),
     #[error("unknown lang item {:?}", .0)]
     UnknownLangItem(Option<String>),
@@ -152,7 +150,7 @@ pub enum CodeErrorKind {
     MultipleEtCeteras,
     #[error("recursive macro calls are not allowed")]
     RecursiveMacroCall,
-    #[error("{} is not a macro", .0)]
+    #[error("`{}` is not a macro", .0)]
     NotAMacro(String),
     #[error("not enough macro arguments, at least {} expected", .0)]
     NotEnoughMacroArguments(usize),
@@ -160,15 +158,15 @@ pub enum CodeErrorKind {
     EtCeteraInEtCetera,
     #[error("`...` expansion is not allowed in this position")]
     CannotEtCeteraHere,
-    #[error("{} is a macro (hint: append `!`)", .0)]
+    #[error("`{}` is a macro (hint: append `!`)", .0)]
     IsAMacro(String),
     #[error("cyclic dependency during static initialization")]
     RecursiveStaticInitialization,
     #[error("can only do that in function scope")]
     NotInAFunctionScope,
-    #[error("unknown builtin macro {}", .0)]
+    #[error("unknown builtin macro `{}`", .0)]
     UnknownBuiltinMacro(String),
-    #[error("{} is not a protocol", .0)]
+    #[error("`{}` is not a protocol", .0)]
     NotAProtocol(String),
     #[error("protocol is not expected here")]
     UnexpectedProtocol,
@@ -178,11 +176,11 @@ pub enum CodeErrorKind {
     ProtocolFnsCannotBeGeneric,
     #[error("protocol functions cannot be extern")]
     ProtocolFnsCannotBeExtern,
-    #[error("type parameter {} matches {}, which it should not", .0, .1)]
+    #[error("type `{}` matches `{}`, which it should not", .0, .1)]
     ProtocolMatch(String, String),
-    #[error("type parameter {} does not match {}", .0, .1)]
+    #[error("type `{}` does not match `{}`", .0, .1)]
     ProtocolMismatch(String, String),
-    #[error("type parameter {} does not match {} ({})", .0, .1, .2)]
+    #[error("type `{}` does not match `{}` ({})", .0, .1, .2)]
     ProtocolMismatchDetail(String, String, String),
     #[error("recursive protocol bounds are not supported")]
     CyclicProtocolBound,

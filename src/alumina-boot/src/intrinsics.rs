@@ -17,6 +17,7 @@ pub enum IntrinsicKind {
     SizeOf,
     AlignOf,
     TypeId,
+    TypeName,
     Trap,
     CompileFail,
     CompileWarn,
@@ -33,6 +34,7 @@ pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
         map.insert("size_of", IntrinsicKind::SizeOf);
         map.insert("align_of", IntrinsicKind::AlignOf);
         map.insert("type_id", IntrinsicKind::TypeId);
+        map.insert("type_name", IntrinsicKind::TypeName);
         map.insert("trap", IntrinsicKind::Trap);
         map.insert("compile_fail", IntrinsicKind::CompileFail);
         map.insert("compile_warn", IntrinsicKind::CompileWarn);

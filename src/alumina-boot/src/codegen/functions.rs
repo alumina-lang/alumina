@@ -297,7 +297,11 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 }
                 crate::ir::Lit::Float(v) => {
                     self.type_writer.add_type(expr.ty)?;
-                    w!(self.fn_bodies, "(({}){})", self.ctx.get_type(expr.ty), v);
+                    if *expr.ty == Ty::Builtin(BuiltinType::F32) {
+                        w!(self.fn_bodies, "({}f)", v);
+                    } else {
+                        w!(self.fn_bodies, "({})", v);
+                    }
                 }
                 crate::ir::Lit::Bool(v) => {
                     w!(

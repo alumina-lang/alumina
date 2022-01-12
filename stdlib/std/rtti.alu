@@ -2,3 +2,22 @@
 fn type_id<T>() -> usize {
     intrinsics::type_id::<T>()
 }
+
+#[force_inline]
+fn type_name<T>() -> &[u8] {
+    intrinsics::type_name::<T>()
+}
+
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_type_name() {
+        assert_eq!(type_name::<u8>(), "u8");
+        assert_eq!(type_name::<u16>(), "u16");
+        
+        // inception
+        assert_eq!(type_name::<type_name<type_name<u32>>>(), "type_name<type_name<u32>>");
+        
+    }
+}

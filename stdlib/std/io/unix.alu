@@ -242,7 +242,7 @@ impl File {
     }
 
     fn read_to_string(path: &[u8]) -> Result<collections::Vector<u8>, Error> {
-        use std::io::copy_to;
+        use std::io::copy;
 
         let string = collections::Vector::new::<u8>();
         defer string.free();
@@ -262,6 +262,15 @@ impl File {
     fn read(self: &mut File, buf: &mut [u8]) -> Result<usize, Error> {
         let ret = error_check!(libc::read(self.fd, buf.ptr as &mut void, buf.len));
         Result::ok(ret as usize)
+    }
+
+    fn seek(self: &mut File, whence: SeekFrom, offset: i64) -> Result<i64, Error> {
+        #[cfg(not(target_os = "macos"))]
+        let ret = error_check!(libc::lseek64(self.fd, offset, whence as libc::c_int));
+        #[cfg(target_os = "macos")]
+        let ret = error_check!(libc::lseek(self.fd, offset, whence as libc::c_int));
+
+        Result::ok(ret as i64)
     }
 
     fn write(self: &mut File, buf: &[u8]) -> Result<usize, Error> {
@@ -286,6 +295,7 @@ impl File {
 
     mixin Readable<File>;
     mixin Writable<File>;
+    mixin Seekable<File>;
 }
 
 fn anonymous_pipe() -> result::Result<(File, File), Error> {
@@ -304,3 +314,40 @@ fn anonymous_pipe() -> result::Result<(File, File), Error> {
 static stdout : File = File::from_fd(libc::STDOUT_FILENO);
 static stderr : File = File::from_fd(libc::STDERR_FILENO);
 static stdin  : File = File::from_fd(libc::STDIN_FILENO);
+
+#[cfg(test)]
+mod test {
+    use collections::Vector;
+    static BUF: [u8; 1024];
+    static BUF1: [u8; 1024];
+
+    fn mktemp() -> Vector<u8> {
+        use fmt::{hex, pad, format};
+        format!("/tmp/{}.dat", random::DEFAULT_RNG.next_u64().hex().pad(16))
+    }
+
+    #[test]
+    fn test_open() {
+        let filename = mktemp();
+        let buf = BUF.as_slice_mut();
+        defer filename.free();
+
+        let file = File::create(filename.as_slice()).unwrap();
+
+        file.write_all("Hello, world!").unwrap();
+        file.close().unwrap();
+
+        let file = File::open(filename.as_slice()).unwrap();
+        defer file.close();
+
+        let read = file.read(buf).unwrap();
+        assert_eq!(buf[..read] as &[u8], "Hello, world!");
+        
+        file.seek(SeekFrom::Beginning, 7).unwrap();
+
+        let read = file.read(buf).unwrap();
+        assert_eq!(buf[..read] as &[u8], "world!");
+
+        file.close().unwrap();
+    }
+}
