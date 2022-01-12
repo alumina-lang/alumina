@@ -314,13 +314,13 @@ mod internal {
         }
     }
 
-    struct NumFormatAdapter<T: proto::Unsigned> {
+    struct NumFormatAdapter<T: proto::Integer> {
         radix: u16,
         _pad: usize,
         value: T
     }
 
-    impl NumFormatAdapter<T: proto::Unsigned> {
+    impl NumFormatAdapter<T: proto::Integer> {
         fn fmt<F: Formatter<F>>(self: &NumFormatAdapter<T>, fmt: &mut F) {
             format_integer(self.value, self.radix, self._pad, fmt);
         }
@@ -367,19 +367,19 @@ mod internal {
     }
 }
 
-fn hex<T: proto::Unsigned>(val: T) -> internal::NumFormatAdapter<T> {
+fn hex<T: proto::Integer>(val: T) -> internal::NumFormatAdapter<T> {
     internal::NumFormatAdapter { radix: 16, _pad: 0, value: val }
 }
 
-fn bin<T: proto::Unsigned>(val: T) -> internal::NumFormatAdapter<T> {
+fn bin<T: proto::Integer>(val: T) -> internal::NumFormatAdapter<T> {
     internal::NumFormatAdapter { radix: 2, _pad: 0, value: val }
 }
 
-fn oct<T: proto::Unsigned>(val: T) -> internal::NumFormatAdapter<T> {
+fn oct<T: proto::Integer>(val: T) -> internal::NumFormatAdapter<T> {
     internal::NumFormatAdapter { radix: 8, _pad: 0, value: val }
 }
 
-fn pad<T: proto::Unsigned>(val: T, pad: usize) -> internal::NumFormatAdapter<T> {
+fn pad<T: proto::Integer>(val: T, pad: usize) -> internal::NumFormatAdapter<T> {
     internal::NumFormatAdapter { radix: 10, _pad: pad, value: val }
 }
 

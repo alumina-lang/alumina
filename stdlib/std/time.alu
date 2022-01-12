@@ -4,13 +4,6 @@ const NANOS_PER_MICRO: u32 = 1000;
 const MILLIS_PER_SEC: u64 = 1000;
 const MICROS_PER_SEC: u64 = 1000000;
 
-fn sleep(duration: Duration) {
-    let spec = libc::timespec {
-        tv_sec: duration.secs as libc::time_t,
-        tv_nsec: util::cast(duration.nanos),
-    };
-    libc::nanosleep(&spec, null);
-}
 
 #[cfg(not(target_os = "macos"))]
 {
@@ -25,21 +18,16 @@ fn sleep(duration: Duration) {
             Instant { spec: spec }
         }
 
-        fn since(self: &Instant, other: &Instant) -> option::Option<Duration> {
-            if *self >= *other {
-                let (secs, nsec) = if self.spec.tv_nsec >= other.spec.tv_nsec {
-                    ((self.spec.tv_sec - other.spec.tv_sec) as u64, (self.spec.tv_nsec - other.spec.tv_nsec) as u32)
-                } else {
-                    (
-                        (self.spec.tv_sec - other.spec.tv_sec - 1) as u64,
-                        self.spec.tv_nsec as u32 + (NANOS_PER_SEC as u32) - other.spec.tv_nsec as u32,
-                    )
-                };
+        fn since(self: &Instant, other: &Instant) -> Duration {
+            let secs = (self.spec.tv_sec as i64) - (other.spec.tv_sec as i64);
+            let nanos = (self.spec.tv_nsec as i32) - (other.spec.tv_nsec as i32);
 
-                option::Option::some(Duration::new(secs, nsec))
-            } else {
-                option::Option::none()
-            }
+            if nanos < 0 {
+                secs += 1;
+                nanos += NANOS_PER_SEC as i32;
+            } 
+
+            Duration::new(secs, nanos as u32)
         }
 
         fn add(lhs: &Instant, rhs: &Duration) -> Instant {
@@ -116,15 +104,12 @@ fn sleep(duration: Duration) {
             Instant { inner: mach_absolute_time() }
         }
 
-        fn since(self: &Instant, other: &Instant) -> option::Option<Duration> {
-            if *self >= *other  {
-                let diff = self.inner - other.inner;
-                let nanos = ((diff as u128) * (TIMEBASE.numer as u128) / (TIMEBASE.denom as u128)) as u64;
+        fn since(self: &Instant, other: &Instant) -> Duration {
+            let diff = self.inner - other.inner;
+            let total_nanos = ((diff as i128) * (TIMEBASE.numer as i128) / (TIMEBASE.denom as i128)) as i64;
 
-                option::Option::some(Duration::new(nanos / (NANOS_PER_SEC as u64), (nanos % (NANOS_PER_SEC as u64)) as u32))
-            } else {
-                option::Option::none()
-            }
+            let (secs, nanos) = math::div_floor(total_nanos, NANOS_PER_SEC as i64);
+            Duration::new(secs, nanos as u32)
         }
 
         fn add(lhs: &Instant, rhs: &Duration) -> Instant {
@@ -159,13 +144,18 @@ fn sleep(duration: Duration) {
 }
 
 struct Duration {
-    secs: u64,
+    secs: i64,
     nanos: u32,
 }
 
+// Duration is signed, unlike Rust, which only supports non-negative durations. It is assumed
+// to always be normalized, i.e. 0 <= nanos < NANOS_PER_SEC.
 impl Duration {
-    fn new(secs: u64, nanos: u32) -> Duration {
-        Duration { secs: secs, nanos: nanos }
+    fn new(secs: i64, nanos: u32) -> Duration {
+        Duration { 
+            secs: (nanos / NANOS_PER_SEC) as i64 + secs, 
+            nanos: nanos % NANOS_PER_SEC 
+        }
     }
 
     #[inline]
@@ -175,38 +165,80 @@ impl Duration {
 
 
     #[inline]
-    fn from_secs(secs: u64) -> Duration {
+    fn negative(self: Duration) -> bool {
+        self.secs < 0
+    }
+
+
+    #[inline]
+    fn from_secs(secs: i64) -> Duration {
         Duration { secs: secs, nanos: 0 }
     }
 
 
     #[inline]
-    fn from_millis(millis: u64) -> Duration {
+    fn from_millis(millis: i64) -> Duration {
+        let (secs, millis) = math::div_floor(millis, MILLIS_PER_SEC as i64);
         Duration {
-            secs: millis / MILLIS_PER_SEC,
-            nanos: ((millis % MILLIS_PER_SEC) as u32) * NANOS_PER_MILLI,
+            secs: secs,
+            nanos: millis as u32 * NANOS_PER_MILLI
         }
     }
 
 
     #[inline]
-    fn from_micros(micros: u64) -> Duration {
+    fn from_micros(micros: i64) -> Duration {
+        let (secs, micros) = math::div_floor(micros, MICROS_PER_SEC as i64);
         Duration {
-            secs: micros / MICROS_PER_SEC,
-            nanos: ((micros % MICROS_PER_SEC) as u32) * NANOS_PER_MICRO,
+            secs: secs,
+            nanos: micros as u32 * NANOS_PER_MICRO
         }
     }
 
     #[inline]
-    fn from_nanos(nanos: u64) -> Duration {
+    fn from_nanos(nanos: i64) -> Duration {
+        let (secs, nanos) = math::div_floor(nanos, NANOS_PER_SEC as i64);
+
         Duration {
-            secs: nanos / (NANOS_PER_SEC as u64),
-            nanos: (nanos % (NANOS_PER_SEC as u64)) as u32,
+            secs: secs,
+            nanos: nanos as u32,
         }
     }
 
     #[inline]
-    fn as_secs_f64(self: &Duration) -> f64 {
+    fn add(self: &Duration, rhs: &Duration) -> Duration {
+        let secs = self.secs + rhs.secs;
+        let nanos = self.nanos + rhs.nanos;
+
+        if nanos >= NANOS_PER_SEC {
+            secs += 1;
+            nanos -= NANOS_PER_SEC
+        } 
+
+        Duration {
+            secs: secs,
+            nanos: nanos,
+        }
+    }
+
+    #[inline]
+    fn sub(self: &Duration, rhs: &Duration) -> Duration {
+        let secs = self.secs - rhs.secs;
+        let nanos = (self.nanos as i32) - (rhs.nanos as i32);
+
+        if nanos < 0 {
+            secs -= 1;
+            nanos += NANOS_PER_SEC as i32
+        }
+
+        Duration {
+            secs: secs,
+            nanos: nanos as u32,
+        }
+    }
+
+    #[inline]
+    fn total_secs(self: &Duration) -> f64 {
         (self.secs as f64) + (self.nanos as f64) / (NANOS_PER_SEC as f64)
     }
 
@@ -219,6 +251,28 @@ impl Duration {
         lhs.nanos.compare(&rhs.nanos)
     }
 
+    fn fmt<F: fmt::Formatter<F>>(self: &Duration, f: &mut F) {
+        use fmt::{write, pad};
+
+        let abs = if self.negative() {
+            f.write_char('-');
+            Duration::zero().sub(self)
+        } else {
+            *self
+        };
+        
+        let secs = abs.secs % 60;
+        let mins = (abs.secs / 60) % 60;
+        let hours = abs.secs / 3600;
+
+        if abs.nanos > 0 {
+            write!(f, "{}:{}:{}.{}", hours.pad(2), mins.pad(2), secs.pad(2), abs.nanos.pad(9));
+        } else {
+            write!(f, "{}:{}:{}", hours.pad(2), mins.pad(2), secs.pad(2));
+        }
+
+    }
+
     mixin cmp::Comparable<Duration>;
     mixin cmp::Equatable<Duration>;
 }
@@ -227,6 +281,7 @@ impl Duration {
 #[cfg(test)]
 mod tests {
     use option::Option;
+    use fmt::format_in;
 
     #[test]
     fn test_monotonish() {
@@ -237,17 +292,88 @@ mod tests {
     }
 
     #[test]
-    fn test_add_sub_since() {
+    fn test_from() {
+        let dur = Duration::from_secs(1);
+        assert_eq!(dur.secs, 1);
+        assert_eq!(dur.nanos, 0);
+
+        let dur = Duration::from_millis(1);
+        assert_eq!(dur.secs, 0);
+        assert_eq!(dur.nanos, 1000000);
+
+        let dur = Duration::from_micros(1);
+        assert_eq!(dur.secs, 0);
+        assert_eq!(dur.nanos, 1000);
+
+        let dur = Duration::from_nanos(1);
+        assert_eq!(dur.secs, 0);
+        assert_eq!(dur.nanos, 1);
+    }
+
+    #[test]
+    fn test_from_negative() {
+        let dur = Duration::from_secs(-1);
+        assert_eq!(dur.secs, -1);
+        assert_eq!(dur.nanos, 0);
+
+        let dur = Duration::from_millis(-1);
+        assert_eq!(dur.secs, -1);
+        assert_eq!(dur.nanos, 999000000);
+
+        let dur = Duration::from_micros(-1);
+        assert_eq!(dur.secs, -1);
+        assert_eq!(dur.nanos, 999999000);
+
+        let dur = Duration::from_nanos(-1);
+        assert_eq!(dur.secs, -1);
+        assert_eq!(dur.nanos, 999999999);
+    }
+
+    #[test]
+    fn test_artithmetic() {
         let start = Instant::now();
         let end = start.add(&Duration::from_secs(1));
 
-        assert_eq!(start.since(&start), Option::some(Duration::zero()));
-        assert_eq!(end.since(&start), Option::some(Duration::from_secs(1)));
-        assert_eq!(start.since(&end), Option::none());
+        assert!(start == start);
+        assert!(start >= start);
+        assert!(end > start);
+        assert!(end != start);
+
+        assert_eq!(start.since(&start), Duration::zero());
+        assert_eq!(end.since(&start), Duration::from_secs(1));
+        assert_eq!(start.since(&end), Duration::from_secs(-1));
 
         let start1 = end.sub(&Duration::from_secs(1));
         assert_eq!(start1, start);
+    }
 
-        assert!(end > start);
+    static BUF: [u8; 1024];
+
+    #[test]
+    fn test_fmt() {
+        let buf: [u8; 1024];
+        let buf = buf.as_slice_mut();
+
+        macro chk($dur, $expected) {
+            assert_eq!(
+                format_in!(buf, "{}", $dur),
+                $expected
+            );    
+        }
+        
+        chk!(Duration::zero(), "00:00:00");
+        chk!(Duration::from_secs(1), "00:00:01");
+        chk!(Duration::from_secs(60), "00:01:00");
+        chk!(Duration::from_secs(60*60), "01:00:00");
+        chk!(Duration::from_secs(86399), "23:59:59");
+        chk!(Duration::from_nanos(1), "00:00:00.000000001");
+        chk!(Duration::from_nanos(999999999), "00:00:00.999999999"); 
+
+        chk!(Duration::from_secs(-1), "-00:00:01");
+        chk!(Duration::from_secs(-60), "-00:01:00");
+        chk!(Duration::from_secs(-60*60), "-01:00:00");
+        chk!(Duration::from_secs(-86399), "-23:59:59");
+        chk!(Duration::from_nanos(-1), "-00:00:00.000000001");
+        chk!(Duration::from_nanos(-999999999), "-00:00:00.999999999");
     }
 }
