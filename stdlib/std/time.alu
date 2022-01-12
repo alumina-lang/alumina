@@ -42,10 +42,10 @@ fn sleep(duration: Duration) {
             }
         }
 
-        fn add(lhs: &Instant, rhs: &Duration) {
-            let secs = lhs.spec.tv_sec + rhs.secs;
+        fn add(lhs: &Instant, rhs: &Duration) -> Instant {
+            let secs = lhs.spec.tv_sec + util::cast(rhs.secs);
+            let nsec = lhs.spec.tv_nsec as u32 + rhs.nanos;
 
-            let nsec = rhs.nanos + lhs.spec.tv_nsec as u32;
             if nsec >= NANOS_PER_SEC as u32 {
                 nsec -= NANOS_PER_SEC as u32;
                 secs += 1;
@@ -59,12 +59,12 @@ fn sleep(duration: Duration) {
             }
         }
 
-        fn sub(lhs: &Instant, rhs: &Duration) {
-            let secs = lhs.spec.tv_sec - rhs.secs;
+        fn sub(lhs: &Instant, rhs: &Duration) -> Instant {
+            let secs = lhs.spec.tv_sec - util::cast(rhs.secs);
+            let nsec = lhs.spec.tv_nsec as i32 - (rhs.nanos as i32);
 
-            let nsec = rhs.nanos  as i32 + lhs.spec.tv_nsec as i32;
             if nsec < 0 {
-                nsec += NANOS_PER_SEC as u32;
+                nsec += NANOS_PER_SEC as i32;
                 secs -= 1;
             }
 
@@ -113,7 +113,6 @@ fn sleep(duration: Duration) {
 
     impl Instant {
         fn now() -> Instant {
-
             Instant { inner: mach_absolute_time() }
         }
 
@@ -128,12 +127,22 @@ fn sleep(duration: Duration) {
             }
         }
 
-        fn add(lhs: &Instant, rhs: &Duration) {
-            panic!("")
+        fn add(lhs: &Instant, rhs: &Duration) -> Instant {
+            let total_nanos = (rhs.nanos as u128) + (rhs.secs as u128) * (NANOS_PER_SEC as u128);
+            let nanos = (total_nanos * (TIMEBASE.denom as u128) / (TIMEBASE.numer as u128)) as u64;
+
+            Instant {
+                inner: lhs.inner + nanos
+            }
         }
 
-        fn sub(lhs: &Instant, rhs: &Duration) {
-            panic!("")
+        fn sub(lhs: &Instant, rhs: &Duration) -> Instant {
+            let total_nanos = (rhs.nanos as u128) + (rhs.secs as u128) * (NANOS_PER_SEC as u128);
+            let nanos = (total_nanos * (TIMEBASE.denom as u128) / (TIMEBASE.numer as u128)) as u64;
+
+            Instant {
+                inner: lhs.inner - nanos
+            }
         }
 
         fn equals(lhs: &Instant, rhs: &Instant) -> bool {
@@ -158,6 +167,12 @@ impl Duration {
     fn new(secs: u64, nanos: u32) -> Duration {
         Duration { secs: secs, nanos: nanos }
     }
+
+    #[inline]
+    fn zero() -> Duration {
+        Duration { secs: 0, nanos: 0 }
+    }
+
 
     #[inline]
     fn from_secs(secs: u64) -> Duration {
@@ -211,10 +226,27 @@ impl Duration {
 
 #[cfg(test)]
 mod tests {
+    use option::Option;
+
     #[test]
     fn test_monotonish() {
         let start = Instant::now();
         let end = Instant::now();
+
+        assert!(end > start);
+    }
+
+    #[test]
+    fn test_add_sub_since() {
+        let start = Instant::now();
+        let end = start.add(&Duration::from_secs(1));
+
+        assert_eq!(start.since(&start), Option::some(Duration::zero()));
+        assert_eq!(end.since(&start), Option::some(Duration::from_secs(1)));
+        assert_eq!(start.since(&end), Option::none());
+
+        let start1 = end.sub(&Duration::from_secs(1));
+        assert_eq!(start1, start);
 
         assert!(end > start);
     }
