@@ -1,6 +1,9 @@
 use fmt::{BufferedFormatter, write, writeln};
 
-// We use a single static buffer for convenience stdio formatting macros.
+// We use a single small static buffer for convenience stdio formatting macros.
+// This buffer has limited purpose (if you need larger buffer, use io::stdX directly),
+// but since many formats write individual characters, doing a syscall for every one
+// would be a performance killer.
 // Once we have multi-threading, stdio formatting will have to be synchronized.
 // Having a static buffer is also a concern if the macros recurse, as the buffer
 // will be overwritten. Currently this only happens during a panic, which should
@@ -8,57 +11,42 @@ use fmt::{BufferedFormatter, write, writeln};
 static FMT_BUF: [u8; 128];
 
 macro print($fmt_str, $arg...) {
-    let fmt = FileFormatter::new(&stdout);
-    let fmt = BufferedFormatter::new(&FMT_BUF, &fmt);
-    write!(&fmt, $fmt_str, $arg...);
-    fmt.flush();
+    let fmt = BufferedWriter::from_slice(&stdout, &FMT_BUF);
+    write!(&fmt, $fmt_str, $arg...).unwrap();
+    fmt.flush().unwrap();
 }
 macro println($fmt_str, $arg...) {
-    let fmt = FileFormatter::new(&stdout);
-    let fmt = BufferedFormatter::new(&FMT_BUF, &fmt);
-    writeln!(&fmt, $fmt_str, $arg...);
-    fmt.flush();
+    let fmt = BufferedWriter::from_slice(&stdout, &FMT_BUF);
+    writeln!(&fmt, $fmt_str, $arg...).unwrap();
+    fmt.flush().unwrap();
 }
 macro eprint($fmt_str, $arg...) {
-    let fmt = FileFormatter::new(&stderr);
-    let fmt = BufferedFormatter::new(&FMT_BUF, &fmt);
-    write!(&fmt, $fmt_str, $arg...);
-    fmt.flush();
+    let fmt = BufferedWriter::from_slice(&stderr, &FMT_BUF);
+    write!(&fmt, $fmt_str, $arg...).unwrap();
+    fmt.flush().unwrap();
 }
 macro eprintln($fmt_str, $arg...) {
-    let fmt = FileFormatter::new(&stderr);
-    let fmt = BufferedFormatter::new(&FMT_BUF, &fmt);
-    writeln!(&fmt, $fmt_str, $arg...);
-    fmt.flush();
+    let fmt = BufferedWriter::from_slice(&stderr, &FMT_BUF);
+    writeln!(&fmt, $fmt_str, $arg...).unwrap();
+    fmt.flush().unwrap();
 }
-
-struct FileFormatter {
-    file: &mut File,
-}
-
-impl FileFormatter {
-    fn new(file: &mut File) -> FileFormatter {
-        FileFormatter {
-            file: file
-        }
-    }
-
-    fn write_str(self: &mut FileFormatter, buf: &[u8]) {
-        self.file.write_all(buf);
-    }
-
-    mixin fmt::Formatter<FileFormatter>;
-}
-
 
 enum ErrorKind {
     UnexpectedEof,
-    Os
+    Os,
+    GetAddrInfo,
+    UserDefined
+}
+
+union ErrorInner {
+    errno: libc::c_int,
+    gai_err: libc::c_int,
+    message: &[u8]
 }
 
 struct Error {
     kind: ErrorKind,
-    errno: libc::c_int,
+    inner: ErrorInner,
 }
 
 impl Error {
@@ -67,25 +55,53 @@ impl Error {
     fn from_errno() -> Error {
         Error {
             kind: ErrorKind::Os,
-            errno: *libc::__errno(),
+            inner: ErrorInner { errno: *libc::__errno() },
+        }
+    }
+
+    fn from_gai(gai_err: libc::c_int) -> Error {
+        Error {
+            kind: ErrorKind::GetAddrInfo,
+            inner: ErrorInner { gai_err: gai_err },
+        }
+    }
+
+    fn custom(message: &[u8]) -> Error {
+        Error {
+            kind: ErrorKind::UserDefined,
+            inner: ErrorInner { message: message },
         }
     }
 
     fn eof() -> Error {
         Error {
-            kind: ErrorKind::UnexpectedEof,
-            errno: 0,
+            kind: ErrorKind::UnexpectedEof
         }
     }
 
-    fn fmt<F: Formatter<F>>(self: &Error, f: &mut F) {
+    fn as_errno(self: &Error) -> Option<libc::c_int> {
+        if self.kind == ErrorKind::Os {
+            Option::some(self.inner.errno)
+        } else {
+            Option::none()
+        }
+    }
+
+    fn fmt<F: Formatter<F>>(self: &Error, f: &mut F) -> Result<(), fmt::Error> {
         switch self.kind {
             ErrorKind::UnexpectedEof => f.write_str("unexpected end of file"),
+            ErrorKind::GetAddrInfo => {
+                try!(f.write_str("failed to lookup address information: "));
+                f.write_str(ffi::CString::as_slice(libc::gai_strerror(self.inner.gai_err)))
+            }
+            ErrorKind::UserDefined => {
+                f.write_str(self.inner.message)
+            }
             ErrorKind::Os => {
                 let buf: [u8; 128];
                 let buf = buf.as_slice_mut();
 
-                if libc::strerror_r(self.errno, buf.ptr as &mut libc::c_char, 128) < 0 {
+                if libc::strerror_r(self.inner.errno, buf.ptr as &mut libc::c_char, 128) < 0 {
                     panic!("strerror_r failed");
                 }
 
@@ -94,9 +110,12 @@ impl Error {
                     len += 1;
                 }
 
-                f.write_str("os error: ");
-                f.write_str(buf[0..len]);
+                try!(f.write_str("os error: "));
+                try!(f.write_str(buf[0..len]));
+
+                Result::ok(())
             }
+            _ => unreachable!()
         }
 
     }
@@ -196,7 +215,7 @@ impl OpenOptions {
     }
 }
 
-macro error_check($ret) {
+macro errno_try($ret) {
     let ret = $ret;
     if ret == -1 {
         return result::Result::err(Error::from_errno());
@@ -204,12 +223,116 @@ macro error_check($ret) {
     ret
 }
 
+protocol FdReadWrite<Self: AsFileDescriptor<Self>> {
+    fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize, Error> {
+        let ret = errno_try!(libc::read(self.as_fd().value, buf.ptr as &mut void, buf.len));
+        Result::ok(ret as usize)
+    }
+
+    fn write(self: &mut Self, buf: &[u8]) -> Result<usize, Error> {
+        let ret = errno_try!(libc::write(self.as_fd().value, buf.ptr as &void, buf.len));
+        Result::ok(ret as usize)
+    }
+}
+
+struct FileDescriptor {
+    value: libc::c_int
+}
+
+impl FileDescriptor {
+    fn new(value: libc::c_int) -> FileDescriptor {
+        FileDescriptor { value: value }
+    }
+
+    fn close(self: &mut FileDescriptor) -> Result<(), Error> {
+        if self.value != -1 {
+            errno_try!(libc::close(self.value));
+        }
+        result::Result::ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn set_nonblocking(self: &mut FileDescriptor, nonblocking: bool) -> Result<(), Error> {
+        let nonblocking =  if nonblocking { 1 as libc::c_int } else { 0 as libc::c_int };
+        errno_try!(libc::ioctl(self.value, libc::FIONBIO, &nonblocking));
+
+        result::Result::ok(())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn set_nonblocking(self: &mut FileDescriptor, nonblocking: bool) -> Result<(), Error> {
+        let previous = errno_try!(libc::fcntl(self.value, libc::F_GETFL));
+        let new = if nonblocking {
+            previous | libc::O_NONBLOCK
+        } else {
+            previous & ~libc::O_NONBLOCK
+        };
+
+        if new != previous {
+            errno_try!(libc::fcntl(self.value, libc::F_SETFL, new));
+        }
+
+        result::Result::ok(())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn set_cloexec(self: &mut FileDescriptor) -> Result<(), Error> {
+        let nonblocking =  if nonblocking { 1 as libc::c_int } else { 0 as libc::c_int };
+        errno_try!(libc::ioctl(self.value, libc::FIOCLEX, &nonblocking));
+
+        result::Result::ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn set_cloexec(self: &mut FileDescriptor) -> Result<(), Error> {
+        let previous = errno_try!(libc::fcntl(self.value, libc::F_GETFD));
+        let new = previous | libc::FD_CLOEXEC;
+
+        if new != previous {
+            errno_try!(libc::fcntl(self.value, libc::F_SETFD, new));
+        }
+
+        result::Result::ok(())
+    }
+
+    fn move(self: &mut FileDescriptor) -> FileDescriptor {
+        let ret = *self;
+        self.value = -1;
+        ret
+    }
+}
+
+struct StdioStream {
+    fd: FileDescriptor
+}
+
+impl StdioStream {
+    fn from_fd(fd: FileDescriptor) -> StdioStream {
+        StdioStream { fd: fd }
+    }
+
+    fn as_fd(self: &StdioStream) -> FileDescriptor {
+        self.fd
+    }
+
+    fn close(self: &mut StdioStream) -> Result<(), Error> {
+        self.fd.close()
+    }
+
+    fn move(self: &mut StdioStream) -> StdioStream {
+        StdioStream { fd: self.fd.move() }
+    }    
+
+    mixin FdReadWrite<StdioStream>;
+    mixin Readable<StdioStream>;
+    mixin Writable<StdioStream>;
+}
+
 struct File {
-    fd: libc::c_int,
+    fd: FileDescriptor
 }
 
 impl File {
-    use result::{Result, try};
     use ffi::CString;
 
     /// Opens file in read-only mode.
@@ -232,13 +355,21 @@ impl File {
             | opts.get_creation_mode()
             | (opts._custom_flags as libc::c_int & ~libc::O_ACCMODE);
 
-        let fd = error_check!(libc::open(
+        let fd = errno_try!(libc::open(
             path.ptr,
             flags,
             opts._mode as libc::mode_t
         ));
 
-        Result::ok(File { fd: fd })
+        Result::ok(File { fd: FileDescriptor::new(fd) })
+    }
+
+    fn from_fd(fd: FileDescriptor) -> File {
+        File { fd: fd }
+    }
+
+    fn as_fd(self: &File) -> FileDescriptor {
+        self.fd
     }
 
     fn read_to_string(path: &[u8]) -> Result<collections::Vector<u8>, Error> {
@@ -255,65 +386,84 @@ impl File {
         Result::ok(string.move())
     }
 
-    fn from_fd(fd: libc::c_int) -> File {
-        File { fd: fd }
-    }
-
-    fn read(self: &mut File, buf: &mut [u8]) -> Result<usize, Error> {
-        let ret = error_check!(libc::read(self.fd, buf.ptr as &mut void, buf.len));
-        Result::ok(ret as usize)
-    }
-
     fn seek(self: &mut File, whence: SeekFrom, offset: i64) -> Result<i64, Error> {
         #[cfg(not(target_os = "macos"))]
-        let ret = error_check!(libc::lseek64(self.fd, offset, whence as libc::c_int));
+        let ret = errno_try!(libc::lseek64(self.fd.value, offset, whence as libc::c_int));
         #[cfg(target_os = "macos")]
-        let ret = error_check!(libc::lseek(self.fd, offset, whence as libc::c_int));
+        let ret = errno_try!(libc::lseek(self.fd.value, offset, whence as libc::c_int));
 
         Result::ok(ret as i64)
     }
 
-    fn write(self: &mut File, buf: &[u8]) -> Result<usize, Error> {
-        let ret = error_check!(libc::write(self.fd, buf.ptr as &void, buf.len));
-        Result::ok(ret as usize)
-    }
-
     fn flush(self: &mut File) -> Result<(), Error> {
-        let ret = libc::fsync(self.fd);
-        // Some files (notably stdout) do not support fsync,
-        // this is not an error.
-        if ret == -1 && *libc::__errno() != libc::EINVAL {
-            return Result::err(Error::from_errno());
-        }
+        let ret = errno_try!(libc::fsync(self.fd.value));
         Result::ok(())
     }
 
     fn close(self: &mut File) -> Result<(), Error> {
-        error_check!(libc::close(self.fd));
-        result::Result::ok(())
+        self.fd.close()
     }
 
+    fn move(self: &mut File) -> File {
+        File { fd: self.fd.move() }
+    }
+
+    mixin FdReadWrite<File>;
     mixin Readable<File>;
     mixin Writable<File>;
     mixin Seekable<File>;
 }
 
-fn anonymous_pipe() -> result::Result<(File, File), Error> {
-    let fds: [libc::c_int; 2];
-
-    #[cfg(target_os = "linux")]
-    error_check!(libc::pipe2(&fds[0], libc::O_CLOEXEC));
-    #[cfg(not(target_os = "linux"))]
-    error_check!(libc::pipe(&fds[0]));
-
-    // TODO: add fcntl to O_CLOEXEC
-
-    result::Result::ok((File::from_fd(fds[0]), File::from_fd(fds[1])))
+struct Pipe {
+    fd: FileDescriptor
 }
 
-static stdout : File = File::from_fd(libc::STDOUT_FILENO);
-static stderr : File = File::from_fd(libc::STDERR_FILENO);
-static stdin  : File = File::from_fd(libc::STDIN_FILENO);
+impl Pipe {
+    fn anonymous() -> result::Result<(Pipe, Pipe), Error> {
+        let fds: [libc::c_int; 2];
+    
+        #[cfg(target_os = "linux")]
+        errno_try!(libc::pipe2(&fds[0], libc::O_CLOEXEC));
+        
+        #[cfg(not(target_os = "linux"))]
+        errno_try!(libc::pipe(&fds[0]));
+
+        let rx = FileDescriptor::new(fds[0]);
+        let tx = FileDescriptor::new(fds[1]);
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            try!(rx.set_cloexec());
+            try!(tx.set_cloexec());
+        }
+
+        result::Result::ok((Pipe::from_fd(rx), Pipe::from_fd(tx)))
+    }
+
+    fn from_fd(fd: FileDescriptor) -> Pipe {
+        Pipe { fd: fd }
+    }
+
+    fn as_fd(self: &Pipe) -> FileDescriptor {
+        self.fd
+    }
+
+    fn close(self: &mut Pipe) -> Result<(), Error> {
+        self.fd.close()
+    }
+
+    fn move(self: &mut Pipe) -> Pipe {
+        Pipe { fd: self.fd.move() }
+    }
+
+    mixin FdReadWrite<Pipe>;
+    mixin Readable<Pipe>;
+    mixin Writable<Pipe>;
+}
+
+static stdout : StdioStream = StdioStream::from_fd(FileDescriptor::new(libc::STDOUT_FILENO));
+static stderr : StdioStream = StdioStream::from_fd(FileDescriptor::new(libc::STDERR_FILENO));
+static stdin  : StdioStream = StdioStream::from_fd(FileDescriptor::new(libc::STDIN_FILENO));
 
 #[cfg(test)]
 mod test {
@@ -323,7 +473,7 @@ mod test {
 
     fn mktemp() -> Vector<u8> {
         use fmt::{hex, pad, format};
-        format!("/tmp/{}.dat", random::DEFAULT_RNG.next_u64().hex().pad(16))
+        format!("/tmp/{}.dat", random::DEFAULT_RNG.next_u64().hex().zero_pad(16)).unwrap()
     }
 
     #[test]

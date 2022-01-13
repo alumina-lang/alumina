@@ -251,11 +251,11 @@ impl Duration {
         lhs.nanos.compare(&rhs.nanos)
     }
 
-    fn fmt<F: fmt::Formatter<F>>(self: &Duration, f: &mut F) {
-        use fmt::{write, pad};
+    fn fmt<F: fmt::Formatter<F>>(self: &Duration, f: &mut F) -> Result<(), fmt::Error> {
+        use fmt::{write, zero_pad};
 
         let abs = if self.negative() {
-            f.write_char('-');
+            try!(f.write_char('-'));
             Duration::zero().sub(self)
         } else {
             *self
@@ -266,11 +266,10 @@ impl Duration {
         let hours = abs.secs / 3600;
 
         if abs.nanos > 0 {
-            write!(f, "{}:{}:{}.{}", hours.pad(2), mins.pad(2), secs.pad(2), abs.nanos.pad(9));
+            write!(f, "{}:{}:{}.{}", hours.zero_pad(2), mins.zero_pad(2), secs.zero_pad(2), abs.nanos.zero_pad(9))
         } else {
-            write!(f, "{}:{}:{}", hours.pad(2), mins.pad(2), secs.pad(2));
+            write!(f, "{}:{}:{}", hours.zero_pad(2), mins.zero_pad(2), secs.zero_pad(2))
         }
-
     }
 
     mixin cmp::Comparable<Duration>;
@@ -280,7 +279,6 @@ impl Duration {
 
 #[cfg(test)]
 mod tests {
-    use option::Option;
     use fmt::format_in;
 
     #[test]
@@ -356,7 +354,7 @@ mod tests {
 
         macro chk($dur, $expected) {
             assert_eq!(
-                format_in!(buf, "{}", $dur),
+                format_in!(buf, "{}", $dur).unwrap(),
                 $expected
             );    
         }

@@ -1398,6 +1398,7 @@ impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
             args: self.parameters.alloc_on(self.ast),
             return_type: self.return_type.unwrap(),
             body: Some(self.body.unwrap()),
+            varargs: false,
             span: Some(span),
             closure: true,
         }));

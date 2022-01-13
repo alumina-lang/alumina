@@ -74,6 +74,8 @@ pub enum CodeErrorKind {
     InvalidEscapeSequence,
     #[error("invalid `#[cfg(...)]` attribute")]
     InvalidCfgAttribute,
+    #[error("invalid `#[align(...)]` attribute")]
+    InvalidAlignAttribute,
     #[error("cannot perform {:?} between `{}` and `{}`", .0, .1, .2)]
     InvalidBinOp(crate::ast::BinOp, String, String),
     #[error("cannot perform {:?} on `{}`", .0, .1)]

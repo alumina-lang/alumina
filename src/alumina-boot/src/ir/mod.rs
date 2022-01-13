@@ -275,6 +275,7 @@ pub struct Field<'ir> {
 #[derive(Debug)]
 pub struct StructLike<'ir> {
     pub name: Option<&'ir str>,
+    pub attributes: &'ir [Attribute],
     pub fields: &'ir [Field<'ir>],
     pub is_union: bool,
 }
@@ -304,6 +305,7 @@ pub struct Function<'ir> {
     pub args: &'ir [Parameter<'ir>],
     pub return_type: TyP<'ir>,
     pub body: OnceCell<FuncBody<'ir>>,
+    pub varargs: bool,
 }
 
 #[derive(Debug)]
@@ -566,7 +568,7 @@ impl<'ir> Expr<'ir> {
 
     pub fn diverges(&self) -> bool {
         match self.value_type {
-            ValueType::LValue => false,
+            ValueType::LValue => matches!(self.ty, Ty::Builtin(BuiltinType::Never)), //false,
             ValueType::RValue => matches!(self.ty, Ty::Builtin(BuiltinType::Never)),
         }
     }

@@ -1,0 +1,116 @@
+use std::net::{
+    NameLookup, TcpStream, TcpListener, Shutdown,
+    SocketAddr, IpAddr, Ipv6Addr, buffered
+};
+use std::collections::Vector;
+use std::result::{Result, try};
+use std::io::{
+    BufferedReader, lines, File, Error, 
+    stdin, stdout, copy
+};
+use std::process::{Command, exit};
+use std::fmt::{write, writeln, pad_with};
+
+const PORT: u16 = 24601;
+
+fn client() {
+    let addresses = NameLookup::resolve("localhost", PORT).unwrap();
+    defer addresses.free();
+
+    // Take the first address
+    let address = addresses.next().unwrap();
+
+    let socket = TcpStream::connect(&address).unwrap();
+    defer socket.close();
+
+    // We fork so we can read and write from the socket at the same time
+    // to avoid buffers getting full. This would be better done with a poll,
+    // so we can process both at the same time, but this is a simple example.
+
+    let maybe_child = Command::fork()
+        .spawn()
+        .unwrap();
+
+    if !maybe_child.is_some {
+        copy(&stdin, &socket).unwrap();
+        socket.shutdown(Shutdown::Write).unwrap();
+        exit(0);
+    } 
+    
+    copy(&socket, &stdout).unwrap();
+
+    let status = maybe_child.unwrap().wait().unwrap();
+    if status != 0 {
+        panic!("child exited with status {}", status);
+    }
+}
+
+fn handle_connection(socket: TcpStream) -> Result<(), Error> {
+    defer socket.close();
+   
+    // "Split" the socket into a buffered reader and writer pair
+    let (reader, writer) = socket.buffered(1024, 1024);
+    defer reader.free();
+    defer writer.free();
+
+    let lines_iter = reader.lines();
+    defer lines_iter.free();
+
+    let i = 1;
+    for maybe_line in lines_iter {
+        let line = try!(maybe_line);
+
+        try!(
+            writeln!(&writer, "{} | {}", i.pad_with(5, ' '), line)
+                .map_err(|e: std::fmt::Error| -> Error { Error::custom("failed to write to socket") } )
+        );
+
+        i += 1;
+    }
+
+    try!(writer.flush());
+    try!(socket.shutdown(Shutdown::Both));
+    
+    Result::ok(())
+}
+
+fn server() -> ! {
+    let addr = SocketAddr::new(IpAddr::v6(Ipv6Addr::unspecified()), PORT);
+    let listener = TcpListener::bind(&addr).unwrap();  
+    defer listener.close();
+
+    println!("Listening on {}", listener.socket_addr().unwrap());
+
+    loop {
+        let (socket, addr) = listener.accept().unwrap();
+
+        println!("Received a connection from {}", addr);
+        let ret = handle_connection(socket);
+
+        if !ret.is_ok {
+            eprintln!("error while reading from socket: {}", ret.unwrap_err());
+        }
+    }
+}
+
+fn main(args: &[&[u8]]) -> i32 {  
+    // Mask sigpipe
+    std::libc::signal(std::libc::SIGPIPE, std::libc::SIG_IGN);
+
+    macro usage() {
+        eprintln!("usage: {} [--server|--client]", args[0]);
+        return 1;
+    }
+
+    if args.len != 2 {
+        usage!()
+    }
+
+    switch args[1] { 
+        "--server" => server(),
+        "--client" => client(),
+        _ => usage!()
+    };
+
+    0
+}

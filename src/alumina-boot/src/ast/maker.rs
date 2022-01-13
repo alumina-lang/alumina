@@ -330,6 +330,15 @@ impl<'ast> AstItemMaker<'ast> {
         let code = scope.code().unwrap();
 
         let is_extern = node.child_by_field_name("extern").is_some();
+        let has_varargs = node
+            .child_by_field_name("parameters")
+            .and_then(|n| n.child_by_field_name("et_cetera"))
+            .is_some();
+
+        if has_varargs && !is_extern {
+            panic!("no");
+        }
+
         let is_protocol_fn = matches!(scope.parent().map(|s| s.typ()), Some(ScopeType::Protocol));
 
         let abi = node.child_by_field_name("abi").map(|n| code.node_text(n));
@@ -425,6 +434,7 @@ impl<'ast> AstItemMaker<'ast> {
             args: parameters.alloc_on(self.ast),
             return_type,
             body: function_body,
+            varargs: has_varargs,
             span: Some(span),
             closure: false,
         });

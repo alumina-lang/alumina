@@ -1,5 +1,5 @@
-use io::Error;
-use io::unix::error_check;
+use io::{Error, Pipe};
+use io::unix::errno_try;
 
 struct Command {
     _name: option::Option<&[u8]>,
@@ -32,14 +32,12 @@ impl Output {
 
 struct Child {
     pid: libc::pid_t,
-    stdin: option::Option<io::File>,
-    stdout: option::Option<io::File>,
-    stderr: option::Option<io::File>,
+    stdin: option::Option<io::Pipe>,
+    stdout: option::Option<io::Pipe>,
+    stderr: option::Option<io::Pipe>,
 }
 
 impl Child {
-    use option::Option;
-    use result::{Result, try};
     use collections::Vector;
 
     fn from_pid(pid: libc::pid_t) -> Child {
@@ -63,20 +61,27 @@ impl Child {
         let stderr : Vector<u8> = Vector::new();
         defer stderr.free();
 
-        if self.stdout.is_some {
-            let stdout_v: Vector<u8> = Vector::new();
+        if self.stdout.is_some && self.stderr.is_some {
+            try!(std::io::read_to_end_2(
+                &self.stdout.inner,
+                &stdout,
+                &self.stderr.inner,
+                &stderr
+            ));
+        } else if self.stdout.is_some {
             try!(self.stdout.inner.read_to_end(&stdout));
-            self.stdout = Option::none();
+        } else if self.stderr.is_some {
+            try!(self.stderr.inner.read_to_end(&stderr));
         }
 
-        if self.stderr.is_some {
-            let stderr_v: Vector<u8> = Vector::new();
-            try!(self.stderr.inner.read_to_end(&stderr));
-            self.stderr = Option::none();
-        }
+        // Close all the pipes if we were able to read them
+        // to end. If any of the try!'s above bailed early, 
+        // we leave them open, as it may have been something
+        // transient and a retry might succeed.
+        self.close();
 
         let status: libc::c_int = 0;
-        error_check!(libc::waitpid(self.pid, &status, 0));
+        errno_try!(libc::waitpid(self.pid, &status, 0));
 
         let res = Output {
             status: status as i32,
@@ -94,13 +99,13 @@ impl Child {
         }
 
         let status: libc::c_int = 0;
-        error_check!(libc::waitpid(self.pid, &status, 0));
+        errno_try!(libc::waitpid(self.pid, &status, 0));
 
         Result::ok(status as i32)
     }
 
     fn kill(self: &mut Child) -> Result<(), Error> {
-        let ret = error_check!(libc::kill(self.pid, libc::SIGKILL));
+        let ret = errno_try!(libc::kill(self.pid, libc::SIGKILL));
         Result::ok(())
     }
 
@@ -124,10 +129,74 @@ impl Child {
     }
 }
 
+struct IoRedirection {
+    kind: Stdio,
+    pair: Option<(Pipe, Pipe)>
+}
+
+impl IoRedirection {
+    fn new(is_stdin: bool, kind: Stdio) -> Result<IoRedirection, Error> {
+        let pair: Option<(Pipe, Pipe)> = if kind == Stdio::Piped {
+            let (rx, tx) = try!(Pipe::anonymous());
+
+            if is_stdin {
+                Option::some((tx, rx))
+            } else {
+                Option::some((rx, tx))
+            }
+        } else {
+            Option::none()
+        };
+
+        let res = IoRedirection {
+            pair: pair,
+            kind: kind
+        };
+
+        Result::ok(res)
+    }
+
+    fn close(self: &mut IoRedirection) -> Result<(), Error> {
+        if self.pair.is_some {
+            try!(self.pair.inner.0.close());
+            try!(self.pair.inner.1.close());
+        } 
+            
+        Result::ok(())
+    }
+
+    fn install(self: &mut IoRedirection, fd: libc::c_int) -> Result<(), Error> {
+        use std::io::{File, OpenOptions};
+
+        switch self.kind {
+            Stdio::Piped => {
+                let (_, tgt) = self.pair.unwrap();
+
+                errno_try!(libc::dup2(tgt.fd.value, fd));
+            },
+            Stdio::Null => {
+                let dev_zero = try!(File::open_with("/dev/null", OpenOptions::new().read(true).write(true)));
+                defer dev_zero.close();
+
+                errno_try!(std::libc::dup2(dev_zero.fd.value, fd));
+            },
+            _ => {}
+        };
+
+        Result::ok(())
+    }
+
+    fn into_inner(self: &mut IoRedirection) -> Option<Pipe> {
+        if self.pair.is_some {
+            Option::some(self.pair.inner.0.move())
+        } else {
+            Option::none()
+        }
+    }
+}
+
 impl Command {
-    use result::{Result, try};
     use io::{File, OpenOptions};
-    use option::Option;
     use ffi::CString;
     use collections::{Vector, free_all};
 
@@ -184,57 +253,19 @@ impl Command {
         }
         argv.push(CString::null());
 
-        error_check!(libc::execv(name.ptr as &libc::c_char, argv.as_slice().ptr as &&libc::c_char));
+        errno_try!(libc::execv(name.ptr as &libc::c_char, argv.as_slice().ptr as &&libc::c_char));
         unreachable!()
     }
 
     fn _after_fork(
         self: &Command,
-        stdin_rx: &option::Option<io::File>,
-        stdin_tx: &option::Option<io::File>,
-        stdout_rx: &option::Option<io::File>,
-        stdout_tx: &option::Option<io::File>,
-        stderr_rx: &option::Option<io::File>,
-        stderr_tx: &option::Option<io::File>,
+        stdin: &mut IoRedirection,
+        stdout: &mut IoRedirection,
+        stderr: &mut IoRedirection
     ) -> Result<(), Error> {
-        switch self._stdin {
-            Stdio::Piped => {
-                try!(stdin_tx.unwrap().close());
-                error_check!(libc::dup2(stdin_rx.unwrap().fd, libc::STDIN_FILENO));
-            },
-            Stdio::Null => {
-                let dev_zero = try!(File::open("/dev/null"));
-                error_check!(libc::dup2(dev_zero.fd, libc::STDIN_FILENO));
-                try!(dev_zero.close());
-            },
-            _ => {}
-        };
-
-        switch self._stdout {
-            Stdio::Piped => {
-                try!(stdout_rx.unwrap().close());
-                error_check!(libc::dup2(stdout_tx.unwrap().fd, libc::STDOUT_FILENO));
-            },
-            Stdio::Null => {
-                let dev_zero = try!(File::open_with("/dev/null", OpenOptions::new().write(true)));
-                error_check!(std::libc::dup2(dev_zero.fd, libc::STDOUT_FILENO));
-                try!(dev_zero.close());
-            },
-            _ => {}
-        };
-
-        switch self._stderr {
-            Stdio::Piped => {
-                stderr_rx.unwrap().close().unwrap();
-                error_check!(libc::dup2(stderr_tx.unwrap().fd, libc::STDERR_FILENO));
-            },
-            Stdio::Null => {
-                let dev_zero = try!(File::open_with("/dev/null", OpenOptions::new().write(true)));
-                error_check!(libc::dup2(dev_zero.fd, libc::STDERR_FILENO));
-                dev_zero.close().unwrap();
-            },
-            _ => {}
-        };
+        try!(stdin.install(libc::STDIN_FILENO));
+        try!(stdout.install(libc::STDOUT_FILENO));
+        try!(stderr.install(libc::STDERR_FILENO));
 
         if self._name.is_some {
             try!(self._exec())
@@ -244,54 +275,27 @@ impl Command {
     }
 
     fn spawn(self: &Command) -> Result<Option<Child>, Error> {
-        let (stdin_rx, stdin_tx) = if self._stdin == Stdio::Piped {
-            let (rx, tx) = try!(io::anonymous_pipe());
-            defer rx.close();
+        let stdin = try!(IoRedirection::new(true, self._stdin));
+        defer stdin.close();
 
-            (Option::some(rx), Option::some(tx))
-        } else {
-            (Option::none(), Option::none())
-        };
+        let stdout = try!(IoRedirection::new(false, self._stdout));
+        defer stdout.close();
 
-        let (stdout_rx, stdout_tx) = if self._stdout == Stdio::Piped {
-            let (rx, tx) = try!(io::anonymous_pipe());
-            defer tx.close();
+        let stderr = try!(IoRedirection::new(false, self._stderr));
+        defer stderr.close();
 
-            (Option::some(rx), Option::some(tx))
-        } else {
-            (Option::none(), Option::none())
-        };
-
-        let (stderr_rx, stderr_tx) = if self._stderr == Stdio::Piped {
-            let (rx, tx) = try!(io::anonymous_pipe());
-            defer tx.close();
-
-            (Option::some(rx), Option::some(tx))
-        } else {
-            (Option::none(), Option::none())
-        };
-
-        let (fail_rx, fail_tx) = try!(io::anonymous_pipe());
+        let (fail_rx, fail_tx) = try!(Pipe::anonymous());
         defer fail_rx.close();
 
-        let pid = error_check!(std::libc::fork());
+        let pid = errno_try!(std::libc::fork());
         if pid == 0 {
-            let res = _after_fork(
-                self,
-                &stdin_rx,
-                &stdin_tx,
-                &stdout_rx,
-                &stdout_tx,
-                &stderr_rx,
-                &stderr_tx,
-            );
+            let res = self._after_fork(&stdin, &stdout, &stderr);
 
             // Since we are already in the child process, we can't just bail here, we need to
             // send the error to the parent process via the pipe.
             if !res.is_ok {
-                fail_tx.write_all(
-                    mem::slice::from_raw(&res.inner.err as &u8, mem::size_of::<Error>())
-                ).unwrap();
+                let msg = mem::slice::from_raw(&res.inner.err as &u8, mem::size_of::<Error>());
+                fail_tx.write_all(msg).unwrap();
                 libc::_exit(1);
             } else {
                 fail_tx.close().unwrap();
@@ -306,23 +310,14 @@ impl Command {
             if fail_rx.read_exact(
                 mem::slice::from_raw(&exec_err as &mut u8, mem::size_of::<Error>())
             ).is_ok {
-                if stdin_tx.is_some {
-                    try!(stdin_tx.unwrap().close());
-                }
-                if stdout_rx.is_some {
-                    try!(stdout_rx.unwrap().close());
-                }
-                if stderr_rx.is_some {
-                    try!(stderr_rx.unwrap().close());
-                }
                 return Result::err(exec_err);
             }
 
             Result::ok(Option::some(Child {
                 pid: pid,
-                stdin: stdin_tx,
-                stdout: stdout_rx,
-                stderr: stderr_rx,
+                stdin: stdin.into_inner(),
+                stdout: stdout.into_inner(),
+                stderr: stderr.into_inner(),
             }))
         }
     }
@@ -357,7 +352,7 @@ mod test {
             .spawn();
 
         assert!(!child.is_ok);
-        assert_eq!(child.unwrap_err().errno, libc::ENOENT);
+        assert_eq!(child.unwrap_err().inner.errno, libc::ENOENT);
     }
 
     #[cfg(any(target_os = "linux"))]
@@ -395,6 +390,35 @@ mod test {
             assert_eq!((output.status & 0xff00) >> 8, 123);
             assert_eq!(output.stdout.as_slice(), "Hello");
             assert_eq!(output.stderr.as_slice(), "World");
+        }
+    }
+
+    #[test]
+    fn test_fork_starvation() {
+        use fmt::repeat;
+
+        let child = Command::fork()
+            .stdout(Stdio::Piped)
+            .stderr(Stdio::Piped)
+            .spawn()
+            .unwrap();
+
+        if !child.is_some {
+            // Write to both pipes and fill up the buffer. Naive implementation would
+            // block on write eventually when the pipe capacity is reached. But our's
+            // don't!
+            for i in range(0, 1024) {
+                print!("{}", "A".repeat(1024));
+                eprint!("{}", "B".repeat(1024));
+            }
+            exit(123);
+        } else {
+            let output = child.inner.wait_with_output().unwrap();
+            defer output.free();
+
+            assert_eq!((output.status & 0xff00) >> 8, 123);
+            assert_eq!(output.stdout.len(), 1024 * 1024);
+            assert_eq!(output.stderr.len(), 1024 * 1024);
         }
     }
 }

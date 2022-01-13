@@ -1,7 +1,7 @@
 use std::{cell::RefCell, collections::HashSet, fmt::Write};
 
 use crate::{
-    ast::BuiltinType,
+    ast::{Attribute, BuiltinType},
     codegen::w,
     common::AluminaError,
     ir::{IRItem, Ty, TyP},
@@ -231,10 +231,38 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                         self.write_type_body(f.ty)?;
                     }
 
-                    if s.is_union {
-                        w!(self.type_bodies, "union {} {{\n", name);
+                    let mut align = 0;
+                    for attr in s.attributes {
+                        if let Attribute::Align(val) = attr {
+                            align = *val;
+                            break;
+                        }
+                    }
+
+                    if align > 0 {
+                        // C11 _Alignas does not work on the entire struct, use an extension
+                        // attribute instead.
+                        if s.is_union {
+                            w!(
+                                self.type_bodies,
+                                "union __attribute__((aligned ({}))) {} {{\n",
+                                align,
+                                name
+                            );
+                        } else {
+                            w!(
+                                self.type_bodies,
+                                "struct __attribute__((aligned ({}))) {} {{\n",
+                                align,
+                                name
+                            );
+                        }
                     } else {
-                        w!(self.type_bodies, "struct {} {{\n", name);
+                        if s.is_union {
+                            w!(self.type_bodies, "union {} {{\n", name);
+                        } else {
+                            w!(self.type_bodies, "struct {} {{\n", name);
+                        }
                     }
 
                     for f in s.fields.iter().filter(|f| !f.ty.is_zero_sized()) {

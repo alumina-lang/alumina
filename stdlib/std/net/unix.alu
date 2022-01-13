@@ -1,0 +1,561 @@
+use io::{Error, FileDescriptor};
+use result::{Result, try};
+use option::{Option};
+use io::unix::{errno_try, FdReadWrite};
+
+struct NameLookup {
+    original: &mut libc::addrinfo,
+    cur: &mut libc::addrinfo,
+    port: u16,
+}
+
+enum Shutdown {
+    Read = libc::SHUT_RD,
+    Write = libc::SHUT_WR,
+    Both = libc::SHUT_RDWR,
+}
+
+fn sockaddr_to_addr(addr: &libc::sockaddr_storage, len: libc::socklen_t) -> Option<SocketAddr> {
+    let result: SocketAddr;
+    switch addr.ss_family as libc::c_int {
+        libc::AF_INET => {
+            result.kind = AddrKind::V4;
+            result.inner.v4 = *(addr as &libc::sockaddr_in);
+        }
+        libc::AF_INET6 => {
+            result.kind = AddrKind::V6;
+            result.inner.v6 = *(addr as &libc::sockaddr_in6);
+        }
+        _ => {
+            return Option::none();
+        }
+    };
+
+    Option::some(result)
+}
+
+fn addr_to_family(addr: &SocketAddr) -> (libc::c_int, libc::socklen_t) {
+    let (family, addr_len) = switch addr.kind {
+        AddrKind::V4 => (libc::AF_INET, mem::size_of::<libc::sockaddr_in>()),
+        AddrKind::V6 => (libc::AF_INET6, mem::size_of::<libc::sockaddr_in6>()),
+        _ => unreachable!()
+    };
+
+    (family, addr_len as libc::socklen_t)
+}
+
+impl NameLookup {
+    fn resolve(host: &[u8], port: u16) -> Result<NameLookup, Error> {
+        let host = ffi::CString::new(host);
+        defer host.free();
+    
+        let hints = mem::zeroed::<libc::addrinfo>();
+        hints.ai_socktype = libc::SOCK_STREAM;
+    
+        let res: &mut libc::addrinfo = null;
+        let ret = libc::getaddrinfo(host.ptr, null, &hints, &res);
+        
+        if ret == 0 {
+            Result::ok(NameLookup {
+                original: res,
+                cur: res,
+                port: port
+            })
+        } else {
+            if ret == libc::EAI_SYSTEM {
+                Result::err(Error::from_errno())
+            } else {
+                Result::err(Error::from_gai(ret))
+            }
+        }
+    }
+
+    fn next(self: &mut NameLookup) -> Option<SocketAddr> {
+        if self.cur == null {
+            Option::none()
+        } else {
+            let cur = self.cur;
+            self.cur = cur.ai_next;
+
+            let result = sockaddr_to_addr(
+                cur.ai_addr as &libc::sockaddr_storage,
+                cur.ai_addrlen
+            );
+
+            if result.is_some {
+                let result = result.unwrap();
+                result.set_port(self.port);
+
+                Option::some(result)
+            } else {
+                // Ignore addresses that are not IPv6 or IPv4.
+                return self.next();
+            }            
+        }
+    }
+
+    fn iter(self: &mut NameLookup) -> NameLookup {
+        *self
+    }
+
+    fn free(self: &mut NameLookup) {
+        libc::freeaddrinfo(self.original);
+    }
+
+    fn move(self: &mut NameLookup) -> NameLookup {
+        let res = *self;
+        self.original = null;
+        res
+    }
+}
+    
+struct Socket {
+    fd: FileDescriptor,
+}
+
+impl Socket {
+    fn new(family: libc::c_int, type: libc::c_int) -> Result<Socket, Error> {
+        let fd: FileDescriptor;
+
+        #[cfg(any(target_os = "android", target_os = "linux"))] 
+        fd = FileDescriptor::new(errno_try!(libc::socket(family, type | libc::O_CLOEXEC, 0)));
+
+        #[cfg(not(any(target_os = "android", target_os = "linux")))]{
+            fd = FileDescriptor::new(errno_try!(libc::socket(family, type, 0)));
+            try!(fd.set_cloexec());
+        }
+        
+        Result::ok(Socket { fd: fd })
+    }
+    
+    fn as_fd(self: &Socket) -> FileDescriptor {
+        self.fd
+    }
+    
+    fn shutdown(self: &Socket, how: Shutdown) -> Result<(), Error> {
+        errno_try!(libc::shutdown(self.fd.value, how as libc::c_int));
+        Result::ok(())
+    }
+
+    fn recv_from_with_flags(
+        self: &Socket,
+        buf: &mut [u8],
+        flags: libc::c_int,
+    ) -> Result<(usize, SocketAddr), Error> {
+        let storage: libc::sockaddr_storage = mem::zeroed();
+        let addrlen = mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+
+        let n = errno_try!(
+            libc::recvfrom(
+                self.fd.value,
+                buf.ptr as &mut void,
+                buf.len,
+                flags,
+                &storage as &mut libc::sockaddr,
+                &addrlen,
+            )
+        );
+
+        Result::ok((n as usize, sockaddr_to_addr(&storage, addrlen).unwrap()))
+    }
+
+    fn recv_with_flags(self: &Socket, buf: &mut [u8], flags: libc::c_int) -> Result<usize, Error> {
+        let n = errno_try!(
+            libc::recv(
+                self.fd.value,
+                buf.ptr as &mut void,
+                buf.len,
+                flags,
+            )
+        );
+
+        Result::ok(n as usize)
+    }
+
+    fn read(self: &Socket, buf: &mut [u8]) -> Result<usize, Error> {
+        self.recv_with_flags(buf, 0)
+    }
+
+    fn peer_addr(self: &Socket) -> Result<SocketAddr, Error> {
+        let storage = mem::zeroed::<libc::sockaddr_storage>();
+        let len: libc::socklen_t = mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+
+        errno_try!(libc::getpeername(self.fd.value, &storage as &mut libc::sockaddr, &len));
+        Result::ok(sockaddr_to_addr(&storage, len).unwrap())
+    }
+
+    fn socket_addr(self: &Socket) -> Result<SocketAddr, Error> {
+        let storage = mem::zeroed::<libc::sockaddr_storage>();
+        let len: libc::socklen_t = mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+
+        errno_try!(libc::getsockname(self.fd.value, &storage as &mut libc::sockaddr, &len));
+        Result::ok(sockaddr_to_addr(&storage, len).unwrap())
+    }
+
+    fn close(self: &mut Socket) -> Result<(), Error> {
+        self.fd.close()
+    }
+
+    fn move(self: &mut Socket) -> Socket {
+        Socket { fd: self.fd.move() }
+    }
+
+    // Only write, read is overriden
+    mixin FdReadWrite<Socket>;
+}
+
+struct TcpStream {
+    socket: Socket,
+}
+
+impl TcpStream {
+    fn from_socket(socket: Socket) -> TcpStream {
+        TcpStream { socket: socket }
+    }
+
+    fn connect(addr: &SocketAddr) -> Result<TcpStream, Error> {
+        let (family, addr_len) = addr_to_family(addr);
+
+        let sock = try!(Socket::new(family, libc::SOCK_STREAM));
+        defer sock.close();
+        
+        errno_try!(libc::connect(
+            sock.fd.value, 
+            &addr.inner as &libc::sockaddr, 
+            addr_len as libc::socklen_t
+        ));
+
+        Result::ok(from_socket(sock.move()))
+    }
+
+    fn as_fd(self: &TcpStream) -> FileDescriptor {
+        self.socket.as_fd()
+    }
+
+    fn peer_addr(self: &TcpStream) -> Result<SocketAddr, Error> {
+        self.socket.peer_addr()
+    }
+
+    fn socket_addr(self: &TcpStream) -> Result<SocketAddr, Error> {
+        self.socket.socket_addr()
+    }
+    
+    fn shutdown(self: &TcpStream, how: Shutdown) -> Result<(), Error> {
+        self.socket.shutdown(how)
+    }
+
+    fn read(self: &mut TcpStream, buf: &mut [u8]) -> Result<usize, Error> {
+        self.socket.read(buf)
+    }
+
+    fn write(self: &mut TcpStream, buf: &[u8]) -> Result<usize, Error> {
+        self.socket.write(buf)
+    }
+
+    fn flush(self: &mut TcpStream) -> Result<(), Error> {
+        Result::ok(())
+    }
+
+    fn close(self: &mut TcpStream) -> Result<(), Error> {
+        self.socket.close()
+    }
+
+    fn move(self: &mut TcpStream) -> TcpStream {
+        TcpStream { socket: self.socket.move() }
+    }
+
+    mixin io::Readable<TcpStream>;
+    mixin io::Writable<TcpStream>;
+}
+
+struct TcpListener {
+    socket: Socket,
+}
+
+impl TcpListener {
+    fn from_socket(socket: Socket) -> TcpListener {
+        TcpListener { socket: socket }
+    }
+
+    fn bind(addr: &SocketAddr) -> Result<TcpListener, Error> {
+        let (family, addr_len) = addr_to_family(addr);
+
+        let sock = try!(Socket::new(family, libc::SOCK_STREAM));
+        defer sock.close();
+        
+        errno_try!(libc::bind(
+            sock.fd.value, 
+            &addr.inner as &libc::sockaddr, 
+            addr_len
+        ));
+
+        errno_try!(libc::listen(
+            sock.fd.value, 
+            128
+        ));
+
+        Result::ok(from_socket(sock.move()))
+    }
+
+    fn as_fd(self: &TcpListener) -> FileDescriptor {
+        self.socket.as_fd()
+    }
+
+    fn accept(self: &TcpListener) -> Result<(TcpStream, SocketAddr), Error> {
+        let storage = mem::zeroed::<libc::sockaddr_storage>();
+        let len: libc::socklen_t = mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+        
+        let fd: FileDescriptor;
+
+        #[cfg(any(target_os = "android", target_os = "linux"))] 
+        fd = FileDescriptor::new(errno_try!(libc::accept4(
+            self.socket.fd.value, 
+            &storage as &mut libc::sockaddr, 
+            &len,
+            libc::O_CLOEXEC
+        )));
+    
+
+        #[cfg(not(any(target_os = "android", target_os = "linux")))]
+        {
+            fd = FileDescriptor::new(errno_try!(libc::accept(
+                self.socket.fd.value,
+                &storage as &mut libc::sockaddr, 
+                &len
+            )));
+            try!(fd.set_cloexec());
+        }
+
+        let socket = Socket { fd: fd };
+
+        Result::ok((
+            TcpStream { socket: socket },
+            sockaddr_to_addr(&storage, len).unwrap()
+        ))
+    }
+
+    fn socket_addr(self: &TcpListener) -> Result<SocketAddr, Error> {
+        self.socket.socket_addr()
+    }
+
+    fn close(self: &mut TcpListener) -> Result<(), Error> {
+        self.socket.close()
+    }
+
+    fn move(self: &mut TcpListener) -> TcpStream {
+        TcpListener { socket: self.socket.move() }
+    }
+}
+
+struct UdpSocket {
+    socket: Socket,
+}
+
+impl UdpSocket {
+    fn from_socket(socket: Socket) -> UdpSocket {
+        UdpSocket { socket: socket }
+    }
+
+    fn bind(addr: &SocketAddr) -> Result<UdpSocket, Error> {
+        let (family, addr_len) = addr_to_family(addr);
+
+        let sock = try!(Socket::new(family, libc::SOCK_DGRAM));
+        defer sock.close();
+        
+        errno_try!(libc::bind(
+            sock.fd.value, 
+            &addr.inner as &libc::sockaddr, 
+            addr_len
+        ));
+
+        Result::ok(from_socket(sock.move()))
+    }
+
+    fn connect(self: &UdpSocket, addr: &SocketAddr) -> Result<(), Error> {
+        let (family, addr_len) = addr_to_family(addr);
+
+        errno_try!(libc::connect(
+            self.socket.fd.value, 
+            &addr.inner as &libc::sockaddr, 
+            addr_len as libc::socklen_t
+        ));
+
+        Result::ok(())
+    }
+
+    fn recv_from(
+        self: &UdpSocket,
+        buf: &mut [u8],
+    ) -> Result<(usize, SocketAddr), Error> {
+        self.socket.recv_from_with_flags(buf, 0)
+    }
+
+    fn peek_from(
+        self: &UdpSocket,
+        buf: &mut [u8],
+    ) -> Result<(usize, SocketAddr), Error> {
+        self.socket.recv_from_with_flags(buf, libc::MSG_PEEK)
+    }
+
+    fn send_to(self: &UdpSocket, buf: &[u8], addr: &SocketAddr) -> Result<usize, Error> {
+        let (_, addr_len) = addr_to_family(addr);
+
+        let ret = errno_try!(libc::sendto(
+            self.socket.fd.value,
+            buf.ptr as &void,
+            buf.len,
+            libc::MSG_NOSIGNAL,
+            &addr.inner as &libc::sockaddr,
+            addr_len,
+        ));
+
+        Result::ok(ret as usize)
+    }
+
+    fn recv(self: &UdpSocket, buf: &mut [u8]) -> Result<usize, Error> {
+        self.socket.recv_with_flags(buf, 0)
+    }
+
+    fn peek(self: &UdpSocket, buf: &mut [u8]) -> Result<usize, Error> {
+        self.socket.recv_with_flags(buf, libc::MSG_PEEK)
+    }
+
+    fn send(self: &UdpSocket, buf: &[u8]) -> Result<usize, Error> {
+        let ret = errno_try!(
+            libc::send(self.socket.fd.value, buf.ptr as &void, buf.len, libc::MSG_NOSIGNAL)
+        );
+
+        Result::ok(ret as usize)
+    }
+
+    fn as_fd(self: &UdpSocket) -> FileDescriptor {
+        self.socket.as_fd()
+    }
+
+    fn peer_addr(self: &UdpSocket) -> Result<SocketAddr, Error> {
+        self.socket.peer_addr()
+    }
+
+    fn socket_addr(self: &UdpSocket) -> Result<SocketAddr, Error> {
+        self.socket.socket_addr()
+    }
+
+    fn close(self: &mut UdpSocket) -> Result<(), Error> {
+        self.socket.close()
+    }
+
+    fn move(self: &mut UdpSocket) -> UdpSocket {
+        UdpSocket { socket: self.socket.move() }
+    }
+}
+
+
+mod tests {
+    use process::{Command, Child, ExitStatus};
+    use collections::Vector;
+
+    fn fork() -> Option<Child> {
+        Command::fork().spawn().unwrap()
+    }
+
+    #[test]
+    fn test_basic_tcp() {
+        let addr = SocketAddr::new(IpAddr::v6(Ipv6Addr::unspecified()), 0);
+        let listener = TcpListener::bind(&addr).unwrap();  
+        defer listener.close();
+
+        let local_addr = listener.socket_addr().unwrap();
+
+        if !fork().is_some {
+            let socket = TcpStream::connect(&local_addr).unwrap();
+            defer socket.close();
+
+            socket.write_all("Hello, world!").unwrap();
+            socket.shutdown(Shutdown::Both).unwrap();
+        } else {
+            let (socket, peer_addr) = listener.accept().unwrap();
+            defer socket.close();
+
+            let buf: Vector<u8> = Vector::new();
+            socket.read_to_end(&buf).unwrap();
+
+            assert_eq!(buf.as_slice(), "Hello, world!");
+        }
+    }
+
+    #[test]
+    fn test_basic_udp() {
+        let addr = SocketAddr::new(IpAddr::v6(Ipv6Addr::unspecified()), 0);
+        let peer1 = UdpSocket::bind(&addr).unwrap();  
+        defer peer1.close();
+
+        let peer1_addr = peer1.socket_addr().unwrap();
+        if !fork().is_some {
+            let addr = SocketAddr::new(IpAddr::v6(Ipv6Addr::unspecified()), 0);
+            let peer2 = UdpSocket::bind(&addr).unwrap();
+            defer peer2.close();
+
+            peer2.send_to("Hello, world!", &peer1_addr).unwrap();
+        } else {
+            let buf: [u8; 128];
+            let (n, peer) = peer1.recv_from(buf.as_slice_mut()).unwrap();
+
+            assert_eq!(buf.as_slice()[..n], "Hello, world!");
+        }
+    }
+
+    #[test]
+    fn test_udp_connect() {
+        let addr = SocketAddr::new(IpAddr::v6(Ipv6Addr::unspecified()), 0);
+        let peer1 = UdpSocket::bind(&addr).unwrap();  
+        defer peer1.close();
+
+        let buf: [u8; 128];
+
+        let peer1_addr = peer1.socket_addr().unwrap();
+        if !fork().is_some {
+            let addr = SocketAddr::new(IpAddr::v6(Ipv6Addr::unspecified()), 0);
+            let peer2 = UdpSocket::bind(&addr).unwrap();
+            defer peer2.close();
+            
+            peer2.connect(&peer1_addr).unwrap();
+            peer2.send("Hello, world!").unwrap();
+
+            let n = peer2.recv(buf.as_slice_mut()).unwrap();
+            peer2.send(buf.as_slice()[..n]).unwrap();
+
+        } else {
+            let buf: [u8; 128];
+            let (n, peer) = peer1.recv_from(buf.as_slice_mut()).unwrap();
+
+            peer1.send_to("AAAAAAA", &peer).unwrap();
+
+            let (n, peer) = peer1.recv_from(buf.as_slice_mut()).unwrap();
+            assert_eq!(buf.as_slice()[..n], "AAAAAAA");
+        }
+    }
+
+    #[test]
+    fn test_udp_peek() {
+        let addr = SocketAddr::new(IpAddr::v6(Ipv6Addr::unspecified()), 0);
+        let peer1 = UdpSocket::bind(&addr).unwrap();  
+        defer peer1.close();
+
+        let peer1_addr = peer1.socket_addr().unwrap();
+        if !fork().is_some {
+            let addr = SocketAddr::new(IpAddr::v6(Ipv6Addr::unspecified()), 0);
+            let peer2 = UdpSocket::bind(&addr).unwrap();
+            defer peer2.close();
+
+            peer2.send_to("Hello, world!", &peer1_addr).unwrap();
+        } else {
+            let buf1: [u8; 128];
+            let buf2: [u8; 128];
+            let (n, peer) = peer1.peek_from(buf1.as_slice_mut()).unwrap();
+            assert_eq!(buf1.as_slice()[..n], "Hello, world!");
+
+            let (n, peer) = peer1.recv_from(buf2.as_slice_mut()).unwrap();
+            assert_eq!(buf2.as_slice()[..n], "Hello, world!");
+        }
+    }
+}

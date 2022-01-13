@@ -71,8 +71,7 @@ module.exports = grammar({
           seq("/*", /[^*]*\*+([^/*][^*]*\*+)*/, "/")
         )
       ),
-    
-    
+
     attributes: ($) => repeat1($.attribute_item),
     attribute_item: ($) => seq("#", "[", field("inner", $.meta_item), "]"),
     meta_item: ($) =>
@@ -80,14 +79,27 @@ module.exports = grammar({
         field("name", $._path),
         optional(
           choice(
-            seq("=", field("value", $.string_literal)),
+            seq(
+              "=",
+              field("value", choice($.string_literal, $.integer_literal))
+            ),
             field("arguments", $.meta_arguments)
           )
         )
       ),
     meta_arguments: ($) =>
-      seq("(", sepBy(",", field("argument", choice($.meta_item, $.string_literal))), optional(","), ")"),
-
+      seq(
+        "(",
+        sepBy(
+          ",",
+          field(
+            "argument",
+            choice($.meta_item, $.string_literal, $.integer_literal)
+          )
+        ),
+        optional(","),
+        ")"
+      ),
 
     _top_level_item: ($) =>
       choice(
@@ -160,7 +172,10 @@ module.exports = grammar({
       ),
 
     macro_parameter: ($) =>
-      seq(field("name", $.macro_identifier), optional(field("et_cetera", "..."))),
+      seq(
+        field("name", $.macro_identifier),
+        optional(field("et_cetera", "..."))
+      ),
 
     struct_definition: ($) =>
       seq(
@@ -239,11 +254,11 @@ module.exports = grammar({
         "}"
       ),
 
-    use_declaration: ($) => 
+    use_declaration: ($) =>
       seq(
         optional(field("attributes", $.attributes)),
-        "use", 
-        field("argument", $._use_clause), 
+        "use",
+        field("argument", $._use_clause),
         ";"
       ),
 
@@ -286,7 +301,15 @@ module.exports = grammar({
       ),
 
     parameter_list: ($) =>
-      seq("(", sepBy(",", field("parameter", $.parameter)), optional(","), ")"),
+      seq(
+        "(",
+        sepBy(
+          ",",
+          choice(field("et_cetera", "..."), field("parameter", $.parameter))
+        ),
+        optional(","),
+        ")"
+      ),
 
     parameter_type_list: ($) =>
       seq("(", sepBy(",", field("parameter", $._type)), optional(","), ")"),
@@ -367,11 +390,13 @@ module.exports = grammar({
         "let",
         choice(
           field("name", $.identifier),
-          seq("(",
+          seq(
+            "(",
             seq(field("element", $.identifier), ","),
             repeat(seq(field("element", $.identifier), ",")),
             optional(field("element", $.identifier)),
-          ")")
+            ")"
+          )
         ),
         optional(seq(":", field("type", $._type))),
         optional(seq("=", field("value", $._expression))),
@@ -808,11 +833,13 @@ module.exports = grammar({
         "for",
         choice(
           field("name", $.identifier),
-          seq("(",
+          seq(
+            "(",
             seq(field("element", $.identifier), ","),
             repeat(seq(field("element", $.identifier), ",")),
             optional(field("element", $.identifier)),
-          ")")
+            ")"
+          )
         ),
         "in",
         field("value", $._expression),

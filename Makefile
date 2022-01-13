@@ -11,6 +11,7 @@ else
 	BUILD_DIR = $(BUILD_ROOT)/debug
 	CARGO_FLAGS = 
 	CARGO_TARGET_DIR = target/debug
+	CFLAGS += -g3
 	ALUMINA_FLAGS = --sysroot $(SYSROOT) --debug --timings 
 endif
 
@@ -116,8 +117,8 @@ all: alumina-boot aluminac
 
 quickrun: $(ALUMINA_BOOT) $(SYSROOT_FILES) quick.alu
 	RUST_BACKTRACE=1 $(ALUMINA_BOOT) $(ALUMINA_FLAGS) --output quick.c quick=./quick.alu
-	cc -o quickrun -O0 quick.c
+	$(CC) $(CFLAGS) -o quickrun -O0 quick.c
 
 quicktest: $(ALUMINA_BOOT) $(SYSROOT_FILES) quick.alu
 	RUST_BACKTRACE=1 $(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --output quick.c quick=./quick.alu
-	cc -o quicktest -O0 quick.c
+	$(CC) $(CFLAGS) -o quicktest -O0 quick.c

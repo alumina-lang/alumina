@@ -120,8 +120,8 @@ impl slice {
         }
     }
 
-    fn fmt<Ptr: PointerOf<u8>, F: fmt::Formatter<F>>(self: &slice<Ptr>, f: &mut F) {
-        f.write_str(*self);
+    fn fmt<Ptr: PointerOf<u8>, F: fmt::Formatter<F>>(self: &slice<Ptr>, f: &mut F) -> Result<(), fmt::Error> {
+        f.write_str(*self)
     }
     
     mixin<T: Equatable<T>, Ptr: PointerOf<T>> Equatable<slice<Ptr>>;
@@ -274,6 +274,12 @@ fn copy<T>(src: &[T], dst: &mut T) {
 
 fn free<T>(a: &mut [T]) {
     libc::free(a.ptr as &mut void);
+}
+
+fn zeroed<T>() -> T {
+    let ret: T;
+    libc::memset(&ret as &mut void, 0, size_of::<T>());
+    ret
 }
 
 #[cfg(test)]

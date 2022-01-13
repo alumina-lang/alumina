@@ -49,8 +49,8 @@ impl _bool {
         hasher.write(mem::slice::from_raw(self as &u8, 1));
     }
 
-    fn fmt<F: Formatter<F>>(self: &bool, formatter: &mut F)  {
-        formatter.write_str(if *self { "true" } else { "false" });
+    fn fmt<F: Formatter<F>>(self: &bool, formatter: &mut F) -> Result<(), fmt::Error> {
+        formatter.write_str(if *self { "true" } else { "false" })
     }
 
     mixin Equatable<bool>;
@@ -72,7 +72,7 @@ impl _never {
         std::intrinsics::unreachable()
     }
     
-    fn fmt<F: Formatter<F>>(self: &!, formatter: &mut F)  {
+    fn fmt<F: Formatter<F>>(self: &!, formatter: &mut F) -> Result<(), fmt::Error> {
         std::intrinsics::unreachable()
     }
 
@@ -103,14 +103,14 @@ protocol _BuiltinComparable<Self: proto::Numeric> {
 }
 
 protocol _IntegerFormattable<Self: proto::Integer, F: Formatter<F>> {
-    fn fmt(self: &Self, formatter: &mut F) {
-        fmt::internal::format_integer(*self, 10, 0, formatter);
+    fn fmt(self: &Self, formatter: &mut F) -> Result<(), fmt::Error> {
+        fmt::internal::format_integer(*self, 10, 0, formatter)
     }
 }
 
 protocol _FloatFormattable<Self: proto::FloatingPoint, F: Formatter<F>> {
-    fn fmt(self: &Self, formatter: &mut F) {
-        fmt::internal::format_float(*self, formatter, 15);
+    fn fmt(self: &Self, formatter: &mut F) -> Result<(), fmt::Error> {
+        fmt::internal::format_float(*self, formatter, 15)
     }
 }
 

@@ -1,13 +1,28 @@
-protocol Formatter<Self> {
-    fn write_str(self: &mut Self, buf: &[u8]);
-    
-    fn write_char(self: &mut Self, byte: u8) {
-        self.write_str(mem::slice::from_raw(&byte, 1));
+struct Error {}
+
+impl Error {
+    fn new() -> Error {
+        Error {}
+    }
+
+    fn fmt<F: Formatter<F>>(self: &Error, f: &mut F) -> Result<(), Error> {
+        f.write_str("error occurred during formatting")
+    }
+
+    fn from<T>(_: T) -> Error {
+        Error {}
     }
 }
 
-protocol Formattable<Self, F: Formatter<F> = internal::_NullFormatter> {
-    fn fmt(self: &Self, f: &mut F);
+protocol Formatter<Self> {
+    fn write_str(self: &mut Self, buf: &[u8]) -> Result<(), Error>;
+    fn write_char(self: &mut Self, byte: u8) -> Result<(), Error> {
+        self.write_str(mem::slice::from_raw(&byte, 1))
+    }
+}
+
+protocol Formattable<Self, F: Formatter<F> = internal::NullFormatter> {
+    fn fmt(self: &Self, f: &mut F) -> Result<(), Error>;
 }
 
 macro write($fmt, $fmt_str, $arg...) {
@@ -27,15 +42,24 @@ macro writeln($fmt, $fmt_str, $arg...) {
 }
 
 macro format($fmt_str, $arg...) { 
-    let fmt = collections::Vector::with_capacity::<u8>($fmt_str.len);
-    fmt::write!(&fmt, $fmt_str, $arg...);
-    fmt
+    let vec = collections::Vector::with_capacity::<u8>($fmt_str.len);
+    let ret = fmt::write!(&vec, $fmt_str, $arg...);
+    if ret.is_ok {
+        Result::ok::<collections::Vector<u8>, Error>(vec)
+    } else {
+        vec.free();
+        Result::err::<collections::Vector<u8>, Error>(Error::new())
+    }
 }
 
 macro format_in($buf, $fmt_str, $arg...) { 
     let fmt = SliceFormatter::new($buf);
-    fmt::write!(&fmt, $fmt_str, $arg...);
-    fmt.get()
+    let ret = fmt::write!(&fmt, $fmt_str, $arg...);
+    if ret.is_ok {
+        Result::ok::<&[u8], Error>(fmt.get())
+    } else {
+        Result::err::<&[u8], Error>(Error::new())
+    }
 }
 
 struct SliceFormatter {
@@ -52,22 +76,26 @@ impl SliceFormatter {
     }
 
     #[inline]
-    fn write_str(self: &mut SliceFormatter, buf: &[u8]) {
+    fn write_str(self: &mut SliceFormatter, buf: &[u8]) -> Result<(), Error> {
         use mem::copy;
         if self.buf_pos + buf.len > self.buf.len {
-            panic!("buffer overflow");
+            return Result::err(Error::new());
         }
         buf.copy(&self.buf[self.buf_pos]);
         self.buf_pos += buf.len;
+
+        Result::ok(())
     }
 
     #[inline]
-    fn write_char(self: &mut SliceFormatter, byte: u8) {
+    fn write_char(self: &mut SliceFormatter, byte: u8) -> Result<(), Error> {
         if self.buf_pos >= self.buf.len {
-            panic!("buffer overflow");
+            return Result::err(Error::new());
         }
         self.buf[self.buf_pos] = byte;
         self.buf_pos += 1;
+
+        Result::ok(())
     }
 
     #[inline]
@@ -76,80 +104,25 @@ impl SliceFormatter {
     }
 }
 
-struct BufferedFormatter<F: Formatter<F>> {
-    buf: &mut [u8],
-    buf_pos: usize,
-    inner: &mut F
-}
-
-impl BufferedFormatter<F: Formatter<F>> {
-    fn new(buf: &mut [u8], inner: &mut F) -> BufferedFormatter<F> {
-        BufferedFormatter {
-            buf: buf,
-            buf_pos: 0,
-            inner: inner
-        }
-    }
-
-    #[inline]
-    fn write_str(self: &mut BufferedFormatter<F>, buf: &[u8]) {
-        use std::mem::copy_nonoverlapping;
-        
-        let fill_len = math::min(self.buf.len - self.buf_pos, buf.len);
-        if fill_len > 0 {
-            buf[0..fill_len].copy_nonoverlapping(&self.buf[self.buf_pos]);
-            self.buf_pos += fill_len;
-            buf = buf[fill_len..];
-        }
-
-        if self.buf_pos == self.buf.len {
-            self.inner.write_str(self.buf);
-            self.buf_pos = 0;
-        }
-
-        if buf.len >= self.buf.len {
-            self.inner.write_str(buf);
-        } else if buf.len > 0 {
-            buf.copy_nonoverlapping(&self.buf[0]);
-            self.buf_pos += buf.len;
-        }
-    }
-
-    #[inline]
-    fn write_char(self: &mut BufferedFormatter<F>, byte: u8) {
-        if self.buf_pos == self.buf.len {
-            self.inner.write_str(self.buf);
-            self.buf_pos = 0;
-        }
-
-        self.buf[self.buf_pos] = byte;
-        self.buf_pos += 1;
-    }
-
-    #[inline]
-    fn flush(self: &mut BufferedFormatter<F>) {
-        if self.buf_pos > 0 {
-            self.inner.write_str(self.buf[0..self.buf_pos]);
-            self.buf_pos = 0;
-        }
-    }
-}
-
 mod internal {
-    struct _NullFormatter {}
-    impl _NullFormatter {
-        fn write_str(self: &mut _NullFormatter, buf: &[u8]) { }
-        fn write_char(self: &mut _NullFormatter, byte: u8) {}
+    struct NullFormatter {}
+    impl NullFormatter {
+        fn write_str(self: &mut NullFormatter, buf: &[u8]) -> Result<(), Error> {
+            Result::ok(())
+        }
+        fn write_char(self: &mut NullFormatter, byte: u8) -> Result<(), Error> {
+            Result::ok(())
+        }
     }
 
     // Type-erased wrapper of a formattable object
     struct FormatArg<F: Formatter<F>> {
         inner: &void,
-        format_func: fn(&void, &mut F)
+        format_func: fn(&void, &mut F) -> Result<(), Error>
     }
 
-    fn __fmt<F: Formatter<F>, T: Formattable<T, F>>(ptr: &void, fmt: &mut F) {
-        T::fmt(ptr as &T, fmt);
+    fn __fmt<F: Formatter<F>, T: Formattable<T, F>>(ptr: &void, fmt: &mut F) -> Result<(), Error> {
+        T::fmt(ptr as &T, fmt)
     }
 
     impl FormatArg {
@@ -160,14 +133,14 @@ mod internal {
             }
         }
 
-        fn fmt<F: Formatter<F>>(self: &FormatArg<F>, f: &mut F) {
+        fn fmt<F: Formatter<F>>(self: &FormatArg<F>, f: &mut F) -> Result<(), Error> {
             self.format_func(self.inner, f)
         }
     }
 
-    static DIGITS: &[u8] = "0123456789abcdef";
+    const DIGITS = "0123456789abcdef";
 
-    fn format_integer<T: proto::Integer, F: Formatter<F>>(val: T, radix: u16, pad: usize, fmt: &mut F) {
+    fn format_integer<T: proto::Integer, F: Formatter<F>>(val: T, radix: u16, pad: usize, fmt: &mut F) -> Result<(), Error> {
         assert!(radix >= 2 && radix <= 16);
         
         let buf: [u8; 128];
@@ -175,7 +148,7 @@ mod internal {
         
         when T: proto::Signed {
             if val < 0 {
-                fmt.write_char('-');
+                try!(fmt.write_char('-'));
             }
         }
 
@@ -188,17 +161,19 @@ mod internal {
             
             if val_u == 0 {
                 while i + 1 < pad {
-                    fmt.write_char('0');
+                    try!(fmt.write_char('0'));
                     pad -= 1;
                 }
-                fmt.write_str(buf[buf.len - i - 1..]);
+                try!(fmt.write_str(buf[buf.len - i - 1..]));
                 break;
             }
             i += 1;
         }
+
+        Result::ok(())
     }
 
-    fn format_float<T: proto::FloatingPoint, F: Formatter<F>>(val: T, fmt: &mut F, precision: u16) {
+    fn format_float<T: proto::FloatingPoint, F: Formatter<F>>(val: T, fmt: &mut F, precision: u16) -> Result<(), Error> {
         // TODO: this is very very bad, replace with Grisu3 or Dragon4 or alike. Correct float parsing
         // and formatting is a very complicated thing. Using libc instead is an option, but that has a
         // host of other problems: locale-awareness (ideally, Alumina's stdlib is locale-invariant), 
@@ -207,17 +182,15 @@ mod internal {
         debug_assert!(precision <= 18);
 
         if val.is_nan() {
-            fmt.write_str("NaN");
-            return;
+            return fmt.write_str("NaN")
         }
         if val.is_sign_negative() {
-            fmt.write_char('-');
+            try!(fmt.write_char('-'));
         }
         val = math::abs(val)
 
         if val.is_infinite() {
-            fmt.write_str("Inf");
-            return;
+            return fmt.write_str("Inf");
         }
 
         let steps = 0usize;
@@ -229,7 +202,7 @@ mod internal {
         let pad = 0usize;
         while steps > 0 {
             let part = val as u64;
-            format_integer(part, 10, pad, fmt);
+            try!(format_integer(part, 10, pad, fmt));
             val = (val - (part as T)) * 1.0e18;
             steps -= 1;
             pad = 18;
@@ -246,14 +219,16 @@ mod internal {
 
         let rounded = (frac + 0.5) as u64;
         if rounded == frac_i {
-            format_integer(val as u64 + 1, 10, pad, fmt);
-            fmt.write_char('.');
-            format_integer(0, 10, precision as usize, fmt);
+            try!(format_integer(val as u64 + 1, 10, pad, fmt));
+            try!(fmt.write_char('.'));
+            try!(format_integer(0, 10, precision as usize, fmt));
         } else {
-            format_integer(val as u64, 10, pad, fmt);
-            fmt.write_char('.');
-            format_integer(rounded, 10, precision as usize, fmt);
+            try!(format_integer(val as u64, 10, pad, fmt));
+            try!(fmt.write_char('.'));
+            try!(format_integer(rounded, 10, precision as usize, fmt));
         }
+
+        Result::ok(())
     }
 
     enum State {
@@ -262,7 +237,7 @@ mod internal {
         BRACE_CLOSE,
     }
     
-    fn printf<F: Formatter<F>>(fmt_str: &[u8], args: &[FormatArg<F>], fmt: &mut F) {
+    fn printf<F: Formatter<F>>(fmt_str: &[u8], args: &[FormatArg<F>], fmt: &mut F) -> Result<(), Error> {
         let i = 0usize;
 
         let state = State::NORMAL;
@@ -274,14 +249,14 @@ mod internal {
                         '{' => State::BRACE_OPEN,
                         '}' => State::BRACE_CLOSE,
                         _ => {
-                            fmt.write_char(ch);
+                            try!(fmt.write_char(ch));
                             State::NORMAL
                         }
                     }
                 }
                 State::BRACE_CLOSE => {
                     switch ch {
-                        '}' => fmt.write_char(ch),
+                        '}' => try!(fmt.write_char(ch)),
                         _ => panic!("invalid format string")
                     };
                     State::NORMAL
@@ -292,10 +267,10 @@ mod internal {
                             if args.len == 0 {
                                 panic!("too few arguments");
                             }
-                            args[0].fmt(fmt);
+                            try!(args[0].fmt(fmt));
                             args = args[1..];
                         },
-                        '{' => fmt.write_char(ch),
+                        '{' => try!(fmt.write_char(ch)),
                         _ => panic!("invalid format string")
                     };
                     State::NORMAL
@@ -312,6 +287,8 @@ mod internal {
         if args.len > 0 {
             panic!("too many arguments");
         }
+
+        Result::ok(())
     }
 
     struct NumFormatAdapter<T: proto::Integer> {
@@ -321,8 +298,8 @@ mod internal {
     }
 
     impl NumFormatAdapter<T: proto::Integer> {
-        fn fmt<F: Formatter<F>>(self: &NumFormatAdapter<T>, fmt: &mut F) {
-            format_integer(self.value, self.radix, self._pad, fmt);
+        fn fmt<F: Formatter<F>>(self: &NumFormatAdapter<T>, fmt: &mut F) -> Result<(), Error> {
+            format_integer(self.value, self.radix, self._pad, fmt)
         }
 
         fn hex(self: NumFormatAdapter<T>) -> NumFormatAdapter<T> {
@@ -337,7 +314,7 @@ mod internal {
             NumFormatAdapter { radix: 2, _pad: self._pad, value: self.value }
         }
 
-        fn pad(self: NumFormatAdapter<T>, pad: usize) -> NumFormatAdapter<T> {
+        fn zero_pad(self: NumFormatAdapter<T>, pad: usize) -> NumFormatAdapter<T> {
             NumFormatAdapter { radix: self.radix, _pad: pad, value: self.value }
         }
     }
@@ -348,8 +325,8 @@ mod internal {
     }
 
     impl FloatFormatAdapter<T: proto::FloatingPoint> {
-        fn fmt<F: Formatter<F>>(self: &FloatFormatAdapter<T>, fmt: &mut F) {
-            format_float::<T, F>(self.value, fmt, self.precision);
+        fn fmt<F: Formatter<F>>(self: &FloatFormatAdapter<T>, fmt: &mut F) -> Result<(), Error> {
+            format_float::<T, F>(self.value, fmt, self.precision)
         }
     }
 
@@ -359,10 +336,39 @@ mod internal {
     }
 
     impl RepeatAdapter {
-        fn fmt<T: Formattable<T, F>, F: Formatter<F>>(self: &RepeatAdapter<T>, fmt: &mut F) {
+        fn fmt<T: Formattable<T, F>, F: Formatter<F>>(self: &RepeatAdapter<T>, fmt: &mut F) -> Result<(), Error> {
             for i in range(0usize, self.times) {
-                self.inner.fmt(fmt);
+                try!(self.inner.fmt(fmt));
             }
+            Result::ok(())
+        }
+    }
+
+    struct GenericPadAdapter<T: Formattable<T>> {
+        len: usize,
+        pad: u8,
+        inner: T
+    }
+
+    impl GenericPadAdapter {
+        fn fmt<T: Formattable<T, F>, F: Formatter<F>>(self: &GenericPadAdapter<T>, fmt: &mut F) -> Result<(), Error> {
+            let buf: [u8; 32];
+            let res = format_in!(&buf, "{}", self.inner);
+            let s = if res.is_ok {
+                res.inner.ok
+            } else {
+                // We fall back to the heap-allocating variant if the stack buffer was not large enough.
+                let res = try!(format!("{}", self.inner));
+                defer res.free();
+                res.as_slice()
+            };
+
+            if s.len < self.len {
+                for _ in iter::range(0usize, self.len - s.len) {
+                    try!(fmt.write_char(self.pad));
+                }
+            }
+            fmt.write_str(s)
         }
     }
 }
@@ -379,7 +385,7 @@ fn oct<T: proto::Integer>(val: T) -> internal::NumFormatAdapter<T> {
     internal::NumFormatAdapter { radix: 8, _pad: 0, value: val }
 }
 
-fn pad<T: proto::Integer>(val: T, pad: usize) -> internal::NumFormatAdapter<T> {
+fn zero_pad<T: proto::Integer>(val: T, pad: usize) -> internal::NumFormatAdapter<T> {
     internal::NumFormatAdapter { radix: 10, _pad: pad, value: val }
 }
 
@@ -387,48 +393,56 @@ fn precision<T: proto::FloatingPoint>(val: T, prec: u16) -> internal::FloatForma
     internal::FloatFormatAdapter { precision: prec, value: val }
 }
 
-fn repeat<T: Formattable<T>>(times: usize, inner: T) -> internal::RepeatAdapter<T> {
+fn repeat<T: Formattable<T>>(inner: T, times: usize) -> internal::RepeatAdapter<T> {
     internal::RepeatAdapter { times: times, inner: inner }
+}
+
+fn pad_with<T: Formattable<T>>(val: T, len: usize, pad: u8) -> internal::GenericPadAdapter<T> {
+    internal::GenericPadAdapter { len: len, pad: pad, inner: val }
 }
 
 
 #[cfg(test)]
 mod tests {
     static BUF: [u8; 1024];
+
+    macro fmt($args...) {
+        format_in!(&BUF, $args...).unwrap()
+    }
     
     #[test]
     fn test_format_integer() {
-        assert_eq!(format_in!(&BUF, "{}", u8::max_value()), "255");
-        assert_eq!(format_in!(&BUF, "{}", -23847), "-23847");
-        assert_eq!(format_in!(&BUF, "{}", i64::min_value()), "-9223372036854775808");
+        assert_eq!(fmt!("{}", u8::max_value()), "255");
+        assert_eq!(fmt!("{}", -23847), "-23847");
+        assert_eq!(fmt!("{}", i64::min_value()), "-9223372036854775808");
         assert_eq!(
-            format_in!(&BUF, "{}", i128::min_value()), 
+            fmt!("{}", i128::min_value()), 
             "-170141183460469231731687303715884105728"
         );
     }
 
     #[test]
     fn test_format_radix() {
-        assert_eq!(format_in!(&BUF, "{}", 255u32.hex()), "ff");
-        assert_eq!(format_in!(&BUF, "{}", 255u32.bin()), "11111111");
-        assert_eq!(format_in!(&BUF, "{}", 255u32.oct()), "377");
+        assert_eq!(fmt!("{}", 255u32.hex()), "ff");
+        assert_eq!(fmt!("{}", 255u32.bin()), "11111111");
+        assert_eq!(fmt!("{}", 255u32.oct()), "377");
     }
 
     #[test]
     fn test_format_zero_pad() {
-        assert_eq!(format_in!(&BUF, "{}", 255u32.pad(4)), "0255");
-        assert_eq!(format_in!(&BUF, "{}", 255u32.pad(8)), "00000255");
+        assert_eq!(fmt!("{}", 255u32.zero_pad(4)), "0255");
+        assert_eq!(fmt!("{}", 255u32.zero_pad(8)), "00000255");
     }
 
     #[test]
     fn test_format_radix_and_pad() {
-        assert_eq!(format_in!(&BUF, "{}", 15u8.pad(2).hex()), "0f");
-        assert_eq!(format_in!(&BUF, "{}", 15u8.hex().pad(2)), "0f");
+        assert_eq!(fmt!("{}", 15u8.zero_pad(2).hex()), "0f");
+        assert_eq!(fmt!("{}", 15u8.hex().zero_pad(2)), "0f");
     }
 
     #[test]
     fn test_format_repeat() {
-        assert_eq!(format_in!(&BUF, "{}", repeat(3, "world")), "worldworldworld");
+        assert_eq!(fmt!("{}", "world".repeat(3)), "worldworldworld");
     }
 
     #[test]
@@ -436,72 +450,72 @@ mod tests {
         // These tests do not assert that float formatting logic is correct. It is in fact
         // very incorrect.
         
-        assert_eq!(format_in!(&BUF, "{}", f64::nan()), "NaN");
-        assert_eq!(format_in!(&BUF, "{}", f64::infinity()), "Inf");
-        assert_eq!(format_in!(&BUF, "{}", f64::neg_infinity()), "-Inf");
+        assert_eq!(fmt!("{}", f64::nan()), "NaN");
+        assert_eq!(fmt!("{}", f64::infinity()), "Inf");
+        assert_eq!(fmt!("{}", f64::neg_infinity()), "-Inf");
 
-        assert_eq!(format_in!(&BUF, "{}", 0.0), "0.000000000000000");
-        assert_eq!(format_in!(&BUF, "{}", -0.0), "-0.000000000000000");
+        assert_eq!(fmt!("{}", 0.0), "0.000000000000000");
+        assert_eq!(fmt!("{}", -0.0), "-0.000000000000000");
 
-        assert_eq!(format_in!(&BUF, "{}", 0.1.precision(5)), "0.10000");
-        assert_eq!(format_in!(&BUF, "{}", 0.01.precision(5)), "0.01000");
-        assert_eq!(format_in!(&BUF, "{}", 0.001.precision(5)), "0.00100");
-        assert_eq!(format_in!(&BUF, "{}", 0.0001.precision(5)), "0.00010");
-        assert_eq!(format_in!(&BUF, "{}", 0.00001.precision(5)), "0.00001");
-        assert_eq!(format_in!(&BUF, "{}", 0.000001.precision(5)), "0.00000");
+        assert_eq!(fmt!("{}", 0.1.precision(5)), "0.10000");
+        assert_eq!(fmt!("{}", 0.01.precision(5)), "0.01000");
+        assert_eq!(fmt!("{}", 0.001.precision(5)), "0.00100");
+        assert_eq!(fmt!("{}", 0.0001.precision(5)), "0.00010");
+        assert_eq!(fmt!("{}", 0.00001.precision(5)), "0.00001");
+        assert_eq!(fmt!("{}", 0.000001.precision(5)), "0.00000");
         
-        assert_eq!(format_in!(&BUF, "{}", 1.0.precision(1)), "1.0");
-        assert_eq!(format_in!(&BUF, "{}", 11.0.precision(1)), "11.0");
-        assert_eq!(format_in!(&BUF, "{}", 111.0.precision(1)), "111.0");
-        assert_eq!(format_in!(&BUF, "{}", 1111.0.precision(1)), "1111.0");
-        assert_eq!(format_in!(&BUF, "{}", 11111.0.precision(1)), "11111.0");
-        assert_eq!(format_in!(&BUF, "{}", 111111.0.precision(1)), "111111.0");
-        assert_eq!(format_in!(&BUF, "{}", 1111111.0.precision(1)), "1111111.0");
-        assert_eq!(format_in!(&BUF, "{}", 11111111.0.precision(1)), "11111111.0");
-        assert_eq!(format_in!(&BUF, "{}", 111111111.0.precision(1)), "111111111.0");
-        assert_eq!(format_in!(&BUF, "{}", 1111111111.0.precision(1)), "1111111111.0");
-        assert_eq!(format_in!(&BUF, "{}", 11111111111.0.precision(1)), "11111111111.0");
-        assert_eq!(format_in!(&BUF, "{}", 111111111111.0.precision(1)), "111111111111.0");
-        assert_eq!(format_in!(&BUF, "{}", 1111111111111.0.precision(1)), "1111111111111.0");
-        assert_eq!(format_in!(&BUF, "{}", 11111111111111.0.precision(1)), "11111111111111.0");
-        assert_eq!(format_in!(&BUF, "{}", 111111111111111.0.precision(1)), "111111111111111.0");
-        assert_eq!(format_in!(&BUF, "{}", 1111111111111111.0.precision(1)), "1111111111111111.0");
+        assert_eq!(fmt!("{}", 1.0.precision(1)), "1.0");
+        assert_eq!(fmt!("{}", 11.0.precision(1)), "11.0");
+        assert_eq!(fmt!("{}", 111.0.precision(1)), "111.0");
+        assert_eq!(fmt!("{}", 1111.0.precision(1)), "1111.0");
+        assert_eq!(fmt!("{}", 11111.0.precision(1)), "11111.0");
+        assert_eq!(fmt!("{}", 111111.0.precision(1)), "111111.0");
+        assert_eq!(fmt!("{}", 1111111.0.precision(1)), "1111111.0");
+        assert_eq!(fmt!("{}", 11111111.0.precision(1)), "11111111.0");
+        assert_eq!(fmt!("{}", 111111111.0.precision(1)), "111111111.0");
+        assert_eq!(fmt!("{}", 1111111111.0.precision(1)), "1111111111.0");
+        assert_eq!(fmt!("{}", 11111111111.0.precision(1)), "11111111111.0");
+        assert_eq!(fmt!("{}", 111111111111.0.precision(1)), "111111111111.0");
+        assert_eq!(fmt!("{}", 1111111111111.0.precision(1)), "1111111111111.0");
+        assert_eq!(fmt!("{}", 11111111111111.0.precision(1)), "11111111111111.0");
+        assert_eq!(fmt!("{}", 111111111111111.0.precision(1)), "111111111111111.0");
+        assert_eq!(fmt!("{}", 1111111111111111.0.precision(1)), "1111111111111111.0");
         
-        assert_eq!(format_in!(&BUF, "{}", 10.0.precision(1)), "10.0");
-        assert_eq!(format_in!(&BUF, "{}", 100.0.precision(1)), "100.0");
-        assert_eq!(format_in!(&BUF, "{}", 1000.0.precision(1)), "1000.0");
-        assert_eq!(format_in!(&BUF, "{}", 10000.0.precision(1)), "10000.0");
-        assert_eq!(format_in!(&BUF, "{}", 100000.0.precision(1)), "100000.0");
-        assert_eq!(format_in!(&BUF, "{}", 1000000.0.precision(1)), "1000000.0");
-        assert_eq!(format_in!(&BUF, "{}", 10000000.0.precision(1)), "10000000.0");
-        assert_eq!(format_in!(&BUF, "{}", 100000000.0.precision(1)), "100000000.0");
-        assert_eq!(format_in!(&BUF, "{}", 1000000000.0.precision(1)), "1000000000.0");
-        assert_eq!(format_in!(&BUF, "{}", 10000000000.0.precision(1)), "10000000000.0");
-        assert_eq!(format_in!(&BUF, "{}", 100000000000.0.precision(1)), "100000000000.0");
-        assert_eq!(format_in!(&BUF, "{}", 1000000000000.0.precision(1)), "1000000000000.0");
-        assert_eq!(format_in!(&BUF, "{}", 10000000000000.0.precision(1)), "10000000000000.0");
-        assert_eq!(format_in!(&BUF, "{}", 100000000000000.0.precision(1)), "100000000000000.0");
-        assert_eq!(format_in!(&BUF, "{}", 1000000000000000.0.precision(1)), "1000000000000000.0");
-        assert_eq!(format_in!(&BUF, "{}", 10000000000000000.0.precision(1)), "10000000000000000.0");
-        assert_eq!(format_in!(&BUF, "{}", 100000000000000000.0.precision(1)), "100000000000000000.0");
-        assert_eq!(format_in!(&BUF, "{}", 1000000000000000000.0.precision(1)), "1000000000000000000.0");
-        assert_eq!(format_in!(&BUF, "{}", 10000000000000000000.0.precision(1)), "10000000000000000000.0");
+        assert_eq!(fmt!("{}", 10.0.precision(1)), "10.0");
+        assert_eq!(fmt!("{}", 100.0.precision(1)), "100.0");
+        assert_eq!(fmt!("{}", 1000.0.precision(1)), "1000.0");
+        assert_eq!(fmt!("{}", 10000.0.precision(1)), "10000.0");
+        assert_eq!(fmt!("{}", 100000.0.precision(1)), "100000.0");
+        assert_eq!(fmt!("{}", 1000000.0.precision(1)), "1000000.0");
+        assert_eq!(fmt!("{}", 10000000.0.precision(1)), "10000000.0");
+        assert_eq!(fmt!("{}", 100000000.0.precision(1)), "100000000.0");
+        assert_eq!(fmt!("{}", 1000000000.0.precision(1)), "1000000000.0");
+        assert_eq!(fmt!("{}", 10000000000.0.precision(1)), "10000000000.0");
+        assert_eq!(fmt!("{}", 100000000000.0.precision(1)), "100000000000.0");
+        assert_eq!(fmt!("{}", 1000000000000.0.precision(1)), "1000000000000.0");
+        assert_eq!(fmt!("{}", 10000000000000.0.precision(1)), "10000000000000.0");
+        assert_eq!(fmt!("{}", 100000000000000.0.precision(1)), "100000000000000.0");
+        assert_eq!(fmt!("{}", 1000000000000000.0.precision(1)), "1000000000000000.0");
+        assert_eq!(fmt!("{}", 10000000000000000.0.precision(1)), "10000000000000000.0");
+        assert_eq!(fmt!("{}", 100000000000000000.0.precision(1)), "100000000000000000.0");
+        assert_eq!(fmt!("{}", 1000000000000000000.0.precision(1)), "1000000000000000000.0");
+        assert_eq!(fmt!("{}", 10000000000000000000.0.precision(1)), "10000000000000000000.0");
 
-        assert_eq!(format_in!(&BUF, "{}", 9.0.precision(1)), "9.0");
-        assert_eq!(format_in!(&BUF, "{}", 99.0.precision(1)), "99.0");
-        assert_eq!(format_in!(&BUF, "{}", 999.0.precision(1)), "999.0");
-        assert_eq!(format_in!(&BUF, "{}", 9999.0.precision(1)), "9999.0");
-        assert_eq!(format_in!(&BUF, "{}", 99999.0.precision(1)), "99999.0");
-        assert_eq!(format_in!(&BUF, "{}", 999999.0.precision(1)), "999999.0");
-        assert_eq!(format_in!(&BUF, "{}", 9999999.0.precision(1)), "9999999.0");
-        assert_eq!(format_in!(&BUF, "{}", 99999999.0.precision(1)), "99999999.0");
-        assert_eq!(format_in!(&BUF, "{}", 999999999.0.precision(1)), "999999999.0");
-        assert_eq!(format_in!(&BUF, "{}", 9999999999.0.precision(1)), "9999999999.0");
-        assert_eq!(format_in!(&BUF, "{}", 99999999999.0.precision(1)), "99999999999.0");
-        assert_eq!(format_in!(&BUF, "{}", 999999999999.0.precision(1)), "999999999999.0");
-        assert_eq!(format_in!(&BUF, "{}", 9999999999999.0.precision(1)), "9999999999999.0");
-        assert_eq!(format_in!(&BUF, "{}", 99999999999999.0.precision(1)), "99999999999999.0");
-        assert_eq!(format_in!(&BUF, "{}", 999999999999999.0.precision(1)), "999999999999999.0"); 
+        assert_eq!(fmt!("{}", 9.0.precision(1)), "9.0");
+        assert_eq!(fmt!("{}", 99.0.precision(1)), "99.0");
+        assert_eq!(fmt!("{}", 999.0.precision(1)), "999.0");
+        assert_eq!(fmt!("{}", 9999.0.precision(1)), "9999.0");
+        assert_eq!(fmt!("{}", 99999.0.precision(1)), "99999.0");
+        assert_eq!(fmt!("{}", 999999.0.precision(1)), "999999.0");
+        assert_eq!(fmt!("{}", 9999999.0.precision(1)), "9999999.0");
+        assert_eq!(fmt!("{}", 99999999.0.precision(1)), "99999999.0");
+        assert_eq!(fmt!("{}", 999999999.0.precision(1)), "999999999.0");
+        assert_eq!(fmt!("{}", 9999999999.0.precision(1)), "9999999999.0");
+        assert_eq!(fmt!("{}", 99999999999.0.precision(1)), "99999999999.0");
+        assert_eq!(fmt!("{}", 999999999999.0.precision(1)), "999999999999.0");
+        assert_eq!(fmt!("{}", 9999999999999.0.precision(1)), "9999999999999.0");
+        assert_eq!(fmt!("{}", 99999999999999.0.precision(1)), "99999999999999.0");
+        assert_eq!(fmt!("{}", 999999999999999.0.precision(1)), "999999999999999.0"); 
 
     }
 }
