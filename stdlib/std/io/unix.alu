@@ -277,7 +277,6 @@ impl FileDescriptor {
 
     #[cfg(not(target_os = "linux"))]
     fn set_cloexec(self: &mut FileDescriptor) -> Result<(), Error> {
-        let nonblocking =  if nonblocking { 1 as libc::c_int } else { 0 as libc::c_int };
         errno_try!(libc::ioctl(self.value, libc::FIOCLEX, &nonblocking));
 
         result::Result::ok(())
