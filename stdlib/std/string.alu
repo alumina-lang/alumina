@@ -65,6 +65,69 @@ fn trim(self: &[u8]) -> &[u8] {
     self.trim_start().trim_end()
 }
 
+struct SplitIterator {
+    data: &[u8],
+    sep: &[u8],
+    done: bool
+}
+
+impl SplitIterator {
+    fn new(data: &[u8], sep: &[u8]) -> SplitIterator {
+        SplitIterator {
+            data: data,
+            sep: sep,
+            done: false
+        }
+    }
+
+    fn next(self: &mut SplitIterator) -> Option<&[u8]> {
+        if self.done {
+            return Option::none();
+        }
+
+        let pos = self.data.find(self.sep);
+        if !pos.is_some {
+            self.done = true;
+            return Option::some(self.data);
+        }
+
+        let pos = pos.unwrap();
+        let ret = Option::some(self.data[..pos]);
+        self.data = self.data[pos + self.sep.len..];
+
+        ret
+    }
+
+    fn iter(self: &mut SplitIterator) -> SplitIterator {
+        *self
+    }
+}
+
+fn split(self: &[u8], sep: &[u8]) -> SplitIterator {
+    SplitIterator::new(self, sep)
+}
+
+fn join<T: iter::Iterator<T, &[u8]>>(self: &[u8], iter: &mut T) -> collections::Vector<u8> {
+    let ret: collections::Vector<u8> = collections::Vector::new();
+    let first = true;
+
+    loop {
+        let item = iter.next();
+        if item.is_some {
+            if first {
+                first = false;
+            } else {
+                ret.extend_from_slice(self);
+            }
+            ret.extend_from_slice(item.inner);
+        } else {
+            break;
+        }
+    }
+
+    ret
+}
+
 fn parse_integer<T: proto::Integer>(s: &[u8]) -> Option<T> {
     use builtins::unsigned_of;
 
@@ -225,5 +288,53 @@ mod tests {
         assert_eq!("\t\t\thello world \n\t ".trim(), "hello world")
         assert_eq!("\n\n\nhello world".trim(), "hello world")
         assert_eq!("\r\r\rhello world".trim(), "hello world")
+    }
+
+    #[test]
+    fn test_split() {
+        let iter = "".split(".");
+        assert_eq!(iter.next(), Option::some(""));
+        assert_eq!(iter.next(), Option::none());
+
+        let iter = "192.168.0.1".split(".");
+        assert_eq!(iter.next(), Option::some("192"));
+        assert_eq!(iter.next(), Option::some("168"));
+        assert_eq!(iter.next(), Option::some("0"));
+        assert_eq!(iter.next(), Option::some("1"));
+        assert_eq!(iter.next(), Option::none());
+
+        let iter = "192.168.0.1".split("%");
+        assert_eq!(iter.next(), Option::some("192.168.0.1"));
+        assert_eq!(iter.next(), Option::none());
+
+        let iter = "192.168.0.1".split("");
+        assert_eq!(iter.next(), Option::some(""));
+        assert_eq!(iter.next(), Option::some(""));
+        assert_eq!(iter.next(), Option::some(""));
+        // ...
+
+        let iter = "  ab c ".split(" ");
+        assert_eq!(iter.next(), Option::some(""));
+        assert_eq!(iter.next(), Option::some(""));
+        assert_eq!(iter.next(), Option::some("ab"));
+        assert_eq!(iter.next(), Option::some("c"));
+        assert_eq!(iter.next(), Option::some(""));
+        assert_eq!(iter.next(), Option::none());
+        // ...
+    }
+
+    #[test]
+    fn test_join() {
+        let vec = ".".join(&["192", "168", "0", "1"].iter());
+        defer vec.free();
+        assert_eq!(vec.as_slice(), "192.168.0.1");
+
+        let vec = "".join(&["192", "168", "0", "1"].iter());
+        defer vec.free();
+        assert_eq!(vec.as_slice(), "19216801");
+
+        let vec = "%".join(&["192.168.0.1"].iter());
+        defer vec.free();
+        assert_eq!(vec.as_slice(), "192.168.0.1");
     }
 }

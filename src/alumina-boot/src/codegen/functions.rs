@@ -74,6 +74,13 @@ pub fn write_function_signature<'ir, 'gen>(
         w!(buf, "{} {}", ctx.get_type(arg.ty), name);
     }
 
+    if item.varargs {
+        if item.args.len() > 0 {
+            w!(buf, ", ");
+        }
+        w!(buf, "...");
+    }
+
     w!(buf, ")");
     Ok(())
 }

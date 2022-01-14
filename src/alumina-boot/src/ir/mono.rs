@@ -494,6 +494,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let res = ir::IRItem::StructLike(ir::StructLike {
             name: s.name.map(|n| n.alloc_on(child.mono_ctx.ir)),
             fields: fields.alloc_on(child.mono_ctx.ir),
+            attributes: s.attributes.alloc_on(child.mono_ctx.ir),
             is_union: s.is_union,
         });
         item.assign(res);
@@ -925,6 +926,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             name: func.name.map(|n| n.alloc_on(child.mono_ctx.ir)),
             attributes: func.attributes.alloc_on(child.mono_ctx.ir),
             args: parameters.alloc_on(child.mono_ctx.ir),
+            varargs: func.varargs,
             return_type,
             body: OnceCell::new(),
         });
@@ -1021,6 +1023,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .alloc_on(self.mono_ctx.ast),
                 body: Some(body),
                 span: fun.span,
+                varargs: false,
                 closure: fun.closure, // = false always
             }));
 
@@ -1295,6 +1298,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             attributes: [Attribute::StaticConstructor].alloc_on(self.mono_ctx.ir),
             args: [].alloc_on(self.mono_ctx.ir),
             return_type: self.types.builtin(BuiltinType::Void),
+            varargs: false,
             body: OnceCell::from(optimized),
         }));
 
@@ -1998,6 +2002,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
     }
 
+    /// Take reference of anything, promoting the lifetime if it is a rvalue.
     fn r#ref(&mut self, expr: ir::ExprP<'ir>) -> ir::ExprP<'ir> {
         if matches!(expr.value_type, ValueType::LValue) {
             return self.exprs.r#ref(expr);
@@ -3202,18 +3207,32 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             _ => self.lower_expr(callee, None)?,
         };
 
+        let mut varargs = false;
+
         let fn_arg_types: Vec<_>;
         let (arg_types, return_type) = match callee.ty {
             ir::Ty::FunctionPointer(arg_types, return_type) => (*arg_types, *return_type),
             ir::Ty::NamedFunction(item) => {
                 let fun = item.get_function().with_no_span()?;
+                if fun.varargs {
+                    varargs = true;
+                }
                 fn_arg_types = fun.args.iter().map(|p| p.ty).collect();
+
                 (&fn_arg_types[..], fun.return_type)
             }
             _ => return Err(CodeErrorKind::FunctionExpectedHere).with_span(ast_callee.span),
         };
 
-        if arg_types.len() != args.len() {
+        if !varargs && (arg_types.len() != args.len()) {
+            return Err(CodeErrorKind::ParamCountMismatch(
+                arg_types.len(),
+                args.len(),
+            ))
+            .with_no_span();
+        }
+
+        if varargs && (arg_types.len() > args.len()) {
             return Err(CodeErrorKind::ParamCountMismatch(
                 arg_types.len(),
                 args.len(),
@@ -3223,8 +3242,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let mut args = args
             .iter()
-            .zip(arg_types.iter())
-            .map(|(arg, ty)| self.lower_expr(arg, Some(ty)))
+            .zip(
+                // Pad with None for varargs
+                arg_types
+                    .iter()
+                    .map(|t| Some(*t))
+                    .chain(std::iter::repeat(None)),
+            )
+            .map(|(arg, ty)| self.lower_expr(arg, ty))
             .collect::<Result<Vec<_>, _>>()?;
 
         for (expected, arg) in arg_types.iter().zip(args.iter_mut()) {

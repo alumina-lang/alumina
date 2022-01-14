@@ -7,7 +7,6 @@ struct Vector<T> {
 impl Vector<T> {
     use std::mem::{slice, alloc, realloc, copy, copy_nonoverlapping};
     use std::iter::{Iterator, Iterable};
-    use std::option::Option;
 
     fn new() -> Vector<T> {
         with_capacity(0)
@@ -49,6 +48,10 @@ impl Vector<T> {
     }
 
     fn extend_from_slice(self: &mut Vector<T>, value: &[T]) {
+        if value.len == 0 {
+            return;
+        }
+
         self.reserve(value.len);
 
         value.copy(&self._data[self._length]);
@@ -186,19 +189,20 @@ impl Vector<T> {
 impl Vector {
     use std::fmt::{Formatter, Formattable};
 
-    fn write_str(self: &mut Vector<u8>, buf: &[u8]) {
+    fn write_str(self: &mut Vector<u8>, buf: &[u8]) -> Result<(), fmt::Error> {
         self.extend_from_slice(buf);
+        Result::ok(())
     }
 
-    fn write_char(self: &mut Vector<u8>, c: u8) {
+    fn write_char(self: &mut Vector<u8>, c: u8) -> Result<(), fmt::Error> {
         self.push(c);
+        Result::ok(())
     }
 }
 
 
 #[cfg(test)]
 mod tests {
-    use std::option::Option;
 
     #[test]
     fn test_vector_new() {

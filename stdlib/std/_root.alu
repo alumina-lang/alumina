@@ -4,6 +4,7 @@ macro compile_fail($reason) {
 
 macro assert($cond) {
     if !$cond {
+        intrinsics::trap();
         panic!("assertion failed");
     }
 }
@@ -20,7 +21,6 @@ macro debug_assert($cond) { #[cfg(debug)] assert!($cond); }
 macro debug_assert_eq($lhs, $rhs) { #[cfg(debug)] assert_eq!($lhs, $rhs); }
 macro debug_assert_ne($lhs, $rhs) { #[cfg(debug)] assert_ne!($lhs, $rhs); }
 
-
 /// Satisy the typechecker if the code is unreachable. Note that when compiled 
 /// in release mode, this will cause UB if ever reached.
 macro unreachable() {
@@ -36,6 +36,17 @@ macro unreachable() {
 #[builtin] macro env($s) {  }
 #[builtin] macro include_bytes($file) {  }
 #[builtin] macro concat($parts...) {  }
+
+macro dbg($fmt, $args...) {
+    let f = panicking::internal::PanicFormatter {};
+    fmt::writeln!(&f,
+        concat!("[{}:{}:{}] ", $fmt),
+        file!(), 
+        line!(), 
+        column!(),
+        $args...
+    )
+}
 
 mod internal {
     use panicking::internal::{panic_impl, PanicFormatter};
@@ -76,6 +87,7 @@ mod internal {
 
 mod util {
     #[force_inline] fn identity<T>(t: T) -> T { t }
+    #[force_inline] fn drop<T>(_: T) { }
     
     // This function is mostly useful as a type inference guide (when the target type
     // is not easily expressible).

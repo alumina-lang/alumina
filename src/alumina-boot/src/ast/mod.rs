@@ -524,6 +524,7 @@ pub struct Function<'ast> {
     pub body: Option<ExprP<'ast>>,
     pub span: Option<Span>,
     pub closure: bool,
+    pub varargs: bool,
 }
 
 #[derive(Debug)]
@@ -602,6 +603,7 @@ pub enum Attribute {
     Cold,
     TestMain,
     Inline,
+    Align(u32),
     NoInline,
     Builtin,
     ForceInline,

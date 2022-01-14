@@ -11,22 +11,46 @@ macro panic($reason, $args...) {
 }
 
 mod internal {
-    use fmt::internal::{printf, FormatArg};
+    use fmt::{Formatter, internal::{printf, FormatArg}};
 
-    // Small formatter with as few dependencies as possible. No buffering, etc.
+    // Small formatter with as few dependencies as possible. No buffering, no checking
+    // for unwritten bytes, etc. This is both for reliability, to allow higher-level IO
+    // code to panic safely but also to break potential circular dependencies in static
+    // initialization.
+
     struct PanicFormatter {}
     impl PanicFormatter {
-        #[inline]
-        fn write_str(self: &mut PanicFormatter, buf: &[u8]) {
-            libc::write(libc::STDERR_FILENO, buf.ptr as &void, buf.len);
+        fn write_str(self: &mut PanicFormatter, buf: &[u8]) -> Result<(), fmt::Error> {
+            if libc::write(libc::STDERR_FILENO, buf.ptr as &void, buf.len) < 0 {
+                Result::err(fmt::Error::new())
+            } else {
+                Result::ok(())
+            }
         }
-        #[inline]
-        fn write_char(self: &mut PanicFormatter, byte: u8) {
-            libc::write(libc::STDERR_FILENO, &byte as &void, 1);
-        }
+        mixin Formatter<PanicFormatter>;
     }
     
-    static PANICKING: bool = false;
+    static PANICKING: bool;
+
+    fn print_panic_message(
+        fmt_str: &[u8], 
+        file: &[u8], 
+        line: i32, 
+        column: i32, 
+        args: &[FormatArg<PanicFormatter>]
+    ) -> Result<(), fmt::Error> {
+        let formatter = PanicFormatter {};
+        
+        try!(printf(
+            "panic at {}:{}:{}: ", 
+            &[FormatArg::new(&file), FormatArg::new(&line), FormatArg::new(&column)], 
+            &formatter
+        ));
+        try!(printf(fmt_str, args, &formatter));
+        try!(formatter.write_char('\n'));
+
+        Result::ok(())
+    }
 
     #[cold]
     #[no_inline]
@@ -37,20 +61,15 @@ mod internal {
         column: i32, 
         args: &[FormatArg<PanicFormatter>]
     ) -> ! {
-        if PANICKING {
+        if mem::replace(&PANICKING, true) {
+            // If we panic during a panic handler, nuclear abort.
             intrinsics::trap();
         }
-        PANICKING = true;
 
-        let formatter = PanicFormatter {};
-        printf(
-            "panic at {}:{}:{}: ", 
-            &[FormatArg::new(&file), FormatArg::new(&line), FormatArg::new(&column)], 
-            &formatter
-        );
-        printf(fmt_str, args, &formatter);
-        formatter.write_char('\n');
-
+        // Swallow errors from print_panic_message, because at this point, what can we do, panic?
+        // We still bail early if it fails.
+        let _ = print_panic_message(fmt_str, file, line, column, args);
+        
         libc::_exit(-1);
     }
 }

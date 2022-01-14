@@ -96,7 +96,7 @@ impl Option {
         }
     }
 
-    fn fmt<T: Formattable<T, F>, F: Formatter<F>>(self: &Option<T>, formatter: &mut F) {
+    fn fmt<T: Formattable<T, F>, F: Formatter<F>>(self: &Option<T>, formatter: &mut F) -> Result<(), fmt::Error> {
         if self.is_some {
             write!(formatter, "some({})", self.inner)
         } else {
@@ -116,6 +116,12 @@ impl Option {
 
 #[cfg(test)]
 mod tests {
+    static BUF: [u8; 1024];
+
+    macro fmt($args...) {
+        fmt::format_in!(&BUF, $args...).unwrap()
+    }
+
     #[test]
     fn option_ok() {
         let opt = Option::some(42);
@@ -151,13 +157,11 @@ mod tests {
 
     #[test]
     fn option_fmt() {
-        use fmt::format_in;
-        let buf: [u8; 100];
 
         let opt1 = Option::some(42);
         let opt2 = Option::none::<i32>();
-        assert!(format_in!(&buf, "{}", opt1) == "some(42)");
-        assert!(format_in!(&buf, "{}", opt2) == "none");
+        assert!(fmt!("{}", opt1) == "some(42)");
+        assert!(fmt!("{}", opt2) == "none");
     }
 
 

@@ -2,14 +2,16 @@
 {
     use unix::{
         print, println, eprint, eprintln,
-        Error, OpenOptions, File,
+        Error, OpenOptions, File, FileDescriptor, Pipe,
         stdin, stdout, stderr, anonymous_pipe
     }
 }
 
+protocol AsFileDescriptor<Self> {
+    fn as_fd(self: &Self) -> FileDescriptor;
+}
+
 protocol Readable<Self> {
-    use result::{Result, try};
-    use option::Option;
     use collections::Vector;
     use internal::default_read_exact;
 
@@ -47,12 +49,8 @@ protocol Readable<Self> {
 }
 
 protocol Writable<Self> {
-    use result::Result;
-
     fn write(self: &mut Self, buf: &[u8]) -> Result<usize, Error>;
-    fn flush(self: &mut Self) -> Result<(), Error>;
     fn write_all(self: &mut Self, buf: &[u8]) -> Result<(), Error> {
-        use result::try;
 
         while buf.len > 0 {
             let written_bytes = try!(self.write(buf));
@@ -73,8 +71,6 @@ enum SeekFrom {
 }
 
 protocol Seekable<Self> {
-    use result::{Result, try};
-
     fn seek(self: &mut Self, whence: SeekFrom, offset: i64) -> Result<i64, Error>;
     fn rewind(self: &mut Self) -> Result<(), Error> {
         try!(self.seek(SeekFrom::Beginning, 0));
@@ -92,8 +88,6 @@ struct StringWriter {
 }
 
 impl StringWriter {
-    use result::Result;
-
     fn new(string: &mut collections::Vector<u8>) -> StringWriter {
         StringWriter {
             string: string
@@ -113,7 +107,6 @@ impl StringWriter {
 }
 
 protocol BufferedReadable<Self: Readable<Self>> {
-    use result::Result;
 
     fn fill_buffer(self: &mut Self) -> Result<&[u8], Error>;
     fn consume(self: &mut Self, amount: usize)
@@ -129,7 +122,6 @@ struct BufferedReader<R: Readable<R>> {
 impl BufferedReader<R: Readable<R>> {
     use std::mem::copy_nonoverlapping;
     use internal::default_read_exact;
-    use std::result::{Result, try};
 
     /// Create a BufferedReader with a heap-allocated buffer of the given size.
     fn new(inner: &mut R, buf_size: usize) -> BufferedReader<R> {
@@ -164,16 +156,20 @@ impl BufferedReader<R: Readable<R>> {
         let slice = try!(self.fill_buffer());
 
         let nread = math::min(buf.len, slice.len);
-        slice[..nread].copy_nonoverlapping(&buf[0]);
-        self.consume(nread);
+        if nread > 0 {
+            slice[..nread].copy_nonoverlapping(&buf[0]);
+            self.consume(nread);
+        }
 
         Result::ok(nread)
     }
 
     fn read_exact(self: &mut BufferedReader<R>, buf: &mut [u8]) -> Result<(), Error> {
         if self.cap - self.pos >= buf.len {
-            self.buf[self.pos..self.pos + buf.len].copy_nonoverlapping(&buf[0]);
-            self.consume(buf.len);
+            if buf.len > 0 {
+                self.buf[self.pos..self.pos + buf.len].copy_nonoverlapping(&buf[0]);
+                self.consume(buf.len);
+            }
             return Result::ok(());
         }
 
@@ -195,8 +191,6 @@ impl BufferedReader<R: Readable<R>> {
 }
 
 impl BufferedReader<R: Seekable<R>> {
-    use result::{Result, try};
-
     fn seek(self: &mut BufferedReader<R>, whence: SeekFrom, offset: i64) -> Result<i64, Error> {
         let res = if whence == SeekFrom::Current {
             let remainder = (self.cap - self.pos) as i64;
@@ -219,30 +213,93 @@ impl BufferedReader<R: Seekable<R>> {
     mixin<R: Seekable<R>> Seekable<BufferedReader<R>>;
 }
 
+const DEFAULT_BUFFER_SIZE: usize = 8192;
 
 // Extension methods
 fn copy<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D) -> result::Result<u64, Error> {
-    use result::{Result, try};
+    let buf = mem::alloc::<u8>(DEFAULT_BUFFER_SIZE);
+    defer mem::free(buf);
+    
+    copy_using(src, dst, buf)
+}
 
-    let buf: [u8; 1024];
-    let buf = buf.as_slice_mut();
+fn copy_using<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D, buffer: &mut [u8]) -> result::Result<u64, Error> {
     let read = 0u64;
-
     loop {
-        let n = try!(src.read(buf));
+        let n = try!(src.read(buffer));
         read += n as u64;
         if n == 0 {
             break;
         }
-        try!(dst.write_all(buf[0..n]));
+        try!(dst.write_all(buffer[0..n]));
     }
 
     Result::ok(read)
 }
 
-fn read_byte<R: Readable<R>>(reader: &mut R) -> result::Result<u8, Error> {
-    use std::result::{try, Result};
+fn read_to_end_2<
+    S1: Readable<S1> + AsFileDescriptor<S1>, 
+    S2: Readable<S2> + AsFileDescriptor<S2>, 
+>(
+    src1: &mut S1, 
+    dst1: &mut collections::Vector<u8>, 
+    src2: &mut S2, 
+    dst2: &mut collections::Vector<u8>
+) -> result::Result<(), Error> {
+    use std::io::unix::{ErrorKind, errno_try};
 
+    let s1 = src1.as_fd();
+    let s2 = src2.as_fd();
+
+    s1.set_nonblocking(true);
+    s2.set_nonblocking(true);
+
+    let fds: [libc::pollfd; 2] = mem::zeroed();
+    fds[0].fd = s1.value;
+    fds[0].events = libc::POLLIN;
+    fds[1].fd = s2.value;
+    fds[1].events = libc::POLLIN;
+
+    loop {
+        errno_try!(libc::poll(&fds[0], 2, -1));
+
+        if fds[0].revents != 0 {
+            let maybe_n = src1.read_to_end(dst1);
+            if maybe_n.is_ok {
+                try!(s2.set_nonblocking(false));
+                return src2.read_to_end(dst2).map(util::drop::<usize>);
+            } else {
+                let error = maybe_n.unwrap_err();
+                let as_errno = error.as_errno();
+
+                if as_errno != Option::some(libc::EWOULDBLOCK) || 
+                    as_errno != Option::some(libc::EAGAIN) {
+                    return Result::err(error);
+                }
+            }
+        }
+
+        if fds[1].revents != 0 {
+            let maybe_n = src2.read_to_end(dst2);
+            if maybe_n.is_ok {
+                try!(s1.set_nonblocking(false));
+                return src1.read_to_end(dst1).map(util::drop::<usize>);
+            } else {
+                let error = maybe_n.unwrap_err();
+                let as_errno = error.as_errno();
+
+                if as_errno != Option::some(libc::EWOULDBLOCK) || 
+                    as_errno != Option::some(libc::EAGAIN) {
+                    return Result::err(error);
+                }
+            }
+        }
+    }
+
+}
+    
+
+fn read_byte<R: Readable<R>>(reader: &mut R) -> result::Result<u8, Error> {
     let buf: [u8; 1];
     try!(reader.read_exact(&buf));
 
@@ -250,7 +307,6 @@ fn read_byte<R: Readable<R>>(reader: &mut R) -> result::Result<u8, Error> {
 }
 
 fn read_until<R: BufferedReadable<R>>(r: &mut R, delim: u8, buf: &mut collections::Vector<u8>) -> result::Result<usize, Error> {
-    use result::{Result, try};
 
     let read = 0usize;
     loop {
@@ -281,8 +337,6 @@ struct LineIterator<R: BufferedReadable<R>> {
 /// An iterator over the lines of a buffered reader. The iterator maintains an internal
 /// heap-allocated buffer of the line's contents, which is reused between lines.
 impl LineIterator<R: BufferedReadable<R>> {
-    use std::result::Result;
-    use std::option::Option;
     use std::iter::Iterator;
 
     fn with_line_buffer(reader: &mut R, line_buf: collections::Vector<u8>) -> LineIterator<R> {
@@ -342,11 +396,126 @@ fn lines<R: BufferedReadable<R>>(reader: &mut R) -> LineIterator<R> {
     LineIterator::new(reader)
 }
 
+struct BufferedWriter<W: Writable<W>> {
+    buf: &mut [u8],
+    pos: usize,
+    inner: &mut W
+}
+
+impl BufferedWriter<W: Writable<W>> {
+    use mem::copy_nonoverlapping;
+
+    /// Create a BufferedWriter with a heap-allocated buffer of the given size.
+    fn new(inner: &mut W, buf_size: usize) -> BufferedWriter<W> {
+        from_slice(inner, mem::alloc::<u8>(buf_size))
+    }
+
+    /// Creates a BufferedWriter from an existing-buffer, potentially
+    /// avoiding a heap allocation.
+    fn from_slice(inner: &mut W, buf: &mut [u8]) -> BufferedWriter<W> {
+        BufferedWriter {
+            inner: inner,
+            buf: buf,
+            pos: 0
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn write_full(self: &mut BufferedWriter<W>, buf: &[u8]) -> result::Result<usize, Error> {
+        if buf.len > self.buf.len - self.pos {
+            try!(self.flush());
+        }
+     
+        if buf.len >= self.buf.len  {
+            // Bypass the buffer if we need to write more than buffer size
+            self.inner.write(buf)
+        } else {
+            self._write_to_buffer(buf);
+            Result::ok(buf.len)
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn write_all_full(self: &mut BufferedWriter<W>, buf: &[u8]) -> result::Result<(), Error> {
+        if buf.len > self.buf.len - self.pos {
+            try!(self.flush());
+        }
+
+        if buf.len >= self.buf.len {
+            // Bypass the buffer if we need to write more than buffer size
+            self.inner.write_all(buf)
+        } else {
+            self._write_to_buffer(buf);
+            Result::ok(())
+        }
+    }
+
+    #[inline]
+    fn write(self: &mut BufferedWriter<W>, buf: &[u8]) -> result::Result<usize, Error> {
+        if buf.len < self.buf.len - self.pos {
+            self._write_to_buffer(buf);
+            Result::ok(buf.len)
+        } else {
+            self.write_full(buf)
+        }
+    }
+
+    #[inline]
+    fn write_all(self: &mut BufferedWriter<W>, buf: &[u8]) -> result::Result<(), Error> {
+        if buf.len < self.buf.len - self.pos {
+            self._write_to_buffer(buf);
+            Result::ok(())
+        } else {
+            self.write_all_full(buf)
+        }
+    }
+
+    fn flush(self: &mut BufferedWriter<W>) -> result::Result<(), Error> {
+        // This will return an EOF error, if we are not able to write everything.
+        // since we have accepted bytes that  are not written to the underlying 
+        // writer and not signalled an EOF.
+        try!(self.inner.write_all(self.buf[..self.pos]));
+        self.pos = 0;
+
+        Result::ok(())
+    }
+
+    #[inline]
+    fn _write_to_buffer(self: &mut BufferedWriter<W>, buf: &[u8]) {
+        if buf.len > 0 {
+            // This guard is technically redundant, but to avoid the debug assertion
+            // when indexing past the end of the buffer with 0-length writes.
+            buf.copy_nonoverlapping(&self.buf[self.pos]);
+            self.pos += buf.len;
+        }
+    }
+
+    fn free(self: &mut BufferedWriter<W>) {
+        use std::mem::free;
+        free(self.buf);
+    }
+
+    fn move(self: &mut BufferedWriter<W>) -> BufferedWriter<W> {
+        let ret = *self;
+        self.buf = mem::slice::empty();
+        ret
+    }
+}
+
+// BufferedWriter implements Formatter, so it can be used as a sink in write!(...)
+impl BufferedWriter<W: Writable<W>> {
+    #[inline]
+    fn write_str(self: &mut BufferedWriter<W>, buf: &[u8]) -> Result<(), fmt::Error> {
+        self.write_all(buf).map_err(fmt::Error::from::<Error>)
+    }
+
+    mixin<W: Writable<W>> fmt::Formatter<BufferedWriter<W>>;
+}
+
 
 mod internal {
-    use result::{Result, try};
-    use option::Option;
-
     fn default_read_exact<T: Readable<T>>(self: &mut T, buf: &mut [u8]) -> Result<(), Error> {
         while buf.len > 0 {
             let read_bytes = try!(self.read(buf));

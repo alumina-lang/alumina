@@ -207,6 +207,16 @@ snapshots['test_examples[statics.alu] run_stderr'] = b''
 
 snapshots['test_examples[statics.alu] run_stdout'] = b'1792\n'
 
+snapshots['test_examples[tcp_client_server.alu] compile_ret'] = 0
+
+snapshots['test_examples[tcp_client_server.alu] compile_stderr'] = None
+
+snapshots['test_examples[tcp_client_server.alu] run_ret'] = 1
+
+snapshots['test_examples[tcp_client_server.alu] run_stderr'] = b'usage: ./tcp_client_server.alu.out [--server|--client]\n'
+
+snapshots['test_examples[tcp_client_server.alu] run_stdout'] = b''
+
 snapshots['test_examples[tests.alu] compile_ret'] = 0
 
 snapshots['test_examples[tests.alu] compile_stderr'] = None

@@ -338,6 +338,17 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
 
         match name {
             "inline" => self.attributes.push(Attribute::Inline),
+            "align" => {
+                let align: u32 = inner
+                    .child_by_field_name("arguments")
+                    .and_then(|n| n.child_by_field_name("argument"))
+                    .map(|n| self.code.node_text(n))
+                    .and_then(|f| f.parse().ok())
+                    .ok_or(CodeErrorKind::InvalidCfgAttribute)
+                    .with_span(&self.scope, node)?;
+
+                self.attributes.push(Attribute::Align(align))
+            }
             "cold" => self.attributes.push(Attribute::Cold),
             "no_inline" => self.attributes.push(Attribute::NoInline),
             "builtin" => self.attributes.push(Attribute::Builtin),

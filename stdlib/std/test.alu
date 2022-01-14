@@ -6,8 +6,6 @@
 #[cfg(all(test, not(custom_test_framework))] 
 {
     use std::io::{File, StringWriter, anonymous_pipe, copy, Error};
-    use std::result::{Result, try};
-    use std::option::Option;
     use std::process::{Command, Stdio};
     use std::collections::{Vector, free_all, sort_by};
     use std::runtime::internal::{TEST_CASES, TestCaseMeta};
@@ -76,6 +74,22 @@
         }
     }
 
+    struct Args {
+        include_std: bool,
+        prefix: Option<&[u8]>,
+        filter: Option<&[u8]>,
+    }
+
+    impl Args {
+        fn default() -> Args {
+            Args {
+                include_std: false,
+                prefix: Option::none(),
+                filter: Option::none(),
+            }
+        }
+    }
+
     enum State {
         Normal, 
         Prefix,
@@ -87,14 +101,9 @@
         process::exit(1);
     }
 
-    fn filter_tests(args: &[&[u8]]) -> (Vector<TestCaseMeta>, usize) {
-        use string::{starts_with, contains};
-
+    fn parse_args(args: &[&[u8]]) -> Args {
         let state = State::Normal;
-        
-        let include_std = false;
-        let prefix: Option<&[u8]> = Option::none();
-        let filter: Option<&[u8]> = Option::none();
+        let res = Args::default();
 
         for arg in args[1..] {
             state = switch state {
@@ -102,17 +111,17 @@
                     "--prefix", "-p" => State::Prefix,
                     "--filter", "-f" => State::Filter,
                     "--include-std" => {
-                        include_std = true;
+                        res.include_std = true;
                         State::Normal
                     }
                     _ => print_help_string(args)
                 },
                 State::Prefix => {
-                    prefix = Option::some(arg);
+                    res.prefix = Option::some(arg);
                     State::Normal
                 },
                 State::Filter => {
-                    filter = Option::some(arg);
+                    res.filter = Option::some(arg);
                     State::Normal
                 },
                 _ => unreachable!()
@@ -123,19 +132,25 @@
             print_help_string(args);
         }
 
+        res
+    }
+
+    fn filter_tests(args: Args) -> (Vector<TestCaseMeta>, usize) {
+        use string::{starts_with, contains};
+
         let test_cases: Vector<TestCaseMeta> = Vector::new();
         defer test_cases.free();
 
         for test in TEST_CASES {
-            if !include_std && test.path.starts_with("::std") {
+            if !args.include_std && test.path.starts_with("::std") {
                 continue
             }
 
-            if prefix.is_some && !test.path[2..].starts_with(prefix.inner) {
+            if args.prefix.is_some && !test.path[2..].starts_with(args.prefix.inner) {
                 continue
             }
 
-            if filter.is_some && !test.name.contains(filter.inner) {
+            if args.filter.is_some && !test.name.contains(args.filter.inner) {
                 continue
             }
 
@@ -155,6 +170,7 @@
 
     #[test_main]
     fn main(args: &[&[u8]]) -> i32 {
+        let args = parse_args(args);
         let start_time = Instant::now();
 
         let results: Vector<TestResult> = Vector::new();
@@ -164,7 +180,7 @@
         let num_passed = 0;
         let num_ignored = 0;
 
-        let (test_cases, filtered_count) = filter_tests(args)
+        let (test_cases, filtered_count) = filter_tests(args);
         defer test_cases.free();
 
         eprintln!("running {} tests ({} filtered out)", test_cases.len(), filtered_count);
@@ -187,8 +203,7 @@
             }
         }
 
-        let elapsed_ms = (Instant::now().since(&start_time).unwrap().as_secs_f64() * 1000.0) as u32;
-
+        let elapsed = Instant::now().since(&start_time);
         if num_failed > 0 {
             eprintln!("");
             eprintln!("failures:");
@@ -211,20 +226,20 @@
                     }
                 }
             }
-            eprintln!("test result: \x1b[0;31mFAILED\x1b[0m. {} passed; {} failed; {} ignored; finished in {}ms", 
+            eprintln!("test result: \x1b[0;31mFAILED\x1b[0m. {} passed; {} failed; {} ignored; finished in {}", 
                 num_passed, 
                 num_failed, 
                 num_ignored,
-                elapsed_ms
+                elapsed
             );
             1
         } else {
             eprintln!("");
-            eprintln!("test result: \x1b[0;32mok\x1b[0m. {} passed; {} failed; {} ignored; finished in {}ms", 
+            eprintln!("test result: \x1b[0;32mok\x1b[0m. {} passed; {} failed; {} ignored; finished in {}", 
                 num_passed, 
                 num_failed, 
                 num_ignored, 
-                elapsed_ms
+                elapsed
             );
             0
         }
