@@ -20,7 +20,7 @@ impl Ipv6Addr {
     fn new(a: u16, b: u16, c: u16, d: u16, e: u16, f: u16, g: u16, h: u16) -> Ipv6Addr {
         use internal::htons;
 
-        let addr: libc::in6_addr;
+        let addr: libc::in6_addr = mem::zeroed();
         let as_u16 = &addr.s6_addr as &mut [u16; 8];
 
         (*as_u16)[0] = htons(a);
@@ -149,12 +149,13 @@ struct Ipv4Addr {
 
 impl Ipv4Addr {
     fn new(a: u8, b: u8, c: u8, d: u8) -> Ipv4Addr {
-        let as_int = a as u32 |
+        let ret: libc::in_addr = mem::zeroed();
+        ret.s_addr = a as u32 |
             (b as u32) << 8 |
             (c as u32) << 16 |
             (d as u32) << 24;
 
-        Ipv4Addr { inner: libc::in_addr { s_addr: as_int } }
+        Ipv4Addr { inner: ret }
     }
 
     fn localhost() -> Ipv4Addr {
