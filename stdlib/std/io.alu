@@ -272,7 +272,7 @@ fn read_to_end_2<
                 let error = maybe_n.unwrap_err();
                 let as_errno = error.as_errno();
 
-                if as_errno != Option::some(libc::EWOULDBLOCK) || 
+                if as_errno != Option::some(libc::EWOULDBLOCK) && 
                     as_errno != Option::some(libc::EAGAIN) {
                     return Result::err(error);
                 }
@@ -288,7 +288,7 @@ fn read_to_end_2<
                 let error = maybe_n.unwrap_err();
                 let as_errno = error.as_errno();
 
-                if as_errno != Option::some(libc::EWOULDBLOCK) || 
+                if as_errno != Option::some(libc::EWOULDBLOCK) && 
                     as_errno != Option::some(libc::EAGAIN) {
                     return Result::err(error);
                 }
@@ -307,7 +307,6 @@ fn read_byte<R: Readable<R>>(reader: &mut R) -> result::Result<u8, Error> {
 }
 
 fn read_until<R: BufferedReadable<R>>(r: &mut R, delim: u8, buf: &mut collections::Vector<u8>) -> result::Result<usize, Error> {
-
     let read = 0usize;
     loop {
         let available = try!(r.fill_buffer());
