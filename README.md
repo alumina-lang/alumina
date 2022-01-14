@@ -104,13 +104,23 @@ Finished:
 - Type support
 - Lowering parse tree into AST (desugaring, macro expansion, ...)
 - Lowering AST into IR (with monomorphization, type checking and semantic analysis)
-- Codegen to C
+- Codegen to C11
+- A reasonable chunk of standard library
+    - collections (vector, hashmap, hashset)
+    - string functions and formatting
+    - spawning processes
+    - standard, file and pipe I/O
+    - TCP/IP sockets
+    - random number generation
+    - unit testing
+
 
 To be done:
 
 - Standard library is only usable on Unixes (Linux is best supported, some limited support for MacOS and Android)
 - Probably a lot of bugs and miscompilations
 - Better error messages and warnings. Currently they are not terrible, but not great either.
+- Language and library reference and other documentation
 
 A self-hosted compiler ([`aluminac`](./src/aluminac)) is also being written. It is in very early stages (is only able to parse source at the moment). It will eventually have a LLVM backend.
 

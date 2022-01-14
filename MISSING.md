@@ -49,8 +49,15 @@
 
 - basic structure and philosophy. how big should it be?
   - Rely on libc as little as possible. I'd like to use Alumina on bare-metal.
+  - Ignore ^ for now. libc is fine. Rust relies heavily on libc. That said, no libc in following areas:
+    - no string formatting, anything locale dependent really
+    - no buffered I/O (fwrite/...). Native Alumina IO primitives should be much more ergonomic.
+    - no random small functions where it can be done efficiently in Alumina (memfrob, htonl, ...)
+      - memcpy/memove/strlen are an exception. these are heavily optimized an may actually be compiler builtins
+    - what to do about math (libm?) yay or nay?
+    - I really wanted to say *absolutely nothing with varargs*, but unfortunately `ioctl` and `fcntl` are varargs :(
 - tests
-- how portable should it be? I'm not sure if I'll have the grit to support anything other than `x86_64-unknown-linux-gnu` and maybe `aarch64`.
+- how portable should it be? currently it seems to be working quite well on ARM and x86_64 on Linux, Android and Mac. Windows is not supported yet.
 - these are definitely needed:
   - file IO and streams
     - done
@@ -59,10 +66,11 @@
   - string formatting
     - The pattern is well-established (Formattable protocol) and I'm very happy with it,
       but it's very very basic right now
+      - update: it's not so basic anymore, it's actually quite fine
     - formatting for floats is especially terrible, needs to be much better
   - heap-allocating collections
     - Vector, HashMap, HashSet are implemented (very basic, probably do not perform very well)
-    - Vector might actually be pretty ok
+    - Vector might actually be pretty ok. Hashed collections are probably bad.
   - math
     - abs/truns/frac/round/sin/cos/... are missing
 
@@ -70,10 +78,12 @@
   - threading, atomics, ...
     - This will definitely defer to pthread (what about Windows?)
     - Need a good story for thread-local storage
-  - network and unix sockets
+  - network/sockets
+    - done
   - random number generation
     - basic RNG is implemented, need a good way to make it generic over various integer lengths
   - date/time???? this is a big can of worms
+    - durations/monotonic timer are implemented
   - regexes? probably not, maybe a PCRE wrapper outside stdlib
 
 ## Optimizations
@@ -111,6 +121,8 @@
 - specialization/SFINAE/overloading?
   - I am leaning pretty strongly towards not having either of these. With protocols the language 
     is expressive enough to do string formatting and collections, which are a good litmus test if generics are any good.
+- tagged unions
+  - I miss them quite a lot from Rust. They are not hard, but need a good syntax for `match`
 - full Hindley-Milner type inference. Global type inference will pretty much require a full rewrite of `mono`, so whis would be a massive project, but it would also be super awesome to have
 - true variadic functions (certainly they'd be generic and variadic only pre-monomorphization, varargs is an abomination). This is hard to do, both from the syntax and `mono` perspective but the payoff is that tuples can have nice protocol implementations.
 - generators? coroutines? lmao, not gonna happen
@@ -123,3 +135,4 @@
 ## Bikeshedding
 
 - Name conventions (PascalCase, snake_case, ...)
+  - This is settled now. See: Rust.
