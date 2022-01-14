@@ -348,6 +348,13 @@ impl TcpListener {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use libc::MSG_NOSIGNAL;
+
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+const MSG_NOSIGNAL: libc::c_int = 0;
+
+
 struct UdpSocket {
     socket: Socket,
 }
@@ -405,7 +412,7 @@ impl UdpSocket {
             self.socket.fd.value,
             buf.ptr as &void,
             buf.len,
-            libc::MSG_NOSIGNAL,
+            MSG_NOSIGNAL,
             &addr.inner as &libc::sockaddr,
             addr_len,
         ));
@@ -423,7 +430,7 @@ impl UdpSocket {
 
     fn send(self: &UdpSocket, buf: &[u8]) -> Result<usize, Error> {
         let ret = errno_try!(
-            libc::send(self.socket.fd.value, buf.ptr as &void, buf.len, libc::MSG_NOSIGNAL)
+            libc::send(self.socket.fd.value, buf.ptr as &void, buf.len, MSG_NOSIGNAL)
         );
 
         Result::ok(ret as usize)
