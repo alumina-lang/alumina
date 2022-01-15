@@ -457,7 +457,7 @@ impl UdpSocket {
     }
 }
 
-
+#[cfg(test)]
 mod tests {
     use process::{Command, Child, ExitStatus};
     use collections::Vector;
@@ -468,7 +468,7 @@ mod tests {
 
     #[test]
     fn test_basic_tcp() {
-        let addr = SocketAddr::new(IpAddr::v6(Ipv6Addr::localhost()), 0);
+        let addr = SocketAddr::parse("[::1]:0").unwrap();
         let listener = TcpListener::bind(&addr).unwrap();  
         defer listener.close();
 
@@ -493,13 +493,13 @@ mod tests {
 
     #[test]
     fn test_basic_udp() {
-        let addr = SocketAddr::new(IpAddr::v6(Ipv6Addr::localhost()), 0);
+        let addr = SocketAddr::parse("[::1]:0").unwrap();
         let peer1 = UdpSocket::bind(&addr).unwrap();  
         defer peer1.close();
 
         let peer1_addr = peer1.socket_addr().unwrap();
         if !fork().is_some {
-            let addr = SocketAddr::new(IpAddr::v6(Ipv6Addr::localhost()), 0);
+            let addr = SocketAddr::parse("[::1]:0").unwrap();
             let peer2 = UdpSocket::bind(&addr).unwrap();
             defer peer2.close();
 
@@ -514,7 +514,7 @@ mod tests {
 
     #[test]
     fn test_udp_connect() {
-        let addr = SocketAddr::new(IpAddr::v6(Ipv6Addr::localhost()), 0);
+        let addr = SocketAddr::parse("[::1]:0").unwrap();
         let peer1 = UdpSocket::bind(&addr).unwrap();  
         defer peer1.close();
 
@@ -522,7 +522,7 @@ mod tests {
 
         let peer1_addr = peer1.socket_addr().unwrap();
         if !fork().is_some {
-            let addr = SocketAddr::new(IpAddr::v6(Ipv6Addr::localhost()), 0);
+            let addr = SocketAddr::parse("[::1]:0").unwrap();
             let peer2 = UdpSocket::bind(&addr).unwrap();
             defer peer2.close();
             
@@ -545,13 +545,13 @@ mod tests {
 
     #[test]
     fn test_udp_peek() {
-        let addr = SocketAddr::new(IpAddr::v6(Ipv6Addr::localhost()), 0);
+        let addr = SocketAddr::parse("[::1]:0").unwrap();
         let peer1 = UdpSocket::bind(&addr).unwrap();  
         defer peer1.close();
 
         let peer1_addr = peer1.socket_addr().unwrap();
         if !fork().is_some {
-            let addr = SocketAddr::new(IpAddr::v6(Ipv6Addr::localhost()), 0);
+            let addr = SocketAddr::parse("[::1]:0").unwrap();
             let peer2 = UdpSocket::bind(&addr).unwrap();
             defer peer2.close();
 

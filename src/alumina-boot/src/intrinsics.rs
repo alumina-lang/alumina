@@ -25,6 +25,8 @@ pub enum IntrinsicKind {
     Unreachable,
     AlignedAlloca,
     TestCases,
+    CodegenFunc,
+    CodegenConst,
 }
 
 pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
@@ -42,6 +44,8 @@ pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
         map.insert("unreachable", IntrinsicKind::Unreachable);
         map.insert("aligned_alloca", IntrinsicKind::AlignedAlloca);
         map.insert("test_cases", IntrinsicKind::TestCases);
+        map.insert("codegen_func", IntrinsicKind::CodegenFunc);
+        map.insert("codegen_const", IntrinsicKind::CodegenConst);
         map
     })
     .get(name)
@@ -64,6 +68,7 @@ macro_rules! typecheck {
 pub enum CodegenIntrinsicKind<'ir> {
     SizeOfLike(&'ir str, TyP<'ir>),
     FunctionLike(&'ir str),
+    ConstLike(&'ir str),
 }
 
 pub struct CompilerIntrinsics<'ir> {
@@ -210,6 +215,43 @@ impl<'ir> CompilerIntrinsics<'ir> {
         ))
     }
 
+    fn codegen_func(
+        &self,
+        name: ExprP<'ir>,
+        args: &[ExprP<'ir>],
+        ret_ty: TyP<'ir>,
+    ) -> Result<ExprP<'ir>, AluminaError> {
+        let name = match const_eval::const_eval(name) {
+            Ok(Value::Str(s)) => std::str::from_utf8(s).unwrap(),
+            _ => return Err(CodeErrorKind::CannotConstEvaluate).with_no_span(),
+        };
+
+        let arg_types = args.iter().map(|arg| arg.ty).collect::<Vec<_>>();
+        let fn_type = self.types.function(arg_types, ret_ty);
+
+        Ok(self.expressions.call(
+            self.expressions
+                .codegen_intrinsic(CodegenIntrinsicKind::FunctionLike(name), fn_type),
+            args.iter().copied(),
+            ret_ty,
+        ))
+    }
+
+    fn codegen_const(
+        &self,
+        name: ExprP<'ir>,
+        ret_ty: TyP<'ir>,
+    ) -> Result<ExprP<'ir>, AluminaError> {
+        let name = match const_eval::const_eval(name) {
+            Ok(Value::Str(s)) => std::str::from_utf8(s).unwrap(),
+            _ => return Err(CodeErrorKind::CannotConstEvaluate).with_no_span(),
+        };
+
+        Ok(self
+            .expressions
+            .codegen_intrinsic(CodegenIntrinsicKind::ConstLike(name), ret_ty))
+    }
+
     pub fn invoke(
         &self,
         kind: IntrinsicKind,
@@ -229,6 +271,8 @@ impl<'ir> CompilerIntrinsics<'ir> {
             IntrinsicKind::CompileNote => self.compile_note(args[0], span),
             IntrinsicKind::Unreachable => self.unreachable(),
             IntrinsicKind::AlignedAlloca => self.aligned_alloca(args[0], args[1]),
+            IntrinsicKind::CodegenFunc => self.codegen_func(args[0], &args[1..], generic[0]),
+            IntrinsicKind::CodegenConst => self.codegen_const(args[0], generic[0]),
             _ => unimplemented!(),
         }
     }

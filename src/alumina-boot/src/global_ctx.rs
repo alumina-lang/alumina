@@ -33,6 +33,9 @@ impl GlobalCtx {
             })),
         };
 
+        // We are the alumina-boot compiler
+        result.add_flag("boot");
+
         // No cross-compilation, so we just use whatever the compiler was compiled with
         result.add_cfg("target_os", std::env::consts::OS);
         result.add_cfg("target_family", std::env::consts::FAMILY);

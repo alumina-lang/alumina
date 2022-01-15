@@ -2809,7 +2809,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .with_no_span();
         }
 
-        if callee.arg_count != args.len() {
+        if (callee.arg_count != args.len()) && !(callee.varargs && args.len() >= callee.arg_count) {
             return Err(CodeErrorKind::ParamCountMismatch(
                 callee.arg_count,
                 args.len(),

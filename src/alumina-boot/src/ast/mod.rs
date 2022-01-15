@@ -481,6 +481,7 @@ pub struct Intrinsic {
     pub span: Option<Span>,
     pub generic_count: usize,
     pub arg_count: usize,
+    pub varargs: bool,
 }
 
 #[derive(Debug, Clone, Copy)]

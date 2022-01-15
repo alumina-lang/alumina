@@ -138,10 +138,8 @@ mod internal {
         }
     }
 
-    const DIGITS = "0123456789abcdef";
-
     fn format_integer<T: proto::Integer, F: Formatter<F>>(val: T, radix: u16, pad: usize, fmt: &mut F) -> Result<(), Error> {
-        assert!(radix >= 2 && radix <= 16);
+        assert!(radix >= 2 && radix <= 36);
         
         let buf: [u8; 128];
         let buf = buf.as_slice_mut();
@@ -156,7 +154,7 @@ mod internal {
 
         let i: usize = 0;
         loop {
-            buf[buf.len - i - 1] = DIGITS[(val_u % (radix as builtins::unsigned_of<T>)) as usize];
+            buf[buf.len - i - 1] = string::RADIX_DIGITS[(val_u % (radix as builtins::unsigned_of<T>)) as usize];
             val_u /= radix as builtins::unsigned_of<T>;
             
             if val_u == 0 {
