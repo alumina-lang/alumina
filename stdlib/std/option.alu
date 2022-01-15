@@ -52,6 +52,22 @@ impl Option<T> {
         }
     }
 
+    fn map<Tm, F: proto::Callable<(T), Tm>>(self: Option<T>, func: F) -> Option<Tm> {
+        if self.is_some {
+            Option::some(func(self.inner))
+        } else {
+            Option::none()
+        }
+    }
+
+    fn and_then<Tm, F: proto::Callable<(T), Option<Tm>>>(self: Option<T>, func: F) -> Option<Tm> {
+        if self.is_some {
+            func(self.inner)
+        } else {
+            Option::none()
+        }
+    }
+
     fn iter(self: &Option<T>) -> Option<T> {
         *self
     }

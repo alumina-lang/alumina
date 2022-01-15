@@ -1,7 +1,25 @@
 use std::option::Option;
 
+const RADIX_DIGITS = "0123456789abcdefghijklmnopqrstuvwxyz";
+
 fn is_whitespace(c: u8) -> bool {
     c == 0x20 || c == 0x85 || c == 0xa0 || (c >= 0x09 && c <= 0x0D)
+}
+
+fn to_lower(self: u8) -> u8 {
+    if self >= 'A' && self <= 'Z' {
+        self + 0x20
+    } else {
+        self
+    }
+}
+
+fn to_upper(self: u8) -> u8 {
+    if self >= 'a' && self <= 'z' {
+        self - 0x20
+    } else {
+        self
+    }
 }
 
 fn starts_with(self: &[u8], prefix: &[u8]) -> bool {
@@ -38,6 +56,20 @@ fn find(self: &[u8], needle: &[u8]) -> Option<usize> {
         Option::none()
     } else {
         Option::some(((ret as &u8) - self.ptr) as usize)
+    }
+}
+
+fn find_char(self: &[u8], needle: u8) -> Option<usize> {
+    let p = libc::memchr(
+        self.ptr as &void,
+        needle as libc::c_int,
+        self.len,
+    );
+
+    if p == null {
+        Option::none()
+    } else {
+        Option::some(p as usize - (self.ptr as usize))
     }
 }
 
@@ -128,8 +160,11 @@ fn join<T: iter::Iterator<T, &[u8]>>(self: &[u8], iter: &mut T) -> collections::
     ret
 }
 
-fn parse_integer<T: proto::Integer>(s: &[u8]) -> Option<T> {
+fn parse_integer<T: proto::Integer>(s: &[u8], radix: u16) -> Option<T> {
+    assert!(radix >= 2 && radix <= 36);
+
     use builtins::unsigned_of;
+    use option::try;
 
     if s.len == 0 {
         return Option::none();
@@ -147,20 +182,22 @@ fn parse_integer<T: proto::Integer>(s: &[u8]) -> Option<T> {
     };
 
     let result: unsigned_of<T> = 0;
+    let radix = radix as unsigned_of<T>;
     for ch in s {
-        if ch >= '0' && ch <= '9' {
-            let a = result * 10;
-            if a / 10 != result {
-                return Option::none();
-            } 
-            let b = a + ((ch - '0') as unsigned_of<T>);
-            if b < a {
-                return Option::none();
-            }
-            result = b;
-        } else {
+        let digit = try!(RADIX_DIGITS.find_char(ch.to_lower())) as unsigned_of<T>;
+        if digit >= radix {
             return Option::none();
         }
+
+        let a = result * radix; 
+        if a / radix != result {
+            return Option::none();
+        } 
+        let b = a + digit;
+        if b < a {
+            return Option::none();
+        }
+        result = b;
     }
 
     when T: proto::Signed {
@@ -188,11 +225,6 @@ fn parse_integer<T: proto::Integer>(s: &[u8]) -> Option<T> {
 #[cfg(test)]
 mod tests {
     use std::{assert, assert_eq, assert_ne};
-
-    #[test]
-    fn test_trim1() {
-        parse_integer::<u8>("123");
-    }
 
     #[test]
     fn starts_with_positive() {
@@ -225,39 +257,48 @@ mod tests {
 
     #[test]
     fn test_parse_integer() {
-        assert_eq!(parse_integer::<usize>("0"), Option::some(0usize));
-        assert_eq!(parse_integer::<isize>("0"), Option::some(0isize));
+        assert_eq!(parse_integer::<usize>("0", 10), Option::some(0usize));
+        assert_eq!(parse_integer::<isize>("0", 10), Option::some(0isize));
         
-        assert_eq!(parse_integer::<usize>("-0"), Option::none());
-        assert_eq!(parse_integer::<isize>("-0"), Option::some(0isize));
+        assert_eq!(parse_integer::<usize>("-0", 10), Option::none());
+        assert_eq!(parse_integer::<isize>("-0", 10), Option::some(0isize));
 
-        assert_eq!(parse_integer::<usize>("24601"), Option::some(24601usize));
-        assert_eq!(parse_integer::<isize>("-24601"), Option::some(-24601isize));
+        assert_eq!(parse_integer::<usize>("24601", 10), Option::some(24601usize));
+        assert_eq!(parse_integer::<isize>("-24601", 10), Option::some(-24601isize));
 
-        assert_eq!(parse_integer::<usize>(""), Option::none());
-        assert_eq!(parse_integer::<usize>("abcdes"), Option::none());
-        assert_eq!(parse_integer::<usize>("-243"), Option::none());  
+        assert_eq!(parse_integer::<usize>("", 10), Option::none());
+        assert_eq!(parse_integer::<usize>("abcdes", 10), Option::none());
+        assert_eq!(parse_integer::<usize>("-243", 10), Option::none());  
 
         // Unsigned overflow
-        assert_eq!(parse_integer::<u8>("256"), Option::none());
-        assert_eq!(parse_integer::<u8>("255"), Option::some(255u8));
+        assert_eq!(parse_integer::<u8>("256", 10), Option::none());
+        assert_eq!(parse_integer::<u8>("255", 10), Option::some(255u8));
 
-        assert_eq!(parse_integer::<u16>("65535"), Option::some(0xffffu16));
-        assert_eq!(parse_integer::<u16>("65536"), Option::none());
+        assert_eq!(parse_integer::<u16>("65535", 10), Option::some(0xffffu16));
+        assert_eq!(parse_integer::<u16>("65536", 10), Option::none());
 
         // Signed overflow
-        assert_eq!(parse_integer::<i8>("127"), Option::some(127i8));  
-        assert_eq!(parse_integer::<i8>("128"), Option::none());  
-        assert_eq!(parse_integer::<i8>("-128"), Option::some(-128i8));  
-        assert_eq!(parse_integer::<i8>("-129"), Option::none());  
+        assert_eq!(parse_integer::<i8>("127", 10), Option::some(127i8));  
+        assert_eq!(parse_integer::<i8>("128", 10), Option::none());  
+        assert_eq!(parse_integer::<i8>("-128", 10), Option::some(-128i8));  
+        assert_eq!(parse_integer::<i8>("-129", 10), Option::none());  
         assert_eq!(
-            parse_integer::<i128>("170141183460469231731687303715884105727"),
+            parse_integer::<i128>("170141183460469231731687303715884105727", 10),
             Option::some(170141183460469231731687303715884105727i128)
         );
         assert_eq!(
-            parse_integer::<i128>("170141183460469231731687303715884105728"),
+            parse_integer::<i128>("170141183460469231731687303715884105728", 10),
             Option::none()
         );
+    }
+
+    #[test]
+    fn test_parse_integer_radix() {
+        assert_eq!(parse_integer::<u8>("ff", 16), Option::some(255u8));       
+        assert_eq!(parse_integer::<u32>("11111111111111111111111111111111", 2), Option::some(u32::max_value()));       
+        assert_eq!(parse_integer::<u32>("DeAdBeEf", 16), Option::some(3735928559u32));
+
+        assert_eq!(parse_integer::<u8>("ff", 10), Option::none());       
     }
 
     #[test]

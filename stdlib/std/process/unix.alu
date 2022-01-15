@@ -62,7 +62,7 @@ impl Child {
         defer stderr.free();
 
         if self.stdout.is_some && self.stderr.is_some {
-            try!(std::io::read_to_end_2(
+            try!(internal::read_to_end_2(
                 &self.stdout.inner,
                 &stdout,
                 &self.stderr.inner,
@@ -129,74 +129,9 @@ impl Child {
     }
 }
 
-struct IoRedirection {
-    kind: Stdio,
-    pair: Option<(Pipe, Pipe)>
-}
-
-impl IoRedirection {
-    fn new(is_stdin: bool, kind: Stdio) -> Result<IoRedirection, Error> {
-        let pair: Option<(Pipe, Pipe)> = if kind == Stdio::Piped {
-            let (rx, tx) = try!(Pipe::anonymous());
-
-            if is_stdin {
-                Option::some((tx, rx))
-            } else {
-                Option::some((rx, tx))
-            }
-        } else {
-            Option::none()
-        };
-
-        let res = IoRedirection {
-            pair: pair,
-            kind: kind
-        };
-
-        Result::ok(res)
-    }
-
-    fn close(self: &mut IoRedirection) -> Result<(), Error> {
-        if self.pair.is_some {
-            try!(self.pair.inner.0.close());
-            try!(self.pair.inner.1.close());
-        } 
-            
-        Result::ok(())
-    }
-
-    fn install(self: &mut IoRedirection, fd: libc::c_int) -> Result<(), Error> {
-        use std::io::{File, OpenOptions};
-
-        switch self.kind {
-            Stdio::Piped => {
-                let (_, tgt) = self.pair.unwrap();
-
-                errno_try!(libc::dup2(tgt.fd.value, fd));
-            },
-            Stdio::Null => {
-                let dev_zero = try!(File::open_with("/dev/null", OpenOptions::new().read(true).write(true)));
-                defer dev_zero.close();
-
-                errno_try!(std::libc::dup2(dev_zero.fd.value, fd));
-            },
-            _ => {}
-        };
-
-        Result::ok(())
-    }
-
-    fn into_inner(self: &mut IoRedirection) -> Option<Pipe> {
-        if self.pair.is_some {
-            Option::some(self.pair.inner.0.move())
-        } else {
-            Option::none()
-        }
-    }
-}
-
 impl Command {
     use io::{File, OpenOptions};
+    use internal::IoRedirection;
     use ffi::CString;
     use collections::{Vector, free_all};
 
@@ -319,6 +254,137 @@ impl Command {
                 stdout: stdout.into_inner(),
                 stderr: stderr.into_inner(),
             }))
+        }
+    }
+}
+
+mod internal {
+    use io::{Readable, AsFileDescriptor};
+    use std::io::unix::{ErrorKind, errno_try};
+    use collections::Vector;
+    
+    fn maybe_read_to_end<S1: Readable<S1>>(src: &mut S1, dst: &mut Vector<u8>) -> Result<bool, Error> {
+        let maybe_n = src.read_to_end(dst);
+        if maybe_n.is_ok {
+            Result::ok(true)
+        } else {
+            let error = maybe_n.unwrap_err();
+            let as_errno = error.as_errno();
+
+            if as_errno == Option::some(libc::EWOULDBLOCK) || 
+                as_errno == Option::some(libc::EAGAIN) {
+                Result::ok(false)
+            } else {
+                Result::err(error)
+            }
+        }
+    }
+
+    // Reads two pipes (or any other stream) into respecitve buffers at the same time. It uses
+    // poll to make sure one pipe is not blocked by the other.
+    fn read_to_end_2<
+        S1: Readable<S1> + AsFileDescriptor<S1>, 
+        S2: Readable<S2> + AsFileDescriptor<S2>, 
+    >(
+        src1: &mut S1, 
+        dst1: &mut Vector<u8>, 
+        src2: &mut S2, 
+        dst2: &mut Vector<u8>
+    ) -> result::Result<(), Error> {
+        let s1 = src1.as_fd();
+        let s2 = src2.as_fd();
+
+        s1.set_nonblocking(true);
+        s2.set_nonblocking(true);
+
+        let fds: [libc::pollfd; 2] = mem::zeroed();
+        fds[0].fd = s1.value;
+        fds[0].events = libc::POLLIN;
+        fds[1].fd = s2.value;
+        fds[1].events = libc::POLLIN;
+
+        loop {
+            errno_try!(libc::poll(&fds[0], 2, -1));
+
+            if fds[0].revents != 0 {
+                if try!(src1.maybe_read_to_end(dst1)) {
+                    try!(s2.set_nonblocking(false));
+                    return src2.read_to_end(dst2).map(util::drop::<usize>);
+                }
+            }
+
+            if fds[1].revents != 0 {
+                if try!(src2.maybe_read_to_end(dst2)) {
+                    try!(s1.set_nonblocking(false));
+                    return src1.read_to_end(dst1).map(util::drop::<usize>);
+                }
+            }
+        }
+    }
+
+    struct IoRedirection {
+        kind: Stdio,
+        pair: Option<(Pipe, Pipe)>
+    }
+    
+    impl IoRedirection {
+        fn new(is_stdin: bool, kind: Stdio) -> Result<IoRedirection, Error> {
+            let pair: Option<(Pipe, Pipe)> = if kind == Stdio::Piped {
+                let (rx, tx) = try!(Pipe::anonymous());
+    
+                if is_stdin {
+                    Option::some((tx, rx))
+                } else {
+                    Option::some((rx, tx))
+                }
+            } else {
+                Option::none()
+            };
+    
+            let res = IoRedirection {
+                pair: pair,
+                kind: kind
+            };
+    
+            Result::ok(res)
+        }
+    
+        fn close(self: &mut IoRedirection) -> Result<(), Error> {
+            if self.pair.is_some {
+                try!(self.pair.inner.0.close());
+                try!(self.pair.inner.1.close());
+            } 
+                
+            Result::ok(())
+        }
+    
+        fn install(self: &mut IoRedirection, fd: libc::c_int) -> Result<(), Error> {
+            use std::io::{File, OpenOptions};
+    
+            switch self.kind {
+                Stdio::Piped => {
+                    let (_, tgt) = self.pair.unwrap();
+    
+                    errno_try!(libc::dup2(tgt.fd.value, fd));
+                },
+                Stdio::Null => {
+                    let dev_zero = try!(File::open_with("/dev/null", OpenOptions::new().read(true).write(true)));
+                    defer dev_zero.close();
+    
+                    errno_try!(std::libc::dup2(dev_zero.fd.value, fd));
+                },
+                _ => {}
+            };
+    
+            Result::ok(())
+        }
+    
+        fn into_inner(self: &mut IoRedirection) -> Option<Pipe> {
+            if self.pair.is_some {
+                Option::some(self.pair.inner.0.move())
+            } else {
+                Option::none()
+            }
         }
     }
 }

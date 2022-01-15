@@ -90,8 +90,8 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         Self {
             ctx,
             type_writer,
-            fn_decls: String::with_capacity(10 * 1024),
-            fn_bodies: String::with_capacity(10 * 1024),
+            fn_decls: String::with_capacity(512 * 1024),
+            fn_bodies: String::with_capacity(512 * 1024),
             indent: 0,
         }
     }
@@ -425,6 +425,9 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                     w!(self.fn_bodies, "{}({})", n, self.ctx.get_type(typ));
                 }
                 CodegenIntrinsicKind::FunctionLike(n) => {
+                    w!(self.fn_bodies, "{}", n);
+                }
+                CodegenIntrinsicKind::ConstLike(n) => {
                     w!(self.fn_bodies, "{}", n);
                 }
             },

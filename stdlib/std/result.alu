@@ -87,6 +87,14 @@ impl Result<T, E> {
             Result::err(func(self.inner.err))
         }
     }
+
+    fn and_then<Tm, Em, F: proto::Callable<(T), Result<Tm, Em>>>(self: Result<T, E>, func: F) -> Result<Tm, Em> {
+        if self.is_ok {
+            func(self.inner.ok)
+        } else {
+            Result::err(self.inner.err)
+        }
+    }
 }
 
 impl Result {

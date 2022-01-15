@@ -395,6 +395,7 @@ impl<'ast> AstItemMaker<'ast> {
                         .with_span(&scope, node)?,
                     generic_count: placeholders.len(),
                     arg_count: parameters.len(),
+                    varargs: has_varargs,
                     span: Some(span),
                 });
                 symbol.assign(result);

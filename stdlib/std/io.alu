@@ -107,7 +107,6 @@ impl StringWriter {
 }
 
 protocol BufferedReadable<Self: Readable<Self>> {
-
     fn fill_buffer(self: &mut Self) -> Result<&[u8], Error>;
     fn consume(self: &mut Self, amount: usize)
 }
@@ -211,189 +210,6 @@ impl BufferedReader<R: Seekable<R>> {
     }
 
     mixin<R: Seekable<R>> Seekable<BufferedReader<R>>;
-}
-
-const DEFAULT_BUFFER_SIZE: usize = 8192;
-
-// Extension methods
-fn copy<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D) -> result::Result<u64, Error> {
-    let buf = mem::alloc::<u8>(DEFAULT_BUFFER_SIZE);
-    defer mem::free(buf);
-    
-    copy_using(src, dst, buf)
-}
-
-fn copy_using<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D, buffer: &mut [u8]) -> result::Result<u64, Error> {
-    let read = 0u64;
-    loop {
-        let n = try!(src.read(buffer));
-        read += n as u64;
-        if n == 0 {
-            break;
-        }
-        try!(dst.write_all(buffer[0..n]));
-    }
-
-    Result::ok(read)
-}
-
-fn read_to_end_2<
-    S1: Readable<S1> + AsFileDescriptor<S1>, 
-    S2: Readable<S2> + AsFileDescriptor<S2>, 
->(
-    src1: &mut S1, 
-    dst1: &mut collections::Vector<u8>, 
-    src2: &mut S2, 
-    dst2: &mut collections::Vector<u8>
-) -> result::Result<(), Error> {
-    use std::io::unix::{ErrorKind, errno_try};
-
-    let s1 = src1.as_fd();
-    let s2 = src2.as_fd();
-
-    s1.set_nonblocking(true);
-    s2.set_nonblocking(true);
-
-    let fds: [libc::pollfd; 2] = mem::zeroed();
-    fds[0].fd = s1.value;
-    fds[0].events = libc::POLLIN;
-    fds[1].fd = s2.value;
-    fds[1].events = libc::POLLIN;
-
-    loop {
-        errno_try!(libc::poll(&fds[0], 2, -1));
-
-        if fds[0].revents != 0 {
-            let maybe_n = src1.read_to_end(dst1);
-            if maybe_n.is_ok {
-                try!(s2.set_nonblocking(false));
-                return src2.read_to_end(dst2).map(util::drop::<usize>);
-            } else {
-                let error = maybe_n.unwrap_err();
-                let as_errno = error.as_errno();
-
-                if as_errno != Option::some(libc::EWOULDBLOCK) || 
-                    as_errno != Option::some(libc::EAGAIN) {
-                    return Result::err(error);
-                }
-            }
-        }
-
-        if fds[1].revents != 0 {
-            let maybe_n = src2.read_to_end(dst2);
-            if maybe_n.is_ok {
-                try!(s1.set_nonblocking(false));
-                return src1.read_to_end(dst1).map(util::drop::<usize>);
-            } else {
-                let error = maybe_n.unwrap_err();
-                let as_errno = error.as_errno();
-
-                if as_errno != Option::some(libc::EWOULDBLOCK) || 
-                    as_errno != Option::some(libc::EAGAIN) {
-                    return Result::err(error);
-                }
-            }
-        }
-    }
-
-}
-    
-
-fn read_byte<R: Readable<R>>(reader: &mut R) -> result::Result<u8, Error> {
-    let buf: [u8; 1];
-    try!(reader.read_exact(&buf));
-
-    Result::ok(buf[0])
-}
-
-fn read_until<R: BufferedReadable<R>>(r: &mut R, delim: u8, buf: &mut collections::Vector<u8>) -> result::Result<usize, Error> {
-
-    let read = 0usize;
-    loop {
-        let available = try!(r.fill_buffer());
-        let ret = internal::memchr(delim, available);
-
-        let (done, used) = if ret.is_some {
-            buf.extend_from_slice(available[..ret.inner + 1]);
-            (true, ret.inner + 1)
-        } else {
-            buf.extend_from_slice(available);
-            (false, available.len)
-        };
-
-        r.consume(used);
-        read += used;
-        if done || used == 0 {
-            return Result::ok(read);
-        }
-    }
-}
-
-struct LineIterator<R: BufferedReadable<R>> {
-    line_buf: collections::Vector<u8>,
-    reader: &mut R,
-}
-
-/// An iterator over the lines of a buffered reader. The iterator maintains an internal
-/// heap-allocated buffer of the line's contents, which is reused between lines.
-impl LineIterator<R: BufferedReadable<R>> {
-    use std::iter::Iterator;
-
-    fn with_line_buffer(reader: &mut R, line_buf: collections::Vector<u8>) -> LineIterator<R> {
-        LineIterator {
-            reader: reader,
-            line_buf: line_buf
-        }
-    }
-
-    fn with_capacity(reader: &mut R, capacity: usize) -> LineIterator<R> {
-        with_line_buffer(reader, collections::Vector::with_capacity(capacity))
-    }
-
-    fn new(reader: &mut R) -> LineIterator<R> {
-        with_capacity(reader, 0)
-    }
-
-    fn next(self: &mut LineIterator<R>) -> Option<Result<&[u8], Error>> {
-        self.line_buf.clear();
-
-        let res = self.reader.read_until('\n', &self.line_buf);
-        if !res.is_ok {
-            return Option::some(Result::err(res.unwrap_err()));
-        }
-
-        if res.unwrap() == 0 {
-            return Option::none();
-        }
-
-        if self.line_buf.last() == Option::some('\n') {
-            self.line_buf.pop();
-            if self.line_buf.last() == Option::some('\r') {
-                self.line_buf.pop();
-            }
-        }
-
-        Option::some(Result::ok(self.line_buf.as_slice()))
-    }
-
-    fn iter(self: &mut LineIterator<R>) -> &mut LineIterator<R> {
-        self
-    }
-
-    fn free(self: &mut LineIterator<R>) {
-        self.line_buf.free();
-    }
-
-    fn move(self: &mut LineIterator<R>) -> LineIterator<R> {
-        LineIterator::<R> {
-            reader: self.reader,
-            line_buf: self.line_buf.move()
-        }
-    }
-}
-
-fn lines<R: BufferedReadable<R>>(reader: &mut R) -> LineIterator<R> {
-    LineIterator::new(reader)
 }
 
 struct BufferedWriter<W: Writable<W>> {
@@ -515,6 +331,129 @@ impl BufferedWriter<W: Writable<W>> {
 }
 
 
+const DEFAULT_BUFFER_SIZE: usize = 8192;
+
+// Extension methods
+fn copy<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D) -> result::Result<u64, Error> {
+    let buf = mem::alloc::<u8>(DEFAULT_BUFFER_SIZE);
+    defer mem::free(buf);
+    
+    copy_using(src, dst, buf)
+}
+
+fn copy_using<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D, buffer: &mut [u8]) -> result::Result<u64, Error> {
+    let read = 0u64;
+    loop {
+        let n = try!(src.read(buffer));
+        read += n as u64;
+        if n == 0 {
+            break;
+        }
+        try!(dst.write_all(buffer[0..n]));
+    }
+
+    Result::ok(read)
+}    
+
+fn read_byte<R: Readable<R>>(reader: &mut R) -> result::Result<u8, Error> {
+    let buf: [u8; 1];
+    try!(reader.read_exact(&buf));
+
+    Result::ok(buf[0])
+}
+
+fn read_until<R: BufferedReadable<R>>(r: &mut R, delim: u8, buf: &mut collections::Vector<u8>) -> result::Result<usize, Error> {
+    use string::find_char;
+
+    let read = 0usize;
+    loop {
+        let available = try!(r.fill_buffer());
+        let ret = available.find_char(delim);
+
+        let (done, used) = if ret.is_some {
+            buf.extend_from_slice(available[..ret.inner + 1]);
+            (true, ret.inner + 1)
+        } else {
+            buf.extend_from_slice(available);
+            (false, available.len)
+        };
+
+        r.consume(used);
+        read += used;
+        if done || used == 0 {
+            return Result::ok(read);
+        }
+    }
+}
+
+struct LineIterator<R: BufferedReadable<R>> {
+    line_buf: collections::Vector<u8>,
+    reader: &mut R,
+}
+
+/// An iterator over the lines of a buffered reader. The iterator maintains an internal
+/// heap-allocated buffer of the line's contents, which is reused between lines.
+impl LineIterator<R: BufferedReadable<R>> {
+    use std::iter::Iterator;
+
+    fn with_line_buffer(reader: &mut R, line_buf: collections::Vector<u8>) -> LineIterator<R> {
+        LineIterator {
+            reader: reader,
+            line_buf: line_buf
+        }
+    }
+
+    fn with_capacity(reader: &mut R, capacity: usize) -> LineIterator<R> {
+        with_line_buffer(reader, collections::Vector::with_capacity(capacity))
+    }
+
+    fn new(reader: &mut R) -> LineIterator<R> {
+        with_capacity(reader, 0)
+    }
+
+    fn next(self: &mut LineIterator<R>) -> Option<Result<&[u8], Error>> {
+        self.line_buf.clear();
+
+        let res = self.reader.read_until('\n', &self.line_buf);
+        if !res.is_ok {
+            return Option::some(Result::err(res.unwrap_err()));
+        }
+
+        if res.unwrap() == 0 {
+            return Option::none();
+        }
+
+        if self.line_buf.last() == Option::some('\n') {
+            self.line_buf.pop();
+            if self.line_buf.last() == Option::some('\r') {
+                self.line_buf.pop();
+            }
+        }
+
+        Option::some(Result::ok(self.line_buf.as_slice()))
+    }
+
+    fn iter(self: &mut LineIterator<R>) -> &mut LineIterator<R> {
+        self
+    }
+
+    fn free(self: &mut LineIterator<R>) {
+        self.line_buf.free();
+    }
+
+    fn move(self: &mut LineIterator<R>) -> LineIterator<R> {
+        LineIterator::<R> {
+            reader: self.reader,
+            line_buf: self.line_buf.move()
+        }
+    }
+}
+
+fn lines<R: BufferedReadable<R>>(reader: &mut R) -> LineIterator<R> {
+    LineIterator::new(reader)
+}
+
+
 mod internal {
     fn default_read_exact<T: Readable<T>>(self: &mut T, buf: &mut [u8]) -> Result<(), Error> {
         while buf.len > 0 {
@@ -526,21 +465,6 @@ mod internal {
         }
 
         Result::ok(())
-    }
-
-
-    fn memchr(needle: u8, haystack: &[u8]) -> Option<usize> {
-        let p = libc::memchr(
-            haystack.ptr as &void,
-            needle as libc::c_int,
-            haystack.len,
-        );
-
-        if p == null {
-            Option::none()
-        } else {
-            Option::some(p as usize - (haystack.ptr as usize))
-        }
     }
 }
 

@@ -8,8 +8,9 @@ use std::{
 };
 
 use crate::{
+    ast::BuiltinType,
     common::{AluminaError, Incrementable},
-    ir::{IRItem, IRItemP},
+    ir::{IRItem, IRItemP, Ty},
 };
 use bumpalo::Bump;
 
@@ -123,6 +124,9 @@ impl Display for CName<'_> {
 pub fn codegen(items: &[IRItemP<'_>]) -> Result<String, AluminaError> {
     let ctx = CodegenCtx::new();
     let type_writer = TypeWriter::new(&ctx);
+
+    type_writer.add_type(&Ty::Builtin(BuiltinType::Void))?;
+
     let mut function_writer = FunctionWriter::new(&ctx, &type_writer);
 
     for item in items {
@@ -139,7 +143,7 @@ pub fn codegen(items: &[IRItemP<'_>]) -> Result<String, AluminaError> {
         }
     }
 
-    let mut buf = String::with_capacity(10 * 1024);
+    let mut buf = String::with_capacity(512 * 1024);
     writeln!(buf, "#include <stdint.h>").unwrap();
     writeln!(buf, "#include <stddef.h>").unwrap();
     writeln!(
