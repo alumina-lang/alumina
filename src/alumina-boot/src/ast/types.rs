@@ -75,6 +75,7 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
         {
             ItemResolution::Item(item) => match item.kind {
                 NamedItemKind::Type(ty, _, _) => self.ast.intern_type(Ty::NamedType(ty)),
+                NamedItemKind::TypeDef(ty, _, _) => self.ast.intern_type(Ty::NamedType(ty)),
                 NamedItemKind::Placeholder(ty, _) => self.ast.intern_type(Ty::Placeholder(ty)),
                 NamedItemKind::Function(ty, _, _) => self.ast.intern_type(Ty::NamedFunction(ty)),
                 NamedItemKind::Protocol(ty, _, _) => {

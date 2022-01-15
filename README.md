@@ -33,7 +33,7 @@ struct Stack<T> {
 }
 
 impl Stack {
-    use std::mem::{alloc, realloc, copy};
+    use std::mem::{alloc, realloc};
 
     fn new<T>() -> Stack<T> {
         with_capacity(0)
@@ -95,7 +95,7 @@ fn main() {
 
 # Status
 
-Bootstrap Alumina compiler ([`alumina-boot`](./src/alumina-boot)) is written in Rust and is currently actively developed. It compiles to ugly C11 code with GCC extensions. It is currently at a point where it can be considered a functional compiler, but it is not by any means stable, reliable or complete.
+Bootstrap Alumina compiler ([`alumina-boot`](./src/alumina-boot)) is written in Rust and is currently actively developed. It compiles to ugly C11 code with GCC extensions (works on Clang too). It is currently at a point where it can be considered a functional compiler, but it is not by any means stable, reliable or complete.
 
 Finished:
 
@@ -114,10 +114,9 @@ Finished:
     - random number generation
     - unit testing
 
-
 To be done:
 
-- Standard library is only usable on Unixes (Linux is best supported, some limited support for MacOS and Android)
+- Standard library is only usable on Unixes (tested on Linux, macOS and Android)
 - Probably a lot of bugs and miscompilations
 - Better error messages and warnings. Currently they are not terrible, but not great either.
 - Language and library reference and other documentation
@@ -128,15 +127,33 @@ Full list of missing features, open questions, bugs and ideas for the future in 
 
 # Try it out
 
+Just want to try it out? You can do it with Podman/Docker:
+
+```bash
+# With Podman
+alias alumina-boot='podman -v $(pwd):/workspace ghcr.io/tibordp/alumina-boot:latest'
+# With Docker
+alias alumina-boot='docker run -u $(id -u ${USER}):$(id -g ${USER}) -v $(pwd):/workspace ghcr.io/tibordp/alumina-boot:latest'
+
+alumina-boot hello_world=./examples/hello_world.alu -o hello.c
+cc hello.c -o hello
+./hello
+```
+
+Otherwise, follow the instructions to build it from source.
+
 ## Prerequisites
 
 To compile `alumina-boot` compiler from source, these prerequisites are needed:
   
   - A C compiler (GCC or Clang) and Make
   - A Rust toolchain (`rustup install stable`)
-  - Tree-sitter CLI (`npm install -g tree-sitter-cli`)
+  - Node.js and Tree-sitter CLI (`npm install -g tree-sitter-cli`)
 
-Additionally, to compile `aluminac`, Tree-sitter runtime library (`libtree-sitter.a`/`libtree-sitter.so`) is needed:
+Additionally, to compile `aluminac`, these prerequisites are needed:
+
+  - LLVM 13 shared libraries and headers (`llvm-13-dev`)
+  - Tree-sitter runtime library (`libtree-sitter.a`/`libtree-sitter.so`):
 
 ```bash
 git clone https://github.com/tree-sitter/tree-sitter

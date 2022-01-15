@@ -247,6 +247,7 @@ impl<'ir> Ty<'ir> {
             Ty::Builtin(_) => false,
             Ty::Protocol(_) => todo!(),
             Ty::NamedType(inner) => match inner.get().unwrap() {
+                IRItem::Alias(inner) => inner.is_zero_sized(),
                 IRItem::StructLike(s) => s.fields.iter().all(|f| f.ty.is_zero_sized()),
                 IRItem::Enum(e) => e.underlying_type.is_zero_sized(),
                 IRItem::Static(_) => unreachable!(),
@@ -350,6 +351,7 @@ pub struct Const<'ir> {
 #[derive(Debug)]
 pub enum IRItem<'ir> {
     StructLike(StructLike<'ir>),
+    Alias(TyP<'ir>),
     Protocol(Protocol<'ir>),
     Function(Function<'ir>),
     Enum(Enum<'ir>),
@@ -371,6 +373,13 @@ impl<'ir> IRItemCell<'ir> {
         match self.contents.get() {
             Some(item) => Ok(item),
             None => Err(CodeErrorKind::UnpopulatedSymbol),
+        }
+    }
+
+    pub fn get_alias(&'ir self) -> Option<TyP<'ir>> {
+        match self.contents.get() {
+            Some(IRItem::Alias(ty)) => Some(*ty),
+            _ => None,
         }
     }
 

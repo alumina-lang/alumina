@@ -1,0 +1,154 @@
+//! Object file reading and writing
+
+
+enum LLVMOpaqueSectionIterator {}
+
+type LLVMSectionIteratorRef = &mut LLVMOpaqueSectionIterator;
+
+enum LLVMOpaqueSymbolIterator {}
+
+type LLVMSymbolIteratorRef = &mut LLVMOpaqueSymbolIterator;
+
+enum LLVMOpaqueRelocationIterator {}
+
+type LLVMRelocationIteratorRef = &mut LLVMOpaqueRelocationIterator;
+
+enum LLVMOpaqueBinary {}
+
+type LLVMBinaryRef = &mut LLVMOpaqueBinary;
+
+enum LLVMBinaryType {
+    /// Archive file
+    LLVMBinaryTypeArchive,
+    /// Mach-O Universal Binary file
+    LLVMBinaryTypeMachOUniversalBinary,
+    /// COFF Import file
+    LLVMBinaryTypeCOFFImportFile,
+    /// LLVM IR
+    LLVMBinaryTypeIR,
+    /// Windows resource (.res) file
+    LLVMBinaryTypeWinRes,
+    /// COFF Object file
+    LLVMBinaryTypeCOFF,
+    /// ELF 32-bit, little endian
+    LLVMBinaryTypeELF32L,
+    /// ELF 32-bit, big endian
+    LLVMBinaryTypeELF32B,
+    /// ELF 64-bit, little endian
+    LLVMBinaryTypeELF64L,
+    /// ELF 64-bit, big endian
+    LLVMBinaryTypeELF64B,
+    /// MachO 32-bit, little endian
+    LLVMBinaryTypeMachO32L,
+    /// MachO 32-bit, big endian
+    LLVMBinaryTypeMachO32B,
+    /// MachO 64-bit, little endian
+    LLVMBinaryTypeMachO64L,
+    /// MachO 64-bit, big endian
+    LLVMBinaryTypeMachO64B,
+    /// Web assembly
+    LLVMBinaryTypeWasm,
+}
+
+#[deprecated(since = "LLVM 9.0")]
+enum LLVMOpaqueObjectFile {}
+
+#[allow(deprecated)]
+#[deprecated(since = "LLVM 9.0")]
+type LLVMObjectFileRef = &mut LLVMOpaqueObjectFile;
+
+/// Create a binary file from the given memory buffer.
+extern "C" fn LLVMCreateBinary(
+    MemBuf: LLVMMemoryBufferRef,
+    Context: LLVMContextRef,
+    ErrorMessage: &mut &mut libc::c_char,
+) -> LLVMBinaryRef;
+/// Dispose of a binary file
+extern "C" fn LLVMDisposeBinary(BR: LLVMBinaryRef);
+
+extern "C" fn LLVMBinaryCopyMemoryBuffer(BR: LLVMBinaryRef) -> LLVMMemoryBufferRef;
+extern "C" fn LLVMBinaryGetType(BR: LLVMBinaryRef) -> LLVMBinaryType;
+extern "C" fn LLVMMachOUniversalBinaryCopyObjectForArch(
+    BR: LLVMBinaryRef,
+    Arch: &libc::c_char,
+    ArchLen: libc::size_t,
+    ErrorMessage: &mut &mut libc::c_char,
+) -> LLVMBinaryRef;
+
+extern "C" fn LLVMObjectFileCopySectionIterator(BR: LLVMBinaryRef) -> LLVMSectionIteratorRef;
+extern "C" fn LLVMObjectFileIsSectionIteratorAtEnd(
+    BR: LLVMBinaryRef,
+    SI: LLVMSectionIteratorRef,
+) -> LLVMBool;
+extern "C" fn LLVMObjectFileCopySymbolIterator(BR: LLVMBinaryRef) -> LLVMSymbolIteratorRef;
+extern "C" fn LLVMObjectFileIsSymbolIteratorAtEnd(
+    BR: LLVMBinaryRef,
+    SI: LLVMSymbolIteratorRef,
+) -> LLVMBool;
+extern "C" fn LLVMDisposeSectionIterator(SI: LLVMSectionIteratorRef);
+
+extern "C" fn LLVMMoveToNextSection(SI: LLVMSectionIteratorRef);
+extern "C" fn LLVMMoveToContainingSection(Sect: LLVMSectionIteratorRef, Sym: LLVMSymbolIteratorRef);
+extern "C" fn LLVMDisposeSymbolIterator(SI: LLVMSymbolIteratorRef);
+extern "C" fn LLVMMoveToNextSymbol(SI: LLVMSymbolIteratorRef);
+extern "C" fn LLVMGetSectionName(SI: LLVMSectionIteratorRef) -> &libc::c_char;
+extern "C" fn LLVMGetSectionSize(SI: LLVMSectionIteratorRef) -> u64;
+extern "C" fn LLVMGetSectionContents(SI: LLVMSectionIteratorRef) -> &libc::c_char;
+extern "C" fn LLVMGetSectionAddress(SI: LLVMSectionIteratorRef) -> u64;
+extern "C" fn LLVMGetSectionContainsSymbol(
+    SI: LLVMSectionIteratorRef,
+    Sym: LLVMSymbolIteratorRef,
+) -> LLVMBool;
+extern "C" fn LLVMGetRelocations(Section: LLVMSectionIteratorRef) -> LLVMRelocationIteratorRef;
+extern "C" fn LLVMDisposeRelocationIterator(RI: LLVMRelocationIteratorRef);
+extern "C" fn LLVMIsRelocationIteratorAtEnd(
+    Section: LLVMSectionIteratorRef,
+    RI: LLVMRelocationIteratorRef,
+) -> LLVMBool;
+extern "C" fn LLVMMoveToNextRelocation(RI: LLVMRelocationIteratorRef);
+extern "C" fn LLVMGetSymbolName(SI: LLVMSymbolIteratorRef) -> &libc::c_char;
+extern "C" fn LLVMGetSymbolAddress(SI: LLVMSymbolIteratorRef) -> u64;
+extern "C" fn LLVMGetSymbolSize(SI: LLVMSymbolIteratorRef) -> u64;
+extern "C" fn LLVMGetRelocationOffset(RI: LLVMRelocationIteratorRef) -> u64;
+extern "C" fn LLVMGetRelocationSymbol(RI: LLVMRelocationIteratorRef) -> LLVMSymbolIteratorRef;
+extern "C" fn LLVMGetRelocationType(RI: LLVMRelocationIteratorRef) -> u64;
+extern "C" fn LLVMGetRelocationTypeName(RI: LLVMRelocationIteratorRef) -> &libc::c_char;
+extern "C" fn LLVMGetRelocationValueString(RI: LLVMRelocationIteratorRef) -> &libc::c_char;
+
+#[allow(deprecated)]
+#[deprecated(since = "LLVM 9.0", note = "Use LLVMCreateBinary instead")]
+extern "C" fn LLVMCreateObjectFile(MemBuf: LLVMMemoryBufferRef) -> LLVMObjectFileRef;
+#[allow(deprecated)]
+#[deprecated(since = "LLVM 9.0", note = "Use LLVMDisposeBinary instead")]
+extern "C" fn LLVMDisposeObjectFile(ObjectFile: LLVMObjectFileRef);
+#[allow(deprecated)]
+#[deprecated(
+    since = "LLVM 9.0",
+    note = "Use LLVMObjectFileCopySectionIterator instead"
+)]
+extern "C" fn LLVMGetSections(ObjectFile: LLVMObjectFileRef) -> LLVMSectionIteratorRef;
+#[allow(deprecated)]
+#[deprecated(
+    since = "LLVM 9.0",
+    note = "Use LLVMObjectFileIsSectionIteratorAtEnd instead"
+)]
+extern "C" fn LLVMIsSectionIteratorAtEnd(
+    ObjectFile: LLVMObjectFileRef,
+    SI: LLVMSectionIteratorRef,
+) -> LLVMBool;
+#[allow(deprecated)]
+#[deprecated(
+    since = "LLVM 9.0",
+    note = "Use LLVMObjectFileCopySymbolIterator instead"
+)]
+extern "C" fn LLVMGetSymbols(ObjectFile: LLVMObjectFileRef) -> LLVMSymbolIteratorRef;
+#[allow(deprecated)]
+#[deprecated(
+    since = "LLVM 9.0",
+    note = "Use LLVMObjectFileIsSymbolIteratorAtEnd instead"
+)]
+extern "C" fn LLVMIsSymbolIteratorAtEnd(
+    ObjectFile: LLVMObjectFileRef,
+    SI: LLVMSymbolIteratorRef,
+) -> LLVMBool;
+

@@ -14,7 +14,7 @@ use crate::{
 use super::{
     expressions::ExpressionVisitor, macros::MacroMaker, types::TypeVisitor, AssociatedFn,
     Attribute, Enum, EnumMember, Intrinsic, Mixin, MixinCell, Placeholder, Protocol, Span,
-    StaticOrConst,
+    StaticOrConst, TypeDef,
 };
 
 pub struct AstItemMaker<'ast> {
@@ -317,6 +317,43 @@ impl<'ast> AstItemMaker<'ast> {
         Ok(())
     }
 
+    fn make_typedef<'src>(
+        &mut self,
+        name: Option<&'ast str>,
+        symbol: ItemP<'ast>,
+        node: tree_sitter::Node<'src>,
+        scope: Scope<'ast, 'src>,
+        attributes: &'ast [Attribute],
+    ) -> Result<(), AluminaError> {
+        let placeholders = self.get_placeholders(&scope)?;
+
+        let span = Span {
+            start: node.start_byte(),
+            end: node.end_byte(),
+            file: scope.code().unwrap().file_id(),
+        };
+
+        let target = node
+            .child_by_field_name("inner")
+            .map(|n| TypeVisitor::new(self.ast, scope.clone(), self.in_a_macro).visit(n))
+            .transpose()?
+            .unwrap();
+
+        let result = Item::TypeDef(TypeDef {
+            name,
+            placeholders,
+            target,
+            span: Some(span),
+            attributes,
+        });
+
+        symbol.assign(result);
+
+        self.symbols.push(symbol);
+
+        Ok(())
+    }
+
     fn make_function<'src>(
         &mut self,
         name: Option<&'ast str>,
@@ -571,6 +608,12 @@ impl<'ast> AstItemMaker<'ast> {
                     &impl_scopes[..],
                     attributes,
                 )?;
+            }
+            [NI {
+                kind: TypeDef(symbol, node, scope),
+                attributes,
+            }] => {
+                self.make_typedef(name, *symbol, *node, scope.clone(), attributes)?;
             }
             [NI {
                 kind: Protocol(symbol, node, scope),

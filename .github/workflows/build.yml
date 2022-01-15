@@ -51,6 +51,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
+      - run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 13
+
       - name: Install Tree-sitter (with runtime)
         run: |
           npm install -g tree-sitter-cli
@@ -62,3 +67,9 @@ jobs:
 
       - name: Build aluminac
         run: make -j8
+  docker:
+    name: Build docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - run: docker build .

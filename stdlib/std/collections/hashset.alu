@@ -3,10 +3,6 @@ use std::option::{Option, try};
 use std::iter::{Iterator, Iterable};
 use std::cmp::Equatable;
 
-struct HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
-    _inner: hashmap::HashMap<K, (), H>
-}
-
 struct HashSetIterator<K> {
     inner: hashmap::HashMapIterator<K, ()>
 }
@@ -16,6 +12,12 @@ impl HashSetIterator<K> {
         let elem = try!(self.inner.next());
         Option::some(elem.0)
     }
+
+    mixin<K> iter::Iterator<HashSetIterator<K>, K>;
+}
+
+struct HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
+    _inner: hashmap::HashMap<K, (), H>
 }
 
 impl HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
@@ -27,6 +29,16 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
         HashSet::<K, H> {
             _inner: hashmap::HashMap::with_capacity::<K, (), H>(capacity)
         }
+    }
+
+    #[inline]
+    fn reserve(self: &mut HashSet<K, H>, additional: usize) {
+        self._inner.reserve(additional);
+    }
+
+    #[inline]
+    fn rehash(self: &mut HashSet<K, H>, new_capacity: usize) {
+        self._inner.rehash(new_capacity);
     }
 
     #[inline]

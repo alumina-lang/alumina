@@ -1,0 +1,128 @@
+//! Remark diagnostics library.
+
+enum LLVMRemarkType {
+    LLVMRemarkTypeUnknown,
+    LLVMRemarkTypePassed,
+    LLVMRemarkTypeMissed,
+    LLVMRemarkTypeAnalysis,
+    LLVMRemarkTypeAnalysisFPCommute,
+    LLVMRemarkTypeAnalysisAliasing,
+    LLVMRemarkTypeFailure,
+}
+
+enum LLVMRemarkOpaqueString {}
+
+/// String containing a buffer and a length. The buffer is not guaranteed to be zero-terminated.
+type LLVMRemarkStringRef = &mut LLVMRemarkOpaqueString;
+
+
+/// Returns the buffer holding the string.
+extern "C" fn LLVMRemarkStringGetData(String: LLVMRemarkStringRef) -> &libc::c_char;
+
+/// Returns the size of the string.
+extern "C" fn LLVMRemarkStringGetLen(String: LLVMRemarkStringRef) -> u32;
+
+
+enum LLVMRemarkOpaqueDebugLoc {}
+
+/// DebugLoc containing File, Line and Column.
+type LLVMRemarkDebugLocRef = &mut LLVMRemarkOpaqueDebugLoc;
+
+/// Return the path to the source file for a debug location.
+extern "C" fn LLVMRemarkDebugLocGetSourceFilePath(DL: LLVMRemarkDebugLocRef) -> LLVMRemarkStringRef;
+
+/// Return the line in the source file for a debug location.
+extern "C" fn LLVMRemarkDebugLocGetSourceLine(DL: LLVMRemarkDebugLocRef) -> u32;
+
+/// Return the column in the source file for a debug location.
+extern "C" fn LLVMRemarkDebugLocGetSourceColumn(DL: LLVMRemarkDebugLocRef) -> u32;
+
+enum LLVMRemarkOpaqueArg {}
+
+/// Element of the "Args" list. The key might give more information about what
+/// the semantics of the value are, e.g. "Callee" will tell you that the value
+/// is a symbol that names a function.
+type LLVMRemarkArgRef = &mut LLVMRemarkOpaqueArg;
+
+
+/// Returns the key of an argument. The key defines what the value is, and the
+/// same key can appear multiple times in the list of arguments.
+extern "C" fn LLVMRemarkArgGetKey(Arg: LLVMRemarkArgRef) -> LLVMRemarkStringRef;
+
+/// Returns the value of an argument. This is a string that can contain newlines.
+extern "C" fn LLVMRemarkArgGetValue(Arg: LLVMRemarkArgRef) -> LLVMRemarkStringRef;
+
+/// Returns the debug location that is attached to the value of this argument.
+extern "C" fn LLVMRemarkArgGetDebugLoc(Arg: LLVMRemarkArgRef) -> LLVMRemarkDebugLocRef;
+
+
+enum LLVMRemarkOpaqueEntry {}
+/// A remark emitted by the compiler.
+type LLVMRemarkEntryRef = &mut LLVMRemarkOpaqueEntry;
+
+
+    /// Free the resources used by the remark entry.
+extern "C" fn LLVMRemarkEntryDispose(Remark: LLVMRemarkEntryRef);
+
+/// The type of the remark. For example, it can allow users to only keep the
+/// missed optimizations from the compiler.
+extern "C" fn LLVMRemarkEntryGetType(Remark: LLVMRemarkEntryRef) -> LLVMRemarkType;
+
+/// Get the name of the pass that emitted this remark.
+extern "C" fn LLVMRemarkEntryGetPassName(Remark: LLVMRemarkEntryRef) -> LLVMRemarkStringRef;
+
+/// Get an identifier of the remark.
+extern "C" fn LLVMRemarkEntryGetRemarkName(Remark: LLVMRemarkEntryRef) -> LLVMRemarkStringRef;
+
+/// Get the name of the function being processed when the remark was emitted.
+extern "C" fn LLVMRemarkEntryGetFunctionName(Remark: LLVMRemarkEntryRef) -> LLVMRemarkStringRef;
+
+/// Returns the debug location that is attached to this remark.
+extern "C" fn LLVMRemarkEntryGetDebugLoc(Remark: LLVMRemarkEntryRef) -> LLVMRemarkDebugLocRef;
+
+/// Return the hotness of the remark.
+extern "C" fn LLVMRemarkEntryGetHotness(Remark: LLVMRemarkEntryRef) -> u64;
+
+/// The number of arguments the remark holds.
+extern "C" fn LLVMRemarkEntryGetNumArgs(Remark: LLVMRemarkEntryRef) -> u32;
+
+/// Get a new iterator to iterate over a remark's argument.
+extern "C" fn LLVMRemarkEntryGetFirstArg(Remark: LLVMRemarkEntryRef) -> LLVMRemarkArgRef;
+
+/// Get the next argument in Remark from the position of It.
+extern "C" fn LLVMRemarkEntryGetNextArg(
+    It: LLVMRemarkArgRef,
+    Remark: LLVMRemarkEntryRef,
+) -> LLVMRemarkArgRef;
+
+
+enum LLVMRemarkOpaqueParser {}
+type LLVMRemarkParserRef = &mut LLVMRemarkOpaqueParser;
+
+/// Creates a remark parser that can be used to parse the buffer located in
+/// Buf of size Size bytes.
+extern "C" fn LLVMRemarkParserCreateYAML(Buf: &void, Size: u64)
+    -> LLVMRemarkParserRef;
+
+extern "C" fn LLVMRemarkParserCreateBitstream(
+    Buf: &void,
+    Size: u64,
+) -> LLVMRemarkParserRef;
+
+/// Returns the next remark in the file.
+extern "C" fn LLVMRemarkParserGetNext(Parser: LLVMRemarkParserRef) -> LLVMRemarkEntryRef;
+
+/// Returns `1` if the parser encountered an error while parsing the buffer.
+extern "C" fn LLVMRemarkParserHasError(Parser: LLVMRemarkParserRef) -> LLVMBool;
+
+/// Returns a null-terminated string containing an error message.
+extern "C" fn LLVMRemarkParserGetErrorMessage(Parser: LLVMRemarkParserRef) -> &libc::c_char;
+
+extern "C" fn LLVMRemarkParserDispose(Parser: LLVMRemarkParserRef);
+
+
+const REMARKS_API_VERSION: u32 = 1;
+
+/// Returns the version of the remarks library.
+extern "C" fn LLVMRemarkVersion() -> u32;
+

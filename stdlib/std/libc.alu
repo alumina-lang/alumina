@@ -1,156 +1,156 @@
 // "FFI" interfaces to libc. It assumes glibc on Linux
 // Mostly copied/adapted from Rust's libc crate (https://github.com/rust-lang/libc)
 
-use i8 as c_schar;
-use u8 as c_uchar;
-use i16 as c_short;
-use u16 as c_ushort;
-use i32 as c_int;
-use u32 as c_uint;
-use f32 as c_float;
-use f64 as c_double;
-use i64 as c_longlong;
-use u64 as c_ulonglong;
-use i64 as intmax_t;
-use u64 as uintmax_t;
-use usize as size_t;
-use isize as ptrdiff_t;
-use isize as intptr_t;
-use usize as uintptr_t;
-use isize as ssize_t;
+type c_schar = i8;
+type c_uchar = u8;
+type c_short = i16;
+type c_ushort = u16;
+type c_int = i32;
+type c_uint = u32;
+type c_float = f32;
+type c_double = f64;
+type c_longlong = i64;
+type c_ulonglong = u64;
+type intmax_t = i64;
+type uintmax_t = u64;
+type size_t = usize;
+type ptrdiff_t = isize;
+type intptr_t = isize;
+type uintptr_t = usize;
+type ssize_t = isize;
 
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
 {
-    use i32 as pid_t;
-    use u32 as uid_t;
-    use u32 as gid_t;
-    use u32 as in_addr_t;
-    use u16 as in_port_t;
-    use isize as sighandler_t;
+    type pid_t = i32;
+    type uid_t = u32;
+    type gid_t = u32;
+    type in_addr_t = u32;
+    type in_port_t = u16;
+    type sighandler_t = isize;
 }
 #[cfg(any(target_os="linux", target_os="android"))]
 {
-    use c_int as clockid_t;
-    use i64 as off64_t;
+    type clockid_t = c_int;
+    type off64_t = i64;
 }
 
 #[cfg(target_os="macos")]
 {
-    use i8 as c_char;
-    use i32 as wchar_t;
-    use c_ulong as clock_t;
-    use c_long as time_t;
-    use u16 as mode_t;
-    use i64 as c_long;
-    use u64 as c_ulong;
-    use c_uint as clockid_t;
-    use i64 as off_t;
-    use c_uint as nfds_t;
-    use u32 as socklen_t;
-    use u8 as sa_family_t;
+    type c_char = i8;
+    type wchar_t = i32;
+    type clock_t = c_ulong;
+    type time_t = c_long;
+    type mode_t = u16;
+    type c_long = i64;
+    type c_ulong = u64;
+    type clockid_t = c_uint;
+    type off_t = i64;
+    type nfds_t = c_uint;
+    type socklen_t = u32;
+    type sa_family_t = u8;
 }
 
 #[cfg(target_os="android")]
 {
-    use u8 as c_char;
-    use u32 as wchar_t;
-    use i64 as c_long;
-    use u64 as c_ulong;
-    use u32 as mode_t;
-    use c_long as clock_t;
-    use c_long as time_t;
-    use c_long as off_t;
-    use c_uint as nfds_t;
+    type c_char = u8;
+    type wchar_t = u32;
+    type c_long = i64;
+    type c_ulong = u64;
+    type mode_t = u32;
+    type clock_t = c_long;
+    type time_t = c_long;
+    type off_t = c_long;
+    type nfds_t = c_uint;
 
     #[cfg(target_pointer_width = "32")]
-    use i32 as socklen_t;
+    type socklen_t = i32;
     
     #[cfg(target_pointer_width = "64")]
-    use u32 as socklen_t;
+    type socklen_t = u32;
 }
 
 #[cfg(target_os="linux")]
 {
     #[cfg(target_pointer_width = "32")]
-    use i64 as off_t;
+    type off_t = i64;
     
     #[cfg(target_pointer_width = "64")]
-    use i32 as off_t;
+    type off_t = i32;
 
     #[cfg(target_arch = "x86")]
     {
-        use i32 as c_long;
-        use u32 as c_ulong;
-        use i8 as c_char;
-        use i32 as wchar_t;
-        use i32 as clock_t;
-        use i32 as time_t;
+        type c_long = i32;
+        type c_ulong = u32;
+        type c_char = i8;
+        type wchar_t = i32;
+        type clock_t = i32;
+        type time_t = i32;
     }
 
     #[cfg(target_arch = "arm")]
     {
-        use i32 as c_long;
-        use u32 as c_ulong;
-        use u8 as c_char;
-        use u32 as wchar_t;
-        use i32 as clock_t;
-        use i32 as time_t;
+        type c_long = i32;
+        type c_ulong = u32;
+        type c_char = u8;
+        type wchar_t = u32;
+        type clock_t = i32;
+        type time_t = i32;
     }
 
     #[cfg(target_arch = "x86_64")]
     {
-        use i8 as c_char;
-        use i32 as wchar_t;
-        use i64 as clock_t;
-        use i64 as time_t;
+        type c_char = i8;
+        type wchar_t = i32;
+        type clock_t = i64;
+        type time_t = i64;
 
         #[cfg(target_pointer_width = "32")]
         {
-            use i32 as c_long;
-            use u32 as c_ulong;
+            type c_long = i32;
+            type c_ulong = u32;
         }
 
         #[cfg(not(target_pointer_width = "32"))]
         {
-            use i64 as c_long;
-            use u64 as c_ulong;
+            type c_long = i64;
+            type c_ulong = u64;
         }
     }
 
     #[cfg(target_arch = "aarch64")]
     {
-        use u8 as c_char;
-        use u32 as wchar_t;
+        type c_char = u8;
+        type wchar_t = u32;
 
         #[cfg(target_pointer_width = "32")]
         {
-            use i32 as c_long;
-            use u32 as c_ulong;
-            use i32 as clock_t;
-            use i32 as time_t;
+            type c_long = i32;
+            type c_ulong = u32;
+            type clock_t = i32;
+            type time_t = i32;
         }
 
         #[cfg(not(target_pointer_width = "32"))]
         {
-            use i64 as c_long;
-            use u64 as c_ulong;
-            use i64 as clock_t;
-            use i64 as time_t;
+            type c_long = i64;
+            type c_ulong = u64;
+            type clock_t = i64;
+            type time_t = i64;
         }
     }
 
-    use u32 as mode_t;
-    use u32 as socklen_t;
-    use c_ulong as nfds_t;
-    use u16 as sa_family_t;
+    type mode_t = u32;
+    type socklen_t = u32;
+    type nfds_t = c_ulong;
+    type sa_family_t = u16;
 }
 
 #[cfg(target_os="windows")]
 {
-    use i8 as c_char;
-    use i32 as c_long;
-    use u32 as c_ulong;
-    use u16 as wchar_t;
+    type c_char = i8;
+    type c_long = i32;
+    type c_ulong = u32;
+    type wchar_t = u16;
 }
 
 

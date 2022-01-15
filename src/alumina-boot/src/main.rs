@@ -66,7 +66,7 @@ struct Args {
     output: Option<String>,
 
     /// Path to the standard library
-    #[clap(long)]
+    #[clap(long, env = "ALUMINA_SYSROOT")]
     sysroot: PathBuf,
 
     /// Modules to compile (use 'module::name=filename.alu' syntax). If output type is executable,

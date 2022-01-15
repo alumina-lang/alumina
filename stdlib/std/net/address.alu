@@ -82,7 +82,7 @@ impl Ipv6Addr {
 
     fn parse(s: &[u8]) -> Option<Ipv6Addr> {
         use option::try;
-        use string::{split, parse_integer};
+        use string::split;
         use mem::copy_nonoverlapping;;
         use collections::Vector
         use internal::ipv6_parse_part;
@@ -236,16 +236,14 @@ impl Ipv4Addr {
 
     fn parse(s: &[u8]) -> Option<Ipv4Addr> {
         use option::try;
-        use string::{split, parse_integer};
+        use string::split;
         use collections::Vector
 
-        let parse_byte = |s: &[u8]| -> Option<u8> { parse_integer::<u8>(s, 10) };
-
         let segments = s.split(".");
-        let a = try!(segments.next().and_then(parse_byte));
-        let b = try!(segments.next().and_then(parse_byte));
-        let c = try!(segments.next().and_then(parse_byte));
-        let d = try!(segments.next().and_then(parse_byte));
+        let a = try!(segments.next().and_then(u8::parse));
+        let b = try!(segments.next().and_then(u8::parse));
+        let c = try!(segments.next().and_then(u8::parse));
+        let d = try!(segments.next().and_then(u8::parse));
 
         if segments.next().is_some {
             return Option::none();
@@ -394,7 +392,7 @@ impl SocketAddr {
 
     fn parse(s: &[u8]) -> Option<SocketAddr> {
         use option::try;
-        use string::{split, starts_with, ends_with, parse_integer, contains};
+        use string::{split, starts_with, ends_with, contains};
 
         let i = s.len;
         let split_at = loop {
@@ -408,7 +406,7 @@ impl SocketAddr {
             }
         };
 
-        let port = try!(parse_integer::<u16>(s[i + 1..], 10));
+        let port = try!(u16::parse(s[i + 1..]));
 
         s = s[..split_at];
         let ret = if s.starts_with("[") && s.ends_with("]") {
@@ -419,7 +417,7 @@ impl SocketAddr {
             
             let remainder = segments.next();
             let scope_id = if remainder.is_some {
-                try!(parse_integer::<u32>(remainder.inner, 10))
+                try!(u32::parse(remainder.inner))
             } else {
                 0
             };
@@ -465,7 +463,7 @@ mod internal {
     /// Parses A or B for IPv6 addresses in "A::B" format
     fn ipv6_parse_part(s: &[u8], allow_ipv4: bool) -> Option<([u16; 8], usize)> {
         use option::try;
-        use string::{split, parse_integer};
+        use string::split;
         let segments = s.split(":");
         
         let result: [u16; 8] = mem::zeroed();
@@ -483,7 +481,7 @@ mod internal {
             }
 
             let segment = segment.inner;
-            let val = parse_integer::<u16>(segment, 16);
+            let val = u16::parse_with_radix(segment, 16);
             if val.is_some {
                 result[len] = val.inner;
                 len += 1;

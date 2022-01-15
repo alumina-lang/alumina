@@ -19,6 +19,7 @@ use super::path::{Path, PathSegment};
 pub enum NamedItemKind<'ast, 'src> {
     Alias(Path<'ast>),
     Function(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
+    TypeDef(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
     Static(ItemP<'ast>, Node<'src>),
     Const(ItemP<'ast>, Node<'src>),
     Macro(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
@@ -48,6 +49,7 @@ impl Display for NamedItemKind<'_, '_> {
             NamedItemKind::Mixin(_, _) => write!(f, "mixin"),
             NamedItemKind::Module(_) => write!(f, "module"),
             NamedItemKind::Protocol(_, _, _) => write!(f, "protocol"),
+            NamedItemKind::TypeDef(_, _, _) => write!(f, "typedef"),
             NamedItemKind::Impl(_, _) => write!(f, "impl"),
             NamedItemKind::Placeholder(_, _) => write!(f, "placeholder"),
             NamedItemKind::Field(_) => write!(f, "field"),
