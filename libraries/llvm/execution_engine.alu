@@ -1,0 +1,202 @@
+//! Runtime code generation and execution.
+
+use target::LLVMTargetDataRef;
+use target_machine::{LLVMCodeModel, LLVMTargetMachineRef};
+
+enum LLVMOpaqueGenericValue {}
+
+enum LLVMOpaqueExecutionEngine {}
+
+enum LLVMOpaqueMCJITMemoryManager {}
+
+type LLVMGenericValueRef = &mut LLVMOpaqueGenericValue;
+type LLVMExecutionEngineRef = &mut LLVMOpaqueExecutionEngine;
+type LLVMMCJITMemoryManagerRef = &mut LLVMOpaqueMCJITMemoryManager;
+
+#[allow(non_snake_case)]
+struct LLVMMCJITCompilerOptions {
+    OptLevel: libc::c_uint,
+    CodeModel: LLVMCodeModel,
+    NoFramePointerElim: LLVMBool,
+    EnableFastISel: LLVMBool,
+    MCJMM: LLVMMCJITMemoryManagerRef,
+}
+
+type LLVMMemoryManagerAllocateCodeSectionCallback = fn(
+    &mut void,
+    libc::uintptr_t,
+    libc::c_uint,
+    libc::c_uint,
+    &libc::c_char,
+) -> &mut u8;
+type LLVMMemoryManagerAllocateDataSectionCallback = fn(
+    &mut void,
+    libc::uintptr_t,
+    libc::c_uint,
+    libc::c_uint,
+    &libc::c_char,
+    LLVMBool,
+) -> &mut u8;
+type LLVMMemoryManagerFinalizeMemoryCallback = fn(&mut void, &mut &mut libc::c_char) -> LLVMBool;
+type LLVMMemoryManagerDestroyCallback = fn(&mut void);
+
+extern "C" fn LLVMLinkInMCJIT();
+extern "C" fn LLVMLinkInInterpreter();
+
+// Operations on generic values
+extern "C" fn LLVMCreateGenericValueOfInt(
+    Ty: LLVMTypeRef,
+    N: libc::c_ulonglong,
+    IsSigned: LLVMBool,
+) -> LLVMGenericValueRef;
+extern "C" fn LLVMCreateGenericValueOfPointer(P: &mut void) -> LLVMGenericValueRef;
+extern "C" fn LLVMCreateGenericValueOfFloat(
+    Ty: LLVMTypeRef,
+    N: libc::c_double,
+) -> LLVMGenericValueRef;
+extern "C" fn LLVMGenericValueIntWidth(GenValRef: LLVMGenericValueRef) -> libc::c_uint;
+extern "C" fn LLVMGenericValueToInt(
+    GenVal: LLVMGenericValueRef,
+    IsSigned: LLVMBool,
+) -> libc::c_ulonglong;
+extern "C" fn LLVMGenericValueToPointer(GenVal: LLVMGenericValueRef) -> &mut void;
+extern "C" fn LLVMGenericValueToFloat(
+    TyRef: LLVMTypeRef,
+    GenVal: LLVMGenericValueRef,
+) -> libc::c_double;
+extern "C" fn LLVMDisposeGenericValue(GenVal: LLVMGenericValueRef);
+
+// Operations on execution engines
+extern "C" fn LLVMCreateExecutionEngineForModule(
+    OutEE: &mut LLVMExecutionEngineRef,
+    M: LLVMModuleRef,
+    OutError: &mut &mut libc::c_char,
+) -> LLVMBool;
+extern "C" fn LLVMCreateInterpreterForModule(
+    OutInterp: &mut LLVMExecutionEngineRef,
+    M: LLVMModuleRef,
+    OutError: &mut &mut libc::c_char,
+) -> LLVMBool;
+extern "C" fn LLVMCreateJITCompilerForModule(
+    OutJIT: &mut LLVMExecutionEngineRef,
+    M: LLVMModuleRef,
+    OptLevel: libc::c_uint,
+    OutError: &mut &mut libc::c_char,
+) -> LLVMBool;
+extern "C" fn LLVMInitializeMCJITCompilerOptions(
+    Options: &mut LLVMMCJITCompilerOptions,
+    SizeOfOptions: libc::size_t,
+);
+
+/// Create an MCJIT execution engine for a module, with the given options.
+///
+/// It is
+/// the responsibility of the caller to ensure that all fields in Options up to
+/// the given SizeOfOptions are initialized. It is correct to pass a smaller
+/// value of SizeOfOptions that omits some fields. The canonical way of using
+/// this is:
+///
+/// ```c++
+/// LLVMMCJITCompilerOptions options;
+/// LLVMInitializeMCJITCompilerOptions(&options, sizeof(options));
+/// // ... fill in those options you care about
+/// LLVMCreateMCJITCompilerForModule(&jit, mod, &options, sizeof(options),
+///                                  &error);
+/// ```
+///
+/// Note that this is also correct, though possibly suboptimal:
+///
+/// ```c++
+/// LLVMCreateMCJITCompilerForModule(&jit, mod, 0, 0, &error);
+/// ```
+///
+/// 0 is returned on success, or 1 on failure.
+extern "C" fn LLVMCreateMCJITCompilerForModule(
+    OutJIT: &mut LLVMExecutionEngineRef,
+    M: LLVMModuleRef,
+    Options: &mut LLVMMCJITCompilerOptions,
+    SizeOfOptions: libc::size_t,
+    OutError: &mut &mut libc::c_char,
+) -> LLVMBool;
+
+extern "C" fn LLVMDisposeExecutionEngine(EE: LLVMExecutionEngineRef);
+extern "C" fn LLVMRunStaticConstructors(EE: LLVMExecutionEngineRef);
+extern "C" fn LLVMRunStaticDestructors(EE: LLVMExecutionEngineRef);
+extern "C" fn LLVMRunFunctionAsMain(
+    EE: LLVMExecutionEngineRef,
+    F: LLVMValueRef,
+    ArgC: libc::c_uint,
+    ArgV: &&libc::c_char,
+    EnvP: &&libc::c_char,
+) -> libc::c_int;
+extern "C" fn LLVMRunFunction(
+    EE: LLVMExecutionEngineRef,
+    F: LLVMValueRef,
+    NumArgs: libc::c_uint,
+    Args: &mut LLVMGenericValueRef,
+) -> LLVMGenericValueRef;
+extern "C" fn LLVMFreeMachineCodeForFunction(EE: LLVMExecutionEngineRef, F: LLVMValueRef);
+extern "C" fn LLVMAddModule(EE: LLVMExecutionEngineRef, M: LLVMModuleRef);
+extern "C" fn LLVMRemoveModule(
+    EE: LLVMExecutionEngineRef,
+    M: LLVMModuleRef,
+    OutMod: &mut LLVMModuleRef,
+    OutError: &mut &mut libc::c_char,
+) -> LLVMBool;
+extern "C" fn LLVMFindFunction(
+    EE: LLVMExecutionEngineRef,
+    Name: &libc::c_char,
+    OutFn: &mut LLVMValueRef,
+) -> LLVMBool;
+extern "C" fn LLVMRecompileAndRelinkFunction(
+    EE: LLVMExecutionEngineRef,
+    Fn: LLVMValueRef,
+) -> &mut void;
+extern "C" fn LLVMGetExecutionEngineTargetData(EE: LLVMExecutionEngineRef) -> LLVMTargetDataRef;
+extern "C" fn LLVMGetExecutionEngineTargetMachine(EE: LLVMExecutionEngineRef) -> LLVMTargetMachineRef;
+extern "C" fn LLVMAddGlobalMapping(
+    EE: LLVMExecutionEngineRef,
+    Global: LLVMValueRef,
+    Addr: &mut void,
+);
+extern "C" fn LLVMGetPointerToGlobal(
+    EE: LLVMExecutionEngineRef,
+    Global: LLVMValueRef,
+) -> &mut void;
+extern "C" fn LLVMGetGlobalValueAddress(
+    EE: LLVMExecutionEngineRef,
+    Name: &libc::c_char,
+) -> u64;
+extern "C" fn LLVMGetFunctionAddress(EE: LLVMExecutionEngineRef, Name: &libc::c_char) -> u64;
+
+extern "C" fn LLVMExecutionEngineGetErrMsg(
+    EE: LLVMExecutionEngineRef,
+    OutError: &mut &mut libc::c_char,
+) -> LLVMBool;
+
+// Operations on memory managers
+// Create a simple custom MCJIT memory manager.
+//
+// This memory manager can intercept allocations in a module-oblivious way. It will
+// return NULL if any of the passed functions are NULL.
+//
+// `AllocateCodeSection` and `AllocateDataSection` are called to allocate blocks
+// of memory for executable code and data, respectively. `FinalizeMemory` is called
+// to set page permissions and flush caches, returning 0 on success and 1 on error.
+//
+// `Opaque` will be passed to the callbacks.
+extern "C" fn LLVMCreateSimpleMCJITMemoryManager(
+    Opaque: &mut void,
+    AllocateCodeSection: LLVMMemoryManagerAllocateCodeSectionCallback,
+    AllocateDataSection: LLVMMemoryManagerAllocateDataSectionCallback,
+    FinalizeMemory: LLVMMemoryManagerFinalizeMemoryCallback,
+    Destroy: LLVMMemoryManagerDestroyCallback,
+) -> LLVMMCJITMemoryManagerRef;
+
+extern "C" fn LLVMDisposeMCJITMemoryManager(MM: LLVMMCJITMemoryManagerRef);
+
+// JIT event listener functions
+extern "C" fn LLVMCreateGDBRegistrationListener() -> LLVMJITEventListenerRef;
+extern "C" fn LLVMCreateIntelJITEventListener() -> LLVMJITEventListenerRef;
+extern "C" fn LLVMCreateOProfileJITEventListener() -> LLVMJITEventListenerRef;
+extern "C" fn LLVMCreatePerfJITEventListener() -> LLVMJITEventListenerRef;

@@ -1,0 +1,69 @@
+use error::LLVMErrorRef;
+
+type LLVMOrcLLJITBuilderObjectLinkingLayerCreatorFunction =
+    fn(
+        &mut void,
+        LLVMOrcExecutionSessionRef,
+        &libc::c_char,
+    ) -> LLVMOrcObjectLayerRef;
+
+enum LLVMOrcOpaqueLLJITBuilder {}
+type LLVMOrcLLJITBuilderRef = &mut LLVMOrcOpaqueLLJITBuilder;
+
+enum LLVMOrcOpaqueLLJIT {}
+type LLVMOrcLLJITRef = &mut LLVMOrcOpaqueLLJIT;
+
+extern "C" fn LLVMOrcCreateLLJITBuilder() -> LLVMOrcLLJITBuilderRef;
+extern "C" fn LLVMOrcDisposeLLJITBuilder(Builder: LLVMOrcLLJITBuilderRef);
+extern "C" fn LLVMOrcLLJITBuilderSetJITTargetMachineBuilder(
+    Builder: LLVMOrcLLJITBuilderRef,
+    JTMB: LLVMOrcJITTargetMachineBuilderRef,
+);
+extern "C" fn LLVMOrcLLJITBuilderSetObjectLinkingLayerCreator(
+    Builder: LLVMOrcLLJITBuilderRef,
+    F: LLVMOrcLLJITBuilderObjectLinkingLayerCreatorFunction,
+    Ctx: &mut void,
+);
+extern "C" fn LLVMOrcCreateLLJIT(
+    Result: &mut LLVMOrcLLJITRef,
+    Builder: LLVMOrcLLJITBuilderRef,
+) -> LLVMErrorRef;
+extern "C" fn LLVMOrcDisposeLLJIT(J: LLVMOrcLLJITRef) -> LLVMErrorRef;
+extern "C" fn LLVMOrcLLJITGetExecutionSession(J: LLVMOrcLLJITRef) -> LLVMOrcExecutionSessionRef;
+extern "C" fn LLVMOrcLLJITGetMainJITDylib(J: LLVMOrcLLJITRef) -> LLVMOrcJITDylibRef;
+extern "C" fn LLVMOrcLLJITGetTripleString(J: LLVMOrcLLJITRef) -> &libc::c_char;
+extern "C" fn LLVMOrcLLJITGetGlobalPrefix(J: LLVMOrcLLJITRef) -> libc::c_char;
+extern "C" fn LLVMOrcLLJITMangleAndIntern(
+    J: LLVMOrcLLJITRef,
+    UnmangledName: &libc::c_char,
+) -> LLVMOrcSymbolStringPoolEntryRef;
+extern "C" fn LLVMOrcLLJITAddObjectFile(
+    J: LLVMOrcLLJITRef,
+    JD: LLVMOrcJITDylibRef,
+    ObjBuffer: LLVMMemoryBufferRef,
+) -> LLVMErrorRef;
+extern "C" fn LLVMOrcLLJITAddObjectFileWithRT(
+    J: LLVMOrcLLJITRef,
+    RT: LLVMOrcResourceTrackerRef,
+    ObjBuffer: LLVMMemoryBufferRef,
+) -> LLVMErrorRef;
+extern "C" fn LLVMOrcLLJITAddLLVMIRModule(
+    J: LLVMOrcLLJITRef,
+    JD: LLVMOrcJITDylibRef,
+    TSM: LLVMOrcThreadSafeModuleRef,
+) -> LLVMErrorRef;
+extern "C" fn LLVMOrcLLJITAddLLVMIRModuleWithRT(
+    J: LLVMOrcLLJITRef,
+    JD: LLVMOrcResourceTrackerRef,
+    TSM: LLVMOrcThreadSafeModuleRef,
+) -> LLVMErrorRef;
+extern "C" fn LLVMOrcLLJITLookup(
+    J: LLVMOrcLLJITRef,
+    Result: &mut LLVMOrcExecutorAddress,
+    Name: &libc::c_char,
+) -> LLVMErrorRef;
+extern "C" fn LLVMOrcLLJITGetObjLinkingLayer(J: LLVMOrcLLJITRef) -> LLVMOrcObjectLayerRef;
+extern "C" fn LLVMOrcLLJITGetObjTransformLayer(J: LLVMOrcLLJITRef) -> LLVMOrcObjectTransformLayerRef;
+extern "C" fn LLVMOrcLLJITGetIRTransformLayer(J: LLVMOrcLLJITRef) -> LLVMOrcIRTransformLayerRef;
+extern "C" fn LLVMOrcLLJITGetDataLayoutStr(J: LLVMOrcLLJITRef) -> &libc::c_char;
+

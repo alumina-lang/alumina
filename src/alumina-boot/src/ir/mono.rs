@@ -155,6 +155,7 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
                     ast::Item::StructLike(e) => write!(f, "{}", e.name.unwrap_or("{{anonymous}}")),
                     ast::Item::Protocol(e) => write!(f, "{}", e.name.unwrap_or("{{anonymous}}")),
                     ast::Item::Function(e) => write!(f, "{}", e.name.unwrap_or("{{anonymous}}")),
+                    ast::Item::TypeDef(e) => write!(f, "{}", e.name.unwrap_or("{{anonymous}}")),
                     _ => unreachable!(),
                 };
 
@@ -506,6 +507,40 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         for mixin in s.mixins {
             self.expand_mixin(mixin)?;
         }
+
+        Ok(())
+    }
+
+    fn monomorphize_typedef(
+        &mut self,
+        item: ir::IRItemP<'ir>,
+        s: &ast::TypeDef<'ast>,
+        generic_args: &'ir [ir::TyP<'ir>],
+    ) -> Result<(), AluminaError> {
+        let replacements = self.resolve_placeholders(s.placeholders, generic_args)?;
+        let mut child = Self::with_replacements(
+            self.mono_ctx,
+            replacements,
+            self.tentative,
+            self.current_item,
+        );
+
+        let mut protocol_bounds = Vec::new();
+        for (placeholder, ty) in s.placeholders.iter().zip(generic_args.iter()) {
+            for bound in placeholder.bounds {
+                let ir_bound = child.lower_type(bound.typ).append_span(bound.span)?;
+                protocol_bounds.push((bound.span, ir_bound, *ty, bound.negated));
+            }
+        }
+
+        let inner = child.lower_type(s.target).append_span(s.span)?;
+
+        let res = ir::IRItem::Alias(inner);
+        item.assign(res);
+
+        child
+            .check_protocol_bounds(protocol_bounds)
+            .append_span(s.span)?;
 
         Ok(())
     }
@@ -1240,6 +1275,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.monomorphize_protocol(item, p, key.1)
                     .append_mono_marker()?;
             }
+            ast::Item::TypeDef(i) => {
+                self.monomorphize_typedef(item, i, key.1)
+                    .append_mono_marker()?;
+            }
         };
 
         Ok(())
@@ -1331,32 +1370,38 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     }
 
     pub fn lower_type(&mut self, typ: ast::TyP<'ast>) -> Result<ir::TyP<'ir>, AluminaError> {
+        let typ = self.lower_type_inner(typ)?;
+
+        Ok(typ)
+    }
+
+    fn lower_type_inner(&mut self, typ: ast::TyP<'ast>) -> Result<ir::TyP<'ir>, AluminaError> {
         let result = match *typ {
             ast::Ty::Builtin(kind) => self.types.builtin(kind),
             ast::Ty::Array(inner, len) => {
-                let inner = self.lower_type(inner)?;
+                let inner = self.lower_type_inner(inner)?;
                 self.types.array(inner, len)
             }
             ast::Ty::Pointer(inner, is_const) => {
-                let inner = self.lower_type(inner)?;
+                let inner = self.lower_type_inner(inner)?;
                 self.types.pointer(inner, is_const)
             }
             ast::Ty::Slice(inner, is_const) => {
-                let inner = self.lower_type(inner)?;
+                let inner = self.lower_type_inner(inner)?;
                 self.slice_of(inner, is_const)?
             }
             ast::Ty::FunctionPointer(args, ret) => {
                 let args = args
                     .iter()
-                    .map(|arg| self.lower_type(arg))
+                    .map(|arg| self.lower_type_inner(arg))
                     .collect::<Result<Vec<_>, _>>()?;
-                let ret = self.lower_type(ret)?;
+                let ret = self.lower_type_inner(ret)?;
                 self.types.function(args, ret)
             }
             ast::Ty::Tuple(items) => {
                 let items = items
                     .iter()
-                    .map(|arg| self.lower_type(arg))
+                    .map(|arg| self.lower_type_inner(arg))
                     .collect::<Result<Vec<_>, _>>()?;
                 self.types.tuple(items)
             }
@@ -1376,6 +1421,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 Some(LangItemKind::ImplBuiltin(kind)) => self.types.builtin(kind),
                 _ => {
                     let item = self.monomorphize_item(item, &[])?;
+                    if let Some(typ) = item.get_alias() {
+                        return Ok(typ);
+                    }
+
                     self.types.named(item)
                 }
             },
@@ -1386,7 +1435,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ast::Ty::Generic(item, args) => {
                 let args = args
                     .iter()
-                    .map(|arg| self.lower_type(arg))
+                    .map(|arg| self.lower_type_inner(arg))
                     .collect::<Result<Vec<_>, _>>()?
                     .alloc_on(self.mono_ctx.ir);
 
@@ -1492,6 +1541,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 };
 
                 let ir_item = self.monomorphize_item(item, args)?;
+                if let Some(typ) = ir_item.get_alias() {
+                    return Ok(typ);
+                }
+
                 match item.get() {
                     ast::Item::Protocol(_) => self.types.protocol(ir_item),
                     ast::Item::Function(_) => self.types.named_function(ir_item),
@@ -3118,6 +3171,20 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         ast_type: ast::TyP<'ast>,
     ) -> Result<ast::TyP<'ast>, AluminaError> {
         let typ = match ast_type {
+            ast::Ty::NamedType(n) => {
+                if let ast::Item::TypeDef(t) = n.get() {
+                    let _guard = self
+                        .mono_ctx
+                        .cycle_guardian
+                        .guard((n, &[]))
+                        .map_err(|_| CodeErrorKind::CycleDetected)
+                        .with_no_span()?;
+
+                    return self.resolve_ast_type(t.target);
+                }
+
+                ast_type
+            }
             ast::Ty::Placeholder(_) => {
                 let ir_type = self.lower_type(ast_type)?;
                 self.raise_type(ir_type)?

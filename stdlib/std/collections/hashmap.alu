@@ -32,6 +32,8 @@ impl HashMapIterator<K, V> {
         }
         Option::none()
     }
+
+    mixin<K, V> iter::Iterator<HashMapIterator<K, V>, (K, V)>;
 }
 
 /// A simple linear probing hash table.
@@ -49,12 +51,29 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
 
     fn with_capacity(capacity: usize) -> HashMap<K, V, H> {
         HashMap::<K, V, H> {
-            _buckets: alloc_zeroed::<HashItem<(K, V)>>(capacity),
+            _buckets: alloc_zeroed::<HashItem<(K, V)>>(capacity * 2),
             _length: 0,
         }
     }
 
+    /// Reserves space for at least `additional` more elements to be inserted without
+    /// reallocating. This follows the amortized growth strategy.
+    fn reserve(self: &mut HashMap<K, V, H>, additional: usize) -> bool {            
+        // We keep the load factor below 0.75.
+        let new_length = self._length + additional;
+        if new_length * 4 > self._buckets.len * 3 { 
+            self.rehash(math::max(self._buckets.len * 2, new_length * 2));
+            return true;
+        }
+        return false;
+    }
+
+    // Resizes the underlying array to exactly the given `new_capacity`. Note that
+    // this could lead to poor performance if the resulting load factor is close to 
+    // 1. 
     fn rehash(self: &mut HashMap<K, V, H>, new_capacity: usize) {
+        debug_assert!(self._length <= new_capacity);
+
         let new_map = with_capacity::<K, V, H>(new_capacity);
         for item in self {
             new_map._insert(item, true);
@@ -64,13 +83,18 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
         self._buckets = new_map._buckets;
     }
 
-    fn _grow_if_needed(self: &mut HashMap<K, V, H>, new_length: usize) -> bool {            
-        if new_length * 3 > self._buckets.len * 2 { 
-            self.rehash(self._buckets.len * 2);
-            return true;
+    fn shrink_to_fit(self: &mut HashMap<K, V, H>) {
+        if self._length * 4 <= self._buckets.len * 3 {
+            return;
         }
 
-        return false;
+        if self._length == 0 {
+            self.free();
+            self._buckets = mem::slice::empty();
+        } else {
+            let new_capacity = math::max((self._length * 4 / 3) + 1, INITIAL_SIZE);
+            self.rehash(new_capacity);
+        }
     }
 
     fn _insert(self: &mut HashMap<K, V, H>, item: (K, V), grow: bool) -> Option<V> {
@@ -80,7 +104,7 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
         loop {
             switch self._buckets[index].state {
                 State::Vacant => {
-                    if grow && self._grow_if_needed(self._length + 1) {
+                    if grow && self.reserve(1) {
                         return self._insert(item, false);
                     }
                     self._length += 1;
@@ -357,6 +381,22 @@ mod tests {
         assert!(iter.next() == Option::some((2, 4)));
         assert!(iter.next() == Option::some((3, 5)));
         assert!(iter.next() == Option::none());
+    }
+
+    #[test]
+    fn test_reserve() {
+        let map = HashMap::new::<i32, i32>();
+        defer map.free();
+
+        map.reserve(100);
+        
+        let ptr = map._buckets.ptr;
+        for i in range(0, 100) {
+            map.insert(i, i);
+        }
+
+        // Did not reallocate
+        assert_eq!(map._buckets.ptr, ptr);        
     }
 
     #[test]

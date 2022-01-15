@@ -274,6 +274,7 @@ pub type TyP<'ast> = &'ast Ty<'ast>;
 pub enum Item<'ast> {
     Enum(Enum<'ast>),
     StructLike(StructLike<'ast>),
+    TypeDef(TypeDef<'ast>),
     Protocol(Protocol<'ast>),
     Function(Function<'ast>),
     StaticOrConst(StaticOrConst<'ast>),
@@ -456,6 +457,15 @@ pub struct StructLike<'ast> {
     pub fields: &'ast [Field<'ast>],
     pub span: Option<Span>,
     pub is_union: bool,
+}
+
+#[derive(Debug)]
+pub struct TypeDef<'ast> {
+    pub name: Option<&'ast str>,
+    pub placeholders: &'ast [Placeholder<'ast>],
+    pub attributes: &'ast [Attribute],
+    pub target: TyP<'ast>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug)]

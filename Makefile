@@ -70,7 +70,7 @@ $(CODEGEN).c: $(ALU_DEPS) $(CODEGEN_SOURCES)
 		$(foreach src,$(CODEGEN_SOURCES),$(subst /,::,$(basename $(src)))=$(src))
 
 $(CODEGEN): $(CODEGEN).c $(BUILD_DIR)/parser.o
-	$(CC) $(CFLAGS) -o $@ $(BUILD_DIR)/parser.o $(CODEGEN).c -ltree-sitter
+	$(CC) $(CFLAGS) -o $@ $^ -ltree-sitter
 
 src/aluminac/node_kinds.alu: $(CODEGEN)
 	$(CODEGEN) > $@
@@ -81,8 +81,16 @@ $(ALUMINAC).c: $(ALU_DEPS) $(SELFHOSTED_SOURCES) src/aluminac/node_kinds.alu
 		$(foreach src,$(ALU_LIBRARIES),$(subst /,::,$(basename $(subst libraries/,,$(src))))=$(src)) \
 		$(foreach src,$(SELFHOSTED_SOURCES),$(subst /,::,$(basename $(src)))=$(src))
 
-$(ALUMINAC): $(ALUMINAC).c $(BUILD_DIR)/parser.o
-	$(CC) $(CFLAGS) -o $@ $(BUILD_DIR)/parser.o $(ALUMINAC).c -ltree-sitter
+
+LLVM_CFLAGS = $(shell llvm-config-13 --cflags)
+LLVM_LDFLAGS = $(shell llvm-config-13 --ldflags)
+LLVM_LIBS = $(shell llvm-config-13 --libs engine)
+
+$(BUILD_DIR)/llvm_target.o: libraries/llvm/target.c
+	$(CC) $(CFLAGS) $(LLVM_CFLAGS) -c $^ -o $@
+
+$(ALUMINAC): $(ALUMINAC).c $(BUILD_DIR)/parser.o $(BUILD_DIR)/llvm_target.o
+	$(CC) $(CFLAGS) -o $@ $^ $(LLVM_LDFLAGS) -ltree-sitter $(LLVM_LIBS)
 
 ## ------------------------------ Various ------------------------------
 

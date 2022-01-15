@@ -1282,6 +1282,10 @@ pub fn parse_string_literal(lit: &str) -> Result<Vec<u8>, CodeErrorKind> {
                     result.push(b'"');
                     State::Normal
                 }
+                b'0' => {
+                    result.push(b'\0');
+                    State::Normal
+                }
                 b'x' => State::Hex,
                 b'u' => State::UnicodeStart,
                 _ => {

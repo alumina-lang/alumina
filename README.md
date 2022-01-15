@@ -136,7 +136,7 @@ To compile `alumina-boot` compiler from source, these prerequisites are needed:
   - A Rust toolchain (`rustup install stable`)
   - Tree-sitter CLI (`npm install -g tree-sitter-cli`)
 
-Additionally, to compile `aluminac`, Tree-sitter runtime library (`libtree-sitter.a`/`libtree-sitter.so`) is needed:
+Additionally, to compile `aluminac`, LLVM v13 and Tree-sitter runtime library (`libtree-sitter.a`/`libtree-sitter.so`) are needed:
 
 ```bash
 git clone https://github.com/tree-sitter/tree-sitter
