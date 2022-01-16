@@ -16,7 +16,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
 RUN apt-get install -y nodejs
 
-RUN npm install -g tree-sitter-cli
+RUN cargo install tree-sitter-cli
 
 WORKDIR /alumina/deps
 RUN curl -fsSL https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.20.2.tar.gz | tar -xz
