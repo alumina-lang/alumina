@@ -48,7 +48,7 @@ $(ALUMINA_BOOT): $(BOOTSTRAP_SOURCES) $(COMMON_SOURCES) $(BUILD_DIR)/.build
 
 # Stdlib tests
 $(STDLIB_TESTS).c: $(ALUMINA_BOOT) $(SYSROOT_FILES)
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --output $@
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --cfg test_std --output $@
 
 $(STDLIB_TESTS): $(STDLIB_TESTS).c
 	$(CC) $(CFLAGS) -o $@ $(STDLIB_TESTS).c
@@ -108,7 +108,7 @@ aluminac: $(ALUMINAC)
 .PHONY: test-std test-examples test test-fix
 
 test-std: alumina-boot $(STDLIB_TESTS)
-	$(STDLIB_TESTS) --include-std
+	$(STDLIB_TESTS)
 	
 test-examples: alumina-boot
 	cd tools/snapshot-tests/ && pytest snapshot.py

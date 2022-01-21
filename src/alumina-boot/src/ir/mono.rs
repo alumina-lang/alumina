@@ -1439,6 +1439,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .collect::<Result<Vec<_>, _>>()?
                     .alloc_on(self.mono_ctx.ir);
 
+                // Builtin type operators
                 match self.mono_ctx.ast.lang_item_kind(item) {
                     Some(LangItemKind::TypeopDerefOf) => {
                         if args.len() != 1 {
@@ -1536,6 +1537,35 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                             }
                             _ => return Err(CodeErrorKind::InvalidTypeOperator).with_no_span(),
                         }
+                    }
+                    Some(LangItemKind::TypeopReturnTypeOf) => {
+                        if args.len() != 1 {
+                            return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
+                        }
+                        if let ir::Ty::FunctionPointer(_, ret) = args[0] {
+                            return Ok(*ret);
+                        }
+                        if let ir::Ty::NamedFunction(f) = args[0] {
+                            return Ok(f.get_function().with_no_span()?.return_type);
+                        }
+                        return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
+                    }
+                    Some(LangItemKind::TypeopArgumentsOf) => {
+                        if args.len() != 1 {
+                            return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
+                        }
+                        if let ir::Ty::FunctionPointer(args, _) = args[0] {
+                            return Ok(self.types.tuple(args.iter().copied()));
+                        }
+                        if let ir::Ty::NamedFunction(f) = args[0] {
+                            let func = f.get_function().with_no_span()?;
+                            if func.args.len() == 0 {
+                                return Ok(self.types.void());
+                            } else {
+                                return Ok(self.types.tuple(func.args.iter().map(|a| a.ty)));
+                            }
+                        }
+                        return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
                     }
                     _ => {}
                 };

@@ -151,7 +151,12 @@ pub fn codegen(items: &[IRItemP<'_>]) -> Result<String, AluminaError> {
         "#pragma clang diagnostic ignored \"-Wparentheses-equality\""
     )
     .unwrap();
-
+    writeln!(
+        buf,
+        "#pragma clang diagnostic ignored \"-Wincompatible-library-redeclaration\""
+    )
+    .unwrap();
+    writeln!(buf, "#pragma clang diagnostic ignored \"-Wunused-value\"").unwrap();
     type_writer.write(&mut buf);
     function_writer.write(&mut buf);
 

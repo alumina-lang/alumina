@@ -92,7 +92,7 @@ impl Error {
             ErrorKind::UnexpectedEof => f.write_str("unexpected end of file"),
             ErrorKind::GetAddrInfo => {
                 try!(f.write_str("failed to lookup address information: "));
-                f.write_str(ffi::CString::as_slice(libc::gai_strerror(self.inner.gai_err)))
+                f.write_str(ffi::CString::from_raw(libc::gai_strerror(self.inner.gai_err)).as_slice())
             }
             ErrorKind::UserDefined => {
                 f.write_str(self.inner.message)
@@ -318,6 +318,10 @@ impl StdioStream {
         self.fd.close()
     }
 
+    fn flush(self: &mut StdioStream) -> Result<(), Error> {
+        Result::ok(())
+    }
+
     fn move(self: &mut StdioStream) -> StdioStream {
         StdioStream { fd: self.fd.move() }
     }    
@@ -395,6 +399,10 @@ impl File {
     }
 
     fn flush(self: &mut File) -> Result<(), Error> {
+        Result::ok(())
+    }
+
+    fn sync(self: &mut File) -> Result<(), Error> {
         let ret = errno_try!(libc::fsync(self.fd.value));
         Result::ok(())
     }
@@ -464,7 +472,7 @@ static stdout : StdioStream = StdioStream::from_fd(FileDescriptor::new(libc::STD
 static stderr : StdioStream = StdioStream::from_fd(FileDescriptor::new(libc::STDERR_FILENO));
 static stdin  : StdioStream = StdioStream::from_fd(FileDescriptor::new(libc::STDIN_FILENO));
 
-#[cfg(test)]
+#[cfg(all(test, test_std))]
 mod test {
     use collections::Vector;
     static BUF: [u8; 1024];

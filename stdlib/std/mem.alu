@@ -1,4 +1,4 @@
-use proto::Pointer;
+use marker::Pointer;
 use std::option::Option;
 
 // Freable protocol is used for types that can be "freed". Usually these types contain something that
@@ -11,6 +11,15 @@ protocol Freeable<Self> {
 protocol Movable<Self> {
     fn move(self: &mut Self) -> Self;
 }
+
+protocol AsSlice<Self, T> {
+    fn as_slice(self: &Self) -> &[T];
+}
+
+protocol AsSliceMut<Self, T> {
+    fn as_slice_mut(self: &mut Self) -> &mut [T];
+}
+
 
 // Slice fat "pointers" are just regular structs that compiler handles in a special way with regards
 // to syntax, implicit coercion and type inference. They are generic over the pointer-to-element type
@@ -25,7 +34,7 @@ struct slice<Ptr: Pointer> {
 impl slice {
     use std::cmp::{Equatable, Comparable, Ordering};
     use std::hash::{Hasher, Hashable};
-    use std::proto::{Primitive, PointerOf, ZeroSized};
+    use std::marker::{Primitive, PointerOf, ZeroSized};
     use std::libc::{memcmp};
 
     #[force_inline]
@@ -42,6 +51,14 @@ impl slice {
     #[force_inline]
     fn iter<Ptr: Pointer>(self: &slice<Ptr>) -> SliceIterator<Ptr> {
         SliceIterator::new(*self)
+    }
+
+    fn as_slice<T>(self: &&[T]) -> &[T] {
+        *self
+    }
+
+    fn as_slice_mut<T>(self: &mut &mut [T]) -> &mut [T] {
+        *self
     }
 
     fn fill<T>(slice: &mut [T], value: T) {
@@ -133,7 +150,7 @@ struct SliceIterator<Ptr: Pointer> {
 }
 
 impl SliceIterator {
-    use std::proto::{PointerOf};
+    use std::marker::{PointerOf};
 
     #[force_inline]
     fn new<Ptr: Pointer>(inner: slice<Ptr>) -> SliceIterator<Ptr> {
@@ -163,7 +180,7 @@ impl SliceIterator {
 }
 
 mod internal {
-    use proto::{Primitive, Pointer}; 
+    use marker::{Primitive, Pointer}; 
     
     #[force_inline]
     #[lang(slice_index)]
@@ -199,10 +216,13 @@ mod internal {
 
 fn alloc<T>(len: usize) -> &mut [T] {
     let ret: &mut [T];
-    ret.ptr = when T: proto::ZeroSized {
-        null as &mut T
+    when T: marker::ZeroSized {
+        ret.ptr = null as &mut T;
     } else {
-        libc::malloc(size_of::<T>() * len) as &mut T
+        ret.ptr = libc::malloc(size_of::<T>() * len) as &mut T;
+        if ret.ptr == null {
+            panic!("out of memory")
+        }
     };
     ret.len = len;
     ret
@@ -210,7 +230,7 @@ fn alloc<T>(len: usize) -> &mut [T] {
 
 fn realloc<T>(slice: &mut [T], len: usize) -> &mut [T] {
     let ret: &mut [T];
-    ret.ptr = when T: proto::ZeroSized {
+    ret.ptr = when T: marker::ZeroSized {
         null as &mut T
     } else {
         libc::realloc(slice.ptr as &mut void, size_of::<T>() * len) as &mut T
@@ -221,7 +241,7 @@ fn realloc<T>(slice: &mut [T], len: usize) -> &mut [T] {
 
 fn alloc_zeroed<T>(len: usize) -> &mut [T] {
     let ret: &mut [T];
-    ret.ptr = when T: proto::ZeroSized {
+    ret.ptr = when T: marker::ZeroSized {
         null as &mut T
     } else {
         libc::calloc(len, size_of::<T>()) as &mut T
@@ -269,11 +289,15 @@ fn replace<T>(a: &mut T, b: T) -> T {
 }
 
 fn copy_nonoverlapping<T>(src: &[T], dst: &mut T) {
-    libc::memcpy(dst as &mut void, src.ptr as &void, src.len * size_of::<T>());
+    when T: !marker::ZeroSized {
+        libc::memcpy(dst as &mut void, src.ptr as &void, src.len * size_of::<T>());
+    }
 }
 
 fn copy<T>(src: &[T], dst: &mut T) {
-    libc::memmove(dst as &mut void, src.ptr as &void, src.len * size_of::<T>());
+    when T: !marker::ZeroSized {
+        libc::memmove(dst as &mut void, src.ptr as &void, src.len * size_of::<T>());
+    }
 }
 
 fn free<T>(a: &mut [T]) {
@@ -282,11 +306,13 @@ fn free<T>(a: &mut [T]) {
 
 fn zeroed<T>() -> T {
     let ret: T;
-    libc::memset(&ret as &mut void, 0, size_of::<T>());
+    when T: !marker::ZeroSized {
+        libc::memset(&ret as &mut void, 0, size_of::<T>());
+    }
     ret
 }
 
-#[cfg(test)]
+#[cfg(all(test, test_std))]
 mod tests {
     #[test]
     fn size_of_zst() {

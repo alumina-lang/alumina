@@ -160,7 +160,7 @@ fn join<T: iter::Iterator<T, &[u8]>>(self: &[u8], iter: &mut T) -> collections::
     ret
 }
 
-fn parse_integer<T: proto::Integer>(s: &[u8], radix: u16) -> Option<T> {
+fn parse_integer<T: marker::Integer>(s: &[u8], radix: u16) -> Option<T> {
     assert!(radix >= 2 && radix <= 36);
 
     use builtins::unsigned_of;
@@ -171,7 +171,7 @@ fn parse_integer<T: proto::Integer>(s: &[u8], radix: u16) -> Option<T> {
     }
 
     let negative = if s[0] == '-' {
-        when T: proto::Signed {
+        when T: marker::Signed {
             s = s[1..];
             true
         } else {
@@ -200,7 +200,7 @@ fn parse_integer<T: proto::Integer>(s: &[u8], radix: u16) -> Option<T> {
         result = b;
     }
 
-    when T: proto::Signed {
+    when T: marker::Signed {
         // We only need to check for unsigned-to-signed conversion overflow, other
         // cases have already been handled.
         if negative {
@@ -222,7 +222,7 @@ fn parse_integer<T: proto::Integer>(s: &[u8], radix: u16) -> Option<T> {
 }
 
 
-#[cfg(test)]
+#[cfg(all(test, test_std))]
 mod tests {
     use std::{assert, assert_eq, assert_ne};
 
@@ -280,7 +280,7 @@ mod tests {
         // Signed overflow
         assert_eq!(parse_integer::<i8>("127", 10), Option::some(127i8));  
         assert_eq!(parse_integer::<i8>("128", 10), Option::none());  
-        assert_eq!(parse_integer::<i8>("-128", 10), Option::some(-128i8));  
+        assert_eq!(parse_integer::<i8>("-128", 10), Option::some(-128 as i8));  
         assert_eq!(parse_integer::<i8>("-129", 10), Option::none());  
         assert_eq!(
             parse_integer::<i128>("170141183460469231731687303715884105727", 10),

@@ -35,6 +35,8 @@ pub enum LangItemKind {
     TypeopSignedOf,
     TypeopUnsignedOf,
     TypeopDerefOf,
+    TypeopReturnTypeOf,
+    TypeopArgumentsOf,
 
     EntrypointGlue,
     TestCaseMeta,
@@ -101,6 +103,8 @@ impl TryFrom<&str> for LangItemKind {
             "typeop_signed_of" => Ok(LangItemKind::TypeopSignedOf),
             "typeop_unsigned_of" => Ok(LangItemKind::TypeopUnsignedOf),
             "typeop_deref_of" => Ok(LangItemKind::TypeopDerefOf),
+            "typeop_return_type_of" => Ok(LangItemKind::TypeopReturnTypeOf),
+            "typeop_arguments_of" => Ok(LangItemKind::TypeopArgumentsOf),
 
             "entrypoint_glue" => Ok(LangItemKind::EntrypointGlue),
             "test_case_meta" => Ok(LangItemKind::TestCaseMeta),

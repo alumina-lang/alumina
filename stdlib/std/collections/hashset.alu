@@ -31,6 +31,12 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
         }
     }
 
+    fn with_size(size: usize) -> HashSet<K, H> {
+        HashSet::<K, H> {
+            _inner: hashmap::HashMap::with_size::<K, (), H>(size)
+        }
+    }
+
     #[inline]
     fn reserve(self: &mut HashSet<K, H>, additional: usize) {
         self._inner.reserve(additional);
@@ -39,6 +45,11 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
     #[inline]
     fn rehash(self: &mut HashSet<K, H>, new_capacity: usize) {
         self._inner.rehash(new_capacity);
+    }
+
+    #[inline]
+    fn shrink_to_fit(self: &mut HashSet<K, H>) {
+        self._inner.shrink_to_fit()
     }
 
     #[inline]
@@ -98,6 +109,8 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, I: Iterator<I, K>, H: Hasher<H> =
     }
 
     fn extend(self: &mut HashSet<K, H>, iter: &mut I) {
+        self.reserve(iter.size_hint().unwrap_or(0));
+        
         loop {
             let item = iter.next();
             if item.is_some {
@@ -109,7 +122,7 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, I: Iterator<I, K>, H: Hasher<H> =
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, test_std))]
 mod tests {
     use hashmap::tests::DummyHasher;
 

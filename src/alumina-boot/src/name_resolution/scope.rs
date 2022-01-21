@@ -102,6 +102,7 @@ pub struct ScopeInner<'ast, 'src> {
     // name resolution, it is important for e.g. struct layout, function signature, generic
     // parameter ordering, etc.
     pub items: IndexMap<Option<&'ast str>, Vec<NamedItem<'ast, 'src>>>,
+    pub star_imports: Vec<Path<'ast>>,
     pub parent: Option<Weak<RefCell<ScopeInner<'ast, 'src>>>>,
 
     code: OnceCell<&'src ParseCtx<'src>>,
@@ -130,6 +131,10 @@ impl<'ast, 'src> ScopeInner<'ast, 'src> {
             .get(&Some(name))
             .into_iter()
             .flat_map(|its| its.iter())
+    }
+
+    pub fn star_imports<'i>(&'i self) -> impl Iterator<Item = &'i Path<'ast>> {
+        self.star_imports.iter()
     }
 }
 
@@ -172,6 +177,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             r#type: ScopeType::Root,
             path: Path::root(),
             items: IndexMap::new(),
+            star_imports: Vec::new(),
             parent: None,
             code: OnceCell::new(),
         })))
@@ -201,6 +207,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             r#type,
             path: new_path,
             items: IndexMap::new(),
+            star_imports: Vec::new(),
             code,
             parent: Some(Rc::downgrade(&self.0)),
         })))
@@ -213,6 +220,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             r#type,
             path: new_path,
             items: IndexMap::new(),
+            star_imports: Vec::new(),
             code: OnceCell::new(),
             parent: Some(Rc::downgrade(&self.0)),
         })))
@@ -225,6 +233,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             r#type,
             path: self.path(),
             items: IndexMap::new(),
+            star_imports: Vec::new(),
             code,
             parent: Some(Rc::downgrade(&self.0)),
         })))
@@ -293,6 +302,10 @@ impl<'ast, 'src> Scope<'ast, 'src> {
         }
 
         Err(CodeErrorKind::DuplicateName(name.unwrap().into()))
+    }
+
+    pub fn add_star_import(&self, path: Path<'ast>) {
+        self.0.borrow_mut().star_imports.push(path.clone());
     }
 
     pub fn find_root(&self) -> Self {

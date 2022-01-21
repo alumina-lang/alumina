@@ -225,6 +225,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
         Ok(())
     }
 
+    fn visit_use_wildcard(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
+        let path = self.parse_use_path(node.child_by_field_name("path").unwrap())?;
+        self.scope.add_star_import(self.prefix.join_with(path));
+
+        Ok(())
+    }
+
     fn visit_scoped_identifier(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
         let path = match node.child_by_field_name("path") {
             Some(path) => self.parse_use_path(path)?,

@@ -3,7 +3,7 @@ use std::option::{Option, try};
 use std::cmp::Equatable;
 use std::iter::{Iterator, Iterable};
 
-const INITIAL_SIZE: usize = 4;
+const INITIAL_SIZE: usize = 32;
 
 enum State {
     Vacant = 0u8,
@@ -50,8 +50,12 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     }
 
     fn with_capacity(capacity: usize) -> HashMap<K, V, H> {
+        with_size(capacity * 4 / 3 + 1)
+    }
+
+    fn with_size(size: usize) -> HashMap<K, V, H> {
         HashMap::<K, V, H> {
-            _buckets: alloc_zeroed::<HashItem<(K, V)>>(capacity * 2),
+            _buckets: alloc_zeroed::<HashItem<(K, V)>>(size),
             _length: 0,
         }
     }
@@ -74,9 +78,9 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     fn rehash(self: &mut HashMap<K, V, H>, new_capacity: usize) {
         debug_assert!(self._length <= new_capacity);
 
-        let new_map = with_capacity::<K, V, H>(new_capacity);
+        let new_map = with_size::<K, V, H>(new_capacity);
         for item in self {
-            new_map._insert(item, true);
+            new_map._insert(item, false);
         }
 
         self.free();
@@ -84,16 +88,11 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     }
 
     fn shrink_to_fit(self: &mut HashMap<K, V, H>) {
-        if self._length * 4 <= self._buckets.len * 3 {
-            return;
-        }
-
         if self._length == 0 {
             self.free();
             self._buckets = mem::slice::empty();
-        } else {
-            let new_capacity = math::max((self._length * 4 / 3) + 1, INITIAL_SIZE);
-            self.rehash(new_capacity);
+        } else if self._length * 2 > INITIAL_SIZE {
+            self.rehash(self._length * 2);
         }
     }
 
@@ -180,6 +179,10 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
         let item = try!(self._get_slot(key));
         self._length -= 1;
         item.state = State::Deleted;
+
+        // We leave the tombstones in the map and do not clean them up, which will lead to sub-optimal
+        // performance when a lot of items are deleted. Call shrink_to_fit() to get rid of them.
+
         Option::some(item.item.1)
     }
 
@@ -233,6 +236,8 @@ impl HashMap<
     }
 
     fn extend(self: &mut HashMap<K, V, H>, iter: &mut I) {
+        self.reserve(iter.size_hint().unwrap_or(0));
+        
         if self._buckets.len == 0 {
             self.rehash(INITIAL_SIZE);
         }
@@ -243,7 +248,7 @@ impl HashMap<
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, test_std))]
 mod tests {
     struct DummyHasher {
         state: u64    

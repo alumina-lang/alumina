@@ -29,6 +29,11 @@ pub enum ItemResolution<'ast, 'src> {
     Defered(Ty<'ast>, PathSegment<'ast>),
 }
 
+// Name resolution has the following order:
+// - explicitely named items and imports in each scope (including aliases, i.e. use foo::bar::X as Y;)
+// - star imports (use foo::bar::*;)
+// - items in parent scope
+// As star imports are weaker than explicit imports, that allows local definitions to shadow them.
 impl<'ast, 'src> NameResolver<'ast, 'src> {
     pub fn new() -> Self {
         NameResolver {
@@ -89,6 +94,18 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
             }
         }
 
+        for import in self_scope.inner().star_imports() {
+            match self.resolve_scope(self_scope.clone(), import.clone()) {
+                Ok(ScopeResolution::Scope(scope)) => {
+                    match self.resolve_scope(scope, path.clone()) {
+                        Ok(item) => return Ok(item),
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+
         if let Some(parent) = self_scope.parent() {
             return self.resolve_scope(parent, path);
         }
@@ -128,10 +145,7 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
             }
         };
 
-        for item in containing_scope
-            .inner()
-            .items_with_name(path.segments.last().unwrap().0)
-        {
+        for item in containing_scope.inner().items_with_name(last_segment.0) {
             match &item.kind {
                 NamedItemKind::Impl(_, _) => continue,
                 NamedItemKind::Alias(target) => {
@@ -154,6 +168,22 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
                     }
                 }
                 _ => return Ok(ItemResolution::Item(item.clone())),
+            }
+        }
+
+        for import in containing_scope.inner().star_imports() {
+            match self.resolve_scope(scope.clone(), import.clone()) {
+                Ok(ScopeResolution::Scope(scope)) => {
+                    match self.resolve_item_impl(
+                        self_scope.clone(),
+                        scope,
+                        last_segment.clone().into(),
+                    ) {
+                        Ok(item) => return Ok(item),
+                        _ => {}
+                    }
+                }
+                _ => {}
             }
         }
 

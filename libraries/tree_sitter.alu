@@ -96,7 +96,7 @@ extern "C" fn ts_language_field_name_for_id(self: &TSLanguage, id: TSFieldId) ->
 impl TSLanguage {
     fn symbol_name(self: &TSLanguage, id: TSSymbol) -> &[u8] {
         let name = ts_language_symbol_name(self, id);
-        CString::as_slice(name)
+        CString::from_raw(name).as_slice()
     }
 
     fn symbol_type(self: &TSLanguage, id: TSSymbol) -> TSSymbolType {
@@ -105,7 +105,7 @@ impl TSLanguage {
 
     fn field_name(self: &TSLanguage, id: TSFieldId) -> &[u8] {
         let name = ts_language_field_name_for_id(self, id);
-        CString::as_slice(name)
+        CString::from_raw(name).as_slice()
     }
 
     fn symbols(self: &TSLanguage) -> std::iter::Range<TSSymbol> {
@@ -360,6 +360,6 @@ impl Node {
         let string = ts_node_string(self.inner);
         defer std::libc::free(string as &mut void);
 
-        write!(f, "{}", CString::as_slice(string));
+        write!(f, "{}", CString::from_raw(string).as_slice());
     }
 }

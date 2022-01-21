@@ -82,7 +82,7 @@ impl _never {
 
 // This mixin implements Equatable and Comparable for types that have natively implemented
 // equality and comparison operators.
-protocol _BuiltinComparable<Self: proto::Numeric> {
+protocol _BuiltinComparable<Self: marker::Numeric> {
     #[force_inline] fn equals(lhs: &Self, rhs: &Self) -> bool { *lhs == *rhs }
     #[force_inline] fn not_equals(lhs: &Self, rhs: &Self) -> bool { *lhs != *rhs }    
     #[force_inline]
@@ -102,7 +102,7 @@ protocol _BuiltinComparable<Self: proto::Numeric> {
     #[force_inline] fn greater_than_or_equal(lhs: &Self, rhs: &Self) -> bool { *lhs >= *rhs }
 }
 
-protocol _IntegerParsable<Self: proto::Integer> {
+protocol _IntegerParsable<Self: marker::Integer> {
     #[inline]
     fn parse(s: &[u8]) -> Option<Self> {
         string::parse_integer::<Self>(s, 10)
@@ -114,19 +114,19 @@ protocol _IntegerParsable<Self: proto::Integer> {
     }
 }
 
-protocol _IntegerFormattable<Self: proto::Integer, F: Formatter<F>> {
+protocol _IntegerFormattable<Self: marker::Integer, F: Formatter<F>> {
     fn fmt(self: &Self, formatter: &mut F) -> Result<(), fmt::Error> {
         fmt::internal::format_integer(*self, 10, 0, formatter)
     }
 }
 
-protocol _FloatFormattable<Self: proto::FloatingPoint, F: Formatter<F>> {
+protocol _FloatFormattable<Self: marker::FloatingPoint, F: Formatter<F>> {
     fn fmt(self: &Self, formatter: &mut F) -> Result<(), fmt::Error> {
         fmt::internal::format_float(*self, formatter, 15)
     }
 }
 
-protocol _BitOps<Self: proto::Unsigned> {
+protocol _BitOps<Self: marker::Unsigned> {
     #[inline(always)]
     fn rotate_left(self: Self, shift: usize) -> Self {
         (self << shift) | (self >> ((8 * mem::size_of::<Self>()) - shift))
@@ -1009,7 +1009,7 @@ impl _tuple_8 {
 #[lang(impl_array)]
 struct _array {}
 impl _array {
-    use proto::ArrayOf;
+    use marker::ArrayOf;
 
     // There are not const usize generics, so we cannot generically accept all
     // possible arrays proper in this impl. Instead we accept slice as a self 
@@ -1031,17 +1031,28 @@ impl _array {
     }
 }
 
+/// The following are "type-operators", pseudo-types, implemented inside the compiler
+/// that resolve to other types based on the type of the generic parameters. Ideally,
+/// these would be implemented in the standard library, but the infer system is not 
+/// yet sufficiently powerful for this.
+
 #[lang(typeop_signed_of)]
-struct signed_of<T: proto::Integer> {}
+struct signed_of<T: marker::Integer> {}
 
 #[lang(typeop_unsigned_of)]
-struct unsigned_of<T: proto::Integer> {}
+struct unsigned_of<T: marker::Integer> {}
 
 #[lang(typeop_deref_of)]
-struct deref_of<T: proto::Pointer> {}
+struct deref_of<T: marker::Pointer> {}
+
+#[lang(typeop_return_type_of)]
+struct return_type_of<T> {}
+
+#[lang(typeop_arguments_of)]
+struct arguments_of<T> {}
 
 
-#[cfg(test)]
+#[cfg(all(test, test_std))]
 mod tests {
     #[test]
     fn unsigned_num_limits() {

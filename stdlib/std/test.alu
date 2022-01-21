@@ -75,7 +75,6 @@
     }
 
     struct Args {
-        include_std: bool,
         prefix: Option<&[u8]>,
         filter: Option<&[u8]>,
     }
@@ -83,7 +82,6 @@
     impl Args {
         fn default() -> Args {
             Args {
-                include_std: false,
                 prefix: Option::none(),
                 filter: Option::none(),
             }
@@ -97,7 +95,7 @@
     }
 
     fn print_help_string(args: &[&[u8]]) -> ! {
-        eprintln!("usage: {} [--include-std] [--prefix <PREFIX>] [--filter <FILTER>]", args[0]);
+        eprintln!("usage: {} [--prefix <PREFIX>] [--filter <FILTER>]", args[0]);
         process::exit(1);
     }
 
@@ -105,15 +103,15 @@
         let state = State::Normal;
         let res = Args::default();
 
+        if args.len == 0 {
+            return res;
+        }
+
         for arg in args[1..] {
             state = switch state {
                 State::Normal => switch arg {
                     "--prefix", "-p" => State::Prefix,
                     "--filter", "-f" => State::Filter,
-                    "--include-std" => {
-                        res.include_std = true;
-                        State::Normal
-                    }
                     _ => print_help_string(args)
                 },
                 State::Prefix => {
@@ -142,10 +140,6 @@
         defer test_cases.free();
 
         for test in TEST_CASES {
-            if !args.include_std && test.path.starts_with("::std") {
-                continue
-            }
-
             if args.prefix.is_some && !test.path[2..].starts_with(args.prefix.inner) {
                 continue
             }
@@ -246,15 +240,17 @@
     }
     
     // Quis testabitur ipsos testes
-    #[test]
-    fn regular_test() {
-    }
-
-    #[test(ignore)]
-    fn ignored_test() {}
-
-    #[test(should_fail)]
-    fn should_fail_test() {
-        panic!("oops")
+    #[cfg(test_std)] {
+        #[test]
+        fn regular_test() {
+        }
+        
+        #[test(ignore)]
+        fn ignored_test() {}
+        
+        #[test(should_fail)]
+        fn should_fail_test() {
+            panic!("oops")
+        }
     }
 }
