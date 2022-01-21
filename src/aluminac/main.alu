@@ -67,41 +67,16 @@ impl SampleVisitor {
     mixin NodeVisitorExt<SampleVisitor, Result<(), Error>>;
 }
 
-use llvm::core::{
-    LLVMContextCreate,
-    LLVMModuleCreateWithNameInContext,
-    LLVMCreateBuilderInContext,
-    LLVMInt64TypeInContext,
-    LLVMFunctionType,
-    LLVMAddFunction,
-    LLVMAppendBasicBlockInContext,
-    LLVMPositionBuilderAtEnd,
-    LLVMGetParam,
-    LLVMBuildAdd,
-    LLVMBuildRet,
-    LLVMDisposeBuilder,
-    LLVMDumpModule,
-    LLVMContextDispose
-};
-use llvm::execution_engine::{
-    LLVMExecutionEngineRef,
-    LLVMLinkInMCJIT,
-    LLVMCreateExecutionEngineForModule,
-    LLVMGetFunctionAddress,
-    LLVMDisposeExecutionEngine   
-};
-use llvm::target::{
-    LLVM_InitializeNativeTarget,
-    LLVM_InitializeNativeAsmPrinter
-};
-
-
-
+use llvm::core::*;
+use llvm::execution_engine::*;
+use llvm::target::*;
 
 fn llvm_example() {
     use std::util::{cast, transmute};
 
     let context = LLVMContextCreate();
+    defer context.LLVMContextDispose();
+
     let module = LLVMModuleCreateWithNameInContext(cast("sum\0".ptr), context);
     let builder = LLVMCreateBuilderInContext(context);
 
@@ -149,6 +124,7 @@ fn llvm_example() {
 
     // takes ownership of the module
     LLVMCreateExecutionEngineForModule(&ee, module, &out);
+    defer ee.LLVMDisposeExecutionEngine();
 
     let addr = LLVMGetFunctionAddress(ee, cast("sum\0".ptr));
 
@@ -162,8 +138,6 @@ fn llvm_example() {
     println!("{} + {} + {} = {}", x, y, z, res);
 
     // Clean up the rest.
-    LLVMDisposeExecutionEngine(ee);
-    LLVMContextDispose(context);
 }
 
 fn main() {

@@ -3,6 +3,10 @@ struct CString {
     ptr: &libc::c_char,
 }
 
+macro c_str($s) {
+    concat!($s, "\0").ptr as &libc::c_char
+}
+
 impl CString {
     fn new(s: &[u8]) -> CString {
         use std::mem::{slice, alloc, copy_nonoverlapping};
@@ -14,17 +18,20 @@ impl CString {
         CString { ptr: ptr }
     }
 
+    fn from_raw(ptr: &libc::c_char) -> CString {
+        CString { ptr: ptr }
+    }
 
     fn null() -> CString {
         CString { ptr: null }
     }
 
-    fn from_raw(ptr: &libc::c_char) -> CString {
-        CString { ptr: ptr }
+    fn len(self: &CString) -> usize {
+        libc::strlen(self.ptr) as usize
     }
 
-    fn as_slice(ptr: &libc::c_char) -> &[u8] {
-        mem::slice::from_raw(ptr as &u8, libc::strlen(ptr) as usize)
+    fn as_slice(self: &CString) -> &[u8] {
+        mem::slice::from_raw(self.ptr as &u8, self.len())
     }
 
     fn free(self: &mut CString) {

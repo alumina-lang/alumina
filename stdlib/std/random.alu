@@ -1,4 +1,4 @@
-use std::proto::{Unsigned, Integer, FloatingPoint};
+use std::marker::{Unsigned, Integer, FloatingPoint};
 
 protocol RandomNumberGenerator<Self> {
     fn next_u32(self: &mut Self) -> u32;
@@ -226,7 +226,7 @@ fn choice<Rng: RandomNumberGenerator<Rng>, T>(rng: &mut Rng, slice: &[T]) -> T {
     slice[rng.uniform(slice.len)]
 }
 
-#[cfg(test)]
+#[cfg(all(test, test_std))]
 mod tests {
     static SEED: [u8; 16] = mem::zeroed();
 

@@ -112,9 +112,8 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
 
                 self.ctx.register_type(ty, name);
             }
-            Ty::Array(inner, len) if !body_only => {
+            Ty::Array(inner, _len) if !body_only => {
                 assert!(!inner.is_zero_sized());
-                assert!(*len > 0);
 
                 self.add_type(inner, false)?;
                 let name = self.ctx.get_type(inner).mangle(self.ctx.make_id());
@@ -212,7 +211,6 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
         match ty {
             Ty::Array(inner, len) => {
                 assert!(!inner.is_zero_sized());
-                assert!(*len > 0);
 
                 let name = self.ctx.get_type(ty);
                 let inner_name = self.ctx.get_type(inner);

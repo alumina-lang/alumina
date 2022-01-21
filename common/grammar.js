@@ -262,8 +262,13 @@ module.exports = grammar({
         ";"
       ),
 
+    use_wildcard: $ => seq(
+        optional(seq(field("path", $._path), '::')),
+        '*'
+    ),
+
     _use_clause: ($) =>
-      choice($._path, $.use_as_clause, $.use_list, $.scoped_use_list),
+      choice($._path, $.use_as_clause, $.use_list, $.scoped_use_list, $.use_wildcard),
 
     use_as_clause: ($) =>
       seq(field("path", $._path), "as", field("alias", $.identifier)),

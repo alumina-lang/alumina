@@ -2,9 +2,6 @@ FROM ubuntu:21.04 as builder
 
 ENV DEBIAN_FRONTEND noninteractive
 
-# deb http://apt.llvm.org/hirsute/ llvm-toolchain-hirsute-13 main
-# deb-src http://apt.llvm.org/hirsute/ llvm-toolchain-hirsute-13 main
-
 RUN apt-get update && apt-get install -y software-properties-common curl gnupg build-essential
 RUN curl --proto '=https' --tlsv1.2 -sSf https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add -
 RUN add-apt-repository -y 'deb http://apt.llvm.org/hirsute/ llvm-toolchain-hirsute-13 main'

@@ -32,9 +32,12 @@ protocol Readable<Self> {
             if read == 0 {
                 return Result::ok(buf.len() - start_len);
             } else {
-                buf.resize(buf.len() + read);
+                buf._length = buf.len() + read;
             }
 
+            // Optimization for the case where the initial vector had exactly 
+            // enough capacity - avoid doubling the vector if the next read will
+            // return EOF by using a small stack buffer instead.
             if buf.capacity() == buf.len() && buf.capacity() == start_cap {
                 let probe: [u8; 32];
                 let read = try!(self.read(probe.as_slice_mut()));
@@ -62,6 +65,7 @@ protocol Writable<Self> {
 
         Result::ok(())
     }
+    fn flush(self: &mut Self) -> Result<(), Error>;
 }
 
 enum SeekFrom {
@@ -240,7 +244,7 @@ impl BufferedWriter<W: Writable<W>> {
     #[inline(never)]
     fn write_full(self: &mut BufferedWriter<W>, buf: &[u8]) -> result::Result<usize, Error> {
         if buf.len > self.buf.len - self.pos {
-            try!(self.flush());
+            try!(self.flush_buffer());
         }
      
         if buf.len >= self.buf.len  {
@@ -256,7 +260,7 @@ impl BufferedWriter<W: Writable<W>> {
     #[inline(never)]
     fn write_all_full(self: &mut BufferedWriter<W>, buf: &[u8]) -> result::Result<(), Error> {
         if buf.len > self.buf.len - self.pos {
-            try!(self.flush());
+            try!(self.flush_buffer());
         }
 
         if buf.len >= self.buf.len {
@@ -288,7 +292,7 @@ impl BufferedWriter<W: Writable<W>> {
         }
     }
 
-    fn flush(self: &mut BufferedWriter<W>) -> result::Result<(), Error> {
+    fn flush_buffer(self: &mut BufferedWriter<W>) -> result::Result<(), Error> {
         // This will return an EOF error, if we are not able to write everything.
         // since we have accepted bytes that  are not written to the underlying 
         // writer and not signalled an EOF.
@@ -296,6 +300,11 @@ impl BufferedWriter<W: Writable<W>> {
         self.pos = 0;
 
         Result::ok(())
+    }
+
+    fn flush(self: &mut BufferedWriter<W>) -> result::Result<(), Error> {
+        try!(self.flush_buffer());
+        self.inner.flush()
     }
 
     #[inline]
@@ -469,7 +478,7 @@ mod internal {
 }
 
 
-#[cfg(test)]
+#[cfg(all(test, test_std))]
 mod tests {
 
 }
