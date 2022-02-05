@@ -6,7 +6,7 @@
 #[cfg(all(test, not(custom_test_framework))] 
 {
     use std::io::{File, StringWriter, anonymous_pipe, copy, Error};
-    use std::process::{Command, Stdio};
+    use std::process::{Command, Stdio, Forked};
     use std::collections::{Vector, free_all, sort_by};
     use std::runtime::internal::{TEST_CASES, TestCaseMeta};
     use std::time::{Instant, Duration};
@@ -46,7 +46,7 @@
 
     fn run(test: &TestCaseMeta) -> TestResult {
         let should_fail = test.should_fail();
-        let child = Command::fork()
+        let child = Forked::new()
             .stdin(Stdio::Null)
             .stdout(Stdio::Piped)
             .stderr(Stdio::Piped)

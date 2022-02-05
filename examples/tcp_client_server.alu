@@ -6,9 +6,9 @@ use std::collections::Vector;
 use std::result::{Result, try};
 use std::io::{
     BufferedReader, lines, File, Error, 
-    stdin, stdout, copy
+    StdioStream, copy
 };
-use std::process::{Command, exit};
+use std::process::{Forked, exit};
 use std::fmt::{write, writeln, pad_with};
 
 const PORT: u16 = 24601;
@@ -27,17 +27,17 @@ fn client() {
     // to avoid buffers getting full. This would be better done with a poll,
     // so we can process both at the same time, but this is a simple example.
 
-    let maybe_child = Command::fork()
+    let maybe_child = Forked::new()
         .spawn()
         .unwrap();
 
     if !maybe_child.is_some {
-        copy(&stdin, &socket).unwrap();
+        copy(&StdioStream::stdin(), &socket).unwrap();
         socket.shutdown(Shutdown::Write).unwrap();
         exit(0);
     } 
     
-    copy(&socket, &stdout).unwrap();
+    copy(&socket, &StdioStream::stdout()).unwrap();
 
     let status = maybe_child.unwrap().wait().unwrap();
     if status != 0 {

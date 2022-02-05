@@ -209,6 +209,8 @@ pub enum CodeErrorKind {
     CannotBeATest,
     #[error("test cases must have 0 parameters and return void")]
     InvalidTestCaseSignature,
+    #[error("extern statics cannot have initializers")]
+    ExternStaticMustHaveType,
 
     // Warnings
     #[error("defer inside a loop: this defered statement will only be executed once")]

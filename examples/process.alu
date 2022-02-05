@@ -1,0 +1,16 @@
+use std::string::{trim};
+use std::process::{Command, Stdio};
+
+fn main() {  
+    let command = Command::new("/usr/bin/uname")
+        .stdout(Stdio::Piped)
+        .args(&["-s"]);
+        
+    let output = command.spawn()
+        .unwrap()
+        .wait_with_output()
+        .unwrap();
+    defer output.free();
+    
+    println!("Running on {}", output.stdout.as_slice().trim());
+}

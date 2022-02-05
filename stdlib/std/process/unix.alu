@@ -1,13 +1,49 @@
 use io::{Error, Pipe};
 use io::unix::errno_try;
 
-struct Command {
-    _name: option::Option<&[u8]>,
-    _args: &[&[u8]],
-    _stdin: Stdio,
-    _stdout: Stdio,
-    _stderr: Stdio
+struct EnvIterator {
+    ptr: &&libc::c_char
 }
+
+impl EnvIterator {
+    use ffi::CString;
+    use string::find_char;
+
+    fn new() -> EnvIterator {
+        EnvIterator {
+            ptr: internal::environ
+        }
+    }
+
+    fn iter(self: &EnvIterator) -> EnvIterator {
+        *self
+    }
+
+    fn next(self: &mut EnvIterator) -> Option<(&[u8], &[u8])> {
+        loop {
+            if *self.ptr == null {
+                break Option::none();
+            }
+
+            let env_str = CString::from_raw(*self.ptr).as_slice();
+            self.ptr += 1;
+
+            if env_str.len == 0 {
+                continue;
+            }
+
+            // Empty environment variable name is consider not valid, so allow
+            // it to start with '='
+            let sep = env_str[1..].find_char('=');
+            if !sep.is_some {
+                continue;
+            }
+
+            break Option::some((env_str[0..sep.inner + 1], env_str[sep.inner + 2..]));
+        }
+    }
+}
+
 
 struct Output {
     status: i32,
@@ -129,71 +165,40 @@ impl Child {
     }
 }
 
-impl Command {
-    use io::{File, OpenOptions};
+struct Forked {
+    _stdin: Stdio,
+    _stdout: Stdio,
+    _stderr: Stdio
+}
+
+impl Forked {
     use internal::IoRedirection;
-    use ffi::CString;
-    use collections::{Vector, free_all};
 
-    fn new(name: &[u8]) -> Command {
-        Command {
-            _name: Option::some(name),
-            _args: mem::slice::empty(),
+    fn new() -> Forked {
+        Forked {
             _stdin: Stdio::Inherit,
             _stdout: Stdio::Inherit,
             _stderr: Stdio::Inherit
         }
     }
 
-    fn fork() -> Command {
-        Command {
-            _name: Option::none(),
-            _args: mem::slice::empty(),
-            _stdin: Stdio::Inherit,
-            _stdout: Stdio::Inherit,
-            _stderr: Stdio::Inherit
-        }
-    }
-
-    fn args(self: &mut Command, args: &[&[u8]]) -> &mut Command {
-        self._args = args;
-        self
-    }
-
-    fn stdin(self: &mut Command, stdin: Stdio) -> &mut Command {
+    fn stdin(self: &mut Forked, stdin: Stdio) -> &mut Forked {
         self._stdin = stdin;
         self
     }
 
-    fn stdout(self: &mut Command, stdout: Stdio) -> &mut Command {
+    fn stdout(self: &mut Forked, stdout: Stdio) -> &mut Forked {
         self._stdout = stdout;
         self
     }
 
-    fn stderr(self: &mut Command, stderr: Stdio) -> &mut Command {
+    fn stderr(self: &mut Forked, stderr: Stdio) -> &mut Forked {
         self._stderr = stderr;
         self
     }
 
-    fn _exec(self: &Command) -> Result<!, Error> {
-        let name = CString::new(self._name.unwrap());
-        defer name.free();
-
-        let argv : Vector<CString> = Vector::with_capacity(self._args.len + 2);
-        defer argv.free_all();
-
-        argv.push(CString::new(self._name.unwrap()));
-        for arg in self._args {
-            argv.push(CString::new(arg));
-        }
-        argv.push(CString::null());
-
-        errno_try!(libc::execv(name.ptr as &libc::c_char, argv.as_slice().ptr as &&libc::c_char));
-        unreachable!()
-    }
-
     fn _after_fork(
-        self: &Command,
+        self: &Forked,
         stdin: &mut IoRedirection,
         stdout: &mut IoRedirection,
         stderr: &mut IoRedirection
@@ -202,14 +207,10 @@ impl Command {
         try!(stdout.install(libc::STDOUT_FILENO));
         try!(stderr.install(libc::STDERR_FILENO));
 
-        if self._name.is_some {
-            try!(self._exec())
-        }
-
         Result::ok(())
     }
 
-    fn spawn(self: &Command) -> Result<Option<Child>, Error> {
+    fn spawn(self: &Forked) -> Result<Option<Child>, Error> {
         let stdin = try!(IoRedirection::new(true, self._stdin));
         defer stdin.close();
 
@@ -258,10 +259,159 @@ impl Command {
     }
 }
 
+struct Command {
+    _name: option::Option<&[u8]>,
+    _args: &[&[u8]],
+    _environ: Option<&[(&[u8], &[u8])]>,
+    _stdin: Stdio,
+    _stdout: Stdio,
+    _stderr: Stdio
+}
+
+impl Command {
+    use internal::IoRedirection;
+    use ffi::CString;
+    use collections::{Vector, free_all};
+
+    fn new(name: &[u8]) -> Command {
+        Command {
+            _name: Option::some(name),
+            _args: mem::slice::empty(),
+            _environ: Option::none(),
+            _stdin: Stdio::Inherit,
+            _stdout: Stdio::Inherit,
+            _stderr: Stdio::Inherit
+        }
+    }
+
+    fn args(self: &mut Command, args: &[&[u8]]) -> &mut Command {
+        self._args = args;
+        self
+    }
+
+    fn env(self: &mut Command, environ: &[(&[u8], &[u8])]) -> &mut Command {
+        self._environ = Option::some(environ);
+        self
+    }
+
+    fn stdin(self: &mut Command, stdin: Stdio) -> &mut Command {
+        self._stdin = stdin;
+        self
+    }
+
+    fn stdout(self: &mut Command, stdout: Stdio) -> &mut Command {
+        self._stdout = stdout;
+        self
+    }
+
+    fn stderr(self: &mut Command, stderr: Stdio) -> &mut Command {
+        self._stderr = stderr;
+        self
+    }
+
+    fn _after_fork(
+        self: &Command,
+        stdin: &mut IoRedirection,
+        stdout: &mut IoRedirection,
+        stderr: &mut IoRedirection
+    ) -> Result<!, Error> {
+        use mem::copy_nonoverlapping;
+
+        try!(stdin.install(libc::STDIN_FILENO));
+        try!(stdout.install(libc::STDOUT_FILENO));
+        try!(stderr.install(libc::STDERR_FILENO));
+
+        let name = CString::new(self._name.unwrap());
+        defer name.free();
+
+        let argv : Vector<CString> = Vector::with_capacity(self._args.len + 2);
+        defer argv.free_all();
+
+        argv.push(CString::new(self._name.unwrap()));
+        for arg in self._args {
+            argv.push(CString::new(arg));
+        }
+        argv.push(CString::null());
+
+        if !self._environ.is_some {
+            errno_try!(libc::execv(name.ptr as &libc::c_char, argv.as_slice().ptr as &&libc::c_char));
+        } else {
+            let environ_s = self._environ.unwrap();
+            let environ : Vector<CString> = Vector::with_capacity(environ_s.len + 1);
+            defer environ.free_all();
+
+            for (key, value) in environ_s {
+                let var = libc::malloc(key.len + value.len + 2) as &mut u8;
+                key.copy_nonoverlapping(var);
+                *(var + key.len) = '=';
+                value.copy_nonoverlapping(var + key.len + 1);
+                *(var + key.len + value.len + 1) = 0;
+
+                environ.push(CString::from_raw(var as &libc::c_char));
+            }
+            environ.push(CString::null());
+
+            errno_try!(libc::execve(
+                name.ptr as &libc::c_char,
+                argv.as_slice().ptr as &&libc::c_char,
+                environ.as_slice().ptr as &&libc::c_char
+            ));
+        }
+        unreachable!()
+    }
+
+    fn spawn(self: &Command) -> Result<Child, Error> {
+        let stdin = try!(IoRedirection::new(true, self._stdin));
+        defer stdin.close();
+
+        let stdout = try!(IoRedirection::new(false, self._stdout));
+        defer stdout.close();
+
+        let stderr = try!(IoRedirection::new(false, self._stderr));
+        defer stderr.close();
+
+        let (fail_rx, fail_tx) = try!(Pipe::anonymous());
+        defer fail_rx.close();
+
+        let pid = errno_try!(std::libc::fork());
+        if pid > 0 {
+            fail_tx.close().unwrap();
+
+            let exec_err: Error;
+            if fail_rx.read_exact(
+                mem::slice::from_raw(&exec_err as &mut u8, mem::size_of::<Error>())
+            ).is_ok {
+                return Result::err(exec_err);
+            }
+
+            Result::ok(Child {
+                pid: pid,
+                stdin: stdin.into_inner(),
+                stdout: stdout.into_inner(),
+                stderr: stderr.into_inner(),
+            })
+        } else {
+            let res = self._after_fork(&stdin, &stdout, &stderr);
+
+            // Since we are already in the child process, we can't just bail here, we need to
+            // send the error to the parent process via the pipe.
+            if !res.is_ok {
+                let msg = mem::slice::from_raw(&res.inner.err as &u8, mem::size_of::<Error>());
+                fail_tx.write_all(msg).unwrap();
+                libc::_exit(1);
+            } 
+
+            unreachable!()
+        }
+    }
+}
+
 mod internal {
     use io::{Readable, AsFileDescriptor};
     use std::io::unix::{ErrorKind, errno_try};
     use collections::Vector;
+
+    extern "C" static environ: &&libc::c_char;
     
     fn maybe_read_to_end<S1: Readable<S1>>(src: &mut S1, dst: &mut Vector<u8>) -> Result<bool, Error> {
         let maybe_n = src.read_to_end(dst);
@@ -359,7 +509,7 @@ mod internal {
         }
     
         fn install(self: &mut IoRedirection, fd: libc::c_int) -> Result<(), Error> {
-            use std::io::{File, OpenOptions};
+            use std::fs::{File, OpenOptions};
     
             switch self.kind {
                 Stdio::Piped => {
@@ -399,7 +549,6 @@ mod test {
             .stdout(Stdio::Piped)
             .stderr(Stdio::Piped)
             .spawn()
-            .unwrap()
             .unwrap();
 
         let output = child.wait_with_output().unwrap();
@@ -413,8 +562,8 @@ mod test {
     #[test]
     fn spawn_fails_on_exec_failure() {
         let child = Command::new("some nonexistent program hopefully")
-            .stdout(Stdio::Piped)
-            .stderr(Stdio::Piped)
+            //.stdout(Stdio::Piped)
+            //.stderr(Stdio::Piped)
             .spawn();
 
         assert!(!child.is_ok);
@@ -427,7 +576,6 @@ mod test {
         let child = Command::new("/bin/sleep")
             .args(&["10000"])
             .spawn()
-            .unwrap()
             .unwrap();
 
         child.kill().unwrap();
@@ -439,7 +587,7 @@ mod test {
 
     #[test]
     fn test_fork() {
-        let child = Command::fork()
+        let child = Forked::new()
             .stdout(Stdio::Piped)
             .stderr(Stdio::Piped)
             .spawn()
@@ -463,7 +611,7 @@ mod test {
     fn test_fork_starvation() {
         use fmt::repeat;
 
-        let child = Command::fork()
+        let child = Forked::new()
             .stdout(Stdio::Piped)
             .stderr(Stdio::Piped)
             .spawn()
@@ -473,7 +621,7 @@ mod test {
             // Write to both pipes and fill up the buffer. Naive implementation would
             // block on write eventually when the pipe capacity is reached. But our's
             // don't!
-            for i in range(0, 1024) {
+            for i in 0..1024 {
                 print!("{}", "A".repeat(1024));
                 eprint!("{}", "B".repeat(1024));
             }

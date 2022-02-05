@@ -1,5 +1,4 @@
 const PREC = {
-  range: 15,
   call: 14,
   field: 13,
   unary: 12,
@@ -13,6 +12,7 @@ const PREC = {
   comparative: 4,
   and: 3,
   or: 2,
+  range: 1,
   assign: 0,
   closure: -1,
   et_cetera: -2,
@@ -262,13 +262,16 @@ module.exports = grammar({
         ";"
       ),
 
-    use_wildcard: $ => seq(
-        optional(seq(field("path", $._path), '::')),
-        '*'
-    ),
+    use_wildcard: ($) => seq(optional(seq(field("path", $._path), "::")), "*"),
 
     _use_clause: ($) =>
-      choice($._path, $.use_as_clause, $.use_list, $.scoped_use_list, $.use_wildcard),
+      choice(
+        $._path,
+        $.use_as_clause,
+        $.use_list,
+        $.scoped_use_list,
+        $.use_wildcard
+      ),
 
     use_as_clause: ($) =>
       seq(field("path", $._path), "as", field("alias", $.identifier)),
@@ -411,6 +414,9 @@ module.exports = grammar({
     static_declaration: ($) =>
       seq(
         optional(field("attributes", $.attributes)),
+        optional(
+          seq(field("extern", "extern"), field("abi", $.string_literal))
+        ),
         "static",
         field("name", $.identifier),
         optional(seq(":", field("type", $._type))),
@@ -487,7 +493,7 @@ module.exports = grammar({
         )
       ),
 
-    _expression: ($) =>
+    _expression_except_range: ($) =>
       choice(
         $.return_expression,
         $.defer_expression,
@@ -508,7 +514,6 @@ module.exports = grammar({
         prec(1, $.macro_invocation),
         $.et_cetera_expression,
         $.closure_expression,
-        $._expression_ending_with_block,
         $._literal,
         prec.left($.identifier),
         prec.left($.macro_identifier),
@@ -516,9 +521,12 @@ module.exports = grammar({
         $.scoped_identifier,
         $.generic_function,
         $.parenthesized_expression,
-        $.struct_expression
+        $.struct_expression,
+        $._expression_ending_with_block
         // TODO: other kinds of expressions
       ),
+
+    _expression: ($) => choice($.range_expression, $._expression_except_range),
 
     unary_expression: ($) =>
       prec(
@@ -585,10 +593,7 @@ module.exports = grammar({
         seq(
           field("value", $._expression),
           "[",
-          choice(
-            field("index", $._expression),
-            field("range", $.range_expression)
-          ),
+          field("index", $._expression),
           "]"
         )
       ),
@@ -597,13 +602,10 @@ module.exports = grammar({
       prec.left(
         PREC.range,
         choice(
-          prec.left(
-            PREC.range + 1,
-            seq(
-              field("lower", $._expression),
-              "..",
-              field("upper", $._expression)
-            )
+          seq(
+            field("lower", $._expression),
+            "..",
+            field("upper", $._expression)
           ),
           seq(field("lower", $._expression), ".."),
           seq("..", field("upper", $._expression)),
@@ -633,7 +635,10 @@ module.exports = grammar({
     call_expression: ($) =>
       prec(
         PREC.call,
-        seq(field("function", $._expression), field("arguments", $.arguments))
+        seq(
+          field("function", $._expression_except_range),
+          field("arguments", $.arguments)
+        )
       ),
 
     macro_invocation: ($) =>

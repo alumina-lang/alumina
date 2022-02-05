@@ -13,12 +13,38 @@ protocol Iterable<Self, It: Iterator<It, T>, T> {
     fn iter(self: &Self) -> It;
 }
 
+#[lang(range_full)]
+struct RangeFull<T: Integer> {
+
+}
+
+#[lang(range_from)]
+struct RangeFrom<T: Integer> {
+    lower: T,
+}
+
+#[lang(range_to)]
+struct RangeTo<T: Integer> {
+    upper: T,
+}
+
+#[lang(range)]
 struct Range<T: Integer> {
     lower: T,
     upper: T,
 }
 
+
 impl Range<T: Integer> {
+    #[force_inline]
+    #[lang(range_new)]
+    fn new(lower: T, upper: T) -> Range<T> {
+        Range {
+            lower: lower,
+            upper: upper,
+        }
+    }
+
     #[force_inline]
     fn iter(self: &Range<T>) -> RangeIter<T> {
         RangeIter {
@@ -29,6 +55,71 @@ impl Range<T: Integer> {
 
     fn len(self: &Range<T>) -> T {
         self.upper - self.lower
+    }
+}
+
+impl RangeFrom<T: Integer> {
+    #[force_inline]
+    #[lang(range_from_new)]
+    fn new(lower: T) -> RangeFrom<T> {
+        RangeFrom {
+            lower: lower,
+        }
+    }
+
+
+    #[force_inline]
+    fn iter(self: &RangeFrom<T>) -> RangeIter<T> {
+        RangeIter {
+            current: self.lower,
+            upper: T::max_value(),
+        }
+    }
+
+    fn len(self: &RangeFrom<T>) -> T {
+        T::max_value() - self.lower
+    }
+}
+
+impl RangeTo<T: Integer> {
+    #[force_inline]
+    #[lang(range_to_new)]
+    fn new(upper: T) -> RangeTo<T> {
+        RangeTo {
+            upper: upper,
+        }
+    }
+
+    #[force_inline]
+    fn iter(self: &RangeTo<T>) -> RangeIter<T> {
+        RangeIter {
+            current: T::min_value(),
+            upper: self.upper,
+        }
+    }
+
+    fn len(self: &RangeTo<T>) -> T {
+        self.upper - T::min_value()
+    }
+}
+
+impl RangeFull<T: Integer> {
+    #[force_inline]
+    #[lang(range_full_new)]
+    fn new() -> RangeFull<T> {
+        RangeFull {}
+    }
+
+    #[force_inline]
+    fn iter(self: &RangeFull<T>) -> RangeIter<T> {
+        RangeIter {
+            current: T::min_value(),
+            upper: T::max_value(),
+        }
+    }
+
+    fn len(self: &RangeFull<T>) -> T {
+        T::max_value() - T::min_value()
     }
 }
 

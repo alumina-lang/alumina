@@ -484,17 +484,29 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
     ) -> Result<(), AluminaError> {
         self.type_writer.add_type(item.typ)?;
 
-        if let Some(name) = item.name {
+        if item.r#extern {
+            self.ctx
+                .register_name(id, CName::Native(item.name.unwrap()));
+        } else if let Some(name) = item.name {
             self.ctx.register_name(id, CName::Mangled(name, id.id));
         }
 
         if !item.typ.is_zero_sized() {
-            w!(
-                self.fn_decls,
-                "\nstatic {} {};",
-                self.ctx.get_type(item.typ),
-                self.ctx.get_name(id)
-            );
+            if item.r#extern {
+                w!(
+                    self.fn_decls,
+                    "\nextern {} {};",
+                    self.ctx.get_type(item.typ),
+                    self.ctx.get_name(id)
+                );
+            } else {
+                w!(
+                    self.fn_decls,
+                    "\nstatic {} {};",
+                    self.ctx.get_type(item.typ),
+                    self.ctx.get_name(id)
+                );
+            }
         }
 
         Ok(())

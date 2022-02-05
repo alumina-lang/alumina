@@ -1,0 +1,225 @@
+use io::{Error, FileDescriptor, SeekFrom, Readable, Writable, Seekable};
+use io::unix::{errno_try, FdReadWrite};
+
+struct OpenOptions {
+    _read: bool,
+    _write: bool,
+    _append: bool,
+    _truncate: bool,
+    _create: bool,
+    _create_new: bool,
+    _custom_flags: i32,
+    _mode: libc::mode_t,
+}
+
+impl OpenOptions {
+    fn new() -> OpenOptions {
+        OpenOptions {
+            _read: false,
+            _write: false,
+            _append: false,
+            _truncate: false,
+            _create: false,
+            _create_new: false,
+            _custom_flags: 0,
+            _mode: 0o666,
+        }
+    }
+
+    fn read(self: &mut OpenOptions, read: bool) -> &mut OpenOptions {
+        self._read = read;
+        self
+    }
+    fn write(self: &mut OpenOptions, write: bool) -> &mut OpenOptions {
+        self._write = write;
+        self
+    }
+    fn append(self: &mut OpenOptions, append: bool) -> &mut OpenOptions {
+        self._append = append;
+        self
+    }
+    fn truncate(self: &mut OpenOptions, truncate: bool) -> &mut OpenOptions {
+        self._truncate = truncate;
+        self
+    }
+    fn create(self: &mut OpenOptions, create: bool) -> &mut OpenOptions {
+        self._create = create;
+        self
+    }
+    fn create_new(self: &mut OpenOptions, create_new: bool) -> &mut OpenOptions {
+        self._create_new = create_new;
+        self
+    }
+    fn custom_flags(self: &mut OpenOptions, flags: i32) -> &mut OpenOptions {
+        self._custom_flags = flags;
+        self
+    }
+    fn mode(self: &mut OpenOptions, mode: u32) -> &mut OpenOptions {
+        self._mode = mode as libc::mode_t;
+        self
+    }
+
+    fn get_access_mode(self: &OpenOptions) -> libc::c_int {
+        switch (self._read, self._write, self._append) {
+            (true, false, false) => libc::O_RDONLY,
+            (false, true, false) => libc::O_WRONLY,
+            (true, true, false) => libc::O_RDWR,
+            (false, true, true), (false, false, true)  => libc::O_WRONLY | libc::O_APPEND,
+            (true, true, true), (true, false, true) => libc::O_RDWR | libc::O_APPEND,
+            _ => -1
+        }
+    }
+
+    fn get_creation_mode(self: &OpenOptions) -> libc::c_int {
+        switch (self._write, self._append) {
+            (true, false) => {}
+            (false, false) => {
+                if self._truncate || self._create || self._create_new {
+                    return -1;
+                }
+            }
+            (true, true), (false, true) => {
+                if self._truncate && !self._create_new {
+                    return -1;
+                }
+            }
+        }
+
+        switch (self._create, self._truncate, self._create_new) {
+            (false, false, false) => 0,
+            (true, false, false) => libc::O_CREAT,
+            (false, true, false) => libc::O_TRUNC,
+            (true, true, false) => libc::O_CREAT | libc::O_TRUNC,
+            _ => libc::O_CREAT | libc::O_EXCL,
+        }
+    }
+}
+
+
+struct File {
+    fd: FileDescriptor
+}
+
+impl File {
+    use ffi::CString;
+
+    /// Opens file in read-only mode.
+    fn open(path: &[u8]) -> Result<File, Error> {
+        open_with(path, OpenOptions::new().read(true))
+    }
+
+    /// Creates a new file for writing (truncating it if it already exists).
+    fn create(path: &[u8]) -> Result<File, Error> {
+        open_with(path, OpenOptions::new().write(true).create(true).truncate(true))
+    }
+
+    /// Opens file with custom options.
+    fn open_with(path: &[u8], opts: &OpenOptions) -> Result<File, Error> {
+        let path = CString::new(path);
+        defer path.free();
+
+        let flags = libc::O_CLOEXEC
+            | opts.get_access_mode()
+            | opts.get_creation_mode()
+            | (opts._custom_flags as libc::c_int & ~libc::O_ACCMODE);
+
+        let fd = errno_try!(libc::open(
+            path.ptr,
+            flags,
+            opts._mode as libc::mode_t
+        ));
+
+        Result::ok(File { fd: FileDescriptor::new(fd) })
+    }
+
+    fn from_fd(fd: FileDescriptor) -> File {
+        File { fd: fd }
+    }
+
+    fn as_fd(self: &File) -> FileDescriptor {
+        self.fd
+    }
+
+    fn read_to_string(path: &[u8]) -> Result<collections::Vector<u8>, Error> {
+        use std::io::copy;
+
+        let string = collections::Vector::new::<u8>();
+        defer string.free();
+
+        let file = try!(File::open(path));
+        defer file.close();
+
+        let ret = try!(file.read_to_end(&string));
+
+        Result::ok(string.move())
+    }
+
+    fn seek(self: &mut File, whence: SeekFrom, offset: i64) -> Result<i64, Error> {
+        #[cfg(not(target_os = "macos"))]
+        let ret = errno_try!(libc::lseek64(self.fd.value, offset, whence as libc::c_int));
+        #[cfg(target_os = "macos")]
+        let ret = errno_try!(libc::lseek(self.fd.value, offset, whence as libc::c_int));
+
+        Result::ok(ret as i64)
+    }
+
+    fn flush(self: &mut File) -> Result<(), Error> {
+        Result::ok(())
+    }
+
+    fn sync(self: &mut File) -> Result<(), Error> {
+        let ret = errno_try!(libc::fsync(self.fd.value));
+        Result::ok(())
+    }
+
+    fn close(self: &mut File) -> Result<(), Error> {
+        self.fd.close()
+    }
+
+    fn move(self: &mut File) -> File {
+        File { fd: self.fd.move() }
+    }
+
+    mixin FdReadWrite<File>;
+    mixin Readable<File>;
+    mixin Writable<File>;
+    mixin Seekable<File>;
+}
+
+
+#[cfg(all(test, test_std))]
+mod test {
+    use collections::Vector;
+    static BUF: [u8; 1024];
+    static BUF1: [u8; 1024];
+
+    fn mktemp() -> Vector<u8> {
+        use fmt::{hex, pad, format};
+        format!("/tmp/{}.dat", random::DEFAULT_RNG.next_u64().hex().zero_pad(16)).unwrap()
+    }
+
+    #[test]
+    fn test_open() {
+        let filename = mktemp();
+        let buf = BUF.as_slice_mut();
+        defer filename.free();
+
+        let file = File::create(filename.as_slice()).unwrap();
+
+        file.write_all("Hello, world!").unwrap();
+        file.close().unwrap();
+
+        let file = File::open(filename.as_slice()).unwrap();
+        defer file.close();
+
+        let read = file.read(buf).unwrap();
+        assert_eq!(buf[..read] as &[u8], "Hello, world!");
+        
+        file.seek(SeekFrom::Beginning, 7).unwrap();
+
+        let read = file.read(buf).unwrap();
+        assert_eq!(buf[..read] as &[u8], "world!");
+
+        file.close().unwrap();
+    }
+}

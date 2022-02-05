@@ -340,6 +340,7 @@ pub struct Static<'ir> {
     pub name: Option<&'ir str>,
     pub typ: TyP<'ir>,
     pub init: Option<ExprP<'ir>>,
+    pub r#extern: bool,
 }
 
 #[derive(Debug)]

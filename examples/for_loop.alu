@@ -1,22 +1,16 @@
 use std::hash::{Hasher, Hashable};
 use std::cmp::{Equatable, Comparable};
-use std::collections::{HashMap, Vector};
+use std::collections::{HashMap, Vector, free_all};
 use std::fmt::format;
 use std::iter::for_each;
 use std::random::DEFAULT_RNG;
 
 fn main() {
     let vec = Vector::new::<Vector<u8>>();
-    defer vec.free();
+    defer vec.free_all();
 
-    for i in range(0, 100) {
+    for i in 0..100 {
         vec.push(format!("Hello, you are number {}", i).unwrap());
-    }
-    defer {
-        // Format allocates heap memory, we need to free the values individually
-        for val in vec {
-            val.free();
-        }
     }
 
     let hm = HashMap::new::<&[u8], u32>();

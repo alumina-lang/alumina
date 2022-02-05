@@ -8,8 +8,16 @@ pub enum LangItemKind {
     SliceNew,
     SliceIndex,
     SliceRangeIndex,
-    SliceRangeIndexLower,
     SliceCoerce,
+
+    RangeFull,
+    RangeFrom,
+    RangeTo,
+    Range,
+    RangeFullNew,
+    RangeFromNew,
+    RangeToNew,
+    RangeNew,
 
     ProtoPrimitive,
     ProtoNumeric,
@@ -55,7 +63,17 @@ impl TryFrom<&str> for LangItemKind {
             "slice_coerce" => Ok(LangItemKind::SliceCoerce),
             "slice_index" => Ok(LangItemKind::SliceIndex),
             "slice_range_index" => Ok(LangItemKind::SliceRangeIndex),
-            "slice_range_index_lower" => Ok(LangItemKind::SliceRangeIndexLower),
+
+            "range_full" => Ok(LangItemKind::RangeFull),
+            "range_from" => Ok(LangItemKind::RangeFrom),
+            "range_to" => Ok(LangItemKind::RangeTo),
+            "range" => Ok(LangItemKind::Range),
+
+            "range_full_new" => Ok(LangItemKind::RangeFullNew),
+            "range_from_new" => Ok(LangItemKind::RangeFromNew),
+            "range_to_new" => Ok(LangItemKind::RangeToNew),
+            "range_new" => Ok(LangItemKind::RangeNew),
+
             "proto_primitive" => Ok(LangItemKind::ProtoPrimitive),
             "proto_numeric" => Ok(LangItemKind::ProtoNumeric),
             "proto_integer" => Ok(LangItemKind::ProtoInteger),
