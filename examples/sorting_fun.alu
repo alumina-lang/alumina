@@ -5,12 +5,6 @@ struct PrintableSlice<T> {
 }
 
 impl PrintableSlice {
-    fn new<T>(inner: &[T]) -> PrintableSlice<T> {
-        PrintableSlice {
-            inner: inner
-        }
-    }
-
     fn fmt<T: Formattable<T, F>, F: Formatter<F>>(self: &PrintableSlice<T>, formatter: &mut F) -> Result<(), Error> {
         try!(write!(formatter, "[ "));
         for item in self.inner {
@@ -18,6 +12,10 @@ impl PrintableSlice {
         }
         write!(formatter, "]")
     }
+}
+
+fn printable<T>(slice: &[T]) -> PrintableSlice<T> {
+    PrintableSlice { inner: slice }
 }
 
 
@@ -43,12 +41,12 @@ fn main() {
         "yulo",
     ];
 
-    println!("Original: {}", PrintableSlice::new(words));
+    println!("Original: {}", words.printable());
     
     use std::random::{DEFAULT_RNG, shuffle};
     DEFAULT_RNG.shuffle(words);
-    println!("Shuffled: {}", PrintableSlice::new(words));
+    println!("Shuffled: {}", words.printable());
     
     std::collections::sort(words);
-    println!("Sorted:   {}", PrintableSlice::new(words));
+    println!("Sorted:   {}", words.printable());
 }

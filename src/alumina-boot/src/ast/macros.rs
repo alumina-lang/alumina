@@ -345,8 +345,7 @@ impl<'ast> MacroExpander<'ast> {
             }
             TupleIndex(inner, idx) => TupleIndex(self.visit(inner)?, idx),
             Index(inner, idx) => Index(self.visit(inner)?, self.visit(idx)?),
-            RangeIndex(inner, lower, upper) => RangeIndex(
-                self.visit(inner)?,
+            Range(lower, upper) => Range(
                 lower.map(|i| self.visit(i)).transpose()?,
                 upper.map(|i| self.visit(i)).transpose()?,
             ),

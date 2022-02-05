@@ -2,7 +2,7 @@ use std::result::{Result, try};
 use tree_sitter::{TSLanguage, Node, Parser, TSTreeCursor, TSFieldId};
 use node_kinds::{NodeVisitor, FieldKind};
 use common::{NodeVisitorExt, child_by, Error};
-use std::io::File;
+use std::fs::File;
 
 extern "C" fn tree_sitter_alumina() -> &TSLanguage;
 use llvm::core;
@@ -145,7 +145,7 @@ fn main() {
     defer parser.free();
 
     parser.set_language(tree_sitter_alumina()).unwrap()
-    let source = std::io::File::read_to_string("./src/aluminac/main.alu").unwrap();
+    let source = std::fs::File::read_to_string("./src/aluminac/main.alu").unwrap();
     defer source.free();
     
     let tree = parser.parse(source.as_slice());

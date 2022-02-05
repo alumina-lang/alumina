@@ -95,7 +95,7 @@ snapshots['test_examples[hello_world.alu] run_ret'] = 0
 
 snapshots['test_examples[hello_world.alu] run_stderr'] = b''
 
-snapshots['test_examples[hello_world.alu] run_stdout'] = b'Hello, world!\n\n'
+snapshots['test_examples[hello_world.alu] run_stdout'] = b'Hello, world!\n'
 
 snapshots['test_examples[intrinsics.alu] compile_ret'] = 1
 
@@ -147,15 +147,15 @@ snapshots['test_examples[primes.alu] run_stderr'] = b''
 
 snapshots['test_examples[primes.alu] run_stdout'] = b'1\n2\n3\n5\n7\n11\n13\n17\n19\n23\n29\n31\n37\n41\n43\n47\n53\n59\n61\n67\n71\n73\n79\n83\n89\n97\n'
 
-snapshots['test_examples[protocols_mixins.alu] compile_ret'] = 0
+snapshots['test_examples[process.alu] compile_ret'] = 0
 
-snapshots['test_examples[protocols_mixins.alu] compile_stderr'] = None
+snapshots['test_examples[process.alu] compile_stderr'] = None
 
-snapshots['test_examples[protocols_mixins.alu] run_ret'] = 0
+snapshots['test_examples[process.alu] run_ret'] = 0
 
-snapshots['test_examples[protocols_mixins.alu] run_stderr'] = b''
+snapshots['test_examples[process.alu] run_stderr'] = b''
 
-snapshots['test_examples[protocols_mixins.alu] run_stdout'] = b'inserting key with hash 177585\ninserting key with hash 177586\ninserting key with hash 177587\n[hello, hel, abracadabra, mordor, zblj, mor]\n[abracadabra, hel, hello, mor, mordor, zblj]\ninserting key with hash 13865934201817421465\n'
+snapshots['test_examples[process.alu] run_stdout'] = b'Running on Linux\n'
 
 snapshots['test_examples[quicksort.alu] compile_ret'] = 0
 
@@ -226,16 +226,6 @@ snapshots['test_examples[tests.alu] run_ret'] = 0
 snapshots['test_examples[tests.alu] run_stderr'] = b''
 
 snapshots['test_examples[tests.alu] run_stdout'] = b''
-
-snapshots['test_examples[vector.alu] compile_ret'] = 0
-
-snapshots['test_examples[vector.alu] compile_stderr'] = None
-
-snapshots['test_examples[vector.alu] run_ret'] = 0
-
-snapshots['test_examples[vector.alu] run_stderr'] = b''
-
-snapshots['test_examples[vector.alu] run_stdout'] = b'I am a stack.\n'
 
 snapshots['test_examples[when_expression.alu] compile_ret'] = 0
 

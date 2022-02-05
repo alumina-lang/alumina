@@ -725,25 +725,24 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
     fn visit_index_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let value = self.visit(node.child_by_field_name("value").unwrap())?;
+        let index = self.visit(node.child_by_field_name("index").unwrap())?;
 
-        let result;
-        if let Some(index) = node.child_by_field_name("index") {
-            let index = self.visit(index)?;
-            result = ExprKind::Index(value, index);
-        } else if let Some(range) = node.child_by_field_name("range") {
-            let lower_bound = range
-                .child_by_field_name("lower")
-                .map(|n| self.visit(n))
-                .transpose()?;
-            let upper_bound = range
-                .child_by_field_name("upper")
-                .map(|n| self.visit(n))
-                .transpose()?;
+        let result = ExprKind::Index(value, index);
 
-            result = ExprKind::RangeIndex(value, lower_bound, upper_bound);
-        } else {
-            unreachable!();
-        }
+        Ok(result.alloc_with_span(self.ast, &self.scope, node))
+    }
+
+    fn visit_range_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let lower_bound = node
+            .child_by_field_name("lower")
+            .map(|n| self.visit(n))
+            .transpose()?;
+        let upper_bound = node
+            .child_by_field_name("upper")
+            .map(|n| self.visit(n))
+            .transpose()?;
+
+        let result = ExprKind::Range(lower_bound, upper_bound);
 
         Ok(result.alloc_with_span(self.ast, &self.scope, node))
     }

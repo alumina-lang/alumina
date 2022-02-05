@@ -8,7 +8,7 @@ protocol RandomNumberGenerator<Self> {
         let i = 0usize;
         while dest.len >= 8 {
             let val = self.next_u64();
-            for i in range(0, 8) {
+            for i in 0..8 {
                 dest[i] = *((&val as &u8) + i);
             }
             dest = dest[8..];
@@ -16,12 +16,12 @@ protocol RandomNumberGenerator<Self> {
 
         if dest.len > 4 {
             let val = self.next_u64();
-            for i in range(0, dest.len) {
+            for i in 0..dest.len {
                 dest[i] = *((&val as &u8) + i);
             }
         } else {
             let val = self.next_u32();
-            for i in range(0, dest.len) {
+            for i in 0..dest.len {
                 dest[i] = *((&val as &u8) + i);
             }
         }
@@ -82,7 +82,7 @@ impl Pcg32 {
 {
     struct OsRng {
         #[cfg(not(target_os = "linux"))]
-        file: io::File
+        file: fs::File
     }
 
     impl OsRng {
@@ -91,7 +91,7 @@ impl Pcg32 {
         #[cfg(not(target_os = "linux"))]
         fn new() -> OsRng {
             OsRng {
-                file: io::File::open("/dev/urandom").unwrap()
+                file: fs::File::open("/dev/urandom").unwrap()
             }
         }
 

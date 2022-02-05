@@ -67,7 +67,7 @@ impl slice {
         } else when T: u8 {
             libc::memset(slice.ptr as &mut void, value as libc::c_int, slice.len);
         } else {
-            for i in range(0, slice.len) {
+            for i in 0..slice.len {
                 slice[i] = value;
             }
         }
@@ -192,20 +192,26 @@ mod internal {
     
     #[force_inline]
     #[lang(slice_range_index)]
-    fn slice_range_index<Ptr: Pointer>(a: slice<Ptr>, lower: usize, upper: usize) -> slice<Ptr> {
-        debug_assert!(lower <= upper);
-        debug_assert!(upper <= a.len);
+    fn slice_range_index<Ptr: Pointer, T>(a: slice<Ptr>, range: T) -> slice<Ptr> {
+        when T: iter::Range<usize> {
+            debug_assert!(range.lower <= range.upper);
+            debug_assert!(range.upper <= a.len);
 
-        slice::from_raw::<Ptr>(a.ptr + lower, upper - lower)
+            slice::from_raw::<Ptr>(a.ptr + range.lower, range.upper - range.lower)
+        } else when T: iter::RangeTo<usize> {
+            debug_assert!(range.upper <= a.len);
+
+            slice::from_raw::<Ptr>(a.ptr, range.upper)
+        } else when T: iter::RangeFrom<usize> {
+            debug_assert!(range.lower <= a.len);
+
+            slice::from_raw::<Ptr>(a.ptr + range.lower, a.len - range.lower)
+        } else when T: iter::RangeFull<usize> {
+            a
+        } else {
+            compile_fail!("unsupported range type");
+        }
     }
-
-    #[force_inline]
-    #[lang(slice_range_index_lower)]
-    fn slice_range_index_lower<Ptr: Pointer>(a: slice<Ptr>, lower: usize) -> slice<Ptr> {
-        debug_assert!(lower <= a.len);
-
-        slice::from_raw::<Ptr>(a.ptr + lower, a.len - lower)
-    }        
 
     #[force_inline]
     #[lang(slice_coerce)]
@@ -314,6 +320,16 @@ fn zeroed<T>() -> T {
 
 #[cfg(all(test, test_std))]
 mod tests {
+    #[test]
+    fn slice_range_index() {
+        let a = [1, 2, 3, 4, 5].as_slice();
+
+        assert_eq!(a[..], &[1, 2, 3, 4, 5]);
+        assert_eq!(a[..3], &[1, 2, 3]);
+        assert_eq!(a[1..], &[2, 3, 4, 5]);
+        assert_eq!(a[1..5], &[2, 3, 4, 5]);
+    }
+
     #[test]
     fn size_of_zst() {
         assert_eq!(size_of::<()>(), 0usize);

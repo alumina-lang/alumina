@@ -1,5 +1,4 @@
 const PREC = {
-  range: 15,
   call: 14,
   field: 13,
   unary: 12,
@@ -13,6 +12,7 @@ const PREC = {
   comparative: 4,
   and: 3,
   or: 2,
+  range: 1,
   assign: 0,
   closure: -1,
   et_cetera: -2,
@@ -263,8 +263,8 @@ module.exports = grammar({
       ),
 
     use_wildcard: $ => seq(
-        optional(seq(field("path", $._path), '::')),
-        '*'
+      optional(seq(field("path", $._path), '::')),
+      '*'
     ),
 
     _use_clause: ($) =>
@@ -411,6 +411,9 @@ module.exports = grammar({
     static_declaration: ($) =>
       seq(
         optional(field("attributes", $.attributes)),
+        optional(
+          seq(field("extern", "extern"), field("abi", $.string_literal))
+        ),
         "static",
         field("name", $.identifier),
         optional(seq(":", field("type", $._type))),
@@ -495,6 +498,7 @@ module.exports = grammar({
         $.continue_expression,
         $.unary_expression,
         $.binary_expression,
+        $.range_expression,
         $.reference_expression,
         $.dereference_expression,
         $.assignment_expression,
@@ -508,7 +512,6 @@ module.exports = grammar({
         prec(1, $.macro_invocation),
         $.et_cetera_expression,
         $.closure_expression,
-        $._expression_ending_with_block,
         $._literal,
         prec.left($.identifier),
         prec.left($.macro_identifier),
@@ -516,7 +519,8 @@ module.exports = grammar({
         $.scoped_identifier,
         $.generic_function,
         $.parenthesized_expression,
-        $.struct_expression
+        $.struct_expression,
+        $._expression_ending_with_block,
         // TODO: other kinds of expressions
       ),
 
@@ -585,10 +589,7 @@ module.exports = grammar({
         seq(
           field("value", $._expression),
           "[",
-          choice(
-            field("index", $._expression),
-            field("range", $.range_expression)
-          ),
+          field("index", $._expression),
           "]"
         )
       ),
@@ -597,13 +598,10 @@ module.exports = grammar({
       prec.left(
         PREC.range,
         choice(
-          prec.left(
-            PREC.range + 1,
-            seq(
-              field("lower", $._expression),
-              "..",
-              field("upper", $._expression)
-            )
+          seq(
+            field("lower", $._expression),
+            "..",
+            field("upper", $._expression)
           ),
           seq(field("lower", $._expression), ".."),
           seq("..", field("upper", $._expression)),

@@ -140,8 +140,7 @@ impl<'ast> Rebinder<'ast> {
             }
             TupleIndex(inner, idx) => TupleIndex(self.visit_expr(inner)?, idx),
             Index(inner, idx) => Index(self.visit_expr(inner)?, self.visit_expr(idx)?),
-            RangeIndex(inner, lower, upper) => RangeIndex(
-                self.visit_expr(inner)?,
+            Range(lower, upper) => Range(
                 lower.map(|i| self.visit_expr(i)).transpose()?,
                 upper.map(|i| self.visit_expr(i)).transpose()?,
             ),

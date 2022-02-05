@@ -115,6 +115,22 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
             return Some(LangTypeKind::Slice(item.1[0]));
         }
 
+        if self.ast.lang_item(LangItemKind::RangeFull).ok() == Some(item.0) {
+            return Some(LangTypeKind::Range(item.1[0]));
+        }
+
+        if self.ast.lang_item(LangItemKind::RangeFrom).ok() == Some(item.0) {
+            return Some(LangTypeKind::Range(item.1[0]));
+        }
+
+        if self.ast.lang_item(LangItemKind::RangeTo).ok() == Some(item.0) {
+            return Some(LangTypeKind::Range(item.1[0]));
+        }
+
+        if self.ast.lang_item(LangItemKind::Range).ok() == Some(item.0) {
+            return Some(LangTypeKind::Range(item.1[0]));
+        }
+
         None
     }
 
@@ -901,6 +917,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 name: s.name.map(|n| n.alloc_on(child.mono_ctx.ir)),
                 typ,
                 init,
+                r#extern: s.r#extern,
             });
             item.assign(res);
 
@@ -2701,7 +2718,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let lowered = exprs
             .iter()
             .zip(type_hints.into_iter())
-            .map(|(expr, hint)| self.lower_expr(expr, hint))
+            .map(|(expr, hint)| {
+                let obj = self.lower_expr(expr, hint)?;
+                let obj_type = self.try_qualify_type(obj.ty)?;
+                self.try_coerce(obj_type, obj)
+            })
             .collect::<Result<Vec<_>, _>>()?;
 
         if lowered.iter().any(|e| e.diverges()) {
@@ -2999,6 +3020,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             name: None,
             typ: res.ty,
             init: Some(res),
+            r#extern: false,
         }));
 
         self.mono_ctx.static_local_defs.insert(
@@ -3033,11 +3055,25 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .alloc_slice_copy(meta.path.to_string().as_bytes()),
             ));
 
-            let item =
-                self.monomorphize_lang_item(LangItemKind::SliceRangeIndex, [string_slice_ptr])?;
+            let range_item = self.monomorphize_lang_item(
+                LangItemKind::RangeNew,
+                [self.types.builtin(BuiltinType::USize)],
+            )?;
+            let range_func = self.exprs.function(range_item);
+
+            let range = self.exprs.call(
+                range_func,
+                [start_index, end_index].into_iter(),
+                range_item.get_function().with_no_span()?.return_type,
+            );
+
+            let item = self.monomorphize_lang_item(
+                LangItemKind::SliceRangeIndex,
+                [string_slice_ptr, range.ty],
+            )?;
             let attr_slice = self.exprs.call(
                 self.exprs.function(item),
-                [attrs_as_slice, start_index, end_index].into_iter(),
+                [attrs_as_slice, range].into_iter(),
                 string_slice_slice,
             );
 
@@ -3060,6 +3096,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             name: None,
             typ: res.ty,
             init: Some(res),
+            r#extern: false,
         }));
 
         self.mono_ctx.static_local_defs.insert(
@@ -3489,95 +3526,163 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let inner_span = inner.span;
-        let inner = self.lower_expr(inner, type_hint.map(|ty| self.types.array(ty, 0)))?;
+        // We put usize as a hint, lower_range has a special case and will take
+        let index = self.lower_expr(index, Some(self.types.builtin(BuiltinType::USize)))?;
+        let inner_hint = if let Some(LangTypeKind::Range(bound_ty)) =
+            self.mono_ctx.get_lang_type_kind(index.ty)
+        {
+            if let ir::Ty::Builtin(BuiltinType::USize) = bound_ty {
+                type_hint
+            } else {
+                return Err(mismatch!(
+                    self,
+                    self.types.builtin(BuiltinType::USize),
+                    bound_ty
+                ))
+                .with_no_span();
+            }
+        } else {
+            type_hint.map(|ty| self.types.array(ty, 0))
+        };
+
+        let inner = self.lower_expr(inner, inner_hint)?;
         let inner_type = self.try_qualify_type(inner.ty)?;
         let inner = self.try_coerce(inner_type, inner)?;
-
-        let index = self.lower_expr(index, Some(self.types.builtin(BuiltinType::USize)))?;
 
         if inner.diverges() || index.diverges() {
             return Ok(self.exprs.diverges([inner, index]));
         }
 
-        let index = self.try_coerce(self.types.builtin(BuiltinType::USize), index)?;
+        let result = if let Some(LangTypeKind::Range(_)) =
+            self.mono_ctx.get_lang_type_kind(index.ty)
+        {
+            let inner_lang = self.mono_ctx.get_lang_type_kind(inner.ty);
+            if let Some(LangTypeKind::Slice(ptr_ty)) = inner_lang {
+                let item =
+                    self.monomorphize_lang_item(LangItemKind::SliceRangeIndex, [ptr_ty, index.ty])?;
+                let func = self.exprs.function(item);
+                return Ok(self.exprs.call(
+                    func,
+                    [inner, index].into_iter(),
+                    item.get_function().with_no_span()?.return_type,
+                ));
+            } else {
+                return Err(mismatch!(self, "slice", inner.ty)).with_span(inner_span);
+            }
+        } else {
+            let index = self.try_coerce(self.types.builtin(BuiltinType::USize), index)?;
+            match inner.ty {
+                ir::Ty::Array(_, _) => self.exprs.index(inner, index),
+                _ => {
+                    let inner_lang = self.mono_ctx.get_lang_type_kind(inner.ty);
+                    if let Some(LangTypeKind::Slice(ptr_ty)) = inner_lang {
+                        let item =
+                            self.monomorphize_lang_item(LangItemKind::SliceIndex, [ptr_ty])?;
+                        let func = self.exprs.function(item);
+                        return Ok(self.exprs.deref(self.exprs.call(
+                            func,
+                            [inner, index].into_iter(),
+                            ptr_ty,
+                        )));
+                    }
 
-        let result = match inner.ty {
-            ir::Ty::Array(_, _) => self.exprs.index(inner, index),
-            _ => {
-                let inner_lang = self.mono_ctx.get_lang_type_kind(inner.ty);
-                if let Some(LangTypeKind::Slice(ptr_ty)) = inner_lang {
-                    let item = self.monomorphize_lang_item(LangItemKind::SliceIndex, [ptr_ty])?;
-                    let func = self.exprs.function(item);
-                    return Ok(self.exprs.deref(self.exprs.call(
-                        func,
-                        [inner, index].into_iter(),
-                        ptr_ty,
-                    )));
+                    return Err(mismatch!(self, "array or slice", inner.ty)).with_span(inner_span);
                 }
-
-                return Err(mismatch!(self, "array or slice", inner.ty)).with_span(inner_span);
             }
         };
 
         Ok(result)
     }
 
-    fn lower_range_index(
+    fn lower_range(
         &mut self,
-        inner: ast::ExprP<'ast>,
         lower: Option<ast::ExprP<'ast>>,
         upper: Option<ast::ExprP<'ast>>,
         type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let inner = self.lower_expr(
-            inner,
-            // slice slices to another slice. It could also be an array, but wcyd
-            type_hint,
-        )?;
-        let inner_type = self.try_qualify_type(inner.ty)?;
-        let inner = self.try_coerce(inner_type, inner)?;
+        let bound_hint = match type_hint {
+            // Special case for range indexing
+            Some(ir::Ty::Builtin(BuiltinType::USize)) => type_hint,
+            Some(ty) => self
+                .mono_ctx
+                .get_lang_type_kind(ty)
+                .map(|kind| {
+                    if let LangTypeKind::Range(inner) = kind {
+                        Some(inner)
+                    } else {
+                        None
+                    }
+                })
+                .flatten(),
+            None => None,
+        };
 
-        let lower = lower
-            .map(|e| self.lower_expr(e, Some(self.types.builtin(BuiltinType::USize))))
-            .transpose()?;
-
+        let lower = lower.map(|e| self.lower_expr(e, bound_hint)).transpose()?;
         let upper = upper
-            .map(|e| self.lower_expr(e, Some(self.types.builtin(BuiltinType::USize))))
+            .map(|e| self.lower_expr(e, lower.map(|l| l.ty).or(bound_hint)))
             .transpose()?;
 
-        let stack = [Some(inner), lower, upper]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
+        let stack = [lower, upper].into_iter().flatten().collect::<Vec<_>>();
 
         if stack.iter().any(|e| e.diverges()) {
             return Ok(self.exprs.diverges(stack));
         }
 
-        let inner_lang = self.mono_ctx.get_lang_type_kind(inner.ty);
-        let result = match inner_lang {
-            Some(LangTypeKind::Slice(ptr_ty)) => {
-                let lower = lower.unwrap_or_else(|| {
-                    self.exprs
-                        .lit(Lit::Int(0u128), self.types.builtin(BuiltinType::USize))
-                });
-                match upper {
-                    Some(upper) => {
-                        let item =
-                            self.monomorphize_lang_item(LangItemKind::SliceRangeIndex, [ptr_ty])?;
-                        let func = self.exprs.function(item);
-                        self.exprs
-                            .call(func, [inner, lower, upper].into_iter(), inner.ty)
-                    }
-                    None => {
-                        let item = self
-                            .monomorphize_lang_item(LangItemKind::SliceRangeIndexLower, [ptr_ty])?;
-                        let func = self.exprs.function(item);
-                        self.exprs.call(func, [inner, lower].into_iter(), inner.ty)
-                    }
-                }
+        let bound_ty = lower
+            .map(|l| l.ty)
+            .or(upper.map(|u| u.ty))
+            .or(bound_hint)
+            .ok_or_else(|| CodeErrorKind::TypeHintRequired)
+            .with_no_span()?;
+
+        let result = match (lower, upper) {
+            (Some(lower), Some(upper)) => {
+                let lower = self.try_coerce(bound_ty, lower)?;
+                let upper = self.try_coerce(bound_ty, upper)?;
+
+                let item = self.monomorphize_lang_item(LangItemKind::RangeNew, [bound_ty])?;
+                let func = self.exprs.function(item);
+
+                self.exprs.call(
+                    func,
+                    [lower, upper].into_iter(),
+                    item.get_function().with_no_span()?.return_type,
+                )
             }
-            _ => return Err(CodeErrorKind::RangeIndexNonSlice).with_no_span(),
+            (Some(lower), None) => {
+                let lower = self.try_coerce(bound_ty, lower)?;
+
+                let item = self.monomorphize_lang_item(LangItemKind::RangeFromNew, [bound_ty])?;
+                let func = self.exprs.function(item);
+
+                self.exprs.call(
+                    func,
+                    [lower].into_iter(),
+                    item.get_function().with_no_span()?.return_type,
+                )
+            }
+            (None, Some(upper)) => {
+                let upper = self.try_coerce(bound_ty, upper)?;
+
+                let item = self.monomorphize_lang_item(LangItemKind::RangeToNew, [bound_ty])?;
+                let func = self.exprs.function(item);
+
+                self.exprs.call(
+                    func,
+                    [upper].into_iter(),
+                    item.get_function().with_no_span()?.return_type,
+                )
+            }
+            (None, None) => {
+                let item = self.monomorphize_lang_item(LangItemKind::RangeFullNew, [bound_ty])?;
+                let func = self.exprs.function(item);
+
+                self.exprs.call(
+                    func,
+                    [].into_iter(),
+                    item.get_function().with_no_span()?.return_type,
+                )
+            }
         };
 
         Ok(result)
@@ -3881,9 +3986,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.lower_struct_expression(func, initializers, type_hint)
             }
             ast::ExprKind::Index(inner, index) => self.lower_index(inner, index, type_hint),
-            ast::ExprKind::RangeIndex(inner, lower, upper) => {
-                self.lower_range_index(inner, *lower, *upper, type_hint)
-            }
+            ast::ExprKind::Range(lower, upper) => self.lower_range(*lower, *upper, type_hint),
             ast::ExprKind::Return(inner) => self.lower_return(*inner, type_hint),
             ast::ExprKind::Fn(item, args) => self.lower_fn(item.clone(), *args, type_hint),
             ast::ExprKind::Static(item) => self.lower_static(*item, type_hint),

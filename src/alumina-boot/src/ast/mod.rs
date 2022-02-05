@@ -546,6 +546,7 @@ pub struct StaticOrConst<'ast> {
     pub init: Option<ExprP<'ast>>,
     pub span: Option<Span>,
     pub is_const: bool,
+    pub r#extern: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
@@ -697,7 +698,7 @@ pub enum ExprKind<'ast> {
     Field(ExprP<'ast>, &'ast str, Option<ItemP<'ast>>),
     TupleIndex(ExprP<'ast>, usize),
     Index(ExprP<'ast>, ExprP<'ast>),
-    RangeIndex(ExprP<'ast>, Option<ExprP<'ast>>, Option<ExprP<'ast>>),
+    Range(Option<ExprP<'ast>>, Option<ExprP<'ast>>),
     If(ExprP<'ast>, ExprP<'ast>, ExprP<'ast>),
     StaticIf(StaticIfCondition<'ast>, ExprP<'ast>, ExprP<'ast>),
     Cast(ExprP<'ast>, TyP<'ast>),

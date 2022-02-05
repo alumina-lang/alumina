@@ -497,6 +497,9 @@ impl<'ast> AstItemMaker<'ast> {
             .map(|n| TypeVisitor::new(self.ast, scope.clone(), self.in_a_macro).visit(n))
             .transpose()?;
 
+        let is_extern = node.child_by_field_name("extern").is_some();
+        assert!(!is_extern || !is_const);
+
         let init = node
             .child_by_field_name("init")
             .map(|body| {
@@ -514,6 +517,10 @@ impl<'ast> AstItemMaker<'ast> {
             return Err(CodeErrorKind::TypeHintRequired).with_span(&scope, node);
         }
 
+        if is_extern && (typ.is_none() || init.is_some()) {
+            return Err(CodeErrorKind::ExternStaticMustHaveType).with_span(&scope, node);
+        }
+
         let span = Span {
             start: node.start_byte(),
             end: node.end_byte(),
@@ -527,6 +534,7 @@ impl<'ast> AstItemMaker<'ast> {
             init,
             span: Some(span),
             is_const,
+            r#extern: is_extern,
         });
 
         symbol.assign(result);
