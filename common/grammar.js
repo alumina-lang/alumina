@@ -262,13 +262,16 @@ module.exports = grammar({
         ";"
       ),
 
-    use_wildcard: $ => seq(
-      optional(seq(field("path", $._path), '::')),
-      '*'
-    ),
+    use_wildcard: ($) => seq(optional(seq(field("path", $._path), "::")), "*"),
 
     _use_clause: ($) =>
-      choice($._path, $.use_as_clause, $.use_list, $.scoped_use_list, $.use_wildcard),
+      choice(
+        $._path,
+        $.use_as_clause,
+        $.use_list,
+        $.scoped_use_list,
+        $.use_wildcard
+      ),
 
     use_as_clause: ($) =>
       seq(field("path", $._path), "as", field("alias", $.identifier)),
@@ -490,7 +493,7 @@ module.exports = grammar({
         )
       ),
 
-    _expression: ($) =>
+    _expression_except_range: ($) =>
       choice(
         $.return_expression,
         $.defer_expression,
@@ -498,7 +501,6 @@ module.exports = grammar({
         $.continue_expression,
         $.unary_expression,
         $.binary_expression,
-        $.range_expression,
         $.reference_expression,
         $.dereference_expression,
         $.assignment_expression,
@@ -520,9 +522,11 @@ module.exports = grammar({
         $.generic_function,
         $.parenthesized_expression,
         $.struct_expression,
-        $._expression_ending_with_block,
+        $._expression_ending_with_block
         // TODO: other kinds of expressions
       ),
+
+    _expression: ($) => choice($.range_expression, $._expression_except_range),
 
     unary_expression: ($) =>
       prec(
@@ -631,7 +635,10 @@ module.exports = grammar({
     call_expression: ($) =>
       prec(
         PREC.call,
-        seq(field("function", $._expression), field("arguments", $.arguments))
+        seq(
+          field("function", $._expression_except_range),
+          field("arguments", $.arguments)
+        )
       ),
 
     macro_invocation: ($) =>
