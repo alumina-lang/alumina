@@ -411,25 +411,25 @@ impl<'ast> AstItemMaker<'ast> {
 
         if is_protocol_fn {
             if is_extern {
-                return Err(CodeErrorKind::ProtocolFnsCannotBeExtern).with_span(&scope, node);
+                return Err(CodeErrorKind::ProtocolFnsCannotBeExtern).with_span_from(&scope, node);
             }
 
             if !placeholders.is_empty() {
-                return Err(CodeErrorKind::ProtocolFnsCannotBeGeneric).with_span(&scope, node);
+                return Err(CodeErrorKind::ProtocolFnsCannotBeGeneric).with_span_from(&scope, node);
             }
         }
 
         match abi {
             None | Some("\"C\"") => {
                 if is_extern && !placeholders.is_empty() {
-                    return Err(CodeErrorKind::ExternCGenericParams).with_span(&scope, node);
+                    return Err(CodeErrorKind::ExternCGenericParams).with_span_from(&scope, node);
                 }
             }
             Some("\"intrinsic\"") => {
                 let result = Item::Intrinsic(Intrinsic {
                     kind: intrinsic_kind(name.unwrap())
                         .ok_or_else(|| CodeErrorKind::UnknownIntrinsic(name.unwrap().to_string()))
-                        .with_span(&scope, node)?,
+                        .with_span_from(&scope, node)?,
                     generic_count: placeholders.len(),
                     arg_count: parameters.len(),
                     varargs: has_varargs,
@@ -439,7 +439,8 @@ impl<'ast> AstItemMaker<'ast> {
                 return Ok(());
             }
             Some(abi) => {
-                return Err(CodeErrorKind::UnsupportedABI(abi.to_string())).with_span(&scope, node)
+                return Err(CodeErrorKind::UnsupportedABI(abi.to_string()))
+                    .with_span_from(&scope, node)
             }
         }
 
@@ -462,7 +463,7 @@ impl<'ast> AstItemMaker<'ast> {
             .transpose()?;
 
         if function_body.is_none() && !is_extern && !is_protocol_fn {
-            return Err(CodeErrorKind::FunctionMustHaveBody).with_span(&scope, node);
+            return Err(CodeErrorKind::FunctionMustHaveBody).with_span_from(&scope, node);
         }
 
         let result = Item::Function(Function {
@@ -514,11 +515,11 @@ impl<'ast> AstItemMaker<'ast> {
             .transpose()?;
 
         if typ.is_none() && init.is_none() {
-            return Err(CodeErrorKind::TypeHintRequired).with_span(&scope, node);
+            return Err(CodeErrorKind::TypeHintRequired).with_span_from(&scope, node);
         }
 
         if is_extern && (typ.is_none() || init.is_some()) {
-            return Err(CodeErrorKind::ExternStaticMustHaveType).with_span(&scope, node);
+            return Err(CodeErrorKind::ExternStaticMustHaveType).with_span_from(&scope, node);
         }
 
         let span = Span {
@@ -593,7 +594,7 @@ impl<'ast> AstItemMaker<'ast> {
             [NI {
                 kind: Impl(node, scope),
                 ..
-            }] => return Err(CodeErrorKind::NoFreeStandingImpl).with_span(scope, *node),
+            }] => return Err(CodeErrorKind::NoFreeStandingImpl).with_span_from(scope, *node),
             [NI {
                 kind: Type(symbol, node, scope),
                 attributes,

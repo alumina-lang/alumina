@@ -255,7 +255,7 @@ pub struct FileId {
 }
 
 pub trait WithSpanDuringParsing<T> {
-    fn with_span<'ast, 'src>(
+    fn with_span_from<'ast, 'src>(
         self,
         scope: &Scope<'ast, 'src>,
         node: Node<'src>,
@@ -266,7 +266,7 @@ impl<T, E> WithSpanDuringParsing<T> for Result<T, E>
 where
     CodeErrorKind: From<E>,
 {
-    fn with_span<'ast, 'src>(
+    fn with_span_from<'ast, 'src>(
         self,
         scope: &Scope<'ast, 'src>,
         node: Node<'src>,

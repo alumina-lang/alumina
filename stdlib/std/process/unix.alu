@@ -88,7 +88,7 @@ impl Child {
     fn wait_with_output(self: &mut Child) -> Result<Output, Error> {
         let stdin = self.stdin.move();
         if stdin.is_some {
-            try!(stdin.inner.close());
+            stdin.inner.close()?;
         }
 
         let stdout : Vector<u8> = Vector::new();
@@ -98,20 +98,20 @@ impl Child {
         defer stderr.free();
 
         if self.stdout.is_some && self.stderr.is_some {
-            try!(internal::read_to_end_2(
+            internal::read_to_end_2(
                 &self.stdout.inner,
                 &stdout,
                 &self.stderr.inner,
                 &stderr
-            ));
+            )?;
         } else if self.stdout.is_some {
-            try!(self.stdout.inner.read_to_end(&stdout));
+            self.stdout.inner.read_to_end(&stdout)?;
         } else if self.stderr.is_some {
-            try!(self.stderr.inner.read_to_end(&stderr));
+            self.stderr.inner.read_to_end(&stderr)?;
         }
 
         // Close all the pipes if we were able to read them
-        // to end. If any of the try!'s above bailed early, 
+        // to end. If any of the ?'s above bailed early, 
         // we leave them open, as it may have been something
         // transient and a retry might succeed.
         self.close();
@@ -131,7 +131,7 @@ impl Child {
     fn wait(self: &mut Child) -> Result<i32, Error> {
         let stdin = self.stdin.move();
         if stdin.is_some {
-            try!(stdin.inner.close());
+            stdin.inner.close()?;
         }
 
         let status: libc::c_int = 0;
@@ -148,17 +148,17 @@ impl Child {
     fn close(self: &mut Child) -> Result<(), Error> {
         let stdin = self.stdin.move();
         if stdin.is_some {
-            try!(stdin.inner.close());
+            stdin.inner.close()?;
         }
 
         let stdout = self.stdout.move();
         if stdout.is_some {
-            try!(stdout.inner.close());
+            stdout.inner.close()?;
         }
 
         let stderr = self.stderr.move();
         if stderr.is_some {
-            try!(stderr.inner.close());
+            stderr.inner.close()?;
         }
 
         Result::ok(())
@@ -203,24 +203,24 @@ impl Forked {
         stdout: &mut IoRedirection,
         stderr: &mut IoRedirection
     ) -> Result<(), Error> {
-        try!(stdin.install(libc::STDIN_FILENO));
-        try!(stdout.install(libc::STDOUT_FILENO));
-        try!(stderr.install(libc::STDERR_FILENO));
+        stdin.install(libc::STDIN_FILENO)?;
+        stdout.install(libc::STDOUT_FILENO)?;
+        stderr.install(libc::STDERR_FILENO)?;
 
         Result::ok(())
     }
 
     fn spawn(self: &Forked) -> Result<Option<Child>, Error> {
-        let stdin = try!(IoRedirection::new(true, self._stdin));
+        let stdin = IoRedirection::new(true, self._stdin)?;
         defer stdin.close();
 
-        let stdout = try!(IoRedirection::new(false, self._stdout));
+        let stdout = IoRedirection::new(false, self._stdout)?;
         defer stdout.close();
 
-        let stderr = try!(IoRedirection::new(false, self._stderr));
+        let stderr = IoRedirection::new(false, self._stderr)?;
         defer stderr.close();
 
-        let (fail_rx, fail_tx) = try!(Pipe::anonymous());
+        let (fail_rx, fail_tx) = Pipe::anonymous()?;
         defer fail_rx.close();
 
         let pid = errno_try!(std::libc::fork());
@@ -317,9 +317,9 @@ impl Command {
     ) -> Result<!, Error> {
         use mem::copy_nonoverlapping;
 
-        try!(stdin.install(libc::STDIN_FILENO));
-        try!(stdout.install(libc::STDOUT_FILENO));
-        try!(stderr.install(libc::STDERR_FILENO));
+        stdin.install(libc::STDIN_FILENO)?;
+        stdout.install(libc::STDOUT_FILENO)?;
+        stderr.install(libc::STDERR_FILENO)?;
 
         let name = CString::new(self._name.unwrap());
         defer name.free();
@@ -361,16 +361,16 @@ impl Command {
     }
 
     fn spawn(self: &Command) -> Result<Child, Error> {
-        let stdin = try!(IoRedirection::new(true, self._stdin));
+        let stdin = IoRedirection::new(true, self._stdin)?;
         defer stdin.close();
 
-        let stdout = try!(IoRedirection::new(false, self._stdout));
+        let stdout = IoRedirection::new(false, self._stdout)?;
         defer stdout.close();
 
-        let stderr = try!(IoRedirection::new(false, self._stderr));
+        let stderr = IoRedirection::new(false, self._stderr)?;
         defer stderr.close();
 
-        let (fail_rx, fail_tx) = try!(Pipe::anonymous());
+        let (fail_rx, fail_tx) = Pipe::anonymous()?;
         defer fail_rx.close();
 
         let pid = errno_try!(std::libc::fork());
@@ -457,15 +457,15 @@ mod internal {
             errno_try!(libc::poll(&fds[0], 2, -1));
 
             if fds[0].revents != 0 {
-                if try!(src1.maybe_read_to_end(dst1)) {
-                    try!(s2.set_nonblocking(false));
+                if src1.maybe_read_to_end(dst1)? {
+                    s2.set_nonblocking(false)?;
                     return src2.read_to_end(dst2).map(util::drop::<usize>);
                 }
             }
 
             if fds[1].revents != 0 {
-                if try!(src2.maybe_read_to_end(dst2)) {
-                    try!(s1.set_nonblocking(false));
+                if src2.maybe_read_to_end(dst2)? {
+                    s1.set_nonblocking(false)?;
                     return src1.read_to_end(dst1).map(util::drop::<usize>);
                 }
             }
@@ -480,7 +480,7 @@ mod internal {
     impl IoRedirection {
         fn new(is_stdin: bool, kind: Stdio) -> Result<IoRedirection, Error> {
             let pair: Option<(Pipe, Pipe)> = if kind == Stdio::Piped {
-                let (rx, tx) = try!(Pipe::anonymous());
+                let (rx, tx) = Pipe::anonymous()?;
     
                 if is_stdin {
                     Option::some((tx, rx))
@@ -501,8 +501,8 @@ mod internal {
     
         fn close(self: &mut IoRedirection) -> Result<(), Error> {
             if self.pair.is_some {
-                try!(self.pair.inner.0.close());
-                try!(self.pair.inner.1.close());
+                self.pair.inner.0.close()?;
+                self.pair.inner.1.close()?;
             } 
                 
             Result::ok(())
@@ -518,7 +518,7 @@ mod internal {
                     errno_try!(libc::dup2(tgt.fd.value, fd));
                 },
                 Stdio::Null => {
-                    let dev_zero = try!(File::open_with("/dev/null", OpenOptions::new().read(true).write(true)));
+                    let dev_zero = File::open_with("/dev/null", OpenOptions::new().read(true).write(true))?;
                     defer dev_zero.close();
     
                     errno_try!(std::libc::dup2(dev_zero.fd.value, fd));

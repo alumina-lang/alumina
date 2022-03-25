@@ -79,7 +79,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
             .scope
             .find_super()
             .ok_or(CodeErrorKind::SuperNotAllowed)
-            .with_span(&self.scope, node)?
+            .with_span_from(&self.scope, node)?
             .path())
     }
 
@@ -91,7 +91,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
 
     fn visit_macro_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         if !self.in_a_macro {
-            return Err(CodeErrorKind::DollaredOutsideOfMacro).with_span(&self.scope, node);
+            return Err(CodeErrorKind::DollaredOutsideOfMacro).with_span_from(&self.scope, node);
         }
 
         let name = self.code.node_text(node).alloc_on(self.ast);
@@ -120,7 +120,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
     }
 
     fn visit_generic_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        return Err(CodeErrorKind::GenericArgsInPath).with_span(&self.scope, node);
+        return Err(CodeErrorKind::GenericArgsInPath).with_span_from(&self.scope, node);
     }
 
     fn visit_scoped_type_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -190,7 +190,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
                     self.attributes,
                 ),
             )
-            .with_span(&self.scope, node)?;
+            .with_span_from(&self.scope, node)?;
 
         Ok(())
     }
@@ -220,7 +220,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
                     self.attributes,
                 ),
             )
-            .with_span(&self.scope, node)?;
+            .with_span_from(&self.scope, node)?;
 
         Ok(())
     }
@@ -250,7 +250,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
                     self.attributes,
                 ),
             )
-            .with_span(&self.scope, node)?;
+            .with_span_from(&self.scope, node)?;
 
         Ok(())
     }
@@ -306,7 +306,7 @@ impl<'ast, 'src> AttributeVisitor<'ast, 'src> {
             self.ast.add_test_metadata(
                 self.item
                     .ok_or(CodeErrorKind::CannotBeATest)
-                    .with_span(&self.scope, node)?,
+                    .with_span_from(&self.scope, node)?,
                 TestMetadata {
                     attributes: std::mem::replace(&mut self.test_attributes, vec![]),
                     path: self.scope.path(),
@@ -315,7 +315,7 @@ impl<'ast, 'src> AttributeVisitor<'ast, 'src> {
                             .node_text(
                                 node.child_by_field_name("name")
                                     .ok_or(CodeErrorKind::CannotBeATest)
-                                    .with_span(&self.scope, node)?,
+                                    .with_span_from(&self.scope, node)?,
                             )
                             .alloc_on(self.ast),
                     )),
@@ -352,7 +352,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     .map(|n| self.code.node_text(n))
                     .and_then(|f| f.parse().ok())
                     .ok_or(CodeErrorKind::InvalidCfgAttribute)
-                    .with_span(&self.scope, node)?;
+                    .with_span_from(&self.scope, node)?;
 
                 self.attributes.push(Attribute::Align(align))
             }
@@ -382,16 +382,16 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     .child_by_field_name("arguments")
                     .and_then(|n| n.child_by_field_name("argument"))
                     .ok_or(CodeErrorKind::UnknownLangItem(None))
-                    .with_span(&self.scope, inner)?;
+                    .with_span_from(&self.scope, inner)?;
 
                 self.ast.add_lang_item(
                     self.code
                         .node_text(lang_type)
                         .try_into()
-                        .with_span(&self.scope, inner)?,
+                        .with_span_from(&self.scope, inner)?,
                     self.item
                         .ok_or(CodeErrorKind::CannotBeALangItem)
-                        .with_span(&self.scope, inner)?,
+                        .with_span_from(&self.scope, inner)?,
                 );
             }
             "codegen" => {
@@ -467,7 +467,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for CfgVisitor<'ast, 'src> {
                     self.state.push(State::Not);
                     self.visit(arguments)?
                 }
-                _ => return Err(CodeErrorKind::InvalidCfgAttribute).with_span(&self.scope, node),
+                _ => {
+                    return Err(CodeErrorKind::InvalidCfgAttribute)
+                        .with_span_from(&self.scope, node)
+                }
             };
             self.state.pop();
             Ok(ret)
@@ -477,7 +480,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for CfgVisitor<'ast, 'src> {
                 .map(|n| self.code.node_text(n))
                 .map(|s| parse_string_literal(s))
                 .transpose()
-                .with_span(&self.scope, node)?;
+                .with_span_from(&self.scope, node)?;
 
             let actual = self.global_ctx.cfg(name);
 
@@ -503,7 +506,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for CfgVisitor<'ast, 'src> {
                 State::Single | State::Not => {
                     if iter.next().is_some() {
                         return Err(CodeErrorKind::InvalidCfgAttribute)
-                            .with_span(&self.scope, node);
+                            .with_span_from(&self.scope, node);
                     }
                     return Ok(matches == matches!(state, State::Single));
                 }
@@ -522,7 +525,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for CfgVisitor<'ast, 'src> {
 
         match state {
             State::Single | State::Not => {
-                Err(CodeErrorKind::InvalidCfgAttribute).with_span(&self.scope, node)
+                Err(CodeErrorKind::InvalidCfgAttribute).with_span_from(&self.scope, node)
             }
             State::All => Ok(true),
             State::Any => Ok(false),

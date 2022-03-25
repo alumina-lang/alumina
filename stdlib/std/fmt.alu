@@ -146,7 +146,7 @@ mod internal {
         
         when T: marker::Signed {
             if val < 0 {
-                try!(fmt.write_char('-'));
+                fmt.write_char('-')?;
             }
         }
 
@@ -159,10 +159,10 @@ mod internal {
             
             if val_u == 0 {
                 while i + 1 < pad {
-                    try!(fmt.write_char('0'));
+                    fmt.write_char('0')?;
                     pad -= 1;
                 }
-                try!(fmt.write_str(buf[(buf.len - i - 1)..]));
+                fmt.write_str(buf[(buf.len - i - 1)..])?;
                 break;
             }
             i += 1;
@@ -183,7 +183,7 @@ mod internal {
             return fmt.write_str("NaN")
         }
         if val.is_sign_negative() {
-            try!(fmt.write_char('-'));
+            fmt.write_char('-')?;
         }
         val = math::abs(val);
 
@@ -200,7 +200,7 @@ mod internal {
         let pad = 0usize;
         while steps > 0 {
             let part = val as u64;
-            try!(format_integer(part, 10, pad, fmt));
+            format_integer(part, 10, pad, fmt)?;
             val = (val - (part as T)) * 1.0e18;
             steps -= 1;
             pad = 18;
@@ -217,13 +217,13 @@ mod internal {
 
         let rounded = (frac + 0.5) as u64;
         if rounded == frac_i {
-            try!(format_integer(val as u64 + 1, 10, pad, fmt));
-            try!(fmt.write_char('.'));
-            try!(format_integer(0, 10, precision as usize, fmt));
+            format_integer(val as u64 + 1, 10, pad, fmt)?;
+            fmt.write_char('.')?;
+            format_integer(0, 10, precision as usize, fmt)?;
         } else {
-            try!(format_integer(val as u64, 10, pad, fmt));
-            try!(fmt.write_char('.'));
-            try!(format_integer(rounded, 10, precision as usize, fmt));
+            format_integer(val as u64, 10, pad, fmt)?;
+            fmt.write_char('.')?;
+            format_integer(rounded, 10, precision as usize, fmt)?;
         }
 
         Result::ok(())
@@ -247,14 +247,14 @@ mod internal {
                         '{' => State::BRACE_OPEN,
                         '}' => State::BRACE_CLOSE,
                         _ => {
-                            try!(fmt.write_char(ch));
+                            fmt.write_char(ch)?;
                             State::NORMAL
                         }
                     }
                 }
                 State::BRACE_CLOSE => {
                     switch ch {
-                        '}' => try!(fmt.write_char(ch)),
+                        '}' => fmt.write_char(ch)?,
                         _ => panic!("invalid format string")
                     };
                     State::NORMAL
@@ -265,10 +265,10 @@ mod internal {
                             if args.len == 0 {
                                 panic!("too few arguments");
                             }
-                            try!(args[0].fmt(fmt));
+                            args[0].fmt(fmt)?;
                             args = args[1..];
                         },
-                        '{' => try!(fmt.write_char(ch)),
+                        '{' => fmt.write_char(ch)?,
                         _ => panic!("invalid format string")
                     };
                     State::NORMAL
@@ -336,7 +336,7 @@ mod internal {
     impl RepeatAdapter {
         fn fmt<T: Formattable<T, F>, F: Formatter<F>>(self: &RepeatAdapter<T>, fmt: &mut F) -> Result<(), Error> {
             for i in 0usize..self.times {
-                try!(self.inner.fmt(fmt));
+                self.inner.fmt(fmt)?;
             }
             Result::ok(())
         }
@@ -356,14 +356,14 @@ mod internal {
                 res.inner.ok
             } else {
                 // We fall back to the heap-allocating variant if the stack buffer was not large enough.
-                let res = try!(format!("{}", self.inner));
+                let res = format!("{}", self.inner)?;
                 defer res.free();
                 res.as_slice()
             };
 
             if s.len < self.len {
                 for _ in iter::range(0usize, self.len - s.len) {
-                    try!(fmt.write_char(self.pad));
+                    fmt.write_char(self.pad)?;
                 }
             }
             fmt.write_str(s)

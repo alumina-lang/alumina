@@ -7,7 +7,7 @@ use crate::common::CodeErrorKind;
 
 use crate::global_ctx::GlobalCtx;
 use crate::name_resolution::pass1::FirstPassVisitor;
-use crate::name_resolution::path::PathSegment;
+use crate::name_resolution::path::{Path, PathSegment};
 use crate::name_resolution::resolver::ItemResolution;
 use crate::name_resolution::scope::{NamedItem, ScopeType};
 use crate::parser::AluminaVisitor;
@@ -41,14 +41,27 @@ macro_rules! with_block_scope {
     }};
 }
 
-trait Spannable<'ast, 'src> {
+trait Spannable<'ast, 'src>
+where
+    Self: Sized,
+{
     type ReturnType;
-    fn alloc_with_span(
+    fn alloc_with_span(self, ast: &'ast AstCtx<'ast>, span: Span) -> Self::ReturnType;
+
+    fn alloc_with_span_from(
         self,
         ast: &'ast AstCtx<'ast>,
         scope: &Scope<'ast, 'src>,
         node: tree_sitter::Node<'src>,
-    ) -> Self::ReturnType;
+    ) -> Self::ReturnType {
+        let span = Span {
+            start: node.start_byte(),
+            end: node.end_byte(),
+            file: scope.code().unwrap().file_id(),
+        };
+
+        self.alloc_with_span(ast, span)
+    }
 
     fn alloc_with_no_span(self, ast: &'ast AstCtx<'ast>) -> Self::ReturnType;
 }
@@ -56,18 +69,7 @@ trait Spannable<'ast, 'src> {
 impl<'ast, 'src> Spannable<'ast, 'src> for ExprKind<'ast> {
     type ReturnType = ExprP<'ast>;
 
-    fn alloc_with_span(
-        self,
-        ast: &'ast AstCtx<'ast>,
-        scope: &Scope<'ast, 'src>,
-        node: tree_sitter::Node<'src>,
-    ) -> ExprP<'ast> {
-        let span = Span {
-            start: node.start_byte(),
-            end: node.end_byte(),
-            file: scope.code().unwrap().file_id(),
-        };
-
+    fn alloc_with_span(self, ast: &'ast AstCtx<'ast>, span: Span) -> ExprP<'ast> {
         Expr {
             kind: self,
             span: Some(span),
@@ -87,18 +89,7 @@ impl<'ast, 'src> Spannable<'ast, 'src> for ExprKind<'ast> {
 impl<'ast, 'src> Spannable<'ast, 'src> for StatementKind<'ast> {
     type ReturnType = Statement<'ast>;
 
-    fn alloc_with_span(
-        self,
-        _ast: &'ast AstCtx<'ast>,
-        scope: &Scope<'ast, 'src>,
-        node: tree_sitter::Node<'src>,
-    ) -> Statement<'ast> {
-        let span = Span {
-            start: node.start_byte(),
-            end: node.end_byte(),
-            file: scope.code().unwrap().file_id(),
-        };
-
+    fn alloc_with_span(self, _ast: &'ast AstCtx<'ast>, span: Span) -> Statement<'ast> {
         Statement {
             kind: self,
             span: Some(span),
@@ -187,7 +178,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
 
         let expr = match resolver
             .resolve_item(self.scope.clone(), path.clone())
-            .with_span(&self.scope, node)?
+            .with_span_from(&self.scope, node)?
         {
             ItemResolution::Item(item) => match item.kind {
                 NamedItemKind::Function(fun, _, _) => ExprKind::Fn(FnKind::Normal(fun), None),
@@ -199,11 +190,11 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                 NamedItemKind::EnumMember(typ, var, _) => ExprKind::EnumValue(typ, var),
                 NamedItemKind::Macro(_, _, _) => {
                     return Err(CodeErrorKind::IsAMacro(path.to_string()))
-                        .with_span(&self.scope, node)
+                        .with_span_from(&self.scope, node)
                 }
                 kind => {
                     return Err(CodeErrorKind::Unexpected(format!("{}", kind)))
-                        .with_span(&self.scope, node)
+                        .with_span_from(&self.scope, node)
                 }
             },
             ItemResolution::Defered(ty, name) => {
@@ -213,7 +204,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             }
         };
 
-        Ok(expr.alloc_with_span(self.ast, &self.scope, node))
+        Ok(expr.alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_statement(
@@ -263,13 +254,15 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                             Some(name),
                             NamedItem::new_default(NamedItemKind::Local(value_id)),
                         )
-                        .with_span(&self.scope, inner)?;
+                        .with_span_from(&self.scope, inner)?;
 
-                    statements.push(StatementKind::LetDeclaration(let_decl).alloc_with_span(
-                        self.ast,
-                        &self.scope,
-                        node,
-                    ));
+                    statements.push(
+                        StatementKind::LetDeclaration(let_decl).alloc_with_span_from(
+                            self.ast,
+                            &self.scope,
+                            node,
+                        ),
+                    );
                 } else {
                     // Tuple unpacking
                     let mut cursor = inner.walk();
@@ -281,10 +274,14 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                         let elem_id = self.ast.make_id();
 
                         let rhs = ExprKind::TupleIndex(
-                            ExprKind::Local(value_id).alloc_with_span(self.ast, &self.scope, elem),
+                            ExprKind::Local(value_id).alloc_with_span_from(
+                                self.ast,
+                                &self.scope,
+                                elem,
+                            ),
                             idx,
                         )
-                        .alloc_with_span(self.ast, &self.scope, elem);
+                        .alloc_with_span_from(self.ast, &self.scope, elem);
 
                         let elem_decl = LetDeclaration {
                             id: elem_id,
@@ -292,23 +289,25 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                             value: Some(rhs),
                         };
 
-                        statements.push(StatementKind::LetDeclaration(elem_decl).alloc_with_span(
-                            self.ast,
-                            &self.scope,
-                            node,
-                        ));
+                        statements.push(
+                            StatementKind::LetDeclaration(elem_decl).alloc_with_span_from(
+                                self.ast,
+                                &self.scope,
+                                node,
+                            ),
+                        );
 
                         self.scope
                             .add_item(
                                 Some(name),
                                 NamedItem::new_default(NamedItemKind::Local(elem_id)),
                             )
-                            .with_span(&self.scope, elem)?;
+                            .with_span_from(&self.scope, elem)?;
                     }
 
                     statements.insert(
                         0,
-                        StatementKind::LetDeclaration(let_decl).alloc_with_span(
+                        StatementKind::LetDeclaration(let_decl).alloc_with_span_from(
                             self.ast,
                             &self.scope,
                             node,
@@ -325,7 +324,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             "expression_statement" => vec![StatementKind::Expression(
                 self.visit(inner.child_by_field_name("inner").unwrap())?,
             )
-            .alloc_with_span(self.ast, &self.scope, node)],
+            .alloc_with_span_from(self.ast, &self.scope, node)],
             "macro_definition" => {
                 FirstPassVisitor::new(self.global_ctx.clone(), self.ast, self.scope.clone())
                     .visit_macro_definition(inner)?;
@@ -342,7 +341,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                 );
                 self.scope
                     .add_item(Some(name), item.clone())
-                    .with_span(&self.scope, inner)?;
+                    .with_span_from(&self.scope, inner)?;
                 AstItemMaker::new(self.ast, self.global_ctx.clone(), self.in_a_macro).make_item(
                     self.scope.clone(),
                     Some(name),
@@ -368,7 +367,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
 
         let expression_node = match last_node.kind() {
             "expression_statement" => last_node.child_by_field_name("inner").unwrap(),
-            _ => return ExprKind::Void.alloc_with_span(self.ast, &self.scope, last_node),
+            _ => return ExprKind::Void.alloc_with_span_from(self.ast, &self.scope, last_node),
         };
 
         match expression_node.kind() {
@@ -380,8 +379,50 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                 }) => expr,
                 _ => unreachable!(),
             },
-            _ => ExprKind::Void.alloc_with_span(self.ast, &self.scope, expression_node),
+            _ => ExprKind::Void.alloc_with_span_from(self.ast, &self.scope, expression_node),
         }
+    }
+
+    fn visit_macro_invocation_impl(
+        &mut self,
+        path: Path<'ast>,
+        args: Vec<ExprP<'ast>>,
+        span: Span,
+    ) -> Result<ExprP<'ast>, AluminaError> {
+        use crate::common::CodeErrorBuilder;
+
+        let mut resolver = NameResolver::new();
+
+        let r#macro = match resolver
+            .resolve_item(self.scope.clone(), path.clone())
+            .with_span(Some(span))?
+        {
+            ItemResolution::Item(NamedItem {
+                kind: NamedItemKind::Macro(symbol, node, scope),
+                attributes,
+            }) => {
+                let mut macro_maker = MacroMaker::new(self.ast, self.global_ctx.clone());
+                macro_maker.make(
+                    Some(path.segments.last().unwrap().0),
+                    symbol,
+                    node,
+                    scope.clone(),
+                    &attributes,
+                )?;
+                symbol
+            }
+            _ => return Err(CodeErrorKind::NotAMacro(path.to_string())).with_span(Some(span)),
+        };
+
+        let result = if self.in_a_macro {
+            ExprKind::DeferedMacro(r#macro, args.alloc_on(self.ast)).alloc_with_span(self.ast, span)
+        } else {
+            let expander =
+                MacroExpander::new(self.ast, self.global_ctx.clone(), Some(span), r#macro, args);
+            expander.expand()?
+        };
+
+        Ok(result)
     }
 }
 
@@ -414,7 +455,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             return_expression
         } else {
             let statements = statements.alloc_on(self.ast);
-            ExprKind::Block(statements, return_expression).alloc_with_span(
+            ExprKind::Block(statements, return_expression).alloc_with_span_from(
                 self.ast,
                 &self.scope,
                 node,
@@ -433,7 +474,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         )
         .generate(node)?;
 
-        Ok(ExprKind::Fn(FnKind::Normal(func), None).alloc_with_span(self.ast, &self.scope, node))
+        Ok(
+            ExprKind::Fn(FnKind::Normal(func), None).alloc_with_span_from(
+                self.ast,
+                &self.scope,
+                node,
+            ),
+        )
     }
 
     fn visit_integer_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -464,9 +511,9 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
         let value = value
             .map_err(|_| CodeErrorKind::InvalidLiteral)
-            .with_span(&self.scope, node)?;
+            .with_span_from(&self.scope, node)?;
 
-        Ok(ExprKind::Lit(Lit::Int(value, kind)).alloc_with_span(self.ast, &self.scope, node))
+        Ok(ExprKind::Lit(Lit::Int(value, kind)).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_float_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -476,7 +523,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         );
 
         Ok(
-            ExprKind::Lit(Lit::Float(remainder.alloc_on(self.ast), kind)).alloc_with_span(
+            ExprKind::Lit(Lit::Float(remainder.alloc_on(self.ast), kind)).alloc_with_span_from(
                 self.ast,
                 &self.scope,
                 node,
@@ -485,23 +532,24 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_string_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let s = parse_string_literal(self.code.node_text(node)).with_span(&self.scope, node)?;
+        let s =
+            parse_string_literal(self.code.node_text(node)).with_span_from(&self.scope, node)?;
 
         let s = self.ast.arena.alloc_slice_copy(&s);
-        Ok(ExprKind::Lit(Lit::Str(s)).alloc_with_span(self.ast, &self.scope, node))
+        Ok(ExprKind::Lit(Lit::Str(s)).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_char_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let val = match parse_string_literal(self.code.node_text(node))
-            .with_span(&self.scope, node)?
+            .with_span_from(&self.scope, node)?
             .as_slice()
         {
             [v] => *v,
-            _ => return Err(CodeErrorKind::InvalidCharLiteral).with_span(&self.scope, node),
+            _ => return Err(CodeErrorKind::InvalidCharLiteral).with_span_from(&self.scope, node),
         };
 
         Ok(
-            ExprKind::Lit(Lit::Int(val as u128, Some(BuiltinType::U8))).alloc_with_span(
+            ExprKind::Lit(Lit::Int(val as u128, Some(BuiltinType::U8))).alloc_with_span_from(
                 self.ast,
                 &self.scope,
                 node,
@@ -515,17 +563,17 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             .node_text(node)
             .parse()
             .map_err(|_| CodeErrorKind::InvalidLiteral)
-            .with_span(&self.scope, node)?;
+            .with_span_from(&self.scope, node)?;
 
-        Ok(ExprKind::Lit(Lit::Bool(value)).alloc_with_span(self.ast, &self.scope, node))
+        Ok(ExprKind::Lit(Lit::Bool(value)).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_ptr_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        Ok(ExprKind::Lit(Lit::Null).alloc_with_span(self.ast, &self.scope, node))
+        Ok(ExprKind::Lit(Lit::Null).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_void_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        Ok(ExprKind::Void.alloc_with_span(self.ast, &self.scope, node))
+        Ok(ExprKind::Void.alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_parenthesized_expression(
@@ -567,14 +615,14 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         };
         let rhs = self.visit(node.child_by_field_name("right").unwrap())?;
 
-        Ok(ExprKind::Binary(op, lhs, rhs).alloc_with_span(self.ast, &self.scope, node))
+        Ok(ExprKind::Binary(op, lhs, rhs).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_assignment_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let lhs = self.visit(node.child_by_field_name("left").unwrap())?;
         let rhs = self.visit(node.child_by_field_name("right").unwrap())?;
 
-        Ok(ExprKind::Assign(lhs, rhs).alloc_with_span(self.ast, &self.scope, node))
+        Ok(ExprKind::Assign(lhs, rhs).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_compound_assignment_expr(
@@ -603,7 +651,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         let rhs = self.visit(node.child_by_field_name("right").unwrap())?;
         let result = ExprKind::AssignOp(op, lhs, rhs);
 
-        Ok(result.alloc_with_span(self.ast, &self.scope, node))
+        Ok(result.alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_call_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -619,7 +667,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         let arguments = arguments.alloc_on(self.ast);
         let result = ExprKind::Call(func, arguments);
 
-        Ok(result.alloc_with_span(self.ast, &self.scope, node))
+        Ok(result.alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_tuple_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -631,14 +679,26 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         }
 
         let result = match elements[..] {
-            [] => ExprKind::Void.alloc_with_span(self.ast, &self.scope, node),
+            [] => ExprKind::Void.alloc_with_span_from(self.ast, &self.scope, node),
             _ => {
                 let elements = elements.alloc_on(self.ast);
-                ExprKind::Tuple(elements).alloc_with_span(self.ast, &self.scope, node)
+                ExprKind::Tuple(elements).alloc_with_span_from(self.ast, &self.scope, node)
             }
         };
 
         Ok(result)
+    }
+
+    fn visit_try_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let path = PathSegment("try").into();
+        let span = Span {
+            start: node.start_byte(),
+            end: node.end_byte(),
+            file: self.scope.code().unwrap().file_id(),
+        };
+        let inner = self.visit(node.child_by_field_name("inner").unwrap())?;
+
+        self.visit_macro_invocation_impl(path, vec![inner], span)
     }
 
     fn visit_array_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -650,7 +710,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         }
 
         let elements = elements.alloc_on(self.ast);
-        let result = ExprKind::Array(elements).alloc_with_span(self.ast, &self.scope, node);
+        let result = ExprKind::Array(elements).alloc_with_span_from(self.ast, &self.scope, node);
 
         Ok(result)
     }
@@ -661,7 +721,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
     fn visit_macro_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         if !self.in_a_macro {
-            return Err(CodeErrorKind::DollaredOutsideOfMacro).with_span(&self.scope, node);
+            return Err(CodeErrorKind::DollaredOutsideOfMacro).with_span_from(&self.scope, node);
         }
 
         self.visit_ref(node)
@@ -682,17 +742,17 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             "~" => UnOp::BitNot,
             _ => unimplemented!(),
         };
-        Ok(ExprKind::Unary(op, value).alloc_with_span(self.ast, &self.scope, node))
+        Ok(ExprKind::Unary(op, value).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_reference_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let value = self.visit(node.child_by_field_name("value").unwrap())?;
-        Ok(ExprKind::Ref(value).alloc_with_span(self.ast, &self.scope, node))
+        Ok(ExprKind::Ref(value).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_dereference_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let value = self.visit(node.child_by_field_name("value").unwrap())?;
-        Ok(ExprKind::Deref(value).alloc_with_span(self.ast, &self.scope, node))
+        Ok(ExprKind::Deref(value).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_field_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -720,7 +780,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             _ => unreachable!(),
         };
 
-        Ok(result.alloc_with_span(self.ast, &self.scope, node))
+        Ok(result.alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_index_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -729,7 +789,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
         let result = ExprKind::Index(value, index);
 
-        Ok(result.alloc_with_span(self.ast, &self.scope, node))
+        Ok(result.alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_range_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -744,14 +804,14 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
         let result = ExprKind::Range(lower_bound, upper_bound);
 
-        Ok(result.alloc_with_span(self.ast, &self.scope, node))
+        Ok(result.alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_if_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let consequence = self.visit(node.child_by_field_name("consequence").unwrap())?;
         let alternative = match node.child_by_field_name("alternative") {
             Some(node) => self.visit(node)?,
-            None => ExprKind::Void.alloc_with_span(self.ast, &self.scope, node),
+            None => ExprKind::Void.alloc_with_span_from(self.ast, &self.scope, node),
         };
 
         let condition = node
@@ -772,7 +832,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             ExprKind::StaticIf(cond, consequence, alternative)
         };
 
-        return Ok(result.alloc_with_span(self.ast, &self.scope, node));
+        return Ok(result.alloc_with_span_from(self.ast, &self.scope, node));
     }
 
     fn visit_generic_function(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -784,7 +844,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             ExprKind::Defered(def) => FnKind::Defered(def.clone()),
             _ => {
                 //panic!("wow");
-                return Err(CodeErrorKind::FunctionExpectedHere).with_span(&self.scope, node);
+                return Err(CodeErrorKind::FunctionExpectedHere).with_span_from(&self.scope, node);
             }
         };
 
@@ -799,7 +859,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             .alloc_on(self.ast);
 
         let result = ExprKind::Fn(fn_kind, Some(arguments));
-        Ok(result.alloc_with_span(self.ast, &self.scope, node))
+        Ok(result.alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_type_cast_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -807,7 +867,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         let typ = TypeVisitor::new(self.ast, self.scope.clone(), self.in_a_macro)
             .visit(node.child_by_field_name("type").unwrap())?;
 
-        Ok(ExprKind::Cast(value, typ).alloc_with_span(self.ast, &self.scope, node))
+        Ok(ExprKind::Cast(value, typ).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_loop_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -816,12 +876,12 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         self.in_a_loop = was_in_a_loop;
         let body = body?;
 
-        Ok(ExprKind::Loop(body).alloc_with_span(self.ast, &self.scope, node))
+        Ok(ExprKind::Loop(body).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_break_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         if !self.in_a_loop {
-            return Err(CodeErrorKind::BreakOutsideOfLoop).with_span(&self.scope, node);
+            return Err(CodeErrorKind::BreakOutsideOfLoop).with_span_from(&self.scope, node);
         }
 
         let inner = node
@@ -829,7 +889,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             .map(|n| self.visit(n))
             .transpose()?;
 
-        Ok(ExprKind::Break(inner).alloc_with_span(self.ast, &self.scope, node))
+        Ok(ExprKind::Break(inner).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_return_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -838,20 +898,20 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             .map(|n| self.visit(n))
             .transpose()?;
 
-        Ok(ExprKind::Return(inner).alloc_with_span(self.ast, &self.scope, node))
+        Ok(ExprKind::Return(inner).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_defer_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let inner = self.visit(node.child_by_field_name("inner").unwrap())?;
 
-        Ok(ExprKind::Defer(inner).alloc_with_span(self.ast, &self.scope, node))
+        Ok(ExprKind::Defer(inner).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_continue_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         if !self.in_a_loop {
-            return Err(CodeErrorKind::ContinueOutsideOfLoop).with_span(&self.scope, node);
+            return Err(CodeErrorKind::ContinueOutsideOfLoop).with_span_from(&self.scope, node);
         }
-        Ok(ExprKind::Continue.alloc_with_span(self.ast, &self.scope, node))
+        Ok(ExprKind::Continue.alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_for_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -869,7 +929,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             with_block_scope!(self, {
                 self.scope
                     .add_item(Some(name), NamedItem::new_default(NamedItemKind::Local(id)))
-                    .with_span(&self.scope, node)?;
+                    .with_span_from(&self.scope, node)?;
 
                 let was_in_a_loop = std::mem::replace(&mut self.in_a_loop, true);
                 let ret = self.visit(node.child_by_field_name("body").unwrap());
@@ -890,10 +950,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                     let elem_id = self.ast.make_id();
 
                     let rhs = ExprKind::TupleIndex(
-                        ExprKind::Local(id).alloc_with_span(self.ast, &self.scope, elem),
+                        ExprKind::Local(id).alloc_with_span_from(self.ast, &self.scope, elem),
                         idx,
                     )
-                    .alloc_with_span(self.ast, &self.scope, elem);
+                    .alloc_with_span_from(self.ast, &self.scope, elem);
 
                     let elem_decl = LetDeclaration {
                         id: elem_id,
@@ -901,25 +961,27 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                         value: Some(rhs),
                     };
 
-                    statements.push(StatementKind::LetDeclaration(elem_decl).alloc_with_span(
-                        self.ast,
-                        &self.scope,
-                        node,
-                    ));
+                    statements.push(
+                        StatementKind::LetDeclaration(elem_decl).alloc_with_span_from(
+                            self.ast,
+                            &self.scope,
+                            node,
+                        ),
+                    );
 
                     self.scope
                         .add_item(
                             Some(name),
                             NamedItem::new_default(NamedItemKind::Local(elem_id)),
                         )
-                        .with_span(&self.scope, elem)?;
+                        .with_span_from(&self.scope, elem)?;
                 }
 
                 let was_in_a_loop = std::mem::replace(&mut self.in_a_loop, true);
                 let ret = self.visit(node.child_by_field_name("body").unwrap());
                 self.in_a_loop = was_in_a_loop;
 
-                ExprKind::Block(statements.alloc_on(self.ast), ret?).alloc_with_span(
+                ExprKind::Block(statements.alloc_on(self.ast), ret?).alloc_with_span_from(
                     self.ast,
                     &self.scope,
                     node,
@@ -988,7 +1050,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                 .alloc_on(self.ast),
                 loop_if.alloc_with_no_span(self.ast),
             )
-            .alloc_with_span(self.ast, &self.scope, node),
+            .alloc_with_span_from(self.ast, &self.scope, node),
         );
 
         let result = ExprKind::Block(
@@ -997,22 +1059,22 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                 typ: None,
                 value: Some(
                     ExprKind::Call(
-                        ExprKind::Field(iterable, "iter", unified_fn).alloc_with_span(
+                        ExprKind::Field(iterable, "iter", unified_fn).alloc_with_span_from(
                             self.ast,
                             &self.scope,
                             iterable_node,
                         ),
                         [].alloc_on(self.ast),
                     )
-                    .alloc_with_span(self.ast, &self.scope, iterable_node),
+                    .alloc_with_span_from(self.ast, &self.scope, iterable_node),
                 ),
             })
-            .alloc_with_span(self.ast, &self.scope, node)]
+            .alloc_with_span_from(self.ast, &self.scope, node)]
             .alloc_on(self.ast),
             loop_body.alloc_with_no_span(self.ast),
         );
 
-        Ok(result.alloc_with_span(self.ast, &self.scope, node))
+        Ok(result.alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_switch_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -1027,7 +1089,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         // Switch is desugared into a series of if-else expressions
         for arm in body.children_by_field_name("arm", &mut cursor) {
             if default_arm.is_some() {
-                return Err(CodeErrorKind::DefaultCaseMustBeLast).with_span(&self.scope, arm);
+                return Err(CodeErrorKind::DefaultCaseMustBeLast).with_span_from(&self.scope, arm);
             }
 
             let pattern = arm.child_by_field_name("pattern").unwrap();
@@ -1050,7 +1112,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         }
 
         let local_id = self.ast.make_id();
-        let local = ExprKind::Local(local_id).alloc_with_span(self.ast, &self.scope, node);
+        let local = ExprKind::Local(local_id).alloc_with_span_from(self.ast, &self.scope, node);
         let stmts = vec![StatementKind::LetDeclaration(LetDeclaration {
             id: local_id,
             typ: None,
@@ -1082,11 +1144,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                     .unwrap();
                 let branch = ExprKind::If(cmp, value, acc);
 
-                branch.alloc_with_span(self.ast, &self.scope, arm_node)
+                branch.alloc_with_span_from(self.ast, &self.scope, arm_node)
             },
         );
 
-        let block = ExprKind::Block(stmts.alloc_on(self.ast), ret).alloc_with_span(
+        let block = ExprKind::Block(stmts.alloc_on(self.ast), ret).alloc_with_span_from(
             self.ast,
             &self.scope,
             node,
@@ -1113,7 +1175,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
                 if !names.insert(name) {
                     return Err(CodeErrorKind::DuplicateFieldInitializer(name.to_string()))
-                        .with_span(&self.scope, node);
+                        .with_span_from(&self.scope, node);
                 }
 
                 let value = self.visit(node.child_by_field_name("value").unwrap())?;
@@ -1133,7 +1195,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         });
 
         Ok(
-            ExprKind::Struct(typ, field_initializers.alloc_on(self.ast)).alloc_with_span(
+            ExprKind::Struct(typ, field_initializers.alloc_on(self.ast)).alloc_with_span_from(
                 self.ast,
                 &self.scope,
                 node,
@@ -1149,53 +1211,38 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         self.in_a_loop = was_in_a_loop;
         let body = body?;
 
-        let r#break = ExprKind::Break(None).alloc_with_span(self.ast, &self.scope, node);
-        let body =
-            ExprKind::If(condition, body, r#break).alloc_with_span(self.ast, &self.scope, node);
+        let r#break = ExprKind::Break(None).alloc_with_span_from(self.ast, &self.scope, node);
+        let body = ExprKind::If(condition, body, r#break).alloc_with_span_from(
+            self.ast,
+            &self.scope,
+            node,
+        );
 
-        Ok(ExprKind::Loop(body).alloc_with_span(self.ast, &self.scope, node))
+        Ok(ExprKind::Loop(body).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_et_cetera_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         if !self.in_a_macro {
-            return Err(CodeErrorKind::EtCeteraOutsideOfMacro).with_span(&self.scope, node);
+            return Err(CodeErrorKind::EtCeteraOutsideOfMacro).with_span_from(&self.scope, node);
         }
 
         if !self.has_et_cetera {
-            return Err(CodeErrorKind::NoEtCeteraArgs).with_span(&self.scope, node);
+            return Err(CodeErrorKind::NoEtCeteraArgs).with_span_from(&self.scope, node);
         }
 
         let inner = self.visit(node.child_by_field_name("inner").unwrap())?;
 
-        Ok(ExprKind::EtCetera(inner).alloc_with_span(self.ast, &self.scope, node))
+        Ok(ExprKind::EtCetera(inner).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_macro_invocation(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone(), self.in_a_macro);
         let path = visitor.visit(node.child_by_field_name("macro").unwrap())?;
-        let mut resolver = NameResolver::new();
 
-        let r#macro = match resolver
-            .resolve_item(self.scope.clone(), path.clone())
-            .with_span(&self.scope, node)?
-        {
-            ItemResolution::Item(NamedItem {
-                kind: NamedItemKind::Macro(symbol, node, scope),
-                attributes,
-            }) => {
-                let mut macro_maker = MacroMaker::new(self.ast, self.global_ctx.clone());
-                macro_maker.make(
-                    Some(path.segments.last().unwrap().0),
-                    symbol,
-                    node,
-                    scope.clone(),
-                    &attributes,
-                )?;
-                symbol
-            }
-            _ => {
-                return Err(CodeErrorKind::NotAMacro(path.to_string())).with_span(&self.scope, node)
-            }
+        let span = Span {
+            start: node.start_byte(),
+            end: node.end_byte(),
+            file: self.scope.code().unwrap().file_id(),
         };
 
         let mut arguments = Vec::new();
@@ -1205,30 +1252,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             arguments.push(self.visit(node)?);
         }
 
-        let result = if self.in_a_macro {
-            ExprKind::DeferedMacro(r#macro, arguments.alloc_on(self.ast)).alloc_with_span(
-                self.ast,
-                &self.scope,
-                node,
-            )
-        } else {
-            let span = Span {
-                start: node.start_byte(),
-                end: node.end_byte(),
-                file: self.scope.code().unwrap().file_id(),
-            };
-
-            let expander = MacroExpander::new(
-                self.ast,
-                self.global_ctx.clone(),
-                Some(span),
-                r#macro,
-                arguments,
-            );
-            expander.expand()?
-        };
-
-        Ok(result)
+        self.visit_macro_invocation_impl(path, arguments, span)
     }
 }
 
@@ -1423,7 +1447,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
                 Some(name),
                 NamedItem::new_default(NamedItemKind::Parameter(id, node)),
             )
-            .with_span(&self.scope, node)?;
+            .with_span_from(&self.scope, node)?;
 
         let field_type = TypeVisitor::new(self.ast, self.scope.clone(), self.in_a_macro)
             .visit(node.child_by_field_name("type").unwrap())?;
@@ -1452,7 +1476,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
                 Some(name),
                 NamedItem::new_default(NamedItemKind::Parameter(id, node)),
             )
-            .with_span(&self.scope, node)?;
+            .with_span_from(&self.scope, node)?;
 
         let placeholder = self.ast.make_id();
         self.placeholders.push(Placeholder {

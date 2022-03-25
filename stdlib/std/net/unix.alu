@@ -123,7 +123,7 @@ impl Socket {
         #[cfg(not(any(target_os = "android", target_os = "linux")))]
         {
             fd = FileDescriptor::new(errno_try!(libc::socket(family, type, 0)));
-            try!(fd.set_cloexec());
+            fd.set_cloexec()?;
         }
         
         Result::ok(Socket { fd: fd })
@@ -217,7 +217,7 @@ impl TcpStream {
     fn connect(addr: &SocketAddr) -> Result<TcpStream, Error> {
         let (family, addr_len) = addr_to_family(addr);
 
-        let sock = try!(Socket::new(family, libc::SOCK_STREAM));
+        let sock = Socket::new(family, libc::SOCK_STREAM)?;
         defer sock.close();
         
         errno_try!(libc::connect(
@@ -281,7 +281,7 @@ impl TcpListener {
     fn bind(addr: &SocketAddr) -> Result<TcpListener, Error> {
         let (family, addr_len) = addr_to_family(addr);
 
-        let sock = try!(Socket::new(family, libc::SOCK_STREAM));
+        let sock = Socket::new(family, libc::SOCK_STREAM)?;
         defer sock.close();
         
         errno_try!(libc::bind(
@@ -324,7 +324,7 @@ impl TcpListener {
                 &storage as &mut libc::sockaddr, 
                 &len
             )));
-            try!(fd.set_cloexec());
+            fd.set_cloexec()?;
         }
 
         let socket = Socket { fd: fd };
@@ -367,7 +367,7 @@ impl UdpSocket {
     fn bind(addr: &SocketAddr) -> Result<UdpSocket, Error> {
         let (family, addr_len) = addr_to_family(addr);
 
-        let sock = try!(Socket::new(family, libc::SOCK_DGRAM));
+        let sock = Socket::new(family, libc::SOCK_DGRAM)?;
         defer sock.close();
         
         errno_try!(libc::bind(
