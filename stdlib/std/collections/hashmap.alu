@@ -166,17 +166,15 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     }
 
     fn get(self: &HashMap<K, V, H>, key: K) -> Option<V> {
-        let item = try!(self._get_slot(key));
-        Option::some(item.item.1)
+        Option::some(self._get_slot(key)?.item.1)
     }
 
     fn get_mut(self: &mut HashMap<K, V, H>, key: K) -> Option<&mut V> {
-        let item = try!(self._get_slot(key));
-        Option::some(&item.item.1)
+        Option::some(&self._get_slot(key)?.item.1)
     }
 
     fn remove(self: &mut HashMap<K, V, H>, key: K) -> Option<V> {
-        let item = try!(self._get_slot(key));
+        let item = self._get_slot(key)?;
         self._length -= 1;
         item.state = State::Deleted;
 

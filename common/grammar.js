@@ -1,6 +1,7 @@
 const PREC = {
-  call: 14,
-  field: 13,
+  call: 15,
+  field: 14,
+  try: 13,
   unary: 12,
   cast: 11,
   multiplicative: 10,
@@ -503,6 +504,7 @@ module.exports = grammar({
         $.binary_expression,
         $.reference_expression,
         $.dereference_expression,
+        $.try_expression,
         $.assignment_expression,
         $.compound_assignment_expr,
         $.type_cast_expression,
@@ -543,6 +545,9 @@ module.exports = grammar({
 
     dereference_expression: ($) =>
       prec(PREC.unary, seq("*", field("value", $._expression))),
+
+    try_expression: ($) => 
+      prec(PREC.try, seq(field("inner", $._expression), '?')),
 
     binary_expression: ($) => {
       const table = [

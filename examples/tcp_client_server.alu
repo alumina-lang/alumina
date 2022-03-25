@@ -58,18 +58,14 @@ fn handle_connection(socket: TcpStream) -> Result<(), Error> {
 
     let i = 1;
     for maybe_line in lines_iter {
-        let line = try!(maybe_line);
-
-        try!(
-            writeln!(&writer, "{} | {}", i.pad_with(5, ' '), line)
-                .map_err(|e: std::fmt::Error| -> Error { Error::custom("failed to write to socket") } )
-        );
+        writeln!(&writer, "{} | {}", i.pad_with(5, ' '), maybe_line?)
+            .map_err(|e: std::fmt::Error| -> Error { Error::custom("failed to write to socket") } )?;
 
         i += 1;
     }
 
-    try!(writer.flush());
-    try!(socket.shutdown(Shutdown::Write));
+    writer.flush()?;
+    socket.shutdown(Shutdown::Write)?;
     
     Result::ok(())
 }

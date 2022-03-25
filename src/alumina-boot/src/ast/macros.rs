@@ -64,7 +64,7 @@ impl<'ast> MacroMaker<'ast> {
                     if m.body.get().is_some() {
                         return Ok(());
                     } else {
-                        return Err(CodeErrorKind::RecursiveMacroCall).with_span(&scope, node);
+                        return Err(CodeErrorKind::RecursiveMacroCall).with_span_from(&scope, node);
                     }
                 }
                 Item::BuiltinMacro(_) => {
@@ -94,7 +94,7 @@ impl<'ast> MacroMaker<'ast> {
                 "file" => BuiltinMacroKind::File,
                 s => {
                     return Err(CodeErrorKind::UnknownBuiltinMacro(s.to_string()))
-                        .with_span(&scope, node)
+                        .with_span_from(&scope, node)
                 }
             };
 
@@ -110,7 +110,7 @@ impl<'ast> MacroMaker<'ast> {
             match item.kind {
                 NamedItemKind::MacroParameter(id, et_cetera) => {
                     if has_et_cetera && et_cetera {
-                        return Err(CodeErrorKind::MultipleEtCeteras).with_span(&scope, node);
+                        return Err(CodeErrorKind::MultipleEtCeteras).with_span_from(&scope, node);
                     } else if et_cetera {
                         has_et_cetera = true;
                     }

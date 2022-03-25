@@ -71,7 +71,7 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
 
         let res = match resolver
             .resolve_item(self.scope.clone(), path)
-            .with_span(&self.scope, node)?
+            .with_span_from(&self.scope, node)?
         {
             ItemResolution::Item(item) => match item.kind {
                 NamedItemKind::Type(ty, _, _) => self.ast.intern_type(Ty::NamedType(ty)),
@@ -82,16 +82,17 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
                     if self.accept_protocol {
                         self.ast.intern_type(Ty::Protocol(ty))
                     } else {
-                        return Err(CodeErrorKind::UnexpectedProtocol).with_span(&self.scope, node);
+                        return Err(CodeErrorKind::UnexpectedProtocol)
+                            .with_span_from(&self.scope, node);
                     }
                 }
                 kind => {
                     return Err(CodeErrorKind::Unexpected(format!("{}", kind)))
-                        .with_span(&self.scope, node)
+                        .with_span_from(&self.scope, node)
                 }
             },
             ItemResolution::Defered(_, _) => {
-                return Err(CodeErrorKind::NoAssociatedTypes).with_span(&self.scope, node)
+                return Err(CodeErrorKind::NoAssociatedTypes).with_span_from(&self.scope, node)
             }
         };
 
@@ -199,7 +200,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
             Ty::NamedType(ty) => ty,
             Ty::NamedFunction(ty) => ty,
             Ty::Protocol(ty) => ty,
-            _ => return Err(CodeErrorKind::UnexpectedGenericParams).with_span(&self.scope, node),
+            _ => {
+                return Err(CodeErrorKind::UnexpectedGenericParams)
+                    .with_span_from(&self.scope, node)
+            }
         };
 
         Ok(self

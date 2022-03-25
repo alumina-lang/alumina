@@ -9,24 +9,24 @@ fn copy<S: Readable<S>, D: Writable<D>>(
     let buf = buf.as_slice_mut();
 
     loop {
-        let n = try!(src.read(buf));
+        let n = src.read(buf)?;
         if n == 0 {
             break;
         }
-        try!(dst.write_all(buf[0..n]));
+        dst.write_all(buf[0..n])?;
     }
 
     dst.flush()
 }
 
 fn copy_file(src: &[u8], dst: &[u8]) -> Result<(), Error> {
-    let src = try!(File::open(src);
+    let src = File::open(src)?;
     defer src.close();
 
-    let dst = try!(File::create(dst));
+    let dst = File::create(dst)?;
     defer dst.close();
 
-    try!(copy(&src, &dst));
+    copy(&src, &dst)?;
 
     Result::ok(())
 }

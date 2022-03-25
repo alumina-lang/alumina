@@ -91,7 +91,7 @@ impl Error {
         switch self.kind {
             ErrorKind::UnexpectedEof => f.write_str("unexpected end of file"),
             ErrorKind::GetAddrInfo => {
-                try!(f.write_str("failed to lookup address information: "));
+                f.write_str("failed to lookup address information: ")?;
                 f.write_str(ffi::CString::from_raw(libc::gai_strerror(self.inner.gai_err)).as_slice())
             }
             ErrorKind::UserDefined => {
@@ -110,8 +110,8 @@ impl Error {
                     len += 1;
                 }
 
-                try!(f.write_str("os error: "));
-                try!(f.write_str(buf[0..len]));
+                f.write_str("os error: ")?;
+                f.write_str(buf[0..len])?;
 
                 Result::ok(())
             }
@@ -268,8 +268,8 @@ impl Pipe {
 
         #[cfg(not(target_os = "linux"))]
         {
-            try!(rx.set_cloexec());
-            try!(tx.set_cloexec());
+            rx.set_cloexec()?;
+            tx.set_cloexec()?;
         }
 
         result::Result::ok((Pipe::from_fd(rx), Pipe::from_fd(tx)))

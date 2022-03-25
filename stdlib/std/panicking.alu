@@ -41,13 +41,13 @@ mod internal {
     ) -> Result<(), fmt::Error> {
         let formatter = PanicFormatter {};
         
-        try!(printf(
+        printf(
             "panic at {}:{}:{}: ", 
             &[FormatArg::new(&file), FormatArg::new(&line), FormatArg::new(&column)], 
             &formatter
-        ));
-        try!(printf(fmt_str, args, &formatter));
-        try!(formatter.write_char('\n'));
+        )?;
+        printf(fmt_str, args, &formatter)?;
+        formatter.write_char('\n')?;
 
         Result::ok(())
     }

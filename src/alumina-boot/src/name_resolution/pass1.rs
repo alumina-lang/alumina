@@ -111,7 +111,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
                 Some(name),
                 NamedItem::new(NamedItemKind::Module(child_scope.clone()), attributes),
             )
-            .with_span(&self.scope, node)?;
+            .with_span_from(&self.scope, node)?;
 
         with_child_scope!(self, child_scope, {
             self.visit_children_by_field(node, "body")?;
@@ -141,7 +141,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
                     attributes,
                 ),
             )
-            .with_span(&self.scope, node)?;
+            .with_span_from(&self.scope, node)?;
 
         with_child_scope!(self, child_scope, {
             if let Some(f) = node.child_by_field_name("type_arguments") {
@@ -168,7 +168,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
                     attributes,
                 ),
             )
-            .with_span(&self.scope, node)?;
+            .with_span_from(&self.scope, node)?;
 
         with_child_scope!(self, child_scope, {
             if let Some(f) = node.child_by_field_name("type_arguments") {
@@ -191,7 +191,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
                 Some(name),
                 NamedItem::new(NamedItemKind::Impl(node, child_scope.clone()), attributes),
             )
-            .with_span(&self.scope, node)?;
+            .with_span_from(&self.scope, node)?;
 
         with_child_scope!(self, child_scope, {
             if let Some(f) = node.child_by_field_name("type_arguments") {
@@ -218,7 +218,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
                     attributes,
                 ),
             )
-            .with_span(&self.scope, node)?;
+            .with_span_from(&self.scope, node)?;
 
         with_child_scope!(self, child_scope, {
             self.enum_item = Some(item);
@@ -240,7 +240,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
                     attributes,
                 ),
             )
-            .with_span(&self.scope, node)?;
+            .with_span_from(&self.scope, node)?;
 
         Ok(())
     }
@@ -254,7 +254,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
                 Some(name),
                 NamedItem::new(NamedItemKind::Field(node), attributes),
             )
-            .with_span(&self.scope, node)?;
+            .with_span_from(&self.scope, node)?;
 
         Ok(())
     }
@@ -270,11 +270,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
                 if attributes.contains(&Attribute::TestMain)
                     && self.main_candidate.replace(item).is_some()
                 {
-                    return Err(CodeErrorKind::MultipleMainFunctions).with_span(&self.scope, node);
+                    return Err(CodeErrorKind::MultipleMainFunctions)
+                        .with_span_from(&self.scope, node);
                 }
             } else if &self.scope.path() == path && name == "main" {
                 if self.main_candidate.replace(item).is_some() {
-                    return Err(CodeErrorKind::MultipleMainFunctions).with_span(&self.scope, node);
+                    return Err(CodeErrorKind::MultipleMainFunctions)
+                        .with_span_from(&self.scope, node);
                 }
             }
         }
@@ -289,7 +291,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
                     attributes,
                 ),
             )
-            .with_span(&self.scope, node)?;
+            .with_span_from(&self.scope, node)?;
 
         with_child_scope!(self, child_scope, {
             if let Some(f) = node.child_by_field_name("type_arguments") {
@@ -317,7 +319,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
                     attributes,
                 ),
             )
-            .with_span(&self.scope, node)?;
+            .with_span_from(&self.scope, node)?;
 
         with_child_scope!(self, child_scope, {
             if let Some(f) = node.child_by_field_name("type_arguments") {
@@ -337,7 +339,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
                 None,
                 NamedItem::new(NamedItemKind::Mixin(node, child_scope.clone()), attributes),
             )
-            .with_span(&self.scope, node)?;
+            .with_span_from(&self.scope, node)?;
 
         with_child_scope!(self, child_scope, {
             if let Some(f) = node.child_by_field_name("type_arguments") {
@@ -358,7 +360,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
                 Some(name),
                 NamedItem::new(NamedItemKind::Static(item, node), attributes),
             )
-            .with_span(&self.scope, node)?;
+            .with_span_from(&self.scope, node)?;
 
         Ok(())
     }
@@ -378,7 +380,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
                         argument,
                     )),
                 )
-                .with_span(&self.scope, node)?;
+                .with_span_from(&self.scope, node)?;
         }
 
         Ok(())
@@ -392,7 +394,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
                 Some(name),
                 NamedItem::new_default(NamedItemKind::Parameter(self.ast.make_id(), node)),
             )
-            .with_span(&self.scope, node)?;
+            .with_span_from(&self.scope, node)?;
 
         Ok(())
     }
@@ -408,7 +410,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
                     node.child_by_field_name("et_cetera").is_some(),
                 )),
             )
-            .with_span(&self.scope, node)?;
+            .with_span_from(&self.scope, node)?;
 
         Ok(())
     }
@@ -445,7 +447,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
                     attributes,
                 ),
             )
-            .with_span(&self.scope, node)?;
+            .with_span_from(&self.scope, node)?;
 
         with_child_scope!(self, child_scope, {
             self.visit_children_by_field(node, "parameters")?;
@@ -465,7 +467,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
                 Some(name),
                 NamedItem::new(NamedItemKind::Const(item, node), attributes),
             )
-            .with_span(&self.scope, node)?;
+            .with_span_from(&self.scope, node)?;
 
         Ok(())
     }
