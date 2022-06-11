@@ -1,0 +1,128 @@
+use std::mem::{size_of, align_of};
+
+const DEFAULT_CAPACITY: usize = 4096;
+
+struct ArenaNode {
+    ptr: &mut void,
+    remaining: usize,
+    next: &mut ArenaNode,
+    _pad: &mut void
+}
+
+impl ArenaNode {
+    fn create(capacity: usize) -> &mut ArenaNode {
+        let mem: &mut void = std::libc::malloc(size_of::<ArenaNode>() + capacity);
+        let node = mem as &mut ArenaNode;
+        node.ptr = mem + size_of::<ArenaNode>();
+        node.remaining = capacity;
+        node.next = null;
+        node
+    }
+
+    fn free(self: &mut ArenaNode) {
+        std::libc::free(self as &mut void);
+    }
+}
+
+struct Arena {
+    increment: usize,
+    root: &mut ArenaNode,
+    tail: &mut ArenaNode,
+}
+
+#[inline]
+fn align_offset(base: usize, alignment: usize) -> usize {
+    std::debug_assert!((alignment != 0) && ((alignment & (alignment - 1)) == 0));
+    ((base + alignment - 1) & ~(alignment - 1)) - base
+}
+
+impl Arena {
+    fn new() -> Arena {
+        with_capacity(DEFAULT_CAPACITY)
+    }
+
+    fn with_capacity(capacity: usize) -> Arena {
+        let root_node = ArenaNode::create(capacity);
+        Arena {
+            root: root_node,
+            tail: root_node,
+            increment: capacity,
+        }
+    }
+
+    fn grow(self: &mut Arena, size: usize) {
+        // If we want a single large allocation, do not increase the increment.
+        self.increment *= 2;
+        let size = std::math::max(self.increment, size);
+
+        let node = ArenaNode::create(size);
+        self.tail.next = node;
+        self.tail = node;
+    }
+
+    fn aligned_alloc(self: &mut Arena, size: usize, alignment: usize) -> &mut void {
+        //return std::libc::malloc(size);
+
+        std::debug_assert!(self.tail != null);
+
+        let offset = align_offset(self.tail.ptr as usize, alignment);
+        let bump = offset + size;
+
+        if bump <= self.tail.remaining {
+            self.tail.remaining -= bump;
+            let result = self.tail.ptr + offset;
+            self.tail.ptr += bump;
+            result
+        } else {
+            self.grow(size);
+            self.aligned_alloc(size, alignment)
+        }
+    }
+
+    fn alloc<T>(self: &mut Arena) -> &mut T {
+        self.aligned_alloc(size_of::<T>(), align_of::<T>()) as &mut T
+    }
+
+    fn alloc_slice<T>(self: &mut Arena, len: usize) -> &mut [T] {       
+        let ptr = self.aligned_alloc(size_of::<T>() * len, align_of::<T>()) as &mut T;
+        std::mem::slice::from_raw(ptr, len)
+    }
+
+    fn move(self: &mut Arena) -> Arena {
+        let moved = *self;
+        self.root = null;
+        self.tail = null;
+        moved
+    }
+
+    fn free(self: &mut Arena) {
+        let node = self.root;
+        while node != null {
+            let next = node.next;
+            std::libc::free(node as &mut void);
+            node = next;
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn test_arena() {
+        let arena = Arena::new();
+        defer arena.free();
+
+        for i in 0..1000001 {
+            let ptr: &mut i32 = arena.alloc();
+            let slice: &mut [i32] = arena.alloc_slice(1337);
+            
+            *ptr = i;
+            slice[4] = i;
+
+            if i % 100000 == 0 {
+                eprintln!("{}", i);
+            }
+        }
+    }
+}
+ 
