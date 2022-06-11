@@ -137,8 +137,14 @@ impl Compiler {
             // Alumina will tree-shake and only emit the items that are actually used.
             // The functions that are marked with export will always be emitted, otherwise
             // only the functions that are transitively called from the entry point will be
-            // emitted.
-            if inner.should_compile() {
+            // emitted. Can be forced to monomorphize all functions with "-Zmonomorphize-all"
+            let compile = if self.global_ctx.has_option("monomorphize-all") {
+                inner.can_compile()
+            } else {
+                inner.should_compile()
+            };
+
+            if compile {
                 let mut monomorphizer = Monomorphizer::new(&mut mono_ctx, false, None);
                 monomorphizer.monomorphize_item(item, &[])?;
             }

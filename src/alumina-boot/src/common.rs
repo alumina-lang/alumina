@@ -12,8 +12,7 @@ macro_rules! ice {
     ($why:literal) => {
         return Err(CodeErrorKind::InternalError(
             $why.to_string(),
-            #[cfg(nightly)]
-            std::rc::Rc::new(std::backtrace::Backtrace::capture()),
+            backtrace::Backtrace::new(),
         ))
         .with_no_span()
     };
@@ -30,6 +29,10 @@ pub enum AluminaError {
     #[error("{0}")]
     WalkDir(#[from] walkdir::Error),
 }
+
+// thiserror uses string matching in its proc macro and assumes that "Backtrace" is
+// "std::backtrace::Backtrace", which is unstable.
+use backtrace::Backtrace as NonStdBacktrace;
 
 #[derive(Debug, Error, Clone)]
 pub enum CodeErrorKind {
@@ -117,7 +120,7 @@ pub enum CodeErrorKind {
     #[error("only slices can be range-indexed")]
     RangeIndexNonSlice,
     #[error("internal error: {}", .0)]
-    InternalError(String, #[cfg(nightly)] Rc<Backtrace>),
+    InternalError(String, NonStdBacktrace),
     // This error is a compiler bug if it happens on its own, but it can pop up when
     // we abort early due to a previous error.
     #[error("local with unknown type")]
@@ -237,7 +240,7 @@ impl CodeError {
     pub fn from_kind(kind: CodeErrorKind, span: Option<Span>) -> Self {
         Self {
             kind,
-            backtrace: span.into_iter().map(|s| Marker::Span(s)).collect(),
+            backtrace: span.into_iter().map(Marker::Span).collect(),
         }
     }
 

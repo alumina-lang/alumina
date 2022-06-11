@@ -107,7 +107,7 @@ impl<'ast> AstItemMaker<'ast> {
                         })
                     }
                     NamedItemKind::Mixin(node, scope) => {
-                        let placeholders = self.get_placeholders(&scope)?;
+                        let placeholders = self.get_placeholders(scope)?;
                         let mut visitor =
                             TypeVisitor::new(self.ast, scope.clone(), self.in_a_macro)
                                 .with_protocol();
@@ -243,7 +243,7 @@ impl<'ast> AstItemMaker<'ast> {
 
     fn make_impl<'src>(&mut self, scope: Scope<'ast, 'src>) -> Result<(), AluminaError> {
         // Ambient placeholders on impl blocks
-        self.ambient_placeholders = self.get_placeholders(&scope)?.iter().cloned().collect();
+        self.ambient_placeholders = self.get_placeholders(&scope)?.to_vec();
         let res = self.make(scope);
         self.ambient_placeholders.clear();
         res
@@ -476,6 +476,7 @@ impl<'ast> AstItemMaker<'ast> {
             varargs: has_varargs,
             span: Some(span),
             closure: false,
+            is_protocol_fn,
         });
 
         symbol.assign(result);

@@ -1,6 +1,6 @@
 use std::{
     cell::{Ref, RefCell},
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     rc::Rc,
 };
 
@@ -15,6 +15,7 @@ pub enum OutputType {
 struct GlobalCtxInner {
     pub diag: DiagnosticContext,
     pub cfg: HashMap<String, Option<String>>,
+    pub options: HashSet<String>,
     pub output_type: OutputType,
 }
 
@@ -24,11 +25,12 @@ pub struct GlobalCtx {
 }
 
 impl GlobalCtx {
-    pub fn new(output_type: OutputType) -> Self {
+    pub fn new(output_type: OutputType, options: Vec<String>) -> Self {
         let mut result = Self {
             inner: Rc::new(RefCell::new(GlobalCtxInner {
                 diag: DiagnosticContext::new(),
                 cfg: HashMap::new(),
+                options: options.into_iter().collect(),
                 output_type,
             })),
         };
@@ -59,6 +61,10 @@ impl GlobalCtx {
 
     pub fn should_generate_main_glue(&self) -> bool {
         matches!(self.inner.borrow().output_type, OutputType::Executable)
+    }
+
+    pub fn has_option(&self, name: &str) -> bool {
+        self.inner.borrow().options.contains(name)
     }
 
     pub fn diag(&self) -> Ref<'_, DiagnosticContext> {

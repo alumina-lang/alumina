@@ -202,7 +202,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
             let _ = self.match_slot(&mut inferred, param, actual);
         }
 
-        let placeholders: Vec<_> = self.placeholders.iter().cloned().collect();
+        let placeholders: Vec<_> = self.placeholders.to_vec();
         for placeholder in placeholders {
             self.match_protocol_bounds(&mut inferred, &placeholder)
         }

@@ -26,6 +26,8 @@ pub enum Value<'ir> {
     I128(i128),
     USize(usize),
     ISize(isize),
+    F32(&'ir str),
+    F64(&'ir str),
     Str(&'ir [u8]),
 }
 
@@ -45,7 +47,8 @@ impl Display for Value<'_> {
             Value::I64(b) => write!(f, "{}", b),
             Value::I128(b) => write!(f, "{}", b),
             Value::USize(b) => write!(f, "{}", b),
-            Value::ISize(_) => todo!(),
+            Value::ISize(b) => write!(f, "{}", b),
+            Value::F32(s) | Value::F64(s) => write!(f, "{}", s),
             Value::Str(s) => {
                 let as_str = std::str::from_utf8(s).map_err(|_| Error)?;
                 write!(f, "{}", as_str)?;
@@ -94,6 +97,8 @@ impl<'ir> Value<'ir> {
             Value::I128(_) => Some(Ty::Builtin(BuiltinType::I128)),
             Value::USize(_) => Some(Ty::Builtin(BuiltinType::USize)),
             Value::ISize(_) => Some(Ty::Builtin(BuiltinType::ISize)),
+            Value::F32(_) => Some(Ty::Builtin(BuiltinType::F32)),
+            Value::F64(_) => Some(Ty::Builtin(BuiltinType::F64)),
             Value::Str(s) => Some(Ty::Unqualified(UnqualifiedKind::String(s.len()))),
         }
     }
@@ -494,6 +499,11 @@ pub fn const_eval(expr: ExprP<'_>) -> Result<Value<'_>, ()> {
                 Ty::Builtin(BuiltinType::I128) => Ok(Value::I128(*i as i128)),
                 Ty::Builtin(BuiltinType::USize) => Ok(Value::USize(*i as usize)),
                 Ty::Builtin(BuiltinType::ISize) => Ok(Value::ISize(*i as isize)),
+                _ => unreachable!(),
+            },
+            Lit::Float(s) => match expr.ty {
+                Ty::Builtin(BuiltinType::F32) => Ok(Value::F32(*s)),
+                Ty::Builtin(BuiltinType::F64) => Ok(Value::F64(*s)),
                 _ => unreachable!(),
             },
             Lit::Str(s) => Ok(Value::Str(*s)),

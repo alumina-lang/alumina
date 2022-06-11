@@ -75,7 +75,7 @@ pub fn write_function_signature<'ir, 'gen>(
     }
 
     if item.varargs {
-        if item.args.len() > 0 {
+        if !item.args.is_empty() {
             w!(buf, ", ");
         }
         w!(buf, "...");
@@ -165,6 +165,8 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             }
             Value::USize(val) => w!(self.fn_bodies, "{}ULL", val),
             Value::ISize(val) => w!(self.fn_bodies, "{}LL", val),
+            Value::F32(val) => w!(self.fn_bodies, "{}f", val),
+            Value::F64(val) => w!(self.fn_bodies, "{}", val),
             _ => unimplemented!(),
         }
     }
