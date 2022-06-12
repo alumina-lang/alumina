@@ -15,10 +15,6 @@ else
 	ALUMINA_FLAGS += --sysroot $(SYSROOT) --debug --timings 
 endif
 
-ifdef TEST_TIMINGS 
-	TEST_FLAGS += --timings
-endif
-
 ALUMINA_BOOT = $(BUILD_DIR)/alumina-boot
 ALUMINAC = $(BUILD_DIR)/aluminac
 ALUMINAC_TESTS = $(BUILD_DIR)/aluminac-tests
@@ -128,7 +124,7 @@ test-examples: alumina-boot
 test-aluminac: $(ALUMINAC_TESTS)
 	$(ALUMINAC_TESTS) $(TEST_FLAGS)
 
-test: test-std test-examples test-aluminac
+test: test-std test-examples
 
 test-fix: $(ALUMINA_BOOT)
 	cd tools/snapshot-tests/ && pytest snapshot.py --snapshot-update
