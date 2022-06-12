@@ -6,17 +6,18 @@ ifdef RELEASE
 	CARGO_FLAGS = --release
 	CARGO_TARGET_DIR = target/release
 	CFLAGS += -O3
-	ALUMINA_FLAGS = --sysroot $(SYSROOT) --timings 
+	ALUMINA_FLAGS += --sysroot $(SYSROOT) --timings 
 else
 	BUILD_DIR = $(BUILD_ROOT)/debug
 	CARGO_FLAGS = 
 	CARGO_TARGET_DIR = target/debug
 	CFLAGS += -g3
-	ALUMINA_FLAGS = --sysroot $(SYSROOT) --debug --timings 
+	ALUMINA_FLAGS += --sysroot $(SYSROOT) --debug --timings 
 endif
 
 ALUMINA_BOOT = $(BUILD_DIR)/alumina-boot
 ALUMINAC = $(BUILD_DIR)/aluminac
+ALUMINAC_TESTS = $(BUILD_DIR)/aluminac-tests
 CODEGEN = $(BUILD_DIR)/aluminac-generate
 STDLIB_TESTS = $(BUILD_DIR)/stdlib-tests
 
@@ -51,7 +52,7 @@ $(STDLIB_TESTS).c: $(ALUMINA_BOOT) $(SYSROOT_FILES)
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --cfg test_std --output $@
 
 $(STDLIB_TESTS): $(STDLIB_TESTS).c
-	$(CC) $(CFLAGS) -o $@ $(STDLIB_TESTS).c
+	$(CC) $(CFLAGS) -o $@ $^ -lm
 
 ## ------------------ Self-hosted compiler (aluminac) ------------------
 
@@ -61,7 +62,7 @@ $(BUILD_DIR)/src/parser.c: common/grammar.js
 	cd $(BUILD_DIR) && tree-sitter generate --no-bindings $(abspath common/grammar.js)
 
 $(BUILD_DIR)/parser.o: $(BUILD_DIR)/src/parser.c
-	$(CC) $(CFLAGS) -I $(BUILD_DIR)/src -c $(BUILD_DIR)/src/parser.c -o $@
+	$(CC) $(CFLAGS) -I $(BUILD_DIR)/src -c $(BUILD_DIR)/src/parser.c -o $@ -lm
 
 # Codegen util for aluminac
 $(CODEGEN).c: $(ALU_DEPS) $(CODEGEN_SOURCES) 
@@ -70,7 +71,7 @@ $(CODEGEN).c: $(ALU_DEPS) $(CODEGEN_SOURCES)
 		$(foreach src,$(CODEGEN_SOURCES),$(subst /,::,$(basename $(src)))=$(src))
 
 $(CODEGEN): $(CODEGEN).c $(BUILD_DIR)/parser.o
-	$(CC) $(CFLAGS) -o $@ $^ -ltree-sitter
+	$(CC) $(CFLAGS) -o $@ $^ -ltree-sitter -lm
 
 src/aluminac/node_kinds.alu: $(CODEGEN)
 	$(CODEGEN) > $@
@@ -81,16 +82,23 @@ $(ALUMINAC).c: $(ALU_DEPS) $(SELFHOSTED_SOURCES) src/aluminac/node_kinds.alu
 		$(foreach src,$(ALU_LIBRARIES),$(subst /,::,$(basename $(subst libraries/,,$(src))))=$(src)) \
 		$(foreach src,$(SELFHOSTED_SOURCES),$(subst /,::,$(basename $(src)))=$(src))
 
+$(ALUMINAC_TESTS).c: $(ALU_DEPS) $(SELFHOSTED_SOURCES) src/aluminac/node_kinds.alu
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --output $@ \
+		$(foreach src,$(ALU_LIBRARIES),$(subst /,::,$(basename $(subst libraries/,,$(src))))=$(src)) \
+		$(foreach src,$(SELFHOSTED_SOURCES),$(subst /,::,$(basename $(src)))=$(src))
 
 LLVM_CFLAGS = $(shell llvm-config-13 --cflags)
 LLVM_LDFLAGS = $(shell llvm-config-13 --ldflags)
 LLVM_LIBS = $(shell llvm-config-13 --libs engine)
 
 $(BUILD_DIR)/llvm_target.o: libraries/llvm/target.c
-	$(CC) $(CFLAGS) $(LLVM_CFLAGS) -c $^ -o $@
+	$(CC) $(CFLAGS) $(LLVM_CFLAGS) -c $^ -o $@ -lm
 
 $(ALUMINAC): $(ALUMINAC).c $(BUILD_DIR)/parser.o $(BUILD_DIR)/llvm_target.o
-	$(CC) $(CFLAGS) -o $@ $^ $(LLVM_LDFLAGS) -ltree-sitter $(LLVM_LIBS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LLVM_LDFLAGS) -ltree-sitter $(LLVM_LIBS) -lm
+
+$(ALUMINAC_TESTS): $(ALUMINAC_TESTS).c $(BUILD_DIR)/parser.o $(BUILD_DIR)/llvm_target.o
+	$(CC) $(CFLAGS) -o $@ $^ $(LLVM_LDFLAGS) -ltree-sitter $(LLVM_LIBS)	-lm
 
 ## ------------------------------ Various ------------------------------
 
@@ -105,13 +113,16 @@ alumina-boot: $(ALUMINA_BOOT)
 aluminac: $(ALUMINAC)
 	ln -sf $(ALUMINAC) $@
 
-.PHONY: test-std test-examples test test-fix
+.PHONY: test-std test-examples test test-fix test-aluminac
 
 test-std: alumina-boot $(STDLIB_TESTS)
-	$(STDLIB_TESTS)
+	$(STDLIB_TESTS) $(TEST_FLAGS)
 	
 test-examples: alumina-boot
 	cd tools/snapshot-tests/ && pytest snapshot.py
+
+test-aluminac: $(ALUMINAC_TESTS)
+	$(ALUMINAC_TESTS) $(TEST_FLAGS)
 
 test: test-std test-examples
 
@@ -125,8 +136,8 @@ all: alumina-boot aluminac
 
 quickrun: $(ALUMINA_BOOT) $(SYSROOT_FILES) quick.alu
 	RUST_BACKTRACE=1 $(ALUMINA_BOOT) $(ALUMINA_FLAGS) --output quick.c quick=./quick.alu
-	$(CC) $(CFLAGS) -o quickrun -O0 quick.c
+	$(CC) $(CFLAGS) -o quickrun -O0 quick.c -lm
 
 quicktest: $(ALUMINA_BOOT) $(SYSROOT_FILES) quick.alu
 	RUST_BACKTRACE=1 $(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --output quick.c quick=./quick.alu
-	$(CC) $(CFLAGS) -o quicktest -O0 quick.c
+	$(CC) $(CFLAGS) -o quicktest -O0 quick.c -lm

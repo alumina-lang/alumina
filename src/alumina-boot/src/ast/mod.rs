@@ -284,18 +284,38 @@ pub enum Item<'ast> {
 }
 
 impl<'ast> Item<'ast> {
-    pub fn should_compile(&self) -> bool {
+    pub fn can_compile(&self) -> bool {
         match self {
             Item::Function(Function {
                 placeholders,
-                attributes,
+                is_protocol_fn,
                 ..
-            }) => {
-                attributes.contains(&Attribute::Test)
-                    || placeholders.is_empty() && attributes.contains(&Attribute::Export)
-            }
+            }) => placeholders.is_empty() && !is_protocol_fn,
+            Item::Enum(_) => true,
+            Item::StructLike(StructLike { placeholders, .. }) => placeholders.is_empty(),
             _ => false,
         }
+    }
+
+    pub fn is_special(&self) -> bool {
+        match self {
+            Item::Function(Function {
+                placeholders,
+                is_protocol_fn,
+                ..
+            }) => placeholders.is_empty() && !is_protocol_fn,
+            _ => false,
+        }
+    }
+
+    pub fn should_compile(&self) -> bool {
+        self.can_compile()
+            && match self {
+                Item::Function(Function { attributes, .. }) => {
+                    attributes.contains(&Attribute::Test) || attributes.contains(&Attribute::Export)
+                }
+                _ => false,
+            }
     }
 }
 
@@ -536,6 +556,7 @@ pub struct Function<'ast> {
     pub span: Option<Span>,
     pub closure: bool,
     pub varargs: bool,
+    pub is_protocol_fn: bool,
 }
 
 #[derive(Debug)]

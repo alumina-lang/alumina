@@ -23,8 +23,9 @@ enum NodeKind {
     ParameterTypeList,
     Pattern,
     Arguments,
-    CallExpression,
+    TryExpression,
     TypeArguments,
+    CallExpression,
     ContinueExpression,
     MacroDefinition,
     BinaryExpression,
@@ -155,7 +156,7 @@ enum FieldKind {
     Upper = 47u16,
 }
 
-static NODE_KINDS: [NodeKind; 233] = [
+static NODE_KINDS: [NodeKind; 235] = [
     NodeKind::Invalid,
     NodeKind::Identifier,
     NodeKind::Invalid,
@@ -211,6 +212,7 @@ static NODE_KINDS: [NodeKind; 233] = [
     NodeKind::Identifier,
     NodeKind::Identifier,
     NodeKind::Identifier,
+    NodeKind::Invalid,
     NodeKind::Invalid,
     NodeKind::Invalid,
     NodeKind::Invalid,
@@ -325,6 +327,7 @@ static NODE_KINDS: [NodeKind; 233] = [
     NodeKind::UnaryExpression,
     NodeKind::ReferenceExpression,
     NodeKind::DereferenceExpression,
+    NodeKind::TryExpression,
     NodeKind::BinaryExpression,
     NodeKind::FieldExpression,
     NodeKind::AssignmentExpression,
@@ -442,11 +445,14 @@ protocol NodeVisitor<Self, ReturnType> {
     fn visit_arguments(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_arguments");
     }
-    fn visit_call_expression(self: &mut Self, node: Node) -> ReturnType {
-        panic!("unimplemented: visit_call_expression");
+    fn visit_try_expression(self: &mut Self, node: Node) -> ReturnType {
+        panic!("unimplemented: visit_try_expression");
     }
     fn visit_type_arguments(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_type_arguments");
+    }
+    fn visit_call_expression(self: &mut Self, node: Node) -> ReturnType {
+        panic!("unimplemented: visit_call_expression");
     }
     fn visit_continue_expression(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_continue_expression");
@@ -701,8 +707,9 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::ParameterTypeList => self.visit_parameter_type_list(node),
             NodeKind::Pattern => self.visit_pattern(node),
             NodeKind::Arguments => self.visit_arguments(node),
-            NodeKind::CallExpression => self.visit_call_expression(node),
+            NodeKind::TryExpression => self.visit_try_expression(node),
             NodeKind::TypeArguments => self.visit_type_arguments(node),
+            NodeKind::CallExpression => self.visit_call_expression(node),
             NodeKind::ContinueExpression => self.visit_continue_expression(node),
             NodeKind::MacroDefinition => self.visit_macro_definition(node),
             NodeKind::BinaryExpression => self.visit_binary_expression(node),

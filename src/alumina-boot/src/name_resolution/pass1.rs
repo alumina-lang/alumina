@@ -273,11 +273,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
                     return Err(CodeErrorKind::MultipleMainFunctions)
                         .with_span_from(&self.scope, node);
                 }
-            } else if &self.scope.path() == path && name == "main" {
-                if self.main_candidate.replace(item).is_some() {
-                    return Err(CodeErrorKind::MultipleMainFunctions)
-                        .with_span_from(&self.scope, node);
-                }
+            } else if &self.scope.path() == path
+                && name == "main"
+                && self.main_candidate.replace(item).is_some()
+            {
+                return Err(CodeErrorKind::MultipleMainFunctions).with_span_from(&self.scope, node);
             }
         }
 

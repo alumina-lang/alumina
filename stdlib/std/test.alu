@@ -13,6 +13,7 @@
 
     struct TestResult {
         test: TestCaseMeta,
+        duration: Duration,
         success: bool,
         stdout: Vector<u8>,
         stderr: Vector<u8>,
@@ -46,6 +47,7 @@
 
     fn run(test: &TestCaseMeta) -> TestResult {
         let should_fail = test.should_fail();
+        let start_time = Instant::now();
         let child = Forked::new()
             .stdin(Stdio::Null)
             .stdout(Stdio::Piped)
@@ -63,10 +65,13 @@
 
         let child = child.unwrap();
         let output = child.wait_with_output().unwrap();
+        let end_time = Instant::now();
+
         defer output.free();
 
         TestResult {
             test: *test,
+            duration: end_time.since(&start_time),
             success: should_fail ^ (output.status == 0),
             stdout: output.stdout.move(),
             stderr: output.stderr.move(),
@@ -77,6 +82,7 @@
     struct Args {
         prefix: Option<&[u8]>,
         filter: Option<&[u8]>,
+        timings: bool,
     }
 
     impl Args {
@@ -84,6 +90,7 @@
             Args {
                 prefix: Option::none(),
                 filter: Option::none(),
+                timings: false
             }
         }
     }
@@ -95,7 +102,7 @@
     }
 
     fn print_help_string(args: &[&[u8]]) -> ! {
-        eprintln!("usage: {} [--prefix <PREFIX>] [--filter <FILTER>]", args[0]);
+        eprintln!("usage: {} [--prefix <PREFIX>] [--filter <FILTER>] [--timings]", args[0]);
         process::exit(1);
     }
 
@@ -112,6 +119,10 @@
                 State::Normal => switch arg {
                     "--prefix", "-p" => State::Prefix,
                     "--filter", "-f" => State::Filter,
+                    "--timings" => {
+                        res.timings = true;
+                        State::Normal
+                    },
                     _ => print_help_string(args)
                 },
                 State::Prefix => {
@@ -166,7 +177,7 @@
     fn main(args: &[&[u8]]) -> i32 {
         let args = parse_args(args);
         let start_time = Instant::now();
-
+        
         let results: Vector<TestResult> = Vector::new();
         defer results.free_all();
 
@@ -188,16 +199,24 @@
             let result = test.run();
             results.push(result);
 
-            if result.success {
-                eprintln!("\x1b[0;32mok\x1b[0m.");
+            let message = if result.success {
                 num_passed += 1;
+                "\x1b[0;32mok\x1b[0m"
             } else {
-                eprintln!("\x1b[0;31mFAILED\x1b[0m.");
                 num_failed += 1;
+                "\x1b[0;31mFAILED\x1b[0m"
+            };
+
+            if args.timings {
+                eprintln!("{} [{}].", message, result.duration);
+            } else {
+                eprintln!("{}.", message);
             }
         }
 
-        let elapsed = Instant::now().since(&start_time);
+        let end_time = Instant::now();
+        let elapsed = end_time.since(&start_time);
+
         if num_failed > 0 {
             eprintln!("");
             eprintln!("failures:");

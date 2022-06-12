@@ -1,4 +1,4 @@
-#![cfg_attr(feature = "backtrace", feature(nightly))]
+#![allow(clippy::single_match)]
 
 mod ast;
 mod codegen;
@@ -89,6 +89,10 @@ struct Args {
     /// Conditional compilation options
     #[clap(long, parse(try_from_str = parse_key_maybe_val), multiple_occurrences(true))]
     cfg: Vec<(String, Option<String>)>,
+
+    /// Unstable compiler options
+    #[clap(long, short('Z'), multiple_occurrences(true))]
+    options: Vec<String>,
 }
 
 fn get_sysroot(args: &Args) -> Result<Vec<SourceFile>, AluminaError> {
@@ -150,7 +154,7 @@ fn main() {
         OutputType::Executable
     };
 
-    let mut global_ctx = GlobalCtx::new(output_type);
+    let mut global_ctx = GlobalCtx::new(output_type, args.options.clone());
     let mut compiler = Compiler::new(global_ctx.clone());
 
     let mut files = get_sysroot(&args).unwrap();

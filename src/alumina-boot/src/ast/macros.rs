@@ -217,10 +217,7 @@ impl<'ast> MacroExpander<'ast> {
                 self.replacements.insert(r#macro.args[i].id, self.args[i]);
             }
 
-            let etc_args: Vec<_> = self.args[et_cetera_index..et_cetera_index + etc_count]
-                .iter()
-                .copied()
-                .collect();
+            let etc_args: Vec<_> = self.args[et_cetera_index..et_cetera_index + etc_count].to_vec();
 
             for i in et_cetera_index + 1..r#macro.args.len() {
                 self.replacements

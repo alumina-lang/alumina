@@ -172,8 +172,8 @@ mod internal {
     }
 
     fn format_float<T: marker::FloatingPoint, F: Formatter<F>>(val: T, fmt: &mut F, precision: u16) -> Result<(), Error> {
-        // TODO: this is very very bad, replace with Grisu3 or Dragon4 or alike. Correct float parsing
-        // and formatting is a very complicated thing. Using libc instead is an option, but that has a
+        // TODO: this is very very VERY bad, replace with Grisu3 or Dragon4 or alike. Correct float parsing
+        // and formatting is a complicated thing. Using libc instead is an option, but that has a
         // host of other problems: locale-awareness (ideally, Alumina's stdlib is locale-invariant), 
         // use of C-strings, varargs, etc. etc.
 
@@ -191,37 +191,36 @@ mod internal {
             return fmt.write_str("Inf");
         }
 
+        let (integral, frac) = val.modf();
+        
         let steps = 0usize;
-        while val >= 1.0e18 {
-            val /= 1.0e18;
+        while integral >= 1.0e18 {
+            integral /= 1.0e18;
             steps += 1;
         }
 
         let pad = 0usize;
         while steps > 0 {
-            let part = val as u64;
+            let part = integral as u64;
             format_integer(part, 10, pad, fmt)?;
-            val = (val - (part as T)) * 1.0e18;
+            integral = (integral - (part as T)) * 1.0e18;
             steps -= 1;
             pad = 18;
         }
 
-        let frac = val;
         let frac_i = 1u64;
-        frac -= (val as u64) as T;
-        
-        for i in iter::range(0u16, precision) {
+        for i in 0u16..precision {
             frac *= 10.0;
             frac_i *= 10;
         }
 
         let rounded = (frac + 0.5) as u64;
         if rounded == frac_i {
-            format_integer(val as u64 + 1, 10, pad, fmt)?;
+            format_integer(integral as u64 + 1, 10, pad, fmt)?;
             fmt.write_char('.')?;
             format_integer(0, 10, precision as usize, fmt)?;
         } else {
-            format_integer(val as u64, 10, pad, fmt)?;
+            format_integer(integral as u64, 10, pad, fmt)?;
             fmt.write_char('.')?;
             format_integer(rounded, 10, precision as usize, fmt)?;
         }

@@ -23,7 +23,7 @@ const MICROS_PER_SEC: u64 = 1000000;
             let nanos = (self.spec.tv_nsec as i32) - (other.spec.tv_nsec as i32);
 
             if nanos < 0 {
-                secs += 1;
+                secs -= 1;
                 nanos += NANOS_PER_SEC as i32;
             } 
 
@@ -32,17 +32,17 @@ const MICROS_PER_SEC: u64 = 1000000;
 
         fn add(lhs: &Instant, rhs: &Duration) -> Instant {
             let secs = lhs.spec.tv_sec + util::cast(rhs.secs);
-            let nsec = lhs.spec.tv_nsec as u32 + rhs.nanos;
+            let nanos = lhs.spec.tv_nsec as u32 + rhs.nanos;
 
-            if nsec >= NANOS_PER_SEC as u32 {
-                nsec -= NANOS_PER_SEC as u32;
+            if nanos >= NANOS_PER_SEC as u32 {
+                nanos -= NANOS_PER_SEC as u32;
                 secs += 1;
             }
 
             Instant {
                 spec: libc::timespec {
                     tv_sec: secs,
-                    tv_nsec: util::cast(nsec)
+                    tv_nsec: util::cast(nanos)
                 }
             }
         }
@@ -247,7 +247,7 @@ impl Duration {
     }
 
     fn compare(lhs: &Duration, rhs: &Duration) -> cmp::Ordering {
-        cmp::lexicographic_cmp!(&lhs.secs, &rhs.secs);
+        cmp::lexicographic_cmp!(lhs.secs, rhs.secs);
         lhs.nanos.compare(&rhs.nanos)
     }
 

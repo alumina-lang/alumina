@@ -220,6 +220,14 @@ mod internal {
     }
 }
 
+fn new<T>() -> &mut T {
+    when T: marker::ZeroSized {
+        null as &mut T
+    } else {
+        libc::malloc(size_of::<T>()) as &mut T
+    }
+}
+
 fn alloc<T>(len: usize) -> &mut [T] {
     let ret: &mut [T];
     when T: marker::ZeroSized {

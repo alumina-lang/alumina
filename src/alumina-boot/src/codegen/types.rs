@@ -255,12 +255,10 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                                 name
                             );
                         }
+                    } else if s.is_union {
+                        w!(self.type_bodies, "union {} {{\n", name);
                     } else {
-                        if s.is_union {
-                            w!(self.type_bodies, "union {} {{\n", name);
-                        } else {
-                            w!(self.type_bodies, "struct {} {{\n", name);
-                        }
+                        w!(self.type_bodies, "struct {} {{\n", name);
                     }
 
                     for f in s.fields.iter().filter(|f| !f.ty.is_zero_sized()) {

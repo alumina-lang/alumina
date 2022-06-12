@@ -1,7 +1,4 @@
-#[cfg(nightly)]
-use std::backtrace::Backtrace;
-#[cfg(nightly)]
-use std::rc::Rc;
+use backtrace::Backtrace;
 
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
@@ -175,7 +172,7 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
                     _ => unreachable!(),
                 };
 
-                if args.len() > 0 {
+                if !args.is_empty() {
                     let _ = write!(f, "<");
                     for (idx, arg) in args.iter().enumerate() {
                         if idx > 0 {
@@ -812,7 +809,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             let mut type_inferer = TypeInferer::new(
                 self.mono_ctx.ast,
                 self.mono_ctx,
-                candidate_fun.placeholders.iter().copied().collect(),
+                candidate_fun.placeholders.to_vec(),
             );
 
             let infer_slots = candidate_fun
@@ -1016,7 +1013,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let (protocol, generic_args) = match mixin.protocol {
             ast::Ty::Protocol(item) => (item, vec![]),
-            ast::Ty::Generic(item, args) => (item, args.iter().copied().collect()),
+            ast::Ty::Generic(item, args) => (item, args.to_vec()),
             _ => {
                 return Err(CodeErrorKind::NotAProtocol(format!("{:?}", mixin.protocol)))
                     .with_span(mixin.span)
@@ -1077,6 +1074,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 span: fun.span,
                 varargs: false,
                 closure: fun.closure, // = false always
+                is_protocol_fn: false,
             }));
 
             result.push(ast::AssociatedFn {
@@ -1173,9 +1171,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .map_err(|_| CodeErrorKind::CycleDetected)
             .with_no_span()?;
 
-        let mut args: Vec<_> = generic_args.iter().copied().collect();
-        for idx in generic_args.len()..placeholders.len() {
-            match placeholders[idx].default {
+        let mut args: Vec<_> = generic_args.to_vec();
+        for placeholder in placeholders.iter().skip(generic_args.len()) {
+            match placeholder.default {
                 Some(typ) => {
                     args.push(
                         self.lower_type(typ)
@@ -1429,8 +1427,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 .ok_or_else(|| {
                     CodeErrorKind::InternalError(
                         "unbound placeholder".to_string(),
-                        #[cfg(nightly)]
-                        Rc::new(Backtrace::capture()),
+                        Backtrace::new(),
                     )
                 })
                 .with_no_span()?,
@@ -1576,7 +1573,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                         }
                         if let ir::Ty::NamedFunction(f) = args[0] {
                             let func = f.get_function().with_no_span()?;
-                            if func.args.len() == 0 {
+                            if func.args.is_empty() {
                                 return Ok(self.types.void());
                             } else {
                                 return Ok(self.types.tuple(func.args.iter().map(|a| a.ty)));
@@ -1995,11 +1992,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             infer_pairs.push((fun.return_type, return_type_hint));
         }
 
-        let mut type_inferer = TypeInferer::new(
-            self.mono_ctx.ast,
-            self.mono_ctx,
-            fun.placeholders.iter().copied().collect(),
-        );
+        let mut type_inferer =
+            TypeInferer::new(self.mono_ctx.ast, self.mono_ctx, fun.placeholders.to_vec());
 
         match type_inferer.try_infer(self_slot, infer_pairs) {
             Some(generic_args) => {
@@ -2090,7 +2084,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let mut type_inferer = TypeInferer::new(
             self.mono_ctx.ast,
             self.mono_ctx,
-            r#struct.placeholders.iter().copied().collect(),
+            r#struct.placeholders.to_vec(),
         );
         let infer_result = type_inferer.try_infer(None, pairs);
 
@@ -3023,10 +3017,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             r#extern: false,
         }));
 
-        self.mono_ctx.static_local_defs.insert(
-            attrs_static,
-            std::mem::replace(&mut self.local_defs, vec![]),
-        );
+        self.mono_ctx
+            .static_local_defs
+            .insert(attrs_static, std::mem::take(&mut self.local_defs));
 
         let test_cases_static = self.mono_ctx.ir.make_symbol();
 
@@ -3099,10 +3092,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             r#extern: false,
         }));
 
-        self.mono_ctx.static_local_defs.insert(
-            test_cases_static,
-            std::mem::replace(&mut self.local_defs, vec![]),
-        );
+        self.mono_ctx
+            .static_local_defs
+            .insert(test_cases_static, std::mem::take(&mut self.local_defs));
 
         self.mono_ctx.test_cases_statics.replace(TestCasesStatics {
             attributes_array: attrs_static,
@@ -3603,17 +3595,13 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let bound_hint = match type_hint {
             // Special case for range indexing
             Some(ir::Ty::Builtin(BuiltinType::USize)) => type_hint,
-            Some(ty) => self
-                .mono_ctx
-                .get_lang_type_kind(ty)
-                .map(|kind| {
-                    if let LangTypeKind::Range(inner) = kind {
-                        Some(inner)
-                    } else {
-                        None
-                    }
-                })
-                .flatten(),
+            Some(ty) => self.mono_ctx.get_lang_type_kind(ty).and_then(|kind| {
+                if let LangTypeKind::Range(inner) = kind {
+                    Some(inner)
+                } else {
+                    None
+                }
+            }),
             None => None,
         };
 
@@ -3630,9 +3618,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let bound_ty = lower
             .map(|l| l.ty)
-            .or(upper.map(|u| u.ty))
+            .or_else(|| upper.map(|u| u.ty))
             .or(bound_hint)
-            .ok_or_else(|| CodeErrorKind::TypeHintRequired)
+            .ok_or(CodeErrorKind::TypeHintRequired)
             .with_no_span()?;
 
         let result = match (lower, upper) {

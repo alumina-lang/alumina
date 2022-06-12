@@ -407,7 +407,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                     symbol,
                     node,
                     scope.clone(),
-                    &attributes,
+                    attributes,
                 )?;
                 symbol
             }
@@ -1428,6 +1428,7 @@ impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
             varargs: false,
             span: Some(span),
             closure: true,
+            is_protocol_fn: false,
         }));
 
         Ok(symbol)

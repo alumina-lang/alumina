@@ -120,7 +120,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
     }
 
     fn visit_generic_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        return Err(CodeErrorKind::GenericArgsInPath).with_span_from(&self.scope, node);
+        Err(CodeErrorKind::GenericArgsInPath).with_span_from(&self.scope, node)
     }
 
     fn visit_scoped_type_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -308,7 +308,7 @@ impl<'ast, 'src> AttributeVisitor<'ast, 'src> {
                     .ok_or(CodeErrorKind::CannotBeATest)
                     .with_span_from(&self.scope, node)?,
                 TestMetadata {
-                    attributes: std::mem::replace(&mut self.test_attributes, vec![]),
+                    attributes: std::mem::take(&mut self.test_attributes),
                     path: self.scope.path(),
                     name: Path::from(PathSegment(
                         self.code
@@ -478,7 +478,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for CfgVisitor<'ast, 'src> {
             let expected = node
                 .child_by_field_name("value")
                 .map(|n| self.code.node_text(n))
-                .map(|s| parse_string_literal(s))
+                .map(parse_string_literal)
                 .transpose()
                 .with_span_from(&self.scope, node)?;
 

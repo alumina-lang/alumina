@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::HashMap, path::PathBuf, rc::Rc};
 
 use colored::Colorize;
 
-use crate::common::{AluminaError, CodeError, FileId, Marker};
+use crate::common::{AluminaError, CodeError, CodeErrorKind, FileId, Marker};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum Level {
@@ -122,6 +122,12 @@ impl DiagnosticContext {
                 } else {
                     eprintln!(" --> {{ unresolved location }}");
                 }
+            }
+
+            if let CodeErrorKind::InternalError(_, backtrace) = error.kind {
+                eprintln!();
+                eprintln!("Compiler backtrace:");
+                eprintln!("{:?}", backtrace);
             }
 
             eprintln!();
