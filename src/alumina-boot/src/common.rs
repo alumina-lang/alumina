@@ -214,6 +214,10 @@ pub enum CodeErrorKind {
     InvalidTestCaseSignature,
     #[error("extern statics cannot have initializers")]
     ExternStaticMustHaveType,
+    #[error("can only bind local variables")]
+    CanOnlyCloseOverLocals,
+    #[error("anonymous functions that bind environment variables cannot be coerced to a function pointer")]
+    ClosuresAreNotFns,
 
     // Warnings
     #[error("defer inside a loop: this defered statement will only be executed once")]

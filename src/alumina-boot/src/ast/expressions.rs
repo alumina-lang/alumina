@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::{AstCtx, FieldInitializer};
 use crate::ast::{BinOp, Expr, ExprP, LetDeclaration, Lit, Statement, UnOp};
@@ -9,7 +9,7 @@ use crate::global_ctx::GlobalCtx;
 use crate::name_resolution::pass1::FirstPassVisitor;
 use crate::name_resolution::path::{Path, PathSegment};
 use crate::name_resolution::resolver::ItemResolution;
-use crate::name_resolution::scope::{NamedItem, ScopeType};
+use crate::name_resolution::scope::{BoundItemType, NamedItem, ScopeType};
 use crate::parser::AluminaVisitor;
 use crate::parser::ParseCtx;
 
@@ -27,8 +27,8 @@ use super::macros::{MacroExpander, MacroMaker};
 use super::maker::AstItemMaker;
 use super::types::TypeVisitor;
 use super::{
-    BuiltinType, Defered, ExprKind, FnKind, Function, Item, ItemP, Parameter, Placeholder, Span,
-    StatementKind, StaticIfCondition, Ty, TyP,
+    AstId, BuiltinType, ClosureBinding, Defered, ExprKind, FnKind, Function, Item, ItemP,
+    Parameter, Placeholder, Span, StatementKind, StaticIfCondition, Ty, TyP,
 };
 
 macro_rules! with_block_scope {
@@ -183,6 +183,9 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             ItemResolution::Item(item) => match item.kind {
                 NamedItemKind::Function(fun, _, _) => ExprKind::Fn(FnKind::Normal(fun), None),
                 NamedItemKind::Local(var) => ExprKind::Local(var),
+                NamedItemKind::BoundValue(self_id, var, bound_type) => {
+                    ExprKind::BoundParam(self_id, var, bound_type)
+                }
                 NamedItemKind::MacroParameter(var, _) => ExprKind::Local(var),
                 NamedItemKind::Parameter(var, _) => ExprKind::Local(var),
                 NamedItemKind::Static(var, _) => ExprKind::Static(var),
@@ -466,21 +469,32 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_closure_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let func = ClosureVisitor::new(
+        let visitor = ClosureVisitor::new(
             self.ast,
             self.global_ctx.clone(),
             self.scope.anonymous_child(ScopeType::Closure),
             self.in_a_macro,
-        )
-        .generate(node)?;
+        );
 
-        Ok(
-            ExprKind::Fn(FnKind::Normal(func), None).alloc_with_span_from(
-                self.ast,
-                &self.scope,
-                node,
-            ),
-        )
+        let (func, bindings) = visitor.generate(node)?;
+
+        if bindings.is_empty() {
+            Ok(
+                ExprKind::Fn(FnKind::Normal(func), None).alloc_with_span_from(
+                    self.ast,
+                    &self.scope,
+                    node,
+                ),
+            )
+        } else {
+            Ok(
+                ExprKind::Fn(FnKind::Closure(bindings, func), None).alloc_with_span_from(
+                    self.ast,
+                    &self.scope,
+                    node,
+                ),
+            )
+        }
     }
 
     fn visit_integer_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -1379,8 +1393,10 @@ pub struct ClosureVisitor<'ast, 'src> {
     global_ctx: GlobalCtx,
     code: &'src ParseCtx<'src>,
     scope: Scope<'ast, 'src>,
+    self_param: AstId,
 
     parameters: Vec<Parameter<'ast>>,
+    bound_values: HashMap<AstId, (BoundItemType, ExprP<'ast>)>,
     placeholders: Vec<Placeholder<'ast>>,
     return_type: Option<TyP<'ast>>,
     body: Option<ExprP<'ast>>,
@@ -1401,15 +1417,20 @@ impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
                 .expect("cannot run on scope without parse context"),
             scope,
             global_ctx,
+            self_param: ast.make_id(),
             parameters: Vec::new(),
             placeholders: Vec::new(),
+            bound_values: HashMap::new(),
             return_type: None,
             body: None,
             in_a_macro,
         }
     }
 
-    pub fn generate(mut self, node: tree_sitter::Node<'src>) -> Result<ItemP<'ast>, AluminaError> {
+    pub fn generate(
+        mut self,
+        node: tree_sitter::Node<'src>,
+    ) -> Result<(ItemP<'ast>, &'ast [ClosureBinding<'ast>]), AluminaError> {
         self.visit(node)?;
 
         let symbol = self.ast.make_symbol();
@@ -1418,6 +1439,33 @@ impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
             end: node.end_byte(),
             file: self.scope.code().unwrap().file_id(),
         };
+
+        if !self.bound_values.is_empty() {
+            let placeholder = self.ast.make_id();
+            self.placeholders.push(Placeholder {
+                id: placeholder,
+                bounds: [].alloc_on(self.ast),
+                default: None,
+            });
+
+            let span = Span {
+                start: node.start_byte(),
+                end: node.end_byte(),
+                file: self.scope.code().unwrap().file_id(),
+            };
+
+            // Closure struct is passed by a mutable pointer
+            let placeholder_ty = self.ast.intern_type(Ty::Placeholder(placeholder));
+            self.parameters.insert(
+                0,
+                Parameter {
+                    id: self.self_param,
+                    typ: self.ast.intern_type(Ty::Pointer(placeholder_ty, false)),
+                    span: Some(span),
+                },
+            );
+        }
+
         symbol.assign(Item::Function(Function {
             name: None,
             attributes: [].alloc_on(self.ast),
@@ -1427,11 +1475,22 @@ impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
             body: Some(self.body.unwrap()),
             varargs: false,
             span: Some(span),
-            closure: true,
+            lambda: true,
             is_protocol_fn: false,
         }));
 
-        Ok(symbol)
+        let bindings = self
+            .bound_values
+            .iter()
+            .map(|(k, (t, v))| super::ClosureBinding {
+                id: *k,
+                value: *v,
+                binding_type: *t,
+            })
+            .collect::<Vec<_>>()
+            .alloc_on(self.ast);
+
+        Ok((symbol, bindings))
     }
 }
 
@@ -1468,35 +1527,52 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
         Ok(())
     }
 
-    fn visit_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let name = self.code.node_text(node).alloc_on(self.ast);
-        let id = self.ast.make_id();
+    fn visit_bound_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let name = self
+            .code
+            .node_text(node.child_by_field_name("name").unwrap())
+            .alloc_on(self.ast)
+            .trim_start_matches('@');
 
+        let bound_type = if let Some(_) = node.child_by_field_name("by_reference") {
+            BoundItemType::ByReference
+        } else {
+            BoundItemType::ByValue
+        };
+
+        let mut resolver = NameResolver::new();
+        let original = match resolver
+            .resolve_item(self.scope.parent().unwrap(), PathSegment(name).into())
+            .with_span_from(&self.scope, node)?
+        {
+            ItemResolution::Item(NamedItem {
+                kind: NamedItemKind::Local(id) | NamedItemKind::Parameter(id, _),
+                ..
+            }) => ExprKind::Local(id),
+            ItemResolution::Item(NamedItem {
+                kind: NamedItemKind::BoundValue(self_arg, id, bound_type),
+                ..
+            }) => ExprKind::BoundParam(self_arg, id, bound_type),
+            _ => {
+                return Err(CodeErrorKind::CanOnlyCloseOverLocals).with_span_from(&self.scope, node)
+            }
+        };
+
+        let id = self.ast.make_id();
         self.scope
             .add_item(
                 Some(name),
-                NamedItem::new_default(NamedItemKind::Parameter(id, node)),
+                NamedItem::new_default(NamedItemKind::BoundValue(self.self_param, id, bound_type)),
             )
             .with_span_from(&self.scope, node)?;
 
-        let placeholder = self.ast.make_id();
-        self.placeholders.push(Placeholder {
-            id: placeholder,
-            bounds: [].alloc_on(self.ast),
-            default: None,
-        });
-
-        let span = Span {
-            start: node.start_byte(),
-            end: node.end_byte(),
-            file: self.scope.code().unwrap().file_id(),
-        };
-
-        self.parameters.push(Parameter {
+        self.bound_values.insert(
             id,
-            typ: self.ast.intern_type(Ty::Placeholder(placeholder)),
-            span: Some(span),
-        });
+            (
+                bound_type,
+                original.alloc_with_span_from(self.ast, &self.scope, node),
+            ),
+        );
 
         Ok(())
     }
@@ -1530,15 +1606,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
                     TypeVisitor::new(self.ast, self.scope.clone(), self.in_a_macro).visit(node)
                 })
                 .transpose()?
-                .unwrap_or_else(|| {
-                    let placeholder = self.ast.make_id();
-                    self.placeholders.push(Placeholder {
-                        id: placeholder,
-                        bounds: [].alloc_on(self.ast),
-                        default: None,
-                    });
-                    self.ast.intern_type(Ty::Placeholder(placeholder))
-                }),
+                .unwrap_or_else(|| self.ast.intern_type(Ty::Builtin(BuiltinType::Void))),
         );
 
         Ok(())

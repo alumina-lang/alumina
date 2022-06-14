@@ -1,9 +1,11 @@
 use marker::Integer;
 use option::Option;
+use marker::Callable;
 
+#[lang(proto_iterator)]
 protocol Iterator<Self, T> {
     fn next(self: &mut Self) -> Option<T>;
-
+    
     fn size_hint(self: &Self) -> Option<usize> {
         Option::none()
     }
@@ -12,6 +14,441 @@ protocol Iterator<Self, T> {
 protocol Iterable<Self, It: Iterator<It, T>, T> {
     fn iter(self: &Self) -> It;
 }
+
+struct MapIterator<T, U, It: Iterator<It, T>, F: Callable<(T), U>> {
+    it: It,
+    fun: F,
+}
+
+impl MapIterator<T, U, It: Iterator<It, T>, F: Callable<(T), U>> {
+    fn next(self: &mut MapIterator<T, U, It, F>) -> Option<U> {
+        self.it.next().map(|=self, x: T| -> U { self.fun(x) })
+    }
+
+    fn iter(self: &MapIterator<T, U, It, F>) -> MapIterator<T, U, It, F> {
+        *self
+    }
+
+    fn size_hint(self: &MapIterator<T, U, It, F>) -> Option<usize> {
+        self.it.size_hint()
+    }
+
+    mixin IteratorExt<MapIterator<T, U, It, F>, U>;
+    mixin<Other: Iterator<Other, U>> IteratorExtOther<MapIterator<T, U, It, F>, Other, U>;
+}
+
+struct TakeWhileIterator<T, It: Iterator<It, T>, F: Callable<(T), bool>> {
+    it: It,
+    fun: F,
+}
+
+impl TakeWhileIterator<T, It: Iterator<It, T>, F: Callable<(T), bool>> {
+    fn next(self: &mut TakeWhileIterator<T, It, F>) -> Option<T> {
+        self.it.next().and_then(|=self, x: T| -> Option<T> {
+            if self.fun(x) {
+                Option::some(x)
+            } else {
+                Option::none()
+            }
+        })
+    }
+
+    fn iter(self: &TakeWhileIterator<T, It, F>) -> TakeWhileIterator<T, It, F> {
+        *self
+    }
+
+    fn size_hint(self: &TakeWhileIterator<T, It, F>) -> Option<usize> {
+        Option::none()
+    }
+}
+
+struct FilterMapIterator<T, U, It: Iterator<It, T>, F: Callable<(T), Option<U>>> {
+    it: It,
+    fun: F,
+}
+
+impl FilterMapIterator<T, U, It: Iterator<It, T>, F: Callable<(T), Option<U>>> {
+    fn next(self: &mut FilterMapIterator<T, U, It, F>) -> Option<U> {
+        use option::try;
+
+        loop {
+            let value = self.it.next()?;
+            let mapped = self.fun(value);
+
+            if mapped.is_some {
+                return mapped
+            }
+        }
+    }
+
+    fn iter(self: &FilterMapIterator<T, U, It, F>) -> FilterMapIterator<T, U, It, F> {
+        *self
+    }
+
+    fn size_hint(self: &FilterMapIterator<T, U, It, F>) -> Option<usize> {
+        Option::none()
+    }
+
+    mixin IteratorExt<FilterMapIterator<T, U, It, F>, U>;
+    mixin<Other: Iterator<Other, U>> IteratorExtOther<FilterMapIterator<T, U, It, F>, Other, U>;
+}
+
+struct FilterIterator<T, It: Iterator<It, T>, F: Callable<(T), bool>> {
+    it: It,
+    fun: F,
+}
+
+impl FilterIterator<T, It: Iterator<It, T>, F: Callable<(T), bool>> {
+    fn next(self: &mut FilterIterator<T, It, F>) -> Option<T> {
+        use option::try;
+
+        loop {
+            let value = self.it.next()?;
+            if self.fun(value) {
+                return Option::some(value)
+            }
+        }
+    }
+
+    fn iter(self: &FilterIterator<T, It, F>) -> FilterIterator<T, It, F> {
+        *self
+    }
+
+    fn size_hint(self: &FilterIterator<T, It, F>) -> Option<usize> {
+        Option::none()
+    }
+
+    mixin IteratorExt<FilterIterator<T, It, F>, T>;
+    mixin<Other: Iterator<Other, T>> IteratorExtOther<FilterIterator<T, It, F>, Other, T>;
+}
+
+struct SkipIterator<It: Iterator<It, T>, T> {
+    it: It,
+    n: usize,
+}
+
+impl SkipIterator<It: Iterator<It, T>, T> {
+    fn next(self: &mut SkipIterator<It, T>) -> Option<T> {
+        while self.n > 0 {
+            self.n -= 1;
+            if !self.it.next().is_some {
+                return Option::none();
+            }
+        }
+
+        self.it.next()
+    }
+
+    fn size_hint(self: &SkipIterator<It, T>) -> Option<usize> {
+        self.it.size_hint().map(|=self, v: usize| -> usize { 
+            if self.n > v {
+                0
+            } else {
+                v - self.n
+            }
+        })
+    }
+
+    mixin IteratorExt<SkipIterator<It, T>, T>;
+    mixin<Other: Iterator<Other, T>>  IteratorExtOther<SkipIterator<It, T>, Other, T>;
+}
+
+struct TakeIterator<It: Iterator<It, T>, T> {
+    it: It,
+    n: usize,
+}
+
+impl TakeIterator<It: Iterator<It, T>, T> {
+    fn next(self: &mut TakeIterator<It, T>) -> Option<T> {
+        if self.n == 0 {
+            return Option::none();
+        }
+
+        self.n -= 1;
+        self.it.next()
+    }
+
+    fn size_hint(self: &TakeIterator<It, T>) -> Option<usize> {
+        self.it.size_hint().map(|=self, v: usize| -> usize {
+            math::min(v, self.n)
+        })
+    }
+
+    mixin IteratorExt<TakeIterator<It, T>, T>;
+    mixin<Other: Iterator<Other, T>> IteratorExtOther<TakeIterator<It, T>, Other, T>;
+}
+
+struct EnumerateIterator<It: Iterator<It, T>, T> {
+    it: It,
+    n: usize,
+}
+
+impl EnumerateIterator<It: Iterator<It, T>, T> {
+    fn next(self: &mut EnumerateIterator<It, T>) -> Option<(usize, T)> {
+        use option::try;
+        
+        let val = self.it.next()?;
+        let res = (self.n, val);
+        self.n += 1;
+        Option::some(res)
+    }
+
+    fn iter(self: &EnumerateIterator<It, T>) -> EnumerateIterator<It, T> {
+        *self
+    }
+
+    fn size_hint(self: &EnumerateIterator<It, T>) -> Option<usize> {
+        self.it.size_hint()
+    }
+
+    mixin IteratorExt<EnumerateIterator<It, T>, T>;
+    mixin<Other: Iterator<Other, T>> IteratorExtOther<EnumerateIterator<It, T>, Other, T>;
+}
+
+protocol IteratorExt<Self: Iterator<Self, T>, T> {
+    fn skip(self: Self, n: usize) -> SkipIterator<Self, T> {
+        SkipIterator {
+            it: self,
+            n: n,
+        }
+    }
+
+    fn take(self: Self, n: usize) -> TakeIterator<Self, T> {
+        TakeIterator {
+            it: self,
+            n: n,
+        }
+    }
+
+    fn enumerate(self: Self) -> EnumerateIterator<Self, T> {
+        EnumerateIterator {
+            it: self,
+            n: 0,
+        }
+    }
+
+    fn last(self: Self) -> Option<T> {
+        let value: Option<T> = Option::none();
+        loop {
+            let next = self.next();
+            if next.is_some {
+                value = next;
+            } else {
+                return value;
+            }
+        }
+    }
+
+    fn count(self: Self) -> usize {
+        let n = 0usize;
+        loop {
+            if !self.next().is_some {
+                return n;
+            }
+            n += 1;
+        }
+    }
+
+    fn to_vector(self: Self) -> collections::Vector<T> {
+        collections::Vector::from_iter::<T, Self>(&self)
+    }
+}
+
+struct ChainIterator<It1: Iterator<It1, T>, It2: Iterator<It2, T>, T> {
+    first_done: bool,
+    it1: It1,
+    it2: It2,
+}
+
+impl ChainIterator<It1: Iterator<It1, T>, It2: Iterator<It2, T>, T> {
+    fn next(self: &mut ChainIterator<It1, It2, T>) -> Option<T> {
+        if self.first_done {
+            self.it2.next()
+        } else {
+            let v = self.it1.next();
+            if !v.is_some {
+                self.first_done = true;
+                self.it2.next()
+            } else {
+                v
+            }
+        }
+    }
+
+    fn size_hint(self: &ChainIterator<It1, It2, T>) -> Option<usize> {
+        if self.first_done {
+            self.it2.size_hint()
+        } else {
+            let h1 = self.it1.size_hint();
+            let h2 = self.it2.size_hint();
+
+            if h1.is_some && h2.is_some {
+                Option::some(h1.inner + h2.inner)
+            } else {
+                Option::none()
+            }
+        }
+    }
+
+    mixin IteratorExt<ChainIterator<It1, It2, T>, T>;
+    mixin<Other: Iterator<Other, T>> IteratorExtOther<ChainIterator<It1, It2, T>, Other, T>;
+}
+
+protocol IteratorExtOther<Self: Iterator<Self, T>, Other: Iterator<Self, T>, T> {
+    fn chain(self: Self, other: Other) -> ChainIterator<Self, Other, T> {
+        ChainIterator {
+            first_done: false,
+            it1: self,
+            it2: other
+        }
+    }
+}
+
+struct InspectIterator<It: Iterator<It, T>, F: Callable<(T), ()>, T> {
+    it: It,
+    func: F,
+}
+
+impl InspectIterator<It: Iterator<It, T>, F: Callable<(T), ()>, T> {
+    fn next(self: &mut InspectIterator<It, F, T>) -> Option<T> {
+        let v = self.it.next();
+        if v.is_some {
+            self.func(v.inner);
+        }
+        v
+    }
+
+    fn iter(self: &InspectIterator<It, F, T>) -> InspectIterator<It, F, T> {
+        *self
+    }
+
+    fn size_hint(self: &InspectIterator<It, F, T>) -> Option<usize> {
+        self.it.size_hint()
+    }
+
+    mixin IteratorExt<InspectIterator<It, F, T>, T>;
+    mixin<Other: Iterator<Other, T>> IteratorExtOther<InspectIterator<It, F, T>, Other, T>;
+}
+
+fn inspect<It: Iterator<It, T>, F: Callable<(T), ()>, T>(it: It, func: F) -> InspectIterator<It, F, T> {
+    InspectIterator {
+        it: it,
+        func: func,
+    }
+}
+
+fn take_while<T, It: Iterator<It, T>, F: Callable<(T), bool>>(iter: It, fun: F) -> TakeWhileIterator<T, It, F> {
+    TakeWhileIterator { it: iter, fun: fun }
+}
+
+fn map<T, U, It: Iterator<It, T>, F: Callable<(T), U>>(iter: It, fun: F) -> MapIterator<T, U, It, F> {
+    MapIterator { it: iter, fun: fun }
+}
+
+fn foreach<T, It: Iterator<It, T>, F: Callable<(T), ()>>(iter: It, fun: F) {
+    loop {
+        let val = iter.next();
+        if val.is_some {
+            fun(val.inner);
+        } else {
+            break;
+        }
+    }
+}
+
+fn filter<T, It: Iterator<It, T>, F: Callable<(T), bool>>(iter: It, fun: F) -> FilterIterator<T, It, F> {
+    FilterIterator { it: iter, fun: fun }
+}
+
+fn filter_map<T, U, It: Iterator<It, T>, F: Callable<(T), Option<U>>>(iter: It, fun: F) -> FilterMapIterator<T, U, It, F> {
+    FilterMapIterator { it: iter, fun: fun }
+}
+
+fn reduce<T, U, It: Iterator<It, T>, F: Callable<(U, T), U>>(iter: It, initial: U, func: F) -> U {
+    loop {
+        let next = iter.next();
+        if !next.is_some {
+            break
+        }
+        initial = func(initial, next.inner);
+    }
+    initial
+}
+
+fn all<T, It: Iterator<It, T>, F: Callable<(T), bool>>(iter: It, fun: F) -> bool {
+    loop {
+        let next = iter.next();
+        if !next.is_some {
+            break
+        }
+        if !fun(next.inner) {
+            return false
+        }
+    }
+    true
+}
+
+fn any<T, It: Iterator<It, T>, F: Callable<(T), bool>>(iter: It, fun: F) -> bool {
+    loop {
+        let next = iter.next();
+        if !next.is_some {
+            break
+        }
+        if fun(next.inner) {
+            return true
+        }
+    }
+    false
+}
+
+struct EmptyIterator<T> {}
+
+impl EmptyIterator<T> {
+    fn next(self: &mut EmptyIterator<T>) -> Option<T> {
+        Option::none()
+    }
+
+    fn iter(self: &EmptyIterator<T>) -> EmptyIterator<T> {
+        *self
+    }
+
+    fn size_hint(self: &EmptyIterator<T>) -> Option<usize> {
+        Option::some(0)
+    }
+
+    mixin IteratorExt<EmptyIterator<T>, T>;
+    mixin<Other: Iterator<Other, T>> IteratorExtOther<EmptyIterator<T>, Other, T>;
+}
+
+fn empty<T>() -> EmptyIterator<T> {
+    EmptyIterator::<T> {}
+}
+
+struct RepeatIterator<T> {
+    value: T
+}
+
+impl RepeatIterator<T> {
+    fn next(self: &mut RepeatIterator<T>) -> Option<T> {
+        Option::some(self.value)
+    }
+
+    fn iter(self: &RepeatIterator<T>) -> RepeatIterator<T> {
+        *self
+    }
+
+    fn size_hint(self: &RepeatIterator<T>) -> Option<usize> {
+        Option::some(usize::max_value())
+    }
+
+    mixin IteratorExt<RepeatIterator<T>, T>;
+    mixin<Other: Iterator<Other, T>> IteratorExtOther<RepeatIterator<T>, Other, T>;
+}
+
+fn repeat<T>(value: T) -> RepeatIterator<T> {
+    RepeatIterator { value: value }
+}
+
 
 #[lang(range_full)]
 struct RangeFull<T: Integer> {
@@ -66,7 +503,6 @@ impl RangeFrom<T: Integer> {
             lower: lower,
         }
     }
-
 
     #[force_inline]
     fn iter(self: &RangeFrom<T>) -> RangeIter<T> {
@@ -142,13 +578,16 @@ impl RangeIter<T: Integer> {
 
     fn size_hint(self: &RangeIter<T>) -> Option<usize> {
         if self.current < self.upper {
-            Option::some(self.upper - self.current)
+            Option::some(self.upper as usize - self.current as usize)
         } else {
-            Option::some(0)
+            Option::some(0usize)
         }
     }
     
-    mixin<T: Integer> Iterator<RangeIter<T>, T>;
+    mixin Iterator<RangeIter<T>, T>;
+    mixin IteratorExt<RangeIter<T>, T>;
+    mixin <Other: Iterator<Other, T>> IteratorExtOther<RangeIter<T>, Other, T>;
+
 }
 
 #[force_inline]
@@ -156,5 +595,193 @@ fn range<T: Integer>(lower: T, upper: T) -> Range<T> {
     Range {
         lower: lower,
         upper: upper,
+    }
+}
+
+
+#[cfg(all(test, test_std))]
+mod tests {
+    #[test]
+    fn test_range() {
+        let range = (0..5).iter();
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::some(1));
+        assert_eq!(range.next(), Option::some(2));
+        assert_eq!(range.next(), Option::some(3));
+        assert_eq!(range.next(), Option::some(4));
+        assert_eq!(range.next(), Option::none());
+    }
+
+    #[test]
+    fn test_map() {
+        let range = (0..5).iter().map(|x: i32| -> i32 { x * 2 });
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::some(2));
+        assert_eq!(range.next(), Option::some(4));
+        assert_eq!(range.next(), Option::some(6));
+        assert_eq!(range.next(), Option::some(8));
+        assert_eq!(range.next(), Option::none());
+    }
+
+    #[test]
+    fn test_filter() {
+        let range = (0..5).iter().filter(|x: i32| -> bool { x % 2 == 0 });
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::some(2));
+        assert_eq!(range.next(), Option::some(4));
+        assert_eq!(range.next(), Option::none());
+    }
+
+    #[test]
+    fn test_filter_map() {
+        let range = (0..5).iter().filter_map(|x: i32| -> Option<i32> {
+            if x % 2 == 0 {
+                Option::some(x * 2)
+            } else {
+                Option::none()
+            }
+        });
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::some(4));
+        assert_eq!(range.next(), Option::some(8));
+        assert_eq!(range.next(), Option::none());
+    }
+
+    #[test]
+    fn test_reduce() {
+        let range = (0..5).iter().reduce(0, |acc: i32, x: i32| -> i32 {
+            acc + x
+        });
+        assert_eq!(range, 10);
+    }
+
+    #[test]
+    fn test_empty() {
+        let range = empty::<()>();
+        assert_eq!(range.next(), Option::none());
+    }
+
+    #[test]
+    fn test_all() {
+        assert_eq!(empty::<i32>().all(|v: i32| -> bool { v > 10 }), true)
+        assert_eq!((0..5).iter().all(|v: i32| -> bool { v > 10 }), false);
+        assert_eq!((0..5).iter().all(|v: i32| -> bool { v >= 0 }), true);
+    }
+
+    #[test]
+    fn test_any() {
+        assert_eq!(empty::<i32>().any(|v: i32| -> bool { v > 10 }), false)
+        assert_eq!((0..5).iter().any(|v: i32| -> bool { v > 3 }), true);
+        assert_eq!((0..5).iter().any(|v: i32| -> bool { v > 10 }), false);
+    }
+
+    #[test]
+    fn test_repeat() {
+        let range = repeat(1);
+        assert_eq!(range.next(), Option::some(1));
+        assert_eq!(range.next(), Option::some(1));
+        assert_eq!(range.next(), Option::some(1));
+        assert_eq!(range.next(), Option::some(1));
+        assert_eq!(range.next(), Option::some(1));
+        // ...
+    }
+
+    #[test]
+    fn test_skip() {
+        let range = (0..5).iter().skip(2);
+        assert_eq!(range.next(), Option::some(2));
+        assert_eq!(range.next(), Option::some(3));
+        assert_eq!(range.next(), Option::some(4));
+        assert_eq!(range.next(), Option::none());
+        // ...
+    }
+
+    #[test]
+    fn test_take() {
+        let range = (0..5).iter().take(2);
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::some(1));
+        assert_eq!(range.next(), Option::none());
+    }
+
+    #[test]
+    fn test_count() {
+        assert_eq!((0..5).iter().count(), 5usize);
+    }
+
+    #[test]
+    fn test_last() {
+        assert_eq!((0..5).iter().last(), Option::some(4));
+        assert_eq!(empty::<i32>().last(), Option::none());
+    }
+
+    #[test]
+    fn test_chain() {
+        let range = (0..5).iter().chain((10..15).iter());
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::some(1));
+        assert_eq!(range.next(), Option::some(2));
+        assert_eq!(range.next(), Option::some(3));
+        assert_eq!(range.next(), Option::some(4));
+        assert_eq!(range.next(), Option::some(10));
+        assert_eq!(range.next(), Option::some(11));
+        assert_eq!(range.next(), Option::some(12));
+        assert_eq!(range.next(), Option::some(13));
+        assert_eq!(range.next(), Option::some(14));
+        assert_eq!(range.next(), Option::none());
+    }
+
+    #[test]
+    fn test_enumerate() {
+        let range = (10..15).iter().enumerate();
+        assert_eq!(range.next(), Option::some((0usize, 10)));
+        assert_eq!(range.next(), Option::some((1usize, 11)));
+        assert_eq!(range.next(), Option::some((2usize, 12)));
+        assert_eq!(range.next(), Option::some((3usize, 13)));
+        assert_eq!(range.next(), Option::some((4usize, 14)));    
+        assert_eq!(range.next(), Option::none());
+    }
+
+    #[test]
+    fn test_foreach() {
+        let sum = 0;
+        (0..5).iter().foreach(|&sum, x: i32| {
+            sum += x;
+        });
+
+        assert_eq!(sum, 10);
+    }
+
+    #[test]
+    fn test_inspect() {
+        let sum1 = 0;
+        let sum2 = 0;
+        let sum3 = 0;
+        let count = (0..5)
+            .iter()
+            .inspect(|&sum1, x: i32| { sum1 += x })
+            .inspect(|&sum2, x: i32| { sum2 += x * x })
+            .inspect(|&sum3, x: i32| { sum3 += x * x * x })
+            .count();
+
+        assert_eq!(sum1, 10);
+        assert_eq!(sum2, 30);
+        assert_eq!(sum3, 100);
+    }
+
+    #[test]
+    fn test_to_vector() {
+        let vec = (0..5).iter().to_vector();
+        assert_eq!(vec.as_slice(), &[0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_take_while() {
+        let range = (0..5).iter().take_while(|x: i32| -> bool { x < 3 });
+
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::some(1));
+        assert_eq!(range.next(), Option::some(2));
+        assert_eq!(range.next(), Option::none());
     }
 }

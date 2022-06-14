@@ -177,6 +177,17 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                                         let _ = self.match_slot(inferred, a2, fun.return_type);
                                     }
                                 }
+                                ir::Ty::Closure(item) => {
+                                    if let Ok(clos) = item.get_closure() {
+                                        if let Ok(fun) = clos.function.get().unwrap().get_function()
+                                        {
+                                            for (a, b) in a1.iter().zip(fun.args.iter().skip(1)) {
+                                                let _ = self.match_slot(inferred, a, b.ty);
+                                            }
+                                            let _ = self.match_slot(inferred, a2, fun.return_type);
+                                        }
+                                    }
+                                }
                                 _ => {}
                             }
                         }

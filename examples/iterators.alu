@@ -1,0 +1,27 @@
+use std::string::to_upper;
+use std::iter::{map, filter, filter_map, take_while, reduce, inspect};
+
+fn main() {
+    let without_wovels = "Quick brown fox jumps over the lazy dog"
+        .iter()
+        .filter(|a: u8| -> bool { 
+            switch a.to_upper() {
+                'A', 'E', 'I', 'O', 'U' => false,
+                _ => true
+            }
+        })
+        .to_vector();
+    
+    defer without_wovels.free();
+    println!("{}", without_wovels.as_slice());
+
+    let sum_of_squares = (0..100)
+        .iter()
+        .map(|a: i32| -> i32 { a * a })
+        .enumerate()
+        .inspect(|a: (usize, i32)| { println!("{}th square is {}", a.0, a.1) })
+        .take_while(|a: (usize, i32)| -> bool { a.1 < 1000 })
+        .reduce(0, |a: i32, b: (usize, i32)| -> i32 { a + b.1 });
+
+    println!("Sum of squares is {}", sum_of_squares);
+}

@@ -324,6 +324,10 @@ impl<'ir> TypeBuilder<'ir> {
         self.ir.intern_type(Ty::Protocol(item))
     }
 
+    pub fn closure(&self, item: IRItemP<'ir>) -> TyP<'ir> {
+        self.ir.intern_type(Ty::Closure(item))
+    }
+
     pub fn function<I>(&self, args: I, ret: TyP<'ir>) -> TyP<'ir>
     where
         I: IntoIterator<Item = TyP<'ir>>,

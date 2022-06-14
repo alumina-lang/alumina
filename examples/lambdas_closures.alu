@@ -1,0 +1,77 @@
+use std::marker::Callable;
+use std::iter::Range;
+use std::collections::Vector;
+
+fn is_prime(v: i64) -> bool {
+    let i: i64 = 2;
+    while i < v {
+        if v % i == 0 {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+fn print_filtered<F: Callable<(i64), bool>>(range: Range<i64>, filter: F) {
+    let first = true;
+    for i in range {
+        if filter(i) {
+            if first {
+                print!("{}", i);
+                first = false;
+            } else {
+                print!(", {}", i)
+            }
+        }
+    }
+    println!("");
+}
+
+fn main() {
+    // Anonymous functions that do not capture ambient variables
+    let hw = || { println!("Hello, world!"); };
+    hw();
+    hw();
+
+    print_filtered(1..100, |p: i64| -> bool { p < 10 });
+    print_filtered(1..100, |p: i64| -> bool { is_prime(p) });
+
+    // Anonymous functions can be coerced to function pointers.
+    let hw_ptr: fn() = hw;
+    hw_ptr();
+    
+    // Closures are anonymous functions that capture variables from ambient scope.
+    // Captures can be either by value (`=capture`) or by reference (`&capture`) and 
+    // they need to be explicitly specified in the function signature.
+
+    // `a` is passed by value (is copied) into the closure. Captured values are part of the 
+    // closure's state and can be mutated, but the original variable remains unchanged.
+    let a = 1i64;
+    let f = |=a, increment: i64| { 
+        a += increment; 
+        println!("[inside] a = {}", a) 
+    };
+
+    f(10);
+    f(1); 
+    
+    println!("[outside] a = {}", a);
+
+
+    // `composites` is passed by reference. The changes will be reflected in the original
+    // variable.
+    let composites: Vector<i64> = Vector::new();
+    defer composites.free();
+
+    print_filtered(1..100, |&composites, p: i64| -> bool { 
+        if is_prime(p) {
+            true
+        } else {
+            composites.push(p);
+            false
+        }
+    });
+
+    println!("composites.len() = {}", composites.len());
+}

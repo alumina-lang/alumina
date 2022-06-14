@@ -15,6 +15,12 @@ use tree_sitter::Node;
 
 use super::path::{Path, PathSegment};
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
+pub enum BoundItemType {
+    ByValue,
+    ByReference,
+}
+
 #[derive(Debug, Clone)]
 pub enum NamedItemKind<'ast, 'src> {
     Alias(Path<'ast>),
@@ -33,6 +39,7 @@ pub enum NamedItemKind<'ast, 'src> {
     Placeholder(AstId, Node<'src>),
     Field(Node<'src>),
     Local(AstId),
+    BoundValue(AstId, AstId, BoundItemType),
     Parameter(AstId, Node<'src>),
     MacroParameter(AstId, bool),
 }
@@ -55,6 +62,7 @@ impl Display for NamedItemKind<'_, '_> {
             NamedItemKind::Field(_) => write!(f, "field"),
             NamedItemKind::EnumMember(_, _, _) => write!(f, "enum member"),
             NamedItemKind::Local(_) => write!(f, "local"),
+            NamedItemKind::BoundValue(_, _, _) => write!(f, "bound value"),
             NamedItemKind::Parameter(_, _) => write!(f, "parameter"),
             NamedItemKind::MacroParameter(_, _) => write!(f, "macro parameter"),
         }

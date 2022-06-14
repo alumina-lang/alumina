@@ -62,6 +62,20 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
         };
 
         match ty {
+            Ty::Closure(item) if !body_only => match item.get().unwrap() {
+                IRItem::Closure(c) => {
+                    for f in c.fields.iter().filter(|f| !f.ty.is_zero_sized()) {
+                        self.add_type(f.ty, false)?;
+                    }
+
+                    let name = CName::Id(self.ctx.make_id());
+                    w!(self.type_decls, "typedef struct {0} {0};\n", name);
+
+                    self.ctx.register_type(ty, name);
+                    self.needs_body.insert(ty);
+                }
+                _ => unreachable!(),
+            },
             Ty::Builtin(a) if !body_only => {
                 let name = match a {
                     BuiltinType::U128 => {
@@ -97,9 +111,14 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                 self.ctx.register_type(ty, name);
             }
             Ty::Pointer(inner, is_const) if !body_only => {
-                self.add_type(inner, true)?;
+                let inner = if !inner.is_zero_sized() {
+                    self.add_type(inner, true)?;
+                    self.ctx.get_type(inner)
+                } else {
+                    self.add_type(&Ty::Builtin(BuiltinType::Void), true)?;
+                    self.ctx.get_type(&Ty::Builtin(BuiltinType::Void))
+                };
 
-                let inner = self.ctx.get_type(inner);
                 let name = inner.mangle(self.ctx.make_id());
 
                 assert!(inner != name);
@@ -209,6 +228,27 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
         }
 
         match ty {
+            Ty::Closure(item) => match item.get().unwrap() {
+                IRItem::Closure(c) => {
+                    let name = self.ctx.get_type(ty);
+
+                    for f in c.fields.iter().filter(|f| !f.ty.is_zero_sized()) {
+                        self.write_type_body(f.ty)?;
+                    }
+
+                    w!(self.type_bodies, "struct {} {{\n", name);
+                    for f in c.fields.iter().filter(|f| !f.ty.is_zero_sized()) {
+                        w!(
+                            self.type_bodies,
+                            "  {} {};\n",
+                            self.ctx.get_type(f.ty),
+                            self.ctx.get_name(f.id)
+                        );
+                    }
+                    w!(self.type_bodies, "}};\n");
+                }
+                _ => unreachable!(),
+            },
             Ty::Array(inner, len) => {
                 assert!(!inner.is_zero_sized());
 

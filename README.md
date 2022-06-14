@@ -10,7 +10,7 @@ Non-exhaustive list of distinguishing features:
 - [Unified call syntax](https://en.wikipedia.org/wiki/Uniform_Function_Call_Syntax) for functions in scope
 - Limited operator overloading (via `Equatable` and `Comparable` protocols)
 - Block expressions
-- Lambdas (static only, closures are not supported)
+- Anonymous functions (including closures)
 - Richer type system:
   - strong enums,
   - array slices,

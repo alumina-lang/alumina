@@ -546,7 +546,7 @@ module.exports = grammar({
     dereference_expression: ($) =>
       prec(PREC.unary, seq("*", field("value", $._expression))),
 
-    try_expression: ($) => 
+    try_expression: ($) =>
       prec(PREC.try, seq(field("inner", $._expression), '?')),
 
     binary_expression: ($) => {
@@ -899,22 +899,30 @@ module.exports = grammar({
         PREC.closure,
         seq(
           field("parameters", $.closure_parameters),
-          choice(
-            seq(
-              optional(seq("->", field("return_type", $._type))),
-              field("body", $.block)
-            ),
-            field("body", $._expression)
-          )
+          seq(
+            optional(seq("->", field("return_type", $._type))),
+            field("body", $.block)
+          ),
         )
       ),
 
     closure_parameters: ($) =>
       seq(
         "|",
-        sepBy(",", field("parameter", choice($.parameter, $.identifier))),
+        sepBy(",",
+          field("parameter", choice($.bound_identifier, $.parameter))
+        ),
         "|"
       ),
+
+    bound_identifier: ($) =>
+      seq(
+        choice(
+          field("by_reference", "&"), 
+          field("by_value", "=")
+        ),
+        field("name", $.identifier),
+      ),   
 
     string_literal: ($) =>
       token(

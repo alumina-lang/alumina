@@ -107,15 +107,25 @@ snapshots['test_examples[intrinsics.alu] run_stderr'] = None
 
 snapshots['test_examples[intrinsics.alu] run_stdout'] = None
 
-snapshots['test_examples[lambdas.alu] compile_ret'] = 0
+snapshots['test_examples[iterators.alu] compile_ret'] = 0
 
-snapshots['test_examples[lambdas.alu] compile_stderr'] = None
+snapshots['test_examples[iterators.alu] compile_stderr'] = None
 
-snapshots['test_examples[lambdas.alu] run_ret'] = 0
+snapshots['test_examples[iterators.alu] run_ret'] = 0
 
-snapshots['test_examples[lambdas.alu] run_stderr'] = b''
+snapshots['test_examples[iterators.alu] run_stderr'] = b''
 
-snapshots['test_examples[lambdas.alu] run_stdout'] = b'1\n2\n3\n4\n5\n6\n7\n8\n9\n1\n2\n3\n5\n7\n11\n13\n17\n19\n23\n29\n31\n37\n41\n43\n47\n53\n59\n61\n67\n71\n73\n79\n83\n89\n97\n'
+snapshots['test_examples[iterators.alu] run_stdout'] = b'Qck brwn fx jmps vr th lzy dg\n0th square is 0\n1th square is 1\n2th square is 4\n3th square is 9\n4th square is 16\n5th square is 25\n6th square is 36\n7th square is 49\n8th square is 64\n9th square is 81\n10th square is 100\n11th square is 121\n12th square is 144\n13th square is 169\n14th square is 196\n15th square is 225\n16th square is 256\n17th square is 289\n18th square is 324\n19th square is 361\n20th square is 400\n21th square is 441\n22th square is 484\n23th square is 529\n24th square is 576\n25th square is 625\n26th square is 676\n27th square is 729\n28th square is 784\n29th square is 841\n30th square is 900\n31th square is 961\n32th square is 1024\nSum of squares is 10416\n'
+
+snapshots['test_examples[lambdas_closures.alu] compile_ret'] = 0
+
+snapshots['test_examples[lambdas_closures.alu] compile_stderr'] = None
+
+snapshots['test_examples[lambdas_closures.alu] run_ret'] = 0
+
+snapshots['test_examples[lambdas_closures.alu] run_stderr'] = b''
+
+snapshots['test_examples[lambdas_closures.alu] run_stdout'] = b'Hello, world!\nHello, world!\n1, 2, 3, 4, 5, 6, 7, 8, 9\n1, 2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97\nHello, world!\n[inside] a = 11\n[inside] a = 12\n[outside] a = 1\n1, 2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97\ncomposites.len() = 73\n'
 
 snapshots['test_examples[line_numbering.alu] compile_ret'] = 0
 

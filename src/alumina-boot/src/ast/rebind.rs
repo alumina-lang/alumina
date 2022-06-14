@@ -157,6 +157,7 @@ impl<'ast> Rebinder<'ast> {
             Fn(ref kind, generic_args) => {
                 let kind = match kind {
                     FnKind::Normal(_) => kind.clone(),
+                    FnKind::Closure(..) => kind.clone(),
                     FnKind::Defered(def) => FnKind::Defered(crate::ast::Defered {
                         typ: self.visit_typ(def.typ)?,
                         name: def.name,
@@ -194,9 +195,14 @@ impl<'ast> Rebinder<'ast> {
 
                 StaticIf(cond, self.visit_expr(then)?, self.visit_expr(els)?)
             }
-            Local(_) | Continue | EnumValue(_, _) | Lit(_) | Void | Static(_) | Const(_) => {
-                expr.kind.clone()
-            }
+            Local(_)
+            | BoundParam(_, _, _)
+            | Continue
+            | EnumValue(_, _)
+            | Lit(_)
+            | Void
+            | Static(_)
+            | Const(_) => expr.kind.clone(),
         };
 
         let result = Expr {

@@ -24,6 +24,7 @@ use crate::common::{
 use crate::global_ctx::GlobalCtx;
 use crate::intrinsics::{CompilerIntrinsics, IntrinsicKind};
 use crate::ir::ValueType;
+use crate::name_resolution::scope::BoundItemType;
 use crate::{ast, common::CodeErrorKind, ir};
 
 macro_rules! mismatch {
@@ -183,6 +184,13 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
                     }
                     let _ = write!(f, ">");
                 }
+            }
+            Closure(cell) => {
+                let _ = write!(
+                    f,
+                    "{{closure {}}}",
+                    (*cell) as *const ir::IRItemCell<'ir> as usize
+                );
             }
             Builtin(builtin) => {
                 let _ = match builtin {
@@ -739,6 +747,17 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                         actual_args = fun.args.iter().map(|arg| arg.ty).collect();
                         (&actual_args[..], fun.return_type)
                     }
+                    ir::Ty::Closure(item) => {
+                        let fun_item = item.get_closure().with_no_span()?;
+                        let fun = fun_item
+                            .function
+                            .get()
+                            .unwrap()
+                            .get_function()
+                            .with_no_span()?;
+                        actual_args = fun.args.iter().skip(1).map(|arg| arg.ty).collect();
+                        (&actual_args[..], fun.return_type)
+                    }
                     _ => {
                         return Ok(BoundCheckResult::DoesNotMatchBecause(
                             "not a function".into(),
@@ -936,7 +955,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     ) -> Result<(), AluminaError> {
         let mut replacements = self.resolve_placeholders(func.placeholders, generic_args)?;
 
-        if func.closure {
+        if func.lambda {
             // Closures can bind the generic parameters of the enclosing function, so we need
             // to copy them over.
             replacements.extend(self.replacements.iter().map(|(k, v)| (*k, *v)));
@@ -1073,7 +1092,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 body: Some(body),
                 span: fun.span,
                 varargs: false,
-                closure: fun.closure, // = false always
+                lambda: fun.lambda, // = false always
                 is_protocol_fn: false,
             }));
 
@@ -1148,7 +1167,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 // Closures must always be monomorphized afresh whenever encountered as they
                 // can bind ambient types (e.g. generic parameters) that are not part of the
                 // MonoKey.
-                if f.closure {
+                if f.lambda {
                     index = self.current_item.map(|i| i.id);
                 }
                 (f.placeholders, f.span)
@@ -1552,6 +1571,37 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                             _ => return Err(CodeErrorKind::InvalidTypeOperator).with_no_span(),
                         }
                     }
+                    Some(LangItemKind::TypeopTupleHeadOf) => {
+                        if args.len() != 1 {
+                            return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
+                        }
+                        if let ir::Ty::Tuple(tys) = args[0] {
+                            if tys.is_empty() {
+                                return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
+                            }
+
+                            return Ok(tys[0]);
+                        }
+                        return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
+                    }
+                    Some(LangItemKind::TypeopTupleTailOf) => {
+                        if args.len() != 1 {
+                            return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
+                        }
+                        if let ir::Ty::Tuple(tys) = args[0] {
+                            match tys.len() {
+                                0 => return Err(CodeErrorKind::InvalidTypeOperator).with_no_span(),
+                                1 => return Ok(self.types.void()),
+                                _ => {
+                                    return Ok(self
+                                        .mono_ctx
+                                        .ir
+                                        .intern_type(ir::Ty::Tuple(&tys[1..])))
+                                }
+                            }
+                        }
+                        return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
+                    }
                     Some(LangItemKind::TypeopReturnTypeOf) => {
                         if args.len() != 1 {
                             return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
@@ -1661,6 +1711,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                         .collect::<Result<Vec<_>, _>>()?;
                     ast::Ty::Generic(item.0, args.alloc_on(self.mono_ctx.ast))
                 }
+            }
+            ir::Ty::Closure(item) => {
+                let item = self.mono_ctx.reverse_lookup(item);
+                ast::Ty::NamedFunction(item.0)
             }
             ir::Ty::Unqualified(_) => {
                 return Err(CodeErrorKind::Unimplemented("unqualified type".to_string()))
@@ -1806,16 +1860,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     }
                 }
 
-                // Named functions directly coerce into function pointers, we just need
-                // to change the type of the expression to avoid ZST issues in later stages
-                let result = ir::Expr {
-                    ty: lhs_typ,
-                    kind: rhs.kind.clone(),
-                    value_type: rhs.value_type,
-                    is_const: rhs.is_const,
-                };
+                // Named functions directly coerce into function pointers, cast it to avoid
+                // ZST elision issues later on.
+                let result = self.exprs.cast(rhs, lhs_typ);
 
                 return Ok(result.alloc_on(self.mono_ctx.ir));
+            }
+            (ir::Ty::FunctionPointer(_, _), ir::Ty::Closure(_)) => {
+                return Err(CodeErrorKind::ClosuresAreNotFns).with_no_span()
             }
             _ => {}
         };
@@ -1939,9 +1991,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let self_slot = self_expr.map(|self_expr| (fun.args[0].typ, self_expr.ty));
 
         let mut tentative_errors = Vec::new();
-        if let Some(args) = tentative_args {
-            let self_count = self_expr.iter().count();
+        let self_count = self_expr.iter().count();
 
+        if let Some(args) = tentative_args {
             if fun.args.len() != args.len() + self_count {
                 return Err(CodeErrorKind::ParamCountMismatch(
                     fun.args.len() - self_count,
@@ -1978,11 +2030,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         if let Some(args_hint) = args_hint {
             assert!(tentative_args.is_none());
-            assert!(self_slot.is_none());
 
             infer_pairs.extend(
                 fun.args
                     .iter()
+                    .skip(self_count)
                     .zip(args_hint.iter())
                     .map(|(p, e)| (p.typ, *e)),
             );
@@ -2299,7 +2351,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let (statements, errors): (Vec<_>, Vec<_>) = statements
             .iter()
-            .map(|stmt| self.lower_stmt(stmt))
+            .map(|stmt| self.lower_stmt(stmt).append_span(stmt.span))
             .partition(|f| f.is_ok());
 
         if !errors.is_empty() {
@@ -2440,6 +2492,51 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .with_no_span()?;
 
         Ok(self.exprs.local(id, typ))
+    }
+
+    fn lower_bound_param(
+        &mut self,
+        self_arg: ast::AstId,
+        field_id: ast::AstId,
+        bound_type: BoundItemType,
+        _type_hint: Option<ir::TyP<'ir>>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let self_arg = self.mono_ctx.map_id(self_arg);
+        let field_id = self.mono_ctx.map_id(field_id);
+
+        let typ = self
+            .local_types
+            .get(&self_arg)
+            .copied()
+            .ok_or({
+                //unsafe {std::intrinsics::breakpoint(); }
+                CodeErrorKind::LocalWithUnknownType
+            })
+            .with_no_span()?;
+
+        match typ.canonical_type() {
+            ir::Ty::Closure(item) => {
+                let closure = item.get_closure().with_no_span()?;
+                let field_ty = closure
+                    .fields
+                    .iter()
+                    .filter(|f| f.id == field_id)
+                    .next()
+                    .unwrap()
+                    .ty;
+
+                let mut obj = self.exprs.local(self_arg, typ);
+                while let ir::Ty::Pointer(_, _) = obj.ty {
+                    obj = self.exprs.deref(obj);
+                }
+                if let BoundItemType::ByValue = bound_type {
+                    Ok(self.exprs.field(obj, field_id, field_ty))
+                } else {
+                    Ok(self.exprs.deref(self.exprs.field(obj, field_id, field_ty)))
+                }
+            }
+            _ => unreachable!(),
+        }
     }
 
     fn lower_static(
@@ -3334,10 +3431,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         };
 
         let mut varargs = false;
+        let mut self_arg = None;
 
         let fn_arg_types: Vec<_>;
-        let (arg_types, return_type) = match callee.ty {
-            ir::Ty::FunctionPointer(arg_types, return_type) => (*arg_types, *return_type),
+        let (arg_types, return_type, callee) = match callee.ty {
+            ir::Ty::FunctionPointer(arg_types, return_type) => (*arg_types, *return_type, callee),
             ir::Ty::NamedFunction(item) => {
                 let fun = item.get_function().with_no_span()?;
                 if fun.varargs {
@@ -3345,7 +3443,21 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 }
                 fn_arg_types = fun.args.iter().map(|p| p.ty).collect();
 
-                (&fn_arg_types[..], fun.return_type)
+                (&fn_arg_types[..], fun.return_type, callee)
+            }
+            ir::Ty::Closure(item) => {
+                self_arg = Some(self.r#ref(callee));
+
+                let closure = item.get_closure().with_no_span()?;
+                let fun_item = closure.function.get().unwrap();
+                let fun = fun_item.get_function().with_no_span()?;
+                fn_arg_types = fun.args.iter().skip(1).map(|p| p.ty).collect();
+
+                (
+                    &fn_arg_types[..],
+                    fun.return_type,
+                    self.exprs.function(fun_item),
+                )
             }
             _ => return Err(CodeErrorKind::FunctionExpectedHere).with_span(ast_callee.span),
         };
@@ -3384,6 +3496,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         if callee.diverges() || args.iter().any(|e| e.diverges()) {
             return Ok(self.exprs.diverges(once(callee).chain(args)));
+        }
+
+        if let Some(self_arg) = self_arg {
+            args.insert(0, self_arg);
         }
 
         Ok(self.exprs.call(callee, args, return_type))
@@ -3426,6 +3542,87 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 )?;
 
                 self.exprs.function(item)
+            }
+            ast::FnKind::Closure(bindings, func_item) => {
+                let bound_values = bindings
+                    .iter()
+                    .map(|binding| {
+                        let val = self.lower_expr(binding.value, None)?;
+                        if let BoundItemType::ByValue = binding.binding_type {
+                            Ok::<_, AluminaError>(val)
+                        } else {
+                            Ok(self.r#ref(val))
+                        }
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                let fields = bindings
+                    .iter()
+                    .zip(bound_values.iter())
+                    .map(|(binding, expr)| {
+                        Ok(ir::Field {
+                            id: self.mono_ctx.map_id(binding.id),
+                            ty: expr.ty,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, AluminaError>>()?;
+
+                let key = self.get_mono_key(func_item, &[], false)?;
+                let closure_typ = match self.mono_ctx.finished.entry(key.clone()) {
+                    // The cell may be empty at this point if we are dealing with recursive references
+                    // In this case, we will just return the item as is, but it will not
+                    // be populated until the top-level item is finished.
+                    indexmap::map::Entry::Occupied(entry) => self.types.closure(entry.get()),
+                    indexmap::map::Entry::Vacant(entry) => {
+                        let closure = self.mono_ctx.ir.make_symbol();
+                        self.mono_ctx.reverse_map.insert(closure, key.clone());
+                        entry.insert(closure);
+
+                        closure.assign(ir::IRItem::Closure(ir::Closure {
+                            fields: fields.clone().alloc_on(self.mono_ctx.ir),
+                            function: OnceCell::new(),
+                        }));
+
+                        let closure_typ = self.types.closure(closure);
+
+                        let item = self.try_resolve_function(
+                            func_item,
+                            generic_args,
+                            Some(self.exprs.local(self.mono_ctx.ir.make_id(), closure_typ)),
+                            None,
+                            return_type_hint,
+                            args_hint,
+                        )?;
+
+                        closure
+                            .get_closure()
+                            .with_no_span()?
+                            .function
+                            .set(item)
+                            .unwrap();
+
+                        closure_typ
+                    }
+                };
+
+                let temporary = self.mono_ctx.ir.make_id();
+                let local = self.exprs.local(temporary, closure_typ);
+                self.local_defs.push(ir::LocalDef {
+                    id: temporary,
+                    typ: closure_typ,
+                });
+
+                let statements = fields
+                    .iter()
+                    .zip(bound_values.iter())
+                    .map(|(f, e)| {
+                        ir::Statement::Expression(
+                            self.exprs.assign(self.exprs.field(local, f.id, f.ty), e),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                self.exprs.block(statements, local)
             }
             ast::FnKind::Defered(spec) => {
                 let func = self.resolve_defered_func(&spec)?;
@@ -3984,6 +4181,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.lower_static_if(cond, then, els, type_hint)
             }
 
+            ast::ExprKind::BoundParam(self_arg, field_id, bound_type) => {
+                self.lower_bound_param(*self_arg, *field_id, *bound_type, type_hint)
+            }
             ast::ExprKind::EtCetera(_) => ice!("macros should have been expanded by now"),
             ast::ExprKind::DeferedMacro(_, _) => ice!("macros should have been expanded by now"),
         };
