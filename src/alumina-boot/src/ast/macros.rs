@@ -356,6 +356,7 @@ impl<'ast> MacroExpander<'ast> {
             Continue
             | EnumValue(_, _)
             | Lit(_)
+            | BoundParam(_, _, _)
             | Void
             | Fn(_, _)
             | Defered(_)

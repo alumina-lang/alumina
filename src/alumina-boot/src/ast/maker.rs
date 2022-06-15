@@ -85,8 +85,8 @@ impl<'ast> AstItemMaker<'ast> {
         let mut mixins = Vec::new();
         let mut names = HashSet::new();
 
-        for scope in impl_scopes {
-            for (name, item) in scope.inner().all_items() {
+        for impl_scope in impl_scopes {
+            for (name, item) in impl_scope.inner().all_items() {
                 match &item.kind {
                     NamedItemKind::Function(symbol, node, _) => {
                         if let Some(name) = name {
@@ -96,7 +96,7 @@ impl<'ast> AstItemMaker<'ast> {
                                     Some(Span {
                                         start: node.start_byte(),
                                         end: node.end_byte(),
-                                        file: scope.code().unwrap().file_id(),
+                                        file: impl_scope.code().unwrap().file_id(),
                                     }),
                                 ));
                             }
@@ -107,7 +107,11 @@ impl<'ast> AstItemMaker<'ast> {
                         })
                     }
                     NamedItemKind::Mixin(node, scope) => {
-                        let placeholders = self.get_placeholders(scope)?;
+                        // FIXME: Unify this between functions and mixin
+                        let mut placeholders = self.get_placeholders(impl_scope)?.to_vec();
+                        placeholders.extend_from_slice(self.get_placeholders(scope)?);
+                        let placeholders = placeholders.alloc_on(self.ast);
+
                         let mut visitor =
                             TypeVisitor::new(self.ast, scope.clone(), self.in_a_macro)
                                 .with_protocol();
@@ -475,7 +479,7 @@ impl<'ast> AstItemMaker<'ast> {
             body: function_body,
             varargs: has_varargs,
             span: Some(span),
-            closure: false,
+            lambda: false,
             is_protocol_fn,
         });
 

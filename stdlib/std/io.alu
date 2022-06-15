@@ -190,7 +190,7 @@ impl BufferedReader<R: Readable<R>> {
         ret
     }
 
-    mixin<R: Readable<R>> Readable<BufferedReader<R>>;
+    mixin Readable<BufferedReader<R>>;
 }
 
 impl BufferedReader<R: Seekable<R>> {
@@ -213,7 +213,7 @@ impl BufferedReader<R: Seekable<R>> {
         self.seek(SeekFrom::Current, 0)
     }
 
-    mixin<R: Seekable<R>> Seekable<BufferedReader<R>>;
+    mixin Seekable<BufferedReader<R>>;
 }
 
 struct BufferedWriter<W: Writable<W>> {
@@ -336,7 +336,7 @@ impl BufferedWriter<W: Writable<W>> {
         self.write_all(buf).map_err(fmt::Error::from::<Error>)
     }
 
-    mixin<W: Writable<W>> fmt::Formatter<BufferedWriter<W>>;
+    mixin fmt::Formatter<BufferedWriter<W>>;
 }
 
 
@@ -456,6 +456,10 @@ impl LineIterator<R: BufferedReadable<R>> {
             line_buf: self.line_buf.move()
         }
     }
+
+    mixin iter::IteratorExt<LineIterator<R>, Result<&[u8], Error>>;
+    mixin<Other: iter::Iterator<Other, Result<&[u8], Error>>> 
+        iter::IteratorExtOther<LineIterator<R>, Other, Result<&[u8], Error>>;
 }
 
 fn lines<R: BufferedReadable<R>>(reader: &mut R) -> LineIterator<R> {

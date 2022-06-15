@@ -121,15 +121,13 @@ mod internal {
         format_func: fn(&void, &mut F) -> Result<(), Error>
     }
 
-    fn __fmt<F: Formatter<F>, T: Formattable<T, F>>(ptr: &void, fmt: &mut F) -> Result<(), Error> {
-        T::fmt(ptr as &T, fmt)
-    }
-
     impl FormatArg {
         fn new<F: Formatter<F>, T: Formattable<T, F>>(inner: &T) -> FormatArg<F> {
             FormatArg::<F> {
                 inner: inner as &void,
-                format_func: __fmt::<F, T>,
+                format_func: |ptr: &void, fmt: &mut F| -> Result<(), Error> {
+                    T::fmt(ptr as &T, fmt)
+                }
             }
         }
 

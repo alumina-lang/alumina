@@ -5,7 +5,7 @@ ifdef RELEASE
 	BUILD_DIR = $(BUILD_ROOT)/release
 	CARGO_FLAGS = --release
 	CARGO_TARGET_DIR = target/release
-	CFLAGS += -O3
+	CFLAGS += -O0
 	ALUMINA_FLAGS += --sysroot $(SYSROOT) --timings 
 else
 	BUILD_DIR = $(BUILD_ROOT)/debug

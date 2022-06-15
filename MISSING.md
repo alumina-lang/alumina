@@ -26,9 +26,6 @@
 - unqualified types gaps:
   - unqualified string in if/else does not coerce to a slice
   - probably other places too, since it's very ad-hoc
-- lambdas need to be better
-  - type inference does not cross the lambda boundary, requiring a lot of type annotations, which 
-    kind of defeats the purpose of lambdas.
 - "any/don't care" in protocol bounds. Especially for things like `Hashable` and `Formattable`, it would be great if users didn't need to introduce a new generic parameter for the hasher and formatter (since that complicates type inference). 
   - Alternatively, allow pre-monomorphized types to be used as protocol bounds
   - This could be solved by `infer`. It needs to do the same thing as `check_protocol_bounds` - go through all the AST methods of the protocol in the bound and IR method of the type in the slot and
@@ -36,7 +33,6 @@
 - How does Equatable and Comparable work for pointers? Autoref makes this quite complicated... Maybe it's better to simply not have that.
 - Some limited pattern matching in macros (optional arguments)
 - Ability to define types in function scope (especially for ENums, very useful for state machines). Simple in theory, but the same caveats apply as with lambdas: these can bind generic placeholders, so they need to be monomorphized carefully.
-- Some bug with ambient impl placeholders and mixins. Not sure yet.
 
 ## Grammar, parsing, AST
 
@@ -55,6 +51,7 @@
     - no random small functions where it can be done efficiently in Alumina (memfrob, htonl, ...)
       - memcpy/memove/strlen are an exception. these are heavily optimized an may actually be compiler builtins
     - what to do about math (libm?) yay or nay?
+      - yay.
     - I really wanted to say *absolutely nothing with varargs*, but unfortunately `ioctl` and `fcntl` are varargs :(
 - tests
 - how portable should it be? currently it seems to be working quite well on ARM and x86_64 on Linux, Android and Mac. Windows is not supported yet.
@@ -71,8 +68,6 @@
   - heap-allocating collections
     - Vector, HashMap, HashSet are implemented (very basic, probably do not perform very well)
     - Vector might actually be pretty ok. Hashed collections are probably bad.
-  - math
-    - abs/truns/frac/round/sin/cos/... are missing
 
 - extras, nice to have:
   - threading, atomics, ...
@@ -120,17 +115,17 @@
 
 - specialization/SFINAE/overloading?
   - I am leaning pretty strongly towards not having either of these. With protocols the language 
-    is expressive enough to do string formatting and collections, which are a good litmus test if generics are any good.
+    is expressive enough to do string formatting, iterators and collections, which are a good litmus test if generics are any good.
 - tagged unions
   - I miss them quite a lot from Rust. They are not hard, but need a good syntax for `match`
 - full Hindley-Milner type inference. Global type inference will pretty much require a full rewrite of `mono`, so whis would be a massive project, but it would also be super awesome to have
 - true variadic functions (certainly they'd be generic and variadic only pre-monomorphization, varargs is an abomination). This is hard to do, both from the syntax and `mono` perspective but the payoff is that tuples can have nice protocol implementations.
+  - something like `extern "rust-call"` could come to the rescue here. It is already kinda possible to have recursive varargs by `tuple_head_of` and `tuple_tail_of`.
 - generators? coroutines? lmao, not gonna happen
 
 ## Tooling
 
 - rustdoc-like thing. This will have to wait until a self-hosted compiler
-- test framework
 
 ## Bikeshedding
 

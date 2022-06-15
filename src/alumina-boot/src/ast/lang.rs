@@ -36,6 +36,11 @@ pub enum LangItemKind {
     ProtoArrayOf,
     ProtoPointerOf,
 
+    // This one really shouldn't be a lang item, but I'm not smart
+    // enough to figure out the type inference and iterator combinators
+    // are really important for ergonomics.
+    ProtoIterator,
+
     ImplBuiltin(BuiltinType),
     ImplTuple(usize),
     ImplArray,
@@ -43,6 +48,8 @@ pub enum LangItemKind {
     TypeopSignedOf,
     TypeopUnsignedOf,
     TypeopDerefOf,
+    TypeopTupleHeadOf,
+    TypeopTupleTailOf,
     TypeopReturnTypeOf,
     TypeopArgumentsOf,
 
@@ -91,6 +98,9 @@ impl TryFrom<&str> for LangItemKind {
             "proto_array_of" => Ok(LangItemKind::ProtoArrayOf),
             "proto_pointer_of" => Ok(LangItemKind::ProtoPointerOf),
 
+            // hax
+            "proto_iterator" => Ok(LangItemKind::ProtoIterator),
+
             "impl_never" => Ok(LangItemKind::ImplBuiltin(BuiltinType::Never)),
             "impl_void" => Ok(LangItemKind::ImplBuiltin(BuiltinType::Void)),
             "impl_bool" => Ok(LangItemKind::ImplBuiltin(BuiltinType::Bool)),
@@ -121,6 +131,8 @@ impl TryFrom<&str> for LangItemKind {
             "typeop_signed_of" => Ok(LangItemKind::TypeopSignedOf),
             "typeop_unsigned_of" => Ok(LangItemKind::TypeopUnsignedOf),
             "typeop_deref_of" => Ok(LangItemKind::TypeopDerefOf),
+            "typeop_tuple_head_of" => Ok(LangItemKind::TypeopTupleHeadOf),
+            "typeop_tuple_tail_of" => Ok(LangItemKind::TypeopTupleTailOf),
             "typeop_return_type_of" => Ok(LangItemKind::TypeopReturnTypeOf),
             "typeop_arguments_of" => Ok(LangItemKind::TypeopArgumentsOf),
 

@@ -9,6 +9,7 @@ use self::lang::LangItemKind;
 use crate::common::{Allocatable, ArenaAllocatable, CodeErrorKind, FileId, Incrementable};
 use crate::intrinsics::IntrinsicKind;
 use crate::name_resolution::path::{Path, PathSegment};
+use crate::name_resolution::scope::BoundItemType;
 use std::fmt::Display;
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
@@ -554,7 +555,7 @@ pub struct Function<'ast> {
     pub return_type: TyP<'ast>,
     pub body: Option<ExprP<'ast>>,
     pub span: Option<Span>,
-    pub closure: bool,
+    pub lambda: bool,
     pub varargs: bool,
     pub is_protocol_fn: bool,
 }
@@ -675,8 +676,16 @@ pub struct Defered<'ast> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
+pub struct ClosureBinding<'ast> {
+    pub id: AstId,
+    pub value: ExprP<'ast>,
+    pub binding_type: BoundItemType,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum FnKind<'ast> {
     Normal(ItemP<'ast>),
+    Closure(&'ast [ClosureBinding<'ast>], ItemP<'ast>),
     Defered(Defered<'ast>),
 }
 
@@ -716,6 +725,7 @@ pub enum ExprKind<'ast> {
     Tuple(&'ast [ExprP<'ast>]),
     Array(&'ast [ExprP<'ast>]),
     Struct(TyP<'ast>, &'ast [FieldInitializer<'ast>]),
+    BoundParam(AstId, AstId, BoundItemType),
     Field(ExprP<'ast>, &'ast str, Option<ItemP<'ast>>),
     TupleIndex(ExprP<'ast>, usize),
     Index(ExprP<'ast>, ExprP<'ast>),
@@ -754,6 +764,7 @@ impl_allocatable!(
     FieldInitializer<'_>,
     Bound<'_>,
     AssociatedFn<'_>,
+    ClosureBinding<'_>,
     EnumMember<'_>,
     Placeholder<'_>,
     Attribute,

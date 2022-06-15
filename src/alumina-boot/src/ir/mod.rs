@@ -146,6 +146,7 @@ pub enum Ty<'ir> {
     // so they can be stored in variables, passed as arguments and as they
     // are ZSTs, all writes and reads will be elided.
     NamedFunction(IRItemP<'ir>),
+    Closure(IRItemP<'ir>),
 }
 
 impl Debug for Ty<'_> {
@@ -162,13 +163,13 @@ impl Debug for Ty<'_> {
                         write!(f, "}}")
                     }
                     Ok(IRItem::Enum(e)) => {
-                        write!(f, "{}", e.name.unwrap_or("(unnamed)"))
+                        write!(f, "{}", e.name.unwrap_or("(unnamed enum)"))
                     }
                     Ok(IRItem::Protocol(s)) => {
-                        write!(f, "{}", s.name.unwrap_or("(unnamed)"))
+                        write!(f, "{}", s.name.unwrap_or("(unnamed protocol)"))
                     }
                     Ok(IRItem::Function(s)) => {
-                        write!(f, "{}", s.name.unwrap_or("(unnamed)"))
+                        write!(f, "{}", s.name.unwrap_or("(unnamed function)"))
                     }
                     _ => write!(f, "ERROR"),
                 }
@@ -199,6 +200,7 @@ impl Debug for Ty<'_> {
                 }
                 write!(f, ") -> {:?}", ret)
             }
+            Ty::Closure(_) => write!(f, "closure"),
         }
     }
 }
@@ -248,6 +250,7 @@ impl<'ir> Ty<'ir> {
                 IRItem::Alias(inner) => inner.is_zero_sized(),
                 IRItem::StructLike(s) => s.fields.iter().all(|f| f.ty.is_zero_sized()),
                 IRItem::Enum(e) => e.underlying_type.is_zero_sized(),
+                IRItem::Closure(_) => unreachable!(),
                 IRItem::Static(_) => unreachable!(),
                 IRItem::Protocol(_) => unreachable!(),
                 IRItem::Function(_) => unreachable!(),
@@ -258,6 +261,10 @@ impl<'ir> Ty<'ir> {
             Ty::Tuple(elems) => elems.iter().all(|e| e.is_zero_sized()),
             Ty::Unqualified(_) => false,
             Ty::NamedFunction(_) => true,
+            Ty::Closure(inner) => match inner.get().unwrap() {
+                IRItem::Closure(data) => data.fields.iter().all(|f| f.ty.is_zero_sized()),
+                _ => unreachable!(),
+            },
             Ty::FunctionPointer(_, _) => false,
         }
     }
@@ -265,7 +272,7 @@ impl<'ir> Ty<'ir> {
 
 pub type TyP<'ir> = &'ir Ty<'ir>;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Hash, Copy)]
 pub struct Field<'ir> {
     pub id: IrId,
     pub ty: TyP<'ir>,
@@ -305,6 +312,12 @@ pub struct Function<'ir> {
     pub return_type: TyP<'ir>,
     pub body: OnceCell<FuncBody<'ir>>,
     pub varargs: bool,
+}
+
+#[derive(Debug)]
+pub struct Closure<'ir> {
+    pub fields: &'ir [Field<'ir>],
+    pub function: OnceCell<IRItemP<'ir>>,
 }
 
 #[derive(Debug)]
@@ -356,6 +369,7 @@ pub enum IRItem<'ir> {
     Enum(Enum<'ir>),
     Static(Static<'ir>),
     Const(Const<'ir>),
+    Closure(Closure<'ir>),
 }
 
 pub type IRItemP<'ir> = &'ir IRItemCell<'ir>;
@@ -387,6 +401,17 @@ impl<'ir> IRItemCell<'ir> {
             Some(IRItem::Function(f)) => Ok(f),
             Some(_) => Err(CodeErrorKind::InternalError(
                 "function expected".into(),
+                Backtrace::new(),
+            )),
+            None => Err(CodeErrorKind::UnpopulatedSymbol),
+        }
+    }
+
+    pub fn get_closure(&'ir self) -> Result<&'ir Closure<'ir>, CodeErrorKind> {
+        match self.contents.get() {
+            Some(IRItem::Closure(c)) => Ok(c),
+            Some(_) => Err(CodeErrorKind::InternalError(
+                "closure expected".into(),
                 Backtrace::new(),
             )),
             None => Err(CodeErrorKind::UnpopulatedSymbol),
