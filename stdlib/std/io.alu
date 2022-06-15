@@ -75,7 +75,7 @@ enum SeekFrom {
 }
 
 protocol Seekable<Self> {
-    fn seek(self: &mut Self, whence: SeekFrom, offset: i64) -> Result<i64, Error>;
+    fn seek(self: &mut Self, whence: SeekFrom, offset: i64) -> Result<u64, Error>;
     fn rewind(self: &mut Self) -> Result<(), Error> {
         self.seek(SeekFrom::Beginning, 0)?;
         
@@ -85,6 +85,65 @@ protocol Seekable<Self> {
     fn position(self: &mut Self) -> Result<u64, Error> {
         self.seek(SeekFrom::Current, 0)
     }
+}
+
+struct SliceReader {
+    slice: &[u8],
+    pos: usize
+}
+
+impl SliceReader {
+    use std::mem::copy_nonoverlapping;
+
+    fn new(slice: &[u8]) -> SliceReader {
+        SliceReader {
+            slice: slice,
+            pos: 0
+        }
+    }
+
+    fn read(self: &mut SliceReader, buf: &mut [u8]) -> Result<usize, Error> {
+        let len = math::min(buf.len, self.slice.len - self.pos);
+        
+        if len > 0 {
+            self.slice[self.pos..self.pos + len].copy_nonoverlapping(&buf[0]);
+            self.pos += len;
+        }
+
+        Result::ok(len)
+    }
+
+    fn fill_buffer(self: &mut SliceReader) -> Result<&[u8], Error> {
+        Result::ok(self.slice[self.pos..] as &[u8])
+    }
+
+    fn consume(self: &mut SliceReader, amount: usize) {
+        self.pos = math::min(self.pos + amount, self.slice.len);
+    }
+
+    fn seek(self: &mut SliceReader, whence: SeekFrom, offset: i64) -> Result<u64, Error> {
+        let new_offset = switch whence {
+            SeekFrom::Beginning => offset,
+            SeekFrom::Current => self.pos as i64 + offset,
+            SeekFrom::End => self.slice.len as i64 + offset,
+            _ => unreachable!()
+        };
+        
+        if new_offset < 0 || (new_offset as usize) > self.slice.len {
+            Result::err(Error::eof())
+        } else {
+            self.pos = new_offset as usize;
+            Result::ok(new_offset as u64)
+        }
+    }
+
+    fn position(self: &mut SliceReader) -> Result<u64, ()> {
+        Result::ok(self.pos as u64)
+    }
+
+    mixin Seekable<SliceReader>;
+    mixin Readable<SliceReader>;
+    mixin BufferedReadable<SliceReader>;
 }
 
 struct StringWriter {
@@ -194,7 +253,7 @@ impl BufferedReader<R: Readable<R>> {
 }
 
 impl BufferedReader<R: Seekable<R>> {
-    fn seek(self: &mut BufferedReader<R>, whence: SeekFrom, offset: i64) -> Result<i64, Error> {
+    fn seek(self: &mut BufferedReader<R>, whence: SeekFrom, offset: i64) -> Result<u64, Error> {
         let res = if whence == SeekFrom::Current {
             let remainder = (self.cap - self.pos) as i64;
             let res = self.inner.seek(SeekFrom::Current, offset - remainder)?;
@@ -484,5 +543,83 @@ mod internal {
 
 #[cfg(all(test, test_std))]
 mod tests {
+    static BUF: [u8; 1024];
+    use collections::Vector;
 
+    macro read_n($reader, $n) {
+        let read = $reader.read(BUF.as_slice_mut()[..$n]).unwrap();
+        BUF.as_slice()[..read]
+    }
+
+    #[test]
+    fn test_slice_reader() {
+        let text = SliceReader::new("Lorem ipsum dolor sit amet");        
+        assert_eq!(read_n!(text, 12), "Lorem ipsum ");
+        assert_eq!(read_n!(text, 14), "dolor sit amet");
+        assert_eq!(read_n!(text, 100), "");
+
+        let buf = BUF.as_slice_mut();
+        let text = SliceReader::new("Lorem ipsum dolor sit amet");
+        assert_eq!(text.read_exact(buf[..100]), Result::err(Error::eof()));
+
+        let text = SliceReader::new("Lorem ipsum dolor sit amet");
+        assert_eq!(text.read_exact(buf[..26]), Result::ok(()));
+
+        let text = SliceReader::new("Lorem ipsum dolor sit amet");
+        let read : Vector<u8> = Vector::new();
+        defer read.free();
+
+        text.read_to_end(&read).unwrap();
+        assert_eq!(read.as_slice(), "Lorem ipsum dolor sit amet");
+    }
+
+    #[test]
+    fn test_slice_reader_seek() {
+        let text = SliceReader::new("Lorem ipsum dolor sit amet");        
+        assert_eq!(read_n!(text, 12), "Lorem ipsum ");
+
+        assert_eq!(text.seek(SeekFrom::Beginning, 1).unwrap(), 1);
+        assert_eq!(read_n!(text, 12), "orem ipsum d");
+        
+        assert_eq!(text.seek(SeekFrom::Current, -5).unwrap(), 8);
+        assert_eq!(read_n!(text, 12), "sum dolor si");
+        
+        assert_eq!(text.seek(SeekFrom::End, -12).unwrap(), 14);
+        assert_eq!(read_n!(text, 12), "lor sit amet");
+    }
+
+
+    #[test]
+    fn test_lines() {
+        let text = SliceReader::new("Lorem\nipsum\ndolor\nsit\namet");
+        let iter = lines(&text); 
+        defer iter.free();
+
+        assert_eq!(iter.next(), Option::some(Result::ok("Lorem")));
+        assert_eq!(iter.next(), Option::some(Result::ok("ipsum")));
+        assert_eq!(iter.next(), Option::some(Result::ok("dolor")));
+        assert_eq!(iter.next(), Option::some(Result::ok("sit")));
+        assert_eq!(iter.next(), Option::some(Result::ok("amet")));
+        assert_eq!(iter.next(), Option::none());
+    }
+
+    
+    #[test]
+    fn test_read_byte() {
+        let text = SliceReader::new("foo");
+
+        assert_eq!(text.read_byte(), Result::ok('f'));
+        assert_eq!(text.read_byte(), Result::ok('o'));
+        assert_eq!(text.read_byte(), Result::ok('o'));
+        assert_eq!(text.read_byte(), Result::err(Error::eof()));        
+    }
+
+    #[test]
+    fn test_copy() {
+        let src = SliceReader::new("Lorem ipsum dolor sit amet"); 
+        let dst: Vector<u8> = Vector::new();
+
+        copy(&src, &StringWriter::new(&dst)).unwrap();
+        assert_eq!(dst.as_slice(), "Lorem ipsum dolor sit amet");
+    }
 }

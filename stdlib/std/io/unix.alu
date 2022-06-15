@@ -117,8 +117,22 @@ impl Error {
             }
             _ => unreachable!()
         }
-
     }
+
+    fn equals(self: &Error, other: &Error) -> bool {
+        if self.kind != other.kind {
+            return false;
+        }
+        switch self.kind {
+            ErrorKind::GetAddrInfo => self.inner.gai_err == other.inner.gai_err,
+            ErrorKind::Os => self.inner.errno == other.inner.errno,
+            ErrorKind::UnexpectedEof => true,
+            ErrorKind::UserDefined => self.inner.message == other.inner.message,
+            _ => unreachable!()
+        }
+    }
+
+    mixin cmp::Equatable<Error>;
 }
 
 macro errno_try($ret) {

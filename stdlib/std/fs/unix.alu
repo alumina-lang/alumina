@@ -154,13 +154,13 @@ impl File {
         Result::ok(string.move())
     }
 
-    fn seek(self: &mut File, whence: SeekFrom, offset: i64) -> Result<i64, Error> {
+    fn seek(self: &mut File, whence: SeekFrom, offset: i64) -> Result<u64, Error> {
         #[cfg(not(target_os = "macos"))]
         let ret = errno_try!(libc::lseek64(self.fd.value, offset, whence as libc::c_int));
         #[cfg(target_os = "macos")]
         let ret = errno_try!(libc::lseek(self.fd.value, offset, whence as libc::c_int));
 
-        Result::ok(ret as i64)
+        Result::ok(ret as u64)
     }
 
     fn flush(self: &mut File) -> Result<(), Error> {
