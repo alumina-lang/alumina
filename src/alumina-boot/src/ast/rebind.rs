@@ -5,7 +5,7 @@ use crate::{
     common::{AluminaError, ArenaAllocatable},
 };
 
-use super::{AstCtx, AstId, ExprP, Statement, TyP};
+use super::{AstCtx, AstId, ExprP, Placeholder, Statement, TyP};
 
 pub struct Rebinder<'ast> {
     pub ast: &'ast AstCtx<'ast>,
@@ -15,6 +15,31 @@ pub struct Rebinder<'ast> {
 impl<'ast> Rebinder<'ast> {
     pub fn new(ast: &'ast AstCtx<'ast>, replacements: HashMap<AstId, TyP<'ast>>) -> Self {
         Self { ast, replacements }
+    }
+
+    pub fn visit_placeholder(
+        &mut self,
+        placeholder: &Placeholder<'ast>,
+    ) -> Result<Placeholder<'ast>, AluminaError> {
+        let bounds = placeholder
+            .bounds
+            .iter()
+            .map(|b| self.visit_bound(b))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Placeholder {
+            bounds: bounds.alloc_on(self.ast),
+            default: placeholder.default.map(|d| self.visit_typ(d)).transpose()?,
+            id: placeholder.id,
+        })
+    }
+
+    pub fn visit_bound(&mut self, bound: &Bound<'ast>) -> Result<Bound<'ast>, AluminaError> {
+        Ok(Bound {
+            negated: bound.negated,
+            span: bound.span,
+            typ: self.visit_typ(bound.typ)?,
+        })
     }
 
     pub fn visit_typ(&mut self, typ: TyP<'ast>) -> Result<TyP<'ast>, AluminaError> {

@@ -1064,7 +1064,25 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         for function in protocol.associated_fns {
             let fun = function.item.get_function();
-            assert!(fun.placeholders.is_empty());
+            // assert!(fun.placeholders.is_empty());
+
+            let placeholders = if fun.placeholders.is_empty() {
+                mixin.placeholders
+            } else {
+                let rebound_placeholders = fun
+                    .placeholders
+                    .iter()
+                    .map(|p| rebinder.visit_placeholder(p))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                mixin
+                    .placeholders
+                    .iter()
+                    .copied()
+                    .chain(rebound_placeholders)
+                    .collect::<Vec<_>>()
+                    .alloc_on(self.mono_ctx.ast)
+            };
 
             let body = match fun.body {
                 Some(body) => rebinder.visit_expr(body)?,
@@ -1075,7 +1093,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             new_func.assign(ast::Item::Function(ast::Function {
                 name: fun.name,
                 attributes: fun.attributes,
-                placeholders: mixin.placeholders,
+                placeholders: placeholders,
                 return_type: rebinder.visit_typ(fun.return_type)?,
                 args: fun
                     .args
@@ -1581,6 +1599,15 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                             }
 
                             return Ok(tys[0]);
+                        }
+                        return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
+                    }
+                    Some(LangItemKind::TypeopElementOf) => {
+                        if args.len() != 1 {
+                            return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
+                        }
+                        if let ir::Ty::Array(ty, _) = args[0] {
+                            return Ok(ty);
                         }
                         return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
                     }

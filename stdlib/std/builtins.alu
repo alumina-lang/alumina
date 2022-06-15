@@ -8,9 +8,6 @@ use fmt::{Formatter};
 #[lang(impl_void)]
 struct _void {}
 impl _void {
-    mixin Equatable<void>;
-    mixin Comparable<void>;
-
     #[force_inline]
     fn equals(lhs: &void, rhs: &void) -> bool {
         true
@@ -20,10 +17,13 @@ impl _void {
     fn compare(lhs: &void, rhs: &void) -> Ordering {
         Ordering::Equal
     }
-
+    
     #[force_inline]
     fn hash<H: Hasher<H>>(self: &void, hasher: &mut H) {
     }
+
+    mixin Equatable<void>;
+    mixin Comparable<void>;
 }
 
 #[lang(impl_bool)]
@@ -1287,25 +1287,19 @@ impl _tuple_8 {
 
 #[lang(impl_array)]
 struct _array {}
-impl _array {
-    use marker::ArrayOf;
-
-    // There are not const usize generics, so we cannot generically accept all
-    // possible arrays proper in this impl. Instead we accept slice as a self 
-    // parameter and rely on automatic slice coercion, which makes this mostly no-op.
-
+impl _array<Arr: marker::Array> {
     #[force_inline]
-    fn as_slice<T, Arr: ArrayOf<T>>(self: &Arr) -> &[T] {
+    fn as_slice(self: &Arr) -> &[element_of<Arr>] {
         self
     }
 
     #[force_inline]
-    fn as_slice_mut<T, Arr: ArrayOf<T>>(self: &mut Arr) -> &mut [T] {
+    fn as_slice_mut(self: &mut Arr) -> &mut [element_of<Arr>] {
         self
     }
 
     #[force_inline]
-    fn iter<T, Arr: ArrayOf<T>>(self: &Arr) -> mem::SliceIterator<&T> {
+    fn iter(self: &Arr) -> mem::SliceIterator<&element_of<Arr>> {
         self.as_slice().iter()
     }
 }
@@ -1317,6 +1311,9 @@ impl _array {
 
 #[lang(typeop_signed_of)]
 struct signed_of<T: marker::Integer> {}
+
+#[lang(typeop_element_of)]
+struct element_of<T: marker::Array> {}
 
 #[lang(typeop_unsigned_of)]
 struct unsigned_of<T: marker::Integer> {}

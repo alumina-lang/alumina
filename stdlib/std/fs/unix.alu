@@ -140,7 +140,7 @@ impl File {
         self.fd
     }
 
-    fn read_to_string(path: &[u8]) -> Result<collections::Vector<u8>, Error> {
+    fn read_to_string(path: &[u8]) -> Result<string::StringBuf, Error> {
         use std::io::copy;
 
         let string = collections::Vector::new::<u8>();
@@ -154,13 +154,13 @@ impl File {
         Result::ok(string.move())
     }
 
-    fn seek(self: &mut File, whence: SeekFrom, offset: i64) -> Result<i64, Error> {
+    fn seek(self: &mut File, whence: SeekFrom, offset: i64) -> Result<u64, Error> {
         #[cfg(not(target_os = "macos"))]
         let ret = errno_try!(libc::lseek64(self.fd.value, offset, whence as libc::c_int));
         #[cfg(target_os = "macos")]
         let ret = errno_try!(libc::lseek(self.fd.value, offset, whence as libc::c_int));
 
-        Result::ok(ret as i64)
+        Result::ok(ret as u64)
     }
 
     fn flush(self: &mut File) -> Result<(), Error> {
@@ -189,11 +189,12 @@ impl File {
 
 #[cfg(all(test, test_std))]
 mod tests {
-    use collections::Vector;
+    use string::StringBuf;
+    
     static BUF: [u8; 1024];
     static BUF1: [u8; 1024];
 
-    fn mktemp() -> Vector<u8> {
+    fn mktemp() -> StringBuf {
         use fmt::{hex, pad, format};
         format!("/tmp/{}.dat", random::DEFAULT_RNG.next_u64().hex().zero_pad(16)).unwrap()
     }

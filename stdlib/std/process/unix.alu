@@ -15,10 +15,6 @@ impl EnvIterator {
         }
     }
 
-    fn iter(self: &EnvIterator) -> EnvIterator {
-        *self
-    }
-
     fn next(self: &mut EnvIterator) -> Option<(&[u8], &[u8])> {
         loop {
             if *self.ptr == null {
@@ -42,13 +38,16 @@ impl EnvIterator {
             break Option::some((env_str[0..sep.inner + 1], env_str[sep.inner + 2..]));
         }
     }
+
+    mixin iter::Iterator<EnvIterator, (&[u8], &[u8])>;
+    mixin iter::IteratorExt<EnvIterator, (&[u8], &[u8])>;
 }
 
 
 struct Output {
     status: i32,
-    stdout: collections::Vector<u8>,
-    stderr: collections::Vector<u8>,
+    stdout: string::StringBuf,
+    stderr: string::StringBuf,
 }
 
 impl Output {
@@ -74,7 +73,7 @@ struct Child {
 }
 
 impl Child {
-    use collections::Vector;
+    use string::StringBuf;
 
     fn from_pid(pid: libc::pid_t) -> Child {
         Child {
@@ -91,10 +90,10 @@ impl Child {
             stdin.inner.close()?;
         }
 
-        let stdout : Vector<u8> = Vector::new();
+        let stdout : StringBuf = StringBuf::new();
         defer stdout.free();
 
-        let stderr : Vector<u8> = Vector::new();
+        let stderr : StringBuf = StringBuf::new();
         defer stderr.free();
 
         if self.stdout.is_some && self.stderr.is_some {
@@ -409,11 +408,11 @@ impl Command {
 mod internal {
     use io::{Readable, AsFileDescriptor};
     use std::io::unix::{ErrorKind, errno_try};
-    use collections::Vector;
+    use string::StringBuf;
 
     extern "C" static environ: &&libc::c_char;
     
-    fn maybe_read_to_end<S1: Readable<S1>>(src: &mut S1, dst: &mut Vector<u8>) -> Result<bool, Error> {
+    fn maybe_read_to_end<S1: Readable<S1>>(src: &mut S1, dst: &mut StringBuf) -> Result<bool, Error> {
         let maybe_n = src.read_to_end(dst);
         if maybe_n.is_ok {
             Result::ok(true)
@@ -437,9 +436,9 @@ mod internal {
         S2: Readable<S2> + AsFileDescriptor<S2>, 
     >(
         src1: &mut S1, 
-        dst1: &mut Vector<u8>, 
+        dst1: &mut StringBuf, 
         src2: &mut S2, 
-        dst2: &mut Vector<u8>
+        dst2: &mut StringBuf
     ) -> result::Result<(), Error> {
         let s1 = src1.as_fd();
         let s2 = src2.as_fd();

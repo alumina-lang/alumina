@@ -1,10 +1,42 @@
 #[cfg(any(target_os="linux", target_os="macos", target_os="android"))]
 {
     use unix::{
-        print, println, eprint, eprintln,
         Error, FileDescriptor, Pipe, StdioStream,
         stdin, stdout, stderr, anonymous_pipe
     }
+}
+
+use fmt::{BufferedFormatter, write, writeln};
+
+// We use a single small static buffer for convenience stdio formatting macros.
+// This buffer has limited purpose (if you need larger buffer, use io::stdX directly),
+// but since many formats write individual characters, doing a syscall for every one
+// would be a performance killer.
+// Once we have multi-threading, stdio formatting will have to be synchronized.
+// Having a static buffer is also a concern if the macros recurse, as the buffer
+// will be overwritten. Currently this only happens during a panic, which should
+// be fine.
+static FMT_BUF: [u8; 128];
+
+macro print($fmt_str, $arg...) {
+    let fmt = BufferedWriter::from_slice(&StdioStream::stdout(), &FMT_BUF);
+    write!(&fmt, $fmt_str, $arg...).unwrap();
+    fmt.flush().unwrap();
+}
+macro println($fmt_str, $arg...) {
+    let fmt = BufferedWriter::from_slice(&StdioStream::stdout(), &FMT_BUF);
+    writeln!(&fmt, $fmt_str, $arg...).unwrap();
+    fmt.flush().unwrap();
+}
+macro eprint($fmt_str, $arg...) {
+    let fmt = BufferedWriter::from_slice(&StdioStream::stderr(), &FMT_BUF);
+    write!(&fmt, $fmt_str, $arg...).unwrap();
+    fmt.flush().unwrap();
+}
+macro eprintln($fmt_str, $arg...) {
+    let fmt = BufferedWriter::from_slice(&StdioStream::stderr(), &FMT_BUF);
+    writeln!(&fmt, $fmt_str, $arg...).unwrap();
+    fmt.flush().unwrap();
 }
 
 protocol AsFileDescriptor<Self> {
@@ -12,7 +44,7 @@ protocol AsFileDescriptor<Self> {
 }
 
 protocol Readable<Self> {
-    use collections::Vector;
+    use string::StringBuf;
     use internal::default_read_exact;
 
     fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize, Error>;
@@ -20,7 +52,7 @@ protocol Readable<Self> {
         self.default_read_exact(buf)
     }
 
-    fn read_to_end(self: &mut Self, buf: &mut Vector<u8>) -> Result<usize, Error> {;
+    fn read_to_end(self: &mut Self, buf: &mut StringBuf) -> Result<usize, Error> {;
         let start_len = buf.len();
         let start_cap = buf.capacity();
 
@@ -75,7 +107,7 @@ enum SeekFrom {
 }
 
 protocol Seekable<Self> {
-    fn seek(self: &mut Self, whence: SeekFrom, offset: i64) -> Result<i64, Error>;
+    fn seek(self: &mut Self, whence: SeekFrom, offset: i64) -> Result<u64, Error>;
     fn rewind(self: &mut Self) -> Result<(), Error> {
         self.seek(SeekFrom::Beginning, 0)?;
         
@@ -87,12 +119,71 @@ protocol Seekable<Self> {
     }
 }
 
+struct SliceReader {
+    slice: &[u8],
+    pos: usize
+}
+
+impl SliceReader {
+    use std::mem::copy_nonoverlapping;
+
+    fn new(slice: &[u8]) -> SliceReader {
+        SliceReader {
+            slice: slice,
+            pos: 0
+        }
+    }
+
+    fn read(self: &mut SliceReader, buf: &mut [u8]) -> Result<usize, Error> {
+        let len = math::min(buf.len, self.slice.len - self.pos);
+        
+        if len > 0 {
+            self.slice[self.pos..self.pos + len].copy_nonoverlapping(&buf[0]);
+            self.pos += len;
+        }
+
+        Result::ok(len)
+    }
+
+    fn fill_buffer(self: &mut SliceReader) -> Result<&[u8], Error> {
+        Result::ok(self.slice[self.pos..] as &[u8])
+    }
+
+    fn consume(self: &mut SliceReader, amount: usize) {
+        self.pos = math::min(self.pos + amount, self.slice.len);
+    }
+
+    fn seek(self: &mut SliceReader, whence: SeekFrom, offset: i64) -> Result<u64, Error> {
+        let new_offset = switch whence {
+            SeekFrom::Beginning => offset,
+            SeekFrom::Current => self.pos as i64 + offset,
+            SeekFrom::End => self.slice.len as i64 + offset,
+            _ => unreachable!()
+        };
+        
+        if new_offset < 0 || (new_offset as usize) > self.slice.len {
+            Result::err(Error::eof())
+        } else {
+            self.pos = new_offset as usize;
+            Result::ok(new_offset as u64)
+        }
+    }
+
+    fn position(self: &mut SliceReader) -> Result<u64, ()> {
+        Result::ok(self.pos as u64)
+    }
+
+    mixin Seekable<SliceReader>;
+    mixin Readable<SliceReader>;
+    mixin BufferedReadable<SliceReader>;
+}
+
 struct StringWriter {
-    string: &mut collections::Vector<u8>,
+    string: &mut string::StringBuf,
 }
 
 impl StringWriter {
-    fn new(string: &mut collections::Vector<u8>) -> StringWriter {
+    fn new(string: &mut string::StringBuf) -> StringWriter {
         StringWriter {
             string: string
         }
@@ -194,7 +285,7 @@ impl BufferedReader<R: Readable<R>> {
 }
 
 impl BufferedReader<R: Seekable<R>> {
-    fn seek(self: &mut BufferedReader<R>, whence: SeekFrom, offset: i64) -> Result<i64, Error> {
+    fn seek(self: &mut BufferedReader<R>, whence: SeekFrom, offset: i64) -> Result<u64, Error> {
         let res = if whence == SeekFrom::Current {
             let remainder = (self.cap - self.pos) as i64;
             let res = self.inner.seek(SeekFrom::Current, offset - remainder)?;
@@ -371,7 +462,7 @@ fn read_byte<R: Readable<R>>(reader: &mut R) -> result::Result<u8, Error> {
     Result::ok(buf[0])
 }
 
-fn read_until<R: BufferedReadable<R>>(r: &mut R, delim: u8, buf: &mut collections::Vector<u8>) -> result::Result<usize, Error> {
+fn read_until<R: BufferedReadable<R>>(r: &mut R, delim: u8, buf: &mut string::StringBuf) -> result::Result<usize, Error> {
     use string::find_char;
 
     let read = 0usize;
@@ -396,7 +487,7 @@ fn read_until<R: BufferedReadable<R>>(r: &mut R, delim: u8, buf: &mut collection
 }
 
 struct LineIterator<R: BufferedReadable<R>> {
-    line_buf: collections::Vector<u8>,
+    line_buf: string::StringBuf,
     reader: &mut R,
 }
 
@@ -405,7 +496,7 @@ struct LineIterator<R: BufferedReadable<R>> {
 impl LineIterator<R: BufferedReadable<R>> {
     use std::iter::Iterator;
 
-    fn with_line_buffer(reader: &mut R, line_buf: collections::Vector<u8>) -> LineIterator<R> {
+    fn with_line_buffer(reader: &mut R, line_buf: string::StringBuf) -> LineIterator<R> {
         LineIterator {
             reader: reader,
             line_buf: line_buf
@@ -442,10 +533,6 @@ impl LineIterator<R: BufferedReadable<R>> {
         Option::some(Result::ok(self.line_buf.as_slice()))
     }
 
-    fn iter(self: &mut LineIterator<R>) -> &mut LineIterator<R> {
-        self
-    }
-
     fn free(self: &mut LineIterator<R>) {
         self.line_buf.free();
     }
@@ -457,15 +544,13 @@ impl LineIterator<R: BufferedReadable<R>> {
         }
     }
 
+    mixin iter::Iterator<LineIterator<R>, Result<&[u8], Error>>;
     mixin iter::IteratorExt<LineIterator<R>, Result<&[u8], Error>>;
-    mixin<Other: iter::Iterator<Other, Result<&[u8], Error>>> 
-        iter::IteratorExtOther<LineIterator<R>, Other, Result<&[u8], Error>>;
 }
 
 fn lines<R: BufferedReadable<R>>(reader: &mut R) -> LineIterator<R> {
     LineIterator::new(reader)
 }
-
 
 mod internal {
     fn default_read_exact<T: Readable<T>>(self: &mut T, buf: &mut [u8]) -> Result<(), Error> {
@@ -484,5 +569,83 @@ mod internal {
 
 #[cfg(all(test, test_std))]
 mod tests {
+    static BUF: [u8; 1024];
+    use string::StringBuf;
 
+    macro read_n($reader, $n) {
+        let read = $reader.read(BUF.as_slice_mut()[..$n]).unwrap();
+        BUF.as_slice()[..read]
+    }
+
+    #[test]
+    fn test_slice_reader() {
+        let text = SliceReader::new("Lorem ipsum dolor sit amet");        
+        assert_eq!(read_n!(text, 12), "Lorem ipsum ");
+        assert_eq!(read_n!(text, 14), "dolor sit amet");
+        assert_eq!(read_n!(text, 100), "");
+
+        let buf = BUF.as_slice_mut();
+        let text = SliceReader::new("Lorem ipsum dolor sit amet");
+        assert_eq!(text.read_exact(buf[..100]), Result::err(Error::eof()));
+
+        let text = SliceReader::new("Lorem ipsum dolor sit amet");
+        assert_eq!(text.read_exact(buf[..26]), Result::ok(()));
+
+        let text = SliceReader::new("Lorem ipsum dolor sit amet");
+        let read : StringBuf = StringBuf::new();
+        defer read.free();
+
+        text.read_to_end(&read).unwrap();
+        assert_eq!(read.as_slice(), "Lorem ipsum dolor sit amet");
+    }
+
+    #[test]
+    fn test_slice_reader_seek() {
+        let text = SliceReader::new("Lorem ipsum dolor sit amet");        
+        assert_eq!(read_n!(text, 12), "Lorem ipsum ");
+
+        assert_eq!(text.seek(SeekFrom::Beginning, 1).unwrap(), 1);
+        assert_eq!(read_n!(text, 12), "orem ipsum d");
+        
+        assert_eq!(text.seek(SeekFrom::Current, -5).unwrap(), 8);
+        assert_eq!(read_n!(text, 12), "sum dolor si");
+        
+        assert_eq!(text.seek(SeekFrom::End, -12).unwrap(), 14);
+        assert_eq!(read_n!(text, 12), "lor sit amet");
+    }
+
+
+    #[test]
+    fn test_lines() {
+        let text = SliceReader::new("Lorem\nipsum\ndolor\nsit\namet");
+        let iter = lines(&text); 
+        defer iter.free();
+
+        assert_eq!(iter.next(), Option::some(Result::ok("Lorem")));
+        assert_eq!(iter.next(), Option::some(Result::ok("ipsum")));
+        assert_eq!(iter.next(), Option::some(Result::ok("dolor")));
+        assert_eq!(iter.next(), Option::some(Result::ok("sit")));
+        assert_eq!(iter.next(), Option::some(Result::ok("amet")));
+        assert_eq!(iter.next(), Option::none());
+    }
+
+    
+    #[test]
+    fn test_read_byte() {
+        let text = SliceReader::new("foo");
+
+        assert_eq!(text.read_byte(), Result::ok('f'));
+        assert_eq!(text.read_byte(), Result::ok('o'));
+        assert_eq!(text.read_byte(), Result::ok('o'));
+        assert_eq!(text.read_byte(), Result::err(Error::eof()));        
+    }
+
+    #[test]
+    fn test_copy() {
+        let src = SliceReader::new("Lorem ipsum dolor sit amet"); 
+        let dst: StringBuf = StringBuf::new();
+
+        copy(&src, &StringWriter::new(&dst)).unwrap();
+        assert_eq!(dst.as_slice(), "Lorem ipsum dolor sit amet");
+    }
 }
