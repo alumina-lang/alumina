@@ -177,8 +177,6 @@ pub enum CodeErrorKind {
     UnexpectedProtocol,
     #[error("function must have a body")]
     FunctionMustHaveBody,
-    #[error("protocol functions cannot be generic (hint: move the generic parameters to the protocol itself)")]
-    ProtocolFnsCannotBeGeneric,
     #[error("protocol functions cannot be extern")]
     ProtocolFnsCannotBeExtern,
     #[error("type `{}` matches `{}`, which it should not", .0, .1)]

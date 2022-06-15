@@ -167,18 +167,12 @@ impl SliceIterator<Ptr: Pointer> {
         }
     }
 
-    #[force_inline]
-    fn iter(self: &SliceIterator<Ptr>) -> SliceIterator<Ptr> {
-        *self
-    }
-
     fn size_hint(self: &SliceIterator<Ptr>) -> Option<usize> {
         Option::some(self.inner.len)
     }
 
+    mixin iter::Iterator<SliceIterator<Ptr>, builtins::deref_of<Ptr>>;
     mixin iter::IteratorExt<SliceIterator<Ptr>, builtins::deref_of<Ptr>>;
-    mixin<Other: iter::Iterator<Other, builtins::deref_of<Ptr>>> 
-        iter::IteratorExtOther<SliceIterator<Ptr>, Other, builtins::deref_of<Ptr>>;
 }
 
 mod internal {

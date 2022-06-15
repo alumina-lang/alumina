@@ -50,9 +50,10 @@ impl Arena {
         }
     }
 
+    #[cold]
     fn grow(self: &mut Arena, size: usize) {
         // If we want a single large allocation, do not increase the increment.
-        self.increment *= 2;
+        self.increment = self.increment * 2;
         let size = std::math::max(self.increment, size);
 
         let node = ArenaNode::create(size);
@@ -61,9 +62,7 @@ impl Arena {
     }
 
     fn aligned_alloc(self: &mut Arena, size: usize, alignment: usize) -> &mut void {
-        //return std::libc::malloc(size);
-
-        std::debug_assert!(self.tail != null);
+        // std::debug_assert!(self.tail != null);
 
         let offset = align_offset(self.tail.ptr as usize, alignment);
         let bump = offset + size;
@@ -79,10 +78,12 @@ impl Arena {
         }
     }
 
+    #[inline]
     fn alloc<T>(self: &mut Arena) -> &mut T {
         self.aligned_alloc(size_of::<T>(), align_of::<T>()) as &mut T
     }
 
+    #[inline]
     fn alloc_slice<T>(self: &mut Arena, len: usize) -> &mut [T] {       
         let ptr = self.aligned_alloc(size_of::<T>() * len, align_of::<T>()) as &mut T;
         std::mem::slice::from_raw(ptr, len)
@@ -114,14 +115,10 @@ mod tests {
 
         for i in 0..1000001 {
             let ptr: &mut i32 = arena.alloc();
-            let slice: &mut [i32] = arena.alloc_slice(1337);
+            let slice: &mut [i32] = arena.alloc_slice(133);
             
             *ptr = i;
             slice[4] = i;
-
-            if i % 100000 == 0 {
-                eprintln!("{}", i);
-            }
         }
     }
 }
