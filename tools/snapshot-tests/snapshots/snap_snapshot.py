@@ -217,16 +217,6 @@ snapshots['test_examples[statics.alu] run_stderr'] = b''
 
 snapshots['test_examples[statics.alu] run_stdout'] = b'1792\n'
 
-snapshots['test_examples[string_functions.alu] compile_ret'] = 0
-
-snapshots['test_examples[string_functions.alu] compile_stderr'] = None
-
-snapshots['test_examples[string_functions.alu] run_ret'] = 0
-
-snapshots['test_examples[string_functions.alu] run_stderr'] = b''
-
-snapshots['test_examples[string_functions.alu] run_stdout'] = b'0->0, 1->9, 2->36, 3->81, 4->144, 5->225, 6->324, 7->441, 8->576, 9->729, 10->900\n2001 (8193 in decimal)\n db8 (3512 in decimal)\n85a3 (34211 in decimal)\n   0 (0 in decimal)\n   0 (0 in decimal)\n8a2e (35374 in decimal)\n 370 (880 in decimal)\n7334 (29492 in decimal)\n'
-
 snapshots['test_examples[tcp_client_server.alu] compile_ret'] = 0
 
 snapshots['test_examples[tcp_client_server.alu] compile_stderr'] = None

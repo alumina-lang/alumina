@@ -1,36 +1,3 @@
-use fmt::{BufferedFormatter, write, writeln};
-
-// We use a single small static buffer for convenience stdio formatting macros.
-// This buffer has limited purpose (if you need larger buffer, use io::stdX directly),
-// but since many formats write individual characters, doing a syscall for every one
-// would be a performance killer.
-// Once we have multi-threading, stdio formatting will have to be synchronized.
-// Having a static buffer is also a concern if the macros recurse, as the buffer
-// will be overwritten. Currently this only happens during a panic, which should
-// be fine.
-static FMT_BUF: [u8; 128];
-
-macro print($fmt_str, $arg...) {
-    let fmt = BufferedWriter::from_slice(&StdioStream::stdout(), &FMT_BUF);
-    write!(&fmt, $fmt_str, $arg...).unwrap();
-    fmt.flush().unwrap();
-}
-macro println($fmt_str, $arg...) {
-    let fmt = BufferedWriter::from_slice(&StdioStream::stdout(), &FMT_BUF);
-    writeln!(&fmt, $fmt_str, $arg...).unwrap();
-    fmt.flush().unwrap();
-}
-macro eprint($fmt_str, $arg...) {
-    let fmt = BufferedWriter::from_slice(&StdioStream::stderr(), &FMT_BUF);
-    write!(&fmt, $fmt_str, $arg...).unwrap();
-    fmt.flush().unwrap();
-}
-macro eprintln($fmt_str, $arg...) {
-    let fmt = BufferedWriter::from_slice(&StdioStream::stderr(), &FMT_BUF);
-    writeln!(&fmt, $fmt_str, $arg...).unwrap();
-    fmt.flush().unwrap();
-}
-
 enum ErrorKind {
     UnexpectedEof,
     Os,
