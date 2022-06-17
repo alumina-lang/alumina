@@ -472,12 +472,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         Ok(())
     }
 
-    
-    fn visit_doc_comment(&mut self, _node: tree_sitter::Node<'src>) -> Self::ReturnType  {
+    fn visit_doc_comment(&mut self, _node: tree_sitter::Node<'src>) -> Self::ReturnType {
         Ok(())
     }
 
-    fn visit_file_doc_comment(&mut self, _node: tree_sitter::Node<'src>) -> Self::ReturnType  {
+    fn visit_file_doc_comment(&mut self, _node: tree_sitter::Node<'src>) -> Self::ReturnType {
         Ok(())
     }
 }

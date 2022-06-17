@@ -1,0 +1,190 @@
+use std::collections::Vector;
+use std::string::StringBuf;
+
+use aluminac::lib::common::{NodeVisitorExt, child_by};
+use aluminac::lib::node_kinds::{NodeVisitor, FieldKind};
+
+use alumina_doc::error::Result;
+use alumina_doc::common::{Item, Path, ParseContext, ItemKind};
+
+use tree_sitter::Node;
+
+macro get_name($self, $node) {
+    child_by!($node, FieldKind::Name).unwrap().text($self.parse_context.source())
+}
+
+struct TopLevelVisitor {
+    path: Path,
+    parse_context: &ParseContext,
+    items: &mut Vector<Item>,
+    doc_comment: StringBuf,
+    file_doc_comment: StringBuf,
+    in_a_container: bool,
+}
+
+impl TopLevelVisitor {
+    fn new(parse_context: &ParseContext, path: Path, items: &mut Vector<Item>) -> TopLevelVisitor {
+        TopLevelVisitor {
+            parse_context: parse_context,
+            path: path,
+            items: items,
+            doc_comment: StringBuf::new(),
+            file_doc_comment: StringBuf::new(),
+            in_a_container: false
+        }
+    }
+
+    fn free(self: &mut TopLevelVisitor) {
+        self.path.free();
+        self.doc_comment.free();
+        self.file_doc_comment.free();
+    }
+    
+    fn move(self: &mut TopLevelVisitor) -> TopLevelVisitor {
+        TopLevelVisitor {
+            source: self.source,
+            path: self.path.move(),
+            items: self.items,
+            doc_comment: self.doc_comment.move(),
+            file_doc_comment: self.file_doc_comment.move(),
+        }
+    }
+    
+    fn add_item(self: &mut TopLevelVisitor, kind: ItemKind, name: &[u8], node: Node) {
+        self.items.push(Item {
+            kind: kind,
+            path: self.path.extend_with(name),
+            node: node,
+            parse_context: self.parse_context,
+            doc_comment: self.doc_comment.move(),
+        });
+    }
+
+    fn visit_source_file(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.visit_children(node)
+    }
+
+    fn visit_top_level_block(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.visit_children_by_field(node, FieldKind::Items)
+    }
+
+    fn visit_function_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        let kind = if self.in_a_container {
+            ItemKind::Method
+        } else {
+            ItemKind::Function
+        };
+
+        self.add_item(kind, get_name!(self, node), node);
+        Result::ok(())
+    } 
+
+    fn visit_enum_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.add_item(ItemKind::Enum, get_name!(self, node), node);
+        Result::ok(())
+    } 
+
+    fn visit_const_declaration(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.add_item(ItemKind::Const, get_name!(self, node), node);
+        Result::ok(())
+    } 
+
+    fn visit_type_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.add_item(ItemKind::TypeDef, get_name!(self, node), node);
+        Result::ok(())
+    } 
+
+    fn visit_macro_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.add_item(ItemKind::Macro, get_name!(self, node), node);
+        Result::ok(())
+    }
+
+    fn visit_mod_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        let name = child_by!(node, FieldKind::Name).unwrap().text(self.parse_context.source());
+
+        self.add_item(ItemKind::Module, name, node);
+
+        self.path.push(name);
+        defer self.path.pop();
+
+        self.visit_children_by_field(node, FieldKind::Body)?;
+        Result::ok(())
+    }
+
+    fn visit_struct_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        let kind_text = child_by!(node, FieldKind::Kind)
+            .unwrap()
+            .text(self.parse_context.source());
+
+        let kind = if kind_text == "union" {
+            ItemKind::Union
+        } else {
+            ItemKind::Struct
+        };
+
+        self.add_item(kind, get_name!(self, node), node);
+        Result::ok(())
+    }
+
+    fn visit_static_declaration(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.add_item(ItemKind::Static, get_name!(self, node), node);
+        Result::ok(())
+    }
+
+    fn visit_mixin(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.add_item(ItemKind::Mixin, "<mixin>", node);
+        Result::ok(())
+    }
+
+    fn visit_impl_block(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        let name = child_by!(node, FieldKind::Name).unwrap().text(self.parse_context.source());
+                
+        self.path.push(name);
+        defer self.path.pop();
+
+        let in_a_container = self.in_a_container;
+        
+        self.in_a_container = true;
+        self.visit_children_by_field(node, FieldKind::Body)?;
+        self.in_a_container = in_a_container;
+
+        Result::ok(())
+    }
+    
+    fn visit_protocol_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        let name = child_by!(node, FieldKind::Name).unwrap().text(self.parse_context.source());
+        self.add_item(ItemKind::Protocol, name, node);
+
+        self.path.push(name);
+        defer self.path.pop();
+
+        let in_a_container = self.in_a_container;
+        
+        self.in_a_container = true;
+        self.visit_children_by_field(node, FieldKind::Body)?;
+        self.in_a_container = in_a_container;
+
+        Result::ok(())
+    }
+
+    fn visit_use_declaration(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        Result::ok(())
+    }
+
+    fn visit_doc_comment(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.doc_comment.extend_from_slice(node.text(self.parse_context.source()));
+        self.doc_comment.extend_from_slice("\n");
+
+        Result::ok(())
+    }
+
+    fn visit_file_doc_comment(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.file_doc_comment.extend_from_slice(node.text(self.parse_context.source()));
+        self.file_doc_comment.extend_from_slice("\n");
+        Result::ok(())
+    }
+    
+    
+    mixin NodeVisitorExt<TopLevelVisitor, Result<()>>;
+    mixin NodeVisitor<TopLevelVisitor, Result<()>>;
+}

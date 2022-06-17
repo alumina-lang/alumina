@@ -239,7 +239,7 @@ impl<'ir> ExpressionBuilder<'ir> {
     pub fn coerce(&self, expr: ExprP<'ir>, typ: TyP<'ir>) -> ExprP<'ir> {
         let result = Expr {
             is_const: expr.is_const,
-            kind: expr.kind.clone(), 
+            kind: expr.kind.clone(),
             value_type: expr.value_type,
             ty: typ,
         };

@@ -1,5 +1,9 @@
-use std::result::Result;
 use std::collections::Vector;
+use std::string::StringBuf;
+
+use tree_sitter::{Node, Parser, Tree};
+
+use alumina_doc::error::{Error, Result};
 
 struct Path {
     segments: Vector<&[u8]>,
@@ -43,7 +47,7 @@ impl Path {
         self.segments.free();
     }
 
-    fn fmt<F: Formatter<F>>(self: &Path, fmt: &mut F) -> Result<(), Error> {
+    fn fmt<F: Formatter<F>>(self: &Path, fmt: &mut F) -> std::fmt::Result {
         use std::string::join_fmt;
 
         if self.segments.empty() {
@@ -71,4 +75,148 @@ impl Path {
 
     mixin Equatable<Path>;
     mixin Comparable<Path>;
+}
+
+enum ItemKind {
+    Module,
+    Method,
+    Function,
+    TypeDef,
+    Macro,
+    Const,
+    Protocol,
+    Enum,
+    Static,
+    Struct,
+    Union,
+    Mixin,
+}
+
+impl ItemKind {
+    fn fmt<F: std::fmt::Formatter<F>>(self: &ItemKind, f: &mut F) -> std::fmt::Result {
+        use std::fmt::write;
+
+        switch *self {
+            ItemKind::Module => write!(f, "module"),
+            ItemKind::Function => write!(f, "function"),
+            ItemKind::Method => write!(f, "method"),
+            ItemKind::TypeDef => write!(f, "type"),
+            ItemKind::Macro => write!(f, "macro"),
+            ItemKind::Const => write!(f, "const"),
+            ItemKind::Protocol => write!(f, "protocol"),
+            ItemKind::Enum => write!(f, "enum"),
+            ItemKind::Static => write!(f, "static"),
+            ItemKind::Struct => write!(f, "struct"),
+            ItemKind::Union => write!(f, "union"),
+            ItemKind::Mixin => write!(f, "mixin"),
+            _ => unreachable!(),
+        }
+    }
+
+    fn has_children(self: &ItemKind) -> bool {
+        switch *self {
+            ItemKind::Module => true,
+            ItemKind::Function => true,
+            ItemKind::Protocol => true,
+            ItemKind::Enum => true,
+            ItemKind::Union => true,
+            ItemKind::Struct => true,
+
+            ItemKind::Method => false,
+            ItemKind::TypeDef => false,
+            ItemKind::Macro => false,
+            ItemKind::Const => false,
+            ItemKind::Static => false,
+            ItemKind::Mixin => false,
+            _ => false,
+        }
+    }   
+    
+    fn equals(self: &ItemKind, other: &ItemKind) -> bool {
+        (*self as i32) == (*other as i32)
+    }
+
+    mixin std::cmp::Equatable<ItemKind>;
+}
+
+struct Item {
+    kind: ItemKind,
+    parse_context: &ParseContext,
+    path: Path,
+    doc_comment: StringBuf,
+    node: Node,
+}
+
+impl Item {
+    use ::Result;
+    use std::fmt::{Formatter, write, writeln, Error};
+
+    fn free(self: &mut Item) {
+        self.path.free();
+        self.doc_comment.free();
+    }
+
+    fn fmt<F: Formatter<F>>(self: &Item, fmt: &mut F) -> Result<(), Error> {
+        
+        if !self.doc_comment.empty() {
+            write!(fmt, "{}", self.doc_comment)?;
+        }
+
+        switch self.kind {
+            ItemKind::Module => write!(fmt, "module {}", self.name)?,
+            ItemKind::Function => write!(fmt, "function {}", self.name)?,
+            ItemKind::TypeDef => write!(fmt, "type {}", self.name)?,
+            ItemKind::Macro => write!(fmt, "macro {}", self.name)?,
+            ItemKind::Const => write!(fmt, "const {}", self.name)?,
+            ItemKind::Protocol => write!(fmt, "protocol {}", self.name)?,
+            ItemKind::Enum => write!(fmt, "enum {}", self.name)?,
+            ItemKind::Static => write!(fmt, "static {}", self.name)?,
+            ItemKind::Struct => write!(fmt, "struct {}", self.name)?,
+            ItemKind::Mixin => write!(fmt, "mixin {}", self.name)?,
+            _ => unreachable!()
+        };
+
+        write!(fmt, " in {}", self.path)?;
+        Result::ok(())
+    }
+}
+
+struct ParseContext {
+    _source: StringBuf,
+    tree: Tree,
+}
+
+impl ParseContext {
+    fn from_file(parser: &mut Parser, filename: &[u8]) -> Result<ParseContext> {
+        let source = std::fs::File::read_to_string(filename).map_err(Error::from_io)?;
+        defer source.free();
+    
+        let tree = parser.parse(source.as_slice());
+        defer tree.free();
+        
+        Result::ok(ParseContext {
+            _source: source.move(),
+            tree: tree.move(),
+        })
+    }
+
+    fn source(self: &ParseContext) -> &[u8] {
+        self._source.as_slice()
+    }
+
+    fn root_node(self: &ParseContext) -> Node {
+        self.tree.root_node().unwrap()
+    }
+
+    fn free(self: &mut ParseContext) {
+        self._source.free();
+        self.tree.free();
+    }
+
+    fn move(self: &mut ParseContext) -> ParseContext {
+        ParseContext {
+            _source: self.source.move(),
+            tree: self.tree.move(),
+        }
+    }
 }

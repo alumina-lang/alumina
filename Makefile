@@ -119,13 +119,11 @@ $(ALUMINA_DOC): $(ALUMINA_DOC).c $(BUILD_DIR)/parser.o
 
 docs: $(ALUMINA_DOC)
 	rm -rf $(BUILD_ROOT)/docs
-	$(ALUMINA_DOC) \
+#	$(ALUMINA_DOC) \
 		$(foreach src,$(ALUMINAC_LIB_SOURCES),$(subst /,::,$(basename $(subst src/,,$(src))))=$(src)) 
 
-#	$(ALUMINA_DOC) \
-		$(foreach src,$(SYSROOT_FILES),$(subst __root__,, $(subst /,::,$(basename $(subst ./stdlib,,$(src)))))=$(src)) \
-		$(foreach src,$(ALUMINAC_LIB_SOURCES),$(subst /,::,$(basename $(subst src/,,$(src))))=$(src)) \
-		$(foreach src,$(ALU_LIBRARIES),$(subst /,::,$(basename $(subst libraries/,,$(src))))=$(src)) 
+	$(ALUMINA_DOC) \
+		$(foreach src,$(SYSROOT_FILES),$(subst __root__,, $(subst /,::,$(basename $(subst ./stdlib,,$(src)))))=$(src)) 
 	ln -s `realpath tools/alumina-doc/styles.css` $(BUILD_ROOT)/docs
 
 ## ------------------------------ Various ------------------------------
