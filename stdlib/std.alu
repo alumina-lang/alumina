@@ -1,3 +1,6 @@
+//! This is the standard library for the Alumina language.
+//! It is a collection of functions, macros, protocols and types that are essential for writing portable code. 
+
 macro compile_fail($reason) {
     intrinsics::compile_fail($reason);
 }
@@ -29,10 +32,18 @@ macro unreachable() {
     std::intrinsics::unreachable();
 }
 
+/// Returns the line in the source code at which the macro was invoked. If used within a macro, this will return the line of the outermost invocation.
 #[builtin] macro line() {  }
+
+/// Returns the column in the source code at which the macro was invoked. If used within a macro, this will return the column of the outermost invocation.
 #[builtin] macro column() {  }
+
+/// Returns the file in the source code at which the macro was invoked. If used within a macro, this will return the file of the outermost invocation. 
 #[builtin] macro file() {  }
+
+/// Returns the value of an environment variable during compilation.
 #[builtin] macro env($s) {  }
+
 #[builtin] macro include_bytes($file) {  }
 #[builtin] macro concat($parts...) {  }
 
@@ -84,12 +95,12 @@ mod internal {
     }
 }
 
+/// Contains various utility functions that are useful in the generic context where the type operated on is 
+/// not easily expressible.
 mod util {
     #[force_inline] fn identity<T>(t: T) -> T { t }
-    #[force_inline] fn drop<T>(_: T) { }
-    
-    // This function is mostly useful as a type inference guide (when the target type
-    // is not easily expressible).
+    #[force_inline] fn discard<T>(_: T) { }
     #[force_inline] fn cast<T1, T2>(t: T1) -> T2 { t as T2 }
     #[force_inline] fn transmute<T1, T2>(t: T1) -> T2 { *(&t as &T2) }
+    #[force_inline] fn deref<T>(v: &T) -> T { *v }
 }

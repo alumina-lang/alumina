@@ -105,8 +105,8 @@ pub enum CodeErrorKind {
     DuplicateFieldInitializer(String),
     #[error("expected a struct-like type here")]
     StructLikeExpectedHere,
-    #[error("method `{}` not found", .0)]
-    MethodNotFound(String),
+    #[error("method `{}` not found on `{}`", .0, .1)]
+    MethodNotFound(String, String),
     #[error("duplicate enum member")]
     DuplicateEnumMember,
     #[error("cannot be called as a method")]
@@ -222,6 +222,8 @@ pub enum CodeErrorKind {
     DeferInALoop,
     #[error("duplicate function name {:?} (this function will shadow a previous one)", .0)]
     DuplicateNameShadow(String),
+    #[error("field `{}` is not initialized", .0)]
+    UninitializedField(String),
 }
 
 #[derive(Debug, Clone)]

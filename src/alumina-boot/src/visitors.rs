@@ -35,6 +35,7 @@ pub trait VisitorExt<'src> {
 
     fn visit_children(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType;
 
+
     fn visit_children_by_field(
         &mut self,
         node: tree_sitter::Node<'src>,
@@ -56,7 +57,7 @@ where
 
         Ok(())
     }
-
+    
     fn visit_children_by_field(
         &mut self,
         node: tree_sitter::Node<'src>,

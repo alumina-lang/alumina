@@ -236,6 +236,17 @@ impl<'ir> ExpressionBuilder<'ir> {
         result.alloc_on(self.ir)
     }
 
+    pub fn coerce(&self, expr: ExprP<'ir>, typ: TyP<'ir>) -> ExprP<'ir> {
+        let result = Expr {
+            is_const: expr.is_const,
+            kind: expr.kind.clone(), 
+            value_type: expr.value_type,
+            ty: typ,
+        };
+
+        result.alloc_on(self.ir)
+    }
+
     pub fn unary(&self, op: UnOp, inner: ExprP<'ir>, result_typ: TyP<'ir>) -> ExprP<'ir> {
         let result = Expr::rvalue(ExprKind::Unary(op, inner), result_typ);
 

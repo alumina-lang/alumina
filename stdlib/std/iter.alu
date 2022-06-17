@@ -15,6 +15,15 @@ protocol Iterable<Self, It: Iterator<It, T>, T> {
     fn iter(self: &Self) -> It;
 }
 
+protocol IterableRef<Self, It: Iterator<It, &T>, T> {
+    fn iter_ref(self: &Self) -> It;
+}
+
+protocol IterableMut<Self, It: Iterator<It, &mut T>, T> {
+    fn iter_mut(self: &mut Self) -> It;
+}
+
+
 struct MapIterator<It: Iterator<It, T>, F: Callable<(T), U>, T, U> {
     it: &mut It,
     fun: F,
@@ -295,6 +304,99 @@ impl InspectIterator<It: Iterator<It, T>, F: Callable<(T), ()>, T> {
     mixin IteratorExt<InspectIterator<It, F, T>, T>;
 }
 
+struct Grouping<It: Iterator<It, T>, F: Callable<(T), K>, T, K: cmp::Equatable<K>> {
+    parent: &mut GroupByIterator<It, F, T, K>,
+    key: K
+}
+
+impl Grouping<It: Iterator<It, T>, F: Callable<(T), K>, T, K: cmp::Equatable<K>> {
+    fn next(self: &mut Grouping<It, F, T, K>) -> Option<T> {
+        use option::try;
+
+        let v = self.parent.it.peek();
+        if !v.is_some {
+            self.parent.last_group = Option::none();
+            return self.parent.it.next();
+        }
+
+        if self.key != self.parent.func(v.inner) {
+            self.parent.last_group = Option::none();
+            Option::none()
+        } else {
+            self.parent.it.next()
+        }
+    }
+
+    mixin Iterator<Grouping<It, F, T, K>, T>;
+    mixin IteratorExt<Grouping<It, F, T, K>, T>;
+}
+
+struct GroupByIterator<It: Iterator<It, T>, F: Callable<(T), K>, T, K: cmp::Equatable<K>> {
+    it: PeekableIterator<It, T>,
+    last_group: Option<Grouping<It, F, T, K>>,
+    func: F
+}
+
+impl GroupByIterator<It: Iterator<It, T>, F: Callable<(T), K>, T, K: cmp::Equatable<K>> {
+    fn next(self: &mut GroupByIterator<It, F, T, K>) -> Option<Grouping<It, F, T, K>> {
+        let needs_drain = self.last_group.move();
+        if needs_drain.is_some {
+            for _ in needs_drain.inner {
+            }
+        }
+
+        let v = self.it.peek();
+        if !v.is_some {
+            self.it.next();
+            return Option::none();
+        }
+
+        self.last_group = Option::some(Grouping::<It, F, T, K> {
+            parent: self,
+            key: self.func(v.inner)
+        });
+
+        self.last_group
+    }
+
+    mixin Iterator<GroupByIterator<It, F, T, K>, Grouping<It, F, T, K>>;
+    mixin IteratorExt<GroupByIterator<It, F, T, K>, Grouping<It, F, T, K>>;
+}
+
+struct PeekableIterator<It: Iterator<It, T>, T> {
+    it: &mut It,
+    peeked: Option<T>,
+}
+
+impl PeekableIterator<It: Iterator<It, T>, T> {
+    fn next(self: &mut PeekableIterator<It, T>) -> Option<T> {
+        if self.peeked.is_some {
+            self.peeked.move()
+        } else {
+            self.it.next()
+        }
+    }
+    
+    fn peek(self: &mut PeekableIterator<It, T>) -> Option<T> {
+        if !self.peeked.is_some {
+            self.peeked = self.it.next();
+        }
+        self.peeked
+    }
+    
+    fn size_hint(self: &PeekableIterator<It, T>) -> Option<usize> {
+        self.it.size_hint().map(|=self, x: usize| -> usize {
+            if self.peeked.is_some {
+                x + 1
+            } else {
+                x
+            }
+        })
+    }
+    
+    mixin Iterator<PeekableIterator<It, T>, T>;
+    mixin IteratorExt<PeekableIterator<It, T>, T>;
+}
 
 protocol IteratorExt<Self: Iterator<Self, T>, T> {
     fn iter(self: &mut Self) -> &mut Self {
@@ -464,6 +566,22 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
         }
 
         index
+    }
+
+    fn peekable(self: &mut Self) -> PeekableIterator<Self, T> {
+        PeekableIterator {
+            it: self,
+            peeked: Option::none(),
+        }
+    }
+
+    
+    fn group_by<F: Callable<(T), K>, K: cmp::Equatable<K>>(self: &mut Self, func: F) -> GroupByIterator<Self, F, T, K> {
+        GroupByIterator {
+            it: self.peekable(),
+            last_group: Option::none(),    
+            func: func
+        }
     }
 }
 
@@ -937,5 +1055,75 @@ mod tests {
         let written = (10..200).iter().fill_slice(slice);
         assert_eq!(written, 10);
         assert_eq!(slice, &[10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+    }
+
+    #[test]
+    fn test_peekable() {
+        let range = (0..3).iter().peekable();
+        assert_eq!(range.size_hint(), Option::some(3usize));
+        assert_eq!(range.peek(), Option::some(0));
+        
+        assert_eq!(range.size_hint(), Option::some(3usize));
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::some(1));
+        assert_eq!(range.next(), Option::some(2));
+        assert_eq!(range.next(), Option::none());
+    }
+
+    #[test]
+    fn test_group_by() {
+        let values: &[(i32, i32)] = &[
+            (0, 0),
+            (1, 0),
+            (1, 1),
+            (2, 0),
+            (2, 1),
+            (2, 2)
+        ];
+
+        let groups = values.iter().group_by(|v: (i32, i32)| -> i32 { v.0 });
+
+        assert_eq!(groups.size_hint(), Option::none());
+        let group = groups.next().unwrap();
+        assert_eq!(group.next(), Option::some((0, 0)));
+        assert_eq!(group.next(), Option::none());
+
+        let group = groups.next().unwrap();
+        assert_eq!(group.next(), Option::some((1, 0)));
+        assert_eq!(group.next(), Option::some((1, 1)));
+        assert_eq!(group.next(), Option::none());
+
+        let group = groups.next().unwrap();
+        assert_eq!(group.next(), Option::some((2, 0)));
+        assert_eq!(group.next(), Option::some((2, 1)));
+        assert_eq!(group.next(), Option::some((2, 2)));
+        assert_eq!(group.next(), Option::none());
+
+        assert!(!groups.next().is_some);
+    }
+
+    #[test]
+    fn test_group_by_draining() {
+        let values: &[(i32, i32)] = &[
+            (0, 0),
+            (1, 0),
+            (1, 1),
+            (2, 0),
+            (2, 1),
+            (2, 2)
+        ];
+
+        let groups = values.iter().group_by(|v: (i32, i32)| -> i32 { v.0 });
+
+        assert_eq!(groups.size_hint(), Option::none());
+        let group = groups.next().unwrap();
+        let group = groups.next().unwrap();
+        let group = groups.next().unwrap();
+        assert_eq!(group.next(), Option::some((2, 0)));
+        assert_eq!(group.next(), Option::some((2, 1)));
+        assert_eq!(group.next(), Option::some((2, 2)));
+        assert_eq!(group.next(), Option::none());
+
+        assert!(!groups.next().is_some);
     }
 }

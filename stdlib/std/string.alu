@@ -38,6 +38,23 @@ fn ends_with(self: &[u8], suffix: &[u8]) -> bool {
     self[self.len - suffix.len..] == suffix
 }
 
+fn trim_prefix(self: &[u8], prefix: &[u8]) -> &[u8] {
+    if self.starts_with(prefix) {
+        self[prefix.len..]
+    } else {
+        self
+    }
+}
+
+fn trim_suffix(self: &[u8], suffix: &[u8]) -> &[u8] {
+    if self.ends_with(suffix) {
+        &self[..self.len - suffix.len]
+    } else {
+        self
+    }
+}
+
+
 fn find(self: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.len == 0 {
         return Option::some(0usize);
@@ -159,6 +176,82 @@ fn join<T: iter::Iterator<T, &[u8]>>(self: &[u8], iter: &mut T) -> StringBuf {
     }
 
     ret
+}
+
+struct WithReplacement {
+    inner: &[u8],
+    needle: &[u8],
+    replacement: &[u8],
+}
+
+impl WithReplacement {
+    use std::fmt::{write, Error, Formatter};
+
+    fn new(inner: &[u8], needle: &[u8], replacement: &[u8]) -> WithReplacement {
+        WithReplacement {
+            inner: inner,
+            needle: needle,
+            replacement: replacement,
+        }
+    }
+
+    fn fmt<F: Formatter<F>>(self: &WithReplacement, f: &mut F) -> Result<(), Error> {
+        let first = true;    
+        for chunk in self.inner.split(self.needle) {
+            if first {
+                first = false;
+            } else {
+                write!(f, "{}", self.replacement)?;
+            }
+            write!(f, "{}", chunk)?;
+        }
+        Result::ok(())
+    }
+}
+
+struct JoinAdapter<It: iter::Iterator<It, &[u8]>> {
+    separator: &[u8],
+    inner: It,
+}
+
+impl JoinAdapter<It: iter::Iterator<It, &[u8]>> {
+    use std::fmt::{write, Error, Formatter};
+
+    fn new(separator: &[u8], inner: It) -> JoinAdapter<It> {
+        JoinAdapter {
+            separator: separator,
+            inner: inner,
+        }
+    }
+
+    fn fmt<F: fmt::Formatter<F>>(self: &JoinAdapter<It>, f: &mut F) -> Result<(), Error> {
+        let first = true;    
+        
+        // sneaky, sneaky
+        let inner = &self.inner as &mut It;
+
+        for chunk in inner {
+            if first {
+                first = false;
+            } else {
+                write!(f, "{}", self.separator)?;
+            }
+            write!(f, "{}", chunk)?;
+        }
+        Result::ok(())
+    }
+}
+
+fn replace_fmt(self: &[u8], needle: &[u8], replacement: &[u8]) -> JoinAdapter<SplitIterator> {
+    replacement.join_fmt(self.split(needle))
+}
+
+fn replace(self: &[u8], needle: &[u8], replacement: &[u8]) -> StringBuf {
+    replacement.join(&self.split(needle))
+}
+
+fn join_fmt<It: iter::Iterator<It, &[u8]>>(self: &[u8], iter: It) -> JoinAdapter<It> {
+    JoinAdapter::new(self, iter)
 }
 
 fn parse_integer<T: marker::Integer>(s: &[u8], radix: u16) -> Option<T> {
@@ -378,5 +471,21 @@ mod tests {
         let vec = "%".join(&["192.168.0.1"].iter());
         defer vec.free();
         assert_eq!(vec.as_slice(), "192.168.0.1");
+    }
+/*
+    #[test]
+    fn test_with_replacement() {
+        let f = fmt::format!("{}", "192.168.0.1".with_replacement(".", "::")).unwrap();
+        defer f.free();
+
+        assert_eq!(f.as_slice(), "192::168::0::1");
+    }
+*/
+    #[test] 
+    fn test_replace() {
+        let f = "192.168.0.1".replace(".", "::");
+        defer f.free();
+
+        assert_eq!(f.as_slice(), "192::168::0::1");
     }
 }

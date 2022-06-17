@@ -1,0 +1,74 @@
+use std::result::Result;
+use std::collections::Vector;
+
+struct Path {
+    segments: Vector<&[u8]>,
+}
+
+impl Path {
+    use std::fmt::{Formatter, write, writeln, Error};
+    use std::cmp::{Comparable, Equatable, Ordering};
+
+    fn new(segments: Vector<&[u8]>) -> Path {
+        Path { segments: segments }
+    }
+
+    fn move(self: &mut Path) -> Path {
+        Path { segments: self.segments.move() }
+    }
+
+    fn extend_with(self: &Path, segment: &[u8]) -> Path {
+        let ret = self.clone();
+        ret.segments.push(segment);
+        ret
+    }
+
+    fn push(self: &mut Path, segment: &[u8]) {
+        self.segments.push(segment);
+    }
+
+    fn len(self: &Path) -> usize {
+        self.segments.len()
+    }
+
+    fn starts_with(self: &Path, prefix: &Path) -> bool {
+        self.segments.as_slice()[0..prefix.len()] == prefix.segments.as_slice()
+    }
+
+    fn pop(self: &mut Path) {
+        self.segments.pop();
+    }
+
+    fn free(self: &mut Path) {
+        self.segments.free();
+    }
+
+    fn fmt<F: Formatter<F>>(self: &Path, fmt: &mut F) -> Result<(), Error> {
+        use std::string::join_fmt;
+
+        if self.segments.empty() {
+            write!(fmt, "::")
+        } else {
+            write!(fmt, "{}", "::".join_fmt(self.segments.iter()))
+        }
+    }
+
+    fn compare(self: &Path, other: &Path) -> Ordering {
+        self.segments.as_slice().compare(&other.segments.as_slice())
+    }
+
+    fn equals(self: &Path, other: &Path) -> bool {
+        self.segments.as_slice() == other.segments.as_slice()
+    }
+
+    fn clone(self: &Path) -> Path {
+        Path { segments: self.segments.clone() }
+    }
+
+    fn last(self: &Path) -> Option<&[u8]> {
+        self.segments.last()
+    }
+
+    mixin Equatable<Path>;
+    mixin Comparable<Path>;
+}

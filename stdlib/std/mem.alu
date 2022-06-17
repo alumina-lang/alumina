@@ -12,6 +12,10 @@ protocol Movable<Self> {
     fn move(self: &mut Self) -> Self;
 }
 
+protocol Copyable<Self> {
+    fn clone(self: &Self) -> Self;
+}
+
 protocol AsSlice<Self, T> {
     fn as_slice(self: &Self) -> &[T];
 }
@@ -21,10 +25,10 @@ protocol AsSliceMut<Self, T> {
 }
 
 
-// Slice fat "pointers" are just regular structs that compiler handles in a special way with regards
-// to syntax, implicit coercion and type inference. They are generic over the pointer-to-element type
-// rather than the element type itself. This is an implementation detail to ensure that &mut [T] and 
-// &[T] are distinguished without having to have two distinct types for mutable and const slices.
+/// Slice fat "pointers" are just regular structs that compiler handles in a special way with regards
+/// to syntax, implicit coercion and type inference. They are generic over the pointer-to-element type
+/// rather than the element type itself. This is an implementation detail to ensure that &mut [T] and 
+/// &[T] are distinguished without having to have two distinct types for mutable and const slices.
 #[lang(slice)]
 struct slice<Ptr: Pointer> {
     ptr: Ptr,
@@ -51,6 +55,16 @@ impl slice {
     #[force_inline]
     fn iter<Ptr: Pointer>(self: &slice<Ptr>) -> SliceIterator<Ptr> {
         SliceIterator::new(*self)
+    }
+
+    #[force_inline]
+    fn iter_ref<Ptr: Pointer>(self: &slice<Ptr>) -> SliceRefIterator<&builtins::deref_of<Ptr>> {
+        SliceRefIterator::new(*self as slice<&builtins::deref_of<Ptr>>)
+    }
+
+    #[force_inline]
+    fn iter_mut<T>(self: &&mut [T]) -> SliceRefIterator<&mut T> {
+        SliceRefIterator::new(*self)
     }
 
     fn as_slice<T>(self: &&[T]) -> &[T] {
@@ -86,7 +100,7 @@ impl slice {
         } else {
             let idx = 0usize;
             while idx < lhs.len {
-                if lhs[idx] != rhs[idx] {
+                if (*lhs)[idx] != (*rhs)[idx] {
                     return false;
                 }
                 idx += 1;
@@ -113,7 +127,7 @@ impl slice {
             let idx = 0usize;
             let len = min(lhs.len, rhs.len);
             while idx < len {
-                let cmp = lhs[idx].compare(rhs[idx]);
+                let cmp = (*lhs)[idx].compare(&(*rhs)[idx]);
                 if cmp != Ordering::Equal {
                     return cmp;
                 }
@@ -175,6 +189,36 @@ impl SliceIterator<Ptr: Pointer> {
     mixin iter::IteratorExt<SliceIterator<Ptr>, builtins::deref_of<Ptr>>;
 }
 
+struct SliceRefIterator<Ptr: Pointer> {
+    inner: slice<Ptr>,
+}
+
+impl SliceRefIterator<Ptr: Pointer> {
+    #[force_inline]
+    fn new(inner: slice<Ptr>) -> SliceRefIterator<Ptr> {
+        SliceRefIterator { inner: inner }
+    }
+
+    #[force_inline]
+    fn next(self: &mut SliceRefIterator<Ptr>) -> Option<Ptr> {
+        if self.inner.len > 0 {
+            let result = Option::some(self.inner.ptr);
+            self.inner.ptr = self.inner.ptr + 1;
+            self.inner.len -= 1;
+            result
+        } else {
+            Option::none()
+        }
+    }
+
+    fn size_hint(self: &SliceRefIterator<Ptr>) -> Option<usize> {
+        Option::some(self.inner.len)
+    }
+
+    mixin iter::Iterator<SliceRefIterator<Ptr>, Ptr>;
+    mixin iter::IteratorExt<SliceRefIterator<Ptr>, Ptr>;
+}
+
 mod internal {
     use marker::{Primitive, Pointer}; 
     
@@ -216,6 +260,33 @@ mod internal {
     }
 }
 
+struct Unique<T> {
+    inner: &mut T,
+}
+
+impl Unique<T> {
+    fn new(inner: T) -> Unique<T> {
+        let mem = libc::malloc(size_of::<T>()) as &mut T;
+        *mem = inner;
+        Unique { inner: mem }
+    }
+
+    fn free(self: &mut Unique<T>) {
+        if self.inner != null {
+            when T: Freeable<T> {
+                self.inner.free()
+            }
+            libc::free(self.inner as &mut void);
+        }
+    }
+
+    fn move(self: &mut Unique<T>) -> T {
+        let result = *self.inner;
+        self.inner = null;
+        result
+    }
+}
+
 fn new<T>() -> &mut T {
     when T: marker::ZeroSized {
         null as &mut T
@@ -223,6 +294,7 @@ fn new<T>() -> &mut T {
         libc::malloc(size_of::<T>()) as &mut T
     }
 }
+
 
 fn alloc<T>(len: usize) -> &mut [T] {
     let ret: &mut [T];
@@ -319,6 +391,12 @@ fn zeroed<T>() -> T {
     when T: !marker::ZeroSized {
         libc::memset(&ret as &mut void, 0, size_of::<T>());
     }
+    ret
+}
+
+#[force_inline]
+fn uninitialized<T>() -> T {
+    let ret: T;
     ret
 }
 

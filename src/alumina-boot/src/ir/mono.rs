@@ -1807,6 +1807,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let (fns, mixins) = match item.get() {
             ast::Item::StructLike(s) => (s.associated_fns, s.mixins),
             ast::Item::Enum(e) => (e.associated_fns, e.mixins),
+            // ast::Item::TypeDef(e) => (e.),
             _ => ice!("no associated functions for this type"),
         };
 
@@ -2885,7 +2886,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         // If the type coerces automatically, no cast is required
         if let Ok(expr) = self.try_coerce(typ, expr) {
-            return Ok(expr);
+            return Ok(self.exprs.coerce(expr, typ));
         }
 
         match (expr.ty, typ) {
@@ -3284,13 +3285,19 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
         };
 
-        let ast_type = self.raise_type(ir_self_arg.ty.canonical_type())?;
+        let canonical = ir_self_arg.ty.canonical_type();
+        let ast_type = self.raise_type(canonical)?;
         let method = self
             .get_associated_fns(ast_type)?
             .get(name)
             .copied()
             .or(unified_fn)
-            .ok_or_else(|| CodeErrorKind::MethodNotFound(name.into()))
+            .ok_or_else(|| {
+                CodeErrorKind::MethodNotFound(
+                    name.into(),
+                    self.mono_ctx.type_name(canonical).unwrap(),
+                )
+            })
             .with_no_span()?;
 
         let method = self.try_resolve_function(
@@ -3354,7 +3361,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         ast_type: ast::TyP<'ast>,
     ) -> Result<ast::TyP<'ast>, AluminaError> {
         let typ = match ast_type {
-            ast::Ty::NamedType(n) => {
+            ast::Ty::Generic(n, _) | ast::Ty::NamedType(n) => {
                 if let ast::Item::TypeDef(t) = n.get() {
                     let _guard = self
                         .mono_ctx
@@ -3370,7 +3377,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
             ast::Ty::Placeholder(_) => {
                 let ir_type = self.lower_type(ast_type)?;
-                self.raise_type(ir_type)?
+                let ast_type = self.raise_type(ir_type)?;
+
+                ast_type // self.resolve_ast_type(ast_type)?
             }
             _ => ast_type,
         };
@@ -4042,18 +4051,26 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         typ: ast::TyP<'ast>,
         inits: &[ast::FieldInitializer<'ast>],
         type_hint: Option<ir::TyP<'ir>>,
+        span: Option<ast::Span>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let item = self.try_resolve_struct(typ, inits, type_hint)?;
 
         let field_map = self.get_struct_field_map(item)?;
+        let mut uninitialized: HashSet<&'ast str> = field_map.keys().copied().collect();
+
         let lowered = inits
             .iter()
-            .map(|f| match field_map.get(&f.name) {
-                Some(field) => self
-                    .lower_expr(f.value, Some(field.ty))
-                    .and_then(|e| self.try_coerce(field.ty, e))
-                    .map(|i| (*field, i)),
-                None => Err(CodeErrorKind::UnresolvedItem(f.name.to_string())).with_span(f.span),
+            .map(|f| {
+                uninitialized.remove(f.name);
+                match field_map.get(&f.name) {
+                    Some(field) => self
+                        .lower_expr(f.value, Some(field.ty))
+                        .and_then(|e| self.try_coerce(field.ty, e))
+                        .map(|i| (*field, i)),
+                    None => {
+                        Err(CodeErrorKind::UnresolvedItem(f.name.to_string())).with_span(f.span)
+                    }
+                }
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -4076,6 +4093,15 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 ir::Statement::Expression(self.exprs.assign(self.exprs.field(local, f.id, f.ty), e))
             })
             .collect::<Vec<_>>();
+
+        if !item.get_struct_like().with_no_span()?.is_union {
+            for u in uninitialized {
+                self.mono_ctx.global_ctx.diag().add_warning(CodeError {
+                    kind: CodeErrorKind::UninitializedField(u.to_string()),
+                    backtrace: span.iter().map(|f| Marker::Span(*f)).collect(),
+                });
+            }
+        }
 
         Ok(self.exprs.block(statements, local))
     }
@@ -4195,7 +4221,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ast::ExprKind::Array(elements) => self.lower_array_expression(elements, type_hint),
             ast::ExprKind::EnumValue(typ, id) => self.lower_enum_value(typ, *id, type_hint),
             ast::ExprKind::Struct(func, initializers) => {
-                self.lower_struct_expression(func, initializers, type_hint)
+                self.lower_struct_expression(func, initializers, type_hint, expr.span)
             }
             ast::ExprKind::Index(inner, index) => self.lower_index(inner, index, type_hint),
             ast::ExprKind::Range(lower, upper) => self.lower_range(*lower, *upper, type_hint),

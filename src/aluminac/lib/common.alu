@@ -12,34 +12,44 @@ macro children_by($node, $field, $cursor) {
  
 protocol NodeVisitorExt<Self, ReturnType> {
     fn visit_children(self: &mut Self, node: Node) -> ReturnType {
+        let cursor = node.walk();
+        defer cursor.free();
+        
         when ReturnType: () {
-            for node in node.children(self.cursor) {
+            for node in node.children(&cursor) {
                 self.visit(node);
             }
-        } else when ReturnType: Result<(), Error> {
-            for node in node.children(self.cursor) {
+        } else {
+            for node in node.children(&cursor) {
                 self.visit(node)?;
             }
-            Result::ok(())
-        } else {
-            std::compile_fail!("unsupported return type");
+            ReturnType::ok(())
         }
     }
 
     fn visit_children_by_field(self: &mut Self, node: Node, field: FieldKind) -> ReturnType {
+        let cursor = node.walk();
+        defer cursor.free();
+
         when ReturnType: () {
-            for node in children_by!(node, field, self.cursor) {
+            for node in children_by!(node, field, &cursor) {
                 self.visit(node);
             }
-        } else when ReturnType: Result<(), Error> {
-            for node in children_by!(node, field, self.cursor) {
+        } else {
+            for node in children_by!(node, field, &cursor) {
                 self.visit(node)?;
             }
-            Result::ok(())
-        } else {
-            std::compile_fail!("unsupported return type");
+            ReturnType::ok(())
         }
     }
+
+    fn visit_unknown(self: &mut Self, node: Node) -> ReturnType {
+        when ReturnType: () {
+        } else {
+            ReturnType::ok(())
+        }
+    }
+    
 }
 
 struct Error {}

@@ -62,8 +62,6 @@ impl Arena {
     }
 
     fn aligned_alloc(self: &mut Arena, size: usize, alignment: usize) -> &mut void {
-        // std::debug_assert!(self.tail != null);
-
         let offset = align_offset(self.tail.ptr as usize, alignment);
         let bump = offset + size;
 
@@ -79,8 +77,10 @@ impl Arena {
     }
 
     #[inline]
-    fn alloc<T>(self: &mut Arena) -> &mut T {
-        self.aligned_alloc(size_of::<T>(), align_of::<T>()) as &mut T
+    fn alloc<T>(self: &mut Arena, value: T) -> &mut T {
+        let ptr = self.aligned_alloc(size_of::<T>(), align_of::<T>()) as &mut T;
+        *ptr = value;
+        ptr
     }
 
     #[inline]

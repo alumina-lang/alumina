@@ -1,0 +1,672 @@
+use std::fs::File;
+use std::fmt::Formatter;
+use std::collections::{Vector, sort_by};
+use std::string::{StringBuf, split, join};
+
+use tree_sitter::{TSLanguage, Node, Parser, TSTreeCursor, TSFieldId};
+
+use aluminac::lib::common::{NodeVisitorExt, child_by};
+use aluminac::lib::arena::Arena;
+use aluminac::lib::node_kinds::{NodeVisitor, FieldKind};
+
+use alumina_doc::error::{Error, Result};
+use alumina_doc::common::Path;
+
+extern "C" fn tree_sitter_alumina() -> &TSLanguage;
+
+enum ItemKind {
+    Module,
+    Method,
+    Function,
+    TypeDef,
+    Macro,
+    Const,
+    Protocol,
+    Enum,
+    Static,
+    Struct,
+    Union,
+    Mixin,
+}
+
+impl ItemKind {
+    fn fmt<F: std::fmt::Formatter<F>>(self: &ItemKind, f: &mut F) -> std::fmt::Result {
+        use std::fmt::write;
+
+        switch *self {
+            ItemKind::Module => write!(f, "module"),
+            ItemKind::Function => write!(f, "function"),
+            ItemKind::Method => write!(f, "method"),
+            ItemKind::TypeDef => write!(f, "type"),
+            ItemKind::Macro => write!(f, "macro"),
+            ItemKind::Const => write!(f, "const"),
+            ItemKind::Protocol => write!(f, "protocol"),
+            ItemKind::Enum => write!(f, "enum"),
+            ItemKind::Static => write!(f, "static"),
+            ItemKind::Struct => write!(f, "struct"),
+            ItemKind::Union => write!(f, "union"),
+            ItemKind::Mixin => write!(f, "mixin"),
+            _ => unreachable!(),
+        }
+    }
+
+    fn has_children(self: &ItemKind) -> bool {
+        switch *self {
+            ItemKind::Module => true,
+            ItemKind::Function => true,
+            ItemKind::Protocol => true,
+            ItemKind::Enum => true,
+            ItemKind::Union => true,
+            ItemKind::Struct => true,
+
+            ItemKind::Method => false,
+            ItemKind::TypeDef => false,
+            ItemKind::Macro => false,
+            ItemKind::Const => false,
+            ItemKind::Static => false,
+            ItemKind::Mixin => false,
+            _ => false,
+        }
+    }   
+    
+    fn equals(self: &ItemKind, other: &ItemKind) -> bool {
+        (*self as i32) == (*other as i32)
+    }
+
+    mixin std::cmp::Equatable<ItemKind>;
+}
+
+struct Item {
+    kind: ItemKind,
+    parse_context: &ParseContext,
+    path: Path,
+    doc_comment: StringBuf,
+    node: Node,
+}
+
+impl Item {
+    use ::Result;
+    use std::fmt::{Formatter, write, writeln, Error};
+
+    fn free(self: &mut Item) {
+        self.path.free();
+        self.doc_comment.free();
+    }
+
+    fn fmt<F: Formatter<F>>(self: &Item, fmt: &mut F) -> Result<(), Error> {
+        
+        if !self.doc_comment.empty() {
+            write!(fmt, "{}", self.doc_comment)?;
+        }
+
+        switch self.kind {
+            ItemKind::Module => write!(fmt, "module {}", self.name)?,
+            ItemKind::Function => write!(fmt, "function {}", self.name)?,
+            ItemKind::TypeDef => write!(fmt, "type {}", self.name)?,
+            ItemKind::Macro => write!(fmt, "macro {}", self.name)?,
+            ItemKind::Const => write!(fmt, "const {}", self.name)?,
+            ItemKind::Protocol => write!(fmt, "protocol {}", self.name)?,
+            ItemKind::Enum => write!(fmt, "enum {}", self.name)?,
+            ItemKind::Static => write!(fmt, "static {}", self.name)?,
+            ItemKind::Struct => write!(fmt, "struct {}", self.name)?,
+            ItemKind::Mixin => write!(fmt, "mixin {}", self.name)?,
+            _ => unreachable!()
+        };
+
+        write!(fmt, " in {}", self.path)?;
+        Result::ok(())
+    }
+}
+
+macro get_name($self, $node) {
+    child_by!($node, FieldKind::Name).unwrap().text($self.parse_context.source())
+}
+
+struct TopLevelVisitor {
+    path: Path,
+    parse_context: &ParseContext,
+    items: &mut Vector<Item>,
+    doc_comment: StringBuf,
+    file_doc_comment: StringBuf,
+    in_a_container: bool,
+}
+
+impl TopLevelVisitor {
+    fn new(parse_context: &ParseContext, path: Path, items: &mut Vector<Item>) -> TopLevelVisitor {
+        TopLevelVisitor {
+            parse_context: parse_context,
+            path: path,
+            items: items,
+            doc_comment: StringBuf::new(),
+            file_doc_comment: StringBuf::new(),
+            in_a_container: false
+        }
+    }
+
+    fn free(self: &mut TopLevelVisitor) {
+        self.path.free();
+        self.doc_comment.free();
+        self.file_doc_comment.free();
+    }
+    
+    fn move(self: &mut TopLevelVisitor) -> TopLevelVisitor {
+        TopLevelVisitor {
+            source: self.source,
+            path: self.path.move(),
+            items: self.items,
+            doc_comment: self.doc_comment.move(),
+            file_doc_comment: self.file_doc_comment.move(),
+        }
+    }
+    
+    fn add_item(self: &mut TopLevelVisitor, kind: ItemKind, name: &[u8], node: Node) {
+        self.items.push(Item {
+            kind: kind,
+            path: self.path.extend_with(name),
+            node: node,
+            parse_context: self.parse_context,
+            doc_comment: self.doc_comment.move(),
+        });
+    }
+
+    fn visit_source_file(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.visit_children(node)
+    }
+
+    fn visit_top_level_block(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.visit_children_by_field(node, FieldKind::Items)
+    }
+
+    fn visit_function_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        let kind = if self.in_a_container {
+            ItemKind::Method
+        } else {
+            ItemKind::Function
+        };
+
+        self.add_item(kind, get_name!(self, node), node);
+        Result::ok(())
+    } 
+
+    fn visit_enum_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.add_item(ItemKind::Enum, get_name!(self, node), node);
+        Result::ok(())
+    } 
+
+    fn visit_const_declaration(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.add_item(ItemKind::Const, get_name!(self, node), node);
+        Result::ok(())
+    } 
+
+    fn visit_type_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.add_item(ItemKind::TypeDef, get_name!(self, node), node);
+        Result::ok(())
+    } 
+
+    fn visit_macro_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.add_item(ItemKind::Macro, get_name!(self, node), node);
+        Result::ok(())
+    }
+
+    fn visit_mod_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        let name = child_by!(node, FieldKind::Name).unwrap().text(self.parse_context.source());
+
+        self.add_item(ItemKind::Module, name, node);
+
+        self.path.push(name);
+        defer self.path.pop();
+
+        self.visit_children_by_field(node, FieldKind::Body)?;
+        Result::ok(())
+    }
+
+    fn visit_struct_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        let kind_text = child_by!(node, FieldKind::Kind)
+            .unwrap()
+            .text(self.parse_context.source());
+
+        let kind = if kind_text == "union" {
+            ItemKind::Union
+        } else {
+            ItemKind::Struct
+        };
+
+        self.add_item(kind, get_name!(self, node), node);
+        Result::ok(())
+    }
+
+    fn visit_static_declaration(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.add_item(ItemKind::Static, get_name!(self, node), node);
+        Result::ok(())
+    }
+
+    fn visit_mixin(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.add_item(ItemKind::Mixin, "<mixin>", node);
+        Result::ok(())
+    }
+
+    fn visit_impl_block(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        let name = child_by!(node, FieldKind::Name).unwrap().text(self.parse_context.source());
+                
+        self.path.push(name);
+        defer self.path.pop();
+
+        let in_a_container = self.in_a_container;
+        
+        self.in_a_container = true;
+        self.visit_children_by_field(node, FieldKind::Body)?;
+        self.in_a_container = in_a_container;
+
+        Result::ok(())
+    }
+    
+    fn visit_protocol_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        let name = child_by!(node, FieldKind::Name).unwrap().text(self.parse_context.source());
+        self.add_item(ItemKind::Protocol, name, node);
+
+        self.path.push(name);
+        defer self.path.pop();
+
+        let in_a_container = self.in_a_container;
+        
+        self.in_a_container = true;
+        self.visit_children_by_field(node, FieldKind::Body)?;
+        self.in_a_container = in_a_container;
+
+        Result::ok(())
+    }
+
+    fn visit_use_declaration(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        Result::ok(())
+    }
+
+    fn visit_doc_comment(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.doc_comment.extend_from_slice(node.text(self.parse_context.source()));
+        self.doc_comment.extend_from_slice("\n");
+
+        Result::ok(())
+    }
+
+    fn visit_file_doc_comment(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.file_doc_comment.extend_from_slice(node.text(self.parse_context.source()));
+        self.file_doc_comment.extend_from_slice("\n");
+        Result::ok(())
+    }
+    
+    
+    mixin NodeVisitorExt<TopLevelVisitor, Result<()>>;
+    mixin NodeVisitor<TopLevelVisitor, Result<()>>;
+}
+
+struct ParseContext {
+    _source: StringBuf,
+    tree: tree_sitter::Tree,
+}
+
+impl ParseContext {
+    fn from_file(parser: &mut Parser, filename: &[u8]) -> Result<ParseContext> {
+        let source = std::fs::File::read_to_string(filename).map_err(Error::from_io)?;
+        defer source.free();
+    
+        let tree = parser.parse(source.as_slice());
+        defer tree.free();
+        
+        Result::ok(ParseContext {
+            _source: source.move(),
+            tree: tree.move(),
+        })
+    }
+
+    fn source(self: &ParseContext) -> &[u8] {
+        self._source.as_slice()
+    }
+
+    fn root_node(self: &ParseContext) -> Node {
+        self.tree.root_node().unwrap()
+    }
+
+    fn free(self: &mut ParseContext) {
+        self._source.free();
+        self.tree.free();
+    }
+
+    fn move(self: &mut ParseContext) -> ParseContext {
+        ParseContext {
+            _source: self.source.move(),
+            tree: self.tree.move(),
+        }
+    }
+}
+
+struct Processor {
+    parser: Parser,
+    arena: Arena,
+    items: Vector<Item>,
+    parse_contexts: Vector<&mut ParseContext>
+}
+
+impl Processor {
+    fn new() -> Processor {
+        let parser = Parser::new(); 
+        parser.set_language(tree_sitter_alumina()).unwrap();
+
+        Processor {
+            parser: parser,
+            items: Vector::new(),
+            arena: Arena::new(),
+            parse_contexts: Vector::new(),
+        }
+    }
+
+    fn free(self: &mut Processor) {
+        use std::collections::free_all;
+
+        self.parser.free();
+        self.arena.free();
+        self.items.free_all();
+        self.parse_contexts.free_all();
+    }
+    
+    fn move(self: &mut Processor) -> Processor {
+        Processor { 
+            parser: self.parser.move(), 
+            items: self.items.move(), 
+            arena: self.arena.move(),
+        }
+    }
+
+    fn process_file(self: &mut Processor, module_path: &[u8], filename: &[u8]) -> Result<()> {
+        let parse_context = self.arena.alloc(ParseContext::from_file(&self.parser, filename)?);
+        self.parse_contexts.push(parse_context);
+            
+        let path = Path::new(module_path
+            .split("::")
+            .filter(|segment: &[u8]| -> bool { segment.len > 0 })
+            .to_vector()
+        );
+
+        defer path.free();
+
+        let visitor = TopLevelVisitor::new(parse_context, path.clone(), &self.items);
+        defer visitor.free();
+
+        visitor.visit(parse_context.root_node());
+
+        self.items.push(Item {
+            kind: ItemKind::Module,
+            path: path.move(),
+            node: parse_context.root_node(),
+            parse_context: parse_context,
+            doc_comment: visitor.file_doc_comment.move(),
+        });
+
+        Result::ok(())
+    }
+
+}
+
+fn ensure_dir(f: &[u8]) -> Result<()> {
+    use std::string::join;
+
+    let segments = f.split("/").to_vector();
+    defer segments.free();
+    segments.pop();
+
+    let dirname = "/".join(&segments.iter());
+    defer dirname.free();
+
+    std::process::Command::new("/usr/bin/mkdir")
+        .args(&[
+            "-p",
+            dirname.as_slice()
+        ])
+        .spawn()
+        .map_err(Error::from_io)?
+        .wait()
+        .map_err(Error::from_io)?;
+
+    Result::ok(())
+}
+
+fn gen_link(prefix: &[u8], path: &Path) -> StringBuf {
+    use std::string::join_fmt;
+    use std::fmt::{write, writeln, format};
+
+    if path.segments.empty() {
+        format!("{}/index.html", prefix).unwrap()
+    } else {
+        format!("{}/{}.html", prefix, "/".join_fmt(path.segments.iter())).unwrap()
+    }
+}
+
+fn write_breadcrumbs<T: std::io::Writable<T>>(writer: &mut T, item: &Item) {
+    use std::string::join_fmt;
+    use std::fmt::{write, writeln, format};
+
+    if item.path.segments.empty() {
+        writeln!(writer, "<h1>{}</h1>", item.kind);
+        return;
+    } 
+    
+    write!(writer, "<h1>{} ", item.kind);
+
+    for (idx, segment) in item.path.segments.iter().enumerate() {
+        let partial_path = Path::new(Vector::from_slice(item.path.segments.as_slice()[..idx + 1]));
+        let link = gen_link("", &partial_path);
+
+        if idx == 0 {
+            write!(writer, "<a href=\"{}\">{}</a>", link.as_slice(), segment);
+        } else {
+            write!(writer, "::<a href=\"{}\">{}</a>", link.as_slice(), segment);
+        }
+
+        partial_path.free();
+        link.free();
+    }
+    writeln!(writer, "</h1>");
+}
+
+fn write_docstring<T: std::io::Writable<T>>(writer: &mut T, item: &Item) {
+    use std::string::{trim_prefix, starts_with};
+    use std::fmt::writeln;
+
+    if item.doc_comment.len() == 0 {
+        return;
+    }
+
+    writeln!(writer, "<p>");
+    for i in item.doc_comment.as_slice().split("\n") {
+        if i.starts_with("///") {
+            writeln!(writer, "{}", i.trim_prefix("///"));
+        } else {
+            writeln!(writer, "{}", i.trim_prefix("//!"));
+        }
+    }
+    writeln!(writer, "</p>");
+}
+
+fn write_source<T: std::io::Writable<T>>(writer: &mut T, item: &Item) {
+    use std::string::{replace};
+    use std::fmt::{write, writeln};
+
+    let source: StringBuf = StringBuf::from_slice(item.node.text(item.parse_context.source()));
+    defer source.free();
+
+    switch item.kind {
+        ItemKind::Module => return,
+        ItemKind::Enum, ItemKind::Struct, ItemKind::Union, ItemKind::TypeDef, ItemKind::Const, ItemKind::Static => {},
+        // todo: signature only
+        ItemKind::Function, ItemKind::Macro, ItemKind::Protocol, ItemKind::Mixin => return,
+        _ => unreachable!()
+    };
+
+    for (s, t) in [("&", "&amp;"), ("<", "&lt;"), (">", "&gt;")].iter() {
+        let replacement = source
+            .as_slice()
+            .replace(s, t);
+
+        source.free();
+        source = replacement;
+    }
+
+    write!(writer, "<pre><code>");
+    write!(writer, "{}", source.as_slice());
+    writeln!(writer, "</code></pre>");
+}
+
+fn inner(top_level: &Item, grouping: &Vector<&Item>) -> Result<()> {
+    use std::string::join_fmt;
+    use std::fmt::{write, writeln, format};
+
+    let filename = gen_link("./build/docs", &top_level.path);
+    defer filename.free();
+
+    ensure_dir(filename.as_slice())?;
+
+    let file = std::fs::File::create(filename.as_slice()).map_err(Error::from_io)?;
+    defer file.close();
+
+    let writer = std::io::BufferedWriter::new(&file, 1024);
+    defer {
+        writer.flush();
+        writer.free();
+    };
+
+    writeln!(&writer, "<html>");
+    writeln!(&writer, "<head>");
+    writeln!(&writer, "<title>{}</title>", top_level.path);
+    writeln!(&writer, "<link rel=\"stylesheet\" href=\"/styles.css\">");
+    writeln!(&writer, "<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">");
+    writeln!(&writer, "<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>");
+    writeln!(&writer, "<link href=\"https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500&family=Source+Code+Pro:wght@400;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,700&display=swap\" rel=\"stylesheet\">");
+    writeln!(&writer, "</head>");
+    writeln!(&writer, "<nav>");
+
+    let top_level_link = gen_link("", &top_level.path);
+    defer top_level_link.free();
+
+    if top_level.path.last().is_some {
+        writeln!(&writer, "<h1>{}</h1>", top_level.path.last().unwrap());
+    }
+
+    for grp in grouping.iter().group_by(|i: &Item| -> ItemKind { i.kind }) {
+        writeln!(&writer, "<h2>{}s</h2>", grp.key);
+        writeln!(&writer, "<ul>");
+        
+        for item in grp {
+            let link = gen_link("", &item.path);
+            writeln!(&writer, "<li>");
+
+            if item.kind.has_children() {
+                writeln!(&writer, "<a href=\"{}\">{}</a>", link, item.path.last().unwrap());
+            } else {
+                writeln!(&writer, "<a href=\"{}#item.{}\">{}</a>", top_level_link, item.path.last().unwrap(), item.path.last().unwrap());
+            }
+
+            writeln!(&writer, "</li>");
+            link.free();
+        }
+        writeln!(&writer, "</ul>");
+    }
+    writeln!(&writer, "</nav>");
+    writeln!(&writer, "<main>");
+    
+    write_breadcrumbs(&writer, top_level);
+    write_source(&writer, top_level);
+    write_docstring(&writer, top_level);    
+
+    if top_level.kind.has_children() {
+        for grp in grouping.iter().group_by(|i: &Item| -> ItemKind { i.kind }) {
+            writeln!(&writer, "<h2 id=\"{}\">{}s</h2>", grp.key, grp.key);
+            writeln!(&writer, "<ul>");
+            
+            for item in grp {
+                let name = item.path.last().unwrap();
+                let link = gen_link("", &item.path);
+                
+                writeln!(&writer, "<li id=\"item.{}\">", name);
+                if item.kind.has_children() {
+                    writeln!(&writer, "<a href=\"{}\">{}</a>", link, name);
+                } else {
+                    writeln!(&writer, "{}", name);
+                }
+                write_docstring(&writer, item);
+                writeln!(&writer, "</li>");
+
+                link.free();
+            }
+
+            writeln!(&writer, "</ul>");
+        }
+    }
+
+    writeln!(&writer, "</main>");
+    writeln!(&writer, "</html>");
+
+
+    Result::ok(())
+}
+
+
+fn write_html(items: &Vector<Item>) -> Result<()> { 
+    use std::string::join_fmt;
+    use std::fmt::format;
+
+    for top_level in items.iter_ref().filter(|v: &Item| -> bool { v.kind.has_children() }) {
+        let items = items
+            .iter_ref()
+            .filter(|&top_level, v: &Item| -> bool { 
+                v.path.len() == top_level.path.len() + 1 && v.path.starts_with(&top_level.path)
+            })
+            .to_vector();
+        
+        inner(top_level, &items)?;
+    }
+
+    Result::ok(())
+}
+
+fn main_inner(args: &[&[u8]]) -> Result<()> {
+    let processor = Processor::new();
+    defer processor.free();
+
+    let inputs = args
+        .iter()
+        .skip(1)
+        .filter_map(|s: &[u8]| -> Option<(&[u8], &[u8])> {
+            use std::option::try;
+
+            let segments = s.split("=");
+            let module_path = segments.next()?
+            let filename = segments.next()?;
+
+            Option::some((module_path, filename))
+        });
+
+    for (module_path, filename) in inputs {
+        processor.process_file(module_path, filename)?;
+    }
+
+    processor.items
+        .as_slice_mut()
+        .sort_by(|it: &Item| -> (&[&[u8]], i32, &[u8]) {
+            let start = it.path.segments.as_slice();
+            (start[..start.len-1], it.kind as i32, start[start.len-1])
+        });
+
+    write_html(&processor.items)?;
+        
+    Result::ok(())
+}
+
+fn main(args: &[&[u8]]) -> i32 {
+    let res = main_inner(args);
+    if !res.is_ok {
+        println!("{}", res.unwrap_err());
+        1
+    } else {
+        0
+    }
+}
+
+

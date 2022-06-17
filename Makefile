@@ -73,16 +73,16 @@ $(CODEGEN).c: $(ALU_DEPS) $(CODEGEN_SOURCES)
 $(CODEGEN): $(CODEGEN).c $(BUILD_DIR)/parser.o
 	$(CC) $(CFLAGS) -o $@ $^ -ltree-sitter -lm
 
-src/aluminac/node_kinds.alu: $(CODEGEN)
+src/aluminac/lib/node_kinds.alu: $(CODEGEN)
 	$(CODEGEN) > $@
 
 # The actual self-hosted compiler
-$(ALUMINAC).c: $(ALU_DEPS) $(SELFHOSTED_SOURCES) src/aluminac/node_kinds.alu
+$(ALUMINAC).c: $(ALU_DEPS) $(SELFHOSTED_SOURCES) src/aluminac/lib/node_kinds.alu
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --output $@ \
 		$(foreach src,$(ALU_LIBRARIES),$(subst /,::,$(basename $(subst libraries/,,$(src))))=$(src)) \
 		$(foreach src,$(SELFHOSTED_SOURCES),$(subst /,::,$(basename $(src)))=$(src))
 
-$(ALUMINAC_TESTS).c: $(ALU_DEPS) $(SELFHOSTED_SOURCES) src/aluminac/node_kinds.alu
+$(ALUMINAC_TESTS).c: $(ALU_DEPS) $(SELFHOSTED_SOURCES) src/aluminac/lib/node_kinds.alu
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --output $@ \
 		$(foreach src,$(ALU_LIBRARIES),$(subst /,::,$(basename $(subst libraries/,,$(src))))=$(src)) \
 		$(foreach src,$(SELFHOSTED_SOURCES),$(subst /,::,$(basename $(src)))=$(src))
@@ -99,6 +99,34 @@ $(ALUMINAC): $(ALUMINAC).c $(BUILD_DIR)/parser.o $(BUILD_DIR)/llvm_target.o
 
 $(ALUMINAC_TESTS): $(ALUMINAC_TESTS).c $(BUILD_DIR)/parser.o $(BUILD_DIR)/llvm_target.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LLVM_LDFLAGS) -ltree-sitter $(LLVM_LIBS)	-lm
+
+## --------------------------------Tools -------------------------------
+
+ALUMINA_DOC = $(BUILD_DIR)/alumina-doc
+ALUMINAC_LIB_SOURCES = $(shell find src/aluminac/lib/ -type f -name '*.alu')
+ALUMINA_DOC_SOURCES = $(shell find tools/alumina-doc/ -type f -name '*.alu')
+
+$(ALUMINA_DOC).c: $(ALU_DEPS) $(ALUMINAC_LIB_SOURCES) $(ALUMINA_DOC_SOURCES) src/aluminac/lib/node_kinds.alu
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --output $@ \
+		$(foreach src,$(ALU_LIBRARIES),$(subst /,::,$(basename $(subst libraries/,,$(src))))=$(src)) \
+		$(foreach src,$(ALUMINAC_LIB_SOURCES),$(subst /,::,$(basename $(subst src/,,$(src))))=$(src)) \
+		$(foreach src,$(ALUMINA_DOC_SOURCES),$(subst /,::,$(basename $(subst alumina-doc/,alumina_doc/,$(src))))=$(src))
+
+$(ALUMINA_DOC): $(ALUMINA_DOC).c $(BUILD_DIR)/parser.o
+	$(CC) $(CFLAGS) -o $@ $^ -ltree-sitter -lm
+
+.PHONY: docs
+
+docs: $(ALUMINA_DOC)
+	rm -rf $(BUILD_ROOT)/docs
+	$(ALUMINA_DOC) \
+		$(foreach src,$(ALUMINAC_LIB_SOURCES),$(subst /,::,$(basename $(subst src/,,$(src))))=$(src)) 
+
+#	$(ALUMINA_DOC) \
+		$(foreach src,$(SYSROOT_FILES),$(subst __root__,, $(subst /,::,$(basename $(subst ./stdlib,,$(src)))))=$(src)) \
+		$(foreach src,$(ALUMINAC_LIB_SOURCES),$(subst /,::,$(basename $(subst src/,,$(src))))=$(src)) \
+		$(foreach src,$(ALU_LIBRARIES),$(subst /,::,$(basename $(subst libraries/,,$(src))))=$(src)) 
+	ln -s `realpath tools/alumina-doc/styles.css` $(BUILD_ROOT)/docs
 
 ## ------------------------------ Various ------------------------------
 
