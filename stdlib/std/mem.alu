@@ -1,3 +1,5 @@
+//! Working with memory (allocation, slices, copying, ...)
+
 use marker::Pointer;
 use std::option::Option;
 
@@ -7,28 +9,44 @@ protocol Freeable<Self> {
     fn free(self: &mut Self);
 }
 
-// "Move semantics"
+/// Types that implement move semantics
+///
+/// If a type allocates memory, it is a good idea to implement move function, so that instances
+/// can be passed around by value, leaving inert instances behind. This is chiefly used to `defer`
+/// expressions are more ergonomic.
+///
+/// ```
+/// let foo = Vector::new();
+/// defer foo.free(); // Clean up foo if function returns early
+/// ...
+/// do_something_with(foo.move());
+/// // will not lead to double free when this function returns.
+/// ```
 protocol Movable<Self> {
     fn move(self: &mut Self) -> Self;
 }
 
+/// Types that be copied (usually heap-allocated types)
 protocol Copyable<Self> {
     fn clone(self: &Self) -> Self;
 }
 
+/// Types that can be viewed as slices
 protocol AsSlice<Self, T> {
     fn as_slice(self: &Self) -> &[T];
 }
 
+/// Types that can be viewed as mutable slices
 protocol AsSliceMut<Self, T> {
     fn as_slice_mut(self: &mut Self) -> &mut [T];
 }
 
-
+/// Fat pointers to a contiguous region of memory.
+///
 /// Slice fat "pointers" are just regular structs that compiler handles in a special way with regards
 /// to syntax, implicit coercion and type inference. They are generic over the pointer-to-element type
-/// rather than the element type itself. This is an implementation detail to ensure that &mut [T] and 
-/// &[T] are distinguished without having to have two distinct types for mutable and const slices.
+/// rather than the element type itself. This is an implementation detail to ensure that `&mut [T]` and 
+/// `&[T]` are distinguished without having to have two distinct types for mutable and const slices.
 #[lang(slice)]
 struct slice<Ptr: Pointer> {
     ptr: Ptr,
@@ -145,7 +163,7 @@ impl slice {
         } else {
             let idx = 0usize;
             while idx < self.len {
-                self[idx].hash(hasher);
+                (*self)[idx].hash(hasher);
                 idx += 1;
             }
         }

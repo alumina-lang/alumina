@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::fmt::format;
 use std::collections::{Vector, sort_by};
-use std::string::{StringBuf, split, join, trim_prefix, starts_with, join_fmt, replace};
+use std::string::{StringBuf, split, join, trim_prefix, starts_with, join_fmt, replace, trim};
 
 use tree_sitter::{TSLanguage, Node, Parser, TSTreeCursor, TSFieldId};
 
@@ -10,8 +10,8 @@ use aluminac::lib::arena::Arena;
 use aluminac::lib::node_kinds::{NodeVisitor, FieldKind};
 
 use alumina_doc::error::{Error, Result};
-use alumina_doc::common::{Item, ItemKind, Path, ParseContext};
-use alumina_doc::visitors::TopLevelVisitor;
+use alumina_doc::common::{Item, ItemKind, Path, ParseContext, ItemBag};
+use alumina_doc::visitors::{TopLevelVisitor, CodePrinter};
 
 extern "C" fn tree_sitter_alumina() -> &TSLanguage;
 
@@ -26,7 +26,7 @@ macro wln($writer, $fmt, $args...) {
 struct Processor {
     parser: Parser,
     arena: Arena,
-    items: Vector<Item>,
+    items: ItemBag,
     parse_contexts: Vector<&mut ParseContext>
 }
 
@@ -37,7 +37,7 @@ impl Processor {
 
         Processor {
             parser: parser,
-            items: Vector::new(),
+            items: ItemBag::new(),
             arena: Arena::new(),
             parse_contexts: Vector::new(),
         }
@@ -48,7 +48,7 @@ impl Processor {
 
         self.parser.free();
         self.arena.free();
-        self.items.free_all();
+        self.items.free();
         self.parse_contexts.free_all();
     }
     
@@ -77,7 +77,7 @@ impl Processor {
 
         visitor.visit(parse_context.root_node());
 
-        self.items.push(Item {
+        self.items.add_item(Item {
             kind: ItemKind::Module,
             path: path.move(),
             node: parse_context.root_node(),
@@ -119,22 +119,26 @@ fn link_for_path(prefix: &[u8], path: &Path) -> StringBuf {
     }
 }
 
-fn write_breadcrumbs<T: std::io::Writable<T>>(writer: &mut T, item: &Item) -> Result<()> {
+fn write_breadcrumbs<T: std::io::Writable<T>>(writer: &mut T, item: &Item, with_kind: bool) -> Result<()> {
     if item.path.segments.empty() {
         wln!(writer, "<h1>{}</h1>", item.kind);
         return Result::ok(());
     } 
     
-    w!(writer, "<h1>{} ", item.kind);
+    if with_kind {
+        w!(writer, "<h1>{} ", item.kind);
+    } else {
+        w!(writer, "<h1>");
+    }
 
     for (idx, segment) in item.path.segments.iter().enumerate() {
         let partial_path = Path::new(Vector::from_slice(item.path.segments.as_slice()[..idx + 1]));
         let link = link_for_path("", &partial_path);
 
         if idx == 0 {
-            w!(writer, "<a href=\"{}\">{}</a>", link.as_slice(), segment);
+            w!(writer, "<a class=\"breadcrumbs\" href=\"{}\">{}</a>", link.as_slice(), segment);
         } else {
-            w!(writer, "::<a href=\"{}\">{}</a>", link.as_slice(), segment);
+            w!(writer, "::<a class=\"breadcrumbs\" href=\"{}\">{}</a>", link.as_slice(), segment);
         }
 
         partial_path.free();
@@ -144,20 +148,50 @@ fn write_breadcrumbs<T: std::io::Writable<T>>(writer: &mut T, item: &Item) -> Re
     Result::ok(())
 }
 
-fn write_docstring<T: std::io::Writable<T>>(writer: &mut T, item: &Item) -> Result<()> {
+fn write_docstring<T: std::io::Writable<T>>(writer: &mut T, item: &Item, tagline_only: bool) -> Result<()> {
     if item.doc_comment.len() == 0 {
         return Result::ok(());
     }
 
-    wln!(writer, "<p>");
+    if !tagline_only {
+        wln!(writer, "<p>");
+    }
+
+    let in_a_code_block = false;
+
     for i in item.doc_comment.as_slice().split("\n") {
-        if i.starts_with("///") {
-            wln!(writer, "{}", i.trim_prefix("///"));
+        let without_prefix =  if i.starts_with("///") {
+            i.trim_prefix("///").trim()
         } else {
-            wln!(writer, "{}", i.trim_prefix("//!"));
+            i.trim_prefix("//!").trim()
+        };
+
+        if without_prefix.len == 0 {
+            if tagline_only {
+                return Result::ok(());
+            } else {
+                wln!(writer, "</p><p>");
+            }
+        } else if without_prefix == "```" {
+            if in_a_code_block {
+                wln!(writer, "</code></pre>");
+                in_a_code_block = false;
+            } else {
+                w!(writer, "<pre><code>");
+                in_a_code_block = true;
+            }
+        } else {
+            wln!(writer, "{}", without_prefix);
         }
     }
-    wln!(writer, "</p>");
+
+    if in_a_code_block {
+        return Result::err(Error::from_custom("unclosed code block"));
+    }
+
+    if !tagline_only {
+        wln!(writer, "</p>");
+    }
     Result::ok(())
 }
 
@@ -166,30 +200,24 @@ fn write_source<T: std::io::Writable<T>>(writer: &mut T, item: &Item) -> Result<
     defer source.free();
 
     switch item.kind {
-        ItemKind::Enum, ItemKind::Struct, ItemKind::Union, ItemKind::TypeDef, ItemKind::Const, ItemKind::Static => {},
+        ItemKind::Enum, ItemKind::Struct, ItemKind::Union, ItemKind::TypeDef, ItemKind::Const, ItemKind::Static, ItemKind::Function, ItemKind::Macro => {},
         // todo: signature only
-        ItemKind::Module,
-        ItemKind::Function, ItemKind::Macro, ItemKind::Protocol, ItemKind::Mixin => return Result::ok(()),
+        ItemKind::Module, ItemKind::Protocol, ItemKind::Mixin => return Result::ok(()),
         _ => unreachable!()
     };
 
-    for (s, t) in [("&", "&amp;"), ("<", "&lt;"), (">", "&gt;")].iter() {
-        let replacement = source
-            .as_slice()
-            .replace(s, t);
-
-        source.free();
-        source = replacement;
-    }
-
+    
     w!(writer, "<pre><code>");
-    w!(writer, "{}", source.as_slice());
+    
+    let printer = CodePrinter::new(item.parse_context, writer);
+    printer.visit(item.node);
+
     wln!(writer, "</code></pre>");
 
     Result::ok(())
 }
 
-fn write_page(top_level: &Item, grouping: &Vector<&Item>) -> Result<()> {
+fn write_page_inner(nav_item: &Item, top_level: &Item, nav_items: &Vector<&Item>, main_items: &Vector<&Item>) -> Result<()> {
     let filename = link_for_path("./build/docs", &top_level.path);
     defer filename.free();
 
@@ -206,10 +234,17 @@ fn write_page(top_level: &Item, grouping: &Vector<&Item>) -> Result<()> {
 
     wln!(&writer, "<html>");
     wln!(&writer, "<head>");
-    wln!(&writer, "<title>{}</title>", top_level.path);
-    wln!(&writer, "<link rel=\"stylesheet\" href=\"/styles.css\">");
+
+    if top_level.path.segments.len() == 0 {
+        wln!(&writer, "<title>Alumina Docs</title>");
+    } else {
+        wln!(&writer, "<title>{} - Alumina Docs</title>", top_level.path);
+    }
+
+    wln!(&writer, "<link rel=\"stylesheet\" href=\"/static/styles.css\">");
     wln!(&writer, "<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">");
     wln!(&writer, "<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>");
+    wln!(&writer, "<meta content=\"width=device-width, initial-scale=1\" name=\"viewport\" />");
     wln!(&writer, "<link href=\"https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500&family=Source+Code+Pro:wght@400;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,700&display=swap\" rel=\"stylesheet\">");
     wln!(&writer, "</head>");
     wln!(&writer, "<body>");
@@ -217,14 +252,15 @@ fn write_page(top_level: &Item, grouping: &Vector<&Item>) -> Result<()> {
     // Left sidebar
 
     wln!(&writer, "<nav>");
+    wln!(&writer, "<a href=\"/\"><img class=\"logo\" src=\"/static/logo.svg\"></a>");
     let top_level_link = link_for_path("", &top_level.path);
     defer top_level_link.free();
 
-    if top_level.path.last().is_some {
-        wln!(&writer, "<h1>{}</h1>", top_level.path.last().unwrap());
+    if nav_item.path.last().is_some {
+        write_breadcrumbs(&writer, nav_item, false)?;
     }
 
-    for grp in grouping.iter().group_by(|i: &Item| -> ItemKind { i.kind }) {
+    for grp in nav_items.iter().group_by(|i: &Item| -> ItemKind { i.kind }) {
         wln!(&writer, "<h2>{}s</h2>", grp.key);
         wln!(&writer, "<ul>");
         
@@ -232,7 +268,7 @@ fn write_page(top_level: &Item, grouping: &Vector<&Item>) -> Result<()> {
             let link = link_for_path("", &item.path);
             wln!(&writer, "<li>");
 
-            if item.kind.has_children() {
+            if item.kind.has_own_page() {
                 wln!(&writer, "<a href=\"{}\">{}</a>", link, item.path.last().unwrap());
             } else {
                 wln!(&writer, "<a href=\"{}#item.{}\">{}</a>", top_level_link, item.path.last().unwrap(), item.path.last().unwrap());
@@ -248,33 +284,52 @@ fn write_page(top_level: &Item, grouping: &Vector<&Item>) -> Result<()> {
     // Main section
 
     wln!(&writer, "<main>");
-    
-    write_breadcrumbs(&writer, top_level)?;
+
+    write_breadcrumbs(&writer, top_level, true)?;
     write_source(&writer, top_level)?;
-    write_docstring(&writer, top_level)?;    
+    write_docstring(&writer, top_level, false)?;    
 
-    if top_level.kind.has_children() {
-        for grp in grouping.iter().group_by(|i: &Item| -> ItemKind { i.kind }) {
+    if top_level.kind.has_own_page() {
+        for grp in main_items.iter().group_by(|i: &Item| -> ItemKind { i.kind }) {
             wln!(&writer, "<h2 id=\"{}\">{}s</h2>", grp.key, grp.key);
-            wln!(&writer, "<ul>");
             
-            for item in grp {
-                let name = item.path.last().unwrap();
-                let link = link_for_path("", &item.path);
-                
-                wln!(&writer, "<li id=\"item.{}\">", name);
-                if item.kind.has_children() {
-                    wln!(&writer, "<a href=\"{}\">{}</a>", link, name);
-                } else {
-                    wln!(&writer, "{}", name);
+            if grp.key.has_own_page() {
+                wln!(&writer, "<div class=\"item-short-table\">");
+                for item in grp {
+                    let name = item.path.last().unwrap();
+                    let link = link_for_path("", &item.path);
+                    
+                    wln!(&writer, "<div class=\"row\" id=\"item.{}\">", name);
+                    wln!(&writer, "<div class=\"cell-name\"><a href=\"{}\">{}</a></div>", link, name);
+                    w!(&writer, "<div class=\"cell-doc\">");
+                    write_docstring(&writer, item, true);
+                    wln!(&writer, "</div>");
+                    wln!(&writer, "</div>");
+    
+                    link.free();
                 }
-                write_docstring(&writer, item);
-                wln!(&writer, "</li>");
-
-                link.free();
+                wln!(&writer, "</div>");
+                
+            } else {
+                wln!(&writer, "<ul>");
+                for item in grp {
+                    let name = item.path.last().unwrap();
+                    
+                    wln!(&writer, "<li id=\"item.{}\">", name);
+                    
+                    
+                    wln!(&writer, "<h4 class=\"signature\">");
+                    let printer = CodePrinter::new(item.parse_context, &writer);
+                    printer.visit(item.node);
+                    wln!(&writer, "</h4>");
+                    wln!(&writer, "<div class=\"item-doc\">");
+                    write_docstring(&writer, item, false);
+                    wln!(&writer, "</div>");
+                    wln!(&writer, "</li>");
+                }
+    
+                wln!(&writer, "</ul>");
             }
-
-            wln!(&writer, "</ul>");
         }
     }
 
@@ -286,19 +341,42 @@ fn write_page(top_level: &Item, grouping: &Vector<&Item>) -> Result<()> {
 }
 
 
-fn write_html(items: &Vector<Item>) -> Result<()> { 
+fn write_page(items: &ItemBag, top_level: &Item) -> Result<()> {
+    let main_items = items
+        .filtered(|&top_level, v: &Item| -> bool { 
+            v.path.len() == top_level.path.len() + 1 && v.path.starts_with(&top_level.path)
+        });
+    defer main_items.free();
+
+    let (nav_item, nav_items) = if !top_level.kind.show_siblings() {
+        (top_level, &main_items)
+    } else {
+        let nav_items = items
+            .filtered(|&top_level, v: &Item| -> bool { 
+                v.path.len() == top_level.path.len() && 
+                    v.path.segments.as_slice()[..v.path.len() - 1] == 
+                        top_level.path.segments.as_slice()[..v.path.len() - 1]
+            });
+        
+        defer nav_items.free();
+        
+        let parent_path = top_level.path.clone();
+        defer parent_path.free();
+        parent_path.pop();
+
+        let parent = items.get(&parent_path).unwrap();
+        (parent, &nav_items)
+    };
+
+    write_page_inner(nav_item, top_level, nav_items, &main_items)  
+} 
+
+fn write_html(items: &ItemBag) -> Result<()> { 
     use std::string::join_fmt;
     use std::fmt::format;
 
-    for top_level in items.iter_ref().filter(|v: &Item| -> bool { v.kind.has_children() }) {
-        let items = items
-            .iter_ref()
-            .filter(|&top_level, v: &Item| -> bool { 
-                v.path.len() == top_level.path.len() + 1 && v.path.starts_with(&top_level.path)
-            })
-            .to_vector();
-        
-        write_page(top_level, &items)?;
+    for top_level in items.all().filter(|v: &Item| -> bool { v.kind.has_own_page() }) {
+        write_page(items, top_level)?;
     }
 
     Result::ok(())
@@ -325,18 +403,7 @@ fn main_inner(args: &[&[u8]]) -> Result<()> {
         processor.process_file(module_path, filename)?;
     }
 
-    processor.items
-        .as_slice_mut()
-        .sort_by(|it: &Item| -> (&[&[u8]], i32, &[u8]) {
-            use std::mem::slice::empty;
-
-            let start = it.path.segments.as_slice();
-            if start.len == 0 {
-                (empty(), 0, empty())
-            } else {
-                (start[..start.len-1], it.kind as i32, start[start.len-1])
-            }
-        });
+    processor.items.sort();
 
     write_html(&processor.items)?;
         

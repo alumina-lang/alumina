@@ -118,13 +118,9 @@ $(ALUMINA_DOC): $(ALUMINA_DOC).c $(BUILD_DIR)/parser.o
 .PHONY: docs
 
 docs: $(ALUMINA_DOC)
-	rm -rf $(BUILD_ROOT)/docs
-#	$(ALUMINA_DOC) \
-		$(foreach src,$(ALUMINAC_LIB_SOURCES),$(subst /,::,$(basename $(subst src/,,$(src))))=$(src)) 
-
 	$(ALUMINA_DOC) \
 		$(foreach src,$(SYSROOT_FILES),$(subst __root__,, $(subst /,::,$(basename $(subst ./stdlib,,$(src)))))=$(src)) 
-	ln -s `realpath tools/alumina-doc/styles.css` $(BUILD_ROOT)/docs
+	cp -rf tools/alumina-doc/static $(BUILD_ROOT)/docs/static
 
 ## ------------------------------ Various ------------------------------
 

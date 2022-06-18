@@ -1,30 +1,42 @@
-//! This is the standard library for the Alumina language.
-//! It is a collection of functions, macros, protocols and types that are essential for writing portable code. 
+//! Standard library for the Alumina language.
+//!
+//! It is a collection of functions, macros, protocols and types that are essential for writing portable code. Follows a 
+//! similar scope and structure as the Rust standard library.
 
+/// Causes the compilation to fail if reached.
+///
+/// This is useful when conditional compilation is usedwith `#[cfg(...)]` attributes, but it can also be used
+/// in generic context (e.g. with `when` expressions).
 macro compile_fail($reason) {
     intrinsics::compile_fail($reason);
 }
 
+/// Panics if `cond` evaluates to false.
 macro assert($cond) {
     if !$cond {
         panic!("assertion failed");
     }
 }
 
+/// Panics if `lhs` and `rhs` are not equal.
 macro assert_eq($lhs, $rhs) {
     internal::assert_eq(file!(), line!(), column!(), $lhs, $rhs);
 }
 
+/// Panics if `lhs` and `rhs` are equal.
 macro assert_ne($lhs, $rhs) {
     internal::assert_ne(file!(), line!(), column!(), $lhs, $rhs);
 }
 
+/// Panics if `cond` evaluates to false when compiled in debug mode. Otherwise, does nothing.
 macro debug_assert($cond) { #[cfg(debug)] assert!($cond); }
+
+/// Panics if `lhs` and `rhs` are not equal when compiled in debug mode. Otherwise, does nothing.
 macro debug_assert_eq($lhs, $rhs) { #[cfg(debug)] assert_eq!($lhs, $rhs); }
+
+/// Panics if `lhs` and `rhs` are equal when compiled in debug mode. Otherwise, does nothing.
 macro debug_assert_ne($lhs, $rhs) { #[cfg(debug)] assert_ne!($lhs, $rhs); }
 
-/// Satisy the typechecker if the code is unreachable. Note that when compiled 
-/// in release mode, this will cause UB if ever reached.
 macro unreachable() {
     #[cfg(debug)]
     panic!("reached unreachable code");
@@ -32,21 +44,33 @@ macro unreachable() {
     std::intrinsics::unreachable();
 }
 
-/// Returns the line in the source code at which the macro was invoked. If used within a macro, this will return the line of the outermost invocation.
+/// Returns the line in the source code at which the macro was invoked. 
+///
+/// If used within a macro, this will return the line of the outermost macro invocation.
 #[builtin] macro line() {  }
 
-/// Returns the column in the source code at which the macro was invoked. If used within a macro, this will return the column of the outermost invocation.
+/// Returns the column in the source code at which the macro was invoked. 
+///
+/// If used within a macro, this will return the line of the outermost macro invocation.
 #[builtin] macro column() {  }
 
-/// Returns the file in the source code at which the macro was invoked. If used within a macro, this will return the file of the outermost invocation. 
+/// Returns the file in the source code at which the macro was invoked.
+///
+/// If used within a macro, this will return the line of the outermost macro invocation.
 #[builtin] macro file() {  }
 
 /// Returns the value of an environment variable during compilation.
 #[builtin] macro env($s) {  }
 
 #[builtin] macro include_bytes($file) {  }
+
+/// Concatenates strings at compile time.
+///
+/// This macro can be useful also as a guard that string is a compile-time constant. 
 #[builtin] macro concat($parts...) {  }
 
+
+/// Print a message to standard error with code location information.
 macro dbg($fmt, $args...) {
     let f = panicking::internal::PanicFormatter {};
     fmt::writeln!(&f,

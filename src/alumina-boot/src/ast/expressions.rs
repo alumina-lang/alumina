@@ -182,6 +182,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
         {
             ItemResolution::Item(item) => match item.kind {
                 NamedItemKind::Function(fun, _, _) => ExprKind::Fn(FnKind::Normal(fun), None),
+                NamedItemKind::Method(fun, _, _) => ExprKind::Fn(FnKind::Normal(fun), None),
                 NamedItemKind::Local(var) => ExprKind::Local(var),
                 NamedItemKind::BoundValue(self_id, var, bound_type) => {
                     ExprKind::BoundParam(self_id, var, bound_type)

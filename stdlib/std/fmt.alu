@@ -1,3 +1,5 @@
+//! String formatting
+
 struct Error {}
 
 type Result = ::Result<(), Error>;
@@ -256,7 +258,7 @@ mod internal {
                 State::BRACE_CLOSE => {
                     switch ch {
                         '}' => fmt.write_char(ch)?,
-                        _ => panic!("invalid format string")
+                        _ => panic!("invalid format string {}", fmt_str)
                     };
                     State::NORMAL
                 }
@@ -270,7 +272,7 @@ mod internal {
                             args = args[1..];
                         },
                         '{' => fmt.write_char(ch)?,
-                        _ => panic!("invalid format string")
+                        _ => panic!("invalid format string {}", fmt_str)
                     };
                     State::NORMAL
                 }
@@ -280,7 +282,7 @@ mod internal {
         }
 
         if state != State::NORMAL {
-            panic!("invalid format string");
+            panic!("invalid format string {}", fmt_str);
         }
 
         if args.len > 0 {

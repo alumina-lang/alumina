@@ -114,6 +114,8 @@ module.exports = grammar({
 
     _top_level_item: ($) =>
       choice(
+        $.doc_comment,
+        $.file_doc_comment,
         $.use_declaration,
         $.function_definition,
         $.struct_definition,
@@ -136,10 +138,9 @@ module.exports = grammar({
         "}"
       ),
 
-    _impl_item: ($) =>
-      choice($.use_declaration, $.function_definition, $.mixin),
+    _impl_item: ($) => choice($.doc_comment, $.use_declaration, $.function_definition, $.mixin),
 
-    _protocol_item: ($) => choice($.use_declaration, $.function_definition),
+    _protocol_item: ($) => choice($.doc_comment, $.use_declaration, $.function_definition),
 
     mod_definition: ($) =>
       seq(
