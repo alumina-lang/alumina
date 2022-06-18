@@ -88,7 +88,8 @@ impl<'ast> AstItemMaker<'ast> {
         for impl_scope in impl_scopes {
             for (name, item) in impl_scope.inner().all_items() {
                 match &item.kind {
-                    NamedItemKind::Function(symbol, node, _) => {
+                    NamedItemKind::Function(symbol, node, _)
+                    | NamedItemKind::Method(symbol, node, _) => {
                         if let Some(name) = name {
                             if !names.insert(name) {
                                 self.global_ctx.diag().add_warning(CodeError::from_kind(
