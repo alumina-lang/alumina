@@ -1,4 +1,4 @@
-
+//! Panic support macros and functions
 
 macro panic($reason, $args...) {
     internal::panic_impl(
@@ -52,7 +52,19 @@ mod internal {
         Result::ok(())
     }
 
+    #[cfg(panic_trap)]
+    fn panic_impl(
+        fmt_str: &[u8], 
+        file: &[u8], 
+        line: i32, 
+        column: i32, 
+        args: &[FormatArg<PanicFormatter>]
+    ) -> ! {
+        // If we want to trigger a debugger
+        std::intrinsics::trap();
+    }
     
+    #[cfg(not(panic_trap))]
     #[cold]
     #[no_inline]
     fn panic_impl(
@@ -64,7 +76,7 @@ mod internal {
     ) -> ! {
         if mem::replace(&PANICKING, true) {
             // If we panic during a panic handler, nuclear abort.
-            intrinsics::trap();
+            std::intrinsics::trap();
         }
 
         // Swallow errors from print_panic_message, because at this point, what can we do, panic?

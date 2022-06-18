@@ -127,7 +127,7 @@ fn get_sysroot(args: &Args) -> Result<Vec<SourceFile>, AluminaError> {
                 write!(module_path, "::{}", segment).unwrap();
             } else {
                 let module_name = segment.strip_suffix(".alu").unwrap();
-                if module_name != "_root" {
+                if module_name != "__root__" {
                     write!(module_path, "::{}", module_name).unwrap();
                 }
             }

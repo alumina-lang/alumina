@@ -193,7 +193,7 @@ snapshots['test_examples[result.alu] compile_stderr'] = None
 
 snapshots['test_examples[result.alu] run_ret'] = 255
 
-snapshots['test_examples[result.alu] run_stderr'] = b'panic at ../../stdlib/std/result.alu:50:17: unwrap on an err value\n'
+snapshots['test_examples[result.alu] run_stderr'] = b'panic at ../../stdlib/std/result.alu:52:17: unwrap on an err value\n'
 
 snapshots['test_examples[result.alu] run_stdout'] = b''
 

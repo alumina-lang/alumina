@@ -122,7 +122,7 @@ impl Vector<T> {
         }
     }
 
-    fn last(self: &mut Vector<T>) -> Option<T> {
+    fn last(self: &Vector<T>) -> Option<T> {
         if self._length == 0 {
             Option::none()
         } else {
@@ -169,6 +169,16 @@ impl Vector<T> {
         self.as_slice().iter()
     }
 
+    #[inline]
+    fn iter_ref(self: &Vector<T>) -> mem::SliceRefIterator<&T> {
+        self.as_slice().iter_ref()
+    }
+
+    #[inline]
+    fn iter_mut(self: &mut Vector<T>) -> mem::SliceRefIterator<&mut T> {
+        self.as_slice_mut().iter_mut()
+    }
+
     fn shrink_to_fit(self: &mut Vector<T>) {
         if self._length < self._data.len  {
             self._data = self._data.realloc(self._length);
@@ -186,6 +196,12 @@ impl Vector<T> {
         self._length = 0;
         ret
     }
+
+    fn clone(self: &Vector<T>) -> Vector<T> {
+        let vec = Vector::new::<T>();
+        vec.extend_from_slice(self.as_slice());
+        vec
+    }
 }
 
 impl Vector {
@@ -199,6 +215,10 @@ impl Vector {
     fn write_char(self: &mut Vector<u8>, c: u8) -> Result<(), fmt::Error> {
         self.push(c);
         Result::ok(())
+    }
+
+    fn fmt<F: Formatter<F>>(self: &Vector<u8>, fmt: &mut F) -> Result<(), fmt::Error> {
+        fmt.write_str(self.as_slice())
     }
 }
 
@@ -370,5 +390,31 @@ mod tests {
         assert_eq!(vec.len(), 0);
         assert_eq!(vec2.len(), 3);
         assert_eq!(vec2.as_slice(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn test_iter_ref() {
+        let vec = Vector::from_slice(&[1, 2, 3]);
+        let as_slice = vec.as_slice();
+
+        let it = vec.iter_ref();
+
+        assert_eq!(it.next().unwrap(), &as_slice[0]);
+        assert_eq!(it.next().unwrap(), &as_slice[1]);
+        assert_eq!(it.next().unwrap(), &as_slice[2]);
+        assert!(!it.next().is_some);
+    }
+
+    #[test]
+    fn test_iter_mut() {
+        let vec = Vector::from_slice(&[1, 2, 3]);
+        let as_slice = vec.as_slice_mut();
+
+        let it = vec.iter_mut();
+
+        assert_eq!(it.next().unwrap(), &as_slice[0]);
+        assert_eq!(it.next().unwrap(), &as_slice[1]);
+        assert_eq!(it.next().unwrap(), &as_slice[2]);
+        assert!(!it.next().is_some);
     }
 }

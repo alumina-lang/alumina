@@ -1,3 +1,5 @@
+//! Optional values
+
 macro try($opt) {
     let opt = $opt;
     if opt.is_some {
@@ -24,7 +26,8 @@ impl Option<T> {
     #[force_inline]
     fn none() -> Option<T> {
         Option::<T> {
-            is_some: false
+            is_some: false,
+            inner: mem::uninitialized()
         }
     }
 
@@ -94,6 +97,18 @@ impl Option {
     use std::fmt::{write, Formatter, Formattable};
     use std::mem::{Freeable, Movable};
     
+    fn transpose<T, E>(self: Option<Result<T, E>>) -> Result<Option<T>, E> {
+        if self.is_some {
+            if self.inner.is_ok {
+                Result::ok(Option::some(self.inner.inner.ok))
+            } else {
+                Result::err(self.inner.inner.err)
+            }
+        } else {
+            Result::ok(Option::none())
+        }
+    }
+
     #[inline]
     fn equals<T: Equatable<T>>(lhs: &Option<T>, rhs: &Option<T>) -> bool {
         if lhs.is_some {

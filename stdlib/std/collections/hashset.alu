@@ -4,17 +4,31 @@ use std::iter::{Iterator, Iterable};
 use std::cmp::Equatable;
 
 struct HashSetIterator<K> {
-    inner: hashmap::HashMapIterator<K, ()>
+    inner: hashmap::HashMapRefIterator<K, ()>
 }
 
 impl HashSetIterator<K> {
     fn next(self: &mut HashSetIterator<K>) -> Option<K> {
         let elem = self.inner.next()?;
-        Option::some(elem.0)
+        Option::some(*elem.0)
     }
 
     mixin iter::Iterator<HashSetIterator<K>, K>;
     mixin iter::IteratorExt<HashSetIterator<K>, K>;
+}
+
+struct HashSetRefIterator<K> {
+    inner: hashmap::HashMapRefIterator<K, ()>
+}
+
+impl HashSetRefIterator<K> {
+    fn next(self: &mut HashSetIterator<K>) -> Option<&K> {
+        let elem = self.inner.next()?;
+        Option::some(elem.0)
+    }
+
+    mixin iter::Iterator<HashSetIterator<K>, &K>;
+    mixin iter::IteratorExt<HashSetIterator<K>, &K>;
 }
 
 struct HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
@@ -86,7 +100,7 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
     #[inline]
     fn iter(self: &HashSet<K, H>) -> HashSetIterator<K> {
         HashSetIterator::<K> {
-            inner: self._inner.iter()
+            inner: self._inner.iter_ref()
         }
     }
 
@@ -98,6 +112,12 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
     fn move(self: &mut HashSet<K, H>) -> HashSet<K, H> {
         HashSet::<K, H> {
             _inner: self._inner.move()
+        }
+    }
+
+    fn clone(self: &HashSet<K, H>) -> HashSet<K, H> {
+        HashSet::<K, H> {
+            _inner: self._inner.clone()
         }
     }
 }

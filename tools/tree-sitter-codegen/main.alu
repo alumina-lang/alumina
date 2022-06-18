@@ -1,5 +1,5 @@
-// This tool generates strongly-typed Tree-Sitter node types for the self-hosting compiler 
-// (to avoid matching by string) and visitor protocols.
+//! This tool generates strongly-typed Tree-Sitter node types for the self-hosting compiler 
+//! (to avoid matching by string) and visitor protocols.
 
 use std::collections::{Vector, HashMap, HashSet};
 use tree_sitter::{TSLanguage, TSSymbolType, TSSymbol, Parser};
@@ -149,6 +149,10 @@ fn main(args: &[&[u8]]) {
         println!("    }}");
     }
 
+    println!("    fn visit_unknown(self: &mut Self, node: Node) -> ReturnType {{");
+    println!("        panic!(\"unimplemented: visit unknown\");");
+    println!("    }}");
+
     println!("    fn visit(self: &mut Self, node: Node) -> ReturnType {{");
     println!("        switch NODE_KINDS[node.symbol() as usize] {{");
     for name in unique_symbol_names {
@@ -157,7 +161,7 @@ fn main(args: &[&[u8]]) {
             SanitizedIdentifier::default(name)    
         );
     }
-    println!("            _ => panic!(\"unimplemented: visit\")");
+    println!("            _ => self.visit_unknown(node),");
     println!("        }}");
     println!("    }}");
     println!("}}")

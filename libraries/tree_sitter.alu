@@ -168,7 +168,15 @@ impl Parser {
     }
 
     fn free(self: &mut Parser) {
-        ts_parser_delete(self.inner);
+        if self.inner != null {
+            ts_parser_delete(self.inner);
+        }
+    }
+
+    fn move(self: &mut Parser) -> Parser {
+        let ret = Parser { inner: self.inner };
+        self.inner = null;
+        ret
     }
 }
 
@@ -182,7 +190,15 @@ impl Tree {
     }
 
     fn free(self: &mut Tree) {
-        ts_tree_delete(self.inner);
+        if self.inner != null {
+            ts_tree_delete(self.inner);
+        }
+    }
+
+    fn move(self: &mut Tree) -> Tree {
+        let ret = Tree { inner: self.inner };
+        self.inner = null;
+        ret
     }
 }
 
@@ -237,7 +253,15 @@ impl TSTreeCursor {
     }
 
     fn free(self: &mut TSTreeCursor) {
-        ts_tree_cursor_delete(self)
+        if self.tree != null {
+            ts_tree_cursor_delete(self)
+        }
+    }
+
+    fn move(self: &mut TSTreeCursor) -> TSTreeCursor {
+        let ret = *self;
+        self.tree = null;
+        ret
     }
 }
 
@@ -357,10 +381,10 @@ impl Node {
         from_raw(ts_node_child_by_field_id(self.inner, field_id))
     }
 
-    fn fmt<F: Formatter<F>>(self: &Node, f: &mut F) {
+    fn fmt<F: Formatter<F>>(self: &Node, f: &mut F) -> std::fmt::Result {
         let string = ts_node_string(self.inner);
         defer std::libc::free(string as &mut void);
 
-        write!(f, "{}", CString::from_raw(string).as_slice());
+        write!(f, "{}", CString::from_raw(string).as_slice())
     }
 }

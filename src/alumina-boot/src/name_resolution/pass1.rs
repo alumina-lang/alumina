@@ -20,6 +20,7 @@ pub struct FirstPassVisitor<'ast, 'src> {
     code: &'src ParseCtx<'src>,
     enum_item: Option<ItemP<'ast>>,
 
+    in_a_container: bool,
     main_module_path: Option<Path<'ast>>,
     main_candidate: Option<ItemP<'ast>>,
 }
@@ -33,6 +34,7 @@ impl<'ast, 'src> FirstPassVisitor<'ast, 'src> {
                 .code()
                 .expect("cannot run on scope without parse context"),
             scope,
+            in_a_container: false,
             enum_item: None,
             main_module_path: None,
             main_candidate: None,
@@ -52,6 +54,7 @@ impl<'ast, 'src> FirstPassVisitor<'ast, 'src> {
                 .expect("cannot run on scope without parse context"),
             main_module_path: Some(scope.path()),
             scope,
+            in_a_container: false,
             enum_item: None,
             main_candidate: None,
         }
@@ -67,6 +70,16 @@ macro_rules! with_child_scope {
         let previous_scope = std::mem::replace(&mut $self.scope, $scope);
         $body
         $self.scope = previous_scope;
+    };
+}
+
+macro_rules! with_child_scope_container {
+    ($self:ident, $scope:expr, $body:block) => {
+        let previous_scope = std::mem::replace(&mut $self.scope, $scope);
+        let previous_in_a_container = $self.in_a_container;
+        $body
+        $self.scope = previous_scope;
+        $self.in_a_container = previous_in_a_container;
     };
 }
 
@@ -143,7 +156,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
             )
             .with_span_from(&self.scope, node)?;
 
-        with_child_scope!(self, child_scope, {
+        with_child_scope_container!(self, child_scope, {
             if let Some(f) = node.child_by_field_name("type_arguments") {
                 self.visit(f)?;
             }
@@ -193,7 +206,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
             )
             .with_span_from(&self.scope, node)?;
 
-        with_child_scope!(self, child_scope, {
+        with_child_scope_container!(self, child_scope, {
             if let Some(f) = node.child_by_field_name("type_arguments") {
                 self.visit(f)?;
             }
@@ -287,7 +300,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
             .add_item(
                 Some(name),
                 NamedItem::new(
-                    NamedItemKind::Function(item, node, child_scope.clone()),
+                    if self.in_a_container {
+                        NamedItemKind::Method(item, node, child_scope.clone())
+                    } else {
+                        NamedItemKind::Function(item, node, child_scope.clone())
+                    },
                     attributes,
                 ),
             )
@@ -469,6 +486,14 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
             )
             .with_span_from(&self.scope, node)?;
 
+        Ok(())
+    }
+
+    fn visit_doc_comment(&mut self, _node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        Ok(())
+    }
+
+    fn visit_file_doc_comment(&mut self, _node: tree_sitter::Node<'src>) -> Self::ReturnType {
         Ok(())
     }
 }

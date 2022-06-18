@@ -16,6 +16,48 @@ struct HashItem<T> {
     item: T
 }
 
+struct HashMapRefIterator<K, V> {
+    _buckets: &[HashItem<(K, V)>],
+    _index: usize,
+}
+
+impl HashMapRefIterator<K, V> {
+    fn next(self: &mut HashMapRefIterator<K, V>) -> Option<(&K, &V)> {
+        while self._index < self._buckets.len {
+            let item = &self._buckets[self._index];
+            self._index += 1;
+            if item.state == State::Occupied {
+                return Option::some((&item.item.0, &item.item.1));
+            }
+        }
+        Option::none()
+    }
+
+    mixin iter::Iterator<HashMapRefIterator<K, V>, (&K, &V)>;
+    mixin iter::IteratorExt<HashMapRefIterator<K, V>, (&K, &V)>;
+}
+
+struct HashMapMutIterator<K, V> {
+    _buckets: &mut [HashItem<(K, V)>],
+    _index: usize,
+}
+
+impl HashMapMutIterator<K, V> {
+    fn next(self: &mut HashMapMutIterator<K, V>) -> Option<(&K, &mut V)> {
+        while self._index < self._buckets.len {
+            let item = &self._buckets[self._index];
+            self._index += 1;
+            if item.state == State::Occupied {
+                return Option::some((&item.item.0 as &K, &item.item.1));
+            }
+        }
+        Option::none()
+    }
+
+    mixin iter::Iterator<HashMapMutIterator<K, V>, (&K, &mut V)>;
+    mixin iter::IteratorExt<HashMapMutIterator<K, V>, (&K, &mut V)>;
+}
+
 struct HashMapIterator<K, V> {
     _buckets: &[HashItem<(K, V)>],
     _index: usize,
@@ -36,6 +78,7 @@ impl HashMapIterator<K, V> {
     mixin iter::Iterator<HashMapIterator<K, V>, (K, V)>;
     mixin iter::IteratorExt<HashMapIterator<K, V>, (K, V)>;
 }
+
 
 /// A simple linear probing hash table.
 struct HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
@@ -73,9 +116,9 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
         return false;
     }
 
-    // Resizes the underlying array to exactly the given `new_capacity`. Note that
-    // this could lead to poor performance if the resulting load factor is close to 
-    // 1. 
+    /// Resizes the underlying array to exactly the given `new_capacity`. Note that
+    /// this could lead to poor performance if the resulting load factor is close to 
+    /// 1. 
     fn rehash(self: &mut HashMap<K, V, H>, new_capacity: usize) {
         debug_assert!(self._length <= new_capacity);
 
@@ -209,6 +252,20 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
         }
     }
 
+    fn iter_ref(self: &HashMap<K, V, H>) -> HashMapRefIterator<K, V> {
+        HashMapRefIterator::<K, V> {
+            _buckets: self._buckets,
+            _index: 0,
+        }
+    }
+
+    fn iter_mut(self: &mut HashMap<K, V, H>) -> HashMapMutIterator<K, V> {
+        HashMapMutIterator::<K, V> {
+            _buckets: self._buckets,
+            _index: 0,
+        }
+    }
+
     fn free(self: &mut HashMap<K, V, H>) {
         use std::mem::free;
         self._buckets.free();
@@ -218,6 +275,14 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
         let ret = *self;
         self._buckets = mem::slice::empty();
         self._length = 0;
+        ret
+    }
+
+    fn clone(self: &HashMap<K, V, H>) -> HashMap<K, V, H> {
+        let ret = HashMap::with_capacity::<K, V, H>(self._length);
+        for item in self {
+            ret.insert(item.0, item.1);
+        }
         ret
     }
 }
@@ -385,6 +450,47 @@ mod tests {
         assert!(iter.next() == Option::some((2, 4)));
         assert!(iter.next() == Option::some((3, 5)));
         assert!(iter.next() == Option::none());
+    }
+
+    #[test]
+    fn test_hashmap_iter_ref() {
+        let map = HashMap::new::<i32, i32, DummyHasher>();
+        defer map.free();
+
+        map.insert(1, 2);
+        map.insert(2, 4);
+        map.insert(3, 5);
+
+        let iter = map.iter_ref();
+        let v = iter.next().unwrap();
+        assert_eq!(*v.0, 1);
+        assert_eq!(*v.1, 2);
+        let v = iter.next().unwrap();
+        assert_eq!(*v.0, 2);
+        assert_eq!(*v.1, 4);
+        let v = iter.next().unwrap();
+        assert_eq!(*v.0, 3);
+        assert_eq!(*v.1, 5);
+
+        assert!(!iter.next().is_some);
+    }
+
+    #[test]
+    fn test_hashmap_iter_mut() {
+        let map = HashMap::new::<i32, i32, DummyHasher>();
+        defer map.free();
+
+        map.insert(1, 2);
+        map.insert(2, 4);
+        map.insert(3, 5);
+
+        let iter = map.iter_mut();
+        let v = iter.next().unwrap();
+        assert_eq!(*v.0, 1);
+        assert_eq!(*v.1, 2);
+        *v.1 = 100;
+
+        assert_eq!(map.get(1).unwrap(), 100);
     }
 
     #[test]

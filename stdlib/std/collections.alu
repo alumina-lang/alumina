@@ -12,7 +12,7 @@ fn free_all<T: Freeable<T>(col: &mut T) {
 }
 
 
-fn sort_by<T, F: Callable<(T), K>, K: Comparable<K>>(arr: &mut [T], key: F) {
+fn sort_by<T, F: Callable<(&T), K>, K: Comparable<K>>(arr: &mut [T], key: F) {
     if arr.len <= 1 {
         return;
     }
@@ -23,17 +23,17 @@ fn sort_by<T, F: Callable<(T), K>, K: Comparable<K>>(arr: &mut [T], key: F) {
 }
 
 fn sort<T: Comparable<T>>(arr: &mut [T]) {
-    sort_by(arr, std::util::identity::<T>);
+    sort_by(arr, |k: &T| -> T { *k });
 }
 
-fn partition_by<T, F: Callable<(T), K>, K: Comparable<K>>(arr: &mut [T], key: F) -> usize {
+fn partition_by<T, F: Callable<(&T), K>, K: Comparable<K>>(arr: &mut [T], key: F) -> usize {
     use std::mem::swap;
 
     let pivot = arr[arr.len - 1];
     let i = 0usize;
     let j = 0usize;
     while j < arr.len - 1 {
-        if key(arr[j]) <= key(pivot) {
+        if key(&arr[j]) <= key(&pivot) {
             swap(&arr[i], &arr[j]);
             i += 1;
         }
@@ -61,7 +61,7 @@ mod tests {
     #[test]
     fn test_sort_by() {
         let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
-        sort_by(slice, |x: i32| -> i32 { -x });
+        sort_by(slice, |x: &i32| -> i32 { -*x });
 
         assert_eq!(slice, &[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
     }

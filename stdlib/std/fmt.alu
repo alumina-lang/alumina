@@ -1,11 +1,16 @@
+//! String formatting
+
 struct Error {}
+
+type Result = ::Result<(), Error>;
+
 
 impl Error {
     fn new() -> Error {
         Error {}
     }
 
-    fn fmt<F: Formatter<F>>(self: &Error, f: &mut F) -> Result<(), Error> {
+    fn fmt<F: Formatter<F>>(self: &Error, f: &mut F) -> Result {
         f.write_str("error occurred during formatting")
     }
 
@@ -14,15 +19,16 @@ impl Error {
     }
 }
 
+
 protocol Formatter<Self> {
-    fn write_str(self: &mut Self, buf: &[u8]) -> Result<(), Error>;
-    fn write_char(self: &mut Self, byte: u8) -> Result<(), Error> {
+    fn write_str(self: &mut Self, buf: &[u8]) -> Result;
+    fn write_char(self: &mut Self, byte: u8) -> Result {
         self.write_str(mem::slice::from_raw(&byte, 1))
     }
 }
 
 protocol Formattable<Self, F: Formatter<F> = internal::NullFormatter> {
-    fn fmt(self: &Self, f: &mut F) -> Result<(), Error>;
+    fn fmt(self: &Self, f: &mut F) -> Result;
 }
 
 macro write($fmt, $fmt_str, $arg...) {
@@ -76,7 +82,7 @@ impl SliceFormatter {
     }
 
     #[inline]
-    fn write_str(self: &mut SliceFormatter, buf: &[u8]) -> Result<(), Error> {
+    fn write_str(self: &mut SliceFormatter, buf: &[u8]) -> Result {
         use mem::copy;
         if self.buf_pos + buf.len > self.buf.len {
             return Result::err(Error::new());
@@ -88,7 +94,7 @@ impl SliceFormatter {
     }
 
     #[inline]
-    fn write_char(self: &mut SliceFormatter, byte: u8) -> Result<(), Error> {
+    fn write_char(self: &mut SliceFormatter, byte: u8) -> Result {
         if self.buf_pos >= self.buf.len {
             return Result::err(Error::new());
         }
@@ -107,36 +113,36 @@ impl SliceFormatter {
 mod internal {
     struct NullFormatter {}
     impl NullFormatter {
-        fn write_str(self: &mut NullFormatter, buf: &[u8]) -> Result<(), Error> {
+        fn write_str(self: &mut NullFormatter, buf: &[u8]) -> Result {
             Result::ok(())
         }
-        fn write_char(self: &mut NullFormatter, byte: u8) -> Result<(), Error> {
+        fn write_char(self: &mut NullFormatter, byte: u8) -> Result {
             Result::ok(())
         }
     }
 
-    // Type-erased wrapper of a formattable object
+    /// Type-erased wrapper of a formattable object
     struct FormatArg<F: Formatter<F>> {
         inner: &void,
-        format_func: fn(&void, &mut F) -> Result<(), Error>
+        format_func: fn(&void, &mut F) -> Result
     }
 
     impl FormatArg {
         fn new<F: Formatter<F>, T: Formattable<T, F>>(inner: &T) -> FormatArg<F> {
             FormatArg::<F> {
                 inner: inner as &void,
-                format_func: |ptr: &void, fmt: &mut F| -> Result<(), Error> {
+                format_func: |ptr: &void, fmt: &mut F| -> Result {
                     T::fmt(ptr as &T, fmt)
                 }
             }
         }
 
-        fn fmt<F: Formatter<F>>(self: &FormatArg<F>, f: &mut F) -> Result<(), Error> {
+        fn fmt<F: Formatter<F>>(self: &FormatArg<F>, f: &mut F) -> Result {
             self.format_func(self.inner, f)
         }
     }
 
-    fn format_integer<T: marker::Integer, F: Formatter<F>>(val: T, radix: u16, pad: usize, fmt: &mut F) -> Result<(), Error> {
+    fn format_integer<T: marker::Integer, F: Formatter<F>>(val: T, radix: u16, pad: usize, fmt: &mut F) -> Result {
         assert!(radix >= 2 && radix <= 36);
         
         let buf: [u8; 128];
@@ -169,7 +175,7 @@ mod internal {
         Result::ok(())
     }
 
-    fn format_float<T: marker::FloatingPoint, F: Formatter<F>>(val: T, fmt: &mut F, precision: u16) -> Result<(), Error> {
+    fn format_float<T: marker::FloatingPoint, F: Formatter<F>>(val: T, fmt: &mut F, precision: u16) -> Result {
         // TODO: this is very very VERY bad, replace with Grisu3 or Dragon4 or alike. Correct float parsing
         // and formatting is a complicated thing. Using libc instead is an option, but that has a
         // host of other problems: locale-awareness (ideally, Alumina's stdlib is locale-invariant), 
@@ -232,7 +238,7 @@ mod internal {
         BRACE_CLOSE,
     }
     
-    fn printf<F: Formatter<F>>(fmt_str: &[u8], args: &[FormatArg<F>], fmt: &mut F) -> Result<(), Error> {
+    fn printf<F: Formatter<F>>(fmt_str: &[u8], args: &[FormatArg<F>], fmt: &mut F) -> Result {
         let i = 0usize;
 
         let state = State::NORMAL;
@@ -252,7 +258,7 @@ mod internal {
                 State::BRACE_CLOSE => {
                     switch ch {
                         '}' => fmt.write_char(ch)?,
-                        _ => panic!("invalid format string")
+                        _ => panic!("invalid format string {}", fmt_str)
                     };
                     State::NORMAL
                 }
@@ -266,7 +272,7 @@ mod internal {
                             args = args[1..];
                         },
                         '{' => fmt.write_char(ch)?,
-                        _ => panic!("invalid format string")
+                        _ => panic!("invalid format string {}", fmt_str)
                     };
                     State::NORMAL
                 }
@@ -276,7 +282,7 @@ mod internal {
         }
 
         if state != State::NORMAL {
-            panic!("invalid format string");
+            panic!("invalid format string {}", fmt_str);
         }
 
         if args.len > 0 {
@@ -293,7 +299,7 @@ mod internal {
     }
 
     impl NumFormatAdapter<T: marker::Integer> {
-        fn fmt<F: Formatter<F>>(self: &NumFormatAdapter<T>, fmt: &mut F) -> Result<(), Error> {
+        fn fmt<F: Formatter<F>>(self: &NumFormatAdapter<T>, fmt: &mut F) -> Result {
             format_integer(self.value, self.radix, self._pad, fmt)
         }
 
@@ -320,7 +326,7 @@ mod internal {
     }
 
     impl FloatFormatAdapter<T: marker::FloatingPoint> {
-        fn fmt<F: Formatter<F>>(self: &FloatFormatAdapter<T>, fmt: &mut F) -> Result<(), Error> {
+        fn fmt<F: Formatter<F>>(self: &FloatFormatAdapter<T>, fmt: &mut F) -> Result {
             format_float::<T, F>(self.value, fmt, self.precision)
         }
     }
@@ -331,7 +337,7 @@ mod internal {
     }
 
     impl RepeatAdapter {
-        fn fmt<T: Formattable<T, F>, F: Formatter<F>>(self: &RepeatAdapter<T>, fmt: &mut F) -> Result<(), Error> {
+        fn fmt<T: Formattable<T, F>, F: Formatter<F>>(self: &RepeatAdapter<T>, fmt: &mut F) -> Result {
             for i in 0usize..self.times {
                 self.inner.fmt(fmt)?;
             }
@@ -346,7 +352,7 @@ mod internal {
     }
 
     impl GenericPadAdapter {
-        fn fmt<T: Formattable<T, F>, F: Formatter<F>>(self: &GenericPadAdapter<T>, fmt: &mut F) -> Result<(), Error> {
+        fn fmt<T: Formattable<T, F>, F: Formatter<F>>(self: &GenericPadAdapter<T>, fmt: &mut F) -> Result {
             let buf: [u8; 32];
             let res = format_in!(&buf, "{}", self.inner);
             let s = if res.is_ok {

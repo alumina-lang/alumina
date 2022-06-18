@@ -22,6 +22,7 @@ enum NodeKind {
     DeferExpression,
     ParameterTypeList,
     Pattern,
+    DocComment,
     Arguments,
     TryExpression,
     TypeArguments,
@@ -44,6 +45,7 @@ enum NodeKind {
     RangeExpression,
     DereferenceExpression,
     TypeCheck,
+    FileDocComment,
     MacroParameterList,
     TypeIdentifier,
     MacroInvocation,
@@ -159,9 +161,11 @@ enum FieldKind {
     Upper = 49u16,
 }
 
-static NODE_KINDS: [NodeKind; 236] = [
+static NODE_KINDS: [NodeKind; 238] = [
     NodeKind::Invalid,
     NodeKind::Identifier,
+    NodeKind::DocComment,
+    NodeKind::FileDocComment,
     NodeKind::Invalid,
     NodeKind::Invalid,
     NodeKind::Invalid,
@@ -446,6 +450,9 @@ protocol NodeVisitor<Self, ReturnType> {
     fn visit_pattern(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_pattern");
     }
+    fn visit_doc_comment(self: &mut Self, node: Node) -> ReturnType {
+        panic!("unimplemented: visit_doc_comment");
+    }
     fn visit_arguments(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_arguments");
     }
@@ -511,6 +518,9 @@ protocol NodeVisitor<Self, ReturnType> {
     }
     fn visit_type_check(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_type_check");
+    }
+    fn visit_file_doc_comment(self: &mut Self, node: Node) -> ReturnType {
+        panic!("unimplemented: visit_file_doc_comment");
     }
     fn visit_macro_parameter_list(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_macro_parameter_list");
@@ -695,6 +705,9 @@ protocol NodeVisitor<Self, ReturnType> {
     fn visit_parameter_list(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_parameter_list");
     }
+    fn visit_unknown(self: &mut Self, node: Node) -> ReturnType {
+        panic!("unimplemented: visit unknown");
+    }
     fn visit(self: &mut Self, node: Node) -> ReturnType {
         switch NODE_KINDS[node.symbol() as usize] {
             NodeKind::SourceFile => self.visit_source_file(node),
@@ -713,6 +726,7 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::DeferExpression => self.visit_defer_expression(node),
             NodeKind::ParameterTypeList => self.visit_parameter_type_list(node),
             NodeKind::Pattern => self.visit_pattern(node),
+            NodeKind::DocComment => self.visit_doc_comment(node),
             NodeKind::Arguments => self.visit_arguments(node),
             NodeKind::TryExpression => self.visit_try_expression(node),
             NodeKind::TypeArguments => self.visit_type_arguments(node),
@@ -735,6 +749,7 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::RangeExpression => self.visit_range_expression(node),
             NodeKind::DereferenceExpression => self.visit_dereference_expression(node),
             NodeKind::TypeCheck => self.visit_type_check(node),
+            NodeKind::FileDocComment => self.visit_file_doc_comment(node),
             NodeKind::MacroParameterList => self.visit_macro_parameter_list(node),
             NodeKind::TypeIdentifier => self.visit_type_identifier(node),
             NodeKind::MacroInvocation => self.visit_macro_invocation(node),
@@ -796,7 +811,7 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::StructField => self.visit_struct_field(node),
             NodeKind::FunctionDefinition => self.visit_function_definition(node),
             NodeKind::ParameterList => self.visit_parameter_list(node),
-            _ => panic!("unimplemented: visit")
+            _ => self.visit_unknown(node),
         }
     }
 }

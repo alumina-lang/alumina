@@ -1,0 +1,307 @@
+use std::collections::Vector;
+use std::string::StringBuf;
+
+use tree_sitter::{Node, Parser, Tree};
+use std::collections::{free_all, HashMap, sort_by};
+
+use aluminac::lib::arena::Arena;
+
+use alumina_doc::error::{Error, Result};
+
+struct Path {
+    segments: Vector<&[u8]>,
+}
+
+impl Path {
+    use std::fmt::{Formatter, write, writeln, Error};
+    use std::cmp::{Comparable, Equatable, Ordering};
+    use std::hash::{Hashable, Hasher};
+    
+    fn new(segments: Vector<&[u8]>) -> Path {
+        Path { segments: segments }
+    }
+
+    fn move(self: &mut Path) -> Path {
+        Path { segments: self.segments.move() }
+    }
+
+    fn extend_with(self: &Path, segment: &[u8]) -> Path {
+        let ret = self.clone();
+        ret.segments.push(segment);
+        ret
+    }
+
+    fn push(self: &mut Path, segment: &[u8]) {
+        self.segments.push(segment);
+    }
+
+    fn len(self: &Path) -> usize {
+        self.segments.len()
+    }
+
+    fn starts_with(self: &Path, prefix: &Path) -> bool {
+        self.segments.as_slice()[0..prefix.len()] == prefix.segments.as_slice()
+    }
+
+    fn pop(self: &mut Path) {
+        self.segments.pop();
+    }
+
+    fn free(self: &mut Path) {
+        self.segments.free();
+    }
+
+    fn fmt<F: Formatter<F>>(self: &Path, fmt: &mut F) -> std::fmt::Result {
+        use std::string::join_fmt;
+
+        if self.segments.empty() {
+            write!(fmt, "::")
+        } else {
+            write!(fmt, "{}", "::".join_fmt(self.segments.iter()))
+        }
+    }
+
+    fn compare(self: &Path, other: &Path) -> Ordering {
+        self.segments.as_slice().compare(&other.segments.as_slice())
+    }
+
+    fn equals(self: &Path, other: &Path) -> bool {
+        self.segments.as_slice() == other.segments.as_slice()
+    }
+
+    fn clone(self: &Path) -> Path {
+        Path { segments: self.segments.clone() }
+    }
+
+    fn last(self: &Path) -> Option<&[u8]> {
+        self.segments.last()
+    }
+
+    fn hash<H: Hasher<H>>(self: &Path, hasher: &mut H) {
+        self.segments.as_slice().hash(hasher);
+    }
+
+    mixin Equatable<Path>;
+    mixin Comparable<Path>;
+    mixin<H: Hasher<H>> Hashable<Path, H>;
+}
+
+enum ItemKind {
+    Module,
+    Method,
+    Function,
+    TypeDef,
+    Macro,
+    Const,
+    Protocol,
+    Enum,
+    Static,
+    Struct,
+    Union,
+    Mixin,
+}
+
+impl ItemKind {
+    fn fmt<F: std::fmt::Formatter<F>>(self: &ItemKind, f: &mut F) -> std::fmt::Result {
+        use std::fmt::write;
+
+        switch *self {
+            ItemKind::Module => write!(f, "module"),
+            ItemKind::Function => write!(f, "function"),
+            ItemKind::Method => write!(f, "method"),
+            ItemKind::TypeDef => write!(f, "type"),
+            ItemKind::Macro => write!(f, "macro"),
+            ItemKind::Const => write!(f, "const"),
+            ItemKind::Protocol => write!(f, "protocol"),
+            ItemKind::Enum => write!(f, "enum"),
+            ItemKind::Static => write!(f, "static"),
+            ItemKind::Struct => write!(f, "struct"),
+            ItemKind::Union => write!(f, "union"),
+            ItemKind::Mixin => write!(f, "mixin"),
+            _ => unreachable!(),
+        }
+    }
+
+    fn has_own_page(self: &ItemKind) -> bool {
+        switch *self {
+            ItemKind::Module => true,
+            ItemKind::Function => false,
+            ItemKind::Protocol => true,
+            ItemKind::Enum => true,
+            ItemKind::Union => true,
+            ItemKind::Struct => true,
+            ItemKind::Macro => true,
+
+            ItemKind::Method => false,
+            ItemKind::TypeDef => false,
+            ItemKind::Const => false,
+            ItemKind::Static => false,
+            ItemKind::Mixin => false,
+            _ => false,
+        }
+    }   
+
+    fn show_siblings(self: &ItemKind) -> bool {
+        switch *self {
+            ItemKind::Module => false,
+            ItemKind::Union => false,
+            ItemKind::Struct => false,
+            ItemKind::Enum => false,
+            _ => true,
+        }
+    }  
+    
+    fn equals(self: &ItemKind, other: &ItemKind) -> bool {
+        (*self as i32) == (*other as i32)
+    }
+
+    mixin std::cmp::Equatable<ItemKind>;
+}
+
+struct Item {
+    kind: ItemKind,
+    parse_context: &ParseContext,
+    path: Path,
+    doc_comment: StringBuf,
+    node: Node,
+}
+
+impl Item {
+    use ::Result;
+    use std::fmt::{Formatter, write, writeln, Error};
+
+    fn free(self: &mut Item) {
+        self.path.free();
+        self.doc_comment.free();
+    }
+
+    fn fmt<F: Formatter<F>>(self: &Item, fmt: &mut F) -> Result<(), Error> {
+        
+        if !self.doc_comment.empty() {
+            write!(fmt, "{}", self.doc_comment)?;
+        }
+
+        switch self.kind {
+            ItemKind::Module => write!(fmt, "module {}", self.name)?,
+            ItemKind::Function => write!(fmt, "function {}", self.name)?,
+            ItemKind::TypeDef => write!(fmt, "type {}", self.name)?,
+            ItemKind::Macro => write!(fmt, "macro {}", self.name)?,
+            ItemKind::Const => write!(fmt, "const {}", self.name)?,
+            ItemKind::Protocol => write!(fmt, "protocol {}", self.name)?,
+            ItemKind::Enum => write!(fmt, "enum {}", self.name)?,
+            ItemKind::Static => write!(fmt, "static {}", self.name)?,
+            ItemKind::Struct => write!(fmt, "struct {}", self.name)?,
+            ItemKind::Mixin => write!(fmt, "mixin {}", self.name)?,
+            _ => unreachable!()
+        };
+
+        write!(fmt, " in {}", self.path)?;
+        Result::ok(())
+    }
+}
+
+struct ItemBag {
+    arena: Arena,
+    items: Vector<&Item>,
+    lookup: HashMap<Path, &Item>,
+}
+
+impl ItemBag {
+    fn new() -> ItemBag {
+        ItemBag {
+            arena: Arena::new(),
+            items: Vector::new(),
+            lookup: HashMap::new(),
+        }
+    }
+
+    fn free(self: &mut ItemBag) {
+        for item in self.items {
+            (item as &mut Item).free();
+        }
+        self.items.free();
+        self.lookup.free();
+        self.arena.free();
+    }
+
+    fn move(self: &mut ItemBag) -> ItemBag {
+        ItemBag {
+            arena: self.arena.move(),
+            items: self.items.move(),
+            lookup: self.lookup.move(),
+        }
+    }
+
+    fn add_item(self: &mut ItemBag, item: Item) {
+        let ptr = self.arena.alloc(item);
+        self.items.push(ptr);
+        self.lookup.insert(item.path, ptr);
+    }
+
+    fn sort(self: &mut ItemBag) {
+        self.items
+            .as_slice_mut()
+            .sort_by(|it: &&Item| -> (&[&[u8]], i32, &[u8]) {
+                use std::mem::slice::empty;
+
+                let start = it.path.segments.as_slice();
+                if start.len == 0 {
+                    (empty(), 0, empty())
+                } else {
+                    (start[..start.len-1], it.kind as i32, start[start.len-1])
+                }
+            });
+    }
+
+    fn get(self: &ItemBag, path: &Path) -> Option<&Item> {
+        self.lookup.get(*path)
+    }
+
+    fn all(self: &ItemBag) -> std::mem::SliceIterator<&&Item> {
+        self.items.iter()
+    }
+
+    fn filtered<F: std::marker::Callable<(&Item), bool>>(self: &ItemBag, func: F) -> Vector<&Item> {
+        self.items.iter().filter(func).to_vector()
+    }
+}
+
+struct ParseContext {
+    _source: StringBuf,
+    tree: Tree,
+}
+
+impl ParseContext {
+    fn from_file(parser: &mut Parser, filename: &[u8]) -> Result<ParseContext> {
+        let source = std::fs::File::read_to_string(filename).map_err(Error::from_io)?;
+        defer source.free();
+    
+        let tree = parser.parse(source.as_slice());
+        defer tree.free();
+        
+        Result::ok(ParseContext {
+            _source: source.move(),
+            tree: tree.move(),
+        })
+    }
+
+    fn source(self: &ParseContext) -> &[u8] {
+        self._source.as_slice()
+    }
+
+    fn root_node(self: &ParseContext) -> Node {
+        self.tree.root_node().unwrap()
+    }
+
+    fn free(self: &mut ParseContext) {
+        self._source.free();
+        self.tree.free();
+    }
+
+    fn move(self: &mut ParseContext) -> ParseContext {
+        ParseContext {
+            _source: self.source.move(),
+            tree: self.tree.move(),
+        }
+    }
+}

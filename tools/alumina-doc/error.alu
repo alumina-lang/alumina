@@ -1,0 +1,50 @@
+type Result<T> = std::result::Result<T, Error>;
+
+union ErrorInner {
+    io: std::io::Error,
+    custom: &[u8],
+}
+
+struct Error {
+    is_custom: bool,
+    inner: ErrorInner,
+}
+
+impl Error {
+    use std::fmt::{Formatter, write};
+
+    fn from_io(error: std::io::Error) -> Error {
+        Error {
+            is_custom: false,
+            inner: ErrorInner {
+                io: error
+            }
+        }
+    }
+
+    fn from_custom(error: &[u8]) -> Error {
+        Error {
+            is_custom: true,
+            inner: ErrorInner {
+                custom: error
+            }
+        }
+    }
+
+    fn from<T>(error: T) -> Error {
+        Error {
+            is_custom: true,
+            inner: ErrorInner {
+                custom: "Error occured"
+            }
+        }
+    }
+
+    fn fmt<F: Formatter<F>>(self: &Error, f: &mut F) -> std::result::Result<(), std::fmt::Error> {
+        if self.is_custom {
+            write!(f, "{}", self.inner.custom)
+        } else {
+            write!(f, "{}", self.inner.io)
+        }
+    }
+}
