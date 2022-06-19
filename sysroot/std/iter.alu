@@ -13,6 +13,19 @@ protocol Iterator<Self, T> {
     }
 }
 
+protocol BackIterator<Self, T> {
+    fn next_back(self: &mut Self) -> Option<T>;
+    
+    fn size_hint(self: &Self) -> Option<usize> {
+        Option::none()
+    }
+
+    fn rev(self: &mut Self) -> RevIterator<Self, T> {
+        RevIterator { it: self }
+    }
+}
+
+
 protocol Iterable<Self, It: Iterator<It, T>, T> {
     fn iter(self: &Self) -> It;
 }
@@ -23,6 +36,31 @@ protocol IterableRef<Self, It: Iterator<It, &T>, T> {
 
 protocol IterableMut<Self, It: Iterator<It, &mut T>, T> {
     fn iter_mut(self: &mut Self) -> It;
+}
+
+struct RevIterator<It: BackIterator<It, T>,T> {
+    it: &mut It
+}
+
+impl RevIterator<It: BackIterator<It, T>, T> {
+    fn next(self: &mut RevIterator<It, T>) -> Option<T> {
+        self.it.next_back()
+    }
+
+    fn size_hint(self: &RevIterator<It, T>) -> Option<usize> {
+        self.it.size_hint()
+    }
+
+    mixin Iterator<RevIterator<It, T>, T>;
+    mixin IteratorExt<RevIterator<It, T>, T>;
+}
+
+impl RevIterator<It: Iterator<It, T>, T> {
+    fn next_back(self: &mut RevIterator<It, T>) -> Option<T> {
+        self.it.next()
+    }
+
+    mixin BackIterator<RevIterator<It, T>, T>;
 }
 
 
@@ -42,6 +80,14 @@ impl MapIterator<It: Iterator<It, T>, F: Callable<(T), U>, T, U> {
 
     mixin Iterator<MapIterator<It, F, T, U>, U>;
     mixin IteratorExt<MapIterator<It, F, T, U>, U>;
+}
+
+impl MapIterator<It: RevIterator<It, T>, F: Callable<(T), U>, T, U> {
+    fn next_back(self: &mut MapIterator<It, F, T, U>) -> Option<U> {
+        self.it.next_back().map(|=self, x: T| -> U { self.fun(x) })
+    }
+
+    mixin BackIterator<MapIterator<It, F, T, U>, U>;
 }
 
 struct TakeWhileIterator<It: Iterator<It, T>, F: Callable<(T), bool>, T> {
@@ -131,6 +177,21 @@ impl FilterIterator<It: Iterator<It, T>, F: Callable<(T), bool>, T> {
 
     mixin Iterator<FilterIterator<It, F, T>, T>;
     mixin IteratorExt<FilterIterator<It, F, T>, T>;
+}
+
+impl FilterIterator<It: BackIterator<It, T>, F: Callable<(T), bool>, T> {
+    fn next_back(self: &mut FilterIterator<It, F, T>) -> Option<T> {
+        use option::try;
+
+        loop {
+            let value = self.it.next_back()?;
+            if self.fun(value) {
+                return Option::some(value)
+            }
+        }
+    }
+
+    mixin BackIterator<FilterIterator<It, F, T>, T>;
 }
 
 struct SkipIterator<It: Iterator<It, T>, T> {
@@ -602,6 +663,14 @@ impl EmptyIterator<T> {
     mixin IteratorExt<EmptyIterator<T>, T>;
 }
 
+/// Returns an iterator that produces no elements.
+///
+/// # Example
+/// ```
+/// let range = std::iter::empty::<()>();
+///
+/// assert_eq!(range.next(), Option::none());
+/// ```
 fn empty<T>() -> EmptyIterator<T> {
     EmptyIterator::<T> {}
 }
@@ -623,6 +692,17 @@ impl RepeatIterator<T> {
     mixin IteratorExt<RepeatIterator<T>, T>;
 }
 
+/// Returns an iterator that repeats the same value indefinitely.
+///
+/// # Example
+/// ```
+/// let range = std::iter::repeat(42);
+///
+/// assert_eq!(range.next(), Option::some(42));
+/// assert_eq!(range.next(), Option::some(42));
+/// assert_eq!(range.next(), Option::some(42));
+/// // ...
+/// ```
 fn repeat<T>(value: T) -> RepeatIterator<T> {
     RepeatIterator { value: value }
 }
@@ -648,6 +728,15 @@ impl OnceIterator<T> {
     mixin IteratorExt<OnceIterator<T>, T>;
 }
 
+/// Returns an iterator that repeats a single element exactly once.
+///
+/// # Example
+/// ```
+/// let iter = std::iter::once(42);
+///
+/// assert_eq!(iter.next(), Option::some(42));
+/// assert_eq!(iter.next(), Option::none());
+/// ```
 fn once<T>(value: T) -> OnceIterator<T> {
     OnceIterator { value: Option::some(value) }
 }
@@ -779,6 +868,16 @@ impl RangeIter<T: Integer> {
         }
     }
 
+    #[force_inline]
+    fn next_back(self: &mut RangeIter<T>) -> Option<T> {
+        if self.current < self.upper {
+            self.upper -= 1;
+            Option::some(self.upper)
+        } else {
+            Option::none()
+        }
+    }
+
     fn size_hint(self: &RangeIter<T>) -> Option<usize> {
         if self.current < self.upper {
             Option::some(self.upper as usize - self.current as usize)
@@ -789,15 +888,7 @@ impl RangeIter<T: Integer> {
     
     mixin Iterator<RangeIter<T>, T>;
     mixin IteratorExt<RangeIter<T>, T>;
-
-}
-
-#[force_inline]
-fn range<T: Integer>(lower: T, upper: T) -> Range<T> {
-    Range {
-        lower: lower,
-        upper: upper,
-    }
+    mixin BackIterator<RangeIter<T>, T>;
 }
 
 
@@ -1127,5 +1218,35 @@ mod tests {
         assert_eq!(group.next(), Option::none());
 
         assert!(!groups.next().is_some);
+    }
+
+    #[test]
+    fn test_rev() {
+        let range = (0..5).iter().rev();
+        assert_eq!(range.size_hint(), Option::some(5usize));
+        assert_eq!(range.next(), Option::some(4));
+        assert_eq!(range.next(), Option::some(3));
+        assert_eq!(range.next(), Option::some(2));
+        assert_eq!(range.next(), Option::some(1));
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::none());
+
+        let range = (0..5).iter().rev().rev();
+        assert_eq!(range.size_hint(), Option::some(5usize));
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::some(1));
+        assert_eq!(range.next(), Option::some(2));
+        assert_eq!(range.next(), Option::some(3));
+        assert_eq!(range.next(), Option::some(4));
+        assert_eq!(range.next(), Option::none());
+
+        let range = [0, 1, 2, 3, 4].iter().rev();
+        assert_eq!(range.size_hint(), Option::some(5usize));
+        assert_eq!(range.next(), Option::some(4));
+        assert_eq!(range.next(), Option::some(3));
+        assert_eq!(range.next(), Option::some(2));
+        assert_eq!(range.next(), Option::some(1));
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::none());
     }
 }

@@ -1,5 +1,7 @@
-use std::string::StringBuf;
-use std::fmt::{Formatter, Formattable, Result, write, Error};
+//! Markdown-ish renderer.
+
+use std::string::{split, StringBuf, starts_with, trim_prefix, trim_start, trim};
+use std::fmt::{Formatter, Formattable, Result, write, writeln, Error};
 
 enum State {
     Normal,
@@ -28,9 +30,9 @@ impl InlineMarkdownState {
         }
     }
 
-    fn reset(self: &mut InlineMarkdownState) -> ::Result<(), ()> {
+    fn reset(self: &mut InlineMarkdownState) -> ::Result<(), Error> {
         if self.kind != State::Normal {
-            return Result::err(())
+            return Result::err(Error::new())
         } 
         self.free();
         *self = InlineMarkdownState::default();
@@ -140,4 +142,96 @@ impl InlineMarkdown {
 
         Result::ok(())
     }
+}
+
+
+/// A mini-markdown subset parser
+fn write_docstring<T: std::io::Writable<T>>(writer: &mut T, doc_comment: &[u8], tagline_only: bool) -> Result {
+    use markdown::{InlineMarkdown, InlineMarkdownState};
+
+    if doc_comment.len == 0 {
+        return Result::ok(());
+    }
+
+    if !tagline_only {
+        writeln!(writer, "<p>");
+    }
+
+    let in_a_code_block = false;
+    let md_state = InlineMarkdownState::default();
+    defer md_state.free();
+
+    for i in doc_comment.split("\n") {
+        let docline =  if i.starts_with("///") {
+            i.trim_prefix("///")
+        } else {
+            i.trim_prefix("//!")
+        };
+
+        if docline.trim() == "```" {
+            if in_a_code_block {
+                writeln!(writer, "</code></pre>");
+            } else {
+                write!(writer, "<pre><code>");
+            };
+            in_a_code_block = !in_a_code_block;
+        } else if !in_a_code_block {
+            docline = docline.trim_start();
+            if docline.len == 0 {
+                if tagline_only {
+                    return Result::ok(());
+                } else {
+                    writeln!(writer, "</p><p>");
+                }
+            } else if docline.starts_with("###") {
+                md_state.reset()?;
+                writeln!(writer, "</p>");
+                writeln!(writer, "<h4>{}</h4>", InlineMarkdown::new(
+                    docline.trim_prefix("###").trim(), &md_state
+                ));
+                md_state.reset()?;
+                writeln!(writer, "<p>");
+            } else if docline.starts_with("##") {
+                md_state.reset()?;
+                writeln!(writer, "</p>");
+                writeln!(writer, "<h3>{}</h3>", InlineMarkdown::new(
+                    docline.trim_prefix("##").trim(), &md_state
+                ));
+                md_state.reset()?;
+                writeln!(writer, "<p>");
+            } else if docline.starts_with("#!") {
+                md_state.reset()?;
+                writeln!(writer, "</p>");
+                writeln!(writer, "<h1>{}</h1>", InlineMarkdown::new(
+                    docline.trim_prefix("#!").trim(), &md_state
+                ));
+                md_state.reset()?;
+                writeln!(writer, "<p>");
+            } else if docline.starts_with("#") {
+                md_state.reset()?;
+                writeln!(writer, "</p>");
+                writeln!(writer, "<h2>{}</h2>", InlineMarkdown::new(
+                    docline.trim_prefix("#").trim(), &md_state
+                ));
+                md_state.reset()?;
+                writeln!(writer, "<p>");
+            } else {
+                writeln!(writer, "{}", InlineMarkdown::new(
+                    docline.trim(), 
+                    &md_state
+                ));
+            }
+        } else {
+            writeln!(writer, "{}", docline);
+        }
+    }
+
+    if in_a_code_block {
+        return Result::err(Error::new());
+    }
+
+    if !tagline_only {
+        writeln!(writer, "</p>");
+    }
+    Result::ok(())
 }

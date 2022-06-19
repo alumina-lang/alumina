@@ -1,5 +1,5 @@
 use std::collections::Vector;
-use std::string::StringBuf;
+use std::string::{split, StringBuf};
 
 use tree_sitter::{Node, Parser, Tree};
 use std::collections::{free_all, HashMap, sort_by};
@@ -21,6 +21,18 @@ impl Path {
         Path { segments: segments }
     }
 
+    fn as_slice(self: &Path) -> &[&[u8]] {
+        self.segments.as_slice()
+    }
+
+    fn from_str(s: &[u8]) -> Path {
+        Path::new(
+            s.split("::")
+                .filter(|segment: &[u8]| -> bool { segment.len > 0 })
+                .to_vector()
+        )
+    }
+
     fn move(self: &mut Path) -> Path {
         Path { segments: self.segments.move() }
     }
@@ -28,6 +40,12 @@ impl Path {
     fn extend_with(self: &Path, segment: &[u8]) -> Path {
         let ret = self.clone();
         ret.segments.push(segment);
+        ret
+    }
+
+    fn join_with(self: &Path, other: &Path) -> Path {
+        let ret = self.clone();
+        ret.segments.extend_from_slice(other.as_slice());
         ret
     }
 
@@ -40,11 +58,14 @@ impl Path {
     }
 
     fn starts_with(self: &Path, prefix: &Path) -> bool {
-        self.segments.as_slice()[0..prefix.len()] == prefix.segments.as_slice()
+        if self.segments.len() < prefix.segments.len() {
+            return false;
+        }
+        self.as_slice()[0..prefix.len()] == prefix.as_slice()
     }
 
-    fn pop(self: &mut Path) {
-        self.segments.pop();
+    fn pop(self: &mut Path) -> &[u8] {
+        self.segments.pop().unwrap()
     }
 
     fn free(self: &mut Path) {
@@ -62,11 +83,11 @@ impl Path {
     }
 
     fn compare(self: &Path, other: &Path) -> Ordering {
-        self.segments.as_slice().compare(&other.segments.as_slice())
+        self.as_slice().compare(&other.as_slice())
     }
 
     fn equals(self: &Path, other: &Path) -> bool {
-        self.segments.as_slice() == other.segments.as_slice()
+        self.as_slice() == other.as_slice()
     }
 
     fn clone(self: &Path) -> Path {
@@ -92,15 +113,15 @@ enum ItemKind {
     Variant,
     Method,
     Function,
-    TypeDef,
-    Macro,
-    Const,
-    Protocol,
-    Enum,
-    Static,
     Struct,
     Union,
-    Mixin,
+    Protocol,
+    TypeDef,
+    Enum,
+    Macro,
+    Const,
+    Static,
+    Mixin
 }
 
 impl ItemKind {
@@ -108,20 +129,20 @@ impl ItemKind {
         use std::fmt::write;
 
         switch *self {
-            ItemKind::Module => write!(f, "module"),
-            ItemKind::Function => write!(f, "function"),
-            ItemKind::Method => write!(f, "method"),
-            ItemKind::TypeDef => write!(f, "type"),
-            ItemKind::Macro => write!(f, "macro"),
-            ItemKind::Const => write!(f, "const"),
-            ItemKind::Protocol => write!(f, "protocol"),
-            ItemKind::Enum => write!(f, "enum"),
-            ItemKind::Variant => write!(f, "variant"),
-            ItemKind::Static => write!(f, "static"),
-            ItemKind::Struct => write!(f, "struct"),
-            ItemKind::Field => write!(f, "field"),
-            ItemKind::Union => write!(f, "union"),
-            ItemKind::Mixin => write!(f, "mixin"),
+            ItemKind::Module => write!(f, "Module"),
+            ItemKind::Function => write!(f, "Function"),
+            ItemKind::Method => write!(f, "Method"),
+            ItemKind::TypeDef => write!(f, "Type"),
+            ItemKind::Macro => write!(f, "Macro"),
+            ItemKind::Const => write!(f, "Const"),
+            ItemKind::Protocol => write!(f, "Protocol"),
+            ItemKind::Enum => write!(f, "Enum"),
+            ItemKind::Variant => write!(f, "Variant"),
+            ItemKind::Static => write!(f, "Static"),
+            ItemKind::Struct => write!(f, "Struct"),
+            ItemKind::Field => write!(f, "Field"),
+            ItemKind::Union => write!(f, "Union"),
+            ItemKind::Mixin => write!(f, "Mixin"),
             _ => unreachable!(),
         }
     }
@@ -169,6 +190,7 @@ struct Item {
     index: usize,
     parse_context: &ParseContext,
     path: Path,
+    defined_in: Path,
     doc_comment: StringBuf,
     node: Node,
 }
@@ -179,11 +201,46 @@ impl Item {
 
     fn free(self: &mut Item) {
         self.path.free();
+        self.defined_in.free();
         self.doc_comment.free();
     }
 
+    
+    /// Show re-exports only if the original item was defined in a submodule.
+    ///
+    /// Since Alumina does not have item visibility, this is a heuristic to determine
+    /// if the item should be shown.
+    fn is_public(self: &Item) -> bool {
+        let loc = self.path.as_slice();
+        let def = self.defined_in.as_slice();
+
+        if loc == def {
+            return true; 
+        } else if loc.len >= 2 && loc[0] == "std" && loc[1] == "prelude"  {
+            // Special case for prelude
+            return true;
+        } else if  loc.len >= def.len {
+            return false;
+        } 
+
+        let suffix_len = 0usize;
+        loop {
+            if suffix_len >= std::math::max(loc.len, def.len) {
+                break;
+            }
+
+            if loc[loc.len - suffix_len - 1] == def[def.len - suffix_len - 1]  {
+                suffix_len += 1;
+            } else {
+                break;
+            }
+        }
+
+        loc[0..loc.len - suffix_len] == def[0..loc.len - suffix_len]
+    }
+    
+
     fn fmt<F: Formatter<F>>(self: &Item, fmt: &mut F) -> Result<(), Error> {
-        
         if !self.doc_comment.empty() {
             write!(fmt, "{}", self.doc_comment)?;
         }
@@ -211,6 +268,8 @@ struct ItemBag {
     arena: Arena,
     items: Vector<&Item>,
     lookup: HashMap<Path, &Item>,
+    aliases: HashMap<Path, Path>,
+    star_aliases: HashMap<Path, Path>,
 }
 
 impl ItemBag {
@@ -219,6 +278,8 @@ impl ItemBag {
             arena: Arena::new(),
             items: Vector::new(),
             lookup: HashMap::new(),
+            aliases: HashMap::new(),
+            star_aliases: HashMap::new(),
         }
     }
 
@@ -226,9 +287,16 @@ impl ItemBag {
         for item in self.items {
             (item as &mut Item).free();
         }
+        for (k, v) in self.aliases.iter().chain(&self.star_aliases.iter()) {
+            k.free();
+            v.free()
+        }
+        
         self.items.free();
         self.lookup.free();
         self.arena.free();
+        self.aliases.free();
+        self.star_aliases.free();
     }
 
     fn move(self: &mut ItemBag) -> ItemBag {
@@ -236,6 +304,8 @@ impl ItemBag {
             arena: self.arena.move(),
             items: self.items.move(),
             lookup: self.lookup.move(),
+            aliases: self.aliases.move(),
+            star_aliases: self.star_aliases.move(),
         }
     }
 
@@ -245,13 +315,21 @@ impl ItemBag {
         self.lookup.insert(item.path, ptr);
     }
 
+    fn add_alias(self: &mut ItemBag, path: Path, destination: Path) {
+        self.aliases.insert(path, destination);
+    }
+
+    fn add_star_alias(self: &mut ItemBag, path: Path, destination: Path) {
+        self.star_aliases.insert(path, destination);
+    }
+
     fn sort(self: &mut ItemBag) {
         self.items
             .as_slice_mut()
             .sort_by(|it: &&Item| -> (&[&[u8]], i32, usize, &[u8]) {
                 use std::mem::slice::empty;
 
-                let start = it.path.segments.as_slice();
+                let start = it.path.as_slice();
                 if start.len == 0 {
                     (empty(), 0, it.index, empty())
                 } else {
@@ -262,6 +340,97 @@ impl ItemBag {
 
     fn get(self: &ItemBag, path: &Path) -> Option<&Item> {
         self.lookup.get(*path)
+    }
+
+    fn resolve(self: &ItemBag, scope: &Path, path: &Path, go_down: bool) -> Option<&Item> {
+        let joined = scope.join_with(path);
+        defer joined.free();
+
+        let proper = self.lookup.get(joined);
+        if proper.is_some {
+            return proper;
+        }
+
+        let alias = self.aliases.get(joined);
+        if alias.is_some {
+            return self.resolve(scope, &alias.inner, true);
+        }
+
+        let star_alias = self.star_aliases.get(*scope);
+        if star_alias.is_some {
+            let maybe_resolved = self.resolve(&star_alias.inner, path, false);
+            if maybe_resolved.is_some {
+                return maybe_resolved;
+            }
+        }
+
+        if go_down {
+            let scope = scope.clone();
+            defer scope.free();
+
+            while scope.segments.len() > 0 {
+                scope.pop();
+                let resolved = self.resolve(&scope, path, false);
+                if resolved.is_some {
+                    return resolved;
+                }
+            }
+        }
+
+        Option::none()
+    }
+
+    fn sync_reexport(self: &mut ItemBag, source: &Path, dst: &Path) {
+        for i in self.items.iter() {
+            if !i.path.starts_with(dst) {
+                continue
+            }
+
+            let src_path = source.clone();
+            for s in i.path.as_slice()[dst.segments.len()..] {
+                src_path.push(s);
+            }
+            
+            if !self.lookup.get(src_path).is_some {
+                self.add_item(Item {
+                    kind: i.kind,
+                    index: 9999,
+                    parse_context: i.parse_context,
+                    path: src_path.move(),
+                    defined_in: i.defined_in.clone(),
+                    doc_comment: i.doc_comment.clone(),
+                    node: i.node,
+                });
+            }
+            
+            src_path.free();
+        }
+    }
+
+    fn resolve_all(self: &mut ItemBag) {
+        loop {
+            let insertion_count = 0;
+            for (src, dst) in self.aliases {
+                let scope = src.clone();
+                let suffix = Path::from_str(scope.pop());
+                
+                let resolved = self.resolve(&scope, &suffix, true);
+                if resolved.is_some {
+                    let item = resolved.inner;
+                    if !self.lookup.get(src).is_some {
+                        insertion_count += 1;
+                        self.sync_reexport(&src, &item.defined_in);
+                    }
+                }
+
+                scope.free();
+                suffix.free();
+            }
+
+            if insertion_count == 0 {
+                break;
+            }
+        }
     }
 
     fn all(self: &ItemBag) -> std::mem::SliceIterator<&&Item> {
@@ -310,5 +479,43 @@ impl ParseContext {
             _source: self.source.move(),
             tree: self.tree.move(),
         }
+    }
+}
+
+struct LinkContext {
+    item_bag: &ItemBag,
+    path: &Path,
+}
+
+impl LinkContext {
+    fn new(item_bag: &ItemBag, path: &Path) -> LinkContext {
+        LinkContext {
+            item_bag: item_bag,
+            path: path
+        }
+    }
+
+    fn resolve_link(self: &LinkContext, path: &Path) -> Option<StringBuf> {
+        use std::option::try;
+        use std::fmt::format;
+        use std::string::join_fmt;
+        
+        let item = self.item_bag.resolve(self.path, path, true)?;
+
+        let path = item.defined_in.clone();
+        defer path.free();
+
+        let val = if item.kind.has_own_page() {
+            if path.segments.empty() {
+                format!("/index.html").unwrap()
+            } else {
+                format!("/{}.html", "/".join_fmt(path.segments.iter())).unwrap()
+            }
+        } else {
+            let name = path.pop();
+            format!("/{}.html#item.{}", "/".join_fmt(path.segments.iter()), name).unwrap()
+        };
+        
+        Option::some(val)
     }
 }

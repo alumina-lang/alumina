@@ -93,6 +93,15 @@ impl DiagnosticContext {
                 Level::Note => "note".green(),
             };
 
+            if let CodeError {
+                kind: CodeErrorKind::LocalWithUnknownType,
+                ..
+            } = error
+            {
+                // This usually means that something before the error failed, so it's just noise.
+                continue;
+            }
+
             let tagline = format!("{}: {}", level, error.kind).bold();
             eprintln!("{}", tagline);
 

@@ -57,7 +57,7 @@ impl slice {
     use std::cmp::{Equatable, Comparable, Ordering};
     use std::hash::{Hasher, Hashable};
     use std::marker::{Primitive, PointerOf, ZeroSized};
-    use std::libc::{memcmp};
+    use libc::memcmp;
 
     #[force_inline]
     fn empty<Ptr: Pointer>() -> slice<Ptr> {
@@ -199,12 +199,24 @@ impl SliceIterator<Ptr: Pointer> {
         }
     }
 
+    #[force_inline]
+    fn next_back(self: &mut SliceIterator<Ptr>) -> Option<builtins::deref_of<Ptr>> {
+        if self.inner.len > 0 {
+            let result = Option::some(self.inner[self.inner.len - 1]);
+            self.inner.len -= 1;
+            result
+        } else {
+            Option::none()
+        }
+    }
+
     fn size_hint(self: &SliceIterator<Ptr>) -> Option<usize> {
         Option::some(self.inner.len)
     }
 
     mixin iter::Iterator<SliceIterator<Ptr>, builtins::deref_of<Ptr>>;
     mixin iter::IteratorExt<SliceIterator<Ptr>, builtins::deref_of<Ptr>>;
+    mixin iter::BackIterator<SliceIterator<Ptr>, builtins::deref_of<Ptr>>;
 }
 
 struct SliceRefIterator<Ptr: Pointer> {
@@ -229,12 +241,24 @@ impl SliceRefIterator<Ptr: Pointer> {
         }
     }
 
+    #[force_inline]
+    fn next_back(self: &mut SliceIterator<Ptr>) -> Option<Ptr> {
+        if self.inner.len > 0 {
+            let result = Option::some(&self.inner[self.inner.len - 1]);
+            self.inner.len -= 1;
+            result
+        } else {
+            Option::none()
+        }
+    }
+
     fn size_hint(self: &SliceRefIterator<Ptr>) -> Option<usize> {
         Option::some(self.inner.len)
     }
 
     mixin iter::Iterator<SliceRefIterator<Ptr>, Ptr>;
     mixin iter::IteratorExt<SliceRefIterator<Ptr>, Ptr>;
+    mixin iter::BackIterator<SliceRefIterator<Ptr>, Ptr>;
 }
 
 mod internal {

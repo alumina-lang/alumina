@@ -10,17 +10,18 @@ use aluminac::lib::arena::Arena;
 use aluminac::lib::node_kinds::{NodeVisitor, FieldKind};
 
 use alumina_doc::error::{Error, Result};
-use alumina_doc::common::{Item, ItemKind, Path, ParseContext, ItemBag};
+use alumina_doc::common::{Item, ItemKind, Path, ParseContext, ItemBag, LinkContext};
 use alumina_doc::visitors::{TopLevelVisitor, CodePrinter};
+use alumina_doc::markdown::write_docstring;
 
 extern "C" fn tree_sitter_alumina() -> &TSLanguage;
 
-macro w($writer, $fmt, $args...) {
-    std::fmt::write!($writer, $fmt, $args...).map_err(Error::from::<std::fmt::Error>)?
+macro w($self, $fmt, $args...) {
+    std::fmt::write!($self.writer, $fmt, $args...).map_err(Error::from::<std::fmt::Error>)?
 }
 
-macro wln($writer, $fmt, $args...) {
-    std::fmt::writeln!($writer, $fmt, $args...).map_err(Error::from::<std::fmt::Error>)?
+macro wln($self, $fmt, $args...) {
+    std::fmt::writeln!($self.writer, $fmt, $args...).map_err(Error::from::<std::fmt::Error>)?
 }
 
 struct Processor {
@@ -64,12 +65,7 @@ impl Processor {
         let parse_context = self.arena.alloc(ParseContext::from_file(&self.parser, filename)?);
         self.parse_contexts.push(parse_context);
             
-        let path = Path::new(module_path
-            .split("::")
-            .filter(|segment: &[u8]| -> bool { segment.len > 0 })
-            .to_vector()
-        );
-
+        let path = Path::from_str(module_path);
         defer path.free();
 
         let visitor = TopLevelVisitor::new(parse_context, path.clone(), &self.items);
@@ -79,7 +75,10 @@ impl Processor {
 
         self.items.add_item(Item {
             kind: ItemKind::Module,
+            
+            defined_in: path.clone(),
             path: path.move(),
+
             node: parse_context.root_node(),
             parse_context: parse_context,
             doc_comment: visitor.file_doc_comment.move(),
@@ -112,160 +111,196 @@ fn ensure_dir(f: &[u8]) -> Result<()> {
     Result::ok(())
 }
 
-fn link_for_path(prefix: &[u8], path: &Path) -> StringBuf {
-    if path.segments.empty() {
-        format!("{}/index.html", prefix).unwrap()
-    } else {
-        format!("{}/{}.html", prefix, "/".join_fmt(path.segments.iter())).unwrap()
-    }
+
+struct PageWriter<T: std::io::Writable<T>> {
+    item_bag: &ItemBag,
+    writer: &mut T
 }
 
-fn write_breadcrumbs<T: std::io::Writable<T>>(writer: &mut T, item: &Item, with_kind: bool) -> Result<()> {
-    if item.path.segments.empty() {
-        wln!(writer, "<h1>{}</h1>", item.kind);
-        return Result::ok(());
-    } 
-    
-    if with_kind {
-        w!(writer, "<h1>{} ", item.kind);
-    } else {
-        w!(writer, "<h1>");
-    }
+impl PageWriter<T: std::io::Writable<T>> {
+    fn write_breadcrumbs(self: &PageWriter<T>, item: &Item, with_kind: bool) -> Result<()> {
+        let link_context = LinkContext::new(self.item_bag, &item.path);
 
-    for (idx, segment) in item.path.segments.iter().enumerate() {
-        let partial_path = Path::new(Vector::from_slice(item.path.segments.as_slice()[..idx + 1]));
-        let link = link_for_path("", &partial_path);
-
-        if idx == 0 {
-            w!(writer, "<a class=\"breadcrumbs\" href=\"{}\">{}</a>", link.as_slice(), segment);
+        if item.path.segments.empty() {
+            wln!(self, "<h1>{}</h1>", item.kind);
+            return Result::ok(());
+        } 
+        
+        if with_kind {
+            w!(self, "<h1>{} ", item.kind);
         } else {
-            w!(writer, "::<a class=\"breadcrumbs\" href=\"{}\">{}</a>", link.as_slice(), segment);
+            w!(self, "<h1>");
         }
 
-        partial_path.free();
-        link.free();
-    }
-    wln!(writer, "</h1>");
-    Result::ok(())
-}
+        for (idx, segment) in item.path.segments.iter().enumerate() {
+            let partial_path = Path::new(Vector::from_slice(item.path.as_slice()[..idx + 1]));
+            let link = link_context.resolve_link(&partial_path).unwrap();
 
-/// A mini-markdown subset parser
-fn write_docstring<T: std::io::Writable<T>>(writer: &mut T, item: &Item, tagline_only: bool) -> Result<()> {
-    use markdown::{InlineMarkdown, InlineMarkdownState};
+            if idx == 0 {
+                w!(self, "<a class=\"breadcrumbs\" href=\"{}\">{}</a>", link.as_slice(), segment);
+            } else {
+                w!(self, "::<a class=\"breadcrumbs\" href=\"{}\">{}</a>", link.as_slice(), segment);
+            }
 
-    if item.doc_comment.len() == 0 {
-        return Result::ok(());
-    }
-
-    if !tagline_only {
-        wln!(writer, "<p>");
+            partial_path.free();
+            link.free();
+        }
+        wln!(self, "</h1>");
+        Result::ok(())
     }
 
-    let in_a_code_block = false;
-    let md_state = InlineMarkdownState::default();
-    defer md_state.free();
+    fn write_source(self: &PageWriter<T>, item: &Item) -> Result<()> {
+        let link_context = LinkContext::new(self.item_bag, &item.defined_in);
+        let source: StringBuf = StringBuf::from_slice(item.node.text(item.parse_context.source()));
+        defer source.free();
 
-    for i in item.doc_comment.as_slice().split("\n") {
-        let docline =  if i.starts_with("///") {
-            i.trim_prefix("///")
-        } else {
-            i.trim_prefix("//!")
+        switch item.kind {
+            ItemKind::Enum, ItemKind::Struct, ItemKind::Union, ItemKind::TypeDef, ItemKind::Const, ItemKind::Static, ItemKind::Function, ItemKind::Macro => {},
+            // todo: signature only
+            ItemKind::Module, ItemKind::Protocol, ItemKind::Mixin => return Result::ok(()),
+            
+            _ => unreachable!()
         };
 
-        if docline.trim() == "```" {
-            if in_a_code_block {
-                wln!(writer, "</code></pre>");
-            } else {
-                w!(writer, "<pre><code>");
-            };
-            in_a_code_block = !in_a_code_block;
-        } else if !in_a_code_block {
-            docline = docline.trim_start();
-            if docline.len == 0 {
-                if tagline_only {
-                    return Result::ok(());
-                } else {
-                    wln!(writer, "</p><p>");
-                }
-            } else if docline.starts_with("###") {
-                md_state.reset().map_err(Error::from::<()>)?;
-                wln!(writer, "</p>");
-                wln!(writer, "<h4>{}</h4>", InlineMarkdown::new(
-                    docline.trim_prefix("###").trim(), &md_state
-                ));
-                md_state.reset().map_err(Error::from::<()>)?;
-                wln!(writer, "<p>");
-            } else if docline.starts_with("##") {
-                md_state.reset().map_err(Error::from::<()>)?;
-                wln!(writer, "</p>");
-                wln!(writer, "<h3>{}</h3>", InlineMarkdown::new(
-                    docline.trim_prefix("##").trim(), &md_state
-                ));
-                md_state.reset().map_err(Error::from::<()>)?;
-                wln!(writer, "<p>");
-            } else if docline.starts_with("#!") {
-                md_state.reset().map_err(Error::from::<()>)?;
-                wln!(writer, "</p>");
-                wln!(writer, "<h1>{}</h1>", InlineMarkdown::new(
-                    docline.trim_prefix("#!").trim(), &md_state
-                ));
-                md_state.reset().map_err(Error::from::<()>)?;
-                wln!(writer, "<p>");
-            } else if docline.starts_with("#") {
-                md_state.reset().map_err(Error::from::<()>)?;
-                wln!(writer, "</p>");
-                wln!(writer, "<h2>{}</h2>", InlineMarkdown::new(
-                    docline.trim_prefix("#").trim(), &md_state
-                ));
-                md_state.reset().map_err(Error::from::<()>)?;
-                wln!(writer, "<p>");
-            } else {
-                wln!(writer, "{}", InlineMarkdown::new(
-                    docline.trim(), 
-                    &md_state
-                ));
-            }
+        w!(self, "<pre><code>");
+        
+        let printer = CodePrinter::new(item.parse_context, &link_context, self.writer);
+        printer.visit(item.node);
+
+        wln!(self, "</code></pre>");
+
+        Result::ok(())
+    }
+
+    fn write_page(
+        self: &PageWriter<T>, 
+        nav_item: &Item, 
+        top_level: &Item, 
+        nav_items: &Vector<&Item>, 
+        main_items: &Vector<&Item>
+    ) -> Result<()> {
+        let link_context = LinkContext::new(self.item_bag, &top_level.defined_in);
+
+        wln!(self, "<html>");
+        wln!(self, "<head>");
+
+        if top_level.path.segments.len() == 0 {
+            wln!(self, "<title>Alumina Docs</title>");
         } else {
-            wln!(writer, "{}", docline);
+            wln!(self, "<title>{} - Alumina Docs</title>", top_level.path);
         }
-    }
 
-    if in_a_code_block {
-        return Result::err(Error::from_custom("unclosed code block"));
-    }
+        wln!(self, "<link rel=\"stylesheet\" href=\"/static/styles.css\">");
+        wln!(self, "<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">");
+        wln!(self, "<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>");
+        wln!(self, "<meta content=\"width=device-width, initial-scale=1\" name=\"viewport\" />");
+        wln!(self, "<link href=\"https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500&family=Source+Code+Pro:wght@400;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,700&display=swap\" rel=\"stylesheet\">");
+        wln!(self, "</head>");
+        wln!(self, "<body>");
+        
+        // Left sidebar
 
-    if !tagline_only {
-        wln!(writer, "</p>");
+        wln!(self, "<nav>");
+        wln!(self, "<a href=\"/\"><img class=\"logo\" src=\"/static/logo.svg\"></a>");
+        let top_level_link = link_context.resolve_link(&top_level.path).unwrap();
+        defer top_level_link.free();
+
+        if nav_item.path.last().is_some {
+            self.write_breadcrumbs(nav_item, false)?;
+        }
+
+        for grp in nav_items.iter().group_by(|i: &Item| -> ItemKind { i.kind }) {
+            wln!(self, "<h2>{}s</h2>", grp.key);
+            wln!(self, "<ul>");
+            
+            for item in grp {
+                let link_context = LinkContext::new(self.item_bag, &item.defined_in);
+                let link = link_context.resolve_link(&item.path).unwrap();
+                wln!(self, "<li>");
+                wln!(self, "<a href=\"{}\">{}</a>", link, item.path.last().unwrap());
+                wln!(self, "</li>");
+                link.free();
+            }
+            wln!(self, "</ul>");
+        }
+        wln!(self, "</nav>");
+
+        // Main section
+
+        wln!(self, "<main>");
+
+        if top_level.path.segments.len() > 0 {
+            self.write_breadcrumbs(top_level, true)?;
+        }
+
+        self.write_source(top_level)?;
+        write_docstring(self.writer, top_level.doc_comment.as_slice(), false)
+            .map_err(Error::from::<std::fmt::Error>)?;    
+
+        if top_level.kind.has_own_page() {
+            for grp in main_items.iter().group_by(|i: &Item| -> ItemKind { i.kind }) {
+                wln!(self, "<h2 id=\"{}\">{}s</h2>", grp.key, grp.key);
+                
+                if grp.key.has_own_page() {
+                    wln!(self, "<div class=\"item-short-table\">");
+                    for item in grp {
+                        let link_context = LinkContext::new(self.item_bag, &item.defined_in);
+                        let name = item.path.last().unwrap();
+                        let link = link_context.resolve_link(&item.path).unwrap();
+                        
+                        wln!(self, "<div class=\"row\" id=\"item.{}\">", name);
+                        wln!(self, "<div class=\"cell-name\"><a href=\"{}\">{}</a></div>", link, name);
+                        w!(self, "<div class=\"cell-doc\">");
+                        write_docstring(self.writer, item.doc_comment.as_slice(), true)
+                            .map_err(Error::from::<std::fmt::Error>)?;  
+                        wln!(self, "</div>");
+                        wln!(self, "</div>");
+        
+                        link.free();
+                    }
+                    wln!(self, "</div>");
+                    
+                } else {
+                    wln!(self, "<ul>");
+                    for item in grp {
+                        let link_context = LinkContext::new(self.item_bag, &item.defined_in);
+                        let name = item.path.last().unwrap();
+                        
+                        wln!(self, "<li>");                  
+                        wln!(self, "<h4 id=\"item.{}\" class=\"signature\">", name);
+                        let printer = CodePrinter::new(item.parse_context, &link_context, self.writer);
+                        printer.visit(item.node);
+                        wln!(self, "</h4>");
+                        wln!(self, "<div class=\"item-doc\">");
+                        write_docstring(self.writer, item.doc_comment.as_slice(), false)
+                            .map_err(Error::from::<std::fmt::Error>)?;  
+                        wln!(self, "</div>");
+                        wln!(self, "</li>");
+                    }
+        
+                    wln!(self, "</ul>");
+                }
+            }
+        }
+
+        wln!(self, "</main>");
+        wln!(self, "</body>");
+        wln!(self, "</html>");
+
+        Result::ok(())
     }
-    Result::ok(())
 }
 
-fn write_source<T: std::io::Writable<T>>(writer: &mut T, item: &Item) -> Result<()> {
-    let source: StringBuf = StringBuf::from_slice(item.node.text(item.parse_context.source()));
-    defer source.free();
 
-    switch item.kind {
-        ItemKind::Enum, ItemKind::Struct, ItemKind::Union, ItemKind::TypeDef, ItemKind::Const, ItemKind::Static, ItemKind::Function, ItemKind::Macro => {},
-        // todo: signature only
-        ItemKind::Module, ItemKind::Protocol, ItemKind::Mixin => return Result::ok(()),
-        _ => unreachable!()
+fn write_page(items: &ItemBag, top_level: &Item) -> Result<()> {
+    let filename = if top_level.path.segments.empty() {
+        format!("./build/docs/index.html").unwrap()
+    } else {
+        format!("./build/docs/{}.html", "/".join_fmt(top_level.path.segments.iter()))
+            .unwrap()
     };
 
-    
-    w!(writer, "<pre><code>");
-    
-    let printer = CodePrinter::new(item.parse_context, writer);
-    printer.visit(item.node);
-
-    wln!(writer, "</code></pre>");
-
-    Result::ok(())
-}
-
-fn write_page_inner(nav_item: &Item, top_level: &Item, nav_items: &Vector<&Item>, main_items: &Vector<&Item>) -> Result<()> {
-    let filename = link_for_path("./build/docs", &top_level.path);
     defer filename.free();
-
     ensure_dir(filename.as_slice())?;
 
     let file = std::fs::File::create(filename.as_slice()).map_err(Error::from_io)?;
@@ -276,123 +311,10 @@ fn write_page_inner(nav_item: &Item, top_level: &Item, nav_items: &Vector<&Item>
         writer.flush();
         writer.free();
     };
-
-    wln!(&writer, "<html>");
-    wln!(&writer, "<head>");
-
-    if top_level.path.segments.len() == 0 {
-        wln!(&writer, "<title>Alumina Docs</title>");
-    } else {
-        wln!(&writer, "<title>{} - Alumina Docs</title>", top_level.path);
-    }
-
-    wln!(&writer, "<link rel=\"stylesheet\" href=\"/static/styles.css\">");
-    wln!(&writer, "<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">");
-    wln!(&writer, "<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>");
-    wln!(&writer, "<meta content=\"width=device-width, initial-scale=1\" name=\"viewport\" />");
-    wln!(&writer, "<link href=\"https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500&family=Source+Code+Pro:wght@400;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,700&display=swap\" rel=\"stylesheet\">");
-    wln!(&writer, "</head>");
-    wln!(&writer, "<body>");
     
-    // Left sidebar
-
-    wln!(&writer, "<nav>");
-    wln!(&writer, "<a href=\"/\"><img class=\"logo\" src=\"/static/logo.svg\"></a>");
-    let top_level_link = link_for_path("", &top_level.path);
-    defer top_level_link.free();
-
-    if nav_item.path.last().is_some {
-        write_breadcrumbs(&writer, nav_item, false)?;
-    }
-
-    for grp in nav_items.iter().group_by(|i: &Item| -> ItemKind { i.kind }) {
-        wln!(&writer, "<h2>{}s</h2>", grp.key);
-        wln!(&writer, "<ul>");
-        
-        for item in grp {
-            let link = link_for_path("", &item.path);
-            wln!(&writer, "<li>");
-
-            if item.kind.has_own_page() {
-                wln!(&writer, "<a href=\"{}\">{}</a>", link, item.path.last().unwrap());
-            } else {
-                wln!(&writer, "<a href=\"{}#item.{}\">{}</a>", top_level_link, item.path.last().unwrap(), item.path.last().unwrap());
-            }
-
-            wln!(&writer, "</li>");
-            link.free();
-        }
-        wln!(&writer, "</ul>");
-    }
-    wln!(&writer, "</nav>");
-
-    // Main section
-
-    wln!(&writer, "<main>");
-
-    if top_level.path.segments.len() > 0 {
-        write_breadcrumbs(&writer, top_level, true)?;
-    }
-
-    write_source(&writer, top_level)?;
-    write_docstring(&writer, top_level, false)?;    
-
-    if top_level.kind.has_own_page() {
-        for grp in main_items.iter().group_by(|i: &Item| -> ItemKind { i.kind }) {
-            wln!(&writer, "<h2 id=\"{}\">{}s</h2>", grp.key, grp.key);
-            
-            if grp.key.has_own_page() {
-                wln!(&writer, "<div class=\"item-short-table\">");
-                for item in grp {
-                    let name = item.path.last().unwrap();
-                    let link = link_for_path("", &item.path);
-                    
-                    wln!(&writer, "<div class=\"row\" id=\"item.{}\">", name);
-                    wln!(&writer, "<div class=\"cell-name\"><a href=\"{}\">{}</a></div>", link, name);
-                    w!(&writer, "<div class=\"cell-doc\">");
-                    write_docstring(&writer, item, true);
-                    wln!(&writer, "</div>");
-                    wln!(&writer, "</div>");
-    
-                    link.free();
-                }
-                wln!(&writer, "</div>");
-                
-            } else {
-                wln!(&writer, "<ul>");
-                for item in grp {
-                    let name = item.path.last().unwrap();
-                    
-                    wln!(&writer, "<li id=\"item.{}\">", name);
-                    
-                    
-                    wln!(&writer, "<h4 class=\"signature\">");
-                    let printer = CodePrinter::new(item.parse_context, &writer);
-                    printer.visit(item.node);
-                    wln!(&writer, "</h4>");
-                    wln!(&writer, "<div class=\"item-doc\">");
-                    write_docstring(&writer, item, false);
-                    wln!(&writer, "</div>");
-                    wln!(&writer, "</li>");
-                }
-    
-                wln!(&writer, "</ul>");
-            }
-        }
-    }
-
-    wln!(&writer, "</main>");
-    wln!(&writer, "</body>");
-    wln!(&writer, "</html>");
-
-    Result::ok(())
-}
-
-
-fn write_page(items: &ItemBag, top_level: &Item) -> Result<()> {
     let main_items = items
         .filtered(|&top_level, v: &Item| -> bool { 
-            v.path.len() == top_level.path.len() + 1 && v.path.starts_with(&top_level.path)
+            v.is_public() && v.path.len() == top_level.path.len() + 1 && v.path.starts_with(&top_level.path)
         });
     defer main_items.free();
 
@@ -401,9 +323,9 @@ fn write_page(items: &ItemBag, top_level: &Item) -> Result<()> {
     } else {
         let nav_items = items
             .filtered(|&top_level, v: &Item| -> bool { 
-                v.path.len() == top_level.path.len() && 
-                    v.path.segments.as_slice()[..v.path.len() - 1] == 
-                        top_level.path.segments.as_slice()[..v.path.len() - 1]
+                v.is_public() && v.path.len() == top_level.path.len() && 
+                    v.path.as_slice()[..v.path.len() - 1] == 
+                        top_level.path.as_slice()[..v.path.len() - 1]
             });
         
         defer nav_items.free();
@@ -416,14 +338,15 @@ fn write_page(items: &ItemBag, top_level: &Item) -> Result<()> {
         (parent, &nav_items)
     };
 
-    write_page_inner(nav_item, top_level, nav_items, &main_items)  
+    let page_writer = PageWriter { writer: &writer, item_bag: items };
+    page_writer.write_page(nav_item, top_level, nav_items, &main_items)
 } 
 
 fn write_html(items: &ItemBag) -> Result<()> { 
     use std::string::join_fmt;
     use std::fmt::format;
 
-    for top_level in items.all().filter(|v: &Item| -> bool { v.kind.has_own_page() }) {
+    for top_level in items.all().filter(|v: &Item| -> bool {  v.is_public() && v.kind.has_own_page() }) {
         write_page(items, top_level)?;
     }
 
@@ -451,7 +374,19 @@ fn main_inner(args: &[&[u8]]) -> Result<()> {
         processor.process_file(module_path, filename)?;
     }
 
+    processor.items.resolve_all();
     processor.items.sort();
+/*
+    for (k, v) in processor.items.aliases {
+        let foo = processor.items.resolve(&k, &v, true);
+        
+        if foo.is_some {
+            eprintln!("{} {} => {}", k, v, foo.inner.path);
+        } else {
+            eprintln!("{} {} => OOPS!", k, v);
+        }
+    }
+    */
 
     write_html(&processor.items)?;
         

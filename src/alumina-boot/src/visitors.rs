@@ -74,15 +74,6 @@ where
 impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
     type ReturnType = Result<Path<'ast>, AluminaError>;
 
-    fn visit_super(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        Ok(self
-            .scope
-            .find_super()
-            .ok_or(CodeErrorKind::SuperNotAllowed)
-            .with_span_from(&self.scope, node)?
-            .path())
-    }
-
     fn visit_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let name = self.code.node_text(node).alloc_on(self.ast);
 

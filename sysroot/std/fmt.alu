@@ -1,9 +1,13 @@
 //! String formatting
 
-struct Error {}
-
 type Result = ::Result<(), Error>;
 
+/// Error that can occur during a string formatting operation.
+///
+/// This error can signal many different things - either the value is somehow
+/// invalid and cannot be formatted, or there is an I/O error if the formatter is performing
+/// I/O operations.
+struct Error {}
 
 impl Error {
     fn new() -> Error {
@@ -27,10 +31,24 @@ protocol Formatter<Self> {
     }
 }
 
+/// Types that can be formatted.
 protocol Formattable<Self, F: Formatter<F> = internal::NullFormatter> {
     fn fmt(self: &Self, f: &mut F) -> Result;
 }
 
+
+/// Write a formatted string into a given formatter.
+/// 
+/// # Example
+/// ```
+/// use std::fmt::{write, SliceFormatter};
+/// let buf: [u8; 64];
+/// let fmt = SliceFormatter::new(buf.as_slice_mut());
+///     
+/// write!(&fmt, "{} + {} = {}", 1, 2, 3);
+/// 
+/// assert_eq!(fmt.as_slice()[0..9], "1 + 2 = 3");
+/// ``` 
 macro write($fmt, $fmt_str, $arg...) {
     internal::printf(
         concat!($fmt_str), 
@@ -39,6 +57,7 @@ macro write($fmt, $fmt_str, $arg...) {
     )
 }
 
+/// Write a formatted string and a newline into a given formatter.
 macro writeln($fmt, $fmt_str, $arg...) {
     internal::printf(
         concat!($fmt_str, "\n"), 
@@ -47,6 +66,17 @@ macro writeln($fmt, $fmt_str, $arg...) {
     )
 }
 
+/// Format a string into a `StringBuf`.
+///
+/// # Example
+/// ```
+/// use std::fmt::format;
+///
+/// let s: StringBuf = format!("{} + {} = {}", 1, 2, 3);
+/// defer s.free()
+///
+/// assert_eq!(s.as_slice(), "1 + 2 = 3");
+/// ```
 macro format($fmt_str, $arg...) { 
     let vec = collections::Vector::with_capacity::<u8>($fmt_str.len);
     let ret = fmt::write!(&vec, $fmt_str, $arg...);
@@ -58,6 +88,19 @@ macro format($fmt_str, $arg...) {
     }
 }
 
+/// Format a string into a preexisting buffer.
+///
+/// Returns an error if the buffer is not large enough.
+///
+/// # Example
+/// ```
+/// use std::fmt::format_in;
+///
+/// let buf: [u8; 64];
+/// let f = format_in!(&buf, "{} + {} = {}", 1, 2, 3).unwrap();
+///
+/// assert_eq!(f, "1 + 2 = 3");
+/// ```
 macro format_in($buf, $fmt_str, $arg...) { 
     let fmt = SliceFormatter::new($buf);
     let ret = fmt::write!(&fmt, $fmt_str, $arg...);
@@ -365,7 +408,7 @@ mod internal {
             };
 
             if s.len < self.len {
-                for _ in iter::range(0usize, self.len - s.len) {
+                for _ in (0usize..self.len - s.len) {
                     fmt.write_char(self.pad)?;
                 }
             }

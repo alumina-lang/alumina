@@ -3,12 +3,11 @@
 #[cfg(any(target_os="linux", target_os="macos", target_os="android"))]
 {
     use unix::{
-        Error, FileDescriptor, Pipe, StdioStream,
-        stdin, stdout, stderr, anonymous_pipe
+        Error, FileDescriptor, Pipe, StdioStream
     }
 }
 
-use fmt::{BufferedFormatter, write, writeln};
+use fmt::{write, writeln};
 
 /// Buffer for formatted standard I/O.
 ///
@@ -17,45 +16,87 @@ use fmt::{BufferedFormatter, write, writeln};
 /// directly). As many formatters write individual characters, doing a syscall 
 /// for every one would be a performance killer.
 ///
-/// Once we have multi-threading, stdio formatting will have to be synchronized or made
-/// thread-local. Having a static buffer is also a concern if the macros recurse, as
+/// Once we have multi-threading, stdio formatting will have to be synchronized or `FMT_BUF`
+/// made thread-local. Having a static buffer is also a concern if the macros recurse, as
 /// the buffer will be overwritten.
 static FMT_BUF: [u8; 128];
 
+/// Prints a formatted string to standard output.
+///
+/// # Example
+/// ```
+/// print!("Hello, world");
+/// ```
 macro print($fmt_str, $arg...) {
     let fmt = BufferedWriter::from_slice(&StdioStream::stdout(), &FMT_BUF);
     write!(&fmt, $fmt_str, $arg...).unwrap();
     fmt.flush().unwrap();
 }
+
+/// Prints a formatted string to standard output with newline.
+///
+/// # Example
+/// ```
+/// println!("Hello, world");
+/// ```
 macro println($fmt_str, $arg...) {
     let fmt = BufferedWriter::from_slice(&StdioStream::stdout(), &FMT_BUF);
     writeln!(&fmt, $fmt_str, $arg...).unwrap();
     fmt.flush().unwrap();
 }
+
+/// Prints a formatted string to standard error.
+///
+/// # Example
+/// ```
+/// eprint!("Something went wrong :(");
+/// ```
 macro eprint($fmt_str, $arg...) {
     let fmt = BufferedWriter::from_slice(&StdioStream::stderr(), &FMT_BUF);
     write!(&fmt, $fmt_str, $arg...).unwrap();
     fmt.flush().unwrap();
 }
+
+/// Prints a formatted string to standard error with newline.
+///
+/// # Example
+/// ```
+/// eprintln!("Something went wrong :(");
+/// ```
 macro eprintln($fmt_str, $arg...) {
     let fmt = BufferedWriter::from_slice(&StdioStream::stderr(), &FMT_BUF);
     writeln!(&fmt, $fmt_str, $arg...).unwrap();
     fmt.flush().unwrap();
 }
 
+/// Types that are wrappers over a file descriptor.
 protocol AsFileDescriptor<Self> {
     fn as_fd(self: &Self) -> FileDescriptor;
 }
 
+
+/// Types that implement readable stream semantics.
 protocol Readable<Self> {
     use string::StringBuf;
     use internal::default_read_exact;
 
+    /// Reads from the stream into a provided buffer.
+    ///
+    /// If successful, returns the number of bytes read. This may be less than the size
+    /// of the provided buffer.
     fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize, Error>;
+
+    /// Fills the provided buffer by reading from the stream.
+    ///
+    /// If stream had less bytes available than the size of the buffer, this method
+    /// will return an `Error::eof()`.
     fn read_exact(self: &mut Self, buf: &mut [u8]) -> Result<(), Error> {
         self.default_read_exact(buf)
     }
 
+    /// Reads the entire stream into a `StringBuf`.
+    ///
+    /// If successful, returns the number of bytes that were read.
     fn read_to_end(self: &mut Self, buf: &mut StringBuf) -> Result<usize, Error> {;
         let start_len = buf.len();
         let start_cap = buf.capacity();
@@ -87,6 +128,7 @@ protocol Readable<Self> {
     }
 }
 
+/// Types that implement writable stream semantics.
 protocol Writable<Self> {
     fn write(self: &mut Self, buf: &[u8]) -> Result<usize, Error>;
     fn write_all(self: &mut Self, buf: &[u8]) -> Result<(), Error> {
@@ -104,12 +146,14 @@ protocol Writable<Self> {
     fn flush(self: &mut Self) -> Result<(), Error>;
 }
 
+/// Reference point for the seek operation.
 enum SeekFrom {
     Beginning,
     Current,
     End
 }
 
+/// Streams that can be 
 protocol Seekable<Self> {
     fn seek(self: &mut Self, whence: SeekFrom, offset: i64) -> Result<u64, Error>;
     fn rewind(self: &mut Self) -> Result<(), Error> {
