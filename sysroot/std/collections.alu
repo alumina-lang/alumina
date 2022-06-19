@@ -18,6 +18,16 @@ fn free_all<T: Freeable<T>(col: &mut T) {
 }
 
 /// Sorts a slice using a key extraction function.
+///
+/// # Example
+/// ```
+/// use std::collections::sort_by;
+///
+/// let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
+/// slice.sort_by(|v: &i32| -> i32 { -*v });
+///
+/// assert_eq!(slice, &[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
+/// ```
 fn sort_by<T, F: Callable<(&T), K>, K: Comparable<K>>(arr: &mut [T], key: F) {
     if arr.len <= 1 {
         return;
@@ -28,7 +38,17 @@ fn sort_by<T, F: Callable<(&T), K>, K: Comparable<K>>(arr: &mut [T], key: F) {
     sort_by(arr[p+1..], key);
 }
 
-/// Sorts the slice.
+/// Sorts a slice.
+///
+/// # Example
+/// ```
+/// use std::collections::sort;
+///
+/// let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
+/// slice.sort();
+///
+/// assert_eq!(slice, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+/// ```
 fn sort<T: Comparable<T>>(arr: &mut [T]) {
     sort_by(arr, |k: &T| -> T { *k });
 }

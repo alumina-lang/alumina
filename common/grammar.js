@@ -274,7 +274,7 @@ module.exports = grammar({
         ";"
       ),
 
-    use_wildcard: ($) => seq(optional(seq(field("path", $._path), "::")), "*"),
+    use_wildcard: ($) => seq(field("path", $._path), "::", "*"),
 
     _use_clause: ($) =>
       choice(
@@ -739,7 +739,6 @@ module.exports = grammar({
     _path: ($) =>
       choice(
         alias(choice(...primitive_types), $.identifier),
-        $.super,
         $.identifier,
         $.macro_identifier,
         $.scoped_identifier
@@ -976,8 +975,6 @@ module.exports = grammar({
           "'"
         )
       ),
-
-    super: ($) => "super",
 
     boolean_literal: ($) => choice("true", "false"),
     ptr_literal: ($) => choice("null"),

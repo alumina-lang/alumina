@@ -5,7 +5,7 @@ use aluminac::lib::common::{NodeVisitorExt, child_by, children_by};
 use aluminac::lib::node_kinds::{NodeVisitor, FieldKind};
 
 use alumina_doc::error::Result;
-use alumina_doc::common::{Item, ItemBag, Path, ParseContext, ItemKind};
+use alumina_doc::common::{Item, ItemBag, Path, ParseContext, ItemKind, LinkContext};
 
 use std::io::Writable;
 
@@ -14,6 +14,130 @@ use tree_sitter::Node;
 macro get_name($self, $node) {
     child_by!($node, FieldKind::Name).unwrap().text($self.parse_context.source())
 }
+
+struct UseClauseVisitor {
+    original_path: &Path,
+    path: Path,
+    parse_context: &ParseContext,
+    items: &mut ItemBag
+}
+
+impl UseClauseVisitor {
+    fn new(parse_context: &ParseContext, path: &Path, items: &mut ItemBag) -> UseClauseVisitor {
+        UseClauseVisitor {
+            parse_context: parse_context,
+            original_path: path,
+            path: Path::new(Vector::new()),
+            items: items
+        }
+    }
+  
+    fn visit_use_wildcard(self: &mut UseClauseVisitor, node: Node) -> Result<()> {
+        let suffix = Path::from_str(
+            child_by!(node, FieldKind::Path)
+                .unwrap()
+                .text(self.parse_context.source())
+        );
+        defer suffix.free();
+
+        self.items.add_star_alias(
+            self.original_path.clone(),
+            self.path.join_with(&suffix)
+        );
+        Result::ok(())
+    }
+
+    fn visit_scoped_use_list(self: &mut UseClauseVisitor, node: Node) -> Result<()> {
+        let suffix = Path::from_str(
+            child_by!(node, FieldKind::Path)
+                .unwrap()
+                .text(self.parse_context.source())
+        );
+        defer suffix.free();
+
+        let new_prefix = self.path.join_with(&suffix);
+        let old_prefix = std::mem::replace(&self.path, new_prefix);
+        defer old_prefix.free();       
+
+        self.visit(child_by!(node, FieldKind::List).unwrap())?;
+        std::mem::replace(&self.path, old_prefix.move()).free();
+
+        Result::ok(())
+    }
+
+    fn visit_use_list(self: &mut UseClauseVisitor, node: Node) -> Result<()> {
+        self.visit_children_by_field(node, FieldKind::Item)
+    }
+
+    fn visit_identifier(self: &mut UseClauseVisitor, node: Node) -> Result<()> {
+        let name = node.text(self.parse_context.source());
+
+        self.items.add_alias(
+            self.original_path.extend_with(name),
+            self.path.extend_with(name)
+        );
+        Result::ok(())
+    }
+
+    fn visit_scoped_identifier(self: &mut UseClauseVisitor, node: Node) -> Result<()> {
+        let path = child_by!(node, FieldKind::Path)
+            .map(|=self, node: Node| -> Path {
+                let suffix = Path::from_str(
+                    node.text(self.parse_context.source())
+                );
+                defer suffix.free();
+                self.path.join_with(&suffix)
+            })
+            .unwrap_or_else(|=self| -> Path { self.path.clone() });
+        defer path.free();
+
+        let name = child_by!(node, FieldKind::Name)
+            .unwrap()
+            .text(self.parse_context.source());       
+        
+        self.items.add_alias(
+            self.original_path.extend_with(name),
+            path.extend_with(name)
+        );
+        Result::ok(())
+    }
+
+    fn visit_use_as_clause(self: &mut UseClauseVisitor, node: Node) -> Result<()> {
+        let path = Path::from_str(
+            child_by!(node, FieldKind::Path)
+                .unwrap()
+                .text(self.parse_context.source())
+        );
+        defer path.free();
+        
+        let name = child_by!(node, FieldKind::Alias)
+            .unwrap()
+            .text(self.parse_context.source());        
+
+        self.items.add_alias(
+            self.original_path.extend_with(name),
+            self.path.join_with(&path)
+        );
+        Result::ok(())
+    }
+
+    fn free(self: &mut UseClauseVisitor) {
+        self.path.free();
+    }
+
+    fn move(self: &mut UseClauseVisitor) -> UseClauseVisitor {
+        UseClauseVisitor {
+            parse_context: self.parse_context,
+            path: self.path.move(),
+            items: self.items,
+            index: self.index
+        }
+    }
+
+    mixin NodeVisitorExt<UseClauseVisitor, Result<()>>;
+    mixin NodeVisitor<UseClauseVisitor, Result<()>>;
+}
+    
 
 struct TopLevelVisitor {
     path: Path,
@@ -46,7 +170,7 @@ impl TopLevelVisitor {
     
     fn move(self: &mut TopLevelVisitor) -> TopLevelVisitor {
         TopLevelVisitor {
-            source: self.source,
+            parse_context: self.parse_context,
             path: self.path.move(),
             items: self.items,
             doc_comment: self.doc_comment.move(),
@@ -59,6 +183,7 @@ impl TopLevelVisitor {
         self.items.add_item(Item {
             kind: kind,
             path: self.path.extend_with(name),
+            defined_in: self.path.extend_with(name),
             node: node,
             parse_context: self.parse_context,
             doc_comment: self.doc_comment.move(),
@@ -197,7 +322,10 @@ impl TopLevelVisitor {
     }
 
     fn visit_use_declaration(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
-        Result::ok(())
+        let visitor = UseClauseVisitor::new(self.parse_context, &self.path, self.items);
+        defer visitor.free();
+
+        visitor.visit(child_by!(node, FieldKind::Argument).unwrap())
     }
 
     fn visit_doc_comment(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
@@ -219,9 +347,9 @@ impl TopLevelVisitor {
 
 struct CodePrinter<W: Writable<W>> {
     parse_context: &ParseContext,
+    link_context: &LinkContext,
     writer: &mut W    
 }
-
 
 macro w($writer, $fmt, $args...) {
     std::fmt::write!($writer, $fmt, $args...)
@@ -235,9 +363,10 @@ macro wln($writer, $fmt, $args...) {
 
 
 impl CodePrinter<W: Writable<W>> {
-    fn new(parse_context: &ParseContext, writer: &mut W) -> CodePrinter<W> {
+    fn new(parse_context: &ParseContext, link_context: &LinkContext, writer: &mut W) -> CodePrinter<W> {
         CodePrinter {
             parse_context: parse_context,
+            link_context: link_context,
             writer: writer
         }
     }
@@ -331,25 +460,23 @@ impl CodePrinter<W: Writable<W>> {
     }
 
     fn visit_type_identifier(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
-        let path = node.text(self.parse_context.source())
-            .split("::")
-            .last()
-            .unwrap();
+        let path = common::Path::from_str(node.text(self.parse_context.source()));
+        defer path.free();
 
-        w!(self.writer, "{}", path);
+        let link = self.link_context.resolve_link(&path);
+        defer link.free();
+
+        if link.is_some {
+            w!(self.writer, "<a href=\"{}\">{}</a>", link.inner, path.last().unwrap());
+        } else {
+            w!(self.writer, "{}", path.last().unwrap());
+        }
 
         Result::ok(())
     }
 
     fn visit_scoped_type_identifier(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
-        let path = node.text(self.parse_context.source())
-            .split("::")
-            .last()
-            .unwrap();
-
-        w!(self.writer, "{}", path);
-        
-        Result::ok(())
+        self.visit_type_identifier(node)
     }
 
     fn visit_pointer_of(self: &mut CodePrinter<W>, node: Node) -> Result<()> {

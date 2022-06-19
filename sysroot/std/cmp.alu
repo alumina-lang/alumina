@@ -1,5 +1,6 @@
 //! Equality and comparison 
 
+/// Types that can be compared for equality.
 protocol Equatable<Self> {
     fn equals(lhs: &Self, rhs: &Self) -> bool;
 
@@ -15,6 +16,7 @@ enum Ordering {
     Greater = 1i8,
 }
 
+/// Types that have a total order.
 protocol Comparable<Self: Equatable<Self>> {
     fn compare(lhs: &Self, rhs: &Self) -> Ordering;
     
@@ -39,6 +41,32 @@ protocol Comparable<Self: Equatable<Self>> {
     }
 }
 
+/// Helper macro for implementing a lexicographic order.
+///
+/// The macro will short-ciricuit the enclosuing function if `lhs` and `rhs` are not equal
+/// and continue if they are.
+///
+/// # Example
+/// ```
+/// struct IPv4 {
+///     a: u8,
+///     b: u8,
+///     c: u8,
+///     d: u8,
+/// }
+/// 
+/// impl IPv4 {
+///     fn compare(lhs: &IPv4, rhs: &IPv4) -> Ordering {
+///         lexicographic_cmp!(lhs.a, rhs.a);
+///         lexicographic_cmp!(lhs.b, rhs.b);
+///         lexicographic_cmp!(lhs.c, rhs.c);
+///         lexicographic_cmp!(lhs.d, rhs.d);
+///         Ordering::Equal
+///     }
+///
+///     mixin Comparable<IPv4>;
+/// }
+/// ```
 macro lexicographic_cmp($lhs, $rhs) {
     let cmp = $lhs.compare(&$rhs);
     if cmp != Ordering::Equal {
