@@ -173,7 +173,7 @@ make alumina-boot
 Now you are able to compile Alumina code, e.g.
 
 ```
-./alumina-boot --sysroot ./stdlib hello_world=./examples/hello_world.alu -o hello_world.c
+./alumina-boot --sysroot ./sysroot hello_world=./examples/hello_world.alu -o hello_world.c
 cc hello_world.c -o hello_world
 ./hello_world
 ```
@@ -181,7 +181,7 @@ cc hello_world.c -o hello_world
 If you wish to run the tests, simply add `--cfg test`. In this case the `main()` function will be replaced by the test runner.
 
 ```
-./alumina-boot --sysroot ./stdlib hello_world=./examples/hello_world.alu -o hello_world_test.c
+./alumina-boot --sysroot ./sysroot hello_world=./examples/hello_world.alu -o hello_world_test.c
 cc hello_world_test.c -o hello_world_test
 ./hello_world_test
 ```
@@ -192,7 +192,7 @@ To compile the self-hosted compiler, run:
 make aluminac
 ```
 
-See [examples](./examples), [standard library](./stdlib) and the [self-hosted compiler](./src/aluminac) for a tour of the language, documentation is TBD.
+See [examples](./examples), [standard library](./sysroot) and the [self-hosted compiler](./src/aluminac) for a tour of the language, documentation is TBD.
 
 # Contributing
 

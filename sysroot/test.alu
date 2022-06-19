@@ -1,7 +1,10 @@
 //! Unit testing mini-framework.
 //!
-//! This unit testing runner is in `std` for convenience's sake, eventually it should be
-//! extracted. Nothing prevents you from writing your own framework, just compile with 
+//! When `--cfg test` is provided as an argument to the compiler, this module will override
+//! the `main` entrypoint with the test runner which will run all the test cases defined in 
+//! the code that is being compiled.
+//!
+//! Nothing prevents you from writing your own framework, just compile with 
 //! `--cfg custom_test_framework` and use the test support glue in `std::runtime` to get the test
 //! cases.
 
@@ -14,6 +17,7 @@
     use std::runtime::internal::{TEST_CASES, TestCaseMeta};
     use std::time::{Instant, Duration};
 
+    /// Holder for the results of a test case.
     struct TestResult {
         test: TestCaseMeta,
         duration: Duration,
@@ -30,6 +34,7 @@
         }
     }
 
+    /// Whether a failure (non-0 exit code) is expected for this test.
     fn should_fail(test: &TestCaseMeta) -> bool {
         for attr in test.attributes {
             if attr == "(should_fail)" {
@@ -39,6 +44,7 @@
         return false;
     }
 
+    /// Whether a test should be ignored.
     fn ignored(test: &TestCaseMeta) -> bool {
         for attr in test.attributes {
             if attr == "(ignore)" {
@@ -48,6 +54,7 @@
         return false;
     }
 
+    /// Run a single test case in a forked process and collect output. 
     fn run(test: &TestCaseMeta) -> TestResult {
         let should_fail = test.should_fail();
         let start_time = Instant::now();
@@ -97,7 +104,7 @@
             }
         }
     }
-
+    
     enum State {
         Normal, 
         Prefix,
@@ -109,6 +116,7 @@
         process::exit(1);
     }
 
+    /// Parse command line arguments.
     fn parse_args(args: &[&[u8]]) -> Args {
         let state = State::Normal;
         let res = Args::default();
@@ -147,6 +155,7 @@
         res
     }
 
+    /// Filter tests based on user-provided criteria (e.g. path prefix).
     fn filter_tests(args: Args) -> (Vector<TestCaseMeta>, usize) {
         use string::{starts_with, contains};
 
@@ -261,7 +270,7 @@
         }
     }
     
-    // Quis testabitur ipsos testes
+    /// Quis testabitur ipsos testes
     #[cfg(test_std)] {
         #[test]
         fn regular_test() {

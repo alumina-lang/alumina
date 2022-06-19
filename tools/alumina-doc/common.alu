@@ -88,6 +88,8 @@ impl Path {
 
 enum ItemKind {
     Module,
+    Field,
+    Variant,
     Method,
     Function,
     TypeDef,
@@ -114,8 +116,10 @@ impl ItemKind {
             ItemKind::Const => write!(f, "const"),
             ItemKind::Protocol => write!(f, "protocol"),
             ItemKind::Enum => write!(f, "enum"),
+            ItemKind::Variant => write!(f, "variant"),
             ItemKind::Static => write!(f, "static"),
             ItemKind::Struct => write!(f, "struct"),
+            ItemKind::Field => write!(f, "field"),
             ItemKind::Union => write!(f, "union"),
             ItemKind::Mixin => write!(f, "mixin"),
             _ => unreachable!(),
@@ -135,7 +139,9 @@ impl ItemKind {
             ItemKind::Method => false,
             ItemKind::TypeDef => false,
             ItemKind::Const => false,
+            ItemKind::Variant => false,
             ItemKind::Static => false,
+            ItemKind::Field => false,
             ItemKind::Mixin => false,
             _ => false,
         }
@@ -160,6 +166,7 @@ impl ItemKind {
 
 struct Item {
     kind: ItemKind,
+    index: usize,
     parse_context: &ParseContext,
     path: Path,
     doc_comment: StringBuf,
@@ -241,14 +248,14 @@ impl ItemBag {
     fn sort(self: &mut ItemBag) {
         self.items
             .as_slice_mut()
-            .sort_by(|it: &&Item| -> (&[&[u8]], i32, &[u8]) {
+            .sort_by(|it: &&Item| -> (&[&[u8]], i32, usize, &[u8]) {
                 use std::mem::slice::empty;
 
                 let start = it.path.segments.as_slice();
                 if start.len == 0 {
-                    (empty(), 0, empty())
+                    (empty(), 0, it.index, empty())
                 } else {
-                    (start[..start.len-1], it.kind as i32, start[start.len-1])
+                    (start[..start.len-1], it.kind as i32, it.index, start[start.len-1])
                 }
             });
     }

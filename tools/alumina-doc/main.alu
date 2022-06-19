@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::fmt::format;
 use std::collections::{Vector, sort_by};
-use std::string::{StringBuf, split, join, trim_prefix, starts_with, join_fmt, replace, trim};
+use std::string::{StringBuf, split, join, trim_prefix, starts_with, join_fmt, replace, trim, trim_start};
 
 use tree_sitter::{TSLanguage, Node, Parser, TSTreeCursor, TSFieldId};
 
@@ -83,6 +83,7 @@ impl Processor {
             node: parse_context.root_node(),
             parse_context: parse_context,
             doc_comment: visitor.file_doc_comment.move(),
+            index: 0
         });
 
         Result::ok(())
@@ -148,7 +149,10 @@ fn write_breadcrumbs<T: std::io::Writable<T>>(writer: &mut T, item: &Item, with_
     Result::ok(())
 }
 
+/// A mini-markdown subset parser
 fn write_docstring<T: std::io::Writable<T>>(writer: &mut T, item: &Item, tagline_only: bool) -> Result<()> {
+    use markdown::{InlineMarkdown, InlineMarkdownState};
+
     if item.doc_comment.len() == 0 {
         return Result::ok(());
     }
@@ -158,30 +162,71 @@ fn write_docstring<T: std::io::Writable<T>>(writer: &mut T, item: &Item, tagline
     }
 
     let in_a_code_block = false;
+    let md_state = InlineMarkdownState::default();
+    defer md_state.free();
 
     for i in item.doc_comment.as_slice().split("\n") {
-        let without_prefix =  if i.starts_with("///") {
-            i.trim_prefix("///").trim()
+        let docline =  if i.starts_with("///") {
+            i.trim_prefix("///")
         } else {
-            i.trim_prefix("//!").trim()
+            i.trim_prefix("//!")
         };
 
-        if without_prefix.len == 0 {
-            if tagline_only {
-                return Result::ok(());
-            } else {
-                wln!(writer, "</p><p>");
-            }
-        } else if without_prefix == "```" {
+        if docline.trim() == "```" {
             if in_a_code_block {
                 wln!(writer, "</code></pre>");
-                in_a_code_block = false;
             } else {
                 w!(writer, "<pre><code>");
-                in_a_code_block = true;
+            };
+            in_a_code_block = !in_a_code_block;
+        } else if !in_a_code_block {
+            docline = docline.trim_start();
+            if docline.len == 0 {
+                if tagline_only {
+                    return Result::ok(());
+                } else {
+                    wln!(writer, "</p><p>");
+                }
+            } else if docline.starts_with("###") {
+                md_state.reset().map_err(Error::from::<()>)?;
+                wln!(writer, "</p>");
+                wln!(writer, "<h4>{}</h4>", InlineMarkdown::new(
+                    docline.trim_prefix("###").trim(), &md_state
+                ));
+                md_state.reset().map_err(Error::from::<()>)?;
+                wln!(writer, "<p>");
+            } else if docline.starts_with("##") {
+                md_state.reset().map_err(Error::from::<()>)?;
+                wln!(writer, "</p>");
+                wln!(writer, "<h3>{}</h3>", InlineMarkdown::new(
+                    docline.trim_prefix("##").trim(), &md_state
+                ));
+                md_state.reset().map_err(Error::from::<()>)?;
+                wln!(writer, "<p>");
+            } else if docline.starts_with("#!") {
+                md_state.reset().map_err(Error::from::<()>)?;
+                wln!(writer, "</p>");
+                wln!(writer, "<h1>{}</h1>", InlineMarkdown::new(
+                    docline.trim_prefix("#!").trim(), &md_state
+                ));
+                md_state.reset().map_err(Error::from::<()>)?;
+                wln!(writer, "<p>");
+            } else if docline.starts_with("#") {
+                md_state.reset().map_err(Error::from::<()>)?;
+                wln!(writer, "</p>");
+                wln!(writer, "<h2>{}</h2>", InlineMarkdown::new(
+                    docline.trim_prefix("#").trim(), &md_state
+                ));
+                md_state.reset().map_err(Error::from::<()>)?;
+                wln!(writer, "<p>");
+            } else {
+                wln!(writer, "{}", InlineMarkdown::new(
+                    docline.trim(), 
+                    &md_state
+                ));
             }
         } else {
-            wln!(writer, "{}", without_prefix);
+            wln!(writer, "{}", docline);
         }
     }
 
@@ -285,7 +330,10 @@ fn write_page_inner(nav_item: &Item, top_level: &Item, nav_items: &Vector<&Item>
 
     wln!(&writer, "<main>");
 
-    write_breadcrumbs(&writer, top_level, true)?;
+    if top_level.path.segments.len() > 0 {
+        write_breadcrumbs(&writer, top_level, true)?;
+    }
+
     write_source(&writer, top_level)?;
     write_docstring(&writer, top_level, false)?;    
 

@@ -31,7 +31,7 @@ RUN make -j8
 FROM ubuntu:22.04 as alumina-boot
 
 COPY --from=builder /alumina/build/release/alumina-boot /usr/bin/alumina-boot
-COPY ./stdlib /usr/include/alumina
+COPY ./sysroot /usr/include/alumina
 
 WORKDIR /workspace
 ENV ALUMINA_SYSROOT=/usr/include/alumina

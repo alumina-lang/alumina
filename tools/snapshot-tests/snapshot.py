@@ -64,7 +64,7 @@ def test_examples(source_file, snapshot):
         [
             COMPILER_PATH,
             "--sysroot",
-            "../../stdlib",
+            "../../sysroot",
             "--output",
             os.path.join(BUILD_DIR, f"{output}.c"),
             f"example={example}",

@@ -4,6 +4,10 @@ use std::cmp::Comparable;
 use std::marker::Callable;
 use std::mem::Freeable;
 
+use vector::Vector;
+use hashmap::HashMap;
+use hashset::HashSet;
+
 /// Helper for collections that own heap-allocated objects. This is used to
 /// be able to do `defer col.free_all()` without much boilerplate.
 fn free_all<T: Freeable<T>(col: &mut T) {
@@ -13,7 +17,7 @@ fn free_all<T: Freeable<T>(col: &mut T) {
     col.free();
 }
 
-
+/// Sorts a slice using a key extraction function.
 fn sort_by<T, F: Callable<(&T), K>, K: Comparable<K>>(arr: &mut [T], key: F) {
     if arr.len <= 1 {
         return;
@@ -24,6 +28,7 @@ fn sort_by<T, F: Callable<(&T), K>, K: Comparable<K>>(arr: &mut [T], key: F) {
     sort_by(arr[p+1..], key);
 }
 
+/// Sorts the slice.
 fn sort<T: Comparable<T>>(arr: &mut [T]) {
     sort_by(arr, |k: &T| -> T { *k });
 }
@@ -44,10 +49,6 @@ fn partition_by<T, F: Callable<(&T), K>, K: Comparable<K>>(arr: &mut [T], key: F
     swap(&arr[i], &arr[arr.len - 1]);
     i
 }
-
-use vector::Vector;
-use hashmap::HashMap;
-use hashset::HashSet;
 
 
 #[cfg(all(test, test_std))]

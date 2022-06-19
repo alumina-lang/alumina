@@ -1,5 +1,5 @@
 BUILD_ROOT = build
-SYSROOT = ./stdlib
+SYSROOT = ./sysroot
 
 ifdef RELEASE
 	BUILD_DIR = $(BUILD_ROOT)/release
@@ -119,8 +119,8 @@ $(ALUMINA_DOC): $(ALUMINA_DOC).c $(BUILD_DIR)/parser.o
 
 docs: $(ALUMINA_DOC)
 	$(ALUMINA_DOC) \
-		$(foreach src,$(SYSROOT_FILES),$(subst __root__,, $(subst /,::,$(basename $(subst ./stdlib,,$(src)))))=$(src)) 
-	cp -rf tools/alumina-doc/static $(BUILD_ROOT)/docs/static
+		$(foreach src,$(SYSROOT_FILES),$(subst __root__,, $(subst /,::,$(basename $(subst ./sysroot,,$(src)))))=$(src)) 
+	cp -rf tools/alumina-doc/static $(BUILD_ROOT)/docs/
 
 ## ------------------------------ Various ------------------------------
 

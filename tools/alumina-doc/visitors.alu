@@ -1,5 +1,5 @@
 use std::collections::Vector;
-use std::string::StringBuf;
+use std::string::{StringBuf, split};
 
 use aluminac::lib::common::{NodeVisitorExt, child_by, children_by};
 use aluminac::lib::node_kinds::{NodeVisitor, FieldKind};
@@ -22,6 +22,7 @@ struct TopLevelVisitor {
     doc_comment: StringBuf,
     file_doc_comment: StringBuf,
     in_a_container: bool,
+    index: usize
 }
 
 impl TopLevelVisitor {
@@ -32,7 +33,8 @@ impl TopLevelVisitor {
             items: items,
             doc_comment: StringBuf::new(),
             file_doc_comment: StringBuf::new(),
-            in_a_container: false
+            in_a_container: false,
+            index: 1
         }
     }
 
@@ -49,6 +51,7 @@ impl TopLevelVisitor {
             items: self.items,
             doc_comment: self.doc_comment.move(),
             file_doc_comment: self.file_doc_comment.move(),
+            index: self.index
         }
     }
     
@@ -59,7 +62,10 @@ impl TopLevelVisitor {
             node: node,
             parse_context: self.parse_context,
             doc_comment: self.doc_comment.move(),
+            index: self.index,
         });
+
+        self.index += 1;
     }
 
     fn visit_source_file(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
@@ -82,12 +88,22 @@ impl TopLevelVisitor {
     } 
 
     fn visit_enum_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
-        self.add_item(ItemKind::Enum, get_name!(self, node), node);
+        let name = get_name!(self, node);
+        self.add_item(ItemKind::Enum, name, node);
+        self.path.push(name);
+        defer self.path.pop();
+
+        self.visit_children_by_field(node, FieldKind::Body)?;
         Result::ok(())
     } 
 
     fn visit_const_declaration(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
         self.add_item(ItemKind::Const, get_name!(self, node), node);
+        Result::ok(())
+    } 
+
+    fn visit_enum_item(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.add_item(ItemKind::Variant, get_name!(self, node), node);
         Result::ok(())
     } 
 
@@ -117,6 +133,7 @@ impl TopLevelVisitor {
         let kind_text = child_by!(node, FieldKind::Kind)
             .unwrap()
             .text(self.parse_context.source());
+        let name = get_name!(self, node);
 
         let kind = if kind_text == "union" {
             ItemKind::Union
@@ -124,12 +141,22 @@ impl TopLevelVisitor {
             ItemKind::Struct
         };
 
-        self.add_item(kind, get_name!(self, node), node);
+        self.add_item(kind, name, node);
+        
+        self.path.push(name);
+        defer self.path.pop();
+
+        self.visit_children_by_field(node, FieldKind::Body)?;
         Result::ok(())
     }
 
     fn visit_static_declaration(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
         self.add_item(ItemKind::Static, get_name!(self, node), node);
+        Result::ok(())
+    }
+
+    fn visit_struct_field(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.add_item(ItemKind::Field, get_name!(self, node), node);
         Result::ok(())
     }
 
@@ -216,6 +243,17 @@ impl CodePrinter<W: Writable<W>> {
     }
 
     fn visit_function_definition(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
+        child_by!(node, FieldKind::Abi)
+            .map(|=self, child: Node| -> Result<()> { 
+                w!(
+                    self.writer, 
+                    "<span class=\"keyword\">extern</span> <span class=\"literal-string\">{}</span> ", 
+                    child.text(self.parse_context.source())
+                );
+                Result::ok(()) 
+            })
+            .transpose()?;
+        
         w!(self.writer, "<span class=\"keyword\">fn</span> <span class=\"identifier-function\">{}</span>", get_name!(self, node));
         
         child_by!(node, FieldKind::TypeArguments)
@@ -267,20 +305,48 @@ impl CodePrinter<W: Writable<W>> {
         Result::ok(())
     }
 
+    fn visit_macro_parameter_list(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
+        self.visit_parameter_list(node)
+    }
+
     fn visit_generic_argument(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
-        w!(self.writer, "sth");
+        let placeholder = child_by!(node, FieldKind::Placeholder)
+            .unwrap()
+            .text(self.parse_context.source());
+        w!(self.writer, "{}", placeholder);
+
+        Result::ok(())
+    }
+
+    fn visit_macro_parameter(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
+        let name = child_by!(node, FieldKind::Name).unwrap()
+            .text(self.parse_context.source());
+        
+        w!(self.writer, "{}", name);
+        if child_by!(node, FieldKind::EtCetera).is_some {
+            w!(self.writer, "...");
+        }
+            
         Result::ok(())
     }
 
     fn visit_type_identifier(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
-        let path = node.text(self.parse_context.source());
+        let path = node.text(self.parse_context.source())
+            .split("::")
+            .last()
+            .unwrap();
+
         w!(self.writer, "{}", path);
 
         Result::ok(())
     }
 
     fn visit_scoped_type_identifier(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
-        let path = node.text(self.parse_context.source());
+        let path = node.text(self.parse_context.source())
+            .split("::")
+            .last()
+            .unwrap();
+
         w!(self.writer, "{}", path);
         
         Result::ok(())
@@ -296,6 +362,26 @@ impl CodePrinter<W: Writable<W>> {
         self.visit(child_by!(node, FieldKind::Inner).unwrap())?;
         Result::ok(())
     }
+
+    fn visit_struct_field(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
+        let name = child_by!(node, FieldKind::Name).unwrap()
+            .text(self.parse_context.source());
+        
+        w!(self.writer, "{}: ", name);
+        self.visit(child_by!(node, FieldKind::Type).unwrap())?;
+
+        Result::ok(())
+    }
+
+    fn visit_enum_item(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
+        let name = child_by!(node, FieldKind::Name).unwrap()
+            .text(self.parse_context.source());
+
+        w!(self.writer, "{}", name);
+
+        Result::ok(())
+    }
+
 
     fn visit_tuple_type(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         let cursor = node.walk();
@@ -331,10 +417,7 @@ impl CodePrinter<W: Writable<W>> {
 
 
     fn visit_generic_type(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
-        let path = child_by!(node, FieldKind::Type).unwrap()
-            .text(self.parse_context.source());
-
-        w!(self.writer, "{}", path);
+        self.visit(child_by!(node, FieldKind::Type).unwrap())?;
         self.visit(child_by!(node, FieldKind::TypeArguments).unwrap())?;
 
         Result::ok(())
@@ -411,14 +494,16 @@ impl CodePrinter<W: Writable<W>> {
     fn visit_struct_definition(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         let kind_text = child_by!(node, FieldKind::Kind)
             .unwrap()
-            .text(self.parse_context.source());
+            .text(self.parse_context.source());      
 
         w!(self.writer, "<span class=\"keyword\">{}</span> <span class=\"identifier-type\">{}</span> {{ ... }}", kind_text, get_name!(self, node));
         Result::ok(())
     }
 
     fn visit_macro_definition(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
-        w!(self.writer, "<span class=\"keyword\">macro</span> <span class=\"identifier-function\">{}</span> {{ ... }}", get_name!(self, node));
+        w!(self.writer, "<span class=\"keyword\">macro</span> <span class=\"identifier-function\">{}</span>", get_name!(self, node));
+        self.visit(child_by!(node, FieldKind::Parameters).unwrap())?;
+        w!(self.writer, " {{ ... }}");
         Result::ok(())
     }
 
@@ -428,17 +513,50 @@ impl CodePrinter<W: Writable<W>> {
     }
 
     fn visit_type_definition(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
-        w!(self.writer, "<span class=\"keyword\">type</span> <span class=\"identifier-type\">{}</span> = ...", get_name!(self, node));
+        w!(self.writer, "<span class=\"keyword\">type</span> <span class=\"identifier-type\">{}</span>", get_name!(self, node));
+        
+        child_by!(node, FieldKind::TypeArguments)
+            .map(|=self, child: Node| -> Result<()> { self.visit(child) })
+            .transpose()?;
+
+        w!(self.writer, " = ");
+
+        self.visit(child_by!(node, FieldKind::Inner).unwrap())?;
+            
         Result::ok(())
     }
 
     fn visit_const_declaration(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
-        w!(self.writer, "<span class=\"keyword\">const</span> <span class=\"identifier-constant\">{}</span> = ...", get_name!(self, node));
+        w!(self.writer, "<span class=\"keyword\">const</span> <span class=\"identifier-constant\">{}</span>", get_name!(self, node));
+        child_by!(node, FieldKind::Type)
+            .map(|=self, child: Node| -> Result<()> { 
+                w!(self.writer, ": ");
+                self.visit(child)?
+                Result::ok(())
+            })
+            .transpose()?;
+        w!(self.writer, " = ...");
         Result::ok(())
     }
 
     fn visit_static_declaration(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
-        w!(self.writer, "<span class=\"keyword\">static</span> <span class=\"identifier-constant\">{}</span> = ...", get_name!(self, node));
+        w!(self.writer, "<span class=\"keyword\">static</span> <span class=\"identifier-constant\">{}</span>", get_name!(self, node));
+        
+        child_by!(node, FieldKind::Type)
+            .map(|=self, child: Node| -> Result<()> { 
+                w!(self.writer, ": ");
+                self.visit(child)?
+                Result::ok(())
+            })
+            .transpose()?;
+        
+        child_by!(node, FieldKind::Init)
+            .map(|=self, child: Node| -> Result<()> { 
+                w!(self.writer, " = ...");
+                Result::ok(())
+            })
+            .transpose()?;
+
         Result::ok(())
     }
 
