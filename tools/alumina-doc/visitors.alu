@@ -623,7 +623,26 @@ impl CodePrinter<W: Writable<W>> {
             .unwrap()
             .text(self.parse_context.source());      
 
-        w!(self.writer, "<span class=\"keyword\">{}</span> <span class=\"identifier-type\">{}</span> {{ ... }}", kind_text, get_name!(self, node));
+        w!(self.writer, "<span class=\"keyword\">{}</span> <span class=\"identifier-type\">{}</span>", kind_text, get_name!(self, node));
+        
+        child_by!(node, FieldKind::TypeArguments)
+            .map(|=self, node: Node| -> Result<()> { self.visit(node) })
+            .transpose()?
+
+        w!(self.writer, " {{");
+        
+        let has_children = false;
+        let cursor = node.walk();
+        for (idx, child) in children_by!(node, FieldKind::Body, &cursor).enumerate() {
+            w!(self.writer, "\n    ");
+            self.visit(child)?;
+            has_children = true;
+        }
+        if has_children {
+            w!(self.writer, "\n");
+        }
+        w!(self.writer, "}}");
+
         Result::ok(())
     }
 
@@ -635,7 +654,20 @@ impl CodePrinter<W: Writable<W>> {
     }
 
     fn visit_enum_definition(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
-        w!(self.writer, "<span class=\"keyword\">enum</span> <span class=\"identifier-type\">{}</span> {{ ... }}", get_name!(self, node));
+        w!(self.writer, "<span class=\"keyword\">enum</span> <span class=\"identifier-type\">{}</span> {{", get_name!(self, node));
+        
+        let has_children = false;
+        let cursor = node.walk();
+        for (idx, child) in children_by!(node, FieldKind::Body, &cursor).enumerate() {
+            w!(self.writer, "\n    ");
+            self.visit(child)?;
+            has_children = true;
+        }
+        if has_children {
+            w!(self.writer, "\n");
+        }
+        w!(self.writer, "}}");
+
         Result::ok(())
     }
 

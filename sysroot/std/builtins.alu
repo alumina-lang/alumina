@@ -1,15 +1,23 @@
 //! Builtin types and their method implementations.
 //!
-//! This module holds impl blocks for builtin types all items with `#[lang(impl_X)]` are
+//! This module holds impl blocks for builtin types all items with `#[lang(builtin_X)]` are
 //! treated as X when lowering into IR, so they cannot actually exist as proper structs.
+//! 
+//! Builtin protocols also cannot be directly implemented by user code, even though 
+//! they contain no associated functions. They are handled specially
+//! by the compiler.
 
 use cmp::{Equatable, Comparable, Ordering, lexicographic_cmp};
 use hash::{Hashable, Hasher};
 use fmt::{Formatter};
 
-#[lang(impl_void)]
-struct _void {}
-impl _void {
+/// Unit type (`()`)
+///
+/// Unit type (also called void type) is the return type of expressions that do not return 
+/// a value.
+#[lang(builtin_void)]
+struct void {}
+impl void {
     #[force_inline]
     fn equals(lhs: &void, rhs: &void) -> bool {
         true
@@ -28,9 +36,10 @@ impl _void {
     mixin Comparable<void>;
 }
 
-#[lang(impl_bool)]
-struct _bool {}
-impl _bool {
+/// Boolean type
+#[lang(builtin_bool)]
+struct bool {}
+impl bool {
     #[force_inline]
     fn equals(lhs: &bool, rhs: &bool) -> bool {
         *lhs == *rhs
@@ -59,9 +68,18 @@ impl _bool {
     mixin Comparable<u8>;
 }
 
-#[lang(impl_never)]
-struct _never {}
-impl _never {
+/// Never type (`!`)
+///
+/// Never type is the type of expressions that never return. For example, 
+/// ```
+///`let a = loop {};  /// `a` is of type `!`
+/// ```
+///
+/// It has a couple of interesting properties, notably it is a bottom type, 
+/// which means that values of never type can be coerced into any other type.
+#[lang(builtin_never)]
+struct never {}
+impl never {
     fn equals(lhs: &!, rhs: &!) -> bool {
         std::intrinsics::unreachable()
     }
@@ -84,7 +102,7 @@ impl _never {
 
 /// This mixin implements Equatable and Comparable for types that have natively implemented
 /// equality and comparison operators.
-protocol _BuiltinComparable<Self: marker::Numeric> {
+protocol _BuiltinComparable<Self: builtins::Numeric> {
     #[force_inline] fn equals(lhs: &Self, rhs: &Self) -> bool { *lhs == *rhs }
     #[force_inline] fn not_equals(lhs: &Self, rhs: &Self) -> bool { *lhs != *rhs }    
     #[force_inline]
@@ -104,7 +122,7 @@ protocol _BuiltinComparable<Self: marker::Numeric> {
     #[force_inline] fn greater_than_or_equal(lhs: &Self, rhs: &Self) -> bool { *lhs >= *rhs }
 }
 
-protocol _IntegerParsable<Self: marker::Integer> {
+protocol _IntegerParsable<Self: builtins::Integer> {
     #[inline]
     fn parse(s: &[u8]) -> Option<Self> {
         string::parse_integer::<Self>(s, 10)
@@ -116,19 +134,19 @@ protocol _IntegerParsable<Self: marker::Integer> {
     }
 }
 
-protocol _IntegerFormattable<Self: marker::Integer, F: Formatter<F>> {
+protocol _IntegerFormattable<Self: builtins::Integer, F: Formatter<F>> {
     fn fmt(self: &Self, formatter: &mut F) -> Result<(), fmt::Error> {
         fmt::internal::format_integer(*self, 10, 0, formatter)
     }
 }
 
-protocol _FloatFormattable<Self: marker::FloatingPoint, F: Formatter<F>> {
+protocol _FloatFormattable<Self: builtins::FloatingPoint, F: Formatter<F>> {
     fn fmt(self: &Self, formatter: &mut F) -> Result<(), fmt::Error> {
         fmt::internal::format_float(*self, formatter, 15)
     }
 }
 
-protocol _BitOps<Self: marker::Unsigned> {
+protocol _BitOps<Self: builtins::Unsigned> {
     #[inline(always)]
     fn rotate_left(self: Self, shift: usize) -> Self {
         (self << shift) | (self >> ((8 * mem::size_of::<Self>()) - shift))
@@ -140,9 +158,10 @@ protocol _BitOps<Self: marker::Unsigned> {
     }
 }
 
-#[lang(impl_u8)]
-struct _u8 {}
-impl _u8 {
+/// 8-bit unsigned integer (byte)
+#[lang(builtin_u8)]
+struct u8 {}
+impl u8 {
     mixin _BitOps<u8>;
     mixin _BuiltinComparable<u8>;
     mixin<H: Hasher<H>> Hashable<u8, H>;
@@ -160,9 +179,10 @@ impl _u8 {
     }
 }
 
-#[lang(impl_u16)]
-struct _u16 {}
-impl _u16 {
+/// 16-bit unsigned integer
+#[lang(builtin_u16)]
+struct u16 {}
+impl u16 {
     mixin _BitOps<u16>;
     mixin _BuiltinComparable<u16>;
     mixin<H: Hasher<H>> Hashable<u16, H>;
@@ -180,9 +200,10 @@ impl _u16 {
     }
 }
 
-#[lang(impl_u32)]
-struct _u32 {}
-impl _u32 {
+/// 32-bit unsigned integer
+#[lang(builtin_u32)]
+struct u32 {}
+impl u32 {
     mixin _BitOps<u32>;
     mixin _BuiltinComparable<u32>;
     mixin<H: Hasher<H>> Hashable<u32, H>;
@@ -200,9 +221,10 @@ impl _u32 {
     }
 }
 
-#[lang(impl_u64)]
-struct _u64 {}
-impl _u64 {
+/// 64-bit unsigned integer
+#[lang(builtin_u64)]
+struct u64 {}
+impl u64 {
     mixin _BitOps<u64>;
     mixin _BuiltinComparable<u64>;
     mixin<H: Hasher<H>> Hashable<u64, H>;
@@ -220,9 +242,10 @@ impl _u64 {
     }
 }
 
-#[lang(impl_u128)]
-struct _u128 {}
-impl _u128 {
+/// 128-bit unsigned integer
+#[lang(builtin_u128)]
+struct u128 {}
+impl u128 {
     mixin _BitOps<u128>;
     mixin _BuiltinComparable<u128>;
     mixin<H: Hasher<H>> Hashable<u128, H>;
@@ -240,9 +263,13 @@ impl _u128 {
     }
 }
 
-#[lang(impl_usize)]
-struct _usize {}
-impl _usize {
+/// Native unsigned integer (machine word)
+///
+/// On 64-bit systems, `usize` is the same as `u64`. On 32-bit systems, `usize` is the same
+/// as `u32`. 
+#[lang(builtin_usize)]
+struct usize {}
+impl usize {
     mixin _BitOps<usize>;
     mixin _BuiltinComparable<usize>;
     mixin<H: Hasher<H>> Hashable<usize, H>;
@@ -274,9 +301,10 @@ impl _usize {
     }
 }
 
-#[lang(impl_i8)]
-struct _i8 {}
-impl _i8 {
+/// Signed 8-bit integer
+#[lang(builtin_i8)]
+struct i8 {}
+impl i8 {
     mixin _BuiltinComparable<i8>;
     mixin<H: Hasher<H>> Hashable<i8, H>;
     mixin<F: Formatter<F>> _IntegerFormattable<i8, F>;
@@ -293,9 +321,10 @@ impl _i8 {
     }
 }
 
-#[lang(impl_i16)]
-struct _i16 {}
-impl _i16 {
+/// Signed 16-bit integer
+#[lang(builtin_i16)]
+struct i16 {}
+impl i16 {
     mixin _BuiltinComparable<i16>;
     mixin<H: Hasher<H>> Hashable<i16, H>;
     mixin<F: Formatter<F>> _IntegerFormattable<i16, F>;
@@ -312,9 +341,10 @@ impl _i16 {
     }
 }
 
-#[lang(impl_i32)]
-struct _i32 {}
-impl _i32 {
+/// Signed 32-bit integer
+#[lang(builtin_i32)]
+struct i32 {}
+impl i32 {
     mixin _BuiltinComparable<i32>;
     mixin<H: Hasher<H>> Hashable<i32, H>;
     mixin<F: Formatter<F>> _IntegerFormattable<i32, F>;
@@ -331,9 +361,10 @@ impl _i32 {
     }
 }
 
-#[lang(impl_i64)]
-struct _i64 {}
-impl _i64 {
+/// Signed 64-bit integer
+#[lang(builtin_i64)]
+struct i64 {}
+impl i64 {
     mixin _BuiltinComparable<i64>;
     mixin<H: Hasher<H>> Hashable<i64, H>;
     mixin<F: Formatter<F>> _IntegerFormattable<i64, F>;
@@ -350,9 +381,10 @@ impl _i64 {
     }
 }
 
-#[lang(impl_i128)]
-struct _i128 {}
-impl _i128 {
+/// Signed 128-bit integer
+#[lang(builtin_i128)]
+struct i128 {}
+impl i128 {
     mixin _BuiltinComparable<i128>;
     mixin<H: Hasher<H>> Hashable<i128, H>;
     mixin<F: Formatter<F>> _IntegerFormattable<i128, F>;
@@ -369,9 +401,10 @@ impl _i128 {
     }
 }
 
-#[lang(impl_isize)]
-struct _isize {}
-impl _isize {
+/// Native signed integer (machine word)
+#[lang(builtin_isize)]
+struct isize {}
+impl isize {
     mixin _BuiltinComparable<isize>;
     mixin<H: Hasher<H>> Hashable<isize, H>;
     mixin<F: Formatter<F>> _IntegerFormattable<isize, F>;
@@ -434,9 +467,10 @@ protocol _FloatOps<Self> {
     }
 }
 
-#[lang(impl_f32)]
-struct _f32 {}
-impl _f32 {
+/// Single precision floating point type
+#[lang(builtin_f32)]
+struct f32 {}
+impl f32 {
     mixin _BuiltinComparable<f32>;
     // Not hashable
     mixin<F: Formatter<F>> _FloatFormattable<f32, F>;
@@ -609,9 +643,10 @@ impl _f32 {
     }
 }
 
-#[lang(impl_f64)]
-struct _f64 {}
-impl _f64 {
+/// Double precision floating point type
+#[lang(builtin_f64)]
+struct f64 {}
+impl f64 {
     mixin _BuiltinComparable<f64>;
     // Not hashable
     mixin<F: Formatter<F>> _FloatFormattable<f64, F>;
@@ -787,9 +822,9 @@ impl _f64 {
 // is probably the best way without implementing it all inside the compiler
 // Also, who needs Rust-like macros when you have GitHub Copilot?
 
-#[lang(impl_tuple_1)]
-struct _tuple_1 {}
-impl _tuple_1 {
+#[lang(builtin_tuple_1)]
+struct tuple_1 {}
+impl tuple_1 {
     #[inline]
     fn equals<T1: Equatable<T1>>(lhs: &(T1,), rhs: &(T1,)) -> bool {
         lhs.0.equals(&rhs.0)
@@ -809,9 +844,9 @@ impl _tuple_1 {
     mixin<T1: Comparable<T1>> Comparable<(T1,)>;
 }
 
-#[lang(impl_tuple_2)]
-struct _tuple_2 {}
-impl _tuple_2 {
+#[lang(builtin_tuple_2)]
+struct tuple_2 {}
+impl tuple_2 {
     #[inline]
     fn equals<
         T1: Equatable<T1>, 
@@ -844,9 +879,9 @@ impl _tuple_2 {
     mixin<T1: Comparable<T1>, T2: Comparable<T2>> Comparable<(T1, T2)>;
 }
 
-#[lang(impl_tuple_3)]
-struct _tuple_3 {}
-impl _tuple_3 {
+#[lang(builtin_tuple_3)]
+struct tuple_3 {}
+impl tuple_3 {
     #[inline]
     fn equals<
         T1: Equatable<T1>,
@@ -893,9 +928,9 @@ impl _tuple_3 {
     > Comparable<(T1, T2, T3)>;
 }
 
-#[lang(impl_tuple_4)]
-struct _tuple_4 {}
-impl _tuple_4 {
+#[lang(builtin_tuple_4)]
+struct tuple_4 {}
+impl tuple_4 {
     #[inline]
     fn equals<
         T1: Equatable<T1>,
@@ -952,9 +987,9 @@ impl _tuple_4 {
     > Comparable<(T1, T2, T3, T4)>;
 }
 
-#[lang(impl_tuple_5)]
-struct _tuple_5 {}
-impl _tuple_5 {
+#[lang(builtin_tuple_5)]
+struct tuple_5 {}
+impl tuple_5 {
     #[inline]
     fn equals<
         T1: Equatable<T1>, 
@@ -1019,9 +1054,9 @@ impl _tuple_5 {
     > Comparable<(T1, T2, T3, T4, T5)>;
 }
 
-#[lang(impl_tuple_6)]
-struct _tuple_6 {}
-impl _tuple_6 {
+#[lang(builtin_tuple_6)]
+struct tuple_6 {}
+impl tuple_6 {
     #[inline]
     fn equals<
         T1: Equatable<T1>, 
@@ -1100,9 +1135,9 @@ impl _tuple_6 {
     > Comparable<(T1, T2, T3, T4, T5, T6)>;
 }
 
-#[lang(impl_tuple_7)]
-struct _tuple_7 {}
-impl _tuple_7 {
+#[lang(builtin_tuple_7)]
+struct tuple_7 {}
+impl tuple_7 {
     #[inline]
     fn equals<
         T1: Equatable<T1>, 
@@ -1189,9 +1224,9 @@ impl _tuple_7 {
     > Comparable<(T1, T2, T3, T4, T5, T6, T7)>;
 }
 
-#[lang(impl_tuple_8)]
-struct _tuple_8 {}
-impl _tuple_8 {
+#[lang(builtin_tuple_8)]
+struct tuple_8 {}
+impl tuple_8 {
     #[inline]
     fn equals<
         T1: Equatable<T1>, 
@@ -1287,9 +1322,9 @@ impl _tuple_8 {
 }
 
 
-#[lang(impl_array)]
-struct _array {}
-impl _array<Arr: marker::Array> {
+#[lang(builtin_array)]
+struct array {}
+impl array<Arr: builtins::Array> {
     #[force_inline]
     fn as_slice(self: &Arr) -> &[element_of<Arr>] {
         self
@@ -1306,34 +1341,95 @@ impl _array<Arr: marker::Array> {
     }
 }
 
-/// The following are "type-operators", pseudo-types, implemented inside the compiler
-/// that resolve to other types based on the type of the generic parameters. Ideally,
-/// these would be implemented in the standard library, but the infer system is not 
-/// yet sufficiently powerful for this.
+// The following are "type-operators", pseudo-types, implemented inside the compiler
+// that resolve to other types based on the type of the generic parameters. Ideally,
+// these would be implemented in the standard library, but the infer system is not 
+// yet sufficiently powerful for this.
 
+/// Signed integer type of the same size as the original type.
 #[lang(typeop_signed_of)]
-struct signed_of<T: marker::Integer> {}
+struct signed_of<T: builtins::Integer> {}
 
+/// Element type of the provided array
 #[lang(typeop_element_of)]
-struct element_of<T: marker::Array> {}
+struct element_of<T: builtins::Array> {}
 
+/// Unsigned integer type of the same size as the original type.
 #[lang(typeop_unsigned_of)]
-struct unsigned_of<T: marker::Integer> {}
+struct unsigned_of<T: builtins::Integer> {}
 
+/// Type of the pointed-to value
 #[lang(typeop_deref_of)]
-struct deref_of<T: marker::Pointer> {}
+struct deref_of<T: builtins::Pointer> {}
 
+/// Type of the first element of the provided tuple
 #[lang(typeop_tuple_head_of)]
-struct tuple_head_of<T: marker::Tuple> {}
+struct tuple_head_of<T: builtins::Tuple> {}
 
+/// Tuple type equivalent to the provided one without the first element
 #[lang(typeop_tuple_tail_of)]
-struct tuple_tail_of<T: marker::Tuple> {}
+struct tuple_tail_of<T: builtins::Tuple> {}
 
+/// Return type of the provided function
 #[lang(typeop_return_type_of)]
 struct return_type_of<T> {}
 
+/// Tuple of argument types of the provided function
 #[lang(typeop_arguments_of)]
 struct arguments_of<T> {}
+
+
+
+/// Matches any type
+#[lang(proto_any)] protocol Any {}
+
+/// Matches zero-sized types (void, named function types, empty structs, empty arrays, ...)
+#[lang(proto_zero_sized)] protocol ZeroSized {}
+
+/// Matches all primitive types
+#[lang(proto_primitive)] protocol Primitive {}
+
+/// Integer and floating point types
+#[lang(proto_numeric)] protocol Numeric {}
+
+/// Integer types
+#[lang(proto_integer)] protocol Integer {}
+
+/// Floating point types
+#[lang(proto_floating_point)] protocol FloatingPoint {}
+
+/// Signed integer types (`i8`, `i16`, `i32`, ...)
+#[lang(proto_signed)] protocol Signed {}
+
+/// Unsigned integer types (`u8`, `u16`, `u32`, ...)
+#[lang(proto_unsigned)] protocol Unsigned {}
+
+/// All pointers
+#[lang(proto_pointer)] protocol Pointer {}
+
+/// All (fixed-size) arrays
+#[lang(proto_array)] protocol Array {}
+
+/// All tuples
+#[lang(proto_tuple)] protocol Tuple {}
+
+/// All named functions (including lambdas, but excluding closures)
+#[lang(proto_named_function)] protocol NamedFunction {}
+
+/// Function pointers
+#[lang(proto_function_pointer)] protocol FunctionPointer {}
+
+/// All callable objects (named functions, closures, and function pointers)
+#[lang(proto_callable)] protocol Callable<Args: Tuple, Ret> {}
+
+// These are mostly useful as type inference guides
+
+/// Arrays with element type `T`
+#[lang(proto_array_of)] protocol ArrayOf<T> {}
+
+/// Pointers to `T` (regardless of mutability)
+#[lang(proto_pointer_of)] protocol PointerOf<T> {}
+
 
 
 #[cfg(all(test, test_std))]

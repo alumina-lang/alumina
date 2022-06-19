@@ -2,6 +2,7 @@
 
 use std::string::{split, StringBuf, starts_with, trim_prefix, trim_start, trim};
 use std::fmt::{Formatter, Formattable, Result, write, writeln, Error};
+use alumina_doc::common::{LinkContext, Path};
 
 enum State {
     Normal,
@@ -57,15 +58,50 @@ impl InlineMarkdownState {
 /// without nesting. 
 struct InlineMarkdown {
     inner: &[u8],
-    state: &mut InlineMarkdownState,
+    state: &mut InlineMarkdownState,    
+    link_context: &LinkContext,
 }
 
 impl InlineMarkdown {
-    fn new(inner: &[u8], state: &mut InlineMarkdownState) -> InlineMarkdown {
+    fn new(inner: &[u8], state: &mut InlineMarkdownState, link_context: &LinkContext) -> InlineMarkdown {
         InlineMarkdown {
             inner: inner,
-            state: state
+            state: state,
+            link_context: link_context,
         }
+    }
+
+    fn write_link<F: Formatter<F>>(self: &InlineMarkdown, f: &mut F) -> Result {
+        let (text, link) = if self.state.link_url.empty() {
+            (
+                self.state.link_text.as_slice().split("::").last().unwrap(),
+                self.state.link_text.as_slice()
+            )
+        } else {
+            (self.state.link_text.as_slice(), self.state.link_url.as_slice())
+        };
+
+        let link = if link.starts_with("http") {
+            link
+        } else {
+            let path = Path::from_str(link);
+            defer path.free();
+            let link = self.link_context.resolve_link(&path).unwrap();
+            defer link.free();
+
+            link.as_slice()
+        }
+
+        write!(f, 
+            "<a href=\"{}\">{}</a>", 
+            link,
+            text 
+        )?;
+        
+        self.state.link_url.clear();
+        self.state.link_text.clear();
+
+        Result::ok(())
     }
 
     fn fmt<F: Formatter<F>>(self: &InlineMarkdown, f: &mut F) -> Result {
@@ -124,15 +160,15 @@ impl InlineMarkdown {
                 },
                 State::LinkUrlStart => switch ch {
                     '(' => self.state.kind = State::LinkUrl,
-                    _ => return Result::err(Error::new()),
+                    _ => {
+                        self.write_link(f)?;
+                        f.write_char(ch)?;
+                        self.state.kind = State::Normal;
+                    },
                 },
                 State::LinkUrl => switch ch {
                     ')' => {
-                        write!(f, 
-                            "<a href=\"{}\">{}</a>", 
-                            self.state.link_url.as_slice(), 
-                            self.state.link_text.as_slice()
-                        )?;
+                        self.write_link(f)?;
                         self.state.kind = State::Normal;
                     },
                     _ => self.state.link_url.push(ch),
@@ -146,9 +182,12 @@ impl InlineMarkdown {
 
 
 /// A mini-markdown subset parser
-fn write_docstring<T: std::io::Writable<T>>(writer: &mut T, doc_comment: &[u8], tagline_only: bool) -> Result {
-    use markdown::{InlineMarkdown, InlineMarkdownState};
-
+fn write_docstring<T: std::io::Writable<T>>(
+    writer: &mut T, 
+    doc_comment: &[u8], 
+    tagline_only: bool, 
+    link_context: &LinkContext
+) -> Result {
     if doc_comment.len == 0 {
         return Result::ok(());
     }
@@ -187,7 +226,8 @@ fn write_docstring<T: std::io::Writable<T>>(writer: &mut T, doc_comment: &[u8], 
                 md_state.reset()?;
                 writeln!(writer, "</p>");
                 writeln!(writer, "<h4>{}</h4>", InlineMarkdown::new(
-                    docline.trim_prefix("###").trim(), &md_state
+                    docline.trim_prefix("###"), &md_state,
+                    link_context
                 ));
                 md_state.reset()?;
                 writeln!(writer, "<p>");
@@ -195,7 +235,8 @@ fn write_docstring<T: std::io::Writable<T>>(writer: &mut T, doc_comment: &[u8], 
                 md_state.reset()?;
                 writeln!(writer, "</p>");
                 writeln!(writer, "<h3>{}</h3>", InlineMarkdown::new(
-                    docline.trim_prefix("##").trim(), &md_state
+                    docline.trim_prefix("##"), &md_state,
+                    link_context
                 ));
                 md_state.reset()?;
                 writeln!(writer, "<p>");
@@ -203,7 +244,8 @@ fn write_docstring<T: std::io::Writable<T>>(writer: &mut T, doc_comment: &[u8], 
                 md_state.reset()?;
                 writeln!(writer, "</p>");
                 writeln!(writer, "<h1>{}</h1>", InlineMarkdown::new(
-                    docline.trim_prefix("#!").trim(), &md_state
+                    docline.trim_prefix("#!"), &md_state,
+                    link_context
                 ));
                 md_state.reset()?;
                 writeln!(writer, "<p>");
@@ -211,14 +253,16 @@ fn write_docstring<T: std::io::Writable<T>>(writer: &mut T, doc_comment: &[u8], 
                 md_state.reset()?;
                 writeln!(writer, "</p>");
                 writeln!(writer, "<h2>{}</h2>", InlineMarkdown::new(
-                    docline.trim_prefix("#").trim(), &md_state
+                    docline.trim_prefix("#"), &md_state,
+                    link_context
                 ));
                 md_state.reset()?;
                 writeln!(writer, "<p>");
             } else {
                 writeln!(writer, "{}", InlineMarkdown::new(
-                    docline.trim(), 
-                    &md_state
+                    docline,
+                    &md_state,
+                    link_context
                 ));
             }
         } else {

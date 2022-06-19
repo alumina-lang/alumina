@@ -183,7 +183,7 @@ impl PageWriter<T: std::io::Writable<T>> {
 
         wln!(self, "<html>");
         wln!(self, "<head>");
-
+        wln!(self, "<meta charset=\"utf-8\">");
         if top_level.path.segments.len() == 0 {
             wln!(self, "<title>Alumina Docs</title>");
         } else {
@@ -227,6 +227,7 @@ impl PageWriter<T: std::io::Writable<T>> {
 
         // Main section
 
+        wln!(self, "<div class=\"main-container\">");
         wln!(self, "<main>");
 
         if top_level.path.segments.len() > 0 {
@@ -234,7 +235,7 @@ impl PageWriter<T: std::io::Writable<T>> {
         }
 
         self.write_source(top_level)?;
-        write_docstring(self.writer, top_level.doc_comment.as_slice(), false)
+        write_docstring(self.writer, top_level.doc_comment.as_slice(), false, &link_context)
             .map_err(Error::from::<std::fmt::Error>)?;    
 
         if top_level.kind.has_own_page() {
@@ -251,7 +252,7 @@ impl PageWriter<T: std::io::Writable<T>> {
                         wln!(self, "<div class=\"row\" id=\"item.{}\">", name);
                         wln!(self, "<div class=\"cell-name\"><a href=\"{}\">{}</a></div>", link, name);
                         w!(self, "<div class=\"cell-doc\">");
-                        write_docstring(self.writer, item.doc_comment.as_slice(), true)
+                        write_docstring(self.writer, item.doc_comment.as_slice(), true, &link_context)
                             .map_err(Error::from::<std::fmt::Error>)?;  
                         wln!(self, "</div>");
                         wln!(self, "</div>");
@@ -264,15 +265,19 @@ impl PageWriter<T: std::io::Writable<T>> {
                     wln!(self, "<ul>");
                     for item in grp {
                         let link_context = LinkContext::new(self.item_bag, &item.defined_in);
+                        
                         let name = item.path.last().unwrap();
                         
                         wln!(self, "<li>");                  
-                        wln!(self, "<h4 id=\"item.{}\" class=\"signature\">", name);
+                        wln!(self, "<div class=\"signature\" id=\"item.{}\">", name);
+                        wln!(self, "<h4>");
                         let printer = CodePrinter::new(item.parse_context, &link_context, self.writer);
                         printer.visit(item.node);
                         wln!(self, "</h4>");
+                        ///wln!(self, "<div class=\"source-link\"><a href=\"github.vom\"/>source</a></div>");
+                        wln!(self, "</div>");
                         wln!(self, "<div class=\"item-doc\">");
-                        write_docstring(self.writer, item.doc_comment.as_slice(), false)
+                        write_docstring(self.writer, item.doc_comment.as_slice(), false, &link_context)
                             .map_err(Error::from::<std::fmt::Error>)?;  
                         wln!(self, "</div>");
                         wln!(self, "</li>");
@@ -284,6 +289,7 @@ impl PageWriter<T: std::io::Writable<T>> {
         }
 
         wln!(self, "</main>");
+        wln!(self, "</div>");
         wln!(self, "</body>");
         wln!(self, "</html>");
 

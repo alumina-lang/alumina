@@ -185,13 +185,13 @@ mod internal {
         }
     }
 
-    fn format_integer<T: marker::Integer, F: Formatter<F>>(val: T, radix: u16, pad: usize, fmt: &mut F) -> Result {
+    fn format_integer<T: builtins::Integer, F: Formatter<F>>(val: T, radix: u16, pad: usize, fmt: &mut F) -> Result {
         assert!(radix >= 2 && radix <= 36);
         
         let buf: [u8; 128];
         let buf = buf.as_slice_mut();
         
-        when T: marker::Signed {
+        when T: builtins::Signed {
             if val < 0 {
                 fmt.write_char('-')?;
             }
@@ -218,7 +218,7 @@ mod internal {
         Result::ok(())
     }
 
-    fn format_float<T: marker::FloatingPoint, F: Formatter<F>>(val: T, fmt: &mut F, precision: u16) -> Result {
+    fn format_float<T: builtins::FloatingPoint, F: Formatter<F>>(val: T, fmt: &mut F, precision: u16) -> Result {
         // TODO: this is very very VERY bad, replace with Grisu3 or Dragon4 or alike. Correct float parsing
         // and formatting is a complicated thing. Using libc instead is an option, but that has a
         // host of other problems: locale-awareness (ideally, Alumina's stdlib is locale-invariant), 
@@ -335,13 +335,13 @@ mod internal {
         Result::ok(())
     }
 
-    struct NumFormatAdapter<T: marker::Integer> {
+    struct NumFormatAdapter<T: builtins::Integer> {
         radix: u16,
         _pad: usize,
         value: T
     }
 
-    impl NumFormatAdapter<T: marker::Integer> {
+    impl NumFormatAdapter<T: builtins::Integer> {
         fn fmt<F: Formatter<F>>(self: &NumFormatAdapter<T>, fmt: &mut F) -> Result {
             format_integer(self.value, self.radix, self._pad, fmt)
         }
@@ -363,12 +363,12 @@ mod internal {
         }
     }
 
-    struct FloatFormatAdapter<T: marker::FloatingPoint> {
+    struct FloatFormatAdapter<T: builtins::FloatingPoint> {
         precision: u16,
         value: T
     }
 
-    impl FloatFormatAdapter<T: marker::FloatingPoint> {
+    impl FloatFormatAdapter<T: builtins::FloatingPoint> {
         fn fmt<F: Formatter<F>>(self: &FloatFormatAdapter<T>, fmt: &mut F) -> Result {
             format_float::<T, F>(self.value, fmt, self.precision)
         }
@@ -417,23 +417,23 @@ mod internal {
     }
 }
 
-fn hex<T: marker::Integer>(val: T) -> internal::NumFormatAdapter<T> {
+fn hex<T: builtins::Integer>(val: T) -> internal::NumFormatAdapter<T> {
     internal::NumFormatAdapter { radix: 16, _pad: 0, value: val }
 }
 
-fn bin<T: marker::Integer>(val: T) -> internal::NumFormatAdapter<T> {
+fn bin<T: builtins::Integer>(val: T) -> internal::NumFormatAdapter<T> {
     internal::NumFormatAdapter { radix: 2, _pad: 0, value: val }
 }
 
-fn oct<T: marker::Integer>(val: T) -> internal::NumFormatAdapter<T> {
+fn oct<T: builtins::Integer>(val: T) -> internal::NumFormatAdapter<T> {
     internal::NumFormatAdapter { radix: 8, _pad: 0, value: val }
 }
 
-fn zero_pad<T: marker::Integer>(val: T, pad: usize) -> internal::NumFormatAdapter<T> {
+fn zero_pad<T: builtins::Integer>(val: T, pad: usize) -> internal::NumFormatAdapter<T> {
     internal::NumFormatAdapter { radix: 10, _pad: pad, value: val }
 }
 
-fn precision<T: marker::FloatingPoint>(val: T, prec: u16) -> internal::FloatFormatAdapter<T> {
+fn precision<T: builtins::FloatingPoint>(val: T, prec: u16) -> internal::FloatFormatAdapter<T> {
     internal::FloatFormatAdapter { precision: prec, value: val }
 }
 

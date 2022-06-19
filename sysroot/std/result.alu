@@ -74,7 +74,7 @@ impl Result<T, E> {
         }
     }
 
-    fn map<Tm, F: marker::Callable<(T), Tm>>(self: Result<T, E>, func: F) -> Result<Tm, E> {
+    fn map<Tm, F: builtins::Callable<(T), Tm>>(self: Result<T, E>, func: F) -> Result<Tm, E> {
         if self.is_ok {
             Result::ok(func(self.inner.ok))
         } else {
@@ -82,7 +82,7 @@ impl Result<T, E> {
         }
     }
 
-    fn map_err<Em, F: marker::Callable<(E), Em>>(self: Result<T, E>, func: F) -> Result<T, Em> {
+    fn map_err<Em, F: builtins::Callable<(E), Em>>(self: Result<T, E>, func: F) -> Result<T, Em> {
         if self.is_ok {
             Result::ok(self.inner.ok)
         } else {
@@ -90,7 +90,7 @@ impl Result<T, E> {
         }
     }
 
-    fn and_then<Tm, Em, F: marker::Callable<(T), Result<Tm, Em>>>(self: Result<T, E>, func: F) -> Result<Tm, Em> {
+    fn and_then<Tm, Em, F: builtins::Callable<(T), Result<Tm, Em>>>(self: Result<T, E>, func: F) -> Result<Tm, Em> {
         if self.is_ok {
             func(self.inner.ok)
         } else {

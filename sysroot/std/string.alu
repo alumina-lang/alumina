@@ -256,7 +256,7 @@ fn join_fmt<It: iter::Iterator<It, &[u8]>>(self: &[u8], iter: It) -> JoinAdapter
     JoinAdapter::new(self, iter)
 }
 
-fn parse_integer<T: marker::Integer>(s: &[u8], radix: u16) -> Option<T> {
+fn parse_integer<T: builtins::Integer>(s: &[u8], radix: u16) -> Option<T> {
     assert!(radix >= 2 && radix <= 36);
 
     use builtins::unsigned_of;
@@ -267,7 +267,7 @@ fn parse_integer<T: marker::Integer>(s: &[u8], radix: u16) -> Option<T> {
     }
 
     let negative = if s[0] == '-' {
-        when T: marker::Signed {
+        when T: builtins::Signed {
             s = s[1..];
             true
         } else {
@@ -296,7 +296,7 @@ fn parse_integer<T: marker::Integer>(s: &[u8], radix: u16) -> Option<T> {
         result = b;
     }
 
-    when T: marker::Signed {
+    when T: builtins::Signed {
         // We only need to check for unsigned-to-signed conversion overflow, other
         // cases have already been handled.
         if negative {

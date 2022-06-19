@@ -1,6 +1,6 @@
 //! Working with memory (allocation, slices, copying, ...)
 
-use marker::Pointer;
+use builtins::Pointer;
 use std::option::Option;
 
 // Freable protocol is used for types that can be "freed". Usually these types contain something that
@@ -56,7 +56,7 @@ struct slice<Ptr: Pointer> {
 impl slice {
     use std::cmp::{Equatable, Comparable, Ordering};
     use std::hash::{Hasher, Hashable};
-    use std::marker::{Primitive, PointerOf, ZeroSized};
+    use std::builtins::{Primitive, PointerOf, ZeroSized};
     use libc::memcmp;
 
     #[force_inline]
@@ -262,7 +262,7 @@ impl SliceRefIterator<Ptr: Pointer> {
 }
 
 mod internal {
-    use marker::{Primitive, Pointer}; 
+    use builtins::{Primitive, Pointer}; 
     
     #[force_inline]
     #[lang(slice_index)]
@@ -330,7 +330,7 @@ impl Unique<T> {
 }
 
 fn new<T>() -> &mut T {
-    when T: marker::ZeroSized {
+    when T: builtins::ZeroSized {
         null as &mut T
     } else {
         libc::malloc(size_of::<T>()) as &mut T
@@ -340,7 +340,7 @@ fn new<T>() -> &mut T {
 
 fn alloc<T>(len: usize) -> &mut [T] {
     let ret: &mut [T];
-    when T: marker::ZeroSized {
+    when T: builtins::ZeroSized {
         ret.ptr = null as &mut T;
     } else {
         ret.ptr = libc::malloc(size_of::<T>() * len) as &mut T;
@@ -354,7 +354,7 @@ fn alloc<T>(len: usize) -> &mut [T] {
 
 fn realloc<T>(slice: &mut [T], len: usize) -> &mut [T] {
     let ret: &mut [T];
-    ret.ptr = when T: marker::ZeroSized {
+    ret.ptr = when T: builtins::ZeroSized {
         null as &mut T
     } else {
         libc::realloc(slice.ptr as &mut void, size_of::<T>() * len) as &mut T
@@ -365,7 +365,7 @@ fn realloc<T>(slice: &mut [T], len: usize) -> &mut [T] {
 
 fn alloc_zeroed<T>(len: usize) -> &mut [T] {
     let ret: &mut [T];
-    ret.ptr = when T: marker::ZeroSized {
+    ret.ptr = when T: builtins::ZeroSized {
         null as &mut T
     } else {
         libc::calloc(len, size_of::<T>()) as &mut T
@@ -413,13 +413,13 @@ fn replace<T>(a: &mut T, b: T) -> T {
 }
 
 fn copy_nonoverlapping<T>(src: &[T], dst: &mut T) {
-    when T: !marker::ZeroSized {
+    when T: !builtins::ZeroSized {
         libc::memcpy(dst as &mut void, src.ptr as &void, src.len * size_of::<T>());
     }
 }
 
 fn copy<T>(src: &[T], dst: &mut T) {
-    when T: !marker::ZeroSized {
+    when T: !builtins::ZeroSized {
         libc::memmove(dst as &mut void, src.ptr as &void, src.len * size_of::<T>());
     }
 }
@@ -430,7 +430,7 @@ fn free<T>(a: &mut [T]) {
 
 fn zeroed<T>() -> T {
     let ret: T;
-    when T: !marker::ZeroSized {
+    when T: !builtins::ZeroSized {
         libc::memset(&ret as &mut void, 0, size_of::<T>());
     }
     ret

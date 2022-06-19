@@ -102,25 +102,25 @@ impl TryFrom<&str> for LangItemKind {
             // hax
             "proto_iterator" => Ok(LangItemKind::ProtoIterator),
 
-            "impl_never" => Ok(LangItemKind::ImplBuiltin(BuiltinType::Never)),
-            "impl_void" => Ok(LangItemKind::ImplBuiltin(BuiltinType::Void)),
-            "impl_bool" => Ok(LangItemKind::ImplBuiltin(BuiltinType::Bool)),
-            "impl_u8" => Ok(LangItemKind::ImplBuiltin(BuiltinType::U8)),
-            "impl_u16" => Ok(LangItemKind::ImplBuiltin(BuiltinType::U16)),
-            "impl_u32" => Ok(LangItemKind::ImplBuiltin(BuiltinType::U32)),
-            "impl_u64" => Ok(LangItemKind::ImplBuiltin(BuiltinType::U64)),
-            "impl_u128" => Ok(LangItemKind::ImplBuiltin(BuiltinType::U128)),
-            "impl_usize" => Ok(LangItemKind::ImplBuiltin(BuiltinType::USize)),
-            "impl_i8" => Ok(LangItemKind::ImplBuiltin(BuiltinType::I8)),
-            "impl_i16" => Ok(LangItemKind::ImplBuiltin(BuiltinType::I16)),
-            "impl_i32" => Ok(LangItemKind::ImplBuiltin(BuiltinType::I32)),
-            "impl_i64" => Ok(LangItemKind::ImplBuiltin(BuiltinType::I64)),
-            "impl_i128" => Ok(LangItemKind::ImplBuiltin(BuiltinType::I128)),
-            "impl_isize" => Ok(LangItemKind::ImplBuiltin(BuiltinType::ISize)),
-            "impl_f32" => Ok(LangItemKind::ImplBuiltin(BuiltinType::F32)),
-            "impl_f64" => Ok(LangItemKind::ImplBuiltin(BuiltinType::F64)),
+            "builtin_never" => Ok(LangItemKind::ImplBuiltin(BuiltinType::Never)),
+            "builtin_void" => Ok(LangItemKind::ImplBuiltin(BuiltinType::Void)),
+            "builtin_bool" => Ok(LangItemKind::ImplBuiltin(BuiltinType::Bool)),
+            "builtin_u8" => Ok(LangItemKind::ImplBuiltin(BuiltinType::U8)),
+            "builtin_u16" => Ok(LangItemKind::ImplBuiltin(BuiltinType::U16)),
+            "builtin_u32" => Ok(LangItemKind::ImplBuiltin(BuiltinType::U32)),
+            "builtin_u64" => Ok(LangItemKind::ImplBuiltin(BuiltinType::U64)),
+            "builtin_u128" => Ok(LangItemKind::ImplBuiltin(BuiltinType::U128)),
+            "builtin_usize" => Ok(LangItemKind::ImplBuiltin(BuiltinType::USize)),
+            "builtin_i8" => Ok(LangItemKind::ImplBuiltin(BuiltinType::I8)),
+            "builtin_i16" => Ok(LangItemKind::ImplBuiltin(BuiltinType::I16)),
+            "builtin_i32" => Ok(LangItemKind::ImplBuiltin(BuiltinType::I32)),
+            "builtin_i64" => Ok(LangItemKind::ImplBuiltin(BuiltinType::I64)),
+            "builtin_i128" => Ok(LangItemKind::ImplBuiltin(BuiltinType::I128)),
+            "builtin_isize" => Ok(LangItemKind::ImplBuiltin(BuiltinType::ISize)),
+            "builtin_f32" => Ok(LangItemKind::ImplBuiltin(BuiltinType::F32)),
+            "builtin_f64" => Ok(LangItemKind::ImplBuiltin(BuiltinType::F64)),
 
-            "impl_array" => Ok(LangItemKind::ImplArray),
+            "builtin_array" => Ok(LangItemKind::ImplArray),
 
             "operator_eq" => Ok(LangItemKind::Operator(BinOp::Eq)),
             "operator_neq" => Ok(LangItemKind::Operator(BinOp::Neq)),
@@ -143,7 +143,7 @@ impl TryFrom<&str> for LangItemKind {
             "test_case_meta_new" => Ok(LangItemKind::TestCaseMetaNew),
 
             t => {
-                if let Some(matches) = regex!(r"^impl_tuple_(\d+)$").captures(t) {
+                if let Some(matches) = regex!(r"^builtin_tuple_(\d+)$").captures(t) {
                     let n = matches[1].parse::<usize>().unwrap();
                     Ok(LangItemKind::ImplTuple(n))
                 } else {
