@@ -13,18 +13,15 @@ protocol Iterator<Self, T> {
     }
 }
 
-protocol BackIterator<Self, T> {
+protocol DoubleEndedIterator<Self: Iterator<Self, T>, T> {
     fn next_back(self: &mut Self) -> Option<T>;
-    
-    fn size_hint(self: &Self) -> Option<usize> {
-        Option::none()
-    }
+}
 
+protocol DoubleEndedIteratorExt<Self: DoubleEndedIterator<Self, T>, T> {
     fn rev(self: &mut Self) -> RevIterator<Self, T> {
         RevIterator { it: self }
     }
 }
-
 
 protocol Iterable<Self, It: Iterator<It, T>, T> {
     fn iter(self: &Self) -> It;
@@ -38,13 +35,17 @@ protocol IterableMut<Self, It: Iterator<It, &mut T>, T> {
     fn iter_mut(self: &mut Self) -> It;
 }
 
-struct RevIterator<It: BackIterator<It, T>,T> {
+struct RevIterator<It: DoubleEndedIterator<It, T>, T> {
     it: &mut It
 }
 
-impl RevIterator<It: BackIterator<It, T>, T> {
+impl RevIterator<It: DoubleEndedIterator<It, T>, T> {
     fn next(self: &mut RevIterator<It, T>) -> Option<T> {
         self.it.next_back()
+    }
+
+    fn next_back(self: &mut RevIterator<It, T>) -> Option<T> {
+        self.it.next()
     }
 
     fn size_hint(self: &RevIterator<It, T>) -> Option<usize> {
@@ -53,16 +54,9 @@ impl RevIterator<It: BackIterator<It, T>, T> {
 
     mixin Iterator<RevIterator<It, T>, T>;
     mixin IteratorExt<RevIterator<It, T>, T>;
+    mixin DoubleEndedIterator<RevIterator<It, T>, T>;
+    mixin DoubleEndedIteratorExt<RevIterator<It, T>, T>;
 }
-
-impl RevIterator<It: Iterator<It, T>, T> {
-    fn next_back(self: &mut RevIterator<It, T>) -> Option<T> {
-        self.it.next()
-    }
-
-    mixin BackIterator<RevIterator<It, T>, T>;
-}
-
 
 struct MapIterator<It: Iterator<It, T>, F: Callable<(T), U>, T, U> {
     it: &mut It,
@@ -82,12 +76,13 @@ impl MapIterator<It: Iterator<It, T>, F: Callable<(T), U>, T, U> {
     mixin IteratorExt<MapIterator<It, F, T, U>, U>;
 }
 
-impl MapIterator<It: RevIterator<It, T>, F: Callable<(T), U>, T, U> {
+impl MapIterator<It: DoubleEndedIterator<It, T>, F: Callable<(T), U>, T, U> {
     fn next_back(self: &mut MapIterator<It, F, T, U>) -> Option<U> {
         self.it.next_back().map(|=self, x: T| -> U { self.fun(x) })
     }
 
-    mixin BackIterator<MapIterator<It, F, T, U>, U>;
+    mixin DoubleEndedIterator<MapIterator<It, F, T, U>, U>;
+    mixin DoubleEndedIteratorExt<MapIterator<It, F, T, U>, U>;
 }
 
 struct TakeWhileIterator<It: Iterator<It, T>, F: Callable<(T), bool>, T> {
@@ -179,7 +174,7 @@ impl FilterIterator<It: Iterator<It, T>, F: Callable<(T), bool>, T> {
     mixin IteratorExt<FilterIterator<It, F, T>, T>;
 }
 
-impl FilterIterator<It: BackIterator<It, T>, F: Callable<(T), bool>, T> {
+impl FilterIterator<It: DoubleEndedIterator<It, T>, F: Callable<(T), bool>, T> {
     fn next_back(self: &mut FilterIterator<It, F, T>) -> Option<T> {
         use option::try;
 
@@ -191,7 +186,8 @@ impl FilterIterator<It: BackIterator<It, T>, F: Callable<(T), bool>, T> {
         }
     }
 
-    mixin BackIterator<FilterIterator<It, F, T>, T>;
+    mixin DoubleEndedIterator<FilterIterator<It, F, T>, T>;
+    mixin DoubleEndedIteratorExt<FilterIterator<It, F, T>, T>;
 }
 
 struct SkipIterator<It: Iterator<It, T>, T> {
@@ -255,6 +251,48 @@ impl StepByIterator<It: Iterator<It, T>, T> {
     mixin IteratorExt<StepByIterator<It, T>, T>;
 }
 
+struct FusedIterator<It: Iterator<It, T>, T> {
+    done: bool,
+    it: &mut It,
+}
+
+impl FusedIterator<It: Iterator<It, T>, T> {
+    fn next(self: &mut FusedIterator<It, T>) -> Option<T> {
+        if self.done {
+            Option::none()
+        } else {
+            let v = self.it.next();
+            self.done = !v.is_some;
+            v
+        }
+    }
+
+    fn size_hint(self: &FusedIterator<It, T>) -> Option<usize> {
+        if self.done {
+            Option::some(0usize)
+        } else {
+            self.it.size_hint()
+        }
+    }
+
+    mixin Iterator<FusedIterator<It, T>, T>;
+    mixin IteratorExt<FusedIterator<It, T>, T>;
+}
+
+impl FusedIterator<It: DoubleEndedIterator<It, T>, T> {
+    fn next_back(self: &mut FusedIterator<It, T>) -> Option<T> {
+        if self.done {
+            Option::none()
+        } else {
+            let v = self.it.next_back();
+            self.done = !v.is_some;
+            v
+        }
+    }
+
+    mixin DoubleEndedIterator<FusedIterator<It, T>, T>;
+    mixin DoubleEndedIteratorExt<FusedIterator<It, T>, T>;
+}
 
 struct TakeIterator<It: Iterator<It, T>, T> {
     it: &mut It,
@@ -305,38 +343,28 @@ impl EnumerateIterator<It: Iterator<It, T>, T> {
 }
 
 struct ChainIterator<It1: Iterator<It1, T>, It2: Iterator<It2, T>, T> {
-    first_done: bool,
-    it1: &mut It1,
-    it2: &mut It2,
+    it1: FusedIterator<It1, T>,
+    it2: FusedIterator<It2, T>,
 }
 
 impl ChainIterator<It1: Iterator<It1, T>, It2: Iterator<It2, T>, T> {
     fn next(self: &mut ChainIterator<It1, It2, T>) -> Option<T> {
-        if self.first_done {
-            self.it2.next()
+        let v = self.it1.next();
+        if v.is_some {
+            v
         } else {
-            let v = self.it1.next();
-            if !v.is_some {
-                self.first_done = true;
-                self.it2.next()
-            } else {
-                v
-            }
+            self.it2.next()
         }
     }
 
     fn size_hint(self: &ChainIterator<It1, It2, T>) -> Option<usize> {
-        if self.first_done {
-            self.it2.size_hint()
-        } else {
-            let h1 = self.it1.size_hint();
-            let h2 = self.it2.size_hint();
+        let h1 = self.it1.size_hint();
+        let h2 = self.it2.size_hint();
 
-            if h1.is_some && h2.is_some {
-                Option::some(h1.inner + h2.inner)
-            } else {
-                Option::none()
-            }
+        if h1.is_some && h2.is_some {
+            Option::some(h1.inner + h2.inner)
+        } else {
+            Option::none()
         }
     }
 
@@ -344,6 +372,19 @@ impl ChainIterator<It1: Iterator<It1, T>, It2: Iterator<It2, T>, T> {
     mixin IteratorExt<ChainIterator<It1, It2, T>, T>;
 }
 
+impl ChainIterator<It1: DoubleEndedIterator<It1, T>, It2: DoubleEndedIterator<It2, T>, T> {
+    fn next_back(self: &mut ChainIterator<It1, It2, T>) -> Option<T> {
+        let v = self.it2.next_back();
+        if v.is_some {
+            v
+        } else {
+            self.it1.next_back()
+        }
+    }
+
+    mixin DoubleEndedIterator<ChainIterator<It1, It2, T>, T>;
+    mixin DoubleEndedIteratorExt<ChainIterator<It1, It2, T>, T>;
+}
 
 struct InspectIterator<It: Iterator<It, T>, F: Callable<(T), ()>, T> {
     it: &mut It,
@@ -466,11 +507,17 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
         self
     }
 
+    fn fuse(self: &mut Self) -> FusedIterator<Self, T> {
+        FusedIterator {
+            done: false,
+            it: self
+        }
+    }
+
     fn chain<Other: Iterator<Other, T>>(self: &mut Self, other: &mut Other) -> ChainIterator<Self, Other, T> {
         ChainIterator {
-            first_done: false,
-            it1: self,
-            it2: other
+            it1: FusedIterator { done: false, it: self },
+            it2: FusedIterator { done: false, it: other }
         }
     }
 
@@ -663,6 +710,19 @@ impl EmptyIterator<T> {
     mixin IteratorExt<EmptyIterator<T>, T>;
 }
 
+struct FromFnIterator<F: Callable<(), Option<T>>, T> {
+    func: F,
+}
+
+impl FromFnIterator<F: Callable<(), Option<T>>, T> {
+    fn next(self: &mut FromFnIterator<F, T>) -> Option<T> {
+        self.func()
+    }
+
+    mixin Iterator<FromFnIterator<F, T>, T>;
+    mixin IteratorExt<FromFnIterator<F, T>, T>;   
+}
+
 /// Returns an iterator that produces no elements.
 ///
 /// # Example
@@ -675,12 +735,20 @@ fn empty<T>() -> EmptyIterator<T> {
     EmptyIterator::<T> {}
 }
 
+fn from_fn<F: Callable<(), Option<T>>, T>(func: F) -> FromFnIterator<F, T> {
+    FromFnIterator::<F, T> { func: func }
+}
+
 struct RepeatIterator<T> {
     value: T
 }
 
 impl RepeatIterator<T> {
     fn next(self: &mut RepeatIterator<T>) -> Option<T> {
+        Option::some(self.value)
+    }
+
+    fn next_back(self: &mut RepeatIterator<T>) -> Option<T> {
         Option::some(self.value)
     }
 
@@ -713,6 +781,10 @@ struct OnceIterator<T> {
 
 impl OnceIterator<T> {
     fn next(self: &mut OnceIterator<T>) -> Option<T> {
+        self.value.next()
+    }
+
+    fn next_back(self: &mut OnceIterator<T>) -> Option<T> {
         self.value.next()
     }
 
@@ -888,7 +960,8 @@ impl RangeIter<T: Integer> {
     
     mixin Iterator<RangeIter<T>, T>;
     mixin IteratorExt<RangeIter<T>, T>;
-    mixin BackIterator<RangeIter<T>, T>;
+    mixin DoubleEndedIterator<RangeIter<T>, T>;
+    mixin DoubleEndedIteratorExt<RangeIter<T>, T>;
 }
 
 
@@ -921,6 +994,19 @@ mod tests {
     }
 
     #[test]
+    fn test_map_rev() {
+        let range = (0..5).iter().map(|x: i32| -> i32 { x * 2 }).rev();
+        assert_eq!(range.size_hint(), Option::some(5usize));
+
+        assert_eq!(range.next(), Option::some(8));
+        assert_eq!(range.next(), Option::some(6));
+        assert_eq!(range.next(), Option::some(4));
+        assert_eq!(range.next(), Option::some(2));
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::none());
+    }
+
+    #[test]
     fn test_filter() {
         let range = (0..5).iter().filter(|x: i32| -> bool { x % 2 == 0 });
         assert_eq!(range.size_hint(), Option::none());
@@ -928,6 +1014,17 @@ mod tests {
         assert_eq!(range.next(), Option::some(0));
         assert_eq!(range.next(), Option::some(2));
         assert_eq!(range.next(), Option::some(4));
+        assert_eq!(range.next(), Option::none());
+    }
+
+    #[test]
+    fn test_filter_rev() {
+        let range = (0..5).iter().filter(|x: i32| -> bool { x % 2 == 0 }).rev();
+        assert_eq!(range.size_hint(), Option::none());
+
+        assert_eq!(range.next(), Option::some(4));
+        assert_eq!(range.next(), Option::some(2));
+        assert_eq!(range.next(), Option::some(0));
         assert_eq!(range.next(), Option::none());
     }
 
@@ -1026,19 +1123,25 @@ mod tests {
 
     #[test]
     fn test_chain() {
-        let range = (0..5).iter().chain(&(10..15).iter());
-        assert_eq!(range.size_hint(), Option::some(10usize));
+        let range = (0..2).iter().chain(&(10..12).iter());
+        assert_eq!(range.size_hint(), Option::some(4usize));
 
         assert_eq!(range.next(), Option::some(0));
         assert_eq!(range.next(), Option::some(1));
-        assert_eq!(range.next(), Option::some(2));
-        assert_eq!(range.next(), Option::some(3));
-        assert_eq!(range.next(), Option::some(4));
         assert_eq!(range.next(), Option::some(10));
         assert_eq!(range.next(), Option::some(11));
-        assert_eq!(range.next(), Option::some(12));
-        assert_eq!(range.next(), Option::some(13));
-        assert_eq!(range.next(), Option::some(14));
+        assert_eq!(range.next(), Option::none());
+    }
+
+    #[test]
+    fn test_chain_rev() {
+        let range = (0..2).iter().chain(&(10..12).iter()).rev();
+        assert_eq!(range.size_hint(), Option::some(4usize));
+
+        assert_eq!(range.next(), Option::some(11));
+        assert_eq!(range.next(), Option::some(10));
+        assert_eq!(range.next(), Option::some(1));
+        assert_eq!(range.next(), Option::some(0));
         assert_eq!(range.next(), Option::none());
     }
 
@@ -1248,5 +1351,43 @@ mod tests {
         assert_eq!(range.next(), Option::some(1));
         assert_eq!(range.next(), Option::some(0));
         assert_eq!(range.next(), Option::none());
+    }
+
+    #[test]
+    fn test_from_fn() {
+        let index = 5;
+        let iter = from_fn(|&index| -> Option<i32> {
+            if index == 0 {
+                Option::none()
+            } else {
+                index -= 1;
+                Option::some(index)
+            }
+        });
+
+        assert_eq!(iter.next(), Option::some(4));
+        assert_eq!(iter.next(), Option::some(3));
+        assert_eq!(iter.next(), Option::some(2));
+        assert_eq!(iter.next(), Option::some(1));
+        assert_eq!(iter.next(), Option::some(0));
+        assert_eq!(iter.next(), Option::none());
+    }
+
+    #[test]
+    fn test_fuse() {
+        let index = 0;
+        let iter = from_fn(|&index| -> Option<()> {
+            index += 1;
+            if index % 2 == 0 {
+                Option::none()
+            } else {
+                Option::some(())
+            }
+        }).fuse();
+
+        assert_eq!(iter.next(), Option::some(()));
+        assert_eq!(iter.next(), Option::none());
+        assert_eq!(iter.next(), Option::none());
+        assert_eq!(iter.next(), Option::none());
     }
 }

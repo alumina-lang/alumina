@@ -76,6 +76,10 @@ impl GlobalCtx {
         borrowed.cfg.insert(value.to_string(), None);
     }
 
+    pub fn has_flag(&self, name: &str) -> bool {
+        self.inner.borrow().cfg.contains_key(name)
+    }
+
     pub fn add_cfg(&mut self, value: impl ToString, value_str: impl ToString) {
         let mut borrowed = self.inner.borrow_mut();
         borrowed

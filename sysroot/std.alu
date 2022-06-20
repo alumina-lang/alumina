@@ -37,6 +37,20 @@ macro debug_assert_eq($lhs, $rhs) { #[cfg(debug)] assert_eq!($lhs, $rhs); }
 /// Panics if `lhs` and `rhs` are equal when compiled in debug mode. Otherwise, does nothing.
 macro debug_assert_ne($lhs, $rhs) { #[cfg(debug)] assert_ne!($lhs, $rhs); }
 
+/// Treats the location as unreachable during program flow.
+///
+/// In debug mode, this macro will panic if ever reached. In release mode, it will cause
+/// undefined behavior. This is a way to satisfy type-checker, especially useful in `switch` expressions.
+/// # Example:
+/// ```
+/// let number: i32 = 42;
+/// switch number % 3 {
+///     0 => "odd", 
+///     1 => "even",
+///     2 => "what even?",
+///     _ => unreachable!()
+/// }
+/// ```
 macro unreachable() {
     #[cfg(debug)]
     panic!("reached unreachable code");
@@ -83,13 +97,13 @@ macro dbg($fmt, $args...) {
 }
 
 mod internal {
-    use panicking::internal::{panic_impl, PanicFormatter};
-    use fmt::{Formattable, internal::FormatArg};
-
     // These are in a function instead of a macro so we can typecheck and display a nice
     // error message if the argument is Formattable.
 
     fn assert_eq<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T)  {
+        use panicking::internal::panic_impl;
+        use fmt::{Formattable, internal::FormatArg};
+
         if !(lhs == rhs) {
             when T: Formattable<T> {
                 panic_impl("assertion failed ({} != {}))", file, line, column, &[
@@ -105,6 +119,9 @@ mod internal {
     }
 
     fn assert_ne<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T)  {
+        use panicking::internal::panic_impl;
+        use fmt::{Formattable, internal::FormatArg};
+
         if lhs == rhs {
             when T: Formattable<T> {
                 panic_impl("assertion failed ({} == {}))", file, line, column, &[

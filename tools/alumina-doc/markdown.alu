@@ -72,13 +72,14 @@ impl InlineMarkdown {
     }
 
     fn write_link<F: Formatter<F>>(self: &InlineMarkdown, f: &mut F) -> Result {
-        let (text, link) = if self.state.link_url.empty() {
+        let (text, link, class) = if self.state.link_url.empty() {
             (
                 self.state.link_text.as_slice().split("::").last().unwrap(),
-                self.state.link_text.as_slice()
+                self.state.link_text.as_slice(),
+                "path-link"
             )
         } else {
-            (self.state.link_text.as_slice(), self.state.link_url.as_slice())
+            (self.state.link_text.as_slice(), self.state.link_url.as_slice(), "")
         };
 
         let link = if link.starts_with("http") {
@@ -93,7 +94,8 @@ impl InlineMarkdown {
         }
 
         write!(f, 
-            "<a href=\"{}\">{}</a>", 
+            "<a class=\"{}\" href=\"{}\">{}</a>", 
+            class,
             link,
             text 
         )?;

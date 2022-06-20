@@ -12,9 +12,9 @@ use fmt::{write, writeln};
 /// Buffer for formatted standard I/O.
 ///
 /// We use a single small static buffer for convenience stdio formatting macros.
-/// This buffer has limited purpose (if you need a larger buffer, use [io::StdioStream]
-/// directly). As many formatters write individual characters, doing a syscall 
-/// for every one would be a performance killer.
+/// This buffer has limited purpose (if you need a larger buffer, use [io::StdioStream] directly).
+/// As many formatters write individual characters, doing a syscall for every one would be
+/// a performance killer.
 ///
 /// Once we have multi-threading, stdio formatting will have to be synchronized or `FMT_BUF`
 /// made thread-local. Having a static buffer is also a concern if the macros recurse, as
@@ -534,13 +534,15 @@ fn read_until<R: BufferedReadable<R>>(r: &mut R, delim: u8, buf: &mut string::St
     }
 }
 
+/// Iterator that reads the inner stream line by line.
+///
+/// An iterator over the lines of a buffered reader. The iterator maintains an internal
+/// heap-allocated buffer of the line's contents, which is reused between lines.
 struct LineIterator<R: BufferedReadable<R>> {
     line_buf: string::StringBuf,
     reader: &mut R,
 }
 
-/// An iterator over the lines of a buffered reader. The iterator maintains an internal
-/// heap-allocated buffer of the line's contents, which is reused between lines.
 impl LineIterator<R: BufferedReadable<R>> {
     use std::iter::Iterator;
 

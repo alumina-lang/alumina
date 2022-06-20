@@ -81,26 +81,31 @@ const MICROS_PER_SEC: u64 = 1000000;
 
 #[cfg(target_os = "macos")]
 {
-    struct mach_timebase_info_t {
-        numer: u32,
-        denom: u32,
+    /// Darwin-specific implementation.
+    mod internal {
+        struct mach_timebase_info_t {
+            numer: u32,
+            denom: u32,
+        }
+        use libc::c_int as kern_return_t;
+
+        extern "C" fn mach_absolute_time() -> u64;
+        extern "C" fn mach_timebase_info(info: &mut mach_timebase_info_t) -> kern_return_t;
+
+        static TIMEBASE: mach_timebase_info_t = {
+            let v: mach_timebase_info_t;
+            mach_timebase_info(&v);
+            v
+        };   
     }
-    use libc::c_int as kern_return_t;
 
     struct Instant {
         inner: u64
     }
 
-    extern "C" fn mach_absolute_time() -> u64;
-    extern "C" fn mach_timebase_info(info: &mut mach_timebase_info_t) -> kern_return_t;
-
-    static TIMEBASE: mach_timebase_info_t = {
-        let v: mach_timebase_info_t;
-        mach_timebase_info(&v);
-        v
-    };
-
     impl Instant {
+        use internal::*;
+
         fn now() -> Instant {
             Instant { inner: mach_absolute_time() }
         }

@@ -29,12 +29,15 @@ pub fn write_function_signature<'ir, 'gen>(
     is_static: bool,
 ) -> Result<(), AluminaError> {
     let name = ctx.get_name(id);
+    let mut is_inline = false;
 
     let mut attributes = if item.attributes.contains(&Attribute::ForceInline) {
+        is_inline = true;
         "__attribute__((always_inline)) inline ".to_string()
     } else if item.attributes.contains(&Attribute::NoInline) {
         "__attribute__((noinline)) ".to_string()
     } else if item.attributes.contains(&Attribute::Inline) {
+        is_inline = true;
         "inline ".to_string()
     } else if item.attributes.contains(&Attribute::StaticConstructor) {
         "__attribute__((constructor)) ".to_string()
@@ -56,7 +59,7 @@ pub fn write_function_signature<'ir, 'gen>(
         ctx.get_type(item.return_type)
     };
 
-    if is_static {
+    if is_static || is_inline {
         w!(buf, "\n{}static {} {}(", attributes, return_type, name);
     } else {
         w!(buf, "\n{}{} {}(", attributes, return_type, name);
@@ -471,7 +474,13 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 id,
                 CName::Mangled(item.name.unwrap_or("anonymous"), self.ctx.make_id()),
             );
-            write_function_signature(self.ctx, &mut self.fn_decls, id, item, true)?;
+            write_function_signature(
+                self.ctx,
+                &mut self.fn_decls,
+                id,
+                item,
+                !self.ctx.global_ctx.has_flag("debug"),
+            )?;
         }
 
         w!(self.fn_decls, ";");
@@ -537,7 +546,13 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 self.ctx.get_name(item.args[1].id)
             );
         } else {
-            write_function_signature(self.ctx, &mut self.fn_bodies, id, item, !should_export)?;
+            write_function_signature(
+                self.ctx,
+                &mut self.fn_bodies,
+                id,
+                item,
+                !should_export && !self.ctx.global_ctx.has_flag("debug"),
+            )?;
         }
 
         let body = item.body.get().unwrap();

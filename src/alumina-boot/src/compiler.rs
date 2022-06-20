@@ -177,7 +177,7 @@ impl Compiler {
 
         // Dunno why the borrow checker is not letting me do that, it should be possible.
         // drop(ast);
-        let res = codegen::codegen(&items[..]);
+        let res = codegen::codegen(self.global_ctx.clone(), &items[..]);
         timing!(self, cur_time, Stage::Codegen);
 
         res

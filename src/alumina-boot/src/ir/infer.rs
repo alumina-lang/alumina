@@ -4,7 +4,7 @@ use super::{
     UnqualifiedKind,
 };
 use crate::{
-    ast::{self, lang::LangItemKind, Placeholder},
+    ast::{self, lang::LangItemKind, BuiltinType, Placeholder},
     ir,
 };
 use std::collections::HashMap;
@@ -160,38 +160,54 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                             }
                         }
                     }
-                    Some(LangItemKind::ProtoCallable) => {
-                        if let [ast::Ty::Tuple(a1), a2] = args {
-                            match tgt {
-                                ir::Ty::FunctionPointer(b1, b2) => {
-                                    for (a, b) in a1.iter().zip(b1.iter()) {
-                                        let _ = self.match_slot(inferred, a, b);
-                                    }
-                                    let _ = self.match_slot(inferred, a2, b2);
+                    Some(LangItemKind::ProtoCallable) => match args {
+                        [ast::Ty::Tuple(a1), a2] => match tgt {
+                            ir::Ty::FunctionPointer(b1, b2) => {
+                                for (a, b) in a1.iter().zip(b1.iter()) {
+                                    let _ = self.match_slot(inferred, a, b);
                                 }
-                                ir::Ty::NamedFunction(item) => {
-                                    if let Ok(fun) = item.get_function() {
-                                        for (a, b) in a1.iter().zip(fun.args.iter()) {
+                                let _ = self.match_slot(inferred, a2, b2);
+                            }
+                            ir::Ty::NamedFunction(item) => {
+                                if let Ok(fun) = item.get_function() {
+                                    for (a, b) in a1.iter().zip(fun.args.iter()) {
+                                        let _ = self.match_slot(inferred, a, b.ty);
+                                    }
+                                    let _ = self.match_slot(inferred, a2, fun.return_type);
+                                }
+                            }
+                            ir::Ty::Closure(item) => {
+                                if let Ok(clos) = item.get_closure() {
+                                    if let Ok(fun) = clos.function.get().unwrap().get_function() {
+                                        for (a, b) in a1.iter().zip(fun.args.iter().skip(1)) {
                                             let _ = self.match_slot(inferred, a, b.ty);
                                         }
                                         let _ = self.match_slot(inferred, a2, fun.return_type);
                                     }
                                 }
-                                ir::Ty::Closure(item) => {
-                                    if let Ok(clos) = item.get_closure() {
-                                        if let Ok(fun) = clos.function.get().unwrap().get_function()
-                                        {
-                                            for (a, b) in a1.iter().zip(fun.args.iter().skip(1)) {
-                                                let _ = self.match_slot(inferred, a, b.ty);
-                                            }
-                                            let _ = self.match_slot(inferred, a2, fun.return_type);
-                                        }
+                            }
+                            _ => {}
+                        },
+                        [ast::Ty::Builtin(BuiltinType::Void), a2] => match tgt {
+                            ir::Ty::FunctionPointer(_, b2) => {
+                                let _ = self.match_slot(inferred, a2, b2);
+                            }
+                            ir::Ty::NamedFunction(item) => {
+                                if let Ok(fun) = item.get_function() {
+                                    let _ = self.match_slot(inferred, a2, fun.return_type);
+                                }
+                            }
+                            ir::Ty::Closure(item) => {
+                                if let Ok(clos) = item.get_closure() {
+                                    if let Ok(fun) = clos.function.get().unwrap().get_function() {
+                                        let _ = self.match_slot(inferred, a2, fun.return_type);
                                     }
                                 }
-                                _ => {}
                             }
-                        }
-                    }
+                            _ => {}
+                        },
+                        _ => {}
+                    },
                     _ => {}
                 }
             }

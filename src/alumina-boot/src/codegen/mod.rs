@@ -10,6 +10,7 @@ use std::{
 use crate::{
     ast::BuiltinType,
     common::{AluminaError, Incrementable},
+    global_ctx::{self, GlobalCtx},
     ir::{IRItem, IRItemP, Ty},
 };
 use bumpalo::Bump;
@@ -50,6 +51,7 @@ impl<'gen> CName<'gen> {
 }
 
 pub struct CodegenCtx<'ir, 'gen> {
+    global_ctx: GlobalCtx,
     id_map: RefCell<HashMap<IrId, CName<'gen>>>,
     type_map: RefCell<HashMap<TyP<'ir>, CName<'gen>>>,
     counter: Cell<usize>,
@@ -57,8 +59,9 @@ pub struct CodegenCtx<'ir, 'gen> {
 }
 
 impl<'ir, 'gen> CodegenCtx<'ir, 'gen> {
-    pub fn new() -> Self {
+    pub fn new(global_ctx: GlobalCtx) -> Self {
         Self {
+            global_ctx,
             arena: Bump::new(),
             id_map: RefCell::new(HashMap::new()),
             type_map: RefCell::new(HashMap::new()),
@@ -121,8 +124,8 @@ impl Display for CName<'_> {
     }
 }
 
-pub fn codegen(items: &[IRItemP<'_>]) -> Result<String, AluminaError> {
-    let ctx = CodegenCtx::new();
+pub fn codegen(global_ctx: GlobalCtx, items: &[IRItemP<'_>]) -> Result<String, AluminaError> {
+    let ctx = CodegenCtx::new(global_ctx);
     let type_writer = TypeWriter::new(&ctx);
 
     type_writer.add_type(&Ty::Builtin(BuiltinType::Void))?;
