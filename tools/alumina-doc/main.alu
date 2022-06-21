@@ -226,6 +226,8 @@ impl PageWriter<T: std::io::Writable<T>> {
         wln!(self, "<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">");
         wln!(self, "<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>");
         wln!(self, "<meta content=\"width=device-width, initial-scale=1\" name=\"viewport\" />");
+        wln!(self, "<script src=\"/static/site.js\"></script>");
+        wln!(self, "<script src=\"/search_index.js\" async></script>");
         wln!(self, "<link href=\"https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500&family=Source+Code+Pro:wght@400;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,700&display=swap\" rel=\"stylesheet\">");
         wln!(self, "</head>");
         wln!(self, "<body>");
@@ -265,7 +267,11 @@ impl PageWriter<T: std::io::Writable<T>> {
         // Main section
         
         wln!(self, "<div class=\"main-container\">");
-        wln!(self, "<main>");
+        wln!(self, "<div class=\"search-container\">");
+        wln!(self, "<input id=\"search-input\" class=\"search-input\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"Search the documentation...\" type=\"search\"></input>");
+        wln!(self, "</div>");
+        wln!(self, "<div id=\"search-results\"></div>");    
+        wln!(self, "<main id=\"main-content\">");
         
         if top_level.path.segments.len() > 0 {
             self.write_breadcrumbs(top_level, true)?;
@@ -310,7 +316,7 @@ impl PageWriter<T: std::io::Writable<T>> {
                         
                         wln!(self, "<div class=\"item-doc\">");
                         write_docstring(self.writer, item.doc_comment.as_slice(), false, &link_context)
-                        .map_err(Error::from::<std::fmt::Error>)?;  
+                            .map_err(Error::from::<std::fmt::Error>)?;  
                         wln!(self, "</div>");
                         wln!(self, "</li>");
                     }
@@ -391,6 +397,61 @@ fn write_html(items: &ItemBag) -> Result<()> {
     Result::ok(())
 }
 
+fn clean_doc_comment(doc_comment: &[u8]) -> StringBuf {
+    use std::string::{trim_prefix, trim, starts_with, replace};
+    use std::mem::replace as x;
+
+    let tag_line = doc_comment.split("\n").next().unwrap_or("").trim();
+    let tag_line = if tag_line.starts_with("///") {
+        tag_line.trim_prefix("///")
+    } else {
+        tag_line.trim_prefix("//!")
+    };
+
+    let result: StringBuf = StringBuf::from_slice(tag_line);
+    x(&result, result.as_slice().replace("\\", "\\\\")).free();
+    x(&result, result.as_slice().replace("\n", "\\n")).free();
+    x(&result, result.as_slice().replace("\"", "\\\"")).free();
+    result 
+}
+
+fn write_index(items: &ItemBag) -> Result<()> { 
+    use std::fmt::{write, writeln};
+    use std::string::replace_fmt;
+
+    let filename = "./build/docs/search_index.js";
+    ensure_dir(filename)?;
+
+    let file = std::fs::File::create(filename).map_err(Error::from_io)?;
+    defer file.close();
+
+    let writer = std::io::BufferedWriter::new(&file, 1024);
+    defer {
+        writer.flush();
+        writer.free();
+    };
+
+    write!(&writer, "const index = [");
+    for item in items.all().filter(|v: &Item| -> bool {  v.is_public() }) {
+        let link_context = LinkContext::new(items, &item.defined_in);
+        let link = link_context.resolve_link(&item.path).unwrap();
+        let doc = clean_doc_comment(item.doc_comment.as_slice());
+
+        writeln!(&writer, "[\"{}\",\"{}\",\"{}\"],", 
+            item.path, 
+            doc.as_slice(), 
+            link
+        ).map_err(Error::from::<std::fmt::Error>)?;
+        
+        link.free();
+        doc.free();
+    }
+    writeln!(&writer, "];");
+    writeln!(&writer, "if (typeof window.loadSearchIndex !== \"undefined\") {{ window.loadSearchIndex(index); }}");
+
+    Result::ok(())
+}
+
 fn main_inner(args: &[&[u8]]) -> Result<()> {
     let processor = Processor::new();
     defer processor.free();
@@ -416,6 +477,7 @@ fn main_inner(args: &[&[u8]]) -> Result<()> {
     processor.items.sort();
 
     write_html(&processor.items)?;
+    write_index(&processor.items)?;
         
     Result::ok(())
 }
