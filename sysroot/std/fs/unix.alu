@@ -224,3 +224,122 @@ mod tests {
         file.close().unwrap();
     }
 }
+
+
+
+/// Iterator over the items in a directory
+///
+/// See [std::fs::unix::read_dir]
+struct DirIterator {
+    inner: &mut libc::DIR
+}
+
+impl DirIterator {
+    fn next(self: &mut DirIterator) -> Option<Result<DirEntry, Error>> {
+        loop {
+            let ent = libc::readdir(self.inner);
+            if ent == null {
+                let err = Error::from_errno();
+                if err.inner.errno == 0 {
+                    return Option::none();
+                } else {
+                    return Option::some(Result::err(err));
+                }
+            }
+
+            let res = DirEntry { inner: ent };
+            let name = res.name();
+            if name == "." || name == ".." {
+                continue
+            }
+
+            return Option::some(Result::ok(res));
+        }
+    }
+
+    fn close(self: &mut DirIterator) -> Result<(), Error> {
+        errno_try!(libc::closedir(self.inner));
+        Result::ok(())
+    }
+
+    mixin std::iter::Iterator<DirIterator, Result<DirEntry, Error>>;
+    mixin std::iter::IteratorExt<DirIterator, Result<DirEntry, Error>>;
+}
+
+/// Directory entry
+struct DirEntry {
+    inner: &mut libc::dirent,
+}
+
+impl DirEntry {
+    /// Return the name of the item in directory
+    fn name(self: &DirEntry) -> &[u8] {
+        std::ffi::CString::from_raw(&self.inner.d_name[0]).as_slice()
+    }
+
+    /// Returns the file type
+    fn file_type(self: &DirEntry) -> FileType {
+        self.inner.d_type as u8 as FileType
+    }
+}
+
+/// Returns iterator over the items in a directory.
+///
+/// # Example
+/// ```
+/// use std::fs::read_dir;
+///
+/// let dir = read_dir("/home/alumina")?
+/// defer dir.close()?;
+/// 
+/// for item in dir {
+///     let item = item?;
+///     println!("{}: {}", item.name(), item.file_type());
+/// }
+/// ```
+fn read_dir(path: &[u8]) -> Result<DirIterator, Error> {
+    let path_c = std::ffi::CString::new(path);
+    defer path_c.free();
+
+    let res = libc::opendir(path_c.ptr);
+    if res == null {
+        Result::err(Error::from_errno())
+    } else {
+        Result::ok(DirIterator { inner: res })
+    }
+}
+
+
+enum FileType {
+    Unknown = libc::DT_UNKNOWN,
+    Fifo = libc::DT_FIFO,
+    CharacterDevice = libc::DT_CHR,
+    Directory = libc::DT_DIR,
+    BlockDevice = libc::DT_BLK,
+    Regular = libc::DT_REG,
+    Link = libc::DT_LNK,
+    Socket = libc::DT_SOCK,
+}
+
+impl FileType {
+    fn fmt<F: std::fmt::Formatter<F>>(self: &FileType, fmt: &mut F) -> std::fmt::Result {
+        use std::fmt::write;
+        switch *self {
+            FileType::Unknown => write!(fmt, "unknown"),
+            FileType::Fifo => write!(fmt, "fifo"),
+            FileType::CharacterDevice => write!(fmt, "character device"),
+            FileType::Directory => write!(fmt, "directory"),
+            FileType::BlockDevice => write!(fmt, "block device"),
+            FileType::Regular => write!(fmt, "regular"),
+            FileType::Link => write!(fmt, "link"),
+            FileType::Socket => write!(fmt, "socket"),
+            _ => write!(fmt, "unknown"),            
+        }
+    }
+
+    fn equals(self: &FileType, other: &FileType) -> bool {
+        *self == *other
+    }
+
+    mixin std::cmp::Equatable<FileType>;
+}

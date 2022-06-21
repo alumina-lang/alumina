@@ -10,7 +10,7 @@ use std::{
 use crate::{
     ast::BuiltinType,
     common::{AluminaError, Incrementable},
-    global_ctx::{self, GlobalCtx},
+    global_ctx::GlobalCtx,
     ir::{IRItem, IRItemP, Ty},
 };
 use bumpalo::Bump;
