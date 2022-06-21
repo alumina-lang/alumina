@@ -5,7 +5,7 @@ use std::string::{StringBuf, split, join, trim_prefix, starts_with, join_fmt, re
 
 use tree_sitter::{TSLanguage, Node, Parser, TSTreeCursor, TSFieldId};
 
-use aluminac::lib::common::{NodeVisitorExt, child_by};
+use aluminac::lib::common::{NodeVisitorExt, child_by, children_by};
 use aluminac::lib::arena::Arena;
 use aluminac::lib::node_kinds::{NodeVisitor, FieldKind};
 
@@ -98,7 +98,7 @@ fn ensure_dir(f: &[u8]) -> Result<()> {
     let dirname = "/".join(&segments.iter());
     defer dirname.free();
 
-    std::process::Command::new("/usr/bin/mkdir")
+    std::process::Command::new("/bin/mkdir")
         .args(&[
             "-p",
             dirname.as_slice()
@@ -149,29 +149,60 @@ impl PageWriter<T: std::io::Writable<T>> {
         Result::ok(())
     }
 
-    fn write_source(self: &PageWriter<T>, item: &Item) -> Result<()> {
+    fn write_signature(self: &PageWriter<T>, item: &Item, top_level: bool) -> Result<()> {
         let link_context = LinkContext::new(self.item_bag, &item.defined_in);
-        let source: StringBuf = StringBuf::from_slice(item.node.text(item.parse_context.source()));
-        defer source.free();
-
-        switch item.kind {
-            ItemKind::Enum, ItemKind::Struct, ItemKind::Union, ItemKind::TypeDef, ItemKind::Const, ItemKind::Static, ItemKind::Function, ItemKind::Macro => {},
-            // todo: signature only
-            ItemKind::Module, ItemKind::Protocol, ItemKind::Mixin => return Result::ok(()),
-            
-            _ => unreachable!()
-        };
-
-        w!(self, "<pre><code>");
         
+        if !top_level {
+            let name = item.path.last().unwrap();
+            wln!(self, "<div class=\"signature\" id=\"item.{}\">", name);
+        } else {
+            wln!(self, "<div class=\"signature\">");
+        }
+
+        wln!(self, "{}", if top_level { "<h3>" } else { "<h4>" });
         let printer = CodePrinter::new(item.parse_context, &link_context, self.writer);
         printer.visit(item.node);
-
-        wln!(self, "</code></pre>");
-
+        
+        child_by!(item.node, FieldKind::TypeArguments)
+            .map(|=self, &printer, node: Node| -> Result<()> {
+                let cursor = node.walk();
+                defer cursor.free();
+                
+                printer.protocol_bounds = true;
+                
+                for (idx, child) in children_by!(node, FieldKind::Argument, &cursor).enumerate() {
+                    if !child_by!(child, FieldKind::Bound).is_some {
+                        continue;
+                    }
+                    wln!(self, "<div class=\"protocol-bound\">");
+                    printer.visit(child);
+                    wln!(self, "</div>");
+                }
+                
+                Result::ok(())
+            })
+            .transpose()?;
+        
+        wln!(self, "{}", if top_level { "</h3>" } else { "</h4>" });
+        if item.kind.show_source_link() {
+            let file = item.parse_context.filename.as_slice().trim_prefix("./");
+            let start = item.node.start_point();
+            let end = item.node.end_point();
+            wln!(self, "<div class=\"source-link\">");
+            wln!(
+                self, 
+                "<a href=\"https://github.com/tibordp/alumina/blob/master/{}#L{}-L{}\"/>source</a>",
+                file, 
+                start.row + 1,
+                end.row + 1
+            );
+            wln!(self, "</div>");
+        }
+        wln!(self, "</div>");
+        
         Result::ok(())
     }
-
+    
     fn write_page(
         self: &PageWriter<T>, 
         nav_item: &Item, 
@@ -180,8 +211,9 @@ impl PageWriter<T: std::io::Writable<T>> {
         main_items: &Vector<&Item>
     ) -> Result<()> {
         let link_context = LinkContext::new(self.item_bag, &top_level.defined_in);
-
-        wln!(self, "<html>");
+        
+        wln!(self, "<!DOCTYPE html>");
+        wln!(self, "<html lang=\"en\">");
         wln!(self, "<head>");
         wln!(self, "<meta charset=\"utf-8\">");
         if top_level.path.segments.len() == 0 {
@@ -189,7 +221,7 @@ impl PageWriter<T: std::io::Writable<T>> {
         } else {
             wln!(self, "<title>{} - Alumina Docs</title>", top_level.path);
         }
-
+        
         wln!(self, "<link rel=\"stylesheet\" href=\"/static/styles.css\">");
         wln!(self, "<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">");
         wln!(self, "<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>");
@@ -199,17 +231,22 @@ impl PageWriter<T: std::io::Writable<T>> {
         wln!(self, "<body>");
         
         // Left sidebar
-
+        
         wln!(self, "<nav>");
-        wln!(self, "<a href=\"/\"><img class=\"logo\" src=\"/static/logo.svg\"></a>");
+        wln!(self, "<a href=\"/\">");
+        wln!(self, "<img width=\"100px\" height=\"100px\" class=\"logo\" src=\"/static/logo.svg\" alt=\"Alumina Docs\">");
+        wln!(self, "</a>");
         let top_level_link = link_context.resolve_link(&top_level.path).unwrap();
         defer top_level_link.free();
-
+        
         if nav_item.path.last().is_some {
             self.write_breadcrumbs(nav_item, false)?;
         }
-
-        for grp in nav_items.iter().group_by(|i: &Item| -> ItemKind { i.kind }) {
+        
+        for grp in nav_items
+            .iter()
+            .filter(|i: &Item| -> bool { i.kind.should_show_in_sidebar() })
+            .group_by(|i: &Item| -> ItemKind { i.kind }) {
             wln!(self, "<h2>{}s</h2>", grp.key);
             wln!(self, "<ul>");
             
@@ -224,20 +261,23 @@ impl PageWriter<T: std::io::Writable<T>> {
             wln!(self, "</ul>");
         }
         wln!(self, "</nav>");
-
+        
         // Main section
-
+        
         wln!(self, "<div class=\"main-container\">");
         wln!(self, "<main>");
-
+        
         if top_level.path.segments.len() > 0 {
             self.write_breadcrumbs(top_level, true)?;
         }
-
-        self.write_source(top_level)?;
+        
+        if top_level.kind.show_signature() {
+            self.write_signature(top_level, true)?;
+        }
+        
         write_docstring(self.writer, top_level.doc_comment.as_slice(), false, &link_context)
-            .map_err(Error::from::<std::fmt::Error>)?;    
-
+        .map_err(Error::from::<std::fmt::Error>)?;    
+        
         if top_level.kind.has_own_page() {
             for grp in main_items.iter().group_by(|i: &Item| -> ItemKind { i.kind }) {
                 wln!(self, "<h2 id=\"{}\">{}s</h2>", grp.key, grp.key);
@@ -253,10 +293,10 @@ impl PageWriter<T: std::io::Writable<T>> {
                         wln!(self, "<div class=\"cell-name\"><a href=\"{}\">{}</a></div>", link, name);
                         w!(self, "<div class=\"cell-doc\">");
                         write_docstring(self.writer, item.doc_comment.as_slice(), true, &link_context)
-                            .map_err(Error::from::<std::fmt::Error>)?;  
+                        .map_err(Error::from::<std::fmt::Error>)?;  
                         wln!(self, "</div>");
                         wln!(self, "</div>");
-        
+                        
                         link.free();
                     }
                     wln!(self, "</div>");
@@ -265,24 +305,16 @@ impl PageWriter<T: std::io::Writable<T>> {
                     wln!(self, "<ul>");
                     for item in grp {
                         let link_context = LinkContext::new(self.item_bag, &item.defined_in);
-                        
-                        let name = item.path.last().unwrap();
-                        
                         wln!(self, "<li>");                  
-                        wln!(self, "<div class=\"signature\" id=\"item.{}\">", name);
-                        wln!(self, "<h4>");
-                        let printer = CodePrinter::new(item.parse_context, &link_context, self.writer);
-                        printer.visit(item.node);
-                        wln!(self, "</h4>");
-                        ///wln!(self, "<div class=\"source-link\"><a href=\"github.vom\"/>source</a></div>");
-                        wln!(self, "</div>");
+                        self.write_signature(item, false)?;
+                        
                         wln!(self, "<div class=\"item-doc\">");
                         write_docstring(self.writer, item.doc_comment.as_slice(), false, &link_context)
-                            .map_err(Error::from::<std::fmt::Error>)?;  
+                        .map_err(Error::from::<std::fmt::Error>)?;  
                         wln!(self, "</div>");
                         wln!(self, "</li>");
                     }
-        
+                    
                     wln!(self, "</ul>");
                 }
             }
@@ -382,17 +414,6 @@ fn main_inner(args: &[&[u8]]) -> Result<()> {
 
     processor.items.resolve_all();
     processor.items.sort();
-/*
-    for (k, v) in processor.items.aliases {
-        let foo = processor.items.resolve(&k, &v, true);
-        
-        if foo.is_some {
-            eprintln!("{} {} => {}", k, v, foo.inner.path);
-        } else {
-            eprintln!("{} {} => OOPS!", k, v);
-        }
-    }
-    */
 
     write_html(&processor.items)?;
         

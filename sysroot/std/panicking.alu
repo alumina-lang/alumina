@@ -13,11 +13,21 @@ macro panic($reason, $args...) {
 mod internal {
     use fmt::{Formatter, internal::{printf, FormatArg}};
 
-    // Small formatter with as few dependencies as possible. No buffering, no checking
-    // for unwritten bytes, etc. This is both for reliability, to allow higher-level IO
-    // code to panic safely but also to break potential circular dependencies in static
-    // initialization.
+    // libc runtime backtrace support
 
+    #[cfg(all(debug, not(no_backtrace)))]
+    {
+        extern "C" fn backtrace(buffer: &mut &mut void, size: libc::c_int) -> libc::c_int;
+        extern "C" fn backtrace_symbols(buffer: &mut &void, size: libc::c_int) -> &mut &mut libc::c_char;
+        extern "C" fn backtrace_symbols_fd(buffer: &mut &void, size: libc::c_int, fd: libc::c_int);
+    }
+
+    /// Small formatter with as few dependencies as possible.
+    ///
+    /// PanicFormatter has no buffering, no checking for unwritten bytes. It just writes
+    /// directly to fd 2. This is both for reliability, to allow higher-level IO
+    /// code to panic safely but also to break potential circular dependencies in static
+    /// initialization.
     struct PanicFormatter {}
     impl PanicFormatter {
         fn write_str(self: &mut PanicFormatter, buf: &[u8]) -> Result<(), fmt::Error> {
@@ -82,6 +92,13 @@ mod internal {
         // Swallow errors from print_panic_message, because at this point, what can we do, panic?
         // We still bail early if it fails.
         let _ = print_panic_message(fmt_str, file, line, column, args);
+
+        #[cfg(all(debug, not(no_backtrace)))]
+        {
+            let buf: [&mut void; 128];
+            let size = backtrace(&buf[0], 128);
+            backtrace_symbols_fd(&buf[0] as &mut &void, size, libc::STDERR_FILENO);
+        }
         
         libc::_exit(-1);
     }

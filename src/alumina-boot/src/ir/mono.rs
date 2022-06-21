@@ -1064,7 +1064,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         for function in protocol.associated_fns {
             let fun = function.item.get_function();
-            // assert!(fun.placeholders.is_empty());
 
             let placeholders = if fun.placeholders.is_empty() {
                 mixin.placeholders

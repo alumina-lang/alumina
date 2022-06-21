@@ -102,7 +102,7 @@ impl never {
 
 /// This mixin implements Equatable and Comparable for types that have natively implemented
 /// equality and comparison operators.
-protocol _BuiltinComparable<Self: builtins::Numeric> {
+protocol BuiltinComparable<Self: builtins::Numeric> {
     #[force_inline] fn equals(lhs: &Self, rhs: &Self) -> bool { *lhs == *rhs }
     #[force_inline] fn not_equals(lhs: &Self, rhs: &Self) -> bool { *lhs != *rhs }    
     #[force_inline]
@@ -122,7 +122,7 @@ protocol _BuiltinComparable<Self: builtins::Numeric> {
     #[force_inline] fn greater_than_or_equal(lhs: &Self, rhs: &Self) -> bool { *lhs >= *rhs }
 }
 
-protocol _IntegerParsable<Self: builtins::Integer> {
+protocol IntegerParsable<Self: builtins::Integer> {
     #[inline]
     fn parse(s: &[u8]) -> Option<Self> {
         string::parse_integer::<Self>(s, 10)
@@ -134,19 +134,19 @@ protocol _IntegerParsable<Self: builtins::Integer> {
     }
 }
 
-protocol _IntegerFormattable<Self: builtins::Integer, F: Formatter<F>> {
+protocol IntegerFormattable<Self: builtins::Integer, F: Formatter<F>> {
     fn fmt(self: &Self, formatter: &mut F) -> Result<(), fmt::Error> {
         fmt::internal::format_integer(*self, 10, 0, formatter)
     }
 }
 
-protocol _FloatFormattable<Self: builtins::FloatingPoint, F: Formatter<F>> {
+protocol FloatFormattable<Self: builtins::FloatingPoint, F: Formatter<F>> {
     fn fmt(self: &Self, formatter: &mut F) -> Result<(), fmt::Error> {
         fmt::internal::format_float(*self, formatter, 15)
     }
 }
 
-protocol _BitOps<Self: builtins::Unsigned> {
+protocol BitOps<Self: builtins::Unsigned> {
     #[inline(always)]
     fn rotate_left(self: Self, shift: usize) -> Self {
         (self << shift) | (self >> ((8 * mem::size_of::<Self>()) - shift))
@@ -162,11 +162,11 @@ protocol _BitOps<Self: builtins::Unsigned> {
 #[lang(builtin_u8)]
 struct u8 {}
 impl u8 {
-    mixin _BitOps<u8>;
-    mixin _BuiltinComparable<u8>;
+    mixin BitOps<u8>;
+    mixin BuiltinComparable<u8>;
     mixin<H: Hasher<H>> Hashable<u8, H>;
-    mixin<F: Formatter<F>> _IntegerFormattable<u8, F>;
-    mixin _IntegerParsable<u8>;
+    mixin<F: Formatter<F>> IntegerFormattable<u8, F>;
+    mixin IntegerParsable<u8>;
 
     #[force_inline]
     fn max_value() -> u8 {
@@ -183,11 +183,11 @@ impl u8 {
 #[lang(builtin_u16)]
 struct u16 {}
 impl u16 {
-    mixin _BitOps<u16>;
-    mixin _BuiltinComparable<u16>;
+    mixin BitOps<u16>;
+    mixin BuiltinComparable<u16>;
     mixin<H: Hasher<H>> Hashable<u16, H>;
-    mixin<F: Formatter<F>> _IntegerFormattable<u16, F>;
-    mixin _IntegerParsable<u16>;
+    mixin<F: Formatter<F>> IntegerFormattable<u16, F>;
+    mixin IntegerParsable<u16>;
 
     #[force_inline]
     fn max_value() -> u16 {
@@ -204,11 +204,11 @@ impl u16 {
 #[lang(builtin_u32)]
 struct u32 {}
 impl u32 {
-    mixin _BitOps<u32>;
-    mixin _BuiltinComparable<u32>;
+    mixin BitOps<u32>;
+    mixin BuiltinComparable<u32>;
     mixin<H: Hasher<H>> Hashable<u32, H>;
-    mixin<F: Formatter<F>> _IntegerFormattable<u32, F>;
-    mixin _IntegerParsable<u32>;
+    mixin<F: Formatter<F>> IntegerFormattable<u32, F>;
+    mixin IntegerParsable<u32>;
 
     #[force_inline]
     fn max_value() -> u32 {
@@ -225,11 +225,11 @@ impl u32 {
 #[lang(builtin_u64)]
 struct u64 {}
 impl u64 {
-    mixin _BitOps<u64>;
-    mixin _BuiltinComparable<u64>;
+    mixin BitOps<u64>;
+    mixin BuiltinComparable<u64>;
     mixin<H: Hasher<H>> Hashable<u64, H>;
-    mixin<F: Formatter<F>> _IntegerFormattable<u64, F>;
-    mixin _IntegerParsable<u64>;
+    mixin<F: Formatter<F>> IntegerFormattable<u64, F>;
+    mixin IntegerParsable<u64>;
 
     #[force_inline]
     fn max_value() -> u64 {
@@ -246,11 +246,11 @@ impl u64 {
 #[lang(builtin_u128)]
 struct u128 {}
 impl u128 {
-    mixin _BitOps<u128>;
-    mixin _BuiltinComparable<u128>;
+    mixin BitOps<u128>;
+    mixin BuiltinComparable<u128>;
     mixin<H: Hasher<H>> Hashable<u128, H>;
-    mixin<F: Formatter<F>> _IntegerFormattable<u128, F>;
-    mixin _IntegerParsable<u128>;
+    mixin<F: Formatter<F>> IntegerFormattable<u128, F>;
+    mixin IntegerParsable<u128>;
 
     #[force_inline]
     fn max_value() -> u128 {
@@ -270,11 +270,11 @@ impl u128 {
 #[lang(builtin_usize)]
 struct usize {}
 impl usize {
-    mixin _BitOps<usize>;
-    mixin _BuiltinComparable<usize>;
+    mixin BitOps<usize>;
+    mixin BuiltinComparable<usize>;
     mixin<H: Hasher<H>> Hashable<usize, H>;
-    mixin<F: Formatter<F>> _IntegerFormattable<usize, F>;
-    mixin _IntegerParsable<usize>;
+    mixin<F: Formatter<F>> IntegerFormattable<usize, F>;
+    mixin IntegerParsable<usize>;
 
     #[force_inline]
     fn max_value() -> usize {
@@ -305,10 +305,10 @@ impl usize {
 #[lang(builtin_i8)]
 struct i8 {}
 impl i8 {
-    mixin _BuiltinComparable<i8>;
+    mixin BuiltinComparable<i8>;
     mixin<H: Hasher<H>> Hashable<i8, H>;
-    mixin<F: Formatter<F>> _IntegerFormattable<i8, F>;
-    mixin _IntegerParsable<i8>;
+    mixin<F: Formatter<F>> IntegerFormattable<i8, F>;
+    mixin IntegerParsable<i8>;
 
     #[force_inline]
     fn max_value() -> i8 {
@@ -325,10 +325,10 @@ impl i8 {
 #[lang(builtin_i16)]
 struct i16 {}
 impl i16 {
-    mixin _BuiltinComparable<i16>;
+    mixin BuiltinComparable<i16>;
     mixin<H: Hasher<H>> Hashable<i16, H>;
-    mixin<F: Formatter<F>> _IntegerFormattable<i16, F>;
-    mixin _IntegerParsable<i16>;
+    mixin<F: Formatter<F>> IntegerFormattable<i16, F>;
+    mixin IntegerParsable<i16>;
 
     #[force_inline]
     fn max_value() -> i16 {
@@ -345,10 +345,10 @@ impl i16 {
 #[lang(builtin_i32)]
 struct i32 {}
 impl i32 {
-    mixin _BuiltinComparable<i32>;
+    mixin BuiltinComparable<i32>;
     mixin<H: Hasher<H>> Hashable<i32, H>;
-    mixin<F: Formatter<F>> _IntegerFormattable<i32, F>;
-    mixin _IntegerParsable<i32>;
+    mixin<F: Formatter<F>> IntegerFormattable<i32, F>;
+    mixin IntegerParsable<i32>;
 
     #[force_inline]
     fn max_value() -> i32 {
@@ -365,10 +365,10 @@ impl i32 {
 #[lang(builtin_i64)]
 struct i64 {}
 impl i64 {
-    mixin _BuiltinComparable<i64>;
+    mixin BuiltinComparable<i64>;
     mixin<H: Hasher<H>> Hashable<i64, H>;
-    mixin<F: Formatter<F>> _IntegerFormattable<i64, F>;
-    mixin _IntegerParsable<i64>;
+    mixin<F: Formatter<F>> IntegerFormattable<i64, F>;
+    mixin IntegerParsable<i64>;
 
     #[force_inline]
     fn max_value() -> i64 {
@@ -385,10 +385,10 @@ impl i64 {
 #[lang(builtin_i128)]
 struct i128 {}
 impl i128 {
-    mixin _BuiltinComparable<i128>;
+    mixin BuiltinComparable<i128>;
     mixin<H: Hasher<H>> Hashable<i128, H>;
-    mixin<F: Formatter<F>> _IntegerFormattable<i128, F>;
-    mixin _IntegerParsable<i128>;
+    mixin<F: Formatter<F>> IntegerFormattable<i128, F>;
+    mixin IntegerParsable<i128>;
 
     #[force_inline]
     fn max_value() -> i128 {
@@ -405,10 +405,10 @@ impl i128 {
 #[lang(builtin_isize)]
 struct isize {}
 impl isize {
-    mixin _BuiltinComparable<isize>;
+    mixin BuiltinComparable<isize>;
     mixin<H: Hasher<H>> Hashable<isize, H>;
-    mixin<F: Formatter<F>> _IntegerFormattable<isize, F>;
-    mixin _IntegerParsable<isize>;
+    mixin<F: Formatter<F>> IntegerFormattable<isize, F>;
+    mixin IntegerParsable<isize>;
 
     #[force_inline]
     fn max_value() -> isize {
@@ -435,7 +435,7 @@ impl isize {
     }
 }
 
-protocol _FloatOps<Self> {
+protocol FloatOps<Self> {
     #[inline]
     fn nan() -> Self {
         (0.0 as Self) / (0.0 as Self)
@@ -471,10 +471,10 @@ protocol _FloatOps<Self> {
 #[lang(builtin_f32)]
 struct f32 {}
 impl f32 {
-    mixin _BuiltinComparable<f32>;
+    mixin BuiltinComparable<f32>;
     // Not hashable
-    mixin<F: Formatter<F>> _FloatFormattable<f32, F>;
-    mixin _FloatOps<f32>;
+    mixin<F: Formatter<F>> FloatFormattable<f32, F>;
+    mixin FloatOps<f32>;
 
     #[force_inline]
     fn is_sign_negative(self: f32) -> bool {
@@ -647,10 +647,10 @@ impl f32 {
 #[lang(builtin_f64)]
 struct f64 {}
 impl f64 {
-    mixin _BuiltinComparable<f64>;
+    mixin BuiltinComparable<f64>;
     // Not hashable
-    mixin<F: Formatter<F>> _FloatFormattable<f64, F>;
-    mixin _FloatOps<f64>;
+    mixin<F: Formatter<F>> FloatFormattable<f64, F>;
+    mixin FloatOps<f64>;
 
     #[force_inline]
     fn is_sign_negative(self: f64) -> bool {
@@ -1420,6 +1420,9 @@ struct arguments_of<T> {}
 #[lang(proto_function_pointer)] protocol FunctionPointer {}
 
 /// All callable objects (named functions, closures, and function pointers)
+///
+/// `Args` is a tuple of the argument types of the function and `Ret` is the return type,
+/// for example `fn foo(a: i32, b: i64) -> usize` would match `Callable<(i32, i64), usize>`.
 #[lang(proto_callable)] protocol Callable<Args: Tuple, Ret> {}
 
 // These are mostly useful as type inference guides
@@ -1429,7 +1432,6 @@ struct arguments_of<T> {}
 
 /// Pointers to `T` (regardless of mutability)
 #[lang(proto_pointer_of)] protocol PointerOf<T> {}
-
 
 
 #[cfg(all(test, test_std))]

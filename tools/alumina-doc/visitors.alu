@@ -345,12 +345,6 @@ impl TopLevelVisitor {
     mixin NodeVisitor<TopLevelVisitor, Result<()>>;
 }
 
-struct CodePrinter<W: Writable<W>> {
-    parse_context: &ParseContext,
-    link_context: &LinkContext,
-    writer: &mut W    
-}
-
 macro w($writer, $fmt, $args...) {
     std::fmt::write!($writer, $fmt, $args...)
         .map_err(alumina_doc::error::Error::from::<std::fmt::Error>)?
@@ -361,13 +355,21 @@ macro wln($writer, $fmt, $args...) {
         .map_err(alumina_doc::error::Error::from::<std::fmt::Error>)?
 }
 
+struct CodePrinter<W: Writable<W>> {
+    parse_context: &ParseContext,
+    link_context: &LinkContext,
+    writer: &mut W,
+    
+    protocol_bounds: bool
+}
 
 impl CodePrinter<W: Writable<W>> {
     fn new(parse_context: &ParseContext, link_context: &LinkContext, writer: &mut W) -> CodePrinter<W> {
         CodePrinter {
             parse_context: parse_context,
             link_context: link_context,
-            writer: writer
+            writer: writer,
+            protocol_bounds: false
         }
     }
 
@@ -438,11 +440,39 @@ impl CodePrinter<W: Writable<W>> {
         self.visit_parameter_list(node)
     }
 
+    fn visit_protocol_bound(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
+        if child_by!(node, FieldKind::Negated).is_some {
+            w!(self.writer, ":");
+        }
+        self.visit(child_by!(node, FieldKind::Type).unwrap())
+    }
+
     fn visit_generic_argument(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         let placeholder = child_by!(node, FieldKind::Placeholder)
             .unwrap()
             .text(self.parse_context.source());
         w!(self.writer, "{}", placeholder);
+
+        if self.protocol_bounds {
+            let cursor = node.walk();
+            defer cursor.free();
+
+            for (idx, bound) in children_by!(node, FieldKind::Bound, &cursor).enumerate() {
+                if idx == 0 {
+                    w!(self.writer, ": ");
+                } else {
+                    w!(self.writer, " + ");
+                }
+                self.visit(bound)?;
+            }
+        } else {
+            child_by!(node, FieldKind::Default)
+                .map(|=self, node: Node| -> Result<()> {
+                    w!(self.writer, " = ");
+                    self.visit(node)
+                })
+                .transpose()?;
+        }
 
         Result::ok(())
     }
@@ -467,7 +497,7 @@ impl CodePrinter<W: Writable<W>> {
         defer link.free();
 
         if link.is_some {
-            w!(self.writer, "<a href=\"{}\">{}</a>", link.inner, path.last().unwrap());
+            w!(self.writer, "<a href=\"{}\"><span class=\"identifier-type\">{}</span></a>", link.inner, path.last().unwrap());
         } else {
             w!(self.writer, "{}", path.last().unwrap());
         }
@@ -629,20 +659,18 @@ impl CodePrinter<W: Writable<W>> {
             .map(|=self, node: Node| -> Result<()> { self.visit(node) })
             .transpose()?
 
-        w!(self.writer, " {{");
-        
-        let has_children = false;
-        let cursor = node.walk();
-        for (idx, child) in children_by!(node, FieldKind::Body, &cursor).enumerate() {
-            w!(self.writer, "\n    ");
-            self.visit(child)?;
-            has_children = true;
-        }
-        if has_children {
-            w!(self.writer, "\n");
-        }
-        w!(self.writer, "}}");
+        w!(self.writer, " {{ ... }}");
+    
+        Result::ok(())
+    }
 
+    fn visit_protocol_definition(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
+        w!(self.writer, "<span class=\"keyword\">protocol</span> <span class=\"identifier-type\">{}</span>", get_name!(self, node));
+        child_by!(node, FieldKind::TypeArguments)
+            .map(|=self, node: Node| -> Result<()> { self.visit(node) })
+            .transpose()?
+
+        w!(self.writer, " {{ ... }}");
         Result::ok(())
     }
 
@@ -654,20 +682,7 @@ impl CodePrinter<W: Writable<W>> {
     }
 
     fn visit_enum_definition(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
-        w!(self.writer, "<span class=\"keyword\">enum</span> <span class=\"identifier-type\">{}</span> {{", get_name!(self, node));
-        
-        let has_children = false;
-        let cursor = node.walk();
-        for (idx, child) in children_by!(node, FieldKind::Body, &cursor).enumerate() {
-            w!(self.writer, "\n    ");
-            self.visit(child)?;
-            has_children = true;
-        }
-        if has_children {
-            w!(self.writer, "\n");
-        }
-        w!(self.writer, "}}");
-
+        w!(self.writer, "<span class=\"keyword\">enum</span> <span class=\"identifier-type\">{}</span> {{ ... }}", get_name!(self, node));
         Result::ok(())
     }
 
@@ -720,7 +735,15 @@ impl CodePrinter<W: Writable<W>> {
     }
 
     fn visit_mixin(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
-        //w!(self.writer, "<span class=\"keyword\">static</span> <span class=\"identifier-constant\">{}</span> = ...", get_name!(self, node));
+        w!(self.writer, "<span class=\"keyword\">mixin</span>");
+        
+        child_by!(node, FieldKind::TypeArguments)
+            .map(|=self, child: Node| -> Result<()> { self.visit(child) })
+            .transpose()?;
+
+        w!(self.writer, " ");
+        self.visit(child_by!(node, FieldKind::Protocol).unwrap())?;
+            
         Result::ok(())
     }
 

@@ -149,34 +149,50 @@ impl ItemKind {
 
     fn has_own_page(self: &ItemKind) -> bool {
         switch *self {
-            ItemKind::Module => true,
-            ItemKind::Function => false,
-            ItemKind::Protocol => true,
-            ItemKind::Enum => true,
-            ItemKind::Union => true,
-            ItemKind::Struct => true,
+            ItemKind::Module,
+            ItemKind::Protocol,
+            ItemKind::Enum, 
+            ItemKind::Union,
+            ItemKind::Struct, 
             ItemKind::Macro => true,
-
-            ItemKind::Method => false,
-            ItemKind::TypeDef => false,
-            ItemKind::Const => false,
-            ItemKind::Variant => false,
-            ItemKind::Static => false,
-            ItemKind::Field => false,
-            ItemKind::Mixin => false,
             _ => false,
+        }
+    }   
+
+    fn should_show_in_sidebar(self: &ItemKind) -> bool {
+        switch *self {
+            ItemKind::Mixin => false,
+            _ => true,
         }
     }   
 
     fn show_siblings(self: &ItemKind) -> bool {
         switch *self {
-            ItemKind::Module => false,
-            ItemKind::Union => false,
-            ItemKind::Struct => false,
+            ItemKind::Module,
+            ItemKind::Union,
+            ItemKind::Protocol,
+            ItemKind::Struct,
             ItemKind::Enum => false,
             _ => true,
         }
     }  
+
+    fn show_source_link(self: &ItemKind) -> bool {
+        switch *self {
+            ItemKind::Field,
+            ItemKind::Mixin,
+            ItemKind::Variant => false,
+            _ => true,
+        }
+    }  
+
+    fn show_signature(self: &ItemKind) -> bool {
+        switch *self {
+            ItemKind::Module => false,
+            _ => true,
+        }
+    }  
+    
     
     fn equals(self: &ItemKind, other: &ItemKind) -> bool {
         (*self as i32) == (*other as i32)
@@ -204,7 +220,6 @@ impl Item {
         self.defined_in.free();
         self.doc_comment.free();
     }
-
     
     /// Show re-exports only if the original item was defined in a submodule.
     ///
@@ -225,7 +240,7 @@ impl Item {
 
         let suffix_len = 0usize;
         loop {
-            if suffix_len >= std::math::max(loc.len, def.len) {
+            if suffix_len >= std::math::min(loc.len, def.len) {
                 break;
             }
 
@@ -238,7 +253,6 @@ impl Item {
 
         loc[0..loc.len - suffix_len] == def[0..loc.len - suffix_len]
     }
-    
 
     fn fmt<F: Formatter<F>>(self: &Item, fmt: &mut F) -> Result<(), Error> {
         if !self.doc_comment.empty() {
@@ -443,6 +457,7 @@ impl ItemBag {
 }
 
 struct ParseContext {
+    filename: StringBuf,
     _source: StringBuf,
     tree: Tree,
 }
@@ -458,6 +473,7 @@ impl ParseContext {
         Result::ok(ParseContext {
             _source: source.move(),
             tree: tree.move(),
+            filename: StringBuf::from_slice(filename)
         })
     }
 
@@ -472,12 +488,14 @@ impl ParseContext {
     fn free(self: &mut ParseContext) {
         self._source.free();
         self.tree.free();
+        self.filename.free();
     }
 
     fn move(self: &mut ParseContext) -> ParseContext {
         ParseContext {
             _source: self.source.move(),
             tree: self.tree.move(),
+            filename: self.filename.move()
         }
     }
 }

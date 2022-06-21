@@ -5,13 +5,13 @@ ifdef RELEASE
 	BUILD_DIR = $(BUILD_ROOT)/release
 	CARGO_FLAGS = --release
 	CARGO_TARGET_DIR = target/release
-	CFLAGS += -O0
+	CFLAGS += -O3
 	ALUMINA_FLAGS += --sysroot $(SYSROOT) --timings 
 else
 	BUILD_DIR = $(BUILD_ROOT)/debug
 	CARGO_FLAGS = 
 	CARGO_TARGET_DIR = target/debug
-	CFLAGS += -g3
+	CFLAGS += -g3 -fPIE -rdynamic
 	ALUMINA_FLAGS += --sysroot $(SYSROOT) --debug --timings 
 endif
 
