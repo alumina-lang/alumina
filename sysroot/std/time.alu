@@ -282,6 +282,21 @@ impl Duration {
     mixin cmp::Equatable<Duration>;
 }
 
+/// Suspends thread execution for the specified duration.
+///
+/// The sleep may sleep for less than the specified time if interrupted by a
+/// signal.
+fn sleep(duration: &Duration) {
+    if *duration < Duration::zero() {
+        return;
+    }
+
+    libc::nanosleep(&libc::timespec {
+        tv_sec: util::cast(duration.secs),
+        tv_nsec: util::cast(duration.nanos)
+    }, null);
+}
+
 
 #[cfg(all(test, test_std))]
 mod tests {
@@ -290,6 +305,7 @@ mod tests {
     #[test]
     fn test_monotonish() {
         let start = Instant::now();
+        Duration::from_nanos(1000).sleep();
         let end = Instant::now();
 
         assert!(end > start);
