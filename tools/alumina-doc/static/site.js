@@ -9,6 +9,12 @@ window.addEventListener("load", () => {
     const searchResults = document.getElementById("search-results");
     const searchBox = document.getElementById("search-input");
     
+    const queryParams = new URLSearchParams(window.location.search);
+    const initialSearch = queryParams.get("q");
+    if (initialSearch) {
+        searchBox.value = initialSearch;
+    }
+
     window.updateSearchResults = () => {
         if (searchBox.value !== "") {
             searchResults.style.display = 'block';
@@ -60,14 +66,25 @@ window.addEventListener("load", () => {
                 table.appendChild(child);
             });
         
-        searchResults.innerText = "";
-        searchResults.appendChild(table);
+        if (table.children.length != 0) {
+            searchResults.innerText = "";
+            searchResults.appendChild(table);
+        } else {
+            searchResults.innerText = "No results";
+        }
     };
 
 
     searchBox.addEventListener("input",  (evt) => {
+        
         clearTimeout(window.debounceTimer);
-        window.debounceTimer = setTimeout(window.updateSearchResults, 250);
+        if (searchBox.value) {
+            history.replaceState(null, null, `?q=${encodeURIComponent(searchBox.value)}`);
+            window.debounceTimer = setTimeout(window.updateSearchResults, 150);
+        } else {
+            history.replaceState(null, null, window.location.href.split("?")[0]);
+            window.updateSearchResults();
+        }
     });
 
     window.updateSearchResults();
