@@ -227,6 +227,8 @@ struct DirIterator {
 impl DirIterator {
     fn next(self: &mut DirIterator) -> Option<Result<DirEntry, Error>> {
         loop {
+            *libc::__errno() = 0;
+
             #[cfg(target_os = "macos")]
             let ent = libc::readdir(self.inner);
             #[cfg(not(target_os = "macos"))]
