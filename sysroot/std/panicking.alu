@@ -15,7 +15,7 @@ mod internal {
 
     // libc runtime backtrace support
 
-    #[cfg(all(debug, not(no_backtrace)))]
+    #[cfg(all(debug, not(no_backtrace), not(target_os = "android")))]
     {
         extern "C" fn backtrace(buffer: &mut &mut void, size: libc::c_int) -> libc::c_int;
         extern "C" fn backtrace_symbols(buffer: &mut &void, size: libc::c_int) -> &mut &mut libc::c_char;
@@ -93,7 +93,7 @@ mod internal {
         // We still bail early if it fails.
         let _ = print_panic_message(fmt_str, file, line, column, args);
 
-        #[cfg(all(debug, not(no_backtrace)))]
+        #[cfg(all(debug, not(no_backtrace), not(target_os = "android")))]
         {
             let buf: [&mut void; 128];
             let size = backtrace(&buf[0], 128);

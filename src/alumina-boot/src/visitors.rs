@@ -353,6 +353,20 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
             "export" => self.attributes.push(Attribute::Export),
             "force_inline" => self.attributes.push(Attribute::ForceInline),
             "test_main" => self.attributes.push(Attribute::TestMain),
+            "link_name" => {
+                let link_name = inner
+                    .child_by_field_name("arguments")
+                    .and_then(|n| n.child_by_field_name("argument"))
+                    .ok_or(CodeErrorKind::UnknownLangItem(None))
+                    .with_span_from(&self.scope, inner)?;
+
+                let bytes = self.code.node_text(link_name).as_bytes();
+
+                let mut val = [0; 255];
+                val.as_mut_slice()[0..bytes.len()].copy_from_slice(bytes);
+
+                self.attributes.push(Attribute::LinkName(bytes.len(), val));
+            }
             "test" => {
                 self.test_attributes.push(
                     inner

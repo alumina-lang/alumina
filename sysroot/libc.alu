@@ -21,6 +21,7 @@ type intptr_t = isize;
 type uintptr_t = usize;
 type ssize_t = isize;
 
+
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
 {
     type pid_t = i32;
@@ -33,6 +34,7 @@ type ssize_t = isize;
 #[cfg(any(target_os="linux", target_os="android"))]
 {
     type clockid_t = c_int;
+    type ino64_t = u64;
     type off64_t = i64;
 }
 
@@ -76,10 +78,16 @@ type ssize_t = isize;
 #[cfg(target_os="linux")]
 {
     #[cfg(target_pointer_width = "32")]
-    type off_t = i64;
+    {
+        type off_t = i64;
+        type ino_t = u32;
+    }
     
     #[cfg(target_pointer_width = "64")]
-    type off_t = i32;
+    {
+        type off_t = i32;
+        type ino_t = u64;
+    }
 
     #[cfg(target_arch = "x86")]
     {
@@ -284,6 +292,54 @@ extern "C" fn strlen(s: &c_char) -> size_t;
         }
     }
 
+    #[cfg(target_os="linux")]
+    {
+        struct dirent {
+            d_ino: ino_t,
+            d_off: off_t,
+            d_reclen: c_ushort,
+            d_type: c_uchar,
+            d_name: [c_char; 256],
+        }
+     
+        struct dirent64 {
+            d_ino: ino64_t,
+            d_off: off64_t,
+            d_reclen: c_ushort,
+            d_type: c_uchar,
+            d_name: [c_char; 256],
+        }
+    }
+    
+    #[cfg(target_os="macos")]
+    struct dirent {
+        d_ino: u64,
+        d_seekoff: u64,
+        d_reclen: u16,
+        d_namlen: u16,
+        d_type: u8,
+        d_name: [c_char; 1024],
+    }
+    
+    #[cfg(target_os="android")]
+    {
+        struct dirent {
+            d_ino: u64,
+            d_off: i64,
+            d_reclen: c_ushort,
+            d_type: c_uchar,
+            d_name: [c_char; 256],
+        }
+        struct dirent64 {
+            d_ino: u64,
+            d_off: i64,
+            d_reclen: c_ushort,
+            d_type: c_uchar,
+            d_name: [c_char; 256],
+        }
+    }
+
+    struct DIR {} // Opaque
 
     struct pollfd {
         fd: c_int,
@@ -420,13 +476,31 @@ extern "C" fn strlen(s: &c_char) -> size_t;
     ) -> c_int;
     extern "C" fn shutdown(socket: c_int, how: c_int) -> c_int;
 
+    #[cfg(target_os="macos")]
+    #[link_name("_opendir$INODE64")]
+    extern "C" fn opendir(dirname: &c_char) -> &mut DIR;
+    #[cfg(not(target_os="macos"))]
+    extern "C" fn opendir(dirname: &c_char) -> &mut DIR;
+    
+    #[cfg(target_os="macos")]
+    #[link_name("_readdir$INODE64")]
+    extern "C" fn readdir(dirp: &mut DIR) -> &mut dirent;
+
+    #[cfg(not(target_os="macos"))]
+    extern "C" fn readdir(dirp: &mut DIR) -> &mut dirent;
+    extern "C" fn closedir(dirp: &mut DIR) -> c_int;
+    
+    #[cfg(not(target_os="macos"))]
+    extern "C" fn readdir64(dirp: &mut DIR) -> &mut dirent64;
+
+    extern "C" fn mkdir(path: &c_char, mode: mode_t) -> c_int;
+
     const EXIT_FAILURE: c_int = 1;
     const EXIT_SUCCESS: c_int = 0;
 
     const STDIN_FILENO: c_int = 0;
     const STDOUT_FILENO: c_int = 1;
     const STDERR_FILENO: c_int = 2;
-
     
     const SIGHUP: c_int = 1;
     const SIGINT: c_int = 2;
@@ -695,4 +769,13 @@ extern "C" fn strlen(s: &c_char) -> size_t;
     const SHUT_RD: c_int = 0;
     const SHUT_WR: c_int = 1;
     const SHUT_RDWR: c_int = 2;
+
+    const DT_UNKNOWN: u8 = 0u8;
+    const DT_FIFO: u8 = 1;
+    const DT_CHR: u8 = 2;
+    const DT_DIR: u8 = 4;
+    const DT_BLK: u8 = 6;
+    const DT_REG: u8 = 8;
+    const DT_LNK: u8 = 10;
+    const DT_SOCK: u8 = 12;
 }

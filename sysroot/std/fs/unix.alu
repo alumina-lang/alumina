@@ -95,6 +95,36 @@ impl OpenOptions {
     }
 }
 
+struct DirBuilder {
+    mode: libc::mode_t,
+}
+
+impl DirBuilder {
+    fn new() -> DirBuilder {
+        DirBuilder {
+            mode: 0o777,
+        }
+    }
+
+    fn mode(self: &mut DirBuilder, mode: u32) -> &mut DirBuilder {
+        self.mode = mode as libc::mode_t;
+        self
+    }
+
+    fn mkdir(self: &DirBuilder, path: &[u8]) -> Result<(), Error> {
+        let path = ffi::CString::new(path);
+        defer path.free();
+        
+        errno_try!(libc::mkdir(path.ptr, self.mode));
+        Result::ok(())
+    }
+}
+
+/// Create a new directory
+fn create_directory(path: &[u8]) -> Result<(), Error> {
+    DirBuilder::new().mkdir(path)
+}
+
 
 struct File {
     fd: FileDescriptor
@@ -187,16 +217,155 @@ impl File {
 }
 
 
+/// Iterator over the items in a directory
+///
+/// See [std::fs::unix::read_directory]
+struct DirIterator {
+    inner: &mut libc::DIR
+}
+
+impl DirIterator {
+    fn next(self: &mut DirIterator) -> Option<Result<DirEntry, Error>> {
+        loop {
+            *libc::__errno() = 0;
+
+            #[cfg(target_os = "macos")]
+            let ent = libc::readdir(self.inner);
+            #[cfg(not(target_os = "macos"))]
+            let ent = libc::readdir64(self.inner);
+            
+            if ent == null {
+                let err = Error::from_errno();
+                if err.inner.errno == 0 {
+                    return Option::none();
+                } else {
+                    return Option::some(Result::err(err));
+                }
+            }
+
+            let res = DirEntry { inner: ent };
+            let name = res.name();
+            if name == "." || name == ".." {
+                continue
+            }
+
+            return Option::some(Result::ok(res));
+        }
+    }
+
+    fn close(self: &mut DirIterator) -> Result<(), Error> {
+        errno_try!(libc::closedir(self.inner));
+        Result::ok(())
+    }
+
+    mixin std::iter::Iterator<DirIterator, Result<DirEntry, Error>>;
+    mixin std::iter::IteratorExt<DirIterator, Result<DirEntry, Error>>;
+}
+
+/// Directory entry
+struct DirEntry {
+    #[cfg(target_os = "macos")]
+    inner: &mut libc::dirent,
+    #[cfg(not(target_os = "macos"))]
+    inner: &mut libc::dirent64,
+}
+
+impl DirEntry {
+    /// Return the name of the item in directory
+    fn name(self: &DirEntry) -> &[u8] {
+        std::ffi::CString::from_raw(&self.inner.d_name[0]).as_slice()
+    }
+
+    /// Returns the file type
+    fn file_type(self: &DirEntry) -> FileType {
+        self.inner.d_type as u8 as FileType
+    }
+}
+
+/// Returns iterator over the items in a directory.
+///
+/// # Example
+/// ```
+/// use std::fs::read_directory;
+///
+/// let dir = read_directory("/home/alumina")?
+/// defer dir.close()?;
+/// 
+/// for item in dir {
+///     let item = item?;
+///     println!("{}: {}", item.name(), item.file_type());
+/// }
+/// ```
+fn read_directory(path: &[u8]) -> Result<DirIterator, Error> {
+    let path_c = std::ffi::CString::new(path);
+    defer path_c.free();
+
+    let res = libc::opendir(path_c.ptr);
+    if res == null {
+        Result::err(Error::from_errno())
+    } else {
+        Result::ok(DirIterator { inner: res })
+    }
+}
+
+
+enum FileType {
+    Unknown = libc::DT_UNKNOWN,
+    Fifo = libc::DT_FIFO,
+    CharacterDevice = libc::DT_CHR,
+    Directory = libc::DT_DIR,
+    BlockDevice = libc::DT_BLK,
+    Regular = libc::DT_REG,
+    Link = libc::DT_LNK,
+    Socket = libc::DT_SOCK,
+}
+
+impl FileType {
+    fn fmt<F: std::fmt::Formatter<F>>(self: &FileType, fmt: &mut F) -> std::fmt::Result {
+        use std::fmt::write;
+        switch *self {
+            FileType::Unknown => write!(fmt, "unknown"),
+            FileType::Fifo => write!(fmt, "fifo"),
+            FileType::CharacterDevice => write!(fmt, "character device"),
+            FileType::Directory => write!(fmt, "directory"),
+            FileType::BlockDevice => write!(fmt, "block device"),
+            FileType::Regular => write!(fmt, "regular"),
+            FileType::Link => write!(fmt, "link"),
+            FileType::Socket => write!(fmt, "socket"),
+            _ => write!(fmt, "unknown"),            
+        }
+    }
+
+    fn equals(self: &FileType, other: &FileType) -> bool {
+        *self == *other
+    }
+
+    mixin std::cmp::Equatable<FileType>;
+}
+
+
+
 #[cfg(all(test, test_std))]
 mod tests {
+    use fmt::{hex, pad, zero_pad, format};
+    use collections::{free_all, sort_by};
     use string::StringBuf;
     
     static BUF: [u8; 1024];
     static BUF1: [u8; 1024];
 
     fn mktemp() -> StringBuf {
-        use fmt::{hex, pad, format};
-        format!("/tmp/{}.dat", random::DEFAULT_RNG.next_u64().hex().zero_pad(16)).unwrap()
+        let tmpdir = std::process::env()
+            .filter(|e: (&[u8], &[u8])| -> bool { e.0 == "TMPDIR" })
+            .map(|e: (&[u8], &[u8])| -> &[u8] { e.1 })
+            .next()
+            .unwrap_or("/tmp");
+
+        format!(
+            "{}/alumina_{}",
+            tmpdir,
+            random::OsRng::new().next_u64().hex().zero_pad(16)
+        ).unwrap()
     }
 
     #[test]
@@ -222,5 +391,41 @@ mod tests {
         assert_eq!(buf[..read] as &[u8], "world!");
 
         file.close().unwrap();
+    }
+
+    #[test]
+    fn test_read_directory() {
+        let path = mktemp();
+        defer path.free();
+        
+        create_directory(path.as_slice()).unwrap();
+
+        (0..5).iter().foreach(|&path, i: i32| {
+            let filename = format!("{}/hello{}.txt", path, i.zero_pad(2)).unwrap();
+            defer filename.free();
+
+            File::create(filename.as_slice()).unwrap().close();
+        });
+
+        let dir = read_directory(path.as_slice()).unwrap();
+        defer dir.close();
+
+        let entries = dir
+            .map(|e: Result<DirEntry, Error>| -> StringBuf  {
+                StringBuf::from_slice(e.unwrap().name())
+            })
+            .to_vector();
+        defer entries.free_all();
+
+        entries.as_slice_mut().sort_by(|e: &StringBuf| -> &[u8] { e.as_slice() });
+
+        let it = entries.iter_ref().map(StringBuf::as_slice::<u8>);
+
+        assert_eq!(it.next(), Option::some("hello00.txt"));
+        assert_eq!(it.next(), Option::some("hello01.txt"));
+        assert_eq!(it.next(), Option::some("hello02.txt"));
+        assert_eq!(it.next(), Option::some("hello03.txt"));
+        assert_eq!(it.next(), Option::some("hello04.txt"));
+        assert_eq!(it.next(), Option::none());
     }
 }

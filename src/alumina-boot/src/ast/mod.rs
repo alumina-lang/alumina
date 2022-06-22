@@ -644,6 +644,7 @@ pub enum Attribute {
     Intrinsic,
     StaticConstructor,
     Codegen(CodegenType),
+    LinkName(usize, [u8; 255]),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
