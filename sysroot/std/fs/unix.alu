@@ -121,7 +121,7 @@ impl DirBuilder {
 }
 
 /// Create a new directory
-fn create_dir(path: &[u8]) -> Result<(), Error> {
+fn create_directory(path: &[u8]) -> Result<(), Error> {
     DirBuilder::new().mkdir(path)
 }
 
@@ -219,7 +219,7 @@ impl File {
 
 /// Iterator over the items in a directory
 ///
-/// See [std::fs::unix::read_dir]
+/// See [std::fs::unix::read_directory]
 struct DirIterator {
     inner: &mut libc::DIR
 }
@@ -284,9 +284,9 @@ impl DirEntry {
 ///
 /// # Example
 /// ```
-/// use std::fs::read_dir;
+/// use std::fs::read_directory;
 ///
-/// let dir = read_dir("/home/alumina")?
+/// let dir = read_directory("/home/alumina")?
 /// defer dir.close()?;
 /// 
 /// for item in dir {
@@ -294,7 +294,7 @@ impl DirEntry {
 ///     println!("{}: {}", item.name(), item.file_type());
 /// }
 /// ```
-fn read_dir(path: &[u8]) -> Result<DirIterator, Error> {
+fn read_directory(path: &[u8]) -> Result<DirIterator, Error> {
     let path_c = std::ffi::CString::new(path);
     defer path_c.free();
 
@@ -392,11 +392,11 @@ mod tests {
     }
 
     #[test]
-    fn test_read_dir() {
+    fn test_read_directory() {
         let path = mktemp();
         defer path.free();
         
-        create_dir(path.as_slice()).unwrap();
+        create_directory(path.as_slice()).unwrap();
 
         (0..5).iter().foreach(|&path, i: i32| {
             let filename = format!("{}/hello{}.txt", path, i.zero_pad(2)).unwrap();
@@ -405,7 +405,7 @@ mod tests {
             File::create(filename.as_slice()).unwrap().close();
         });
 
-        let dir = read_dir(path.as_slice()).unwrap();
+        let dir = read_directory(path.as_slice()).unwrap();
         defer dir.close();
 
         let entries = dir
