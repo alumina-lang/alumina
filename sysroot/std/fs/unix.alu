@@ -352,13 +352,13 @@ mod tests {
     static BUF: [u8; 1024];
     static BUF1: [u8; 1024];
 
-    fn mktemp(prefix: &[u8]) -> StringBuf {
-        format!("/tmp/{}_{}", prefix, random::DEFAULT_RNG.next_u64().hex().zero_pad(16)).unwrap()
+    fn mktemp() -> StringBuf {
+        format!("/tmp/alumina_{}", random::OsRng::new().next_u64().hex().zero_pad(16)).unwrap()
     }
 
     #[test]
     fn test_open() {
-        let filename = mktemp("test_open");
+        let filename = mktemp();
         let buf = BUF.as_slice_mut();
         defer filename.free();
 
@@ -383,7 +383,7 @@ mod tests {
 
     #[test]
     fn test_read_dir() {
-        let path = mktemp("test_read_dir");
+        let path = mktemp();
         defer path.free();
         
         create_dir(path.as_slice()).unwrap();
