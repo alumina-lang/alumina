@@ -34,6 +34,7 @@ type ssize_t = isize;
 #[cfg(any(target_os="linux", target_os="android"))]
 {
     type clockid_t = c_int;
+    type ino64_t = u64;
     type off64_t = i64;
 }
 
@@ -292,12 +293,22 @@ extern "C" fn strlen(s: &c_char) -> size_t;
     }
 
     #[cfg(target_os="linux")]
-    struct dirent {
-        d_ino: ino_t,
-        d_off: off_t,
-        d_reclen: c_ushort,
-        d_type: c_uchar,
-        d_name: [c_char; 256],
+    {
+        struct dirent {
+            d_ino: ino_t,
+            d_off: off_t,
+            d_reclen: c_ushort,
+            d_type: c_uchar,
+            d_name: [c_char; 256],
+        }
+     
+        struct dirent64 {
+            d_ino: ino64_t,
+            d_off: off64_t,
+            d_reclen: c_ushort,
+            d_type: c_uchar,
+            d_name: [c_char; 256],
+        }
     }
     
     #[cfg(target_os="macos")]
@@ -311,12 +322,21 @@ extern "C" fn strlen(s: &c_char) -> size_t;
     }
     
     #[cfg(target_os="android")]
-    struct dirent {
-        d_ino: u64,
-        d_off: i64,
-        d_reclen: c_ushort,
-        d_type: c_uchar,
-        d_name: [c_char; 256],
+    {
+        struct dirent {
+            d_ino: u64,
+            d_off: i64,
+            d_reclen: c_ushort,
+            d_type: c_uchar,
+            d_name: [c_char; 256],
+        }
+        struct dirent64 {
+            d_ino: u64,
+            d_off: i64,
+            d_reclen: c_ushort,
+            d_type: c_uchar,
+            d_name: [::c_char; 256],
+        }
     }
 
     struct DIR {} // Opaque
@@ -469,6 +489,11 @@ extern "C" fn strlen(s: &c_char) -> size_t;
     #[cfg(not(target_os="macos"))]
     extern "C" fn readdir(dirp: &mut DIR) -> &mut dirent;
     extern "C" fn closedir(dirp: &mut DIR) -> c_int;
+    
+    #[cfg(not(target_os="macos"))]
+    extern "C" fn readdir64(dirp: &mut DIR) -> &mut dirent64;
+
+    extern "C" fn mkdir(path: &c_char, mode: mode_t) -> c_int;
 
     const EXIT_FAILURE: c_int = 1;
     const EXIT_SUCCESS: c_int = 0;

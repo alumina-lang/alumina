@@ -2895,7 +2895,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             // Enums
             (ir::Ty::NamedType(a), ir::Ty::Builtin(b))
                 if matches!(a.get().with_no_span()?, ir::IRItem::Enum(_)) && b.is_numeric() => {}
-            (ir::Ty::Builtin(a), ir::Ty::NamedType(b), )
+            (ir::Ty::Builtin(a), ir::Ty::NamedType(b))
                 if matches!(b.get().with_no_span()?, ir::IRItem::Enum(_)) && a.is_numeric() => {}
 
             // Pointer casts

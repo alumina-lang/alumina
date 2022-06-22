@@ -360,9 +360,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     .ok_or(CodeErrorKind::UnknownLangItem(None))
                     .with_span_from(&self.scope, inner)?;
 
-                let bytes = self.code
-                    .node_text(link_name).as_bytes();
-                
+                let bytes = self.code.node_text(link_name).as_bytes();
+
                 let mut val = [0; 255];
                 val.as_mut_slice()[0..bytes.len()].copy_from_slice(bytes);
 

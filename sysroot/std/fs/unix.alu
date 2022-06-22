@@ -95,6 +95,36 @@ impl OpenOptions {
     }
 }
 
+struct DirBuilder {
+    mode: libc::mode_t,
+}
+
+impl DirBuilder {
+    fn new() -> DirBuilder {
+        DirBuilder {
+            mode: 0o777,
+        }
+    }
+
+    fn mode(self: &mut DirBuilder, mode: u32) -> &mut DirBuilder {
+        self.mode = mode as libc::mode_t;
+        self
+    }
+
+    fn mkdir(self: &DirBuilder, path: &[u8]) -> Result<(), Error> {
+        let path = ffi::CString::new(path);
+        defer path.free();
+        
+        errno_try!(libc::mkdir(path.ptr, self.mode));
+        Result::ok(())
+    }
+}
+
+/// Create a new directory
+fn create_dir(path: &[u8]) -> Result<(), Error> {
+    DirBuilder::new().mkdir(path)
+}
+
 
 struct File {
     fd: FileDescriptor
@@ -187,46 +217,6 @@ impl File {
 }
 
 
-#[cfg(all(test, test_std))]
-mod tests {
-    use string::StringBuf;
-    
-    static BUF: [u8; 1024];
-    static BUF1: [u8; 1024];
-
-    fn mktemp() -> StringBuf {
-        use fmt::{hex, pad, format};
-        format!("/tmp/{}.dat", random::DEFAULT_RNG.next_u64().hex().zero_pad(16)).unwrap()
-    }
-
-    #[test]
-    fn test_open() {
-        let filename = mktemp();
-        let buf = BUF.as_slice_mut();
-        defer filename.free();
-
-        let file = File::create(filename.as_slice()).unwrap();
-
-        file.write_all("Hello, world!").unwrap();
-        file.close().unwrap();
-
-        let file = File::open(filename.as_slice()).unwrap();
-        defer file.close();
-
-        let read = file.read(buf).unwrap();
-        assert_eq!(buf[..read] as &[u8], "Hello, world!");
-        
-        file.seek(SeekFrom::Beginning, 7).unwrap();
-
-        let read = file.read(buf).unwrap();
-        assert_eq!(buf[..read] as &[u8], "world!");
-
-        file.close().unwrap();
-    }
-}
-
-
-
 /// Iterator over the items in a directory
 ///
 /// See [std::fs::unix::read_dir]
@@ -237,7 +227,11 @@ struct DirIterator {
 impl DirIterator {
     fn next(self: &mut DirIterator) -> Option<Result<DirEntry, Error>> {
         loop {
+            #[cfg(target_os = "macos")]
             let ent = libc::readdir(self.inner);
+            #[cfg(not(target_os = "macos"))]
+            let ent = libc::readdir64(self.inner);
+            
             if ent == null {
                 let err = Error::from_errno();
                 if err.inner.errno == 0 {
@@ -268,7 +262,10 @@ impl DirIterator {
 
 /// Directory entry
 struct DirEntry {
+    #[cfg(target_os = "macos")]
     inner: &mut libc::dirent,
+    #[cfg(not(target_os = "macos"))]
+    inner: &mut libc::dirent64,
 }
 
 impl DirEntry {
@@ -342,4 +339,81 @@ impl FileType {
     }
 
     mixin std::cmp::Equatable<FileType>;
+}
+
+
+
+#[cfg(all(test, test_std))]
+mod tests {
+    use fmt::{hex, pad, format};
+    use collections::{free_all, sort_by};
+    use string::StringBuf;
+    
+    static BUF: [u8; 1024];
+    static BUF1: [u8; 1024];
+
+    fn mktemp(prefix: &[u8]) -> StringBuf {
+        format!("/tmp/{}_{}", prefix, random::DEFAULT_RNG.next_u64().hex().zero_pad(16)).unwrap()
+    }
+
+    #[test]
+    fn test_open() {
+        let filename = mktemp("test_open");
+        let buf = BUF.as_slice_mut();
+        defer filename.free();
+
+        let file = File::create(filename.as_slice()).unwrap();
+
+        file.write_all("Hello, world!").unwrap();
+        file.close().unwrap();
+
+        let file = File::open(filename.as_slice()).unwrap();
+        defer file.close();
+
+        let read = file.read(buf).unwrap();
+        assert_eq!(buf[..read] as &[u8], "Hello, world!");
+        
+        file.seek(SeekFrom::Beginning, 7).unwrap();
+
+        let read = file.read(buf).unwrap();
+        assert_eq!(buf[..read] as &[u8], "world!");
+
+        file.close().unwrap();
+    }
+
+    #[test]
+    fn test_read_dir() {
+        let path = mktemp("test_read_dir");
+        defer path.free();
+        
+        create_dir(path.as_slice()).unwrap();
+
+        (0..5).iter().foreach(|&path, i: i32| {
+            let filename = format!("{}/{}", path, i).unwrap();
+            defer filename.free();
+
+            File::create(filename.as_slice()).unwrap().close();
+        });
+
+        let dir = read_dir(path.as_slice()).unwrap();
+        defer dir.close();
+
+        let entries = dir
+            .map(|e: Result<DirEntry, Error>| -> StringBuf  {
+                StringBuf::from_slice(e.unwrap().name())
+            })
+            .to_vector();
+        defer entries.free_all();
+
+        entries.as_slice_mut().sort_by(|e: &StringBuf| -> &[u8] { e.as_slice() });
+
+        let it = entries.iter_ref().map(StringBuf::as_slice::<u8>);
+
+        assert_eq!(it.next(), Option::some("0"));
+        assert_eq!(it.next(), Option::some("1"));
+        assert_eq!(it.next(), Option::some("2"));
+        assert_eq!(it.next(), Option::some("3"));
+        assert_eq!(it.next(), Option::some("4"));
+        assert_eq!(it.next(), Option::none());
+    }
 }
