@@ -345,7 +345,7 @@ impl FileType {
 
 #[cfg(all(test, test_std))]
 mod tests {
-    use fmt::{hex, pad, format};
+    use fmt::{hex, pad, zero_pad, format};
     use collections::{free_all, sort_by};
     use string::StringBuf;
     
@@ -389,7 +389,7 @@ mod tests {
         create_dir(path.as_slice()).unwrap();
 
         (0..5).iter().foreach(|&path, i: i32| {
-            let filename = format!("{}/{}", path, i).unwrap();
+            let filename = format!("{}/hello{}.txt", path, i.zero_pad(2)).unwrap();
             defer filename.free();
 
             File::create(filename.as_slice()).unwrap().close();
@@ -409,11 +409,11 @@ mod tests {
 
         let it = entries.iter_ref().map(StringBuf::as_slice::<u8>);
 
-        assert_eq!(it.next(), Option::some("0"));
-        assert_eq!(it.next(), Option::some("1"));
-        assert_eq!(it.next(), Option::some("2"));
-        assert_eq!(it.next(), Option::some("3"));
-        assert_eq!(it.next(), Option::some("4"));
+        assert_eq!(it.next(), Option::some("hello00.txt"));
+        assert_eq!(it.next(), Option::some("hello01.txt"));
+        assert_eq!(it.next(), Option::some("hello02.txt"));
+        assert_eq!(it.next(), Option::some("hello03.txt"));
+        assert_eq!(it.next(), Option::some("hello04.txt"));
         assert_eq!(it.next(), Option::none());
     }
 }
