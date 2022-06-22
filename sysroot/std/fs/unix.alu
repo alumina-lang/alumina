@@ -353,7 +353,17 @@ mod tests {
     static BUF1: [u8; 1024];
 
     fn mktemp() -> StringBuf {
-        format!("/tmp/alumina_{}", random::OsRng::new().next_u64().hex().zero_pad(16)).unwrap()
+        let tmpdir = std::process::env()
+            .filter(|e: (&[u8], &[u8])| -> bool { e.0 == "TMPDIR" })
+            .map(|e: (&[u8], &[u8])| -> &[u8] { e.1 })
+            .next()
+            .unwrap_or("/tmp");
+
+        format!(
+            "{}/alumina_{}",
+            tmpdir,
+            random::OsRng::new().next_u64().hex().zero_pad(16)
+        ).unwrap()
     }
 
     #[test]
