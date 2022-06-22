@@ -85,6 +85,20 @@ pub fn write_function_signature<'ir, 'gen>(
     }
 
     w!(buf, ")");
+
+    let link_name = item.attributes
+    .iter()
+    .filter_map(|a| match a  {
+        Attribute::LinkName(size, name) => Some(std::str::from_utf8(&name.as_slice()[..*size]).unwrap()),
+        _ => None
+    })
+    .next();
+
+
+    if let Some(link_name) = link_name {
+        w!(buf, " asm({})", link_name);
+    }
+    
     Ok(())
 }
 
