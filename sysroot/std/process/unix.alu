@@ -334,7 +334,7 @@ impl Command {
         argv.push(CString::null());
 
         if !self._environ.is_some {
-            errno_try!(libc::execvp(name.ptr as &libc::c_char, argv.as_slice().ptr as &&libc::c_char));
+            errno_try!(libc::execv(name.ptr as &libc::c_char, argv.as_slice().ptr as &&libc::c_char));
         } else {
             let environ_s = self._environ.unwrap();
             let environ : Vector<CString> = Vector::with_capacity(environ_s.len + 1);
@@ -351,7 +351,7 @@ impl Command {
             }
             environ.push(CString::null());
 
-            errno_try!(libc::execvpe(
+            errno_try!(libc::execve(
                 name.ptr as &libc::c_char,
                 argv.as_slice().ptr as &&libc::c_char,
                 environ.as_slice().ptr as &&libc::c_char
@@ -547,7 +547,7 @@ mod tests {
 
     #[test]
     fn test_spawn() {
-        let child = Command::new(Path::new("echo"))
+        let child = Command::new(Path::new("/bin/echo"))
             .args(&["Hello, World!"])
             .stdout(Stdio::Piped)
             .stderr(Stdio::Piped)
@@ -576,7 +576,7 @@ mod tests {
     #[cfg(any(target_os = "linux"))]
     #[test]
     fn test_kill() {
-        let child = Command::new(Path::new("sleep"))
+        let child = Command::new(Path::new("/bin/sleep"))
             .args(&["10000"])
             .spawn()
             .unwrap();
