@@ -4,7 +4,8 @@
 {
     use unix::{
         OpenOptions, File, DirIterator, DirEntry, FileType,
-        read_directory, create_directory
+        DirBuilder,  read_directory, create_directory,
+        FileAttr, remove_file, remove_directory 
     }
 }
 
@@ -255,8 +256,12 @@ impl PathBuf {
     }
 
     fn from_path(path: Path) -> PathBuf {
+        from_str(path.inner)
+    }
+
+    fn from_str(path: &[u8]) -> PathBuf {
         PathBuf {
-            inner: StringBuf::from_slice(path.inner)
+            inner: StringBuf::from_slice(path)
         }
     }
 

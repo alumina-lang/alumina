@@ -118,20 +118,64 @@ impl DirBuilder {
         self
     }
 
-    fn mkdir(self: &DirBuilder, path: Path) -> Result<(), Error> {
+    fn _mkdir(self: &DirBuilder, path: Path) -> Result<(), Error> {
         let path = ffi::CString::new(path.inner);
         defer path.free();
         
         errno_try!(libc::mkdir(path.ptr, self._mode));
         Result::ok(())
     }
+
+    fn create(self: &DirBuilder, path: Path) -> Result<(), Error> {
+        if self._recursive {
+            let res = self._mkdir(path);
+            if res.is_ok {
+                return Result::ok(())
+            } else if res.inner.err.as_errno() != Option::some(libc::ENOENT) {
+                let attr = FileAttr::from_path(path)?;
+                if attr.file_type() == FileType::Directory {
+                    return Result::ok(());
+                } else {
+                    return res;
+                }
+            }
+
+            let parent = path.parent();
+            if parent.is_some {
+                self.create(parent.inner)?;
+            } else {
+                return Result::err(Error::custom("failed to create directory tree"))
+            }
+        }
+
+        self._mkdir(path)
+    }
 }
 
 /// Create a new directory
 fn create_directory(path: Path) -> Result<(), Error> {
-    DirBuilder::new().mkdir(path)
+    DirBuilder::new().create(path)
 }
 
+/// Remove a file
+fn remove_file(path: Path) -> Result<(), Error> {
+    let path_c = std::ffi::CString::new(path.inner);
+    defer path_c.free();
+
+    errno_try!(libc::unlink(path_c.ptr));
+
+    Result::ok(())
+}
+
+/// Remove an empty directory
+fn remove_directory(path: Path) -> Result<(), Error> {
+    let path_c = std::ffi::CString::new(path.inner);
+    defer path_c.free();
+
+    errno_try!(libc::rmdir(path_c.ptr));
+
+    Result::ok(())
+}
 
 struct File {
     fd: FileDescriptor
@@ -169,6 +213,18 @@ impl File {
         Result::ok(File { fd: FileDescriptor::new(fd) })
     }
 
+    fn attributes(self: &File) -> Result<FileAttr, Error> {
+        let result: FileAttr;
+
+        #[cfg(target_os = "macos")]
+        errno_try!(libc::fstat(self.fd.value, &result.inner));
+                
+        #[cfg(not(target_os = "macos"))]
+        errno_try!(libc::fstat64(self.fd.value, &result.inner));
+
+        Result::ok(result)
+    }
+
     fn from_fd(fd: FileDescriptor) -> File {
         File { fd: fd }
     }
@@ -178,13 +234,15 @@ impl File {
     }
 
     fn read_to_string(path: Path) -> Result<string::StringBuf, Error> {
-        use std::io::copy;
-
-        let string = collections::Vector::new::<u8>();
-        defer string.free();
+        use string::StringBuf;
 
         let file = File::open(path)?;
         defer file.close();
+        
+        let attrs = file.attributes()?;
+        
+        let string: StringBuf = StringBuf::with_capacity(attrs.size() as usize);
+        defer string.free();                
 
         let ret = file.read_to_end(&string)?;
 
@@ -285,7 +343,16 @@ impl DirEntry {
 
     /// Returns the file type
     fn file_type(self: &DirEntry) -> FileType {
-        self.inner.d_type as u8 as FileType
+        switch self.inner.d_type as u8 {
+            libc::DT_FIFO => FileType::Fifo,
+            libc::DT_CHR => FileType::CharacterDevice,
+            libc::DT_DIR => FileType::Directory,
+            libc::DT_BLK => FileType::BlockDevice,
+            libc::DT_REG => FileType::Regular,
+            libc::DT_LNK => FileType::Link,
+            libc::DT_SOCK => FileType::Socket,
+            _ => FileType::Unknown
+        }
     }
 }
 
@@ -317,14 +384,14 @@ fn read_directory(path: Path) -> Result<DirIterator, Error> {
 
 
 enum FileType {
-    Unknown = libc::DT_UNKNOWN,
-    Fifo = libc::DT_FIFO,
-    CharacterDevice = libc::DT_CHR,
-    Directory = libc::DT_DIR,
-    BlockDevice = libc::DT_BLK,
-    Regular = libc::DT_REG,
-    Link = libc::DT_LNK,
-    Socket = libc::DT_SOCK,
+    Fifo = libc::S_IFIFO,
+    CharacterDevice = libc::S_IFCHR,
+    Directory = libc::S_IFDIR,
+    BlockDevice = libc::S_IFBLK,
+    Regular = libc::S_IFREG,
+    Link = libc::S_IFLNK,
+    Socket = libc::S_IFSOCK,
+    Unknown = 0,
 }
 
 impl FileType {
@@ -372,6 +439,14 @@ impl FileAttr {
         errno_try!(libc::stat64(path.ptr, &result.inner));
 
         Result::ok(result)
+    }
+
+    fn file_type(self: &FileAttr) -> FileType {
+        (self.inner.st_mode & libc::S_IFMT) as FileType
+    }
+
+    fn size(self: &FileAttr) -> u64 {
+        self.inner.st_size as u64
     }
 }
 
@@ -426,8 +501,21 @@ mod tests {
         let read = file.read(buf).unwrap();
         assert_eq!(buf[..read] as &[u8], "world!");
 
+        let attrs = file.attributes().unwrap();
+        assert_eq!(attrs.size(), 13);
+
         file.close().unwrap();
+
+        let attrs2 = FileAttr::from_path(filename.as_path()).unwrap();
+        assert_eq!(attrs.size(), 13);
+        assert_eq!(attrs.file_type(), FileType::Regular);
+
+        let read_back = File::read_to_string(filename.as_path()).unwrap();
+        defer read_back.free();
+
+        assert_eq!(read_back.as_slice(), "Hello, world!");
     }
+
 
     #[test]
     fn test_read_directory() {
@@ -464,5 +552,30 @@ mod tests {
         assert_eq!(it.next(), Option::some("hello03.txt"));
         assert_eq!(it.next(), Option::some("hello04.txt"));
         assert_eq!(it.next(), Option::none());
+    }
+
+    #[test]
+    fn test_create_remove_directory() {
+        let path = mktemp();
+        defer path.free();
+        
+        create_directory(path.as_path()).unwrap();
+        remove_directory(path.as_path()).unwrap();
+
+        let nested = path.clone();
+        defer nested.free();
+        nested.push(Path::new("a/b/c/d/e/f/g/h/i/j/k/l"));
+
+        DirBuilder::new().recursive(true).create(nested.as_path()).unwrap();
+        remove_directory(path.as_path()).unwrap_err();
+    }
+
+    #[test]
+    fn test_remove_file() {
+        let path = mktemp();
+        defer path.free();
+        
+        File::create(path.as_path()).unwrap().close();
+        remove_file(path.as_path()).unwrap();
     }
 }
