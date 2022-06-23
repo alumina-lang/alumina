@@ -96,35 +96,86 @@ impl OpenOptions {
 }
 
 struct DirBuilder {
-    mode: libc::mode_t,
+    _recursive: bool,
+    _mode: libc::mode_t,
 }
 
 impl DirBuilder {
     fn new() -> DirBuilder {
         DirBuilder {
-            mode: 0o777,
+            _recursive: false,
+            _mode: 0o777,
         }
     }
 
-    fn mode(self: &mut DirBuilder, mode: u32) -> &mut DirBuilder {
-        self.mode = mode as libc::mode_t;
+    fn recursive(self: &mut DirBuilder, recursive: bool) -> &mut DirBuilder {
+        self._recursive = true;
         self
     }
 
-    fn mkdir(self: &DirBuilder, path: &[u8]) -> Result<(), Error> {
-        let path = ffi::CString::new(path);
+    fn mode(self: &mut DirBuilder, mode: u32) -> &mut DirBuilder {
+        self._mode = mode as libc::mode_t;
+        self
+    }
+
+    fn _mkdir(self: &DirBuilder, path: Path) -> Result<(), Error> {
+        let path = ffi::CString::new(path.inner);
         defer path.free();
         
-        errno_try!(libc::mkdir(path.ptr, self.mode));
+        errno_try!(libc::mkdir(path.ptr, self._mode));
         Result::ok(())
+    }
+
+    fn create(self: &DirBuilder, path: Path) -> Result<(), Error> {
+        if self._recursive {
+            let res = self._mkdir(path);
+            if res.is_ok {
+                return Result::ok(())
+            } else if res.inner.err.as_errno() != Option::some(libc::ENOENT) {
+                let attr = FileAttr::from_path(path)?;
+                if attr.file_type() == FileType::Directory {
+                    return Result::ok(());
+                } else {
+                    return res;
+                }
+            }
+
+            let parent = path.parent();
+            if parent.is_some {
+                self.create(parent.inner)?;
+            } else {
+                return Result::err(Error::custom("failed to create directory tree"))
+            }
+        }
+
+        self._mkdir(path)
     }
 }
 
 /// Create a new directory
-fn create_directory(path: &[u8]) -> Result<(), Error> {
-    DirBuilder::new().mkdir(path)
+fn create_directory(path: Path) -> Result<(), Error> {
+    DirBuilder::new().create(path)
 }
 
+/// Remove a file
+fn remove_file(path: Path) -> Result<(), Error> {
+    let path_c = std::ffi::CString::new(path.inner);
+    defer path_c.free();
+
+    errno_try!(libc::unlink(path_c.ptr));
+
+    Result::ok(())
+}
+
+/// Remove an empty directory
+fn remove_directory(path: Path) -> Result<(), Error> {
+    let path_c = std::ffi::CString::new(path.inner);
+    defer path_c.free();
+
+    errno_try!(libc::rmdir(path_c.ptr));
+
+    Result::ok(())
+}
 
 struct File {
     fd: FileDescriptor
@@ -134,18 +185,18 @@ impl File {
     use ffi::CString;
 
     /// Opens file in read-only mode.
-    fn open(path: &[u8]) -> Result<File, Error> {
+    fn open(path: Path) -> Result<File, Error> {
         open_with(path, OpenOptions::new().read(true))
     }
 
     /// Creates a new file for writing (truncating it if it already exists).
-    fn create(path: &[u8]) -> Result<File, Error> {
+    fn create(path: Path) -> Result<File, Error> {
         open_with(path, OpenOptions::new().write(true).create(true).truncate(true))
     }
 
     /// Opens file with custom options.
-    fn open_with(path: &[u8], opts: &OpenOptions) -> Result<File, Error> {
-        let path = CString::new(path);
+    fn open_with(path: Path, opts: &OpenOptions) -> Result<File, Error> {
+        let path = CString::new(path.inner);
         defer path.free();
 
         let flags = libc::O_CLOEXEC
@@ -162,6 +213,18 @@ impl File {
         Result::ok(File { fd: FileDescriptor::new(fd) })
     }
 
+    fn attributes(self: &File) -> Result<FileAttr, Error> {
+        let result: FileAttr;
+
+        #[cfg(target_os = "macos")]
+        errno_try!(libc::fstat(self.fd.value, &result.inner));
+                
+        #[cfg(not(target_os = "macos"))]
+        errno_try!(libc::fstat64(self.fd.value, &result.inner));
+
+        Result::ok(result)
+    }
+
     fn from_fd(fd: FileDescriptor) -> File {
         File { fd: fd }
     }
@@ -170,14 +233,16 @@ impl File {
         self.fd
     }
 
-    fn read_to_string(path: &[u8]) -> Result<string::StringBuf, Error> {
-        use std::io::copy;
-
-        let string = collections::Vector::new::<u8>();
-        defer string.free();
+    fn read_to_string(path: Path) -> Result<string::StringBuf, Error> {
+        use string::StringBuf;
 
         let file = File::open(path)?;
         defer file.close();
+        
+        let attrs = file.attributes()?;
+        
+        let string: StringBuf = StringBuf::with_capacity(attrs.size() as usize);
+        defer string.free();                
 
         let ret = file.read_to_end(&string)?;
 
@@ -278,7 +343,16 @@ impl DirEntry {
 
     /// Returns the file type
     fn file_type(self: &DirEntry) -> FileType {
-        self.inner.d_type as u8 as FileType
+        switch self.inner.d_type as u8 {
+            libc::DT_FIFO => FileType::Fifo,
+            libc::DT_CHR => FileType::CharacterDevice,
+            libc::DT_DIR => FileType::Directory,
+            libc::DT_BLK => FileType::BlockDevice,
+            libc::DT_REG => FileType::Regular,
+            libc::DT_LNK => FileType::Link,
+            libc::DT_SOCK => FileType::Socket,
+            _ => FileType::Unknown
+        }
     }
 }
 
@@ -296,8 +370,8 @@ impl DirEntry {
 ///     println!("{}: {}", item.name(), item.file_type());
 /// }
 /// ```
-fn read_directory(path: &[u8]) -> Result<DirIterator, Error> {
-    let path_c = std::ffi::CString::new(path);
+fn read_directory(path: Path) -> Result<DirIterator, Error> {
+    let path_c = std::ffi::CString::new(path.inner);
     defer path_c.free();
 
     let res = libc::opendir(path_c.ptr);
@@ -310,14 +384,14 @@ fn read_directory(path: &[u8]) -> Result<DirIterator, Error> {
 
 
 enum FileType {
-    Unknown = libc::DT_UNKNOWN,
-    Fifo = libc::DT_FIFO,
-    CharacterDevice = libc::DT_CHR,
-    Directory = libc::DT_DIR,
-    BlockDevice = libc::DT_BLK,
-    Regular = libc::DT_REG,
-    Link = libc::DT_LNK,
-    Socket = libc::DT_SOCK,
+    Fifo = libc::S_IFIFO,
+    CharacterDevice = libc::S_IFCHR,
+    Directory = libc::S_IFDIR,
+    BlockDevice = libc::S_IFBLK,
+    Regular = libc::S_IFREG,
+    Link = libc::S_IFLNK,
+    Socket = libc::S_IFSOCK,
+    Unknown = 0,
 }
 
 impl FileType {
@@ -344,28 +418,65 @@ impl FileType {
 }
 
 
+struct FileAttr {
+    #[cfg(target_os = "macos")]
+    inner: libc::t_stat,
+    #[cfg(not(target_os = "macos"))]
+    inner: libc::t_stat64,
+}
+
+impl FileAttr {
+    fn from_path(path: Path) -> Result<FileAttr, Error> {
+        let path = ffi::CString::new(path.inner);
+        defer path.free();
+
+        let result: FileAttr;
+
+        #[cfg(target_os = "macos")]
+        errno_try!(libc::stat(path.ptr, &result.inner));
+                
+        #[cfg(not(target_os = "macos"))]
+        errno_try!(libc::stat64(path.ptr, &result.inner));
+
+        Result::ok(result)
+    }
+
+    fn file_type(self: &FileAttr) -> FileType {
+        (self.inner.st_mode & libc::S_IFMT) as FileType
+    }
+
+    fn size(self: &FileAttr) -> u64 {
+        self.inner.st_size as u64
+    }
+}
+
 
 #[cfg(all(test, test_std))]
 mod tests {
-    use fmt::{hex, pad, zero_pad, format};
+    use fmt::{hex, pad, zero_pad, format, format_in};
     use collections::{free_all, sort_by};
     use string::StringBuf;
     
     static BUF: [u8; 1024];
     static BUF1: [u8; 1024];
 
-    fn mktemp() -> StringBuf {
-        let tmpdir = std::process::env()
-            .filter(|e: (&[u8], &[u8])| -> bool { e.0 == "TMPDIR" })
-            .map(|e: (&[u8], &[u8])| -> &[u8] { e.1 })
-            .next()
-            .unwrap_or("/tmp");
+    fn mktemp() -> PathBuf {
+        let tmpdir = PathBuf::from_path(
+            Path::new(
+                std::process::env()
+                    .filter(|e: (&[u8], &[u8])| -> bool { e.0 == "TMPDIR" })
+                    .map(|e: (&[u8], &[u8])| -> &[u8] { e.1 })
+                    .next()
+                    .unwrap_or("/tmp")
+            )
+        );
 
-        format!(
-            "{}/alumina_{}",
-            tmpdir,
+        tmpdir.push(Path::new(format_in!(&BUF1,
+            "alumina_{}",
             random::OsRng::new().next_u64().hex().zero_pad(16)
-        ).unwrap()
+        ).unwrap()));
+
+        tmpdir        
     }
 
     #[test]
@@ -374,12 +485,12 @@ mod tests {
         let buf = BUF.as_slice_mut();
         defer filename.free();
 
-        let file = File::create(filename.as_slice()).unwrap();
+        let file = File::create(filename.as_path()).unwrap();
 
         file.write_all("Hello, world!").unwrap();
         file.close().unwrap();
 
-        let file = File::open(filename.as_slice()).unwrap();
+        let file = File::open(filename.as_path()).unwrap();
         defer file.close();
 
         let read = file.read(buf).unwrap();
@@ -390,24 +501,38 @@ mod tests {
         let read = file.read(buf).unwrap();
         assert_eq!(buf[..read] as &[u8], "world!");
 
+        let attrs = file.attributes().unwrap();
+        assert_eq!(attrs.size(), 13);
+
         file.close().unwrap();
+
+        let attrs2 = FileAttr::from_path(filename.as_path()).unwrap();
+        assert_eq!(attrs.size(), 13);
+        assert_eq!(attrs.file_type(), FileType::Regular);
+
+        let read_back = File::read_to_string(filename.as_path()).unwrap();
+        defer read_back.free();
+
+        assert_eq!(read_back.as_slice(), "Hello, world!");
     }
+
 
     #[test]
     fn test_read_directory() {
         let path = mktemp();
         defer path.free();
         
-        create_directory(path.as_slice()).unwrap();
+        create_directory(path.as_path()).unwrap();
 
         (0..5).iter().foreach(|&path, i: i32| {
-            let filename = format!("{}/hello{}.txt", path, i.zero_pad(2)).unwrap();
+            let filename = path.clone();
+            filename.push(Path::new(format_in!(&BUF1, "hello{}.txt", i.zero_pad(2)).unwrap()));
             defer filename.free();
 
-            File::create(filename.as_slice()).unwrap().close();
+            File::create(filename.as_path()).unwrap().close();
         });
 
-        let dir = read_directory(path.as_slice()).unwrap();
+        let dir = read_directory(path.as_path()).unwrap();
         defer dir.close();
 
         let entries = dir
@@ -427,5 +552,30 @@ mod tests {
         assert_eq!(it.next(), Option::some("hello03.txt"));
         assert_eq!(it.next(), Option::some("hello04.txt"));
         assert_eq!(it.next(), Option::none());
+    }
+
+    #[test]
+    fn test_create_remove_directory() {
+        let path = mktemp();
+        defer path.free();
+        
+        create_directory(path.as_path()).unwrap();
+        remove_directory(path.as_path()).unwrap();
+
+        let nested = path.clone();
+        defer nested.free();
+        nested.push(Path::new("a/b/c/d/e/f/g/h/i/j/k/l"));
+
+        DirBuilder::new().recursive(true).create(nested.as_path()).unwrap();
+        remove_directory(path.as_path()).unwrap_err();
+    }
+
+    #[test]
+    fn test_remove_file() {
+        let path = mktemp();
+        defer path.free();
+        
+        File::create(path.as_path()).unwrap().close();
+        remove_file(path.as_path()).unwrap();
     }
 }

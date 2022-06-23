@@ -36,6 +36,7 @@ type ssize_t = isize;
     type clockid_t = c_int;
     type ino64_t = u64;
     type off64_t = i64;
+    type blkcnt64_t = i64;
 }
 
 #[cfg(target_os="macos")]
@@ -52,6 +53,12 @@ type ssize_t = isize;
     type nfds_t = c_uint;
     type socklen_t = u32;
     type sa_family_t = u8;
+    type dev_t = i32;
+
+    type blkcnt_t = i64;
+    type nlink_t = u16;
+    type blksize_t = i32;
+    type ino_t = u64;
 }
 
 #[cfg(target_os="android")]
@@ -73,6 +80,14 @@ type ssize_t = isize;
     type socklen_t = u32;
 
     type sa_family_t = u16;
+
+    type dev_t = c_ulong;
+
+    type blkcnt_t = c_ulong;
+    type blksize_t = c_ulong;
+    type nlink_t = u32;
+
+    type ino_t = c_ulong;
 }
 
 #[cfg(target_os="linux")]
@@ -97,16 +112,10 @@ type ssize_t = isize;
         type wchar_t = i32;
         type clock_t = i32;
         type time_t = i32;
-    }
 
-    #[cfg(target_arch = "arm")]
-    {
-        type c_long = i32;
-        type c_ulong = u32;
-        type c_char = u8;
-        type wchar_t = u32;
-        type clock_t = i32;
-        type time_t = i32;
+        type nlink_t = u32;
+        type blkcnt_t = i32;
+        type blksize_t = i32;
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -115,6 +124,10 @@ type ssize_t = isize;
         type wchar_t = i32;
         type clock_t = i64;
         type time_t = i64;
+        
+        type nlink_t = u64;
+        type blkcnt_t = i64;
+        type blksize_t = i64;
 
         #[cfg(target_pointer_width = "32")]
         {
@@ -129,7 +142,7 @@ type ssize_t = isize;
         }
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
     {
         type c_char = u8;
         type wchar_t = u32;
@@ -140,6 +153,10 @@ type ssize_t = isize;
             type c_ulong = u32;
             type clock_t = i32;
             type time_t = i32;
+            
+            type nlink_t = u32;
+            type blkcnt_t = i64;
+            type blksize_t = i32;
         }
 
         #[cfg(not(target_pointer_width = "32"))]
@@ -148,6 +165,10 @@ type ssize_t = isize;
             type c_ulong = u64;
             type clock_t = i64;
             type time_t = i64;
+            
+            type nlink_t = u32;
+            type blkcnt_t = i32;
+            type blksize_t = i32;
         }
     }
 
@@ -155,6 +176,7 @@ type ssize_t = isize;
     type socklen_t = u32;
     type nfds_t = c_ulong;
     type sa_family_t = u16;
+    type dev_t = u64;
 }
 
 #[cfg(target_os="windows")]
@@ -361,6 +383,10 @@ extern "C" fn strlen(s: &c_char) -> size_t;
     extern "C" fn fsync(fd: c_int) -> c_int;
     extern "C" fn execv(prog: &c_char, argv: &&c_char) -> c_int;
     extern "C" fn execve(prog: &c_char, argv: &&c_char, envp: &&c_char) -> c_int;
+    #[cfg(not(target_os="macos"))]
+    extern "C" fn execvp(prog: &c_char, argv: &&c_char) -> c_int;
+    #[cfg(not(target_os="macos"))]
+    extern "C" fn execvpe(prog: &c_char, argv: &&c_char, envp: &&c_char) -> c_int;
     extern "C" fn kill(pid: pid_t, sig: c_int) -> c_int;
     extern "C" fn sleep(secs: c_uint) -> c_uint;
     extern "C" fn nanosleep(rqtp: &timespec, rmtp: &mut timespec) -> c_int;
@@ -494,6 +520,195 @@ extern "C" fn strlen(s: &c_char) -> size_t;
     extern "C" fn readdir64(dirp: &mut DIR) -> &mut dirent64;
 
     extern "C" fn mkdir(path: &c_char, mode: mode_t) -> c_int;
+
+    #[cfg(target_os="macos")]
+    #[link_name("_stat$INODE64")]
+    extern "C" fn stat(path: &c_char, buf: &mut t_stat) -> c_int;
+    #[cfg(not(target_os="macos"))]
+    extern "C" fn stat(path: &c_char, buf: &mut t_stat) -> c_int;
+    
+    #[cfg(not(target_os="macos"))]
+    extern "C" fn stat64(path: &c_char, buf: &mut t_stat64) -> c_int;
+
+    #[cfg(target_os="macos")]
+    #[link_name("_fstat$INODE64")]
+    extern "C" fn fstat(fildes: c_int, buf: &mut t_stat) -> c_int;
+    #[cfg(not(target_os="macos"))]
+    extern "C" fn fstat(fildes: c_int, buf: &mut t_stat) -> c_int;
+
+    #[cfg(not(target_os="macos"))]
+    extern "C" fn fstat64(fildes: c_int, buf: &mut t_stat64) -> c_int;
+
+    extern "C" fn rmdir(path: &c_char) -> c_int;
+    extern "C" fn unlink(path: &c_char) -> c_int;
+
+    #[cfg(all(target_os="linux", target_arch = "x86_64"))]
+    {
+        struct t_stat {
+            st_dev: dev_t,
+            st_ino: ino_t,
+            st_nlink: nlink_t,
+            st_mode: mode_t,
+            st_uid: uid_t,
+            st_gid: gid_t,
+            __pad0: c_int,
+            st_rdev: dev_t,
+            st_size: off_t,
+            st_blksize: blksize_t,
+            st_blocks: blkcnt_t,
+            st_atime: time_t,
+            st_atime_nsec: i64,
+            st_mtime: time_t,
+            st_mtime_nsec: i64,
+            st_ctime: time_t,
+            st_ctime_nsec: i64,
+            __unused: [i64; 3],
+        }
+
+        struct t_stat64 {
+            st_dev: dev_t,
+            st_ino: ino64_t,
+            st_nlink: nlink_t,
+            st_mode: mode_t,
+            st_uid: uid_t,
+            st_gid: gid_t,
+            __pad0: c_int,
+            st_rdev: dev_t,
+            st_size: off_t,
+            st_blksize: blksize_t,
+            st_blocks: blkcnt64_t,
+            st_atime: time_t,
+            st_atime_nsec: i64,
+            st_mtime: time_t,
+            st_mtime_nsec: i64,
+            st_ctime: time_t,
+            st_ctime_nsec: i64,
+            __reserved: [i64; 3],
+        }
+    }
+
+    #[cfg(all(target_os="linux", target_arch = "aarch64"))]
+    {
+        struct t_stat {
+            st_dev: dev_t,
+            st_ino: ino_t,
+            st_mode: mode_t,
+            st_nlink: nlink_t,
+            st_uid: uid_t,
+            st_gid: gid_t,
+            st_rdev: dev_t,
+            __pad1: dev_t,
+            st_size: off_t,
+            st_blksize: blksize_t,
+            __pad2: c_int,
+            st_blocks: blkcnt_t,
+            st_atime: time_t,
+            st_atime_nsec: c_long,
+            st_mtime: time_t,
+            st_mtime_nsec: c_long,
+            st_ctime: time_t,
+            st_ctime_nsec: c_long,
+            __unused: [c_int; 2],
+        }
+
+        struct t_stat64 {
+            st_dev: dev_t,
+            st_ino: ino_t,
+            st_mode: mode_t,
+            st_nlink: nlink_t,
+            st_uid: uid_t,
+            st_gid: gid_t,
+            st_rdev: dev_t,
+            __pad1: dev_t,
+            st_size: off64_t,
+            st_blksize: blksize_t,
+            __pad2: c_int,
+            st_blocks: blkcnt64_t,
+            st_atime: time_t,
+            st_atime_nsec: c_long,
+            st_mtime: time_t,
+            st_mtime_nsec: c_long,
+            st_ctime: time_t,
+            st_ctime_nsec: c_long,
+            __unused: [c_int; 2],
+        }
+    }
+
+    #[cfg(all(target_os="android", target_arch = "aarch64"))] 
+    {
+        struct t_stat {
+            st_dev: dev_t,
+            st_ino: ino_t,
+            st_mode: c_uint,
+            st_nlink: nlink_t,
+            st_uid: uid_t,
+            st_gid: gid_t,
+            st_rdev: dev_t,
+            __pad1: c_ulong,
+            st_size: off64_t,
+            st_blksize: c_int,
+            __pad2: c_int,
+            st_blocks: c_long,
+            st_atime: time_t,
+            st_atime_nsec: c_long,
+            st_mtime: time_t,
+            st_mtime_nsec: c_long,
+            st_ctime: time_t,
+            st_ctime_nsec: c_long,
+            __unused4: c_uint,
+            __unused5: c_uint,
+        }
+
+        struct t_stat64 {
+            st_dev: dev_t,
+            st_ino: ino_t,
+            st_mode: c_uint,
+            st_nlink: nlink_t,
+            st_uid: uid_t,
+            st_gid: gid_t,
+            st_rdev: dev_t,
+            __pad1: c_ulong,
+            st_size: off64_t,
+            st_blksize: c_int,
+            __pad2: c_int,
+            st_blocks: c_long,
+            st_atime: time_t,
+            st_atime_nsec: c_long,
+            st_mtime: time_t,
+            st_mtime_nsec: c_long,
+            st_ctime: time_t,
+            st_ctime_nsec: c_long,
+            __unused4: c_uint,
+            __unused5: c_uint,
+        }
+    }
+    
+    #[cfg(target_os="macos")] 
+    struct t_stat {
+        st_dev: dev_t,
+        st_mode: mode_t,
+        st_nlink: nlink_t,
+        st_ino: ino_t,
+        st_uid: uid_t,
+        st_gid: gid_t,
+        st_rdev: dev_t,
+        st_atime: time_t,
+        st_atime_nsec: c_long,
+        st_mtime: time_t,
+        st_mtime_nsec: c_long,
+        st_ctime: time_t,
+        st_ctime_nsec: c_long,
+        st_birthtime: time_t,
+        st_birthtime_nsec: c_long,
+        st_size: off_t,
+        st_blocks: blkcnt_t,
+        st_blksize: blksize_t,
+        st_flags: u32,
+        st_gen: u32,
+        st_lspare: i32,
+        st_qspare: [i64; 2],
+    }
+
 
     const EXIT_FAILURE: c_int = 1;
     const EXIT_SUCCESS: c_int = 0;
@@ -778,4 +993,14 @@ extern "C" fn strlen(s: &c_char) -> size_t;
     const DT_REG: u8 = 8;
     const DT_LNK: u8 = 10;
     const DT_SOCK: u8 = 12;
+
+    const S_IFIFO: mode_t = 4096;
+    const S_IFCHR: mode_t = 8192;
+    const S_IFBLK: mode_t = 24576;
+    const S_IFDIR: mode_t = 16384;
+    const S_IFREG: mode_t = 32768;
+    const S_IFLNK: mode_t = 40960;
+    const S_IFSOCK: mode_t = 49152;
+    
+    const S_IFMT: mode_t = 61440;
 }

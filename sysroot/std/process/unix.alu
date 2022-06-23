@@ -259,7 +259,7 @@ impl Forked {
 }
 
 struct Command {
-    _name: option::Option<&[u8]>,
+    _path: fs::Path,
     _args: &[&[u8]],
     _environ: Option<&[(&[u8], &[u8])]>,
     _stdin: Stdio,
@@ -270,11 +270,12 @@ struct Command {
 impl Command {
     use internal::IoRedirection;
     use ffi::CString;
+    use fs::Path;
     use collections::{Vector, free_all};
 
-    fn new(name: &[u8]) -> Command {
+    fn new(path: Path) -> Command {
         Command {
-            _name: Option::some(name),
+            _path: path,
             _args: mem::slice::empty(),
             _environ: Option::none(),
             _stdin: Stdio::Inherit,
@@ -320,13 +321,13 @@ impl Command {
         stdout.install(libc::STDOUT_FILENO)?;
         stderr.install(libc::STDERR_FILENO)?;
 
-        let name = CString::new(self._name.unwrap());
+        let name = CString::new(self._path.inner);
         defer name.free();
 
         let argv : Vector<CString> = Vector::with_capacity(self._args.len + 2);
         defer argv.free_all();
 
-        argv.push(CString::new(self._name.unwrap()));
+        argv.push(CString::new(self._path.inner));
         for arg in self._args {
             argv.push(CString::new(arg));
         }
@@ -407,6 +408,7 @@ impl Command {
 
 mod internal {
     use io::{Readable, AsFileDescriptor};
+    use fs::Path;
     use std::io::unix::{ErrorKind, errno_try};
     use string::StringBuf;
 
@@ -517,7 +519,7 @@ mod internal {
                     errno_try!(libc::dup2(tgt.fd.value, fd));
                 },
                 Stdio::Null => {
-                    let dev_zero = File::open_with("/dev/null", OpenOptions::new().read(true).write(true))?;
+                    let dev_zero = File::open_with(Path::new("/dev/null"), OpenOptions::new().read(true).write(true))?;
                     defer dev_zero.close();
     
                     errno_try!(std::libc::dup2(dev_zero.fd.value, fd));
@@ -541,9 +543,11 @@ mod internal {
 
 #[cfg(all(test, test_std))]
 mod tests {
+    use fs::Path;
+
     #[test]
     fn test_spawn() {
-        let child = Command::new("/bin/echo")
+        let child = Command::new(Path::new("/bin/echo"))
             .args(&["Hello, World!"])
             .stdout(Stdio::Piped)
             .stderr(Stdio::Piped)
@@ -560,7 +564,7 @@ mod tests {
 
     #[test]
     fn spawn_fails_on_exec_failure() {
-        let child = Command::new("some nonexistent program hopefully")
+        let child = Command::new(Path::new("some nonexistent program hopefully"))
             //.stdout(Stdio::Piped)
             //.stderr(Stdio::Piped)
             .spawn();
@@ -572,7 +576,7 @@ mod tests {
     #[cfg(any(target_os = "linux"))]
     #[test]
     fn test_kill() {
-        let child = Command::new("/bin/sleep")
+        let child = Command::new(Path::new("/bin/sleep"))
             .args(&["10000"])
             .spawn()
             .unwrap();

@@ -61,7 +61,7 @@ impl Processor {
         }
     }
 
-    fn process_file(self: &mut Processor, module_path: &[u8], filename: &[u8]) -> Result<()> {
+    fn process_file(self: &mut Processor, module_path: &[u8], filename: std::fs::Path) -> Result<()> {
         let parse_context = self.arena.alloc(ParseContext::from_file(&self.parser, filename)?);
         self.parse_contexts.push(parse_context);
             
@@ -89,28 +89,6 @@ impl Processor {
     }
 
 }
-
-fn ensure_dir(f: &[u8]) -> Result<()> {
-    let segments = f.split("/").to_vector();
-    defer segments.free();
-    segments.pop();
-
-    let dirname = "/".join(&segments.iter());
-    defer dirname.free();
-
-    std::process::Command::new("/bin/mkdir")
-        .args(&[
-            "-p",
-            dirname.as_slice()
-        ])
-        .spawn()
-        .map_err(Error::from_io)?
-        .wait()
-        .map_err(Error::from_io)?;
-
-    Result::ok(())
-}
-
 
 struct PageWriter<T: std::io::Writable<T>> {
     item_bag: &ItemBag,
@@ -185,7 +163,7 @@ impl PageWriter<T: std::io::Writable<T>> {
         
         wln!(self, "{}", if top_level { "</h3>" } else { "</h4>" });
         if item.kind.show_source_link() {
-            let file = item.parse_context.filename.as_slice().trim_prefix("./");
+            let file = item.parse_context.filename.as_path().strip_prefix(std::fs::Path::new("./"));
             let start = item.node.start_point();
             let end = item.node.end_point();
             wln!(self, "<div class=\"source-link\">");
@@ -340,17 +318,30 @@ impl PageWriter<T: std::io::Writable<T>> {
 
 
 fn write_page(items: &ItemBag, top_level: &Item) -> Result<()> {
-    let filename = if top_level.path.segments.empty() {
-        format!("./build/docs/index.html").unwrap()
-    } else {
-        format!("./build/docs/{}.html", "/".join_fmt(top_level.path.segments.iter()))
-            .unwrap()
-    };
-
+    let filename = std::fs::PathBuf::from_str("./build/docs");
     defer filename.free();
-    ensure_dir(filename.as_slice())?;
 
-    let file = std::fs::File::create(filename.as_slice()).map_err(Error::from_io)?;
+
+    if top_level.path.segments.empty() {
+        filename.push(std::fs::Path::new("index.html"));
+    } else {
+        for (idx, s) in top_level.path.segments.iter().enumerate() {
+            if idx == top_level.path.segments.len() - 1 {
+                let formatted = format!("{}.html", s).unwrap();
+                filename.push(std::fs::Path::new(formatted.as_slice()));
+                formatted.free();
+            } else {
+                filename.push(std::fs::Path::new(s));    
+            }
+        }
+    }
+
+    let filename = filename.as_path();
+
+    std::fs::DirBuilder::new().recursive(true).create(filename.parent().unwrap())
+        .map_err(Error::from_io)?;
+
+    let file = std::fs::File::create(filename).map_err(Error::from_io)?;
     defer file.close();
 
     let writer = std::io::BufferedWriter::new(&file, 1024);
@@ -422,8 +413,9 @@ fn write_index(items: &ItemBag) -> Result<()> {
     use std::fmt::{write, writeln};
     use std::string::replace_fmt;
 
-    let filename = "./build/docs/search_index.js";
-    ensure_dir(filename)?;
+    let filename = std::fs::Path::new("./build/docs/search_index.js");
+    std::fs::DirBuilder::new().recursive(true).create(filename.parent().unwrap())
+        .map_err(Error::from_io)?;
 
     let file = std::fs::File::create(filename).map_err(Error::from_io)?;
     defer file.close();
@@ -462,12 +454,12 @@ fn main_inner(args: &[&[u8]]) -> Result<()> {
     let inputs = args
         .iter()
         .skip(1)
-        .filter_map(|s: &[u8]| -> Option<(&[u8], &[u8])> {
+        .filter_map(|s: &[u8]| -> Option<(&[u8], std::fs::Path)> {
             use std::option::try;
 
             let segments = s.split("=");
             let module_path = segments.next()?
-            let filename = segments.next()?;
+            let filename = std::fs::Path::new(segments.next()?);
 
             Option::some((module_path, filename))
         });

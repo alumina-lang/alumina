@@ -4,6 +4,467 @@
 {
     use unix::{
         OpenOptions, File, DirIterator, DirEntry, FileType,
-        read_directory, create_directory
+        DirBuilder,  read_directory, create_directory,
+        FileAttr, remove_file, remove_directory 
+    }
+}
+
+enum PathSegmentKind {
+    Root,
+    Normal,
+    CurDir,
+    ParentDir
+}
+
+impl PathSegmentKind {
+    fn equals(self: &PathSegmentKind, other: &PathSegmentKind) -> bool {
+        *self == *other
+    }
+
+    fn fmt<F: fmt::Formatter<F>>(self: &PathSegmentKind, f: &mut F) -> fmt::Result {
+        switch *self {
+            PathSegmentKind::Root => f.write_str("root"),
+            PathSegmentKind::Normal => f.write_str("normal"),
+            PathSegmentKind::CurDir => f.write_str("curdir"),
+            PathSegmentKind::ParentDir => f.write_str("parentdir"),
+            _ => unreachable!()
+        }
+    }
+
+    mixin cmp::Equatable<PathSegmentKind>;
+}
+
+struct PathSegment {
+    kind: PathSegmentKind,
+    value: &[u8] 
+}
+
+impl PathSegment {
+    fn equals(self: &PathSegment, other: &PathSegment) -> bool {
+        self.kind == other.kind && switch self.kind {
+            PathSegmentKind::Normal => self.value == other.value,
+            _ => true
+        }
+    }
+
+    fn fmt<F: fmt::Formatter<F>>(self: &PathSegment, f: &mut F) -> fmt::Result {
+        switch self.kind {
+            PathSegmentKind::Root => f.write_str("/"),
+            PathSegmentKind::Normal => f.write_str(self.value),
+            PathSegmentKind::CurDir => f.write_str("."),
+            PathSegmentKind::ParentDir => f.write_str(".."),
+            _ => unreachable!()
+        }
+    }
+
+    mixin cmp::Equatable<PathSegment>;
+}
+
+struct PathIterator {
+    remainder: &[u8],
+    at_start: bool
+}
+
+impl PathIterator {
+    use string::find;
+
+    fn next(self: &mut PathIterator) -> Option<PathSegment> {
+        loop {
+            if self.remainder.len == 0 {
+                return Option::none();
+            }
+
+            let maybe_sep = self.remainder.find("/");
+            let orig = self.remainder;
+            let segment = if maybe_sep.is_some {
+                self.remainder = orig[maybe_sep.inner + 1..];
+                orig[..maybe_sep.inner]
+            } else {
+                self.remainder = mem::slice::empty();
+                orig
+            };
+
+            let at_start = mem::replace(&self.at_start, false);
+
+            if segment.len == 0 {
+                if at_start && maybe_sep.is_some {
+                    return Option::some(PathSegment {
+                        kind: PathSegmentKind::Root,
+                        value: segment
+                    });
+                } else if self.remainder.len != 0 {
+                    continue;
+                } else {
+                    return Option::none();
+                }
+            } else if segment == "." {
+                return Option::some(PathSegment {
+                    kind: PathSegmentKind::CurDir,
+                    value: segment
+                });
+            } else if segment == ".." {
+                return Option::some(PathSegment {
+                    kind: PathSegmentKind::ParentDir,
+                    value: segment
+                });
+            } else {
+                return Option::some(PathSegment {
+                    kind: PathSegmentKind::Normal,
+                    value: segment
+                });
+            }
+        }
+    }
+
+    mixin iter::Iterator<PathIterator, PathSegment>;
+    mixin iter::IteratorExt<PathIterator, PathSegment>;
+}
+
+struct Path {
+    inner: &[u8]
+}
+
+impl Path {
+    fn new(inner: &[u8]) -> Path {
+        Path { inner: inner }
+    }
+
+    fn iter(self: &Path) -> PathIterator {
+        PathIterator {
+            remainder: self.inner,
+            at_start: true
+        }
+    }
+
+    fn as_slice(self: &Path) -> &[u8] {
+        self.inner
+    }
+
+    fn is_absolute(self: &Path) -> bool {
+        self
+            .iter()
+            .next()
+            .map(|v: PathSegment| -> bool { v.kind == PathSegmentKind::Root})
+            .unwrap_or(false)
+    }
+
+    fn is_relative(self: &Path) -> bool {
+        !self.is_absolute()
+    }
+
+    fn parent(self: &Path) -> Option<Path> {
+        use string::ends_with;
+
+        let iter = self.iter().peekable();
+        let last: Option<PathSegment> = Option::none();
+        loop {
+            if !iter.peek().is_some {
+                if !last.is_some || last.inner.kind == PathSegmentKind::Root {
+                    return Option::none();
+                } else {
+                    let ret = mem::slice::from_raw(self.inner.ptr, (last.inner.value.ptr - self.inner.ptr) as usize);
+                    if ret.len > 1 && ret.ends_with("/") {
+                        ret = ret[..ret.len-1];
+                    }
+                    return Option::some(Path::new(ret));
+                }
+            }
+            last = iter.next();
+        }
+    }
+
+    fn strip_prefix(self: &Path, prefix: Path) -> Option<Path> {
+        let i1 = self.iter();
+        let i2 = prefix.iter();
+        loop {
+            let copy = i1;
+
+            let s1 = i1.next();
+            let s2 = i2.next();
+
+            if s1.is_some && s2.is_some {
+                if s1.inner == s2.inner {
+                    continue;
+                } else {
+                    return Option::none();
+                }
+            }
+
+            if !s1.is_some && s2.is_some {
+                return Option::none();
+            }
+
+            return Option::some(Path::new(copy.remainder));
+        }
+    }
+
+    fn starts_with(self: &Path, other: Path) -> bool {
+        self.strip_prefix(other).is_some
+    }
+
+    fn fmt<F: fmt::Formatter<F>>(self: &Path, f: &mut F) -> fmt::Result {
+        let has_root = false;
+
+        for (idx, i) in self.iter().enumerate() {
+            if idx == 0 {
+                if i.kind == PathSegmentKind::Root {
+                    has_root = true;
+                }
+            } else if idx > 1 || !has_root {
+                f.write_str("/")?;
+            }
+            i.fmt(f)?;
+        }
+
+        fmt::Result::ok(())
+    }
+
+    fn equals(self: &Path, other: &Path) -> bool {
+        let a = self.iter();
+        let b = other.iter();
+
+        loop {
+            let s1 = a.next();
+            let s2 = b.next();
+
+            if s1.is_some && s2.is_some {
+                if s1.inner != s2.inner {
+                    return false;
+                }
+            } else if s1.is_some || s2.is_some {
+                return false;
+            } else {
+                return true;
+            }
+        }
+    }
+
+    mixin cmp::Equatable<Path>;
+}
+
+struct PathBuf {
+    inner: string::StringBuf
+}
+
+impl PathBuf {
+    use string::StringBuf;
+
+    fn new() -> PathBuf {
+        PathBuf {
+            inner: StringBuf::new()
+        }
+    }
+
+    fn from_path(path: Path) -> PathBuf {
+        from_str(path.inner)
+    }
+
+    fn from_str(path: &[u8]) -> PathBuf {
+        PathBuf {
+            inner: StringBuf::from_slice(path)
+        }
+    }
+
+    fn as_path(self: &PathBuf) -> Path {
+        Path::new(self.inner.as_slice())
+    }
+
+    fn extend<It: iter::Iterator<It, PathSegment>>(self: &mut PathBuf, iter: &mut It) {
+        use fmt::write;
+        let has_root = false;
+
+        for (idx, i) in iter.enumerate() {
+            if i.kind == PathSegmentKind::Root {
+                self.inner.clear();
+                has_root = true;
+            }
+
+            if self.inner.len() > 0 || !has_root {
+                self.inner.push('/');
+            }
+
+            write!(&self.inner, "{}", i).unwrap();
+        }
+    }
+
+    fn push(self: &mut PathBuf, suffix: Path) {
+        self.extend(&suffix.iter());
+    }
+
+    fn pop(self: &mut PathBuf) -> bool {
+        self.as_path().parent().map(|=self, p: Path| -> bool {
+            self.inner.resize(p.inner.len);
+            true
+        })
+        .unwrap_or(false)
+    }
+
+    fn from_iter<It: iter::Iterator<It, PathSegment>>(iter: &mut It) -> PathBuf {
+        let ret = PathBuf::new();
+        ret.extend(iter);
+        ret
+    }
+
+    fn fmt<F: fmt::Formatter<F>>(self: &PathBuf, f: &mut F) -> fmt::Result {
+        self.as_path().fmt(f)
+    }
+
+    fn clone(self: &PathBuf) -> PathBuf {
+        PathBuf {
+            inner: self.inner.clone()
+        }
+    }
+
+    fn free(self: &mut PathBuf) {
+        self.inner.free();
+    }
+
+    fn move(self: &mut PathBuf) -> PathBuf {
+        PathBuf { inner: self.inner.move() }
+    }
+}
+
+#[cfg(all(test, test_std))]
+mod tests {
+    #[test]
+    fn test_path_iter() {
+        let path = Path::new("/").iter();
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Root, value: "" }));
+        assert_eq!(path.next(), Option::none());
+
+        let path = Path::new("/home/alumina").iter();
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Root, value: "" }));
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "home" }));
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "alumina" }));
+        assert_eq!(path.next(), Option::none());
+
+        let path = Path::new("/home/alumina/").iter();
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Root, value: "" }));
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "home" }));
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "alumina" }));
+        assert_eq!(path.next(), Option::none());
+
+        let path = Path::new("./home/alumina").iter();
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::CurDir, value: "" }));
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "home" }));
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "alumina" }));
+        assert_eq!(path.next(), Option::none());
+
+        let path = Path::new("home/../alumina").iter();
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "home" }));
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::ParentDir, value: "" }));
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "alumina" }));
+        assert_eq!(path.next(), Option::none());
+
+        let path = Path::new("").iter();
+        assert_eq!(path.next(), Option::none());
+
+        let path = Path::new("home").iter();
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "home" }));
+        assert_eq!(path.next(), Option::none());
+        
+        let path = Path::new("home///").iter();
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "home" }));
+        assert_eq!(path.next(), Option::none());        
+
+        let path = Path::new("home///alumina").iter();
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "home" }));
+        assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "alumina" }));
+        assert_eq!(path.next(), Option::none());    
+    }
+
+    use fmt::format_in;
+
+    #[test]
+    fn test_path_fmt() {
+        let buf: [u8; 512];
+        let buf = buf.as_slice_mut();
+
+        macro chk($path, $expected) {
+            let path = Path::new($path);
+            let ret = format_in!(buf, "{}", path).unwrap();
+            assert_eq!(ret, $expected);
+        }    
+
+        chk!("", "");
+        chk!("/", "/");
+        chk!("/.", "/.");
+        chk!("/foo", "/foo");
+        chk!("/foo/bar", "/foo/bar");
+        chk!("foo/bar", "foo/bar");
+        chk!("foo/bar/", "foo/bar");
+        chk!("foo/////bar/", "foo/bar");
+        chk!("./../////bar/", "./../bar");
+    } 
+
+    #[test]
+    fn test_is_absolute() {
+        assert!(Path::new("/").is_absolute());
+        assert!(Path::new("/foo").is_absolute());
+
+        assert!(Path::new("").is_relative());
+        assert!(Path::new("./foo").is_relative());
+        assert!(Path::new("foo").is_relative());
+    } 
+
+    #[test]
+    fn test_strip_prefix() {
+        assert_eq!(Path::new("").strip_prefix(Path::new("")), Option::some(Path::new("")));
+        assert_eq!(Path::new("/foo/bar").strip_prefix(Path::new("/")), Option::some(Path::new("foo/bar")));
+        assert_eq!(Path::new("/foo/bar").strip_prefix(Path::new("/foo/")), Option::some(Path::new("bar")));
+        
+        assert_eq!(Path::new("/foo/bar").strip_prefix(Path::new("/quux")), Option::none());
+        assert_eq!(Path::new("foo/bar").strip_prefix(Path::new("/")), Option::none());
+    }
+
+    #[test]
+    fn test_from_iter() {
+        let path_buf = PathBuf::from_iter(&Path::new("/hello/world/").iter());
+        defer path_buf.free();
+        assert_eq!(path_buf.as_path(), Path::new("/hello/world"));
+
+        let path_buf = PathBuf::from_iter(&Path::new("/hello/world/").iter().chain(&Path::new("foo/bar/").iter()));
+        defer path_buf.free();
+        assert_eq!(path_buf.as_path(), Path::new("/hello/world/foo/bar"));
+        
+        let path_buf = PathBuf::from_iter(&Path::new("/hello/world/").iter().chain(&Path::new("/foo/bar/").iter()));
+        defer path_buf.free();
+        assert_eq!(path_buf.as_path(), Path::new("/foo/bar"));
+    }
+
+    #[test]
+    fn test_push_pop() {
+        let path_buf = PathBuf::from_iter(&Path::new("/hello/world/").iter());
+        defer path_buf.free();
+
+        path_buf.push(Path::new(""));
+        assert_eq!(path_buf.as_path(), Path::new("/hello/world"));
+
+        path_buf.push(Path::new("hello"));
+        assert_eq!(path_buf.as_path(), Path::new("/hello/world/hello"));
+
+        path_buf.push(Path::new("/world/foo"));
+        assert_eq!(path_buf.as_path(), Path::new("/world/foo"));
+
+        assert!(path_buf.pop());
+        assert_eq!(path_buf.as_path(), Path::new("/world"));
+
+        assert!(path_buf.pop());
+        assert_eq!(path_buf.as_path(), Path::new("/"));
+
+        assert!(!path_buf.pop());
+        assert_eq!(path_buf.as_path(), Path::new("/"));
+    }
+
+    #[test]
+    fn test_parent() {
+        assert_eq!(Path::new("").parent(), Option::none());
+        assert_eq!(Path::new("/").parent(), Option::none());
+        assert_eq!(Path::new(".").parent(), Option::some(Path::new("")));
+        assert_eq!(Path::new("./").parent(), Option::some(Path::new("")));
+        assert_eq!(Path::new("hello").parent(), Option::some(Path::new("")));
+        assert_eq!(Path::new("/hello").parent(), Option::some(Path::new("/")));
+        assert_eq!(Path::new("/hello/world").parent(), Option::some(Path::new("/hello")));
+        assert_eq!(Path::new("hello/world").parent(), Option::some(Path::new("hello")));
     }
 }

@@ -457,13 +457,13 @@ impl ItemBag {
 }
 
 struct ParseContext {
-    filename: StringBuf,
+    filename: std::fs::PathBuf,
     _source: StringBuf,
     tree: Tree,
 }
 
 impl ParseContext {
-    fn from_file(parser: &mut Parser, filename: &[u8]) -> Result<ParseContext> {
+    fn from_file(parser: &mut Parser, filename: std::fs::Path) -> Result<ParseContext> {
         let source = std::fs::File::read_to_string(filename).map_err(Error::from_io)?;
         defer source.free();
     
@@ -473,7 +473,7 @@ impl ParseContext {
         Result::ok(ParseContext {
             _source: source.move(),
             tree: tree.move(),
-            filename: StringBuf::from_slice(filename)
+            filename: std::fs::PathBuf::from_path(filename)
         })
     }
 
