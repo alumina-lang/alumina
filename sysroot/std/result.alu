@@ -62,6 +62,14 @@ impl Result<T, E> {
         }
     }
 
+    fn unwrap_or_else<F: builtins::Callable<(), T>>(self: Result<T, E>, func: F) -> T {
+        if self.is_ok {
+            self.inner.ok
+        } else {
+            func()
+        }
+    }
+
     fn unwrap_err(self: Result<T, E>) -> E {
         if !self.is_ok {
             self.inner.err

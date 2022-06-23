@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::fs::{File, Path};
 use std::io::{Error, Readable, Writable};
 
 fn copy<S: Readable<S>, D: Writable<D>>(
@@ -19,7 +19,7 @@ fn copy<S: Readable<S>, D: Writable<D>>(
     dst.flush()
 }
 
-fn copy_file(src: &[u8], dst: &[u8]) -> Result<(), Error> {
+fn copy_file(src: Path, dst: Path) -> Result<(), Error> {
     let src = File::open(src)?;
     defer src.close();
 
@@ -34,7 +34,10 @@ fn copy_file(src: &[u8], dst: &[u8]) -> Result<(), Error> {
 fn main() -> i32 {
     use std::io::lines;
 
-    let ret = copy_file("/proc/mounts", "./mounts.txt");
+    let ret = copy_file(
+        Path::new("/proc/mounts"),
+        Path::new("./mounts.txt")
+    );
 
     if !ret.is_ok {
         eprintln!("failed: {}", ret.unwrap_err());

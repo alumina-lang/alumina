@@ -18,10 +18,14 @@ Non-exhaustive list of distinguishing features:
   - first-class 0-sized types (unit/void, function types, 0-sized arrays, structs with no fields, ...),
   - never type
 - Hygenic expression macros
-- Const evaluation (very limited at the moment)
 - Go-style defer expressions
 
 Alumina is heavily inspired by Rust, especially in terms of syntax and standard library API. Unlike Rust, however, Alumina is not memory-safe and it requires manual memory management.
+
+# Quick links
+
+- [Online compiler playground](https://play.alumina-lang.net)
+- [Library documentation](https://docs.alumina-lang.net)
 
 # Motivating example
 
@@ -107,9 +111,11 @@ Finished:
 - Codegen to C11
 - A reasonable chunk of standard library
     - collections (vector, hashmap, hashset)
+    - iterator combinators
     - string functions and formatting
     - spawning processes
     - standard, file and pipe I/O
+    - basic filesystem operations
     - TCP/IP sockets
     - random number generation
     - unit testing
