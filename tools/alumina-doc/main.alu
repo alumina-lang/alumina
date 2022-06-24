@@ -97,7 +97,7 @@ struct PageWriter<T: std::io::Writable<T>> {
 
 impl PageWriter<T: std::io::Writable<T>> {
     fn write_breadcrumbs(self: &PageWriter<T>, item: &Item, with_kind: bool) -> Result<()> {
-        let link_context = LinkContext::new(self.item_bag, &item.path);
+        let link_context = LinkContext::new(self.item_bag, &item.defined_in);
 
         if item.path.segments.empty() {
             wln!(self, "<h1>{}</h1>", item.kind);
@@ -279,8 +279,8 @@ impl PageWriter<T: std::io::Writable<T>> {
             wln!(self, "<ul>");
             
             for item in grp {
-                let link_context = LinkContext::new(self.item_bag, &item.path);
-                let link = link_context.link_for_item(item).unwrap();
+                let link_context = LinkContext::new(self.item_bag, &item.defined_in);
+                let link = link_context.link_for_item(item, false).unwrap();
                 wln!(self, "<li>");
                 wln!(self, "<a href=\"{}\">{}</a>", link, item.path.last().unwrap());
                 wln!(self, "</li>");
@@ -329,7 +329,7 @@ impl PageWriter<T: std::io::Writable<T>> {
                         for item in impl_grp {
                             let link_context = LinkContext::new(self.item_bag, &item.defined_in);
                             let name = item.path.last().unwrap();
-                            let link = link_context.link_for_item(item).unwrap();
+                            let link = link_context.link_for_item(item, false).unwrap();
                             
                             if item.cfg_index == 0 {
                                 wln!(self, "<div class=\"row\" id=\"item.{}\">", name);
@@ -500,7 +500,7 @@ fn write_index(items: &ItemBag) -> Result<()> {
     write!(&writer, "const index = [");
     for item in items.all().filter(|v: &Item| -> bool {  v.is_public() && v.kind.is_indexed() }) {
         let link_context = LinkContext::new(items, &item.path);
-        let link = link_context.link_for_item(item).unwrap();
+        let link = link_context.link_for_item(item, false).unwrap();
         let doc = clean_doc_comment(item.doc_comment.as_slice());
 
         writeln!(&writer, "[\"{}\",\"{}\",\"{}\"],", 

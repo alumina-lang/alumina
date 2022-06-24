@@ -528,11 +528,16 @@ impl LinkContext {
         }
     }
 
-    fn link_for_item(self: &LinkContext, item: &Item) -> Option<StringBuf> {
+    fn link_for_item(self: &LinkContext, item: &Item, defined_in: bool) -> Option<StringBuf> {
         use std::fmt::format;
         use std::string::join_fmt;
         
-        let path = item.path.clone();
+        let path = if defined_in {
+            item.defined_in.clone()
+        } else {
+            item.path.clone()
+        };
+
         defer path.free();
 
         let val = if item.kind.has_own_page() {
@@ -559,6 +564,6 @@ impl LinkContext {
         use std::option::try;
         
         let item = self.item_bag.resolve(self.path, path, true)?;
-        self.link_for_item(item)
+        self.link_for_item(item, true)
     }
 }
