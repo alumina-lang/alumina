@@ -1,5 +1,27 @@
 //! Panic support macros and functions
 
+/// Ungracefully terminate the process with an error message.
+///
+/// Use this macro to bail on conditions that the program cannot reasonably be expected to
+/// recover from (e.g. when a condition means a certain programming bug).
+///
+/// Since panics cannot be recovered from, prefer to use [structured error handling](std::result::Result) as 
+/// a general purpose failure handling mechanism.
+///
+/// When compiled in debug mode, `panic` prints the provided message along with the stack trace (on platforms
+/// that support it)
+///
+/// # Example
+/// ```
+/// let value = 42;
+/// switch value % 2 {
+///     0 => println!("even"),    
+///     1 => println!("odd"),    
+///     _ => panic!("{} is somehow neither odd nor even", value),    
+/// }
+/// ```
+/// 
+/// Expressions that panic have a [never type](std::builtins::never).
 macro panic($reason, $args...) {
     internal::panic_impl(
         concat!($reason), 

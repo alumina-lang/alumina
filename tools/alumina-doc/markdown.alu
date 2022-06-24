@@ -97,7 +97,7 @@ impl InlineMarkdown {
             "<a class=\"{}\" href=\"{}\">{}</a>", 
             class,
             link,
-            text 
+            HtmlEscaped::str(text)
         )?;
         
         self.state.link_url.clear();
@@ -107,6 +107,8 @@ impl InlineMarkdown {
     }
 
     fn fmt<F: Formatter<F>>(self: &InlineMarkdown, f: &mut F) -> Result {
+        use std::fmt::write;
+
         for ch in self.inner {
             switch self.state.kind {
                 State::Normal => switch ch {
@@ -116,7 +118,7 @@ impl InlineMarkdown {
                         self.state.kind = State::Code;
                     },
                     '[' => self.state.kind = State::LinkTitle,
-                    _ => f.write_char(ch)?,
+                    _ => write!(f, "{}", HtmlEscaped::char(&ch))?,
                 },
                 State::MaybeItalic => switch ch {
                     '*' => {
@@ -126,7 +128,7 @@ impl InlineMarkdown {
                     _ => {
                         self.state.kind = State::Italic;
                         write!(f, "<i>")?;
-                        f.write_char(ch)?;
+                        write!(f, "{}", HtmlEscaped::char(&ch))?;
                     }
                 },
                 State::Italic => switch ch {
@@ -134,14 +136,14 @@ impl InlineMarkdown {
                         write!(f, "</i>")?;
                         self.state.kind = State::Normal;
                     },
-                    _ => f.write_char(ch)?,
+                    _ => write!(f, "{}", HtmlEscaped::char(&ch))?,
                 },
                 State::Bold => switch ch {
                     '*' => {
                         write!(f, "</b>")?;
                         self.state.kind = State::BoldEnd;
                     },
-                    _ => f.write_char(ch)?,
+                    _ => write!(f, "{}", HtmlEscaped::char(&ch))?,
                 },
                 State::BoldEnd => switch ch {
                     '*' => {
@@ -154,7 +156,7 @@ impl InlineMarkdown {
                         write!(f, "</code>")?;
                         self.state.kind = State::Normal;
                     },
-                    _ => f.write_char(ch)?,
+                    _ => write!(f, "{}", HtmlEscaped::char(&ch))?,
                 },
                 State::LinkTitle => switch ch {
                     ']' => self.state.kind = State::LinkUrlStart,
@@ -164,7 +166,7 @@ impl InlineMarkdown {
                     '(' => self.state.kind = State::LinkUrl,
                     _ => {
                         self.write_link(f)?;
-                        f.write_char(ch)?;
+                        write!(f, "{}", HtmlEscaped::char(&ch))?;
                         self.state.kind = State::Normal;
                     },
                 },
@@ -182,6 +184,32 @@ impl InlineMarkdown {
     }
 }
 
+struct HtmlEscaped {
+    inner: &[u8]
+}
+
+impl HtmlEscaped {
+    fn str(inner: &[u8]) -> HtmlEscaped {
+        HtmlEscaped { inner: inner }
+    }
+
+    fn char(inner: &u8) -> HtmlEscaped {
+        HtmlEscaped { inner: std::mem::slice::from_raw(inner, 1) }
+    }
+
+    fn fmt<F: Formatter<F>>(self: &HtmlEscaped, f: &mut F) -> Result {
+        for ch in self.inner {
+            switch ch {
+                '&' => f.write_str("&amp;")?,
+                '<' => f.write_str("&lt;")?,
+                '>' => f.write_str("&gt;")?,
+                _ => f.write_char(ch)?
+            }
+        }
+
+        Result::ok(())
+    }
+}
 
 /// A mini-markdown subset parser
 fn write_docstring<T: std::io::Writable<T>>(
@@ -194,6 +222,22 @@ fn write_docstring<T: std::io::Writable<T>>(
         return Result::ok(());
     }
 
+    // Redirects
+    if doc_comment.starts_with("/// @") {
+        let path = Path::from_str(doc_comment.trim_prefix("/// @").trim());
+        defer path.free();
+
+        let item = link_context.item_bag.resolve(link_context.path, &path, true).unwrap();
+        let link_context = LinkContext::new(link_context.item_bag, &item.defined_in);
+
+        return write_docstring(
+            writer,
+            item.doc_comment.as_slice(),
+            tagline_only,
+            &link_context    
+        );
+    }
+
     if !tagline_only {
         writeln!(writer, "<p>");
     }
@@ -204,9 +248,9 @@ fn write_docstring<T: std::io::Writable<T>>(
 
     for i in doc_comment.split("\n") {
         let docline =  if i.starts_with("///") {
-            i.trim_prefix("///")
+            i.trim_prefix("///").trim_prefix(" ")
         } else {
-            i.trim_prefix("//!")
+            i.trim_prefix("//!").trim_prefix(" ")
         };
 
         if docline.trim() == "```" {
@@ -268,7 +312,7 @@ fn write_docstring<T: std::io::Writable<T>>(
                 ));
             }
         } else {
-            writeln!(writer, "{}", docline);
+            writeln!(writer, "{}", HtmlEscaped::str(docline));
         }
     }
 

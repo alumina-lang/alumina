@@ -65,6 +65,8 @@ def test_examples(source_file, snapshot):
             COMPILER_PATH,
             "--sysroot",
             "../../sysroot",
+            "--cfg",
+            "no_backtrace",
             "--output",
             os.path.join(BUILD_DIR, f"{output}.c"),
             f"example={example}",

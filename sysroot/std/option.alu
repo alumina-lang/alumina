@@ -1,5 +1,32 @@
 //! Optional values
 
+/// Extract the value or short-circuit the calling function.
+///
+/// When expression is suffixed with `?`, this is de-sugared to an invocation of `try` macro on the 
+/// expression. 
+///
+/// Expands to the following expression
+/// ```
+/// if $.is_some {
+///     $.inner
+/// } else {
+///     return Option::none()
+/// }
+/// ```
+///
+/// See also [std::result::try] for [std::result::Result].
+///
+/// # Example
+/// ```
+/// fn maybe_sum(maybe_a: Option<i32>, maybe_b: Option<i32>) -> Option<i32> {
+///     use std::option::try;
+/// 
+///     let a = maybe_a?; // `return Option::none()` when `a` is empty.
+///     let b = maybe_b?; // `return Option::none()` when `a` is empty.
+/// 
+///     Option::some(a + b)
+/// }
+/// ```
 macro try($opt) {
     let opt = $opt;
     if opt.is_some {
@@ -9,12 +36,29 @@ macro try($opt) {
     }
 }
 
+/// Optional value
+///
+/// Optional values can either contain a value or they can be empty
+/// # Example
+/// ```
+/// fn divide(a: i32, b: i32) -> Option<i32> {
+///     if b == 0 {
+///         Option::none()
+///     } else {
+///         Option::some(a / b)
+///     }
+/// }
+///
+/// assert_eq!(divide(10, 5), Option::some(2));
+/// assert_eq!(divide(10, 0), Option::none());
+/// ```
 struct Option<T> {
     is_some: bool,
     inner: T
 }
 
 impl Option<T> {
+    /// Create a populated `Option` value
     #[force_inline]
     fn some(inner: T) -> Option<T> {
         Option::<T> {
@@ -23,6 +67,7 @@ impl Option<T> {
         }
     }
 
+    /// Create an empty `Option` value
     #[force_inline]
     fn none() -> Option<T> {
         Option::<T> {
@@ -31,6 +76,9 @@ impl Option<T> {
         }
     }
 
+    /// Convert the option into a [std::result::Result]
+    ///
+    /// If the option is empty, the `err` value will be used for the error variant.
     fn as_result<E>(self: Option<T>, err: E) -> result::Result<T, E> {
         if self.is_some {
             result::Result::ok(self.inner)
@@ -39,6 +87,7 @@ impl Option<T> {
         }
     }
 
+    /// Returns a value, if present, panic otherwise. 
     fn unwrap(self: Option<T>) -> T {
         if self.is_some {
             self.inner
@@ -47,6 +96,7 @@ impl Option<T> {
         }
     }
 
+    /// Returns a value, if present, otherwise return a default value.
     fn unwrap_or(self: Option<T>, val: T) -> T {
         if self.is_some {
             self.inner
@@ -55,6 +105,7 @@ impl Option<T> {
         }
     }
 
+    /// Returns a value, if present, otherwise invoke func to get the default.
     fn unwrap_or_else<F: builtins::Callable<(), T>>(self: Option<T>, func: F) -> T {
         if self.is_some {
             self.inner
@@ -63,6 +114,18 @@ impl Option<T> {
         }
     }
 
+    /// Transform the value inside the `Option` by calling the provided function.
+    ///
+    /// If the value is none, function is not called.
+    ///
+    /// # Example
+    /// ```
+    /// let a = Option::some(42).map(|v: i32| -> i32 { i + 1 });
+    /// let b = Option::none::<i32>().map(|v: i32| -> i32 { i + 1 });
+    /// 
+    /// assert_eq!(a, Option::some(43));
+    /// assert_eq!(b, Option::none());
+    /// ```
     fn map<Tm, F: builtins::Callable<(T), Tm>>(self: Option<T>, func: F) -> Option<Tm> {
         if self.is_some {
             Option::some(func(self.inner))
@@ -71,6 +134,23 @@ impl Option<T> {
         }
     }
 
+    /// Transform the value inside the `Option` by calling the provided function.
+    ///
+    /// If the value is none, function is not called.
+    ///
+    /// # Example
+    /// ```
+    /// let a = Option::some(42)
+    ///     .and_then(|v: i32| -> Option<i32> { 
+    ///         if v == 0 {
+    ///             Option::none()
+    ///         } else {
+    ///             Option::some(v + 1)
+    ///         }
+    ///     });
+    /// 
+    /// assert_eq!(a, Option::some(43));
+    /// ```
     fn and_then<Tm, F: builtins::Callable<(T), Option<Tm>>>(self: Option<T>, func: F) -> Option<Tm> {
         if self.is_some {
             func(self.inner)
@@ -79,6 +159,7 @@ impl Option<T> {
         }
     }
 
+    /// If `self` is populated, return it, otherwise return `other`
     fn or(self: Option<T>, other: Option<T>) -> Option<T> {
         if self.is_some {
             self
@@ -105,6 +186,7 @@ impl Option {
     use std::fmt::{write, Formatter, Formattable};
     use std::mem::{Freeable, Movable};
     
+    /// Convert `Option<Result<T, E>>` to `Result<Option<T>, E>`
     fn transpose<T, E>(self: Option<Result<T, E>>) -> Result<Option<T>, E> {
         if self.is_some {
             if self.inner.is_ok {

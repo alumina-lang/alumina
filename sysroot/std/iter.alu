@@ -6,14 +6,27 @@ use builtins::Callable;
 
 #[lang(proto_iterator)]
 protocol Iterator<Self, T> {
+    /// Returns the next item, if any.
+    ///
+    /// If the iterator has reached the end, it returns none.
     fn next(self: &mut Self) -> Option<T>;
     
+    /// Returns the number of remaining elements, if available.
+    ///
+    /// This is used for efficiently pre-allocating storage in collections 
+    /// that are created from iterators to avoid copies.
+    ///
+    /// It the number of remaining elements is unknown, the method should 
+    /// return `Option::none()`.
     fn size_hint(self: &Self) -> Option<usize> {
         Option::none()
     }
 }
 
 protocol DoubleEndedIterator<Self: Iterator<Self, T>, T> {
+    /// Returns the next item from the back, if any.
+    ///
+    /// If the iterator has reached the beginning, it returns none.
     fn next_back(self: &mut Self) -> Option<T>;
 }
 
@@ -64,10 +77,12 @@ struct MapIterator<It: Iterator<It, T>, F: Callable<(T), U>, T, U> {
 }
 
 impl MapIterator<It: Iterator<It, T>, F: Callable<(T), U>, T, U> {
+    /// @ Iterator::next
     fn next(self: &mut MapIterator<It, F, T, U>) -> Option<U> {
-        self.it.next().map(|=self, x: T| -> U { self.fun(x) })
+        self.it.next().map(self.fun)
     }
 
+    /// @ Iterator::size_hint
     fn size_hint(self: &MapIterator<It, F, T, U>) -> Option<usize> {
         self.it.size_hint()
     }
@@ -77,8 +92,9 @@ impl MapIterator<It: Iterator<It, T>, F: Callable<(T), U>, T, U> {
 }
 
 impl MapIterator<It: DoubleEndedIterator<It, T>, F: Callable<(T), U>, T, U> {
+    /// @ DoubleEndedIterator::next_back
     fn next_back(self: &mut MapIterator<It, F, T, U>) -> Option<U> {
-        self.it.next_back().map(|=self, x: T| -> U { self.fun(x) })
+        self.it.next_back().map(self.fun)
     }
 
     mixin DoubleEndedIterator<MapIterator<It, F, T, U>, U>;
@@ -91,6 +107,7 @@ struct TakeWhileIterator<It: Iterator<It, T>, F: Callable<(T), bool>, T> {
 }
 
 impl TakeWhileIterator<It: Iterator<It, T>, F: Callable<(T), bool>, T> {
+    /// @ Iterator::next
     fn next(self: &mut TakeWhileIterator<It, F, T>) -> Option<T> {
         self.it.next().and_then(|=self, x: T| -> Option<T> {
             if self.fun(x) {
@@ -112,6 +129,7 @@ struct SkipWhileIterator<It: Iterator<It, T>, F: Callable<(T), bool>, T> {
 }
 
 impl SkipWhileIterator<It: Iterator<It, T>, F: Callable<(T), bool>, T> {
+    /// @ Iterator::next
     fn next(self: &mut SkipWhileIterator<It, F, T>) -> Option<T> {
         loop {
             let v = self.it.next();
@@ -136,6 +154,7 @@ struct FilterMapIterator<It: Iterator<It, T>, F: Callable<(T), Option<U>>, T, U>
 }
 
 impl FilterMapIterator<It: Iterator<It, T>, F: Callable<(T), Option<U>>, T, U> {
+    /// @ Iterator::next
     fn next(self: &mut FilterMapIterator<It, F, T, U>) -> Option<U> {
         use option::try;
 
@@ -159,6 +178,7 @@ struct FilterIterator<It: Iterator<It, T>, F: Callable<(T), bool>, T> {
 }
 
 impl FilterIterator<It: Iterator<It, T>, F: Callable<(T), bool>, T> {
+    /// @ Iterator::next
     fn next(self: &mut FilterIterator<It, F, T>) -> Option<T> {
         use option::try;
 
@@ -196,6 +216,7 @@ struct SkipIterator<It: Iterator<It, T>, T> {
 }
 
 impl SkipIterator<It: Iterator<It, T>, T> {
+    /// @ Iterator::next
     fn next(self: &mut SkipIterator<It, T>) -> Option<T> {
         while self.n > 0 {
             self.n -= 1;
@@ -228,6 +249,7 @@ struct StepByIterator<It: Iterator<It, T>, T> {
 }
 
 impl StepByIterator<It: Iterator<It, T>, T> {
+    /// @ Iterator::next
     fn next(self: &mut StepByIterator<It, T>) -> Option<T> {
         use option::try;
         loop {
@@ -257,6 +279,7 @@ struct FusedIterator<It: Iterator<It, T>, T> {
 }
 
 impl FusedIterator<It: Iterator<It, T>, T> {
+    /// @ Iterator::next
     fn next(self: &mut FusedIterator<It, T>) -> Option<T> {
         if self.done {
             Option::none()
@@ -300,6 +323,7 @@ struct TakeIterator<It: Iterator<It, T>, T> {
 }
 
 impl TakeIterator<It: Iterator<It, T>, T> {
+    /// @ Iterator::next
     fn next(self: &mut TakeIterator<It, T>) -> Option<T> {
         if self.n == 0 {
             return Option::none();
@@ -311,7 +335,7 @@ impl TakeIterator<It: Iterator<It, T>, T> {
 
     fn size_hint(self: &TakeIterator<It, T>) -> Option<usize> {
         self.it.size_hint().map(|=self, v: usize| -> usize {
-            math::min(v, self.n)
+            cmp::min(v, self.n)
         })
     }
 
@@ -325,6 +349,7 @@ struct EnumerateIterator<It: Iterator<It, T>, T> {
 }
 
 impl EnumerateIterator<It: Iterator<It, T>, T> {
+    /// @ Iterator::next
     fn next(self: &mut EnumerateIterator<It, T>) -> Option<(usize, T)> {
         use option::try;
         
@@ -348,6 +373,7 @@ struct ChainIterator<It1: Iterator<It1, T>, It2: Iterator<It2, T>, T> {
 }
 
 impl ChainIterator<It1: Iterator<It1, T>, It2: Iterator<It2, T>, T> {
+    /// @ Iterator::next
     fn next(self: &mut ChainIterator<It1, It2, T>) -> Option<T> {
         let v = self.it1.next();
         if v.is_some {
@@ -392,6 +418,7 @@ struct InspectIterator<It: Iterator<It, T>, F: Callable<(T), ()>, T> {
 }
 
 impl InspectIterator<It: Iterator<It, T>, F: Callable<(T), ()>, T> {
+    /// @ Iterator::next
     fn next(self: &mut InspectIterator<It, F, T>) -> Option<T> {
         let v = self.it.next();
         if v.is_some {
@@ -414,6 +441,7 @@ struct Grouping<It: Iterator<It, T>, F: Callable<(T), K>, T, K: cmp::Equatable<K
 }
 
 impl Grouping<It: Iterator<It, T>, F: Callable<(T), K>, T, K: cmp::Equatable<K>> {
+    /// @ Iterator::next
     fn next(self: &mut Grouping<It, F, T, K>) -> Option<T> {
         use option::try;
 
@@ -442,6 +470,7 @@ struct GroupByIterator<It: Iterator<It, T>, F: Callable<(T), K>, T, K: cmp::Equa
 }
 
 impl GroupByIterator<It: Iterator<It, T>, F: Callable<(T), K>, T, K: cmp::Equatable<K>> {
+    /// @ Iterator::next
     fn next(self: &mut GroupByIterator<It, F, T, K>) -> Option<Grouping<It, F, T, K>> {
         let needs_drain = self.last_group.move();
         if needs_drain.is_some {
@@ -473,6 +502,7 @@ struct PeekableIterator<It: Iterator<It, T>, T> {
 }
 
 impl PeekableIterator<It: Iterator<It, T>, T> {
+    /// @ Iterator::next
     fn next(self: &mut PeekableIterator<It, T>) -> Option<T> {
         if self.peeked.is_some {
             self.peeked.move()
@@ -698,6 +728,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
 struct EmptyIterator<T> {}
 
 impl EmptyIterator<T> {
+    /// @ Iterator::next
     fn next(self: &mut EmptyIterator<T>) -> Option<T> {
         Option::none()
     }
@@ -715,6 +746,7 @@ struct FromFnIterator<F: Callable<(), Option<T>>, T> {
 }
 
 impl FromFnIterator<F: Callable<(), Option<T>>, T> {
+    /// @ Iterator::next
     fn next(self: &mut FromFnIterator<F, T>) -> Option<T> {
         self.func()
     }
@@ -744,6 +776,7 @@ struct RepeatIterator<T> {
 }
 
 impl RepeatIterator<T> {
+    /// @ Iterator::next
     fn next(self: &mut RepeatIterator<T>) -> Option<T> {
         Option::some(self.value)
     }
@@ -780,6 +813,7 @@ struct OnceIterator<T> {
 }
 
 impl OnceIterator<T> {
+    /// @ Iterator::next
     fn next(self: &mut OnceIterator<T>) -> Option<T> {
         self.value.next()
     }
@@ -929,6 +963,7 @@ struct RangeIter<T: Integer> {
 }
 
 impl RangeIter<T: Integer> {
+    /// @ Iterator::next
     #[force_inline]
     fn next(self: &mut RangeIter<T>) -> Option<T> {
         if self.current < self.upper {

@@ -129,8 +129,7 @@ impl UseClauseVisitor {
         UseClauseVisitor {
             parse_context: self.parse_context,
             path: self.path.move(),
-            items: self.items,
-            index: self.index
+            items: self.items
         }
     }
 
@@ -139,14 +138,25 @@ impl UseClauseVisitor {
 }
     
 
+macro check_cfg($self, $node) {
+    let has_cfg = $self.has_cfg;
+
+    let child = child_by!($node, FieldKind::Attributes);
+    if child.is_some {
+        $self.visit(child.inner)?;
+    }
+
+    defer { $self.has_cfg = has_cfg; } 
+}
+
 struct TopLevelVisitor {
     path: Path,
     parse_context: &ParseContext,
     items: &mut ItemBag,
     doc_comment: StringBuf,
     file_doc_comment: StringBuf,
-    in_a_container: bool,
-    index: usize
+    container: Option<Node>,
+    has_cfg: bool
 }
 
 impl TopLevelVisitor {
@@ -157,8 +167,8 @@ impl TopLevelVisitor {
             items: items,
             doc_comment: StringBuf::new(),
             file_doc_comment: StringBuf::new(),
-            in_a_container: false,
-            index: 1
+            container: Option::none(),
+            has_cfg: false,
         }
     }
 
@@ -175,22 +185,43 @@ impl TopLevelVisitor {
             items: self.items,
             doc_comment: self.doc_comment.move(),
             file_doc_comment: self.file_doc_comment.move(),
-            index: self.index
+            container: self.container
         }
     }
     
     fn add_item(self: &mut TopLevelVisitor, kind: ItemKind, name: &[u8], node: Node) {
+        let path = self.path.extend_with(name);
+        defer path.free();
+
+        let cfg_index = self.items
+            .get(&path)
+            .map(|i: &Item| -> usize { i.cfg_index + 1 })
+            .unwrap_or(0);
+        
         self.items.add_item(Item {
             kind: kind,
-            path: self.path.extend_with(name),
-            defined_in: self.path.extend_with(name),
+            path: path.clone(),
+            defined_in: path.move(),
             node: node,
+            cfg_index: cfg_index,
             parse_context: self.parse_context,
             doc_comment: self.doc_comment.move(),
-            index: self.index,
+            group_node: self.container,
+            has_cfg: self.has_cfg,
         });
+    }
 
-        self.index += 1;
+    fn visit_attributes(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.visit_children(node)
+    }
+
+    fn visit_attribute_item(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        
+        if get_name!(self, child_by!(node, FieldKind::Inner).unwrap()) == "cfg" {
+            self.has_cfg = true;
+        }
+
+        Result::ok(())
     }
 
     fn visit_source_file(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
@@ -198,11 +229,13 @@ impl TopLevelVisitor {
     }
 
     fn visit_top_level_block(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        check_cfg!(self, node);
+
         self.visit_children_by_field(node, FieldKind::Items)
     }
 
     fn visit_function_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
-        let kind = if self.in_a_container {
+        let kind = if self.container.is_some {
             ItemKind::Method
         } else {
             ItemKind::Function
@@ -213,6 +246,8 @@ impl TopLevelVisitor {
     } 
 
     fn visit_enum_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        check_cfg!(self, node);
+
         let name = get_name!(self, node);
         self.add_item(ItemKind::Enum, name, node);
         self.path.push(name);
@@ -223,26 +258,35 @@ impl TopLevelVisitor {
     } 
 
     fn visit_const_declaration(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        check_cfg!(self, node);
+
         self.add_item(ItemKind::Const, get_name!(self, node), node);
         Result::ok(())
     } 
 
     fn visit_enum_item(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        check_cfg!(self, node);
+
         self.add_item(ItemKind::Variant, get_name!(self, node), node);
         Result::ok(())
     } 
 
     fn visit_type_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        check_cfg!(self, node);
+
         self.add_item(ItemKind::TypeDef, get_name!(self, node), node);
         Result::ok(())
     } 
 
     fn visit_macro_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        check_cfg!(self, node);
+
         self.add_item(ItemKind::Macro, get_name!(self, node), node);
         Result::ok(())
     }
 
     fn visit_mod_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        check_cfg!(self, node);
         let name = child_by!(node, FieldKind::Name).unwrap().text(self.parse_context.source());
 
         self.add_item(ItemKind::Module, name, node);
@@ -276,52 +320,58 @@ impl TopLevelVisitor {
     }
 
     fn visit_static_declaration(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        check_cfg!(self, node);
         self.add_item(ItemKind::Static, get_name!(self, node), node);
         Result::ok(())
     }
 
     fn visit_struct_field(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        check_cfg!(self, node);
         self.add_item(ItemKind::Field, get_name!(self, node), node);
         Result::ok(())
     }
 
     fn visit_mixin(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        check_cfg!(self, node);
         self.add_item(ItemKind::Mixin, "<mixin>", node);
         Result::ok(())
     }
 
     fn visit_impl_block(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        check_cfg!(self, node);
         let name = child_by!(node, FieldKind::Name).unwrap().text(self.parse_context.source());
                 
         self.path.push(name);
         defer self.path.pop();
 
-        let in_a_container = self.in_a_container;
+        let container = self.container;
         
-        self.in_a_container = true;
+        self.container = Option::some(node);
         self.visit_children_by_field(node, FieldKind::Body)?;
-        self.in_a_container = in_a_container;
+        self.container = container;
 
         Result::ok(())
     }
     
     fn visit_protocol_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        check_cfg!(self, node);
         let name = child_by!(node, FieldKind::Name).unwrap().text(self.parse_context.source());
         self.add_item(ItemKind::Protocol, name, node);
 
         self.path.push(name);
         defer self.path.pop();
 
-        let in_a_container = self.in_a_container;
+        let container = self.container;
         
-        self.in_a_container = true;
+        self.container = Option::some(node);
         self.visit_children_by_field(node, FieldKind::Body)?;
-        self.in_a_container = in_a_container;
+        self.container = container;
 
         Result::ok(())
     }
 
     fn visit_use_declaration(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        check_cfg!(self, node);
         let visitor = UseClauseVisitor::new(self.parse_context, &self.path, self.items);
         defer visitor.free();
 
@@ -654,6 +704,18 @@ impl CodePrinter<W: Writable<W>> {
             .text(self.parse_context.source());      
 
         w!(self.writer, "<span class=\"keyword\">{}</span> <span class=\"identifier-type\">{}</span>", kind_text, get_name!(self, node));
+        
+        child_by!(node, FieldKind::TypeArguments)
+            .map(|=self, node: Node| -> Result<()> { self.visit(node) })
+            .transpose()?
+
+        w!(self.writer, " {{ ... }}");
+    
+        Result::ok(())
+    }
+
+    fn visit_impl_block(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
+        w!(self.writer, "<span class=\"keyword\">impl</span> <span class=\"identifier-type\">{}</span>", get_name!(self, node));
         
         child_by!(node, FieldKind::TypeArguments)
             .map(|=self, node: Node| -> Result<()> { self.visit(node) })

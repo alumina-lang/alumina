@@ -1,6 +1,6 @@
 //! String formatting
 
-type Result = ::Result<(), Error>;
+type Result = std::result::Result<(), Error>;
 
 /// Error that can occur during a string formatting operation.
 ///
@@ -14,6 +14,7 @@ impl Error {
         Error {}
     }
 
+    /// @ Formattable::fmt
     fn fmt<F: Formatter<F>>(self: &Error, f: &mut F) -> Result {
         f.write_str("error occurred during formatting")
     }
@@ -23,9 +24,13 @@ impl Error {
     }
 }
 
-
+/// A sink for string formatting operations
+///
+/// 
 protocol Formatter<Self> {
+    /// Write a string
     fn write_str(self: &mut Self, buf: &[u8]) -> Result;
+    /// Write a single character
     fn write_char(self: &mut Self, byte: u8) -> Result {
         self.write_str(mem::slice::from_raw(&byte, 1))
     }
@@ -33,6 +38,9 @@ protocol Formatter<Self> {
 
 /// Types that can be formatted.
 protocol Formattable<Self, F: Formatter<F> = internal::NullFormatter> {
+    /// Write the object into a given formatter. 
+    ///
+    /// See [Formattable] for details.
     fn fmt(self: &Self, f: &mut F) -> Result;
 }
 
@@ -111,6 +119,7 @@ macro format_in($buf, $fmt_str, $arg...) {
     }
 }
 
+/// Formatter that writes into a string slice.
 struct SliceFormatter {
     buf: &mut [u8],
     buf_pos: usize
@@ -124,6 +133,7 @@ impl SliceFormatter {
         }
     }
 
+    /// @ Formatter::write_str
     #[inline]
     fn write_str(self: &mut SliceFormatter, buf: &[u8]) -> Result {
         use mem::copy;
@@ -136,6 +146,7 @@ impl SliceFormatter {
         Result::ok(())
     }
 
+    /// @ Formatter::write_char
     #[inline]
     fn write_char(self: &mut SliceFormatter, byte: u8) -> Result {
         if self.buf_pos >= self.buf.len {
@@ -147,6 +158,7 @@ impl SliceFormatter {
         Result::ok(())
     }
 
+    /// Get the resulting string
     #[inline]
     fn get(self: &SliceFormatter) -> &[u8] {
         self.buf[..self.buf_pos]
@@ -417,18 +429,50 @@ mod internal {
     }
 }
 
+/// Write value as a hexadecimal number
+///
+/// # Example
+/// ```
+/// use std::fmt::hex;
+/// 
+/// println!("{}", 42.hex()); // prints '2a'
+/// ```
 fn hex<T: builtins::Integer>(val: T) -> internal::NumFormatAdapter<T> {
     internal::NumFormatAdapter { radix: 16, _pad: 0, value: val }
 }
 
+/// Write value as a binary number
+///
+/// # Example
+/// ```
+/// use std::fmt::bin;
+/// 
+/// println!("{}", 42.bin()); // prints '101010'
+/// ```
 fn bin<T: builtins::Integer>(val: T) -> internal::NumFormatAdapter<T> {
     internal::NumFormatAdapter { radix: 2, _pad: 0, value: val }
 }
 
+/// Write value as an octal number
+///
+/// # Example
+/// ```
+/// use std::fmt::oct;
+/// 
+/// println!("{}", 42.oct()); // prints '52'
+/// ```
 fn oct<T: builtins::Integer>(val: T) -> internal::NumFormatAdapter<T> {
     internal::NumFormatAdapter { radix: 8, _pad: 0, value: val }
 }
 
+/// Pads number with zeros on the left.
+///
+/// # Example
+/// ```
+/// use std::fmt::zero_pad;
+/// 
+/// println!("{}", 42.zero_pad(5)); // prints '00042'
+/// ```
 fn zero_pad<T: builtins::Integer>(val: T, pad: usize) -> internal::NumFormatAdapter<T> {
     internal::NumFormatAdapter { radix: 10, _pad: pad, value: val }
 }
@@ -437,10 +481,26 @@ fn precision<T: builtins::FloatingPoint>(val: T, prec: u16) -> internal::FloatFo
     internal::FloatFormatAdapter { precision: prec, value: val }
 }
 
+/// Repeats value `times` times.
+///
+/// # Example
+/// ```
+/// use std::fmt::repeat;
+/// 
+/// println!("{}", "ha".repeat(3)); // prints 'hahaha'
+/// ```
 fn repeat<T: Formattable<T>>(inner: T, times: usize) -> internal::RepeatAdapter<T> {
     internal::RepeatAdapter { times: times, inner: inner }
 }
 
+/// Pads arbitrary formattable value on the left with a specified character.
+///
+/// # Example
+/// ```
+/// use std::fmt::pad_with;
+/// 
+/// println!("{}", "ha".pad_with(5, ' ')); // prints '   ha'
+/// ```
 fn pad_with<T: Formattable<T>>(val: T, len: usize, pad: u8) -> internal::GenericPadAdapter<T> {
     internal::GenericPadAdapter { len: len, pad: pad, inner: val }
 }

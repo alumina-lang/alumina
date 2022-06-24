@@ -153,7 +153,7 @@ enum SeekFrom {
     End
 }
 
-/// Streams that can be 
+/// Streams that can be fast-forwarded or rewound to an arbitrary offset.
 protocol Seekable<Self> {
     fn seek(self: &mut Self, whence: SeekFrom, offset: i64) -> Result<u64, Error>;
     fn rewind(self: &mut Self) -> Result<(), Error> {
@@ -167,6 +167,7 @@ protocol Seekable<Self> {
     }
 }
 
+/// A readable stream backed by an in-memory string slice.
 struct SliceReader {
     slice: &[u8],
     pos: usize
@@ -183,7 +184,7 @@ impl SliceReader {
     }
 
     fn read(self: &mut SliceReader, buf: &mut [u8]) -> Result<usize, Error> {
-        let len = math::min(buf.len, self.slice.len - self.pos);
+        let len = cmp::min(buf.len, self.slice.len - self.pos);
         
         if len > 0 {
             self.slice[self.pos..self.pos + len].copy_nonoverlapping(&buf[0]);
@@ -198,7 +199,7 @@ impl SliceReader {
     }
 
     fn consume(self: &mut SliceReader, amount: usize) {
-        self.pos = math::min(self.pos + amount, self.slice.len);
+        self.pos = cmp::min(self.pos + amount, self.slice.len);
     }
 
     fn seek(self: &mut SliceReader, whence: SeekFrom, offset: i64) -> Result<u64, Error> {
@@ -226,6 +227,7 @@ impl SliceReader {
     mixin BufferedReadable<SliceReader>;
 }
 
+/// A writable stream backed by [std::string::StringBuf].
 struct StringWriter {
     string: &mut string::StringBuf,
 }
@@ -249,11 +251,16 @@ impl StringWriter {
     mixin Writable<StringWriter>;
 }
 
+/// Streams that have an internal buffer.
+///
+/// Streams implementing this protocol enables them to be used by method such as [read_until],
+/// which is aware of the internal buffer.
 protocol BufferedReadable<Self: Readable<Self>> {
     fn fill_buffer(self: &mut Self) -> Result<&[u8], Error>;
     fn consume(self: &mut Self, amount: usize)
 }
 
+/// A buffered wrapper over an underlying stream.
 struct BufferedReader<R: Readable<R>> {
     inner: &mut R,
     buf: &mut [u8],
@@ -291,13 +298,13 @@ impl BufferedReader<R: Readable<R>> {
     }
 
     fn consume(self: &mut BufferedReader<R>, amount: usize) {
-        self.pos = math::min(self.pos + amount, self.cap);
+        self.pos = cmp::min(self.pos + amount, self.cap);
     }
 
     fn read(self: &mut BufferedReader<R>, buf: &mut [u8]) -> Result<usize, Error> {
         let slice = self.fill_buffer()?;
 
-        let nread = math::min(buf.len, slice.len);
+        let nread = cmp::min(buf.len, slice.len);
         if nread > 0 {
             slice[..nread].copy_nonoverlapping(&buf[0]);
             self.consume(nread);
@@ -355,6 +362,7 @@ impl BufferedReader<R: Seekable<R>> {
     mixin Seekable<BufferedReader<R>>;
 }
 
+/// A buffered wrapper over an underlying writable stream.
 struct BufferedWriter<W: Writable<W>> {
     buf: &mut [u8],
     pos: usize,
@@ -482,6 +490,10 @@ impl BufferedWriter<W: Writable<W>> {
 const DEFAULT_BUFFER_SIZE: usize = 8192;
 
 // Extension methods
+
+/// Copy the entire stream `src` into `dst`
+///
+/// Internally allocates a buffer with the size of [DEFAULT_BUFFER_SIZE].
 fn copy<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D) -> result::Result<u64, Error> {
     let buf = mem::alloc::<u8>(DEFAULT_BUFFER_SIZE);
     defer mem::free(buf);
@@ -489,6 +501,7 @@ fn copy<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D) -> result::Res
     copy_using(src, dst, buf)
 }
 
+/// Copy the entire stream `src` into `dst` using a provided buffer.
 fn copy_using<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D, buffer: &mut [u8]) -> result::Result<u64, Error> {
     let read = 0u64;
     loop {
@@ -503,6 +516,9 @@ fn copy_using<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D, buffer: 
     Result::ok(read)
 }    
 
+/// Reads a single byte from the stream. 
+///
+/// Returns `Error::eof` if the stream has no bytes left.
 fn read_byte<R: Readable<R>>(reader: &mut R) -> result::Result<u8, Error> {
     let buf: [u8; 1];
     reader.read_exact(&buf)?;
@@ -510,6 +526,9 @@ fn read_byte<R: Readable<R>>(reader: &mut R) -> result::Result<u8, Error> {
     Result::ok(buf[0])
 }
 
+/// Reads the stream into `buf` until a specific byte is encountered.
+///
+/// The `delim` terminator is included.
 fn read_until<R: BufferedReadable<R>>(r: &mut R, delim: u8, buf: &mut string::StringBuf) -> result::Result<usize, Error> {
     use string::find_char;
 

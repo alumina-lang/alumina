@@ -75,14 +75,14 @@ impl Processor {
 
         self.items.add_item(Item {
             kind: ItemKind::Module,
-            
+            has_cfg: false,
             defined_in: path.clone(),
             path: path.move(),
-
+            cfg_index: 0,
             node: parse_context.root_node(),
             parse_context: parse_context,
+            group_node: Option::none(),
             doc_comment: visitor.file_doc_comment.move(),
-            index: 0
         });
 
         Result::ok(())
@@ -132,12 +132,19 @@ impl PageWriter<T: std::io::Writable<T>> {
         
         if !top_level {
             let name = item.path.last().unwrap();
-            wln!(self, "<div class=\"signature\" id=\"item.{}\">", name);
+            if item.cfg_index == 0 {
+                wln!(self, "<div class=\"signature\" id=\"item.{}\">", name);
+            } else {
+                wln!(self, "<div class=\"signature\" id=\"item.{}.{}\">", name, item.cfg_index);
+            }
         } else {
             wln!(self, "<div class=\"signature\">");
         }
-
+        
         wln!(self, "{}", if top_level { "<h3>" } else { "<h4>" });
+        if item.has_cfg {
+            wln!(self, "<span class=\"badge\">#[cfg]</span>");
+        }
         let printer = CodePrinter::new(item.parse_context, &link_context, self.writer);
         printer.visit(item.node);
         
@@ -163,7 +170,7 @@ impl PageWriter<T: std::io::Writable<T>> {
         
         wln!(self, "{}", if top_level { "</h3>" } else { "</h4>" });
         if item.kind.show_source_link() {
-            let file = item.parse_context.filename.as_path().strip_prefix(std::fs::Path::new("./"));
+            let file = item.parse_context.filename.as_path().strip_prefix(std::fs::Path::new("./")).unwrap();
             let start = item.node.start_point();
             let end = item.node.end_point();
             wln!(self, "<div class=\"source-link\">");
@@ -178,6 +185,49 @@ impl PageWriter<T: std::io::Writable<T>> {
         }
         wln!(self, "</div>");
         
+        Result::ok(())
+    }
+
+    fn write_impl_header(self: &PageWriter<T>, item: &Item, node: Option<Node>, first: bool) -> Result<()> {
+        use aluminac::lib::node_kinds::{NODE_KINDS, NodeKind};
+
+        if !node.is_some || NODE_KINDS[node.inner.symbol() as usize] != NodeKind::ImplBlock {
+            return Result::ok(());
+        }
+
+        let node = node.inner;
+        let link_context = LinkContext::new(self.item_bag, &item.defined_in);
+
+        if first {
+            wln!(self, "<div class=\"signature impl-header\"><h3>");
+        } else {
+            wln!(self, "<div class=\"signature impl-header not-first\"><h3>");
+        }
+        
+        let printer = CodePrinter::new(item.parse_context, &link_context, self.writer);
+        printer.visit(node);
+        child_by!(node, FieldKind::TypeArguments)
+            .map(|=self, &printer, node: Node| -> Result<()> {
+                let cursor = node.walk();
+                defer cursor.free();
+                
+                printer.protocol_bounds = true;
+                
+                for (idx, child) in children_by!(node, FieldKind::Argument, &cursor).enumerate() {
+                    if !child_by!(child, FieldKind::Bound).is_some {
+                        continue;
+                    }
+                    wln!(self, "<div class=\"protocol-bound\">");
+                    printer.visit(child);
+                    wln!(self, "</div>");
+                } 
+                
+                Result::ok(())
+            })
+            .transpose()?;
+        
+        wln!(self, "</h3></div>");
+
         Result::ok(())
     }
     
@@ -216,9 +266,7 @@ impl PageWriter<T: std::io::Writable<T>> {
         wln!(self, "<a href=\"/\">");
         wln!(self, "<img width=\"100px\" height=\"100px\" class=\"logo\" src=\"/static/logo.svg\" alt=\"Alumina Docs\">");
         wln!(self, "</a>");
-        let top_level_link = link_context.resolve_link(&top_level.path).unwrap();
-        defer top_level_link.free();
-        
+
         if nav_item.path.last().is_some {
             self.write_breadcrumbs(nav_item, false)?;
         }
@@ -231,8 +279,8 @@ impl PageWriter<T: std::io::Writable<T>> {
             wln!(self, "<ul>");
             
             for item in grp {
-                let link_context = LinkContext::new(self.item_bag, &item.defined_in);
-                let link = link_context.resolve_link(&item.path).unwrap();
+                let link_context = LinkContext::new(self.item_bag, &item.path);
+                let link = link_context.link_for_item(item).unwrap();
                 wln!(self, "<li>");
                 wln!(self, "<a href=\"{}\">{}</a>", link, item.path.last().unwrap());
                 wln!(self, "</li>");
@@ -269,40 +317,57 @@ impl PageWriter<T: std::io::Writable<T>> {
             for grp in main_items.iter().group_by(|i: &Item| -> ItemKind { i.kind }) {
                 wln!(self, "<h2 id=\"{}\">{}s</h2>", grp.key, grp.key);
                 
-                if grp.key.has_own_page() {
-                    wln!(self, "<div class=\"item-short-table\">");
-                    for item in grp {
-                        let link_context = LinkContext::new(self.item_bag, &item.defined_in);
-                        let name = item.path.last().unwrap();
-                        let link = link_context.resolve_link(&item.path).unwrap();
-                        
-                        wln!(self, "<div class=\"row\" id=\"item.{}\">", name);
-                        wln!(self, "<div class=\"cell-name\"><a href=\"{}\">{}</a></div>", link, name);
-                        w!(self, "<div class=\"cell-doc\">");
-                        write_docstring(self.writer, item.doc_comment.as_slice(), true, &link_context)
-                        .map_err(Error::from::<std::fmt::Error>)?;  
-                        wln!(self, "</div>");
-                        wln!(self, "</div>");
-                        
-                        link.free();
-                    }
-                    wln!(self, "</div>");
+                let first = true;
+
+                for impl_grp in grp.group_by(|i: &Item| -> Option<Node> { i.group_node }) {
+
+                    self.write_impl_header(top_level, impl_grp.key, first)?;
+                    first = false;
                     
-                } else {
-                    wln!(self, "<ul>");
-                    for item in grp {
-                        let link_context = LinkContext::new(self.item_bag, &item.defined_in);
-                        wln!(self, "<li>");                  
-                        self.write_signature(item, false)?;
-                        
-                        wln!(self, "<div class=\"item-doc\">");
-                        write_docstring(self.writer, item.doc_comment.as_slice(), false, &link_context)
+                    if grp.key.has_own_page() {
+                        wln!(self, "<div class=\"item-short-table\">");
+                        for item in impl_grp {
+                            let link_context = LinkContext::new(self.item_bag, &item.defined_in);
+                            let name = item.path.last().unwrap();
+                            let link = link_context.link_for_item(item).unwrap();
+                            
+                            if item.cfg_index == 0 {
+                                wln!(self, "<div class=\"row\" id=\"item.{}\">", name);
+                            } else {
+                                wln!(self, "<div class=\"row\" id=\"item.{}.{}\">", name, item.cfg_index);
+                            }
+                            wln!(self, "<div class=\"cell-name\">");
+                            if item.has_cfg {
+                                wln!(self, "<span class=\"badge\">#[cfg]</span>");
+                            }
+                            wln!(self, "<a href=\"{}\">{}</a>", link, name);
+                            wln!(self, "</div>");
+                            w!(self, "<div class=\"cell-doc\">");
+                            write_docstring(self.writer, item.doc_comment.as_slice(), true, &link_context)
                             .map_err(Error::from::<std::fmt::Error>)?;  
+                            wln!(self, "</div>");
+                            wln!(self, "</div>");
+                            
+                            link.free();
+                        }
                         wln!(self, "</div>");
-                        wln!(self, "</li>");
+                        
+                    } else {
+                        wln!(self, "<ul>");
+                        for item in impl_grp {
+                            let link_context = LinkContext::new(self.item_bag, &item.defined_in);
+                            wln!(self, "<li>");                  
+                            self.write_signature(item, false)?;
+                            
+                            wln!(self, "<div class=\"item-doc\">");
+                            write_docstring(self.writer, item.doc_comment.as_slice(), false, &link_context)
+                                .map_err(Error::from::<std::fmt::Error>)?;  
+                            wln!(self, "</div>");
+                            wln!(self, "</li>");
+                        }
+                        
+                        wln!(self, "</ul>");
                     }
-                    
-                    wln!(self, "</ul>");
                 }
             }
         }
@@ -327,7 +392,12 @@ fn write_page(items: &ItemBag, top_level: &Item) -> Result<()> {
     } else {
         for (idx, s) in top_level.path.segments.iter().enumerate() {
             if idx == top_level.path.segments.len() - 1 {
-                let formatted = format!("{}.html", s).unwrap();
+                let formatted = if top_level.cfg_index == 0 {
+                    format!("{}.html", s).unwrap()
+                } else {
+                    format!("{}.{}.html", s, top_level.cfg_index).unwrap()
+                };
+
                 filename.push(std::fs::Path::new(formatted.as_slice()));
                 formatted.free();
             } else {
@@ -352,7 +422,8 @@ fn write_page(items: &ItemBag, top_level: &Item) -> Result<()> {
     
     let main_items = items
         .filtered(|&top_level, v: &Item| -> bool { 
-            v.is_public() && v.path.len() == top_level.path.len() + 1 && v.path.starts_with(&top_level.path)
+            v.is_public() && v.path.len() == top_level.path.len() + 1 
+                && v.path.starts_with(&top_level.path)
         });
     defer main_items.free();
 
@@ -427,9 +498,9 @@ fn write_index(items: &ItemBag) -> Result<()> {
     };
 
     write!(&writer, "const index = [");
-    for item in items.all().filter(|v: &Item| -> bool {  v.is_public() }) {
-        let link_context = LinkContext::new(items, &item.defined_in);
-        let link = link_context.resolve_link(&item.path).unwrap();
+    for item in items.all().filter(|v: &Item| -> bool {  v.is_public() && v.kind.is_indexed() }) {
+        let link_context = LinkContext::new(items, &item.path);
+        let link = link_context.link_for_item(item).unwrap();
         let doc = clean_doc_comment(item.doc_comment.as_slice());
 
         writeln!(&writer, "[\"{}\",\"{}\",\"{}\"],", 

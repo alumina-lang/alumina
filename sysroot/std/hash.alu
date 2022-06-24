@@ -1,14 +1,22 @@
 //! Generic (non-cryptographic) hashing support
 
+/// Hashing algorithms.
 protocol Hasher<Self> {
     use std::mem::{size_of,slice::from_raw};
 
+    /// Create a new hasher.
     fn new() -> Self;
+    /// Write a byte slice into a hasher.
     fn write(self: &mut Self, val: &[u8]);
+    /// Finalize the hashing and return the hash value.
     fn finish(self: &mut Self) -> u64;
 }
 
+/// Types that can be hashed.
 protocol Hashable<Self, H: Hasher<H>> {
+    /// Update hasher state with the contents of this object.
+    ///
+    /// See [Hashable] for details.
     #[inline]
     fn hash(a: &Self, hasher: &mut H) {
         use std::mem::{size_of,slice::from_raw};
@@ -22,4 +30,5 @@ fn hash_of<T: Hashable<T, H>, H: Hasher<H>>(val: T) -> u64 {
     hasher.finish()
 }
 
+/// The default hashing algorithm used for hash-based collections if none is specified.
 type DefaultHash = xxhash::Xxh64;

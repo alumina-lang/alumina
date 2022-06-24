@@ -1,9 +1,15 @@
 //! Equality and comparison 
 
 /// Types that can be compared for equality.
+///
+/// 
 protocol Equatable<Self> {
+    /// Returns `true` if arguments are equal, `false` otherwise
+    ///
+    /// See [Equatable] for details.
     fn equals(lhs: &Self, rhs: &Self) -> bool;
 
+    /// Returns `false` if arguments are equal, `true` otherwise
     #[force_inline]
     fn not_equals(lhs: &Self, rhs: &Self) -> bool {
         !Self::equals(lhs, rhs)
@@ -18,23 +24,30 @@ enum Ordering {
 
 /// Types that have a total order.
 protocol Comparable<Self: Equatable<Self>> {
+    /// Compare the value
+    ///
+    /// See [Comparable] for details.
     fn compare(lhs: &Self, rhs: &Self) -> Ordering;
     
+    /// Returns `true` if `lhs` is strictly less than `rhs`, `false` otherwise
     #[force_inline]
     fn less_than(lhs: &Self, rhs: &Self) -> bool {
         Self::compare(lhs, rhs) == Ordering::Less
     }
 
+    /// Returns `true` if `lhs` is less or equal to `rhs`, `false` otherwise
     #[force_inline]
     fn less_than_or_equal(lhs: &Self, rhs: &Self) -> bool {
         Self::compare(lhs, rhs) != Ordering::Greater
     }
 
+    /// Returns `true` if `lhs` strictly greater than `rhs`, `false` otherwise
     #[force_inline]
     fn greater_than(lhs: &Self, rhs: &Self) -> bool {
         Self::compare(lhs, rhs) == Ordering::Greater
     }
 
+    /// Returns `true` if `lhs` greater than or equal `rhs`, `false` otherwise
     #[force_inline]
     fn greater_than_or_equal(lhs: &Self, rhs: &Self) -> bool {
         Self::compare(lhs, rhs) != Ordering::Less
@@ -71,6 +84,26 @@ macro lexicographic_cmp($lhs, $rhs) {
     let cmp = $lhs.compare(&$rhs);
     if cmp != Ordering::Equal {
         return cmp;
+    }
+}
+
+/// Returns the greater of the two arguments.
+#[inline]
+fn max<T: Comparable<T>>(a: T, b: T) -> T {
+    if a < b {
+        b
+    } else {
+        a
+    }
+}
+
+/// Returns the least of the two arguments.
+#[inline]
+fn min<T: Comparable<T>>(a: T, b: T) -> T {
+    if a < b {
+        a
+    } else {
+        b
     }
 }
 
