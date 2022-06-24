@@ -11,6 +11,7 @@ union ErrorInner {
     message: &[u8]
 }
 
+/// Error type for I/O operations
 struct Error {
     kind: ErrorKind,
     inner: ErrorInner,
@@ -19,6 +20,7 @@ struct Error {
 impl Error {
     use fmt::Formatter;
 
+    /// Create `Error` from the last OS error (`errno`)
     fn from_errno() -> Error {
         Error {
             kind: ErrorKind::Os,
@@ -26,6 +28,7 @@ impl Error {
         }
     }
 
+    /// Create `Error` from the code returned by [libc::getaddrinfo].
     fn from_gai(gai_err: libc::c_int) -> Error {
         Error {
             kind: ErrorKind::GetAddrInfo,
@@ -33,6 +36,10 @@ impl Error {
         }
     }
 
+    /// Create a custom Error.
+    ///
+    /// The provided string is not copied, so the pointer should remain valid for
+    /// the lifetime of `Error` object.
     fn custom(message: &[u8]) -> Error {
         Error {
             kind: ErrorKind::UserDefined,
@@ -40,6 +47,9 @@ impl Error {
         }
     }
 
+    /// Create an error signalling end-of-file.
+    ///
+    /// See [std::io::Readable::read_to_end].
     fn eof() -> Error {
         Error {
             kind: ErrorKind::UnexpectedEof,
@@ -55,7 +65,7 @@ impl Error {
         }
     }
 
-    fn fmt<F: Formatter<F>>(self: &Error, f: &mut F) -> Result<(), fmt::Error> {
+    fn fmt<F: Formatter<F>>(self: &Error, f: &mut F) -> fmt::Result {
         switch self.kind {
             ErrorKind::UnexpectedEof => f.write_str("unexpected end of file"),
             ErrorKind::GetAddrInfo => {
@@ -111,6 +121,7 @@ macro errno_try($ret) {
     ret
 }
 
+/// Mixin for read and write operations for objects that can be viewed as a file descriptor.
 protocol FdReadWrite<Self: AsFileDescriptor<Self>> {
     fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize, Error> {
         let ret = errno_try!(libc::read(self.as_fd().value, buf.ptr as &mut void, buf.len));
@@ -123,6 +134,9 @@ protocol FdReadWrite<Self: AsFileDescriptor<Self>> {
     }
 }
 
+/// Platform specific file descriptor.
+///
+/// On UNIX platforms this is a wrapper over an integer.
 struct FileDescriptor {
     value: libc::c_int
 }
@@ -189,19 +203,23 @@ impl FileDescriptor {
     }
 }
 
+/// Standard I/O stream.
 struct StdioStream {
     fd: FileDescriptor
 }
 
 impl StdioStream {
+    /// Standard input
     fn stdin() -> StdioStream {
         StdioStream { fd: FileDescriptor::new(libc::STDIN_FILENO) }
     }
 
+    /// Standard output
     fn stdout() -> StdioStream {
         StdioStream { fd: FileDescriptor::new(libc::STDOUT_FILENO) }
     }
 
+    /// Standard error
     fn stderr() -> StdioStream {
         StdioStream { fd: FileDescriptor::new(libc::STDERR_FILENO) }
     }

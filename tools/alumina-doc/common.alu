@@ -159,6 +159,15 @@ impl ItemKind {
         }
     }   
 
+    fn is_indexed(self: &ItemKind) -> bool {
+        switch *self {
+            ItemKind::Mixin,
+            ItemKind::Field => false,
+            _ => true,
+        }
+    }   
+
+
     fn should_show_in_sidebar(self: &ItemKind) -> bool {
         switch *self {
             ItemKind::Mixin => false,
@@ -203,12 +212,14 @@ impl ItemKind {
 
 struct Item {
     kind: ItemKind,
-    index: usize,
     parse_context: &ParseContext,
     path: Path,
+    cfg_index: usize,
     defined_in: Path,
     doc_comment: StringBuf,
     node: Node,
+    group_node: Option<Node>,
+    has_cfg: bool,
 }
 
 impl Item {
@@ -240,7 +251,7 @@ impl Item {
 
         let suffix_len = 0usize;
         loop {
-            if suffix_len >= std::math::min(loc.len, def.len) {
+            if suffix_len >= std::cmp::min(loc.len, def.len) {
                 break;
             }
 
@@ -342,12 +353,14 @@ impl ItemBag {
             .as_slice_mut()
             .sort_by(|it: &&Item| -> (&[&[u8]], i32, usize, &[u8]) {
                 use std::mem::slice::empty;
-
+     
+                let item_loc = it.node.start_byte();
                 let start = it.path.as_slice();
+
                 if start.len == 0 {
-                    (empty(), 0, it.index, empty())
+                    (empty(), 0, item_loc, empty())
                 } else {
-                    (start[..start.len-1], it.kind as i32, it.index, start[start.len-1])
+                    (start[..start.len-1], it.kind as i32, item_loc, start[start.len-1])
                 }
             });
     }
@@ -408,11 +421,13 @@ impl ItemBag {
             if !self.lookup.get(src_path).is_some {
                 self.add_item(Item {
                     kind: i.kind,
-                    index: 9999,
+                    cfg_index: i.cfg_index,
                     parse_context: i.parse_context,
                     path: src_path.move(),
                     defined_in: i.defined_in.clone(),
                     doc_comment: i.doc_comment.clone(),
+                    group_node: i.group_node,
+                    has_cfg: i.has_cfg,
                     node: i.node,
                 });
             }
@@ -513,27 +528,37 @@ impl LinkContext {
         }
     }
 
-    fn resolve_link(self: &LinkContext, path: &Path) -> Option<StringBuf> {
-        use std::option::try;
+    fn link_for_item(self: &LinkContext, item: &Item) -> Option<StringBuf> {
         use std::fmt::format;
         use std::string::join_fmt;
         
-        let item = self.item_bag.resolve(self.path, path, true)?;
-
-        let path = item.defined_in.clone();
+        let path = item.path.clone();
         defer path.free();
 
         let val = if item.kind.has_own_page() {
             if path.segments.empty() {
                 format!("/index.html").unwrap()
+            } else if item.cfg_index != 0 {
+                format!("/{}.{}.html", "/".join_fmt(path.segments.iter()), item.cfg_index).unwrap()
             } else {
                 format!("/{}.html", "/".join_fmt(path.segments.iter())).unwrap()
             }
         } else {
             let name = path.pop();
-            format!("/{}.html#item.{}", "/".join_fmt(path.segments.iter()), name).unwrap()
+            if item.cfg_index != 0 {
+                format!("/{}.html#item.{}.{}", "/".join_fmt(path.segments.iter()), name, item.cfg_index).unwrap()
+            } else {
+                format!("/{}.html#item.{}", "/".join_fmt(path.segments.iter()), name).unwrap()
+            }
         };
         
         Option::some(val)
+    }
+
+    fn resolve_link(self: &LinkContext, path: &Path) -> Option<StringBuf> {
+        use std::option::try;
+        
+        let item = self.item_bag.resolve(self.path, path, true)?;
+        self.link_for_item(item)
     }
 }

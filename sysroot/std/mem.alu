@@ -6,6 +6,7 @@ use std::option::Option;
 // Freable protocol is used for types that can be "freed". Usually these types contain something that
 // is heap-allocated.
 protocol Freeable<Self> {
+    /// Frees the memory backing the object.
     fn free(self: &mut Self);
 }
 
@@ -23,6 +24,9 @@ protocol Freeable<Self> {
 /// // will not lead to double free when this function returns.
 /// ```
 protocol Movable<Self> {
+    /// Creates a copy of the object, leaving an inert object behind.
+    ///
+    /// See [Movable] for details.
     fn move(self: &mut Self) -> Self;
 }
 
@@ -128,7 +132,7 @@ impl slice {
     }
 
     fn compare<T: Comparable<T>, Ptr: PointerOf<T>>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> Ordering {
-        use std::math::min;
+        use std::cmp::min;
 
         when T: ZeroSized {
             lhs.len.compare(&rhs.len)
@@ -243,7 +247,7 @@ impl SliceRefIterator<Ptr: Pointer> {
     }
 
     #[force_inline]
-    fn next_back(self: &mut SliceIterator<Ptr>) -> Option<Ptr> {
+    fn next_back(self: &mut SliceRefIterator<Ptr>) -> Option<Ptr> {
         if self.inner.len > 0 {
             let result = Option::some(&self.inner[self.inner.len - 1]);
             self.inner.len -= 1;
@@ -331,6 +335,9 @@ impl Unique<T> {
     }
 }
 
+/// Allocates an object on the heap.
+///
+/// The value is not initialized.
 fn new<T>() -> &mut T {
     when T: builtins::ZeroSized {
         null as &mut T
@@ -339,7 +346,9 @@ fn new<T>() -> &mut T {
     }
 }
 
-
+/// Allocates an array of specified size on the heap.
+///
+/// The values are not initialized.
 fn alloc<T>(len: usize) -> &mut [T] {
     let ret: &mut [T];
     when T: builtins::ZeroSized {
@@ -354,6 +363,7 @@ fn alloc<T>(len: usize) -> &mut [T] {
     ret
 }
 
+/// Resizes a heap-allocated array.
 fn realloc<T>(slice: &mut [T], len: usize) -> &mut [T] {
     let ret: &mut [T];
     ret.ptr = when T: builtins::ZeroSized {
@@ -365,6 +375,9 @@ fn realloc<T>(slice: &mut [T], len: usize) -> &mut [T] {
     ret
 }
 
+/// Allocates an array of specified size on the heap.
+///
+/// The values are zero-initialized.
 fn alloc_zeroed<T>(len: usize) -> &mut [T] {
     let ret: &mut [T];
     ret.ptr = when T: builtins::ZeroSized {
@@ -376,60 +389,57 @@ fn alloc_zeroed<T>(len: usize) -> &mut [T] {
     ret
 }
 
-#[force_inline]
-fn stack_alloc<T>(len: usize) -> &mut [T] {
-    // TODO: this is broken until inlining in IR is implemented, since __builtin_alloca_with_align
-    // cannot leave the function it was called in even if the function was force-inlined.
-    let ret: &mut [T];
-    ret.ptr = intrinsics::aligned_alloca(
-        size_of::<T>() * len, 
-        if intrinsics::align_of::<T>() >= 8 {
-            8 * intrinsics::align_of::<T>()
-        } else { 
-            8usize 
-        }
-    ) as &mut T;
-    ret.len = len;
-    ret
-}
-
+/// Memory size of for a given type in bytes.
 #[force_inline]
 fn size_of<T>() -> usize {
     intrinsics::size_of::<T>()
 }
 
+/// Minimum alignment for given type in bytes.
 #[force_inline]
 fn align_of<T>() -> usize {
     intrinsics::align_of::<T>()
 }
 
+/// Swaps the data in two memory locations.
 fn swap<T>(a: &mut T, b: &mut T) {
     let tmp = *a;
     *a = *b;
     *b = tmp;
 }
 
+/// Replaces a memory at location `a` with value `b`.
+///
+/// The existing value is returned.
 fn replace<T>(a: &mut T, b: T) -> T {
     swap(a, &b);
     b
 }
 
+/// Copies a region of memory from `src` to `dst`.
+///
+/// The memory ranges must not overlap, use [copy] if they may be overlapping.
 fn copy_nonoverlapping<T>(src: &[T], dst: &mut T) {
     when T: !builtins::ZeroSized {
         libc::memcpy(dst as &mut void, src.ptr as &void, src.len * size_of::<T>());
     }
 }
 
+/// Copies a region of memory from `src` to `dst`.
+///
+/// The ranges may overlap.
 fn copy<T>(src: &[T], dst: &mut T) {
     when T: !builtins::ZeroSized {
         libc::memmove(dst as &mut void, src.ptr as &void, src.len * size_of::<T>());
     }
 }
 
+/// Frees the memory of a heap-allocated object.
 fn free<T>(a: &mut [T]) {
     libc::free(a.ptr as &mut void);
 }
 
+/// Zero-initialized object of a given type.
 fn zeroed<T>() -> T {
     let ret: T;
     when T: !builtins::ZeroSized {
@@ -438,6 +448,9 @@ fn zeroed<T>() -> T {
     ret
 }
 
+/// Uninitialized object.
+///
+/// Using the return value in any manner is undefined behavior.
 #[force_inline]
 fn uninitialized<T>() -> T {
     let ret: T;

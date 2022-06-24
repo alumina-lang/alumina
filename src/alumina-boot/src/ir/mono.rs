@@ -1469,6 +1469,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 .with_no_span()?,
             ast::Ty::NamedType(item) => match self.mono_ctx.ast.lang_item_kind(item) {
                 Some(LangItemKind::ImplBuiltin(kind)) => self.types.builtin(kind),
+                Some(LangItemKind::ImplArray | LangItemKind::ImplTuple(..)) => return Err(
+                    CodeErrorKind::BuiltinTypesAreSpecialMkay
+                ).with_no_span(),
                 _ => {
                     let item = self.monomorphize_item(item, &[])?;
                     if let Some(typ) = item.get_alias() {

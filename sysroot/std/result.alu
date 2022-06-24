@@ -1,5 +1,20 @@
-//! Type for operations that can fail.
+//! Error handling functionality.
 
+/// Extract the success value or short-circuit the calling function.
+///
+/// When expression is suffixed with `?`, this is de-sugared to an invocation of `try` macro on the 
+/// expression. 
+///
+/// Expands to the following expression
+/// ```
+/// if $.is_ok {
+///     $.inner.ok
+/// } else {
+///     return Result::err(self.inner.err)
+/// }
+/// ```
+///
+/// See also [std::option::try] for [std::option::Option].
 macro try($res) {
     let res = $res;
     if res.is_ok {
@@ -9,6 +24,45 @@ macro try($res) {
     }
 }
 
+/// Type for operations that can fail.
+///
+/// `Result` is the type that can be used to express fallible operations in the type system.
+/// Alumina does not have exceptions. Value `Result<T, E>` can be either a successfull value of 
+/// type `T` or an error value `E`, usually in some form representing the failure that happened.
+///
+/// # Example
+/// ```
+/// enum ExecutableType {
+///     ELF,
+///     PE
+/// }
+/// 
+/// struct Error {}
+/// 
+/// fn executable_type(contents: &[u8]) -> Result<ExecutableType, Error> {
+///     use std::string::starts_with;
+///     if contents.starts_with("MZ") {
+///         Result::ok(ExecutableType::PE)
+///     } else if contents.starts_with("\x7FELF") {
+///         Result::ok(ExecutableType::ELF)
+///     } else {
+///         /// Invalid executable
+///         Result::err(Error {})
+///     }
+/// }
+/// 
+/// let result = executable_type();
+/// 
+/// if !result.is_ok {
+///     eprintln!("Invalid executable");
+/// } else {
+///     // e.g. result.unwrap();
+///     // do something with it
+/// }
+/// ```
+/// 
+/// `Result` is commonly used with the [try operator](try) (`?`) so that fallible functions can 
+/// be composed easily by bailing early.
 struct Result<T, E> {
     is_ok: bool,
     inner: ResultT<T, E>
@@ -22,6 +76,7 @@ union ResultT<T, E> {
 impl Result<T, E> {
     use std::fmt::{write, Formatter, Formattable};
 
+    /// Create a success variant
     #[force_inline]
     fn ok(ok: T) -> Result<T, E> {
         Result::<T, E> {
@@ -32,6 +87,7 @@ impl Result<T, E> {
         }
     }
 
+    /// Create a error variant
     #[force_inline]
     fn err(err: E) -> Result<T, E> {
         Result::<T, E> {
@@ -42,6 +98,7 @@ impl Result<T, E> {
         }
     }
 
+    /// Return the success value, panicking if error value is present
     fn unwrap(self: Result<T, E>) -> T {
         if self.is_ok {
             self.inner.ok
@@ -54,6 +111,7 @@ impl Result<T, E> {
         }
     }
 
+    /// Return the success value or a default value
     fn unwrap_or(self: Result<T, E>, val: T) -> T {
         if self.is_ok {
             self.inner.ok
@@ -62,6 +120,7 @@ impl Result<T, E> {
         }
     }
 
+    /// Return the success value or a default value provided by a callback
     fn unwrap_or_else<F: builtins::Callable<(), T>>(self: Result<T, E>, func: F) -> T {
         if self.is_ok {
             self.inner.ok
@@ -70,6 +129,7 @@ impl Result<T, E> {
         }
     }
 
+    /// Return the error value, panicking if success value is present
     fn unwrap_err(self: Result<T, E>) -> E {
         if !self.is_ok {
             self.inner.err
@@ -82,6 +142,19 @@ impl Result<T, E> {
         }
     }
 
+    /// Transform the success value inside the `Result` by calling the provided function.
+    ///
+    /// If the error value is present, function is not called and the original error is 
+    /// passed through.
+    ///
+    /// # Example
+    /// ```
+    /// let a: Result<i32, ()> = Result::ok(42).map(|v: i32| -> i32 { i + 1 });
+    /// let b: Result<i32, ()> = Result::err(()).map(|v: i32| -> i32 { i + 1 });
+    /// 
+    /// assert_eq!(a, Result::ok(43));
+    /// assert_eq!(b, Result::err(()));
+    /// ```
     fn map<Tm, F: builtins::Callable<(T), Tm>>(self: Result<T, E>, func: F) -> Result<Tm, E> {
         if self.is_ok {
             Result::ok(func(self.inner.ok))
@@ -90,6 +163,19 @@ impl Result<T, E> {
         }
     }
 
+    /// Transform the error value inside the `Result` by calling the provided function.
+    ///
+    /// If the success value is present, function is not called and the original error is 
+    /// passed through.
+    ///
+    /// # Example
+    /// ```
+    /// let a: Result<(), i32> = Result::err(42).map(|v: i32| -> i32 { i + 1 });
+    /// let b: Result<(), i32> = Result::ok(()).map(|v: i32| -> i32 { i + 1 });
+    /// 
+    /// assert_eq!(a, Result::err(43));
+    /// assert_eq!(b, Result::ok(()));
+    /// ```
     fn map_err<Em, F: builtins::Callable<(E), Em>>(self: Result<T, E>, func: F) -> Result<T, Em> {
         if self.is_ok {
             Result::ok(self.inner.ok)
@@ -98,7 +184,7 @@ impl Result<T, E> {
         }
     }
 
-    fn and_then<Tm, Em, F: builtins::Callable<(T), Result<Tm, Em>>>(self: Result<T, E>, func: F) -> Result<Tm, Em> {
+    fn and_then<Tm, F: builtins::Callable<(T), Result<Tm, E>>>(self: Result<T, E>, func: F) -> Result<Tm, E> {
         if self.is_ok {
             func(self.inner.ok)
         } else {
@@ -113,6 +199,7 @@ impl Result {
     use std::cmp::{Equatable};
     use std::mem::{Freeable, Movable};
 
+    /// @ std::fmt::Formattable::fmt
     fn fmt<T: Formattable<T, F>, E: Formattable<E, F>, F: Formatter<F>>(self: &Result<T, E>, formatter: &mut F) {
         if self.is_ok {
             write!(formatter, "ok({})", self.inner.ok)
@@ -121,6 +208,7 @@ impl Result {
         }
     }
 
+    /// @ std::hash::Hashable::hash
     #[inline]
     fn hash<T: Hashable<T, H>, E: Hashable<E, H>, H: Hasher<H>>(self: &Result<T, E>, hasher: &mut H) {
         self.is_ok.hash(hasher);
@@ -131,6 +219,7 @@ impl Result {
         }
     }
 
+    /// @ std::cmp::Equatable::equals
     #[inline]
     fn equals<T: Equatable<T>, E: Equatable<E>>(lhs: &Result<T, E>, rhs: &Result<T, E>) -> bool {
         if lhs.is_ok && rhs.is_ok {
@@ -142,6 +231,7 @@ impl Result {
         }
     }
 
+    /// @ std::mem::Movable::move
     fn move<T: Movable<T>, E: Movable<E>>(self: &mut Result<T, E>) -> Result<T, E> {
         if self.is_ok {
             Result::ok(self.inner.ok.move())
@@ -150,6 +240,7 @@ impl Result {
         }
     }
 
+    /// @ std::mem::Freeable::free
     fn free<T: Freeable<T>, E: Freeable<E>>(self: &mut Result<T, E>) {
         if self.is_ok {
             self.inner.ok.free();

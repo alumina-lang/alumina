@@ -57,7 +57,7 @@ impl Stack {
     }
 
     fn push<T>(self: &mut Stack<T>, value: T) {
-        use std::math::max;
+        use std::cmp::max;
 
         if self.length == self.data.len {
             self.reserve(max(self.data.len, 1) * 2);

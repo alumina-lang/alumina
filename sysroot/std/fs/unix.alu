@@ -1,6 +1,7 @@
 use io::{Error, FileDescriptor, SeekFrom, Readable, Writable, Seekable};
 use io::unix::{errno_try, FdReadWrite};
 
+/// Options for how the file should be opened.
 struct OpenOptions {
     _read: bool,
     _write: bool,
@@ -213,6 +214,7 @@ impl File {
         Result::ok(File { fd: FileDescriptor::new(fd) })
     }
 
+    /// Returns the file attributes (`stat`) for the file
     fn attributes(self: &File) -> Result<FileAttr, Error> {
         let result: FileAttr;
 
@@ -225,14 +227,17 @@ impl File {
         Result::ok(result)
     }
 
+    /// Create a file object from an existing file descriptor.
     fn from_fd(fd: FileDescriptor) -> File {
         File { fd: fd }
     }
 
+    /// Get the file descriptor for the file.
     fn as_fd(self: &File) -> FileDescriptor {
         self.fd
     }
 
+    /// Read the entire file into a [std::string::StringBuf]
     fn read_to_string(path: Path) -> Result<string::StringBuf, Error> {
         use string::StringBuf;
 
@@ -271,6 +276,7 @@ impl File {
         self.fd.close()
     }
 
+    /// @ std::mem::Movable::move
     fn move(self: &mut File) -> File {
         File { fd: self.fd.move() }
     }
@@ -284,12 +290,13 @@ impl File {
 
 /// Iterator over the items in a directory
 ///
-/// See [std::fs::unix::read_directory]
+/// See [std::fs::read_directory] for details.
 struct DirIterator {
     inner: &mut libc::DIR
 }
 
 impl DirIterator {
+    /// @ std::iter::Iterator::next
     fn next(self: &mut DirIterator) -> Option<Result<DirEntry, Error>> {
         loop {
             *libc::__errno() = 0;
@@ -318,6 +325,9 @@ impl DirIterator {
         }
     }
 
+    /// Closes the file descriptor associated with the iterator.
+    ///
+    /// Make sure to call it when done with iteration.
     fn close(self: &mut DirIterator) -> Result<(), Error> {
         errno_try!(libc::closedir(self.inner));
         Result::ok(())
@@ -383,6 +393,7 @@ fn read_directory(path: Path) -> Result<DirIterator, Error> {
 }
 
 
+/// Type of the file (regular file, symlink, directory, ...)
 enum FileType {
     Fifo = libc::S_IFIFO,
     CharacterDevice = libc::S_IFCHR,
@@ -417,7 +428,7 @@ impl FileType {
     mixin std::cmp::Equatable<FileType>;
 }
 
-
+/// File attributes (`stat`)
 struct FileAttr {
     #[cfg(target_os = "macos")]
     inner: libc::t_stat,

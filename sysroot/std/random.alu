@@ -2,10 +2,15 @@
 
 use std::builtins::{Unsigned, Integer, FloatingPoint};
 
+/// Random number generators
 protocol RandomNumberGenerator<Self> {
+    /// Generate a 32-bit integer.
     fn next_u32(self: &mut Self) -> u32;
+    
+    /// Generate a 64-bit integer.
     fn next_u64(self: &mut Self) -> u64;
 
+    /// Fill the slice with random bytes.
     fn fill_bytes(self: &mut Self, dest: &mut [u8]) {
         let i = 0usize;
         while dest.len >= 8 {
@@ -30,6 +35,11 @@ protocol RandomNumberGenerator<Self> {
     }
 }
 
+/// PCG-32 random number generator
+///
+/// A small-state general purpose random number generator ([https://www.pcg-random.org/]).
+/// 
+/// Not suitable for cryptographic purposes.
 struct Pcg32  {
     state: u64,
     increment: u64,
@@ -42,6 +52,7 @@ impl Pcg32 {
         self.state = self.state * MUTLIPLIER + self.increment;
     }
 
+    /// Create a Pcg32 random number generator from a given seed.
     fn from_seed(seed: &[u8; 16]) -> Pcg32 {
         use std::mem::copy_nonoverlapping;
 
@@ -57,6 +68,7 @@ impl Pcg32 {
         pcg
     }
 
+    /// @ RandomNumberGenerator::next_u32
     #[inline]
     fn next_u32(self: &mut Pcg32) -> u32 {
         let state = self.state;
@@ -72,6 +84,7 @@ impl Pcg32 {
         xsh.rotate_right(rot)
     }
 
+    /// @ RandomNumberGenerator::next_u64
     #[inline]
     fn next_u64(self: &mut Pcg32) -> u64 {
         (self.next_u32() as u64) << 32 | (self.next_u32() as u64)
@@ -82,6 +95,16 @@ impl Pcg32 {
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 {
+    /// RNG backed by a OS-provided random number generation facility
+    ///
+    /// On Linux, this is based on `getrandom` syscall, on other UNIX-like platforms, this 
+    /// reads the bytes from `/dev/urandom`.
+    ///
+    /// # Usage notes
+    /// `OsRng` is generally considered to be safe to use for cryptographic purposes. However, since
+    /// it results in a syscall for each operation, it may not be a good general-purpose RNG.
+    ///
+    /// Good choice for seeding other RNGs.
     struct OsRng {
         #[cfg(not(target_os = "linux"))]
         file: fs::File
@@ -90,33 +113,38 @@ impl Pcg32 {
     impl OsRng {
         use mem::{size_of, slice};
 
+        /// Create a new instance of OsRng
         #[cfg(not(target_os = "linux"))]
         fn new() -> OsRng {
             use fs::Path;
-
+            
             OsRng {
                 file: fs::File::open(Path::new("/dev/urandom"))
-                    .unwrap()
+                .unwrap()
             }
         }
-
+        
+        /// Create a new instance of OsRng
         #[cfg(target_os = "linux")]
         fn new() -> OsRng {
             OsRng {}
         }
 
+        /// @ RandomNumberGenerator::next_u32
         fn next_u32(self: &mut OsRng) -> u32 {
             let ret: u32;
             self.fill_bytes(slice::from_raw(&ret as &mut u8, size_of::<u32>()));
             ret
         }
 
+        /// @ RandomNumberGenerator::next_u64
         fn next_u64(self: &mut OsRng) -> u64 {
             let ret: u64;
             self.fill_bytes(slice::from_raw(&ret as &mut u8, size_of::<u64>()));
             ret
         }
 
+        /// @ RandomNumberGenerator::fill_bytes
         fn fill_bytes(self: &mut OsRng, dest: &mut [u8]) {
             #[cfg(not(target_os = "linux"))]
             self.file.read_exact(dest).unwrap();
@@ -124,6 +152,9 @@ impl Pcg32 {
             libc::getrandom(dest.ptr as &mut void, dest.len, 0);
         }
 
+        /// Close the file descriptor
+        ///
+        /// On Linux this is a no-op.
         fn close(self: &mut OsRng) {
             #[cfg(not(target_os = "linux"))]
             self.file.close().unwrap();
@@ -133,6 +164,10 @@ impl Pcg32 {
     }
 
 
+    /// A convenience pre-seeded random number generator. It is
+    /// seeded using `OsRng` and ready to be used.
+    ///
+    /// Not thread safe.
     static DEFAULT_RNG: Pcg32 = internal::seed_default_rng();
 
     mod internal {
@@ -148,7 +183,10 @@ impl Pcg32 {
 
 }
 
-fn next<Rng: RandomNumberGenerator<Rng>, T: Unsigned>(rng: &mut Rng) -> T {
+/// Generate a random integer of any unsigned integer type
+///
+/// Each possible value that the integer can take is equally likely
+fn next_integer<Rng: RandomNumberGenerator<Rng>, T: Unsigned>(rng: &mut Rng) -> T {
     when T: u128 {
         ((rng.next_u64() as u128)  << 64) | (rng.next_u64() as u128)
     } else when T: u64 {
@@ -165,19 +203,21 @@ fn next<Rng: RandomNumberGenerator<Rng>, T: Unsigned>(rng: &mut Rng) -> T {
     }
 }
 
-fn uniform<Rng: RandomNumberGenerator<Rng>, T: Unsigned>(rng: &mut Rng, range: T) -> T {
-    debug_assert!(range > 0);
+/// Generate a random integer between 0 (inclusive) and `upper_bound` (exclusive)
+fn uniform<Rng: RandomNumberGenerator<Rng>, T: Unsigned>(rng: &mut Rng, upper_bound: T) -> T {
+    debug_assert!(upper_bound > 0);
 
     loop {
-        let x = next::<Rng, T>(rng);
-        let r = x % range;
-        if x - r <= ~range {
+        let x = next_integer::<Rng, T>(rng);
+        let r = x % upper_bound;
+        if x - r <= ~upper_bound {
             return r;
         }
     }
 }
 
-fn float<Rng: RandomNumberGenerator<Rng>, T: FloatingPoint>(rng: &mut Rng) -> T {
+/// Generate a random floating point number in [0, 1) interval
+fn next_float<Rng: RandomNumberGenerator<Rng>, T: FloatingPoint>(rng: &mut Rng) -> T {
     when T: f32 {
         let scale = 1.0f32 / ((1u32 << 24) as f32);
         let x = rng.next_u32() >> 8;
@@ -189,6 +229,7 @@ fn float<Rng: RandomNumberGenerator<Rng>, T: FloatingPoint>(rng: &mut Rng) -> T 
     } 
 }
 
+/// Generate a random number between `lower` (inclusive) and `upper` (exclusive)
 fn range<Rng: RandomNumberGenerator<Rng>, T: Integer>(rng: &mut Rng, lower: T, upper: T) -> T {
     use builtins::unsigned_of;
 
@@ -200,6 +241,7 @@ fn range<Rng: RandomNumberGenerator<Rng>, T: Integer>(rng: &mut Rng, lower: T, u
     ret as T
 }
 
+/// Generate a random number between `lower` and `upper` inclusive
 fn range_inclusive<Rng: RandomNumberGenerator<Rng>, T: Integer>(rng: &mut Rng, lower: T, upper: T) -> T {
     use builtins::unsigned_of;
 
@@ -207,13 +249,14 @@ fn range_inclusive<Rng: RandomNumberGenerator<Rng>, T: Integer>(rng: &mut Rng, l
 
     let range = ((upper as unsigned_of<T>) - (lower as unsigned_of<T>)) + 1;
     if range == 0 {
-        next::<Rng, unsigned_of<T>>(rng) as T
+        next_integer::<Rng, unsigned_of<T>>(rng) as T
     } else {
         let ret = (lower as unsigned_of<T>) + uniform(rng, range);        
         ret as T
     }
 }
 
+/// Permute a slice of elements in random order.
 fn shuffle<Rng: RandomNumberGenerator<Rng>, T>(rng: &mut Rng, slice: &mut [T]) {
     use std::mem::swap;
 
@@ -225,11 +268,13 @@ fn shuffle<Rng: RandomNumberGenerator<Rng>, T>(rng: &mut Rng, slice: &mut [T]) {
     }
 }
 
+/// Return a random element of the slice.
 fn choice<Rng: RandomNumberGenerator<Rng>, T>(rng: &mut Rng, slice: &[T]) -> T {
     debug_assert!(slice.len > 0);
 
     slice[rng.uniform(slice.len)]
 }
+
 
 #[cfg(all(test, test_std))]
 mod tests {
@@ -238,8 +283,8 @@ mod tests {
     #[test]
     fn test_float() {
         let rng = Pcg32::from_seed(&SEED)
-        let _: f32 = rng.float();
-        let _: f64 = rng.float();
+        let _: f32 = rng.next_float();
+        let _: f64 = rng.next_float();
     }
 
     #[test]
