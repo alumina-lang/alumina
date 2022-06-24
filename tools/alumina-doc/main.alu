@@ -97,7 +97,7 @@ struct PageWriter<T: std::io::Writable<T>> {
 
 impl PageWriter<T: std::io::Writable<T>> {
     fn write_breadcrumbs(self: &PageWriter<T>, item: &Item, with_kind: bool) -> Result<()> {
-        let link_context = LinkContext::new(self.item_bag, &item.path);
+        let link_context = LinkContext::new(self.item_bag, &item.defined_in);
 
         if item.path.segments.empty() {
             wln!(self, "<h1>{}</h1>", item.kind);
@@ -254,6 +254,15 @@ impl PageWriter<T: std::io::Writable<T>> {
         wln!(self, "<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">");
         wln!(self, "<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>");
         wln!(self, "<meta content=\"width=device-width, initial-scale=1\" name=\"viewport\" />");
+        wln!(self, "<link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"/static/apple-touch-icon.png\" />");
+        wln!(self, "<link rel=\"icon\" type=\"image/png\" sizes=\"32x32\" href=\"/static/favicon-32x32.png\" />");
+        wln!(self, "<link rel=\"icon\" type=\"image/png\" sizes=\"16x16\" href=\"/static/favicon-16x16.png\" />");
+        wln!(self, "<link rel=\"manifest\" href=\"/static/manifest.json\" />");
+        wln!(self, "<link rel=\"mask-icon\" href=\"/static/safari-pinned-tab.svg\" color=\"#5bbad5\" />");
+        wln!(self, "<link rel=\"shortcut icon\" href=\"/static/favicon.ico\" />");
+        wln!(self, "<meta name=\"msapplication-TileColor\" content=\"#da532c\" />");
+        wln!(self, "<meta name=\"msapplication-config\" content=\"/static/browserconfig.xml\" />");
+        wln!(self, "<meta name=\"description\" content=\"Documentation for the Alumina standard library\" />");
         wln!(self, "<script src=\"/static/site.js\"></script>");
         wln!(self, "<script src=\"/search_index.js\" async></script>");
         wln!(self, "<link href=\"https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500&family=Source+Code+Pro:wght@400;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,700&display=swap\" rel=\"stylesheet\">");
@@ -279,8 +288,8 @@ impl PageWriter<T: std::io::Writable<T>> {
             wln!(self, "<ul>");
             
             for item in grp {
-                let link_context = LinkContext::new(self.item_bag, &item.path);
-                let link = link_context.link_for_item(item).unwrap();
+                let link_context = LinkContext::new(self.item_bag, &item.defined_in);
+                let link = link_context.link_for_item(item, false).unwrap();
                 wln!(self, "<li>");
                 wln!(self, "<a href=\"{}\">{}</a>", link, item.path.last().unwrap());
                 wln!(self, "</li>");
@@ -329,7 +338,7 @@ impl PageWriter<T: std::io::Writable<T>> {
                         for item in impl_grp {
                             let link_context = LinkContext::new(self.item_bag, &item.defined_in);
                             let name = item.path.last().unwrap();
-                            let link = link_context.link_for_item(item).unwrap();
+                            let link = link_context.link_for_item(item, false).unwrap();
                             
                             if item.cfg_index == 0 {
                                 wln!(self, "<div class=\"row\" id=\"item.{}\">", name);
@@ -462,9 +471,22 @@ fn write_html(items: &ItemBag) -> Result<()> {
     Result::ok(())
 }
 
-fn clean_doc_comment(doc_comment: &[u8]) -> StringBuf {
+fn clean_doc_comment(link_context: &LinkContext, doc_comment: &[u8]) -> StringBuf {
     use std::string::{trim_prefix, trim, starts_with, replace};
     use std::mem::replace as x;
+
+    if doc_comment.starts_with("/// @") {
+        let path = Path::from_str(doc_comment.trim_prefix("/// @").trim());
+        defer path.free();
+
+        let item = link_context.item_bag.resolve(link_context.path, &path, true).unwrap();
+        let link_context = LinkContext::new(link_context.item_bag, &item.defined_in);
+
+        return clean_doc_comment(
+            &link_context,
+            item.doc_comment.as_slice(), 
+        );
+    }
 
     let tag_line = doc_comment.split("\n").next().unwrap_or("").trim();
     let tag_line = if tag_line.starts_with("///") {
@@ -500,10 +522,10 @@ fn write_index(items: &ItemBag) -> Result<()> {
     write!(&writer, "const index = [");
     for item in items.all().filter(|v: &Item| -> bool {  v.is_public() && v.kind.is_indexed() }) {
         let link_context = LinkContext::new(items, &item.path);
-        let link = link_context.link_for_item(item).unwrap();
-        let doc = clean_doc_comment(item.doc_comment.as_slice());
+        let link = link_context.link_for_item(item, false).unwrap();
+        let doc = clean_doc_comment(&link_context, item.doc_comment.as_slice());
 
-        writeln!(&writer, "[\"{}\",\"{}\",\"{}\"],", 
+        write!(&writer, "[\"{}\",\"{}\",\"{}\"],", 
             item.path, 
             doc.as_slice(), 
             link

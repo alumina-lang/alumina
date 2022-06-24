@@ -3,12 +3,6 @@ use result::{Result, try};
 use option::{Option};
 use io::unix::{errno_try, FdReadWrite};
 
-struct NameLookup {
-    original: &mut libc::addrinfo,
-    cur: &mut libc::addrinfo,
-    port: u16,
-}
-
 enum Shutdown {
     Read = libc::SHUT_RD,
     Write = libc::SHUT_WR,
@@ -44,7 +38,26 @@ fn addr_to_family(addr: &SocketAddr) -> (libc::c_int, libc::socklen_t) {
     (family, addr_len as libc::socklen_t)
 }
 
+/// Domain name resolution iterator
+///
+/// # Example
+/// ```
+/// use std::net::NameLookup;
+/// let addresses = NameLookup::resolve("www.alumina-lang.net", 443).unwrap();
+/// defer addresses.free();
+/// 
+/// for addr in addresses {
+///     println!("{}", addr);
+/// }
+/// ```
+struct NameLookup {
+    original: &mut libc::addrinfo,
+    cur: &mut libc::addrinfo,
+    port: u16,
+}
+
 impl NameLookup {
+    /// Resolve a hostname to network addresses
     fn resolve(host: &[u8], port: u16) -> Result<NameLookup, Error> {
         let host = ffi::CString::new(host);
         defer host.free();
@@ -70,6 +83,7 @@ impl NameLookup {
         }
     }
 
+    /// @ std::iter::Iterator::next
     fn next(self: &mut NameLookup) -> Option<SocketAddr> {
         if self.cur == null {
             Option::none()
@@ -94,21 +108,23 @@ impl NameLookup {
         }
     }
 
-    fn iter(self: &mut NameLookup) -> NameLookup {
-        *self
-    }
-
+    /// @ std::mem::Freeable::free
     fn free(self: &mut NameLookup) {
         libc::freeaddrinfo(self.original);
     }
 
+    /// @ std::mem::Movable::move
     fn move(self: &mut NameLookup) -> NameLookup {
         let res = *self;
         self.original = null;
         res
     }
+
+    mixin std::iter::Iterator<NameLookup, SocketAddr>;
+    mixin std::iter::IteratorExt<NameLookup, SocketAddr>;
 }
-    
+
+/// A network socket
 struct Socket {
     fd: FileDescriptor,
 }
@@ -464,6 +480,19 @@ mod tests {
 
     fn fork() -> Option<Child> {
         Forked::new().spawn().unwrap()
+    }
+
+    #[test]
+    fn test_name_resolution() {
+        let addrs = NameLookup::resolve("localhost", 80).unwrap();
+        defer addrs.free();
+
+        let v6 = SocketAddr::new(IpAddr::v6(Ipv6Addr::localhost()), 80);
+        let v4 = SocketAddr::new(IpAddr::v4(Ipv4Addr::localhost()), 80);
+
+        assert!(addrs.all(|=v6, =v4, a: SocketAddr| -> bool {
+            a == v6 || a == v4
+        }));
     }
 
     #[test]

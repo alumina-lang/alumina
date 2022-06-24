@@ -78,7 +78,7 @@ impl Path {
         if self.segments.empty() {
             write!(fmt, "::")
         } else {
-            write!(fmt, "{}", "::".join_fmt(self.segments.iter()))
+            write!(fmt, "{}", "::".join_fmt(&self.segments.iter()))
         }
     }
 
@@ -95,7 +95,7 @@ impl Path {
     }
 
     fn last(self: &Path) -> Option<&[u8]> {
-        self.segments.last()
+        self.segments.iter().next_back()
     }
 
     fn hash<H: Hasher<H>>(self: &Path, hasher: &mut H) {
@@ -528,27 +528,32 @@ impl LinkContext {
         }
     }
 
-    fn link_for_item(self: &LinkContext, item: &Item) -> Option<StringBuf> {
+    fn link_for_item(self: &LinkContext, item: &Item, defined_in: bool) -> Option<StringBuf> {
         use std::fmt::format;
         use std::string::join_fmt;
         
-        let path = item.path.clone();
+        let path = if defined_in {
+            item.defined_in.clone()
+        } else {
+            item.path.clone()
+        };
+
         defer path.free();
 
         let val = if item.kind.has_own_page() {
             if path.segments.empty() {
                 format!("/index.html").unwrap()
             } else if item.cfg_index != 0 {
-                format!("/{}.{}.html", "/".join_fmt(path.segments.iter()), item.cfg_index).unwrap()
+                format!("/{}.{}.html", "/".join_fmt(&path.segments.iter()), item.cfg_index).unwrap()
             } else {
-                format!("/{}.html", "/".join_fmt(path.segments.iter())).unwrap()
+                format!("/{}.html", "/".join_fmt(&path.segments.iter())).unwrap()
             }
         } else {
             let name = path.pop();
             if item.cfg_index != 0 {
-                format!("/{}.html#item.{}.{}", "/".join_fmt(path.segments.iter()), name, item.cfg_index).unwrap()
+                format!("/{}.html#item.{}.{}", "/".join_fmt(&path.segments.iter()), name, item.cfg_index).unwrap()
             } else {
-                format!("/{}.html#item.{}", "/".join_fmt(path.segments.iter()), name).unwrap()
+                format!("/{}.html#item.{}", "/".join_fmt(&path.segments.iter()), name).unwrap()
             }
         };
         
@@ -558,7 +563,10 @@ impl LinkContext {
     fn resolve_link(self: &LinkContext, path: &Path) -> Option<StringBuf> {
         use std::option::try;
         
-        let item = self.item_bag.resolve(self.path, path, true)?;
-        self.link_for_item(item)
+        let item = self.item_bag.resolve(self.path, path, true);
+        if !item.is_some {
+            //eprintln!("Unresolved link: {} (ctx: {})", *path, *self.path);
+        }
+        self.link_for_item(item?, true)
     }
 }

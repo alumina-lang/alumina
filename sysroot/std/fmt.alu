@@ -36,7 +36,23 @@ protocol Formatter<Self> {
     }
 }
 
-/// Types that can be formatted.
+/// Types that can be formatted. This is the standard way to implement custom
+/// formatting for types.
+///
+/// # Example
+/// ```
+/// struct Point3D { x: i32, y: i32, z: i32 }
+/// impl Point3D {
+///     use std::fmt::{Formatter, Result, write};
+///     
+///     fn fmt<F: Formatter<F>>(self: &Point3D, f: &mut F) -> Result {
+///         write!(f, "({}, {}, {})", self.x, self.y, self.z)
+///     }
+/// }
+/// 
+/// // prints "You are at (1, 2, 3)"
+/// println!("You are at {}", Point3D { x: 1, y: 2, z: 3 });
+/// ```
 protocol Formattable<Self, F: Formatter<F> = internal::NullFormatter> {
     /// Write the object into a given formatter. 
     ///

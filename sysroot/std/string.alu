@@ -4,12 +4,19 @@ use std::option::Option;
 
 const RADIX_DIGITS = "0123456789abcdefghijklmnopqrstuvwxyz";
 
+/// A heap-allocated string.
+///
+/// `StringBuf` is just a vector of bytes.
 type StringBuf = std::collections::Vector<u8>;
 
+/// Returns `true` if character is an ASCII whitespace character, `false` otherwise.
 fn is_whitespace(c: u8) -> bool {
     c == 0x20 || c == 0x85 || c == 0xa0 || (c >= 0x09 && c <= 0x0D)
 }
 
+/// Convert character to lower case.
+///
+/// If character is not an ASCII uppercase letter, returns the same character.
 fn to_lower(self: u8) -> u8 {
     if self >= 'A' && self <= 'Z' {
         self + 0x20
@@ -18,6 +25,9 @@ fn to_lower(self: u8) -> u8 {
     }
 }
 
+/// Convert character to upper case.
+///
+/// If character is not an ASCII lowercase letter, returns the same character.
 fn to_upper(self: u8) -> u8 {
     if self >= 'a' && self <= 'z' {
         self - 0x20
@@ -26,6 +36,7 @@ fn to_upper(self: u8) -> u8 {
     }
 }
 
+/// Returns `true` if string starts with the given prefix, `false` otherwise.
 fn starts_with(self: &[u8], prefix: &[u8]) -> bool {
     if self.len < prefix.len {
         return false;
@@ -33,6 +44,7 @@ fn starts_with(self: &[u8], prefix: &[u8]) -> bool {
     self[..prefix.len] == prefix
 }
 
+/// Returns `true` if string ends with the given suffix, `false` otherwise.
 fn ends_with(self: &[u8], suffix: &[u8]) -> bool {
     if self.len < suffix.len {
         return false;
@@ -40,6 +52,9 @@ fn ends_with(self: &[u8], suffix: &[u8]) -> bool {
     self[self.len - suffix.len..] == suffix
 }
 
+/// Return string without the given prefix.
+///
+/// If the string does not start with the given prefix, returns the string unchanged.
 fn trim_prefix(self: &[u8], prefix: &[u8]) -> &[u8] {
     if self.starts_with(prefix) {
         self[prefix.len..]
@@ -48,6 +63,9 @@ fn trim_prefix(self: &[u8], prefix: &[u8]) -> &[u8] {
     }
 }
 
+/// Return string without the given suffix.
+///
+/// If the string does not end with the given suffix, returns the string unchanged.
 fn trim_suffix(self: &[u8], suffix: &[u8]) -> &[u8] {
     if self.ends_with(suffix) {
         &self[..self.len - suffix.len]
@@ -56,7 +74,10 @@ fn trim_suffix(self: &[u8], suffix: &[u8]) -> &[u8] {
     }
 }
 
-
+/// Finds a substring in a string.
+///
+/// It returns the index of the first occurrence of `needle` in `haystack`, or `Option::none()` if
+/// `needle` is not part of `haystack`.
 fn find(self: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.len == 0 {
         return Option::some(0usize);
@@ -80,6 +101,7 @@ fn find(self: &[u8], needle: &[u8]) -> Option<usize> {
     }
 }
 
+/// Finds the first occurrence of a character in a string.
 fn find_char(self: &[u8], needle: u8) -> Option<usize> {
     let p = libc::memchr(
         self.ptr as &void,
@@ -94,10 +116,12 @@ fn find_char(self: &[u8], needle: u8) -> Option<usize> {
     }
 }
 
+/// Returns `true` if `needle` is a substring of self, `false` otherwise.
 fn contains(self: &[u8], needle: &[u8]) -> bool {
     self.find(needle).is_some
 }
 
+/// Trims the whitespace from the start of the string.
 fn trim_start(self: &[u8]) -> &[u8] {
     let i = 0usize;
     while i < self.len && self[i].is_whitespace() {
@@ -106,6 +130,7 @@ fn trim_start(self: &[u8]) -> &[u8] {
     self[i..]
 }
 
+/// Trims the whitespace from the end of the string.
 fn trim_end(self: &[u8]) -> &[u8] {
     let i = self.len;
     while i > 0 && self[i - 1].is_whitespace() {
@@ -114,10 +139,14 @@ fn trim_end(self: &[u8]) -> &[u8] {
     self[..i]
 }
 
+/// Trims the whitespace from the start and end of the string.
 fn trim(self: &[u8]) -> &[u8] {
     self.trim_start().trim_end()
 }
 
+/// Iterator over parts of a string split by a delimiter.
+///
+/// See [split] for details.
 struct SplitIterator {
     data: &[u8],
     sep: &[u8],
@@ -133,6 +162,7 @@ impl SplitIterator {
         }
     }
 
+    /// @ std::iter::Iterator::next
     fn next(self: &mut SplitIterator) -> Option<&[u8]> {
         if self.done {
             return Option::none();
@@ -155,107 +185,117 @@ impl SplitIterator {
     mixin iter::IteratorExt<SplitIterator, &[u8]>;
 }
 
+/// Returns an iterator over the parts of the string split by the given delimiter.
+///
+/// # Example
+/// ```
+/// use std::string::split;
+/// 
+/// let iter = "192.168.0.1".split(".");
+/// assert_eq!(iter.next(), Option::some("192"));
+/// assert_eq!(iter.next(), Option::some("168"));
+/// assert_eq!(iter.next(), Option::some("0"));
+/// assert_eq!(iter.next(), Option::some("1"));
+/// assert_eq!(iter.next(), Option::none());
+/// ```
 fn split(self: &[u8], sep: &[u8]) -> SplitIterator {
     SplitIterator::new(self, sep)
 }
 
-fn join<T: iter::Iterator<T, &[u8]>>(self: &[u8], iter: &mut T) -> StringBuf {
-    let ret: StringBuf = StringBuf::new();
-    let first = true;
-
-    loop {
-        let item = iter.next();
-        if item.is_some {
-            if first {
-                first = false;
-            } else {
-                ret.extend_from_slice(self);
-            }
-            ret.extend_from_slice(item.inner);
-        } else {
-            break;
-        }
-    }
-
-    ret
-}
-
-struct WithReplacement {
+struct ReplaceAdapter {
     inner: &[u8],
     needle: &[u8],
     replacement: &[u8],
 }
 
-impl WithReplacement {
+impl ReplaceAdapter {
     use std::fmt::{write, Error, Formatter};
 
-    fn new(inner: &[u8], needle: &[u8], replacement: &[u8]) -> WithReplacement {
-        WithReplacement {
-            inner: inner,
-            needle: needle,
-            replacement: replacement,
-        }
-    }
-
-    fn fmt<F: Formatter<F>>(self: &WithReplacement, f: &mut F) -> Result<(), Error> {
+    fn fmt<F: Formatter<F>>(self: &ReplaceAdapter, f: &mut F) -> Result<(), Error> {
         let first = true;    
         for chunk in self.inner.split(self.needle) {
             if first {
                 first = false;
             } else {
-                write!(f, "{}", self.replacement)?;
+                f.write_str(self.replacement)?;
             }
-            write!(f, "{}", chunk)?;
+            f.write_str(chunk)?;
         }
         Result::ok(())
     }
 }
 
+/// Replaces all occurrences of `needle` with `replacement`, returning a new string.
+///
+/// See also [replace_fmt] for a non-allocating variant.
+fn replace(self: &[u8], needle: &[u8], replacement: &[u8]) -> StringBuf {
+    let ret: StringBuf = StringBuf::new();
+    self.replace_fmt(needle, replacement).fmt(&ret).unwrap();
+    ret
+}
+
+/// Returns an object that formats to the string with all `needle` occurrences replaced with
+/// `replacement`.
+///
+/// # Example
+/// ```
+/// use std::string::replace_fmt;
+/// 
+/// // Prints "I like cake"
+/// println!("{}", "I like pie".replace_fmt("pie", "cake"));
+/// ```
+fn replace_fmt(self: &[u8], needle: &[u8], replacement: &[u8]) -> ReplaceAdapter {
+    ReplaceAdapter { inner: self, needle: needle, replacement: replacement }
+}
+
 struct JoinAdapter<It: iter::Iterator<It, &[u8]>> {
     separator: &[u8],
-    inner: It,
+    inner: &mut It,
 }
 
 impl JoinAdapter<It: iter::Iterator<It, &[u8]>> {
     use std::fmt::{write, Error, Formatter};
 
-    fn new(separator: &[u8], inner: It) -> JoinAdapter<It> {
-        JoinAdapter {
-            separator: separator,
-            inner: inner,
-        }
-    }
-
     fn fmt<F: fmt::Formatter<F>>(self: &JoinAdapter<It>, f: &mut F) -> Result<(), Error> {
-        let first = true;    
-        
-        // sneaky, sneaky
-        let inner = &self.inner as &mut It;
-
-        for chunk in inner {
+        let first = true;
+        for chunk in self.inner {
             if first {
                 first = false;
             } else {
-                write!(f, "{}", self.separator)?;
+                f.write_str(self.separator)?;
             }
-            write!(f, "{}", chunk)?;
+            f.write_str(chunk)?;
         }
         Result::ok(())
     }
 }
 
-fn replace_fmt(self: &[u8], needle: &[u8], replacement: &[u8]) -> JoinAdapter<SplitIterator> {
-    replacement.join_fmt(self.split(needle))
+/// Join the parts of a string with the given delimiter, returning a new string.
+///
+/// See also [join_fmt] for a non-allocating string formatting adapter.
+fn join<It: iter::Iterator<It, &[u8]>>(self: &[u8], iter: &mut It) -> StringBuf {
+    let ret: StringBuf = StringBuf::new();
+    self.join_fmt(iter).fmt(&ret).unwrap();
+    ret
 }
 
-fn replace(self: &[u8], needle: &[u8], replacement: &[u8]) -> StringBuf {
-    replacement.join(&self.split(needle))
+
+/// Returns an object that formats to parts joined with the separartor.
+///
+/// # Example
+/// ```
+/// use std::string::join_fmt;
+/// 
+/// // Prints 192.168.0.1
+/// println!("{}", ".".join_fmt(&["192", "168", "0", "1"].iter()));
+/// ```
+fn join_fmt<It: iter::Iterator<It, &[u8]>>(self: &[u8], iter: &mut It) -> JoinAdapter<It> {
+    JoinAdapter { separator: self, inner: iter }
 }
 
-fn join_fmt<It: iter::Iterator<It, &[u8]>>(self: &[u8], iter: It) -> JoinAdapter<It> {
-    JoinAdapter::new(self, iter)
-}
-
+/// Parses an integer with the given radix.
+///
+/// See also [std::builtins::IntegerParsable], a mixin available on all integer types
 fn parse_integer<T: builtins::Integer>(s: &[u8], radix: u16) -> Option<T> {
     assert!(radix >= 2 && radix <= 36);
 

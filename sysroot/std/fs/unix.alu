@@ -27,34 +27,49 @@ impl OpenOptions {
         }
     }
 
+    /// Sets the option for read access.
     fn read(self: &mut OpenOptions, read: bool) -> &mut OpenOptions {
         self._read = read;
         self
     }
+
+    /// Sets the option for write access.
     fn write(self: &mut OpenOptions, write: bool) -> &mut OpenOptions {
         self._write = write;
         self
     }
+
+    /// Sets the option for append access.
     fn append(self: &mut OpenOptions, append: bool) -> &mut OpenOptions {
         self._append = append;
         self
     }
+
+    /// Sets the option for truncate access.
     fn truncate(self: &mut OpenOptions, truncate: bool) -> &mut OpenOptions {
         self._truncate = truncate;
         self
     }
+
+    /// Sets the option for create access.
     fn create(self: &mut OpenOptions, create: bool) -> &mut OpenOptions {
         self._create = create;
         self
     }
+
+    /// Sets the option for create new access.
     fn create_new(self: &mut OpenOptions, create_new: bool) -> &mut OpenOptions {
         self._create_new = create_new;
         self
     }
+
+    /// Sets the custom flags.
     fn custom_flags(self: &mut OpenOptions, flags: i32) -> &mut OpenOptions {
         self._custom_flags = flags;
         self
     }
+
+    /// Sets the mode for creation.
     fn mode(self: &mut OpenOptions, mode: u32) -> &mut OpenOptions {
         self._mode = mode as libc::mode_t;
         self
@@ -96,6 +111,17 @@ impl OpenOptions {
     }
 }
 
+/// Utility for creating directories.
+///
+/// # Example
+/// ```
+/// use std::fs::{DirBuilder, Path};
+/// 
+/// DirBuilder::new()
+///     .recursive(true)
+///     .create(Path::new("/home/alumina/a/b/c/d/e/f"))
+///     .unwrap();
+/// ```
 struct DirBuilder {
     _recursive: bool,
     _mode: libc::mode_t,
@@ -109,11 +135,13 @@ impl DirBuilder {
         }
     }
 
+    /// Sets whether to create a recursive directory structure.
     fn recursive(self: &mut DirBuilder, recursive: bool) -> &mut DirBuilder {
         self._recursive = true;
         self
     }
 
+    /// Sets the mode for creation.
     fn mode(self: &mut DirBuilder, mode: u32) -> &mut DirBuilder {
         self._mode = mode as libc::mode_t;
         self
@@ -127,6 +155,7 @@ impl DirBuilder {
         Result::ok(())
     }
 
+    /// Create the directory (or directory tree) specified by `path`.
     fn create(self: &DirBuilder, path: Path) -> Result<(), Error> {
         if self._recursive {
             let res = self._mkdir(path);
