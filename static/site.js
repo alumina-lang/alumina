@@ -47,24 +47,37 @@ window.addEventListener("load", () => {
             return true;
         };
         
-        window.searchIndex
-            .filter(([path, doc, __]) => matcher(path))
-            .forEach(([path, doc, href]) => {
-                const child = document.createElement("div");
-                child.className = "row";
-                const pathCell = document.createElement("div");
-                pathCell.className = "cell-name";
-                const link = document.createElement("a");
-                link.href = href;
-                link.innerText = path;
-                pathCell.appendChild(link);
-                const docCell = document.createElement("div");
-                docCell.className = "cell-doc";
-                docCell.innerText = doc;
-                child.appendChild(pathCell);
-                child.appendChild(docCell);
-                table.appendChild(child);
-            });
+        const results = window.searchIndex
+            .filter(([path, doc, __]) => matcher(path));
+
+        // Put the exact matches to the top
+        const exactMatchSuffix = `::${searchBox.value}`.toLowerCase();
+        const exactMatcher = (s) => s === searchBox.value || s.toLowerCase().endsWith(exactMatchSuffix);
+
+        results.sort(([a, _, __], [b, ___, ____]) => {
+            if (exactMatcher(a) ^ exactMatcher(b)) {
+                return exactMatcher(a) ? -1 : 1
+            } else {
+                return 0
+            }
+        });
+
+        results.forEach(([path, doc, href]) => {
+            const child = document.createElement("div");
+            child.className = "row";
+            const pathCell = document.createElement("div");
+            pathCell.className = "cell-name";
+            const link = document.createElement("a");
+            link.href = href;
+            link.innerText = path;
+            pathCell.appendChild(link);
+            const docCell = document.createElement("div");
+            docCell.className = "cell-doc";
+            docCell.innerText = doc;
+            child.appendChild(pathCell);
+            child.appendChild(docCell);
+            table.appendChild(child);
+        });
         
         if (table.children.length != 0) {
             searchResults.innerText = "";
