@@ -1,14 +1,17 @@
 
+/// Network address family
 enum AddrKind {
     V6,
-    #[deprecated] V4, // booya!
+    #[deprecated] V4, // a boy can dream
 }
 
+/// IPv6 address
 struct Ipv6Addr {
     inner: libc::in6_addr,
 }
 
 impl Ipv6Addr {
+    /// Create a new IPv6 address from 16-bit segments
     fn new(a: u16, b: u16, c: u16, d: u16, e: u16, f: u16, g: u16, h: u16) -> Ipv6Addr {
         use internal::htons;
 
@@ -27,6 +30,7 @@ impl Ipv6Addr {
         Ipv6Addr { inner: addr }
     }
 
+    /// Create a new IPv6 address from a slice of 16-bit segments
     fn from_segments(segments: &[u16]) -> Ipv6Addr {
         assert!(segments.len == 8);
 
@@ -36,18 +40,22 @@ impl Ipv6Addr {
         )
     }
 
+    /// Localhost address (`::1`)
     fn localhost() -> Ipv6Addr {
         Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)
     }
 
+    /// Unspecified address (`::`)
     fn unspecified() -> Ipv6Addr {
         Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0)
     }
 
+    /// Convert `in6_addr` into an IPv6 address
     fn from_libc(addr: libc::in6_addr) -> Ipv6Addr {
         Ipv6Addr { inner: addr }
     }
 
+    /// 
     fn to_segments(self: &Ipv6Addr) -> [u16; 8] {
         use internal::htons;
 
@@ -65,6 +73,9 @@ impl Ipv6Addr {
         ]
     }
     
+    /// Extract IPv4 address from an IPv6 address if it's a v4-mapped or v4-compat address
+    ///
+    /// Returns `Option::none()` if the address is not a v4-mapped or v4-compat address.
     fn to_ipv4(self: &Ipv6Addr) -> Option<Ipv4Addr> {
         let segments = self.to_segments();
         if segments[0] == 0 && segments[1] == 0 && segments[2] == 0 && segments[3] == 0 &&
@@ -80,6 +91,7 @@ impl Ipv6Addr {
         }
     }
 
+    /// Parses an IPv6 address from a string.
     fn parse(s: &[u8]) -> Option<Ipv6Addr> {
         use option::try;
         use string::split;
@@ -115,6 +127,7 @@ impl Ipv6Addr {
         Option::some(from_segments(&left.0))
     }
 
+    /// @ std::fmt::Formattable::fmt
     fn fmt<F: fmt::Formatter<F>>(self: &Ipv6Addr, f: &mut F) -> Result<(), fmt::Error> {
         use fmt::{hex, zero_pad, write};
  
@@ -172,6 +185,7 @@ impl Ipv6Addr {
         Result::ok(())
     }
 
+    /// @ std::cmp::Equatable::equals
     fn equals(self: &Ipv6Addr, other: &Ipv6Addr) -> bool {
         self.inner.s6_addr.as_slice() == other.inner.s6_addr.as_slice()
     }
@@ -321,6 +335,7 @@ union SocketAddrInner {
     v4: libc::sockaddr_in,
 }
 
+/// Socket address (e.g. IP address and port)
 struct SocketAddr {
     kind: AddrKind,
     inner: SocketAddrInner

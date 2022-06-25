@@ -2,6 +2,8 @@ use io::{Error, Pipe};
 use io::unix::errno_try;
 
 /// Iterator over the environment variables.
+///
+/// See [std::process::env] for usage.
 struct EnvIterator {
     ptr: &&libc::c_char
 }
@@ -9,12 +11,6 @@ struct EnvIterator {
 impl EnvIterator {
     use ffi::CString;
     use string::find_char;
-
-    fn new() -> EnvIterator {
-        EnvIterator {
-            ptr: internal::environ
-        }
-    }
 
     /// @ std::iter::Iterator::next
     fn next(self: &mut EnvIterator) -> Option<(&[u8], &[u8])> {
@@ -45,6 +41,13 @@ impl EnvIterator {
     mixin iter::IteratorExt<EnvIterator, (&[u8], &[u8])>;
 }
 
+/// Return environment variables of the current process.
+fn env() -> EnvIterator {
+    EnvIterator {
+        ptr: unix::internal::environ
+    }
+}
+
 
 struct Output {
     status: i32,
@@ -67,6 +70,7 @@ impl Output {
     }
 }
 
+/// Child process
 struct Child {
     pid: libc::pid_t,
     stdin: option::Option<io::Pipe>,
@@ -77,6 +81,7 @@ struct Child {
 impl Child {
     use string::StringBuf;
 
+    /// Construct `Child` from a given process id.
     fn from_pid(pid: libc::pid_t) -> Child {
         Child {
             pid: pid,
@@ -86,6 +91,7 @@ impl Child {
         }
     }
 
+    /// Wait for child to exit, reading stdout and stderr if I/O redirection is requested.
     fn wait_with_output(self: &mut Child) -> Result<Output, Error> {
         let stdin = self.stdin.move();
         if stdin.is_some {
@@ -129,6 +135,7 @@ impl Child {
         Result::ok(res)
     }
 
+    /// Wait for child to exit, returning the exit status.
     fn wait(self: &mut Child) -> Result<i32, Error> {
         let stdin = self.stdin.move();
         if stdin.is_some {
@@ -141,11 +148,13 @@ impl Child {
         Result::ok(status as i32)
     }
 
+    /// Kill the child process.
     fn kill(self: &mut Child) -> Result<(), Error> {
         let ret = errno_try!(libc::kill(self.pid, libc::SIGKILL));
         Result::ok(())
     }
 
+    /// Close all pipes.
     fn close(self: &mut Child) -> Result<(), Error> {
         let stdin = self.stdin.move();
         if stdin.is_some {
@@ -166,6 +175,7 @@ impl Child {
     }
 }
 
+/// Builder for creating a forked process.
 struct Forked {
     _stdin: Stdio,
     _stdout: Stdio,
@@ -183,16 +193,19 @@ impl Forked {
         }
     }
 
+    /// Set the stdin redirection type
     fn stdin(self: &mut Forked, stdin: Stdio) -> &mut Forked {
         self._stdin = stdin;
         self
     }
 
+    /// Set the stdout redirection type
     fn stdout(self: &mut Forked, stdout: Stdio) -> &mut Forked {
         self._stdout = stdout;
         self
     }
 
+    /// Set the stderr redirection type
     fn stderr(self: &mut Forked, stderr: Stdio) -> &mut Forked {
         self._stderr = stderr;
         self
@@ -211,6 +224,10 @@ impl Forked {
         Result::ok(())
     }
 
+    /// Fork the process.
+    ///
+    /// Returns Option::none() in the child and a `Child` value in the
+    /// parent.
     fn spawn(self: &Forked) -> Result<Option<Child>, Error> {
         let stdin = IoRedirection::new(true, self._stdin)?;
         defer stdin.close();
@@ -260,6 +277,7 @@ impl Forked {
     }
 }
 
+/// Builder for creating a process.
 struct Command {
     _path: fs::Path,
     _args: &[&[u8]],
@@ -286,26 +304,31 @@ impl Command {
         }
     }
 
+    /// Set command line arguments.
     fn args(self: &mut Command, args: &[&[u8]]) -> &mut Command {
         self._args = args;
         self
     }
 
+    /// Set environment variables.
     fn env(self: &mut Command, environ: &[(&[u8], &[u8])]) -> &mut Command {
         self._environ = Option::some(environ);
         self
     }
 
+    /// Set the stdin redirection type
     fn stdin(self: &mut Command, stdin: Stdio) -> &mut Command {
         self._stdin = stdin;
         self
     }
 
+    /// Set the stdout redirection type
     fn stdout(self: &mut Command, stdout: Stdio) -> &mut Command {
         self._stdout = stdout;
         self
     }
 
+    /// Set the stderr redirection type
     fn stderr(self: &mut Command, stderr: Stdio) -> &mut Command {
         self._stderr = stderr;
         self
@@ -362,6 +385,7 @@ impl Command {
         unreachable!()
     }
 
+    /// Spawn a process.
     fn spawn(self: &Command) -> Result<Child, Error> {
         let stdin = IoRedirection::new(true, self._stdin)?;
         defer stdin.close();
@@ -433,8 +457,9 @@ mod internal {
         }
     }
 
-    // Reads two pipes (or any other stream) into respecitve buffers at the same time. It uses
-    // poll to make sure one pipe is not blocked by the other.
+    /// Reads two pipes (or any other stream) into respecitve buffers at the same time. 
+    ///
+    /// It uses [libc::poll] to make sure one pipe is not blocked by the other.
     fn read_to_end_2<
         S1: Readable<S1> + AsFileDescriptor<S1>, 
         S2: Readable<S2> + AsFileDescriptor<S2>, 

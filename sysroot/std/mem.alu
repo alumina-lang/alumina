@@ -3,8 +3,9 @@
 use builtins::Pointer;
 use std::option::Option;
 
-// Freable protocol is used for types that can be "freed". Usually these types contain something that
-// is heap-allocated.
+/// Types that can be "freed". 
+///
+/// Usually these types contain something that is heap-allocated.
 protocol Freeable<Self> {
     /// Frees the memory backing the object.
     fn free(self: &mut Self);
@@ -32,6 +33,7 @@ protocol Movable<Self> {
 
 /// Types that be copied (usually heap-allocated types)
 protocol Copyable<Self> {
+    /// 
     fn clone(self: &Self) -> Self;
 }
 
@@ -46,6 +48,11 @@ protocol AsSliceMut<Self, T> {
 }
 
 /// Fat pointers to a contiguous region of memory.
+///
+/// ```
+/// type &[T] = slice<&T>;
+/// type &mut [T] = slice<&mut T>;
+/// ```
 ///
 /// Slice fat "pointers" are just regular structs that compiler handles in a special way with regards
 /// to syntax, implicit coercion and type inference. They are generic over the pointer-to-element type
@@ -63,40 +70,38 @@ impl slice {
     use std::builtins::{Primitive, PointerOf, ZeroSized};
     use libc::memcmp;
 
+    /// Empty slice
     #[force_inline]
     fn empty<Ptr: Pointer>() -> slice<Ptr> {
         slice::<Ptr> { ptr: null, len: 0 }
     }
 
+    /// Create a slice from a pointer and length
     #[force_inline]
     #[lang(slice_new)]
     fn from_raw<Ptr: Pointer>(ptr: Ptr, len: usize) -> slice<Ptr> {
         slice::<Ptr> { ptr: ptr, len: len }
     }
 
+    /// @ std::iter::Iterable::iter
     #[force_inline]
     fn iter<Ptr: Pointer>(self: &slice<Ptr>) -> SliceIterator<Ptr> {
-        SliceIterator::new(*self)
+        SliceIterator { inner: *self }
     }
 
+    /// @ std::iter::IterableRef::iter_ref
     #[force_inline]
     fn iter_ref<Ptr: Pointer>(self: &slice<Ptr>) -> SliceRefIterator<&builtins::deref_of<Ptr>> {
-        SliceRefIterator::new(*self as slice<&builtins::deref_of<Ptr>>)
+        SliceRefIterator { inner: *self as slice<&builtins::deref_of<Ptr>> }
     }
 
+    /// @ std::iter::IterableMut::iter_mut
     #[force_inline]
     fn iter_mut<T>(self: &&mut [T]) -> SliceRefIterator<&mut T> {
-        SliceRefIterator::new(*self)
+        SliceRefIterator { inner: *self }
     }
 
-    fn as_slice<T>(self: &&[T]) -> &[T] {
-        *self
-    }
-
-    fn as_slice_mut<T>(self: &mut &mut [T]) -> &mut [T] {
-        *self
-    }
-
+    /// Fill slice with a value
     fn fill<T>(slice: &mut [T], value: T) {
         when T: ZeroSized {
             // nop
@@ -109,6 +114,7 @@ impl slice {
         }
     }
 
+    /// @ std::cmp::Equatable::equals
     fn equals<T: Equatable<T>, Ptr: PointerOf<T>>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> bool {
         if lhs.len != rhs.len {
             return false;
@@ -131,6 +137,7 @@ impl slice {
         }
     }
 
+    /// @ std::cmp::Comparable::compare
     fn compare<T: Comparable<T>, Ptr: PointerOf<T>>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> Ordering {
         use std::cmp::min;
 
@@ -159,6 +166,7 @@ impl slice {
         }
     }
     
+    /// @ std::hash::Hashable::hash
     fn hash<T: Hashable<T, H>, Ptr: PointerOf<T>, H: Hasher<H>>(self: &slice<Ptr>, hasher: &mut H) {
         when T: ZeroSized {
             // no-op
@@ -173,6 +181,7 @@ impl slice {
         }
     }
 
+    /// @ std::fmt::Formattable::fmt
     fn fmt<Ptr: PointerOf<u8>, F: fmt::Formatter<F>>(self: &slice<Ptr>, f: &mut F) -> Result<(), fmt::Error> {
         f.write_str(*self)
     }
@@ -181,16 +190,13 @@ impl slice {
     mixin<T: Comparable<T>, Ptr: PointerOf<T>> Comparable<slice<Ptr>>;
 }
 
+/// Iterator over elements of a slice
 struct SliceIterator<Ptr: Pointer> {
     inner: slice<Ptr>,
 }
 
 impl SliceIterator<Ptr: Pointer> {
-    #[force_inline]
-    fn new(inner: slice<Ptr>) -> SliceIterator<Ptr> {
-        SliceIterator { inner: inner }
-    }
-
+    /// @ iter::Iterator::next
     #[force_inline]
     fn next(self: &mut SliceIterator<Ptr>) -> Option<builtins::deref_of<Ptr>> {
         if self.inner.len > 0 {
@@ -203,6 +209,7 @@ impl SliceIterator<Ptr: Pointer> {
         }
     }
 
+    /// @ iter::DoubleEndedIterator::next_back
     #[force_inline]
     fn next_back(self: &mut SliceIterator<Ptr>) -> Option<builtins::deref_of<Ptr>> {
         if self.inner.len > 0 {
@@ -214,6 +221,7 @@ impl SliceIterator<Ptr: Pointer> {
         }
     }
 
+    /// @ iter::Iterator::size_hint
     fn size_hint(self: &SliceIterator<Ptr>) -> Option<usize> {
         Option::some(self.inner.len)
     }
@@ -224,16 +232,13 @@ impl SliceIterator<Ptr: Pointer> {
     mixin iter::DoubleEndedIteratorExt<SliceIterator<Ptr>, builtins::deref_of<Ptr>>;
 }
 
+/// Iterator over pointers to elements of a slice
 struct SliceRefIterator<Ptr: Pointer> {
     inner: slice<Ptr>,
 }
 
 impl SliceRefIterator<Ptr: Pointer> {
-    #[force_inline]
-    fn new(inner: slice<Ptr>) -> SliceRefIterator<Ptr> {
-        SliceRefIterator { inner: inner }
-    }
-
+    /// @ iter::Iterator::next
     #[force_inline]
     fn next(self: &mut SliceRefIterator<Ptr>) -> Option<Ptr> {
         if self.inner.len > 0 {
@@ -246,6 +251,7 @@ impl SliceRefIterator<Ptr: Pointer> {
         }
     }
 
+    /// @ iter::DoubleEndedIterator::next_back
     #[force_inline]
     fn next_back(self: &mut SliceRefIterator<Ptr>) -> Option<Ptr> {
         if self.inner.len > 0 {
@@ -257,6 +263,7 @@ impl SliceRefIterator<Ptr: Pointer> {
         }
     }
 
+    /// @ iter::Iterator::size_hint
     fn size_hint(self: &SliceRefIterator<Ptr>) -> Option<usize> {
         Option::some(self.inner.len)
     }
@@ -305,33 +312,6 @@ mod internal {
     #[lang(slice_coerce)]
     fn slice_coerce<T>(a: slice<&mut T>) -> slice<&T> {
         slice::from_raw::<&T>(a.ptr, a.len)
-    }
-}
-
-struct Unique<T> {
-    inner: &mut T,
-}
-
-impl Unique<T> {
-    fn new(inner: T) -> Unique<T> {
-        let mem = libc::malloc(size_of::<T>()) as &mut T;
-        *mem = inner;
-        Unique { inner: mem }
-    }
-
-    fn free(self: &mut Unique<T>) {
-        if self.inner != null {
-            when T: Freeable<T> {
-                self.inner.free()
-            }
-            libc::free(self.inner as &mut void);
-        }
-    }
-
-    fn move(self: &mut Unique<T>) -> T {
-        let result = *self.inner;
-        self.inner = null;
-        result
     }
 }
 

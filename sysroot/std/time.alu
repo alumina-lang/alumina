@@ -6,32 +6,60 @@ const NANOS_PER_MICRO: u32 = 1000;
 const MILLIS_PER_SEC: u64 = 1000;
 const MICROS_PER_SEC: u64 = 1000000;
 
-#[cfg(not(target_os = "macos"))]
-{
-    struct Instant {
-        spec: libc::timespec
-    }
+/// A specific point in time
+///
+/// This is typically a reading from a high-precision monotonic clock and not the wall-clock. It is useful
+/// for measuring durations between two points in time.
+struct Instant {
+    #[cfg(not(target_os = "macos"))]
+    spec: libc::timespec,
+    #[cfg(target_os = "macos")]
+    inner: u64,
+}
 
-    impl Instant {
-        fn now() -> Instant {
+impl Instant {
+    /// Current time
+    fn now() -> Instant {
+        #[cfg(not(target_os = "macos"))]
+        {
             let spec: libc::timespec;
             libc::clock_gettime(libc::CLOCK_MONOTONIC, &spec);
             Instant { spec: spec }
         }
 
-        fn since(self: &Instant, other: &Instant) -> Duration {
-            let secs = (self.spec.tv_sec as i64) - (other.spec.tv_sec as i64);
-            let nanos = (self.spec.tv_nsec as i32) - (other.spec.tv_nsec as i32);
+        #[cfg(target_os = "macos")] {
+            Instant { inner: internal::mach_absolute_time() }
+        }
+    }
+
+    /// Returns time elapsed since an earlier instant.
+    ///
+    /// If `earlier` is after the current instant, then a negative duration is returned.
+    fn duration_since(self: &Instant, earlier: &Instant) -> Duration {
+        #[cfg(not(target_os = "macos"))] {
+            let secs = (self.spec.tv_sec as i64) - (earlier.spec.tv_sec as i64);
+            let nanos = (self.spec.tv_nsec as i32) - (earlier.spec.tv_nsec as i32);
 
             if nanos < 0 {
                 secs -= 1;
                 nanos += NANOS_PER_SEC as i32;
-            } 
+            }
+            Duration::new(secs, nanos as u32)
+        } 
 
+
+        #[cfg(target_os = "macos")] {
+            let diff = self.inner - earlier.inner;
+            let total_nanos = ((diff as i128) * (internal::TIMEBASE.numer as i128) / 
+                (internal::TIMEBASE.denom as i128)) as i64;
+            let (secs, nanos) = math::div_floor(total_nanos, NANOS_PER_SEC as i64);
             Duration::new(secs, nanos as u32)
         }
+    }
 
-        fn add(lhs: &Instant, rhs: &Duration) -> Instant {
+    /// Add a specific duration to an instant.
+    fn add(lhs: &Instant, rhs: &Duration) -> Instant {
+        #[cfg(not(target_os = "macos"))] {
             let secs = lhs.spec.tv_sec + util::cast(rhs.secs);
             let nanos = lhs.spec.tv_nsec as u32 + rhs.nanos;
 
@@ -48,7 +76,20 @@ const MICROS_PER_SEC: u64 = 1000000;
             }
         }
 
-        fn sub(lhs: &Instant, rhs: &Duration) -> Instant {
+        #[cfg(target_os = "macos")] {
+            let total_nanos = (rhs.nanos as u128) + (rhs.secs as u128) * (NANOS_PER_SEC as u128);
+            let nanos = (total_nanos * (internal::TIMEBASE.denom as u128) / 
+                (internal::TIMEBASE.numer as u128)) as u64;
+
+            Instant {
+                inner: lhs.inner + nanos
+            }
+        }
+    }
+
+    /// Subtract a specific duration from an instant.
+    fn sub(lhs: &Instant, rhs: &Duration) -> Instant {
+        #[cfg(not(target_os = "macos"))] {
             let secs = lhs.spec.tv_sec - util::cast(rhs.secs);
             let nsec = lhs.spec.tv_nsec as i32 - (rhs.nanos as i32);
 
@@ -65,18 +106,40 @@ const MICROS_PER_SEC: u64 = 1000000;
             }
         }
 
-        fn equals(lhs: &Instant, rhs: &Instant) -> bool {
+        #[cfg(target_os = "macos")] {
+            let total_nanos = (rhs.nanos as u128) + (rhs.secs as u128) * (NANOS_PER_SEC as u128);
+            let nanos = (total_nanos * (internal::TIMEBASE.denom as u128) / 
+                (internal::TIMEBASE.numer as u128)) as u64;
+            
+            Instant {
+                inner: lhs.inner - nanos
+            }
+        }
+    }
+    
+    /// @ std::cmp::Equatable::equals
+    fn equals(lhs: &Instant, rhs: &Instant) -> bool {
+        #[cfg(not(target_os = "macos"))] {
             lhs.spec.tv_sec == rhs.spec.tv_sec && lhs.spec.tv_nsec == rhs.spec.tv_nsec
         }
+        #[cfg(target_os = "macos")] {
+            lhs.inner == rhs.inner
+        }
+    }
 
-        fn compare(lhs: &Instant, rhs: &Instant) -> cmp::Ordering {
+    /// @ std::cmp::Comparable::compare
+    fn compare(lhs: &Instant, rhs: &Instant) -> cmp::Ordering {
+        #[cfg(not(target_os = "macos"))] {
             cmp::lexicographic_cmp!(lhs.spec.tv_sec, rhs.spec.tv_sec);
             lhs.spec.tv_nsec.compare(&rhs.spec.tv_nsec)
         }
-
-        mixin cmp::Comparable<Instant>;
-        mixin cmp::Equatable<Instant>;
+        #[cfg(target_os = "macos")] {
+            lhs.inner.compare(&rhs.inner)
+        }
     }
+    
+    mixin cmp::Comparable<Instant>;
+    mixin cmp::Equatable<Instant>;
 }
 
 #[cfg(target_os = "macos")]
@@ -98,64 +161,17 @@ const MICROS_PER_SEC: u64 = 1000000;
             v
         };   
     }
-
-    struct Instant {
-        inner: u64
-    }
-
-    impl Instant {
-        use internal::*;
-
-        fn now() -> Instant {
-            Instant { inner: mach_absolute_time() }
-        }
-
-        fn since(self: &Instant, other: &Instant) -> Duration {
-            let diff = self.inner - other.inner;
-            let total_nanos = ((diff as i128) * (TIMEBASE.numer as i128) / (TIMEBASE.denom as i128)) as i64;
-
-            let (secs, nanos) = math::div_floor(total_nanos, NANOS_PER_SEC as i64);
-            Duration::new(secs, nanos as u32)
-        }
-
-        fn add(lhs: &Instant, rhs: &Duration) -> Instant {
-            let total_nanos = (rhs.nanos as u128) + (rhs.secs as u128) * (NANOS_PER_SEC as u128);
-            let nanos = (total_nanos * (TIMEBASE.denom as u128) / (TIMEBASE.numer as u128)) as u64;
-
-            Instant {
-                inner: lhs.inner + nanos
-            }
-        }
-
-        fn sub(lhs: &Instant, rhs: &Duration) -> Instant {
-            let total_nanos = (rhs.nanos as u128) + (rhs.secs as u128) * (NANOS_PER_SEC as u128);
-            let nanos = (total_nanos * (TIMEBASE.denom as u128) / (TIMEBASE.numer as u128)) as u64;
-
-            Instant {
-                inner: lhs.inner - nanos
-            }
-        }
-
-        fn equals(lhs: &Instant, rhs: &Instant) -> bool {
-            lhs.inner == rhs.inner
-        }
-
-        fn compare(lhs: &Instant, rhs: &Instant) -> cmp::Ordering {
-            lhs.inner.compare(&rhs.inner)
-        }
-
-        mixin cmp::Comparable<Instant>;
-        mixin cmp::Equatable<Instant>;
-    }
 }
 
+/// Represents a span of time.
+///
+/// Duration is signed, unlike Rust, which only supports non-negative durations. It is assumed
+/// to always be normalized, i.e. 0 <= `nanos` < [NANOS_PER_SEC].
 struct Duration {
     secs: i64,
     nanos: u32,
 }
 
-// Duration is signed, unlike Rust, which only supports non-negative durations. It is assumed
-// to always be normalized, i.e. 0 <= nanos < NANOS_PER_SEC.
 impl Duration {
     fn new(secs: i64, nanos: u32) -> Duration {
         Duration { 
@@ -164,24 +180,28 @@ impl Duration {
         }
     }
 
+    /// A duration of zero time
     #[inline]
     fn zero() -> Duration {
         Duration { secs: 0, nanos: 0 }
     }
 
 
+    /// Returns `true` if durationis negative, `false` otherwise
     #[inline]
     fn negative(self: Duration) -> bool {
         self.secs < 0
     }
 
 
+    /// Duration from a specified number of seconds
     #[inline]
     fn from_secs(secs: i64) -> Duration {
         Duration { secs: secs, nanos: 0 }
     }
 
 
+    /// Duration from a specified number of milliseconds
     #[inline]
     fn from_millis(millis: i64) -> Duration {
         let (secs, millis) = math::div_floor(millis, MILLIS_PER_SEC as i64);
@@ -191,7 +211,7 @@ impl Duration {
         }
     }
 
-
+    /// Duration from a specified number of microseconds
     #[inline]
     fn from_micros(micros: i64) -> Duration {
         let (secs, micros) = math::div_floor(micros, MICROS_PER_SEC as i64);
@@ -201,6 +221,7 @@ impl Duration {
         }
     }
 
+    /// Duration from a specified number of nanoseconds
     #[inline]
     fn from_nanos(nanos: i64) -> Duration {
         let (secs, nanos) = math::div_floor(nanos, NANOS_PER_SEC as i64);
@@ -211,6 +232,7 @@ impl Duration {
         }
     }
 
+    /// Add a duration to another.
     #[inline]
     fn add(self: &Duration, rhs: &Duration) -> Duration {
         let secs = self.secs + rhs.secs;
@@ -227,6 +249,7 @@ impl Duration {
         }
     }
 
+    /// Subtract a duration from the current duration.
     #[inline]
     fn sub(self: &Duration, rhs: &Duration) -> Duration {
         let secs = self.secs - rhs.secs;
@@ -243,20 +266,24 @@ impl Duration {
         }
     }
 
+    /// Total number of seconds as a floating point.
     #[inline]
     fn total_secs(self: &Duration) -> f64 {
         (self.secs as f64) + (self.nanos as f64) / (NANOS_PER_SEC as f64)
     }
 
+    /// @ std::cmp::Equatable::equals
     fn equals(lhs: &Duration, rhs: &Duration) -> bool {
         lhs.secs == rhs.secs && lhs.nanos == rhs.nanos
     }
 
+    /// @ std::cmp::Comparable::compare
     fn compare(lhs: &Duration, rhs: &Duration) -> cmp::Ordering {
         cmp::lexicographic_cmp!(lhs.secs, rhs.secs);
         lhs.nanos.compare(&rhs.nanos)
     }
 
+    /// @ std::fmt::Formattable::fmt
     fn fmt<F: fmt::Formatter<F>>(self: &Duration, f: &mut F) -> Result<(), fmt::Error> {
         use fmt::{write, zero_pad};
 
@@ -359,9 +386,9 @@ mod tests {
         assert!(end > start);
         assert!(end != start);
 
-        assert_eq!(start.since(&start), Duration::zero());
-        assert_eq!(end.since(&start), Duration::from_secs(1));
-        assert_eq!(start.since(&end), Duration::from_secs(-1));
+        assert_eq!(start.duration_since(&start), Duration::zero());
+        assert_eq!(end.duration_since(&start), Duration::from_secs(1));
+        assert_eq!(start.duration_since(&end), Duration::from_secs(-1));
 
         let start1 = end.sub(&Duration::from_secs(1));
         assert_eq!(start1, start);

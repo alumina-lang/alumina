@@ -130,7 +130,15 @@ protocol Readable<Self> {
 
 /// Types that implement writable stream semantics.
 protocol Writable<Self> {
+    /// Write the buffer to the stream.
+    ///
+    /// Returns the number of bytes written. This may be less than the size of the buffer.
+    /// See also [write_all], which can be used to write the entire buffer.
     fn write(self: &mut Self, buf: &[u8]) -> Result<usize, Error>;
+
+    /// Writes all the bytes in the buffer to the stream.
+    /// 
+    /// If EOF is reached, returns `Error::eof()`.
     fn write_all(self: &mut Self, buf: &[u8]) -> Result<(), Error> {
 
         while buf.len > 0 {
@@ -143,6 +151,10 @@ protocol Writable<Self> {
 
         Result::ok(())
     }
+
+    /// Flush the stream
+    /// 
+    /// This may be a no-op, depending on the stream.
     fn flush(self: &mut Self) -> Result<(), Error>;
 }
 
@@ -155,13 +167,19 @@ enum SeekFrom {
 
 /// Streams that can be fast-forwarded or rewound to an arbitrary offset.
 protocol Seekable<Self> {
+    /// Jump to a specified position in the stream.
+    ///
+    /// Returns the new position in the stream from the beginning.
     fn seek(self: &mut Self, whence: SeekFrom, offset: i64) -> Result<u64, Error>;
+    
+    /// Rewind the stream to the beginning.
     fn rewind(self: &mut Self) -> Result<(), Error> {
         self.seek(SeekFrom::Beginning, 0)?;
         
         Result::ok(())
     }
 
+    /// Returns the current position in the stream from the beginning.
     fn position(self: &mut Self) -> Result<u64, Error> {
         self.seek(SeekFrom::Current, 0)
     }
@@ -183,6 +201,7 @@ impl SliceReader {
         }
     }
 
+    /// @ Readable::read
     fn read(self: &mut SliceReader, buf: &mut [u8]) -> Result<usize, Error> {
         let len = cmp::min(buf.len, self.slice.len - self.pos);
         
@@ -194,14 +213,17 @@ impl SliceReader {
         Result::ok(len)
     }
 
+    /// @ BufferedReadable::fill_buffer
     fn fill_buffer(self: &mut SliceReader) -> Result<&[u8], Error> {
         Result::ok(self.slice[self.pos..] as &[u8])
     }
 
+    /// @ BufferedReadable::consume
     fn consume(self: &mut SliceReader, amount: usize) {
         self.pos = cmp::min(self.pos + amount, self.slice.len);
     }
 
+    /// @ Seekable::seek
     fn seek(self: &mut SliceReader, whence: SeekFrom, offset: i64) -> Result<u64, Error> {
         let new_offset = switch whence {
             SeekFrom::Beginning => offset,
@@ -218,6 +240,7 @@ impl SliceReader {
         }
     }
 
+    /// @ Seekable::position
     fn position(self: &mut SliceReader) -> Result<u64, ()> {
         Result::ok(self.pos as u64)
     }
@@ -239,11 +262,13 @@ impl StringWriter {
         }
     }
 
+    /// @ Writable::write
     fn write(self: &mut StringWriter, buf: &[u8]) -> Result<usize, Error> {
         self.string.extend_from_slice(buf);
         Result::ok(buf.len)
     }
 
+    /// @ Writable::flush
     fn flush(self: &mut StringWriter) -> Result<(), Error> {
         Result::ok(())
     }
@@ -256,7 +281,13 @@ impl StringWriter {
 /// Streams implementing this protocol enables them to be used by method such as [read_until],
 /// which is aware of the internal buffer.
 protocol BufferedReadable<Self: Readable<Self>> {
+    /// Return the current contents of the buffer, reading additional
+    /// data from the stream if necessary.
+    ///
+    /// Does not move the internal buffer position.
     fn fill_buffer(self: &mut Self) -> Result<&[u8], Error>;
+
+    /// Mark `amount` bytes as consumed.
     fn consume(self: &mut Self, amount: usize)
 }
 
@@ -288,6 +319,7 @@ impl BufferedReader<R: Readable<R>> {
         }
     }
 
+    /// @ BufferedReadable::fill_buffer
     fn fill_buffer(self: &mut BufferedReader<R>) -> Result<&[u8], Error> {
         if self.pos == self.cap {
             self.cap = self.inner.read(self.buf)?;
@@ -297,10 +329,12 @@ impl BufferedReader<R: Readable<R>> {
         Result::ok(self.buf[self.pos..self.cap] as &[u8])
     }
 
+    /// @ BufferedReadable::consume
     fn consume(self: &mut BufferedReader<R>, amount: usize) {
         self.pos = cmp::min(self.pos + amount, self.cap);
     }
 
+    /// @ Readable::read
     fn read(self: &mut BufferedReader<R>, buf: &mut [u8]) -> Result<usize, Error> {
         let slice = self.fill_buffer()?;
 
@@ -313,6 +347,7 @@ impl BufferedReader<R: Readable<R>> {
         Result::ok(nread)
     }
 
+    /// @ Readable::read_exact
     fn read_exact(self: &mut BufferedReader<R>, buf: &mut [u8]) -> Result<(), Error> {
         if self.cap - self.pos >= buf.len {
             if buf.len > 0 {
@@ -325,11 +360,13 @@ impl BufferedReader<R: Readable<R>> {
         self.default_read_exact(buf)
     }
 
+    /// @ std::mem::Freeable::free
     fn free(self: &mut BufferedReader<R>) {
         use std::mem::free;
         self.buf.free();
     }
 
+    /// @ std::mem::Movable::move
     fn move(self: &mut BufferedReader<R>) -> BufferedReader<R> {
         let ret = *self;
         self.buf = mem::slice::empty();
@@ -340,6 +377,7 @@ impl BufferedReader<R: Readable<R>> {
 }
 
 impl BufferedReader<R: Seekable<R>> {
+    /// @ Seekable::seek
     fn seek(self: &mut BufferedReader<R>, whence: SeekFrom, offset: i64) -> Result<u64, Error> {
         let res = if whence == SeekFrom::Current {
             let remainder = (self.cap - self.pos) as i64;
@@ -353,10 +391,6 @@ impl BufferedReader<R: Seekable<R>> {
         self.pos = 0;
 
         Result::ok(res)
-    }
-
-    fn position(self: &mut BufferedReader<R>) -> Result<u64, ()> {
-        self.seek(SeekFrom::Current, 0)
     }
 
     mixin Seekable<BufferedReader<R>>;
@@ -391,7 +425,7 @@ impl BufferedWriter<W: Writable<W>> {
     #[inline(never)]
     fn write_full(self: &mut BufferedWriter<W>, buf: &[u8]) -> result::Result<usize, Error> {
         if buf.len > self.buf.len - self.pos {
-            self.flush_buffer()?;
+            self._flush_buffer()?;
         }
      
         if buf.len >= self.buf.len  {
@@ -403,22 +437,7 @@ impl BufferedWriter<W: Writable<W>> {
         }
     }
 
-    #[cold]
-    #[inline(never)]
-    fn write_all_full(self: &mut BufferedWriter<W>, buf: &[u8]) -> result::Result<(), Error> {
-        if buf.len > self.buf.len - self.pos {
-            self.flush_buffer()?;
-        }
-
-        if buf.len >= self.buf.len {
-            // Bypass the buffer if we need to write more than buffer size
-            self.inner.write_all(buf)
-        } else {
-            self._write_to_buffer(buf);
-            Result::ok(())
-        }
-    }
-
+    /// @ Writable::write
     #[inline]
     fn write(self: &mut BufferedWriter<W>, buf: &[u8]) -> result::Result<usize, Error> {
         if buf.len < self.buf.len - self.pos {
@@ -429,28 +448,20 @@ impl BufferedWriter<W: Writable<W>> {
         }
     }
 
+    /// @ Writable::write_all
     #[inline]
     fn write_all(self: &mut BufferedWriter<W>, buf: &[u8]) -> result::Result<(), Error> {
         if buf.len < self.buf.len - self.pos {
             self._write_to_buffer(buf);
             Result::ok(())
         } else {
-            self.write_all_full(buf)
+            self._write_all_full(buf)
         }
     }
 
-    fn flush_buffer(self: &mut BufferedWriter<W>) -> result::Result<(), Error> {
-        // This will return an EOF error, if we are not able to write everything.
-        // since we have accepted bytes that  are not written to the underlying 
-        // writer and not signalled an EOF.
-        self.inner.write_all(self.buf[..self.pos])?;
-        self.pos = 0;
-
-        Result::ok(())
-    }
-
+    /// @ Writable::flush
     fn flush(self: &mut BufferedWriter<W>) -> result::Result<(), Error> {
-        self.flush_buffer()?;
+        self._flush_buffer()?;
         self.inner.flush()
     }
 
@@ -464,11 +475,39 @@ impl BufferedWriter<W: Writable<W>> {
         }
     }
 
+    fn _flush_buffer(self: &mut BufferedWriter<W>) -> result::Result<(), Error> {
+        // This will return an EOF error, if we are not able to write everything.
+        // since we have accepted bytes that are not written to the underlying 
+        // writer and not signalled an EOF.
+        self.inner.write_all(self.buf[..self.pos])?;
+        self.pos = 0;
+
+        Result::ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn _write_all_full(self: &mut BufferedWriter<W>, buf: &[u8]) -> result::Result<(), Error> {
+        if buf.len > self.buf.len - self.pos {
+            self._flush_buffer()?;
+        }
+
+        if buf.len >= self.buf.len {
+            // Bypass the buffer if we need to write more than buffer size
+            self.inner.write_all(buf)
+        } else {
+            self._write_to_buffer(buf);
+            Result::ok(())
+        }
+    }
+
+    /// @ std::mem::Freeable::free
     fn free(self: &mut BufferedWriter<W>) {
         use std::mem::free;
         free(self.buf);
     }
 
+    /// @ std::mem::Movable::move
     fn move(self: &mut BufferedWriter<W>) -> BufferedWriter<W> {
         let ret = *self;
         self.buf = mem::slice::empty();
@@ -478,6 +517,7 @@ impl BufferedWriter<W: Writable<W>> {
 
 // BufferedWriter implements Formatter, so it can be used as a sink in write!(...)
 impl BufferedWriter<W: Writable<W>> {
+    /// @ std::fmt::Formatter::write_str
     #[inline]
     fn write_str(self: &mut BufferedWriter<W>, buf: &[u8]) -> Result<(), fmt::Error> {
         self.write_all(buf).map_err(fmt::Error::from::<Error>)
@@ -565,6 +605,7 @@ struct LineIterator<R: BufferedReadable<R>> {
 impl LineIterator<R: BufferedReadable<R>> {
     use std::iter::Iterator;
 
+    /// Create a line iterator with a pre-allocated buffer.
     fn with_line_buffer(reader: &mut R, line_buf: string::StringBuf) -> LineIterator<R> {
         LineIterator {
             reader: reader,
@@ -572,14 +613,17 @@ impl LineIterator<R: BufferedReadable<R>> {
         }
     }
 
-    fn with_capacity(reader: &mut R, capacity: usize) -> LineIterator<R> {
-        with_line_buffer(reader, collections::Vector::with_capacity(capacity))
-    }
-
+    /// Create a line iterator with a default buffer.
     fn new(reader: &mut R) -> LineIterator<R> {
         with_capacity(reader, 0)
     }
 
+    /// Create a line iterator with a given capacity
+    fn with_capacity(reader: &mut R, capacity: usize) -> LineIterator<R> {
+        with_line_buffer(reader, collections::Vector::with_capacity(capacity))
+    }
+    
+    /// @ std::iter::Iterator::next
     fn next(self: &mut LineIterator<R>) -> Option<Result<&[u8], Error>> {
         self.line_buf.clear();
 
@@ -592,9 +636,9 @@ impl LineIterator<R: BufferedReadable<R>> {
             return Option::none();
         }
 
-        if self.line_buf.last() == Option::some('\n') {
+        if self.line_buf.iter().next_back() == Option::some('\n') {
             self.line_buf.pop();
-            if self.line_buf.last() == Option::some('\r') {
+            if self.line_buf.iter().next_back() == Option::some('\r') {
                 self.line_buf.pop();
             }
         }
@@ -602,10 +646,12 @@ impl LineIterator<R: BufferedReadable<R>> {
         Option::some(Result::ok(self.line_buf.as_slice()))
     }
 
+    /// @ std::mem::Freeable::free
     fn free(self: &mut LineIterator<R>) {
         self.line_buf.free();
     }
 
+    /// @ std::mem::Movable::move
     fn move(self: &mut LineIterator<R>) -> LineIterator<R> {
         LineIterator::<R> {
             reader: self.reader,
