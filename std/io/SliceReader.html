@@ -7,6 +7,15 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <meta content="width=device-width, initial-scale=1" name="viewport" />
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png" />
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
+<link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
+<link rel="manifest" href="/static/manifest.json" />
+<link rel="mask-icon" href="/static/safari-pinned-tab.svg" color="#5bbad5" />
+<link rel="shortcut icon" href="/static/favicon.ico" />
+<meta name="msapplication-TileColor" content="#da532c" />
+<meta name="msapplication-config" content="/static/browserconfig.xml" />
+<meta name="description" content="Documentation for the Alumina standard library" />
 <script src="/static/site.js"></script>
 <script src="/search_index.js" async></script>
 <link href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500&family=Source+Code+Pro:wght@400;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,700&display=swap" rel="stylesheet">
@@ -62,7 +71,7 @@
 <h3>
 <span class="keyword">struct</span> <span class="identifier-type">SliceReader</span> { ... }</h3>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L171-L174"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L189-L192"/>source</a>
 </div>
 </div>
 <p>
@@ -97,7 +106,7 @@ pos: <span class="keyword-type">usize</span></h4>
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">new</span>(slice: &amp;[<span class="keyword-type">u8</span>]) -> <a href="/std/io/SliceReader.html"><span class="identifier-type">SliceReader</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L179-L184"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L197-L202"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -108,10 +117,17 @@ pos: <span class="keyword-type">usize</span></h4>
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">read</span>(self: &amp;mut <a href="/std/io/SliceReader.html"><span class="identifier-type">SliceReader</span></a>, buf: &amp;mut [<span class="keyword-type">u8</span>]) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;<span class="keyword-type">usize</span>, <a href="/std/io/unix/Error.html"><span class="identifier-type">Error</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L186-L195"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L205-L214"/>source</a>
 </div>
 </div>
 <div class="item-doc">
+<p>
+Reads from the stream into a provided buffer.
+</p><p>
+If successful, returns the number of bytes read. This may be less than the size
+of the provided buffer.
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -119,10 +135,17 @@ pos: <span class="keyword-type">usize</span></h4>
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">fill_buffer</span>(self: &amp;mut <a href="/std/io/SliceReader.html"><span class="identifier-type">SliceReader</span></a>) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;&amp;[<span class="keyword-type">u8</span>], <a href="/std/io/unix/Error.html"><span class="identifier-type">Error</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L197-L199"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L217-L219"/>source</a>
 </div>
 </div>
 <div class="item-doc">
+<p>
+Return the current contents of the buffer, reading additional
+data from the stream if necessary.
+</p><p>
+Does not move the internal buffer position.
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -130,10 +153,14 @@ pos: <span class="keyword-type">usize</span></h4>
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">consume</span>(self: &amp;mut <a href="/std/io/SliceReader.html"><span class="identifier-type">SliceReader</span></a>, amount: <span class="keyword-type">usize</span>)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L201-L203"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L222-L224"/>source</a>
 </div>
 </div>
 <div class="item-doc">
+<p>
+Mark <code>amount</code> bytes as consumed.
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -141,10 +168,16 @@ pos: <span class="keyword-type">usize</span></h4>
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">seek</span>(self: &amp;mut <a href="/std/io/SliceReader.html"><span class="identifier-type">SliceReader</span></a>, whence: <a href="/std/io/SeekFrom.html"><span class="identifier-type">SeekFrom</span></a>, offset: <span class="keyword-type">i64</span>) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;<span class="keyword-type">u64</span>, <a href="/std/io/unix/Error.html"><span class="identifier-type">Error</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L205-L219"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L227-L241"/>source</a>
 </div>
 </div>
 <div class="item-doc">
+<p>
+Jump to a specified position in the stream.
+</p><p>
+Returns the new position in the stream from the beginning.
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -152,10 +185,14 @@ pos: <span class="keyword-type">usize</span></h4>
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">position</span>(self: &amp;mut <a href="/std/io/SliceReader.html"><span class="identifier-type">SliceReader</span></a>) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;<span class="keyword-type">u64</span>, ()&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L221-L223"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L244-L246"/>source</a>
 </div>
 </div>
 <div class="item-doc">
+<p>
+Returns the current position in the stream from the beginning.
+</p><p>
+</p>
 </div>
 </li>
 </ul>
