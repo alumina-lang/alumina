@@ -1004,3 +1004,78 @@ extern "C" fn strlen(s: &c_char) -> size_t;
     
     const S_IFMT: mode_t = 61440;
 }
+
+
+#[cfg(target_os = "android")] {
+    type pthread_t = c_long;
+
+    #[cfg(target_pointer_width = "32")]
+    struct pthread_attr_t {
+        flags: u32,
+        stack_base: &mut void,
+        stack_size: size_t,
+        guard_size: size_t,
+        sched_policy: i32,
+        sched_priority: i32,
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    struct pthread_attr_t {
+        flags: u32,
+        stack_base: &mut void,
+        stack_size: size_t,
+        guard_size: size_t,
+        sched_policy: i32,
+        sched_priority: i32,
+    }
+}
+
+#[cfg(target_os = "linux")] {
+    type pthread_t = c_ulong;
+
+    #[cfg(target_arch = "aarch64")]
+    struct pthread_attr_t {
+        __size: [usize; 8]
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "arm"))]
+    struct pthread_attr_t {
+        __size: [u32; 9]
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    struct pthread_attr_t {
+        #[cfg(target_pointer_width = "32")]
+        __size: [u32; 8],
+        #[cfg(target_pointer_width = "64")]
+        __size: [u64; 7]
+    }
+}
+
+#[cfg(target_os = "macos")] {
+    type pthread_t = uintptr_t;
+
+    #[cfg(target_pointer_width = "32")]
+    struct pthread_attr_t {
+        __sig: c_long,
+        __opaque: [c_char; 36]
+    }
+    
+    #[cfg(target_pointer_width = "64")]
+    struct pthread_attr_t {
+        __sig: c_long,
+        __opaque: [c_char; 56]
+    }
+}
+
+extern "C" fn pthread_create(
+    native: &mut pthread_t,
+    attr: &pthread_attr_t,
+    f: fn(&mut void) -> &mut void,
+    value: &mut void,
+) -> c_int;
+
+extern "C" fn pthread_join(native: pthread_t, value: &mut &mut void) -> c_int;
+extern "C" fn pthread_exit(value: &mut void) -> !;
+extern "C" fn pthread_kill(thread: pthread_t, sig: c_int) -> c_int;
+extern "C" fn pthread_self() -> pthread_t;

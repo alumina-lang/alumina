@@ -1,0 +1,167 @@
+//! Threading support
+
+use std::builtins::Callable;
+use std::time::sleep;
+use std::time::Duration;
+use std::io::Error;
+
+enum JoinErrorKind {
+    Os,
+    Panic
+}
+
+union JoinErrorT {
+    os: std::io::Error,
+    panic: std::panicking::PanicInfo
+}
+
+struct JoinError {
+    kind: JoinErrorKind,
+    inner: JoinErrorT
+}
+
+impl JoinError {
+    use fmt::{Formatter, Result, write};
+
+    fn from_os(os: std::io::Error) -> JoinError {
+        JoinError {
+            kind: JoinErrorKind::Os,
+            inner: JoinErrorT {
+                os: os
+            }
+        }
+    }
+
+    fn from_panic(panic: std::panicking::PanicInfo) -> JoinError {
+        JoinError {
+            kind: JoinErrorKind::Panic,
+            inner: JoinErrorT {
+                panic: panic
+            }
+        }
+    }
+
+    fn fmt<F: Formatter<F>>(self: &JoinError, f: &mut F) -> Result {
+        switch self.kind {
+            JoinErrorKind::Os => self.inner.os.fmt(f),
+            JoinErrorKind::Panic => write!(f, "child thread panicked at {}:{}:{}",
+                self.inner.panic.file,
+                self.inner.panic.line,
+                self.inner.panic.column
+            ),
+            _ => unreachable!()
+        }
+    }
+}
+
+struct JoinHandleInner<T> {
+    thread: Thread,
+    ret: Result<T, std::panicking::PanicInfo>,
+}
+
+struct JoinHandleInnerFunc<F, T> {
+    inner: JoinHandleInner<T>,
+    callback: F
+}
+
+impl JoinHandleInnerFunc {
+    fn _run<T, F: Callable<(), T>>(arg: &mut void) -> &mut void {
+        let inner = arg as &mut JoinHandleInnerFunc<F, T>;
+        std::panicking::internal::THREAD_PANIC_INFO = &inner.inner.ret.inner.err;
+        inner.inner.ret = Result::ok(inner.callback());
+        libc::pthread_exit(null);
+    }
+}
+
+struct JoinHandle<T> {
+    inner: &mut JoinHandleInner<T>,
+}
+
+impl JoinHandle<T> {
+    fn join(self: &mut JoinHandle<T>) -> Result<T, JoinError> {
+        let handle = &self.inner;
+
+        let exit_value: &mut void;
+        let ret = libc::pthread_join(handle.thread.id, &exit_value);
+        if ret != 0 {
+            return Result::err(JoinError::from_os(Error::from_errno_custom(ret)));
+        }
+
+        defer self.free(); 
+        if self.inner.ret.is_ok {
+            Result::ok(self.inner.ret.inner.ok)
+        } else {
+            Result::err(if exit_value == &handle.ret.inner.err as &mut void {
+                JoinError::from_panic(handle.ret.inner.err)
+            } else {
+                /// This can happen if someone manually calls pthread_exit()
+                JoinError::from_os(Error::custom("thread returned without a value"))
+            })
+        }
+    }
+
+    fn thread(self: &mut JoinHandle<T>) -> Thread {
+        self.inner.thread
+    }
+
+    fn move(self: &mut JoinHandle<T>) -> JoinHandle<T> {
+        let ret = *self;
+        self.inner = null;
+        ret
+    } 
+
+    fn free(self: &mut JoinHandle<T>) {
+        libc::free(self.inner as &mut void)
+    } 
+}
+
+struct Thread {
+    id: libc::pthread_t
+}
+
+impl Thread {
+    fn current() -> Thread {
+        Thread {
+            id: libc::pthread_self()
+        }
+    }
+
+    fn spawn<T, F: Callable<(), T>>(func: F) -> JoinHandle<T> {
+        #[cfg(not(threading))]
+        compile_fail!("threading is not enabled (use --cfg threading)");
+
+        let handle = std::mem::new::<JoinHandleInnerFunc<F, T>>();
+        handle.callback = func;
+        handle.inner.ret = Result::err(mem::zeroed());
+
+        let ret = libc::pthread_create(
+            &handle.inner.thread.id, 
+            null, 
+            JoinHandleInnerFunc::_run::<T, F>, 
+            handle as &mut void
+        );
+        if ret != 0 {
+            panic!("failed to create thread");
+        }
+
+        JoinHandle {
+           inner: handle as &mut JoinHandleInner<T>,
+        }
+    }
+}
+
+mod internal {
+    macro pthread_try($expr) {
+        let ret = $expr;
+        if ret != 0 {
+            return std::result::Result::err(
+                std::io::Error::from_errno_custom(ret)
+            )
+        }
+    }
+}
+
+#[cfg(all(test, test_std))]
+mod tests {
+
+}

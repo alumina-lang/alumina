@@ -511,6 +511,12 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
     ) -> Result<(), AluminaError> {
         self.type_writer.add_type(item.typ)?;
 
+        let attributes = if item.attributes.contains(&Attribute::ThreadLocal) {
+            " __thread"
+        } else {
+            ""
+        };
+
         if item.r#extern {
             self.ctx
                 .register_name(id, CName::Native(item.name.unwrap()));
@@ -522,14 +528,16 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             if item.r#extern {
                 w!(
                     self.fn_decls,
-                    "\nextern {} {};",
+                    "\nextern{} {} {};",
+                    attributes,
                     self.ctx.get_type(item.typ),
                     self.ctx.get_name(id)
                 );
             } else {
                 w!(
                     self.fn_decls,
-                    "\nstatic {} {};",
+                    "\nstatic{} {} {};",
+                    attributes,
                     self.ctx.get_type(item.typ),
                     self.ctx.get_name(id)
                 );

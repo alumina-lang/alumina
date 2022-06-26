@@ -1,0 +1,222 @@
+//! Thread synchronization
+
+use std::builtins::{Primitive, ZeroSized, Integer};
+
+enum Ordering {
+    Relaxed = 0,
+    Consume = 1,
+    Acquire = 2,
+    Release = 3,
+    AcqRel = 4,
+    SeqCst = 5 
+}
+
+/// Values that can be operated on atomically.
+struct Atomic<T: Primitive + !ZeroSized> {
+    inner: T
+}
+
+impl Atomic<T: Primitive + !ZeroSized> {
+    fn new(inner: T) -> Atomic<T> {
+        Atomic { inner: inner }
+    }
+
+    #[force_inline]
+    fn load(self: &Atomic<T>, ordering: Ordering) -> T {
+        intrinsics::codegen_func::<T>("__atomic_load_n", &self.inner, ordering as libc::c_int)
+    }
+
+    #[force_inline]
+    fn store(self: &mut Atomic<T>, value: T, ordering: Ordering) {
+        intrinsics::codegen_func::<void>("__atomic_store_n", &self.inner, value, ordering as libc::c_int)
+    }
+
+    #[force_inline]
+    fn exchange(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
+        intrinsics::codegen_func::<T>("__atomic_exchange_n", &self.inner, value, ordering as libc::c_int)
+    }
+
+    #[force_inline]
+    fn compare_exchange(
+        self: &mut Atomic<T>, 
+        expected: T, 
+        desired: T, 
+        success_ordering: Ordering, 
+        failure_ordering: Ordering
+    ) -> Result<T, T> {
+        if intrinsics::codegen_func::<bool>(
+            "__atomic_compare_exchange_n", 
+            &self.inner, 
+            &expected, 
+            desired, 
+            false,
+            success_ordering as libc::c_int,
+            failure_ordering as libc::c_int
+        ) {
+            Result::ok(expected)
+        } else {
+            Result::err(expected)
+        }
+    }
+
+    #[force_inline]
+    fn compare_exchange_weak(
+        self: &mut Atomic<T>, 
+        expected: T, 
+        desired: T, 
+        success_ordering: Ordering, 
+        failure_ordering: Ordering
+    ) -> Result<T, T> {
+        if intrinsics::codegen_func::<bool>(
+            "__atomic_compare_exchange_n", 
+            &self.inner, 
+            &expected, 
+            desired, 
+            true,
+            success_ordering as libc::c_int,
+            failure_ordering as libc::c_int
+        ) {
+            Result::ok(expected)
+        } else {
+            Result::err(expected)
+        }
+    }
+}
+
+/// Memory barrier
+fn fence(ordering: Ordering) {
+    intrinsics::codegen_func::<void>("__atomic_thread_fence", ordering as libc::c_int)
+}
+
+impl Atomic<T: Integer> {
+    #[force_inline]
+    fn fetch_add(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
+        intrinsics::codegen_func::<T>("__atomic_fetch_add", &self.inner, value, ordering as libc::c_int)
+    }
+
+    #[force_inline]
+    fn fetch_sub(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
+        intrinsics::codegen_func::<T>("__atomic_fetch_sub", &self.inner, value, ordering as libc::c_int)
+    }
+
+    #[force_inline]
+    fn fetch_and(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
+        intrinsics::codegen_func::<T>("__atomic_fetch_and", &self.inner, value, ordering as libc::c_int)
+    }
+
+    #[force_inline]
+    fn fetch_or(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
+        intrinsics::codegen_func::<T>("__atomic_fetch_or", &self.inner, value, ordering as libc::c_int)
+    }
+
+    #[force_inline]
+    fn fetch_xor(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
+        intrinsics::codegen_func::<T>("__atomic_fetch_xor", &self.inner, value, ordering as libc::c_int)
+    }
+
+    #[force_inline]
+    fn fetch_nand(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
+        intrinsics::codegen_func::<T>("__atomic_fetch_nand", &self.inner, value, ordering as libc::c_int)
+    }
+}
+
+#[cfg(all(test, test_std))]
+mod test {
+    #[test]
+    fn test_ordering_values_match() {
+        // This test asserts that the ordering constant values we hardcode above match the
+        // builtin constants in the C compiler.
+
+        macro match($a, $b) {
+            assert_eq!($a as libc::c_int, intrinsics::codegen_const::<libc::c_int>($b));
+        }
+
+        match!(Ordering::Relaxed, "__ATOMIC_RELAXED");
+        match!(Ordering::Consume, "__ATOMIC_CONSUME");
+        match!(Ordering::Acquire, "__ATOMIC_ACQUIRE");
+        match!(Ordering::Release, "__ATOMIC_RELEASE");
+        match!(Ordering::AcqRel, "__ATOMIC_ACQ_REL");
+        match!(Ordering::SeqCst, "__ATOMIC_SEQ_CST");
+    }
+
+    #[test]
+    fn test_load() {
+        let a: Atomic<i32> = Atomic::new(42);
+        assert_eq!(a.load(Ordering::Relaxed), 42);
+    }
+
+    #[test]
+    fn test_store() {
+        let a: Atomic<i32> = Atomic::new(42);
+        a.store(43, Ordering::Relaxed);
+        assert_eq!(a.load(Ordering::Relaxed), 43);
+    }
+
+    #[test]
+    fn test_exchange() {
+        let a: Atomic<i32> = Atomic::new(42);
+        assert_eq!(a.exchange(43, Ordering::Relaxed), 42);
+        assert_eq!(a.load(Ordering::Relaxed), 43);
+    }
+
+    #[test]
+    fn test_compare_exchange() {
+        let a: Atomic<i32> = Atomic::new(42);
+        assert_eq!(a.compare_exchange(42, 43, Ordering::Relaxed, Ordering::Relaxed), Result::ok(42));
+        assert_eq!(a.load(Ordering::Relaxed), 43);
+        assert_eq!(a.compare_exchange(44, 45, Ordering::Relaxed, Ordering::Relaxed), Result::err(43));
+        assert_eq!(a.load(Ordering::Relaxed), 43);
+    }
+
+    #[test]
+    fn test_compare_exchange_weak() {
+        let a: Atomic<i32> = Atomic::new(42);
+        assert_eq!(a.compare_exchange_weak(42, 43, Ordering::Relaxed, Ordering::Relaxed), Result::ok(42));
+        assert_eq!(a.load(Ordering::Relaxed), 43);
+        assert_eq!(a.compare_exchange_weak(44, 45, Ordering::Relaxed, Ordering::Relaxed), Result::err(43));
+        assert_eq!(a.load(Ordering::Relaxed), 43);
+    }
+
+    #[test]
+    fn test_fetch_add() {
+        let a: Atomic<u32> = Atomic::new(42u32);
+        assert_eq!(a.fetch_add(1, Ordering::Relaxed), 42u32);
+        assert_eq!(a.load(Ordering::Relaxed), 43u32);
+    }
+
+    #[test]
+    fn test_fetch_sub() {
+        let a: Atomic<u32> = Atomic::new(42u32);
+        assert_eq!(a.fetch_sub(1, Ordering::Relaxed), 42u32);
+        assert_eq!(a.load(Ordering::Relaxed), 41u32);
+    }
+
+    #[test]
+    fn test_fetch_and() {
+        let a: Atomic<u32> = Atomic::new(42u32);
+        assert_eq!(a.fetch_and(0xFu32, Ordering::Relaxed), 42u32);
+        assert_eq!(a.load(Ordering::Relaxed), 10u32);
+    }
+
+    #[test]
+    fn test_fetch_or() {
+        let a: Atomic<u32> = Atomic::new(42u32);
+        assert_eq!(a.fetch_or(0xFu32, Ordering::Relaxed), 42u32);
+        assert_eq!(a.load(Ordering::Relaxed), 47u32);
+    }
+
+    #[test]
+    fn test_fetch_xor() {
+        let a: Atomic<u32> = Atomic::new(42u32);
+        assert_eq!(a.fetch_xor(0xFu32, Ordering::Relaxed), 42u32);
+        assert_eq!(a.load(Ordering::Relaxed), 37u32);
+    }
+
+    #[test]
+    fn test_fetch_nand() {
+        let a: Atomic<u32> = Atomic::new(42u32);
+        assert_eq!(a.fetch_nand(0xFu32, Ordering::Relaxed), 42u32);
+        assert_eq!(a.load(Ordering::Relaxed), 0xfffffff5u32);
+    }
+}
+

@@ -28,6 +28,14 @@ impl Error {
         }
     }
 
+    /// Create `Error` from the last OS error (`errno`)
+    fn from_errno_custom(errno: libc::c_int) -> Error {
+        Error {
+            kind: ErrorKind::Os,
+            inner: ErrorInner { errno: errno },
+        }
+    }
+
     /// Create `Error` from the code returned by [libc::getaddrinfo].
     fn from_gai(gai_err: libc::c_int) -> Error {
         Error {

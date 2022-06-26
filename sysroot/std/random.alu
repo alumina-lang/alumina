@@ -163,14 +163,9 @@ impl Pcg32 {
         mixin RandomNumberGenerator<OsRng>;
     }
 
-
-    /// A convenience pre-seeded random number generator. It is
-    /// seeded using `OsRng` and ready to be used.
-    ///
-    /// Not thread safe.
-    static DEFAULT_RNG: Pcg32 = internal::seed_default_rng();
-
     mod internal {
+        #[thread_local] static DEFAULT_RNG: Option<Pcg32>;
+
         fn seed_default_rng() -> Pcg32 {
             let seed: [u8; 16];
             let seeder = OsRng::new();
@@ -181,6 +176,16 @@ impl Pcg32 {
         }
     }
 
+}
+
+/// A thread-local RNG that's seeded from the operating system.
+///
+/// Lazily initialized on first access from each thread.
+fn thread_rng() -> &mut Pcg32 {
+    if !internal::DEFAULT_RNG.is_some {
+        internal::DEFAULT_RNG = Option::some(internal::seed_default_rng());
+    }
+    &internal::DEFAULT_RNG.inner
 }
 
 /// Generate a random integer of any unsigned integer type

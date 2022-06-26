@@ -15,6 +15,12 @@ else
 	ALUMINA_FLAGS += --sysroot $(SYSROOT) --debug --timings 
 endif
 
+LDFLAGS = -lm 
+ifndef NO_THREADS
+	ALUMINA_FLAGS += --cfg threading
+	LDFLAGS += -lpthread
+endif
+
 ALUMINA_BOOT = $(BUILD_DIR)/alumina-boot
 ALUMINAC = $(BUILD_DIR)/aluminac
 ALUMINAC_TESTS = $(BUILD_DIR)/aluminac-tests
@@ -52,7 +58,7 @@ $(STDLIB_TESTS).c: $(ALUMINA_BOOT) $(SYSROOT_FILES)
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --cfg test_std --output $@
 
 $(STDLIB_TESTS): $(STDLIB_TESTS).c
-	$(CC) $(CFLAGS) -o $@ $^ -lm
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 ## ------------------ Self-hosted compiler (aluminac) ------------------
 
@@ -62,7 +68,7 @@ $(BUILD_DIR)/src/parser.c: common/grammar.js
 	cd $(BUILD_DIR) && tree-sitter generate --no-bindings $(abspath common/grammar.js)
 
 $(BUILD_DIR)/parser.o: $(BUILD_DIR)/src/parser.c
-	$(CC) $(CFLAGS) -I $(BUILD_DIR)/src -c $(BUILD_DIR)/src/parser.c -o $@ -lm
+	$(CC) $(CFLAGS) -I $(BUILD_DIR)/src -c $(BUILD_DIR)/src/parser.c -o $@ $(LDFLAGS)
 
 # Codegen util for aluminac
 $(CODEGEN).c: $(ALU_DEPS) $(CODEGEN_SOURCES) 
@@ -71,7 +77,7 @@ $(CODEGEN).c: $(ALU_DEPS) $(CODEGEN_SOURCES)
 		$(foreach src,$(CODEGEN_SOURCES),$(subst /,::,$(basename $(src)))=$(src))
 
 $(CODEGEN): $(CODEGEN).c $(BUILD_DIR)/parser.o
-	$(CC) $(CFLAGS) -o $@ $^ -ltree-sitter -lm
+	$(CC) $(CFLAGS) -o $@ $^ -ltree-sitter $(LD_FLAGS)
 
 src/aluminac/lib/node_kinds.alu: $(CODEGEN)
 	$(CODEGEN) > $@
@@ -92,13 +98,13 @@ LLVM_LDFLAGS = $(shell llvm-config-13 --ldflags)
 LLVM_LIBS = $(shell llvm-config-13 --libs engine)
 
 $(BUILD_DIR)/llvm_target.o: libraries/llvm/target.c
-	$(CC) $(CFLAGS) $(LLVM_CFLAGS) -c $^ -o $@ -lm
+	$(CC) $(CFLAGS) $(LLVM_CFLAGS) -c $^ -o $@ $(LDFLAGS)
 
 $(ALUMINAC): $(ALUMINAC).c $(BUILD_DIR)/parser.o $(BUILD_DIR)/llvm_target.o
-	$(CC) $(CFLAGS) -o $@ $^ $(LLVM_LDFLAGS) -ltree-sitter $(LLVM_LIBS) -lm
+	$(CC) $(CFLAGS) -o $@ $^ $(LLVM_LDFLAGS) -ltree-sitter $(LLVM_LIBS) $(LDFLAGS)
 
 $(ALUMINAC_TESTS): $(ALUMINAC_TESTS).c $(BUILD_DIR)/parser.o $(BUILD_DIR)/llvm_target.o
-	$(CC) $(CFLAGS) -o $@ $^ $(LLVM_LDFLAGS) -ltree-sitter $(LLVM_LIBS)	-lm
+	$(CC) $(CFLAGS) -o $@ $^ $(LLVM_LDFLAGS) -ltree-sitter $(LLVM_LIBS)	$(LDFLAGS)
 
 ## --------------------------------Tools -------------------------------
 
@@ -113,7 +119,7 @@ $(ALUMINA_DOC).c: $(ALU_DEPS) $(ALUMINAC_LIB_SOURCES) $(ALUMINA_DOC_SOURCES) src
 		$(foreach src,$(ALUMINA_DOC_SOURCES),$(subst /,::,$(basename $(subst alumina-doc/,alumina_doc/,$(src))))=$(src))
 
 $(ALUMINA_DOC): $(ALUMINA_DOC).c $(BUILD_DIR)/parser.o
-	$(CC) $(CFLAGS) -o $@ $^ -ltree-sitter -lm
+	$(CC) $(CFLAGS) -o $@ $^ -ltree-sitter $(LDFLAGS)
 
 .PHONY: docs
 
@@ -158,8 +164,8 @@ all: alumina-boot aluminac
 
 quickrun: $(ALUMINA_BOOT) $(SYSROOT_FILES) quick.alu
 	RUST_BACKTRACE=1 $(ALUMINA_BOOT) $(ALUMINA_FLAGS) --output quick.c quick=./quick.alu
-	$(CC) $(CFLAGS) -o quickrun -O0 quick.c -lm
+	$(CC) $(CFLAGS) -o quickrun -O0 quick.c $(LDFLAGS)
 
 quicktest: $(ALUMINA_BOOT) $(SYSROOT_FILES) quick.alu
 	RUST_BACKTRACE=1 $(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --output quick.c quick=./quick.alu
-	$(CC) $(CFLAGS) -o quicktest -O0 quick.c -lm
+	$(CC) $(CFLAGS) -o quicktest -O0 quick.c $(LDFLAGS)

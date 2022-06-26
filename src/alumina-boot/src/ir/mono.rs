@@ -721,6 +721,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             },
             Some(LangItemKind::ProtoPrimitive) => match ty {
                 ir::Ty::Builtin(_) => return Ok(BoundCheckResult::Matches),
+                ir::Ty::Pointer(_, _) => return Ok(BoundCheckResult::Matches),
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
             Some(LangItemKind::ProtoPointer) => match ty {
@@ -933,6 +934,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 name: s.name.map(|n| n.alloc_on(child.mono_ctx.ir)),
                 typ,
                 init,
+                attributes: s.attributes.alloc_on(child.mono_ctx.ir),
                 r#extern: s.r#extern,
             });
             item.assign(res);
@@ -3143,6 +3145,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             name: None,
             typ: res.ty,
             init: Some(res),
+            attributes: &[],
             r#extern: false,
         }));
 
@@ -3218,6 +3221,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             name: None,
             typ: res.ty,
             init: Some(res),
+            attributes: &[],
             r#extern: false,
         }));
 

@@ -352,6 +352,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
             "builtin" => self.attributes.push(Attribute::Builtin),
             "export" => self.attributes.push(Attribute::Export),
             "force_inline" => self.attributes.push(Attribute::ForceInline),
+            "thread_local" => {
+                // We can skip thread-local on programs that are compiled with threads
+                // disabled.
+                if self.global_ctx.has_flag("threading") {
+                    self.attributes.push(Attribute::ThreadLocal)
+                }
+            },
             "test_main" => self.attributes.push(Attribute::TestMain),
             "link_name" => {
                 let link_name = inner

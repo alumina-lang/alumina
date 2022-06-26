@@ -32,11 +32,17 @@ macro panic($reason, $args...) {
     )
 }
 
+struct PanicInfo {
+    file: &[u8], 
+    line: i32, 
+    column: i32,
+    message: &[u8],
+}
+
 mod internal {
     use fmt::{Formatter, internal::{printf, FormatArg}};
 
     // libc runtime backtrace support
-
     #[cfg(all(debug, not(no_backtrace), not(target_os = "android")))]
     {
         extern "C" fn backtrace(buffer: &mut &mut void, size: libc::c_int) -> libc::c_int;
@@ -62,9 +68,10 @@ mod internal {
         mixin Formatter<PanicFormatter>;
     }
     
-    static PANICKING: bool;
+    #[thread_local] static PANICKING: bool;
+    #[thread_local] static THREAD_PANIC_INFO: &mut PanicInfo;
 
-    fn print_panic_message(
+    fn print_panic_message( 
         fmt_str: &[u8], 
         file: &[u8], 
         line: i32, 
@@ -96,17 +103,28 @@ mod internal {
     ) -> ! {
         #[cfg(panic_trap)]
         std::intrinsics::trap();
-        
+
         #[cfg(not(panic_trap))] {
             if mem::replace(&PANICKING, true) {
                 // If we panic during a panic handler, nuclear abort.
                 std::intrinsics::trap();
             }
+
+            #[cfg(threading)] {
+                if THREAD_PANIC_INFO != null {
+                    // If we are in a "managed" thread, we don't abort the process, but rather we just
+                    // populate the panic info that was put there by the thread constructor. This allows
+                    // the panic to be handled when the thread is joined.
+                    THREAD_PANIC_INFO.file = file;
+                    THREAD_PANIC_INFO.line = line;
+                    THREAD_PANIC_INFO.column = column;
+                    libc::pthread_exit(THREAD_PANIC_INFO as &mut void);
+                }
+            }
     
             // Swallow errors from print_panic_message, because at this point, what can we do, panic?
             // We still bail early if it fails.
             let _ = print_panic_message(fmt_str, file, line, column, args);
-    
             #[cfg(all(debug, not(no_backtrace), not(target_os = "android")))]
             {
                 let buf: [&mut void; 128];
