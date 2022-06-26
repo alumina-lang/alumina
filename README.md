@@ -115,6 +115,9 @@ Finished:
     - string functions and formatting
     - spawning processes
     - standard, file and pipe I/O
+    - multithreading
+    - atomics
+    - basic synchronization primitives
     - basic filesystem operations
     - TCP/IP sockets
     - random number generation
@@ -192,13 +195,21 @@ cc hello_world_test.c -o hello_world_test
 ./hello_world_test
 ```
 
+If you wish to compile with multithreading enabled, add `--cfg threading` and link with `libpthread`.
+
+```
+./alumina-boot --cfg threading --sysroot ./sysroot hello_world=./examples/threading.alu -o threading.c
+cc threading.c -o threading -lpthread
+./threading
+```
+
 
 To compile the self-hosted compiler, run:
 ```
 make aluminac
 ```
 
-See [examples](./examples), [standard library](./sysroot) and the [self-hosted compiler](./src/aluminac) for a tour of the language, documentation is TBD.
+See [examples](./examples), [standard library](./sysroot) and the [self-hosted compiler](./src/aluminac) for a tour of the language.
 
 # Contributing
 

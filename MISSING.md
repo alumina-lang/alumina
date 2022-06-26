@@ -12,16 +12,6 @@
     - It might be fine now, it's been a while since I last ran into a ZST bug
 - if tentative monomorphization fails (e.g. error), but type inference still succeeds, we are left with unpopulated symbols
     - this is now especially an issue with `when` expressions which do tentative mono during proto bound checking
-- generic-binding typedefs (e.g. `type HashSet<T> = HashMap<T, ()>`). 
-  - This has been attempted and reverted because it was a big mess.
-  - It sounds really simple to implement, but the naive approach leads to a bunch of issues (dependencies during AST construction, `impl` forwarding, whether IR should even be aware of them and if not, should they be handled in `mono`, name resolution needs another 'defered' type, ...). That's because they are in a way partial specializations of generic types.
-  - typedefs that don't bind generic parameters are already possible with `use X as Y`.
-  - It could be easier now with `rebind` in AST 
-  - Attempt #2 revealed a more fundamental issue - since `impl` blocks are only loosely bound to their types, typedefs cannot effectively bind generic parameters for methods. E.g. `type HashMap<K, V> = HashMapImpl<K, V, SpecificHasher>` will still require `HashMap::new::<i32, i32, SpecificHasher>`. Not sure how to make this work, but here are a few ideas:
-    - get rid of impl-forwarding typedefs and only allow newtypes. Mixins could be extended to allow copying impls from general types (and not just protocols)
-    - forward impls, but allow typedefs to have their own impl blocks, which would shadow the ones from the underlyhing types (for the hashmap example, only constructors would need to be overriden, since the hasher can be inferred from the self parameter)
-    - leave things as-is and introduce additional constructors that allow overriding the "optional" generic parameters.
-    - do not have typedefs, use default generic parameters
 - statics in function scope
 - unqualified types gaps:
   - unqualified string in if/else does not coerce to a slice
@@ -70,13 +60,8 @@
     - Vector might actually be pretty ok. Hashed collections are probably bad.
 
 - extras, nice to have:
-  - threading, atomics, ...
-    - This will definitely defer to pthread (what about Windows?)
-    - Need a good story for thread-local storage
   - network/sockets
     - done
-  - random number generation
-    - basic RNG is implemented, need a good way to make it generic over various integer lengths
   - date/time???? this is a big can of worms
     - durations/monotonic timer are implemented
   - regexes? probably not, maybe a PCRE wrapper outside stdlib
@@ -85,11 +70,13 @@
 
 - Get rid of all the redundant variable assignments and copying. I assume C compiler can optimize those well, but the
   generated code looks very bloated.
+- Maybe run `elide_zst` on everything, not just when ZSTs are present
 
 ## Diagnostics
 
 - More warnings and notes
   - Unused variables
+  - Unused imports
 - Add more specific spans to compile errors. It's pretty good right now, but could be better.
 - do not panic on cyclic/recursive protocol bounds (figure out which ones are appropriate), but rather give a meaningful error message
 
@@ -125,7 +112,7 @@
 
 ## Tooling
 
-- rustdoc-like thing. This will have to wait until a self-hosted compiler
+- a compiler driver (i.e. Cargo)
 
 ## Bikeshedding
 

@@ -219,7 +219,7 @@ pub enum CodeErrorKind {
     #[error("anonymous functions that bind environment variables cannot be coerced to a function pointer")]
     ClosuresAreNotFns,
     #[error("thread local storage is not supported")]
-    ThreadLocalNotSupported,    
+    ThreadLocalNotSupported,
 
     // Warnings
     #[error("defer inside a loop: this defered statement will only be executed once")]

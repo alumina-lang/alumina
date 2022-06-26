@@ -41,6 +41,7 @@ struct PanicInfo {
 
 mod internal {
     use fmt::{Formatter, internal::{printf, FormatArg}};
+    use sync::{Atomic, Ordering};
 
     // libc runtime backtrace support
     #[cfg(all(debug, not(no_backtrace), not(target_os = "android")))]
@@ -69,7 +70,7 @@ mod internal {
     }
     
     #[thread_local] static PANICKING: bool;
-    #[thread_local] static THREAD_PANIC_INFO: &mut PanicInfo;
+    #[thread_local] static THREAD_PANIC_INFO: Atomic<&mut PanicInfo>;
 
     fn print_panic_message( 
         fmt_str: &[u8], 
@@ -91,7 +92,6 @@ mod internal {
         Result::ok(())
     }
 
-    #[cfg(not(panic_trap))]
     #[cold]
     #[no_inline]
     fn panic_impl(
@@ -104,21 +104,25 @@ mod internal {
         #[cfg(panic_trap)]
         std::intrinsics::trap();
 
-        #[cfg(not(panic_trap))] {
+        #[cfg(panic_abort)]
+        libc::abort();
+
+        #[cfg(all(not(panic_trap), not(panic_abort)))] {
             if mem::replace(&PANICKING, true) {
                 // If we panic during a panic handler, nuclear abort.
                 std::intrinsics::trap();
             }
 
             #[cfg(threading)] {
-                if THREAD_PANIC_INFO != null {
+                let panic_info = THREAD_PANIC_INFO.exchange(null, Ordering::SeqCst);
+                if panic_info != null {
                     // If we are in a "managed" thread, we don't abort the process, but rather we just
                     // populate the panic info that was put there by the thread constructor. This allows
                     // the panic to be handled when the thread is joined.
-                    THREAD_PANIC_INFO.file = file;
-                    THREAD_PANIC_INFO.line = line;
-                    THREAD_PANIC_INFO.column = column;
-                    libc::pthread_exit(THREAD_PANIC_INFO as &mut void);
+                    panic_info.file = file;
+                    panic_info.line = line;
+                    panic_info.column = column;
+                    libc::pthread_exit(panic_info as &mut void);
                 }
             }
     
@@ -132,7 +136,7 @@ mod internal {
                 backtrace_symbols_fd(&buf[0] as &mut &void, size, libc::STDERR_FILENO);
             }
             
-            libc::_exit(-1);
+            libc::abort();
         }
     }
 }

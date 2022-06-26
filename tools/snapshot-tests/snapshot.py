@@ -67,6 +67,8 @@ def test_examples(source_file, snapshot):
             "../../sysroot",
             "--cfg",
             "no_backtrace",
+            "--cfg",
+            "threading",
             "--output",
             os.path.join(BUILD_DIR, f"{output}.c"),
             f"example={example}",
@@ -95,6 +97,8 @@ def test_examples(source_file, snapshot):
                 os.path.join(BUILD_DIR, f"{output}.out"),
                 "./monkeypatch.c",
                 os.path.join(BUILD_DIR, f"{output}.c"),
+                "-lm",
+                "-lpthread"
             ],
             stderr=subprocess.PIPE,
         )

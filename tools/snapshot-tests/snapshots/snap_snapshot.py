@@ -237,6 +237,16 @@ snapshots['test_examples[tests.alu] run_stderr'] = b''
 
 snapshots['test_examples[tests.alu] run_stdout'] = b''
 
+snapshots['test_examples[threading.alu] compile_ret'] = 0
+
+snapshots['test_examples[threading.alu] compile_stderr'] = None
+
+snapshots['test_examples[threading.alu] run_ret'] = 0
+
+snapshots['test_examples[threading.alu] run_stderr'] = b''
+
+snapshots['test_examples[threading.alu] run_stdout'] = b'Sent 0\nSent 1\nSent 2\nSent 3\nSent 4\nReceived 0\nSent 5\nReceived 1\nSent 6\nReceived 2\nSent 7\nReceived 3\nSent 8\nReceived 4\nSent 9\nReceived 5\nReceived 6\nReceived 7\nReceived 8\nReceived 9\n'
+
 snapshots['test_examples[when_expression.alu] compile_ret'] = 0
 
 snapshots['test_examples[when_expression.alu] compile_stderr'] = None

@@ -358,7 +358,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                 if self.global_ctx.has_flag("threading") {
                     self.attributes.push(Attribute::ThreadLocal)
                 }
-            },
+            }
             "test_main" => self.attributes.push(Attribute::TestMain),
             "link_name" => {
                 let link_name = inner

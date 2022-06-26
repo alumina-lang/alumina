@@ -199,6 +199,7 @@ extern "C" fn realloc(ptr: &mut void, size: size_t) -> &mut void;
 extern "C" fn calloc(num: size_t, size: size_t) -> &mut void;
 extern "C" fn exit(ret: c_int) -> !;
 extern "C" fn _exit(ret: c_int) -> !;
+extern "C" fn abort() -> !;
 extern "C" fn strlen(s: &c_char) -> size_t;
 
 #[cfg(any(target_os="linux", target_os="macos", target_os="android"))]
@@ -839,6 +840,11 @@ extern "C" fn strlen(s: &c_char) -> size_t;
     const EWOULDBLOCK: c_int = EAGAIN;
     #[cfg(target_os="macos")]
     const EWOULDBLOCK: c_int = 35;
+    
+    #[cfg(any(target_os="linux", target_os="android"))]
+    const ETIMEDOUT: c_int = 110;
+    #[cfg(target_os="macos")]
+    const ETIMEDOUT: c_int = 60;
 
     const POLLIN: c_short = 0x1;
     const POLLPRI: c_short = 0x2;
@@ -1008,26 +1014,68 @@ extern "C" fn strlen(s: &c_char) -> size_t;
 
 #[cfg(target_os = "android")] {
     type pthread_t = c_long;
+    type pthread_mutexattr_t = c_long;
+    type pthread_rwlockattr_t = c_long;
+    type pthread_barrierattr_t = c_int;
+    type pthread_condattr_t = c_long;
 
     #[cfg(target_pointer_width = "32")]
-    struct pthread_attr_t {
-        flags: u32,
-        stack_base: &mut void,
-        stack_size: size_t,
-        guard_size: size_t,
-        sched_policy: i32,
-        sched_priority: i32,
+    {
+        struct pthread_attr_t {
+            flags: u32,
+            stack_base: &mut void,
+            stack_size: size_t,
+            guard_size: size_t,
+            sched_policy: i32,
+            sched_priority: i32,
+        }
+
+        struct pthread_mutex_t { value: c_int }
+
+        struct pthread_cond_t { value: c_int }
+    
+        struct pthread_rwlock_t {
+            lock: pthread_mutex_t,
+            cond: pthread_cond_t,
+            numLocks: c_int,
+            writerThreadId: c_int,
+            pendingReaders: c_int,
+            pendingWriters: c_int,
+            attr: i32,
+            __reserved: [c_char; 12],
+        }
     }
 
     #[cfg(target_pointer_width = "64")]
-    struct pthread_attr_t {
-        flags: u32,
-        stack_base: &mut void,
-        stack_size: size_t,
-        guard_size: size_t,
-        sched_policy: i32,
-        sched_priority: i32,
-    }
+    {
+        struct pthread_attr_t {
+            flags: u32,
+            stack_base: &mut void,
+            stack_size: size_t,
+            guard_size: size_t,
+            sched_policy: i32,
+            sched_priority: i32,
+        }
+        
+        struct pthread_mutex_t {
+            value: c_int,
+            __reserved: [c_char; 36],
+        }
+
+        struct pthread_cond_t {
+            value: c_int,
+            __reserved: [c_char; 44],
+        }
+
+        struct pthread_rwlock_t {
+            numLocks: c_int,
+            writerThreadId: c_int,
+            pendingReaders: c_int,
+            pendingWriters: c_int,
+            attr: i32,
+            __reserved: [c_char; 36],
+        }
+    }    
 }
 
 #[cfg(target_os = "linux")] {
@@ -1050,6 +1098,106 @@ extern "C" fn strlen(s: &c_char) -> size_t;
         #[cfg(target_pointer_width = "64")]
         __size: [u64; 7]
     }
+
+    type INNER_SIZEOF_PTHREAD_RWLOCKATTR_T = [u8; 8];
+    type INNER_SIZEOF_PTHREAD_COND_T = [u8; 48];
+
+    #[cfg(all(target_arch = "aarch64", target_pointer_width = "64"))]
+    {
+        type INNER_SIZEOF_PTHREAD_CONDATTR_T = [u8; 8];
+        type INNER_SIZEOF_PTHREAD_MUTEXATTR_T = [u8; 8];
+        type INNER_SIZEOF_PTHREAD_MUTEX_T = [u8; 48];
+        type INNER_SIZEOF_PTHREAD_RWLOCK_T = [u8; 56];
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        #[cfg(target_pointer_width = "64")] {
+            type INNER_SIZEOF_PTHREAD_CONDATTR_T = [u8; 4];
+            type INNER_SIZEOF_PTHREAD_MUTEXATTR_T = [u8; 4];
+            type INNER_SIZEOF_PTHREAD_MUTEX_T = [u8; 40];
+            type INNER_SIZEOF_PTHREAD_RWLOCK_T = [u8; 56];
+        }
+        
+        #[cfg(target_pointer_width = "32")] {
+            type INNER_SIZEOF_PTHREAD_CONDATTR_T = [u8; 4];
+            type INNER_SIZEOF_PTHREAD_MUTEXATTR_T = [u8; 4];
+            type INNER_SIZEOF_PTHREAD_MUTEX_T = [u8; 32];
+            type INNER_SIZEOF_PTHREAD_RWLOCK_T = [u8; 44];
+        }
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "arm"))] {
+        type INNER_SIZEOF_PTHREAD_CONDATTR_T = [u8; 4];
+        type INNER_SIZEOF_PTHREAD_MUTEXATTR_T = [u8; 4];
+        type INNER_SIZEOF_PTHREAD_MUTEX_T = [u8; 24];
+        type INNER_SIZEOF_PTHREAD_RWLOCK_T = [u8; 32];
+    }
+
+    #[cfg(target_arch = "x86")]
+    #[align(4)]
+    struct pthread_cond_t {
+        size: INNER_SIZEOF_PTHREAD_COND_T,
+    }
+    
+    #[cfg(not(target_arch = "x86"))]
+    #[align(8)]
+    struct pthread_cond_t {
+        size: INNER_SIZEOF_PTHREAD_COND_T,
+    }
+    
+    #[cfg(any(target_pointer_width = "64", not(any(target_arch = "arm", target_arch = "x86_64", target_arch = "x86")))]
+    #[align(8)]
+    struct pthread_mutex_t {
+        size: INNER_SIZEOF_PTHREAD_MUTEX_T,
+    }
+
+    #[cfg(all(target_pointer_width = "32", any(target_arch = "arm", target_arch = "x86_64", target_arch = "x86"))]
+    #[align(4)]
+    struct pthread_mutex_t {
+        size: INNER_SIZEOF_PTHREAD_MUTEX_T,
+    }
+
+    #[cfg(any(target_pointer_width = "64", not(any(target_arch = "arm", target_arch = "x86_64", target_arch = "x86")))]
+    #[align(8)]
+    struct pthread_rwlock_t {
+        size: INNER_SIZEOF_PTHREAD_RWLOCK_T,
+    }
+
+    #[cfg(all(target_pointer_width = "32", any(target_arch = "arm", target_arch = "x86_64", target_arch = "x86"))]
+    #[align(4)]
+    struct pthread_rwlock_t {
+        size: INNER_SIZEOF_PTHREAD_RWLOCK_T,
+    }
+
+    #[cfg(any(target_pointer_width = "32", target_arch = "x86_64", target_arch = "aarch64"))]
+    #[align(4)]
+    struct pthread_mutexattr_t {
+        size: INNER_SIZEOF_PTHREAD_MUTEXATTR_T,
+    }
+
+    #[cfg(not(any(target_pointer_width = "32", target_arch = "x86_64", target_arch = "aarch64")))]
+    #[align(8)]
+    struct pthread_mutexattr_t {
+        size: INNER_SIZEOF_PTHREAD_MUTEXATTR_T,
+    }
+
+    #[align(4)]
+    struct pthread_condattr_t {
+        size: INNER_SIZEOF_PTHREAD_CONDATTR_T,
+    }
+
+    #[cfg(target_pointer_width = "32")]
+    #[align(4)]
+    struct pthread_rwlockattr_t {
+        size: INNER_SIZEOF_PTHREAD_RWLOCKATTR_T,
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[align(8)]
+    struct pthread_rwlockattr_t {
+        size: INNER_SIZEOF_PTHREAD_RWLOCKATTR_T,
+    }
 }
 
 #[cfg(target_os = "macos")] {
@@ -1066,6 +1214,42 @@ extern "C" fn strlen(s: &c_char) -> size_t;
         __sig: c_long,
         __opaque: [c_char; 56]
     }
+
+    type INNER_PTHREAD_MUTEX_SIZE = [u8; 56];
+    type INNER_PTHREAD_COND_SIZE = [u8; 40];
+    type INNER_PTHREAD_CONDATTR_SIZE = [u8;  8];
+    type INNER_PTHREAD_RWLOCK_SIZE  = [u8; 92];
+    type INNER_PTHREAD_RWLOCKATTR_SIZE = [u8; 16];
+
+    struct pthread_rwlock_t {
+        __sig: c_long,
+        __opaque: INNER_PTHREAD_RWLOCK_SIZE,
+    }
+
+    struct pthread_mutex_t {
+        __sig: c_long,
+        __opaque: INNER_PTHREAD_MUTEX_SIZE,
+    }
+
+    struct pthread_cond_t {
+        __sig: c_long,
+        __opaque: INNER_PTHREAD_COND_SIZE,
+    }
+
+    struct pthread_mutexattr_t {
+        __sig: c_long,
+        __opaque: [u8; 8],
+    }
+
+    struct pthread_condattr_t {
+        __sig: c_long,
+        __opaque: INNER_PTHREAD_CONDATTR_SIZE,
+    }
+
+    struct pthread_rwlockattr_t {
+        __sig: c_long,
+        __opaque: INNER_PTHREAD_RWLOCKATTR_SIZE,
+    }
 }
 
 extern "C" fn pthread_create(
@@ -1079,3 +1263,50 @@ extern "C" fn pthread_join(native: pthread_t, value: &mut &mut void) -> c_int;
 extern "C" fn pthread_exit(value: &mut void) -> !;
 extern "C" fn pthread_kill(thread: pthread_t, sig: c_int) -> c_int;
 extern "C" fn pthread_self() -> pthread_t;
+extern "C" fn pthread_detach(thread: pthread_t) -> c_int;
+
+extern "C" fn pthread_mutex_lock(lock: &mut pthread_mutex_t) -> c_int;
+extern "C" fn pthread_mutex_trylock(lock: &mut pthread_mutex_t) -> c_int;
+extern "C" fn pthread_mutex_unlock(lock: &mut pthread_mutex_t) -> c_int;
+extern "C" fn pthread_mutex_timedlock(lock: &mut pthread_mutex_t, abstime: &timespec) -> c_int;
+
+extern "C" fn pthread_rwlock_rdlock(lock: &mut pthread_rwlock_t) -> c_int;
+extern "C" fn pthread_rwlock_tryrdlock(lock: &mut pthread_rwlock_t) -> c_int;
+extern "C" fn pthread_rwlock_timedrdlock(attr: &mut pthread_rwlock_t, abstime: &timespec) -> c_int;
+extern "C" fn pthread_rwlock_wrlock(lock: &mut pthread_rwlock_t) -> c_int;
+extern "C" fn pthread_rwlock_trywrlock(lock: &mut pthread_rwlock_t) -> c_int;
+extern "C" fn pthread_rwlock_timedwrlock(attr: &mut pthread_rwlock_t, abstime: &timespec) -> c_int;
+extern "C" fn pthread_rwlock_unlock(lock: &mut pthread_rwlock_t) -> c_int;
+
+extern "C" fn pthread_cond_wait(cond: &mut pthread_cond_t, lock: &mut pthread_mutex_t) -> c_int;
+extern "C" fn pthread_cond_timedwait(cond: &mut pthread_cond_t, lock: &mut pthread_mutex_t, abstime: &timespec) -> c_int;
+extern "C" fn pthread_cond_signal(cond: &mut pthread_cond_t) -> c_int;
+extern "C" fn pthread_cond_broadcast(cond: &mut pthread_cond_t) -> c_int;
+
+extern "C" fn sched_yield() -> c_int;
+
+
+#[inline]
+fn pthread_mutex_initializer() -> pthread_mutex_t {
+    let ret = std::mem::zeroed::<pthread_mutex_t>();
+    #[cfg(target_os = "macos")]
+    ret.__sig = 0x32AAABA7;
+    ret
+}
+
+#[inline]
+fn pthread_cond_initializer() -> pthread_cond_t {
+    let ret = std::mem::zeroed::<pthread_cond_t>();
+    #[cfg(target_os = "macos")]
+    ret.__sig = 0x3CB0B1BB;
+    ret
+}
+
+#[inline]
+fn pthread_rwlock_initializer() -> pthread_rwlock_t {
+    let ret = std::mem::zeroed::<pthread_rwlock_t>();
+    #[cfg(target_os = "macos")]
+    ret.__sig = 0x2DA8B3B4;
+    ret
+}
+
