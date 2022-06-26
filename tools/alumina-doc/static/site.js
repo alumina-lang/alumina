@@ -62,6 +62,7 @@ window.addEventListener("load", () => {
             }
         });
 
+        const hasMore = results.splice(500).length > 0;
         results.forEach(([path, doc, href]) => {
             const child = document.createElement("div");
             child.className = "row";
@@ -79,21 +80,23 @@ window.addEventListener("load", () => {
             table.appendChild(child);
         });
         
-        if (table.children.length != 0) {
+        if (table.children.length == 0) {
+            searchResults.innerText = "No results";
+        } else {
             searchResults.innerText = "";
             searchResults.appendChild(table);
-        } else {
-            searchResults.innerText = "No results";
+            if (hasMore) {
+                searchResults.appendChild(document.createTextNode("More found, refine your search."));
+            }
         }
     };
 
 
     searchBox.addEventListener("input",  (evt) => {
-        
         clearTimeout(window.debounceTimer);
         if (searchBox.value) {
             history.replaceState(null, null, `?q=${encodeURIComponent(searchBox.value)}`);
-            window.debounceTimer = setTimeout(window.updateSearchResults, 150);
+            window.debounceTimer = setTimeout(window.updateSearchResults, 200);
         } else {
             history.replaceState(null, null, window.location.href.split("?")[0]);
             window.updateSearchResults();
