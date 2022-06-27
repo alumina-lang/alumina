@@ -678,7 +678,9 @@ mod test {
     fn test_mutex() {
         let a = Mutex::new();
         a.lock();
-        assert_eq!(a.try_lock(), false);
+        thread::spawn(|&a| {
+            assert_eq!(a.try_lock(), false);
+        }).join().unwrap();
         a.unlock();
         assert_eq!(a.try_lock(), true);
         a.unlock();
@@ -689,14 +691,18 @@ mod test {
     fn test_rwlock() {
         let a = RwLock::new();
         a.read_lock();
-        assert_eq!(a.try_read_lock(), true);
-        assert_eq!(a.try_write_lock(), false);
-        a.unlock();
+        thread::spawn(|&a| {
+            assert_eq!(a.try_write_lock(), false);
+            assert_eq!(a.try_read_lock(), true);
+            a.unlock();
+        }).join().unwrap();
         a.unlock();
 
         a.write_lock();
-        assert_eq!(a.try_read_lock(), false);
-        assert_eq!(a.try_write_lock(), false);
+        thread::spawn(|&a| {
+            assert_eq!(a.try_read_lock(), false);
+            assert_eq!(a.try_write_lock(), false);
+        }).join().unwrap();
         a.unlock();
     }
 
