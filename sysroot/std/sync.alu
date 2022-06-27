@@ -178,22 +178,6 @@ impl Mutex {
         }
     }
 
-    /// Attempts to acquire a mutex with a timeout
-    ///
-    /// Returns `true` if the mutex was successfully acquired, `false` otherwise.
-    fn lock_timeout(self: &mut Mutex, timeout: time::Duration) -> bool {
-        let timespec = libc::timespec {
-            tv_sec: util::cast(timeout.secs),
-            tv_nsec: util::cast(timeout.nanos)
-        }
-        let ret = libc::pthread_mutex_timedlock(&self.inner, &timespec);
-        switch ret {
-            0 => true,
-            libc::ETIMEDOUT => false,
-            _ => panic!("pthread_mutex_timedlock failed: {}", Error::from_errno_custom(ret))
-        }
-    }
-
     /// Releases a mutex.
     fn unlock(self: &mut Mutex) {
         let ret = libc::pthread_mutex_unlock(&self.inner);
@@ -240,22 +224,6 @@ impl RwLock {
         }
     }
 
-    /// Acquires a reader-writer lock for reading with a timeout.
-    ///
-    /// Returns `true` if the lock was successfully acquired, `false` otherwise.
-    fn read_lock_timeout(self: &mut RwLock, timeout: time::Duration) -> bool {
-        let timespec = libc::timespec {
-            tv_sec: util::cast(timeout.secs),
-            tv_nsec: util::cast(timeout.nanos)
-        }
-        let ret = libc::pthread_rwlock_timedrdlock(&self.inner, &timespec);
-        switch ret {
-            0 => true,
-            libc::ETIMEDOUT => false,
-            _ => panic!("pthread_rwlock_timedrdlock failed: {}", Error::from_errno_custom(ret))
-        }
-    }
-
     /// Acquires a reader-writer lock for writing.
     fn write_lock(self: &mut RwLock) {
         let ret = libc::pthread_rwlock_wrlock(&self.inner);
@@ -273,22 +241,6 @@ impl RwLock {
             0 => true,
             libc::EBUSY => false,
             _ => panic!("pthread_rwlock_trywrlock failed: {}", Error::from_errno_custom(ret))
-        }
-    }
-
-    /// Acquires a reader-writer lock for writing with a timeout.
-    ///
-    /// Returns `true` if the lock was successfully acquired, `false` otherwise.
-    fn write_lock_timeout(self: &mut RwLock, timeout: time::Duration) -> bool {
-        let timespec = libc::timespec {
-            tv_sec: util::cast(timeout.secs),
-            tv_nsec: util::cast(timeout.nanos)
-        }
-        let ret = libc::pthread_rwlock_timedwrlock(&self.inner, &timespec);
-        switch ret {
-            0 => true,
-            libc::ETIMEDOUT => false,
-            _ => panic!("pthread_rwlock_timedwrlock failed: {}", Error::from_errno_custom(ret))
         }
     }
 
@@ -550,9 +502,11 @@ impl Channel<T> {
 
     fn _wait_timeout<F: Callable<(&Channel<T>), bool>>(self: &mut Channel<T>, cond: F, timeout: Duration) -> Result<(), ChannelError> {
         let start = Instant::now();
-        if !self.mutex.lock_timeout(timeout) {
-            return Result::err(ChannelError::WouldBlock);
-        }
+        
+        // timedlock is not available on MacOS. The assumption is that the mutex is 
+        // unlikely to be contended for long enough to matter, so the timeout is just 
+        // passed to the condvar.
+        self.mutex.lock();
     
         while !cond(self) {
             let remaining = timeout.sub(
