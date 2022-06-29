@@ -37,6 +37,7 @@ struct PanicInfo {
     line: i32, 
     column: i32,
     message: &[u8],
+    args: &[fmt::internal::FormatArg<internal::PanicFormatter>]
 }
 
 mod internal {
@@ -68,25 +69,22 @@ mod internal {
         }
         mixin Formatter<PanicFormatter>;
     }
-    
-    #[thread_local] static PANICKING: bool;
-    #[thread_local] static THREAD_PANIC_INFO: Atomic<&mut PanicInfo>;
 
-    fn print_panic_message( 
-        fmt_str: &[u8], 
-        file: &[u8], 
-        line: i32, 
-        column: i32, 
-        args: &[FormatArg<PanicFormatter>]
-    ) -> Result<(), fmt::Error> {
+    #[thread_local] static PANICKING: bool;
+    #[thread_local] static PANIC_HOOK: Option<(&mut void, fn(&mut void, &PanicInfo))>;
+
+    fn set_panic_hook(arg: &mut void, f: fn(&mut void, &PanicInfo)) {
+        PANIC_HOOK = Option::some((arg, f));
+    }
+
+    fn print_panic_message(info: &PanicInfo) -> Result<(), fmt::Error> {
         let formatter = PanicFormatter {};
-        
         printf(
             "panic at {}:{}:{}: ", 
-            &[FormatArg::new(&file), FormatArg::new(&line), FormatArg::new(&column)], 
+            &[FormatArg::new(&info.file), FormatArg::new(&info.line), FormatArg::new(&info.column)], 
             &formatter
         )?;
-        printf(fmt_str, args, &formatter)?;
+        printf(info.message, info.args, &formatter)?;
         formatter.write_char('\n')?;
 
         Result::ok(())
@@ -113,22 +111,21 @@ mod internal {
                 std::intrinsics::trap();
             }
 
-            #[cfg(threading)] {
-                let panic_info = THREAD_PANIC_INFO.exchange(null, Ordering::SeqCst);
-                if panic_info != null {
-                    // If we are in a "managed" thread, we don't abort the process, but rather we just
-                    // populate the panic info that was put there by the thread constructor. This allows
-                    // the panic to be handled when the thread is joined.
-                    panic_info.file = file;
-                    panic_info.line = line;
-                    panic_info.column = column;
-                    libc::pthread_exit(panic_info as &mut void);
-                }
+            let panic_info = PanicInfo {
+                file: file, 
+                line: line, 
+                column: column, 
+                message: fmt_str, 
+                args: args
+            };
+            
+            if PANIC_HOOK.is_some {
+                PANIC_HOOK.inner.1(PANIC_HOOK.inner.0, &panic_info);
             }
     
             // Swallow errors from print_panic_message, because at this point, what can we do, panic?
             // We still bail early if it fails.
-            let _ = print_panic_message(fmt_str, file, line, column, args);
+            let _ = print_panic_message(&panic_info);
             #[cfg(all(debug, not(no_backtrace), not(target_os = "android")))]
             {
                 let buf: [&mut void; 128];

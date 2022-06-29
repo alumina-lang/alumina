@@ -9,13 +9,14 @@ use thiserror::Error;
 use tree_sitter::Node;
 
 macro_rules! ice {
-    ($why:literal) => {
+    ($why:literal) => {{
+        use crate::common::CodeErrorBuilder; 
         return Err(CodeErrorKind::InternalError(
             $why.to_string(),
             backtrace::Backtrace::new(),
         ))
         .with_no_span()
-    };
+    }};
 }
 
 pub(crate) use ice;
@@ -179,6 +180,8 @@ pub enum CodeErrorKind {
     FunctionMustHaveBody,
     #[error("protocol functions cannot be extern")]
     ProtocolFnsCannotBeExtern,
+    #[error("varargs functions can only be extern")]
+    VarArgsCanOnlyBeExtern,
     #[error("type `{}` matches `{}`, which it should not", .0, .1)]
     ProtocolMatch(String, String),
     #[error("type `{}` does not match `{}`", .0, .1)]

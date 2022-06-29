@@ -709,17 +709,18 @@ mod test {
     #[cfg(threading)]
     #[test]
     fn test_condvar() {
+        use thread::{spawn, Thread};
+
         let counter = 0;
 
         let flag = Atomic::new(false);
-
         let mutex = Mutex::new();
         let condvar = CondVar::new();
 
-        let t = thread::spawn(|&counter, &condvar, &mutex, &flag| {
+        let t = spawn(|&counter, &condvar, &mutex, &flag| {
             /// Ensure the main thread gets the mutex first;
             while !flag.load(Ordering::SeqCst) {
-                thread::yield();
+                Thread::park();
             }
 
             mutex.lock();
@@ -735,6 +736,7 @@ mod test {
         assert!(!condvar.wait_timeout(&mutex, time::Duration::zero()));
         
         flag.store(true, Ordering::SeqCst);
+        t.thread().unpark();
 
         while counter == 0 {
             condvar.wait(&mutex);

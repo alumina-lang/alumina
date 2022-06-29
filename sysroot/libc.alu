@@ -1307,3 +1307,34 @@ fn pthread_rwlock_initializer() -> pthread_rwlock_t {
     ret
 }
 
+// Futex support
+#[cfg(any(target_os = "android", target_os = "linux"))]
+{
+    extern "C" fn syscall(num: c_long, ...) -> c_long;
+
+    const FUTEX_WAIT: c_int = 0;
+    const FUTEX_WAKE: c_int = 1;
+    const FUTEX_FD: c_int = 2;
+    const FUTEX_REQUEUE: c_int = 3;
+    const FUTEX_CMP_REQUEUE: c_int = 4;
+    const FUTEX_WAKE_OP: c_int = 5;
+    const FUTEX_LOCK_PI: c_int = 6;
+    const FUTEX_UNLOCK_PI: c_int = 7;
+    const FUTEX_TRYLOCK_PI: c_int = 8;
+    const FUTEX_WAIT_BITSET: c_int = 9;
+    const FUTEX_WAKE_BITSET: c_int = 10;
+    const FUTEX_WAIT_REQUEUE_PI: c_int = 11;
+    const FUTEX_CMP_REQUEUE_PI: c_int = 12;
+    const FUTEX_PRIVATE_FLAG: c_int = 128;
+    const FUTEX_CLOCK_REALTIME: c_int = 256;
+    const FUTEX_CMD_MASK: c_int = ~(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
+
+    #[cfg(any(target_arch = "arm", target_arch = "x86"))]
+    const SYS_futex: c_long = 240;
+    
+    #[cfg(target_arch = "aarch64")]
+    const SYS_futex: c_long = 98;
+    
+    #[cfg(target_arch = "x86_64")]
+    const SYS_futex: c_long = 202;
+}
