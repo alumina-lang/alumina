@@ -111,7 +111,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     type ReturnType = Result<(), AluminaError>;
 
     fn visit_source_file(&mut self, node: Node<'src>) -> Self::ReturnType {
-        self.visit_children(node)
+        let attributes = parse_attributes!(self, node);
+        self.visit_children_by_field(node, "body")
     }
 
     fn visit_mod_definition(&mut self, node: Node<'src>) -> Self::ReturnType {

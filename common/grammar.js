@@ -63,17 +63,15 @@ module.exports = grammar({
   ],
 
   rules: {
-    source_file: ($) => repeat($._top_level_item),
+    source_file: ($) =>
+      seq(
+        optional(field("attributes", $.top_level_attributes)),
+        repeat(field("body", $._top_level_item))
+      ),
 
-    doc_comment: ($) =>
-    token(
-      seq("///", /[^\n\r]*/),
-    ),
+    doc_comment: ($) => token(seq("///", /[^\n\r]*/)),
 
-    file_doc_comment: ($) =>
-    token(
-      seq("//!", /[^\n\r]*/),
-    ),
+    file_doc_comment: ($) => token(seq("//!", /[^\n\r]*/)),
 
     _comment: ($) =>
       token(
@@ -82,6 +80,10 @@ module.exports = grammar({
           seq("/*", /[^*]*\*+([^/*][^*]*\*+)*/, "/")
         )
       ),
+
+    top_level_attributes: ($) => repeat1($.top_level_attribute_item),
+    top_level_attribute_item: ($) =>
+      seq("#!", "[", field("inner", $.meta_item), "]"),
 
     attributes: ($) => repeat1($.attribute_item),
     attribute_item: ($) => seq("#", "[", field("inner", $.meta_item), "]"),
@@ -138,9 +140,11 @@ module.exports = grammar({
         "}"
       ),
 
-    _impl_item: ($) => choice($.doc_comment, $.use_declaration, $.function_definition, $.mixin),
+    _impl_item: ($) =>
+      choice($.doc_comment, $.use_declaration, $.function_definition, $.mixin),
 
-    _protocol_item: ($) => choice($.doc_comment, $.use_declaration, $.function_definition),
+    _protocol_item: ($) =>
+      choice($.doc_comment, $.use_declaration, $.function_definition),
 
     mod_definition: ($) =>
       seq(
@@ -558,7 +562,7 @@ module.exports = grammar({
       prec(PREC.unary, seq("*", field("value", $._expression))),
 
     try_expression: ($) =>
-      prec(PREC.try, seq(field("inner", $._expression), '?')),
+      prec(PREC.try, seq(field("inner", $._expression), "?")),
 
     binary_expression: ($) => {
       const table = [
@@ -912,27 +916,22 @@ module.exports = grammar({
           seq(
             optional(seq("->", field("return_type", $._type))),
             field("body", $.block)
-          ),
+          )
         )
       ),
 
     closure_parameters: ($) =>
       seq(
         "|",
-        sepBy(",",
-          field("parameter", choice($.bound_identifier, $.parameter))
-        ),
+        sepBy(",", field("parameter", choice($.bound_identifier, $.parameter))),
         "|"
       ),
 
     bound_identifier: ($) =>
       seq(
-        choice(
-          field("by_reference", "&"), 
-          field("by_value", "=")
-        ),
-        field("name", $.identifier),
-      ),   
+        choice(field("by_reference", "&"), field("by_value", "=")),
+        field("name", $.identifier)
+      ),
 
     string_literal: ($) =>
       token(

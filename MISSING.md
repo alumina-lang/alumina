@@ -40,8 +40,6 @@
     - no buffered I/O (fwrite/...). Native Alumina IO primitives should be much more ergonomic.
     - no random small functions where it can be done efficiently in Alumina (memfrob, htonl, ...)
       - memcpy/memove/strlen are an exception. these are heavily optimized an may actually be compiler builtins
-    - what to do about math (libm?) yay or nay?
-      - yay.
     - I really wanted to say *absolutely nothing with varargs*, but unfortunately `ioctl` and `fcntl` are varargs :(
 - tests
 - how portable should it be? currently it seems to be working quite well on ARM and x86_64 on Linux, Android and Mac. Windows is not supported yet.

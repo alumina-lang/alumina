@@ -11,8 +11,10 @@ mod internal {
     {
         /// Minimal support for testing in the compiler. 
         ///
-        /// During AST construction, compiler will collect all the methods with #[test] attribute and
+        /// During AST construction, compiler will collect all the methods with `#[test]` attribute and
         /// make them available via this intrinsic.
+        ///
+        /// Do not use directly, use the [TEST_CASES] static instead.
         extern "intrinsic" fn test_cases() -> &[TestCaseMeta];
 
         // `test_cases()` call can be lowered at at any point during the IR lowering processed, ensure
@@ -41,10 +43,32 @@ mod internal {
         }
     }
 
-    macro argc_argv_to_slice($argc, $argv) {
+    const STACK_ARGS_MAX: usize = 1024;
+
+    /// Converts `argc` and `argv` into a `&[&[u8]]` slice of strings.
+    ///
+    /// It allocates the memory for the slice on the stack, hence a macro. This is done to avoid
+    /// a dependency on `malloc` for simple programs, but it is potentially problematic if a large 
+    /// number of arguments is passed as a significant portion of the stack space will be consumed.
+    /// The size of the slice is `argc * sizeof(usize) * 2` as only the pointers and lengths are 
+    /// stored in the slice, the contents of the arguments stays in the memory region pointed to by
+    /// `argv`.
+    ///
+    /// If number of arguments exceeds [STACK_ARGS_MAX], the function will fall back to using malloc.
+    ///
+    /// This is not great and probably a reason why Rust has `env::args()` instead of an argument
+    /// to the `main` function, but I kind of like the C-style arguments to main, so for now this
+    /// is the approach. 
+    macro argc_argv_to_slice($argc, $argv) { 
         let argc = $argc as usize;
         let argv = $argv as &&u8;
-        let args = aligned_alloca(size_of::<&[u8]>() * (argc), align_of::<&[u8]>() * 8) as &mut &[u8];
+        
+        let args = if argc > STACK_ARGS_MAX {
+            aligned_alloca(size_of::<&[u8]>() * argc, align_of::<&[u8]>() * 8) as &mut &[u8]
+        } else {
+            libc::malloc(size_of::<&[u8]>() * argc) as &mut &[u8] // will leak
+        };
+
         let args_ptr = args;
         while *argv != null {
             *args_ptr = slice::from_raw(*argv, libc::strlen(*argv as &libc::c_char) as usize);
@@ -59,8 +83,9 @@ mod internal {
         use thread::internal::{THREAD_INFO, ThreadInfo};
 
         // ThreadInfo for main thread is not freed when program is exiting. Calling
-        // C main in a loop would cause a memory leak.
-        assert!(THREAD_INFO == null);
+        // C main in a loop would cause a memory leak. Calling user main recursively
+        // is fine. 
+        debug_assert!(THREAD_INFO == null);
 
         let info = ThreadInfo::new();
         info.id = libc::pthread_self();

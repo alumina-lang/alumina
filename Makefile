@@ -121,12 +121,13 @@ $(ALUMINA_DOC).c: $(ALU_DEPS) $(ALUMINAC_LIB_SOURCES) $(ALUMINA_DOC_SOURCES) src
 $(ALUMINA_DOC): $(ALUMINA_DOC).c $(BUILD_DIR)/parser.o
 	$(CC) $(CFLAGS) -o $@ $^ -ltree-sitter $(LDFLAGS)
 
-.PHONY: docs
-
-docs: $(ALUMINA_DOC)
+$(BUILD_ROOT)/docs/index.html: $(ALUMINA_DOC) $(SYSROOT_FILES)
 	$(ALUMINA_DOC) \
 		$(foreach src,$(SYSROOT_FILES),$(subst __root__,, $(subst /,::,$(basename $(subst ./sysroot,,$(src)))))=$(src)) 
 	cp -rf tools/alumina-doc/static $(BUILD_ROOT)/docs/
+
+.PHONY: docs
+docs: $(BUILD_ROOT)/docs/index.html
 
 ## ------------------------------ Various ------------------------------
 
@@ -152,7 +153,7 @@ test-examples: alumina-boot
 test-aluminac: $(ALUMINAC_TESTS)
 	$(ALUMINAC_TESTS) $(TEST_FLAGS)
 
-test: test-std test-examples
+test: test-std test-aluminac test-examples 
 
 test-fix: $(ALUMINA_BOOT)
 	cd tools/snapshot-tests/ && pytest snapshot.py --snapshot-update

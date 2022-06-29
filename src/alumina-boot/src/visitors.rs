@@ -327,6 +327,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
         Ok(())
     }
 
+    fn visit_top_level_attributes(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        self.visit_attributes(node)
+    }
+
+    fn visit_top_level_attribute_item(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        self.visit_attribute_item(node)
+    }
     fn visit_attribute_item(&mut self, node: Node<'src>) -> Self::ReturnType {
         let inner = node.child_by_field_name("inner").unwrap();
 

@@ -211,12 +211,19 @@ impl TopLevelVisitor {
         });
     }
 
+    fn visit_top_level_attributes(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.visit_children(node)
+    }
+
     fn visit_attributes(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
         self.visit_children(node)
     }
 
+    fn visit_top_level_attribute_item(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        self.visit_attribute_item(node)
+    }
+
     fn visit_attribute_item(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
-        
         if get_name!(self, child_by!(node, FieldKind::Inner).unwrap()) == "cfg" {
             self.has_cfg = true;
         }
@@ -225,7 +232,22 @@ impl TopLevelVisitor {
     }
 
     fn visit_source_file(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
-        self.visit_children(node)
+        check_cfg!(self, node);
+
+        self.visit_children_by_field(node, FieldKind::Body)?;
+        self.items.add_item(Item {
+            kind: ItemKind::Module,
+            path: self.path.clone(),
+            defined_in: self.path.clone(),
+            node: node,
+            cfg_index: 0,
+            parse_context: self.parse_context,
+            doc_comment: self.file_doc_comment.move(),
+            group_node: Option::none(),
+            has_cfg: self.has_cfg,
+        });
+
+        Result::ok(())
     }
 
     fn visit_top_level_block(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
