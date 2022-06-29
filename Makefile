@@ -153,7 +153,7 @@ test-examples: alumina-boot
 test-aluminac: $(ALUMINAC_TESTS)
 	$(ALUMINAC_TESTS) $(TEST_FLAGS)
 
-test: test-std test-aluminac test-examples 
+test: test-std test-examples 
 
 test-fix: $(ALUMINA_BOOT)
 	cd tools/snapshot-tests/ && pytest snapshot.py --snapshot-update
