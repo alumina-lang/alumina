@@ -5,7 +5,7 @@
 /// Use this macro to bail on conditions that the program cannot reasonably be expected to
 /// recover from (e.g. when a condition means a certain programming bug).
 ///
-/// Since panics cannot be recovered from, prefer to use [structured error handling](std::result::Result) as 
+/// Since panics cannot be recovered from, prefer to use [structured error handling](std::result::Result) as
 /// a general purpose failure handling mechanism.
 ///
 /// When compiled in debug mode, `panic` prints the provided message along with the stack trace (on platforms
@@ -15,28 +15,36 @@
 /// ```
 /// let value = 42;
 /// switch value % 2 {
-///     0 => println!("even"),    
-///     1 => println!("odd"),    
-///     _ => panic!("{} is somehow neither odd nor even", value),    
+///     0 => println!("even"),
+///     1 => println!("odd"),
+///     _ => panic!("{} is somehow neither odd nor even", value),
 /// }
 /// ```
-/// 
+///
 /// Expressions that panic have a [never type](std::builtins::never).
 macro panic($reason, $args...) {
     internal::panic_impl(
-        concat!($reason), 
-        file!(), 
-        line!(), 
+        concat!($reason),
+        file!(),
+        line!(),
         column!(),
         &[internal::FormatArg::new(&$args)...]
     )
 }
 
+struct PanicInfo {
+    file: &[u8],
+    line: i32,
+    column: i32,
+    message: &[u8],
+    args: &[fmt::internal::FormatArg<internal::PanicFormatter>]
+}
+
 mod internal {
     use fmt::{Formatter, internal::{printf, FormatArg}};
+    use sync::{Atomic, Ordering};
 
     // libc runtime backtrace support
-
     #[cfg(all(debug, not(no_backtrace), not(target_os = "android")))]
     {
         extern "C" fn backtrace(buffer: &mut &mut void, size: libc::c_int) -> libc::c_int;
@@ -61,60 +69,71 @@ mod internal {
         }
         mixin Formatter<PanicFormatter>;
     }
-    
-    static PANICKING: bool;
 
-    fn print_panic_message(
-        fmt_str: &[u8], 
-        file: &[u8], 
-        line: i32, 
-        column: i32, 
-        args: &[FormatArg<PanicFormatter>]
-    ) -> Result<(), fmt::Error> {
+    #[thread_local] static PANICKING: bool;
+    #[thread_local] static PANIC_HOOK: Option<(&mut void, fn(&mut void, &PanicInfo))>;
+
+    fn set_panic_hook(arg: &mut void, f: fn(&mut void, &PanicInfo)) {
+        PANIC_HOOK = Option::some((arg, f));
+    }
+
+    fn print_panic_message(info: &PanicInfo) -> Result<(), fmt::Error> {
         let formatter = PanicFormatter {};
-        
         printf(
-            "panic at {}:{}:{}: ", 
-            &[FormatArg::new(&file), FormatArg::new(&line), FormatArg::new(&column)], 
+            "panic at {}:{}:{}: ",
+            &[FormatArg::new(&info.file), FormatArg::new(&info.line), FormatArg::new(&info.column)],
             &formatter
         )?;
-        printf(fmt_str, args, &formatter)?;
+        printf(info.message, info.args, &formatter)?;
         formatter.write_char('\n')?;
 
         Result::ok(())
     }
 
-    #[cfg(not(panic_trap))]
     #[cold]
     #[no_inline]
     fn panic_impl(
-        fmt_str: &[u8], 
-        file: &[u8], 
-        line: i32, 
-        column: i32, 
+        fmt_str: &[u8],
+        file: &[u8],
+        line: i32,
+        column: i32,
         args: &[FormatArg<PanicFormatter>]
     ) -> ! {
         #[cfg(panic_trap)]
         std::intrinsics::trap();
-        
-        #[cfg(not(panic_trap))] {
+
+        #[cfg(panic_abort)]
+        libc::abort();
+
+        #[cfg(all(not(panic_trap), not(panic_abort)))] {
             if mem::replace(&PANICKING, true) {
                 // If we panic during a panic handler, nuclear abort.
                 std::intrinsics::trap();
             }
-    
+
+            let panic_info = PanicInfo {
+                file: file,
+                line: line,
+                column: column,
+                message: fmt_str,
+                args: args
+            };
+
+            if PANIC_HOOK.is_some {
+                PANIC_HOOK.inner.1(PANIC_HOOK.inner.0, &panic_info);
+            }
+
             // Swallow errors from print_panic_message, because at this point, what can we do, panic?
             // We still bail early if it fails.
-            let _ = print_panic_message(fmt_str, file, line, column, args);
-    
+            let _ = print_panic_message(&panic_info);
             #[cfg(all(debug, not(no_backtrace), not(target_os = "android")))]
             {
                 let buf: [&mut void; 128];
                 let size = backtrace(&buf[0], 128);
                 backtrace_symbols_fd(&buf[0] as &mut &void, size, libc::STDERR_FILENO);
             }
-            
-            libc::_exit(-1);
+
+            libc::abort();
         }
     }
 }

@@ -1,6 +1,6 @@
 //! "FFI" interfaces to libc.
 //!
-//! If compiled on a Linux target, this module assumes glibc. Mostly copied/adapted 
+//! If compiled on a Linux target, this module assumes glibc. Mostly copied/adapted
 //! from [Rust's libc crate](https://github.com/rust-lang/libc).
 
 type c_schar = i8;
@@ -75,7 +75,7 @@ type ssize_t = isize;
 
     #[cfg(target_pointer_width = "32")]
     type socklen_t = i32;
-    
+
     #[cfg(target_pointer_width = "64")]
     type socklen_t = u32;
 
@@ -97,7 +97,7 @@ type ssize_t = isize;
         type off_t = i64;
         type ino_t = u32;
     }
-    
+
     #[cfg(target_pointer_width = "64")]
     {
         type off_t = i32;
@@ -124,7 +124,7 @@ type ssize_t = isize;
         type wchar_t = i32;
         type clock_t = i64;
         type time_t = i64;
-        
+
         type nlink_t = u64;
         type blkcnt_t = i64;
         type blksize_t = i64;
@@ -153,7 +153,7 @@ type ssize_t = isize;
             type c_ulong = u32;
             type clock_t = i32;
             type time_t = i32;
-            
+
             type nlink_t = u32;
             type blkcnt_t = i64;
             type blksize_t = i32;
@@ -165,7 +165,7 @@ type ssize_t = isize;
             type c_ulong = u64;
             type clock_t = i64;
             type time_t = i64;
-            
+
             type nlink_t = u32;
             type blkcnt_t = i32;
             type blksize_t = i32;
@@ -199,6 +199,7 @@ extern "C" fn realloc(ptr: &mut void, size: size_t) -> &mut void;
 extern "C" fn calloc(num: size_t, size: size_t) -> &mut void;
 extern "C" fn exit(ret: c_int) -> !;
 extern "C" fn _exit(ret: c_int) -> !;
+extern "C" fn abort() -> !;
 extern "C" fn strlen(s: &c_char) -> size_t;
 
 #[cfg(any(target_os="linux", target_os="macos", target_os="android"))]
@@ -230,7 +231,7 @@ extern "C" fn strlen(s: &c_char) -> size_t;
         struct sockaddr_storage {
             ss_family: sa_family_t,
             __ss_align: size_t,
-            
+
             #[cfg(target_pointer_width = "32")]
             __ss_pad2: [u8; 120],
             #[cfg(target_pointer_width = "64")]
@@ -323,7 +324,7 @@ extern "C" fn strlen(s: &c_char) -> size_t;
             d_type: c_uchar,
             d_name: [c_char; 256],
         }
-     
+
         struct dirent64 {
             d_ino: ino64_t,
             d_off: off64_t,
@@ -332,7 +333,7 @@ extern "C" fn strlen(s: &c_char) -> size_t;
             d_name: [c_char; 256],
         }
     }
-    
+
     #[cfg(target_os="macos")]
     struct dirent {
         d_ino: u64,
@@ -342,7 +343,7 @@ extern "C" fn strlen(s: &c_char) -> size_t;
         d_type: u8,
         d_name: [c_char; 1024],
     }
-    
+
     #[cfg(target_os="android")]
     {
         struct dirent {
@@ -368,14 +369,14 @@ extern "C" fn strlen(s: &c_char) -> size_t;
         events: c_short,
         revents: c_short,
     }
-    
+
     #[cfg(any(target_os="linux"))]
     extern "C" fn getrandom(buf: &mut void, buflen: size_t, flags: c_uint) -> ssize_t;
     extern "C" fn write(fd: c_int, buf: &void, len: size_t) -> ssize_t;
     extern "C" fn read(fd: c_int, buf: &mut void, len: size_t) -> ssize_t;
     extern "C" fn open(path: &c_char, oflag: c_int, mode: mode_t) -> c_int;
     extern "C" fn lseek(fd: c_int, offset: off_t, whence: c_int) -> off_t;
-    
+
     #[cfg(not(target_os="macos"))]
     extern "C" fn lseek64(fd: c_int, offset: off64_t, whence: c_int) -> off64_t;
 
@@ -457,7 +458,7 @@ extern "C" fn strlen(s: &c_char) -> size_t;
     ) -> c_int;
     extern "C" fn recv(socket: c_int, buf: &mut void, len: size_t, flags: c_int) -> ssize_t;
     extern "C" fn send(socket: c_int, buf: &void, len: size_t, flags: c_int) -> ssize_t;
-    
+
     extern "C" fn recvfrom(
         socket: c_int,
         buf: &mut void,
@@ -475,7 +476,7 @@ extern "C" fn strlen(s: &c_char) -> size_t;
         addr: &sockaddr,
         addrlen: socklen_t,
     ) -> ssize_t;
-    
+
     extern "C" fn getaddrinfo(
         node: &c_char,
         service: &c_char,
@@ -489,15 +490,15 @@ extern "C" fn strlen(s: &c_char) -> size_t;
         address: &mut sockaddr,
         address_len: &mut socklen_t
     ) -> c_int;
-    
+
     extern "C" fn getsockname(
         socket: c_int,
         address: &mut sockaddr,
         address_len: &mut socklen_t
     ) -> c_int;
     extern "C" fn bind(
-        socket: c_int, 
-        address: &sockaddr, 
+        socket: c_int,
+        address: &sockaddr,
         address_len: socklen_t
     ) -> c_int;
     extern "C" fn shutdown(socket: c_int, how: c_int) -> c_int;
@@ -507,7 +508,7 @@ extern "C" fn strlen(s: &c_char) -> size_t;
     extern "C" fn opendir(dirname: &c_char) -> &mut DIR;
     #[cfg(not(target_os="macos"))]
     extern "C" fn opendir(dirname: &c_char) -> &mut DIR;
-    
+
     #[cfg(target_os="macos")]
     #[link_name("_readdir$INODE64")]
     extern "C" fn readdir(dirp: &mut DIR) -> &mut dirent;
@@ -515,7 +516,7 @@ extern "C" fn strlen(s: &c_char) -> size_t;
     #[cfg(not(target_os="macos"))]
     extern "C" fn readdir(dirp: &mut DIR) -> &mut dirent;
     extern "C" fn closedir(dirp: &mut DIR) -> c_int;
-    
+
     #[cfg(not(target_os="macos"))]
     extern "C" fn readdir64(dirp: &mut DIR) -> &mut dirent64;
 
@@ -526,7 +527,7 @@ extern "C" fn strlen(s: &c_char) -> size_t;
     extern "C" fn stat(path: &c_char, buf: &mut t_stat) -> c_int;
     #[cfg(not(target_os="macos"))]
     extern "C" fn stat(path: &c_char, buf: &mut t_stat) -> c_int;
-    
+
     #[cfg(not(target_os="macos"))]
     extern "C" fn stat64(path: &c_char, buf: &mut t_stat64) -> c_int;
 
@@ -634,7 +635,7 @@ extern "C" fn strlen(s: &c_char) -> size_t;
         }
     }
 
-    #[cfg(all(target_os="android", target_arch = "aarch64"))] 
+    #[cfg(all(target_os="android", target_arch = "aarch64"))]
     {
         struct t_stat {
             st_dev: dev_t,
@@ -682,8 +683,8 @@ extern "C" fn strlen(s: &c_char) -> size_t;
             __unused5: c_uint,
         }
     }
-    
-    #[cfg(target_os="macos")] 
+
+    #[cfg(target_os="macos")]
     struct t_stat {
         st_dev: dev_t,
         st_mode: mode_t,
@@ -716,7 +717,7 @@ extern "C" fn strlen(s: &c_char) -> size_t;
     const STDIN_FILENO: c_int = 0;
     const STDOUT_FILENO: c_int = 1;
     const STDERR_FILENO: c_int = 2;
-    
+
     const SIGHUP: c_int = 1;
     const SIGINT: c_int = 2;
     const SIGQUIT: c_int = 3;
@@ -736,7 +737,7 @@ extern "C" fn strlen(s: &c_char) -> size_t;
     const SEEK_SET: c_int = 0;
     const SEEK_CUR: c_int = 1;
     const SEEK_END: c_int = 2;
-    
+
     const O_RDONLY: c_int = 0;
     const O_WRONLY: c_int = 1;
     const O_RDWR: c_int = 2;
@@ -758,7 +759,7 @@ extern "C" fn strlen(s: &c_char) -> size_t;
         const O_TRUNC: c_int = 512;
     }
 
-    #[cfg(target_os="macos")] 
+    #[cfg(target_os="macos")]
     {
         const O_ACCMODE: c_int = 0x3;
         const O_APPEND: c_int = 8;
@@ -840,6 +841,11 @@ extern "C" fn strlen(s: &c_char) -> size_t;
     #[cfg(target_os="macos")]
     const EWOULDBLOCK: c_int = 35;
 
+    #[cfg(any(target_os="linux", target_os="android"))]
+    const ETIMEDOUT: c_int = 110;
+    #[cfg(target_os="macos")]
+    const ETIMEDOUT: c_int = 60;
+
     const POLLIN: c_short = 0x1;
     const POLLPRI: c_short = 0x2;
     const POLLOUT: c_short = 0x4;
@@ -883,20 +889,20 @@ extern "C" fn strlen(s: &c_char) -> size_t;
         const FIONBIO: c_ulong = 0x8004667e;
         const FIOCLEX: c_ulong = 0x20006601;
     }
-    
+
     #[cfg(target_os = "android")]
     {
         const FIONBIO: c_int = 0x5421;
         const FIOCLEX: c_int = 0x5451;
     }
-    
+
     #[cfg(target_os = "linux")]
     {
         const FIONBIO: c_ulong = 0x5421;
         const FIOCLEX: c_ulong = 0x5451;
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android"))] 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         const AF_UNSPEC: c_int = 0;
         const AF_UNIX: c_int = 1;
@@ -939,7 +945,7 @@ extern "C" fn strlen(s: &c_char) -> size_t;
         const AF_ALG: c_int = 38;
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "android")))] 
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         const AF_UNSPEC: c_int = 0;
         const AF_LOCAL: c_int = 1;
@@ -1001,6 +1007,334 @@ extern "C" fn strlen(s: &c_char) -> size_t;
     const S_IFREG: mode_t = 32768;
     const S_IFLNK: mode_t = 40960;
     const S_IFSOCK: mode_t = 49152;
-    
+
     const S_IFMT: mode_t = 61440;
+}
+
+
+#[cfg(target_os = "android")] {
+    type pthread_t = c_long;
+    type pthread_mutexattr_t = c_long;
+    type pthread_rwlockattr_t = c_long;
+    type pthread_barrierattr_t = c_int;
+    type pthread_condattr_t = c_long;
+
+    #[cfg(target_pointer_width = "32")]
+    {
+        struct pthread_attr_t {
+            flags: u32,
+            stack_base: &mut void,
+            stack_size: size_t,
+            guard_size: size_t,
+            sched_policy: i32,
+            sched_priority: i32,
+        }
+
+        struct pthread_mutex_t { value: c_int }
+
+        struct pthread_cond_t { value: c_int }
+
+        struct pthread_rwlock_t {
+            lock: pthread_mutex_t,
+            cond: pthread_cond_t,
+            numLocks: c_int,
+            writerThreadId: c_int,
+            pendingReaders: c_int,
+            pendingWriters: c_int,
+            attr: i32,
+            __reserved: [c_char; 12],
+        }
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    {
+        struct pthread_attr_t {
+            flags: u32,
+            stack_base: &mut void,
+            stack_size: size_t,
+            guard_size: size_t,
+            sched_policy: i32,
+            sched_priority: i32,
+        }
+
+        struct pthread_mutex_t {
+            value: c_int,
+            __reserved: [c_char; 36],
+        }
+
+        struct pthread_cond_t {
+            value: c_int,
+            __reserved: [c_char; 44],
+        }
+
+        struct pthread_rwlock_t {
+            numLocks: c_int,
+            writerThreadId: c_int,
+            pendingReaders: c_int,
+            pendingWriters: c_int,
+            attr: i32,
+            __reserved: [c_char; 36],
+        }
+    }
+}
+
+#[cfg(target_os = "linux")] {
+    type pthread_t = c_ulong;
+
+    #[cfg(target_arch = "aarch64")]
+    struct pthread_attr_t {
+        __size: [usize; 8]
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "arm"))]
+    struct pthread_attr_t {
+        __size: [u32; 9]
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    struct pthread_attr_t {
+        #[cfg(target_pointer_width = "32")]
+        __size: [u32; 8],
+        #[cfg(target_pointer_width = "64")]
+        __size: [u64; 7]
+    }
+
+    type INNER_SIZEOF_PTHREAD_RWLOCKATTR_T = [u8; 8];
+    type INNER_SIZEOF_PTHREAD_COND_T = [u8; 48];
+
+    #[cfg(all(target_arch = "aarch64", target_pointer_width = "64"))]
+    {
+        type INNER_SIZEOF_PTHREAD_CONDATTR_T = [u8; 8];
+        type INNER_SIZEOF_PTHREAD_MUTEXATTR_T = [u8; 8];
+        type INNER_SIZEOF_PTHREAD_MUTEX_T = [u8; 48];
+        type INNER_SIZEOF_PTHREAD_RWLOCK_T = [u8; 56];
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        #[cfg(target_pointer_width = "64")] {
+            type INNER_SIZEOF_PTHREAD_CONDATTR_T = [u8; 4];
+            type INNER_SIZEOF_PTHREAD_MUTEXATTR_T = [u8; 4];
+            type INNER_SIZEOF_PTHREAD_MUTEX_T = [u8; 40];
+            type INNER_SIZEOF_PTHREAD_RWLOCK_T = [u8; 56];
+        }
+
+        #[cfg(target_pointer_width = "32")] {
+            type INNER_SIZEOF_PTHREAD_CONDATTR_T = [u8; 4];
+            type INNER_SIZEOF_PTHREAD_MUTEXATTR_T = [u8; 4];
+            type INNER_SIZEOF_PTHREAD_MUTEX_T = [u8; 32];
+            type INNER_SIZEOF_PTHREAD_RWLOCK_T = [u8; 44];
+        }
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "arm"))] {
+        type INNER_SIZEOF_PTHREAD_CONDATTR_T = [u8; 4];
+        type INNER_SIZEOF_PTHREAD_MUTEXATTR_T = [u8; 4];
+        type INNER_SIZEOF_PTHREAD_MUTEX_T = [u8; 24];
+        type INNER_SIZEOF_PTHREAD_RWLOCK_T = [u8; 32];
+    }
+
+    #[cfg(target_arch = "x86")]
+    #[align(4)]
+    struct pthread_cond_t {
+        size: INNER_SIZEOF_PTHREAD_COND_T,
+    }
+
+    #[cfg(not(target_arch = "x86"))]
+    #[align(8)]
+    struct pthread_cond_t {
+        size: INNER_SIZEOF_PTHREAD_COND_T,
+    }
+
+    #[cfg(any(target_pointer_width = "64", not(any(target_arch = "arm", target_arch = "x86_64", target_arch = "x86")))]
+    #[align(8)]
+    struct pthread_mutex_t {
+        size: INNER_SIZEOF_PTHREAD_MUTEX_T,
+    }
+
+    #[cfg(all(target_pointer_width = "32", any(target_arch = "arm", target_arch = "x86_64", target_arch = "x86"))]
+    #[align(4)]
+    struct pthread_mutex_t {
+        size: INNER_SIZEOF_PTHREAD_MUTEX_T,
+    }
+
+    #[cfg(any(target_pointer_width = "64", not(any(target_arch = "arm", target_arch = "x86_64", target_arch = "x86")))]
+    #[align(8)]
+    struct pthread_rwlock_t {
+        size: INNER_SIZEOF_PTHREAD_RWLOCK_T,
+    }
+
+    #[cfg(all(target_pointer_width = "32", any(target_arch = "arm", target_arch = "x86_64", target_arch = "x86"))]
+    #[align(4)]
+    struct pthread_rwlock_t {
+        size: INNER_SIZEOF_PTHREAD_RWLOCK_T,
+    }
+
+    #[cfg(any(target_pointer_width = "32", target_arch = "x86_64", target_arch = "aarch64"))]
+    #[align(4)]
+    struct pthread_mutexattr_t {
+        size: INNER_SIZEOF_PTHREAD_MUTEXATTR_T,
+    }
+
+    #[cfg(not(any(target_pointer_width = "32", target_arch = "x86_64", target_arch = "aarch64")))]
+    #[align(8)]
+    struct pthread_mutexattr_t {
+        size: INNER_SIZEOF_PTHREAD_MUTEXATTR_T,
+    }
+
+    #[align(4)]
+    struct pthread_condattr_t {
+        size: INNER_SIZEOF_PTHREAD_CONDATTR_T,
+    }
+
+    #[cfg(target_pointer_width = "32")]
+    #[align(4)]
+    struct pthread_rwlockattr_t {
+        size: INNER_SIZEOF_PTHREAD_RWLOCKATTR_T,
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[align(8)]
+    struct pthread_rwlockattr_t {
+        size: INNER_SIZEOF_PTHREAD_RWLOCKATTR_T,
+    }
+}
+
+#[cfg(target_os = "macos")] {
+    type pthread_t = uintptr_t;
+
+    #[cfg(target_pointer_width = "32")]
+    struct pthread_attr_t {
+        __sig: c_long,
+        __opaque: [c_char; 36]
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    struct pthread_attr_t {
+        __sig: c_long,
+        __opaque: [c_char; 56]
+    }
+
+    type INNER_PTHREAD_MUTEX_SIZE = [u8; 56];
+    type INNER_PTHREAD_COND_SIZE = [u8; 40];
+    type INNER_PTHREAD_CONDATTR_SIZE = [u8;  8];
+    type INNER_PTHREAD_RWLOCK_SIZE  = [u8; 92];
+    type INNER_PTHREAD_RWLOCKATTR_SIZE = [u8; 16];
+
+    struct pthread_rwlock_t {
+        __sig: c_long,
+        __opaque: INNER_PTHREAD_RWLOCK_SIZE,
+    }
+
+    struct pthread_mutex_t {
+        __sig: c_long,
+        __opaque: INNER_PTHREAD_MUTEX_SIZE,
+    }
+
+    struct pthread_cond_t {
+        __sig: c_long,
+        __opaque: INNER_PTHREAD_COND_SIZE,
+    }
+
+    struct pthread_mutexattr_t {
+        __sig: c_long,
+        __opaque: [u8; 8],
+    }
+
+    struct pthread_condattr_t {
+        __sig: c_long,
+        __opaque: INNER_PTHREAD_CONDATTR_SIZE,
+    }
+
+    struct pthread_rwlockattr_t {
+        __sig: c_long,
+        __opaque: INNER_PTHREAD_RWLOCKATTR_SIZE,
+    }
+}
+
+extern "C" fn pthread_create(
+    native: &mut pthread_t,
+    attr: &pthread_attr_t,
+    f: fn(&mut void) -> &mut void,
+    value: &mut void,
+) -> c_int;
+
+extern "C" fn pthread_join(native: pthread_t, value: &mut &mut void) -> c_int;
+extern "C" fn pthread_exit(value: &mut void) -> !;
+extern "C" fn pthread_kill(thread: pthread_t, sig: c_int) -> c_int;
+extern "C" fn pthread_self() -> pthread_t;
+extern "C" fn pthread_detach(thread: pthread_t) -> c_int;
+
+extern "C" fn pthread_mutex_lock(lock: &mut pthread_mutex_t) -> c_int;
+extern "C" fn pthread_mutex_trylock(lock: &mut pthread_mutex_t) -> c_int;
+extern "C" fn pthread_mutex_unlock(lock: &mut pthread_mutex_t) -> c_int;
+
+extern "C" fn pthread_rwlock_rdlock(lock: &mut pthread_rwlock_t) -> c_int;
+extern "C" fn pthread_rwlock_tryrdlock(lock: &mut pthread_rwlock_t) -> c_int;
+extern "C" fn pthread_rwlock_wrlock(lock: &mut pthread_rwlock_t) -> c_int;
+extern "C" fn pthread_rwlock_trywrlock(lock: &mut pthread_rwlock_t) -> c_int;
+extern "C" fn pthread_rwlock_unlock(lock: &mut pthread_rwlock_t) -> c_int;
+
+extern "C" fn pthread_cond_wait(cond: &mut pthread_cond_t, lock: &mut pthread_mutex_t) -> c_int;
+extern "C" fn pthread_cond_timedwait(cond: &mut pthread_cond_t, lock: &mut pthread_mutex_t, abstime: &timespec) -> c_int;
+extern "C" fn pthread_cond_signal(cond: &mut pthread_cond_t) -> c_int;
+extern "C" fn pthread_cond_broadcast(cond: &mut pthread_cond_t) -> c_int;
+
+extern "C" fn sched_yield() -> c_int;
+
+
+#[inline]
+fn pthread_mutex_initializer() -> pthread_mutex_t {
+    let ret = std::mem::zeroed::<pthread_mutex_t>();
+    #[cfg(target_os = "macos")]
+    ret.__sig = 0x32AAABA7;
+    ret
+}
+
+#[inline]
+fn pthread_cond_initializer() -> pthread_cond_t {
+    let ret = std::mem::zeroed::<pthread_cond_t>();
+    #[cfg(target_os = "macos")]
+    ret.__sig = 0x3CB0B1BB;
+    ret
+}
+
+#[inline]
+fn pthread_rwlock_initializer() -> pthread_rwlock_t {
+    let ret = std::mem::zeroed::<pthread_rwlock_t>();
+    #[cfg(target_os = "macos")]
+    ret.__sig = 0x2DA8B3B4;
+    ret
+}
+
+// Futex support
+#[cfg(any(target_os = "android", target_os = "linux"))]
+{
+    extern "C" fn syscall(num: c_long, ...) -> c_long;
+
+    const FUTEX_WAIT: c_int = 0;
+    const FUTEX_WAKE: c_int = 1;
+    const FUTEX_FD: c_int = 2;
+    const FUTEX_REQUEUE: c_int = 3;
+    const FUTEX_CMP_REQUEUE: c_int = 4;
+    const FUTEX_WAKE_OP: c_int = 5;
+    const FUTEX_LOCK_PI: c_int = 6;
+    const FUTEX_UNLOCK_PI: c_int = 7;
+    const FUTEX_TRYLOCK_PI: c_int = 8;
+    const FUTEX_WAIT_BITSET: c_int = 9;
+    const FUTEX_WAKE_BITSET: c_int = 10;
+    const FUTEX_WAIT_REQUEUE_PI: c_int = 11;
+    const FUTEX_CMP_REQUEUE_PI: c_int = 12;
+    const FUTEX_PRIVATE_FLAG: c_int = 128;
+    const FUTEX_CLOCK_REALTIME: c_int = 256;
+    const FUTEX_CMD_MASK: c_int = ~(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
+
+    #[cfg(any(target_arch = "arm", target_arch = "x86"))]
+    const SYS_futex: c_long = 240;
+
+    #[cfg(target_arch = "aarch64")]
+    const SYS_futex: c_long = 98;
+
+    #[cfg(target_arch = "x86_64")]
+    const SYS_futex: c_long = 202;
 }

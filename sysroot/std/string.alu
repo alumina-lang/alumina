@@ -190,7 +190,7 @@ impl SplitIterator {
 /// # Example
 /// ```
 /// use std::string::split;
-/// 
+///
 /// let iter = "192.168.0.1".split(".");
 /// assert_eq!(iter.next(), Option::some("192"));
 /// assert_eq!(iter.next(), Option::some("168"));
@@ -212,7 +212,7 @@ impl ReplaceAdapter {
     use std::fmt::{write, Error, Formatter};
 
     fn fmt<F: Formatter<F>>(self: &ReplaceAdapter, f: &mut F) -> Result<(), Error> {
-        let first = true;    
+        let first = true;
         for chunk in self.inner.split(self.needle) {
             if first {
                 first = false;
@@ -240,7 +240,7 @@ fn replace(self: &[u8], needle: &[u8], replacement: &[u8]) -> StringBuf {
 /// # Example
 /// ```
 /// use std::string::replace_fmt;
-/// 
+///
 /// // Prints "I like cake"
 /// println!("{}", "I like pie".replace_fmt("pie", "cake"));
 /// ```
@@ -285,7 +285,7 @@ fn join<It: iter::Iterator<It, &[u8]>>(self: &[u8], iter: &mut It) -> StringBuf 
 /// # Example
 /// ```
 /// use std::string::join_fmt;
-/// 
+///
 /// // Prints 192.168.0.1
 /// println!("{}", ".".join_fmt(&["192", "168", "0", "1"].iter()));
 /// ```
@@ -325,10 +325,10 @@ fn parse_integer<T: builtins::Integer>(s: &[u8], radix: u16) -> Option<T> {
             return Option::none();
         }
 
-        let a = result * radix; 
+        let a = result * radix;
         if a / radix != result {
             return Option::none();
-        } 
+        }
         let b = a + digit;
         if b < a {
             return Option::none();
@@ -395,7 +395,7 @@ mod tests {
     fn test_parse_integer() {
         assert_eq!(parse_integer::<usize>("0", 10), Option::some(0usize));
         assert_eq!(parse_integer::<isize>("0", 10), Option::some(0isize));
-        
+
         assert_eq!(parse_integer::<usize>("-0", 10), Option::none());
         assert_eq!(parse_integer::<isize>("-0", 10), Option::some(0isize));
 
@@ -404,7 +404,7 @@ mod tests {
 
         assert_eq!(parse_integer::<usize>("", 10), Option::none());
         assert_eq!(parse_integer::<usize>("abcdes", 10), Option::none());
-        assert_eq!(parse_integer::<usize>("-243", 10), Option::none());  
+        assert_eq!(parse_integer::<usize>("-243", 10), Option::none());
 
         // Unsigned overflow
         assert_eq!(parse_integer::<u8>("256", 10), Option::none());
@@ -414,10 +414,10 @@ mod tests {
         assert_eq!(parse_integer::<u16>("65536", 10), Option::none());
 
         // Signed overflow
-        assert_eq!(parse_integer::<i8>("127", 10), Option::some(127i8));  
-        assert_eq!(parse_integer::<i8>("128", 10), Option::none());  
-        assert_eq!(parse_integer::<i8>("-128", 10), Option::some(-128 as i8));  
-        assert_eq!(parse_integer::<i8>("-129", 10), Option::none());  
+        assert_eq!(parse_integer::<i8>("127", 10), Option::some(127i8));
+        assert_eq!(parse_integer::<i8>("128", 10), Option::none());
+        assert_eq!(parse_integer::<i8>("-128", 10), Option::some(-128 as i8));
+        assert_eq!(parse_integer::<i8>("-129", 10), Option::none());
         assert_eq!(
             parse_integer::<i128>("170141183460469231731687303715884105727", 10),
             Option::some(170141183460469231731687303715884105727i128)
@@ -430,11 +430,11 @@ mod tests {
 
     #[test]
     fn test_parse_integer_radix() {
-        assert_eq!(parse_integer::<u8>("ff", 16), Option::some(255u8));       
-        assert_eq!(parse_integer::<u32>("11111111111111111111111111111111", 2), Option::some(u32::max_value()));       
+        assert_eq!(parse_integer::<u8>("ff", 16), Option::some(255u8));
+        assert_eq!(parse_integer::<u32>("11111111111111111111111111111111", 2), Option::some(u32::max_value()));
         assert_eq!(parse_integer::<u32>("DeAdBeEf", 16), Option::some(3735928559u32));
 
-        assert_eq!(parse_integer::<u8>("ff", 10), Option::none());       
+        assert_eq!(parse_integer::<u8>("ff", 10), Option::none());
     }
 
     #[test]
@@ -523,7 +523,7 @@ mod tests {
         assert_eq!(f.as_slice(), "192::168::0::1");
     }
 */
-    #[test] 
+    #[test]
     fn test_replace() {
         let f = "192.168.0.1".replace(".", "::");
         defer f.free();

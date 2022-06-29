@@ -45,12 +45,12 @@ impl Instant {
                 nanos += NANOS_PER_SEC as i32;
             }
             Duration::new(secs, nanos as u32)
-        } 
+        }
 
 
         #[cfg(target_os = "macos")] {
             let diff = self.inner - earlier.inner;
-            let total_nanos = ((diff as i128) * (internal::TIMEBASE.numer as i128) / 
+            let total_nanos = ((diff as i128) * (internal::TIMEBASE.numer as i128) /
                 (internal::TIMEBASE.denom as i128)) as i64;
             let (secs, nanos) = math::div_floor(total_nanos, NANOS_PER_SEC as i64);
             Duration::new(secs, nanos as u32)
@@ -78,7 +78,7 @@ impl Instant {
 
         #[cfg(target_os = "macos")] {
             let total_nanos = (rhs.nanos as u128) + (rhs.secs as u128) * (NANOS_PER_SEC as u128);
-            let nanos = (total_nanos * (internal::TIMEBASE.denom as u128) / 
+            let nanos = (total_nanos * (internal::TIMEBASE.denom as u128) /
                 (internal::TIMEBASE.numer as u128)) as u64;
 
             Instant {
@@ -108,15 +108,15 @@ impl Instant {
 
         #[cfg(target_os = "macos")] {
             let total_nanos = (rhs.nanos as u128) + (rhs.secs as u128) * (NANOS_PER_SEC as u128);
-            let nanos = (total_nanos * (internal::TIMEBASE.denom as u128) / 
+            let nanos = (total_nanos * (internal::TIMEBASE.denom as u128) /
                 (internal::TIMEBASE.numer as u128)) as u64;
-            
+
             Instant {
                 inner: lhs.inner - nanos
             }
         }
     }
-    
+
     /// @ std::cmp::Equatable::equals
     fn equals(lhs: &Instant, rhs: &Instant) -> bool {
         #[cfg(not(target_os = "macos"))] {
@@ -137,7 +137,7 @@ impl Instant {
             lhs.inner.compare(&rhs.inner)
         }
     }
-    
+
     mixin cmp::Comparable<Instant>;
     mixin cmp::Equatable<Instant>;
 }
@@ -159,7 +159,7 @@ impl Instant {
             let v: mach_timebase_info_t;
             mach_timebase_info(&v);
             v
-        };   
+        };
     }
 }
 
@@ -174,9 +174,9 @@ struct Duration {
 
 impl Duration {
     fn new(secs: i64, nanos: u32) -> Duration {
-        Duration { 
-            secs: (nanos / NANOS_PER_SEC) as i64 + secs, 
-            nanos: nanos % NANOS_PER_SEC 
+        Duration {
+            secs: (nanos / NANOS_PER_SEC) as i64 + secs,
+            nanos: nanos % NANOS_PER_SEC
         }
     }
 
@@ -241,7 +241,7 @@ impl Duration {
         if nanos >= NANOS_PER_SEC {
             secs += 1;
             nanos -= NANOS_PER_SEC
-        } 
+        }
 
         Duration {
             secs: secs,
@@ -293,7 +293,7 @@ impl Duration {
         } else {
             *self
         };
-        
+
         let secs = abs.secs % 60;
         let mins = (abs.secs / 60) % 60;
         let hours = abs.secs / 3600;
@@ -309,21 +309,6 @@ impl Duration {
     mixin cmp::Equatable<Duration>;
 }
 
-/// Suspends thread execution for the specified duration.
-///
-/// The sleep may sleep for less than the specified time if interrupted by a
-/// signal.
-fn sleep(duration: &Duration) {
-    if *duration < Duration::zero() {
-        return;
-    }
-
-    libc::nanosleep(&libc::timespec {
-        tv_sec: util::cast(duration.secs),
-        tv_nsec: util::cast(duration.nanos)
-    }, null);
-}
-
 
 #[cfg(all(test, test_std))]
 mod tests {
@@ -331,6 +316,8 @@ mod tests {
 
     #[test]
     fn test_monotonish() {
+        use thread::sleep;
+
         let start = Instant::now();
         Duration::from_nanos(1000).sleep();
         let end = Instant::now();
@@ -405,16 +392,16 @@ mod tests {
             assert_eq!(
                 format_in!(buf, "{}", $dur).unwrap(),
                 $expected
-            );    
+            );
         }
-        
+
         chk!(Duration::zero(), "00:00:00");
         chk!(Duration::from_secs(1), "00:00:01");
         chk!(Duration::from_secs(60), "00:01:00");
         chk!(Duration::from_secs(60*60), "01:00:00");
         chk!(Duration::from_secs(86399), "23:59:59");
         chk!(Duration::from_nanos(1), "00:00:00.000000001");
-        chk!(Duration::from_nanos(999999999), "00:00:00.999999999"); 
+        chk!(Duration::from_nanos(999999999), "00:00:00.999999999");
 
         chk!(Duration::from_secs(-1), "-00:00:01");
         chk!(Duration::from_secs(-60), "-00:01:00");

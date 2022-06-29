@@ -3,7 +3,7 @@
 use builtins::Pointer;
 use std::option::Option;
 
-/// Types that can be "freed". 
+/// Types that can be "freed".
 ///
 /// Usually these types contain something that is heap-allocated.
 protocol Freeable<Self> {
@@ -33,7 +33,7 @@ protocol Movable<Self> {
 
 /// Types that be copied (usually heap-allocated types)
 protocol Copyable<Self> {
-    /// 
+    ///
     fn clone(self: &Self) -> Self;
 }
 
@@ -56,7 +56,7 @@ protocol AsSliceMut<Self, T> {
 ///
 /// Slice fat "pointers" are just regular structs that compiler handles in a special way with regards
 /// to syntax, implicit coercion and type inference. They are generic over the pointer-to-element type
-/// rather than the element type itself. This is an implementation detail to ensure that `&mut [T]` and 
+/// rather than the element type itself. This is an implementation detail to ensure that `&mut [T]` and
 /// `&[T]` are distinguished without having to have two distinct types for mutable and const slices.
 #[lang(slice)]
 struct slice<Ptr: Pointer> {
@@ -119,7 +119,7 @@ impl slice {
         if lhs.len != rhs.len {
             return false;
         }
-        
+
         when T: ZeroSized {
             true
         } else when T: Primitive {
@@ -165,7 +165,7 @@ impl slice {
             lhs.len.compare(&rhs.len)
         }
     }
-    
+
     /// @ std::hash::Hashable::hash
     fn hash<T: Hashable<T, H>, Ptr: PointerOf<T>, H: Hasher<H>>(self: &slice<Ptr>, hasher: &mut H) {
         when T: ZeroSized {
@@ -185,7 +185,7 @@ impl slice {
     fn fmt<Ptr: PointerOf<u8>, F: fmt::Formatter<F>>(self: &slice<Ptr>, f: &mut F) -> Result<(), fmt::Error> {
         f.write_str(*self)
     }
-    
+
     mixin<T: Equatable<T>, Ptr: PointerOf<T>> Equatable<slice<Ptr>>;
     mixin<T: Comparable<T>, Ptr: PointerOf<T>> Comparable<slice<Ptr>>;
 }
@@ -275,8 +275,8 @@ impl SliceRefIterator<Ptr: Pointer> {
 }
 
 mod internal {
-    use builtins::{Primitive, Pointer}; 
-    
+    use builtins::{Primitive, Pointer};
+
     #[force_inline]
     #[lang(slice_index)]
     fn slice_index<Ptr: Pointer>(a: slice<Ptr>, idx: usize) -> Ptr {
@@ -284,7 +284,7 @@ mod internal {
 
         a.ptr + idx
     }
-    
+
     #[force_inline]
     #[lang(slice_range_index)]
     fn slice_range_index<Ptr: Pointer, T>(a: slice<Ptr>, range: T) -> slice<Ptr> {

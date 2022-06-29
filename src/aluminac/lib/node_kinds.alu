@@ -35,6 +35,7 @@ enum NodeKind {
     StructInitializer,
     Block,
     SliceOf,
+    TopLevelAttributes,
     FloatLiteral,
     ArrayOf,
     ScopedUseList,
@@ -50,11 +51,11 @@ enum NodeKind {
     TypeIdentifier,
     MacroInvocation,
     ConstDeclaration,
-    StructExpression,
     LoopExpression,
+    StructExpression,
     UseAsClause,
-    ProtocolDefinition,
     Parameter,
+    ProtocolDefinition,
     FieldExpression,
     PtrLiteral,
     EnumDefinition,
@@ -104,6 +105,7 @@ enum NodeKind {
     ForExpression,
     IntegerLiteral,
     StructField,
+    TopLevelAttributeItem,
     FunctionDefinition,
     ParameterList,
 }
@@ -160,11 +162,12 @@ enum FieldKind {
     Upper = 49u16,
 }
 
-static NODE_KINDS: [NodeKind; 237] = [
+static NODE_KINDS: [NodeKind; 242] = [
     NodeKind::Invalid,
     NodeKind::Identifier,
     NodeKind::DocComment,
     NodeKind::FileDocComment,
+    NodeKind::Invalid,
     NodeKind::Invalid,
     NodeKind::Invalid,
     NodeKind::Invalid,
@@ -272,6 +275,8 @@ static NODE_KINDS: [NodeKind; 237] = [
     NodeKind::Invalid,
     NodeKind::MacroIdentifier,
     NodeKind::SourceFile,
+    NodeKind::TopLevelAttributes,
+    NodeKind::TopLevelAttributeItem,
     NodeKind::Attributes,
     NodeKind::AttributeItem,
     NodeKind::MetaItem,
@@ -396,6 +401,8 @@ static NODE_KINDS: [NodeKind; 237] = [
     NodeKind::Invalid,
     NodeKind::Invalid,
     NodeKind::Invalid,
+    NodeKind::Invalid,
+    NodeKind::Invalid,
     NodeKind::PrimitiveType,
     NodeKind::TypeIdentifier,
 ];
@@ -487,6 +494,9 @@ protocol NodeVisitor<Self, ReturnType> {
     fn visit_slice_of(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_slice_of");
     }
+    fn visit_top_level_attributes(self: &mut Self, node: Node) -> ReturnType {
+        panic!("unimplemented: visit_top_level_attributes");
+    }
     fn visit_float_literal(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_float_literal");
     }
@@ -532,20 +542,20 @@ protocol NodeVisitor<Self, ReturnType> {
     fn visit_const_declaration(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_const_declaration");
     }
-    fn visit_struct_expression(self: &mut Self, node: Node) -> ReturnType {
-        panic!("unimplemented: visit_struct_expression");
-    }
     fn visit_loop_expression(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_loop_expression");
+    }
+    fn visit_struct_expression(self: &mut Self, node: Node) -> ReturnType {
+        panic!("unimplemented: visit_struct_expression");
     }
     fn visit_use_as_clause(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_use_as_clause");
     }
-    fn visit_protocol_definition(self: &mut Self, node: Node) -> ReturnType {
-        panic!("unimplemented: visit_protocol_definition");
-    }
     fn visit_parameter(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_parameter");
+    }
+    fn visit_protocol_definition(self: &mut Self, node: Node) -> ReturnType {
+        panic!("unimplemented: visit_protocol_definition");
     }
     fn visit_field_expression(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_field_expression");
@@ -694,6 +704,9 @@ protocol NodeVisitor<Self, ReturnType> {
     fn visit_struct_field(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_struct_field");
     }
+    fn visit_top_level_attribute_item(self: &mut Self, node: Node) -> ReturnType {
+        panic!("unimplemented: visit_top_level_attribute_item");
+    }
     fn visit_function_definition(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_function_definition");
     }
@@ -734,6 +747,7 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::StructInitializer => self.visit_struct_initializer(node),
             NodeKind::Block => self.visit_block(node),
             NodeKind::SliceOf => self.visit_slice_of(node),
+            NodeKind::TopLevelAttributes => self.visit_top_level_attributes(node),
             NodeKind::FloatLiteral => self.visit_float_literal(node),
             NodeKind::ArrayOf => self.visit_array_of(node),
             NodeKind::ScopedUseList => self.visit_scoped_use_list(node),
@@ -749,11 +763,11 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::TypeIdentifier => self.visit_type_identifier(node),
             NodeKind::MacroInvocation => self.visit_macro_invocation(node),
             NodeKind::ConstDeclaration => self.visit_const_declaration(node),
-            NodeKind::StructExpression => self.visit_struct_expression(node),
             NodeKind::LoopExpression => self.visit_loop_expression(node),
+            NodeKind::StructExpression => self.visit_struct_expression(node),
             NodeKind::UseAsClause => self.visit_use_as_clause(node),
-            NodeKind::ProtocolDefinition => self.visit_protocol_definition(node),
             NodeKind::Parameter => self.visit_parameter(node),
+            NodeKind::ProtocolDefinition => self.visit_protocol_definition(node),
             NodeKind::FieldExpression => self.visit_field_expression(node),
             NodeKind::PtrLiteral => self.visit_ptr_literal(node),
             NodeKind::EnumDefinition => self.visit_enum_definition(node),
@@ -803,6 +817,7 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::ForExpression => self.visit_for_expression(node),
             NodeKind::IntegerLiteral => self.visit_integer_literal(node),
             NodeKind::StructField => self.visit_struct_field(node),
+            NodeKind::TopLevelAttributeItem => self.visit_top_level_attribute_item(node),
             NodeKind::FunctionDefinition => self.visit_function_definition(node),
             NodeKind::ParameterList => self.visit_parameter_list(node),
             _ => self.visit_unknown(node),

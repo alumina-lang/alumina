@@ -639,6 +639,7 @@ pub enum Attribute {
     Inline,
     Align(u32),
     NoInline,
+    ThreadLocal,
     Builtin,
     ForceInline,
     Intrinsic,

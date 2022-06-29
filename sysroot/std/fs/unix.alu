@@ -116,7 +116,7 @@ impl OpenOptions {
 /// # Example
 /// ```
 /// use std::fs::{DirBuilder, Path};
-/// 
+///
 /// DirBuilder::new()
 ///     .recursive(true)
 ///     .create(Path::new("/home/alumina/a/b/c/d/e/f"))
@@ -150,7 +150,7 @@ impl DirBuilder {
     fn _mkdir(self: &DirBuilder, path: Path) -> Result<(), Error> {
         let path = ffi::CString::new(path.inner);
         defer path.free();
-        
+
         errno_try!(libc::mkdir(path.ptr, self._mode));
         Result::ok(())
     }
@@ -249,7 +249,7 @@ impl File {
 
         #[cfg(target_os = "macos")]
         errno_try!(libc::fstat(self.fd.value, &result.inner));
-                
+
         #[cfg(not(target_os = "macos"))]
         errno_try!(libc::fstat64(self.fd.value, &result.inner));
 
@@ -272,11 +272,11 @@ impl File {
 
         let file = File::open(path)?;
         defer file.close();
-        
+
         let attrs = file.attributes()?;
-        
+
         let string: StringBuf = StringBuf::with_capacity(attrs.size() as usize);
-        defer string.free();                
+        defer string.free();
 
         let ret = file.read_to_end(&string)?;
 
@@ -334,7 +334,7 @@ impl DirIterator {
             let ent = libc::readdir(self.inner);
             #[cfg(not(target_os = "macos"))]
             let ent = libc::readdir64(self.inner);
-            
+
             if ent == null {
                 let err = Error::from_errno();
                 if err.inner.errno == 0 {
@@ -403,7 +403,7 @@ impl DirEntry {
 ///
 /// let dir = read_directory("/home/alumina")?
 /// defer dir.close()?;
-/// 
+///
 /// for item in dir {
 ///     let item = item?;
 ///     println!("{}: {}", item.name(), item.file_type());
@@ -446,7 +446,7 @@ impl FileType {
             FileType::Regular => write!(fmt, "regular"),
             FileType::Link => write!(fmt, "link"),
             FileType::Socket => write!(fmt, "socket"),
-            _ => write!(fmt, "unknown"),            
+            _ => write!(fmt, "unknown"),
         }
     }
 
@@ -474,7 +474,7 @@ impl FileAttr {
 
         #[cfg(target_os = "macos")]
         errno_try!(libc::stat(path.ptr, &result.inner));
-                
+
         #[cfg(not(target_os = "macos"))]
         errno_try!(libc::stat64(path.ptr, &result.inner));
 
@@ -496,7 +496,7 @@ mod tests {
     use fmt::{hex, pad, zero_pad, format, format_in};
     use collections::{free_all, sort_by};
     use string::StringBuf;
-    
+
     static BUF: [u8; 1024];
     static BUF1: [u8; 1024];
 
@@ -516,7 +516,7 @@ mod tests {
             random::OsRng::new().next_u64().hex().zero_pad(16)
         ).unwrap()));
 
-        tmpdir        
+        tmpdir
     }
 
     #[test]
@@ -535,7 +535,7 @@ mod tests {
 
         let read = file.read(buf).unwrap();
         assert_eq!(buf[..read] as &[u8], "Hello, world!");
-        
+
         file.seek(SeekFrom::Beginning, 7).unwrap();
 
         let read = file.read(buf).unwrap();
@@ -561,7 +561,7 @@ mod tests {
     fn test_read_directory() {
         let path = mktemp();
         defer path.free();
-        
+
         create_directory(path.as_path()).unwrap();
 
         (0..5).iter().foreach(|&path, i: i32| {
@@ -598,7 +598,7 @@ mod tests {
     fn test_create_remove_directory() {
         let path = mktemp();
         defer path.free();
-        
+
         create_directory(path.as_path()).unwrap();
         remove_directory(path.as_path()).unwrap();
 
@@ -614,7 +614,7 @@ mod tests {
     fn test_remove_file() {
         let path = mktemp();
         defer path.free();
-        
+
         File::create(path.as_path()).unwrap().close();
         remove_file(path.as_path()).unwrap();
     }

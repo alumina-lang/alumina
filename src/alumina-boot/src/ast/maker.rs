@@ -378,7 +378,7 @@ impl<'ast> AstItemMaker<'ast> {
             .is_some();
 
         if has_varargs && !is_extern {
-            panic!("no");
+            return Err(CodeErrorKind::VarArgsCanOnlyBeExtern).with_span_from(&scope, node);
         }
 
         let is_protocol_fn = matches!(scope.parent().map(|s| s.typ()), Some(ScopeType::Protocol));

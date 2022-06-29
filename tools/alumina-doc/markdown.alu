@@ -34,15 +34,15 @@ impl InlineMarkdownState {
     fn reset(self: &mut InlineMarkdownState) -> ::Result<(), Error> {
         if self.kind != State::Normal {
             return Result::err(Error::new())
-        } 
+        }
         self.free();
         *self = InlineMarkdownState::default();
         Result::ok(())
     }
 
     fn move(self: &mut InlineMarkdownState) -> InlineMarkdownState {
-        InlineMarkdownState { 
-            kind: self.kind, 
+        InlineMarkdownState {
+            kind: self.kind,
             link_text: self.link_text.move(),
             link_url: self.link_url.move()
         }
@@ -55,10 +55,10 @@ impl InlineMarkdownState {
 }
 
 /// A very tiny subset of Markdown is supported, just inline code, bold, italic and links
-/// without nesting. 
+/// without nesting.
 struct InlineMarkdown {
     inner: &[u8],
-    state: &mut InlineMarkdownState,    
+    state: &mut InlineMarkdownState,
     link_context: &LinkContext,
 }
 
@@ -93,13 +93,13 @@ impl InlineMarkdown {
             link.as_slice()
         }
 
-        write!(f, 
-            "<a class=\"{}\" href=\"{}\">{}</a>", 
+        write!(f,
+            "<a class=\"{}\" href=\"{}\">{}</a>",
             class,
             link,
             HtmlEscaped::str(text)
         )?;
-        
+
         self.state.link_url.clear();
         self.state.link_text.clear();
 
@@ -213,9 +213,9 @@ impl HtmlEscaped {
 
 /// A mini-markdown subset parser
 fn write_docstring<T: std::io::Writable<T>>(
-    writer: &mut T, 
-    doc_comment: &[u8], 
-    tagline_only: bool, 
+    writer: &mut T,
+    doc_comment: &[u8],
+    tagline_only: bool,
     link_context: &LinkContext
 ) -> Result {
     if doc_comment.len == 0 {
@@ -234,7 +234,7 @@ fn write_docstring<T: std::io::Writable<T>>(
             writer,
             item.doc_comment.as_slice(),
             tagline_only,
-            &link_context    
+            &link_context
         );
     }
 

@@ -5,7 +5,7 @@
     use unix::{
         OpenOptions, File, DirIterator, DirEntry, FileType,
         DirBuilder,  read_directory, create_directory,
-        FileAttr, remove_file, remove_directory 
+        FileAttr, remove_file, remove_directory
     }
 }
 
@@ -36,7 +36,7 @@ impl PathSegmentKind {
 
 struct PathSegment {
     kind: PathSegmentKind,
-    value: &[u8] 
+    value: &[u8]
 }
 
 impl PathSegment {
@@ -362,15 +362,15 @@ mod tests {
         let path = Path::new("home").iter();
         assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "home" }));
         assert_eq!(path.next(), Option::none());
-        
+
         let path = Path::new("home///").iter();
         assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "home" }));
-        assert_eq!(path.next(), Option::none());        
+        assert_eq!(path.next(), Option::none());
 
         let path = Path::new("home///alumina").iter();
         assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "home" }));
         assert_eq!(path.next(), Option::some(PathSegment { kind: PathSegmentKind::Normal, value: "alumina" }));
-        assert_eq!(path.next(), Option::none());    
+        assert_eq!(path.next(), Option::none());
     }
 
     use fmt::format_in;
@@ -384,7 +384,7 @@ mod tests {
             let path = Path::new($path);
             let ret = format_in!(buf, "{}", path).unwrap();
             assert_eq!(ret, $expected);
-        }    
+        }
 
         chk!("", "");
         chk!("/", "/");
@@ -395,7 +395,7 @@ mod tests {
         chk!("foo/bar/", "foo/bar");
         chk!("foo/////bar/", "foo/bar");
         chk!("./../////bar/", "./../bar");
-    } 
+    }
 
     #[test]
     fn test_is_absolute() {
@@ -405,14 +405,14 @@ mod tests {
         assert!(Path::new("").is_relative());
         assert!(Path::new("./foo").is_relative());
         assert!(Path::new("foo").is_relative());
-    } 
+    }
 
     #[test]
     fn test_strip_prefix() {
         assert_eq!(Path::new("").strip_prefix(Path::new("")), Option::some(Path::new("")));
         assert_eq!(Path::new("/foo/bar").strip_prefix(Path::new("/")), Option::some(Path::new("foo/bar")));
         assert_eq!(Path::new("/foo/bar").strip_prefix(Path::new("/foo/")), Option::some(Path::new("bar")));
-        
+
         assert_eq!(Path::new("/foo/bar").strip_prefix(Path::new("/quux")), Option::none());
         assert_eq!(Path::new("foo/bar").strip_prefix(Path::new("/")), Option::none());
     }
@@ -426,7 +426,7 @@ mod tests {
         let path_buf = PathBuf::from_iter(&Path::new("/hello/world/").iter().chain(&Path::new("foo/bar/").iter()));
         defer path_buf.free();
         assert_eq!(path_buf.as_path(), Path::new("/hello/world/foo/bar"));
-        
+
         let path_buf = PathBuf::from_iter(&Path::new("/hello/world/").iter().chain(&Path::new("/foo/bar/").iter()));
         defer path_buf.free();
         assert_eq!(path_buf.as_path(), Path::new("/foo/bar"));

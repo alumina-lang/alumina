@@ -2,8 +2,8 @@
 //!
 //! This module holds impl blocks for builtin types all items with `#[lang(builtin_X)]` are
 //! treated as X when lowering into IR, so they cannot actually exist as proper structs.
-//! 
-//! Builtin protocols also cannot be directly implemented by user code, even though 
+//!
+//! Builtin protocols also cannot be directly implemented by user code, even though
 //! they contain no associated functions. They are handled specially
 //! by the compiler.
 
@@ -13,7 +13,7 @@ use fmt::{Formatter};
 
 /// Unit type (`()`)
 ///
-/// Unit type (also called void type) is the return type of expressions that do not return 
+/// Unit type (also called void type) is the return type of expressions that do not return
 /// a value.
 #[lang(builtin_void)]
 struct void {}
@@ -27,7 +27,7 @@ impl void {
     fn compare(lhs: &void, rhs: &void) -> Ordering {
         Ordering::Equal
     }
-    
+
     #[force_inline]
     fn hash<H: Hasher<H>>(self: &void, hasher: &mut H) {
     }
@@ -70,12 +70,12 @@ impl bool {
 
 /// Never type (`!`)
 ///
-/// Never type is the type of expressions that never return. For example, 
+/// Never type is the type of expressions that never return. For example,
 /// ```
 ///`let a = loop {};  /// `a` is of type `!`
 /// ```
 ///
-/// It has a couple of interesting properties, notably it is a bottom type, 
+/// It has a couple of interesting properties, notably it is a bottom type,
 /// which means that values of never type can be coerced into any other type.
 #[lang(builtin_never)]
 struct never {}
@@ -83,15 +83,15 @@ impl never {
     fn equals(lhs: &!, rhs: &!) -> bool {
         std::intrinsics::unreachable()
     }
-    
+
     fn compare(lhs: &!, rhs: &!) -> Ordering {
         std::intrinsics::unreachable()
     }
-    
+
     fn hash<H: Hasher<H>>(self: &!, hasher: &mut H) {
         std::intrinsics::unreachable()
     }
-    
+
     fn fmt<F: Formatter<F>>(self: &!, formatter: &mut F) -> Result<(), fmt::Error> {
         std::intrinsics::unreachable()
     }
@@ -104,7 +104,7 @@ impl never {
 /// equality and comparison operators.
 protocol BuiltinComparable<Self: builtins::Numeric> {
     #[force_inline] fn equals(lhs: &Self, rhs: &Self) -> bool { *lhs == *rhs }
-    #[force_inline] fn not_equals(lhs: &Self, rhs: &Self) -> bool { *lhs != *rhs }    
+    #[force_inline] fn not_equals(lhs: &Self, rhs: &Self) -> bool { *lhs != *rhs }
     #[force_inline]
     fn compare(lhs: &Self, rhs: &Self) -> Ordering {
         if *lhs < *rhs {
@@ -266,7 +266,7 @@ impl u128 {
 /// Native unsigned integer (machine word)
 ///
 /// On 64-bit systems, `usize` is the same as `u64`. On 32-bit systems, `usize` is the same
-/// as `u32`. 
+/// as `u32`.
 #[lang(builtin_usize)]
 struct usize {}
 impl usize {
@@ -285,7 +285,7 @@ impl usize {
         #[cfg(target_pointer_width = "64")]
         {
             u64::max_value() as usize
-        }        
+        }
     }
 
     #[force_inline]
@@ -297,7 +297,7 @@ impl usize {
         #[cfg(target_pointer_width = "64")]
         {
             u64::min_value() as usize
-        }   
+        }
     }
 }
 
@@ -840,7 +840,7 @@ impl array<Arr: builtins::Array> {
 
 // The following are "type-operators", pseudo-types, implemented inside the compiler
 // that resolve to other types based on the type of the generic parameters. Ideally,
-// these would be implemented in the standard library, but the infer system is not 
+// these would be implemented in the standard library, but the infer system is not
 // yet sufficiently powerful for this.
 
 /// Signed integer type of the same size as the original type.
@@ -957,14 +957,14 @@ mod tests {
     #[test]
     fn test_signed_of() {
         use rtti::type_id;
-        
+
         assert_eq!(type_id::<signed_of<u8>>(), type_id::<i8>());
         assert_eq!(type_id::<signed_of<u16>>(), type_id::<i16>());
         assert_eq!(type_id::<signed_of<u32>>(), type_id::<i32>());
         assert_eq!(type_id::<signed_of<u64>>(), type_id::<i64>());
         assert_eq!(type_id::<signed_of<usize>>(), type_id::<isize>());
         assert_eq!(type_id::<signed_of<u128>>(), type_id::<i128>());
-     
+
         assert_eq!(type_id::<signed_of<i8>>(), type_id::<i8>());
         assert_eq!(type_id::<signed_of<i16>>(), type_id::<i16>());
         assert_eq!(type_id::<signed_of<i32>>(), type_id::<i32>());
@@ -976,7 +976,7 @@ mod tests {
     #[test]
     fn test_unsigned_of() {
         use rtti::type_id;
-        
+
         assert_eq!(type_id::<unsigned_of<u8>>(), type_id::<u8>());
         assert_eq!(type_id::<unsigned_of<u16>>(), type_id::<u16>());
         assert_eq!(type_id::<unsigned_of<u32>>(), type_id::<u32>());
@@ -995,7 +995,7 @@ mod tests {
     #[test]
     fn test_deref_of() {
         use rtti::type_id;
-        
+
         assert_eq!(type_id::<deref_of<&u8>>(), type_id::<u8>());
         assert_eq!(type_id::<deref_of<&mut u8>>(), type_id::<u8>());
 

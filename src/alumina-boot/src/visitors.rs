@@ -327,6 +327,16 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
         Ok(())
     }
 
+    fn visit_top_level_attributes(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        self.visit_attributes(node)
+    }
+
+    fn visit_top_level_attribute_item(
+        &mut self,
+        node: tree_sitter::Node<'src>,
+    ) -> Self::ReturnType {
+        self.visit_attribute_item(node)
+    }
     fn visit_attribute_item(&mut self, node: Node<'src>) -> Self::ReturnType {
         let inner = node.child_by_field_name("inner").unwrap();
 
@@ -352,6 +362,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
             "builtin" => self.attributes.push(Attribute::Builtin),
             "export" => self.attributes.push(Attribute::Export),
             "force_inline" => self.attributes.push(Attribute::ForceInline),
+            "thread_local" => {
+                // We can skip thread-local on programs that are compiled with threads
+                // disabled.
+                if self.global_ctx.has_flag("threading") {
+                    self.attributes.push(Attribute::ThreadLocal)
+                }
+            }
             "test_main" => self.attributes.push(Attribute::TestMain),
             "link_name" => {
                 let link_name = inner

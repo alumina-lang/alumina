@@ -1,14 +1,14 @@
 use std::builtins::Callable;
 
-// This function will accept a function pointer as a parameter. 
+// This function will accept a function pointer as a parameter.
 fn say_twice_pointer<T>(sayer: fn(T), what: T) {
     sayer(what);
     sayer(what);
 }
 
-// say_twice_mono will be monomorphized using a specific function say<T> for a given T it is invoked 
+// say_twice_mono will be monomorphized using a specific function say<T> for a given T it is invoked
 // with. This allows for e.g. inlining and other optimizations. Unlike function pointers,
-// function types are zero-sized (each function type is a unit type containing only one 
+// function types are zero-sized (each function type is a unit type containing only one
 // function), so the "sayer" parameter will be elided away and `say` will be called directly
 // from the body of the function.
 fn say_twice_mono<T>(sayer: say<T>, what: T) {
@@ -30,8 +30,8 @@ fn say<T>(what: T) {
 fn main() {
     say_twice_pointer(say, "hello");
     say_twice_mono(say, "world");
-    
-    // Unfortunately type inference is not yet smart enough to figure out the T parameter 
+
+    // Unfortunately type inference is not yet smart enough to figure out the T parameter
     // of say if it is only constrained by the protocol bound, so we need to add a type
     // hint.
     say_twice_protocol(say::<&[u8]>, "!");

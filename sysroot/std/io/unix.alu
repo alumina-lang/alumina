@@ -28,6 +28,14 @@ impl Error {
         }
     }
 
+    /// Create `Error` from the last OS error (`errno`)
+    fn from_errno_custom(errno: libc::c_int) -> Error {
+        Error {
+            kind: ErrorKind::Os,
+            inner: ErrorInner { errno: errno },
+        }
+    }
+
     /// Create `Error` from the code returned by [libc::getaddrinfo].
     fn from_gai(gai_err: libc::c_int) -> Error {
         Error {
@@ -161,7 +169,7 @@ impl FileDescriptor {
     fn set_nonblocking(self: &mut FileDescriptor, nonblocking: bool) -> Result<(), Error> {
         #[cfg(target_os = "linux")] {
             let nonblocking =  if nonblocking { 1 as libc::c_int } else { 0 as libc::c_int };
-            errno_try!(libc::ioctl(self.value, libc::FIONBIO, &nonblocking));    
+            errno_try!(libc::ioctl(self.value, libc::FIONBIO, &nonblocking));
         }
 
         #[cfg(not(target_os = "linux"))] {
@@ -185,11 +193,11 @@ impl FileDescriptor {
         #[cfg(not(target_os = "linux"))] {
             errno_try!(libc::ioctl(self.value, libc::FIOCLEX));
         }
-        
+
         #[cfg(target_os = "linux")] {
             let previous = errno_try!(libc::fcntl(self.value, libc::F_GETFD));
             let new = previous | libc::FD_CLOEXEC;
-    
+
             if new != previous {
                 errno_try!(libc::fcntl(self.value, libc::F_SETFD, new));
             }
@@ -245,7 +253,7 @@ impl StdioStream {
     /// @ std::mem::Movable::move
     fn move(self: &mut StdioStream) -> StdioStream {
         StdioStream { fd: self.fd.move() }
-    }    
+    }
 
     mixin FdReadWrite<StdioStream>;
     mixin Readable<StdioStream>;
@@ -261,10 +269,10 @@ impl Pipe {
     /// Create an anonymous pipe pair.
     fn anonymous() -> result::Result<(Pipe, Pipe), Error> {
         let fds: [libc::c_int; 2];
-    
+
         #[cfg(target_os = "linux")]
         errno_try!(libc::pipe2(&fds[0], libc::O_CLOEXEC));
-        
+
         #[cfg(not(target_os = "linux"))]
         errno_try!(libc::pipe(&fds[0]));
 

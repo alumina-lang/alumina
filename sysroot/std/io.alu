@@ -11,15 +11,11 @@ use fmt::{write, writeln};
 
 /// Buffer for formatted standard I/O.
 ///
-/// We use a single small static buffer for convenience stdio formatting macros.
+/// We use a single small thread local buffer for convenience stdio formatting macros.
 /// This buffer has limited purpose (if you need a larger buffer, use [io::StdioStream] directly).
 /// As many formatters write individual characters, doing a syscall for every one would be
 /// a performance killer.
-///
-/// Once we have multi-threading, stdio formatting will have to be synchronized or `FMT_BUF`
-/// made thread-local. Having a static buffer is also a concern if the macros recurse, as
-/// the buffer will be overwritten.
-static FMT_BUF: [u8; 128];
+#[thread_local] static FMT_BUF: [u8; 256];
 
 /// Prints a formatted string to standard output.
 ///
@@ -112,7 +108,7 @@ protocol Readable<Self> {
                 buf._length = buf.len() + read;
             }
 
-            // Optimization for the case where the initial vector had exactly 
+            // Optimization for the case where the initial vector had exactly
             // enough capacity - avoid doubling the vector if the next read will
             // return EOF by using a small stack buffer instead.
             if buf.capacity() == buf.len() && buf.capacity() == start_cap {
@@ -137,7 +133,7 @@ protocol Writable<Self> {
     fn write(self: &mut Self, buf: &[u8]) -> Result<usize, Error>;
 
     /// Writes all the bytes in the buffer to the stream.
-    /// 
+    ///
     /// If EOF is reached, returns `Error::eof()`.
     fn write_all(self: &mut Self, buf: &[u8]) -> Result<(), Error> {
 
@@ -153,7 +149,7 @@ protocol Writable<Self> {
     }
 
     /// Flush the stream
-    /// 
+    ///
     /// This may be a no-op, depending on the stream.
     fn flush(self: &mut Self) -> Result<(), Error>;
 }
@@ -171,11 +167,11 @@ protocol Seekable<Self> {
     ///
     /// Returns the new position in the stream from the beginning.
     fn seek(self: &mut Self, whence: SeekFrom, offset: i64) -> Result<u64, Error>;
-    
+
     /// Rewind the stream to the beginning.
     fn rewind(self: &mut Self) -> Result<(), Error> {
         self.seek(SeekFrom::Beginning, 0)?;
-        
+
         Result::ok(())
     }
 
@@ -204,7 +200,7 @@ impl SliceReader {
     /// @ Readable::read
     fn read(self: &mut SliceReader, buf: &mut [u8]) -> Result<usize, Error> {
         let len = cmp::min(buf.len, self.slice.len - self.pos);
-        
+
         if len > 0 {
             self.slice[self.pos..self.pos + len].copy_nonoverlapping(&buf[0]);
             self.pos += len;
@@ -231,7 +227,7 @@ impl SliceReader {
             SeekFrom::End => self.slice.len as i64 + offset,
             _ => unreachable!()
         };
-        
+
         if new_offset < 0 || (new_offset as usize) > self.slice.len {
             Result::err(Error::eof())
         } else {
@@ -427,7 +423,7 @@ impl BufferedWriter<W: Writable<W>> {
         if buf.len > self.buf.len - self.pos {
             self._flush_buffer()?;
         }
-     
+
         if buf.len >= self.buf.len  {
             // Bypass the buffer if we need to write more than buffer size
             self.inner.write(buf)
@@ -477,7 +473,7 @@ impl BufferedWriter<W: Writable<W>> {
 
     fn _flush_buffer(self: &mut BufferedWriter<W>) -> result::Result<(), Error> {
         // This will return an EOF error, if we are not able to write everything.
-        // since we have accepted bytes that are not written to the underlying 
+        // since we have accepted bytes that are not written to the underlying
         // writer and not signalled an EOF.
         self.inner.write_all(self.buf[..self.pos])?;
         self.pos = 0;
@@ -537,7 +533,7 @@ const DEFAULT_BUFFER_SIZE: usize = 8192;
 fn copy<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D) -> result::Result<u64, Error> {
     let buf = mem::alloc::<u8>(DEFAULT_BUFFER_SIZE);
     defer mem::free(buf);
-    
+
     copy_using(src, dst, buf)
 }
 
@@ -554,9 +550,9 @@ fn copy_using<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D, buffer: 
     }
 
     Result::ok(read)
-}    
+}
 
-/// Reads a single byte from the stream. 
+/// Reads a single byte from the stream.
 ///
 /// Returns `Error::eof` if the stream has no bytes left.
 fn read_byte<R: Readable<R>>(reader: &mut R) -> result::Result<u8, Error> {
@@ -622,7 +618,7 @@ impl LineIterator<R: BufferedReadable<R>> {
     fn with_capacity(reader: &mut R, capacity: usize) -> LineIterator<R> {
         with_line_buffer(reader, collections::Vector::with_capacity(capacity))
     }
-    
+
     /// @ std::iter::Iterator::next
     fn next(self: &mut LineIterator<R>) -> Option<Result<&[u8], Error>> {
         self.line_buf.clear();
@@ -694,7 +690,7 @@ mod tests {
 
     #[test]
     fn test_slice_reader() {
-        let text = SliceReader::new("Lorem ipsum dolor sit amet");        
+        let text = SliceReader::new("Lorem ipsum dolor sit amet");
         assert_eq!(read_n!(text, 12), "Lorem ipsum ");
         assert_eq!(read_n!(text, 14), "dolor sit amet");
         assert_eq!(read_n!(text, 100), "");
@@ -716,15 +712,15 @@ mod tests {
 
     #[test]
     fn test_slice_reader_seek() {
-        let text = SliceReader::new("Lorem ipsum dolor sit amet");        
+        let text = SliceReader::new("Lorem ipsum dolor sit amet");
         assert_eq!(read_n!(text, 12), "Lorem ipsum ");
 
         assert_eq!(text.seek(SeekFrom::Beginning, 1).unwrap(), 1);
         assert_eq!(read_n!(text, 12), "orem ipsum d");
-        
+
         assert_eq!(text.seek(SeekFrom::Current, -5).unwrap(), 8);
         assert_eq!(read_n!(text, 12), "sum dolor si");
-        
+
         assert_eq!(text.seek(SeekFrom::End, -12).unwrap(), 14);
         assert_eq!(read_n!(text, 12), "lor sit amet");
     }
@@ -733,7 +729,7 @@ mod tests {
     #[test]
     fn test_lines() {
         let text = SliceReader::new("Lorem\nipsum\ndolor\nsit\namet");
-        let iter = lines(&text); 
+        let iter = lines(&text);
         defer iter.free();
 
         assert_eq!(iter.next(), Option::some(Result::ok("Lorem")));
@@ -744,7 +740,7 @@ mod tests {
         assert_eq!(iter.next(), Option::none());
     }
 
-    
+
     #[test]
     fn test_read_byte() {
         let text = SliceReader::new("foo");
@@ -752,12 +748,12 @@ mod tests {
         assert_eq!(text.read_byte(), Result::ok('f'));
         assert_eq!(text.read_byte(), Result::ok('o'));
         assert_eq!(text.read_byte(), Result::ok('o'));
-        assert_eq!(text.read_byte(), Result::err(Error::eof()));        
+        assert_eq!(text.read_byte(), Result::err(Error::eof()));
     }
 
     #[test]
     fn test_copy() {
-        let src = SliceReader::new("Lorem ipsum dolor sit amet"); 
+        let src = SliceReader::new("Lorem ipsum dolor sit amet");
         let dst: StringBuf = StringBuf::new();
 
         copy(&src, &StringWriter::new(&dst)).unwrap();
