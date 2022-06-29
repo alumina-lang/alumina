@@ -39,6 +39,9 @@
 <a href="/std/panicking/internal.html#item.backtrace_symbols_fd">backtrace_symbols_fd</a>
 </li>
 <li>
+<a href="/std/panicking/internal.html#item.set_panic_hook">set_panic_hook</a>
+</li>
+<li>
 <a href="/std/panicking/internal.html#item.print_panic_message">print_panic_message</a>
 </li>
 <li>
@@ -55,6 +58,9 @@
 <ul>
 <li>
 <a href="/std/panicking/internal.html#item.PANICKING">PANICKING</a>
+</li>
+<li>
+<a href="/std/panicking/internal.html#item.PANIC_HOOK">PANIC_HOOK</a>
 </li>
 </ul>
 </nav>
@@ -78,7 +84,7 @@
 <span class="badge">#[cfg]</span>
 <span class="keyword">extern</span> <span class="literal-string">"C"</span> <span class="keyword">fn</span> <span class="identifier-function">backtrace</span>(buffer: &amp;mut &amp;mut <span class="keyword-type">void</span>, size: <a href="/libc.html#item.c_int"><span class="identifier-type">c_int</span></a>) -> <a href="/libc.html#item.c_int"><span class="identifier-type">c_int</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/panicking.alu#L42-L42"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/panicking.alu#L50-L50"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -90,7 +96,7 @@
 <span class="badge">#[cfg]</span>
 <span class="keyword">extern</span> <span class="literal-string">"C"</span> <span class="keyword">fn</span> <span class="identifier-function">backtrace_symbols</span>(buffer: &amp;mut &amp;<span class="keyword-type">void</span>, size: <a href="/libc.html#item.c_int"><span class="identifier-type">c_int</span></a>) -> &amp;mut &amp;mut <a href="/libc.html#item.c_char.5"><span class="identifier-type">c_char</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/panicking.alu#L43-L43"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/panicking.alu#L51-L51"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -102,7 +108,18 @@
 <span class="badge">#[cfg]</span>
 <span class="keyword">extern</span> <span class="literal-string">"C"</span> <span class="keyword">fn</span> <span class="identifier-function">backtrace_symbols_fd</span>(buffer: &amp;mut &amp;<span class="keyword-type">void</span>, size: <a href="/libc.html#item.c_int"><span class="identifier-type">c_int</span></a>, fd: <a href="/libc.html#item.c_int"><span class="identifier-type">c_int</span></a>)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/panicking.alu#L44-L44"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/panicking.alu#L52-L52"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+</div>
+</li>
+<li>
+<div class="signature" id="item.set_panic_hook">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">set_panic_hook</span>(arg: &amp;mut <span class="keyword-type">void</span>, f: fn(&amp;mut <span class="keyword-type">void</span>, &amp;<a href="/std/panicking/PanicInfo.html"><span class="identifier-type">PanicInfo</span></a>))</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/panicking.alu#L76-L78"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -111,9 +128,9 @@
 <li>
 <div class="signature" id="item.print_panic_message">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">print_panic_message</span>(fmt_str: &amp;[<span class="keyword-type">u8</span>], file: &amp;[<span class="keyword-type">u8</span>], line: <span class="keyword-type">i32</span>, column: <span class="keyword-type">i32</span>, args: &amp;[<a href="/std/fmt/internal/FormatArg.html"><span class="identifier-type">FormatArg</span></a>&lt;<a href="/std/panicking/internal/PanicFormatter.html"><span class="identifier-type">PanicFormatter</span></a>&gt;]) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;(), <a href="/std/fmt/Error.html"><span class="identifier-type">Error</span></a>&gt;</h4>
+<span class="keyword">fn</span> <span class="identifier-function">print_panic_message</span>(info: &amp;<a href="/std/panicking/PanicInfo.html"><span class="identifier-type">PanicInfo</span></a>) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;(), <a href="/std/fmt/Error.html"><span class="identifier-type">Error</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/panicking.alu#L67-L85"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/panicking.alu#L80-L91"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -124,7 +141,7 @@
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">panic_impl</span>(fmt_str: &amp;[<span class="keyword-type">u8</span>], file: &amp;[<span class="keyword-type">u8</span>], line: <span class="keyword-type">i32</span>, column: <span class="keyword-type">i32</span>, args: &amp;[<a href="/std/fmt/internal/FormatArg.html"><span class="identifier-type">FormatArg</span></a>&lt;<a href="/std/panicking/internal/PanicFormatter.html"><span class="identifier-type">PanicFormatter</span></a>&gt;]) -> !</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/panicking.alu#L87-L119"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/panicking.alu#L93-L138"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -148,7 +165,18 @@
 <h4>
 <span class="keyword">static</span> <span class="identifier-constant">PANICKING</span>: <span class="keyword-type">bool</span></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/panicking.alu#L65-L65"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/panicking.alu#L73-L73"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+</div>
+</li>
+<li>
+<div class="signature" id="item.PANIC_HOOK">
+<h4>
+<span class="keyword">static</span> <span class="identifier-constant">PANIC_HOOK</span>: <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;(&amp;mut <span class="keyword-type">void</span>, fn(&amp;mut <span class="keyword-type">void</span>, &amp;<a href="/std/panicking/PanicInfo.html"><span class="identifier-type">PanicInfo</span></a>))&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/panicking.alu#L74-L74"/>source</a>
 </div>
 </div>
 <div class="item-doc">
