@@ -31,7 +31,7 @@ impl UseClauseVisitor {
             items: items
         }
     }
-  
+
     fn visit_use_wildcard(self: &mut UseClauseVisitor, node: Node) -> Result<()> {
         let suffix = Path::from_str(
             child_by!(node, FieldKind::Path)
@@ -57,7 +57,7 @@ impl UseClauseVisitor {
 
         let new_prefix = self.path.join_with(&suffix);
         let old_prefix = std::mem::replace(&self.path, new_prefix);
-        defer old_prefix.free();       
+        defer old_prefix.free();
 
         self.visit(child_by!(node, FieldKind::List).unwrap())?;
         std::mem::replace(&self.path, old_prefix.move()).free();
@@ -93,8 +93,8 @@ impl UseClauseVisitor {
 
         let name = child_by!(node, FieldKind::Name)
             .unwrap()
-            .text(self.parse_context.source());       
-        
+            .text(self.parse_context.source());
+
         self.items.add_alias(
             self.original_path.extend_with(name),
             path.extend_with(name)
@@ -109,10 +109,10 @@ impl UseClauseVisitor {
                 .text(self.parse_context.source())
         );
         defer path.free();
-        
+
         let name = child_by!(node, FieldKind::Alias)
             .unwrap()
-            .text(self.parse_context.source());        
+            .text(self.parse_context.source());
 
         self.items.add_alias(
             self.original_path.extend_with(name),
@@ -136,7 +136,7 @@ impl UseClauseVisitor {
     mixin NodeVisitorExt<UseClauseVisitor, Result<()>>;
     mixin NodeVisitor<UseClauseVisitor, Result<()>>;
 }
-    
+
 
 macro check_cfg($self, $node) {
     let has_cfg = $self.has_cfg;
@@ -146,7 +146,7 @@ macro check_cfg($self, $node) {
         $self.visit(child.inner)?;
     }
 
-    defer { $self.has_cfg = has_cfg; } 
+    defer { $self.has_cfg = has_cfg; }
 }
 
 struct TopLevelVisitor {
@@ -177,7 +177,7 @@ impl TopLevelVisitor {
         self.doc_comment.free();
         self.file_doc_comment.free();
     }
-    
+
     fn move(self: &mut TopLevelVisitor) -> TopLevelVisitor {
         TopLevelVisitor {
             parse_context: self.parse_context,
@@ -188,7 +188,7 @@ impl TopLevelVisitor {
             container: self.container
         }
     }
-    
+
     fn add_item(self: &mut TopLevelVisitor, kind: ItemKind, name: &[u8], node: Node) {
         let path = self.path.extend_with(name);
         defer path.free();
@@ -197,7 +197,7 @@ impl TopLevelVisitor {
             .get(&path)
             .map(|i: &Item| -> usize { i.cfg_index + 1 })
             .unwrap_or(0);
-        
+
         self.items.add_item(Item {
             kind: kind,
             path: path.clone(),
@@ -265,7 +265,7 @@ impl TopLevelVisitor {
 
         self.add_item(kind, get_name!(self, node), node);
         Result::ok(())
-    } 
+    }
 
     fn visit_enum_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
         check_cfg!(self, node);
@@ -277,28 +277,28 @@ impl TopLevelVisitor {
 
         self.visit_children_by_field(node, FieldKind::Body)?;
         Result::ok(())
-    } 
+    }
 
     fn visit_const_declaration(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
         check_cfg!(self, node);
 
         self.add_item(ItemKind::Const, get_name!(self, node), node);
         Result::ok(())
-    } 
+    }
 
     fn visit_enum_item(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
         check_cfg!(self, node);
 
         self.add_item(ItemKind::Variant, get_name!(self, node), node);
         Result::ok(())
-    } 
+    }
 
     fn visit_type_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
         check_cfg!(self, node);
 
         self.add_item(ItemKind::TypeDef, get_name!(self, node), node);
         Result::ok(())
-    } 
+    }
 
     fn visit_macro_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
         check_cfg!(self, node);
@@ -333,7 +333,7 @@ impl TopLevelVisitor {
         };
 
         self.add_item(kind, name, node);
-        
+
         self.path.push(name);
         defer self.path.pop();
 
@@ -362,19 +362,19 @@ impl TopLevelVisitor {
     fn visit_impl_block(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
         check_cfg!(self, node);
         let name = child_by!(node, FieldKind::Name).unwrap().text(self.parse_context.source());
-                
+
         self.path.push(name);
         defer self.path.pop();
 
         let container = self.container;
-        
+
         self.container = Option::some(node);
         self.visit_children_by_field(node, FieldKind::Body)?;
         self.container = container;
 
         Result::ok(())
     }
-    
+
     fn visit_protocol_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
         check_cfg!(self, node);
         let name = child_by!(node, FieldKind::Name).unwrap().text(self.parse_context.source());
@@ -384,7 +384,7 @@ impl TopLevelVisitor {
         defer self.path.pop();
 
         let container = self.container;
-        
+
         self.container = Option::some(node);
         self.visit_children_by_field(node, FieldKind::Body)?;
         self.container = container;
@@ -411,8 +411,8 @@ impl TopLevelVisitor {
         self.file_doc_comment.extend_from_slice("\n");
         Result::ok(())
     }
-    
-    
+
+
     mixin NodeVisitorExt<TopLevelVisitor, Result<()>>;
     mixin NodeVisitor<TopLevelVisitor, Result<()>>;
 }
@@ -431,7 +431,7 @@ struct CodePrinter<W: Writable<W>> {
     parse_context: &ParseContext,
     link_context: &LinkContext,
     writer: &mut W,
-    
+
     protocol_bounds: bool
 }
 
@@ -447,18 +447,18 @@ impl CodePrinter<W: Writable<W>> {
 
     fn visit_function_definition(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         child_by!(node, FieldKind::Abi)
-            .map(|=self, child: Node| -> Result<()> { 
+            .map(|=self, child: Node| -> Result<()> {
                 w!(
-                    self.writer, 
-                    "<span class=\"keyword\">extern</span> <span class=\"literal-string\">{}</span> ", 
+                    self.writer,
+                    "<span class=\"keyword\">extern</span> <span class=\"literal-string\">{}</span> ",
                     child.text(self.parse_context.source())
                 );
-                Result::ok(()) 
+                Result::ok(())
             })
             .transpose()?;
-        
+
         w!(self.writer, "<span class=\"keyword\">fn</span> <span class=\"identifier-function\">{}</span>", get_name!(self, node));
-        
+
         child_by!(node, FieldKind::TypeArguments)
             .map(|=self, child: Node| -> Result<()> { self.visit(child) })
             .transpose()?;
@@ -466,20 +466,20 @@ impl CodePrinter<W: Writable<W>> {
         self.visit(child_by!(node, FieldKind::Parameters).unwrap())?;
 
         child_by!(node, FieldKind::ReturnType)
-            .map(|=self, child: Node| -> Result<()> { 
+            .map(|=self, child: Node| -> Result<()> {
                 w!(self.writer, " -> ");
                 self.visit(child)?
                 Result::ok(())
             })
             .transpose()?;
-            
+
         Result::ok(())
     }
-    
+
     fn visit_generic_argument_list(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         let cursor = node.walk();
         defer cursor.free();
-        
+
         w!(self.writer, "&lt;");
         for (idx, child) in children_by!(node, FieldKind::Argument, &cursor).enumerate() {
             if idx != 0 {
@@ -495,7 +495,7 @@ impl CodePrinter<W: Writable<W>> {
     fn visit_parameter_list(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         let cursor = node.walk();
         defer cursor.free();
-        
+
         w!(self.writer, "(");
         for (idx, child) in children_by!(node, FieldKind::Parameter, &cursor).enumerate() {
             if idx != 0 {
@@ -552,12 +552,12 @@ impl CodePrinter<W: Writable<W>> {
     fn visit_macro_parameter(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         let name = child_by!(node, FieldKind::Name).unwrap()
             .text(self.parse_context.source());
-        
+
         w!(self.writer, "{}", name);
         if child_by!(node, FieldKind::EtCetera).is_some {
             w!(self.writer, "...");
         }
-            
+
         Result::ok(())
     }
 
@@ -595,7 +595,7 @@ impl CodePrinter<W: Writable<W>> {
     fn visit_struct_field(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         let name = child_by!(node, FieldKind::Name).unwrap()
             .text(self.parse_context.source());
-        
+
         w!(self.writer, "{}: ", name);
         self.visit(child_by!(node, FieldKind::Type).unwrap())?;
 
@@ -615,7 +615,7 @@ impl CodePrinter<W: Writable<W>> {
     fn visit_tuple_type(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         let cursor = node.walk();
         defer cursor.free();
-        
+
         w!(self.writer, "(");
         for (idx, child) in children_by!(node, FieldKind::Element, &cursor).enumerate() {
             if idx != 0 {
@@ -631,7 +631,7 @@ impl CodePrinter<W: Writable<W>> {
     fn visit_parameter_type_list(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         let cursor = node.walk();
         defer cursor.free();
-        
+
         w!(self.writer, "(");
         for (idx, child) in children_by!(node, FieldKind::Parameter, &cursor).enumerate() {
             if idx != 0 {
@@ -655,7 +655,7 @@ impl CodePrinter<W: Writable<W>> {
     fn visit_type_arguments(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         let cursor = node.walk();
         defer cursor.free();
-        
+
         w!(self.writer, "&lt;");
         for (idx, child) in children_by!(node, FieldKind::Type, &cursor).enumerate() {
             if idx != 0 {
@@ -692,9 +692,9 @@ impl CodePrinter<W: Writable<W>> {
     fn visit_function_pointer(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         w!(self.writer, "fn");
         self.visit(child_by!(node, FieldKind::Parameters).unwrap())?;
-        
+
         child_by!(node, FieldKind::ReturnType)
-            .map(|=self, child: Node| -> Result<()> { 
+            .map(|=self, child: Node| -> Result<()> {
                 w!(self.writer, " -> ");
                 self.visit(child)?
                 Result::ok(())
@@ -705,7 +705,7 @@ impl CodePrinter<W: Writable<W>> {
     }
 
     fn visit_never_type(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
-        w!(self.writer, "!");        
+        w!(self.writer, "!");
         Result::ok(())
     }
 
@@ -723,28 +723,28 @@ impl CodePrinter<W: Writable<W>> {
     fn visit_struct_definition(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         let kind_text = child_by!(node, FieldKind::Kind)
             .unwrap()
-            .text(self.parse_context.source());      
+            .text(self.parse_context.source());
 
         w!(self.writer, "<span class=\"keyword\">{}</span> <span class=\"identifier-type\">{}</span>", kind_text, get_name!(self, node));
-        
+
         child_by!(node, FieldKind::TypeArguments)
             .map(|=self, node: Node| -> Result<()> { self.visit(node) })
             .transpose()?
 
         w!(self.writer, " {{ ... }}");
-    
+
         Result::ok(())
     }
 
     fn visit_impl_block(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         w!(self.writer, "<span class=\"keyword\">impl</span> <span class=\"identifier-type\">{}</span>", get_name!(self, node));
-        
+
         child_by!(node, FieldKind::TypeArguments)
             .map(|=self, node: Node| -> Result<()> { self.visit(node) })
             .transpose()?
 
         w!(self.writer, " {{ ... }}");
-    
+
         Result::ok(())
     }
 
@@ -772,7 +772,7 @@ impl CodePrinter<W: Writable<W>> {
 
     fn visit_type_definition(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         w!(self.writer, "<span class=\"keyword\">type</span> <span class=\"identifier-type\">{}</span>", get_name!(self, node));
-        
+
         child_by!(node, FieldKind::TypeArguments)
             .map(|=self, child: Node| -> Result<()> { self.visit(child) })
             .transpose()?;
@@ -780,14 +780,14 @@ impl CodePrinter<W: Writable<W>> {
         w!(self.writer, " = ");
 
         self.visit(child_by!(node, FieldKind::Inner).unwrap())?;
-            
+
         Result::ok(())
     }
 
     fn visit_const_declaration(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         w!(self.writer, "<span class=\"keyword\">const</span> <span class=\"identifier-constant\">{}</span>", get_name!(self, node));
         child_by!(node, FieldKind::Type)
-            .map(|=self, child: Node| -> Result<()> { 
+            .map(|=self, child: Node| -> Result<()> {
                 w!(self.writer, ": ");
                 self.visit(child)?
                 Result::ok(())
@@ -799,17 +799,17 @@ impl CodePrinter<W: Writable<W>> {
 
     fn visit_static_declaration(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         w!(self.writer, "<span class=\"keyword\">static</span> <span class=\"identifier-constant\">{}</span>", get_name!(self, node));
-        
+
         child_by!(node, FieldKind::Type)
-            .map(|=self, child: Node| -> Result<()> { 
+            .map(|=self, child: Node| -> Result<()> {
                 w!(self.writer, ": ");
                 self.visit(child)?
                 Result::ok(())
             })
             .transpose()?;
-        
+
         child_by!(node, FieldKind::Init)
-            .map(|=self, child: Node| -> Result<()> { 
+            .map(|=self, child: Node| -> Result<()> {
                 w!(self.writer, " = ...");
                 Result::ok(())
             })
@@ -820,14 +820,14 @@ impl CodePrinter<W: Writable<W>> {
 
     fn visit_mixin(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         w!(self.writer, "<span class=\"keyword\">mixin</span>");
-        
+
         child_by!(node, FieldKind::TypeArguments)
             .map(|=self, child: Node| -> Result<()> { self.visit(child) })
             .transpose()?;
 
         w!(self.writer, " ");
         self.visit(child_by!(node, FieldKind::Protocol).unwrap())?;
-            
+
         Result::ok(())
     }
 

@@ -111,7 +111,7 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, I: Iterator<I, K>, H: Hasher<H> =
 
     fn extend(self: &mut HashSet<K, H>, iter: &mut I) {
         self.reserve(iter.size_hint().unwrap_or(0));
-        
+
         loop {
             let item = iter.next();
             if item.is_some {
@@ -139,7 +139,7 @@ impl HashSetIterator<K> {
     mixin iter::Iterator<HashSetIterator<K>, K>;
     mixin iter::IteratorExt<HashSetIterator<K>, K>;
     mixin iter::DoubleEndedIterator<HashSetIterator<K>, K>;
-    mixin iter::DoubleEndedIteratorExt<HashSetIterator<K>, K>;    
+    mixin iter::DoubleEndedIteratorExt<HashSetIterator<K>, K>;
 }
 
 struct HashSetRefIterator<K> {
@@ -158,7 +158,7 @@ impl HashSetRefIterator<K> {
     mixin iter::Iterator<HashSetRefIterator<K>, &K>;
     mixin iter::IteratorExt<HashSetRefIterator<K>, &K>;
     mixin iter::DoubleEndedIterator<HashSetRefIterator<K>, &K>;
-    mixin iter::DoubleEndedIteratorExt<HashSetRefIterator<K>, &K>;        
+    mixin iter::DoubleEndedIteratorExt<HashSetRefIterator<K>, &K>;
 }
 
 #[cfg(all(test, test_std))]
@@ -168,7 +168,7 @@ mod tests {
     #[test]
     fn test_hashset_new() {
         let set = HashSet::new::<i32>();
-        defer set.free(); 
+        defer set.free();
 
         assert!(set.empty());
         assert_eq!(set.len(), 0);
@@ -177,7 +177,7 @@ mod tests {
     #[test]
     fn test_hashset_with_capacity() {
         let set = HashSet::with_capacity::<i32>(10);
-        defer set.free(); 
+        defer set.free();
 
         assert!(set.empty());
         assert_eq!(set.len(), 0);
@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn test_hashset_insert() {
         let set = HashSet::new::<i32>();
-        defer set.free(); 
+        defer set.free();
 
         assert!(set.insert(1));
         assert!(!set.insert(1));
@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn test_hashset_remove() {
         let set = HashSet::new::<i32>();
-        defer set.free(); 
+        defer set.free();
 
         assert!(set.insert(1));
         assert!(set.remove(1));
@@ -207,7 +207,7 @@ mod tests {
     #[test]
     fn test_hashset_contains() {
         let set = HashSet::new::<i32>();
-        defer set.free(); 
+        defer set.free();
 
         assert!(!set.contains(1));
         assert!(set.insert(1));
@@ -217,7 +217,7 @@ mod tests {
     #[test]
     fn test_hashset_len() {
         let set = HashSet::new::<i32>();
-        defer set.free(); 
+        defer set.free();
 
         assert_eq!(set.len(), 0);
         assert!(set.insert(1));
@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn test_hashset_empty() {
         let set = HashSet::new::<i32>();
-        defer set.free(); 
+        defer set.free();
 
         assert!(set.empty());
         assert!(set.insert(1));
@@ -240,7 +240,7 @@ mod tests {
     #[test]
     fn test_hashset_clear() {
         let set = HashSet::new::<i32>();
-        defer set.free(); 
+        defer set.free();
 
         assert!(set.insert(1));
         assert!(set.insert(2));
@@ -253,7 +253,7 @@ mod tests {
     #[test]
     fn test_hashset_iter() {
         let set = HashSet::with_capacity::<i32, DummyHasher>(10);
-        defer set.free(); 
+        defer set.free();
 
         assert!(set.insert(1));
         assert!(set.insert(2));
@@ -274,7 +274,7 @@ mod tests {
     #[test]
     fn test_hashset_iter_ref() {
         let set = HashSet::with_capacity::<i32, DummyHasher>(10);
-        defer set.free(); 
+        defer set.free();
 
         assert!(set.insert(1));
         assert!(set.insert(2));
@@ -295,14 +295,14 @@ mod tests {
     #[test]
     fn test_hashset_move() {
         let set = HashSet::new::<i32>();
-        defer set.free(); 
+        defer set.free();
 
         assert!(set.insert(1));
         assert!(set.insert(2));
         assert!(set.insert(3));
 
         let set2 = set.move();
-        defer set2.free(); 
+        defer set2.free();
 
         assert_eq!(set2.len(), 3);
         assert!(set2.contains(1));
@@ -314,7 +314,7 @@ mod tests {
     #[test]
     fn test_hashset_from_iter() {
         let set: HashSet<i32> = HashSet::from_iter(&[1, 2, 3].iter());
-        defer set.free(); 
+        defer set.free();
 
         assert_eq!(set.len(), 3);
         assert!(set.contains(1));
@@ -325,7 +325,7 @@ mod tests {
     #[test]
     fn test_hashset_extend() {
         let set = HashSet::new::<i32>();
-        defer set.free(); 
+        defer set.free();
 
         set.extend(&[1, 2, 3].iter());
         assert_eq!(set.len(), 3);

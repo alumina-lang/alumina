@@ -2,11 +2,11 @@ fn printf_impl(fmt: &[u8], args: &[&void]) {
     let i = 0usize;
     let buf: [u8; 32];
     let buf: &mut [u8] = &buf;
-    
+
     let buf_pos = 0usize;
     let in_escape = false;
 
-    // Macros are hygienic, but if defined in linear scopes, 
+    // Macros are hygienic, but if defined in linear scopes,
     // they can bind ambient variables (like buf, buf_pos here)
     macro buf_append($val) {
         buf[buf_pos] = $val;
@@ -16,7 +16,7 @@ fn printf_impl(fmt: &[u8], args: &[&void]) {
             buf_pos = 0;
         }
     }
-    
+
     macro pop_arg() {
         if args.len == 0 {
             panic!("too few arguments");
@@ -34,7 +34,7 @@ fn printf_impl(fmt: &[u8], args: &[&void]) {
                     print!("{}", buf[0..buf_pos]);
                     print!("{}", *(pop_arg!() as &&[u8]));
                     buf_pos = 0;
-                } 
+                }
                 'd' => {
                     print!("{}", buf[0..buf_pos]);
                     print!("{}", *(pop_arg!() as &i32));
@@ -57,7 +57,7 @@ fn printf_impl(fmt: &[u8], args: &[&void]) {
         }
         i += 1;
     }
-    
+
     print!("{}", buf[0..buf_pos]);
 
     if args.len > 0 {
@@ -72,8 +72,8 @@ macro printf($fmt, $expr...) {
 
 fn main() {
     printf!(
-        "hello %s, you are %d years old, you have %d dogs and %d cats\n", 
-        "user", 
+        "hello %s, you are %d years old, you have %d dogs and %d cats\n",
+        "user",
         42,
         3,
         6

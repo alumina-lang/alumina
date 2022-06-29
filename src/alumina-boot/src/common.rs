@@ -10,12 +10,12 @@ use tree_sitter::Node;
 
 macro_rules! ice {
     ($why:literal) => {{
-        use crate::common::CodeErrorBuilder; 
+        use crate::common::CodeErrorBuilder;
         return Err(CodeErrorKind::InternalError(
             $why.to_string(),
             backtrace::Backtrace::new(),
         ))
-        .with_no_span()
+        .with_no_span();
     }};
 }
 

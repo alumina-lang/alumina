@@ -1,4 +1,4 @@
-//! This tool generates strongly-typed Tree-Sitter node types for the self-hosting compiler 
+//! This tool generates strongly-typed Tree-Sitter node types for the self-hosting compiler
 //! (to avoid matching by string) and visitor protocols.
 
 use std::collections::{Vector, HashMap, HashSet};
@@ -25,14 +25,14 @@ impl SanitizedIdentifier {
             inner: identifier,
             pascal_case: true
         }
-    }    
+    }
 
     fn fmt<F: Formatter<F>>(self: &SanitizedIdentifier, f: &mut F) -> Result<(), std::fmt::Error> {
         let first_char = true;
 
         for ch in self.inner {
-            if (ch >= 'a' && ch <= 'z') || 
-                (ch >= 'A' && ch <= 'Z') || 
+            if (ch >= 'a' && ch <= 'z') ||
+                (ch >= 'A' && ch <= 'Z') ||
                 (ch >= '0' && ch <= '9') || ch == '_' {
                     // Convert to PascalCase
                     if self.pascal_case {
@@ -40,7 +40,7 @@ impl SanitizedIdentifier {
                             if first_char {
                                 ch += 'A' - 'a';
                                 first_char = false;
-                            } 
+                            }
                         } else {
                             first_char = true;
                         }
@@ -51,7 +51,7 @@ impl SanitizedIdentifier {
                         f.write_char(ch)?;
                     }
                     continue;
-            } 
+            }
             let replacement = switch ch {
                 '~' => "TILDE",
                 '`' => "BQUOTE",
@@ -136,7 +136,7 @@ fn main(args: &[&[u8]]) {
         if symbol == 0 || language.symbol_type(symbol) != TSSymbolType::Regular {
             println!("    NodeKind::Invalid,");
             continue;
-        } 
+        }
 
         let name = language.symbol_name(symbol);
         println!("    NodeKind::{},", SanitizedIdentifier::pascal(name));
@@ -158,7 +158,7 @@ fn main(args: &[&[u8]]) {
     for name in unique_symbol_names {
         println!("            NodeKind::{} => self.visit_{}(node),",
             SanitizedIdentifier::pascal(name),
-            SanitizedIdentifier::default(name)    
+            SanitizedIdentifier::default(name)
         );
     }
     println!("            _ => self.visit_unknown(node),");

@@ -2,8 +2,8 @@
 
 /// Extract the value or short-circuit the calling function.
 ///
-/// When expression is suffixed with `?`, this is de-sugared to an invocation of `try` macro on the 
-/// expression. 
+/// When expression is suffixed with `?`, this is de-sugared to an invocation of `try` macro on the
+/// expression.
 ///
 /// Expands to the following expression
 /// ```
@@ -20,10 +20,10 @@
 /// ```
 /// fn maybe_sum(maybe_a: Option<i32>, maybe_b: Option<i32>) -> Option<i32> {
 ///     use std::option::try;
-/// 
+///
 ///     let a = maybe_a?; // `return Option::none()` when `a` is empty.
 ///     let b = maybe_b?; // `return Option::none()` when `a` is empty.
-/// 
+///
 ///     Option::some(a + b)
 /// }
 /// ```
@@ -62,7 +62,7 @@ impl Option<T> {
     #[force_inline]
     fn some(inner: T) -> Option<T> {
         Option::<T> {
-            is_some: true, 
+            is_some: true,
             inner: inner
         }
     }
@@ -87,7 +87,7 @@ impl Option<T> {
         }
     }
 
-    /// Returns a value, if present, panic otherwise. 
+    /// Returns a value, if present, panic otherwise.
     fn unwrap(self: Option<T>) -> T {
         if self.is_some {
             self.inner
@@ -122,7 +122,7 @@ impl Option<T> {
     /// ```
     /// let a = Option::some(42).map(|v: i32| -> i32 { i + 1 });
     /// let b = Option::none::<i32>().map(|v: i32| -> i32 { i + 1 });
-    /// 
+    ///
     /// assert_eq!(a, Option::some(43));
     /// assert_eq!(b, Option::none());
     /// ```
@@ -141,14 +141,14 @@ impl Option<T> {
     /// # Example
     /// ```
     /// let a = Option::some(42)
-    ///     .and_then(|v: i32| -> Option<i32> { 
+    ///     .and_then(|v: i32| -> Option<i32> {
     ///         if v == 0 {
     ///             Option::none()
     ///         } else {
     ///             Option::some(v + 1)
     ///         }
     ///     });
-    /// 
+    ///
     /// assert_eq!(a, Option::some(43));
     /// ```
     fn and_then<Tm, F: builtins::Callable<(T), Option<Tm>>>(self: Option<T>, func: F) -> Option<Tm> {
@@ -194,7 +194,7 @@ impl Option {
     use std::cmp::{Equatable, Comparable, Ordering};
     use std::fmt::{write, Formatter, Formattable};
     use std::mem::{Freeable, Movable};
-    
+
     /// Convert `Option<Result<T, E>>` to `Result<Option<T>, E>`
     fn transpose<T, E>(self: Option<Result<T, E>>) -> Result<Option<T>, E> {
         if self.is_some {
@@ -307,7 +307,7 @@ mod tests {
     fn option_iter() {
         let opt1 = Option::some(42);
         let opt2 = Option::none::<i32>();
-        
+
         let iter = opt1.iter();
         assert!(iter.next() == opt1);
         assert!(iter.next() == opt2);
@@ -343,7 +343,7 @@ mod tests {
     #[test]
     fn option_unwrap() {
         let opt1 = Option::some(42);
-        
+
         assert!(opt1.unwrap() == 42);
     }
 

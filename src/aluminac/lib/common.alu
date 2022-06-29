@@ -9,12 +9,12 @@ macro child_by($node, $field) {
 macro children_by($node, $field, $cursor) {
     $node.children_by_field_id($field as TSFieldId, $cursor)
 }
- 
+
 protocol NodeVisitorExt<Self, ReturnType> {
     fn visit_children(self: &mut Self, node: Node) -> ReturnType {
         let cursor = node.walk();
         defer cursor.free();
-        
+
         when ReturnType: () {
             for node in node.children(&cursor) {
                 self.visit(node);
@@ -49,7 +49,7 @@ protocol NodeVisitorExt<Self, ReturnType> {
             ReturnType::ok(())
         }
     }
-    
+
 }
 
 struct Error {}

@@ -11,7 +11,7 @@ enum Ordering {
     Acquire = 2,
     Release = 3,
     AcqRel = 4,
-    SeqCst = 5 
+    SeqCst = 5
 }
 
 /// Values that can be operated on atomically.
@@ -43,23 +43,23 @@ impl Atomic<T: Primitive + !ZeroSized> {
         intrinsics::codegen_func::<T>("__atomic_exchange_n", &self.inner, value, ordering as libc::c_int)
     }
 
-    /// Atomically compares the value in the atomic variable to `expected` and, if they are equal, 
+    /// Atomically compares the value in the atomic variable to `expected` and, if they are equal,
     /// sets the atomic variable to `desired`.
     ///
     /// This is the strong version, which will not fail spuriously. See also [compare_exchange_weak].
     #[force_inline]
     fn compare_exchange(
-        self: &mut Atomic<T>, 
-        expected: T, 
-        desired: T, 
-        success_ordering: Ordering, 
+        self: &mut Atomic<T>,
+        expected: T,
+        desired: T,
+        success_ordering: Ordering,
         failure_ordering: Ordering
     ) -> Result<T, T> {
         if intrinsics::codegen_func::<bool>(
-            "__atomic_compare_exchange_n", 
-            &self.inner, 
-            &expected, 
-            desired, 
+            "__atomic_compare_exchange_n",
+            &self.inner,
+            &expected,
+            desired,
             false,
             success_ordering as libc::c_int,
             failure_ordering as libc::c_int
@@ -76,17 +76,17 @@ impl Atomic<T: Primitive + !ZeroSized> {
     /// This is the weak version, which can fail spuriously even when the comparison succeeds.
     #[force_inline]
     fn compare_exchange_weak(
-        self: &mut Atomic<T>, 
-        expected: T, 
-        desired: T, 
-        success_ordering: Ordering, 
+        self: &mut Atomic<T>,
+        expected: T,
+        desired: T,
+        success_ordering: Ordering,
         failure_ordering: Ordering
     ) -> Result<T, T> {
         if intrinsics::codegen_func::<bool>(
-            "__atomic_compare_exchange_n", 
-            &self.inner, 
-            &expected, 
-            desired, 
+            "__atomic_compare_exchange_n",
+            &self.inner,
+            &expected,
+            desired,
             true,
             success_ordering as libc::c_int,
             failure_ordering as libc::c_int
@@ -166,7 +166,7 @@ impl Mutex {
         }
     }
 
-    /// Attempts to acquire a mutex, but does not block. 
+    /// Attempts to acquire a mutex, but does not block.
     ///
     /// Returns `true` if the mutex was successfully acquired, `false` otherwise.
     fn try_lock(self: &mut Mutex) -> bool {
@@ -282,7 +282,7 @@ impl CondVar {
 
     /// Waits on a condition variable with a timeout.
     ///
-    /// Returns `true` if the condition variable was signaled, `false` otherwise. However, since the 
+    /// Returns `true` if the condition variable was signaled, `false` otherwise. However, since the
     /// condition variable can wake up spuriously, it is not guaranteed that the condition is actually
     /// satisfied.
     fn wait_timeout(self: &mut CondVar, mutex: &mut Mutex, timeout: time::Duration) -> bool {
@@ -336,7 +336,7 @@ impl ChannelIterator<T> {
     mixin iter::IteratorExt<ChannelIterator<T>, T>;
 }
 
-/// 
+///
 enum ChannelError {
     Closed,
     WouldBlock
@@ -366,27 +366,27 @@ impl ChannelError {
 /// A simple bounded synchronous channel.
 ///
 /// Uses a ring buffer and [Mutex] and [CondVar] to provide mutual exclusion and signalling.
-/// 
+///
 /// # Example
 /// ```
 /// use std::sync::Channel;
 /// use std::thread::spawn;
-/// 
+///
 /// // Space for 10 elements
 /// let chan: Channel<i32> = Channel::new(5);
-/// 
+///
 /// let t = spawn(|&chan| {
 ///     for i in 0..10 {
 ///         chan.send(i).unwrap();
 ///     }
 ///     chan.close();
 /// });
-/// 
+///
 /// /// Prints all the values.
 /// for i in chan {
 ///     println!("{}", i);
 /// }
-/// 
+///
 /// t.join().unwrap();
 /// ```
 struct Channel<T> {
@@ -422,7 +422,7 @@ impl Channel<T> {
     fn send(self: &mut Channel<T>, value: T) -> Result<(), ChannelError> {
         self._wait(Channel::_send_cond::<T>);
         self._do_send(value)
-    } 
+    }
 
     /// Try to send a value to the channel.
     ///
@@ -430,7 +430,7 @@ impl Channel<T> {
     fn try_send(self: &mut Channel<T>, value: T) -> Result<(), ChannelError> {
         self._try_wait(Channel::_send_cond::<T>)?;
         self._do_send(value)
-    } 
+    }
 
     /// Try to send a value to the channel with a timeout.
     ///
@@ -438,7 +438,7 @@ impl Channel<T> {
     fn send_timeout(self: &mut Channel<T>, value: T, timeout: Duration) -> Result<(), ChannelError> {
         self._wait_timeout(Channel::_send_cond::<T>, timeout)?;
         self._do_send(value)
-    }    
+    }
 
     /// Receive a value from the channel.
     ///
@@ -491,23 +491,23 @@ impl Channel<T> {
         if !self.mutex.try_lock() {
             return Result::err(ChannelError::WouldBlock);
         }
-        
+
         if !cond(self) {
             self.mutex.unlock();
             return Result::err(ChannelError::WouldBlock);
         }
-        
+
         Result::ok(())
     }
 
     fn _wait_timeout<F: Callable<(&Channel<T>), bool>>(self: &mut Channel<T>, cond: F, timeout: Duration) -> Result<(), ChannelError> {
         let start = Instant::now();
-        
-        // timedlock is not available on MacOS. The assumption is that the mutex is 
-        // unlikely to be contended for long enough to matter, so the timeout is just 
+
+        // timedlock is not available on MacOS. The assumption is that the mutex is
+        // unlikely to be contended for long enough to matter, so the timeout is just
         // passed to the condvar.
         self.mutex.lock();
-    
+
         while !cond(self) {
             let remaining = timeout.sub(
                 &Instant::now().duration_since(&start)
@@ -526,11 +526,11 @@ impl Channel<T> {
     fn _recv_cond(self: &Channel<T>) -> bool {
         self.reader != self.writer || self.closed
     }
-    
+
     fn _send_cond(self: &Channel<T>) -> bool {
-        (self.reader != (self.writer + 1) % self.buffer.len) || self.closed 
+        (self.reader != (self.writer + 1) % self.buffer.len) || self.closed
     }
-    
+
     fn _do_recv(self: &mut Channel<T>) -> Result<T, ChannelError> {
         // Don't check self.closed, there may still be items to read
         if self.reader == self.writer {
@@ -553,11 +553,11 @@ impl Channel<T> {
 
         self.buffer[self.writer] = value;
         self.writer = (self.writer + 1) % self.buffer.len;
-        
+
         self.mutex.unlock();
         self.cond.notify_one();
         Result::ok(())
-    } 
+    }
 
     /// @ iter::Iterable::iter
     fn iter(self: &mut Channel<T>) -> ChannelIterator<T> {
@@ -672,7 +672,7 @@ mod test {
         assert_eq!(a.fetch_nand(0xFu32, Ordering::Relaxed), 42u32);
         assert_eq!(a.load(Ordering::Relaxed), 0xfffffff5u32);
     }
-    
+
     #[cfg(threading)]
     #[test]
     fn test_mutex() {
@@ -730,18 +730,18 @@ mod test {
             condvar.notify_one();
         });
 
-        mutex.lock(); 
+        mutex.lock();
         defer mutex.unlock();
 
         assert!(!condvar.wait_timeout(&mutex, time::Duration::zero()));
-        
+
         flag.store(true, Ordering::SeqCst);
         t.thread().unpark();
 
         while counter == 0 {
             condvar.wait(&mutex);
         }
-        
+
         assert_eq!(mutex.try_lock(), false);
 
         t.join().unwrap();

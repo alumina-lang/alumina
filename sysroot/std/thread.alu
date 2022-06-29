@@ -69,7 +69,7 @@ impl JoinError {
 }
 
 /// A handle that allows to wait for the thread to finish.
-/// 
+///
 /// Each `JoinHandle` must be either joined or detached before it goes out of scope.
 /// Failure to do so will result in a resource leak.
 struct JoinHandle<T> {
@@ -86,7 +86,7 @@ impl JoinHandle<T> {
     ///
     /// Returns the return value of the thread function if the thread ran to completion.
     /// It it panicked or was killed, it returns an error variant of `JoinError`.
-    /// 
+    ///
     /// Joining a thread that has already been joined or detached is undefined behavior.
     fn join(self: &mut JoinHandle<T>) -> Result<T, JoinError> {
         assert!(self._handle != null);
@@ -155,12 +155,12 @@ impl JoinHandle<T> {
 /// ```
 /// use std::thread::{spawn, sleep};
 /// use std::time::Duration;
-/// 
+///
 /// let text = "The quick brown fox jumps over the lazy dog";
-/// 
+///
 /// let t = spawn(|=text| -> usize {
 ///     // pretend that calculating the length is expensive
-///     sleep(Duration::from_secs(1)); 
+///     sleep(Duration::from_secs(1));
 ///     text.len
 /// });
 ///
@@ -170,9 +170,9 @@ impl JoinHandle<T> {
 ///
 /// # Panic handling
 ///
-/// If the child thread panics, the process is not terminated automatically. Instead, the 
+/// If the child thread panics, the process is not terminated automatically. Instead, the
 /// [JoinHandle::join] function will return a [JoinError] with the panic information.
-/// 
+///
 /// If a thread is [detached](JoinHandle::detach), a panic in the thread will terminate the process.
 fn spawn<T, F: Callable<(), T>>(func: F) -> JoinHandle<T> {
     #[cfg(not(threading))]
@@ -183,9 +183,9 @@ fn spawn<T, F: Callable<(), T>>(func: F) -> JoinHandle<T> {
     handle.callback = func;
 
     let ret = libc::pthread_create(
-        &handle.inner.thread_info.id, 
+        &handle.inner.thread_info.id,
         null,
-        internal::_run_thread::<T, F>, 
+        internal::_run_thread::<T, F>,
         handle as &mut void
     );
     if ret != 0 {
@@ -200,25 +200,25 @@ fn spawn<T, F: Callable<(), T>>(func: F) -> JoinHandle<T> {
 
 /// A structure representing an Alumina thread.
 struct Thread {
-    inner: &mut internal::ThreadInfo 
+    inner: &mut internal::ThreadInfo
 }
 
 impl Thread {
     /// Returns the current thread
-    /// 
-    /// If the current thread is a foreign thread (e.g. not spawned using [spawn] 
-    /// or a main thread of a program with a non-Alumina entrypoint), this function 
+    ///
+    /// If the current thread is a foreign thread (e.g. not spawned using [spawn]
+    /// or a main thread of a program with a non-Alumina entrypoint), this function
     /// will panic.
     fn current() -> Thread {
         #[cfg(not(threading))]
         compile_fail!("threading is not enabled (use --cfg threading)");
 
         if internal::THREAD_INFO == null {
-            // This can happen if done in an unmanaged thread (e.g. a callback 
+            // This can happen if done in an unmanaged thread (e.g. a callback
             // from a thread created by an external library).
             panic!("thread info was not initialized");
         }
-        
+
         Thread {
             inner: internal::THREAD_INFO
         }
@@ -229,14 +229,14 @@ impl Thread {
         self.inner.id
     }
 
-    /// Suspends the current thread until another thread calls [Thread::unpark]. 
-    /// 
-    /// If the thread was unparked before the park function is called, this function 
-    /// will return immediately. It may also return spuriously, so care must be taken 
+    /// Suspends the current thread until another thread calls [Thread::unpark].
+    ///
+    /// If the thread was unparked before the park function is called, this function
+    /// will return immediately. It may also return spuriously, so care must be taken
     /// if it is used as a synchronization primitive.
     ///
-    /// The purpose of this function is to efficiently wait on a condition and can be 
-    /// more lightweight than a [sync::CondVar] on some platforms. 
+    /// The purpose of this function is to efficiently wait on a condition and can be
+    /// more lightweight than a [sync::CondVar] on some platforms.
     ///
     /// This is the same mechanism as [Rust's thread parking](https://doc.rust-lang.org/std/thread/fn.park.html).
     /// # Example
@@ -246,7 +246,7 @@ impl Thread {
     ///
     /// let main_thread = Thread::current();
     /// let flag: Atomic<bool> = Atomic::new(false);
-    /// let parked = spawn(|&flag| { 
+    /// let parked = spawn(|&flag| {
     ///     while !flag.load(Ordering::SeqCst) {
     ///         Thread::park();
     ///     }
@@ -303,7 +303,7 @@ fn sleep(duration: time::Duration) {
 }
 
 mod internal {
-    #[thread_local] static THREAD_INFO: &mut ThreadInfo; 
+    #[thread_local] static THREAD_INFO: &mut ThreadInfo;
 
     struct ThreadInfo {
         id: libc::pthread_t,
@@ -315,12 +315,12 @@ mod internal {
             let ret = std::mem::new::<internal::ThreadInfo>();
             ret.parker = parker::Parker::new();
             ret
-        } 
+        }
 
         fn free(self: &mut ThreadInfo) {
             libc::free(self as &mut void);
         }
-    } 
+    }
 
     /// Ref-counted additional data associated with an Alumina thread
     struct ThreadHandle<T> {
@@ -349,18 +349,18 @@ mod internal {
             libc::free(self as &mut void);
         }
     }
-    
+
     /// An aliased version of [ThreadHandle] that also contains the function to be called.
     ///
-    /// If the function is not a closure (or a function pointer), then `F` is zero-sized 
-    /// and this struct has identical layout to [ThreadHandle], otherwise it will contain 
-    /// the captured variables.  This aliasing allows us to type-erase the thread function 
+    /// If the function is not a closure (or a function pointer), then `F` is zero-sized
+    /// and this struct has identical layout to [ThreadHandle], otherwise it will contain
+    /// the captured variables.  This aliasing allows us to type-erase the thread function
     /// and not have to carry the function type in [JoinHandle].
     struct ThreadHandleFunc<F, T> {
         inner: ThreadHandle<T>,
         callback: F
     }
-    
+
     /// Wrapper over the user-provided thread function
     ///
     /// This is the function that gets passed to `pthread_create` and it is responsible
@@ -368,7 +368,7 @@ mod internal {
     fn _run_thread<T, F: Callable<(), T>>(arg: &mut void) -> &mut void {
         let handle_func = arg as &mut ThreadHandleFunc<F, T>;
         let handle = &handle_func.inner;
-        
+
         THREAD_INFO = handle.thread_info;
         std::panicking::internal::set_panic_hook(handle as &mut void, _panic_hook::<T>);
 
@@ -376,7 +376,7 @@ mod internal {
         if handle.pop() {
             handle.free();
         }
-            
+
         null
     }
 
@@ -408,10 +408,10 @@ mod tests {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     #[test]
     fn test_spawn_manual_exit() {
-        let t = spawn(|| -> i32 { 
+        let t = spawn(|| -> i32 {
             /// call just SYS_exit without SYS_exit_group
-            libc::syscall(60, 0 as libc::c_int); 
-            unreachable!() 
+            libc::syscall(60, 0 as libc::c_int);
+            unreachable!()
         });
 
         assert_eq!(t.join().unwrap_err().kind, JoinErrorKind::Os);
@@ -420,7 +420,7 @@ mod tests {
     #[test]
     fn test_panic() {
         let t = spawn(|| -> i32 { panic!("panic") });
-        
+
         assert_eq!(t.join().unwrap_err().kind, JoinErrorKind::Panic);
     }
 
@@ -434,11 +434,11 @@ mod tests {
     #[test]
     fn test_detach_finished() {
         let main_thread = Thread::current();
-        let t = spawn(|=main_thread| -> i32 { 
+        let t = spawn(|=main_thread| -> i32 {
             defer main_thread.unpark();
-            42 
+            42
         });
-        
+
         Thread::park();
         loop {
             // Spin a few cycles until the thread sets the return value
@@ -455,13 +455,13 @@ mod tests {
 
     #[test(should_fail)]
     fn test_detach_panic() {
-        let t = spawn(|| -> i32 { 
+        let t = spawn(|| -> i32 {
             Thread::park();
-            panic!("panic") 
+            panic!("panic")
         });
         t.detach();
         t.thread().unpark();
-        
+
         // We will only sleep if the detached process does not in fact terminate
         // the process when it panics.
         sleep(Duration::from_secs(1));
@@ -470,13 +470,13 @@ mod tests {
     #[test(should_fail)]
     fn test_detach_panic_2() {
         let main_thread = Thread::current();
-        let t = spawn(|=main_thread| -> i32 { 
+        let t = spawn(|=main_thread| -> i32 {
             main_thread.unpark();
-            panic!("panic") 
+            panic!("panic")
         });
         Thread::park();
         t.detach();
-        
+
         // We will only sleep if the detached process does not in fact terminate
         // the process when it panics.
         sleep(Duration::from_secs(1));
@@ -485,15 +485,15 @@ mod tests {
     #[test(should_fail)]
     fn test_detach_panic_3() {
         let main_thread = Thread::current();
-        let t = spawn(|=main_thread| -> i32 { 
+        let t = spawn(|=main_thread| -> i32 {
             main_thread.unpark();
             Thread::park();
-            panic!("panic") 
+            panic!("panic")
         });
         Thread::park();
         t.detach();
         t.thread().unpark();
-        
+
         // We will only sleep if the detached process does not in fact terminate
         // the process when it panics.
         sleep(Duration::from_secs(1));
@@ -515,12 +515,12 @@ mod tests {
     fn test_current_foreign_thread() {
         let id: libc::pthread_t;
         libc::pthread_create(
-            &id, 
+            &id,
             null,
             |arg: &mut void| -> &mut void {
                 Thread::current(); // panics
                 null
-            }, 
+            },
             null
         );
         libc::pthread_join(id, null);

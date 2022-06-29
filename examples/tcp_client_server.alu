@@ -5,7 +5,7 @@ use std::net::{
 use std::collections::Vector;
 use std::result::{Result, try};
 use std::io::{
-    BufferedReader, lines, File, Error, 
+    BufferedReader, lines, File, Error,
     StdioStream, copy
 };
 use std::process::{Forked, exit};
@@ -35,8 +35,8 @@ fn client() {
         copy(&StdioStream::stdin(), &socket).unwrap();
         socket.shutdown(Shutdown::Write).unwrap();
         exit(0);
-    } 
-    
+    }
+
     copy(&socket, &StdioStream::stdout()).unwrap();
 
     let status = maybe_child.unwrap().wait().unwrap();
@@ -47,7 +47,7 @@ fn client() {
 
 fn handle_connection(socket: TcpStream) -> Result<(), Error> {
     defer socket.close();
-   
+
     // "Split" the socket into a buffered reader and writer pair
     let (reader, writer) = socket.buffered(1024, 1024);
     defer reader.free();
@@ -66,13 +66,13 @@ fn handle_connection(socket: TcpStream) -> Result<(), Error> {
 
     writer.flush()?;
     socket.shutdown(Shutdown::Write)?;
-    
+
     Result::ok(())
 }
 
 fn server() -> ! {
     let addr = SocketAddr::parse("[::]:24601").unwrap();
-    let listener = TcpListener::bind(&addr).unwrap();  
+    let listener = TcpListener::bind(&addr).unwrap();
     defer listener.close();
 
     println!("Listening on {}", listener.socket_addr().unwrap());
@@ -89,7 +89,7 @@ fn server() -> ! {
     }
 }
 
-fn main(args: &[&[u8]]) -> i32 {  
+fn main(args: &[&[u8]]) -> i32 {
     // Mask sigpipe
     std::libc::signal(std::libc::SIGPIPE, std::libc::SIG_IGN);
 
@@ -102,7 +102,7 @@ fn main(args: &[&[u8]]) -> i32 {
         usage!()
     }
 
-    switch args[1] { 
+    switch args[1] {
         "--server" => server(),
         "--client" => client(),
         _ => usage!()

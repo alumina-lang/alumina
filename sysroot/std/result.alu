@@ -2,8 +2,8 @@
 
 /// Extract the success value or short-circuit the calling function.
 ///
-/// When expression is suffixed with `?`, this is de-sugared to an invocation of `try` macro on the 
-/// expression. 
+/// When expression is suffixed with `?`, this is de-sugared to an invocation of `try` macro on the
+/// expression.
 ///
 /// Expands to the following expression
 /// ```
@@ -27,7 +27,7 @@ macro try($res) {
 /// Type for operations that can fail.
 ///
 /// `Result` is the type that can be used to express fallible operations in the type system.
-/// Alumina does not have exceptions. Value `Result<T, E>` can be either a successfull value of 
+/// Alumina does not have exceptions. Value `Result<T, E>` can be either a successfull value of
 /// type `T` or an error value `E`, usually in some form representing the failure that happened.
 ///
 /// # Example
@@ -36,9 +36,9 @@ macro try($res) {
 ///     ELF,
 ///     PE
 /// }
-/// 
+///
 /// struct Error {}
-/// 
+///
 /// fn executable_type(contents: &[u8]) -> Result<ExecutableType, Error> {
 ///     use std::string::starts_with;
 ///     if contents.starts_with("MZ") {
@@ -50,9 +50,9 @@ macro try($res) {
 ///         Result::err(Error {})
 ///     }
 /// }
-/// 
+///
 /// let result = executable_type();
-/// 
+///
 /// if !result.is_ok {
 ///     eprintln!("Invalid executable");
 /// } else {
@@ -60,8 +60,8 @@ macro try($res) {
 ///     // do something with it
 /// }
 /// ```
-/// 
-/// `Result` is commonly used with the [try operator](try) (`?`) so that fallible functions can 
+///
+/// `Result` is commonly used with the [try operator](try) (`?`) so that fallible functions can
 /// be composed easily by bailing early.
 struct Result<T, E> {
     is_ok: bool,
@@ -80,7 +80,7 @@ impl Result<T, E> {
     #[force_inline]
     fn ok(ok: T) -> Result<T, E> {
         Result::<T, E> {
-            is_ok: true, 
+            is_ok: true,
             inner: ResultT::<T, E> {
                 ok: ok
             }
@@ -91,7 +91,7 @@ impl Result<T, E> {
     #[force_inline]
     fn err(err: E) -> Result<T, E> {
         Result::<T, E> {
-            is_ok: false, 
+            is_ok: false,
             inner: ResultT::<T, E> {
                 err: err
             }
@@ -144,14 +144,14 @@ impl Result<T, E> {
 
     /// Transform the success value inside the `Result` by calling the provided function.
     ///
-    /// If the error value is present, function is not called and the original error is 
+    /// If the error value is present, function is not called and the original error is
     /// passed through.
     ///
     /// # Example
     /// ```
     /// let a: Result<i32, ()> = Result::ok(42).map(|v: i32| -> i32 { i + 1 });
     /// let b: Result<i32, ()> = Result::err(()).map(|v: i32| -> i32 { i + 1 });
-    /// 
+    ///
     /// assert_eq!(a, Result::ok(43));
     /// assert_eq!(b, Result::err(()));
     /// ```
@@ -165,14 +165,14 @@ impl Result<T, E> {
 
     /// Transform the error value inside the `Result` by calling the provided function.
     ///
-    /// If the success value is present, function is not called and the original error is 
+    /// If the success value is present, function is not called and the original error is
     /// passed through.
     ///
     /// # Example
     /// ```
     /// let a: Result<(), i32> = Result::err(42).map(|v: i32| -> i32 { i + 1 });
     /// let b: Result<(), i32> = Result::ok(()).map(|v: i32| -> i32 { i + 1 });
-    /// 
+    ///
     /// assert_eq!(a, Result::err(43));
     /// assert_eq!(b, Result::ok(()));
     /// ```

@@ -16,7 +16,7 @@ impl Path {
     use std::fmt::{Formatter, write, writeln, Error};
     use std::cmp::{Comparable, Equatable, Ordering};
     use std::hash::{Hashable, Hasher};
-    
+
     fn new(segments: Vector<&[u8]>) -> Path {
         Path { segments: segments }
     }
@@ -151,13 +151,13 @@ impl ItemKind {
         switch *self {
             ItemKind::Module,
             ItemKind::Protocol,
-            ItemKind::Enum, 
+            ItemKind::Enum,
             ItemKind::Union,
-            ItemKind::Struct, 
+            ItemKind::Struct,
             ItemKind::Macro => true,
             _ => false,
         }
-    }   
+    }
 
     fn is_indexed(self: &ItemKind) -> bool {
         switch *self {
@@ -165,7 +165,7 @@ impl ItemKind {
             ItemKind::Field => false,
             _ => true,
         }
-    }   
+    }
 
 
     fn should_show_in_sidebar(self: &ItemKind) -> bool {
@@ -173,7 +173,7 @@ impl ItemKind {
             ItemKind::Mixin => false,
             _ => true,
         }
-    }   
+    }
 
     fn show_siblings(self: &ItemKind) -> bool {
         switch *self {
@@ -184,7 +184,7 @@ impl ItemKind {
             ItemKind::Enum => false,
             _ => true,
         }
-    }  
+    }
 
     fn show_source_link(self: &ItemKind) -> bool {
         switch *self {
@@ -193,16 +193,16 @@ impl ItemKind {
             ItemKind::Variant => false,
             _ => true,
         }
-    }  
+    }
 
     fn show_signature(self: &ItemKind) -> bool {
         switch *self {
             ItemKind::Module => false,
             _ => true,
         }
-    }  
-    
-    
+    }
+
+
     fn equals(self: &ItemKind, other: &ItemKind) -> bool {
         (*self as i32) == (*other as i32)
     }
@@ -231,7 +231,7 @@ impl Item {
         self.defined_in.free();
         self.doc_comment.free();
     }
-    
+
     /// Show re-exports only if the original item was defined in a submodule.
     ///
     /// Since Alumina does not have item visibility, this is a heuristic to determine
@@ -241,13 +241,13 @@ impl Item {
         let def = self.defined_in.as_slice();
 
         if loc == def {
-            return true; 
+            return true;
         } else if loc.len >= 2 && loc[0] == "std" && loc[1] == "prelude"  {
             // Special case for prelude
             return true;
         } else if  loc.len >= def.len {
             return false;
-        } 
+        }
 
         let suffix_len = 0usize;
         loop {
@@ -316,7 +316,7 @@ impl ItemBag {
             k.free();
             v.free()
         }
-        
+
         self.items.free();
         self.lookup.free();
         self.arena.free();
@@ -353,7 +353,7 @@ impl ItemBag {
             .as_slice_mut()
             .sort_by(|it: &&Item| -> (&[&[u8]], i32, usize, &[u8]) {
                 use std::mem::slice::empty;
-     
+
                 let item_loc = it.node.start_byte();
                 let start = it.path.as_slice();
 
@@ -417,7 +417,7 @@ impl ItemBag {
             for s in i.path.as_slice()[dst.segments.len()..] {
                 src_path.push(s);
             }
-            
+
             if !self.lookup.get(src_path).is_some {
                 self.add_item(Item {
                     kind: i.kind,
@@ -431,7 +431,7 @@ impl ItemBag {
                     node: i.node,
                 });
             }
-            
+
             src_path.free();
         }
     }
@@ -442,7 +442,7 @@ impl ItemBag {
             for (src, dst) in self.aliases {
                 let scope = src.clone();
                 let suffix = Path::from_str(scope.pop());
-                
+
                 let resolved = self.resolve(&scope, &suffix, true);
                 if resolved.is_some {
                     let item = resolved.inner;
@@ -481,10 +481,10 @@ impl ParseContext {
     fn from_file(parser: &mut Parser, filename: std::fs::Path) -> Result<ParseContext> {
         let source = std::fs::File::read_to_string(filename).map_err(Error::from_io)?;
         defer source.free();
-    
+
         let tree = parser.parse(source.as_slice());
         defer tree.free();
-        
+
         Result::ok(ParseContext {
             _source: source.move(),
             tree: tree.move(),
@@ -531,7 +531,7 @@ impl LinkContext {
     fn link_for_item(self: &LinkContext, item: &Item, defined_in: bool) -> Option<StringBuf> {
         use std::fmt::format;
         use std::string::join_fmt;
-        
+
         let path = if defined_in {
             item.defined_in.clone()
         } else {
@@ -556,13 +556,13 @@ impl LinkContext {
                 format!("/{}.html#item.{}", "/".join_fmt(&path.segments.iter()), name).unwrap()
             }
         };
-        
+
         Option::some(val)
     }
 
     fn resolve_link(self: &LinkContext, path: &Path) -> Option<StringBuf> {
         use std::option::try;
-        
+
         let item = self.item_bag.resolve(self.path, path, true)?;
         self.link_for_item(item, true)
     }

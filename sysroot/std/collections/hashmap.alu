@@ -14,11 +14,11 @@ const INITIAL_SIZE: usize = 32;
 ///
 /// let map = HashMap::new::<i32, i32>();
 /// defer map.free();
-/// 
+///
 /// map.insert(1, 2);
 /// map.insert(2, 4);
 /// map.insert(3, 5);
-/// 
+///
 /// assert!(map.get(1) == Option::some(2));
 /// assert!(map.get(2) == Option::some(4));
 /// assert!(map.get(3) == Option::some(5));
@@ -37,7 +37,7 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
         with_capacity(0)
     }
 
-    /// Creates an empty hash map that can store up to `capacity` items without 
+    /// Creates an empty hash map that can store up to `capacity` items without
     /// reallocating.
     fn with_capacity(capacity: usize) -> HashMap<K, V, H> {
         with_size(capacity * 4 / 3 + 1)
@@ -55,13 +55,13 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     }
 
     /// Reserves space for at least `additional` more elements to be inserted without
-    /// reallocating. 
+    /// reallocating.
     ///
     /// This follows the amortized growth strategy.
-    fn reserve(self: &mut HashMap<K, V, H>, additional: usize) -> bool {            
+    fn reserve(self: &mut HashMap<K, V, H>, additional: usize) -> bool {
         // We keep the load factor below 0.75.
         let new_length = self._length + additional;
-        if new_length * 4 > self._buckets.len * 3 { 
+        if new_length * 4 > self._buckets.len * 3 {
             self.rehash(cmp::max(self._buckets.len * 2, new_length * 2));
             return true;
         }
@@ -69,9 +69,9 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     }
 
     /// Resizes the underlying array to exactly the given `new_capacity`.
-    /// 
-    /// Note that this could lead to poor performance if the resulting load factor 
-    /// is close to 1. 
+    ///
+    /// Note that this could lead to poor performance if the resulting load factor
+    /// is close to 1.
     fn rehash(self: &mut HashMap<K, V, H>, new_capacity: usize) {
         debug_assert!(self._length <= new_capacity);
 
@@ -175,7 +175,7 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     }
 
     fn _insert(self: &mut HashMap<K, V, H>, item: (K, V), grow: bool) -> Option<V> {
-        let initial_index = (hash_of::<K, H>(item.0) as usize) % self._buckets.len; 
+        let initial_index = (hash_of::<K, H>(item.0) as usize) % self._buckets.len;
         let index = initial_index;
 
         loop {
@@ -213,7 +213,7 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
             return Option::none();
         }
 
-        let initial_index = (hash_of::<K, H>(key) as usize) % self._buckets.len; 
+        let initial_index = (hash_of::<K, H>(key) as usize) % self._buckets.len;
         let index = initial_index;
 
         loop {
@@ -259,9 +259,9 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
 }
 
 impl HashMap<
-    K: Hashable<K, H> + Equatable<K>, 
+    K: Hashable<K, H> + Equatable<K>,
     V,
-    I: Iterator<I, (K, V)>, 
+    I: Iterator<I, (K, V)>,
     H: Hasher<H> = DefaultHash
 > {
     /// Creates a hash map from an iterator of key-value pairs
@@ -287,7 +287,7 @@ impl HashMap<
     /// of key-value pairs.
     fn extend(self: &mut HashMap<K, V, H>, iter: &mut I) {
         self.reserve(iter.size_hint().unwrap_or(0));
-        
+
         if self._buckets.len == 0 {
             self.rehash(INITIAL_SIZE);
         }
@@ -326,7 +326,7 @@ impl HashMapRefIterator<K, V> {
         }
         Option::none()
     }
-    
+
     /// @ iter::DoubleEndedIterator::next_back
     fn next_back(self: &mut HashMapRefIterator<K, V>) -> Option<(&K, &V)> {
         use option::try;
@@ -338,7 +338,7 @@ impl HashMapRefIterator<K, V> {
         }
         Option::none()
     }
-    
+
     mixin iter::Iterator<HashMapRefIterator<K, V>, (&K, &V)>;
     mixin iter::IteratorExt<HashMapRefIterator<K, V>, (&K, &V)>;
     mixin iter::DoubleEndedIterator<HashMapRefIterator<K, V>, (&K, &V)>;
@@ -361,7 +361,7 @@ impl HashMapMutIterator<K, V> {
         }
         Option::none()
     }
-    
+
     /// @ iter::DoubleEndedIterator::next_back
     fn next_back(self: &mut HashMapMutIterator<K, V>) -> Option<(&K, &mut V)> {
         use option::try;
@@ -373,7 +373,7 @@ impl HashMapMutIterator<K, V> {
         }
         Option::none()
     }
-    
+
     mixin iter::Iterator<HashMapMutIterator<K, V>, (&K, &mut V)>;
     mixin iter::IteratorExt<HashMapMutIterator<K, V>, (&K, &mut V)>;
     mixin iter::DoubleEndedIterator<HashMapMutIterator<K, V>, (&K, &mut V)>;
@@ -396,7 +396,7 @@ impl HashMapIterator<K, V> {
         }
         Option::none()
     }
-    
+
     /// @ iter::DoubleEndedIterator::next_back
     fn next_back(self: &mut HashMapIterator<K, V>) -> Option<(K, V)> {
         use option::try;
@@ -418,7 +418,7 @@ impl HashMapIterator<K, V> {
 #[cfg(all(test, test_std))]
 mod tests {
     struct DummyHasher {
-        state: u64    
+        state: u64
     }
 
     impl DummyHasher {
@@ -444,7 +444,7 @@ mod tests {
     fn test_hashmap_new() {
         let map = HashMap::new::<i32, i32>();
         defer map.free();
-        
+
         assert!(map.len() == 0);
     }
 
@@ -558,7 +558,7 @@ mod tests {
         assert!(iter.next() == Option::some((3, 5)));
         assert!(iter.next() == Option::some((2, 4)));
         assert!(iter.next() == Option::some((1, 2)));
-        assert!(iter.next() == Option::none());        
+        assert!(iter.next() == Option::none());
     }
 
     #[test]
@@ -586,7 +586,7 @@ mod tests {
         let iter = map.iter_ref().rev();
         let v = iter.next().unwrap();
         assert_eq!(*v.0, 3);
-        assert_eq!(*v.1, 5);        
+        assert_eq!(*v.1, 5);
         let v = iter.next().unwrap();
         assert_eq!(*v.0, 2);
         assert_eq!(*v.1, 4);
@@ -628,14 +628,14 @@ mod tests {
         defer map.free();
 
         map.reserve(100);
-        
+
         let ptr = map._buckets.ptr;
         for i in 0..100 {
             map.insert(i, i);
         }
 
         // Did not reallocate
-        assert_eq!(map._buckets.ptr, ptr);        
+        assert_eq!(map._buckets.ptr, ptr);
     }
 
     #[test]

@@ -118,7 +118,7 @@ impl Child {
         }
 
         // Close all the pipes if we were able to read them
-        // to end. If any of the ?'s above bailed early, 
+        // to end. If any of the ?'s above bailed early,
         // we leave them open, as it may have been something
         // transient and a retry might succeed.
         self.close();
@@ -425,7 +425,7 @@ impl Command {
                 let msg = mem::slice::from_raw(&res.inner.err as &u8, mem::size_of::<Error>());
                 fail_tx.write_all(msg).unwrap();
                 libc::_exit(1);
-            } 
+            }
 
             unreachable!()
         }
@@ -439,7 +439,7 @@ mod internal {
     use string::StringBuf;
 
     extern "C" static environ: &&libc::c_char;
-    
+
     fn maybe_read_to_end<S1: Readable<S1>>(src: &mut S1, dst: &mut StringBuf) -> Result<bool, Error> {
         let maybe_n = src.read_to_end(dst);
         if maybe_n.is_ok {
@@ -448,7 +448,7 @@ mod internal {
             let error = maybe_n.unwrap_err();
             let as_errno = error.as_errno();
 
-            if as_errno == Option::some(libc::EWOULDBLOCK) || 
+            if as_errno == Option::some(libc::EWOULDBLOCK) ||
                 as_errno == Option::some(libc::EAGAIN) {
                 Result::ok(false)
             } else {
@@ -457,16 +457,16 @@ mod internal {
         }
     }
 
-    /// Reads two pipes (or any other stream) into respecitve buffers at the same time. 
+    /// Reads two pipes (or any other stream) into respecitve buffers at the same time.
     ///
     /// It uses [libc::poll] to make sure one pipe is not blocked by the other.
     fn read_to_end_2<
-        S1: Readable<S1> + AsFileDescriptor<S1>, 
-        S2: Readable<S2> + AsFileDescriptor<S2>, 
+        S1: Readable<S1> + AsFileDescriptor<S1>,
+        S2: Readable<S2> + AsFileDescriptor<S2>,
     >(
-        src1: &mut S1, 
-        dst1: &mut StringBuf, 
-        src2: &mut S2, 
+        src1: &mut S1,
+        dst1: &mut StringBuf,
+        src2: &mut S2,
         dst2: &mut StringBuf
     ) -> result::Result<(), Error> {
         let s1 = src1.as_fd();
@@ -504,12 +504,12 @@ mod internal {
         kind: Stdio,
         pair: Option<(Pipe, Pipe)>
     }
-    
+
     impl IoRedirection {
         fn new(is_stdin: bool, kind: Stdio) -> Result<IoRedirection, Error> {
             let pair: Option<(Pipe, Pipe)> = if kind == Stdio::Piped {
                 let (rx, tx) = Pipe::anonymous()?;
-    
+
                 if is_stdin {
                     Option::some((tx, rx))
                 } else {
@@ -518,45 +518,45 @@ mod internal {
             } else {
                 Option::none()
             };
-    
+
             let res = IoRedirection {
                 pair: pair,
                 kind: kind
             };
-    
+
             Result::ok(res)
         }
-    
+
         fn close(self: &mut IoRedirection) -> Result<(), Error> {
             if self.pair.is_some {
                 self.pair.inner.0.close()?;
                 self.pair.inner.1.close()?;
-            } 
-                
+            }
+
             Result::ok(())
         }
-    
+
         fn install(self: &mut IoRedirection, fd: libc::c_int) -> Result<(), Error> {
             use std::fs::{File, OpenOptions};
-    
+
             switch self.kind {
                 Stdio::Piped => {
                     let (_, tgt) = self.pair.unwrap();
-    
+
                     errno_try!(libc::dup2(tgt.fd.value, fd));
                 },
                 Stdio::Null => {
                     let dev_zero = File::open_with(Path::new("/dev/null"), OpenOptions::new().read(true).write(true))?;
                     defer dev_zero.close();
-    
+
                     errno_try!(std::libc::dup2(dev_zero.fd.value, fd));
                 },
                 _ => {}
             };
-    
+
             Result::ok(())
         }
-    
+
         fn into_inner(self: &mut IoRedirection) -> Option<Pipe> {
             if self.pair.is_some {
                 Option::some(self.pair.inner.0.move())

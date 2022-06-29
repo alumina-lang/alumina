@@ -4,7 +4,7 @@
 /// ```
 /// let vec = Vector::new::<i32>();
 /// defer vec.free();
-/// 
+///
 /// vec.push(1);
 /// assert_eq!(vec.len(), 1);
 /// assert_eq!(vec.as_slice(), &[1]);
@@ -33,7 +33,7 @@ impl Vector<T> {
 
     /// Create a vector from a raw slice and a length.
     ///
-    /// The slice must be allocated with [mem::alloc] and its length must be greater 
+    /// The slice must be allocated with [mem::alloc] and its length must be greater
     /// than or equal to `length`.
     fn from_raw(data: &mut [T], length: usize) {
         Vector {
@@ -89,7 +89,7 @@ impl Vector<T> {
     /// Extend the vector with the elements from an iterator.
     fn extend<I: Iterator<I, T>>(self: &mut Vector<T>, iter: &mut I) {
         self.reserve(iter.size_hint().unwrap_or(0));
-        
+
         loop {
             let item = iter.next();
             if item.is_some {
@@ -426,10 +426,10 @@ mod tests {
     fn test_vector_move() {
         let vec = Vector::from_slice(&[1, 2, 3]);
         defer vec.free();
-        
+
         let vec2 = vec.move();
         defer vec2.free();
-        
+
         assert_eq!(vec.len(), 0);
         assert_eq!(vec2.len(), 3);
         assert_eq!(vec2.as_slice(), &[1, 2, 3]);

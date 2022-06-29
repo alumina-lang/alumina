@@ -6,7 +6,7 @@ use std::builtins::{Unsigned, Integer, FloatingPoint};
 protocol RandomNumberGenerator<Self> {
     /// Generate a 32-bit integer.
     fn next_u32(self: &mut Self) -> u32;
-    
+
     /// Generate a 64-bit integer.
     fn next_u64(self: &mut Self) -> u64;
 
@@ -38,7 +38,7 @@ protocol RandomNumberGenerator<Self> {
 /// PCG-32 random number generator
 ///
 /// A small-state general purpose random number generator ([https://www.pcg-random.org/]).
-/// 
+///
 /// Not suitable for cryptographic purposes.
 struct Pcg32  {
     state: u64,
@@ -62,7 +62,7 @@ impl Pcg32 {
         seed[0..8].copy_nonoverlapping(&pcg.state as &mut u8);
         seed[8..16].copy_nonoverlapping(&pcg.increment as &mut u8);
         pcg.increment = pcg.increment | 1;
-        
+
         pcg.state = pcg.state + pcg.increment;
         pcg.step();
         pcg
@@ -97,7 +97,7 @@ impl Pcg32 {
 {
     /// RNG backed by a OS-provided random number generation facility
     ///
-    /// On Linux, this is based on `getrandom` syscall, on other UNIX-like platforms, this 
+    /// On Linux, this is based on `getrandom` syscall, on other UNIX-like platforms, this
     /// reads the bytes from `/dev/urandom`.
     ///
     /// # Usage notes
@@ -117,13 +117,13 @@ impl Pcg32 {
         #[cfg(not(target_os = "linux"))]
         fn new() -> OsRng {
             use fs::Path;
-            
+
             OsRng {
                 file: fs::File::open(Path::new("/dev/urandom"))
                 .unwrap()
             }
         }
-        
+
         /// Create a new instance of OsRng
         #[cfg(target_os = "linux")]
         fn new() -> OsRng {
@@ -231,7 +231,7 @@ fn next_float<Rng: RandomNumberGenerator<Rng>, T: FloatingPoint>(rng: &mut Rng) 
         let scale = 1.0f64 / ((1u64 << 53) as f64);
         let x = rng.next_u64() >> 11;
         (x as f64) * scale
-    } 
+    }
 }
 
 /// Generate a random number between `lower` (inclusive) and `upper` (exclusive)
@@ -256,7 +256,7 @@ fn range_inclusive<Rng: RandomNumberGenerator<Rng>, T: Integer>(rng: &mut Rng, l
     if range == 0 {
         next_integer::<Rng, unsigned_of<T>>(rng) as T
     } else {
-        let ret = (lower as unsigned_of<T>) + uniform(rng, range);        
+        let ret = (lower as unsigned_of<T>) + uniform(rng, range);
         ret as T
     }
 }

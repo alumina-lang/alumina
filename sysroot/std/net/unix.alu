@@ -45,7 +45,7 @@ fn addr_to_family(addr: &SocketAddr) -> (libc::c_int, libc::socklen_t) {
 /// use std::net::NameLookup;
 /// let addresses = NameLookup::resolve("www.alumina-lang.net", 443).unwrap();
 /// defer addresses.free();
-/// 
+///
 /// for addr in addresses {
 ///     println!("{}", addr);
 /// }
@@ -61,13 +61,13 @@ impl NameLookup {
     fn resolve(host: &[u8], port: u16) -> Result<NameLookup, Error> {
         let host = ffi::CString::new(host);
         defer host.free();
-    
+
         let hints = mem::zeroed::<libc::addrinfo>();
         hints.ai_socktype = libc::SOCK_STREAM;
-    
+
         let res: &mut libc::addrinfo = null;
         let ret = libc::getaddrinfo(host.ptr, null, &hints, &res);
-        
+
         if ret == 0 {
             Result::ok(NameLookup {
                 original: res,
@@ -104,7 +104,7 @@ impl NameLookup {
             } else {
                 // Ignore addresses that are not IPv6 or IPv4.
                 return self.next();
-            }            
+            }
         }
     }
 
@@ -133,7 +133,7 @@ impl Socket {
     fn new(family: libc::c_int, type: libc::c_int) -> Result<Socket, Error> {
         let fd: FileDescriptor;
 
-        #[cfg(any(target_os = "android", target_os = "linux"))] 
+        #[cfg(any(target_os = "android", target_os = "linux"))]
         fd = FileDescriptor::new(errno_try!(libc::socket(family, type | libc::O_CLOEXEC, 0)));
 
         #[cfg(not(any(target_os = "android", target_os = "linux")))]
@@ -141,14 +141,14 @@ impl Socket {
             fd = FileDescriptor::new(errno_try!(libc::socket(family, type, 0)));
             fd.set_cloexec()?;
         }
-        
+
         Result::ok(Socket { fd: fd })
     }
-    
+
     fn as_fd(self: &Socket) -> FileDescriptor {
         self.fd
     }
-    
+
     fn shutdown(self: &Socket, how: Shutdown) -> Result<(), Error> {
         errno_try!(libc::shutdown(self.fd.value, how as libc::c_int));
         Result::ok(())
@@ -235,10 +235,10 @@ impl TcpStream {
 
         let sock = Socket::new(family, libc::SOCK_STREAM)?;
         defer sock.close();
-        
+
         errno_try!(libc::connect(
-            sock.fd.value, 
-            &addr.inner as &libc::sockaddr, 
+            sock.fd.value,
+            &addr.inner as &libc::sockaddr,
             addr_len as libc::socklen_t
         ));
 
@@ -256,7 +256,7 @@ impl TcpStream {
     fn socket_addr(self: &TcpStream) -> Result<SocketAddr, Error> {
         self.socket.socket_addr()
     }
-    
+
     fn shutdown(self: &TcpStream, how: Shutdown) -> Result<(), Error> {
         self.socket.shutdown(how)
     }
@@ -299,15 +299,15 @@ impl TcpListener {
 
         let sock = Socket::new(family, libc::SOCK_STREAM)?;
         defer sock.close();
-        
+
         errno_try!(libc::bind(
-            sock.fd.value, 
-            &addr.inner as &libc::sockaddr, 
+            sock.fd.value,
+            &addr.inner as &libc::sockaddr,
             addr_len
         ));
 
         errno_try!(libc::listen(
-            sock.fd.value, 
+            sock.fd.value,
             128
         ));
 
@@ -321,23 +321,23 @@ impl TcpListener {
     fn accept(self: &TcpListener) -> Result<(TcpStream, SocketAddr), Error> {
         let storage = mem::zeroed::<libc::sockaddr_storage>();
         let len: libc::socklen_t = mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
-        
+
         let fd: FileDescriptor;
 
-        #[cfg(any(target_os = "android", target_os = "linux"))] 
+        #[cfg(any(target_os = "android", target_os = "linux"))]
         fd = FileDescriptor::new(errno_try!(libc::accept4(
-            self.socket.fd.value, 
-            &storage as &mut libc::sockaddr, 
+            self.socket.fd.value,
+            &storage as &mut libc::sockaddr,
             &len,
             libc::O_CLOEXEC
         )));
-    
+
 
         #[cfg(not(any(target_os = "android", target_os = "linux")))]
         {
             fd = FileDescriptor::new(errno_try!(libc::accept(
                 self.socket.fd.value,
-                &storage as &mut libc::sockaddr, 
+                &storage as &mut libc::sockaddr,
                 &len
             )));
             fd.set_cloexec()?;
@@ -385,10 +385,10 @@ impl UdpSocket {
 
         let sock = Socket::new(family, libc::SOCK_DGRAM)?;
         defer sock.close();
-        
+
         errno_try!(libc::bind(
-            sock.fd.value, 
-            &addr.inner as &libc::sockaddr, 
+            sock.fd.value,
+            &addr.inner as &libc::sockaddr,
             addr_len
         ));
 
@@ -399,8 +399,8 @@ impl UdpSocket {
         let (family, addr_len) = addr_to_family(addr);
 
         errno_try!(libc::connect(
-            self.socket.fd.value, 
-            &addr.inner as &libc::sockaddr, 
+            self.socket.fd.value,
+            &addr.inner as &libc::sockaddr,
             addr_len as libc::socklen_t
         ));
 
@@ -498,7 +498,7 @@ mod tests {
     #[test]
     fn test_basic_tcp() {
         let addr = SocketAddr::parse("[::1]:0").unwrap();
-        let listener = TcpListener::bind(&addr).unwrap();  
+        let listener = TcpListener::bind(&addr).unwrap();
         defer listener.close();
 
         let local_addr = listener.socket_addr().unwrap();
@@ -523,7 +523,7 @@ mod tests {
     #[test]
     fn test_basic_udp() {
         let addr = SocketAddr::parse("[::1]:0").unwrap();
-        let peer1 = UdpSocket::bind(&addr).unwrap();  
+        let peer1 = UdpSocket::bind(&addr).unwrap();
         defer peer1.close();
 
         let peer1_addr = peer1.socket_addr().unwrap();
@@ -544,7 +544,7 @@ mod tests {
     #[test]
     fn test_udp_connect() {
         let addr = SocketAddr::parse("[::1]:0").unwrap();
-        let peer1 = UdpSocket::bind(&addr).unwrap();  
+        let peer1 = UdpSocket::bind(&addr).unwrap();
         defer peer1.close();
 
         let buf: [u8; 128];
@@ -554,7 +554,7 @@ mod tests {
             let addr = SocketAddr::parse("[::1]:0").unwrap();
             let peer2 = UdpSocket::bind(&addr).unwrap();
             defer peer2.close();
-            
+
             peer2.connect(&peer1_addr).unwrap();
             peer2.send("Hello, world!").unwrap();
 
@@ -575,7 +575,7 @@ mod tests {
     #[test]
     fn test_udp_peek() {
         let addr = SocketAddr::parse("[::1]:0").unwrap();
-        let peer1 = UdpSocket::bind(&addr).unwrap();  
+        let peer1 = UdpSocket::bind(&addr).unwrap();
         defer peer1.close();
 
         let peer1_addr = peer1.socket_addr().unwrap();

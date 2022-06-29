@@ -7,16 +7,16 @@
 //! for i in 0..10 {
 //!     println!("{}", i);
 //! }
-//! 
+//!
 //! for i in &["a", "b", "c"] {
 //!     println!("{}", i);
 //! }
 //! ```
 //!
-//! There is distinction between an [iterable type](Iterable) and an [iterator](Iterator). Iterators are 
-//! consumable objects that can only be used to iterate once. Iterable types are ones that can 
+//! There is distinction between an [iterable type](Iterable) and an [iterator](Iterator). Iterators are
+//! consumable objects that can only be used to iterate once. Iterable types are ones that can
 //! produce an iterator when needed.
-//! 
+//!
 //! Iterators can also be combined to create more complex types of iterators. See [IteratorExt] protocol
 //! for a reference of methods that can be used to combine iterators.
 
@@ -34,13 +34,13 @@ protocol Iterator<Self, T> {
     ///
     /// If the iterator has reached the end, it returns none.
     fn next(self: &mut Self) -> Option<T>;
-    
+
     /// Returns the number of remaining elements, if available.
     ///
-    /// This is used for efficiently pre-allocating storage in collections 
+    /// This is used for efficiently pre-allocating storage in collections
     /// that are created from iterators to avoid copies.
     ///
-    /// It the number of remaining elements is unknown, the method should 
+    /// It the number of remaining elements is unknown, the method should
     /// return `Option::none()`.
     fn size_hint(self: &Self) -> Option<usize> {
         Option::none()
@@ -59,7 +59,7 @@ protocol DoubleEndedIterator<Self: Iterator<Self, T>, T> {
 protocol DoubleEndedIteratorExt<Self: DoubleEndedIterator<Self, T>, T> {
     /// "Reverse" the iterator.
     ///
-    /// `rev` returns a wrapper over an iterator that has `next` and `next_back` methods 
+    /// `rev` returns a wrapper over an iterator that has `next` and `next_back` methods
     /// reversed.
     fn rev(self: &mut Self) -> RevIterator<Self, T> {
         RevIterator { it: self }
@@ -79,7 +79,7 @@ protocol IterableMut<Self, It: Iterator<It, &mut T>, T> {
 }
 
 /// Reverse iterator.
-/// 
+///
 /// See [DoubleEndedIteratorExt::rev].
 struct RevIterator<It: DoubleEndedIterator<It, T>, T> {
     it: &mut It
@@ -285,7 +285,7 @@ impl SkipIterator<It: Iterator<It, T>, T> {
 
     /// @ Iterator::size_hint
     fn size_hint(self: &SkipIterator<It, T>) -> Option<usize> {
-        self.it.size_hint().map(|=self, v: usize| -> usize { 
+        self.it.size_hint().map(|=self, v: usize| -> usize {
             if self.n > v {
                 0
             } else {
@@ -324,7 +324,7 @@ impl StepByIterator<It: Iterator<It, T>, T> {
 
     /// @ Iterator::size_hint
     fn size_hint(self: &StepByIterator<It, T>) -> Option<usize> {
-        self.it.size_hint().map(|=self, v: usize| -> usize { 
+        self.it.size_hint().map(|=self, v: usize| -> usize {
             (v + self.index) / self.n
         })
     }
@@ -352,7 +352,7 @@ impl FusedIterator<It: Iterator<It, T>, T> {
             v
         }
     }
-    
+
     /// @ Iterator::size_hint
     fn size_hint(self: &FusedIterator<It, T>) -> Option<usize> {
         if self.done {
@@ -424,7 +424,7 @@ impl EnumerateIterator<It: Iterator<It, T>, T> {
     /// @ Iterator::next
     fn next(self: &mut EnumerateIterator<It, T>) -> Option<(usize, T)> {
         use option::try;
-        
+
         let val = self.it.next()?;
         let res = (self.n, val);
         self.n += 1;
@@ -601,7 +601,7 @@ impl PeekableIterator<It: Iterator<It, T>, T> {
             self.it.next()
         }
     }
-    
+
     /// Return the next element in the iterator without consuming it.
     fn peek(self: &mut PeekableIterator<It, T>) -> Option<T> {
         if !self.peeked.is_some {
@@ -609,7 +609,7 @@ impl PeekableIterator<It: Iterator<It, T>, T> {
         }
         self.peeked
     }
-    
+
     /// @ Iterator::size_hint
     fn size_hint(self: &PeekableIterator<It, T>) -> Option<usize> {
         self.it.size_hint().map(|=self, x: usize| -> usize {
@@ -620,7 +620,7 @@ impl PeekableIterator<It: Iterator<It, T>, T> {
             }
         })
     }
-    
+
     mixin Iterator<PeekableIterator<It, T>, T>;
     mixin IteratorExt<PeekableIterator<It, T>, T>;
 }
@@ -629,7 +629,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// Return self.
     ///
     /// Each iterator is itself an iterable object, though only once. This
-    /// helper function is there so that iterators can be used ergonomically 
+    /// helper function is there so that iterators can be used ergonomically
     /// in for loops (which de-sugar to a call to `.iter()`)
     fn iter(self: &mut Self) -> &mut Self {
         self
@@ -648,16 +648,16 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     }
 
     /// Returns an iterator that yields all elements of `self` and then all elements of `other`.
-    /// # Example    
+    /// # Example
     /// ```
     /// let range = (0..2).iter().chain(&(10..12).iter());
     /// assert_eq!(range.size_hint(), Option::some(4usize));
-    /// 
+    ///
     /// assert_eq!(range.next(), Option::some(0));
     /// assert_eq!(range.next(), Option::some(1));
     /// assert_eq!(range.next(), Option::some(10));
     /// assert_eq!(range.next(), Option::some(11));
-    /// assert_eq!(range.next(), Option::none());    
+    /// assert_eq!(range.next(), Option::none());
     /// ```
     fn chain<Other: Iterator<Other, T>>(self: &mut Self, other: &mut Other) -> ChainIterator<Self, Other, T> {
         ChainIterator {
@@ -675,11 +675,11 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// ```
     /// let range = (0..5).iter().skip(2);
     /// assert_eq!(range.size_hint(), Option::some(3usize));
-    /// 
+    ///
     /// assert_eq!(range.next(), Option::some(2));
     /// assert_eq!(range.next(), Option::some(3));
     /// assert_eq!(range.next(), Option::some(4));
-    /// assert_eq!(range.next(), Option::none());    
+    /// assert_eq!(range.next(), Option::none());
     /// ```
     fn skip(self: &mut Self, n: usize) -> SkipIterator<Self, T> {
         SkipIterator {
@@ -695,11 +695,11 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// ```
     /// let range = (0..5).iter().step_by(2);
     /// assert_eq!(range.size_hint(), Option::some(3usize));
-    /// 
+    ///
     /// assert_eq!(range.next(), Option::some(0));
     /// assert_eq!(range.next(), Option::some(2));
     /// assert_eq!(range.next(), Option::some(4));
-    /// assert_eq!(range.next(), Option::none());    
+    /// assert_eq!(range.next(), Option::none());
     /// ```
     fn step_by(self: &mut Self, n: usize) -> StepByIterator<Self, T> {
         assert!(n > 0);
@@ -717,10 +717,10 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// ```
     /// let range = (0..5).iter().take(2);
     /// assert_eq!(range.size_hint(), Option::some(2usize));
-    /// 
+    ///
     /// assert_eq!(range.next(), Option::some(0));
     /// assert_eq!(range.next(), Option::some(1));
-    /// assert_eq!(range.next(), Option::none());    
+    /// assert_eq!(range.next(), Option::none());
     /// ```
     fn take(self: &mut Self, n: usize) -> TakeIterator<Self, T> {
         TakeIterator {
@@ -735,12 +735,12 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// ```
     /// let range = (10..15).iter().enumerate();
     /// assert_eq!(range.size_hint(), Option::some(5usize));
-    /// 
+    ///
     /// assert_eq!(range.next(), Option::some((0usize, 10)));
     /// assert_eq!(range.next(), Option::some((1usize, 11)));
     /// assert_eq!(range.next(), Option::some((2usize, 12)));
     /// assert_eq!(range.next(), Option::some((3usize, 13)));
-    /// assert_eq!(range.next(), Option::some((4usize, 14)));    
+    /// assert_eq!(range.next(), Option::some((4usize, 14)));
     /// assert_eq!(range.next(), Option::none());
     /// ```
     fn enumerate(self: &mut Self) -> EnumerateIterator<Self, T> {
@@ -754,7 +754,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     fn last(self: &mut Self) -> Option<T> {
         when Self: DoubleEndedIterator<Self, T> {
             self.next_back()
-        } else {       
+        } else {
             let value: Option<T> = Option::none();
             loop {
                 let next = self.next();
@@ -793,7 +793,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
             func: func,
         }
     }
-    
+
     /// Returns an iterator that yields the elements while a predicate is true.
     ///
     /// # Example
@@ -804,12 +804,12 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// assert_eq!(range.next(), Option::some(0));
     /// assert_eq!(range.next(), Option::some(1));
     /// assert_eq!(range.next(), Option::some(2));
-    /// assert_eq!(range.next(), Option::none());    
+    /// assert_eq!(range.next(), Option::none());
     /// ```
     fn take_while<F: Callable<(T), bool>>(iter: &mut Self, fun: F) -> TakeWhileIterator<Self, F, T> {
         TakeWhileIterator { it: iter, fun: fun }
     }
-    
+
     /// Returns an iterator that skips the elements while a predicate is true.
     /// # Example
     /// ```
@@ -823,13 +823,13 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     fn skip_while<F: Callable<(T), bool>>(iter: &mut Self, fun: F) -> SkipWhileIterator<Self, F, T> {
         SkipWhileIterator { it: iter, fun: fun, finished: false }
     }
-    
+
     /// Returns an iterator that transforms the elements of this iterator.
     /// # Example
     /// ```
     /// let range = (0..5).iter().map(|x: i32| -> i32 { x * 2 });
     /// assert_eq!(range.size_hint(), Option::some(5usize));
-    /// 
+    ///
     /// assert_eq!(range.next(), Option::some(0));
     /// assert_eq!(range.next(), Option::some(2));
     /// assert_eq!(range.next(), Option::some(4));
@@ -840,7 +840,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     fn map<U, F: Callable<(T), U>>(iter: &mut Self, fun: F) -> MapIterator<Self, F, T, U> {
         MapIterator { it: iter, fun: fun }
     }
-    
+
     /// Executes a function on each element of this iterator.
     fn foreach<F: Callable<(T), ()>>(iter: &mut Self, fun: F) {
         loop {
@@ -858,20 +858,20 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// ```
     /// let range = (0..5).iter().filter(|x: i32| -> bool { x % 2 == 0 });
     /// assert_eq!(range.size_hint(), Option::none());
-    /// 
+    ///
     /// assert_eq!(range.next(), Option::some(0));
     /// assert_eq!(range.next(), Option::some(2));
     /// assert_eq!(range.next(), Option::some(4));
-    /// assert_eq!(range.next(), Option::none());    
+    /// assert_eq!(range.next(), Option::none());
     /// ```
     fn filter<F: Callable<(T), bool>>(iter: &mut Self, fun: F) -> FilterIterator<Self, F, T> {
         FilterIterator { it: iter, fun: fun }
     }
-    
+
     fn filter_map<U, F: Callable<(T), Option<U>>>(iter: &mut Self, fun: F) -> FilterMapIterator<Self, F, T, U> {
         FilterMapIterator { it: iter, fun: fun }
     }
-    
+
     fn reduce<U, F: Callable<(U, T), U>>(iter: &mut Self, initial: U, func: F) -> U {
         loop {
             let next = iter.next();
@@ -882,7 +882,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
         }
         initial
     }
-    
+
     fn all<F: Callable<(T), bool>>(iter: &mut Self, fun: F) -> bool {
         loop {
             let next = iter.next();
@@ -895,7 +895,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
         }
         true
     }
-    
+
     fn any<F: Callable<(T), bool>>(iter: &mut Self, fun: F) -> bool {
         loop {
             let next = iter.next();
@@ -937,11 +937,11 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
         }
     }
 
-    
+
     fn group_by<F: Callable<(T), K>, K: cmp::Equatable<K>>(self: &mut Self, func: F) -> GroupByIterator<Self, F, T, K> {
         GroupByIterator {
             it: self.peekable(),
-            last_group: Option::none(),    
+            last_group: Option::none(),
             func: func
         }
     }
@@ -977,7 +977,7 @@ impl FromFnIterator<F: Callable<(), Option<T>>, T> {
     }
 
     mixin Iterator<FromFnIterator<F, T>, T>;
-    mixin IteratorExt<FromFnIterator<F, T>, T>;   
+    mixin IteratorExt<FromFnIterator<F, T>, T>;
 }
 
 /// Returns an iterator that produces no elements.
@@ -1218,7 +1218,7 @@ impl RangeIter<T: Integer> {
             Option::some(0usize)
         }
     }
-    
+
     mixin Iterator<RangeIter<T>, T>;
     mixin IteratorExt<RangeIter<T>, T>;
     mixin DoubleEndedIterator<RangeIter<T>, T>;
@@ -1415,7 +1415,7 @@ mod tests {
         assert_eq!(range.next(), Option::some((1usize, 11)));
         assert_eq!(range.next(), Option::some((2usize, 12)));
         assert_eq!(range.next(), Option::some((3usize, 13)));
-        assert_eq!(range.next(), Option::some((4usize, 14)));    
+        assert_eq!(range.next(), Option::some((4usize, 14)));
         assert_eq!(range.next(), Option::none());
     }
 
@@ -1519,7 +1519,7 @@ mod tests {
         let range = (0..3).iter().peekable();
         assert_eq!(range.size_hint(), Option::some(3usize));
         assert_eq!(range.peek(), Option::some(0));
-        
+
         assert_eq!(range.size_hint(), Option::some(3usize));
         assert_eq!(range.next(), Option::some(0));
         assert_eq!(range.next(), Option::some(1));

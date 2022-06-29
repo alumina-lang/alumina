@@ -54,7 +54,7 @@ impl Xxh64 {
             mem_size: 0,
         }
     }
-    
+
     #[no_inline]
     fn write(self: &mut Xxh64, input: &[u8]) {
         use std::mem::copy_nonoverlapping;
@@ -101,14 +101,14 @@ impl Xxh64 {
             input.copy_nonoverlapping(&self.mem[0] as &mut u8);
             self.mem_size = input.len;
         }
-    }    
+    }
 
     fn finish(self: &mut Xxh64) -> u64 {
         let result: u64;
 
         if self.total_len >= CHUNK_SIZE {
-            result = (self.v1.rotate_left(1)) + 
-                (self.v2.rotate_left(7)) + 
+            result = (self.v1.rotate_left(1)) +
+                (self.v2.rotate_left(7)) +
                 (self.v3.rotate_left(12)) +
                 (self.v4.rotate_left(18));
 
@@ -129,18 +129,18 @@ impl Xxh64 {
             remainder = remainder[8..];
             result = (result.rotate_left(27)) * PRIME_1 + PRIME_4
         }
-    
+
         if remainder.len >= 4 {
             result ^= (*(remainder.ptr as &u32) as u64) * PRIME_1;
             remainder = remainder[4..];
             result = (result.rotate_left(23)) * PRIME_2 + PRIME_3;
         }
-    
+
         for byte in remainder {
             result ^= (byte as u64) * PRIME_5;
             result = (result.rotate_left(11)) * PRIME_1;
         }
-    
+
         avalanche(result)
     }
 }
