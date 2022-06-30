@@ -54,13 +54,11 @@ impl Pcg32 {
 
     /// Create a Pcg32 random number generator from a given seed.
     fn from_seed(seed: &[u8; 16]) -> Pcg32 {
-        use std::mem::copy_nonoverlapping;
-
         let seed = seed.as_slice();
         let pcg: Pcg32;
 
-        seed[0..8].copy_nonoverlapping(&pcg.state as &mut u8);
-        seed[8..16].copy_nonoverlapping(&pcg.increment as &mut u8);
+        seed[0..8].copy_to_nonoverlapping(&pcg.state as &mut u8);
+        seed[8..16].copy_to_nonoverlapping(&pcg.increment as &mut u8);
         pcg.increment = pcg.increment | 1;
 
         pcg.state = pcg.state + pcg.increment;
@@ -221,7 +219,7 @@ fn uniform<Rng: RandomNumberGenerator<Rng>, T: Unsigned>(rng: &mut Rng, upper_bo
     }
 }
 
-/// Generate a random floating point number in [0, 1) interval
+/// Generate a random floating point number in `[0, 1)` interval
 fn next_float<Rng: RandomNumberGenerator<Rng>, T: FloatingPoint>(rng: &mut Rng) -> T {
     when T: f32 {
         let scale = 1.0f32 / ((1u32 << 24) as f32);

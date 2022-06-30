@@ -165,6 +165,11 @@ impl FileDescriptor {
         result::Result::ok(())
     }
 
+    /// @ AsFileDescriptor::as_fd
+    fn as_fd(self: &FileDescriptor) -> FileDescriptor {
+        *self
+    }
+
     /// Sets the file descriptor blocking mode.
     fn set_nonblocking(self: &mut FileDescriptor, nonblocking: bool) -> Result<(), Error> {
         #[cfg(target_os = "linux")] {
@@ -212,6 +217,10 @@ impl FileDescriptor {
         self.value = -1;
         ret
     }
+
+    mixin FdReadWrite<FileDescriptor>;
+    mixin Readable<FileDescriptor>;
+    mixin Writable<FileDescriptor>;
 }
 
 /// Standard I/O stream.

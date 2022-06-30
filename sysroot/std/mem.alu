@@ -1,4 +1,7 @@
 //! Working with memory (allocation, slices, copying, ...)
+//!
+//! The main feature of this module is the [slice] type, which is a pointer to a region
+//! of memory. `&[T]` is a slice (read-only) of `T`, and `&mut [T]` is a mutable slice.
 
 use builtins::Pointer;
 use std::option::Option;
@@ -81,6 +84,67 @@ impl slice {
     #[lang(slice_new)]
     fn from_raw<Ptr: Pointer>(ptr: Ptr, len: usize) -> slice<Ptr> {
         slice::<Ptr> { ptr: ptr, len: len }
+    }
+
+    /// Allocates an array of specified size on the heap.
+    ///
+    /// The values are not initialized.
+    fn alloc<T>(len: usize) -> &mut [T] {
+        let ret: &mut [T];
+        when T: builtins::ZeroSized {
+            ret.ptr = null as &mut T;
+        } else {
+            ret.ptr = libc::malloc(size_of::<T>() * len) as &mut T;
+            if ret.ptr == null {
+                panic!("out of memory")
+            }
+        };
+        ret.len = len;
+        ret
+    }
+
+    /// Resizes a heap-allocated array.
+    fn realloc<T>(slice: &mut [T], len: usize) -> &mut [T] {
+        let ret: &mut [T];
+        ret.ptr = when T: builtins::ZeroSized {
+            null as &mut T
+        } else {
+            libc::realloc(slice.ptr as &mut void, size_of::<T>() * len) as &mut T
+        };
+        ret.len = len;
+        ret
+    }
+
+    /// Allocates an array of specified size on the heap.
+    ///
+    /// The values are zero-initialized.
+    fn alloc_zeroed<T>(len: usize) -> &mut [T] {
+        let ret: &mut [T];
+        ret.ptr = when T: builtins::ZeroSized {
+            null as &mut T
+        } else {
+            libc::calloc(len, size_of::<T>()) as &mut T
+        };
+        ret.len = len;
+        ret
+    }
+
+    /// Copies a region of memory from `src` to `dst`.
+    ///
+    /// The memory ranges must not overlap, use [copy_to] if they may be overlapping.
+    fn copy_to_nonoverlapping<T>(src: &[T], dst: &mut T) {
+        when T: !builtins::ZeroSized {
+            libc::memcpy(dst as &mut void, src.ptr as &void, src.len * size_of::<T>());
+        }
+    }
+
+    /// Copies a region of memory from `src` to `dst`.
+    ///
+    /// The ranges may overlap.
+    fn copy_to<T>(src: &[T], dst: &mut T) {
+        when T: !builtins::ZeroSized {
+            libc::memmove(dst as &mut void, src.ptr as &void, src.len * size_of::<T>());
+        }
     }
 
     /// @ std::iter::Iterable::iter
@@ -186,6 +250,13 @@ impl slice {
         f.write_str(*self)
     }
 
+    /// Frees the slice.
+    ///
+    /// This requires that the slice was allocated with `alloc` or `alloc_zeroed`.
+    fn free<T>(a: &mut [T]) {
+        libc::free(a.ptr as &mut void);
+    }
+
     mixin<T: Equatable<T>, Ptr: PointerOf<T>> Equatable<slice<Ptr>>;
     mixin<T: Comparable<T>, Ptr: PointerOf<T>> Comparable<slice<Ptr>>;
 }
@@ -277,6 +348,10 @@ impl SliceRefIterator<Ptr: Pointer> {
 mod internal {
     use builtins::{Primitive, Pointer};
 
+    /// Implementation for single-element indexing for slices.
+    ///
+    /// Compiler will convert `slice[i]` to `*slice_index(slice, i)`.
+    /// Slice indexing is bounds-checked in debug mode.
     #[force_inline]
     #[lang(slice_index)]
     fn slice_index<Ptr: Pointer>(a: slice<Ptr>, idx: usize) -> Ptr {
@@ -285,6 +360,10 @@ mod internal {
         a.ptr + idx
     }
 
+    /// Implementation for range indexing for slices.
+    ///
+    /// Compiler will convert `slice[ran..ge]` to `slice_index(slice, ran..ge)`.
+    /// It is generic over all range types (`..`, `ran..`, `..ge` and `ran..ge`)
     #[force_inline]
     #[lang(slice_range_index)]
     fn slice_range_index<Ptr: Pointer, T>(a: slice<Ptr>, range: T) -> slice<Ptr> {
@@ -308,6 +387,11 @@ mod internal {
         }
     }
 
+    /// Compiler invokes this function to coerce a mutable slice
+    /// into a const slice.
+    ///
+    /// This is necessary, since they are completely
+    /// different types.
     #[force_inline]
     #[lang(slice_coerce)]
     fn slice_coerce<T>(a: slice<&mut T>) -> slice<&T> {
@@ -315,10 +399,12 @@ mod internal {
     }
 }
 
-/// Allocates an object on the heap.
+/// Allocates a single object on the heap using a default allocator (`malloc`)
 ///
 /// The value is not initialized.
-fn new<T>() -> &mut T {
+///
+/// See also a [the matching method](slice::alloc) for allocating a slice.
+fn alloc<T>() -> &mut T {
     when T: builtins::ZeroSized {
         null as &mut T
     } else {
@@ -326,47 +412,24 @@ fn new<T>() -> &mut T {
     }
 }
 
-/// Allocates an array of specified size on the heap.
+/// Allocates a single object on the heap using a default allocator (`malloc`)
 ///
-/// The values are not initialized.
-fn alloc<T>(len: usize) -> &mut [T] {
-    let ret: &mut [T];
+/// The value is zero-initialized.
+///
+/// See also a [the matching method](slice::alloc_zeroed) for allocating a slice.
+fn alloc_zeroed<T>() -> &mut T {
     when T: builtins::ZeroSized {
-        ret.ptr = null as &mut T;
-    } else {
-        ret.ptr = libc::malloc(size_of::<T>() * len) as &mut T;
-        if ret.ptr == null {
-            panic!("out of memory")
-        }
-    };
-    ret.len = len;
-    ret
-}
-
-/// Resizes a heap-allocated array.
-fn realloc<T>(slice: &mut [T], len: usize) -> &mut [T] {
-    let ret: &mut [T];
-    ret.ptr = when T: builtins::ZeroSized {
         null as &mut T
     } else {
-        libc::realloc(slice.ptr as &mut void, size_of::<T>() * len) as &mut T
-    };
-    ret.len = len;
-    ret
+        libc::calloc(size_of::<T>()) as &mut T
+    }
 }
 
-/// Allocates an array of specified size on the heap.
+/// Frees a heap-allocated object
 ///
-/// The values are zero-initialized.
-fn alloc_zeroed<T>(len: usize) -> &mut [T] {
-    let ret: &mut [T];
-    ret.ptr = when T: builtins::ZeroSized {
-        null as &mut T
-    } else {
-        libc::calloc(len, size_of::<T>()) as &mut T
-    };
-    ret.len = len;
-    ret
+/// The pointer must be allocated with the default allocator (`malloc`).
+fn free<T>(a: &mut T) {
+    libc::free(a as &mut void);
 }
 
 /// Memory size of for a given type in bytes.
@@ -394,29 +457,6 @@ fn swap<T>(a: &mut T, b: &mut T) {
 fn replace<T>(a: &mut T, b: T) -> T {
     swap(a, &b);
     b
-}
-
-/// Copies a region of memory from `src` to `dst`.
-///
-/// The memory ranges must not overlap, use [copy] if they may be overlapping.
-fn copy_nonoverlapping<T>(src: &[T], dst: &mut T) {
-    when T: !builtins::ZeroSized {
-        libc::memcpy(dst as &mut void, src.ptr as &void, src.len * size_of::<T>());
-    }
-}
-
-/// Copies a region of memory from `src` to `dst`.
-///
-/// The ranges may overlap.
-fn copy<T>(src: &[T], dst: &mut T) {
-    when T: !builtins::ZeroSized {
-        libc::memmove(dst as &mut void, src.ptr as &void, src.len * size_of::<T>());
-    }
-}
-
-/// Frees the memory of a heap-allocated object.
-fn free<T>(a: &mut [T]) {
-    libc::free(a.ptr as &mut void);
 }
 
 /// Zero-initialized object of a given type.

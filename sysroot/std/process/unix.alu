@@ -73,9 +73,9 @@ impl Output {
 /// Child process
 struct Child {
     pid: libc::pid_t,
-    stdin: option::Option<io::Pipe>,
-    stdout: option::Option<io::Pipe>,
-    stderr: option::Option<io::Pipe>,
+    stdin: option::Option<io::FileDescriptor>,
+    stdout: option::Option<io::FileDescriptor>,
+    stderr: option::Option<io::FileDescriptor>,
 }
 
 impl Child {
@@ -150,7 +150,7 @@ impl Child {
 
     /// Kill the child process.
     fn kill(self: &mut Child) -> Result<(), Error> {
-        let ret = errno_try!(libc::kill(self.pid, libc::SIGKILL));
+        errno_try!(libc::kill(self.pid, libc::SIGKILL));
         Result::ok(())
     }
 
@@ -183,7 +183,7 @@ struct Forked {
 }
 
 impl Forked {
-    use internal::IoRedirection;
+    use internal::ChildStdio;
 
     fn new() -> Forked {
         Forked {
@@ -216,13 +216,13 @@ impl Forked {
     /// Returns Option::none() in the child and a `Child` value in the
     /// parent.
     fn spawn(self: &Forked) -> Result<Option<Child>, Error> {
-        let stdin = IoRedirection::new(true, self._stdin)?;
+        let stdin = ChildStdio::new(true, self._stdin)?;
         defer stdin.close();
 
-        let stdout = IoRedirection::new(false, self._stdout)?;
+        let stdout = ChildStdio::new(false, self._stdout)?;
         defer stdout.close();
 
-        let stderr = IoRedirection::new(false, self._stderr)?;
+        let stderr = ChildStdio::new(false, self._stderr)?;
         defer stderr.close();
 
         let pid = errno_try!(std::libc::fork());
@@ -260,7 +260,7 @@ struct Command {
 }
 
 impl Command {
-    use internal::IoRedirection;
+    use internal::ChildStdio;
     use ffi::CString;
     use fs::Path;
     use collections::{Vector, free_all};
@@ -306,40 +306,18 @@ impl Command {
         self
     }
 
-    fn _after_fork(
-        self: &Command,
-        stdin: &mut IoRedirection,
-        stdout: &mut IoRedirection,
-        stderr: &mut IoRedirection,
-        params: &internal::ExecParams
-    ) -> Result<!, Error> {
-        use mem::copy_nonoverlapping;
-
-        stdin.install(libc::STDIN_FILENO)?;
-        stdout.install(libc::STDOUT_FILENO)?;
-        stderr.install(libc::STDERR_FILENO)?;
-
-        if !self._environ.is_some {
-            errno_try!(libc::execv(params.name(), params.argv()));
-        } else {
-            errno_try!(libc::execve(params.name(), params.argv(), params.envp()));
-        }
-
-        unreachable!()
-    }
-
     /// Spawn a process.
     fn spawn(self: &Command) -> Result<Child, Error> {
         let exec_params = internal::ExecParams::new(self);
         defer exec_params.free();
 
-        let stdin = IoRedirection::new(true, self._stdin)?;
+        let stdin = ChildStdio::new(true, self._stdin)?;
         defer stdin.close();
 
-        let stdout = IoRedirection::new(false, self._stdout)?;
+        let stdout = ChildStdio::new(false, self._stdout)?;
         defer stdout.close();
 
-        let stderr = IoRedirection::new(false, self._stderr)?;
+        let stderr = ChildStdio::new(false, self._stderr)?;
         defer stderr.close();
 
         let (fail_rx, fail_tx) = Pipe::anonymous()?;
@@ -347,17 +325,24 @@ impl Command {
 
         let pid = errno_try!(std::libc::fork());
         if pid == 0 {
-            let res = self._after_fork(&stdin, &stdout, &stderr, &exec_params);
+            std::panicking::internal::PANIC_HOOK = mem::zeroed();
 
-            // Since we are already in the child process, we can't just bail here, we need to
-            // send the error to the parent process via the pipe.
-            if !res.is_ok {
-                let msg = mem::slice::from_raw(&res.inner.err as &u8, mem::size_of::<Error>());
-                fail_tx.write_all(msg).unwrap();
-                libc::_exit(1);
+            stdin.install(libc::STDIN_FILENO).unwrap();
+            stdout.install(libc::STDOUT_FILENO).unwrap();
+            stderr.install(libc::STDERR_FILENO).unwrap();
+
+            if !self._environ.is_some {
+                libc::execv(exec_params.name(), exec_params.argv());
+            } else {
+                libc::execve(exec_params.name(), exec_params.argv(), exec_params.envp());
             }
 
-            unreachable!()
+            // If we are here, it means exec failed, send the error back to the
+            // parrent over the pipe and exit
+            let error = Error::from_errno();
+            let msg = mem::slice::from_raw(&error as &u8, mem::size_of::<Error>());
+            fail_tx.write_all(msg).unwrap();
+            libc::_exit(1);
         } else {
             fail_tx.close().unwrap();
 
@@ -446,69 +431,68 @@ mod internal {
         }
     }
 
-    struct IoRedirection {
-        kind: Stdio,
-        pair: Option<(Pipe, Pipe)>
+    struct ChildStdio {
+        ours: Option<io::FileDescriptor>,
+        theirs: Option<io::FileDescriptor>
     }
 
-    impl IoRedirection {
-        fn new(is_stdin: bool, kind: Stdio) -> Result<IoRedirection, Error> {
-            let pair: Option<(Pipe, Pipe)> = if kind == Stdio::Piped {
-                let (rx, tx) = Pipe::anonymous()?;
+    impl ChildStdio {
+        fn new(is_stdin: bool, kind: Stdio) -> Result<ChildStdio, Error> {
+            let fds = switch kind {
+                Stdio::Piped => {
+                    let (rx, tx) = Pipe::anonymous()?;
+                    if is_stdin {
+                        (Option::some(tx.as_fd()), Option::some(rx.as_fd()))
+                    } else {
+                        (Option::some(rx.as_fd()), Option::some(tx.as_fd()))
+                    }
+                },
+                Stdio::Inherit => {
+                    (Option::none(), Option::none())
+                },
+                Stdio::Null => {
+                    let dev_null = fs::File::open_with(
+                        Path::new("/dev/null"), 
+                        fs::OpenOptions::new()
+                            .read(is_stdin)
+                            .write(!is_stdin)
+                    )?;
 
-                if is_stdin {
-                    Option::some((tx, rx))
-                } else {
-                    Option::some((rx, tx))
+                    (Option::none(), Option::some(dev_null.as_fd()))
                 }
-            } else {
-                Option::none()
-            };
+                _ => unreachable!()
+            }
 
-            let res = IoRedirection {
-                pair: pair,
-                kind: kind
+            let res = ChildStdio {
+                ours: fds.0,
+                theirs: fds.1
             };
 
             Result::ok(res)
         }
 
-        fn close(self: &mut IoRedirection) -> Result<(), Error> {
-            if self.pair.is_some {
-                self.pair.inner.0.close()?;
-                self.pair.inner.1.close()?;
+        fn close(self: &mut ChildStdio) -> Result<(), Error> {
+            if self.ours.is_some {
+                self.ours.inner.close()?;
+            }
+
+            if self.theirs.is_some {
+                self.theirs.inner.close()?;
             }
 
             Result::ok(())
         }
 
-        fn install(self: &mut IoRedirection, fd: libc::c_int) -> Result<(), Error> {
+        fn install(self: &mut ChildStdio, fd: libc::c_int) -> Result<(), Error> {
             use std::fs::{File, OpenOptions};
-
-            switch self.kind {
-                Stdio::Piped => {
-                    let (_, tgt) = self.pair.unwrap();
-
-                    errno_try!(libc::dup2(tgt.fd.value, fd));
-                },
-                Stdio::Null => {
-                    let dev_zero = File::open_with(Path::new("/dev/null"), OpenOptions::new().read(true).write(true))?;
-                    defer dev_zero.close();
-
-                    errno_try!(std::libc::dup2(dev_zero.fd.value, fd));
-                },
-                _ => {}
-            };
-
+            if self.theirs.is_some {
+                errno_try!(libc::dup2(self.theirs.inner.value, fd));
+            }
             Result::ok(())
         }
 
-        fn into_inner(self: &mut IoRedirection) -> Option<Pipe> {
-            if self.pair.is_some {
-                Option::some(self.pair.inner.0.move())
-            } else {
-                Option::none()
-            }
+        fn into_inner(self: &mut ChildStdio) -> Option<io::FileDescriptor> {
+            self.ours.move()
         }
     }
 

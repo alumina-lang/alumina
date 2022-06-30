@@ -30,7 +30,7 @@ struct HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> 
 }
 
 impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
-    use std::mem::alloc_zeroed;
+    use std::mem::slice;
 
     /// Creates an empty hash map
     fn new() -> HashMap<K, V, H> {
@@ -49,7 +49,7 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     /// you want to strictly control the size of the underlying array.
     fn with_size(size: usize) -> HashMap<K, V, H> {
         HashMap::<K, V, H> {
-            _buckets: alloc_zeroed::<HashItem<(K, V)>>(size),
+            _buckets: slice::alloc_zeroed::<HashItem<(K, V)>>(size),
             _length: 0,
         }
     }
@@ -237,7 +237,6 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
 
     /// @ std::mem::Freeable::free
     fn free(self: &mut HashMap<K, V, H>) {
-        use std::mem::free;
         self._buckets.free();
     }
 
@@ -429,10 +428,8 @@ mod tests {
         }
 
         fn write(self: &mut DummyHasher, val: &[u8]) {
-            mem::copy(
-                val[..cmp::min(val.len, mem::size_of::<u64>())],
-                &self.state as &mut u8
-            );
+            val[..cmp::min(val.len, mem::size_of::<u64>())]
+                .copy_to(&self.state as &mut u8);
         }
 
         fn finish(self: &mut DummyHasher) -> u64 {

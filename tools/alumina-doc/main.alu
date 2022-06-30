@@ -208,7 +208,7 @@ impl PageWriter<T: std::io::Writable<T>> {
         wln!(self, "<link rel=\"mask-icon\" href=\"/static/safari-pinned-tab.svg\" color=\"#5bbad5\" />");
         wln!(self, "<link rel=\"shortcut icon\" href=\"/static/favicon.ico\" />");
 
-        if self.processor.base_domain.is_some && top_level.path != top_level.defined_in {
+        if self.processor.base_domain.is_some {
             let link = link_context.resolve_link(&top_level.defined_in).unwrap();
             defer link.free();
             wln!(
@@ -248,7 +248,7 @@ impl PageWriter<T: std::io::Writable<T>> {
 
             for item in grp {
                 let link_context = LinkContext::new(self.item_bag, &item.defined_in);
-                let link = link_context.link_for_item(item, false).unwrap();
+                let link = link_context.link_for_item(item, false, false).unwrap();
                 wln!(self, "<li>");
                 wln!(self, "<a href=\"{}\">{}</a>", link, item.path.last().unwrap());
                 wln!(self, "</li>");
@@ -297,7 +297,7 @@ impl PageWriter<T: std::io::Writable<T>> {
                         for item in impl_grp {
                             let link_context = LinkContext::new(self.item_bag, &item.defined_in);
                             let name = item.path.last().unwrap();
-                            let link = link_context.link_for_item(item, false).unwrap();
+                            let link = link_context.link_for_item(item, false, false).unwrap();
 
                             if item.cfg_index == 0 {
                                 wln!(self, "<div class=\"row\" id=\"item.{}\">", name);
@@ -438,30 +438,21 @@ impl Processor {
     }
 
     fn write_page(self: &Processor, top_level: &Item) -> Result<()> {
+        use std::string::trim_prefix;
+
+        let link_context = LinkContext::new(&self.items, &top_level.defined_in);
+
         let filename = std::fs::PathBuf::from_str("./build/docs");
         defer filename.free();
 
-
-        if top_level.path.segments.empty() {
-            filename.push(std::fs::Path::new("index.html"));
-        } else {
-            for (idx, s) in top_level.path.segments.iter().enumerate() {
-                if idx == top_level.path.segments.len() - 1 {
-                    let formatted = if top_level.cfg_index == 0 {
-                        format!("{}.html", s).unwrap()
-                    } else {
-                        format!("{}.{}.html", s, top_level.cfg_index).unwrap()
-                    };
-
-                    filename.push(std::fs::Path::new(formatted.as_slice()));
-                    formatted.free();
-                } else {
-                    filename.push(std::fs::Path::new(s));
-                }
-            }
-        }
+        filename.push(std::fs::Path::new({
+            let l = link_context.link_for_item(top_level, false, true).unwrap();
+            defer l.free();
+            l.as_slice().trim_prefix("/")
+        }));
 
         let filename = filename.as_path();
+        eprintln!("Writing {}", filename);
 
         std::fs::DirBuilder::new().recursive(true).create(filename.parent().unwrap())
             .map_err(Error::from_io)?;
@@ -537,7 +528,7 @@ impl Processor {
         write!(&writer, "const index = [");
         for item in self.items.all().filter(|v: &Item| -> bool {  v.is_public() && v.kind.is_indexed() }) {
             let link_context = LinkContext::new(&self.items, &item.path);
-            let link = link_context.link_for_item(item, false).unwrap();
+            let link = link_context.link_for_item(item, false, false).unwrap();
             let doc = clean_doc_comment(&link_context, item.doc_comment.as_slice());
 
             write!(&writer, "[\"{}\",\"{}\",\"{}\"],",

@@ -1,10 +1,5 @@
 //! Utilities related to FFI bindings.
 
-#[repr(transparent)]
-struct CString {
-    ptr: &libc::c_char,
-}
-
 /// Compile-time null-terminated string.
 ///
 /// # Example usage
@@ -15,18 +10,26 @@ struct CString {
 /// libc::puts(f);
 /// ```
 macro c_str($s) {
+    // This concat is technically redundant since C codegen already emits
+    // those as C strings, but it doesn't hurt to be explicit if this is 
+    // ever changed. Also concat has a nice side-effect of guarding against
+    // strings that are not a compile-time constant.
     concat!($s, "\0").ptr as &libc::c_char
 }
 
+struct CString {
+    ptr: &libc::c_char,
+}
+
 impl CString {
-    fn new(s: &[u8]) -> CString {
-        use std::mem::{slice, alloc, copy_nonoverlapping};
+    fn from_slice(s: &[u8]) -> CString {
+        use std::mem::slice;
 
-        let ptr = libc::malloc(s.len + 1) as &mut libc::c_char;
-        s.copy_nonoverlapping(ptr as &mut u8);
-        *(ptr + s.len) = 0;
+        let ret = slice::alloc::<u8>(s.len + 1);
+        s.copy_to_nonoverlapping(&ret[0]);
+        ret[s.len] = '\0';
 
-        CString { ptr: ptr }
+        CString { ptr: ret.ptr as &libc::c_char }
     }
 
     fn from_raw(ptr: &libc::c_char) -> CString {
@@ -53,5 +56,16 @@ impl CString {
         let ret = *self;
         self.ptr = null;
         ret
+    }
+}
+
+
+#[cfg(all(test_std, test))]
+mod tests {
+    #[test]
+    fn test_cstring() {
+        let s = CString::from_raw(c_str!("Hello, World"));
+
+        assert_eq!(s.as_slice(), "Hello, World");
     }
 }

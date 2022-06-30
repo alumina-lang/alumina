@@ -6,16 +6,16 @@ ifdef RELEASE
 	CARGO_FLAGS = --release
 	CARGO_TARGET_DIR = target/release
 	CFLAGS += -O3
-	ALUMINA_FLAGS += --sysroot $(SYSROOT) --timings 
+	ALUMINA_FLAGS += --sysroot $(SYSROOT) --timings
 else
 	BUILD_DIR = $(BUILD_ROOT)/debug
-	CARGO_FLAGS = 
+	CARGO_FLAGS =
 	CARGO_TARGET_DIR = target/debug
 	CFLAGS += -g3 -fPIE -rdynamic
-	ALUMINA_FLAGS += --sysroot $(SYSROOT) --debug --timings 
+	ALUMINA_FLAGS += --sysroot $(SYSROOT) --debug --timings
 endif
 
-LDFLAGS = -lm 
+LDFLAGS = -lm
 ifndef NO_THREADS
 	ALUMINA_FLAGS += --cfg threading
 	LDFLAGS += -lpthread
@@ -28,12 +28,12 @@ CODEGEN = $(BUILD_DIR)/aluminac-generate
 STDLIB_TESTS = $(BUILD_DIR)/stdlib-tests
 
 # If grammar changes, we need to rebuild the world
-COMMON_SOURCES = common/grammar.js 
+COMMON_SOURCES = common/grammar.js
 BOOTSTRAP_SOURCES = $(shell find src/alumina-boot/ -type f)
 SYSROOT_FILES = $(shell find $(SYSROOT) -type f -name '*.alu')
 ALU_LIBRARIES = $(shell find libraries/ -type f -name '*.alu')
 
-SELFHOSTED_SOURCES = $(shell find src/aluminac/ -type f -name '*.alu') 
+SELFHOSTED_SOURCES = $(shell find src/aluminac/ -type f -name '*.alu')
 CODEGEN_SOURCES = $(shell find tools/tree-sitter-codegen/ -type f -name '*.alu')
 
 ALU_DEPS = $(ALUMINA_BOOT) $(SYSROOT_FILES) $(ALU_LIBRARIES)
@@ -45,7 +45,7 @@ $(BUILD_DIR)/.build:
 
 ## ----------------- Bootstrap compiler (alumina-boot) -----------------
 
-# alumina-boot is entirely built by cargo, it is here in the Makefile just so it can 
+# alumina-boot is entirely built by cargo, it is here in the Makefile just so it can
 # be a dependency and gets rebuilt if sources change.
 $(ALUMINA_BOOT): $(BOOTSTRAP_SOURCES) $(COMMON_SOURCES) $(BUILD_DIR)/.build
 	cargo build $(CARGO_FLAGS)
@@ -71,7 +71,7 @@ $(BUILD_DIR)/parser.o: $(BUILD_DIR)/src/parser.c
 	$(CC) $(CFLAGS) -I $(BUILD_DIR)/src -c $(BUILD_DIR)/src/parser.c -o $@ $(LDFLAGS)
 
 # Codegen util for aluminac
-$(CODEGEN).c: $(ALU_DEPS) $(CODEGEN_SOURCES) 
+$(CODEGEN).c: $(ALU_DEPS) $(CODEGEN_SOURCES)
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --output $@ \
 		$(foreach src,$(ALU_LIBRARIES),$(subst /,::,$(basename $(subst libraries/,,$(src))))=$(src)) \
 		$(foreach src,$(CODEGEN_SOURCES),$(subst /,::,$(basename $(src)))=$(src))
@@ -122,8 +122,9 @@ $(ALUMINA_DOC): $(ALUMINA_DOC).c $(BUILD_DIR)/parser.o
 	$(CC) $(CFLAGS) -o $@ $^ -ltree-sitter $(LDFLAGS)
 
 $(BUILD_ROOT)/docs/index.html: $(ALUMINA_DOC) $(SYSROOT_FILES)
+	rm -rf $(BUILD_ROOT)/docs
 	$(ALUMINA_DOC) \
-		$(foreach src,$(SYSROOT_FILES),$(subst __root__,, $(subst /,::,$(basename $(subst ./sysroot,,$(src)))))=$(src)) 
+		$(foreach src,$(SYSROOT_FILES),$(subst __root__,, $(subst /,::,$(basename $(subst ./sysroot,,$(src)))))=$(src))
 	cp -rf tools/alumina-doc/static $(BUILD_ROOT)/docs/
 
 .PHONY: docs
@@ -146,14 +147,14 @@ aluminac: $(ALUMINAC)
 
 test-std: alumina-boot $(STDLIB_TESTS)
 	$(STDLIB_TESTS) $(TEST_FLAGS)
-	
+
 test-examples: alumina-boot
 	cd tools/snapshot-tests/ && pytest snapshot.py
 
 test-aluminac: $(ALUMINAC_TESTS)
 	$(ALUMINAC_TESTS) $(TEST_FLAGS)
 
-test: test-std test-examples 
+test: test-std test-examples
 
 test-fix: $(ALUMINA_BOOT)
 	cd tools/snapshot-tests/ && pytest snapshot.py --snapshot-update
@@ -163,10 +164,12 @@ all: alumina-boot aluminac
 
 ## ------------------ Ad-hoc manual testing shortcuts ------------------
 
-quickrun: $(ALUMINA_BOOT) $(SYSROOT_FILES) quick.alu
-	RUST_BACKTRACE=1 $(ALUMINA_BOOT) $(ALUMINA_FLAGS) --output quick.c quick=./quick.alu
-	$(CC) $(CFLAGS) -o quickrun -O0 quick.c $(LDFLAGS)
+$(BUILD_DIR)/quick.c: $(ALUMINA_BOOT) $(SYSROOT_FILES) quick.alu
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --output $@ quick=./quick.alu
 
-quicktest: $(ALUMINA_BOOT) $(SYSROOT_FILES) quick.alu
-	RUST_BACKTRACE=1 $(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --output quick.c quick=./quick.alu
-	$(CC) $(CFLAGS) -o quicktest -O0 quick.c $(LDFLAGS)
+$(BUILD_DIR)/quick: $(BUILD_DIR)/quick.c
+	$(CC) $(CFLAGS) -o $@ $^ -ltree-sitter $(LD_FLAGS)
+
+quick: $(BUILD_DIR)/quick
+	ln -sf $^.c $@.c
+	ln -sf $^ $@

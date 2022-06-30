@@ -178,7 +178,7 @@ fn spawn<T, F: Callable<(), T>>(func: F) -> JoinHandle<T> {
     #[cfg(not(threading))]
     compile_fail!("threading is not enabled (use --cfg threading)");
 
-    let handle = std::mem::new::<internal::ThreadHandleFunc<F, T>>();
+    let handle = mem::alloc::<internal::ThreadHandleFunc<F, T>>();
     handle.inner = internal::ThreadHandle::new();
     handle.callback = func;
 
@@ -312,13 +312,13 @@ mod internal {
 
     impl ThreadInfo {
         fn new() -> &mut ThreadInfo {
-            let ret = std::mem::new::<internal::ThreadInfo>();
+            let ret = mem::alloc::<internal::ThreadInfo>();
             ret.parker = parker::Parker::new();
             ret
         }
 
         fn free(self: &mut ThreadInfo) {
-            libc::free(self as &mut void);
+            mem::free(self);
         }
     }
 
@@ -345,8 +345,8 @@ mod internal {
         }
 
         fn free(self: &mut ThreadHandle<T>) {
-            libc::free(self.thread_info as &mut void);
-            libc::free(self as &mut void);
+            mem::free(self.thread_info);
+            mem::free(self);
         }
     }
 

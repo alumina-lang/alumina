@@ -21,7 +21,7 @@ struct Vector<T> {
 }
 
 impl Vector<T> {
-    use std::mem::{slice, alloc, realloc, copy, copy_nonoverlapping};
+    use std::mem::slice;
     use std::iter::{Iterator, Iterable};
 
     /// Create an empty vector
@@ -33,7 +33,7 @@ impl Vector<T> {
 
     /// Create a vector from a raw slice and a length.
     ///
-    /// The slice must be allocated with [mem::alloc] and its length must be greater
+    /// The slice must be allocated with [mem::slice::alloc] and its length must be greater
     /// than or equal to `length`.
     fn from_raw(data: &mut [T], length: usize) {
         Vector {
@@ -45,7 +45,7 @@ impl Vector<T> {
     /// Create a vector that can hold up to `capacity` elements without reallocating.
     fn with_capacity(capacity: usize) -> Vector<T> {
         Vector {
-            _data: alloc::<T>(capacity),
+            _data: slice::alloc::<T>(capacity),
             _length: 0,
         }
     }
@@ -53,7 +53,7 @@ impl Vector<T> {
     /// Create a vector from a slice, copying the elements.
     fn from_slice(slice: &[T]) -> Vector<T> {
         let vec = with_capacity::<T>(slice.len);
-        slice.copy_nonoverlapping(vec._data.ptr);
+        slice.copy_to_nonoverlapping(vec._data.ptr);
         vec._length = slice.len;
         vec
     }
@@ -82,7 +82,7 @@ impl Vector<T> {
 
         self.reserve(value.len);
 
-        value.copy(&self._data[self._length]);
+        value.copy_to(&self._data[self._length]);
         self._length += value.len;
     }
 
@@ -105,7 +105,7 @@ impl Vector<T> {
         self.reserve(1);
 
         if index < self._length {
-            self._data[index..self._length].copy(&self._data[index + 1]);
+            self._data[index..self._length].copy_to(&self._data[index + 1]);
         }
         self._data[index] = value;
 
@@ -154,7 +154,7 @@ impl Vector<T> {
     /// Remove an element at the given index, shifting all elements after it.
     fn remove(self: &mut Vector<T>, index: usize) -> T {
         let value = self._data[index];
-        self._data[index + 1..self._length].copy(&self._data[index]);
+        self._data[index + 1..self._length].copy_to(&self._data[index]);
         self._length -= 1;
         value
     }
@@ -224,7 +224,6 @@ impl Vector<T> {
 
     /// @ std::mem::Freeable::free
     fn free(self: &mut Vector<T>) {
-        use std::mem::free;
         self._data.free();
     }
 

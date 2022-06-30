@@ -188,8 +188,6 @@ struct SliceReader {
 }
 
 impl SliceReader {
-    use std::mem::copy_nonoverlapping;
-
     fn new(slice: &[u8]) -> SliceReader {
         SliceReader {
             slice: slice,
@@ -202,7 +200,7 @@ impl SliceReader {
         let len = cmp::min(buf.len, self.slice.len - self.pos);
 
         if len > 0 {
-            self.slice[self.pos..self.pos + len].copy_nonoverlapping(&buf[0]);
+            self.slice[self.pos..self.pos + len].copy_to_nonoverlapping(&buf[0]);
             self.pos += len;
         }
 
@@ -296,12 +294,12 @@ struct BufferedReader<R: Readable<R>> {
 }
 
 impl BufferedReader<R: Readable<R>> {
-    use std::mem::copy_nonoverlapping;
+    use std::mem::slice;
     use internal::default_read_exact;
 
     /// Create a BufferedReader with a heap-allocated buffer of the given size.
     fn new(inner: &mut R, buf_size: usize) -> BufferedReader<R> {
-        from_slice(inner, mem::alloc::<u8>(buf_size))
+        from_slice(inner, slice::alloc::<u8>(buf_size))
     }
 
     /// Creates a BufferedReader from an existing-buffer, potentially
@@ -358,7 +356,6 @@ impl BufferedReader<R: Readable<R>> {
 
     /// @ std::mem::Freeable::free
     fn free(self: &mut BufferedReader<R>) {
-        use std::mem::free;
         self.buf.free();
     }
 
@@ -400,11 +397,11 @@ struct BufferedWriter<W: Writable<W>> {
 }
 
 impl BufferedWriter<W: Writable<W>> {
-    use mem::copy_nonoverlapping;
+    use mem::slice;
 
     /// Create a BufferedWriter with a heap-allocated buffer of the given size.
     fn new(inner: &mut W, buf_size: usize) -> BufferedWriter<W> {
-        from_slice(inner, mem::alloc::<u8>(buf_size))
+        from_slice(inner, slice::alloc::<u8>(buf_size))
     }
 
     /// Creates a BufferedWriter from an existing-buffer, potentially
@@ -466,7 +463,7 @@ impl BufferedWriter<W: Writable<W>> {
         if buf.len > 0 {
             // This guard is technically redundant, but to avoid the debug assertion
             // when indexing past the end of the buffer with 0-length writes.
-            buf.copy_nonoverlapping(&self.buf[self.pos]);
+            buf.copy_to_nonoverlapping(&self.buf[self.pos]);
             self.pos += buf.len;
         }
     }
@@ -499,14 +496,13 @@ impl BufferedWriter<W: Writable<W>> {
 
     /// @ std::mem::Freeable::free
     fn free(self: &mut BufferedWriter<W>) {
-        use std::mem::free;
-        free(self.buf);
+        self.buf.free()
     }
 
     /// @ std::mem::Movable::move
     fn move(self: &mut BufferedWriter<W>) -> BufferedWriter<W> {
         let ret = *self;
-        self.buf = mem::slice::empty();
+        self.buf = slice::empty();
         ret
     }
 }
@@ -531,8 +527,8 @@ const DEFAULT_BUFFER_SIZE: usize = 8192;
 ///
 /// Internally allocates a buffer with the size of [DEFAULT_BUFFER_SIZE].
 fn copy<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D) -> result::Result<u64, Error> {
-    let buf = mem::alloc::<u8>(DEFAULT_BUFFER_SIZE);
-    defer mem::free(buf);
+    let buf = mem::slice::alloc::<u8>(DEFAULT_BUFFER_SIZE);
+    defer buf.free();
 
     copy_using(src, dst, buf)
 }

@@ -152,11 +152,10 @@ impl SliceFormatter {
     /// @ Formatter::write_str
     #[inline]
     fn write_str(self: &mut SliceFormatter, buf: &[u8]) -> Result {
-        use mem::copy;
         if self.buf_pos + buf.len > self.buf.len {
             return Result::err(Error::new());
         }
-        buf.copy(&self.buf[self.buf_pos]);
+        buf.copy_to(&self.buf[self.buf_pos]);
         self.buf_pos += buf.len;
 
         Result::ok(())
