@@ -293,6 +293,7 @@ pub struct Monomorphizer<'a, 'ast, 'ir> {
     return_type: Option<ir::TyP<'ir>>,
     loop_contexts: Vec<LoopContext<'ir>>,
     local_types: HashMap<ir::IrId, ir::TyP<'ir>>,
+    local_type_hints: HashMap<ir::IrId, ir::TyP<'ir>>,
     local_defs: Vec<ir::LocalDef<'ir>>,
     defer_context: Option<DeferContext<'ir>>,
 
@@ -333,6 +334,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             types: TypeBuilder::new(ir),
             return_type: None,
             loop_contexts: Vec::new(),
+            local_type_hints: HashMap::new(),
             local_defs: Vec::new(),
             defer_context: None,
             tentative,
@@ -356,6 +358,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             return_type: None,
             loop_contexts: Vec::new(),
             local_defs: Vec::new(),
+            local_type_hints: HashMap::new(),
             defer_context: None,
             tentative,
             current_item: parent_item,
@@ -1852,6 +1855,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             return_type: self.return_type,
             loop_contexts: self.loop_contexts.clone(),
             local_defs: self.local_defs.clone(),
+            local_type_hints: self.local_type_hints.clone(),
             defer_context: self.defer_context.clone(),
             current_item: self.current_item,
             tentative: true,
@@ -2328,7 +2332,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let type_hint = decl.typ.map(|t| self.lower_type(t)).transpose()?;
                 let init = decl
                     .value
-                    .map(|v| self.lower_expr(v, type_hint))
+                    .map(|v| {
+                        self.lower_expr(v, type_hint.or(self.local_type_hints.get(&id).copied()))
+                    })
                     .transpose()?;
 
                 match (type_hint, init) {
@@ -2376,6 +2382,31 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     }
 
     fn lower_block(
+        &mut self,
+        statements: &'ast [ast::Statement<'ast>],
+        ret: ast::ExprP<'ast>,
+        type_hint: Option<ir::TyP<'ir>>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let mut local_id: Option<ir::IrId> = None;
+        if let ast::ExprKind::Local(id) = ret.kind {
+            // This is a hack so the following works:
+            // let a: Ty = { let b = a; ...; b };
+            let id = self.mono_ctx.map_id(id);
+            if let Some(ty) = type_hint {
+                local_id = Some(id);
+                self.local_type_hints.insert(id, ty);
+            }
+        }
+
+        let ret = self.lower_block_inner(statements, ret, type_hint);
+        if let Some(id) = local_id {
+            self.local_type_hints.remove(&id);
+        }
+
+        ret
+    }
+
+    fn lower_block_inner(
         &mut self,
         statements: &'ast [ast::Statement<'ast>],
         ret: ast::ExprP<'ast>,

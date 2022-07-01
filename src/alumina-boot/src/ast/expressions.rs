@@ -1269,6 +1269,31 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
         self.visit_macro_invocation_impl(path, arguments, span)
     }
+
+    fn visit_universal_macro_invocation(
+        &mut self,
+        node: tree_sitter::Node<'src>,
+    ) -> Self::ReturnType {
+        let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone(), self.in_a_macro);
+        let path = visitor.visit(node.child_by_field_name("macro").unwrap())?;
+
+        let span = Span {
+            start: node.start_byte(),
+            end: node.end_byte(),
+            file: self.scope.code().unwrap().file_id(),
+        };
+
+        let mut arguments = Vec::new();
+        arguments.push(self.visit(node.child_by_field_name("value").unwrap())?);
+
+        let arguments_node = node.child_by_field_name("arguments").unwrap();
+        let mut cursor = arguments_node.walk();
+
+        for node in arguments_node.children_by_field_name("inner", &mut cursor) {
+            arguments.push(self.visit(node)?);
+        }
+        self.visit_macro_invocation_impl(path, arguments, span)
+    }
 }
 
 pub fn parse_string_literal(lit: &str) -> Result<Vec<u8>, CodeErrorKind> {

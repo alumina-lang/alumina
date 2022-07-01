@@ -127,9 +127,11 @@ $(BUILD_ROOT)/docs/index.html: $(ALUMINA_DOC) $(SYSROOT_FILES)
 		$(foreach src,$(SYSROOT_FILES),$(subst __root__,, $(subst /,::,$(basename $(subst ./sysroot,,$(src)))))=$(src))
 	cp -rf tools/alumina-doc/static $(BUILD_ROOT)/docs/
 
-.PHONY: docs
+.PHONY: docs serve-docs
 docs: $(BUILD_ROOT)/docs/index.html
 
+serve-docs: docs
+	cd $(BUILD_ROOT)/docs && python3 -m http.server
 ## ------------------------------ Various ------------------------------
 
 .PHONY: clean all

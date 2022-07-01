@@ -3,73 +3,119 @@ use std::option::{Option, try};
 use std::iter::{Iterator, Iterable};
 use std::cmp::Equatable;
 
-
+/// A hash-based set collection.
+///
+/// `HashSet<T>` is a wrapper around `HashMap<T, ()>`.
+///
+/// # Example
+/// ```
+/// use std::collections::HashSet;
+///
+/// let map = HashMap::new::<i32, i32>();
+/// defer map.free();
+///
+/// map.insert(1, 2);
+/// map.insert(2, 4);
+/// map.insert(3, 5);
+///
+/// assert!(map.get(1) == Option::some(2));
+/// assert!(map.get(2) == Option::some(4));
+/// assert!(map.get(3) == Option::some(5));
+/// assert!(map.get(4) == Option::none());
+/// ```
 struct HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
     _inner: hashmap::HashMap<K, (), H>
 }
 
 impl HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
+    /// Creates an empty set
+    ///
+    /// Will not allocate until the first element is inserted.
     fn new() -> HashSet<K, H> {
         with_capacity(0)
     }
 
+    /// Creates an empty set that can store up to `capacity` items without
+    /// reallocating.
     fn with_capacity(capacity: usize) -> HashSet<K, H> {
         HashSet::<K, H> {
             _inner: hashmap::HashMap::with_capacity::<K, (), H>(capacity)
         }
     }
 
+    /// Creates a set with a specific number of buckets.
+    ///
+    /// As [HashSet] uses amortized growth strategy, prefer to use [with_capacity] unless
+    /// you want to strictly control the size of the underlying array.
     fn with_size(size: usize) -> HashSet<K, H> {
         HashSet::<K, H> {
             _inner: hashmap::HashMap::with_size::<K, (), H>(size)
         }
     }
 
+    /// Reserves space for at least `additional` more elements to be inserted without
+    /// reallocating.
+    ///
+    /// This follows the amortized growth strategy.
     #[inline]
     fn reserve(self: &mut HashSet<K, H>, additional: usize) {
         self._inner.reserve(additional);
     }
 
+    /// Resizes the underlying array to exactly the given `new_capacity`.
+    ///
+    /// Note that this could lead to poor performance if the resulting load factor
+    /// is close to 1.
     #[inline]
     fn rehash(self: &mut HashSet<K, H>, new_capacity: usize) {
         self._inner.rehash(new_capacity);
     }
 
+    /// Reduces the size of underlying storage to fit the contained elements if needed.
     #[inline]
     fn shrink_to_fit(self: &mut HashSet<K, H>) {
         self._inner.shrink_to_fit()
     }
 
+    /// Inserts a value into the set.
     #[inline]
     fn insert(self: &mut HashSet<K, H>, item: K) -> bool {
         !self._inner.insert(item, ()).is_some
     }
 
+    /// Removes a value from the set.
+    ///
+    /// Returns `true` if the value was present in the set, `false` otherwise.
     #[inline]
     fn remove(self: &mut HashSet<K, H>, item: K) -> bool {
         self._inner.remove(item).is_some
     }
 
+    /// Retreives `true` if the set contains the given value, `false` otherwise.
     #[inline]
     fn contains(self: &HashSet<K, H>, item: K) -> bool {
         self._inner.get(item).is_some
     }
 
+    /// Retreives the number of elements in the set.
     #[inline]
     fn len(self: &HashSet<K, H>) -> usize {
         self._inner.len()
     }
 
+    /// Returns `true` if the set is empty, `false` otherwise.
     #[inline]
-    fn empty(self: &HashSet<K, H>) -> bool {
-        self._inner.empty()
+    fn is_empty(self: &HashSet<K, H>) -> bool {
+        self._inner.is_empty()
     }
 
+    /// Clears the set, removing all values.
     #[inline]
     fn clear(self: &mut HashSet<K, H>) {
         self._inner.clear();
     }
 
+    /// @ iter::Iterable::iter
     #[inline]
     fn iter(self: &HashSet<K, H>) -> HashSetIterator<K> {
         HashSetIterator::<K> {
@@ -77,6 +123,7 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
         }
     }
 
+    /// @ iter::IterableRef::iter_ref
     #[inline]
     fn iter_ref(self: &HashSet<K, H>) -> HashSetRefIterator<K> {
         HashSetRefIterator::<K> {
@@ -84,17 +131,20 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
         }
     }
 
+    /// @ mem::Freeable::free
     #[inline]
     fn free(self: &mut HashSet<K, H>) {
         self._inner.free();
     }
 
+    /// @ mem::Movable::move
     fn move(self: &mut HashSet<K, H>) -> HashSet<K, H> {
         HashSet::<K, H> {
             _inner: self._inner.move()
         }
     }
 
+    /// @ mem::Clonable::clone
     fn clone(self: &HashSet<K, H>) -> HashSet<K, H> {
         HashSet::<K, H> {
             _inner: self._inner.clone()
@@ -170,7 +220,7 @@ mod tests {
         let set = HashSet::new::<i32>();
         defer set.free();
 
-        assert!(set.empty());
+        assert!(set.is_empty());
         assert_eq!(set.len(), 0);
     }
 
@@ -179,7 +229,7 @@ mod tests {
         let set = HashSet::with_capacity::<i32>(10);
         defer set.free();
 
-        assert!(set.empty());
+        assert!(set.is_empty());
         assert_eq!(set.len(), 0);
     }
 
@@ -201,7 +251,7 @@ mod tests {
         assert!(set.insert(1));
         assert!(set.remove(1));
         assert!(!set.remove(1));
-        assert!(set.empty());
+        assert!(set.is_empty());
     }
 
     #[test]
@@ -230,11 +280,11 @@ mod tests {
         let set = HashSet::new::<i32>();
         defer set.free();
 
-        assert!(set.empty());
+        assert!(set.is_empty());
         assert!(set.insert(1));
-        assert!(!set.empty());
+        assert!(!set.is_empty());
         assert!(set.remove(1));
-        assert!(set.empty());
+        assert!(set.is_empty());
     }
 
     #[test]
@@ -247,7 +297,7 @@ mod tests {
         assert!(set.insert(3));
         assert_eq!(set.len(), 3);
         set.clear();
-        assert!(set.empty());
+        assert!(set.is_empty());
     }
 
     #[test]
@@ -308,7 +358,7 @@ mod tests {
         assert!(set2.contains(1));
         assert!(set2.contains(2));
         assert!(set2.contains(3));
-        assert!(set.empty());
+        assert!(set.is_empty());
     }
 
     #[test]

@@ -14,6 +14,7 @@ protocol Freeable<Self> {
     fn free(self: &mut Self);
 }
 
+
 /// Types that implement move semantics
 ///
 /// If a type allocates memory, it is a good idea to implement move function, so that instances
@@ -34,9 +35,9 @@ protocol Movable<Self> {
     fn move(self: &mut Self) -> Self;
 }
 
-/// Types that be copied (usually heap-allocated types)
-protocol Copyable<Self> {
-    ///
+/// Types that be copied non-trivially (usually types containing a heap allocation).
+protocol Clonable<Self> {
+    /// Returns a copy of the object.
     fn clone(self: &Self) -> Self;
 }
 
@@ -105,14 +106,13 @@ impl slice {
 
     /// Resizes a heap-allocated array.
     fn realloc<T>(slice: &mut [T], len: usize) -> &mut [T] {
-        let ret: &mut [T];
-        ret.ptr = when T: builtins::ZeroSized {
+        slice.ptr = when T: builtins::ZeroSized {
             null as &mut T
         } else {
             libc::realloc(slice.ptr as &mut void, size_of::<T>() * len) as &mut T
         };
-        ret.len = len;
-        ret
+        slice.len = len;
+        slice
     }
 
     /// Allocates an array of specified size on the heap.

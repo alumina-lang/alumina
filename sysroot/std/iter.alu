@@ -66,15 +66,24 @@ protocol DoubleEndedIteratorExt<Self: DoubleEndedIterator<Self, T>, T> {
     }
 }
 
+/// Types that can be iterated.
+///
+/// Types that implement `Iterable` can produce an iterator when called with
+/// the `iter` method.
 protocol Iterable<Self, It: Iterator<It, T>, T> {
+    /// Returns an iterator over the elements of this iterable.
     fn iter(self: &Self) -> It;
 }
 
+/// Types that can produce an iterator over pointers to their elements.
 protocol IterableRef<Self, It: Iterator<It, &T>, T> {
+    /// Returns an iterator over the pointers of the items of the collection.
     fn iter_ref(self: &Self) -> It;
 }
 
+/// Types that can produce an iterator over mutable pointers to their elements.
 protocol IterableMut<Self, It: Iterator<It, &mut T>, T> {
+    /// Returns an iterator over mutable pointers to the elements of the collection.
     fn iter_mut(self: &mut Self) -> It;
 }
 
@@ -625,6 +634,11 @@ impl PeekableIterator<It: Iterator<It, T>, T> {
     mixin IteratorExt<PeekableIterator<It, T>, T>;
 }
 
+/// Extension protocol for iterators.
+///
+/// Contains various useful combinators and functions to work with iterators.
+///
+/// All structs that implement [Iterator] should also mix in this protocol.
 protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// Return self.
     ///
@@ -787,6 +801,27 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
         }
     }
 
+    /// Inspects each element of the iterator.
+    ///
+    /// Presented chain of iterator combinators, [inspect] can be used to execute
+    /// a callback on every element of an iterator. This is useful for debugging.
+    ///
+    /// The elements are passed through unmodified.
+    /// # Example
+    /// ```
+    /// let last = (0..3)
+    ///     .iter()
+    ///     .inspect(|x: i32| println!("I see {}", i))
+    ///     .last();
+    ///
+    /// println!("Last: {}", last);
+    ///
+    /// // Prints:
+    /// // I see 0
+    /// // I see 1
+    /// // I see 2
+    /// // Last: 2
+    /// ```
     fn inspect<F: Callable<(T), ()>>(it: &mut Self, func: F) -> InspectIterator<Self, F, T> {
         InspectIterator {
             it: it,
@@ -868,10 +903,28 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
         FilterIterator { it: iter, fun: fun }
     }
 
+    /// Transforms and filters the iterator at the same time.
+    ///
+    /// Function `f` is called on each element of this iterator. If it returns `Option::some(...)`,
+    /// that element is yielded. If it returns `Option::none()`, the element is skipped.
     fn filter_map<U, F: Callable<(T), Option<U>>>(iter: &mut Self, fun: F) -> FilterMapIterator<Self, F, T, U> {
         FilterMapIterator { it: iter, fun: fun }
     }
 
+    /// Reduces the iterator into a single value.
+    ///
+    /// Equivalent to:
+    /// ```
+    /// let value = initial;
+    /// for element in iter {
+    ///     value = func(value, element);
+    /// }
+    /// ```
+    /// # Example
+    /// ```
+    /// let sum = (0..5).iter().reduce(0, |acc: i32, x: i32| acc + x);
+    /// println!("{}", sum); // Prints: 15
+    /// ```
     fn reduce<U, F: Callable<(U, T), U>>(iter: &mut Self, initial: U, func: F) -> U {
         loop {
             let next = iter.next();
@@ -883,6 +936,30 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
         initial
     }
 
+    /// Sums all the values in the iterator.
+    ///
+    /// `T` must satisfy [builtins::Numeric] protocol.
+    fn sum(iter: &mut Self) -> T {
+        iter.reduce(0 as T, internal::iter_plus::<T>)
+    }
+
+    /// Returns the minimum value of the iterator.
+    ///
+    /// `T` must satisfy [cmp::Comparable] protocol.
+    fn min(iter: &mut Self) -> Option<T> {
+        iter.reduce(Option::none::<T>(), internal::iter_min::<T>)
+    }
+
+    /// Returns the maximum value of the iterator.
+    ///
+    /// `T` must satisfy [cmp::Comparable] protocol.
+    fn max(iter: &mut Self) -> Option<T> {
+        iter.reduce(Option::none::<T>(), internal::iter_max::<T>)
+    }
+
+    /// Returns `true` if all elements of the iterator match a predicate, `false` otherwise.
+    ///
+    /// If iterator produces no values, `true` is returned.
     fn all<F: Callable<(T), bool>>(iter: &mut Self, fun: F) -> bool {
         loop {
             let next = iter.next();
@@ -896,6 +973,9 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
         true
     }
 
+    /// Returns `true` if any element of the iterator matches a predicate, `false` otherwise.
+    ///
+    /// If iterator produces no values, `false` is returned.
     fn any<F: Callable<(T), bool>>(iter: &mut Self, fun: F) -> bool {
         loop {
             let next = iter.next();
@@ -909,10 +989,18 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
         false
     }
 
+    /// Collects the values of the iterator into a vector.
     fn to_vector(self: &mut Self) -> collections::Vector<T> {
         collections::Vector::from_iter::<T, Self>(self)
     }
 
+    /// Fills the slice with the values of the iterator.
+    ///
+    /// If the number of elements in the iterator is greater than the length of the
+    /// slice, the remaining values in the iterator are not consumed.
+    ///
+    /// If the number of elements in the iterator is less than the length of the
+    /// slice, the remainder of the slice is untouched.
     fn fill_slice(self: &mut Self, slice: &mut [T]) -> usize {
         let index = 0usize;
         loop {
@@ -930,6 +1018,11 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
         index
     }
 
+    /// Returns a "peekable" iterator.
+    ///
+    /// Peekable iterators have an additional method, [PeekableIterator::peek], which is similar to
+    /// [Iterator::next], but it does not consume the value, so a subsequent call to
+    /// [Iterator::next] will return the same value.
     fn peekable(self: &mut Self) -> PeekableIterator<Self, T> {
         PeekableIterator {
             it: self,
@@ -938,6 +1031,10 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     }
 
 
+    /// Returns an iterator of groups grouped by a key.
+    ///
+    /// Requires that the items of the iterator that have the same key are contiguous (e.g.
+    /// the values are sorted by key).
     fn group_by<F: Callable<(T), K>, K: cmp::Equatable<K>>(self: &mut Self, func: F) -> GroupByIterator<Self, F, T, K> {
         GroupByIterator {
             it: self.peekable(),
@@ -966,6 +1063,9 @@ impl EmptyIterator<T> {
     mixin IteratorExt<EmptyIterator<T>, T>;
 }
 
+/// A function wrapped in an iterator.
+///
+/// See [from_fn] for details.
 struct FromFnIterator<F: Callable<(), Option<T>>, T> {
     func: F,
 }
@@ -992,11 +1092,31 @@ fn empty<T>() -> EmptyIterator<T> {
     EmptyIterator::<T> {}
 }
 
-/// Returns an iterator that produces no elements.
+/// Wraps a function in an iterator.
+///
+/// # Example
+/// ```
+/// use std::iter::from_fn;
+/// use std::random::{next_float, thread_rng};
+///
+/// let sqrt2 = from_fn(|| -> Option<f64> {
+///     Option::some(thread_rng().next_float())
+/// })
+///     .map(|v: f64| -> f64 { v * 10.0 })
+///     .filter(|v: f64| -> bool { v * v <= 2.0 })
+///     .take(100000)
+///     .max()
+///     .unwrap();
+///
+/// println!("{}", sqrt2); // Prints approximately 1.4142135623730951
+/// ```
 fn from_fn<F: Callable<(), Option<T>>, T>(func: F) -> FromFnIterator<F, T> {
     FromFnIterator::<F, T> { func: func }
 }
 
+/// Iterator that repeats a value infinitely.
+///
+/// See [repeat] for more details.
 struct RepeatIterator<T> {
     value: T
 }
@@ -1034,6 +1154,9 @@ fn repeat<T>(value: T) -> RepeatIterator<T> {
     RepeatIterator { value: value }
 }
 
+/// Iterator that yields a single value
+///
+/// See [once] for more details.
 struct OnceIterator<T> {
     value: Option<T>
 }
@@ -1074,21 +1197,25 @@ fn once<T>(value: T) -> OnceIterator<T> {
 }
 
 
+/// An unbounded range (`..`)
 #[lang(range_full)]
 struct RangeFull<T: Integer> {
 
 }
 
+/// A range with a lower bound (`a..`)
 #[lang(range_from)]
 struct RangeFrom<T: Integer> {
     lower: T,
 }
 
+/// A range with an upper bound (`..a`)
 #[lang(range_to)]
 struct RangeTo<T: Integer> {
     upper: T,
 }
 
+/// A range with both lower and upper bounds (`a..b`)
 #[lang(range)]
 struct Range<T: Integer> {
     lower: T,
@@ -1183,6 +1310,14 @@ impl RangeFull<T: Integer> {
     }
 }
 
+/// Iterator over a numeric range.
+///
+/// This is the underlying iterator for a basic for loop
+/// ```
+/// for i in 1..100 {
+///      // ...
+/// }
+/// ```
 struct RangeIter<T: Integer> {
     current: T,
     upper: T,
@@ -1223,6 +1358,34 @@ impl RangeIter<T: Integer> {
     mixin IteratorExt<RangeIter<T>, T>;
     mixin DoubleEndedIterator<RangeIter<T>, T>;
     mixin DoubleEndedIteratorExt<RangeIter<T>, T>;
+}
+
+mod internal {
+    use builtins::Numeric;
+    use cmp::Comparable;
+
+    // See IteratorExt::sum
+    fn iter_plus<T: builtins::Numeric>(a: T, b: T) -> T {
+        a + b
+    }
+
+    // See IteratorExt::min
+    fn iter_min<T: Comparable<T>>(a: Option<T>, b: T) -> Option<T> {
+        if !a.is_some || a.inner > b {
+            Option::some(b)
+        } else {
+            a
+        }
+    }
+
+    // See IteratorExt::max
+    fn iter_max<T: Comparable<T>>(a: Option<T>, b: T) -> Option<T> {
+        if !a.is_some || a.inner < b {
+            Option::some(b)
+        } else {
+            a
+        }
+    }
 }
 
 
@@ -1650,5 +1813,23 @@ mod tests {
         assert_eq!(iter.next(), Option::none());
         assert_eq!(iter.next(), Option::none());
         assert_eq!(iter.next(), Option::none());
+    }
+
+    #[test]
+    fn test_sum() {
+        assert_eq!(empty::<i32>().sum(), 0);
+        assert_eq!((0..5).iter().sum(), 10);
+    }
+
+    #[test]
+    fn test_min() {
+        assert_eq!(empty::<i32>().min(), Option::none());
+        assert_eq!((0..5).iter().min(), Option::some(0));
+    }
+
+    #[test]
+    fn test_max() {
+        assert_eq!(empty::<i32>().max(), Option::none());
+        assert_eq!((0..5).iter().max(), Option::some(4));
     }
 }
