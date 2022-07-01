@@ -37,6 +37,7 @@ enum NodeKind {
     SliceOf,
     TopLevelAttributes,
     FloatLiteral,
+    UniversalMacroInvocation,
     ArrayOf,
     ScopedUseList,
     ArrayExpression,
@@ -162,7 +163,7 @@ enum FieldKind {
     Upper = 49u16,
 }
 
-static NODE_KINDS: [NodeKind; 242] = [
+static NODE_KINDS: [NodeKind; 243] = [
     NodeKind::Invalid,
     NodeKind::Identifier,
     NodeKind::DocComment,
@@ -340,6 +341,7 @@ static NODE_KINDS: [NodeKind; 242] = [
     NodeKind::TryExpression,
     NodeKind::BinaryExpression,
     NodeKind::FieldExpression,
+    NodeKind::UniversalMacroInvocation,
     NodeKind::AssignmentExpression,
     NodeKind::IndexExpression,
     NodeKind::RangeExpression,
@@ -499,6 +501,9 @@ protocol NodeVisitor<Self, ReturnType> {
     }
     fn visit_float_literal(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_float_literal");
+    }
+    fn visit_universal_macro_invocation(self: &mut Self, node: Node) -> ReturnType {
+        panic!("unimplemented: visit_universal_macro_invocation");
     }
     fn visit_array_of(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_array_of");
@@ -749,6 +754,7 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::SliceOf => self.visit_slice_of(node),
             NodeKind::TopLevelAttributes => self.visit_top_level_attributes(node),
             NodeKind::FloatLiteral => self.visit_float_literal(node),
+            NodeKind::UniversalMacroInvocation => self.visit_universal_macro_invocation(node),
             NodeKind::ArrayOf => self.visit_array_of(node),
             NodeKind::ScopedUseList => self.visit_scoped_use_list(node),
             NodeKind::ArrayExpression => self.visit_array_expression(node),

@@ -3,7 +3,7 @@
 ## General
 
 - Whole const_eval thing. It's very ad-hoc and messy. Full const-eval is not a priority, but it needs to be good enough
-  so `consts` and enum members can have values that people usually put there + in as much as compiler intrinsics need them. 
+  so `consts` and enum members can have values that people usually put there + in as much as compiler intrinsics need them.
 - Force inlining in IR (especially for slice coercions - function call is an overkill)
     - It's not a priority, since C compiler can inline perfectly fine, except in special cases like `alloca` where the allocated buffer cannot leave the stack frame. To have a good wrapper around `alloca`, it needs to be force-inlined except if done in a macro (but macros don't really have a good type parameter system, params can only be expressions).
 - stack overflow in codegen stage because infinite size recursive structs are not rejected during monomorphization
@@ -16,13 +16,14 @@
 - unqualified types gaps:
   - unqualified string in if/else does not coerce to a slice
   - probably other places too, since it's very ad-hoc
-- "any/don't care" in protocol bounds. Especially for things like `Hashable` and `Formattable`, it would be great if users didn't need to introduce a new generic parameter for the hasher and formatter (since that complicates type inference). 
+- "any/don't care" in protocol bounds. Especially for things like `Hashable` and `Formattable`, it would be great if users didn't need to introduce a new generic parameter for the hasher and formatter (since that complicates type inference).
   - Alternatively, allow pre-monomorphized types to be used as protocol bounds
   - This could be solved by `infer`. It needs to do the same thing as `check_protocol_bounds` - go through all the AST methods of the protocol in the bound and IR method of the type in the slot and
   match the slots on all of them. It's quite a lot of work and also `infer` will probably need to start looping until no more changes are made (e.g. in nested protocol bounds), but it would be quite awesome. By doing that, protocols would actually start *helping* type inference instead of making it harder.
 - How does Equatable and Comparable work for pointers? Autoref makes this quite complicated... Maybe it's better to simply not have that.
 - Some limited pattern matching in macros (optional arguments)
 - Ability to define types in function scope (especially for ENums, very useful for state machines). Simple in theory, but the same caveats apply as with lambdas: these can bind generic placeholders, so they need to be monomorphized carefully.
+- Lambdas in macros are broken.
 
 ## Grammar, parsing, AST
 
@@ -99,7 +100,7 @@
 ## Exploratory
 
 - specialization/SFINAE/overloading?
-  - I am leaning pretty strongly towards not having either of these. With protocols the language 
+  - I am leaning pretty strongly towards not having either of these. With protocols the language
     is expressive enough to do string formatting, iterators and collections, which are a good litmus test if generics are any good.
 - tagged unions
   - I miss them quite a lot from Rust. They are not hard, but need a good syntax for `match`

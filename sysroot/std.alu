@@ -139,9 +139,28 @@ mod internal {
 /// Contains various utility functions that are useful in the generic context where the type operated on is
 /// not easily expressible.
 mod util {
+    /// Identity function
     #[force_inline] fn identity<T>(t: T) -> T { t }
+
+    /// Take any parameter and discard the result
     #[force_inline] fn discard<T>(_: T) { }
+
+    /// Cast a value to a different type.
     #[force_inline] fn cast<T1, T2>(t: T1) -> T2 { t as T2 }
+
+    /// Reinterpret the bits of the value as another type.
     #[force_inline] fn transmute<T1, T2>(t: T1) -> T2 { *(&t as &T2) }
+
+    /// Dereference a pointer.
     #[force_inline] fn deref<T>(v: &T) -> T { *v }
+
+    /// Produce the only value of a unit type out of thin air.
+    #[force_inline]
+    fn unit<T: builtins::ZeroSized>() -> T {
+        when T: ! {
+            compile_fail!("cannot produce never type out of thin air");
+        }
+        let ret: T;
+        ret
+    }
 }

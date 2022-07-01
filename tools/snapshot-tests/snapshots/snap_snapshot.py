@@ -145,7 +145,7 @@ snapshots['test_examples[macros.alu] run_ret'] = 0
 
 snapshots['test_examples[macros.alu] run_stderr'] = b''
 
-snapshots['test_examples[macros.alu] run_stdout'] = b'hello user, you are 42 years old, you have 3 dogs and 6 cats\n'
+snapshots['test_examples[macros.alu] run_stdout'] = b'hello user, you are 42 years old, you have 3 dogs and 6 cats\n1 + 2 = 3\n'
 
 snapshots['test_examples[primes.alu] compile_ret'] = 0
 

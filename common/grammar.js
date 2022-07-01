@@ -524,6 +524,7 @@ module.exports = grammar({
         $.compound_assignment_expr,
         $.type_cast_expression,
         $.call_expression,
+        $.universal_macro_invocation,
         $.field_expression,
         $.index_expression,
         $.tuple_expression,
@@ -598,6 +599,18 @@ module.exports = grammar({
           field("value", $._expression),
           ".",
           field("field", choice($.identifier, $.integer_literal))
+        )
+      ),
+
+    universal_macro_invocation: ($) =>
+      prec(
+        PREC.field,
+        seq(
+          field("value", $._expression),
+          ".",
+          field("macro", choice($.scoped_identifier, $.identifier)),
+          "!",
+          field("arguments", $.arguments)
         )
       ),
 
