@@ -20,7 +20,7 @@ impl ArenaNode {
     }
 
     fn free(self: &mut ArenaNode) {
-        std::libc::free(self as &mut void);
+        std::mem::free(self);
     }
 }
 
@@ -100,7 +100,7 @@ impl Arena {
         let node = self.root;
         while node != null {
             let next = node.next;
-            std::libc::free(node as &mut void);
+            std::mem::free(node);
             node = next;
         }
     }

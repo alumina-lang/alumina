@@ -211,7 +211,8 @@ impl HtmlEscaped {
     }
 }
 
-/// A mini-markdown subset parser
+
+/// A hacky mini-markdown subset parser
 fn write_docstring<T: std::io::Writable<T>>(
     writer: &mut T,
     doc_comment: &[u8],
@@ -263,6 +264,7 @@ fn write_docstring<T: std::io::Writable<T>>(
         } else if !in_a_code_block {
             docline = docline.trim_start();
             if docline.len == 0 {
+                md_state.reset()?;
                 if tagline_only {
                     return Result::ok(());
                 } else {

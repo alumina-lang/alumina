@@ -528,42 +528,61 @@ impl LinkContext {
         }
     }
 
-    fn link_for_item(self: &LinkContext, item: &Item, defined_in: bool) -> Option<StringBuf> {
-        use std::fmt::format;
-        use std::string::join_fmt;
+    fn link_for_item(self: &LinkContext, item: &Item, defined_in: bool, filename: bool) -> Option<StringBuf> {
+        use std::fmt::write;
+        use std::string::ends_with;
 
         let path = if defined_in {
             item.defined_in.clone()
         } else {
             item.path.clone()
         };
-
         defer path.free();
 
-        let val = if item.kind.has_own_page() {
-            if path.segments.empty() {
-                format!("/index.html").unwrap()
-            } else if item.cfg_index != 0 {
-                format!("/{}.{}.html", "/".join_fmt(&path.segments.iter()), item.cfg_index).unwrap()
-            } else {
-                format!("/{}.html", "/".join_fmt(&path.segments.iter())).unwrap()
-            }
-        } else {
-            let name = path.pop();
-            if item.cfg_index != 0 {
-                format!("/{}.html#item.{}.{}", "/".join_fmt(&path.segments.iter()), name, item.cfg_index).unwrap()
-            } else {
-                format!("/{}.html#item.{}", "/".join_fmt(&path.segments.iter()), name).unwrap()
-            }
-        };
+        if !item.kind.has_own_page() {
+            assert!(!filename);
 
-        Option::some(val)
+            let name = path.pop();
+            let parent = self.item_bag.get(&path).unwrap();
+
+            let link = self.link_for_item(parent, defined_in, false).unwrap();
+            if item.cfg_index != 0 {
+                write!(&link, "#item.{}.{}", name, item.cfg_index).unwrap();
+            } else {
+                write!(&link, "#item.{}", name).unwrap();
+            }
+            return Option::some(link);
+        }
+
+        let link: StringBuf = StringBuf::from_slice("/");
+        for (idx, segment) in path.segments.iter().enumerate() {
+            link.extend_from_slice(segment);
+
+            if idx + 1 == path.segments.len() {
+                if item.cfg_index != 0 {
+                    write!(&link, ".{}", item.cfg_index);
+                }
+                if item.kind == ItemKind::Module {
+                    link.extend_from_slice("/");
+                } else {
+                    link.extend_from_slice(".html");
+                }
+            } else {
+                link.extend_from_slice("/");
+            }
+        }
+
+        if filename && link.as_slice().ends_with("/") {
+            link.extend_from_slice("index.html");
+        }
+
+        Option::some(link)
     }
 
     fn resolve_link(self: &LinkContext, path: &Path) -> Option<StringBuf> {
         use std::option::try;
 
         let item = self.item_bag.resolve(self.path, path, true)?;
-        self.link_for_item(item, true)
+        self.link_for_item(item, true, false)
     }
 }

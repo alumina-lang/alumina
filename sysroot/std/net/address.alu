@@ -95,7 +95,6 @@ impl Ipv6Addr {
     fn parse(s: &[u8]) -> Option<Ipv6Addr> {
         use option::try;
         use string::split;
-        use mem::copy_nonoverlapping;
         use collections::Vector
         use internal::ipv6_parse_part;
 
@@ -121,7 +120,8 @@ impl Ipv6Addr {
         }
 
         if right.1 > 0 {
-            right.0.as_slice()[..right.1].copy_nonoverlapping(&left.0[8 - right.1]);
+            right.0.as_slice()[..right.1]
+                .copy_to_nonoverlapping(&left.0[8 - right.1]);
         }
 
         Option::some(from_segments(&left.0))

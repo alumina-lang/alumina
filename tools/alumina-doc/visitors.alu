@@ -141,10 +141,11 @@ impl UseClauseVisitor {
 macro check_cfg($self, $node) {
     let has_cfg = $self.has_cfg;
 
+    $self.has_cfg = false;
     let child = child_by!($node, FieldKind::Attributes);
     if child.is_some {
         $self.visit(child.inner)?;
-    }
+    } 
 
     defer { $self.has_cfg = has_cfg; }
 }
@@ -232,9 +233,11 @@ impl TopLevelVisitor {
     }
 
     fn visit_source_file(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
-        check_cfg!(self, node);
-
+        // Visit children first so we capture the doc comments
         self.visit_children_by_field(node, FieldKind::Body)?;
+
+        // But check cfg later to not make all child items cfg'd.
+        check_cfg!(self, node);
         self.items.add_item(Item {
             kind: ItemKind::Module,
             path: self.path.clone(),
@@ -257,6 +260,7 @@ impl TopLevelVisitor {
     }
 
     fn visit_function_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        check_cfg!(self, node);
         let kind = if self.container.is_some {
             ItemKind::Method
         } else {
@@ -309,8 +313,7 @@ impl TopLevelVisitor {
 
     fn visit_mod_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
         check_cfg!(self, node);
-        let name = child_by!(node, FieldKind::Name).unwrap().text(self.parse_context.source());
-
+        let name = get_name!(self, node);
         self.add_item(ItemKind::Module, name, node);
 
         self.path.push(name);
@@ -321,6 +324,7 @@ impl TopLevelVisitor {
     }
 
     fn visit_struct_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        check_cfg!(self, node);
         let kind_text = child_by!(node, FieldKind::Kind)
             .unwrap()
             .text(self.parse_context.source());
@@ -577,7 +581,27 @@ impl CodePrinter<W: Writable<W>> {
         Result::ok(())
     }
 
+    fn visit_never_type(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
+        let path = common::Path::from_str("std::builtins::never");
+        defer path.free();
+
+        let link = self.link_context.resolve_link(&path);
+        defer link.free();
+
+        if link.is_some {
+            w!(self.writer, "<a href=\"{}\"><span class=\"identifier-type\">!</span></a>", link.inner);
+        } else {
+            w!(self.writer, "!");
+        }
+
+        Result::ok(())
+    }
+
     fn visit_scoped_type_identifier(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
+        self.visit_type_identifier(node)
+    }
+
+    fn visit_primitive_type(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         self.visit_type_identifier(node)
     }
 
@@ -615,6 +639,22 @@ impl CodePrinter<W: Writable<W>> {
     fn visit_tuple_type(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         let cursor = node.walk();
         defer cursor.free();
+
+        if children_by!(node, FieldKind::Element, &cursor).count() == 0 {
+            let path = common::Path::from_str("std::builtins::void");
+            defer path.free();
+
+            let link = self.link_context.resolve_link(&path);
+            defer link.free();
+
+            if link.is_some {
+                w!(self.writer, "<a href=\"{}\"><span class=\"identifier-type\">()</span></a>", link.inner);
+            } else {
+                w!(self.writer, "()");
+            }
+
+            return Result::ok(())   
+        }
 
         w!(self.writer, "(");
         for (idx, child) in children_by!(node, FieldKind::Element, &cursor).enumerate() {
@@ -701,16 +741,6 @@ impl CodePrinter<W: Writable<W>> {
             })
             .transpose()?;
 
-        Result::ok(())
-    }
-
-    fn visit_never_type(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
-        w!(self.writer, "!");
-        Result::ok(())
-    }
-
-    fn visit_primitive_type(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
-        w!(self.writer, "<span class=\"keyword-type\">{}</span>", node.text(self.parse_context.source()));
         Result::ok(())
     }
 

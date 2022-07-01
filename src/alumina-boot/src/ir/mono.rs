@@ -2770,7 +2770,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let cond = self.lower_expr(cond_, Some(self.types.builtin(BuiltinType::Bool)))?;
         let then = self.lower_expr(then, type_hint)?;
-        let els = self.lower_expr(els_, Some(then.ty))?;
+        let els = self.lower_expr(
+            els_,
+            if then.diverges() {
+                type_hint.or(Some(then.ty))
+            } else {
+                Some(then.ty)
+            },
+        )?;
 
         if cond.diverges() {
             return Ok(cond);

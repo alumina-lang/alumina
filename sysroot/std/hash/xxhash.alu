@@ -57,19 +57,17 @@ impl Xxh64 {
 
     #[no_inline]
     fn write(self: &mut Xxh64, input: &[u8]) {
-        use std::mem::copy_nonoverlapping;
-
         self.total_len += input.len;
 
         if (self.mem_size + input.len) < CHUNK_SIZE {
-            input.copy_nonoverlapping((&self.mem[0] as &mut u8) + self.mem_size);
+            input.copy_to_nonoverlapping((&self.mem[0] as &mut u8) + self.mem_size);
             self.mem_size += input.len;
             return
         }
 
         if self.mem_size > 0 {
             let fill_len = CHUNK_SIZE - self.mem_size;
-            input[0..fill_len].copy_nonoverlapping((&self.mem[0] as &mut u8) + self.mem_size);
+            input[0..fill_len].copy_to_nonoverlapping((&self.mem[0] as &mut u8) + self.mem_size);
 
             self.v1 = round(self.v1, self.mem[0]);
             self.v2 = round(self.v2, self.mem[1]);
@@ -98,7 +96,7 @@ impl Xxh64 {
         }
 
         if input.len > 0 {
-            input.copy_nonoverlapping(&self.mem[0] as &mut u8);
+            input.copy_to_nonoverlapping(&self.mem[0] as &mut u8);
             self.mem_size = input.len;
         }
     }

@@ -1,48 +1,39 @@
+//! A line numbering service
+
 use std::net::{
-    NameLookup, TcpStream, TcpListener, Shutdown,
-    SocketAddr, IpAddr, Ipv6Addr, buffered
+    NameLookup, TcpStream, TcpListener, Shutdown, 
+    SocketAddr, buffered
 };
 use std::collections::Vector;
-use std::result::{Result, try};
-use std::io::{
-    BufferedReader, lines, File, Error,
-    StdioStream, copy
-};
-use std::process::{Forked, exit};
+use std::io::{lines, Error, StdioStream, copy};
+use std::thread::spawn;
 use std::fmt::{write, writeln, pad_with};
 
 const PORT: u16 = 24601;
 
-fn client() {
-    let addresses = NameLookup::resolve("localhost", PORT).unwrap();
+fn client() -> Result<(), Error> {
+    let addresses = NameLookup::resolve("localhost", PORT)?;
     defer addresses.free();
 
     // Take the first address
-    let address = addresses.next().unwrap();
+    let address = addresses.next()
+        .as_result(Error::custom("cannot resolve the address"))?;
 
-    let socket = TcpStream::connect(&address).unwrap();
+    let socket = TcpStream::connect(&address)?;
     defer socket.close();
 
-    // We fork so we can read and write from the socket at the same time
-    // to avoid buffers getting full. This would be better done with a poll,
-    // so we can process both at the same time, but this is a simple example.
+    // We send to the socket in a separate thread to avoid buffers
+    // getting full.
+    let reader = spawn(|&socket| -> Result<(), Error> {
+        copy(&StdioStream::stdin(), &socket)?;
+        socket.shutdown(Shutdown::Write)?;
+        Result::ok(())
+    });
+    defer reader.join().unwrap()?;
 
-    let maybe_child = Forked::new()
-        .spawn()
-        .unwrap();
+    copy(&socket, &StdioStream::stdout())?;
 
-    if !maybe_child.is_some {
-        copy(&StdioStream::stdin(), &socket).unwrap();
-        socket.shutdown(Shutdown::Write).unwrap();
-        exit(0);
-    }
-
-    copy(&socket, &StdioStream::stdout()).unwrap();
-
-    let status = maybe_child.unwrap().wait().unwrap();
-    if status != 0 {
-        panic!("child exited with status {}", status);
-    }
+    Result::ok(())
 }
 
 fn handle_connection(socket: TcpStream) -> Result<(), Error> {
@@ -56,12 +47,9 @@ fn handle_connection(socket: TcpStream) -> Result<(), Error> {
     let lines_iter = reader.lines();
     defer lines_iter.free();
 
-    let i = 1;
-    for maybe_line in lines_iter {
-        writeln!(&writer, "{} | {}", i.pad_with(5, ' '), maybe_line?)
+    for (idx, maybe_line) in lines_iter.enumerate() {
+        writeln!(&writer, "{} | {}", (idx + 1).pad_with(5, ' '), maybe_line?)
             .map_err(|e: std::fmt::Error| -> Error { Error::custom("failed to write to socket") } )?;
-
-        i += 1;
     }
 
     writer.flush()?;
@@ -70,22 +58,26 @@ fn handle_connection(socket: TcpStream) -> Result<(), Error> {
     Result::ok(())
 }
 
-fn server() -> ! {
+fn server() -> Result<!, Error> {
     let addr = SocketAddr::parse("[::]:24601").unwrap();
-    let listener = TcpListener::bind(&addr).unwrap();
+    let listener = TcpListener::bind(&addr)?;
     defer listener.close();
 
-    println!("Listening on {}", listener.socket_addr().unwrap());
+    println!("Listening on {}", listener.socket_addr()?);
 
     loop {
-        let (socket, addr) = listener.accept().unwrap();
+        let (socket, addr) = listener.accept()?;
 
         println!("Received a connection from {}", addr);
-        let ret = handle_connection(socket);
 
-        if !ret.is_ok {
-            eprintln!("error while reading from socket: {}", ret.unwrap_err());
-        }
+        // Spawn a new thread for handling the connection
+        spawn(|=socket| {
+            let ret = handle_connection(socket);
+            if !ret.is_ok {
+                eprintln!("error while reading from socket: {}", ret.unwrap_err());
+            }
+        })
+        .detach();
     }
 }
 
@@ -103,8 +95,8 @@ fn main(args: &[&[u8]]) -> i32 {
     }
 
     switch args[1] {
-        "--server" => server(),
-        "--client" => client(),
+        "--server" => server().unwrap(),
+        "--client" => client().unwrap(),
         _ => usage!()
     };
 

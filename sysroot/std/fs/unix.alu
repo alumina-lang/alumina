@@ -148,7 +148,7 @@ impl DirBuilder {
     }
 
     fn _mkdir(self: &DirBuilder, path: Path) -> Result<(), Error> {
-        let path = ffi::CString::new(path.inner);
+        let path = ffi::CString::from_slice(path.inner);
         defer path.free();
 
         errno_try!(libc::mkdir(path.ptr, self._mode));
@@ -189,7 +189,7 @@ fn create_directory(path: Path) -> Result<(), Error> {
 
 /// Remove a file
 fn remove_file(path: Path) -> Result<(), Error> {
-    let path_c = std::ffi::CString::new(path.inner);
+    let path_c = std::ffi::CString::from_slice(path.inner);
     defer path_c.free();
 
     errno_try!(libc::unlink(path_c.ptr));
@@ -199,7 +199,7 @@ fn remove_file(path: Path) -> Result<(), Error> {
 
 /// Remove an empty directory
 fn remove_directory(path: Path) -> Result<(), Error> {
-    let path_c = std::ffi::CString::new(path.inner);
+    let path_c = std::ffi::CString::from_slice(path.inner);
     defer path_c.free();
 
     errno_try!(libc::rmdir(path_c.ptr));
@@ -226,7 +226,7 @@ impl File {
 
     /// Opens file with custom options.
     fn open_with(path: Path, opts: &OpenOptions) -> Result<File, Error> {
-        let path = CString::new(path.inner);
+        let path = CString::from_slice(path.inner);
         defer path.free();
 
         let flags = libc::O_CLOEXEC
@@ -266,7 +266,7 @@ impl File {
         self.fd
     }
 
-    /// Read the entire file into a [std::string::StringBuf]
+    /// Read the entire file into a [std::string::StringBuf].
     fn read_to_string(path: Path) -> Result<string::StringBuf, Error> {
         use string::StringBuf;
 
@@ -410,7 +410,7 @@ impl DirEntry {
 /// }
 /// ```
 fn read_directory(path: Path) -> Result<DirIterator, Error> {
-    let path_c = std::ffi::CString::new(path.inner);
+    let path_c = std::ffi::CString::from_slice(path.inner);
     defer path_c.free();
 
     let res = libc::opendir(path_c.ptr);
@@ -467,7 +467,7 @@ struct FileAttr {
 
 impl FileAttr {
     fn from_path(path: Path) -> Result<FileAttr, Error> {
-        let path = ffi::CString::new(path.inner);
+        let path = ffi::CString::from_slice(path.inner);
         defer path.free();
 
         let result: FileAttr;

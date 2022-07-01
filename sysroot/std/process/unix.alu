@@ -73,9 +73,9 @@ impl Output {
 /// Child process
 struct Child {
     pid: libc::pid_t,
-    stdin: option::Option<io::Pipe>,
-    stdout: option::Option<io::Pipe>,
-    stderr: option::Option<io::Pipe>,
+    stdin: option::Option<io::FileDescriptor>,
+    stdout: option::Option<io::FileDescriptor>,
+    stderr: option::Option<io::FileDescriptor>,
 }
 
 impl Child {
@@ -150,7 +150,7 @@ impl Child {
 
     /// Kill the child process.
     fn kill(self: &mut Child) -> Result<(), Error> {
-        let ret = errno_try!(libc::kill(self.pid, libc::SIGKILL));
+        errno_try!(libc::kill(self.pid, libc::SIGKILL));
         Result::ok(())
     }
 
@@ -183,7 +183,7 @@ struct Forked {
 }
 
 impl Forked {
-    use internal::IoRedirection;
+    use internal::ChildStdio;
 
     fn new() -> Forked {
         Forked {
@@ -211,62 +211,34 @@ impl Forked {
         self
     }
 
-    fn _after_fork(
-        self: &Forked,
-        stdin: &mut IoRedirection,
-        stdout: &mut IoRedirection,
-        stderr: &mut IoRedirection
-    ) -> Result<(), Error> {
-        stdin.install(libc::STDIN_FILENO)?;
-        stdout.install(libc::STDOUT_FILENO)?;
-        stderr.install(libc::STDERR_FILENO)?;
-
-        Result::ok(())
-    }
-
     /// Fork the process.
     ///
     /// Returns Option::none() in the child and a `Child` value in the
     /// parent.
     fn spawn(self: &Forked) -> Result<Option<Child>, Error> {
-        let stdin = IoRedirection::new(true, self._stdin)?;
+        let stdin = ChildStdio::new(true, self._stdin)?;
         defer stdin.close();
 
-        let stdout = IoRedirection::new(false, self._stdout)?;
+        let stdout = ChildStdio::new(false, self._stdout)?;
         defer stdout.close();
 
-        let stderr = IoRedirection::new(false, self._stderr)?;
+        let stderr = ChildStdio::new(false, self._stderr)?;
         defer stderr.close();
-
-        let (fail_rx, fail_tx) = Pipe::anonymous()?;
-        defer fail_rx.close();
 
         let pid = errno_try!(std::libc::fork());
         if pid == 0 {
-            let res = self._after_fork(&stdin, &stdout, &stderr);
+            // If we forked a child thread, we want the panic to 
+            // abort the whole process.
+            std::panicking::internal::PANIC_HOOK = mem::zeroed();
 
-            // Since we are already in the child process, we can't just bail here, we need to
-            // send the error to the parent process via the pipe.
-            if !res.is_ok {
-                let msg = mem::slice::from_raw(&res.inner.err as &u8, mem::size_of::<Error>());
-                fail_tx.write_all(msg).unwrap();
-                libc::_exit(1);
-            } else {
-                fail_tx.close().unwrap();
-            }
+            // If any of these fail, abort
+            stdin.install(libc::STDIN_FILENO).unwrap();
+            stdout.install(libc::STDOUT_FILENO).unwrap();
+            stderr.install(libc::STDERR_FILENO).unwrap();
 
             // We have forked
             Result::ok(Option::none())
         } else {
-            fail_tx.close().unwrap();
-
-            let exec_err: Error;
-            if fail_rx.read_exact(
-                mem::slice::from_raw(&exec_err as &mut u8, mem::size_of::<Error>())
-            ).is_ok {
-                return Result::err(exec_err);
-            }
-
             Result::ok(Option::some(Child {
                 pid: pid,
                 stdin: stdin.into_inner(),
@@ -288,7 +260,7 @@ struct Command {
 }
 
 impl Command {
-    use internal::IoRedirection;
+    use internal::ChildStdio;
     use ffi::CString;
     use fs::Path;
     use collections::{Vector, free_all};
@@ -334,73 +306,44 @@ impl Command {
         self
     }
 
-    fn _after_fork(
-        self: &Command,
-        stdin: &mut IoRedirection,
-        stdout: &mut IoRedirection,
-        stderr: &mut IoRedirection
-    ) -> Result<!, Error> {
-        use mem::copy_nonoverlapping;
-
-        stdin.install(libc::STDIN_FILENO)?;
-        stdout.install(libc::STDOUT_FILENO)?;
-        stderr.install(libc::STDERR_FILENO)?;
-
-        let name = CString::new(self._path.inner);
-        defer name.free();
-
-        let argv : Vector<CString> = Vector::with_capacity(self._args.len + 2);
-        defer argv.free_all();
-
-        argv.push(CString::new(self._path.inner));
-        for arg in self._args {
-            argv.push(CString::new(arg));
-        }
-        argv.push(CString::null());
-
-        if !self._environ.is_some {
-            errno_try!(libc::execv(name.ptr as &libc::c_char, argv.as_slice().ptr as &&libc::c_char));
-        } else {
-            let environ_s = self._environ.unwrap();
-            let environ : Vector<CString> = Vector::with_capacity(environ_s.len + 1);
-            defer environ.free_all();
-
-            for (key, value) in environ_s {
-                let var = libc::malloc(key.len + value.len + 2) as &mut u8;
-                key.copy_nonoverlapping(var);
-                *(var + key.len) = '=';
-                value.copy_nonoverlapping(var + key.len + 1);
-                *(var + key.len + value.len + 1) = 0;
-
-                environ.push(CString::from_raw(var as &libc::c_char));
-            }
-            environ.push(CString::null());
-
-            errno_try!(libc::execve(
-                name.ptr as &libc::c_char,
-                argv.as_slice().ptr as &&libc::c_char,
-                environ.as_slice().ptr as &&libc::c_char
-            ));
-        }
-        unreachable!()
-    }
-
     /// Spawn a process.
     fn spawn(self: &Command) -> Result<Child, Error> {
-        let stdin = IoRedirection::new(true, self._stdin)?;
+        let exec_params = internal::ExecParams::new(self);
+        defer exec_params.free();
+
+        let stdin = ChildStdio::new(true, self._stdin)?;
         defer stdin.close();
 
-        let stdout = IoRedirection::new(false, self._stdout)?;
+        let stdout = ChildStdio::new(false, self._stdout)?;
         defer stdout.close();
 
-        let stderr = IoRedirection::new(false, self._stderr)?;
+        let stderr = ChildStdio::new(false, self._stderr)?;
         defer stderr.close();
 
         let (fail_rx, fail_tx) = Pipe::anonymous()?;
         defer fail_rx.close();
 
         let pid = errno_try!(std::libc::fork());
-        if pid > 0 {
+        if pid == 0 {
+            std::panicking::internal::PANIC_HOOK = mem::zeroed();
+
+            stdin.install(libc::STDIN_FILENO).unwrap();
+            stdout.install(libc::STDOUT_FILENO).unwrap();
+            stderr.install(libc::STDERR_FILENO).unwrap();
+
+            if !self._environ.is_some {
+                libc::execv(exec_params.name(), exec_params.argv());
+            } else {
+                libc::execve(exec_params.name(), exec_params.argv(), exec_params.envp());
+            }
+
+            // If we are here, it means exec failed, send the error back to the
+            // parrent over the pipe and exit
+            let error = Error::from_errno();
+            let msg = mem::slice::from_raw(&error as &u8, mem::size_of::<Error>());
+            fail_tx.write_all(msg).unwrap();
+            libc::_exit(1);
+        } else {
             fail_tx.close().unwrap();
 
             let exec_err: Error;
@@ -416,18 +359,6 @@ impl Command {
                 stdout: stdout.into_inner(),
                 stderr: stderr.into_inner(),
             })
-        } else {
-            let res = self._after_fork(&stdin, &stdout, &stderr);
-
-            // Since we are already in the child process, we can't just bail here, we need to
-            // send the error to the parent process via the pipe.
-            if !res.is_ok {
-                let msg = mem::slice::from_raw(&res.inner.err as &u8, mem::size_of::<Error>());
-                fail_tx.write_all(msg).unwrap();
-                libc::_exit(1);
-            }
-
-            unreachable!()
         }
     }
 }
@@ -472,8 +403,8 @@ mod internal {
         let s1 = src1.as_fd();
         let s2 = src2.as_fd();
 
-        s1.set_nonblocking(true);
-        s2.set_nonblocking(true);
+        s1.set_nonblocking(true)?;
+        s2.set_nonblocking(true)?;
 
         let fds: [libc::pollfd; 2] = mem::zeroed();
         fds[0].fd = s1.value;
@@ -500,69 +431,145 @@ mod internal {
         }
     }
 
-    struct IoRedirection {
-        kind: Stdio,
-        pair: Option<(Pipe, Pipe)>
+    struct ChildStdio {
+        ours: Option<io::FileDescriptor>,
+        theirs: Option<io::FileDescriptor>
     }
 
-    impl IoRedirection {
-        fn new(is_stdin: bool, kind: Stdio) -> Result<IoRedirection, Error> {
-            let pair: Option<(Pipe, Pipe)> = if kind == Stdio::Piped {
-                let (rx, tx) = Pipe::anonymous()?;
+    impl ChildStdio {
+        fn new(is_stdin: bool, kind: Stdio) -> Result<ChildStdio, Error> {
+            let fds = switch kind {
+                Stdio::Piped => {
+                    let (rx, tx) = Pipe::anonymous()?;
+                    if is_stdin {
+                        (Option::some(tx.as_fd()), Option::some(rx.as_fd()))
+                    } else {
+                        (Option::some(rx.as_fd()), Option::some(tx.as_fd()))
+                    }
+                },
+                Stdio::Inherit => {
+                    (Option::none(), Option::none())
+                },
+                Stdio::Null => {
+                    let dev_null = fs::File::open_with(
+                        Path::new("/dev/null"), 
+                        fs::OpenOptions::new()
+                            .read(is_stdin)
+                            .write(!is_stdin)
+                    )?;
 
-                if is_stdin {
-                    Option::some((tx, rx))
-                } else {
-                    Option::some((rx, tx))
+                    (Option::none(), Option::some(dev_null.as_fd()))
                 }
-            } else {
-                Option::none()
-            };
+                _ => unreachable!()
+            }
 
-            let res = IoRedirection {
-                pair: pair,
-                kind: kind
+            let res = ChildStdio {
+                ours: fds.0,
+                theirs: fds.1
             };
 
             Result::ok(res)
         }
 
-        fn close(self: &mut IoRedirection) -> Result<(), Error> {
-            if self.pair.is_some {
-                self.pair.inner.0.close()?;
-                self.pair.inner.1.close()?;
+        fn close(self: &mut ChildStdio) -> Result<(), Error> {
+            if self.ours.is_some {
+                self.ours.inner.close()?;
+            }
+
+            if self.theirs.is_some {
+                self.theirs.inner.close()?;
             }
 
             Result::ok(())
         }
 
-        fn install(self: &mut IoRedirection, fd: libc::c_int) -> Result<(), Error> {
+        fn install(self: &mut ChildStdio, fd: libc::c_int) -> Result<(), Error> {
             use std::fs::{File, OpenOptions};
-
-            switch self.kind {
-                Stdio::Piped => {
-                    let (_, tgt) = self.pair.unwrap();
-
-                    errno_try!(libc::dup2(tgt.fd.value, fd));
-                },
-                Stdio::Null => {
-                    let dev_zero = File::open_with(Path::new("/dev/null"), OpenOptions::new().read(true).write(true))?;
-                    defer dev_zero.close();
-
-                    errno_try!(std::libc::dup2(dev_zero.fd.value, fd));
-                },
-                _ => {}
-            };
-
+            if self.theirs.is_some {
+                errno_try!(libc::dup2(self.theirs.inner.value, fd));
+            }
             Result::ok(())
         }
 
-        fn into_inner(self: &mut IoRedirection) -> Option<Pipe> {
-            if self.pair.is_some {
-                Option::some(self.pair.inner.0.move())
-            } else {
-                Option::none()
+        fn into_inner(self: &mut ChildStdio) -> Option<io::FileDescriptor> {
+            self.ours.move()
+        }
+    }
+
+    /// Holder for `execve` args converted to C-strings.
+    ///
+    /// Needs to be allocated before we fork as we should not call `malloc` after
+    /// fork in multithreaded programs.
+    struct ExecParams {
+        _chars: collections::Vector<u8>,
+        _ptrs: collections::Vector<&u8>,
+        _argc: usize,
+    } 
+
+    impl ExecParams {
+        use collections::Vector;
+
+        fn new(command: &Command) -> ExecParams {
+            let storage: Vector<u8> = Vector::new();
+            defer storage.free();
+            let args_idxs: Vector<usize> = Vector::new();
+            defer args_idxs.free();
+            let env_idxs: Vector<usize> = Vector::new();
+            defer env_idxs.free();
+
+            args_idxs.push(0usize);
+            storage.extend_from_slice(command._path.inner);
+            storage.push('\0');
+            for arg in command._args {
+                args_idxs.push(storage.len());
+                storage.extend_from_slice(arg);
+                storage.push('\0');
             }
+
+            if command._environ.is_some {
+                for (key, value) in command._environ.inner {
+                    env_idxs.push(storage.len());
+                    storage.extend_from_slice(key);
+                    storage.push('=');
+                    storage.extend_from_slice(value);
+                    storage.push('\0');
+                }
+            }
+
+            let ptr = &storage.as_slice()[0];
+            let ptrs: Vector<&u8> = args_idxs
+                .iter()
+                .map(|&ptr, idx: usize| -> &u8 { ptr + idx })
+                .chain(&iter::once(null as &u8))
+                .chain(&env_idxs
+                    .iter()
+                    .map(|&ptr, idx: usize| -> &u8 { ptr + idx })
+                )
+                .chain(&iter::once(null as &u8))
+                .to_vector();
+
+            ExecParams {
+                _chars: storage.move(),
+                _ptrs: ptrs,
+                _argc: args_idxs.len(),
+            }
+        }
+
+        fn name(self: &ExecParams) -> &libc::c_char {
+            &self._chars.as_slice()[0] as &libc::c_char 
+        }
+
+        fn argv(self: &ExecParams) -> &&libc::c_char {
+            &self._ptrs.as_slice()[0] as &&libc::c_char 
+        }
+
+        fn envp(self: &ExecParams) -> &&libc::c_char {
+            &self._ptrs.as_slice()[self._argc + 1] as &&libc::c_char 
+        }
+
+        fn free(self: &mut ExecParams) {
+            self._chars.free();
+            self._ptrs.free();
         }
     }
 }
@@ -573,7 +580,7 @@ mod tests {
     use fs::Path;
 
     #[test]
-    fn test_spawn() {
+    fn test_spawn_args() {
         let child = Command::new(Path::new("/bin/echo"))
             .args(&["Hello, World!"])
             .stdout(Stdio::Piped)
@@ -586,6 +593,26 @@ mod tests {
 
         assert_eq!(output.status, 0);
         assert_eq!(output.stdout.as_slice(), "Hello, World!\n");
+        assert_eq!(output.stderr.as_slice(), &[]);
+    }
+
+    #[test]
+    fn test_spawn_env() {
+        let child = Command::new(Path::new("/usr/bin/env"))
+            .env(&[
+                ("HELLO", "world"),
+                ("FOO", "bar")
+            ])
+            .stdout(Stdio::Piped)
+            .stderr(Stdio::Piped)
+            .spawn()
+            .unwrap();
+
+        let output = child.wait_with_output().unwrap();
+        defer output.free();
+
+        assert_eq!(output.status, 0);
+        assert_eq!(output.stdout.as_slice(), "HELLO=world\nFOO=bar\n");
         assert_eq!(output.stderr.as_slice(), &[]);
     }
 

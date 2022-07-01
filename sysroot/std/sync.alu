@@ -409,7 +409,7 @@ impl Channel<T> {
         Channel {
             mutex: Mutex::new(),
             cond: CondVar::new(),
-            buffer: mem::alloc::<T>(capacity + 1),
+            buffer: mem::slice::alloc::<T>(capacity + 1),
             closed: false,
             reader: 0,
             writer: 0,
@@ -568,7 +568,7 @@ impl Channel<T> {
 
     /// @ mem::Freeable::free
     fn free(self: &mut Channel<T>) {
-        mem::free(self.buffer);
+        self.buffer.free();
     }
 }
 
