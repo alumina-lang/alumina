@@ -7,7 +7,7 @@ use std::builtins::{Primitive, ZeroSized, Integer};
 /// Follows C++ memory model ([see here](https://en.cppreference.com/w/c/atomic/memory_order)).
 enum Ordering {
     Relaxed = 0,
-    Consume = 1,
+    // Consume = 1, but it's not included
     Acquire = 2,
     Release = 3,
     AcqRel = 4,
@@ -574,10 +574,29 @@ impl Channel<T> {
     }
 }
 
-/// A synchronization primitive that allows multiple threads to wait until the event is signalled.
+/// A synchronization primitive that allows multiple threads to wait until the
+/// event is signalled.
 ///
-/// Once signalled, an event cannot be reset.
+/// Once an event is signalled it can be reset and reused.
+///
 /// # Example
+/// ```
+/// use std::sync::Event;
+/// use std::thread::spawn;
+///
+/// let ev = Event::new();
+/// let text: &[u8];
+///
+/// let t = spawn(|&ev, &text| {
+///     text = "Hello, world!";
+///     ev.set();
+/// });
+///
+/// ev.wait();
+/// assert_eq!(text, "Hello, world!");
+///
+/// t.join().unwrap();
+/// ```
 struct Event {
     state: Atomic<usize>
 }
@@ -607,6 +626,18 @@ impl Event {
                 }
             }
         }
+    }
+
+    /// Resets the event, so that it can be waited on and signalled again.
+    ///
+    /// If event is not in set state, this is a no-op.
+    fn reset(self: &mut Event) {
+        self.state.compare_exchange(
+            COMPLETE,
+            INCOMPLETE,
+            Ordering::Release,
+            Ordering::Relaxed
+        );
     }
 
     /// Checks if the event is signalled.
@@ -656,6 +687,22 @@ impl Event {
 ///
 /// A one-shot channel is a channel that can only be sent to once. Multiple threads can wait on it and
 /// they will all receive the same value.
+///
+/// # Example
+/// ```
+/// use std::sync::Oneshot;
+/// use std::thread::spawn;
+///
+/// let one_shot: Oneshot<i32> = Oneshot::new();
+/// let t = spawn(|&one_shot| {
+///     one_shot.send(42);
+/// });
+///
+/// let value = one_shot.recv();
+/// assert_eq!(value, 42);
+///
+/// t.join().unwrap();
+/// ```
 struct Oneshot<T> {
     _event: Event,
     _value: T
@@ -673,7 +720,9 @@ impl Oneshot<T> {
     /// Sets the value of the channel.
     ///
     /// If the channel is already closed, this will return `Result::err(ChannelError::Closed)`.
-    fn set(self: &mut Oneshot<T>, value: T) {
+    ///
+    /// It is undefined behavior to call this function more than once on a single channel.
+    fn send(self: &mut Oneshot<T>, value: T) {
         debug_assert!(!self._event.is_set());
 
         self._value = value;
@@ -684,16 +733,15 @@ impl Oneshot<T> {
     ///
     /// If the channel's value has already been set, this will return immediately. Otherwise,
     /// it will block until the value is set.
-    fn get(self: &mut Oneshot<T>) -> T {
+    fn recv(self: &mut Oneshot<T>) -> T {
         self._event.wait();
         self._value
     }
 
     /// Tries to get the value of the channel
     ///
-    /// If the channel's value has not been set, this will return
-    /// `Result::err(ChannelError::WouldBlock)`.
-    fn try_get(self: &mut Oneshot<T>) -> Result<T, ChannelError> {
+    /// If the channel's value has not been set, this will return [ChannelError::WouldBlock].
+    fn try_recv(self: &mut Oneshot<T>) -> Result<T, ChannelError> {
         if self._event.is_set() {
             Result::ok(self._value)
         } else {
@@ -729,7 +777,6 @@ mod tests {
         }
 
         match!(Ordering::Relaxed, "__ATOMIC_RELAXED");
-        match!(Ordering::Consume, "__ATOMIC_CONSUME");
         match!(Ordering::Acquire, "__ATOMIC_ACQUIRE");
         match!(Ordering::Release, "__ATOMIC_RELEASE");
         match!(Ordering::AcqRel, "__ATOMIC_ACQ_REL");
@@ -949,16 +996,40 @@ mod tests {
         ev.set();
         assert_eq!(ev.is_set(), true);
         ev.wait();
+        ev.reset();
+        assert_eq!(ev.is_set(), false);
+    }
+
+    #[cfg(threading)]
+    #[test]
+    fn test_event_blocking() {
+        use thread::{spawn, Thread};
+        let ev1 = Event::new();
+        let ev2 = Event::new();
+
+        let t1 = spawn(|&ev1, &ev2| {
+            ev1.wait();
+            ev1.reset();
+            ev2.set();
+        });
+
+        ev1.set();
+        ev2.wait();
+
+        assert_eq!(ev1.is_set(), false);
+        assert_eq!(ev2.is_set(), true);
+
+        t1.join().unwrap();
     }
 
     #[cfg(threading)]
     #[test]
     fn test_oneshot() {
         let chan: Oneshot<i32> = Oneshot::new();
-        assert_eq!(chan.try_get(), Result::err(ChannelError::WouldBlock));
-        chan.set(1337);
-        assert_eq!(chan.try_get(), Result::ok(1337));
-        assert_eq!(chan.get(), 1337);
+        assert_eq!(chan.try_recv(), Result::err(ChannelError::WouldBlock));
+        chan.send(1337);
+        assert_eq!(chan.try_recv(), Result::ok(1337));
+        assert_eq!(chan.recv(), 1337);
     }
 
     #[cfg(threading)]
@@ -974,14 +1045,14 @@ mod tests {
             if flag.fetch_sub(1, Ordering::SeqCst) == 1 {
                 main_thread.unpark();
             }
-            chan.get() + 1
+            chan.recv() + 1
         });
 
         let t2 = spawn(|&chan, &flag, =main_thread| -> i32 {
             if flag.fetch_sub(1, Ordering::SeqCst) == 1 {
                 main_thread.unpark();
             }
-            chan.get() + 2
+            chan.recv() + 2
         });
 
         while flag.load(Ordering::SeqCst) != 0 {
@@ -992,7 +1063,7 @@ mod tests {
             Thread::yield();
         }
 
-        chan.set(42);
+        chan.send(42);
         assert_eq!(t1.join().unwrap(), 43);
         assert_eq!(t2.join().unwrap(), 44);
     }
