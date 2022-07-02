@@ -185,7 +185,7 @@ impl Ipv6Addr {
         Result::ok(())
     }
 
-    /// @ std::cmp::Equatable::equals
+    /// @ cmp::Equatable::equals
     fn equals(self: &Ipv6Addr, other: &Ipv6Addr) -> bool {
         self.inner.s6_addr.as_slice() == other.inner.s6_addr.as_slice()
     }
@@ -193,11 +193,13 @@ impl Ipv6Addr {
     mixin cmp::Equatable<Ipv6Addr>;
 }
 
+/// IPv4 address
 struct Ipv4Addr {
     inner: libc::in_addr,
 }
 
 impl Ipv4Addr {
+    /// Creates a new IPv4 address from four eight-bit octets.
     fn new(a: u8, b: u8, c: u8, d: u8) -> Ipv4Addr {
         let ret: libc::in_addr = mem::zeroed();
         ret.s_addr = a as u32 |
@@ -208,14 +210,17 @@ impl Ipv4Addr {
         Ipv4Addr { inner: ret }
     }
 
+    /// Localhost IPv4 address (127.0.0.1)
     fn localhost() -> Ipv4Addr {
         Ipv4Addr::new(127, 0, 0, 1)
     }
 
+    /// Unspecified IPv4 address (0.0.0.0)
     fn unspecified() -> Ipv4Addr {
         Ipv4Addr::new(0, 0, 0, 0)
     }
 
+    /// Broadcast IPv4 address (255.255.255.255)
     fn broadcast() -> Ipv4Addr {
         Ipv4Addr::new(255, 255, 255, 255)
     }
@@ -224,6 +229,7 @@ impl Ipv4Addr {
         Ipv4Addr { inner: addr }
     }
 
+    /// Returns an array of octets.
     fn to_octets(self: &Ipv4Addr) -> [u8; 4] {
         let as_int = self.inner.s_addr;
         [
@@ -234,6 +240,7 @@ impl Ipv4Addr {
         ]
     }
 
+    /// Returns the IPv4 address as IPv6 compatible address.
     fn to_ipv6_compatible(self: &Ipv4Addr) -> Ipv6Addr {
         let ip = self.to_octets();
         let x = ip[1] as u16 | ((ip[0] as u16) << 8);
@@ -241,6 +248,7 @@ impl Ipv4Addr {
         Ipv6Addr::new(0, 0, 0, 0, 0, 0, x, y)
     }
 
+    /// Returns the IPv4 address as IPv6 mapped address.
     fn to_ipv6_mapped(self: &Ipv4Addr) -> Ipv6Addr {
         let ip = self.to_octets();
         let x = ip[1] as u16 | ((ip[0] as u16) << 8);
@@ -248,6 +256,7 @@ impl Ipv4Addr {
         Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, x, y)
     }
 
+    /// Parses an IPv4 address from a string.
     fn parse(s: &[u8]) -> Option<Ipv4Addr> {
         use option::try;
         use string::split;
@@ -268,6 +277,7 @@ impl Ipv4Addr {
         Option::some(ret)
     }
 
+    /// @ fmt::Formattable::fmt
     fn fmt<F: fmt::Formatter<F>>(self: &Ipv4Addr, f: &mut F) -> Result<(), fmt::Error> {
         use fmt::{hex, zero_pad, write};
 
@@ -281,6 +291,7 @@ impl Ipv4Addr {
         )
     }
 
+    /// @ cmp::Equatable::equals
     fn equals(self: &Ipv4Addr, other: &Ipv4Addr) -> bool {
         self.inner.s_addr == other.inner.s_addr
     }
@@ -288,25 +299,24 @@ impl Ipv4Addr {
     mixin cmp::Equatable<Ipv4Addr>;
 }
 
-union IpAddrInner {
-    v6: Ipv6Addr,
-    v4: Ipv4Addr,
-}
-
+/// IP address (IPv6 or IPv4).
 struct IpAddr {
     kind: AddrKind,
-    inner: IpAddrInner
+    inner: internal::IpAddrInner
 }
 
 impl IpAddr {
+    /// IPv6 address
     fn v6(ip: Ipv6Addr) -> IpAddr {
-        IpAddr { kind: AddrKind::V6, inner: IpAddrInner { v6: ip } }
+        IpAddr { kind: AddrKind::V6, inner: internal::IpAddrInner { v6: ip } }
     }
 
+    /// IPv4 address
     fn v4(ip: Ipv4Addr) -> IpAddr {
-        IpAddr { kind: AddrKind::V4, inner: IpAddrInner { v4: ip } }
+        IpAddr { kind: AddrKind::V4, inner: internal::IpAddrInner { v4: ip } }
     }
 
+    /// @ fmt::Formattable::fmt
     fn fmt<F: fmt::Formatter<F>>(self: &IpAddr, f: &mut F) -> Result<(), fmt::Error> {
         switch self.kind {
             AddrKind::V6 => self.inner.v6.fmt(f),
@@ -315,6 +325,7 @@ impl IpAddr {
         }
     }
 
+    /// @ cmp::Equatable::equals
     fn equals(self: &IpAddr, other: &IpAddr) -> bool {
         if self.kind != other.kind {
             return false;
@@ -330,18 +341,14 @@ impl IpAddr {
     mixin cmp::Equatable<IpAddr>;
 }
 
-union SocketAddrInner {
-    v6: libc::sockaddr_in6,
-    v4: libc::sockaddr_in,
-}
-
 /// Socket address (e.g. IP address and port)
 struct SocketAddr {
     kind: AddrKind,
-    inner: SocketAddrInner
+    inner: internal::SocketAddrInner
 }
 
 impl SocketAddr {
+    /// Create SocketAddr from IP address and port
     fn new(addr: IpAddr, port: u16) -> SocketAddr {
         let inner = switch addr.kind {
             AddrKind::V6 => {
@@ -353,7 +360,7 @@ impl SocketAddr {
                 sockaddr.sin_port = internal::htons(port);
                 sockaddr.sin_addr = addr.inner.v4.inner;
 
-                SocketAddrInner { v4: sockaddr }
+                internal::SocketAddrInner { v4: sockaddr }
             },
             _ => unreachable!()
         }
@@ -364,6 +371,7 @@ impl SocketAddr {
         }
     }
 
+    /// Create SocketAddr from IPv6 address, port, flow info and scope ID.
     fn with_flowinfo_and_scope(addr: Ipv6Addr, port: u16, flowinfo: u32, scope_id: u32) -> SocketAddr {
         let sockaddr = mem::zeroed::<libc::sockaddr_in6>();
         sockaddr.sin6_family = libc::AF_INET6 as libc::sa_family_t;
@@ -374,10 +382,11 @@ impl SocketAddr {
 
         SocketAddr {
             kind: AddrKind::V6,
-            inner: SocketAddrInner { v6: sockaddr }
+            inner: internal::SocketAddrInner { v6: sockaddr }
         }
     }
 
+    /// Sets the port number
     fn set_port(self: &mut SocketAddr, port: u16) {
         switch self.kind {
             AddrKind::V6 => {
@@ -389,6 +398,7 @@ impl SocketAddr {
         }
     }
 
+    /// Returns the port number
     fn port(self: &SocketAddr) -> u16 {
         switch self.kind {
             AddrKind::V6 => internal::htons(self.inner.v6.sin6_port),
@@ -397,6 +407,7 @@ impl SocketAddr {
         }
     }
 
+    /// Returns the IP address
     fn ip(self: &SocketAddr) -> IpAddr {
         switch self.kind {
             AddrKind::V6 => IpAddr::v6(Ipv6Addr::from_libc(self.inner.v6.sin6_addr)),
@@ -405,6 +416,7 @@ impl SocketAddr {
         }
     }
 
+    /// Parses a socket address from a string.
     fn parse(s: &[u8]) -> Option<SocketAddr> {
         use option::try;
         use string::{split, starts_with, ends_with, contains};
@@ -449,6 +461,7 @@ impl SocketAddr {
         Option::some(ret)
     }
 
+    /// @ fmt::Formattable::fmt
     fn fmt<F: fmt::Formatter<F>>(self: &SocketAddr, f: &mut F) -> Result<(), fmt::Error> {
         use fmt::write;
 
@@ -467,6 +480,7 @@ impl SocketAddr {
         }
     }
 
+    /// @ cmp::Equatable::equals
     fn equals(self: &SocketAddr, other: &SocketAddr) -> bool {
         self.ip() == other.ip() && self.port() == other.port()
     }
@@ -526,6 +540,16 @@ mod internal {
 
     fn htons(i: u16) -> u16 {
         ((i & 0x00ff) << 8) | ((i & 0xff00) >> 8)
+    }
+
+    union IpAddrInner {
+        v6: Ipv6Addr,
+        v4: Ipv4Addr,
+    }
+
+    union SocketAddrInner {
+        v6: libc::sockaddr_in6,
+        v4: libc::sockaddr_in,
     }
 }
 

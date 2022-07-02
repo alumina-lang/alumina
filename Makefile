@@ -77,7 +77,7 @@ $(CODEGEN).c: $(ALU_DEPS) $(CODEGEN_SOURCES)
 		$(foreach src,$(CODEGEN_SOURCES),$(subst /,::,$(basename $(src)))=$(src))
 
 $(CODEGEN): $(CODEGEN).c $(BUILD_DIR)/parser.o
-	$(CC) $(CFLAGS) -o $@ $^ -ltree-sitter $(LD_FLAGS)
+	$(CC) $(CFLAGS) -o $@ $^ -ltree-sitter $(LDFLAGS)
 
 src/aluminac/lib/node_kinds.alu: $(CODEGEN)
 	$(CODEGEN) > $@
@@ -170,7 +170,7 @@ $(BUILD_DIR)/quick.c: $(ALUMINA_BOOT) $(SYSROOT_FILES) quick.alu
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --output $@ quick=./quick.alu
 
 $(BUILD_DIR)/quick: $(BUILD_DIR)/quick.c
-	$(CC) $(CFLAGS) -o $@ $^ -ltree-sitter $(LD_FLAGS)
+	$(CC) $(CFLAGS) -o $@ $^ -ltree-sitter $(LDFLAGS)
 
 quick: $(BUILD_DIR)/quick
 	ln -sf $^.c $@.c

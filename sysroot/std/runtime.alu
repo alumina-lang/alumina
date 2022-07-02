@@ -3,9 +3,8 @@
 #[cfg(not(output_type = "library"))]
 mod internal {
     use std::intrinsics::{aligned_alloca, size_of, align_of};
-    use builtins::{return_type_of, arguments_of};
+    use builtins::{return_type_of, arguments_of, NamedFunction, Callable};
     use std::mem::slice;
-    use std::builtins::Callable;
 
     #[cfg(all(test))]
     {
@@ -88,6 +87,8 @@ mod internal {
     }
 
     /// Sets up associated data of the main thread
+    ///
+    /// Only runs when threading is enabled (`--cfg threading`).
     #[cfg(threading)]
     fn threading_init() {
         use thread::internal::{THREAD_INFO, ThreadInfo};
@@ -96,10 +97,8 @@ mod internal {
         // C main in a loop would cause a memory leak. Calling user main recursively
         // is fine.
         debug_assert!(THREAD_INFO == null);
-
-        let info = ThreadInfo::new();
-        info.id = libc::pthread_self();
-        THREAD_INFO = info;
+        THREAD_INFO = ThreadInfo::new();
+        THREAD_INFO.id = libc::pthread_self();
     }
 
     #[cfg(not(custom_entrypoint))]
@@ -112,7 +111,7 @@ mod internal {
         #[export]
         #[codegen(c_main)]
         #[lang(entrypoint_glue)]
-        fn main<UserMain>(argc: libc::c_int, argv: &&libc::c_char) -> libc::c_int {
+        fn main<UserMain: NamedFunction>(argc: libc::c_int, argv: &&libc::c_char) -> libc::c_int {
             let func = std::util::unit::<UserMain>();
 
             #[cfg(threading)]

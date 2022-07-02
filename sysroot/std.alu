@@ -58,6 +58,21 @@ macro unreachable() {
     std::intrinsics::unreachable();
 }
 
+/// Assume that the condition is true.
+///
+/// This can enable additional optimizations.
+///
+/// In debug mode, this macro will panic if the condition is false. In release mode, it will
+/// cause undefined behavior.
+macro assume($cond) {
+    if !$cond {
+        #[cfg(debug)]
+        panic!("called assume with a false condition");
+        #[cfg(not(debug))]
+        std::intrinsics::unreachable();
+    }
+}
+
 /// Returns the line in the source code at which the macro was invoked.
 ///
 /// If used within a macro, this will return the line of the outermost macro invocation.
@@ -82,7 +97,6 @@ macro unreachable() {
 ///
 /// This macro can be useful also as a guard that string is a compile-time constant.
 #[builtin] macro concat($parts...) {  }
-
 
 /// Print a message to standard error with code location information.
 macro dbg($fmt, $args...) {
