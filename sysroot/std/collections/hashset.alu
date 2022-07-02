@@ -153,12 +153,27 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
 }
 
 impl HashSet<K: Hashable<K, H> + Equatable<K>, I: Iterator<I, K>, H: Hasher<H> = DefaultHash> {
+    /// Creates a hash map from an iterator of key-value pairs
+    ///
+    /// # Example
+    /// ```
+    /// use std::collections::HashSet;
+    /// let set: HashSet<i32> = HashSet::from_iter(&[1, 2, 3].iter());
+    /// defer set.free();
+    ///
+    /// assert_eq!(set.len(), 3);
+    /// assert!(set.contains(1));
+    /// assert!(set.contains(2));
+    /// assert!(set.contains(3));
+    /// ```
     fn from_iter(iter: &mut I) -> HashSet<K, H> {
         let set = HashSet::new::<K, H>();
         set.extend(iter);
         set
     }
 
+    /// Inserts additional elements into the set from an iterator
+    /// of key-value pairs.
     fn extend(self: &mut HashSet<K, H>, iter: &mut I) {
         self.reserve(iter.size_hint().unwrap_or(0));
 
@@ -173,15 +188,18 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, I: Iterator<I, K>, H: Hasher<H> =
     }
 }
 
+/// Iterator over the values in the hashset
 struct HashSetIterator<K> {
     inner: hashmap::HashMapRefIterator<K, ()>
 }
 
 impl HashSetIterator<K> {
+    /// @ iter::Iterator::next
     fn next(self: &mut HashSetIterator<K>) -> Option<K> {
         self.inner.next().map(|v: (&K, &())| -> K { *v.0 })
     }
 
+    /// @ iter::DoubleEndedIterator::next_back
     fn next_back(self: &mut HashSetIterator<K>) -> Option<K> {
         self.inner.next_back().map(|v: (&K, &())| -> K { *v.0 })
     }
@@ -192,15 +210,18 @@ impl HashSetIterator<K> {
     mixin iter::DoubleEndedIteratorExt<HashSetIterator<K>, K>;
 }
 
+/// Iterator over the pointers to the values in the hashset
 struct HashSetRefIterator<K> {
     inner: hashmap::HashMapRefIterator<K, ()>
 }
 
 impl HashSetRefIterator<K> {
+    /// @ iter::Iterator::next
     fn next(self: &mut HashSetRefIterator<K>) -> Option<&K> {
         self.inner.next().map(|v: (&K, &())| -> &K { v.0 })
     }
 
+    /// @ iter::DoubleEndedIterator::next_back
     fn next_back(self: &mut HashSetRefIterator<K>) -> Option<&K> {
         self.inner.next_back().map(|v: (&K, &())| -> &K { v.0 })
     }

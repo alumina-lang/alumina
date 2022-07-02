@@ -270,7 +270,7 @@ impl StringWriter {
     mixin Writable<StringWriter>;
 }
 
-/// Streams that have an internal buffer.
+/// Readable streams that have an internal buffer.
 ///
 /// Streams implementing this protocol enables them to be used by method such as [read_until],
 /// which is aware of the internal buffer.
@@ -281,7 +281,8 @@ protocol BufferedReadable<Self: Readable<Self>> {
     /// Does not move the internal buffer position.
     fn fill_buffer(self: &mut Self) -> Result<&[u8], Error>;
 
-    /// Mark `amount` bytes as consumed.
+    /// Mark `amount` bytes as consumed, moving the internal buffer
+    /// position forward.
     fn consume(self: &mut Self, amount: usize)
 }
 

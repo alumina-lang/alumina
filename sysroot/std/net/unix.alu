@@ -3,39 +3,11 @@ use result::{Result, try};
 use option::{Option};
 use io::unix::{errno_try, FdReadWrite};
 
+/// Which end(s) of the socket to shutdown
 enum Shutdown {
     Read = libc::SHUT_RD,
     Write = libc::SHUT_WR,
     Both = libc::SHUT_RDWR,
-}
-
-fn sockaddr_to_addr(addr: &libc::sockaddr_storage, len: libc::socklen_t) -> Option<SocketAddr> {
-    let result: SocketAddr;
-    switch addr.ss_family as libc::c_int {
-        libc::AF_INET => {
-            result.kind = AddrKind::V4;
-            result.inner.v4 = *(addr as &libc::sockaddr_in);
-        }
-        libc::AF_INET6 => {
-            result.kind = AddrKind::V6;
-            result.inner.v6 = *(addr as &libc::sockaddr_in6);
-        }
-        _ => {
-            return Option::none();
-        }
-    };
-
-    Option::some(result)
-}
-
-fn addr_to_family(addr: &SocketAddr) -> (libc::c_int, libc::socklen_t) {
-    let (family, addr_len) = switch addr.kind {
-        AddrKind::V4 => (libc::AF_INET, mem::size_of::<libc::sockaddr_in>()),
-        AddrKind::V6 => (libc::AF_INET6, mem::size_of::<libc::sockaddr_in6>()),
-        _ => unreachable!()
-    };
-
-    (family, addr_len as libc::socklen_t)
 }
 
 /// Domain name resolution iterator
@@ -83,7 +55,7 @@ impl NameLookup {
         }
     }
 
-    /// @ std::iter::Iterator::next
+    /// @ iter::Iterator::next
     fn next(self: &mut NameLookup) -> Option<SocketAddr> {
         if self.cur == null {
             Option::none()
@@ -91,7 +63,7 @@ impl NameLookup {
             let cur = self.cur;
             self.cur = cur.ai_next;
 
-            let result = sockaddr_to_addr(
+            let result = internal::sockaddr_to_addr(
                 cur.ai_addr as &libc::sockaddr_storage,
                 cur.ai_addrlen
             );
@@ -108,12 +80,12 @@ impl NameLookup {
         }
     }
 
-    /// @ std::mem::Freeable::free
+    /// @ mem::Freeable::free
     fn free(self: &mut NameLookup) {
         libc::freeaddrinfo(self.original);
     }
 
-    /// @ std::mem::Movable::move
+    /// @ mem::Movable::move
     fn move(self: &mut NameLookup) -> NameLookup {
         let res = *self;
         self.original = null;
@@ -124,12 +96,13 @@ impl NameLookup {
     mixin std::iter::IteratorExt<NameLookup, SocketAddr>;
 }
 
-/// A network socket
+/// A network or local socket
 struct Socket {
     fd: FileDescriptor,
 }
 
 impl Socket {
+    /// Create a new socket with a given family and type
     fn new(family: libc::c_int, type: libc::c_int) -> Result<Socket, Error> {
         let fd: FileDescriptor;
 
@@ -145,10 +118,12 @@ impl Socket {
         Result::ok(Socket { fd: fd })
     }
 
+    /// @ io::AsFileDescriptor::as_fd
     fn as_fd(self: &Socket) -> FileDescriptor {
         self.fd
     }
 
+    /// Shuts down the reading or writing end of the socket or both.
     fn shutdown(self: &Socket, how: Shutdown) -> Result<(), Error> {
         errno_try!(libc::shutdown(self.fd.value, how as libc::c_int));
         Result::ok(())
@@ -173,7 +148,7 @@ impl Socket {
             )
         );
 
-        Result::ok((n as usize, sockaddr_to_addr(&storage, addrlen).unwrap()))
+        Result::ok((n as usize, internal::sockaddr_to_addr(&storage, addrlen).unwrap()))
     }
 
     fn recv_with_flags(self: &Socket, buf: &mut [u8], flags: libc::c_int) -> Result<usize, Error> {
@@ -189,30 +164,35 @@ impl Socket {
         Result::ok(n as usize)
     }
 
+    /// @ io::Readable::read
     fn read(self: &Socket, buf: &mut [u8]) -> Result<usize, Error> {
         self.recv_with_flags(buf, 0)
     }
 
+    /// Returns the address of the remote peer
     fn peer_addr(self: &Socket) -> Result<SocketAddr, Error> {
         let storage = mem::zeroed::<libc::sockaddr_storage>();
         let len: libc::socklen_t = mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
 
         errno_try!(libc::getpeername(self.fd.value, &storage as &mut libc::sockaddr, &len));
-        Result::ok(sockaddr_to_addr(&storage, len).unwrap())
+        Result::ok(internal::sockaddr_to_addr(&storage, len).unwrap())
     }
 
+    /// Returns the address of the remote peer
     fn socket_addr(self: &Socket) -> Result<SocketAddr, Error> {
         let storage = mem::zeroed::<libc::sockaddr_storage>();
         let len: libc::socklen_t = mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
 
         errno_try!(libc::getsockname(self.fd.value, &storage as &mut libc::sockaddr, &len));
-        Result::ok(sockaddr_to_addr(&storage, len).unwrap())
+        Result::ok(internal::sockaddr_to_addr(&storage, len).unwrap())
     }
 
+    /// Closes the socket.
     fn close(self: &mut Socket) -> Result<(), Error> {
         self.fd.close()
     }
 
+    /// @ mem::Movable::move
     fn move(self: &mut Socket) -> Socket {
         Socket { fd: self.fd.move() }
     }
@@ -221,6 +201,7 @@ impl Socket {
     mixin FdReadWrite<Socket>;
 }
 
+/// A TCP connection
 struct TcpStream {
     socket: Socket,
 }
@@ -231,7 +212,7 @@ impl TcpStream {
     }
 
     fn connect(addr: &SocketAddr) -> Result<TcpStream, Error> {
-        let (family, addr_len) = addr_to_family(addr);
+        let (family, addr_len) = internal::addr_to_family(addr);
 
         let sock = Socket::new(family, libc::SOCK_STREAM)?;
         defer sock.close();
@@ -245,38 +226,47 @@ impl TcpStream {
         Result::ok(from_socket(sock.move()))
     }
 
+    /// @ io::AsFileDescriptor::as_fd
     fn as_fd(self: &TcpStream) -> FileDescriptor {
         self.socket.as_fd()
     }
 
+    /// @ Socket::peer_addr
     fn peer_addr(self: &TcpStream) -> Result<SocketAddr, Error> {
         self.socket.peer_addr()
     }
 
+    /// @ Socket::socket_addr
     fn socket_addr(self: &TcpStream) -> Result<SocketAddr, Error> {
         self.socket.socket_addr()
     }
 
+    /// @ Socket::shutdown
     fn shutdown(self: &TcpStream, how: Shutdown) -> Result<(), Error> {
         self.socket.shutdown(how)
     }
 
+    /// @ io::Readable::read
     fn read(self: &mut TcpStream, buf: &mut [u8]) -> Result<usize, Error> {
         self.socket.read(buf)
     }
 
+    /// @ io::Writable::write
     fn write(self: &mut TcpStream, buf: &[u8]) -> Result<usize, Error> {
         self.socket.write(buf)
     }
 
+    /// @ io::Writable::flush
     fn flush(self: &mut TcpStream) -> Result<(), Error> {
         Result::ok(())
     }
 
+    /// @ Socket::close
     fn close(self: &mut TcpStream) -> Result<(), Error> {
         self.socket.close()
     }
 
+    /// @ mem::Movable::move
     fn move(self: &mut TcpStream) -> TcpStream {
         TcpStream { socket: self.socket.move() }
     }
@@ -285,17 +275,20 @@ impl TcpStream {
     mixin io::Writable<TcpStream>;
 }
 
+/// A TCP listener which can accept new connections.
 struct TcpListener {
     socket: Socket,
 }
 
 impl TcpListener {
+    /// Create a new TCP listener from a socket.
     fn from_socket(socket: Socket) -> TcpListener {
         TcpListener { socket: socket }
     }
 
+    /// Creates a new TCP listener bound to the specified address.
     fn bind(addr: &SocketAddr) -> Result<TcpListener, Error> {
-        let (family, addr_len) = addr_to_family(addr);
+        let (family, addr_len) = internal::addr_to_family(addr);
 
         let sock = Socket::new(family, libc::SOCK_STREAM)?;
         defer sock.close();
@@ -314,10 +307,15 @@ impl TcpListener {
         Result::ok(from_socket(sock.move()))
     }
 
+    /// @ io::AsFileDescriptor::as_fd
     fn as_fd(self: &TcpListener) -> FileDescriptor {
         self.socket.as_fd()
     }
 
+    /// Accepts a new incoming connection.
+    ///
+    /// Returns a new `TcpStream` representing the accepted connection and the address
+    /// of the remote peer.
     fn accept(self: &TcpListener) -> Result<(TcpStream, SocketAddr), Error> {
         let storage = mem::zeroed::<libc::sockaddr_storage>();
         let len: libc::socklen_t = mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
@@ -347,18 +345,21 @@ impl TcpListener {
 
         Result::ok((
             TcpStream { socket: socket },
-            sockaddr_to_addr(&storage, len).unwrap()
+            internal::sockaddr_to_addr(&storage, len).unwrap()
         ))
     }
 
+    /// @ Socket::socket_addr
     fn socket_addr(self: &TcpListener) -> Result<SocketAddr, Error> {
         self.socket.socket_addr()
     }
 
+    /// @ Socket::close
     fn close(self: &mut TcpListener) -> Result<(), Error> {
         self.socket.close()
     }
 
+    /// @ mem::Movable::move
     fn move(self: &mut TcpListener) -> TcpStream {
         TcpStream { socket: self.socket.move() }
     }
@@ -370,18 +371,20 @@ use libc::MSG_NOSIGNAL;
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
 const MSG_NOSIGNAL: libc::c_int = 0;
 
-
+/// A UDP socket
 struct UdpSocket {
     socket: Socket,
 }
 
 impl UdpSocket {
+    /// Create a new UDP socket from a raw socket.
     fn from_socket(socket: Socket) -> UdpSocket {
         UdpSocket { socket: socket }
     }
 
+    /// Creates a new UDP socket bound to the specified address.
     fn bind(addr: &SocketAddr) -> Result<UdpSocket, Error> {
-        let (family, addr_len) = addr_to_family(addr);
+        let (family, addr_len) = internal::addr_to_family(addr);
 
         let sock = Socket::new(family, libc::SOCK_DGRAM)?;
         defer sock.close();
@@ -395,8 +398,15 @@ impl UdpSocket {
         Result::ok(from_socket(sock.move()))
     }
 
+    /// "Connects" the UDP socket to the specified address.
+    ///
+    /// As UDP is a connectionless protocol, this does not actually perform any
+    /// connection, it just attaches the remote address to the socket.
+    ///
+    /// Subsequent calls to [recv] and [send] will only receive and send data
+    /// from and to this address.
     fn connect(self: &UdpSocket, addr: &SocketAddr) -> Result<(), Error> {
-        let (family, addr_len) = addr_to_family(addr);
+        let (family, addr_len) = internal::addr_to_family(addr);
 
         errno_try!(libc::connect(
             self.socket.fd.value,
@@ -407,6 +417,9 @@ impl UdpSocket {
         Result::ok(())
     }
 
+    /// Receives data from the socket.
+    ///
+    /// Returns the number of bytes read and the address from which the data was received.
     fn recv_from(
         self: &UdpSocket,
         buf: &mut [u8],
@@ -414,6 +427,9 @@ impl UdpSocket {
         self.socket.recv_from_with_flags(buf, 0)
     }
 
+    /// Receives data from the socket without consuming it.
+    ///
+    /// Subsequent calls to [recv] will return the same data.
     fn peek_from(
         self: &UdpSocket,
         buf: &mut [u8],
@@ -421,8 +437,9 @@ impl UdpSocket {
         self.socket.recv_from_with_flags(buf, libc::MSG_PEEK)
     }
 
+    /// Sends data to a particular address.
     fn send_to(self: &UdpSocket, buf: &[u8], addr: &SocketAddr) -> Result<usize, Error> {
-        let (_, addr_len) = addr_to_family(addr);
+        let (_, addr_len) = internal::addr_to_family(addr);
 
         let ret = errno_try!(libc::sendto(
             self.socket.fd.value,
@@ -436,14 +453,17 @@ impl UdpSocket {
         Result::ok(ret as usize)
     }
 
+    /// Receives data from the socket.
     fn recv(self: &UdpSocket, buf: &mut [u8]) -> Result<usize, Error> {
         self.socket.recv_with_flags(buf, 0)
     }
 
+    /// Receives data from the socket without consuming it.
     fn peek(self: &UdpSocket, buf: &mut [u8]) -> Result<usize, Error> {
         self.socket.recv_with_flags(buf, libc::MSG_PEEK)
     }
 
+    /// Sends data to the socket.
     fn send(self: &UdpSocket, buf: &[u8]) -> Result<usize, Error> {
         let ret = errno_try!(
             libc::send(self.socket.fd.value, buf.ptr as &void, buf.len, MSG_NOSIGNAL)
@@ -452,24 +472,60 @@ impl UdpSocket {
         Result::ok(ret as usize)
     }
 
+    /// @ io::AsFileDescriptor::as_fd
     fn as_fd(self: &UdpSocket) -> FileDescriptor {
         self.socket.as_fd()
     }
 
+    /// @ Socket::peer_addr
     fn peer_addr(self: &UdpSocket) -> Result<SocketAddr, Error> {
         self.socket.peer_addr()
     }
 
+    /// @ Socket::socket_addr
     fn socket_addr(self: &UdpSocket) -> Result<SocketAddr, Error> {
         self.socket.socket_addr()
     }
 
+    /// @ Socket::close
     fn close(self: &mut UdpSocket) -> Result<(), Error> {
         self.socket.close()
     }
 
+    /// @ mem::Movable::move
     fn move(self: &mut UdpSocket) -> UdpSocket {
         UdpSocket { socket: self.socket.move() }
+    }
+}
+
+mod internal {
+    fn sockaddr_to_addr(addr: &libc::sockaddr_storage, len: libc::socklen_t) -> Option<SocketAddr> {
+        let result: SocketAddr;
+        switch addr.ss_family as libc::c_int {
+            libc::AF_INET => {
+                result.kind = AddrKind::V4;
+                result.inner.v4 = *(addr as &libc::sockaddr_in);
+            }
+            libc::AF_INET6 => {
+                result.kind = AddrKind::V6;
+                result.inner.v6 = *(addr as &libc::sockaddr_in6);
+            }
+            _ => {
+                return Option::none();
+            }
+        };
+
+        Option::some(result)
+    }
+
+    fn addr_to_family(addr: &SocketAddr) -> (libc::c_int, libc::socklen_t) {
+        let (family, addr_len) = switch addr.kind {
+            AddrKind::V4 => (libc::AF_INET, mem::size_of::<libc::sockaddr_in>()),
+            AddrKind::V6 => (libc::AF_INET6, mem::size_of::<libc::sockaddr_in6>()),
+            _ => unreachable!()
+        };
+
+        (family, addr_len as libc::socklen_t)
     }
 }
 

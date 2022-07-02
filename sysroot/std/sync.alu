@@ -4,10 +4,10 @@ use std::builtins::{Primitive, ZeroSized, Integer};
 
 /// Memory ordering
 ///
-/// Follows C11 memory model ([see here](https://en.cppreference.com/w/c/atomic/memory_order)).
+/// Follows C++ memory model ([see here](https://en.cppreference.com/w/c/atomic/memory_order)).
 enum Ordering {
     Relaxed = 0,
-    Consume = 1,
+    // Consume = 1, but it's not included
     Acquire = 2,
     Release = 3,
     AcqRel = 4,
@@ -137,8 +137,18 @@ impl Atomic<T: Integer> {
 }
 
 /// Memory barrier
+#[force_inline]
 fn fence(ordering: Ordering) {
     intrinsics::codegen_func::<void>("__atomic_thread_fence", ordering as libc::c_int)
+}
+
+/// Compiler-only memory barrier
+///
+/// This prevents the compiler from reordering memory accesses accrodning to the
+/// memory access ordering, but does not prevent hardware reordering.
+#[force_inline]
+fn compiler_fence(ordering: Ordering) {
+    intrinsics::codegen_func::<void>("__atomic_signal_fence", ordering as libc::c_int)
 }
 
 /// A mutual exclusion lock (mutex)
@@ -336,7 +346,7 @@ impl ChannelIterator<T> {
     mixin iter::IteratorExt<ChannelIterator<T>, T>;
 }
 
-///
+/// Error returned by [Channel] operations.
 enum ChannelError {
     Closed,
     WouldBlock
@@ -363,7 +373,7 @@ impl ChannelError {
     mixin cmp::Equatable<ChannelError>;
 }
 
-/// A simple bounded synchronous channel.
+/// A simple bounded synchronous queue.
 ///
 /// Uses a ring buffer and [Mutex] and [CondVar] to provide mutual exclusion and signalling.
 ///
@@ -488,10 +498,7 @@ impl Channel<T> {
     }
 
     fn _try_wait<F: Callable<(&Channel<T>), bool>>(self: &mut Channel<T>, cond: F) -> Result<(), ChannelError> {
-        if !self.mutex.try_lock() {
-            return Result::err(ChannelError::WouldBlock);
-        }
-
+        self.mutex.lock();
         if !cond(self) {
             self.mutex.unlock();
             return Result::err(ChannelError::WouldBlock);
@@ -502,10 +509,6 @@ impl Channel<T> {
 
     fn _wait_timeout<F: Callable<(&Channel<T>), bool>>(self: &mut Channel<T>, cond: F, timeout: Duration) -> Result<(), ChannelError> {
         let start = Instant::now();
-
-        // timedlock is not available on MacOS. The assumption is that the mutex is
-        // unlikely to be contended for long enough to matter, so the timeout is just
-        // passed to the condvar.
         self.mutex.lock();
 
         while !cond(self) {
@@ -513,7 +516,7 @@ impl Channel<T> {
                 &Instant::now().duration_since(&start)
             );
 
-            if remaining.negative() {
+            if remaining.is_negative() {
                 self.mutex.unlock();
                 return Result::err(ChannelError::WouldBlock);
             }
@@ -572,8 +575,197 @@ impl Channel<T> {
     }
 }
 
+/// A synchronization primitive that allows multiple threads to wait until the
+/// event is signalled.
+///
+/// Once an event is signalled it can be reset and reused.
+///
+/// # Example
+/// ```
+/// use std::sync::Event;
+/// use std::thread::spawn;
+///
+/// let ev = Event::new();
+/// let text: &[u8];
+///
+/// let t = spawn(|&ev, &text| {
+///     text = "Hello, world!";
+///     ev.set();
+/// });
+///
+/// ev.wait();
+/// assert_eq!(text, "Hello, world!");
+///
+/// t.join().unwrap();
+/// ```
+struct Event {
+    state: Atomic<usize>
+}
+
+impl Event {
+    use internal::{EventWaiter, COMPLETE, INCOMPLETE, STATE_MASK};
+
+    /// Create a new event
+    fn new() -> Event {
+        Event {
+            state: Atomic::new(INCOMPLETE)
+        }
+    }
+
+    /// Signals the event, waking up all threads that are waiting on it.
+    fn set(self: &mut Event) {
+        let old_value = self.state.exchange(COMPLETE, Ordering::AcqRel);
+        switch old_value {
+            INCOMPLETE, COMPLETE => {}
+            _ => {
+                // Wake up some threads
+                let waiter = (old_value & ~STATE_MASK) as &mut EventWaiter;
+                while waiter != null {
+                    waiter.signaled.store(true, Ordering::Release);
+                    waiter.thread.unpark();
+                    waiter = waiter.next;
+                }
+            }
+        }
+    }
+
+    /// Resets the event, so that it can be waited on and signalled again.
+    ///
+    /// If event is not in set state, this is a no-op.
+    fn reset(self: &mut Event) {
+        self.state.compare_exchange(
+            COMPLETE,
+            INCOMPLETE,
+            Ordering::Release,
+            Ordering::Relaxed
+        );
+    }
+
+    /// Checks if the event is signalled.
+    fn is_set(self: &Event) -> bool {
+        self.state.load(Ordering::Acquire) == COMPLETE
+    }
+
+    /// Waits for the event to be signalled.
+    fn wait(self: &mut Event) {
+        let state = self.state.load(Ordering::Acquire);
+        loop {
+            if state == COMPLETE {
+                return;
+            }
+
+            // This is a super clever idea I stole from Rust's Once, a linked-list
+            // of nodes on the stack. Since the threads are sleeping, the address will
+            // remain valid.
+            let waiter = EventWaiter {
+                thread: thread::Thread::current(),
+                signaled: Atomic::new(false),
+                next: (state & ~STATE_MASK) as &mut EventWaiter
+            }
+
+            let maybe_replaced = self.state.compare_exchange(
+                state,
+                &waiter as usize,
+                Ordering::Release,
+                Ordering::Relaxed
+            );
+
+            if !maybe_replaced.is_ok {
+                // Someone beat us to the punch
+                state = maybe_replaced.unwrap_err();
+                continue;
+            }
+
+            while !waiter.signaled.load(Ordering::Acquire) {
+                thread::Thread::park();
+            }
+            return;
+        }
+    }
+}
+
+/// A one-shot channel (future).
+///
+/// A one-shot channel is a channel that can only be sent to once. Multiple threads can wait on it and
+/// they will all receive the same value.
+///
+/// # Example
+/// ```
+/// use std::sync::Oneshot;
+/// use std::thread::spawn;
+///
+/// let one_shot: Oneshot<i32> = Oneshot::new();
+/// let t = spawn(|&one_shot| {
+///     one_shot.send(42);
+/// });
+///
+/// let value = one_shot.recv();
+/// assert_eq!(value, 42);
+///
+/// t.join().unwrap();
+/// ```
+struct Oneshot<T> {
+    _event: Event,
+    _value: T
+}
+
+impl Oneshot<T> {
+    /// Creates a new one-shot channel.
+    fn new() -> Oneshot<T> {
+        Oneshot::<T> {
+            _event: Event::new(),
+            _value: mem::uninitialized()
+        }
+    }
+
+    /// Sets the value of the channel.
+    ///
+    /// If the channel is already closed, this will return `Result::err(ChannelError::Closed)`.
+    ///
+    /// It is undefined behavior to call this function more than once on a single channel.
+    fn send(self: &mut Oneshot<T>, value: T) {
+        debug_assert!(!self._event.is_set());
+
+        self._value = value;
+        self._event.set();
+    }
+
+    /// Gets the value of the channel.
+    ///
+    /// If the channel's value has already been set, this will return immediately. Otherwise,
+    /// it will block until the value is set.
+    fn recv(self: &mut Oneshot<T>) -> T {
+        self._event.wait();
+        self._value
+    }
+
+    /// Tries to get the value of the channel
+    ///
+    /// If the channel's value has not been set, this will return [ChannelError::WouldBlock].
+    fn try_recv(self: &mut Oneshot<T>) -> Result<T, ChannelError> {
+        if self._event.is_set() {
+            Result::ok(self._value)
+        } else {
+            Result::err(ChannelError::WouldBlock)
+        }
+    }
+}
+
+mod internal {
+    const INCOMPLETE: usize = 0x0;
+    const COMPLETE: usize = 0x1;
+    const STATE_MASK: usize = 0x1;
+
+    #[align(4)]
+    struct EventWaiter {
+        thread: thread::Thread,
+        signaled: Atomic<bool>,
+        next: &mut EventWaiter,
+    }
+}
+
 #[cfg(all(test, test_std))]
-mod test {
+mod tests {
     use time::Duration;
 
     #[test]
@@ -586,7 +778,6 @@ mod test {
         }
 
         match!(Ordering::Relaxed, "__ATOMIC_RELAXED");
-        match!(Ordering::Consume, "__ATOMIC_CONSUME");
         match!(Ordering::Acquire, "__ATOMIC_ACQUIRE");
         match!(Ordering::Release, "__ATOMIC_RELEASE");
         match!(Ordering::AcqRel, "__ATOMIC_ACQ_REL");
@@ -797,5 +988,84 @@ mod test {
         assert_eq!(chan.recv_timeout(Duration::zero()), Result::ok(42));
         assert_eq!(chan.recv_timeout(Duration::zero()), Result::err(ChannelError::WouldBlock));
     }
-}
 
+    #[cfg(threading)]
+    #[test]
+    fn test_event() {
+        let ev = Event::new();
+        assert_eq!(ev.is_set(), false);
+        ev.set();
+        assert_eq!(ev.is_set(), true);
+        ev.wait();
+        ev.reset();
+        assert_eq!(ev.is_set(), false);
+    }
+
+    #[cfg(threading)]
+    #[test]
+    fn test_event_blocking() {
+        use thread::{spawn, Thread};
+        let ev1 = Event::new();
+        let ev2 = Event::new();
+
+        let t1 = spawn(|&ev1, &ev2| {
+            ev1.wait();
+            ev1.reset();
+            ev2.set();
+        });
+
+        ev1.set();
+        ev2.wait();
+
+        assert_eq!(ev1.is_set(), false);
+        assert_eq!(ev2.is_set(), true);
+
+        t1.join().unwrap();
+    }
+
+    #[cfg(threading)]
+    #[test]
+    fn test_oneshot() {
+        let chan: Oneshot<i32> = Oneshot::new();
+        assert_eq!(chan.try_recv(), Result::err(ChannelError::WouldBlock));
+        chan.send(1337);
+        assert_eq!(chan.try_recv(), Result::ok(1337));
+        assert_eq!(chan.recv(), 1337);
+    }
+
+    #[cfg(threading)]
+    #[test]
+    fn test_oneshot_blocking() {
+        use thread::{spawn, Thread};
+
+        let chan: Oneshot<i32> = Oneshot::new();
+        let main_thread = Thread::current();
+        let flag = Atomic::new(2);
+
+        let t1 = spawn(|&chan, &flag, =main_thread| -> i32 {
+            if flag.fetch_sub(1, Ordering::SeqCst) == 1 {
+                main_thread.unpark();
+            }
+            chan.recv() + 1
+        });
+
+        let t2 = spawn(|&chan, &flag, =main_thread| -> i32 {
+            if flag.fetch_sub(1, Ordering::SeqCst) == 1 {
+                main_thread.unpark();
+            }
+            chan.recv() + 2
+        });
+
+        while flag.load(Ordering::SeqCst) != 0 {
+            Thread::park();
+        }
+        /// Make sure the threads are really blocked.
+        for i in 0..100 {
+            Thread::yield();
+        }
+
+        chan.send(42);
+        assert_eq!(t1.join().unwrap(), 43);
+        assert_eq!(t2.join().unwrap(), 44);
+    }
+}
