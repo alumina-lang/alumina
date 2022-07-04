@@ -73,6 +73,14 @@ macro assume($cond) {
     }
 }
 
+macro likely($cond) {
+    internal::expect($cond, true)
+}
+
+macro unlikely($cond) {
+    internal::expect($cond, false)
+}
+
 /// Returns the line in the source code at which the macro was invoked.
 ///
 /// If used within a macro, this will return the line of the outermost macro invocation.
@@ -148,6 +156,11 @@ mod internal {
             }
         }
     }
+
+    #[force_inline]
+    fn expect(cond: bool, expected: bool) -> bool {
+        intrinsics::codegen_func::<bool>("__builtin_expect", cond, expected)
+    }
 }
 
 /// Contains various utility functions that are useful in the generic context where the type operated on is
@@ -176,5 +189,16 @@ mod util {
         }
         let ret: T;
         ret
+    }
+}
+
+#[cfg(all(test_std, test))]
+mod tests {
+    #[test]
+    fn test_likely() {
+        assert!(likely!(true));
+        assert!(!likely!(false));
+        assert!(unlikely!(true));
+        assert!(!unlikely!(false));
     }
 }

@@ -1,0 +1,743 @@
+/// A double-ended queue (growable ring buffer).
+///
+/// Elements can be pushed to and popped from either end of the queue.
+/// # Example
+/// ```
+/// let deque: Deque<i32> = Deque::new();
+/// defer deque.free();
+///
+/// deque.push(1);
+/// deque.push(2);
+/// deque.push_front(3);
+/// deque.push_front(4);
+///
+/// assert_eq!(deque.len(), 4);
+///
+/// assert_eq!(deque.pop(), Option::some(2));
+/// assert_eq!(deque.pop_front(), Option::some(4));
+/// assert_eq!(deque.pop(), Option::some(1));
+/// assert_eq!(deque.pop_front(), Option::some(3));
+/// ```
+struct Deque<T> {
+    _data: &mut [T],
+    _tail: usize,
+    _head: usize,
+}
+
+impl Deque<T> {
+    /// Create an empty deque
+    ///
+    /// This will not call allocate until the first element is inserted.
+    fn new() -> Deque<T> {
+        with_capacity(0)
+    }
+
+     /// Create a deque that can hold up to `capacity` elements without reallocating.
+    fn with_capacity(capacity: usize) -> Deque<T> {
+        Deque::<T> {
+            _data: if capacity == 0 {
+                mem::slice::empty()
+            } else {
+                mem::slice::alloc(capacity + 1)
+            },
+            _tail: 0,
+            _head: 0,
+        }
+    }
+
+    /// Create a deque from a slice, copying the elements.
+    fn from_slice(slice: &[T]) -> Deque<T> {
+        let deque = with_capacity::<T>(slice.len);
+        slice.copy_to_nonoverlapping(deque._data[0]);
+        deque._head = 0;
+        deque._tail = slice.len;
+        deque
+    }
+
+    /// Create a deque from an iterator of elements.
+    fn from_iter<I: iter::Iterator<I, T>>(iter: &mut I) -> Deque<T> {
+        let deque = Deque::new::<T>();
+        deque.extend(iter);
+        deque
+    }
+
+    /// Reserve capacity for at least `additional` elements.
+    fn reserve(self: &mut Deque<T>, additional: usize) {
+        if self._data.len <= self.len() + additional {
+            self._resize(
+                cmp::max(
+                    2usize, cmp::max(self._data.len * 2, self._data.len + additional)
+                )
+            );
+        }
+    }
+
+    /// Shrink the size of the underlying buffer to match
+    /// the current length.
+    fn shrink_to_fit(self: &mut Deque<T>) {
+        if self._data.len > self.len() + 1 {
+            self._resize(self.len() + 1);
+        }
+    }
+
+    #[cold]
+    #[no_inline]
+    fn _resize(self: &mut Deque<T>, new_size: usize) {
+        debug_assert!(new_size > self.len());
+
+        let len = self.len();
+        let new_data = mem::slice::alloc::<T>(new_size);
+
+        if self._tail > self._head {
+            self._data[self._head..self._tail]
+                .copy_to_nonoverlapping(&new_data[0]);
+        } else if self._tail < self._head {
+            self._data[self._head..]
+                .copy_to_nonoverlapping(&new_data[0]);
+            self._data[..self._tail]
+                .copy_to_nonoverlapping(&new_data[self._data.len - self._head]);
+        }
+
+        self._data.free();
+        self._data = new_data;
+        self._head = 0;
+        self._tail = len;
+    }
+
+    /// Returns the number of elements in the deque.
+    fn len(self: &Deque<T>) -> usize {
+        if self._tail >= self._head {
+            self._tail - self._head
+        } else {
+            self._data.len - self._head + self._tail
+        }
+    }
+
+    /// Returns the total number of elements that the deque can hold without reallocating.
+    fn capacity(self: &Deque<T>) -> usize {
+        if self._data.len == 0 {
+            0
+        } else {
+            self._data.len - 1
+        }
+    }
+
+    /// Returns `true` if the deque is empty, `false` otherwise.
+    fn is_empty(self: &Deque<T>) -> bool {
+        self.len() == 0
+    }
+
+    /// Clears the deque, removing all values.
+    ///
+    /// This does not shrink the underlying buffer, call
+    /// [Deque::shrink_to_fit] to free up unused memory.
+    fn clear(self: &mut Deque<T>) {
+        self._head = 0;
+        self._tail = 0;
+    }
+
+    /// Returns a pair of slices that represent the deque's contents.
+    ///
+    /// If the deque has not wrapped around (elements are contiguous in memory),
+    /// the second slice will be empty.
+    fn as_slices(self: &Deque<T>) -> (&[T], &[T]) {
+        if self._head <= self._tail {
+            (self._data[self._head..self._tail] as &[T], mem::slice::empty::<&T>())
+        } else {
+            (self._data[self._head..] as &[T], self._data[..self._tail] as &[T])
+        }
+    }
+
+    /// Returns a pair of mutable slices that represent the deque's contents.
+    ///
+    /// If the deque has not wrapped around (elements are contiguous in memory),
+    /// the second slice will be empty.
+    fn as_slices_mut(self: &mut Deque<T>) -> (&mut [T], &mut [T]) {
+        if self._head <= self._tail {
+            (self._data[self._head..self._tail], mem::slice::empty::<&mut T>())
+        } else {
+            (self._data[self._head..], self._data[..self._tail])
+        }
+    }
+
+    /// Pushes an element to the back of the deque.
+    fn push(self: &mut Deque<T>, element: T) {
+        self.reserve(1);
+        self._data[self._tail] = element;
+        self._tail = (self._tail + 1) % self._data.len;
+    }
+
+    /// Pops an element from the back of the deque.
+    ///
+    /// If the queue is empty, returns `Option::none()`.
+    fn pop(self: &mut Deque<T>) -> Option<T> {
+        if self.len() == 0 {
+            Option::none()
+        } else {
+            self._tail = (self._tail + self._data.len - 1) % self._data.len;
+            Option::some(self._data[self._tail])
+        }
+    }
+
+    /// Pushes an element to the front of the deque.
+    fn push_front(self: &mut Deque<T>, element: T) {
+        self.reserve(1);
+        self._head = (self._head + self._data.len - 1) % self._data.len;
+        self._data[self._head] = element;
+    }
+
+    /// Pops an element from the front of the deque.
+    ///
+    /// If the queue is empty, returns `Option::none()`.
+    fn pop_front(self: &mut Deque<T>) -> Option<T> {
+        if self.len() == 0 {
+            Option::none()
+        } else {
+            let element = self._data[self._head];
+            self._head = (self._head + 1) % self._data.len;
+            Option::some(element)
+        }
+    }
+
+    /// Returns an iterator over the elements of the deque.
+    fn iter(self: &Deque<T>) -> DequeIterator<T> {
+        DequeIterator { _inner: *self }
+    }
+
+    /// Returns a iterator over the pointers to the elements of the deque.
+    fn iter_ref(self: &Deque<T>) -> DequeRefIterator<&T> {
+        DequeRefIterator::<&T> {
+            _data: self._data,
+            _head: self._head,
+            _tail: self._tail
+        }
+    }
+
+    /// Returns a iterator over the mutable pointers to the elements of the deque.
+    fn iter_mut(self: &mut Deque<T>) -> DequeRefIterator<&mut T> {
+        DequeRefIterator::<&mut T> {
+            _data: self._data,
+            _head: self._head,
+            _tail: self._tail
+        }
+    }
+
+    /// Extends the deque on the back end with the contents of an iterator.
+    fn extend<I: iter::Iterator<I, T>>(self: &mut Deque<T>, iter: &mut I) {
+        self.reserve(iter.size_hint().unwrap_or(0));
+
+        loop {
+            let item = iter.next();
+            if item.is_some {
+                self.push(item.inner);
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Extends the deque on the front end with the contents of an iterator.
+    fn extend_front<I: iter::Iterator<I, T>>(self: &mut Deque<T>, iter: &mut I) {
+        self.reserve(iter.size_hint().unwrap_or(0));
+
+        loop {
+            let item = iter.next();
+            if item.is_some {
+                self.push_front(item.inner);
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Extends the deque on the back end with the contents of a slice.
+    fn extend_from_slice(self: &mut Deque<T>, value: &[T]) {
+        if value.len == 0 {
+            return;
+        }
+
+        self.reserve(value.len);
+
+        if self._tail < self._head {
+            value.copy_to_nonoverlapping(&self._data[self._tail])
+        } else {
+            let spare = self._data.len - self._tail;
+            if value.len <= spare {
+                value.copy_to_nonoverlapping(&self._data[self._tail]);
+            } else {
+                value[..spare].copy_to_nonoverlapping(&self._data[self._tail]);
+                value[spare..].copy_to_nonoverlapping(&self._data[0]);
+            }
+        }
+
+        self._tail = (self._tail + value.len) % self._data.len;
+    }
+
+    /// @ mem::Movable::move
+    fn move(self: &mut Deque<T>) -> Deque<T> {
+        let ret = *self;
+        self.clear();
+        self._data = mem::slice::empty();
+        ret
+    }
+
+    /// @ mem::Freeable::free
+    fn free(self: &mut Deque<T>) {
+        self._data.free();
+    }
+
+    /// @ mem::Clonable::clone
+    fn clone(self: &Deque<T>) -> Deque<T> {
+        let cloned = with_capacity(self.len());
+        let (h, t) = self.as_slices();
+        cloned.extend_from_slice(h);
+        cloned.extend_from_slice(t);
+        cloned
+    }
+}
+
+/// Iterator over the elements of a deque.
+struct DequeIterator<T> {
+    _inner: Deque<T>,
+}
+
+impl DequeIterator<T> {
+    /// @ iter::Iterator::next
+    fn next(self: &mut DequeIterator<T>) -> Option<T> {
+        self._inner.pop_front()
+    }
+
+    /// @ iter::DoubleEndedIterator::next_back
+    fn next_back(self: &mut DequeIterator<T>) -> Option<T> {
+        self._inner.pop()
+    }
+
+    /// @ iter::Iterator::size_hint
+    fn size_hint(self: &DequeIterator<T>) -> Option<usize> {
+        Option::some(self._inner.len())
+    }
+
+    mixin iter::Iterator<DequeIterator<T>, T>;
+    mixin iter::IteratorExt<DequeIterator<T>, T>;
+    mixin iter::DoubleEndedIterator<DequeIterator<T>, T>;
+    mixin iter::DoubleEndedIteratorExt<DequeIterator<T>, T>;
+}
+
+/// Iterator over the pointers to the elements of a deque.
+struct DequeRefIterator<Ptr> {
+    _data: std::mem::slice<Ptr>,
+    _head: usize,
+    _tail: usize,
+}
+
+impl DequeRefIterator<Ptr> {
+    /// @ iter::Iterator::next
+    fn next(self: &mut DequeRefIterator<Ptr>) -> Option<Ptr> {
+        if self._tail == self._head {
+            Option::none()
+        } else {
+            let element = &self._data[self._head];
+            self._head = (self._head + 1) % self._data.len;
+            Option::some(element)
+        }
+    }
+
+    /// @ iter::DoubleEndedIterator::next_back
+    fn next_back(self: &mut DequeRefIterator<Ptr>) -> Option<Ptr> {
+        if self._tail == self._head {
+            Option::none()
+        } else {
+            self._tail = (self._tail + self._data.len - 1) % self._data.len;
+            Option::some(&self._data[self._tail])
+        }
+    }
+
+    /// @ iter::Iterator::size_hint
+    fn size_hint(self: &DequeRefIterator<Ptr>) -> Option<usize> {
+        Option::some(if self._tail >= self._head {
+            self._tail - self._head
+        } else {
+            self._data.len - self._head + self._tail
+        })
+    }
+
+    mixin iter::Iterator<DequeRefIterator<Ptr>, Ptr>;
+    mixin iter::IteratorExt<DequeRefIterator<Ptr>, Ptr>;
+    mixin iter::DoubleEndedIterator<DequeRefIterator<Ptr>, Ptr>;
+    mixin iter::DoubleEndedIteratorExt<DequeRefIterator<Ptr>, Ptr>;
+}
+
+
+#[cfg(all(test_std, test))]
+mod tests {
+    #[test]
+    fn test_basic() {
+        let deque: Deque<i32> = Deque::new();
+        defer deque.free();
+
+        deque.push(1);
+        deque.push(2);
+        deque.push_front(3);
+        deque.push_front(4);
+
+        assert_eq!(deque.len(), 4);
+
+        assert_eq!(deque.pop(), Option::some(2));
+        assert_eq!(deque.pop_front(), Option::some(4));
+        assert_eq!(deque.pop(), Option::some(1));
+        assert_eq!(deque.pop_front(), Option::some(3));
+    }
+
+    #[test]
+    fn test_push_pop() {
+        let deque: Deque<i32> = Deque::new();
+        defer deque.free();
+
+        deque.push(1);
+        deque.push(2);
+        deque.push(3);
+
+        assert_eq!(deque.len(), 3);
+
+        assert_eq!(deque.pop(), Option::some(3));
+        assert_eq!(deque.pop(), Option::some(2));
+        assert_eq!(deque.pop(), Option::some(1));
+        assert_eq!(deque.pop(), Option::none());
+    }
+
+    #[test]
+    fn test_push_front_pop_front() {
+        let deque: Deque<i32> = Deque::new();
+        defer deque.free();
+
+        deque.push_front(1);
+        deque.push_front(2);
+        deque.push_front(3);
+
+        assert_eq!(deque.len(), 3);
+
+        assert_eq!(deque.pop_front(), Option::some(3));
+        assert_eq!(deque.pop_front(), Option::some(2));
+        assert_eq!(deque.pop_front(), Option::some(1));
+        assert_eq!(deque.pop_front(), Option::none());
+    }
+
+    #[test]
+    fn test_push_pop_front() {
+        let deque: Deque<i32> = Deque::new();
+        defer deque.free();
+
+        deque.push(1);
+        deque.push(2);
+        deque.push(3);
+
+        assert_eq!(deque.len(), 3);
+
+        assert_eq!(deque.pop_front(), Option::some(1));
+        assert_eq!(deque.pop_front(), Option::some(2));
+        assert_eq!(deque.pop_front(), Option::some(3));
+        assert_eq!(deque.pop_front(), Option::none());
+    }
+
+    #[test]
+    fn test_push_front_pop() {
+        let deque: Deque<i32> = Deque::new();
+        defer deque.free();
+
+        deque.push_front(1);
+        deque.push_front(2);
+        deque.push_front(3);
+
+        assert_eq!(deque.len(), 3);
+
+        assert_eq!(deque.pop(), Option::some(1));
+        assert_eq!(deque.pop(), Option::some(2));
+        assert_eq!(deque.pop(), Option::some(3));
+        assert_eq!(deque.pop(), Option::none());
+    }
+
+    #[test]
+    fn test_as_slices_contiguous() {
+        let deque: Deque<i32> = Deque::with_capacity(10);
+        defer deque.free();
+
+        deque.push(1);
+        deque.push(2);
+        deque.push(3);
+        deque.push(4);
+
+        let (h, t) = deque.as_slices();
+        assert_eq!(h, &[1, 2, 3, 4]);
+        assert!(t.len == 0);
+
+        let (h, t) = deque.as_slices_mut();
+        assert_eq!(h, &[1, 2, 3, 4]);
+        assert!(t.len == 0);
+    }
+
+    #[test]
+    fn test_as_slices_non_contiguous() {
+        let deque: Deque<i32> = Deque::with_capacity(10);
+        defer deque.free();
+
+        deque.push(1);
+        deque.push(2);
+        deque.push_front(3);
+        deque.push_front(4);
+
+        let (h, t) = deque.as_slices();
+
+        assert_eq!(h, &[4, 3]);
+        assert_eq!(t, &[1, 2]);
+
+        let (h, t) = deque.as_slices_mut();
+
+        assert_eq!(h, &[4, 3]);
+        assert_eq!(t, &[1, 2]);
+    }
+
+    #[test]
+    fn test_iter() {
+        let deque: Deque<i32> = Deque::with_capacity(10);
+        defer deque.free();
+
+        deque.push(1);
+        deque.push(2);
+        deque.push_front(3);
+        deque.push_front(4);
+
+        let it = deque.iter();
+        assert_eq!(it.next(), Option::some(4));
+        assert_eq!(it.next(), Option::some(3));
+        assert_eq!(it.next(), Option::some(1));
+        assert_eq!(it.next(), Option::some(2));
+        assert_eq!(it.next(), Option::none());
+    }
+
+    #[test]
+    fn test_iter_rev() {
+        let deque: Deque<i32> = Deque::with_capacity(10);
+        defer deque.free();
+
+        deque.push(1);
+        deque.push(2);
+        deque.push_front(3);
+        deque.push_front(4);
+
+        let it = deque.iter().rev();
+        assert_eq!(it.next(), Option::some(2));
+        assert_eq!(it.next(), Option::some(1));
+        assert_eq!(it.next(), Option::some(3));
+        assert_eq!(it.next(), Option::some(4));
+        assert_eq!(it.next(), Option::none());
+    }
+
+    #[test]
+    fn test_iter_ref() {
+        let deque: Deque<i32> = Deque::with_capacity(10);
+        defer deque.free();
+
+        deque.push(1);
+        deque.push(2);
+        deque.push_front(3);
+        deque.push_front(4);
+
+        let it = deque.iter_ref();
+        assert_eq!(*it.next().unwrap(), 4);
+        assert_eq!(*it.next().unwrap(), 3);
+        assert_eq!(*it.next().unwrap(), 1);
+        assert_eq!(*it.next().unwrap(), 2);
+        assert!(!it.next().is_some);
+    }
+
+    #[test]
+    fn test_iter_ref_rev() {
+        let deque: Deque<i32> = Deque::with_capacity(10);
+        defer deque.free();
+
+        deque.push(1);
+        deque.push(2);
+        deque.push_front(3);
+        deque.push_front(4);
+
+        let it = deque.iter_ref().rev();
+        assert_eq!(*it.next().unwrap(), 2);
+        assert_eq!(*it.next().unwrap(), 1);
+        assert_eq!(*it.next().unwrap(), 3);
+        assert_eq!(*it.next().unwrap(), 4);
+        assert!(!it.next().is_some);
+    }
+
+    #[test]
+    fn test_iter_mut() {
+        let deque: Deque<i32> = Deque::with_capacity(10);
+        defer deque.free();
+
+        deque.push(1);
+        deque.push(2);
+        deque.push_front(3);
+        deque.push_front(4);
+
+        for v in deque.iter_mut() {
+            *v += 50;
+        }
+
+        for v in deque.iter_mut().rev() {
+            *v += 50;
+        }
+
+        let it = deque.iter();
+        assert_eq!(it.next(), Option::some(104));
+        assert_eq!(it.next(), Option::some(103));
+        assert_eq!(it.next(), Option::some(101));
+        assert_eq!(it.next(), Option::some(102));
+        assert_eq!(it.next(), Option::none());
+    }
+
+    #[test]
+    fn test_extend() {
+        let deque: Deque<i32> = Deque::with_capacity(10);
+        defer deque.free();
+
+        deque.extend(&[1, 2, 3, 4].iter());
+
+        let it = deque.iter();
+        assert_eq!(it.next(), Option::some(1));
+        assert_eq!(it.next(), Option::some(2));
+        assert_eq!(it.next(), Option::some(3));
+        assert_eq!(it.next(), Option::some(4));
+        assert_eq!(it.next(), Option::none());
+    }
+
+    #[test]
+    fn test_extend_front() {
+        let deque: Deque<i32> = Deque::with_capacity(10);
+        defer deque.free();
+
+        deque.extend_front(&[1, 2, 3, 4].iter());
+
+        let it = deque.iter();
+        assert_eq!(it.next(), Option::some(4));
+        assert_eq!(it.next(), Option::some(3));
+        assert_eq!(it.next(), Option::some(2));
+        assert_eq!(it.next(), Option::some(1));
+        assert_eq!(it.next(), Option::none());
+    }
+
+    #[test]
+    fn test_extend_1() {
+        let deque: Deque<i32> = Deque::with_capacity(10);
+        defer deque.free();
+
+        deque.push(1);
+        deque.push(2);
+        deque.push_front(3);
+        deque.push_front(4);
+
+        deque.extend(&[5, 6, 7, 8].iter());
+
+        let it = deque.iter();
+        assert_eq!(it.next(), Option::some(4));
+        assert_eq!(it.next(), Option::some(3));
+        assert_eq!(it.next(), Option::some(1));
+        assert_eq!(it.next(), Option::some(2));
+        assert_eq!(it.next(), Option::some(5));
+        assert_eq!(it.next(), Option::some(6));
+        assert_eq!(it.next(), Option::some(7));
+        assert_eq!(it.next(), Option::some(8));
+        assert_eq!(it.next(), Option::none());
+    }
+
+    #[test]
+    fn test_extend_front_1() {
+        let deque: Deque<i32> = Deque::with_capacity(8);
+        defer deque.free();
+
+        deque.push(1);
+        deque.push(2);
+        deque.push_front(3);
+        deque.push_front(4);
+
+        deque.extend_front(&[5, 6, 7, 8].iter());
+
+        let it = deque.iter();
+        assert_eq!(it.next(), Option::some(8));
+        assert_eq!(it.next(), Option::some(7));
+        assert_eq!(it.next(), Option::some(6));
+        assert_eq!(it.next(), Option::some(5));
+        assert_eq!(it.next(), Option::some(4));
+        assert_eq!(it.next(), Option::some(3));
+        assert_eq!(it.next(), Option::some(1));
+        assert_eq!(it.next(), Option::some(2));
+        assert_eq!(it.next(), Option::none());
+    }
+
+    #[test]
+    fn test_extend_from_slice() {
+        let deque: Deque<i32> = Deque::with_capacity(10);
+        defer deque.free();
+
+        deque.push(1);
+        deque.push(2);
+        deque.push_front(3);
+        deque.push_front(4);
+
+        deque.extend_from_slice(&[5, 6, 7, 8]);
+
+        let it = deque.iter();
+        assert_eq!(it.next(), Option::some(4));
+        assert_eq!(it.next(), Option::some(3));
+        assert_eq!(it.next(), Option::some(1));
+        assert_eq!(it.next(), Option::some(2));
+        assert_eq!(it.next(), Option::some(5));
+        assert_eq!(it.next(), Option::some(6));
+        assert_eq!(it.next(), Option::some(7));
+        assert_eq!(it.next(), Option::some(8));
+        assert_eq!(it.next(), Option::none());
+    }
+
+    #[test]
+    fn test_extend_from_slice_1() {
+        let deque: Deque<i32> = Deque::with_capacity(8);
+        defer deque.free();
+
+        deque.push(1);
+        deque.push(2);
+        deque.push(3);
+        deque.push(4);
+
+        deque.extend_from_slice(&[5, 6, 7, 8]);
+
+        let it = deque.iter();
+        assert_eq!(it.next(), Option::some(1));
+        assert_eq!(it.next(), Option::some(2));
+        assert_eq!(it.next(), Option::some(3));
+        assert_eq!(it.next(), Option::some(4));
+        assert_eq!(it.next(), Option::some(5));
+        assert_eq!(it.next(), Option::some(6));
+        assert_eq!(it.next(), Option::some(7));
+        assert_eq!(it.next(), Option::some(8));
+        assert_eq!(it.next(), Option::none());
+    }
+
+    #[test]
+    fn test_clone() {
+        let deque: Deque<i32> = Deque::with_capacity(8);
+        defer deque.free();
+
+        deque.push(1);
+        deque.push(2);
+        deque.push_front(3);
+        deque.push_front(4);
+
+        let cloned = deque.clone();
+        defer cloned.free();
+
+        let it = cloned.iter();
+        assert_eq!(it.next(), Option::some(4));
+        assert_eq!(it.next(), Option::some(3));
+        assert_eq!(it.next(), Option::some(1));
+        assert_eq!(it.next(), Option::some(2));
+        assert_eq!(it.next(), Option::none());
+    }
+}
