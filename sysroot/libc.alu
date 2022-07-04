@@ -1259,6 +1259,11 @@ extern "C" fn pthread_kill(thread: pthread_t, sig: c_int) -> c_int;
 extern "C" fn pthread_self() -> pthread_t;
 extern "C" fn pthread_detach(thread: pthread_t) -> c_int;
 
+extern "C" fn pthread_attr_init(attr: &mut pthread_attr_t) -> c_int;
+extern "C" fn pthread_attr_destroy(attr: &mut pthread_attr_t) -> c_int;
+extern "C" fn pthread_attr_setstacksize(attr: &mut pthread_attr_t, stack_size: size_t) -> c_int;
+extern "C" fn pthread_attr_setdetachstate(attr: &mut pthread_attr_t, state: c_int) -> c_int;
+
 extern "C" fn pthread_mutex_lock(lock: &mut pthread_mutex_t) -> c_int;
 extern "C" fn pthread_mutex_trylock(lock: &mut pthread_mutex_t) -> c_int;
 extern "C" fn pthread_mutex_unlock(lock: &mut pthread_mutex_t) -> c_int;
@@ -1275,6 +1280,18 @@ extern "C" fn pthread_cond_signal(cond: &mut pthread_cond_t) -> c_int;
 extern "C" fn pthread_cond_broadcast(cond: &mut pthread_cond_t) -> c_int;
 
 extern "C" fn sched_yield() -> c_int;
+
+#[cfg(target_os = "macos")]
+{
+    const PTHREAD_CREATE_JOINABLE: c_int = 1;
+    const PTHREAD_CREATE_DETACHED: c_int = 2;
+}
+
+#[cfg(not(target_os = "macos"))]
+{
+    const PTHREAD_CREATE_JOINABLE: c_int = 0;
+    const PTHREAD_CREATE_DETACHED: c_int = 1;
+}
 
 
 #[inline]

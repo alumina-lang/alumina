@@ -788,6 +788,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 }
                 return Ok(BoundCheckResult::Matches);
             }
+            Some(LangItemKind::ProtoNamedFunction) => match ty {
+                ir::Ty::NamedFunction(..) => return Ok(BoundCheckResult::Matches),
+                _ => return Ok(BoundCheckResult::DoesNotMatch),
+            },
+            Some(LangItemKind::ProtoFunctionPointer) => match ty {
+                ir::Ty::FunctionPointer(..) => return Ok(BoundCheckResult::Matches),
+                _ => return Ok(BoundCheckResult::DoesNotMatch),
+            },
             Some(LangItemKind::ProtoArrayOf) => match ty {
                 ir::Ty::Array(k, _) if *k == proto_generic_args[0] => {
                     return Ok(BoundCheckResult::Matches)
@@ -2942,11 +2950,20 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 if matches!(b.get().with_no_span()?, ir::IRItem::Enum(_)) && a.is_numeric() => {}
 
             // Pointer casts
-            (ir::Ty::Pointer(_, _), ir::Ty::Pointer(_, _)) => {
+            (
+                ir::Ty::Pointer(_, _) | ir::Ty::FunctionPointer(_, _),
+                ir::Ty::Pointer(_, _) | ir::Ty::FunctionPointer(_, _),
+            ) => {
                 // Yes, even const -> mut casts, if you do this you are on your own
             }
-            (ir::Ty::Builtin(BuiltinType::USize), ir::Ty::Pointer(_, _)) => {}
-            (ir::Ty::Pointer(_, _), ir::Ty::Builtin(BuiltinType::USize)) => {}
+            (
+                ir::Ty::Builtin(BuiltinType::USize),
+                ir::Ty::Pointer(_, _) | ir::Ty::FunctionPointer(_, _),
+            ) => {}
+            (
+                ir::Ty::Pointer(_, _) | ir::Ty::FunctionPointer(_, _),
+                ir::Ty::Builtin(BuiltinType::USize),
+            ) => {}
 
             _ => {
                 return Err(CodeErrorKind::InvalidCast(

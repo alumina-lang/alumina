@@ -163,6 +163,8 @@ impl Mutex {
 
     /// Creates a new mutex.
     fn new() -> Mutex {
+        thread::internal::check_threading!();
+
         Mutex {
             inner: libc::pthread_mutex_initializer()
         }
@@ -209,6 +211,8 @@ impl RwLock {
 
     /// Creates a new reader-writer lock.
     fn new() -> RwLock {
+        thread::internal::check_threading!();
+
         RwLock {
             inner: libc::pthread_rwlock_initializer()
         }
@@ -275,6 +279,8 @@ impl CondVar {
 
     /// Creates a new condition variable.
     fn new() -> CondVar {
+        thread::internal::check_threading!();
+
         CondVar {
             inner: libc::pthread_cond_initializer()
         }
@@ -325,255 +331,6 @@ impl CondVar {
     }
 }
 
-/// Iterator over values of [Channel].
-struct ChannelIterator<T> {
-    inner: &mut Channel<T>
-}
-
-impl ChannelIterator<T> {
-    /// @ iter::Iterator::next
-    fn next(self: &mut ChannelIterator<T>) -> Option<T> {
-        let ret = self.inner.recv();
-        if ret.is_ok {
-            Option::some(ret.inner.ok)
-        } else {
-            assert_eq!(ret.inner.err, ChannelError::Closed);
-            Option::none()
-        }
-    }
-
-    mixin iter::Iterator<ChannelIterator<T>, T>;
-    mixin iter::IteratorExt<ChannelIterator<T>, T>;
-}
-
-/// Error returned by [Channel] operations.
-enum ChannelError {
-    Closed,
-    WouldBlock
-}
-
-impl ChannelError {
-    use fmt::{write, Formattable, Formatter, Result};
-    use cmp::Equatable;
-
-    /// @ Equatable::equals
-    fn equals(self: &ChannelError, other: &ChannelError) -> bool {
-        *self as i32 == *other as i32
-    }
-
-    /// @ Formattable::fmt
-    fn fmt<F: Formatter<F>>(self: &ChannelError, f: &mut F) -> Result {
-        switch *self {
-            ChannelError::Closed => write!(f, "channel closed"),
-            ChannelError::WouldBlock => write!(f, "channel would block")
-            _ => unreachable!()
-        }
-    }
-
-    mixin cmp::Equatable<ChannelError>;
-}
-
-/// A simple bounded synchronous queue.
-///
-/// Uses a ring buffer and [Mutex] and [CondVar] to provide mutual exclusion and signalling.
-///
-/// # Example
-/// ```
-/// use std::sync::Channel;
-/// use std::thread::spawn;
-///
-/// // Space for 10 elements
-/// let chan: Channel<i32> = Channel::new(5);
-///
-/// let t = spawn(|&chan| {
-///     for i in 0..10 {
-///         chan.send(i).unwrap();
-///     }
-///     chan.close();
-/// });
-///
-/// /// Prints all the values.
-/// for i in chan {
-///     println!("{}", i);
-/// }
-///
-/// t.join().unwrap();
-/// ```
-struct Channel<T> {
-    mutex: Mutex,
-    cond: CondVar,
-    buffer: &mut [T],
-    closed: bool,
-    reader: usize,
-    writer: usize
-}
-
-impl Channel<T> {
-    use time::{Instant, Duration};
-    use builtins::Callable;
-
-    /// Creates a new channel with a given capacity
-    fn new(capacity: usize) -> Channel<T> {
-        assert!(capacity >= 1);
-
-        Channel {
-            mutex: Mutex::new(),
-            cond: CondVar::new(),
-            buffer: mem::slice::alloc::<T>(capacity + 1),
-            closed: false,
-            reader: 0,
-            writer: 0,
-        }
-    }
-
-    /// Send a value to the channel.
-    ///
-    /// This function will block if the channel is full.
-    fn send(self: &mut Channel<T>, value: T) -> Result<(), ChannelError> {
-        self._wait(Channel::_send_cond::<T>);
-        self._do_send(value)
-    }
-
-    /// Try to send a value to the channel.
-    ///
-    /// If the channel is full, this function will return `Result::err(ChannelError::WouldBlock)`.
-    fn try_send(self: &mut Channel<T>, value: T) -> Result<(), ChannelError> {
-        self._try_wait(Channel::_send_cond::<T>)?;
-        self._do_send(value)
-    }
-
-    /// Try to send a value to the channel with a timeout.
-    ///
-    /// If the channel is full, this function will return `Result::err(ChannelError::WouldBlock)`.
-    fn send_timeout(self: &mut Channel<T>, value: T, timeout: Duration) -> Result<(), ChannelError> {
-        self._wait_timeout(Channel::_send_cond::<T>, timeout)?;
-        self._do_send(value)
-    }
-
-    /// Receive a value from the channel.
-    ///
-    /// This function will block if the channel is empty.
-    fn recv(self: &mut Channel<T>) -> Result<T, ChannelError> {
-        self._wait(Channel::_recv_cond::<T>);
-        self._do_recv()
-    }
-
-    /// Try to receive a value from the channel.
-    ///
-    /// If the channel is empty, this function will return `Result::err(ChannelError::WouldBlock)`.
-    fn try_recv(self: &mut Channel<T>) -> Result<T, ChannelError>  {
-        self._try_wait(Channel::_recv_cond::<T>)?;
-        self._do_recv()
-    }
-
-    /// Try to receive a value from the channel with a timeout.
-    ///
-    /// If the channel is empty, this function will return `Result::err(ChannelError::WouldBlock)`.
-    fn recv_timeout(self: &mut Channel<T>, timeout: Duration) -> Result<T, ChannelError> {
-        self._wait_timeout(Channel::_recv_cond::<T>, timeout)?;
-        self._do_recv()
-    }
-
-    /// Close the channel.
-    ///
-    /// All subsequent calls to `send` or `recv` (or their variants) will return `Result::err(ChannelError::Closed)`.
-    fn close(self: &mut Channel<T>) {
-        self.mutex.lock();
-        let cond = self.reader == self.writer;
-        self.closed = true;
-        self.mutex.unlock();
-
-        if cond {
-            self.cond.notify_all();
-        } else {
-            self.cond.notify_one();
-        }
-    }
-
-    fn _wait<F: Callable<(&Channel<T>), bool>>(self: &mut Channel<T>, cond: F) {
-        self.mutex.lock();
-        while !cond(self) {
-            self.cond.wait(&self.mutex);
-        }
-    }
-
-    fn _try_wait<F: Callable<(&Channel<T>), bool>>(self: &mut Channel<T>, cond: F) -> Result<(), ChannelError> {
-        self.mutex.lock();
-        if !cond(self) {
-            self.mutex.unlock();
-            return Result::err(ChannelError::WouldBlock);
-        }
-
-        Result::ok(())
-    }
-
-    fn _wait_timeout<F: Callable<(&Channel<T>), bool>>(self: &mut Channel<T>, cond: F, timeout: Duration) -> Result<(), ChannelError> {
-        let start = Instant::now();
-        self.mutex.lock();
-
-        while !cond(self) {
-            let remaining = timeout.sub(
-                &Instant::now().duration_since(&start)
-            );
-
-            if remaining.is_negative() {
-                self.mutex.unlock();
-                return Result::err(ChannelError::WouldBlock);
-            }
-            self.cond.wait_timeout(&self.mutex, remaining);
-        }
-
-        Result::ok(())
-    }
-
-    fn _recv_cond(self: &Channel<T>) -> bool {
-        self.reader != self.writer || self.closed
-    }
-
-    fn _send_cond(self: &Channel<T>) -> bool {
-        (self.reader != (self.writer + 1) % self.buffer.len) || self.closed
-    }
-
-    fn _do_recv(self: &mut Channel<T>) -> Result<T, ChannelError> {
-        // Don't check self.closed, there may still be items to read
-        if self.reader == self.writer {
-            self.mutex.unlock();
-            return Result::err(ChannelError::Closed);
-        }
-
-        let value = self.buffer[self.reader];
-        self.reader = (self.reader + 1) % self.buffer.len;
-        self.mutex.unlock();
-        self.cond.notify_one();
-        Result::ok(value)
-    }
-
-    fn _do_send(self: &mut Channel<T>, value: T) -> Result<(), ChannelError> {
-        if self.closed {
-            self.mutex.unlock();
-            return Result::err(ChannelError::Closed);
-        }
-
-        self.buffer[self.writer] = value;
-        self.writer = (self.writer + 1) % self.buffer.len;
-
-        self.mutex.unlock();
-        self.cond.notify_one();
-        Result::ok(())
-    }
-
-    /// @ iter::Iterable::iter
-    fn iter(self: &mut Channel<T>) -> ChannelIterator<T> {
-        ChannelIterator {
-            inner: self
-        }
-    }
-
-    /// @ mem::Freeable::free
-    fn free(self: &mut Channel<T>) {
-        self.buffer.free();
-    }
-}
 
 /// A synchronization primitive that allows multiple threads to wait until the
 /// event is signalled.
@@ -603,27 +360,39 @@ struct Event {
 }
 
 impl Event {
-    use internal::{EventWaiter, COMPLETE, INCOMPLETE, STATE_MASK};
+    use internal::{EventWaiter, EVENT_SET, EVENT_RESET, EVENT_STATE_MASK};
 
-    /// Create a new event
+    /// Create a new event in an unset state
     fn new() -> Event {
         Event {
-            state: Atomic::new(INCOMPLETE)
+            state: Atomic::new(EVENT_RESET)
+        }
+    }
+
+    /// Create a new event in a set state
+    fn new_set() -> Event {
+        Event {
+            state: Atomic::new(EVENT_SET)
         }
     }
 
     /// Signals the event, waking up all threads that are waiting on it.
     fn set(self: &mut Event) {
-        let old_value = self.state.exchange(COMPLETE, Ordering::AcqRel);
+        let old_value = self.state.exchange(EVENT_SET, Ordering::AcqRel);
         switch old_value {
-            INCOMPLETE, COMPLETE => {}
+            EVENT_SET, EVENT_RESET => {}
             _ => {
                 // Wake up some threads
-                let waiter = (old_value & ~STATE_MASK) as &mut EventWaiter;
+                let waiter = (old_value & ~EVENT_STATE_MASK) as &mut EventWaiter;
                 while waiter != null {
+                    /// As soon as we set the `signaled` flag, the region of
+                    /// memory that waiter points to may be invalidated. So we need
+                    /// to store it first.
+                    let next = waiter.next;
+                    let thread = waiter.thread;
                     waiter.signaled.store(true, Ordering::Release);
-                    waiter.thread.unpark();
-                    waiter = waiter.next;
+                    thread.unpark();
+                    waiter = next;
                 }
             }
         }
@@ -634,8 +403,8 @@ impl Event {
     /// If event is not in set state, this is a no-op.
     fn reset(self: &mut Event) {
         self.state.compare_exchange(
-            COMPLETE,
-            INCOMPLETE,
+            EVENT_SET,
+            EVENT_RESET,
             Ordering::Release,
             Ordering::Relaxed
         );
@@ -643,14 +412,14 @@ impl Event {
 
     /// Checks if the event is signalled.
     fn is_set(self: &Event) -> bool {
-        self.state.load(Ordering::Acquire) == COMPLETE
+        self.state.load(Ordering::Acquire) == EVENT_SET
     }
 
     /// Waits for the event to be signalled.
     fn wait(self: &mut Event) {
         let state = self.state.load(Ordering::Acquire);
         loop {
-            if state == COMPLETE {
+            if state == EVENT_SET {
                 return;
             }
 
@@ -660,7 +429,7 @@ impl Event {
             let waiter = EventWaiter {
                 thread: thread::Thread::current(),
                 signaled: Atomic::new(false),
-                next: (state & ~STATE_MASK) as &mut EventWaiter
+                next: (state & ~EVENT_STATE_MASK) as &mut EventWaiter
             }
 
             let maybe_replaced = self.state.compare_exchange(
@@ -686,7 +455,7 @@ impl Event {
 
 /// A one-shot channel (future).
 ///
-/// A one-shot channel is a channel that can only be sent to once. Multiple threads can wait on it and
+/// `Oneshot` can be used to send a single value between threads. Multiple threads can wait on it and
 /// they will all receive the same value.
 ///
 /// # Example
@@ -718,6 +487,14 @@ impl Oneshot<T> {
         }
     }
 
+    /// Creates a completed one-shot channel from a value
+    fn from_value(value: T) -> Oneshot<T> {
+        Oneshot::<T> {
+            _event: Event::new_set(),
+            _value: value
+        }
+    }
+
     /// Sets the value of the channel.
     ///
     /// If the channel is already closed, this will return `Result::err(ChannelError::Closed)`.
@@ -741,20 +518,20 @@ impl Oneshot<T> {
 
     /// Tries to get the value of the channel
     ///
-    /// If the channel's value has not been set, this will return [ChannelError::WouldBlock].
-    fn try_recv(self: &mut Oneshot<T>) -> Result<T, ChannelError> {
+    /// If the channel's value has not been set, this will return [channel::ChannelError::WouldBlock].
+    fn try_recv(self: &mut Oneshot<T>) -> Result<T, channel::ChannelError> {
         if self._event.is_set() {
             Result::ok(self._value)
         } else {
-            Result::err(ChannelError::WouldBlock)
+            Result::err(channel::ChannelError::WouldBlock)
         }
     }
 }
 
 mod internal {
-    const INCOMPLETE: usize = 0x0;
-    const COMPLETE: usize = 0x1;
-    const STATE_MASK: usize = 0x1;
+    const EVENT_RESET: usize = 0x0;
+    const EVENT_SET: usize = 0x1;
+    const EVENT_STATE_MASK: usize = 0x1;
 
     #[align(4)]
     struct EventWaiter {
@@ -941,56 +718,6 @@ mod tests {
 
     #[cfg(threading)]
     #[test]
-    fn test_channel() {
-        let chan: Channel<i32> = Channel::new(3);
-        assert_eq!(chan.send(42), Result::ok(()));
-        assert_eq!(chan.recv(), Result::ok(42));
-    }
-
-    #[cfg(threading)]
-    #[test]
-    fn test_channel_closed() {
-        let chan: Channel<i32> = Channel::new(3);
-        assert_eq!(chan.send(42), Result::ok(()));
-        assert_eq!(chan.send(42), Result::ok(()));
-        chan.close();
-
-        assert_eq!(chan.send(42), Result::err(ChannelError::Closed));
-        assert_eq!(chan.recv(), Result::ok(42));
-        assert_eq!(chan.recv(), Result::ok(42));
-        assert_eq!(chan.recv(), Result::err(ChannelError::Closed));
-    }
-
-    #[cfg(threading)]
-    #[test]
-    fn test_channel_try() {
-        let chan: Channel<i32> = Channel::new(3);
-        assert_eq!(chan.try_send(42), Result::ok(()));
-        assert_eq!(chan.try_send(42), Result::ok(()));
-        assert_eq!(chan.try_send(42), Result::ok(()));
-        assert_eq!(chan.try_send(42), Result::err(ChannelError::WouldBlock));
-        assert_eq!(chan.try_recv(), Result::ok(42));
-        assert_eq!(chan.try_recv(), Result::ok(42));
-        assert_eq!(chan.try_recv(), Result::ok(42));
-        assert_eq!(chan.try_recv(), Result::err(ChannelError::WouldBlock));
-    }
-
-    #[cfg(threading)]
-    #[test]
-    fn test_channel_timeout() {
-        let chan: Channel<i32> = Channel::new(3);
-        assert_eq!(chan.send_timeout(42, Duration::zero()), Result::ok(()));
-        assert_eq!(chan.send_timeout(42, Duration::zero()), Result::ok(()));
-        assert_eq!(chan.send_timeout(42, Duration::zero()), Result::ok(()));
-        assert_eq!(chan.send_timeout(42, Duration::zero()), Result::err(ChannelError::WouldBlock));
-        assert_eq!(chan.recv_timeout(Duration::zero()), Result::ok(42));
-        assert_eq!(chan.recv_timeout(Duration::zero()), Result::ok(42));
-        assert_eq!(chan.recv_timeout(Duration::zero()), Result::ok(42));
-        assert_eq!(chan.recv_timeout(Duration::zero()), Result::err(ChannelError::WouldBlock));
-    }
-
-    #[cfg(threading)]
-    #[test]
     fn test_event() {
         let ev = Event::new();
         assert_eq!(ev.is_set(), false);
@@ -1027,9 +754,16 @@ mod tests {
     #[test]
     fn test_oneshot() {
         let chan: Oneshot<i32> = Oneshot::new();
-        assert_eq!(chan.try_recv(), Result::err(ChannelError::WouldBlock));
+        assert_eq!(chan.try_recv(), Result::err(channel::ChannelError::WouldBlock));
         chan.send(1337);
         assert_eq!(chan.try_recv(), Result::ok(1337));
+        assert_eq!(chan.recv(), 1337);
+    }
+
+    #[cfg(threading)]
+    #[test]
+    fn test_oneshot_completed() {
+        let chan: Oneshot<i32> = Oneshot::from_value(1337);
         assert_eq!(chan.recv(), 1337);
     }
 

@@ -146,10 +146,113 @@ impl JoinHandle<T> {
     }
 }
 
-/// Spawn a new thread.
+/// A thread builder.
+///
+/// Use this struct to customize the way a thread is spawned.
+struct Builder {
+    _stack_size: Option<usize>,
+    _catch_panic: bool
+}
+
+impl Builder {
+    /// Create a new default [Builder] instance.
+    fn new() -> Builder {
+        Builder {
+            _stack_size: Option::none(),
+            _catch_panic: true,
+        }
+    }
+
+    /// Whether panics should be caught by the thread.
+    ///
+    /// This is relevant only for threads that are created in joinable state. When a detached thread
+    /// panics, the process will terminate.
+    fn catch_panic(self: &mut Builder, catch_panic: bool) -> &mut Builder {
+        self._catch_panic = catch_panic;
+        self
+    }
+
+    /// Sets the size of the stack for the new thread.
+    ///
+    /// The stack size is specified in bytes.
+    fn stack_size(self: &mut Builder, stack_size: usize) -> &mut Builder {
+        self._stack_size = Option::some(stack_size);
+        self
+    }
+
+    /// Spawn a thread in joinable state.
+    fn spawn<T, F: Callable<(), T>>(self: &Builder, func: F) -> Result<JoinHandle<T>, Error> {
+        internal::check_threading!();
+
+        use internal::pthread_try;
+
+        let attr: libc::pthread_attr_t;
+        pthread_try!(libc::pthread_attr_init(&attr));
+        pthread_try!(libc::pthread_attr_setdetachstate(&attr, libc::PTHREAD_CREATE_JOINABLE));
+        if self._stack_size.is_some {
+            pthread_try!(libc::pthread_attr_setstacksize(&attr, self._stack_size.inner as libc::size_t));
+        }
+
+        let handle = mem::alloc::<internal::ThreadHandleFunc<F, T>>();
+        handle.inner = internal::ThreadHandle::new(false, self._catch_panic);
+        handle.callback = func;
+
+        let ret = libc::pthread_create(
+            &handle.inner.thread_info.id,
+            null,
+            internal::_run_thread::<T, F>,
+            handle as &mut void
+        );
+        libc::pthread_attr_destroy(&attr);
+        if ret != 0 {
+            mem::free(handle);
+            return Result::err(Error::from_errno_custom(ret));
+        }
+
+        Result::ok(JoinHandle {
+           _handle: handle as &mut internal::ThreadHandle<T>,
+        })
+    }
+
+    /// Spawn a thread in detached state.
+    fn spawn_detached<T, F: Callable<(), T>>(self: &Builder, func: F) -> Result<(), Error> {
+        internal::check_threading!();
+
+        use internal::pthread_try;
+
+        let attr: libc::pthread_attr_t;
+        pthread_try!(libc::pthread_attr_init(&attr));
+        pthread_try!(libc::pthread_attr_setdetachstate(&attr, libc::PTHREAD_CREATE_DETACHED));
+        if self._stack_size.is_some {
+            pthread_try!(libc::pthread_attr_setstacksize(&attr, self._stack_size.inner as libc::size_t));
+        }
+
+        let handle = mem::alloc::<internal::ThreadHandleFunc<F, T>>();
+        handle.inner = internal::ThreadHandle::new(true, self._catch_panic);
+        handle.callback = func;
+
+        let ret = libc::pthread_create(
+            &handle.inner.thread_info.id,
+            null,
+            internal::_run_thread::<T, F>,
+            handle as &mut void
+        );
+        libc::pthread_attr_destroy(&attr);
+        if ret != 0 {
+            mem::free(handle);
+            return Result::err(Error::from_errno_custom(ret));
+        }
+
+        Result::ok(())
+    }
+}
+
+/// Spawn a new thread with default settings.
 ///
 /// The thread will execute the given function and then terminate. `spawn` returns a [JoinHandle], which
 /// can be used to join the thread and retreive the value that the thread returned.
+///
+/// See [Builder] as a means to customize thread creation options.
 ///
 /// # Example
 /// ```
@@ -175,27 +278,7 @@ impl JoinHandle<T> {
 ///
 /// If a thread is [detached](JoinHandle::detach), a panic in the thread will terminate the process.
 fn spawn<T, F: Callable<(), T>>(func: F) -> JoinHandle<T> {
-    #[cfg(not(threading))]
-    compile_fail!("threading is not enabled (use --cfg threading)");
-
-    let handle = mem::alloc::<internal::ThreadHandleFunc<F, T>>();
-    handle.inner = internal::ThreadHandle::new();
-    handle.callback = func;
-
-    let ret = libc::pthread_create(
-        &handle.inner.thread_info.id,
-        null,
-        internal::_run_thread::<T, F>,
-        handle as &mut void
-    );
-    if ret != 0 {
-        handle.inner.free();
-        panic!("pthread_create failed: {}", Error::from_errno_custom(ret));
-    }
-
-    JoinHandle {
-       _handle: handle as &mut internal::ThreadHandle<T>,
-    }
+    Builder::new().spawn(func).unwrap()
 }
 
 /// A structure representing an Alumina thread.
@@ -210,8 +293,7 @@ impl Thread {
     /// or a main thread of a program with a non-Alumina entrypoint), this function
     /// will panic.
     fn current() -> Thread {
-        #[cfg(not(threading))]
-        compile_fail!("threading is not enabled (use --cfg threading)");
+        internal::check_threading!();
 
         if internal::THREAD_INFO == null {
             // This can happen if done in an unmanaged thread (e.g. a callback
@@ -265,6 +347,14 @@ impl Thread {
         current().inner.parker.park();
     }
 
+    /// Suspends the current thread until another thread calls [Thread::unpark] or until
+    /// the specified duration has elapsed.
+    ///
+    /// Same as [Thread::park], but the thread will be unparked after the specified duration.
+    fn park_timeout(timeout: time::Duration) {
+        current().inner.parker.park_timeout(timeout);
+    }
+
     /// Resumes the execution of a thread that was previously parked.
     ///
     /// See also [Thread::park].
@@ -303,7 +393,19 @@ fn sleep(duration: time::Duration) {
 }
 
 mod internal {
+    macro check_threading() {
+        #[cfg(not(threading))]
+        compile_fail!("threading is not enabled (use --cfg threading)");
+    }
+
     #[thread_local] static THREAD_INFO: &mut ThreadInfo;
+
+    macro pthread_try($expr) {
+        let ret = $expr;
+        if ret != 0 {
+            return Result::err(Error::from_errno_custom(ret));
+        }
+    }
 
     struct ThreadInfo {
         id: libc::pthread_t,
@@ -326,15 +428,21 @@ mod internal {
     struct ThreadHandle<T> {
         ref_count: Atomic<usize>,
         thread_info: &mut ThreadInfo,
+        catch_panic: bool,
         panicked: bool,
         ret: Result<T, std::panicking::PanicInfo>,
     }
 
     impl ThreadHandle<T> {
-        fn new() -> ThreadHandle<T> {
+        fn new(detached: bool, catch_panic: bool) -> ThreadHandle<T> {
             ThreadHandle {
-                ref_count: Atomic::new(2usize),
+                ref_count: Atomic::new(if detached {
+                    1usize
+                } else {
+                    2usize
+                }),
                 panicked: false,
+                catch_panic: catch_panic,
                 thread_info: ThreadInfo::new(),
                 ret: Result::err(mem::zeroed())
             }
@@ -370,7 +478,9 @@ mod internal {
         let handle = &handle_func.inner;
 
         THREAD_INFO = handle.thread_info;
-        std::panicking::internal::set_panic_hook(handle as &mut void, _panic_hook::<T>);
+        if handle.catch_panic {
+            std::panicking::internal::set_panic_hook(handle as &mut void, _panic_hook::<T>);
+        }
 
         handle.ret = Result::ok(handle_func.callback());
         if handle.pop() {
@@ -405,6 +515,32 @@ mod tests {
         assert_eq!(t.join().unwrap(), 42);
     }
 
+    #[test]
+    fn test_spawn_custom() {
+        let t = Builder::new()
+            .stack_size(1)
+            .spawn(|| -> i32 { 42 })
+            .unwrap_err();
+    }
+
+    #[test(should_fail)]
+    fn test_spawn_detached() {
+        let t = Builder::new()
+            .spawn_detached(|| { panic!("hello") })
+            .unwrap();
+
+        sleep(Duration::from_secs(1));
+    }
+
+    #[test(should_fail)]
+    fn test_spawn_no_catch_panic() {
+        let t = Builder::new()
+            .catch_panic(false)
+            .spawn(|| { panic!("hello") })
+            .unwrap()
+            .join();
+    }
+
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     #[test]
     fn test_spawn_manual_exit() {
@@ -424,6 +560,10 @@ mod tests {
         assert_eq!(t.join().unwrap_err().kind, JoinErrorKind::Panic);
     }
 
+    #[test]
+    fn test_park_timeout() {
+        Thread::park_timeout(Duration::from_nanos(10));
+    }
 
     #[test]
     fn test_detach() {
