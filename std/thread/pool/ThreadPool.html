@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>std::thread::pool::ThreadPool - Alumina Docs</title>
+<link rel="stylesheet" href="/static/styles.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<meta content="width=device-width, initial-scale=1" name="viewport" />
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png" />
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
+<link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
+<link rel="manifest" href="/static/manifest.json" />
+<link rel="mask-icon" href="/static/safari-pinned-tab.svg" color="#5bbad5" />
+<link rel="shortcut icon" href="/static/favicon.ico" />
+<link rel="canonical" href="https://docs.alumina-lang.net/std/thread/pool/ThreadPool.html" />
+<meta name="msapplication-TileColor" content="#da532c" />
+<meta name="msapplication-config" content="/static/browserconfig.xml" />
+<meta name="description" content="Documentation for the Alumina standard library" />
+<script src="/static/site.js"></script>
+<script src="/search_index.js" async></script>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500&family=Source+Code+Pro:wght@400;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,700&display=swap" rel="stylesheet">
+</head>
+<body>
+<nav>
+<a href="/">
+<img width="100px" height="100px" class="logo" src="/static/logo.svg" alt="Alumina Docs">
+</a>
+<h1><a class="breadcrumbs" href="/std/">std</a>::<a class="breadcrumbs" href="/std/thread/">thread</a>::<a class="breadcrumbs" href="/std/thread/pool/">pool</a>::<a class="breadcrumbs" href="/std/thread/pool/ThreadPool.html">ThreadPool</a></h1>
+</h1>
+<h2>Fields</h2>
+<ul>
+<li>
+<a href="/std/thread/pool/ThreadPool.html#item.inner">inner</a>
+</li>
+</ul>
+<h2>Methods</h2>
+<ul>
+<li>
+<a href="/std/thread/pool/ThreadPool.html#item.bounded">bounded</a>
+</li>
+<li>
+<a href="/std/thread/pool/ThreadPool.html#item.unbounded">unbounded</a>
+</li>
+<li>
+<a href="/std/thread/pool/ThreadPool.html#item.spawn">spawn</a>
+</li>
+<li>
+<a href="/std/thread/pool/ThreadPool.html#item.spawn_detached">spawn_detached</a>
+</li>
+<li>
+<a href="/std/thread/pool/ThreadPool.html#item.close">close</a>
+</li>
+<li>
+<a href="/std/thread/pool/ThreadPool.html#item.join">join</a>
+</li>
+</ul>
+</nav>
+<div class="main-container">
+<div id="search-container">
+<a class="mobile-only" href="/">
+<img width="40px" height="40px" class="logo" src="/static/logo.svg" alt="Alumina Docs">
+</a>
+<input id="search-input" class="search-input" autocomplete="off" spellcheck="false" placeholder="Search the documentation..." type="search"></input>
+</div>
+<div id="search-results"></div>
+<main id="main-content">
+<div class="main-title"><h1>Struct <a class="breadcrumbs" href="/std/">std</a>::<a class="breadcrumbs" href="/std/thread/">thread</a>::<a class="breadcrumbs" href="/std/thread/pool/">pool</a>::<a class="breadcrumbs" href="/std/thread/pool/ThreadPool.html">ThreadPool</a></h1>
+</h1>
+</div>
+<div class="signature">
+<h3>
+<span class="keyword">struct</span> <span class="identifier-type">ThreadPool</span> { ... }</h3>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/thread/pool.alu#L60-L62"/>source</a>
+</div>
+</div>
+<p>
+A thread pool.
+</p><p>
+</p>
+<h2> Example</h2>
+<p>
+<pre><code>use std::thread::pool::ThreadPool;
+use std::sync::Atomic;
+
+/// Use 10 threads
+let pool = ThreadPool::new_unbounded(10);
+let counter = sync::Atomic::new(0);
+
+for i in 0..1000 {
+    pool
+        .spawn_detached(|&amp;counter| {
+            counter.fetch_add(1, sync::Ordering::Relaxed);
+        })
+        .unwrap();
+}
+
+// Wait for all remaining tasks to complete
+pool.join();
+
+assert_eq!(counter.load(sync::Ordering::Relaxed), 1000);
+</code></pre>
+</p><p>
+</p>
+<h2 id="Field">Fields</h2>
+<ul>
+<li>
+<div class="signature" id="item.inner">
+<h4>
+inner: &amp;mut <a href="/std/thread/pool/internal/ThreadPoolInner.html"><span class="identifier-type">ThreadPoolInner</span></a></h4>
+</div>
+<div class="item-doc">
+</div>
+</li>
+</ul>
+<h2 id="Method">Methods</h2>
+<div class="signature impl-header"><h3>
+<span class="keyword">impl</span> <span class="identifier-type">ThreadPool</span> { ... }</h3></div>
+<ul>
+<li>
+<div class="signature" id="item.bounded">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">bounded</span>(num_threads: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>, max_in_flight: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> <a href="/std/thread/pool/ThreadPool.html"><span class="identifier-type">ThreadPool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/thread/pool.alu#L71-L93"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Creates a new thread pool with a bounded task queue.
+</p><p>
+<code>max_in_flight</code> is the maximum length of the task queue, if the queue is full,
+calling <a class="path-link" href="/std/thread/pool/ThreadPool.html#item.spawn">spawn</a> will block.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.unbounded">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">unbounded</span>(num_threads: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> <a href="/std/thread/pool/ThreadPool.html"><span class="identifier-type">ThreadPool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/thread/pool.alu#L96-L118"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Creates a new thread pool with an unbounded task queue.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.spawn">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">spawn</span>&lt;T, F&gt;(self: &amp;<a href="/std/thread/pool/ThreadPool.html"><span class="identifier-type">ThreadPool</span></a>, f: F) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;<a href="/std/thread/pool/TaskHandle.html"><span class="identifier-type">TaskHandle</span></a>&lt;T&gt;, <a href="/std/sync/channel/ChannelError.html"><span class="identifier-type">ChannelError</span></a>&gt;<div class="protocol-bound">
+F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>, T&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/thread/pool.alu#L121-L129"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Spawns a new task on the thread pool, returning a handle that can be used to wait for the result.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.spawn_detached">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">spawn_detached</span>&lt;F&gt;(self: &amp;<a href="/std/thread/pool/ThreadPool.html"><span class="identifier-type">ThreadPool</span></a>, f: F) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>, <a href="/std/sync/channel/ChannelError.html"><span class="identifier-type">ChannelError</span></a>&gt;<div class="protocol-bound">
+F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>, <a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/thread/pool.alu#L134-L141"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Spawns a new task on the thread pool.
+</p><p>
+This is similar to <a class="path-link" href="/std/thread/pool/ThreadPool.html#item.spawn">spawn</a>, but there is no completion handle.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.close">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">close</span>(self: &amp;<a href="/std/thread/pool/ThreadPool.html"><span class="identifier-type">ThreadPool</span></a>)</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/thread/pool.alu#L144-L150"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Completes the task queue, preventing new tasks to be spawned.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.join">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">join</span>(self: &amp;<a href="/std/thread/pool/ThreadPool.html"><span class="identifier-type">ThreadPool</span></a>)</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/thread/pool.alu#L153-L159"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Closes the thread pool and waits for all remaining tasks to finish.
+</p><p>
+</p>
+</div>
+</li>
+</ul>
+</main>
+</div>
+</body>
+</html>
