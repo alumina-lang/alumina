@@ -7,6 +7,8 @@
     }
 }
 
+type Result<T> = std::result::Result<T, Error>;
+
 use fmt::{write, writeln};
 
 /// Buffer for formatted standard I/O.
@@ -80,20 +82,20 @@ protocol Readable<Self> {
     ///
     /// If successful, returns the number of bytes read. This may be less than the size
     /// of the provided buffer.
-    fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize, Error>;
+    fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize>;
 
     /// Fills the provided buffer by reading from the stream.
     ///
     /// If stream had less bytes available than the size of the buffer, this method
     /// will return an `Error::eof()`.
-    fn read_exact(self: &mut Self, buf: &mut [u8]) -> Result<(), Error> {
+    fn read_exact(self: &mut Self, buf: &mut [u8]) -> Result<()> {
         self.default_read_exact(buf)
     }
 
     /// Reads the entire stream into a `StringBuf`.
     ///
     /// If successful, returns the number of bytes that were read.
-    fn read_to_end(self: &mut Self, buf: &mut StringBuf) -> Result<usize, Error> {;
+    fn read_to_end(self: &mut Self, buf: &mut StringBuf) -> Result<usize> {;
         let start_len = buf.len();
         let start_cap = buf.capacity();
 
@@ -130,12 +132,12 @@ protocol Writable<Self> {
     ///
     /// Returns the number of bytes written. This may be less than the size of the buffer.
     /// See also [write_all], which can be used to write the entire buffer.
-    fn write(self: &mut Self, buf: &[u8]) -> Result<usize, Error>;
+    fn write(self: &mut Self, buf: &[u8]) -> Result<usize>;
 
     /// Writes all the bytes in the buffer to the stream.
     ///
     /// If EOF is reached, returns `Error::eof()`.
-    fn write_all(self: &mut Self, buf: &[u8]) -> Result<(), Error> {
+    fn write_all(self: &mut Self, buf: &[u8]) -> Result<()> {
 
         while buf.len > 0 {
             let written_bytes = self.write(buf)?;
@@ -151,7 +153,7 @@ protocol Writable<Self> {
     /// Flush the stream
     ///
     /// This may be a no-op, depending on the stream.
-    fn flush(self: &mut Self) -> Result<(), Error>;
+    fn flush(self: &mut Self) -> Result<()>;
 }
 
 /// Reference point for the seek operation.
@@ -166,17 +168,17 @@ protocol Seekable<Self> {
     /// Jump to a specified position in the stream.
     ///
     /// Returns the new position in the stream from the beginning.
-    fn seek(self: &mut Self, whence: SeekFrom, offset: i64) -> Result<u64, Error>;
+    fn seek(self: &mut Self, whence: SeekFrom, offset: i64) -> Result<u64>;
 
     /// Rewind the stream to the beginning.
-    fn rewind(self: &mut Self) -> Result<(), Error> {
+    fn rewind(self: &mut Self) -> Result<()> {
         self.seek(SeekFrom::Beginning, 0)?;
 
         Result::ok(())
     }
 
     /// Returns the current position in the stream from the beginning.
-    fn position(self: &mut Self) -> Result<u64, Error> {
+    fn position(self: &mut Self) -> Result<u64> {
         self.seek(SeekFrom::Current, 0)
     }
 }
@@ -195,12 +197,12 @@ impl NullStream {
     }
 
     /// @ Readable::read
-    fn read(self: &mut NullStream, buf: &mut [u8]) -> Result<usize, Error> {
+    fn read(self: &mut NullStream, buf: &mut [u8]) -> Result<usize> {
         Result::ok(0usize)
     }
 
     /// @ Readable::read_exact
-    fn read_exact(self: &mut NullStream, buf: &mut [u8]) -> Result<(), Error> {
+    fn read_exact(self: &mut NullStream, buf: &mut [u8]) -> Result<()> {
         if buf.len == 0 {
             Result::ok(())
         } else {
@@ -209,24 +211,94 @@ impl NullStream {
     }
 
     /// @ Readable::read_to_end
-    fn read_to_end(self: &mut NullStream, buf: &mut StringBuf) -> Result<usize, Error> {
+    fn read_to_end(self: &mut NullStream, buf: &mut StringBuf) -> Result<usize> {
         Result::ok(0usize)
     }
 
     /// @ Writable::write
-    fn write(self: &mut NullStream, buf: &[u8]) -> Result<usize, Error> {
+    fn write(self: &mut NullStream, buf: &[u8]) -> Result<usize> {
         Result::ok(buf.len)
     }
 
     /// @ Writable::write_all
-    fn write_all(self: &mut NullStream, buf: &[u8]) -> Result<(), Error> {
+    fn write_all(self: &mut NullStream, buf: &[u8]) -> Result<()> {
         Result::ok(())
     }
 
     /// @ Writable::flush
-    fn flush(self: &mut NullStream) -> Result<(), Error> {
+    fn flush(self: &mut NullStream) -> Result<()> {
         Result::ok(())
     }
+}
+
+/// Adapter for a stream that returns EOF after `limit` bytes are read.
+///
+/// See [take] extension method.
+struct TakeAdapter<R: Readable<R>> {
+    limit: u64,
+    inner: &mut R
+}
+
+impl TakeAdapter<R: Readable<R>> {
+    /// Creates a new adapter for the given stream.
+    fn new(inner: &mut R, limit: u64) -> TakeAdapter<R> {
+        TakeAdapter {
+            inner: inner,
+            limit: limit
+        }
+    }
+
+    /// @ Readable::read
+    fn read(self: &mut TakeAdapter<R>, buf: &mut [u8]) -> Result<usize> {
+        if self.limit == 0 {
+            return Result::ok(0usize);
+        }
+
+        let max = cmp::min(buf.len as u64, self.limit) as usize;
+        let ret = self.inner.read(buf[..self.limit as usize])?;
+        self.limit -= ret as u64;
+
+        Result::ok(ret)
+    }
+
+    mixin Readable<TakeAdapter<R>>;
+}
+
+/// Adapter for a pair of streams that chains them together.
+///
+/// See [chain] extension method.
+struct ChainAdapter<R1: Readable<R1>, R2: Readable<R2>> {
+    first: &mut R1,
+    second: &mut R2,
+    done: bool
+}
+
+impl ChainAdapter<R1: Readable<R1>, R2: Readable<R2>> {
+    /// Creates a new adapter for a pair of streams
+    fn new(first: &mut R1, second: &mut R2) -> ChainAdapter<R1, R2> {
+        ChainAdapter {
+            first: first,
+            second: second,
+            done: false
+        }
+    }
+
+    /// @ Readable::read
+    fn read(self: &mut ChainAdapter<R1, R2>, buf: &mut [u8]) -> Result<usize> {
+        if self.done {
+            return self.second.read(buf);
+        }
+
+        let n_read = self.first.read(buf)?;
+        if n_read == 0 {
+            self.done = true;
+            return self.second.read(buf);
+        }
+
+        Result::ok(n_read)
+    }
+
+    mixin Readable<ChainAdapter<R1, R2>>;
 }
 
 /// A readable stream backed by an in-memory string slice.
@@ -244,7 +316,7 @@ impl SliceReader {
     }
 
     /// @ Readable::read
-    fn read(self: &mut SliceReader, buf: &mut [u8]) -> Result<usize, Error> {
+    fn read(self: &mut SliceReader, buf: &mut [u8]) -> Result<usize> {
         let len = cmp::min(buf.len, self.slice.len - self.pos);
 
         if len > 0 {
@@ -256,7 +328,7 @@ impl SliceReader {
     }
 
     /// @ BufferedReadable::fill_buffer
-    fn fill_buffer(self: &mut SliceReader) -> Result<&[u8], Error> {
+    fn fill_buffer(self: &mut SliceReader) -> Result<&[u8]> {
         Result::ok(self.slice[self.pos..] as &[u8])
     }
 
@@ -266,7 +338,7 @@ impl SliceReader {
     }
 
     /// @ Seekable::seek
-    fn seek(self: &mut SliceReader, whence: SeekFrom, offset: i64) -> Result<u64, Error> {
+    fn seek(self: &mut SliceReader, whence: SeekFrom, offset: i64) -> Result<u64> {
         let new_offset = switch whence {
             SeekFrom::Beginning => offset,
             SeekFrom::Current => self.pos as i64 + offset,
@@ -305,13 +377,13 @@ impl StringWriter {
     }
 
     /// @ Writable::write
-    fn write(self: &mut StringWriter, buf: &[u8]) -> Result<usize, Error> {
+    fn write(self: &mut StringWriter, buf: &[u8]) -> Result<usize> {
         self.string.extend_from_slice(buf);
         Result::ok(buf.len)
     }
 
     /// @ Writable::flush
-    fn flush(self: &mut StringWriter) -> Result<(), Error> {
+    fn flush(self: &mut StringWriter) -> Result<()> {
         Result::ok(())
     }
 
@@ -327,7 +399,7 @@ protocol BufferedReadable<Self: Readable<Self>> {
     /// data from the stream if necessary.
     ///
     /// Does not move the internal buffer position.
-    fn fill_buffer(self: &mut Self) -> Result<&[u8], Error>;
+    fn fill_buffer(self: &mut Self) -> Result<&[u8]>;
 
     /// Mark `amount` bytes as consumed, moving the internal buffer
     /// position forward.
@@ -363,7 +435,7 @@ impl BufferedReader<R: Readable<R>> {
     }
 
     /// @ BufferedReadable::fill_buffer
-    fn fill_buffer(self: &mut BufferedReader<R>) -> Result<&[u8], Error> {
+    fn fill_buffer(self: &mut BufferedReader<R>) -> Result<&[u8]> {
         if self.pos == self.cap {
             self.cap = self.inner.read(self.buf)?;
             self.pos = 0;
@@ -378,12 +450,12 @@ impl BufferedReader<R: Readable<R>> {
     }
 
     /// @ Readable::read
-    fn read(self: &mut BufferedReader<R>, buf: &mut [u8]) -> Result<usize, Error> {
+    fn read(self: &mut BufferedReader<R>, buf: &mut [u8]) -> Result<usize> {
         let slice = self.fill_buffer()?;
 
         let nread = cmp::min(buf.len, slice.len);
         if nread > 0 {
-            slice[..nread].copy_nonoverlapping(&buf[0]);
+            slice[..nread].copy_to_nonoverlapping(&buf[0]);
             self.consume(nread);
         }
 
@@ -391,10 +463,10 @@ impl BufferedReader<R: Readable<R>> {
     }
 
     /// @ Readable::read_exact
-    fn read_exact(self: &mut BufferedReader<R>, buf: &mut [u8]) -> Result<(), Error> {
+    fn read_exact(self: &mut BufferedReader<R>, buf: &mut [u8]) -> Result<()> {
         if self.cap - self.pos >= buf.len {
             if buf.len > 0 {
-                self.buf[self.pos..self.pos + buf.len].copy_nonoverlapping(&buf[0]);
+                self.buf[self.pos..self.pos + buf.len].copy_to_nonoverlapping(&buf[0]);
                 self.consume(buf.len);
             }
             return Result::ok(());
@@ -420,7 +492,7 @@ impl BufferedReader<R: Readable<R>> {
 
 impl BufferedReader<R: Seekable<R>> {
     /// @ Seekable::seek
-    fn seek(self: &mut BufferedReader<R>, whence: SeekFrom, offset: i64) -> Result<u64, Error> {
+    fn seek(self: &mut BufferedReader<R>, whence: SeekFrom, offset: i64) -> Result<u64> {
         let res = if whence == SeekFrom::Current {
             let remainder = (self.cap - self.pos) as i64;
             let res = self.inner.seek(SeekFrom::Current, offset - remainder)?;
@@ -465,7 +537,7 @@ impl BufferedWriter<W: Writable<W>> {
 
     #[cold]
     #[no_inline]
-    fn write_full(self: &mut BufferedWriter<W>, buf: &[u8]) -> result::Result<usize, Error> {
+    fn write_full(self: &mut BufferedWriter<W>, buf: &[u8]) -> Result<usize> {
         if buf.len > self.buf.len - self.pos {
             self._flush_buffer()?;
         }
@@ -481,7 +553,7 @@ impl BufferedWriter<W: Writable<W>> {
 
     /// @ Writable::write
     #[inline]
-    fn write(self: &mut BufferedWriter<W>, buf: &[u8]) -> result::Result<usize, Error> {
+    fn write(self: &mut BufferedWriter<W>, buf: &[u8]) -> Result<usize> {
         if buf.len < self.buf.len - self.pos {
             self._write_to_buffer(buf);
             Result::ok(buf.len)
@@ -492,7 +564,7 @@ impl BufferedWriter<W: Writable<W>> {
 
     /// @ Writable::write_all
     #[inline]
-    fn write_all(self: &mut BufferedWriter<W>, buf: &[u8]) -> result::Result<(), Error> {
+    fn write_all(self: &mut BufferedWriter<W>, buf: &[u8]) -> Result<()> {
         if buf.len < self.buf.len - self.pos {
             self._write_to_buffer(buf);
             Result::ok(())
@@ -502,7 +574,7 @@ impl BufferedWriter<W: Writable<W>> {
     }
 
     /// @ Writable::flush
-    fn flush(self: &mut BufferedWriter<W>) -> result::Result<(), Error> {
+    fn flush(self: &mut BufferedWriter<W>) -> Result<()> {
         self._flush_buffer()?;
         self.inner.flush()
     }
@@ -517,7 +589,7 @@ impl BufferedWriter<W: Writable<W>> {
         }
     }
 
-    fn _flush_buffer(self: &mut BufferedWriter<W>) -> result::Result<(), Error> {
+    fn _flush_buffer(self: &mut BufferedWriter<W>) -> Result<()> {
         // This will return an EOF error, if we are not able to write everything.
         // since we have accepted bytes that are not written to the underlying
         // writer and not signalled an EOF.
@@ -529,7 +601,7 @@ impl BufferedWriter<W: Writable<W>> {
 
     #[cold]
     #[no_inline]
-    fn _write_all_full(self: &mut BufferedWriter<W>, buf: &[u8]) -> result::Result<(), Error> {
+    fn _write_all_full(self: &mut BufferedWriter<W>, buf: &[u8]) -> Result<()> {
         if buf.len > self.buf.len - self.pos {
             self._flush_buffer()?;
         }
@@ -560,7 +632,7 @@ impl BufferedWriter<W: Writable<W>> {
 impl BufferedWriter<W: Writable<W>> {
     /// @ std::fmt::Formatter::write_str
     #[inline]
-    fn write_str(self: &mut BufferedWriter<W>, buf: &[u8]) -> Result<(), fmt::Error> {
+    fn write_str(self: &mut BufferedWriter<W>, buf: &[u8]) -> fmt::Result {
         self.write_all(buf).map_err(fmt::Error::from::<Error>)
     }
 
@@ -572,10 +644,20 @@ const DEFAULT_BUFFER_SIZE: usize = 8192;
 
 // Extension methods
 
+/// Returns an adapter for a stream that returns EOF after `limit` bytes have been read.
+fn take<R: Readable<R>>(self: &mut R, limit: u64) -> TakeAdapter<R> {
+    TakeAdapter::new(self, limit)
+}
+
+/// Chains the two streams together
+fn chain<R1: Readable<R1>, R2: Readable<R2>>(self: &mut R1, other: &mut R2) -> ChainAdapter<R1, R2> {
+    ChainAdapter::new(self, other)
+}
+
 /// Copy the entire stream `src` into `dst`
 ///
 /// Internally allocates a buffer with the size of [DEFAULT_BUFFER_SIZE].
-fn copy<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D) -> result::Result<u64, Error> {
+fn copy<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D) -> Result<u64> {
     let buf = mem::slice::alloc::<u8>(DEFAULT_BUFFER_SIZE);
     defer buf.free();
 
@@ -583,7 +665,7 @@ fn copy<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D) -> result::Res
 }
 
 /// Copy the entire stream `src` into `dst` using a provided buffer.
-fn copy_using<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D, buffer: &mut [u8]) -> result::Result<u64, Error> {
+fn copy_using<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D, buffer: &mut [u8]) -> Result<u64> {
     let read = 0u64;
     loop {
         let n = src.read(buffer)?;
@@ -600,7 +682,7 @@ fn copy_using<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D, buffer: 
 /// Reads a single byte from the stream.
 ///
 /// Returns `Error::eof` if the stream has no bytes left.
-fn read_byte<R: Readable<R>>(reader: &mut R) -> result::Result<u8, Error> {
+fn read_byte<R: Readable<R>>(reader: &mut R) -> Result<u8> {
     let buf: [u8; 1];
     reader.read_exact(&buf)?;
 
@@ -610,7 +692,7 @@ fn read_byte<R: Readable<R>>(reader: &mut R) -> result::Result<u8, Error> {
 /// Reads the stream into `buf` until a specific byte is encountered.
 ///
 /// The `delim` terminator is included.
-fn read_until<R: BufferedReadable<R>>(r: &mut R, delim: u8, buf: &mut string::StringBuf) -> result::Result<usize, Error> {
+fn read_until<R: BufferedReadable<R>>(r: &mut R, delim: u8, buf: &mut string::StringBuf) -> Result<usize> {
     use string::find_char;
 
     let read = 0usize;
@@ -665,7 +747,7 @@ impl LineIterator<R: BufferedReadable<R>> {
     }
 
     /// @ std::iter::Iterator::next
-    fn next(self: &mut LineIterator<R>) -> Option<Result<&[u8], Error>> {
+    fn next(self: &mut LineIterator<R>) -> Option<Result<&[u8]>> {
         self.line_buf.clear();
 
         let res = self.reader.read_until('\n', &self.line_buf);
@@ -700,8 +782,8 @@ impl LineIterator<R: BufferedReadable<R>> {
         }
     }
 
-    mixin iter::Iterator<LineIterator<R>, Result<&[u8], Error>>;
-    mixin iter::IteratorExt<LineIterator<R>, Result<&[u8], Error>>;
+    mixin iter::Iterator<LineIterator<R>, Result<&[u8]>>;
+    mixin iter::IteratorExt<LineIterator<R>, Result<&[u8]>>;
 }
 
 fn lines<R: BufferedReadable<R>>(reader: &mut R) -> LineIterator<R> {
@@ -709,7 +791,7 @@ fn lines<R: BufferedReadable<R>>(reader: &mut R) -> LineIterator<R> {
 }
 
 mod internal {
-    fn default_read_exact<T: Readable<T>>(self: &mut T, buf: &mut [u8]) -> Result<(), Error> {
+    fn default_read_exact<T: Readable<T>>(self: &mut T, buf: &mut [u8]) -> Result<()> {
         while buf.len > 0 {
             let read_bytes = self.read(buf)?;
             if read_bytes == 0 {
@@ -820,5 +902,30 @@ mod tests {
         assert_eq!(src.write("hello world"), Result::ok(11usize));
         assert_eq!(src.write_all("hello world"), Result::ok(()));
         assert_eq!(src.flush(), Result::ok(()));
+    }
+
+    #[test]
+    fn test_take() {
+        let src = SliceReader::new("Lorem ipsum dolor sit amet")
+        let s: StringBuf = StringBuf::new();
+        defer s.free();
+
+        assert_eq!(src.take(5).read_to_end(&s), Result::ok(5usize));
+        assert_eq!(s.as_slice(), "Lorem");
+
+        assert_eq!(src.read_to_end(&s), Result::ok(21usize));
+        assert_eq!(s.as_slice(), "Lorem ipsum dolor sit amet");
+    }
+
+    #[test]
+    fn test_chain() {
+        let src1 = SliceReader::new("Lorem ipsum ")
+        let src2 = SliceReader::new("dolor sit amet")
+
+        let s: StringBuf = StringBuf::new();
+        defer s.free();
+
+        assert_eq!(src1.chain(&src2).read_to_end(&s), Result::ok(26usize));
+        assert_eq!(s.as_slice(), "Lorem ipsum dolor sit amet");
     }
 }

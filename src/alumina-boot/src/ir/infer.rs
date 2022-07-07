@@ -4,7 +4,7 @@ use super::{
     UnqualifiedKind,
 };
 use crate::{
-    ast::{self, lang::LangItemKind, BuiltinType, Placeholder},
+    ast::{self, lang::LangItemKind, rebind::Rebinder, BuiltinType, Placeholder},
     ir,
 };
 use std::collections::HashMap;
@@ -114,6 +114,21 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                 }
             }
             (ast::Ty::Generic(item, holders), ir::Ty::NamedType(t) | ir::Ty::NamedFunction(t)) => {
+                if let ast::Item::TypeDef(t) = item.get() {
+                    let mut rebinder = Rebinder::new(
+                        self.ast,
+                        t.placeholders
+                            .iter()
+                            .map(|h| h.id)
+                            .zip(holders.iter().copied())
+                            .collect(),
+                    );
+
+                    if let Ok(src) = rebinder.visit_typ(t.target) {
+                        return self.match_slot(inferred, src, tgt);
+                    }
+                }
+
                 let mono_key = self.mono_ctx.reverse_lookup(t);
                 if mono_key.0 != *item {
                     return Err(());
