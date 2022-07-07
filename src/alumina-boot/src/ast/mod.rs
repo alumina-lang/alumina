@@ -360,6 +360,13 @@ impl<'ast> ItemCell<'ast> {
         }
     }
 
+    pub fn get_typedef(&'ast self) -> &'ast TypeDef<'ast> {
+        match self.contents.get() {
+            Some(Item::TypeDef(t)) => t,
+            _ => panic!("typedef expected"),
+        }
+    }
+
     pub fn is_struct_like(&self) -> bool {
         matches!(self.contents.get(), Some(Item::StructLike(_)))
     }

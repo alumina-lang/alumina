@@ -1,4 +1,4 @@
-use io::{Error, FileDescriptor, SeekFrom, Readable, Writable, Seekable};
+use io::{Error, Result, FileDescriptor, SeekFrom, Readable, Writable, Seekable};
 use io::unix::{errno_try, FdReadWrite};
 
 /// Options for how the file should be opened.
@@ -147,7 +147,7 @@ impl DirBuilder {
         self
     }
 
-    fn _mkdir(self: &DirBuilder, path: Path) -> Result<(), Error> {
+    fn _mkdir(self: &DirBuilder, path: Path) -> Result<()> {
         let path = ffi::CString::from_slice(path.inner);
         defer path.free();
 
@@ -156,7 +156,7 @@ impl DirBuilder {
     }
 
     /// Create the directory (or directory tree) specified by `path`.
-    fn create(self: &DirBuilder, path: Path) -> Result<(), Error> {
+    fn create(self: &DirBuilder, path: Path) -> Result<()> {
         if self._recursive {
             let res = self._mkdir(path);
             if res.is_ok {
@@ -183,12 +183,12 @@ impl DirBuilder {
 }
 
 /// Create a new directory
-fn create_directory(path: Path) -> Result<(), Error> {
+fn create_directory(path: Path) -> Result<()> {
     DirBuilder::new().create(path)
 }
 
 /// Remove a file
-fn remove_file(path: Path) -> Result<(), Error> {
+fn remove_file(path: Path) -> Result<()> {
     let path_c = std::ffi::CString::from_slice(path.inner);
     defer path_c.free();
 
@@ -198,7 +198,7 @@ fn remove_file(path: Path) -> Result<(), Error> {
 }
 
 /// Remove an empty directory
-fn remove_directory(path: Path) -> Result<(), Error> {
+fn remove_directory(path: Path) -> Result<()> {
     let path_c = std::ffi::CString::from_slice(path.inner);
     defer path_c.free();
 
@@ -215,17 +215,17 @@ impl File {
     use ffi::CString;
 
     /// Opens file in read-only mode.
-    fn open(path: Path) -> Result<File, Error> {
+    fn open(path: Path) -> Result<File> {
         open_with(path, OpenOptions::new().read(true))
     }
 
     /// Creates a new file for writing (truncating it if it already exists).
-    fn create(path: Path) -> Result<File, Error> {
+    fn create(path: Path) -> Result<File> {
         open_with(path, OpenOptions::new().write(true).create(true).truncate(true))
     }
 
     /// Opens file with custom options.
-    fn open_with(path: Path, opts: &OpenOptions) -> Result<File, Error> {
+    fn open_with(path: Path, opts: &OpenOptions) -> Result<File> {
         let path = CString::from_slice(path.inner);
         defer path.free();
 
@@ -244,7 +244,7 @@ impl File {
     }
 
     /// Returns the file attributes (`stat`) for the file
-    fn attributes(self: &File) -> Result<FileAttr, Error> {
+    fn attributes(self: &File) -> Result<FileAttr> {
         let result: FileAttr;
 
         #[cfg(target_os = "macos")]
@@ -267,7 +267,7 @@ impl File {
     }
 
     /// Read the entire file into a [std::string::StringBuf].
-    fn read_to_string(path: Path) -> Result<string::StringBuf, Error> {
+    fn read_to_string(path: Path) -> Result<string::StringBuf> {
         use string::StringBuf;
 
         let file = File::open(path)?;
@@ -283,7 +283,7 @@ impl File {
         Result::ok(string.move())
     }
 
-    fn seek(self: &mut File, whence: SeekFrom, offset: i64) -> Result<u64, Error> {
+    fn seek(self: &mut File, whence: SeekFrom, offset: i64) -> Result<u64> {
         #[cfg(not(target_os = "macos"))]
         let ret = errno_try!(libc::lseek64(self.fd.value, offset, whence as libc::c_int));
         #[cfg(target_os = "macos")]
@@ -292,16 +292,16 @@ impl File {
         Result::ok(ret as u64)
     }
 
-    fn flush(self: &mut File) -> Result<(), Error> {
+    fn flush(self: &mut File) -> Result<()> {
         Result::ok(())
     }
 
-    fn sync(self: &mut File) -> Result<(), Error> {
+    fn sync(self: &mut File) -> Result<()> {
         let ret = errno_try!(libc::fsync(self.fd.value));
         Result::ok(())
     }
 
-    fn close(self: &mut File) -> Result<(), Error> {
+    fn close(self: &mut File) -> Result<()> {
         self.fd.close()
     }
 
@@ -326,7 +326,7 @@ struct DirIterator {
 
 impl DirIterator {
     /// @ std::iter::Iterator::next
-    fn next(self: &mut DirIterator) -> Option<Result<DirEntry, Error>> {
+    fn next(self: &mut DirIterator) -> Option<Result<DirEntry>> {
         loop {
             *libc::__errno() = 0;
 
@@ -357,13 +357,13 @@ impl DirIterator {
     /// Closes the file descriptor associated with the iterator.
     ///
     /// Make sure to call it when done with iteration.
-    fn close(self: &mut DirIterator) -> Result<(), Error> {
+    fn close(self: &mut DirIterator) -> Result<()> {
         errno_try!(libc::closedir(self.inner));
         Result::ok(())
     }
 
-    mixin std::iter::Iterator<DirIterator, Result<DirEntry, Error>>;
-    mixin std::iter::IteratorExt<DirIterator, Result<DirEntry, Error>>;
+    mixin std::iter::Iterator<DirIterator, Result<DirEntry>>;
+    mixin std::iter::IteratorExt<DirIterator, Result<DirEntry>>;
 }
 
 /// Directory entry
@@ -409,7 +409,7 @@ impl DirEntry {
 ///     println!("{}: {}", item.name(), item.file_type());
 /// }
 /// ```
-fn read_directory(path: Path) -> Result<DirIterator, Error> {
+fn read_directory(path: Path) -> Result<DirIterator> {
     let path_c = std::ffi::CString::from_slice(path.inner);
     defer path_c.free();
 
@@ -466,7 +466,7 @@ struct FileAttr {
 }
 
 impl FileAttr {
-    fn from_path(path: Path) -> Result<FileAttr, Error> {
+    fn from_path(path: Path) -> Result<FileAttr> {
         let path = ffi::CString::from_slice(path.inner);
         defer path.free();
 
@@ -576,7 +576,7 @@ mod tests {
         defer dir.close();
 
         let entries = dir
-            .map(|e: Result<DirEntry, Error>| -> StringBuf  {
+            .map(|e: Result<DirEntry>| -> StringBuf  {
                 StringBuf::from_slice(e.unwrap().name())
             })
             .to_vector();

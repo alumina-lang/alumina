@@ -1,4 +1,4 @@
-use io::{Error, Pipe};
+use io::{Error, Result, Pipe};
 use io::unix::errno_try;
 
 /// Iterator over the environment variables.
@@ -48,7 +48,7 @@ fn env() -> EnvIterator {
     }
 }
 
-
+/// Captured output of a child process.
 struct Output {
     status: i32,
     stdout: string::StringBuf,
@@ -56,6 +56,7 @@ struct Output {
 }
 
 impl Output {
+    /// @ mem::Movable::move
     fn move(self: &mut Output) -> Output {
         Output {
             status: self.status,
@@ -64,6 +65,7 @@ impl Output {
         }
     }
 
+    /// @ mem::Freeable::free
     fn free(self: &mut Output) {
         self.stdout.free();
         self.stderr.free();
@@ -92,7 +94,7 @@ impl Child {
     }
 
     /// Wait for child to exit, reading stdout and stderr if I/O redirection is requested.
-    fn wait_with_output(self: &mut Child) -> Result<Output, Error> {
+    fn wait_with_output(self: &mut Child) -> Result<Output> {
         let stdin = self.stdin.move();
         if stdin.is_some {
             stdin.inner.close()?;
@@ -136,7 +138,7 @@ impl Child {
     }
 
     /// Wait for child to exit, returning the exit status.
-    fn wait(self: &mut Child) -> Result<i32, Error> {
+    fn wait(self: &mut Child) -> Result<i32> {
         let stdin = self.stdin.move();
         if stdin.is_some {
             stdin.inner.close()?;
@@ -149,13 +151,13 @@ impl Child {
     }
 
     /// Kill the child process.
-    fn kill(self: &mut Child) -> Result<(), Error> {
+    fn kill(self: &mut Child) -> Result<()> {
         errno_try!(libc::kill(self.pid, libc::SIGKILL));
         Result::ok(())
     }
 
     /// Close all pipes.
-    fn close(self: &mut Child) -> Result<(), Error> {
+    fn close(self: &mut Child) -> Result<()> {
         let stdin = self.stdin.move();
         if stdin.is_some {
             stdin.inner.close()?;
@@ -215,7 +217,7 @@ impl Forked {
     ///
     /// Returns Option::none() in the child and a `Child` value in the
     /// parent.
-    fn spawn(self: &Forked) -> Result<Option<Child>, Error> {
+    fn spawn(self: &Forked) -> Result<Option<Child>> {
         let stdin = ChildStdio::new(true, self._stdin)?;
         defer stdin.close();
 
@@ -227,7 +229,7 @@ impl Forked {
 
         let pid = errno_try!(std::libc::fork());
         if pid == 0 {
-            // If we forked a child thread, we want the panic to 
+            // If we forked a child thread, we want the panic to
             // abort the whole process.
             std::panicking::internal::PANIC_HOOK = mem::zeroed();
 
@@ -307,7 +309,7 @@ impl Command {
     }
 
     /// Spawn a process.
-    fn spawn(self: &Command) -> Result<Child, Error> {
+    fn spawn(self: &Command) -> Result<Child> {
         let exec_params = internal::ExecParams::new(self);
         defer exec_params.free();
 
@@ -371,7 +373,7 @@ mod internal {
 
     extern "C" static environ: &&libc::c_char;
 
-    fn maybe_read_to_end<S1: Readable<S1>>(src: &mut S1, dst: &mut StringBuf) -> Result<bool, Error> {
+    fn maybe_read_to_end<S1: Readable<S1>>(src: &mut S1, dst: &mut StringBuf) -> Result<bool> {
         let maybe_n = src.read_to_end(dst);
         if maybe_n.is_ok {
             Result::ok(true)
@@ -399,7 +401,7 @@ mod internal {
         dst1: &mut StringBuf,
         src2: &mut S2,
         dst2: &mut StringBuf
-    ) -> result::Result<(), Error> {
+    ) -> Result<()> {
         let s1 = src1.as_fd();
         let s2 = src2.as_fd();
 
@@ -437,7 +439,7 @@ mod internal {
     }
 
     impl ChildStdio {
-        fn new(is_stdin: bool, kind: Stdio) -> Result<ChildStdio, Error> {
+        fn new(is_stdin: bool, kind: Stdio) -> Result<ChildStdio> {
             let fds = switch kind {
                 Stdio::Piped => {
                     let (rx, tx) = Pipe::anonymous()?;
@@ -452,7 +454,7 @@ mod internal {
                 },
                 Stdio::Null => {
                     let dev_null = fs::File::open_with(
-                        Path::new("/dev/null"), 
+                        Path::new("/dev/null"),
                         fs::OpenOptions::new()
                             .read(is_stdin)
                             .write(!is_stdin)
@@ -471,7 +473,7 @@ mod internal {
             Result::ok(res)
         }
 
-        fn close(self: &mut ChildStdio) -> Result<(), Error> {
+        fn close(self: &mut ChildStdio) -> Result<()> {
             if self.ours.is_some {
                 self.ours.inner.close()?;
             }
@@ -483,7 +485,7 @@ mod internal {
             Result::ok(())
         }
 
-        fn install(self: &mut ChildStdio, fd: libc::c_int) -> Result<(), Error> {
+        fn install(self: &mut ChildStdio, fd: libc::c_int) -> Result<()> {
             use std::fs::{File, OpenOptions};
             if self.theirs.is_some {
                 errno_try!(libc::dup2(self.theirs.inner.value, fd));
@@ -504,7 +506,7 @@ mod internal {
         _chars: collections::Vector<u8>,
         _ptrs: collections::Vector<&u8>,
         _argc: usize,
-    } 
+    }
 
     impl ExecParams {
         use collections::Vector;
@@ -556,15 +558,15 @@ mod internal {
         }
 
         fn name(self: &ExecParams) -> &libc::c_char {
-            &self._chars.as_slice()[0] as &libc::c_char 
+            &self._chars.as_slice()[0] as &libc::c_char
         }
 
         fn argv(self: &ExecParams) -> &&libc::c_char {
-            &self._ptrs.as_slice()[0] as &&libc::c_char 
+            &self._ptrs.as_slice()[0] as &&libc::c_char
         }
 
         fn envp(self: &ExecParams) -> &&libc::c_char {
-            &self._ptrs.as_slice()[self._argc + 1] as &&libc::c_char 
+            &self._ptrs.as_slice()[self._argc + 1] as &&libc::c_char
         }
 
         fn free(self: &mut ExecParams) {

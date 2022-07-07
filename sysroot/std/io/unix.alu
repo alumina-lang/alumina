@@ -124,7 +124,7 @@ impl Error {
 macro errno_try($ret) {
     let ret = $ret;
     if ret == -1 {
-        return result::Result::err(Error::from_errno());
+        return Result::err(Error::from_errno());
     }
     ret
 }
@@ -132,13 +132,13 @@ macro errno_try($ret) {
 /// Mixin for read and write operations for objects that can be viewed as a file descriptor.
 protocol FdReadWrite<Self: AsFileDescriptor<Self>> {
     /// io::Readable::read
-    fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize, Error> {
+    fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize> {
         let ret = errno_try!(libc::read(self.as_fd().value, buf.ptr as &mut void, buf.len));
         Result::ok(ret as usize)
     }
 
     /// io::Writable::write
-    fn write(self: &mut Self, buf: &[u8]) -> Result<usize, Error> {
+    fn write(self: &mut Self, buf: &[u8]) -> Result<usize> {
         let ret = errno_try!(libc::write(self.as_fd().value, buf.ptr as &void, buf.len));
         Result::ok(ret as usize)
     }
@@ -158,11 +158,11 @@ impl FileDescriptor {
     }
 
     /// Close the file descriptor.
-    fn close(self: &mut FileDescriptor) -> Result<(), Error> {
+    fn close(self: &mut FileDescriptor) -> Result<()> {
         if self.value != -1 {
             errno_try!(libc::close(self.value));
         }
-        result::Result::ok(())
+        Result::ok(())
     }
 
     /// @ AsFileDescriptor::as_fd
@@ -171,7 +171,7 @@ impl FileDescriptor {
     }
 
     /// Sets the file descriptor blocking mode.
-    fn set_nonblocking(self: &mut FileDescriptor, nonblocking: bool) -> Result<(), Error> {
+    fn set_nonblocking(self: &mut FileDescriptor, nonblocking: bool) -> Result<()> {
         #[cfg(target_os = "linux")] {
             let nonblocking =  if nonblocking { 1 as libc::c_int } else { 0 as libc::c_int };
             errno_try!(libc::ioctl(self.value, libc::FIONBIO, &nonblocking));
@@ -190,11 +190,11 @@ impl FileDescriptor {
             }
         }
 
-        result::Result::ok(())
+        Result::ok(())
     }
 
     /// Sets whether the file descriptor is closed on exec.
-    fn set_cloexec(self: &mut FileDescriptor) -> Result<(), Error> {
+    fn set_cloexec(self: &mut FileDescriptor) -> Result<()> {
         #[cfg(not(target_os = "linux"))] {
             errno_try!(libc::ioctl(self.value, libc::FIOCLEX));
         }
@@ -208,7 +208,7 @@ impl FileDescriptor {
             }
         }
 
-        result::Result::ok(())
+        Result::ok(())
     }
 
     /// @ std::mem::Movable::move
@@ -250,12 +250,12 @@ impl StdioStream {
     }
 
     /// Close the stream.
-    fn close(self: &mut StdioStream) -> Result<(), Error> {
+    fn close(self: &mut StdioStream) -> Result<()> {
         self.fd.close()
     }
 
     /// Flush the stream.
-    fn flush(self: &mut StdioStream) -> Result<(), Error> {
+    fn flush(self: &mut StdioStream) -> Result<()> {
         Result::ok(())
     }
 
@@ -276,7 +276,7 @@ struct Pipe {
 
 impl Pipe {
     /// Create an anonymous pipe pair.
-    fn anonymous() -> result::Result<(Pipe, Pipe), Error> {
+    fn anonymous() -> Result<(Pipe, Pipe)> {
         let fds: [libc::c_int; 2];
 
         #[cfg(target_os = "linux")]
@@ -294,7 +294,7 @@ impl Pipe {
             tx.set_cloexec()?;
         }
 
-        result::Result::ok((Pipe::from_fd(rx), Pipe::from_fd(tx)))
+        Result::ok((Pipe::from_fd(rx), Pipe::from_fd(tx)))
     }
 
     /// Create a `Pipe` object from a raw file descriptor.
@@ -308,7 +308,7 @@ impl Pipe {
     }
 
     /// Close the pipe.
-    fn close(self: &mut Pipe) -> Result<(), Error> {
+    fn close(self: &mut Pipe) -> Result<()> {
         self.fd.close()
     }
 
