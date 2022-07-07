@@ -350,6 +350,14 @@ module.exports = grammar({
         "]"
       ),
 
+    dyn_of: ($) =>
+      seq(
+        "&",
+        optional(field("mut", "mut")),
+        "dyn",
+        field("inner", $._type),
+      ),
+
     array_of: ($) =>
       seq(
         "[",
@@ -390,6 +398,7 @@ module.exports = grammar({
         $.pointer_of,
         $.generic_type,
         $.slice_of,
+        $.dyn_of,
         $.array_of,
         $.tuple_type,
         $.function_pointer

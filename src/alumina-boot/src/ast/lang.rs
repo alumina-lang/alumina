@@ -8,7 +8,8 @@ pub enum LangItemKind {
     SliceNew,
     SliceIndex,
     SliceRangeIndex,
-    SliceCoerce,
+    SliceConstCoerce,
+    SliceConstCast,
 
     RangeFull,
     RangeFrom,
@@ -53,10 +54,19 @@ pub enum LangItemKind {
     TypeopTupleTailOf,
     TypeopReturnTypeOf,
     TypeopArgumentsOf,
+    TypeopVoidPtrOf,
 
     EntrypointGlue,
     TestCaseMeta,
     TestCaseMetaNew,
+
+    Dyn,
+    DynSelf,
+    DynNew,
+    DynConstCoerce,
+    DynConstCast,
+    DynData,
+    DynVtableIndex,
 
     Operator(BinOp),
 }
@@ -68,7 +78,8 @@ impl TryFrom<&str> for LangItemKind {
         match s {
             "slice" => Ok(LangItemKind::Slice),
             "slice_new" => Ok(LangItemKind::SliceNew),
-            "slice_coerce" => Ok(LangItemKind::SliceCoerce),
+            "slice_const_coerce" => Ok(LangItemKind::SliceConstCoerce),
+            "slice_const_cast" => Ok(LangItemKind::SliceConstCast),
             "slice_index" => Ok(LangItemKind::SliceIndex),
             "slice_range_index" => Ok(LangItemKind::SliceRangeIndex),
 
@@ -137,10 +148,19 @@ impl TryFrom<&str> for LangItemKind {
             "typeop_tuple_tail_of" => Ok(LangItemKind::TypeopTupleTailOf),
             "typeop_return_type_of" => Ok(LangItemKind::TypeopReturnTypeOf),
             "typeop_arguments_of" => Ok(LangItemKind::TypeopArgumentsOf),
+            "typeop_void_ptr_of" => Ok(LangItemKind::TypeopVoidPtrOf),
 
             "entrypoint_glue" => Ok(LangItemKind::EntrypointGlue),
             "test_case_meta" => Ok(LangItemKind::TestCaseMeta),
             "test_case_meta_new" => Ok(LangItemKind::TestCaseMetaNew),
+
+            "dyn" => Ok(LangItemKind::Dyn),
+            "dyn_self" => Ok(LangItemKind::DynSelf),
+            "dyn_new" => Ok(LangItemKind::DynNew),
+            "dyn_const_coerce" => Ok(LangItemKind::DynConstCoerce),
+            "dyn_const_cast" => Ok(LangItemKind::DynConstCast),
+            "dyn_data" => Ok(LangItemKind::DynData),
+            "dyn_vtable_index" => Ok(LangItemKind::DynVtableIndex),
 
             t => {
                 if let Some(matches) = regex!(r"^builtin_tuple_(\d+)$").captures(t) {

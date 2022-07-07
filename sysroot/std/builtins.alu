@@ -153,12 +153,50 @@ protocol FloatFormattable<Self: builtins::FloatingPoint, F: Formatter<F>> {
 }
 
 protocol BitOps<Self: builtins::Unsigned> {
-    #[inline(always)]
+    #[inline]
+    fn to_be(self: Self) -> Self {
+        #[cfg(prince_of_denmark = "hamlet")]
+        {
+            intrinsics::compile_note("...or not to be, that is the question.");
+        }
+        #[cfg(target_endian = "big")]
+        {
+            self
+        }
+        #[cfg(target_endian = "little")]
+        {
+            self.swap_bytes()
+        }
+    }
+
+    #[inline]
+    fn from_be(self: Self) -> Self {
+        self.to_be()
+    }
+
+    #[inline]
+    fn to_le(self: Self) -> Self {
+        #[cfg(target_endian = "big")]
+        {
+            self.swap_bytes()
+        }
+        #[cfg(target_endian = "little")]
+        {
+            self
+        }
+    }
+
+    #[inline]
+    fn from_le(self: Self) -> Self {
+        self.to_le()
+    }
+
+    #[inline]
     fn rotate_left(self: Self, shift: usize) -> Self {
         (self << shift) | (self >> ((8 * mem::size_of::<Self>()) - shift))
     }
 
-    #[inline(always)]
+    #[inline]
     fn rotate_right(self: Self, shift: usize) -> Self {
         (self >> shift) | (self << ((8 * mem::size_of::<Self>()) - shift))
     }
@@ -183,6 +221,11 @@ impl u8 {
     fn min_value() -> u8 {
         0u8
     }
+
+    #[inline]
+    fn swap_bytes(self: u8) -> u8 {
+        self
+    }
 }
 
 /// 16-bit unsigned integer
@@ -203,6 +246,11 @@ impl u16 {
     #[force_inline]
     fn min_value() -> u16 {
         0u16
+    }
+
+    #[inline]
+    fn swap_bytes(self: u16) -> u16 {
+        (self >> 8) | (self << 8)
     }
 }
 
@@ -225,6 +273,14 @@ impl u32 {
     fn min_value() -> u32 {
         0u32
     }
+
+    #[inline]
+    fn swap_bytes(self: u32) -> u32 {
+        (self >> 24)
+        | ((self >> 8) & 0x0000FF00u32)
+        | ((self << 8) & 0x00FF0000u32)
+        | (self << 24)
+    }
 }
 
 /// 64-bit unsigned integer
@@ -246,6 +302,18 @@ impl u64 {
     fn min_value() -> u64 {
         0u64
     }
+
+    #[inline]
+    fn swap_bytes(self: u64) -> u64 {
+        (self >> 56)
+        | ((self >> 40) & 0x000000000000FF00u64)
+        | ((self >> 24) & 0x0000000000FF0000u64)
+        | ((self >> 8)  & 0x00000000FF000000u64)
+        | ((self << 8)  & 0x000000FF00000000u64)
+        | ((self << 24) & 0x0000FF0000000000u64)
+        | ((self << 40) & 0x00FF000000000000u64)
+        | (self << 56)
+    }
 }
 
 /// 128-bit unsigned integer
@@ -266,6 +334,26 @@ impl u128 {
     #[force_inline]
     fn min_value() -> u128 {
         0u128
+    }
+
+    #[inline]
+    fn swap_bytes(self: u128) -> u128 {
+        (self >> 120)
+        | ((self >> 104) & 0x0000000000000000000000000000FF00u128)
+        | ((self >> 88) & 0x00000000000000000000000000FF0000u128)
+        | ((self >> 72) & 0x000000000000000000000000FF000000u128)
+        | ((self >> 56) & 0x0000000000000000000000FF00000000u128)
+        | ((self >> 40) & 0x00000000000000000000FF0000000000u128)
+        | ((self >> 24) & 0x000000000000000000FF000000000000u128)
+        | ((self >> 8)  & 0x0000000000000000FF00000000000000u128)
+        | ((self << 8)  & 0x00000000000000FF0000000000000000u128)
+        | ((self << 24) & 0x000000000000FF000000000000000000u128)
+        | ((self << 40) & 0x0000000000FF00000000000000000000u128)
+        | ((self << 56) & 0x00000000FF0000000000000000000000u128)
+        | ((self << 72) & 0x000000FF000000000000000000000000u128)
+        | ((self << 88) & 0x0000FF00000000000000000000000000u128)
+        | ((self << 104) & 0x00FF0000000000000000000000000000u128)
+        | (self << 120)
     }
 }
 
@@ -303,6 +391,19 @@ impl usize {
         #[cfg(target_pointer_width = "64")]
         {
             u64::min_value() as usize
+        }
+    }
+
+
+    #[inline]
+    fn swap_bytes(self: usize) -> usize {
+        #[cfg(target_pointer_width = "32")]
+        {
+            (self as u32).swap_bytes() as usize
+        }
+        #[cfg(target_pointer_width = "64")]
+        {
+            (self as u64).swap_bytes() as usize
         }
     }
 }
@@ -838,7 +939,7 @@ impl array<Arr: builtins::Array> {
         self
     }
 
-    #[force_inline]
+    #[inline]
     fn iter(self: &Arr) -> mem::SliceIterator<&element_of<Arr>> {
         self.as_slice().iter()
     }
@@ -881,6 +982,9 @@ struct return_type_of<T> {}
 #[lang(typeop_arguments_of)]
 struct arguments_of<T> {}
 
+/// Void pointer type of the same constness as the provided pointer type.
+#[lang(typeop_void_ptr_of)]
+struct void_ptr_of<T: Pointer> {}
 
 
 /// Matches any type
@@ -996,6 +1100,31 @@ mod tests {
         assert_eq!(type_id::<unsigned_of<i64>>(), type_id::<u64>());
         assert_eq!(type_id::<unsigned_of<isize>>(), type_id::<usize>());
         assert_eq!(type_id::<unsigned_of<i128>>(), type_id::<u128>());
+    }
+
+    #[test]
+    fn test_swap_bytes() {
+        assert_eq!(0x01u8.swap_bytes(), 0x01u8);
+        assert_eq!(0x0123u16.swap_bytes(), 0x2301u16);
+        assert_eq!(0x01234567u32.swap_bytes(), 0x67452301u32);
+        assert_eq!(0x0123456789abcdefu64.swap_bytes(), 0xefcdab8967452301u64);
+        assert_eq!(
+            0x000102030405060708090a0b0c0d0e0fu128.swap_bytes(),
+            0x0f0e0d0c0b0a09080706050403020100u128
+        );
+
+        use u16::to_be;
+
+        // Totally not an excuse to work in some Shakespeare...
+        #[cfg(target_endian = "little")]
+        assert_eq!(0x100u16
+            .to_be() | ~ to_be
+        (0x1u16), 0xfeffu16);
+
+        #[cfg(target_endian = "big")]
+        assert_eq!(0x100u16
+            .to_be() | ~ to_be
+        (0x1u16), 0xfffeu16);
     }
 
     #[test]

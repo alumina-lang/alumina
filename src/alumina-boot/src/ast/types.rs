@@ -54,6 +54,8 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
                 span: Some(Span {
                     start: node.start_byte(),
                     end: node.end_byte(),
+                    line: node.start_position().row,
+                    column: node.start_position().column,
                     file: self.scope.code().unwrap().file_id(),
                 }),
                 negated: bound.child_by_field_name("negated").is_some(),
@@ -146,6 +148,14 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
         let is_mut = node.child_by_field_name("mut").is_some();
 
         Ok(self.ast.intern_type(Ty::Slice(ty, !is_mut)))
+    }
+
+    fn visit_dyn_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        self.accept_protocol = true;
+        let ty = self.visit(node.child_by_field_name("inner").unwrap())?;
+        let is_mut = node.child_by_field_name("mut").is_some();
+
+        Ok(self.ast.intern_type(Ty::Dyn(ty, !is_mut)))
     }
 
     fn visit_array_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {

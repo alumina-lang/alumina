@@ -254,6 +254,7 @@ pub enum Ty<'ast> {
     Builtin(BuiltinType),
     Pointer(TyP<'ast>, bool),
     Slice(TyP<'ast>, bool),
+    Dyn(TyP<'ast>, bool),
     Array(TyP<'ast>, usize),
     Tuple(&'ast [TyP<'ast>]),
     FunctionPointer(&'ast [TyP<'ast>], TyP<'ast>),
@@ -743,6 +744,8 @@ pub enum ExprKind<'ast> {
 pub struct Span {
     pub start: usize,
     pub end: usize,
+    pub line: usize,
+    pub column: usize,
     pub file: FileId,
 }
 

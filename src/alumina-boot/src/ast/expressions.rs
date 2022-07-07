@@ -57,6 +57,8 @@ where
         let span = Span {
             start: node.start_byte(),
             end: node.end_byte(),
+            line: node.start_position().row,
+            column: node.start_position().column,
             file: scope.code().unwrap().file_id(),
         };
 
@@ -709,6 +711,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         let span = Span {
             start: node.start_byte(),
             end: node.end_byte(),
+            line: node.start_position().row,
+            column: node.start_position().column,
             file: self.scope.code().unwrap().file_id(),
         };
         let inner = self.visit(node.child_by_field_name("inner").unwrap())?;
@@ -1198,6 +1202,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                 let span = Span {
                     start: node.start_byte(),
                     end: node.end_byte(),
+                    line: node.start_position().row,
+                    column: node.start_position().column,
                     file: self.scope.code().unwrap().file_id(),
                 };
 
@@ -1257,6 +1263,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         let span = Span {
             start: node.start_byte(),
             end: node.end_byte(),
+            line: node.start_position().row,
+            column: node.start_position().column,
             file: self.scope.code().unwrap().file_id(),
         };
 
@@ -1280,6 +1288,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         let span = Span {
             start: node.start_byte(),
             end: node.end_byte(),
+            line: node.start_position().row,
+            column: node.start_position().column,
             file: self.scope.code().unwrap().file_id(),
         };
 
@@ -1463,6 +1473,8 @@ impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
         let span = Span {
             start: node.start_byte(),
             end: node.end_byte(),
+            line: node.start_position().row,
+            column: node.start_position().column,
             file: self.scope.code().unwrap().file_id(),
         };
 
@@ -1477,6 +1489,8 @@ impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
             let span = Span {
                 start: node.start_byte(),
                 end: node.end_byte(),
+                line: node.start_position().row,
+                column: node.start_position().column,
                 file: self.scope.code().unwrap().file_id(),
             };
 
@@ -1541,6 +1555,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
         let span = Span {
             start: node.start_byte(),
             end: node.end_byte(),
+            line: node.start_position().row,
+            column: node.start_position().column,
             file: self.scope.code().unwrap().file_id(),
         };
 

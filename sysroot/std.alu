@@ -124,13 +124,13 @@ mod internal {
 
     fn assert_eq<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T)  {
         use panicking::internal::panic_impl;
-        use fmt::{Formattable, internal::FormatArg};
+        use fmt::{Formattable, internal::format_arg};
 
         if !(lhs == rhs) {
             when T: Formattable<T> {
                 panic_impl("assertion failed ({} != {}))", file, line, column, &[
-                    FormatArg::new(&lhs),
-                    FormatArg::new(&rhs)
+                    format_arg(&lhs),
+                    format_arg(&rhs)
                 ])
             }
             else {
@@ -142,13 +142,13 @@ mod internal {
 
     fn assert_ne<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T)  {
         use panicking::internal::panic_impl;
-        use fmt::{Formattable, internal::FormatArg};
+        use fmt::{Formattable, internal::format_arg};
 
         if lhs == rhs {
             when T: Formattable<T> {
                 panic_impl("assertion failed ({} == {}))", file, line, column, &[
-                    FormatArg::new(&lhs),
-                    FormatArg::new(&rhs)
+                    format_arg(&lhs),
+                    format_arg(&rhs)
                 ])
             }
             else {
@@ -167,26 +167,28 @@ mod internal {
 /// not easily expressible.
 mod util {
     /// Identity function
-    #[force_inline] fn identity<T>(t: T) -> T { t }
+    #[inline] fn identity<T>(t: T) -> T { t }
 
     /// Take any parameter and discard the result
-    #[force_inline] fn discard<T>(_: T) { }
+    #[inline] fn discard<T>(_: T) { }
 
     /// Cast a value to a different type.
-    #[force_inline] fn cast<T1, T2>(t: T1) -> T2 { t as T2 }
+    #[inline] fn cast<T1, T2>(t: T1) -> T2 { t as T2 }
+
+    /// Coerce a value to a different type without casting
+    #[inline] fn coerce<T1, T2>(t: T1) -> T2 { t }
 
     /// Reinterpret the bits of the value as another type.
-    #[force_inline] fn transmute<T1, T2>(t: T1) -> T2 { *(&t as &T2) }
+    #[inline] fn transmute<T1, T2>(t: T1) -> T2 { *(&t as &T2) }
 
     /// Dereference a pointer.
-    #[force_inline] fn deref<T>(v: &T) -> T { *v }
+    #[inline] fn deref<T>(v: &T) -> T { *v }
 
     /// Produce the only value of a unit type out of thin air.
+    ///
+    /// Does not work for the [builtins::never] type.
     #[force_inline]
-    fn unit<T: builtins::ZeroSized>() -> T {
-        when T: ! {
-            compile_fail!("cannot produce never type out of thin air");
-        }
+    fn unit<T: builtins::ZeroSized + !!>() -> T {
         let ret: T;
         ret
     }

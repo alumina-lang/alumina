@@ -181,6 +181,54 @@ protocol Seekable<Self> {
     }
 }
 
+/// A null stream (similar to `/dev/null`).
+///
+/// It behaves as a file of infinite capacity for writing and an empty file for reading.
+struct NullStream {}
+
+impl NullStream {
+    use string::StringBuf;
+
+    /// Creates a new null stream.
+    fn new() -> NullStream {
+        NullStream {}
+    }
+
+    /// @ Readable::read
+    fn read(self: &mut NullStream, buf: &mut [u8]) -> Result<usize, Error> {
+        Result::ok(0usize)
+    }
+
+    /// @ Readable::read_exact
+    fn read_exact(self: &mut NullStream, buf: &mut [u8]) -> Result<(), Error> {
+        if buf.len == 0 {
+            Result::ok(())
+        } else {
+            Result::err(Error::eof())
+        }
+    }
+
+    /// @ Readable::read_to_end
+    fn read_to_end(self: &mut NullStream, buf: &mut StringBuf) -> Result<usize, Error> {
+        Result::ok(0usize)
+    }
+
+    /// @ Writable::write
+    fn write(self: &mut NullStream, buf: &[u8]) -> Result<usize, Error> {
+        Result::ok(buf.len)
+    }
+
+    /// @ Writable::write_all
+    fn write_all(self: &mut NullStream, buf: &[u8]) -> Result<(), Error> {
+        Result::ok(())
+    }
+
+    /// @ Writable::flush
+    fn flush(self: &mut NullStream) -> Result<(), Error> {
+        Result::ok(())
+    }
+}
+
 /// A readable stream backed by an in-memory string slice.
 struct SliceReader {
     slice: &[u8],
@@ -755,5 +803,22 @@ mod tests {
 
         copy(&src, &StringWriter::new(&dst)).unwrap();
         assert_eq!(dst.as_slice(), "Lorem ipsum dolor sit amet");
+    }
+
+    #[test]
+    fn test_null() {
+        let src = NullStream::new();
+        let buf: [u8; 32];
+        assert_eq!(src.read(buf.as_slice_mut()), Result::ok(0usize));
+        assert_eq!(src.read_exact(buf.as_slice_mut()), Result::err(Error::eof()));
+        assert_eq!(src.read_exact(mem::slice::empty()), Result::ok(()));
+        let s: StringBuf = StringBuf::new();
+        defer s.free();
+
+        assert_eq!(src.read_to_end(&s), Result::ok(0usize));
+
+        assert_eq!(src.write("hello world"), Result::ok(11usize));
+        assert_eq!(src.write_all("hello world"), Result::ok(()));
+        assert_eq!(src.flush(), Result::ok(()));
     }
 }

@@ -10,7 +10,7 @@ protocol Equatable<Self> {
     fn equals(lhs: &Self, rhs: &Self) -> bool;
 
     /// Returns `false` if arguments are equal, `true` otherwise
-    #[force_inline]
+    #[inline]
     fn not_equals(lhs: &Self, rhs: &Self) -> bool {
         !Self::equals(lhs, rhs)
     }
@@ -55,6 +55,31 @@ protocol Comparable<Self: Equatable<Self>> {
     fn greater_than_or_equal(lhs: &Self, rhs: &Self) -> bool {
         Self::compare(lhs, rhs) != Ordering::Less
     }
+}
+
+/// A wrapper that can be used to reverse the ordering of a Comparable.
+///
+/// # Example
+
+struct Reversed<T: Comparable<T>> {
+    value: &T,
+}
+
+impl Reversed<T: Comparable<T>> {
+    fn compare(self: &Reversed<T>, other: &Reversed<T>) -> Ordering {
+        other.value.compare(self.value)
+    }
+
+    fn equals(self: &Reversed<T>, other: &Reversed<T>) -> bool {
+        self.value.equals(other.value)
+    }
+
+    mixin Equatable<Reversed<T>>;
+    mixin Comparable<Reversed<T>>;
+}
+
+fn reversed<T: Comparable<T>>(value: &T) -> Reversed<T> {
+    Reversed { value: value }
 }
 
 /// Helper macro for implementing a lexicographic order.

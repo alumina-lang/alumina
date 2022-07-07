@@ -334,6 +334,11 @@ pub struct ProtocolFunction<'ir> {
 }
 
 #[derive(Debug)]
+pub struct VtableLayout<'ir> {
+    pub methods: &'ir [ProtocolFunction<'ir>],
+}
+
+#[derive(Debug)]
 pub struct EnumMember<'ir> {
     pub id: IrId,
     pub value: ExprP<'ir>,

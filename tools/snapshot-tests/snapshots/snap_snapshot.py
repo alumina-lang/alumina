@@ -47,6 +47,16 @@ snapshots['test_examples[defer_and_move.alu] run_stderr'] = b''
 
 snapshots['test_examples[defer_and_move.alu] run_stdout'] = b'moved: Hello, world!\noriginal: \n'
 
+snapshots['test_examples[dyn.alu] compile_ret'] = 0
+
+snapshots['test_examples[dyn.alu] compile_stderr'] = None
+
+snapshots['test_examples[dyn.alu] run_ret'] = 0
+
+snapshots['test_examples[dyn.alu] run_stderr'] = b''
+
+snapshots['test_examples[dyn.alu] run_stdout'] = b'[GENERIC] Inserting 42 into RealSlot\n[GENERIC] Retrieving value from RealSlot: some(42)\n[GENERIC] Inserting 42 into NullSlot\n[GENERIC] Retrieving value from NullSlot: none\n[DYN] Inserting 42 into RealSlot\n[DYN] Retrieving value from RealSlot: some(42)\n[DYN] Inserting 42 into NullSlot\n[DYN] Retrieving value from NullSlot: none\n'
+
 snapshots['test_examples[file_io.alu] compile_ret'] = 0
 
 snapshots['test_examples[file_io.alu] compile_stderr'] = None

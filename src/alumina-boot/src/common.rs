@@ -223,6 +223,12 @@ pub enum CodeErrorKind {
     ClosuresAreNotFns,
     #[error("thread local storage is not supported")]
     ThreadLocalNotSupported,
+    #[error("dyn requires a protocol")]
+    NonProtocolDyn,
+    #[error("protocols containing generic functions can only be used as mixins")]
+    MixinOnlyProtocol,
+    #[error("signature of `{}` is incompatible with virtual dispatch", .0)]
+    NonDynnableFunction(String),
 
     // Warnings
     #[error("defer inside a loop: this defered statement will only be executed once")]
@@ -288,6 +294,8 @@ where
         let span = Span {
             start: node.start_byte(),
             end: node.end_byte(),
+            line: node.start_position().row,
+            column: node.start_position().column,
             file: scope.code().unwrap().file_id(),
         };
 

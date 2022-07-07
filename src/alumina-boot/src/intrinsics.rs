@@ -27,6 +27,7 @@ pub enum IntrinsicKind {
     TestCases,
     CodegenFunc,
     CodegenConst,
+    MakeVtable,
 }
 
 pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
@@ -46,6 +47,7 @@ pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
         map.insert("test_cases", IntrinsicKind::TestCases);
         map.insert("codegen_func", IntrinsicKind::CodegenFunc);
         map.insert("codegen_const", IntrinsicKind::CodegenConst);
+        map.insert("make_vtable", IntrinsicKind::MakeVtable);
         map
     })
     .get(name)
