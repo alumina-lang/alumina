@@ -3758,12 +3758,18 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         // A separate check for constness match for the self argument. It's not
         // required, as the one below will catch it, but we want to show a nicer
         // error message.
-        if let (ir::Ty::Pointer(_, t1_const), ir::Ty::Pointer(_, t2_const)) = (dyn_ptr, func.arg_types[0]) {
+        if let (ir::Ty::Pointer(_, t1_const), ir::Ty::Pointer(_, t2_const)) =
+            (dyn_ptr, func.arg_types[0])
+        {
             if !*t2_const && *t1_const {
-                let mut_dyn = self.monomorphize_lang_item(
-                    LangItemKind::DynConstCast,
-                    [self.types.protocol(protocol)],
-                )?.get_function().with_no_span()?.return_type;
+                let mut_dyn = self
+                    .monomorphize_lang_item(
+                        LangItemKind::DynConstCast,
+                        [self.types.protocol(protocol)],
+                    )?
+                    .get_function()
+                    .with_no_span()?
+                    .return_type;
 
                 return Err(mismatch!(self, mut_dyn, self_arg.ty)).with_no_span();
             }
