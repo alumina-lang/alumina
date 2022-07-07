@@ -73,10 +73,16 @@
 <a href="/std/io/StdioStream.html">StdioStream</a>
 </li>
 <li>
-<a href="/std/io/SliceReader.html">SliceReader</a>
+<a href="/std/io/TakeAdapter.html">TakeAdapter</a>
 </li>
 <li>
 <a href="/std/io/Pipe.html">Pipe</a>
+</li>
+<li>
+<a href="/std/io/ChainAdapter.html">ChainAdapter</a>
+</li>
+<li>
+<a href="/std/io/SliceReader.html">SliceReader</a>
 </li>
 <li>
 <a href="/std/io/StringWriter.html">StringWriter</a>
@@ -94,6 +100,12 @@
 <h2>Functions</h2>
 <ul>
 <li>
+<a href="/std/io/#item.take">take</a>
+</li>
+<li>
+<a href="/std/io/#item.chain">chain</a>
+</li>
+<li>
 <a href="/std/io/#item.copy">copy</a>
 </li>
 <li>
@@ -107,6 +119,12 @@
 </li>
 <li>
 <a href="/std/io/#item.lines">lines</a>
+</li>
+</ul>
+<h2>Types</h2>
+<ul>
+<li>
+<a href="/std/io/#item.Result">Result</a>
 </li>
 </ul>
 <h2>Enums</h2>
@@ -249,11 +267,11 @@ Streams and other byte I/O functionality
 <div class="cell-doc">Standard I/O stream.
 </div>
 </div>
-<div class="row" id="item.SliceReader">
+<div class="row" id="item.TakeAdapter">
 <div class="cell-name">
-<a href="/std/io/SliceReader.html">SliceReader</a>
+<a href="/std/io/TakeAdapter.html">TakeAdapter</a>
 </div>
-<div class="cell-doc">A readable stream backed by an in-memory string slice.
+<div class="cell-doc">Adapter for a stream that returns EOF after <code>limit</code> bytes are read.
 </div>
 </div>
 <div class="row" id="item.Pipe">
@@ -261,6 +279,20 @@ Streams and other byte I/O functionality
 <a href="/std/io/Pipe.html">Pipe</a>
 </div>
 <div class="cell-doc">A FIFO pipe.
+</div>
+</div>
+<div class="row" id="item.ChainAdapter">
+<div class="cell-name">
+<a href="/std/io/ChainAdapter.html">ChainAdapter</a>
+</div>
+<div class="cell-doc">Adapter for a pair of streams that chains them together.
+</div>
+</div>
+<div class="row" id="item.SliceReader">
+<div class="cell-name">
+<a href="/std/io/SliceReader.html">SliceReader</a>
+</div>
+<div class="cell-doc">A readable stream backed by an in-memory string slice.
 </div>
 </div>
 <div class="row" id="item.StringWriter">
@@ -295,15 +327,51 @@ Streams and other byte I/O functionality
 <h2 id="Function">Functions</h2>
 <ul>
 <li>
+<div class="signature" id="item.take">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">take</span>&lt;R&gt;(self: &amp;mut R, limit: <a href="/std/builtins/u64.html"><span class="identifier-type">u64</span></a>) -> <a href="/std/io/TakeAdapter.html"><span class="identifier-type">TakeAdapter</span></a>&lt;R&gt;<div class="protocol-bound">
+R: <a href="/std/io/Readable.html"><span class="identifier-type">Readable</span></a>&lt;R&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L648-L650"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns an adapter for a stream that returns EOF after <code>limit</code> bytes have been read.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.chain">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">chain</span>&lt;R1, R2&gt;(self: &amp;mut R1, other: &amp;mut R2) -> <a href="/std/io/ChainAdapter.html"><span class="identifier-type">ChainAdapter</span></a>&lt;R1, R2&gt;<div class="protocol-bound">
+R1: <a href="/std/io/Readable.html"><span class="identifier-type">Readable</span></a>&lt;R1&gt;</div>
+<div class="protocol-bound">
+R2: <a href="/std/io/Readable.html"><span class="identifier-type">Readable</span></a>&lt;R2&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L653-L655"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Chains the two streams together
+</p><p>
+</p>
+</div>
+</li>
+<li>
 <div class="signature" id="item.copy">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">copy</span>&lt;S, D&gt;(src: &amp;mut S, dst: &amp;mut D) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/u64.html"><span class="identifier-type">u64</span></a>, <a href="/std/io/unix/Error.html"><span class="identifier-type">Error</span></a>&gt;<div class="protocol-bound">
+<span class="keyword">fn</span> <span class="identifier-function">copy</span>&lt;S, D&gt;(src: &amp;mut S, dst: &amp;mut D) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/u64.html"><span class="identifier-type">u64</span></a>&gt;<div class="protocol-bound">
 S: <a href="/std/io/Readable.html"><span class="identifier-type">Readable</span></a>&lt;S&gt;</div>
 <div class="protocol-bound">
 D: <a href="/std/io/Writable.html"><span class="identifier-type">Writable</span></a>&lt;D&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L578-L583"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L660-L665"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -318,13 +386,13 @@ Internally allocates a buffer with the size of <a class="path-link" href="/std/i
 <li>
 <div class="signature" id="item.copy_using">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">copy_using</span>&lt;S, D&gt;(src: &amp;mut S, dst: &amp;mut D, buffer: &amp;mut [<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/u64.html"><span class="identifier-type">u64</span></a>, <a href="/std/io/unix/Error.html"><span class="identifier-type">Error</span></a>&gt;<div class="protocol-bound">
+<span class="keyword">fn</span> <span class="identifier-function">copy_using</span>&lt;S, D&gt;(src: &amp;mut S, dst: &amp;mut D, buffer: &amp;mut [<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/u64.html"><span class="identifier-type">u64</span></a>&gt;<div class="protocol-bound">
 S: <a href="/std/io/Readable.html"><span class="identifier-type">Readable</span></a>&lt;S&gt;</div>
 <div class="protocol-bound">
 D: <a href="/std/io/Writable.html"><span class="identifier-type">Writable</span></a>&lt;D&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L586-L598"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L668-L680"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -337,11 +405,11 @@ Copy the entire stream <code>src</code> into <code>dst</code> using a provided b
 <li>
 <div class="signature" id="item.read_byte">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">read_byte</span>&lt;R&gt;(reader: &amp;mut R) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>, <a href="/std/io/unix/Error.html"><span class="identifier-type">Error</span></a>&gt;<div class="protocol-bound">
+<span class="keyword">fn</span> <span class="identifier-function">read_byte</span>&lt;R&gt;(reader: &amp;mut R) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>&gt;<div class="protocol-bound">
 R: <a href="/std/io/Readable.html"><span class="identifier-type">Readable</span></a>&lt;R&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L603-L608"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L685-L690"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -356,11 +424,11 @@ Returns <code>Error::eof</code> if the stream has no bytes left.
 <li>
 <div class="signature" id="item.read_until">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">read_until</span>&lt;R&gt;(r: &amp;mut R, delim: <a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>, buf: &amp;mut <a href="/std/string/#item.StringBuf"><span class="identifier-type">StringBuf</span></a>) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>, <a href="/std/io/unix/Error.html"><span class="identifier-type">Error</span></a>&gt;<div class="protocol-bound">
+<span class="keyword">fn</span> <span class="identifier-function">read_until</span>&lt;R&gt;(r: &amp;mut R, delim: <a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>, buf: &amp;mut <a href="/std/string/#item.StringBuf"><span class="identifier-type">StringBuf</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;<div class="protocol-bound">
 R: <a href="/std/io/BufferedReadable.html"><span class="identifier-type">BufferedReadable</span></a>&lt;R&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L613-L635"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L695-L717"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -379,7 +447,21 @@ The <code>delim</code> terminator is included.
 R: <a href="/std/io/BufferedReadable.html"><span class="identifier-type">BufferedReadable</span></a>&lt;R&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L707-L709"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L789-L791"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+</div>
+</li>
+</ul>
+<h2 id="Type">Types</h2>
+<ul>
+<li>
+<div class="signature" id="item.Result">
+<h4>
+<span class="keyword">type</span> <span class="identifier-type">Result</span>&lt;T&gt; = <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, <a href="/std/io/unix/Error.html"><span class="identifier-type">Error</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L10-L10"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -434,7 +516,7 @@ R: <a href="/std/io/BufferedReadable.html"><span class="identifier-type">Buffere
 <h4>
 <span class="keyword">const</span> <span class="identifier-constant">DEFAULT_BUFFER_SIZE</span>: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a> = ...</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L571-L571"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L643-L643"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -448,7 +530,7 @@ R: <a href="/std/io/BufferedReadable.html"><span class="identifier-type">Buffere
 <h4>
 <span class="keyword">static</span> <span class="identifier-constant">FMT_BUF</span>: [<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>; 256]</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L18-L18"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L20-L20"/>source</a>
 </div>
 </div>
 <div class="item-doc">
