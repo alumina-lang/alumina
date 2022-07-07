@@ -47,6 +47,11 @@ impl GlobalCtx {
             (std::mem::size_of::<usize>() * 8).to_string(),
         );
 
+        #[cfg(target_endian = "big")]
+        result.add_cfg("target_endian", "big".to_string());
+        #[cfg(target_endian = "little")]
+        result.add_cfg("target_endian", "little".to_string());
+
         match output_type {
             OutputType::Executable => {
                 result.add_cfg("output_type", "executable");

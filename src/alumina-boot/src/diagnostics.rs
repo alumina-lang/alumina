@@ -84,8 +84,6 @@ impl DiagnosticContext {
                 .unwrap_or((*level, None))
         });
 
-        let mut file_cache = HashMap::new();
-
         for (level, error) in all_errors {
             let level = match level {
                 Level::Error => "error".red(),
@@ -122,12 +120,12 @@ impl DiagnosticContext {
                 };
 
                 if let Some(file_name) = inner.file_map.get(&span.file) {
-                    let source = file_cache
-                        .entry(span.file)
-                        .or_insert_with(|| std::fs::read_to_string(file_name).unwrap());
-
-                    let (line, column) = line_and_column(source, span.start);
-                    eprintln!(" --> {}:{}:{}", file_name.display(), line, column,);
+                    eprintln!(
+                        " --> {}:{}:{}",
+                        file_name.display(),
+                        span.line + 1,
+                        span.column + 1
+                    );
                 } else {
                     eprintln!(" --> {{ unresolved location }}");
                 }
@@ -144,21 +142,4 @@ impl DiagnosticContext {
 
         Ok(())
     }
-}
-
-pub fn line_and_column(source: &str, byte_offset: usize) -> (usize, usize) {
-    let mut line = 1;
-    let mut column = 1;
-    for (i, c) in source.chars().enumerate() {
-        if i == byte_offset {
-            break;
-        }
-        if c == '\n' {
-            line += 1;
-            column = 1;
-        } else {
-            column += 1;
-        }
-    }
-    (line, column)
 }

@@ -7,7 +7,6 @@ use crate::{
         AstCtx, BuiltinMacro, BuiltinMacroKind, Expr, ExprKind, FieldInitializer, Item, ItemP, Lit,
     },
     common::{ice, AluminaError, ArenaAllocatable, CodeErrorKind},
-    diagnostics::line_and_column,
     global_ctx::GlobalCtx,
     name_resolution::scope::{NamedItemKind, Scope},
 };
@@ -81,6 +80,8 @@ impl<'ast> MacroMaker<'ast> {
         let span = Span {
             start: node.start_byte(),
             end: node.end_byte(),
+            line: node.start_position().row,
+            column: node.start_position().column,
             file: code.file_id(),
         };
 
@@ -118,6 +119,8 @@ impl<'ast> MacroMaker<'ast> {
                     let span = Span {
                         start: node.start_byte(),
                         end: node.end_byte(),
+                        line: node.start_position().row,
+                        column: node.start_position().column,
                         file: code.file_id(),
                     };
 
@@ -420,17 +423,7 @@ impl<'ast> MacroExpander<'ast> {
             BuiltinMacroKind::Line | BuiltinMacroKind::Column => {
                 let (line, column) = self
                     .invocation_span
-                    .and_then(|s| {
-                        self.global_ctx
-                            .diag()
-                            .get_file_path(s.file)
-                            .map(|filename| {
-                                line_and_column(
-                                    &std::fs::read_to_string(filename).unwrap(),
-                                    s.start,
-                                )
-                            })
-                    })
+                    .map(|s| (s.line + 1, s.column + 1))
                     .ok_or(CodeErrorKind::NoSpanInformation)
                     .with_span(self.invocation_span)?;
 

@@ -123,6 +123,28 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                     self.match_slot(inferred, *holder, *t)?;
                 }
             }
+            (ast::Ty::Dyn(ast::Ty::Generic(item, holders), a_const), _) => {
+                if let Some(LangTypeKind::Dyn(
+                    ir::Ty::Protocol(proto),
+                    ir::Ty::Pointer(_, b_const),
+                )) = self.mono_ctx.get_lang_type_kind(tgt)
+                {
+                    if !*a_const && (*a_const != *b_const) {
+                        return Err(());
+                    }
+
+                    let mono_key = self.mono_ctx.reverse_lookup(proto);
+                    if mono_key.0 != *item {
+                        return Err(());
+                    }
+
+                    for (holder, t) in holders.iter().zip(mono_key.1.iter().skip(1)) {
+                        self.match_slot(inferred, *holder, *t)?;
+                    }
+                } else {
+                    return Err(());
+                }
+            }
             _ => return Err(()),
         }
 

@@ -89,6 +89,8 @@ impl Compiler {
                 let source = std::fs::read_to_string(&source_file.filename)?;
 
                 let parse_tree = ParseCtx::from_source(file_id, source);
+                parse_tree.check_syntax_errors(parse_tree.root_node())?;
+
                 Ok((parse_tree, ast.parse_path(&source_file.path)))
             })
             .collect::<Result<_, AluminaError>>()?;
@@ -98,8 +100,6 @@ impl Compiler {
         for (ctx, path) in source_files.iter() {
             let scope = root_scope.ensure_module(path.clone()).with_no_span()?;
             scope.set_code(ctx);
-
-            ctx.check_syntax_errors(ctx.root_node())?;
 
             if self.global_ctx.should_generate_main_glue() {
                 let mut visitor =

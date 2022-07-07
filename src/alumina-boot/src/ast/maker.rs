@@ -97,6 +97,8 @@ impl<'ast> AstItemMaker<'ast> {
                                     Some(Span {
                                         start: node.start_byte(),
                                         end: node.end_byte(),
+                                        line: node.start_position().row,
+                                        column: node.start_position().column,
                                         file: impl_scope.code().unwrap().file_id(),
                                     }),
                                 ));
@@ -122,6 +124,8 @@ impl<'ast> AstItemMaker<'ast> {
                         let span = Span {
                             start: node.start_byte(),
                             end: node.end_byte(),
+                            line: node.start_position().row,
+                            column: node.start_position().column,
                             file: scope.code().unwrap().file_id(),
                         };
 
@@ -167,6 +171,8 @@ impl<'ast> AstItemMaker<'ast> {
                     let span = Span {
                         start: node.start_byte(),
                         end: node.end_byte(),
+                        line: node.start_position().row,
+                        column: node.start_position().column,
                         file: code.file_id(),
                     };
 
@@ -193,6 +199,8 @@ impl<'ast> AstItemMaker<'ast> {
         let span = Span {
             start: node.start_byte(),
             end: node.end_byte(),
+            line: node.start_position().row,
+            column: node.start_position().column,
             file: code.file_id(),
         };
 
@@ -228,6 +236,8 @@ impl<'ast> AstItemMaker<'ast> {
         let span = Span {
             start: node.start_byte(),
             end: node.end_byte(),
+            line: node.start_position().row,
+            column: node.start_position().column,
             file: code.file_id(),
         };
 
@@ -284,6 +294,8 @@ impl<'ast> AstItemMaker<'ast> {
                     let span = Span {
                         start: node.start_byte(),
                         end: node.end_byte(),
+                        line: node.start_position().row,
+                        column: node.start_position().column,
                         file: scope.code().unwrap().file_id(),
                     };
 
@@ -303,6 +315,8 @@ impl<'ast> AstItemMaker<'ast> {
         let span = Span {
             start: node.start_byte(),
             end: node.end_byte(),
+            line: node.start_position().row,
+            column: node.start_position().column,
             file: scope.code().unwrap().file_id(),
         };
 
@@ -335,6 +349,8 @@ impl<'ast> AstItemMaker<'ast> {
         let span = Span {
             start: node.start_byte(),
             end: node.end_byte(),
+            line: node.start_position().row,
+            column: node.start_position().column,
             file: scope.code().unwrap().file_id(),
         };
 
@@ -387,6 +403,8 @@ impl<'ast> AstItemMaker<'ast> {
         let span = Span {
             start: node.start_byte(),
             end: node.end_byte(),
+            line: node.start_position().row,
+            column: node.start_position().column,
             file: scope.code().unwrap().file_id(),
         };
 
@@ -401,6 +419,8 @@ impl<'ast> AstItemMaker<'ast> {
                     let span = Span {
                         start: node.start_byte(),
                         end: node.end_byte(),
+                        line: node.start_position().row,
+                        column: node.start_position().column,
                         file: code.file_id(),
                     };
 
@@ -527,6 +547,8 @@ impl<'ast> AstItemMaker<'ast> {
         let span = Span {
             start: node.start_byte(),
             end: node.end_byte(),
+            line: node.start_position().row,
+            column: node.start_position().column,
             file: scope.code().unwrap().file_id(),
         };
 

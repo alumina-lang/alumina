@@ -30,7 +30,7 @@ macro panic($reason, $args...) {
         file!(),
         line!(),
         column!(),
-        &[internal::FormatArg::new(&$args)...]
+        &[fmt::internal::format_arg(&$args)...]
     )
 }
 
@@ -39,11 +39,11 @@ struct PanicInfo {
     line: i32,
     column: i32,
     message: &[u8],
-    args: &[fmt::internal::FormatArg<internal::PanicFormatter>]
+    args: &[&dyn fmt::Formattable<internal::PanicFormatter>]
 }
 
 mod internal {
-    use fmt::{Formatter, internal::{printf, FormatArg}};
+    use fmt::{Formatter, Formattable, internal::{printf, format_arg}};
     use sync::{Atomic, Ordering};
 
     // libc runtime backtrace support
@@ -83,7 +83,7 @@ mod internal {
         let formatter = PanicFormatter {};
         printf(
             "panic at {}:{}:{}: ",
-            &[FormatArg::new(&info.file), FormatArg::new(&info.line), FormatArg::new(&info.column)],
+            &[format_arg(&info.file), format_arg(&info.line), format_arg(&info.column)],
             &formatter
         )?;
         printf(info.message, info.args, &formatter)?;
@@ -99,7 +99,7 @@ mod internal {
         file: &[u8],
         line: i32,
         column: i32,
-        args: &[FormatArg<PanicFormatter>]
+        args: &[&dyn Formattable<PanicFormatter>]
     ) -> ! {
         #[cfg(panic_trap)]
         std::intrinsics::trap();

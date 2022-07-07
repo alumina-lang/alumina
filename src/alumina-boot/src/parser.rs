@@ -8,6 +8,8 @@ use tree_sitter::{Query, QueryCursor};
 
 include!(concat!(env!("OUT_DIR"), "/parser.rs"));
 
+static ERROR_QUERY: once_cell::sync::OnceCell<Query> = once_cell::sync::OnceCell::new();
+
 pub struct ParseCtx<'src> {
     source: String,
     tree: OnceCell<tree_sitter::Tree>,
@@ -53,9 +55,9 @@ impl<'src> ParseCtx<'src> {
         node: tree_sitter::Node<'src>,
     ) -> Result<(), AluminaError> {
         let mut cursor = QueryCursor::new();
-        let query = Query::new(language(), "(ERROR) @node").unwrap();
-        let matches = cursor.matches(&query, node, self.source.as_bytes());
+        let query = ERROR_QUERY.get_or_init(|| Query::new(language(), "(ERROR) @node").unwrap());
 
+        let matches = cursor.matches(query, node, self.source.as_bytes());
         let mut errors = Vec::new();
         for m in matches {
             let error_node = m.nodes_for_capture_index(0).next().unwrap();
@@ -64,6 +66,8 @@ impl<'src> ParseCtx<'src> {
                 backtrace: vec![Marker::Span(Span {
                     start: error_node.start_byte(),
                     end: error_node.end_byte(),
+                    line: error_node.start_position().row,
+                    column: error_node.start_position().column,
                     file: self.file_id,
                 })],
             })

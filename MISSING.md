@@ -88,6 +88,7 @@
     - Expressions need to be flattened into SSA form (should be easy enough)
     - Type casts need to be explicit
     - Spaghetti gotos need to be converted to LLVM basic blocks
+- Clean up `mono`. It's a mess.
 - Should monomorphization and type checking be separate stages? Can this even be done with the loose duck-typed language?
 - Will the compiler architecture scale to large programs? Is it possible to pre-compile the libraries at least to AST?
 - AST expression should have a convenience builder, like the one for IR expressions. `expressions.rs` is overly verbose right now, especially with all the span tagging.

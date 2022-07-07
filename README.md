@@ -1,12 +1,13 @@
 # The Alumina Programming Language
 
-Alumina is a general-purpose programming language. 
+Alumina is a general-purpose programming language.
 
 Non-exhaustive list of distinguishing features:
 
 - Module system and 2-pass compilation (no header files and forward declarations needed)
 - Generics, protocols and mixins (duck-typed, similar to C++ template but without overloading/SFINAE)
   - Specialization is possible with [`when` expressions](./examples/when_expression.alu)
+  - Opt-in dynamic polymorphism with dynamic dispatch ([`dyn` pointers](./examples/dyn.alu))
 - [Unified call syntax](https://en.wikipedia.org/wiki/Uniform_Function_Call_Syntax) for functions in scope
 - Limited operator overloading (via `Equatable` and `Comparable` protocols)
 - Block expressions
@@ -18,7 +19,7 @@ Non-exhaustive list of distinguishing features:
   - first-class 0-sized types (unit/void, function types, 0-sized arrays, structs with no fields, ...),
   - never type
 - Hygenic expression macros
-- Go-style defer expressions
+- Go-style [defer expressions](./examples/defer_and_move.alu)
 
 Alumina is heavily inspired by Rust, especially in terms of syntax and standard library API. Unlike Rust, however, Alumina is not memory-safe and it requires manual memory management.
 
@@ -154,7 +155,7 @@ Otherwise, follow the instructions to build it from source.
 ## Prerequisites
 
 To compile `alumina-boot` compiler from source, these prerequisites are needed:
-  
+
   - A C compiler (GCC or Clang) and Make
   - A Rust toolchain (`rustup install stable`)
   - Node.js and Tree-sitter CLI (`npm install -g tree-sitter-cli`)
@@ -173,7 +174,7 @@ sudo make install
 ```
 
 ## Building
-  
+
 To compile `alumina-boot` compiler from source, run:
 ```
 make alumina-boot
@@ -213,13 +214,13 @@ See [examples](./examples), [standard library](./sysroot) and the [self-hosted c
 
 # Contributing
 
-Issues, pull requests, and feature requests are most welcome. Standard library is somewhat covered with tests, and there are also regression tests that run all the examples in the `examples` folders. These tests are run with 
+Issues, pull requests, and feature requests are most welcome. Standard library is somewhat covered with tests, and there are also regression tests that run all the examples in the `examples` folders. These tests are run with
 
 ```
 make test
 ```
 
-If the snapshot need to be updated, run 
+If the snapshot need to be updated, run
 
 ```
 make test-fix

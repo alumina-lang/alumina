@@ -67,7 +67,7 @@ impl<'ast> Rebinder<'ast> {
                     .alloc_on(self.ast),
                 self.visit_typ(ret)?,
             ),
-
+            Dyn(inner, is_const) => Dyn(self.visit_typ(inner)?, *is_const),
             Generic(item, args) => Generic(
                 item,
                 args.iter()

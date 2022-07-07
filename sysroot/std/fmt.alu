@@ -25,8 +25,6 @@ impl Error {
 }
 
 /// A sink for string formatting operations
-///
-///
 protocol Formatter<Self> {
     /// Write a string
     fn write_str(self: &mut Self, buf: &[u8]) -> Result;
@@ -53,7 +51,7 @@ protocol Formatter<Self> {
 /// // prints "You are at (1, 2, 3)"
 /// println!("You are at {}", Point3D { x: 1, y: 2, z: 3 });
 /// ```
-protocol Formattable<Self, F: Formatter<F> = internal::NullFormatter> {
+protocol Formattable<Self, F: Formatter<F> = NullFormatter> {
     /// Write the object into a given formatter.
     ///
     /// See [Formattable] for details.
@@ -76,7 +74,7 @@ protocol Formattable<Self, F: Formatter<F> = internal::NullFormatter> {
 macro write($fmt, $fmt_str, $arg...) {
     internal::printf(
         concat!($fmt_str),
-        &[internal::FormatArg::new(&$arg)...],
+        &[internal::format_arg(&$arg)...],
         $fmt
     )
 }
@@ -85,7 +83,7 @@ macro write($fmt, $fmt_str, $arg...) {
 macro writeln($fmt, $fmt_str, $arg...) {
     internal::printf(
         concat!($fmt_str, "\n"),
-        &[internal::FormatArg::new(&$arg)...],
+        &[internal::format_arg(&$arg)...],
         $fmt
     )
 }
@@ -180,36 +178,23 @@ impl SliceFormatter {
     }
 }
 
+/// A formatter that discards output.
+struct NullFormatter {}
+
+impl NullFormatter {
+    /// @ Formatter::write_str
+    fn write_str(self: &mut NullFormatter, buf: &[u8]) -> Result {
+        Result::ok(())
+    }
+    /// @ Formatter::write_char
+    fn write_char(self: &mut NullFormatter, byte: u8) -> Result {
+        Result::ok(())
+    }
+}
+
 mod internal {
-    struct NullFormatter {}
-    impl NullFormatter {
-        fn write_str(self: &mut NullFormatter, buf: &[u8]) -> Result {
-            Result::ok(())
-        }
-        fn write_char(self: &mut NullFormatter, byte: u8) -> Result {
-            Result::ok(())
-        }
-    }
-
-    /// Type-erased wrapper of a formattable object
-    struct FormatArg<F: Formatter<F>> {
-        inner: &void,
-        format_func: fn(&void, &mut F) -> Result
-    }
-
-    impl FormatArg {
-        fn new<F: Formatter<F>, T: Formattable<T, F>>(inner: &T) -> FormatArg<F> {
-            FormatArg::<F> {
-                inner: inner as &void,
-                format_func: |ptr: &void, fmt: &mut F| -> Result {
-                    T::fmt(ptr as &T, fmt)
-                }
-            }
-        }
-
-        fn fmt<F: Formatter<F>>(self: &FormatArg<F>, f: &mut F) -> Result {
-            self.format_func(self.inner, f)
-        }
+    fn format_arg<F: Formatter<F>, T: Formattable<T, F>>(self: &T) -> &dyn Formattable<F> {
+        self
     }
 
     fn format_integer<T: builtins::Integer, F: Formatter<F>>(val: T, radix: u16, pad: usize, fmt: &mut F) -> Result {
@@ -308,7 +293,7 @@ mod internal {
         BRACE_CLOSE,
     }
 
-    fn printf<F: Formatter<F>>(fmt_str: &[u8], args: &[FormatArg<F>], fmt: &mut F) -> Result {
+    fn printf<F: Formatter<F>>(fmt_str: &[u8], args: &[&dyn Formattable<F>], fmt: &mut F) -> Result {
         let i = 0usize;
 
         let state = State::NORMAL;

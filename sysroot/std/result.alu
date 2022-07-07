@@ -103,7 +103,7 @@ impl Result<T, E> {
         if self.is_ok {
             self.inner.ok
         } else {
-            when E: Formattable<E> {
+            when E: Formattable<E, panicking::internal::PanicFormatter> {
                 panic!("unwrap on an err value: {}", self.inner.err)
             } else {
                 panic!("unwrap on an err value")
@@ -134,7 +134,7 @@ impl Result<T, E> {
         if !self.is_ok {
             self.inner.err
         } else {
-            when T: Formattable<T> {
+            when T: Formattable<T, panicking::internal::PanicFormatter> {
                 panic!("unwrap_err on a ok value: {}", self.inner.ok)
             } else {
                 panic!("unwrap_err on a ok value")

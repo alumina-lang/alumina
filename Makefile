@@ -1,3 +1,5 @@
+PREFIX ?= /usr/local
+
 BUILD_ROOT = build
 SYSROOT = ./sysroot
 
@@ -134,9 +136,16 @@ serve-docs: docs
 	cd $(BUILD_ROOT)/docs && python3 -m http.server
 ## ------------------------------ Various ------------------------------
 
-.PHONY: clean all
+.PHONY: clean all install
 clean:
 	rm -rf $(BUILD_ROOT)/
+	rm -f quick.c quick alumina-boot aluminac
+
+install: $(ALUMINA_BOOT) $(SYSROOT_FILES)
+	install -T $(ALUMINA_BOOT) $(PREFIX)/bin/alumina-boot
+	rm -rf $(PREFIX)/share/alumina
+	mkdir -p $(PREFIX)/share/alumina
+	cp -r $(SYSROOT)/* $(PREFIX)/share/alumina
 
 # Some convenience symlinks
 alumina-boot: $(ALUMINA_BOOT)

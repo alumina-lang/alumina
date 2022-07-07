@@ -118,7 +118,7 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
         scope: Scope<'ast, 'src>,
         path: Path<'ast>,
     ) -> Result<ItemResolution<'ast, 'src>, CodeErrorKind> {
-        self.resolve_item_impl(scope.clone(), scope, path)
+        self.resolve_item_impl(scope.clone(), scope, path, true)
     }
 
     fn resolve_item_impl(
@@ -126,6 +126,7 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
         self_scope: Scope<'ast, 'src>,
         scope: Scope<'ast, 'src>,
         path: Path<'ast>,
+        go_down: bool,
     ) -> Result<ItemResolution<'ast, 'src>, CodeErrorKind> {
         let _guard = self
             .cycle_guardian
@@ -153,6 +154,7 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
                         self_scope,
                         containing_scope.clone(),
                         target.clone(),
+                        true,
                     );
                 }
                 NamedItemKind::Macro(_, _, _)
@@ -178,6 +180,7 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
                         self_scope.clone(),
                         scope,
                         last_segment.clone().into(),
+                        false,
                     ) {
                         Ok(item) => return Ok(item),
                         _ => {}
@@ -187,9 +190,9 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
             }
         }
 
-        if containing_scope == scope {
+        if go_down && containing_scope == scope {
             if let Some(parent) = scope.parent() {
-                return self.resolve_item_impl(self_scope, parent, path);
+                return self.resolve_item_impl(self_scope, parent, path, true);
             }
         }
 

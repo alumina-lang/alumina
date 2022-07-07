@@ -4,13 +4,65 @@ type TypeId = usize;
 
 /// Returns a unique identifer for the type passed as the generic parameter.
 ///
-/// The resulting value is not guaranteed to be the same when program is recompiled.
+/// The resulting value is not guaranteed to be the same across compilations, but it is
+/// guaranteed to be unique for each distinct type.
 fn type_id<T>() -> TypeId {
     intrinsics::type_id::<T>()
 }
 
 fn type_name<T>() -> &[u8] {
     intrinsics::type_name::<T>()
+}
+
+/// "Dyn" object, a type-erased pointer to an object and a vtable for protocol functions.
+///
+/// ```
+/// type &dyn Protocol<...> = dyn<Protocol<dyn_self, ...>, &void>
+/// type &mut dyn Protocol<...> = dyn<Protocol<dyn_self, ...>, &mut void>
+/// ```
+#[lang(dyn)]
+struct dyn<Proto, Ptr> {
+    data: Ptr,
+    vtable: &fn(),
+}
+
+mod internal {
+    /// A placeholder for the `Self` type in the protocol of a dyn object.
+    #[lang(dyn_self)]
+    struct dyn_self {}
+
+    #[lang(dyn_new)]
+    #[force_inline]
+    fn dyn_new<Proto, Ptr>(data: Ptr) -> dyn<Proto, builtins::void_ptr_of<Ptr>> {
+        dyn {
+            data: data as builtins::void_ptr_of<Ptr>,
+            vtable: intrinsics::make_vtable::<Proto, builtins::deref_of<Ptr>>()
+        }
+    }
+
+    #[lang(dyn_const_coerce)]
+    #[force_inline]
+    fn dyn_const_coerce<Proto>(self: dyn<Proto, &mut void>) -> dyn<Proto, &void> {
+        dyn { data: self.data, vtable: self.vtable }
+    }
+
+    #[lang(dyn_const_cast)]
+    #[force_inline]
+    fn dyn_const_cast<Proto>(self: dyn<Proto, &void>) -> dyn<Proto, &mut void> {
+        dyn { data: self.data as &mut void, vtable: self.vtable }
+    }
+
+    #[lang(dyn_data)]
+    #[force_inline]
+    fn dyn_data<Proto, Ptr>(self: dyn<Proto, Ptr>) -> Ptr {
+        self.data
+    }
+
+    #[lang(dyn_vtable_index)]
+    #[force_inline]
+    fn dyn_vtable_index<Proto, Ptr>(self: dyn<Proto, Ptr>, idx: usize) -> fn() {
+        *(self.vtable + idx)
+    }
 }
 
 #[cfg(all(test, test_std))]
@@ -23,5 +75,29 @@ mod tests {
         // inception
         assert_eq!(type_name::<type_name<type_name<u32>>>(), "type_name<type_name<u32>>");
 
+    }
+
+    #[test]
+    fn test_dyn() {
+        let b: &mut dyn iter::Iterator<i32>;
+
+        b = &iter::repeat(42);
+        let a: &dyn iter::Iterator<i32> = b;
+        assert_eq!(a.size_hint(), Option::some(usize::max_value()));
+        assert_eq!(b.size_hint(), Option::some(usize::max_value()));
+        assert_eq!(b.next(), Option::some(42));
+        assert_eq!(b.next(), Option::some(42));
+        assert_eq!(b.next(), Option::some(42));
+        // ...
+
+        b = &iter::once(10);
+        assert_eq!(b.next(), Option::some(10));
+        assert_eq!(b.next(), Option::none());
+
+        let c = a as &mut dyn iter::Iterator<i32>;
+        assert_eq!(c.next(), Option::some(42));
+        assert_eq!(c.next(), Option::some(42));
+        assert_eq!(c.next(), Option::some(42));
+        // ...
     }
 }

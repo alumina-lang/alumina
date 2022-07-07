@@ -93,6 +93,7 @@ enum NodeKind {
     AttributeItem,
     GenericArgumentList,
     ReturnExpression,
+    DynOf,
     IfExpression,
     SwitchArm,
     StructDefinition,
@@ -163,11 +164,12 @@ enum FieldKind {
     Upper = 49u16,
 }
 
-static NODE_KINDS: [NodeKind; 243] = [
+static NODE_KINDS: [NodeKind; 245] = [
     NodeKind::Invalid,
     NodeKind::Identifier,
     NodeKind::DocComment,
     NodeKind::FileDocComment,
+    NodeKind::Invalid,
     NodeKind::Invalid,
     NodeKind::Invalid,
     NodeKind::Invalid,
@@ -313,6 +315,7 @@ static NODE_KINDS: [NodeKind; 243] = [
     NodeKind::ParameterTypeList,
     NodeKind::PointerOf,
     NodeKind::SliceOf,
+    NodeKind::DynOf,
     NodeKind::ArrayOf,
     NodeKind::ArrayExpression,
     NodeKind::FunctionPointer,
@@ -670,6 +673,9 @@ protocol NodeVisitor<Self, ReturnType> {
     fn visit_return_expression(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_return_expression");
     }
+    fn visit_dyn_of(self: &mut Self, node: Node) -> ReturnType {
+        panic!("unimplemented: visit_dyn_of");
+    }
     fn visit_if_expression(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_if_expression");
     }
@@ -810,6 +816,7 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::AttributeItem => self.visit_attribute_item(node),
             NodeKind::GenericArgumentList => self.visit_generic_argument_list(node),
             NodeKind::ReturnExpression => self.visit_return_expression(node),
+            NodeKind::DynOf => self.visit_dyn_of(node),
             NodeKind::IfExpression => self.visit_if_expression(node),
             NodeKind::SwitchArm => self.visit_switch_arm(node),
             NodeKind::StructDefinition => self.visit_struct_definition(node),

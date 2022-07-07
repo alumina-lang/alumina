@@ -1,0 +1,64 @@
+protocol Slot<Self, Element> {
+    fn get(self: &Self) -> Option<Element>;
+    fn set(self: &mut Self, element: Element);
+    fn type_name(self: &Self) -> &[u8] {
+        std::rtti::type_name::<Self>()
+    }
+}
+
+struct RealSlot {
+    value: Option<i32>,
+}
+impl RealSlot {
+    fn get(self: &RealSlot) -> Option<i32> {
+        self.value
+    }
+    fn set(self: &mut RealSlot, element: i32) {
+        self.value = Option::some(element);
+    }
+    mixin Slot<RealSlot, i32>;
+}
+
+struct NullSlot {}
+impl NullSlot {
+    fn get(self: &NullSlot) -> Option<i32> {
+        Option::none()
+    }
+    fn set(self: &mut NullSlot, element: i32) {
+    }
+    mixin Slot<NullSlot, i32>;
+}
+
+/// Static polymorphism.
+///
+/// During monomorphization, the compiler will generate a copy of `roundtrip_generic`
+/// for each type of slot encountered (RealSlot and NullSlot).
+fn roundtrip_generic<T: Slot<T, i32>>(slot: &mut T) {
+    let val = 42;
+    println!("[GENERIC] Inserting {} into {}", val, slot.type_name());
+    slot.set(val);
+    println!("[GENERIC] Retrieving value from {}: {}", slot.type_name(), slot.get());
+}
+
+/// Dynamic polymorphism.
+///
+/// `roundtrip_dyn` is a non-generic function. It takes a dyn object, which contains
+/// a pointer to a virtual method table so an appropriate implementation of `Slot` can be
+/// found at runtime.
+fn roundtrip_dyn(slot: &mut dyn Slot<i32>) {
+    let val = 42;
+    println!("[DYN] Inserting {} into {}", val, slot.type_name());
+    slot.set(val);
+    println!("[DYN] Retrieving value from {}: {}", slot.type_name(), slot.get());
+}
+
+fn main() {
+    let real_slot = RealSlot { value: Option::none() };
+    let null_slot = NullSlot {};
+
+    roundtrip_generic(&real_slot);
+    roundtrip_generic(&null_slot);
+
+    roundtrip_dyn(&real_slot);
+    roundtrip_dyn(&null_slot);
+}
