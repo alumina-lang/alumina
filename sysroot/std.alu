@@ -73,10 +73,36 @@ macro assume($cond) {
     }
 }
 
+/// Hint to the compiler that a particular boolean expression is likely true.
+///
+/// Useful for branch prediction. See also [unlikely].
+///
+/// # Example
+/// ```
+/// use random::{thread_rng, next_float};
+/// use std::unlikely;
+///
+/// if likely!(thread_rng().next_float::<f64>() < 0.99) {
+///     // ...
+/// }
+/// ```
 macro likely($cond) {
     internal::expect($cond, true)
 }
 
+/// Hint to the compiler that a particular boolean expression is unlikely to be true.
+///
+/// Useful for branch prediction. See also [likely].
+///
+/// # Example
+/// ```
+/// use random::{thread_rng, next_float};
+/// use std::unlikely;
+///
+/// if unlikely!(thread_rng().next_float::<f64>() < 0.01) {
+///     // ...
+/// }
+/// ```
 macro unlikely($cond) {
     internal::expect($cond, false)
 }
@@ -127,7 +153,7 @@ mod internal {
         use fmt::{Formattable, internal::format_arg};
 
         if !(lhs == rhs) {
-            when T: Formattable<T> {
+            when T: Formattable<T, panicking::internal::PanicFormatter> {
                 panic_impl("assertion failed ({} != {}))", file, line, column, &[
                     format_arg(&lhs),
                     format_arg(&rhs)
@@ -145,7 +171,7 @@ mod internal {
         use fmt::{Formattable, internal::format_arg};
 
         if lhs == rhs {
-            when T: Formattable<T> {
+            when T: Formattable<T, panicking::internal::PanicFormatter> {
                 panic_impl("assertion failed ({} == {}))", file, line, column, &[
                     format_arg(&lhs),
                     format_arg(&rhs)
@@ -163,8 +189,7 @@ mod internal {
     }
 }
 
-/// Contains various utility functions that are useful in the generic context where the type operated on is
-/// not easily expressible.
+/// Various utility functions useful in the generic context.
 mod util {
     /// Identity function
     #[inline] fn identity<T>(t: T) -> T { t }

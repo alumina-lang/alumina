@@ -145,7 +145,7 @@ macro check_cfg($self, $node) {
     let child = child_by!($node, FieldKind::Attributes);
     if child.is_some {
         $self.visit(child.inner)?;
-    } 
+    }
 
     defer { $self.has_cfg = has_cfg; }
 }
@@ -653,7 +653,7 @@ impl CodePrinter<W: Writable<W>> {
                 w!(self.writer, "()");
             }
 
-            return Result::ok(())   
+            return Result::ok(())
         }
 
         w!(self.writer, "(");
@@ -717,6 +717,18 @@ impl CodePrinter<W: Writable<W>> {
 
         self.visit(child_by!(node, FieldKind::Inner).unwrap())?;
         w!(self.writer, "]");
+
+        Result::ok(())
+    }
+
+    fn visit_dyn_of(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
+        if child_by!(node, FieldKind::Mut).is_some {
+            w!(self.writer, "&amp;mut dyn ");
+        } else {
+            w!(self.writer, "&amp;dyn ");
+        }
+
+        self.visit(child_by!(node, FieldKind::Inner).unwrap())?;
 
         Result::ok(())
     }
