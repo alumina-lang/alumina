@@ -207,6 +207,23 @@ fn remove_directory(path: Path) -> Result<()> {
     Result::ok(())
 }
 
+/// A file.
+///
+/// # Example
+/// ```
+/// use std::fs::{File, Path};
+/// use std::string::StringBuf;
+///
+/// let file = File::open("/etc/passwd").unwrap();
+/// defer file.close();
+///
+/// let buf: StringBuf = StringBuf::new();
+/// defer buf.free();
+///
+/// file.read_to_end(&buf).unwrap();
+///
+/// println!("{}", buf.as_slice());
+/// ```
 struct File {
     fd: FileDescriptor
 }
@@ -283,6 +300,7 @@ impl File {
         Result::ok(string.move())
     }
 
+    /// @ io::Seekable::seek
     fn seek(self: &mut File, whence: SeekFrom, offset: i64) -> Result<u64> {
         #[cfg(not(target_os = "macos"))]
         let ret = errno_try!(libc::lseek64(self.fd.value, offset, whence as libc::c_int));
@@ -292,15 +310,18 @@ impl File {
         Result::ok(ret as u64)
     }
 
+    /// @ io::Writable::flush
     fn flush(self: &mut File) -> Result<()> {
         Result::ok(())
     }
 
+    /// Flushes disk buffers to disk (`fsync`)
     fn sync(self: &mut File) -> Result<()> {
         let ret = errno_try!(libc::fsync(self.fd.value));
         Result::ok(())
     }
 
+    /// Closes the file.
     fn close(self: &mut File) -> Result<()> {
         self.fd.close()
     }
@@ -435,6 +456,7 @@ enum FileType {
 }
 
 impl FileType {
+    /// @ fmt::Formattable::fmt
     fn fmt<F: std::fmt::Formatter<F>>(self: &FileType, fmt: &mut F) -> std::fmt::Result {
         use std::fmt::write;
         switch *self {
@@ -450,6 +472,7 @@ impl FileType {
         }
     }
 
+    /// cmp::Equatable::equals
     fn equals(self: &FileType, other: &FileType) -> bool {
         *self == *other
     }
@@ -466,6 +489,7 @@ struct FileAttr {
 }
 
 impl FileAttr {
+    /// Returns file attributes for a path.
     fn from_path(path: Path) -> Result<FileAttr> {
         let path = ffi::CString::from_slice(path.inner);
         defer path.free();
@@ -481,10 +505,12 @@ impl FileAttr {
         Result::ok(result)
     }
 
+    /// Returns file type.
     fn file_type(self: &FileAttr) -> FileType {
         (self.inner.st_mode & libc::S_IFMT) as FileType
     }
 
+    /// Returns the size of the file, in bytes.
     fn size(self: &FileAttr) -> u64 {
         self.inner.st_size as u64
     }

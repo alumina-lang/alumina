@@ -7,9 +7,11 @@
     }
 }
 
+/// Type alias for the result of I/O operations.
+///
+/// See also [Error] and the main [std::result::Result].
 type Result<T> = std::result::Result<T, Error>;
 
-use fmt::{write, writeln};
 
 /// Buffer for formatted standard I/O.
 ///
@@ -27,7 +29,7 @@ use fmt::{write, writeln};
 /// ```
 macro print($fmt_str, $arg...) {
     let fmt = BufferedWriter::from_slice(&StdioStream::stdout(), &FMT_BUF);
-    write!(&fmt, $fmt_str, $arg...).unwrap();
+    fmt::write!(&fmt, $fmt_str, $arg...).unwrap();
     fmt.flush().unwrap();
 }
 
@@ -39,7 +41,7 @@ macro print($fmt_str, $arg...) {
 /// ```
 macro println($fmt_str, $arg...) {
     let fmt = BufferedWriter::from_slice(&StdioStream::stdout(), &FMT_BUF);
-    writeln!(&fmt, $fmt_str, $arg...).unwrap();
+    fmt::writeln!(&fmt, $fmt_str, $arg...).unwrap();
     fmt.flush().unwrap();
 }
 
@@ -51,7 +53,7 @@ macro println($fmt_str, $arg...) {
 /// ```
 macro eprint($fmt_str, $arg...) {
     let fmt = BufferedWriter::from_slice(&StdioStream::stderr(), &FMT_BUF);
-    write!(&fmt, $fmt_str, $arg...).unwrap();
+    fmt::write!(&fmt, $fmt_str, $arg...).unwrap();
     fmt.flush().unwrap();
 }
 
@@ -63,7 +65,7 @@ macro eprint($fmt_str, $arg...) {
 /// ```
 macro eprintln($fmt_str, $arg...) {
     let fmt = BufferedWriter::from_slice(&StdioStream::stderr(), &FMT_BUF);
-    writeln!(&fmt, $fmt_str, $arg...).unwrap();
+    fmt::writeln!(&fmt, $fmt_str, $arg...).unwrap();
     fmt.flush().unwrap();
 }
 

@@ -9,6 +9,7 @@
     }
 }
 
+/// Type of the path segment
 enum PathSegmentKind {
     Root,
     Normal,
@@ -34,12 +35,14 @@ impl PathSegmentKind {
     mixin cmp::Equatable<PathSegmentKind>;
 }
 
+/// A filesystem path segment
 struct PathSegment {
     kind: PathSegmentKind,
     value: &[u8]
 }
 
 impl PathSegment {
+    /// @ cmp::Equatable::equals
     fn equals(self: &PathSegment, other: &PathSegment) -> bool {
         self.kind == other.kind && switch self.kind {
             PathSegmentKind::Normal => self.value == other.value,
@@ -47,6 +50,7 @@ impl PathSegment {
         }
     }
 
+    /// @ fmt::Formattable::fmt
     fn fmt<F: fmt::Formatter<F>>(self: &PathSegment, f: &mut F) -> fmt::Result {
         switch self.kind {
             PathSegmentKind::Root => f.write_str("/"),
@@ -60,6 +64,7 @@ impl PathSegment {
     mixin cmp::Equatable<PathSegment>;
 }
 
+/// Iterator over the segments of a path
 struct PathIterator {
     remainder: &[u8],
     at_start: bool
@@ -68,6 +73,7 @@ struct PathIterator {
 impl PathIterator {
     use string::find;
 
+    /// @ iter::Iterator::next
     fn next(self: &mut PathIterator) -> Option<PathSegment> {
         loop {
             if self.remainder.len == 0 {
@@ -120,15 +126,18 @@ impl PathIterator {
     mixin iter::IteratorExt<PathIterator, PathSegment>;
 }
 
+/// A filesystem path
 struct Path {
     inner: &[u8]
 }
 
 impl Path {
+    /// Create a path from a string slice
     fn new(inner: &[u8]) -> Path {
         Path { inner: inner }
     }
 
+    /// @ iter::Iterable::iter
     fn iter(self: &Path) -> PathIterator {
         PathIterator {
             remainder: self.inner,
@@ -136,10 +145,12 @@ impl Path {
         }
     }
 
+    /// View path as a string slice
     fn as_slice(self: &Path) -> &[u8] {
         self.inner
     }
 
+    /// Returns true if the path is absolute, false otherwise
     fn is_absolute(self: &Path) -> bool {
         self
             .iter()
@@ -148,10 +159,14 @@ impl Path {
             .unwrap_or(false)
     }
 
+    /// Returns true if the path is relative, false otherwise
     fn is_relative(self: &Path) -> bool {
         !self.is_absolute()
     }
 
+    /// Returns the parent path of the path
+    ///
+    /// If the path has no parent, then `Option::none()` is returned.
     fn parent(self: &Path) -> Option<Path> {
         use string::ends_with;
 
@@ -173,6 +188,9 @@ impl Path {
         }
     }
 
+    /// Strips the prefix from the path.
+    ///
+    /// If the path does not start with the prefix, then `Option::none()` is returned.
     fn strip_prefix(self: &Path, prefix: Path) -> Option<Path> {
         let i1 = self.iter();
         let i2 = prefix.iter();
@@ -198,10 +216,12 @@ impl Path {
         }
     }
 
+    /// Returns true if `other` is a prefix of the current path, false otherwise
     fn starts_with(self: &Path, other: Path) -> bool {
         self.strip_prefix(other).is_some
     }
 
+    /// @ fmt::Formattable::fmt
     fn fmt<F: fmt::Formatter<F>>(self: &Path, f: &mut F) -> fmt::Result {
         let has_root = false;
 
@@ -219,6 +239,7 @@ impl Path {
         fmt::Result::ok(())
     }
 
+    /// @ cmp::Equatable::equals
     fn equals(self: &Path, other: &Path) -> bool {
         let a = self.iter();
         let b = other.iter();
@@ -242,6 +263,7 @@ impl Path {
     mixin cmp::Equatable<Path>;
 }
 
+/// An owned path buffer
 struct PathBuf {
     inner: string::StringBuf
 }
@@ -249,26 +271,31 @@ struct PathBuf {
 impl PathBuf {
     use string::StringBuf;
 
+    /// Create a new empty path buffer
     fn new() -> PathBuf {
         PathBuf {
             inner: StringBuf::new()
         }
     }
 
+    /// Create a new path buffer from a [Path] instance
     fn from_path(path: Path) -> PathBuf {
         from_str(path.inner)
     }
 
+    /// Create a new path buffer from a string slice
     fn from_str(path: &[u8]) -> PathBuf {
         PathBuf {
             inner: StringBuf::from_slice(path)
         }
     }
 
+    /// View path as [Path] object
     fn as_path(self: &PathBuf) -> Path {
         Path::new(self.inner.as_slice())
     }
 
+    /// Extend the path buffer from an iterator of path segments
     fn extend<It: iter::Iterator<It, PathSegment>>(self: &mut PathBuf, iter: &mut It) {
         use fmt::write;
         let has_root = false;
@@ -287,10 +314,12 @@ impl PathBuf {
         }
     }
 
+    /// Extend the path buffer with a [Path] instance
     fn push(self: &mut PathBuf, suffix: Path) {
         self.extend(&suffix.iter());
     }
 
+    /// Pop the last path segment from the path buffer
     fn pop(self: &mut PathBuf) -> bool {
         self.as_path().parent().map(|=self, p: Path| -> bool {
             self.inner.truncate(p.inner.len);
@@ -299,12 +328,14 @@ impl PathBuf {
         .unwrap_or(false)
     }
 
+    /// Create a new path buffer from an iterator of path segments
     fn from_iter<It: iter::Iterator<It, PathSegment>>(iter: &mut It) -> PathBuf {
         let ret = PathBuf::new();
         ret.extend(iter);
         ret
     }
 
+    /// @ fmt::Formattable::fmt
     fn fmt<F: fmt::Formatter<F>>(self: &PathBuf, f: &mut F) -> fmt::Result {
         self.as_path().fmt(f)
     }
