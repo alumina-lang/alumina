@@ -184,6 +184,11 @@ impl Result<T, E> {
         }
     }
 
+    /// Transform the value inside the `Result` by calling the provided function, which returns a
+    /// `Result`.
+    ///
+    /// If the success value is present, function is not called and the original error is
+    /// passed through.
     fn and_then<Tm, F: builtins::Callable<(T), Result<Tm, E>>>(self: Result<T, E>, func: F) -> Result<Tm, E> {
         if self.is_ok {
             func(self.inner.ok)

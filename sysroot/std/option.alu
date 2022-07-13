@@ -177,6 +177,7 @@ impl Option<T> {
         }
     }
 
+    /// Flattens a nested `Option` into a single `Option`.
     fn flatten(self: Option<Option<T>>) -> Option<T> {
         if !self.is_some {
             Option::none()
@@ -185,14 +186,12 @@ impl Option<T> {
         }
     }
 
-    fn iter(self: &Option<T>) -> Option<T> {
-        *self
+    /// @ iter::Iterable::iter
+    fn iter(self: &Option<T>) -> iter::OnceIterator<T> {
+        iter::OnceIterator { value: *self }
     }
 
-    fn next(self: &mut Option<T>) -> Option<T> {
-        std::mem::replace(self, Option::none())
-    }
-
+    /// @ mem::Movable::move
     fn move(self: &mut Option<T>) -> Option<T> {
         std::mem::replace(self, Option::none())
     }
@@ -201,6 +200,7 @@ impl Option<T> {
 impl Option {
     use std::cmp::{Equatable, Comparable, Ordering};
     use std::fmt::{write, Formatter, Formattable};
+    use std::hash::{Hashable, Hasher};
     use std::mem::{Freeable, Movable};
 
     /// Convert `Option<Result<T, E>>` to `Result<Option<T>, E>`
@@ -216,6 +216,15 @@ impl Option {
         }
     }
 
+    /// @ std::hash::Hashable::hash
+    #[inline]
+    fn hash<T: Hashable<T, H>, H: Hasher<H>>(self: &Option<T>, hasher: &mut H) {
+        if self.is_some {
+            self.inner.hash(hasher);
+        }
+    }
+
+    /// @ cmp::Equatable::equals
     #[inline]
     fn equals<T: Equatable<T>>(lhs: &Option<T>, rhs: &Option<T>) -> bool {
         if lhs.is_some {
@@ -229,6 +238,7 @@ impl Option {
         }
     }
 
+    /// @ cmp::Comparable::compare
     #[inline]
     fn compare<T: Comparable<T>>(lhs: &Option<T>, rhs: &Option<T>) -> Ordering {
         if lhs.is_some {
@@ -242,6 +252,7 @@ impl Option {
         }
     }
 
+    /// @ fmt::Formattable::fmt
     fn fmt<T: Formattable<T, F>, F: Formatter<F>>(self: &Option<T>, formatter: &mut F) -> fmt::Result {
         if self.is_some {
             write!(formatter, "some({})", self.inner)
@@ -250,6 +261,7 @@ impl Option {
         }
     }
 
+    /// @ mem::Freeable::free
     fn free<T: Freeable<T>>(self: &mut Option<T>) {
         if self.is_some {
             self.inner.free();
@@ -329,25 +341,17 @@ mod tests {
         assert!(opt1.as_result(0) == result::Result::ok(42));
         assert!(opt2.as_result(0) == result::Result::err(0));
     }
-/*
+
     #[test]
     fn option_move() {
         let opt1 = Option::some(42);
         let opt2 = Option::none::<i32>();
 
         assert!(opt1.move() == Option::some(42));
+        assert!(opt1 == Option::none());
         assert!(opt2.move() == Option::none::<i32>());
     }
 
-    #[test]
-    fn option_free() {
-        let mut opt1 = Option::some(42);
-        let mut opt2 = Option::none::<i32>();
-
-        opt1.free();
-        opt2.free();
-    }
-*/
     #[test]
     fn option_unwrap() {
         let opt1 = Option::some(42);
@@ -369,5 +373,20 @@ mod tests {
 
         assert!(opt1.unwrap_or(0) == 42);
         assert!(opt2.unwrap_or(0) == 0);
+    }
+
+    fn hash<T>(value: T) -> u64 {
+        hash::hash_of::<T, hash::DefaultHash>(value)
+    }
+
+    #[test]
+    fn test_hash() {
+        use hash::hash_of;
+
+        let opt1: Option<i32> = Option::none();
+        let opt2: Option<i32> = Option::some(1337);
+
+        assert_eq!(hash(opt1), hash(()));
+        assert_eq!(hash(opt2), hash(1337i32));
     }
 }

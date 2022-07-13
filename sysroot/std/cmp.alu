@@ -137,7 +137,45 @@ fn min<T: Comparable<T>>(a: T, b: T) -> T {
     }
 }
 
-/// This module contains the target functions for operator overloading
+/// Sorts a slice using a key extraction function.
+///
+/// # Example
+/// ```
+/// use std::cmp::sort_by;
+///
+/// let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
+/// slice.sort_by(|v: &i32| -> i32 { -*v });
+///
+/// assert_eq!(slice, &[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
+/// ```
+fn sort_by<T, F: builtins::Callable<(&T), K>, K: Comparable<K>>(arr: &mut [T], key: F) {
+    if arr.len <= 1 {
+        return;
+    }
+
+    let p = internal::partition_by(arr, key);
+    sort_by(arr[..p], key);
+    sort_by(arr[p+1..], key);
+}
+
+/// Sorts a slice.
+///
+/// Uses quicksort with naive partitioning. Sort is not stable.
+///
+/// # Example
+/// ```
+/// use std::cmp::sort;
+///
+/// let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
+/// slice.sort();
+///
+/// assert_eq!(slice, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+/// ```
+fn sort<T: Comparable<T>>(arr: &mut [T]) {
+    sort_by(arr, |k: &T| -> T { *k });
+}
+
+
 mod internal {
     #[force_inline]
     #[lang(operator_eq)]
@@ -174,5 +212,40 @@ mod internal {
     fn operator_gte<T: Comparable<T>>(lhs: &T, rhs: &T) -> bool {
         lhs.greater_than_or_equal(rhs)
     }
+
+    fn partition_by<T, F: builtins::Callable<(&T), K>, K: Comparable<K>>(arr: &mut [T], key: F) -> usize {
+        use std::mem::swap;
+
+        let pivot = arr[arr.len - 1];
+        let i = 0usize;
+        let j = 0usize;
+        while j < arr.len - 1 {
+            if key(&arr[j]) <= key(&pivot) {
+                swap(&arr[i], &arr[j]);
+                i += 1;
+            }
+            j += 1;
+        }
+        swap(&arr[i], &arr[arr.len - 1]);
+        i
+    }
 }
 
+#[cfg(all(test, test_std))]
+mod tests {
+    #[test]
+    fn test_sort() {
+        let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
+        sort(slice);
+
+        assert_eq!(slice, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    }
+
+    #[test]
+    fn test_sort_by() {
+        let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
+        sort_by(slice, |x: &i32| -> i32 { -*x });
+
+        assert_eq!(slice, &[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
+    }
+}

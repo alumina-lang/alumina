@@ -11,17 +11,21 @@
 /// ```
 macro c_str($s) {
     // This concat is technically redundant since C codegen already emits
-    // those as C strings, but it doesn't hurt to be explicit if this is 
+    // those as C strings, but it doesn't hurt to be explicit if this is
     // ever changed. Also concat has a nice side-effect of guarding against
     // strings that are not a compile-time constant.
     concat!($s, "\0").ptr as &libc::c_char
 }
 
+/// A wrapper for a null-terminated (C) string.
 struct CString {
     ptr: &libc::c_char,
 }
 
 impl CString {
+    /// Create a new CString from a string slice
+    ///
+    /// Allocates memory.
     fn from_slice(s: &[u8]) -> CString {
         use std::mem::slice;
 
@@ -32,26 +36,32 @@ impl CString {
         CString { ptr: ret.ptr as &libc::c_char }
     }
 
+    /// Create a CString from a raw pointer to a null-terminated string.
     fn from_raw(ptr: &libc::c_char) -> CString {
         CString { ptr: ptr }
     }
 
+    /// A null C string.
     fn null() -> CString {
         CString { ptr: null }
     }
 
+    /// Returns the length of the string.
     fn len(self: &CString) -> usize {
         libc::strlen(self.ptr) as usize
     }
 
+    /// Returns the string slice.
     fn as_slice(self: &CString) -> &[u8] {
         mem::slice::from_raw(self.ptr as &u8, self.len())
     }
 
+    /// @ mem::Freeable::free
     fn free(self: &mut CString) {
         libc::free(self.ptr as &mut void);
     }
 
+    /// @ mem::Movable::move
     fn move(self: &mut CString) -> CString {
         let ret = *self;
         self.ptr = null;

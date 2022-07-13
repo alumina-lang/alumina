@@ -173,7 +173,7 @@ impl TakeWhileIterator<It: Iterator<It, T>, F: Callable<(T), bool>, T> {
     mixin IteratorExt<TakeWhileIterator<It, F, T>, T>;
 }
 
-/// Iterator that skips elements while a predicate is true.
+/// Iterator that skips elements until a predicate becomes false.
 ///
 /// See [IteratorExt::skip_while].
 struct SkipWhileIterator<It: Iterator<It, T>, F: Callable<(T), bool>, T> {
@@ -1051,16 +1051,27 @@ struct EmptyIterator<T> {}
 
 impl EmptyIterator<T> {
     /// @ Iterator::next
+    #[inline]
     fn next(self: &mut EmptyIterator<T>) -> Option<T> {
         Option::none()
     }
 
+    /// @ DoubleEndedIterator::next_back
+    #[inline]
+    fn next_back(self: &mut EmptyIterator<T>) -> Option<T> {
+        Option::none()
+    }
+
+    /// @ Iterator::size_hint
+    #[inline]
     fn size_hint(self: &EmptyIterator<T>) -> Option<usize> {
         Option::some(0usize)
     }
 
     mixin Iterator<EmptyIterator<T>, T>;
     mixin IteratorExt<EmptyIterator<T>, T>;
+    mixin DoubleEndedIterator<EmptyIterator<T>, T>;
+    mixin DoubleEndedIteratorExt<EmptyIterator<T>, T>;
 }
 
 /// A function wrapped in an iterator.
@@ -1127,10 +1138,12 @@ impl RepeatIterator<T> {
         Option::some(self.value)
     }
 
+    /// @ DoubleEndedIterator::next_back
     fn next_back(self: &mut RepeatIterator<T>) -> Option<T> {
         Option::some(self.value)
     }
 
+    /// @ Iterator::size_hint
     fn size_hint(self: &RepeatIterator<T>) -> Option<usize> {
         Option::some(usize::max_value())
     }
@@ -1164,13 +1177,15 @@ struct OnceIterator<T> {
 impl OnceIterator<T> {
     /// @ Iterator::next
     fn next(self: &mut OnceIterator<T>) -> Option<T> {
-        self.value.next()
+        self.value.move()
     }
 
+    /// @ DoubleEndedIterator::next_back
     fn next_back(self: &mut OnceIterator<T>) -> Option<T> {
-        self.value.next()
+        self.value.move()
     }
 
+    /// @ Iterator::size_hint
     fn size_hint(self: &OnceIterator<T>) -> Option<usize> {
         if self.value.is_some {
             Option::some(1usize)
@@ -1336,6 +1351,7 @@ impl RangeIter<T: Integer> {
         }
     }
 
+    /// @ DoubleEndedIterator::next_back
     #[force_inline]
     fn next_back(self: &mut RangeIter<T>) -> Option<T> {
         if self.current < self.upper {
@@ -1346,6 +1362,7 @@ impl RangeIter<T: Integer> {
         }
     }
 
+    /// @ Iterator::size_hint
     fn size_hint(self: &RangeIter<T>) -> Option<usize> {
         if self.current < self.upper {
             Option::some(self.upper as usize - self.current as usize)

@@ -192,6 +192,43 @@ impl NullFormatter {
     }
 }
 
+/// Adapter for writting formatted data into a stream
+///
+/// Some streams such as [io::BufferedWriter] already implement the [Formatter] protocol, in which
+/// case this adapter just passes through to the underlying writer.
+struct StreamFormatter<W: io::Writable<W>> {
+    inner: &mut W
+}
+
+impl StreamFormatter<W: io::Writable<W>> {
+    fn new(inner: &mut W) -> StreamFormatter<W> {
+        StreamFormatter {
+            inner: inner
+        }
+    }
+
+    /// @ Formatter::write_str
+    #[inline]
+    fn write_str(self: &mut StreamFormatter<W>, buf: &[u8]) -> Result {
+        when W: Formattable<W> {
+            self.inner.write_str(buf)
+        } else {
+            self.inner.write_all(buf).map_err(Error::from::<io::Error>)
+        }
+    }
+
+    #[inline]
+    fn write_char(self: &mut StreamFormatter<W>, byte: u8) -> Result {
+        when W: Formattable<W> {
+            self.inner.write_char(byte)
+        } else {
+            self.write_str(mem::slice::from_raw(&byte, 1))
+        }
+    }
+
+    mixin Formatter<StreamFormatter<W>>;
+}
+
 mod internal {
     fn format_arg<F: Formatter<F>, T: Formattable<T, F>>(self: &T) -> &dyn Formattable<F> {
         self
