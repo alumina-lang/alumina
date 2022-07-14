@@ -272,12 +272,31 @@ fn write_docstring<T: std::io::Writable<T>>(
                     doctest_writer.write_test(name.as_slice(), doctest_source.as_slice(), no_doctest_run);
                     name.free();
                 }
-                writeln!(writer, "</code></pre>");
+                write!(writer, "</code>");
+
+                if !no_doctest && !tagline_only {
+                    let code: StringBuf = StringBuf::new();
+                    for part in ["fn main() {\n", doctest_source.as_slice(), "}\n"].as_slice() {
+                        for c in part {
+                            use std::fmt::hex;
+                            if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
+                                code.push(c);
+                            } else {
+                                write!(&code, "%{}", c.hex().zero_pad(2));
+                            }
+                        }
+                    }
+                    write!(writer, "<a class=\"playground-link\" target=\"_blank\" href=\"https://play.alumina-lang.net/?q={}\">Open in playground</a>", code);
+                    code.free();
+                }
+
+                writeln!(writer, "</pre>");
             } else {
                 doctest_source.clear();
                 no_doctest = docline.trim() == "```notest";
                 no_doctest_run = docline.trim() == "```norun";
-                write!(writer, "<pre><code class=\"language-alumina\">");
+                write!(writer, "<pre>");
+                write!(writer, "<code class=\"language-alumina\">");
             };
             in_a_code_block = !in_a_code_block;
         } else if !in_a_code_block {
