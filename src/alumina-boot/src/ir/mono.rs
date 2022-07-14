@@ -500,10 +500,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .with_no_span();
         }
 
-        let replacements = placeholders
-            .iter()
+        let replacements =
+        self.replacements.iter().map(|(a, b)| (*a, *b)).chain(
+            placeholders.iter()
             .zip(generic_args.iter())
-            .map(|(&k, &v)| (k.id, v))
+            .map(|(&k, &v)| (k.id, v)))
             .collect();
 
         Ok(replacements)
@@ -602,7 +603,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         generic_args: &'ir [ir::TyP<'ir>],
     ) -> Result<(), AluminaError> {
         let replacements = self.resolve_placeholders(s.placeholders, generic_args)?;
-
         let mut child = Self::with_replacements(
             self.mono_ctx,
             replacements,
@@ -1010,14 +1010,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         generic_args: &'ir [ir::TyP<'ir>],
         signature_only: bool,
     ) -> Result<(), AluminaError> {
-        let mut replacements = self.resolve_placeholders(func.placeholders, generic_args)?;
-
-        if func.lambda {
-            // Closures can bind the generic parameters of the enclosing function, so we need
-            // to copy them over.
-            replacements.extend(self.replacements.iter().map(|(k, v)| (*k, *v)));
-        }
-
+        let replacements = self.resolve_placeholders(func.placeholders, generic_args)?;
         let mut child = Self::with_replacements(
             self.mono_ctx,
             replacements,
@@ -1166,7 +1159,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 body: Some(body),
                 span: fun.span,
                 varargs: false,
-                lambda: fun.lambda, // = false always
+                is_local: fun.is_local,
                 is_protocol_fn: false,
             }));
 
@@ -1238,16 +1231,13 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let (placeholders, span) = match item.get() {
             ast::Item::Function(f) => {
-                // Closures must always be monomorphized afresh whenever encountered as they
-                // can bind ambient types (e.g. generic parameters) that are not part of the
-                // MonoKey.
-                if f.lambda {
+                if f.is_local {
                     index = self.current_item.map(|i| i.id);
                 }
                 (f.placeholders, f.span)
             }
-            ast::Item::StructLike(s) => (s.placeholders, s.span),
             ast::Item::Protocol(p) => (p.placeholders, p.span),
+            ast::Item::StructLike(s) => (s.placeholders, s.span),
             _ => return Ok(MonoKey::new(item, generic_args, index, tentative)),
         };
 

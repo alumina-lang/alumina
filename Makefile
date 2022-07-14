@@ -28,6 +28,7 @@ ALUMINAC = $(BUILD_DIR)/aluminac
 ALUMINAC_TESTS = $(BUILD_DIR)/aluminac-tests
 CODEGEN = $(BUILD_DIR)/aluminac-generate
 STDLIB_TESTS = $(BUILD_DIR)/stdlib-tests
+DOCTEST = $(BUILD_DIR)/doctest
 
 # If grammar changes, we need to rebuild the world
 COMMON_SOURCES = common/grammar.js
@@ -123,17 +124,26 @@ $(ALUMINA_DOC).c: $(ALU_DEPS) $(ALUMINAC_LIB_SOURCES) $(ALUMINA_DOC_SOURCES) src
 $(ALUMINA_DOC): $(ALUMINA_DOC).c $(BUILD_DIR)/parser.o
 	$(CC) $(CFLAGS) -o $@ $^ -ltree-sitter $(LDFLAGS)
 
-$(BUILD_ROOT)/docs/index.html: $(ALUMINA_DOC) $(SYSROOT_FILES)
-	rm -rf $(BUILD_ROOT)/docs
-	$(ALUMINA_DOC) \
+$(BUILD_DIR)/doctest.alu: $(ALUMINA_DOC) $(SYSROOT_FILES) tools/alumina-doc/static/*
+	rm -rf $(BUILD_DIR)/html
+	ALUMINADOC_OUTPUT_DIR=$(BUILD_DIR) $(ALUMINA_DOC) \
 		$(foreach src,$(SYSROOT_FILES),$(subst __root__,, $(subst /,::,$(basename $(subst ./sysroot,,$(src)))))=$(src))
-	cp -rf tools/alumina-doc/static $(BUILD_ROOT)/docs/
+	cp -rf tools/alumina-doc/static $(BUILD_DIR)/html/
 
-.PHONY: docs serve-docs
-docs: $(BUILD_ROOT)/docs/index.html
+$(DOCTEST).c: $(ALUMINA_BOOT) $(SYSROOT_FILES) $(BUILD_DIR)/doctest.alu
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --output $@ main=$(BUILD_DIR)/doctest.alu
+
+$(DOCTEST): $(DOCTEST).c
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+.PHONY: docs serve-docs doctest
+docs: $(BUILD_DIR)/doctest.alu
+
+doctest: $(DOCTEST)
+	$(DOCTEST) $(TEST_FLAGS) || true
 
 serve-docs: docs
-	cd $(BUILD_ROOT)/docs && python3 -m http.server
+	cd $(BUILD_DIR)/html && python3 -m http.server
 ## ------------------------------ Various ------------------------------
 
 .PHONY: clean all install

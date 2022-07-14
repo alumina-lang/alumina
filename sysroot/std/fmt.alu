@@ -69,7 +69,7 @@ protocol Formattable<Self, F: Formatter<F> = NullFormatter> {
 ///
 /// write!(&fmt, "{} + {} = {}", 1, 2, 3);
 ///
-/// assert_eq!(fmt.as_slice()[0..9], "1 + 2 = 3");
+/// assert_eq!(fmt.get()[0..9], "1 + 2 = 3");
 /// ```
 macro write($fmt, $fmt_str, $arg...) {
     internal::printf(
@@ -93,9 +93,10 @@ macro writeln($fmt, $fmt_str, $arg...) {
 /// # Example
 /// ```
 /// use std::fmt::format;
+/// use std::string::StringBuf;
 ///
-/// let s: StringBuf = format!("{} + {} = {}", 1, 2, 3);
-/// defer s.free()
+/// let s: StringBuf = format!("{} + {} = {}", 1, 2, 3).unwrap();
+/// defer s.free();
 ///
 /// assert_eq!(s.as_slice(), "1 + 2 = 3");
 /// ```

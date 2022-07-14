@@ -6,7 +6,7 @@
 /// expression.
 ///
 /// Expands to the following expression
-/// ```
+/// ```notest
 /// if $.is_ok {
 ///     $.inner.ok
 /// } else {
@@ -51,7 +51,7 @@ macro try($res) {
 ///     }
 /// }
 ///
-/// let result = executable_type();
+/// let result = executable_type("\x7f\x45\x4c\x46\x02\x01\x01\x00...");
 ///
 /// if !result.is_ok {
 ///     eprintln!("Invalid executable");
@@ -149,11 +149,11 @@ impl Result<T, E> {
     ///
     /// # Example
     /// ```
-    /// let a: Result<i32, ()> = Result::ok(42).map(|v: i32| -> i32 { i + 1 });
-    /// let b: Result<i32, ()> = Result::err(()).map(|v: i32| -> i32 { i + 1 });
+    /// let a: Result<i32, ()> = Result::ok(42);
+    /// let b: Result<i32, ()> = Result::err(());
     ///
-    /// assert_eq!(a, Result::ok(43));
-    /// assert_eq!(b, Result::err(()));
+    /// assert_eq!(a.map(|v: i32| -> i32 { v + 1 }), Result::ok(43));
+    /// assert_eq!(b.map(|v: i32| -> i32 { v + 1 }), Result::err(()));
     /// ```
     fn map<Tm, F: builtins::Callable<(T), Tm>>(self: Result<T, E>, func: F) -> Result<Tm, E> {
         if self.is_ok {
@@ -170,11 +170,11 @@ impl Result<T, E> {
     ///
     /// # Example
     /// ```
-    /// let a: Result<(), i32> = Result::err(42).map(|v: i32| -> i32 { i + 1 });
-    /// let b: Result<(), i32> = Result::ok(()).map(|v: i32| -> i32 { i + 1 });
+    /// let a: Result<(), i32> = Result::err(42);
+    /// let b: Result<(), i32> = Result::ok(());
     ///
-    /// assert_eq!(a, Result::err(43));
-    /// assert_eq!(b, Result::ok(()));
+    /// assert_eq!(a.map_err(|v: i32| -> i32 { v + 1 }), Result::err(43));
+    /// assert_eq!(b.map_err(|v: i32| -> i32 { v + 1 }), Result::ok(()));
     /// ```
     fn map_err<Em, F: builtins::Callable<(E), Em>>(self: Result<T, E>, func: F) -> Result<T, Em> {
         if self.is_ok {

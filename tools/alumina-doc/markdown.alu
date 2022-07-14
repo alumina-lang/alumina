@@ -2,7 +2,7 @@
 
 use std::string::{split, StringBuf, starts_with, trim_prefix, trim_start, trim};
 use std::fmt::{Formatter, Formattable, Result, write, writeln, Error};
-use alumina_doc::common::{LinkContext, Path};
+use alumina_doc::common::{LinkContext, Path, DoctestWriter};
 
 enum State {
     Normal,
@@ -217,7 +217,9 @@ fn write_docstring<T: std::io::Writable<T>>(
     writer: &mut T,
     doc_comment: &[u8],
     tagline_only: bool,
-    link_context: &LinkContext
+    link_context: &LinkContext,
+    doctest_path: &Path,
+    doctest_writer: &mut DoctestWriter
 ) -> Result {
     if doc_comment.len == 0 {
         return Result::ok(());
@@ -235,7 +237,9 @@ fn write_docstring<T: std::io::Writable<T>>(
             writer,
             item.doc_comment.as_slice(),
             tagline_only,
-            &link_context
+            &link_context,
+            &item.path,
+            doctest_writer
         );
     }
 
@@ -244,8 +248,13 @@ fn write_docstring<T: std::io::Writable<T>>(
     }
 
     let in_a_code_block = false;
+    let no_doctest = false;
+    let no_doctest_run = false;
     let md_state = InlineMarkdownState::default();
     defer md_state.free();
+
+    let doctest_source: StringBuf = StringBuf::new();
+    defer doctest_source.free();
 
     for i in doc_comment.split("\n") {
         let docline =  if i.starts_with("///") {
@@ -254,11 +263,21 @@ fn write_docstring<T: std::io::Writable<T>>(
             i.trim_prefix("//!").trim_prefix(" ")
         };
 
-        if docline.trim() == "```" {
+        if docline.trim().starts_with("```") {
             if in_a_code_block {
+                if !no_doctest && !tagline_only {
+                    use std::string::join;
+
+                    let name = "_".join(&doctest_path.as_slice().iter());
+                    doctest_writer.write_test(name.as_slice(), doctest_source.as_slice(), no_doctest_run);
+                    name.free();
+                }
                 writeln!(writer, "</code></pre>");
             } else {
-                write!(writer, "<pre><code>");
+                doctest_source.clear();
+                no_doctest = docline.trim() == "```notest";
+                no_doctest_run = docline.trim() == "```norun";
+                write!(writer, "<pre><code class=\"language-alumina\">");
             };
             in_a_code_block = !in_a_code_block;
         } else if !in_a_code_block {
@@ -314,6 +333,7 @@ fn write_docstring<T: std::io::Writable<T>>(
                 ));
             }
         } else {
+            writeln!(&doctest_source, "   {}", docline);
             writeln!(writer, "{}", HtmlEscaped::str(docline));
         }
     }
