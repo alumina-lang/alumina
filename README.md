@@ -33,68 +33,67 @@ Alumina is heavily inspired by Rust, especially in terms of syntax and standard 
 <!-- github, add syntax highlighting for Alumina pls -->
 ```rust
 struct Stack<T> {
-    data: &mut [T],
-    length: usize,
+   data: &mut [T],
+   len: usize,
 }
 
-impl Stack {
-    use std::mem::{alloc, realloc};
+impl Stack<T> {
+   use std::mem::slice;
 
-    fn new<T>() -> Stack<T> {
-        with_capacity(0)
-    }
+   fn new() -> Stack<T> {
+      with_capacity(0)
+   }
 
-    fn with_capacity<T>(capacity: usize) -> Stack<T> {
-        Stack {
-            data: alloc::<T>(capacity),
-            length: 0,
-        }
-    }
+   fn with_capacity(capacity: usize) -> Stack<T> {
+      Stack {
+         data: slice::alloc(capacity),
+         len: 0,
+      }
+   }
 
-    fn reserve<T>(self: &mut Stack<T>, new_capacity: usize) {
-        if self.data.len < new_capacity {
-            self.data = self.data.realloc(new_capacity);
-        }
-    }
+   fn reserve(self: &mut Stack<T>, additional: usize) {
+      use std::cmp::max;
 
-    fn push<T>(self: &mut Stack<T>, value: T) {
-        use std::cmp::max;
+      if self.len + additional > self.data.len {
+         self.data = self.data.realloc(max(
+            self.data.len * 2,
+            self.len + additional
+         ));
+      }
+   }
 
-        if self.length == self.data.len {
-            self.reserve(max(self.data.len, 1) * 2);
-        }
+   fn push(self: &mut Stack<T>, value: T) {
+      self.reserve(1);
+      self.data[self.len] = value;
+      self.len += 1;
+   }
 
-        self.data[self.length] = value;
-        self.length += 1;
-    }
+   fn pop(self: &mut Stack<T>) -> T {
+      self.len -= 1;
+      self.data[self.len]
+   }
 
-    fn pop<T>(self: &mut Stack<T>) -> T {
-        self.length -= 1;
-        self.data[self.length]
-    }
+   fn is_empty(self: &Stack<T>) -> bool {
+      self.len == 0
+   }
 
-    fn empty<T>(self: &Stack<T>) -> bool {
-        self.length == 0
-    }
-
-    fn free<T>(self: &mut Stack<T>) {
-        use std::mem::free;
-        self.data.free();
-    }
+   fn free(self: &mut Stack<T>) {
+      self.data.free();
+   }
 }
 
 fn main() {
-    let v: Stack<&[u8]> = Stack::new();
-    defer v.free();
+   let v: Stack<&[u8]> = Stack::new();
+   defer v.free();
 
-    v.push("Stack.\n");
-    v.push("a ");
-    v.push("am ");
-    v.push("I ");
+   v.push("Stack.\n");
+   v.push("a ");
+   v.push("am ");
+   v.push("I ");
 
-    while !v.empty() {
-        print!("{}", v.pop());
-    }
+   while !v.is_empty() {
+       print!("{}", v.pop());
+   }
 }
 ```
 

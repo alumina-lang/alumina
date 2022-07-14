@@ -22,10 +22,17 @@ protocol Freeable<Self> {
 /// expressions are more ergonomic.
 ///
 /// ```
-/// let foo = Vector::new();
+/// use std::collections::Vector;
+///
+/// fn do_something(v: Vector<i32>) {
+///     // ...
+///     v.free();
+/// }
+///
+/// let foo: Vector<i32> = Vector::new();
 /// defer foo.free(); // Clean up foo if function returns early
-/// ...
-/// do_something_with(foo.move());
+/// // ...
+/// do_something(foo.move());
 /// // will not lead to double free when this function returns.
 /// ```
 protocol Movable<Self> {
@@ -53,7 +60,7 @@ protocol AsSliceMut<Self, T> {
 
 /// Fat pointers to a contiguous region of memory.
 ///
-/// ```
+/// ```notest
 /// type &[T] = slice<&T>;
 /// type &mut [T] = slice<&mut T>;
 /// ```

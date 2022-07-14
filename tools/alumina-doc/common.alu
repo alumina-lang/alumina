@@ -587,3 +587,37 @@ impl LinkContext {
         self.link_for_item(item, true, false)
     }
 }
+
+struct DoctestWriter {
+    writer: &mut dyn std::io::Writable,
+    index: usize
+}
+
+impl DoctestWriter {
+    use std::fmt::StreamFormatter;
+
+    fn new(writer: &mut dyn std::io::Writable) -> DoctestWriter {
+        DoctestWriter {
+            writer: writer,
+            index: 0
+        }
+    }
+
+    fn write_test(self: &mut DoctestWriter, name: &[u8], source: &[u8], no_run: bool) {
+        use std::fmt::writeln;
+        let fmt = StreamFormatter::new(&self.writer);
+
+        if no_run {
+            writeln!(&fmt, "#[test(ignore)]").unwrap();
+        } else {
+            writeln!(&fmt, "#[test]").unwrap();
+        }
+        writeln!(&fmt, "fn test_{}_{}() {{", name, self.index).unwrap();
+        writeln!(&fmt, "{}", source).unwrap();
+        writeln!(&fmt, "}}").unwrap();
+
+        writeln!(&fmt, "").unwrap();
+
+        self.index += 1;
+    }
+}

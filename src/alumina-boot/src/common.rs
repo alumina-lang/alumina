@@ -116,6 +116,8 @@ pub enum CodeErrorKind {
     DefaultCaseMustBeLast,
     #[error("cannot reference `{}` in a nested function", .0)]
     CannotReferenceLocal(String),
+    #[error("local items cannot bind ambient generic placeholders (yet)")]
+    LocalItemsCannotBindGenericPlaceholders,
     #[error("missing lang item: {:?}", .0)]
     MissingLangItem(LangItemKind),
     #[error("only slices can be range-indexed")]

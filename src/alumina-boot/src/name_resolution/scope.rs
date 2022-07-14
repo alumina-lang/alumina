@@ -279,10 +279,6 @@ impl<'ast, 'src> Scope<'ast, 'src> {
                 if name.is_none() {
                     existing.push(item);
                     return Ok(());
-                } else if let ScopeType::Block = scope_type {
-                    // In linear scopes we allow shadowing.
-                    existing[0] = item;
-                    return Ok(());
                 } else {
                     let (type_count, impl_count) =
                         existing
@@ -307,6 +303,12 @@ impl<'ast, 'src> Scope<'ast, 'src> {
                         });
                         return Ok(());
                     }
+                }
+
+                if let ScopeType::Block = scope_type {
+                    // In linear scopes we allow shadowing.
+                    existing[0] = item;
+                    return Ok(());
                 }
             }
         }

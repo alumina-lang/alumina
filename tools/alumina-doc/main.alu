@@ -11,7 +11,7 @@ use aluminac::lib::arena::Arena;
 use aluminac::lib::node_kinds::{NodeVisitor, FieldKind};
 
 use alumina_doc::error::{Error, Result};
-use alumina_doc::common::{Item, ItemKind, Path, ParseContext, ItemBag, LinkContext};
+use alumina_doc::common::{Item, ItemKind, Path, ParseContext, DoctestWriter, ItemBag, LinkContext};
 use alumina_doc::visitors::{TopLevelVisitor, CodePrinter};
 use alumina_doc::markdown::write_docstring;
 
@@ -279,7 +279,7 @@ impl PageWriter<T: std::io::Writable<T>> {
             self.write_signature(top_level, true)?;
         }
 
-        write_docstring(self.writer, top_level.doc_comment.as_slice(), false, &link_context)
+        write_docstring(self.writer, top_level.doc_comment.as_slice(), false, &link_context, &top_level.path, self.processor.doctest_writer)
         .map_err(Error::from::<std::fmt::Error>)?;
 
         if top_level.kind.has_own_page() {
@@ -312,7 +312,7 @@ impl PageWriter<T: std::io::Writable<T>> {
                             wln!(self, "<a href=\"{}\">{}</a>", link, name);
                             wln!(self, "</div>");
                             w!(self, "<div class=\"cell-doc\">");
-                            write_docstring(self.writer, item.doc_comment.as_slice(), true, &link_context)
+                            write_docstring(self.writer, item.doc_comment.as_slice(), true, &link_context, &item.path, self.processor.doctest_writer)
                             .map_err(Error::from::<std::fmt::Error>)?;
                             wln!(self, "</div>");
                             wln!(self, "</div>");
@@ -329,7 +329,7 @@ impl PageWriter<T: std::io::Writable<T>> {
                             self.write_signature(item, false)?;
 
                             wln!(self, "<div class=\"item-doc\">");
-                            write_docstring(self.writer, item.doc_comment.as_slice(), false, &link_context)
+                            write_docstring(self.writer, item.doc_comment.as_slice(), false, &link_context, &item.path, self.processor.doctest_writer)
                                 .map_err(Error::from::<std::fmt::Error>)?;
                             wln!(self, "</div>");
                             wln!(self, "</li>");
@@ -343,6 +343,12 @@ impl PageWriter<T: std::io::Writable<T>> {
 
         wln!(self, "</main>");
         wln!(self, "</div>");
+
+        w!(self, "<script src=\"https://cdnjs.cloudflare.com/ajax/libs/prism/1.28.0/prism.min.js\" ");
+        w!(self, "integrity=\"sha512-RDQSW3KoqJMiX0L/UBgwBmH1EmRYp8LBOiLaA8rBHIy+7OGP/7Gxg8vbt8wG4ZYd29P0Fnoq6+LOytCqx3cyoQ==\" ");
+        wln!(self, "crossorigin=\"anonymous\" referrerpolicy=\"no-referrer\"></script>");
+        wln!(self, "<script src=\"/static/prism-alumina.js\"></script>");
+
         wln!(self, "</body>");
         wln!(self, "</html>");
 
@@ -382,18 +388,18 @@ fn clean_doc_comment(link_context: &LinkContext, doc_comment: &[u8]) -> StringBu
     result
 }
 
-
-
 struct Processor {
     parser: Parser,
     arena: Arena,
     items: ItemBag,
     parse_contexts: Vector<&mut ParseContext>,
     base_domain: Option<&[u8]>,
+    output_dir: std::fs::PathBuf,
+    doctest_writer: &mut DoctestWriter,
 }
 
 impl Processor {
-    fn new() -> Processor {
+    fn new(output_dir: std::fs::PathBuf, doctest_writer: &mut DoctestWriter) -> Processor {
         let parser = Parser::new();
         parser.set_language(tree_sitter_alumina()).unwrap();
 
@@ -403,6 +409,8 @@ impl Processor {
             arena: Arena::new(),
             parse_contexts: Vector::new(),
             base_domain: Option::none(),
+            output_dir: output_dir,
+            doctest_writer: doctest_writer
         }
     }
 
@@ -443,7 +451,7 @@ impl Processor {
 
         let link_context = LinkContext::new(&self.items, &top_level.defined_in);
 
-        let filename = std::fs::PathBuf::from_str("./build/docs");
+        let filename = self.output_dir.with_suffix(std::fs::Path::new("html"));
         defer filename.free();
 
         filename.push(std::fs::Path::new({
@@ -494,7 +502,7 @@ impl Processor {
             (parent, &nav_items)
         };
 
-        let page_writer = PageWriter { processor: self,  writer: &writer, item_bag: &self.items };
+        let page_writer = PageWriter { processor: self, writer: &writer, item_bag: &self.items };
         page_writer.write_page(nav_item, top_level, nav_items, &main_items)
     }
 
@@ -513,11 +521,14 @@ impl Processor {
         use std::fmt::{write, writeln};
         use std::string::replace_fmt;
 
-        let filename = std::fs::Path::new("./build/docs/search_index.js");
-        std::fs::DirBuilder::new().recursive(true).create(filename.parent().unwrap())
+
+        let filename = self.output_dir.with_suffix(std::fs::Path::new("html/search_index.js"));
+        defer filename.free();
+
+        std::fs::DirBuilder::new().recursive(true).create(filename.as_path().parent().unwrap())
             .map_err(Error::from_io)?;
 
-        let file = std::fs::File::create(filename).map_err(Error::from_io)?;
+        let file = std::fs::File::create(filename.as_path()).map_err(Error::from_io)?;
         defer file.close();
 
         let writer = std::io::BufferedWriter::new(&file, 1024);
@@ -549,7 +560,26 @@ impl Processor {
 }
 
 fn main_inner(args: &[&[u8]]) -> Result<()> {
-    let processor = Processor::new();
+    let output_dir = std::fs::PathBuf::from_str(std::process::env()
+        .filter_map(|e: (&[u8], &[u8])| -> Option<&[u8]> {
+            if e.0 == "ALUMINADOC_OUTPUT_DIR" {
+                Option::some(e.1)
+            } else {
+                Option::none()
+            }
+        })
+        .next()
+        .unwrap()
+    );
+    defer output_dir.free();
+
+    let doctest_path = output_dir.with_suffix(std::fs::Path::new("doctest.alu"));
+    defer doctest_path.free();
+
+    let doctest = File::create(doctest_path.as_path()).map_err(Error::from_io)?;
+    defer doctest.close();
+
+    let processor = Processor::new(output_dir.move(), &DoctestWriter::new(&doctest));
     defer processor.free();
 
     processor.base_domain = std::process::env()

@@ -471,6 +471,13 @@ module.exports = grammar({
         $.let_declaration,
         $.use_declaration,
         $.const_declaration,
+        $.function_definition,
+        $.static_declaration,
+        $.struct_definition,
+        $.enum_definition,
+        $.protocol_definition,
+        $.type_definition,
+        $.impl_block,
         $.macro_definition,
         $.empty_statement
       ),

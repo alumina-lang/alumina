@@ -23,6 +23,7 @@ pub struct AstItemMaker<'ast> {
     symbols: Vec<ItemP<'ast>>,
     ambient_placeholders: Vec<Placeholder<'ast>>,
     in_a_macro: bool,
+    local: bool,
 }
 
 impl<'ast> AstItemMaker<'ast> {
@@ -33,6 +34,18 @@ impl<'ast> AstItemMaker<'ast> {
             symbols: Vec::new(),
             ambient_placeholders: Vec::new(),
             in_a_macro,
+            local: false,
+        }
+    }
+
+    pub fn new_local(ast: &'ast AstCtx<'ast>, global_ctx: GlobalCtx, in_a_macro: bool) -> Self {
+        Self {
+            ast,
+            global_ctx,
+            symbols: Vec::new(),
+            ambient_placeholders: Vec::new(),
+            in_a_macro,
+            local: true,
         }
     }
 
@@ -212,6 +225,7 @@ impl<'ast> AstItemMaker<'ast> {
             associated_fns,
             mixins,
             span: Some(span),
+            is_local: self.local,
             is_union,
         });
 
@@ -248,6 +262,7 @@ impl<'ast> AstItemMaker<'ast> {
             placeholders,
             associated_fns,
             attributes,
+            is_local: self.local,
             span: Some(span),
         });
 
@@ -326,6 +341,7 @@ impl<'ast> AstItemMaker<'ast> {
             attributes,
             associated_fns,
             mixins,
+            is_local: self.local,
             span: Some(span),
         });
 
@@ -365,6 +381,7 @@ impl<'ast> AstItemMaker<'ast> {
             placeholders,
             target,
             span: Some(span),
+            is_local: self.local,
             attributes,
         });
 
@@ -496,7 +513,7 @@ impl<'ast> AstItemMaker<'ast> {
             body: function_body,
             varargs: has_varargs,
             span: Some(span),
-            lambda: false,
+            is_local: self.local,
             is_protocol_fn,
         });
 
@@ -559,6 +576,7 @@ impl<'ast> AstItemMaker<'ast> {
             init,
             span: Some(span),
             is_const,
+            is_local: self.local,
             r#extern: is_extern,
         });
 
@@ -589,15 +607,6 @@ impl<'ast> AstItemMaker<'ast> {
         };
 
         Ok(())
-    }
-
-    pub fn make_item<'src>(
-        &mut self,
-        scope: Scope<'ast, 'src>,
-        name: Option<&'ast str>,
-        item: NamedItem<'ast, 'src>,
-    ) -> Result<(), AluminaError> {
-        self.make_item_group(scope, name, &[item])
     }
 
     fn make_item_group<'src>(

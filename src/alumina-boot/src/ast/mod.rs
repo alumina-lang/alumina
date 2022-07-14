@@ -473,6 +473,7 @@ pub struct Protocol<'ast> {
     pub placeholders: &'ast [Placeholder<'ast>],
     pub associated_fns: &'ast [AssociatedFn<'ast>],
     pub attributes: &'ast [Attribute],
+    pub is_local: bool,
     pub span: Option<Span>,
 }
 
@@ -485,6 +486,7 @@ pub struct StructLike<'ast> {
     pub attributes: &'ast [Attribute],
     pub fields: &'ast [Field<'ast>],
     pub span: Option<Span>,
+    pub is_local: bool,
     pub is_union: bool,
 }
 
@@ -494,6 +496,7 @@ pub struct TypeDef<'ast> {
     pub placeholders: &'ast [Placeholder<'ast>],
     pub attributes: &'ast [Attribute],
     pub target: TyP<'ast>,
+    pub is_local: bool,
     pub span: Option<Span>,
 }
 
@@ -504,6 +507,7 @@ pub struct Enum<'ast> {
     pub mixins: &'ast [Mixin<'ast>],
     pub attributes: &'ast [Attribute],
     pub members: &'ast [EnumMember<'ast>],
+    pub is_local: bool,
     pub span: Option<Span>,
 }
 
@@ -563,7 +567,7 @@ pub struct Function<'ast> {
     pub return_type: TyP<'ast>,
     pub body: Option<ExprP<'ast>>,
     pub span: Option<Span>,
-    pub lambda: bool,
+    pub is_local: bool,
     pub varargs: bool,
     pub is_protocol_fn: bool,
 }
@@ -575,6 +579,7 @@ pub struct StaticOrConst<'ast> {
     pub typ: Option<TyP<'ast>>,
     pub init: Option<ExprP<'ast>>,
     pub span: Option<Span>,
+    pub is_local: bool,
     pub is_const: bool,
     pub r#extern: bool,
 }

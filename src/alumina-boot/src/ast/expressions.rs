@@ -13,7 +13,6 @@ use crate::name_resolution::scope::{BoundItemType, NamedItem, ScopeType};
 use crate::parser::AluminaVisitor;
 use crate::parser::ParseCtx;
 
-use crate::visitors::UseClauseVisitor;
 use crate::visitors::{AttributeVisitor, ScopedPathVisitor};
 use crate::{
     common::{AluminaError, WithSpanDuringParsing},
@@ -218,7 +217,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
         node: tree_sitter::Node<'src>,
     ) -> Result<Vec<Statement<'ast>>, AluminaError> {
         let inner = node.child_by_field_name("inner").unwrap();
-        let attributes = match AttributeVisitor::parse_attributes(
+        match AttributeVisitor::parse_attributes(
             self.global_ctx.clone(),
             self.ast,
             self.scope.clone(),
@@ -322,37 +321,20 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                 }
                 statements
             }
-            "use_declaration" => {
-                UseClauseVisitor::new(self.ast, self.scope.clone(), attributes, self.in_a_macro)
-                    .visit(inner.child_by_field_name("argument").unwrap())?;
-                vec![]
-            }
             "expression_statement" => vec![StatementKind::Expression(
                 self.visit(inner.child_by_field_name("inner").unwrap())?,
             )
             .alloc_with_span_from(self.ast, &self.scope, node)],
-            "macro_definition" => {
+            "macro_definition"
+            | "enum_definition"
+            | "const_declaration"
+            | "impl_block"
+            | "struct_definition"
+            | "static_definition"
+            | "function_definition"
+            | "use_declaration" => {
                 FirstPassVisitor::new(self.global_ctx.clone(), self.ast, self.scope.clone())
-                    .visit_macro_definition(inner)?;
-                vec![]
-            }
-            "const_declaration" => {
-                let name = self
-                    .code
-                    .node_text(inner.child_by_field_name("name").unwrap())
-                    .alloc_on(self.ast);
-                let item = NamedItem::new(
-                    NamedItemKind::Const(self.ast.make_symbol(), inner),
-                    attributes,
-                );
-                self.scope
-                    .add_item(Some(name), item.clone())
-                    .with_span_from(&self.scope, inner)?;
-                AstItemMaker::new(self.ast, self.global_ctx.clone(), self.in_a_macro).make_item(
-                    self.scope.clone(),
-                    Some(name),
-                    item,
-                )?;
+                    .visit(inner)?;
                 vec![]
             }
             _ => unimplemented!(),
@@ -445,6 +427,9 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                 last_node = Some(node.child_by_field_name("inner").unwrap());
                 statements.extend(self.visit_statement(node)?);
             }
+
+            AstItemMaker::new_local(self.ast, self.global_ctx.clone(), self.in_a_macro)
+                .make(self.scope.clone())?;
 
             match node.child_by_field_name("result") {
                 Some(return_expression) => self.visit(return_expression)?,
@@ -1515,7 +1500,7 @@ impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
             body: Some(self.body.unwrap()),
             varargs: false,
             span: Some(span),
-            lambda: true,
+            is_local: true,
             is_protocol_fn: false,
         }));
 
