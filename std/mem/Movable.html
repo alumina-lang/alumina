@@ -51,7 +51,7 @@
 <h3>
 <span class="keyword">protocol</span> <span class="identifier-type">Movable</span>&lt;Self&gt; { ... }</h3>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L31-L36"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L38-L43"/>source</a>
 </div>
 </div>
 <p>
@@ -61,12 +61,19 @@ If a type allocates memory, it is a good idea to implement move function, so tha
 can be passed around by value, leaving inert instances behind. This is chiefly used to <code>defer</code>
 expressions are more ergonomic.
 </p><p>
-<pre><code>let foo = Vector::new();
+<pre><code class="language-alumina">use std::collections::Vector;
+
+fn do_something(v: Vector&lt;i32&gt;) {
+    // ...
+    v.free();
+}
+
+let foo: Vector&lt;i32&gt; = Vector::new();
 defer foo.free(); // Clean up foo if function returns early
-...
-do_something_with(foo.move());
+// ...
+do_something(foo.move());
 // will not lead to double free when this function returns.
-</code></pre>
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aVector%3b%0a%20%20%20%0a%20%20%20fn%20do%5fsomething%28v%3a%20Vector%3ci32%3e%29%20%7b%0a%20%20%20%20%20%20%20%2f%2f%20%2e%2e%2e%0a%20%20%20%20%20%20%20v%2efree%28%29%3b%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20let%20foo%3a%20Vector%3ci32%3e%20%3d%20Vector%3a%3anew%28%29%3b%0a%20%20%20defer%20foo%2efree%28%29%3b%20%2f%2f%20Clean%20up%20foo%20if%20function%20returns%20early%0a%20%20%20%2f%2f%20%2e%2e%2e%0a%20%20%20do%5fsomething%28foo%2emove%28%29%29%3b%0a%20%20%20%2f%2f%20will%20not%20lead%20to%20double%20free%20when%20this%20function%20returns%2e%0a%7d%0a">Open in playground</a></pre>
 </p><p>
 </p>
 <h2 id="Method">Methods</h2>
@@ -76,7 +83,7 @@ do_something_with(foo.move());
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">move</span>(self: &amp;mut Self) -> Self</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L35-L35"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L42-L42"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -91,5 +98,7 @@ See <a class="path-link" href="/std/mem/Movable.html">Movable</a> for details.
 </ul>
 </main>
 </div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.28.0/prism.min.js" integrity="sha512-RDQSW3KoqJMiX0L/UBgwBmH1EmRYp8LBOiLaA8rBHIy+7OGP/7Gxg8vbt8wG4ZYd29P0Fnoq6+LOytCqx3cyoQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="/static/prism-alumina.js"></script>
 </body>
 </html>

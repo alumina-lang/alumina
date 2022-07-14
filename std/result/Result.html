@@ -112,7 +112,7 @@ type <code>T</code> or an error value <code>E</code>, usually in some form repre
 </p>
 <h2> Example</h2>
 <p>
-<pre><code>enum ExecutableType {
+<pre><code class="language-alumina">enum ExecutableType {
     ELF,
     PE
 }
@@ -131,7 +131,7 @@ fn executable_type(contents: &amp;[u8]) -&gt; Result&lt;ExecutableType, Error&gt
     }
 }
 
-let result = executable_type();
+let result = executable_type("\x7f\x45\x4c\x46\x02\x01\x01\x00...");
 
 if !result.is_ok {
     eprintln!("Invalid executable");
@@ -139,7 +139,7 @@ if !result.is_ok {
     // e.g. result.unwrap();
     // do something with it
 }
-</code></pre>
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20enum%20ExecutableType%20%7b%0a%20%20%20%20%20%20%20ELF%2c%0a%20%20%20%20%20%20%20PE%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20struct%20Error%20%7b%7d%0a%20%20%20%0a%20%20%20fn%20executable%5ftype%28contents%3a%20%26%5bu8%5d%29%20%2d%3e%20Result%3cExecutableType%2c%20Error%3e%20%7b%0a%20%20%20%20%20%20%20use%20std%3a%3astring%3a%3astarts%5fwith%3b%0a%20%20%20%20%20%20%20if%20contents%2estarts%5fwith%28%22MZ%22%29%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20Result%3a%3aok%28ExecutableType%3a%3aPE%29%0a%20%20%20%20%20%20%20%7d%20else%20if%20contents%2estarts%5fwith%28%22%5cx7FELF%22%29%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20Result%3a%3aok%28ExecutableType%3a%3aELF%29%0a%20%20%20%20%20%20%20%7d%20else%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%2f%2f%2f%20Invalid%20executable%0a%20%20%20%20%20%20%20%20%20%20%20Result%3a%3aerr%28Error%20%7b%7d%29%0a%20%20%20%20%20%20%20%7d%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20let%20result%20%3d%20executable%5ftype%28%22%5cx7f%5cx45%5cx4c%5cx46%5cx02%5cx01%5cx01%5cx00%2e%2e%2e%22%29%3b%0a%20%20%20%0a%20%20%20if%20%21result%2eis%5fok%20%7b%0a%20%20%20%20%20%20%20eprintln%21%28%22Invalid%20executable%22%29%3b%0a%20%20%20%7d%20else%20%7b%0a%20%20%20%20%20%20%20%2f%2f%20e%2eg%2e%20result%2eunwrap%28%29%3b%0a%20%20%20%20%20%20%20%2f%2f%20do%20something%20with%20it%0a%20%20%20%7d%0a%7d%0a">Open in playground</a></pre>
 </p><p>
 <code>Result</code> is commonly used with the <a class="" href="/std/result/try.html">try operator</a> (<code>?</code>) so that fallible functions can
 be composed easily by bailing early.
@@ -280,12 +280,12 @@ passed through.
 </p>
 <h2> Example</h2>
 <p>
-<pre><code>let a: Result&lt;i32, ()&gt; = Result::ok(42).map(|v: i32| -&gt; i32 { i + 1 });
-let b: Result&lt;i32, ()&gt; = Result::err(()).map(|v: i32| -&gt; i32 { i + 1 });
+<pre><code class="language-alumina">let a: Result&lt;i32, ()&gt; = Result::ok(42);
+let b: Result&lt;i32, ()&gt; = Result::err(());
 
-assert_eq!(a, Result::ok(43));
-assert_eq!(b, Result::err(()));
-</code></pre>
+assert_eq!(a.map(|v: i32| -&gt; i32 { v + 1 }), Result::ok(43));
+assert_eq!(b.map(|v: i32| -&gt; i32 { v + 1 }), Result::err(()));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20a%3a%20Result%3ci32%2c%20%28%29%3e%20%3d%20Result%3a%3aok%2842%29%3b%0a%20%20%20let%20b%3a%20Result%3ci32%2c%20%28%29%3e%20%3d%20Result%3a%3aerr%28%28%29%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28a%2emap%28%7cv%3a%20i32%7c%20%2d%3e%20i32%20%7b%20v%20%2b%201%20%7d%29%2c%20Result%3a%3aok%2843%29%29%3b%0a%20%20%20assert%5feq%21%28b%2emap%28%7cv%3a%20i32%7c%20%2d%3e%20i32%20%7b%20v%20%2b%201%20%7d%29%2c%20Result%3a%3aerr%28%28%29%29%29%3b%0a%7d%0a">Open in playground</a></pre>
 </p><p>
 </p>
 </div>
@@ -310,12 +310,12 @@ passed through.
 </p>
 <h2> Example</h2>
 <p>
-<pre><code>let a: Result&lt;(), i32&gt; = Result::err(42).map(|v: i32| -&gt; i32 { i + 1 });
-let b: Result&lt;(), i32&gt; = Result::ok(()).map(|v: i32| -&gt; i32 { i + 1 });
+<pre><code class="language-alumina">let a: Result&lt;(), i32&gt; = Result::err(42);
+let b: Result&lt;(), i32&gt; = Result::ok(());
 
-assert_eq!(a, Result::err(43));
-assert_eq!(b, Result::ok(()));
-</code></pre>
+assert_eq!(a.map_err(|v: i32| -&gt; i32 { v + 1 }), Result::err(43));
+assert_eq!(b.map_err(|v: i32| -&gt; i32 { v + 1 }), Result::ok(()));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20a%3a%20Result%3c%28%29%2c%20i32%3e%20%3d%20Result%3a%3aerr%2842%29%3b%0a%20%20%20let%20b%3a%20Result%3c%28%29%2c%20i32%3e%20%3d%20Result%3a%3aok%28%28%29%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28a%2emap%5ferr%28%7cv%3a%20i32%7c%20%2d%3e%20i32%20%7b%20v%20%2b%201%20%7d%29%2c%20Result%3a%3aerr%2843%29%29%3b%0a%20%20%20assert%5feq%21%28b%2emap%5ferr%28%7cv%3a%20i32%7c%20%2d%3e%20i32%20%7b%20v%20%2b%201%20%7d%29%2c%20Result%3a%3aok%28%28%29%29%29%3b%0a%7d%0a">Open in playground</a></pre>
 </p><p>
 </p>
 </div>
@@ -472,5 +472,7 @@ E: <a href="/std/cmp/Equatable.html"><span class="identifier-type">Equatable</sp
 </ul>
 </main>
 </div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.28.0/prism.min.js" integrity="sha512-RDQSW3KoqJMiX0L/UBgwBmH1EmRYp8LBOiLaA8rBHIy+7OGP/7Gxg8vbt8wG4ZYd29P0Fnoq6+LOytCqx3cyoQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="/static/prism-alumina.js"></script>
 </body>
 </html>

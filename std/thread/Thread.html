@@ -136,7 +136,7 @@ Returns the native thread id of a thread.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">park</span>()</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/thread.alu#L346-L348"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/thread.alu#L347-L349"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -154,8 +154,9 @@ This is the same mechanism as <a class="" href="https://doc.rust-lang.org/std/th
 </p>
 <h2> Example</h2>
 <p>
-<pre><code>use std::sync::{Atomic, Ordering};
+<pre><code class="language-alumina">use std::sync::{Atomic, Ordering};
 use std::thread::{Thread, spawn, sleep};
+use std::time::Duration;
 
 let main_thread = Thread::current();
 let flag: Atomic&lt;bool&gt; = Atomic::new(false);
@@ -163,17 +164,17 @@ let parked = spawn(|&amp;flag| {
     while !flag.load(Ordering::SeqCst) {
         Thread::park();
     }
-    println!("Hello from `parked`")
+    println!("Hello from `parked`");
 });
 
 sleep(Duration::from_secs(1));
-println!("Hello from `parked`")
+println!("Hello from `parked`");
 
 flag.store(true, Ordering::SeqCst);
 parked.thread().unpark();
 
 parked.join().unwrap();
-</code></pre>
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3async%3a%3a%7bAtomic%2c%20Ordering%7d%3b%0a%20%20%20use%20std%3a%3athread%3a%3a%7bThread%2c%20spawn%2c%20sleep%7d%3b%0a%20%20%20use%20std%3a%3atime%3a%3aDuration%3b%0a%20%20%20%0a%20%20%20let%20main%5fthread%20%3d%20Thread%3a%3acurrent%28%29%3b%0a%20%20%20let%20flag%3a%20Atomic%3cbool%3e%20%3d%20Atomic%3a%3anew%28false%29%3b%0a%20%20%20let%20parked%20%3d%20spawn%28%7c%26flag%7c%20%7b%0a%20%20%20%20%20%20%20while%20%21flag%2eload%28Ordering%3a%3aSeqCst%29%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20Thread%3a%3apark%28%29%3b%0a%20%20%20%20%20%20%20%7d%0a%20%20%20%20%20%20%20println%21%28%22Hello%20from%20%60parked%60%22%29%3b%0a%20%20%20%7d%29%3b%0a%20%20%20%0a%20%20%20sleep%28Duration%3a%3afrom%5fsecs%281%29%29%3b%0a%20%20%20println%21%28%22Hello%20from%20%60parked%60%22%29%3b%0a%20%20%20%0a%20%20%20flag%2estore%28true%2c%20Ordering%3a%3aSeqCst%29%3b%0a%20%20%20parked%2ethread%28%29%2eunpark%28%29%3b%0a%20%20%20%0a%20%20%20parked%2ejoin%28%29%2eunwrap%28%29%3b%0a%7d%0a">Open in playground</a></pre>
 </p><p>
 </p>
 </div>
@@ -183,7 +184,7 @@ parked.join().unwrap();
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">park_timeout</span>(timeout: <a href="/std/time/Duration.html"><span class="identifier-type">Duration</span></a>)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/thread.alu#L354-L356"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/thread.alu#L355-L357"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -201,7 +202,7 @@ Same as <a class="path-link" href="/std/thread/Thread.html#item.park">park</a>, 
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">unpark</span>(self: &amp;<a href="/std/thread/Thread.html"><span class="identifier-type">Thread</span></a>)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/thread.alu#L361-L363"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/thread.alu#L362-L364"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -218,7 +219,7 @@ See also <a class="path-link" href="/std/thread/Thread.html#item.park">park</a>.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">yield</span>()</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/thread.alu#L368-L370"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/thread.alu#L369-L371"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -235,7 +236,7 @@ You probably don't want to use this in a spin-lock.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">equals</span>(self: &amp;<a href="/std/thread/Thread.html"><span class="identifier-type">Thread</span></a>, other: &amp;<a href="/std/thread/Thread.html"><span class="identifier-type">Thread</span></a>) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/thread.alu#L373-L375"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/thread.alu#L374-L376"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -263,5 +264,7 @@ See <a class="path-link" href="/std/cmp/Equatable.html">Equatable</a> for detail
 </ul>
 </main>
 </div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.28.0/prism.min.js" integrity="sha512-RDQSW3KoqJMiX0L/UBgwBmH1EmRYp8LBOiLaA8rBHIy+7OGP/7Gxg8vbt8wG4ZYd29P0Fnoq6+LOytCqx3cyoQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="/static/prism-alumina.js"></script>
 </body>
 </html>
