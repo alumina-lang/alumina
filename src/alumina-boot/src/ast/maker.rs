@@ -23,7 +23,7 @@ pub struct AstItemMaker<'ast> {
     symbols: Vec<ItemP<'ast>>,
     ambient_placeholders: Vec<Placeholder<'ast>>,
     in_a_macro: bool,
-    local: bool
+    local: bool,
 }
 
 impl<'ast> AstItemMaker<'ast> {
@@ -34,7 +34,7 @@ impl<'ast> AstItemMaker<'ast> {
             symbols: Vec::new(),
             ambient_placeholders: Vec::new(),
             in_a_macro,
-            local: false
+            local: false,
         }
     }
 
@@ -45,7 +45,7 @@ impl<'ast> AstItemMaker<'ast> {
             symbols: Vec::new(),
             ambient_placeholders: Vec::new(),
             in_a_macro,
-            local: true
+            local: true,
         }
     }
 

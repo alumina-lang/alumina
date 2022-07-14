@@ -121,7 +121,7 @@ impl DiagnosticContext {
 
                 if let Some(file_name) = inner.file_map.get(&span.file) {
                     eprintln!(
-                        " --> {} {}:{}",
+                        " --> {}:{}:{}",
                         file_name.display(),
                         span.line + 1,
                         span.column + 1

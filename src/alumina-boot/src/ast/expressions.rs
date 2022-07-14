@@ -217,7 +217,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
         node: tree_sitter::Node<'src>,
     ) -> Result<Vec<Statement<'ast>>, AluminaError> {
         let inner = node.child_by_field_name("inner").unwrap();
-        let attributes = match AttributeVisitor::parse_attributes(
+        match AttributeVisitor::parse_attributes(
             self.global_ctx.clone(),
             self.ast,
             self.scope.clone(),
@@ -325,8 +325,14 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                 self.visit(inner.child_by_field_name("inner").unwrap())?,
             )
             .alloc_with_span_from(self.ast, &self.scope, node)],
-            "macro_definition" | "enum_definition" | "const_declaration" | "impl_block"
-            | "struct_definition" | "static_definition" | "function_definition" | "use_declaration" => {
+            "macro_definition"
+            | "enum_definition"
+            | "const_declaration"
+            | "impl_block"
+            | "struct_definition"
+            | "static_definition"
+            | "function_definition"
+            | "use_declaration" => {
                 FirstPassVisitor::new(self.global_ctx.clone(), self.ast, self.scope.clone())
                     .visit(inner)?;
                 vec![]

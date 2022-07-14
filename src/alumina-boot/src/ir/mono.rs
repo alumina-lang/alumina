@@ -500,11 +500,16 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .with_no_span();
         }
 
-        let replacements =
-        self.replacements.iter().map(|(a, b)| (*a, *b)).chain(
-            placeholders.iter()
-            .zip(generic_args.iter())
-            .map(|(&k, &v)| (k.id, v)))
+        let replacements = self
+            .replacements
+            .iter()
+            .map(|(a, b)| (*a, *b))
+            .chain(
+                placeholders
+                    .iter()
+                    .zip(generic_args.iter())
+                    .map(|(&k, &v)| (k.id, v)),
+            )
             .collect();
 
         Ok(replacements)
