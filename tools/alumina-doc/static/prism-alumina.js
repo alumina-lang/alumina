@@ -65,7 +65,7 @@ Prism.languages.alumina = {
         alias: 'function'
     },
     'type-definition': {
-        pattern: /(\b(?:enum|struct|trait|type|union)\s+)\w+/,
+        pattern: /(\b(?:enum|struct|protocol|type|union)\s+)\w+/,
         lookbehind: true,
         alias: 'class-name'
     },
