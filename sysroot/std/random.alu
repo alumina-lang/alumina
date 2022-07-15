@@ -207,6 +207,15 @@ fn next_integer<Rng: RandomNumberGenerator<Rng>, T: Unsigned>(rng: &mut Rng) -> 
 }
 
 /// Generate a random integer between 0 (inclusive) and `upper_bound` (exclusive)
+///
+/// # Example
+/// ```
+/// use std::random::{thread_rng, uniform};
+///
+/// let value = thread_rng().uniform(10u32);
+///
+/// assert!(value < 10);
+/// ```
 fn uniform<Rng: RandomNumberGenerator<Rng>, T: Unsigned>(rng: &mut Rng, upper_bound: T) -> T {
     debug_assert!(upper_bound > 0);
 
@@ -220,6 +229,15 @@ fn uniform<Rng: RandomNumberGenerator<Rng>, T: Unsigned>(rng: &mut Rng, upper_bo
 }
 
 /// Generate a random floating point number in `[0, 1)` interval
+///
+/// # Example
+/// ```
+/// use std::random::{thread_rng, next_float};
+///
+/// let value: f64 = thread_rng().next_float();
+///
+/// assert!(value >= 0.0 && value < 1.0);
+/// ```
 fn next_float<Rng: RandomNumberGenerator<Rng>, T: FloatingPoint>(rng: &mut Rng) -> T {
     when T: f32 {
         let scale = 1.0f32 / ((1u32 << 24) as f32);
@@ -233,6 +251,15 @@ fn next_float<Rng: RandomNumberGenerator<Rng>, T: FloatingPoint>(rng: &mut Rng) 
 }
 
 /// Generate a random number between `lower` (inclusive) and `upper` (exclusive)
+///
+/// # Example
+/// ```
+/// use std::random::{thread_rng, range};
+///
+/// let value: i32 = thread_rng().range(0, 3);
+///
+/// assert!(value >= 0 && value < 3);
+/// ```
 fn range<Rng: RandomNumberGenerator<Rng>, T: Integer>(rng: &mut Rng, lower: T, upper: T) -> T {
     use builtins::unsigned_of;
 
@@ -245,6 +272,15 @@ fn range<Rng: RandomNumberGenerator<Rng>, T: Integer>(rng: &mut Rng, lower: T, u
 }
 
 /// Generate a random number between `lower` and `upper` inclusive
+///
+/// # Example
+/// ```
+/// use std::random::{thread_rng, range_inclusive};
+///
+/// let value: i32 = thread_rng().range_inclusive(-4, 4);
+///
+/// assert!(value >= -4 && value <= 4);
+/// ```
 fn range_inclusive<Rng: RandomNumberGenerator<Rng>, T: Integer>(rng: &mut Rng, lower: T, upper: T) -> T {
     use builtins::unsigned_of;
 
@@ -272,6 +308,15 @@ fn shuffle<Rng: RandomNumberGenerator<Rng>, T>(rng: &mut Rng, slice: &mut [T]) {
 }
 
 /// Return a random element of the slice.
+///
+/// # Example
+/// ```
+/// use std::random::{thread_rng, choice};
+///
+/// let value = thread_rng().choice(&["hello", "world"]);
+///
+/// assert!(value == "hello" || value == "world");
+/// ```
 fn choice<Rng: RandomNumberGenerator<Rng>, T>(rng: &mut Rng, slice: &[T]) -> T {
     debug_assert!(slice.len > 0);
 

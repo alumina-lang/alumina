@@ -252,6 +252,26 @@ impl Forked {
 }
 
 /// Builder for creating a process.
+///
+/// # Example
+/// ```
+/// use std::process::{Stdio, Command};
+/// use std::string::trim;
+/// use std::fs::Path;
+///
+/// let command = Command::new(Path::new("/usr/bin/uname"))
+///     .stdout(Stdio::Piped)
+///     .args(&["-s"]);
+///
+/// let output = command.spawn()
+///     .unwrap()
+///     .wait_with_output()
+///     .unwrap();
+/// defer output.free();
+///
+/// // Prints "Running on Linux"
+/// println!("Running on {}", output.stdout.as_slice().trim());
+/// ```
 struct Command {
     _path: fs::Path,
     _args: &[&[u8]],
