@@ -134,6 +134,9 @@
 <p>
 String functions
 </p><p>
+Alumina is not Unicode-aware and strings are simply byte slices (<code>&amp;[u8]</code>) without
+any assumed encoding.
+</p><p>
 </p>
 <h2 id="Module">Modules</h2>
 <div class="item-short-table">
@@ -174,7 +177,7 @@ String functions
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">is_whitespace</span>(c: <a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L13-L15"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L15-L17"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -189,7 +192,7 @@ Returns <code>true</code> if character is an ASCII whitespace character, <code>f
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">to_lower</span>(self: <a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>) -> <a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L20-L26"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L22-L28"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -206,7 +209,7 @@ If character is not an ASCII uppercase letter, returns the same character.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">to_upper</span>(self: <a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>) -> <a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L31-L37"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L33-L39"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -223,12 +226,21 @@ If character is not an ASCII lowercase letter, returns the same character.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">starts_with</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], prefix: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L40-L45"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L50-L55"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Returns <code>true</code> if string starts with the given prefix, <code>false</code> otherwise.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::string::starts_with;
+
+assert!("hello world".starts_with("hello"));
+assert!(!"hello world".starts_with("world"));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3astring%3a%3astarts%5fwith%3b%0a%20%20%20%0a%20%20%20assert%21%28%22hello%20world%22%2estarts%5fwith%28%22hello%22%29%29%3b%0a%20%20%20assert%21%28%21%22hello%20world%22%2estarts%5fwith%28%22world%22%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -238,12 +250,21 @@ Returns <code>true</code> if string starts with the given prefix, <code>false</c
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">ends_with</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], suffix: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L48-L53"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L66-L71"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Returns <code>true</code> if string ends with the given suffix, <code>false</code> otherwise.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::string::ends_with;
+
+assert!("hello world".ends_with("world"));
+assert!(!"hello world".ends_with("hello"));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3astring%3a%3aends%5fwith%3b%0a%20%20%20%0a%20%20%20assert%21%28%22hello%20world%22%2eends%5fwith%28%22world%22%29%29%3b%0a%20%20%20assert%21%28%21%22hello%20world%22%2eends%5fwith%28%22hello%22%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -253,7 +274,7 @@ Returns <code>true</code> if string ends with the given suffix, <code>false</cod
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">trim_prefix</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], prefix: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L58-L64"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L84-L90"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -263,6 +284,15 @@ Return string without the given prefix.
 If the string does not start with the given prefix, returns the string unchanged.
 </p><p>
 </p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::string::trim_prefix;
+
+assert_eq!("hello world".trim_prefix("hello"), " world");
+assert_eq!("hello world".trim_prefix("world"), "hello world");
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3astring%3a%3atrim%5fprefix%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28%22hello%20world%22%2etrim%5fprefix%28%22hello%22%29%2c%20%22%20world%22%29%3b%0a%20%20%20assert%5feq%21%28%22hello%20world%22%2etrim%5fprefix%28%22world%22%29%2c%20%22hello%20world%22%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -270,7 +300,7 @@ If the string does not start with the given prefix, returns the string unchanged
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">trim_suffix</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], suffix: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L69-L75"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L103-L109"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -280,6 +310,15 @@ Return string without the given suffix.
 If the string does not end with the given suffix, returns the string unchanged.
 </p><p>
 </p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::string::trim_suffix;
+
+assert_eq!("hello world".trim_suffix("world"), "hello ");
+assert_eq!("hello world".trim_suffix("hello"), "hello world");
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3astring%3a%3atrim%5fsuffix%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28%22hello%20world%22%2etrim%5fsuffix%28%22world%22%29%2c%20%22hello%20%22%29%3b%0a%20%20%20assert%5feq%21%28%22hello%20world%22%2etrim%5fsuffix%28%22hello%22%29%2c%20%22hello%20world%22%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -287,7 +326,7 @@ If the string does not end with the given suffix, returns the string unchanged.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">find</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], needle: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L81-L102"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L123-L144"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -298,6 +337,15 @@ It returns the index of the first occurrence of <code>needle</code> in <code>hay
 <code>needle</code> is not part of <code>haystack</code>.
 </p><p>
 </p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::string::find;
+
+assert_eq!("hello world".find("world"), Option::some(6usize));
+assert_eq!("hello world".find("worldx"), Option::none());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3astring%3a%3afind%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28%22hello%20world%22%2efind%28%22world%22%29%2c%20Option%3a%3asome%286usize%29%29%3b%0a%20%20%20assert%5feq%21%28%22hello%20world%22%2efind%28%22worldx%22%29%2c%20Option%3a%3anone%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -305,12 +353,21 @@ It returns the index of the first occurrence of <code>needle</code> in <code>hay
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">find_char</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], needle: <a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L105-L117"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L155-L167"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Finds the first occurrence of a character in a string.
+Finds the index of the first occurrence of a character in a string.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::string::find_char;
+
+assert_eq!("hello world".find_char('o'), Option::some(4usize));
+assert_eq!("hello world".find_char('x'), Option::none());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3astring%3a%3afind%5fchar%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28%22hello%20world%22%2efind%5fchar%28%27o%27%29%2c%20Option%3a%3asome%284usize%29%29%3b%0a%20%20%20assert%5feq%21%28%22hello%20world%22%2efind%5fchar%28%27x%27%29%2c%20Option%3a%3anone%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -320,12 +377,21 @@ Finds the first occurrence of a character in a string.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">contains</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], needle: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L120-L122"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L178-L180"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Returns <code>true</code> if <code>needle</code> is a substring of self, <code>false</code> otherwise.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::string::contains;
+
+assert!("hello world".contains("world"));
+assert!(!"hello world".contains("chtulhu"));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3astring%3a%3acontains%3b%0a%20%20%20%0a%20%20%20assert%21%28%22hello%20world%22%2econtains%28%22world%22%29%29%3b%0a%20%20%20assert%21%28%21%22hello%20world%22%2econtains%28%22chtulhu%22%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -335,12 +401,20 @@ Returns <code>true</code> if <code>needle</code> is a substring of self, <code>f
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">trim_start</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L125-L131"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L190-L196"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Trims the whitespace from the start of the string.
+Trims ASCII whitespace from the start of the string.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::string::trim_start;
+
+assert_eq!("  hello world   ".trim_start(), "hello world   ");
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3astring%3a%3atrim%5fstart%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28%22%20%20hello%20world%20%20%20%22%2etrim%5fstart%28%29%2c%20%22hello%20world%20%20%20%22%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -350,12 +424,20 @@ Trims the whitespace from the start of the string.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">trim_end</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L134-L140"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L206-L212"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Trims the whitespace from the end of the string.
+Trims ASCII whitespace from the end of the string.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::string::trim_end;
+
+assert_eq!("  hello world   ".trim_end(), "  hello world");
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3astring%3a%3atrim%5fend%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28%22%20%20hello%20world%20%20%20%22%2etrim%5fend%28%29%2c%20%22%20%20hello%20world%22%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -365,12 +447,20 @@ Trims the whitespace from the end of the string.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">trim</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L143-L145"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L222-L224"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Trims the whitespace from the start and end of the string.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::string::trim;
+
+assert_eq!("  hello world   ".trim(), "hello world");
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3astring%3a%3atrim%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28%22%20%20hello%20world%20%20%20%22%2etrim%28%29%2c%20%22hello%20world%22%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -380,7 +470,7 @@ Trims the whitespace from the start and end of the string.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">split</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], sep: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/string/SplitIterator.html"><span class="identifier-type">SplitIterator</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L201-L203"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L280-L282"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -388,7 +478,7 @@ Trims the whitespace from the start and end of the string.
 Returns an iterator over the parts of the string split by the given delimiter.
 </p><p>
 </p>
-<h2> Example</h2>
+<h3> Example</h3>
 <p>
 <pre class="with-playground-link"><code class="language-alumina">use std::string::split;
 
@@ -408,7 +498,7 @@ assert_eq!(iter.next(), Option::none());
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">replace</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], needle: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], replacement: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/string/#item.StringBuf"><span class="identifier-type">StringBuf</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L231-L235"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L310-L314"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -425,7 +515,7 @@ See also <a class="path-link" href="/std/string/#item.replace_fmt">replace_fmt</
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">replace_fmt</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], needle: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], replacement: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/string/ReplaceAdapter.html"><span class="identifier-type">ReplaceAdapter</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L247-L249"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L326-L328"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -434,7 +524,7 @@ Returns an object that formats to the string with all <code>needle</code> occurr
 <code>replacement</code>.
 </p><p>
 </p>
-<h2> Example</h2>
+<h3> Example</h3>
 <p>
 <pre class="with-playground-link"><code class="language-alumina">use std::string::replace_fmt;
 
@@ -452,7 +542,7 @@ println!("{}", "I like pie".replace_fmt("pie", "cake"));
 It: <a href="/std/iter/Iterator.html"><span class="identifier-type">Iterator</span></a>&lt;It, &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L276-L280"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L355-L359"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -471,7 +561,7 @@ See also <a class="path-link" href="/std/string/#item.join_fmt">join_fmt</a> for
 It: <a href="/std/iter/Iterator.html"><span class="identifier-type">Iterator</span></a>&lt;It, &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L292-L294"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L371-L373"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -479,7 +569,7 @@ It: <a href="/std/iter/Iterator.html"><span class="identifier-type">Iterator</sp
 Returns an object that formats to parts joined with the separartor.
 </p><p>
 </p>
-<h2> Example</h2>
+<h3> Example</h3>
 <p>
 <pre class="with-playground-link"><code class="language-alumina">use std::string::join_fmt;
 
@@ -497,7 +587,7 @@ println!("{}", ".".join_fmt(&amp;["192", "168", "0", "1"].iter()));
 T: <a href="/std/builtins/Integer.html"><span class="identifier-type">Integer</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L299-L358"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L378-L437"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -517,7 +607,7 @@ See also <a class="path-link" href="/std/builtins/IntegerParsable.html">IntegerP
 <h4>
 <span class="keyword">type</span> <span class="identifier-type">StringBuf</span> = <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L10-L10"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L12-L12"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -537,7 +627,7 @@ A heap-allocated string.
 <h4>
 <span class="keyword">const</span> <span class="identifier-constant">RADIX_DIGITS</span> = ...</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L5-L5"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L7-L7"/>source</a>
 </div>
 </div>
 <div class="item-doc">
