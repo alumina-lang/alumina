@@ -1,5 +1,8 @@
 //! String formatting
-
+//!
+//! The core of the formatting system is the [Formattable] protocol. Implementing it on custom types
+//! allows them to be formatted using the standard string-formatting macros ([format], [write], ...)
+//! and the convenience standard I/O macros ([io::print], [io::println], ...).
 type Result = std::result::Result<(), Error>;
 
 /// Error that can occur during a string formatting operation.
@@ -37,7 +40,7 @@ protocol Formatter<Self> {
 /// Types that can be formatted. This is the standard way to implement custom
 /// formatting for types.
 ///
-/// # Example
+/// ## Example
 /// ```
 /// struct Point3D { x: i32, y: i32, z: i32 }
 /// impl Point3D {
@@ -61,7 +64,7 @@ protocol Formattable<Self, F: Formatter<F> = NullFormatter> {
 
 /// Write a formatted string into a given formatter.
 ///
-/// # Example
+/// ## Example
 /// ```
 /// use std::fmt::{write, SliceFormatter};
 /// let buf: [u8; 64];
@@ -90,7 +93,7 @@ macro writeln($fmt, $fmt_str, $arg...) {
 
 /// Format a string into a `StringBuf`.
 ///
-/// # Example
+/// ## Example
 /// ```
 /// use std::fmt::format;
 /// use std::string::StringBuf;
@@ -115,7 +118,7 @@ macro format($fmt_str, $arg...) {
 ///
 /// Returns an error if the buffer is not large enough.
 ///
-/// # Example
+/// ## Example
 /// ```
 /// use std::fmt::format_in;
 ///
@@ -469,7 +472,7 @@ mod internal {
 
 /// Write value as a hexadecimal number
 ///
-/// # Example
+/// ## Example
 /// ```
 /// use std::fmt::hex;
 ///
@@ -481,7 +484,7 @@ fn hex<T: builtins::Integer>(val: T) -> internal::NumFormatAdapter<T> {
 
 /// Write value as a binary number
 ///
-/// # Example
+/// ## Example
 /// ```
 /// use std::fmt::bin;
 ///
@@ -493,7 +496,7 @@ fn bin<T: builtins::Integer>(val: T) -> internal::NumFormatAdapter<T> {
 
 /// Write value as an octal number
 ///
-/// # Example
+/// ## Example
 /// ```
 /// use std::fmt::oct;
 ///
@@ -505,7 +508,7 @@ fn oct<T: builtins::Integer>(val: T) -> internal::NumFormatAdapter<T> {
 
 /// Pads number with zeros on the left.
 ///
-/// # Example
+/// ## Example
 /// ```
 /// use std::fmt::zero_pad;
 ///
@@ -521,7 +524,7 @@ fn precision<T: builtins::FloatingPoint>(val: T, prec: u16) -> internal::FloatFo
 
 /// Repeats value `times` times.
 ///
-/// # Example
+/// ## Example
 /// ```
 /// use std::fmt::repeat;
 ///
@@ -533,7 +536,7 @@ fn repeat<T: Formattable<T>>(inner: T, times: usize) -> internal::RepeatAdapter<
 
 /// Pads arbitrary formattable value on the left with a specified character.
 ///
-/// # Example
+/// ## Example
 /// ```
 /// use std::fmt::pad_with;
 ///

@@ -59,17 +59,18 @@ protocol Comparable<Self: Equatable<Self>> {
 
 /// A wrapper that can be used to reverse the ordering of a Comparable.
 ///
-/// # Example
-
+/// See [reversed] for details.
 struct Reversed<T: Comparable<T>> {
     value: &T,
 }
 
 impl Reversed<T: Comparable<T>> {
+    /// @ Comparable::compare
     fn compare(self: &Reversed<T>, other: &Reversed<T>) -> Ordering {
         other.value.compare(self.value)
     }
 
+    /// @ Equatable::equals
     fn equals(self: &Reversed<T>, other: &Reversed<T>) -> bool {
         self.value.equals(other.value)
     }
@@ -78,6 +79,17 @@ impl Reversed<T: Comparable<T>> {
     mixin Comparable<Reversed<T>>;
 }
 
+/// Reverses the ordering of a Comparable.
+///
+/// ## Example
+/// ```
+/// use std::cmp::{sort_by, reversed};
+///
+/// let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
+/// slice.sort_by(reversed::<i32>);
+///
+/// assert_eq!(slice, &[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
+/// ```
 fn reversed<T: Comparable<T>>(value: &T) -> Reversed<T> {
     Reversed { value: value }
 }
@@ -87,7 +99,7 @@ fn reversed<T: Comparable<T>>(value: &T) -> Reversed<T> {
 /// The macro will short-ciricuit the enclosuing function if `lhs` and `rhs` are not equal
 /// and continue if they are.
 ///
-/// # Example
+/// ## Example
 /// ```
 /// use std::cmp::{Ordering, Comparable, lexicographic_cmp};
 ///
@@ -118,6 +130,12 @@ macro lexicographic_cmp($lhs, $rhs) {
 }
 
 /// Returns the greater of the two arguments.
+/// ## Example
+/// ```
+/// use std::cmp::max;
+///
+/// assert_eq!(max(1, 2), 2);
+/// ```
 #[inline]
 fn max<T: Comparable<T>>(a: T, b: T) -> T {
     if a < b {
@@ -128,6 +146,12 @@ fn max<T: Comparable<T>>(a: T, b: T) -> T {
 }
 
 /// Returns the least of the two arguments.
+/// ## Example
+/// ```
+/// use std::cmp::min;
+///
+/// assert_eq!(min(1, 2), 1);
+/// ```
 #[inline]
 fn min<T: Comparable<T>>(a: T, b: T) -> T {
     if a < b {
@@ -139,7 +163,7 @@ fn min<T: Comparable<T>>(a: T, b: T) -> T {
 
 /// Sorts a slice using a key extraction function.
 ///
-/// # Example
+/// ## Example
 /// ```
 /// use std::cmp::sort_by;
 ///
@@ -162,7 +186,7 @@ fn sort_by<T, F: builtins::Callable<(&T), K>, K: Comparable<K>>(arr: &mut [T], k
 ///
 /// Uses quicksort with naive partitioning. Sort is not stable.
 ///
-/// # Example
+/// ## Example
 /// ```
 /// use std::cmp::sort;
 ///

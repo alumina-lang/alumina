@@ -10,6 +10,17 @@ const MICROS_PER_SEC: u64 = 1000000;
 ///
 /// This is typically a reading from a high-precision monotonic clock and not the wall-clock. It is useful
 /// for measuring durations between two points in time.
+///
+/// ## Example
+/// ```
+/// use std::time::{Instant, Duration};
+/// use std::thread::sleep;
+///
+/// let start = Instant::now();
+/// sleep(Duration::from_millis(500));
+///
+/// assert!(Instant::now().duration_since(&start).total_secs() >= 0.5);
+/// ```
 struct Instant {
     #[cfg(not(target_os = "macos"))]
     spec: libc::timespec,
@@ -167,6 +178,18 @@ impl Instant {
 ///
 /// Duration is signed, unlike Rust, which only supports non-negative durations. It is assumed
 /// to always be normalized, i.e. 0 <= `nanos` < [NANOS_PER_SEC].
+///
+/// ## Example
+/// ```
+/// use std::time::Duration;
+///
+/// let d = Duration::zero();
+/// d = d.add(&Duration::from_nanos(700000000));
+/// d = d.sub(&Duration::from_micros(200000));
+/// d = d.add(&Duration::from_millis(1500));
+///
+/// assert_eq!(d, Duration::from_secs(2));
+/// ```
 struct Duration {
     secs: i64,
     nanos: u32,
@@ -187,7 +210,7 @@ impl Duration {
     }
 
 
-    /// Returns `true` if durationis negative, `false` otherwise
+    /// Returns `true` if duration is negative, `false` otherwise
     #[inline]
     fn is_negative(self: Duration) -> bool {
         self.secs < 0
