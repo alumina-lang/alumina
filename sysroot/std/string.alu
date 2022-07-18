@@ -1,5 +1,7 @@
 //! String functions
-
+//!
+//! Alumina is not Unicode-aware and strings are simply byte slices (`&[u8]`) without
+//! any assumed encoding.
 use std::option::Option;
 
 const RADIX_DIGITS = "0123456789abcdefghijklmnopqrstuvwxyz";
@@ -37,6 +39,14 @@ fn to_upper(self: u8) -> u8 {
 }
 
 /// Returns `true` if string starts with the given prefix, `false` otherwise.
+///
+/// ## Example
+/// ```
+/// use std::string::starts_with;
+///
+/// assert!("hello world".starts_with("hello"));
+/// assert!(!"hello world".starts_with("world"));
+/// ```
 fn starts_with(self: &[u8], prefix: &[u8]) -> bool {
     if self.len < prefix.len {
         return false;
@@ -45,6 +55,14 @@ fn starts_with(self: &[u8], prefix: &[u8]) -> bool {
 }
 
 /// Returns `true` if string ends with the given suffix, `false` otherwise.
+///
+/// ## Example
+/// ```
+/// use std::string::ends_with;
+///
+/// assert!("hello world".ends_with("world"));
+/// assert!(!"hello world".ends_with("hello"));
+/// ```
 fn ends_with(self: &[u8], suffix: &[u8]) -> bool {
     if self.len < suffix.len {
         return false;
@@ -55,6 +73,14 @@ fn ends_with(self: &[u8], suffix: &[u8]) -> bool {
 /// Return string without the given prefix.
 ///
 /// If the string does not start with the given prefix, returns the string unchanged.
+///
+/// ## Example
+/// ```
+/// use std::string::trim_prefix;
+///
+/// assert_eq!("hello world".trim_prefix("hello"), " world");
+/// assert_eq!("hello world".trim_prefix("world"), "hello world");
+/// ```
 fn trim_prefix(self: &[u8], prefix: &[u8]) -> &[u8] {
     if self.starts_with(prefix) {
         self[prefix.len..]
@@ -66,9 +92,17 @@ fn trim_prefix(self: &[u8], prefix: &[u8]) -> &[u8] {
 /// Return string without the given suffix.
 ///
 /// If the string does not end with the given suffix, returns the string unchanged.
+///
+/// ## Example
+/// ```
+/// use std::string::trim_suffix;
+///
+/// assert_eq!("hello world".trim_suffix("world"), "hello ");
+/// assert_eq!("hello world".trim_suffix("hello"), "hello world");
+/// ```
 fn trim_suffix(self: &[u8], suffix: &[u8]) -> &[u8] {
     if self.ends_with(suffix) {
-        &self[..self.len - suffix.len]
+        self[..self.len - suffix.len]
     } else {
         self
     }
@@ -78,6 +112,14 @@ fn trim_suffix(self: &[u8], suffix: &[u8]) -> &[u8] {
 ///
 /// It returns the index of the first occurrence of `needle` in `haystack`, or `Option::none()` if
 /// `needle` is not part of `haystack`.
+///
+/// ## Example
+/// ```
+/// use std::string::find;
+///
+/// assert_eq!("hello world".find("world"), Option::some(6usize));
+/// assert_eq!("hello world".find("worldx"), Option::none());
+/// ```
 fn find(self: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.len == 0 {
         return Option::some(0usize);
@@ -101,7 +143,15 @@ fn find(self: &[u8], needle: &[u8]) -> Option<usize> {
     }
 }
 
-/// Finds the first occurrence of a character in a string.
+/// Finds the index of the first occurrence of a character in a string.
+///
+/// ## Example
+/// ```
+/// use std::string::find_char;
+///
+/// assert_eq!("hello world".find_char('o'), Option::some(4usize));
+/// assert_eq!("hello world".find_char('x'), Option::none());
+/// ```
 fn find_char(self: &[u8], needle: u8) -> Option<usize> {
     let p = libc::memchr(
         self.ptr as &void,
@@ -117,11 +167,26 @@ fn find_char(self: &[u8], needle: u8) -> Option<usize> {
 }
 
 /// Returns `true` if `needle` is a substring of self, `false` otherwise.
+///
+/// ## Example
+/// ```
+/// use std::string::contains;
+///
+/// assert!("hello world".contains("world"));
+/// assert!(!"hello world".contains("chtulhu"));
+/// ```
 fn contains(self: &[u8], needle: &[u8]) -> bool {
     self.find(needle).is_some
 }
 
-/// Trims the whitespace from the start of the string.
+/// Trims ASCII whitespace from the start of the string.
+///
+/// ## Example
+/// ```
+/// use std::string::trim_start;
+///
+/// assert_eq!("  hello world   ".trim_start(), "hello world   ");
+/// ```
 fn trim_start(self: &[u8]) -> &[u8] {
     let i = 0usize;
     while i < self.len && self[i].is_whitespace() {
@@ -130,7 +195,14 @@ fn trim_start(self: &[u8]) -> &[u8] {
     self[i..]
 }
 
-/// Trims the whitespace from the end of the string.
+/// Trims ASCII whitespace from the end of the string.
+///
+/// ## Example
+/// ```
+/// use std::string::trim_end;
+///
+/// assert_eq!("  hello world   ".trim_end(), "  hello world");
+/// ```
 fn trim_end(self: &[u8]) -> &[u8] {
     let i = self.len;
     while i > 0 && self[i - 1].is_whitespace() {
@@ -140,6 +212,13 @@ fn trim_end(self: &[u8]) -> &[u8] {
 }
 
 /// Trims the whitespace from the start and end of the string.
+///
+/// ## Example
+/// ```
+/// use std::string::trim;
+///
+/// assert_eq!("  hello world   ".trim(), "hello world");
+/// ```
 fn trim(self: &[u8]) -> &[u8] {
     self.trim_start().trim_end()
 }
@@ -187,7 +266,7 @@ impl SplitIterator {
 
 /// Returns an iterator over the parts of the string split by the given delimiter.
 ///
-/// # Example
+/// ## Example
 /// ```
 /// use std::string::split;
 ///
@@ -237,7 +316,7 @@ fn replace(self: &[u8], needle: &[u8], replacement: &[u8]) -> StringBuf {
 /// Returns an object that formats to the string with all `needle` occurrences replaced with
 /// `replacement`.
 ///
-/// # Example
+/// ## Example
 /// ```
 /// use std::string::replace_fmt;
 ///
@@ -282,7 +361,7 @@ fn join<It: iter::Iterator<It, &[u8]>>(self: &[u8], iter: &mut It) -> StringBuf 
 
 /// Returns an object that formats to parts joined with the separartor.
 ///
-/// # Example
+/// ## Example
 /// ```
 /// use std::string::join_fmt;
 ///

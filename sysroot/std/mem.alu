@@ -88,6 +88,17 @@ impl slice {
     }
 
     /// Create a slice from a pointer and length
+    ///
+    /// ## Example
+    /// ```
+    /// use std::mem::slice;
+    ///
+    /// let arr = [1, 2, 3];
+    /// let ptr: &i32 = &arr[0];
+    ///
+    /// let slice = slice::from_raw(ptr, 2);
+    /// assert_eq!(slice, &[1, 2]);
+    /// ```
     #[force_inline]
     #[lang(slice_new)]
     fn from_raw<Ptr: Pointer>(ptr: Ptr, len: usize) -> slice<Ptr> {
@@ -97,6 +108,18 @@ impl slice {
     /// Allocates an array of specified size on the heap.
     ///
     /// The values are not initialized.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::mem::slice;
+    ///
+    /// let hw = "Hello, World!";
+    /// let s = slice::alloc::<u8>(hw.len);
+    /// defer s.free();
+    ///
+    /// hw.copy_to(&s[0]);
+    /// assert_eq!(hw, s);
+    /// ```
     fn alloc<T>(len: usize) -> &mut [T] {
         let ret: &mut [T];
         when T: builtins::ZeroSized {
@@ -441,11 +464,37 @@ fn alloc_zeroed<T>() -> &mut T {
 /// Frees a heap-allocated object
 ///
 /// The pointer must be allocated with the default allocator (`malloc`).
+///
+/// ## Example
+/// ```
+/// struct Box<T> { ptr: &mut T }
+/// impl Box<T> {
+///     fn new(value: T) -> Box<T> {
+///         let ptr = std::mem::alloc::<T>();
+///         *ptr = value;
+///         Box { ptr: ptr }
+///     }
+///
+///     fn free(value: &mut Box<T>) {
+///         std::mem::free(value);
+///     }
+/// }
+/// ```
 fn free<T>(a: &mut T) {
     libc::free(a as &mut void);
 }
 
 /// Memory size of for a given type in bytes.
+///
+/// ## Example
+/// ```
+/// use std::mem::size_of;
+///
+/// assert_eq!(size_of::<u8>(), 1);
+/// assert_eq!(size_of::<u16>(), 2);
+/// assert_eq!(size_of::<u32>(), 4);
+/// assert_eq!(size_of::<u64>(), 8);
+/// ```
 #[force_inline]
 fn size_of<T>() -> usize {
     intrinsics::size_of::<T>()
@@ -458,6 +507,19 @@ fn align_of<T>() -> usize {
 }
 
 /// Swaps the data in two memory locations.
+///
+/// ## Example
+/// ```
+/// use std::mem::swap;
+///
+/// let a = 1;
+/// let b = 2;
+///
+/// swap(&a, &b);
+///
+/// assert_eq!(a, 2);
+/// assert_eq!(b, 1);
+/// ```
 fn swap<T>(a: &mut T, b: &mut T) {
     let tmp = *a;
     *a = *b;
@@ -467,6 +529,16 @@ fn swap<T>(a: &mut T, b: &mut T) {
 /// Replaces a memory at location `a` with value `b`.
 ///
 /// The existing value is returned.
+///
+/// ## Example
+/// ```
+/// use std::mem::replace;
+///
+/// let a = 1;
+///
+/// assert_eq!(a.replace(2), 1);
+/// assert_eq!(a, 2);
+/// ```
 fn replace<T>(a: &mut T, b: T) -> T {
     swap(a, &b);
     b
@@ -483,7 +555,7 @@ fn zeroed<T>() -> T {
 
 /// Uninitialized object.
 ///
-/// Using the return value in any manner is undefined behavior.
+/// Using the return value is undefined behavior.
 #[force_inline]
 fn uninitialized<T>() -> T {
     let ret: T;
