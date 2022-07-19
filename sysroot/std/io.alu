@@ -694,6 +694,21 @@ fn read_byte<R: Readable<R>>(reader: &mut R) -> Result<u8> {
 /// Reads the stream into `buf` until a specific byte is encountered.
 ///
 /// The `delim` terminator is included.
+/// ## Example
+/// ```
+/// use std::io::{SliceReader, read_until};
+/// use std::string::StringBuf;
+///
+/// let stream = SliceReader::new("Hello\nWorld\n");
+/// let buf: StringBuf = StringBuf::new();
+/// defer buf.free();
+///
+/// stream.read_until('\n', &buf).unwrap();
+/// assert_eq!(buf.as_slice(), "Hello\n");
+/// buf.clear();
+/// stream.read_until('\n', &buf).unwrap();
+/// assert_eq!(buf.as_slice(), "World\n");
+/// ```
 fn read_until<R: BufferedReadable<R>>(r: &mut R, delim: u8, buf: &mut string::StringBuf) -> Result<usize> {
     use string::find_char;
 
@@ -722,6 +737,8 @@ fn read_until<R: BufferedReadable<R>>(r: &mut R, delim: u8, buf: &mut string::St
 ///
 /// An iterator over the lines of a buffered reader. The iterator maintains an internal
 /// heap-allocated buffer of the line's contents, which is reused between lines.
+///
+/// See also [lines].
 struct LineIterator<R: BufferedReadable<R>> {
     line_buf: string::StringBuf,
     reader: &mut R,
@@ -788,6 +805,26 @@ impl LineIterator<R: BufferedReadable<R>> {
     mixin iter::IteratorExt<LineIterator<R>, Result<&[u8]>>;
 }
 
+/// Return an iterator that yields the stream's contents line by line.
+///
+/// Both `\n` and `\r\n` are considered line terminators and they are omitted from the
+/// yielded lines.
+///
+/// The iterator allocates a buffer of the line's contents, so it should be [freed](LineIterator::free) when
+/// it is no longer needed.
+///
+/// ## Example
+/// ```
+/// use std::io::{SliceReader, lines};
+///
+/// let stream = SliceReader::new("Hello\nWorld\n");
+/// let lines = stream.lines();
+/// defer lines.free();
+///
+/// assert_eq!(lines.next(), Option::some(Result::ok("Hello")));
+/// assert_eq!(lines.next(), Option::some(Result::ok("World")));
+/// assert_eq!(lines.next(), Option::none());
+/// ```
 fn lines<R: BufferedReadable<R>>(reader: &mut R) -> LineIterator<R> {
     LineIterator::new(reader)
 }

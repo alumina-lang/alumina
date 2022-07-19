@@ -13,6 +13,57 @@ protocol Hasher<Self> {
 }
 
 /// Types that can be hashed.
+///
+/// The [Hashable::hash] method can be implemented directly or a default implementation can
+/// be mixed in, in which case the memory representation of the type is used as an input to
+/// the hash function.
+///
+/// This is only recommended if the memory layout of the type does not contain padding, as
+/// the value of the padding bytes may be unpredictable and cause undefined behavior.
+///
+/// ## Examples
+/// ### A default implementation
+/// ```
+/// struct FancyI32 { a: i32 }
+///
+/// impl FancyI32 {
+///    use std::hash::{Hashable, Hasher};
+///
+///    mixin<H: Hasher<H>> std::hash::Hashable<FancyI32, H>;
+/// }
+///
+/// use std::hash::{hash_of, DefaultHash};
+///
+/// let x = FancyI32 { a: 1 };
+/// let y = FancyI32 { a: 1 };
+/// let z = FancyI32 { a: 2 };
+///
+/// assert_eq!(hash_of::<FancyI32, DefaultHash>(x), hash_of::<FancyI32, DefaultHash>(y));
+/// assert_ne!(hash_of::<FancyI32, DefaultHash>(x), hash_of::<FancyI32, DefaultHash>(z));
+/// ```
+/// ### A custom implementation
+/// ```
+/// struct Foo { a: i32, b: &[u8], extra: u64 }
+///
+/// impl Foo {
+///     use std::hash::Hasher;
+///     fn hash<H: Hasher<H>>(self: &Foo, hasher: &mut H) {
+///         self.a.hash(hasher);
+///         self.b.hash(hasher);
+///         // Skip the `extra`, if two instances of `Foo` are otherwise equal,
+///         // but differ in the value of `extra`, they will hash to the same value.
+///     }
+/// }
+///
+/// use std::hash::{hash_of, DefaultHash};
+///
+/// let v1 = Foo { a: 1, b: "foo", extra: 0 };
+/// let v2 = Foo { a: 1, b: "foo", extra: 1 };
+/// let v3 = Foo { a: 1, b: "bar", extra: 0 };
+///
+/// assert_eq!(hash_of::<Foo, DefaultHash>(v1), hash_of::<Foo, DefaultHash>(v2));
+/// assert_ne!(hash_of::<Foo, DefaultHash>(v1), hash_of::<Foo, DefaultHash>(v3));
+/// ```
 protocol Hashable<Self, H: Hasher<H>> {
     /// Update hasher state with the contents of this object.
     ///

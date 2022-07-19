@@ -16,6 +16,7 @@ use once_cell::sync::OnceCell;
 pub enum IntrinsicKind {
     SizeOf,
     AlignOf,
+    ArrayLengthOf,
     TypeId,
     TypeName,
     Trap,
@@ -36,6 +37,7 @@ pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
         let mut map = HashMap::new();
         map.insert("size_of", IntrinsicKind::SizeOf);
         map.insert("align_of", IntrinsicKind::AlignOf);
+        map.insert("array_length_of", IntrinsicKind::ArrayLengthOf);
         map.insert("type_id", IntrinsicKind::TypeId);
         map.insert("type_name", IntrinsicKind::TypeName);
         map.insert("trap", IntrinsicKind::Trap);
@@ -122,6 +124,18 @@ impl<'ir> CompilerIntrinsics<'ir> {
         let id = interned as *const Ty<'ir> as usize;
 
         Ok(self.expressions.const_value(Value::USize(id)))
+    }
+
+    fn array_length_of(&self, ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
+        if let Ty::Array(_, len) = ty {
+            return Ok(self.expressions.const_value(Value::USize(*len)));
+        }
+
+        Err(CodeErrorKind::TypeMismatch(
+            "array".to_string(),
+            format!("{:?}", ty),
+        ))
+        .with_no_span()
     }
 
     fn compile_fail(&self, reason: ExprP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
@@ -267,6 +281,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
             IntrinsicKind::SizeOf => self.size_of(generic[0]),
             IntrinsicKind::AlignOf => self.align_of(generic[0]),
             IntrinsicKind::TypeId => self.type_id(generic[0]),
+            IntrinsicKind::ArrayLengthOf => self.array_length_of(generic[0]),
             IntrinsicKind::Trap => self.trap(),
             IntrinsicKind::CompileFail => self.compile_fail(args[0]),
             IntrinsicKind::CompileWarn => self.compile_warn(args[0], span),

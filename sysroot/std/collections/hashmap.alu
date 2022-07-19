@@ -162,6 +162,7 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     fn iter(self: &HashMap<K, V, H>) -> HashMapIterator<K, V> {
         HashMapIterator::<K, V> {
             inner: self._buckets.iter_ref(),
+            remaining: self._length
         }
     }
 
@@ -169,6 +170,7 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     fn iter_ref(self: &HashMap<K, V, H>) -> HashMapRefIterator<K, V> {
         HashMapRefIterator::<K, V> {
             inner: self._buckets.iter_ref(),
+            remaining: self._length
         }
     }
 
@@ -176,6 +178,7 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     fn iter_mut(self: &mut HashMap<K, V, H>) -> HashMapMutIterator<K, V> {
         HashMapMutIterator::<K, V> {
             inner: self._buckets.iter_mut(),
+            remaining: self._length
         }
     }
 
@@ -317,6 +320,7 @@ struct HashItem<T> {
 
 struct HashMapRefIterator<K, V> {
     inner: mem::SliceRefIterator<&HashItem<(K, V)>>,
+    remaining: usize
 }
 
 impl HashMapRefIterator<K, V> {
@@ -326,6 +330,7 @@ impl HashMapRefIterator<K, V> {
         loop {
             let entry = self.inner.next()?;
             if entry.state == State::Occupied {
+                self.remaining -= 1;
                 return Option::some((&entry.item.0, &entry.item.1));
             }
         }
@@ -338,10 +343,16 @@ impl HashMapRefIterator<K, V> {
         loop {
             let entry = self.inner.next_back()?;
             if entry.state == State::Occupied {
+                self.remaining -= 1;
                 return Option::some((&entry.item.0, &entry.item.1));
             }
         }
         Option::none()
+    }
+
+    /// @ iter::Iterator::size_hint
+    fn size_hint(self: &HashMapRefIterator<K, V>) -> Option<usize> {
+        Option::some(self.remaining)
     }
 
     mixin iter::Iterator<HashMapRefIterator<K, V>, (&K, &V)>;
@@ -352,6 +363,7 @@ impl HashMapRefIterator<K, V> {
 
 struct HashMapMutIterator<K, V> {
     inner: mem::SliceRefIterator<&mut HashItem<(K, V)>>,
+    remaining: usize
 }
 
 impl HashMapMutIterator<K, V> {
@@ -361,6 +373,7 @@ impl HashMapMutIterator<K, V> {
         loop {
             let entry = self.inner.next()?;
             if entry.state == State::Occupied {
+                self.remaining -= 1;
                 return Option::some((&entry.item.0 as &K, &entry.item.1));
             }
         }
@@ -373,10 +386,16 @@ impl HashMapMutIterator<K, V> {
         loop {
             let entry = self.inner.next_back()?;
             if entry.state == State::Occupied {
+                self.remaining -= 1;
                 return Option::some((&entry.item.0 as &K, &entry.item.1));
             }
         }
         Option::none()
+    }
+
+    /// @ iter::Iterator::size_hint
+    fn size_hint(self: &HashMapMutIterator<K, V>) -> Option<usize> {
+        Option::some(self.remaining)
     }
 
     mixin iter::Iterator<HashMapMutIterator<K, V>, (&K, &mut V)>;
@@ -387,6 +406,7 @@ impl HashMapMutIterator<K, V> {
 
 struct HashMapIterator<K, V> {
     inner: mem::SliceRefIterator<&HashItem<(K, V)>>,
+    remaining: usize,
 }
 
 impl HashMapIterator<K, V> {
@@ -396,6 +416,7 @@ impl HashMapIterator<K, V> {
         loop {
             let entry = self.inner.next()?;
             if entry.state == State::Occupied {
+                self.remaining -= 1;
                 return Option::some(entry.item);
             }
         }
@@ -408,10 +429,16 @@ impl HashMapIterator<K, V> {
         loop {
             let entry = self.inner.next_back()?;
             if entry.state == State::Occupied {
+                self.remaining -= 1;
                 return Option::some(entry.item);
             }
         }
         Option::none()
+    }
+
+    /// @ iter::Iterator::size_hint
+    fn size_hint(self: &HashMapIterator<K, V>) -> Option<usize> {
+        Option::some(self.remaining)
     }
 
     mixin iter::Iterator<HashMapIterator<K, V>, (K, V)>;
@@ -552,15 +579,19 @@ mod tests {
         map.insert(3, 5);
 
         let iter = map.iter();
+        assert_eq!(iter.size_hint(), Option::some(3usize));
         assert!(iter.next() == Option::some((1, 2)));
         assert!(iter.next() == Option::some((2, 4)));
         assert!(iter.next() == Option::some((3, 5)));
+        assert_eq!(iter.size_hint(), Option::some(0usize));
         assert!(iter.next() == Option::none());
 
         let iter = map.iter().rev();
+        assert_eq!(iter.size_hint(), Option::some(3usize));
         assert!(iter.next() == Option::some((3, 5)));
         assert!(iter.next() == Option::some((2, 4)));
         assert!(iter.next() == Option::some((1, 2)));
+        assert_eq!(iter.size_hint(), Option::some(0usize));
         assert!(iter.next() == Option::none());
     }
 
@@ -574,6 +605,7 @@ mod tests {
         map.insert(3, 5);
 
         let iter = map.iter_ref();
+        assert_eq!(iter.size_hint(), Option::some(3usize));
         let v = iter.next().unwrap();
         assert_eq!(*v.0, 1);
         assert_eq!(*v.1, 2);
@@ -583,10 +615,12 @@ mod tests {
         let v = iter.next().unwrap();
         assert_eq!(*v.0, 3);
         assert_eq!(*v.1, 5);
+        assert_eq!(iter.size_hint(), Option::some(0usize));
 
         assert!(!iter.next().is_some);
 
         let iter = map.iter_ref().rev();
+        assert_eq!(iter.size_hint(), Option::some(3usize));
         let v = iter.next().unwrap();
         assert_eq!(*v.0, 3);
         assert_eq!(*v.1, 5);
@@ -596,6 +630,7 @@ mod tests {
         let v = iter.next().unwrap();
         assert_eq!(*v.0, 1);
         assert_eq!(*v.1, 2);
+        assert_eq!(iter.size_hint(), Option::some(0usize));
 
         assert!(!iter.next().is_some);
     }
@@ -610,12 +645,14 @@ mod tests {
         map.insert(3, 5);
 
         let iter = map.iter_mut();
+        assert_eq!(iter.size_hint(), Option::some(3usize));
         let v = iter.next().unwrap();
         assert_eq!(*v.0, 1);
         assert_eq!(*v.1, 2);
         *v.1 = 100;
 
         let iter = map.iter_mut().rev();
+        assert_eq!(iter.size_hint(), Option::some(3usize));
         let v = iter.next().unwrap();
         assert_eq!(*v.0, 3);
         assert_eq!(*v.1, 5);

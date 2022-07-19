@@ -77,6 +77,9 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
     }
 
     /// Inserts a value into the set.
+    ///
+    /// Returns `true` if the value was newly inserted and `false` if the
+    /// set already contained the value.
     #[inline]
     fn insert(self: &mut HashSet<K, H>, item: K) -> bool {
         !self._inner.insert(item, ()).is_some
@@ -203,6 +206,11 @@ impl HashSetIterator<K> {
         self.inner.next_back().map(|v: (&K, &())| -> K { *v.0 })
     }
 
+    /// @ iter::Iterator::size_hint
+    fn size_hint(self: &HashSetIterator<K>) -> Option<usize> {
+        self.inner.size_hint()
+    }
+
     mixin iter::Iterator<HashSetIterator<K>, K>;
     mixin iter::IteratorExt<HashSetIterator<K>, K>;
     mixin iter::DoubleEndedIterator<HashSetIterator<K>, K>;
@@ -223,6 +231,11 @@ impl HashSetRefIterator<K> {
     /// @ iter::DoubleEndedIterator::next_back
     fn next_back(self: &mut HashSetRefIterator<K>) -> Option<&K> {
         self.inner.next_back().map(|v: (&K, &())| -> &K { v.0 })
+    }
+
+    /// @ iter::Iterator::size_hint
+    fn size_hint(self: &HashSetRefIterator<K>) -> Option<usize> {
+        self.inner.size_hint()
     }
 
     mixin iter::Iterator<HashSetRefIterator<K>, &K>;
@@ -329,12 +342,14 @@ mod tests {
         assert!(set.insert(2));
         assert!(set.insert(3));
         let iter = set.iter();
+        assert_eq!(iter.size_hint(), Option::some(3usize));
         assert_eq!(iter.next(), Option::some(1));
         assert_eq!(iter.next(), Option::some(2));
         assert_eq!(iter.next(), Option::some(3));
         assert_eq!(iter.next(), Option::none());
 
         let iter = set.iter().rev();
+        assert_eq!(iter.size_hint(), Option::some(3usize));
         assert_eq!(iter.next(), Option::some(3));
         assert_eq!(iter.next(), Option::some(2));
         assert_eq!(iter.next(), Option::some(1));
@@ -350,12 +365,14 @@ mod tests {
         assert!(set.insert(2));
         assert!(set.insert(3));
         let iter = set.iter_ref();
+        assert_eq!(iter.size_hint(), Option::some(3usize));
         assert_eq!(*iter.next().unwrap(), 1);
         assert_eq!(*iter.next().unwrap(), 2);
         assert_eq!(*iter.next().unwrap(), 3);
         assert!(!iter.next().is_some);
 
         let iter = set.iter_ref().rev();
+        assert_eq!(iter.size_hint(), Option::some(3usize));
         assert_eq!(*iter.next().unwrap(), 3);
         assert_eq!(*iter.next().unwrap(), 2);
         assert_eq!(*iter.next().unwrap(), 1);

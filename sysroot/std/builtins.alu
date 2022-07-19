@@ -18,16 +18,19 @@ use fmt::{Formatter};
 #[lang(builtin_void)]
 struct void {}
 impl void {
+    /// @ cmp::Equatable::equals
     #[force_inline]
     fn equals(lhs: &void, rhs: &void) -> bool {
         true
     }
 
+    /// @ cmp::Comparable::compare
     #[force_inline]
     fn compare(lhs: &void, rhs: &void) -> Ordering {
         Ordering::Equal
     }
 
+    /// @ hash::Hashable::hash
     #[force_inline]
     fn hash<H: Hasher<H>>(self: &void, hasher: &mut H) {
     }
@@ -40,11 +43,13 @@ impl void {
 #[lang(builtin_bool)]
 struct bool {}
 impl bool {
+    /// @ cmp::Equatable::equals
     #[force_inline]
     fn equals(lhs: &bool, rhs: &bool) -> bool {
         *lhs == *rhs
     }
 
+    /// @ cmp::Comparable::compare
     #[force_inline]
     fn compare(lhs: &bool, rhs: &bool) -> Ordering {
         if *lhs == *rhs {
@@ -56,10 +61,12 @@ impl bool {
         }
     }
 
+    /// @ hash::Hashable::hash
     fn hash<H: Hasher<H>>(self: &bool, hasher: &mut H) {
         hasher.write(mem::slice::from_raw(self as &u8, 1));
     }
 
+    /// @ fmt::Formattable::fmt
     fn fmt<F: Formatter<F>>(self: &bool, formatter: &mut F) -> Result<(), fmt::Error> {
         formatter.write_str(if *self { "true" } else { "false" })
     }
@@ -107,8 +114,11 @@ impl never {
 /// This mixin implements Equatable and Comparable for types that have natively implemented
 /// equality and comparison operators.
 protocol BuiltinComparable<Self: builtins::Numeric> {
+    /// @ cmp::Equatable::equals
     #[force_inline] fn equals(lhs: &Self, rhs: &Self) -> bool { *lhs == *rhs }
+    /// @ cmp::Equatable::not_equals
     #[force_inline] fn not_equals(lhs: &Self, rhs: &Self) -> bool { *lhs != *rhs }
+    /// @ cmp::Comparable::compare
     #[force_inline]
     fn compare(lhs: &Self, rhs: &Self) -> Ordering {
         if *lhs < *rhs {
@@ -120,39 +130,127 @@ protocol BuiltinComparable<Self: builtins::Numeric> {
         }
     }
 
+    /// @ cmp::Comparable::less_than
     #[force_inline] fn less_than(lhs: &Self, rhs: &Self) -> bool { *lhs < *rhs }
+    /// @ cmp::Comparable::less_than_or_equal
     #[force_inline] fn less_than_or_equal(lhs: &Self, rhs: &Self) -> bool { *lhs <= *rhs }
+    /// @ cmp::Comparable::greater_than
     #[force_inline] fn greater_than(lhs: &Self, rhs: &Self) -> bool { *lhs > *rhs }
+    /// @ cmp::Comparable::greater_than_or_equal
     #[force_inline] fn greater_than_or_equal(lhs: &Self, rhs: &Self) -> bool { *lhs >= *rhs }
 }
 
+/// Mixin for parsing integers from strings.
 protocol IntegerParsable<Self: builtins::Integer> {
+    /// Parses the integer from a base-10 string.
+    ///
+    /// If the string does not represent a valid integer, `Option::none()` is returned.
+    ///
+    /// # Example
+    /// ```
+    /// assert_eq!(i32::parse("10"), Option::some(10));
+    /// assert_eq!(i32::parse("foo"), Option::none());
+    /// ```
     #[inline]
     fn parse(s: &[u8]) -> Option<Self> {
         string::parse_integer::<Self>(s, 10)
     }
 
+    /// Parses the integer from a string in a given base.
+    ///
+    /// If the string does not represent a valid integer in the given base, `Option::none()` is
+    /// returned.
+    ///
+    /// # Example
+    /// ```
+    /// assert_eq!(i32::parse_with_radix("10", 2), Option::some(2));
+    /// assert_eq!(u64::parse_with_radix("deadbeef", 16), Option::some(0xdeadbeefu64));
+    /// assert_eq!(i32::parse_with_radix("foo", 10), Option::none());
+    /// ```
     #[inline]
     fn parse_with_radix(s: &[u8], radix: u16) -> Option<Self> {
         string::parse_integer::<Self>(s, radix)
     }
 }
 
+/// String formatting mixin for integers.
 protocol IntegerFormattable<Self: builtins::Integer, F: Formatter<F>> {
+    /// @ fmt::Formattable::fmt
     #[inline]
     fn fmt(self: &Self, formatter: &mut F) -> Result<(), fmt::Error> {
         fmt::internal::format_integer(*self, 10, 0, formatter)
     }
 }
 
+/// String formatting mixin for floating-point types.
 protocol FloatFormattable<Self: builtins::FloatingPoint, F: Formatter<F>> {
+    /// @ fmt::Formattable::fmt
     #[inline]
     fn fmt(self: &Self, formatter: &mut F) -> Result<(), fmt::Error> {
         fmt::internal::format_float(*self, formatter, 15)
     }
 }
 
+/// Bitwise operations on unsigned integers
 protocol BitOps<Self: builtins::Unsigned> {
+    /// Swaps the byte order (endianness) of the number.
+    #[inline]
+    fn swap_bytes(self: Self) -> Self {
+        when Self: usize {
+            #[cfg(target_pointer_width = "64")]
+            {
+                return (self as u64).swap_bytes() as usize
+            }
+            #[cfg(target_pointer_width = "32")]
+            {
+                return (self as u32).swap_bytes() as usize
+            }
+        }
+
+        when Self: u8 {
+            self
+        } else when Self: u16 {
+            (self >> 8) | (self << 8)
+        } else when Self: u32 {
+            (self >> 24)
+            | ((self >> 8) & 0x0000FF00u32)
+            | ((self << 8) & 0x00FF0000u32)
+            | (self << 24)
+        } else when Self: u64 {
+            (self >> 56)
+            | ((self >> 40) & 0x000000000000FF00u64)
+            | ((self >> 24) & 0x0000000000FF0000u64)
+            | ((self >> 8)  & 0x00000000FF000000u64)
+            | ((self << 8)  & 0x000000FF00000000u64)
+            | ((self << 24) & 0x0000FF0000000000u64)
+            | ((self << 40) & 0x00FF000000000000u64)
+            | (self << 56)
+        } else when Self: u128 {
+            (self >> 120)
+            | ((self >> 104) & 0x0000000000000000000000000000FF00u128)
+            | ((self >> 88) & 0x00000000000000000000000000FF0000u128)
+            | ((self >> 72) & 0x000000000000000000000000FF000000u128)
+            | ((self >> 56) & 0x0000000000000000000000FF00000000u128)
+            | ((self >> 40) & 0x00000000000000000000FF0000000000u128)
+            | ((self >> 24) & 0x000000000000000000FF000000000000u128)
+            | ((self >> 8)  & 0x0000000000000000FF00000000000000u128)
+            | ((self << 8)  & 0x00000000000000FF0000000000000000u128)
+            | ((self << 24) & 0x000000000000FF000000000000000000u128)
+            | ((self << 40) & 0x0000000000FF00000000000000000000u128)
+            | ((self << 56) & 0x00000000FF0000000000000000000000u128)
+            | ((self << 72) & 0x000000FF000000000000000000000000u128)
+            | ((self << 88) & 0x0000FF00000000000000000000000000u128)
+            | ((self << 104) & 0x00FF0000000000000000000000000000u128)
+            | (self << 120)
+        } else {
+            compile_fail!("unexpected integer type");
+        }
+    }
+
+    /// Converts the number into a big-endian representation.
+    ///
+    /// If the numbers of this type are represented in big-endian order on the target
+    /// architecture, then this is an identity function.
     #[inline]
     fn to_be(self: Self) -> Self {
         #[cfg(prince_of_denmark = "hamlet")]
@@ -169,11 +267,19 @@ protocol BitOps<Self: builtins::Unsigned> {
         }
     }
 
+    /// Converts the number from a big-endian representation.
+    ///
+    /// If the numbers of this type are represented in big-endian order on the target
+    /// architecture, then this is an identity function.
     #[inline]
     fn from_be(self: Self) -> Self {
         self.to_be()
     }
 
+    /// Converts the number into a little-endian representation.
+    ///
+    /// If the numbers of this type are represented in little-endian order on the target
+    /// architecture, then this is an identity function.
     #[inline]
     fn to_le(self: Self) -> Self {
         #[cfg(target_endian = "big")]
@@ -186,19 +292,161 @@ protocol BitOps<Self: builtins::Unsigned> {
         }
     }
 
+    /// Converts the number from a little-endian representation.
+    ///
+    /// If the numbers of this type are represented in little-endian order on the target
+    /// architecture, then this is an identity operation.
     #[inline]
     fn from_le(self: Self) -> Self {
         self.to_le()
     }
 
+    /// Returns the number of ones in the binary representation of the number.
     #[inline]
-    fn rotate_left(self: Self, shift: usize) -> Self {
-        (self << shift) | (self >> ((8 * mem::size_of::<Self>()) - shift))
+    fn count_ones(self: Self) -> u32 {
+        use libc::{c_int, c_ulong, c_ulonglong, c_uint};
+
+        when Self: usize {
+            #[cfg(target_pointer_width = "64")]
+            {
+                (self as u64).count_ones()
+            }
+            #[cfg(target_pointer_width = "32")]
+            {
+                (self as u32).count_ones()
+            }
+        }
+
+        let ret = when Self: u128 {
+            return ((self >> 64) as u64).count_ones() + (self as u64).count_ones();
+        } else when Self: c_ulonglong {
+            intrinsics::codegen_func::<c_int>("__builtin_popcountll", self)
+        } else when Self: c_ulong {
+            intrinsics::codegen_func::<c_int>("__builtin_popcountl", self)
+        } else {
+            intrinsics::codegen_func::<c_int>("__builtin_popcount", self as c_uint)
+        };
+
+        ret as u32
     }
 
+    /// Returns the number of zeros in the binary representation of the number.
     #[inline]
-    fn rotate_right(self: Self, shift: usize) -> Self {
-        (self >> shift) | (self << ((8 * mem::size_of::<Self>()) - shift))
+    fn count_zeros(self: Self) -> u32 {
+        (~self).count_ones()
+    }
+
+    /// Returns the number of leading zeros in the binary representation of the number.
+    #[inline]
+    fn leading_zeros(self: Self) -> u32 {
+        use libc::{c_int, c_ulong, c_uint, c_ulonglong};
+        use mem::size_of;
+
+        when Self: usize {
+            #[cfg(target_pointer_width = "64")]
+            {
+                return (self as u64).leading_zeros();
+            }
+            #[cfg(target_pointer_width = "32")]
+            {
+                return (self as u32).leading_zeros();
+            }
+        }
+
+        if self == 0 {
+            return (size_of::<Self>() * 8) as u32;
+        }
+
+        let ret = when Self: u128 {
+            let head = (self >> 64) as u64;
+            if head == 0 {
+                return (self as u64).leading_zeros() + 64;
+            } else {
+                return head.leading_zeros();
+            }
+        } else when Self: c_ulonglong {
+            intrinsics::codegen_func::<c_int>("__builtin_clzll", self)
+        } else when Self: c_ulong {
+            intrinsics::codegen_func::<c_int>("__builtin_clzl", self)
+        } else when Self: c_uint {
+            intrinsics::codegen_func::<c_int>("__builtin_clz", self)
+        } else {
+            let val =
+                ((self as c_uint) << (8 * (size_of::<c_uint>() - size_of::<Self>()))) |
+                (c_uint::max_value() >> (8 * size_of::<Self>()));
+
+            intrinsics::codegen_func::<c_int>("__builtin_clz", val)
+        };
+
+        ret as u32
+    }
+
+    /// Returns the number of trailing zeros in the binary representation of the number.
+    #[inline]
+    fn trailing_zeros(self: Self) -> u32 {
+        use libc::{c_int, c_ulong, c_uint, c_ulonglong};
+        use mem::size_of;
+
+        when Self: usize {
+            #[cfg(target_pointer_width = "64")]
+            {
+                return (self as u64).trailing_zeros();
+            }
+            #[cfg(target_pointer_width = "32")]
+            {
+                return (self as u32).trailing_zeros();
+            }
+        }
+
+        if self == 0 {
+            return (size_of::<Self>() * 8) as u32;
+        }
+
+        let ret = when Self: u128 {
+            let tail = self as u64;
+            if tail == 0 {
+                return ((self >> 64) as u64).trailing_zeros() + 64;
+            } else {
+                return tail.trailing_zeros();
+            }
+        } else when Self: c_ulonglong {
+            intrinsics::codegen_func::<c_int>("__builtin_ctzll", self)
+        } else when Self: c_ulong {
+            intrinsics::codegen_func::<c_int>("__builtin_ctzl", self)
+        } else when Self: c_uint {
+            intrinsics::codegen_func::<c_int>("__builtin_ctz", self)
+        } else {
+            let val =
+                (c_uint::max_value() << (8 * size_of::<Self>())) | (self as c_uint);
+
+            intrinsics::codegen_func::<c_int>("__builtin_ctz", val)
+        };
+
+        ret as u32
+    }
+
+    /// Returns the number of leading ones in the binary representation of the number.
+    #[inline]
+    fn leading_ones(self: Self) -> u32 {
+        (~self).leading_zeros()
+    }
+
+    /// Returns the number of trailing ones in the binary representation of the number.
+    #[inline]
+    fn trailing_ones(self: Self) -> u32 {
+        (~self).trailing_zeros()
+    }
+
+    /// Rotates the bits to the left by `n` bits.
+    #[inline]
+    fn rotate_left(self: Self, n: usize) -> Self {
+        (self << n) | (self >> ((8 * mem::size_of::<Self>()) - n))
+    }
+
+    /// Rotates the bits to the right by `n` bits.
+    #[inline]
+    fn rotate_right(self: Self, n: usize) -> Self {
+        (self >> n) | (self << ((8 * mem::size_of::<Self>()) - n))
     }
 }
 
@@ -212,19 +460,16 @@ impl u8 {
     mixin<F: Formatter<F>> IntegerFormattable<u8, F>;
     mixin IntegerParsable<u8>;
 
+    /// Returns the maximum value of `u8`.
     #[force_inline]
     fn max_value() -> u8 {
         0xffu8
     }
 
+    /// Returns the minimum value of `u8`.
     #[force_inline]
     fn min_value() -> u8 {
         0u8
-    }
-
-    #[inline]
-    fn swap_bytes(self: u8) -> u8 {
-        self
     }
 }
 
@@ -238,19 +483,16 @@ impl u16 {
     mixin<F: Formatter<F>> IntegerFormattable<u16, F>;
     mixin IntegerParsable<u16>;
 
+    /// Returns the maximum value of `u16`.
     #[force_inline]
     fn max_value() -> u16 {
         0xffffu16
     }
 
+    /// Returns the minimum value of `u16`.
     #[force_inline]
     fn min_value() -> u16 {
         0u16
-    }
-
-    #[inline]
-    fn swap_bytes(self: u16) -> u16 {
-        (self >> 8) | (self << 8)
     }
 }
 
@@ -264,22 +506,16 @@ impl u32 {
     mixin<F: Formatter<F>> IntegerFormattable<u32, F>;
     mixin IntegerParsable<u32>;
 
+    /// Returns the maximum value of `u32`.
     #[force_inline]
     fn max_value() -> u32 {
         0xffffffffu32
     }
 
+    /// Returns the minimum value of `u32`.
     #[force_inline]
     fn min_value() -> u32 {
         0u32
-    }
-
-    #[inline]
-    fn swap_bytes(self: u32) -> u32 {
-        (self >> 24)
-        | ((self >> 8) & 0x0000FF00u32)
-        | ((self << 8) & 0x00FF0000u32)
-        | (self << 24)
     }
 }
 
@@ -293,26 +529,16 @@ impl u64 {
     mixin<F: Formatter<F>> IntegerFormattable<u64, F>;
     mixin IntegerParsable<u64>;
 
+    /// Returns the maximum value of `u64`.
     #[force_inline]
     fn max_value() -> u64 {
         0xffffffffffffffffu64
     }
 
+    /// Returns the minimum value of `u64`.
     #[force_inline]
     fn min_value() -> u64 {
         0u64
-    }
-
-    #[inline]
-    fn swap_bytes(self: u64) -> u64 {
-        (self >> 56)
-        | ((self >> 40) & 0x000000000000FF00u64)
-        | ((self >> 24) & 0x0000000000FF0000u64)
-        | ((self >> 8)  & 0x00000000FF000000u64)
-        | ((self << 8)  & 0x000000FF00000000u64)
-        | ((self << 24) & 0x0000FF0000000000u64)
-        | ((self << 40) & 0x00FF000000000000u64)
-        | (self << 56)
     }
 }
 
@@ -326,41 +552,26 @@ impl u128 {
     mixin<F: Formatter<F>> IntegerFormattable<u128, F>;
     mixin IntegerParsable<u128>;
 
+    /// Returns the maximum value of `u128`.
     #[force_inline]
     fn max_value() -> u128 {
         0xffffffffffffffffffffffffffffffffu128
     }
 
+    /// Returns the minimum value of `u128`.
     #[force_inline]
     fn min_value() -> u128 {
         0u128
-    }
-
-    #[inline]
-    fn swap_bytes(self: u128) -> u128 {
-        (self >> 120)
-        | ((self >> 104) & 0x0000000000000000000000000000FF00u128)
-        | ((self >> 88) & 0x00000000000000000000000000FF0000u128)
-        | ((self >> 72) & 0x000000000000000000000000FF000000u128)
-        | ((self >> 56) & 0x0000000000000000000000FF00000000u128)
-        | ((self >> 40) & 0x00000000000000000000FF0000000000u128)
-        | ((self >> 24) & 0x000000000000000000FF000000000000u128)
-        | ((self >> 8)  & 0x0000000000000000FF00000000000000u128)
-        | ((self << 8)  & 0x00000000000000FF0000000000000000u128)
-        | ((self << 24) & 0x000000000000FF000000000000000000u128)
-        | ((self << 40) & 0x0000000000FF00000000000000000000u128)
-        | ((self << 56) & 0x00000000FF0000000000000000000000u128)
-        | ((self << 72) & 0x000000FF000000000000000000000000u128)
-        | ((self << 88) & 0x0000FF00000000000000000000000000u128)
-        | ((self << 104) & 0x00FF0000000000000000000000000000u128)
-        | (self << 120)
     }
 }
 
 /// Native unsigned integer (machine word)
 ///
-/// On 64-bit systems, `usize` is the same as `u64`. On 32-bit systems, `usize` is the same
-/// as `u32`.
+/// On 64-bit systems, `usize` is equivalent to [u64]. On 32-bit systems, `usize` is equivalent
+/// to [u32].
+///
+/// To help writing portable code, `usize` is a distinct type and not just a type alias.
+/// Conversions from `usize` to the equivalently sized unsigned integer require an explicit cast.
 #[lang(builtin_usize)]
 struct usize {}
 impl usize {
@@ -370,6 +581,7 @@ impl usize {
     mixin<F: Formatter<F>> IntegerFormattable<usize, F>;
     mixin IntegerParsable<usize>;
 
+    /// Returns the maximum value of `usize`.
     #[force_inline]
     fn max_value() -> usize {
         #[cfg(target_pointer_width = "32")]
@@ -382,6 +594,7 @@ impl usize {
         }
     }
 
+    /// Returns the minimum value of `usize`.
     #[force_inline]
     fn min_value() -> usize {
         #[cfg(target_pointer_width = "32")]
@@ -391,19 +604,6 @@ impl usize {
         #[cfg(target_pointer_width = "64")]
         {
             u64::min_value() as usize
-        }
-    }
-
-
-    #[inline]
-    fn swap_bytes(self: usize) -> usize {
-        #[cfg(target_pointer_width = "32")]
-        {
-            (self as u32).swap_bytes() as usize
-        }
-        #[cfg(target_pointer_width = "64")]
-        {
-            (self as u64).swap_bytes() as usize
         }
     }
 }
@@ -417,11 +617,13 @@ impl i8 {
     mixin<F: Formatter<F>> IntegerFormattable<i8, F>;
     mixin IntegerParsable<i8>;
 
+    /// Returns the maximum value of `i8`.
     #[force_inline]
     fn max_value() -> i8 {
         0x7fu8 as i8
     }
 
+    /// Returns the minimum value of `i8`.
     #[force_inline]
     fn min_value() -> i8 {
         0x80u8 as i8
@@ -437,11 +639,13 @@ impl i16 {
     mixin<F: Formatter<F>> IntegerFormattable<i16, F>;
     mixin IntegerParsable<i16>;
 
+    /// Returns the maximum value of `i16`.
     #[force_inline]
     fn max_value() -> i16 {
         0x7fffu16 as i16
     }
 
+    /// Returns the minimum value of `i16`.
     #[force_inline]
     fn min_value() -> i16 {
         0x8000u16 as i16
@@ -457,11 +661,13 @@ impl i32 {
     mixin<F: Formatter<F>> IntegerFormattable<i32, F>;
     mixin IntegerParsable<i32>;
 
+    /// Returns the maximum value of `i32`.
     #[force_inline]
     fn max_value() -> i32 {
         0x7fffffffu32 as i32
     }
 
+    /// Returns the minimum value of `i32`.
     #[force_inline]
     fn min_value() -> i32 {
         0x80000000u32 as i32
@@ -477,11 +683,13 @@ impl i64 {
     mixin<F: Formatter<F>> IntegerFormattable<i64, F>;
     mixin IntegerParsable<i64>;
 
+    /// Returns the maximum value of `i64`.
     #[force_inline]
     fn max_value() -> i64 {
         0x7fffffffffffffffu64 as i64
     }
 
+    /// Returns the minimum value of `i64`.
     #[force_inline]
     fn min_value() -> i64 {
         0x8000000000000000u64 as i64
@@ -497,11 +705,13 @@ impl i128 {
     mixin<F: Formatter<F>> IntegerFormattable<i128, F>;
     mixin IntegerParsable<i128>;
 
+    /// Returns the maximum value of `i128`.
     #[force_inline]
     fn max_value() -> i128 {
         0x7fffffffffffffffffffffffffffffffu128 as i128
     }
 
+    /// Returns the minimum value of `i128`.
     #[force_inline]
     fn min_value() -> i128 {
         0x80000000000000000000000000000000u128 as i128
@@ -517,6 +727,7 @@ impl isize {
     mixin<F: Formatter<F>> IntegerFormattable<isize, F>;
     mixin IntegerParsable<isize>;
 
+    /// Returns the maximum value of `isize`.
     #[force_inline]
     fn max_value() -> isize {
         #[cfg(target_pointer_width = "32")]
@@ -529,6 +740,7 @@ impl isize {
         }
     }
 
+    /// Returns the minimum value of `isize`.
     #[force_inline]
     fn min_value() -> isize {
         #[cfg(target_pointer_width = "32")]
@@ -542,32 +754,39 @@ impl isize {
     }
 }
 
+/// Mixin for common floating point functions
 protocol FloatOps<Self> {
+    /// Returns `NaN`.
     #[inline]
     fn nan() -> Self {
         (0.0 as Self) / (0.0 as Self)
     }
 
+    /// Returns a positive infinity.
     #[inline]
     fn infinity() -> Self {
         (1.0 as Self) / (0.0 as Self)
     }
 
+    /// Returns a negative infinity.
     #[inline]
     fn neg_infinity() -> Self {
         (-1.0 as Self) / (0.0 as Self)
     }
 
+    /// Returns `true` if the number is NaN, `false` otherwise.
     #[inline]
     fn is_nan(self: Self) -> bool {
         self != self
     }
 
+    /// Returns `true` if the number is infinite, `false` otherwise.
     #[inline]
     fn is_infinite(self: Self) -> bool {
         !self.is_nan() && !self.is_finite()
     }
 
+    /// Returns `true` if the number is neither infinite nor NaN, `false` otherwise.
     #[inline]
     fn is_finite(self: Self) -> bool {
         !self.is_nan() && self < Self::infinity() && self > Self::neg_infinity()
@@ -583,98 +802,118 @@ impl f32 {
     mixin<F: Formatter<F>> FloatFormattable<f32, F>;
     mixin FloatOps<f32>;
 
+    /// Returns `true` if the number has a negative sign, `false` otherwise.
     #[force_inline]
     fn is_sign_negative(self: f32) -> bool {
         let as_bits: u64 = util::transmute(self);
         as_bits & 0x80000000u64 != 0
     }
 
+    /// Returns the maximum value of `f32`.
     #[force_inline]
     fn max_value() -> f32 {
         3.40282347e+38f32
     }
 
+    /// Returns the minimum value of `f32`.
     #[force_inline]
     fn min_value() -> f32 {
         -3.40282347e+38f32
     }
 
+    /// Returns the smallest positive value of `f32`.
     #[force_inline]
     fn min_positive() -> f32 {
         1.17549435e-38f32
     }
 
+    /// Returns the machine epsilon for `f32`.
     #[force_inline]
     fn epsilon() -> f32 {
         1.19209290e-07f32
     }
 
+    /// Inverse cosine
     #[force_inline]
     fn acos(self: f32) -> f32 {
         libc::acosf(self)
     }
 
+    /// Inverse sine
     #[force_inline]
     fn asin(self: f32) -> f32 {
         libc::asinf(self)
     }
 
+    /// Inverse tangent
     #[force_inline]
     fn atan(self: f32) -> f32 {
         libc::atanf(self)
     }
 
+    /// Four-quadrant inverse tangent
     #[force_inline]
     fn atan2(self: f32, other: f32) -> f32 {
         libc::atan2f(self, other)
     }
 
+    /// Inverse hyperbolic cosine
     #[force_inline]
     fn atanh(self: f32) -> f32 {
         libc::atanhf(self)
     }
 
+    /// Cube root
     #[force_inline]
     fn cbrt(self: f32) -> f32 {
         libc::cbrtf(self)
     }
 
+    /// Ceiling of number
     #[force_inline]
     fn ceil(self: f32) -> f32 {
         libc::ceilf(self)
     }
 
+    /// Cosine
     #[force_inline]
     fn cos(self: f32) -> f32 {
         libc::cosf(self)
     }
 
+    /// Hyperbolic cosine
     #[force_inline]
     fn cosh(self: f32) -> f32 {
         libc::coshf(self)
     }
 
+    /// Gauss error function
     #[force_inline]
     fn erf(self: f32) -> f32 {
         libc::erff(self)
     }
 
+    /// Complementary error function (1 - [erf(self)](erf))
     #[force_inline]
     fn erfc(self: f32) -> f32 {
         libc::erfcf(self)
     }
 
+    /// Exponential function (e^`self`)
     #[force_inline]
     fn exp(self: f32) -> f32 {
         libc::expf(self)
     }
 
-
+    /// Floor of number
     #[force_inline]
     fn floor(self: f32) -> f32 {
         libc::floorf(self)
     }
 
+    /// Decomposes `self` into a normalized fractional part and an integral power of two.
+    ///
+    /// Inverse of [ldexp].
     #[force_inline]
     fn frexp(self: f32) -> (f32, i32) {
         let out: i32;
@@ -682,26 +921,33 @@ impl f32 {
         (val, out)
     }
 
+    /// Multiplies `self` by 2 raised to the power of `exp`.
+    ///
+    /// Inverse of [frexp].
     #[force_inline]
     fn ldexp(self: f32, exp: i32) -> f32 {
         libc::ldexpf(self, exp)
     }
 
+    /// Natural logarithm
     #[force_inline]
     fn log(self: f32) -> f32 {
         libc::logf(self)
     }
 
+    /// Base 2 logarithm
     #[force_inline]
     fn log2(self: f32) -> f32 {
         libc::log2f(self)
     }
 
+    /// Base 10 logarithm
     #[force_inline]
     fn log10(self: f32) -> f32 {
         libc::log10f(self)
     }
 
+    /// Decompose `self` into a whole and fractional part
     #[force_inline]
     fn modf(self: f32) -> (f32, f32) {
         let out: f32;
@@ -709,41 +955,51 @@ impl f32 {
         (out, val)
     }
 
+    /// Power function
     #[force_inline]
     fn pow(self: f32, other: f32) -> f32 {
         libc::powf(self, other)
     }
 
+    /// Rounds `self` to the closest integer.
+    ///
+    /// If the number is halfway between two integers, it is rounded away from zero.
     #[force_inline]
     fn round(self: f32) -> f32 {
         libc::roundf(self)
     }
 
+    /// Sine function
     #[force_inline]
     fn sin(self: f32) -> f32 {
         libc::sinf(self)
     }
 
+    /// Hyperbolic sine function
     #[force_inline]
     fn sinh(self: f32) -> f32 {
         libc::sinhf(self)
     }
 
+    /// Square root
     #[force_inline]
     fn sqrt(self: f32) -> f32 {
         libc::sqrtf(self)
     }
 
+    /// Tangent function
     #[force_inline]
     fn tan(self: f32) -> f32 {
         libc::tanf(self)
     }
 
+    /// Hyperbolic tangent function
     #[force_inline]
     fn tanh(self: f32) -> f32 {
         libc::tanhf(self)
     }
 
+    /// Returns the integer part of `self` (round towards zero).
     #[force_inline]
     fn trunc(self: f32) -> f32 {
         libc::truncf(self)
@@ -759,97 +1015,116 @@ impl f64 {
     mixin<F: Formatter<F>> FloatFormattable<f64, F>;
     mixin FloatOps<f64>;
 
+    /// @ f32::is_sign_negative
     #[force_inline]
     fn is_sign_negative(self: f64) -> bool {
         let as_bits: u64 = util::transmute(self);
         as_bits & 0x8000000000000000u64 != 0
     }
 
+    /// Returns the maximum value of `f64`
     #[force_inline]
     fn max_value() -> f64 {
         1.7976931348623157e+308f64
     }
 
+    /// Returns the minimum value of `f64`
     #[force_inline]
     fn min_value() -> f64 {
         -1.7976931348623157e+308f64
     }
 
+    /// Returns the smallest positive value of `f64`.
     #[force_inline]
     fn min_positive() -> f64 {
         2.2250738585072014e-308f64
     }
 
+    /// Returns the machine epsilon for `f64`.
     #[force_inline]
     fn epsilon() -> f64 {
         2.2204460492503131e-16f64
     }
 
+    /// @ f32::acos
     #[force_inline]
     fn acos(self: f64) -> f64 {
         libc::acos(self)
     }
 
+    /// @ f32::asin
     #[force_inline]
     fn asin(self: f64) -> f64 {
         libc::asin(self)
     }
 
+    /// @ f32::atan
     #[force_inline]
     fn atan(self: f64) -> f64 {
         libc::atan(self)
     }
 
+    /// @ f32::atan2
     #[force_inline]
     fn atan2(self: f64, other: f64) -> f64 {
         libc::atan2(self, other)
     }
 
+    /// @ f32::atanh
     #[force_inline]
     fn atanh(self: f64) -> f64 {
         libc::atanh(self)
     }
 
+    /// @ f32::cbrt
     #[force_inline]
     fn cbrt(self: f64) -> f64 {
         libc::cbrt(self)
     }
 
+    /// @ f32::ceil
     #[force_inline]
     fn ceil(self: f64) -> f64 {
         libc::ceil(self)
     }
 
+    /// @ f32::cos
     #[force_inline]
     fn cos(self: f64) -> f64 {
         libc::cos(self)
     }
 
+    /// @ f32::cosh
     #[force_inline]
     fn cosh(self: f64) -> f64 {
         libc::cosh(self)
     }
 
+    /// @ f32::erf
     #[force_inline]
     fn erf(self: f64) -> f64 {
         libc::erf(self)
     }
 
+    /// @ f32::erfc
     #[force_inline]
     fn erfc(self: f64) -> f64 {
         libc::erfc(self)
     }
 
+    /// @ f32::exp
     #[force_inline]
     fn exp(self: f64) -> f64 {
         libc::exp(self)
     }
 
+    /// @ f32::floor
     #[force_inline]
     fn floor(self: f64) -> f64 {
         libc::floor(self)
     }
 
+    /// @ f32::frexp
     #[force_inline]
     fn frexp(self: f64) -> (f64, i32) {
         let out: i32;
@@ -857,26 +1132,31 @@ impl f64 {
         (val, out)
     }
 
+    /// @ f32::ldexp
     #[force_inline]
     fn ldexp(self: f64, exp: i32) -> f64 {
         libc::ldexp(self, exp)
     }
 
+    /// @ f32::log
     #[force_inline]
     fn log(self: f64) -> f64 {
         libc::log(self)
     }
 
+    /// @ f32::log2
     #[force_inline]
     fn log2(self: f64) -> f64 {
         libc::log2(self)
     }
 
+    /// @ f32::log10
     #[force_inline]
     fn log10(self: f64) -> f64 {
         libc::log10(self)
     }
 
+    /// @ f32::modf
     #[force_inline]
     fn modf(self: f64) -> (f64, f64) {
         let out: f64;
@@ -884,41 +1164,49 @@ impl f64 {
         (out, val)
     }
 
+    /// @ f32::pow
     #[force_inline]
     fn pow(self: f64, other: f64) -> f64 {
         libc::pow(self, other)
     }
 
+    /// @ f32::round
     #[force_inline]
     fn round(self: f64) -> f64 {
         libc::round(self)
     }
 
+    /// @ f32::sin
     #[force_inline]
     fn sin(self: f64) -> f64 {
         libc::sin(self)
     }
 
+    /// @ f32::sinh
     #[force_inline]
     fn sinh(self: f64) -> f64 {
         libc::sinh(self)
     }
 
+    /// @ f32::sqrt
     #[force_inline]
     fn sqrt(self: f64) -> f64 {
         libc::sqrt(self)
     }
 
+    /// @ f32::tan
     #[force_inline]
     fn tan(self: f64) -> f64 {
         libc::tan(self)
     }
 
+    /// @ f32::tanh
     #[force_inline]
     fn tanh(self: f64) -> f64 {
         libc::tanh(self)
     }
 
+    /// @ f32::trunc
     #[force_inline]
     fn trunc(self: f64) -> f64 {
         libc::trunc(self)
@@ -926,19 +1214,43 @@ impl f64 {
 }
 
 /// Fixed size arrays
+///
+/// Working with slices is often more convenient than working with arrays. See also
+/// [mem::slice] for methods on slices.
 #[lang(builtin_array)]
 struct array {}
 impl array<Arr: builtins::Array> {
+    /// Returns a slice covering the entire array.
     #[force_inline]
     fn as_slice(self: &Arr) -> &[element_of<Arr>] {
         self
     }
 
+    /// Returns a mutable slice covering the entire array.
     #[force_inline]
     fn as_slice_mut(self: &mut Arr) -> &mut [element_of<Arr>] {
         self
     }
 
+    /// Returns a pointer to the first element.
+    #[force_inline]
+    fn as_ptr(self: &Arr) -> &element_of<Arr> {
+        &self[0]
+    }
+
+    /// Returns a mutable pointer to the first element.
+    #[force_inline]
+    fn as_ptr_mut(self: &mut Arr) -> &mut element_of<Arr> {
+        &self[0]
+    }
+
+    /// Returns the number of elements in the array
+    #[force_inline]
+    fn len(self: &Arr) -> usize {
+        intrinsics::array_length_of::<Arr>()
+    }
+
+    /// @ iter::Iterable::iter
     #[inline]
     fn iter(self: &Arr) -> mem::SliceIterator<&element_of<Arr>> {
         self.as_slice().iter()
@@ -951,41 +1263,113 @@ impl array<Arr: builtins::Array> {
 // yet sufficiently powerful for this.
 
 /// Signed integer type of the same size as the original type.
+///
+/// ## Example
+/// ```
+/// use std::builtins::signed_of;
+///
+/// let v: signed_of<u32>; // v is `i32`
+/// let v: signed_of<usize>; // v is `isize`
+/// ```
 #[lang(typeop_signed_of)]
 struct signed_of<T: builtins::Integer> {}
 
-/// Element type of the provided array
-#[lang(typeop_element_of)]
-struct element_of<T: builtins::Array> {}
-
 /// Unsigned integer type of the same size as the original type.
+///
+/// ## Example
+/// ```
+/// use std::builtins::unsigned_of;
+///
+/// let v: unsigned_of<i32>; // v is `u32`
+/// let v: unsigned_of<isize>; // v is `usize`
+/// ```
 #[lang(typeop_unsigned_of)]
 struct unsigned_of<T: builtins::Integer> {}
 
+/// Element type of the provided array
+///
+/// ## Example
+/// ```
+/// use std::builtins::element_of;
+///
+/// let v: element_of<[i32; 3]>; // v is `i32`
+/// ```
+#[lang(typeop_element_of)]
+struct element_of<T: builtins::Array> {}
+
 /// Type of the pointed-to value
+///
+/// ## Example
+/// ```
+/// use std::builtins::deref_of;
+///
+/// let v: deref_of<&i32>; // v is `i32`
+/// let v: deref_of<&mut i32>; // v is `i32`
+/// ```
 #[lang(typeop_deref_of)]
 struct deref_of<T: builtins::Pointer> {}
 
 /// Type of the first element of the provided tuple
+///
+/// ## Example
+/// ```
+/// use std::builtins::tuple_head_of;
+///
+/// let v: tuple_head_of<(i32, u8, ())>; // v is `i32`
+/// ```
 #[lang(typeop_tuple_head_of)]
 struct tuple_head_of<T: builtins::Tuple> {}
 
 /// Tuple type equivalent to the provided one without the first element
+///
+/// ## Example
+/// ```
+/// use std::builtins::tuple_tail_of;
+///
+/// let v: tuple_tail_of<(i32, u8, ())>; // v is `(u8, ())`
+/// ```
 #[lang(typeop_tuple_tail_of)]
 struct tuple_tail_of<T: builtins::Tuple> {}
 
 /// Return type of the provided function
+///
+/// ## Example
+/// ```
+/// use std::builtins::return_type_of;
+///
+/// fn add(x: i32, y: i32) -> i32 { x + y }
+///
+/// let v: return_type_of<add>; // v is `i32`
+/// let v: return_type_of<fn() -> u8>; // v is `u8`
+/// ```
 #[lang(typeop_return_type_of)]
 struct return_type_of<T> {}
 
 /// Tuple of argument types of the provided function
+///
+/// ## Example
+/// ```
+/// use std::builtins::arguments_of;
+///
+/// fn add(x: i32, y: i32) -> i32 { x + y }
+///
+/// let v: arguments_of<add>; // v is `(i32, i32)`
+/// let v: arguments_of<fn() -> u8>; // v is `()`
+/// ```
 #[lang(typeop_arguments_of)]
 struct arguments_of<T> {}
 
 /// Void pointer type of the same constness as the provided pointer type.
+///
+/// ## Example
+/// ```
+/// use std::builtins::void_ptr_of;
+///
+/// let v: void_ptr_of<&i32>; // v is `&()`
+/// let v: void_ptr_of<&mut i32>; // v is `&mut ()`
+/// ```
 #[lang(typeop_void_ptr_of)]
 struct void_ptr_of<T: Pointer> {}
-
 
 /// Matches any type
 #[lang(proto_any)] protocol Any {}
@@ -1138,5 +1522,92 @@ mod tests {
         assert_eq!(type_id::<deref_of<deref_of<&&mut u8>>>(), type_id::<u8>());
         assert_eq!(type_id::<deref_of<deref_of<&mut &mut u8>>>(), type_id::<u8>());
         assert_eq!(type_id::<deref_of<deref_of<&mut &u8>>>(), type_id::<u8>());
+    }
+
+    #[test]
+    fn test_trailing_bits() {
+        assert_eq!(0u8.trailing_zeros(), 8);
+        assert_eq!(0u16.trailing_zeros(), 16);
+        assert_eq!(0u32.trailing_zeros(), 32);
+        assert_eq!(0u64.trailing_zeros(), 64);
+        assert_eq!(0u128.trailing_zeros(), 128);
+
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(0usize.trailing_zeros(), 64);
+        #[cfg(target_pointer_width = "32")]
+        assert_eq!(0usize.trailing_zeros(), 32);
+
+        assert_eq!(15u8.trailing_ones(), 4);
+        assert_eq!(15u16.trailing_ones(), 4);
+        assert_eq!(15u32.trailing_ones(), 4);
+        assert_eq!(15u64.trailing_ones(), 4);
+        assert_eq!(15u128.trailing_ones(), 4);
+        assert_eq!(15usize.trailing_ones(), 4);
+
+        assert_eq!(16u8.trailing_zeros(), 4);
+        assert_eq!(16u16.trailing_zeros(), 4);
+        assert_eq!(16u32.trailing_zeros(), 4);
+        assert_eq!(16u64.trailing_zeros(), 4);
+        assert_eq!(16u128.trailing_zeros(), 4);
+        assert_eq!(16usize.trailing_zeros(), 4);
+    }
+
+    #[test]
+    fn test_leading_bits() {
+        assert_eq!(0u8.leading_zeros(), 8);
+        assert_eq!(0u16.leading_zeros(), 16);
+        assert_eq!(0u32.leading_zeros(), 32);
+        assert_eq!(0u64.leading_zeros(), 64);
+        assert_eq!(0u128.leading_zeros(), 128);
+
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(0usize.leading_zeros(), 64);
+        #[cfg(target_pointer_width = "32")]
+        assert_eq!(0usize.leading_zeros(), 32);
+
+        assert_eq!(15u8.leading_ones(), 0);
+        assert_eq!(15u16.leading_ones(), 0);
+        assert_eq!(15u32.leading_ones(), 0);
+        assert_eq!(15u64.leading_ones(), 0);
+        assert_eq!(15u128.leading_ones(), 0);
+        assert_eq!(15usize.leading_ones(), 0);
+
+        assert_eq!(16u8.leading_zeros(), 3;
+        assert_eq!(16u16.leading_zeros(), 11);
+        assert_eq!(16u32.leading_zeros(), 27);
+        assert_eq!(16u64.leading_zeros(), 59);
+        assert_eq!(16u128.leading_zeros(), 123);
+    }
+
+    #[test]
+    fn test_popcount() {
+        assert_eq!(0xaau8.count_ones(), 4);
+        assert_eq!(0xaaaau16.count_ones(), 8);
+        assert_eq!(0xaaaaaaaau32.count_ones(), 16);
+        assert_eq!(0xaaaaaaaaaaaaaaaau64.count_ones(), 32);
+        assert_eq!(0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaau128.count_ones(), 64);
+
+        assert_eq!(0xaaaaaaaausize.count_ones(), 16);
+
+        assert_eq!(0xaau8.count_zeros(), 4);
+        assert_eq!(0xaaaau16.count_zeros(), 8);
+        assert_eq!(0xaaaaaaaau32.count_zeros(), 16);
+        assert_eq!(0xaaaaaaaaaaaaaaaau64.count_zeros(), 32);
+        assert_eq!(0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaau128.count_zeros(), 64);
+
+        assert_eq!(0xaaaaaaaausize.count_zeros(), 16);
+    }
+
+    #[test]
+    fn test_array_length() {
+        let f1: [u8; 0];
+        let f2: [u8; 1];
+        let f3: [(); 0];
+        let f4: [(); 10];
+
+        assert_eq!(f1.len(), 0);
+        assert_eq!(f2.len(), 1);
+        assert_eq!(f3.len(), 0);
+        assert_eq!(f4.len(), 10);
     }
 }
