@@ -54,11 +54,66 @@
 H: <a href="/std/hash/Hasher.html"><span class="identifier-type">Hasher</span></a>&lt;H&gt;</div>
 </h3>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/hash.alu#L16-L25"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/hash.alu#L67-L76"/>source</a>
 </div>
 </div>
 <p>
 Types that can be hashed.
+</p><p>
+The <a class="path-link" href="/std/hash/Hashable.html#item.hash">hash</a> method can be implemented directly or a default implementation can
+be mixed in, in which case the memory representation of the type is used as an input to
+the hash function.
+</p><p>
+This is only recommended if the memory layout of the type does not contain padding, as
+the value of the padding bytes may be unpredictable and cause undefined behavior.
+</p><p>
+</p>
+<h3> Examples</h3>
+<p>
+</p>
+<h4> A default implementation</h4>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">struct FancyI32 { a: i32 }
+
+impl FancyI32 {
+   use std::hash::{Hashable, Hasher};
+
+   mixin&lt;H: Hasher&lt;H&gt;&gt; std::hash::Hashable&lt;FancyI32, H&gt;;
+}
+
+use std::hash::{hash_of, DefaultHash};
+
+let x = FancyI32 { a: 1 };
+let y = FancyI32 { a: 1 };
+let z = FancyI32 { a: 2 };
+
+assert_eq!(hash_of::&lt;FancyI32, DefaultHash&gt;(x), hash_of::&lt;FancyI32, DefaultHash&gt;(y));
+assert_ne!(hash_of::&lt;FancyI32, DefaultHash&gt;(x), hash_of::&lt;FancyI32, DefaultHash&gt;(z));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20struct%20FancyI32%20%7b%20a%3a%20i32%20%7d%0a%20%20%20%0a%20%20%20impl%20FancyI32%20%7b%0a%20%20%20%20%20%20use%20std%3a%3ahash%3a%3a%7bHashable%2c%20Hasher%7d%3b%0a%20%20%20%0a%20%20%20%20%20%20mixin%3cH%3a%20Hasher%3cH%3e%3e%20std%3a%3ahash%3a%3aHashable%3cFancyI32%2c%20H%3e%3b%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20use%20std%3a%3ahash%3a%3a%7bhash%5fof%2c%20DefaultHash%7d%3b%0a%20%20%20%0a%20%20%20let%20x%20%3d%20FancyI32%20%7b%20a%3a%201%20%7d%3b%0a%20%20%20let%20y%20%3d%20FancyI32%20%7b%20a%3a%201%20%7d%3b%0a%20%20%20let%20z%20%3d%20FancyI32%20%7b%20a%3a%202%20%7d%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28hash%5fof%3a%3a%3cFancyI32%2c%20DefaultHash%3e%28x%29%2c%20hash%5fof%3a%3a%3cFancyI32%2c%20DefaultHash%3e%28y%29%29%3b%0a%20%20%20assert%5fne%21%28hash%5fof%3a%3a%3cFancyI32%2c%20DefaultHash%3e%28x%29%2c%20hash%5fof%3a%3a%3cFancyI32%2c%20DefaultHash%3e%28z%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p>
+<h4> A custom implementation</h4>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">struct Foo { a: i32, b: &amp;[u8], extra: u64 }
+
+impl Foo {
+    use std::hash::Hasher;
+    fn hash&lt;H: Hasher&lt;H&gt;&gt;(self: &amp;Foo, hasher: &amp;mut H) {
+        self.a.hash(hasher);
+        self.b.hash(hasher);
+        // Skip the `extra`, if two instances of `Foo` are otherwise equal,
+        // but differ in the value of `extra`, they will hash to the same value.
+    }
+}
+
+use std::hash::{hash_of, DefaultHash};
+
+let v1 = Foo { a: 1, b: "foo", extra: 0 };
+let v2 = Foo { a: 1, b: "foo", extra: 1 };
+let v3 = Foo { a: 1, b: "bar", extra: 0 };
+
+assert_eq!(hash_of::&lt;Foo, DefaultHash&gt;(v1), hash_of::&lt;Foo, DefaultHash&gt;(v2));
+assert_ne!(hash_of::&lt;Foo, DefaultHash&gt;(v1), hash_of::&lt;Foo, DefaultHash&gt;(v3));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20struct%20Foo%20%7b%20a%3a%20i32%2c%20b%3a%20%26%5bu8%5d%2c%20extra%3a%20u64%20%7d%0a%20%20%20%0a%20%20%20impl%20Foo%20%7b%0a%20%20%20%20%20%20%20use%20std%3a%3ahash%3a%3aHasher%3b%0a%20%20%20%20%20%20%20fn%20hash%3cH%3a%20Hasher%3cH%3e%3e%28self%3a%20%26Foo%2c%20hasher%3a%20%26mut%20H%29%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20self%2ea%2ehash%28hasher%29%3b%0a%20%20%20%20%20%20%20%20%20%20%20self%2eb%2ehash%28hasher%29%3b%0a%20%20%20%20%20%20%20%20%20%20%20%2f%2f%20Skip%20the%20%60extra%60%2c%20if%20two%20instances%20of%20%60Foo%60%20are%20otherwise%20equal%2c%0a%20%20%20%20%20%20%20%20%20%20%20%2f%2f%20but%20differ%20in%20the%20value%20of%20%60extra%60%2c%20they%20will%20hash%20to%20the%20same%20value%2e%0a%20%20%20%20%20%20%20%7d%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20use%20std%3a%3ahash%3a%3a%7bhash%5fof%2c%20DefaultHash%7d%3b%0a%20%20%20%0a%20%20%20let%20v1%20%3d%20Foo%20%7b%20a%3a%201%2c%20b%3a%20%22foo%22%2c%20extra%3a%200%20%7d%3b%0a%20%20%20let%20v2%20%3d%20Foo%20%7b%20a%3a%201%2c%20b%3a%20%22foo%22%2c%20extra%3a%201%20%7d%3b%0a%20%20%20let%20v3%20%3d%20Foo%20%7b%20a%3a%201%2c%20b%3a%20%22bar%22%2c%20extra%3a%200%20%7d%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28hash%5fof%3a%3a%3cFoo%2c%20DefaultHash%3e%28v1%29%2c%20hash%5fof%3a%3a%3cFoo%2c%20DefaultHash%3e%28v2%29%29%3b%0a%20%20%20assert%5fne%21%28hash%5fof%3a%3a%3cFoo%2c%20DefaultHash%3e%28v1%29%2c%20hash%5fof%3a%3a%3cFoo%2c%20DefaultHash%3e%28v3%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 <h2 id="Method">Methods</h2>
@@ -68,7 +123,7 @@ Types that can be hashed.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">hash</span>(a: &amp;Self, hasher: &amp;mut H)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/hash.alu#L20-L24"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/hash.alu#L71-L75"/>source</a>
 </div>
 </div>
 <div class="item-doc">

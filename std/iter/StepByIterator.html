@@ -171,6 +171,645 @@ It: <a href="/std/iter/Iterator.html"><span class="identifier-type">Iterator</sp
 <div class="item-doc">
 </div>
 </li>
+<ul class="mixin-methods">
+<li>
+<div class="signature" id="item.iter">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">iter</span>(self: &amp;mut Self) -> &amp;mut Self</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L651-L653"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Return self.
+</p><p>
+Each iterator is itself an <a class="" href="/std/iter/Iterable.html">iterable</a> object, though only once. This
+helper function is there so that iterators can be used ergonomically
+in for loops (which de-sugar to a call to <code>.iter()</code>)
+</p><p>
+See also <a class="path-link" href="/std/iter/Iterable.html#item.iter">iter</a>.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.fuse">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">fuse</span>(self: &amp;mut Self) -> <a href="/std/iter/FusedIterator.html"><span class="identifier-type">FusedIterator</span></a>&lt;Self, T&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L660-L665"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Return an iterator that returns <code>Option::none()</code> forever after the
+first one is returned.
+</p><p>
+Iterators can validly reset back to returning values after they are
+exhausted. This method "caps it off" after they are first exhausted.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.chain">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">chain</span>&lt;Other&gt;(self: &amp;mut Self, other: &amp;mut Other) -> <a href="/std/iter/ChainIterator.html"><span class="identifier-type">ChainIterator</span></a>&lt;Self, Other, T&gt;<div class="protocol-bound">
+Other: <a href="/std/iter/Iterator.html"><span class="identifier-type">Iterator</span></a>&lt;Other, T&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L679-L684"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns an iterator that yields all elements of <code>self</code> and then all elements of <code>other</code>.
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let range = (0..2).iter().chain(&amp;(10..12).iter());
+assert_eq!(range.size_hint(), Option::some(4usize));
+
+assert_eq!(range.next(), Option::some(0));
+assert_eq!(range.next(), Option::some(1));
+assert_eq!(range.next(), Option::some(10));
+assert_eq!(range.next(), Option::some(11));
+assert_eq!(range.next(), Option::none());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20range%20%3d%20%280%2e%2e2%29%2eiter%28%29%2echain%28%26%2810%2e%2e12%29%2eiter%28%29%29%3b%0a%20%20%20assert%5feq%21%28range%2esize%5fhint%28%29%2c%20Option%3a%3asome%284usize%29%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%280%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%281%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%2810%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%2811%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3anone%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.skip">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">skip</span>(self: &amp;mut Self, n: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> <a href="/std/iter/SkipIterator.html"><span class="identifier-type">SkipIterator</span></a>&lt;Self, T&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L701-L706"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns an iterator that skips first <code>n</code> values.
+</p><p>
+If the underlying iterator yields fewer than or exactly <code>n</code> values, then the
+iterator will yield no values.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let range = (0..5).iter().skip(2);
+assert_eq!(range.size_hint(), Option::some(3usize));
+
+assert_eq!(range.next(), Option::some(2));
+assert_eq!(range.next(), Option::some(3));
+assert_eq!(range.next(), Option::some(4));
+assert_eq!(range.next(), Option::none());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20range%20%3d%20%280%2e%2e5%29%2eiter%28%29%2eskip%282%29%3b%0a%20%20%20assert%5feq%21%28range%2esize%5fhint%28%29%2c%20Option%3a%3asome%283usize%29%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%282%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%283%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%284%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3anone%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.step_by">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">step_by</span>(self: &amp;mut Self, n: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> <a href="/std/iter/StepByIterator.html"><span class="identifier-type">StepByIterator</span></a>&lt;Self, T&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L721-L729"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns an iterator that steps by <code>n</code> values.
+</p><p>
+First value will always be yielded, then every <code>n</code>-th value.
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let range = (0..5).iter().step_by(2);
+assert_eq!(range.size_hint(), Option::some(3usize));
+
+assert_eq!(range.next(), Option::some(0));
+assert_eq!(range.next(), Option::some(2));
+assert_eq!(range.next(), Option::some(4));
+assert_eq!(range.next(), Option::none());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20range%20%3d%20%280%2e%2e5%29%2eiter%28%29%2estep%5fby%282%29%3b%0a%20%20%20assert%5feq%21%28range%2esize%5fhint%28%29%2c%20Option%3a%3asome%283usize%29%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%280%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%282%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%284%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3anone%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.take">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">take</span>(self: &amp;mut Self, n: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> <a href="/std/iter/TakeIterator.html"><span class="identifier-type">TakeIterator</span></a>&lt;Self, T&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L742-L747"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns an iterator that yields at most <code>n</code> elements.
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let range = (0..5).iter().take(2);
+assert_eq!(range.size_hint(), Option::some(2usize));
+
+assert_eq!(range.next(), Option::some(0));
+assert_eq!(range.next(), Option::some(1));
+assert_eq!(range.next(), Option::none());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20range%20%3d%20%280%2e%2e5%29%2eiter%28%29%2etake%282%29%3b%0a%20%20%20assert%5feq%21%28range%2esize%5fhint%28%29%2c%20Option%3a%3asome%282usize%29%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%280%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%281%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3anone%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.enumerate">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">enumerate</span>(self: &amp;mut Self) -> <a href="/std/iter/EnumerateIterator.html"><span class="identifier-type">EnumerateIterator</span></a>&lt;Self, T&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L763-L768"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns an iterator that attaches a sequence number of each item.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let range = (10..15).iter().enumerate();
+assert_eq!(range.size_hint(), Option::some(5usize));
+
+assert_eq!(range.next(), Option::some((0usize, 10)));
+assert_eq!(range.next(), Option::some((1usize, 11)));
+assert_eq!(range.next(), Option::some((2usize, 12)));
+assert_eq!(range.next(), Option::some((3usize, 13)));
+assert_eq!(range.next(), Option::some((4usize, 14)));
+assert_eq!(range.next(), Option::none());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20range%20%3d%20%2810%2e%2e15%29%2eiter%28%29%2eenumerate%28%29%3b%0a%20%20%20assert%5feq%21%28range%2esize%5fhint%28%29%2c%20Option%3a%3asome%285usize%29%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%28%280usize%2c%2010%29%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%28%281usize%2c%2011%29%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%28%282usize%2c%2012%29%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%28%283usize%2c%2013%29%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%28%284usize%2c%2014%29%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3anone%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.last">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">last</span>(self: &amp;mut Self) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L774-L784"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns the last value of the iterator.
+</p><p>
+This method always exhausts the iterator. For iterators that implement <a class="path-link" href="/std/iter/DoubleEndedIterator.html">DoubleEndedIterator</a>,
+it may be more efficient to use <a class="path-link" href="/std/iter/DoubleEndedIterator.html#item.next_back">next_back</a>.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.nth">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">nth</span>(self: &amp;mut Self, n: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L787-L793"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns the <code>n</code>-th value of the iterator.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.count">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">count</span>(self: &amp;mut Self) -> <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L796-L804"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Counts the number of elements in this iterator.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.inspect">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">inspect</span>&lt;F&gt;(it: &amp;mut Self, func: F) -> <a href="/std/iter/InspectIterator.html"><span class="identifier-type">InspectIterator</span></a>&lt;Self, F, T&gt;<div class="protocol-bound">
+F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;(T), <a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L827-L832"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Inspects each element of the iterator.
+</p><p>
+Presented chain of iterator combinators, <a class="path-link" href="/std/iter/IteratorExt.html#item.inspect">inspect</a> can be used to execute
+a callback on every element of an iterator. This is useful for debugging.
+</p><p>
+The elements are passed through unmodified.
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let last = (0..3)
+    .iter()
+    .inspect(|i: i32| { println!("I see {}", i) })
+    .last();
+
+println!("Last: {}", last);
+
+// Prints:
+// I see 0
+// I see 1
+// I see 2
+// Last: 2
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20last%20%3d%20%280%2e%2e3%29%0a%20%20%20%20%20%20%20%2eiter%28%29%0a%20%20%20%20%20%20%20%2einspect%28%7ci%3a%20i32%7c%20%7b%20println%21%28%22I%20see%20%7b%7d%22%2c%20i%29%20%7d%29%0a%20%20%20%20%20%20%20%2elast%28%29%3b%0a%20%20%20%0a%20%20%20println%21%28%22Last%3a%20%7b%7d%22%2c%20last%29%3b%0a%20%20%20%0a%20%20%20%2f%2f%20Prints%3a%0a%20%20%20%2f%2f%20I%20see%200%0a%20%20%20%2f%2f%20I%20see%201%0a%20%20%20%2f%2f%20I%20see%202%0a%20%20%20%2f%2f%20Last%3a%202%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.take_while">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">take_while</span>&lt;F&gt;(iter: &amp;mut Self, fun: F) -> <a href="/std/iter/TakeWhileIterator.html"><span class="identifier-type">TakeWhileIterator</span></a>&lt;Self, F, T&gt;<div class="protocol-bound">
+F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;(T), <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a>&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L846-L848"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns an iterator that yields the elements while a predicate is true.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let range = (0..5).iter().take_while(|x: i32| -&gt; bool { x &lt; 3 });
+assert_eq!(range.size_hint(), Option::none());
+
+assert_eq!(range.next(), Option::some(0));
+assert_eq!(range.next(), Option::some(1));
+assert_eq!(range.next(), Option::some(2));
+assert_eq!(range.next(), Option::none());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20range%20%3d%20%280%2e%2e5%29%2eiter%28%29%2etake%5fwhile%28%7cx%3a%20i32%7c%20%2d%3e%20bool%20%7b%20x%20%3c%203%20%7d%29%3b%0a%20%20%20assert%5feq%21%28range%2esize%5fhint%28%29%2c%20Option%3a%3anone%28%29%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%280%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%281%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%282%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3anone%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.skip_while">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">skip_while</span>&lt;F&gt;(iter: &amp;mut Self, fun: F) -> <a href="/std/iter/SkipWhileIterator.html"><span class="identifier-type">SkipWhileIterator</span></a>&lt;Self, F, T&gt;<div class="protocol-bound">
+F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;(T), <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a>&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L860-L862"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns an iterator that skips the elements while a predicate is true.
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let range = (0..5).iter().skip_while(|x: i32| -&gt; bool { x &lt; 3 });
+assert_eq!(range.size_hint(), Option::none());
+
+assert_eq!(range.next(), Option::some(3));
+assert_eq!(range.next(), Option::some(4));
+assert_eq!(range.next(), Option::none());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20range%20%3d%20%280%2e%2e5%29%2eiter%28%29%2eskip%5fwhile%28%7cx%3a%20i32%7c%20%2d%3e%20bool%20%7b%20x%20%3c%203%20%7d%29%3b%0a%20%20%20assert%5feq%21%28range%2esize%5fhint%28%29%2c%20Option%3a%3anone%28%29%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%283%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%284%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3anone%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.map">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">map</span>&lt;U, F&gt;(iter: &amp;mut Self, fun: F) -> <a href="/std/iter/MapIterator.html"><span class="identifier-type">MapIterator</span></a>&lt;Self, F, T, U&gt;<div class="protocol-bound">
+F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;(T), U&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L877-L879"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns an iterator that transforms the elements of this iterator.
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let range = (0..5).iter().map(|x: i32| -&gt; i32 { x * 2 });
+assert_eq!(range.size_hint(), Option::some(5usize));
+
+assert_eq!(range.next(), Option::some(0));
+assert_eq!(range.next(), Option::some(2));
+assert_eq!(range.next(), Option::some(4));
+assert_eq!(range.next(), Option::some(6));
+assert_eq!(range.next(), Option::some(8));
+assert_eq!(range.next(), Option::none());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20range%20%3d%20%280%2e%2e5%29%2eiter%28%29%2emap%28%7cx%3a%20i32%7c%20%2d%3e%20i32%20%7b%20x%20%2a%202%20%7d%29%3b%0a%20%20%20assert%5feq%21%28range%2esize%5fhint%28%29%2c%20Option%3a%3asome%285usize%29%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%280%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%282%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%284%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%286%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%288%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3anone%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.foreach">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">foreach</span>&lt;F&gt;(iter: &amp;mut Self, fun: F)<div class="protocol-bound">
+F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;(T), <a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L882-L891"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Executes a function on each element of this iterator.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.filter">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">filter</span>&lt;F&gt;(iter: &amp;mut Self, fun: F) -> <a href="/std/iter/FilterIterator.html"><span class="identifier-type">FilterIterator</span></a>&lt;Self, F, T&gt;<div class="protocol-bound">
+F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;(T), <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a>&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L904-L906"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns an iterator that yields the elements of this iterator that match a predicate.
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let range = (0..5).iter().filter(|x: i32| -&gt; bool { x % 2 == 0 });
+assert_eq!(range.size_hint(), Option::none());
+
+assert_eq!(range.next(), Option::some(0));
+assert_eq!(range.next(), Option::some(2));
+assert_eq!(range.next(), Option::some(4));
+assert_eq!(range.next(), Option::none());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20range%20%3d%20%280%2e%2e5%29%2eiter%28%29%2efilter%28%7cx%3a%20i32%7c%20%2d%3e%20bool%20%7b%20x%20%25%202%20%3d%3d%200%20%7d%29%3b%0a%20%20%20assert%5feq%21%28range%2esize%5fhint%28%29%2c%20Option%3a%3anone%28%29%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%280%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%282%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3asome%284%29%29%3b%0a%20%20%20assert%5feq%21%28range%2enext%28%29%2c%20Option%3a%3anone%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.filter_map">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">filter_map</span>&lt;U, F&gt;(iter: &amp;mut Self, fun: F) -> <a href="/std/iter/FilterMapIterator.html"><span class="identifier-type">FilterMapIterator</span></a>&lt;Self, F, T, U&gt;<div class="protocol-bound">
+F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;(T), <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;U&gt;&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L912-L914"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Transforms and filters the iterator at the same time.
+</p><p>
+Function <code>f</code> is called on each element of this iterator. If it returns <code>Option::some(...)</code>,
+that element is yielded. If it returns <code>Option::none()</code>, the element is skipped.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.reduce">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">reduce</span>&lt;U, F&gt;(iter: &amp;mut Self, initial: U, func: F) -> U<div class="protocol-bound">
+F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;(U, T), U&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L933-L942"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Reduces the iterator into a single value.
+</p><p>
+Equivalent to:
+<pre><code class="language-alumina">let value = initial;
+for element in iter {
+    value = func(value, element);
+}
+</code></pre>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let sum = (0..5)
+    .iter()
+    .reduce(0, |acc: i32, x: i32| -&gt; i32 { acc + x });
+
+println!("{}", sum); // Prints: 10
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20sum%20%3d%20%280%2e%2e5%29%0a%20%20%20%20%20%20%20%2eiter%28%29%0a%20%20%20%20%20%20%20%2ereduce%280%2c%20%7cacc%3a%20i32%2c%20x%3a%20i32%7c%20%2d%3e%20i32%20%7b%20acc%20%2b%20x%20%7d%29%3b%0a%20%20%20%0a%20%20%20println%21%28%22%7b%7d%22%2c%20sum%29%3b%20%2f%2f%20Prints%3a%2010%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.sum">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">sum</span>(iter: &amp;mut Self) -> T</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L947-L949"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Sums all the values in the iterator.
+</p><p>
+<code>T</code> must satisfy <a class="path-link" href="/std/builtins/Numeric.html">Numeric</a> protocol.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.min">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">min</span>(iter: &amp;mut Self) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L954-L956"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns the minimum value of the iterator.
+</p><p>
+<code>T</code> must satisfy <a class="path-link" href="/std/cmp/Comparable.html">Comparable</a> protocol.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.max">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">max</span>(iter: &amp;mut Self) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L961-L963"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns the maximum value of the iterator.
+</p><p>
+<code>T</code> must satisfy <a class="path-link" href="/std/cmp/Comparable.html">Comparable</a> protocol.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.all">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">all</span>&lt;F&gt;(iter: &amp;mut Self, fun: F) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a><div class="protocol-bound">
+F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;(T), <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a>&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L968-L979"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code>true</code> if all elements of the iterator match a predicate, <code>false</code> otherwise.
+</p><p>
+If iterator produces no values, <code>true</code> is returned.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.any">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">any</span>&lt;F&gt;(iter: &amp;mut Self, fun: F) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a><div class="protocol-bound">
+F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;(T), <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a>&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L984-L995"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code>true</code> if any element of the iterator matches a predicate, <code>false</code> otherwise.
+</p><p>
+If iterator produces no values, <code>false</code> is returned.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.to_vector">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">to_vector</span>(self: &amp;mut Self) -> <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;T&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L998-L1000"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Collects the values of the iterator into a vector.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.fill_slice">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">fill_slice</span>(self: &amp;mut Self, slice: &amp;mut [T]) -> <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L1009-L1024"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Fills the slice with the values of the iterator.
+</p><p>
+If the number of elements in the iterator is greater than the length of the
+slice, the remaining values in the iterator are not consumed.
+</p><p>
+If the number of elements in the iterator is less than the length of the
+slice, the remainder of the slice is untouched.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.peekable">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">peekable</span>(self: &amp;mut Self) -> <a href="/std/iter/PeekableIterator.html"><span class="identifier-type">PeekableIterator</span></a>&lt;Self, T&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L1031-L1036"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns a "peekable" iterator.
+</p><p>
+Peekable iterators have an additional method, <a class="path-link" href="/std/iter/PeekableIterator.html#item.peek">peek</a>, which is similar to
+<a class="path-link" href="/std/iter/Iterator.html#item.next">next</a>, but it does not consume the value, so a subsequent call to
+<a class="path-link" href="/std/iter/Iterator.html#item.next">next</a> will return the same value.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.group_by">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">group_by</span>&lt;F, K&gt;(self: &amp;mut Self, func: F) -> <a href="/std/iter/GroupByIterator.html"><span class="identifier-type">GroupByIterator</span></a>&lt;Self, F, T, K&gt;<div class="protocol-bound">
+F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;(T), K&gt;</div>
+<div class="protocol-bound">
+K: <a href="/std/cmp/Equatable.html"><span class="identifier-type">Equatable</span></a>&lt;K&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L1062-L1068"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns an iterator of groups grouped by a key.
+</p><p>
+Requires that the items of the iterator that have the same key are contiguous (e.g.
+the values are sorted by key).
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">fn divide_by_three(x: i32) -&gt; i32 { x / 3 }
+
+for group in (0..10).iter().group_by(divide_by_three) {
+    print!("{}:", group.key);
+    for value in group {
+        print!(" {}", value);
+    }
+    println!("");
+}
+
+// Prints:
+// 0: 0 1 2
+// 1: 3 4 5
+// 2: 6 7 8
+// 3: 9
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20fn%20divide%5fby%5fthree%28x%3a%20i32%29%20%2d%3e%20i32%20%7b%20x%20%2f%203%20%7d%0a%20%20%20%0a%20%20%20for%20group%20in%20%280%2e%2e10%29%2eiter%28%29%2egroup%5fby%28divide%5fby%5fthree%29%20%7b%0a%20%20%20%20%20%20%20print%21%28%22%7b%7d%3a%22%2c%20group%2ekey%29%3b%0a%20%20%20%20%20%20%20for%20value%20in%20group%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20print%21%28%22%20%7b%7d%22%2c%20value%29%3b%0a%20%20%20%20%20%20%20%7d%0a%20%20%20%20%20%20%20println%21%28%22%22%29%3b%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20%2f%2f%20Prints%3a%0a%20%20%20%2f%2f%200%3a%200%201%202%0a%20%20%20%2f%2f%201%3a%203%204%205%0a%20%20%20%2f%2f%202%3a%206%207%208%0a%20%20%20%2f%2f%203%3a%209%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+</ul>
 </ul>
 </main>
 </div>

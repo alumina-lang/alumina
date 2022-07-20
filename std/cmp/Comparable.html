@@ -34,6 +34,12 @@
 <a href="/std/cmp/Comparable.html#item.compare">compare</a>
 </li>
 <li>
+<a href="/std/cmp/Comparable.html#item.equals">equals</a>
+</li>
+<li>
+<a href="/std/cmp/Comparable.html#item.not_equals">not_equals</a>
+</li>
+<li>
 <a href="/std/cmp/Comparable.html#item.less_than">less_than</a>
 </li>
 <li>
@@ -65,13 +71,45 @@
 Self: <a href="/std/cmp/Equatable.html"><span class="identifier-type">Equatable</span></a>&lt;Self&gt;</div>
 </h3>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L29-L58"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L80-L121"/>source</a>
 </div>
 </div>
 <p>
 Types that have a total order.
 </p><p>
 Types that implement this trait can be compared using the <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code> and <code>&gt;=</code> operators.
+</p><p>
+Method <a class="path-link" href="/std/cmp/Comparable.html#item.compare">compare</a> must be implemented, other methods can be mixed in. This includes the default
+implementations for <a class="path-link" href="/std/cmp/Equatable.html#item.equals">equals</a> and <a class="path-link" href="/std/cmp/Equatable.html#item.not_equals">not_equals</a> of the <a class="path-link" href="/std/cmp/Equatable.html">Equatable</a> trait.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">struct FullName { first: &amp;[u8], last: &amp;[u8] }
+
+impl FullName {
+    use std::cmp::{Ordering, Comparable};
+
+    fn new(first: &amp;[u8], last: &amp;[u8]) -&gt; FullName {
+        FullName { first: first, last: last }
+    }
+
+    fn compare(self: &amp;FullName, other: &amp;FullName) -&gt; Ordering {
+        let first_cmp = self.first.compare(&amp;other.first);
+        if first_cmp != Ordering::Equal {
+            return first_cmp;
+        }
+        self.last.compare(&amp;other.last)
+    }
+
+    mixin Comparable&lt;FullName&gt;;
+}
+
+assert!(FullName::new("John", "Malkovich") &lt; FullName::new("John", "McCain"));
+assert!(FullName::new("John", "Doe") == FullName::new("John", "Doe"));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20struct%20FullName%20%7b%20first%3a%20%26%5bu8%5d%2c%20last%3a%20%26%5bu8%5d%20%7d%0a%20%20%20%0a%20%20%20impl%20FullName%20%7b%0a%20%20%20%20%20%20%20use%20std%3a%3acmp%3a%3a%7bOrdering%2c%20Comparable%7d%3b%0a%20%20%20%0a%20%20%20%20%20%20%20fn%20new%28first%3a%20%26%5bu8%5d%2c%20last%3a%20%26%5bu8%5d%29%20%2d%3e%20FullName%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20FullName%20%7b%20first%3a%20first%2c%20last%3a%20last%20%7d%0a%20%20%20%20%20%20%20%7d%0a%20%20%20%0a%20%20%20%20%20%20%20fn%20compare%28self%3a%20%26FullName%2c%20other%3a%20%26FullName%29%20%2d%3e%20Ordering%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20let%20first%5fcmp%20%3d%20self%2efirst%2ecompare%28%26other%2efirst%29%3b%0a%20%20%20%20%20%20%20%20%20%20%20if%20first%5fcmp%20%21%3d%20Ordering%3a%3aEqual%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20return%20first%5fcmp%3b%0a%20%20%20%20%20%20%20%20%20%20%20%7d%0a%20%20%20%20%20%20%20%20%20%20%20self%2elast%2ecompare%28%26other%2elast%29%0a%20%20%20%20%20%20%20%7d%0a%20%20%20%0a%20%20%20%20%20%20%20mixin%20Comparable%3cFullName%3e%3b%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20assert%21%28FullName%3a%3anew%28%22John%22%2c%20%22Malkovich%22%29%20%3c%20FullName%3a%3anew%28%22John%22%2c%20%22McCain%22%29%29%3b%0a%20%20%20assert%21%28FullName%3a%3anew%28%22John%22%2c%20%22Doe%22%29%20%3d%3d%20FullName%3a%3anew%28%22John%22%2c%20%22Doe%22%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+See also <a class="path-link" href="/std/cmp/lexicographic_cmp.html">lexicographic_cmp</a> for a convenient way to implement the <code>compare</code> method.
 </p><p>
 </p>
 <h2 id="Method">Methods</h2>
@@ -81,7 +119,7 @@ Types that implement this trait can be compared using the <code>&lt;</code>, <co
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">compare</span>(lhs: &amp;Self, rhs: &amp;Self) -> <a href="/std/cmp/Ordering.html"><span class="identifier-type">Ordering</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L33-L33"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L84-L84"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -94,11 +132,41 @@ See <a class="path-link" href="/std/cmp/Comparable.html">Comparable</a> for deta
 </div>
 </li>
 <li>
+<div class="signature" id="item.equals">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">equals</span>(lhs: &amp;Self, rhs: &amp;Self) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L87-L90"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code>true</code> if <code>lhs</code> is equal to <code>rhs</code>, <code>false</code> otherwise
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.not_equals">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">not_equals</span>(lhs: &amp;Self, rhs: &amp;Self) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L93-L96"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code>true</code> if <code>lhs</code> not equal to <code>rhs</code>, <code>false</code> otherwise
+</p><p>
+</p>
+</div>
+</li>
+<li>
 <div class="signature" id="item.less_than">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">less_than</span>(lhs: &amp;Self, rhs: &amp;Self) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L36-L39"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L99-L102"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -113,7 +181,7 @@ Returns <code>true</code> if <code>lhs</code> is strictly less than <code>rhs</c
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">less_than_or_equal</span>(lhs: &amp;Self, rhs: &amp;Self) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L42-L45"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L105-L108"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -128,7 +196,7 @@ Returns <code>true</code> if <code>lhs</code> is less or equal to <code>rhs</cod
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">greater_than</span>(lhs: &amp;Self, rhs: &amp;Self) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L48-L51"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L111-L114"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -143,7 +211,7 @@ Returns <code>true</code> if <code>lhs</code> strictly greater than <code>rhs</c
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">greater_than_or_equal</span>(lhs: &amp;Self, rhs: &amp;Self) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L54-L57"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L117-L120"/>source</a>
 </div>
 </div>
 <div class="item-doc">
