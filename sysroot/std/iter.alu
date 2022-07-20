@@ -635,7 +635,7 @@ impl PeekableIterator<It: Iterator<It, T>, T> {
 }
 
 
-/// Extension protocol for iterators.
+/// Extension mixin for [Iterator] types.
 ///
 /// Contains various useful combinators and functions to work with iterators.
 ///
@@ -643,9 +643,11 @@ impl PeekableIterator<It: Iterator<It, T>, T> {
 protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// Return self.
     ///
-    /// Each iterator is itself an iterable object, though only once. This
+    /// Each iterator is itself an [iterable](Iterable) object, though only once. This
     /// helper function is there so that iterators can be used ergonomically
     /// in for loops (which de-sugar to a call to `.iter()`)
+    ///
+    /// See also [Iterable::iter].
     fn iter(self: &mut Self) -> &mut Self {
         self
     }
@@ -766,18 +768,17 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     }
 
     /// Returns the last value of the iterator.
+    ///
+    /// This method always exhausts the iterator. For iterators that implement [DoubleEndedIterator],
+    /// it may be more efficient to use [DoubleEndedIterator::next_back].
     fn last(self: &mut Self) -> Option<T> {
-        when Self: DoubleEndedIterator<Self, T> {
-            self.next_back()
-        } else {
-            let value: Option<T> = Option::none();
-            loop {
-                let next = self.next();
-                if next.is_some {
-                    value = next;
-                } else {
-                    return value;
-                }
+        let value: Option<T> = Option::none();
+        loop {
+            let next = self.next();
+            if next.is_some {
+                value = next;
+            } else {
+                return value;
             }
         }
     }
@@ -923,8 +924,11 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// ```
     /// ## Example
     /// ```
-    /// let sum = (0..5).iter().reduce(0, |acc: i32, x: i32| -> i32 { acc + x });
-    /// println!("{}", sum); // Prints: 15
+    /// let sum = (0..5)
+    ///     .iter()
+    ///     .reduce(0, |acc: i32, x: i32| -> i32 { acc + x });
+    ///
+    /// println!("{}", sum); // Prints: 10
     /// ```
     fn reduce<U, F: Callable<(U, T), U>>(iter: &mut Self, initial: U, func: F) -> U {
         loop {
@@ -1036,6 +1040,25 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     ///
     /// Requires that the items of the iterator that have the same key are contiguous (e.g.
     /// the values are sorted by key).
+    ///
+    /// ## Example
+    /// ```
+    /// fn divide_by_three(x: i32) -> i32 { x / 3 }
+    ///
+    /// for group in (0..10).iter().group_by(divide_by_three) {
+    ///     print!("{}:", group.key);
+    ///     for value in group {
+    ///         print!(" {}", value);
+    ///     }
+    ///     println!("");
+    /// }
+    ///
+    /// // Prints:
+    /// // 0: 0 1 2
+    /// // 1: 3 4 5
+    /// // 2: 6 7 8
+    /// // 3: 9
+    /// ```
     fn group_by<F: Callable<(T), K>, K: cmp::Equatable<K>>(self: &mut Self, func: F) -> GroupByIterator<Self, F, T, K> {
         GroupByIterator {
             it: self.peekable(),

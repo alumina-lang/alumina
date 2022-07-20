@@ -160,6 +160,15 @@ impl Option<T> {
     }
 
     /// If `self` is populated, return it, otherwise return `other`
+    ///
+    /// ## Example
+    /// ```
+    /// let a = Option::some(42);
+    /// let b = Option::none::<i32>();
+    ///
+    /// assert_eq!(a.or(b), Option::some(42));
+    /// assert_eq!(b.or(a), Option::some(42));
+    /// ```
     fn or(self: Option<T>, other: Option<T>) -> Option<T> {
         if self.is_some {
             self
@@ -178,6 +187,13 @@ impl Option<T> {
     }
 
     /// Flattens a nested `Option` into a single `Option`.
+    ///
+    /// ## Example
+    /// ```
+    /// assert_eq!(Option::some(Option::some(42)).flatten(), Option::some(42));
+    /// assert_eq!(Option::some(Option::none::<i32>()).flatten(), Option::none());
+    /// assert_eq!(Option::none::<Option<i32>>().flatten(), Option::none());
+    /// ```
     fn flatten(self: Option<Option<T>>) -> Option<T> {
         if !self.is_some {
             Option::none()
@@ -204,6 +220,22 @@ impl Option {
     use std::mem::{Freeable, Movable};
 
     /// Convert `Option<Result<T, E>>` to `Result<Option<T>, E>`
+    ///
+    /// ## Example
+    /// ```
+    /// assert_eq!(
+    ///     Option::some(Result::ok::<i32, ()>(42)).transpose(),
+    ///     Result::ok(Option::some(42))
+    /// );
+    /// assert_eq!(
+    ///     Option::some(Result::err::<i32, ()>(())).transpose(),
+    ///     Result::err(())
+    /// );
+    /// assert_eq!(
+    ///     Option::none::<Result<i32, ()>>().transpose(),
+    ///     Result::ok(Option::none())
+    /// );
+    /// ```
     fn transpose<T, E>(self: Option<Result<T, E>>) -> Result<Option<T>, E> {
         if self.is_some {
             if self.inner.is_ok {

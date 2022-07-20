@@ -501,11 +501,21 @@ impl CodePrinter<W: Writable<W>> {
         defer cursor.free();
 
         w!(self.writer, "(");
+        let first = true;
         for (idx, child) in children_by!(node, FieldKind::Parameter, &cursor).enumerate() {
-            if idx != 0 {
+            if first {
+                first = false
+            } else {
                 w!(self.writer, ", ");
             }
             self.visit(child)?;
+        }
+        if node.child_by!(FieldKind::EtCetera).is_some {
+            if first {
+                w!(self.writer, "...");
+            } else {
+                w!(self.writer, ", ...");
+            }
         }
         w!(self.writer, ")");
 

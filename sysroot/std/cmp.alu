@@ -3,6 +3,26 @@
 /// Types that can be compared for equality.
 ///
 /// Types that implement this trait can be compared for equality using the `==` and `!=` operators.
+/// Many built-in types implement this protocol, such as primitive types, slices, [Option], etc.
+///
+/// Method [equals] must be implemented, other methods can be mixed in.
+///
+/// # Example
+/// ```
+/// struct Point { x: i32, y: i32 }
+///
+/// impl Point {
+///     use std::cmp::Equatable;
+///
+///     fn equals(self: &Point, other: &Point) -> bool {
+///         self.x == other.x && self.y == other.y
+///     }
+///     mixin Equatable<Point>;
+/// }
+///
+/// assert_eq!(Point { x: 1, y: 2 }, Point { x: 1, y: 2 });
+/// assert_ne!(Point { x: 1, y: 2 }, Point { x: 1, y: 3 });
+/// ```
 protocol Equatable<Self> {
     /// Returns `true` if arguments are equal, `false` otherwise
     ///
@@ -26,32 +46,75 @@ enum Ordering {
 /// Types that have a total order.
 ///
 /// Types that implement this trait can be compared using the `<`, `<=`, `>` and `>=` operators.
+///
+/// Method [compare] must be implemented, other methods can be mixed in. This includes the default
+/// implementations for [Equatable::equals] and [Equatable::not_equals] of the [Equatable] trait.
+///
+/// ## Example
+/// ```
+/// struct FullName { first: &[u8], last: &[u8] }
+///
+/// impl FullName {
+///     use std::cmp::{Ordering, Comparable};
+///
+///     fn new(first: &[u8], last: &[u8]) -> FullName {
+///         FullName { first: first, last: last }
+///     }
+///
+///     fn compare(self: &FullName, other: &FullName) -> Ordering {
+///         let first_cmp = self.first.compare(&other.first);
+///         if first_cmp != Ordering::Equal {
+///             return first_cmp;
+///         }
+///         self.last.compare(&other.last)
+///     }
+///
+///     mixin Comparable<FullName>;
+/// }
+///
+/// assert!(FullName::new("John", "Malkovich") < FullName::new("John", "McCain"));
+/// assert!(FullName::new("John", "Doe") == FullName::new("John", "Doe"));
+/// ```
+///
+/// See also [lexicographic_cmp] for a convenient way to implement the `compare` method.
 protocol Comparable<Self: Equatable<Self>> {
     /// Compare the value
     ///
     /// See [Comparable] for details.
     fn compare(lhs: &Self, rhs: &Self) -> Ordering;
 
+    /// Returns `true` if `lhs` is equal to `rhs`, `false` otherwise
+    #[inline]
+    fn equals(lhs: &Self, rhs: &Self) -> bool {
+        Self::compare(lhs, rhs) == Ordering::Equal
+    }
+
+    /// Returns `true` if `lhs` not equal to `rhs`, `false` otherwise
+    #[inline]
+    fn not_equals(lhs: &Self, rhs: &Self) -> bool {
+        Self::compare(lhs, rhs) != Ordering::Equal
+    }
+
     /// Returns `true` if `lhs` is strictly less than `rhs`, `false` otherwise
-    #[force_inline]
+    #[inline]
     fn less_than(lhs: &Self, rhs: &Self) -> bool {
         Self::compare(lhs, rhs) == Ordering::Less
     }
 
     /// Returns `true` if `lhs` is less or equal to `rhs`, `false` otherwise
-    #[force_inline]
+    #[inline]
     fn less_than_or_equal(lhs: &Self, rhs: &Self) -> bool {
         Self::compare(lhs, rhs) != Ordering::Greater
     }
 
     /// Returns `true` if `lhs` strictly greater than `rhs`, `false` otherwise
-    #[force_inline]
+    #[inline]
     fn greater_than(lhs: &Self, rhs: &Self) -> bool {
         Self::compare(lhs, rhs) == Ordering::Greater
     }
 
     /// Returns `true` if `lhs` greater than or equal `rhs`, `false` otherwise
-    #[force_inline]
+    #[inline]
     fn greater_than_or_equal(lhs: &Self, rhs: &Self) -> bool {
         Self::compare(lhs, rhs) != Ordering::Less
     }

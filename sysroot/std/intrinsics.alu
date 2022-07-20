@@ -1,21 +1,77 @@
 //! Functions implemented directly in the compiler.
+//!
+//! Functions in this module are not intended for general use, and are usually called by
+//! wrapper functions in the standard library (e.g. [mem::size_of] and [std::unreachable]).
 
+/// Fail the compilation process with a human-readable message.
+///
+/// Use [std::compile_fail] instead.
 extern "intrinsic" fn compile_fail(reason: &[u8]) -> !;
+
+/// Emit a warning message during compilation.
 extern "intrinsic" fn compile_warn(reason: &[u8]);
+
+/// Emit a note during compilation.
 extern "intrinsic" fn compile_note(reason: &[u8]);
+
+/// Unreachable code
+///
+/// Use [std::unreachable] instead.
 extern "intrinsic" fn unreachable() -> !;
+
+/// Trigger a trap (e.g. through an invalid instruction).
 extern "intrinsic" fn trap() -> !;
+
+/// Size of type in bytes
+///
+/// Use [mem::size_of] instead.
 extern "intrinsic" fn size_of<T>() -> usize;
+
+/// Length of a fixed-size array
+///
+/// Use [std::builtins::array::len] instead.
+extern "intrinsic" fn array_length_of<T: builtins::Array>() -> usize;
+
+/// Unique type identifier
+///
+/// Use [std::rtti::type_id] instead.
 extern "intrinsic" fn type_id<T>() -> usize;
+
+/// Name of a type
+///
+/// Use [std::rtti::type_name] instead.
 extern "intrinsic" fn type_name<T>() -> &[u8];
+
+/// Minimum alignment of a type in bytes.
+///
+/// Use [mem::align_of] instead.
 extern "intrinsic" fn align_of<T>() -> usize;
+
+/// Allocate the memory on the stack
 extern "intrinsic" fn aligned_alloca(size: usize, align: usize) -> &mut void;
+
+/// Return a pointer to the first element of the virtual method table for the given
+/// protocol and type.
+///
+/// Do not use directly, use coercion to `&dyn Protocol` instead.
 extern "intrinsic" fn make_vtable<Proto, T>() -> &fn();
+
+/// Minimal support for unit testing in the compiler.
+///
+/// During AST construction, compiler will collect all the methods with `#[test]` attribute and
+/// make them available via this intrinsic.
+///
+/// Do not use this directly. If implementing a custom test framework, use the
+/// [runtime::internal::TEST_CASES] static instead to ensure that all test cases have been discovered.
+extern "intrinsic" fn test_cases() -> &[TestCaseMeta];
 
 #[cfg(boot)]
 {
     // These are only useful in alumina-boot, aluminac will use LLVM intrinsics that are
     // explicitely defined.
+
+    /// Return the value of a C builtin constant
     extern "intrinsic" fn codegen_const<T>(name: &[u8]) -> T;
+    /// Call a builtin C function
     extern "intrinsic" fn codegen_func<T>(name: &[u8], ...) -> T;
 }

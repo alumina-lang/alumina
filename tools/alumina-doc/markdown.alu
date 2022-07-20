@@ -218,7 +218,7 @@ fn write_docstring<T: std::io::Writable<T>>(
     doc_comment: &[u8],
     tagline_only: bool,
     link_context: &LinkContext,
-    doctest_path: &Path,
+    doctest_item: &common::Item,
     doctest_writer: &mut DoctestWriter
 ) -> Result {
     if doc_comment.len == 0 {
@@ -238,7 +238,7 @@ fn write_docstring<T: std::io::Writable<T>>(
             item.doc_comment.as_slice(),
             tagline_only,
             &link_context,
-            &item.path,
+            null, // Redirects should not have additional doctests
             doctest_writer
         );
     }
@@ -268,9 +268,12 @@ fn write_docstring<T: std::io::Writable<T>>(
                 if !no_doctest && !tagline_only {
                     use std::string::join;
 
-                    let name = "_".join(&doctest_path.as_slice().iter());
-                    doctest_writer.write_test(name.as_slice(), doctest_source.as_slice(), no_doctest_run);
-                    name.free();
+                    if doctest_item != null && doctest_item.path == doctest_item.defined_in {
+                        let name = "_".join(&doctest_item.defined_in.as_slice().iter());
+                        doctest_writer.write_test(name.as_slice(), doctest_source.as_slice(), no_doctest_run);
+                        name.free();
+                    }
+
                 }
                 write!(writer, "</code>");
 

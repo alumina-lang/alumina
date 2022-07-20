@@ -14,6 +14,7 @@ use alumina_doc::error::{Error, Result};
 use alumina_doc::common::{Item, ItemKind, Path, ParseContext, DoctestWriter, ItemBag, LinkContext};
 use alumina_doc::visitors::{TopLevelVisitor, CodePrinter};
 use alumina_doc::markdown::write_docstring;
+use std::collections::HashSet;
 
 extern "C" fn tree_sitter_alumina() -> &TSLanguage;
 
@@ -179,6 +180,99 @@ impl PageWriter<T: std::io::Writable<T>> {
         Result::ok(())
     }
 
+    fn write_item_short(self: &PageWriter<T>, item: &Item) -> Result<()> {
+        let link_context = LinkContext::new(self.item_bag, &item.defined_in);
+        let name = item.path.last().unwrap();
+        let link = link_context.link_for_item(item, false, false).unwrap();
+        defer link.free();
+
+        if item.cfg_index == 0 {
+            wln!(self, "<div class=\"row\" id=\"item.{}\">", name);
+        } else {
+            wln!(self, "<div class=\"row\" id=\"item.{}.{}\">", name, item.cfg_index);
+        }
+        wln!(self, "<div class=\"cell-name\">");
+        if item.has_cfg {
+            wln!(self, "<span class=\"badge\">#[cfg]</span>");
+        }
+        wln!(self, "<a href=\"{}\">{}</a>", link, name);
+        wln!(self, "</div>");
+        w!(self, "<div class=\"cell-doc\">");
+        write_docstring(self.writer, item.doc_comment.as_slice(), true, &link_context, item, self.processor.doctest_writer)
+        .map_err(Error::from::<std::fmt::Error>)?;
+        wln!(self, "</div>");
+        wln!(self, "</div>");
+
+        Result::ok(())
+    }
+
+    fn write_item_full(self: &PageWriter<T>, item: &Item, mixed_in: bool) -> Result<()> {
+        let link_context = LinkContext::new(self.item_bag, &item.defined_in);
+        wln!(self, "<li>");
+        self.write_signature(item, false)?;
+
+        wln!(self, "<div class=\"item-doc\">");
+
+        // Do not duplicate doctests for mixed in methods
+        let doctest_item = if !mixed_in {
+            item
+        } else {
+            null
+        };
+
+        write_docstring(self.writer, item.doc_comment.as_slice(), false, &link_context, doctest_item, self.processor.doctest_writer)
+            .map_err(Error::from::<std::fmt::Error>)?;
+        wln!(self, "</div>");
+        wln!(self, "</li>");
+
+        Result::ok(())
+    }
+
+    fn expand_mixin(self: &PageWriter<T>, item: &Item, methods: &mut HashSet<&[u8]>) -> Result<()> {
+        use aluminac::lib::common::child_by;
+        use aluminac::lib::node_kinds::FieldKind;
+        use visitors::get_name;
+
+        let link_context = LinkContext::new(self.item_bag, &item.defined_in);
+
+        let proto_path = item.node
+            .child_by!(FieldKind::Protocol)
+            .unwrap()
+
+        let proto_path = Path::from_str(proto_path
+            .child_by!(FieldKind::Type)
+            .unwrap_or(proto_path)
+            .text(item.parse_context.source()));
+        defer proto_path.free();
+
+        let proto = self.item_bag.resolve(
+            &item.defined_in,
+            &proto_path,
+            true
+        ).unwrap();
+
+        let mixin_methods = self.item_bag
+            .filtered(|&proto, =methods, v: &Item| -> bool {
+                v.kind == ItemKind::Method
+                    && v.is_public()
+                    && v.path.len() == proto.defined_in.len() + 1
+                    && v.path.starts_with(&proto.defined_in)
+                    && v.node.child_by!(FieldKind::Body).is_some // Only methods with body
+                    && methods.insert(v.path.last().unwrap())    // Mixin methods do not shadow other methods
+            });
+        defer mixin_methods.free();
+
+        if !mixin_methods.is_empty() {
+            wln!(self, "<ul class=\"mixin-methods\">");
+            for method in mixin_methods {
+                self.write_item_full(method, true)?;
+            }
+            wln!(self, "</ul>");
+        }
+
+        Result::ok(())
+    }
+
     fn write_page(
         self: &PageWriter<T>,
         nav_item: &Item,
@@ -279,8 +373,11 @@ impl PageWriter<T: std::io::Writable<T>> {
             self.write_signature(top_level, true)?;
         }
 
-        write_docstring(self.writer, top_level.doc_comment.as_slice(), false, &link_context, &top_level.path, self.processor.doctest_writer)
+        write_docstring(self.writer, top_level.doc_comment.as_slice(), false, &link_context, top_level, self.processor.doctest_writer)
         .map_err(Error::from::<std::fmt::Error>)?;
+
+        let methods: HashSet<&[u8]> = HashSet::new();
+        defer methods.free();
 
         if top_level.kind.has_own_page() {
             for grp in main_items.iter().group_by(|i: &Item| -> ItemKind { i.kind }) {
@@ -289,50 +386,26 @@ impl PageWriter<T: std::io::Writable<T>> {
                 let first = true;
 
                 for impl_grp in grp.group_by(|i: &Item| -> Option<Node> { i.group_node }) {
-
                     self.write_impl_header(top_level, impl_grp.key, first)?;
                     first = false;
 
                     if grp.key.has_own_page() {
                         wln!(self, "<div class=\"item-short-table\">");
                         for item in impl_grp {
-                            let link_context = LinkContext::new(self.item_bag, &item.defined_in);
-                            let name = item.path.last().unwrap();
-                            let link = link_context.link_for_item(item, false, false).unwrap();
-
-                            if item.cfg_index == 0 {
-                                wln!(self, "<div class=\"row\" id=\"item.{}\">", name);
-                            } else {
-                                wln!(self, "<div class=\"row\" id=\"item.{}.{}\">", name, item.cfg_index);
-                            }
-                            wln!(self, "<div class=\"cell-name\">");
-                            if item.has_cfg {
-                                wln!(self, "<span class=\"badge\">#[cfg]</span>");
-                            }
-                            wln!(self, "<a href=\"{}\">{}</a>", link, name);
-                            wln!(self, "</div>");
-                            w!(self, "<div class=\"cell-doc\">");
-                            write_docstring(self.writer, item.doc_comment.as_slice(), true, &link_context, &item.path, self.processor.doctest_writer)
-                            .map_err(Error::from::<std::fmt::Error>)?;
-                            wln!(self, "</div>");
-                            wln!(self, "</div>");
-
-                            link.free();
+                            self.write_item_short(item)?;
                         }
                         wln!(self, "</div>");
 
                     } else {
                         wln!(self, "<ul>");
                         for item in impl_grp {
-                            let link_context = LinkContext::new(self.item_bag, &item.defined_in);
-                            wln!(self, "<li>");
-                            self.write_signature(item, false)?;
-
-                            wln!(self, "<div class=\"item-doc\">");
-                            write_docstring(self.writer, item.doc_comment.as_slice(), false, &link_context, &item.path, self.processor.doctest_writer)
-                                .map_err(Error::from::<std::fmt::Error>)?;
-                            wln!(self, "</div>");
-                            wln!(self, "</li>");
+                            if item.kind == ItemKind::Method {
+                                methods.insert(item.path.last().unwrap());
+                            }
+                            self.write_item_full(item, false)?;
+                            if item.kind == ItemKind::Mixin {
+                                self.expand_mixin(item, &methods)?;
+                            }
                         }
 
                         wln!(self, "</ul>");
