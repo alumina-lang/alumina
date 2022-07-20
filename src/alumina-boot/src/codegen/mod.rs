@@ -157,6 +157,10 @@ pub fn codegen(global_ctx: GlobalCtx, items: &[IRItemP<'_>]) -> Result<String, A
     writeln!(
         buf,
         "#pragma clang diagnostic ignored \"-Wincompatible-library-redeclaration\""
+    ).unwrap();
+    writeln!(
+        buf,
+        "#pragma GCC diagnostic ignored \"-Wbuiltin-declaration-mismatch\""
     )
     .unwrap();
     writeln!(buf, "#pragma clang diagnostic ignored \"-Wunused-value\"").unwrap();

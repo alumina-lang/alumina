@@ -1,4 +1,4 @@
-FROM ubuntu:22.04 as builder
+FROM ubuntu:22.04 as environment
 
 ENV DEBIAN_FRONTEND noninteractive
 
@@ -21,6 +21,8 @@ RUN cargo install tree-sitter-cli
 WORKDIR /alumina/deps
 RUN curl -fsSL https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.20.6.tar.gz | tar -xz
 RUN cd tree-sitter-* && make -j8 && make install && ldconfig
+
+FROM environment as builder
 
 WORKDIR /alumina
 ADD . .
