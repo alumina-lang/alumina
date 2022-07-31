@@ -69,6 +69,8 @@ pub enum LangItemKind {
     DynVtableIndex,
 
     Operator(BinOp),
+
+    FormatArg,
 }
 
 impl TryFrom<&str> for LangItemKind {
@@ -161,6 +163,8 @@ impl TryFrom<&str> for LangItemKind {
             "dyn_const_cast" => Ok(LangItemKind::DynConstCast),
             "dyn_data" => Ok(LangItemKind::DynData),
             "dyn_vtable_index" => Ok(LangItemKind::DynVtableIndex),
+
+            "format_arg" => Ok(LangItemKind::FormatArg),
 
             t => {
                 if let Some(matches) = regex!(r"^builtin_tuple_(\d+)$").captures(t) {

@@ -232,6 +232,12 @@ pub enum CodeErrorKind {
     #[error("signature of `{}` is incompatible with virtual dispatch", .0)]
     NonDynnableFunction(String),
 
+    #[error("invalid format string ({})", .0)]
+    InvalidFormatString(String),
+
+    #[error("cannot read file `{}`", .0)]
+    CannotReadFile(String),
+
     // Warnings
     #[error("defer inside a loop: this defered statement will only be executed once")]
     DeferInALoop,

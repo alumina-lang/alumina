@@ -550,6 +550,7 @@ pub enum BuiltinMacroKind {
     Column,
     File,
     IncludeBytes,
+    FormatArgs,
 }
 
 #[derive(Debug)]

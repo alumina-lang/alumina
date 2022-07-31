@@ -71,8 +71,8 @@ protocol AsSliceMut<Self, T> {
 /// `&[T]` are distinguished without having to have two distinct types for mutable and const slices.
 #[lang(slice)]
 struct slice<Ptr: Pointer> {
-    ptr: Ptr,
-    len: usize,
+    _ptr: Ptr,
+    _len: usize,
 }
 
 impl slice {
@@ -84,7 +84,7 @@ impl slice {
     /// Empty slice
     #[force_inline]
     fn empty<Ptr: Pointer>() -> slice<Ptr> {
-        slice::<Ptr> { ptr: null, len: 0 }
+        slice::<Ptr> { _ptr: null, _len: 0 }
     }
 
     /// Create a slice from a pointer and length
@@ -102,7 +102,13 @@ impl slice {
     #[force_inline]
     #[lang(slice_new)]
     fn from_raw<Ptr: Pointer>(ptr: Ptr, len: usize) -> slice<Ptr> {
-        slice::<Ptr> { ptr: ptr, len: len }
+        slice::<Ptr> { _ptr: ptr, _len: len }
+    }
+
+    /// Returns the length of the slice
+    #[force_inline]
+    fn len<Ptr: Pointer>(self: &slice<Ptr>) -> usize {
+        self._len
     }
 
     /// Allocates an array of specified size on the heap.
@@ -114,49 +120,44 @@ impl slice {
     /// use std::mem::slice;
     ///
     /// let hw = "Hello, World!";
-    /// let s = slice::alloc::<u8>(hw.len);
+    /// let s = slice::alloc::<u8>(hw.len());
     /// defer s.free();
     ///
     /// hw.copy_to(&s[0]);
     /// assert_eq!(hw, s);
     /// ```
     fn alloc<T>(len: usize) -> &mut [T] {
-        let ret: &mut [T];
-        when T: builtins::ZeroSized {
-            ret.ptr = null as &mut T;
+        let ptr = when T: builtins::ZeroSized {
+            null as &mut T
         } else {
-            ret.ptr = libc::malloc(size_of::<T>() * len) as &mut T;
-            if ret.ptr == null {
-                panic!("out of memory")
-            }
+            libc::malloc(size_of::<T>() * len) as &mut T
         };
-        ret.len = len;
-        ret
+
+        from_raw(ptr, len)
     }
 
     /// Resizes a heap-allocated array.
     fn realloc<T>(slice: &mut [T], len: usize) -> &mut [T] {
-        slice.ptr = when T: builtins::ZeroSized {
+        let ptr = when T: builtins::ZeroSized {
             null as &mut T
         } else {
-            libc::realloc(slice.ptr as &mut void, size_of::<T>() * len) as &mut T
+            libc::realloc(slice._ptr as &mut void, size_of::<T>() * len) as &mut T
         };
-        slice.len = len;
-        slice
+
+        from_raw(ptr, len)
     }
 
     /// Allocates an array of specified size on the heap.
     ///
     /// The values are zero-initialized.
     fn alloc_zeroed<T>(len: usize) -> &mut [T] {
-        let ret: &mut [T];
-        ret.ptr = when T: builtins::ZeroSized {
+        let ptr = when T: builtins::ZeroSized {
             null as &mut T
         } else {
             libc::calloc(len, size_of::<T>()) as &mut T
         };
-        ret.len = len;
-        ret
+
+        from_raw(ptr, len)
     }
 
     /// Copies a region of memory from `src` to `dst`.
@@ -164,7 +165,7 @@ impl slice {
     /// The memory ranges must not overlap, use [copy_to] if they may be overlapping.
     fn copy_to_nonoverlapping<T>(src: &[T], dst: &mut T) {
         when T: !builtins::ZeroSized {
-            libc::memcpy(dst as &mut void, src.ptr as &void, src.len * size_of::<T>());
+            libc::memcpy(dst as &mut void, src._ptr as &void, src.len() * size_of::<T>());
         }
     }
 
@@ -173,7 +174,7 @@ impl slice {
     /// The ranges may overlap.
     fn copy_to<T>(src: &[T], dst: &mut T) {
         when T: !builtins::ZeroSized {
-            libc::memmove(dst as &mut void, src.ptr as &void, src.len * size_of::<T>());
+            libc::memmove(dst as &mut void, src._ptr as &void, src.len() * size_of::<T>());
         }
     }
 
@@ -200,9 +201,9 @@ impl slice {
         when T: ZeroSized {
             // nop
         } else when T: u8 {
-            libc::memset(slice.ptr as &mut void, value as libc::c_int, slice.len);
+            libc::memset(slice._ptr as &mut void, value as libc::c_int, slice.len());
         } else {
-            for i in 0..slice.len {
+            for i in 0..slice.len() {
                 slice[i] = value;
             }
         }
@@ -210,7 +211,7 @@ impl slice {
 
     /// @ std::cmp::Equatable::equals
     fn equals<T: Equatable<T>, Ptr: PointerOf<T>>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> bool {
-        if lhs.len != rhs.len {
+        if lhs.len() != rhs.len() {
             return false;
         }
 
@@ -218,10 +219,10 @@ impl slice {
             true
         } else when T: Primitive {
             // Optimization for slices of primitive types
-            memcmp(lhs.ptr as &void, rhs.ptr as &void, lhs.len * size_of::<T>()) == 0
+            memcmp(lhs._ptr as &void, rhs._ptr as &void, lhs.len() * size_of::<T>()) == 0
         } else {
             let idx = 0usize;
-            while idx < lhs.len {
+            while idx < lhs.len() {
                 if (*lhs)[idx] != (*rhs)[idx] {
                     return false;
                 }
@@ -236,19 +237,19 @@ impl slice {
         use std::cmp::min;
 
         when T: ZeroSized {
-            lhs.len.compare(&rhs.len)
+            lhs.len().compare(&rhs.len())
         } else when T: u8 {
-            let cmp = memcmp(lhs.ptr as &void, rhs.ptr as &void, min(lhs.len, rhs.len) * size_of::<T>());
+            let cmp = memcmp(lhs._ptr as &void, rhs._ptr as &void, min(lhs.len(), rhs.len()) * size_of::<T>());
             if cmp < 0 {
                 Ordering::Less
             } else if cmp > 0 {
                 Ordering::Greater
             } else {
-                lhs.len.compare(&rhs.len)
+                lhs.len().compare(&rhs.len())
             }
         } else {
             let idx = 0usize;
-            let len = min(lhs.len, rhs.len);
+            let len = min(lhs.len(), rhs.len());
             while idx < len {
                 let cmp = (*lhs)[idx].compare(&(*rhs)[idx]);
                 if cmp != Ordering::Equal {
@@ -256,7 +257,7 @@ impl slice {
                 }
                 idx += 1;
             }
-            lhs.len.compare(&rhs.len)
+            lhs.len().compare(&rhs.len())
         }
     }
 
@@ -264,11 +265,11 @@ impl slice {
     fn hash<T: Hashable<T, H>, Ptr: PointerOf<T>, H: Hasher<H>>(self: &slice<Ptr>, hasher: &mut H) {
         when T: ZeroSized {
             // no-op
-        } when T: u8 {
+        } else when T: u8 {
             hasher.write(*self);
         } else {
             let idx = 0usize;
-            while idx < self.len {
+            while idx < self.len() {
                 (*self)[idx].hash(hasher);
                 idx += 1;
             }
@@ -284,7 +285,7 @@ impl slice {
     ///
     /// This requires that the slice was allocated with `alloc` or `alloc_zeroed`.
     fn free<T>(a: &mut [T]) {
-        libc::free(a.ptr as &mut void);
+        libc::free(a._ptr as &mut void);
     }
 
     mixin<T: Equatable<T>, Ptr: PointerOf<T>> Equatable<slice<Ptr>>;
@@ -300,10 +301,10 @@ impl SliceIterator<Ptr: Pointer> {
     /// @ iter::Iterator::next
     #[force_inline]
     fn next(self: &mut SliceIterator<Ptr>) -> Option<builtins::deref_of<Ptr>> {
-        if self.inner.len > 0 {
-            let result = Option::some(*self.inner.ptr);
-            self.inner.ptr = self.inner.ptr + 1;
-            self.inner.len -= 1;
+        if self.inner.len() > 0 {
+            let result = Option::some(*self.inner._ptr);
+            self.inner._ptr = self.inner._ptr + 1;
+            self.inner._len -= 1;
             result
         } else {
             Option::none()
@@ -313,9 +314,9 @@ impl SliceIterator<Ptr: Pointer> {
     /// @ iter::DoubleEndedIterator::next_back
     #[force_inline]
     fn next_back(self: &mut SliceIterator<Ptr>) -> Option<builtins::deref_of<Ptr>> {
-        if self.inner.len > 0 {
-            let result = Option::some(self.inner[self.inner.len - 1]);
-            self.inner.len -= 1;
+        if self.inner.len() > 0 {
+            let result = Option::some(self.inner[self.inner.len() - 1]);
+            self.inner._len -= 1;
             result
         } else {
             Option::none()
@@ -324,7 +325,7 @@ impl SliceIterator<Ptr: Pointer> {
 
     /// @ iter::Iterator::size_hint
     fn size_hint(self: &SliceIterator<Ptr>) -> Option<usize> {
-        Option::some(self.inner.len)
+        Option::some(self.inner.len())
     }
 
     mixin iter::Iterator<SliceIterator<Ptr>, builtins::deref_of<Ptr>>;
@@ -342,10 +343,10 @@ impl SliceRefIterator<Ptr: Pointer> {
     /// @ iter::Iterator::next
     #[force_inline]
     fn next(self: &mut SliceRefIterator<Ptr>) -> Option<Ptr> {
-        if self.inner.len > 0 {
-            let result = Option::some(self.inner.ptr);
-            self.inner.ptr = self.inner.ptr + 1;
-            self.inner.len -= 1;
+        if self.inner.len() > 0 {
+            let result = Option::some(self.inner._ptr);
+            self.inner._ptr = self.inner._ptr + 1;
+            self.inner._len -= 1;
             result
         } else {
             Option::none()
@@ -355,9 +356,9 @@ impl SliceRefIterator<Ptr: Pointer> {
     /// @ iter::DoubleEndedIterator::next_back
     #[force_inline]
     fn next_back(self: &mut SliceRefIterator<Ptr>) -> Option<Ptr> {
-        if self.inner.len > 0 {
-            let result = Option::some(&self.inner[self.inner.len - 1]);
-            self.inner.len -= 1;
+        if self.inner.len() > 0 {
+            let result = Option::some(&self.inner[self.inner.len() - 1]);
+            self.inner._len -= 1;
             result
         } else {
             Option::none()
@@ -366,7 +367,7 @@ impl SliceRefIterator<Ptr: Pointer> {
 
     /// @ iter::Iterator::size_hint
     fn size_hint(self: &SliceRefIterator<Ptr>) -> Option<usize> {
-        Option::some(self.inner.len)
+        Option::some(self.inner.len())
     }
 
     mixin iter::Iterator<SliceRefIterator<Ptr>, Ptr>;
@@ -385,9 +386,14 @@ mod internal {
     #[force_inline]
     #[lang(slice_index)]
     fn slice_index<Ptr: Pointer>(a: slice<Ptr>, idx: usize) -> Ptr {
-        debug_assert!(idx < a.len);
+        #[cfg(debug)]
+        {
+            if idx >= a.len() {
+                panic!("index out of bounds: the len is {} but the index is {}", a.len(), idx);
+            }
+        }
 
-        a.ptr + idx
+        a._ptr + idx
     }
 
     /// Implementation for range indexing for slices.
@@ -399,17 +405,17 @@ mod internal {
     fn slice_range_index<Ptr: Pointer, T>(a: slice<Ptr>, range: T) -> slice<Ptr> {
         when T: iter::Range<usize> {
             debug_assert!(range.lower <= range.upper);
-            debug_assert!(range.upper <= a.len);
+            debug_assert!(range.upper <= a.len());
 
-            slice::from_raw::<Ptr>(a.ptr + range.lower, range.upper - range.lower)
+            slice::from_raw::<Ptr>(a._ptr + range.lower, range.upper - range.lower)
         } else when T: iter::RangeTo<usize> {
-            debug_assert!(range.upper <= a.len);
+            debug_assert!(range.upper <= a.len());
 
-            slice::from_raw::<Ptr>(a.ptr, range.upper)
+            slice::from_raw::<Ptr>(a._ptr, range.upper)
         } else when T: iter::RangeFrom<usize> {
-            debug_assert!(range.lower <= a.len);
+            debug_assert!(range.lower <= a.len());
 
-            slice::from_raw::<Ptr>(a.ptr + range.lower, a.len - range.lower)
+            slice::from_raw::<Ptr>(a._ptr + range.lower, a.len() - range.lower)
         } else when T: iter::RangeFull<usize> {
             a
         } else {
@@ -425,13 +431,13 @@ mod internal {
     #[force_inline]
     #[lang(slice_const_coerce)]
     fn slice_const_coerce<T>(a: slice<&mut T>) -> slice<&T> {
-        slice::from_raw::<&T>(a.ptr, a.len)
+        slice::from_raw::<&T>(a._ptr, a.len())
     }
 
     #[force_inline]
     #[lang(slice_const_cast)]
     fn slice_const_cast<T>(a: slice<&T>) -> slice<&mut T> {
-        slice::from_raw::<&mut T>(a.ptr as &mut T, a.len)
+        slice::from_raw::<&mut T>(a._ptr as &mut T, a.len())
     }
 }
 

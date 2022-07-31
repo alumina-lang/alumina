@@ -29,7 +29,7 @@ impl Path {
     fn from_str(s: &[u8]) -> Path {
         Path::new(
             s.split("::")
-                .filter(|segment: &[u8]| -> bool { segment.len > 0 })
+                .filter(|segment: &[u8]| -> bool { segment.len() > 0 })
                 .to_vector()
         )
     }
@@ -238,32 +238,38 @@ impl Item {
     /// Since Alumina does not have item visibility, this is a heuristic to determine
     /// if the item should be shown.
     fn is_public(self: &Item) -> bool {
+        use std::string::starts_with;
+
         let loc = self.path.as_slice();
         let def = self.defined_in.as_slice();
 
+        if loc.len() > 0 && loc[loc.len() - 1].starts_with("_") {
+            return false;
+        }
+
         if loc == def {
             return true;
-        } else if loc.len >= 2 && loc[0] == "std" && loc[1] == "prelude"  {
+        } else if loc.len() >= 2 && loc[0] == "std" && loc[1] == "prelude"  {
             // Special case for prelude
             return true;
-        } else if  loc.len >= def.len {
+        } else if  loc.len() >= def.len() {
             return false;
         }
 
         let suffix_len = 0usize;
         loop {
-            if suffix_len >= std::cmp::min(loc.len, def.len) {
+            if suffix_len >= std::cmp::min(loc.len(), def.len()) {
                 break;
             }
 
-            if loc[loc.len - suffix_len - 1] == def[def.len - suffix_len - 1]  {
+            if loc[loc.len() - suffix_len - 1] == def[def.len() - suffix_len - 1]  {
                 suffix_len += 1;
             } else {
                 break;
             }
         }
 
-        loc[0..loc.len - suffix_len] == def[0..loc.len - suffix_len]
+        loc[0..loc.len() - suffix_len] == def[0..loc.len() - suffix_len]
     }
 
     fn fmt<F: Formatter<F>>(self: &Item, fmt: &mut F) -> Result<(), Error> {
@@ -358,10 +364,10 @@ impl ItemBag {
                 let item_loc = it.node.start_byte();
                 let start = it.path.as_slice();
 
-                if start.len == 0 {
+                if start.len() == 0 {
                     (empty(), 0, item_loc, empty())
                 } else {
-                    (start[..start.len-1], it.kind as i32, item_loc, start[start.len-1])
+                    (start[..start.len()-1], it.kind as i32, item_loc, start[start.len()-1])
                 }
             });
     }

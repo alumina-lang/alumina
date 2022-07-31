@@ -11,28 +11,28 @@ struct Ipv6Addr {
 }
 
 impl Ipv6Addr {
+    use hash::Hasher;
+
     /// Create a new IPv6 address from 16-bit segments
     fn new(a: u16, b: u16, c: u16, d: u16, e: u16, f: u16, g: u16, h: u16) -> Ipv6Addr {
-        use internal::htons;
-
         let addr: libc::in6_addr = mem::zeroed();
         let as_u16 = &addr.s6_addr as &mut [u16; 8];
 
-        (*as_u16)[0] = htons(a);
-        (*as_u16)[1] = htons(b);
-        (*as_u16)[2] = htons(c);
-        (*as_u16)[3] = htons(d);
-        (*as_u16)[4] = htons(e);
-        (*as_u16)[5] = htons(f);
-        (*as_u16)[6] = htons(g);
-        (*as_u16)[7] = htons(h);
+        (*as_u16)[0] = a.to_be();
+        (*as_u16)[1] = b.to_be();
+        (*as_u16)[2] = c.to_be();
+        (*as_u16)[3] = d.to_be();
+        (*as_u16)[4] = e.to_be();
+        (*as_u16)[5] = f.to_be();
+        (*as_u16)[6] = g.to_be();
+        (*as_u16)[7] = h.to_be();
 
         Ipv6Addr { inner: addr }
     }
 
     /// Create a new IPv6 address from a slice of 16-bit segments
     fn from_segments(segments: &[u16]) -> Ipv6Addr {
-        assert!(segments.len == 8);
+        assert!(segments.len() == 8);
 
         Ipv6Addr::new(
             segments[0], segments[1], segments[2], segments[3],
@@ -55,21 +55,19 @@ impl Ipv6Addr {
         Ipv6Addr { inner: addr }
     }
 
-    ///
+    /// Convert IPv6 address to an array of 16-bit segments
     fn to_segments(self: &Ipv6Addr) -> [u16; 8] {
-        use internal::htons;
-
         let as_u16 = &self.inner.s6_addr as &[u16; 8];
 
         [
-            htons((*as_u16)[0]),
-            htons((*as_u16)[1]),
-            htons((*as_u16)[2]),
-            htons((*as_u16)[3]),
-            htons((*as_u16)[4]),
-            htons((*as_u16)[5]),
-            htons((*as_u16)[6]),
-            htons((*as_u16)[7]),
+            (*as_u16)[0].from_be(),
+            (*as_u16)[1].from_be(),
+            (*as_u16)[2].from_be(),
+            (*as_u16)[3].from_be(),
+            (*as_u16)[4].from_be(),
+            (*as_u16)[5].from_be(),
+            (*as_u16)[6].from_be(),
+            (*as_u16)[7].from_be(),
         ]
     }
 
@@ -190,6 +188,11 @@ impl Ipv6Addr {
         self.inner.s6_addr.as_slice() == other.inner.s6_addr.as_slice()
     }
 
+    /// @ hash::Hashable::hash
+    fn hash<H: Hasher<H>>(self: &Ipv6Addr, hasher: &mut H) {
+        self.inner.s6_addr.as_slice().hash(hasher);
+    }
+
     mixin cmp::Equatable<Ipv6Addr>;
 }
 
@@ -199,6 +202,8 @@ struct Ipv4Addr {
 }
 
 impl Ipv4Addr {
+    use hash::Hasher;
+
     /// Creates a new IPv4 address from four eight-bit octets.
     fn new(a: u8, b: u8, c: u8, d: u8) -> Ipv4Addr {
         let ret: libc::in_addr = mem::zeroed();
@@ -296,6 +301,11 @@ impl Ipv4Addr {
         self.inner.s_addr == other.inner.s_addr
     }
 
+    /// @ hash::Hashable::hash
+    fn hash<H: Hasher<H>>(self: &Ipv4Addr, hasher: &mut H) {
+        self.inner.s_addr.hash(hasher);
+    }
+
     mixin cmp::Equatable<Ipv4Addr>;
 }
 
@@ -306,6 +316,8 @@ struct IpAddr {
 }
 
 impl IpAddr {
+    use hash::Hasher;
+
     /// IPv6 address
     fn v6(ip: Ipv6Addr) -> IpAddr {
         IpAddr { kind: AddrKind::V6, inner: internal::IpAddrInner { v6: ip } }
@@ -338,6 +350,17 @@ impl IpAddr {
         }
     }
 
+    /// @ hash::Hashable::hash
+    fn hash<H: Hasher<H>>(self: &IpAddr, hasher: &mut H) {
+        (self.kind as i32).hash(hasher);
+
+        switch self.kind {
+            AddrKind::V6 => self.inner.v6.hash(hasher),
+            AddrKind::V4 => self.inner.v4.hash(hasher),
+            _ => unreachable!()
+        }
+    }
+
     mixin cmp::Equatable<IpAddr>;
 }
 
@@ -348,6 +371,8 @@ struct SocketAddr {
 }
 
 impl SocketAddr {
+    use hash::Hasher;
+
     /// Create SocketAddr from IP address and port
     fn new(addr: IpAddr, port: u16) -> SocketAddr {
         let inner = switch addr.kind {
@@ -357,7 +382,7 @@ impl SocketAddr {
             AddrKind::V4 => {
                 let sockaddr = mem::zeroed::<libc::sockaddr_in>();
                 sockaddr.sin_family = libc::AF_INET as libc::sa_family_t;
-                sockaddr.sin_port = internal::htons(port);
+                sockaddr.sin_port = port.to_be();
                 sockaddr.sin_addr = addr.inner.v4.inner;
 
                 internal::SocketAddrInner { v4: sockaddr }
@@ -375,7 +400,7 @@ impl SocketAddr {
     fn with_flowinfo_and_scope(addr: Ipv6Addr, port: u16, flowinfo: u32, scope_id: u32) -> SocketAddr {
         let sockaddr = mem::zeroed::<libc::sockaddr_in6>();
         sockaddr.sin6_family = libc::AF_INET6 as libc::sa_family_t;
-        sockaddr.sin6_port = internal::htons(port);
+        sockaddr.sin6_port = port.to_be();
         sockaddr.sin6_addr = addr.inner;
         sockaddr.sin6_flowinfo = flowinfo;
         sockaddr.sin6_scope_id = scope_id;
@@ -390,10 +415,10 @@ impl SocketAddr {
     fn set_port(self: &mut SocketAddr, port: u16) {
         switch self.kind {
             AddrKind::V6 => {
-                self.inner.v6.sin6_port = internal::htons(port);
+                self.inner.v6.sin6_port = port.to_be();
             }
             AddrKind::V4 => {
-                self.inner.v4.sin_port = internal::htons(port);
+                self.inner.v4.sin_port = port.to_be();
             }
         }
     }
@@ -401,8 +426,8 @@ impl SocketAddr {
     /// Returns the port number
     fn port(self: &SocketAddr) -> u16 {
         switch self.kind {
-            AddrKind::V6 => internal::htons(self.inner.v6.sin6_port),
-            AddrKind::V4 => internal::htons(self.inner.v4.sin_port),
+            AddrKind::V6 => self.inner.v6.sin6_port.from_be(),
+            AddrKind::V4 => self.inner.v4.sin_port.from_be(),
             _ => unreachable!()
         }
     }
@@ -421,7 +446,7 @@ impl SocketAddr {
         use option::try;
         use string::{split, starts_with, ends_with, contains};
 
-        let i = s.len;
+        let i = s.len();
         let split_at = loop {
             if i == 0 {
                 return Option::none();
@@ -437,7 +462,7 @@ impl SocketAddr {
 
         s = s[..split_at];
         let ret = if s.starts_with("[") && s.ends_with("]") {
-            s = s[1..s.len - 1];
+            s = s[1..s.len() - 1];
 
             let segments = s.split("%");
             let address = Ipv6Addr::parse(segments.next()?)?;
@@ -485,6 +510,12 @@ impl SocketAddr {
         self.ip() == other.ip() && self.port() == other.port()
     }
 
+    /// @ hash::Hashable::hash
+    fn hash<H: Hasher<H>>(self: &SocketAddr, hasher: &mut H) {
+        self.ip().hash(hasher);
+        self.port().hash(hasher);
+    }
+
     mixin cmp::Equatable<SocketAddr>;
 }
 
@@ -496,7 +527,7 @@ mod internal {
         let segments = s.split(":");
 
         let result: [u16; 8] = mem::zeroed();
-        if s.len == 0 {
+        if s.len() == 0 {
             return Option::some((result, 0usize));
         }
 
@@ -536,10 +567,6 @@ mod internal {
         }
 
         Option::some((result, len))
-    }
-
-    fn htons(i: u16) -> u16 {
-        ((i & 0x00ff) << 8) | ((i & 0xff00) >> 8)
     }
 
     union IpAddrInner {
@@ -674,6 +701,37 @@ mod tests {
         assert_eq!(Ipv4Addr::parse("1.2.3.4.5"), Option::none());
         assert_eq!(Ipv4Addr::parse(" 1.2.3.4"), Option::none());
     }
+
+    #[test]
+    fn test_hash() {
+        use hash::hash_of;
+
+        assert_eq!(
+            SocketAddr::parse("192.168.0.1:80").unwrap().hash_of(),
+            SocketAddr::parse("192.168.0.1:80").unwrap().hash_of()
+        );
+
+        assert_eq!(
+            SocketAddr::parse("[2001:db8::1]:80").unwrap().hash_of(),
+            SocketAddr::parse("[2001:db8::1]:80").unwrap().hash_of()
+        );
+
+        assert_ne!(
+            SocketAddr::parse("192.168.0.1:80").unwrap().hash_of(),
+            SocketAddr::parse("[2001:db8::1]:80").unwrap().hash_of()
+        );
+
+        assert_ne!(
+            SocketAddr::parse("192.168.0.1:80").unwrap().hash_of(),
+            SocketAddr::parse("192.168.0.1:81").unwrap().hash_of()
+        );
+
+        assert_ne!(
+            SocketAddr::parse("[2001:db8::1]:80").unwrap().hash_of(),
+            SocketAddr::parse("[2001:db8::1]:81").unwrap().hash_of()
+        );
+    }
+
 
     macro roundtrip_sa($addr, $expected) {
         let parsed = SocketAddr::parse($addr).unwrap();

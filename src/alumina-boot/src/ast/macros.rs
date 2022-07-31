@@ -4,7 +4,8 @@ use once_cell::unsync::OnceCell;
 
 use crate::{
     ast::{
-        AstCtx, BuiltinMacro, BuiltinMacroKind, Expr, ExprKind, FieldInitializer, Item, ItemP, Lit,
+        lang::LangItemKind, AstCtx, BuiltinMacro, BuiltinMacroKind, Expr, ExprKind,
+        FieldInitializer, FnKind, Item, ItemP, Lit,
     },
     common::{ice, AluminaError, ArenaAllocatable, CodeErrorKind},
     global_ctx::GlobalCtx,
@@ -93,6 +94,7 @@ impl<'ast> MacroMaker<'ast> {
                 "line" => BuiltinMacroKind::Line,
                 "column" => BuiltinMacroKind::Column,
                 "file" => BuiltinMacroKind::File,
+                "format_args" => BuiltinMacroKind::FormatArgs,
                 s => {
                     return Err(CodeErrorKind::UnknownBuiltinMacro(s.to_string()))
                         .with_span_from(&scope, node)
@@ -465,8 +467,20 @@ impl<'ast> MacroExpander<'ast> {
                 .alloc_on(self.ast))
             }
             BuiltinMacroKind::IncludeBytes => {
-                assert_args!(self, 1);
-                todo!()
+                let filename = match std::str::from_utf8(string_arg!(self, 0)) {
+                    Ok(v) => v,
+                    _ => ice!("invalid UTF-8 in filename"),
+                };
+
+                let data = std::fs::read(filename)
+                    .map_err(|_| CodeErrorKind::CannotReadFile(filename.to_string()))
+                    .with_span(self.invocation_span)?;
+
+                Ok(Expr {
+                    kind: ExprKind::Lit(Lit::Str(self.ast.arena.alloc_slice_copy(&data[..]))),
+                    span: self.invocation_span,
+                }
+                .alloc_on(self.ast))
             }
             BuiltinMacroKind::Concat => {
                 let parts =
@@ -492,6 +506,148 @@ impl<'ast> MacroExpander<'ast> {
 
                 Ok(Expr {
                     kind: ExprKind::Lit(Lit::Str(value)),
+                    span: self.invocation_span,
+                }
+                .alloc_on(self.ast))
+            }
+            BuiltinMacroKind::FormatArgs => {
+                if self.args.len() < 1 {
+                    return Err(CodeErrorKind::NotEnoughMacroArguments(1))
+                        .with_span(self.invocation_span);
+                }
+
+                let fmt_string = string_arg!(self, 0);
+
+                #[derive(PartialEq, Eq, Debug)]
+                enum State {
+                    Normal,
+                    BraceOpen,
+                    BraceClose,
+                }
+
+                let mut args = Vec::new();
+                let mut string_part = Vec::new();
+
+                let make_arg = |arg: ExprP<'ast>| {
+                    let ret = Expr {
+                        kind: ExprKind::Call(
+                            Expr {
+                                kind: ExprKind::Fn(
+                                    FnKind::Normal(
+                                        self.ast
+                                            .lang_item(LangItemKind::FormatArg)
+                                            .with_span(self.invocation_span)?,
+                                    ),
+                                    None,
+                                ),
+                                span: self.invocation_span,
+                            }
+                            .alloc_on(self.ast),
+                            [Expr {
+                                kind: ExprKind::Ref(arg),
+                                span: self.invocation_span,
+                            }
+                            .alloc_on(self.ast)]
+                            .alloc_on(self.ast),
+                        ),
+                        span: self.invocation_span,
+                    }
+                    .alloc_on(self.ast);
+
+                    Ok::<_, AluminaError>(ret)
+                };
+
+                let mut state = State::Normal;
+                let mut arg_index = 0;
+
+                macro_rules! push_string_part {
+                    () => {
+                        if !string_part.is_empty() {
+                            args.push(make_arg(
+                                Expr {
+                                    kind: ExprKind::Lit(Lit::Str(
+                                        self.ast.arena.alloc_slice_copy(string_part.as_slice()),
+                                    )),
+                                    span: self.invocation_span,
+                                }
+                                .alloc_on(self.ast),
+                            )?);
+                            string_part.clear();
+                        }
+                    };
+                }
+
+                for ch in fmt_string.iter().copied() {
+                    state = match state {
+                        State::Normal => match ch {
+                            b'{' => State::BraceOpen,
+                            b'}' => State::BraceClose,
+                            _ => {
+                                string_part.push(ch);
+                                State::Normal
+                            }
+                        },
+                        State::BraceClose => match ch {
+                            b'}' => {
+                                string_part.push(ch);
+                                State::Normal
+                            }
+                            _ => {
+                                return Err(CodeErrorKind::InvalidFormatString(format!(
+                                    "unexpected {:?}",
+                                    ch as char
+                                )))
+                                .with_span(self.args[0].span);
+                            }
+                        },
+                        State::BraceOpen => match ch {
+                            b'{' => {
+                                string_part.push(ch);
+                                State::Normal
+                            }
+                            b'}' => {
+                                push_string_part!();
+
+                                if self.args.len() <= arg_index + 1 {
+                                    return Err(CodeErrorKind::InvalidFormatString(
+                                        "not enough arguments".to_string(),
+                                    ))
+                                    .with_span(self.invocation_span);
+                                }
+
+                                args.push(make_arg(self.args[arg_index + 1])?);
+                                arg_index += 1;
+
+                                State::Normal
+                            }
+                            _ => {
+                                return Err(CodeErrorKind::InvalidFormatString(format!(
+                                    "unexpected {:?}",
+                                    ch as char
+                                )))
+                                .with_span(self.invocation_span);
+                            }
+                        },
+                    };
+                }
+
+                if state != State::Normal {
+                    return Err(CodeErrorKind::InvalidFormatString(
+                        "unexpected end of format string".to_string(),
+                    ))
+                    .with_span(self.invocation_span);
+                }
+
+                if self.args.len() > arg_index + 1 {
+                    return Err(CodeErrorKind::InvalidFormatString(
+                        "too many arguments".to_string(),
+                    ))
+                    .with_span(self.invocation_span);
+                }
+                push_string_part!();
+
+                Ok(Expr {
+                    kind: ExprKind::Array(args.alloc_on(self.ast)),
                     span: self.invocation_span,
                 }
                 .alloc_on(self.ast))

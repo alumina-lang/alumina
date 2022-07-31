@@ -109,7 +109,7 @@ protocol Readable<Self> {
             if read == 0 {
                 return Result::ok(buf.len() - start_len);
             } else {
-                buf._length = buf.len() + read;
+                buf.truncate(buf.len() + read);
             }
 
             // Optimization for the case where the initial vector had exactly
@@ -141,7 +141,7 @@ protocol Writable<Self> {
     /// If EOF is reached, returns `Error::eof()`.
     fn write_all(self: &mut Self, buf: &[u8]) -> Result<()> {
 
-        while buf.len > 0 {
+        while buf.len() > 0 {
             let written_bytes = self.write(buf)?;
             if written_bytes == 0 {
                 return Result::err(Error::eof());
@@ -205,7 +205,7 @@ impl NullStream {
 
     /// @ Readable::read_exact
     fn read_exact(self: &mut NullStream, buf: &mut [u8]) -> Result<()> {
-        if buf.len == 0 {
+        if buf.len() == 0 {
             Result::ok(())
         } else {
             Result::err(Error::eof())
@@ -219,7 +219,7 @@ impl NullStream {
 
     /// @ Writable::write
     fn write(self: &mut NullStream, buf: &[u8]) -> Result<usize> {
-        Result::ok(buf.len)
+        Result::ok(buf.len())
     }
 
     /// @ Writable::write_all
@@ -256,7 +256,7 @@ impl TakeAdapter<R: Readable<R>> {
             return Result::ok(0usize);
         }
 
-        let max = cmp::min(buf.len as u64, self.limit) as usize;
+        let max = cmp::min(buf.len() as u64, self.limit) as usize;
         let ret = self.inner.read(buf[..max])?;
         self.limit -= ret as u64;
 
@@ -319,7 +319,7 @@ impl SliceReader {
 
     /// @ Readable::read
     fn read(self: &mut SliceReader, buf: &mut [u8]) -> Result<usize> {
-        let len = cmp::min(buf.len, self.slice.len - self.pos);
+        let len = cmp::min(buf.len(), self.slice.len() - self.pos);
 
         if len > 0 {
             self.slice[self.pos..self.pos + len].copy_to_nonoverlapping(&buf[0]);
@@ -336,7 +336,7 @@ impl SliceReader {
 
     /// @ BufferedReadable::consume
     fn consume(self: &mut SliceReader, amount: usize) {
-        self.pos = cmp::min(self.pos + amount, self.slice.len);
+        self.pos = cmp::min(self.pos + amount, self.slice.len());
     }
 
     /// @ Seekable::seek
@@ -344,11 +344,11 @@ impl SliceReader {
         let new_offset = switch whence {
             SeekFrom::Beginning => offset,
             SeekFrom::Current => self.pos as i64 + offset,
-            SeekFrom::End => self.slice.len as i64 + offset,
+            SeekFrom::End => self.slice.len() as i64 + offset,
             _ => unreachable!()
         };
 
-        if new_offset < 0 || (new_offset as usize) > self.slice.len {
+        if new_offset < 0 || (new_offset as usize) > self.slice.len() {
             Result::err(Error::eof())
         } else {
             self.pos = new_offset as usize;
@@ -381,7 +381,7 @@ impl StringWriter {
     /// @ Writable::write
     fn write(self: &mut StringWriter, buf: &[u8]) -> Result<usize> {
         self.string.extend_from_slice(buf);
-        Result::ok(buf.len)
+        Result::ok(buf.len())
     }
 
     /// @ Writable::flush
@@ -405,7 +405,7 @@ protocol BufferedReadable<Self: Readable<Self>> {
 
     /// Mark `amount` bytes as consumed, moving the internal buffer
     /// position forward.
-    fn consume(self: &mut Self, amount: usize)
+    fn consume(self: &mut Self, amount: usize);
 }
 
 /// A buffered wrapper over an underlying stream.
@@ -455,7 +455,7 @@ impl BufferedReader<R: Readable<R>> {
     fn read(self: &mut BufferedReader<R>, buf: &mut [u8]) -> Result<usize> {
         let slice = self.fill_buffer()?;
 
-        let nread = cmp::min(buf.len, slice.len);
+        let nread = cmp::min(buf.len(), slice.len());
         if nread > 0 {
             slice[..nread].copy_to_nonoverlapping(&buf[0]);
             self.consume(nread);
@@ -466,10 +466,10 @@ impl BufferedReader<R: Readable<R>> {
 
     /// @ Readable::read_exact
     fn read_exact(self: &mut BufferedReader<R>, buf: &mut [u8]) -> Result<()> {
-        if self.cap - self.pos >= buf.len {
-            if buf.len > 0 {
-                self.buf[self.pos..self.pos + buf.len].copy_to_nonoverlapping(&buf[0]);
-                self.consume(buf.len);
+        if self.cap - self.pos >= buf.len() {
+            if buf.len() > 0 {
+                self.buf[self.pos..self.pos + buf.len()].copy_to_nonoverlapping(&buf[0]);
+                self.consume(buf.len());
             }
             return Result::ok(());
         }
@@ -540,25 +540,25 @@ impl BufferedWriter<W: Writable<W>> {
     #[cold]
     #[no_inline]
     fn write_full(self: &mut BufferedWriter<W>, buf: &[u8]) -> Result<usize> {
-        if buf.len > self.buf.len - self.pos {
+        if buf.len() > self.buf.len() - self.pos {
             self._flush_buffer()?;
         }
 
-        if buf.len >= self.buf.len  {
+        if buf.len() >= self.buf.len()  {
             // Bypass the buffer if we need to write more than buffer size
             self.inner.write(buf)
         } else {
             self._write_to_buffer(buf);
-            Result::ok(buf.len)
+            Result::ok(buf.len())
         }
     }
 
     /// @ Writable::write
     #[inline]
     fn write(self: &mut BufferedWriter<W>, buf: &[u8]) -> Result<usize> {
-        if buf.len < self.buf.len - self.pos {
+        if buf.len() < self.buf.len() - self.pos {
             self._write_to_buffer(buf);
-            Result::ok(buf.len)
+            Result::ok(buf.len())
         } else {
             self.write_full(buf)
         }
@@ -567,7 +567,7 @@ impl BufferedWriter<W: Writable<W>> {
     /// @ Writable::write_all
     #[inline]
     fn write_all(self: &mut BufferedWriter<W>, buf: &[u8]) -> Result<()> {
-        if buf.len < self.buf.len - self.pos {
+        if buf.len() < self.buf.len() - self.pos {
             self._write_to_buffer(buf);
             Result::ok(())
         } else {
@@ -583,11 +583,11 @@ impl BufferedWriter<W: Writable<W>> {
 
     #[inline]
     fn _write_to_buffer(self: &mut BufferedWriter<W>, buf: &[u8]) {
-        if buf.len > 0 {
+        if buf.len() > 0 {
             // This guard is technically redundant, but to avoid the debug assertion
             // when indexing past the end of the buffer with 0-length writes.
             buf.copy_to_nonoverlapping(&self.buf[self.pos]);
-            self.pos += buf.len;
+            self.pos += buf.len();
         }
     }
 
@@ -604,11 +604,11 @@ impl BufferedWriter<W: Writable<W>> {
     #[cold]
     #[no_inline]
     fn _write_all_full(self: &mut BufferedWriter<W>, buf: &[u8]) -> Result<()> {
-        if buf.len > self.buf.len - self.pos {
+        if buf.len() > self.buf.len() - self.pos {
             self._flush_buffer()?;
         }
 
-        if buf.len >= self.buf.len {
+        if buf.len() >= self.buf.len() {
             // Bypass the buffer if we need to write more than buffer size
             self.inner.write_all(buf)
         } else {
@@ -722,7 +722,7 @@ fn read_until<R: BufferedReadable<R>>(r: &mut R, delim: u8, buf: &mut string::St
             (true, ret.inner + 1)
         } else {
             buf.extend_from_slice(available);
-            (false, available.len)
+            (false, available.len())
         };
 
         r.consume(used);
@@ -831,7 +831,7 @@ fn lines<R: BufferedReadable<R>>(reader: &mut R) -> LineIterator<R> {
 
 mod internal {
     fn default_read_exact<T: Readable<T>>(self: &mut T, buf: &mut [u8]) -> Result<()> {
-        while buf.len > 0 {
+        while buf.len() > 0 {
             let read_bytes = self.read(buf)?;
             if read_bytes == 0 {
                 return Result::err(Error::eof());

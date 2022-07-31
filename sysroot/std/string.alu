@@ -48,10 +48,10 @@ fn to_upper(self: u8) -> u8 {
 /// assert!(!"hello world".starts_with("world"));
 /// ```
 fn starts_with(self: &[u8], prefix: &[u8]) -> bool {
-    if self.len < prefix.len {
+    if self.len() < prefix.len() {
         return false;
     }
-    self[..prefix.len] == prefix
+    self[..prefix.len()] == prefix
 }
 
 /// Returns `true` if string ends with the given suffix, `false` otherwise.
@@ -64,10 +64,10 @@ fn starts_with(self: &[u8], prefix: &[u8]) -> bool {
 /// assert!(!"hello world".ends_with("hello"));
 /// ```
 fn ends_with(self: &[u8], suffix: &[u8]) -> bool {
-    if self.len < suffix.len {
+    if self.len() < suffix.len() {
         return false;
     }
-    self[self.len - suffix.len..] == suffix
+    self[self.len() - suffix.len()..] == suffix
 }
 
 /// Return string without the given prefix.
@@ -83,7 +83,7 @@ fn ends_with(self: &[u8], suffix: &[u8]) -> bool {
 /// ```
 fn trim_prefix(self: &[u8], prefix: &[u8]) -> &[u8] {
     if self.starts_with(prefix) {
-        self[prefix.len..]
+        self[prefix.len()..]
     } else {
         self
     }
@@ -102,7 +102,7 @@ fn trim_prefix(self: &[u8], prefix: &[u8]) -> &[u8] {
 /// ```
 fn trim_suffix(self: &[u8], suffix: &[u8]) -> &[u8] {
     if self.ends_with(suffix) {
-        self[..self.len - suffix.len]
+        self[..self.len() - suffix.len()]
     } else {
         self
     }
@@ -121,25 +121,25 @@ fn trim_suffix(self: &[u8], suffix: &[u8]) -> &[u8] {
 /// assert_eq!("hello world".find("worldx"), Option::none());
 /// ```
 fn find(self: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.len == 0 {
+    if needle.len() == 0 {
         return Option::some(0usize);
     }
 
-    if self.len == 0 {
+    if self.len() == 0 {
         return Option::none();
     }
 
     let ret = libc::memmem(
-        self.ptr as &void,
-        self.len,
-        needle.ptr as &void,
-        needle.len
+        &self[0] as &void,
+        self.len(),
+        &needle[0] as &void,
+        needle.len()
     )
 
     if ret == null {
         Option::none()
     } else {
-        Option::some(((ret as &u8) - self.ptr) as usize)
+        Option::some(((ret as &u8) - &self[0]) as usize)
     }
 }
 
@@ -153,16 +153,20 @@ fn find(self: &[u8], needle: &[u8]) -> Option<usize> {
 /// assert_eq!("hello world".find_char('x'), Option::none());
 /// ```
 fn find_char(self: &[u8], needle: u8) -> Option<usize> {
+    if self.len() == 0 {
+        return Option::none();
+    }
+
     let p = libc::memchr(
-        self.ptr as &void,
+        &self[0] as &void,
         needle as libc::c_int,
-        self.len,
+        self.len(),
     );
 
     if p == null {
         Option::none()
     } else {
-        Option::some(p as usize - (self.ptr as usize))
+        Option::some(p as usize - (&self[0] as usize))
     }
 }
 
@@ -189,7 +193,7 @@ fn contains(self: &[u8], needle: &[u8]) -> bool {
 /// ```
 fn trim_start(self: &[u8]) -> &[u8] {
     let i = 0usize;
-    while i < self.len && self[i].is_whitespace() {
+    while i < self.len() && self[i].is_whitespace() {
         i += 1;
     }
     self[i..]
@@ -204,7 +208,7 @@ fn trim_start(self: &[u8]) -> &[u8] {
 /// assert_eq!("  hello world   ".trim_end(), "  hello world");
 /// ```
 fn trim_end(self: &[u8]) -> &[u8] {
-    let i = self.len;
+    let i = self.len();
     while i > 0 && self[i - 1].is_whitespace() {
         i -= 1;
     }
@@ -255,7 +259,7 @@ impl SplitIterator {
 
         let pos = pos.unwrap();
         let ret = Option::some(self.data[..pos]);
-        self.data = self.data[pos + self.sep.len..];
+        self.data = self.data[pos + self.sep.len()..];
 
         ret
     }
@@ -381,7 +385,7 @@ fn parse_integer<T: builtins::Integer>(s: &[u8], radix: u16) -> Option<T> {
     use builtins::unsigned_of;
     use option::try;
 
-    if s.len == 0 {
+    if s.len() == 0 {
         return Option::none();
     }
 

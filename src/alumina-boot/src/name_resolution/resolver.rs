@@ -87,7 +87,7 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
                 NamedItemKind::Module(child_scope) => {
                     return self.resolve_scope(child_scope.clone(), remainder);
                 }
-                NamedItemKind::Alias(target) => {
+                NamedItemKind::Alias(target, _) => {
                     return self.resolve_scope(self_scope.clone(), target.join_with(remainder));
                 }
                 _ => {}
@@ -149,7 +149,7 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
         for item in containing_scope.inner().items_with_name(last_segment.0) {
             match &item.kind {
                 NamedItemKind::Impl(_, _) => continue,
-                NamedItemKind::Alias(target) => {
+                NamedItemKind::Alias(target, _) => {
                     return self.resolve_item_impl(
                         self_scope,
                         containing_scope.clone(),

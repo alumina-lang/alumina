@@ -63,11 +63,29 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     /// reallocating.
     ///
     /// This follows the amortized growth strategy.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::HashMap;
+    ///
+    /// let map: HashMap<i32, i32> = HashMap::new();
+    /// map.reserve(100);
+    ///
+    /// map.insert(1, 2);
+    /// let ptr = map.get_ref(1).unwrap();
+    ///
+    /// for i in 1..100 {
+    ///     map.insert(i, i * 2);
+    /// }
+    ///
+    /// /// The first element is still at the same position.
+    /// assert_eq!(ptr, map.get_ref(1).unwrap());
+    /// ```
     fn reserve(self: &mut HashMap<K, V, H>, additional: usize) -> bool {
         // We keep the load factor below 0.75.
         let new_length = self._length + additional;
-        if new_length * 4 > self._buckets.len * 3 {
-            self.rehash(cmp::max(self._buckets.len * 2, new_length * 2));
+        if new_length * 4 > self._buckets.len() * 3 {
+            self.rehash(cmp::max(self._buckets.len() * 2, new_length * 2));
             return true;
         }
         return false;
@@ -77,6 +95,8 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     ///
     /// Note that this could lead to poor performance if the resulting load factor
     /// is close to 1.
+    #[cold]
+    #[no_inline]
     fn rehash(self: &mut HashMap<K, V, H>, new_capacity: usize) {
         debug_assert!(self._length <= new_capacity);
 
@@ -101,7 +121,7 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
 
     /// Inserts a value into the map under a given key.
     fn insert(self: &mut HashMap<K, V, H>, key: K, value: V) -> Option<V> {
-        if self._buckets.len == 0 {
+        if self._buckets.len() == 0 {
             self.rehash(INITIAL_SIZE);
         }
 
@@ -124,6 +144,9 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     }
 
     /// Removes the element from the map.
+    ///
+    /// If the element with the given key was present in the map, the corresponding value is
+    /// returned. Otherwise, `Option::none()` is returned.
     fn remove(self: &mut HashMap<K, V, H>, key: K) -> Option<V> {
         let item = self._get_slot(key)?;
         self._length -= 1;
@@ -136,6 +159,16 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     }
 
     /// Returns the number of elements in the map.
+    /// ## Example
+    /// ```
+    /// use std::collections::HashMap;
+    ///
+    /// let map: HashMap<i32, i32> = HashMap::new();
+    /// assert_eq!(map.len(), 0);
+    ///
+    /// map.insert(1, 2);
+    /// assert_eq!(map.len(), 1);
+    /// ```
     #[inline]
     fn len(self: &HashMap<K, V, H>) -> usize {
         self._length
@@ -152,7 +185,7 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     /// This does not shrink the underlying array after clearing. If this is desired, call [shrink_to_fit]
     /// afterwards.
     fn clear(self: &mut HashMap<K, V, H>) {
-        for i in (0usize..self._buckets.len) {
+        for i in (0usize..self._buckets.len()) {
             self._buckets[i].state = State::Vacant;
         }
         self._length = 0;
@@ -183,7 +216,7 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     }
 
     fn _insert(self: &mut HashMap<K, V, H>, item: (K, V), grow: bool) -> Option<V> {
-        let initial_index = (hash_of::<K, H>(item.0) as usize) % self._buckets.len;
+        let initial_index = (hash_of::<K, H>(item.0) as usize) % self._buckets.len();
         let index = initial_index;
 
         loop {
@@ -203,14 +236,14 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
                     }
                 }
             }
-            index = (index + 1) % self._buckets.len;
+            index = (index + 1) % self._buckets.len();
             if index == initial_index {
                 assert!(grow);
 
                 // We wrapped around because of deleted items, we don't
                 // need to grow the hashmap, but we need to get rid of the
                 // tombstones by rehashing.
-                self.rehash(self._buckets.len);
+                self.rehash(self._buckets.len());
                 return self._insert(item, false);
             }
         }
@@ -221,7 +254,7 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
             return Option::none();
         }
 
-        let initial_index = (hash_of::<K, H>(key) as usize) % self._buckets.len;
+        let initial_index = (hash_of::<K, H>(key) as usize) % self._buckets.len();
         let index = initial_index;
 
         loop {
@@ -235,7 +268,7 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
                     }
                 }
             }
-            index = (index + 1) % self._buckets.len;
+            index = (index + 1) % self._buckets.len();
             if index == initial_index {
                 // We can wrap around if all the buckets are Occupied or Deleted
                 return Option::none();
@@ -296,7 +329,7 @@ impl HashMap<
     fn extend(self: &mut HashMap<K, V, H>, iter: &mut I) {
         self.reserve(iter.size_hint().unwrap_or(0));
 
-        if self._buckets.len == 0 {
+        if self._buckets.len() == 0 {
             self.rehash(INITIAL_SIZE);
         }
 
@@ -461,7 +494,7 @@ mod tests {
         }
 
         fn write(self: &mut DummyHasher, val: &[u8]) {
-            val[..cmp::min(val.len, mem::size_of::<u64>())]
+            val[..cmp::min(val.len(), mem::size_of::<u64>())]
                 .copy_to(&self.state as &mut u8);
         }
 
@@ -669,13 +702,13 @@ mod tests {
 
         map.reserve(100);
 
-        let ptr = map._buckets.ptr;
+        let ptr = &map._buckets[0];
         for i in 0..100 {
             map.insert(i, i);
         }
 
         // Did not reallocate
-        assert_eq!(map._buckets.ptr, ptr);
+        assert_eq!(&map._buckets[0], ptr);
     }
 
     #[test]

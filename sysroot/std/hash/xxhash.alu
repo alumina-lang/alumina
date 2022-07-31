@@ -26,6 +26,7 @@ fn avalanche(input: u64) -> u64 {
     input
 }
 
+/// 64-bit version of xxHash (XXH64)
 struct Xxh64 {
     total_len: usize,
     v1: u64,
@@ -57,11 +58,11 @@ impl Xxh64 {
 
     #[no_inline]
     fn write(self: &mut Xxh64, input: &[u8]) {
-        self.total_len += input.len;
+        self.total_len += input.len();
 
-        if (self.mem_size + input.len) < CHUNK_SIZE {
+        if (self.mem_size + input.len()) < CHUNK_SIZE {
             input.copy_to_nonoverlapping((&self.mem[0] as &mut u8) + self.mem_size);
-            self.mem_size += input.len;
+            self.mem_size += input.len();
             return
         }
 
@@ -78,26 +79,26 @@ impl Xxh64 {
             self.mem_size = 0;
         }
 
-        if input.len >= CHUNK_SIZE {
+        if input.len() >= CHUNK_SIZE {
             loop {
-                self.v1 = round(self.v1, (*(input.ptr as &u64)).to_le());
+                self.v1 = round(self.v1, (*(&input[0] as &u64)).to_le());
                 input = input[8..];
-                self.v2 = round(self.v2, (*(input.ptr as &u64)).to_le());
+                self.v2 = round(self.v2, (*(&input[0] as &u64)).to_le());
                 input = input[8..];
-                self.v3 = round(self.v3, (*(input.ptr as &u64)).to_le());
+                self.v3 = round(self.v3, (*(&input[0] as &u64)).to_le());
                 input = input[8..];
-                self.v4 = round(self.v4, (*(input.ptr as &u64)).to_le());
+                self.v4 = round(self.v4, (*(&input[0] as &u64)).to_le());
                 input = input[8..];
 
-                if input.len < CHUNK_SIZE {
+                if input.len() < CHUNK_SIZE {
                     break;
                 }
             }
         }
 
-        if input.len > 0 {
+        if input.len() > 0 {
             input.copy_to_nonoverlapping(&self.mem[0] as &mut u8);
-            self.mem_size = input.len;
+            self.mem_size = input.len();
         }
     }
 
@@ -122,14 +123,14 @@ impl Xxh64 {
 
         let remainder = std::mem::slice::from_raw(&self.mem[0] as &u8, self.mem_size);
 
-        while remainder.len >= 8 {
-            result ^= round(0, (*(remainder.ptr as &u64)).to_le());
+        while remainder.len() >= 8 {
+            result ^= round(0, (*(&remainder[0] as &u64)).to_le());
             remainder = remainder[8..];
             result = (result.rotate_left(27)) * PRIME_1 + PRIME_4
         }
 
-        if remainder.len >= 4 {
-            result ^= ((*(remainder.ptr as &u32)).to_le() as u64) * PRIME_1;
+        if remainder.len() >= 4 {
+            result ^= ((*(&remainder[0] as &u32)).to_le() as u64) * PRIME_1;
             remainder = remainder[4..];
             result = (result.rotate_left(23)) * PRIME_2 + PRIME_3;
         }
@@ -246,211 +247,5 @@ mod tests {
         assert_eq!(hash_range(48), 0xc44594eeb39efae3);
         assert_eq!(hash_range(49), 0xdd1520c422ec8060);
         assert_eq!(hash_range(50), 0x2a919ccea10d1988);
-        assert_eq!(hash_range(51), 0xb20e88944f5a8337);
-        assert_eq!(hash_range(52), 0x688d3a298e74eb1a);
-        assert_eq!(hash_range(53), 0xd7c2584cd87f772);
-        assert_eq!(hash_range(54), 0xe62fc5b6735bb00);
-        assert_eq!(hash_range(55), 0xf26f59d71004dae5);
-        assert_eq!(hash_range(56), 0x13e73e77186eba4a);
-        assert_eq!(hash_range(57), 0x1d3cd39eb0a88d56);
-        assert_eq!(hash_range(58), 0x833b5e16e1735e22);
-        assert_eq!(hash_range(59), 0xfbf24b55f2a110f);
-        assert_eq!(hash_range(60), 0xa16ac0d10220c51b);
-        assert_eq!(hash_range(61), 0xe7fa041bc6f4b0fe);
-        assert_eq!(hash_range(62), 0x158f47ce90e08f14);
-        assert_eq!(hash_range(63), 0xe2318657777c58f7);
-        assert_eq!(hash_range(64), 0x540043b1b632006b);
-        assert_eq!(hash_range(65), 0xa0f374d29066e0a7);
-        assert_eq!(hash_range(66), 0xbd68a7f880076f1f);
-        assert_eq!(hash_range(67), 0xad43ea6f46f7b471);
-        assert_eq!(hash_range(68), 0x1a22abef7c49d7c6);
-        assert_eq!(hash_range(69), 0xf83ecf00fb8d561d);
-        assert_eq!(hash_range(70), 0xd2b1aac469a1cef8);
-        assert_eq!(hash_range(71), 0xa5c3aedfaa7e7cd1);
-        assert_eq!(hash_range(72), 0x3fd204c173eaf1bf);
-        assert_eq!(hash_range(73), 0x11719713d2728695);
-        assert_eq!(hash_range(74), 0xd4bfc7924305dfd4);
-        assert_eq!(hash_range(75), 0xddce8c4f904deea);
-        assert_eq!(hash_range(76), 0xe55d97fb16b586b3);
-        assert_eq!(hash_range(77), 0xe49b7ac366fb01b);
-        assert_eq!(hash_range(78), 0x6a787ba78169f5ab);
-        assert_eq!(hash_range(79), 0x2a0f546376ac87ca);
-        assert_eq!(hash_range(80), 0xc1e4b471cfeb78f9);
-        assert_eq!(hash_range(81), 0xa362112cc0fe5e16);
-        assert_eq!(hash_range(82), 0xf53e0d2cd98d55b7);
-        assert_eq!(hash_range(83), 0x60368af786335252);
-        assert_eq!(hash_range(84), 0xf584e529fbb65488);
-        assert_eq!(hash_range(85), 0x68a69874a1b4c5c4);
-        assert_eq!(hash_range(86), 0xd4574031dff4593f);
-        assert_eq!(hash_range(87), 0x24e505d64941a9d1);
-        assert_eq!(hash_range(88), 0x47b132b48d727bf0);
-        assert_eq!(hash_range(89), 0xef8478c2686913e3);
-        assert_eq!(hash_range(90), 0xd5b27e06ebc9d723);
-        assert_eq!(hash_range(91), 0x7d463a38823110ab);
-        assert_eq!(hash_range(92), 0xfb70265f1c22e78e);
-        assert_eq!(hash_range(93), 0x2c6961efa2f2d98a);
-        assert_eq!(hash_range(94), 0x42e7fa3f10f97117);
-        assert_eq!(hash_range(95), 0x692d076108c0230e);
-        assert_eq!(hash_range(96), 0xeac3e9d5d110c207);
-        assert_eq!(hash_range(97), 0x574c7d0f87afc052);
-        assert_eq!(hash_range(98), 0x82db8a3e6bf00a50);
-        assert_eq!(hash_range(99), 0x3cc42b2cdecb956a);
-        assert_eq!(hash_range(100), 0x96904ff25b840c9b);
-        assert_eq!(hash_range(101), 0x472ad8a4e0ee913);
-        assert_eq!(hash_range(102), 0xbda7e0244edc77bd);
-        assert_eq!(hash_range(103), 0xe4dc023a47a42724);
-        assert_eq!(hash_range(104), 0xca5c6f1701c8d308);
-        assert_eq!(hash_range(105), 0xffeae5db23628c9c);
-        assert_eq!(hash_range(106), 0x2ec6619d454dc37a);
-        assert_eq!(hash_range(107), 0xf14ee182916e9ba9);
-        assert_eq!(hash_range(108), 0xbb920a54d9c80237);
-        assert_eq!(hash_range(109), 0x6df005451c4a1778);
-        assert_eq!(hash_range(110), 0x866ee1661933b5d6);
-        assert_eq!(hash_range(111), 0xa02282cb1fe36277);
-        assert_eq!(hash_range(112), 0xff82fb68ce6771aa);
-        assert_eq!(hash_range(113), 0xbf5898b9a3b437df);
-        assert_eq!(hash_range(114), 0x9dfeeced48a5540e);
-        assert_eq!(hash_range(115), 0xb05f89d7b80b568f);
-        assert_eq!(hash_range(116), 0xf52ff8115149ebde);
-        assert_eq!(hash_range(117), 0xf5608af2fc4985e1);
-        assert_eq!(hash_range(118), 0x64caa3980d32c4c0);
-        assert_eq!(hash_range(119), 0x9c456de40ff3147d);
-        assert_eq!(hash_range(120), 0xa2ba1944ad839ec3);
-        assert_eq!(hash_range(121), 0xadb976de8dfa0134);
-        assert_eq!(hash_range(122), 0x6c7b7cbacf3ffc01);
-        assert_eq!(hash_range(123), 0xe5c30b23f7da92ab);
-        assert_eq!(hash_range(124), 0x1e7620af3448b5c2);
-        assert_eq!(hash_range(125), 0xe937b1b642b47e3d);
-        assert_eq!(hash_range(126), 0x5246d63641981a44);
-        assert_eq!(hash_range(127), 0xb11313a30d0f226d);
-        assert_eq!(hash_range(128), 0x6259ad15d04aceb5);
-        assert_eq!(hash_range(129), 0x52032adb7b877868);
-        assert_eq!(hash_range(130), 0x83454d4c5b072325);
-        assert_eq!(hash_range(131), 0xea132f499fddbce3);
-        assert_eq!(hash_range(132), 0xe099f79ac922e73d);
-        assert_eq!(hash_range(133), 0xe73b1d8d46a95819);
-        assert_eq!(hash_range(134), 0x78ca488f4e6de17d);
-        assert_eq!(hash_range(135), 0xeb1c686f2551403b);
-        assert_eq!(hash_range(136), 0x282846f5c6dc3601);
-        assert_eq!(hash_range(137), 0x5b3279073ba49448);
-        assert_eq!(hash_range(138), 0xf3edfb38ebf5b6de);
-        assert_eq!(hash_range(139), 0xfc7123bc15b80b28);
-        assert_eq!(hash_range(140), 0xa52669d8868cf1be);
-        assert_eq!(hash_range(141), 0x212a7deb23aeaece);
-        assert_eq!(hash_range(142), 0xeaec9ea9a8159a8b);
-        assert_eq!(hash_range(143), 0x62a9422f81b16b36);
-        assert_eq!(hash_range(144), 0xba0c68f152e181d0);
-        assert_eq!(hash_range(145), 0x18a54a7b2e558824);
-        assert_eq!(hash_range(146), 0xfc8e30f586264f89);
-        assert_eq!(hash_range(147), 0xb768c3585d3db03f);
-        assert_eq!(hash_range(148), 0xcb88a20f9b09cfbd);
-        assert_eq!(hash_range(149), 0xee3e6f27bd8f27f4);
-        assert_eq!(hash_range(150), 0xb3caf2a602de8183);
-        assert_eq!(hash_range(151), 0x51aa4d0d35607a3a);
-        assert_eq!(hash_range(152), 0xd687390ec5c27017);
-        assert_eq!(hash_range(153), 0xaab468880ad8ddb3);
-        assert_eq!(hash_range(154), 0xfd6232c1164a4a0a);
-        assert_eq!(hash_range(155), 0x64c6a5019242565);
-        assert_eq!(hash_range(156), 0xee7e2f677de5871);
-        assert_eq!(hash_range(157), 0x161906cbe0900850);
-        assert_eq!(hash_range(158), 0xcc92bfdb963f44fc);
-        assert_eq!(hash_range(159), 0x625a106f8ecc90fc);
-        assert_eq!(hash_range(160), 0xb78f99d52bbab243);
-        assert_eq!(hash_range(161), 0xf093337405886a33);
-        assert_eq!(hash_range(162), 0x7f3b227e9f066933);
-        assert_eq!(hash_range(163), 0x1941b2432415736e);
-        assert_eq!(hash_range(164), 0x22a617d7c9ef7bcc);
-        assert_eq!(hash_range(165), 0x8cbd231f82d86fff);
-        assert_eq!(hash_range(166), 0x247a499f953201ae);
-        assert_eq!(hash_range(167), 0x749b1f9413156bea);
-        assert_eq!(hash_range(168), 0x13b55f20069f48e5);
-        assert_eq!(hash_range(169), 0x8d6a1b3535cadd3f);
-        assert_eq!(hash_range(170), 0x1810bc8139cfdd44);
-        assert_eq!(hash_range(171), 0x7b9f19e23b5e8ae7);
-        assert_eq!(hash_range(172), 0x24f23dfd9a701500);
-        assert_eq!(hash_range(173), 0x3470d18162bd2d78);
-        assert_eq!(hash_range(174), 0x20f59754b3f724df);
-        assert_eq!(hash_range(175), 0x3411187a36dbc62e);
-        assert_eq!(hash_range(176), 0x822120c53e60076a);
-        assert_eq!(hash_range(177), 0x75e09a0c20893b7a);
-        assert_eq!(hash_range(178), 0x4c8e3390e4d69dc8);
-        assert_eq!(hash_range(179), 0xa120cbabe2118c1f);
-        assert_eq!(hash_range(180), 0x4c4438c05852d6da);
-        assert_eq!(hash_range(181), 0xe869e8b100141a30);
-        assert_eq!(hash_range(182), 0x6d5e78d02f82ab66);
-        assert_eq!(hash_range(183), 0x72aeba503b820389);
-        assert_eq!(hash_range(184), 0x763dca43dbeef40f);
-        assert_eq!(hash_range(185), 0xf7287f28080557a7);
-        assert_eq!(hash_range(186), 0x161b1cc2ecdbc29e);
-        assert_eq!(hash_range(187), 0xa92d3423fc815f31);
-        assert_eq!(hash_range(188), 0x855277bff26e5c9b);
-        assert_eq!(hash_range(189), 0x82094f0046357fe0);
-        assert_eq!(hash_range(190), 0xba04ab208acd735);
-        assert_eq!(hash_range(191), 0x10d3c7acbbf1d4f5);
-        assert_eq!(hash_range(192), 0xfe7dbcb5ec343bbb);
-        assert_eq!(hash_range(193), 0xaaf20660ab8fff12);
-        assert_eq!(hash_range(194), 0x3dd6afa588349);
-        assert_eq!(hash_range(195), 0xa6b7c695acfd5910);
-        assert_eq!(hash_range(196), 0x5cac81f9ee63c22f);
-        assert_eq!(hash_range(197), 0xe290ff6add006340);
-        assert_eq!(hash_range(198), 0x728d5a0627b62476);
-        assert_eq!(hash_range(199), 0xb8c534d1a1c24f87);
-        assert_eq!(hash_range(200), 0xdc833088b7a3d023);
-        assert_eq!(hash_range(201), 0x6cb7683ada3bbf4c);
-        assert_eq!(hash_range(202), 0xdc4d39d89057115d);
-        assert_eq!(hash_range(203), 0x7e3df0c493944e85);
-        assert_eq!(hash_range(204), 0xa34642fa640cd63b);
-        assert_eq!(hash_range(205), 0x40ef33d6f063c0a8);
-        assert_eq!(hash_range(206), 0xc059a33729558cd2);
-        assert_eq!(hash_range(207), 0x224e5498601cec77);
-        assert_eq!(hash_range(208), 0x960b4696b97c106c);
-        assert_eq!(hash_range(209), 0xed1d6f7d7c7047e5);
-        assert_eq!(hash_range(210), 0xdae5b534a7a44ace);
-        assert_eq!(hash_range(211), 0x9e39e9fd029b2f40);
-        assert_eq!(hash_range(212), 0xcaabdd112c244337);
-        assert_eq!(hash_range(213), 0x879d3999f7a3555e);
-        assert_eq!(hash_range(214), 0x57265ce060c81a3b);
-        assert_eq!(hash_range(215), 0x26c6100e481cf8a2);
-        assert_eq!(hash_range(216), 0x83c50673535d33c3);
-        assert_eq!(hash_range(217), 0xecea119e277abf08);
-        assert_eq!(hash_range(218), 0x101484cb6d9fe949);
-        assert_eq!(hash_range(219), 0x76e0465cb4fd575d);
-        assert_eq!(hash_range(220), 0xd554900fb7ab919b);
-        assert_eq!(hash_range(221), 0x5e90ba93aac778ec);
-        assert_eq!(hash_range(222), 0x130f136157e3b476);
-        assert_eq!(hash_range(223), 0x6e3fdb9c77dfcf4);
-        assert_eq!(hash_range(224), 0x60667edb17478f00);
-        assert_eq!(hash_range(225), 0xdc0ba25d952b9081);
-        assert_eq!(hash_range(226), 0x59b121cfe6520bed);
-        assert_eq!(hash_range(227), 0xca6d28359db78427);
-        assert_eq!(hash_range(228), 0xbd8916484adfddef);
-        assert_eq!(hash_range(229), 0x66e20a33de7eaef7);
-        assert_eq!(hash_range(230), 0xfaa196e1ad2bbd17);
-        assert_eq!(hash_range(231), 0xb08e1156d6179a00);
-        assert_eq!(hash_range(232), 0x1d0cd03afedf751f);
-        assert_eq!(hash_range(233), 0xa99f9b2e52175969);
-        assert_eq!(hash_range(234), 0x915950de6ddc9e5c);
-        assert_eq!(hash_range(235), 0x9d85096cf18102b7);
-        assert_eq!(hash_range(236), 0x1390cb932786ab79);
-        assert_eq!(hash_range(237), 0xc7d3b9d09f747360);
-        assert_eq!(hash_range(238), 0xb9b48dc1360e891);
-        assert_eq!(hash_range(239), 0x53fc087d0c50bb23);
-        assert_eq!(hash_range(240), 0xe7e5442b5778f946);
-        assert_eq!(hash_range(241), 0xe230db8b32840ca1);
-        assert_eq!(hash_range(242), 0xdd7d7d7acd8d0166);
-        assert_eq!(hash_range(243), 0xdebd61d488dad0fa);
-        assert_eq!(hash_range(244), 0x4095c7617c79672f);
-        assert_eq!(hash_range(245), 0x20ec50f0ad70d38f);
-        assert_eq!(hash_range(246), 0x1d765a8e78d6e47e);
-        assert_eq!(hash_range(247), 0xadc6476d33e4b0ca);
-        assert_eq!(hash_range(248), 0x7af3a82579baef40);
-        assert_eq!(hash_range(249), 0x82f1f2f94f97f8bd);
-        assert_eq!(hash_range(250), 0xe97d636e56b2b345);
-        assert_eq!(hash_range(251), 0xfab7b8bc9ce24845);
-        assert_eq!(hash_range(252), 0x291ffd948849b0e1);
-        assert_eq!(hash_range(253), 0x1b2c469ace1696b1);
-        assert_eq!(hash_range(254), 0xcb41feb3f27ee66e);
-        assert_eq!(hash_range(255), 0x2518c518adf013f8);
-        assert_eq!(hash_range(256), 0xe9c55b62c5b51497);
     }
 }

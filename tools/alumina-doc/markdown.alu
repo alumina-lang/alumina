@@ -221,7 +221,7 @@ fn write_docstring<T: std::io::Writable<T>>(
     doctest_item: &common::Item,
     doctest_writer: &mut DoctestWriter
 ) -> Result {
-    if doc_comment.len == 0 {
+    if doc_comment.len() == 0 {
         return Result::ok(());
     }
 
@@ -250,6 +250,7 @@ fn write_docstring<T: std::io::Writable<T>>(
     let in_a_code_block = false;
     let no_doctest = false;
     let no_doctest_run = false;
+    let bare = false;
     let md_state = InlineMarkdownState::default();
     defer md_state.free();
 
@@ -279,7 +280,13 @@ fn write_docstring<T: std::io::Writable<T>>(
 
                 if !no_doctest && !tagline_only {
                     let code: StringBuf = StringBuf::new();
-                    for part in ["fn main() {\n", doctest_source.as_slice(), "}\n"].as_slice() {
+                    let parts: &[&[u8]] = if bare {
+                        [doctest_source.as_slice()].as_slice()
+                    } else {
+                        ["fn main() {\n", doctest_source.as_slice(), "\n}\n"].as_slice()
+                    };
+
+                    for part in parts {
                         for c in part {
                             use std::fmt::hex;
                             if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
@@ -298,6 +305,8 @@ fn write_docstring<T: std::io::Writable<T>>(
                 doctest_source.clear();
                 no_doctest = docline.trim() == "```notest";
                 no_doctest_run = docline.trim() == "```norun";
+                bare = docline.trim() == "```bare";
+
                 if no_doctest || tagline_only {
                     write!(writer, "<pre>");
                 } else {
@@ -308,7 +317,7 @@ fn write_docstring<T: std::io::Writable<T>>(
             in_a_code_block = !in_a_code_block;
         } else if !in_a_code_block {
             docline = docline.trim_start();
-            if docline.len == 0 {
+            if docline.len() == 0 {
                 md_state.reset()?;
                 if tagline_only {
                     return Result::ok(());
@@ -359,7 +368,11 @@ fn write_docstring<T: std::io::Writable<T>>(
                 ));
             }
         } else {
-            writeln!(&doctest_source, "   {}", docline);
+            if bare {
+                writeln!(&doctest_source, "{}", docline);
+            } else {
+                writeln!(&doctest_source, "   {}", docline);
+            }
             writeln!(writer, "{}", HtmlEscaped::str(docline));
         }
     }

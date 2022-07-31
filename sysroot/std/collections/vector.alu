@@ -40,7 +40,7 @@ impl Vector<T> {
     ///
     /// The slice must be allocated with [mem::slice::alloc] and its length must be greater
     /// than or equal to `length`.
-    fn from_raw(data: &mut [T], length: usize) {
+    fn from_raw(data: &mut [T], length: usize) -> Vector<T> {
         Vector {
             _data: data,
             _length: length,
@@ -56,14 +56,36 @@ impl Vector<T> {
     }
 
     /// Create a vector from a slice, copying the elements.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::Vector;
+    ///
+    /// let vec = Vector::from_slice(&[1, 2, 3]);
+    /// assert_eq!(vec.len(), 3);
+    /// assert_eq!(vec.as_slice(), &[1, 2, 3]);
+    /// ```
     fn from_slice(slice: &[T]) -> Vector<T> {
-        let vec = with_capacity::<T>(slice.len);
-        slice.copy_to_nonoverlapping(vec._data.ptr);
-        vec._length = slice.len;
+        let vec = with_capacity::<T>(slice.len());
+        if slice.len() > 0 {
+            slice.copy_to_nonoverlapping(&vec._data[0]);
+        }
+        vec._length = slice.len();
         vec
     }
 
     /// Create a vector from an iterator.
+    ///
+    /// See also [iter::IteratorExt::to_vector] for a chainable version.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::Vector;
+    ///
+    /// let vec: Vector<i32> = Vector::from_iter(&(0..3).iter());
+    /// assert_eq!(vec.len(), 3);
+    /// assert_eq!(vec.as_slice(), &[0, 1, 2]);
+    /// ```
     fn from_iter<I: Iterator<I, T>>(iter: &mut I) -> Vector<T> {
         let vec = Vector::new::<T>();
         vec.extend(iter);
@@ -72,7 +94,7 @@ impl Vector<T> {
 
     /// Reserve capacity for at least `additional` elements.
     fn reserve(self: &mut Vector<T>, additional: usize) {
-        if self._length + additional > self._data.len {
+        if self._length + additional > self._data.len() {
             self._data = self._data.realloc(
                 cmp::max(self._length * 2, self._length + additional)
             );
@@ -80,15 +102,26 @@ impl Vector<T> {
     }
 
     /// Extend the vector with the elements from a slice.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::Vector;
+    ///
+    /// let vec = Vector::new::<i32>();
+    /// vec.extend_from_slice(&[1, 2, 3]);
+    /// vec.extend_from_slice(&[4, 5, 6]);
+    /// assert_eq!(vec.len(), 6);
+    /// assert_eq!(vec.as_slice(), &[1, 2, 3, 4, 5, 6]);
+    /// ```
     fn extend_from_slice(self: &mut Vector<T>, value: &[T]) {
-        if value.len == 0 {
+        if value.len() == 0 {
             return;
         }
 
-        self.reserve(value.len);
+        self.reserve(value.len());
 
         value.copy_to(&self._data[self._length]);
-        self._length += value.len;
+        self._length += value.len();
     }
 
     /// Extend the vector with the elements from an iterator.
@@ -106,6 +139,17 @@ impl Vector<T> {
     }
 
     /// Insert an element at the given index, shifting all elements after it.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::Vector;
+    ///
+    /// let vec = Vector::from_slice(&[0, 1, 2, 3, 4]);
+    /// vec.insert(0, 100);
+    /// vec.insert(4, 200);
+    /// vec.insert(7, 300);
+    /// assert_eq!(vec.as_slice(), &[100, 0, 1, 2, 200, 3, 4, 300]);
+    /// ```
     fn insert(self: &mut Vector<T>, index: usize, value: T) {
         self.reserve(1);
 
@@ -147,6 +191,8 @@ impl Vector<T> {
     }
 
     /// Pop an element from the end of the vector.
+    ///
+    /// If the vector is empty, it returns `Option::none()`.
     fn pop(self: &mut Vector<T>) -> Option<T> {
         if self._length == 0 {
             Option::none()
@@ -171,7 +217,7 @@ impl Vector<T> {
 
     /// Return the size of the underlying buffer.
     fn capacity(self: &Vector<T>) -> usize {
-        self._data.len
+        self._data.len()
     }
 
     /// Returns a region of memory "after the last element".
@@ -195,9 +241,13 @@ impl Vector<T> {
 
     /// Truncate the vector, removing all but the first `new_size` elements.
     ///
-    /// `new_size` should not be greater than the current length of the vector.
+    /// `new_size` should not be greater than the current capacity of the vector, but it may be
+    /// greater than the current length of the vector. In this case the vector will grow to the
+    /// specified capacity.
+    ///
+    /// `vec.truncate(0)` is equivalent to `vec.clear()`.
     fn truncate(self: &mut Vector<T>, new_size: usize) {
-        debug_assert!(new_size <= self._data.len);
+        debug_assert!(new_size <= self._data.len());
 
         self._length = new_size;
     }
@@ -215,6 +265,17 @@ impl Vector<T> {
     }
 
     /// Returns an iterator over the mutable pointers to the elements.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::Vector;
+    ///
+    /// let vec = Vector::from_slice(&[1, 2, 3]);
+    /// for elem in vec.iter_mut() {
+    ///     *elem *= 2;
+    /// }
+    /// assert_eq!(vec.as_slice(), &[2, 4, 6]);
+    /// ```
     #[inline]
     fn iter_mut(self: &mut Vector<T>) -> mem::SliceRefIterator<&mut T> {
         self.as_slice_mut().iter_mut()
@@ -222,7 +283,7 @@ impl Vector<T> {
 
     /// Shrink the underlying buffer to the length of the vector.
     fn shrink_to_fit(self: &mut Vector<T>) {
-        if self._length < self._data.len  {
+        if self._length < self._data.len()  {
             self._data = self._data.realloc(self._length);
         }
     }

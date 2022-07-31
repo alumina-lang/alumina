@@ -11,14 +11,14 @@ fn printf_impl(fmt: &[u8], args: &[&void]) {
     macro buf_append($val) {
         buf[buf_pos] = $val;
         buf_pos += 1;
-        if buf_pos == buf.len {
+        if buf_pos == buf.len() {
             print!("{}", buf);
             buf_pos = 0;
         }
     }
 
     macro pop_arg() {
-        if args.len == 0 {
+        if args.len() == 0 {
             panic!("too few arguments");
         }
         let arg = args[0];
@@ -26,7 +26,7 @@ fn printf_impl(fmt: &[u8], args: &[&void]) {
         arg
     }
 
-    while i < fmt.len {
+    while i < fmt.len() {
         let ch = fmt[i];
         if in_escape {
             switch ch {
@@ -60,7 +60,7 @@ fn printf_impl(fmt: &[u8], args: &[&void]) {
 
     print!("{}", buf[0..buf_pos]);
 
-    if args.len > 0 {
+    if args.len() > 0 {
         panic!("too many arguments");
     }
 }

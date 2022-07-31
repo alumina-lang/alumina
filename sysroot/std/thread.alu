@@ -20,7 +20,7 @@ impl JoinErrorKind {
     mixin cmp::Equatable<JoinErrorKind>;
 }
 
-union JoinErrorT {
+union _JoinErrorT {
     os: std::io::Error,
     panic: std::panicking::PanicInfo
 }
@@ -30,7 +30,7 @@ union JoinErrorT {
 /// It can represent either a panic or an OS error.
 struct JoinError {
     kind: JoinErrorKind,
-    inner: JoinErrorT
+    inner: _JoinErrorT
 }
 
 impl JoinError {
@@ -39,7 +39,7 @@ impl JoinError {
     fn from_os(os: std::io::Error) -> JoinError {
         JoinError {
             kind: JoinErrorKind::Os,
-            inner: JoinErrorT {
+            inner: _JoinErrorT {
                 os: os
             }
         }
@@ -48,7 +48,7 @@ impl JoinError {
     fn from_panic(panic: std::panicking::PanicInfo) -> JoinError {
         JoinError {
             kind: JoinErrorKind::Panic,
-            inner: JoinErrorT {
+            inner: _JoinErrorT {
                 panic: panic
             }
         }
@@ -215,7 +215,7 @@ impl Builder {
     }
 
     /// Spawn a thread in detached state.
-    fn spawn_detached<T, F: Callable<(), T>>(self: &Builder, func: F) -> Result<(), Error> {
+    fn spawn_detached<F: Callable<(), ()>>(self: &Builder, func: F) -> Result<(), Error> {
         internal::check_threading!();
 
         use internal::pthread_try;
@@ -227,14 +227,14 @@ impl Builder {
             pthread_try!(libc::pthread_attr_setstacksize(&attr, self._stack_size.inner as libc::size_t));
         }
 
-        let handle = mem::alloc::<internal::ThreadHandleFunc<F, T>>();
+        let handle = mem::alloc::<internal::ThreadHandleFunc<F, ()>>();
         handle.inner = internal::ThreadHandle::new(true, self._catch_panic);
         handle.callback = func;
 
         let ret = libc::pthread_create(
             &handle.inner.thread_info.id,
             null,
-            internal::_run_thread::<T, F>,
+            internal::_run_thread::<(), F>,
             handle as &mut void
         );
         libc::pthread_attr_destroy(&attr);
@@ -264,14 +264,14 @@ impl Builder {
 /// let t = spawn(|=text| -> usize {
 ///     // pretend that calculating the length is expensive
 ///     sleep(Duration::from_secs(1));
-///     text.len
+///     text.len()
 /// });
 ///
 /// println!("Calculating length of {}", text);
 /// println!("Length is {}", t.join().unwrap());
 /// ```
 ///
-/// # Panic handling
+/// ## Panic handling
 ///
 /// If the child thread panics, the process is not terminated automatically. Instead, the
 /// [JoinHandle::join] function will return a [JoinError] with the panic information.
@@ -287,6 +287,8 @@ struct Thread {
 }
 
 impl Thread {
+    use hash::Hasher;
+
     /// Returns the current thread
     ///
     /// If the current thread is a foreign thread (e.g. not spawned using [spawn]
@@ -363,16 +365,14 @@ impl Thread {
         self.inner.parker.unpark();
     }
 
-    /// Yields the execution of the current thread.
-    ///
-    /// You probably don't want to use this in a spin-lock.
-    fn yield() {
-        libc::sched_yield();
-    }
-
     /// @ cmp::Equatable::equals
     fn equals(self: &Thread, other: &Thread) -> bool {
         self.id() == other.id()
+    }
+
+    /// @ hash::Hashable::hash
+    fn hash<H: Hasher<H>>(self: &Thread, hasher: &mut H) {
+        self.id().hash(hasher);
     }
 
     mixin cmp::Equatable<Thread>;
@@ -382,6 +382,17 @@ impl Thread {
 ///
 /// The sleep may sleep for less than the specified time if interrupted by a
 /// signal.
+///
+/// ## Example
+/// ```
+/// use std::time::{Instant, Duration};
+/// use std::thread::sleep;
+///
+/// let start = Instant::now();
+/// sleep(Duration::from_millis(500));
+///
+/// assert!(Instant::now().duration_since(&start).total_secs() >= 0.5);
+/// ```
 fn sleep(duration: time::Duration) {
     if duration < time::Duration::zero() {
         return;
@@ -391,6 +402,31 @@ fn sleep(duration: time::Duration) {
         tv_sec: util::cast(duration.secs),
         tv_nsec: util::cast(duration.nanos)
     }, null);
+}
+
+/// Yields the execution of the current thread.
+///
+/// You probably don't want to use this in a spin-lock.
+///
+/// ## Example
+/// ```
+/// use std::time::Duration;
+///
+/// /// A bad way to sleep. Use std::thread::sleep instead
+/// fn bad_sleep(duration: Duration) {
+///     use std::time::Instant;
+///     use std::thread::yield;
+///
+///     let start = time::Instant::now();
+///     while Instant::now().duration_since(&start) < duration {
+///         yield();
+///     }
+/// }
+///
+/// bad_sleep(Duration::from_millis(10));
+/// ```
+fn yield() {
+    libc::sched_yield();
 }
 
 mod internal {
@@ -587,7 +623,7 @@ mod tests {
             if t._handle.ret.is_ok {
                 break;
             } else {
-                Thread::yield();
+                yield();
             }
         }
 

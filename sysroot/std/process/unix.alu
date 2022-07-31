@@ -22,7 +22,7 @@ impl EnvIterator {
             let env_str = CString::from_raw(*self.ptr).as_slice();
             self.ptr += 1;
 
-            if env_str.len == 0 {
+            if env_str.len() == 0 {
                 continue;
             }
 
@@ -42,10 +42,73 @@ impl EnvIterator {
 }
 
 /// Return environment variables of the current process.
+///
+/// ## Example
+/// ```
+/// use std::process::env;
+/// use std::string::split;
+///
+/// let path_dirs = env()
+///     .filter(|e: (&[u8], &[u8])| -> bool { e.0 == "PATH" })
+///     .next()
+///     .unwrap().1
+///     .split(":");
+///
+/// for dir in path_dirs {
+///     println!("{}", dir);
+/// }
+/// ```
 fn env() -> EnvIterator {
     EnvIterator {
         ptr: unix::internal::environ
     }
+}
+
+/// Returns the current working directory as a `PathBuf`.
+fn current_dir() -> Result<fs::PathBuf> {
+    use string::StringBuf;
+    use ffi::CString;
+
+    let buf: StringBuf = StringBuf::with_capacity(512);
+
+    loop {
+        let spare_capacity = buf.spare_capacity();
+        let ret = libc::getcwd(
+            &spare_capacity[0] as &mut libc::c_char,
+            spare_capacity.len()
+        );
+
+        if ret == null {
+            let error = Error::from_errno();
+            let as_errno = error.as_errno();
+
+            if as_errno == Option::some(libc::ERANGE) {
+                buf.reserve(1);
+                continue;
+            }
+
+            return Result::err(error);
+        }
+
+        let len = CString::from_raw(ret).len();
+        // We don't know the exact size of the allocated buffer, so we assume
+        // that it is at least as big as the length of the string plus the null
+        // terminator.
+        let slice = mem::slice::from_raw(ret as &mut u8, len + 1);
+        return Result::ok(fs::PathBuf { inner: collections::Vector::from_raw(slice, len) })
+    }
+}
+
+/// Change the current working directory to the specified path.
+fn set_current_dir(path: fs::Path) -> Result<()> {
+    use ffi::CString;
+
+    let path = CString::from_slice(path.as_slice());
+    defer path.free();
+
+    errno_try!(libc::chdir(path.ptr as &libc::c_char));
+
+    Result::ok(())
 }
 
 /// Captured output of a child process.
@@ -713,5 +776,15 @@ mod tests {
             assert_eq!(output.stdout.len(), 1024 * 1024);
             assert_eq!(output.stderr.len(), 1024 * 1024);
         }
+    }
+
+    #[test]
+    fn test_current_directory() {
+        set_current_dir(Path::new("/")).unwrap();
+
+        let cwd = current_dir().unwrap();
+        defer cwd.free();
+
+        assert_eq!(cwd.as_path(), Path::new("/"));
     }
 }

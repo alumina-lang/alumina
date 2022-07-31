@@ -105,12 +105,6 @@
         }
     }
 
-    enum State {
-        Normal,
-        Prefix,
-        Filter
-    }
-
     fn print_help_string(args: &[&[u8]]) -> ! {
         eprintln!("usage: {} [--prefix <PREFIX>] [--filter <FILTER>] [--timings]", args[0]);
         process::exit(1);
@@ -118,10 +112,16 @@
 
     /// Parse command line arguments.
     fn parse_args(args: &[&[u8]]) -> Args {
+        enum State {
+            Normal,
+            Prefix,
+            Filter
+        }
+
         let state = State::Normal;
         let res = Args::default();
 
-        if args.len == 0 {
+        if args.len() == 0 {
             return res;
         }
 
@@ -180,7 +180,7 @@
                 (m.path, m.name)
             });
 
-        let filtered_count = TEST_CASES.len - test_cases.len();
+        let filtered_count = TEST_CASES.len() - test_cases.len();
 
         (test_cases.move(), filtered_count)
     }

@@ -29,6 +29,8 @@ struct Instant {
 }
 
 impl Instant {
+    use std::hash::Hasher;
+
     /// Current time
     fn now() -> Instant {
         #[cfg(not(target_os = "macos"))]
@@ -128,7 +130,7 @@ impl Instant {
         }
     }
 
-    /// @ std::cmp::Equatable::equals
+    /// @ cmp::Equatable::equals
     fn equals(lhs: &Instant, rhs: &Instant) -> bool {
         #[cfg(not(target_os = "macos"))] {
             lhs.spec.tv_sec == rhs.spec.tv_sec && lhs.spec.tv_nsec == rhs.spec.tv_nsec
@@ -138,7 +140,18 @@ impl Instant {
         }
     }
 
-    /// @ std::cmp::Comparable::compare
+    /// @ hash::Hashable::hash
+    fn hash<H: Hasher<H>>(self: &Instant, hasher: &mut H) {
+        #[cfg(not(target_os = "macos"))] {
+            self.spec.tv_sec.hash(hasher);
+            self.spec.tv_nsec.hash(hasher);
+        }
+        #[cfg(target_os = "macos")] {
+            self.inner.hash(hasher);
+        }
+    }
+
+    /// @ cmp::Comparable::compare
     fn compare(lhs: &Instant, rhs: &Instant) -> cmp::Ordering {
         #[cfg(not(target_os = "macos"))] {
             cmp::lexicographic_cmp!(lhs.spec.tv_sec, rhs.spec.tv_sec);
@@ -196,6 +209,8 @@ struct Duration {
 }
 
 impl Duration {
+    use std::hash::Hasher;
+
     fn new(secs: i64, nanos: u32) -> Duration {
         Duration {
             secs: (nanos / NANOS_PER_SEC) as i64 + secs,
@@ -300,6 +315,12 @@ impl Duration {
         lhs.secs == rhs.secs && lhs.nanos == rhs.nanos
     }
 
+    /// @ hash::Hashable::hash
+    fn hash<H: Hasher<H>>(self: &Duration, hasher: &mut H) {
+        self.secs.hash(hasher);
+        self.nanos.hash(hasher);
+    }
+
     /// @ std::cmp::Comparable::compare
     fn compare(lhs: &Duration, rhs: &Duration) -> cmp::Ordering {
         cmp::lexicographic_cmp!(lhs.secs, rhs.secs);
@@ -402,6 +423,18 @@ mod tests {
 
         let start1 = end.sub(&Duration::from_secs(1));
         assert_eq!(start1, start);
+    }
+
+    #[test]
+    fn test_hash() {
+        use hash::hash_of;
+
+        let start = Instant::now();
+        assert_ne!(hash_of(start), hash_of(start.add(&Duration::from_secs(1))));
+        assert_ne!(hash_of(start), hash_of(start.add(&Duration::from_nanos(1))));
+
+        assert_ne!(hash_of(Duration::from_secs(1)), hash_of(Duration::from_secs(2)));
+        assert_ne!(hash_of(Duration::from_nanos(1)), hash_of(Duration::from_nanos(2)));
     }
 
     static BUF: [u8; 1024];

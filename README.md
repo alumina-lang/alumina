@@ -54,9 +54,9 @@ impl Stack<T> {
    fn reserve(self: &mut Stack<T>, additional: usize) {
       use std::cmp::max;
 
-      if self.len + additional > self.data.len {
+      if self.len + additional > self.data.len() {
          self.data = self.data.realloc(max(
-            self.data.len * 2,
+            self.data.len() * 2,
             self.len + additional
          ));
       }

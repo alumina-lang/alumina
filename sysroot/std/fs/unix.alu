@@ -182,12 +182,25 @@ impl DirBuilder {
     }
 }
 
-/// Create a new directory
+/// Create an empty directory
+///
+/// See also [fs::DirBuilder] for creating directories with more options (e.g. recursively).
 fn create_directory(path: Path) -> Result<()> {
     DirBuilder::new().create(path)
 }
 
 /// Remove a file
+///
+/// ## Example
+/// ```
+/// use std::fs::{File, Path, remove_file};
+///
+/// let filename = Path::new("foo.txt");
+/// // Create an empty file
+/// File::create(filename).unwrap().close();
+/// // Remove the file
+/// remove_file(filename).unwrap();
+/// ```
 fn remove_file(path: Path) -> Result<()> {
     let path_c = std::ffi::CString::from_slice(path.inner);
     defer path_c.free();
@@ -340,7 +353,7 @@ impl File {
 
 /// Iterator over the items in a directory
 ///
-/// See [std::fs::read_directory] for details.
+/// See [fs::read_directory] for details.
 struct DirIterator {
     inner: &mut libc::DIR
 }
@@ -418,6 +431,8 @@ impl DirEntry {
 
 /// Returns iterator over the items in a directory.
 ///
+/// See [fs::DirEntry] for the item returned.
+///
 /// ## Example
 /// ```
 /// use std::fs::{Path, read_directory};
@@ -442,6 +457,37 @@ fn read_directory(path: Path) -> Result<DirIterator> {
     }
 }
 
+/// Returns a canonical absolute path for the given path.
+///
+/// ## Example
+/// ```
+/// use std::fs::{Path, canonicalize};
+///
+/// let cwd = Path::new(".").canonicalize().unwrap();
+/// defer cwd.free();
+///
+/// println!("Current directory: {}", cwd);
+/// ```
+fn canonicalize(path: Path) -> Result<PathBuf> {
+    use std::ffi::CString;
+
+    let path_c = CString::from_slice(path.inner);
+    defer path_c.free();
+
+    let ret = libc::realpath(path_c.ptr, null);
+    if ret == null {
+        Result::err(Error::from_errno())
+    } else {
+        let len = CString::from_raw(ret).len();
+        // We don't know the exact size of the allocated buffer, so we assume
+        // that it is at least as big as the length of the string plus the null
+        // terminator.
+        let slice = mem::slice::from_raw(ret as &mut u8, len + 1);
+
+        Result::ok(PathBuf { inner: collections::Vector::from_raw(slice, len) })
+    }
+}
+
 
 /// Type of the file (regular file, symlink, directory, ...)
 enum FileType {
@@ -456,6 +502,8 @@ enum FileType {
 }
 
 impl FileType {
+    use hash::Hasher;
+
     /// @ fmt::Formattable::fmt
     fn fmt<F: std::fmt::Formatter<F>>(self: &FileType, fmt: &mut F) -> std::fmt::Result {
         use std::fmt::write;
@@ -472,9 +520,14 @@ impl FileType {
         }
     }
 
-    /// cmp::Equatable::equals
+    /// @ cmp::Equatable::equals
     fn equals(self: &FileType, other: &FileType) -> bool {
         *self == *other
+    }
+
+    /// @ hash::Hashable::hash
+    fn hash<H: Hasher<H>>(self: &FileType, hasher: &mut H) {
+        (*self as i32).hash(hasher);
     }
 
     mixin std::cmp::Equatable<FileType>;
@@ -519,7 +572,7 @@ impl FileAttr {
 
 #[cfg(all(test, test_std))]
 mod tests {
-    use fmt::{hex, pad, zero_pad, format, format_in};
+    use fmt::{hex, zero_pad, format, format_in};
     use cmp::sort_by;
     use collections::free_all;
     use string::StringBuf;
@@ -619,6 +672,17 @@ mod tests {
         assert_eq!(it.next(), Option::some("hello03.txt"));
         assert_eq!(it.next(), Option::some("hello04.txt"));
         assert_eq!(it.next(), Option::none());
+    }
+
+    #[test]
+    fn test_canonicalize() {
+        let cwd = process::current_dir().unwrap();
+        defer cwd.free();
+
+        let path = canonicalize(Path::new(".")).unwrap();
+        defer path.free();
+
+        assert_eq!(path.as_path(), cwd.as_path());
     }
 
     #[test]

@@ -23,7 +23,7 @@ pub enum BoundItemType {
 
 #[derive(Debug, Clone)]
 pub enum NamedItemKind<'ast, 'src> {
-    Alias(Path<'ast>),
+    Alias(Path<'ast>, Node<'src>),
     Function(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
     Method(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
     TypeDef(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
@@ -48,7 +48,7 @@ pub enum NamedItemKind<'ast, 'src> {
 impl Display for NamedItemKind<'_, '_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            NamedItemKind::Alias(_) => write!(f, "alias"),
+            NamedItemKind::Alias(_, _) => write!(f, "alias"),
             NamedItemKind::Function(_, _, _) => write!(f, "function"),
             NamedItemKind::Method(_, _, _) => write!(f, "method"),
             NamedItemKind::Static(_, _) => write!(f, "static"),

@@ -5,8 +5,8 @@
     use unix::{
         OpenOptions, File, DirIterator, DirEntry, FileType,
         DirBuilder,  read_directory, create_directory,
-        FileAttr, remove_file, remove_directory
-    }
+        FileAttr, remove_file, remove_directory, canonicalize
+    };
 }
 
 /// Type of the path segment
@@ -76,7 +76,7 @@ impl PathIterator {
     /// @ iter::Iterator::next
     fn next(self: &mut PathIterator) -> Option<PathSegment> {
         loop {
-            if self.remainder.len == 0 {
+            if self.remainder.len() == 0 {
                 return Option::none();
             }
 
@@ -92,13 +92,13 @@ impl PathIterator {
 
             let at_start = mem::replace(&self.at_start, false);
 
-            if segment.len == 0 {
+            if segment.len() == 0 {
                 if at_start && maybe_sep.is_some {
                     return Option::some(PathSegment {
                         kind: PathSegmentKind::Root,
                         value: segment
                     });
-                } else if self.remainder.len != 0 {
+                } else if self.remainder.len() != 0 {
                     continue;
                 } else {
                     return Option::none();
@@ -189,9 +189,9 @@ impl Path {
                 if !last.is_some || last.inner.kind == PathSegmentKind::Root {
                     return Option::none();
                 } else {
-                    let ret = mem::slice::from_raw(self.inner.ptr, (last.inner.value.ptr - self.inner.ptr) as usize);
-                    if ret.len > 1 && ret.ends_with("/") {
-                        ret = ret[..ret.len-1];
+                    let ret = mem::slice::from_raw(&self.inner[0], (&last.inner.value[0] - &self.inner[0]) as usize);
+                    if ret.len() > 1 && ret.ends_with("/") {
+                        ret = ret[..ret.len()-1];
                     }
                     return Option::some(Path::new(ret));
                 }
@@ -369,7 +369,7 @@ impl PathBuf {
     /// Pop the last path segment from the path buffer
     fn pop(self: &mut PathBuf) -> bool {
         self.as_path().parent().map(|=self, p: Path| -> bool {
-            self.inner.truncate(p.inner.len);
+            self.inner.truncate(p.inner.len());
             true
         })
         .unwrap_or(false)

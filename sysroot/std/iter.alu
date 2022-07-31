@@ -771,6 +771,13 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     ///
     /// This method always exhausts the iterator. For iterators that implement [DoubleEndedIterator],
     /// it may be more efficient to use [DoubleEndedIterator::next_back].
+    ///
+    /// ## Example
+    /// ```
+    /// let last = (0..5).iter().last();
+    ///
+    /// assert_eq!(last, Option::some(4));
+    /// ```
     fn last(self: &mut Self) -> Option<T> {
         let value: Option<T> = Option::none();
         loop {
@@ -784,6 +791,13 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     }
 
     /// Returns the `n`-th value of the iterator.
+    ///
+    /// ## Example
+    /// ```
+    /// let nth = (10..).iter().nth(2);
+    ///
+    /// assert_eq!(nth, Option::some(12));
+    /// ```
     fn nth(self: &mut Self, n: usize) -> Option<T> {
         use option::try;
         for i in 0usize..n {
@@ -793,6 +807,13 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     }
 
     /// Counts the number of elements in this iterator.
+    ///
+    /// ## Example
+    /// ```
+    /// let count = (100..105).iter().count();
+    ///
+    /// assert_eq!(count, 5);
+    /// ```
     fn count(self: &mut Self) -> usize {
         let n = 0usize;
         loop {
@@ -879,6 +900,22 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     }
 
     /// Executes a function on each element of this iterator.
+    ///
+    /// For readability, it is usually better to use the `for` loop, but `foreach` can be useful in cases
+    /// where a function allocates memory which can be then freed using a `defer` expression.
+    /// ## Example
+    /// ```
+    /// use std::fmt::format;
+    ///
+    /// let range = (0..5)
+    ///     .iter()
+    ///     .foreach(|x: i32| {
+    ///         let f = format!("{}", x).unwrap();
+    ///         defer f.free();
+    ///
+    ///         println!("{}", f.as_slice());
+    ///     });
+    /// ```
     fn foreach<F: Callable<(T), ()>>(iter: &mut Self, fun: F) {
         loop {
             let val = iter.next();
@@ -909,6 +946,23 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     ///
     /// Function `f` is called on each element of this iterator. If it returns `Option::some(...)`,
     /// that element is yielded. If it returns `Option::none()`, the element is skipped.
+    ///
+    /// ## Example
+    /// ```
+    /// let range = (0..6)
+    ///     .iter()
+    ///     .filter_map(|x: i32| -> Option<i32> {
+    ///         if x % 2 == 1 {
+    ///             Option::some(x * 100)
+    ///         } else {
+    ///             Option::none()
+    ///         }
+    ///     });
+    ///
+    /// assert_eq!(range.next(), Option::some(100));
+    /// assert_eq!(range.next(), Option::some(300));
+    /// assert_eq!(range.next(), Option::some(500));
+    /// ```
     fn filter_map<U, F: Callable<(T), Option<U>>>(iter: &mut Self, fun: F) -> FilterMapIterator<Self, F, T, U> {
         FilterMapIterator { it: iter, fun: fun }
     }
@@ -944,6 +998,12 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// Sums all the values in the iterator.
     ///
     /// `T` must satisfy [builtins::Numeric] protocol.
+    /// ## Example
+    /// ```
+    /// let sum = (0..5).iter().sum();
+    ///
+    /// assert_eq!(sum, 10);
+    /// ```
     fn sum(iter: &mut Self) -> T {
         iter.reduce(0 as T, internal::iter_plus::<T>)
     }
@@ -951,6 +1011,12 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// Returns the minimum value of the iterator.
     ///
     /// `T` must satisfy [cmp::Comparable] protocol.
+    /// ## Example
+    /// ```
+    /// let min = [1, -5, 10, 200].iter().min();
+    ///
+    /// assert_eq!(min, Option::some(-5));
+    /// ```
     fn min(iter: &mut Self) -> Option<T> {
         iter.reduce(Option::none::<T>(), internal::iter_min::<T>)
     }
@@ -958,6 +1024,12 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// Returns the maximum value of the iterator.
     ///
     /// `T` must satisfy [cmp::Comparable] protocol.
+    /// ## Example
+    /// ```
+    /// let max = [1, -5, 10, 200].iter().max();
+    ///
+    /// assert_eq!(max, Option::some(200));
+    /// ```
     fn max(iter: &mut Self) -> Option<T> {
         iter.reduce(Option::none::<T>(), internal::iter_max::<T>)
     }
@@ -965,6 +1037,14 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// Returns `true` if all elements of the iterator match a predicate, `false` otherwise.
     ///
     /// If iterator produces no values, `true` is returned.
+    /// ## Example
+    /// ```
+    /// let t1 = [1, -5, 10, 200].iter().all(|x: i32| -> bool { x > 0 });
+    /// let t2 = [1, -5, 10, 200].iter().all(|x: i32| -> bool { x < 1000 });
+    ///
+    /// assert!(!t1);
+    /// assert!(t2);
+    /// ```
     fn all<F: Callable<(T), bool>>(iter: &mut Self, fun: F) -> bool {
         loop {
             let next = iter.next();
@@ -981,6 +1061,14 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// Returns `true` if any element of the iterator matches a predicate, `false` otherwise.
     ///
     /// If iterator produces no values, `false` is returned.
+    /// ## Example
+    /// ```
+    /// let t1 = [1, -5, 10, 200].iter().any(|x: i32| -> bool { x > 1000 });
+    /// let t2 = [1, -5, 10, 200].iter().any(|x: i32| -> bool { x < 0 });
+    ///
+    /// assert!(!t1);
+    /// assert!(t2);
+    /// ```
     fn any<F: Callable<(T), bool>>(iter: &mut Self, fun: F) -> bool {
         loop {
             let next = iter.next();
@@ -995,6 +1083,15 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     }
 
     /// Collects the values of the iterator into a vector.
+    ///
+    /// ## Example
+    /// ```
+    /// let range = (0..5).iter().to_vector();
+    /// defer range.free();
+    ///
+    /// assert_eq!(range.len(), 5);
+    /// assert_eq!(range.as_slice(), &[0, 1, 2, 3, 4]);
+    /// ```
     fn to_vector(self: &mut Self) -> collections::Vector<T> {
         collections::Vector::from_iter::<T, Self>(self)
     }
@@ -1006,10 +1103,18 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     ///
     /// If the number of elements in the iterator is less than the length of the
     /// slice, the remainder of the slice is untouched.
+    ///
+    /// ## Example
+    /// ```
+    /// let buf: [i32; 5];
+    /// (0..5).iter().fill_slice(buf.as_slice_mut());
+    ///
+    /// assert_eq!(buf.as_slice(), &[0, 1, 2, 3, 4]);
+    /// ```
     fn fill_slice(self: &mut Self, slice: &mut [T]) -> usize {
         let index = 0usize;
         loop {
-            if slice.len <= index {
+            if slice.len() <= index {
                 break;
             }
             let next = self.next();

@@ -9,6 +9,14 @@ ifdef RELEASE
 	CARGO_TARGET_DIR = target/release
 	CFLAGS += -O3
 	ALUMINA_FLAGS += --sysroot $(SYSROOT) --timings
+else ifdef FAST_DEBUG
+	# Compile in debug mode, but with alumina-boot compiled in release mode.
+	# It is significantly faster.
+	BUILD_DIR = $(BUILD_ROOT)/fast-release
+	CARGO_FLAGS = --release
+	CARGO_TARGET_DIR = target/release
+	CFLAGS += -g3 -fPIE -rdynamic
+	ALUMINA_FLAGS += --sysroot $(SYSROOT) --debug --timings
 else
 	BUILD_DIR = $(BUILD_ROOT)/debug
 	CARGO_FLAGS =
@@ -144,10 +152,29 @@ doctest: $(DOCTEST)
 
 serve-docs: docs
 	cd $(BUILD_DIR)/html && python3 -m http.server
+## ------------------------------ Examples -----------------------------
+
+.PHONY: examples
+
+EXAMPLES = $(shell find examples/ -type f -name '*.alu')
+
+$(BUILD_DIR)/example_%.alu.c: examples/%.alu $(ALUMINA_BOOT) $(SYSROOT_FILES)
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --output $@ main=$< || true
+
+$(BUILD_DIR)/example_%: $(BUILD_DIR)/example_%.alu.c
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) || true
+
+examples: $(patsubst examples/%.alu,$(BUILD_DIR)/example_%,$(EXAMPLES))
+
+$(BUILD_DIR)/examples_tested: $(ALUMINA_BOOT) $(SYSROOT_FILES) $(EXAMPLES)
+	cd tools/snapshot-tests/ && pytest snapshot.py
+	touch $(BUILD_DIR)/examples_tested
+
 ## ------------------------------ Various ------------------------------
 
 .PHONY: clean all install
 clean:
+	cargo clean
 	rm -rf $(BUILD_ROOT)/
 	rm -f quick.c quick alumina-boot aluminac
 
@@ -169,8 +196,7 @@ aluminac: $(ALUMINAC)
 test-std: alumina-boot $(STDLIB_TESTS)
 	$(STDLIB_TESTS) $(TEST_FLAGS)
 
-test-examples: alumina-boot
-	cd tools/snapshot-tests/ && pytest snapshot.py
+test-examples: $(BUILD_DIR)/examples_tested
 
 test-aluminac: $(ALUMINAC_TESTS)
 	$(ALUMINAC_TESTS) $(TEST_FLAGS)
@@ -194,3 +220,11 @@ $(BUILD_DIR)/quick: $(BUILD_DIR)/quick.c
 quick: $(BUILD_DIR)/quick
 	ln -sf $^.c $@.c
 	ln -sf $^ $@
+
+## ------------------------------ Dist ----------------------------------
+
+.PHONY: dist-check
+
+dist-check: aluminac doctest test
+	cargo check $(CARGO_FLAGS) --all-targets
+	cargo fmt -- --check

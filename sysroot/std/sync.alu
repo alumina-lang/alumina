@@ -15,6 +15,19 @@ enum Ordering {
 }
 
 /// Values that can be operated on atomically.
+///
+/// `Atomic` supports all primitive types (integer types, pointers, [bool]), with the exception of
+/// zero-sized types (e.g. [void]). Some types (e.g. [u128] and [i128]) may not be available on all
+/// platforms or require library support (`libatomic`).
+///
+/// ## Example
+/// ```
+/// use std::sync::{Atomic, Ordering};
+///
+/// let a: Atomic<i32> = Atomic::new(5);
+/// assert_eq!(a.exchange(10, Ordering::Relaxed), 5);
+/// assert_eq!(a.load(Ordering::Relaxed), 10);
+/// ```
 struct Atomic<T: Primitive + !ZeroSized> {
     inner: T
 }
@@ -154,6 +167,26 @@ fn compiler_fence(ordering: Ordering) {
 /// A mutual exclusion lock (mutex)
 ///
 /// This is a standard pthread mutex.
+///
+/// ## Example
+/// ```
+/// use std::sync::Mutex;
+/// use std::thread::spawn;
+///
+/// let mutex = Mutex::new();
+/// let sync_print = |&mutex, t: &[u8]| {
+///     mutex.lock();
+///     defer mutex.unlock();
+///
+///     println!("{}", t);
+/// };
+///
+/// let t1 = spawn(|=sync_print| { sync_print("hello world 1") });
+/// let t2 = spawn(|=sync_print| { sync_print("hello world 2") });
+///
+/// t1.join().unwrap();
+/// t2.join().unwrap();
+/// ```
 struct Mutex {
     inner: libc::pthread_mutex_t
 }
@@ -770,7 +803,7 @@ mod tests {
     #[cfg(threading)]
     #[test]
     fn test_oneshot_blocking() {
-        use thread::{spawn, Thread};
+        use thread::{spawn, yield, Thread};
 
         let chan: Oneshot<i32> = Oneshot::new();
         let main_thread = Thread::current();
@@ -795,7 +828,7 @@ mod tests {
         }
         /// Make sure the threads are really blocked.
         for i in 0..100 {
-            Thread::yield();
+            yield();
         }
 
         chan.send(42);
