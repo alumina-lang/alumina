@@ -84,6 +84,9 @@
 <li>
 <a href="/std/fs/#item.read_directory">read_directory</a>
 </li>
+<li>
+<a href="/std/fs/#item.canonicalize">canonicalize</a>
+</li>
 </ul>
 <h2>Enums</h2>
 <ul>
@@ -207,12 +210,14 @@ Working with files and directories
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">create_directory</span>(path: <a href="/std/fs/Path.html"><span class="identifier-type">Path</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs/unix.alu#L186-L188"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs/unix.alu#L188-L190"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Create a new directory
+Create an empty directory
+</p><p>
+See also <a class="path-link" href="/std/fs/unix/DirBuilder.html">DirBuilder</a> for creating directories with more options (e.g. recursively).
 </p><p>
 </p>
 </div>
@@ -222,12 +227,24 @@ Create a new directory
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">remove_file</span>(path: <a href="/std/fs/Path.html"><span class="identifier-type">Path</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs/unix.alu#L191-L198"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs/unix.alu#L204-L211"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Remove a file
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::fs::{File, Path, remove_file};
+
+let filename = Path::new("foo.txt");
+// Create an empty file
+File::create(filename).unwrap().close();
+// Remove the file
+remove_file(filename).unwrap();
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3afs%3a%3a%7bFile%2c%20Path%2c%20remove%5ffile%7d%3b%0a%20%20%20%0a%20%20%20let%20filename%20%3d%20Path%3a%3anew%28%22foo%2etxt%22%29%3b%0a%20%20%20%2f%2f%20Create%20an%20empty%20file%0a%20%20%20File%3a%3acreate%28filename%29%2eunwrap%28%29%2eclose%28%29%3b%0a%20%20%20%2f%2f%20Remove%20the%20file%0a%20%20%20remove%5ffile%28filename%29%2eunwrap%28%29%3b%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -237,7 +254,7 @@ Remove a file
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">remove_directory</span>(path: <a href="/std/fs/Path.html"><span class="identifier-type">Path</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs/unix.alu#L201-L208"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs/unix.alu#L214-L221"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -252,12 +269,14 @@ Remove an empty directory
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">read_directory</span>(path: <a href="/std/fs/Path.html"><span class="identifier-type">Path</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/fs/unix/DirIterator.html"><span class="identifier-type">DirIterator</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs/unix.alu#L433-L443"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs/unix.alu#L448-L458"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Returns iterator over the items in a directory.
+</p><p>
+See <a class="path-link" href="/std/fs/unix/DirEntry.html">DirEntry</a> for the item returned.
 </p><p>
 </p>
 <h3> Example</h3>
@@ -271,7 +290,33 @@ for item in dir {
     let item = item.unwrap();
     println!("{}: {}", item.name(), item.file_type());
 }
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3afs%3a%3a%7bPath%2c%20read%5fdirectory%7d%3b%0a%20%20%20%0a%20%20%20let%20dir%20%3d%20read%5fdirectory%28Path%3a%3anew%28%22%2e%22%29%29%2eunwrap%28%29%3b%0a%20%20%20defer%20dir%2eclose%28%29%3b%0a%20%20%20%0a%20%20%20for%20item%20in%20dir%20%7b%0a%20%20%20%20%20%20%20let%20item%20%3d%20item%2eunwrap%28%29%3b%0a%20%20%20%20%20%20%20println%21%28%22%7b%7d%3a%20%7b%7d%22%2c%20item%2ename%28%29%2c%20item%2efile%5ftype%28%29%29%3b%0a%20%20%20%7d%0a%7d%0a">Run this example</a></pre>
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3afs%3a%3a%7bPath%2c%20read%5fdirectory%7d%3b%0a%20%20%20%0a%20%20%20let%20dir%20%3d%20read%5fdirectory%28Path%3a%3anew%28%22%2e%22%29%29%2eunwrap%28%29%3b%0a%20%20%20defer%20dir%2eclose%28%29%3b%0a%20%20%20%0a%20%20%20for%20item%20in%20dir%20%7b%0a%20%20%20%20%20%20%20let%20item%20%3d%20item%2eunwrap%28%29%3b%0a%20%20%20%20%20%20%20println%21%28%22%7b%7d%3a%20%7b%7d%22%2c%20item%2ename%28%29%2c%20item%2efile%5ftype%28%29%29%3b%0a%20%20%20%7d%0a%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.canonicalize">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">canonicalize</span>(path: <a href="/std/fs/Path.html"><span class="identifier-type">Path</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/fs/PathBuf.html"><span class="identifier-type">PathBuf</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs/unix.alu#L471-L489"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns a canonical absolute path for the given path.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::fs::{Path, canonicalize};
+
+let cwd = Path::new(".").canonicalize().unwrap();
+defer cwd.free();
+
+println!("Current directory: {}", cwd);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3afs%3a%3a%7bPath%2c%20canonicalize%7d%3b%0a%20%20%20%0a%20%20%20let%20cwd%20%3d%20Path%3a%3anew%28%22%2e%22%29%2ecanonicalize%28%29%2eunwrap%28%29%3b%0a%20%20%20defer%20cwd%2efree%28%29%3b%0a%20%20%20%0a%20%20%20println%21%28%22Current%20directory%3a%20%7b%7d%22%2c%20cwd%29%3b%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>

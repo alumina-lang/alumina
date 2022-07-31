@@ -64,11 +64,35 @@
 <h3>
 <span class="keyword">protocol</span> <span class="identifier-type">Hasher</span>&lt;Self&gt; { ... }</h3>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/hash.alu#L4-L13"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/hash.alu#L32-L41"/>source</a>
 </div>
 </div>
 <p>
 Hashing algorithms.
+</p><p>
+Hasher is a visitor that is accepted by a hashable type through the <a class="path-link" href="/std/hash/Hashable.html#item.hash">hash</a> method.
+Each hasher is a disposable object that is used to hash a single value.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::hash::hash_of;
+
+// A bad hash, do not use
+struct CountingHash {
+    length: usize
+}
+
+impl CountingHash {
+    fn new() -&gt; CountingHash { CountingHash { length: 0 } }
+    fn write(self: &amp;mut CountingHash, val: &amp;[u8]) { self.length += val.len() }
+    fn finish(self: &amp;mut CountingHash) -&gt; u64 { self.length as u64 }
+}
+
+assert_eq!(hash_of::&lt;&amp;[u8], CountingHash&gt;(""), 0);
+assert_eq!(hash_of::&lt;&amp;[u8], CountingHash&gt;("a"), 1);
+assert_eq!(hash_of::&lt;&amp;[u8], CountingHash&gt;("ab"), 2);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3ahash%3a%3ahash%5fof%3b%0a%20%20%20%0a%20%20%20%2f%2f%20A%20bad%20hash%2c%20do%20not%20use%0a%20%20%20struct%20CountingHash%20%7b%0a%20%20%20%20%20%20%20length%3a%20usize%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20impl%20CountingHash%20%7b%0a%20%20%20%20%20%20%20fn%20new%28%29%20%2d%3e%20CountingHash%20%7b%20CountingHash%20%7b%20length%3a%200%20%7d%20%7d%0a%20%20%20%20%20%20%20fn%20write%28self%3a%20%26mut%20CountingHash%2c%20val%3a%20%26%5bu8%5d%29%20%7b%20self%2elength%20%2b%3d%20val%2elen%28%29%20%7d%0a%20%20%20%20%20%20%20fn%20finish%28self%3a%20%26mut%20CountingHash%29%20%2d%3e%20u64%20%7b%20self%2elength%20as%20u64%20%7d%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20assert%5feq%21%28hash%5fof%3a%3a%3c%26%5bu8%5d%2c%20CountingHash%3e%28%22%22%29%2c%200%29%3b%0a%20%20%20assert%5feq%21%28hash%5fof%3a%3a%3c%26%5bu8%5d%2c%20CountingHash%3e%28%22a%22%29%2c%201%29%3b%0a%20%20%20assert%5feq%21%28hash%5fof%3a%3a%3c%26%5bu8%5d%2c%20CountingHash%3e%28%22ab%22%29%2c%202%29%3b%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 <h2 id="Method">Methods</h2>
@@ -78,7 +102,7 @@ Hashing algorithms.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">new</span>() -> Self</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/hash.alu#L8-L8"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/hash.alu#L36-L36"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -93,7 +117,7 @@ Create a new hasher.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">write</span>(self: &amp;mut Self, val: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>])</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/hash.alu#L10-L10"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/hash.alu#L38-L38"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -108,7 +132,7 @@ Write a byte slice into a hasher.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">finish</span>(self: &amp;mut Self) -> <a href="/std/builtins/u64.html"><span class="identifier-type">u64</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/hash.alu#L12-L12"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/hash.alu#L40-L40"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -126,7 +150,7 @@ Finalize the hashing and return the hash value.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">size_of</span>&lt;T&gt;() -> <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L498-L501"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L504-L507"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -142,7 +166,7 @@ assert_eq!(size_of::&lt;u8&gt;(), 1);
 assert_eq!(size_of::&lt;u16&gt;(), 2);
 assert_eq!(size_of::&lt;u32&gt;(), 4);
 assert_eq!(size_of::&lt;u64&gt;(), 8);
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3amem%3a%3asize%5fof%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28size%5fof%3a%3a%3cu8%3e%28%29%2c%201%29%3b%0a%20%20%20assert%5feq%21%28size%5fof%3a%3a%3cu16%3e%28%29%2c%202%29%3b%0a%20%20%20assert%5feq%21%28size%5fof%3a%3a%3cu32%3e%28%29%2c%204%29%3b%0a%20%20%20assert%5feq%21%28size%5fof%3a%3a%3cu64%3e%28%29%2c%208%29%3b%0a%7d%0a">Run this example</a></pre>
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3amem%3a%3asize%5fof%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28size%5fof%3a%3a%3cu8%3e%28%29%2c%201%29%3b%0a%20%20%20assert%5feq%21%28size%5fof%3a%3a%3cu16%3e%28%29%2c%202%29%3b%0a%20%20%20assert%5feq%21%28size%5fof%3a%3a%3cu32%3e%28%29%2c%204%29%3b%0a%20%20%20assert%5feq%21%28size%5fof%3a%3a%3cu64%3e%28%29%2c%208%29%3b%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>

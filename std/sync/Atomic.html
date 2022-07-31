@@ -92,11 +92,25 @@
 T: <a href="/std/builtins/Primitive.html"><span class="identifier-type">Primitive</span></a> + !<a href="/std/builtins/ZeroSized.html"><span class="identifier-type">ZeroSized</span></a></div>
 </h3>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L18-L20"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L31-L33"/>source</a>
 </div>
 </div>
 <p>
 Values that can be operated on atomically.
+</p><p>
+<code>Atomic</code> supports all primitive types (integer types, pointers, <a class="path-link" href="/std/builtins/bool.html">bool</a>), with the exception of
+zero-sized types (e.g. <a class="path-link" href="/std/builtins/void.html">void</a>). Some types (e.g. <a class="path-link" href="/std/builtins/u128.html">u128</a> and <a class="path-link" href="/std/builtins/i128.html">i128</a>) may not be available on all
+platforms or require library support (<code>libatomic</code>).
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::sync::{Atomic, Ordering};
+
+let a: Atomic&lt;i32&gt; = Atomic::new(5);
+assert_eq!(a.exchange(10, Ordering::Relaxed), 5);
+assert_eq!(a.load(Ordering::Relaxed), 10);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3async%3a%3a%7bAtomic%2c%20Ordering%7d%3b%0a%20%20%20%0a%20%20%20let%20a%3a%20Atomic%3ci32%3e%20%3d%20Atomic%3a%3anew%285%29%3b%0a%20%20%20assert%5feq%21%28a%2eexchange%2810%2c%20Ordering%3a%3aRelaxed%29%2c%205%29%3b%0a%20%20%20assert%5feq%21%28a%2eload%28Ordering%3a%3aRelaxed%29%2c%2010%29%3b%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 <h2 id="Field">Fields</h2>
@@ -121,7 +135,7 @@ T: <a href="/std/builtins/Primitive.html"><span class="identifier-type">Primitiv
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">new</span>(inner: T) -> <a href="/std/sync/Atomic.html"><span class="identifier-type">Atomic</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L24-L26"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L37-L39"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -136,7 +150,7 @@ Create a new <code>Atomic</code> value with the given initial value.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">load</span>(self: &amp;<a href="/std/sync/Atomic.html"><span class="identifier-type">Atomic</span></a>&lt;T&gt;, ordering: <a href="/std/sync/Ordering.html"><span class="identifier-type">Ordering</span></a>) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L29-L32"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L42-L45"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -151,7 +165,7 @@ Loads a value from the atomic variable.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">store</span>(self: &amp;mut <a href="/std/sync/Atomic.html"><span class="identifier-type">Atomic</span></a>&lt;T&gt;, value: T, ordering: <a href="/std/sync/Ordering.html"><span class="identifier-type">Ordering</span></a>)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L35-L38"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L48-L51"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -166,7 +180,7 @@ Stores a value into the atomic variable.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">exchange</span>(self: &amp;mut <a href="/std/sync/Atomic.html"><span class="identifier-type">Atomic</span></a>&lt;T&gt;, value: T, ordering: <a href="/std/sync/Ordering.html"><span class="identifier-type">Ordering</span></a>) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L41-L44"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L54-L57"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -181,7 +195,7 @@ Stores a value into the atomic variable, atomically returning the old value.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">compare_exchange</span>(self: &amp;mut <a href="/std/sync/Atomic.html"><span class="identifier-type">Atomic</span></a>&lt;T&gt;, expected: T, desired: T, success_ordering: <a href="/std/sync/Ordering.html"><span class="identifier-type">Ordering</span></a>, failure_ordering: <a href="/std/sync/Ordering.html"><span class="identifier-type">Ordering</span></a>) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L50-L71"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L63-L84"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -199,7 +213,7 @@ This is the strong version, which will not fail spuriously. See also <a class="p
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">compare_exchange_weak</span>(self: &amp;mut <a href="/std/sync/Atomic.html"><span class="identifier-type">Atomic</span></a>&lt;T&gt;, expected: T, desired: T, success_ordering: <a href="/std/sync/Ordering.html"><span class="identifier-type">Ordering</span></a>, failure_ordering: <a href="/std/sync/Ordering.html"><span class="identifier-type">Ordering</span></a>) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L77-L98"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L90-L111"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -223,7 +237,7 @@ T: <a href="/std/builtins/Integer.html"><span class="identifier-type">Integer</s
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">fetch_add</span>(self: &amp;mut <a href="/std/sync/Atomic.html"><span class="identifier-type">Atomic</span></a>&lt;T&gt;, value: T, ordering: <a href="/std/sync/Ordering.html"><span class="identifier-type">Ordering</span></a>) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L103-L106"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L116-L119"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -238,7 +252,7 @@ Atomically adds <code>value</code> to the atomic variable and returns the old va
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">fetch_sub</span>(self: &amp;mut <a href="/std/sync/Atomic.html"><span class="identifier-type">Atomic</span></a>&lt;T&gt;, value: T, ordering: <a href="/std/sync/Ordering.html"><span class="identifier-type">Ordering</span></a>) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L109-L112"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L122-L125"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -253,7 +267,7 @@ Atomically subtracts <code>value</code> from the atomic variable and returns the
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">fetch_and</span>(self: &amp;mut <a href="/std/sync/Atomic.html"><span class="identifier-type">Atomic</span></a>&lt;T&gt;, value: T, ordering: <a href="/std/sync/Ordering.html"><span class="identifier-type">Ordering</span></a>) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L115-L118"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L128-L131"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -268,7 +282,7 @@ Atomically performs <code>*self &amp;= value</code> and returns the old value.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">fetch_or</span>(self: &amp;mut <a href="/std/sync/Atomic.html"><span class="identifier-type">Atomic</span></a>&lt;T&gt;, value: T, ordering: <a href="/std/sync/Ordering.html"><span class="identifier-type">Ordering</span></a>) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L121-L124"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L134-L137"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -283,7 +297,7 @@ Atomically performs <code>*self |= value</code> and returns the old value.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">fetch_xor</span>(self: &amp;mut <a href="/std/sync/Atomic.html"><span class="identifier-type">Atomic</span></a>&lt;T&gt;, value: T, ordering: <a href="/std/sync/Ordering.html"><span class="identifier-type">Ordering</span></a>) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L127-L130"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L140-L143"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -298,7 +312,7 @@ Atomically performs <code>*self ^= value</code> and returns the old value.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">fetch_nand</span>(self: &amp;mut <a href="/std/sync/Atomic.html"><span class="identifier-type">Atomic</span></a>&lt;T&gt;, value: T, ordering: <a href="/std/sync/Ordering.html"><span class="identifier-type">Ordering</span></a>) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L133-L136"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L146-L149"/>source</a>
 </div>
 </div>
 <div class="item-doc">

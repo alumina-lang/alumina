@@ -189,7 +189,7 @@
 <h3>
 <span class="keyword">macro</span> <span class="identifier-function">compile_fail</span>($reason) { ... }</h3>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std.alu#L10-L12"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std.alu#L44-L46"/>source</a>
 </div>
 </div>
 <p>
@@ -197,6 +197,40 @@ Causes the compilation to fail if reached.
 </p><p>
 This is useful when conditional compilation is used with <code>#[cfg(...)]</code> attributes, but it can also be used
 in generic context (e.g. with <code>when</code> expressions).
+</p><p>
+</p>
+<h3> Examples</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::compile_fail;
+
+fn rand() -&gt; i32 {
+    #[cfg(not(target_os = "linux"))]
+    compile_fail!("rand() only works on linux");
+
+    let ret: i32;
+    libc::getrandom(&amp;ret as &amp;mut void, std::mem::size_of::&lt;i32&gt;(), 0);
+    ret
+}
+
+println!("{}", rand());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acompile%5ffail%3b%0a%20%20%20%0a%20%20%20fn%20rand%28%29%20%2d%3e%20i32%20%7b%0a%20%20%20%20%20%20%20%23%5bcfg%28not%28target%5fos%20%3d%20%22linux%22%29%29%5d%0a%20%20%20%20%20%20%20compile%5ffail%21%28%22rand%28%29%20only%20works%20on%20linux%22%29%3b%0a%20%20%20%0a%20%20%20%20%20%20%20let%20ret%3a%20i32%3b%0a%20%20%20%20%20%20%20libc%3a%3agetrandom%28%26ret%20as%20%26mut%20void%2c%20std%3a%3amem%3a%3asize%5fof%3a%3a%3ci32%3e%28%29%2c%200%29%3b%0a%20%20%20%20%20%20%20ret%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20println%21%28%22%7b%7d%22%2c%20rand%28%29%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+</p><p>
+<pre class="with-playground-link"><code class="language-alumina">use std::compile_fail;
+
+fn type_of_value&lt;T&gt;(t: T) -&gt; &amp;[u8] {
+    when T: i32 {
+        "i32"
+    } else when T: &amp;[u8] {
+        "&amp;[u8]"
+    } else {
+        compile_fail!("unsupported type")
+    }
+}
+
+println!("{}", type_of_value(1)); // "i32"
+println!("{}", type_of_value("hello world")); // "&amp;[u8]"
+// println!("{}", type_of_value(true)); // Would fail to compile
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acompile%5ffail%3b%0a%20%20%20%0a%20%20%20fn%20type%5fof%5fvalue%3cT%3e%28t%3a%20T%29%20%2d%3e%20%26%5bu8%5d%20%7b%0a%20%20%20%20%20%20%20when%20T%3a%20i32%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%22i32%22%0a%20%20%20%20%20%20%20%7d%20else%20when%20T%3a%20%26%5bu8%5d%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%22%26%5bu8%5d%22%0a%20%20%20%20%20%20%20%7d%20else%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20compile%5ffail%21%28%22unsupported%20type%22%29%0a%20%20%20%20%20%20%20%7d%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20println%21%28%22%7b%7d%22%2c%20type%5fof%5fvalue%281%29%29%3b%20%2f%2f%20%22i32%22%0a%20%20%20println%21%28%22%7b%7d%22%2c%20type%5fof%5fvalue%28%22hello%20world%22%29%29%3b%20%2f%2f%20%22%26%5bu8%5d%22%0a%20%20%20%2f%2f%20println%21%28%22%7b%7d%22%2c%20type%5fof%5fvalue%28true%29%29%3b%20%2f%2f%20Would%20fail%20to%20compile%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </main>

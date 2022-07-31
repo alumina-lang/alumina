@@ -66,11 +66,8 @@
 <li>
 <a href="/std/thread/#item.sleep">sleep</a>
 </li>
-</ul>
-<h2>Unions</h2>
-<ul>
 <li>
-<a href="/std/thread/JoinErrorT.html">JoinErrorT</a>
+<a href="/std/thread/#item.yield">yield</a>
 </li>
 </ul>
 <h2>Enums</h2>
@@ -191,15 +188,15 @@ let text = "The quick brown fox jumps over the lazy dog";
 let t = spawn(|=text| -&gt; usize {
     // pretend that calculating the length is expensive
     sleep(Duration::from_secs(1));
-    text.len
+    text.len()
 });
 
 println!("Calculating length of {}", text);
 println!("Length is {}", t.join().unwrap());
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3athread%3a%3a%7bspawn%2c%20sleep%7d%3b%0a%20%20%20use%20std%3a%3atime%3a%3aDuration%3b%0a%20%20%20%0a%20%20%20let%20text%20%3d%20%22The%20quick%20brown%20fox%20jumps%20over%20the%20lazy%20dog%22%3b%0a%20%20%20%0a%20%20%20let%20t%20%3d%20spawn%28%7c%3dtext%7c%20%2d%3e%20usize%20%7b%0a%20%20%20%20%20%20%20%2f%2f%20pretend%20that%20calculating%20the%20length%20is%20expensive%0a%20%20%20%20%20%20%20sleep%28Duration%3a%3afrom%5fsecs%281%29%29%3b%0a%20%20%20%20%20%20%20text%2elen%0a%20%20%20%7d%29%3b%0a%20%20%20%0a%20%20%20println%21%28%22Calculating%20length%20of%20%7b%7d%22%2c%20text%29%3b%0a%20%20%20println%21%28%22Length%20is%20%7b%7d%22%2c%20t%2ejoin%28%29%2eunwrap%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3athread%3a%3a%7bspawn%2c%20sleep%7d%3b%0a%20%20%20use%20std%3a%3atime%3a%3aDuration%3b%0a%20%20%20%0a%20%20%20let%20text%20%3d%20%22The%20quick%20brown%20fox%20jumps%20over%20the%20lazy%20dog%22%3b%0a%20%20%20%0a%20%20%20let%20t%20%3d%20spawn%28%7c%3dtext%7c%20%2d%3e%20usize%20%7b%0a%20%20%20%20%20%20%20%2f%2f%20pretend%20that%20calculating%20the%20length%20is%20expensive%0a%20%20%20%20%20%20%20sleep%28Duration%3a%3afrom%5fsecs%281%29%29%3b%0a%20%20%20%20%20%20%20text%2elen%28%29%0a%20%20%20%7d%29%3b%0a%20%20%20%0a%20%20%20println%21%28%22Calculating%20length%20of%20%7b%7d%22%2c%20text%29%3b%0a%20%20%20println%21%28%22Length%20is%20%7b%7d%22%2c%20t%2ejoin%28%29%2eunwrap%28%29%29%3b%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
-<h2> Panic handling</h2>
+<h3> Panic handling</h3>
 <p>
 </p><p>
 If the child thread panics, the process is not terminated automatically. Instead, the
@@ -215,7 +212,7 @@ If a thread is <a class="" href="/std/thread/JoinHandle.html#item.detach">detach
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">sleep</span>(duration: <a href="/std/time/Duration.html"><span class="identifier-type">Duration</span></a>)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/thread.alu#L385-L394"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/thread.alu#L396-L405"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -226,18 +223,57 @@ The sleep may sleep for less than the specified time if interrupted by a
 signal.
 </p><p>
 </p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::time::{Instant, Duration};
+use std::thread::sleep;
+
+let start = Instant::now();
+sleep(Duration::from_millis(500));
+
+assert!(Instant::now().duration_since(&amp;start).total_secs() &gt;= 0.5);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3atime%3a%3a%7bInstant%2c%20Duration%7d%3b%0a%20%20%20use%20std%3a%3athread%3a%3asleep%3b%0a%20%20%20%0a%20%20%20let%20start%20%3d%20Instant%3a%3anow%28%29%3b%0a%20%20%20sleep%28Duration%3a%3afrom%5fmillis%28500%29%29%3b%0a%20%20%20%0a%20%20%20assert%21%28Instant%3a%3anow%28%29%2eduration%5fsince%28%26start%29%2etotal%5fsecs%28%29%20%3e%3d%200%2e5%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.yield">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">yield</span>()</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/thread.alu#L428-L430"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Yields the execution of the current thread.
+</p><p>
+You probably don't want to use this in a spin-lock.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::time::Duration;
+
+/// A bad way to sleep. Use std::thread::sleep instead
+fn bad_sleep(duration: Duration) {
+    use std::time::Instant;
+    use std::thread::yield;
+
+    let start = time::Instant::now();
+    while Instant::now().duration_since(&amp;start) &lt; duration {
+        yield();
+    }
+}
+
+bad_sleep(Duration::from_millis(10));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3atime%3a%3aDuration%3b%0a%20%20%20%0a%20%20%20%2f%2f%2f%20A%20bad%20way%20to%20sleep%2e%20Use%20std%3a%3athread%3a%3asleep%20instead%0a%20%20%20fn%20bad%5fsleep%28duration%3a%20Duration%29%20%7b%0a%20%20%20%20%20%20%20use%20std%3a%3atime%3a%3aInstant%3b%0a%20%20%20%20%20%20%20use%20std%3a%3athread%3a%3ayield%3b%0a%20%20%20%0a%20%20%20%20%20%20%20let%20start%20%3d%20time%3a%3aInstant%3a%3anow%28%29%3b%0a%20%20%20%20%20%20%20while%20Instant%3a%3anow%28%29%2eduration%5fsince%28%26start%29%20%3c%20duration%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20yield%28%29%3b%0a%20%20%20%20%20%20%20%7d%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20bad%5fsleep%28Duration%3a%3afrom%5fmillis%2810%29%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
 </div>
 </li>
 </ul>
-<h2 id="Union">Unions</h2>
-<div class="item-short-table">
-<div class="row" id="item.JoinErrorT">
-<div class="cell-name">
-<a href="/std/thread/JoinErrorT.html">JoinErrorT</a>
-</div>
-<div class="cell-doc"></div>
-</div>
-</div>
 <h2 id="Enum">Enums</h2>
 <div class="item-short-table">
 <div class="row" id="item.JoinErrorKind">

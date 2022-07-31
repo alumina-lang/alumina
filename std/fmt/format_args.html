@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>std::fmt::format - Alumina Docs</title>
+<title>std::fmt::format_args - Alumina Docs</title>
 <link rel="stylesheet" href="/static/styles.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -13,7 +13,7 @@
 <link rel="manifest" href="/static/manifest.json" />
 <link rel="mask-icon" href="/static/safari-pinned-tab.svg" color="#5bbad5" />
 <link rel="shortcut icon" href="/static/favicon.ico" />
-<link rel="canonical" href="https://docs.alumina-lang.net/std/fmt/format.html" />
+<link rel="canonical" href="https://docs.alumina-lang.net/std/fmt/format_args.html" />
 <meta name="msapplication-TileColor" content="#da532c" />
 <meta name="msapplication-config" content="/static/browserconfig.xml" />
 <meta name="description" content="Documentation for the Alumina standard library" />
@@ -119,30 +119,54 @@
 </div>
 <div id="search-results"></div>
 <main id="main-content">
-<div class="main-title"><h1>Macro <a class="breadcrumbs" href="/std/">std</a>::<a class="breadcrumbs" href="/std/fmt/">fmt</a>::<a class="breadcrumbs" href="/std/fmt/format.html">format</a></h1>
+<div class="main-title"><h1>Macro <a class="breadcrumbs" href="/std/">std</a>::<a class="breadcrumbs" href="/std/fmt/">fmt</a>::<a class="breadcrumbs" href="/std/fmt/format_args.html">format_args</a></h1>
 </h1>
 </div>
 <div class="signature">
 <h3>
-<span class="keyword">macro</span> <span class="identifier-function">format</span>($fmt_str, $arg...) { ... }</h3>
+<span class="keyword">macro</span> <span class="identifier-function">format_args</span>($fmt, $args...) { ... }</h3>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fmt.alu#L142-L151"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fmt.alu#L101-L101"/>source</a>
 </div>
 </div>
 <p>
-Format a string into a <code>StringBuf</code>.
+Constructs an array of pieces from a format string and arguments.
+</p><p>
+This macro is implemented in the compiler, and is used as a foundation for other formatting macros,
+such as <a class="path-link" href="/std/fmt/format.html">format</a> and <a class="path-link" href="/std/io/println.html">println</a>. You probably want to use one of those formatting macros instead.
+</p><p>
+<pre><code class="language-alumina">format_args!("{} = {}", a, b);
+// Expands to:
+[
+    ::std::fmt::internal::format_arg(&amp;a),
+    ::std::fmt::internal::format_arg(&amp;" = "),
+    ::std::fmt::internal::format_arg(&amp;b)
+]
+</code></pre>
+</p><p>
+See also <a class="path-link" href="/std/fmt/internal/#item.format_arg">format_arg</a>.
+</p><p>
+As the type-erased <code>&amp;dyn Formattable&lt;_&gt;</code> wraps a pointer to the original arguments, it is generally not safe to
+store the array that is returned by <code>format_args</code>.
 </p><p>
 </p>
 <h3> Example</h3>
 <p>
-<pre class="with-playground-link"><code class="language-alumina">use std::fmt::format;
-use std::string::StringBuf;
+<pre class="with-playground-link"><code class="language-alumina">use std::fmt::{format_args, Formattable, StreamFormatter};
+use std::io::StdioStream;
 
-let s: StringBuf = format!("{} + {} = {}", 1, 2, 3).unwrap();
-defer s.free();
+let stdout = StreamFormatter::new(&amp;StdioStream::stdout());
 
-assert_eq!(s.as_slice(), "1 + 2 = 3");
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3afmt%3a%3aformat%3b%0a%20%20%20use%20std%3a%3astring%3a%3aStringBuf%3b%0a%20%20%20%0a%20%20%20let%20s%3a%20StringBuf%20%3d%20format%21%28%22%7b%7d%20%2b%20%7b%7d%20%3d%20%7b%7d%22%2c%201%2c%202%2c%203%29%2eunwrap%28%29%3b%0a%20%20%20defer%20s%2efree%28%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28s%2eas%5fslice%28%29%2c%20%221%20%2b%202%20%3d%203%22%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+// Type hint is required here in order to infer the formatter type
+let args: [&amp;dyn Formattable&lt;StreamFormatter&lt;StdioStream&gt;&gt;; 5]
+    = format_args!("{} + {} = {}", 1, 2, 3);
+
+args[0].fmt(&amp;stdout); // "1"
+args[1].fmt(&amp;stdout); // " + "
+args[2].fmt(&amp;stdout); // "2"
+args[3].fmt(&amp;stdout); // " = "
+args[4].fmt(&amp;stdout); // "3"
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3afmt%3a%3a%7bformat%5fargs%2c%20Formattable%2c%20StreamFormatter%7d%3b%0a%20%20%20use%20std%3a%3aio%3a%3aStdioStream%3b%0a%20%20%20%0a%20%20%20let%20stdout%20%3d%20StreamFormatter%3a%3anew%28%26StdioStream%3a%3astdout%28%29%29%3b%0a%20%20%20%0a%20%20%20%2f%2f%20Type%20hint%20is%20required%20here%20in%20order%20to%20infer%20the%20formatter%20type%0a%20%20%20let%20args%3a%20%5b%26dyn%20Formattable%3cStreamFormatter%3cStdioStream%3e%3e%3b%205%5d%0a%20%20%20%20%20%20%20%3d%20format%5fargs%21%28%22%7b%7d%20%2b%20%7b%7d%20%3d%20%7b%7d%22%2c%201%2c%202%2c%203%29%3b%0a%20%20%20%0a%20%20%20args%5b0%5d%2efmt%28%26stdout%29%3b%20%2f%2f%20%221%22%0a%20%20%20args%5b1%5d%2efmt%28%26stdout%29%3b%20%2f%2f%20%22%20%2b%20%22%0a%20%20%20args%5b2%5d%2efmt%28%26stdout%29%3b%20%2f%2f%20%222%22%0a%20%20%20args%5b3%5d%2efmt%28%26stdout%29%3b%20%2f%2f%20%22%20%3d%20%22%0a%20%20%20args%5b4%5d%2efmt%28%26stdout%29%3b%20%2f%2f%20%223%22%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </main>
