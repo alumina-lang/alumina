@@ -177,7 +177,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
             .add_item(
                 Some(alias),
                 NamedItem::new(
-                    NamedItemKind::Alias(self.prefix.join_with(path)),
+                    NamedItemKind::Alias(self.prefix.join_with(path), node),
                     self.attributes,
                 ),
             )
@@ -207,7 +207,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
             .add_item(
                 Some(alias),
                 NamedItem::new(
-                    NamedItemKind::Alias(self.prefix.extend(PathSegment(alias))),
+                    NamedItemKind::Alias(self.prefix.extend(PathSegment(alias)), node),
                     self.attributes,
                 ),
             )
@@ -237,7 +237,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
             .add_item(
                 Some(name),
                 NamedItem::new(
-                    NamedItemKind::Alias(self.prefix.join_with(path.extend(PathSegment(name)))),
+                    NamedItemKind::Alias(
+                        self.prefix.join_with(path.extend(PathSegment(name))),
+                        node,
+                    ),
                     self.attributes,
                 ),
             )

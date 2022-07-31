@@ -35,10 +35,30 @@ fn type_name<T>() -> &[u8] {
 /// type &dyn Protocol<...> = dyn<Protocol<dyn_self, ...>, &void>
 /// type &mut dyn Protocol<...> = dyn<Protocol<dyn_self, ...>, &mut void>
 /// ```
+/// ## Example
+/// ```
+/// protocol Foo<Self> { fn foo(self: &Self); }
+///
+/// struct Bar {};
+/// impl Bar {
+///     fn foo(self: &Bar) { println!("Bar::foo"); }
+/// }
+///
+/// struct Quux {};
+/// impl Quux {
+///     fn foo(self: &Quux) { println!("Quux::foo"); }
+/// }
+///
+/// let bar: &dyn Foo = &Bar {};
+/// let quux: &dyn Foo = &Quux {};
+///
+/// bar.foo(); // prints "Bar::foo"
+/// quux.foo(); // prints "Quux::foo"
+/// ```
 #[lang(dyn)]
 struct dyn<Proto, Ptr> {
-    data: Ptr,
-    vtable: &fn(),
+    _ptr: Ptr,
+    _vtable: &fn(),
 }
 
 mod internal {
@@ -48,40 +68,50 @@ mod internal {
 
     #[lang(dyn_new)]
     #[force_inline]
-    fn dyn_new<Proto, Ptr>(data: Ptr) -> dyn<Proto, builtins::void_ptr_of<Ptr>> {
+    fn dyn_new<Proto, Ptr>(ptr: Ptr) -> dyn<Proto, builtins::void_ptr_of<Ptr>> {
         dyn {
-            data: data as builtins::void_ptr_of<Ptr>,
-            vtable: intrinsics::make_vtable::<Proto, builtins::deref_of<Ptr>>()
+            _ptr: ptr as builtins::void_ptr_of<Ptr>,
+            _vtable: intrinsics::make_vtable::<Proto, builtins::deref_of<Ptr>>()
         }
     }
 
     #[lang(dyn_const_coerce)]
     #[force_inline]
     fn dyn_const_coerce<Proto>(self: dyn<Proto, &mut void>) -> dyn<Proto, &void> {
-        dyn { data: self.data, vtable: self.vtable }
+        dyn { _ptr: self._ptr, _vtable: self._vtable }
     }
 
     #[lang(dyn_const_cast)]
     #[force_inline]
     fn dyn_const_cast<Proto>(self: dyn<Proto, &void>) -> dyn<Proto, &mut void> {
-        dyn { data: self.data as &mut void, vtable: self.vtable }
+        dyn { _ptr: self._ptr as &mut void, _vtable: self._vtable }
     }
 
     #[lang(dyn_data)]
     #[force_inline]
     fn dyn_data<Proto, Ptr>(self: dyn<Proto, Ptr>) -> Ptr {
-        self.data
+        self._ptr
     }
 
     #[lang(dyn_vtable_index)]
     #[force_inline]
     fn dyn_vtable_index<Proto, Ptr>(self: dyn<Proto, Ptr>, idx: usize) -> fn() {
-        *(self.vtable + idx)
+        *(self._vtable + idx)
     }
 }
 
 #[cfg(all(test, test_std))]
 mod tests {
+    #[test]
+    fn test_type_id() {
+        assert_eq!(type_id::<u8>(), type_id::<u8>());
+        assert_ne!(type_id::<u8>(), type_id::<u16>());
+
+        assert_eq!(type_id::<Option<&[u8]>>(), type_id::<Option<&[u8]>>());
+        assert_ne!(type_id::<Option<&[u8]>>(), type_id::<Option<&mut [u8]>>());
+    }
+
+
     #[test]
     fn test_type_name() {
         assert_eq!(type_name::<u8>(), "u8");

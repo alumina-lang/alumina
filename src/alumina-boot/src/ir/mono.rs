@@ -247,7 +247,7 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
                 }
             }
             Array(ty, len) => {
-                let _ = write!(f, "[{:?}; {}]", ty, len);
+                let _ = write!(f, "[{}; {}]", self.type_name(*ty)?, len);
             }
             Unqualified(kind) => {
                 let _ = write!(f, "{{unqualified {:?}}}", kind);

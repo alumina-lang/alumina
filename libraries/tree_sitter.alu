@@ -120,8 +120,12 @@ impl TSLanguage {
 fn default_read(payload: &void, byte_offset: u32, point: TSPoint, read_size: &mut u32) -> &c_char {
     let slice = *(payload as &&[u8]);
     let remaining = slice[byte_offset as usize..];
-    *read_size = remaining.len as u32;
-    return remaining.ptr as &c_char;
+    *read_size = remaining.len() as u32;
+    if remaining.len() > 0 {
+        &remaining[0] as &c_char
+    } else {
+        null
+    }
 }
 
 struct Parser {

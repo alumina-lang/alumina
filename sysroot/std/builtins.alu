@@ -146,7 +146,7 @@ protocol IntegerParsable<Self: builtins::Integer> {
     ///
     /// If the string does not represent a valid integer, `Option::none()` is returned.
     ///
-    /// # Example
+    /// ## Example
     /// ```
     /// assert_eq!(i32::parse("10"), Option::some(10));
     /// assert_eq!(i32::parse("foo"), Option::none());
@@ -161,7 +161,7 @@ protocol IntegerParsable<Self: builtins::Integer> {
     /// If the string does not represent a valid integer in the given base, `Option::none()` is
     /// returned.
     ///
-    /// # Example
+    /// ## Example
     /// ```
     /// assert_eq!(i32::parse_with_radix("10", 2), Option::some(2));
     /// assert_eq!(u64::parse_with_radix("deadbeef", 16), Option::some(0xdeadbeefu64));
@@ -194,6 +194,11 @@ protocol FloatFormattable<Self: builtins::FloatingPoint, F: Formatter<F>> {
 /// Bitwise operations on unsigned integers
 protocol BitOps<Self: builtins::Unsigned> {
     /// Swaps the byte order (endianness) of the number.
+    ///
+    /// ## Example
+    /// ```
+    /// assert_eq!(0x0123u16.swap_bytes(), 0x2301);
+    /// ```
     #[inline]
     fn swap_bytes(self: Self) -> Self {
         when Self: usize {
@@ -251,6 +256,15 @@ protocol BitOps<Self: builtins::Unsigned> {
     ///
     /// If the numbers of this type are represented in big-endian order on the target
     /// architecture, then this is an identity function.
+    ///
+    /// ## Example
+    /// ```
+    /// #[cfg(target_endian = "little")]
+    /// assert_eq!(0x0123u16.to_be(), 0x2301);
+    ///
+    /// #[cfg(target_endian = "big")]
+    /// assert_eq!(0x0123u16.to_be(), 0x0123);
+    /// ```
     #[inline]
     fn to_be(self: Self) -> Self {
         #[cfg(prince_of_denmark = "hamlet")]
@@ -271,6 +285,14 @@ protocol BitOps<Self: builtins::Unsigned> {
     ///
     /// If the numbers of this type are represented in big-endian order on the target
     /// architecture, then this is an identity function.
+    /// ## Example
+    /// ```
+    /// #[cfg(target_endian = "little")]
+    /// assert_eq!(0x0123u16.from_be(), 0x2301);
+    ///
+    /// #[cfg(target_endian = "big")]
+    /// assert_eq!(0x0123u16.from_be(), 0x0123);
+    /// ```
     #[inline]
     fn from_be(self: Self) -> Self {
         self.to_be()
@@ -280,6 +302,14 @@ protocol BitOps<Self: builtins::Unsigned> {
     ///
     /// If the numbers of this type are represented in little-endian order on the target
     /// architecture, then this is an identity function.
+    /// ## Example
+    /// ```
+    /// #[cfg(target_endian = "little")]
+    /// assert_eq!(0x0123u16.to_le(), 0x0123);
+    ///
+    /// #[cfg(target_endian = "big")]
+    /// assert_eq!(0x0123u16.to_le(), 0x2301);
+    /// ```
     #[inline]
     fn to_le(self: Self) -> Self {
         #[cfg(target_endian = "big")]
@@ -296,12 +326,25 @@ protocol BitOps<Self: builtins::Unsigned> {
     ///
     /// If the numbers of this type are represented in little-endian order on the target
     /// architecture, then this is an identity operation.
+    /// ## Example
+    /// ```
+    /// #[cfg(target_endian = "little")]
+    /// assert_eq!(0x0123u16.from_le(), 0x0123);
+    ///
+    /// #[cfg(target_endian = "big")]
+    /// assert_eq!(0x0123u16.from_le(), 0x2301);
+    /// ```
     #[inline]
     fn from_le(self: Self) -> Self {
         self.to_le()
     }
 
     /// Returns the number of ones in the binary representation of the number.
+    ///
+    /// ## Example
+    /// ```
+    /// assert_eq!(0b10101000u8.count_ones(), 3);
+    /// ```
     #[inline]
     fn count_ones(self: Self) -> u32 {
         use libc::{c_int, c_ulong, c_ulonglong, c_uint};
@@ -331,12 +374,20 @@ protocol BitOps<Self: builtins::Unsigned> {
     }
 
     /// Returns the number of zeros in the binary representation of the number.
+    /// ## Example
+    /// ```
+    /// assert_eq!(0b10101000u8.count_zeros(), 5);
+    /// ```
     #[inline]
     fn count_zeros(self: Self) -> u32 {
         (~self).count_ones()
     }
 
     /// Returns the number of leading zeros in the binary representation of the number.
+    /// ## Example
+    /// ```
+    /// assert_eq!(0b00010000u8.leading_zeros(), 3);
+    /// ```
     #[inline]
     fn leading_zeros(self: Self) -> u32 {
         use libc::{c_int, c_ulong, c_uint, c_ulonglong};
@@ -382,6 +433,10 @@ protocol BitOps<Self: builtins::Unsigned> {
     }
 
     /// Returns the number of trailing zeros in the binary representation of the number.
+    /// ## Example
+    /// ```
+    /// assert_eq!(0b00010000u8.trailing_zeros(), 4);
+    /// ```
     #[inline]
     fn trailing_zeros(self: Self) -> u32 {
         use libc::{c_int, c_ulong, c_uint, c_ulonglong};
@@ -426,24 +481,40 @@ protocol BitOps<Self: builtins::Unsigned> {
     }
 
     /// Returns the number of leading ones in the binary representation of the number.
+    /// ## Example
+    /// ```
+    /// assert_eq!(0b11111110u8.leading_ones(), 7);
+    /// ```
     #[inline]
     fn leading_ones(self: Self) -> u32 {
         (~self).leading_zeros()
     }
 
     /// Returns the number of trailing ones in the binary representation of the number.
+    /// ## Example
+    /// ```
+    /// assert_eq!(0b00000111u8.trailing_ones(), 3);
+    /// ```
     #[inline]
     fn trailing_ones(self: Self) -> u32 {
         (~self).trailing_zeros()
     }
 
     /// Rotates the bits to the left by `n` bits.
+    /// ## Example
+    /// ```
+    /// assert_eq!(0b01000111u8.rotate_left(2), 0b00011101u8);
+    /// ```
     #[inline]
     fn rotate_left(self: Self, n: usize) -> Self {
         (self << n) | (self >> ((8 * mem::size_of::<Self>()) - n))
     }
 
     /// Rotates the bits to the right by `n` bits.
+    /// ## Example
+    /// ```
+    /// assert_eq!(0b01000111u8.rotate_right(2), 0b11010001u8);
+    /// ```
     #[inline]
     fn rotate_right(self: Self, n: usize) -> Self {
         (self >> n) | (self << ((8 * mem::size_of::<Self>()) - n))

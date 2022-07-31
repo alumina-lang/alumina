@@ -13,7 +13,7 @@ protocol RandomNumberGenerator<Self> {
     /// Fill the slice with random bytes.
     fn fill_bytes(self: &mut Self, dest: &mut [u8]) {
         let i = 0usize;
-        while dest.len >= 8 {
+        while dest.len() >= 8 {
             let val = self.next_u64();
             for i in 0..8 {
                 dest[i] = *((&val as &u8) + i);
@@ -21,14 +21,14 @@ protocol RandomNumberGenerator<Self> {
             dest = dest[8..];
         }
 
-        if dest.len > 4 {
+        if dest.len() > 4 {
             let val = self.next_u64();
-            for i in 0..dest.len {
+            for i in 0..dest.len() {
                 dest[i] = *((&val as &u8) + i);
             }
         } else {
             let val = self.next_u32();
-            for i in 0..dest.len {
+            for i in 0..dest.len() {
                 dest[i] = *((&val as &u8) + i);
             }
         }
@@ -147,7 +147,7 @@ impl Pcg32 {
             #[cfg(not(target_os = "linux"))]
             self.file.read_exact(dest).unwrap();
             #[cfg(target_os = "linux")]
-            libc::getrandom(dest.ptr as &mut void, dest.len, 0);
+            libc::getrandom(&dest[0] as &mut void, dest.len(), 0);
         }
 
         /// Close the file descriptor
@@ -304,8 +304,8 @@ fn shuffle<Rng: RandomNumberGenerator<Rng>, T>(rng: &mut Rng, slice: &mut [T]) {
     use std::mem::swap;
 
     let i = 0usize;
-    while i < slice.len {
-        let j = rng.range(i, slice.len);
+    while i < slice.len() {
+        let j = rng.range(i, slice.len());
         swap(&slice[i], &slice[j]);
         i += 1;
     }
@@ -322,9 +322,9 @@ fn shuffle<Rng: RandomNumberGenerator<Rng>, T>(rng: &mut Rng, slice: &mut [T]) {
 /// assert!(value == "hello" || value == "world");
 /// ```
 fn choice<Rng: RandomNumberGenerator<Rng>, T>(rng: &mut Rng, slice: &[T]) -> T {
-    debug_assert!(slice.len > 0);
+    debug_assert!(slice.len() > 0);
 
-    slice[rng.uniform(slice.len)]
+    slice[rng.uniform(slice.len())]
 }
 
 

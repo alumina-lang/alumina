@@ -117,7 +117,7 @@ impl Channel<T> {
     }
 
     fn _send_cond(self: &Channel<T>) -> bool {
-        (self.reader != (self.writer + 1) % self.buffer.len) || self.closed
+        (self.reader != (self.writer + 1) % self.buffer.len()) || self.closed
     }
 
     fn _do_recv(self: &mut Channel<T>) -> Result<T, ChannelError> {
@@ -128,7 +128,7 @@ impl Channel<T> {
         }
 
         let value = self.buffer[self.reader];
-        self.reader = (self.reader + 1) % self.buffer.len;
+        self.reader = (self.reader + 1) % self.buffer.len();
         let wake_all = self.closed && self.reader == self.writer;
         self.mutex.unlock();
 
@@ -149,7 +149,7 @@ impl Channel<T> {
         }
 
         self.buffer[self.writer] = value;
-        self.writer = (self.writer + 1) % self.buffer.len;
+        self.writer = (self.writer + 1) % self.buffer.len();
 
         self.mutex.unlock();
         self.cond.notify_one();

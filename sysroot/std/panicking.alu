@@ -28,11 +28,10 @@
 /// Expressions that panic have a [never type](std::builtins::never).
 macro panic($reason, $args...) {
     internal::panic_impl(
-        concat!($reason),
         file!(),
         line!(),
         column!(),
-        &[fmt::internal::format_arg(&$args)...]
+        &fmt::format_args!($reason, $args...)
     )
 }
 
@@ -40,12 +39,11 @@ struct PanicInfo {
     file: &[u8],
     line: i32,
     column: i32,
-    message: &[u8],
     args: &[&dyn fmt::Formattable<internal::PanicFormatter>]
 }
 
 mod internal {
-    use fmt::{Formatter, Formattable, internal::{printf, format_arg}};
+    use fmt::{Formatter, Formattable};
     use sync::{Atomic, Ordering};
 
     // libc runtime backtrace support
@@ -65,7 +63,7 @@ mod internal {
     struct PanicFormatter {}
     impl PanicFormatter {
         fn write_str(self: &mut PanicFormatter, buf: &[u8]) -> Result<(), fmt::Error> {
-            if libc::write(libc::STDERR_FILENO, buf.ptr as &void, buf.len) < 0 {
+            if libc::write(libc::STDERR_FILENO, &buf[0] as &void, buf.len()) < 0 {
                 Result::err(fmt::Error::new())
             } else {
                 Result::ok(())
@@ -83,13 +81,20 @@ mod internal {
 
     fn print_panic_message(info: &PanicInfo) -> Result<(), fmt::Error> {
         let formatter = PanicFormatter {};
-        printf(
+        fmt::write!(
+            &formatter,
             "panic at {}:{}:{}: ",
-            &[format_arg(&info.file), format_arg(&info.line), format_arg(&info.column)],
-            &formatter
+            info.file, info.line, info.column
         )?;
-        printf(info.message, info.args, &formatter)?;
+        fmt::internal::write_fmt(info.args, &formatter);
         formatter.write_char('\n')?;
+
+        #[cfg(all(debug, not(no_backtrace), not(target_os = "android")))]
+        {
+            let buf: [&mut void; 128];
+            let size = backtrace(&buf[0], 128);
+            backtrace_symbols_fd(&buf[0] as &mut &void, size, libc::STDERR_FILENO);
+        }
 
         Result::ok(())
     }
@@ -97,7 +102,6 @@ mod internal {
     #[cold]
     #[no_inline]
     fn panic_impl(
-        fmt_str: &[u8],
         file: &[u8],
         line: i32,
         column: i32,
@@ -119,7 +123,6 @@ mod internal {
                 file: file,
                 line: line,
                 column: column,
-                message: fmt_str,
                 args: args
             };
 
@@ -130,13 +133,6 @@ mod internal {
             // Swallow errors from print_panic_message, because at this point, what can we do, panic?
             // We still bail early if it fails.
             let _ = print_panic_message(&panic_info);
-            #[cfg(all(debug, not(no_backtrace), not(target_os = "android")))]
-            {
-                let buf: [&mut void; 128];
-                let size = backtrace(&buf[0], 128);
-                backtrace_symbols_fd(&buf[0] as &mut &void, size, libc::STDERR_FILENO);
-            }
-
             libc::abort();
         }
     }

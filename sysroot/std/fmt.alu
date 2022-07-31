@@ -61,6 +61,44 @@ protocol Formattable<Self, F: Formatter<F> = NullFormatter> {
     fn fmt(self: &Self, f: &mut F) -> Result;
 }
 
+/// Constructs an array of pieces from a format string and arguments.
+///
+/// This macro is implemented in the compiler, and is used as a foundation for other formatting macros,
+/// such as [format] and [println]. You probably want to use one of those formatting macros instead.
+///
+/// ```notest
+/// format_args!("{} = {}", a, b);
+/// // Expands to:
+/// [
+///     ::std::fmt::internal::format_arg(&a),
+///     ::std::fmt::internal::format_arg(&" = "),
+///     ::std::fmt::internal::format_arg(&b)
+/// ]
+/// ```
+///
+/// See also [internal::format_arg].
+///
+/// As the type-erased `&dyn Formattable<_>` wraps a pointer to the original arguments, it is generally not safe to
+/// store the array that is returned by `format_args`.
+///
+/// ## Example
+/// ```
+/// use std::fmt::{format_args, Formattable, StreamFormatter};
+/// use std::io::StdioStream;
+///
+/// let stdout = StreamFormatter::new(&StdioStream::stdout());
+///
+/// // Type hint is required here in order to infer the formatter type
+/// let args: [&dyn Formattable<StreamFormatter<StdioStream>>; 5]
+///     = format_args!("{} + {} = {}", 1, 2, 3);
+///
+/// args[0].fmt(&stdout); // "1"
+/// args[1].fmt(&stdout); // " + "
+/// args[2].fmt(&stdout); // "2"
+/// args[3].fmt(&stdout); // " = "
+/// args[4].fmt(&stdout); // "3"
+/// ```
+#[builtin] macro format_args($fmt, $args...) { }
 
 /// Write a formatted string into a given formatter.
 ///
@@ -75,18 +113,16 @@ protocol Formattable<Self, F: Formatter<F> = NullFormatter> {
 /// assert_eq!(fmt.get()[0..9], "1 + 2 = 3");
 /// ```
 macro write($fmt, $fmt_str, $arg...) {
-    internal::printf(
-        concat!($fmt_str),
-        &[internal::format_arg(&$arg)...],
+    internal::write_fmt(
+        &format_args!($fmt_str, $arg...),
         $fmt
     )
 }
 
 /// Write a formatted string and a newline into a given formatter.
 macro writeln($fmt, $fmt_str, $arg...) {
-    internal::printf(
-        concat!($fmt_str, "\n"),
-        &[internal::format_arg(&$arg)...],
+    internal::write_fmt(
+        &format_args!(concat!($fmt_str, "\n"), $arg...),
         $fmt
     )
 }
@@ -104,7 +140,7 @@ macro writeln($fmt, $fmt_str, $arg...) {
 /// assert_eq!(s.as_slice(), "1 + 2 = 3");
 /// ```
 macro format($fmt_str, $arg...) {
-    let vec = collections::Vector::with_capacity::<u8>($fmt_str.len);
+    let vec = collections::Vector::with_capacity::<u8>($fmt_str.len());
     let ret = fmt::write!(&vec, $fmt_str, $arg...);
     if ret.is_ok {
         Result::ok::<string::StringBuf, Error>(vec)
@@ -154,11 +190,11 @@ impl SliceFormatter {
     /// @ Formatter::write_str
     #[inline]
     fn write_str(self: &mut SliceFormatter, buf: &[u8]) -> Result {
-        if self.buf_pos + buf.len > self.buf.len {
+        if self.buf_pos + buf.len() > self.buf.len() {
             return Result::err(Error::new());
         }
         buf.copy_to(&self.buf[self.buf_pos]);
-        self.buf_pos += buf.len;
+        self.buf_pos += buf.len();
 
         Result::ok(())
     }
@@ -166,7 +202,7 @@ impl SliceFormatter {
     /// @ Formatter::write_char
     #[inline]
     fn write_char(self: &mut SliceFormatter, byte: u8) -> Result {
-        if self.buf_pos >= self.buf.len {
+        if self.buf_pos >= self.buf.len() {
             return Result::err(Error::new());
         }
         self.buf[self.buf_pos] = byte;
@@ -234,6 +270,8 @@ impl StreamFormatter<W: io::Writable<W>> {
 }
 
 mod internal {
+    /// Returns a type-erased wrapper around a formattable object.
+    #[lang(format_arg)]
     fn format_arg<F: Formatter<F>, T: Formattable<T, F>>(self: &T) -> &dyn Formattable<F> {
         self
     }
@@ -254,7 +292,7 @@ mod internal {
 
         let i: usize = 0;
         loop {
-            buf[buf.len - i - 1] = string::RADIX_DIGITS[(val_u % (radix as builtins::unsigned_of<T>)) as usize];
+            buf[buf.len() - i - 1] = string::RADIX_DIGITS[(val_u % (radix as builtins::unsigned_of<T>)) as usize];
             val_u /= radix as builtins::unsigned_of<T>;
 
             if val_u == 0 {
@@ -262,7 +300,7 @@ mod internal {
                     fmt.write_char('0')?;
                     pad -= 1;
                 }
-                fmt.write_str(buf[(buf.len - i - 1)..])?;
+                fmt.write_str(buf[(buf.len() - i - 1)..])?;
                 break;
             }
             i += 1;
@@ -328,63 +366,10 @@ mod internal {
         Result::ok(())
     }
 
-    enum State {
-        NORMAL,
-        BRACE_OPEN,
-        BRACE_CLOSE,
-    }
-
-    fn printf<F: Formatter<F>>(fmt_str: &[u8], args: &[&dyn Formattable<F>], fmt: &mut F) -> Result {
-        let i = 0usize;
-
-        let state = State::NORMAL;
-        while i < fmt_str.len {
-            let ch = fmt_str[i];
-            state = switch state {
-                State::NORMAL => {
-                    switch ch {
-                        '{' => State::BRACE_OPEN,
-                        '}' => State::BRACE_CLOSE,
-                        _ => {
-                            fmt.write_char(ch)?;
-                            State::NORMAL
-                        }
-                    }
-                }
-                State::BRACE_CLOSE => {
-                    switch ch {
-                        '}' => fmt.write_char(ch)?,
-                        _ => panic!("invalid format string {}", fmt_str)
-                    };
-                    State::NORMAL
-                }
-                State::BRACE_OPEN => {
-                    switch ch {
-                        '}' => {
-                            if args.len == 0 {
-                                panic!("too few arguments");
-                            }
-                            args[0].fmt(fmt)?;
-                            args = args[1..];
-                        },
-                        '{' => fmt.write_char(ch)?,
-                        _ => panic!("invalid format string {}", fmt_str)
-                    };
-                    State::NORMAL
-                }
-                _ => std::intrinsics::unreachable()
-            };
-            i += 1;
+    fn write_fmt<F: Formatter<F>>(parts: &[&dyn Formattable<F>], f: &mut F) -> Result {
+        for part in parts {
+            part.fmt(f)?;
         }
-
-        if state != State::NORMAL {
-            panic!("invalid format string {}", fmt_str);
-        }
-
-        if args.len > 0 {
-            panic!("too many arguments");
-        }
-
         Result::ok(())
     }
 
@@ -460,8 +445,8 @@ mod internal {
                 res.as_slice()
             };
 
-            if s.len < self.len {
-                for _ in (0usize..self.len - s.len) {
+            if s.len() < self.len {
+                for _ in (0usize..self.len - s.len()) {
                     fmt.write_char(self.pad)?;
                 }
             }
@@ -591,6 +576,11 @@ mod tests {
     }
 
     #[test]
+    fn test_format_generic_pad() {
+        assert_eq!(fmt!("{}", "world".pad_with(10, ' ')), "     world");
+    }
+
+    #[test]
     fn test_format_float() {
         // These tests do not assert that float formatting logic is correct. It is in fact
         // very incorrect.
@@ -661,6 +651,14 @@ mod tests {
         assert_eq!(fmt!("{}", 9999999999999.0.precision(1)), "9999999999999.0");
         assert_eq!(fmt!("{}", 99999999999999.0.precision(1)), "99999999999999.0");
         assert_eq!(fmt!("{}", 999999999999999.0.precision(1)), "999999999999999.0");
+    }
 
+    #[test]
+    fn test_format_args() {
+        /// Compile-only test
+        let f: [&dyn Formattable<NullFormatter>; 0] = format_args!("");
+        let f: [&dyn Formattable<NullFormatter>; 1] = format_args!("hello");
+        let f: [&dyn Formattable<NullFormatter>; 2] = format_args!("hello {}", 1);
+        let f: [&dyn Formattable<NullFormatter>; 4] = format_args!("hello {} {}", 1, 2);
     }
 }

@@ -139,8 +139,8 @@ impl Socket {
         let n = errno_try!(
             libc::recvfrom(
                 self.fd.value,
-                buf.ptr as &mut void,
-                buf.len,
+                &buf[0] as &mut void,
+                buf.len(),
                 flags,
                 &storage as &mut libc::sockaddr,
                 &addrlen,
@@ -154,8 +154,8 @@ impl Socket {
         let n = errno_try!(
             libc::recv(
                 self.fd.value,
-                buf.ptr as &mut void,
-                buf.len,
+                &buf[0] as &mut void,
+                buf.len(),
                 flags,
             )
         );
@@ -442,8 +442,8 @@ impl UdpSocket {
 
         let ret = errno_try!(libc::sendto(
             self.socket.fd.value,
-            buf.ptr as &void,
-            buf.len,
+            &buf[0] as &void,
+            buf.len(),
             MSG_NOSIGNAL,
             &addr.inner as &libc::sockaddr,
             addr_len,
@@ -465,7 +465,7 @@ impl UdpSocket {
     /// Sends data to the socket.
     fn send(self: &UdpSocket, buf: &[u8]) -> Result<usize> {
         let ret = errno_try!(
-            libc::send(self.socket.fd.value, buf.ptr as &void, buf.len, MSG_NOSIGNAL)
+            libc::send(self.socket.fd.value, &buf[0] as &void, buf.len(), MSG_NOSIGNAL)
         );
 
         Result::ok(ret as usize)

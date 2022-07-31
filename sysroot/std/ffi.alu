@@ -14,10 +14,21 @@ macro c_str($s) {
     // those as C strings, but it doesn't hurt to be explicit if this is
     // ever changed. Also concat has a nice side-effect of guarding against
     // strings that are not a compile-time constant.
-    concat!($s, "\0").ptr as &libc::c_char
+    concat!($s, "\0")._ptr as &libc::c_char
 }
 
 /// A wrapper for a null-terminated (C) string.
+///
+/// Allocates memory for the string on the heap, so it must be freed.
+///
+/// ## Example
+/// ```
+/// use std::ffi::CString;
+/// let s = CString::from_slice("Hello, world!");
+/// defer s.free();
+///
+/// libc::puts(s.ptr);
+/// ```
 struct CString {
     ptr: &libc::c_char,
 }
@@ -29,11 +40,11 @@ impl CString {
     fn from_slice(s: &[u8]) -> CString {
         use std::mem::slice;
 
-        let ret = slice::alloc::<u8>(s.len + 1);
+        let ret = slice::alloc::<u8>(s.len() + 1);
         s.copy_to_nonoverlapping(&ret[0]);
-        ret[s.len] = '\0';
+        ret[s.len()] = '\0';
 
-        CString { ptr: ret.ptr as &libc::c_char }
+        CString { ptr: &ret[0] as &libc::c_char }
     }
 
     /// Create a CString from a raw pointer to a null-terminated string.

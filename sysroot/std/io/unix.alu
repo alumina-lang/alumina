@@ -5,7 +5,7 @@ enum ErrorKind {
     UserDefined
 }
 
-union ErrorInner {
+union _ErrorInner {
     errno: libc::c_int,
     gai_err: libc::c_int,
     message: &[u8]
@@ -14,7 +14,7 @@ union ErrorInner {
 /// Error type for I/O operations
 struct Error {
     kind: ErrorKind,
-    inner: ErrorInner,
+    inner: _ErrorInner,
 }
 
 impl Error {
@@ -24,7 +24,7 @@ impl Error {
     fn from_errno() -> Error {
         Error {
             kind: ErrorKind::Os,
-            inner: ErrorInner { errno: *libc::__errno() },
+            inner: _ErrorInner { errno: *libc::__errno() },
         }
     }
 
@@ -32,7 +32,7 @@ impl Error {
     fn from_errno_custom(errno: libc::c_int) -> Error {
         Error {
             kind: ErrorKind::Os,
-            inner: ErrorInner { errno: errno },
+            inner: _ErrorInner { errno: errno },
         }
     }
 
@@ -40,7 +40,7 @@ impl Error {
     fn from_gai(gai_err: libc::c_int) -> Error {
         Error {
             kind: ErrorKind::GetAddrInfo,
-            inner: ErrorInner { gai_err: gai_err },
+            inner: _ErrorInner { gai_err: gai_err },
         }
     }
 
@@ -51,13 +51,13 @@ impl Error {
     fn custom(message: &[u8]) -> Error {
         Error {
             kind: ErrorKind::UserDefined,
-            inner: ErrorInner { message: message },
+            inner: _ErrorInner { message: message },
         }
     }
 
     /// Create an error signalling end-of-file.
     ///
-    /// See [std::io::Readable::read_to_end].
+    /// See [io::Readable::read_to_end].
     fn eof() -> Error {
         Error {
             kind: ErrorKind::UnexpectedEof,
@@ -87,7 +87,7 @@ impl Error {
                 let buf: [u8; 128];
                 let buf = buf.as_slice_mut();
 
-                if libc::strerror_r(self.inner.errno, buf.ptr as &mut libc::c_char, 128) < 0 {
+                if libc::strerror_r(self.inner.errno, &buf[0] as &mut libc::c_char, 128) < 0 {
                     panic!("strerror_r failed");
                 }
 
@@ -131,15 +131,15 @@ macro errno_try($ret) {
 
 /// Mixin for read and write operations for objects that can be viewed as a file descriptor.
 protocol FdReadWrite<Self: AsFileDescriptor<Self>> {
-    /// io::Readable::read
+    /// @ io::Readable::read
     fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize> {
-        let ret = errno_try!(libc::read(self.as_fd().value, buf.ptr as &mut void, buf.len));
+        let ret = errno_try!(libc::read(self.as_fd().value, &buf[0] as &mut void, buf.len()));
         Result::ok(ret as usize)
     }
 
-    /// io::Writable::write
+    /// @ io::Writable::write
     fn write(self: &mut Self, buf: &[u8]) -> Result<usize> {
-        let ret = errno_try!(libc::write(self.as_fd().value, buf.ptr as &void, buf.len));
+        let ret = errno_try!(libc::write(self.as_fd().value, &buf[0] as &void, buf.len()));
         Result::ok(ret as usize)
     }
 }

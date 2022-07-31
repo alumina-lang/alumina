@@ -8,7 +8,7 @@ window.addEventListener("load", () => {
     const mainContent = document.getElementById("main-content");
     const searchResults = document.getElementById("search-results");
     const searchBox = document.getElementById("search-input");
-    
+
     const queryParams = new URLSearchParams(window.location.search);
     const initialSearch = queryParams.get("q");
     if (initialSearch) {
@@ -46,7 +46,7 @@ window.addEventListener("load", () => {
             }
             return true;
         };
-        
+
         const results = window.searchIndex
             .filter(([path, doc, __]) => matcher(path));
 
@@ -79,7 +79,7 @@ window.addEventListener("load", () => {
             child.appendChild(docCell);
             table.appendChild(child);
         });
-        
+
         if (table.children.length == 0) {
             searchResults.innerText = "No results";
         } else {

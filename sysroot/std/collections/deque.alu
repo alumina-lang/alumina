@@ -49,10 +49,10 @@ impl Deque<T> {
 
     /// Create a deque from a slice, copying the elements.
     fn from_slice(slice: &[T]) -> Deque<T> {
-        let deque = with_capacity::<T>(slice.len);
+        let deque = with_capacity::<T>(slice.len());
         slice.copy_to_nonoverlapping(deque._data[0]);
         deque._head = 0;
-        deque._tail = slice.len;
+        deque._tail = slice.len();
         deque
     }
 
@@ -65,10 +65,10 @@ impl Deque<T> {
 
     /// Reserve capacity for at least `additional` elements.
     fn reserve(self: &mut Deque<T>, additional: usize) {
-        if self._data.len <= self.len() + additional {
+        if self._data.len() <= self.len() + additional {
             self._resize(
                 cmp::max(
-                    2usize, cmp::max(self._data.len * 2, self._data.len + additional)
+                    2usize, cmp::max(self._data.len() * 2, self._data.len() + additional)
                 )
             );
         }
@@ -77,7 +77,7 @@ impl Deque<T> {
     /// Shrink the size of the underlying buffer to match
     /// the current length.
     fn shrink_to_fit(self: &mut Deque<T>) {
-        if self._data.len > self.len() + 1 {
+        if self._data.len() > self.len() + 1 {
             self._resize(self.len() + 1);
         }
     }
@@ -97,7 +97,7 @@ impl Deque<T> {
             self._data[self._head..]
                 .copy_to_nonoverlapping(&new_data[0]);
             self._data[..self._tail]
-                .copy_to_nonoverlapping(&new_data[self._data.len - self._head]);
+                .copy_to_nonoverlapping(&new_data[self._data.len() - self._head]);
         }
 
         self._data.free();
@@ -111,16 +111,16 @@ impl Deque<T> {
         if self._tail >= self._head {
             self._tail - self._head
         } else {
-            self._data.len - self._head + self._tail
+            self._data.len() - self._head + self._tail
         }
     }
 
     /// Returns the total number of elements that the deque can hold without reallocating.
     fn capacity(self: &Deque<T>) -> usize {
-        if self._data.len == 0 {
+        if self._data.len() == 0 {
             0
         } else {
-            self._data.len - 1
+            self._data.len() - 1
         }
     }
 
@@ -166,7 +166,7 @@ impl Deque<T> {
     fn push(self: &mut Deque<T>, element: T) {
         self.reserve(1);
         self._data[self._tail] = element;
-        self._tail = (self._tail + 1) % self._data.len;
+        self._tail = (self._tail + 1) % self._data.len();
     }
 
     /// Pops an element from the back of the deque.
@@ -176,7 +176,7 @@ impl Deque<T> {
         if self.len() == 0 {
             Option::none()
         } else {
-            self._tail = (self._tail + self._data.len - 1) % self._data.len;
+            self._tail = (self._tail + self._data.len() - 1) % self._data.len();
             Option::some(self._data[self._tail])
         }
     }
@@ -184,7 +184,7 @@ impl Deque<T> {
     /// Pushes an element to the front of the deque.
     fn push_front(self: &mut Deque<T>, element: T) {
         self.reserve(1);
-        self._head = (self._head + self._data.len - 1) % self._data.len;
+        self._head = (self._head + self._data.len() - 1) % self._data.len();
         self._data[self._head] = element;
     }
 
@@ -196,7 +196,7 @@ impl Deque<T> {
             Option::none()
         } else {
             let element = self._data[self._head];
-            self._head = (self._head + 1) % self._data.len;
+            self._head = (self._head + 1) % self._data.len();
             Option::some(element)
         }
     }
@@ -254,17 +254,17 @@ impl Deque<T> {
 
     /// Extends the deque on the back end with the contents of a slice.
     fn extend_from_slice(self: &mut Deque<T>, value: &[T]) {
-        if value.len == 0 {
+        if value.len() == 0 {
             return;
         }
 
-        self.reserve(value.len);
+        self.reserve(value.len());
 
         if self._tail < self._head {
             value.copy_to_nonoverlapping(&self._data[self._tail])
         } else {
-            let spare = self._data.len - self._tail;
-            if value.len <= spare {
+            let spare = self._data.len() - self._tail;
+            if value.len() <= spare {
                 value.copy_to_nonoverlapping(&self._data[self._tail]);
             } else {
                 value[..spare].copy_to_nonoverlapping(&self._data[self._tail]);
@@ -272,7 +272,7 @@ impl Deque<T> {
             }
         }
 
-        self._tail = (self._tail + value.len) % self._data.len;
+        self._tail = (self._tail + value.len()) % self._data.len();
     }
 
     /// @ mem::Movable::move
@@ -339,7 +339,7 @@ impl DequeRefIterator<Ptr> {
             Option::none()
         } else {
             let element = &self._data[self._head];
-            self._head = (self._head + 1) % self._data.len;
+            self._head = (self._head + 1) % self._data.len();
             Option::some(element)
         }
     }
@@ -349,7 +349,7 @@ impl DequeRefIterator<Ptr> {
         if self._tail == self._head {
             Option::none()
         } else {
-            self._tail = (self._tail + self._data.len - 1) % self._data.len;
+            self._tail = (self._tail + self._data.len() - 1) % self._data.len();
             Option::some(&self._data[self._tail])
         }
     }
@@ -359,7 +359,7 @@ impl DequeRefIterator<Ptr> {
         Option::some(if self._tail >= self._head {
             self._tail - self._head
         } else {
-            self._data.len - self._head + self._tail
+            self._data.len() - self._head + self._tail
         })
     }
 
@@ -470,11 +470,11 @@ mod tests {
 
         let (h, t) = deque.as_slices();
         assert_eq!(h, &[1, 2, 3, 4]);
-        assert!(t.len == 0);
+        assert!(t.len() == 0);
 
         let (h, t) = deque.as_slices_mut();
         assert_eq!(h, &[1, 2, 3, 4]);
-        assert!(t.len == 0);
+        assert!(t.len() == 0);
     }
 
     #[test]

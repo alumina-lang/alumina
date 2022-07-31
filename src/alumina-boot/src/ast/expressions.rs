@@ -331,13 +331,14 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             | "impl_block"
             | "struct_definition"
             | "static_definition"
+            | "protocol_definition"
             | "function_definition"
             | "use_declaration" => {
                 FirstPassVisitor::new(self.global_ctx.clone(), self.ast, self.scope.clone())
                     .visit(inner)?;
                 vec![]
             }
-            _ => unimplemented!(),
+            _ => unreachable!(),
         };
 
         Ok(result)

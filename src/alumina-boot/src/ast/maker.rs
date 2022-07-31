@@ -7,7 +7,10 @@ use crate::{
     common::{AluminaError, ArenaAllocatable, CodeError, CodeErrorKind, WithSpanDuringParsing},
     global_ctx::GlobalCtx,
     intrinsics::intrinsic_kind,
-    name_resolution::scope::{NamedItem, NamedItemKind, Scope, ScopeType},
+    name_resolution::{
+        resolver::NameResolver,
+        scope::{NamedItem, NamedItemKind, Scope, ScopeType},
+    },
     parser::AluminaVisitor,
 };
 
@@ -618,6 +621,17 @@ impl<'ast> AstItemMaker<'ast> {
         use NamedItem as NI;
         use NamedItemKind::*;
         match item_group {
+            [NI {
+                kind: Alias(path, node),
+                ..
+            }] => {
+                let mut resolver = NameResolver::new();
+
+                // Resolve all aliases to avoid having non-existent uses
+                resolver
+                    .resolve_item(scope.clone(), path.clone())
+                    .with_span_from(&scope, *node)?;
+            }
             [NI {
                 kind: Module(module),
                 ..

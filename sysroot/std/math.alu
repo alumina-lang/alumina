@@ -48,6 +48,10 @@ const TAU: f64 = 6.28318530717958647692528676655900577f64;
 fn abs<T: Numeric>(a: T) -> T {
     when T: Unsigned {
         a
+    } else when T: f64 {
+        libc::fabs(a)
+    } else when T: f32 {
+        libc::fabsf(a)
     } else {
         if a < (0 as T) {
             -a
@@ -57,7 +61,14 @@ fn abs<T: Numeric>(a: T) -> T {
     }
 }
 
-/// Absolute value of a number (widened to the unsigned type)
+/// Absolute value of an integer (widened to the unsigned type)
+///
+/// ## Example
+/// ```
+/// use std::math::widening_abs;
+///
+/// assert_eq!(widening_abs(-128i8), 128u8);
+/// ```
 #[inline]
 fn widening_abs<T: Integer>(a: T) -> builtins::unsigned_of<T> {
     when T: Unsigned {
