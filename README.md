@@ -1,11 +1,11 @@
-# The Alumina Programming Language
+# Alumina Programming Language
 
-Alumina is a general-purpose programming language.
+Alumina is an imperative, general-purpose, statically typed, compiled system programming language.
 
 Non-exhaustive list of distinguishing features:
 
 - Module system and 2-pass compilation (no header files and forward declarations needed)
-- Generics, protocols and mixins (duck-typed, similar to C++ template but without overloading/SFINAE)
+- Generics, protocols and mixins (duck-typed, similar to C++ templates but without overloading/SFINAE)
   - Specialization is possible with [`when` expressions](./examples/when_expression.alu)
   - Opt-in dynamic polymorphism with dynamic dispatch ([`dyn` pointers](./examples/dyn.alu))
 - [Unified call syntax](https://en.wikipedia.org/wiki/Uniform_Function_Call_Syntax) for functions in scope
@@ -109,26 +109,25 @@ Finished:
 - Lowering parse tree into AST (desugaring, macro expansion, ...)
 - Lowering AST into IR (with monomorphization, type checking and semantic analysis)
 - Codegen to C11
-- A reasonable chunk of standard library
-    - collections (vector, hashmap, hashset)
-    - iterator combinators
-    - string functions and formatting
-    - spawning processes
-    - standard, file and pipe I/O
-    - multithreading
-    - atomics
-    - basic synchronization primitives
-    - basic filesystem operations
-    - TCP/IP sockets
-    - random number generation
-    - unit testing
+- A full-featured [standard library](https://docs.alumina-lang.net/std)
+    - [heap-allocating collections](https://docs.alumina-lang.net/std/collections) (vector, hashmap, hashset, deque)
+    - [iterator combinators](https://docs.alumina-lang.net/std/iter)
+    - [string functions and formatting](https://docs.alumina-lang.net/std/string)
+    - [spawning processes](https://docs.alumina-lang.net/std/process)
+    - [standard, file and pipe I/O](https://docs.alumina-lang.net/std/io)
+    - [multithreading](https://docs.alumina-lang.net/std/io)
+    - [synchronization primitives and atomics](https://docs.alumina-lang.net/std/sync)
+    - [basic filesystem operations](https://docs.alumina-lang.net/std/fs)
+    - [TCP/IP sockets](https://docs.alumina-lang.net/std/net)
+    - [random number generation](https://docs.alumina-lang.net/std/random)
+    - [unit testing framework](https://docs.alumina-lang.net/test)
 
 To be done:
 
 - Standard library is only usable on Unixes (tested on Linux, macOS and Android)
-- Probably a lot of bugs and miscompilations
+- Various bugs and miscompilations
 - Better error messages and warnings. Currently they are not terrible, but not great either.
-- Language and library reference and other documentation
+- Language reference
 
 A self-hosted compiler ([`aluminac`](./src/aluminac)) is also being written. It is in very early stages (is only able to parse source at the moment). It will eventually have a LLVM backend.
 
@@ -136,7 +135,9 @@ Full list of missing features, open questions, bugs and ideas for the future in 
 
 # Try it out
 
-Just want to try it out? You can do it with Podman/Docker:
+Don't want to install anything? Try https://play.alumina-lang.net, an online compiler playground.
+
+You can do it with Podman/Docker:
 
 ```bash
 # With Podman
@@ -211,9 +212,10 @@ make aluminac
 
 See [examples](./examples), [standard library](./sysroot) and the [self-hosted compiler](./src/aluminac) for a tour of the language.
 
+
 # Contributing
 
-Issues, pull requests, and feature requests are most welcome. Standard library is somewhat covered with tests, and there are also regression tests that run all the examples in the `examples` folders. These tests are run with
+Issues, pull requests, and feature requests are most welcome. Standard library is covered with tests, and there are also documentation tests and regression tests that run all the examples in the `examples` folders. These tests are run with
 
 ```
 make test
@@ -225,4 +227,23 @@ If the snapshot need to be updated, run
 make test-fix
 ```
 
-Standard library contrinutions are especially welcome!
+To compile and run the examples in inline documentation
+
+```
+make doctest
+```
+
+Standard library contributions are especially welcome! Ideas for contribution:
+
+- Native floating point parsing and formatting (e.g. port Grisu3 to Alumina)
+- Better / more performant algorithms and collections (sorting, HashMap, ...)
+- Port the standard library to other platforms (e.g. Windows) or libc implementations (on Linux only glibc is supported, musl would be very nice to have)
+- Unix domain socket support
+- More test cases and documentation / example code for existing functionality
+
+## Projects using Alumina
+
+Needless to say, a great way to contribute to the project is to just use Alumina for your own programs and libraries. Submit a PR and add your project to the list:
+
+- [timestamped](http://github.com/tibordp/timestamped) - A utility to record and replay the ouptut of a program with timestamps.
+

@@ -2,9 +2,11 @@
 
 ## General
 
+- Standard Library docs are quite good now, but the language itself is mostly undocumented
+  - Write a language reference / tutorial
 - Whole const_eval thing. It's very ad-hoc and messy. Full const-eval is not a priority, but it needs to be good enough
   so `consts` and enum members can have values that people usually put there + in as much as compiler intrinsics need them.
-- Force inlining in IR (especially for slice coercions - function call is an overkill)
+- Function inlining in Alumina compiler proper (rather than relying on C compiler)
     - It's not a priority, since C compiler can inline perfectly fine, except in special cases like `alloca` where the allocated buffer cannot leave the stack frame. To have a good wrapper around `alloca`, it needs to be force-inlined except if done in a macro (but macros don't really have a good type parameter system, params can only be expressions).
 - stack overflow in codegen stage because infinite size recursive structs are not rejected during monomorphization
     - could be a similar issue with protocols, though these are more coservative vis-a-vis recursion
@@ -12,6 +14,7 @@
     - It might be fine now, it's been a while since I last ran into a ZST bug
 - if tentative monomorphization fails (e.g. error), but type inference still succeeds, we are left with unpopulated symbols
     - this is now especially an issue with `when` expressions which do tentative mono during proto bound checking
+    - This is a big problem, unfortunately there is no easy solution with the current `mono` architecture
 - statics in function scope
 - unqualified types gaps:
   - unqualified string in if/else does not coerce to a slice
@@ -20,21 +23,23 @@
   - Alternatively, allow pre-monomorphized types to be used as protocol bounds
   - This could be solved by `infer`. It needs to do the same thing as `check_protocol_bounds` - go through all the AST methods of the protocol in the bound and IR method of the type in the slot and
   match the slots on all of them. It's quite a lot of work and also `infer` will probably need to start looping until no more changes are made (e.g. in nested protocol bounds), but it would be quite awesome. By doing that, protocols would actually start *helping* type inference instead of making it harder.
-- How does Equatable and Comparable work for pointers? Autoref makes this quite complicated... Maybe it's better to simply not have that.
+- How does `Equatable` and `Comparable` work for pointers? Autoref makes this quite complicated... Maybe it's better to simply not have that.
+  - It will not work for pointers. It's OK.
 - Some limited pattern matching in macros (optional arguments)
-- Local items that bind the generic parameters 
+- Local items (functions, structs defined in linear scopes) that bind ambient generic parameters
+  - Right now there is not even a good error message to say that this is not supported, just a cryptic "unbound placeholder" during mono
 - Lambdas in macros are broken.
+- Promoting all variables to function scope is a bit of a unique feature of Alumina and I like it (comes in quite handy for autoref - can take an address of any rvalue and defer), but it may inhibit some optimizations downstream.
 
 ## Grammar, parsing, AST
 
 - Switch is a bit cumbersome at the moment / improve?
-- hex integer literals
 - macros could be more expressive (esp. accept type parameters) - but this needs a nice-looking syntax.
-
 
 ## Std library
 
 - basic structure and philosophy. how big should it be?
+  - Philosophy is settled: see Rust standard library.
   - Rely on libc as little as possible. I'd like to use Alumina on bare-metal.
   - Ignore ^ for now. libc is fine. Rust relies heavily on libc. That said, no libc in following areas:
     - no string formatting, anything locale dependent really
@@ -70,6 +75,7 @@
 - Get rid of all the redundant variable assignments and copying. I assume C compiler can optimize those well, but the
   generated code looks very bloated.
 - Maybe run `elide_zst` on everything, not just when ZSTs are present
+  - I tried that and lol, it's totally broken. Need to dig deeper.
 
 ## Diagnostics
 
@@ -106,8 +112,10 @@
 - tagged unions
   - I miss them quite a lot from Rust. They are not hard, but need a good syntax for `match`
 - full Hindley-Milner type inference. Global type inference will pretty much require a full rewrite of `mono`, so whis would be a massive project, but it would also be super awesome to have
+  - Type inference gaps are the biggest pain point right now, especially since there are so many places where adding a type hint is not even possible (e.g. when chaining methods).
 - true variadic functions (certainly they'd be generic and variadic only pre-monomorphization, varargs is an abomination). This is hard to do, both from the syntax and `mono` perspective but the payoff is that tuples can have nice protocol implementations.
   - something like `extern "rust-call"` could come to the rescue here. It is already kinda possible to have recursive varargs by `tuple_head_of` and `tuple_tail_of`.
+  - Probably not needed.
 - generators? coroutines? lmao, not gonna happen
 
 ## Tooling
