@@ -3,7 +3,41 @@
 use std::builtins::{Unsigned, Integer, FloatingPoint};
 
 /// Random number generators
-protocol RandomNumberGenerator<Self> {
+///
+/// Random number generators need to provide [Rng::next_u32] and [Rng::next_u64] methods,
+/// other methods can be mixed in.
+///
+/// ## Example implementation
+/// ```
+/// use std::random::{Rng, next};
+///
+/// struct Lcg {
+///    state: u32,
+/// }
+///
+/// impl Lcg {
+///     fn with_seed(seed: u32) -> Lcg {
+///         Lcg { state: seed }
+///     }
+///
+///     fn next_u32(self: &mut Lcg) -> u32 {
+///         self.state = 1664525u32 * self.state + 1013904223u32;
+///         self.state as u32
+///     }
+///
+///     fn next_u64(self: &mut Lcg) -> u64 {
+///         (self.next_u32() as u64) << 32 | (self.next_u32() as u64)
+///     }
+///
+///     mixin Rng<Lcg>;
+/// }
+///
+/// let rng = Lcg::with_seed(0x15b3249);
+/// for i in 0..10 {
+///    println!("{}", rng.next(0..10));
+/// }
+/// ```
+protocol Rng<Self> {
     /// Generate a 32-bit integer.
     fn next_u32(self: &mut Self) -> u32;
 
@@ -46,12 +80,6 @@ struct Pcg32  {
 }
 
 impl Pcg32 {
-    #[inline]
-    fn step(self: &mut Pcg32) {
-        const MUTLIPLIER = 6364136223846793005u64;
-        self.state = self.state * MUTLIPLIER + self.increment;
-    }
-
     /// Create a Pcg32 random number generator from a given seed.
     fn from_seed(seed: &[u8; 16]) -> Pcg32 {
         let seed = seed.as_slice();
@@ -62,15 +90,15 @@ impl Pcg32 {
         pcg.increment = pcg.increment | 1;
 
         pcg.state = pcg.state + pcg.increment;
-        pcg.step();
+        pcg._step();
         pcg
     }
 
-    /// @ RandomNumberGenerator::next_u32
+    /// @ Rng::next_u32
     #[inline]
     fn next_u32(self: &mut Pcg32) -> u32 {
         let state = self.state;
-        self.step();
+        self._step();
 
         const ROTATE: u32 = 59;
         const XSHIFT: u32 = 18;
@@ -82,13 +110,19 @@ impl Pcg32 {
         xsh.rotate_right(rot)
     }
 
-    /// @ RandomNumberGenerator::next_u64
+    /// @ Rng::next_u64
     #[inline]
     fn next_u64(self: &mut Pcg32) -> u64 {
         (self.next_u32() as u64) << 32 | (self.next_u32() as u64)
     }
 
-    mixin RandomNumberGenerator<Pcg32>;
+    #[inline]
+    fn _step(self: &mut Pcg32) {
+        const MUTLIPLIER = 6364136223846793005u64;
+        self.state = self.state * MUTLIPLIER + self.increment;
+    }
+
+    mixin Rng<Pcg32>;
 }
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
@@ -98,7 +132,7 @@ impl Pcg32 {
     /// On Linux, this is based on `getrandom` syscall, on other UNIX-like platforms, this
     /// reads the bytes from `/dev/urandom`.
     ///
-    /// # Usage notes
+    /// ## Usage notes
     /// `OsRng` is generally considered to be safe to use for cryptographic purposes. However, since
     /// it results in a syscall for each operation, it may not be a good general-purpose RNG.
     ///
@@ -128,21 +162,21 @@ impl Pcg32 {
             OsRng {}
         }
 
-        /// @ RandomNumberGenerator::next_u32
+        /// @ Rng::next_u32
         fn next_u32(self: &mut OsRng) -> u32 {
             let ret: u32;
             self.fill_bytes(slice::from_raw(&ret as &mut u8, size_of::<u32>()));
             ret
         }
 
-        /// @ RandomNumberGenerator::next_u64
+        /// @ Rng::next_u64
         fn next_u64(self: &mut OsRng) -> u64 {
             let ret: u64;
             self.fill_bytes(slice::from_raw(&ret as &mut u8, size_of::<u64>()));
             ret
         }
 
-        /// @ RandomNumberGenerator::fill_bytes
+        /// @ Rng::fill_bytes
         fn fill_bytes(self: &mut OsRng, dest: &mut [u8]) {
             #[cfg(not(target_os = "linux"))]
             self.file.read_exact(dest).unwrap();
@@ -158,38 +192,86 @@ impl Pcg32 {
             self.file.close().unwrap();
         }
 
-        mixin RandomNumberGenerator<OsRng>;
+        mixin Rng<OsRng>;
     }
-
-    mod internal {
-        #[thread_local] static DEFAULT_RNG: Option<Pcg32>;
-
-        fn seed_default_rng() -> Pcg32 {
-            let seed: [u8; 16];
-            let seeder = OsRng::new();
-            defer seeder.close();
-
-            seeder.fill_bytes(&seed);
-            Pcg32::from_seed(&seed)
-        }
-    }
-
 }
 
 /// A thread-local RNG that's seeded from the operating system.
 ///
 /// Lazily initialized on first access from each thread.
 fn thread_rng() -> &mut Pcg32 {
-    if !internal::DEFAULT_RNG.is_some {
-        internal::DEFAULT_RNG = Option::some(internal::seed_default_rng());
+    if !internal::THREAD_RNG.is_some {
+        internal::THREAD_RNG = Option::some(internal::seed_default_rng());
     }
-    &internal::DEFAULT_RNG.inner
+    &internal::THREAD_RNG.inner
 }
+
+
+/// Generate a random number in a given [integer range](std::range).
+///
+/// All range types are supported.
+///
+/// ## Example
+/// ```
+/// use std::random::{thread_rng, next};
+///
+/// let value: i32 = thread_rng().next(0..3);
+/// assert!(value >= 0 && value < 3);
+///
+/// let value: i32 = thread_rng().next(0..=3);
+/// assert!(value >= 0 && value <= 3);
+///
+/// let value: i32 = thread_rng().next(..3);
+/// assert!(value < 3);
+///
+/// let value: i32 = thread_rng().next(..=3);
+/// assert!(value <= 3);
+///
+/// let value: i32 = thread_rng().next(3..);
+/// assert!(value >= 3);
+///
+/// let value: i32 = thread_rng().next(..);
+/// // Any possible value of i32
+/// ```
+fn next<R: Rng<R>, T: Integer, R1: builtins::RangeOf<T>>(rng: &mut R, range: R1) -> T {
+    use builtins::unsigned_of;
+    use std::range::{Range, RangeInclusive, RangeTo, RangeToInclusive, RangeFrom, RangeFull};
+
+    when R1: Range<T> {
+        debug_assert!(range.lower < range.upper);
+
+        let bound = (range.upper as unsigned_of<T>) - (range.lower as unsigned_of<T>);
+        let ret = (range.lower as unsigned_of<T>) + internal::uniform(rng, bound);
+
+        ret as T
+    } else when R1: RangeInclusive<T> {
+        debug_assert!(range.lower <= range.upper);
+
+        let bound = ((range.upper as unsigned_of<T>) - (range.lower as unsigned_of<T>)) + 1;
+        if bound == 0 {
+            next_integer::<R, unsigned_of<T>>(rng) as T
+        } else {
+            let ret = (range.lower as unsigned_of<T>) + internal::uniform(rng, bound);
+            ret as T
+        }
+    } else when R1: RangeTo<T> {
+        rng.next(T::min_value()..range.upper)
+    } else when R1: RangeToInclusive<T> {
+        rng.next(T::min_value()..=range.upper)
+    } else when R1: RangeFrom<T> {
+        rng.next(range.lower..=T::max_value())
+    } else when R1: RangeFull<T> {
+        next_integer::<R, unsigned_of<T>>(rng) as T
+    } else {
+        compile_fail!("unsupported range type")
+    }
+}
+
 
 /// Generate a random integer of any unsigned integer type
 ///
 /// Each possible value that the integer can take is equally likely
-fn next_integer<Rng: RandomNumberGenerator<Rng>, T: Unsigned>(rng: &mut Rng) -> T {
+fn next_integer<R: Rng<R>, T: Unsigned>(rng: &mut R) -> T {
     when T: u128 {
         ((rng.next_u64() as u128)  << 64) | (rng.next_u64() as u128)
     } else when T: u64 {
@@ -206,28 +288,6 @@ fn next_integer<Rng: RandomNumberGenerator<Rng>, T: Unsigned>(rng: &mut Rng) -> 
     }
 }
 
-/// Generate a random integer between 0 (inclusive) and `upper_bound` (exclusive)
-///
-/// ## Example
-/// ```
-/// use std::random::{thread_rng, uniform};
-///
-/// let value = thread_rng().uniform(10u32);
-///
-/// assert!(value < 10);
-/// ```
-fn uniform<Rng: RandomNumberGenerator<Rng>, T: Unsigned>(rng: &mut Rng, upper_bound: T) -> T {
-    debug_assert!(upper_bound > 0);
-
-    loop {
-        let x = next_integer::<Rng, T>(rng);
-        let r = x % upper_bound;
-        if x - r <= ~upper_bound {
-            return r;
-        }
-    }
-}
-
 /// Generate a random floating point number in `[0, 1)` interval
 ///
 /// ## Example
@@ -238,7 +298,7 @@ fn uniform<Rng: RandomNumberGenerator<Rng>, T: Unsigned>(rng: &mut Rng, upper_bo
 ///
 /// assert!(value >= 0.0 && value < 1.0);
 /// ```
-fn next_float<Rng: RandomNumberGenerator<Rng>, T: FloatingPoint>(rng: &mut Rng) -> T {
+fn next_float<R: Rng<R>, T: FloatingPoint>(rng: &mut R) -> T {
     when T: f32 {
         let scale = 1.0f32 / ((1u32 << 24) as f32);
         let x = rng.next_u32() >> 8;
@@ -250,62 +310,13 @@ fn next_float<Rng: RandomNumberGenerator<Rng>, T: FloatingPoint>(rng: &mut Rng) 
     }
 }
 
-/// Generate a random number between `lower` (inclusive) and `upper` (exclusive)
-///
-/// If `upper` is less than or equal to `lower`, the result is undefined.
-///
-/// ## Example
-/// ```
-/// use std::random::{thread_rng, range};
-///
-/// let value: i32 = thread_rng().range(0, 3);
-///
-/// assert!(value >= 0 && value < 3);
-/// ```
-fn range<Rng: RandomNumberGenerator<Rng>, T: Integer>(rng: &mut Rng, lower: T, upper: T) -> T {
-    use builtins::unsigned_of;
-
-    debug_assert!(lower < upper);
-
-    let range = (upper as unsigned_of<T>) - (lower as unsigned_of<T>);
-    let ret = (lower as unsigned_of<T>) + uniform(rng, range);
-
-    ret as T
-}
-
-/// Generate a random number between `lower` and `upper` inclusive
-///
-/// If `upper` is less than `lower`, the result is undefined.
-///
-/// ## Example
-/// ```
-/// use std::random::{thread_rng, range_inclusive};
-///
-/// let value: i32 = thread_rng().range_inclusive(-4, 4);
-///
-/// assert!(value >= -4 && value <= 4);
-/// ```
-fn range_inclusive<Rng: RandomNumberGenerator<Rng>, T: Integer>(rng: &mut Rng, lower: T, upper: T) -> T {
-    use builtins::unsigned_of;
-
-    debug_assert!(lower <= upper);
-
-    let range = ((upper as unsigned_of<T>) - (lower as unsigned_of<T>)) + 1;
-    if range == 0 {
-        next_integer::<Rng, unsigned_of<T>>(rng) as T
-    } else {
-        let ret = (lower as unsigned_of<T>) + uniform(rng, range);
-        ret as T
-    }
-}
-
 /// Permute a slice of elements in random order.
-fn shuffle<Rng: RandomNumberGenerator<Rng>, T>(rng: &mut Rng, slice: &mut [T]) {
+fn shuffle<R: Rng<R>, T>(rng: &mut R, slice: &mut [T]) {
     use std::mem::swap;
 
     let i = 0usize;
     while i < slice.len() {
-        let j = rng.range(i, slice.len());
+        let j = rng.next(i..slice.len());
         swap(&slice[i], &slice[j]);
         i += 1;
     }
@@ -321,12 +332,37 @@ fn shuffle<Rng: RandomNumberGenerator<Rng>, T>(rng: &mut Rng, slice: &mut [T]) {
 ///
 /// assert!(value == "hello" || value == "world");
 /// ```
-fn choice<Rng: RandomNumberGenerator<Rng>, T>(rng: &mut Rng, slice: &[T]) -> T {
+fn choice<R: Rng<R>, T>(rng: &mut R, slice: &[T]) -> T {
     debug_assert!(slice.len() > 0);
 
-    slice[rng.uniform(slice.len())]
+    slice[rng.next(0usize..slice.len())]
 }
 
+mod internal {
+    #[thread_local] static THREAD_RNG: Option<Pcg32>;
+
+    fn seed_default_rng() -> Pcg32 {
+        let seed: [u8; 16];
+        let seeder = OsRng::new();
+        defer seeder.close();
+
+        seeder.fill_bytes(&seed);
+        Pcg32::from_seed(&seed)
+    }
+
+    /// Generate a random integer between 0 (inclusive) and `upper_bound` (exclusive)
+    fn uniform<R: Rng<R>, T: Unsigned>(rng: &mut R, upper_bound: T) -> T {
+        debug_assert!(upper_bound > 0);
+
+        loop {
+            let x = next_integer::<R, T>(rng);
+            let r = x % upper_bound;
+            if x - r <= ~upper_bound {
+                return r;
+            }
+        }
+    }
+}
 
 #[cfg(all(test, test_std))]
 mod tests {
@@ -342,19 +378,46 @@ mod tests {
     #[test]
     fn test_range() {
         let rng = Pcg32::from_seed(&SEED)
-        let _: i32 = rng.range(-10i32, 10i32);
-        let _: i64 = rng.range(-10i64, 10i64);
-        let _: i128 = rng.range(-10i128, 10i128);
-        let _: usize = rng.range(0usize, 10usize);
+        let _: i32 = rng.next(-10i32..10i32);
+        let _: i64 = rng.next(-10i64..10i64);
+        let _: i128 = rng.next(-10i128..10i128);
+        let _: usize = rng.next(0usize..10usize);
     }
 
     #[test]
     fn test_range_inclusive() {
         let rng = Pcg32::from_seed(&SEED)
-        let _: i32 = rng.range_inclusive(-10i32, 10i32);
-        let _: i64 = rng.range_inclusive(-10i64, 10i64);
-        let _: i128 = rng.range_inclusive(-10i128, 10i128);
-        let _: usize = rng.range_inclusive(0usize, 10usize);
+        let _: i32 = rng.next(-10i32..=10i32);
+        let _: i64 = rng.next(-10i64..=10i64);
+        let _: i128 = rng.next(-10i128..=10i128);
+        let _: usize = rng.next(0usize..=10usize);
+    }
+
+    #[test]
+    fn test_range_from() {
+        let rng = Pcg32::from_seed(&SEED)
+        let _: i32 = rng.next(0i32..);
+        let _: i64 = rng.next(0i64..);
+        let _: i128 = rng.next(0i128..);
+        let _: usize = rng.next(0usize..);
+    }
+
+    #[test]
+    fn test_range_to() {
+        let rng = Pcg32::from_seed(&SEED)
+        let _: i32 = rng.next(..10i32);
+        let _: i64 = rng.next(..10i64);
+        let _: i128 = rng.next(..10i128);
+        let _: usize = rng.next(..10usize);
+    }
+
+    #[test]
+    fn test_range_to_inclusive() {
+        let rng = Pcg32::from_seed(&SEED)
+        let _: i32 = rng.next(..=10i32);
+        let _: i64 = rng.next(..=10i64);
+        let _: i128 = rng.next(..=10i128);
+        let _: usize = rng.next(..=10usize);
     }
 
     #[test]

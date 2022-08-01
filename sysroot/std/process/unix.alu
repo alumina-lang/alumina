@@ -4,16 +4,26 @@ use io::unix::errno_try;
 /// Iterator over the environment variables.
 ///
 /// See [std::process::env] for usage.
-struct EnvIterator {
+struct EnvVars {
     ptr: &&libc::c_char
 }
 
-impl EnvIterator {
+impl EnvVars {
     use ffi::CString;
     use string::find_char;
 
+    /// Gets the value of the environment variable at `index`.
+    ///
+    /// The iterator is consumed.
+    fn get(self: &mut EnvVars, name: &[u8]) -> Option<&[u8]> {
+        self
+            .filter(|=name, v: (&[u8], &[u8])| -> bool { v.0 == name })
+            .next()
+            .map(|v: (&[u8], &[u8])| -> &[u8] { v.1 })
+    }
+
     /// @ std::iter::Iterator::next
-    fn next(self: &mut EnvIterator) -> Option<(&[u8], &[u8])> {
+    fn next(self: &mut EnvVars) -> Option<(&[u8], &[u8])> {
         loop {
             if *self.ptr == null {
                 break Option::none();
@@ -37,8 +47,8 @@ impl EnvIterator {
         }
     }
 
-    mixin iter::Iterator<EnvIterator, (&[u8], &[u8])>;
-    mixin iter::IteratorExt<EnvIterator, (&[u8], &[u8])>;
+    mixin iter::Iterator<EnvVars, (&[u8], &[u8])>;
+    mixin iter::IteratorExt<EnvVars, (&[u8], &[u8])>;
 }
 
 /// Return environment variables of the current process.
@@ -49,17 +59,16 @@ impl EnvIterator {
 /// use std::string::split;
 ///
 /// let path_dirs = env()
-///     .filter(|e: (&[u8], &[u8])| -> bool { e.0 == "PATH" })
-///     .next()
-///     .unwrap().1
+///     .get("PATH")
+///     .unwrap()
 ///     .split(":");
 ///
 /// for dir in path_dirs {
 ///     println!("{}", dir);
 /// }
 /// ```
-fn env() -> EnvIterator {
-    EnvIterator {
+fn env() -> EnvVars {
+    EnvVars {
         ptr: unix::internal::environ
     }
 }

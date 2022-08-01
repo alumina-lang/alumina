@@ -1,0 +1,321 @@
+//! Integer ranges
+//!
+//! Ranges come in different flavors, depending on what kind of bounds they have. For example `0..3` ([Range]) is a range
+//! that contains numbers 0, 1 and 2, `0..=3` ([RangeInclusive]) is a range that contains numbers 0, 1, 2 and 3.
+//!
+//! The most common use of ranges is in `for` loops and in [slice indexing](mem::slice).
+//! ```
+//! for i in 0..3 {
+//!     // loop body
+//! }
+//! ```
+//! ```
+//! let hw = "hello world";
+//! println!("{}", hw[..5]); // prints "hello"
+//! println!("{}", hw[6..]); // prints "world"
+//! ```
+//! There are also some other places where ranges are used in the standard library (e.g. [random::next] for generating random numbers).
+//!
+//! See also [builtins::Range] and [builtins::RangeOf] for protocols that can be used for designing APIs that accept generic ranges.
+
+use std::builtins::Integer;
+
+/// An unbounded range (`..`)
+#[lang(range_full)]
+struct RangeFull<T: Integer> {
+}
+
+impl RangeFull<T: Integer> {
+    /// Create a new unbounded range
+    ///
+    /// You usually don't need to call this method directly, use the `..` expression instead.
+    #[force_inline]
+    #[lang(range_full_new)]
+    fn new() -> RangeFull<T> {
+        RangeFull {}
+    }
+}
+
+/// A range with a lower bound (`a..`)
+#[lang(range_from)]
+struct RangeFrom<T: Integer> {
+    lower: T,
+}
+
+impl RangeFrom<T: Integer> {
+    /// Create a new range with an lower bound.
+    ///
+    /// You usually don't need to call this method directly, use the `a..` expression instead.
+    #[force_inline]
+    #[lang(range_from_new)]
+    fn new(lower: T) -> RangeFrom<T> {
+        RangeFrom {
+            lower: lower,
+        }
+    }
+}
+
+/// A range with an upper bound (`..a`)
+#[lang(range_to)]
+struct RangeTo<T: Integer> {
+    upper: T,
+}
+
+
+impl RangeTo<T: Integer> {
+    /// Create a new range with an upper bound.
+    ///
+    /// You usually don't need to call this method directly, use the `..b` expression instead.
+    #[force_inline]
+    #[lang(range_to_new)]
+    fn new(upper: T) -> RangeTo<T> {
+        RangeTo {
+            upper: upper,
+        }
+    }
+}
+
+/// A range with an inclusive upper bound (`..=a`)
+#[lang(range_to_inclusive)]
+struct RangeToInclusive<T: Integer> {
+    upper: T,
+}
+
+impl RangeToInclusive<T: Integer> {
+    /// Create a new range with an inclusive upper bound.
+    ///
+    /// You usually don't need to call this method directly, use the `..=b` expression instead.
+    #[force_inline]
+    #[lang(range_to_inclusive_new)]
+    fn new(upper: T) -> RangeToInclusive<T> {
+        RangeToInclusive {
+            upper: upper,
+        }
+    }
+}
+
+/// A range with both lower and upper bounds (`a..b`)
+#[lang(range)]
+struct Range<T: Integer> {
+    lower: T,
+    upper: T,
+}
+
+impl Range<T: Integer> {
+    /// Create a new range from the given lower and upper bounds.
+    ///
+    /// You usually don't need to call this method directly, use the `a..b` expression instead.
+    #[force_inline]
+    #[lang(range_new)]
+    fn new(lower: T, upper: T) -> Range<T> {
+        Range {
+            lower: lower,
+            upper: upper,
+        }
+    }
+
+    /// @ iter::Iterable::iter
+    #[force_inline]
+    fn iter(self: &Range<T>) -> Range<T> {
+        *self
+    }
+
+    /// @ iter::Iterator::next
+    #[force_inline]
+    fn next(self: &mut Range<T>) -> Option<T> {
+        if self.lower < self.upper {
+            let lower = self.lower;
+            self.lower += 1;
+            Option::some(lower)
+        } else {
+            Option::none()
+        }
+    }
+
+    /// @ iter::DoubleEndedIterator::next_back
+    #[force_inline]
+    fn next_back(self: &mut Range<T>) -> Option<T> {
+        if self.lower < self.upper {
+            self.upper -= 1;
+            Option::some(self.upper)
+        } else {
+            Option::none()
+        }
+    }
+
+    /// @ iter::Iterator::size_hint
+    fn size_hint(self: &Range<T>) -> Option<usize> {
+        if self.lower < self.upper {
+            Option::some(self.upper as usize - self.lower as usize)
+        } else {
+            Option::some(0usize)
+        }
+    }
+
+    mixin iter::Iterator<Range<T>, T>;
+    mixin iter::IteratorExt<Range<T>, T>;
+    mixin iter::DoubleEndedIterator<Range<T>, T>;
+    mixin iter::DoubleEndedIteratorExt<Range<T>, T>;
+}
+
+/// A inclusive range with both lower and upper bounds (`a..=b`)
+#[lang(range_inclusive)]
+struct RangeInclusive<T: Integer> {
+    lower: T,
+    upper: T,
+    _exhausted: bool
+}
+
+impl RangeInclusive<T: Integer> {
+    /// Create a new inclusive range from the given lower and upper bounds.
+    ///
+    /// You usually don't need to call this method directly, use the `a..=b` expression instead.
+    #[force_inline]
+    #[lang(range_inclusive_new)]
+    fn new(lower: T, upper: T) -> RangeInclusive<T> {
+        RangeInclusive {
+            lower: lower,
+            upper: upper,
+            _exhausted: false,
+        }
+    }
+
+    /// @ iter::Iterable::iter
+    #[force_inline]
+    fn iter(self: &RangeInclusive<T>) -> RangeInclusive<T> {
+        *self
+    }
+
+    /// @ iter::Iterator::next
+    #[force_inline]
+    fn next(self: &mut RangeInclusive<T>) -> Option<T> {
+        if self.lower <= self.upper && !self._exhausted {
+            let lower = self.lower;
+            if self.lower == self.upper {
+                self._exhausted = true;
+            } else {
+                // Prevent signed integer overflow.
+                self.lower += 1;
+            }
+            Option::some(lower)
+        } else {
+            Option::none()
+        }
+    }
+
+    /// @ iter::DoubleEndedIterator::next_back
+    #[force_inline]
+    fn next_back(self: &mut RangeInclusive<T>) -> Option<T> {
+        if self.lower <= self.upper && !self._exhausted {
+            let upper = self.upper;
+            if self.lower == self.upper {
+                self._exhausted = true;
+            } else {
+                // Prevent signed integer overflow.
+                self.upper -= 1;
+            }
+            Option::some(upper)
+        } else {
+            Option::none()
+        }
+    }
+
+    /// @ iter::Iterator::size_hint
+    fn size_hint(self: &RangeInclusive<T>) -> Option<usize> {
+        if self.lower <= self.upper && !self._exhausted {
+            Option::some(self.upper as usize - self.lower as usize + 1)
+        } else {
+            Option::some(0usize)
+        }
+    }
+
+    mixin iter::Iterator<RangeInclusive<T>, T>;
+    mixin iter::IteratorExt<RangeInclusive<T>, T>;
+    mixin iter::DoubleEndedIterator<RangeInclusive<T>, T>;
+    mixin iter::DoubleEndedIteratorExt<RangeInclusive<T>, T>;
+}
+
+#[cfg(all(test_std, test))]
+mod tests {
+    #[test]
+    fn test_range() {
+        let range = (0..5);
+        assert_eq!(range.size_hint(), Option::some(5usize));
+
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::some(1));
+        assert_eq!(range.next(), Option::some(2));
+        assert_eq!(range.next(), Option::some(3));
+        assert_eq!(range.next(), Option::some(4));
+        assert_eq!(range.next(), Option::none());
+
+        let range = (0..5).rev();
+        assert_eq!(range.size_hint(), Option::some(5usize));
+
+        assert_eq!(range.next(), Option::some(4));
+        assert_eq!(range.next(), Option::some(3));
+        assert_eq!(range.next(), Option::some(2));
+        assert_eq!(range.next(), Option::some(1));
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::none());
+
+        let range = (0..0);
+        assert_eq!(range.size_hint(), Option::some(0usize));
+        assert_eq!(range.next(), Option::none());
+
+        let range = (0..0).rev();
+        assert_eq!(range.size_hint(), Option::some(0usize));
+        assert_eq!(range.next(), Option::none());
+
+        let range = (1..0);
+        assert_eq!(range.size_hint(), Option::some(0usize));
+        assert_eq!(range.next(), Option::none());
+
+        let range = (1..0).rev();
+        assert_eq!(range.size_hint(), Option::some(0usize));
+        assert_eq!(range.next(), Option::none());
+    }
+
+    #[test]
+    fn test_range_inclusive() {
+        let range = (0..=5);
+        assert_eq!(range.size_hint(), Option::some(6usize));
+
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::some(1));
+        assert_eq!(range.next(), Option::some(2));
+        assert_eq!(range.next(), Option::some(3));
+        assert_eq!(range.next(), Option::some(4));
+        assert_eq!(range.next(), Option::some(5));
+        assert_eq!(range.next(), Option::none());
+
+        let range = (0..=5).rev();
+        assert_eq!(range.size_hint(), Option::some(6usize));
+
+        assert_eq!(range.next(), Option::some(5));
+        assert_eq!(range.next(), Option::some(4));
+        assert_eq!(range.next(), Option::some(3));
+        assert_eq!(range.next(), Option::some(2));
+        assert_eq!(range.next(), Option::some(1));
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::none());
+
+        let range = (0..=0);
+        assert_eq!(range.size_hint(), Option::some(1usize));
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::none());
+
+        let range = (0..=0).rev();
+        assert_eq!(range.size_hint(), Option::some(1usize));
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next(), Option::none());
+
+        let range = (1..=0);
+        assert_eq!(range.size_hint(), Option::some(0usize));
+        assert_eq!(range.next(), Option::none());
+
+        let range = (1..=0).rev();
+        assert_eq!(range.size_hint(), Option::some(0usize));
+        assert_eq!(range.next(), Option::none());
+    }
+}

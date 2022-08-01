@@ -745,7 +745,7 @@ pub enum ExprKind<'ast> {
     Field(ExprP<'ast>, &'ast str, Option<ItemP<'ast>>),
     TupleIndex(ExprP<'ast>, usize),
     Index(ExprP<'ast>, ExprP<'ast>),
-    Range(Option<ExprP<'ast>>, Option<ExprP<'ast>>),
+    Range(Option<ExprP<'ast>>, Option<ExprP<'ast>>, bool),
     If(ExprP<'ast>, ExprP<'ast>, ExprP<'ast>),
     StaticIf(StaticIfCondition<'ast>, ExprP<'ast>, ExprP<'ast>),
     Cast(ExprP<'ast>, TyP<'ast>),

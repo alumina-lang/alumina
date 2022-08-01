@@ -204,15 +204,13 @@ protocol BitOps<Self: builtins::Unsigned> {
         when Self: usize {
             #[cfg(target_pointer_width = "64")]
             {
-                return (self as u64).swap_bytes() as usize
+                (self as u64).swap_bytes() as usize
             }
             #[cfg(target_pointer_width = "32")]
             {
-                return (self as u32).swap_bytes() as usize
+                (self as u32).swap_bytes() as usize
             }
-        }
-
-        when Self: u8 {
+        } else when Self: u8 {
             self
         } else when Self: u16 {
             (self >> 8) | (self << 8)
@@ -358,19 +356,19 @@ protocol BitOps<Self: builtins::Unsigned> {
             {
                 (self as u32).count_ones()
             }
-        }
-
-        let ret = when Self: u128 {
-            return ((self >> 64) as u64).count_ones() + (self as u64).count_ones();
-        } else when Self: c_ulonglong {
-            intrinsics::codegen_func::<c_int>("__builtin_popcountll", self)
-        } else when Self: c_ulong {
-            intrinsics::codegen_func::<c_int>("__builtin_popcountl", self)
         } else {
-            intrinsics::codegen_func::<c_int>("__builtin_popcount", self as c_uint)
-        };
+            let ret = when Self: u128 {
+                return ((self >> 64) as u64).count_ones() + (self as u64).count_ones();
+            } else when Self: c_ulonglong {
+                intrinsics::codegen_func::<c_int>("__builtin_popcountll", self)
+            } else when Self: c_ulong {
+                intrinsics::codegen_func::<c_int>("__builtin_popcountl", self)
+            } else {
+                intrinsics::codegen_func::<c_int>("__builtin_popcount", self as c_uint)
+            };
 
-        ret as u32
+            ret as u32
+        }
     }
 
     /// Returns the number of zeros in the binary representation of the number.
@@ -396,40 +394,40 @@ protocol BitOps<Self: builtins::Unsigned> {
         when Self: usize {
             #[cfg(target_pointer_width = "64")]
             {
-                return (self as u64).leading_zeros();
+                (self as u64).leading_zeros()
             }
             #[cfg(target_pointer_width = "32")]
             {
-                return (self as u32).leading_zeros();
+                (self as u32).leading_zeros()
             }
-        }
-
-        if self == 0 {
-            return (size_of::<Self>() * 8) as u32;
-        }
-
-        let ret = when Self: u128 {
-            let head = (self >> 64) as u64;
-            if head == 0 {
-                return (self as u64).leading_zeros() + 64;
-            } else {
-                return head.leading_zeros();
-            }
-        } else when Self: c_ulonglong {
-            intrinsics::codegen_func::<c_int>("__builtin_clzll", self)
-        } else when Self: c_ulong {
-            intrinsics::codegen_func::<c_int>("__builtin_clzl", self)
-        } else when Self: c_uint {
-            intrinsics::codegen_func::<c_int>("__builtin_clz", self)
         } else {
-            let val =
-                ((self as c_uint) << (8 * (size_of::<c_uint>() - size_of::<Self>()))) |
-                (c_uint::max_value() >> (8 * size_of::<Self>()));
+            if self == 0 {
+                return (size_of::<Self>() * 8) as u32;
+            }
 
-            intrinsics::codegen_func::<c_int>("__builtin_clz", val)
-        };
+            let ret = when Self: u128 {
+                let head = (self >> 64) as u64;
+                if head == 0 {
+                    return (self as u64).leading_zeros() + 64;
+                } else {
+                    return head.leading_zeros();
+                }
+            } else when Self: c_ulonglong {
+                intrinsics::codegen_func::<c_int>("__builtin_clzll", self)
+            } else when Self: c_ulong {
+                intrinsics::codegen_func::<c_int>("__builtin_clzl", self)
+            } else when Self: c_uint {
+                intrinsics::codegen_func::<c_int>("__builtin_clz", self)
+            } else {
+                let val =
+                    ((self as c_uint) << (8 * (size_of::<c_uint>() - size_of::<Self>()))) |
+                    (c_uint::max_value() >> (8 * size_of::<Self>()));
 
-        ret as u32
+                intrinsics::codegen_func::<c_int>("__builtin_clz", val)
+            };
+
+            ret as u32
+        }
     }
 
     /// Returns the number of trailing zeros in the binary representation of the number.
@@ -445,39 +443,39 @@ protocol BitOps<Self: builtins::Unsigned> {
         when Self: usize {
             #[cfg(target_pointer_width = "64")]
             {
-                return (self as u64).trailing_zeros();
+                (self as u64).trailing_zeros()
             }
             #[cfg(target_pointer_width = "32")]
             {
-                return (self as u32).trailing_zeros();
+                (self as u32).trailing_zeros()
             }
-        }
-
-        if self == 0 {
-            return (size_of::<Self>() * 8) as u32;
-        }
-
-        let ret = when Self: u128 {
-            let tail = self as u64;
-            if tail == 0 {
-                return ((self >> 64) as u64).trailing_zeros() + 64;
-            } else {
-                return tail.trailing_zeros();
-            }
-        } else when Self: c_ulonglong {
-            intrinsics::codegen_func::<c_int>("__builtin_ctzll", self)
-        } else when Self: c_ulong {
-            intrinsics::codegen_func::<c_int>("__builtin_ctzl", self)
-        } else when Self: c_uint {
-            intrinsics::codegen_func::<c_int>("__builtin_ctz", self)
         } else {
-            let val =
-                (c_uint::max_value() << (8 * size_of::<Self>())) | (self as c_uint);
+            if self == 0 {
+                return (size_of::<Self>() * 8) as u32;
+            }
 
-            intrinsics::codegen_func::<c_int>("__builtin_ctz", val)
-        };
+            let ret = when Self: u128 {
+                let tail = self as u64;
+                if tail == 0 {
+                    return ((self >> 64) as u64).trailing_zeros() + 64;
+                } else {
+                    return tail.trailing_zeros();
+                }
+            } else when Self: c_ulonglong {
+                intrinsics::codegen_func::<c_int>("__builtin_ctzll", self)
+            } else when Self: c_ulong {
+                intrinsics::codegen_func::<c_int>("__builtin_ctzl", self)
+            } else when Self: c_uint {
+                intrinsics::codegen_func::<c_int>("__builtin_ctz", self)
+            } else {
+                let val =
+                    (c_uint::max_value() << (8 * size_of::<Self>())) | (self as c_uint);
 
-        ret as u32
+                intrinsics::codegen_func::<c_int>("__builtin_ctz", val)
+            };
+
+            ret as u32
+        }
     }
 
     /// Returns the number of leading ones in the binary representation of the number.
@@ -1430,6 +1428,21 @@ struct return_type_of<T> {}
 #[lang(typeop_arguments_of)]
 struct arguments_of<T> {}
 
+/// Tuple of the generic arguments of a given type
+///
+/// ## Example
+/// ```
+/// use std::builtins::generic_args_of;
+///
+/// fn add<T>(x: T, y: T) -> T { x + y }
+///
+/// let v: generic_args_of<add<i32>>; // v is `(i32,)`
+/// let v: generic_args_of<Result<&[u8], i32>; // v is `(&[u8], i32)`
+/// let v: generic_args_of<std::cmp::Ordering>; // v is `()`
+/// ```
+#[lang(typeop_generic_args_of)]
+struct generic_args_of<T> {}
+
 /// Void pointer type of the same constness as the provided pointer type.
 ///
 /// ## Example
@@ -1475,6 +1488,9 @@ struct void_ptr_of<T: Pointer> {}
 /// All tuples
 #[lang(proto_tuple)] protocol Tuple {}
 
+/// All ranges (`a..b`, `a..=b`, `..b`, `..=b`, ...)
+#[lang(proto_range)] protocol Range {}
+
 /// All named functions (including lambdas, but excluding closures)
 #[lang(proto_named_function)] protocol NamedFunction {}
 
@@ -1494,6 +1510,9 @@ struct void_ptr_of<T: Pointer> {}
 
 /// Pointers to `T` (regardless of mutability)
 #[lang(proto_pointer_of)] protocol PointerOf<T> {}
+
+/// Range over `T`
+#[lang(proto_range_of)] protocol RangeOf<T: Integer> {}
 
 
 #[cfg(all(test, test_std))]
@@ -1555,6 +1574,17 @@ mod tests {
         assert_eq!(type_id::<unsigned_of<i64>>(), type_id::<u64>());
         assert_eq!(type_id::<unsigned_of<isize>>(), type_id::<usize>());
         assert_eq!(type_id::<unsigned_of<i128>>(), type_id::<u128>());
+    }
+
+    #[test]
+    fn test_generic_args_of() {
+        use rtti::type_id;
+
+        struct Foo {}
+
+        assert_eq!(type_id::<generic_args_of<Foo>>(), type_id::<()>());
+        assert_eq!(type_id::<generic_args_of<Option<Option<u8>>>>(), type_id::<(Option<u8>,)>());
+        assert_eq!(type_id::<generic_args_of<io::Result<()>>>(), type_id::<((), io::Error)>());
     }
 
     #[test]
@@ -1666,6 +1696,10 @@ mod tests {
         assert_eq!(0xaaaaaaaaaaaaaaaau64.count_zeros(), 32);
         assert_eq!(0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaau128.count_zeros(), 64);
 
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(0xaaaaaaaausize.count_zeros(), 48);
+
+        #[cfg(target_pointer_width = "32")]
         assert_eq!(0xaaaaaaaausize.count_zeros(), 16);
     }
 

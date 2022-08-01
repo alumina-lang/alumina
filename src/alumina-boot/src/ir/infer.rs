@@ -197,6 +197,15 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                             }
                         }
                     }
+                    Some(LangItemKind::ProtoRangeOf) => {
+                        if let [src] = args {
+                            if let Some(LangTypeKind::Range(inner)) =
+                                self.mono_ctx.get_lang_type_kind(tgt)
+                            {
+                                let _ = self.match_slot(inferred, src, inner);
+                            }
+                        }
+                    }
                     Some(LangItemKind::ProtoCallable) => match args {
                         [ast::Ty::Tuple(a1), a2] => match tgt {
                             ir::Ty::FunctionPointer(b1, b2) => {

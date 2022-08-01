@@ -1,7 +1,7 @@
-//! Ranges and iterators.
+//! Iterators.
 //!
 //! Iterators provide an abstraction for types that can be used to access their elements
-//! one-by-one, for example in `for` loop. The most common examples are ranges and collections.
+//! one-by-one, for example in `for` loop. The most common examples are [ranges](std::range) and collections.
 //!
 //! ```
 //! for i in 0..10 {
@@ -667,7 +667,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// Returns an iterator that yields all elements of `self` and then all elements of `other`.
     /// ## Example
     /// ```
-    /// let range = (0..2).iter().chain(&(10..12).iter());
+    /// let range = (0..2).chain(&(10..12));
     /// assert_eq!(range.size_hint(), Option::some(4usize));
     ///
     /// assert_eq!(range.next(), Option::some(0));
@@ -690,7 +690,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     ///
     /// ## Example
     /// ```
-    /// let range = (0..5).iter().skip(2);
+    /// let range = (0..5).skip(2);
     /// assert_eq!(range.size_hint(), Option::some(3usize));
     ///
     /// assert_eq!(range.next(), Option::some(2));
@@ -710,7 +710,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// First value will always be yielded, then every `n`-th value.
     /// ## Example
     /// ```
-    /// let range = (0..5).iter().step_by(2);
+    /// let range = (0..5).step_by(2);
     /// assert_eq!(range.size_hint(), Option::some(3usize));
     ///
     /// assert_eq!(range.next(), Option::some(0));
@@ -732,7 +732,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
 
     /// ## Example
     /// ```
-    /// let range = (0..5).iter().take(2);
+    /// let range = (0..5).take(2);
     /// assert_eq!(range.size_hint(), Option::some(2usize));
     ///
     /// assert_eq!(range.next(), Option::some(0));
@@ -750,7 +750,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     ///
     /// ## Example
     /// ```
-    /// let range = (10..15).iter().enumerate();
+    /// let range = (10..15).enumerate();
     /// assert_eq!(range.size_hint(), Option::some(5usize));
     ///
     /// assert_eq!(range.next(), Option::some((0usize, 10)));
@@ -774,7 +774,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     ///
     /// ## Example
     /// ```
-    /// let last = (0..5).iter().last();
+    /// let last = (0..5).last();
     ///
     /// assert_eq!(last, Option::some(4));
     /// ```
@@ -794,7 +794,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     ///
     /// ## Example
     /// ```
-    /// let nth = (10..).iter().nth(2);
+    /// let nth = (10..100).nth(2);
     ///
     /// assert_eq!(nth, Option::some(12));
     /// ```
@@ -810,7 +810,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     ///
     /// ## Example
     /// ```
-    /// let count = (100..105).iter().count();
+    /// let count = (100..105).count();
     ///
     /// assert_eq!(count, 5);
     /// ```
@@ -856,7 +856,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     ///
     /// ## Example
     /// ```
-    /// let range = (0..5).iter().take_while(|x: i32| -> bool { x < 3 });
+    /// let range = (0..5).take_while(|x: i32| -> bool { x < 3 });
     /// assert_eq!(range.size_hint(), Option::none());
     ///
     /// assert_eq!(range.next(), Option::some(0));
@@ -871,7 +871,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// Returns an iterator that skips the elements while a predicate is true.
     /// ## Example
     /// ```
-    /// let range = (0..5).iter().skip_while(|x: i32| -> bool { x < 3 });
+    /// let range = (0..5).skip_while(|x: i32| -> bool { x < 3 });
     /// assert_eq!(range.size_hint(), Option::none());
     ///
     /// assert_eq!(range.next(), Option::some(3));
@@ -885,7 +885,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// Returns an iterator that transforms the elements of this iterator.
     /// ## Example
     /// ```
-    /// let range = (0..5).iter().map(|x: i32| -> i32 { x * 2 });
+    /// let range = (0..5).map(|x: i32| -> i32 { x * 2 });
     /// assert_eq!(range.size_hint(), Option::some(5usize));
     ///
     /// assert_eq!(range.next(), Option::some(0));
@@ -930,7 +930,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// Returns an iterator that yields the elements of this iterator that match a predicate.
     /// ## Example
     /// ```
-    /// let range = (0..5).iter().filter(|x: i32| -> bool { x % 2 == 0 });
+    /// let range = (0..5).filter(|x: i32| -> bool { x % 2 == 0 });
     /// assert_eq!(range.size_hint(), Option::none());
     ///
     /// assert_eq!(range.next(), Option::some(0));
@@ -1000,7 +1000,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// `T` must satisfy [builtins::Numeric] protocol.
     /// ## Example
     /// ```
-    /// let sum = (0..5).iter().sum();
+    /// let sum = (0..5).sum();
     ///
     /// assert_eq!(sum, 10);
     /// ```
@@ -1086,7 +1086,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     ///
     /// ## Example
     /// ```
-    /// let range = (0..5).iter().to_vector();
+    /// let range = (0..5).to_vector();
     /// defer range.free();
     ///
     /// assert_eq!(range.len(), 5);
@@ -1107,7 +1107,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// ## Example
     /// ```
     /// let buf: [i32; 5];
-    /// (0..5).iter().fill_slice(buf.as_slice_mut());
+    /// (0..5).fill_slice(buf.as_slice_mut());
     ///
     /// assert_eq!(buf.as_slice(), &[0, 1, 2, 3, 4]);
     /// ```
@@ -1150,7 +1150,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// ```
     /// fn divide_by_three(x: i32) -> i32 { x / 3 }
     ///
-    /// for group in (0..10).iter().group_by(divide_by_three) {
+    /// for group in (0..10).group_by(divide_by_three) {
     ///     print!("{}:", group.key);
     ///     for value in group {
     ///         print!(" {}", value);
@@ -1340,172 +1340,6 @@ fn once<T>(value: T) -> OnceIterator<T> {
     OnceIterator { value: Option::some(value) }
 }
 
-
-/// An unbounded range (`..`)
-#[lang(range_full)]
-struct RangeFull<T: Integer> {
-
-}
-
-/// A range with a lower bound (`a..`)
-#[lang(range_from)]
-struct RangeFrom<T: Integer> {
-    lower: T,
-}
-
-/// A range with an upper bound (`..a`)
-#[lang(range_to)]
-struct RangeTo<T: Integer> {
-    upper: T,
-}
-
-/// A range with both lower and upper bounds (`a..b`)
-#[lang(range)]
-struct Range<T: Integer> {
-    lower: T,
-    upper: T,
-}
-
-
-impl Range<T: Integer> {
-    #[force_inline]
-    #[lang(range_new)]
-    fn new(lower: T, upper: T) -> Range<T> {
-        Range {
-            lower: lower,
-            upper: upper,
-        }
-    }
-
-    #[force_inline]
-    fn iter(self: &Range<T>) -> RangeIter<T> {
-        RangeIter {
-            current: self.lower,
-            upper: self.upper,
-        }
-    }
-
-    fn len(self: &Range<T>) -> T {
-        self.upper - self.lower
-    }
-}
-
-impl RangeFrom<T: Integer> {
-    #[force_inline]
-    #[lang(range_from_new)]
-    fn new(lower: T) -> RangeFrom<T> {
-        RangeFrom {
-            lower: lower,
-        }
-    }
-
-    #[force_inline]
-    fn iter(self: &RangeFrom<T>) -> RangeIter<T> {
-        RangeIter {
-            current: self.lower,
-            upper: T::max_value(),
-        }
-    }
-
-    fn len(self: &RangeFrom<T>) -> T {
-        T::max_value() - self.lower
-    }
-}
-
-impl RangeTo<T: Integer> {
-    #[force_inline]
-    #[lang(range_to_new)]
-    fn new(upper: T) -> RangeTo<T> {
-        RangeTo {
-            upper: upper,
-        }
-    }
-
-    #[force_inline]
-    fn iter(self: &RangeTo<T>) -> RangeIter<T> {
-        RangeIter {
-            current: T::min_value(),
-            upper: self.upper,
-        }
-    }
-
-    fn len(self: &RangeTo<T>) -> T {
-        self.upper - T::min_value()
-    }
-}
-
-impl RangeFull<T: Integer> {
-    #[force_inline]
-    #[lang(range_full_new)]
-    fn new() -> RangeFull<T> {
-        RangeFull {}
-    }
-
-    #[force_inline]
-    fn iter(self: &RangeFull<T>) -> RangeIter<T> {
-        RangeIter {
-            current: T::min_value(),
-            upper: T::max_value(),
-        }
-    }
-
-    fn len(self: &RangeFull<T>) -> T {
-        T::max_value() - T::min_value()
-    }
-}
-
-/// Iterator over a numeric range.
-///
-/// This is the underlying iterator for a basic for loop
-/// ```
-/// for i in 1..100 {
-///      // ...
-/// }
-/// ```
-struct RangeIter<T: Integer> {
-    current: T,
-    upper: T,
-}
-
-impl RangeIter<T: Integer> {
-    /// @ Iterator::next
-    #[force_inline]
-    fn next(self: &mut RangeIter<T>) -> Option<T> {
-        if self.current < self.upper {
-            let current = self.current;
-            self.current += 1;
-            Option::some(current)
-        } else {
-            Option::none()
-        }
-    }
-
-    /// @ DoubleEndedIterator::next_back
-    #[force_inline]
-    fn next_back(self: &mut RangeIter<T>) -> Option<T> {
-        if self.current < self.upper {
-            self.upper -= 1;
-            Option::some(self.upper)
-        } else {
-            Option::none()
-        }
-    }
-
-    /// @ Iterator::size_hint
-    fn size_hint(self: &RangeIter<T>) -> Option<usize> {
-        if self.current < self.upper {
-            Option::some(self.upper as usize - self.current as usize)
-        } else {
-            Option::some(0usize)
-        }
-    }
-
-    mixin Iterator<RangeIter<T>, T>;
-    mixin IteratorExt<RangeIter<T>, T>;
-    mixin DoubleEndedIterator<RangeIter<T>, T>;
-    mixin DoubleEndedIteratorExt<RangeIter<T>, T>;
-}
-
 mod internal {
     use builtins::Numeric;
     use cmp::Comparable;
@@ -1538,21 +1372,8 @@ mod internal {
 #[cfg(all(test, test_std))]
 mod tests {
     #[test]
-    fn test_range() {
-        let range = (0..5).iter();
-        assert_eq!(range.size_hint(), Option::some(5usize));
-
-        assert_eq!(range.next(), Option::some(0));
-        assert_eq!(range.next(), Option::some(1));
-        assert_eq!(range.next(), Option::some(2));
-        assert_eq!(range.next(), Option::some(3));
-        assert_eq!(range.next(), Option::some(4));
-        assert_eq!(range.next(), Option::none());
-    }
-
-    #[test]
     fn test_map() {
-        let range = (0..5).iter().map(|x: i32| -> i32 { x * 2 });
+        let range = (0..5).map(|x: i32| -> i32 { x * 2 });
         assert_eq!(range.size_hint(), Option::some(5usize));
 
         assert_eq!(range.next(), Option::some(0));
@@ -1565,7 +1386,7 @@ mod tests {
 
     #[test]
     fn test_map_rev() {
-        let range = (0..5).iter().map(|x: i32| -> i32 { x * 2 }).rev();
+        let range = (0..5).map(|x: i32| -> i32 { x * 2 }).rev();
         assert_eq!(range.size_hint(), Option::some(5usize));
 
         assert_eq!(range.next(), Option::some(8));
@@ -1578,7 +1399,7 @@ mod tests {
 
     #[test]
     fn test_filter() {
-        let range = (0..5).iter().filter(|x: i32| -> bool { x % 2 == 0 });
+        let range = (0..5).filter(|x: i32| -> bool { x % 2 == 0 });
         assert_eq!(range.size_hint(), Option::none());
 
         assert_eq!(range.next(), Option::some(0));
@@ -1589,7 +1410,7 @@ mod tests {
 
     #[test]
     fn test_filter_rev() {
-        let range = (0..5).iter().filter(|x: i32| -> bool { x % 2 == 0 }).rev();
+        let range = (0..5).filter(|x: i32| -> bool { x % 2 == 0 }).rev();
         assert_eq!(range.size_hint(), Option::none());
 
         assert_eq!(range.next(), Option::some(4));
@@ -1600,7 +1421,7 @@ mod tests {
 
     #[test]
     fn test_filter_map() {
-        let range = (0..5).iter().filter_map(|x: i32| -> Option<i32> {
+        let range = (0..5).filter_map(|x: i32| -> Option<i32> {
             if x % 2 == 0 {
                 Option::some(x * 2)
             } else {
@@ -1617,7 +1438,7 @@ mod tests {
 
     #[test]
     fn test_reduce() {
-        let range = (0..5).iter().reduce(0, |acc: i32, x: i32| -> i32 {
+        let range = (0..5).reduce(0, |acc: i32, x: i32| -> i32 {
             acc + x
         });
         assert_eq!(range, 10);
@@ -1634,15 +1455,15 @@ mod tests {
     #[test]
     fn test_all() {
         assert_eq!(empty::<i32>().all(|v: i32| -> bool { v > 10 }), true)
-        assert_eq!((0..5).iter().all(|v: i32| -> bool { v > 10 }), false);
-        assert_eq!((0..5).iter().all(|v: i32| -> bool { v >= 0 }), true);
+        assert_eq!((0..5).all(|v: i32| -> bool { v > 10 }), false);
+        assert_eq!((0..5).all(|v: i32| -> bool { v >= 0 }), true);
     }
 
     #[test]
     fn test_any() {
         assert_eq!(empty::<i32>().any(|v: i32| -> bool { v > 10 }), false)
-        assert_eq!((0..5).iter().any(|v: i32| -> bool { v > 3 }), true);
-        assert_eq!((0..5).iter().any(|v: i32| -> bool { v > 10 }), false);
+        assert_eq!((0..5).any(|v: i32| -> bool { v > 3 }), true);
+        assert_eq!((0..5).any(|v: i32| -> bool { v > 10 }), false);
     }
 
     #[test]
@@ -1660,7 +1481,7 @@ mod tests {
 
     #[test]
     fn test_skip() {
-        let range = (0..5).iter().skip(2);
+        let range = (0..5).skip(2);
         assert_eq!(range.size_hint(), Option::some(3usize));
 
         assert_eq!(range.next(), Option::some(2));
@@ -1672,7 +1493,7 @@ mod tests {
 
     #[test]
     fn test_take() {
-        let range = (0..5).iter().take(2);
+        let range = (0..5).take(2);
         assert_eq!(range.size_hint(), Option::some(2usize));
 
         assert_eq!(range.next(), Option::some(0));
@@ -1682,18 +1503,18 @@ mod tests {
 
     #[test]
     fn test_count() {
-        assert_eq!((0..5).iter().count(), 5usize);
+        assert_eq!((0..5).count(), 5usize);
     }
 
     #[test]
     fn test_last() {
-        assert_eq!((0..5).iter().last(), Option::some(4));
+        assert_eq!((0..5).last(), Option::some(4));
         assert_eq!(empty::<i32>().last(), Option::none());
     }
 
     #[test]
     fn test_chain() {
-        let range = (0..2).iter().chain(&(10..12).iter());
+        let range = (0..2).chain(&(10..12));
         assert_eq!(range.size_hint(), Option::some(4usize));
 
         assert_eq!(range.next(), Option::some(0));
@@ -1705,7 +1526,7 @@ mod tests {
 
     #[test]
     fn test_chain_rev() {
-        let range = (0..2).iter().chain(&(10..12).iter()).rev();
+        let range = (0..2).chain(&(10..12)).rev();
         assert_eq!(range.size_hint(), Option::some(4usize));
 
         assert_eq!(range.next(), Option::some(11));
@@ -1717,7 +1538,7 @@ mod tests {
 
     #[test]
     fn test_enumerate() {
-        let range = (10..15).iter().enumerate();
+        let range = (10..15).enumerate();
         assert_eq!(range.size_hint(), Option::some(5usize));
 
         assert_eq!(range.next(), Option::some((0usize, 10)));
@@ -1731,7 +1552,7 @@ mod tests {
     #[test]
     fn test_foreach() {
         let sum = 0;
-        (0..5).iter().foreach(|&sum, x: i32| {
+        (0..5).foreach(|&sum, x: i32| {
             sum += x;
         });
 
@@ -1757,13 +1578,13 @@ mod tests {
 
     #[test]
     fn test_to_vector() {
-        let vec = (0..5).iter().to_vector();
+        let vec = (0..5).to_vector();
         assert_eq!(vec.as_slice(), &[0, 1, 2, 3, 4]);
     }
 
     #[test]
     fn test_take_while() {
-        let range = (0..5).iter().take_while(|x: i32| -> bool { x < 3 });
+        let range = (0..5).take_while(|x: i32| -> bool { x < 3 });
         assert_eq!(range.size_hint(), Option::none());
 
         assert_eq!(range.next(), Option::some(0));
@@ -1774,7 +1595,7 @@ mod tests {
 
     #[test]
     fn test_skip_while() {
-        let range = (0..5).iter().skip_while(|x: i32| -> bool { x < 3 });
+        let range = (0..5).skip_while(|x: i32| -> bool { x < 3 });
         assert_eq!(range.size_hint(), Option::none());
 
         assert_eq!(range.next(), Option::some(3));
@@ -1784,7 +1605,7 @@ mod tests {
 
     #[test]
     fn test_step_by() {
-        let range = (0..5).iter().step_by(2);
+        let range = (0..5).step_by(2);
         assert_eq!(range.size_hint(), Option::some(3usize));
 
         assert_eq!(range.next(), Option::some(0));
@@ -1795,9 +1616,9 @@ mod tests {
 
     #[test]
     fn test_nth() {
-        assert_eq!((0..5).iter().nth(0), Option::some(0));
-        assert_eq!((0..5).iter().nth(1), Option::some(1));
-        assert_eq!((0..5).iter().nth(10), Option::none());
+        assert_eq!((0..5).nth(0), Option::some(0));
+        assert_eq!((0..5).nth(1), Option::some(1));
+        assert_eq!((0..5).nth(10), Option::none());
     }
 
     #[test]
@@ -1814,18 +1635,18 @@ mod tests {
         let buf: [i32; 10];
         let slice = buf.as_slice_mut();
 
-        let written = (0..5).iter().fill_slice(slice);
+        let written = (0..5).fill_slice(slice);
         assert_eq!(written, 5);
         assert_eq!(slice[..5], &[0, 1, 2, 3, 4]);
 
-        let written = (10..200).iter().fill_slice(slice);
+        let written = (10..200).fill_slice(slice);
         assert_eq!(written, 10);
         assert_eq!(slice, &[10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
     }
 
     #[test]
     fn test_peekable() {
-        let range = (0..3).iter().peekable();
+        let range = (0..3).peekable();
         assert_eq!(range.size_hint(), Option::some(3usize));
         assert_eq!(range.peek(), Option::some(0));
 
@@ -1895,7 +1716,7 @@ mod tests {
 
     #[test]
     fn test_rev() {
-        let range = (0..5).iter().rev();
+        let range = (0..5).rev();
         assert_eq!(range.size_hint(), Option::some(5usize));
         assert_eq!(range.next(), Option::some(4));
         assert_eq!(range.next(), Option::some(3));
@@ -1904,7 +1725,7 @@ mod tests {
         assert_eq!(range.next(), Option::some(0));
         assert_eq!(range.next(), Option::none());
 
-        let range = (0..5).iter().rev().rev();
+        let range = (0..5).rev().rev();
         assert_eq!(range.size_hint(), Option::some(5usize));
         assert_eq!(range.next(), Option::some(0));
         assert_eq!(range.next(), Option::some(1));
@@ -1964,18 +1785,18 @@ mod tests {
     #[test]
     fn test_sum() {
         assert_eq!(empty::<i32>().sum(), 0);
-        assert_eq!((0..5).iter().sum(), 10);
+        assert_eq!((0..5).sum(), 10);
     }
 
     #[test]
     fn test_min() {
         assert_eq!(empty::<i32>().min(), Option::none());
-        assert_eq!((0..5).iter().min(), Option::some(0));
+        assert_eq!((0..5).min(), Option::some(0));
     }
 
     #[test]
     fn test_max() {
         assert_eq!(empty::<i32>().max(), Option::none());
-        assert_eq!((0..5).iter().max(), Option::some(4));
+        assert_eq!((0..5).max(), Option::some(4));
     }
 }

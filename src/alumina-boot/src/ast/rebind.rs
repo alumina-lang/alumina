@@ -165,9 +165,10 @@ impl<'ast> Rebinder<'ast> {
             }
             TupleIndex(inner, idx) => TupleIndex(self.visit_expr(inner)?, idx),
             Index(inner, idx) => Index(self.visit_expr(inner)?, self.visit_expr(idx)?),
-            Range(lower, upper) => Range(
+            Range(lower, upper, inclusive) => Range(
                 lower.map(|i| self.visit_expr(i)).transpose()?,
                 upper.map(|i| self.visit_expr(i)).transpose()?,
+                inclusive,
             ),
             If(condition, then, els) => If(
                 self.visit_expr(condition)?,

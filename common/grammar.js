@@ -653,11 +653,11 @@ module.exports = grammar({
         choice(
           seq(
             field("lower", $._expression),
-            "..",
+            field("inclusive", choice("..", "..=")),
             field("upper", $._expression)
           ),
           seq(field("lower", $._expression), ".."),
-          seq("..", field("upper", $._expression)),
+          seq(field("inclusive", choice("..", "..=")), field("upper", $._expression)),
           ".."
         )
       ),
