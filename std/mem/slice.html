@@ -40,6 +40,9 @@
 <a href="/std/mem/slice.html#item.len">len</a>
 </li>
 <li>
+<a href="/std/mem/slice.html#item.as_ptr">as_ptr</a>
+</li>
+<li>
 <a href="/std/mem/slice.html#item.alloc">alloc</a>
 </li>
 <li>
@@ -113,8 +116,8 @@ type &amp;mut [T] = slice&lt;&amp;mut T&gt;;
 </p><p>
 Slice fat "pointers" are just regular structs that compiler handles in a special way with regards
 to syntax, implicit coercion and type inference. They are generic over the pointer-to-element type
-rather than the element type itself. This is an implementation detail to ensure that <code>&amp;mut [T]</code> and
-<code>&amp;[T]</code> are distinguished without having to have two distinct types for mutable and const slices.
+rather than the element type itself. This is an implementation detail to ensure that <code class="language-alumina">&amp;mut [T]</code> and
+<code class="language-alumina">&amp;[T]</code> are distinguished without having to have two distinct types for mutable and const slices.
 </p><p>
 </p>
 <h2 id="Method">Methods</h2>
@@ -185,11 +188,32 @@ Returns the length of the slice
 </div>
 </li>
 <li>
+<div class="signature" id="item.as_ptr">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">as_ptr</span>&lt;Ptr&gt;(self: &amp;<a href="/std/mem/slice.html"><span class="identifier-type">slice</span></a>&lt;Ptr&gt;) -> Ptr<div class="protocol-bound">
+Ptr: <a href="/std/builtins/Pointer.html"><span class="identifier-type">Pointer</span></a></div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L119-L122"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns a pointer to the first element of the slice.
+</p><p>
+Unlike <code class="language-alumina">&amp;slice[0]</code>, this is not range-checked, so it will not panic
+if the slice is empty, but may return <code class="language-alumina">null</code>, a dangling or an otherwise
+invalid pointer.
+</p><p>
+</p>
+</div>
+</li>
+<li>
 <div class="signature" id="item.alloc">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">alloc</span>&lt;T&gt;(len: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> &amp;mut [T]</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L129-L137"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L139-L147"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -219,7 +243,7 @@ assert_eq!(hw, s);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">realloc</span>&lt;T&gt;(slice: &amp;mut [T], len: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> &amp;mut [T]</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L140-L148"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L150-L158"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -234,7 +258,7 @@ Resizes a heap-allocated array.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">alloc_zeroed</span>&lt;T&gt;(len: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> &amp;mut [T]</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L153-L161"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L163-L171"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -251,12 +275,12 @@ The values are zero-initialized.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">copy_to_nonoverlapping</span>&lt;T&gt;(src: &amp;[T], dst: &amp;mut T)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L166-L170"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L176-L180"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Copies a region of memory from <code>src</code> to <code>dst</code>.
+Copies a region of memory from <code class="language-alumina">src</code> to <code class="language-alumina">dst</code>.
 </p><p>
 The memory ranges must not overlap, use <a class="path-link" href="/std/mem/slice.html#item.copy_to">copy_to</a> if they may be overlapping.
 </p><p>
@@ -268,12 +292,12 @@ The memory ranges must not overlap, use <a class="path-link" href="/std/mem/slic
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">copy_to</span>&lt;T&gt;(src: &amp;[T], dst: &amp;mut T)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L175-L179"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L185-L189"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Copies a region of memory from <code>src</code> to <code>dst</code>.
+Copies a region of memory from <code class="language-alumina">src</code> to <code class="language-alumina">dst</code>.
 </p><p>
 The ranges may overlap.
 </p><p>
@@ -287,7 +311,7 @@ The ranges may overlap.
 Ptr: <a href="/std/builtins/Pointer.html"><span class="identifier-type">Pointer</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L182-L185"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L192-L195"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -304,7 +328,7 @@ Returns an iterator over the elements of this iterable.
 Ptr: <a href="/std/builtins/Pointer.html"><span class="identifier-type">Pointer</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L188-L191"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L198-L201"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -319,7 +343,7 @@ Returns an iterator over the pointers of the items of the collection.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">iter_mut</span>&lt;T&gt;(self: &amp;&amp;mut [T]) -> <a href="/std/mem/SliceRefIterator.html"><span class="identifier-type">SliceRefIterator</span></a>&lt;&amp;mut T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L194-L197"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L204-L207"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -334,7 +358,7 @@ Returns an iterator over mutable pointers to the elements of the collection.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">fill</span>&lt;T&gt;(slice: &amp;mut [T], value: T)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L200-L210"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L210-L220"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -353,12 +377,12 @@ T: <a href="/std/cmp/Equatable.html"><span class="identifier-type">Equatable</sp
 Ptr: <a href="/std/builtins/PointerOf.html"><span class="identifier-type">PointerOf</span></a>&lt;T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L213-L233"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L223-L243"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Returns <code>true</code> if arguments are equal, <code>false</code> otherwise
+Returns <code class="language-alumina">true</code> if arguments are equal, <code class="language-alumina">false</code> otherwise
 </p><p>
 See <a class="path-link" href="/std/cmp/Equatable.html">Equatable</a> for details.
 </p><p>
@@ -374,7 +398,7 @@ T: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</
 Ptr: <a href="/std/builtins/PointerOf.html"><span class="identifier-type">PointerOf</span></a>&lt;T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L236-L262"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L246-L272"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -397,7 +421,7 @@ Ptr: <a href="/std/builtins/PointerOf.html"><span class="identifier-type">Pointe
 H: <a href="/std/hash/Hasher.html"><span class="identifier-type">Hasher</span></a>&lt;H&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L265-L277"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L275-L287"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -418,7 +442,7 @@ Ptr: <a href="/std/builtins/PointerOf.html"><span class="identifier-type">Pointe
 F: <a href="/std/fmt/Formatter.html"><span class="identifier-type">Formatter</span></a>&lt;F&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L280-L282"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L290-L292"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -435,14 +459,14 @@ See <a class="path-link" href="/std/fmt/Formattable.html">Formattable</a> for de
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">free</span>&lt;T&gt;(a: &amp;mut [T])</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L287-L289"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L297-L299"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Frees the slice.
 </p><p>
-This requires that the slice was allocated with <code>alloc</code> or <code>alloc_zeroed</code>.
+This requires that the slice was allocated with <code class="language-alumina">alloc</code> or <code class="language-alumina">alloc_zeroed</code>.
 </p><p>
 </p>
 </div>
@@ -475,7 +499,7 @@ Ptr: <a href="/std/builtins/PointerOf.html"><span class="identifier-type">Pointe
 </div>
 <div class="item-doc">
 <p>
-Returns <code>false</code> if arguments are equal, <code>true</code> otherwise
+Returns <code class="language-alumina">false</code> if arguments are equal, <code class="language-alumina">true</code> otherwise
 </p><p>
 </p>
 </div>
@@ -504,7 +528,7 @@ Ptr: <a href="/std/builtins/PointerOf.html"><span class="identifier-type">Pointe
 </div>
 <div class="item-doc">
 <p>
-Returns <code>true</code> if <code>lhs</code> is strictly less than <code>rhs</code>, <code>false</code> otherwise
+Returns <code class="language-alumina">true</code> if <code class="language-alumina">lhs</code> is strictly less than <code class="language-alumina">rhs</code>, <code class="language-alumina">false</code> otherwise
 </p><p>
 </p>
 </div>
@@ -519,7 +543,7 @@ Returns <code>true</code> if <code>lhs</code> is strictly less than <code>rhs</c
 </div>
 <div class="item-doc">
 <p>
-Returns <code>true</code> if <code>lhs</code> is less or equal to <code>rhs</code>, <code>false</code> otherwise
+Returns <code class="language-alumina">true</code> if <code class="language-alumina">lhs</code> is less or equal to <code class="language-alumina">rhs</code>, <code class="language-alumina">false</code> otherwise
 </p><p>
 </p>
 </div>
@@ -534,7 +558,7 @@ Returns <code>true</code> if <code>lhs</code> is less or equal to <code>rhs</cod
 </div>
 <div class="item-doc">
 <p>
-Returns <code>true</code> if <code>lhs</code> strictly greater than <code>rhs</code>, <code>false</code> otherwise
+Returns <code class="language-alumina">true</code> if <code class="language-alumina">lhs</code> strictly greater than <code class="language-alumina">rhs</code>, <code class="language-alumina">false</code> otherwise
 </p><p>
 </p>
 </div>
@@ -549,7 +573,7 @@ Returns <code>true</code> if <code>lhs</code> strictly greater than <code>rhs</c
 </div>
 <div class="item-doc">
 <p>
-Returns <code>true</code> if <code>lhs</code> greater than or equal <code>rhs</code>, <code>false</code> otherwise
+Returns <code class="language-alumina">true</code> if <code class="language-alumina">lhs</code> greater than or equal <code class="language-alumina">rhs</code>, <code class="language-alumina">false</code> otherwise
 </p><p>
 </p>
 </div>
