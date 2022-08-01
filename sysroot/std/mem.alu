@@ -111,6 +111,16 @@ impl slice {
         self._len
     }
 
+    /// Returns a pointer to the first element of the slice.
+    ///
+    /// Unlike `&slice[0]`, this is not range-checked, so it will not panic
+    /// if the slice is empty, but may return `null`, a dangling or an otherwise
+    /// invalid pointer.
+    #[force_inline]
+    fn as_ptr<Ptr: Pointer>(self: &slice<Ptr>) -> Ptr {
+        self._ptr
+    }
+
     /// Allocates an array of specified size on the heap.
     ///
     /// The values are not initialized.
@@ -379,6 +389,15 @@ impl SliceRefIterator<Ptr: Pointer> {
 mod internal {
     use builtins::{Primitive, Pointer};
 
+    macro bounds_check($cond, $msg, $args...) {
+        #[cfg(debug)]
+        {
+            if !$cond {
+                panic!($msg, $args...);
+            }
+        }
+    }
+
     /// Implementation for single-element indexing for slices.
     ///
     /// Compiler will convert `slice[i]` to `*slice_index(slice, i)`.
@@ -386,12 +405,7 @@ mod internal {
     #[force_inline]
     #[lang(slice_index)]
     fn slice_index<Ptr: Pointer>(a: slice<Ptr>, idx: usize) -> Ptr {
-        #[cfg(debug)]
-        {
-            if idx >= a.len() {
-                panic!("index out of bounds: the len is {} but the index is {}", a.len(), idx);
-            }
-        }
+        bounds_check!(idx < a.len(), "index out of bounds: the len is {} but the index is {}", a.len(), idx);
 
         a._ptr + idx
     }
@@ -403,20 +417,64 @@ mod internal {
     #[force_inline]
     #[lang(slice_range_index)]
     fn slice_range_index<Ptr: Pointer, T>(a: slice<Ptr>, range: T) -> slice<Ptr> {
-        when T: iter::Range<usize> {
-            debug_assert!(range.lower <= range.upper);
-            debug_assert!(range.upper <= a.len());
+        when T: range::Range<usize> {
+            bounds_check!(
+                range.lower <= range.upper,
+                "index out of bounds: lower bound {} is greater than upper bound {}",
+                range.lower,
+                range.upper
+            );
+            bounds_check!(
+                range.upper <= a.len(),
+                "index out of bounds: the len is {} but the upper bound is {}",
+                a.len(),
+                range.upper
+            );
 
             slice::from_raw::<Ptr>(a._ptr + range.lower, range.upper - range.lower)
-        } else when T: iter::RangeTo<usize> {
-            debug_assert!(range.upper <= a.len());
+        } else when T: range::RangeInclusive<usize> {
+            bounds_check!(
+                range.lower <= range.upper,
+                "index out of bounds: lower bound {} is greater than upper bound {}",
+                range.lower,
+                range.upper
+            );
+            bounds_check!(
+                range.upper < a.len(),
+                "index out of bounds: the len is {} but the inclusive upper bound is {}",
+                a.len(),
+                range.upper
+            );
+
+            slice::from_raw::<Ptr>(a._ptr + range.lower, range.upper - range.lower + 1)
+        } else when T: range::RangeTo<usize> {
+            bounds_check!(
+                range.upper <= a.len(),
+                "index out of bounds: the len is {} but the upper bound is {}",
+                a.len(),
+                range.upper
+            );
 
             slice::from_raw::<Ptr>(a._ptr, range.upper)
-        } else when T: iter::RangeFrom<usize> {
-            debug_assert!(range.lower <= a.len());
+        } else when T: range::RangeToInclusive<usize> {
+            bounds_check!(
+                range.upper < a.len(),
+                "index out of bounds: the len is {} but the inclusive upper bound is {}",
+                a.len(),
+                range.upper
+            );
+
+            slice::from_raw::<Ptr>(a._ptr, range.upper + 1)
+        } else when T: range::RangeFrom<usize> {
+            bounds_check!(
+                range.lower <= a.len(),
+                "index out of bounds: the len is {} but the lower bound is {}",
+                a.len(),
+                range.lower
+            );
 
             slice::from_raw::<Ptr>(a._ptr + range.lower, a.len() - range.lower)
-        } else when T: iter::RangeFull<usize> {
+        } else when T: range::RangeFull<usize> {
             a
         } else {
             compile_fail!("unsupported range type");
@@ -578,6 +636,9 @@ mod tests {
         assert_eq!(a[..3], &[1, 2, 3]);
         assert_eq!(a[1..], &[2, 3, 4, 5]);
         assert_eq!(a[1..5], &[2, 3, 4, 5]);
+
+        assert_eq!(a[..=3], &[1, 2, 3, 4]);
+        assert_eq!(a[1..=3], &[2, 3, 4]);
     }
 
     #[test]
@@ -643,5 +704,57 @@ mod tests {
         assert!([1,2,3,4].as_slice() > [1,2,3,2].as_slice());
         assert!([1,2,3,4].as_slice() > [1,2,3].as_slice());
         assert!([1,2,3].as_slice() < [1,2,3,4].as_slice());
+    }
+
+    #[test]
+    fn test_bounds_check() {
+        let a = [1,2,3,4,5].as_slice();
+        a[4];
+        a[0..5];
+        a[..5];
+        a[5..];
+        a[..=4];
+        a[0..=4];
+        a[0..=0];
+        a[..=0];
+    }
+
+    #[cfg(debug)]
+    {
+        #[test(should_fail)]
+        fn test_bounds_check_1() {
+            let a = [1,2,3,4,5].as_slice();
+            a[5];
+        }
+
+        #[test(should_fail)]
+        fn test_bounds_check_2() {
+            let a = [1,2,3,4,5].as_slice();
+            a[4..3];
+        }
+
+        #[test(should_fail)]
+        fn test_bounds_check_3() {
+            let a = [1,2,3,4,5].as_slice();
+            a[6..];
+        }
+
+        #[test(should_fail)]
+        fn test_bounds_check_4() {
+            let a = [1,2,3,4,5].as_slice();
+            a[..6];
+        }
+
+        #[test(should_fail)]
+        fn test_bounds_check_5() {
+            let a = [1,2,3,4,5].as_slice();
+            a[..=5];
+        }
+
+        #[test(should_fail)]
+        fn test_bounds_check_6() {
+            let a = [1,2,3,4,5].as_slice();
+            a[0..=5];
+        }
     }
 }

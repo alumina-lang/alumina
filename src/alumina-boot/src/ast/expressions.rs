@@ -348,15 +348,15 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
         &self,
         last_node: Option<tree_sitter::Node<'src>>,
         statements: &mut Vec<Statement<'ast>>,
-    ) -> ExprP<'ast> {
+    ) -> Result<ExprP<'ast>, AluminaError> {
         let last_node = match last_node {
             Some(n) => n,
-            None => return ExprKind::Void.alloc_with_no_span(self.ast),
+            None => return Ok(ExprKind::Void.alloc_with_no_span(self.ast)),
         };
 
         let expression_node = match last_node.kind() {
             "expression_statement" => last_node.child_by_field_name("inner").unwrap(),
-            _ => return ExprKind::Void.alloc_with_span_from(self.ast, &self.scope, last_node),
+            _ => return Ok(ExprKind::Void.alloc_with_span_from(self.ast, &self.scope, last_node)),
         };
 
         match expression_node.kind() {
@@ -365,10 +365,14 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                 Some(Statement {
                     kind: StatementKind::Expression(expr),
                     ..
-                }) => expr,
-                _ => unreachable!(),
+                }) => Ok(expr),
+                _ => {
+                    // There are no statements preceeding the return expression. From the pure syntax perspective this
+                    // should not be possible, however we may have filtered a statement out due to #[cfg] directive on it.
+                    Ok(ExprKind::Void.alloc_with_span_from(self.ast, &self.scope, expression_node))
+                }
             },
-            _ => ExprKind::Void.alloc_with_span_from(self.ast, &self.scope, expression_node),
+            _ => Ok(ExprKind::Void.alloc_with_span_from(self.ast, &self.scope, expression_node)),
         }
     }
 
@@ -438,7 +442,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                     // This is a bit of a hack to work around Tree-Sitter. _expression_ending_with_block nodes
                     // are treated as statements even if they appear in the terminal positions. If they are
                     // actually statements (semicolon), there is another empty_statement inserted, so it's fine.
-                    self.extract_expression_ending_with_block(last_node, &mut statements)
+                    self.extract_expression_ending_with_block(last_node, &mut statements)?
                 }
             }
         });
@@ -807,7 +811,12 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             .map(|n| self.visit(n))
             .transpose()?;
 
-        let result = ExprKind::Range(lower_bound, upper_bound);
+        let inclusive = node
+            .child_by_field_name("inclusive")
+            .map(|n| self.code.node_text(n) == "..=")
+            .unwrap_or(false);
+
+        let result = ExprKind::Range(lower_bound, upper_bound, inclusive);
 
         Ok(result.alloc_with_span_from(self.ast, &self.scope, node))
     }

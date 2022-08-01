@@ -104,6 +104,12 @@ impl<'ir> CompilerIntrinsics<'ir> {
     }
 
     fn align_of(&self, ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
+        if let Ty::Array(inner, _) = ty {
+            // In Rust [i32; 0] has alignment of 4 instead of 1 as one would expect as it is a
+            // ZST. I don't really know why, but I assume there's a good reason for it.
+            return self.align_of(inner);
+        }
+
         if ty.is_zero_sized() {
             return Ok(self.expressions.const_value(Value::USize(1)));
         }

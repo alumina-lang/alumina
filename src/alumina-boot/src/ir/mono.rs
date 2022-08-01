@@ -128,7 +128,15 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
             return Some(LangTypeKind::Range(item.1[0]));
         }
 
+        if self.ast.lang_item(LangItemKind::RangeToInclusive).ok() == Some(item.0) {
+            return Some(LangTypeKind::Range(item.1[0]));
+        }
+
         if self.ast.lang_item(LangItemKind::Range).ok() == Some(item.0) {
+            return Some(LangTypeKind::Range(item.1[0]));
+        }
+
+        if self.ast.lang_item(LangItemKind::RangeInclusive).ok() == Some(item.0) {
             return Some(LangTypeKind::Range(item.1[0]));
         }
 
@@ -767,6 +775,16 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             },
             Some(LangItemKind::ProtoArray) => match ty {
                 ir::Ty::Array(_, _) => return Ok(BoundCheckResult::Matches),
+                _ => return Ok(BoundCheckResult::DoesNotMatch),
+            },
+            Some(LangItemKind::ProtoRange) => match self.mono_ctx.get_lang_type_kind(ty) {
+                Some(LangTypeKind::Range(_)) => return Ok(BoundCheckResult::Matches),
+                _ => return Ok(BoundCheckResult::DoesNotMatch),
+            },
+            Some(LangItemKind::ProtoRangeOf) => match self.mono_ctx.get_lang_type_kind(ty) {
+                Some(LangTypeKind::Range(k)) if k == proto_generic_args[0] => {
+                    return Ok(BoundCheckResult::Matches)
+                }
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
             Some(LangItemKind::ProtoCallable) => {
@@ -1692,6 +1710,26 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                                         .intern_type(ir::Ty::Tuple(&tys[1..])))
                                 }
                             }
+                        }
+                        return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
+                    }
+                    Some(LangItemKind::TypeopGenericArgsOf) => {
+                        if args.len() != 1 {
+                            return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
+                        }
+
+                        match args[0] {
+                            ir::Ty::NamedFunction(cell)
+                            | ir::Ty::NamedType(cell)
+                            | ir::Ty::Protocol(cell) => {
+                                let MonoKey(_, types, _, _) = self.mono_ctx.reverse_lookup(cell);
+                                if types.is_empty() {
+                                    return Ok(self.types.void());
+                                } else {
+                                    return Ok(self.types.tuple(types.iter().copied()));
+                                }
+                            }
+                            _ => {}
                         }
                         return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
                     }
@@ -4371,6 +4409,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         &mut self,
         lower: Option<ast::ExprP<'ast>>,
         upper: Option<ast::ExprP<'ast>>,
+        inclusive: bool,
         type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let bound_hint = match type_hint {
@@ -4401,15 +4440,18 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .map(|l| l.ty)
             .or_else(|| upper.map(|u| u.ty))
             .or(bound_hint)
-            .ok_or(CodeErrorKind::TypeHintRequired)
-            .with_no_span()?;
+            .unwrap_or(self.types.builtin(BuiltinType::I32)); // Same as for unqualified integer literals
 
         let result = match (lower, upper) {
             (Some(lower), Some(upper)) => {
                 let lower = self.try_coerce(bound_ty, lower)?;
                 let upper = self.try_coerce(bound_ty, upper)?;
 
-                let item = self.monomorphize_lang_item(LangItemKind::RangeNew, [bound_ty])?;
+                let item = if inclusive {
+                    self.monomorphize_lang_item(LangItemKind::RangeInclusiveNew, [bound_ty])?
+                } else {
+                    self.monomorphize_lang_item(LangItemKind::RangeNew, [bound_ty])?
+                };
                 let func = self.exprs.function(item);
 
                 self.exprs.call(
@@ -4433,7 +4475,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             (None, Some(upper)) => {
                 let upper = self.try_coerce(bound_ty, upper)?;
 
-                let item = self.monomorphize_lang_item(LangItemKind::RangeToNew, [bound_ty])?;
+                let item = if inclusive {
+                    self.monomorphize_lang_item(LangItemKind::RangeToInclusiveNew, [bound_ty])?
+                } else {
+                    self.monomorphize_lang_item(LangItemKind::RangeToNew, [bound_ty])?
+                };
                 let func = self.exprs.function(item);
 
                 self.exprs.call(
@@ -4772,7 +4818,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.lower_struct_expression(func, initializers, type_hint, expr.span)
             }
             ast::ExprKind::Index(inner, index) => self.lower_index(inner, index, type_hint),
-            ast::ExprKind::Range(lower, upper) => self.lower_range(*lower, *upper, type_hint),
+            ast::ExprKind::Range(lower, upper, inclusive) => {
+                self.lower_range(*lower, *upper, *inclusive, type_hint)
+            }
             ast::ExprKind::Return(inner) => self.lower_return(*inner, type_hint),
             ast::ExprKind::Fn(item, args) => self.lower_fn(item.clone(), *args, type_hint),
             ast::ExprKind::Static(item) => self.lower_static(*item, type_hint),

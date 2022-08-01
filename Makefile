@@ -12,7 +12,7 @@ ifdef RELEASE
 else ifdef FAST_DEBUG
 	# Compile in debug mode, but with alumina-boot compiled in release mode.
 	# It is significantly faster.
-	BUILD_DIR = $(BUILD_ROOT)/fast-release
+	BUILD_DIR = $(BUILD_ROOT)/fast-debug
 	CARGO_FLAGS = --release
 	CARGO_TARGET_DIR = target/release
 	CFLAGS += -g3 -fPIE -rdynamic

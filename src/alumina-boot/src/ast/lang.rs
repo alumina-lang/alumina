@@ -14,11 +14,15 @@ pub enum LangItemKind {
     RangeFull,
     RangeFrom,
     RangeTo,
+    RangeToInclusive,
     Range,
+    RangeInclusive,
     RangeFullNew,
     RangeFromNew,
     RangeToNew,
+    RangeToInclusiveNew,
     RangeNew,
+    RangeInclusiveNew,
 
     ProtoPrimitive,
     ProtoNumeric,
@@ -30,12 +34,14 @@ pub enum LangItemKind {
     ProtoPointer,
     ProtoArray,
     ProtoTuple,
+    ProtoRange,
     ProtoCallable,
     ProtoNamedFunction,
     ProtoFunctionPointer,
     ProtoAny,
     ProtoArrayOf,
     ProtoPointerOf,
+    ProtoRangeOf,
 
     // This one really shouldn't be a lang item, but I'm not smart
     // enough to figure out the type inference and iterator combinators
@@ -55,6 +61,7 @@ pub enum LangItemKind {
     TypeopReturnTypeOf,
     TypeopArgumentsOf,
     TypeopVoidPtrOf,
+    TypeopGenericArgsOf,
 
     EntrypointGlue,
     TestCaseMeta,
@@ -88,12 +95,16 @@ impl TryFrom<&str> for LangItemKind {
             "range_full" => Ok(LangItemKind::RangeFull),
             "range_from" => Ok(LangItemKind::RangeFrom),
             "range_to" => Ok(LangItemKind::RangeTo),
+            "range_to_inclusive" => Ok(LangItemKind::RangeToInclusive),
             "range" => Ok(LangItemKind::Range),
+            "range_inclusive" => Ok(LangItemKind::RangeInclusive),
 
             "range_full_new" => Ok(LangItemKind::RangeFullNew),
             "range_from_new" => Ok(LangItemKind::RangeFromNew),
             "range_to_new" => Ok(LangItemKind::RangeToNew),
             "range_new" => Ok(LangItemKind::RangeNew),
+            "range_to_inclusive_new" => Ok(LangItemKind::RangeToInclusiveNew),
+            "range_inclusive_new" => Ok(LangItemKind::RangeInclusiveNew),
 
             "proto_primitive" => Ok(LangItemKind::ProtoPrimitive),
             "proto_numeric" => Ok(LangItemKind::ProtoNumeric),
@@ -106,11 +117,13 @@ impl TryFrom<&str> for LangItemKind {
             "proto_any" => Ok(LangItemKind::ProtoAny),
             "proto_array" => Ok(LangItemKind::ProtoArray),
             "proto_tuple" => Ok(LangItemKind::ProtoTuple),
+            "proto_range" => Ok(LangItemKind::ProtoRange),
             "proto_named_function" => Ok(LangItemKind::ProtoNamedFunction),
             "proto_function_pointer" => Ok(LangItemKind::ProtoFunctionPointer),
             "proto_callable" => Ok(LangItemKind::ProtoCallable),
             "proto_array_of" => Ok(LangItemKind::ProtoArrayOf),
             "proto_pointer_of" => Ok(LangItemKind::ProtoPointerOf),
+            "proto_range_of" => Ok(LangItemKind::ProtoRangeOf),
 
             // hax
             "proto_iterator" => Ok(LangItemKind::ProtoIterator),
@@ -151,6 +164,7 @@ impl TryFrom<&str> for LangItemKind {
             "typeop_return_type_of" => Ok(LangItemKind::TypeopReturnTypeOf),
             "typeop_arguments_of" => Ok(LangItemKind::TypeopArgumentsOf),
             "typeop_void_ptr_of" => Ok(LangItemKind::TypeopVoidPtrOf),
+            "typeop_generic_args_of" => Ok(LangItemKind::TypeopGenericArgsOf),
 
             "entrypoint_glue" => Ok(LangItemKind::EntrypointGlue),
             "test_case_meta" => Ok(LangItemKind::TestCaseMeta),
