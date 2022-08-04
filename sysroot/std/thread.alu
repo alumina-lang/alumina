@@ -430,11 +430,21 @@ fn yield() {
 }
 
 mod internal {
+    /// Compile-time assert that threading is enabled.
     macro check_threading() {
+        // This is used to disable threading-spawning functionality if the program was not compiled
+        // with multithreading enabled. The main reason is that if `---cfg threading` is not passed,
+        // #[thread_local] attribute does not do anything (to improve code size and a slight runtime
+        // overhead for single-threaded programs), which can be a footgun if the program is actually
+        // multi-threaded.
+        //
+        // It's not a fool-proof solution, as one can always manually call pthread_create or use some
+        // external library that spawns threads, but should prevent honest mistakes.
         #[cfg(not(threading))]
         compile_fail!("threading is not enabled (use --cfg threading)");
     }
 
+    static MAIN_THREAD_INFO: ThreadInfo;
     #[thread_local] static THREAD_INFO: &mut ThreadInfo;
 
     macro pthread_try($expr) {
@@ -450,15 +460,33 @@ mod internal {
     }
 
     impl ThreadInfo {
-        fn new() -> &mut ThreadInfo {
+        fn create() -> &mut ThreadInfo {
             let ret = mem::alloc::<internal::ThreadInfo>();
-            ret.parker = parker::Parker::new();
+            ret.init();
             ret
+        }
+
+        fn init(self: &mut ThreadInfo) {
+            self.parker = parker::Parker::new();
         }
 
         fn free(self: &mut ThreadInfo) {
             mem::free(self);
         }
+    }
+
+    /// Sets up associated data of the main thread
+    ///
+    /// Runs before user main when there's an Alumina entrypoint. Only runs when threading
+    /// is enabled (`--cfg threading`).
+    fn threading_init() {
+        check_threading!();
+
+        assert!(THREAD_INFO == null);
+
+        MAIN_THREAD_INFO.init();
+        MAIN_THREAD_INFO.id = libc::pthread_self();
+        THREAD_INFO = &MAIN_THREAD_INFO;
     }
 
     /// Ref-counted additional data associated with an Alumina thread
@@ -480,7 +508,7 @@ mod internal {
                 }),
                 panicked: false,
                 catch_panic: catch_panic,
-                thread_info: ThreadInfo::new(),
+                thread_info: ThreadInfo::create(),
                 ret: Result::err(mem::zeroed())
             }
         }

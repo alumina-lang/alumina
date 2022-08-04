@@ -8,7 +8,7 @@ ifdef RELEASE
 	CARGO_FLAGS = --release
 	CARGO_TARGET_DIR = target/release
 	CFLAGS += -O3
-	ALUMINA_FLAGS += --sysroot $(SYSROOT) --timings
+	ALUMINA_FLAGS += --sysroot $(SYSROOT)
 else ifdef FAST_DEBUG
 	# Compile in debug mode, but with alumina-boot compiled in release mode.
 	# It is significantly faster.
@@ -16,13 +16,13 @@ else ifdef FAST_DEBUG
 	CARGO_FLAGS = --release
 	CARGO_TARGET_DIR = target/release
 	CFLAGS += -g3 -fPIE -rdynamic
-	ALUMINA_FLAGS += --sysroot $(SYSROOT) --debug --timings
+	ALUMINA_FLAGS += --sysroot $(SYSROOT) --debug
 else
 	BUILD_DIR = $(BUILD_ROOT)/debug
 	CARGO_FLAGS =
 	CARGO_TARGET_DIR = target/debug
 	CFLAGS += -g3 -fPIE -rdynamic
-	ALUMINA_FLAGS += --sysroot $(SYSROOT) --debug --timings
+	ALUMINA_FLAGS += --sysroot $(SYSROOT) --debug
 endif
 
 LDFLAGS = -lm
@@ -30,6 +30,11 @@ ifndef NO_THREADS
 	ALUMINA_FLAGS += --cfg threading
 	LDFLAGS += -lpthread
 endif
+
+ifdef TIMINGS
+	ALUMINA_FLAGS += --timings
+endif
+
 
 ALUMINA_BOOT = $(BUILD_DIR)/alumina-boot
 ALUMINAC = $(BUILD_DIR)/aluminac
@@ -154,21 +159,20 @@ serve-docs: docs
 	cd $(BUILD_DIR)/html && python3 -m http.server
 ## ------------------------------ Examples -----------------------------
 
-.PHONY: examples
+.PHONY: examples examples
 
 EXAMPLES = $(shell find examples/ -type f -name '*.alu')
 
-$(BUILD_DIR)/example_%.alu.c: examples/%.alu $(ALUMINA_BOOT) $(SYSROOT_FILES)
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --output $@ main=$< || true
+$(BUILD_DIR)/examples/.build:
+	mkdir -p $(BUILD_DIR)/examples
+	touch $@
 
-$(BUILD_DIR)/example_%: $(BUILD_DIR)/example_%.alu.c
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) || true
+$(BUILD_DIR)/examples/%: examples/%.alu $(ALUMINA_BOOT) $(SYSROOT_FILES) $(BUILD_DIR)/examples/.build
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --output $@.c main=$< && \
+	$(CC) $(CFLAGS) -o $@ $@.c $(LDFLAGS) \
+	|| true
 
-examples: $(patsubst examples/%.alu,$(BUILD_DIR)/example_%,$(EXAMPLES))
-
-$(BUILD_DIR)/examples_tested: $(ALUMINA_BOOT) $(SYSROOT_FILES) $(EXAMPLES)
-	cd tools/snapshot-tests/ && pytest snapshot.py
-	touch $(BUILD_DIR)/examples_tested
+examples: $(patsubst examples/%.alu,$(BUILD_DIR)/examples/%,$(EXAMPLES))
 
 ## ------------------------------ Various ------------------------------
 
@@ -191,20 +195,18 @@ alumina-boot: $(ALUMINA_BOOT)
 aluminac: $(ALUMINAC)
 	ln -sf $(ALUMINAC) $@
 
-.PHONY: test-std test-examples test test-fix test-aluminac
+.PHONY: test-std test-examples  test-alumina-boot test-aluminac test
 
 test-std: alumina-boot $(STDLIB_TESTS)
 	$(STDLIB_TESTS) $(TEST_FLAGS)
 
-test-examples: $(BUILD_DIR)/examples_tested
+test-alumina-boot:
+	cargo test $(CARGO_FLAGS) --all-targets
 
 test-aluminac: $(ALUMINAC_TESTS)
 	$(ALUMINAC_TESTS) $(TEST_FLAGS)
 
-test: test-std test-examples
-
-test-fix: $(ALUMINA_BOOT)
-	cd tools/snapshot-tests/ && pytest snapshot.py --snapshot-update
+test: test-alumina-boot test-std
 
 .DEFAULT_GOAL := all
 all: alumina-boot aluminac
@@ -225,6 +227,6 @@ quick: $(BUILD_DIR)/quick
 
 .PHONY: dist-check
 
-dist-check: aluminac doctest test
+dist-check: aluminac doctest test examples
 	cargo check $(CARGO_FLAGS) --all-targets
 	cargo fmt -- --check

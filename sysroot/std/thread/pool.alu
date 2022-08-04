@@ -64,6 +64,31 @@ struct ThreadPool {
 impl ThreadPool {
     use sync::channel::{Channel, ChannelError};
 
+    /// Creates a new thread pool with an unbounded task queue.
+    fn unbounded(num_threads: usize) -> ThreadPool {
+        let inner = mem::alloc::<internal::ThreadPoolInner>();
+        inner.is_bounded = false;
+        inner.work_queue = internal::WorkQueue {
+            unbounded: sync::channel::UnboundedChannel::new()
+        };
+        inner.threads = mem::slice::alloc(num_threads);
+
+        let builder = Builder::new().catch_panic(false);
+        for i in 0usize..num_threads {
+            inner.threads[i] = builder
+                .spawn(|=inner| {
+                    for task in inner.work_queue.unbounded {
+                        task.run();
+                    }
+                })
+                .unwrap();
+        }
+
+        ThreadPool {
+            inner: inner,
+        }
+    }
+
     /// Creates a new thread pool with a bounded task queue.
     ///
     /// `max_in_flight` is the maximum length of the task queue, if the queue is full,
@@ -81,31 +106,6 @@ impl ThreadPool {
             inner.threads[i] = builder
                 .spawn(|=inner| {
                     for task in inner.work_queue.bounded {
-                        task.run();
-                    }
-                })
-                .unwrap();
-        }
-
-        ThreadPool {
-            inner: inner,
-        }
-    }
-
-    /// Creates a new thread pool with an unbounded task queue.
-    fn unbounded(num_threads: usize) -> ThreadPool {
-        let inner = mem::alloc::<internal::ThreadPoolInner>();
-        inner.is_bounded = false;
-        inner.work_queue = internal::WorkQueue {
-            unbounded: sync::channel::UnboundedChannel::new()
-        };
-        inner.threads = mem::slice::alloc(num_threads);
-
-        let builder = Builder::new().catch_panic(false);
-        for i in 0usize..num_threads {
-            inner.threads[i] = builder
-                .spawn(|=inner| {
-                    for task in inner.work_queue.unbounded {
                         task.run();
                     }
                 })

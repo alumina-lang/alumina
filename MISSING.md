@@ -30,6 +30,8 @@
   - Right now there is not even a good error message to say that this is not supported, just a cryptic "unbound placeholder" during mono
 - Lambdas in macros are broken.
 - Promoting all variables to function scope is a bit of a unique feature of Alumina and I like it (comes in quite handy for autoref - can take an address of any rvalue and defer), but it may inhibit some optimizations downstream.
+- `if opt.is_some { opt.inner }` and  `if res.is_ok { res.inner.ok }` do not spark joy. Full pattern matching is overkill, but this is very common and
+  deserves a better idiom.
 
 ## Grammar, parsing, AST
 
@@ -91,7 +93,10 @@
   - IMO it should be mostly OK, modulo a few gaps:
     - ABI awareness. Not sure how much of this LLVM gives you
     - Copying and passing structs by value needs to be explicit
-    - Expressions need to be flattened into SSA form (should be easy enough)
+    - Expressions need to be flattened into SSA form
+      - This should be easy enough, with two caveats which C handles for us today:
+          - order of evaluation needs to be exactly preserved.
+          - || and && need to short circuit
     - Type casts need to be explicit
     - Spaghetti gotos need to be converted to LLVM basic blocks
 - Clean up `mono`. It's a mess.
@@ -99,7 +104,6 @@
 - Will the compiler architecture scale to large programs? Is it possible to pre-compile the libraries at least to AST?
 - AST expression should have a convenience builder, like the one for IR expressions. `expressions.rs` is overly verbose right now, especially with all the span tagging.
 - Most panics should probably use `ice!` macro to report the source span where the compiler panicked
-- Refactor/consolidate the contexts that are passed around
 - Cross-compilation
   - Should be easy enough, as generated C code has almost no platform dependencies. This is more of a concern for the standard library to ensure `cfg` attributes are sprinkled around appropriately.
 - Logging, timings
@@ -126,3 +130,6 @@
 
 - Name conventions (PascalCase, snake_case, ...)
   - This is settled now. See: Rust.
+- Why "Alumina"?
+  - Because it's another metal oxide, like Rust
+    - Rust begets more Rust until everything is oxidized. Aluminium forms just a thin passivation layer leaving "bare metal" just under the surface.

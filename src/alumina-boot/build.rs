@@ -163,6 +163,7 @@ fn main() {
     c_config.include(&src_dir);
     c_config
         .flag_if_supported("-Wno-unused-parameter")
+        .flag_if_supported("-Wno-unused-const-variable")
         .flag_if_supported("-Wno-unused-but-set-variable")
         .flag_if_supported("-Wno-trigraphs");
     c_config.file(&parser_path);
@@ -177,5 +178,5 @@ fn main() {
         .write_all(visitor.as_bytes())
         .unwrap();
 
-    println!("cargo:rerun-if-changed=grammar.js");
+    println!("cargo:rerun-if-changed={}", grammar_path.display());
 }

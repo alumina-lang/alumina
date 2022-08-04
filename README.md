@@ -115,7 +115,7 @@ Finished:
     - [string functions and formatting](https://docs.alumina-lang.net/std/string)
     - [spawning processes](https://docs.alumina-lang.net/std/process)
     - [standard, file and pipe I/O](https://docs.alumina-lang.net/std/io)
-    - [multithreading](https://docs.alumina-lang.net/std/io)
+    - [multithreading](https://docs.alumina-lang.net/std/thread)
     - [synchronization primitives and atomics](https://docs.alumina-lang.net/std/sync)
     - [basic filesystem operations](https://docs.alumina-lang.net/std/fs)
     - [TCP/IP sockets](https://docs.alumina-lang.net/std/net)

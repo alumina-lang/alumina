@@ -276,6 +276,43 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
         }
     }
 
+    /// Removes the elements not mathing the given predicate.
+    ///
+    /// Does not remove excess capacity, call [shrink_to_fit] afterwards, if this
+    /// is desired.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::HashMap;
+    ///
+    /// let map = HashMap::new::<i32, i32>();
+    /// defer map.free();
+    ///
+    /// map.insert(1, 1);
+    /// map.insert(2, 100);
+    /// map.insert(3, 100);
+    /// map.insert(4, 4);
+    ///
+    /// map.retain(|k: &i32, v: &i32| -> bool { *k == *v });
+    ///
+    /// assert_eq!(map.get(1), Option::some(1));
+    /// assert_eq!(map.get(2), Option::none());
+    /// assert_eq!(map.get(3), Option::none());
+    /// assert_eq!(map.get(4), Option::some(4));
+    /// ```
+    fn retain<F: builtins::Callable<(&K, &V), bool>>(self: &mut HashMap<K, V, H>, func: F) {
+        let deleted = 0usize;
+        for i in (0usize..self._buckets.len()) {
+            if self._buckets[i].state == State::Occupied {
+                if !func(&self._buckets[i].item.0, &self._buckets[i].item.1) {
+                    self._buckets[i].state = State::Deleted;
+                    deleted += 1;
+                }
+            }
+        }
+        self._length -= deleted;
+    }
+
     /// @ std::mem::Freeable::free
     fn free(self: &mut HashMap<K, V, H>) {
         self._buckets.free();
