@@ -97,6 +97,9 @@
 <a href="/std/collections/deque/Deque.html#item.extend_from_slice">extend_from_slice</a>
 </li>
 <li>
+<a href="/std/collections/deque/Deque.html#item.retain">retain</a>
+</li>
+<li>
 <a href="/std/collections/deque/Deque.html#item.move">move</a>
 </li>
 <li>
@@ -123,13 +126,14 @@
 <h3>
 <span class="keyword">struct</span> <span class="identifier-type">Deque</span>&lt;T&gt; { ... }</h3>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L23-L27"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L24-L28"/>source</a>
 </div>
 </div>
 <p>
 A double-ended queue (growable ring buffer).
 </p><p>
 Elements can be pushed to and popped from either end of the queue.
+</p><p>
 </p>
 <h3> Example</h3>
 <p>
@@ -161,14 +165,14 @@ assert_eq!(deque.pop_front(), Option::some(3));
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">new</span>() -> <a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L33-L35"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L34-L36"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Create an empty deque
 </p><p>
-This will not call allocate until the first element is inserted.
+This will not allocate until the first element is inserted.
 </p><p>
 </p>
 </div>
@@ -178,7 +182,7 @@ This will not call allocate until the first element is inserted.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">with_capacity</span>(capacity: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> <a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L38-L48"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L39-L45"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -193,7 +197,7 @@ Create a deque that can hold up to <code class="language-alumina">capacity</code
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">from_slice</span>(slice: &amp;[T]) -> <a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L51-L57"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L48-L54"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -210,7 +214,7 @@ Create a deque from a slice, copying the elements.
 I: <a href="/std/iter/Iterator.html"><span class="identifier-type">Iterator</span></a>&lt;I, T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L60-L64"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L57-L61"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -225,7 +229,7 @@ Create a deque from an iterator of elements.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">reserve</span>(self: &amp;mut <a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;, additional: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L67-L75"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L64-L68"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -240,13 +244,13 @@ Reserve capacity for at least <code class="language-alumina">additional</code> e
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">shrink_to_fit</span>(self: &amp;mut <a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L79-L83"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L72-L76"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Shrink the size of the underlying buffer to match
-the current length.
+Shrink the size of the underlying buffer to the minimum size
+needed to hold the current elements.
 </p><p>
 </p>
 </div>
@@ -256,7 +260,7 @@ the current length.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">len</span>(self: &amp;<a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;) -> <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L110-L116"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L103-L106"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -271,7 +275,7 @@ Returns the number of elements in the deque.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">capacity</span>(self: &amp;<a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;) -> <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L119-L125"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L109-L115"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -286,7 +290,7 @@ Returns the total number of elements that the deque can hold without reallocatin
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">is_empty</span>(self: &amp;<a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L128-L130"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L118-L121"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -301,7 +305,7 @@ Returns <code class="language-alumina">true</code> if the deque is empty, <code 
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">clear</span>(self: &amp;mut <a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L136-L139"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L127-L130"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -319,12 +323,12 @@ This does not shrink the underlying buffer, call
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">as_slices</span>(self: &amp;<a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;) -> (&amp;[T], &amp;[T])</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L145-L151"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L136-L142"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Returns a pair of slices that represent the deque's contents.
+Returns a pair of slices that represent the deque's contents in order.
 </p><p>
 If the deque has not wrapped around (elements are contiguous in memory),
 the second slice will be empty.
@@ -337,12 +341,12 @@ the second slice will be empty.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">as_slices_mut</span>(self: &amp;mut <a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;) -> (&amp;mut [T], &amp;mut [T])</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L157-L163"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L148-L154"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Returns a pair of mutable slices that represent the deque's contents.
+Returns a pair of mutable slices that represent the deque's contents in order.
 </p><p>
 If the deque has not wrapped around (elements are contiguous in memory),
 the second slice will be empty.
@@ -355,7 +359,7 @@ the second slice will be empty.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">push</span>(self: &amp;mut <a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;, element: T)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L166-L170"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L157-L161"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -370,7 +374,7 @@ Pushes an element to the back of the deque.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">pop</span>(self: &amp;mut <a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L175-L182"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L166-L173"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -387,7 +391,7 @@ If the queue is empty, returns <code class="language-alumina">Option::none()</co
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">push_front</span>(self: &amp;mut <a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;, element: T)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L185-L189"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L176-L180"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -402,7 +406,7 @@ Pushes an element to the front of the deque.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">pop_front</span>(self: &amp;mut <a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L194-L202"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L185-L193"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -419,7 +423,7 @@ If the queue is empty, returns <code class="language-alumina">Option::none()</co
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">iter</span>(self: &amp;<a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;) -> <a href="/std/collections/deque/DequeIterator.html"><span class="identifier-type">DequeIterator</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L205-L207"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L196-L202"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -434,7 +438,7 @@ Returns an iterator over the elements of the deque.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">iter_ref</span>(self: &amp;<a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;) -> <a href="/std/collections/deque/DequeRefIterator.html"><span class="identifier-type">DequeRefIterator</span></a>&lt;&amp;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L210-L216"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L205-L211"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -449,7 +453,7 @@ Returns a iterator over the pointers to the elements of the deque.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">iter_mut</span>(self: &amp;mut <a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;) -> <a href="/std/collections/deque/DequeRefIterator.html"><span class="identifier-type">DequeRefIterator</span></a>&lt;&amp;mut T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L219-L225"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L214-L220"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -466,7 +470,7 @@ Returns a iterator over the mutable pointers to the elements of the deque.
 I: <a href="/std/iter/Iterator.html"><span class="identifier-type">Iterator</span></a>&lt;I, T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L228-L239"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L223-L234"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -483,7 +487,7 @@ Extends the deque on the back end with the contents of an iterator.
 I: <a href="/std/iter/Iterator.html"><span class="identifier-type">Iterator</span></a>&lt;I, T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L242-L253"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L237-L248"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -498,7 +502,7 @@ Extends the deque on the front end with the contents of an iterator.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">extend_from_slice</span>(self: &amp;mut <a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;, value: &amp;[T])</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L256-L276"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L251-L271"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -509,11 +513,50 @@ Extends the deque on the back end with the contents of a slice.
 </div>
 </li>
 <li>
+<div class="signature" id="item.retain">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">retain</span>&lt;F&gt;(self: &amp;mut <a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;, func: F)<div class="protocol-bound">
+F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;(&amp;T), <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a>&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L295-L309"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Removes the elements not mathing the given predicate.
+</p><p>
+Does not remove excess capacity, call <a class="path-link" href="/std/collections/deque/Deque.html#item.shrink_to_fit">shrink_to_fit</a> afterwards, if this
+is desired.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::collections::Deque;
+
+let queue: Deque&lt;i32&gt; = Deque::from_iter(&amp;(0..=6));
+defer queue.free();
+
+queue.retain(|x: &amp;i32| -&gt; bool { *x % 2 == 0 });
+
+assert_eq!(queue.len(), 4);
+let iter = queue.iter();
+assert_eq!(iter.next(), Option::some(0));
+assert_eq!(iter.next(), Option::some(2));
+assert_eq!(iter.next(), Option::some(4));
+assert_eq!(iter.next(), Option::some(6));
+assert_eq!(iter.next(), Option::none());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aDeque%3b%0a%20%20%20%0a%20%20%20let%20queue%3a%20Deque%3ci32%3e%20%3d%20Deque%3a%3afrom%5fiter%28%26%280%2e%2e%3d6%29%29%3b%0a%20%20%20defer%20queue%2efree%28%29%3b%0a%20%20%20%0a%20%20%20queue%2eretain%28%7cx%3a%20%26i32%7c%20%2d%3e%20bool%20%7b%20%2ax%20%25%202%20%3d%3d%200%20%7d%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28queue%2elen%28%29%2c%204%29%3b%0a%20%20%20let%20iter%20%3d%20queue%2eiter%28%29%3b%0a%20%20%20assert%5feq%21%28iter%2enext%28%29%2c%20Option%3a%3asome%280%29%29%3b%0a%20%20%20assert%5feq%21%28iter%2enext%28%29%2c%20Option%3a%3asome%282%29%29%3b%0a%20%20%20assert%5feq%21%28iter%2enext%28%29%2c%20Option%3a%3asome%284%29%29%3b%0a%20%20%20assert%5feq%21%28iter%2enext%28%29%2c%20Option%3a%3asome%286%29%29%3b%0a%20%20%20assert%5feq%21%28iter%2enext%28%29%2c%20Option%3a%3anone%28%29%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
 <div class="signature" id="item.move">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">move</span>(self: &amp;mut <a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;) -> <a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L279-L284"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L317-L322"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -530,7 +573,7 @@ See <a class="path-link" href="/std/mem/Movable.html">Movable</a> for details.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">free</span>(self: &amp;mut <a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L287-L289"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L325-L327"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -545,7 +588,7 @@ Frees the memory backing the object.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">clone</span>(self: &amp;<a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;) -> <a href="/std/collections/deque/Deque.html"><span class="identifier-type">Deque</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L292-L298"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/deque.alu#L330-L336"/>source</a>
 </div>
 </div>
 <div class="item-doc">

@@ -82,6 +82,9 @@
 <a href="/std/collections/HashMap.html#item.iter_mut">iter_mut</a>
 </li>
 <li>
+<a href="/std/collections/HashMap.html#item.retain">retain</a>
+</li>
+<li>
 <a href="/std/collections/HashMap.html#item.free">free</a>
 </li>
 <li>
@@ -456,11 +459,52 @@ Returns an iterator of mutable pointers to elements of the array.
 </div>
 </li>
 <li>
+<div class="signature" id="item.retain">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">retain</span>&lt;F&gt;(self: &amp;mut <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;, func: F)<div class="protocol-bound">
+F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;(&amp;K, &amp;V), <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a>&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L303-L314"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Removes the elements not mathing the given predicate.
+</p><p>
+Does not remove excess capacity, call <a class="path-link" href="/std/collections/hashmap/HashMap.html#item.shrink_to_fit">shrink_to_fit</a> afterwards, if this
+is desired.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::collections::HashMap;
+
+let map = HashMap::new::&lt;i32, i32&gt;();
+defer map.free();
+
+map.insert(1, 1);
+map.insert(2, 100);
+map.insert(3, 100);
+map.insert(4, 4);
+
+map.retain(|k: &amp;i32, v: &amp;i32| -&gt; bool { *k == *v });
+
+assert_eq!(map.get(1), Option::some(1));
+assert_eq!(map.get(2), Option::none());
+assert_eq!(map.get(3), Option::none());
+assert_eq!(map.get(4), Option::some(4));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aHashMap%3b%0a%20%20%20%0a%20%20%20let%20map%20%3d%20HashMap%3a%3anew%3a%3a%3ci32%2c%20i32%3e%28%29%3b%0a%20%20%20defer%20map%2efree%28%29%3b%0a%20%20%20%0a%20%20%20map%2einsert%281%2c%201%29%3b%0a%20%20%20map%2einsert%282%2c%20100%29%3b%0a%20%20%20map%2einsert%283%2c%20100%29%3b%0a%20%20%20map%2einsert%284%2c%204%29%3b%0a%20%20%20%0a%20%20%20map%2eretain%28%7ck%3a%20%26i32%2c%20v%3a%20%26i32%7c%20%2d%3e%20bool%20%7b%20%2ak%20%3d%3d%20%2av%20%7d%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28map%2eget%281%29%2c%20Option%3a%3asome%281%29%29%3b%0a%20%20%20assert%5feq%21%28map%2eget%282%29%2c%20Option%3a%3anone%28%29%29%3b%0a%20%20%20assert%5feq%21%28map%2eget%283%29%2c%20Option%3a%3anone%28%29%29%3b%0a%20%20%20assert%5feq%21%28map%2eget%284%29%2c%20Option%3a%3asome%284%29%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
 <div class="signature" id="item.free">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">free</span>(self: &amp;mut <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L280-L282"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L317-L319"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -475,7 +519,7 @@ Frees the memory backing the object.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">move</span>(self: &amp;mut <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;) -> <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L285-L290"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L322-L327"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -492,7 +536,7 @@ See <a class="path-link" href="/std/mem/Movable.html">Movable</a> for details.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">clone</span>(self: &amp;<a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;) -> <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L293-L299"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L330-L336"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -517,7 +561,7 @@ H: <a href="/std/hash/Hasher.html"><span class="identifier-type">Hasher</span></
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">from_iter</span>(iter: &amp;mut I) -> <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L321-L325"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L358-L362"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -545,7 +589,7 @@ assert!(map.get(1) == Option::some(2));
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">extend</span>(self: &amp;mut <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;, iter: &amp;mut I)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L329-L339"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L366-L376"/>source</a>
 </div>
 </div>
 <div class="item-doc">

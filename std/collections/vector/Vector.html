@@ -94,6 +94,9 @@
 <a href="/std/collections/vector/Vector.html#item.truncate">truncate</a>
 </li>
 <li>
+<a href="/std/collections/vector/Vector.html#item.retain">retain</a>
+</li>
+<li>
 <a href="/std/collections/vector/Vector.html#item.iter">iter</a>
 </li>
 <li>
@@ -523,12 +526,15 @@ Returns <code class="language-alumina">true</code> if the vector is empty, <code
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">clear</span>(self: &amp;mut <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;T&gt;)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L238-L240"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L241-L243"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Clear the vector, removing all elements.
+</p><p>
+Does not remove excess capacity, call <a class="path-link" href="/std/collections/vector/Vector.html#item.shrink_to_fit">shrink_to_fit</a> afterwards, if this
+is desired.
 </p><p>
 </p>
 </div>
@@ -538,7 +544,7 @@ Clear the vector, removing all elements.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">truncate</span>(self: &amp;mut <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;T&gt;, new_size: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L249-L253"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L252-L256"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -555,11 +561,41 @@ specified capacity.
 </div>
 </li>
 <li>
+<div class="signature" id="item.retain">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">retain</span>&lt;F&gt;(self: &amp;mut <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;T&gt;, func: F)<div class="protocol-bound">
+F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;(&amp;T), <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a>&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L271-L283"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Removes the elements not mathing the given predicate.
+</p><p>
+Does not remove excess capacity, call <a class="path-link" href="/std/collections/vector/Vector.html#item.shrink_to_fit">shrink_to_fit</a> afterwards, if this
+is desired.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let vec = (0..=10).to_vector();
+defer vec.free();
+
+vec.retain(|x: &amp;i32| -&gt; bool { *x % 2 == 0 });
+assert_eq!(vec.as_slice(), &amp;[0, 2, 4, 6, 8, 10]);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20vec%20%3d%20%280%2e%2e%3d10%29%2eto%5fvector%28%29%3b%0a%20%20%20defer%20vec%2efree%28%29%3b%0a%20%20%20%0a%20%20%20vec%2eretain%28%7cx%3a%20%26i32%7c%20%2d%3e%20bool%20%7b%20%2ax%20%25%202%20%3d%3d%200%20%7d%29%3b%0a%20%20%20assert%5feq%21%28vec%2eas%5fslice%28%29%2c%20%26%5b0%2c%202%2c%204%2c%206%2c%208%2c%2010%5d%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
 <div class="signature" id="item.iter">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">iter</span>(self: &amp;<a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;T&gt;) -> <a href="/std/mem/SliceIterator.html"><span class="identifier-type">SliceIterator</span></a>&lt;&amp;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L256-L259"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L286-L289"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -574,7 +610,7 @@ Returns an iterator over the vector.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">iter_ref</span>(self: &amp;<a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;T&gt;) -> <a href="/std/mem/SliceRefIterator.html"><span class="identifier-type">SliceRefIterator</span></a>&lt;&amp;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L262-L265"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L292-L295"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -589,7 +625,7 @@ Returns an iterator over the pointers to the elements.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">iter_mut</span>(self: &amp;mut <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;T&gt;) -> <a href="/std/mem/SliceRefIterator.html"><span class="identifier-type">SliceRefIterator</span></a>&lt;&amp;mut T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L279-L282"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L309-L312"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -616,7 +652,7 @@ assert_eq!(vec.as_slice(), &amp;[2, 4, 6]);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">shrink_to_fit</span>(self: &amp;mut <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;T&gt;)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L285-L289"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L315-L319"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -631,7 +667,7 @@ Shrink the underlying buffer to the length of the vector.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">free</span>(self: &amp;mut <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;T&gt;)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L292-L294"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L322-L324"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -646,7 +682,7 @@ Frees the memory backing the object.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">move</span>(self: &amp;mut <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;T&gt;) -> <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L297-L302"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L327-L332"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -663,7 +699,7 @@ See <a class="path-link" href="/std/mem/Movable.html">Movable</a> for details.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">clone</span>(self: &amp;<a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;T&gt;) -> <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L305-L309"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L335-L339"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -682,7 +718,7 @@ Create a shallow copy of the vector.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">write_str</span>(self: &amp;mut <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>&gt;, buf: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>, <a href="/std/fmt/Error.html"><span class="identifier-type">Error</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L316-L319"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L346-L349"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -697,7 +733,7 @@ Write a string
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">write_char</span>(self: &amp;mut <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>&gt;, c: <a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>, <a href="/std/fmt/Error.html"><span class="identifier-type">Error</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L322-L325"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L352-L355"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -714,7 +750,7 @@ Write a single character
 F: <a href="/std/fmt/Formatter.html"><span class="identifier-type">Formatter</span></a>&lt;F&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L328-L330"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/vector.alu#L358-L360"/>source</a>
 </div>
 </div>
 <div class="item-doc">
