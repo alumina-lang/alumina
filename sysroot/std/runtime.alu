@@ -78,21 +78,6 @@ mod internal {
         slice::from_raw(args as &&[u8], argc)
     }
 
-    /// Sets up associated data of the main thread
-    ///
-    /// Only runs when threading is enabled (`--cfg threading`).
-    #[cfg(threading)]
-    fn threading_init() {
-        use thread::internal::{THREAD_INFO, ThreadInfo};
-
-        // ThreadInfo for main thread is not freed when program is exiting. Calling
-        // C main in a loop would cause a memory leak. Calling user main recursively
-        // is fine.
-        debug_assert!(THREAD_INFO == null);
-        THREAD_INFO = ThreadInfo::new();
-        THREAD_INFO.id = libc::pthread_self();
-    }
-
     #[cfg(not(custom_entrypoint))]
     {
         /// Program entrypoint glue.
@@ -107,7 +92,7 @@ mod internal {
             let func = std::util::unit::<UserMain>();
 
             #[cfg(threading)]
-            threading_init();
+            std::thread::internal::threading_init();
 
             let ret = when arguments_of<UserMain>: (&[&[u8]]) {
                 func(argc_argv_to_slice!(argc, argv))

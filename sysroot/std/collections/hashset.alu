@@ -133,6 +133,33 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
         }
     }
 
+    /// Removes the elements not mathing the given predicate.
+    ///
+    /// Does not remove excess capacity, call [shrink_to_fit] afterwards, if this
+    /// is desired.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::HashSet;
+    ///
+    /// let set = HashSet::new::<i32>();
+    /// defer set.free();
+    ///
+    /// set.insert(1);
+    /// set.insert(2);
+    /// set.insert(3);
+    ///
+    /// set.retain(|x: &i32| -> bool { *x % 2 == 0 });
+    ///
+    /// assert!(!set.contains(1));
+    /// assert!(set.contains(2));
+    /// assert!(!set.contains(3));
+    /// ```
+    fn retain<F: builtins::Callable<(&K), bool>>(self: &mut HashSet<K, H>, func: F) {
+        self._inner.retain(|&func, k: &K, v: &()| -> bool { func(k) });
+    }
+
+
     /// @ mem::Freeable::free
     #[inline]
     fn free(self: &mut HashSet<K, H>) {
