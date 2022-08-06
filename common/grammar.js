@@ -312,7 +312,10 @@ module.exports = grammar({
     generic_argument: ($) =>
       seq(
         field("placeholder", $.identifier),
-        optional(seq(":", sepBy("+", field("bound", $.protocol_bound)))),
+        optional(seq(":", choice(
+          field("all_bounds", sepBy("+", field("bound", $.protocol_bound))),
+          field("any_bounds", sepBy("|", field("bound", $.protocol_bound))),
+        ))),
         optional(seq("=", field("default", $._type)))
       ),
 
@@ -401,8 +404,11 @@ module.exports = grammar({
         $.dyn_of,
         $.array_of,
         $.tuple_type,
-        $.function_pointer
+        $.function_pointer,
+        $.type_of
       ),
+
+    type_of: ($) => seq("typeof", "(", field("inner", $._expression), ")"),
 
     never_type: ($) => "!",
 

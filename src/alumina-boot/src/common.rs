@@ -227,8 +227,13 @@ pub enum CodeErrorKind {
     ThreadLocalNotSupported,
     #[error("dyn requires a protocol")]
     NonProtocolDyn,
+    #[error("builtin protocols cannot be used with `dyn`")]
+    BuiltinProtocolDyn,
     #[error("protocols containing generic functions can only be used as mixins")]
     MixinOnlyProtocol,
+    #[error("protocols cannot be used as concrete types (did you mean to use `&dyn {}`?)", .0)]
+    ProtocolsAreSpecialMkay(String),
+
     #[error("signature of `{}` is incompatible with virtual dispatch", .0)]
     NonDynnableFunction(String),
 

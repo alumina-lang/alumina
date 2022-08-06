@@ -5,7 +5,7 @@ use crate::{
     common::{AluminaError, ArenaAllocatable},
 };
 
-use super::{AstCtx, AstId, ExprP, Placeholder, Statement, TyP};
+use super::{AstCtx, AstId, ExprP, Placeholder, ProtocolBounds, Statement, TyP};
 
 pub struct Rebinder<'ast> {
     pub ast: &'ast AstCtx<'ast>,
@@ -23,12 +23,16 @@ impl<'ast> Rebinder<'ast> {
     ) -> Result<Placeholder<'ast>, AluminaError> {
         let bounds = placeholder
             .bounds
+            .bounds
             .iter()
             .map(|b| self.visit_bound(b))
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(Placeholder {
-            bounds: bounds.alloc_on(self.ast),
+            bounds: ProtocolBounds {
+                typ: placeholder.bounds.typ,
+                bounds: bounds.alloc_on(self.ast),
+            },
             default: placeholder.default.map(|d| self.visit_typ(d)).transpose()?,
             id: placeholder.id,
         })
@@ -68,6 +72,7 @@ impl<'ast> Rebinder<'ast> {
                 self.visit_typ(ret)?,
             ),
             Dyn(inner, is_const) => Dyn(self.visit_typ(inner)?, *is_const),
+            TypeOf(inner) => TypeOf(self.visit_expr(inner)?),
             Generic(item, args) => Generic(
                 item,
                 args.iter()
@@ -75,6 +80,10 @@ impl<'ast> Rebinder<'ast> {
                     .collect::<Result<Vec<_>, _>>()?
                     .alloc_on(self.ast),
             ),
+            Defered(super::Defered { typ, name }) => Defered(super::Defered {
+                typ: self.visit_typ(typ)?,
+                name,
+            }),
 
             NamedFunction(_) | NamedType(_) | Builtin(_) | Protocol(_) => return Ok(typ),
         };
@@ -205,18 +214,22 @@ impl<'ast> Rebinder<'ast> {
             StaticIf(ref cond, then, els) => {
                 let cond = StaticIfCondition {
                     typ: self.visit_typ(cond.typ)?,
-                    bounds: cond
-                        .bounds
-                        .iter()
-                        .map(|b| {
-                            self.visit_typ(b.typ).map(|t| Bound {
-                                span: b.span,
-                                negated: b.negated,
-                                typ: t,
+                    bounds: ProtocolBounds {
+                        typ: cond.bounds.typ,
+                        bounds: cond
+                            .bounds
+                            .bounds
+                            .iter()
+                            .map(|b| {
+                                self.visit_typ(b.typ).map(|t| Bound {
+                                    span: b.span,
+                                    negated: b.negated,
+                                    typ: t,
+                                })
                             })
-                        })
-                        .collect::<Result<Vec<_>, _>>()?
-                        .alloc_on(self.ast),
+                            .collect::<Result<Vec<_>, _>>()?
+                            .alloc_on(self.ast),
+                    },
                 };
 
                 StaticIf(cond, self.visit_expr(then)?, self.visit_expr(els)?)

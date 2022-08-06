@@ -64,6 +64,10 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
         match ty {
             Ty::Closure(item) if !body_only => match item.get().unwrap() {
                 IRItem::Closure(c) => {
+                    if ty.is_zero_sized() {
+                        return Ok(());
+                    }
+
                     for f in c.fields.iter().filter(|f| !f.ty.is_zero_sized()) {
                         self.add_type(f.ty, false)?;
                     }
@@ -132,7 +136,9 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                 self.ctx.register_type(ty, name);
             }
             Ty::Array(inner, _len) if !body_only => {
-                assert!(!inner.is_zero_sized());
+                if ty.is_zero_sized() {
+                    return Ok(());
+                }
 
                 self.add_type(inner, false)?;
                 let name = self.ctx.get_type(inner).mangle(self.ctx.make_id());
@@ -144,6 +150,10 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
             }
             Ty::NamedType(item) => match item.get().unwrap() {
                 IRItem::StructLike(s) => {
+                    if ty.is_zero_sized() {
+                        return Ok(());
+                    }
+
                     if !body_only {
                         let name = if let Some(name) = s.name {
                             self.ctx.get_name_with_hint(name, item.id)
@@ -175,6 +185,10 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                 _ => {}
             },
             Ty::Tuple(items) if !body_only => {
+                if ty.is_zero_sized() {
+                    return Ok(());
+                }
+
                 for elem in items.iter().filter(|f| !f.is_zero_sized()) {
                     self.add_type(elem, false)?;
                 }

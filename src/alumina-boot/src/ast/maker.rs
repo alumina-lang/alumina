@@ -76,14 +76,24 @@ impl<'ast> AstItemMaker<'ast> {
                                 // now. The complication is that default args need to be resolved quite
                                 // early in the monomorphization process to ensure that fully-specified
                                 // items and ones instantiated with default values result in the same item.
-                                TypeVisitor::new(self.ast, scope.parent().unwrap(), self.in_a_macro)
-                                    .visit(node)
+                                TypeVisitor::new(
+                                    self.global_ctx.clone(),
+                                    self.ast,
+                                    scope.parent().unwrap(),
+                                    self.in_a_macro,
+                                )
+                                .visit(node)
                             })
                             .transpose()?,
                         // Unlike defaults, bounds can refer to self and this is in fact quite central
                         // to how Alumina protocols work.
-                        bounds: TypeVisitor::new(self.ast, scope.clone(), self.in_a_macro)
-                            .parse_protocol_bounds(node)?,
+                        bounds: TypeVisitor::new(
+                            self.global_ctx.clone(),
+                            self.ast,
+                            scope.clone(),
+                            self.in_a_macro,
+                        )
+                        .parse_protocol_bounds(node)?,
                     });
                 }
                 _ => {}
@@ -131,9 +141,12 @@ impl<'ast> AstItemMaker<'ast> {
                         placeholders.extend_from_slice(self.get_placeholders(scope)?);
                         let placeholders = placeholders.alloc_on(self.ast);
 
-                        let mut visitor =
-                            TypeVisitor::new(self.ast, scope.clone(), self.in_a_macro)
-                                .with_protocol();
+                        let mut visitor = TypeVisitor::new(
+                            self.global_ctx.clone(),
+                            self.ast,
+                            scope.clone(),
+                            self.in_a_macro,
+                        );
                         let protocol_type =
                             visitor.visit(node.child_by_field_name("protocol").unwrap())?;
 
@@ -181,7 +194,12 @@ impl<'ast> AstItemMaker<'ast> {
         for (name, item) in scope.inner().all_items() {
             match item.kind {
                 NamedItemKind::Field(node) => {
-                    let mut visitor = TypeVisitor::new(self.ast, scope.clone(), self.in_a_macro);
+                    let mut visitor = TypeVisitor::new(
+                        self.global_ctx.clone(),
+                        self.ast,
+                        scope.clone(),
+                        self.in_a_macro,
+                    );
                     let field_type = visitor.visit(node.child_by_field_name("type").unwrap())?;
 
                     let span = Span {
@@ -375,7 +393,15 @@ impl<'ast> AstItemMaker<'ast> {
 
         let target = node
             .child_by_field_name("inner")
-            .map(|n| TypeVisitor::new(self.ast, scope.clone(), self.in_a_macro).visit(n))
+            .map(|n| {
+                TypeVisitor::new(
+                    self.global_ctx.clone(),
+                    self.ast,
+                    scope.clone(),
+                    self.in_a_macro,
+                )
+                .visit(n)
+            })
             .transpose()?
             .unwrap();
 
@@ -433,8 +459,13 @@ impl<'ast> AstItemMaker<'ast> {
         for (_name, item) in scope.inner().all_items() {
             match item.kind {
                 NamedItemKind::Parameter(id, node) => {
-                    let typ = TypeVisitor::new(self.ast, scope.clone(), self.in_a_macro)
-                        .visit(node.child_by_field_name("type").unwrap())?;
+                    let typ = TypeVisitor::new(
+                        self.global_ctx.clone(),
+                        self.ast,
+                        scope.clone(),
+                        self.in_a_macro,
+                    )
+                    .visit(node.child_by_field_name("type").unwrap())?;
 
                     let span = Span {
                         start: node.start_byte(),
@@ -487,7 +518,15 @@ impl<'ast> AstItemMaker<'ast> {
 
         let return_type = node
             .child_by_field_name("return_type")
-            .map(|n| TypeVisitor::new(self.ast, scope.clone(), self.in_a_macro).visit(n))
+            .map(|n| {
+                TypeVisitor::new(
+                    self.global_ctx.clone(),
+                    self.ast,
+                    scope.clone(),
+                    self.in_a_macro,
+                )
+                .visit(n)
+            })
             .transpose()?
             .unwrap_or_else(|| self.ast.intern_type(Ty::Builtin(BuiltinType::Void)));
 
@@ -537,7 +576,15 @@ impl<'ast> AstItemMaker<'ast> {
     ) -> Result<(), AluminaError> {
         let typ = node
             .child_by_field_name("type")
-            .map(|n| TypeVisitor::new(self.ast, scope.clone(), self.in_a_macro).visit(n))
+            .map(|n| {
+                TypeVisitor::new(
+                    self.global_ctx.clone(),
+                    self.ast,
+                    scope.clone(),
+                    self.in_a_macro,
+                )
+                .visit(n)
+            })
             .transpose()?;
 
         let is_extern = node.child_by_field_name("extern").is_some();
