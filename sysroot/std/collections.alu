@@ -27,3 +27,24 @@ fn free_all<T: mem::Freeable<T>(col: &mut T) {
     }
     col.free();
 }
+
+
+#[cfg(all(test_std, test)]
+mod tests {
+
+    #[test]
+    fn test_free_all() {
+        struct Free { counter: &mut usize }
+        impl Free { fn free(self: &mut Free) { *self.counter += 1; } }
+
+        let free_count = 0usize;
+        let f: Vector<Free> = Vector::new();
+
+        for i in 0..42 {
+            f.push(Free { counter: &free_count });
+        }
+        f.free_all();
+
+        assert_eq!(free_count, 42);
+    }
+}

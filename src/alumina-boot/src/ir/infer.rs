@@ -113,7 +113,14 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                     self.match_slot(inferred, a2, fun.return_type)?;
                 }
             }
-            (ast::Ty::Generic(item, holders), ir::Ty::NamedType(t) | ir::Ty::NamedFunction(t)) => {
+            (ast::Ty::Generic(inner, holders), ir::Ty::NamedType(t) | ir::Ty::NamedFunction(t)) => {
+                let item = match inner {
+                    ast::Ty::NamedType(item) => item,
+                    ast::Ty::NamedFunction(item) => item,
+                    ast::Ty::Protocol(item) => item,
+                    _ => return Err(()),
+                };
+
                 if let ast::Item::TypeDef(t) = item.get() {
                     let mut rebinder = Rebinder::new(
                         self.ast,
@@ -138,7 +145,12 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                     self.match_slot(inferred, *holder, *t)?;
                 }
             }
-            (ast::Ty::Dyn(ast::Ty::Generic(item, holders), a_const), _) => {
+            (ast::Ty::Dyn(ast::Ty::Generic(inner, holders), a_const), _) => {
+                let item = match inner {
+                    ast::Ty::Protocol(item) => item,
+                    _ => return Err(()),
+                };
+
                 if let Some(LangTypeKind::Dyn(
                     ir::Ty::Protocol(proto),
                     ir::Ty::Pointer(_, b_const),
@@ -176,9 +188,15 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
         // we have <A, B, C, F: Callable<(A, B), C>> and F is a known function/function pointer,
         // we can infer A, B and C.
         if let Some(tgt) = inferred.get(&placeholder.id).copied() {
-            for bound in placeholder.bounds {
+            if placeholder.bounds.typ == ast::ProtocolBoundsType::Any {
+                return;
+            }
+
+            for bound in placeholder.bounds.bounds {
                 let (item, args) = match bound.typ {
-                    ast::Ty::Generic(item, args) => (item, args),
+                    ast::Ty::Generic(ast::Ty::NamedType(item), args) => (item, args),
+                    ast::Ty::Generic(ast::Ty::NamedFunction(item), args) => (item, args),
+                    ast::Ty::Generic(ast::Ty::Protocol(item), args) => (item, args),
                     _ => continue,
                 };
 

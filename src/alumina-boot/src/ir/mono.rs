@@ -539,10 +539,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let mut protocol_bounds = Vec::new();
         for (placeholder, ty) in s.placeholders.iter().zip(generic_args.iter()) {
-            for bound in placeholder.bounds {
-                let ir_bound = child.lower_type(bound.typ).append_span(bound.span)?;
-                protocol_bounds.push((bound.span, ir_bound, *ty, bound.negated));
+            let mut grouped_bounds = Vec::new();
+            for bound in placeholder.bounds.bounds {
+                let ir_bound = child.lower_type_inner(bound.typ).append_span(bound.span)?;
+                grouped_bounds.push((bound.span, ir_bound, bound.negated));
             }
+            protocol_bounds.push((placeholder.bounds.typ, *ty, grouped_bounds));
         }
 
         let fields = s
@@ -564,9 +566,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         });
         item.assign(res);
 
-        child
-            .check_protocol_bounds(protocol_bounds)
-            .append_span(s.span)?;
+        for (kind, ty, bounds) in protocol_bounds {
+            child
+                .check_protocol_bounds(kind, ty, bounds)
+                .append_span(s.span)?;
+        }
 
         for mixin in s.mixins {
             self.expand_mixin(mixin)?;
@@ -591,10 +595,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let mut protocol_bounds = Vec::new();
         for (placeholder, ty) in s.placeholders.iter().zip(generic_args.iter()) {
-            for bound in placeholder.bounds {
-                let ir_bound = child.lower_type(bound.typ).append_span(bound.span)?;
-                protocol_bounds.push((bound.span, ir_bound, *ty, bound.negated));
+            let mut grouped_bounds = Vec::new();
+            for bound in placeholder.bounds.bounds {
+                let ir_bound = child.lower_type_inner(bound.typ).append_span(bound.span)?;
+                grouped_bounds.push((bound.span, ir_bound, bound.negated));
             }
+            protocol_bounds.push((placeholder.bounds.typ, *ty, grouped_bounds));
         }
 
         let inner = child.lower_type(s.target).append_span(s.span)?;
@@ -602,9 +608,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let res = ir::IRItem::Alias(inner);
         item.assign(res);
 
-        child
-            .check_protocol_bounds(protocol_bounds)
-            .append_span(s.span)?;
+        for (kind, ty, bounds) in protocol_bounds {
+            child
+                .check_protocol_bounds(kind, ty, bounds)
+                .append_span(s.span)?;
+        }
 
         Ok(())
     }
@@ -626,10 +634,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         // Protocols can have their own protocol bounds, yay!
         let mut protocol_bounds = Vec::new();
         for (placeholder, ty) in s.placeholders.iter().zip(generic_args.iter()) {
-            for bound in placeholder.bounds {
-                let ir_bound = child.lower_type(bound.typ).append_span(bound.span)?;
-                protocol_bounds.push((bound.span, ir_bound, *ty, bound.negated));
+            let mut grouped_bounds = Vec::new();
+            for bound in placeholder.bounds.bounds {
+                let ir_bound = child.lower_type_inner(bound.typ).append_span(bound.span)?;
+                grouped_bounds.push((bound.span, ir_bound, bound.negated));
             }
+            protocol_bounds.push((placeholder.bounds.typ, *ty, grouped_bounds));
         }
 
         let mut methods = Vec::new();
@@ -658,46 +668,88 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         });
         item.assign(res);
 
-        child
-            .check_protocol_bounds(protocol_bounds)
-            .append_span(s.span)?;
+        for (kind, ty, bounds) in protocol_bounds {
+            child
+                .check_protocol_bounds(kind, ty, bounds)
+                .append_span(s.span)?;
+        }
 
         Ok(())
     }
 
     fn check_protocol_bounds(
         &mut self,
-        bounds: Vec<(Option<ast::Span>, ir::TyP<'ir>, ir::TyP<'ir>, bool)>,
+        kind: ast::ProtocolBoundsType,
+        typ: ir::TyP<'ir>,
+        bounds: Vec<(Option<ast::Span>, ir::TyP<'ir>, bool)>,
     ) -> Result<(), AluminaError> {
-        for (span, bound, ty, negated) in bounds {
-            match self.check_protocol_bound(bound, ty).append_span(span)? {
-                BoundCheckResult::Matches => {
+        if bounds.is_empty() {
+            return Ok(());
+        }
+
+        let mut found = false;
+        for (span, bound, negated) in bounds.iter().copied() {
+            match self.check_protocol_bound(bound, typ).append_span(span)? {
+                BoundCheckResult::Matches if negated => {
+                    if kind == ast::ProtocolBoundsType::Any {
+                        continue;
+                    }
                     if negated {
                         return Err(CodeErrorKind::ProtocolMatch(
-                            self.mono_ctx.type_name(ty).unwrap(),
+                            self.mono_ctx.type_name(typ).unwrap(),
                             self.mono_ctx.type_name(bound).unwrap(),
                         ))
                         .with_span(span);
                     }
                 }
                 BoundCheckResult::DoesNotMatch if !negated => {
+                    if kind == ast::ProtocolBoundsType::Any {
+                        continue;
+                    }
                     return Err(CodeErrorKind::ProtocolMismatch(
-                        self.mono_ctx.type_name(ty).unwrap(),
+                        self.mono_ctx.type_name(typ).unwrap(),
                         self.mono_ctx.type_name(bound).unwrap(),
                     ))
-                    .with_span(span)
+                    .with_span(span);
                 }
                 BoundCheckResult::DoesNotMatchBecause(detail) if !negated => {
+                    if kind == ast::ProtocolBoundsType::Any {
+                        continue;
+                    }
                     return Err(CodeErrorKind::ProtocolMismatchDetail(
-                        self.mono_ctx.type_name(ty).unwrap(),
+                        self.mono_ctx.type_name(typ).unwrap(),
                         self.mono_ctx.type_name(bound).unwrap(),
                         detail,
                     ))
-                    .with_span(span)
+                    .with_span(span);
                 }
-                _ => {}
+                _ => {
+                    found = true;
+                    if kind == ast::ProtocolBoundsType::Any {
+                        break;
+                    }
+                }
             }
         }
+
+        if !found {
+            return Err(CodeErrorKind::ProtocolMismatch(
+                self.mono_ctx.type_name(typ).unwrap(),
+                bounds
+                    .iter()
+                    .map(|(_, bound, negated)| {
+                        if *negated {
+                            format!("!{}", self.mono_ctx.type_name(bound).unwrap())
+                        } else {
+                            self.mono_ctx.type_name(bound).unwrap()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | "),
+            ))
+            .with_span(bounds[0].0);
+        }
+
         Ok(())
     }
 
@@ -1043,10 +1095,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let mut protocol_bounds = Vec::new();
         for (placeholder, ty) in func.placeholders.iter().zip(generic_args.iter()) {
-            for bound in placeholder.bounds {
-                let ir_bound = child.lower_type(bound.typ).append_span(bound.span)?;
-                protocol_bounds.push((bound.span, ir_bound, *ty, bound.negated));
+            let mut grouped_bounds = Vec::new();
+            for bound in placeholder.bounds.bounds {
+                let ir_bound = child.lower_type_inner(bound.typ).append_span(bound.span)?;
+                grouped_bounds.push((bound.span, ir_bound, bound.negated));
             }
+            protocol_bounds.push((placeholder.bounds.typ, *ty, grouped_bounds));
         }
 
         let parameters = func
@@ -1074,9 +1128,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         item.assign(res);
 
         // This happens after we assign the signature to avoid issues when calling recursively
-        child
-            .check_protocol_bounds(protocol_bounds)
-            .append_span(func.span)?;
+        for (kind, ty, bounds) in protocol_bounds {
+            child
+                .check_protocol_bounds(kind, ty, bounds)
+                .append_span(func.span)?;
+        }
 
         // We need the item to be assigned before we monomorphize the body, as the
         // function can be recursive and we need to be able to get the signature for
@@ -1105,7 +1161,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let (protocol, generic_args) = match mixin.protocol {
             ast::Ty::Protocol(item) => (item, vec![]),
-            ast::Ty::Generic(item, args) => (item, args.to_vec()),
+            ast::Ty::Generic(ast::Ty::Protocol(item), args) => (item, args.to_vec()),
             _ => {
                 return Err(CodeErrorKind::NotAProtocol(format!("{:?}", mixin.protocol)))
                     .with_span(mixin.span)
@@ -1496,6 +1552,17 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     pub fn lower_type(&mut self, typ: ast::TyP<'ast>) -> Result<ir::TyP<'ir>, AluminaError> {
         let typ = self.lower_type_inner(typ)?;
 
+        // Protocols can be used as types in certain blessed scenarios (e.g. intrinsics, `dyn` object), but they
+        // don't work as proper types in general.
+        // `let a: Proto;` makes no sense, even though a protocol can be used as a generic parameter to an item to
+        // ensure a unique monomorphized version for each distinct protocol.
+        if let ir::Ty::Protocol(_) = typ {
+            return Err(CodeErrorKind::ProtocolsAreSpecialMkay(
+                self.mono_ctx.type_name(typ).unwrap(),
+            ))
+            .with_no_span();
+        }
+
         Ok(typ)
     }
 
@@ -1558,7 +1625,15 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let item = self.monomorphize_item(item, &[])?;
                 self.types.named_function(item)
             }
-            ast::Ty::Generic(item, args) => {
+            ast::Ty::Generic(inner, args) => {
+                let item = match inner {
+                    ast::Ty::Protocol(item) => item,
+                    ast::Ty::NamedType(item) => item,
+                    ast::Ty::NamedFunction(item) => item,
+                    ast::Ty::Defered(spec) => self.resolve_defered_func(spec)?,
+                    _ => ice!("unsupported generic type"),
+                };
+
                 let args = args
                     .iter()
                     .map(|arg| self.lower_type_inner(arg))
@@ -1776,19 +1851,38 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     _ => self.types.named(ir_item),
                 }
             }
+            ast::Ty::Defered(def) => {
+                // Currently there are no associated types, so this must be a function
+                let item = self.resolve_defered_func(&def)?;
+                let ir_item = self.monomorphize_item(item, &[])?;
+                self.types.named_function(ir_item)
+            }
             ast::Ty::Protocol(item) => {
                 let item = self.monomorphize_item(item, &[])?;
                 self.types.protocol(item)
             }
             ast::Ty::Dyn(inner, is_const) => {
                 let dyn_self = self.dyn_self()?;
+
                 let protocol_item = match inner {
                     ast::Ty::Protocol(item) => {
+                        match self.mono_ctx.ast.lang_item_kind(item) {
+                            Some(lang) if lang.is_protocol() => {
+                                return Err(CodeErrorKind::BuiltinProtocolDyn).with_no_span()
+                            }
+                            _ => {}
+                        }
+
                         self.monomorphize_item(item, &[dyn_self].alloc_on(self.mono_ctx.ir))?
                     }
-                    ast::Ty::Generic(item, args)
-                        if matches!(item.get(), ast::Item::Protocol(_)) =>
-                    {
+                    ast::Ty::Generic(ast::Ty::Protocol(item), args) => {
+                        match self.mono_ctx.ast.lang_item_kind(item) {
+                            Some(lang) if lang.is_protocol() => {
+                                return Err(CodeErrorKind::BuiltinProtocolDyn).with_no_span()
+                            }
+                            _ => {}
+                        }
+
                         let args = std::iter::once(Ok(dyn_self))
                             .chain(args.iter().map(|arg| self.lower_type_inner(arg)))
                             .collect::<Result<Vec<_>, _>>()?
@@ -1806,6 +1900,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.create_vtable_layout(protocol_item)?;
 
                 self.types.named(item)
+            }
+            ast::Ty::TypeOf(inner) => {
+                let mut child = self.make_tentative_child();
+                let expr = child.lower_expr(inner, None)?;
+                expr.ty
             }
         };
 
@@ -1926,34 +2025,27 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
                 ast::Ty::Tuple(items.alloc_on(self.mono_ctx.ast))
             }
-            ir::Ty::NamedType(item) | ir::Ty::NamedFunction(item) => {
+            ir::Ty::NamedType(item) | ir::Ty::NamedFunction(item) | ir::Ty::Protocol(item) => {
                 let item = self.mono_ctx.reverse_lookup(item);
+                let base = match typ {
+                    ir::Ty::NamedType(_) => ast::Ty::NamedType(item.0),
+                    ir::Ty::NamedFunction(_) => ast::Ty::NamedFunction(item.0),
+                    ir::Ty::Protocol(_) => ast::Ty::Protocol(item.0),
+                    _ => unreachable!(),
+                };
                 if item.1.is_empty() {
-                    match typ {
-                        ir::Ty::NamedType(_) => ast::Ty::NamedType(item.0),
-                        ir::Ty::NamedFunction(_) => ast::Ty::NamedFunction(item.0),
-                        _ => unreachable!(),
-                    }
+                    base
                 } else {
                     let args = item
                         .1
                         .iter()
                         .map(|arg| self.raise_type(arg))
                         .collect::<Result<Vec<_>, _>>()?;
-                    ast::Ty::Generic(item.0, args.alloc_on(self.mono_ctx.ast))
-                }
-            }
-            ir::Ty::Protocol(item) => {
-                let item = self.mono_ctx.reverse_lookup(item);
-                if item.1.is_empty() {
-                    ast::Ty::Protocol(item.0)
-                } else {
-                    let args = item
-                        .1
-                        .iter()
-                        .map(|arg| self.raise_type(arg))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    ast::Ty::Generic(item.0, args.alloc_on(self.mono_ctx.ast))
+
+                    ast::Ty::Generic(
+                        self.mono_ctx.ast.intern_type(base),
+                        args.alloc_on(self.mono_ctx.ast),
+                    )
                 }
             }
             ir::Ty::Closure(item) => {
@@ -2017,7 +2109,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 .with_no_span()?,
 
             ast::Ty::NamedType(item) => item,
-            ast::Ty::Generic(item, _) => item,
+            ast::Ty::Generic(ast::Ty::NamedType(item), _) => item,
             _ => return Ok(associated_fns),
         };
 
@@ -2340,7 +2432,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     ) -> Result<ir::IRItemP<'ir>, AluminaError> {
         let (item, generic_args) = match typ {
             ast::Ty::NamedType(item) => (*item, None),
-            ast::Ty::Generic(item, generic_args) => (*item, Some(*generic_args)),
+            ast::Ty::Generic(ast::Ty::NamedType(item), generic_args) => {
+                (*item, Some(*generic_args))
+            }
             _ => {
                 let lowered = self.lower_type(typ)?;
                 match lowered {
@@ -3086,23 +3180,42 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let typ = self.lower_type(cond.typ)?;
 
-        for bound in cond.bounds {
-            let bound_typ = self.lower_type(bound.typ)?;
+        let mut found = false;
+
+        for bound in cond.bounds.bounds {
+            let bound_typ = self.lower_type_inner(bound.typ)?;
             match self
                 .check_protocol_bound(bound_typ, typ)
                 .append_span(bound.span)?
             {
-                BoundCheckResult::Matches => {
-                    if bound.negated {
-                        return self.lower_expr(els, type_hint);
+                BoundCheckResult::Matches if bound.negated => {
+                    if cond.bounds.typ == ast::ProtocolBoundsType::Any {
+                        continue;
+                    }
+                    return self.lower_expr(els, type_hint);
+                }
+                BoundCheckResult::DoesNotMatch | BoundCheckResult::DoesNotMatchBecause(_)
+                    if !bound.negated =>
+                {
+                    if cond.bounds.typ == ast::ProtocolBoundsType::Any {
+                        continue;
+                    }
+                    return self.lower_expr(els, type_hint);
+                }
+                _ => {
+                    found = true;
+                    if cond.bounds.typ == ast::ProtocolBoundsType::Any {
+                        break;
                     }
                 }
-                _ if !bound.negated => return self.lower_expr(els, type_hint),
-                _ => {}
             }
         }
 
-        self.lower_expr(then, type_hint)
+        if !found {
+            self.lower_expr(els, type_hint)
+        } else {
+            self.lower_expr(then, type_hint)
+        }
     }
 
     fn lower_tuple(
@@ -3371,7 +3484,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let generic_args = generic_args
             .iter()
-            .map(|e| self.lower_type(e))
+            .map(|e| self.lower_type_inner(e))
             .collect::<Result<Vec<_>, _>>()?;
 
         let args = args
@@ -3689,7 +3802,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let actual_protocol_type = self.types.protocol(actual_protocol);
 
         // We only rely on standard protocol bound matching to see if the vtable is compatible
-        self.check_protocol_bounds(vec![(None, actual_protocol_type, concrete_type, false)])?;
+        self.check_protocol_bounds(
+            ast::ProtocolBoundsType::All,
+            concrete_type,
+            vec![(None, actual_protocol_type, false)],
+        )?;
 
         let vtable_layout = self
             .mono_ctx
@@ -3947,7 +4064,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         ast_type: ast::TyP<'ast>,
     ) -> Result<ast::TyP<'ast>, AluminaError> {
         let typ = match ast_type {
-            ast::Ty::Generic(n, _) | ast::Ty::NamedType(n) => {
+            ast::Ty::Generic(ast::Ty::NamedType(n), _) | ast::Ty::NamedType(n) => {
                 if let ast::Item::TypeDef(t) = n.get() {
                     let _guard = self
                         .mono_ctx

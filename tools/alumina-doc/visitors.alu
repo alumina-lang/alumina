@@ -2,7 +2,7 @@ use std::collections::Vector;
 use std::string::{StringBuf, split};
 
 use aluminac::lib::common::{NodeVisitorExt, child_by, children_by};
-use aluminac::lib::node_kinds::{NodeVisitor, FieldKind};
+use aluminac::lib::node_kinds::{NodeVisitor, FieldKind, NodeKind, NODE_KINDS};
 
 use alumina_doc::error::Result;
 use alumina_doc::common::{Item, ItemBag, Path, ParseContext, ItemKind, LinkContext};
@@ -262,7 +262,15 @@ impl TopLevelVisitor {
     fn visit_function_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
         check_cfg!(self, node);
         let kind = if self.container.is_some {
-            ItemKind::Method
+            if NODE_KINDS[self.container.inner.symbol() as usize] == NodeKind::ProtocolDefinition {
+                if node.child_by!(FieldKind::Body).is_some {
+                    ItemKind::ProvidedMethod
+                } else {
+                    ItemKind::RequiredMethod
+                }
+            } else {
+                ItemKind::Method
+            }
         } else {
             ItemKind::Function
         };
@@ -613,6 +621,11 @@ impl CodePrinter<W: Writable<W>> {
 
     fn visit_primitive_type(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         self.visit_type_identifier(node)
+    }
+
+    fn visit_type_of(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
+        w!(self.writer, "<span class=\"keyword\">typeof</span>(...)");
+        Result::ok(())
     }
 
     fn visit_pointer_of(self: &mut CodePrinter<W>, node: Node) -> Result<()> {

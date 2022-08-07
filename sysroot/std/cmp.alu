@@ -76,7 +76,7 @@ enum Ordering {
 /// assert!(FullName::new("John", "Doe") == FullName::new("John", "Doe"));
 /// ```
 ///
-/// See also [lexicographic_cmp] for a convenient way to implement the `compare` method.
+/// See also [lex_compare] for a convenient way to implement the `compare` method.
 protocol Comparable<Self: Equatable<Self>> {
     /// Compare the value
     ///
@@ -159,12 +159,12 @@ fn reversed<T: Comparable<T>>(value: &T) -> Reversed<T> {
 
 /// Helper macro for implementing a lexicographic order.
 ///
-/// The macro will short-ciricuit the enclosuing function if `lhs` and `rhs` are not equal
+/// The macro will short-circuit the enclosuing function if `lhs` and `rhs` are not equal
 /// and continue if they are.
 ///
 /// ## Example
 /// ```
-/// use std::cmp::{Ordering, Comparable, lexicographic_cmp};
+/// use std::cmp::{Ordering, Comparable, lex_compare};
 ///
 /// struct IPv4 {
 ///     a: u8,
@@ -175,22 +175,23 @@ fn reversed<T: Comparable<T>>(value: &T) -> Reversed<T> {
 ///
 /// impl IPv4 {
 ///     fn compare(lhs: &IPv4, rhs: &IPv4) -> Ordering {
-///         lexicographic_cmp!(lhs.a, rhs.a);
-///         lexicographic_cmp!(lhs.b, rhs.b);
-///         lexicographic_cmp!(lhs.c, rhs.c);
-///         lexicographic_cmp!(lhs.d, rhs.d);
+///         lex_compare!(lhs.a, rhs.a);
+///         lex_compare!(lhs.b, rhs.b);
+///         lex_compare!(lhs.c, rhs.c);
+///         lex_compare!(lhs.d, rhs.d);
 ///         Ordering::Equal
 ///     }
 ///
 ///     mixin Comparable<IPv4>;
 /// }
 /// ```
-macro lexicographic_cmp($lhs, $rhs) {
+macro lex_compare($lhs, $rhs) {
     let cmp = $lhs.compare(&$rhs);
     if cmp != Ordering::Equal {
         return cmp;
     }
 }
+
 
 /// Returns the greater of the two arguments.
 /// ## Example

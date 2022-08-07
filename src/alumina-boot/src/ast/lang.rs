@@ -43,11 +43,6 @@ pub enum LangItemKind {
     ProtoPointerOf,
     ProtoRangeOf,
 
-    // This one really shouldn't be a lang item, but I'm not smart
-    // enough to figure out the type inference and iterator combinators
-    // are really important for ergonomics.
-    ProtoIterator,
-
     ImplBuiltin(BuiltinType),
     ImplTuple(usize),
     ImplArray,
@@ -78,6 +73,57 @@ pub enum LangItemKind {
     Operator(BinOp),
 
     FormatArg,
+}
+
+impl LangItemKind {
+    pub fn is_protocol(&self) -> bool {
+        match self {
+            LangItemKind::ProtoPrimitive
+            | LangItemKind::ProtoNumeric
+            | LangItemKind::ProtoInteger
+            | LangItemKind::ProtoFloatingPoint
+            | LangItemKind::ProtoSigned
+            | LangItemKind::ProtoUnsigned
+            | LangItemKind::ProtoZeroSized
+            | LangItemKind::ProtoPointer
+            | LangItemKind::ProtoArray
+            | LangItemKind::ProtoTuple
+            | LangItemKind::ProtoRange
+            | LangItemKind::ProtoCallable
+            | LangItemKind::ProtoNamedFunction
+            | LangItemKind::ProtoFunctionPointer
+            | LangItemKind::ProtoAny
+            | LangItemKind::ProtoArrayOf
+            | LangItemKind::ProtoPointerOf
+            | LangItemKind::ProtoRangeOf => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_typeop(&self) -> bool {
+        match self {
+            LangItemKind::TypeopSignedOf
+            | LangItemKind::TypeopUnsignedOf
+            | LangItemKind::TypeopDerefOf
+            | LangItemKind::TypeopElementOf
+            | LangItemKind::TypeopTupleHeadOf
+            | LangItemKind::TypeopTupleTailOf
+            | LangItemKind::TypeopReturnTypeOf
+            | LangItemKind::TypeopArgumentsOf
+            | LangItemKind::TypeopVoidPtrOf
+            | LangItemKind::TypeopGenericArgsOf => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_builtin_impl(&self) -> bool {
+        match self {
+            LangItemKind::ImplBuiltin(_) | LangItemKind::ImplTuple(_) | LangItemKind::ImplArray => {
+                true
+            }
+            _ => false,
+        }
+    }
 }
 
 impl TryFrom<&str> for LangItemKind {
@@ -124,9 +170,6 @@ impl TryFrom<&str> for LangItemKind {
             "proto_array_of" => Ok(LangItemKind::ProtoArrayOf),
             "proto_pointer_of" => Ok(LangItemKind::ProtoPointerOf),
             "proto_range_of" => Ok(LangItemKind::ProtoRangeOf),
-
-            // hax
-            "proto_iterator" => Ok(LangItemKind::ProtoIterator),
 
             "builtin_never" => Ok(LangItemKind::ImplBuiltin(BuiltinType::Never)),
             "builtin_void" => Ok(LangItemKind::ImplBuiltin(BuiltinType::Void)),

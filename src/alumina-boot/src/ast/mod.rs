@@ -255,10 +255,12 @@ pub enum Ty<'ast> {
     Pointer(TyP<'ast>, bool),
     Slice(TyP<'ast>, bool),
     Dyn(TyP<'ast>, bool),
+    TypeOf(ExprP<'ast>),
     Array(TyP<'ast>, usize),
     Tuple(&'ast [TyP<'ast>]),
     FunctionPointer(&'ast [TyP<'ast>], TyP<'ast>),
-    Generic(ItemP<'ast>, &'ast [TyP<'ast>]),
+    Generic(TyP<'ast>, &'ast [TyP<'ast>]),
+    Defered(Defered<'ast>),
 }
 
 impl<'ast> Ty<'ast> {
@@ -460,10 +462,22 @@ pub struct Bound<'ast> {
     pub typ: TyP<'ast>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProtocolBoundsType {
+    All,
+    Any,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ProtocolBounds<'ast> {
+    pub typ: ProtocolBoundsType,
+    pub bounds: &'ast [Bound<'ast>],
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Placeholder<'ast> {
     pub id: AstId,
-    pub bounds: &'ast [Bound<'ast>],
+    pub bounds: ProtocolBounds<'ast>,
     pub default: Option<TyP<'ast>>,
 }
 
@@ -685,7 +699,7 @@ pub struct FieldInitializer<'ast> {
     pub span: Option<Span>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+#[derive(Debug, PartialEq, Eq, Clone, Hash, Copy)]
 pub struct Defered<'ast> {
     pub typ: TyP<'ast>,
     pub name: &'ast str,
@@ -708,7 +722,7 @@ pub enum FnKind<'ast> {
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub struct StaticIfCondition<'ast> {
     pub typ: TyP<'ast>,
-    pub bounds: &'ast [Bound<'ast>],
+    pub bounds: ProtocolBounds<'ast>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
