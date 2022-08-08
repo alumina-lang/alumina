@@ -34,6 +34,17 @@ impl RangeFull<T: Integer> {
     fn new() -> RangeFull<T> {
         RangeFull {}
     }
+
+    /// @ cmp::Equatable::equals
+    fn equals(self: &RangeFull<T>, other: &RangeFull<T>) -> bool {
+        true
+    }
+    
+    /// @ hash::Hashable::hash
+    fn hash<H: hash::Hasher<H>>(self: &RangeFull<T>, h: &mut H) {
+    }
+
+    mixin cmp::Equatable<RangeFull<T>>;
 }
 
 /// A range with a lower bound (`a..`)
@@ -53,6 +64,34 @@ impl RangeFrom<T: Integer> {
             lower: lower,
         }
     }
+
+    /// @ iter::Iterable::iter
+    #[force_inline]
+    fn iter(self: &RangeFrom<T>) -> RangeFrom<T> {
+        *self
+    }
+
+    /// @ iter::Iterator::next
+    #[force_inline]
+    fn next(self: &mut RangeFrom<T>) -> Option<T> {
+        let lower = self.lower;
+        self.lower += 1;
+        Option::some(lower)
+    }
+
+    /// @ cmp::Equatable::equals
+    fn equals(self: &RangeFrom<T>, other: &RangeFrom<T>) -> bool {
+        self.lower == other.lower
+    }
+    
+    /// @ hash::Hashable::hash
+    fn hash<H: hash::Hasher<H>>(self: &RangeFrom<T>, h: &mut H) {
+        self.lower.hash(h);
+    }
+
+    mixin cmp::Equatable<RangeFrom<T>>;
+    mixin iter::Iterator<RangeFrom<T>, T>;
+    mixin iter::IteratorExt<RangeFrom<T>, T>;
 }
 
 /// A range with an upper bound (`..a`)
@@ -73,6 +112,18 @@ impl RangeTo<T: Integer> {
             upper: upper,
         }
     }
+
+    /// @ cmp::Equatable::equals
+    fn equals(self: &RangeTo<T>, other: &RangeTo<T>) -> bool {
+        self.upper == other.upper
+    }
+    
+    /// @ hash::Hashable::hash
+    fn hash<H: hash::Hasher<H>>(self: &RangeTo<T>, h: &mut H) {
+        self.upper.hash(h);
+    }
+
+    mixin cmp::Equatable<RangeTo<T>>;
 }
 
 /// A range with an inclusive upper bound (`..=a`)
@@ -92,6 +143,18 @@ impl RangeToInclusive<T: Integer> {
             upper: upper,
         }
     }
+
+    /// @ cmp::Equatable::equals
+    fn equals(self: &RangeToInclusive<T>, other: &RangeToInclusive<T>) -> bool {
+        self.upper == other.upper
+    }
+    
+    /// @ hash::Hashable::hash
+    fn hash<H: hash::Hasher<H>>(self: &RangeToInclusive<T>, h: &mut H) {
+        self.upper.hash(h);
+    }
+
+    mixin cmp::Equatable<RangeToInclusive<T>>;
 }
 
 /// A range with both lower and upper bounds (`a..b`)
@@ -152,6 +215,18 @@ impl Range<T: Integer> {
         }
     }
 
+    /// @ cmp::Equatable::equals
+    fn equals(self: &Range<T>, other: &Range<T>) -> bool {
+        self.lower == other.lower && self.upper == other.upper
+    }
+    
+    /// @ hash::Hashable::hash
+    fn hash<H: hash::Hasher<H>>(self: &Range<T>, h: &mut H) {
+        self.lower.hash(h);
+        self.upper.hash(h);
+    }
+
+    mixin cmp::Equatable<Range<T>>;
     mixin iter::Iterator<Range<T>, T>;
     mixin iter::IteratorExt<Range<T>, T>;
     mixin iter::DoubleEndedIterator<Range<T>, T>;
@@ -229,6 +304,18 @@ impl RangeInclusive<T: Integer> {
         }
     }
 
+    /// @ cmp::Equatable::equals
+    fn equals(self: &RangeInclusive<T>, other: &RangeInclusive<T>) -> bool {
+        self.lower == other.lower && self.upper == other.upper
+    }
+    
+    /// @ hash::Hashable::hash
+    fn hash<H: hash::Hasher<H>>(self: &RangeInclusive<T>, h: &mut H) {
+        self.lower.hash(h);
+        self.upper.hash(h);
+    }
+
+    mixin cmp::Equatable<RangeInclusive<T>>;
     mixin iter::Iterator<RangeInclusive<T>, T>;
     mixin iter::IteratorExt<RangeInclusive<T>, T>;
     mixin iter::DoubleEndedIterator<RangeInclusive<T>, T>;
@@ -317,5 +404,55 @@ mod tests {
         let range = (1..=0).rev();
         assert_eq!(range.size_hint(), Option::some(0usize));
         assert_eq!(range.next(), Option::none());
+    }
+
+    #[test]
+    fn test_range_lower() {
+        let range = (5..);
+        assert_eq!(range.size_hint(), Option::none());
+
+        assert_eq!(range.next(), Option::some(5));
+        assert_eq!(range.next(), Option::some(6));
+        assert_eq!(range.next(), Option::some(7));
+        assert_eq!(range.next(), Option::some(8));
+        assert_eq!(range.next(), Option::some(9));
+        assert_eq!(range.next(), Option::some(10));
+        // ...
+    }
+
+    #[test]
+    fn test_equality() {
+        assert_eq!(.., ..);
+
+        assert_eq!(1.., 1..);
+        assert_ne!(1.., 2..);
+        
+        assert_eq!(..1, ..1);
+        assert_ne!(..1, ..2);
+        
+        assert_eq!(..=1, ..=1);
+        assert_ne!(..=1, ..=2);
+        
+        assert_eq!(0..5, 0..5);
+        assert_ne!(0..5, 1..5);
+        assert_ne!(0..5, 0..6);
+        
+        assert_eq!(0..=5, 0..=5);
+        assert_ne!(0..=5, 1..=5);
+        assert_ne!(0..=5, 0..=6);
+    }
+
+    #[test]
+    fn test_hash() {
+        use std::hash::hash_of;
+
+        assert_eq!(hash_of(..), hash_of(()));
+        assert_ne!(hash_of(1..), hash_of(2..));
+        assert_ne!(hash_of(..1), hash_of(..2));
+        assert_ne!(hash_of(..=1), hash_of(..=2));
+        assert_ne!(hash_of(1..2), hash_of(1..3));
+        assert_ne!(hash_of(1..2), hash_of(0..2));
+        assert_ne!(hash_of(1..=2), hash_of(1..=3));
+        assert_ne!(hash_of(1..=2), hash_of(0..=2));
     }
 }

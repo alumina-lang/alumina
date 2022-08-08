@@ -1,4 +1,6 @@
 //! Error handling functionality.
+//!
+//! The main type in this module [Result], which is used as a type for expressions that can fail. 
 
 /// Extract the success value or short-circuit the calling function.
 ///
@@ -77,6 +79,14 @@ impl Result<T, E> {
     use std::fmt::{write, Formatter, Formattable};
 
     /// Create a success variant
+    ///
+    /// ## Example
+    /// ```
+    /// let r: Result<i32, i32> = Result::ok(10);
+    /// 
+    /// assert!(r.is_ok);
+    /// assert_eq!(r.unwrap(), 10);
+    /// ```
     #[force_inline]
     fn ok(ok: T) -> Result<T, E> {
         Result::<T, E> {
@@ -88,6 +98,13 @@ impl Result<T, E> {
     }
 
     /// Create a error variant
+    /// ## Example
+    /// ```
+    /// let r: Result<i32, i32> = Result::err(42);
+    /// 
+    /// assert!(!r.is_ok);
+    /// assert_eq!(r.unwrap_err(), 42);
+    /// ```    
     #[force_inline]
     fn err(err: E) -> Result<T, E> {
         Result::<T, E> {
@@ -112,6 +129,15 @@ impl Result<T, E> {
     }
 
     /// Return the success value or a default value
+    ///
+    /// ## Example
+    /// ```
+    /// let r1: Result<i32, i32> = Result::ok(10);
+    /// let r2: Result<i32, i32> = Result::err(20);
+    /// 
+    /// assert_eq!(r1.unwrap_or(30), 10);
+    /// assert_eq!(r2.unwrap_or(40), 40);
+    /// ```  
     fn unwrap_or(self: Result<T, E>, val: T) -> T {
         if self.is_ok {
             self.inner.ok
@@ -121,6 +147,15 @@ impl Result<T, E> {
     }
 
     /// Return the success value or a default value provided by a callback
+    ///
+    /// ## Example
+    /// ```
+    /// let r1: Result<i32, i32> = Result::ok(10);
+    /// let r2: Result<i32, i32> = Result::err(20);
+    /// 
+    /// assert_eq!(r1.unwrap_or_else(i32::max_value), 10);
+    /// assert_eq!(r2.unwrap_or_else(i32::max_value), i32::max_value());
+    /// ```      
     fn unwrap_or_else<F: builtins::Callable<(), T>>(self: Result<T, E>, func: F) -> T {
         if self.is_ok {
             self.inner.ok

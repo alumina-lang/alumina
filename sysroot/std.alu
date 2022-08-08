@@ -12,16 +12,19 @@
 /// ```
 /// use std::compile_fail;
 ///
-/// fn rand() -> i32 {
-///     #[cfg(not(target_os = "linux"))]
-///     compile_fail!("rand() only works on linux");
-///
-///     let ret: i32;
-///     libc::getrandom(&ret as &mut void, std::mem::size_of::<i32>(), 0);
-///     ret
+/// fn fork() -> bool {
+///     #[cfg(target_os="windows")]
+///     compile_fail!("fork() is not supported on Windows");
+///     
+///     libc::fork() == 0
 /// }
 ///
-/// println!("{}", rand());
+/// let is_child = fork();
+/// if is_child {
+///     println!("Hello from child");
+/// } else {
+///     println!("Hello from parent");
+/// }
 /// ```
 ///
 /// ```

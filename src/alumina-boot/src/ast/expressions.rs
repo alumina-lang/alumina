@@ -1413,7 +1413,9 @@ pub fn parse_string_literal(lit: &str) -> Result<Vec<u8>, CodeErrorKind> {
             State::UnicodeShort => {
                 if buf.len() == 3 {
                     buf.push(ch as char);
-                    let ch = u32::from_str_radix(&buf, 16).unwrap();
+                    let ch = u32::from_str_radix(&buf, 16)
+                        .map_err(|_| CodeErrorKind::InvalidEscapeSequence)?;
+
                     let utf8 = char::from_u32(ch)
                         .ok_or(CodeErrorKind::InvalidEscapeSequence)?
                         .to_string();
@@ -1428,7 +1430,8 @@ pub fn parse_string_literal(lit: &str) -> Result<Vec<u8>, CodeErrorKind> {
             }
             State::UnicodeLong => match ch {
                 b'}' => {
-                    let ch = u32::from_str_radix(&buf, 16).unwrap();
+                    let ch = u32::from_str_radix(&buf, 16)
+                        .map_err(|_| CodeErrorKind::InvalidEscapeSequence)?;
                     let utf8 = char::from_u32(ch)
                         .ok_or(CodeErrorKind::InvalidEscapeSequence)?
                         .to_string();
@@ -1438,7 +1441,7 @@ pub fn parse_string_literal(lit: &str) -> Result<Vec<u8>, CodeErrorKind> {
                 }
                 _ => {
                     buf.push(ch as char);
-                    State::UnicodeShort
+                    State::UnicodeLong
                 }
             },
         };

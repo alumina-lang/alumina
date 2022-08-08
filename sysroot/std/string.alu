@@ -1,7 +1,14 @@
 //! String functions
 //!
 //! Alumina is not Unicode-aware and strings are simply byte slices (`&[u8]`) without
-//! any assumed encoding.
+//! any assumed encoding. An exception to this are string literals in code. They are 
+//! treated as UTF-8 (but not required to be valid UTF-8), e.g.
+//!
+//! ```
+//! assert_eq!("😊", "\xf0\x9f\x98\x8a");
+//! assert_eq!("\u{1f60a}", "\xf0\x9f\x98\x8a");
+//! "\xe2\x82\x28\x00\xf0\x01\x02"; // Not valid UTF-8, but a valid string literal
+//! ```
 use std::option::Option;
 
 const RADIX_DIGITS = "0123456789abcdefghijklmnopqrstuvwxyz";

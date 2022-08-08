@@ -11,7 +11,7 @@ use crate::{
 
 use super::{types::TypeWriter, w, CodegenCtx};
 
-use std::fmt::Write;
+use std::{fmt::Write, borrow::Cow};
 
 pub struct FunctionWriter<'ir, 'gen> {
     ctx: &'gen CodegenCtx<'ir, 'gen>,
@@ -19,6 +19,15 @@ pub struct FunctionWriter<'ir, 'gen> {
     fn_decls: String,
     fn_bodies: String,
     indent: usize,
+}
+
+/// Prevent "1f32" from being interpreted as an int constant 
+fn force_float<'a>(v: &'a str) -> Cow<'a, str> {
+    if v.chars().all(|ch| ch.is_digit(10)) {
+        Cow::Owned(format!("{}e0", v))
+    } else {
+        Cow::Borrowed(v)
+    }
 }
 
 pub fn write_function_signature<'ir, 'gen>(
@@ -184,8 +193,8 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             }
             Value::USize(val) => w!(self.fn_bodies, "{}ULL", val),
             Value::ISize(val) => w!(self.fn_bodies, "{}LL", val),
-            Value::F32(val) => w!(self.fn_bodies, "{}f", val),
-            Value::F64(val) => w!(self.fn_bodies, "{}", val),
+            Value::F32(val) => w!(self.fn_bodies, "{}f", force_float(val)),
+            Value::F64(val) => w!(self.fn_bodies, "{}", force_float(val)),
             _ => unimplemented!(),
         }
     }
@@ -326,9 +335,9 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 crate::ir::Lit::Float(v) => {
                     self.type_writer.add_type(expr.ty)?;
                     if *expr.ty == Ty::Builtin(BuiltinType::F32) {
-                        w!(self.fn_bodies, "({}f)", v);
+                        w!(self.fn_bodies, "({}f)", force_float(v));
                     } else {
-                        w!(self.fn_bodies, "({})", v);
+                        w!(self.fn_bodies, "({})", force_float(v));
                     }
                 }
                 crate::ir::Lit::Bool(v) => {

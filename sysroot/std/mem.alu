@@ -188,6 +188,24 @@ impl slice {
         }
     }
 
+    /// Copy a slice into a fixed-size array.
+    ///
+    /// The length of the result array must exactly match the length of the slice.
+    ///
+    /// ## Example
+    /// ```
+    /// let hw = "Hello, world";
+    /// let hw: [u8; 5] = hw[..5].to_array();
+    /// 
+    /// assert_eq!(hw.as_slice(), "Hello");
+    /// ```
+    fn to_array<T, Arr: builtins::ArrayOf<T>>(self: &[T]) -> Arr {
+        let ret: Arr;
+        debug_assert!(self.len() == ret.len());
+        self.copy_to_nonoverlapping(&ret[0]);
+        ret
+    }
+
     /// @ std::iter::Iterable::iter
     #[force_inline]
     fn iter<Ptr: Pointer>(self: &slice<Ptr>) -> SliceIterator<Ptr> {
