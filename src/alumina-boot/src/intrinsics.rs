@@ -146,7 +146,6 @@ impl<'ir> CompilerIntrinsics<'ir> {
         .with_no_span()
     }
 
-
     fn compile_fail(&self, reason: ExprP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
         let value = const_eval::const_eval(reason)
             .map_err(|_| CodeErrorKind::CannotConstEvaluate)

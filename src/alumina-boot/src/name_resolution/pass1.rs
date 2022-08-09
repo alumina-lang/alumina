@@ -378,7 +378,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         self.scope
             .add_item(
                 Some(name),
-                NamedItem::new(NamedItemKind::Static(item, node, child_scope.clone()), attributes),
+                NamedItem::new(
+                    NamedItemKind::Static(item, node, child_scope.clone()),
+                    attributes,
+                ),
             )
             .with_span_from(&self.scope, node)?;
 

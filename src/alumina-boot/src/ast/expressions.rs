@@ -890,9 +890,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             ExprKind::Static(inner, None) => {
                 let ret = ExprKind::Static(inner, Some(arguments));
                 return Ok(ret.alloc_with_span_from(self.ast, &self.scope, node));
-            },
+            }
             _ => {
-                return Err(CodeErrorKind::FunctionOrStaticExpectedHere).with_span_from(&self.scope, node);
+                return Err(CodeErrorKind::FunctionOrStaticExpectedHere)
+                    .with_span_from(&self.scope, node);
             }
         };
 
