@@ -1,4 +1,4 @@
-//! Type information and `dyn` objects
+//! Type reflection and `dyn` objects
 
 type TypeId = usize;
 
@@ -61,7 +61,39 @@ struct dyn<Proto, Ptr> {
     _vtable: &fn(),
 }
 
+
+/// Returns the names and associated values of enum variants.
+///
+/// ## Example
+/// ```
+/// use std::typing::enum_variants;
+///
+/// enum Foo {
+///     Bar,
+///     Quux,
+/// }
+///
+/// let variants = enum_variants::<Foo>();
+///
+/// assert_eq!(variants.len(), 2);
+/// assert_eq!(variants[0].0, "Bar");
+/// assert_eq!(variants[0].1, Foo::Bar);
+/// assert_eq!(variants[1].0, "Quux");
+/// assert_eq!(variants[1].1, Foo::Quux);
+/// ```
+fn enum_variants<E: builtins::Enum>() -> &[(&[u8], E)] {
+    (internal::ENUM_VARIANTS::<E>).as_slice()
+}
+
 mod internal {
+    static ENUM_VARIANTS<E> = intrinsics::enum_variants::<E>();
+
+    #[lang(enum_variant_new)]
+    #[force_inline]
+    fn make_enum_variant<E>(name: &[u8], value: E) -> (&[u8], E) {
+        (name, value)
+    }
+
     /// A placeholder for the `Self` type in the protocol of a dyn object.
     #[lang(dyn_self)]
     struct dyn_self {}

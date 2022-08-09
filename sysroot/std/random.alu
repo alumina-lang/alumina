@@ -1,20 +1,22 @@
 //! Random number generation
-//! 
+//!
 //! ## Example
 //! ```
-//! use std::random::{thread_rng, next};
+//! use std::random::thread_rng;
 //!
-//! // Roll a die
-//! let value: i32 = thread_rng().next(1..=6);
-//! println!("You've rolled a {}", value);
+//! // Roll two dice
+//! let first: i32 = thread_rng().next(1..=6);
+//! let second: i32 = thread_rng().next(1..=6);
+//!
+//! println!("You've rolled {} and {}", first, second);
 //! ```
 //!
 //! This module consists of a protocol [Rng] which can be used to implement a random number
-//! generator that provides "raw randomness" and free functions such as [next], [next_float], ... that can 
-//! be used to generate random numbers of a particular type.
+//! generator that provides "raw randomness" and an extension mixin [RngExt] which adds common
+//! functionality to create various kinds of random numbers.
 //!
-//! The module also provides a [Pcg32], a decent general purpose pseudo-random, [OsRng] backed by `/dev/urandom/`
-//! and [thread_rng], a convenient thread-local random generator that does not need manual seeding. 
+//! The module also provides a [Pcg32], a decent general purpose pseudo-random generator, [OsRng] backed by the OS-provided
+//! random number generator, and [thread_rng], a convenience thread-local random generator that does not need manual seeding.
 
 use std::builtins::{Unsigned, Integer, FloatingPoint};
 
@@ -23,9 +25,11 @@ use std::builtins::{Unsigned, Integer, FloatingPoint};
 /// Random number generators need to provide [Rng::next_u32] and [Rng::next_u64] methods,
 /// other methods can be mixed in.
 ///
+/// Types implementing [Rng] should also mix in [RngExt].
+///
 /// ## Example implementation
 /// ```
-/// use std::random::{Rng, next};
+/// use std::random::{Rng, RngExt};
 ///
 /// struct Lcg {
 ///    state: u32,
@@ -46,6 +50,7 @@ use std::builtins::{Unsigned, Integer, FloatingPoint};
 ///     }
 ///
 ///     mixin Rng<Lcg>;
+///     mixin RngExt<Lcg>;
 /// }
 ///
 /// let rng = Lcg::with_seed(0x15b3249);
@@ -139,14 +144,15 @@ impl Pcg32 {
     }
 
     mixin Rng<Pcg32>;
+    mixin RngExt<Pcg32>;
 }
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 {
     /// RNG backed by a OS-provided random number generation facility
     ///
-    /// On Linux, this is based on `getrandom` syscall, on other UNIX-like platforms, this
-    /// reads the bytes from `/dev/urandom`.
+    /// On Linux, this is based on [libc::getrandom], on other UNIX-like platforms, this
+    /// reads random bytes from `/dev/urandom`.
     ///
     /// ## Usage notes
     /// `OsRng` is generally considered to be safe to use for cryptographic purposes. However, since
@@ -209,12 +215,22 @@ impl Pcg32 {
         }
 
         mixin Rng<OsRng>;
+        mixin RngExt<OsRng>;
     }
 }
 
-/// A thread-local RNG that's seeded from the operating system.
+/// A thread-local RNG.
 ///
-/// Lazily initialized on first access from each thread.
+/// Lazily seeded from [OsRng] on first access from each thread.
+///
+/// ## Example
+/// ```
+/// use std::random::thread_rng;
+///
+/// let rng = thread_rng().next_u64();
+/// ```
+///
+/// The returned pointer is safe to store, but not safe to send across threads.
 fn thread_rng() -> &mut Pcg32 {
     if !internal::THREAD_RNG.is_some {
         internal::THREAD_RNG = Option::some(internal::seed_default_rng());
@@ -222,136 +238,131 @@ fn thread_rng() -> &mut Pcg32 {
     &internal::THREAD_RNG.inner
 }
 
+/// Extension mixin for the [Rng] trait
+///
+/// Contains useful methods for random number generation.
+protocol RngExt<Self: Rng<Self>> {
+    /// Generate a random number in a given [integer range](std::range).
+    ///
+    /// All range types are supported.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::random::thread_rng;
+    ///
+    /// let value: i32 = thread_rng().next(0..3);
+    /// assert!(value >= 0 && value < 3);
+    ///
+    /// let value: i32 = thread_rng().next(0..=3);
+    /// assert!(value >= 0 && value <= 3);
+    ///
+    /// let value: i32 = thread_rng().next(..3);
+    /// assert!(value < 3);
+    ///
+    /// let value: i32 = thread_rng().next(..=3);
+    /// assert!(value <= 3);
+    ///
+    /// let value: i32 = thread_rng().next(3..);
+    /// assert!(value >= 3);
+    ///
+    /// let value: i32 = thread_rng().next(..);
+    /// // Any possible value of i32
+    /// ```
+    fn next<T: Integer, R: builtins::RangeOf<T>>(rng: &mut Self, range: R) -> T {
+        use builtins::unsigned_of;
+        use std::range::{Range, RangeInclusive, RangeTo, RangeToInclusive, RangeFrom, RangeFull};
 
-/// Generate a random number in a given [integer range](std::range).
-///
-/// All range types are supported.
-///
-/// ## Example
-/// ```
-/// use std::random::{thread_rng, next};
-///
-/// let value: i32 = thread_rng().next(0..3);
-/// assert!(value >= 0 && value < 3);
-///
-/// let value: i32 = thread_rng().next(0..=3);
-/// assert!(value >= 0 && value <= 3);
-///
-/// let value: i32 = thread_rng().next(..3);
-/// assert!(value < 3);
-///
-/// let value: i32 = thread_rng().next(..=3);
-/// assert!(value <= 3);
-///
-/// let value: i32 = thread_rng().next(3..);
-/// assert!(value >= 3);
-///
-/// let value: i32 = thread_rng().next(..);
-/// // Any possible value of i32
-/// ```
-fn next<R: Rng<R>, T: Integer, R1: builtins::RangeOf<T>>(rng: &mut R, range: R1) -> T {
-    use builtins::unsigned_of;
-    use std::range::{Range, RangeInclusive, RangeTo, RangeToInclusive, RangeFrom, RangeFull};
+        when R: Range<T> {
+            debug_assert!(range.lower < range.upper);
 
-    when R1: Range<T> {
-        debug_assert!(range.lower < range.upper);
+            let bound = (range.upper as unsigned_of<T>) - (range.lower as unsigned_of<T>);
+            let ret = (range.lower as unsigned_of<T>) + internal::gen_uniform(rng, bound);
 
-        let bound = (range.upper as unsigned_of<T>) - (range.lower as unsigned_of<T>);
-        let ret = (range.lower as unsigned_of<T>) + internal::uniform(rng, bound);
-
-        ret as T
-    } else when R1: RangeInclusive<T> {
-        debug_assert!(range.lower <= range.upper);
-
-        let bound = ((range.upper as unsigned_of<T>) - (range.lower as unsigned_of<T>)) + 1;
-        if bound == 0 {
-            next_integer::<R, unsigned_of<T>>(rng) as T
-        } else {
-            let ret = (range.lower as unsigned_of<T>) + internal::uniform(rng, bound);
             ret as T
+        } else when R: RangeInclusive<T> {
+            debug_assert!(range.lower <= range.upper);
+
+            let bound = ((range.upper as unsigned_of<T>) - (range.lower as unsigned_of<T>)) + 1;
+            if bound == 0 {
+                internal::gen_unsigned::<Self, unsigned_of<T>>(rng) as T
+            } else {
+                let ret = (range.lower as unsigned_of<T>) + internal::gen_uniform(rng, bound);
+                ret as T
+            }
+        } else when R: RangeTo<T> {
+            rng.next(T::min_value()..range.upper)
+        } else when R: RangeToInclusive<T> {
+            rng.next(T::min_value()..=range.upper)
+        } else when R: RangeFrom<T> {
+            rng.next(range.lower..=T::max_value())
+        } else when R: RangeFull<T> {
+            internal::gen_unsigned::<Self, unsigned_of<T>>(rng) as T
+        } else {
+            compile_fail!("unsupported range type")
         }
-    } else when R1: RangeTo<T> {
-        rng.next(T::min_value()..range.upper)
-    } else when R1: RangeToInclusive<T> {
-        rng.next(T::min_value()..=range.upper)
-    } else when R1: RangeFrom<T> {
-        rng.next(range.lower..=T::max_value())
-    } else when R1: RangeFull<T> {
-        next_integer::<R, unsigned_of<T>>(rng) as T
-    } else {
-        compile_fail!("unsupported range type")
     }
-}
 
-
-/// Generate a random integer of any unsigned integer type
-///
-/// Each possible value that the integer can take is equally likely
-fn next_integer<R: Rng<R>, T: Unsigned>(rng: &mut R) -> T {
-    when T: u128 {
-        ((rng.next_u64() as u128)  << 64) | (rng.next_u64() as u128)
-    } else when T: u64 {
-        rng.next_u64()
-    } else when T: usize {
-        let x: T;
-        #[cfg(target_pointer_width = "32")]
-        x = rng.next_u32() as usize;
-        #[cfg(target_pointer_width = "64")]
-        x = rng.next_u64() as usize;
-        x
-    } else {
-        rng.next_u32() as T
+    /// Generate a random floating point number in `[0, 1)` interval
+    ///
+    /// ## Example
+    /// ```
+    /// use std::random::thread_rng;
+    ///
+    /// let value: f64 = thread_rng().next_float();
+    ///
+    /// assert!(value >= 0.0 && value < 1.0);
+    /// ```
+    fn next_float<T: FloatingPoint>(rng: &mut Self) -> T {
+        when T: f32 {
+            let scale = 1.0f32 / ((1u32 << 24) as f32);
+            let x = rng.next_u32() >> 8;
+            (x as f32) * scale
+        } else when T: f64 {
+            let scale = 1.0f64 / ((1u64 << 53) as f64);
+            let x = rng.next_u64() >> 11;
+            (x as f64) * scale
+        }
     }
-}
 
-/// Generate a random floating point number in `[0, 1)` interval
-///
-/// ## Example
-/// ```
-/// use std::random::{thread_rng, next_float};
-///
-/// let value: f64 = thread_rng().next_float();
-///
-/// assert!(value >= 0.0 && value < 1.0);
-/// ```
-fn next_float<R: Rng<R>, T: FloatingPoint>(rng: &mut R) -> T {
-    when T: f32 {
-        let scale = 1.0f32 / ((1u32 << 24) as f32);
-        let x = rng.next_u32() >> 8;
-        (x as f32) * scale
-    } else when T: f64 {
-        let scale = 1.0f64 / ((1u64 << 53) as f64);
-        let x = rng.next_u64() >> 11;
-        (x as f64) * scale
+    /// Permute a slice of elements in random order.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::random::thread_rng;
+    ///
+    /// let values = [1, 2, 3, 4, 5];
+    /// thread_rng().shuffle(&values);
+    ///
+    /// for value in values {
+    ///     println!("{}", value);
+    /// }
+    /// ```
+    fn shuffle<T>(rng: &mut Self, slice: &mut [T]) {
+        use std::mem::swap;
+
+        let i = 0usize;
+        while i < slice.len() {
+            let j = rng.next(i..slice.len());
+            swap(&slice[i], &slice[j]);
+            i += 1;
+        }
     }
-}
 
-/// Permute a slice of elements in random order.
-fn shuffle<R: Rng<R>, T>(rng: &mut R, slice: &mut [T]) {
-    use std::mem::swap;
+    /// Return a random element of the slice.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::random::thread_rng;
+    ///
+    /// let value = thread_rng().choice(&["hello", "world"]);
+    ///
+    /// assert!(value == "hello" || value == "world");
+    /// ```
+    fn choice<T>(rng: &mut Self, slice: &[T]) -> T {
+        debug_assert!(slice.len() > 0);
 
-    let i = 0usize;
-    while i < slice.len() {
-        let j = rng.next(i..slice.len());
-        swap(&slice[i], &slice[j]);
-        i += 1;
+        slice[rng.next(0usize..slice.len())]
     }
-}
-
-/// Return a random element of the slice.
-///
-/// ## Example
-/// ```
-/// use std::random::{thread_rng, choice};
-///
-/// let value = thread_rng().choice(&["hello", "world"]);
-///
-/// assert!(value == "hello" || value == "world");
-/// ```
-fn choice<R: Rng<R>, T>(rng: &mut R, slice: &[T]) -> T {
-    debug_assert!(slice.len() > 0);
-
-    slice[rng.next(0usize..slice.len())]
 }
 
 mod internal {
@@ -367,15 +378,35 @@ mod internal {
     }
 
     /// Generate a random integer between 0 (inclusive) and `upper_bound` (exclusive)
-    fn uniform<R: Rng<R>, T: Unsigned>(rng: &mut R, upper_bound: T) -> T {
+    fn gen_uniform<R: Rng<R>, T: Unsigned>(rng: &mut R, upper_bound: T) -> T {
         debug_assert!(upper_bound > 0);
 
         loop {
-            let x = next_integer::<R, T>(rng);
+            let x: T = rng.gen_unsigned();
             let r = x % upper_bound;
             if x - r <= ~upper_bound {
                 return r;
             }
+        }
+    }
+
+    /// Generate a random integer of any unsigned integer type
+    ///
+    /// Each possible value that the integer can take is equally likely
+    fn gen_unsigned<R: Rng<R>, T: Unsigned>(rng: &mut R) -> T {
+        when T: u128 {
+            ((rng.next_u64() as u128)  << 64) | (rng.next_u64() as u128)
+        } else when T: u64 {
+            rng.next_u64()
+        } else when T: usize {
+            let x: T;
+            #[cfg(target_pointer_width = "32")]
+            x = rng.next_u32() as usize;
+            #[cfg(target_pointer_width = "64")]
+            x = rng.next_u64() as usize;
+            x
+        } else {
+            rng.next_u32() as T
         }
     }
 }

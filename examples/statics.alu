@@ -18,10 +18,21 @@ static global_var7: i32 = loop {
     global_var5 *= 2;
 };
 
+// Statics can also be generic. This can be useful to create associated statics for
+// multiple distinct types
+static TYPE_NAME<T>: &[u8] = std::typing::type_name::<T>();
+
 fn hello() -> i32 {
     3
 }
 
 fn main() {
     println!("{}", global_var7);
+
+    /// Each instance of a generic static is distinct, but also mutable
+    TYPE_NAME::<i32> = "32-bit signed integer";
+
+    println!("{}", TYPE_NAME::<i32>);
+    println!("{}", TYPE_NAME::<i64>);
+    println!("{}", TYPE_NAME::<Option<i32>>);
 }

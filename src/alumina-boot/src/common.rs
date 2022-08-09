@@ -98,8 +98,8 @@ pub enum CodeErrorKind {
     ParamCountMismatch(usize, usize),
     #[error("tuple index out of bounds")]
     TupleIndexOutOfBounds,
-    #[error("function expected")]
-    FunctionExpectedHere,
+    #[error("function or static expected")]
+    FunctionOrStaticExpectedHere,
     #[error("could not resolve item `{}`", .0)]
     UnresolvedItem(String),
     #[error("duplicate field `{}` in struct initializer", .0)]
@@ -219,6 +219,8 @@ pub enum CodeErrorKind {
     InvalidTestCaseSignature,
     #[error("extern statics cannot have initializers")]
     ExternStaticMustHaveType,
+    #[error("extern statics cannot be generic")]
+    ExternStaticCannotBeGeneric,
     #[error("can only bind local variables")]
     CanOnlyCloseOverLocals,
     #[error("anonymous functions that bind environment variables cannot be coerced to a function pointer")]

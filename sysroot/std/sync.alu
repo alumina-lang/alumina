@@ -60,6 +60,31 @@ impl Atomic<T: Primitive + !ZeroSized> {
     /// sets the atomic variable to `desired`.
     ///
     /// This is the strong version, which will not fail spuriously. See also [compare_exchange_weak].
+    ///
+    /// ## Example
+    /// ```
+    /// use std::sync::{Atomic, Ordering};
+    ///
+    /// /// Atomic version of a square root using a CAS loop
+    /// fn fetch_sqrt(val: &mut Atomic<u64>, ordering: Ordering) -> u64 {
+    ///     let old = val.load(Ordering::Relaxed);
+    ///     loop {
+    ///         let root = (old as f64).sqrt() as u64;
+    ///
+    ///         let ret = val.compare_exchange(old, root, ordering, Ordering::Relaxed);
+    ///         if ret.is_ok {
+    ///             return old;
+    ///         } else {
+    ///             old = ret.unwrap_err();
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// let val = Atomic::new(144u64);
+    ///
+    /// assert_eq!(val.fetch_sqrt(Ordering::Relaxed), 144u64);
+    /// assert_eq!(val.load(Ordering::Relaxed), 12u64);
+    /// ```
     #[force_inline]
     fn compare_exchange(
         self: &mut Atomic<T>,

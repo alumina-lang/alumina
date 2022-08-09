@@ -211,6 +211,19 @@ impl<'ast> Rebinder<'ast> {
 
                 Fn(kind, generic_args)
             }
+            Static(item, generic_args) => {
+                let generic_args = match generic_args {
+                    Some(args) => Some(
+                        args.iter()
+                            .map(|e| self.visit_typ(e))
+                            .collect::<Result<Vec<_>, _>>()?
+                            .alloc_on(self.ast),
+                    ),
+                    None => None,
+                };
+
+                Static(item, generic_args)
+            }
             StaticIf(ref cond, then, els) => {
                 let cond = StaticIfCondition {
                     typ: self.visit_typ(cond.typ)?,
@@ -240,7 +253,6 @@ impl<'ast> Rebinder<'ast> {
             | EnumValue(_, _)
             | Lit(_)
             | Void
-            | Static(_)
             | Const(_) => expr.kind.clone(),
         };
 

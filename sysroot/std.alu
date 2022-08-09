@@ -15,7 +15,7 @@
 /// fn fork() -> bool {
 ///     #[cfg(target_os="windows")]
 ///     compile_fail!("fork() is not supported on Windows");
-///     
+///
 ///     libc::fork() == 0
 /// }
 ///
@@ -49,6 +49,14 @@ macro compile_fail($reason) {
 }
 
 /// Panics if `cond` evaluates to false.
+///
+/// ## Examples
+/// ```
+/// assert!(1 + 1 == 2);
+/// ```
+/// ```panics
+/// assert!(1 + 1 == 3); // panics
+/// ```
 macro assert($cond) {
     if !$cond {
         panic!("assertion failed");
@@ -56,11 +64,27 @@ macro assert($cond) {
 }
 
 /// Panics if `lhs` and `rhs` are not equal.
+///
+/// ## Examples
+/// ```
+/// assert_eq!(1 + 1, 2);
+/// ```
+/// ```panics
+/// assert_eq!(1 + 1, 3); // panics
+/// ```
 macro assert_eq($lhs, $rhs) {
     internal::assert_eq(file!(), line!(), column!(), $lhs, $rhs);
 }
 
 /// Panics if `lhs` and `rhs` are equal.
+///
+/// ## Examples
+/// ```
+/// assert_ne!(1 + 1, 3);
+/// ```
+/// ```panics
+/// assert_ne!(1 + 1, 2); // panics
+/// ```
 macro assert_ne($lhs, $rhs) {
     internal::assert_ne(file!(), line!(), column!(), $lhs, $rhs);
 }
@@ -97,10 +121,29 @@ macro unreachable() {
 
 /// Assume that the condition is true.
 ///
-/// This can enable additional optimizations.
+/// This *may* enable additional optimizations when you know better than the compiler.
 ///
 /// In debug mode, this macro will panic if the condition is false. In release mode, it will
 /// cause undefined behavior.
+///
+/// ## Example
+/// ```
+/// use std::assume;
+/// use std::collections::Vector;
+///
+/// fn get_unchecked<T>(vec: &Vector<T>, index: usize) -> T {
+///     assume!(index < vec.len());
+///     vec.get(index).unwrap()
+/// }
+///
+/// let vec = Vector::from_slice(&[0, 1, 2, 3, 4]);
+///
+/// // The bounds check in Vector::get *may* be optimized out:
+/// println!("{}", vec.get_unchecked(3));
+///
+/// // In release mode, this would likely no longer panic and will segfault instead:
+/// // println!("{}", vec.get_unchecked(10));
+/// ```
 macro assume($cond) {
     if !$cond {
         #[cfg(debug)]
@@ -116,7 +159,7 @@ macro assume($cond) {
 ///
 /// ## Example
 /// ```
-/// use random::{thread_rng, next_float};
+/// use random::thread_rng;
 /// use std::likely;
 ///
 /// let v: f64 = thread_rng().next_float();
@@ -134,7 +177,7 @@ macro likely($cond) {
 ///
 /// ## Example
 /// ```
-/// use random::{thread_rng, next_float};
+/// use random::thread_rng;
 /// use std::unlikely;
 ///
 /// let v: f64 = thread_rng().next_float();
@@ -180,18 +223,39 @@ macro unlikely($cond) {
 /// Concatenates strings at compile time.
 ///
 /// This macro can be useful also as a guard that string is a compile-time constant.
+///
+/// ## Example
+/// ```
+/// use std::concat;
+///
+/// assert_eq!(concat!("foo", "bar"), "foobar");
+/// ```
 #[builtin] macro concat($parts...) {  }
 
-/// Print a message to standard error with code location information.
-macro dbg($fmt, $args...) {
+/// A helper for printing a value of a subexpression for debugging purposes.
+///
+/// It prints the value to standard error with code location (file, line, column) and
+/// returns the value.
+///
+/// ## Example
+/// ```
+/// let a = 1;
+/// // Prints "[<filename>:<line>:<column>] 2"
+/// let b = 2 * dbg!(a + 1);
+///
+/// assert_eq!(b, 4);
+/// ```
+macro dbg($value) {
+    let val = $value;
     let f = panicking::internal::PanicFormatter {};
     fmt::writeln!(&f,
-        concat!("[{}:{}:{}] ", $fmt),
+        "[{}:{}:{}] {}",
         file!(),
         line!(),
         column!(),
-        $args...
-    )
+        val
+    );
+    val
 }
 
 mod internal {
@@ -254,36 +318,6 @@ mod internal {
     #[force_inline]
     fn expect(cond: bool, expected: bool) -> bool {
         intrinsics::codegen_func::<bool>("__builtin_expect", cond, expected)
-    }
-}
-
-/// Various utility functions useful in the generic context.
-mod util {
-    /// Identity function
-    #[inline] fn identity<T>(t: T) -> T { t }
-
-    /// Take any parameter and discard the result
-    #[inline] fn discard<T>(_: T) { }
-
-    /// Cast a value to a different type.
-    #[inline] fn cast<T1, T2>(t: T1) -> T2 { t as T2 }
-
-    /// Coerce a value to a different type without casting
-    #[inline] fn coerce<T1, T2>(t: T1) -> T2 { t }
-
-    /// Reinterpret the bits of the value as another type.
-    #[inline] fn transmute<T1, T2>(t: T1) -> T2 { *(&t as &T2) }
-
-    /// Dereference a pointer.
-    #[inline] fn deref<T>(v: &T) -> T { *v }
-
-    /// Produce the only value of a unit type out of thin air.
-    ///
-    /// Does not work for the [builtins::never] type.
-    #[force_inline]
-    fn unit<T: builtins::ZeroSized + !!>() -> T {
-        let ret: T;
-        ret
     }
 }
 

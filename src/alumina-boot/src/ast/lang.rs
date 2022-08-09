@@ -35,10 +35,12 @@ pub enum LangItemKind {
     ProtoArray,
     ProtoTuple,
     ProtoRange,
+    ProtoStruct,
+    ProtoEnum,
+    ProtoUnion,
     ProtoCallable,
     ProtoNamedFunction,
     ProtoFunctionPointer,
-    ProtoAny,
     ProtoArrayOf,
     ProtoPointerOf,
     ProtoRangeOf,
@@ -73,6 +75,7 @@ pub enum LangItemKind {
     Operator(BinOp),
 
     FormatArg,
+    EnumVariantNew,
 }
 
 impl LangItemKind {
@@ -89,10 +92,12 @@ impl LangItemKind {
             | LangItemKind::ProtoArray
             | LangItemKind::ProtoTuple
             | LangItemKind::ProtoRange
+            | LangItemKind::ProtoEnum
+            | LangItemKind::ProtoStruct
+            | LangItemKind::ProtoUnion
             | LangItemKind::ProtoCallable
             | LangItemKind::ProtoNamedFunction
             | LangItemKind::ProtoFunctionPointer
-            | LangItemKind::ProtoAny
             | LangItemKind::ProtoArrayOf
             | LangItemKind::ProtoPointerOf
             | LangItemKind::ProtoRangeOf => true,
@@ -160,8 +165,10 @@ impl TryFrom<&str> for LangItemKind {
             "proto_unsigned" => Ok(LangItemKind::ProtoUnsigned),
             "proto_pointer" => Ok(LangItemKind::ProtoPointer),
             "proto_zero_sized" => Ok(LangItemKind::ProtoZeroSized),
-            "proto_any" => Ok(LangItemKind::ProtoAny),
             "proto_array" => Ok(LangItemKind::ProtoArray),
+            "proto_struct" => Ok(LangItemKind::ProtoStruct),
+            "proto_enum" => Ok(LangItemKind::ProtoEnum),
+            "proto_union" => Ok(LangItemKind::ProtoUnion),
             "proto_tuple" => Ok(LangItemKind::ProtoTuple),
             "proto_range" => Ok(LangItemKind::ProtoRange),
             "proto_named_function" => Ok(LangItemKind::ProtoNamedFunction),
@@ -222,6 +229,7 @@ impl TryFrom<&str> for LangItemKind {
             "dyn_vtable_index" => Ok(LangItemKind::DynVtableIndex),
 
             "format_arg" => Ok(LangItemKind::FormatArg),
+            "enum_variant_new" => Ok(LangItemKind::EnumVariantNew),
 
             t => {
                 if let Some(matches) = regex!(r"^builtin_tuple_(\d+)$").captures(t) {

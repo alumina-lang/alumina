@@ -1,6 +1,6 @@
 //! Optional values
 //!
-//! The main type in this module [Option]. 
+//! The main type in this module [Option].
 
 /// Extract the value or short-circuit the calling function.
 ///
@@ -105,10 +105,15 @@ impl Option<T> {
     }
 
     /// Returns a value, if present, panic otherwise.
-    /// 
-    /// ## Example
+    ///
+    /// ## Examples
     /// ```
     /// assert_eq!(Option::some(42).unwrap(), 42);
+    /// ```
+    /// ```panics
+    /// let opt: Option<i32> = Option::none();
+    ///
+    /// opt.unwrap(); // panics
     /// ```
     fn unwrap(self: Option<T>) -> T {
         if self.is_some {
@@ -124,7 +129,7 @@ impl Option<T> {
     /// ```
     /// assert_eq!(Option::some(42).unwrap_or(1337), 42);
     /// assert_eq!(Option::none::<i32>().unwrap_or(1337), 1337);
-    /// ```    
+    /// ```
     fn unwrap_or(self: Option<T>, val: T) -> T {
         if self.is_some {
             self.inner
@@ -137,9 +142,16 @@ impl Option<T> {
     ///
     /// ## Example
     /// ```
-    /// assert_eq!(Option::some(42).unwrap_or_else(i32::max_value), 42);
-    /// assert_eq!(Option::none::<i32>().unwrap_or_else(i32::max_value), i32::max_value());
-    /// ```      
+    /// let a = Option::some(42);
+    /// let b: Option<i32> = Option::none();
+    ///
+    /// fn default() -> i32 {
+    ///     1337
+    /// }
+    ///
+    /// assert_eq!(a.unwrap_or_else(default), 42);
+    /// assert_eq!(b.unwrap_or_else(default), 1337);
+    /// ```
     fn unwrap_or_else<F: builtins::Callable<(), T>>(self: Option<T>, func: F) -> T {
         if self.is_some {
             self.inner

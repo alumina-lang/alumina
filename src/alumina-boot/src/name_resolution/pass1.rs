@@ -373,12 +373,20 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         let attributes = parse_attributes!(self, node, item);
 
         let name = self.parse_name(node);
+        let child_scope = self.scope.named_child(ScopeType::Function, name);
+
         self.scope
             .add_item(
                 Some(name),
-                NamedItem::new(NamedItemKind::Static(item, node), attributes),
+                NamedItem::new(NamedItemKind::Static(item, node, child_scope.clone()), attributes),
             )
             .with_span_from(&self.scope, node)?;
+
+        with_child_scope!(self, child_scope, {
+            if let Some(f) = node.child_by_field_name("type_arguments") {
+                self.visit(f)?;
+            }
+        });
 
         Ok(())
     }

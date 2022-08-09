@@ -29,6 +29,7 @@ pub enum IntrinsicKind {
     CodegenFunc,
     CodegenConst,
     MakeVtable,
+    EnumVariants,
 }
 
 pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
@@ -50,6 +51,7 @@ pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
         map.insert("codegen_func", IntrinsicKind::CodegenFunc);
         map.insert("codegen_const", IntrinsicKind::CodegenConst);
         map.insert("make_vtable", IntrinsicKind::MakeVtable);
+        map.insert("enum_variants", IntrinsicKind::EnumVariants);
         map
     })
     .get(name)
@@ -143,6 +145,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
         ))
         .with_no_span()
     }
+
 
     fn compile_fail(&self, reason: ExprP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
         let value = const_eval::const_eval(reason)

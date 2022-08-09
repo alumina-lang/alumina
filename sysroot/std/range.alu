@@ -14,7 +14,7 @@
 //! println!("{}", hw[..5]); // prints "hello"
 //! println!("{}", hw[6..]); // prints "world"
 //! ```
-//! There are also some other places where ranges are used in the standard library (e.g. [random::next] for generating random numbers).
+//! There are also some other places where ranges are used in the standard library (e.g. [random::RngExt::next] for generating random numbers).
 //!
 //! See also [builtins::Range] and [builtins::RangeOf] for protocols that can be used for designing APIs that accept generic ranges.
 
@@ -39,7 +39,7 @@ impl RangeFull<T: Integer> {
     fn equals(self: &RangeFull<T>, other: &RangeFull<T>) -> bool {
         true
     }
-    
+
     /// @ hash::Hashable::hash
     fn hash<H: hash::Hasher<H>>(self: &RangeFull<T>, h: &mut H) {
     }
@@ -83,7 +83,7 @@ impl RangeFrom<T: Integer> {
     fn equals(self: &RangeFrom<T>, other: &RangeFrom<T>) -> bool {
         self.lower == other.lower
     }
-    
+
     /// @ hash::Hashable::hash
     fn hash<H: hash::Hasher<H>>(self: &RangeFrom<T>, h: &mut H) {
         self.lower.hash(h);
@@ -117,7 +117,7 @@ impl RangeTo<T: Integer> {
     fn equals(self: &RangeTo<T>, other: &RangeTo<T>) -> bool {
         self.upper == other.upper
     }
-    
+
     /// @ hash::Hashable::hash
     fn hash<H: hash::Hasher<H>>(self: &RangeTo<T>, h: &mut H) {
         self.upper.hash(h);
@@ -148,7 +148,7 @@ impl RangeToInclusive<T: Integer> {
     fn equals(self: &RangeToInclusive<T>, other: &RangeToInclusive<T>) -> bool {
         self.upper == other.upper
     }
-    
+
     /// @ hash::Hashable::hash
     fn hash<H: hash::Hasher<H>>(self: &RangeToInclusive<T>, h: &mut H) {
         self.upper.hash(h);
@@ -219,7 +219,7 @@ impl Range<T: Integer> {
     fn equals(self: &Range<T>, other: &Range<T>) -> bool {
         self.lower == other.lower && self.upper == other.upper
     }
-    
+
     /// @ hash::Hashable::hash
     fn hash<H: hash::Hasher<H>>(self: &Range<T>, h: &mut H) {
         self.lower.hash(h);
@@ -308,7 +308,7 @@ impl RangeInclusive<T: Integer> {
     fn equals(self: &RangeInclusive<T>, other: &RangeInclusive<T>) -> bool {
         self.lower == other.lower && self.upper == other.upper
     }
-    
+
     /// @ hash::Hashable::hash
     fn hash<H: hash::Hasher<H>>(self: &RangeInclusive<T>, h: &mut H) {
         self.lower.hash(h);
@@ -426,17 +426,17 @@ mod tests {
 
         assert_eq!(1.., 1..);
         assert_ne!(1.., 2..);
-        
+
         assert_eq!(..1, ..1);
         assert_ne!(..1, ..2);
-        
+
         assert_eq!(..=1, ..=1);
         assert_ne!(..=1, ..=2);
-        
+
         assert_eq!(0..5, 0..5);
         assert_ne!(0..5, 1..5);
         assert_ne!(0..5, 0..6);
-        
+
         assert_eq!(0..=5, 0..=5);
         assert_ne!(0..=5, 1..=5);
         assert_ne!(0..=5, 0..=6);
