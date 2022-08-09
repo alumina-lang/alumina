@@ -109,10 +109,10 @@
 <a href="/std/typing/">typing</a>
 </li>
 <li>
-<a href="/std/internal/">internal</a>
+<a href="/std/util/">util</a>
 </li>
 <li>
-<a href="/std/util/">util</a>
+<a href="/std/internal/">internal</a>
 </li>
 <li>
 <a href="/std/tests/">tests</a>
@@ -192,7 +192,7 @@
 <h3>
 <span class="keyword">macro</span> <span class="identifier-function">compile_fail</span>($reason) { ... }</h3>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std.alu#L44-L46"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std.alu#L47-L49"/>source</a>
 </div>
 </div>
 <p>
@@ -206,17 +206,20 @@ in generic context (e.g. with <code class="language-alumina">when</code> express
 <p>
 <pre class="with-playground-link"><code class="language-alumina">use std::compile_fail;
 
-fn rand() -&gt; i32 {
-    #[cfg(not(target_os = "linux"))]
-    compile_fail!("rand() only works on linux");
+fn fork() -&gt; bool {
+    #[cfg(target_os="windows")]
+    compile_fail!("fork() is not supported on Windows");
 
-    let ret: i32;
-    libc::getrandom(&amp;ret as &amp;mut void, std::mem::size_of::&lt;i32&gt;(), 0);
-    ret
+    libc::fork() == 0
 }
 
-println!("{}", rand());
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acompile%5ffail%3b%0a%20%20%20%0a%20%20%20fn%20rand%28%29%20%2d%3e%20i32%20%7b%0a%20%20%20%20%20%20%20%23%5bcfg%28not%28target%5fos%20%3d%20%22linux%22%29%29%5d%0a%20%20%20%20%20%20%20compile%5ffail%21%28%22rand%28%29%20only%20works%20on%20linux%22%29%3b%0a%20%20%20%0a%20%20%20%20%20%20%20let%20ret%3a%20i32%3b%0a%20%20%20%20%20%20%20libc%3a%3agetrandom%28%26ret%20as%20%26mut%20void%2c%20std%3a%3amem%3a%3asize%5fof%3a%3a%3ci32%3e%28%29%2c%200%29%3b%0a%20%20%20%20%20%20%20ret%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20println%21%28%22%7b%7d%22%2c%20rand%28%29%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+let is_child = fork();
+if is_child {
+    println!("Hello from child");
+} else {
+    println!("Hello from parent");
+}
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acompile%5ffail%3b%0a%20%20%20%0a%20%20%20fn%20fork%28%29%20%2d%3e%20bool%20%7b%0a%20%20%20%20%20%20%20%23%5bcfg%28target%5fos%3d%22windows%22%29%5d%0a%20%20%20%20%20%20%20compile%5ffail%21%28%22fork%28%29%20is%20not%20supported%20on%20Windows%22%29%3b%0a%20%20%20%0a%20%20%20%20%20%20%20libc%3a%3afork%28%29%20%3d%3d%200%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20let%20is%5fchild%20%3d%20fork%28%29%3b%0a%20%20%20if%20is%5fchild%20%7b%0a%20%20%20%20%20%20%20println%21%28%22Hello%20from%20child%22%29%3b%0a%20%20%20%7d%20else%20%7b%0a%20%20%20%20%20%20%20println%21%28%22Hello%20from%20parent%22%29%3b%0a%20%20%20%7d%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 <pre class="with-playground-link"><code class="language-alumina">use std::compile_fail;
 

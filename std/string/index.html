@@ -135,7 +135,13 @@
 String functions
 </p><p>
 Alumina is not Unicode-aware and strings are simply byte slices (<code class="language-alumina">&amp;[u8]</code>) without
-any assumed encoding.
+any assumed encoding. An exception to this are string literals in code. They are 
+treated as UTF-8 (but not required to be valid UTF-8), e.g.
+</p><p>
+<pre class="with-playground-link"><code class="language-alumina">assert_eq!("😊", "\xf0\x9f\x98\x8a");
+assert_eq!("\u{1f60a}", "\xf0\x9f\x98\x8a");
+"\xe2\x82\x28\x00\xf0\x01\x02"; // Not valid UTF-8, but a valid string literal
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20assert%5feq%21%28%22%f0%9f%98%8a%22%2c%20%22%5cxf0%5cx9f%5cx98%5cx8a%22%29%3b%0a%20%20%20assert%5feq%21%28%22%5cu%7b1f60a%7d%22%2c%20%22%5cxf0%5cx9f%5cx98%5cx8a%22%29%3b%0a%20%20%20%22%5cxe2%5cx82%5cx28%5cx00%5cxf0%5cx01%5cx02%22%3b%20%2f%2f%20Not%20valid%20UTF%2d8%2c%20but%20a%20valid%20string%20literal%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 <h2 id="Module">Modules</h2>
@@ -177,7 +183,7 @@ any assumed encoding.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">is_whitespace</span>(c: <a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L15-L17"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L22-L24"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -192,7 +198,7 @@ Returns <code class="language-alumina">true</code> if character is an ASCII whit
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">to_lower</span>(self: <a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>) -> <a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L22-L28"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L29-L35"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -209,7 +215,7 @@ If character is not an ASCII uppercase letter, returns the same character.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">to_upper</span>(self: <a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>) -> <a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L33-L39"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L40-L46"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -226,7 +232,7 @@ If character is not an ASCII lowercase letter, returns the same character.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">starts_with</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], prefix: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L50-L55"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L57-L62"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -250,7 +256,7 @@ assert!(!"hello world".starts_with("world"));
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">ends_with</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], suffix: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L66-L71"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L73-L78"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -274,7 +280,7 @@ assert!(!"hello world".ends_with("hello"));
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">trim_prefix</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], prefix: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L84-L90"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L91-L97"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -300,7 +306,7 @@ assert_eq!("hello world".trim_prefix("world"), "hello world");
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">trim_suffix</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], suffix: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L103-L109"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L110-L116"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -326,7 +332,7 @@ assert_eq!("hello world".trim_suffix("hello"), "hello world");
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">find</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], needle: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L123-L144"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L130-L151"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -353,7 +359,7 @@ assert_eq!("hello world".find("worldx"), Option::none());
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">find_char</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], needle: <a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L155-L171"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L162-L178"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -377,7 +383,7 @@ assert_eq!("hello world".find_char('x'), Option::none());
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">contains</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], needle: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L182-L184"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L189-L191"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -401,7 +407,7 @@ assert!(!"hello world".contains("chtulhu"));
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">trim_start</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L194-L200"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L201-L207"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -424,7 +430,7 @@ assert_eq!("  hello world   ".trim_start(), "hello world   ");
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">trim_end</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L210-L216"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L217-L223"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -447,7 +453,7 @@ assert_eq!("  hello world   ".trim_end(), "  hello world");
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">trim</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L226-L228"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L233-L235"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -470,7 +476,7 @@ assert_eq!("  hello world   ".trim(), "hello world");
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">split</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], sep: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/string/SplitIterator.html"><span class="identifier-type">SplitIterator</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L284-L286"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L291-L293"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -498,7 +504,7 @@ assert_eq!(iter.next(), Option::none());
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">replace</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], needle: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], replacement: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/string/#item.StringBuf"><span class="identifier-type">StringBuf</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L314-L318"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L321-L325"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -515,7 +521,7 @@ See also <a class="path-link" href="/std/string/#item.replace_fmt">replace_fmt</
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">replace_fmt</span>(self: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], needle: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], replacement: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/string/ReplaceAdapter.html"><span class="identifier-type">ReplaceAdapter</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L330-L332"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L337-L339"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -542,7 +548,7 @@ println!("{}", "I like pie".replace_fmt("pie", "cake"));
 It: <a href="/std/iter/Iterator.html"><span class="identifier-type">Iterator</span></a>&lt;It, &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L359-L363"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L366-L370"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -561,7 +567,7 @@ See also <a class="path-link" href="/std/string/#item.join_fmt">join_fmt</a> for
 It: <a href="/std/iter/Iterator.html"><span class="identifier-type">Iterator</span></a>&lt;It, &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L375-L377"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L382-L384"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -587,7 +593,7 @@ println!("{}", ".".join_fmt(&amp;["192", "168", "0", "1"].iter()));
 T: <a href="/std/builtins/Integer.html"><span class="identifier-type">Integer</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L382-L441"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L389-L448"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -607,7 +613,7 @@ See also <a class="path-link" href="/std/builtins/IntegerParsable.html">IntegerP
 <h4>
 <span class="keyword">type</span> <span class="identifier-type">StringBuf</span> = <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L12-L12"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L19-L19"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -627,7 +633,7 @@ A heap-allocated string.
 <h4>
 <span class="keyword">const</span> <span class="identifier-constant">RADIX_DIGITS</span> = ...</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L7-L7"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/string.alu#L14-L14"/>source</a>
 </div>
 </div>
 <div class="item-doc">

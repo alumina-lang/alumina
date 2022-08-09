@@ -195,7 +195,7 @@ Stores a value into the atomic variable, atomically returning the old value.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">compare_exchange</span>(self: &amp;mut <a href="/std/sync/Atomic.html"><span class="identifier-type">Atomic</span></a>&lt;T&gt;, expected: T, desired: T, success_ordering: <a href="/std/sync/Ordering.html"><span class="identifier-type">Ordering</span></a>, failure_ordering: <a href="/std/sync/Ordering.html"><span class="identifier-type">Ordering</span></a>) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L63-L84"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L88-L109"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -206,6 +206,32 @@ sets the atomic variable to <code class="language-alumina">desired</code>.
 This is the strong version, which will not fail spuriously. See also <a class="path-link" href="/std/sync/Atomic.html#item.compare_exchange_weak">compare_exchange_weak</a>.
 </p><p>
 </p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::sync::{Atomic, Ordering};
+
+/// Atomic version of a square root using a CAS loop
+fn fetch_sqrt(val: &amp;mut Atomic&lt;u64&gt;, ordering: Ordering) -&gt; u64 {
+    let old = val.load(Ordering::Relaxed);
+    loop {
+        let root = (old as f64).sqrt() as u64;
+
+        let ret = val.compare_exchange(old, root, ordering, Ordering::Relaxed);
+        if ret.is_ok {
+            return old;
+        } else {
+            old = ret.unwrap_err();
+        }
+    }
+}
+
+let val = Atomic::new(144u64);
+
+assert_eq!(val.fetch_sqrt(Ordering::Relaxed), 144u64);
+assert_eq!(val.load(Ordering::Relaxed), 12u64);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3async%3a%3a%7bAtomic%2c%20Ordering%7d%3b%0a%20%20%20%0a%20%20%20%2f%2f%2f%20Atomic%20version%20of%20a%20square%20root%20using%20a%20CAS%20loop%0a%20%20%20fn%20fetch%5fsqrt%28val%3a%20%26mut%20Atomic%3cu64%3e%2c%20ordering%3a%20Ordering%29%20%2d%3e%20u64%20%7b%0a%20%20%20%20%20%20%20let%20old%20%3d%20val%2eload%28Ordering%3a%3aRelaxed%29%3b%0a%20%20%20%20%20%20%20loop%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20let%20root%20%3d%20%28old%20as%20f64%29%2esqrt%28%29%20as%20u64%3b%0a%20%20%20%0a%20%20%20%20%20%20%20%20%20%20%20let%20ret%20%3d%20val%2ecompare%5fexchange%28old%2c%20root%2c%20ordering%2c%20Ordering%3a%3aRelaxed%29%3b%0a%20%20%20%20%20%20%20%20%20%20%20if%20ret%2eis%5fok%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20return%20old%3b%0a%20%20%20%20%20%20%20%20%20%20%20%7d%20else%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20old%20%3d%20ret%2eunwrap%5ferr%28%29%3b%0a%20%20%20%20%20%20%20%20%20%20%20%7d%0a%20%20%20%20%20%20%20%7d%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20let%20val%20%3d%20Atomic%3a%3anew%28144u64%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28val%2efetch%5fsqrt%28Ordering%3a%3aRelaxed%29%2c%20144u64%29%3b%0a%20%20%20assert%5feq%21%28val%2eload%28Ordering%3a%3aRelaxed%29%2c%2012u64%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -213,7 +239,7 @@ This is the strong version, which will not fail spuriously. See also <a class="p
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">compare_exchange_weak</span>(self: &amp;mut <a href="/std/sync/Atomic.html"><span class="identifier-type">Atomic</span></a>&lt;T&gt;, expected: T, desired: T, success_ordering: <a href="/std/sync/Ordering.html"><span class="identifier-type">Ordering</span></a>, failure_ordering: <a href="/std/sync/Ordering.html"><span class="identifier-type">Ordering</span></a>) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L90-L111"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L115-L136"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -237,7 +263,7 @@ T: <a href="/std/builtins/Integer.html"><span class="identifier-type">Integer</s
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">fetch_add</span>(self: &amp;mut <a href="/std/sync/Atomic.html"><span class="identifier-type">Atomic</span></a>&lt;T&gt;, value: T, ordering: <a href="/std/sync/Ordering.html"><span class="identifier-type">Ordering</span></a>) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L116-L119"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L141-L144"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -252,7 +278,7 @@ Atomically adds <code class="language-alumina">value</code> to the atomic variab
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">fetch_sub</span>(self: &amp;mut <a href="/std/sync/Atomic.html"><span class="identifier-type">Atomic</span></a>&lt;T&gt;, value: T, ordering: <a href="/std/sync/Ordering.html"><span class="identifier-type">Ordering</span></a>) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L122-L125"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L147-L150"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -267,7 +293,7 @@ Atomically subtracts <code class="language-alumina">value</code> from the atomic
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">fetch_and</span>(self: &amp;mut <a href="/std/sync/Atomic.html"><span class="identifier-type">Atomic</span></a>&lt;T&gt;, value: T, ordering: <a href="/std/sync/Ordering.html"><span class="identifier-type">Ordering</span></a>) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L128-L131"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L153-L156"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -282,7 +308,7 @@ Atomically performs <code class="language-alumina">*self &amp;= value</code> and
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">fetch_or</span>(self: &amp;mut <a href="/std/sync/Atomic.html"><span class="identifier-type">Atomic</span></a>&lt;T&gt;, value: T, ordering: <a href="/std/sync/Ordering.html"><span class="identifier-type">Ordering</span></a>) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L134-L137"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L159-L162"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -297,7 +323,7 @@ Atomically performs <code class="language-alumina">*self |= value</code> and ret
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">fetch_xor</span>(self: &amp;mut <a href="/std/sync/Atomic.html"><span class="identifier-type">Atomic</span></a>&lt;T&gt;, value: T, ordering: <a href="/std/sync/Ordering.html"><span class="identifier-type">Ordering</span></a>) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L140-L143"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L165-L168"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -312,7 +338,7 @@ Atomically performs <code class="language-alumina">*self ^= value</code> and ret
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">fetch_nand</span>(self: &amp;mut <a href="/std/sync/Atomic.html"><span class="identifier-type">Atomic</span></a>&lt;T&gt;, value: T, ordering: <a href="/std/sync/Ordering.html"><span class="identifier-type">Ordering</span></a>) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L146-L149"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L171-L174"/>source</a>
 </div>
 </div>
 <div class="item-doc">

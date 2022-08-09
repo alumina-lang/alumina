@@ -109,10 +109,10 @@
 <a href="/std/typing/">typing</a>
 </li>
 <li>
-<a href="/std/internal/">internal</a>
+<a href="/std/util/">util</a>
 </li>
 <li>
-<a href="/std/util/">util</a>
+<a href="/std/internal/">internal</a>
 </li>
 <li>
 <a href="/std/tests/">tests</a>
@@ -192,16 +192,36 @@
 <h3>
 <span class="keyword">macro</span> <span class="identifier-function">assume</span>($cond) { ... }</h3>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std.alu#L101-L108"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std.alu#L147-L154"/>source</a>
 </div>
 </div>
 <p>
 Assume that the condition is true.
 </p><p>
-This can enable additional optimizations.
+This <i>may</i> enable additional optimizations when you know better than the compiler.
 </p><p>
 In debug mode, this macro will panic if the condition is false. In release mode, it will
 cause undefined behavior.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::assume;
+use std::collections::Vector;
+
+fn get_unchecked&lt;T&gt;(vec: &amp;Vector&lt;T&gt;, index: usize) -&gt; T {
+    assume!(index &lt; vec.len());
+    vec.get(index).unwrap()
+}
+
+let vec = Vector::from_slice(&amp;[0, 1, 2, 3, 4]);
+
+// The bounds check in Vector::get *may* be optimized out:
+println!("{}", vec.get_unchecked(3));
+
+// In release mode, this would likely no longer panic and will segfault instead:
+// println!("{}", vec.get_unchecked(10));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3aassume%3b%0a%20%20%20use%20std%3a%3acollections%3a%3aVector%3b%0a%20%20%20%0a%20%20%20fn%20get%5funchecked%3cT%3e%28vec%3a%20%26Vector%3cT%3e%2c%20index%3a%20usize%29%20%2d%3e%20T%20%7b%0a%20%20%20%20%20%20%20assume%21%28index%20%3c%20vec%2elen%28%29%29%3b%0a%20%20%20%20%20%20%20vec%2eget%28index%29%2eunwrap%28%29%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20let%20vec%20%3d%20Vector%3a%3afrom%5fslice%28%26%5b0%2c%201%2c%202%2c%203%2c%204%5d%29%3b%0a%20%20%20%0a%20%20%20%2f%2f%20The%20bounds%20check%20in%20Vector%3a%3aget%20%2amay%2a%20be%20optimized%20out%3a%0a%20%20%20println%21%28%22%7b%7d%22%2c%20vec%2eget%5funchecked%283%29%29%3b%0a%20%20%20%0a%20%20%20%2f%2f%20In%20release%20mode%2c%20this%20would%20likely%20no%20longer%20panic%20and%20will%20segfault%20instead%3a%0a%20%20%20%2f%2f%20println%21%28%22%7b%7d%22%2c%20vec%2eget%5funchecked%2810%29%29%3b%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </main>

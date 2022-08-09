@@ -42,6 +42,9 @@
 <li>
 <a href="/std/random/Rng.html">Rng</a>
 </li>
+<li>
+<a href="/std/random/RngExt.html">RngExt</a>
+</li>
 </ul>
 <h2>Structs</h2>
 <ul>
@@ -56,21 +59,6 @@
 <ul>
 <li>
 <a href="/std/random/#item.thread_rng">thread_rng</a>
-</li>
-<li>
-<a href="/std/random/#item.next">next</a>
-</li>
-<li>
-<a href="/std/random/#item.next_integer">next_integer</a>
-</li>
-<li>
-<a href="/std/random/#item.next_float">next_float</a>
-</li>
-<li>
-<a href="/std/random/#item.shuffle">shuffle</a>
-</li>
-<li>
-<a href="/std/random/#item.choice">choice</a>
 </li>
 </ul>
 </nav>
@@ -88,6 +76,25 @@
 </div>
 <p>
 Random number generation
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::random::thread_rng;
+
+// Roll two dice
+let first: i32 = thread_rng().next(1..=6);
+let second: i32 = thread_rng().next(1..=6);
+
+println!("You've rolled {} and {}", first, second);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3arandom%3a%3athread%5frng%3b%0a%20%20%20%0a%20%20%20%2f%2f%20Roll%20two%20dice%0a%20%20%20let%20first%3a%20i32%20%3d%20thread%5frng%28%29%2enext%281%2e%2e%3d6%29%3b%0a%20%20%20let%20second%3a%20i32%20%3d%20thread%5frng%28%29%2enext%281%2e%2e%3d6%29%3b%0a%20%20%20%0a%20%20%20println%21%28%22You%27ve%20rolled%20%7b%7d%20and%20%7b%7d%22%2c%20first%2c%20second%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+</p><p>
+This module consists of a protocol <a class="path-link" href="/std/random/Rng.html">Rng</a> which can be used to implement a random number
+generator that provides "raw randomness" and an extension mixin <a class="path-link" href="/std/random/RngExt.html">RngExt</a> which adds common
+functionality to create various kinds of random numbers.
+</p><p>
+The module also provides a <a class="path-link" href="/std/random/Pcg32.html">Pcg32</a>, a decent general purpose pseudo-random generator, <a class="path-link" href="/std/random/OsRng.html">OsRng</a> backed by the OS-provided
+random number generator, and <a class="path-link" href="/std/random/#item.thread_rng">thread_rng</a>, a convenience thread-local random generator that does not need manual seeding.
 </p><p>
 </p>
 <h2 id="Module">Modules</h2>
@@ -115,6 +122,13 @@ Random number generation
 <div class="cell-doc">Random number generators
 </div>
 </div>
+<div class="row" id="item.RngExt">
+<div class="cell-name">
+<a href="/std/random/RngExt.html">RngExt</a>
+</div>
+<div class="cell-doc">Extension mixin for the <a class="path-link" href="/std/random/Rng.html">Rng</a> trait
+</div>
+</div>
 </div>
 <h2 id="Struct">Structs</h2>
 <div class="item-short-table">
@@ -140,155 +154,24 @@ Random number generation
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">thread_rng</span>() -> &amp;mut <a href="/std/random/Pcg32.html"><span class="identifier-type">Pcg32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/random.alu#L202-L207"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/random.alu#L234-L239"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-A thread-local RNG that's seeded from the operating system.
+A thread-local RNG.
 </p><p>
-Lazily initialized on first access from each thread.
-</p><p>
-</p>
-</div>
-</li>
-<li>
-<div class="signature" id="item.next">
-<h4>
-<span class="keyword">fn</span> <span class="identifier-function">next</span>&lt;R, T, R1&gt;(rng: &amp;mut R, range: R1) -> T<div class="protocol-bound">
-R: <a href="/std/random/Rng.html"><span class="identifier-type">Rng</span></a>&lt;R&gt;</div>
-<div class="protocol-bound">
-T: <a href="/std/builtins/Integer.html"><span class="identifier-type">Integer</span></a></div>
-<div class="protocol-bound">
-R1: <a href="/std/builtins/RangeOf.html"><span class="identifier-type">RangeOf</span></a>&lt;T&gt;</div>
-</h4>
-<div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/random.alu#L236-L268"/>source</a>
-</div>
-</div>
-<div class="item-doc">
-<p>
-Generate a random number in a given <a class="" href="/std/range/">integer range</a>.
-</p><p>
-All range types are supported.
+Lazily seeded from <a class="path-link" href="/std/random/OsRng.html">OsRng</a> on first access from each thread.
 </p><p>
 </p>
 <h3> Example</h3>
 <p>
-<pre class="with-playground-link"><code class="language-alumina">use std::random::{thread_rng, next};
+<pre class="with-playground-link"><code class="language-alumina">use std::random::thread_rng;
 
-let value: i32 = thread_rng().next(0..3);
-assert!(value &gt;= 0 &amp;&amp; value &lt; 3);
-
-let value: i32 = thread_rng().next(0..=3);
-assert!(value &gt;= 0 &amp;&amp; value &lt;= 3);
-
-let value: i32 = thread_rng().next(..3);
-assert!(value &lt; 3);
-
-let value: i32 = thread_rng().next(..=3);
-assert!(value &lt;= 3);
-
-let value: i32 = thread_rng().next(3..);
-assert!(value &gt;= 3);
-
-let value: i32 = thread_rng().next(..);
-// Any possible value of i32
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3arandom%3a%3a%7bthread%5frng%2c%20next%7d%3b%0a%20%20%20%0a%20%20%20let%20value%3a%20i32%20%3d%20thread%5frng%28%29%2enext%280%2e%2e3%29%3b%0a%20%20%20assert%21%28value%20%3e%3d%200%20%26%26%20value%20%3c%203%29%3b%0a%20%20%20%0a%20%20%20let%20value%3a%20i32%20%3d%20thread%5frng%28%29%2enext%280%2e%2e%3d3%29%3b%0a%20%20%20assert%21%28value%20%3e%3d%200%20%26%26%20value%20%3c%3d%203%29%3b%0a%20%20%20%0a%20%20%20let%20value%3a%20i32%20%3d%20thread%5frng%28%29%2enext%28%2e%2e3%29%3b%0a%20%20%20assert%21%28value%20%3c%203%29%3b%0a%20%20%20%0a%20%20%20let%20value%3a%20i32%20%3d%20thread%5frng%28%29%2enext%28%2e%2e%3d3%29%3b%0a%20%20%20assert%21%28value%20%3c%3d%203%29%3b%0a%20%20%20%0a%20%20%20let%20value%3a%20i32%20%3d%20thread%5frng%28%29%2enext%283%2e%2e%29%3b%0a%20%20%20assert%21%28value%20%3e%3d%203%29%3b%0a%20%20%20%0a%20%20%20let%20value%3a%20i32%20%3d%20thread%5frng%28%29%2enext%28%2e%2e%29%3b%0a%20%20%20%2f%2f%20Any%20possible%20value%20of%20i32%0a%0a%7d%0a">Run this example</a></pre>
+let rng = thread_rng().next_u64();
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3arandom%3a%3athread%5frng%3b%0a%20%20%20%0a%20%20%20let%20rng%20%3d%20thread%5frng%28%29%2enext%5fu64%28%29%3b%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
-</p>
-</div>
-</li>
-<li>
-<div class="signature" id="item.next_integer">
-<h4>
-<span class="keyword">fn</span> <span class="identifier-function">next_integer</span>&lt;R, T&gt;(rng: &amp;mut R) -> T<div class="protocol-bound">
-R: <a href="/std/random/Rng.html"><span class="identifier-type">Rng</span></a>&lt;R&gt;</div>
-<div class="protocol-bound">
-T: <a href="/std/builtins/Unsigned.html"><span class="identifier-type">Unsigned</span></a></div>
-</h4>
-<div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/random.alu#L274-L289"/>source</a>
-</div>
-</div>
-<div class="item-doc">
-<p>
-Generate a random integer of any unsigned integer type
-</p><p>
-Each possible value that the integer can take is equally likely
-</p><p>
-</p>
-</div>
-</li>
-<li>
-<div class="signature" id="item.next_float">
-<h4>
-<span class="keyword">fn</span> <span class="identifier-function">next_float</span>&lt;R, T&gt;(rng: &amp;mut R) -> T<div class="protocol-bound">
-R: <a href="/std/random/Rng.html"><span class="identifier-type">Rng</span></a>&lt;R&gt;</div>
-<div class="protocol-bound">
-T: <a href="/std/builtins/FloatingPoint.html"><span class="identifier-type">FloatingPoint</span></a></div>
-</h4>
-<div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/random.alu#L301-L311"/>source</a>
-</div>
-</div>
-<div class="item-doc">
-<p>
-Generate a random floating point number in <code class="language-alumina">[0, 1)</code> interval
-</p><p>
-</p>
-<h3> Example</h3>
-<p>
-<pre class="with-playground-link"><code class="language-alumina">use std::random::{thread_rng, next_float};
-
-let value: f64 = thread_rng().next_float();
-
-assert!(value &gt;= 0.0 &amp;&amp; value &lt; 1.0);
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3arandom%3a%3a%7bthread%5frng%2c%20next%5ffloat%7d%3b%0a%20%20%20%0a%20%20%20let%20value%3a%20f64%20%3d%20thread%5frng%28%29%2enext%5ffloat%28%29%3b%0a%20%20%20%0a%20%20%20assert%21%28value%20%3e%3d%200%2e0%20%26%26%20value%20%3c%201%2e0%29%3b%0a%0a%7d%0a">Run this example</a></pre>
-</p><p>
-</p>
-</div>
-</li>
-<li>
-<div class="signature" id="item.shuffle">
-<h4>
-<span class="keyword">fn</span> <span class="identifier-function">shuffle</span>&lt;R, T&gt;(rng: &amp;mut R, slice: &amp;mut [T])<div class="protocol-bound">
-R: <a href="/std/random/Rng.html"><span class="identifier-type">Rng</span></a>&lt;R&gt;</div>
-</h4>
-<div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/random.alu#L314-L323"/>source</a>
-</div>
-</div>
-<div class="item-doc">
-<p>
-Permute a slice of elements in random order.
-</p><p>
-</p>
-</div>
-</li>
-<li>
-<div class="signature" id="item.choice">
-<h4>
-<span class="keyword">fn</span> <span class="identifier-function">choice</span>&lt;R, T&gt;(rng: &amp;mut R, slice: &amp;[T]) -> T<div class="protocol-bound">
-R: <a href="/std/random/Rng.html"><span class="identifier-type">Rng</span></a>&lt;R&gt;</div>
-</h4>
-<div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/random.alu#L335-L339"/>source</a>
-</div>
-</div>
-<div class="item-doc">
-<p>
-Return a random element of the slice.
-</p><p>
-</p>
-<h3> Example</h3>
-<p>
-<pre class="with-playground-link"><code class="language-alumina">use std::random::{thread_rng, choice};
-
-let value = thread_rng().choice(&amp;["hello", "world"]);
-
-assert!(value == "hello" || value == "world");
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3arandom%3a%3a%7bthread%5frng%2c%20choice%7d%3b%0a%20%20%20%0a%20%20%20let%20value%20%3d%20thread%5frng%28%29%2echoice%28%26%5b%22hello%22%2c%20%22world%22%5d%29%3b%0a%20%20%20%0a%20%20%20assert%21%28value%20%3d%3d%20%22hello%22%20%7c%7c%20value%20%3d%3d%20%22world%22%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+The returned pointer is safe to store, but not safe to send across threads.
 </p><p>
 </p>
 </div>
