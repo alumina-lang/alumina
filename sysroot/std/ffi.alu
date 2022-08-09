@@ -72,6 +72,11 @@ impl CString {
         libc::free(self.ptr as &mut void);
     }
 
+    /// @ mem::Clonable::clone
+    fn clone(self: &CString) -> CString {
+        from_slice(self.as_slice())
+    }
+
     /// @ mem::Movable::move
     fn move(self: &mut CString) -> CString {
         let ret = *self;
@@ -88,5 +93,17 @@ mod tests {
         let s = CString::from_raw(c_str!("Hello, World"));
 
         assert_eq!(s.as_slice(), "Hello, World");
+    }
+
+    #[test]
+    fn test_cstring_clone() {
+        let s1 = CString::from_raw(c_str!("Hello, World"));
+        let s2 = s1.clone();
+        defer s2.free();
+
+        *(s2.ptr as &mut u8) = 'Y';
+
+        assert_eq!(s1.as_slice(), "Hello, World");
+        assert_eq!(s2.as_slice(), "Yello, World");
     }
 }

@@ -1,0 +1,107 @@
+//! Various utility functions useful in the generic context.
+
+/// Identity function
+///
+/// ## Example
+/// ```
+/// use std::util::identity;
+///
+/// assert_eq!(identity(1), 1);
+/// ```
+#[inline] fn identity<T>(t: T) -> T { t }
+
+/// Take any parameter and discard the result
+///
+/// ## Example
+/// ```
+/// use std::util::discard;
+///
+/// // Use foreach to loop through the iterator, but don't do anything with the values.
+/// (0..10)
+///     .inspect(|i: i32| { println!("{}", i); })
+///     .foreach(discard::<i32>);
+/// ```
+#[inline] fn discard<T>(_: T) { }
+
+/// Cast a value to a different type.
+///
+/// ## Example
+/// ```
+/// use std::util::cast;
+///
+/// #[cfg(target_pointer_width = "64")]
+/// let x: u64;
+/// #[cfg(target_pointer_width = "32")]
+/// let x: u32;
+///
+/// // We do not know whether x is `u64` or `u32`, but we know 10
+/// // fits in either.
+/// x = cast(10);
+/// ```
+#[inline] fn cast<T1, T2>(t: T1) -> T2 { t as T2 }
+
+/// Coerce a value to a different type without casting
+///
+/// ## Example
+/// ```
+/// use std::util::coerce;
+/// use std::mem::slice;
+///
+/// let x: Option<&mut [u8]> = Option::some(slice::alloc(10));
+/// defer x.inner.free();
+///
+/// let y: Option<&[u8]> = x.map(coerce::<&mut [u8], &[u8]>);
+/// ```
+#[inline] fn coerce<T1, T2>(t: T1) -> T2 { t }
+
+/// Reinterpret the bits of the value as another type.
+///
+/// ## Example
+/// ```
+/// use std::util::transmute;
+///
+/// let x: u64 = 0x400921fb54442d18;
+/// let y: f64 = transmute(x);
+///
+/// assert_eq!(y, 3.14159265358979323846264338327950288f64);
+/// ```
+#[inline]
+fn transmute<T1, T2>(t: T1) -> T2 {
+    // Could use pointers, but union makes sure that we have the correct
+    // alignment.
+    union BitCastT<A, B> {
+        a: A,
+        b: B,
+    }
+    (BitCastT::<T1, T2> { a: t }).b
+}
+
+/// Dereference a pointer.
+#[inline] fn deref<T>(v: &T) -> T { *v }
+
+/// Produce the only value of a unit type out of thin air.
+///
+/// Does not work for the [builtins::never] type.
+///
+/// ## Example
+/// ```
+/// use std::builtins::{Callable, NamedFunction};
+/// use std::util::unit;
+///
+/// fn hello_world() {
+///     println!("Hello, world!");
+/// }
+///
+/// fn call<F: Callable<(), ()> + NamedFunction>() {
+///     // Named functions are a family of zero-sized types
+///     let f = unit::<F>();
+///     f();
+/// }
+///
+/// call::<hello_world>();
+/// ```
+#[inline]
+fn unit<T: builtins::ZeroSized + !!>() -> T {
+    let ret: T;
+    ret
+}

@@ -591,6 +591,7 @@ pub struct Function<'ast> {
 pub struct StaticOrConst<'ast> {
     pub name: Option<&'ast str>,
     pub attributes: &'ast [Attribute],
+    pub placeholders: &'ast [Placeholder<'ast>],
     pub typ: Option<TyP<'ast>>,
     pub init: Option<ExprP<'ast>>,
     pub span: Option<Span>,
@@ -742,7 +743,7 @@ pub enum ExprKind<'ast> {
     Assign(ExprP<'ast>, ExprP<'ast>),
     AssignOp(BinOp, ExprP<'ast>, ExprP<'ast>),
     Local(AstId),
-    Static(ItemP<'ast>),
+    Static(ItemP<'ast>, Option<&'ast [TyP<'ast>]>),
     Const(ItemP<'ast>),
     EnumValue(ItemP<'ast>, AstId),
     Lit(Lit<'ast>),

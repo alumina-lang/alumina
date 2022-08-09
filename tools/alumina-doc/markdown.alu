@@ -87,7 +87,12 @@ impl InlineMarkdown {
         } else {
             let path = Path::from_str(link);
             defer path.free();
-            let link = self.link_context.resolve_link(&path).unwrap();
+            let link = self.link_context.resolve_link(&path);
+            let link = if !link.is_some {
+                panic!("Could not resolve link: {}", path);
+            } else {
+                link.inner
+            };
             defer link.free();
 
             link.as_slice()
@@ -249,6 +254,7 @@ fn write_docstring<T: std::io::Writable<T>>(
 
     let in_a_code_block = false;
     let no_doctest = false;
+    let panics = false;
     let no_doctest_run = false;
     let bare = false;
     let md_state = InlineMarkdownState::default();
@@ -271,7 +277,7 @@ fn write_docstring<T: std::io::Writable<T>>(
 
                     if doctest_item != null && doctest_item.path == doctest_item.defined_in {
                         let name = "_".join(&doctest_item.defined_in.as_slice().iter());
-                        doctest_writer.write_test(name.as_slice(), doctest_source.as_slice(), no_doctest_run);
+                        doctest_writer.write_test(name.as_slice(), doctest_source.as_slice(), no_doctest_run, panics);
                         name.free();
                     }
 
@@ -304,11 +310,14 @@ fn write_docstring<T: std::io::Writable<T>>(
             } else {
                 doctest_source.clear();
                 no_doctest = docline.trim() == "```notest";
+                panics = docline.trim() == "```panics";
                 no_doctest_run = docline.trim() == "```norun";
                 bare = docline.trim() == "```bare";
 
                 if no_doctest || tagline_only {
                     write!(writer, "<pre>");
+                } else if panics {
+                    write!(writer, "<pre class=\"with-playground-link panics\">");
                 } else {
                     write!(writer, "<pre class=\"with-playground-link\">");
                 }

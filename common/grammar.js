@@ -450,6 +450,7 @@ module.exports = grammar({
         ),
         "static",
         field("name", $.identifier),
+        optional(field("type_arguments", $.generic_argument_list)),
         optional(seq(":", field("type", $._type))),
         optional(seq("=", field("init", $._expression))),
         ";"
@@ -518,7 +519,7 @@ module.exports = grammar({
         ")"
       ),
 
-    generic_function: ($) =>
+    turbofish: ($) =>
       prec(
         1,
         seq(
@@ -559,7 +560,7 @@ module.exports = grammar({
         prec.left($.macro_identifier),
         alias(choice(...primitive_types), $.identifier),
         $.scoped_identifier,
-        $.generic_function,
+        $.turbofish,
         $.parenthesized_expression,
         $.struct_expression,
         $._expression_ending_with_block

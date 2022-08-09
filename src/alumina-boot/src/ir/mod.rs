@@ -341,6 +341,7 @@ pub struct VtableLayout<'ir> {
 #[derive(Debug)]
 pub struct EnumMember<'ir> {
     pub id: IrId,
+    pub name: &'ir str,
     pub value: ExprP<'ir>,
 }
 
@@ -440,6 +441,17 @@ impl<'ir> IRItemCell<'ir> {
             Some(IRItem::StructLike(p)) => Ok(p),
             Some(_) => Err(CodeErrorKind::InternalError(
                 "struct expected".into(),
+                Backtrace::new(),
+            )),
+            None => Err(CodeErrorKind::UnpopulatedSymbol),
+        }
+    }
+
+    pub fn get_enum(&'ir self) -> Result<&'ir Enum<'ir>, CodeErrorKind> {
+        match self.contents.get() {
+            Some(IRItem::Enum(p)) => Ok(p),
+            Some(_) => Err(CodeErrorKind::InternalError(
+                "enum expected".into(),
                 Backtrace::new(),
             )),
             None => Err(CodeErrorKind::UnpopulatedSymbol),

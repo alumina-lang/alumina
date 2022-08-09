@@ -169,8 +169,7 @@ $(BUILD_DIR)/examples/.build:
 
 $(BUILD_DIR)/examples/%: examples/%.alu $(ALUMINA_BOOT) $(SYSROOT_FILES) $(BUILD_DIR)/examples/.build
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --output $@.c main=$< && \
-	$(CC) $(CFLAGS) -o $@ $@.c $(LDFLAGS) \
-	|| true
+	$(CC) $(CFLAGS) -o $@ $@.c $(LDFLAGS)
 
 examples: $(patsubst examples/%.alu,$(BUILD_DIR)/examples/%,$(EXAMPLES))
 

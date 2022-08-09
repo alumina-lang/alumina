@@ -874,8 +874,8 @@ impl f32 {
     /// Returns `true` if the number has a negative sign, `false` otherwise.
     #[force_inline]
     fn is_sign_negative(self: f32) -> bool {
-        let as_bits: u64 = util::transmute(self);
-        as_bits & 0x80000000u64 != 0
+        let as_bits: u32 = util::transmute(self);
+        as_bits & 0x80000000u32 != 0
     }
 
     /// Returns the maximum value of `f32`.
@@ -1313,7 +1313,21 @@ impl array<Arr: builtins::Array> {
         &self[0]
     }
 
-    /// Returns the number of elements in the array
+    /// Returns the number of elements in the array.
+    ///
+    /// Prefer to use this function instead of [mem::size_of], as it can lead to surprising results
+    /// when array's element is a zero-sized type.
+    ///
+    /// ## Example
+    /// ```
+    /// let a: [u32; 8];
+    /// let b: [u32; 0];
+    /// let c: [(); 10]; // zero-sized
+    ///
+    /// assert_eq!(a.len(), 8);
+    /// assert_eq!(b.len(), 0);
+    /// assert_eq!(c.len(), 10);
+    /// ```
     #[force_inline]
     fn len(self: &Arr) -> usize {
         intrinsics::array_length_of::<Arr>()
@@ -1455,9 +1469,6 @@ struct generic_args_of<T> {}
 #[lang(typeop_void_ptr_of)]
 struct void_ptr_of<T: Pointer> {}
 
-/// Matches any type
-#[lang(proto_any)] protocol Any {}
-
 /// Matches zero-sized types (void, named function types, empty structs, empty arrays, ...)
 #[lang(proto_zero_sized)] protocol ZeroSized {}
 
@@ -1487,6 +1498,15 @@ struct void_ptr_of<T: Pointer> {}
 
 /// All tuples
 #[lang(proto_tuple)] protocol Tuple {}
+
+/// All structs
+#[lang(proto_struct)] protocol Struct {}
+
+/// All unions
+#[lang(proto_union)] protocol Union {}
+
+/// All enums
+#[lang(proto_enum)] protocol Enum {}
 
 /// All ranges (`a..b`, `a..=b`, `..b`, `..=b`, ...)
 #[lang(proto_range)] protocol Range {}
@@ -1714,5 +1734,63 @@ mod tests {
         assert_eq!(f2.len(), 1);
         assert_eq!(f3.len(), 0);
         assert_eq!(f4.len(), 10);
+    }
+
+    #[test]
+    fn test_f64_ops() {
+        assert!(!0.0f64.is_sign_negative());
+        assert!((-0.0f64).is_sign_negative());
+        assert!(!(1f64).is_sign_negative());
+        assert!((-1f64).is_sign_negative());
+
+        assert!(f64::nan().is_nan());
+        assert!(!0.0f64.is_nan());
+        assert!(!1.0f64.is_nan());
+        assert!(!(-1.0f64).is_nan());
+        assert!(!f64::infinity().is_nan());
+        assert!(!(-f64::infinity()).is_nan());
+
+        assert!(!f64::nan().is_infinite());
+        assert!(!0.0f64.is_infinite());
+        assert!(!1.0f64.is_infinite());
+        assert!(!(-1.0f64).is_infinite());
+        assert!(f64::infinity().is_infinite());
+        assert!((-f64::infinity()).is_infinite());
+
+        assert!(!f64::nan().is_finite());
+        assert!(0.0f64.is_finite());
+        assert!(1.0f64.is_finite());
+        assert!((-1.0f64).is_finite());
+        assert!(!f64::infinity().is_finite());
+        assert!(!(-f64::infinity()).is_finite());
+    }
+
+    #[test]
+    fn test_f32_ops() {
+        assert!(!0.0f32.is_sign_negative());
+        assert!((-0.0f32).is_sign_negative());
+        assert!(!(1f32).is_sign_negative());
+        assert!((-1f32).is_sign_negative());
+
+        assert!(f32::nan().is_nan());
+        assert!(!0.0f32.is_nan());
+        assert!(!1.0f32.is_nan());
+        assert!(!(-1.0f32).is_nan());
+        assert!(!f32::infinity().is_nan());
+        assert!(!(-f32::infinity()).is_nan());
+
+        assert!(!f32::nan().is_infinite());
+        assert!(!0.0f32.is_infinite());
+        assert!(!1.0f32.is_infinite());
+        assert!(!(-1.0f32).is_infinite());
+        assert!(f32::infinity().is_infinite());
+        assert!((-f32::infinity()).is_infinite());
+
+        assert!(!f32::nan().is_finite());
+        assert!(0.0f32.is_finite());
+        assert!(1.0f32.is_finite());
+        assert!((-1.0f32).is_finite());
+        assert!(!f32::infinity().is_finite());
+        assert!(!(-f32::infinity()).is_finite());
     }
 }

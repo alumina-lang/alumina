@@ -613,12 +613,14 @@ impl DoctestWriter {
         }
     }
 
-    fn write_test(self: &mut DoctestWriter, name: &[u8], source: &[u8], no_run: bool) {
+    fn write_test(self: &mut DoctestWriter, name: &[u8], source: &[u8], no_run: bool, panics: bool) {
         use std::fmt::writeln;
         let fmt = StreamFormatter::new(&self.writer);
 
         if no_run {
             writeln!(&fmt, "#[test(ignore)]").unwrap();
+        } else if panics {
+            writeln!(&fmt, "#[test(should_fail)]").unwrap();
         } else {
             writeln!(&fmt, "#[test]").unwrap();
         }

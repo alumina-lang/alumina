@@ -366,7 +366,7 @@ impl<'ast> MacroExpander<'ast> {
             | Void
             | Fn(_, _)
             | Defered(_)
-            | Static(_)
+            | Static(_, _)
             | Const(_) => expr.kind.clone(),
         };
 

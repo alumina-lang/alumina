@@ -603,6 +603,14 @@ impl<'ast> AstItemMaker<'ast> {
             })
             .transpose()?;
 
+        let placeholders = self.get_placeholders(&scope)?;
+
+        assert!(placeholders.is_empty() || !is_const);
+
+        if !placeholders.is_empty() && is_extern {
+            return Err(CodeErrorKind::ExternStaticCannotBeGeneric).with_span_from(&scope, node);
+        }
+
         if typ.is_none() && init.is_none() {
             return Err(CodeErrorKind::TypeHintRequired).with_span_from(&scope, node);
         }
@@ -626,6 +634,7 @@ impl<'ast> AstItemMaker<'ast> {
             init,
             span: Some(span),
             is_const,
+            placeholders,
             is_local: self.local,
             r#extern: is_extern,
         });
@@ -726,10 +735,10 @@ impl<'ast> AstItemMaker<'ast> {
                 self.make(scope.clone())?;
             }
             [NI {
-                kind: Static(symbol, node),
+                kind: Static(symbol, node, scope),
                 attributes,
             }] => {
-                self.make_static_or_const(false, name, *symbol, *node, scope, attributes)?;
+                self.make_static_or_const(false, name, *symbol, *node, scope.clone(), attributes)?;
             }
             [NI {
                 kind: Const(symbol, node),

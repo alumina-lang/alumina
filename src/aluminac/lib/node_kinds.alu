@@ -22,6 +22,7 @@ enum NodeKind {
     DeferExpression,
     ParameterTypeList,
     Pattern,
+    Turbofish,
     DocComment,
     Arguments,
     TryExpression,
@@ -101,7 +102,6 @@ enum NodeKind {
     Statement,
     TupleExpression,
     EnumItem,
-    GenericFunction,
     PointerOf,
     ParenthesizedExpression,
     CharLiteral,
@@ -342,7 +342,7 @@ static NODE_KINDS: [NodeKind; 249] = [
     NodeKind::DeferExpression,
     NodeKind::Arguments,
     NodeKind::TupleExpression,
-    NodeKind::GenericFunction,
+    NodeKind::Turbofish,
     NodeKind::Invalid,
     NodeKind::Invalid,
     NodeKind::UnaryExpression,
@@ -467,6 +467,9 @@ protocol NodeVisitor<Self, ReturnType> {
     }
     fn visit_pattern(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_pattern");
+    }
+    fn visit_turbofish(self: &mut Self, node: Node) -> ReturnType {
+        panic!("unimplemented: visit_turbofish");
     }
     fn visit_doc_comment(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_doc_comment");
@@ -705,9 +708,6 @@ protocol NodeVisitor<Self, ReturnType> {
     fn visit_enum_item(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_enum_item");
     }
-    fn visit_generic_function(self: &mut Self, node: Node) -> ReturnType {
-        panic!("unimplemented: visit_generic_function");
-    }
     fn visit_pointer_of(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_pointer_of");
     }
@@ -756,6 +756,7 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::DeferExpression => self.visit_defer_expression(node),
             NodeKind::ParameterTypeList => self.visit_parameter_type_list(node),
             NodeKind::Pattern => self.visit_pattern(node),
+            NodeKind::Turbofish => self.visit_turbofish(node),
             NodeKind::DocComment => self.visit_doc_comment(node),
             NodeKind::Arguments => self.visit_arguments(node),
             NodeKind::TryExpression => self.visit_try_expression(node),
@@ -835,7 +836,6 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::Statement => self.visit_statement(node),
             NodeKind::TupleExpression => self.visit_tuple_expression(node),
             NodeKind::EnumItem => self.visit_enum_item(node),
-            NodeKind::GenericFunction => self.visit_generic_function(node),
             NodeKind::PointerOf => self.visit_pointer_of(node),
             NodeKind::ParenthesizedExpression => self.visit_parenthesized_expression(node),
             NodeKind::CharLiteral => self.visit_char_literal(node),

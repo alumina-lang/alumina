@@ -190,7 +190,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                 }
                 NamedItemKind::MacroParameter(var, _) => ExprKind::Local(var),
                 NamedItemKind::Parameter(var, _) => ExprKind::Local(var),
-                NamedItemKind::Static(var, _) => ExprKind::Static(var),
+                NamedItemKind::Static(var, _, _) => ExprKind::Static(var, None),
                 NamedItemKind::Const(var, _) => ExprKind::Const(var),
                 NamedItemKind::EnumMember(typ, var, _) => ExprKind::EnumValue(typ, var),
                 NamedItemKind::Macro(_, _, _) => {
@@ -865,19 +865,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         return Ok(result.alloc_with_span_from(self.ast, &self.scope, node));
     }
 
-    fn visit_generic_function(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let fn_kind = match &self
-            .visit(node.child_by_field_name("function").unwrap())?
-            .kind
-        {
-            ExprKind::Fn(fn_kind, None) => fn_kind.clone(),
-            ExprKind::Defered(def) => FnKind::Defered(def.clone()),
-            _ => {
-                //panic!("wow");
-                return Err(CodeErrorKind::FunctionExpectedHere).with_span_from(&self.scope, node);
-            }
-        };
-
+    fn visit_turbofish(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let mut type_visitor = TypeVisitor::new(
             self.global_ctx.clone(),
             self.ast,
@@ -892,6 +880,22 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             .map(|child| type_visitor.visit(child))
             .collect::<Result<Vec<_>, _>>()?
             .alloc_on(self.ast);
+
+        let fn_kind = match &self
+            .visit(node.child_by_field_name("function").unwrap())?
+            .kind
+        {
+            ExprKind::Fn(fn_kind, None) => fn_kind.clone(),
+            ExprKind::Defered(def) => FnKind::Defered(def.clone()),
+            ExprKind::Static(inner, None) => {
+                let ret = ExprKind::Static(inner, Some(arguments));
+                return Ok(ret.alloc_with_span_from(self.ast, &self.scope, node));
+            }
+            _ => {
+                return Err(CodeErrorKind::FunctionOrStaticExpectedHere)
+                    .with_span_from(&self.scope, node);
+            }
+        };
 
         let result = ExprKind::Fn(fn_kind, Some(arguments));
         Ok(result.alloc_with_span_from(self.ast, &self.scope, node))
@@ -1413,7 +1417,9 @@ pub fn parse_string_literal(lit: &str) -> Result<Vec<u8>, CodeErrorKind> {
             State::UnicodeShort => {
                 if buf.len() == 3 {
                     buf.push(ch as char);
-                    let ch = u32::from_str_radix(&buf, 16).unwrap();
+                    let ch = u32::from_str_radix(&buf, 16)
+                        .map_err(|_| CodeErrorKind::InvalidEscapeSequence)?;
+
                     let utf8 = char::from_u32(ch)
                         .ok_or(CodeErrorKind::InvalidEscapeSequence)?
                         .to_string();
@@ -1428,7 +1434,8 @@ pub fn parse_string_literal(lit: &str) -> Result<Vec<u8>, CodeErrorKind> {
             }
             State::UnicodeLong => match ch {
                 b'}' => {
-                    let ch = u32::from_str_radix(&buf, 16).unwrap();
+                    let ch = u32::from_str_radix(&buf, 16)
+                        .map_err(|_| CodeErrorKind::InvalidEscapeSequence)?;
                     let utf8 = char::from_u32(ch)
                         .ok_or(CodeErrorKind::InvalidEscapeSequence)?
                         .to_string();
@@ -1438,7 +1445,7 @@ pub fn parse_string_literal(lit: &str) -> Result<Vec<u8>, CodeErrorKind> {
                 }
                 _ => {
                     buf.push(ch as char);
-                    State::UnicodeShort
+                    State::UnicodeLong
                 }
             },
         };
