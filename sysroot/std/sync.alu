@@ -390,6 +390,42 @@ impl CondVar {
 }
 
 
+struct Spinlock {
+    inner: Atomic<bool>
+}
+
+impl Spinlock {
+    use std::io::Error;
+
+    /// Creates a new mutex.
+    fn new() -> Spinlock {
+        Spinlock {
+            inner: Atomic::new(false)
+        }
+    }
+
+    /// Acquires a spinlock, potentially spinning
+    #[inline]
+    fn lock(self: &mut Spinlock) {
+        while !self.try_lock() {}
+    }
+
+    /// Attempts to acquire a spinlock, but does not spin.
+    ///
+    /// Returns `true` if the lock was successfully acquired, `false` otherwise.
+    #[inline]
+    fn try_lock(self: &mut Spinlock) -> bool {
+        self.inner.compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire).is_ok
+    }
+
+    /// Releases a spinlock.
+    #[inline]
+    fn unlock(self: &mut Spinlock) {
+        self.inner.store(false, Ordering::Release);
+    }
+}
+
+
 /// A synchronization primitive that allows multiple threads to wait until the
 /// event is signalled.
 ///
@@ -414,23 +450,26 @@ impl CondVar {
 /// t.join().unwrap();
 /// ```
 struct Event {
-    state: Atomic<usize>
+    state: Atomic<usize>,
+    lock: Spinlock,
 }
 
 impl Event {
-    use internal::{EventWaiter, EVENT_SET, EVENT_RESET, EVENT_STATE_MASK};
+    use internal::{EventWaiter, EVENT_SET, EVENT_RESET};
 
     /// Create a new event in an unset state
     fn new() -> Event {
         Event {
-            state: Atomic::new(EVENT_RESET)
+            state: Atomic::new(EVENT_RESET),
+            lock: Spinlock::new()
         }
     }
 
     /// Create a new event in a set state
     fn new_set() -> Event {
         Event {
-            state: Atomic::new(EVENT_SET)
+            state: Atomic::new(EVENT_SET),
+            lock: Spinlock::new()
         }
     }
 
@@ -440,8 +479,11 @@ impl Event {
         switch old_value {
             EVENT_SET, EVENT_RESET => {}
             _ => {
+                self.lock.lock();
+                defer self.lock.unlock();
+
                 // Wake up some threads
-                let waiter = (old_value & ~EVENT_STATE_MASK) as &mut EventWaiter;
+                let waiter = old_value as &mut EventWaiter;
                 while waiter != null {
                     /// As soon as we set the `signaled` flag, the region of
                     /// memory that waiter points to may be invalidated. So we need
@@ -487,7 +529,7 @@ impl Event {
             let waiter = EventWaiter {
                 thread: thread::Thread::current(),
                 signaled: Atomic::new(false),
-                next: (state & ~EVENT_STATE_MASK) as &mut EventWaiter
+                next: state as &mut EventWaiter
             }
 
             let maybe_replaced = self.state.compare_exchange(
@@ -508,6 +550,83 @@ impl Event {
             }
             return;
         }
+    }
+
+    fn wait_timeout(self: &mut Event, timeout: time::Duration) -> bool {
+        let state = self.state.load(Ordering::Acquire);
+        loop {
+            if state == EVENT_SET {
+                return true;
+            }
+
+            // This is a clever idea I stole from Rust's Once, a linked-list of nodes
+            // on the stack. Since the threads are sleeping, the address will
+            // remain valid.
+            let waiter = EventWaiter {
+                thread: thread::Thread::current(),
+                signaled: Atomic::new(false),
+                next: state as &mut EventWaiter
+            }
+
+            let maybe_replaced = self.state.compare_exchange(
+                state,
+                &waiter as usize,
+                Ordering::Release,
+                Ordering::Relaxed
+            );
+
+            if !maybe_replaced.is_ok {
+                // Someone beat us to the punch
+                state = maybe_replaced.unwrap_err();
+                continue;
+            }
+
+            thread::Thread::park_timeout(timeout);
+            if waiter.signaled.load(Ordering::Acquire) {
+                return true;
+            } else {
+                self._unregister(&waiter);
+                return false;
+            }
+        }
+    }
+
+    fn _unregister(self: &mut Event, waiter: &mut EventWaiter) {
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        let state = self.state.load(Ordering::Relaxed);
+        loop {
+            if state == EVENT_SET || state == EVENT_RESET {
+                return;
+            }
+            if waiter as usize == state {
+                let maybe_replaced = self.state.compare_exchange(
+                    state,
+                    waiter.next as usize,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed
+                ); 
+                if !maybe_replaced.is_ok {
+                    state = maybe_replaced.unwrap_err();
+                    continue;
+                }
+                return;
+            }
+            break;
+        }
+
+        let node = state as &mut EventWaiter;
+        while node != null {
+            if node.next == waiter {
+                node.next = waiter.next;
+                return;
+            } else {
+                node = node.next;
+            }
+        }
+
+        unreachable!()
     }
 }
 
@@ -589,7 +708,6 @@ impl Oneshot<T> {
 mod internal {
     const EVENT_RESET: usize = 0x0;
     const EVENT_SET: usize = 0x1;
-    const EVENT_STATE_MASK: usize = 0x1;
 
     #[align(4)]
     struct EventWaiter {
