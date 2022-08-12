@@ -30,6 +30,7 @@ pub enum IntrinsicKind {
     CodegenConst,
     MakeVtable,
     EnumVariants,
+    Asm,
 }
 
 pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
@@ -52,6 +53,7 @@ pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
         map.insert("codegen_const", IntrinsicKind::CodegenConst);
         map.insert("make_vtable", IntrinsicKind::MakeVtable);
         map.insert("enum_variants", IntrinsicKind::EnumVariants);
+        map.insert("asm", IntrinsicKind::Asm);
         map
     })
     .get(name)
@@ -73,6 +75,7 @@ macro_rules! typecheck {
 #[derive(Debug, Clone)]
 pub enum CodegenIntrinsicKind<'ir> {
     SizeOfLike(&'ir str, TyP<'ir>),
+    Asm(&'ir str),
     FunctionLike(&'ir str),
     ConstLike(&'ir str),
 }
@@ -261,6 +264,18 @@ impl<'ir> CompilerIntrinsics<'ir> {
         ))
     }
 
+    fn asm(&self, assembly: ExprP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
+        let assembly = match const_eval::const_eval(assembly) {
+            Ok(Value::Str(s)) => std::str::from_utf8(s).unwrap(),
+            _ => return Err(CodeErrorKind::CannotConstEvaluate).with_no_span(),
+        };
+
+        Ok(self.expressions.codegen_intrinsic(
+            CodegenIntrinsicKind::Asm(assembly),
+            self.types.builtin(BuiltinType::Void),
+        ))
+    }
+
     fn codegen_const(
         &self,
         name: ExprP<'ir>,
@@ -295,6 +310,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
             IntrinsicKind::CompileWarn => self.compile_warn(args[0], span),
             IntrinsicKind::CompileNote => self.compile_note(args[0], span),
             IntrinsicKind::Unreachable => self.unreachable(),
+            IntrinsicKind::Asm => self.asm(args[0]),
             IntrinsicKind::AlignedAlloca => self.aligned_alloca(args[0], args[1]),
             IntrinsicKind::CodegenFunc => self.codegen_func(args[0], &args[1..], generic[0]),
             IntrinsicKind::CodegenConst => self.codegen_const(args[0], generic[0]),

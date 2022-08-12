@@ -460,6 +460,9 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 CodegenIntrinsicKind::ConstLike(n) => {
                     w!(self.fn_bodies, "{}", n);
                 }
+                CodegenIntrinsicKind::Asm(n) => {
+                    w!(self.fn_bodies, "asm volatile({:?})", *n);
+                }
             },
             ExprKind::Void => {}
         }

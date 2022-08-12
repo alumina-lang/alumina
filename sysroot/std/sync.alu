@@ -189,6 +189,22 @@ fn compiler_fence(ordering: Ordering) {
     intrinsics::codegen_func::<void>("__atomic_signal_fence", ordering as libc::c_int)
 }
 
+/// A hint to the CPU that we are spinning
+///
+/// This does not result in a system call like [thread::yield], but can reduce power usage
+/// or allow other hyperthreads to run.
+#[force_inline]
+fn spin_loop() {
+    #[cfg(target_arch = "x86")]
+    std::intrinsics::asm("pause");
+    #[cfg(target_arch = "x86_64")]
+    std::intrinsics::asm("pause");
+    #[cfg(target_arch = "arm")]
+    std::intrinsics::asm("yield");
+    #[cfg(target_arch = "aarch64")]
+    std::intrinsics::asm("isb");
+}
+
 /// A mutual exclusion lock (mutex)
 ///
 /// This is a standard pthread mutex.
@@ -360,10 +376,24 @@ impl CondVar {
     /// condition variable can wake up spuriously, it is not guaranteed that the condition is actually
     /// satisfied.
     fn wait_timeout(self: &mut CondVar, mutex: &mut Mutex, timeout: time::Duration) -> bool {
-        let timespec = libc::timespec {
-            tv_sec: util::cast(timeout.secs),
-            tv_nsec: util::cast(timeout.nanos)
+        if timeout.is_negative() {
+            return false;
         }
+
+        // We use the wall time here, not the monotonic time that's used for time::Instant
+        let cur_time: libc::timeval;
+        assert!(libc::gettimeofday(&cur_time, null) == 0);
+
+        let timespec = libc::timespec {
+            tv_sec: cur_time.tv_sec + util::cast(timeout.secs),
+            tv_nsec: cur_time.tv_usec * 1000 + util::cast(timeout.nanos)
+        };
+
+        if timespec.tv_nsec >= util::cast(time::NANOS_PER_SEC) {
+            timespec.tv_sec += 1;
+            timespec.tv_nsec -= util::cast(time::NANOS_PER_SEC);
+        }
+
         let ret = libc::pthread_cond_timedwait(&self.inner, &mutex.inner, &timespec);
         switch ret {
             0 => true,
@@ -389,7 +419,10 @@ impl CondVar {
     }
 }
 
-
+/// A spinlock.
+///
+/// Dangerous to use in userspace, do not use unless you know what you're doing. Can lead to priority
+/// inversion and other nasty stuff. Prefer to use [Mutex] instead.
 struct Spinlock {
     inner: Atomic<bool>
 }
@@ -404,10 +437,12 @@ impl Spinlock {
         }
     }
 
-    /// Acquires a spinlock, potentially spinning
+    /// Acquires a spinlock, spinning until it is acquired.
     #[inline]
     fn lock(self: &mut Spinlock) {
-        while !self.try_lock() {}
+        while !self.try_lock() {
+            spin_loop();
+        }
     }
 
     /// Attempts to acquire a spinlock, but does not spin.
@@ -415,7 +450,19 @@ impl Spinlock {
     /// Returns `true` if the lock was successfully acquired, `false` otherwise.
     #[inline]
     fn try_lock(self: &mut Spinlock) -> bool {
-        self.inner.compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire).is_ok
+        self.inner.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok
+    }
+
+    /// Attempts to acquire a spinlock, spining for up to `times` times.
+    #[inline]
+    fn try_lock_bounded(self: &mut Spinlock, times: usize) -> bool {
+        for _ in 0usize..times {
+            if self.try_lock() {
+                return true;
+            }
+            spin_loop();
+        }
+        false
     }
 
     /// Releases a spinlock.
@@ -552,6 +599,9 @@ impl Event {
         }
     }
 
+    /// Waits for the event to be signalled or the timeout to be reached.
+    ///
+    /// Returns `true` if the event was signalled, `false` if the timeout was reached.
     fn wait_timeout(self: &mut Event, timeout: time::Duration) -> bool {
         let state = self.state.load(Ordering::Acquire);
         loop {
@@ -559,9 +609,6 @@ impl Event {
                 return true;
             }
 
-            // This is a clever idea I stole from Rust's Once, a linked-list of nodes
-            // on the stack. Since the threads are sleeping, the address will
-            // remain valid.
             let waiter = EventWaiter {
                 thread: thread::Thread::current(),
                 signaled: Atomic::new(false),
@@ -606,7 +653,7 @@ impl Event {
                     waiter.next as usize,
                     Ordering::Relaxed,
                     Ordering::Relaxed
-                ); 
+                );
                 if !maybe_replaced.is_ok {
                     state = maybe_replaced.unwrap_err();
                     continue;
@@ -698,6 +745,17 @@ impl Oneshot<T> {
     /// If the channel's value has not been set, this will return [channel::ChannelError::WouldBlock].
     fn try_recv(self: &mut Oneshot<T>) -> Result<T, channel::ChannelError> {
         if self._event.is_set() {
+            Result::ok(self._value)
+        } else {
+            Result::err(channel::ChannelError::WouldBlock)
+        }
+    }
+
+    /// Try to get a value from the channel with a timeout.
+    ///
+    /// If the timeout is reached, this will return [channel::ChannelError::WouldBlock].
+    fn recv_timeout(self: &mut Oneshot<T>, timeout: time::Duration) -> Result<T, channel::ChannelError> {
+        if self._event.wait_timeout(timeout) {
             Result::ok(self._value)
         } else {
             Result::err(channel::ChannelError::WouldBlock)
@@ -938,6 +996,15 @@ mod tests {
 
     #[cfg(threading)]
     #[test]
+    fn test_oneshot_timeout() {
+        let chan: Oneshot<i32> = Oneshot::new();
+        assert_eq!(chan.recv_timeout(Duration::from_secs(0)), Result::err(channel::ChannelError::WouldBlock));
+        chan.send(1337);
+        assert_eq!(chan.recv_timeout(Duration::from_secs(1)), Result::ok(1337));
+    }
+
+    #[cfg(threading)]
+    #[test]
     fn test_oneshot_completed() {
         let chan: Oneshot<i32> = Oneshot::from_value(1337);
         assert_eq!(chan.recv(), 1337);
@@ -977,5 +1044,30 @@ mod tests {
         chan.send(42);
         assert_eq!(t1.join().unwrap(), 43);
         assert_eq!(t2.join().unwrap(), 44);
+    }
+
+    #[test]
+    fn test_spinlock() {
+        let lock = Spinlock::new();
+        lock.lock();
+        lock.unlock();
+        assert!(lock.try_lock());
+        lock.unlock();
+        assert!(lock.try_lock_bounded(50));
+        lock.unlock();
+    }
+
+    #[test]
+    fn test_spinlock_try() {
+        let lock = Spinlock::new();
+        lock.lock();
+        assert!(!lock.try_lock());
+    }
+
+    #[test]
+    fn test_spinlock_bounded() {
+        let lock = Spinlock::new();
+        lock.lock();
+        assert!(!lock.try_lock_bounded(50));
     }
 }
