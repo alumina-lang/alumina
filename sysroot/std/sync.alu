@@ -385,8 +385,8 @@ impl CondVar {
         assert!(libc::gettimeofday(&cur_time, null) == 0);
 
         let timespec = libc::timespec {
-            tv_sec: cur_time.tv_sec + util::cast(timeout.secs),
-            tv_nsec: cur_time.tv_usec * 1000 + util::cast(timeout.nanos)
+            tv_sec: util::cast(cur_time.tv_sec) + util::cast(timeout.secs),
+            tv_nsec: util::cast(cur_time.tv_usec) * 1000 + util::cast(timeout.nanos)
         };
 
         if timespec.tv_nsec >= util::cast(time::NANOS_PER_SEC) {
