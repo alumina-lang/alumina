@@ -605,7 +605,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             protocol_bounds.push((placeholder.bounds.typ, *ty, grouped_bounds));
         }
 
-        let inner = child.lower_type(s.target).append_span(s.span)?;
+        let target = s
+            .target
+            .ok_or_else(|| CodeErrorKind::TypedefWithoutTarget)
+            .with_span(s.span)?;
+        let inner = child.lower_type(target).append_span(s.span)?;
 
         let res = ir::IRItem::Alias(inner);
         item.assign(res);
@@ -863,6 +867,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 Some(LangTypeKind::Range(k)) if k == proto_generic_args[0] => {
                     return Ok(BoundCheckResult::Matches)
                 }
+                _ => return Ok(BoundCheckResult::DoesNotMatch),
+            },
+            Some(LangItemKind::ProtoMeta) => match ty {
+                ir::Ty::Protocol(_) => return Ok(BoundCheckResult::Matches),
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
             Some(LangItemKind::ProtoCallable) => {
@@ -1874,7 +1882,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                             return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
                         }
                         if let ir::Ty::FunctionPointer(args, _) = args[0] {
-                            return Ok(self.types.tuple(args.iter().copied()));
+                            if args.is_empty() {
+                                return Ok(self.types.void());
+                            } else {
+                                return Ok(self.types.tuple(args.iter().copied()));
+                            }
                         }
                         if let ir::Ty::NamedFunction(f) = args[0] {
                             let func = f.get_function().with_no_span()?;
@@ -1882,6 +1894,17 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                                 return Ok(self.types.void());
                             } else {
                                 return Ok(self.types.tuple(func.args.iter().map(|a| a.ty)));
+                            }
+                        }
+                        return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
+                    }
+                    Some(LangItemKind::TypeopEnumTypeOf) => {
+                        if args.len() != 1 {
+                            return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
+                        }
+                        if let ir::Ty::NamedType(e) = args[0] {
+                            if let Ok(e) = e.get_enum() {
+                                return Ok(e.underlying_type);
                             }
                         }
                         return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
@@ -1922,7 +1945,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                             _ => {}
                         }
 
-                        self.monomorphize_item(item, &[dyn_self].alloc_on(self.mono_ctx.ir))?
+                        self.monomorphize_item(item, [dyn_self].alloc_on(self.mono_ctx.ir))?
                     }
                     ast::Ty::Generic(ast::Ty::Protocol(item), args) => {
                         match self.mono_ctx.ast.lang_item_kind(item) {
@@ -2717,7 +2740,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let init = decl
                     .value
                     .map(|v| {
-                        self.lower_expr(v, type_hint.or(self.local_type_hints.get(&id).copied()))
+                        self.lower_expr(
+                            v,
+                            type_hint.or_else(|| self.local_type_hints.get(&id).copied()),
+                        )
                     })
                     .transpose()?;
 
@@ -2958,13 +2984,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         match typ.canonical_type() {
             ir::Ty::Closure(item) => {
                 let closure = item.get_closure().with_no_span()?;
-                let field_ty = closure
-                    .fields
-                    .iter()
-                    .filter(|f| f.id == field_id)
-                    .next()
-                    .unwrap()
-                    .ty;
+                let field_ty = closure.fields.iter().find(|f| f.id == field_id).unwrap().ty;
 
                 let mut obj = self.exprs.local(self_arg, typ);
                 while let ir::Ty::Pointer(_, _) = obj.ty {
@@ -3377,6 +3397,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         match (expr.ty, typ) {
             // Numeric casts
             (ir::Ty::Builtin(a), ir::Ty::Builtin(b)) if a.is_numeric() && b.is_numeric() => {}
+            // bool -> integer (but not vice-versa)
+            (ir::Ty::Builtin(BuiltinType::Bool), ir::Ty::Builtin(b)) if b.is_numeric() => {}
 
             // Enums
             (ir::Ty::NamedType(a), ir::Ty::Builtin(b))
@@ -3946,8 +3968,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .methods
             .iter()
             .enumerate()
-            .filter(|(_, p)| p.name == name)
-            .next()
+            .find(|(_, p)| p.name == name)
         {
             x
         } else {
@@ -4150,7 +4171,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     ) -> Result<ast::TyP<'ast>, AluminaError> {
         let typ = match ast_type {
             ast::Ty::Generic(ast::Ty::NamedType(n), _) | ast::Ty::NamedType(n) => {
-                if let ast::Item::TypeDef(t) = n.get() {
+                if let ast::Item::TypeDef(ast::TypeDef {
+                    target: Some(target),
+                    ..
+                }) = n.get()
+                {
                     let _guard = self
                         .mono_ctx
                         .cycle_guardian
@@ -4158,16 +4183,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                         .map_err(|_| CodeErrorKind::CycleDetected)
                         .with_no_span()?;
 
-                    return self.resolve_ast_type(t.target);
+                    return self.resolve_ast_type(target);
                 }
 
                 ast_type
             }
             ast::Ty::Placeholder(_) => {
                 let ir_type = self.lower_type(ast_type)?;
-                let ast_type = self.raise_type(ir_type)?;
-
-                ast_type // self.resolve_ast_type(ast_type)?
+                self.raise_type(ir_type)?
             }
             _ => ast_type,
         };
@@ -4644,7 +4667,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .map(|l| l.ty)
             .or_else(|| upper.map(|u| u.ty))
             .or(bound_hint)
-            .unwrap_or(self.types.builtin(BuiltinType::I32)); // Same as for unqualified integer literals
+            .unwrap_or_else(|| self.types.builtin(BuiltinType::I32)); // Same as for unqualified integer literals
 
         let result = match (lower, upper) {
             (Some(lower), Some(upper)) => {
@@ -4985,7 +5008,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
         }
 
-        self.lower_fn(ast::FnKind::Defered(spec.clone()), None, type_hint)
+        self.lower_fn(ast::FnKind::Defered(*spec), None, type_hint)
     }
 
     fn lower_expr(

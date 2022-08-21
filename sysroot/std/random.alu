@@ -147,6 +147,9 @@ impl Pcg32 {
     mixin RngExt<Pcg32>;
 }
 
+/// Default general purpose random number generator.
+type DefaultRng = Pcg32;
+
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 {
     /// RNG backed by a OS-provided random number generation facility
@@ -231,7 +234,7 @@ impl Pcg32 {
 /// ```
 ///
 /// The returned pointer is safe to store, but not safe to send across threads.
-fn thread_rng() -> &mut Pcg32 {
+fn thread_rng() -> &mut DefaultRng {
     if !internal::THREAD_RNG.is_some {
         internal::THREAD_RNG = Option::some(internal::seed_default_rng());
     }
@@ -273,14 +276,14 @@ protocol RngExt<Self: Rng<Self>> {
         use std::range::{Range, RangeInclusive, RangeTo, RangeToInclusive, RangeFrom, RangeFull};
 
         when R: Range<T> {
-            debug_assert!(range.lower < range.upper);
+            assert!(range.lower < range.upper);
 
             let bound = (range.upper as unsigned_of<T>) - (range.lower as unsigned_of<T>);
             let ret = (range.lower as unsigned_of<T>) + internal::gen_uniform(rng, bound);
 
             ret as T
         } else when R: RangeInclusive<T> {
-            debug_assert!(range.lower <= range.upper);
+            assert!(range.lower <= range.upper);
 
             let bound = ((range.upper as unsigned_of<T>) - (range.lower as unsigned_of<T>)) + 1;
             if bound == 0 {
@@ -359,7 +362,7 @@ protocol RngExt<Self: Rng<Self>> {
     /// assert!(value == "hello" || value == "world");
     /// ```
     fn choice<T>(rng: &mut Self, slice: &[T]) -> T {
-        debug_assert!(slice.len() > 0);
+        assert!(slice.len() > 0);
 
         slice[rng.next(0usize..slice.len())]
     }

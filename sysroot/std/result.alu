@@ -263,6 +263,32 @@ impl Result {
     use std::cmp::{Equatable};
     use std::mem::{Freeable, Movable};
 
+    /// Convert `Result<Option<T>, E>` to `Option<Result<T, E>>`
+    ///
+    /// See also [Option::transpose] for the reverse operation.
+    ///
+    /// ## Example
+    /// ```
+    /// let a: Result<Option<i32>, i32> = Result::ok(Option::some(42));
+    /// let b: Result<Option<i32>, i32> = Result::ok(Option::none());
+    /// let c: Result<Option<i32>, i32> = Result::err(1337);
+    ///
+    /// assert_eq!(a.transpose(), Option::some(Result::ok(42)));
+    /// assert_eq!(b.transpose(), Option::none());
+    /// assert_eq!(c.transpose(), Option::some(Result::err(1337)));
+    /// ```
+    fn transpose<T, E>(self: Result<Option<T>, E>) -> Option<Result<T, E>> {
+        if self.is_ok {
+            if self.inner.ok.is_some {
+                Option::some(Result::ok(self.inner.ok.inner))
+            } else {
+                Option::none()
+            }
+        } else {
+            Option::some(Result::err(self.inner.err))
+        }
+    }
+
     /// @ std::fmt::Formattable::fmt
     fn fmt<T: Formattable<T, F>, E: Formattable<E, F>, F: Formatter<F>>(self: &Result<T, E>, formatter: &mut F) -> fmt::Result {
         if self.is_ok {

@@ -96,11 +96,22 @@ impl Option<T> {
     /// Convert the option into a [std::result::Result].
     ///
     /// If the option is empty, the `err` value will be used for the error variant.
-    fn as_result<E>(self: Option<T>, err: E) -> result::Result<T, E> {
+    fn ok_or<E>(self: Option<T>, err: E) -> result::Result<T, E> {
         if self.is_some {
             result::Result::ok(self.inner)
         } else {
             result::Result::err(err)
+        }
+    }
+
+    /// Convert the option into a [std::result::Result].
+    ///
+    /// If the option is empty, the callback will be called to get the the error variant.
+    fn ok_or_else<E, F: builtins::Callable<(), E>>(self: Option<T>, f: F) -> result::Result<T, E> {
+        if self.is_some {
+            result::Result::ok(self.inner)
+        } else {
+            result::Result::err(f())
         }
     }
 
@@ -180,9 +191,28 @@ impl Option<T> {
         }
     }
 
-    /// Transform the value inside the `Option` by calling the provided function.
+    /// If `self` is none, return none, otherwise return `other`
     ///
-    /// If the value is none, function is not called.
+    /// ## Example
+    /// ```
+    /// let a = Option::some(42);
+    /// let b = Option::some(true);
+    /// let c = Option::none::<i32>();
+    ///
+    /// assert_eq!(a.and(b), Option::some(true));
+    /// assert_eq!(a.and(c), Option::none());
+    /// assert_eq!(c.and(a), Option::none());
+    /// ```
+    fn and<Tm>(self: Option<T>, other: Option<Tm>) -> Option<Tm> {
+        if self.is_some {
+            other
+        } else {
+            Option::none()
+        }
+    }
+
+    /// If `self` is none, return none, otherwise return the result of
+    /// calling `func`.
     ///
     /// ## Example
     /// ```
@@ -205,7 +235,7 @@ impl Option<T> {
         }
     }
 
-    /// If `self` is populated, return it, otherwise return `other`
+    /// Return `self` if it is populated, otherwise return `other`.
     ///
     /// ## Example
     /// ```
@@ -223,12 +253,84 @@ impl Option<T> {
         }
     }
 
+    /// Return `self` if it is populated, otherwise return the result of
+    /// calling `func`.
+    ///
+    /// ## Example
+    /// ```
+    /// let a = Option::some(42);
+    /// let b = Option::none::<i32>();
+    ///
+    /// assert_eq!(
+    ///     a.or_else(|| -> Option<i32> { Option::none() }),
+    ///     Option::some(42)
+    /// );
+    /// assert_eq!(
+    ///     b.or_else(|| -> Option<i32> { Option::some(42) }),
+    ///     Option::some(42)
+    /// );
+    /// ```
+    fn or_else<F: builtins::Callable<(), Option<T>>>(self: Option<T>, func: F) -> Option<T> {
+        if self.is_some {
+            self
+        } else {
+            func()
+        }
+    }
+
     /// Returns pointer to inner or a null pointer if not present.
-    fn as_ptr(self: &Option<T>) -> &T {
+    ///
+    /// ## Example
+    /// ```
+    /// let a = Option::some(42);
+    /// let b = Option::none::<i32>();
+    ///
+    /// assert_eq!(*a.as_nullable_ptr(), 42);
+    /// assert_eq!(b.as_nullable_ptr(), null);
+    /// ```
+    fn as_nullable_ptr(self: &Option<T>) -> &T {
         if self.is_some {
             &self.inner
         } else {
             null as &T
+        }
+    }
+
+    /// Transform a pointer to `Option` to an `Option` of pointer.
+    ///
+    /// ## Example
+    /// ```
+    /// let a = Option::some(42);
+    ///
+    /// let b = a.as_ptr();
+    /// assert_eq!(*b.unwrap(), 42);
+    ///
+    /// a = Option::some(1337);
+    /// assert_eq!(*b.unwrap(), 1337);
+    /// ```
+    fn as_ptr(self: &Option<T>) -> Option<&T> {
+        if self.is_some {
+            Option::some(&self.inner)
+        } else {
+            Option::none()
+        }
+    }
+
+    /// Transform a mutable pointer to `Option` to an `Option` of mutable pointer.
+    ///
+    /// ## Example
+    /// ```
+    /// let a = Option::some(42);
+    ///
+    /// *a.as_mut_ptr().unwrap() = 1337;
+    ///
+    /// assert_eq!(a, Option::some(1337));
+    /// ```
+    fn as_mut_ptr(self: &mut Option<T>) -> Option<&mut T> {
+        if self.is_some {
+            Option::some(&self.inner)
+        } else {
+            Option::none()
         }
     }
 
@@ -266,6 +368,8 @@ impl Option {
     use std::mem::{Freeable, Movable};
 
     /// Convert `Option<Result<T, E>>` to `Result<Option<T>, E>`
+    ///
+    /// See also [Result::transpose] for the reverse operation.
     ///
     /// ## Example
     /// ```
@@ -412,13 +516,23 @@ mod tests {
     }
 
     #[test]
-    fn option_as_result() {
+    fn option_ok_or() {
         let opt1 = Option::some(42);
         let opt2 = Option::none::<i32>();
 
-        assert!(opt1.as_result(0) == result::Result::ok(42));
-        assert!(opt2.as_result(0) == result::Result::err(0));
+        assert!(opt1.ok_or(0) == result::Result::ok(42));
+        assert!(opt2.ok_or(0) == result::Result::err(0));
     }
+
+    #[test]
+    fn option_ok_or_else() {
+        let opt1 = Option::some(42);
+        let opt2 = Option::none::<i32>();
+
+        assert!(opt1.ok_or_else(|| -> i32 { 0 }) == result::Result::ok(42));
+        assert!(opt2.ok_or_else(|| -> i32 { 0 }) == result::Result::err(0));
+    }
+
 
     #[test]
     fn option_move() {

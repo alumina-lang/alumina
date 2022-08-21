@@ -509,7 +509,7 @@ pub struct TypeDef<'ast> {
     pub name: Option<&'ast str>,
     pub placeholders: &'ast [Placeholder<'ast>],
     pub attributes: &'ast [Attribute],
-    pub target: TyP<'ast>,
+    pub target: Option<TyP<'ast>>,
     pub is_local: bool,
     pub span: Option<Span>,
 }

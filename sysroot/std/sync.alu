@@ -29,37 +29,81 @@ enum Ordering {
 /// assert_eq!(a.load(Ordering::Relaxed), 10);
 /// ```
 struct Atomic<T: Primitive + !ZeroSized> {
-    inner: T
+    _inner: T
 }
 
 impl Atomic<T: Primitive + !ZeroSized> {
     /// Create a new `Atomic` value with the given initial value.
     fn new(inner: T) -> Atomic<T> {
-        Atomic { inner: inner }
+        Atomic { _inner: inner }
+    }
+
+    /// Convert a pointer to a value into a `Atomic` pointer referencing the same memory.
+    ///
+    /// The pointed-to value needs to be sufficiently aligned for the target platform.
+    ///
+    /// # Example
+    /// ```
+    /// use std::sync::{Atomic, Ordering};
+    ///
+    /// let i = 42;
+    /// let a = Atomic::from_mut_ptr(&i);
+    ///
+    /// assert_eq!(a.exchange(10, Ordering::Relaxed), 42);
+    /// assert_eq!(i, 10);
+    /// ```
+    #[inline]
+    fn from_mut_ptr(inner: &mut T) -> &mut Atomic<T> {
+        util::cast(inner)
+    }
+
+    /// Convert a slice of values into a slice of `Atomic` values referencing the same memory.
+    ///
+    /// The pointed-to values need to be sufficiently aligned for the target platform.
+    ///
+    /// # Example
+    /// ```
+    /// use std::sync::{Atomic, Ordering};
+    ///
+    /// let arr = [1, 2, 3];
+    /// let a = Atomic::from_mut_slice(&arr);
+    ///
+    /// for i in a.iter_mut() {
+    ///     i.fetch_add(1, Ordering::Relaxed);
+    /// }
+    ///
+    /// assert_eq!(arr.as_slice(), &[2, 3, 4]);
+    /// ```
+    #[inline]
+    fn from_mut_slice(inner: &mut [T]) -> &mut [Atomic<T>] {
+        mem::slice::from_raw(&inner[0] as &mut Atomic<T>, inner.len())
     }
 
     /// Loads a value from the atomic variable.
     #[force_inline]
     fn load(self: &Atomic<T>, ordering: Ordering) -> T {
-        intrinsics::codegen_func::<T>("__atomic_load_n", &self.inner, ordering as libc::c_int)
+        intrinsics::codegen_func::<T>("__atomic_load_n", &self._inner, ordering as libc::c_int)
     }
 
     /// Stores a value into the atomic variable.
     #[force_inline]
     fn store(self: &mut Atomic<T>, value: T, ordering: Ordering) {
-        intrinsics::codegen_func::<void>("__atomic_store_n", &self.inner, value, ordering as libc::c_int)
+        intrinsics::codegen_func::<void>("__atomic_store_n", &self._inner, value, ordering as libc::c_int)
     }
 
     /// Stores a value into the atomic variable, atomically returning the old value.
     #[force_inline]
     fn exchange(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
-        intrinsics::codegen_func::<T>("__atomic_exchange_n", &self.inner, value, ordering as libc::c_int)
+        intrinsics::codegen_func::<T>("__atomic_exchange_n", &self._inner, value, ordering as libc::c_int)
     }
 
     /// Atomically compares the value in the atomic variable to `expected` and, if they are equal,
     /// sets the atomic variable to `desired`.
     ///
     /// This is the strong version, which will not fail spuriously. See also [compare_exchange_weak].
+    ///
+    /// Returns previous value as an `Result::ok(...)` variant if the value was updated and as
+    /// an `Result::err(...)` if it was not.
     ///
     /// ## Example
     /// ```
@@ -95,7 +139,7 @@ impl Atomic<T: Primitive + !ZeroSized> {
     ) -> Result<T, T> {
         if intrinsics::codegen_func::<bool>(
             "__atomic_compare_exchange_n",
-            &self.inner,
+            &self._inner,
             &expected,
             desired,
             false,
@@ -112,6 +156,9 @@ impl Atomic<T: Primitive + !ZeroSized> {
     /// sets the atomic variable to `desired`.
     ///
     /// This is the weak version, which can fail spuriously even when the comparison succeeds.
+    ///
+    /// Returns previous value as an `Result::ok(...)` variant if the value was updated and as
+    /// an `Result::err(...)` if it was not.
     #[force_inline]
     fn compare_exchange_weak(
         self: &mut Atomic<T>,
@@ -122,7 +169,7 @@ impl Atomic<T: Primitive + !ZeroSized> {
     ) -> Result<T, T> {
         if intrinsics::codegen_func::<bool>(
             "__atomic_compare_exchange_n",
-            &self.inner,
+            &self._inner,
             &expected,
             desired,
             true,
@@ -134,43 +181,104 @@ impl Atomic<T: Primitive + !ZeroSized> {
             Result::err(expected)
         }
     }
+
+    /// Updates the value of the atomic variable using a callback function.
+    ///
+    /// The callback function is passed the current value of the variable and returns the desired value
+    /// or `Option::none()` to leave the value unchanged.
+    ///
+    /// Returns previous value as an `Result::ok(...)` variant if the value was updated and as
+    /// an `Result::err(...)` if it was not.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::sync::{Atomic, Ordering::SeqCst};
+    ///
+    /// // Simulate a Collatz sequence starting with 39
+    /// let val = Atomic::new(39);
+    /// loop {
+    ///     let value = val.fetch_update(SeqCst, SeqCst, |v: i32| -> Option<i32> {
+    ///         if v == 1 {
+    ///             Option::none()
+    ///         } else if v % 2 == 0 {
+    ///             Option::some(v / 2)
+    ///         } else {
+    ///             Option::some(v * 3 + 1)
+    ///         }
+    ///     });
+    ///
+    ///     if value.is_ok {
+    ///         println!("val = {}", value.unwrap());
+    ///     } else {
+    ///         println!("val = {}. We are done.", value.unwrap_err());
+    ///         break;
+    ///     }
+    /// }
+    /// ```
+    #[inline]
+    fn fetch_update<F: builtins::Callable<(T), Option<T>>>(
+        self: &mut Atomic<T>,
+        set_order: Ordering,
+        fetch_order: Ordering,
+        f: F
+    ) -> Result<T, T> {
+        let prev = self.load(fetch_order);
+        loop {
+            let updated = f(prev);
+            if !updated.is_some {
+                return Result::err(prev);
+            }
+            let maybe_updated = self.compare_exchange_weak(
+                prev,
+                updated.unwrap(),
+                set_order,
+                fetch_order,
+            );
+            if maybe_updated.is_ok {
+                return Result::ok(prev);
+            } else {
+                prev = maybe_updated.unwrap_err();
+            }
+        }
+    }
+
 }
 
 impl Atomic<T: Integer> {
     /// Atomically adds `value` to the atomic variable and returns the old value.
     #[force_inline]
     fn fetch_add(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
-        intrinsics::codegen_func::<T>("__atomic_fetch_add", &self.inner, value, ordering as libc::c_int)
+        intrinsics::codegen_func::<T>("__atomic_fetch_add", &self._inner, value, ordering as libc::c_int)
     }
 
     /// Atomically subtracts `value` from the atomic variable and returns the old value.
     #[force_inline]
     fn fetch_sub(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
-        intrinsics::codegen_func::<T>("__atomic_fetch_sub", &self.inner, value, ordering as libc::c_int)
+        intrinsics::codegen_func::<T>("__atomic_fetch_sub", &self._inner, value, ordering as libc::c_int)
     }
 
     /// Atomically performs `*self &= value` and returns the old value.
     #[force_inline]
     fn fetch_and(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
-        intrinsics::codegen_func::<T>("__atomic_fetch_and", &self.inner, value, ordering as libc::c_int)
+        intrinsics::codegen_func::<T>("__atomic_fetch_and", &self._inner, value, ordering as libc::c_int)
     }
 
     /// Atomically performs `*self |= value` and returns the old value.
     #[force_inline]
     fn fetch_or(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
-        intrinsics::codegen_func::<T>("__atomic_fetch_or", &self.inner, value, ordering as libc::c_int)
+        intrinsics::codegen_func::<T>("__atomic_fetch_or", &self._inner, value, ordering as libc::c_int)
     }
 
     /// Atomically performs `*self ^= value` and returns the old value.
     #[force_inline]
     fn fetch_xor(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
-        intrinsics::codegen_func::<T>("__atomic_fetch_xor", &self.inner, value, ordering as libc::c_int)
+        intrinsics::codegen_func::<T>("__atomic_fetch_xor", &self._inner, value, ordering as libc::c_int)
     }
 
     /// Atomically performs `*self = ~(*self & value)` and returns the old value.
     #[force_inline]
     fn fetch_nand(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
-        intrinsics::codegen_func::<T>("__atomic_fetch_nand", &self.inner, value, ordering as libc::c_int)
+        intrinsics::codegen_func::<T>("__atomic_fetch_nand", &self._inner, value, ordering as libc::c_int)
     }
 }
 
@@ -193,6 +301,16 @@ fn compiler_fence(ordering: Ordering) {
 ///
 /// This does not result in a system call like [thread::yield], but can reduce power usage
 /// or allow other hyperthreads to run.
+///
+/// ## Example
+/// ```norun
+/// use std::sync::{Atomic, Ordering, spin_loop};
+///
+/// let flag = Atomic::new(false);
+/// while !flag.exchange(true, Ordering::Acquire) {
+///     spin_loop();
+/// }
+/// ```
 #[force_inline]
 fn spin_loop() {
     #[cfg(target_arch = "x86")]
@@ -202,7 +320,35 @@ fn spin_loop() {
     #[cfg(target_arch = "arm")]
     std::intrinsics::asm("yield");
     #[cfg(target_arch = "aarch64")]
-    std::intrinsics::asm("isb");
+    std::intrinsics::asm("isb sy");
+}
+
+/// Protocol for types implementing mutex-like semantics.
+///
+/// Implemented by e.g. [Mutex] and [Spinlock].
+protocol Lockable<Self> {
+    /// Acquires the lock
+    fn lock(self: &mut Self);
+    /// Releases the lock
+    fn unlock(self: &mut Self);
+}
+
+/// Execute a closure with the lock held
+///
+/// ## Example
+/// ```
+/// use std::sync::{Mutex, with_lock};
+///
+/// let mutex = Mutex::new();
+/// mutex.with_lock(|| {
+///     println!("Hello, World");
+/// });
+/// ```
+fn with_lock<L: Lockable<L>, T, F: builtins::Callable<(), T>>(lock: &mut L, f: F) -> T {
+    lock.lock();
+    defer lock.unlock();
+
+    f()
 }
 
 /// A mutual exclusion lock (mutex)
@@ -423,6 +569,26 @@ impl CondVar {
 ///
 /// Dangerous to use in userspace, do not use unless you know what you're doing. Can lead to priority
 /// inversion and other nasty stuff. Prefer to use [Mutex] instead.
+///
+/// ## Example
+/// ```
+/// use std::sync::Spinlock;
+/// use std::thread::spawn;
+///
+/// let lock = Spinlock::new();
+/// let sync_print = |&lock, t: &[u8]| {
+///     lock.lock();
+///     defer lock.unlock();
+///
+///     println!("{}", t);
+/// };
+///
+/// let t1 = spawn(|=sync_print| { sync_print("hello world 1") });
+/// let t2 = spawn(|=sync_print| { sync_print("hello world 2") });
+///
+/// t1.join().unwrap();
+/// t2.join().unwrap();
+/// ```
 struct Spinlock {
     inner: Atomic<bool>
 }
@@ -440,8 +606,10 @@ impl Spinlock {
     /// Acquires a spinlock, spinning until it is acquired.
     #[inline]
     fn lock(self: &mut Spinlock) {
-        while !self.try_lock() {
-            spin_loop();
+        while self.inner.exchange(true, Ordering::Acquire) {
+            while self.inner.load(Ordering::Relaxed) {
+                spin_loop();
+            }
         }
     }
 
@@ -450,17 +618,24 @@ impl Spinlock {
     /// Returns `true` if the lock was successfully acquired, `false` otherwise.
     #[inline]
     fn try_lock(self: &mut Spinlock) -> bool {
-        self.inner.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok
+        !self.inner.load(Ordering::Relaxed)
+            && !self.inner.exchange(true, Ordering::Acquire)
     }
 
     /// Attempts to acquire a spinlock, spining for up to `times` times.
+    ///
+    /// Returns `true` if the lock was successfully acquired, `false` otherwise.
     #[inline]
     fn try_lock_bounded(self: &mut Spinlock, times: usize) -> bool {
-        for _ in 0usize..times {
-            if self.try_lock() {
+        while times > 0 {
+            times -= 1;
+            if !self.inner.exchange(true, Ordering::Acquire) {
                 return true;
             }
-            spin_loop();
+            while times > 0 && self.inner.load(Ordering::Relaxed) {
+                times -= 1;
+                spin_loop();
+            }
         }
         false
     }
@@ -497,8 +672,7 @@ impl Spinlock {
 /// t.join().unwrap();
 /// ```
 struct Event {
-    state: Atomic<usize>,
-    lock: Spinlock,
+    state: Atomic<usize>
 }
 
 impl Event {
@@ -507,30 +681,25 @@ impl Event {
     /// Create a new event in an unset state
     fn new() -> Event {
         Event {
-            state: Atomic::new(EVENT_RESET),
-            lock: Spinlock::new()
+            state: Atomic::new(EVENT_RESET)
         }
     }
 
     /// Create a new event in a set state
     fn new_set() -> Event {
         Event {
-            state: Atomic::new(EVENT_SET),
-            lock: Spinlock::new()
+            state: Atomic::new(EVENT_SET)
         }
     }
 
     /// Signals the event, waking up all threads that are waiting on it.
     fn set(self: &mut Event) {
-        let old_value = self.state.exchange(EVENT_SET, Ordering::AcqRel);
-        switch old_value {
+        let state = self.state.exchange(EVENT_SET, Ordering::AcqRel);
+        switch state {
             EVENT_SET, EVENT_RESET => {}
             _ => {
-                self.lock.lock();
-                defer self.lock.unlock();
-
                 // Wake up some threads
-                let waiter = old_value as &mut EventWaiter;
+                let waiter = state as &mut EventWaiter;
                 while waiter != null {
                     /// As soon as we set the `signaled` flag, the region of
                     /// memory that waiter points to may be invalidated. So we need
@@ -579,7 +748,7 @@ impl Event {
                 next: state as &mut EventWaiter
             }
 
-            let maybe_replaced = self.state.compare_exchange(
+            let maybe_replaced = self.state.compare_exchange_weak(
                 state,
                 &waiter as usize,
                 Ordering::Release,
@@ -595,85 +764,9 @@ impl Event {
             while !waiter.signaled.load(Ordering::Acquire) {
                 thread::Thread::park();
             }
+
             return;
         }
-    }
-
-    /// Waits for the event to be signalled or the timeout to be reached.
-    ///
-    /// Returns `true` if the event was signalled, `false` if the timeout was reached.
-    fn wait_timeout(self: &mut Event, timeout: time::Duration) -> bool {
-        let state = self.state.load(Ordering::Acquire);
-        loop {
-            if state == EVENT_SET {
-                return true;
-            }
-
-            let waiter = EventWaiter {
-                thread: thread::Thread::current(),
-                signaled: Atomic::new(false),
-                next: state as &mut EventWaiter
-            }
-
-            let maybe_replaced = self.state.compare_exchange(
-                state,
-                &waiter as usize,
-                Ordering::Release,
-                Ordering::Relaxed
-            );
-
-            if !maybe_replaced.is_ok {
-                // Someone beat us to the punch
-                state = maybe_replaced.unwrap_err();
-                continue;
-            }
-
-            thread::Thread::park_timeout(timeout);
-            if waiter.signaled.load(Ordering::Acquire) {
-                return true;
-            } else {
-                self._unregister(&waiter);
-                return false;
-            }
-        }
-    }
-
-    fn _unregister(self: &mut Event, waiter: &mut EventWaiter) {
-        self.lock.lock();
-        defer self.lock.unlock();
-
-        let state = self.state.load(Ordering::Relaxed);
-        loop {
-            if state == EVENT_SET || state == EVENT_RESET {
-                return;
-            }
-            if waiter as usize == state {
-                let maybe_replaced = self.state.compare_exchange(
-                    state,
-                    waiter.next as usize,
-                    Ordering::Relaxed,
-                    Ordering::Relaxed
-                );
-                if !maybe_replaced.is_ok {
-                    state = maybe_replaced.unwrap_err();
-                    continue;
-                }
-                return;
-            }
-            break;
-        }
-
-        let node = state as &mut EventWaiter;
-        while node != null {
-            if node.next == waiter {
-                node.next = waiter.next;
-                return;
-            } else {
-                node = node.next;
-            }
-        }
-
-        unreachable!()
     }
 }
 
@@ -745,17 +838,6 @@ impl Oneshot<T> {
     /// If the channel's value has not been set, this will return [channel::ChannelError::WouldBlock].
     fn try_recv(self: &mut Oneshot<T>) -> Result<T, channel::ChannelError> {
         if self._event.is_set() {
-            Result::ok(self._value)
-        } else {
-            Result::err(channel::ChannelError::WouldBlock)
-        }
-    }
-
-    /// Try to get a value from the channel with a timeout.
-    ///
-    /// If the timeout is reached, this will return [channel::ChannelError::WouldBlock].
-    fn recv_timeout(self: &mut Oneshot<T>, timeout: time::Duration) -> Result<T, channel::ChannelError> {
-        if self._event.wait_timeout(timeout) {
             Result::ok(self._value)
         } else {
             Result::err(channel::ChannelError::WouldBlock)
@@ -992,15 +1074,6 @@ mod tests {
         chan.send(1337);
         assert_eq!(chan.try_recv(), Result::ok(1337));
         assert_eq!(chan.recv(), 1337);
-    }
-
-    #[cfg(threading)]
-    #[test]
-    fn test_oneshot_timeout() {
-        let chan: Oneshot<i32> = Oneshot::new();
-        assert_eq!(chan.recv_timeout(Duration::from_secs(0)), Result::err(channel::ChannelError::WouldBlock));
-        chan.send(1337);
-        assert_eq!(chan.recv_timeout(Duration::from_secs(1)), Result::ok(1337));
     }
 
     #[cfg(threading)]

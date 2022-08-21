@@ -21,17 +21,17 @@ fn futex_wait(futex: &mut Atomic<i32>, expected: i32, timeout: Option<Duration>)
 
     libc::syscall(
         libc::SYS_futex,
-        &futex.inner,
+        &futex._inner,
         libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
         expected,
-        maybe_timespec.as_ptr()
+        maybe_timespec.as_nullable_ptr()
     );
 }
 
 fn futex_wake(futex: &mut Atomic<i32>) {
     libc::syscall(
         libc::SYS_futex,
-        &futex.inner,
+        &futex._inner,
         libc::FUTEX_WAKE | libc::FUTEX_PRIVATE_FLAG,
         1i32
     );

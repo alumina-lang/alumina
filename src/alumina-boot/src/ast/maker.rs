@@ -402,8 +402,7 @@ impl<'ast> AstItemMaker<'ast> {
                 )
                 .visit(n)
             })
-            .transpose()?
-            .unwrap();
+            .transpose()?;
 
         let result = Item::TypeDef(TypeDef {
             name,
