@@ -54,6 +54,12 @@
 <li>
 <a href="/std/typing/#item.enum_variants">enum_variants</a>
 </li>
+<li>
+<a href="/std/typing/#item.assert_type_eq">assert_type_eq</a>
+</li>
+<li>
+<a href="/std/typing/#item.assert_type_ne">assert_type_ne</a>
+</li>
 </ul>
 <h2>Types</h2>
 <ul>
@@ -187,6 +193,90 @@ assert_eq!(variants[0].1, Foo::Bar);
 assert_eq!(variants[1].0, "Quux");
 assert_eq!(variants[1].1, Foo::Quux);
 </code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3atyping%3a%3aenum%5fvariants%3b%0a%20%20%20%0a%20%20%20enum%20Foo%20%7b%0a%20%20%20%20%20%20%20Bar%2c%0a%20%20%20%20%20%20%20Quux%2c%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20let%20variants%20%3d%20enum%5fvariants%3a%3a%3cFoo%3e%28%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28variants%2elen%28%29%2c%202%29%3b%0a%20%20%20assert%5feq%21%28variants%5b0%5d%2e0%2c%20%22Bar%22%29%3b%0a%20%20%20assert%5feq%21%28variants%5b0%5d%2e1%2c%20Foo%3a%3aBar%29%3b%0a%20%20%20assert%5feq%21%28variants%5b1%5d%2e0%2c%20%22Quux%22%29%3b%0a%20%20%20assert%5feq%21%28variants%5b1%5d%2e1%2c%20Foo%3a%3aQuux%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.assert_type_eq">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">assert_type_eq</span>&lt;T1, T2&gt;()</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/typing.alu#L117-L122"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Asserts that the types are equal.
+</p><p>
+</p>
+<h3> Examples</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::typing::assert_type_eq;
+use std::string::StringBuf;
+use std::collections::Vector;
+
+assert_type_eq::&lt;u8, u8&gt;();
+assert_type_eq::&lt;StringBuf, Vector&lt;u8&gt;&gt;();
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3atyping%3a%3aassert%5ftype%5feq%3b%0a%20%20%20use%20std%3a%3astring%3a%3aStringBuf%3b%0a%20%20%20use%20std%3a%3acollections%3a%3aVector%3b%0a%20%20%20%0a%20%20%20assert%5ftype%5feq%3a%3a%3cu8%2c%20u8%3e%28%29%3b%0a%20%20%20assert%5ftype%5feq%3a%3a%3cStringBuf%2c%20Vector%3cu8%3e%3e%28%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+</p><p>
+<pre class="with-playground-link panics"><code class="language-alumina">use std::typing::assert_type_eq;
+
+assert_type_eq::&lt;u64, usize&gt;();
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3atyping%3a%3aassert%5ftype%5feq%3b%0a%20%20%20%0a%20%20%20assert%5ftype%5feq%3a%3a%3cu64%2c%20usize%3e%28%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+<h3> Note</h3>
+<p>
+This causes a run-time panic if the types are not equal rather than a compile-time error.
+If a compile time error is desired, it is recommended to use a <code class="language-alumina">when</code> expression and <a class="path-link" href="/std/compile_fail.html">compile_fail</a>:
+</p><p>
+<pre><code class="language-alumina">type T = u8;
+
+when T: !u8 {
+    compile_fail!("T is not equal to u8");
+}
+</code></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.assert_type_ne">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">assert_type_ne</span>&lt;T1, T2&gt;()</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/typing.alu#L149-L154"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Asserts that the types are not equal.
+</p><p>
+</p>
+<h3> Examples</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::typing::assert_type_ne;
+
+assert_type_ne::&lt;u8, u16&gt;();
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3atyping%3a%3aassert%5ftype%5fne%3b%0a%20%20%20%0a%20%20%20assert%5ftype%5fne%3a%3a%3cu8%2c%20u16%3e%28%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+</p><p>
+<pre class="with-playground-link panics"><code class="language-alumina">use std::typing::assert_type_ne;
+
+assert_type_ne::&lt;u64, u64&gt;();
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3atyping%3a%3aassert%5ftype%5fne%3b%0a%20%20%20%0a%20%20%20assert%5ftype%5fne%3a%3a%3cu64%2c%20u64%3e%28%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+</p>
+<h3> Note</h3>
+<p>
+This causes a run-time panic if the types are equal rather than a compile-time error.
+If a compile time error is desired, it is recommended to use a <code class="language-alumina">when</code> expression and <a class="path-link" href="/std/compile_fail.html">compile_fail</a>:
+</p><p>
+<pre><code class="language-alumina">type T = u8;
+
+when T: u8 {
+    compile_fail!("T is equal to u8");
+}
+</code></pre>
 </p><p>
 </p>
 </div>

@@ -69,7 +69,7 @@
 <h3>
 <span class="keyword">struct</span> <span class="identifier-type">Spinlock</span> { ... }</h3>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L426-L428"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L592-L594"/>source</a>
 </div>
 </div>
 <p>
@@ -77,6 +77,27 @@ A spinlock.
 </p><p>
 Dangerous to use in userspace, do not use unless you know what you're doing. Can lead to priority
 inversion and other nasty stuff. Prefer to use <a class="path-link" href="/std/sync/Mutex.html">Mutex</a> instead.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::sync::Spinlock;
+use std::thread::spawn;
+
+let lock = Spinlock::new();
+let sync_print = |&amp;lock, t: &amp;[u8]| {
+    lock.lock();
+    defer lock.unlock();
+
+    println!("{}", t);
+};
+
+let t1 = spawn(|=sync_print| { sync_print("hello world 1") });
+let t2 = spawn(|=sync_print| { sync_print("hello world 2") });
+
+t1.join().unwrap();
+t2.join().unwrap();
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3async%3a%3aSpinlock%3b%0a%20%20%20use%20std%3a%3athread%3a%3aspawn%3b%0a%20%20%20%0a%20%20%20let%20lock%20%3d%20Spinlock%3a%3anew%28%29%3b%0a%20%20%20let%20sync%5fprint%20%3d%20%7c%26lock%2c%20t%3a%20%26%5bu8%5d%7c%20%7b%0a%20%20%20%20%20%20%20lock%2elock%28%29%3b%0a%20%20%20%20%20%20%20defer%20lock%2eunlock%28%29%3b%0a%20%20%20%0a%20%20%20%20%20%20%20println%21%28%22%7b%7d%22%2c%20t%29%3b%0a%20%20%20%7d%3b%0a%20%20%20%0a%20%20%20let%20t1%20%3d%20spawn%28%7c%3dsync%5fprint%7c%20%7b%20sync%5fprint%28%22hello%20world%201%22%29%20%7d%29%3b%0a%20%20%20let%20t2%20%3d%20spawn%28%7c%3dsync%5fprint%7c%20%7b%20sync%5fprint%28%22hello%20world%202%22%29%20%7d%29%3b%0a%20%20%20%0a%20%20%20t1%2ejoin%28%29%2eunwrap%28%29%3b%0a%20%20%20t2%2ejoin%28%29%2eunwrap%28%29%3b%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 <h2 id="Field">Fields</h2>
@@ -99,7 +120,7 @@ inner: <a href="/std/sync/Atomic.html"><span class="identifier-type">Atomic</spa
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">new</span>() -> <a href="/std/sync/Spinlock.html"><span class="identifier-type">Spinlock</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L434-L438"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L600-L604"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -114,7 +135,7 @@ Creates a new mutex.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">lock</span>(self: &amp;mut <a href="/std/sync/Spinlock.html"><span class="identifier-type">Spinlock</span></a>)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L441-L446"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L607-L614"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -129,7 +150,7 @@ Acquires a spinlock, spinning until it is acquired.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">try_lock</span>(self: &amp;mut <a href="/std/sync/Spinlock.html"><span class="identifier-type">Spinlock</span></a>) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L451-L454"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L619-L623"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -146,12 +167,14 @@ Returns <code class="language-alumina">true</code> if the lock was successfully 
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">try_lock_bounded</span>(self: &amp;mut <a href="/std/sync/Spinlock.html"><span class="identifier-type">Spinlock</span></a>, times: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L457-L466"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L628-L641"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Attempts to acquire a spinlock, spining for up to <code class="language-alumina">times</code> times.
+</p><p>
+Returns <code class="language-alumina">true</code> if the lock was successfully acquired, <code class="language-alumina">false</code> otherwise.
 </p><p>
 </p>
 </div>
@@ -161,7 +184,7 @@ Attempts to acquire a spinlock, spining for up to <code class="language-alumina"
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">unlock</span>(self: &amp;mut <a href="/std/sync/Spinlock.html"><span class="identifier-type">Spinlock</span></a>)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L469-L472"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/sync.alu#L644-L647"/>source</a>
 </div>
 </div>
 <div class="item-doc">
