@@ -85,6 +85,74 @@ fn enum_variants<E: builtins::Enum>() -> &[(&[u8], E)] {
     (internal::ENUM_VARIANTS::<E>).as_slice()
 }
 
+/// Asserts that the types are equal.
+///
+/// ## Examples
+/// ```
+/// use std::typing::assert_type_eq;
+/// use std::string::StringBuf;
+/// use std::collections::Vector;
+///
+/// assert_type_eq::<u8, u8>();
+/// assert_type_eq::<StringBuf, Vector<u8>>();
+/// ```
+///
+/// ```panics
+/// use std::typing::assert_type_eq;
+///
+/// assert_type_eq::<u64, usize>();
+/// ```
+///
+/// ## Note
+/// This causes a run-time panic if the types are not equal rather than a compile-time error.
+/// If a compile time error is desired, it is recommended to use a `when` expression and [std::compile_fail]:
+///
+/// ```notest
+/// type T = u8;
+///
+/// when T: !u8 {
+///     compile_fail!("T is not equal to u8");
+/// }
+/// ```
+fn assert_type_eq<T1, T2>() {
+    when T1: T2 {
+    } else {
+        panic!("{} is not equal to {}", type_name::<T1>(), type_name::<T2>());
+    }
+}
+
+/// Asserts that the types are not equal.
+///
+/// ## Examples
+/// ```
+/// use std::typing::assert_type_ne;
+///
+/// assert_type_ne::<u8, u16>();
+/// ```
+///
+/// ```panics
+/// use std::typing::assert_type_ne;
+///
+/// assert_type_ne::<u64, u64>();
+/// ```
+/// ## Note
+/// This causes a run-time panic if the types are equal rather than a compile-time error.
+/// If a compile time error is desired, it is recommended to use a `when` expression and [std::compile_fail]:
+///
+/// ```notest
+/// type T = u8;
+///
+/// when T: u8 {
+///     compile_fail!("T is equal to u8");
+/// }
+/// ```
+fn assert_type_ne<T1, T2>() {
+    when T1: !T2 {
+    } else {
+        panic!("{} is equal to {}", type_name::<T1>(), type_name::<T2>());
+    }
+}
+
 mod internal {
     static ENUM_VARIANTS<E> = intrinsics::enum_variants::<E>();
 

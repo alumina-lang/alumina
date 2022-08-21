@@ -140,6 +140,7 @@ impl UseClauseVisitor {
 
 macro check_cfg($self, $node) {
     let has_cfg = $self.has_cfg;
+    let is_builtin_type = $self.is_builtin_type;
 
     $self.has_cfg = false;
     let child = child_by!($node, FieldKind::Attributes);
@@ -147,7 +148,10 @@ macro check_cfg($self, $node) {
         $self.visit(child.inner)?;
     }
 
-    defer { $self.has_cfg = has_cfg; }
+    defer {
+        $self.has_cfg = has_cfg;
+        $self.is_builtin_type = is_builtin_type;
+    }
 }
 
 struct TopLevelVisitor {
@@ -157,7 +161,8 @@ struct TopLevelVisitor {
     doc_comment: StringBuf,
     file_doc_comment: StringBuf,
     container: Option<Node>,
-    has_cfg: bool
+    has_cfg: bool,
+    is_builtin_type: bool
 }
 
 impl TopLevelVisitor {
@@ -170,6 +175,7 @@ impl TopLevelVisitor {
             file_doc_comment: StringBuf::new(),
             container: Option::none(),
             has_cfg: false,
+            is_builtin_type: false
         }
     }
 
@@ -225,8 +231,26 @@ impl TopLevelVisitor {
     }
 
     fn visit_attribute_item(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
-        if get_name!(self, child_by!(node, FieldKind::Inner).unwrap()) == "cfg" {
-            self.has_cfg = true;
+        use std::string::{starts_with, ends_with};
+        let meta_item = child_by!(node, FieldKind::Inner).unwrap();
+        let attr_name = get_name!(self, meta_item);
+
+        switch attr_name {
+            "cfg" => {
+                self.has_cfg = true;
+            }
+            "lang" => {
+                let lang = meta_item
+                            .child_by!(FieldKind::Arguments)
+                            .unwrap()
+                            .child_by!(FieldKind::Argument)
+                            .unwrap()
+                            .text(self.parse_context.source());
+
+                if lang.starts_with("builtin_") {
+                    self.is_builtin_type = true;
+                }
+            }
         }
 
         Result::ok(())
@@ -338,7 +362,9 @@ impl TopLevelVisitor {
             .text(self.parse_context.source());
         let name = get_name!(self, node);
 
-        let kind = if kind_text == "union" {
+        let kind = if self.is_builtin_type {
+            ItemKind::BuiltinType
+        } else if kind_text == "union" {
             ItemKind::Union
         } else {
             ItemKind::Struct
@@ -547,6 +573,8 @@ impl CodePrinter<W: Writable<W>> {
             .text(self.parse_context.source());
         w!(self.writer, "{}", placeholder);
 
+        let all_bounds = child_by!(node, FieldKind::AllBounds).is_some;
+
         if self.protocol_bounds {
             let cursor = node.walk();
             defer cursor.free();
@@ -554,8 +582,10 @@ impl CodePrinter<W: Writable<W>> {
             for (idx, bound) in children_by!(node, FieldKind::Bound, &cursor).enumerate() {
                 if idx == 0 {
                     w!(self.writer, ": ");
-                } else {
+                } else if all_bounds {
                     w!(self.writer, " + ");
+                } else  {
+                    w!(self.writer, " | ");
                 }
                 self.visit(bound)?;
             }
@@ -842,9 +872,11 @@ impl CodePrinter<W: Writable<W>> {
             .map(|=self, child: Node| -> Result<()> { self.visit(child) })
             .transpose()?;
 
-        w!(self.writer, " = ");
-
-        self.visit(child_by!(node, FieldKind::Inner).unwrap())?;
+        let inner = child_by!(node, FieldKind::Inner);
+        if inner.is_some {
+            w!(self.writer, " = ");
+            self.visit(inner.unwrap())?;
+        }
 
         Result::ok(())
     }

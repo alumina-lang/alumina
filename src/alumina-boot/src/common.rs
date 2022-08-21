@@ -235,15 +235,14 @@ pub enum CodeErrorKind {
     MixinOnlyProtocol,
     #[error("protocols cannot be used as concrete types (did you mean to use `&dyn {}`?)", .0)]
     ProtocolsAreSpecialMkay(String),
-
     #[error("signature of `{}` is incompatible with virtual dispatch", .0)]
     NonDynnableFunction(String),
-
     #[error("invalid format string ({})", .0)]
     InvalidFormatString(String),
-
     #[error("cannot read file `{}`", .0)]
     CannotReadFile(String),
+    #[error("type alias must have a target")] // unless it is a blessed builtin :)
+    TypedefWithoutTarget,
 
     // Warnings
     #[error("defer inside a loop: this defered statement will only be executed once")]

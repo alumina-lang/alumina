@@ -121,17 +121,22 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                     _ => return Err(()),
                 };
 
-                if let ast::Item::TypeDef(t) = item.get() {
+                if let ast::Item::TypeDef(ast::TypeDef {
+                    placeholders,
+                    target: Some(target),
+                    ..
+                }) = item.get()
+                {
                     let mut rebinder = Rebinder::new(
                         self.ast,
-                        t.placeholders
+                        placeholders
                             .iter()
                             .map(|h| h.id)
                             .zip(holders.iter().copied())
                             .collect(),
                     );
 
-                    if let Ok(src) = rebinder.visit_typ(t.target) {
+                    if let Ok(src) = rebinder.visit_typ(target) {
                         return self.match_slot(inferred, src, tgt);
                     }
                 }

@@ -111,423 +111,15 @@ impl never {
     mixin Comparable<u8>;
 }
 
-/// This mixin implements Equatable and Comparable for types that have natively implemented
-/// equality and comparison operators.
-protocol BuiltinComparable<Self: builtins::Numeric> {
-    /// @ cmp::Equatable::equals
-    #[force_inline] fn equals(lhs: &Self, rhs: &Self) -> bool { *lhs == *rhs }
-    /// @ cmp::Equatable::not_equals
-    #[force_inline] fn not_equals(lhs: &Self, rhs: &Self) -> bool { *lhs != *rhs }
-    /// @ cmp::Comparable::compare
-    #[force_inline]
-    fn compare(lhs: &Self, rhs: &Self) -> Ordering {
-        if *lhs < *rhs {
-            Ordering::Less
-        } else if *lhs == *rhs {
-            Ordering::Equal
-        } else {
-            Ordering::Greater
-        }
-    }
-
-    /// @ cmp::Comparable::less_than
-    #[force_inline] fn less_than(lhs: &Self, rhs: &Self) -> bool { *lhs < *rhs }
-    /// @ cmp::Comparable::less_than_or_equal
-    #[force_inline] fn less_than_or_equal(lhs: &Self, rhs: &Self) -> bool { *lhs <= *rhs }
-    /// @ cmp::Comparable::greater_than
-    #[force_inline] fn greater_than(lhs: &Self, rhs: &Self) -> bool { *lhs > *rhs }
-    /// @ cmp::Comparable::greater_than_or_equal
-    #[force_inline] fn greater_than_or_equal(lhs: &Self, rhs: &Self) -> bool { *lhs >= *rhs }
-}
-
-/// Mixin for parsing integers from strings.
-protocol IntegerParsable<Self: builtins::Integer> {
-    /// Parses the integer from a base-10 string.
-    ///
-    /// If the string does not represent a valid integer, `Option::none()` is returned.
-    ///
-    /// ## Example
-    /// ```
-    /// assert_eq!(i32::parse("10"), Option::some(10));
-    /// assert_eq!(i32::parse("foo"), Option::none());
-    /// ```
-    #[inline]
-    fn parse(s: &[u8]) -> Option<Self> {
-        string::parse_integer::<Self>(s, 10)
-    }
-
-    /// Parses the integer from a string in a given base.
-    ///
-    /// If the string does not represent a valid integer in the given base, `Option::none()` is
-    /// returned.
-    ///
-    /// ## Example
-    /// ```
-    /// assert_eq!(i32::parse_with_radix("10", 2), Option::some(2));
-    /// assert_eq!(u64::parse_with_radix("deadbeef", 16), Option::some(0xdeadbeefu64));
-    /// assert_eq!(i32::parse_with_radix("foo", 10), Option::none());
-    /// ```
-    #[inline]
-    fn parse_with_radix(s: &[u8], radix: u16) -> Option<Self> {
-        string::parse_integer::<Self>(s, radix)
-    }
-}
-
-/// String formatting mixin for integers.
-protocol IntegerFormattable<Self: builtins::Integer, F: Formatter<F>> {
-    /// @ fmt::Formattable::fmt
-    #[inline]
-    fn fmt(self: &Self, formatter: &mut F) -> Result<(), fmt::Error> {
-        fmt::internal::format_integer(*self, 10, 0, formatter)
-    }
-}
-
-/// String formatting mixin for floating-point types.
-protocol FloatFormattable<Self: builtins::FloatingPoint, F: Formatter<F>> {
-    /// @ fmt::Formattable::fmt
-    #[inline]
-    fn fmt(self: &Self, formatter: &mut F) -> Result<(), fmt::Error> {
-        fmt::internal::format_float(*self, formatter, 15)
-    }
-}
-
-/// Bitwise operations on unsigned integers
-protocol BitOps<Self: builtins::Unsigned> {
-    /// Swaps the byte order (endianness) of the number.
-    ///
-    /// ## Example
-    /// ```
-    /// assert_eq!(0x0123u16.swap_bytes(), 0x2301);
-    /// ```
-    #[inline]
-    fn swap_bytes(self: Self) -> Self {
-        when Self: usize {
-            #[cfg(target_pointer_width = "64")]
-            {
-                (self as u64).swap_bytes() as usize
-            }
-            #[cfg(target_pointer_width = "32")]
-            {
-                (self as u32).swap_bytes() as usize
-            }
-        } else when Self: u8 {
-            self
-        } else when Self: u16 {
-            (self >> 8) | (self << 8)
-        } else when Self: u32 {
-            (self >> 24)
-            | ((self >> 8) & 0x0000FF00u32)
-            | ((self << 8) & 0x00FF0000u32)
-            | (self << 24)
-        } else when Self: u64 {
-            (self >> 56)
-            | ((self >> 40) & 0x000000000000FF00u64)
-            | ((self >> 24) & 0x0000000000FF0000u64)
-            | ((self >> 8)  & 0x00000000FF000000u64)
-            | ((self << 8)  & 0x000000FF00000000u64)
-            | ((self << 24) & 0x0000FF0000000000u64)
-            | ((self << 40) & 0x00FF000000000000u64)
-            | (self << 56)
-        } else when Self: u128 {
-            (self >> 120)
-            | ((self >> 104) & 0x0000000000000000000000000000FF00u128)
-            | ((self >> 88) & 0x00000000000000000000000000FF0000u128)
-            | ((self >> 72) & 0x000000000000000000000000FF000000u128)
-            | ((self >> 56) & 0x0000000000000000000000FF00000000u128)
-            | ((self >> 40) & 0x00000000000000000000FF0000000000u128)
-            | ((self >> 24) & 0x000000000000000000FF000000000000u128)
-            | ((self >> 8)  & 0x0000000000000000FF00000000000000u128)
-            | ((self << 8)  & 0x00000000000000FF0000000000000000u128)
-            | ((self << 24) & 0x000000000000FF000000000000000000u128)
-            | ((self << 40) & 0x0000000000FF00000000000000000000u128)
-            | ((self << 56) & 0x00000000FF0000000000000000000000u128)
-            | ((self << 72) & 0x000000FF000000000000000000000000u128)
-            | ((self << 88) & 0x0000FF00000000000000000000000000u128)
-            | ((self << 104) & 0x00FF0000000000000000000000000000u128)
-            | (self << 120)
-        } else {
-            compile_fail!("unexpected integer type");
-        }
-    }
-
-    /// Converts the number into a big-endian representation.
-    ///
-    /// If the numbers of this type are represented in big-endian order on the target
-    /// architecture, then this is an identity function.
-    ///
-    /// ## Example
-    /// ```
-    /// #[cfg(target_endian = "little")]
-    /// assert_eq!(0x0123u16.to_be(), 0x2301);
-    ///
-    /// #[cfg(target_endian = "big")]
-    /// assert_eq!(0x0123u16.to_be(), 0x0123);
-    /// ```
-    #[inline]
-    fn to_be(self: Self) -> Self {
-        #[cfg(prince_of_denmark = "hamlet")]
-        {
-            intrinsics::compile_note("...or not to be, that is the question.");
-        }
-        #[cfg(target_endian = "big")]
-        {
-            self
-        }
-        #[cfg(target_endian = "little")]
-        {
-            self.swap_bytes()
-        }
-    }
-
-    /// Converts the number from a big-endian representation.
-    ///
-    /// If the numbers of this type are represented in big-endian order on the target
-    /// architecture, then this is an identity function.
-    /// ## Example
-    /// ```
-    /// #[cfg(target_endian = "little")]
-    /// assert_eq!(0x0123u16.from_be(), 0x2301);
-    ///
-    /// #[cfg(target_endian = "big")]
-    /// assert_eq!(0x0123u16.from_be(), 0x0123);
-    /// ```
-    #[inline]
-    fn from_be(self: Self) -> Self {
-        self.to_be()
-    }
-
-    /// Converts the number into a little-endian representation.
-    ///
-    /// If the numbers of this type are represented in little-endian order on the target
-    /// architecture, then this is an identity function.
-    /// ## Example
-    /// ```
-    /// #[cfg(target_endian = "little")]
-    /// assert_eq!(0x0123u16.to_le(), 0x0123);
-    ///
-    /// #[cfg(target_endian = "big")]
-    /// assert_eq!(0x0123u16.to_le(), 0x2301);
-    /// ```
-    #[inline]
-    fn to_le(self: Self) -> Self {
-        #[cfg(target_endian = "big")]
-        {
-            self.swap_bytes()
-        }
-        #[cfg(target_endian = "little")]
-        {
-            self
-        }
-    }
-
-    /// Converts the number from a little-endian representation.
-    ///
-    /// If the numbers of this type are represented in little-endian order on the target
-    /// architecture, then this is an identity operation.
-    /// ## Example
-    /// ```
-    /// #[cfg(target_endian = "little")]
-    /// assert_eq!(0x0123u16.from_le(), 0x0123);
-    ///
-    /// #[cfg(target_endian = "big")]
-    /// assert_eq!(0x0123u16.from_le(), 0x2301);
-    /// ```
-    #[inline]
-    fn from_le(self: Self) -> Self {
-        self.to_le()
-    }
-
-    /// Returns the number of ones in the binary representation of the number.
-    ///
-    /// ## Example
-    /// ```
-    /// assert_eq!(0b10101000u8.count_ones(), 3);
-    /// ```
-    #[inline]
-    fn count_ones(self: Self) -> u32 {
-        use libc::{c_int, c_ulong, c_ulonglong, c_uint};
-
-        when Self: usize {
-            #[cfg(target_pointer_width = "64")]
-            {
-                (self as u64).count_ones()
-            }
-            #[cfg(target_pointer_width = "32")]
-            {
-                (self as u32).count_ones()
-            }
-        } else {
-            let ret = when Self: u128 {
-                return ((self >> 64) as u64).count_ones() + (self as u64).count_ones();
-            } else when Self: c_ulonglong {
-                intrinsics::codegen_func::<c_int>("__builtin_popcountll", self)
-            } else when Self: c_ulong {
-                intrinsics::codegen_func::<c_int>("__builtin_popcountl", self)
-            } else {
-                intrinsics::codegen_func::<c_int>("__builtin_popcount", self as c_uint)
-            };
-
-            ret as u32
-        }
-    }
-
-    /// Returns the number of zeros in the binary representation of the number.
-    /// ## Example
-    /// ```
-    /// assert_eq!(0b10101000u8.count_zeros(), 5);
-    /// ```
-    #[inline]
-    fn count_zeros(self: Self) -> u32 {
-        (~self).count_ones()
-    }
-
-    /// Returns the number of leading zeros in the binary representation of the number.
-    /// ## Example
-    /// ```
-    /// assert_eq!(0b00010000u8.leading_zeros(), 3);
-    /// ```
-    #[inline]
-    fn leading_zeros(self: Self) -> u32 {
-        use libc::{c_int, c_ulong, c_uint, c_ulonglong};
-        use mem::size_of;
-
-        when Self: usize {
-            #[cfg(target_pointer_width = "64")]
-            {
-                (self as u64).leading_zeros()
-            }
-            #[cfg(target_pointer_width = "32")]
-            {
-                (self as u32).leading_zeros()
-            }
-        } else {
-            if self == 0 {
-                return (size_of::<Self>() * 8) as u32;
-            }
-
-            let ret = when Self: u128 {
-                let head = (self >> 64) as u64;
-                if head == 0 {
-                    return (self as u64).leading_zeros() + 64;
-                } else {
-                    return head.leading_zeros();
-                }
-            } else when Self: c_ulonglong {
-                intrinsics::codegen_func::<c_int>("__builtin_clzll", self)
-            } else when Self: c_ulong {
-                intrinsics::codegen_func::<c_int>("__builtin_clzl", self)
-            } else when Self: c_uint {
-                intrinsics::codegen_func::<c_int>("__builtin_clz", self)
-            } else {
-                let val =
-                    ((self as c_uint) << (8 * (size_of::<c_uint>() - size_of::<Self>()))) |
-                    (c_uint::max_value() >> (8 * size_of::<Self>()));
-
-                intrinsics::codegen_func::<c_int>("__builtin_clz", val)
-            };
-
-            ret as u32
-        }
-    }
-
-    /// Returns the number of trailing zeros in the binary representation of the number.
-    /// ## Example
-    /// ```
-    /// assert_eq!(0b00010000u8.trailing_zeros(), 4);
-    /// ```
-    #[inline]
-    fn trailing_zeros(self: Self) -> u32 {
-        use libc::{c_int, c_ulong, c_uint, c_ulonglong};
-        use mem::size_of;
-
-        when Self: usize {
-            #[cfg(target_pointer_width = "64")]
-            {
-                (self as u64).trailing_zeros()
-            }
-            #[cfg(target_pointer_width = "32")]
-            {
-                (self as u32).trailing_zeros()
-            }
-        } else {
-            if self == 0 {
-                return (size_of::<Self>() * 8) as u32;
-            }
-
-            let ret = when Self: u128 {
-                let tail = self as u64;
-                if tail == 0 {
-                    return ((self >> 64) as u64).trailing_zeros() + 64;
-                } else {
-                    return tail.trailing_zeros();
-                }
-            } else when Self: c_ulonglong {
-                intrinsics::codegen_func::<c_int>("__builtin_ctzll", self)
-            } else when Self: c_ulong {
-                intrinsics::codegen_func::<c_int>("__builtin_ctzl", self)
-            } else when Self: c_uint {
-                intrinsics::codegen_func::<c_int>("__builtin_ctz", self)
-            } else {
-                let val =
-                    (c_uint::max_value() << (8 * size_of::<Self>())) | (self as c_uint);
-
-                intrinsics::codegen_func::<c_int>("__builtin_ctz", val)
-            };
-
-            ret as u32
-        }
-    }
-
-    /// Returns the number of leading ones in the binary representation of the number.
-    /// ## Example
-    /// ```
-    /// assert_eq!(0b11111110u8.leading_ones(), 7);
-    /// ```
-    #[inline]
-    fn leading_ones(self: Self) -> u32 {
-        (~self).leading_zeros()
-    }
-
-    /// Returns the number of trailing ones in the binary representation of the number.
-    /// ## Example
-    /// ```
-    /// assert_eq!(0b00000111u8.trailing_ones(), 3);
-    /// ```
-    #[inline]
-    fn trailing_ones(self: Self) -> u32 {
-        (~self).trailing_zeros()
-    }
-
-    /// Rotates the bits to the left by `n` bits.
-    /// ## Example
-    /// ```
-    /// assert_eq!(0b01000111u8.rotate_left(2), 0b00011101u8);
-    /// ```
-    #[inline]
-    fn rotate_left(self: Self, n: usize) -> Self {
-        (self << n) | (self >> ((8 * mem::size_of::<Self>()) - n))
-    }
-
-    /// Rotates the bits to the right by `n` bits.
-    /// ## Example
-    /// ```
-    /// assert_eq!(0b01000111u8.rotate_right(2), 0b11010001u8);
-    /// ```
-    #[inline]
-    fn rotate_right(self: Self, n: usize) -> Self {
-        (self >> n) | (self << ((8 * mem::size_of::<Self>()) - n))
-    }
-}
-
 /// 8-bit unsigned integer (byte)
 #[lang(builtin_u8)]
 struct u8 {}
 impl u8 {
-    mixin BitOps<u8>;
-    mixin BuiltinComparable<u8>;
+    mixin internal::BitOps<u8>;
+    mixin internal::BuiltinComparable<u8>;
     mixin<H: Hasher<H>> Hashable<u8, H>;
-    mixin<F: Formatter<F>> IntegerFormattable<u8, F>;
-    mixin IntegerParsable<u8>;
+    mixin<F: Formatter<F>> internal::IntegerFormattable<u8, F>;
+    mixin internal::IntegerParsable<u8>;
 
     /// Returns the maximum value of `u8`.
     #[force_inline]
@@ -546,11 +138,11 @@ impl u8 {
 #[lang(builtin_u16)]
 struct u16 {}
 impl u16 {
-    mixin BitOps<u16>;
-    mixin BuiltinComparable<u16>;
+    mixin internal::BitOps<u16>;
+    mixin internal::BuiltinComparable<u16>;
     mixin<H: Hasher<H>> Hashable<u16, H>;
-    mixin<F: Formatter<F>> IntegerFormattable<u16, F>;
-    mixin IntegerParsable<u16>;
+    mixin<F: Formatter<F>> internal::IntegerFormattable<u16, F>;
+    mixin internal::IntegerParsable<u16>;
 
     /// Returns the maximum value of `u16`.
     #[force_inline]
@@ -569,11 +161,11 @@ impl u16 {
 #[lang(builtin_u32)]
 struct u32 {}
 impl u32 {
-    mixin BitOps<u32>;
-    mixin BuiltinComparable<u32>;
+    mixin internal::BitOps<u32>;
+    mixin internal::BuiltinComparable<u32>;
     mixin<H: Hasher<H>> Hashable<u32, H>;
-    mixin<F: Formatter<F>> IntegerFormattable<u32, F>;
-    mixin IntegerParsable<u32>;
+    mixin<F: Formatter<F>> internal::IntegerFormattable<u32, F>;
+    mixin internal::IntegerParsable<u32>;
 
     /// Returns the maximum value of `u32`.
     #[force_inline]
@@ -592,11 +184,11 @@ impl u32 {
 #[lang(builtin_u64)]
 struct u64 {}
 impl u64 {
-    mixin BitOps<u64>;
-    mixin BuiltinComparable<u64>;
+    mixin internal::BitOps<u64>;
+    mixin internal::BuiltinComparable<u64>;
     mixin<H: Hasher<H>> Hashable<u64, H>;
-    mixin<F: Formatter<F>> IntegerFormattable<u64, F>;
-    mixin IntegerParsable<u64>;
+    mixin<F: Formatter<F>> internal::IntegerFormattable<u64, F>;
+    mixin internal::IntegerParsable<u64>;
 
     /// Returns the maximum value of `u64`.
     #[force_inline]
@@ -615,11 +207,11 @@ impl u64 {
 #[lang(builtin_u128)]
 struct u128 {}
 impl u128 {
-    mixin BitOps<u128>;
-    mixin BuiltinComparable<u128>;
+    mixin internal::BitOps<u128>;
+    mixin internal::BuiltinComparable<u128>;
     mixin<H: Hasher<H>> Hashable<u128, H>;
-    mixin<F: Formatter<F>> IntegerFormattable<u128, F>;
-    mixin IntegerParsable<u128>;
+    mixin<F: Formatter<F>> internal::IntegerFormattable<u128, F>;
+    mixin internal::IntegerParsable<u128>;
 
     /// Returns the maximum value of `u128`.
     #[force_inline]
@@ -644,11 +236,11 @@ impl u128 {
 #[lang(builtin_usize)]
 struct usize {}
 impl usize {
-    mixin BitOps<usize>;
-    mixin BuiltinComparable<usize>;
+    mixin internal::BitOps<usize>;
+    mixin internal::BuiltinComparable<usize>;
     mixin<H: Hasher<H>> Hashable<usize, H>;
-    mixin<F: Formatter<F>> IntegerFormattable<usize, F>;
-    mixin IntegerParsable<usize>;
+    mixin<F: Formatter<F>> internal::IntegerFormattable<usize, F>;
+    mixin internal::IntegerParsable<usize>;
 
     /// Returns the maximum value of `usize`.
     #[force_inline]
@@ -681,10 +273,10 @@ impl usize {
 #[lang(builtin_i8)]
 struct i8 {}
 impl i8 {
-    mixin BuiltinComparable<i8>;
+    mixin internal::BuiltinComparable<i8>;
     mixin<H: Hasher<H>> Hashable<i8, H>;
-    mixin<F: Formatter<F>> IntegerFormattable<i8, F>;
-    mixin IntegerParsable<i8>;
+    mixin<F: Formatter<F>> internal::IntegerFormattable<i8, F>;
+    mixin internal::IntegerParsable<i8>;
 
     /// Returns the maximum value of `i8`.
     #[force_inline]
@@ -703,10 +295,10 @@ impl i8 {
 #[lang(builtin_i16)]
 struct i16 {}
 impl i16 {
-    mixin BuiltinComparable<i16>;
+    mixin internal::BuiltinComparable<i16>;
     mixin<H: Hasher<H>> Hashable<i16, H>;
-    mixin<F: Formatter<F>> IntegerFormattable<i16, F>;
-    mixin IntegerParsable<i16>;
+    mixin<F: Formatter<F>> internal::IntegerFormattable<i16, F>;
+    mixin internal::IntegerParsable<i16>;
 
     /// Returns the maximum value of `i16`.
     #[force_inline]
@@ -725,10 +317,10 @@ impl i16 {
 #[lang(builtin_i32)]
 struct i32 {}
 impl i32 {
-    mixin BuiltinComparable<i32>;
+    mixin internal::BuiltinComparable<i32>;
     mixin<H: Hasher<H>> Hashable<i32, H>;
-    mixin<F: Formatter<F>> IntegerFormattable<i32, F>;
-    mixin IntegerParsable<i32>;
+    mixin<F: Formatter<F>> internal::IntegerFormattable<i32, F>;
+    mixin internal::IntegerParsable<i32>;
 
     /// Returns the maximum value of `i32`.
     #[force_inline]
@@ -747,10 +339,10 @@ impl i32 {
 #[lang(builtin_i64)]
 struct i64 {}
 impl i64 {
-    mixin BuiltinComparable<i64>;
+    mixin internal::BuiltinComparable<i64>;
     mixin<H: Hasher<H>> Hashable<i64, H>;
-    mixin<F: Formatter<F>> IntegerFormattable<i64, F>;
-    mixin IntegerParsable<i64>;
+    mixin<F: Formatter<F>> internal::IntegerFormattable<i64, F>;
+    mixin internal::IntegerParsable<i64>;
 
     /// Returns the maximum value of `i64`.
     #[force_inline]
@@ -769,10 +361,10 @@ impl i64 {
 #[lang(builtin_i128)]
 struct i128 {}
 impl i128 {
-    mixin BuiltinComparable<i128>;
+    mixin internal::BuiltinComparable<i128>;
     mixin<H: Hasher<H>> Hashable<i128, H>;
-    mixin<F: Formatter<F>> IntegerFormattable<i128, F>;
-    mixin IntegerParsable<i128>;
+    mixin<F: Formatter<F>> internal::IntegerFormattable<i128, F>;
+    mixin internal::IntegerParsable<i128>;
 
     /// Returns the maximum value of `i128`.
     #[force_inline]
@@ -791,10 +383,10 @@ impl i128 {
 #[lang(builtin_isize)]
 struct isize {}
 impl isize {
-    mixin BuiltinComparable<isize>;
+    mixin internal::BuiltinComparable<isize>;
     mixin<H: Hasher<H>> Hashable<isize, H>;
-    mixin<F: Formatter<F>> IntegerFormattable<isize, F>;
-    mixin IntegerParsable<isize>;
+    mixin<F: Formatter<F>> internal::IntegerFormattable<isize, F>;
+    mixin internal::IntegerParsable<isize>;
 
     /// Returns the maximum value of `isize`.
     #[force_inline]
@@ -823,53 +415,14 @@ impl isize {
     }
 }
 
-/// Mixin for common floating point functions
-protocol FloatOps<Self> {
-    /// Returns `NaN`.
-    #[inline]
-    fn nan() -> Self {
-        (0.0 as Self) / (0.0 as Self)
-    }
-
-    /// Returns a positive infinity.
-    #[inline]
-    fn infinity() -> Self {
-        (1.0 as Self) / (0.0 as Self)
-    }
-
-    /// Returns a negative infinity.
-    #[inline]
-    fn neg_infinity() -> Self {
-        (-1.0 as Self) / (0.0 as Self)
-    }
-
-    /// Returns `true` if the number is NaN, `false` otherwise.
-    #[inline]
-    fn is_nan(self: Self) -> bool {
-        self != self
-    }
-
-    /// Returns `true` if the number is infinite, `false` otherwise.
-    #[inline]
-    fn is_infinite(self: Self) -> bool {
-        !self.is_nan() && !self.is_finite()
-    }
-
-    /// Returns `true` if the number is neither infinite nor NaN, `false` otherwise.
-    #[inline]
-    fn is_finite(self: Self) -> bool {
-        !self.is_nan() && self < Self::infinity() && self > Self::neg_infinity()
-    }
-}
-
 /// Single precision floating point type
 #[lang(builtin_f32)]
 struct f32 {}
 impl f32 {
-    mixin BuiltinComparable<f32>;
+    mixin internal::BuiltinComparable<f32>;
     // Not hashable
-    mixin<F: Formatter<F>> FloatFormattable<f32, F>;
-    mixin FloatOps<f32>;
+    mixin<F: Formatter<F>> internal::FloatFormattable<f32, F>;
+    mixin internal::FloatOps<f32>;
 
     /// Returns `true` if the number has a negative sign, `false` otherwise.
     #[force_inline]
@@ -1079,10 +632,10 @@ impl f32 {
 #[lang(builtin_f64)]
 struct f64 {}
 impl f64 {
-    mixin BuiltinComparable<f64>;
+    mixin internal::BuiltinComparable<f64>;
     // Not hashable
-    mixin<F: Formatter<F>> FloatFormattable<f64, F>;
-    mixin FloatOps<f64>;
+    mixin<F: Formatter<F>> internal::FloatFormattable<f64, F>;
+    mixin internal::FloatOps<f64>;
 
     /// @ f32::is_sign_negative
     #[force_inline]
@@ -1355,119 +908,145 @@ impl array<Arr: builtins::Array> {
 /// let v: signed_of<usize>; // v is `isize`
 /// ```
 #[lang(typeop_signed_of)]
-struct signed_of<T: builtins::Integer> {}
+type signed_of<T: builtins::Integer>;
 
 /// Unsigned integer type of the same size as the original type.
 ///
 /// ## Example
 /// ```
+/// use std::typing::assert_type_eq;
 /// use std::builtins::unsigned_of;
 ///
-/// let v: unsigned_of<i32>; // v is `u32`
-/// let v: unsigned_of<isize>; // v is `usize`
+/// assert_type_eq::<unsigned_of<i32>, u32>();
+/// assert_type_eq::<unsigned_of<isize>, usize>();
 /// ```
 #[lang(typeop_unsigned_of)]
-struct unsigned_of<T: builtins::Integer> {}
+type unsigned_of<T: builtins::Integer>;
 
 /// Element type of the provided array
 ///
 /// ## Example
 /// ```
+/// use std::typing::assert_type_eq;
 /// use std::builtins::element_of;
 ///
-/// let v: element_of<[i32; 3]>; // v is `i32`
+/// assert_type_eq::<element_of<[i32; 3]>, i32>();
 /// ```
 #[lang(typeop_element_of)]
-struct element_of<T: builtins::Array> {}
+type element_of<T: builtins::Array>;
 
 /// Type of the pointed-to value
 ///
 /// ## Example
 /// ```
+/// use std::typing::assert_type_eq;
 /// use std::builtins::deref_of;
 ///
-/// let v: deref_of<&i32>; // v is `i32`
-/// let v: deref_of<&mut i32>; // v is `i32`
+/// assert_type_eq::<deref_of<&i32>, i32>();
+/// assert_type_eq::<deref_of<&mut i32>, i32>();
 /// ```
 #[lang(typeop_deref_of)]
-struct deref_of<T: builtins::Pointer> {}
+type deref_of<T: builtins::Pointer>;
 
 /// Type of the first element of the provided tuple
 ///
 /// ## Example
 /// ```
+/// use std::typing::assert_type_eq;
 /// use std::builtins::tuple_head_of;
 ///
-/// let v: tuple_head_of<(i32, u8, ())>; // v is `i32`
+/// assert_type_eq::<tuple_head_of<(i32, u8, ())>, i32>();
 /// ```
 #[lang(typeop_tuple_head_of)]
-struct tuple_head_of<T: builtins::Tuple> {}
+type tuple_head_of<T: builtins::Tuple>;
 
 /// Tuple type equivalent to the provided one without the first element
 ///
 /// ## Example
 /// ```
+/// use std::typing::assert_type_eq;
 /// use std::builtins::tuple_tail_of;
 ///
-/// let v: tuple_tail_of<(i32, u8, ())>; // v is `(u8, ())`
+/// assert_type_eq::<tuple_tail_of<(i32, u8, ())>, (u8, ())>();
+/// assert_type_eq::<tuple_tail_of<(i32,)>, ()>();
 /// ```
 #[lang(typeop_tuple_tail_of)]
-struct tuple_tail_of<T: builtins::Tuple> {}
+type tuple_tail_of<T: builtins::Tuple>;
 
 /// Return type of the provided function
 ///
 /// ## Example
 /// ```
+/// use std::typing::assert_type_eq;
 /// use std::builtins::return_type_of;
 ///
 /// fn add(x: i32, y: i32) -> i32 { x + y }
 ///
-/// let v: return_type_of<add>; // v is `i32`
-/// let v: return_type_of<fn() -> u8>; // v is `u8`
+/// assert_type_eq::<return_type_of<add>, i32>();
+/// assert_type_eq::<return_type_of<fn() -> u8>, u8>();
 /// ```
 #[lang(typeop_return_type_of)]
-struct return_type_of<T> {}
+type return_type_of<T>;
 
 /// Tuple of argument types of the provided function
 ///
 /// ## Example
 /// ```
+/// use std::typing::assert_type_eq;
 /// use std::builtins::arguments_of;
 ///
 /// fn add(x: i32, y: i32) -> i32 { x + y }
 ///
-/// let v: arguments_of<add>; // v is `(i32, i32)`
-/// let v: arguments_of<fn() -> u8>; // v is `()`
+/// assert_type_eq::<arguments_of<add>, (i32, i32)>();
+/// assert_type_eq::<arguments_of<fn() -> u8>, ()>();
 /// ```
 #[lang(typeop_arguments_of)]
-struct arguments_of<T> {}
+type arguments_of<T>;
 
 /// Tuple of the generic arguments of a given type
 ///
 /// ## Example
 /// ```
+/// use std::typing::assert_type_eq;
 /// use std::builtins::generic_args_of;
 ///
 /// fn add<T>(x: T, y: T) -> T { x + y }
 ///
-/// let v: generic_args_of<add<i32>>; // v is `(i32,)`
-/// let v: generic_args_of<Result<&[u8], i32>; // v is `(&[u8], i32)`
-/// let v: generic_args_of<std::cmp::Ordering>; // v is `()`
+/// assert_type_eq::<generic_args_of<add<i32>>, (i32,)>();
+/// assert_type_eq::<generic_args_of<Result<&[u8], i32>>, (&[u8], i32)>();
+/// assert_type_eq::<generic_args_of<std::cmp::Ordering>, ()>();
 /// ```
 #[lang(typeop_generic_args_of)]
-struct generic_args_of<T> {}
+type generic_args_of<T>;
 
 /// Void pointer type of the same constness as the provided pointer type.
 ///
 /// ## Example
 /// ```
+/// use std::typing::assert_type_eq;
 /// use std::builtins::void_ptr_of;
 ///
-/// let v: void_ptr_of<&i32>; // v is `&()`
-/// let v: void_ptr_of<&mut i32>; // v is `&mut ()`
+/// assert_type_eq::<void_ptr_of<&i32>, &()>();
+/// assert_type_eq::<void_ptr_of<&mut i32>, &mut ()>();
 /// ```
 #[lang(typeop_void_ptr_of)]
-struct void_ptr_of<T: Pointer> {}
+type void_ptr_of<T: Pointer>;
+
+/// Backing type of an `enum`.
+///
+/// ## Example
+/// ```
+/// use std::typing::assert_type_eq;
+/// use std::builtins::enum_type_of;
+///
+/// enum Foo { A, B, C }
+/// enum Bar { A = 0usize, B, C }
+///
+/// assert_type_eq::<enum_type_of<Foo>, i32>();
+/// assert_type_eq::<enum_type_of<Bar>, usize>();
+/// ```
+#[lang(typeop_enum_type_of)]
+type enum_type_of<T: Enum>;
 
 /// Matches zero-sized types (void, named function types, empty structs, empty arrays, ...)
 #[lang(proto_zero_sized)] protocol ZeroSized {}
@@ -1534,6 +1113,457 @@ struct void_ptr_of<T: Pointer> {}
 /// Range over `T`
 #[lang(proto_range_of)] protocol RangeOf<T: Integer> {}
 
+/// All protocols
+#[lang(proto_meta)] protocol Protocol {}
+
+mod internal {
+    /// This mixin implements Equatable and Comparable for types that have natively implemented
+    /// equality and comparison operators.
+    protocol BuiltinComparable<Self: builtins::Numeric> {
+        /// @ cmp::Equatable::equals
+        #[force_inline] fn equals(lhs: &Self, rhs: &Self) -> bool { *lhs == *rhs }
+        /// @ cmp::Equatable::not_equals
+        #[force_inline] fn not_equals(lhs: &Self, rhs: &Self) -> bool { *lhs != *rhs }
+        /// @ cmp::Comparable::compare
+        #[force_inline]
+        fn compare(lhs: &Self, rhs: &Self) -> Ordering {
+            if *lhs < *rhs {
+                Ordering::Less
+            } else if *lhs == *rhs {
+                Ordering::Equal
+            } else {
+                Ordering::Greater
+            }
+        }
+
+        /// @ cmp::Comparable::less_than
+        #[force_inline] fn less_than(lhs: &Self, rhs: &Self) -> bool { *lhs < *rhs }
+        /// @ cmp::Comparable::less_than_or_equal
+        #[force_inline] fn less_than_or_equal(lhs: &Self, rhs: &Self) -> bool { *lhs <= *rhs }
+        /// @ cmp::Comparable::greater_than
+        #[force_inline] fn greater_than(lhs: &Self, rhs: &Self) -> bool { *lhs > *rhs }
+        /// @ cmp::Comparable::greater_than_or_equal
+        #[force_inline] fn greater_than_or_equal(lhs: &Self, rhs: &Self) -> bool { *lhs >= *rhs }
+    }
+
+    /// Mixin for parsing integers from strings.
+    protocol IntegerParsable<Self: builtins::Integer> {
+        /// Parses the integer from a base-10 string.
+        ///
+        /// If the string does not represent a valid integer, `Option::none()` is returned.
+        ///
+        /// ## Example
+        /// ```
+        /// assert_eq!(i32::parse("10"), Option::some(10));
+        /// assert_eq!(i32::parse("foo"), Option::none());
+        /// ```
+        #[inline]
+        fn parse(s: &[u8]) -> Option<Self> {
+            string::parse_integer::<Self>(s, 10)
+        }
+
+        /// Parses the integer from a string in a given base.
+        ///
+        /// If the string does not represent a valid integer in the given base, `Option::none()` is
+        /// returned.
+        ///
+        /// ## Example
+        /// ```
+        /// assert_eq!(i32::parse_with_radix("10", 2), Option::some(2));
+        /// assert_eq!(u64::parse_with_radix("deadbeef", 16), Option::some(0xdeadbeefu64));
+        /// assert_eq!(i32::parse_with_radix("foo", 10), Option::none());
+        /// ```
+        #[inline]
+        fn parse_with_radix(s: &[u8], radix: u16) -> Option<Self> {
+            string::parse_integer::<Self>(s, radix)
+        }
+    }
+
+    /// String formatting mixin for integers.
+    protocol IntegerFormattable<Self: builtins::Integer, F: Formatter<F>> {
+        /// @ fmt::Formattable::fmt
+        #[inline]
+        fn fmt(self: &Self, formatter: &mut F) -> Result<(), fmt::Error> {
+            fmt::internal::format_integer(*self, 10, 0, formatter)
+        }
+    }
+
+    /// String formatting mixin for floating-point types.
+    protocol FloatFormattable<Self: builtins::FloatingPoint, F: Formatter<F>> {
+        /// @ fmt::Formattable::fmt
+        #[inline]
+        fn fmt(self: &Self, formatter: &mut F) -> Result<(), fmt::Error> {
+            fmt::internal::format_float(*self, formatter, 15)
+        }
+    }
+
+    /// Bitwise operations on unsigned integers
+    protocol BitOps<Self: builtins::Unsigned> {
+        /// Swaps the byte order (endianness) of the number.
+        ///
+        /// ## Example
+        /// ```
+        /// assert_eq!(0x0123u16.swap_bytes(), 0x2301);
+        /// ```
+        #[inline]
+        fn swap_bytes(self: Self) -> Self {
+            when Self: usize {
+                #[cfg(target_pointer_width = "64")]
+                {
+                    (self as u64).swap_bytes() as usize
+                }
+                #[cfg(target_pointer_width = "32")]
+                {
+                    (self as u32).swap_bytes() as usize
+                }
+            } else when Self: u8 {
+                self
+            } else when Self: u16 {
+                (self >> 8) | (self << 8)
+            } else when Self: u32 {
+                (self >> 24)
+                | ((self >> 8) & 0x0000FF00u32)
+                | ((self << 8) & 0x00FF0000u32)
+                | (self << 24)
+            } else when Self: u64 {
+                (self >> 56)
+                | ((self >> 40) & 0x000000000000FF00u64)
+                | ((self >> 24) & 0x0000000000FF0000u64)
+                | ((self >> 8)  & 0x00000000FF000000u64)
+                | ((self << 8)  & 0x000000FF00000000u64)
+                | ((self << 24) & 0x0000FF0000000000u64)
+                | ((self << 40) & 0x00FF000000000000u64)
+                | (self << 56)
+            } else when Self: u128 {
+                (self >> 120)
+                | ((self >> 104) & 0x0000000000000000000000000000FF00u128)
+                | ((self >> 88) & 0x00000000000000000000000000FF0000u128)
+                | ((self >> 72) & 0x000000000000000000000000FF000000u128)
+                | ((self >> 56) & 0x0000000000000000000000FF00000000u128)
+                | ((self >> 40) & 0x00000000000000000000FF0000000000u128)
+                | ((self >> 24) & 0x000000000000000000FF000000000000u128)
+                | ((self >> 8)  & 0x0000000000000000FF00000000000000u128)
+                | ((self << 8)  & 0x00000000000000FF0000000000000000u128)
+                | ((self << 24) & 0x000000000000FF000000000000000000u128)
+                | ((self << 40) & 0x0000000000FF00000000000000000000u128)
+                | ((self << 56) & 0x00000000FF0000000000000000000000u128)
+                | ((self << 72) & 0x000000FF000000000000000000000000u128)
+                | ((self << 88) & 0x0000FF00000000000000000000000000u128)
+                | ((self << 104) & 0x00FF0000000000000000000000000000u128)
+                | (self << 120)
+            } else {
+                compile_fail!("unexpected integer type");
+            }
+        }
+
+        /// Converts the number into a big-endian representation.
+        ///
+        /// If the numbers of this type are represented in big-endian order on the target
+        /// architecture, then this is an identity function.
+        ///
+        /// ## Example
+        /// ```
+        /// #[cfg(target_endian = "little")]
+        /// assert_eq!(0x0123u16.to_be(), 0x2301);
+        ///
+        /// #[cfg(target_endian = "big")]
+        /// assert_eq!(0x0123u16.to_be(), 0x0123);
+        /// ```
+        #[inline]
+        fn to_be(self: Self) -> Self {
+            #[cfg(prince_of_denmark = "hamlet")]
+            {
+                intrinsics::compile_note("...or not to be, that is the question.");
+            }
+            #[cfg(target_endian = "big")]
+            {
+                self
+            }
+            #[cfg(target_endian = "little")]
+            {
+                self.swap_bytes()
+            }
+        }
+
+        /// Converts the number from a big-endian representation.
+        ///
+        /// If the numbers of this type are represented in big-endian order on the target
+        /// architecture, then this is an identity function.
+        /// ## Example
+        /// ```
+        /// #[cfg(target_endian = "little")]
+        /// assert_eq!(0x0123u16.from_be(), 0x2301);
+        ///
+        /// #[cfg(target_endian = "big")]
+        /// assert_eq!(0x0123u16.from_be(), 0x0123);
+        /// ```
+        #[inline]
+        fn from_be(self: Self) -> Self {
+            self.to_be()
+        }
+
+        /// Converts the number into a little-endian representation.
+        ///
+        /// If the numbers of this type are represented in little-endian order on the target
+        /// architecture, then this is an identity function.
+        /// ## Example
+        /// ```
+        /// #[cfg(target_endian = "little")]
+        /// assert_eq!(0x0123u16.to_le(), 0x0123);
+        ///
+        /// #[cfg(target_endian = "big")]
+        /// assert_eq!(0x0123u16.to_le(), 0x2301);
+        /// ```
+        #[inline]
+        fn to_le(self: Self) -> Self {
+            #[cfg(target_endian = "big")]
+            {
+                self.swap_bytes()
+            }
+            #[cfg(target_endian = "little")]
+            {
+                self
+            }
+        }
+
+        /// Converts the number from a little-endian representation.
+        ///
+        /// If the numbers of this type are represented in little-endian order on the target
+        /// architecture, then this is an identity operation.
+        /// ## Example
+        /// ```
+        /// #[cfg(target_endian = "little")]
+        /// assert_eq!(0x0123u16.from_le(), 0x0123);
+        ///
+        /// #[cfg(target_endian = "big")]
+        /// assert_eq!(0x0123u16.from_le(), 0x2301);
+        /// ```
+        #[inline]
+        fn from_le(self: Self) -> Self {
+            self.to_le()
+        }
+
+        /// Returns the number of ones in the binary representation of the number.
+        ///
+        /// ## Example
+        /// ```
+        /// assert_eq!(0b10101000u8.count_ones(), 3);
+        /// ```
+        #[inline]
+        fn count_ones(self: Self) -> u32 {
+            use libc::{c_int, c_ulong, c_ulonglong, c_uint};
+
+            when Self: usize {
+                #[cfg(target_pointer_width = "64")]
+                {
+                    (self as u64).count_ones()
+                }
+                #[cfg(target_pointer_width = "32")]
+                {
+                    (self as u32).count_ones()
+                }
+            } else {
+                let ret = when Self: u128 {
+                    return ((self >> 64) as u64).count_ones() + (self as u64).count_ones();
+                } else when Self: c_ulonglong {
+                    intrinsics::codegen_func::<c_int>("__builtin_popcountll", self)
+                } else when Self: c_ulong {
+                    intrinsics::codegen_func::<c_int>("__builtin_popcountl", self)
+                } else {
+                    intrinsics::codegen_func::<c_int>("__builtin_popcount", self as c_uint)
+                };
+
+                ret as u32
+            }
+        }
+
+        /// Returns the number of zeros in the binary representation of the number.
+        /// ## Example
+        /// ```
+        /// assert_eq!(0b10101000u8.count_zeros(), 5);
+        /// ```
+        #[inline]
+        fn count_zeros(self: Self) -> u32 {
+            (~self).count_ones()
+        }
+
+        /// Returns the number of leading zeros in the binary representation of the number.
+        /// ## Example
+        /// ```
+        /// assert_eq!(0b00010000u8.leading_zeros(), 3);
+        /// ```
+        #[inline]
+        fn leading_zeros(self: Self) -> u32 {
+            use libc::{c_int, c_ulong, c_uint, c_ulonglong};
+            use mem::size_of;
+
+            when Self: usize {
+                #[cfg(target_pointer_width = "64")]
+                {
+                    (self as u64).leading_zeros()
+                }
+                #[cfg(target_pointer_width = "32")]
+                {
+                    (self as u32).leading_zeros()
+                }
+            } else {
+                if self == 0 {
+                    return (size_of::<Self>() * 8) as u32;
+                }
+
+                let ret = when Self: u128 {
+                    let head = (self >> 64) as u64;
+                    if head == 0 {
+                        return (self as u64).leading_zeros() + 64;
+                    } else {
+                        return head.leading_zeros();
+                    }
+                } else when Self: c_ulonglong {
+                    intrinsics::codegen_func::<c_int>("__builtin_clzll", self)
+                } else when Self: c_ulong {
+                    intrinsics::codegen_func::<c_int>("__builtin_clzl", self)
+                } else when Self: c_uint {
+                    intrinsics::codegen_func::<c_int>("__builtin_clz", self)
+                } else {
+                    let val =
+                        ((self as c_uint) << (8 * (size_of::<c_uint>() - size_of::<Self>()))) |
+                        (c_uint::max_value() >> (8 * size_of::<Self>()));
+
+                    intrinsics::codegen_func::<c_int>("__builtin_clz", val)
+                };
+
+                ret as u32
+            }
+        }
+
+        /// Returns the number of trailing zeros in the binary representation of the number.
+        /// ## Example
+        /// ```
+        /// assert_eq!(0b00010000u8.trailing_zeros(), 4);
+        /// ```
+        #[inline]
+        fn trailing_zeros(self: Self) -> u32 {
+            use libc::{c_int, c_ulong, c_uint, c_ulonglong};
+            use mem::size_of;
+
+            when Self: usize {
+                #[cfg(target_pointer_width = "64")]
+                {
+                    (self as u64).trailing_zeros()
+                }
+                #[cfg(target_pointer_width = "32")]
+                {
+                    (self as u32).trailing_zeros()
+                }
+            } else {
+                if self == 0 {
+                    return (size_of::<Self>() * 8) as u32;
+                }
+
+                let ret = when Self: u128 {
+                    let tail = self as u64;
+                    if tail == 0 {
+                        return ((self >> 64) as u64).trailing_zeros() + 64;
+                    } else {
+                        return tail.trailing_zeros();
+                    }
+                } else when Self: c_ulonglong {
+                    intrinsics::codegen_func::<c_int>("__builtin_ctzll", self)
+                } else when Self: c_ulong {
+                    intrinsics::codegen_func::<c_int>("__builtin_ctzl", self)
+                } else when Self: c_uint {
+                    intrinsics::codegen_func::<c_int>("__builtin_ctz", self)
+                } else {
+                    let val =
+                        (c_uint::max_value() << (8 * size_of::<Self>())) | (self as c_uint);
+
+                    intrinsics::codegen_func::<c_int>("__builtin_ctz", val)
+                };
+
+                ret as u32
+            }
+        }
+
+        /// Returns the number of leading ones in the binary representation of the number.
+        /// ## Example
+        /// ```
+        /// assert_eq!(0b11111110u8.leading_ones(), 7);
+        /// ```
+        #[inline]
+        fn leading_ones(self: Self) -> u32 {
+            (~self).leading_zeros()
+        }
+
+        /// Returns the number of trailing ones in the binary representation of the number.
+        /// ## Example
+        /// ```
+        /// assert_eq!(0b00000111u8.trailing_ones(), 3);
+        /// ```
+        #[inline]
+        fn trailing_ones(self: Self) -> u32 {
+            (~self).trailing_zeros()
+        }
+
+        /// Rotates the bits to the left by `n` bits.
+        /// ## Example
+        /// ```
+        /// assert_eq!(0b01000111u8.rotate_left(2), 0b00011101u8);
+        /// ```
+        #[inline]
+        fn rotate_left(self: Self, n: usize) -> Self {
+            (self << n) | (self >> ((8 * mem::size_of::<Self>()) - n))
+        }
+
+        /// Rotates the bits to the right by `n` bits.
+        /// ## Example
+        /// ```
+        /// assert_eq!(0b01000111u8.rotate_right(2), 0b11010001u8);
+        /// ```
+        #[inline]
+        fn rotate_right(self: Self, n: usize) -> Self {
+            (self >> n) | (self << ((8 * mem::size_of::<Self>()) - n))
+        }
+    }
+
+    /// Mixin for common floating point functions
+    protocol FloatOps<Self> {
+        /// Returns `NaN`.
+        #[inline]
+        fn nan() -> Self {
+            (0.0 as Self) / (0.0 as Self)
+        }
+
+        /// Returns a positive infinity.
+        #[inline]
+        fn infinity() -> Self {
+            (1.0 as Self) / (0.0 as Self)
+        }
+
+        /// Returns a negative infinity.
+        #[inline]
+        fn neg_infinity() -> Self {
+            (-1.0 as Self) / (0.0 as Self)
+        }
+
+        /// Returns `true` if the number is NaN, `false` otherwise.
+        #[inline]
+        fn is_nan(self: Self) -> bool {
+            self != self
+        }
+
+        /// Returns `true` if the number is infinite, `false` otherwise.
+        #[inline]
+        fn is_infinite(self: Self) -> bool {
+            !self.is_nan() && !self.is_finite()
+        }
+
+        /// Returns `true` if the number is neither infinite nor NaN, `false` otherwise.
+        #[inline]
+        fn is_finite(self: Self) -> bool {
+            !self.is_nan() && self < Self::infinity() && self > Self::neg_infinity()
+        }
+    }
+}
 
 #[cfg(all(test, test_std))]
 mod tests {

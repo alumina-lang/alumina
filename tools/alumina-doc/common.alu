@@ -108,6 +108,7 @@ impl Path {
     mixin<H: Hasher<H>> Hashable<Path, H>;
 }
 
+// Order of enum variants here determines the order of sections in the generated documentation.
 enum ItemKind {
     Module,
     Field,
@@ -115,6 +116,7 @@ enum ItemKind {
     RequiredMethod,
     ProvidedMethod,
     Method,
+    BuiltinType,
     Protocol,
     Struct,
     Function,
@@ -145,6 +147,7 @@ impl ItemKind {
             ItemKind::Variant => write!(f, "Variant"),
             ItemKind::Static => write!(f, "Static"),
             ItemKind::Struct => write!(f, "Struct"),
+            ItemKind::BuiltinType => write!(f, "Builtin type"),
             ItemKind::Field => write!(f, "Field"),
             ItemKind::Union => write!(f, "Union"),
             ItemKind::Mixin => write!(f, "Mixin"),
@@ -159,6 +162,7 @@ impl ItemKind {
             ItemKind::Enum,
             ItemKind::Union,
             ItemKind::Struct,
+            ItemKind::BuiltinType,
             ItemKind::Macro => true,
             _ => false,
         }
@@ -186,6 +190,7 @@ impl ItemKind {
             ItemKind::Union,
             ItemKind::Protocol,
             ItemKind::Struct,
+            ItemKind::BuiltinType,
             ItemKind::Enum => false,
             _ => true,
         }
@@ -202,7 +207,8 @@ impl ItemKind {
 
     fn show_signature(self: &ItemKind) -> bool {
         switch *self {
-            ItemKind::Module => false,
+            ItemKind::Module,
+            ItemKind::BuiltinType => false,
             _ => true,
         }
     }

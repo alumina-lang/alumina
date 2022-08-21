@@ -44,6 +44,7 @@ pub enum LangItemKind {
     ProtoArrayOf,
     ProtoPointerOf,
     ProtoRangeOf,
+    ProtoMeta,
 
     ImplBuiltin(BuiltinType),
     ImplTuple(usize),
@@ -59,6 +60,7 @@ pub enum LangItemKind {
     TypeopArgumentsOf,
     TypeopVoidPtrOf,
     TypeopGenericArgsOf,
+    TypeopEnumTypeOf,
 
     EntrypointGlue,
     TestCaseMeta,
@@ -177,6 +179,7 @@ impl TryFrom<&str> for LangItemKind {
             "proto_array_of" => Ok(LangItemKind::ProtoArrayOf),
             "proto_pointer_of" => Ok(LangItemKind::ProtoPointerOf),
             "proto_range_of" => Ok(LangItemKind::ProtoRangeOf),
+            "proto_meta" => Ok(LangItemKind::ProtoMeta),
 
             "builtin_never" => Ok(LangItemKind::ImplBuiltin(BuiltinType::Never)),
             "builtin_void" => Ok(LangItemKind::ImplBuiltin(BuiltinType::Void)),
@@ -215,6 +218,7 @@ impl TryFrom<&str> for LangItemKind {
             "typeop_arguments_of" => Ok(LangItemKind::TypeopArgumentsOf),
             "typeop_void_ptr_of" => Ok(LangItemKind::TypeopVoidPtrOf),
             "typeop_generic_args_of" => Ok(LangItemKind::TypeopGenericArgsOf),
+            "typeop_enum_type_of" => Ok(LangItemKind::TypeopEnumTypeOf),
 
             "entrypoint_glue" => Ok(LangItemKind::EntrypointGlue),
             "test_case_meta" => Ok(LangItemKind::TestCaseMeta),

@@ -231,8 +231,10 @@ module.exports = grammar({
         "type",
         field("name", $.identifier),
         optional(field("type_arguments", $.generic_argument_list)),
-        "=",
-        field("inner", $._type),
+        optional(seq(
+          "=",
+          field("inner", $._type),
+        )),
         ";"
       ),
 
@@ -825,7 +827,10 @@ module.exports = grammar({
       seq(
         field("lhs", $._type),
         ":",
-        sepBy("+", field("bound", $.protocol_bound))
+        choice(
+          field("all_bounds", sepBy("+", field("bound", $.protocol_bound))),
+          field("any_bounds", sepBy("|", field("bound", $.protocol_bound))),
+        )
       ),
 
     if_expression: ($) =>

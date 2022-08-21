@@ -17,7 +17,7 @@ fn client() -> Result<(), Error> {
 
     // Take the first address
     let address = addresses.next()
-        .as_result(Error::custom("cannot resolve the address"))?;
+        .ok_or(Error::custom("cannot resolve the address"))?;
 
     let socket = TcpStream::connect(&address)?;
     defer socket.close();
