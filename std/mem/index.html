@@ -240,7 +240,7 @@ See also a <a class="" href="/std/mem/slice.html#item.alloc_zeroed">the matching
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">free</span>&lt;T&gt;(a: &amp;mut T)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L565-L567"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L566-L568"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -253,6 +253,7 @@ The pointer must be allocated with the default allocator (<code class="language-
 <h3> Example</h3>
 <p>
 <pre class="with-playground-link"><code class="language-alumina">struct Box&lt;T&gt; { ptr: &amp;mut T }
+
 impl Box&lt;T&gt; {
     fn new(value: T) -&gt; Box&lt;T&gt; {
         let ptr = std::mem::alloc::&lt;T&gt;();
@@ -260,11 +261,11 @@ impl Box&lt;T&gt; {
         Box { ptr: ptr }
     }
 
-    fn free(value: &amp;mut Box&lt;T&gt;) {
-        std::mem::free(value);
+    fn free(self: &amp;mut Box&lt;T&gt;) {
+        std::mem::free(self.ptr);
     }
 }
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20struct%20Box%3cT%3e%20%7b%20ptr%3a%20%26mut%20T%20%7d%0a%20%20%20impl%20Box%3cT%3e%20%7b%0a%20%20%20%20%20%20%20fn%20new%28value%3a%20T%29%20%2d%3e%20Box%3cT%3e%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20let%20ptr%20%3d%20std%3a%3amem%3a%3aalloc%3a%3a%3cT%3e%28%29%3b%0a%20%20%20%20%20%20%20%20%20%20%20%2aptr%20%3d%20value%3b%0a%20%20%20%20%20%20%20%20%20%20%20Box%20%7b%20ptr%3a%20ptr%20%7d%0a%20%20%20%20%20%20%20%7d%0a%20%20%20%0a%20%20%20%20%20%20%20fn%20free%28value%3a%20%26mut%20Box%3cT%3e%29%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20std%3a%3amem%3a%3afree%28value%29%3b%0a%20%20%20%20%20%20%20%7d%0a%20%20%20%7d%0a%0a%7d%0a">Run this example</a></pre>
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20struct%20Box%3cT%3e%20%7b%20ptr%3a%20%26mut%20T%20%7d%0a%20%20%20%0a%20%20%20impl%20Box%3cT%3e%20%7b%0a%20%20%20%20%20%20%20fn%20new%28value%3a%20T%29%20%2d%3e%20Box%3cT%3e%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20let%20ptr%20%3d%20std%3a%3amem%3a%3aalloc%3a%3a%3cT%3e%28%29%3b%0a%20%20%20%20%20%20%20%20%20%20%20%2aptr%20%3d%20value%3b%0a%20%20%20%20%20%20%20%20%20%20%20Box%20%7b%20ptr%3a%20ptr%20%7d%0a%20%20%20%20%20%20%20%7d%0a%20%20%20%0a%20%20%20%20%20%20%20fn%20free%28self%3a%20%26mut%20Box%3cT%3e%29%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20std%3a%3amem%3a%3afree%28self%2eptr%29%3b%0a%20%20%20%20%20%20%20%7d%0a%20%20%20%7d%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -274,7 +275,7 @@ impl Box&lt;T&gt; {
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">size_of</span>&lt;T&gt;() -> <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L580-L583"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L581-L584"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -300,7 +301,7 @@ assert_eq!(size_of::&lt;u64&gt;(), 8);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">align_of</span>&lt;T&gt;() -> <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L586-L589"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L587-L590"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -315,7 +316,7 @@ Minimum alignment for given type in bytes.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">swap</span>&lt;T&gt;(a: &amp;mut T, b: &amp;mut T)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L605-L609"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L606-L610"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -344,7 +345,7 @@ assert_eq!(b, 1);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">replace</span>&lt;T&gt;(a: &amp;mut T, b: T) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L624-L627"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L625-L628"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -372,7 +373,7 @@ assert_eq!(a, 2);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">zeroed</span>&lt;T&gt;() -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L630-L636"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L631-L637"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -387,7 +388,7 @@ Zero-initialized object of a given type.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">uninitialized</span>&lt;T&gt;() -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L641-L645"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L642-L646"/>source</a>
 </div>
 </div>
 <div class="item-doc">

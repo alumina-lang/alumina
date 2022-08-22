@@ -28,15 +28,6 @@
 </a>
 <h1><a class="breadcrumbs" href="/std/">std</a>::<a class="breadcrumbs" href="/std/prelude/">prelude</a>::<a class="breadcrumbs" href="/std/result/Result.html">Result</a></h1>
 </h1>
-<h2>Fields</h2>
-<ul>
-<li>
-<a href="/std/prelude/Result.html#item.is_ok">is_ok</a>
-</li>
-<li>
-<a href="/std/prelude/Result.html#item.inner">inner</a>
-</li>
-</ul>
 <h2>Methods</h2>
 <ul>
 <li>
@@ -46,16 +37,25 @@
 <a href="/std/prelude/Result.html#item.err">err</a>
 </li>
 <li>
+<a href="/std/prelude/Result.html#item.is_ok">is_ok</a>
+</li>
+<li>
+<a href="/std/prelude/Result.html#item.get">get</a>
+</li>
+<li>
+<a href="/std/prelude/Result.html#item.get_err">get_err</a>
+</li>
+<li>
 <a href="/std/prelude/Result.html#item.unwrap">unwrap</a>
+</li>
+<li>
+<a href="/std/prelude/Result.html#item.unwrap_err">unwrap_err</a>
 </li>
 <li>
 <a href="/std/prelude/Result.html#item.unwrap_or">unwrap_or</a>
 </li>
 <li>
 <a href="/std/prelude/Result.html#item.unwrap_or_else">unwrap_or_else</a>
-</li>
-<li>
-<a href="/std/prelude/Result.html#item.unwrap_err">unwrap_err</a>
 </li>
 <li>
 <a href="/std/prelude/Result.html#item.map">map</a>
@@ -167,37 +167,18 @@ fn executable_type(contents: &amp;[u8]) -&gt; Result&lt;ExecutableType, Error&gt
 
 let result = executable_type("\x7f\x45\x4c\x46\x02\x01\x01\x00...");
 
-if !result.is_ok {
+if !result.is_ok() {
     eprintln!("Invalid executable");
 } else {
     // e.g. result.unwrap();
     // do something with it
 }
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20enum%20ExecutableType%20%7b%0a%20%20%20%20%20%20%20ELF%2c%0a%20%20%20%20%20%20%20PE%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20struct%20Error%20%7b%7d%0a%20%20%20%0a%20%20%20fn%20executable%5ftype%28contents%3a%20%26%5bu8%5d%29%20%2d%3e%20Result%3cExecutableType%2c%20Error%3e%20%7b%0a%20%20%20%20%20%20%20use%20std%3a%3astring%3a%3astarts%5fwith%3b%0a%20%20%20%20%20%20%20if%20contents%2estarts%5fwith%28%22MZ%22%29%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20Result%3a%3aok%28ExecutableType%3a%3aPE%29%0a%20%20%20%20%20%20%20%7d%20else%20if%20contents%2estarts%5fwith%28%22%5cx7FELF%22%29%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20Result%3a%3aok%28ExecutableType%3a%3aELF%29%0a%20%20%20%20%20%20%20%7d%20else%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%2f%2f%20Invalid%20executable%0a%20%20%20%20%20%20%20%20%20%20%20Result%3a%3aerr%28Error%20%7b%7d%29%0a%20%20%20%20%20%20%20%7d%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20let%20result%20%3d%20executable%5ftype%28%22%5cx7f%5cx45%5cx4c%5cx46%5cx02%5cx01%5cx01%5cx00%2e%2e%2e%22%29%3b%0a%20%20%20%0a%20%20%20if%20%21result%2eis%5fok%20%7b%0a%20%20%20%20%20%20%20eprintln%21%28%22Invalid%20executable%22%29%3b%0a%20%20%20%7d%20else%20%7b%0a%20%20%20%20%20%20%20%2f%2f%20e%2eg%2e%20result%2eunwrap%28%29%3b%0a%20%20%20%20%20%20%20%2f%2f%20do%20something%20with%20it%0a%20%20%20%7d%0a%0a%7d%0a">Run this example</a></pre>
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20enum%20ExecutableType%20%7b%0a%20%20%20%20%20%20%20ELF%2c%0a%20%20%20%20%20%20%20PE%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20struct%20Error%20%7b%7d%0a%20%20%20%0a%20%20%20fn%20executable%5ftype%28contents%3a%20%26%5bu8%5d%29%20%2d%3e%20Result%3cExecutableType%2c%20Error%3e%20%7b%0a%20%20%20%20%20%20%20use%20std%3a%3astring%3a%3astarts%5fwith%3b%0a%20%20%20%20%20%20%20if%20contents%2estarts%5fwith%28%22MZ%22%29%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20Result%3a%3aok%28ExecutableType%3a%3aPE%29%0a%20%20%20%20%20%20%20%7d%20else%20if%20contents%2estarts%5fwith%28%22%5cx7FELF%22%29%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20Result%3a%3aok%28ExecutableType%3a%3aELF%29%0a%20%20%20%20%20%20%20%7d%20else%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%2f%2f%20Invalid%20executable%0a%20%20%20%20%20%20%20%20%20%20%20Result%3a%3aerr%28Error%20%7b%7d%29%0a%20%20%20%20%20%20%20%7d%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20let%20result%20%3d%20executable%5ftype%28%22%5cx7f%5cx45%5cx4c%5cx46%5cx02%5cx01%5cx01%5cx00%2e%2e%2e%22%29%3b%0a%20%20%20%0a%20%20%20if%20%21result%2eis%5fok%28%29%20%7b%0a%20%20%20%20%20%20%20eprintln%21%28%22Invalid%20executable%22%29%3b%0a%20%20%20%7d%20else%20%7b%0a%20%20%20%20%20%20%20%2f%2f%20e%2eg%2e%20result%2eunwrap%28%29%3b%0a%20%20%20%20%20%20%20%2f%2f%20do%20something%20with%20it%0a%20%20%20%7d%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 <code class="language-alumina">Result</code> is commonly used with the <a class="" href="/std/result/try.html">try operator</a> (<code class="language-alumina">?</code>) so that fallible functions can
 be composed easily by bailing early.
 </p><p>
 </p>
-<h2 id="Field">Fields</h2>
-<ul>
-<li>
-<div class="signature" id="item.is_ok">
-<h4>
-is_ok: <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
-</div>
-<div class="item-doc">
-</div>
-</li>
-<li>
-<div class="signature" id="item.inner">
-<h4>
-inner: <a href="/std/result/_ResultT.html"><span class="identifier-type">_ResultT</span></a>&lt;T, E&gt;</h4>
-</div>
-<div class="item-doc">
-</div>
-</li>
-</ul>
 <h2 id="Method">Methods</h2>
 <div class="signature impl-header"><h3>
 <span class="keyword">impl</span> <span class="identifier-type">Result</span>&lt;T, E&gt; { ... }</h3></div>
@@ -219,9 +200,9 @@ Create a success variant
 <p>
 <pre class="with-playground-link"><code class="language-alumina">let r: Result&lt;i32, i32&gt; = Result::ok(10);
 
-assert!(r.is_ok);
+assert!(r.is_ok());
 assert_eq!(r.unwrap(), 10);
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20r%3a%20Result%3ci32%2c%20i32%3e%20%3d%20Result%3a%3aok%2810%29%3b%0a%20%20%20%0a%20%20%20assert%21%28r%2eis%5fok%29%3b%0a%20%20%20assert%5feq%21%28r%2eunwrap%28%29%2c%2010%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20r%3a%20Result%3ci32%2c%20i32%3e%20%3d%20Result%3a%3aok%2810%29%3b%0a%20%20%20%0a%20%20%20assert%21%28r%2eis%5fok%28%29%29%3b%0a%20%20%20assert%5feq%21%28r%2eunwrap%28%29%2c%2010%29%3b%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -231,20 +212,100 @@ assert_eq!(r.unwrap(), 10);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">err</span>(err: E) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, E&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L108-L116"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L109-L117"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Create a error variant
+</p><p>
 </p>
 <h3> Example</h3>
 <p>
 <pre class="with-playground-link"><code class="language-alumina">let r: Result&lt;i32, i32&gt; = Result::err(42);
 
-assert!(!r.is_ok);
+assert!(!r.is_ok());
 assert_eq!(r.unwrap_err(), 42);
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20r%3a%20Result%3ci32%2c%20i32%3e%20%3d%20Result%3a%3aerr%2842%29%3b%0a%20%20%20%0a%20%20%20assert%21%28%21r%2eis%5fok%29%3b%0a%20%20%20assert%5feq%21%28r%2eunwrap%5ferr%28%29%2c%2042%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20r%3a%20Result%3ci32%2c%20i32%3e%20%3d%20Result%3a%3aerr%2842%29%3b%0a%20%20%20%0a%20%20%20assert%21%28%21r%2eis%5fok%28%29%29%3b%0a%20%20%20assert%5feq%21%28r%2eunwrap%5ferr%28%29%2c%2042%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.is_ok">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_ok</span>(self: &amp;<a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, E&gt;) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L120-L123"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if the result conains an OK variant, <code class="language-alumina">false</code> otherwise
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.get">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">get</span>(self: <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, E&gt;) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L142-L148"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Converts from <code class="language-alumina">Result&lt;T, E&gt;</code> to <code class="language-alumina">Option&lt;T&gt;</code>.
+</p><p>
+If the result contains an error, it returns <code class="language-alumina">Option::none()</code>.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let r1: Result&lt;i32, i32&gt; = Result::ok(10);
+let r2: Result&lt;i32, i32&gt; = Result::err(20);
+
+let o1: Option&lt;i32&gt; = r1.get();
+let o2: Option&lt;i32&gt; = r2.get();
+
+assert!(o1.is_some());
+assert_eq!(o1.unwrap(), 10);
+
+assert!(!o2.is_some());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20r1%3a%20Result%3ci32%2c%20i32%3e%20%3d%20Result%3a%3aok%2810%29%3b%0a%20%20%20let%20r2%3a%20Result%3ci32%2c%20i32%3e%20%3d%20Result%3a%3aerr%2820%29%3b%0a%20%20%20%0a%20%20%20let%20o1%3a%20Option%3ci32%3e%20%3d%20r1%2eget%28%29%3b%0a%20%20%20let%20o2%3a%20Option%3ci32%3e%20%3d%20r2%2eget%28%29%3b%0a%20%20%20%0a%20%20%20assert%21%28o1%2eis%5fsome%28%29%29%3b%0a%20%20%20assert%5feq%21%28o1%2eunwrap%28%29%2c%2010%29%3b%0a%20%20%20%0a%20%20%20assert%21%28%21o2%2eis%5fsome%28%29%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.get_err">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">get_err</span>(self: <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, E&gt;) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;E&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L167-L173"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Converts from <code class="language-alumina">Result&lt;T, E&gt;</code> to <code class="language-alumina">Option&lt;E&gt;</code>.
+</p><p>
+If the result contains an OK varianr, it returns <code class="language-alumina">Option::none()</code>.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let r1: Result&lt;i32, i32&gt; = Result::ok(10);
+let r2: Result&lt;i32, i32&gt; = Result::err(20);
+
+let o1: Option&lt;i32&gt; = r1.get_err();
+let o2: Option&lt;i32&gt; = r2.get_err();
+
+assert!(!o1.is_some());
+
+assert!(o2.is_some());
+assert_eq!(o2.unwrap(), 20);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20r1%3a%20Result%3ci32%2c%20i32%3e%20%3d%20Result%3a%3aok%2810%29%3b%0a%20%20%20let%20r2%3a%20Result%3ci32%2c%20i32%3e%20%3d%20Result%3a%3aerr%2820%29%3b%0a%20%20%20%0a%20%20%20let%20o1%3a%20Option%3ci32%3e%20%3d%20r1%2eget%5ferr%28%29%3b%0a%20%20%20let%20o2%3a%20Option%3ci32%3e%20%3d%20r2%2eget%5ferr%28%29%3b%0a%20%20%20%0a%20%20%20assert%21%28%21o1%2eis%5fsome%28%29%29%3b%0a%20%20%20%0a%20%20%20assert%21%28o2%2eis%5fsome%28%29%29%3b%0a%20%20%20assert%5feq%21%28o2%2eunwrap%28%29%2c%2020%29%3b%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -254,7 +315,7 @@ assert_eq!(r.unwrap_err(), 42);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">unwrap</span>(self: <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, E&gt;) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L131-L141"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L188-L199"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -277,11 +338,38 @@ r.unwrap(); // panics
 </div>
 </li>
 <li>
+<div class="signature" id="item.unwrap_err">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">unwrap_err</span>(self: <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, E&gt;) -> E</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L214-L225"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Return the error value, panicking if success value is present
+</p><p>
+</p>
+<h3> Examples</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let r: Result&lt;i32, i32&gt; = Result::err(10);
+
+assert_eq!(r.unwrap_err(), 10);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20r%3a%20Result%3ci32%2c%20i32%3e%20%3d%20Result%3a%3aerr%2810%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28r%2eunwrap%5ferr%28%29%2c%2010%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+<pre class="with-playground-link panics"><code class="language-alumina">let r: Result&lt;i32, i32&gt; = Result::ok(42);
+
+r.unwrap_err(); // panics
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20r%3a%20Result%3ci32%2c%20i32%3e%20%3d%20Result%3a%3aok%2842%29%3b%0a%20%20%20%0a%20%20%20r%2eunwrap%5ferr%28%29%3b%20%2f%2f%20panics%0a%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
 <div class="signature" id="item.unwrap_or">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">unwrap_or</span>(self: <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, E&gt;, val: T) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L153-L159"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L237-L243"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -308,7 +396,7 @@ assert_eq!(r2.unwrap_or(40), 40);
 F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>, T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L171-L177"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L255-L261"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -329,40 +417,13 @@ assert_eq!(r2.unwrap_or_else(i32::max_value), i32::max_value());
 </div>
 </li>
 <li>
-<div class="signature" id="item.unwrap_err">
-<h4>
-<span class="keyword">fn</span> <span class="identifier-function">unwrap_err</span>(self: <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, E&gt;) -> E</h4>
-<div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L192-L202"/>source</a>
-</div>
-</div>
-<div class="item-doc">
-<p>
-Return the error value, panicking if success value is present
-</p><p>
-</p>
-<h3> Examples</h3>
-<p>
-<pre class="with-playground-link"><code class="language-alumina">let r: Result&lt;i32, i32&gt; = Result::err(10);
-
-assert_eq!(r.unwrap_err(), 10);
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20r%3a%20Result%3ci32%2c%20i32%3e%20%3d%20Result%3a%3aerr%2810%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28r%2eunwrap%5ferr%28%29%2c%2010%29%3b%0a%0a%7d%0a">Run this example</a></pre>
-<pre class="with-playground-link panics"><code class="language-alumina">let r: Result&lt;i32, i32&gt; = Result::ok(42);
-
-r.unwrap_err(); // panics
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20r%3a%20Result%3ci32%2c%20i32%3e%20%3d%20Result%3a%3aok%2842%29%3b%0a%20%20%20%0a%20%20%20r%2eunwrap%5ferr%28%29%3b%20%2f%2f%20panics%0a%0a%7d%0a">Run this example</a></pre>
-</p><p>
-</p>
-</div>
-</li>
-<li>
 <div class="signature" id="item.map">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">map</span>&lt;Tm, F&gt;(self: <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, E&gt;, func: F) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;Tm, E&gt;<div class="protocol-bound">
 F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;(T), Tm&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L217-L223"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L276-L282"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -392,7 +453,7 @@ assert_eq!(b.map(|v: i32| -&gt; i32 { v + 1 }), Result::err(()));
 F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;(E), Em&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L238-L244"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L297-L303"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -422,7 +483,7 @@ assert_eq!(b.map_err(|v: i32| -&gt; i32 { v + 1 }), Result::ok(()));
 F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;(T), <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;Tm, E&gt;&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L251-L257"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L310-L316"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -445,7 +506,7 @@ passed through.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">transpose</span>&lt;T, E&gt;(self: <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;<a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;, E&gt;) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;<a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, E&gt;&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L280-L290"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L339-L349"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -480,7 +541,7 @@ E: <a href="/std/fmt/Formattable.html"><span class="identifier-type">Formattable
 F: <a href="/std/fmt/Formatter.html"><span class="identifier-type">Formatter</span></a>&lt;F&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L293-L299"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L352-L358"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -503,7 +564,7 @@ E: <a href="/std/hash/Hashable.html"><span class="identifier-type">Hashable</spa
 H: <a href="/std/hash/Hasher.html"><span class="identifier-type">Hasher</span></a>&lt;H&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L302-L310"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L361-L369"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -524,7 +585,7 @@ T: <a href="/std/cmp/Equatable.html"><span class="identifier-type">Equatable</sp
 E: <a href="/std/cmp/Equatable.html"><span class="identifier-type">Equatable</span></a>&lt;E&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L313-L322"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L372-L381"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -545,7 +606,7 @@ T: <a href="/std/mem/Movable.html"><span class="identifier-type">Movable</span><
 E: <a href="/std/mem/Movable.html"><span class="identifier-type">Movable</span></a>&lt;E&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L325-L331"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L384-L390"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -566,7 +627,7 @@ T: <a href="/std/mem/Freeable.html"><span class="identifier-type">Freeable</span
 E: <a href="/std/mem/Freeable.html"><span class="identifier-type">Freeable</span></a>&lt;E&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L334-L340"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/result.alu#L393-L399"/>source</a>
 </div>
 </div>
 <div class="item-doc">

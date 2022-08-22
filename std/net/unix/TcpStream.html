@@ -37,10 +37,10 @@
 <h2>Methods</h2>
 <ul>
 <li>
-<a href="/std/net/unix/TcpStream.html#item.from_socket">from_socket</a>
+<a href="/std/net/unix/TcpStream.html#item.connect">connect</a>
 </li>
 <li>
-<a href="/std/net/unix/TcpStream.html#item.connect">connect</a>
+<a href="/std/net/unix/TcpStream.html#item.from_socket">from_socket</a>
 </li>
 <li>
 <a href="/std/net/unix/TcpStream.html#item.as_fd">as_fd</a>
@@ -87,11 +87,38 @@
 <h3>
 <span class="keyword">struct</span> <span class="identifier-type">TcpStream</span> { ... }</h3>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L204-L206"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L230-L232"/>source</a>
 </div>
 </div>
 <p>
 A TCP connection
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::net::{NameLookup, TcpStream, Shutdown};
+use std::io::{Result, StdioStream, copy};
+
+fn http_fetch() -&gt; Result&lt;()&gt; {
+    let addrs = NameLookup::resolve("docs.alumina-lang.net", 80)?;
+    defer addrs.free();
+
+    let socket = TcpStream::connect(&amp;addrs.next().unwrap())?;
+    defer socket.close();
+
+    socket.write_all("GET / HTTP/1.1\r\n")?;
+    socket.write_all("Host: docs.alumina-lang.net\r\n")?;
+    socket.write_all("Connection: close\r\n\r\n")?;
+
+    socket.shutdown(Shutdown::Write)?;
+
+    copy(&amp;socket, &amp;StdioStream::stdout())?;
+
+    Result::ok(())
+}
+
+http_fetch().unwrap();
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3anet%3a%3a%7bNameLookup%2c%20TcpStream%2c%20Shutdown%7d%3b%0a%20%20%20use%20std%3a%3aio%3a%3a%7bResult%2c%20StdioStream%2c%20copy%7d%3b%0a%20%20%20%0a%20%20%20fn%20http%5ffetch%28%29%20%2d%3e%20Result%3c%28%29%3e%20%7b%0a%20%20%20%20%20%20%20let%20addrs%20%3d%20NameLookup%3a%3aresolve%28%22docs%2ealumina%2dlang%2enet%22%2c%2080%29%3f%3b%0a%20%20%20%20%20%20%20defer%20addrs%2efree%28%29%3b%0a%20%20%20%0a%20%20%20%20%20%20%20let%20socket%20%3d%20TcpStream%3a%3aconnect%28%26addrs%2enext%28%29%2eunwrap%28%29%29%3f%3b%0a%20%20%20%20%20%20%20defer%20socket%2eclose%28%29%3b%0a%20%20%20%0a%20%20%20%20%20%20%20socket%2ewrite%5fall%28%22GET%20%2f%20HTTP%2f1%2e1%5cr%5cn%22%29%3f%3b%0a%20%20%20%20%20%20%20socket%2ewrite%5fall%28%22Host%3a%20docs%2ealumina%2dlang%2enet%5cr%5cn%22%29%3f%3b%0a%20%20%20%20%20%20%20socket%2ewrite%5fall%28%22Connection%3a%20close%5cr%5cn%5cr%5cn%22%29%3f%3b%0a%20%20%20%0a%20%20%20%20%20%20%20socket%2eshutdown%28Shutdown%3a%3aWrite%29%3f%3b%0a%20%20%20%0a%20%20%20%20%20%20%20copy%28%26socket%2c%20%26StdioStream%3a%3astdout%28%29%29%3f%3b%0a%20%20%20%0a%20%20%20%20%20%20%20Result%3a%3aok%28%28%29%29%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20http%5ffetch%28%29%2eunwrap%28%29%3b%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 <h2 id="Field">Fields</h2>
@@ -110,25 +137,33 @@ socket: <a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket
 <span class="keyword">impl</span> <span class="identifier-type">TcpStream</span> { ... }</h3></div>
 <ul>
 <li>
-<div class="signature" id="item.from_socket">
-<h4>
-<span class="keyword">fn</span> <span class="identifier-function">from_socket</span>(socket: <a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket</span></a>) -> <a href="/std/net/unix/TcpStream.html"><span class="identifier-type">TcpStream</span></a></h4>
-<div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L209-L211"/>source</a>
-</div>
-</div>
-<div class="item-doc">
-</div>
-</li>
-<li>
 <div class="signature" id="item.connect">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">connect</span>(addr: &amp;<a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/net/unix/TcpStream.html"><span class="identifier-type">TcpStream</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L213-L226"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L236-L249"/>source</a>
 </div>
 </div>
 <div class="item-doc">
+<p>
+Establishes a TCP connection to a remote host.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.from_socket">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">from_socket</span>(socket: <a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket</span></a>) -> <a href="/std/net/unix/TcpStream.html"><span class="identifier-type">TcpStream</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L252-L254"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Create a new TCP stream from a raw socket
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -136,7 +171,7 @@ socket: <a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">as_fd</span>(self: &amp;<a href="/std/net/unix/TcpStream.html"><span class="identifier-type">TcpStream</span></a>) -> <a href="/std/io/unix/FileDescriptor.html"><span class="identifier-type">FileDescriptor</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L229-L231"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L257-L259"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -147,7 +182,7 @@ socket: <a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">peer_addr</span>(self: &amp;<a href="/std/net/unix/TcpStream.html"><span class="identifier-type">TcpStream</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L234-L236"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L262-L264"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -162,7 +197,7 @@ Returns the address of the remote peer
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">socket_addr</span>(self: &amp;<a href="/std/net/unix/TcpStream.html"><span class="identifier-type">TcpStream</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L239-L241"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L267-L269"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -177,7 +212,7 @@ Returns the address of the remote peer
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">shutdown</span>(self: &amp;<a href="/std/net/unix/TcpStream.html"><span class="identifier-type">TcpStream</span></a>, how: <a href="/std/net/unix/Shutdown.html"><span class="identifier-type">Shutdown</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L244-L246"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L272-L274"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -192,7 +227,7 @@ Shuts down the reading or writing end of the socket or both.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">read</span>(self: &amp;mut <a href="/std/net/unix/TcpStream.html"><span class="identifier-type">TcpStream</span></a>, buf: &amp;mut [<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L249-L251"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L277-L279"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -210,7 +245,7 @@ of the provided buffer.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">write</span>(self: &amp;mut <a href="/std/net/unix/TcpStream.html"><span class="identifier-type">TcpStream</span></a>, buf: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L254-L256"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L282-L284"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -228,7 +263,7 @@ See also <a class="path-link" href="/std/io/Writable.html#item.write_all">write_
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">flush</span>(self: &amp;mut <a href="/std/net/unix/TcpStream.html"><span class="identifier-type">TcpStream</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L259-L261"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L287-L289"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -245,7 +280,7 @@ This may be a no-op, depending on the stream.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">close</span>(self: &amp;mut <a href="/std/net/unix/TcpStream.html"><span class="identifier-type">TcpStream</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L264-L266"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L292-L294"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -260,7 +295,7 @@ Closes the socket.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">move</span>(self: &amp;mut <a href="/std/net/unix/TcpStream.html"><span class="identifier-type">TcpStream</span></a>) -> <a href="/std/net/unix/TcpStream.html"><span class="identifier-type">TcpStream</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L269-L271"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L297-L299"/>source</a>
 </div>
 </div>
 <div class="item-doc">

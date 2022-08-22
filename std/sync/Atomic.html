@@ -273,7 +273,7 @@ fn fetch_sqrt(val: &amp;mut Atomic&lt;u64&gt;, ordering: Ordering) -&gt; u64 {
         let root = (old as f64).sqrt() as u64;
 
         let ret = val.compare_exchange(old, root, ordering, Ordering::Relaxed);
-        if ret.is_ok {
+        if ret.is_ok() {
             return old;
         } else {
             old = ret.unwrap_err();
@@ -285,7 +285,7 @@ let val = Atomic::new(144u64);
 
 assert_eq!(val.fetch_sqrt(Ordering::Relaxed), 144u64);
 assert_eq!(val.load(Ordering::Relaxed), 12u64);
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3async%3a%3a%7bAtomic%2c%20Ordering%7d%3b%0a%20%20%20%0a%20%20%20%2f%2f%2f%20Atomic%20version%20of%20a%20square%20root%20using%20a%20CAS%20loop%0a%20%20%20fn%20fetch%5fsqrt%28val%3a%20%26mut%20Atomic%3cu64%3e%2c%20ordering%3a%20Ordering%29%20%2d%3e%20u64%20%7b%0a%20%20%20%20%20%20%20let%20old%20%3d%20val%2eload%28Ordering%3a%3aRelaxed%29%3b%0a%20%20%20%20%20%20%20loop%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20let%20root%20%3d%20%28old%20as%20f64%29%2esqrt%28%29%20as%20u64%3b%0a%20%20%20%0a%20%20%20%20%20%20%20%20%20%20%20let%20ret%20%3d%20val%2ecompare%5fexchange%28old%2c%20root%2c%20ordering%2c%20Ordering%3a%3aRelaxed%29%3b%0a%20%20%20%20%20%20%20%20%20%20%20if%20ret%2eis%5fok%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20return%20old%3b%0a%20%20%20%20%20%20%20%20%20%20%20%7d%20else%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20old%20%3d%20ret%2eunwrap%5ferr%28%29%3b%0a%20%20%20%20%20%20%20%20%20%20%20%7d%0a%20%20%20%20%20%20%20%7d%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20let%20val%20%3d%20Atomic%3a%3anew%28144u64%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28val%2efetch%5fsqrt%28Ordering%3a%3aRelaxed%29%2c%20144u64%29%3b%0a%20%20%20assert%5feq%21%28val%2eload%28Ordering%3a%3aRelaxed%29%2c%2012u64%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3async%3a%3a%7bAtomic%2c%20Ordering%7d%3b%0a%20%20%20%0a%20%20%20%2f%2f%2f%20Atomic%20version%20of%20a%20square%20root%20using%20a%20CAS%20loop%0a%20%20%20fn%20fetch%5fsqrt%28val%3a%20%26mut%20Atomic%3cu64%3e%2c%20ordering%3a%20Ordering%29%20%2d%3e%20u64%20%7b%0a%20%20%20%20%20%20%20let%20old%20%3d%20val%2eload%28Ordering%3a%3aRelaxed%29%3b%0a%20%20%20%20%20%20%20loop%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20let%20root%20%3d%20%28old%20as%20f64%29%2esqrt%28%29%20as%20u64%3b%0a%20%20%20%0a%20%20%20%20%20%20%20%20%20%20%20let%20ret%20%3d%20val%2ecompare%5fexchange%28old%2c%20root%2c%20ordering%2c%20Ordering%3a%3aRelaxed%29%3b%0a%20%20%20%20%20%20%20%20%20%20%20if%20ret%2eis%5fok%28%29%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20return%20old%3b%0a%20%20%20%20%20%20%20%20%20%20%20%7d%20else%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20old%20%3d%20ret%2eunwrap%5ferr%28%29%3b%0a%20%20%20%20%20%20%20%20%20%20%20%7d%0a%20%20%20%20%20%20%20%7d%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20let%20val%20%3d%20Atomic%3a%3anew%28144u64%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28val%2efetch%5fsqrt%28Ordering%3a%3aRelaxed%29%2c%20144u64%29%3b%0a%20%20%20assert%5feq%21%28val%2eload%28Ordering%3a%3aRelaxed%29%2c%2012u64%29%3b%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -349,14 +349,14 @@ loop {
         }
     });
 
-    if value.is_ok {
+    if value.is_ok() {
         println!("val = {}", value.unwrap());
     } else {
         println!("val = {}. We are done.", value.unwrap_err());
         break;
     }
 }
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3async%3a%3a%7bAtomic%2c%20Ordering%3a%3aSeqCst%7d%3b%0a%20%20%20%0a%20%20%20%2f%2f%20Simulate%20a%20Collatz%20sequence%20starting%20with%2039%0a%20%20%20let%20val%20%3d%20Atomic%3a%3anew%2839%29%3b%0a%20%20%20loop%20%7b%0a%20%20%20%20%20%20%20let%20value%20%3d%20val%2efetch%5fupdate%28SeqCst%2c%20SeqCst%2c%20%7cv%3a%20i32%7c%20%2d%3e%20Option%3ci32%3e%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20if%20v%20%3d%3d%201%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20Option%3a%3anone%28%29%0a%20%20%20%20%20%20%20%20%20%20%20%7d%20else%20if%20v%20%25%202%20%3d%3d%200%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20Option%3a%3asome%28v%20%2f%202%29%0a%20%20%20%20%20%20%20%20%20%20%20%7d%20else%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20Option%3a%3asome%28v%20%2a%203%20%2b%201%29%0a%20%20%20%20%20%20%20%20%20%20%20%7d%0a%20%20%20%20%20%20%20%7d%29%3b%0a%20%20%20%0a%20%20%20%20%20%20%20if%20value%2eis%5fok%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20println%21%28%22val%20%3d%20%7b%7d%22%2c%20value%2eunwrap%28%29%29%3b%0a%20%20%20%20%20%20%20%7d%20else%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20println%21%28%22val%20%3d%20%7b%7d%2e%20We%20are%20done%2e%22%2c%20value%2eunwrap%5ferr%28%29%29%3b%0a%20%20%20%20%20%20%20%20%20%20%20break%3b%0a%20%20%20%20%20%20%20%7d%0a%20%20%20%7d%0a%0a%7d%0a">Run this example</a></pre>
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3async%3a%3a%7bAtomic%2c%20Ordering%3a%3aSeqCst%7d%3b%0a%20%20%20%0a%20%20%20%2f%2f%20Simulate%20a%20Collatz%20sequence%20starting%20with%2039%0a%20%20%20let%20val%20%3d%20Atomic%3a%3anew%2839%29%3b%0a%20%20%20loop%20%7b%0a%20%20%20%20%20%20%20let%20value%20%3d%20val%2efetch%5fupdate%28SeqCst%2c%20SeqCst%2c%20%7cv%3a%20i32%7c%20%2d%3e%20Option%3ci32%3e%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20if%20v%20%3d%3d%201%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20Option%3a%3anone%28%29%0a%20%20%20%20%20%20%20%20%20%20%20%7d%20else%20if%20v%20%25%202%20%3d%3d%200%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20Option%3a%3asome%28v%20%2f%202%29%0a%20%20%20%20%20%20%20%20%20%20%20%7d%20else%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20Option%3a%3asome%28v%20%2a%203%20%2b%201%29%0a%20%20%20%20%20%20%20%20%20%20%20%7d%0a%20%20%20%20%20%20%20%7d%29%3b%0a%20%20%20%0a%20%20%20%20%20%20%20if%20value%2eis%5fok%28%29%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20println%21%28%22val%20%3d%20%7b%7d%22%2c%20value%2eunwrap%28%29%29%3b%0a%20%20%20%20%20%20%20%7d%20else%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20println%21%28%22val%20%3d%20%7b%7d%2e%20We%20are%20done%2e%22%2c%20value%2eunwrap%5ferr%28%29%29%3b%0a%20%20%20%20%20%20%20%20%20%20%20break%3b%0a%20%20%20%20%20%20%20%7d%0a%20%20%20%7d%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>

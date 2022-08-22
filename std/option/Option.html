@@ -28,15 +28,6 @@
 </a>
 <h1><a class="breadcrumbs" href="/std/">std</a>::<a class="breadcrumbs" href="/std/option/">option</a>::<a class="breadcrumbs" href="/std/option/Option.html">Option</a></h1>
 </h1>
-<h2>Fields</h2>
-<ul>
-<li>
-<a href="/std/option/Option.html#item.is_some">is_some</a>
-</li>
-<li>
-<a href="/std/option/Option.html#item.inner">inner</a>
-</li>
-</ul>
 <h2>Methods</h2>
 <ul>
 <li>
@@ -46,13 +37,16 @@
 <a href="/std/option/Option.html#item.none">none</a>
 </li>
 <li>
+<a href="/std/option/Option.html#item.is_some">is_some</a>
+</li>
+<li>
+<a href="/std/option/Option.html#item.unwrap">unwrap</a>
+</li>
+<li>
 <a href="/std/option/Option.html#item.ok_or">ok_or</a>
 </li>
 <li>
 <a href="/std/option/Option.html#item.ok_or_else">ok_or_else</a>
-</li>
-<li>
-<a href="/std/option/Option.html#item.unwrap">unwrap</a>
 </li>
 <li>
 <a href="/std/option/Option.html#item.unwrap_or">unwrap_or</a>
@@ -86,6 +80,9 @@
 </li>
 <li>
 <a href="/std/option/Option.html#item.flatten">flatten</a>
+</li>
+<li>
+<a href="/std/option/Option.html#item.zip">zip</a>
 </li>
 <li>
 <a href="/std/option/Option.html#item.iter">iter</a>
@@ -153,25 +150,6 @@ assert_eq!(divide(10, 0), Option::none());
 </code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20fn%20divide%28a%3a%20i32%2c%20b%3a%20i32%29%20%2d%3e%20Option%3ci32%3e%20%7b%0a%20%20%20%20%20%20%20if%20b%20%3d%3d%200%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20Option%3a%3anone%28%29%0a%20%20%20%20%20%20%20%7d%20else%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20Option%3a%3asome%28a%20%2f%20b%29%0a%20%20%20%20%20%20%20%7d%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20assert%5feq%21%28divide%2810%2c%205%29%2c%20Option%3a%3asome%282%29%29%3b%0a%20%20%20assert%5feq%21%28divide%2810%2c%200%29%2c%20Option%3a%3anone%28%29%29%3b%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
-<h2 id="Field">Fields</h2>
-<ul>
-<li>
-<div class="signature" id="item.is_some">
-<h4>
-is_some: <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
-</div>
-<div class="item-doc">
-</div>
-</li>
-<li>
-<div class="signature" id="item.inner">
-<h4>
-inner: T</h4>
-</div>
-<div class="item-doc">
-</div>
-</li>
-</ul>
 <h2 id="Method">Methods</h2>
 <div class="signature impl-header"><h3>
 <span class="keyword">impl</span> <span class="identifier-type">Option</span>&lt;T&gt; { ... }</h3></div>
@@ -192,9 +170,9 @@ Create a populated <code class="language-alumina">Option</code> value
 <p>
 <pre class="with-playground-link"><code class="language-alumina">let opt = Option::some(42);
 
-assert!(opt.is_some);
+assert!(opt.is_some());
 assert_eq!(opt.unwrap(), 42);
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20opt%20%3d%20Option%3a%3asome%2842%29%3b%0a%20%20%20%0a%20%20%20assert%21%28opt%2eis%5fsome%29%3b%0a%20%20%20assert%5feq%21%28opt%2eunwrap%28%29%2c%2042%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20opt%20%3d%20Option%3a%3asome%2842%29%3b%0a%20%20%20%0a%20%20%20assert%21%28opt%2eis%5fsome%28%29%29%3b%0a%20%20%20assert%5feq%21%28opt%2eunwrap%28%29%2c%2042%29%3b%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -216,44 +194,23 @@ Create an empty <code class="language-alumina">Option</code> value
 <p>
 <pre class="with-playground-link"><code class="language-alumina">let opt: Option&lt;i32&gt; = Option::none();
 
-assert!(!opt.is_some);
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20opt%3a%20Option%3ci32%3e%20%3d%20Option%3a%3anone%28%29%3b%0a%20%20%20%0a%20%20%20assert%21%28%21opt%2eis%5fsome%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+assert!(!opt.is_some());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20opt%3a%20Option%3ci32%3e%20%3d%20Option%3a%3anone%28%29%3b%0a%20%20%20%0a%20%20%20assert%21%28%21opt%2eis%5fsome%28%29%29%3b%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
 </li>
 <li>
-<div class="signature" id="item.ok_or">
+<div class="signature" id="item.is_some">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">ok_or</span>&lt;E&gt;(self: <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;, err: E) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, E&gt;</h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_some</span>(self: &amp;<a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L99-L105"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L97-L100"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Convert the option into a <a class="path-link" href="/std/result/Result.html">Result</a>.
-</p><p>
-If the option is empty, the <code class="language-alumina">err</code> value will be used for the error variant.
-</p><p>
-</p>
-</div>
-</li>
-<li>
-<div class="signature" id="item.ok_or_else">
-<h4>
-<span class="keyword">fn</span> <span class="identifier-function">ok_or_else</span>&lt;E, F&gt;(self: <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;, f: F) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, E&gt;<div class="protocol-bound">
-F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>, E&gt;</div>
-</h4>
-<div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L110-L116"/>source</a>
-</div>
-</div>
-<div class="item-doc">
-<p>
-Convert the option into a <a class="path-link" href="/std/result/Result.html">Result</a>.
-</p><p>
-If the option is empty, the callback will be called to get the the error variant.
+Returns <code class="language-alumina">true</code> if the option is populated, <code class="language-alumina">false</code> otherwise.
 </p><p>
 </p>
 </div>
@@ -263,7 +220,7 @@ If the option is empty, the callback will be called to get the the error variant
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">unwrap</span>(self: <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L129-L135"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L113-L120"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -284,11 +241,47 @@ opt.unwrap(); // panics
 </div>
 </li>
 <li>
+<div class="signature" id="item.ok_or">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">ok_or</span>&lt;E&gt;(self: <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;, err: E) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, E&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L125-L131"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Convert the option into a <a class="path-link" href="/std/result/Result.html">Result</a>.
+</p><p>
+If the option is empty, the <code class="language-alumina">err</code> value will be used for the error variant.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.ok_or_else">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">ok_or_else</span>&lt;E, F&gt;(self: <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;, f: F) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, E&gt;<div class="protocol-bound">
+F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>, E&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L136-L142"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Convert the option into a <a class="path-link" href="/std/result/Result.html">Result</a>.
+</p><p>
+If the option is empty, the callback will be called to get the the error variant.
+</p><p>
+</p>
+</div>
+</li>
+<li>
 <div class="signature" id="item.unwrap_or">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">unwrap_or</span>(self: <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;, val: T) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L144-L150"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L151-L157"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -312,7 +305,7 @@ assert_eq!(Option::none::&lt;i32&gt;().unwrap_or(1337), 1337);
 F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>, T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L166-L172"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L173-L179"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -343,7 +336,7 @@ assert_eq!(b.unwrap_or_else(default), 1337);
 F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;(T), Tm&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L186-L192"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L193-L199"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -370,7 +363,7 @@ assert_eq!(b, Option::none());
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">and</span>&lt;Tm&gt;(self: <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;, other: <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;Tm&gt;) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;Tm&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L206-L212"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L213-L219"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -399,7 +392,7 @@ assert_eq!(c.and(a), Option::none());
 F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;(T), <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;Tm&gt;&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L230-L236"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L237-L243"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -430,7 +423,7 @@ assert_eq!(a, Option::some(43));
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">or</span>(self: <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;, other: <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L248-L254"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L255-L261"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -457,7 +450,7 @@ assert_eq!(b.or(a), Option::some(42));
 F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>, <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L273-L279"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L280-L286"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -489,7 +482,7 @@ assert_eq!(
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">as_nullable_ptr</span>(self: &amp;<a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;) -> &amp;T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L291-L297"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L298-L304"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -514,7 +507,7 @@ assert_eq!(b.as_nullable_ptr(), null);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">as_ptr</span>(self: &amp;<a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;&amp;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L311-L317"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L318-L324"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -541,7 +534,7 @@ assert_eq!(*b.unwrap(), 1337);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">as_mut_ptr</span>(self: &amp;mut <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;&amp;mut T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L329-L335"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L336-L342"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -566,7 +559,7 @@ assert_eq!(a, Option::some(1337));
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">flatten</span>(self: <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;<a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;&gt;) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L345-L351"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L352-L358"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -585,11 +578,37 @@ assert_eq!(Option::none::&lt;Option&lt;i32&gt;&gt;().flatten(), Option::none());
 </div>
 </li>
 <li>
+<div class="signature" id="item.zip">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">zip</span>&lt;O&gt;(self: <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;, other: <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;O&gt;) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;(T, O)&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L371-L377"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Merges two <code class="language-alumina">Option</code>s into an <code class="language-alumina">Option</code> of a tuple.
+</p><p>
+If either <code class="language-alumina">self</code> or <code class="language-alumina">other</code> is none, the result is none.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let a = Option::some(42);
+let b = Option::some(1337);
+
+assert_eq!(a.zip(b), Option::some((42, 1337)));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20a%20%3d%20Option%3a%3asome%2842%29%3b%0a%20%20%20let%20b%20%3d%20Option%3a%3asome%281337%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28a%2ezip%28b%29%2c%20Option%3a%3asome%28%2842%2c%201337%29%29%29%3b%0a%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
 <div class="signature" id="item.iter">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">iter</span>(self: &amp;<a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;) -> <a href="/std/iter/OnceIterator.html"><span class="identifier-type">OnceIterator</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L354-L356"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L380-L382"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -604,7 +623,7 @@ Returns an iterator over the elements of this iterable.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">move</span>(self: &amp;mut <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L359-L361"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L385-L387"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -625,7 +644,7 @@ See <a class="path-link" href="/std/mem/Movable.html">Movable</a> for details.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">transpose</span>&lt;T, E&gt;(self: <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;<a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, E&gt;&gt;) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;<a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;, E&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L389-L399"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L415-L425"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -663,7 +682,7 @@ T: <a href="/std/hash/Hashable.html"><span class="identifier-type">Hashable</spa
 H: <a href="/std/hash/Hasher.html"><span class="identifier-type">Hasher</span></a>&lt;H&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L402-L407"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L428-L433"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -682,7 +701,7 @@ See <a class="path-link" href="/std/hash/Hashable.html">Hashable</a> for details
 T: <a href="/std/cmp/Equatable.html"><span class="identifier-type">Equatable</span></a>&lt;T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L410-L421"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L436-L447"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -701,7 +720,7 @@ See <a class="path-link" href="/std/cmp/Equatable.html">Equatable</a> for detail
 T: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</span></a>&lt;T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L424-L435"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L450-L461"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -722,7 +741,7 @@ T: <a href="/std/fmt/Formattable.html"><span class="identifier-type">Formattable
 F: <a href="/std/fmt/Formatter.html"><span class="identifier-type">Formatter</span></a>&lt;F&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L438-L444"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L464-L470"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -741,7 +760,7 @@ See <a class="path-link" href="/std/fmt/Formattable.html">Formattable</a> for de
 T: <a href="/std/mem/Freeable.html"><span class="identifier-type">Freeable</span></a>&lt;T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L447-L451"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/option.alu#L473-L477"/>source</a>
 </div>
 </div>
 <div class="item-doc">

@@ -96,11 +96,61 @@
 <h3>
 <span class="keyword">struct</span> <span class="identifier-type">UdpSocket</span> { ... }</h3>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L374-L376"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L451-L453"/>source</a>
 </div>
 </div>
 <p>
 A UDP socket
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+</p><p>
+This example sends a DNS query to CloudFlare's DNS server and prints the response metadata.
+</p><p>
+<pre class="with-playground-link"><code class="language-alumina">use std::net::{SocketAddr, UdpSocket};
+use std::io::Result;
+
+fn dns_query() -&gt; Result&lt;()&gt; {
+    let request = std::concat!(
+        "\x00\x01", // Transaction id
+        "\x01\x20", // Flags (standard query)
+        "\x00\x01", // Question RRs
+        "\x00\x00", // Answer RRs
+        "\x00\x00", // Authority RRs
+        "\x00\x00", // Additional RRs
+        "\x04docs", // Domain name
+        "\x0calumina-lang",
+        "\x03net",
+        "\0",
+        "\x00\x1c", // Type (AAAA)
+        "\x00\x01"  // Class (IN)
+    );
+
+    // Bind on a random local port
+    let local_addr = SocketAddr::parse("[::]:0").unwrap();
+    // Cloudflare DNS resolver
+    let remote_addr = SocketAddr::parse("[2606:4700:4700::1111]:53").unwrap();
+
+    let socket = UdpSocket::bind(&amp;local_addr)?;
+    defer socket.close();
+
+    socket.send_to(request, &amp;remote_addr)?;
+
+    let buf: [u8; 65536];
+    let (size, src) = socket.recv_from(buf.as_slice_mut())?;
+
+    println!("Received {} bytes from {}", size, src);
+    println!("  {} questions",   (&amp;buf[4]  as &amp;u16).from_be());
+    println!("  {} answers",     (&amp;buf[6]  as &amp;u16).from_be());
+    println!("  {} authorities", (&amp;buf[8]  as &amp;u16).from_be());
+    println!("  {} additional",  (&amp;buf[10] as &amp;u16).from_be());
+
+    Result::ok(())
+}
+
+dns_query().unwrap();
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3anet%3a%3a%7bSocketAddr%2c%20UdpSocket%7d%3b%0a%20%20%20use%20std%3a%3aio%3a%3aResult%3b%0a%20%20%20%0a%20%20%20fn%20dns%5fquery%28%29%20%2d%3e%20Result%3c%28%29%3e%20%7b%0a%20%20%20%20%20%20%20let%20request%20%3d%20std%3a%3aconcat%21%28%0a%20%20%20%20%20%20%20%20%20%20%20%22%5cx00%5cx01%22%2c%20%2f%2f%20Transaction%20id%0a%20%20%20%20%20%20%20%20%20%20%20%22%5cx01%5cx20%22%2c%20%2f%2f%20Flags%20%28standard%20query%29%0a%20%20%20%20%20%20%20%20%20%20%20%22%5cx00%5cx01%22%2c%20%2f%2f%20Question%20RRs%0a%20%20%20%20%20%20%20%20%20%20%20%22%5cx00%5cx00%22%2c%20%2f%2f%20Answer%20RRs%0a%20%20%20%20%20%20%20%20%20%20%20%22%5cx00%5cx00%22%2c%20%2f%2f%20Authority%20RRs%0a%20%20%20%20%20%20%20%20%20%20%20%22%5cx00%5cx00%22%2c%20%2f%2f%20Additional%20RRs%0a%20%20%20%20%20%20%20%20%20%20%20%22%5cx04docs%22%2c%20%2f%2f%20Domain%20name%0a%20%20%20%20%20%20%20%20%20%20%20%22%5cx0calumina%2dlang%22%2c%0a%20%20%20%20%20%20%20%20%20%20%20%22%5cx03net%22%2c%0a%20%20%20%20%20%20%20%20%20%20%20%22%5c0%22%2c%0a%20%20%20%20%20%20%20%20%20%20%20%22%5cx00%5cx1c%22%2c%20%2f%2f%20Type%20%28AAAA%29%0a%20%20%20%20%20%20%20%20%20%20%20%22%5cx00%5cx01%22%20%20%2f%2f%20Class%20%28IN%29%0a%20%20%20%20%20%20%20%29%3b%0a%20%20%20%0a%20%20%20%20%20%20%20%2f%2f%20Bind%20on%20a%20random%20local%20port%0a%20%20%20%20%20%20%20let%20local%5faddr%20%3d%20SocketAddr%3a%3aparse%28%22%5b%3a%3a%5d%3a0%22%29%2eunwrap%28%29%3b%0a%20%20%20%20%20%20%20%2f%2f%20Cloudflare%20DNS%20resolver%0a%20%20%20%20%20%20%20let%20remote%5faddr%20%3d%20SocketAddr%3a%3aparse%28%22%5b2606%3a4700%3a4700%3a%3a1111%5d%3a53%22%29%2eunwrap%28%29%3b%0a%20%20%20%0a%20%20%20%20%20%20%20let%20socket%20%3d%20UdpSocket%3a%3abind%28%26local%5faddr%29%3f%3b%0a%20%20%20%20%20%20%20defer%20socket%2eclose%28%29%3b%0a%20%20%20%0a%20%20%20%20%20%20%20socket%2esend%5fto%28request%2c%20%26remote%5faddr%29%3f%3b%0a%20%20%20%0a%20%20%20%20%20%20%20let%20buf%3a%20%5bu8%3b%2065536%5d%3b%0a%20%20%20%20%20%20%20let%20%28size%2c%20src%29%20%3d%20socket%2erecv%5ffrom%28buf%2eas%5fslice%5fmut%28%29%29%3f%3b%0a%20%20%20%0a%20%20%20%20%20%20%20println%21%28%22Received%20%7b%7d%20bytes%20from%20%7b%7d%22%2c%20size%2c%20src%29%3b%0a%20%20%20%20%20%20%20println%21%28%22%20%20%7b%7d%20questions%22%2c%20%20%20%28%26buf%5b4%5d%20%20as%20%26u16%29%2efrom%5fbe%28%29%29%3b%0a%20%20%20%20%20%20%20println%21%28%22%20%20%7b%7d%20answers%22%2c%20%20%20%20%20%28%26buf%5b6%5d%20%20as%20%26u16%29%2efrom%5fbe%28%29%29%3b%0a%20%20%20%20%20%20%20println%21%28%22%20%20%7b%7d%20authorities%22%2c%20%28%26buf%5b8%5d%20%20as%20%26u16%29%2efrom%5fbe%28%29%29%3b%0a%20%20%20%20%20%20%20println%21%28%22%20%20%7b%7d%20additional%22%2c%20%20%28%26buf%5b10%5d%20as%20%26u16%29%2efrom%5fbe%28%29%29%3b%0a%20%20%20%0a%20%20%20%20%20%20%20Result%3a%3aok%28%28%29%29%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20dns%5fquery%28%29%2eunwrap%28%29%3b%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 <h2 id="Field">Fields</h2>
@@ -123,7 +173,7 @@ socket: <a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">from_socket</span>(socket: <a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket</span></a>) -> <a href="/std/net/unix/UdpSocket.html"><span class="identifier-type">UdpSocket</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L380-L382"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L457-L459"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -138,7 +188,7 @@ Create a new UDP socket from a raw socket.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">bind</span>(addr: &amp;<a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/net/unix/UdpSocket.html"><span class="identifier-type">UdpSocket</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L385-L398"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L462-L475"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -153,7 +203,7 @@ Creates a new UDP socket bound to the specified address.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">connect</span>(self: &amp;<a href="/std/net/unix/UdpSocket.html"><span class="identifier-type">UdpSocket</span></a>, addr: &amp;<a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L407-L417"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L484-L494"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -174,7 +224,7 @@ from and to this address.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">recv_from</span>(self: &amp;<a href="/std/net/unix/UdpSocket.html"><span class="identifier-type">UdpSocket</span></a>, buf: &amp;mut [<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;(<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>, <a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>)&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L422-L427"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L499-L504"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -191,7 +241,7 @@ Returns the number of bytes read and the address from which the data was receive
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">peek_from</span>(self: &amp;<a href="/std/net/unix/UdpSocket.html"><span class="identifier-type">UdpSocket</span></a>, buf: &amp;mut [<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;(<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>, <a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>)&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L432-L437"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L509-L514"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -208,7 +258,7 @@ Subsequent calls to <a class="path-link" href="/std/net/unix/UdpSocket.html#item
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">send_to</span>(self: &amp;<a href="/std/net/unix/UdpSocket.html"><span class="identifier-type">UdpSocket</span></a>, buf: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], addr: &amp;<a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L440-L453"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L517-L530"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -223,7 +273,7 @@ Sends data to a particular address.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">recv</span>(self: &amp;<a href="/std/net/unix/UdpSocket.html"><span class="identifier-type">UdpSocket</span></a>, buf: &amp;mut [<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L456-L458"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L533-L535"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -238,7 +288,7 @@ Receives data from the socket.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">peek</span>(self: &amp;<a href="/std/net/unix/UdpSocket.html"><span class="identifier-type">UdpSocket</span></a>, buf: &amp;mut [<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L461-L463"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L538-L540"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -253,7 +303,7 @@ Receives data from the socket without consuming it.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">send</span>(self: &amp;<a href="/std/net/unix/UdpSocket.html"><span class="identifier-type">UdpSocket</span></a>, buf: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L466-L472"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L543-L549"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -268,7 +318,7 @@ Sends data to the socket.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">as_fd</span>(self: &amp;<a href="/std/net/unix/UdpSocket.html"><span class="identifier-type">UdpSocket</span></a>) -> <a href="/std/io/unix/FileDescriptor.html"><span class="identifier-type">FileDescriptor</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L475-L477"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L552-L554"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -279,7 +329,7 @@ Sends data to the socket.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">peer_addr</span>(self: &amp;<a href="/std/net/unix/UdpSocket.html"><span class="identifier-type">UdpSocket</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L480-L482"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L557-L559"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -294,7 +344,7 @@ Returns the address of the remote peer
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">socket_addr</span>(self: &amp;<a href="/std/net/unix/UdpSocket.html"><span class="identifier-type">UdpSocket</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L485-L487"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L562-L564"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -309,7 +359,7 @@ Returns the address of the remote peer
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">close</span>(self: &amp;mut <a href="/std/net/unix/UdpSocket.html"><span class="identifier-type">UdpSocket</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L490-L492"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L567-L569"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -324,7 +374,7 @@ Closes the socket.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">move</span>(self: &amp;mut <a href="/std/net/unix/UdpSocket.html"><span class="identifier-type">UdpSocket</span></a>) -> <a href="/std/net/unix/UdpSocket.html"><span class="identifier-type">UdpSocket</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L495-L497"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/net/unix.alu#L572-L574"/>source</a>
 </div>
 </div>
 <div class="item-doc">
