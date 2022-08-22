@@ -391,19 +391,19 @@ impl ItemBag {
         defer joined.free();
 
         let proper = self.lookup.get(joined);
-        if proper.is_some {
+        if proper.is_some() {
             return proper;
         }
 
         let alias = self.aliases.get(joined);
-        if alias.is_some {
-            return self.resolve(scope, &alias.inner, true);
+        if alias.is_some() {
+            return self.resolve(scope, &alias.unwrap(), true);
         }
 
         let star_alias = self.star_aliases.get(*scope);
-        if star_alias.is_some {
-            let maybe_resolved = self.resolve(&star_alias.inner, path, false);
-            if maybe_resolved.is_some {
+        if star_alias.is_some() {
+            let maybe_resolved = self.resolve(&star_alias.unwrap(), path, false);
+            if maybe_resolved.is_some() {
                 return maybe_resolved;
             }
         }
@@ -415,7 +415,7 @@ impl ItemBag {
             while scope.segments.len() > 0 {
                 scope.pop();
                 let resolved = self.resolve(&scope, path, false);
-                if resolved.is_some {
+                if resolved.is_some() {
                     return resolved;
                 }
             }
@@ -435,7 +435,7 @@ impl ItemBag {
                 src_path.push(s);
             }
 
-            if !self.lookup.get(src_path).is_some {
+            if !self.lookup.get(src_path).is_some() {
                 self.add_item(Item {
                     kind: i.kind,
                     cfg_index: i.cfg_index,
@@ -461,9 +461,9 @@ impl ItemBag {
                 let suffix = Path::from_str(scope.pop());
 
                 let resolved = self.resolve(&scope, &suffix, true);
-                if resolved.is_some {
-                    let item = resolved.inner;
-                    if !self.lookup.get(src).is_some {
+                if resolved.is_some() {
+                    let item = resolved.unwrap();
+                    if !self.lookup.get(src).is_some() {
                         insertion_count += 1;
                         self.sync_reexport(&src, &item.defined_in);
                     }

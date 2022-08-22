@@ -39,11 +39,11 @@ impl EnvVars {
             // Empty environment variable name is consider not valid, so allow
             // it to start with '='
             let sep = env_str[1..].find_char('=');
-            if !sep.is_some {
+            if !sep.is_some() {
                 continue;
             }
 
-            break Option::some((env_str[0..sep.inner + 1], env_str[sep.inner + 2..]));
+            break Option::some((env_str[0..sep.unwrap() + 1], env_str[sep.unwrap() + 2..]));
         }
     }
 
@@ -167,10 +167,11 @@ impl Child {
 
     /// Wait for child to exit, reading stdout and stderr if I/O redirection is requested.
     fn wait_with_output(self: &mut Child) -> Result<Output> {
-        let stdin = self.stdin.move();
-        if stdin.is_some {
-            stdin.inner.close()?;
-        }
+        self.stdin
+            .move()
+            .as_mut_ptr()
+            .map(io::FileDescriptor::close)
+            .transpose()?;
 
         let stdout : StringBuf = StringBuf::new();
         defer stdout.free();
@@ -178,17 +179,17 @@ impl Child {
         let stderr : StringBuf = StringBuf::new();
         defer stderr.free();
 
-        if self.stdout.is_some && self.stderr.is_some {
+        if self.stdout.is_some() && self.stderr.is_some() {
             internal::read_to_end_2(
-                &self.stdout.inner,
+                &self.stdout.unwrap(),
                 &stdout,
-                &self.stderr.inner,
+                &self.stderr.unwrap(),
                 &stderr
             )?;
-        } else if self.stdout.is_some {
-            self.stdout.inner.read_to_end(&stdout)?;
-        } else if self.stderr.is_some {
-            self.stderr.inner.read_to_end(&stderr)?;
+        } else if self.stdout.is_some() {
+            self.stdout.unwrap().read_to_end(&stdout)?;
+        } else if self.stderr.is_some() {
+            self.stderr.unwrap().read_to_end(&stderr)?;
         }
 
         // Close all the pipes if we were able to read them
@@ -211,10 +212,11 @@ impl Child {
 
     /// Wait for child to exit, returning the exit status.
     fn wait(self: &mut Child) -> Result<i32> {
-        let stdin = self.stdin.move();
-        if stdin.is_some {
-            stdin.inner.close()?;
-        }
+        self.stdin
+            .move()
+            .as_mut_ptr()
+            .map(io::FileDescriptor::close)
+            .transpose()?;
 
         let status: libc::c_int = 0;
         errno_try!(libc::waitpid(self.pid, &status, 0));
@@ -229,21 +231,24 @@ impl Child {
     }
 
     /// Close all pipes.
-    fn close(self: &mut Child) -> Result<()> {
-        let stdin = self.stdin.move();
-        if stdin.is_some {
-            stdin.inner.close()?;
-        }
+    fn close(self: &mut Child) -> Result<()> { 
+        self.stdin
+            .move()
+            .as_mut_ptr()
+            .map(io::FileDescriptor::close)
+            .transpose()?;
 
-        let stdout = self.stdout.move();
-        if stdout.is_some {
-            stdout.inner.close()?;
-        }
+        self.stderr
+            .move()
+            .as_mut_ptr()
+            .map(io::FileDescriptor::close)
+            .transpose()?;
 
-        let stderr = self.stderr.move();
-        if stderr.is_some {
-            stderr.inner.close()?;
-        }
+        self.stdout
+            .move()
+            .as_mut_ptr()
+            .map(io::FileDescriptor::close)
+            .transpose()?;
 
         Result::ok(())
     }
@@ -425,7 +430,7 @@ impl Command {
             stdout.install(libc::STDOUT_FILENO).unwrap();
             stderr.install(libc::STDERR_FILENO).unwrap();
 
-            if !self._environ.is_some {
+            if !self._environ.is_some() {
                 libc::execv(exec_params.name(), exec_params.argv());
             } else {
                 libc::execve(exec_params.name(), exec_params.argv(), exec_params.envp());
@@ -443,7 +448,7 @@ impl Command {
             let exec_err: Error;
             if fail_rx.read_exact(
                 mem::slice::from_raw(&exec_err as &mut u8, mem::size_of::<Error>())
-            ).is_ok {
+            ).is_ok() {
                 return Result::err(exec_err);
             }
 
@@ -467,7 +472,7 @@ mod internal {
 
     fn maybe_read_to_end<S1: Readable<S1>>(src: &mut S1, dst: &mut StringBuf) -> Result<bool> {
         let maybe_n = src.read_to_end(dst);
-        if maybe_n.is_ok {
+        if maybe_n.is_ok() {
             Result::ok(true)
         } else {
             let error = maybe_n.unwrap_err();
@@ -566,21 +571,23 @@ mod internal {
         }
 
         fn close(self: &mut ChildStdio) -> Result<()> {
-            if self.ours.is_some {
-                self.ours.inner.close()?;
-            }
+            self.ours
+                .as_mut_ptr()
+                .map(io::FileDescriptor::close)
+                .transpose()?;
 
-            if self.theirs.is_some {
-                self.theirs.inner.close()?;
-            }
+            self.theirs
+                .as_mut_ptr()
+                .map(io::FileDescriptor::close)
+                .transpose()?;
 
             Result::ok(())
         }
 
         fn install(self: &mut ChildStdio, fd: libc::c_int) -> Result<()> {
             use std::fs::{File, OpenOptions};
-            if self.theirs.is_some {
-                errno_try!(libc::dup2(self.theirs.inner.value, fd));
+            if self.theirs.is_some() {
+                errno_try!(libc::dup2(self.theirs.unwrap().value, fd));
             }
             Result::ok(())
         }
@@ -620,8 +627,8 @@ mod internal {
                 storage.push('\0');
             }
 
-            if command._environ.is_some {
-                for (key, value) in command._environ.inner {
+            if command._environ.is_some() {
+                for (key, value) in command._environ.unwrap() {
                     env_idxs.push(storage.len());
                     storage.extend_from_slice(key);
                     storage.push('=');
@@ -717,7 +724,7 @@ mod tests {
             //.stderr(Stdio::Piped)
             .spawn();
 
-        assert!(!child.is_ok);
+        assert!(!child.is_ok());
         assert_eq!(child.unwrap_err().inner.errno, libc::ENOENT);
     }
 
@@ -744,12 +751,12 @@ mod tests {
             .spawn()
             .unwrap();
 
-        if !child.is_some {
+        if !child.is_some() {
             print!("Hello");
             eprint!("World");
             exit(123);
         } else {
-            let output = child.inner.wait_with_output().unwrap();
+            let output = child.unwrap().wait_with_output().unwrap();
             defer output.free();
 
             assert_eq!((output.status & 0xff00) >> 8, 123);
@@ -768,7 +775,7 @@ mod tests {
             .spawn()
             .unwrap();
 
-        if !child.is_some {
+        if !child.is_some() {
             // Write to both pipes and fill up the buffer. Naive implementation would
             // block on write eventually when the pipe capacity is reached. But our's
             // don't!
@@ -778,7 +785,7 @@ mod tests {
             }
             exit(123);
         } else {
-            let output = child.inner.wait_with_output().unwrap();
+            let output = child.unwrap().wait_with_output().unwrap();
             defer output.free();
 
             assert_eq!((output.status & 0xff00) >> 8, 123);

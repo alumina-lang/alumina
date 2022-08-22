@@ -82,9 +82,9 @@ impl PathIterator {
 
             let maybe_sep = self.remainder.find("/");
             let orig = self.remainder;
-            let segment = if maybe_sep.is_some {
-                self.remainder = orig[maybe_sep.inner + 1..];
-                orig[..maybe_sep.inner]
+            let segment = if maybe_sep.is_some() {
+                self.remainder = orig[maybe_sep.unwrap() + 1..];
+                orig[..maybe_sep.unwrap()]
             } else {
                 self.remainder = mem::slice::empty();
                 orig
@@ -93,7 +93,7 @@ impl PathIterator {
             let at_start = mem::replace(&self.at_start, false);
 
             if segment.len() == 0 {
-                if at_start && maybe_sep.is_some {
+                if at_start && maybe_sep.is_some() {
                     return Option::some(PathSegment {
                         kind: PathSegmentKind::Root,
                         value: segment
@@ -185,11 +185,11 @@ impl Path {
         let iter = self.iter().peekable();
         let last: Option<PathSegment> = Option::none();
         loop {
-            if !iter.peek().is_some {
-                if !last.is_some || last.inner.kind == PathSegmentKind::Root {
+            if !iter.peek().is_some() {
+                if !last.is_some() || last.unwrap().kind == PathSegmentKind::Root {
                     return Option::none();
                 } else {
-                    let ret = mem::slice::from_raw(&self.inner[0], (&last.inner.value[0] - &self.inner[0]) as usize);
+                    let ret = mem::slice::from_raw(&self.inner[0], (&last.unwrap().value[0] - &self.inner[0]) as usize);
                     if ret.len() > 1 && ret.ends_with("/") {
                         ret = ret[..ret.len()-1];
                     }
@@ -225,15 +225,15 @@ impl Path {
             let s1 = i1.next();
             let s2 = i2.next();
 
-            if s1.is_some && s2.is_some {
-                if s1.inner == s2.inner {
+            if s1.is_some() && s2.is_some() {
+                if s1.unwrap() == s2.unwrap() {
                     continue;
                 } else {
                     return Option::none();
                 }
             }
 
-            if !s1.is_some && s2.is_some {
+            if !s1.is_some() && s2.is_some() {
                 return Option::none();
             }
 
@@ -243,7 +243,7 @@ impl Path {
 
     /// Returns true if `other` is a prefix of the current path, false otherwise
     fn starts_with(self: &Path, other: Path) -> bool {
-        self.strip_prefix(other).is_some
+        self.strip_prefix(other).is_some()
     }
 
     /// @ fmt::Formattable::fmt
@@ -273,11 +273,11 @@ impl Path {
             let s1 = a.next();
             let s2 = b.next();
 
-            if s1.is_some && s2.is_some {
-                if s1.inner != s2.inner {
+            if s1.is_some() && s2.is_some() {
+                if s1.unwrap() != s2.unwrap() {
                     return false;
                 }
-            } else if s1.is_some || s2.is_some {
+            } else if s1.is_some() || s2.is_some() {
                 return false;
             } else {
                 return true;

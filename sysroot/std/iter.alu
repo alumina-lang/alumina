@@ -186,9 +186,9 @@ impl SkipWhileIterator<It: Iterator<It, T>, F: Callable<(T), bool>, T> {
     fn next(self: &mut SkipWhileIterator<It, F, T>) -> Option<T> {
         loop {
             let v = self.it.next();
-            if self.finished || !v.is_some {
+            if self.finished || !v.is_some() {
                 return v;
-            } else if self.fun(v.inner) {
+            } else if self.fun(v.unwrap()) {
                 continue
             } else {
                 self.finished = true;
@@ -218,7 +218,7 @@ impl FilterMapIterator<It: Iterator<It, T>, F: Callable<(T), Option<U>>, T, U> {
             let value = self.it.next()?;
             let mapped = self.fun(value);
 
-            if mapped.is_some {
+            if mapped.is_some() {
                 return mapped
             }
         }
@@ -283,7 +283,7 @@ impl SkipIterator<It: Iterator<It, T>, T> {
     fn next(self: &mut SkipIterator<It, T>) -> Option<T> {
         while self.n > 0 {
             self.n -= 1;
-            if !self.it.next().is_some {
+            if !self.it.next().is_some() {
                 return Option::none();
             }
         }
@@ -356,7 +356,7 @@ impl FusedIterator<It: Iterator<It, T>, T> {
             Option::none()
         } else {
             let v = self.it.next();
-            self.done = !v.is_some;
+            self.done = !v.is_some();
             v
         }
     }
@@ -381,7 +381,7 @@ impl FusedIterator<It: DoubleEndedIterator<It, T>, T> {
             Option::none()
         } else {
             let v = self.it.next_back();
-            self.done = !v.is_some;
+            self.done = !v.is_some();
             v
         }
     }
@@ -459,24 +459,16 @@ struct ChainIterator<It1: Iterator<It1, T>, It2: Iterator<It2, T>, T> {
 impl ChainIterator<It1: Iterator<It1, T>, It2: Iterator<It2, T>, T> {
     /// @ Iterator::next
     fn next(self: &mut ChainIterator<It1, It2, T>) -> Option<T> {
-        let v = self.it1.next();
-        if v.is_some {
-            v
-        } else {
-            self.it2.next()
-        }
+        self.it1.next().or_else(|=self| -> Option<T> { self.it2.next() })
     }
 
     /// @ Iterator::size_hint
     fn size_hint(self: &ChainIterator<It1, It2, T>) -> Option<usize> {
-        let h1 = self.it1.size_hint();
-        let h2 = self.it2.size_hint();
-
-        if h1.is_some && h2.is_some {
-            Option::some(h1.inner + h2.inner)
-        } else {
-            Option::none()
-        }
+        self.it1.size_hint()
+            .zip(self.it2.size_hint())
+            .map(|v: (usize, usize)| -> usize {
+                v.0 + v.1
+            })
     }
 
     mixin Iterator<ChainIterator<It1, It2, T>, T>;
@@ -487,7 +479,7 @@ impl ChainIterator<It1: DoubleEndedIterator<It1, T>, It2: DoubleEndedIterator<It
     /// @ DoubleEndedIterator::next_back
     fn next_back(self: &mut ChainIterator<It1, It2, T>) -> Option<T> {
         let v = self.it2.next_back();
-        if v.is_some {
+        if v.is_some() {
             v
         } else {
             self.it1.next_back()
@@ -510,8 +502,8 @@ impl InspectIterator<It: Iterator<It, T>, F: Callable<(T), ()>, T> {
     /// @ Iterator::next
     fn next(self: &mut InspectIterator<It, F, T>) -> Option<T> {
         let v = self.it.next();
-        if v.is_some {
-            self.func(v.inner);
+        if v.is_some() {
+            self.func(v.unwrap());
         }
         v
     }
@@ -539,12 +531,12 @@ impl Grouping<It: Iterator<It, T>, F: Callable<(T), K>, T, K: cmp::Equatable<K>>
         use option::try;
 
         let v = self.parent.it.peek();
-        if !v.is_some {
+        if !v.is_some() {
             self.parent.last_group = Option::none();
             return self.parent.it.next();
         }
 
-        if self.key != self.parent.func(v.inner) {
+        if self.key != self.parent.func(v.unwrap()) {
             self.parent.last_group = Option::none();
             Option::none()
         } else {
@@ -569,20 +561,20 @@ impl GroupByIterator<It: Iterator<It, T>, F: Callable<(T), K>, T, K: cmp::Equata
     /// @ Iterator::next
     fn next(self: &mut GroupByIterator<It, F, T, K>) -> Option<Grouping<It, F, T, K>> {
         let needs_drain = self.last_group.move();
-        if needs_drain.is_some {
-            for _ in needs_drain.inner {
+        if needs_drain.is_some() {
+            for _ in needs_drain.unwrap() {
             }
         }
 
         let v = self.it.peek();
-        if !v.is_some {
+        if !v.is_some() {
             self.it.next();
             return Option::none();
         }
 
         self.last_group = Option::some(Grouping::<It, F, T, K> {
             parent: self,
-            key: self.func(v.inner)
+            key: self.func(v.unwrap())
         });
 
         self.last_group
@@ -603,7 +595,7 @@ struct PeekableIterator<It: Iterator<It, T>, T> {
 impl PeekableIterator<It: Iterator<It, T>, T> {
     /// @ Iterator::next
     fn next(self: &mut PeekableIterator<It, T>) -> Option<T> {
-        if self.peeked.is_some {
+        if self.peeked.is_some() {
             self.peeked.move()
         } else {
             self.it.next()
@@ -612,7 +604,7 @@ impl PeekableIterator<It: Iterator<It, T>, T> {
 
     /// Return the next element in the iterator without consuming it.
     fn peek(self: &mut PeekableIterator<It, T>) -> Option<T> {
-        if !self.peeked.is_some {
+        if !self.peeked.is_some() {
             self.peeked = self.it.next();
         }
         self.peeked
@@ -621,7 +613,7 @@ impl PeekableIterator<It: Iterator<It, T>, T> {
     /// @ Iterator::size_hint
     fn size_hint(self: &PeekableIterator<It, T>) -> Option<usize> {
         self.it.size_hint().map(|=self, x: usize| -> usize {
-            if self.peeked.is_some {
+            if self.peeked.is_some() {
                 x + 1
             } else {
                 x
@@ -645,22 +637,16 @@ struct ZipIterator<It1: Iterator<It1, T1>, It2: Iterator<It2, T2>, T1, T2> {
 impl ZipIterator<It1: Iterator<It1, T1>, It2: Iterator<It2, T2>, T1, T2> {
     /// @ Iterator::next
     fn next(self: &mut ZipIterator<It1, It2, T1, T2>) -> Option<(T1, T2)> {
-        use std::option::try;
-
-        let v1 = self.it1.next()?;
-        let v2 = self.it2.next()?;
-
-        Option::some((v1, v2))
+        self.it1.next().zip(self.it2.next())
     }
 
     /// @ Iterator::size_hint
     fn size_hint(self: &ZipIterator<It1, It2, T1, T2>,) -> Option<usize> {
-        use std::option::try;
-
-        let s1 = self.it1.size_hint()?;
-        let s2 = self.it2.size_hint()?;
-
-        Option::some(std::cmp::min(s1, s2))
+        self.it1.size_hint()
+            .zip(self.it2.size_hint())
+            .map(|v: (usize, usize)| -> usize {
+                std::cmp::min(v.0, v.1)
+            })
     }
 
     mixin Iterator<ZipIterator<It1, It2, T1, T2>, (T1, T2)>;
@@ -691,7 +677,7 @@ impl FlattenIterator<It: Iterator<It, T>, T, Ret> {
             }
 
             let v = self.elem_iter.next();
-            if v.is_some {
+            if v.is_some() {
                 return v;
             } else {
                 self.has_elem = false;
@@ -875,7 +861,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
         let value: Option<T> = Option::none();
         loop {
             let next = self.next();
-            if next.is_some {
+            if next.is_some() {
                 value = next;
             } else {
                 return value;
@@ -910,7 +896,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     fn count(self: &mut Self) -> usize {
         let n = 0usize;
         loop {
-            if !self.next().is_some {
+            if !self.next().is_some() {
                 return n;
             }
             n += 1;
@@ -1012,8 +998,8 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     fn foreach<F: Callable<(T), ()>>(iter: &mut Self, fun: F) {
         loop {
             let val = iter.next();
-            if val.is_some {
-                fun(val.inner);
+            if val.is_some() {
+                fun(val.unwrap());
             } else {
                 break;
             }
@@ -1021,6 +1007,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     }
 
     /// Returns an iterator that yields the elements of this iterator that match a predicate.
+    ///
     /// ## Example
     /// ```
     /// let range = (0..5).filter(|x: i32| -> bool { x % 2 == 0 });
@@ -1033,6 +1020,48 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// ```
     fn filter<F: Callable<(T), bool>>(iter: &mut Self, fun: F) -> FilterIterator<Self, F, T> {
         FilterIterator { it: iter, fun: fun }
+    }
+
+    /// Returns the first item matching the predicate.
+    ///
+    /// If there is no item matching the predicate, returns none.
+    ///
+    /// ## Example
+    /// ```
+    /// let a = (1..10).find(|x: i32| -> bool { x * x >= 50 });
+    /// let b = (1..10).find(|x: i32| -> bool { x * x >= 1000 });
+    ///
+    /// assert_eq!(a, Option::some(8));
+    /// assert_eq!(b, Option::none());
+    /// ```
+    fn find<F: Callable<(T), bool>>(iter: &mut Self, fun: F) -> Option<T> {
+        iter.filter(fun).next()
+    }
+
+    /// Returns the index of the first item matching the predicate.
+    ///
+    /// If there is no item matching the predicate, returns none.
+    ///
+    /// ## Example
+    /// ```
+    /// let arr = [1, 2, 3, 1337, 5, 6]
+    ///
+    /// let idx = arr
+    ///     .iter()
+    ///     .find_index(|x: i32| -> bool { x > 100 })
+    ///     .unwrap();
+    ///
+    /// println!("First number larger than 100: {}", arr[idx]);
+    /// ```
+    fn find_index<F: Callable<(T), bool>>(iter: &mut Self, fun: F) -> Option<usize> {
+        let idx = 0usize;
+        for v in iter {
+            if fun(v) {
+                return Option::some(idx);
+            }
+            idx += 1;
+        }
+        Option::none()
     }
 
     /// Transforms and filters the iterator at the same time.
@@ -1080,10 +1109,10 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     fn reduce<U, F: Callable<(U, T), U>>(iter: &mut Self, initial: U, func: F) -> U {
         loop {
             let next = iter.next();
-            if !next.is_some {
+            if !next.is_some() {
                 break
             }
-            initial = func(initial, next.inner);
+            initial = func(initial, next.unwrap());
         }
         initial
     }
@@ -1141,10 +1170,10 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     fn all<F: Callable<(T), bool>>(iter: &mut Self, fun: F) -> bool {
         loop {
             let next = iter.next();
-            if !next.is_some {
+            if !next.is_some() {
                 break
             }
-            if !fun(next.inner) {
+            if !fun(next.unwrap()) {
                 return false
             }
         }
@@ -1165,10 +1194,10 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     fn any<F: Callable<(T), bool>>(iter: &mut Self, fun: F) -> bool {
         loop {
             let next = iter.next();
-            if !next.is_some {
+            if !next.is_some() {
                 break
             }
-            if fun(next.inner) {
+            if fun(next.unwrap()) {
                 return true
             }
         }
@@ -1211,10 +1240,10 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
                 break;
             }
             let next = self.next();
-            if !next.is_some {
+            if !next.is_some() {
                 break;
             }
-            slice[index] = next.inner;
+            slice[index] = next.unwrap();
             index += 1;
         }
 
@@ -1451,7 +1480,7 @@ impl OnceIterator<T> {
 
     /// @ Iterator::size_hint
     fn size_hint(self: &OnceIterator<T>) -> Option<usize> {
-        if self.value.is_some {
+        if self.value.is_some() {
             Option::some(1usize)
         } else {
             Option::some(0usize)
@@ -1486,7 +1515,7 @@ mod internal {
 
     // See IteratorExt::min
     fn iter_min<T: Comparable<T>>(a: Option<T>, b: T) -> Option<T> {
-        if !a.is_some || a.inner > b {
+        if !a.is_some() || a.unwrap() > b {
             Option::some(b)
         } else {
             a
@@ -1495,7 +1524,7 @@ mod internal {
 
     // See IteratorExt::max
     fn iter_max<T: Comparable<T>>(a: Option<T>, b: T) -> Option<T> {
-        if !a.is_some || a.inner < b {
+        if !a.is_some() || a.unwrap() < b {
             Option::some(b)
         } else {
             a
@@ -1821,7 +1850,7 @@ mod tests {
         assert_eq!(group.next(), Option::some((2, 2)));
         assert_eq!(group.next(), Option::none());
 
-        assert!(!groups.next().is_some);
+        assert!(!groups.next().is_some());
     }
 
     #[test]
@@ -1846,7 +1875,7 @@ mod tests {
         assert_eq!(group.next(), Option::some((2, 2)));
         assert_eq!(group.next(), Option::none());
 
-        assert!(!groups.next().is_some);
+        assert!(!groups.next().is_some());
     }
 
     #[test]
@@ -2021,5 +2050,23 @@ mod tests {
         assert_eq!(iter.next(), Option::some(3));
         assert_eq!(iter.next(), Option::some(4));
         assert_eq!(iter.next(), Option::none());
+    }
+
+    #[test]
+    fn test_find() {
+        let a = (1..10).find(|x: i32| -> bool { x * x >= 50 });
+        let b = (1..10).find(|x: i32| -> bool { x * x >= 1000 });
+
+        assert_eq!(a, Option::some(8));
+        assert_eq!(b, Option::none());
+    }
+
+    #[test]
+    fn test_find_index() {
+        let a = (1..10).find_index(|x: i32| -> bool { x * x >= 50 });
+        let b = (1..10).find_index(|x: i32| -> bool { x * x >= 1000 });
+
+        assert_eq!(a, Option::some(7usize));
+        assert_eq!(b, Option::none());
     }
 }

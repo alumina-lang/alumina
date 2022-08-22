@@ -1047,7 +1047,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         let loop_if = ExprKind::If(
             ExprKind::Field(
                 ExprKind::Local(iterator_result).alloc_with_no_span(self.ast),
-                "is_some",
+                "_is_some",
                 None,
             )
             .alloc_with_no_span(self.ast),
@@ -1058,7 +1058,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                     value: Some(
                         ExprKind::Field(
                             ExprKind::Local(iterator_result).alloc_with_no_span(self.ast),
-                            "inner",
+                            "_inner",
                             None,
                         )
                         .alloc_with_no_span(self.ast),

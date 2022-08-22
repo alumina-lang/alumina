@@ -43,6 +43,18 @@ impl void {
 #[lang(builtin_bool)]
 struct bool {}
 impl bool {
+    /// Returns `true`.
+    #[force_inline]
+    fn max_value() -> bool {
+        true
+    }
+
+    /// Returns `false`.
+    #[force_inline]
+    fn min_value() -> bool {
+        false
+    }
+
     /// @ cmp::Equatable::equals
     #[force_inline]
     fn equals(lhs: &bool, rhs: &bool) -> bool {
@@ -112,6 +124,8 @@ impl never {
 }
 
 /// 8-bit unsigned integer (byte)
+///
+/// This is also the "character" type, e.g. expression `"hello"[0]` has type `u8`.
 #[lang(builtin_u8)]
 struct u8 {}
 impl u8 {
@@ -902,10 +916,13 @@ impl array<Arr: builtins::Array> {
 ///
 /// ## Example
 /// ```
+/// use std::typing::assert_type_eq;
 /// use std::builtins::signed_of;
 ///
-/// let v: signed_of<u32>; // v is `i32`
-/// let v: signed_of<usize>; // v is `isize`
+/// assert_type_eq::<signed_of<u32>, i32>();
+/// assert_type_eq::<signed_of<usize>, isize>();
+///
+/// assert_type_eq::<signed_of<i8>, i8>();
 /// ```
 #[lang(typeop_signed_of)]
 type signed_of<T: builtins::Integer>;
@@ -919,6 +936,8 @@ type signed_of<T: builtins::Integer>;
 ///
 /// assert_type_eq::<unsigned_of<i32>, u32>();
 /// assert_type_eq::<unsigned_of<isize>, usize>();
+///
+/// assert_type_eq::<unsigned_of<u8>, u8>();
 /// ```
 #[lang(typeop_unsigned_of)]
 type unsigned_of<T: builtins::Integer>;
@@ -960,7 +979,9 @@ type deref_of<T: builtins::Pointer>;
 #[lang(typeop_tuple_head_of)]
 type tuple_head_of<T: builtins::Tuple>;
 
-/// Tuple type equivalent to the provided one without the first element
+/// Tuple type equivalent to the provided one without the first element.
+///
+/// Passing empty tuple ([void]) is a compile-time error.
 ///
 /// ## Example
 /// ```
@@ -1019,18 +1040,18 @@ type arguments_of<T>;
 #[lang(typeop_generic_args_of)]
 type generic_args_of<T>;
 
-/// Void pointer type of the same constness as the provided pointer type.
+/// Pointer to `T` with same constness as `Ptr`.
 ///
 /// ## Example
 /// ```
 /// use std::typing::assert_type_eq;
-/// use std::builtins::void_ptr_of;
+/// use std::builtins::ptr_with_mut_of;
 ///
-/// assert_type_eq::<void_ptr_of<&i32>, &()>();
-/// assert_type_eq::<void_ptr_of<&mut i32>, &mut ()>();
+/// assert_type_eq::<ptr_with_mut_of<void, &i32>, &void>();
+/// assert_type_eq::<ptr_with_mut_of<usize, &mut Option<usize>>, &mut usize>();
 /// ```
-#[lang(typeop_void_ptr_of)]
-type void_ptr_of<T: Pointer>;
+#[lang(typeop_ptr_with_mut_of)]
+type ptr_with_mut_of<T, Ptr: Pointer>;
 
 /// Backing type of an `enum`.
 ///

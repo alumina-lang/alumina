@@ -107,7 +107,7 @@ impl slice {
 
     /// Returns the length of the slice
     #[force_inline]
-    fn len<Ptr: Pointer>(self: &slice<Ptr>) -> usize {
+    fn len<Ptr: Pointer>(self: slice<Ptr>) -> usize {
         self._len
     }
 
@@ -117,7 +117,7 @@ impl slice {
     /// if the slice is empty, but may return `null`, a dangling or an otherwise
     /// invalid pointer.
     #[force_inline]
-    fn as_ptr<Ptr: Pointer>(self: &slice<Ptr>) -> Ptr {
+    fn as_ptr<Ptr: Pointer>(self: slice<Ptr>) -> Ptr {
         self._ptr
     }
 
@@ -196,7 +196,7 @@ impl slice {
     /// ```
     /// let hw = "Hello, world";
     /// let hw: [u8; 5] = hw[..5].to_array();
-    /// 
+    ///
     /// assert_eq!(hw.as_slice(), "Hello");
     /// ```
     fn to_array<T, Arr: builtins::ArrayOf<T>>(self: &[T]) -> Arr {
@@ -208,20 +208,20 @@ impl slice {
 
     /// @ std::iter::Iterable::iter
     #[force_inline]
-    fn iter<Ptr: Pointer>(self: &slice<Ptr>) -> SliceIterator<Ptr> {
-        SliceIterator { inner: *self }
+    fn iter<Ptr: Pointer>(self: slice<Ptr>) -> SliceIterator<Ptr> {
+        SliceIterator { inner: self }
     }
 
     /// @ std::iter::IterableRef::iter_ref
     #[force_inline]
-    fn iter_ref<Ptr: Pointer>(self: &slice<Ptr>) -> SliceRefIterator<&builtins::deref_of<Ptr>> {
-        SliceRefIterator { inner: *self as slice<&builtins::deref_of<Ptr>> }
+    fn iter_ref<Ptr: Pointer>(self: slice<Ptr>) -> SliceRefIterator<&builtins::deref_of<Ptr>> {
+        SliceRefIterator { inner: self as slice<&builtins::deref_of<Ptr>> }
     }
 
     /// @ std::iter::IterableMut::iter_mut
     #[force_inline]
-    fn iter_mut<T>(self: &&mut [T]) -> SliceRefIterator<&mut T> {
-        SliceRefIterator { inner: *self }
+    fn iter_mut<T>(self: &mut [T]) -> SliceRefIterator<&mut T> {
+        SliceRefIterator { inner: self }
     }
 
     /// Fill slice with a value
@@ -550,6 +550,7 @@ fn alloc_zeroed<T>() -> &mut T {
 /// ## Example
 /// ```
 /// struct Box<T> { ptr: &mut T }
+///
 /// impl Box<T> {
 ///     fn new(value: T) -> Box<T> {
 ///         let ptr = std::mem::alloc::<T>();
@@ -557,8 +558,8 @@ fn alloc_zeroed<T>() -> &mut T {
 ///         Box { ptr: ptr }
 ///     }
 ///
-///     fn free(value: &mut Box<T>) {
-///         std::mem::free(value);
+///     fn free(self: &mut Box<T>) {
+///         std::mem::free(self.ptr);
 ///     }
 /// }
 /// ```

@@ -20,7 +20,7 @@ impl Parker {
     fn park(self: &mut Parker) {
         // If we were previously notified then we consume this notification and
         // return quickly.
-        if self.state.compare_exchange(NOTIFIED, EMPTY, Ordering::SeqCst, Ordering::SeqCst).is_ok {
+        if self.state.compare_exchange(NOTIFIED, EMPTY, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
             return;
         }
 
@@ -29,8 +29,8 @@ impl Parker {
         defer self.lock.unlock();
 
         let ret = self.state.compare_exchange(EMPTY, PARKED, Ordering::SeqCst, Ordering::SeqCst);
-        if !ret.is_ok {
-            if ret.inner.err == NOTIFIED {
+        if !ret.is_ok() {
+            if ret.unwrap_err() == NOTIFIED {
                 let old = self.state.exchange(EMPTY, Ordering::SeqCst);
                 assert_eq!(old, NOTIFIED);
                 return;
@@ -41,7 +41,7 @@ impl Parker {
 
         loop {
             self.cvar.wait(&self.lock);
-            if self.state.compare_exchange(NOTIFIED, EMPTY, Ordering::SeqCst, Ordering::SeqCst).is_ok {
+            if self.state.compare_exchange(NOTIFIED, EMPTY, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
                 return;
             }
         }
@@ -51,15 +51,15 @@ impl Parker {
         // Like `park` above we have a fast path for an already-notified thread, and
         // afterwards we start coordinating for a sleep.
         // return quickly.
-        if self.state.compare_exchange(NOTIFIED, EMPTY, Ordering::SeqCst, Ordering::SeqCst).is_ok {
+        if self.state.compare_exchange(NOTIFIED, EMPTY, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
             return;
         }
         self.lock.lock();
         defer self.lock.unlock();
 
         let ret = self.state.compare_exchange(EMPTY, PARKED, Ordering::SeqCst, Ordering::SeqCst);
-        if !ret.is_ok {
-            if ret.inner.err == NOTIFIED {
+        if !ret.is_ok() {
+            if ret.unwrap_err() == NOTIFIED {
                 let old = self.state.exchange(EMPTY, Ordering::SeqCst);
                 assert_eq!(old, NOTIFIED);
                 return;

@@ -67,7 +67,7 @@ impl NameLookup {
                 cur.ai_addrlen
             );
 
-            if result.is_some {
+            if result.is_some() {
                 let result = result.unwrap();
                 result.set_port(self.port);
 
@@ -201,15 +201,38 @@ impl Socket {
 }
 
 /// A TCP connection
+///
+/// ## Example
+/// ```norun
+/// use std::net::{NameLookup, TcpStream, Shutdown};
+/// use std::io::{Result, StdioStream, copy};
+///
+/// fn http_fetch() -> Result<()> {
+///     let addrs = NameLookup::resolve("docs.alumina-lang.net", 80)?;
+///     defer addrs.free();
+///
+///     let socket = TcpStream::connect(&addrs.next().unwrap())?;
+///     defer socket.close();
+///
+///     socket.write_all("GET / HTTP/1.1\r\n")?;
+///     socket.write_all("Host: docs.alumina-lang.net\r\n")?;
+///     socket.write_all("Connection: close\r\n\r\n")?;
+///
+///     socket.shutdown(Shutdown::Write)?;
+///
+///     copy(&socket, &StdioStream::stdout())?;
+///
+///     Result::ok(())
+/// }
+///
+/// http_fetch().unwrap();
+/// ```
 struct TcpStream {
     socket: Socket,
 }
 
 impl TcpStream {
-    fn from_socket(socket: Socket) -> TcpStream {
-        TcpStream { socket: socket }
-    }
-
+    /// Establishes a TCP connection to a remote host.
     fn connect(addr: &SocketAddr) -> Result<TcpStream> {
         let (family, addr_len) = internal::addr_to_family(addr);
 
@@ -223,6 +246,11 @@ impl TcpStream {
         ));
 
         Result::ok(from_socket(sock.move()))
+    }
+
+    /// Create a new TCP stream from a raw socket
+    fn from_socket(socket: Socket) -> TcpStream {
+        TcpStream { socket: socket }
     }
 
     /// @ io::AsFileDescriptor::as_fd
@@ -371,6 +399,55 @@ use libc::MSG_NOSIGNAL;
 const MSG_NOSIGNAL: libc::c_int = 0;
 
 /// A UDP socket
+///
+/// ## Example
+///
+/// This example sends a DNS query to CloudFlare's DNS server and prints the response metadata.
+///
+/// ```norun
+/// use std::net::{SocketAddr, UdpSocket};
+/// use std::io::Result;
+///
+/// fn dns_query() -> Result<()> {
+///     let request = std::concat!(
+///         "\x00\x01", // Transaction id
+///         "\x01\x20", // Flags (standard query)
+///         "\x00\x01", // Question RRs
+///         "\x00\x00", // Answer RRs
+///         "\x00\x00", // Authority RRs
+///         "\x00\x00", // Additional RRs
+///         "\x04docs", // Domain name
+///         "\x0calumina-lang",
+///         "\x03net",
+///         "\0",
+///         "\x00\x1c", // Type (AAAA)
+///         "\x00\x01"  // Class (IN)
+///     );
+///
+///     // Bind on a random local port
+///     let local_addr = SocketAddr::parse("[::]:0").unwrap();
+///     // Cloudflare DNS resolver
+///     let remote_addr = SocketAddr::parse("[2606:4700:4700::1111]:53").unwrap();
+///
+///     let socket = UdpSocket::bind(&local_addr)?;
+///     defer socket.close();
+///
+///     socket.send_to(request, &remote_addr)?;
+///
+///     let buf: [u8; 65536];
+///     let (size, src) = socket.recv_from(buf.as_slice_mut())?;
+///
+///     println!("Received {} bytes from {}", size, src);
+///     println!("  {} questions",   (&buf[4]  as &u16).from_be());
+///     println!("  {} answers",     (&buf[6]  as &u16).from_be());
+///     println!("  {} authorities", (&buf[8]  as &u16).from_be());
+///     println!("  {} additional",  (&buf[10] as &u16).from_be());
+///
+///     Result::ok(())
+/// }
+///
+/// dns_query().unwrap();
+/// ```
 struct UdpSocket {
     socket: Socket,
 }
@@ -558,7 +635,7 @@ mod tests {
 
         let local_addr = listener.socket_addr().unwrap();
 
-        if !fork().is_some {
+        if !fork().is_some() {
             let socket = TcpStream::connect(&local_addr).unwrap();
             defer socket.close();
 
@@ -582,7 +659,7 @@ mod tests {
         defer peer1.close();
 
         let peer1_addr = peer1.socket_addr().unwrap();
-        if !fork().is_some {
+        if !fork().is_some() {
             let addr = SocketAddr::parse("[::1]:0").unwrap();
             let peer2 = UdpSocket::bind(&addr).unwrap();
             defer peer2.close();
@@ -605,7 +682,7 @@ mod tests {
         let buf: [u8; 128];
 
         let peer1_addr = peer1.socket_addr().unwrap();
-        if !fork().is_some {
+        if !fork().is_some() {
             let addr = SocketAddr::parse("[::1]:0").unwrap();
             let peer2 = UdpSocket::bind(&addr).unwrap();
             defer peer2.close();
@@ -634,7 +711,7 @@ mod tests {
         defer peer1.close();
 
         let peer1_addr = peer1.socket_addr().unwrap();
-        if !fork().is_some {
+        if !fork().is_some() {
             let addr = SocketAddr::parse("[::1]:0").unwrap();
             let peer2 = UdpSocket::bind(&addr).unwrap();
             defer peer2.close();

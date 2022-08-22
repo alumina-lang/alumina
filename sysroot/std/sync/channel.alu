@@ -332,10 +332,10 @@ impl ChannelIterator<Self, T> {
     /// @ iter::Iterator::next
     fn next(self: &mut ChannelIterator<Self, T>) -> Option<T> {
         let ret = self.inner.recv();
-        if ret.is_ok {
-            Option::some(ret.inner.ok)
+        if ret.is_ok() {
+            Option::some(ret.unwrap())
         } else {
-            assert_eq!(ret.inner.err, ChannelError::Closed);
+            assert_eq!(ret.unwrap_err(), ChannelError::Closed);
             Option::none()
         }
     }
