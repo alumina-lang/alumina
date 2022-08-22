@@ -717,9 +717,9 @@ fn read_until<R: BufferedReadable<R>>(r: &mut R, delim: u8, buf: &mut string::St
         let available = r.fill_buffer()?;
         let ret = available.find_char(delim);
 
-        let (done, used) = if ret.is_some {
-            buf.extend_from_slice(available[..ret.inner + 1]);
-            (true, ret.inner + 1)
+        let (done, used) = if ret.is_some() {
+            buf.extend_from_slice(available[..ret.unwrap() + 1]);
+            (true, ret.unwrap() + 1)
         } else {
             buf.extend_from_slice(available);
             (false, available.len())
@@ -770,7 +770,7 @@ impl LineIterator<R: BufferedReadable<R>> {
         self.line_buf.clear();
 
         let res = self.reader.read_until('\n', &self.line_buf);
-        if !res.is_ok {
+        if !res.is_ok() {
             return Option::some(Result::err(res.unwrap_err()));
         }
 

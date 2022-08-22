@@ -159,9 +159,9 @@ impl DirBuilder {
     fn create(self: &DirBuilder, path: Path) -> Result<()> {
         if self._recursive {
             let res = self._mkdir(path);
-            if res.is_ok {
+            if res.is_ok() {
                 return Result::ok(())
-            } else if res.inner.err.as_errno() != Option::some(libc::ENOENT) {
+            } else if res.unwrap_err().as_errno() != Option::some(libc::ENOENT) {
                 let attr = FileAttr::from_path(path)?;
                 if attr.file_type() == FileType::Directory {
                     return Result::ok(());
@@ -171,8 +171,8 @@ impl DirBuilder {
             }
 
             let parent = path.parent();
-            if parent.is_some {
-                self.create(parent.inner)?;
+            if parent.is_some() {
+                self.create(parent.unwrap())?;
             } else {
                 return Result::err(Error::custom("failed to create directory tree"))
             }

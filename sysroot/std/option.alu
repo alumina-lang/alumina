@@ -9,8 +9,8 @@
 ///
 /// Expands to the following expression
 /// ```notest
-/// if $.is_some {
-///     $.inner
+/// if $.is_some() {
+///     $.unwrap()
 /// } else {
 ///     return Option::none()
 /// }
@@ -31,8 +31,8 @@
 /// ```
 macro try($opt) {
     let opt = $opt;
-    if opt.is_some {
-        opt.inner
+    if opt.is_some() {
+        opt.unwrap()
     } else {
         return Option::none()
     }
@@ -56,8 +56,8 @@ macro try($opt) {
 /// assert_eq!(divide(10, 0), Option::none());
 /// ```
 struct Option<T> {
-    is_some: bool,
-    inner: T
+    _is_some: bool,
+    _inner: T
 }
 
 impl Option<T> {
@@ -66,14 +66,14 @@ impl Option<T> {
     /// ```
     /// let opt = Option::some(42);
     ///
-    /// assert!(opt.is_some);
+    /// assert!(opt.is_some());
     /// assert_eq!(opt.unwrap(), 42);
     /// ```
     #[force_inline]
     fn some(inner: T) -> Option<T> {
         Option::<T> {
-            is_some: true,
-            inner: inner
+            _is_some: true,
+            _inner: inner
         }
     }
 
@@ -83,36 +83,20 @@ impl Option<T> {
     /// ```
     /// let opt: Option<i32> = Option::none();
     ///
-    /// assert!(!opt.is_some);
+    /// assert!(!opt.is_some());
     /// ```
     #[force_inline]
     fn none() -> Option<T> {
         Option::<T> {
-            is_some: false,
-            inner: mem::uninitialized()
+            _is_some: false,
+            _inner: mem::uninitialized()
         }
     }
 
-    /// Convert the option into a [std::result::Result].
-    ///
-    /// If the option is empty, the `err` value will be used for the error variant.
-    fn ok_or<E>(self: Option<T>, err: E) -> result::Result<T, E> {
-        if self.is_some {
-            result::Result::ok(self.inner)
-        } else {
-            result::Result::err(err)
-        }
-    }
-
-    /// Convert the option into a [std::result::Result].
-    ///
-    /// If the option is empty, the callback will be called to get the the error variant.
-    fn ok_or_else<E, F: builtins::Callable<(), E>>(self: Option<T>, f: F) -> result::Result<T, E> {
-        if self.is_some {
-            result::Result::ok(self.inner)
-        } else {
-            result::Result::err(f())
-        }
+    /// Returns `true` if the option is populated, `false` otherwise.
+    #[force_inline]
+    fn is_some(self: &Option<T>) -> bool {
+        self._is_some
     }
 
     /// Returns a value, if present, panic otherwise.
@@ -126,11 +110,34 @@ impl Option<T> {
     ///
     /// opt.unwrap(); // panics
     /// ```
+    #[inline]
     fn unwrap(self: Option<T>) -> T {
-        if self.is_some {
-            self.inner
+        if self.is_some() {
+            self._inner
         } else {
             panic!("unwrap on a none value")
+        }
+    }
+
+    /// Convert the option into a [std::result::Result].
+    ///
+    /// If the option is empty, the `err` value will be used for the error variant.
+    fn ok_or<E>(self: Option<T>, err: E) -> result::Result<T, E> {
+        if self.is_some() {
+            result::Result::ok(self.unwrap())
+        } else {
+            result::Result::err(err)
+        }
+    }
+
+    /// Convert the option into a [std::result::Result].
+    ///
+    /// If the option is empty, the callback will be called to get the the error variant.
+    fn ok_or_else<E, F: builtins::Callable<(), E>>(self: Option<T>, f: F) -> result::Result<T, E> {
+        if self.is_some() {
+            result::Result::ok(self.unwrap())
+        } else {
+            result::Result::err(f())
         }
     }
 
@@ -142,8 +149,8 @@ impl Option<T> {
     /// assert_eq!(Option::none::<i32>().unwrap_or(1337), 1337);
     /// ```
     fn unwrap_or(self: Option<T>, val: T) -> T {
-        if self.is_some {
-            self.inner
+        if self.is_some() {
+            self.unwrap()
         } else {
             val
         }
@@ -164,8 +171,8 @@ impl Option<T> {
     /// assert_eq!(b.unwrap_or_else(default), 1337);
     /// ```
     fn unwrap_or_else<F: builtins::Callable<(), T>>(self: Option<T>, func: F) -> T {
-        if self.is_some {
-            self.inner
+        if self.is_some() {
+            self.unwrap()
         } else {
             func()
         }
@@ -184,8 +191,8 @@ impl Option<T> {
     /// assert_eq!(b, Option::none());
     /// ```
     fn map<Tm, F: builtins::Callable<(T), Tm>>(self: Option<T>, func: F) -> Option<Tm> {
-        if self.is_some {
-            Option::some(func(self.inner))
+        if self.is_some() {
+            Option::some(func(self.unwrap()))
         } else {
             Option::none()
         }
@@ -204,7 +211,7 @@ impl Option<T> {
     /// assert_eq!(c.and(a), Option::none());
     /// ```
     fn and<Tm>(self: Option<T>, other: Option<Tm>) -> Option<Tm> {
-        if self.is_some {
+        if self.is_some() {
             other
         } else {
             Option::none()
@@ -228,8 +235,8 @@ impl Option<T> {
     /// assert_eq!(a, Option::some(43));
     /// ```
     fn and_then<Tm, F: builtins::Callable<(T), Option<Tm>>>(self: Option<T>, func: F) -> Option<Tm> {
-        if self.is_some {
-            func(self.inner)
+        if self.is_some() {
+            func(self.unwrap())
         } else {
             Option::none()
         }
@@ -246,7 +253,7 @@ impl Option<T> {
     /// assert_eq!(b.or(a), Option::some(42));
     /// ```
     fn or(self: Option<T>, other: Option<T>) -> Option<T> {
-        if self.is_some {
+        if self.is_some() {
             self
         } else {
             other
@@ -271,7 +278,7 @@ impl Option<T> {
     /// );
     /// ```
     fn or_else<F: builtins::Callable<(), Option<T>>>(self: Option<T>, func: F) -> Option<T> {
-        if self.is_some {
+        if self.is_some() {
             self
         } else {
             func()
@@ -289,8 +296,8 @@ impl Option<T> {
     /// assert_eq!(b.as_nullable_ptr(), null);
     /// ```
     fn as_nullable_ptr(self: &Option<T>) -> &T {
-        if self.is_some {
-            &self.inner
+        if self.is_some() {
+            &self._inner
         } else {
             null as &T
         }
@@ -309,8 +316,8 @@ impl Option<T> {
     /// assert_eq!(*b.unwrap(), 1337);
     /// ```
     fn as_ptr(self: &Option<T>) -> Option<&T> {
-        if self.is_some {
-            Option::some(&self.inner)
+        if self.is_some() {
+            Option::some(&self._inner)
         } else {
             Option::none()
         }
@@ -327,8 +334,8 @@ impl Option<T> {
     /// assert_eq!(a, Option::some(1337));
     /// ```
     fn as_mut_ptr(self: &mut Option<T>) -> Option<&mut T> {
-        if self.is_some {
-            Option::some(&self.inner)
+        if self.is_some() {
+            Option::some(&self._inner)
         } else {
             Option::none()
         }
@@ -343,10 +350,29 @@ impl Option<T> {
     /// assert_eq!(Option::none::<Option<i32>>().flatten(), Option::none());
     /// ```
     fn flatten(self: Option<Option<T>>) -> Option<T> {
-        if !self.is_some {
+        if !self.is_some() {
             Option::none()
         } else {
-            self.inner
+            self.unwrap()
+        }
+    }
+
+    /// Merges two `Option`s into an `Option` of a tuple.
+    ///
+    /// If either `self` or `other` is none, the result is none.
+    ///
+    /// ## Example
+    /// ```
+    /// let a = Option::some(42);
+    /// let b = Option::some(1337);
+    ///
+    /// assert_eq!(a.zip(b), Option::some((42, 1337)));
+    /// ```
+    fn zip<O>(self: Option<T>, other: Option<O>) -> Option<(T, O)> {
+        if self.is_some() && other.is_some() {
+            Option::some((self.unwrap(), other.unwrap()))
+        } else {
+            Option::none()
         }
     }
 
@@ -387,11 +413,11 @@ impl Option {
     /// );
     /// ```
     fn transpose<T, E>(self: Option<Result<T, E>>) -> Result<Option<T>, E> {
-        if self.is_some {
-            if self.inner.is_ok {
-                Result::ok(Option::some(self.inner.inner.ok))
+        if self.is_some() {
+            if self.unwrap().is_ok() {
+                Result::ok(Option::some(self.unwrap().unwrap()))
             } else {
-                Result::err(self.inner.inner.err)
+                Result::err(self.unwrap().unwrap_err())
             }
         } else {
             Result::ok(Option::none())
@@ -401,31 +427,31 @@ impl Option {
     /// @ std::hash::Hashable::hash
     #[inline]
     fn hash<T: Hashable<T, H>, H: Hasher<H>>(self: &Option<T>, hasher: &mut H) {
-        if self.is_some {
-            self.inner.hash(hasher);
+        if self.is_some() {
+            self._inner.hash(hasher);
         }
     }
 
     /// @ cmp::Equatable::equals
     #[inline]
     fn equals<T: Equatable<T>>(lhs: &Option<T>, rhs: &Option<T>) -> bool {
-        if lhs.is_some {
-            if rhs.is_some {
-                lhs.inner.equals(&rhs.inner)
+        if lhs.is_some() {
+            if rhs.is_some() {
+                lhs._inner.equals(&rhs._inner)
             } else {
                 false
             }
         } else {
-            !rhs.is_some
+            !rhs.is_some()
         }
     }
 
     /// @ cmp::Comparable::compare
     #[inline]
     fn compare<T: Comparable<T>>(lhs: &Option<T>, rhs: &Option<T>) -> Ordering {
-        if lhs.is_some {
-            if rhs.is_some {
-                lhs.inner.compare(&rhs.inner)
+        if lhs.is_some() {
+            if rhs.is_some() {
+                lhs._inner.compare(&rhs._inner)
             } else {
                 Ordering::Greater
             }
@@ -436,8 +462,8 @@ impl Option {
 
     /// @ fmt::Formattable::fmt
     fn fmt<T: Formattable<T, F>, F: Formatter<F>>(self: &Option<T>, formatter: &mut F) -> fmt::Result {
-        if self.is_some {
-            write!(formatter, "some({})", self.inner)
+        if self.is_some() {
+            write!(formatter, "some({})", self._inner)
         } else {
             write!(formatter, "none")
         }
@@ -445,8 +471,8 @@ impl Option {
 
     /// @ mem::Freeable::free
     fn free<T: Freeable<T>>(self: &mut Option<T>) {
-        if self.is_some {
-            self.inner.free();
+        if self.is_some() {
+            self._inner.free();
         }
     }
 
@@ -465,14 +491,14 @@ mod tests {
     #[test]
     fn option_ok() {
         let opt = Option::some(42);
-        assert!(opt.is_some);
-        assert_eq!(opt.inner, 42);
+        assert!(opt.is_some());
+        assert_eq!(opt.unwrap(), 42);
     }
 
     #[test]
     fn option_none() {
         let opt = Option::none::<i32>();
-        assert!(!opt.is_some);
+        assert!(!opt.is_some());
     }
 
     #[test]

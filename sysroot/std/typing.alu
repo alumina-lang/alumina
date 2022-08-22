@@ -100,7 +100,7 @@ fn enum_variants<E: builtins::Enum>() -> &[(&[u8], E)] {
 /// ```panics
 /// use std::typing::assert_type_eq;
 ///
-/// assert_type_eq::<u64, usize>();
+/// assert_type_eq::<u64, usize>(); // panics
 /// ```
 ///
 /// ## Note
@@ -133,7 +133,7 @@ fn assert_type_eq<T1, T2>() {
 /// ```panics
 /// use std::typing::assert_type_ne;
 ///
-/// assert_type_ne::<u64, u64>();
+/// assert_type_ne::<u64, u64>(); // panics
 /// ```
 /// ## Note
 /// This causes a run-time panic if the types are equal rather than a compile-time error.
@@ -156,6 +156,8 @@ fn assert_type_ne<T1, T2>() {
 mod internal {
     static ENUM_VARIANTS<E> = intrinsics::enum_variants::<E>();
 
+    type void_ptr_of<Ptr> = builtins::ptr_with_mut_of<void, Ptr>;
+
     #[lang(enum_variant_new)]
     #[force_inline]
     fn make_enum_variant<E>(name: &[u8], value: E) -> (&[u8], E) {
@@ -168,9 +170,9 @@ mod internal {
 
     #[lang(dyn_new)]
     #[force_inline]
-    fn dyn_new<Proto, Ptr>(ptr: Ptr) -> dyn<Proto, builtins::void_ptr_of<Ptr>> {
+    fn dyn_new<Proto, Ptr>(ptr: Ptr) -> dyn<Proto, void_ptr_of<Ptr>> {
         dyn {
-            _ptr: ptr as builtins::void_ptr_of<Ptr>,
+            _ptr: ptr as void_ptr_of<Ptr>,
             _vtable: intrinsics::make_vtable::<Proto, builtins::deref_of<Ptr>>()
         }
     }

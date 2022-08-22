@@ -142,7 +142,7 @@ macro writeln($fmt, $fmt_str, $arg...) {
 macro format($fmt_str, $arg...) {
     let vec = collections::Vector::with_capacity::<u8>($fmt_str.len());
     let ret = fmt::write!(&vec, $fmt_str, $arg...);
-    if ret.is_ok {
+    if ret.is_ok() {
         Result::ok::<string::StringBuf, Error>(vec)
     } else {
         vec.free();
@@ -166,7 +166,7 @@ macro format($fmt_str, $arg...) {
 macro format_in($buf, $fmt_str, $arg...) {
     let fmt = SliceFormatter::new($buf);
     let ret = fmt::write!(&fmt, $fmt_str, $arg...);
-    if ret.is_ok {
+    if ret.is_ok() {
         Result::ok::<&[u8], Error>(fmt.get())
     } else {
         Result::err::<&[u8], Error>(Error::new())
@@ -437,8 +437,8 @@ mod internal {
         fn fmt<T: Formattable<T, F>, F: Formatter<F>>(self: &GenericPadAdapter<T>, fmt: &mut F) -> Result {
             let buf: [u8; 32];
             let res = format_in!(&buf, "{}", self.inner);
-            let s = if res.is_ok {
-                res.inner.ok
+            let s = if res.is_ok() {
+                res.unwrap()
             } else {
                 // We fall back to the heap-allocating variant if the stack buffer was not large enough.
                 let res = format!("{}", self.inner)?;

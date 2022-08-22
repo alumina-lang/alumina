@@ -2,10 +2,21 @@
 /// Network address family
 enum AddrKind {
     V6,
-    #[deprecated] V4, // a boy can dream
+    // Fix your networks, my dudes. RFC2460 came out in 1998,
+    // Some of you were probably not even born yet.
+    #[obsolete] V4,
 }
 
-/// IPv6 address
+/// An IPv6 address
+///
+/// ## Example
+/// ```
+/// use std::net::Ipv6Addr;
+///
+/// let address = Ipv6Addr::from_segments(&[0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x1]);
+///
+/// println!("{}", address); // Prints "2001:db8::1"
+/// ```
 struct Ipv6Addr {
     inner: libc::in6_addr,
 }
@@ -90,6 +101,22 @@ impl Ipv6Addr {
     }
 
     /// Parses an IPv6 address from a string.
+    ///
+    /// Returns `Option::none()` if the address is not a valid IPv6 address.
+    ///
+    /// # Examples
+    /// ```
+    /// use std::net::Ipv6Addr;
+    ///
+    /// let addr = Ipv6Addr::parse("::1").unwrap();
+    /// assert_eq!(addr, Ipv6Addr::localhost());
+    /// ```
+    ///
+    /// ```panics
+    /// use std::net::Ipv6Addr;
+    ///
+    /// Ipv6Addr::parse("tota:ly:n0t::ipv6").unwrap(); // panics
+    /// ```
     fn parse(s: &[u8]) -> Option<Ipv6Addr> {
         use option::try;
         use string::split;
@@ -99,12 +126,12 @@ impl Ipv6Addr {
         let s = split(s, "::");
         let left = s.next()?;
         let maybe_right = s.next();
-        if s.next().is_some {
+        if s.next().is_some() {
             return Option::none();
         }
 
-        let (left, right) = if maybe_right.is_some {
-            (ipv6_parse_part(left, false)?, ipv6_parse_part(maybe_right.inner, true)?)
+        let (left, right) = if maybe_right.is_some() {
+            (ipv6_parse_part(left, false)?, ipv6_parse_part(maybe_right.unwrap(), true)?)
         } else {
             let left = ipv6_parse_part(left, true)?;
             if left.1 != 8 {
@@ -133,7 +160,7 @@ impl Ipv6Addr {
         let segments = self.to_segments();
         if *self != Ipv6Addr::localhost() && *self != Ipv6Addr::unspecified() {
             let mapped_v4 = self.to_ipv4();
-            if mapped_v4.is_some {
+            if mapped_v4.is_some() {
                 if segments[5] == 0xffff {
                     return write!(f, "::ffff:{}", mapped_v4.unwrap());
                 } else {
@@ -148,13 +175,11 @@ impl Ipv6Addr {
 
         for i in 0usize..8 {
             if segments[i] == 0 {
-                if !current.is_some {
-                    current = Option::some((i, 1usize));
-                } else {
-                    current.inner.1 += 1;
-                }
+                current = current
+                    .map(|v: (usize, usize)| -> (usize, usize) { (v.0, v.1 + 1) })
+                    .or(Option::some((i, 1usize)));
 
-                if !longest.is_some || (longest.inner.1 < current.inner.1) {
+                if !longest.is_some() || (longest.unwrap().1 < current.unwrap().1) {
                     longest = current;
                 }
             } else {
@@ -165,9 +190,9 @@ impl Ipv6Addr {
         let first = true;
         let i = 0usize;
         while i < 8 {
-            if longest.is_some && i == longest.inner.0 && longest.inner.1 > 1 {
+            if longest.is_some() && i == longest.unwrap().0 && longest.unwrap().1 > 1 {
                 write!(f, "::")?;
-                i += longest.inner.1;
+                i += longest.unwrap().1;
                 first = true;
             } else {
                 if first {
@@ -196,7 +221,9 @@ impl Ipv6Addr {
     mixin cmp::Equatable<Ipv6Addr>;
 }
 
-/// IPv4 address
+/// An IPv4 address
+///
+/// [IPv4 is obsolete](https://www.potaroo.net/ispcol/2022-05/when.html). Consider using [Ipv6Addr] instead.
 struct Ipv4Addr {
     inner: libc::in_addr,
 }
@@ -273,7 +300,7 @@ impl Ipv4Addr {
         let c = segments.next().and_then(u8::parse)?;
         let d = segments.next().and_then(u8::parse)?;
 
-        if segments.next().is_some {
+        if segments.next().is_some() {
             return Option::none();
         }
 
@@ -468,13 +495,13 @@ impl SocketAddr {
             let address = Ipv6Addr::parse(segments.next()?)?;
 
             let remainder = segments.next();
-            let scope_id = if remainder.is_some {
-                u32::parse(remainder.inner)?
+            let scope_id = if remainder.is_some() {
+                u32::parse(remainder.unwrap())?
             } else {
                 0
             };
 
-            if segments.next().is_some {
+            if segments.next().is_some() {
                 return Option::none();
             }
 
@@ -536,14 +563,14 @@ mod internal {
 
         while i < 8 {
             let segment = segments.next();
-            if !segment.is_some {
+            if !segment.is_some() {
                 break;
             }
 
-            let segment = segment.inner;
+            let segment = segment.unwrap();
             let val = u16::parse_with_radix(segment, 16);
-            if val.is_some {
-                result[len] = val.inner;
+            if val.is_some() {
+                result[len] = val.unwrap();
                 len += 1;
             } else {
                 if (allow_ipv4 && len <= 6) {
@@ -562,7 +589,7 @@ mod internal {
         }
 
         // Nothing extra should be at the end
-        if segments.next().is_some {
+        if segments.next().is_some() {
             return Option::none();
         }
 

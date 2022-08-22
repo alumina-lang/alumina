@@ -102,11 +102,11 @@ impl JoinHandle<T> {
             self._handle = null;
         };
 
-        if handle.ret.is_ok {
-            Result::ok(handle.ret.inner.ok)
+        if handle.ret.is_ok() {
+            Result::ok(handle.ret.unwrap())
         } else {
             Result::err(if handle.panicked {
-                JoinError::from_panic(handle.ret.inner.err)
+                JoinError::from_panic(handle.ret.unwrap_err())
             } else {
                 /// This can happen if someone manually calls pthread_exit()
                 JoinError::from_os(Error::custom("thread returned without a value"))
@@ -129,9 +129,9 @@ impl JoinHandle<T> {
             defer handle.free();
             if handle.panicked {
                 panic!("thread panicked at {}:{}:{}",
-                    handle.ret.inner.err.file,
-                    handle.ret.inner.err.line,
-                    handle.ret.inner.err.column
+                    handle.ret.unwrap_err().file,
+                    handle.ret.unwrap_err().line,
+                    handle.ret.unwrap_err().column
                 );
             } else {
                 // Thread already successfully finished, clean up.
@@ -189,8 +189,8 @@ impl Builder {
         let attr: libc::pthread_attr_t;
         pthread_try!(libc::pthread_attr_init(&attr));
         pthread_try!(libc::pthread_attr_setdetachstate(&attr, libc::PTHREAD_CREATE_JOINABLE));
-        if self._stack_size.is_some {
-            pthread_try!(libc::pthread_attr_setstacksize(&attr, self._stack_size.inner as libc::size_t));
+        if self._stack_size.is_some() {
+            pthread_try!(libc::pthread_attr_setstacksize(&attr, self._stack_size.unwrap() as libc::size_t));
         }
 
         let handle = mem::alloc::<internal::ThreadHandleFunc<F, T>>();
@@ -223,8 +223,8 @@ impl Builder {
         let attr: libc::pthread_attr_t;
         pthread_try!(libc::pthread_attr_init(&attr));
         pthread_try!(libc::pthread_attr_setdetachstate(&attr, libc::PTHREAD_CREATE_DETACHED));
-        if self._stack_size.is_some {
-            pthread_try!(libc::pthread_attr_setstacksize(&attr, self._stack_size.inner as libc::size_t));
+        if self._stack_size.is_some() {
+            pthread_try!(libc::pthread_attr_setstacksize(&attr, self._stack_size.unwrap() as libc::size_t));
         }
 
         let handle = mem::alloc::<internal::ThreadHandleFunc<F, ()>>();
@@ -648,7 +648,7 @@ mod tests {
         loop {
             // Spin a few cycles until the thread sets the return value
             sync::fence(Ordering::SeqCst);
-            if t._handle.ret.is_ok {
+            if t._handle.ret.is_ok() {
                 break;
             } else {
                 yield();

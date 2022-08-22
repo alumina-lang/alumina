@@ -144,8 +144,8 @@ macro check_cfg($self, $node) {
 
     $self.has_cfg = false;
     let child = child_by!($node, FieldKind::Attributes);
-    if child.is_some {
-        $self.visit(child.inner)?;
+    if child.is_some() {
+        $self.visit(child.unwrap())?;
     }
 
     defer {
@@ -285,9 +285,9 @@ impl TopLevelVisitor {
 
     fn visit_function_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
         check_cfg!(self, node);
-        let kind = if self.container.is_some {
-            if NODE_KINDS[self.container.inner.symbol() as usize] == NodeKind::ProtocolDefinition {
-                if node.child_by!(FieldKind::Body).is_some {
+        let kind = if self.container.is_some() {
+            if NODE_KINDS[self.container.unwrap().symbol() as usize] == NodeKind::ProtocolDefinition {
+                if node.child_by!(FieldKind::Body).is_some() {
                     ItemKind::ProvidedMethod
                 } else {
                     ItemKind::RequiredMethod
@@ -544,7 +544,7 @@ impl CodePrinter<W: Writable<W>> {
             }
             self.visit(child)?;
         }
-        if node.child_by!(FieldKind::EtCetera).is_some {
+        if node.child_by!(FieldKind::EtCetera).is_some() {
             if first {
                 w!(self.writer, "...");
             } else {
@@ -561,7 +561,7 @@ impl CodePrinter<W: Writable<W>> {
     }
 
     fn visit_protocol_bound(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
-        if child_by!(node, FieldKind::Negated).is_some {
+        if child_by!(node, FieldKind::Negated).is_some() {
             w!(self.writer, "!");
         }
         self.visit(child_by!(node, FieldKind::Type).unwrap())
@@ -573,7 +573,7 @@ impl CodePrinter<W: Writable<W>> {
             .text(self.parse_context.source());
         w!(self.writer, "{}", placeholder);
 
-        let all_bounds = child_by!(node, FieldKind::AllBounds).is_some;
+        let all_bounds = child_by!(node, FieldKind::AllBounds).is_some();
 
         if self.protocol_bounds {
             let cursor = node.walk();
@@ -606,7 +606,7 @@ impl CodePrinter<W: Writable<W>> {
             .text(self.parse_context.source());
 
         w!(self.writer, "{}", name);
-        if child_by!(node, FieldKind::EtCetera).is_some {
+        if child_by!(node, FieldKind::EtCetera).is_some() {
             w!(self.writer, "...");
         }
 
@@ -620,8 +620,8 @@ impl CodePrinter<W: Writable<W>> {
         let link = self.link_context.resolve_link(&path);
         defer link.free();
 
-        if link.is_some {
-            w!(self.writer, "<a href=\"{}\"><span class=\"identifier-type\">{}</span></a>", link.inner, path.last().unwrap());
+        if link.is_some() {
+            w!(self.writer, "<a href=\"{}\"><span class=\"identifier-type\">{}</span></a>", link.unwrap(), path.last().unwrap());
         } else {
             w!(self.writer, "{}", path.last().unwrap());
         }
@@ -636,8 +636,8 @@ impl CodePrinter<W: Writable<W>> {
         let link = self.link_context.resolve_link(&path);
         defer link.free();
 
-        if link.is_some {
-            w!(self.writer, "<a href=\"{}\"><span class=\"identifier-type\">!</span></a>", link.inner);
+        if link.is_some() {
+            w!(self.writer, "<a href=\"{}\"><span class=\"identifier-type\">!</span></a>", link.unwrap());
         } else {
             w!(self.writer, "!");
         }
@@ -659,7 +659,7 @@ impl CodePrinter<W: Writable<W>> {
     }
 
     fn visit_pointer_of(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
-        if child_by!(node, FieldKind::Mut).is_some {
+        if child_by!(node, FieldKind::Mut).is_some() {
             w!(self.writer, "&amp;mut ");
         } else {
             w!(self.writer, "&amp;");
@@ -700,8 +700,8 @@ impl CodePrinter<W: Writable<W>> {
             let link = self.link_context.resolve_link(&path);
             defer link.free();
 
-            if link.is_some {
-                w!(self.writer, "<a href=\"{}\"><span class=\"identifier-type\">()</span></a>", link.inner);
+            if link.is_some() {
+                w!(self.writer, "<a href=\"{}\"><span class=\"identifier-type\">()</span></a>", link.unwrap());
             } else {
                 w!(self.writer, "()");
             }
@@ -762,7 +762,7 @@ impl CodePrinter<W: Writable<W>> {
     }
 
     fn visit_slice_of(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
-        if child_by!(node, FieldKind::Mut).is_some {
+        if child_by!(node, FieldKind::Mut).is_some() {
             w!(self.writer, "&amp;mut [");
         } else {
             w!(self.writer, "&amp;[");
@@ -775,7 +775,7 @@ impl CodePrinter<W: Writable<W>> {
     }
 
     fn visit_dyn_of(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
-        if child_by!(node, FieldKind::Mut).is_some {
+        if child_by!(node, FieldKind::Mut).is_some() {
             w!(self.writer, "&amp;mut dyn ");
         } else {
             w!(self.writer, "&amp;dyn ");
@@ -873,7 +873,7 @@ impl CodePrinter<W: Writable<W>> {
             .transpose()?;
 
         let inner = child_by!(node, FieldKind::Inner);
-        if inner.is_some {
+        if inner.is_some() {
             w!(self.writer, " = ");
             self.visit(inner.unwrap())?;
         }

@@ -82,7 +82,7 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
     /// set already contained the value.
     #[inline]
     fn insert(self: &mut HashSet<K, H>, item: K) -> bool {
-        !self._inner.insert(item, ()).is_some
+        !self._inner.insert(item, ()).is_some()
     }
 
     /// Removes a value from the set.
@@ -90,13 +90,13 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
     /// Returns `true` if the value was present in the set, `false` otherwise.
     #[inline]
     fn remove(self: &mut HashSet<K, H>, item: K) -> bool {
-        self._inner.remove(item).is_some
+        self._inner.remove(item).is_some()
     }
 
     /// Retreives `true` if the set contains the given value, `false` otherwise.
     #[inline]
     fn contains(self: &HashSet<K, H>, item: K) -> bool {
-        self._inner.get(item).is_some
+        self._inner.get(item).is_some()
     }
 
     /// Retreives the number of elements in the set.
@@ -208,8 +208,8 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, I: Iterator<I, K>, H: Hasher<H> =
 
         loop {
             let item = iter.next();
-            if item.is_some {
-                self.insert(item.inner);
+            if item.is_some() {
+                self.insert(item.unwrap());
             } else {
                 break;
             }
@@ -396,14 +396,14 @@ mod tests {
         assert_eq!(*iter.next().unwrap(), 1);
         assert_eq!(*iter.next().unwrap(), 2);
         assert_eq!(*iter.next().unwrap(), 3);
-        assert!(!iter.next().is_some);
+        assert!(!iter.next().is_some());
 
         let iter = set.iter_ref().rev();
         assert_eq!(iter.size_hint(), Option::some(3usize));
         assert_eq!(*iter.next().unwrap(), 3);
         assert_eq!(*iter.next().unwrap(), 2);
         assert_eq!(*iter.next().unwrap(), 1);
-        assert!(!iter.next().is_some);
+        assert!(!iter.next().is_some());
     }
 
     #[test]

@@ -9,20 +9,20 @@
 ///
 /// Expands to the following expression
 /// ```notest
-/// if $.is_ok {
-///     $.inner.ok
+/// if $.is_ok() {
+///     $.unwrap()
 /// } else {
-///     return Result::err(self.inner.err)
+///     return Result::err(self.unwrap_err())
 /// }
 /// ```
 ///
 /// See also [std::option::try] for [std::option::Option].
 macro try($res) {
     let res = $res;
-    if res.is_ok {
-        res.inner.ok
+    if res.is_ok() {
+        res.unwrap()
     } else {
-        return Result::err(res.inner.err)
+        return Result::err(res.unwrap_err())
     }
 }
 
@@ -55,7 +55,7 @@ macro try($res) {
 ///
 /// let result = executable_type("\x7f\x45\x4c\x46\x02\x01\x01\x00...");
 ///
-/// if !result.is_ok {
+/// if !result.is_ok() {
 ///     eprintln!("Invalid executable");
 /// } else {
 ///     // e.g. result.unwrap();
@@ -66,8 +66,8 @@ macro try($res) {
 /// `Result` is commonly used with the [try operator](try) (`?`) so that fallible functions can
 /// be composed easily by bailing early.
 struct Result<T, E> {
-    is_ok: bool,
-    inner: _ResultT<T, E>
+    _is_ok: bool,
+    _inner: _ResultT<T, E>
 }
 
 union _ResultT<T, E> {
@@ -84,34 +84,91 @@ impl Result<T, E> {
     /// ```
     /// let r: Result<i32, i32> = Result::ok(10);
     ///
-    /// assert!(r.is_ok);
+    /// assert!(r.is_ok());
     /// assert_eq!(r.unwrap(), 10);
     /// ```
     #[force_inline]
     fn ok(ok: T) -> Result<T, E> {
         Result::<T, E> {
-            is_ok: true,
-            inner: _ResultT::<T, E> {
+            _is_ok: true,
+            _inner: _ResultT::<T, E> {
                 ok: ok
             }
         }
     }
 
     /// Create a error variant
+    ///
     /// ## Example
     /// ```
     /// let r: Result<i32, i32> = Result::err(42);
     ///
-    /// assert!(!r.is_ok);
+    /// assert!(!r.is_ok());
     /// assert_eq!(r.unwrap_err(), 42);
     /// ```
     #[force_inline]
     fn err(err: E) -> Result<T, E> {
         Result::<T, E> {
-            is_ok: false,
-            inner: _ResultT::<T, E> {
+            _is_ok: false,
+            _inner: _ResultT::<T, E> {
                 err: err
             }
+        }
+    }
+
+    /// Returns `true` if the result conains an OK variant, `false` otherwise
+    #[force_inline]
+    fn is_ok(self: &Result<T, E>) -> bool {
+        self._is_ok
+    }
+
+    /// Converts from `Result<T, E>` to `Option<T>`.
+    ///
+    /// If the result contains an error, it returns `Option::none()`.
+    ///
+    /// ## Example
+    /// ```
+    /// let r1: Result<i32, i32> = Result::ok(10);
+    /// let r2: Result<i32, i32> = Result::err(20);
+    ///
+    /// let o1: Option<i32> = r1.get();
+    /// let o2: Option<i32> = r2.get();
+    ///
+    /// assert!(o1.is_some());
+    /// assert_eq!(o1.unwrap(), 10);
+    ///
+    /// assert!(!o2.is_some());
+    /// ```
+    fn get(self: Result<T, E>) -> Option<T> {
+        if self.is_ok() {
+            Option::some(self.unwrap())
+        } else {
+            Option::none()
+        }
+    }
+
+    /// Converts from `Result<T, E>` to `Option<E>`.
+    ///
+    /// If the result contains an OK varianr, it returns `Option::none()`.
+    ///
+    /// ## Example
+    /// ```
+    /// let r1: Result<i32, i32> = Result::ok(10);
+    /// let r2: Result<i32, i32> = Result::err(20);
+    ///
+    /// let o1: Option<i32> = r1.get_err();
+    /// let o2: Option<i32> = r2.get_err();
+    ///
+    /// assert!(!o1.is_some());
+    ///
+    /// assert!(o2.is_some());
+    /// assert_eq!(o2.unwrap(), 20);
+    /// ```
+    fn get_err(self: Result<T, E>) -> Option<E> {
+        if self.is_ok() {
+            Option::none()
+        } else {
+            Option::some(self.unwrap_err())
         }
     }
 
@@ -128,51 +185,16 @@ impl Result<T, E> {
     ///
     /// r.unwrap(); // panics
     /// ```
+    #[inline]
     fn unwrap(self: Result<T, E>) -> T {
-        if self.is_ok {
-            self.inner.ok
+        if self.is_ok() {
+            self._inner.ok
         } else {
             when E: Formattable<E, panicking::internal::PanicFormatter> {
-                panic!("unwrap on an err value: {}", self.inner.err)
+                panic!("unwrap on an err value: {}", self._inner.err)
             } else {
                 panic!("unwrap on an err value")
             }
-        }
-    }
-
-    /// Return the success value or a default value
-    ///
-    /// ## Example
-    /// ```
-    /// let r1: Result<i32, i32> = Result::ok(10);
-    /// let r2: Result<i32, i32> = Result::err(20);
-    ///
-    /// assert_eq!(r1.unwrap_or(30), 10);
-    /// assert_eq!(r2.unwrap_or(40), 40);
-    /// ```
-    fn unwrap_or(self: Result<T, E>, val: T) -> T {
-        if self.is_ok {
-            self.inner.ok
-        } else {
-            val
-        }
-    }
-
-    /// Return the success value or a default value provided by a callback
-    ///
-    /// ## Example
-    /// ```
-    /// let r1: Result<i32, i32> = Result::ok(10);
-    /// let r2: Result<i32, i32> = Result::err(20);
-    ///
-    /// assert_eq!(r1.unwrap_or_else(i32::max_value), 10);
-    /// assert_eq!(r2.unwrap_or_else(i32::max_value), i32::max_value());
-    /// ```
-    fn unwrap_or_else<F: builtins::Callable<(), T>>(self: Result<T, E>, func: F) -> T {
-        if self.is_ok {
-            self.inner.ok
-        } else {
-            func()
         }
     }
 
@@ -189,15 +211,52 @@ impl Result<T, E> {
     ///
     /// r.unwrap_err(); // panics
     /// ```
+    #[inline]
     fn unwrap_err(self: Result<T, E>) -> E {
-        if !self.is_ok {
-            self.inner.err
+        if !self.is_ok() {
+            self._inner.err
         } else {
             when T: Formattable<T, panicking::internal::PanicFormatter> {
-                panic!("unwrap_err on a ok value: {}", self.inner.ok)
+                panic!("unwrap_err on a ok value: {}", self._inner.ok)
             } else {
                 panic!("unwrap_err on a ok value")
             }
+        }
+    }
+
+    /// Return the success value or a default value
+    ///
+    /// ## Example
+    /// ```
+    /// let r1: Result<i32, i32> = Result::ok(10);
+    /// let r2: Result<i32, i32> = Result::err(20);
+    ///
+    /// assert_eq!(r1.unwrap_or(30), 10);
+    /// assert_eq!(r2.unwrap_or(40), 40);
+    /// ```
+    fn unwrap_or(self: Result<T, E>, val: T) -> T {
+        if self.is_ok() {
+            self.unwrap()
+        } else {
+            val
+        }
+    }
+
+    /// Return the success value or a default value provided by a callback
+    ///
+    /// ## Example
+    /// ```
+    /// let r1: Result<i32, i32> = Result::ok(10);
+    /// let r2: Result<i32, i32> = Result::err(20);
+    ///
+    /// assert_eq!(r1.unwrap_or_else(i32::max_value), 10);
+    /// assert_eq!(r2.unwrap_or_else(i32::max_value), i32::max_value());
+    /// ```
+    fn unwrap_or_else<F: builtins::Callable<(), T>>(self: Result<T, E>, func: F) -> T {
+        if self.is_ok() {
+            self.unwrap()
+        } else {
+            func()
         }
     }
 
@@ -215,10 +274,10 @@ impl Result<T, E> {
     /// assert_eq!(b.map(|v: i32| -> i32 { v + 1 }), Result::err(()));
     /// ```
     fn map<Tm, F: builtins::Callable<(T), Tm>>(self: Result<T, E>, func: F) -> Result<Tm, E> {
-        if self.is_ok {
-            Result::ok(func(self.inner.ok))
+        if self.is_ok() {
+            Result::ok(func(self.unwrap()))
         } else {
-            Result::err(self.inner.err)
+            Result::err(self.unwrap_err())
         }
     }
 
@@ -236,10 +295,10 @@ impl Result<T, E> {
     /// assert_eq!(b.map_err(|v: i32| -> i32 { v + 1 }), Result::ok(()));
     /// ```
     fn map_err<Em, F: builtins::Callable<(E), Em>>(self: Result<T, E>, func: F) -> Result<T, Em> {
-        if self.is_ok {
-            Result::ok(self.inner.ok)
+        if self.is_ok() {
+            Result::ok(self.unwrap())
         } else {
-            Result::err(func(self.inner.err))
+            Result::err(func(self.unwrap_err()))
         }
     }
 
@@ -249,10 +308,10 @@ impl Result<T, E> {
     /// If the success value is present, function is not called and the original error is
     /// passed through.
     fn and_then<Tm, F: builtins::Callable<(T), Result<Tm, E>>>(self: Result<T, E>, func: F) -> Result<Tm, E> {
-        if self.is_ok {
-            func(self.inner.ok)
+        if self.is_ok() {
+            func(self.unwrap())
         } else {
-            Result::err(self.inner.err)
+            Result::err(self.unwrap_err())
         }
     }
 }
@@ -278,44 +337,44 @@ impl Result {
     /// assert_eq!(c.transpose(), Option::some(Result::err(1337)));
     /// ```
     fn transpose<T, E>(self: Result<Option<T>, E>) -> Option<Result<T, E>> {
-        if self.is_ok {
-            if self.inner.ok.is_some {
-                Option::some(Result::ok(self.inner.ok.inner))
+        if self.is_ok() {
+            if self.unwrap().is_some() {
+                Option::some(Result::ok(self.unwrap().unwrap()))
             } else {
                 Option::none()
             }
         } else {
-            Option::some(Result::err(self.inner.err))
+            Option::some(Result::err(self.unwrap_err()))
         }
     }
 
     /// @ std::fmt::Formattable::fmt
     fn fmt<T: Formattable<T, F>, E: Formattable<E, F>, F: Formatter<F>>(self: &Result<T, E>, formatter: &mut F) -> fmt::Result {
-        if self.is_ok {
-            write!(formatter, "ok({})", self.inner.ok)
+        if self.is_ok() {
+            write!(formatter, "ok({})", self.unwrap())
         } else {
-            write!(formatter, "err({})", self.inner.err)
+            write!(formatter, "err({})", self.unwrap_err())
         }
     }
 
     /// @ std::hash::Hashable::hash
     #[inline]
     fn hash<T: Hashable<T, H>, E: Hashable<E, H>, H: Hasher<H>>(self: &Result<T, E>, hasher: &mut H) {
-        self.is_ok.hash(hasher);
-        if self.is_ok {
-            self.inner.ok.hash(hasher);
+        self.is_ok().hash(hasher);
+        if self.is_ok() {
+            self.unwrap().hash(hasher);
         } else {
-            self.inner.err.hash(hasher);
+            self.unwrap_err().hash(hasher);
         }
     }
 
     /// @ std::cmp::Equatable::equals
     #[inline]
     fn equals<T: Equatable<T>, E: Equatable<E>>(lhs: &Result<T, E>, rhs: &Result<T, E>) -> bool {
-        if lhs.is_ok && rhs.is_ok {
-            lhs.inner.ok.equals(&rhs.inner.ok)
-        } else if !lhs.is_ok && !rhs.is_ok {
-            lhs.inner.err.equals(&rhs.inner.err)
+        if lhs.is_ok() && rhs.is_ok() {
+            lhs.unwrap().equals(&rhs.unwrap())
+        } else if !lhs.is_ok() && !rhs.is_ok() {
+            lhs.unwrap_err().equals(&rhs.unwrap_err())
         } else {
             false
         }
@@ -323,19 +382,19 @@ impl Result {
 
     /// @ std::mem::Movable::move
     fn move<T: Movable<T>, E: Movable<E>>(self: &mut Result<T, E>) -> Result<T, E> {
-        if self.is_ok {
-            Result::ok(self.inner.ok.move())
+        if self.is_ok() {
+            Result::ok(self.unwrap().move())
         } else {
-            Result::err(self.inner.err.move())
+            Result::err(self.unwrap_err().move())
         }
     }
 
     /// @ std::mem::Freeable::free
     fn free<T: Freeable<T>, E: Freeable<E>>(self: &mut Result<T, E>) {
-        if self.is_ok {
-            self.inner.ok.free();
+        if self.is_ok() {
+            self.unwrap().free();
         } else {
-            self.inner.err.free();
+            self.unwrap_err().free();
         }
     }
 

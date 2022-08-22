@@ -105,7 +105,7 @@ impl PageWriter<T: std::io::Writable<T>> {
                 printer.protocol_bounds = true;
 
                 for (idx, child) in children_by!(node, FieldKind::Argument, &cursor).enumerate() {
-                    if !child_by!(child, FieldKind::Bound).is_some {
+                    if !child_by!(child, FieldKind::Bound).is_some() {
                         continue;
                     }
                     wln!(self, "<div class=\"protocol-bound\">");
@@ -140,11 +140,11 @@ impl PageWriter<T: std::io::Writable<T>> {
     fn write_impl_header(self: &PageWriter<T>, item: &Item, node: Option<Node>, first: bool) -> Result<()> {
         use aluminac::lib::node_kinds::{NODE_KINDS, NodeKind};
 
-        if !node.is_some || NODE_KINDS[node.inner.symbol() as usize] != NodeKind::ImplBlock {
+        if !node.is_some() || NODE_KINDS[node.unwrap().symbol() as usize] != NodeKind::ImplBlock {
             return Result::ok(());
         }
 
-        let node = node.inner;
+        let node = node.unwrap();
         let link_context = LinkContext::new(self.item_bag, &item.defined_in);
 
         if first {
@@ -163,7 +163,7 @@ impl PageWriter<T: std::io::Writable<T>> {
                 printer.protocol_bounds = true;
 
                 for (idx, child) in children_by!(node, FieldKind::Argument, &cursor).enumerate() {
-                    if !child_by!(child, FieldKind::Bound).is_some {
+                    if !child_by!(child, FieldKind::Bound).is_some() {
                         continue;
                     }
                     wln!(self, "<div class=\"protocol-bound\">");
@@ -257,7 +257,7 @@ impl PageWriter<T: std::io::Writable<T>> {
                     && v.is_public()
                     && v.path.len() == proto.defined_in.len() + 1
                     && v.path.starts_with(&proto.defined_in)
-                    && v.node.child_by!(FieldKind::Body).is_some // Only methods with body
+                    && v.node.child_by!(FieldKind::Body).is_some() // Only methods with body
                     && methods.insert(v.path.last().unwrap())    // Mixin methods do not shadow other methods
             });
         defer mixin_methods.free();
@@ -303,13 +303,13 @@ impl PageWriter<T: std::io::Writable<T>> {
         wln!(self, "<link rel=\"mask-icon\" href=\"/static/safari-pinned-tab.svg\" color=\"#5bbad5\" />");
         wln!(self, "<link rel=\"shortcut icon\" href=\"/static/favicon.ico\" />");
 
-        if self.processor.base_domain.is_some {
+        if self.processor.base_domain.is_some() {
             let link = link_context.resolve_link(&top_level.defined_in).unwrap();
             defer link.free();
             wln!(
                 self,
                 "<link rel=\"canonical\" href=\"{}{}\" />",
-                self.processor.base_domain.inner,
+                self.processor.base_domain.unwrap(),
                 link
             );
         }
@@ -330,7 +330,7 @@ impl PageWriter<T: std::io::Writable<T>> {
         wln!(self, "<img width=\"100px\" height=\"100px\" class=\"logo\" src=\"/static/logo.svg\" alt=\"Alumina Docs\">");
         wln!(self, "</a>");
 
-        if nav_item.path.last().is_some {
+        if nav_item.path.last().is_some() {
             self.write_breadcrumbs(nav_item, false)?;
         }
 
@@ -693,7 +693,7 @@ fn main_inner(args: &[&[u8]]) -> Result<()> {
 
 fn main(args: &[&[u8]]) -> i32 {
     let res = main_inner(args);
-    if !res.is_ok {
+    if !res.is_ok() {
         println!("{}", res.unwrap_err());
         1
     } else {

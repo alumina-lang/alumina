@@ -235,10 +235,10 @@ type DefaultRng = Pcg32;
 ///
 /// The returned pointer is safe to store, but not safe to send across threads.
 fn thread_rng() -> &mut DefaultRng {
-    if !internal::THREAD_RNG.is_some {
+    if !internal::THREAD_RNG.is_some() {
         internal::THREAD_RNG = Option::some(internal::seed_default_rng());
     }
-    &internal::THREAD_RNG.inner
+    internal::THREAD_RNG.as_mut_ptr().unwrap()
 }
 
 /// Extension mixin for the [Rng] trait

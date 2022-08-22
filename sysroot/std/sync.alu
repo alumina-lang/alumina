@@ -116,7 +116,7 @@ impl Atomic<T: Primitive + !ZeroSized> {
     ///         let root = (old as f64).sqrt() as u64;
     ///
     ///         let ret = val.compare_exchange(old, root, ordering, Ordering::Relaxed);
-    ///         if ret.is_ok {
+    ///         if ret.is_ok() {
     ///             return old;
     ///         } else {
     ///             old = ret.unwrap_err();
@@ -207,7 +207,7 @@ impl Atomic<T: Primitive + !ZeroSized> {
     ///         }
     ///     });
     ///
-    ///     if value.is_ok {
+    ///     if value.is_ok() {
     ///         println!("val = {}", value.unwrap());
     ///     } else {
     ///         println!("val = {}. We are done.", value.unwrap_err());
@@ -225,7 +225,7 @@ impl Atomic<T: Primitive + !ZeroSized> {
         let prev = self.load(fetch_order);
         loop {
             let updated = f(prev);
-            if !updated.is_some {
+            if !updated.is_some() {
                 return Result::err(prev);
             }
             let maybe_updated = self.compare_exchange_weak(
@@ -234,7 +234,7 @@ impl Atomic<T: Primitive + !ZeroSized> {
                 set_order,
                 fetch_order,
             );
-            if maybe_updated.is_ok {
+            if maybe_updated.is_ok() {
                 return Result::ok(prev);
             } else {
                 prev = maybe_updated.unwrap_err();
@@ -755,7 +755,7 @@ impl Event {
                 Ordering::Relaxed
             );
 
-            if !maybe_replaced.is_ok {
+            if !maybe_replaced.is_ok() {
                 // Someone beat us to the punch
                 state = maybe_replaced.unwrap_err();
                 continue;

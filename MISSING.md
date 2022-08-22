@@ -30,7 +30,7 @@
   - Right now there is not even a good error message to say that this is not supported, just a cryptic "unbound placeholder" during mono
 - Lambdas in macros are broken.
 - Promoting all variables to function scope is a bit of a unique feature of Alumina and I like it (comes in quite handy for autoref - can take an address of any rvalue and defer), but it may inhibit some optimizations downstream.
-- `if opt.is_some { opt.inner }` and  `if res.is_ok { res.inner.ok }` do not spark joy. Full pattern matching is overkill, but this is very common and
+- `if opt.is_some { opt.inner }` and  `if res.is_ok() { res.unwrap() }` do not spark joy. Full pattern matching is overkill, but this is very common and
   deserves a better idiom.
 
 ## Grammar, parsing, AST

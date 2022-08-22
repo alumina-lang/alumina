@@ -58,7 +58,7 @@ pub enum LangItemKind {
     TypeopTupleTailOf,
     TypeopReturnTypeOf,
     TypeopArgumentsOf,
-    TypeopVoidPtrOf,
+    TypeopPtrWithMutOf,
     TypeopGenericArgsOf,
     TypeopEnumTypeOf,
 
@@ -102,6 +102,7 @@ impl LangItemKind {
             | LangItemKind::ProtoFunctionPointer
             | LangItemKind::ProtoArrayOf
             | LangItemKind::ProtoPointerOf
+            | LangItemKind::ProtoMeta
             | LangItemKind::ProtoRangeOf => true,
             _ => false,
         }
@@ -117,7 +118,8 @@ impl LangItemKind {
             | LangItemKind::TypeopTupleTailOf
             | LangItemKind::TypeopReturnTypeOf
             | LangItemKind::TypeopArgumentsOf
-            | LangItemKind::TypeopVoidPtrOf
+            | LangItemKind::TypeopPtrWithMutOf
+            | LangItemKind::TypeopEnumTypeOf
             | LangItemKind::TypeopGenericArgsOf => true,
             _ => false,
         }
@@ -216,7 +218,7 @@ impl TryFrom<&str> for LangItemKind {
             "typeop_tuple_tail_of" => Ok(LangItemKind::TypeopTupleTailOf),
             "typeop_return_type_of" => Ok(LangItemKind::TypeopReturnTypeOf),
             "typeop_arguments_of" => Ok(LangItemKind::TypeopArgumentsOf),
-            "typeop_void_ptr_of" => Ok(LangItemKind::TypeopVoidPtrOf),
+            "typeop_ptr_with_mut_of" => Ok(LangItemKind::TypeopPtrWithMutOf),
             "typeop_generic_args_of" => Ok(LangItemKind::TypeopGenericArgsOf),
             "typeop_enum_type_of" => Ok(LangItemKind::TypeopEnumTypeOf),
 

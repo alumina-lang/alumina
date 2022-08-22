@@ -1708,12 +1708,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                         }
                         return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
                     }
-                    Some(LangItemKind::TypeopVoidPtrOf) => {
-                        if args.len() != 1 {
+                    Some(LangItemKind::TypeopPtrWithMutOf) => {
+                        if args.len() != 2 {
                             return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
                         }
-                        if let ir::Ty::Pointer(_, is_const) = args[0] {
-                            return Ok(self.types.pointer(self.types.void(), *is_const));
+                        if let ir::Ty::Pointer(_, is_const) = args[1] {
+                            return Ok(self.types.pointer(args[0], *is_const));
                         }
                         return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
                     }
