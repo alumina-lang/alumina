@@ -81,7 +81,7 @@ pub enum LangItemKind {
 }
 
 impl LangItemKind {
-    pub fn is_protocol(&self) -> bool {
+    pub fn is_builtin_protocol(&self) -> bool {
         match self {
             LangItemKind::ProtoPrimitive
             | LangItemKind::ProtoNumeric

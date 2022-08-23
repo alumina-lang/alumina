@@ -50,11 +50,11 @@ extern "intrinsic" fn align_of<T>() -> usize;
 /// Allocate the memory on the stack
 extern "intrinsic" fn aligned_alloca(size: usize, align: usize) -> &mut void;
 
-/// Return a pointer to the first element of the virtual method table for the given
-/// protocol and type.
+/// Generate a virtual method table for the given protocol and type.
 ///
-/// Do not use directly, use coercion to `&dyn Protocol` instead.
-extern "intrinsic" fn make_vtable<Proto, T>() -> &fn();
+/// Do not use directly, use coercion to `&dyn Protocol` instead. Meant to be called
+/// from a static initializer (see [typing::internal::VTABLE]).
+extern "intrinsic" fn vtable<Proto, T>() -> [&fn(); 0];
 
 /// Minimal support for unit testing in the compiler.
 ///
@@ -67,7 +67,8 @@ extern "intrinsic" fn test_cases() -> &[TestCaseMeta];
 
 /// Enum variants
 ///
-/// Do not use directly, use [typing::enum_variants] instead.
+/// Do not use directly, use [typing::enum_variants] instead. Meant to be called
+/// from a static initializer (see [typing::internal::ENUM_VARIANTS]).
 extern "intrinsic" fn enum_variants<T: builtins::Enum>() -> [(&[u8], T); 0];
 
 /// Inline assembly

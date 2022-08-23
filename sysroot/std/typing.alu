@@ -32,8 +32,8 @@ fn type_name<T>() -> &[u8] {
 /// "Dyn" object, a type-erased pointer to an object and a vtable for protocol functions.
 ///
 /// ```notest
-/// type &dyn Protocol<...> = dyn<Protocol<dyn_self, ...>, &void>
-/// type &mut dyn Protocol<...> = dyn<Protocol<dyn_self, ...>, &mut void>
+/// type &dyn Protocol = dyn<Protocol, &void>
+/// type &mut dyn Protocol = dyn<Protocol, &mut void>
 /// ```
 /// ## Example
 /// ```
@@ -49,8 +49,8 @@ fn type_name<T>() -> &[u8] {
 ///     fn foo(self: &Quux) { println!("Quux::foo"); }
 /// }
 ///
-/// let bar: &dyn Foo = &Bar {};
-/// let quux: &dyn Foo = &Quux {};
+/// let bar: &dyn Foo<Self> = &Bar {};
+/// let quux: &dyn Foo<Self> = &Quux {};
 ///
 /// bar.foo(); // prints "Bar::foo"
 /// quux.foo(); // prints "Quux::foo"
@@ -60,6 +60,10 @@ struct dyn<Proto, Ptr> {
     _ptr: Ptr,
     _vtable: &fn(),
 }
+
+/// A placeholder for the `Self` type in the protocol of a `dyn` object.
+#[lang(dyn_self)]
+struct Self {}
 
 
 /// Returns the names and associated values of enum variants.
@@ -155,6 +159,7 @@ fn assert_type_ne<T1, T2>() {
 
 mod internal {
     static ENUM_VARIANTS<E> = intrinsics::enum_variants::<E>();
+    static VTABLE<Proto, T> = intrinsics::vtable::<Proto, T>();
 
     type void_ptr_of<Ptr> = builtins::ptr_with_mut_of<void, Ptr>;
 
@@ -164,16 +169,12 @@ mod internal {
         (name, value)
     }
 
-    /// A placeholder for the `Self` type in the protocol of a dyn object.
-    #[lang(dyn_self)]
-    struct dyn_self {}
-
     #[lang(dyn_new)]
     #[force_inline]
     fn dyn_new<Proto, Ptr>(ptr: Ptr) -> dyn<Proto, void_ptr_of<Ptr>> {
         dyn {
             _ptr: ptr as void_ptr_of<Ptr>,
-            _vtable: intrinsics::make_vtable::<Proto, builtins::deref_of<Ptr>>()
+            _vtable: &VTABLE::<Proto, builtins::deref_of<Ptr>>[0]
         }
     }
 
@@ -226,10 +227,10 @@ mod tests {
 
     #[test]
     fn test_dyn() {
-        let b: &mut dyn iter::Iterator<i32>;
+        let b: &mut dyn iter::Iterator<Self, i32>;
 
         b = &iter::repeat(42);
-        let a: &dyn iter::Iterator<i32> = b;
+        let a: &dyn iter::Iterator<Self, i32> = b;
         assert_eq!(a.size_hint(), Option::some(usize::max_value()));
         assert_eq!(b.size_hint(), Option::some(usize::max_value()));
         assert_eq!(b.next(), Option::some(42));
@@ -241,10 +242,20 @@ mod tests {
         assert_eq!(b.next(), Option::some(10));
         assert_eq!(b.next(), Option::none());
 
-        let c = a as &mut dyn iter::Iterator<i32>;
+        let c = a as &mut dyn iter::Iterator<Self, i32>;
         assert_eq!(c.next(), Option::some(42));
         assert_eq!(c.next(), Option::some(42));
         assert_eq!(c.next(), Option::some(42));
         // ...
+    }
+
+    protocol Empty<Self> {}
+
+    #[test]
+    fn test_dyn_empty_protocol() {
+        let a = 42;
+        let b: &mut dyn Empty<Self> = &a;
+
+        assert_eq!(b._ptr, &a as &mut void);
     }
 }

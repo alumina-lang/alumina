@@ -235,6 +235,8 @@ pub enum CodeErrorKind {
     MixinOnlyProtocol,
     #[error("protocols cannot be used as concrete types (did you mean to use `&dyn {}`?)", .0)]
     ProtocolsAreSpecialMkay(String),
+    #[error("`{}` cannot be used as a concrete type", .0)]
+    SpecialNamedType(String),
     #[error("signature of `{}` is incompatible with virtual dispatch", .0)]
     NonDynnableFunction(String),
     #[error("invalid format string ({})", .0)]
