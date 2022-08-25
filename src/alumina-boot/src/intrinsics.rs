@@ -87,6 +87,18 @@ pub struct CompilerIntrinsics<'ir> {
     types: TypeBuilder<'ir>,
 }
 
+fn get_const_string<'ir>(expr: ExprP<'ir>) -> Result<&'ir str, AluminaError> {
+    match const_eval::const_eval(expr) {
+        Ok(Value::Str(s)) => Ok(std::str::from_utf8(s).unwrap()),
+        Ok(v) => Err(CodeErrorKind::TypeMismatch(
+            "string".to_string(),
+            format!("{:?}", v.type_kind()),
+        ))
+        .with_no_span(),
+        Err(e) => Err(CodeErrorKind::CannotConstEvaluate(e)).with_no_span(),
+    }
+}
+
 impl<'ir> CompilerIntrinsics<'ir> {
     pub fn new(global_ctx: GlobalCtx, ir: &'ir IrCtx<'ir>) -> Self {
         Self {
@@ -150,11 +162,9 @@ impl<'ir> CompilerIntrinsics<'ir> {
     }
 
     fn compile_fail(&self, reason: ExprP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
-        let value = const_eval::const_eval(reason)
-            .map_err(|_| CodeErrorKind::CannotConstEvaluate)
-            .with_no_span()?;
+        let reason = get_const_string(reason)?;
 
-        Err(CodeErrorKind::UserDefined(value.to_string())).with_no_span()
+        Err(CodeErrorKind::UserDefined(reason.to_string())).with_no_span()
     }
 
     fn compile_warn(
@@ -162,12 +172,10 @@ impl<'ir> CompilerIntrinsics<'ir> {
         reason: ExprP<'ir>,
         span: Option<Span>,
     ) -> Result<ExprP<'ir>, AluminaError> {
-        let value = const_eval::const_eval(reason)
-            .map_err(|_| CodeErrorKind::CannotConstEvaluate)
-            .with_no_span()?;
+        let reason = get_const_string(reason)?;
 
         self.global_ctx.diag().add_warning(CodeError::from_kind(
-            CodeErrorKind::UserDefined(value.to_string()),
+            CodeErrorKind::UserDefined(reason.to_string()),
             span,
         ));
 
@@ -181,12 +189,10 @@ impl<'ir> CompilerIntrinsics<'ir> {
         reason: ExprP<'ir>,
         span: Option<Span>,
     ) -> Result<ExprP<'ir>, AluminaError> {
-        let value = const_eval::const_eval(reason)
-            .map_err(|_| CodeErrorKind::CannotConstEvaluate)
-            .with_no_span()?;
+        let reason = get_const_string(reason)?;
 
         self.global_ctx.diag().add_note(CodeError::from_kind(
-            CodeErrorKind::UserDefined(value.to_string()),
+            CodeErrorKind::UserDefined(reason.to_string()),
             span,
         ));
 
@@ -248,10 +254,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
         args: &[ExprP<'ir>],
         ret_ty: TyP<'ir>,
     ) -> Result<ExprP<'ir>, AluminaError> {
-        let name = match const_eval::const_eval(name) {
-            Ok(Value::Str(s)) => std::str::from_utf8(s).unwrap(),
-            _ => return Err(CodeErrorKind::CannotConstEvaluate).with_no_span(),
-        };
+        let name = get_const_string(name)?;
 
         let arg_types = args.iter().map(|arg| arg.ty).collect::<Vec<_>>();
         let fn_type = self.types.function(arg_types, ret_ty);
@@ -265,10 +268,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
     }
 
     fn asm(&self, assembly: ExprP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
-        let assembly = match const_eval::const_eval(assembly) {
-            Ok(Value::Str(s)) => std::str::from_utf8(s).unwrap(),
-            _ => return Err(CodeErrorKind::CannotConstEvaluate).with_no_span(),
-        };
+        let assembly = get_const_string(assembly)?;
 
         Ok(self.expressions.codegen_intrinsic(
             CodegenIntrinsicKind::Asm(assembly),
@@ -281,10 +281,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
         name: ExprP<'ir>,
         ret_ty: TyP<'ir>,
     ) -> Result<ExprP<'ir>, AluminaError> {
-        let name = match const_eval::const_eval(name) {
-            Ok(Value::Str(s)) => std::str::from_utf8(s).unwrap(),
-            _ => return Err(CodeErrorKind::CannotConstEvaluate).with_no_span(),
-        };
+        let name = get_const_string(name)?;
 
         Ok(self
             .expressions

@@ -66,10 +66,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                 }
                 self.match_slot(inferred, a1, b1)?;
             }
-            (ast::Ty::Array(a1, a2), ir::Ty::Array(b1, b2)) => {
-                if a2 != b2 {
-                    return Err(());
-                }
+            (ast::Ty::Array(a1, _), ir::Ty::Array(b1, _)) => {
                 self.match_slot(inferred, a1, b1)?;
             }
             (ast::Ty::Slice(a1, a_const), ir::Ty::NamedType(_t)) => {

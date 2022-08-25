@@ -368,7 +368,7 @@ module.exports = grammar({
         "[",
         field("inner", $._type),
         ";",
-        field("size", $.integer_literal),
+        field("size", $._expression),
         "]"
       ),
 

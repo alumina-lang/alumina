@@ -1,0 +1,57 @@
+// Simple constant values
+const INT: u32 = 1;
+const STR = "Hello";
+
+// Constants with compile-time evaluation
+const EVAL1: u32 = 1 + 1;
+const EVAL2: u32 = {
+    1 + 2; // Only pure statements allowed in constant expressions
+    2 + 3;
+    EVAL1
+};
+
+const AACS_ENCRYPTION_KEY: u128 = {
+    // This warning will only be shown if the constant is used in the program
+    std::compile_warn!("MPAA will sue you if you use this key");
+    0x09f911029d74e35bd84156c5635688c0
+};
+
+// if expressions and casts are supported
+const EVAL3 = if EVAL1 > 2 { EVAL1 as usize } else { 7usize };
+
+// Enum variants can have constant values
+enum Color {
+    Red   = (255 << 16) |   (0 << 8) |   0,
+    Green =   (0 << 16) | (255 << 8) |   0,
+    Blue  =   (0 << 16) |   (0 << 8) | 255,
+}
+
+macro times($x, $y) {
+    $x * $y
+}
+
+fn main() {
+    use std::fmt::{hex, zero_pad};
+
+    // Constants can be used e.g. in array sizes
+    let arr: [i32; EVAL3];
+    println!("arr.len() = {}", arr.len());
+
+    println!("{}", AACS_ENCRYPTION_KEY);
+
+    // Macros work too. Who doesn't love arrays that change length depending on
+    // the source code line they are declared on?
+    let wacky: [i32; std::line!().times!(10)];
+    let odd: [i32; std::line!().times!(100)];
+    let quirky: [i32; std::line!().times!(1000)];
+    let weird: [i32; std::line!().times!(10000)];
+
+    println!("wacky.len() = {}", wacky.len());
+    println!("odd.len() = {}", odd.len());
+    println!("quirky.len() = {}", quirky.len());
+    println!("weird.len() = {}", weird.len());
+
+    for color in [Color::Red, Color::Green, Color::Blue] {
+        println!("{}", (color as i32).hex().zero_pad(6));
+    }
+}

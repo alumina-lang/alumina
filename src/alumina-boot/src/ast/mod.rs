@@ -220,6 +220,46 @@ impl BuiltinType {
         )
     }
 
+    pub fn to_signed(&self) -> Option<BuiltinType> {
+        let ret = match *self {
+            BuiltinType::I8
+            | BuiltinType::I16
+            | BuiltinType::I32
+            | BuiltinType::I64
+            | BuiltinType::I128
+            | BuiltinType::ISize => *self,
+            BuiltinType::U8 => BuiltinType::I8,
+            BuiltinType::U16 => BuiltinType::I16,
+            BuiltinType::U32 => BuiltinType::I32,
+            BuiltinType::U64 => BuiltinType::I64,
+            BuiltinType::U128 => BuiltinType::I128,
+            BuiltinType::USize => BuiltinType::ISize,
+            _ => return None,
+        };
+
+        Some(ret)
+    }
+
+    pub fn to_unsigned(&self) -> Option<BuiltinType> {
+        let ret = match *self {
+            BuiltinType::U8
+            | BuiltinType::U16
+            | BuiltinType::U32
+            | BuiltinType::U64
+            | BuiltinType::U128
+            | BuiltinType::USize => *self,
+            BuiltinType::I8 => BuiltinType::U8,
+            BuiltinType::I16 => BuiltinType::U16,
+            BuiltinType::I32 => BuiltinType::U32,
+            BuiltinType::I64 => BuiltinType::U64,
+            BuiltinType::I128 => BuiltinType::U128,
+            BuiltinType::ISize => BuiltinType::USize,
+            _ => return None,
+        };
+
+        Some(ret)
+    }
+
     pub fn is_float(&self) -> bool {
         matches!(self, BuiltinType::F32 | BuiltinType::F64)
     }
@@ -256,7 +296,7 @@ pub enum Ty<'ast> {
     Slice(TyP<'ast>, bool),
     Dyn(TyP<'ast>, bool),
     TypeOf(ExprP<'ast>),
-    Array(TyP<'ast>, usize),
+    Array(TyP<'ast>, ExprP<'ast>),
     Tuple(&'ast [TyP<'ast>]),
     FunctionPointer(&'ast [TyP<'ast>], TyP<'ast>),
     Generic(TyP<'ast>, &'ast [TyP<'ast>]),

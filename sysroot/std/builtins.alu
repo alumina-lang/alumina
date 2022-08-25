@@ -55,6 +55,46 @@ impl bool {
         false
     }
 
+    /// Convert boolean into an [Option] with a given value.
+    /// 
+    /// Returns `Option::some(value)` if the boolean is `true`, `Option::none()` otherwise.
+    ///
+    /// ## Example
+    /// ```
+    /// let o1 = true.then_some("hello");
+    /// let o2 = false.then_some("world");
+    ///
+    /// assert_eq!(o1, Option::some("hello"));
+    /// assert_eq!(o2, Option::none());
+    /// ```
+    fn then_some<T>(self: bool, value: T) -> Option<T> {
+        if self {
+            Option::some(value)
+        } else {
+            Option::none()
+        }
+    }
+
+    /// Convert boolean into an [Option] with a value provided by a closure.
+    /// 
+    /// Returns `Option::some(func())` if the boolean is `true`, `Option::none()` otherwise.
+    ///
+    /// ## Example
+    /// ```
+    /// let o1 = true.then(|| -> &[u8] { "hello" });
+    /// let o2 = false.then(|| -> &[u8] { "hello" });
+    ///
+    /// assert_eq!(o1, Option::some("hello"));
+    /// assert_eq!(o2, Option::none());
+    /// ```
+    fn then<T, F: Callable<(), T>>(self: bool, func: F) -> Option<T> {
+        if self {
+            Option::some(func())
+        } else {
+            Option::none()
+        }
+    }
+
     /// @ cmp::Equatable::equals
     #[force_inline]
     fn equals(lhs: &bool, rhs: &bool) -> bool {
@@ -1843,5 +1883,21 @@ mod tests {
         assert!((-1.0f32).is_finite());
         assert!(!f32::infinity().is_finite());
         assert!(!(-f32::infinity()).is_finite());
+    }
+
+    #[test]
+    fn test_array_size_constexpr() {
+        use typing::{assert_type_eq, assert_type_ne};
+        
+        const SIZE = 5usize;
+
+        let a: [u8; 0];
+        let b: [u8; 1 - 1];
+        let c: [u8; 1 + SIZE * 2];
+        let d: [u8; 11];
+
+        assert_type_eq::<typeof(a), typeof(b)>();
+        assert_type_eq::<typeof(c), typeof(d)>();
+        assert_type_ne::<typeof(a), typeof(c)>();
     }
 }
