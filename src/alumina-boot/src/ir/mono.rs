@@ -13,7 +13,7 @@ use super::const_eval::{const_eval, numeric_of_kind, Value};
 use super::elide_zst::ZstElider;
 use super::infer::TypeInferer;
 use super::lang::LangTypeKind;
-use super::{FuncBody, IRItemP, Lit, LocalDef, ProtocolFunction, UnqualifiedKind};
+use super::{FuncBody, IRItemP, Lit, LocalDef, UnqualifiedKind};
 use crate::ast::lang::LangItemKind;
 use crate::ast::rebind::Rebinder;
 use crate::ast::{Attribute, BuiltinType, TestMetadata};
@@ -173,11 +173,6 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
                 let MonoKey(cell, args, _, _) = self.reverse_lookup(cell);
 
                 match self.get_lang_type_kind(typ) {
-                    Some(LangTypeKind::DynSelf) => {
-                        let _ = write!(f, "_");
-                        return Ok(f);
-                    }
-
                     Some(LangTypeKind::Dyn(proto, ir::Ty::Pointer(_, is_const))) => {
                         if *is_const {
                             let _ = write!(f, "&dyn {}", self.type_name(proto)?);
@@ -543,7 +538,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         for (placeholder, ty) in s.placeholders.iter().zip(generic_args.iter()) {
             let mut grouped_bounds = Vec::new();
             for bound in placeholder.bounds.bounds {
-                let ir_bound = child.lower_type_inner(bound.typ).append_span(bound.span)?;
+                let ir_bound = child
+                    .lower_type_unrestricted(bound.typ)
+                    .append_span(bound.span)?;
                 grouped_bounds.push((bound.span, ir_bound, bound.negated));
             }
             protocol_bounds.push((placeholder.bounds.typ, *ty, grouped_bounds));
@@ -555,7 +552,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .map(|f| {
                 Ok(ir::Field {
                     id: child.mono_ctx.map_id(f.id),
-                    ty: child.lower_type(f.typ)?,
+                    ty: child.lower_type_for_value(f.typ).append_span(f.span)?,
                 })
             })
             .collect::<Result<Vec<_>, AluminaError>>()?;
@@ -599,7 +596,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         for (placeholder, ty) in s.placeholders.iter().zip(generic_args.iter()) {
             let mut grouped_bounds = Vec::new();
             for bound in placeholder.bounds.bounds {
-                let ir_bound = child.lower_type_inner(bound.typ).append_span(bound.span)?;
+                let ir_bound = child
+                    .lower_type_unrestricted(bound.typ)
+                    .append_span(bound.span)?;
                 grouped_bounds.push((bound.span, ir_bound, bound.negated));
             }
             protocol_bounds.push((placeholder.bounds.typ, *ty, grouped_bounds));
@@ -609,7 +608,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .target
             .ok_or_else(|| CodeErrorKind::TypedefWithoutTarget)
             .with_span(s.span)?;
-        let inner = child.lower_type(target).append_span(s.span)?;
+        let inner = child.lower_type_unrestricted(target).append_span(s.span)?;
 
         let res = ir::IRItem::Alias(inner);
         item.assign(res);
@@ -642,7 +641,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         for (placeholder, ty) in s.placeholders.iter().zip(generic_args.iter()) {
             let mut grouped_bounds = Vec::new();
             for bound in placeholder.bounds.bounds {
-                let ir_bound = child.lower_type_inner(bound.typ).append_span(bound.span)?;
+                let ir_bound = child
+                    .lower_type_unrestricted(bound.typ)
+                    .append_span(bound.span)?;
                 grouped_bounds.push((bound.span, ir_bound, bound.negated));
             }
             protocol_bounds.push((placeholder.bounds.typ, *ty, grouped_bounds));
@@ -657,9 +658,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
             let mut param_types = Vec::new();
             for p in fun.args {
-                param_types.push(child.lower_type(p.typ)?);
+                param_types.push(child.lower_type_for_value(p.typ)?);
             }
-            let ret = child.lower_type(fun.return_type)?;
+            let ret = child.lower_type_for_value(fun.return_type)?;
 
             methods.push(ir::ProtocolFunction {
                 name: m.name.alloc_on(child.mono_ctx.ir),
@@ -949,7 +950,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             Some(_) | None => {}
         };
 
-        // `&dyn Proto<_, ...>` always satisfies Proto<...>
+        // `&dyn Proto<...>` always satisfies Proto<...>
         if let Some(LangTypeKind::Dyn(ir::Ty::Protocol(inner_proto), _)) =
             self.mono_ctx.get_lang_type_kind(ty)
         {
@@ -1075,7 +1076,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         for (placeholder, ty) in s.placeholders.iter().zip(generic_args.iter()) {
             let mut grouped_bounds = Vec::new();
             for bound in placeholder.bounds.bounds {
-                let ir_bound = child.lower_type_inner(bound.typ).append_span(bound.span)?;
+                let ir_bound = child
+                    .lower_type_unrestricted(bound.typ)
+                    .append_span(bound.span)?;
                 grouped_bounds.push((bound.span, ir_bound, bound.negated));
             }
             protocol_bounds.push((placeholder.bounds.typ, *ty, grouped_bounds));
@@ -1087,7 +1090,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 .append_span(s.span)?;
         }
 
-        let typ = s.typ.map(|t| child.lower_type(t)).transpose()?;
+        let typ = s.typ.map(|t| child.lower_type_for_value(t)).transpose()?;
         let mut init = s.init.map(|t| child.lower_expr(t, typ)).transpose()?;
 
         if s.is_const {
@@ -1154,7 +1157,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         for (placeholder, ty) in func.placeholders.iter().zip(generic_args.iter()) {
             let mut grouped_bounds = Vec::new();
             for bound in placeholder.bounds.bounds {
-                let ir_bound = child.lower_type_inner(bound.typ).append_span(bound.span)?;
+                let ir_bound = child
+                    .lower_type_unrestricted(bound.typ)
+                    .append_span(bound.span)?;
                 grouped_bounds.push((bound.span, ir_bound, bound.negated));
             }
             protocol_bounds.push((placeholder.bounds.typ, *ty, grouped_bounds));
@@ -1166,14 +1171,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .map(|p| {
                 let param = ir::Parameter {
                     id: child.mono_ctx.map_id(p.id),
-                    ty: child.lower_type(p.typ)?,
+                    ty: child.lower_type_for_value(p.typ)?,
                 };
                 child.local_types.insert(param.id, param.ty);
                 Ok(param)
             })
             .collect::<Result<Vec<_>, AluminaError>>()?;
 
-        let return_type = child.lower_type(func.return_type)?;
+        let return_type = child.lower_type_for_value(func.return_type)?;
         let res = ir::IRItem::Function(ir::Function {
             name: func.name.map(|n| n.alloc_on(child.mono_ctx.ir)),
             attributes: func.attributes.alloc_on(child.mono_ctx.ir),
@@ -1395,7 +1400,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             match placeholder.default {
                 Some(typ) => {
                     args.push(
-                        self.lower_type(typ)
+                        self.lower_type_unrestricted(typ)
                             .append_span(span)
                             .append_mono_marker()?,
                     );
@@ -1606,11 +1611,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(self.types.named(item))
     }
 
-    pub fn lower_type(&mut self, typ: ast::TyP<'ast>) -> Result<ir::TyP<'ir>, AluminaError> {
-        let typ = self.lower_type_inner(typ)?;
+    pub fn lower_type_for_value(
+        &mut self,
+        typ: ast::TyP<'ast>,
+    ) -> Result<ir::TyP<'ir>, AluminaError> {
+        let typ = self.lower_type_unrestricted(typ)?;
 
-        // Protocols can be used as types in certain blessed scenarios (e.g. intrinsics, `dyn` object), but they
-        // don't work as proper types in general.
+        // Protocols themselves can be used as types in certain blessed scenarios (e.g. intrinsics, `dyn` object),
+        // but they don't work as proper types for values (similar to upcoming extern types).
         // `let a: Proto;` makes no sense, even though a protocol can be used as a generic parameter to an item to
         // ensure a unique monomorphized version for each distinct protocol.
         if let ir::Ty::Protocol(_) = typ {
@@ -1623,33 +1631,36 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(typ)
     }
 
-    fn lower_type_inner(&mut self, typ: ast::TyP<'ast>) -> Result<ir::TyP<'ir>, AluminaError> {
+    fn lower_type_unrestricted(
+        &mut self,
+        typ: ast::TyP<'ast>,
+    ) -> Result<ir::TyP<'ir>, AluminaError> {
         let result = match *typ {
             ast::Ty::Builtin(kind) => self.types.builtin(kind),
             ast::Ty::Array(inner, len) => {
-                let inner = self.lower_type_inner(inner)?;
+                let inner = self.lower_type_for_value(inner)?;
                 self.types.array(inner, len)
             }
             ast::Ty::Pointer(inner, is_const) => {
-                let inner = self.lower_type_inner(inner)?;
+                let inner = self.lower_type_for_value(inner)?;
                 self.types.pointer(inner, is_const)
             }
             ast::Ty::Slice(inner, is_const) => {
-                let inner = self.lower_type_inner(inner)?;
+                let inner = self.lower_type_for_value(inner)?;
                 self.slice_of(inner, is_const)?
             }
             ast::Ty::FunctionPointer(args, ret) => {
                 let args = args
                     .iter()
-                    .map(|arg| self.lower_type_inner(arg))
+                    .map(|arg| self.lower_type_for_value(arg))
                     .collect::<Result<Vec<_>, _>>()?;
-                let ret = self.lower_type_inner(ret)?;
+                let ret = self.lower_type_for_value(ret)?;
                 self.types.function(args, ret)
             }
             ast::Ty::Tuple(items) => {
                 let items = items
                     .iter()
-                    .map(|arg| self.lower_type_inner(arg))
+                    .map(|arg| self.lower_type_for_value(arg))
                     .collect::<Result<Vec<_>, _>>()?;
                 self.types.tuple(items)
             }
@@ -1693,7 +1704,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
                 let args = args
                     .iter()
-                    .map(|arg| self.lower_type_inner(arg))
+                    .map(|arg| self.lower_type_unrestricted(arg))
                     .collect::<Result<Vec<_>, _>>()?
                     .alloc_on(self.mono_ctx.ir);
 
@@ -1934,38 +1945,23 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.types.protocol(item)
             }
             ast::Ty::Dyn(inner, is_const) => {
-                let dyn_self = self.dyn_self()?;
+                let protocol = self.lower_type_unrestricted(inner)?;
+                let protocol_item = match protocol {
+                    ir::Ty::Protocol(protocol_item) => {
+                        let MonoKey(ast_item, _, _, _) =
+                            self.mono_ctx.reverse_lookup(protocol_item);
 
-                let protocol_item = match inner {
-                    ast::Ty::Protocol(item) => {
-                        match self.mono_ctx.ast.lang_item_kind(item) {
-                            Some(lang) if lang.is_protocol() => {
-                                return Err(CodeErrorKind::BuiltinProtocolDyn).with_no_span()
+                        if let Some(p) = self.mono_ctx.ast.lang_item_kind(ast_item) {
+                            if p.is_builtin_protocol() {
+                                return Err(CodeErrorKind::BuiltinProtocolDyn).with_no_span();
                             }
-                            _ => {}
                         }
 
-                        self.monomorphize_item(item, [dyn_self].alloc_on(self.mono_ctx.ir))?
-                    }
-                    ast::Ty::Generic(ast::Ty::Protocol(item), args) => {
-                        match self.mono_ctx.ast.lang_item_kind(item) {
-                            Some(lang) if lang.is_protocol() => {
-                                return Err(CodeErrorKind::BuiltinProtocolDyn).with_no_span()
-                            }
-                            _ => {}
-                        }
-
-                        let args = std::iter::once(Ok(dyn_self))
-                            .chain(args.iter().map(|arg| self.lower_type_inner(arg)))
-                            .collect::<Result<Vec<_>, _>>()?
-                            .alloc_on(self.mono_ctx.ir);
-
-                        self.monomorphize_item(item, args)?
+                        *protocol_item
                     }
                     _ => return Err(CodeErrorKind::NonProtocolDyn).with_no_span(),
                 };
 
-                let protocol = self.types.protocol(protocol_item);
                 let ptr_type = self.types.pointer(self.types.void(), is_const);
                 let item = self.monomorphize_lang_item(LangItemKind::Dyn, [protocol, ptr_type])?;
 
@@ -2409,7 +2405,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         if let Some(generic_args) = generic_args {
             let generic_args = generic_args
                 .iter()
-                .map(|typ| self.lower_type(typ))
+                .map(|typ| self.lower_type_unrestricted(typ))
                 .collect::<Result<Vec<_>, _>>()?
                 .alloc_on(self.mono_ctx.ir);
 
@@ -2508,7 +2504,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 (*item, Some(*generic_args))
             }
             _ => {
-                let lowered = self.lower_type(typ)?;
+                let lowered = self.lower_type_for_value(typ)?;
                 match lowered {
                     ir::Ty::NamedType(item) if item.is_struct_like() => return Ok(item),
                     _ => return Err(CodeErrorKind::StructLikeExpectedHere).with_no_span(),
@@ -2524,7 +2520,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         if let Some(generic_args) = generic_args {
             let generic_args = generic_args
                 .iter()
-                .map(|typ| self.lower_type(typ))
+                .map(|typ| self.lower_type_unrestricted(typ))
                 .collect::<Result<Vec<_>, _>>()?
                 .alloc_on(self.mono_ctx.ir);
 
@@ -2736,7 +2732,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
             ast::StatementKind::LetDeclaration(decl) => {
                 let id = self.mono_ctx.map_id(decl.id);
-                let type_hint = decl.typ.map(|t| self.lower_type(t)).transpose()?;
+                let type_hint = decl.typ.map(|t| self.lower_type_for_value(t)).transpose()?;
                 let init = decl
                     .value
                     .map(|v| {
@@ -3009,7 +3005,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let item_cell = if let Some(generic_args) = generic_args {
             let generic_args = generic_args
                 .iter()
-                .map(|typ| self.lower_type(typ))
+                .map(|typ| self.lower_type_unrestricted(typ))
                 .collect::<Result<Vec<_>, _>>()?
                 .alloc_on(self.mono_ctx.ir);
 
@@ -3252,12 +3248,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         els: ast::ExprP<'ast>,
         type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let typ = self.lower_type(cond.typ)?;
+        let typ = self.lower_type_unrestricted(cond.typ)?;
 
         let mut found = false;
 
         for bound in cond.bounds.bounds {
-            let bound_typ = self.lower_type_inner(bound.typ)?;
+            let bound_typ = self.lower_type_unrestricted(bound.typ)?;
             match self
                 .check_protocol_bound(bound_typ, typ)
                 .append_span(bound.span)?
@@ -3352,7 +3348,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             return Ok(expr);
         }
 
-        let typ = self.lower_type(target_type)?;
+        let typ = self.lower_type_for_value(target_type)?;
 
         // If the type coerces automatically, no cast is required
         if let Ok(expr) = self.try_coerce(typ, expr) {
@@ -3560,7 +3556,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let generic_args = generic_args
             .iter()
-            .map(|e| self.lower_type_inner(e))
+            .map(|e| self.lower_type_unrestricted(e))
             .collect::<Result<Vec<_>, _>>()?;
 
         let args = args
@@ -3813,18 +3809,49 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         self.array_of(enum_variant_new_func.return_type, exprs)
     }
 
-    fn generate_vtable_inner(
+    fn generate_vtable(
         &mut self,
-        layout: &'ir [ProtocolFunction<'ir>],
+        protocol_type: ir::TyP<'ir>,
         concrete_type: ir::TyP<'ir>,
-    ) -> Result<ir::IRItemP<'ir>, AluminaError> {
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let protocol = match protocol_type {
+            ir::Ty::Protocol(protocol) => protocol,
+            _ => ice!("protocol expected"),
+        };
+        let proto_key = self.mono_ctx.reverse_lookup(protocol);
+        // Replace the dyn_self placeholder
+        let args = std::iter::once(concrete_type)
+            .chain(proto_key.1[1..].iter().copied())
+            .collect::<Vec<_>>()
+            .alloc_on(self.mono_ctx.ir);
+        let actual_protocol = self.monomorphize_item(proto_key.0, args)?;
+        let actual_protocol_type = self.types.protocol(actual_protocol);
+
+        // We only rely on standard protocol bound matching to see if the vtable is compatible
+        self.check_protocol_bounds(
+            ast::ProtocolBoundsType::All,
+            concrete_type,
+            vec![(None, actual_protocol_type, false)],
+        )?;
+
+        let vtable_layout = self
+            .mono_ctx
+            .vtable_layouts
+            .get(protocol)
+            .ok_or_else(|| {
+                CodeErrorKind::InternalError(
+                    "vtable layout not found".to_string(),
+                    Backtrace::new(),
+                )
+            })
+            .with_no_span()?
+            .methods;
+
         let ast_type = self.raise_type(concrete_type)?;
         let associated_fns = self.get_associated_fns(ast_type)?;
-
-        let vtable_static = self.mono_ctx.ir.make_symbol();
         let mut attrs = Vec::new();
 
-        for func in layout {
+        for func in vtable_layout {
             let function = associated_fns
                 .get(&func.name)
                 .ok_or_else(|| {
@@ -3869,77 +3896,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ));
         }
 
-        let res = self.array_of(self.types.function([], self.types.void()), attrs)?;
-        vtable_static.assign(ir::IRItem::Static(ir::Static {
-            name: None,
-            typ: res.ty,
-            init: Some(res),
-            attributes: &[],
-            r#extern: false,
-        }));
-
-        self.mono_ctx
-            .static_local_defs
-            .insert(vtable_static, std::mem::take(&mut self.local_defs));
-
-        let dummy = self.mono_ctx.ast.make_symbol();
-        self.mono_ctx
-            .finished
-            .insert(MonoKey::new(dummy, &[], None, false), vtable_static);
-
-        Ok(vtable_static)
-    }
-
-    fn generate_vtable(
-        &mut self,
-        protocol_type: ir::TyP<'ir>,
-        concrete_type: ir::TyP<'ir>,
-    ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let protocol = match protocol_type {
-            ir::Ty::Protocol(protocol) => protocol,
-            _ => ice!("protocol expected"),
-        };
-        let proto_key = self.mono_ctx.reverse_lookup(protocol);
-        // Replace the dyn_self placeholder
-        let args = std::iter::once(concrete_type)
-            .chain(proto_key.1[1..].iter().copied())
-            .collect::<Vec<_>>()
-            .alloc_on(self.mono_ctx.ir);
-        let actual_protocol = self.monomorphize_item(proto_key.0, args)?;
-        let actual_protocol_type = self.types.protocol(actual_protocol);
-
-        // We only rely on standard protocol bound matching to see if the vtable is compatible
-        self.check_protocol_bounds(
-            ast::ProtocolBoundsType::All,
-            concrete_type,
-            vec![(None, actual_protocol_type, false)],
-        )?;
-
-        let vtable_layout = self
-            .mono_ctx
-            .vtable_layouts
-            .get(protocol)
-            .ok_or_else(|| {
-                CodeErrorKind::InternalError(
-                    "vtable layout not found".to_string(),
-                    Backtrace::new(),
-                )
-            })
-            .with_no_span()?
-            .methods;
-
-        let vtable_static = {
-            let mut child = Self::new(self.mono_ctx, self.tentative, self.current_item);
-            child.generate_vtable_inner(vtable_layout, concrete_type)?
-        };
-
-        let ret = self.exprs.r#ref(self.exprs.const_index(
-            self.exprs.static_var(
-                vtable_static,
-                vtable_static.get_static().with_no_span()?.typ,
-            ),
-            0,
-        ));
+        let ret = self.array_of(self.types.function([], self.types.void()), attrs)?;
 
         Ok(ret)
     }
@@ -4189,7 +4146,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 ast_type
             }
             ast::Ty::Placeholder(_) => {
-                let ir_type = self.lower_type(ast_type)?;
+                let ir_type = self.lower_type_for_value(ast_type)?;
                 self.raise_type(ir_type)?
             }
             _ => ast_type,

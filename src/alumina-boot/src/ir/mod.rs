@@ -245,16 +245,12 @@ impl<'ir> Ty<'ir> {
             Ty::Builtin(BuiltinType::Void) => true,
             Ty::Builtin(BuiltinType::Never) => true, // or false? dunno, never type is weird
             Ty::Builtin(_) => false,
-            Ty::Protocol(_) => todo!(),
+            Ty::Protocol(_) => unreachable!("used protocol as a concrete type"),
             Ty::NamedType(inner) => match inner.get().unwrap() {
                 IRItem::Alias(inner) => inner.is_zero_sized(),
                 IRItem::StructLike(s) => s.fields.iter().all(|f| f.ty.is_zero_sized()),
                 IRItem::Enum(e) => e.underlying_type.is_zero_sized(),
-                IRItem::Closure(_) => unreachable!(),
-                IRItem::Static(_) => unreachable!(),
-                IRItem::Protocol(_) => unreachable!(),
-                IRItem::Function(_) => unreachable!(),
-                IRItem::Const(_) => unreachable!(),
+                _ => unreachable!(),
             },
             Ty::Pointer(_, _) => false,
             Ty::Array(inner, size) => *size == 0 || inner.is_zero_sized(),

@@ -1,0 +1,152 @@
+use std::builtins::{generic_args_of, tuple_head_of};
+use std::util::unit;
+
+// Booleans
+struct True {}
+struct False {}
+
+impl True {
+    fn val(v: True) -> bool { true }
+}
+
+impl False {
+    fn val(v: False) -> bool { false }
+}
+
+// Peano integers 0, S(0), S(S(0)), ...
+struct Zero {}
+struct Succ<T> {}
+
+impl Zero {
+    fn val(v: Zero) -> i32 { 0 }
+}
+
+impl Succ<T> {
+    fn val(v: Succ<T>) -> i32 { unit::<T>().val() + 1 }
+}
+
+type One = Succ<Zero>;
+type Two = Succ<One>;
+type Three = Succ<Two>;
+type Four = Succ<Three>;
+type Five = Succ<Four>;
+type Six = Succ<Five>;
+type Seven = Succ<Six>;
+type Eight = Succ<Seven>;
+type Nine = Succ<Eight>;
+type Ten = Succ<Nine>;
+type Eleven = Succ<Ten>;
+type Twelve = Succ<Eleven>;
+
+type Prev<T> = typeof(
+    when T: Zero {
+        unit::<Zero>()
+    } else {
+        unit::<tuple_head_of<generic_args_of<T>>>()
+    }
+);
+
+type Add<A, B> = typeof(
+    when B: Zero {
+        unit::<A>()
+    } else {
+        unit::<Succ<Add<A, Prev<B>>>>()
+    }
+);
+
+type Sub<A, B> = typeof(
+    when B: Zero {
+        unit::<A>()
+    } else {
+        unit::<Sub<Prev<A>, Prev<B>>>()
+    }
+);
+
+type Mul<A, B> = typeof(
+    when B: Zero {
+        unit::<Zero>()
+    } else {
+        unit::<Add<A, Mul<A, Prev<B>>>>()
+    }
+);
+
+type DivT<A, B, Idx> = typeof(
+    when B: Zero {
+        std::compile_fail!("division by zero");
+    } else when Sub<Succ<A>, B>: Zero {
+        unit::<Idx>()
+    } else {
+        unit::<DivT<Sub<A, B>, B, Succ<Idx>>>()
+    }
+);
+
+type Div<A, B> = DivT<A, B, Zero>;
+type Mod<A, B> = Sub<A, Mul<Div<A, B>, B>>;
+
+type Fibonacci<T> = typeof(
+    when Prev<T>: Zero {
+        unit::<T>()
+    } else {
+        unit::<Add<Fibonacci<Prev<T>>, Fibonacci<Prev<Prev<T>>>>>()
+    }
+);
+
+type IsPrimeT<A, Idx> = typeof(
+    when Idx: A {
+        unit::<True>()
+    } else when Mod<A, Idx>: Zero {
+        unit::<False>()
+    } else {
+        unit::<IsPrimeT<A, Succ<Idx>>>()
+    }
+);
+
+type IsPrime<A> = typeof(
+    when Prev<A>: Zero {
+        unit::<False>()
+    } else {
+        unit::<IsPrimeT<A, Two>>()
+    }
+);
+
+fn main() {
+    println!("Arithmetic:");
+    println!("10 * 5 + (6 * 2) / 3 = {}", unit::<
+        Add<
+            Mul<Ten, Five>,
+            Div<
+                Mul<Six, Two>,
+                Three
+            >
+        >>()
+    .val());
+
+    println!("Fibonacci:");
+    println!("fib(0) = {}", unit::<Fibonacci<Zero>>().val());
+    println!("fib(1) = {}", unit::<Fibonacci<One>>().val());
+    println!("fib(2) = {}", unit::<Fibonacci<Two>>().val());
+    println!("fib(3) = {}", unit::<Fibonacci<Three>>().val());
+    println!("fib(4) = {}", unit::<Fibonacci<Four>>().val());
+    println!("fib(5) = {}", unit::<Fibonacci<Five>>().val());
+    println!("fib(6) = {}", unit::<Fibonacci<Six>>().val());
+    println!("fib(7) = {}", unit::<Fibonacci<Seven>>().val());
+    println!("fib(8) = {}", unit::<Fibonacci<Eight>>().val());
+    println!("fib(9) = {}", unit::<Fibonacci<Nine>>().val());
+    println!("fib(10) = {}", unit::<Fibonacci<Ten>>().val());
+    println!("fib(11) = {}", unit::<Fibonacci<Eleven>>().val());
+    println!("fib(12) = {}", unit::<Fibonacci<Twelve>>().val());
+
+    println!("Primality:");
+    println!("is_prime(1) = {}", unit::<IsPrime<One>>().val());
+    println!("is_prime(2) = {}", unit::<IsPrime<Two>>().val());
+    println!("is_prime(3) = {}", unit::<IsPrime<Three>>().val());
+    println!("is_prime(4) = {}", unit::<IsPrime<Four>>().val());
+    println!("is_prime(5) = {}", unit::<IsPrime<Five>>().val());
+    println!("is_prime(6) = {}", unit::<IsPrime<Six>>().val());
+    println!("is_prime(7) = {}", unit::<IsPrime<Seven>>().val());
+    println!("is_prime(8) = {}", unit::<IsPrime<Eight>>().val());
+    println!("is_prime(9) = {}", unit::<IsPrime<Nine>>().val());
+    println!("is_prime(10) = {}", unit::<IsPrime<Ten>>().val());
+    println!("is_prime(11) = {}", unit::<IsPrime<Eleven>>().val());
+    println!("is_prime(12) = {}", unit::<IsPrime<Twelve>>().val());
+}

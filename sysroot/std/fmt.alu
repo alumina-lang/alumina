@@ -78,7 +78,7 @@ protocol Formattable<Self, F: Formatter<F> = NullFormatter> {
 ///
 /// See also [internal::format_arg].
 ///
-/// As the type-erased `&dyn Formattable<_>` wraps a pointer to the original arguments, it is generally not safe to
+/// As the type-erased `&dyn Formattable<...>` wraps a pointer to the original arguments, it is generally not safe to
 /// store the array that is returned by `format_args`.
 ///
 /// ## Example
@@ -89,7 +89,7 @@ protocol Formattable<Self, F: Formatter<F> = NullFormatter> {
 /// let stdout = StreamFormatter::new(&StdioStream::stdout());
 ///
 /// // Type hint is required here in order to infer the formatter type
-/// let args: [&dyn Formattable<StreamFormatter<StdioStream>>; 5]
+/// let args: [&dyn Formattable<Self, StreamFormatter<StdioStream>>; 5]
 ///     = format_args!("{} + {} = {}", 1, 2, 3);
 ///
 /// args[0].fmt(&stdout); // "1"
@@ -273,7 +273,7 @@ impl StreamFormatter<W: io::Writable<W>> {
 mod internal {
     /// Returns a type-erased wrapper around a formattable object.
     #[lang(format_arg)]
-    fn format_arg<F: Formatter<F>, T: Formattable<T, F>>(self: &T) -> &dyn Formattable<F> {
+    fn format_arg<F: Formatter<F>, T: Formattable<T, F>>(self: &T) -> &dyn Formattable<Self, F> {
         self
     }
 
@@ -367,7 +367,7 @@ mod internal {
         Result::ok(())
     }
 
-    fn write_fmt<F: Formatter<F>>(parts: &[&dyn Formattable<F>], f: &mut F) -> Result {
+    fn write_fmt<F: Formatter<F>>(parts: &[&dyn Formattable<Self, F>], f: &mut F) -> Result {
         for part in parts {
             part.fmt(f)?;
         }
@@ -657,9 +657,9 @@ mod tests {
     #[test]
     fn test_format_args() {
         /// Compile-only test
-        let f: [&dyn Formattable<NullFormatter>; 0] = format_args!("");
-        let f: [&dyn Formattable<NullFormatter>; 1] = format_args!("hello");
-        let f: [&dyn Formattable<NullFormatter>; 2] = format_args!("hello {}", 1);
-        let f: [&dyn Formattable<NullFormatter>; 4] = format_args!("hello {} {}", 1, 2);
+        let f: [&dyn Formattable<Self, NullFormatter>; 0] = format_args!("");
+        let f: [&dyn Formattable<Self, NullFormatter>; 1] = format_args!("hello");
+        let f: [&dyn Formattable<Self, NullFormatter>; 2] = format_args!("hello {}", 1);
+        let f: [&dyn Formattable<Self, NullFormatter>; 4] = format_args!("hello {} {}", 1, 2);
     }
 }

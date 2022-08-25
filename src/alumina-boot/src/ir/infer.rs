@@ -170,7 +170,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                         return Err(());
                     }
 
-                    for (holder, t) in holders.iter().zip(mono_key.1.iter().skip(1)) {
+                    for (holder, t) in holders.iter().zip(mono_key.1.iter()) {
                         self.match_slot(inferred, *holder, *t)?;
                     }
                 } else {
