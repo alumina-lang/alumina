@@ -6,7 +6,8 @@
 <link rel="stylesheet" href="/static/styles.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<meta content="width=device-width, initial-scale=1" name="viewport" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="description" content=" Boolean type" />
 <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png" />
 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
 <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
@@ -35,6 +36,12 @@
 </li>
 <li>
 <a href="/std/prelude/bool.html#item.min_value">min_value</a>
+</li>
+<li>
+<a href="/std/prelude/bool.html#item.then_some">then_some</a>
+</li>
+<li>
+<a href="/std/prelude/bool.html#item.then">then</a>
 </li>
 <li>
 <a href="/std/prelude/bool.html#item.equals">equals</a>
@@ -102,11 +109,67 @@ Returns <code class="language-alumina">false</code>.
 </div>
 </li>
 <li>
+<div class="signature" id="item.then_some">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">then_some</span>&lt;T&gt;(self: <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a>, value: T) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L70-L76"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Convert boolean into an <a class="path-link" href="/std/option/Option.html">Option</a> with a given value.
+</p><p>
+Returns <code class="language-alumina">Option::some(value)</code> if the boolean is <code class="language-alumina">true</code>, <code class="language-alumina">Option::none()</code> otherwise.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let o1 = true.then_some("hello");
+let o2 = false.then_some("world");
+
+assert_eq!(o1, Option::some("hello"));
+assert_eq!(o2, Option::none());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20o1%20%3d%20true%2ethen%5fsome%28%22hello%22%29%3b%0a%20%20%20let%20o2%20%3d%20false%2ethen%5fsome%28%22world%22%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28o1%2c%20Option%3a%3asome%28%22hello%22%29%29%3b%0a%20%20%20assert%5feq%21%28o2%2c%20Option%3a%3anone%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.then">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">then</span>&lt;T, F&gt;(self: <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a>, func: F) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;<div class="protocol-bound">
+F: <a href="/std/builtins/Callable.html"><span class="identifier-type">Callable</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>, T&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L90-L96"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Convert boolean into an <a class="path-link" href="/std/option/Option.html">Option</a> with a value provided by a closure.
+</p><p>
+Returns <code class="language-alumina">Option::some(func())</code> if the boolean is <code class="language-alumina">true</code>, <code class="language-alumina">Option::none()</code> otherwise.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let o1 = true.then(|| -&gt; &amp;[u8] { "hello" });
+let o2 = false.then(|| -&gt; &amp;[u8] { "hello" });
+
+assert_eq!(o1, Option::some("hello"));
+assert_eq!(o2, Option::none());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20let%20o1%20%3d%20true%2ethen%28%7c%7c%20%2d%3e%20%26%5bu8%5d%20%7b%20%22hello%22%20%7d%29%3b%0a%20%20%20let%20o2%20%3d%20false%2ethen%28%7c%7c%20%2d%3e%20%26%5bu8%5d%20%7b%20%22hello%22%20%7d%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28o1%2c%20Option%3a%3asome%28%22hello%22%29%29%3b%0a%20%20%20assert%5feq%21%28o2%2c%20Option%3a%3anone%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
 <div class="signature" id="item.equals">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">equals</span>(lhs: &amp;<a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a>, rhs: &amp;<a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a>) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L59-L62"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L99-L102"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -123,7 +186,7 @@ See <a class="path-link" href="/std/cmp/Equatable.html">Equatable</a> for detail
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">compare</span>(lhs: &amp;<a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a>, rhs: &amp;<a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a>) -> <a href="/std/cmp/Ordering.html"><span class="identifier-type">Ordering</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L65-L74"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L105-L114"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -142,7 +205,7 @@ See <a class="path-link" href="/std/cmp/Comparable.html">Comparable</a> for deta
 H: <a href="/std/hash/Hasher.html"><span class="identifier-type">Hasher</span></a>&lt;H&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L77-L79"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L117-L119"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -161,7 +224,7 @@ See <a class="path-link" href="/std/hash/Hashable.html">Hashable</a> for details
 F: <a href="/std/fmt/Formatter.html"><span class="identifier-type">Formatter</span></a>&lt;F&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L82-L84"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L122-L124"/>source</a>
 </div>
 </div>
 <div class="item-doc">
