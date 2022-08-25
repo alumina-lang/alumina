@@ -51,8 +51,8 @@
 <p>
 "Dyn" object, a type-erased pointer to an object and a vtable for protocol functions.
 </p><p>
-<pre><code class="language-alumina">type &amp;dyn Protocol&lt;...&gt; = dyn&lt;Protocol&lt;dyn_self, ...&gt;, &amp;void&gt;
-type &amp;mut dyn Protocol&lt;...&gt; = dyn&lt;Protocol&lt;dyn_self, ...&gt;, &amp;mut void&gt;
+<pre><code class="language-alumina">type &amp;dyn Protocol = dyn&lt;Protocol, &amp;void&gt;
+type &amp;mut dyn Protocol = dyn&lt;Protocol, &amp;mut void&gt;
 </code></pre>
 </p>
 <h3> Example</h3>
@@ -69,12 +69,12 @@ impl Quux {
     fn foo(self: &amp;Quux) { println!("Quux::foo"); }
 }
 
-let bar: &amp;dyn Foo = &amp;Bar {};
-let quux: &amp;dyn Foo = &amp;Quux {};
+let bar: &amp;dyn Foo&lt;Self&gt; = &amp;Bar {};
+let quux: &amp;dyn Foo&lt;Self&gt; = &amp;Quux {};
 
 bar.foo(); // prints "Bar::foo"
 quux.foo(); // prints "Quux::foo"
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20protocol%20Foo%3cSelf%3e%20%7b%20fn%20foo%28self%3a%20%26Self%29%3b%20%7d%0a%20%20%20%0a%20%20%20struct%20Bar%20%7b%7d%3b%0a%20%20%20impl%20Bar%20%7b%0a%20%20%20%20%20%20%20fn%20foo%28self%3a%20%26Bar%29%20%7b%20println%21%28%22Bar%3a%3afoo%22%29%3b%20%7d%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20struct%20Quux%20%7b%7d%3b%0a%20%20%20impl%20Quux%20%7b%0a%20%20%20%20%20%20%20fn%20foo%28self%3a%20%26Quux%29%20%7b%20println%21%28%22Quux%3a%3afoo%22%29%3b%20%7d%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20let%20bar%3a%20%26dyn%20Foo%20%3d%20%26Bar%20%7b%7d%3b%0a%20%20%20let%20quux%3a%20%26dyn%20Foo%20%3d%20%26Quux%20%7b%7d%3b%0a%20%20%20%0a%20%20%20bar%2efoo%28%29%3b%20%2f%2f%20prints%20%22Bar%3a%3afoo%22%0a%20%20%20quux%2efoo%28%29%3b%20%2f%2f%20prints%20%22Quux%3a%3afoo%22%0a%0a%7d%0a">Run this example</a></pre>
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20protocol%20Foo%3cSelf%3e%20%7b%20fn%20foo%28self%3a%20%26Self%29%3b%20%7d%0a%20%20%20%0a%20%20%20struct%20Bar%20%7b%7d%3b%0a%20%20%20impl%20Bar%20%7b%0a%20%20%20%20%20%20%20fn%20foo%28self%3a%20%26Bar%29%20%7b%20println%21%28%22Bar%3a%3afoo%22%29%3b%20%7d%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20struct%20Quux%20%7b%7d%3b%0a%20%20%20impl%20Quux%20%7b%0a%20%20%20%20%20%20%20fn%20foo%28self%3a%20%26Quux%29%20%7b%20println%21%28%22Quux%3a%3afoo%22%29%3b%20%7d%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20let%20bar%3a%20%26dyn%20Foo%3cSelf%3e%20%3d%20%26Bar%20%7b%7d%3b%0a%20%20%20let%20quux%3a%20%26dyn%20Foo%3cSelf%3e%20%3d%20%26Quux%20%7b%7d%3b%0a%20%20%20%0a%20%20%20bar%2efoo%28%29%3b%20%2f%2f%20prints%20%22Bar%3a%3afoo%22%0a%20%20%20quux%2efoo%28%29%3b%20%2f%2f%20prints%20%22Quux%3a%3afoo%22%0a%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </main>
