@@ -7,7 +7,7 @@ on:
     branches: [master]
 
 jobs:
-  alumina-boot:
+  lint:
     name: Lint rust
     runs-on: ubuntu-latest
     steps:
@@ -15,14 +15,12 @@ jobs:
       - name: Install Tree-sitter
         run: npm install -g tree-sitter-cli
 
-      - name: Run cargo fmt
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
+      - name: Lint Rust
+        timeout-minutes: 10
+        run: make lint-rust
 
   tests:
-    name: Tests
+    name: Build and test
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -33,14 +31,20 @@ jobs:
         run: npm install -g tree-sitter-cli
 
       - name: Run all tests
-        if: ${{ matrix.os == 'ubuntu-latest' }}
         timeout-minutes: 10
-        run: make test
+        run: make test -j8
 
-      - name: Run stdlib tests only
-        if: ${{ matrix.os != 'ubuntu-latest' }}
+  examples:
+    name: Build examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Tree-sitter
+        run: npm install -g tree-sitter-cli
+
+      - name: Build examples
         timeout-minutes: 10
-        run: make test-std
+        run: make examples -j8
 
   aluminac:
     name: Build aluminac
@@ -66,6 +70,7 @@ jobs:
 
       - name: Test aluminac
         run: make test-aluminac
+
   docker:
     name: Build docker image
     runs-on: ubuntu-latest

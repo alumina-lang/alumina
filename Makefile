@@ -224,10 +224,10 @@ quick: $(BUILD_DIR)/quick
 
 ## ------------------------------ Dist ----------------------------------
 
-.PHONY: rust-lint dist-check
+.PHONY: lint-rust dist-check
 
-rust-lint: $(ALUMINA_BOOT)
+lint-rust: $(BOOTSTRAP_SOURCES) $(COMMON_SOURCES) $(BUILD_DIR)/.build
 	cargo fmt -- --check
 	cargo clippy $(CARGO_FLAGS) --all-targets
 
-dist-check: rust-lint aluminac doctest test examples
+dist-check: lint-rust aluminac doctest test examples
