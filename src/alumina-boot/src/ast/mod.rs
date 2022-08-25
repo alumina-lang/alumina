@@ -220,14 +220,14 @@ impl BuiltinType {
         )
     }
 
-    pub fn to_signed(&self) -> Option<BuiltinType> {
-        let ret = match *self {
+    pub fn to_signed(self) -> Option<BuiltinType> {
+        let ret = match self {
             BuiltinType::I8
             | BuiltinType::I16
             | BuiltinType::I32
             | BuiltinType::I64
             | BuiltinType::I128
-            | BuiltinType::ISize => *self,
+            | BuiltinType::ISize => self,
             BuiltinType::U8 => BuiltinType::I8,
             BuiltinType::U16 => BuiltinType::I16,
             BuiltinType::U32 => BuiltinType::I32,
@@ -240,14 +240,14 @@ impl BuiltinType {
         Some(ret)
     }
 
-    pub fn to_unsigned(&self) -> Option<BuiltinType> {
-        let ret = match *self {
+    pub fn to_unsigned(self) -> Option<BuiltinType> {
+        let ret = match self {
             BuiltinType::U8
             | BuiltinType::U16
             | BuiltinType::U32
             | BuiltinType::U64
             | BuiltinType::U128
-            | BuiltinType::USize => *self,
+            | BuiltinType::USize => self,
             BuiltinType::I8 => BuiltinType::U8,
             BuiltinType::I16 => BuiltinType::U16,
             BuiltinType::I32 => BuiltinType::U32,
@@ -699,6 +699,7 @@ pub enum CodegenType {
     CMain,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Attribute {
     Export,

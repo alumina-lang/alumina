@@ -87,7 +87,7 @@ pub struct CompilerIntrinsics<'ir> {
     types: TypeBuilder<'ir>,
 }
 
-fn get_const_string<'ir>(expr: ExprP<'ir>) -> Result<&'ir str, AluminaError> {
+fn get_const_string(expr: ExprP<'_>) -> Result<&str, AluminaError> {
     match const_eval::const_eval(expr) {
         Ok(Value::Str(s)) => Ok(std::str::from_utf8(s).unwrap()),
         Ok(v) => Err(CodeErrorKind::TypeMismatch(

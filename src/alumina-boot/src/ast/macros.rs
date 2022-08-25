@@ -512,7 +512,7 @@ impl<'ast> MacroExpander<'ast> {
                 .alloc_on(self.ast))
             }
             BuiltinMacroKind::FormatArgs => {
-                if self.args.len() < 1 {
+                if self.args.is_empty() {
                     return Err(CodeErrorKind::NotEnoughMacroArguments(1))
                         .with_span(self.invocation_span);
                 }

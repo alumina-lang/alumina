@@ -419,7 +419,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         for m in valued {
             let expr = child.lower_expr(m.value.unwrap(), type_hint)?;
             let value = const_eval(expr)
-                .map_err(|e| CodeErrorKind::CannotConstEvaluate(e))
+                .map_err(CodeErrorKind::CannotConstEvaluate)
                 .with_span(m.value.unwrap().span)?;
 
             let value_type = match value.type_kind() {
@@ -606,7 +606,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let target = s
             .target
-            .ok_or_else(|| CodeErrorKind::TypedefWithoutTarget)
+            .ok_or(CodeErrorKind::TypedefWithoutTarget)
             .with_span(s.span)?;
         let inner = child.lower_type_unrestricted(target).append_span(s.span)?;
 
@@ -1104,7 +1104,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             };
 
             let value = ir::const_eval::const_eval(init)
-                .map_err(|e| CodeErrorKind::CannotConstEvaluate(e))
+                .map_err(CodeErrorKind::CannotConstEvaluate)
                 .with_span(s.init.unwrap().span)?;
 
             let res = ir::IRItem::Const(ir::Const {
@@ -1283,7 +1283,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             new_func.assign(ast::Item::Function(ast::Function {
                 name: fun.name,
                 attributes: fun.attributes,
-                placeholders: placeholders,
+                placeholders,
                 return_type: rebinder.visit_typ(fun.return_type)?,
                 args: fun
                     .args
@@ -1773,7 +1773,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let len_expr =
                     child.lower_expr(len, Some(child.types.builtin(BuiltinType::USize)))?;
                 let len = const_eval(len_expr)
-                    .map_err(|e| CodeErrorKind::CannotConstEvaluate(e))
+                    .map_err(CodeErrorKind::CannotConstEvaluate)
                     .and_then(|v| match v {
                         Value::USize(v) => Ok(v),
                         _ => Err(mismatch!(
@@ -3564,6 +3564,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         // It basically creates two static arrays, one which holds all the test attributes contatenated
         // and the other that has the TestCaseMeta objects. TestCaseMeta object contains a slice of the
         // attributes array.
+        #[allow(clippy::mutable_key_type)]
         let tests = self.mono_ctx.tests.clone();
 
         let string_slice = self.slice_of(self.types.builtin(BuiltinType::U8), true)?;

@@ -49,9 +49,9 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
     ) -> Result<ProtocolBounds<'ast>, AluminaError> {
         let mut bounds = Vec::new();
 
-        let (kind, node) = if let Some(_) = node.child_by_field_name("all_bounds") {
+        let (kind, node) = if node.child_by_field_name("all_bounds").is_some() {
             (ProtocolBoundsType::All, node)
-        } else if let Some(_) = node.child_by_field_name("any_bounds") {
+        } else if node.child_by_field_name("any_bounds").is_some() {
             (ProtocolBoundsType::Any, node)
         } else {
             // There are no bounds
