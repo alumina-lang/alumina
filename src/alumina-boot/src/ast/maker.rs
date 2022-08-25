@@ -484,10 +484,8 @@ impl<'ast> AstItemMaker<'ast> {
             }
         }
 
-        if is_protocol_fn {
-            if is_extern {
-                return Err(CodeErrorKind::ProtocolFnsCannotBeExtern).with_span_from(&scope, node);
-            }
+        if is_protocol_fn && is_extern {
+            return Err(CodeErrorKind::ProtocolFnsCannotBeExtern).with_span_from(&scope, node);
         }
 
         match abi {

@@ -87,7 +87,7 @@ impl PageWriter<T: std::io::Writable<T>> {
                 wln!(self, "<div class=\"signature\" id=\"item.{}.{}\">", name, item.cfg_index);
             }
         } else {
-            wln!(self, "<div class=\"signature\">");
+            wln!(self, "<div class=\"signature\" data-nosnippet>");
         }
 
         wln!(self, "{}", if top_level { "<h3>" } else { "<h4>" });
@@ -295,7 +295,12 @@ impl PageWriter<T: std::io::Writable<T>> {
         wln!(self, "<link rel=\"stylesheet\" href=\"/static/styles.css\">");
         wln!(self, "<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">");
         wln!(self, "<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>");
-        wln!(self, "<meta content=\"width=device-width, initial-scale=1\" name=\"viewport\" />");
+        wln!(self, "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />");
+
+        let tagline = clean_doc_comment(&link_context, top_level.doc_comment.as_slice());
+        defer tagline.free();
+        wln!(self, "<meta name=\"description\" content=\"{}\" />", tagline);
+
         wln!(self, "<link rel=\"apple-touch-icon\" sizes=\"180x180\" href=\"/static/apple-touch-icon.png\" />");
         wln!(self, "<link rel=\"icon\" type=\"image/png\" sizes=\"32x32\" href=\"/static/favicon-32x32.png\" />");
         wln!(self, "<link rel=\"icon\" type=\"image/png\" sizes=\"16x16\" href=\"/static/favicon-16x16.png\" />");

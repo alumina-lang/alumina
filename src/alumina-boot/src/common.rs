@@ -140,8 +140,10 @@ pub enum CodeErrorKind {
     IntrinsicsAreSpecialMkay,
     #[error("extern \"C\" functions cannot have generic parameters")]
     ExternCGenericParams,
-    #[error("this expression is not evaluable at compile time")]
-    CannotConstEvaluate,
+    #[error("constant string expected")]
+    ConstantStringExpected,
+    #[error("this expression is not evaluable at compile time ({})", .0)]
+    CannotConstEvaluate(ConstEvalError),
     #[error("invalid value for enum variant")]
     InvalidValueForEnumVariant,
     #[error("{}", .0)]
@@ -441,6 +443,7 @@ pub(crate) use impl_allocatable;
 
 use crate::ast::lang::LangItemKind;
 use crate::ast::Span;
+use crate::ir::const_eval::ConstEvalError;
 use crate::name_resolution::scope::Scope;
 
 pub trait Incrementable<T> {

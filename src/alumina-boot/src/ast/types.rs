@@ -49,9 +49,9 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
     ) -> Result<ProtocolBounds<'ast>, AluminaError> {
         let mut bounds = Vec::new();
 
-        let (kind, node) = if let Some(_) = node.child_by_field_name("all_bounds") {
+        let (kind, node) = if node.child_by_field_name("all_bounds").is_some() {
             (ProtocolBoundsType::All, node)
-        } else if let Some(_) = node.child_by_field_name("any_bounds") {
+        } else if node.child_by_field_name("any_bounds").is_some() {
             (ProtocolBoundsType::Any, node)
         } else {
             // There are no bounds
@@ -162,13 +162,15 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
 
     fn visit_array_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let ty = self.visit(node.child_by_field_name("inner").unwrap())?;
-        let len = self
-            .code
-            .node_text(node.child_by_field_name("size").unwrap())
-            .parse()
-            .unwrap();
+        let mut visitor = ExpressionVisitor::new(
+            self.ast,
+            self.global_ctx.clone(),
+            self.scope.clone(),
+            self.in_a_macro,
+        );
+        let size = visitor.visit(node.child_by_field_name("size").unwrap())?;
 
-        Ok(self.ast.intern_type(Ty::Array(ty, len)))
+        Ok(self.ast.intern_type(Ty::Array(ty, size)))
     }
 
     fn visit_tuple_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {

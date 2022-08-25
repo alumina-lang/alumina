@@ -419,11 +419,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         for m in valued {
             let expr = child.lower_expr(m.value.unwrap(), type_hint)?;
             let value = const_eval(expr)
-                .map_err(|_| CodeErrorKind::CannotConstEvaluate)
+                .map_err(CodeErrorKind::CannotConstEvaluate)
                 .with_span(m.value.unwrap().span)?;
 
             let value_type = match value.type_kind() {
-                Some(ir::Ty::Builtin(b)) if b.is_integer() => self.types.builtin(b),
+                ir::Ty::Builtin(b) if b.is_integer() => self.types.builtin(b),
                 _ => {
                     return Err(CodeErrorKind::InvalidValueForEnumVariant)
                         .with_span(m.value.unwrap().span)?
@@ -606,7 +606,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let target = s
             .target
-            .ok_or_else(|| CodeErrorKind::TypedefWithoutTarget)
+            .ok_or(CodeErrorKind::TypedefWithoutTarget)
             .with_span(s.span)?;
         let inner = child.lower_type_unrestricted(target).append_span(s.span)?;
 
@@ -1104,7 +1104,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             };
 
             let value = ir::const_eval::const_eval(init)
-                .map_err(|_| CodeErrorKind::CannotConstEvaluate)
+                .map_err(CodeErrorKind::CannotConstEvaluate)
                 .with_span(s.init.unwrap().span)?;
 
             let res = ir::IRItem::Const(ir::Const {
@@ -1283,7 +1283,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             new_func.assign(ast::Item::Function(ast::Function {
                 name: fun.name,
                 attributes: fun.attributes,
-                placeholders: placeholders,
+                placeholders,
                 return_type: rebinder.visit_typ(fun.return_type)?,
                 args: fun
                     .args
@@ -1631,6 +1631,136 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(typ)
     }
 
+    // Builtin type operators
+    fn try_lower_type_operator(
+        &mut self,
+        ast_item: ast::ItemP<'ast>,
+        args: &[ir::TyP<'ir>],
+    ) -> Result<Option<ir::TyP<'ir>>, AluminaError> {
+        macro_rules! arg_count {
+            ($count:expr) => {
+                if args.len() != $count {
+                    return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
+                }
+            };
+        }
+
+        match self.mono_ctx.ast.lang_item_kind(ast_item) {
+            Some(LangItemKind::TypeopDerefOf) => {
+                arg_count!(1);
+                if let ir::Ty::Pointer(ty, _) = args[0] {
+                    return Ok(Some(ty));
+                }
+            }
+            Some(LangItemKind::TypeopPtrWithMutOf) => {
+                arg_count!(2);
+                if let ir::Ty::Pointer(_, is_const) = args[1] {
+                    return Ok(Some(self.types.pointer(args[0], *is_const)));
+                }
+            }
+            Some(LangItemKind::TypeopSignedOf) => {
+                arg_count!(1);
+                match args[0] {
+                    ir::Ty::Builtin(v) if v.is_integer() => {
+                        return Ok(Some(self.types.builtin(v.to_signed().unwrap())))
+                    }
+                    _ => {}
+                }
+            }
+            Some(LangItemKind::TypeopUnsignedOf) => {
+                arg_count!(1);
+                match args[0] {
+                    ir::Ty::Builtin(v) if v.is_integer() => {
+                        return Ok(Some(self.types.builtin(v.to_unsigned().unwrap())))
+                    }
+                    _ => {}
+                }
+            }
+            Some(LangItemKind::TypeopTupleHeadOf) => {
+                arg_count!(1);
+                if let ir::Ty::Tuple(tys) = args[0] {
+                    if !tys.is_empty() {
+                        return Ok(Some(tys[0]));
+                    }
+                }
+            }
+            Some(LangItemKind::TypeopElementOf) => {
+                arg_count!(1);
+                if let ir::Ty::Array(ty, _) = args[0] {
+                    return Ok(Some(ty));
+                }
+            }
+            Some(LangItemKind::TypeopTupleTailOf) => {
+                arg_count!(1);
+                if let ir::Ty::Tuple(tys) = args[0] {
+                    match tys.len() {
+                        0 => {}
+                        1 => return Ok(Some(self.types.void())),
+                        _ => {
+                            return Ok(Some(self.mono_ctx.ir.intern_type(ir::Ty::Tuple(&tys[1..]))))
+                        }
+                    }
+                }
+                return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
+            }
+            Some(LangItemKind::TypeopGenericArgsOf) => {
+                arg_count!(1);
+                match args[0] {
+                    ir::Ty::NamedFunction(cell)
+                    | ir::Ty::NamedType(cell)
+                    | ir::Ty::Protocol(cell) => {
+                        let MonoKey(_, types, _, _) = self.mono_ctx.reverse_lookup(cell);
+                        if types.is_empty() {
+                            return Ok(Some(self.types.void()));
+                        } else {
+                            return Ok(Some(self.types.tuple(types.iter().copied())));
+                        }
+                    }
+                    _ => {}
+                }
+                return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
+            }
+            Some(LangItemKind::TypeopReturnTypeOf) => {
+                arg_count!(1);
+                if let ir::Ty::FunctionPointer(_, ret) = args[0] {
+                    return Ok(Some(*ret));
+                }
+                if let ir::Ty::NamedFunction(f) = args[0] {
+                    return Ok(Some(f.get_function().with_no_span()?.return_type));
+                }
+            }
+            Some(LangItemKind::TypeopArgumentsOf) => {
+                arg_count!(1);
+                if let ir::Ty::FunctionPointer(args, _) = args[0] {
+                    if args.is_empty() {
+                        return Ok(Some(self.types.void()));
+                    } else {
+                        return Ok(Some(self.types.tuple(args.iter().copied())));
+                    }
+                }
+                if let ir::Ty::NamedFunction(f) = args[0] {
+                    let func = f.get_function().with_no_span()?;
+                    if func.args.is_empty() {
+                        return Ok(Some(self.types.void()));
+                    } else {
+                        return Ok(Some(self.types.tuple(func.args.iter().map(|a| a.ty))));
+                    }
+                }
+            }
+            Some(LangItemKind::TypeopEnumTypeOf) => {
+                arg_count!(1);
+                if let ir::Ty::NamedType(e) = args[0] {
+                    if let Ok(e) = e.get_enum() {
+                        return Ok(Some(e.underlying_type));
+                    }
+                }
+            }
+            _ => return Ok(None),
+        };
+
+        Err(CodeErrorKind::InvalidTypeOperator).with_no_span()
+    }
+
     fn lower_type_unrestricted(
         &mut self,
         typ: ast::TyP<'ast>,
@@ -1639,6 +1769,21 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ast::Ty::Builtin(kind) => self.types.builtin(kind),
             ast::Ty::Array(inner, len) => {
                 let inner = self.lower_type_for_value(inner)?;
+                let mut child = self.make_tentative_child();
+                let len_expr =
+                    child.lower_expr(len, Some(child.types.builtin(BuiltinType::USize)))?;
+                let len = const_eval(len_expr)
+                    .map_err(CodeErrorKind::CannotConstEvaluate)
+                    .and_then(|v| match v {
+                        Value::USize(v) => Ok(v),
+                        _ => Err(mismatch!(
+                            self,
+                            self.types.builtin(BuiltinType::USize),
+                            self.mono_ctx.ir.intern_type(v.type_kind())
+                        )),
+                    })
+                    .with_span(len.span)?;
+
                 self.types.array(inner, len)
             }
             ast::Ty::Pointer(inner, is_const) => {
@@ -1708,220 +1853,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .collect::<Result<Vec<_>, _>>()?
                     .alloc_on(self.mono_ctx.ir);
 
-                // Builtin type operators
-                match self.mono_ctx.ast.lang_item_kind(item) {
-                    Some(LangItemKind::TypeopDerefOf) => {
-                        if args.len() != 1 {
-                            return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
-                        }
-                        if let ir::Ty::Pointer(ty, _) = args[0] {
-                            return Ok(ty);
-                        }
-                        return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
-                    }
-                    Some(LangItemKind::TypeopPtrWithMutOf) => {
-                        if args.len() != 2 {
-                            return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
-                        }
-                        if let ir::Ty::Pointer(_, is_const) = args[1] {
-                            return Ok(self.types.pointer(args[0], *is_const));
-                        }
-                        return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
-                    }
-                    Some(LangItemKind::TypeopSignedOf) => {
-                        if args.len() != 1 {
-                            return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
-                        }
-                        match args[0] {
-                            ir::Ty::Builtin(BuiltinType::U8) => {
-                                return Ok(self.types.builtin(BuiltinType::I8))
-                            }
-                            ir::Ty::Builtin(BuiltinType::U16) => {
-                                return Ok(self.types.builtin(BuiltinType::I16))
-                            }
-                            ir::Ty::Builtin(BuiltinType::U32) => {
-                                return Ok(self.types.builtin(BuiltinType::I32))
-                            }
-                            ir::Ty::Builtin(BuiltinType::U64) => {
-                                return Ok(self.types.builtin(BuiltinType::I64))
-                            }
-                            ir::Ty::Builtin(BuiltinType::U128) => {
-                                return Ok(self.types.builtin(BuiltinType::I128))
-                            }
-                            ir::Ty::Builtin(BuiltinType::USize) => {
-                                return Ok(self.types.builtin(BuiltinType::ISize))
-                            }
-                            ir::Ty::Builtin(BuiltinType::I8) => {
-                                return Ok(self.types.builtin(BuiltinType::I8))
-                            }
-                            ir::Ty::Builtin(BuiltinType::I16) => {
-                                return Ok(self.types.builtin(BuiltinType::I16))
-                            }
-                            ir::Ty::Builtin(BuiltinType::I32) => {
-                                return Ok(self.types.builtin(BuiltinType::I32))
-                            }
-                            ir::Ty::Builtin(BuiltinType::I64) => {
-                                return Ok(self.types.builtin(BuiltinType::I64))
-                            }
-                            ir::Ty::Builtin(BuiltinType::I128) => {
-                                return Ok(self.types.builtin(BuiltinType::I128))
-                            }
-                            ir::Ty::Builtin(BuiltinType::ISize) => {
-                                return Ok(self.types.builtin(BuiltinType::ISize))
-                            }
-                            _ => return Err(CodeErrorKind::InvalidTypeOperator).with_no_span(),
-                        }
-                    }
-                    Some(LangItemKind::TypeopUnsignedOf) => {
-                        if args.len() != 1 {
-                            return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
-                        }
-                        match args[0] {
-                            ir::Ty::Builtin(BuiltinType::I8) => {
-                                return Ok(self.types.builtin(BuiltinType::U8))
-                            }
-                            ir::Ty::Builtin(BuiltinType::I16) => {
-                                return Ok(self.types.builtin(BuiltinType::U16))
-                            }
-                            ir::Ty::Builtin(BuiltinType::I32) => {
-                                return Ok(self.types.builtin(BuiltinType::U32))
-                            }
-                            ir::Ty::Builtin(BuiltinType::I64) => {
-                                return Ok(self.types.builtin(BuiltinType::U64))
-                            }
-                            ir::Ty::Builtin(BuiltinType::I128) => {
-                                return Ok(self.types.builtin(BuiltinType::U128))
-                            }
-                            ir::Ty::Builtin(BuiltinType::ISize) => {
-                                return Ok(self.types.builtin(BuiltinType::USize))
-                            }
-                            ir::Ty::Builtin(BuiltinType::U8) => {
-                                return Ok(self.types.builtin(BuiltinType::U8))
-                            }
-                            ir::Ty::Builtin(BuiltinType::U16) => {
-                                return Ok(self.types.builtin(BuiltinType::U16))
-                            }
-                            ir::Ty::Builtin(BuiltinType::U32) => {
-                                return Ok(self.types.builtin(BuiltinType::U32))
-                            }
-                            ir::Ty::Builtin(BuiltinType::U64) => {
-                                return Ok(self.types.builtin(BuiltinType::U64))
-                            }
-                            ir::Ty::Builtin(BuiltinType::U128) => {
-                                return Ok(self.types.builtin(BuiltinType::U128))
-                            }
-                            ir::Ty::Builtin(BuiltinType::USize) => {
-                                return Ok(self.types.builtin(BuiltinType::USize))
-                            }
-                            _ => return Err(CodeErrorKind::InvalidTypeOperator).with_no_span(),
-                        }
-                    }
-                    Some(LangItemKind::TypeopTupleHeadOf) => {
-                        if args.len() != 1 {
-                            return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
-                        }
-                        if let ir::Ty::Tuple(tys) = args[0] {
-                            if tys.is_empty() {
-                                return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
-                            }
-
-                            return Ok(tys[0]);
-                        }
-                        return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
-                    }
-                    Some(LangItemKind::TypeopElementOf) => {
-                        if args.len() != 1 {
-                            return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
-                        }
-                        if let ir::Ty::Array(ty, _) = args[0] {
-                            return Ok(ty);
-                        }
-                        return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
-                    }
-                    Some(LangItemKind::TypeopTupleTailOf) => {
-                        if args.len() != 1 {
-                            return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
-                        }
-                        if let ir::Ty::Tuple(tys) = args[0] {
-                            match tys.len() {
-                                0 => return Err(CodeErrorKind::InvalidTypeOperator).with_no_span(),
-                                1 => return Ok(self.types.void()),
-                                _ => {
-                                    return Ok(self
-                                        .mono_ctx
-                                        .ir
-                                        .intern_type(ir::Ty::Tuple(&tys[1..])))
-                                }
-                            }
-                        }
-                        return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
-                    }
-                    Some(LangItemKind::TypeopGenericArgsOf) => {
-                        if args.len() != 1 {
-                            return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
-                        }
-
-                        match args[0] {
-                            ir::Ty::NamedFunction(cell)
-                            | ir::Ty::NamedType(cell)
-                            | ir::Ty::Protocol(cell) => {
-                                let MonoKey(_, types, _, _) = self.mono_ctx.reverse_lookup(cell);
-                                if types.is_empty() {
-                                    return Ok(self.types.void());
-                                } else {
-                                    return Ok(self.types.tuple(types.iter().copied()));
-                                }
-                            }
-                            _ => {}
-                        }
-                        return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
-                    }
-                    Some(LangItemKind::TypeopReturnTypeOf) => {
-                        if args.len() != 1 {
-                            return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
-                        }
-                        if let ir::Ty::FunctionPointer(_, ret) = args[0] {
-                            return Ok(*ret);
-                        }
-                        if let ir::Ty::NamedFunction(f) = args[0] {
-                            return Ok(f.get_function().with_no_span()?.return_type);
-                        }
-                        return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
-                    }
-                    Some(LangItemKind::TypeopArgumentsOf) => {
-                        if args.len() != 1 {
-                            return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
-                        }
-                        if let ir::Ty::FunctionPointer(args, _) = args[0] {
-                            if args.is_empty() {
-                                return Ok(self.types.void());
-                            } else {
-                                return Ok(self.types.tuple(args.iter().copied()));
-                            }
-                        }
-                        if let ir::Ty::NamedFunction(f) = args[0] {
-                            let func = f.get_function().with_no_span()?;
-                            if func.args.is_empty() {
-                                return Ok(self.types.void());
-                            } else {
-                                return Ok(self.types.tuple(func.args.iter().map(|a| a.ty)));
-                            }
-                        }
-                        return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
-                    }
-                    Some(LangItemKind::TypeopEnumTypeOf) => {
-                        if args.len() != 1 {
-                            return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
-                        }
-                        if let ir::Ty::NamedType(e) = args[0] {
-                            if let Ok(e) = e.get_enum() {
-                                return Ok(e.underlying_type);
-                            }
-                        }
-                        return Err(CodeErrorKind::InvalidTypeOperator).with_no_span();
-                    }
-                    _ => {}
-                };
+                if let Some(ty) = self.try_lower_type_operator(item, args)? {
+                    return Ok(ty);
+                }
 
                 let ir_item = self.monomorphize_item(item, args)?;
                 if let Some(typ) = ir_item.get_alias() {
@@ -2068,9 +2002,19 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     fn raise_type(&mut self, typ: ir::TyP<'ir>) -> Result<ast::TyP<'ast>, AluminaError> {
         let result = match typ {
             ir::Ty::Builtin(kind) => ast::Ty::Builtin(*kind),
-            ir::Ty::Array(inner, len) => {
+            ir::Ty::Array(inner, size) => {
                 let inner = self.raise_type(inner)?;
-                ast::Ty::Array(inner, *len)
+                ast::Ty::Array(
+                    inner,
+                    ast::Expr {
+                        kind: ast::ExprKind::Lit(ast::Lit::Int(
+                            *size as _,
+                            Some(ast::BuiltinType::USize),
+                        )),
+                        span: None,
+                    }
+                    .alloc_on(self.mono_ctx.ast),
+                )
             }
             ir::Ty::Pointer(inner, is_const) => {
                 let inner = self.raise_type(inner)?;
@@ -3620,6 +3564,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         // It basically creates two static arrays, one which holds all the test attributes contatenated
         // and the other that has the TestCaseMeta objects. TestCaseMeta object contains a slice of the
         // attributes array.
+        #[allow(clippy::mutable_key_type)]
         let tests = self.mono_ctx.tests.clone();
 
         let string_slice = self.slice_of(self.types.builtin(BuiltinType::U8), true)?;

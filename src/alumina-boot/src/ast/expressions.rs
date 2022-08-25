@@ -886,7 +886,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             .kind
         {
             ExprKind::Fn(fn_kind, None) => fn_kind.clone(),
-            ExprKind::Defered(def) => FnKind::Defered(def.clone()),
+            ExprKind::Defered(def) => FnKind::Defered(*def),
             ExprKind::Static(inner, None) => {
                 let ret = ExprKind::Static(inner, Some(arguments));
                 return Ok(ret.alloc_with_span_from(self.ast, &self.scope, node));
@@ -1617,7 +1617,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
             .alloc_on(self.ast)
             .trim_start_matches('@');
 
-        let bound_type = if let Some(_) = node.child_by_field_name("by_reference") {
+        let bound_type = if node.child_by_field_name("by_reference").is_some() {
             BoundItemType::ByReference
         } else {
             BoundItemType::ByValue

@@ -82,47 +82,47 @@ pub enum LangItemKind {
 
 impl LangItemKind {
     pub fn is_builtin_protocol(&self) -> bool {
-        match self {
+        matches!(
+            self,
             LangItemKind::ProtoPrimitive
-            | LangItemKind::ProtoNumeric
-            | LangItemKind::ProtoInteger
-            | LangItemKind::ProtoFloatingPoint
-            | LangItemKind::ProtoSigned
-            | LangItemKind::ProtoUnsigned
-            | LangItemKind::ProtoZeroSized
-            | LangItemKind::ProtoPointer
-            | LangItemKind::ProtoArray
-            | LangItemKind::ProtoTuple
-            | LangItemKind::ProtoRange
-            | LangItemKind::ProtoEnum
-            | LangItemKind::ProtoStruct
-            | LangItemKind::ProtoUnion
-            | LangItemKind::ProtoCallable
-            | LangItemKind::ProtoNamedFunction
-            | LangItemKind::ProtoFunctionPointer
-            | LangItemKind::ProtoArrayOf
-            | LangItemKind::ProtoPointerOf
-            | LangItemKind::ProtoMeta
-            | LangItemKind::ProtoRangeOf => true,
-            _ => false,
-        }
+                | LangItemKind::ProtoNumeric
+                | LangItemKind::ProtoInteger
+                | LangItemKind::ProtoFloatingPoint
+                | LangItemKind::ProtoSigned
+                | LangItemKind::ProtoUnsigned
+                | LangItemKind::ProtoZeroSized
+                | LangItemKind::ProtoPointer
+                | LangItemKind::ProtoArray
+                | LangItemKind::ProtoTuple
+                | LangItemKind::ProtoRange
+                | LangItemKind::ProtoEnum
+                | LangItemKind::ProtoStruct
+                | LangItemKind::ProtoUnion
+                | LangItemKind::ProtoCallable
+                | LangItemKind::ProtoNamedFunction
+                | LangItemKind::ProtoFunctionPointer
+                | LangItemKind::ProtoArrayOf
+                | LangItemKind::ProtoPointerOf
+                | LangItemKind::ProtoMeta
+                | LangItemKind::ProtoRangeOf
+        )
     }
 
     pub fn is_typeop(&self) -> bool {
-        match self {
+        matches!(
+            self,
             LangItemKind::TypeopSignedOf
-            | LangItemKind::TypeopUnsignedOf
-            | LangItemKind::TypeopDerefOf
-            | LangItemKind::TypeopElementOf
-            | LangItemKind::TypeopTupleHeadOf
-            | LangItemKind::TypeopTupleTailOf
-            | LangItemKind::TypeopReturnTypeOf
-            | LangItemKind::TypeopArgumentsOf
-            | LangItemKind::TypeopPtrWithMutOf
-            | LangItemKind::TypeopEnumTypeOf
-            | LangItemKind::TypeopGenericArgsOf => true,
-            _ => false,
-        }
+                | LangItemKind::TypeopUnsignedOf
+                | LangItemKind::TypeopDerefOf
+                | LangItemKind::TypeopElementOf
+                | LangItemKind::TypeopTupleHeadOf
+                | LangItemKind::TypeopTupleTailOf
+                | LangItemKind::TypeopReturnTypeOf
+                | LangItemKind::TypeopArgumentsOf
+                | LangItemKind::TypeopPtrWithMutOf
+                | LangItemKind::TypeopEnumTypeOf
+                | LangItemKind::TypeopGenericArgsOf
+        )
     }
 
     pub fn is_builtin_impl(&self) -> bool {

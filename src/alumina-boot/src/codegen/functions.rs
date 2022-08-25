@@ -22,8 +22,8 @@ pub struct FunctionWriter<'ir, 'gen> {
 }
 
 /// Prevent "1f32" from being interpreted as an int constant
-fn force_float<'a>(v: &'a str) -> Cow<'a, str> {
-    if v.chars().all(|ch| ch.is_digit(10)) {
+fn force_float(v: &str) -> Cow<'_, str> {
+    if v.chars().all(|ch| ch.is_ascii_digit()) {
         Cow::Owned(format!("{}e0", v))
     } else {
         Cow::Borrowed(v)

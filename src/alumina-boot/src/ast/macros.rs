@@ -37,7 +37,7 @@ macro_rules! string_arg {
             ExprKind::Lit(Lit::Str(s)) => s,
             _ => {
                 use crate::common::CodeErrorBuilder;
-                return Err(CodeErrorKind::CannotConstEvaluate).with_span($self.invocation_span);
+                return Err(CodeErrorKind::ConstantStringExpected).with_span($self.invocation_span);
             }
         }
     };
@@ -484,15 +484,15 @@ impl<'ast> MacroExpander<'ast> {
                 .alloc_on(self.ast))
             }
             BuiltinMacroKind::Concat => {
-                let parts =
-                    self.args
-                        .iter()
-                        .map(|arg| match arg.kind {
-                            ExprKind::Lit(Lit::Str(s)) => Ok(s),
-                            _ => Err(CodeErrorKind::CannotConstEvaluate)
-                                .with_span(self.invocation_span),
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
+                let parts = self
+                    .args
+                    .iter()
+                    .map(|arg| match arg.kind {
+                        ExprKind::Lit(Lit::Str(s)) => Ok(s),
+                        _ => Err(CodeErrorKind::ConstantStringExpected)
+                            .with_span(self.invocation_span),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
 
                 let value = self
                     .ast
@@ -512,7 +512,7 @@ impl<'ast> MacroExpander<'ast> {
                 .alloc_on(self.ast))
             }
             BuiltinMacroKind::FormatArgs => {
-                if self.args.len() < 1 {
+                if self.args.is_empty() {
                     return Err(CodeErrorKind::NotEnoughMacroArguments(1))
                         .with_span(self.invocation_span);
                 }

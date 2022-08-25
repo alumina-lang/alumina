@@ -193,7 +193,7 @@ impl<'ir> ExpressionBuilder<'ir> {
             kind: ExprKind::ConstValue(val),
             value_type: ValueType::RValue,
             is_const: true,
-            ty: self.ir.intern_type(value_kind.expect("unimplemented")),
+            ty: self.ir.intern_type(value_kind),
         };
 
         expr.alloc_on(self.ir)
