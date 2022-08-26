@@ -1646,34 +1646,16 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
 
         match self.mono_ctx.ast.lang_item_kind(ast_item) {
-            Some(LangItemKind::TypeopDerefOf) => {
-                arg_count!(1);
-                if let ir::Ty::Pointer(ty, _) = args[0] {
-                    return Ok(Some(ty));
-                }
-            }
-            Some(LangItemKind::TypeopPtrWithMutOf) => {
+            Some(LangItemKind::TypeopPointerWithMutOf) => {
                 arg_count!(2);
                 if let ir::Ty::Pointer(_, is_const) = args[1] {
                     return Ok(Some(self.types.pointer(args[0], *is_const)));
                 }
             }
-            Some(LangItemKind::TypeopSignedOf) => {
-                arg_count!(1);
-                match args[0] {
-                    ir::Ty::Builtin(v) if v.is_integer() => {
-                        return Ok(Some(self.types.builtin(v.to_signed().unwrap())))
-                    }
-                    _ => {}
-                }
-            }
-            Some(LangItemKind::TypeopUnsignedOf) => {
-                arg_count!(1);
-                match args[0] {
-                    ir::Ty::Builtin(v) if v.is_integer() => {
-                        return Ok(Some(self.types.builtin(v.to_unsigned().unwrap())))
-                    }
-                    _ => {}
+            Some(LangItemKind::TypeopArrayWithLengthOf) => {
+                arg_count!(2);
+                if let ir::Ty::Array(_, len) = args[1] {
+                    return Ok(Some(self.types.array(args[0], *len)));
                 }
             }
             Some(LangItemKind::TypeopTupleHeadOf) => {
@@ -1682,12 +1664,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     if !tys.is_empty() {
                         return Ok(Some(tys[0]));
                     }
-                }
-            }
-            Some(LangItemKind::TypeopElementOf) => {
-                arg_count!(1);
-                if let ir::Ty::Array(ty, _) = args[0] {
-                    return Ok(Some(ty));
                 }
             }
             Some(LangItemKind::TypeopTupleTailOf) => {

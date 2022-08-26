@@ -46,6 +46,7 @@ enum NodeKind {
     Attributes,
     MetaArguments,
     RangeExpression,
+    WhenType,
     DereferenceExpression,
     TypeCheck,
     FileDocComment,
@@ -169,7 +170,7 @@ enum FieldKind {
     Value = 53u16,
 }
 
-static NODE_KINDS: [NodeKind; 249] = [
+static NODE_KINDS: [NodeKind; 250] = [
     NodeKind::Invalid,
     NodeKind::Identifier,
     NodeKind::DocComment,
@@ -371,6 +372,7 @@ static NODE_KINDS: [NodeKind; 249] = [
     NodeKind::ParenthesizedExpression,
     NodeKind::TypeCheck,
     NodeKind::IfExpression,
+    NodeKind::WhenType,
     NodeKind::SwitchArm,
     NodeKind::SwitchArm,
     NodeKind::Pattern,
@@ -540,6 +542,9 @@ protocol NodeVisitor<Self, ReturnType> {
     }
     fn visit_range_expression(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_range_expression");
+    }
+    fn visit_when_type(self: &mut Self, node: Node) -> ReturnType {
+        panic!("unimplemented: visit_when_type");
     }
     fn visit_dereference_expression(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_dereference_expression");
@@ -781,6 +786,7 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::Attributes => self.visit_attributes(node),
             NodeKind::MetaArguments => self.visit_meta_arguments(node),
             NodeKind::RangeExpression => self.visit_range_expression(node),
+            NodeKind::WhenType => self.visit_when_type(node),
             NodeKind::DereferenceExpression => self.visit_dereference_expression(node),
             NodeKind::TypeCheck => self.visit_type_check(node),
             NodeKind::FileDocComment => self.visit_file_doc_comment(node),

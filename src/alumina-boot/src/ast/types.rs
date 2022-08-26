@@ -264,11 +264,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
         let typ = self.visit(typecheck_node.child_by_field_name("lhs").unwrap())?;
         let bounds = self.parse_protocol_bounds(typecheck_node)?;
         let cond = StaticIfCondition { typ, bounds };
-        
+
         let then = self.visit(node.child_by_field_name("consequence").unwrap())?;
         let els = self.visit(node.child_by_field_name("alternative").unwrap())?;
 
         Ok(self.ast.intern_type(Ty::When(cond, then, els)))
     }
-
 }
