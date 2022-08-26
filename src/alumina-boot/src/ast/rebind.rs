@@ -21,20 +21,26 @@ impl<'ast> Rebinder<'ast> {
         &mut self,
         placeholder: &Placeholder<'ast>,
     ) -> Result<Placeholder<'ast>, AluminaError> {
-        let bounds = placeholder
-            .bounds
+        Ok(Placeholder {
+            bounds: self.visit_bounds(&placeholder.bounds)?,
+            default: placeholder.default.map(|d| self.visit_typ(d)).transpose()?,
+            id: placeholder.id,
+        })
+    }
+
+    pub fn visit_bounds(
+        &mut self,
+        bounds: &ProtocolBounds<'ast>,
+    ) -> Result<ProtocolBounds<'ast>, AluminaError> {
+        let new_bounds = bounds
             .bounds
             .iter()
             .map(|b| self.visit_bound(b))
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(Placeholder {
-            bounds: ProtocolBounds {
-                typ: placeholder.bounds.typ,
-                bounds: bounds.alloc_on(self.ast),
-            },
-            default: placeholder.default.map(|d| self.visit_typ(d)).transpose()?,
-            id: placeholder.id,
+        Ok(ProtocolBounds {
+            kind: bounds.kind,
+            bounds: new_bounds.alloc_on(self.ast),
         })
     }
 
@@ -84,7 +90,14 @@ impl<'ast> Rebinder<'ast> {
                 typ: self.visit_typ(typ)?,
                 name,
             }),
-
+            When(cond, then, els) => When(
+                StaticIfCondition {
+                    bounds: self.visit_bounds(&cond.bounds)?,
+                    typ: self.visit_typ(typ)?,
+                },
+                self.visit_typ(then)?,
+                self.visit_typ(els)?,
+            ),
             NamedFunction(_) | NamedType(_) | Builtin(_) | Protocol(_) => return Ok(typ),
         };
 
@@ -228,7 +241,7 @@ impl<'ast> Rebinder<'ast> {
                 let cond = StaticIfCondition {
                     typ: self.visit_typ(cond.typ)?,
                     bounds: ProtocolBounds {
-                        typ: cond.bounds.typ,
+                        kind: cond.bounds.kind,
                         bounds: cond
                             .bounds
                             .bounds

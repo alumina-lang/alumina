@@ -50,15 +50,12 @@ pub enum LangItemKind {
     ImplTuple(usize),
     ImplArray,
 
-    TypeopSignedOf,
-    TypeopUnsignedOf,
-    TypeopDerefOf,
-    TypeopElementOf,
     TypeopTupleHeadOf,
     TypeopTupleTailOf,
     TypeopReturnTypeOf,
     TypeopArgumentsOf,
-    TypeopPtrWithMutOf,
+    TypeopPointerWithMutOf,
+    TypeopArrayWithLengthOf,
     TypeopGenericArgsOf,
     TypeopEnumTypeOf,
 
@@ -111,15 +108,12 @@ impl LangItemKind {
     pub fn is_typeop(&self) -> bool {
         matches!(
             self,
-            LangItemKind::TypeopSignedOf
-                | LangItemKind::TypeopUnsignedOf
-                | LangItemKind::TypeopDerefOf
-                | LangItemKind::TypeopElementOf
-                | LangItemKind::TypeopTupleHeadOf
+            LangItemKind::TypeopTupleHeadOf
                 | LangItemKind::TypeopTupleTailOf
                 | LangItemKind::TypeopReturnTypeOf
                 | LangItemKind::TypeopArgumentsOf
-                | LangItemKind::TypeopPtrWithMutOf
+                | LangItemKind::TypeopPointerWithMutOf
+                | LangItemKind::TypeopArrayWithLengthOf
                 | LangItemKind::TypeopEnumTypeOf
                 | LangItemKind::TypeopGenericArgsOf
         )
@@ -210,15 +204,12 @@ impl TryFrom<&str> for LangItemKind {
             "operator_gt" => Ok(LangItemKind::Operator(BinOp::Gt)),
             "operator_gte" => Ok(LangItemKind::Operator(BinOp::GEq)),
 
-            "typeop_signed_of" => Ok(LangItemKind::TypeopSignedOf),
-            "typeop_unsigned_of" => Ok(LangItemKind::TypeopUnsignedOf),
-            "typeop_deref_of" => Ok(LangItemKind::TypeopDerefOf),
-            "typeop_element_of" => Ok(LangItemKind::TypeopElementOf),
             "typeop_tuple_head_of" => Ok(LangItemKind::TypeopTupleHeadOf),
             "typeop_tuple_tail_of" => Ok(LangItemKind::TypeopTupleTailOf),
             "typeop_return_type_of" => Ok(LangItemKind::TypeopReturnTypeOf),
             "typeop_arguments_of" => Ok(LangItemKind::TypeopArgumentsOf),
-            "typeop_ptr_with_mut_of" => Ok(LangItemKind::TypeopPtrWithMutOf),
+            "typeop_pointer_with_mut_of" => Ok(LangItemKind::TypeopPointerWithMutOf),
+            "typeop_array_with_length_of" => Ok(LangItemKind::TypeopArrayWithLengthOf),
             "typeop_generic_args_of" => Ok(LangItemKind::TypeopGenericArgsOf),
             "typeop_enum_type_of" => Ok(LangItemKind::TypeopEnumTypeOf),
 

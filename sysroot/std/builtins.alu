@@ -56,7 +56,7 @@ impl bool {
     }
 
     /// Convert boolean into an [Option] with a given value.
-    /// 
+    ///
     /// Returns `Option::some(value)` if the boolean is `true`, `Option::none()` otherwise.
     ///
     /// ## Example
@@ -76,7 +76,7 @@ impl bool {
     }
 
     /// Convert boolean into an [Option] with a value provided by a closure.
-    /// 
+    ///
     /// Returns `Option::some(func())` if the boolean is `true`, `Option::none()` otherwise.
     ///
     /// ## Example
@@ -952,21 +952,6 @@ impl array<Arr: builtins::Array> {
 // these would be implemented in the standard library, but the infer system is not
 // yet sufficiently powerful for this.
 
-/// Signed integer type of the same size as the original type.
-///
-/// ## Example
-/// ```
-/// use std::typing::assert_type_eq;
-/// use std::builtins::signed_of;
-///
-/// assert_type_eq::<signed_of<u32>, i32>();
-/// assert_type_eq::<signed_of<usize>, isize>();
-///
-/// assert_type_eq::<signed_of<i8>, i8>();
-/// ```
-#[lang(typeop_signed_of)]
-type signed_of<T: builtins::Integer>;
-
 /// Unsigned integer type of the same size as the original type.
 ///
 /// ## Example
@@ -979,8 +964,49 @@ type signed_of<T: builtins::Integer>;
 ///
 /// assert_type_eq::<unsigned_of<u8>, u8>();
 /// ```
-#[lang(typeop_unsigned_of)]
-type unsigned_of<T: builtins::Integer>;
+type unsigned_of<T: Integer> = when T: i8 {
+    u8
+} else when T: i16 {
+    u16
+} else when T: i32 {
+    u32
+} else when T: i64 {
+    u64
+} else when T: i128 {
+    u128
+} else when T: isize {
+    usize
+} else {
+    T
+};
+
+/// Signed integer type of the same size as the original type.
+///
+/// ## Example
+/// ```
+/// use std::typing::assert_type_eq;
+/// use std::builtins::signed_of;
+///
+/// assert_type_eq::<signed_of<u32>, i32>();
+/// assert_type_eq::<signed_of<usize>, isize>();
+///
+/// assert_type_eq::<signed_of<i8>, i8>();
+/// ```
+type signed_of<T: Integer> = when T: u8 {
+    i8
+} else when T: u16 {
+    i16
+} else when T: u32 {
+    i32
+} else when T: u64 {
+    i64
+} else when T: u128 {
+    i128
+} else when T: usize {
+    isize
+} else {
+    T
+};
 
 /// Element type of the provided array
 ///
@@ -991,8 +1017,7 @@ type unsigned_of<T: builtins::Integer>;
 ///
 /// assert_type_eq::<element_of<[i32; 3]>, i32>();
 /// ```
-#[lang(typeop_element_of)]
-type element_of<T: builtins::Array>;
+type element_of<T: Array> = typeof({ let t: T; t[0] });
 
 /// Type of the pointed-to value
 ///
@@ -1004,8 +1029,7 @@ type element_of<T: builtins::Array>;
 /// assert_type_eq::<deref_of<&i32>, i32>();
 /// assert_type_eq::<deref_of<&mut i32>, i32>();
 /// ```
-#[lang(typeop_deref_of)]
-type deref_of<T: builtins::Pointer>;
+type deref_of<T: Pointer> = typeof({ let t: T; *t });
 
 /// Type of the first element of the provided tuple
 ///
@@ -1085,13 +1109,26 @@ type generic_args_of<T>;
 /// ## Example
 /// ```
 /// use std::typing::assert_type_eq;
-/// use std::builtins::ptr_with_mut_of;
+/// use std::builtins::pointer_with_mut_of;
 ///
-/// assert_type_eq::<ptr_with_mut_of<void, &i32>, &void>();
-/// assert_type_eq::<ptr_with_mut_of<usize, &mut Option<usize>>, &mut usize>();
+/// assert_type_eq::<pointer_with_mut_of<void, &i32>, &void>();
+/// assert_type_eq::<pointer_with_mut_of<usize, &mut Option<usize>>, &mut usize>();
 /// ```
-#[lang(typeop_ptr_with_mut_of)]
-type ptr_with_mut_of<T, Ptr: Pointer>;
+#[lang(typeop_pointer_with_mut_of)]
+type pointer_with_mut_of<T, Ptr: Pointer>;
+
+/// Array of `T` with same length as `Arr`.
+///
+/// ## Example
+/// ```
+/// use std::typing::assert_type_eq;
+/// use std::builtins::array_with_length_of;
+///
+/// assert_type_eq::<array_with_length_of<i32, [(); 42]>, [i32; 42]>();
+/// assert_type_eq::<array_with_length_of<Option<bool>, [i64; 1337]>, [Option<bool>; 1337]>();
+/// ```
+#[lang(typeop_array_with_length_of)]
+type array_with_length_of<T, Arr: Array>;
 
 /// Backing type of an `enum`.
 ///
@@ -1888,7 +1925,7 @@ mod tests {
     #[test]
     fn test_array_size_constexpr() {
         use typing::{assert_type_eq, assert_type_ne};
-        
+
         const SIZE = 5usize;
 
         let a: [u8; 0];

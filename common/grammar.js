@@ -407,7 +407,8 @@ module.exports = grammar({
         $.array_of,
         $.tuple_type,
         $.function_pointer,
-        $.type_of
+        $.type_of,
+        $.when_type,
       ),
 
     type_of: ($) => seq("typeof", "(", field("inner", $._expression), ")"),
@@ -841,6 +842,24 @@ module.exports = grammar({
         ),
         field("consequence", $.block),
         optional(field("alternative", $.else_clause))
+      ),
+
+    when_type: ($) =>
+      seq(
+        "when",
+        field("type_check", $.type_check),
+        "{",
+        field("consequence", $._type),
+        "}",
+        "else",
+        choice(
+          seq(
+            "{",
+            field("alternative", $._type),
+            "}",
+          ),
+          field("alternative", $.when_type)
+        )
       ),
 
     switch_arm: ($) =>

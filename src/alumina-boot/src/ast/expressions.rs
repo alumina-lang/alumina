@@ -1516,7 +1516,7 @@ impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
             self.placeholders.push(Placeholder {
                 id: placeholder,
                 bounds: super::ProtocolBounds {
-                    typ: super::ProtocolBoundsType::All,
+                    kind: super::ProtocolBoundsKind::All,
                     bounds: &[],
                 },
                 default: None,

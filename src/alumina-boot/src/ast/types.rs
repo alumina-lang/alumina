@@ -15,7 +15,7 @@ use crate::{
 };
 
 use super::expressions::ExpressionVisitor;
-use super::{Bound, Defered, ProtocolBounds, ProtocolBoundsType, Span};
+use super::{Bound, Defered, ProtocolBounds, ProtocolBoundsKind, Span, StaticIfCondition};
 
 pub struct TypeVisitor<'ast, 'src> {
     global_ctx: GlobalCtx,
@@ -50,12 +50,12 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
         let mut bounds = Vec::new();
 
         let (kind, node) = if node.child_by_field_name("all_bounds").is_some() {
-            (ProtocolBoundsType::All, node)
+            (ProtocolBoundsKind::All, node)
         } else if node.child_by_field_name("any_bounds").is_some() {
-            (ProtocolBoundsType::Any, node)
+            (ProtocolBoundsKind::Any, node)
         } else {
             // There are no bounds
-            (ProtocolBoundsType::All, node)
+            (ProtocolBoundsKind::All, node)
         };
 
         let mut cursor = node.walk();
@@ -75,7 +75,7 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
 
         let bounds = bounds.alloc_on(self.ast);
 
-        Ok(ProtocolBounds { bounds, typ: kind })
+        Ok(ProtocolBounds { bounds, kind })
     }
 
     fn visit_typeref(&mut self, node: tree_sitter::Node<'src>) -> Result<TyP<'ast>, AluminaError> {
@@ -257,5 +257,17 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
         Ok(self
             .ast
             .intern_type(Ty::FunctionPointer(elements.alloc_on(self.ast), type_node)))
+    }
+
+    fn visit_when_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let typecheck_node = node.child_by_field_name("type_check").unwrap();
+        let typ = self.visit(typecheck_node.child_by_field_name("lhs").unwrap())?;
+        let bounds = self.parse_protocol_bounds(typecheck_node)?;
+        let cond = StaticIfCondition { typ, bounds };
+
+        let then = self.visit(node.child_by_field_name("consequence").unwrap())?;
+        let els = self.visit(node.child_by_field_name("alternative").unwrap())?;
+
+        Ok(self.ast.intern_type(Ty::When(cond, then, els)))
     }
 }

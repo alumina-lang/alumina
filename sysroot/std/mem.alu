@@ -3,9 +3,6 @@
 //! The main feature of this module is the [slice] type, which is a pointer to a region
 //! of memory. `&[T]` is a slice (read-only) of `T`, and `&mut [T]` is a mutable slice.
 
-use builtins::Pointer;
-use std::option::Option;
-
 /// Types that can be "freed".
 ///
 /// Usually these types contain something that is heap-allocated.
@@ -13,7 +10,6 @@ protocol Freeable<Self> {
     /// Frees the memory backing the object.
     fn free(self: &mut Self);
 }
-
 
 /// Types that implement move semantics
 ///
@@ -70,12 +66,13 @@ protocol AsSliceMut<Self, T> {
 /// rather than the element type itself. This is an implementation detail to ensure that `&mut [T]` and
 /// `&[T]` are distinguished without having to have two distinct types for mutable and const slices.
 #[lang(slice)]
-struct slice<Ptr: Pointer> {
+struct slice<Ptr: builtins::Pointer> {
     _ptr: Ptr,
     _len: usize,
 }
 
 impl slice {
+    use builtins::Pointer;
     use std::cmp::{Equatable, Comparable, Ordering};
     use std::hash::{Hasher, Hashable};
     use std::builtins::{Primitive, PointerOf, ZeroSized};
@@ -321,11 +318,11 @@ impl slice {
 }
 
 /// Iterator over elements of a slice
-struct SliceIterator<Ptr: Pointer> {
+struct SliceIterator<Ptr: builtins::Pointer> {
     inner: slice<Ptr>,
 }
 
-impl SliceIterator<Ptr: Pointer> {
+impl SliceIterator<Ptr: builtins::Pointer> {
     /// @ iter::Iterator::next
     #[force_inline]
     fn next(self: &mut SliceIterator<Ptr>) -> Option<builtins::deref_of<Ptr>> {
@@ -363,11 +360,11 @@ impl SliceIterator<Ptr: Pointer> {
 }
 
 /// Iterator over pointers to elements of a slice
-struct SliceRefIterator<Ptr: Pointer> {
+struct SliceRefIterator<Ptr: builtins::Pointer> {
     inner: slice<Ptr>,
 }
 
-impl SliceRefIterator<Ptr: Pointer> {
+impl SliceRefIterator<Ptr: builtins::Pointer> {
     /// @ iter::Iterator::next
     #[force_inline]
     fn next(self: &mut SliceRefIterator<Ptr>) -> Option<Ptr> {
