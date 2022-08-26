@@ -167,10 +167,10 @@
 <h2>Types</h2>
 <ul>
 <li>
-<a href="/std/builtins/#item.signed_of">signed_of</a>
+<a href="/std/builtins/#item.unsigned_of">unsigned_of</a>
 </li>
 <li>
-<a href="/std/builtins/#item.unsigned_of">unsigned_of</a>
+<a href="/std/builtins/#item.signed_of">signed_of</a>
 </li>
 <li>
 <a href="/std/builtins/#item.element_of">element_of</a>
@@ -194,7 +194,10 @@
 <a href="/std/builtins/#item.generic_args_of">generic_args_of</a>
 </li>
 <li>
-<a href="/std/builtins/#item.ptr_with_mut_of">ptr_with_mut_of</a>
+<a href="/std/builtins/#item.pointer_with_mut_of">pointer_with_mut_of</a>
+</li>
+<li>
+<a href="/std/builtins/#item.array_with_length_of">array_with_length_of</a>
 </li>
 <li>
 <a href="/std/builtins/#item.enum_type_of">enum_type_of</a>
@@ -529,42 +532,13 @@ by the compiler.
 <h2 id="Type">Types</h2>
 <ul>
 <li>
-<div class="signature" id="item.signed_of">
-<h4>
-<span class="keyword">type</span> <span class="identifier-type">signed_of</span>&lt;T&gt;<div class="protocol-bound">
-T: <a href="/std/builtins/Integer.html"><span class="identifier-type">Integer</span></a></div>
-</h4>
-<div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L967-L968"/>source</a>
-</div>
-</div>
-<div class="item-doc">
-<p>
-Signed integer type of the same size as the original type.
-</p><p>
-</p>
-<h3> Example</h3>
-<p>
-<pre class="with-playground-link"><code class="language-alumina">use std::typing::assert_type_eq;
-use std::builtins::signed_of;
-
-assert_type_eq::&lt;signed_of&lt;u32&gt;, i32&gt;();
-assert_type_eq::&lt;signed_of&lt;usize&gt;, isize&gt;();
-
-assert_type_eq::&lt;signed_of&lt;i8&gt;, i8&gt;();
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3atyping%3a%3aassert%5ftype%5feq%3b%0a%20%20%20use%20std%3a%3abuiltins%3a%3asigned%5fof%3b%0a%20%20%20%0a%20%20%20assert%5ftype%5feq%3a%3a%3csigned%5fof%3cu32%3e%2c%20i32%3e%28%29%3b%0a%20%20%20assert%5ftype%5feq%3a%3a%3csigned%5fof%3cusize%3e%2c%20isize%3e%28%29%3b%0a%20%20%20%0a%20%20%20assert%5ftype%5feq%3a%3a%3csigned%5fof%3ci8%3e%2c%20i8%3e%28%29%3b%0a%7d%0a">Run this example</a></pre>
-</p><p>
-</p>
-</div>
-</li>
-<li>
 <div class="signature" id="item.unsigned_of">
 <h4>
-<span class="keyword">type</span> <span class="identifier-type">unsigned_of</span>&lt;T&gt;<div class="protocol-bound">
+<span class="keyword">type</span> <span class="identifier-type">unsigned_of</span>&lt;T&gt; = <span class="keyword-control">when</span> ...<div class="protocol-bound">
 T: <a href="/std/builtins/Integer.html"><span class="identifier-type">Integer</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L982-L983"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L967-L981"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -587,13 +561,42 @@ assert_type_eq::&lt;unsigned_of&lt;u8&gt;, u8&gt;();
 </div>
 </li>
 <li>
+<div class="signature" id="item.signed_of">
+<h4>
+<span class="keyword">type</span> <span class="identifier-type">signed_of</span>&lt;T&gt; = <span class="keyword-control">when</span> ...<div class="protocol-bound">
+T: <a href="/std/builtins/Integer.html"><span class="identifier-type">Integer</span></a></div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L995-L1009"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Signed integer type of the same size as the original type.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::typing::assert_type_eq;
+use std::builtins::signed_of;
+
+assert_type_eq::&lt;signed_of&lt;u32&gt;, i32&gt;();
+assert_type_eq::&lt;signed_of&lt;usize&gt;, isize&gt;();
+
+assert_type_eq::&lt;signed_of&lt;i8&gt;, i8&gt;();
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3atyping%3a%3aassert%5ftype%5feq%3b%0a%20%20%20use%20std%3a%3abuiltins%3a%3asigned%5fof%3b%0a%20%20%20%0a%20%20%20assert%5ftype%5feq%3a%3a%3csigned%5fof%3cu32%3e%2c%20i32%3e%28%29%3b%0a%20%20%20assert%5ftype%5feq%3a%3a%3csigned%5fof%3cusize%3e%2c%20isize%3e%28%29%3b%0a%20%20%20%0a%20%20%20assert%5ftype%5feq%3a%3a%3csigned%5fof%3ci8%3e%2c%20i8%3e%28%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
 <div class="signature" id="item.element_of">
 <h4>
-<span class="keyword">type</span> <span class="identifier-type">element_of</span>&lt;T&gt;<div class="protocol-bound">
+<span class="keyword">type</span> <span class="identifier-type">element_of</span>&lt;T&gt; = <span class="keyword">typeof</span>(...)<div class="protocol-bound">
 T: <a href="/std/builtins/Array.html"><span class="identifier-type">Array</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L994-L995"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1020-L1020"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -615,11 +618,11 @@ assert_type_eq::&lt;element_of&lt;[i32; 3]&gt;, i32&gt;();
 <li>
 <div class="signature" id="item.deref_of">
 <h4>
-<span class="keyword">type</span> <span class="identifier-type">deref_of</span>&lt;T&gt;<div class="protocol-bound">
+<span class="keyword">type</span> <span class="identifier-type">deref_of</span>&lt;T&gt; = <span class="keyword">typeof</span>(...)<div class="protocol-bound">
 T: <a href="/std/builtins/Pointer.html"><span class="identifier-type">Pointer</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1007-L1008"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1032-L1032"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -646,7 +649,7 @@ assert_type_eq::&lt;deref_of&lt;&amp;mut i32&gt;, i32&gt;();
 T: <a href="/std/builtins/Tuple.html"><span class="identifier-type">Tuple</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1019-L1020"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1043-L1044"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -672,7 +675,7 @@ assert_type_eq::&lt;tuple_head_of&lt;(i32, u8, ())&gt;, i32&gt;();
 T: <a href="/std/builtins/Tuple.html"><span class="identifier-type">Tuple</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1034-L1035"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1058-L1059"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -699,7 +702,7 @@ assert_type_eq::&lt;tuple_tail_of&lt;(i32,)&gt;, ()&gt;();
 <h4>
 <span class="keyword">type</span> <span class="identifier-type">return_type_of</span>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1049-L1050"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1073-L1074"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -726,7 +729,7 @@ assert_type_eq::&lt;return_type_of&lt;fn() -&gt; u8&gt;, u8&gt;();
 <h4>
 <span class="keyword">type</span> <span class="identifier-type">arguments_of</span>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1064-L1065"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1088-L1089"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -753,7 +756,7 @@ assert_type_eq::&lt;arguments_of&lt;fn() -&gt; u8&gt;, ()&gt;();
 <h4>
 <span class="keyword">type</span> <span class="identifier-type">generic_args_of</span>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1080-L1081"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1104-L1105"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -777,13 +780,13 @@ assert_type_eq::&lt;generic_args_of&lt;std::cmp::Ordering&gt;, ()&gt;();
 </div>
 </li>
 <li>
-<div class="signature" id="item.ptr_with_mut_of">
+<div class="signature" id="item.pointer_with_mut_of">
 <h4>
-<span class="keyword">type</span> <span class="identifier-type">ptr_with_mut_of</span>&lt;T, Ptr&gt;<div class="protocol-bound">
+<span class="keyword">type</span> <span class="identifier-type">pointer_with_mut_of</span>&lt;T, Ptr&gt;<div class="protocol-bound">
 Ptr: <a href="/std/builtins/Pointer.html"><span class="identifier-type">Pointer</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1093-L1094"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1117-L1118"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -794,11 +797,38 @@ Pointer to <code class="language-alumina">T</code> with same constness as <code 
 <h3> Example</h3>
 <p>
 <pre class="with-playground-link"><code class="language-alumina">use std::typing::assert_type_eq;
-use std::builtins::ptr_with_mut_of;
+use std::builtins::pointer_with_mut_of;
 
-assert_type_eq::&lt;ptr_with_mut_of&lt;void, &amp;i32&gt;, &amp;void&gt;();
-assert_type_eq::&lt;ptr_with_mut_of&lt;usize, &amp;mut Option&lt;usize&gt;&gt;, &amp;mut usize&gt;();
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3atyping%3a%3aassert%5ftype%5feq%3b%0a%20%20%20use%20std%3a%3abuiltins%3a%3aptr%5fwith%5fmut%5fof%3b%0a%20%20%20%0a%20%20%20assert%5ftype%5feq%3a%3a%3cptr%5fwith%5fmut%5fof%3cvoid%2c%20%26i32%3e%2c%20%26void%3e%28%29%3b%0a%20%20%20assert%5ftype%5feq%3a%3a%3cptr%5fwith%5fmut%5fof%3cusize%2c%20%26mut%20Option%3cusize%3e%3e%2c%20%26mut%20usize%3e%28%29%3b%0a%7d%0a">Run this example</a></pre>
+assert_type_eq::&lt;pointer_with_mut_of&lt;void, &amp;i32&gt;, &amp;void&gt;();
+assert_type_eq::&lt;pointer_with_mut_of&lt;usize, &amp;mut Option&lt;usize&gt;&gt;, &amp;mut usize&gt;();
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3atyping%3a%3aassert%5ftype%5feq%3b%0a%20%20%20use%20std%3a%3abuiltins%3a%3apointer%5fwith%5fmut%5fof%3b%0a%20%20%20%0a%20%20%20assert%5ftype%5feq%3a%3a%3cpointer%5fwith%5fmut%5fof%3cvoid%2c%20%26i32%3e%2c%20%26void%3e%28%29%3b%0a%20%20%20assert%5ftype%5feq%3a%3a%3cpointer%5fwith%5fmut%5fof%3cusize%2c%20%26mut%20Option%3cusize%3e%3e%2c%20%26mut%20usize%3e%28%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.array_with_length_of">
+<h4>
+<span class="keyword">type</span> <span class="identifier-type">array_with_length_of</span>&lt;T, Arr&gt;<div class="protocol-bound">
+Arr: <a href="/std/builtins/Array.html"><span class="identifier-type">Array</span></a></div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1130-L1131"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Array of <code class="language-alumina">T</code> with same length as <code class="language-alumina">Arr</code>.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::typing::assert_type_eq;
+use std::builtins::array_with_length_of;
+
+assert_type_eq::&lt;array_with_length_of&lt;i32, [(); 42]&gt;, [i32; 42]&gt;();
+assert_type_eq::&lt;array_with_length_of&lt;Option&lt;bool&gt;, [i64; 1337]&gt;, [Option&lt;bool&gt;; 1337]&gt;();
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3atyping%3a%3aassert%5ftype%5feq%3b%0a%20%20%20use%20std%3a%3abuiltins%3a%3aarray%5fwith%5flength%5fof%3b%0a%20%20%20%0a%20%20%20assert%5ftype%5feq%3a%3a%3carray%5fwith%5flength%5fof%3ci32%2c%20%5b%28%29%3b%2042%5d%3e%2c%20%5bi32%3b%2042%5d%3e%28%29%3b%0a%20%20%20assert%5ftype%5feq%3a%3a%3carray%5fwith%5flength%5fof%3cOption%3cbool%3e%2c%20%5bi64%3b%201337%5d%3e%2c%20%5bOption%3cbool%3e%3b%201337%5d%3e%28%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -810,7 +840,7 @@ assert_type_eq::&lt;ptr_with_mut_of&lt;usize, &amp;mut Option&lt;usize&gt;&gt;, 
 T: <a href="/std/builtins/Enum.html"><span class="identifier-type">Enum</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1109-L1110"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1146-L1147"/>source</a>
 </div>
 </div>
 <div class="item-doc">
