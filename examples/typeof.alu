@@ -18,11 +18,7 @@ fn last_element<T>(v: T) -> element_type<T> {
     v[v.len() - 1]
 }
 
-// typeof can be used to implement function overloading, for example this function that can be
-// used both as arithmetic plus and as string concatenation.
-type if_match<T, Proto, If, Then> = typeof(when T: Proto { let _: If; _ } else { let _: Then; _ });
-
-fn plus<T: Numeric | Formattable<T>>(lhs: T, rhs: T) -> if_match<T, Numeric, T, StringBuf> {
+fn plus<T: Numeric | Formattable<T>>(lhs: T, rhs: T) -> when T: Numeric { T } else { StringBuf } {
     when T: Numeric {
         lhs + rhs
     } else {

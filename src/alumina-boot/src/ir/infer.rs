@@ -190,7 +190,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
         // we have <A, B, C, F: Callable<(A, B), C>> and F is a known function/function pointer,
         // we can infer A, B and C.
         if let Some(tgt) = inferred.get(&placeholder.id).copied() {
-            if placeholder.bounds.typ == ast::ProtocolBoundsType::Any {
+            if placeholder.bounds.kind == ast::ProtocolBoundsKind::Any {
                 return;
             }
 

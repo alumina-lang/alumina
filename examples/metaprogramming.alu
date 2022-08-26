@@ -1,18 +1,6 @@
 use std::builtins::{generic_args_of, tuple_head_of};
 use std::util::unit;
 
-// Booleans
-struct True {}
-struct False {}
-
-impl True {
-    fn val(v: True) -> bool { true }
-}
-
-impl False {
-    fn val(v: False) -> bool { false }
-}
-
 // Peano integers 0, S(0), S(S(0)), ...
 struct Zero {}
 struct Succ<T> {}
@@ -38,76 +26,41 @@ type Ten = Succ<Nine>;
 type Eleven = Succ<Ten>;
 type Twelve = Succ<Eleven>;
 
-type Prev<T> = typeof(
-    when T: Zero {
-        unit::<Zero>()
-    } else {
-        unit::<tuple_head_of<generic_args_of<T>>>()
-    }
-);
+type Prev<T> = when T: Zero { Zero } else { tuple_head_of<generic_args_of<T>> };
+type Add<A, B> = when B: Zero { A } else { Succ<Add<A, Prev<B>>> };
+type Sub<A, B> = when B: Zero { A } else { Sub<Prev<A>, Prev<B>> };
+type Mul<A, B> =  when B: Zero { Zero } else { Add<A, Mul<A, Prev<B>>> };
 
-type Add<A, B> = typeof(
-    when B: Zero {
-        unit::<A>()
-    } else {
-        unit::<Succ<Add<A, Prev<B>>>>()
-    }
-);
-
-type Sub<A, B> = typeof(
-    when B: Zero {
-        unit::<A>()
-    } else {
-        unit::<Sub<Prev<A>, Prev<B>>>()
-    }
-);
-
-type Mul<A, B> = typeof(
-    when B: Zero {
-        unit::<Zero>()
-    } else {
-        unit::<Add<A, Mul<A, Prev<B>>>>()
-    }
-);
-
-type DivT<A, B, Idx> = typeof(
-    when B: Zero {
-        std::compile_fail!("division by zero");
-    } else when Sub<Succ<A>, B>: Zero {
-        unit::<Idx>()
-    } else {
-        unit::<DivT<Sub<A, B>, B, Succ<Idx>>>()
-    }
-);
+type DivT<A, B, Idx> = when B: Zero {
+    typeof(std::compile_fail!("division by zero"))
+} else when Sub<Succ<A>, B>: Zero {
+    Idx
+} else {
+    DivT<Sub<A, B>, B, Succ<Idx>>
+};
 
 type Div<A, B> = DivT<A, B, Zero>;
 type Mod<A, B> = Sub<A, Mul<Div<A, B>, B>>;
 
-type Fibonacci<T> = typeof(
-    when Prev<T>: Zero {
-        unit::<T>()
-    } else {
-        unit::<Add<Fibonacci<Prev<T>>, Fibonacci<Prev<Prev<T>>>>>()
-    }
-);
+type Fibonacci<T> = when Prev<T>: Zero {
+    T
+} else {
+    Add<Fibonacci<Prev<T>>, Fibonacci<Prev<Prev<T>>>>
+};
 
-type IsPrimeT<A, Idx> = typeof(
-    when Idx: A {
-        unit::<True>()
-    } else when Mod<A, Idx>: Zero {
-        unit::<False>()
-    } else {
-        unit::<IsPrimeT<A, Succ<Idx>>>()
-    }
-);
+type IsPrimeT<A, Idx> = when Idx: A {
+    One // = true
+} else when Mod<A, Idx>: Zero {
+    Zero // = false
+} else {
+    IsPrimeT<A, Succ<Idx>>
+};
 
-type IsPrime<A> = typeof(
-    when Prev<A>: Zero {
-        unit::<False>()
-    } else {
-        unit::<IsPrimeT<A, Two>>()
-    }
-);
+type IsPrime<A> = when Prev<A>: Zero { 
+    Zero // = false 
+} else { 
+    IsPrimeT<A, Two> 
+};
 
 fn main() {
     println!("Arithmetic:");

@@ -298,6 +298,7 @@ pub enum Ty<'ast> {
     TypeOf(ExprP<'ast>),
     Array(TyP<'ast>, ExprP<'ast>),
     Tuple(&'ast [TyP<'ast>]),
+    When(StaticIfCondition<'ast>, TyP<'ast>, TyP<'ast>),
     FunctionPointer(&'ast [TyP<'ast>], TyP<'ast>),
     Generic(TyP<'ast>, &'ast [TyP<'ast>]),
     Defered(Defered<'ast>),
@@ -503,14 +504,14 @@ pub struct Bound<'ast> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ProtocolBoundsType {
+pub enum ProtocolBoundsKind {
     All,
     Any,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ProtocolBounds<'ast> {
-    pub typ: ProtocolBoundsType,
+    pub kind: ProtocolBoundsKind,
     pub bounds: &'ast [Bound<'ast>],
 }
 
@@ -761,7 +762,7 @@ pub enum FnKind<'ast> {
     Defered(Defered<'ast>),
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+#[derive(Debug, PartialEq, Eq, Clone, Hash, Copy)]
 pub struct StaticIfCondition<'ast> {
     pub typ: TyP<'ast>,
     pub bounds: ProtocolBounds<'ast>,

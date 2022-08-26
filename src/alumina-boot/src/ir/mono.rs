@@ -543,7 +543,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .append_span(bound.span)?;
                 grouped_bounds.push((bound.span, ir_bound, bound.negated));
             }
-            protocol_bounds.push((placeholder.bounds.typ, *ty, grouped_bounds));
+            protocol_bounds.push((placeholder.bounds.kind, *ty, grouped_bounds));
         }
 
         let fields = s
@@ -601,7 +601,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .append_span(bound.span)?;
                 grouped_bounds.push((bound.span, ir_bound, bound.negated));
             }
-            protocol_bounds.push((placeholder.bounds.typ, *ty, grouped_bounds));
+            protocol_bounds.push((placeholder.bounds.kind, *ty, grouped_bounds));
         }
 
         let target = s
@@ -646,7 +646,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .append_span(bound.span)?;
                 grouped_bounds.push((bound.span, ir_bound, bound.negated));
             }
-            protocol_bounds.push((placeholder.bounds.typ, *ty, grouped_bounds));
+            protocol_bounds.push((placeholder.bounds.kind, *ty, grouped_bounds));
         }
 
         let mut methods = Vec::new();
@@ -686,7 +686,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
     fn check_protocol_bounds(
         &mut self,
-        kind: ast::ProtocolBoundsType,
+        kind: ast::ProtocolBoundsKind,
         typ: ir::TyP<'ir>,
         bounds: Vec<(Option<ast::Span>, ir::TyP<'ir>, bool)>,
     ) -> Result<(), AluminaError> {
@@ -698,7 +698,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         for (span, bound, negated) in bounds.iter().copied() {
             match self.check_protocol_bound(bound, typ).append_span(span)? {
                 BoundCheckResult::Matches if negated => {
-                    if kind == ast::ProtocolBoundsType::Any {
+                    if kind == ast::ProtocolBoundsKind::Any {
                         continue;
                     }
                     if negated {
@@ -710,7 +710,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     }
                 }
                 BoundCheckResult::DoesNotMatch if !negated => {
-                    if kind == ast::ProtocolBoundsType::Any {
+                    if kind == ast::ProtocolBoundsKind::Any {
                         continue;
                     }
                     return Err(CodeErrorKind::ProtocolMismatch(
@@ -720,7 +720,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .with_span(span);
                 }
                 BoundCheckResult::DoesNotMatchBecause(detail) if !negated => {
-                    if kind == ast::ProtocolBoundsType::Any {
+                    if kind == ast::ProtocolBoundsKind::Any {
                         continue;
                     }
                     return Err(CodeErrorKind::ProtocolMismatchDetail(
@@ -732,7 +732,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 }
                 _ => {
                     found = true;
-                    if kind == ast::ProtocolBoundsType::Any {
+                    if kind == ast::ProtocolBoundsKind::Any {
                         break;
                     }
                 }
@@ -1081,7 +1081,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .append_span(bound.span)?;
                 grouped_bounds.push((bound.span, ir_bound, bound.negated));
             }
-            protocol_bounds.push((placeholder.bounds.typ, *ty, grouped_bounds));
+            protocol_bounds.push((placeholder.bounds.kind, *ty, grouped_bounds));
         }
 
         for (kind, ty, bounds) in protocol_bounds {
@@ -1162,7 +1162,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .append_span(bound.span)?;
                 grouped_bounds.push((bound.span, ir_bound, bound.negated));
             }
-            protocol_bounds.push((placeholder.bounds.typ, *ty, grouped_bounds));
+            protocol_bounds.push((placeholder.bounds.kind, *ty, grouped_bounds));
         }
 
         let parameters = func
@@ -1907,6 +1907,15 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let mut child = self.make_tentative_child();
                 let expr = child.lower_expr(inner, None)?;
                 expr.ty
+            }
+            ast::Ty::When(cond, then, els) => {
+                // Do not move outside the branch, this must evaluate lazily as the non-matching
+                // branch may contain a compile error.
+                if self.static_cond_matches(&cond)? {
+                    self.lower_type_unrestricted(then)?
+                } else {
+                    self.lower_type_unrestricted(els)?
+                }
             }
         };
 
@@ -3185,17 +3194,13 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(self.exprs.if_then(cond, then, els))
     }
 
-    fn lower_static_if(
+    fn static_cond_matches(
         &mut self,
         cond: &ast::StaticIfCondition<'ast>,
-        then: ast::ExprP<'ast>,
-        els: ast::ExprP<'ast>,
-        type_hint: Option<ir::TyP<'ir>>,
-    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+    ) -> Result<bool, AluminaError> {
         let typ = self.lower_type_unrestricted(cond.typ)?;
 
         let mut found = false;
-
         for bound in cond.bounds.bounds {
             let bound_typ = self.lower_type_unrestricted(bound.typ)?;
             match self
@@ -3203,32 +3208,41 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 .append_span(bound.span)?
             {
                 BoundCheckResult::Matches if bound.negated => {
-                    if cond.bounds.typ == ast::ProtocolBoundsType::Any {
+                    if cond.bounds.kind == ast::ProtocolBoundsKind::Any {
                         continue;
                     }
-                    return self.lower_expr(els, type_hint);
+                    return Ok(false);
                 }
                 BoundCheckResult::DoesNotMatch | BoundCheckResult::DoesNotMatchBecause(_)
                     if !bound.negated =>
                 {
-                    if cond.bounds.typ == ast::ProtocolBoundsType::Any {
+                    if cond.bounds.kind == ast::ProtocolBoundsKind::Any {
                         continue;
                     }
-                    return self.lower_expr(els, type_hint);
+                    return Ok(false);
                 }
                 _ => {
                     found = true;
-                    if cond.bounds.typ == ast::ProtocolBoundsType::Any {
+                    if cond.bounds.kind == ast::ProtocolBoundsKind::Any {
                         break;
                     }
                 }
             }
         }
+        Ok(found)
+    }
 
-        if !found {
-            self.lower_expr(els, type_hint)
-        } else {
+    fn lower_static_if(
+        &mut self,
+        cond: &ast::StaticIfCondition<'ast>,
+        then: ast::ExprP<'ast>,
+        els: ast::ExprP<'ast>,
+        type_hint: Option<ir::TyP<'ir>>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        if self.static_cond_matches(cond)? {
             self.lower_expr(then, type_hint)
+        } else {
+            self.lower_expr(els, type_hint)
         }
     }
 
@@ -3774,7 +3788,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         // We only rely on standard protocol bound matching to see if the vtable is compatible
         self.check_protocol_bounds(
-            ast::ProtocolBoundsType::All,
+            ast::ProtocolBoundsKind::All,
             concrete_type,
             vec![(None, actual_protocol_type, false)],
         )?;
