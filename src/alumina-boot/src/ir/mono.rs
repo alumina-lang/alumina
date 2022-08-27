@@ -60,7 +60,6 @@ pub struct MonoCtx<'ast, 'ir> {
     tests: HashMap<ir::IRItemP<'ir>, TestMetadata<'ast>>,
     intrinsics: CompilerIntrinsics<'ir>,
     static_local_defs: HashMap<ir::IRItemP<'ir>, Vec<LocalDef<'ir>>>,
-    extra_items: Vec<IRItemP<'ir>>,
     test_cases_statics: Option<TestCasesStatics<'ir>>,
     vtable_layouts: HashMap<ir::IRItemP<'ir>, ir::VtableLayout<'ir>>,
 }
@@ -85,7 +84,6 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
             finished: IndexMap::new(),
             reverse_map: HashMap::new(),
             intrinsics: CompilerIntrinsics::new(global_ctx, ir),
-            extra_items: Vec::new(),
             static_local_defs: HashMap::new(),
             cycle_guardian: CycleGuardian::new(),
             tests: HashMap::new(),
@@ -149,17 +147,6 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
         }
 
         None
-    }
-
-    pub fn into_inner(self) -> Vec<ir::IRItemP<'ir>> {
-        self.finished
-            .iter()
-            .filter_map(|(key, item)| match key {
-                MonoKey(_, _, _, true) => None,
-                _ => Some(*item),
-            })
-            .chain(self.extra_items)
-            .collect()
     }
 
     pub fn type_name(&self, typ: ir::TyP<'ir>) -> Result<String, AluminaError> {
@@ -1526,7 +1513,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(())
     }
 
-    pub fn generate_static_constructor(&mut self) -> Result<(), AluminaError> {
+    pub fn generate_static_constructor(
+        &mut self,
+        alive: &HashSet<IRItemP<'ir>>,
+    ) -> Result<IRItemP<'ir>, AluminaError> {
         let item = self.mono_ctx.ir.make_symbol();
         self.return_type = Some(self.types.builtin(BuiltinType::Void));
 
@@ -1535,7 +1525,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .finished
             .iter()
             .filter_map(|(_, v)| match v.get() {
-                Ok(ir::IRItem::Static(s)) if s.init.is_some() => Some((v, s)),
+                Ok(ir::IRItem::Static(s)) if s.init.is_some() && alive.contains(v) => Some((v, s)),
                 _ => None,
             })
             .map(|(v, s)| {
@@ -1583,8 +1573,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             body: OnceCell::from(optimized),
         }));
 
-        self.mono_ctx.extra_items.push(item);
-        Ok(())
+        Ok(item)
     }
 
     pub fn monomorphize_lang_item<I>(
@@ -3554,7 +3543,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         // It basically creates two static arrays, one which holds all the test attributes contatenated
         // and the other that has the TestCaseMeta objects. TestCaseMeta object contains a slice of the
         // attributes array.
-        #[allow(clippy::mutable_key_type)]
         let tests = self.mono_ctx.tests.clone();
 
         let string_slice = self.slice_of(self.types.builtin(BuiltinType::U8), true)?;
