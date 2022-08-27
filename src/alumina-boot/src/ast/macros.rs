@@ -355,9 +355,7 @@ impl<'ast> MacroExpander<'ast> {
             If(condition, then, els) => {
                 If(self.visit(condition)?, self.visit(then)?, self.visit(els)?)
             }
-            StaticIf(ref cond, then, els) => {
-                StaticIf(cond.clone(), self.visit(then)?, self.visit(els)?)
-            }
+            StaticIf(cond, then, els) => StaticIf(cond, self.visit(then)?, self.visit(els)?),
             Cast(inner, typ) => Cast(self.visit(inner)?, typ),
             Continue
             | EnumValue(_, _)

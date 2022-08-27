@@ -1,5 +1,6 @@
 pub mod builder;
 pub mod const_eval;
+pub mod dce;
 pub mod elide_zst;
 pub mod infer;
 pub mod lang;

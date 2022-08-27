@@ -110,12 +110,12 @@ impl Option<T> {
     ///
     /// opt.unwrap(); // panics
     /// ```
-    #[inline]
+    #[force_inline]
     fn unwrap(self: Option<T>) -> T {
         if self.is_some() {
             self._inner
         } else {
-            panic!("unwrap on a none value")
+            internal::unwrap_panic();
         }
     }
 
@@ -478,6 +478,14 @@ impl Option {
 
     mixin<T: Equatable<T>> Equatable<Option<T>;
     mixin<T: Comparable<T>> Comparable<Option<T>;
+}
+
+mod internal {
+    #[cold]
+    #[no_inline]
+    fn unwrap_panic() -> ! {
+        panic!("called `Option::unwrap()` on a `None` value")
+    }
 }
 
 #[cfg(all(test, test_std))]

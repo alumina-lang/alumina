@@ -190,11 +190,7 @@ impl Result<T, E> {
         if self.is_ok() {
             self._inner.ok
         } else {
-            when E: Formattable<E, panicking::internal::PanicFormatter> {
-                panic!("unwrap on an err value: {}", self._inner.err)
-            } else {
-                panic!("unwrap on an err value")
-            }
+            internal::unwrap_panic_err(self._inner.err);
         }
     }
 
@@ -216,11 +212,7 @@ impl Result<T, E> {
         if !self.is_ok() {
             self._inner.err
         } else {
-            when T: Formattable<T, panicking::internal::PanicFormatter> {
-                panic!("unwrap_err on a ok value: {}", self._inner.ok)
-            } else {
-                panic!("unwrap_err on a ok value")
-            }
+            internal::unwrap_panic_ok(self._inner.ok);
         }
     }
 
@@ -399,4 +391,28 @@ impl Result {
     }
 
     mixin<T: Equatable<T>, E: Equatable<E>> Equatable<Result<T, E>>;
+}
+
+mod internal {
+    use std::fmt::{write, Formatter, Formattable};
+
+    #[cold]
+    #[no_inline]
+    fn unwrap_panic_err<E>(err: E) -> ! {
+        when E: Formattable<E, panicking::internal::PanicFormatter> {
+            panic!("unwrap on an err value: {}", err)
+        } else {
+            panic!("unwrap on an err value")
+        }
+    }
+
+    #[cold]
+    #[no_inline]
+    fn unwrap_panic_ok<T>(ok: T) -> ! {
+        when T: Formattable<T, panicking::internal::PanicFormatter> {
+            panic!("unwrap on an ok value: {}", ok)
+        } else {
+            panic!("unwrap on an ok value")
+        }
+    }
 }

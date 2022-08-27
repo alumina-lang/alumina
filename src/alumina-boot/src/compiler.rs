@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crate::codegen;
@@ -6,6 +7,7 @@ use crate::common::AluminaError;
 use crate::common::ArenaAllocatable;
 use crate::common::CodeErrorKind;
 use crate::global_ctx::GlobalCtx;
+use crate::ir::dce::DeadCodeEliminator;
 use crate::ir::mono::MonoCtx;
 use crate::ir::mono::Monomorphizer;
 use crate::ir::IrCtx;
@@ -28,6 +30,7 @@ pub enum Stage {
     Pass1,
     Ast,
     Mono,
+    Optimizations,
     Codegen,
 }
 
@@ -131,6 +134,8 @@ impl Compiler {
         let items = item_maker.into_inner();
         let mut mono_ctx = MonoCtx::new(&ast, &ir_ctx, self.global_ctx.clone());
 
+        let mut roots = HashSet::new();
+
         for item in items {
             let inner = item.get();
 
@@ -146,7 +151,7 @@ impl Compiler {
 
             if compile {
                 let mut monomorphizer = Monomorphizer::new(&mut mono_ctx, false, None);
-                monomorphizer.monomorphize_item(item, &[])?;
+                roots.insert(monomorphizer.monomorphize_item(item, &[])?);
             }
         }
 
@@ -163,17 +168,23 @@ impl Compiler {
 
                 let main_ty = ir_ctx.intern_type(crate::ir::Ty::NamedFunction(user_main));
 
-                monomorphizer.monomorphize_item(glue, [main_ty].alloc_on(&ir_ctx))?;
+                roots.insert(monomorphizer.monomorphize_item(glue, [main_ty].alloc_on(&ir_ctx))?);
             }
+        }
+
+        timing!(self, cur_time, Stage::Mono);
+
+        let mut dce = DeadCodeEliminator::new();
+        for item in roots {
+            dce.visit_item(item)?;
         }
 
         // Finally generate static initialization code
         let mut monomorphizer = Monomorphizer::new(&mut mono_ctx, false, None);
-        monomorphizer.generate_static_constructor()?;
+        dce.visit_item(monomorphizer.generate_static_constructor(dce.alive_items())?)?;
 
-        timing!(self, cur_time, Stage::Mono);
-
-        let items = mono_ctx.into_inner();
+        let items: Vec<_> = dce.alive_items().iter().copied().collect();
+        timing!(self, cur_time, Stage::Optimizations);
 
         // Dunno why the borrow checker is not letting me do that, it should be possible.
         // drop(ast);
