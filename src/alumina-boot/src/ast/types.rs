@@ -154,10 +154,17 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
     }
 
     fn visit_dyn_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let ty = self.visit(node.child_by_field_name("inner").unwrap())?;
         let is_mut = node.child_by_field_name("mut").is_some();
 
-        Ok(self.ast.intern_type(Ty::Dyn(ty, !is_mut)))
+        let mut cursor = node.walk();
+        let inner = node
+            .children_by_field_name("inner", &mut cursor)
+            .map(|child| self.visit(child))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(self
+            .ast
+            .intern_type(Ty::Dyn(inner.alloc_on(self.ast), !is_mut)))
     }
 
     fn visit_array_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {

@@ -360,7 +360,16 @@ module.exports = grammar({
         "&",
         optional(field("mut", "mut")),
         "dyn",
-        field("inner", $._type),
+        choice(
+          field("inner", $._type),
+          seq(
+            "(",
+            field("inner", $._type),
+            "+",
+            sepBy1("+", field("inner", $._type)),
+            ")"
+          )
+        )
       ),
 
     array_of: ($) =>

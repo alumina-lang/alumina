@@ -32,8 +32,9 @@ fn type_name<T>() -> &[u8] {
 /// "Dyn" object, a type-erased pointer to an object and a vtable for protocol functions.
 ///
 /// ```notest
-/// type &dyn Protocol = dyn<Protocol, &void>
-/// type &mut dyn Protocol = dyn<Protocol, &mut void>
+/// type &dyn P = dyn<(P, ), &void>
+/// type &mut dyn P = dyn<(P, ), &mut void>
+/// type &dyn (P1 + P2) = dyn<(P1, P2), &void>
 /// ```
 /// ## Example
 /// ```
@@ -56,7 +57,7 @@ fn type_name<T>() -> &[u8] {
 /// quux.foo(); // prints "Quux::foo"
 /// ```
 #[lang(dyn)]
-struct dyn<Proto, Ptr> {
+struct dyn<Protos, Ptr> {
     _ptr: Ptr,
     _vtable: &fn(),
 }
@@ -159,7 +160,7 @@ fn assert_type_ne<T1, T2>() {
 
 mod internal {
     static ENUM_VARIANTS<E> = intrinsics::enum_variants::<E>();
-    static VTABLE<Proto, T> = intrinsics::vtable::<Proto, T>();
+    static VTABLE<Protos, T> = intrinsics::vtable::<Protos, T>();
 
     type void_ptr_of<Ptr> = builtins::pointer_with_mut_of<void, Ptr>;
 
@@ -171,37 +172,38 @@ mod internal {
 
     #[lang(dyn_new)]
     #[force_inline]
-    fn dyn_new<Proto, Ptr>(ptr: Ptr) -> dyn<Proto, void_ptr_of<Ptr>> {
+    fn dyn_new<Protos, Ptr>(ptr: Ptr) -> dyn<Protos, void_ptr_of<Ptr>> {
         dyn {
             _ptr: ptr as void_ptr_of<Ptr>,
-            _vtable: &VTABLE::<Proto, builtins::deref_of<Ptr>>[0]
+            _vtable: &VTABLE::<Protos, builtins::deref_of<Ptr>>[0]
         }
     }
 
     #[lang(dyn_const_coerce)]
     #[force_inline]
-    fn dyn_const_coerce<Proto>(self: dyn<Proto, &mut void>) -> dyn<Proto, &void> {
+    fn dyn_const_coerce<Protos>(self: dyn<Protos, &mut void>) -> dyn<Protos, &void> {
         dyn { _ptr: self._ptr, _vtable: self._vtable }
     }
 
     #[lang(dyn_const_cast)]
     #[force_inline]
-    fn dyn_const_cast<Proto>(self: dyn<Proto, &void>) -> dyn<Proto, &mut void> {
+    fn dyn_const_cast<Protos>(self: dyn<Protos, &void>) -> dyn<Protos, &mut void> {
         dyn { _ptr: self._ptr as &mut void, _vtable: self._vtable }
     }
 
     #[lang(dyn_data)]
     #[force_inline]
-    fn dyn_data<Proto, Ptr>(self: dyn<Proto, Ptr>) -> Ptr {
+    fn dyn_data<Protos, Ptr>(self: dyn<Protos, Ptr>) -> Ptr {
         self._ptr
     }
 
     #[lang(dyn_vtable_index)]
     #[force_inline]
-    fn dyn_vtable_index<Proto, Ptr>(self: dyn<Proto, Ptr>, idx: usize) -> fn() {
+    fn dyn_vtable_index<Protos, Ptr>(self: dyn<Protos, Ptr>, idx: usize) -> fn() {
         *(self._vtable + idx)
     }
 }
+
 
 #[cfg(all(test, test_std))]
 mod tests {
@@ -249,13 +251,48 @@ mod tests {
         // ...
     }
 
-    protocol Empty<Self> {}
+    #[test]
+    fn test_dyn_multi_protocol() {
+        protocol Foo<Self> {
+            fn foo(self: &Self) -> i32;
+        }
+
+        protocol Bar<Self> {
+            fn bar(self: &Self) -> i32;
+        }
+
+        struct Quux {}
+
+        impl Quux {
+            fn foo(self: &Quux) -> i32 {
+                42
+            }
+
+            fn bar(self: &Quux) -> i32 {
+                1337
+            }
+        }
+
+        let a = Quux {};
+        let b: &dyn (Foo<Self> + Bar<Self>) = &a;
+        let c: &dyn (Bar<Self> + Foo<Self>) = &a;
+
+        assert_eq!(b.foo(), 42);
+        assert_eq!(b.bar(), 1337);
+
+        assert_eq!(c.foo(), 42);
+        assert_eq!(c.bar(), 1337);
+
+        assert_type_ne::<typeof(b), typeof(c)>();
+    }
 
     #[test]
     fn test_dyn_empty_protocol() {
+        protocol Empty<Self> {}
+
         let a = 42;
         let b: &mut dyn Empty<Self> = &a;
 
-        assert_eq!(b._ptr, &a as &mut void);
+        assert_eq!(b as &mut void, &a as &mut void);
     }
 }

@@ -222,11 +222,6 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                 }
                 w!(self.type_decls, ");\n");
             }
-            Ty::Unqualified(_) if !body_only => {
-                // FIXME: unqualified string should not be given explicit types in
-                // codegen.
-                self.ctx.register_type(ty, CName::Id(self.ctx.make_id()));
-            }
             _ => {}
         };
 
