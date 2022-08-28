@@ -307,7 +307,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             }
             ExprKind::Lit(ref l) => match l {
                 crate::ir::Lit::Str(v) => {
-                    w!(self.fn_bodies, "(uint8_t*)\"");
+                    w!(self.fn_bodies, "(const uint8_t*)\"");
                     for (_idx, c) in v.iter().enumerate() {
                         w!(self.fn_bodies, "\\x{:02x}", *c as u8);
                     }
@@ -381,7 +381,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             }
             ExprKind::ConstValue(v) => {
                 if let Value::Str(val) = v {
-                    w!(self.fn_bodies, "(uint8_t*)\"");
+                    w!(self.fn_bodies, "(const uint8_t*)\"");
                     for (_idx, c) in val.iter().enumerate() {
                         w!(self.fn_bodies, "\\x{:02x}", *c as u8);
                     }

@@ -61,7 +61,7 @@ pub struct MonoCtx<'ast, 'ir> {
     intrinsics: CompilerIntrinsics<'ir>,
     static_local_defs: HashMap<ir::IRItemP<'ir>, Vec<LocalDef<'ir>>>,
     test_cases_statics: Option<TestCasesStatics<'ir>>,
-    vtable_layouts: HashMap<ir::IRItemP<'ir>, ir::VtableLayout<'ir>>,
+    vtable_layouts: HashMap<&'ir [ir::TyP<'ir>], ir::VtableLayout<'ir>>,
 }
 
 enum BoundCheckResult {
@@ -160,11 +160,30 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
                 let MonoKey(cell, args, _, _) = self.reverse_lookup(cell);
 
                 match self.get_lang_type_kind(typ) {
-                    Some(LangTypeKind::Dyn(proto, ir::Ty::Pointer(_, is_const))) => {
+                    Some(LangTypeKind::Dyn(
+                        ir::Ty::Tuple(protos),
+                        ir::Ty::Pointer(_, is_const),
+                    )) => {
                         if *is_const {
-                            let _ = write!(f, "&dyn {}", self.type_name(proto)?);
+                            let _ = write!(f, "&dyn ");
                         } else {
-                            let _ = write!(f, "&mut dyn {}", self.type_name(proto)?);
+                            let _ = write!(f, "&mut dyn ");
+                        }
+
+                        if protos.len() > 1 {
+                            let _ = write!(f, "(");
+                        }
+
+                        for (idx, arg) in protos.iter().enumerate() {
+                            if idx > 0 {
+                                let _ = write!(f, " + {}", self.type_name(arg)?);
+                            } else {
+                                let _ = write!(f, "{}", self.type_name(arg)?);
+                            }
+                        }
+
+                        if protos.len() > 1 {
+                            let _ = write!(f, ")");
                         }
                         return Ok(f);
                     }
@@ -938,16 +957,21 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         };
 
         // `&dyn Proto<...>` always satisfies Proto<...>
-        if let Some(LangTypeKind::Dyn(ir::Ty::Protocol(inner_proto), _)) =
+        if let Some(LangTypeKind::Dyn(ir::Ty::Tuple(inner_tys), _)) =
             self.mono_ctx.get_lang_type_kind(ty)
         {
-            let MonoKey(inner_ast, inner_args, ..) = self.mono_ctx.reverse_lookup(inner_proto);
+            for inner_ty in inner_tys.iter() {
+                if let ir::Ty::Protocol(inner_proto) = inner_ty {
+                    let MonoKey(inner_ast, inner_args, ..) =
+                        self.mono_ctx.reverse_lookup(inner_proto);
 
-            if ast_item == inner_ast
-                && proto_generic_args.get(0).copied() == Some(ty)
-                && proto_generic_args.get(1..) == inner_args.get(1..)
-            {
-                return Ok(BoundCheckResult::Matches);
+                    if ast_item == inner_ast
+                        && proto_generic_args.get(0).copied() == Some(ty)
+                        && proto_generic_args.get(1..) == inner_args.get(1..)
+                    {
+                        return Ok(BoundCheckResult::Matches);
+                    }
+                }
             }
         }
 
@@ -1844,27 +1868,37 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.types.protocol(item)
             }
             ast::Ty::Dyn(inner, is_const) => {
-                let protocol = self.lower_type_unrestricted(inner)?;
-                let protocol_item = match protocol {
-                    ir::Ty::Protocol(protocol_item) => {
-                        let MonoKey(ast_item, _, _, _) =
-                            self.mono_ctx.reverse_lookup(protocol_item);
+                let protocols: Vec<_> = inner
+                    .iter()
+                    .map(|t| self.lower_type_unrestricted(t))
+                    .collect::<Result<_, AluminaError>>()?;
 
-                        if let Some(p) = self.mono_ctx.ast.lang_item_kind(ast_item) {
-                            if p.is_builtin_protocol() {
-                                return Err(CodeErrorKind::BuiltinProtocolDyn).with_no_span();
+                let mut protocol_items = Vec::new();
+                for protocol in protocols.iter() {
+                    match protocol {
+                        ir::Ty::Protocol(protocol_item) => {
+                            let MonoKey(ast_item, _, _, _) =
+                                self.mono_ctx.reverse_lookup(protocol_item);
+
+                            if let Some(p) = self.mono_ctx.ast.lang_item_kind(ast_item) {
+                                if p.is_builtin_protocol() {
+                                    return Err(CodeErrorKind::BuiltinProtocolDyn).with_no_span();
+                                }
                             }
-                        }
 
-                        *protocol_item
-                    }
-                    _ => return Err(CodeErrorKind::NonProtocolDyn).with_no_span(),
-                };
+                            protocol_items.push(*protocol_item)
+                        }
+                        _ => return Err(CodeErrorKind::NonProtocolDyn).with_no_span(),
+                    };
+                }
+
+                let key = protocols.alloc_on(self.mono_ctx.ir);
+                let key_ty = self.mono_ctx.ir.intern_type(ir::Ty::Tuple(key));
 
                 let ptr_type = self.types.pointer(self.types.void(), is_const);
-                let item = self.monomorphize_lang_item(LangItemKind::Dyn, [protocol, ptr_type])?;
+                let item = self.monomorphize_lang_item(LangItemKind::Dyn, [key_ty, ptr_type])?;
 
-                self.create_vtable_layout(protocol_item)?;
+                self.create_vtable_layout(key)?;
 
                 self.types.named(item)
             }
@@ -1916,55 +1950,61 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
     }
 
-    fn create_vtable_layout(
-        &mut self,
-        protocol_item: ir::IRItemP<'ir>,
-    ) -> Result<(), AluminaError> {
-        if self.mono_ctx.vtable_layouts.contains_key(protocol_item) {
+    fn create_vtable_layout(&mut self, protocols: &'ir [ir::TyP<'ir>]) -> Result<(), AluminaError> {
+        if self.mono_ctx.vtable_layouts.contains_key(protocols) {
             return Ok(());
         }
 
         let dyn_self = self.dyn_self()?;
-        let protocol = protocol_item.get_protocol().with_no_span()?;
-
         let mut vtable_methods = Vec::new();
-        for proto_fun in protocol.methods {
-            macro_rules! bail {
-                () => {
-                    return Err(CodeErrorKind::NonDynnableFunction(
-                        proto_fun.name.to_string(),
-                    ))
-                    .with_no_span()
-                };
-            }
 
-            if self.contains_type(proto_fun.return_type, dyn_self) {
-                bail!()
-            }
-
-            let args = match proto_fun.arg_types {
-                [ir::Ty::Pointer(typ, is_const), rest @ ..] => {
-                    if *typ != dyn_self || rest.iter().any(|ty| self.contains_type(*ty, dyn_self)) {
-                        bail!()
-                    }
-
-                    std::iter::once(self.types.pointer(self.types.void(), *is_const))
-                        .chain(rest.iter().copied())
-                        .collect::<Vec<_>>()
-                        .alloc_on(self.mono_ctx.ir)
-                }
-                _ => bail!(),
+        for protocol_ty in protocols {
+            let protocol_item = match protocol_ty {
+                ir::Ty::Protocol(item) => item,
+                _ => unreachable!(),
             };
 
-            vtable_methods.push(ir::ProtocolFunction {
-                name: proto_fun.name,
-                arg_types: args,
-                return_type: proto_fun.return_type,
-            });
+            let protocol = protocol_item.get_protocol().with_no_span()?;
+            for proto_fun in protocol.methods {
+                macro_rules! bail {
+                    () => {
+                        return Err(CodeErrorKind::NonDynnableFunction(
+                            proto_fun.name.to_string(),
+                        ))
+                        .with_no_span()
+                    };
+                }
+
+                if self.contains_type(proto_fun.return_type, dyn_self) {
+                    bail!()
+                }
+
+                let args = match proto_fun.arg_types {
+                    [ir::Ty::Pointer(typ, is_const), rest @ ..] => {
+                        if *typ != dyn_self
+                            || rest.iter().any(|ty| self.contains_type(*ty, dyn_self))
+                        {
+                            bail!()
+                        }
+
+                        std::iter::once(self.types.pointer(self.types.void(), *is_const))
+                            .chain(rest.iter().copied())
+                            .collect::<Vec<_>>()
+                            .alloc_on(self.mono_ctx.ir)
+                    }
+                    _ => bail!(),
+                };
+
+                vtable_methods.push(ir::ProtocolFunction {
+                    name: proto_fun.name,
+                    arg_types: args,
+                    return_type: proto_fun.return_type,
+                });
+            }
         }
 
         self.mono_ctx.vtable_layouts.insert(
-            protocol_item,
+            protocols,
             ir::VtableLayout {
                 methods: vtable_methods.alloc_on(self.mono_ctx.ir),
             },
@@ -3310,6 +3350,24 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     item.get_function().with_no_span()?.return_type,
                 ));
             }
+
+            // &dyn Proto -> any pointer (unchecked downcast)
+            (_, Some(LangTypeKind::Dyn(t2_proto, t2_const)))
+                if matches!(typ, ir::Ty::Pointer(_, _)) =>
+            {
+                let item =
+                    self.monomorphize_lang_item(LangItemKind::DynData, [t2_proto, t2_const])?;
+                let func = self.exprs.function(item);
+
+                return Ok(self.exprs.cast(
+                    self.exprs.call(
+                        func,
+                        [expr].into_iter(),
+                        item.get_function().with_no_span()?.return_type,
+                    ),
+                    typ,
+                ));
+            }
             _ => {}
         }
 
@@ -3489,7 +3547,13 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         match callee.kind {
             IntrinsicKind::TestCases => self.generate_test_cases(),
-            IntrinsicKind::MakeVtable => self.generate_vtable(generic_args[0], generic_args[1]),
+            IntrinsicKind::MakeVtable => {
+                if let ir::Ty::Tuple(inner) = generic_args[0] {
+                    self.generate_vtable(inner, generic_args[1])
+                } else {
+                    ice!("creating a vtable with something that' snot a tuple of protocols")
+                }
+            }
             IntrinsicKind::EnumVariants => self.generate_enum_variants(generic_args[0]),
             IntrinsicKind::TypeName => {
                 let typ = generic_args[0];
@@ -3734,33 +3798,35 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
     fn generate_vtable(
         &mut self,
-        protocol_type: ir::TyP<'ir>,
+        protocol_types: &'ir [ir::TyP<'ir>],
         concrete_type: ir::TyP<'ir>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let protocol = match protocol_type {
-            ir::Ty::Protocol(protocol) => protocol,
-            _ => ice!("protocol expected"),
-        };
-        let proto_key = self.mono_ctx.reverse_lookup(protocol);
-        // Replace the dyn_self placeholder
-        let args = std::iter::once(concrete_type)
-            .chain(proto_key.1[1..].iter().copied())
-            .collect::<Vec<_>>()
-            .alloc_on(self.mono_ctx.ir);
-        let actual_protocol = self.monomorphize_item(proto_key.0, args)?;
-        let actual_protocol_type = self.types.protocol(actual_protocol);
+        for protocol_type in protocol_types.iter() {
+            let protocol = match protocol_type {
+                ir::Ty::Protocol(protocol) => protocol,
+                _ => ice!("protocol expected"),
+            };
+            let proto_key = self.mono_ctx.reverse_lookup(protocol);
+            // Replace the dyn_self placeholder
+            let args = std::iter::once(concrete_type)
+                .chain(proto_key.1[1..].iter().copied())
+                .collect::<Vec<_>>()
+                .alloc_on(self.mono_ctx.ir);
+            let actual_protocol = self.monomorphize_item(proto_key.0, args)?;
+            let actual_protocol_type = self.types.protocol(actual_protocol);
 
-        // We only rely on standard protocol bound matching to see if the vtable is compatible
-        self.check_protocol_bounds(
-            ast::ProtocolBoundsKind::All,
-            concrete_type,
-            vec![(None, actual_protocol_type, false)],
-        )?;
+            // We only rely on standard protocol bound matching to see if the vtable is compatible
+            self.check_protocol_bounds(
+                ast::ProtocolBoundsKind::All,
+                concrete_type,
+                vec![(None, actual_protocol_type, false)],
+            )?;
+        }
 
         let vtable_layout = self
             .mono_ctx
             .vtable_layouts
-            .get(protocol)
+            .get(protocol_types)
             .ok_or_else(|| {
                 CodeErrorKind::InternalError(
                     "vtable layout not found".to_string(),
@@ -3775,14 +3841,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let mut attrs = Vec::new();
 
         for func in vtable_layout {
+            // If the function is not found, that can only mean that someone is trying to convert a `dyn` into another
+            // dyn. If it were not so, the compiler would have errored earlier (when checking the protocol bounds).
+            // We'd need to generate a thunk for it and it's not worth the hassle.
             let function = associated_fns
                 .get(&func.name)
-                .ok_or_else(|| {
-                    CodeErrorKind::InternalError(
-                        format!("function not found: {}", func.name),
-                        Backtrace::new(),
-                    )
-                })
+                .ok_or(CodeErrorKind::IndirectDyn)
                 .with_no_span()?;
 
             let candidate_fun = function.get_function();
@@ -3826,7 +3890,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
     fn lower_virtual_call(
         &mut self,
-        protocol: ir::IRItemP<'ir>,
+        protocol_types: &'ir [ir::TyP<'ir>],
         dyn_ptr: ir::TyP<'ir>,
         self_arg: ir::ExprP<'ir>,
         name: &'ast str,
@@ -3835,7 +3899,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let layout = self
             .mono_ctx
             .vtable_layouts
-            .get(protocol)
+            .get(protocol_types)
             .ok_or_else(|| {
                 CodeErrorKind::InternalError(
                     "vtable layout not found".to_string(),
@@ -3865,6 +3929,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         // We need to store the dyn object in a temporary as it may have been produced by
         // an expression with side effects.
+        let key = self.mono_ctx.ir.intern_type(ir::Ty::Tuple(protocol_types));
+
         let canonical = self_arg.ty.canonical_type();
         let temporary = self.mono_ctx.ir.make_id();
         let local = self.exprs.local(temporary, canonical);
@@ -3873,14 +3939,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             typ: canonical,
         });
         let tgt = self.autoref(self_arg, canonical)?;
-        let data_item = self.monomorphize_lang_item(
-            LangItemKind::DynData,
-            [self.types.protocol(protocol), dyn_ptr],
-        )?;
-        let index_item = self.monomorphize_lang_item(
-            LangItemKind::DynVtableIndex,
-            [self.types.protocol(protocol), dyn_ptr],
-        )?;
+        let data_item = self.monomorphize_lang_item(LangItemKind::DynData, [key, dyn_ptr])?;
+        let index_item =
+            self.monomorphize_lang_item(LangItemKind::DynVtableIndex, [key, dyn_ptr])?;
         let callee = self.exprs.cast(
             self.exprs.call(
                 self.exprs.function(index_item),
@@ -3899,10 +3960,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         {
             if !*t2_const && *t1_const {
                 let mut_dyn = self
-                    .monomorphize_lang_item(
-                        LangItemKind::DynConstCast,
-                        [self.types.protocol(protocol)],
-                    )?
+                    .monomorphize_lang_item(LangItemKind::DynConstCast, [key])?
                     .get_function()
                     .with_no_span()?
                     .return_type;
@@ -3965,11 +4023,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let canonical = ir_self_arg.ty.canonical_type();
 
-        if let Some(LangTypeKind::Dyn(ir::Ty::Protocol(protocol), dyn_ptr)) =
+        if let Some(LangTypeKind::Dyn(ir::Ty::Tuple(protocols), dyn_ptr)) =
             self.mono_ctx.get_lang_type_kind(canonical)
         {
             if let Some(result) =
-                self.lower_virtual_call(protocol, dyn_ptr, ir_self_arg, name, args)?
+                self.lower_virtual_call(protocols, dyn_ptr, ir_self_arg, name, args)?
             {
                 return Ok(Some(result));
             }

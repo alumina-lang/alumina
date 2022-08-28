@@ -147,28 +147,35 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                     self.match_slot(inferred, *holder, *t)?;
                 }
             }
-            (ast::Ty::Dyn(ast::Ty::Generic(inner, holders), a_const), _) => {
-                let item = match inner {
-                    ast::Ty::Protocol(item) => item,
-                    _ => return Err(()),
-                };
-
+            (ast::Ty::Dyn(a_protos, a_const), _) => {
                 if let Some(LangTypeKind::Dyn(
-                    ir::Ty::Protocol(proto),
+                    ir::Ty::Tuple(b_protos),
                     ir::Ty::Pointer(_, b_const),
                 )) = self.mono_ctx.get_lang_type_kind(tgt)
                 {
-                    if !*a_const && (*a_const != *b_const) {
-                        return Err(());
-                    }
+                    for (a_typ, b_typ) in a_protos.iter().zip(b_protos.iter()) {
+                        let (item, holders) = match a_typ {
+                            ast::Ty::Generic(ast::Ty::Protocol(item), holders) => (item, holders),
+                            _ => return Err(()),
+                        };
 
-                    let mono_key = self.mono_ctx.reverse_lookup(proto);
-                    if mono_key.0 != *item {
-                        return Err(());
-                    }
+                        let proto = match b_typ {
+                            ir::Ty::Protocol(proto) => proto,
+                            _ => return Err(()),
+                        };
 
-                    for (holder, t) in holders.iter().zip(mono_key.1.iter()) {
-                        self.match_slot(inferred, *holder, *t)?;
+                        if !*a_const && (*a_const != *b_const) {
+                            return Err(());
+                        }
+
+                        let mono_key = self.mono_ctx.reverse_lookup(proto);
+                        if mono_key.0 != *item {
+                            return Err(());
+                        }
+
+                        for (holder, t) in holders.iter().zip(mono_key.1.iter()) {
+                            self.match_slot(inferred, *holder, *t)?;
+                        }
                     }
                 } else {
                     return Err(());

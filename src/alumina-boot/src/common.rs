@@ -46,8 +46,6 @@ pub enum CodeErrorKind {
     UnresolvedPath(String),
     #[error("cycle detected while resolving aliases")]
     CycleDetected,
-    #[error("super not allowed in this context")]
-    SuperNotAllowed,
     #[error("duplicate name `{}`", .0)]
     DuplicateName(String),
     #[error("generic associated types are not supported, soz")]
@@ -237,6 +235,8 @@ pub enum CodeErrorKind {
     MixinOnlyProtocol,
     #[error("protocols cannot be used as concrete types (did you mean to use `&dyn {}`?)", .0)]
     ProtocolsAreSpecialMkay(String),
+    #[error("indirect `dyn` pointers are not supported")]
+    IndirectDyn,
     #[error("`{}` cannot be used as a concrete type", .0)]
     SpecialNamedType(String),
     #[error("signature of `{}` is incompatible with virtual dispatch", .0)]
@@ -255,6 +255,8 @@ pub enum CodeErrorKind {
     DuplicateNameShadow(String),
     #[error("field `{}` is not initialized", .0)]
     UninitializedField(String),
+    #[error("This is `std::typing::Self`, did you mean the enclosing type?")]
+    SelfConfusion,
 }
 
 #[derive(Debug, Clone)]

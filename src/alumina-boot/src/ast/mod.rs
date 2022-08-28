@@ -294,7 +294,7 @@ pub enum Ty<'ast> {
     Builtin(BuiltinType),
     Pointer(TyP<'ast>, bool),
     Slice(TyP<'ast>, bool),
-    Dyn(TyP<'ast>, bool),
+    Dyn(&'ast [TyP<'ast>], bool),
     TypeOf(ExprP<'ast>),
     Array(TyP<'ast>, ExprP<'ast>),
     Tuple(&'ast [TyP<'ast>]),

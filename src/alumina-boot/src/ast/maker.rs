@@ -4,7 +4,9 @@ use once_cell::unsync::OnceCell;
 
 use crate::{
     ast::{AstCtx, BuiltinType, Field, Function, Item, ItemP, Parameter, StructLike, Ty},
-    common::{AluminaError, ArenaAllocatable, CodeError, CodeErrorKind, WithSpanDuringParsing},
+    common::{
+        AluminaError, ArenaAllocatable, CodeError, CodeErrorKind, Marker, WithSpanDuringParsing,
+    },
     global_ctx::GlobalCtx,
     intrinsics::intrinsic_kind,
     name_resolution::{
@@ -15,9 +17,9 @@ use crate::{
 };
 
 use super::{
-    expressions::ExpressionVisitor, macros::MacroMaker, types::TypeVisitor, AssociatedFn,
-    Attribute, Enum, EnumMember, Intrinsic, Mixin, MixinCell, Placeholder, Protocol, Span,
-    StaticOrConst, TypeDef,
+    expressions::ExpressionVisitor, lang::LangItemKind, macros::MacroMaker, types::TypeVisitor,
+    AssociatedFn, Attribute, Enum, EnumMember, Intrinsic, Mixin, MixinCell, Placeholder, Protocol,
+    Span, StaticOrConst, TyP, TypeDef,
 };
 
 pub struct AstItemMaker<'ast> {
@@ -420,6 +422,20 @@ impl<'ast> AstItemMaker<'ast> {
         Ok(())
     }
 
+    fn check_self_confusion(&self, typ: TyP<'ast>, span: Option<Span>) {
+        match typ {
+            Ty::NamedType(item) | Ty::Pointer(Ty::NamedType(item), _) => {
+                if let Some(LangItemKind::DynSelf) = self.ast.lang_item_kind(item) {
+                    self.global_ctx.diag().add_warning(CodeError {
+                        kind: CodeErrorKind::SelfConfusion,
+                        backtrace: span.map(Marker::Span).into_iter().collect(),
+                    })
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn make_function<'src>(
         &mut self,
         name: Option<&'ast str>,
@@ -474,6 +490,8 @@ impl<'ast> AstItemMaker<'ast> {
                         file: code.file_id(),
                     };
 
+                    self.check_self_confusion(typ, Some(span));
+
                     parameters.push(Parameter {
                         id,
                         typ,
@@ -526,6 +544,8 @@ impl<'ast> AstItemMaker<'ast> {
             })
             .transpose()?
             .unwrap_or_else(|| self.ast.intern_type(Ty::Builtin(BuiltinType::Void)));
+
+        self.check_self_confusion(return_type, Some(span));
 
         let function_body = body
             .map(|body| {

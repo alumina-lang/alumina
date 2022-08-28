@@ -77,7 +77,14 @@ impl<'ast> Rebinder<'ast> {
                     .alloc_on(self.ast),
                 self.visit_typ(ret)?,
             ),
-            Dyn(inner, is_const) => Dyn(self.visit_typ(inner)?, *is_const),
+            Dyn(inner, is_const) => Dyn(
+                inner
+                    .iter()
+                    .map(|e| self.visit_typ(e))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .alloc_on(self.ast),
+                *is_const,
+            ),
             TypeOf(inner) => TypeOf(self.visit_expr(inner)?),
             Generic(item, args) => Generic(
                 item,

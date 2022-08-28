@@ -786,7 +786,25 @@ impl CodePrinter<W: Writable<W>> {
             w!(self.writer, "&amp;dyn ");
         }
 
-        self.visit(child_by!(node, FieldKind::Inner).unwrap())?;
+        let cursor = node.walk();
+        defer cursor.free();
+
+        let child_count = children_by!(node, FieldKind::Inner, &cursor).count();
+
+        if child_count > 1 {
+            w!(self.writer, "(");
+        }
+
+        for (idx, child) in children_by!(node, FieldKind::Inner, &cursor).enumerate() {
+            if idx > 0 {
+                w!(self.writer, " + ");
+            }
+            self.visit(child)?;
+        }
+
+        if child_count > 1 {
+            w!(self.writer, ")");
+        }
 
         Result::ok(())
     }

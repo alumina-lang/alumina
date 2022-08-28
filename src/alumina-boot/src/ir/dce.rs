@@ -41,10 +41,7 @@ impl<'ir> DeadCodeEliminator<'ir> {
             }
 
             Ty::Protocol(_) => unreachable!(),
-
-            Ty::Unqualified(_) => {
-                // skipped, this is only for codegen
-            }
+            Ty::Unqualified(_) => {}
         }
 
         Ok(())

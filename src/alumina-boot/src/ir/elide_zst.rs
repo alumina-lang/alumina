@@ -8,7 +8,7 @@ use crate::{
 
 use super::{
     builder::{ExpressionBuilder, TypeBuilder},
-    Expr, ExprKind, ExprP, FuncBody, IrCtx, IrId, Lit, LocalDef, Statement,
+    Expr, ExprKind, ExprP, FuncBody, IrCtx, IrId, Lit, LocalDef, Statement, Ty, UnqualifiedKind,
 };
 
 // The purpose of ZST elider is to take all reads and writes of zero-sized types and
@@ -110,7 +110,12 @@ impl<'ir> ZstElider<'ir> {
                     .map(|arg| self.elide_zst_expr(arg))
                     .collect::<Vec<_>>();
 
-                if args.iter().any(|arg| arg.ty.is_zero_sized()) {
+                let extract_args = match callee.kind {
+                    ExprKind::CodegenIntrinsic(_) => false,
+                    _ => args.iter().any(|arg| arg.ty.is_zero_sized()),
+                };
+
+                if extract_args {
                     let mut statements = Vec::new();
                     let mut arguments = Vec::new();
 
@@ -239,6 +244,8 @@ impl<'ir> ZstElider<'ir> {
             }
         };
 
+        // Some C-codegen specific fixups
+
         // Named function types are unit types, hence ZSTs, and will get elided away if e.g. stored
         // in variables, passed as arguments, ... If this happens, we still need to make sure that
         // codegen invokes it correctly.
@@ -250,6 +257,18 @@ impl<'ir> ZstElider<'ir> {
 
         if result.is_void() && result.ty.is_never() {
             return builder.unreachable();
+        }
+
+        // At this point unqualified strings are only present as arguments to the string constructor. They are always
+        // `&u8`.
+        if let Ty::Unqualified(UnqualifiedKind::String(_)) = result.ty {
+            return Expr {
+                is_const: result.is_const,
+                ty: types.pointer(types.builtin(BuiltinType::U8), true),
+                value_type: result.value_type,
+                kind: result.kind.clone(),
+            }
+            .alloc_on(self.ir);
         }
 
         result
