@@ -85,7 +85,7 @@ Prism.languages.alumina = {
         }
     ],
     'keyword': [
-        /\b(?:Self|const|dyn|enum|extern|fn|impl|let|macro|mod|mut|self|static|struct|mixin|protocol|try|type|union|use|typeof|as)\b/,
+        /\b(?:Self|const|dyn|enum|extern|[Ff]n|impl|let|macro|mod|mut|self|static|struct|mixin|protocol|try|type|union|use|typeof|as)\b/,
         /\b(?:null|void|bool|f(?:32|64)|[ui](?:8|16|32|64|128|size))\b/
     ],
     'control-keyword': [
