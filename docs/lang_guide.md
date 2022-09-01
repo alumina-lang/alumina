@@ -317,11 +317,9 @@ fn main() {
 Statics can be generic. This is seldom needed, but can be useful to create associated variables for a family of generic types or functions. Each combination of type parameters is monomorphized to a distinct variable. Generic statics cannot be `extern`.
 
 ```rust
-use std::builtins::Callable;
-
 static CACHE<T, F>: Option<T>; // zero initialized
 
-fn memoized<T, F: Callable<(), T>>(f: F) -> T {
+fn memoized<T, F: Fn() -> T>(f: F) -> T {
     if CACHE::<T, F>.is_some() {
         CACHE::<T, F>.unwrap()
     } else {
@@ -575,13 +573,13 @@ Most zero-sized types are unit types (they contain only a single value). An exce
 Named function types are a family of unit types, each only containing the specific function. This can be used for tricks like this:
 
 ```rust
-use std::builtins::{NamedFunction, Callable};
+use std::builtins::NamedFunction;
 
 fn hello() {
     println!("Hello");
 }
 
-fn invoke<F: NamedFunction + Callable<()>>() {
+fn invoke<F: NamedFunction + Fn()>() {
     let f = std::util::unit::<F>(); // `unit` produces the only value of a unit type out of thin air
     f();
 }
@@ -748,7 +746,7 @@ loop {
 }
 ```
 
-Loop can be broken out of using a `break` expression
+Loop can be broken out of using a `break` expression. Break expressions can optionally take a value which will be used as the value of the whole loop expression.
 
 ```rust
 use std::random::thread_rng;
@@ -769,7 +767,9 @@ while i < 10 {
 }
 ```
 
-`for` loops are used with [std::iter::Iterable] types
+`for` loops are used with iterable types. See the [std::iter](https://docs.alumina-lang.net/std/iter) module for more information on iterators.
+
+```rust
 
 ```rust
 for i in 0..10 {
@@ -1091,10 +1091,10 @@ Protocol methods are usually not generic themselves, the type parameters come fr
 There are a number of protocols that are built-in to the language. For the full list see [`std::builtins` module](https://docs.alumina-lang.net/std/builtins/). Multiple protocol bounds can be specified by separating them with `+` and negated with `!`
 
 ```rust
-use std::builtins::{Callable, NamedFunction};
+use std::builtins::NamedFunction;
 
 // Exclude closures, since they do not coerce to function pointers
-fn as_function_pointer<F: NamedFunction + Callable<()>>(f: F) -> fn() {
+fn as_function_pointer<F: NamedFunction + Fn()>(f: F) -> fn() {
     f
 }
 
@@ -1325,7 +1325,7 @@ struct FancyInt {
 
 impl FancyInt {
     fn equals(self: &FancyInt, other: &FancyInt) -> bool {
-        self.inner.equals(&other.inner)
+        self.inner == other.inner
     }
 
     fn compare(self: &FancyInt, other: &FancyInt) -> Ordering {

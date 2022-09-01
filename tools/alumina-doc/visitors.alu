@@ -832,6 +832,21 @@ impl CodePrinter<W: Writable<W>> {
         Result::ok(())
     }
 
+    fn visit_function_protocol(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
+        w!(self.writer, "Fn");
+        self.visit(child_by!(node, FieldKind::Parameters).unwrap())?;
+
+        child_by!(node, FieldKind::ReturnType)
+            .map(|=self, child: Node| -> Result<()> {
+                w!(self.writer, " -> ");
+                self.visit(child)?
+                Result::ok(())
+            })
+            .transpose()?;
+
+        Result::ok(())
+    }
+
     fn visit_parameter(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         w!(self.writer, "{}: ", get_name!(self, node));
         self.visit(child_by!(node, FieldKind::Type).unwrap())?;

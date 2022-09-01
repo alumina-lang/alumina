@@ -22,7 +22,6 @@
 
 use builtins::Integer;
 use option::Option;
-use builtins::Callable;
 
 /// Iterators.
 ///
@@ -118,12 +117,12 @@ impl RevIterator<It: DoubleEndedIterator<It, T>, T> {
 /// Map iterator.
 ///
 /// See [IteratorExt::map].
-struct MapIterator<It: Iterator<It, T>, F: Callable<(T), U>, T, U> {
+struct MapIterator<It: Iterator<It, T>, F: Fn(T) -> U, T, U> {
     it: &mut It,
     fun: F,
 }
 
-impl MapIterator<It: Iterator<It, T>, F: Callable<(T), U>, T, U> {
+impl MapIterator<It: Iterator<It, T>, F: Fn(T) -> U, T, U> {
     /// @ Iterator::next
     fn next(self: &mut MapIterator<It, F, T, U>) -> Option<U> {
         self.it.next().map(self.fun)
@@ -138,7 +137,7 @@ impl MapIterator<It: Iterator<It, T>, F: Callable<(T), U>, T, U> {
     mixin IteratorExt<MapIterator<It, F, T, U>, U>;
 }
 
-impl MapIterator<It: DoubleEndedIterator<It, T>, F: Callable<(T), U>, T, U> {
+impl MapIterator<It: DoubleEndedIterator<It, T>, F: Fn(T) -> U, T, U> {
     /// @ DoubleEndedIterator::next_back
     fn next_back(self: &mut MapIterator<It, F, T, U>) -> Option<U> {
         self.it.next_back().map(self.fun)
@@ -151,12 +150,12 @@ impl MapIterator<It: DoubleEndedIterator<It, T>, F: Callable<(T), U>, T, U> {
 /// Iterator that takes elements while a predicate is true.
 ///
 /// See [IteratorExt::take_while].
-struct TakeWhileIterator<It: Iterator<It, T>, F: Callable<(T), bool>, T> {
+struct TakeWhileIterator<It: Iterator<It, T>, F: Fn(T) -> bool, T> {
     it: &mut It,
     fun: F,
 }
 
-impl TakeWhileIterator<It: Iterator<It, T>, F: Callable<(T), bool>, T> {
+impl TakeWhileIterator<It: Iterator<It, T>, F: Fn(T) -> bool, T> {
     /// @ Iterator::next
     fn next(self: &mut TakeWhileIterator<It, F, T>) -> Option<T> {
         self.it.next().and_then(|=self, x: T| -> Option<T> {
@@ -175,13 +174,13 @@ impl TakeWhileIterator<It: Iterator<It, T>, F: Callable<(T), bool>, T> {
 /// Iterator that skips elements until a predicate becomes false.
 ///
 /// See [IteratorExt::skip_while].
-struct SkipWhileIterator<It: Iterator<It, T>, F: Callable<(T), bool>, T> {
+struct SkipWhileIterator<It: Iterator<It, T>, F: Fn(T) -> bool, T> {
     it: &mut It,
     fun: F,
     finished: bool,
 }
 
-impl SkipWhileIterator<It: Iterator<It, T>, F: Callable<(T), bool>, T> {
+impl SkipWhileIterator<It: Iterator<It, T>, F: Fn(T) -> bool, T> {
     /// @ Iterator::next
     fn next(self: &mut SkipWhileIterator<It, F, T>) -> Option<T> {
         loop {
@@ -204,12 +203,12 @@ impl SkipWhileIterator<It: Iterator<It, T>, F: Callable<(T), bool>, T> {
 /// Filter map iterator.
 ///
 /// See [IteratorExt::filter_map].
-struct FilterMapIterator<It: Iterator<It, T>, F: Callable<(T), Option<U>>, T, U> {
+struct FilterMapIterator<It: Iterator<It, T>, F: Fn(T) -> Option<U>, T, U> {
     it: &mut It,
     fun: F,
 }
 
-impl FilterMapIterator<It: Iterator<It, T>, F: Callable<(T), Option<U>>, T, U> {
+impl FilterMapIterator<It: Iterator<It, T>, F: Fn(T) -> Option<U>, T, U> {
     /// @ Iterator::next
     fn next(self: &mut FilterMapIterator<It, F, T, U>) -> Option<U> {
         use option::try;
@@ -231,12 +230,12 @@ impl FilterMapIterator<It: Iterator<It, T>, F: Callable<(T), Option<U>>, T, U> {
 /// Filter iterator.
 ///
 /// See [IteratorExt::filter].
-struct FilterIterator<It: Iterator<It, T>, F: Callable<(T), bool>, T> {
+struct FilterIterator<It: Iterator<It, T>, F: Fn(T) -> bool, T> {
     it: &mut It,
     fun: F,
 }
 
-impl FilterIterator<It: Iterator<It, T>, F: Callable<(T), bool>, T> {
+impl FilterIterator<It: Iterator<It, T>, F: Fn(T) -> bool, T> {
     /// @ Iterator::next
     fn next(self: &mut FilterIterator<It, F, T>) -> Option<T> {
         use option::try;
@@ -253,7 +252,7 @@ impl FilterIterator<It: Iterator<It, T>, F: Callable<(T), bool>, T> {
     mixin IteratorExt<FilterIterator<It, F, T>, T>;
 }
 
-impl FilterIterator<It: DoubleEndedIterator<It, T>, F: Callable<(T), bool>, T> {
+impl FilterIterator<It: DoubleEndedIterator<It, T>, F: Fn(T) -> bool, T> {
     /// @ DoubleEndedIterator::next_back
     fn next_back(self: &mut FilterIterator<It, F, T>) -> Option<T> {
         use option::try;
@@ -493,12 +492,12 @@ impl ChainIterator<It1: DoubleEndedIterator<It1, T>, It2: DoubleEndedIterator<It
 /// Inspect iterator.
 ///
 /// See [IteratorExt::inspect].
-struct InspectIterator<It: Iterator<It, T>, F: Callable<(T), ()>, T> {
+struct InspectIterator<It: Iterator<It, T>, F: Fn(T), T> {
     it: &mut It,
     func: F,
 }
 
-impl InspectIterator<It: Iterator<It, T>, F: Callable<(T)>, T> {
+impl InspectIterator<It: Iterator<It, T>, F: Fn(T), T> {
     /// @ Iterator::next
     fn next(self: &mut InspectIterator<It, F, T>) -> Option<T> {
         let v = self.it.next();
@@ -520,12 +519,12 @@ impl InspectIterator<It: Iterator<It, T>, F: Callable<(T)>, T> {
 /// A group iterator for [GroupByIterator].
 ///
 /// See [IteratorExt::group_by].
-struct Grouping<It: Iterator<It, T>, F: Callable<(T), K>, T, K: cmp::Equatable<K>> {
+struct Grouping<It: Iterator<It, T>, F: Fn(T) -> K, T, K: cmp::Equatable<K>> {
     parent: &mut GroupByIterator<It, F, T, K>,
     key: K
 }
 
-impl Grouping<It: Iterator<It, T>, F: Callable<(T), K>, T, K: cmp::Equatable<K>> {
+impl Grouping<It: Iterator<It, T>, F: Fn(T) -> K, T, K: cmp::Equatable<K>> {
     /// @ Iterator::next
     fn next(self: &mut Grouping<It, F, T, K>) -> Option<T> {
         use option::try;
@@ -551,13 +550,13 @@ impl Grouping<It: Iterator<It, T>, F: Callable<(T), K>, T, K: cmp::Equatable<K>>
 /// Grouping iterator
 ///
 /// See [IteratorExt::group_by].
-struct GroupByIterator<It: Iterator<It, T>, F: Callable<(T), K>, T, K: cmp::Equatable<K>> {
+struct GroupByIterator<It: Iterator<It, T>, F: Fn(T) -> K, T, K: cmp::Equatable<K>> {
     it: PeekableIterator<It, T>,
     last_group: Option<Grouping<It, F, T, K>>,
     func: F
 }
 
-impl GroupByIterator<It: Iterator<It, T>, F: Callable<(T), K>, T, K: cmp::Equatable<K>> {
+impl GroupByIterator<It: Iterator<It, T>, F: Fn(T) -> K, T, K: cmp::Equatable<K>> {
     /// @ Iterator::next
     fn next(self: &mut GroupByIterator<It, F, T, K>) -> Option<Grouping<It, F, T, K>> {
         let needs_drain = self.last_group.move();
@@ -924,7 +923,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// // I see 2
     /// // Last: 2
     /// ```
-    fn inspect<F: Callable<(T)>>(it: &mut Self, func: F) -> InspectIterator<Self, F, T> {
+    fn inspect<F: Fn(T)>(it: &mut Self, func: F) -> InspectIterator<Self, F, T> {
         InspectIterator {
             it: it,
             func: func,
@@ -943,7 +942,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// assert_eq!(range.next(), Option::some(2));
     /// assert_eq!(range.next(), Option::none());
     /// ```
-    fn take_while<F: Callable<(T), bool>>(iter: &mut Self, fun: F) -> TakeWhileIterator<Self, F, T> {
+    fn take_while<F: Fn(T) -> bool>(iter: &mut Self, fun: F) -> TakeWhileIterator<Self, F, T> {
         TakeWhileIterator { it: iter, fun: fun }
     }
 
@@ -957,7 +956,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// assert_eq!(range.next(), Option::some(4));
     /// assert_eq!(range.next(), Option::none());
     /// ```
-    fn skip_while<F: Callable<(T), bool>>(iter: &mut Self, fun: F) -> SkipWhileIterator<Self, F, T> {
+    fn skip_while<F: Fn(T) -> bool>(iter: &mut Self, fun: F) -> SkipWhileIterator<Self, F, T> {
         SkipWhileIterator { it: iter, fun: fun, finished: false }
     }
 
@@ -974,7 +973,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// assert_eq!(range.next(), Option::some(8));
     /// assert_eq!(range.next(), Option::none());
     /// ```
-    fn map<U, F: Callable<(T), U>>(iter: &mut Self, fun: F) -> MapIterator<Self, F, T, U> {
+    fn map<U, F: Fn(T) -> U>(iter: &mut Self, fun: F) -> MapIterator<Self, F, T, U> {
         MapIterator { it: iter, fun: fun }
     }
 
@@ -995,7 +994,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     ///         println!("{}", f.as_slice());
     ///     });
     /// ```
-    fn foreach<F: Callable<(T)>>(iter: &mut Self, fun: F) {
+    fn foreach<F: Fn(T)>(iter: &mut Self, fun: F) {
         loop {
             let val = iter.next();
             if val.is_some() {
@@ -1018,7 +1017,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// assert_eq!(range.next(), Option::some(4));
     /// assert_eq!(range.next(), Option::none());
     /// ```
-    fn filter<F: Callable<(T), bool>>(iter: &mut Self, fun: F) -> FilterIterator<Self, F, T> {
+    fn filter<F: Fn(T) -> bool>(iter: &mut Self, fun: F) -> FilterIterator<Self, F, T> {
         FilterIterator { it: iter, fun: fun }
     }
 
@@ -1034,7 +1033,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// assert_eq!(a, Option::some(8));
     /// assert_eq!(b, Option::none());
     /// ```
-    fn find<F: Callable<(T), bool>>(iter: &mut Self, fun: F) -> Option<T> {
+    fn find<F: Fn(T) -> bool>(iter: &mut Self, fun: F) -> Option<T> {
         iter.filter(fun).next()
     }
 
@@ -1053,7 +1052,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     ///
     /// println!("First number larger than 100: {}", arr[idx]);
     /// ```
-    fn find_index<F: Callable<(T), bool>>(iter: &mut Self, fun: F) -> Option<usize> {
+    fn find_index<F: Fn(T) -> bool>(iter: &mut Self, fun: F) -> Option<usize> {
         let idx = 0usize;
         for v in iter {
             if fun(v) {
@@ -1085,7 +1084,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// assert_eq!(range.next(), Option::some(300));
     /// assert_eq!(range.next(), Option::some(500));
     /// ```
-    fn filter_map<U, F: Callable<(T), Option<U>>>(iter: &mut Self, fun: F) -> FilterMapIterator<Self, F, T, U> {
+    fn filter_map<U, F: Fn(T) -> Option<U>>(iter: &mut Self, fun: F) -> FilterMapIterator<Self, F, T, U> {
         FilterMapIterator { it: iter, fun: fun }
     }
 
@@ -1106,7 +1105,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     ///
     /// println!("{}", sum); // Prints: 10
     /// ```
-    fn reduce<U, F: Callable<(U, T), U>>(iter: &mut Self, initial: U, func: F) -> U {
+    fn reduce<U, F: Fn(U, T) -> U>(iter: &mut Self, initial: U, func: F) -> U {
         loop {
             let next = iter.next();
             if !next.is_some() {
@@ -1167,7 +1166,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// assert!(!t1);
     /// assert!(t2);
     /// ```
-    fn all<F: Callable<(T), bool>>(iter: &mut Self, fun: F) -> bool {
+    fn all<F: Fn(T) -> bool>(iter: &mut Self, fun: F) -> bool {
         loop {
             let next = iter.next();
             if !next.is_some() {
@@ -1191,7 +1190,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// assert!(!t1);
     /// assert!(t2);
     /// ```
-    fn any<F: Callable<(T), bool>>(iter: &mut Self, fun: F) -> bool {
+    fn any<F: Fn(T) -> bool>(iter: &mut Self, fun: F) -> bool {
         loop {
             let next = iter.next();
             if !next.is_some() {
@@ -1286,7 +1285,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// // 2: 6 7 8
     /// // 3: 9
     /// ```
-    fn group_by<F: Callable<(T), K>, K: cmp::Equatable<K>>(self: &mut Self, func: F) -> GroupByIterator<Self, F, T, K> {
+    fn group_by<F: Fn(T) -> K, K: cmp::Equatable<K>>(self: &mut Self, func: F) -> GroupByIterator<Self, F, T, K> {
         GroupByIterator {
             it: self.peekable(),
             last_group: Option::none(),
@@ -1370,11 +1369,11 @@ impl EmptyIterator<T> {
 /// A function wrapped in an iterator.
 ///
 /// See [from_fn] for details.
-struct FromFnIterator<F: Callable<(), Option<T>>, T> {
+struct FromFnIterator<F: Fn() -> Option<T>, T> {
     func: F,
 }
 
-impl FromFnIterator<F: Callable<(), Option<T>>, T> {
+impl FromFnIterator<F: Fn() -> Option<T>, T> {
     /// @ Iterator::next
     fn next(self: &mut FromFnIterator<F, T>) -> Option<T> {
         self.func()
@@ -1414,7 +1413,7 @@ fn empty<T>() -> EmptyIterator<T> {
 ///
 /// println!("{}", sqrt2); // Prints approximately 1.4142135623730951
 /// ```
-fn from_fn<F: Callable<(), Option<T>>, T>(func: F) -> FromFnIterator<F, T> {
+fn from_fn<F: Fn() -> Option<T>, T>(func: F) -> FromFnIterator<F, T> {
     FromFnIterator::<F, T> { func: func }
 }
 

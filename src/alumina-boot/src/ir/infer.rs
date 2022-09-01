@@ -194,7 +194,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
     ) {
         // Matching protocol bounds is quite limited at the moment, it only works for certain
         // builtin protocols and even there it only works in the reverse direction, e.g. if
-        // we have <A, B, C, F: Callable<(A, B), C>> and F is a known function/function pointer,
+        // we have <A, B, C, F: Fn(A, B) -> C> and F is a known function/function pointer,
         // we can infer A, B and C.
         if let Some(tgt) = inferred.get(&placeholder.id).copied() {
             if placeholder.bounds.kind == ast::ProtocolBoundsKind::Any {

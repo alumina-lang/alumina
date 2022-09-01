@@ -300,7 +300,7 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     /// assert_eq!(map.get(3), Option::none());
     /// assert_eq!(map.get(4), Option::some(4));
     /// ```
-    fn retain<F: builtins::Callable<(&K, &V), bool>>(self: &mut HashMap<K, V, H>, func: F) {
+    fn retain<F: Fn(&K, &V) -> bool>(self: &mut HashMap<K, V, H>, func: F) {
         let deleted = 0usize;
         for i in (0usize..self._buckets.len()) {
             if self._buckets[i].state == State::Occupied {

@@ -118,7 +118,7 @@ impl ThreadPool {
     }
 
     /// Spawns a new task on the thread pool, returning a handle that can be used to wait for the result.
-    fn spawn<T, F: Callable<(), T>>(self: &ThreadPool, f: F) -> Result<TaskHandle<T>, ChannelError> {
+    fn spawn<T, F: Fn() -> T>(self: &ThreadPool, f: F) -> Result<TaskHandle<T>, ChannelError> {
         let (task, handle) = internal::Task::new_joinable(f);
         if self.inner.is_bounded {
             self.inner.work_queue.bounded.send(task)?;
@@ -131,7 +131,7 @@ impl ThreadPool {
     /// Spawns a new task on the thread pool.
     ///
     /// This is similar to [spawn], but there is no completion handle.
-    fn spawn_detached<F: Callable<()>>(self: &ThreadPool, f: F) -> Result<(), ChannelError>  {
+    fn spawn_detached<F: Fn()>(self: &ThreadPool, f: F) -> Result<(), ChannelError>  {
         if self.inner.is_bounded {
             self.inner.work_queue.bounded.send(internal::Task::new(f))?;
         } else {
@@ -190,9 +190,9 @@ mod internal {
     }
 
     impl Task {
-        use builtins::{Callable, FunctionPointer, NamedFunction, ZeroSized};
+        use builtins::{FunctionPointer, NamedFunction, ZeroSized};
 
-        fn new<F: Callable<()>>(f: F) -> Task {
+        fn new<F: Fn()>(f: F) -> Task {
             Task {
                 callback: Task::_invoke_noreturn::<F>,
                 // Allocate the storage for the closure. If the function does not capture any
@@ -209,7 +209,7 @@ mod internal {
             }
         }
 
-        fn new_joinable<T, F: Callable<(), T>>(f: F) -> (Task, TaskHandle<T>) {
+        fn new_joinable<T, F: Fn() -> T>(f: F) -> (Task, TaskHandle<T>) {
             let storage = mem::alloc::<JoinableTaskFunc<F, T>>();
             storage.inner = JoinableTask::new();
             storage.func = f;
@@ -225,13 +225,13 @@ mod internal {
             (self.callback)(self.data);
         }
 
-        fn _invoke<T, F: Callable<(), T>>(data: &mut void) {
+        fn _invoke<T, F: Fn() -> T>(data: &mut void) {
             let storage = data as &mut JoinableTaskFunc<F, T>;
             storage.inner.ret.send((storage.func)());
             storage.inner.free();
         }
 
-        fn _invoke_noreturn<F: Callable<()>>(data: &mut void) {
+        fn _invoke_noreturn<F: Fn()>(data: &mut void) {
             when F: NamedFunction {
                 let f = util::unit::<F>();
                 f();

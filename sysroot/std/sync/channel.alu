@@ -376,14 +376,14 @@ mod internal {
         use builtins::Callable;
         use time::{Instant, Duration};
 
-        fn _wait<F: Callable<(&Self), bool>>(self: &mut Self, cond: F) {
+        fn _wait<F: Fn(&Self) -> bool>(self: &mut Self, cond: F) {
             self.mutex.lock();
             while !cond(self) {
                 self.cond.wait(&self.mutex);
             }
         }
 
-        fn _try_wait<F: Callable<(&Self), bool>>(self: &mut Self, cond: F) -> Result<(), ChannelError> {
+        fn _try_wait<F: Fn(&Self) -> bool>(self: &mut Self, cond: F) -> Result<(), ChannelError> {
             self.mutex.lock();
             if !cond(self) {
                 self.mutex.unlock();
@@ -393,7 +393,7 @@ mod internal {
             Result::ok(())
         }
 
-        fn _wait_timeout<F: Callable<(&Self), bool>>(self: &mut Self, cond: F, timeout: Duration) -> Result<(), ChannelError> {
+        fn _wait_timeout<F: Fn(&Self) -> bool>(self: &mut Self, cond: F, timeout: Duration) -> Result<(), ChannelError> {
             let start = Instant::now();
             self.mutex.lock();
 
