@@ -367,7 +367,7 @@ Alumina's type system consists of the following types:
 
 - primitive numeric types (e.g. [`u8`](https://docs.alumina-lang.net/std/builtins/u8.html), [`u16`](https://docs.alumina-lang.net/std/builtins/u16.html), [`f64`](https://docs.alumina-lang.net/std/builtins/f64.html), ...)
 - [boolean type](https://docs.alumina-lang.net/std/builtins/bool.html) (`bool`)
-- [unit/void type](https://docs.alumina-lang.net/std/builtins/bool.html) (`void` or `()`)
+- [unit/void type](https://docs.alumina-lang.net/std/builtins/void.html) (`void` or `()`)
 - pointers (e.g. `&i32`, `&i32`)
 - tuples (e.g. `(i32, f64)`, `(i32, i32, i32)`)
 - fixed-size arrays (e.g. `[i32; 3]`, `[i32; 10]`)
@@ -381,7 +381,7 @@ Alumina's type system consists of the following types:
 
 There is also a special syntax for two kinds of types that are not technically built into the compiler, but are defined in the standard library:
 
-- [slices](https://docs.alumina-lang.net/std/mem/slice.html) (`&[i32]`, `&mut i32`)
+- [slices](#slices) (`&[i32]`, `&mut i32`)
 - [dynamic dispatch pointers](#dyn-pointers) (`&dyn Protocol`)
 
 [Protocols](#protocols-and-mixins) themselves are also technically types (can be used as type arguments), but they are not valid types for values.
@@ -568,7 +568,7 @@ Alumina has first-class support for zero-sized types. The most common one is `()
 - Named function types (see below)
 - Never type (`!`)
 
-During compilation all memory loads and stores of zero-sized values are optimized away. This can be a powerful mechanism in generic context. An example from the standard library is the [`HashSet<T>` type](https://docs.alumina-lang.net/std/collections/hashset/HashSet.html), which is just a wrapper around a [`HashMap<T, ()>`](https://docs.alumina-lang.net/std/collections/hashmap/HashMap.html). As the value type parameter is zero-sized, it incurrs no space overhead and the optimizer can remove all loads and stores of the value.
+During compilation all memory loads and stores of zero-sized values are optimized away. This can be a powerful mechanism in generic context. An example from the standard library is the [`HashSet<T>` type](https://docs.alumina-lang.net/std/collections/HashSet.html), which is just a wrapper around a [`HashMap<T, ()>`](https://docs.alumina-lang.net/std/collections/HashMap.html). As the value type parameter is zero-sized, it incurrs no space overhead and the optimizer can remove all loads and stores of the value.
 
 Most zero-sized types are unit types (they contain only a single value). An exception to this is the never type, which is an empty / uninhabited type since having a value of this type would mean that an expression that was supposed to never return actually returned.
 
@@ -1307,7 +1307,7 @@ dynamic = &hello;
 dynamic.greet(); // "Hello!"
 ```
 
-Since the pointer to the vtable is stored in the `dyn` pointer itself, no size overhead is incurred when the structs are used in a non-dynamic manner. Like slices, `dyn` pointers are [just structs under the hood](https://docs.alumina-lang.net/typing/dyn.html).
+Since the pointer to the vtable is stored in the `dyn` pointer itself, no size overhead is incurred when the structs are used in a non-dynamic manner. Like slices, `dyn` pointers are [just structs under the hood](https://docs.alumina-lang.net/std/typing/dyn.html).
 
 Not all protocols are compatible with dynamic dispatch. Specifically, all methods on a protocol must have a pointer to self (of either mutability) as the first argument and the `Self` type cannot appear anywhere else in the signature.
 
