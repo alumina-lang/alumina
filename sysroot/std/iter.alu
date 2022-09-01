@@ -498,7 +498,7 @@ struct InspectIterator<It: Iterator<It, T>, F: Callable<(T), ()>, T> {
     func: F,
 }
 
-impl InspectIterator<It: Iterator<It, T>, F: Callable<(T), ()>, T> {
+impl InspectIterator<It: Iterator<It, T>, F: Callable<(T)>, T> {
     /// @ Iterator::next
     fn next(self: &mut InspectIterator<It, F, T>) -> Option<T> {
         let v = self.it.next();
@@ -924,7 +924,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// // I see 2
     /// // Last: 2
     /// ```
-    fn inspect<F: Callable<(T), ()>>(it: &mut Self, func: F) -> InspectIterator<Self, F, T> {
+    fn inspect<F: Callable<(T)>>(it: &mut Self, func: F) -> InspectIterator<Self, F, T> {
         InspectIterator {
             it: it,
             func: func,
@@ -995,7 +995,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     ///         println!("{}", f.as_slice());
     ///     });
     /// ```
-    fn foreach<F: Callable<(T), ()>>(iter: &mut Self, fun: F) {
+    fn foreach<F: Callable<(T)>>(iter: &mut Self, fun: F) {
         loop {
             let val = iter.next();
             if val.is_some() {

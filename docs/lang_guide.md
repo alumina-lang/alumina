@@ -581,7 +581,7 @@ fn hello() {
     println!("Hello");
 }
 
-fn invoke<F: NamedFunction + Callable<(), ()>>() {
+fn invoke<F: NamedFunction + Callable<()>>() {
     let f = std::util::unit::<F>(); // `unit` produces the only value of a unit type out of thin air
     f();
 }
@@ -1094,7 +1094,7 @@ There are a number of protocols that are built-in to the language. For the full 
 use std::builtins::{Callable, NamedFunction};
 
 // Exclude closures, since they do not coerce to function pointers
-fn as_function_pointer<F: NamedFunction + Callable<(), ()>>(f: F) -> fn() {
+fn as_function_pointer<F: NamedFunction + Callable<()>>(f: F) -> fn() {
     f
 }
 

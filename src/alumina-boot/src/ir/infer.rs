@@ -206,6 +206,10 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                     ast::Ty::Generic(ast::Ty::NamedType(item), args) => (item, args),
                     ast::Ty::Generic(ast::Ty::NamedFunction(item), args) => (item, args),
                     ast::Ty::Generic(ast::Ty::Protocol(item), args) => (item, args),
+                    ast::Ty::FunctionProtocol(args, ret) => {
+                        self.match_callable(inferred, tgt, args, ret);
+                        continue;
+                    }
                     _ => continue,
                 };
 
@@ -234,56 +238,51 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                         }
                     }
                     Some(LangItemKind::ProtoCallable) => match args {
-                        [ast::Ty::Tuple(a1), a2] => match tgt {
-                            ir::Ty::FunctionPointer(b1, b2) => {
-                                for (a, b) in a1.iter().zip(b1.iter()) {
-                                    let _ = self.match_slot(inferred, a, b);
-                                }
-                                let _ = self.match_slot(inferred, a2, b2);
-                            }
-                            ir::Ty::NamedFunction(item) => {
-                                if let Ok(fun) = item.get_function() {
-                                    for (a, b) in a1.iter().zip(fun.args.iter()) {
-                                        let _ = self.match_slot(inferred, a, b.ty);
-                                    }
-                                    let _ = self.match_slot(inferred, a2, fun.return_type);
-                                }
-                            }
-                            ir::Ty::Closure(item) => {
-                                if let Ok(clos) = item.get_closure() {
-                                    if let Ok(fun) = clos.function.get().unwrap().get_function() {
-                                        for (a, b) in a1.iter().zip(fun.args.iter().skip(1)) {
-                                            let _ = self.match_slot(inferred, a, b.ty);
-                                        }
-                                        let _ = self.match_slot(inferred, a2, fun.return_type);
-                                    }
-                                }
-                            }
-                            _ => {}
-                        },
-                        [ast::Ty::Builtin(BuiltinType::Void), a2] => match tgt {
-                            ir::Ty::FunctionPointer(_, b2) => {
-                                let _ = self.match_slot(inferred, a2, b2);
-                            }
-                            ir::Ty::NamedFunction(item) => {
-                                if let Ok(fun) = item.get_function() {
-                                    let _ = self.match_slot(inferred, a2, fun.return_type);
-                                }
-                            }
-                            ir::Ty::Closure(item) => {
-                                if let Ok(clos) = item.get_closure() {
-                                    if let Ok(fun) = clos.function.get().unwrap().get_function() {
-                                        let _ = self.match_slot(inferred, a2, fun.return_type);
-                                    }
-                                }
-                            }
-                            _ => {}
-                        },
+                        [ast::Ty::Tuple(a1), a2] => self.match_callable(inferred, tgt, a1, a2),
+                        [ast::Ty::Builtin(BuiltinType::Void), a2] => {
+                            self.match_callable(inferred, tgt, &[], a2)
+                        }
                         _ => {}
                     },
                     _ => {}
                 }
             }
+        }
+    }
+
+    fn match_callable(
+        &mut self,
+        inferred: &mut HashMap<ast::AstId, ir::TyP<'ir>>,
+        tgt: ir::TyP<'ir>,
+        a1: &'ast [ast::TyP<'ast>],
+        a2: ast::TyP<'ast>,
+    ) {
+        match tgt {
+            ir::Ty::FunctionPointer(b1, b2) => {
+                for (a, b) in a1.iter().zip(b1.iter()) {
+                    let _ = self.match_slot(inferred, a, b);
+                }
+                let _ = self.match_slot(inferred, a2, b2);
+            }
+            ir::Ty::NamedFunction(item) => {
+                if let Ok(fun) = item.get_function() {
+                    for (a, b) in a1.iter().zip(fun.args.iter()) {
+                        let _ = self.match_slot(inferred, a, b.ty);
+                    }
+                    let _ = self.match_slot(inferred, a2, fun.return_type);
+                }
+            }
+            ir::Ty::Closure(item) => {
+                if let Ok(clos) = item.get_closure() {
+                    if let Ok(fun) = clos.function.get().unwrap().get_function() {
+                        for (a, b) in a1.iter().zip(fun.args.iter().skip(1)) {
+                            let _ = self.match_slot(inferred, a, b.ty);
+                        }
+                        let _ = self.match_slot(inferred, a2, fun.return_type);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 

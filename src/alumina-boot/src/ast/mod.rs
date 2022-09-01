@@ -300,6 +300,7 @@ pub enum Ty<'ast> {
     Tuple(&'ast [TyP<'ast>]),
     When(StaticIfCondition<'ast>, TyP<'ast>, TyP<'ast>),
     FunctionPointer(&'ast [TyP<'ast>], TyP<'ast>),
+    FunctionProtocol(&'ast [TyP<'ast>], TyP<'ast>),
     Generic(TyP<'ast>, &'ast [TyP<'ast>]),
     Defered(Defered<'ast>),
 }

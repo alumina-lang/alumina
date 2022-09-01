@@ -131,7 +131,7 @@ impl ThreadPool {
     /// Spawns a new task on the thread pool.
     ///
     /// This is similar to [spawn], but there is no completion handle.
-    fn spawn_detached<F: Callable<(), ()>>(self: &ThreadPool, f: F) -> Result<(), ChannelError>  {
+    fn spawn_detached<F: Callable<()>>(self: &ThreadPool, f: F) -> Result<(), ChannelError>  {
         if self.inner.is_bounded {
             self.inner.work_queue.bounded.send(internal::Task::new(f))?;
         } else {
@@ -192,7 +192,7 @@ mod internal {
     impl Task {
         use builtins::{Callable, FunctionPointer, NamedFunction, ZeroSized};
 
-        fn new<F: Callable<(), ()>>(f: F) -> Task {
+        fn new<F: Callable<()>>(f: F) -> Task {
             Task {
                 callback: Task::_invoke_noreturn::<F>,
                 // Allocate the storage for the closure. If the function does not capture any
@@ -231,7 +231,7 @@ mod internal {
             storage.inner.free();
         }
 
-        fn _invoke_noreturn<F: Callable<(), ()>>(data: &mut void) {
+        fn _invoke_noreturn<F: Callable<()>>(data: &mut void) {
             when F: NamedFunction {
                 let f = util::unit::<F>();
                 f();
