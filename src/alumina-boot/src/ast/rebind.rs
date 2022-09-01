@@ -77,6 +77,14 @@ impl<'ast> Rebinder<'ast> {
                     .alloc_on(self.ast),
                 self.visit_typ(ret)?,
             ),
+            FunctionProtocol(elems, ret) => FunctionProtocol(
+                elems
+                    .iter()
+                    .map(|e| self.visit_typ(e))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .alloc_on(self.ast),
+                self.visit_typ(ret)?,
+            ),
             Dyn(inner, is_const) => Dyn(
                 inner
                     .iter()

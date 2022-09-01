@@ -402,7 +402,7 @@ impl SliceRefIterator<Ptr: builtins::Pointer> {
 }
 
 mod internal {
-    use builtins::{Primitive, Pointer};
+    use builtins::{Primitive, Pointer, RangeOf};
 
     macro bounds_check($cond, $msg, $args...) {
         #[cfg(any(debug, bounds_checks))]
@@ -431,7 +431,7 @@ mod internal {
     /// It is generic over all range types (`..`, `ran..`, `..ge` and `ran..ge`)
     #[force_inline]
     #[lang(slice_range_index)]
-    fn slice_range_index<Ptr: Pointer, T>(a: slice<Ptr>, range: T) -> slice<Ptr> {
+    fn slice_range_index<Ptr: Pointer, T: RangeOf<usize>>(a: slice<Ptr>, range: T) -> slice<Ptr> {
         when T: range::Range<usize> {
             bounds_check!(
                 range.lower <= range.upper,

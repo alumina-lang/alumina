@@ -236,7 +236,7 @@ fn min<T: Comparable<T>>(a: T, b: T) -> T {
 ///
 /// assert_eq!(slice, &[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
 /// ```
-fn sort_by<T, F: builtins::Callable<(&T), K>, K: Comparable<K>>(arr: &mut [T], key: F) {
+fn sort_by<T, F: Fn(&T) -> K, K: Comparable<K>>(arr: &mut [T], key: F) {
     if arr.len() <= 1 {
         return;
     }
@@ -301,7 +301,7 @@ mod internal {
         lhs.greater_than_or_equal(rhs)
     }
 
-    fn partition_by<T, F: builtins::Callable<(&T), K>, K: Comparable<K>>(arr: &mut [T], key: F) -> usize {
+    fn partition_by<T, F: Fn(&T) -> K, K: Comparable<K>>(arr: &mut [T], key: F) -> usize {
         use std::mem::swap;
 
         let pivot = arr[arr.len() - 1];

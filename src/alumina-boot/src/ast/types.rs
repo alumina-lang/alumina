@@ -106,6 +106,28 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
 
         Ok(res)
     }
+
+    #[allow(non_snake_case)]
+    fn visit_fn_or_Fn(
+        &mut self,
+        node: tree_sitter::Node<'src>,
+    ) -> Result<(&'ast [TyP<'ast>], TyP<'ast>), AluminaError> {
+        let mut cursor = node.walk();
+        let elements = node
+            .child_by_field_name("parameters")
+            .unwrap()
+            .children_by_field_name("parameter", &mut cursor)
+            .map(|child| self.visit(child))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let type_node = if let Some(return_type_node) = node.child_by_field_name("return_type") {
+            self.visit(return_type_node)?
+        } else {
+            self.ast.intern_type(Ty::Builtin(BuiltinType::Void))
+        };
+
+        Ok((elements.alloc_on(self.ast), type_node))
+    }
 }
 
 impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
@@ -247,23 +269,15 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
     }
 
     fn visit_function_pointer(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let mut cursor = node.walk();
-        let elements = node
-            .child_by_field_name("parameters")
-            .unwrap()
-            .children_by_field_name("parameter", &mut cursor)
-            .map(|child| self.visit(child))
-            .collect::<Result<Vec<_>, _>>()?;
+        let (args, ret) = self.visit_fn_or_Fn(node)?;
 
-        let type_node = if let Some(return_type_node) = node.child_by_field_name("return_type") {
-            self.visit(return_type_node)?
-        } else {
-            self.ast.intern_type(Ty::Builtin(BuiltinType::Void))
-        };
+        Ok(self.ast.intern_type(Ty::FunctionPointer(args, ret)))
+    }
 
-        Ok(self
-            .ast
-            .intern_type(Ty::FunctionPointer(elements.alloc_on(self.ast), type_node)))
+    fn visit_function_protocol(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let (args, ret) = self.visit_fn_or_Fn(node)?;
+
+        Ok(self.ast.intern_type(Ty::FunctionProtocol(args, ret)))
     }
 
     fn visit_when_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {

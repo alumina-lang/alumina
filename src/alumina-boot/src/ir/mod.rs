@@ -46,6 +46,11 @@ impl<'ir> IrCtx<'ir> {
     }
 
     pub fn intern_type(&'ir self, ty: Ty<'ir>) -> TyP<'ir> {
+        // TODO: wrong place for this
+        if let Ty::Tuple([]) = ty {
+            return self.intern_type(Ty::Builtin(BuiltinType::Void));
+        }
+
         if let Some(key) = self.types.borrow().get(&ty) {
             return *key;
         }

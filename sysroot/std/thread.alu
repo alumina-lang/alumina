@@ -2,7 +2,6 @@
 //!
 //! See also the [std::sync] module for synchronization primitives.
 
-use std::builtins::Callable;
 use std::io::Error;
 use std::sync::{Atomic, Ordering};
 
@@ -181,7 +180,7 @@ impl Builder {
     }
 
     /// Spawn a thread in joinable state.
-    fn spawn<T, F: Callable<(), T>>(self: &Builder, func: F) -> Result<JoinHandle<T>, Error> {
+    fn spawn<T, F: Fn() -> T>(self: &Builder, func: F) -> Result<JoinHandle<T>, Error> {
         internal::check_threading!();
 
         use internal::pthread_try;
@@ -215,7 +214,7 @@ impl Builder {
     }
 
     /// Spawn a thread in detached state.
-    fn spawn_detached<F: Callable<(), ()>>(self: &Builder, func: F) -> Result<(), Error> {
+    fn spawn_detached<F: Fn()>(self: &Builder, func: F) -> Result<(), Error> {
         internal::check_threading!();
 
         use internal::pthread_try;
@@ -277,7 +276,7 @@ impl Builder {
 /// [JoinHandle::join] function will return a [JoinError] with the panic information.
 ///
 /// If a thread is [detached](JoinHandle::detach), a panic in the thread will terminate the process.
-fn spawn<T, F: Callable<(), T>>(func: F) -> JoinHandle<T> {
+fn spawn<T, F: Fn() -> T>(func: F) -> JoinHandle<T> {
     Builder::new().spawn(func).unwrap()
 }
 
@@ -538,7 +537,7 @@ mod internal {
     ///
     /// This is the function that gets passed to `pthread_create` and it is responsible
     /// for setting up the panic handler and storing the return value of the thread.
-    fn _run_thread<T, F: Callable<(), T>>(arg: &mut void) -> &mut void {
+    fn _run_thread<T, F: Fn() -> T>(arg: &mut void) -> &mut void {
         let handle_func = arg as &mut ThreadHandleFunc<F, T>;
         let handle = &handle_func.inner;
 

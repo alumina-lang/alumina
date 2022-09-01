@@ -2,10 +2,6 @@
 
 ## General
 
-- Standard Library docs are quite good now, but the language itself is mostly undocumented
-  - Write a language reference / tutorial
-- Whole const_eval thing. It's very ad-hoc and messy. Full const-eval is not a priority, but it needs to be good enough
-  so `consts` and enum members can have values that people usually put there + in as much as compiler intrinsics need them.
 - Function inlining in Alumina compiler proper (rather than relying on C compiler)
     - It's not a priority, since C compiler can inline perfectly fine, except in special cases like `alloca` where the allocated buffer cannot leave the stack frame. To have a good wrapper around `alloca`, it needs to be force-inlined except if done in a macro (but macros don't really have a good type parameter system, params can only be expressions).
 - stack overflow in codegen stage because infinite size recursive structs are not rejected during monomorphization
@@ -16,15 +12,10 @@
     - this is now especially an issue with `when` expressions which do tentative mono during proto bound checking
     - This is a big problem, unfortunately there is no easy solution with the current `mono` architecture
 - statics in function scope
-- unqualified types gaps:
-  - unqualified string in if/else does not coerce to a slice
-  - probably other places too, since it's very ad-hoc
 - "any/don't care" in protocol bounds. Especially for things like `Hashable` and `Formattable`, it would be great if users didn't need to introduce a new generic parameter for the hasher and formatter (since that complicates type inference).
   - Alternatively, allow pre-monomorphized types to be used as protocol bounds
   - This could be solved by `infer`. It needs to do the same thing as `check_protocol_bounds` - go through all the AST methods of the protocol in the bound and IR method of the type in the slot and
   match the slots on all of them. It's quite a lot of work and also `infer` will probably need to start looping until no more changes are made (e.g. in nested protocol bounds), but it would be quite awesome. By doing that, protocols would actually start *helping* type inference instead of making it harder.
-- How does `Equatable` and `Comparable` work for pointers? Autoref makes this quite complicated... Maybe it's better to simply not have that.
-  - It will not work for pointers. It's OK.
 - Some limited pattern matching in macros (optional arguments)
 - Local items (functions, structs defined in linear scopes) that bind ambient generic parameters
   - Right now there is not even a good error message to say that this is not supported, just a cryptic "unbound placeholder" during mono
@@ -32,6 +23,17 @@
 - Promoting all variables to function scope is a bit of a unique feature of Alumina and I like it (comes in quite handy for autoref - can take an address of any rvalue and defer), but it may inhibit some optimizations downstream.
 - `if opt.is_some { opt.inner }` and  `if res.is_ok() { res.unwrap() }` do not spark joy. Full pattern matching is overkill, but this is very common and
   deserves a better idiom.
+- vtables are stored in mutable static variables and initialized in the static constructor like all other statics. clang can optimize this to statis storage and even de-virtualize automatically (which is quite amazing really), but gcc seems to not do this. Maybe extend codegen so that they can be properly const-initialized. Might be useful for other things as well (constant arrays, ...)
+- a coherent story for operator overloading
+- `dyn` pointers for certain builtin protocols. Specifically `dyn Callable<...>` would be very useful for being type-erased closures.
+- `format_args` macro is not bad right now, but the generated code is huge. It would be cool to have something like this so the result on `format_args` can still be collected into an array, but can also be unpacked into a sequence of statements directly writing into the formatter
+- unify `void` type and empty tuple in `mono`. They are the same thing. Maybe just hack it in `intern_type`?
+
+```
+macro write!($fmt, $s, $args...) {
+    { format_arg!($s, $args).fmt($fmt); }...
+}
+```
 
 ## Grammar, parsing, AST
 
@@ -49,8 +51,7 @@
     - no random small functions where it can be done efficiently in Alumina (memfrob, htonl, ...)
       - memcpy/memove/strlen are an exception. these are heavily optimized an may actually be compiler builtins
     - I really wanted to say *absolutely nothing with varargs*, but unfortunately `ioctl` and `fcntl` are varargs :(
-- tests
-- how portable should it be? currently it seems to be working quite well on ARM and x86_64 on Linux, Android and Mac. Windows is not supported yet.
+- Windows and non-glibc support on Linux (specifically musl)
 - these are definitely needed:
   - file IO and streams
     - done
@@ -66,8 +67,6 @@
     - Vector might actually be pretty ok. Hashed collections are probably bad.
 
 - extras, nice to have:
-  - network/sockets
-    - done
   - date/time???? this is a big can of worms
     - durations/monotonic timer are implemented
   - regexes? probably not, maybe a PCRE wrapper outside stdlib
@@ -77,7 +76,7 @@
 - Get rid of all the redundant variable assignments and copying. I assume C compiler can optimize those well, but the
   generated code looks very bloated.
 - Maybe run `elide_zst` on everything, not just when ZSTs are present
-  - I tried that and lol, it's totally broken. Need to dig deeper.
+  - It works, but simple programs start being like 100,000 lines of generated C code. Not feasible until redundant variables are assigned
 
 ## Diagnostics
 
@@ -110,16 +109,17 @@
 
 ## Exploratory
 
-- specialization/SFINAE/overloading?
+- specialization/SFINAE/function overloading?
   - I am leaning pretty strongly towards not having either of these. With protocols the language
     is expressive enough to do string formatting, iterators and collections, which are a good litmus test if generics are any good.
 - tagged unions
   - I miss them quite a lot from Rust. They are not hard, but need a good syntax for `match`
 - full Hindley-Milner type inference. Global type inference will pretty much require a full rewrite of `mono`, so whis would be a massive project, but it would also be super awesome to have
-  - Type inference gaps are the biggest pain point right now, especially since there are so many places where adding a type hint is not even possible (e.g. when chaining methods).
+  - Type inference gaps are a big pain point right now, especially since there are so many places where adding a type hint is not even possible (e.g. when chaining methods).
 - true variadic functions (certainly they'd be generic and variadic only pre-monomorphization, varargs is an abomination). This is hard to do, both from the syntax and `mono` perspective but the payoff is that tuples can have nice protocol implementations.
   - something like `extern "rust-call"` could come to the rescue here. It is already kinda possible to have recursive varargs by `tuple_head_of` and `tuple_tail_of`.
   - Probably not needed.
+- some sort of type-checking of pre-monomorphized functions might be useful. they can have pretty blatant errors inside that would fail to compile no matter what the type parameters are, but you don't know until you actually try to use it.
 - generators? coroutines? lmao, not gonna happen
 
 ## Tooling

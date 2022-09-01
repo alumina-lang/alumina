@@ -85,14 +85,14 @@ fn transmute<T1, T2>(t: T1) -> T2 {
 ///
 /// ## Example
 /// ```
-/// use std::builtins::{Callable, NamedFunction};
+/// use std::builtins::NamedFunction;
 /// use std::util::unit;
 ///
 /// fn hello_world() {
 ///     println!("Hello, world!");
 /// }
 ///
-/// fn call<F: Callable<(), ()> + NamedFunction>() {
+/// fn call<F: Fn() + NamedFunction>() {
 ///     // Named functions are a family of zero-sized types
 ///     let f = unit::<F>();
 ///     f();
@@ -122,6 +122,6 @@ fn unit<T: builtins::ZeroSized + !!>() -> T {
 ///
 /// assert_eq!(v, Option::some(3 + 1).unwrap());
 /// ```
-fn apply<T, R, F: builtins::Callable<(T), R>>(v: T, func: F) -> R {
+fn apply<T, R, F: Fn(T) -> R>(v: T, func: F) -> R {
     func(v)
 }

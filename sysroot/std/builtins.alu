@@ -87,7 +87,7 @@ impl bool {
     /// assert_eq!(o1, Option::some("hello"));
     /// assert_eq!(o2, Option::none());
     /// ```
-    fn then<T, F: Callable<(), T>>(self: bool, func: F) -> Option<T> {
+    fn then<T, F: Fn() -> T>(self: bool, func: F) -> Option<T> {
         if self {
             Option::some(func())
         } else {
@@ -1196,9 +1196,11 @@ type enum_type_of<T: Enum>;
 
 /// All callable objects (named functions, closures, and function pointers)
 ///
+/// Equivalent to a more expressive syntax `Fn(Args) -> Ret` or `Fn(Args)` when `Ret` is `()`.
+///
 /// `Args` is a tuple of the argument types of the function and `Ret` is the return type,
 /// for example `fn foo(a: i32, b: i64) -> usize` would match `Callable<(i32, i64), usize>`.
-#[lang(proto_callable)] protocol Callable<Args: Tuple, Ret> {}
+#[lang(proto_callable)] protocol Callable<Args: Tuple, Ret = ()> {}
 
 // These are mostly useful as type inference guides
 

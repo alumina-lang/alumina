@@ -886,7 +886,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     ir::Ty::Builtin(BuiltinType::Void) => &[],
                     _ => unreachable!(),
                 };
-                let proto_ret = proto_generic_args[1];
+                let proto_ret = proto_generic_args
+                    .get(1)
+                    .copied()
+                    .unwrap_or_else(|| self.types.void());
 
                 let actual_args: Vec<_>;
                 let (args, ret) = match ty {
@@ -1790,6 +1793,19 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .collect::<Result<Vec<_>, _>>()?;
                 let ret = self.lower_type_for_value(ret)?;
                 self.types.function(args, ret)
+            }
+            ast::Ty::FunctionProtocol(args, ret) => {
+                let args = args
+                    .iter()
+                    .map(|arg| self.lower_type_for_value(arg))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let ret = self.lower_type_for_value(ret)?;
+
+                let item = self.monomorphize_lang_item(
+                    LangItemKind::ProtoCallable,
+                    [self.types.tuple(args), ret],
+                )?;
+                self.types.protocol(item)
             }
             ast::Ty::Tuple(items) => {
                 let items = items

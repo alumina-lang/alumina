@@ -54,8 +54,8 @@ enum NodeKind {
     TypeIdentifier,
     MacroInvocation,
     ConstDeclaration,
-    LoopExpression,
     StructExpression,
+    LoopExpression,
     UseAsClause,
     Parameter,
     ProtocolDefinition,
@@ -93,6 +93,7 @@ enum NodeKind {
     ClosureParameters,
     ReferenceExpression,
     MetaItem,
+    FunctionProtocol,
     AttributeItem,
     GenericArgumentList,
     ReturnExpression,
@@ -170,11 +171,12 @@ enum FieldKind {
     Value = 53u16,
 }
 
-static NODE_KINDS: [NodeKind; 251] = [
+static NODE_KINDS: [NodeKind; 253] = [
     NodeKind::Invalid,
     NodeKind::Identifier,
     NodeKind::DocComment,
     NodeKind::FileDocComment,
+    NodeKind::Invalid,
     NodeKind::Invalid,
     NodeKind::Invalid,
     NodeKind::Invalid,
@@ -327,6 +329,7 @@ static NODE_KINDS: [NodeKind; 251] = [
     NodeKind::ArrayOf,
     NodeKind::ArrayExpression,
     NodeKind::FunctionPointer,
+    NodeKind::FunctionProtocol,
     NodeKind::TypeArguments,
     NodeKind::Invalid,
     NodeKind::TypeOf,
@@ -568,11 +571,11 @@ protocol NodeVisitor<Self, ReturnType> {
     fn visit_const_declaration(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_const_declaration");
     }
-    fn visit_loop_expression(self: &mut Self, node: Node) -> ReturnType {
-        panic!("unimplemented: visit_loop_expression");
-    }
     fn visit_struct_expression(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_struct_expression");
+    }
+    fn visit_loop_expression(self: &mut Self, node: Node) -> ReturnType {
+        panic!("unimplemented: visit_loop_expression");
     }
     fn visit_use_as_clause(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_use_as_clause");
@@ -685,6 +688,9 @@ protocol NodeVisitor<Self, ReturnType> {
     fn visit_meta_item(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_meta_item");
     }
+    fn visit_function_protocol(self: &mut Self, node: Node) -> ReturnType {
+        panic!("unimplemented: visit_function_protocol");
+    }
     fn visit_attribute_item(self: &mut Self, node: Node) -> ReturnType {
         panic!("unimplemented: visit_attribute_item");
     }
@@ -795,8 +801,8 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::TypeIdentifier => self.visit_type_identifier(node),
             NodeKind::MacroInvocation => self.visit_macro_invocation(node),
             NodeKind::ConstDeclaration => self.visit_const_declaration(node),
-            NodeKind::LoopExpression => self.visit_loop_expression(node),
             NodeKind::StructExpression => self.visit_struct_expression(node),
+            NodeKind::LoopExpression => self.visit_loop_expression(node),
             NodeKind::UseAsClause => self.visit_use_as_clause(node),
             NodeKind::Parameter => self.visit_parameter(node),
             NodeKind::ProtocolDefinition => self.visit_protocol_definition(node),
@@ -834,6 +840,7 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::ClosureParameters => self.visit_closure_parameters(node),
             NodeKind::ReferenceExpression => self.visit_reference_expression(node),
             NodeKind::MetaItem => self.visit_meta_item(node),
+            NodeKind::FunctionProtocol => self.visit_function_protocol(node),
             NodeKind::AttributeItem => self.visit_attribute_item(node),
             NodeKind::GenericArgumentList => self.visit_generic_argument_list(node),
             NodeKind::ReturnExpression => self.visit_return_expression(node),

@@ -216,7 +216,7 @@ impl Atomic<T: Primitive + !ZeroSized> {
     /// }
     /// ```
     #[inline]
-    fn fetch_update<F: builtins::Callable<(T), Option<T>>>(
+    fn fetch_update<F: Fn(T) -> Option<T>>(
         self: &mut Atomic<T>,
         set_order: Ordering,
         fetch_order: Ordering,
@@ -344,7 +344,7 @@ protocol Lockable<Self> {
 ///     println!("Hello, World");
 /// });
 /// ```
-fn with_lock<L: Lockable<L>, T, F: builtins::Callable<(), T>>(lock: &mut L, f: F) -> T {
+fn with_lock<L: Lockable<L>, T, F: Fn() -> T>(lock: &mut L, f: F) -> T {
     lock.lock();
     defer lock.unlock();
 

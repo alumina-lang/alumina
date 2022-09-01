@@ -133,7 +133,7 @@ impl Option<T> {
     /// Convert the option into a [std::result::Result].
     ///
     /// If the option is empty, the callback will be called to get the the error variant.
-    fn ok_or_else<E, F: builtins::Callable<(), E>>(self: Option<T>, f: F) -> result::Result<T, E> {
+    fn ok_or_else<E, F: Fn() -> E>(self: Option<T>, f: F) -> result::Result<T, E> {
         if self.is_some() {
             result::Result::ok(self.unwrap())
         } else {
@@ -170,7 +170,7 @@ impl Option<T> {
     /// assert_eq!(a.unwrap_or_else(default), 42);
     /// assert_eq!(b.unwrap_or_else(default), 1337);
     /// ```
-    fn unwrap_or_else<F: builtins::Callable<(), T>>(self: Option<T>, func: F) -> T {
+    fn unwrap_or_else<F: Fn() -> T>(self: Option<T>, func: F) -> T {
         if self.is_some() {
             self.unwrap()
         } else {
@@ -190,7 +190,7 @@ impl Option<T> {
     /// assert_eq!(a, Option::some(43));
     /// assert_eq!(b, Option::none());
     /// ```
-    fn map<Tm, F: builtins::Callable<(T), Tm>>(self: Option<T>, func: F) -> Option<Tm> {
+    fn map<Tm, F: Fn(T) -> Tm>(self: Option<T>, func: F) -> Option<Tm> {
         if self.is_some() {
             Option::some(func(self.unwrap()))
         } else {
@@ -234,7 +234,7 @@ impl Option<T> {
     ///
     /// assert_eq!(a, Option::some(43));
     /// ```
-    fn and_then<Tm, F: builtins::Callable<(T), Option<Tm>>>(self: Option<T>, func: F) -> Option<Tm> {
+    fn and_then<Tm, F: Fn(T) -> Option<Tm>>(self: Option<T>, func: F) -> Option<Tm> {
         if self.is_some() {
             func(self.unwrap())
         } else {
@@ -277,7 +277,7 @@ impl Option<T> {
     ///     Option::some(42)
     /// );
     /// ```
-    fn or_else<F: builtins::Callable<(), Option<T>>>(self: Option<T>, func: F) -> Option<T> {
+    fn or_else<F: Fn() -> Option<T>>(self: Option<T>, func: F) -> Option<T> {
         if self.is_some() {
             self
         } else {

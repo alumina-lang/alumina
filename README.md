@@ -25,8 +25,9 @@ Alumina is heavily inspired by Rust, especially in terms of syntax and standard 
 
 # Quick links
 
-- [Online compiler playground](https://play.alumina-lang.net)
+- [Language guide](./docs/lang_guide.md)
 - [Library documentation](https://docs.alumina-lang.net)
+- [Online compiler playground](https://play.alumina-lang.net)
 
 # Motivating example
 
@@ -99,7 +100,7 @@ fn main() {
 
 # Status
 
-Bootstrap Alumina compiler ([`alumina-boot`](./src/alumina-boot)) is written in Rust and is currently actively developed. It compiles to ugly C11 code with GCC extensions (works on Clang too). It is currently at a point where it can be considered a functional compiler, but it is not by any means stable, reliable or complete.
+Bootstrap Alumina compiler ([`alumina-boot`](./src/alumina-boot)) is written in Rust and is actively developed. It compiles to ugly C11 code with GCC extensions (works on Clang too).
 
 Finished:
 
@@ -108,6 +109,7 @@ Finished:
 - Type support
 - Lowering parse tree into AST (desugaring, macro expansion, ...)
 - Lowering AST into IR (with monomorphization, type checking and semantic analysis)
+- Basic optimizations (ZST elision, dead code elimination)
 - Codegen to C11
 - A full-featured [standard library](https://docs.alumina-lang.net/std)
     - [heap-allocating collections](https://docs.alumina-lang.net/std/collections) (vector, hashmap, hashset, deque)
@@ -125,13 +127,13 @@ Finished:
 To be done:
 
 - Standard library is only usable on Unixes (tested on Linux, macOS and Android)
-- Various bugs and miscompilations
-- Better error messages and warnings. Currently they are not terrible, but not great either.
-- Language reference
+- Compiler driver (something like Rust's `cargo`)
+- A good story for third-party libraries (something like `crates.io` maybe?)
+- Various rough edges and missing features
 
 A self-hosted compiler ([`aluminac`](./src/aluminac)) is also being written. It is in very early stages (is only able to parse source at the moment). It will eventually have a LLVM backend.
 
-Full list of missing features, open questions, bugs and ideas for the future in [MISSING.md](./MISSING.md)
+Full list of missing features, open questions, bugs and ideas for the future is in [MISSING.md](./MISSING.md)
 
 # Try it out
 
@@ -210,26 +212,22 @@ To compile the self-hosted compiler, run:
 make aluminac
 ```
 
-See [examples](./examples), [standard library](./sysroot) and the [self-hosted compiler](./src/aluminac) for a tour of the language.
+See the [language guide](./docs/lang_guide.md), assorted [examples](./examples), [standard library](./sysroot) and the [self-hosted compiler](./src/aluminac) for a tour of the language.
 
 
 # Contributing
 
-Issues, pull requests, and feature requests are most welcome. Standard library is covered with tests, and there are also documentation tests and regression tests that run all the examples in the `examples` folders. These tests are run with
+Issues, pull requests, and feature requests are most welcome. Standard library is covered with tests, and there are also documentation tests (all examples from the standard library are compiled and executed as test cases).
 
-```
-make test
-```
+To run the standard library tests
 
-If the snapshot need to be updated, run
-
-```
-make test-fix
+```shell
+make test-std
 ```
 
-To compile and run the examples in inline documentation
+To run the documentation tests
 
-```
+```shell
 make doctest
 ```
 

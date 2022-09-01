@@ -395,6 +395,13 @@ module.exports = grammar({
         optional(seq("->", field("return_type", $._type)))
       ),
 
+    function_protocol: ($) =>
+      seq(
+        "Fn",
+        field("parameters", $.parameter_type_list),
+        optional(seq("->", field("return_type", $._type)))
+      ),
+
     type_arguments: ($) =>
       seq(
         token(prec(1, "<")),
@@ -416,6 +423,7 @@ module.exports = grammar({
         $.array_of,
         $.tuple_type,
         $.function_pointer,
+        $.function_protocol,
         $.type_of,
         $.when_type,
       ),
