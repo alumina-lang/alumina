@@ -2,19 +2,19 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>std::prelude::print - Alumina Docs</title>
+<title>std::prelude::compile_fail - Alumina Docs</title>
 <link rel="stylesheet" href="/static/styles.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="description" content=" Prints a formatted string to standard output." />
+<meta name="description" content=" Causes the compilation to fail if reached." />
 <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png" />
 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
 <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
 <link rel="manifest" href="/static/manifest.json" />
 <link rel="mask-icon" href="/static/safari-pinned-tab.svg" color="#5bbad5" />
 <link rel="shortcut icon" href="/static/favicon.ico" />
-<link rel="canonical" href="https://docs.alumina-lang.net/std/io/print.html" />
+<link rel="canonical" href="https://docs.alumina-lang.net/std/compile_fail.html" />
 <meta name="msapplication-TileColor" content="#da532c" />
 <meta name="msapplication-config" content="/static/browserconfig.xml" />
 <meta name="description" content="Documentation for the Alumina standard library" />
@@ -141,25 +141,55 @@
 </div>
 <div id="search-results"></div>
 <main id="main-content">
-<div class="main-title"><h1>Macro <a class="breadcrumbs" href="/std/">std</a>::<a class="breadcrumbs" href="/std/prelude/">prelude</a>::<a class="breadcrumbs" href="/std/io/print.html">print</a></h1>
+<div class="main-title"><h1>Macro <a class="breadcrumbs" href="/std/">std</a>::<a class="breadcrumbs" href="/std/prelude/">prelude</a>::<a class="breadcrumbs" href="/std/compile_fail.html">compile_fail</a></h1>
 </h1>
-<div class="defined-in badge">Re-export from <a href="/std/io/print.html">std::io::print</a></div>
+<div class="defined-in badge">Re-export from <a href="/std/compile_fail.html">std::compile_fail</a></div>
 </div>
 <div class="signature" data-nosnippet>
 <h3>
-<span class="keyword">macro</span> <span class="identifier-function">print</span>($fmt_str, $arg...) { ... }</h3>
+<span class="keyword">macro</span> <span class="identifier-function">compile_fail</span>($reason) { ... }</h3>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/io.alu#L30-L34"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std.alu#L43-L45"/>source</a>
 </div>
 </div>
 <p>
-Prints a formatted string to standard output.
+Causes the compilation to fail if reached.
+</p><p>
+This is useful when conditional compilation is used with <code class="language-alumina">#[cfg(...)]</code> attributes, but it can also be used
+in generic context (e.g. with <code class="language-alumina">when</code> expressions).
 </p><p>
 </p>
-<h3> Example</h3>
+<h3> Examples</h3>
 <p>
-<pre class="with-playground-link"><code class="language-alumina">print!("Hello, world");
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20print%21%28%22Hello%2c%20world%22%29%3b%0a%7d%0a">Run this example</a></pre>
+<pre class="with-playground-link"><code class="language-alumina">fn fork() -&gt; bool {
+    #[cfg(target_os="windows")]
+    compile_fail!("fork() is not supported on Windows");
+
+    libc::fork() == 0
+}
+
+let is_child = fork();
+if is_child {
+    println!("Hello from child");
+} else {
+    println!("Hello from parent");
+}
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20fn%20fork%28%29%20%2d%3e%20bool%20%7b%0a%20%20%20%20%20%20%20%23%5bcfg%28target%5fos%3d%22windows%22%29%5d%0a%20%20%20%20%20%20%20compile%5ffail%21%28%22fork%28%29%20is%20not%20supported%20on%20Windows%22%29%3b%0a%20%20%20%0a%20%20%20%20%20%20%20libc%3a%3afork%28%29%20%3d%3d%200%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20let%20is%5fchild%20%3d%20fork%28%29%3b%0a%20%20%20if%20is%5fchild%20%7b%0a%20%20%20%20%20%20%20println%21%28%22Hello%20from%20child%22%29%3b%0a%20%20%20%7d%20else%20%7b%0a%20%20%20%20%20%20%20println%21%28%22Hello%20from%20parent%22%29%3b%0a%20%20%20%7d%0a%7d%0a">Run this example</a></pre>
+</p><p>
+<pre class="with-playground-link"><code class="language-alumina">fn type_of_value&lt;T&gt;(t: T) -&gt; &amp;[u8] {
+    when T: i32 {
+        "i32"
+    } else when T: &amp;[u8] {
+        "&amp;[u8]"
+    } else {
+        compile_fail!("unsupported type")
+    }
+}
+
+println!("{}", type_of_value(1)); // "i32"
+println!("{}", type_of_value("hello world")); // "&amp;[u8]"
+// println!("{}", type_of_value(true)); // Would fail to compile
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20fn%20type%5fof%5fvalue%3cT%3e%28t%3a%20T%29%20%2d%3e%20%26%5bu8%5d%20%7b%0a%20%20%20%20%20%20%20when%20T%3a%20i32%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%22i32%22%0a%20%20%20%20%20%20%20%7d%20else%20when%20T%3a%20%26%5bu8%5d%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%22%26%5bu8%5d%22%0a%20%20%20%20%20%20%20%7d%20else%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20compile%5ffail%21%28%22unsupported%20type%22%29%0a%20%20%20%20%20%20%20%7d%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20println%21%28%22%7b%7d%22%2c%20type%5fof%5fvalue%281%29%29%3b%20%2f%2f%20%22i32%22%0a%20%20%20println%21%28%22%7b%7d%22%2c%20type%5fof%5fvalue%28%22hello%20world%22%29%29%3b%20%2f%2f%20%22%26%5bu8%5d%22%0a%20%20%20%2f%2f%20println%21%28%22%7b%7d%22%2c%20type%5fof%5fvalue%28true%29%29%3b%20%2f%2f%20Would%20fail%20to%20compile%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </main>

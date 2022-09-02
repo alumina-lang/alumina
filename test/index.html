@@ -29,6 +29,12 @@
 </a>
 <h1><a class="breadcrumbs" href="/test/">test</a></h1>
 </h1>
+<h2>Modules</h2>
+<ul>
+<li>
+<a href="/test/tests/">tests</a>
+</li>
+</ul>
 <h2>Structs</h2>
 <ul>
 <li>
@@ -61,15 +67,6 @@
 <li>
 <a href="/test/#item.main">main</a>
 </li>
-<li>
-<a href="/test/#item.regular_test">regular_test</a>
-</li>
-<li>
-<a href="/test/#item.ignored_test">ignored_test</a>
-</li>
-<li>
-<a href="/test/#item.should_fail_test">should_fail_test</a>
-</li>
 </ul>
 </nav>
 <div class="main-container">
@@ -91,11 +88,66 @@ When <code class="language-alumina">--cfg test</code> is provided as an argument
 the <code class="language-alumina">main</code> entrypoint with the test runner which will run all the test cases defined in
 the code that is being compiled.
 </p><p>
+Each test case is executed in a subprocess.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">fn add(x: i32, y: i32) -&gt; i32 {
+    x + y
+}
+
+fn sub(x: i32, y: i32) -&gt; i32 {
+    x - y
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_add() {
+        assert_eq!(1.add(2), 3);
+    }
+
+    #[test]
+    fn test_sub() {
+        assert_eq!(1.sub(2), -1);
+    }
+
+    #[test(should_fail)]
+    fn test_panic() {
+        panic!("oops");
+    }
+}
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20add%28x%3a%20i32%2c%20y%3a%20i32%29%20%2d%3e%20i32%20%7b%0a%20%20%20%20x%20%2b%20y%0a%7d%0a%0afn%20sub%28x%3a%20i32%2c%20y%3a%20i32%29%20%2d%3e%20i32%20%7b%0a%20%20%20%20x%20%2d%20y%0a%7d%0a%0a%23%5bcfg%28test%29%5d%0amod%20tests%20%7b%0a%20%20%20%20%23%5btest%5d%0a%20%20%20%20fn%20test%5fadd%28%29%20%7b%0a%20%20%20%20%20%20%20%20assert%5feq%21%281%2eadd%282%29%2c%203%29%3b%0a%20%20%20%20%7d%0a%0a%20%20%20%20%23%5btest%5d%0a%20%20%20%20fn%20test%5fsub%28%29%20%7b%0a%20%20%20%20%20%20%20%20assert%5feq%21%281%2esub%282%29%2c%20%2d1%29%3b%0a%20%20%20%20%7d%0a%0a%20%20%20%20%23%5btest%28should%5ffail%29%5d%0a%20%20%20%20fn%20test%5fpanic%28%29%20%7b%0a%20%20%20%20%20%20%20%20panic%21%28%22oops%22%29%3b%0a%20%20%20%20%7d%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+<h3> Test attributes</h3>
+<p>
+</p><p>
+The following attributes are supported: <code class="language-alumina">#[test(ignore)]</code> to skip execution of a test (useful e.g. to make sure
+that a test compiles but is not run), <code class="language-alumina">#[test(should_fail)]</code> to mark a test as expected to fail (e.g. through
+panic).
+</p><p>
+</p>
+<h3> Custom test frameworks</h3>
+<p>
+</p><p>
 Nothing prevents you from writing your own framework, just compile with
 <code class="language-alumina">--cfg custom_test_framework</code> and use the test support glue in <a class="path-link" href="/std/runtime/">runtime</a> to get the test
 cases.
 </p><p>
 </p>
+<h2 id="Module">Modules</h2>
+<div class="item-short-table">
+<div class="row" id="item.tests">
+<div class="cell-name">
+<span class="badge">#[cfg]</span>
+<a href="/test/tests/">tests</a>
+</div>
+<div class="cell-doc">Quis testabitur ipsos testes
+</div>
+</div>
+</div>
 <h2 id="Struct">Structs</h2>
 <div class="item-short-table">
 <div class="row" id="item.TestResult">
@@ -109,7 +161,8 @@ cases.
 <div class="cell-name">
 <a href="/test/Args.html">Args</a>
 </div>
-<div class="cell-doc"></div>
+<div class="cell-doc">Command line arguments for the test runner.
+</div>
 </div>
 </div>
 <h2 id="Function">Functions</h2>
@@ -119,7 +172,7 @@ cases.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">should_fail</span>(test: &amp;<a href="/std/runtime/internal/TestCaseMeta.html"><span class="identifier-type">TestCaseMeta</span></a>) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/test.alu#L38-L45"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/test.alu#L77-L84"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -134,7 +187,7 @@ Whether a failure (non-0 exit code) is expected for this test.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">ignored</span>(test: &amp;<a href="/std/runtime/internal/TestCaseMeta.html"><span class="identifier-type">TestCaseMeta</span></a>) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/test.alu#L48-L55"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/test.alu#L87-L94"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -149,7 +202,7 @@ Whether a test should be ignored.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">run</span>(test: &amp;<a href="/std/runtime/internal/TestCaseMeta.html"><span class="identifier-type">TestCaseMeta</span></a>) -> <a href="/test/TestResult.html"><span class="identifier-type">TestResult</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/test.alu#L58-L90"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/test.alu#L97-L129"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -164,7 +217,7 @@ Run a single test case in a forked process and collect output.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">print_help_string</span>(args: &amp;[&amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]]) -> <a href="/std/builtins/never.html"><span class="identifier-type">!</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/test.alu#L108-L111"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/test.alu#L148-L151"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -175,7 +228,7 @@ Run a single test case in a forked process and collect output.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">parse_args</span>(args: &amp;[&amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]]) -> <a href="/test/Args.html"><span class="identifier-type">Args</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/test.alu#L114-L156"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/test.alu#L154-L196"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -190,7 +243,7 @@ Parse command line arguments.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">filter_tests</span>(args: <a href="/test/Args.html"><span class="identifier-type">Args</span></a>) -> (<a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;<a href="/std/runtime/internal/TestCaseMeta.html"><span class="identifier-type">TestCaseMeta</span></a>&gt;, <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/test.alu#L159-L186"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/test.alu#L199-L226"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -205,47 +258,14 @@ Filter tests based on user-provided criteria (e.g. path prefix).
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">main</span>(args: &amp;[&amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]]) -> <a href="/std/builtins/i32.html"><span class="identifier-type">i32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/test.alu#L188-L271"/>source</a>
-</div>
-</div>
-<div class="item-doc">
-</div>
-</li>
-<li>
-<div class="signature" id="item.regular_test">
-<h4>
-<span class="keyword">fn</span> <span class="identifier-function">regular_test</span>()</h4>
-<div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/test.alu#L275-L277"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/test.alu#L229-L312"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Quis testabitur ipsos testes
+Test runner entrypoint.
 </p><p>
 </p>
-</div>
-</li>
-<li>
-<div class="signature" id="item.ignored_test">
-<h4>
-<span class="keyword">fn</span> <span class="identifier-function">ignored_test</span>()</h4>
-<div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/test.alu#L279-L280"/>source</a>
-</div>
-</div>
-<div class="item-doc">
-</div>
-</li>
-<li>
-<div class="signature" id="item.should_fail_test">
-<h4>
-<span class="keyword">fn</span> <span class="identifier-function">should_fail_test</span>()</h4>
-<div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/test.alu#L282-L285"/>source</a>
-</div>
-</div>
-<div class="item-doc">
 </div>
 </li>
 </ul>
