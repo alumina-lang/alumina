@@ -19,7 +19,7 @@ RUN /bin/echo -e "[net]\ngit-fetch-with-cli = true\n" >> $HOME/.cargo/config.tom
 RUN cargo install tree-sitter-cli
 
 WORKDIR /alumina/deps
-RUN curl -fsSL https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.20.6.tar.gz | tar -xz
+RUN curl -fsSL https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.20.7.tar.gz | tar -xz
 RUN cd tree-sitter-* && make -j8 && make install && ldconfig
 
 FROM environment as builder

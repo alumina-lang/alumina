@@ -1,6 +1,44 @@
-//! Error handling functionality.
+//! Type for operations that can fail.
 //!
-//! The main type in this module [Result], which is used as a type for expressions that can fail.
+//! [Result] is the type that can be used to express fallible operations in the type system.
+//! Alumina does not have exceptions. Value `Result<T, E>` can be either a successfull value of
+//! type `T` or an error value `E`, usually in some form representing the failure that happened.
+//!
+//! ```
+//! enum ExecutableType {
+//!     ELF,
+//!     PE
+//! }
+//!
+//! struct Error {}
+//!
+//! fn executable_type(contents: &[u8]) -> Result<ExecutableType, Error> {
+//!     use std::string::starts_with;
+//!     if contents.starts_with("MZ") {
+//!         Result::ok(ExecutableType::PE)
+//!     } else if contents.starts_with("\x7FELF") {
+//!         Result::ok(ExecutableType::ELF)
+//!     } else {
+//!         // Invalid executable
+//!         Result::err(Error {})
+//!     }
+//! }
+//!
+//! let result = executable_type("\x7f\x45\x4c\x46\x02\x01\x01\x00...");
+//!
+//! if result.is_err() {
+//!     eprintln!("Invalid executable");
+//! } else {
+//!     // e.g. result.unwrap();
+//!     // do something with it
+//! }
+//! ```
+//!
+//! [Result] is commonly used with the [try operator](try) (`?`) so that fallible functions can
+//! be composed easily by bailing early.
+//!
+//! [Result] values can also be transformed without unwrapping them using combinators such as [Result::map] and
+//! [Result::and_then], and converted into [Option] with [Result::get]/[Result::get_err].
 
 /// Extract the success value or short-circuit the calling function.
 ///
@@ -8,7 +46,7 @@
 /// expression.
 ///
 /// Expands to the following expression
-/// ```notest
+/// ```pseudo_alumina
 /// if $.is_ok() {
 ///     $.unwrap()
 /// } else {
@@ -26,45 +64,21 @@ macro try($res) {
     }
 }
 
-/// Type for operations that can fail.
+/// Either a success value or an error value.
 ///
-/// `Result` is the type that can be used to express fallible operations in the type system.
-/// Alumina does not have exceptions. Value `Result<T, E>` can be either a successfull value of
-/// type `T` or an error value `E`, usually in some form representing the failure that happened.
+/// See [module level documentation](std::result) for more information.
 ///
 /// ## Example
 /// ```
-/// enum ExecutableType {
-///     ELF,
-///     PE
-/// }
+/// let ok: Result<i32, i32> = Result::ok(1);
+/// let err: Result<i32, i32> = Result::err(-1);
 ///
-/// struct Error {}
+/// assert!(ok.is_ok());
+/// assert!(err.is_err());
 ///
-/// fn executable_type(contents: &[u8]) -> Result<ExecutableType, Error> {
-///     use std::string::starts_with;
-///     if contents.starts_with("MZ") {
-///         Result::ok(ExecutableType::PE)
-///     } else if contents.starts_with("\x7FELF") {
-///         Result::ok(ExecutableType::ELF)
-///     } else {
-///         // Invalid executable
-///         Result::err(Error {})
-///     }
-/// }
-///
-/// let result = executable_type("\x7f\x45\x4c\x46\x02\x01\x01\x00...");
-///
-/// if !result.is_ok() {
-///     eprintln!("Invalid executable");
-/// } else {
-///     // e.g. result.unwrap();
-///     // do something with it
-/// }
+/// assert_eq!(ok.unwrap(), 1);
+/// assert_eq!(err.unwrap_err(), -1);
 /// ```
-///
-/// `Result` is commonly used with the [try operator](try) (`?`) so that fallible functions can
-/// be composed easily by bailing early.
 struct Result<T, E> {
     _is_ok: bool,
     _inner: _ResultT<T, E>
@@ -103,7 +117,7 @@ impl Result<T, E> {
     /// ```
     /// let r: Result<i32, i32> = Result::err(42);
     ///
-    /// assert!(!r.is_ok());
+    /// assert!(r.is_err());
     /// assert_eq!(r.unwrap_err(), 42);
     /// ```
     #[force_inline]
@@ -120,6 +134,13 @@ impl Result<T, E> {
     #[force_inline]
     fn is_ok(self: &Result<T, E>) -> bool {
         self._is_ok
+    }
+
+
+    /// Returns `true` if the result conains an error variant, `false` otherwise
+    #[force_inline]
+    fn is_err(self: &Result<T, E>) -> bool {
+        !self._is_ok
     }
 
     /// Converts from `Result<T, E>` to `Option<T>`.
@@ -209,7 +230,7 @@ impl Result<T, E> {
     /// ```
     #[inline]
     fn unwrap_err(self: Result<T, E>) -> E {
-        if !self.is_ok() {
+        if self.is_err() {
             self._inner.err
         } else {
             internal::unwrap_panic_ok(self._inner.ok);
@@ -365,7 +386,7 @@ impl Result {
     fn equals<T: Equatable<T>, E: Equatable<E>>(lhs: &Result<T, E>, rhs: &Result<T, E>) -> bool {
         if lhs.is_ok() && rhs.is_ok() {
             lhs.unwrap().equals(&rhs.unwrap())
-        } else if !lhs.is_ok() && !rhs.is_ok() {
+        } else if lhs.is_err() && rhs.is_err() {
             lhs.unwrap_err().equals(&rhs.unwrap_err())
         } else {
             false

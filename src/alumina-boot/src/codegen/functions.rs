@@ -155,16 +155,45 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         }
     }
 
+    fn write_string_literal(&mut self, bytes: &[u8]) {
+        w!(self.fn_bodies, "(const uint8_t*)\"");
+
+        let mut did_we_just_write_a_hex_escape = false;
+
+        for c in bytes.iter().copied() {
+            match c {
+                b'\\' | b'\'' | b'"' | b' '..=b'~' => {
+                    match c {
+                        b'\\' => w!(self.fn_bodies, "\\\\"),
+                        b'\'' => w!(self.fn_bodies, "\\'"),
+                        b'"' => w!(self.fn_bodies, "\\\""),
+                        _ => {
+                            // C's escape sequences are very dumb. There is no limit on the
+                            // length of a hexadecimal escape sequence. It would be easier to
+                            // just hex-escape everything, but that makes the generated C
+                            // less readable.
+                            if did_we_just_write_a_hex_escape
+                                && matches!(c, b'a'..=b'f' | b'A'..=b'F' | b'0'..=b'9')
+                            {
+                                w!(self.fn_bodies, "\"\"");
+                            }
+                            w!(self.fn_bodies, "{}", c as char);
+                        }
+                    }
+                    did_we_just_write_a_hex_escape = false;
+                }
+                _ => {
+                    w!(self.fn_bodies, "\\x{:02x}", c);
+                    did_we_just_write_a_hex_escape = true;
+                }
+            }
+        }
+        w!(self.fn_bodies, "\"");
+    }
+
     fn write_const_val(&mut self, val: Value) {
         match val {
-            Value::Bool(val) => w!(
-                self.fn_bodies,
-                "{}",
-                match val {
-                    true => 1,
-                    false => 0,
-                }
-            ),
+            Value::Bool(val) => w!(self.fn_bodies, "{}", val as u8),
             Value::U8(val) => w!(self.fn_bodies, "{}", val),
             Value::U16(val) => w!(self.fn_bodies, "{}", val),
             Value::U32(val) => w!(self.fn_bodies, "{}ULL", val),
@@ -307,11 +336,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             }
             ExprKind::Lit(ref l) => match l {
                 crate::ir::Lit::Str(v) => {
-                    w!(self.fn_bodies, "(const uint8_t*)\"");
-                    for (_idx, c) in v.iter().enumerate() {
-                        w!(self.fn_bodies, "\\x{:02x}", *c as u8);
-                    }
-                    w!(self.fn_bodies, "\"");
+                    self.write_string_literal(v);
                 }
                 crate::ir::Lit::Int(v) => {
                     self.type_writer.add_type(expr.ty)?;
@@ -381,11 +406,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             }
             ExprKind::ConstValue(v) => {
                 if let Value::Str(val) = v {
-                    w!(self.fn_bodies, "(const uint8_t*)\"");
-                    for (_idx, c) in val.iter().enumerate() {
-                        w!(self.fn_bodies, "\\x{:02x}", *c as u8);
-                    }
-                    w!(self.fn_bodies, "\"");
+                    self.write_string_literal(val);
                 } else {
                     self.type_writer.add_type(expr.ty)?;
                     w!(self.fn_bodies, "(({})", self.ctx.get_type(expr.ty));

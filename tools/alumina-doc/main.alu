@@ -10,7 +10,7 @@ use aluminac::lib::common::{NodeVisitorExt, child_by, children_by};
 use aluminac::lib::arena::Arena;
 use aluminac::lib::node_kinds::{NodeVisitor, FieldKind};
 
-use alumina_doc::error::{Error, Result};
+use alumina_doc::error::{Error, Result, anywho, bail};
 use alumina_doc::common::{Item, ItemKind, Path, ParseContext, DoctestWriter, ItemBag, LinkContext};
 use alumina_doc::visitors::{TopLevelVisitor, CodePrinter};
 use alumina_doc::markdown::write_docstring;
@@ -539,12 +539,12 @@ impl Processor {
         }));
 
         let filename = filename.as_path();
-        eprintln!("Writing {}", filename);
 
         std::fs::DirBuilder::new().recursive(true).create(filename.parent().unwrap())
-            .map_err(Error::from_io)?;
+            .map_err(Error::from::<std::io::Error>)?;
 
-        let file = std::fs::File::create(filename).map_err(Error::from_io)?;
+        let file = std::fs::File::create(filename)
+            .map_err(Error::from::<std::io::Error>)?;
         defer file.close();
 
         let writer = std::io::BufferedWriter::new(&file, 1024);
@@ -589,7 +589,11 @@ impl Processor {
         use std::fmt::format;
 
         for top_level in self.items.all().filter(|v: &Item| -> bool {  v.is_public() && v.kind.has_own_page() }) {
-            self.write_page(top_level)?;
+            self.write_page(top_level)
+                .map_err(|=top_level, e: Error| -> Error {
+                    defer e.free();
+                    anywho!("Error while processing {}: {}", top_level.path, e)
+                })?;
         }
 
         Result::ok(())
@@ -599,14 +603,15 @@ impl Processor {
         use std::fmt::{write, writeln};
         use std::string::replace_fmt;
 
-
         let filename = self.output_dir.with_suffix(std::fs::Path::new("html/search_index.js"));
         defer filename.free();
 
         std::fs::DirBuilder::new().recursive(true).create(filename.as_path().parent().unwrap())
-            .map_err(Error::from_io)?;
+            .map_err(Error::from::<std::io::Error>)?;
 
-        let file = std::fs::File::create(filename.as_path()).map_err(Error::from_io)?;
+        let file = std::fs::File::create(filename.as_path())
+            .map_err(Error::from::<std::io::Error>)?;
+
         defer file.close();
 
         let writer = std::io::BufferedWriter::new(&file, 1024);
@@ -639,14 +644,7 @@ impl Processor {
 
 fn main_inner(args: &[&[u8]]) -> Result<()> {
     let output_dir = std::fs::PathBuf::from_str(std::process::env()
-        .filter_map(|e: (&[u8], &[u8])| -> Option<&[u8]> {
-            if e.0 == "ALUMINADOC_OUTPUT_DIR" {
-                Option::some(e.1)
-            } else {
-                Option::none()
-            }
-        })
-        .next()
+        .get("ALUMINADOC_OUTPUT_DIR")
         .unwrap()
     );
     defer output_dir.free();
@@ -654,21 +652,14 @@ fn main_inner(args: &[&[u8]]) -> Result<()> {
     let doctest_path = output_dir.with_suffix(std::fs::Path::new("doctest.alu"));
     defer doctest_path.free();
 
-    let doctest = File::create(doctest_path.as_path()).map_err(Error::from_io)?;
+    let doctest = File::create(doctest_path.as_path())
+        .map_err(Error::from::<std::io::Error>)?;
     defer doctest.close();
 
     let processor = Processor::new(output_dir.move(), &DoctestWriter::new(&doctest));
     defer processor.free();
 
-    processor.base_domain = std::process::env()
-        .filter_map(|e: (&[u8], &[u8])| -> Option<&[u8]> {
-            if e.0 == "ALUMINADOC_BASE_PATH" {
-                Option::some(e.1)
-            } else {
-                Option::none()
-            }
-        })
-        .next();
+    processor.base_domain = std::process::env().get("ALUMINADOC_BASE_PATH");
 
     let inputs = args
         .iter()
@@ -698,8 +689,11 @@ fn main_inner(args: &[&[u8]]) -> Result<()> {
 
 fn main(args: &[&[u8]]) -> i32 {
     let res = main_inner(args);
-    if !res.is_ok() {
-        println!("{}", res.unwrap_err());
+    if res.is_err() {
+        let err = res.unwrap_err();
+        defer err.free();
+
+        println!("{}", err);
         1
     } else {
         0

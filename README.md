@@ -160,7 +160,7 @@ To compile `alumina-boot` compiler from source, these prerequisites are needed:
 
   - A C compiler (GCC or Clang) and Make
   - A Rust toolchain (`rustup install stable`)
-  - Node.js and Tree-sitter CLI (`npm install -g tree-sitter-cli`)
+  - Node.js and Tree-sitter CLI (`npm install -g tree-sitter-cli` or `cargo install tree-sitter-cli`)
 
 Additionally, to compile `aluminac`, these prerequisites are needed:
 
@@ -228,7 +228,7 @@ make test-std
 To run the documentation tests
 
 ```shell
-make doctest
+make test-docs
 ```
 
 Standard library contributions are especially welcome! Ideas for contribution:

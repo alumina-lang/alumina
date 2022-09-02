@@ -1,50 +1,42 @@
+use std::string::StringBuf;
+
 type Result<T> = std::result::Result<T, Error>;
 
-union ErrorInner {
-    io: std::io::Error,
-    custom: &[u8],
-}
-
 struct Error {
-    is_custom: bool,
-    inner: ErrorInner,
+    inner: StringBuf,
 }
 
 impl Error {
     use std::fmt::{Formatter, write};
 
-    fn from_io(error: std::io::Error) -> Error {
+    fn new(msg: &[u8]) -> Error {
         Error {
-            is_custom: false,
-            inner: ErrorInner {
-                io: error
-            }
+            inner: StringBuf::from_slice(msg),
         }
     }
 
-    fn from_custom(error: &[u8]) -> Error {
-        Error {
-            is_custom: true,
-            inner: ErrorInner {
-                custom: error
-            }
-        }
+    fn from<T>(err: T) -> Error {
+        anywho!("{}", err)
     }
 
-    fn from<T>(error: T) -> Error {
-        Error {
-            is_custom: true,
-            inner: ErrorInner {
-                custom: "Error occured"
-            }
-        }
+    fn fmt<F: Formatter<F>>(self: &Error, f: &mut F) -> std::fmt::Result {
+        write!(f, "{}", self.inner.as_slice())
     }
 
-    fn fmt<F: Formatter<F>>(self: &Error, f: &mut F) -> std::result::Result<(), std::fmt::Error> {
-        if self.is_custom {
-            write!(f, "{}", self.inner.custom)
-        } else {
-            write!(f, "{}", self.inner.io)
-        }
+    fn free(self: &mut Error) {
+        self.inner.free();
     }
+
+    fn move(self: &mut Error) -> Error {
+        Error { inner: self.inner.move() }
+    }
+}
+
+macro anywho($fmt, $args...) {
+    use std::fmt::format;
+    Error { inner: format!($fmt, $args...).unwrap() }
+}
+
+macro bail($fmt, $args...) {
+    return Result::err(anywho!($fmt, $args...));
 }

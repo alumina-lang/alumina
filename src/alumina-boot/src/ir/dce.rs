@@ -1,6 +1,9 @@
 use std::collections::HashSet;
 
-use crate::common::{AluminaError, CodeErrorBuilder};
+use crate::{
+    common::{AluminaError, CodeErrorBuilder},
+    intrinsics::CodegenIntrinsicKind,
+};
 
 use super::{ExprKind, ExprP, IRItem, IRItemP, Statement, Ty, TyP};
 
@@ -51,6 +54,29 @@ impl<'ir> DeadCodeEliminator<'ir> {
         self.visit_typ(expr.ty)?;
 
         match expr.kind {
+            ExprKind::Binary(_, a, b)
+            | ExprKind::AssignOp(_, a, b)
+            | ExprKind::Assign(a, b)
+            | ExprKind::Index(a, b) => {
+                self.visit_expr(a)?;
+                self.visit_expr(b)?;
+            }
+
+            ExprKind::Ref(a)
+            | ExprKind::Deref(a)
+            | ExprKind::Return(a)
+            | ExprKind::Unary(_, a)
+            | ExprKind::Field(a, _)
+            | ExprKind::TupleIndex(a, _)
+            | ExprKind::Cast(a) => {
+                self.visit_expr(a)?;
+            }
+            ExprKind::If(cond, then, els) => {
+                self.visit_expr(cond)?;
+                self.visit_expr(then)?;
+                self.visit_expr(els)?;
+            }
+
             ExprKind::Block(stmts, ret) => {
                 for s in stmts {
                     match s {
@@ -60,64 +86,25 @@ impl<'ir> DeadCodeEliminator<'ir> {
                 }
                 self.visit_expr(ret)?;
             }
-            ExprKind::Binary(_, lhs, rhs) => {
-                self.visit_expr(lhs)?;
-                self.visit_expr(rhs)?;
-            }
-            ExprKind::AssignOp(_, lhs, rhs) => {
-                self.visit_expr(lhs)?;
-                self.visit_expr(rhs)?;
-            }
             ExprKind::Call(callee, args) => {
                 self.visit_expr(callee)?;
                 for arg in args.iter() {
                     self.visit_expr(arg)?;
                 }
             }
-            ExprKind::Ref(inner) => {
-                self.visit_expr(inner)?;
-            }
-            ExprKind::Deref(inner) => {
-                self.visit_expr(inner)?;
-            }
-            ExprKind::Return(ret) => {
-                self.visit_expr(ret)?;
-            }
-            ExprKind::Unary(_, op) => {
-                self.visit_expr(op)?;
-            }
-            ExprKind::Assign(lhs, rhs) => {
-                self.visit_expr(lhs)?;
-                self.visit_expr(rhs)?;
-            }
-            ExprKind::Index(indexee, index) => {
-                self.visit_expr(indexee)?;
-                self.visit_expr(index)?;
-            }
-            ExprKind::Field(s, _) => {
-                self.visit_expr(s)?;
-            }
-            ExprKind::TupleIndex(tup, _) => {
-                self.visit_expr(tup)?;
-            }
-            ExprKind::If(cond, then, els) => {
-                self.visit_expr(cond)?;
-                self.visit_expr(then)?;
-                self.visit_expr(els)?;
-            }
-            ExprKind::Cast(inner) => {
-                self.visit_expr(inner)?;
-            }
 
             ExprKind::Fn(i) | ExprKind::Static(i) => {
                 self.visit_item(i)?;
             }
 
-            ExprKind::Local(_)
+            ExprKind::CodegenIntrinsic(CodegenIntrinsicKind::SizeOfLike(_, typ)) => {
+                self.visit_typ(typ)?;
+            }
+            ExprKind::CodegenIntrinsic(_)
+            | ExprKind::Local(_)
             | ExprKind::Lit(_)
             | ExprKind::ConstValue(_)
             | ExprKind::Goto(_)
-            | ExprKind::CodegenIntrinsic(_)
             | ExprKind::Unreachable
             | ExprKind::Void => {}
         }

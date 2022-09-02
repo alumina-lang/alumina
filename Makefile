@@ -138,10 +138,13 @@ $(ALUMINA_DOC): $(ALUMINA_DOC).c $(BUILD_DIR)/parser.o
 	$(CC) $(CFLAGS) -o $@ $^ -ltree-sitter $(LDFLAGS)
 
 $(BUILD_DIR)/doctest.alu: $(ALUMINA_DOC) $(SYSROOT_FILES) tools/alumina-doc/static/*
-	rm -rf $(BUILD_DIR)/html
-	ALUMINADOC_OUTPUT_DIR=$(BUILD_DIR) $(ALUMINA_DOC) \
+	@mkdir -p $(BUILD_DIR)/~doctest
+	ALUMINADOC_OUTPUT_DIR=$(BUILD_DIR)/~doctest $(ALUMINA_DOC) \
 		$(foreach src,$(SYSROOT_FILES),$(subst __root__,, $(subst /,::,$(basename $(subst ./sysroot,,$(src)))))=$(src))
-	cp -rf tools/alumina-doc/static $(BUILD_DIR)/html/
+	@cp -rf tools/alumina-doc/static $(BUILD_DIR)/~doctest/html/
+	@rm -rf $(BUILD_DIR)/html $(BUILD_DIR)/doctest.alu
+	mv $(BUILD_DIR)/~doctest/* $(BUILD_DIR)/
+	@rmdir $(BUILD_DIR)/~doctest
 
 $(DOCTEST).c: $(ALUMINA_BOOT) $(SYSROOT_FILES) $(BUILD_DIR)/doctest.alu
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --output $@ main=$(BUILD_DIR)/doctest.alu
@@ -149,14 +152,18 @@ $(DOCTEST).c: $(ALUMINA_BOOT) $(SYSROOT_FILES) $(BUILD_DIR)/doctest.alu
 $(DOCTEST): $(DOCTEST).c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-.PHONY: docs serve-docs doctest
+.PHONY: docs test-docs serve-docs watch-docs
 docs: $(BUILD_DIR)/doctest.alu
 
-doctest: $(DOCTEST)
+test-docs: $(DOCTEST)
 	$(DOCTEST) $(TEST_FLAGS) || true
 
-serve-docs: docs
-	cd $(BUILD_DIR)/html && python3 -m http.server
+serve-docs:
+	@cd $(BUILD_DIR)/html && python3 -m http.server
+
+watch-docs:
+	@BUILD_DIR=$(BUILD_DIR) tools/alumina-doc/watch_docs.sh
+
 ## ------------------------------ Examples -----------------------------
 
 .PHONY: examples examples
@@ -230,4 +237,4 @@ lint-rust: $(BOOTSTRAP_SOURCES) $(COMMON_SOURCES) $(BUILD_DIR)/.build
 	cargo fmt -- --check
 	cargo clippy $(CARGO_FLAGS) --all-targets
 
-dist-check: lint-rust aluminac doctest test examples
+dist-check: lint-rust aluminac test-docs test examples

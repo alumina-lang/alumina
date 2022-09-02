@@ -4,6 +4,45 @@
 //! the `main` entrypoint with the test runner which will run all the test cases defined in
 //! the code that is being compiled.
 //!
+//! Each test case is executed in a subprocess.
+//!
+//! ## Example
+//! ```bare
+//! fn add(x: i32, y: i32) -> i32 {
+//!     x + y
+//! }
+//!
+//! fn sub(x: i32, y: i32) -> i32 {
+//!     x - y
+//! }
+//!
+//! #[cfg(test)]
+//! mod tests {
+//!     #[test]
+//!     fn test_add() {
+//!         assert_eq!(1.add(2), 3);
+//!     }
+//!
+//!     #[test]
+//!     fn test_sub() {
+//!         assert_eq!(1.sub(2), -1);
+//!     }
+//!
+//!     #[test(should_fail)]
+//!     fn test_panic() {
+//!         panic!("oops");
+//!     }
+//! }
+//! ```
+//!
+//! ## Test attributes
+//!
+//! The following attributes are supported: `#[test(ignore)]` to skip execution of a test (useful e.g. to make sure
+//! that a test compiles but is not run), `#[test(should_fail)]` to mark a test as expected to fail (e.g. through
+//! panic).
+//!
+//! ## Custom test frameworks
+//!
 //! Nothing prevents you from writing your own framework, just compile with
 //! `--cfg custom_test_framework` and use the test support glue in [std::runtime] to get the test
 //! cases.
@@ -89,6 +128,7 @@
         }
     }
 
+    /// Command line arguments for the test runner.
     struct Args {
         prefix: Option<&[u8]>,
         filter: Option<&[u8]>,
@@ -185,6 +225,7 @@
         (test_cases.move(), filtered_count)
     }
 
+    /// Test runner entrypoint.
     #[test_main]
     fn main(args: &[&[u8]]) -> i32 {
         let args = parse_args(args);
@@ -270,8 +311,10 @@
         }
     }
 
+
     /// Quis testabitur ipsos testes
-    #[cfg(test_std)] {
+    #[cfg(test_std)]
+    mod tests {
         #[test]
         fn regular_test() {
         }

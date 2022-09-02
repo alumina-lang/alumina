@@ -303,7 +303,7 @@ fn compiler_fence(ordering: Ordering) {
 /// or allow other hyperthreads to run.
 ///
 /// ## Example
-/// ```norun
+/// ```no_run
 /// use std::sync::{Atomic, Ordering, spin_loop};
 ///
 /// let flag = Atomic::new(false);
@@ -383,7 +383,7 @@ impl Mutex {
 
     /// Creates a new mutex.
     fn new() -> Mutex {
-        thread::internal::check_threading!();
+        thread::internal::ensure_threading!();
 
         Mutex {
             inner: libc::pthread_mutex_initializer()
@@ -431,7 +431,7 @@ impl RwLock {
 
     /// Creates a new reader-writer lock.
     fn new() -> RwLock {
-        thread::internal::check_threading!();
+        thread::internal::ensure_threading!();
 
         RwLock {
             inner: libc::pthread_rwlock_initializer()
@@ -499,7 +499,7 @@ impl CondVar {
 
     /// Creates a new condition variable.
     fn new() -> CondVar {
-        thread::internal::check_threading!();
+        thread::internal::ensure_threading!();
 
         CondVar {
             inner: libc::pthread_cond_initializer()
@@ -755,7 +755,7 @@ impl Event {
                 Ordering::Relaxed
             );
 
-            if !maybe_replaced.is_ok() {
+            if maybe_replaced.is_err() {
                 // Someone beat us to the punch
                 state = maybe_replaced.unwrap_err();
                 continue;

@@ -7,14 +7,19 @@ With regards to syntax, the language is very similar to Rust and in terms of sem
 - [Modules](#modules)
   - [Name resolution](#name-resolution)
 - [Functions](#functions)
-- [Constants and statics](#constants-and-statics)
+  - [Generic function](#generic-function)
+  - [Foreign functions](#foreign-functions)
+  - [Other function attributes](#other-function-attributes)
+- [Constants](#constants)
+- [Statics](#statics)
+  - [Generic statics](#generic-statics)
   - [Thread-local statics](#thread-local-statics)
 - [Types](#types)
   - [Type aliases](#type-aliases)
   - [Structs and unions](#structs-and-unions)
   - [Enums](#enums)
   - [Impl blocks](#impl-blocks)
-  - [Slices](#slices)
+  - [Type attributes](#type-attributes)
   - [What about strings?](#what-about-strings)
   - [Zero-sized types](#zero-sized-types)
 - [Macros](#macros)
@@ -29,6 +34,7 @@ With regards to syntax, the language is very similar to Rust and in terms of sem
   - [Anonymous functions and closures](#anonymous-functions-and-closures)
 - [Protocols and mixins](#protocols-and-mixins)
 - [Other topics](#other-topics)
+  - [String formatting](#string-formatting)
   - [Type coercion](#type-coercion)
   - [Conditional compilation](#conditional-compilation)
   - [`typeof` type](#typeof-type)
@@ -36,11 +42,13 @@ With regards to syntax, the language is very similar to Rust and in terms of sem
   - [Unit testing](#unit-testing)
   - [Dyn pointers](#dyn-pointers)
   - [Operator overloading](#operator-overloading)
+- [Miscellaneous](#miscellaneous)
+  - [Style conventions](#style-conventions)
 
 
 # Modules
 
-Alumina programs are organized into so-called `modules`, which serve as a grouping of related items and prevent name clashes. Modules can be nested and form a tree structure.
+Alumina programs are organized into so-called *modules* (`mod` keyword), which serve as a grouping of related items and prevent name clashes. Modules can be nested and form a tree structure.
 
 Alumina does not have a notion of visibility (public / private declarations) and always compiles the whole program as one unit. Therefore, modules are more like namespaces.
 
@@ -201,6 +209,8 @@ fn main(args: &[&[]]) -> i32 {
 }
 ```
 
+## Generic function
+
 Generic functions are defined using the `<...>` syntax.
 
 ```rust
@@ -210,6 +220,28 @@ fn add<T>(x: T, y: T) -> T {
 ```
 
 The body of generic function is not type-checked until the function is monomorphized with concrete types as arguments. See [protocols and mixins](#protocols-and-mixins) for a way to constrain the type arguments to only ones meaningful for the function.
+
+Function bodies can contain other item definitions (e.g. nested functions, constants, types, etc.) and they are local to the function.
+
+```rust
+fn main() {
+    const IAN = 1;
+
+    struct Bar {
+        bar: i32,
+    }
+
+    type Age = Bar;
+
+    fn sav() -> Age {
+        Bar { bar: IAN }
+    }
+
+    sav();
+}
+```
+
+## Foreign functions
 
 Functions have internal linkage by default (are `static` in C terminology). When compiling a library, the function can be exported using the `#[export]` attribute. The names of exported functions will not be mangled and can appear in any module in the program.
 
@@ -248,21 +280,35 @@ fn main() {
 }
 ```
 
-# Constants and statics
+## Other function attributes
+
+- `#[inline]`, `#[force_inline]` and `#[no_inline]` control the inlining behavior of the function.
+- `#[cold]` marks the function as unlikely to be called. Any branch that leads to the function call is marked as unlikely to be taken. Usually used on error handling functions to to optimize for the happy path with regards to branch prediction.
+- `#[link_name("name")]` allows to specify the name of the function in the generated object file. This is useful for linking to C libraries that use non-standard naming conventions.
+
+# Constants
 
 Constants are defined using the `const` keyword. Constants are evaluated at compile time and can be used in any constant context (such as for enum values, other constants and lengths of fixed-size arrays).
 
 ```rust
 const FOO = 1;
 const BAR: u64 = 1;
-const BAR: u64 = 1 + BAR;
+const QUUX: usize = (1 + BAR) as usize;
+
+let arr: [u32; QUUX];
 ```
 
 Const evaluation is fairly limited at the moment, but it will be expanded in the future. The following are supported
 
-- literals
-- arithmetic and bitwise operations on integers only
+- all literals
+- arithmetic and bitwise operations on integers (not floats)
+- logical operations on booleans
 - casts between integers
+- if/else expressions (only if condition and both branches are constant)
+- macro calls (only if the macro is a constant expression)
+- block expressions (only if all statements and the final expression are constant)
+
+# Statics
 
 Statics (also known as global variables) are defined using the `static` keyword. If the static does not have an initializer, it will be initialized to all-zero byte pattern. Initializers run before the `main` function at runtime and can perform arbitrary operations. If a static is unused in `main` or other exported functions, the initializer is not guaranteed to run.
 
@@ -313,6 +359,8 @@ fn main() {
     println!("{}", FOO);
 }
 ```
+
+## Generic statics
 
 Statics can be generic. This is seldom needed, but can be useful to create associated variables for a family of generic types or functions. Each combination of type parameters is monomorphized to a distinct variable. Generic statics cannot be `extern`.
 
@@ -435,6 +483,8 @@ struct Point<T> {
 
 ## Enums
 
+Enums are types that can take on one of a finite number of values.
+
 ```rust
 enum Color {
     Red,
@@ -443,7 +493,9 @@ enum Color {
 }
 ```
 
-Enum members can optionally have associated values.
+Enum members can optionally have associated values. They must be constant expressions (see [Constants](#constants)) of an integer type. The underlying type of the enum is determined by the value of the first member and defaults to `i32` if no values are specified.
+
+The underlying value of an enum member can be retreived by casting.
 
 ```rust
 enum Boolean {
@@ -452,13 +504,17 @@ enum Boolean {
 }
 
 fn to_std(v: Boolean) -> bool {
-    v == Boolean::True
+    switch v {
+        Boolean::True => true,
+        Boolean::False => false,
+        _ => unreachable!(),
+    }
 }
 
 assert_eq!(Boolean::True as u8, 1);
 ```
 
-Enums cannot be generic.
+Enums cannot be generic, but are otherwise first-class types and can have their own `impl` blocks.
 
 ## Impl blocks
 
@@ -523,6 +579,15 @@ let point = Point { x: 1.0, y: 2.0 };
 let rotated = Point::rotate_180deg::<f64>(&point);
 // Not `Point::<f64>::rotate_180deg(&point);`
 ```
+
+## Type attributes
+
+Named types can have attributes.
+
+```rust
+
+- `#[align(n)]` specifies the minimum alignment of the type. The default is 1.
+-
 
 ## Slices
 
@@ -606,6 +671,8 @@ fn open_and_close_file(filename: &libc::c_char) -> libc::c_int {
     let fd = error_check!(libc::open("/dev/null", libc::O_RDONLY));
 
     error_check!(libc::close(fd));
+
+    0
 }
 ```
 
@@ -657,7 +724,10 @@ macro u128_tuple($a...) {
     (($a as u128)...)
 }
 
-let tup = i32_tuple!(1u8, 2u16, 3u32, 4u64);
+assert_eq!(
+    u128_tuple!(1u8, 2u16, 3u32, 4u64),
+    (1u128, 2u128, 3u128, 4u128)
+);
 ```
 
 # Statements and expressions
@@ -734,7 +804,6 @@ If the initializer returns a tuple, it can be unpacked using the `let` statement
 let (x, y) = (1, 2);
 let (x, y): (i32, i32) = (1, 2); // with type annotation
 ```
-
 
 ## Loops
 
@@ -1088,25 +1157,38 @@ println!("0x{}", x.next_u128().hex()); // 0x4000000040000000400000004
 
 Protocol methods are usually not generic themselves, the type parameters come from the enclosing protocol. If the protocol contains generic methods, it can only be used as a mixin and not as a generic bound.
 
-There are a number of protocols that are built-in to the language. For the full list see [`std::builtins` module](https://docs.alumina-lang.net/std/builtins/). Multiple protocol bounds can be specified by separating them with `+` and negated with `!`
+There are a number of protocols that are built-in to the language. For the full list see [`std::builtins` module](https://docs.alumina-lang.net/std/builtins/). Multiple protocol bounds can be specified by separating them with `+` and negated with `!`.
 
 ```rust
-use std::builtins::NamedFunction;
+use std::builtins::{Primitive, ZeroSized};
 
-// Exclude closures, since they do not coerce to function pointers
-fn as_function_pointer<F: NamedFunction + Fn()>(f: F) -> fn() {
-    f
+/// Return the number of elements that can fit into
+/// a buffer of `size` bytes.
+///
+/// Not meaningful for zero-sized types.
+fn buffer_capacity<T: Primitive + !ZeroSized>(size: usize) -> usize {
+    // TODO: take alignment into account
+    size / size_of::<T>()
 }
 
-fn hello_world() {
-    println!("Hello, world!");
-}
-
-let hw = hello_world.as_function_pointer();
-hw();
+println!("{}", buffer_capacity::<u32>(16)); // 4
 ```
 
-Protocols can have constraints themselves. This is a common pattern to achieve protocol "inheritance", for example [std::cmp::Comparable](https://docs.alumina-lang.net/std/cmp/Comparable.html) requires that the type satisfies the [std::cmp::Equatable](https://docs.alumina-lang.net/std/cmp/Equatable.html) protocol.
+[`Callable` protocol](https://docs.alumina-lang.net/std/builtins/Callable.html) that matches function-like objects with a given signature can also be used with the special syntax `Fn(Args) -> Ret` that ressembles function pointers. The following two are equivalent:
+
+```rust
+use std::builtins::Callable;
+
+fn call1<T, F: Callable<(T), T>>(f: F, x: T) -> T {
+    f(x)
+}
+
+fn call2<T, F: Fn(T) -> T>(f: F, x: T) -> T {
+    f(x)
+}
+```
+
+Protocols can have constraints themselves. This is a common pattern to achieve protocol "inheritance", for example [`Comparable`](https://docs.alumina-lang.net/std/cmp/Comparable.html) requires that the type satisfies the [`Equatable`](https://docs.alumina-lang.net/std/cmp/Equatable.html) protocol.
 
 ```rust
 protocol Foo<Self> {
@@ -1121,6 +1203,51 @@ protocol Bar<Self: Foo<Self>> {
 
 # Other topics
 
+## String formatting
+
+Alumina has a built-in string formatting macro [`format_args!`](https://docs.alumina-lang.net/std/fmt/format_args.html) that can be used to format strings using a template (format string) and arguments at compile time. It is usually not used directly, but rather through a variety of other convenience macros defined in the standard library, such as
+
+- [`print!`](https://docs.alumina-lang.net/std/fmt/print.html) and [`println!`](https://docs.alumina-lang.net/std/fmt/println.html) for printing to stdout
+- [`eprint!`](https://docs.alumina-lang.net/std/fmt/eprint.html) and [`eprintln!`](https://docs.alumina-lang.net/std/fmt/eprintln.html) for printing to stderr
+- [`write!`](https://docs.alumina-lang.net/std/fmt/write.html) and [`writeln!`](https://docs.alumina-lang.net/std/fmt/writeln.html) for writing into a custom "formatter" (e.g. a stream or a file)
+- [`format!`](https://docs.alumina-lang.net/std/fmt/format.html) (allocating) and [`format_in!`](https://docs.alumina-lang.net/std/fmt/format_in.html) (non-allocating) for constructing string buffers
+
+```rust
+println!("Hello, {}! You are {} years old.", "Alice", 20);
+let s = format!("Hello, {}! You are {} years old.", "Bob", 35);
+defer s.free()
+
+eprintln!("{}", s);
+```
+
+The format string has to be a constant string literal with `{}` placeholders where the arguments should be inserted. The arguments can be any expression that implements the [`std::fmt::Formattable`](https://docs.alumina-lang.net/std/fmt/Formattable.html) protocol. For example, to make a custom type formattable, you can implement the `Formattable` protocol for it:
+
+```rust
+struct Point3D {
+    x: i32,
+    y: i32,
+    z: i32
+}
+
+impl Point3D {
+    use std::fmt::{Formatter, Result, write};
+
+    fn fmt<F: Formatter<F>>(self: &Point3D, f: &mut F) -> Result {
+        write!(f, "({}, {}, {})", self.x, self.y, self.z)
+    }
+}
+
+println!("You are at {}", Point3D { x: 1, y: 2, z: 3 }); // "You are at (1, 2, 3)"
+```
+
+`{}` is the only placeholder that is supported. The standar way to customize the display of an argument is with wrapper/adapter types, for example to format the number as hexadecimal:
+
+```rust
+use std::fmt::hex;
+
+println!("The number is {}", 0xdeadbeef.hex());
+```
+
 ## Type coercion
 
 Values of certain types can be coerced to other types without requiring an explicit conversion or cast.
@@ -1130,7 +1257,7 @@ Values of certain types can be coerced to other types without requiring an expli
 - Mutable slices to const slices (`&mut [T]` to `&[T]`)
 - Pointers to fixed-size arrays to slices (`&[T; N]` to `&[T]` and `&mut [T; N]` to `&mut [T]`)
 - Mutable `dyn` pointers to const `dyn` pointers (`&mut dyn Protocol` to `&dyn Protocol`)
-- `dyn` pointers to void pointers (`&mut dyn Protocol` to `&mut ()` and `&dyn Protocol` to `&()`)
+- Never type (`!`) to any other type
 
 For example
 
@@ -1156,7 +1283,7 @@ fn main() {
 
 #[cfg(target_os = "windows")]
 fn main() {
-    std::compile_fail!("Not yet :) Stay tuned!")
+    compile_fail!("Not yet :) Stay tuned!")
 }
 ```
 
@@ -1192,7 +1319,7 @@ fn fill_with_random_bytes(buf: &mut [u8]) {
 
 ## `typeof` type
 
-typeof is a keyword that can be used to specify the type from a type of any expression
+typeof is a keyword that can be used to specify the type from a type of any expression.
 
 ```rust
 fn double<T>(val: T) -> typeof(val + val) {
@@ -1200,6 +1327,19 @@ fn double<T>(val: T) -> typeof(val + val) {
 }
 
 let x = 1;
+```
+
+`typeof` can be useful for specifying the return type of generic functions. The expression is type-checked, but not executed, so it is fine to use uninitialized variables and `null` pointers to express values of the desired type.
+
+```rust
+type iterable_yield_t<T> = typeof({ let t: T; t.iter().next().unwrap() });
+
+fn first_element<T>(it: T) -> iterable_yield_t<T> {
+    it.iter().next().unwrap()
+}
+
+let x = [1, 2, 3];
+println!("{}", x.first_element()); // 1
 ```
 
 ## `when` types and expressions
@@ -1222,13 +1362,13 @@ fn print_type<T>() {
     } else when T: !ZeroSized {
         println!("some sized type");
     } else {
-        std::compile_fail!("zero-sized types are not supported");
+        compile_fail!("zero-sized types are not supported");
     }
 }
 
 print_type::<u8>(); // "u8"
 print_type::<&&u16>(); // "pointer to pointer to some other unsigned type"
-print_type::<Option<i32>>(); // "something else, lol"
+print_type::<Option<i32>>(); // ""some sized type"
 ```
 
 Similarly, a `when` type in type context to select the appropriate type
@@ -1264,6 +1404,11 @@ mod tests {
     #[test]
     fn test_sub() {
         assert_eq!(1.sub(2), -1);
+    }
+
+    #[test(should_fail)]
+    fn test_panic() {
+        panic!("oops");
     }
 }
 ```
@@ -1311,6 +1456,36 @@ Since the pointer to the vtable is stored in the `dyn` pointer itself, no size o
 
 Not all protocols are compatible with dynamic dispatch. Specifically, all methods on a protocol must have a pointer to self (of either mutability) as the first argument and the `Self` type cannot appear anywhere else in the signature.
 
+Dyn pointers can also be used with multiple protocols with the `&dyn (A + B + ...)` syntax. Currently the order of the protocols is important. `&dyn (A + B)` is not the same type as `&dyn (B + A)`.
+
+```rust
+protocol Hello<Self> {
+    fn hello(self: &Self);
+}
+
+protocol Goodbye<Self> {
+    fn goodbye(self: &Self);
+}
+
+struct  Greeter {}
+impl Greeter {
+    fn hello(self: &Greeter) {
+        println!("Hello!");
+    }
+    fn goodbye(self: &Greeter) {
+        println!("Goodbye!");
+    }
+}
+
+let greeter = Greeter {};
+let dynamic: &dyn (Hello<Self> + Goodbye<Self>) = &greeter;
+
+dynamic.hello(); // "Hello!"
+dynamic.goodbye(); // "Goodbye!"
+```
+
+Dyn pointers cannot currently be used with builtin protocols, such as `Fn(Args) -> Ret`.
+
 
 ## Operator overloading
 
@@ -1339,4 +1514,38 @@ impl FancyInt {
 assert!(FancyInt { inner: 1 } < FancyInt { inner: 2 });
 assert!(FancyInt { inner: 3 } == FancyInt { inner: 3 });
 ```
+
+# Miscellaneous
+
+## Style conventions
+
+Alumina follows similar naming and code formatting conventions for most items as Rust.
+
+- Functions, macros, function parameters and local variables are `snake_case`
+- Types and protocols are `PascalCase`
+  - An exception to this are type operators, which are `snake_case` (e.g. [arguments_of](https://docs.alumina-lang.net/std/builtins/arguments_of.html))
+- Constants and statics are `SCREAMING_SNAKE_CASE`
+- Egyptian brackets are prefered for blocks
+    ```rust
+    if x == 5 {
+        // ...
+    }
+
+    fn foo() {
+        // ...
+    }
+    ```
+
+Some other conventions:
+
+- Private fields and methods are prefixed with an underscore
+- `Self` is used as the first type parameter of protocols
+- Protocol names are usually adjectives. They will often have the -able suffix where applicable (e.g. `Equatable`, `Comparable`, `Cloneable`)
+
+
+
+
+
+
+
 
