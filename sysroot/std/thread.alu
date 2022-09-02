@@ -181,7 +181,7 @@ impl Builder {
 
     /// Spawn a thread in joinable state.
     fn spawn<T, F: Fn() -> T>(self: &Builder, func: F) -> Result<JoinHandle<T>, Error> {
-        internal::check_threading!();
+        internal::ensure_threading!();
 
         use internal::pthread_try;
 
@@ -215,7 +215,7 @@ impl Builder {
 
     /// Spawn a thread in detached state.
     fn spawn_detached<F: Fn()>(self: &Builder, func: F) -> Result<(), Error> {
-        internal::check_threading!();
+        internal::ensure_threading!();
 
         use internal::pthread_try;
 
@@ -294,7 +294,7 @@ impl Thread {
     /// or a main thread of a program with a non-Alumina entrypoint), this function
     /// will panic.
     fn current() -> Thread {
-        internal::check_threading!();
+        internal::ensure_threading!();
 
         if internal::THREAD_INFO == null {
             // This can happen if done in an unmanaged thread (e.g. a callback
@@ -430,9 +430,9 @@ fn yield() {
 
 mod internal {
     /// Compile-time assert that threading is enabled.
-    macro check_threading() {
+    macro ensure_threading() {
         // This is used to disable threading-spawning functionality if the program was not compiled
-        // with multithreading enabled. The main reason is that if `---cfg threading` is not passed,
+        // with multithreading enabled. The main reason is that if `--cfg threading` is not passed,
         // #[thread_local] attribute does not do anything (to improve code size and a slight runtime
         // overhead for single-threaded programs), which can be a footgun if the program is actually
         // multi-threaded.
@@ -479,7 +479,7 @@ mod internal {
     /// Runs before user main when there's an Alumina entrypoint. Only runs when threading
     /// is enabled (`--cfg threading`).
     fn threading_init() {
-        check_threading!();
+        ensure_threading!();
 
         assert!(THREAD_INFO == null);
 

@@ -117,9 +117,9 @@ impl Display for CName<'_> {
         match self {
             Native(name) => f.write_str(name),
             Mangled(name, id) => {
-                write!(f, "{}_AL{}", name, id)
+                write!(f, "_AL{}{}{}", name.len(), name, id)
             }
-            Id(id) => write!(f, "AL_{}", id),
+            Id(id) => write!(f, "_AL0{}", id),
         }
     }
 }

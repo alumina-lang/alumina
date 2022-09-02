@@ -1,6 +1,28 @@
 //! Optional values
 //!
-//! The main type in this module [Option].
+//! The main type in this module [Option]. It can be used to represent a value that may or may not be present.
+//! An [Option] type can be [Option::some] or [Option::none].
+//!
+//! ```
+//! fn divide(a: i32, b: i32) -> Option<i32> {
+//!     if b == 0 {
+//!         Option::none()
+//!     } else {
+//!         Option::some(a / b)
+//!     }
+//! }
+//!
+//! let quotient = divide(2, 1);
+//! if quotient.is_some() {
+//!    println!("{}", quotient.unwrap()); // unwrap panics if the value is none
+//! }
+//! ```
+//!
+//! An [Option] type is useful for return values that may legitimately have no value. If an operation is expected to
+//! produce a value, but can encounter an error, it is more idiomatic to represent it with [Result].
+//!
+//! Option types can be combined in a method-chaining style using combinators such as [Option::map] and [Option::and_then].
+//! They can also be unpacked with using [try expressions](try).
 
 /// Extract the value or short-circuit the calling function.
 ///
@@ -8,7 +30,7 @@
 /// expression.
 ///
 /// Expands to the following expression
-/// ```notest
+/// ```pseudo_alumina
 /// if $.is_some() {
 ///     $.unwrap()
 /// } else {
@@ -40,20 +62,17 @@ macro try($opt) {
 
 /// Optional value
 ///
-/// Optional values can either contain a value or they can be empty. See also [Result].
+/// Optional values can either contain a value or they can be empty.
+///
+/// See also [module-level documentation](std::option).
 ///
 /// ## Example
 /// ```
-/// fn divide(a: i32, b: i32) -> Option<i32> {
-///     if b == 0 {
-///         Option::none()
-///     } else {
-///         Option::some(a / b)
-///     }
-/// }
+/// let a = Option::some(1);
+/// let b: Option<i32> = Option::none();
 ///
-/// assert_eq!(divide(10, 5), Option::some(2));
-/// assert_eq!(divide(10, 0), Option::none());
+/// assert_eq!(a.is_some(), true);
+/// assert_eq!(b.is_some(), false);
 /// ```
 struct Option<T> {
     _is_some: bool,

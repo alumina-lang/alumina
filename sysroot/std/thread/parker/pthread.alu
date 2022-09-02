@@ -29,7 +29,7 @@ impl Parker {
         defer self.lock.unlock();
 
         let ret = self.state.compare_exchange(EMPTY, PARKED, Ordering::SeqCst, Ordering::SeqCst);
-        if !ret.is_ok() {
+        if ret.is_err() {
             if ret.unwrap_err() == NOTIFIED {
                 let old = self.state.exchange(EMPTY, Ordering::SeqCst);
                 assert_eq!(old, NOTIFIED);
@@ -58,7 +58,7 @@ impl Parker {
         defer self.lock.unlock();
 
         let ret = self.state.compare_exchange(EMPTY, PARKED, Ordering::SeqCst, Ordering::SeqCst);
-        if !ret.is_ok() {
+        if ret.is_err() {
             if ret.unwrap_err() == NOTIFIED {
                 let old = self.state.exchange(EMPTY, Ordering::SeqCst);
                 assert_eq!(old, NOTIFIED);

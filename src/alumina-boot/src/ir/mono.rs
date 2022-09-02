@@ -3212,7 +3212,15 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .with_span(els_.span);
         }
 
-        Ok(self.exprs.if_then(cond, then, els))
+        if let Ok(Value::Bool(v)) = const_eval(cond) {
+            if v {
+                Ok(then)
+            } else {
+                Ok(els)
+            }
+        } else {
+            Ok(self.exprs.if_then(cond, then, els))
+        }
     }
 
     fn static_cond_matches(

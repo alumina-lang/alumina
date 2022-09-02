@@ -89,7 +89,8 @@ impl InlineMarkdown {
             defer path.free();
             let link = self.link_context.resolve_link(&path);
             let link = if !link.is_some() {
-                panic!("Could not resolve link: {}", path);
+                eprintln!("Could not resolve link: {}", path);
+                return Result::err(Error::new());
             } else {
                 link.unwrap()
             };
@@ -252,11 +253,20 @@ fn write_docstring<T: std::io::Writable<T>>(
         writeln!(writer, "<p>");
     }
 
+    enum CodeBlockType {
+        Default,        // Fully tested and expected to succeed
+        NotAlumina,     // Not Alumina code. No playground link, no doctest, no syntax highlighting
+        PseudoAlumina,  // Pseudo-Alumina code. Just syntax highlighting but nothing else
+        NoTest,         // Not tested
+        NoRun,          // Test just compiled, but not run
+        Panics,         // Fully tested and expected to panic
+        CompileFail,    // Invalid alumina code. Expected to fail to compile
+        Bare,           // Playground link without fn main() { ... } wrapper. Not tested.
+    }
+
     let in_a_code_block = false;
-    let no_doctest = false;
-    let panics = false;
-    let no_doctest_run = false;
-    let bare = false;
+    let cb_type = CodeBlockType::Default;
+
     let md_state = InlineMarkdownState::default();
     defer md_state.free();
 
@@ -272,21 +282,33 @@ fn write_docstring<T: std::io::Writable<T>>(
 
         if docline.trim().starts_with("```") {
             if in_a_code_block {
-                if !no_doctest && !tagline_only {
+                if !tagline_only &&
+                    cb_type != CodeBlockType::NotAlumina &&
+                    cb_type != CodeBlockType::PseudoAlumina &&
+                    cb_type != CodeBlockType::NoTest &&
+                    cb_type != CodeBlockType::CompileFail &&
+                    cb_type != CodeBlockType::Bare {
                     use std::string::join;
 
                     if doctest_item != null && doctest_item.path == doctest_item.defined_in {
                         let name = "_".join(&doctest_item.defined_in.as_slice().iter());
-                        doctest_writer.write_test(name.as_slice(), doctest_source.as_slice(), no_doctest_run, panics);
+                        doctest_writer.write_test(
+                            name.as_slice(),
+                            doctest_source.as_slice(),
+                            cb_type == CodeBlockType::NoRun,
+                            cb_type == CodeBlockType::Panics
+                        );
                         name.free();
                     }
 
                 }
                 write!(writer, "</code>");
 
-                if !no_doctest && !tagline_only {
+                if !tagline_only &&
+                    cb_type != CodeBlockType::NotAlumina &&
+                    cb_type != CodeBlockType::PseudoAlumina {
                     let code: StringBuf = StringBuf::new();
-                    let parts: &[&[u8]] = if bare {
+                    let parts: &[&[u8]] = if cb_type == CodeBlockType::Bare {
                         [doctest_source.as_slice()].as_slice()
                     } else {
                         ["fn main() {\n", doctest_source.as_slice(), "}\n"].as_slice()
@@ -302,26 +324,45 @@ fn write_docstring<T: std::io::Writable<T>>(
                             }
                         }
                     }
-                    write!(writer, "<a class=\"playground-link\" target=\"_blank\" href=\"https://play.alumina-lang.net/?q={}\">Run this example</a>", code);
+
+                    write!(
+                        writer,
+                        "<a class=\"playground-link\" target=\"_blank\" href=\"{}?q={}\">Run this example</a>",
+                        std::process::env()
+                            .get("ALUMINADOC_PLAYGROUND_URL")
+                            .unwrap_or("https://play.alumina-lang.net/"),
+                        code
+                    );
                     code.free();
                 }
 
                 writeln!(writer, "</pre>");
             } else {
                 doctest_source.clear();
-                no_doctest = docline.trim() == "```notest";
-                panics = docline.trim() == "```panics";
-                no_doctest_run = docline.trim() == "```norun";
-                bare = docline.trim() == "```bare";
+                cb_type = switch docline.trim() {
+                    "```not_alumina" => CodeBlockType::NotAlumina,
+                    "```pseudo_alumina" => CodeBlockType::PseudoAlumina,
+                    "```no_test" => CodeBlockType::NoTest,
+                    "```no_run" => CodeBlockType::NoRun,
+                    "```compile_fail" => CodeBlockType::CompileFail,
+                    "```panics" => CodeBlockType::Panics,
+                    "```bare" => CodeBlockType::Bare,
+                    _ => CodeBlockType::Default,
+                };
 
-                if no_doctest || tagline_only {
+                if tagline_only || cb_type == CodeBlockType::NotAlumina {
                     write!(writer, "<pre>");
-                } else if panics {
+                } else if cb_type == CodeBlockType::Panics || cb_type == CodeBlockType::CompileFail {
                     write!(writer, "<pre class=\"with-playground-link panics\">");
                 } else {
                     write!(writer, "<pre class=\"with-playground-link\">");
                 }
-                write!(writer, "<code class=\"language-alumina\">");
+
+                if cb_type == CodeBlockType::NotAlumina {
+                    write!(writer, "<code>");
+                } else {
+                    write!(writer, "<code class=\"language-alumina\">");
+                }
             };
             in_a_code_block = !in_a_code_block;
         } else if !in_a_code_block {
@@ -377,7 +418,7 @@ fn write_docstring<T: std::io::Writable<T>>(
                 ));
             }
         } else {
-            if bare {
+            if cb_type == CodeBlockType::Bare {
                 writeln!(&doctest_source, "{}", docline);
             } else {
                 writeln!(&doctest_source, "   {}", docline);

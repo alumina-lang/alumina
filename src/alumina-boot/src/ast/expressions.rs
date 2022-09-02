@@ -336,7 +336,8 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             | "const_declaration"
             | "impl_block"
             | "struct_definition"
-            | "static_definition"
+            | "static_declaration"
+            | "type_definition"
             | "protocol_definition"
             | "function_definition"
             | "use_declaration" => {

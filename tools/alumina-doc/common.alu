@@ -496,7 +496,8 @@ struct ParseContext {
 
 impl ParseContext {
     fn from_file(parser: &mut Parser, filename: std::fs::Path) -> Result<ParseContext> {
-        let source = std::fs::File::read_to_string(filename).map_err(Error::from_io)?;
+        let source = std::fs::File::read_to_string(filename)
+            .map_err(Error::from::<std::io::Error>)?;
         defer source.free();
 
         let tree = parser.parse(source.as_slice());
