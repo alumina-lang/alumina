@@ -228,7 +228,7 @@ make test-std
 To run the documentation tests
 
 ```shell
-make doctest
+make test-docs
 ```
 
 Standard library contributions are especially welcome! Ideas for contribution:

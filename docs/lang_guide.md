@@ -1257,7 +1257,6 @@ Values of certain types can be coerced to other types without requiring an expli
 - Mutable slices to const slices (`&mut [T]` to `&[T]`)
 - Pointers to fixed-size arrays to slices (`&[T; N]` to `&[T]` and `&mut [T; N]` to `&mut [T]`)
 - Mutable `dyn` pointers to const `dyn` pointers (`&mut dyn Protocol` to `&dyn Protocol`)
-- `dyn` pointers to void pointers (`&mut dyn Protocol` to `&mut ()` and `&dyn Protocol` to `&()`)
 - Never type (`!`) to any other type
 
 For example
@@ -1284,7 +1283,7 @@ fn main() {
 
 #[cfg(target_os = "windows")]
 fn main() {
-    std::compile_fail!("Not yet :) Stay tuned!")
+    compile_fail!("Not yet :) Stay tuned!")
 }
 ```
 
@@ -1363,7 +1362,7 @@ fn print_type<T>() {
     } else when T: !ZeroSized {
         println!("some sized type");
     } else {
-        std::compile_fail!("zero-sized types are not supported");
+        compile_fail!("zero-sized types are not supported");
     }
 }
 

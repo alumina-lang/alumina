@@ -146,21 +146,23 @@ $(BUILD_DIR)/doctest.alu: $(ALUMINA_DOC) $(SYSROOT_FILES) tools/alumina-doc/stat
 	mv $(BUILD_DIR)/~doctest/* $(BUILD_DIR)/
 	@rmdir $(BUILD_DIR)/~doctest
 
-
 $(DOCTEST).c: $(ALUMINA_BOOT) $(SYSROOT_FILES) $(BUILD_DIR)/doctest.alu
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --output $@ main=$(BUILD_DIR)/doctest.alu
 
 $(DOCTEST): $(DOCTEST).c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-.PHONY: docs serve-docs doctest
+.PHONY: docs test-docs serve-docs watch-docs
 docs: $(BUILD_DIR)/doctest.alu
 
-doctest: $(DOCTEST)
+test-docs: $(DOCTEST)
 	$(DOCTEST) $(TEST_FLAGS) || true
 
 serve-docs:
-	@BUILD_DIR=$(BUILD_DIR) exec tools/alumina-doc/servedocs.sh
+	@cd $(BUILD_DIR)/html && python3 -m http.server
+
+watch-docs:
+	@BUILD_DIR=$(BUILD_DIR) tools/alumina-doc/watch_docs.sh
 
 ## ------------------------------ Examples -----------------------------
 
@@ -235,4 +237,4 @@ lint-rust: $(BOOTSTRAP_SOURCES) $(COMMON_SOURCES) $(BUILD_DIR)/.build
 	cargo fmt -- --check
 	cargo clippy $(CARGO_FLAGS) --all-targets
 
-dist-check: lint-rust aluminac doctest test examples
+dist-check: lint-rust aluminac test-docs test examples
