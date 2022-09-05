@@ -3180,14 +3180,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let cond = self.lower_expr(cond_, Some(self.types.builtin(BuiltinType::Bool)))?;
         let then = self.lower_expr(then, type_hint)?;
-        let els = self.lower_expr(
-            els_,
-            if then.diverges() {
-                type_hint.or(Some(then.ty))
-            } else {
-                Some(then.ty)
-            },
-        )?;
+        let els = self.lower_expr(els_, type_hint.or(Some(then.ty)))?;
 
         if cond.diverges() {
             return Ok(cond);
@@ -3200,16 +3193,27 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let then_typ = self.try_qualify_type(then.ty)?;
         let els_typ = self.try_qualify_type(els.ty)?;
 
-        let then = self.try_coerce(then_typ, then)?;
-        let els = self.try_coerce(els_typ, els)?;
+        let mut then = self.try_coerce(then_typ, then)?;
+        let mut els = self.try_coerce(els_typ, els)?;
 
         let gcd = ir::Ty::gcd(then.ty, els.ty);
         if !gcd.assignable_from(then.ty) || !gcd.assignable_from(els.ty) {
-            return Err(CodeErrorKind::MismatchedBranchTypes(
-                self.mono_ctx.type_name(then.ty).unwrap(),
-                self.mono_ctx.type_name(els.ty).unwrap(),
-            ))
-            .with_span(els_.span);
+            if let Some(hint) = type_hint {
+                // If the user supplied a type hint to the if expression, we can try coercing to it
+                // this is mostly for &T and &U -> &dyn Proto coercion where T and U are distinct types
+                // but satisfy the same protocol
+
+                if let (Ok(a), Ok(b)) = (self.try_coerce(hint, then), self.try_coerce(hint, els)) {
+                    then = a;
+                    els = b;
+                }
+            } else {
+                return Err(CodeErrorKind::MismatchedBranchTypes(
+                    self.mono_ctx.type_name(then.ty).unwrap(),
+                    self.mono_ctx.type_name(els.ty).unwrap(),
+                ))
+                .with_span(els_.span);
+            }
         }
 
         if let Ok(Value::Bool(v)) = const_eval(cond) {
