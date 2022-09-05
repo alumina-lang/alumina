@@ -251,28 +251,40 @@ mod tests {
         // ...
     }
 
+    protocol Foo<Self> {
+        fn foo(self: &Self) -> i32;
+    }
+
+    protocol Bar<Self> {
+        fn bar(self: &Self) -> i32;
+    }
+
+    struct Quux {}
+
+    impl Quux {
+        fn foo(self: &Quux) -> i32 {
+            42
+        }
+
+        fn bar(self: &Quux) -> i32 {
+            1337
+        }
+    }
+
+    struct Frob {}
+
+    impl Frob {
+        fn foo(self: &Frob) -> i32 {
+            1337
+        }
+
+        fn bar(self: &Frob) -> i32 {
+            42
+        }
+    }
+
     #[test]
     fn test_dyn_multi_protocol() {
-        protocol Foo<Self> {
-            fn foo(self: &Self) -> i32;
-        }
-
-        protocol Bar<Self> {
-            fn bar(self: &Self) -> i32;
-        }
-
-        struct Quux {}
-
-        impl Quux {
-            fn foo(self: &Quux) -> i32 {
-                42
-            }
-
-            fn bar(self: &Quux) -> i32 {
-                1337
-            }
-        }
-
         let a = Quux {};
         let b: &dyn (Foo<Self> + Bar<Self>) = &a;
         let c: &dyn (Bar<Self> + Foo<Self>) = &a;
@@ -294,5 +306,18 @@ mod tests {
         let b: &mut dyn Empty<Self> = &a;
 
         assert_eq!(b as &mut void, &a as &mut void);
+    }
+
+    #[test]
+    fn test_dyn_if_coercion() {
+        for cond in [true, false] {
+            let p: &dyn Foo<Self> = if cond {
+                &Quux {}
+            } else {
+                &Frob {}
+            };
+
+            assert_eq!(p.foo(), if cond { 42 } else { 1337 });
+        }
     }
 }
