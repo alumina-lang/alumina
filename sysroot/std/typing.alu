@@ -320,4 +320,20 @@ mod tests {
             assert_eq!(p.foo(), if cond { 42 } else { 1337 });
         }
     }
+
+    #[test]
+    fn test_dyn_if_coercion_switch() {
+        for i in 0..5 {
+            let p: &dyn Foo<Self> = switch i {
+                0 => &Quux {},
+                1 => &Frob {},
+                2 => &Quux {},
+                3 => &Frob {},
+                4 => &Quux {},
+                _ => unreachable!(),
+            };
+
+            assert_eq!(p.foo(), if i % 2 == 0 { 42 } else { 1337 });
+        }
+    }
 }
