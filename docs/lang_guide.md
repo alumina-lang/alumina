@@ -2,12 +2,12 @@
 
 This is a short guide of the notable features of the Alumina programming language. It is not a complete reference, but it should be enough to get you started. See also the [standard library documentation](https://docs.alumina-lang.net) and the examples in the [examples folder](../examples/).
 
-With regards to syntax, the language is very similar to Rust and in terms of semantics it is very similar to C. Generics are similar to C++ templates, except there is no overloading or template specialization. When in doubt, refering to those languages is the best way to go.
+With regards to syntax, the language is very similar to Rust and in terms of semantics it is very similar to C. Generics are similar to C++ templates, except there is no overloading or template specialization. When in doubt, referring to those languages is the best way to go.
 
 - [Modules](#modules)
   - [Name resolution](#name-resolution)
 - [Functions](#functions)
-  - [Generic function](#generic-function)
+  - [Generic functions](#generic-functions)
   - [Foreign functions](#foreign-functions)
   - [Other function attributes](#other-function-attributes)
 - [Constants](#constants)
@@ -118,6 +118,32 @@ Alumina is a two-pass compiler, all items are collected first and all names are 
 
 Within the same non-linear scope names must be unique (even if they are of different kinds). In linear scopes a later definition of a name shadows the previous one.
 
+```rust
+mod sample {
+    struct Foo {}
+    fn Foo() {} // error: duplicate name `Foo`
+}
+```
+
+```rust
+fn main() {
+    fn foo() -> i32 {
+        1
+    }
+
+    fn foo() -> i32 {
+        2
+    }
+
+    println!("{}", foo()); // prints 2
+
+    let a = 1;
+    let a = 2;
+
+    println!("{}", a); // prints 2
+}
+```
+
 Items that are declared within a module or any enclosing modules can be used directly without needing to qualify the full path,
 for example:
 
@@ -135,7 +161,7 @@ mod foo {
 }
 ```
 
-The items in sibling or child modules can be refered to using a relative or fully qualified path, or they can be imported.
+The items in sibling or child modules can be referred to using a relative or fully qualified path, or they can be imported.
 
 ```rust
 mod foo {
@@ -209,7 +235,7 @@ fn main(args: &[&[]]) -> i32 {
 }
 ```
 
-## Generic function
+## Generic functions
 
 Generic functions are defined using the `<...>` syntax.
 
@@ -414,7 +440,7 @@ Alumina's type system consists of the following types:
 - primitive numeric types (e.g. [`u8`](https://docs.alumina-lang.net/std/builtins/u8.html), [`u16`](https://docs.alumina-lang.net/std/builtins/u16.html), [`f64`](https://docs.alumina-lang.net/std/builtins/f64.html), ...)
 - [boolean type](https://docs.alumina-lang.net/std/builtins/bool.html) (`bool`)
 - [unit/void type](https://docs.alumina-lang.net/std/builtins/void.html) (`void` or `()`)
-- pointers (e.g. `&i32`, `&i32`)
+- pointers (e.g. `&i32`, `&mut i32`)
 - tuples (e.g. `(i32, f64)`, `(i32, i32, i32)`)
 - fixed-size arrays (e.g. `[i32; 3]`, `[i32; 10]`)
 - [never type](https://docs.alumina-lang.net/std/builtins/never.html) (`!`)
@@ -495,7 +521,7 @@ enum Color {
 
 Enum members can optionally have associated values. They must be constant expressions (see [Constants](#constants)) of an integer type. The underlying type of the enum is determined by the value of the first member and defaults to `i32` if no values are specified.
 
-The underlying value of an enum member can be retreived by casting.
+The underlying value of an enum member can be retrieved by casting.
 
 ```rust
 enum Boolean {
@@ -631,7 +657,7 @@ Alumina has first-class support for zero-sized types. The most common one is `()
 - Named function types (see below)
 - Never type (`!`)
 
-During compilation all memory loads and stores of zero-sized values are optimized away. This can be a powerful mechanism in generic context. An example from the standard library is the [`HashSet<T>` type](https://docs.alumina-lang.net/std/collections/HashSet.html), which is just a wrapper around a [`HashMap<T, ()>`](https://docs.alumina-lang.net/std/collections/HashMap.html). As the value type parameter is zero-sized, it incurrs no space overhead and the optimizer can remove all loads and stores of the value.
+During compilation all memory loads and stores of zero-sized values are optimized away. This can be a powerful mechanism in generic context. An example from the standard library is the [`HashSet<T>` type](https://docs.alumina-lang.net/std/collections/HashSet.html), which is just a wrapper around a [`HashMap<T, ()>`](https://docs.alumina-lang.net/std/collections/HashMap.html). As the value type parameter is zero-sized, it incurs no space overhead and the optimizer can remove all loads and stores of the value.
 
 Most zero-sized types are unit types (they contain only a single value). An exception to this is the never type, which is an empty / uninhabited type since having a value of this type would mean that an expression that was supposed to never return actually returned.
 
@@ -676,7 +702,7 @@ fn open_and_close_file(filename: &libc::c_char) -> libc::c_int {
 }
 ```
 
-Macros are hygienic, meaning that they cannot refer to items not accessible in the scope of the macro definition or declare new named items that would be accessible outside the macro. They can however, for example, access local variables if they are defined in function scope after the appropriate `let` binding.
+Macros are hygienic, meaning that they cannot refer to items not accessible in the scope of the macro definition or declare new named items that would be accessible outside the macro. They can however, for example, access local variables if they are defined in a linear scope after the appropriate `let` binding.
 
 ```rust
 fn main() {
@@ -836,13 +862,15 @@ while i < 10 {
 }
 ```
 
-`for` loops are used with iterable types. See the [std::iter](https://docs.alumina-lang.net/std/iter) module for more information on iterators.
-
-```rust
+`for` loops are used with iterable types, such as slices and [ranges](https://docs.alumina-lang.net/std/range). See the [std::iter](https://docs.alumina-lang.net/std/iter) module for more information on iterators.
 
 ```rust
 for i in 0..10 {
     println!("{}", i);
+}
+
+for w in ["hello", "world"] {
+    println!("{}", w);
 }
 ```
 
@@ -902,7 +930,7 @@ foo_ppp.by_value();
 /* ... */
 ```
 
-Alumina allows a reference to be taken of any expression, including rvalues. If the referencee is a rvalue, the expression will be promoted to a temporary variable that is valid for the duration of the enclosing function (not block!).
+Alumina allows a reference to be taken of any expression, including rvalues. If the referencee is an rvalue, the expression will be promoted to a temporary variable that is valid for the duration of the enclosing function (not block!).
 
 ```rust
 let one_ptr = &(1 + 1);
@@ -1022,14 +1050,14 @@ fn main() {
 
 ## Anonymous functions and closures
 
-Syntax for anonymous functions is `|args| -> ret { body }`. If the return type is void, it can be ommited, but the braces are always required.
+Syntax for anonymous functions is `|args| -> ret { body }`. If the return type is void, it can be omitted, but the braces are always required.
 
 ```rust
 let a = |x: i32| -> i32 { x + 1 };
 let b = |x: i32| { println!("You are {} years old", x); };
 ```
 
-Closures can be created by specifying the variables that are captured by the closure explicitely. They can either be captured by reference or by value.
+Closures can be created by specifying the variables that are captured by the closure explicitly. They can either be captured by reference or by value.
 
 ```rust
 // Capture by value (copy)
@@ -1073,7 +1101,7 @@ Protocols can be used to constrain the type parameters in generic items. Their m
 
 They are similar to [C++ concepts](https://en.cppreference.com/w/cpp/language/constraints), though much more limited.
 
-Protocols are defined with `protocol` keyword and the list of function signatures that types must implement. Protocols can be generic and by convention the first type parameter is `Self`, refering to the type that implements the protocol.
+Protocols are defined with `protocol` keyword and the list of function signatures that types must implement. Protocols can be generic and by convention the first type parameter is `Self`, referring to the type that implements the protocol.
 
 ```rust
 protocol Additive<Self> {
@@ -1174,7 +1202,7 @@ fn buffer_capacity<T: Primitive + !ZeroSized>(size: usize) -> usize {
 println!("{}", buffer_capacity::<u32>(16)); // 4
 ```
 
-[`Callable` protocol](https://docs.alumina-lang.net/std/builtins/Callable.html) that matches function-like objects with a given signature can also be used with the special syntax `Fn(Args) -> Ret` that ressembles function pointers. The following two are equivalent:
+[`Callable` protocol](https://docs.alumina-lang.net/std/builtins/Callable.html) that matches function-like objects with a given signature can also be used with the special syntax `Fn(Args) -> Ret` that resembles function pointers. The following two are equivalent:
 
 ```rust
 use std::builtins::Callable;
@@ -1240,7 +1268,7 @@ impl Point3D {
 println!("You are at {}", Point3D { x: 1, y: 2, z: 3 }); // "You are at (1, 2, 3)"
 ```
 
-`{}` is the only placeholder that is supported. The standar way to customize the display of an argument is with wrapper/adapter types, for example to format the number as hexadecimal:
+`{}` is the only placeholder that is supported. The standard way to customize the display of an argument is with wrapper/adapter types, for example to format the number as hexadecimal:
 
 ```rust
 use std::fmt::hex;
@@ -1319,7 +1347,7 @@ fn fill_with_random_bytes(buf: &mut [u8]) {
 
 ## `typeof` type
 
-typeof is a keyword that can be used to specify the type from a type of any expression.
+`typeof` is a keyword that can be used to specify the type from a type of any expression.
 
 ```rust
 fn double<T>(val: T) -> typeof(val + val) {
@@ -1383,7 +1411,7 @@ let z: ensure_pointer_t<Option<i32>> = &Some(5);
 
 ## Unit testing
 
-Alumina has a built-in mini unit test framework. All the methods with `#[test]` attribute will be collected during compilation and run during the test phase. To exclude test methods when the program is compiled normally, use the `#[cfg(test)]` attribute. Like in rust, it is conventional to have the test methods in the same file as the module under testm but in a submodule named `tests`.
+Alumina has a built-in mini unit test framework. All the methods with `#[test]` attribute will be collected during compilation and run during the test phase. To exclude test methods when the program is compiled normally, use the `#[cfg(test)]` attribute. Like in rust, it is conventional to have the test methods in the same file as the module under test but in a submodule named `tests`.
 
 ```rust
 fn add(x: i32, y: i32) -> i32 {
@@ -1415,7 +1443,7 @@ mod tests {
 
 ## Dyn pointers
 
-The comon way to achieve polymorphism in Alumina is using generics (static polymorphism). This is prefered as it usually leads to better performance (e.g. since monomorphized functions can be inlined), but can also lead to an explosion of program size.
+The common way to achieve polymorphism in Alumina is using generics (static polymorphism). This is preferred as it usually leads to better performance (e.g. since monomorphized functions can be inlined), but can also lead to an explosion of program size.
 
 Another issue is that generics are viral. Structs that want to contain generic fields, functions that accept generic arguments must be generic as well all the way to the top.
 
@@ -1525,7 +1553,7 @@ Alumina follows similar naming and code formatting conventions for most items as
 - Types and protocols are `PascalCase`
   - An exception to this are type operators, which are `snake_case` (e.g. [arguments_of](https://docs.alumina-lang.net/std/builtins/arguments_of.html))
 - Constants and statics are `SCREAMING_SNAKE_CASE`
-- Egyptian brackets are prefered for blocks
+- Egyptian brackets are preferred for blocks
     ```rust
     if x == 5 {
         // ...

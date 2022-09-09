@@ -45,6 +45,16 @@ pub enum NamedItemKind<'ast, 'src> {
     MacroParameter(AstId, bool),
 }
 
+impl<'ast, 'src> NamedItemKind<'ast, 'src> {
+    pub fn can_be_shadowed(&self) -> bool {
+        match self {
+            NamedItemKind::Local(..) => true,
+            NamedItemKind::Parameter(..) => true,
+            _ => false,
+        }
+    }
+}
+
 impl Display for NamedItemKind<'_, '_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -112,6 +122,7 @@ pub struct ScopeInner<'ast, 'src> {
     // name resolution, it is important for e.g. struct layout, function signature, generic
     // parameter ordering, etc.
     pub items: IndexMap<Option<&'ast str>, Vec<NamedItem<'ast, 'src>>>,
+    pub shadowed_items: Vec<Vec<NamedItem<'ast, 'src>>>,
     pub star_imports: Vec<Path<'ast>>,
     pub parent: Option<Weak<RefCell<ScopeInner<'ast, 'src>>>>,
 
@@ -125,12 +136,20 @@ impl<'ast, 'src> ScopeInner<'ast, 'src> {
         self.items
             .iter()
             .flat_map(|(n, its)| its.iter().map(|i| (*n, i)))
+            .chain(
+                self.shadowed_items
+                    .iter()
+                    .flat_map(|its| its.iter().map(|i| (None, i))),
+            )
     }
 
     pub fn grouped_items<'i>(
         &'i self,
     ) -> impl Iterator<Item = (Option<&'ast str>, &'i [NamedItem<'ast, 'src>])> {
-        self.items.iter().map(|(n, its)| (*n, its.as_slice()))
+        self.items
+            .iter()
+            .map(|(n, its)| (*n, its.as_slice()))
+            .chain(self.shadowed_items.iter().map(|its| (None, its.as_slice())))
     }
 
     pub fn items_with_name<'i>(
@@ -187,6 +206,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             r#type: ScopeType::Root,
             path: Path::root(),
             items: IndexMap::new(),
+            shadowed_items: Vec::new(),
             star_imports: Vec::new(),
             parent: None,
             code: OnceCell::new(),
@@ -218,6 +238,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             path: new_path,
             items: IndexMap::new(),
             star_imports: Vec::new(),
+            shadowed_items: Vec::new(),
             code,
             parent: Some(Rc::downgrade(&self.0)),
         })))
@@ -231,6 +252,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             path: new_path,
             items: IndexMap::new(),
             star_imports: Vec::new(),
+            shadowed_items: Vec::new(),
             code: OnceCell::new(),
             parent: Some(Rc::downgrade(&self.0)),
         })))
@@ -244,6 +266,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             path: self.path(),
             items: IndexMap::new(),
             star_imports: Vec::new(),
+            shadowed_items: Vec::new(),
             code,
             parent: Some(Rc::downgrade(&self.0)),
         })))
@@ -306,9 +329,19 @@ impl<'ast, 'src> Scope<'ast, 'src> {
                 }
 
                 if let ScopeType::Block = scope_type {
-                    // In linear scopes we allow shadowing.
-                    existing[0] = item;
-                    return Ok(());
+                    if existing.iter().all(|i| i.kind.can_be_shadowed()) && item.kind.can_be_shadowed() {
+                        // In linear scopes we allow shadowing. We retain the shadowed item, as it may have been used already,
+                        // but we rebind the name to the new item.
+                        let old_item_group = std::mem::replace(existing, vec![item]);
+                        current_scope.shadowed_items.push(old_item_group);
+                        return Ok(());
+                    } else {
+                        return Err(CodeErrorKind::CannotShadow(
+                            name.unwrap().into(),
+                            format!("{}", item.kind),
+                            format!("{}", existing[0].kind)
+                        ));
+                    }
                 }
             }
         }

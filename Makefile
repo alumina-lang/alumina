@@ -41,6 +41,7 @@ ALUMINAC = $(BUILD_DIR)/aluminac
 ALUMINAC_TESTS = $(BUILD_DIR)/aluminac-tests
 CODEGEN = $(BUILD_DIR)/aluminac-generate
 STDLIB_TESTS = $(BUILD_DIR)/stdlib-tests
+LANG_TESTS = $(BUILD_DIR)/lang-tests
 DOCTEST = $(BUILD_DIR)/doctest
 
 # If grammar changes, we need to rebuild the world
@@ -74,6 +75,17 @@ $(STDLIB_TESTS).c: $(ALUMINA_BOOT) $(SYSROOT_FILES)
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --cfg test_std --output $@
 
 $(STDLIB_TESTS): $(STDLIB_TESTS).c
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+## ---------------------------- Lang tests -----------------------------
+
+LANG_TEST_FILES = $(shell find src/tests -type f -name '*.alu')
+
+$(LANG_TESTS).c: $(ALUMINA_BOOT) $(SYSROOT_FILES) $(LANG_TEST_FILES)
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --output $@ \
+		$(foreach src,$(LANG_TEST_FILES),$(subst /,::,$(basename $(subst src/tests/,lang_tests/,$(src))))=$(src)) \
+
+$(LANG_TESTS): $(LANG_TESTS).c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 ## ------------------ Self-hosted compiler (aluminac) ------------------

@@ -1,0 +1,37 @@
+//! Tests for various language features and constructs.
+
+#[test]
+fn test_linear_scope_shadowing_fn() {
+    fn foo() -> i32 {
+        1
+    }
+    assert_eq!(foo(), 1);
+
+    fn foo() -> i32 {
+        2
+    }
+    assert_eq!(foo(), 2);
+}
+
+#[test]
+fn test_linear_scope_shadowing_impl() {
+    struct Foo {}
+    impl Foo {
+        fn foo(self: &Foo) -> i32 {
+            1
+        }
+    }
+
+    assert_eq!(Foo{}.foo(), 1);
+
+    struct Foo {}
+    impl Foo {
+        fn foo(self: &Foo) -> i32 {
+            2
+        }
+    }
+
+    impl Bar {}
+
+    assert_eq!(Foo{}.foo(), 2);
+}
