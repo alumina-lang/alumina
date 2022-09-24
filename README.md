@@ -5,7 +5,7 @@ Alumina is an imperative, general-purpose, statically typed, compiled system pro
 Non-exhaustive list of distinguishing features:
 
 - Module system and 2-pass compilation (no header files and forward declarations needed)
-- Generics, protocols and mixins (duck-typed, similar to C++ templates but without overloading/SFINAE)
+- Generics (duck-typed, similar to C++ templates but without SFINAE), protocols and mixins
   - Specialization is possible with [`when` expressions](./examples/when_expression.alu)
   - Opt-in dynamic polymorphism with dynamic dispatch ([`dyn` pointers](./examples/dyn.alu))
 - [Unified call syntax](https://en.wikipedia.org/wiki/Uniform_Function_Call_Syntax) for functions in scope
@@ -18,8 +18,8 @@ Non-exhaustive list of distinguishing features:
   - tuples,
   - first-class 0-sized types (unit/void, function types, 0-sized arrays, structs with no fields, ...),
   - never type
-- Hygenic expression macros
-- Go-style [defer expressions](./examples/defer_and_move.alu)
+- Hygienic expression macros
+- [Defer expressions](./examples/defer_and_move.alu)
 
 Alumina is heavily inspired by Rust, especially in terms of syntax and standard library API. Unlike Rust, however, Alumina is not memory-safe and it requires manual memory management.
 
@@ -243,5 +243,5 @@ Standard library contributions are especially welcome! Ideas for contribution:
 
 Needless to say, a great way to contribute to the project is to just use Alumina for your own programs and libraries. Submit a PR and add your project to the list:
 
-- [timestamped](http://github.com/tibordp/timestamped) - A utility to record and replay the ouptut of a program with timestamps.
+- [timestamped](http://github.com/tibordp/timestamped) - A utility to record and replay the output of a program with timestamps.
 

@@ -685,7 +685,7 @@ impl<'ast> AstItemMaker<'ast> {
         Ok(())
     }
 
-    fn make_item_group<'src>(
+    pub fn make_item_group<'src>(
         &mut self,
         scope: Scope<'ast, 'src>,
         name: Option<&'ast str>,

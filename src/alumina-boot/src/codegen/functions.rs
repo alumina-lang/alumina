@@ -521,7 +521,10 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         } else {
             self.ctx.register_name(
                 id,
-                CName::Mangled(item.name.unwrap_or("anonymous"), self.ctx.make_id()),
+                match item.name {
+                    Some(name) => CName::Mangled(name, self.ctx.make_id()),
+                    None => CName::Id(self.ctx.make_id()),
+                },
             );
             write_function_signature(
                 self.ctx,

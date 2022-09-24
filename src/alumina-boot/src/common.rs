@@ -48,6 +48,8 @@ pub enum CodeErrorKind {
     CycleDetected,
     #[error("duplicate name `{}`", .0)]
     DuplicateName(String),
+    #[error("duplicate name `{}` ({} cannot shadow a {})", .0, .1, .2)]
+    CannotShadow(String, String, String),
     #[error("generic associated types are not supported, soz")]
     NoAssociatedTypes,
     #[error("invalid literal")]
