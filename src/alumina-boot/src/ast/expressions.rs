@@ -30,6 +30,8 @@ use super::{
     Parameter, Placeholder, Span, StatementKind, StaticIfCondition, Ty, TyP,
 };
 
+use indexmap::IndexMap;
+
 macro_rules! with_block_scope {
     ($self:ident, $body:expr) => {{
         let child_scope = $self.scope.anonymous_child(ScopeType::Block);
@@ -212,143 +214,98 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
         Ok(expr.alloc_with_span_from(self.ast, &self.scope, node))
     }
 
-    fn visit_statement(
+    fn visit_let_declaration(
         &mut self,
         node: tree_sitter::Node<'src>,
     ) -> Result<Vec<Statement<'ast>>, AluminaError> {
-        let inner = node.child_by_field_name("inner").unwrap();
-        match AttributeVisitor::parse_attributes(
-            self.global_ctx.clone(),
-            self.ast,
-            self.scope.clone(),
-            inner,
-            None,
-        )? {
-            Some(attributes) => attributes,
-            None => return Ok(vec![]),
+        let typ = node
+            .child_by_field_name("type")
+            .map(|n| {
+                TypeVisitor::new(
+                    self.global_ctx.clone(),
+                    self.ast,
+                    self.scope.clone(),
+                    self.in_a_macro,
+                )
+                .visit(n)
+            })
+            .transpose()?;
+        let value_id = self.ast.make_id();
+        let value = node
+            .child_by_field_name("value")
+            .map(|n| self.visit(n))
+            .transpose()?;
+        let let_decl = LetDeclaration {
+            id: value_id,
+            typ,
+            value,
         };
+        let mut statements = Vec::new();
+        if let Some(name) = node.child_by_field_name("name") {
+            let name = self.code.node_text(name).alloc_on(self.ast);
 
-        let result = match inner.kind() {
-            "empty_statement" => vec![],
-            "let_declaration" => {
-                let typ = inner
-                    .child_by_field_name("type")
-                    .map(|n| {
-                        TypeVisitor::new(
-                            self.global_ctx.clone(),
-                            self.ast,
-                            self.scope.clone(),
-                            self.in_a_macro,
-                        )
-                        .visit(n)
-                    })
-                    .transpose()?;
+            self.scope
+                .add_item(
+                    Some(name),
+                    NamedItem::new_default(NamedItemKind::Local(value_id)),
+                )
+                .with_span_from(&self.scope, node)?;
 
-                let value_id = self.ast.make_id();
-                let value = inner
-                    .child_by_field_name("value")
-                    .map(|n| self.visit(n))
-                    .transpose()?;
+            statements.push(
+                StatementKind::LetDeclaration(let_decl).alloc_with_span_from(
+                    self.ast,
+                    &self.scope,
+                    node,
+                ),
+            );
+        } else {
+            // Tuple unpacking
+            let mut cursor = node.walk();
+            for (idx, elem) in node
+                .children_by_field_name("element", &mut cursor)
+                .enumerate()
+            {
+                let name = self.code.node_text(elem).alloc_on(self.ast);
+                let elem_id = self.ast.make_id();
 
-                let let_decl = LetDeclaration {
-                    id: value_id,
-                    typ,
-                    value,
+                let rhs = ExprKind::TupleIndex(
+                    ExprKind::Local(value_id).alloc_with_span_from(self.ast, &self.scope, elem),
+                    idx,
+                )
+                .alloc_with_span_from(self.ast, &self.scope, elem);
+
+                let elem_decl = LetDeclaration {
+                    id: elem_id,
+                    typ: None,
+                    value: Some(rhs),
                 };
 
-                let mut statements = Vec::new();
-                if let Some(name) = inner.child_by_field_name("name") {
-                    let name = self.code.node_text(name).alloc_on(self.ast);
+                statements.push(
+                    StatementKind::LetDeclaration(elem_decl).alloc_with_span_from(
+                        self.ast,
+                        &self.scope,
+                        node,
+                    ),
+                );
 
-                    self.scope
-                        .add_item(
-                            Some(name),
-                            NamedItem::new_default(NamedItemKind::Local(value_id)),
-                        )
-                        .with_span_from(&self.scope, inner)?;
-
-                    statements.push(
-                        StatementKind::LetDeclaration(let_decl).alloc_with_span_from(
-                            self.ast,
-                            &self.scope,
-                            node,
-                        ),
-                    );
-                } else {
-                    // Tuple unpacking
-                    let mut cursor = inner.walk();
-                    for (idx, elem) in inner
-                        .children_by_field_name("element", &mut cursor)
-                        .enumerate()
-                    {
-                        let name = self.code.node_text(elem).alloc_on(self.ast);
-                        let elem_id = self.ast.make_id();
-
-                        let rhs = ExprKind::TupleIndex(
-                            ExprKind::Local(value_id).alloc_with_span_from(
-                                self.ast,
-                                &self.scope,
-                                elem,
-                            ),
-                            idx,
-                        )
-                        .alloc_with_span_from(self.ast, &self.scope, elem);
-
-                        let elem_decl = LetDeclaration {
-                            id: elem_id,
-                            typ: None,
-                            value: Some(rhs),
-                        };
-
-                        statements.push(
-                            StatementKind::LetDeclaration(elem_decl).alloc_with_span_from(
-                                self.ast,
-                                &self.scope,
-                                node,
-                            ),
-                        );
-
-                        self.scope
-                            .add_item(
-                                Some(name),
-                                NamedItem::new_default(NamedItemKind::Local(elem_id)),
-                            )
-                            .with_span_from(&self.scope, elem)?;
-                    }
-
-                    statements.insert(
-                        0,
-                        StatementKind::LetDeclaration(let_decl).alloc_with_span_from(
-                            self.ast,
-                            &self.scope,
-                            node,
-                        ),
-                    );
-                }
-                statements
+                self.scope
+                    .add_item(
+                        Some(name),
+                        NamedItem::new_default(NamedItemKind::Local(elem_id)),
+                    )
+                    .with_span_from(&self.scope, elem)?;
             }
-            "expression_statement" => vec![StatementKind::Expression(
-                self.visit(inner.child_by_field_name("inner").unwrap())?,
-            )
-            .alloc_with_span_from(self.ast, &self.scope, node)],
-            "macro_definition"
-            | "enum_definition"
-            | "const_declaration"
-            | "impl_block"
-            | "struct_definition"
-            | "static_declaration"
-            | "type_definition"
-            | "protocol_definition"
-            | "function_definition"
-            | "use_declaration" => {
-                FirstPassVisitor::new(self.global_ctx.clone(), self.ast, self.scope.clone())
-                    .visit(inner)?;
-                vec![]
-            }
-            _ => unreachable!(),
-        };
 
-        Ok(result)
+            statements.insert(
+                0,
+                StatementKind::LetDeclaration(let_decl).alloc_with_span_from(
+                    self.ast,
+                    &self.scope,
+                    node,
+                ),
+            );
+        }
+        Ok(statements)
     }
 
     fn extract_expression_ending_with_block(
@@ -433,15 +390,106 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         let mut cursor = node.walk();
         let mut statements = Vec::new();
 
+        let mut item_name = None;
+        let mut local_items: IndexMap<_, Vec<_>> = IndexMap::new();
+
+        macro_rules! make_stuff {
+            () => {
+                if !local_items.is_empty() {
+                    let local_items = std::mem::replace(&mut local_items, IndexMap::new());
+                    let mut maker =
+                        AstItemMaker::new_local(self.ast, self.global_ctx.clone(), self.in_a_macro);
+                    for (name, items) in local_items.into_iter() {
+                        maker.make_item_group(self.scope.clone(), name, &items[..])?;
+                    }
+                }
+            };
+        }
+
         let return_expression = with_block_scope!(self, {
             let mut last_node = None;
             for node in node.children_by_field_name("statements", &mut cursor) {
                 last_node = Some(node.child_by_field_name("inner").unwrap());
-                statements.extend(self.visit_statement(node)?);
+
+                let node = node.child_by_field_name("inner").unwrap();
+                match AttributeVisitor::parse_attributes(
+                    self.global_ctx.clone(),
+                    self.ast,
+                    self.scope.clone(),
+                    node,
+                    None,
+                )? {
+                    Some(attributes) => attributes,
+                    None => continue,
+                };
+
+                let result = match node.kind() {
+                    "empty_statement" => vec![],
+                    "let_declaration" => self.visit_let_declaration(node)?,
+                    "expression_statement" => vec![StatementKind::Expression(
+                        self.visit(node.child_by_field_name("inner").unwrap())?,
+                    )
+                    .alloc_with_span_from(self.ast, &self.scope, node)],
+                    "enum_definition"
+                    | "struct_definition"
+                    | "protocol_definition"
+                    | "impl_block"
+                    | "macro_definition"
+                    | "const_declaration"
+                    | "static_declaration"
+                    | "type_definition"
+                    | "function_definition"
+                    | "use_declaration" => {
+                        // In linear scopes named items must be declared first, followed by their impl blocks (with no other
+                        // items in between).
+                        // In module scopes, this restriction does not apply.
+                        match node.kind() {
+                            "enum_definition" | "struct_definition" | "protocol_definition" => {
+                                make_stuff!();
+                                item_name = Some(
+                                    self.code
+                                        .node_text(node.child_by_field_name("name").unwrap()),
+                                );
+                            }
+                            "impl_block" => {
+                                let name = Some(
+                                    self.code
+                                        .node_text(node.child_by_field_name("name").unwrap()),
+                                );
+                                if name != item_name {
+                                    make_stuff!();
+                                    item_name = name;
+                                }
+                            }
+                            _ => {
+                                make_stuff!();
+                                item_name = None;
+                            }
+                        };
+
+                        let items = FirstPassVisitor::new(
+                            self.global_ctx.clone(),
+                            self.ast,
+                            self.scope.clone(),
+                        )
+                        .visit_local(node)?;
+
+                        for ((scope, name), values) in items.into_iter() {
+                            if scope != self.scope {
+                                continue;
+                            }
+                            local_items.entry(name).or_default().extend(values);
+                        }
+
+                        vec![]
+                    }
+                    _ => unreachable!(),
+                };
+
+                statements.extend(result);
             }
 
-            AstItemMaker::new_local(self.ast, self.global_ctx.clone(), self.in_a_macro)
-                .make(self.scope.clone())?;
+            make_stuff!();
 
             match node.child_by_field_name("result") {
                 Some(return_expression) => self.visit(return_expression)?,

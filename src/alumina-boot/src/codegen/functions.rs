@@ -524,7 +524,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 match item.name {
                     Some(name) => CName::Mangled(name, self.ctx.make_id()),
                     None => CName::Id(self.ctx.make_id()),
-                }
+                },
             );
             write_function_signature(
                 self.ctx,

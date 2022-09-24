@@ -213,10 +213,13 @@ alumina-boot: $(ALUMINA_BOOT)
 aluminac: $(ALUMINAC)
 	ln -sf $(ALUMINAC) $@
 
-.PHONY: test-std test-examples  test-alumina-boot test-aluminac test
+.PHONY: test-std test-examples  test-alumina-boot test-aluminac test-lang test
 
 test-std: alumina-boot $(STDLIB_TESTS)
 	$(STDLIB_TESTS) $(TEST_FLAGS)
+
+test-lang: alumina-boot $(LANG_TESTS)
+	$(LANG_TESTS) $(TEST_FLAGS)
 
 test-alumina-boot:
 	cargo test $(CARGO_FLAGS) --all-targets
@@ -224,7 +227,7 @@ test-alumina-boot:
 test-aluminac: $(ALUMINAC_TESTS)
 	$(ALUMINAC_TESTS) $(TEST_FLAGS)
 
-test: test-alumina-boot test-std
+test: test-alumina-boot test-std test-lang
 
 .DEFAULT_GOAL := all
 all: alumina-boot aluminac

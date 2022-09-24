@@ -45,16 +45,6 @@ pub enum NamedItemKind<'ast, 'src> {
     MacroParameter(AstId, bool),
 }
 
-impl<'ast, 'src> NamedItemKind<'ast, 'src> {
-    pub fn can_be_shadowed(&self) -> bool {
-        match self {
-            NamedItemKind::Local(..) => true,
-            NamedItemKind::Parameter(..) => true,
-            _ => false,
-        }
-    }
-}
-
 impl Display for NamedItemKind<'_, '_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -182,11 +172,19 @@ impl<'ast, 'src> Debug for ScopeInner<'ast, 'src> {
 #[derive(Clone)]
 pub struct Scope<'ast, 'src>(pub Rc<RefCell<ScopeInner<'ast, 'src>>>);
 
+impl<'ast, 'src> std::hash::Hash for Scope<'ast, 'src> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        Rc::as_ptr(&self.0).hash(state);
+    }
+}
+
 impl<'ast, 'src> PartialEq for Scope<'ast, 'src> {
     fn eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.0, &other.0)
     }
 }
+
+impl<'ast, 'src> Eq for Scope<'ast, 'src> {}
 
 impl<'ast, 'src> From<Scope<'ast, 'src>> for Weak<RefCell<ScopeInner<'ast, 'src>>> {
     fn from(scope: Scope<'ast, 'src>) -> Self {
@@ -329,19 +327,11 @@ impl<'ast, 'src> Scope<'ast, 'src> {
                 }
 
                 if let ScopeType::Block = scope_type {
-                    if existing.iter().all(|i| i.kind.can_be_shadowed()) && item.kind.can_be_shadowed() {
-                        // In linear scopes we allow shadowing. We retain the shadowed item, as it may have been used already,
-                        // but we rebind the name to the new item.
-                        let old_item_group = std::mem::replace(existing, vec![item]);
-                        current_scope.shadowed_items.push(old_item_group);
-                        return Ok(());
-                    } else {
-                        return Err(CodeErrorKind::CannotShadow(
-                            name.unwrap().into(),
-                            format!("{}", item.kind),
-                            format!("{}", existing[0].kind)
-                        ));
-                    }
+                    // In linear scopes we allow shadowing. We retain the shadowed item, as it may have been used already,
+                    // but we rebind the name to the new item.
+                    let old_item_group = std::mem::replace(existing, vec![item]);
+                    current_scope.shadowed_items.push(old_item_group);
+                    return Ok(());
                 }
             }
         }
