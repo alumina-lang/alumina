@@ -583,6 +583,77 @@ impl GroupByIterator<It: Iterator<It, T>, F: Fn(T) -> K, T, K: cmp::Equatable<K>
     mixin IteratorExt<GroupByIterator<It, F, T, K>, Grouping<It, F, T, K>>;
 }
 
+/// A chunk yielded by [ChunksIterator].
+///
+/// See [IteratorExt::chunks].
+struct Chunk<It: Iterator<It, T>, T> {
+    it: &mut TakeIterator<PeekableIterator<It, T>, T>,
+}
+
+impl Chunk<It: Iterator<It, T>, T> {
+    /// @ Iterator::next
+    fn next(self: &mut Chunk<It, T>) -> Option<T> {
+        self.it.next()
+    }
+
+    /// @ Iterator::size_hint
+    fn size_hint(self: &Chunk<It, T>) -> Option<usize> {
+        self.it.size_hint()
+    }
+
+    mixin Iterator<Chunk<It, T>, T>;
+    mixin IteratorExt<Chunk<It, T>, T>;
+}
+
+/// Chunking iterator
+///
+/// See [IteratorExt::chunks].
+struct ChunksIterator<It: Iterator<It, T>, T> {
+    chunk_size: usize,
+    it: PeekableIterator<It, T>,
+    last_chunk: Option<TakeIterator<PeekableIterator<It, T>, T>>,
+}
+
+impl ChunksIterator<It: Iterator<It, T>, T> {
+    /// @ Iterator::next
+    fn next(self: &mut ChunksIterator<It, T>) -> Option<Chunk<It, T>> {
+        let needs_drain = self.last_chunk.move();
+        if needs_drain.is_some() {
+            for _ in needs_drain.unwrap() {
+            }
+            self.last_chunk = Option::none();
+        }
+
+        let v = self.it.peek();
+        if !v.is_some() {
+            self.it.next();
+            return Option::none();
+        }
+
+        self.last_chunk = Option::some(self.it.take(self.chunk_size));
+        let result = Chunk {
+            it: self.last_chunk.as_mut_ptr().unwrap()
+        };
+
+        Option::some(result)
+    }
+
+    /// @ Iterator::size_hint
+    fn size_hint(self: &ChunksIterator<It, T>) -> Option<usize> {
+        self.it.size_hint().map(|=self, s: usize| -> usize {
+            let full_size = (s + self.chunk_size - 1) / self.chunk_size;
+            if self.last_chunk.is_some() {
+                full_size - 1
+            } else {
+                full_size
+            }
+        })
+    }
+
+    mixin Iterator<ChunksIterator<It, T>, Chunk<It, T,>>;
+    mixin IteratorExt<ChunksIterator<It, T>, Chunk<It, T>>;
+}
+
 /// Peekable iterator
 ///
 /// See [IteratorExt::peekable].
@@ -657,8 +728,7 @@ impl ZipIterator<It1: Iterator<It1, T1>, It2: Iterator<It2, T2>, T1, T2> {
 /// See [IteratorExt::flatten].
 struct FlattenIterator<It: Iterator<It, T>, T, Ret> {
     it: &mut It,
-    has_elem: bool,
-    elem: T, // maybe uninitialised
+    elem: Option<T>,
     elem_iter: typeof((null as &mut T).iter()) // maybe uninitialised
 }
 
@@ -668,18 +738,20 @@ impl FlattenIterator<It: Iterator<It, T>, T, Ret> {
         use option::try;
 
         loop {
-            if !self.has_elem {
+            if !self.elem.is_some() {
                 // We store the element, as the iterator may require a stable pointer to it.
-                self.elem = self.it.next()?;
-                self.elem_iter = self.elem.iter();
-                self.has_elem = true;
+                self.elem = Option::some(self.it.next()?);
+                self.elem_iter = self.elem
+                    .as_mut_ptr()
+                    .unwrap()
+                    .iter();
             }
 
             let v = self.elem_iter.next();
             if v.is_some() {
                 return v;
             } else {
-                self.has_elem = false;
+                self.elem = Option::none()
             }
         }
     }
@@ -1088,6 +1160,36 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
         FilterMapIterator { it: iter, fun: fun }
     }
 
+
+    /// Returns an iterator of chunks of size `chunk_size`.
+    ///
+    /// If the iterator is not divisible by `chunk_size`, the last chunk will be smaller. Panics if
+    /// `chunk_size` is 0.
+    ///
+    /// ## Example
+    /// ```
+    /// // Prints:
+    /// // [ 0 1 2 ]
+    /// // [ 3 4 5 ]
+    /// // [ 6 ]
+    /// for chunk in (0..7).chunks(3) {
+    ///     print!("[ ");
+    ///     for v in chunk {
+    ///         print!("{} ", v);
+    ///     }
+    ///     println!("]");
+    /// }
+    /// ```
+    fn chunks(self: &mut Self, chunk_size: usize) -> ChunksIterator<Self, T> {
+        assert!(chunk_size > 0);
+
+        ChunksIterator {
+            it: self.peekable(),
+            last_chunk: Option::none(),
+            chunk_size: chunk_size,
+        }
+    }
+
     /// Reduces the iterator into a single value.
     ///
     /// Equivalent to:
@@ -1329,8 +1431,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     fn flatten(self: &mut Self) -> FlattenIterator<Self, T, iterable_yield_t<T>> {
         FlattenIterator {
             it: self,
-            has_elem: false,
-            elem: mem::uninitialized(),
+            elem: Option::none(),
             elem_iter: mem::uninitialized()
         }
     }
@@ -2067,5 +2168,107 @@ mod tests {
 
         assert_eq!(a, Option::some(7usize));
         assert_eq!(b, Option::none());
+    }
+
+    #[test]
+    fn test_chunks() {
+        let iter = (0..10).chunks(3);
+        assert_eq!(iter.size_hint(), Option::some(4usize));
+
+        let chunk = iter.next().unwrap();
+        assert_eq!(iter.size_hint(), Option::some(3usize));
+        assert_eq!(chunk.size_hint(), Option::some(3usize));
+        assert_eq!(chunk.next(), Option::some(0));
+        assert_eq!(chunk.next(), Option::some(1));
+        assert_eq!(chunk.next(), Option::some(2));
+        assert_eq!(chunk.next(), Option::none());
+
+        let chunk = iter.next().unwrap();
+        assert_eq!(iter.size_hint(), Option::some(2usize));
+        assert_eq!(chunk.size_hint(), Option::some(3usize));
+        assert_eq!(chunk.next(), Option::some(3));
+        assert_eq!(chunk.next(), Option::some(4));
+        assert_eq!(chunk.next(), Option::some(5));
+        assert_eq!(chunk.next(), Option::none());
+
+        let chunk = iter.next().unwrap();
+        assert_eq!(iter.size_hint(), Option::some(1usize));
+        assert_eq!(chunk.size_hint(), Option::some(3usize));
+        assert_eq!(chunk.next(), Option::some(6));
+        assert_eq!(chunk.next(), Option::some(7));
+        assert_eq!(chunk.next(), Option::some(8));
+        assert_eq!(chunk.next(), Option::none());
+
+        let chunk = iter.next().unwrap();
+        assert_eq!(iter.size_hint(), Option::some(0usize));
+        assert_eq!(chunk.size_hint(), Option::some(1usize));
+        assert_eq!(chunk.next(), Option::some(9));
+        assert_eq!(chunk.next(), Option::none());
+
+        assert!(!iter.next().is_some());
+    }
+
+    #[test]
+    fn test_chunks_not_used() {
+        let iter = (0..10).chunks(3);
+        assert_eq!(iter.size_hint(), Option::some(4usize));
+
+        let chunk = iter.next().unwrap();
+        assert_eq!(iter.size_hint(), Option::some(3usize));
+
+        let chunk = iter.next().unwrap();
+        assert_eq!(iter.size_hint(), Option::some(2usize));
+        assert_eq!(chunk.size_hint(), Option::some(3usize));
+        assert_eq!(chunk.next(), Option::some(3));
+        assert_eq!(chunk.next(), Option::some(4));
+        assert_eq!(chunk.next(), Option::some(5));
+        assert_eq!(chunk.next(), Option::none());
+
+        let chunk = iter.next().unwrap();
+        assert_eq!(iter.size_hint(), Option::some(1usize));
+
+        let chunk = iter.next().unwrap();
+        assert_eq!(iter.size_hint(), Option::some(0usize));
+
+        assert!(!iter.next().is_some());
+    }
+
+    #[test]
+    fn test_chunks_1() {
+        let iter = (0..=2).chunks(1);
+        assert_eq!(iter.size_hint(), Option::some(3usize));
+
+        let chunk = iter.next().unwrap();
+        assert_eq!(iter.size_hint(), Option::some(2usize));
+        assert_eq!(chunk.size_hint(), Option::some(1usize));
+        assert_eq!(chunk.next(), Option::some(0));
+        assert_eq!(chunk.next(), Option::none());
+
+        let chunk = iter.next().unwrap();
+        assert_eq!(iter.size_hint(), Option::some(1usize));
+        assert_eq!(chunk.size_hint(), Option::some(1usize));
+        assert_eq!(chunk.next(), Option::some(1));
+        assert_eq!(chunk.next(), Option::none());
+
+        let chunk = iter.next().unwrap();
+        assert_eq!(iter.size_hint(), Option::some(0usize));
+        assert_eq!(chunk.size_hint(), Option::some(1usize));
+        assert_eq!(chunk.next(), Option::some(2));
+        assert_eq!(chunk.next(), Option::none());
+
+        assert!(!iter.next().is_some());
+    }
+
+    #[test]
+    fn test_chunks_empty() {
+        let iter = empty::<i32>().chunks(100);
+
+        assert_eq!(iter.size_hint(), Option::some(0usize));
+        assert!(!iter.next().is_some());
+    }
+
+    #[test(should_fail)]
+    fn test_chunks_0() {
+        (0..10).chunks(0);
     }
 }
