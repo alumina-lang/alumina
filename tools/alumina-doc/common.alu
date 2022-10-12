@@ -3,7 +3,7 @@ use std::string::{split, StringBuf};
 
 use tree_sitter::{Node, Parser, Tree};
 use std::collections::{free_all, HashMap};
-use std::cmp::sort_by;
+use std::cmp::sort_by_key;
 
 use aluminac::lib::arena::Arena;
 
@@ -368,7 +368,7 @@ impl ItemBag {
     fn sort(self: &mut ItemBag) {
         self.items
             .as_slice_mut()
-            .sort_by(|it: &&Item| -> (&[&[u8]], i32, usize, &[u8]) {
+            .sort_by_key(|it: &&Item| -> (&[&[u8]], i32, usize, &[u8]) {
                 use std::mem::slice::empty;
 
                 let item_loc = it.node.start_byte();
@@ -383,24 +383,24 @@ impl ItemBag {
     }
 
     fn get(self: &ItemBag, path: &Path) -> Option<&Item> {
-        self.lookup.get(*path)
+        self.lookup.get(path)
     }
 
     fn resolve(self: &ItemBag, scope: &Path, path: &Path, go_down: bool) -> Option<&Item> {
         let joined = scope.join_with(path);
         defer joined.free();
 
-        let proper = self.lookup.get(joined);
+        let proper = self.lookup.get(&joined);
         if proper.is_some() {
             return proper;
         }
 
-        let alias = self.aliases.get(joined);
+        let alias = self.aliases.get(&joined);
         if alias.is_some() {
             return self.resolve(scope, &alias.unwrap(), true);
         }
 
-        let star_alias = self.star_aliases.get(*scope);
+        let star_alias = self.star_aliases.get(scope);
         if star_alias.is_some() {
             let maybe_resolved = self.resolve(&star_alias.unwrap(), path, false);
             if maybe_resolved.is_some() {
@@ -435,7 +435,7 @@ impl ItemBag {
                 src_path.push(s);
             }
 
-            if !self.lookup.get(src_path).is_some() {
+            if !self.lookup.get(&src_path).is_some() {
                 self.add_item(Item {
                     kind: i.kind,
                     cfg_index: i.cfg_index,
@@ -463,7 +463,7 @@ impl ItemBag {
                 let resolved = self.resolve(&scope, &suffix, true);
                 if resolved.is_some() {
                     let item = resolved.unwrap();
-                    if !self.lookup.get(src).is_some() {
+                    if !self.lookup.get(&src).is_some() {
                         insertion_count += 1;
                         self.sync_reexport(&src, &item.defined_in);
                     }

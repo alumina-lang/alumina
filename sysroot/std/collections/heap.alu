@@ -1,0 +1,653 @@
+//! Binary heap collection and utilities.
+//!
+//! This module provides an allocating binary heap collection type, [BinaryHeap] as well as
+//! methods for in-place binary heaps over raw slices ([heapify], [sift_up], [sift_down], ...).
+
+use cmp::Comparable;
+
+/// A binary max-heap (priority queue).
+///
+/// # Example
+/// ```
+/// use std::collections::BinaryHeap;
+///
+/// let heap: BinaryHeap<i32> = BinaryHeap::new();
+/// defer heap.free();
+///
+/// heap.push(2);
+/// heap.push(9);
+/// heap.push(5);
+///
+/// assert_eq!(heap.pop(), Option::some(9));
+/// assert_eq!(heap.pop(), Option::some(5));
+/// assert_eq!(heap.pop(), Option::some(2));
+/// assert_eq!(heap.pop(), Option::none());
+/// ```
+///
+/// Min-heap functionality can be achieved by using a `BinaryHeap` over a type
+/// that implements [cmp::Comparable] in reverse order.
+///
+/// ```
+/// use std::collections::BinaryHeap;
+/// use std::cmp::{Comparable, Ordering};
+///
+/// struct ReversedI32 { val: i32 }
+///
+/// impl ReversedI32 {
+///     fn compare(self: &ReversedI32, other: &ReversedI32) -> Ordering {
+///         other.val.compare(&self.val)
+///     }
+///
+///     mixin Comparable<ReversedI32>;
+/// }
+///
+/// let heap: BinaryHeap<ReversedI32> = BinaryHeap::new();
+/// defer heap.free();
+///
+/// heap.push(ReversedI32 { val: 2 });
+/// heap.push(ReversedI32 { val: 9 });
+/// heap.push(ReversedI32 { val: 5 });
+///
+/// assert_eq!(heap.pop(), Option::some(ReversedI32 { val: 2 }));
+/// assert_eq!(heap.pop(), Option::some(ReversedI32 { val: 5 }));
+/// assert_eq!(heap.pop(), Option::some(ReversedI32 { val: 9 }));
+/// assert_eq!(heap.pop(), Option::none());
+/// ```
+struct BinaryHeap<T: Comparable<T>> {
+    _data: Vector<T>
+}
+
+impl BinaryHeap<T: Comparable<T>> {
+    use iter::Iterator;
+
+    /// Creates an empty binary heap.
+    ///
+    /// This will not allocate until the first element is inserted.
+    fn new() -> BinaryHeap<T> {
+        BinaryHeap { _data: Vector::new() }
+    }
+
+    /// Create a heap that can hold up to `capacity` elements without reallocating.
+    fn with_capacity(capacity: usize) -> BinaryHeap<T> {
+        BinaryHeap { _data: Vector::with_capacity(capacity) }
+    }
+
+    /// Creates a heap from an existing vector.
+    ///
+    /// The vector will be heapified in-place.
+    fn from_vector(vector: Vector<T>) -> BinaryHeap<T> {
+        let heap = BinaryHeap { _data: vector };
+        heapify(heap._data.as_slice_mut());
+
+        heap
+    }
+
+    /// Creates a heap from an existing vector.
+    ///
+    /// The vector is assumed to be heapified. If it is not, the behavior is
+    /// undefined.
+    fn from_vector_raw(vector: Vector<T>) -> BinaryHeap<T> {
+        BinaryHeap { _data: vector }
+    }
+
+    /// Creates a heap from a slice of elements.
+    ///
+    /// The elements are copied into the heap and heapified.
+    fn from_slice(slice: &[T]) -> BinaryHeap<T> {
+        from_vector(Vector::from_slice(slice))
+    }
+
+    /// Creates a heap from an iterator.
+    fn from_iter<I: Iterator<I, T>>(iter: &mut I) -> BinaryHeap<T> {
+        let heap = BinaryHeap::new::<T>();
+        heap.extend(iter);
+        heap
+    }
+
+    /// Reserves capacity for at least `additional` more elements
+    /// to be inserted without reallocating.
+    fn reserve(self: &mut BinaryHeap<T>, additional: usize) {
+        self._data.reserve(additional);
+    }
+
+    /// Returns the maximum number of elements the heap can hold
+    /// without reallocating.
+    fn capacity(self: &BinaryHeap<T>) -> usize {
+        self._data.capacity()
+    }
+
+    /// Returns `true` if the heap contains no elements.
+    fn is_empty(self: &BinaryHeap<T>) -> bool {
+        self._data.is_empty()
+    }
+
+    /// Returns the number of elements in the heap.
+    fn len(self: &BinaryHeap<T>) -> usize {
+        self._data.len()
+    }
+
+    /// Extends the heap from an iterator.
+    fn extend<I: Iterator<I, T>>(self: &mut BinaryHeap<T>, iter: &mut I) {
+        self.reserve(iter.size_hint().unwrap_or(0));
+
+        loop {
+            let item = iter.next();
+            if item.is_some() {
+                self.push(item.unwrap());
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Extends the heap from a slice of elements.
+    fn extend_from_slice(self: &mut BinaryHeap<T>, slice: &[T]) {
+        let old_len = self.len();
+        self._data.extend_from_slice(slice);
+        heapify_tail(self._data.as_slice_mut(), old_len);
+    }
+
+    /// Inserts an element into the heap.
+    fn push(self: &mut BinaryHeap<T>, value: T) {
+        let old_len = self._data.len();
+        self._data.push(value);
+
+        sift_up(self._data.as_slice_mut(), 0, old_len);
+    }
+
+    /// Returns the largest element in the heap without removing it.
+    ///
+    /// Returns `Option::none()` if the heap is empty.
+    fn peek(self: &BinaryHeap<T>) -> Option<T> {
+        self._data.get(0)
+    }
+
+    /// Removes the maximum element in the heap, returning it.
+    ///
+    /// Returns `Option::none()` if the heap is empty.
+    fn pop(self: &mut BinaryHeap<T>) -> Option<T> {
+        self._data.pop().map(|=self, item: T| -> T {
+            if !self.is_empty() {
+                mem::swap(&item, &self._data._data[0]);
+                sift_down_to_bottom(self._data.as_slice_mut(), 0);
+            }
+
+            item
+        })
+    }
+
+    /// Shrink the size of the underlying buffer to the minimum size
+    /// needed to hold the current elements.
+    fn shrink_to_fit(self: &mut BinaryHeap<T>) {
+        self._data.shrink_to_fit();
+    }
+
+    /// Removes the elements not mathing the given predicate.
+    ///
+    /// Does not remove excess capacity, call [shrink_to_fit] afterwards, if this
+    /// is desired.
+    fn retain<F: Fn(&T) -> bool>(self: &mut BinaryHeap<T>, f: F) {
+        let first_removed = self.len();
+
+        let i = 0usize;
+        self._data.retain(|=f, &first_removed, &i, e: &T| -> bool {
+            let keep = f(e);
+            if !keep && i < first_removed {
+                first_removed = i;
+            }
+            i += 1;
+            keep
+        });
+
+        heapify_tail(self._data.as_slice_mut(), first_removed);
+    }
+
+    /// Returns an iterator over the elements in the heap.
+    ///
+    /// The iterator will return the elements in arbitrary order (satisfying the
+    /// heap property).
+    fn iter(self: &BinaryHeap<T>) -> mem::SliceIterator<&T> {
+        self._data.iter()
+    }
+
+    /// Returns a iterator over the pointers to elements in the heap.
+    ///
+    /// The iterator will return the elements in arbitrary order (satisfying the
+    /// heap property).
+    fn iter_ref(self: &BinaryHeap<T>) -> mem::SliceRefIterator<&T> {
+        self._data.iter_ref()
+    }
+
+    /// View the vector as a slice of elements in arbitrary order (satisfying the
+    /// heap property).
+    fn as_slice(self: &BinaryHeap<T>) -> &[T] {
+        self._data.as_slice()
+    }
+
+    /// Converts the heap into the underlying vector. The elements
+    /// are in no particular order (satisfying the heap property).
+    ///
+    /// `self` is emptied after this operation (like after [move]).
+    fn into_vector(self: &mut BinaryHeap<T>) -> Vector<T> {
+        self._data.move()
+    }
+
+    /// Converts the heap into the underlying vector. The elements
+    /// are additionally sorted in ascending order.
+    ///
+    /// `self` is emptied after this operation (like after [move]).
+    fn into_sorted_vector(self: &mut BinaryHeap<T>) -> Vector<T> {
+        unheapify(self._data.as_slice_mut());
+
+        self.into_vector()
+    }
+
+    /// Clears the heap, removing all values.
+    fn clear(self: &mut BinaryHeap<T>) {
+        self._data.clear();
+    }
+
+    /// Returns an iterator that removes all elements from the heap and yields them in
+    /// sorted order (descending).
+    fn iter_drain(self: &mut BinaryHeap<T>) -> HeapIterator<T> {
+        HeapIterator { heap: self }
+    }
+
+    /// @ mem::Freeable::free
+    fn free(self: &mut BinaryHeap<T>) {
+        self._data.free();
+    }
+
+    /// @ mem::Movable::move
+    fn move(self: &mut BinaryHeap<T>) -> BinaryHeap<T> {
+        BinaryHeap { _data: self._data.move() }
+    }
+
+    /// @ mem::Clonable::clone
+    fn clone(self: &BinaryHeap<T>) -> BinaryHeap<T> {
+        from_vector_raw(self._data.clone())
+    }
+}
+
+/// Draining heap iterator.
+///
+/// See [BinaryHeap::iter_drain].
+struct HeapIterator<T: Comparable<T>> {
+    heap: &mut BinaryHeap<T>,
+}
+
+impl HeapIterator<T: Comparable<T>> {
+    /// @ iter::Iterator::next
+    fn next(self: &mut HeapIterator<T>) -> Option<T> {
+        self.heap.pop()
+    }
+
+    /// @ iter::Iterator::size_hint
+    fn size_hint(self: &HeapIterator<T>) -> Option<usize> {
+        Option::some(self.heap.len())
+    }
+
+    mixin iter::Iterator<HeapIterator<T>, T>;
+    mixin iter::IteratorExt<HeapIterator<T>, T>;
+}
+
+/// Reorder the elements of a slice so they satisfy the (max) heap property.
+fn heapify<T: Comparable<T>>(self: &mut [T]) {
+    let n = self.len() / 2;
+    while n > 0 {
+        n -= 1;
+        self.sift_down(n);
+    }
+}
+
+/// Reorder the elements of a slice so they satisfy the (max) heap property.
+///
+/// This variant assumes that the prefix of the slice up to `start - 1` inclusive
+/// already satisfies the heap property.
+fn heapify_tail<T: Comparable<T>>(self: &mut [T], start: usize) {
+    if start == self.len() {
+        return;
+    }
+
+    let tail_len = self.len() - start;
+
+    fn log2_fast(x: usize) -> usize {
+        mem::size_of::<usize>() * 8 - (x.leading_zeros() as usize) - 1
+    }
+
+    let better_to_rebuild = if start < tail_len {
+        true
+    } else if self.len() <= 2048 {
+        2usize * self.len() < tail_len * log2_fast(start)
+    } else {
+        2usize * self.len() < tail_len * 11
+    };
+
+    if better_to_rebuild {
+        self.heapify();
+    } else {
+        for i in start..self.len() {
+            self.sift_up(0, i);
+        }
+    }
+}
+
+/// Sorts an array satisfying the max heap property in ascending order.
+fn unheapify<T: Comparable<T>>(self: &mut [T]) {
+    let end = self.len();
+    while end > 1 {
+        end -= 1;
+        mem::swap(&self[0], &self[end]);
+        self.sift_down_range(0, end);
+    }
+}
+
+/// Sifts an element up the heap until it reaches its correct position.
+fn sift_up<T: Comparable<T>>(self: &mut [T], start: usize, pos: usize) -> usize {
+    while pos > start {
+        let parent = (pos - 1) / 2;
+
+        if self[pos] <= self[parent] {
+            break;
+        }
+
+        mem::swap(&self[pos],  &self[parent]);
+        pos = parent;
+    }
+    pos
+}
+
+/// Sifts an element down the heap until it reaches its correct position.
+fn sift_down_range<T: Comparable<T>>(self: &mut [T], pos: usize, end: usize) {
+    let start = pos;
+    let child = 2usize * pos + 1;
+
+    while child + 2 <= end {
+        if self[child] <= self[child + 1] {
+            child += 1;
+        }
+
+        if self[pos] >= self[child] {
+            return;
+        }
+
+        std::mem::swap(&self[pos], &self[child]);
+        pos = child;
+        child = 2 * pos + 1;
+    }
+
+    if child == end - 1 && self[pos] < self[child] {
+        mem::swap(&self[pos], &self[child]);
+    }
+}
+
+/// Sifts an element down the heap until it reaches its correct position.
+fn sift_down<T: Comparable<T>>(self: &mut [T], pos: usize) {
+    let len = self.len();
+    self.sift_down_range(pos, len);
+}
+
+/// Sifts an element to the bottom of the heap, then sifts it up until it reaches
+/// its correct position.
+///
+/// This is apparently faster than just calling `sift_down` until the element
+/// reaches the correct position.
+fn sift_down_to_bottom<T: Comparable<T>>(self: &mut [T], pos: usize) {
+    let end = self.len();
+    let start = pos;
+
+    let child = 2usize * pos + 1;
+    while child + 2 <= end {
+        if self[child] <= self[child + 1] {
+            child += 1;
+        }
+        mem::swap(&self[pos], &self[child]);
+        pos = child;
+        child = 2 * pos + 1;
+    }
+    if child == end - 1 {
+        mem::swap(&self[pos], &self[child]);
+        pos = child;
+    }
+
+    self.sift_up(start, pos);
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_basic() {
+        let heap: BinaryHeap<i32> = BinaryHeap::new();
+        defer heap.free();
+
+        assert!(heap.is_empty());
+        assert_eq!(heap.len(), 0);
+
+        heap.push(2);
+        heap.push(6);
+        heap.push(5);
+
+        assert!(!heap.is_empty());
+        assert_eq!(heap.len(), 3);
+
+        assert_eq!(heap.pop(), Option::some(6));
+        assert_eq!(heap.pop(), Option::some(5));
+        assert_eq!(heap.pop(), Option::some(2));
+        assert_eq!(heap.pop(), Option::none());
+    }
+
+    #[test]
+    fn test_peek() {
+        let heap: BinaryHeap<i32> = BinaryHeap::new();
+        defer heap.free();
+
+        assert_eq!(heap.peek(), Option::none());
+
+        heap.push(2);
+        heap.push(6);
+        heap.push(5);
+
+        assert_eq!(heap.peek(), Option::some(6));
+        assert_eq!(heap.peek(), Option::some(6));
+    }
+
+    #[test]
+    fn test_from_slice() {
+        let heap = BinaryHeap::from_slice(&[ 5, 8, 2, 7, 6, 10, 3, 1, 9, 4 ]);
+        defer heap.free();
+
+        assert_eq!(heap.pop(), Option::some(10));
+        assert_eq!(heap.pop(), Option::some(9));
+        assert_eq!(heap.pop(), Option::some(8));
+        assert_eq!(heap.pop(), Option::some(7));
+        assert_eq!(heap.pop(), Option::some(6));
+        assert_eq!(heap.pop(), Option::some(5));
+        assert_eq!(heap.pop(), Option::some(4));
+        assert_eq!(heap.pop(), Option::some(3));
+        assert_eq!(heap.pop(), Option::some(2));
+        assert_eq!(heap.pop(), Option::some(1));
+        assert_eq!(heap.pop(), Option::none());
+    }
+
+    #[test]
+    fn test_from_iter() {
+        let heap: BinaryHeap<i32> = BinaryHeap::from_iter(&[ 5, 8, 2, 7, 6, 10, 3, 1, 9, 4 ].iter());
+        defer heap.free();
+
+        assert_eq!(heap.pop(), Option::some(10));
+        assert_eq!(heap.pop(), Option::some(9));
+        assert_eq!(heap.pop(), Option::some(8));
+        assert_eq!(heap.pop(), Option::some(7));
+        assert_eq!(heap.pop(), Option::some(6));
+        assert_eq!(heap.pop(), Option::some(5));
+        assert_eq!(heap.pop(), Option::some(4));
+        assert_eq!(heap.pop(), Option::some(3));
+        assert_eq!(heap.pop(), Option::some(2));
+        assert_eq!(heap.pop(), Option::some(1));
+        assert_eq!(heap.pop(), Option::none());
+    }
+
+    #[test]
+    fn test_extend_from_slice() {
+        let heap: BinaryHeap<i32> = BinaryHeap::new();
+        defer heap.free();
+
+        heap.push(6);
+        heap.push(10);
+        heap.push(3);
+        heap.extend_from_slice(&[ 5, 8, 2, 7, 1, 9, 4 ]);
+
+        assert_eq!(heap.pop(), Option::some(10));
+        assert_eq!(heap.pop(), Option::some(9));
+        assert_eq!(heap.pop(), Option::some(8));
+        assert_eq!(heap.pop(), Option::some(7));
+        assert_eq!(heap.pop(), Option::some(6));
+        assert_eq!(heap.pop(), Option::some(5));
+        assert_eq!(heap.pop(), Option::some(4));
+        assert_eq!(heap.pop(), Option::some(3));
+        assert_eq!(heap.pop(), Option::some(2));
+        assert_eq!(heap.pop(), Option::some(1));
+        assert_eq!(heap.pop(), Option::none());
+    }
+
+    #[test]
+    fn test_retain() {
+        let heap = BinaryHeap::from_slice(&[ 5, 8, 2, 7, 6, 10, 3, 1, 9, 4 ]);
+        defer heap.free();
+
+        heap.retain(|i: &i32| -> bool { *i > 3 });
+
+        assert_eq!(heap.pop(), Option::some(10));
+        assert_eq!(heap.pop(), Option::some(9));
+        assert_eq!(heap.pop(), Option::some(8));
+        assert_eq!(heap.pop(), Option::some(7));
+        assert_eq!(heap.pop(), Option::some(6));
+        assert_eq!(heap.pop(), Option::some(5));
+        assert_eq!(heap.pop(), Option::some(4));
+        assert_eq!(heap.pop(), Option::none());
+    }
+
+    #[test]
+    fn test_clear() {
+        let heap = BinaryHeap::from_slice(&[ 5, 8, 2, 7, 6, 10, 3, 1, 9, 4 ]);
+        defer heap.free();
+
+        heap.clear();
+
+        assert!(heap.is_empty());
+        assert_eq!(heap.len(), 0);
+    }
+
+    #[test]
+    fn test_into_vector() {
+        let heap = BinaryHeap::from_slice(&[ 5, 8, 2, 7, 6, 10, 3, 1, 9, 4 ]);
+        defer heap.free();
+
+        let vec = heap.into_vector();
+        defer vec.free();
+
+        // "Arbitrary" order that satisfies the heap property.
+        assert_eq!(vec.as_slice(), &[ 10, 9, 5, 8, 6, 2, 3, 1, 7, 4 ]);
+    }
+
+    #[test]
+    fn test_as_slice() {
+        let heap = BinaryHeap::from_slice(&[ 5, 8, 2, 7, 6, 10, 3, 1, 9, 4 ]);
+        defer heap.free();
+
+        // "Arbitrary" order that satisfies the heap property.
+        assert_eq!(heap.as_slice(), &[ 10, 9, 5, 8, 6, 2, 3, 1, 7, 4 ]);
+    }
+
+    #[test]
+    fn test_iter() {
+        let heap = BinaryHeap::from_slice(&[ 5, 8, 2, 7, 6, 10, 3, 1, 9, 4 ]);
+        defer heap.free();
+
+        let iter = heap.iter();
+        assert_eq!(iter.next(), Option::some(10));
+        assert_eq!(iter.next(), Option::some(9));
+        assert_eq!(iter.next(), Option::some(5));
+        assert_eq!(iter.next(), Option::some(8));
+        assert_eq!(iter.next(), Option::some(6));
+        assert_eq!(iter.next(), Option::some(2));
+        assert_eq!(iter.next(), Option::some(3));
+        assert_eq!(iter.next(), Option::some(1));
+        assert_eq!(iter.next(), Option::some(7));
+        assert_eq!(iter.next(), Option::some(4));
+        assert_eq!(iter.next(), Option::none());
+    }
+
+    #[test]
+    fn test_iter_ref() {
+        let heap = BinaryHeap::from_slice(&[ 5, 8, 2, 7, 6, 10, 3, 1, 9, 4 ]);
+        defer heap.free();
+
+        let iter = heap.iter_ref();
+        assert_eq!(*iter.next().unwrap(), 10);
+        assert_eq!(*iter.next().unwrap(), 9);
+        assert_eq!(*iter.next().unwrap(), 5);
+        assert_eq!(*iter.next().unwrap(), 8);
+        assert_eq!(*iter.next().unwrap(), 6);
+        assert_eq!(*iter.next().unwrap(), 2);
+        assert_eq!(*iter.next().unwrap(), 3);
+        assert_eq!(*iter.next().unwrap(), 1);
+        assert_eq!(*iter.next().unwrap(), 7);
+        assert_eq!(*iter.next().unwrap(), 4);
+        assert!(!iter.next().is_some());
+    }
+
+    #[test]
+    fn test_iter_drain() {
+        let heap = BinaryHeap::from_slice(&[ 5, 8, 2, 7, 6, 10, 3, 1, 9, 4 ]);
+        defer heap.free();
+
+        let iter = heap.iter_drain();
+        assert_eq!(iter.next(), Option::some(10));
+        assert_eq!(iter.next(), Option::some(9));
+        assert_eq!(iter.next(), Option::some(8));
+        assert_eq!(iter.next(), Option::some(7));
+        assert_eq!(iter.next(), Option::some(6));
+        assert_eq!(iter.next(), Option::some(5));
+        assert_eq!(iter.next(), Option::some(4));
+        assert_eq!(iter.next(), Option::some(3));
+        assert_eq!(iter.next(), Option::some(2));
+        assert_eq!(iter.next(), Option::some(1));
+        assert_eq!(iter.next(), Option::none());
+
+        assert!(heap.is_empty());
+        assert_eq!(heap.len(), 0);
+    }
+
+    #[test]
+    fn test_into_sorted_vector() {
+        let heap = BinaryHeap::from_slice(&[ 5, 8, 2, 7, 6, 10, 3, 1, 9, 4 ]);
+        defer heap.free();
+
+        let vec = heap.into_sorted_vector();
+        defer vec.free();
+
+        assert_eq!(vec.as_slice(), &[ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]);
+    }
+
+    #[test]
+    fn test_clone() {
+        let heap = BinaryHeap::from_slice(&[ 5, 8, 2, 7, 6, 10, 3, 1, 9, 4 ]);
+        defer heap.free();
+
+        let heap2 = heap.clone();
+        defer heap2.free();
+
+        assert_eq!(heap2.pop(), Option::some(10));
+        assert_eq!(heap2.pop(), Option::some(9));
+        assert_eq!(heap2.pop(), Option::some(8));
+        assert_eq!(heap2.pop(), Option::some(7));
+        assert_eq!(heap2.pop(), Option::some(6));
+        assert_eq!(heap2.pop(), Option::some(5));
+        assert_eq!(heap2.pop(), Option::some(4));
+        assert_eq!(heap2.pop(), Option::some(3));
+        assert_eq!(heap2.pop(), Option::some(2));
+        assert_eq!(heap2.pop(), Option::some(1));
+        assert_eq!(heap2.pop(), Option::none());
+    }
+}

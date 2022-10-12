@@ -469,7 +469,7 @@ fn read_directory(path: Path) -> Result<DirIterator> {
 /// println!("Current directory: {}", cwd);
 /// ```
 fn canonicalize(path: Path) -> Result<PathBuf> {
-    use std::ffi::CString;
+    use ffi::CString;
 
     let path_c = CString::from_slice(path.inner);
     defer path_c.free();
@@ -506,7 +506,7 @@ impl FileType {
 
     /// @ fmt::Formattable::fmt
     fn fmt<F: std::fmt::Formatter<F>>(self: &FileType, fmt: &mut F) -> std::fmt::Result {
-        use std::fmt::write;
+        use fmt::write;
         switch *self {
             FileType::Unknown => write!(fmt, "unknown"),
             FileType::Fifo => write!(fmt, "fifo"),
@@ -573,7 +573,7 @@ impl FileAttr {
 #[cfg(all(test, test_std))]
 mod tests {
     use fmt::{hex, zero_pad, format, format_in};
-    use cmp::sort_by;
+    use cmp::sort_by_key;
     use collections::free_all;
     use string::StringBuf;
 
@@ -662,7 +662,7 @@ mod tests {
             .to_vector();
         defer entries.free_all();
 
-        entries.as_slice_mut().sort_by(|e: &StringBuf| -> &[u8] { e.as_slice() });
+        entries.as_slice_mut().sort_by_key(|e: &StringBuf| -> &[u8] { e.as_slice() });
 
         let it = entries.iter_ref().map(StringBuf::as_slice::<u8>);
 

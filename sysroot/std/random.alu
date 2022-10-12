@@ -18,7 +18,7 @@
 //! The module also provides a [Pcg32], a decent general purpose pseudo-random generator, [OsRng] backed by the OS-provided
 //! random number generator, and [thread_rng], a convenience thread-local random generator that does not need manual seeding.
 
-use std::builtins::{Unsigned, Integer, FloatingPoint};
+use builtins::{Unsigned, Integer, FloatingPoint};
 
 /// Random number generators
 ///
@@ -159,7 +159,7 @@ type DefaultRng = Pcg32;
     ///
     /// ## Usage notes
     /// `OsRng` is generally considered to be safe to use for cryptographic purposes. However, since
-    /// it results in a syscall for each operation, it may not be a good general-purpose RNG.
+    /// it results in a syscall for each operation, it may be too slow when used as a general-purpose RNG.
     ///
     /// Good choice for seeding other RNGs.
     struct OsRng {
@@ -273,7 +273,7 @@ protocol RngExt<Self: Rng<Self>> {
     /// ```
     fn next<T: Integer, R: builtins::RangeOf<T>>(rng: &mut Self, range: R) -> T {
         use builtins::unsigned_of;
-        use std::range::{Range, RangeInclusive, RangeTo, RangeToInclusive, RangeFrom, RangeFull};
+        use range::{Range, RangeInclusive, RangeTo, RangeToInclusive, RangeFrom, RangeFull};
 
         when R: Range<T> {
             assert!(range.lower < range.upper);
@@ -341,7 +341,7 @@ protocol RngExt<Self: Rng<Self>> {
     /// }
     /// ```
     fn shuffle<T>(rng: &mut Self, slice: &mut [T]) {
-        use std::mem::swap;
+        use mem::swap;
 
         let i = 0usize;
         while i < slice.len() {
