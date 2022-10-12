@@ -172,7 +172,7 @@ impl<'ir> ZstElider<'ir> {
                 let inner = self.elide_zst_expr(inner);
                 if inner.ty.is_zero_sized() {
                     builder.block(
-                        [Statement::Expression(self.elide_zst_expr(inner))],
+                        [Statement::Expression(inner)],
                         builder.ret(builder.void(expr.ty, expr.value_type)),
                     )
                 } else {
