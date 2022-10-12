@@ -146,10 +146,10 @@ impl Reversed<T: Comparable<T>> {
 ///
 /// ## Example
 /// ```
-/// use std::cmp::{sort_by, reversed};
+/// use std::cmp::{sort_by_key, reversed};
 ///
 /// let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
-/// slice.sort_by(reversed::<i32>);
+/// slice.sort_by_key(reversed::<i32>);
 ///
 /// assert_eq!(slice, &[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
 /// ```
@@ -225,25 +225,40 @@ fn min<T: Comparable<T>>(a: T, b: T) -> T {
     }
 }
 
-/// Sorts a slice using a key extraction function.
+/// Sorts a slice using a custom comparison function.
 ///
 /// ## Example
 /// ```
-/// use std::cmp::sort_by;
+/// use std::cmp::{Ordering, sort_by};
 ///
 /// let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
-/// slice.sort_by(|v: &i32| -> i32 { -*v });
+/// slice.sort_by(|a: &i32, b: &i32| -> Ordering { b.compare(a) });
 ///
 /// assert_eq!(slice, &[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
 /// ```
-fn sort_by<T, F: Fn(&T) -> K, K: Comparable<K>>(arr: &mut [T], key: F) {
+fn sort_by<T, F: Fn(&T, &T) -> Ordering>(arr: &mut [T], f: F) {
     if arr.len() <= 1 {
         return;
     }
 
-    let p = internal::partition_by(arr, key);
-    sort_by(arr[..p], key);
-    sort_by(arr[p+1..], key);
+    let p = internal::partition_by(arr, f);
+    sort_by(arr[..p], f);
+    sort_by(arr[p+1..], f);
+}
+
+/// Sorts a slice using a key extraction function.
+///
+/// ## Example
+/// ```
+/// use std::cmp::sort_by_key;
+///
+/// let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
+/// slice.sort_by_key(|v: &i32| -> i32 { -*v });
+///
+/// assert_eq!(slice, &[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
+/// ```
+fn sort_by_key<T, F: Fn(&T) -> K, K: Comparable<K>>(arr: &mut [T], key: F) {
+    arr.sort_by(|=key, a: &T, b: &T| -> Ordering { key(a).compare(&key(b)) });
 }
 
 /// Sorts a slice.
@@ -260,7 +275,81 @@ fn sort_by<T, F: Fn(&T) -> K, K: Comparable<K>>(arr: &mut [T], key: F) {
 /// assert_eq!(slice, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 /// ```
 fn sort<T: Comparable<T>>(arr: &mut [T]) {
-    sort_by(arr, |k: &T| -> T { *k });
+    arr.sort_by(|a: &T, b: &T| -> Ordering { a.compare(b) });
+}
+
+
+/// Performs a binary search on a sorted slice.
+///
+/// If the element is found, returns `Result::ok(index)`, otherwise returns the index where the
+/// element should be inserted as `Result::err(index)`.
+///
+/// ## Example
+/// ```
+/// use std::cmp::binary_search;
+///
+/// let slice = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].as_slice();
+/// assert_eq!(slice.binary_search(&5), Result::ok(4usize));
+/// assert_eq!(slice.binary_search(&11), Result::err(10usize));
+/// ```
+fn binary_search<T: Comparable<T>>(arr: &[T], needle: &T) -> Result<usize, usize> {
+    arr.binary_search_by(|=needle, k: &T| -> Ordering { k.compare(needle) })
+}
+
+/// Performs a binary search on a sorted slice using a custom comparison function.
+///
+/// If the element is found, returns `Result::ok(index)`, otherwise returns the index where the
+/// element should be inserted as `Result::err(index)`.
+///
+/// ## Example
+/// ```
+/// use std::cmp::{Ordering, binary_search_by};
+///
+/// let slice = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].as_slice();
+/// assert_eq!(slice.binary_search_by(|k: &i32| -> Ordering { k.compare(&5) }), Result::ok(4usize));
+/// assert_eq!(slice.binary_search_by(|k: &i32| -> Ordering { k.compare(&11) }), Result::err(10usize));
+/// ```
+fn binary_search_by<T, F: Fn(&T) -> Ordering>(arr: &[T], f: F) -> Result<usize, usize> {
+    let size = arr.len();
+    let left = 0usize;
+    let right = size;
+
+    while left < right {
+        let mid = left + size / 2;
+        let cmp = f(&arr[mid]);
+
+        switch cmp {
+            Ordering::Less => left = mid + 1,
+            Ordering::Greater => right = mid,
+            _ => return Result::ok(mid)
+        }
+
+        size = right - left;
+    }
+
+    Result::err(left)
+}
+
+/// Performs a binary search on a sorted slice using a key extraction function.
+///
+/// If the element is found, returns `Result::ok(index)`, otherwise returns the index where the
+/// element should be inserted as `Result::err(index)`.
+///
+/// ## Example
+/// ```
+/// use std::cmp::binary_search_by_key;
+///
+/// let slice = [
+///     (0, 0), (1, 2), (2, 4),
+///     (3, 6), (4, 8), (5, 10),
+///     (6, 12), (7, 14), (8, 16)
+/// ].as_slice();
+///
+/// assert_eq!(slice.binary_search_by_key(&5, |v: &(i32, i32)| -> i32 { v.0 }), Result::ok(5usize));
+/// assert_eq!(slice.binary_search_by_key(&11, |v: &(i32, i32)| -> i32 { v.0 }), Result::err(9usize));
+/// ```
+fn binary_search_by_key<T, F: Fn(&T) -> K, K: Comparable<K>>(arr: &[T], needle: &K, key: F) -> Result<usize, usize> {
+    arr.binary_search_by(|=needle, =key, k: &T| -> Ordering { key(k).compare(needle) })
 }
 
 
@@ -301,14 +390,14 @@ mod internal {
         lhs.greater_than_or_equal(rhs)
     }
 
-    fn partition_by<T, F: Fn(&T) -> K, K: Comparable<K>>(arr: &mut [T], key: F) -> usize {
-        use std::mem::swap;
+    fn partition_by<T, F: Fn(&T, &T) -> Ordering>(arr: &mut [T], f: F) -> usize {
+        use mem::swap;
 
         let pivot = arr[arr.len() - 1];
         let i = 0usize;
         let j = 0usize;
         while j < arr.len() - 1 {
-            if key(&arr[j]) <= key(&pivot) {
+            if f(&arr[j], &pivot) != Ordering::Greater {
                 swap(&arr[i], &arr[j]);
                 i += 1;
             }
@@ -330,10 +419,47 @@ mod tests {
     }
 
     #[test]
-    fn test_sort_by() {
+    fn test_sort_by_key() {
         let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
-        sort_by(slice, |x: &i32| -> i32 { -*x });
+        sort_by_key(slice, |x: &i32| -> i32 { -*x });
 
         assert_eq!(slice, &[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
+    }
+
+    #[test]
+    fn test_sort_by() {
+        let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
+        sort_by(slice, |x: &i32, y: &i32| -> Ordering { x.compare(y) });
+
+        assert_eq!(slice, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    }
+
+    #[test]
+    fn test_binary_search() {
+        let slice = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].as_slice();
+        assert_eq!(slice.binary_search(&5), Result::ok(4usize));
+        assert_eq!(slice.binary_search(&11), Result::err(10usize));
+    }
+
+    #[test]
+    fn test_binary_search_by() {
+        let slice = [
+            (0, 0), (1, 2), (2, 4),
+            (3, 6), (4, 8), (5, 10),
+            (6, 12), (7, 14), (8, 16)
+        ].as_slice();
+        assert_eq!(slice.binary_search_by(|v: &(i32, i32)| -> Ordering { v.0.compare(&5) }), Result::ok(5usize));
+        assert_eq!(slice.binary_search_by(|v: &(i32, i32)| -> Ordering { v.0.compare(&11) }), Result::err(9usize));
+    }
+
+    #[test]
+    fn test_binary_search_by_key() {
+        let slice = [
+            (0, 0), (1, 2), (2, 4),
+            (3, 6), (4, 8), (5, 10),
+            (6, 12), (7, 14), (8, 16)
+        ].as_slice();
+        assert_eq!(slice.binary_search_by_key(&5, |v: &(i32, i32)| -> i32 { v.0 }), Result::ok(5usize));
+        assert_eq!(slice.binary_search_by_key(&11, |v: &(i32, i32)| -> i32 { v.0 }), Result::err(9usize));
     }
 }

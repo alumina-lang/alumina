@@ -1,7 +1,7 @@
-use std::hash::{Hashable, Hasher, DefaultHash};
-use std::option::{Option, try};
-use std::iter::{Iterator, Iterable};
-use std::cmp::Equatable;
+use hash::{Hashable, Hasher, DefaultHash};
+use option::{Option, try};
+use iter::{Iterator, Iterable};
+use cmp::Equatable;
 
 /// A hash-based set collection.
 ///
@@ -18,9 +18,9 @@ use std::cmp::Equatable;
 /// map.insert(2);
 /// map.insert(3);
 ///
-/// assert!(map.contains(1));
-/// assert!(map.contains(2));
-/// assert!(map.contains(3));
+/// assert!(map.contains(&1));
+/// assert!(map.contains(&2));
+/// assert!(map.contains(&3));
 /// ```
 struct HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
     _inner: hashmap::HashMap<K, (), H>
@@ -89,13 +89,13 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
     ///
     /// Returns `true` if the value was present in the set, `false` otherwise.
     #[inline]
-    fn remove(self: &mut HashSet<K, H>, item: K) -> bool {
+    fn remove(self: &mut HashSet<K, H>, item: &K) -> bool {
         self._inner.remove(item).is_some()
     }
 
     /// Retreives `true` if the set contains the given value, `false` otherwise.
     #[inline]
-    fn contains(self: &HashSet<K, H>, item: K) -> bool {
+    fn contains(self: &HashSet<K, H>, item: &K) -> bool {
         self._inner.get(item).is_some()
     }
 
@@ -151,9 +151,9 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
     ///
     /// set.retain(|x: &i32| -> bool { *x % 2 == 0 });
     ///
-    /// assert!(!set.contains(1));
-    /// assert!(set.contains(2));
-    /// assert!(!set.contains(3));
+    /// assert!(!set.contains(&1));
+    /// assert!(set.contains(&2));
+    /// assert!(!set.contains(&3));
     /// ```
     fn retain<F: Fn(&K) -> bool>(self: &mut HashSet<K, H>, func: F) {
         self._inner.retain(|&func, k: &K, v: &()| -> bool { func(k) });
@@ -191,9 +191,9 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, I: Iterator<I, K>, H: Hasher<H> =
     /// defer set.free();
     ///
     /// assert_eq!(set.len(), 3);
-    /// assert!(set.contains(1));
-    /// assert!(set.contains(2));
-    /// assert!(set.contains(3));
+    /// assert!(set.contains(&1));
+    /// assert!(set.contains(&2));
+    /// assert!(set.contains(&3));
     /// ```
     fn from_iter(iter: &mut I) -> HashSet<K, H> {
         let set = HashSet::new::<K, H>();
@@ -309,8 +309,8 @@ mod tests {
         defer set.free();
 
         assert!(set.insert(1));
-        assert!(set.remove(1));
-        assert!(!set.remove(1));
+        assert!(set.remove(&1));
+        assert!(!set.remove(&1));
         assert!(set.is_empty());
     }
 
@@ -319,9 +319,9 @@ mod tests {
         let set = HashSet::new::<i32>();
         defer set.free();
 
-        assert!(!set.contains(1));
+        assert!(!set.contains(&1));
         assert!(set.insert(1));
-        assert!(set.contains(1));
+        assert!(set.contains(&1));
     }
 
     #[test]
@@ -343,7 +343,7 @@ mod tests {
         assert!(set.is_empty());
         assert!(set.insert(1));
         assert!(!set.is_empty());
-        assert!(set.remove(1));
+        assert!(set.remove(&1));
         assert!(set.is_empty());
     }
 
@@ -419,9 +419,9 @@ mod tests {
         defer set2.free();
 
         assert_eq!(set2.len(), 3);
-        assert!(set2.contains(1));
-        assert!(set2.contains(2));
-        assert!(set2.contains(3));
+        assert!(set2.contains(&1));
+        assert!(set2.contains(&2));
+        assert!(set2.contains(&3));
         assert!(set.is_empty());
     }
 
@@ -431,9 +431,9 @@ mod tests {
         defer set.free();
 
         assert_eq!(set.len(), 3);
-        assert!(set.contains(1));
-        assert!(set.contains(2));
-        assert!(set.contains(3));
+        assert!(set.contains(&1));
+        assert!(set.contains(&2));
+        assert!(set.contains(&3));
     }
 
     #[test]
@@ -443,8 +443,8 @@ mod tests {
 
         set.extend(&[1, 2, 3].iter());
         assert_eq!(set.len(), 3);
-        assert!(set.contains(1));
-        assert!(set.contains(2));
-        assert!(set.contains(3));
+        assert!(set.contains(&1));
+        assert!(set.contains(&2));
+        assert!(set.contains(&3));
     }
 }

@@ -466,8 +466,8 @@ impl Command {
 
 mod internal {
     use io::{Readable, AsFileDescriptor};
+    use io::unix::{ErrorKind, errno_try};
     use fs::Path;
-    use std::io::unix::{ErrorKind, errno_try};
     use string::StringBuf;
 
     extern "C" static environ: &&libc::c_char;
@@ -587,7 +587,7 @@ mod internal {
         }
 
         fn install(self: &mut ChildStdio, fd: libc::c_int) -> Result<()> {
-            use std::fs::{File, OpenOptions};
+            use fs::{File, OpenOptions};
             if self.theirs.is_some() {
                 errno_try!(libc::dup2(self.theirs.unwrap().value, fd));
             }

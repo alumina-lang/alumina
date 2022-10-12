@@ -1,7 +1,7 @@
-use std::hash::{Hashable, Hasher, DefaultHash, hash_of};
-use std::option::{Option, try};
-use std::cmp::Equatable;
-use std::iter::Iterator;
+use hash::{Hashable, Hasher, DefaultHash, hash_of};
+use option::{Option, try};
+use cmp::Equatable;
+use iter::Iterator;
 
 const INITIAL_SIZE: usize = 32;
 
@@ -19,10 +19,10 @@ const INITIAL_SIZE: usize = 32;
 /// map.insert(2, 4);
 /// map.insert(3, 5);
 ///
-/// assert!(map.get(1) == Option::some(2));
-/// assert!(map.get(2) == Option::some(4));
-/// assert!(map.get(3) == Option::some(5));
-/// assert!(map.get(4) == Option::none());
+/// assert!(map.get(&1) == Option::some(2));
+/// assert!(map.get(&2) == Option::some(4));
+/// assert!(map.get(&3) == Option::some(5));
+/// assert!(map.get(&4) == Option::none());
 /// ```
 struct HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     _buckets: &mut [HashItem<(K, V)>],
@@ -30,7 +30,7 @@ struct HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> 
 }
 
 impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
-    use std::mem::slice;
+    use mem::slice;
 
     /// Creates an empty hash map
     ///
@@ -72,14 +72,14 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     /// map.reserve(100);
     ///
     /// map.insert(1, 2);
-    /// let ptr = map.get_ref(1).unwrap();
+    /// let ptr = map.get_ref(&1).unwrap();
     ///
     /// for i in 1..100 {
     ///     map.insert(i, i * 2);
     /// }
     ///
     /// /// The first element is still at the same position.
-    /// assert_eq!(ptr, map.get_ref(1).unwrap());
+    /// assert_eq!(ptr, map.get_ref(&1).unwrap());
     /// ```
     fn reserve(self: &mut HashMap<K, V, H>, additional: usize) -> bool {
         // We keep the load factor below 0.75.
@@ -129,17 +129,17 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     }
 
     /// Retreives the value by given key.
-    fn get(self: &HashMap<K, V, H>, key: K) -> Option<V> {
+    fn get(self: &HashMap<K, V, H>, key: &K) -> Option<V> {
         Option::some(self._get_slot(key)?.item.1)
     }
 
     /// Retreives a pointer to the value by given key.
-    fn get_ref(self: &HashMap<K, V, H>, key: K) -> Option<&V> {
+    fn get_ref(self: &HashMap<K, V, H>, key: &K) -> Option<&V> {
         Option::some(&self._get_slot(key)?.item.1 as &V)
     }
 
     /// Retreives a mutable pointer to the value by given key.
-    fn get_mut(self: &mut HashMap<K, V, H>, key: K) -> Option<&mut V> {
+    fn get_mut(self: &mut HashMap<K, V, H>, key: &K) -> Option<&mut V> {
         Option::some(&self._get_slot(key)?.item.1)
     }
 
@@ -147,7 +147,7 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     ///
     /// If the element with the given key was present in the map, the corresponding value is
     /// returned. Otherwise, `Option::none()` is returned.
-    fn remove(self: &mut HashMap<K, V, H>, key: K) -> Option<V> {
+    fn remove(self: &mut HashMap<K, V, H>, key: &K) -> Option<V> {
         let item = self._get_slot(key)?;
         self._length -= 1;
         item.state = State::Deleted;
@@ -249,12 +249,14 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
         }
     }
 
-    fn _get_slot(self: &HashMap<K, V, H>, key: K) -> Option<&mut HashItem<(K, V)>> {
+    fn _get_slot(self: &HashMap<K, V, H>, key: &K) -> Option<&mut HashItem<(K, V)>> {
         if self._length == 0 {
             return Option::none();
         }
 
-        let initial_index = (hash_of::<K, H>(key) as usize) % self._buckets.len();
+        let hasher = H::new();
+        key.hash(&hasher);
+        let initial_index = (hasher.finish() as usize) % self._buckets.len();
         let index = initial_index;
 
         loop {
@@ -263,7 +265,7 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
                     return Option::none();
                 }
                 State::Occupied => {
-                    if self._buckets[index].item.0 == key {
+                    if self._buckets[index].item.0.equals(key) {
                         return Option::some(&self._buckets[index]);
                     }
                 }
@@ -295,10 +297,10 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     ///
     /// map.retain(|k: &i32, v: &i32| -> bool { *k == *v });
     ///
-    /// assert_eq!(map.get(1), Option::some(1));
-    /// assert_eq!(map.get(2), Option::none());
-    /// assert_eq!(map.get(3), Option::none());
-    /// assert_eq!(map.get(4), Option::some(4));
+    /// assert_eq!(map.get(&1), Option::some(1));
+    /// assert_eq!(map.get(&2), Option::none());
+    /// assert_eq!(map.get(&3), Option::none());
+    /// assert_eq!(map.get(&4), Option::some(4));
     /// ```
     fn retain<F: Fn(&K, &V) -> bool>(self: &mut HashMap<K, V, H>, func: F) {
         let deleted = 0usize;
@@ -353,7 +355,7 @@ impl HashMap<
     /// defer map.free();
     ///
     /// assert!(map.len() == 3);
-    /// assert!(map.get(1) == Option::some(2));
+    /// assert!(map.get(&1) == Option::some(2));
     /// ```
     fn from_iter(iter: &mut I) -> HashMap<K, V, H> {
         let map = HashMap::new::<K, V, H>();
@@ -570,10 +572,10 @@ mod tests {
         map.insert(2, 4);
         map.insert(3, 5);
 
-        assert!(map.get(1) == Option::some(2));
-        assert!(map.get(2) == Option::some(4));
-        assert!(map.get(3) == Option::some(5));
-        assert!(map.get(4) == Option::none());
+        assert!(map.get(&1) == Option::some(2));
+        assert!(map.get(&2) == Option::some(4));
+        assert!(map.get(&3) == Option::some(5));
+        assert!(map.get(&4) == Option::none());
     }
 
     #[test]
@@ -585,9 +587,9 @@ mod tests {
         map.insert(2, 4);
         map.insert(3, 5);
 
-        *map.get_mut(1).unwrap() = 3;
+        *map.get_mut(&1).unwrap() = 3;
 
-        assert!(map.get(1) == Option::some(3));
+        assert!(map.get(&1) == Option::some(3));
     }
 
     #[test]
@@ -599,10 +601,10 @@ mod tests {
         map.insert(2, 4);
         map.insert(3, 5);
 
-        assert!(map.remove(1) == Option::some(2));
-        assert!(map.remove(2) == Option::some(4));
-        assert!(map.remove(3) == Option::some(5));
-        assert!(map.remove(4) == Option::none());
+        assert!(map.remove(&1) == Option::some(2));
+        assert!(map.remove(&2) == Option::some(4));
+        assert!(map.remove(&3) == Option::some(5));
+        assert!(map.remove(&4) == Option::none());
     }
 
     #[test]
@@ -728,8 +730,8 @@ mod tests {
         assert_eq!(*v.1, 5);
         *v.1 = 200;
 
-        assert_eq!(map.get(1).unwrap(), 100);
-        assert_eq!(map.get(3).unwrap(), 200);
+        assert_eq!(map.get(&1).unwrap(), 100);
+        assert_eq!(map.get(&3).unwrap(), 200);
     }
 
     #[test]
