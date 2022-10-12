@@ -68,7 +68,19 @@
 <a href="/std/cmp/#item.sort_by">sort_by</a>
 </li>
 <li>
+<a href="/std/cmp/#item.sort_by_key">sort_by_key</a>
+</li>
+<li>
 <a href="/std/cmp/#item.sort">sort</a>
+</li>
+<li>
+<a href="/std/cmp/#item.binary_search">binary_search</a>
+</li>
+<li>
+<a href="/std/cmp/#item.binary_search_by">binary_search_by</a>
+</li>
+<li>
+<a href="/std/cmp/#item.binary_search_by_key">binary_search_by_key</a>
 </li>
 </ul>
 <h2>Enums</h2>
@@ -162,13 +174,13 @@ Reverses the ordering of a Comparable.
 </p>
 <h3> Example</h3>
 <p>
-<pre class="with-playground-link"><code class="language-alumina">use std::cmp::{sort_by, reversed};
+<pre class="with-playground-link"><code class="language-alumina">use std::cmp::{sort_by_key, reversed};
 
 let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
-slice.sort_by(reversed::&lt;i32&gt;);
+slice.sort_by_key(reversed::&lt;i32&gt;);
 
 assert_eq!(slice, &amp;[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acmp%3a%3a%7bsort%5fby%2c%20reversed%7d%3b%0a%20%20%20%0a%20%20%20let%20slice%20%3d%20%5b4%2c%208%2c%202%2c%209%2c%207%2c%2010%2c%203%2c%201%2c%206%2c%205%5d%2eas%5fslice%5fmut%28%29%3b%0a%20%20%20slice%2esort%5fby%28reversed%3a%3a%3ci32%3e%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28slice%2c%20%26%5b10%2c%209%2c%208%2c%207%2c%206%2c%205%2c%204%2c%203%2c%202%2c%201%5d%29%3b%0a%7d%0a">Run this example</a></pre>
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acmp%3a%3a%7bsort%5fby%5fkey%2c%20reversed%7d%3b%0a%20%20%20%0a%20%20%20let%20slice%20%3d%20%5b4%2c%208%2c%202%2c%209%2c%207%2c%2010%2c%203%2c%201%2c%206%2c%205%5d%2eas%5fslice%5fmut%28%29%3b%0a%20%20%20slice%2esort%5fby%5fkey%28reversed%3a%3a%3ci32%3e%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28slice%2c%20%26%5b10%2c%209%2c%208%2c%207%2c%206%2c%205%2c%204%2c%203%2c%202%2c%201%5d%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -224,13 +236,41 @@ assert_eq!(min(1, 2), 1);
 <li>
 <div class="signature" id="item.sort_by">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">sort_by</span>&lt;T, F, K&gt;(arr: &amp;mut [T], key: F)<div class="protocol-bound">
+<span class="keyword">fn</span> <span class="identifier-function">sort_by</span>&lt;T, F&gt;(arr: &amp;mut [T], f: F)<div class="protocol-bound">
+F: Fn(&amp;T, &amp;T) -> <a href="/std/cmp/Ordering.html"><span class="identifier-type">Ordering</span></a></div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L239-L247"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Sorts a slice using a custom comparison function.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::cmp::{Ordering, sort_by};
+
+let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
+slice.sort_by(|a: &amp;i32, b: &amp;i32| -&gt; Ordering { b.compare(a) });
+
+assert_eq!(slice, &amp;[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acmp%3a%3a%7bOrdering%2c%20sort%5fby%7d%3b%0a%20%20%20%0a%20%20%20let%20slice%20%3d%20%5b4%2c%208%2c%202%2c%209%2c%207%2c%2010%2c%203%2c%201%2c%206%2c%205%5d%2eas%5fslice%5fmut%28%29%3b%0a%20%20%20slice%2esort%5fby%28%7ca%3a%20%26i32%2c%20b%3a%20%26i32%7c%20%2d%3e%20Ordering%20%7b%20b%2ecompare%28a%29%20%7d%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28slice%2c%20%26%5b10%2c%209%2c%208%2c%207%2c%206%2c%205%2c%204%2c%203%2c%202%2c%201%5d%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.sort_by_key">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">sort_by_key</span>&lt;T, F, K&gt;(arr: &amp;mut [T], key: F)<div class="protocol-bound">
 F: Fn(&amp;T) -> K</div>
 <div class="protocol-bound">
 K: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</span></a>&lt;K&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L239-L247"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L260-L262"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -240,13 +280,13 @@ Sorts a slice using a key extraction function.
 </p>
 <h3> Example</h3>
 <p>
-<pre class="with-playground-link"><code class="language-alumina">use std::cmp::sort_by;
+<pre class="with-playground-link"><code class="language-alumina">use std::cmp::sort_by_key;
 
 let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
-slice.sort_by(|v: &amp;i32| -&gt; i32 { -*v });
+slice.sort_by_key(|v: &amp;i32| -&gt; i32 { -*v });
 
 assert_eq!(slice, &amp;[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acmp%3a%3asort%5fby%3b%0a%20%20%20%0a%20%20%20let%20slice%20%3d%20%5b4%2c%208%2c%202%2c%209%2c%207%2c%2010%2c%203%2c%201%2c%206%2c%205%5d%2eas%5fslice%5fmut%28%29%3b%0a%20%20%20slice%2esort%5fby%28%7cv%3a%20%26i32%7c%20%2d%3e%20i32%20%7b%20%2d%2av%20%7d%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28slice%2c%20%26%5b10%2c%209%2c%208%2c%207%2c%206%2c%205%2c%204%2c%203%2c%202%2c%201%5d%29%3b%0a%7d%0a">Run this example</a></pre>
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acmp%3a%3asort%5fby%5fkey%3b%0a%20%20%20%0a%20%20%20let%20slice%20%3d%20%5b4%2c%208%2c%202%2c%209%2c%207%2c%2010%2c%203%2c%201%2c%206%2c%205%5d%2eas%5fslice%5fmut%28%29%3b%0a%20%20%20slice%2esort%5fby%5fkey%28%7cv%3a%20%26i32%7c%20%2d%3e%20i32%20%7b%20%2d%2av%20%7d%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28slice%2c%20%26%5b10%2c%209%2c%208%2c%207%2c%206%2c%205%2c%204%2c%203%2c%202%2c%201%5d%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -258,7 +298,7 @@ assert_eq!(slice, &amp;[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
 T: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</span></a>&lt;T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L262-L264"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L277-L279"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -277,6 +317,103 @@ slice.sort();
 
 assert_eq!(slice, &amp;[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 </code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acmp%3a%3asort%3b%0a%20%20%20%0a%20%20%20let%20slice%20%3d%20%5b4%2c%208%2c%202%2c%209%2c%207%2c%2010%2c%203%2c%201%2c%206%2c%205%5d%2eas%5fslice%5fmut%28%29%3b%0a%20%20%20slice%2esort%28%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28slice%2c%20%26%5b1%2c%202%2c%203%2c%204%2c%205%2c%206%2c%207%2c%208%2c%209%2c%2010%5d%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.binary_search">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">binary_search</span>&lt;T&gt;(arr: &amp;[T], needle: &amp;T) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>, <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;<div class="protocol-bound">
+T: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</span></a>&lt;T&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L295-L297"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Performs a binary search on a sorted slice.
+</p><p>
+If the element is found, returns <code class="language-alumina">Result::ok(index)</code>, otherwise returns the index where the
+element should be inserted as <code class="language-alumina">Result::err(index)</code>.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::cmp::binary_search;
+
+let slice = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].as_slice();
+assert_eq!(slice.binary_search(&amp;5), Result::ok(4usize));
+assert_eq!(slice.binary_search(&amp;11), Result::err(10usize));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acmp%3a%3abinary%5fsearch%3b%0a%20%20%20%0a%20%20%20let%20slice%20%3d%20%5b1%2c%202%2c%203%2c%204%2c%205%2c%206%2c%207%2c%208%2c%209%2c%2010%5d%2eas%5fslice%28%29%3b%0a%20%20%20assert%5feq%21%28slice%2ebinary%5fsearch%28%265%29%2c%20Result%3a%3aok%284usize%29%29%3b%0a%20%20%20assert%5feq%21%28slice%2ebinary%5fsearch%28%2611%29%2c%20Result%3a%3aerr%2810usize%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.binary_search_by">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">binary_search_by</span>&lt;T, F&gt;(arr: &amp;[T], f: F) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>, <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;<div class="protocol-bound">
+F: Fn(&amp;T) -> <a href="/std/cmp/Ordering.html"><span class="identifier-type">Ordering</span></a></div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L312-L331"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Performs a binary search on a sorted slice using a custom comparison function.
+</p><p>
+If the element is found, returns <code class="language-alumina">Result::ok(index)</code>, otherwise returns the index where the
+element should be inserted as <code class="language-alumina">Result::err(index)</code>.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::cmp::{Ordering, binary_search_by};
+
+let slice = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].as_slice();
+assert_eq!(slice.binary_search_by(|k: &amp;i32| -&gt; Ordering { k.compare(&amp;5) }), Result::ok(4usize));
+assert_eq!(slice.binary_search_by(|k: &amp;i32| -&gt; Ordering { k.compare(&amp;11) }), Result::err(10usize));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acmp%3a%3a%7bOrdering%2c%20binary%5fsearch%5fby%7d%3b%0a%20%20%20%0a%20%20%20let%20slice%20%3d%20%5b1%2c%202%2c%203%2c%204%2c%205%2c%206%2c%207%2c%208%2c%209%2c%2010%5d%2eas%5fslice%28%29%3b%0a%20%20%20assert%5feq%21%28slice%2ebinary%5fsearch%5fby%28%7ck%3a%20%26i32%7c%20%2d%3e%20Ordering%20%7b%20k%2ecompare%28%265%29%20%7d%29%2c%20Result%3a%3aok%284usize%29%29%3b%0a%20%20%20assert%5feq%21%28slice%2ebinary%5fsearch%5fby%28%7ck%3a%20%26i32%7c%20%2d%3e%20Ordering%20%7b%20k%2ecompare%28%2611%29%20%7d%29%2c%20Result%3a%3aerr%2810usize%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.binary_search_by_key">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">binary_search_by_key</span>&lt;T, F, K&gt;(arr: &amp;[T], needle: &amp;K, key: F) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>, <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;<div class="protocol-bound">
+F: Fn(&amp;T) -> K</div>
+<div class="protocol-bound">
+K: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</span></a>&lt;K&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L351-L353"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Performs a binary search on a sorted slice using a key extraction function.
+</p><p>
+If the element is found, returns <code class="language-alumina">Result::ok(index)</code>, otherwise returns the index where the
+element should be inserted as <code class="language-alumina">Result::err(index)</code>.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::cmp::binary_search_by_key;
+
+let slice = [
+    (0, 0), (1, 2), (2, 4),
+    (3, 6), (4, 8), (5, 10),
+    (6, 12), (7, 14), (8, 16)
+].as_slice();
+
+assert_eq!(slice.binary_search_by_key(&amp;5, |v: &amp;(i32, i32)| -&gt; i32 { v.0 }), Result::ok(5usize));
+assert_eq!(slice.binary_search_by_key(&amp;11, |v: &amp;(i32, i32)| -&gt; i32 { v.0 }), Result::err(9usize));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acmp%3a%3abinary%5fsearch%5fby%5fkey%3b%0a%20%20%20%0a%20%20%20let%20slice%20%3d%20%5b%0a%20%20%20%20%20%20%20%280%2c%200%29%2c%20%281%2c%202%29%2c%20%282%2c%204%29%2c%0a%20%20%20%20%20%20%20%283%2c%206%29%2c%20%284%2c%208%29%2c%20%285%2c%2010%29%2c%0a%20%20%20%20%20%20%20%286%2c%2012%29%2c%20%287%2c%2014%29%2c%20%288%2c%2016%29%0a%20%20%20%5d%2eas%5fslice%28%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28slice%2ebinary%5fsearch%5fby%5fkey%28%265%2c%20%7cv%3a%20%26%28i32%2c%20i32%29%7c%20%2d%3e%20i32%20%7b%20v%2e0%20%7d%29%2c%20Result%3a%3aok%285usize%29%29%3b%0a%20%20%20assert%5feq%21%28slice%2ebinary%5fsearch%5fby%5fkey%28%2611%2c%20%7cv%3a%20%26%28i32%2c%20i32%29%7c%20%2d%3e%20i32%20%7b%20v%2e0%20%7d%29%2c%20Result%3a%3aerr%289usize%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
