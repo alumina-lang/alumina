@@ -120,12 +120,10 @@ impl LangItemKind {
     }
 
     pub fn is_builtin_impl(&self) -> bool {
-        match self {
-            LangItemKind::ImplBuiltin(_) | LangItemKind::ImplTuple(_) | LangItemKind::ImplArray => {
-                true
-            }
-            _ => false,
-        }
+        matches!(
+            self,
+            LangItemKind::ImplBuiltin(_) | LangItemKind::ImplTuple(_) | LangItemKind::ImplArray
+        )
     }
 }
 
