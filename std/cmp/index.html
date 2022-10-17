@@ -47,14 +47,11 @@
 <a href="/std/cmp/Comparable.html">Comparable</a>
 </li>
 </ul>
-<h2>Structs</h2>
-<ul>
-<li>
-<a href="/std/cmp/Reversed.html">Reversed</a>
-</li>
-</ul>
 <h2>Functions</h2>
 <ul>
+<li>
+<a href="/std/cmp/#item.compare">compare</a>
+</li>
 <li>
 <a href="/std/cmp/#item.reversed">reversed</a>
 </li>
@@ -99,6 +96,12 @@
 </li>
 <li>
 <a href="/std/cmp/#item.binary_search_by_key">binary_search_by_key</a>
+</li>
+</ul>
+<h2>Types</h2>
+<ul>
+<li>
+<a href="/std/cmp/#item.CompareFunction">CompareFunction</a>
 </li>
 </ul>
 <h2>Enums</h2>
@@ -163,42 +166,55 @@ Equality and comparison
 </div>
 </div>
 </div>
-<h2 id="Struct">Structs</h2>
-<div class="item-short-table">
-<div class="row" id="item.Reversed">
-<div class="cell-name">
-<a href="/std/cmp/Reversed.html">Reversed</a>
-</div>
-<div class="cell-doc">A wrapper that can be used to reverse the ordering of a Comparable.
-</div>
-</div>
-</div>
 <h2 id="Function">Functions</h2>
 <ul>
 <li>
-<div class="signature" id="item.reversed">
+<div class="signature" id="item.compare">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">reversed</span>&lt;T&gt;(value: &amp;T) -> <a href="/std/cmp/Reversed.html"><span class="identifier-type">Reversed</span></a>&lt;T&gt;<div class="protocol-bound">
+<span class="keyword">fn</span> <span class="identifier-function">compare</span>&lt;T&gt;(a: &amp;T, b: &amp;T) -> <a href="/std/cmp/Ordering.html"><span class="identifier-type">Ordering</span></a><div class="protocol-bound">
 T: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</span></a>&lt;T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L156-L158"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L132-L135"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Reverses the ordering of a Comparable.
+Compare two values using the <a class="path-link" href="/std/cmp/Comparable.html#item.compare">compare</a> method of a type
+implementing the <a class="path-link" href="/std/cmp/Comparable.html">Comparable</a> protocol.
+</p><p>
+See <a class="path-link" href="/std/cmp/Comparable.html">Comparable</a> for details.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.reversed">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">reversed</span>&lt;T&gt;(a: &amp;T, b: &amp;T) -> <a href="/std/cmp/Ordering.html"><span class="identifier-type">Ordering</span></a><div class="protocol-bound">
+T: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</span></a>&lt;T&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L151-L154"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Compare two values using the <a class="path-link" href="/std/cmp/Comparable.html#item.compare">compare</a> method of a type
+implementing the <a class="path-link" href="/std/cmp/Comparable.html">Comparable</a> protocol, but in reverse order.
+</p><p>
+Useful for sorting collections in descending order. See also <a class="path-link" href="/std/cmp/#item.compare">compare</a>.
 </p><p>
 </p>
 <h3> Example</h3>
 <p>
-<pre class="with-playground-link"><code class="language-alumina">use std::cmp::{sort_by_key, reversed};
+<pre class="with-playground-link"><code class="language-alumina">use std::cmp::{sort_by, reversed};
 
 let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
-slice.sort_by_key(reversed::&lt;i32&gt;);
+slice.sort_by(reversed::&lt;i32&gt;);
 
 assert_eq!(slice, &amp;[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acmp%3a%3a%7bsort%5fby%5fkey%2c%20reversed%7d%3b%0a%20%20%20%0a%20%20%20let%20slice%20%3d%20%5b4%2c%208%2c%202%2c%209%2c%207%2c%2010%2c%203%2c%201%2c%206%2c%205%5d%2eas%5fslice%5fmut%28%29%3b%0a%20%20%20slice%2esort%5fby%5fkey%28reversed%3a%3a%3ci32%3e%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28slice%2c%20%26%5b10%2c%209%2c%208%2c%207%2c%206%2c%205%2c%204%2c%203%2c%202%2c%201%5d%29%3b%0a%7d%0a">Run this example</a></pre>
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acmp%3a%3a%7bsort%5fby%2c%20reversed%7d%3b%0a%20%20%20%0a%20%20%20let%20slice%20%3d%20%5b4%2c%208%2c%202%2c%209%2c%207%2c%2010%2c%203%2c%201%2c%206%2c%205%5d%2eas%5fslice%5fmut%28%29%3b%0a%20%20%20slice%2esort%5fby%28reversed%3a%3a%3ci32%3e%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28slice%2c%20%26%5b10%2c%209%2c%208%2c%207%2c%206%2c%205%2c%204%2c%203%2c%202%2c%201%5d%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -210,7 +226,7 @@ assert_eq!(slice, &amp;[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
 T: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</span></a>&lt;T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L203-L210"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L199-L206"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -234,7 +250,7 @@ assert_eq!(max(1, 2), 2);
 T: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</span></a>&lt;T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L219-L226"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L215-L222"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -255,10 +271,10 @@ assert_eq!(min(1, 2), 1);
 <div class="signature" id="item.is_sorted_by">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">is_sorted_by</span>&lt;T, F&gt;(arr: &amp;[T], f: F) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a><div class="protocol-bound">
-F: Fn(&amp;T, &amp;T) -> <a href="/std/cmp/Ordering.html"><span class="identifier-type">Ordering</span></a></div>
+F: <a href="/std/cmp/#item.CompareFunction"><span class="identifier-type">CompareFunction</span></a>&lt;T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L240-L248"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L236-L244"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -289,7 +305,7 @@ F: Fn(&amp;T) -> K</div>
 K: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</span></a>&lt;K&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L261-L263"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L257-L259"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -317,7 +333,7 @@ assert!(arr.is_sorted_by_key(|e: &amp;(i32, i32)| -&gt; i32 { e.1 }));
 T: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</span></a>&lt;T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L277-L279"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L273-L275"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -343,10 +359,10 @@ assert!(arr2.is_sorted());
 <div class="signature" id="item.sort_by">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">sort_by</span>&lt;T, F&gt;(arr: &amp;mut [T], f: F)<div class="protocol-bound">
-F: Fn(&amp;T, &amp;T) -> <a href="/std/cmp/Ordering.html"><span class="identifier-type">Ordering</span></a></div>
+F: <a href="/std/cmp/#item.CompareFunction"><span class="identifier-type">CompareFunction</span></a>&lt;T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L296-L302"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L292-L298"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -380,7 +396,7 @@ F: Fn(&amp;T) -> K</div>
 K: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</span></a>&lt;K&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L319-L321"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L315-L317"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -412,7 +428,7 @@ assert_eq!(slice, &amp;[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
 T: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</span></a>&lt;T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L337-L339"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L333-L335"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -440,10 +456,10 @@ assert_eq!(slice, &amp;[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 <div class="signature" id="item.stable_sort_by">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">stable_sort_by</span>&lt;T, F&gt;(arr: &amp;mut [T], f: F)<div class="protocol-bound">
-F: Fn(&amp;T, &amp;T) -> <a href="/std/cmp/Ordering.html"><span class="identifier-type">Ordering</span></a></div>
+F: <a href="/std/cmp/#item.CompareFunction"><span class="identifier-type">CompareFunction</span></a>&lt;T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L356-L366"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L352-L366"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -626,6 +642,26 @@ let slice = [
 assert_eq!(slice.binary_search_by_key(&amp;5, |v: &amp;(i32, i32)| -&gt; i32 { v.0 }), Result::ok(5usize));
 assert_eq!(slice.binary_search_by_key(&amp;11, |v: &amp;(i32, i32)| -&gt; i32 { v.0 }), Result::err(9usize));
 </code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acmp%3a%3abinary%5fsearch%5fby%5fkey%3b%0a%20%20%20%0a%20%20%20let%20slice%20%3d%20%5b%0a%20%20%20%20%20%20%20%280%2c%200%29%2c%20%281%2c%202%29%2c%20%282%2c%204%29%2c%0a%20%20%20%20%20%20%20%283%2c%206%29%2c%20%284%2c%208%29%2c%20%285%2c%2010%29%2c%0a%20%20%20%20%20%20%20%286%2c%2012%29%2c%20%287%2c%2014%29%2c%20%288%2c%2016%29%0a%20%20%20%5d%2eas%5fslice%28%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28slice%2ebinary%5fsearch%5fby%5fkey%28%265%2c%20%7cv%3a%20%26%28i32%2c%20i32%29%7c%20%2d%3e%20i32%20%7b%20v%2e0%20%7d%29%2c%20Result%3a%3aok%285usize%29%29%3b%0a%20%20%20assert%5feq%21%28slice%2ebinary%5fsearch%5fby%5fkey%28%2611%2c%20%7cv%3a%20%26%28i32%2c%20i32%29%7c%20%2d%3e%20i32%20%7b%20v%2e0%20%7d%29%2c%20Result%3a%3aerr%289usize%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+</ul>
+<h2 id="Type">Types</h2>
+<ul>
+<li>
+<div class="signature" id="item.CompareFunction">
+<h4>
+<span class="keyword">type</span> <span class="identifier-type">CompareFunction</span>&lt;T&gt; = Fn(&amp;T, &amp;T) -> <a href="/std/cmp/Ordering.html"><span class="identifier-type">Ordering</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L126-L126"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Protocol for comparison functions.
+</p><p>
+See <a class="path-link" href="/std/cmp/Comparable.html">Comparable</a> for details.
 </p><p>
 </p>
 </div>
