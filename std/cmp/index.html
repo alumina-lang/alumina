@@ -65,6 +65,15 @@
 <a href="/std/cmp/#item.min">min</a>
 </li>
 <li>
+<a href="/std/cmp/#item.is_sorted_by">is_sorted_by</a>
+</li>
+<li>
+<a href="/std/cmp/#item.is_sorted_by_key">is_sorted_by_key</a>
+</li>
+<li>
+<a href="/std/cmp/#item.is_sorted">is_sorted</a>
+</li>
+<li>
 <a href="/std/cmp/#item.sort_by">sort_by</a>
 </li>
 <li>
@@ -72,6 +81,15 @@
 </li>
 <li>
 <a href="/std/cmp/#item.sort">sort</a>
+</li>
+<li>
+<a href="/std/cmp/#item.stable_sort_by">stable_sort_by</a>
+</li>
+<li>
+<a href="/std/cmp/#item.stable_sort_by_key">stable_sort_by_key</a>
+</li>
+<li>
+<a href="/std/cmp/#item.stable_sort">stable_sort</a>
 </li>
 <li>
 <a href="/std/cmp/#item.binary_search">binary_search</a>
@@ -234,18 +252,110 @@ assert_eq!(min(1, 2), 1);
 </div>
 </li>
 <li>
+<div class="signature" id="item.is_sorted_by">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_sorted_by</span>&lt;T, F&gt;(arr: &amp;[T], f: F) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a><div class="protocol-bound">
+F: Fn(&amp;T, &amp;T) -> <a href="/std/cmp/Ordering.html"><span class="identifier-type">Ordering</span></a></div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L240-L248"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if the array is sorted by the given comparison function.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::cmp::{Ordering, is_sorted_by};
+
+let arr1 = [5, 3, 2, 4, 1].as_slice();
+let arr2 = [1, 2, 3, 4, 5].as_slice();
+
+assert!(!arr1.is_sorted_by(i32::compare));
+assert!(arr2.is_sorted_by(i32::compare));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acmp%3a%3a%7bOrdering%2c%20is%5fsorted%5fby%7d%3b%0a%20%20%20%0a%20%20%20let%20arr1%20%3d%20%5b5%2c%203%2c%202%2c%204%2c%201%5d%2eas%5fslice%28%29%3b%0a%20%20%20let%20arr2%20%3d%20%5b1%2c%202%2c%203%2c%204%2c%205%5d%2eas%5fslice%28%29%3b%0a%20%20%20%0a%20%20%20assert%21%28%21arr1%2eis%5fsorted%5fby%28i32%3a%3acompare%29%29%3b%0a%20%20%20assert%21%28arr2%2eis%5fsorted%5fby%28i32%3a%3acompare%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.is_sorted_by_key">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_sorted_by_key</span>&lt;T, F, K&gt;(arr: &amp;[T], key: F) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a><div class="protocol-bound">
+F: Fn(&amp;T) -> K</div>
+<div class="protocol-bound">
+K: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</span></a>&lt;K&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L261-L263"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if the array is sorted using a key extraction function.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::cmp::is_sorted_by_key;
+
+let arr = [(5, 1), (3, 2), (2, 3), (4, 4), (1, 5)].as_slice();
+
+assert!(!arr.is_sorted_by_key(|e: &amp;(i32, i32)| -&gt; i32 { e.0 }));
+assert!(arr.is_sorted_by_key(|e: &amp;(i32, i32)| -&gt; i32 { e.1 }));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acmp%3a%3ais%5fsorted%5fby%5fkey%3b%0a%20%20%20%0a%20%20%20let%20arr%20%3d%20%5b%285%2c%201%29%2c%20%283%2c%202%29%2c%20%282%2c%203%29%2c%20%284%2c%204%29%2c%20%281%2c%205%29%5d%2eas%5fslice%28%29%3b%0a%20%20%20%0a%20%20%20assert%21%28%21arr%2eis%5fsorted%5fby%5fkey%28%7ce%3a%20%26%28i32%2c%20i32%29%7c%20%2d%3e%20i32%20%7b%20e%2e0%20%7d%29%29%3b%0a%20%20%20assert%21%28arr%2eis%5fsorted%5fby%5fkey%28%7ce%3a%20%26%28i32%2c%20i32%29%7c%20%2d%3e%20i32%20%7b%20e%2e1%20%7d%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.is_sorted">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_sorted</span>&lt;T&gt;(arr: &amp;[T]) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a><div class="protocol-bound">
+T: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</span></a>&lt;T&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L277-L279"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if the array is sorted.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::cmp::is_sorted;
+
+let arr1 = [5, 3, 2, 4, 1].as_slice();
+let arr2 = [1, 2, 3, 4, 5].as_slice();
+
+assert!(!arr1.is_sorted());
+assert!(arr2.is_sorted());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acmp%3a%3ais%5fsorted%3b%0a%20%20%20%0a%20%20%20let%20arr1%20%3d%20%5b5%2c%203%2c%202%2c%204%2c%201%5d%2eas%5fslice%28%29%3b%0a%20%20%20let%20arr2%20%3d%20%5b1%2c%202%2c%203%2c%204%2c%205%5d%2eas%5fslice%28%29%3b%0a%20%20%20%0a%20%20%20assert%21%28%21arr1%2eis%5fsorted%28%29%29%3b%0a%20%20%20assert%21%28arr2%2eis%5fsorted%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
 <div class="signature" id="item.sort_by">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">sort_by</span>&lt;T, F&gt;(arr: &amp;mut [T], f: F)<div class="protocol-bound">
 F: Fn(&amp;T, &amp;T) -> <a href="/std/cmp/Ordering.html"><span class="identifier-type">Ordering</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L239-L247"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L296-L302"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Sorts a slice using a custom comparison function.
+Sorts a slice using a custom comparison function. The sort is unstable (i.e. does not
+preserve the order of equal elements).
+</p><p>
+The algorithm used is introsort (quicksort with a fallback to heapsort and insertion sort
+when the recursion depth exceeds a certain limit and when the array is small, respectively).
 </p><p>
 </p>
 <h3> Example</h3>
@@ -270,12 +380,16 @@ F: Fn(&amp;T) -> K</div>
 K: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</span></a>&lt;K&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L260-L262"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L319-L321"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Sorts a slice using a key extraction function.
+Sorts a slice using a key extraction function. The sort is unstable (i.e. does not
+preserve the order of equal elements).
+</p><p>
+The algorithm used is introsort (quicksort with a fallback to heapsort and insertion sort
+when the recursion depth exceeds a certain limit and when the array is small, respectively).
 </p><p>
 </p>
 <h3> Example</h3>
@@ -298,14 +412,15 @@ assert_eq!(slice, &amp;[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
 T: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</span></a>&lt;T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L277-L279"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L337-L339"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Sorts a slice.
+Sorts a slice. The sort is unstable (i.e. does not preserve the order of equal elements).
 </p><p>
-Uses quicksort with naive partitioning. Sort is not stable.
+The algorithm used is introsort (quicksort with a fallback to heapsort and insertion sort
+when the recursion depth exceeds a certain limit and when the array is small, respectively).
 </p><p>
 </p>
 <h3> Example</h3>
@@ -322,13 +437,110 @@ assert_eq!(slice, &amp;[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 </div>
 </li>
 <li>
+<div class="signature" id="item.stable_sort_by">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">stable_sort_by</span>&lt;T, F&gt;(arr: &amp;mut [T], f: F)<div class="protocol-bound">
+F: Fn(&amp;T, &amp;T) -> <a href="/std/cmp/Ordering.html"><span class="identifier-type">Ordering</span></a></div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L356-L366"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Sorts a slice using a custom comparison function. The sort is stable (i.e. preserves the
+order of equal elements).
+</p><p>
+The algorithm used is mergesort. it internally allocates a temporary buffer the size of
+the slice.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::cmp::{Ordering, stable_sort_by};
+
+let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
+slice.stable_sort_by(|a: &amp;i32, b: &amp;i32| -&gt; Ordering { b.compare(a) });
+
+assert_eq!(slice, &amp;[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acmp%3a%3a%7bOrdering%2c%20stable%5fsort%5fby%7d%3b%0a%20%20%20%0a%20%20%20let%20slice%20%3d%20%5b4%2c%208%2c%202%2c%209%2c%207%2c%2010%2c%203%2c%201%2c%206%2c%205%5d%2eas%5fslice%5fmut%28%29%3b%0a%20%20%20slice%2estable%5fsort%5fby%28%7ca%3a%20%26i32%2c%20b%3a%20%26i32%7c%20%2d%3e%20Ordering%20%7b%20b%2ecompare%28a%29%20%7d%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28slice%2c%20%26%5b10%2c%209%2c%208%2c%207%2c%206%2c%205%2c%204%2c%203%2c%202%2c%201%5d%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.stable_sort_by_key">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">stable_sort_by_key</span>&lt;T, F, K&gt;(arr: &amp;mut [T], key: F)<div class="protocol-bound">
+F: Fn(&amp;T) -> K</div>
+<div class="protocol-bound">
+K: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</span></a>&lt;K&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L383-L385"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Sorts a slice using a key extraction function. The sort is stable (i.e. preserves the
+order of equal elements).
+</p><p>
+The algorithm used is mergesort. it internally allocates a temporary buffer the size of
+the slice.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::cmp::stable_sort_by_key;
+
+let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
+slice.stable_sort_by_key(|v: &amp;i32| -&gt; i32 { -*v });
+
+assert_eq!(slice, &amp;[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acmp%3a%3astable%5fsort%5fby%5fkey%3b%0a%20%20%20%0a%20%20%20let%20slice%20%3d%20%5b4%2c%208%2c%202%2c%209%2c%207%2c%2010%2c%203%2c%201%2c%206%2c%205%5d%2eas%5fslice%5fmut%28%29%3b%0a%20%20%20slice%2estable%5fsort%5fby%5fkey%28%7cv%3a%20%26i32%7c%20%2d%3e%20i32%20%7b%20%2d%2av%20%7d%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28slice%2c%20%26%5b10%2c%209%2c%208%2c%207%2c%206%2c%205%2c%204%2c%203%2c%202%2c%201%5d%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.stable_sort">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">stable_sort</span>&lt;T&gt;(arr: &amp;mut [T])<div class="protocol-bound">
+T: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</span></a>&lt;T&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L401-L403"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Sorts a slice. The sort is stable (i.e. preserves the order of equal elements).
+</p><p>
+The algorithm used is mergesort. it internally allocates a temporary buffer the size of
+the slice.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::cmp::stable_sort;
+
+let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
+slice.stable_sort();
+
+assert_eq!(slice, &amp;[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acmp%3a%3astable%5fsort%3b%0a%20%20%20%0a%20%20%20let%20slice%20%3d%20%5b4%2c%208%2c%202%2c%209%2c%207%2c%2010%2c%203%2c%201%2c%206%2c%205%5d%2eas%5fslice%5fmut%28%29%3b%0a%20%20%20slice%2estable%5fsort%28%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28slice%2c%20%26%5b1%2c%202%2c%203%2c%204%2c%205%2c%206%2c%207%2c%208%2c%209%2c%2010%5d%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
 <div class="signature" id="item.binary_search">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">binary_search</span>&lt;T&gt;(arr: &amp;[T], needle: &amp;T) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>, <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;<div class="protocol-bound">
 T: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</span></a>&lt;T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L295-L297"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L419-L421"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -358,7 +570,7 @@ assert_eq!(slice.binary_search(&amp;11), Result::err(10usize));
 F: Fn(&amp;T) -> <a href="/std/cmp/Ordering.html"><span class="identifier-type">Ordering</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L312-L331"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L436-L455"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -390,7 +602,7 @@ F: Fn(&amp;T) -> K</div>
 K: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</span></a>&lt;K&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L351-L353"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/cmp.alu#L475-L477"/>source</a>
 </div>
 </div>
 <div class="item-doc">
