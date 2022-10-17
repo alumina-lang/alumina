@@ -78,14 +78,13 @@ impl Error {
             ErrorKind::UnexpectedEof => f.write_str("unexpected end of file"),
             ErrorKind::GetAddrInfo => {
                 f.write_str("failed to lookup address information: ")?;
-                f.write_str(ffi::CString::from_raw(libc::gai_strerror(self.inner.gai_err)).as_slice())
+                f.write_str(ffi::CString::from_raw(libc::gai_strerror(self.inner.gai_err))[..])
             }
             ErrorKind::UserDefined => {
                 f.write_str(self.inner.message)
             }
             ErrorKind::Os => {
                 let buf: [u8; 128];
-                let buf = buf.as_slice_mut();
 
                 if libc::strerror_r(self.inner.errno, &buf[0] as &mut libc::c_char, 128) < 0 {
                     panic!("strerror_r failed");

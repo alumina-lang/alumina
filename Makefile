@@ -15,7 +15,7 @@ else ifdef FAST_DEBUG
 	BUILD_DIR = $(BUILD_ROOT)/fast-debug
 	CARGO_FLAGS = --release
 	CARGO_TARGET_DIR = target/release
-	CFLAGS += -g3 -fPIE -rdynamic
+	CFLAGS += -g0
 	ALUMINA_FLAGS += --sysroot $(SYSROOT) --debug
 else
 	BUILD_DIR = $(BUILD_ROOT)/debug

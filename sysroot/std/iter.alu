@@ -1246,7 +1246,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     ///         let f = format!("{}", x).unwrap();
     ///         defer f.free();
     ///
-    ///         println!("{}", f.as_slice());
+    ///         println!("{}", f[..]);
     ///     });
     /// ```
     fn foreach<F: Fn(T)>(iter: &mut Self, fun: F) {
@@ -1496,7 +1496,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// defer range.free();
     ///
     /// assert_eq!(range.len(), 5);
-    /// assert_eq!(range.as_slice(), &[0, 1, 2, 3, 4]);
+    /// assert_eq!(range[..], &[0, 1, 2, 3, 4]);
     /// ```
     fn to_vector(self: &mut Self) -> collections::Vector<T> {
         collections::Vector::from_iter::<T, Self>(self)
@@ -1513,9 +1513,9 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// ## Example
     /// ```
     /// let buf: [i32; 5];
-    /// (0..5).fill_slice(buf.as_slice_mut());
+    /// (0..5).fill_slice(buf[..]);
     ///
-    /// assert_eq!(buf.as_slice(), &[0, 1, 2, 3, 4]);
+    /// assert_eq!(buf[..], &[0, 1, 2, 3, 4]);
     /// ```
     fn fill_slice(self: &mut Self, slice: &mut [T]) -> usize {
         let index = 0usize;
@@ -1614,7 +1614,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// let v = iter.to_vector();
     /// defer v.free();
     ///
-    /// assert_eq!(v.as_slice(), &['H', 'e', 'l', 'l', 'o', ' ', 'W', 'o', 'r', 'l', 'd']);
+    /// assert_eq!(v[..], &['H', 'e', 'l', 'l', 'o', ' ', 'W', 'o', 'r', 'l', 'd']);
     /// ```
     fn flatten(self: &mut Self) -> FlattenIterator<Self, T, iterable_yield_t<T>> {
         FlattenIterator {
@@ -2031,7 +2031,7 @@ mod tests {
     #[test]
     fn test_to_vector() {
         let vec = (0..5).to_vector();
-        assert_eq!(vec.as_slice(), &[0, 1, 2, 3, 4]);
+        assert_eq!(vec[..], &[0, 1, 2, 3, 4]);
     }
 
     #[test]
@@ -2085,15 +2085,14 @@ mod tests {
     #[test]
     fn fill_slice() {
         let buf: [i32; 10];
-        let slice = buf.as_slice_mut();
 
-        let written = (0..5).fill_slice(slice);
+        let written = (0..5).fill_slice(&buf);
         assert_eq!(written, 5);
-        assert_eq!(slice[..5], &[0, 1, 2, 3, 4]);
+        assert_eq!(buf[..5], &[0, 1, 2, 3, 4]);
 
-        let written = (10..200).fill_slice(slice);
+        let written = (10..200).fill_slice(&buf);
         assert_eq!(written, 10);
-        assert_eq!(slice, &[10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+        assert_eq!(buf[..], &[10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
     }
 
     #[test]

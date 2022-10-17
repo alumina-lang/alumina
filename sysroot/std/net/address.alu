@@ -145,7 +145,7 @@ impl Ipv6Addr {
         }
 
         if right.1 > 0 {
-            right.0.as_slice()[..right.1]
+            right.0[..right.1]
                 .copy_to_nonoverlapping(&left.0[8 - right.1]);
         }
 
@@ -210,12 +210,12 @@ impl Ipv6Addr {
 
     /// @ cmp::Equatable::equals
     fn equals(self: &Ipv6Addr, other: &Ipv6Addr) -> bool {
-        self.inner.s6_addr.as_slice() == other.inner.s6_addr.as_slice()
+        self.inner.s6_addr[..] == other.inner.s6_addr[..]
     }
 
     /// @ hash::Hashable::hash
     fn hash<H: Hasher<H>>(self: &Ipv6Addr, hasher: &mut H) {
-        self.inner.s6_addr.as_slice().hash(hasher);
+        self.inner.s6_addr[..].hash(hasher);
     }
 
     mixin cmp::Equatable<Ipv6Addr>;

@@ -435,7 +435,7 @@ const MSG_NOSIGNAL: libc::c_int = 0;
 ///     socket.send_to(request, &remote_addr)?;
 ///
 ///     let buf: [u8; 65536];
-///     let (size, src) = socket.recv_from(buf.as_slice_mut())?;
+///     let (size, src) = socket.recv_from(&buf)?;
 ///
 ///     println!("Received {} bytes from {}", size, src);
 ///     println!("  {} questions",   (&buf[4]  as &u16).from_be());
@@ -648,7 +648,7 @@ mod tests {
             let buf: StringBuf = StringBuf::new();
             socket.read_to_end(&buf).unwrap();
 
-            assert_eq!(buf.as_slice(), "Hello, world!");
+            assert_eq!(buf[..] as &[u8], "Hello, world!");
         }
     }
 
@@ -667,9 +667,9 @@ mod tests {
             peer2.send_to("Hello, world!", &peer1_addr).unwrap();
         } else {
             let buf: [u8; 128];
-            let (n, peer) = peer1.recv_from(buf.as_slice_mut()).unwrap();
+            let (n, peer) = peer1.recv_from(&buf).unwrap();
 
-            assert_eq!(buf.as_slice()[..n], "Hello, world!");
+            assert_eq!(buf[..n] as &[u8], "Hello, world!");
         }
     }
 
@@ -690,17 +690,17 @@ mod tests {
             peer2.connect(&peer1_addr).unwrap();
             peer2.send("Hello, world!").unwrap();
 
-            let n = peer2.recv(buf.as_slice_mut()).unwrap();
-            peer2.send(buf.as_slice()[..n]).unwrap();
+            let n = peer2.recv(&buf).unwrap();
+            peer2.send(buf[..n]).unwrap();
 
         } else {
             let buf: [u8; 128];
-            let (n, peer) = peer1.recv_from(buf.as_slice_mut()).unwrap();
+            let (n, peer) = peer1.recv_from(&buf).unwrap();
 
             peer1.send_to("AAAAAAA", &peer).unwrap();
 
-            let (n, peer) = peer1.recv_from(buf.as_slice_mut()).unwrap();
-            assert_eq!(buf.as_slice()[..n], "AAAAAAA");
+            let (n, peer) = peer1.recv_from(&buf).unwrap();
+            assert_eq!(buf[..n] as &[u8], "AAAAAAA");
         }
     }
 
@@ -720,11 +720,11 @@ mod tests {
         } else {
             let buf1: [u8; 128];
             let buf2: [u8; 128];
-            let (n, peer) = peer1.peek_from(buf1.as_slice_mut()).unwrap();
-            assert_eq!(buf1.as_slice()[..n], "Hello, world!");
+            let (n, peer) = peer1.peek_from(&buf1).unwrap();
+            assert_eq!(buf1[..n] as &[u8], "Hello, world!");
 
-            let (n, peer) = peer1.recv_from(buf2.as_slice_mut()).unwrap();
-            assert_eq!(buf2.as_slice()[..n], "Hello, world!");
+            let (n, peer) = peer1.recv_from(&buf2).unwrap();
+            assert_eq!(buf2[..n] as &[u8], "Hello, world!");
         }
     }
 }

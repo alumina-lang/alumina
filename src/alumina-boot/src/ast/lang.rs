@@ -10,6 +10,7 @@ pub enum LangItemKind {
     SliceRangeIndex,
     SliceConstCoerce,
     SliceConstCast,
+    SliceSlicify,
 
     RangeFull,
     RangeFrom,
@@ -138,6 +139,7 @@ impl TryFrom<&str> for LangItemKind {
             "slice_const_cast" => Ok(LangItemKind::SliceConstCast),
             "slice_index" => Ok(LangItemKind::SliceIndex),
             "slice_range_index" => Ok(LangItemKind::SliceRangeIndex),
+            "slice_slicify" => Ok(LangItemKind::SliceSlicify),
 
             "range_full" => Ok(LangItemKind::RangeFull),
             "range_from" => Ok(LangItemKind::RangeFrom),

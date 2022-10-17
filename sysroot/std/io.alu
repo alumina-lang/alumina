@@ -117,11 +117,11 @@ protocol Readable<Self> {
             // return EOF by using a small stack buffer instead.
             if buf.capacity() == buf.len() && buf.capacity() == start_cap {
                 let probe: [u8; 32];
-                let read = self.read(probe.as_slice_mut())?;
+                let read = self.read(&probe)?;
                 if read == 0 {
                     return Result::ok(buf.len() - start_len);
                 } else {
-                    buf.extend_from_slice(probe.as_slice()[..read])
+                    buf.extend_from_slice(probe[..read])
                 }
             }
         }
@@ -704,10 +704,10 @@ fn read_byte<R: Readable<R>>(reader: &mut R) -> Result<u8> {
 /// defer buf.free();
 ///
 /// stream.read_until('\n', &buf).unwrap();
-/// assert_eq!(buf.as_slice(), "Hello\n");
+/// assert_eq!(buf[..] as &[u8], "Hello\n");
 /// buf.clear();
 /// stream.read_until('\n', &buf).unwrap();
-/// assert_eq!(buf.as_slice(), "World\n");
+/// assert_eq!(buf[..] as &[u8], "World\n");
 /// ```
 fn read_until<R: BufferedReadable<R>>(r: &mut R, delim: u8, buf: &mut string::StringBuf) -> Result<usize> {
     use string::find_char;
@@ -785,7 +785,7 @@ impl LineIterator<R: BufferedReadable<R>> {
             }
         }
 
-        Option::some(Result::ok(self.line_buf.as_slice()))
+        Option::some(Result::ok(self.line_buf[..] as &[u8]))
     }
 
     /// @ std::mem::Freeable::free
@@ -850,8 +850,8 @@ mod tests {
     use string::StringBuf;
 
     macro read_n($reader, $n) {
-        let read = $reader.read(BUF.as_slice_mut()[..$n]).unwrap();
-        BUF.as_slice()[..read]
+        let read = $reader.read(BUF[..$n]).unwrap();
+        BUF[..read] as &[u8]
     }
 
     #[test]
@@ -861,19 +861,18 @@ mod tests {
         assert_eq!(read_n!(text, 14), "dolor sit amet");
         assert_eq!(read_n!(text, 100), "");
 
-        let buf = BUF.as_slice_mut();
         let text = SliceReader::new("Lorem ipsum dolor sit amet");
-        assert_eq!(text.read_exact(buf[..100]), Result::err(Error::eof()));
+        assert_eq!(text.read_exact(BUF[..100]), Result::err(Error::eof()));
 
         let text = SliceReader::new("Lorem ipsum dolor sit amet");
-        assert_eq!(text.read_exact(buf[..26]), Result::ok(()));
+        assert_eq!(text.read_exact(BUF[..26]), Result::ok(()));
 
         let text = SliceReader::new("Lorem ipsum dolor sit amet");
         let read : StringBuf = StringBuf::new();
         defer read.free();
 
         text.read_to_end(&read).unwrap();
-        assert_eq!(read.as_slice(), "Lorem ipsum dolor sit amet");
+        assert_eq!(read[..] as &[u8], "Lorem ipsum dolor sit amet");
     }
 
     #[test]
@@ -923,15 +922,15 @@ mod tests {
         let dst: StringBuf = StringBuf::new();
 
         copy(&src, &StringWriter::new(&dst)).unwrap();
-        assert_eq!(dst.as_slice(), "Lorem ipsum dolor sit amet");
+        assert_eq!(dst[..] as &[u8], "Lorem ipsum dolor sit amet");
     }
 
     #[test]
     fn test_null() {
         let src = NullStream::new();
         let buf: [u8; 32];
-        assert_eq!(src.read(buf.as_slice_mut()), Result::ok(0usize));
-        assert_eq!(src.read_exact(buf.as_slice_mut()), Result::err(Error::eof()));
+        assert_eq!(src.read(&buf), Result::ok(0usize));
+        assert_eq!(src.read_exact(&buf), Result::err(Error::eof()));
         assert_eq!(src.read_exact(mem::slice::empty()), Result::ok(()));
         let s: StringBuf = StringBuf::new();
         defer s.free();
@@ -950,10 +949,10 @@ mod tests {
         defer s.free();
 
         assert_eq!(src.take(5).read_to_end(&s), Result::ok(5usize));
-        assert_eq!(s.as_slice(), "Lorem");
+        assert_eq!(s[..] as &[u8], "Lorem");
 
         assert_eq!(src.read_to_end(&s), Result::ok(21usize));
-        assert_eq!(s.as_slice(), "Lorem ipsum dolor sit amet");
+        assert_eq!(s[..] as &[u8], "Lorem ipsum dolor sit amet");
     }
 
     #[test]
@@ -965,6 +964,6 @@ mod tests {
         defer s.free();
 
         assert_eq!(src1.chain(&src2).read_to_end(&s), Result::ok(26usize));
-        assert_eq!(s.as_slice(), "Lorem ipsum dolor sit amet");
+        assert_eq!(s[..] as &[u8], "Lorem ipsum dolor sit amet");
     }
 }

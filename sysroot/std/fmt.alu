@@ -106,7 +106,7 @@ protocol Formattable<Self, F: Formatter<F> = NullFormatter> {
 /// ```
 /// use std::fmt::{write, SliceFormatter};
 /// let buf: [u8; 64];
-/// let fmt = SliceFormatter::new(buf.as_slice_mut());
+/// let fmt = SliceFormatter::new(&buf);
 ///
 /// write!(&fmt, "{} + {} = {}", 1, 2, 3);
 ///
@@ -137,7 +137,7 @@ macro writeln($fmt, $fmt_str, $arg...) {
 /// let s: StringBuf = format!("{} + {} = {}", 1, 2, 3).unwrap();
 /// defer s.free();
 ///
-/// assert_eq!(s.as_slice(), "1 + 2 = 3");
+/// assert_eq!(s[..] as &[u8], "1 + 2 = 3");
 /// ```
 macro format($fmt_str, $arg...) {
     let vec = collections::Vector::with_capacity::<u8>($fmt_str.len());
@@ -281,7 +281,6 @@ mod internal {
         assert!(radix >= 2 && radix <= 36);
 
         let buf: [u8; 128];
-        let buf = buf.as_slice_mut();
 
         when T: builtins::Signed {
             if val < 0 {
@@ -437,13 +436,13 @@ mod internal {
         fn fmt<T: Formattable<T, F>, F: Formatter<F>>(self: &GenericPadAdapter<T>, fmt: &mut F) -> Result {
             let buf: [u8; 32];
             let res = format_in!(&buf, "{}", self.inner);
-            let s = if res.is_ok() {
+            let s: &[u8] = if res.is_ok() {
                 res.unwrap()
             } else {
                 // We fall back to the heap-allocating variant if the stack buffer was not large enough.
                 let res = format!("{}", self.inner)?;
                 defer res.free();
-                res.as_slice()
+                res[..]
             };
 
             if s.len() < self.len {

@@ -314,7 +314,7 @@ impl HeapIterator<T: Comparable<T>> {
 /// use std::cmp::compare;
 ///
 /// let v = [3, 5, 1, 2, 9, 8];
-/// v.as_slice_mut().heapify_by(compare::<i32>);
+/// v[..].heapify_by(compare::<i32>);
 ///
 /// assert_eq!(v[0], 9); // max element
 /// ```
@@ -340,9 +340,9 @@ fn heapify_by<T, F: CompareFunction<T>>(self: &mut [T], f: F) {
 /// use std::collections::heap::{heapify_by, heapify_tail_by};
 /// use std::cmp::compare;
 ///
-/// let v = [3, 5, 1, 2, 9, 8].as_slice_mut();
+/// let v = [3, 5, 1, 2, 9, 8];
 /// v[0..4].heapify_by(compare::<i32>);
-/// v.heapify_tail_by(4, compare::<i32>);
+/// v[..].heapify_tail_by(4, compare::<i32>);
 ///
 /// assert_eq!(v[0], 9); // max element
 /// ```
@@ -377,15 +377,15 @@ fn heapify_tail_by<T, F: CompareFunction<T>>(self: &mut [T], start: usize, f: F)
 /// use std::collections::heap::{heapify_by, sort_heap_by};
 /// use std::cmp::compare;
 ///
-/// fn heapsort(v: &mut [i32]) {
-///     v.heapify_by(compare::<i32>);
-///     v.sort_heap_by(compare::<i32>);
+/// fn heapsort(slice: &mut [i32]) {
+///     slice.heapify_by(compare::<i32>);
+///     slice.sort_heap_by(compare::<i32>);
 /// }
 ///
-/// let v = [3, 5, 1, 2, 9, 8].as_slice_mut();
-/// v.heapsort();
+/// let arr = [3, 5, 1, 2, 9, 8];
+/// arr[..].heapsort();
 ///
-/// assert_eq!(v, &[1, 2, 3, 5, 8, 9]);
+/// assert_eq!(arr[..], &[1, 2, 3, 5, 8, 9]);
 /// ```
 fn sort_heap_by<T, F: CompareFunction<T>>(self: &mut [T], f: F) {
     let end = self.len();
@@ -406,12 +406,12 @@ fn sort_heap_by<T, F: CompareFunction<T>>(self: &mut [T], f: F) {
 /// use std::collections::heap::{heapify_by, sift_up_by};
 /// use std::cmp::compare;
 ///
-/// let v = [1, 2, 3, 4, 5].as_slice_mut();
-/// v.heapify_by(compare::<i32>);
+/// let v = [1, 2, 3, 4, 5];
+/// v[..].heapify_by(compare::<i32>);
 /// assert_eq!(v[0], 5); // 5 is the max element
 ///
 /// v[4] = 100;
-/// v.sift_up_by(4, compare::<i32>);
+/// v[..].sift_up_by(4, compare::<i32>);
 /// assert_eq!(v[0], 100); // 100 is the new max element
 /// ```
 fn sift_up_by<T, F: CompareFunction<T>>(self: &mut [T], pos: usize, f: F) {
@@ -439,12 +439,12 @@ fn sift_up_by<T, F: CompareFunction<T>>(self: &mut [T], pos: usize, f: F) {
 /// use std::collections::heap::{heapify_by, sift_down_by};
 /// use std::cmp::compare;
 ///
-/// let v = [1, 2, 3, 4, 5].as_slice_mut();
-/// v.heapify_by(compare::<i32>);
+/// let v = [1, 2, 3, 4, 5];
+/// v[..].heapify_by(compare::<i32>);
 /// assert_eq!(v[0], 5); // 5 is the max element
 ///
 /// v[0] = 3;
-/// v.sift_down_by(0, compare::<i32>);
+/// v[..].sift_down_by(0, compare::<i32>);
 /// assert_eq!(v[0], 4); // 4 is the new max element
 /// ```
 fn sift_down_by<T, F: CompareFunction<T>>(self: &mut [T], pos: usize, f: F) {
@@ -661,7 +661,7 @@ mod tests {
         defer vec.free();
 
         // "Arbitrary" order that satisfies the heap property.
-        assert_eq!(vec.as_slice(), &[ 10, 9, 5, 8, 6, 2, 3, 1, 7, 4 ]);
+        assert_eq!(vec[..], &[ 10, 9, 5, 8, 6, 2, 3, 1, 7, 4 ]);
     }
 
     #[test]
@@ -670,7 +670,7 @@ mod tests {
         defer heap.free();
 
         // "Arbitrary" order that satisfies the heap property.
-        assert_eq!(heap.as_slice(), &[ 10, 9, 5, 8, 6, 2, 3, 1, 7, 4 ]);
+        assert_eq!(heap[..], &[ 10, 9, 5, 8, 6, 2, 3, 1, 7, 4 ]);
     }
 
     #[test]
@@ -741,7 +741,7 @@ mod tests {
         let vec = heap.into_sorted_vector();
         defer vec.free();
 
-        assert_eq!(vec.as_slice(), &[ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]);
+        assert_eq!(vec[..], &[ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]);
     }
 
     #[test]

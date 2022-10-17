@@ -331,7 +331,7 @@ impl PathBuf {
 
     /// View path as [Path] object
     fn as_path(self: &PathBuf) -> Path {
-        Path::new(self.inner.as_slice())
+        Path::new(self.inner[..])
     }
 
     /// Extend the path buffer from an iterator of path segments
@@ -459,11 +459,10 @@ mod tests {
     #[test]
     fn test_path_fmt() {
         let buf: [u8; 512];
-        let buf = buf.as_slice_mut();
 
         macro chk($path, $expected) {
             let path = Path::new($path);
-            let ret = format_in!(buf, "{}", path).unwrap();
+            let ret = format_in!(&buf, "{}", path).unwrap();
             assert_eq!(ret, $expected);
         }
 

@@ -235,7 +235,7 @@ fn remove_directory(path: Path) -> Result<()> {
 ///
 /// file.read_to_end(&buf).unwrap();
 ///
-/// println!("{}", buf.as_slice());
+/// println!("{}", buf[..]);
 /// ```
 struct File {
     fd: FileDescriptor
@@ -411,7 +411,7 @@ struct DirEntry {
 impl DirEntry {
     /// Return the name of the item in directory
     fn name(self: &DirEntry) -> &[u8] {
-        std::ffi::CString::from_raw(&self.inner.d_name[0]).as_slice()
+        std::ffi::CString::from_raw(&self.inner.d_name[0])[..]
     }
 
     /// Returns the file type
@@ -602,7 +602,6 @@ mod tests {
     #[test]
     fn test_open() {
         let filename = mktemp();
-        let buf = BUF.as_slice_mut();
         defer filename.free();
 
         let file = File::create(filename.as_path()).unwrap();
@@ -613,13 +612,13 @@ mod tests {
         let file = File::open(filename.as_path()).unwrap();
         defer file.close();
 
-        let read = file.read(buf).unwrap();
-        assert_eq!(buf[..read] as &[u8], "Hello, world!");
+        let read = file.read(&BUF).unwrap();
+        assert_eq!(BUF[..read] as &[u8], "Hello, world!");
 
         file.seek(SeekFrom::Beginning, 7).unwrap();
 
-        let read = file.read(buf).unwrap();
-        assert_eq!(buf[..read] as &[u8], "world!");
+        let read = file.read(&BUF).unwrap();
+        assert_eq!(BUF[..read] as &[u8], "world!");
 
         let attrs = file.attributes().unwrap();
         assert_eq!(attrs.size(), 13);
@@ -633,7 +632,7 @@ mod tests {
         let read_back = File::read_to_string(filename.as_path()).unwrap();
         defer read_back.free();
 
-        assert_eq!(read_back.as_slice(), "Hello, world!");
+        assert_eq!(read_back[..] as &[u8], "Hello, world!");
     }
 
 
@@ -662,7 +661,8 @@ mod tests {
             .to_vector();
         defer entries.free_all();
 
-        entries.as_slice_mut().sort_by_key(|e: &StringBuf| -> &[u8] { e.as_slice() });
+        entries[..]
+            .sort_by_key(|e: &StringBuf| -> &[u8] { e[..] });
 
         let it = entries.iter_ref().map(StringBuf::as_slice::<u8>);
 
