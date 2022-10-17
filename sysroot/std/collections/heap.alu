@@ -1,9 +1,9 @@
 //! Binary heap collection and utilities.
 //!
 //! This module provides an allocating binary heap collection type, [BinaryHeap] as well as
-//! methods for in-place binary heaps over raw slices ([heapify], [sift_up], [sift_down], ...).
+//! methods for in-place binary heaps over raw slices ([heapify_by], [sift_up_by], [sift_down_by], ...).
 
-use cmp::Comparable;
+use cmp::{Comparable, Ordering};
 
 /// A binary max-heap (priority queue).
 ///
@@ -77,7 +77,7 @@ impl BinaryHeap<T: Comparable<T>> {
     /// The vector will be heapified in-place.
     fn from_vector(vector: Vector<T>) -> BinaryHeap<T> {
         let heap = BinaryHeap { _data: vector };
-        heapify(heap._data.as_slice_mut());
+        heapify_by(heap._data.as_slice_mut(), cmp::internal::default_compare::<T>);
 
         heap
     }
@@ -144,7 +144,7 @@ impl BinaryHeap<T: Comparable<T>> {
     fn extend_from_slice(self: &mut BinaryHeap<T>, slice: &[T]) {
         let old_len = self.len();
         self._data.extend_from_slice(slice);
-        heapify_tail(self._data.as_slice_mut(), old_len);
+        heapify_tail_by(self._data.as_slice_mut(), old_len, cmp::internal::default_compare::<T>);
     }
 
     /// Inserts an element into the heap.
@@ -152,7 +152,7 @@ impl BinaryHeap<T: Comparable<T>> {
         let old_len = self._data.len();
         self._data.push(value);
 
-        sift_up(self._data.as_slice_mut(), 0, old_len);
+        sift_up_by(self._data.as_slice_mut(), 0, old_len, cmp::internal::default_compare::<T>);
     }
 
     /// Returns the largest element in the heap without removing it.
@@ -169,7 +169,11 @@ impl BinaryHeap<T: Comparable<T>> {
         self._data.pop().map(|=self, item: T| -> T {
             if !self.is_empty() {
                 mem::swap(&item, &self._data._data[0]);
-                sift_down_to_bottom(self._data.as_slice_mut(), 0);
+                sift_down_to_bottom_by(
+                    self._data.as_slice_mut(),
+                    0,
+                    cmp::internal::default_compare::<T>
+                );
             }
 
             item
@@ -199,7 +203,11 @@ impl BinaryHeap<T: Comparable<T>> {
             keep
         });
 
-        heapify_tail(self._data.as_slice_mut(), first_removed);
+        heapify_tail_by(
+            self._data.as_slice_mut(),
+            first_removed,
+            cmp::internal::default_compare::<T>
+        );
     }
 
     /// Returns an iterator over the elements in the heap.
@@ -237,7 +245,7 @@ impl BinaryHeap<T: Comparable<T>> {
     ///
     /// `self` is emptied after this operation (like after [move]).
     fn into_sorted_vector(self: &mut BinaryHeap<T>) -> Vector<T> {
-        unheapify(self._data.as_slice_mut());
+        unheapify_by(self._data.as_slice_mut(), cmp::internal::default_compare::<T>);
 
         self.into_vector()
     }
@@ -292,11 +300,11 @@ impl HeapIterator<T: Comparable<T>> {
 }
 
 /// Reorder the elements of a slice so they satisfy the (max) heap property.
-fn heapify<T: Comparable<T>>(self: &mut [T]) {
+fn heapify_by<T, F: Fn(&T, &T) -> Ordering>(self: &mut [T], f: F) {
     let n = self.len() / 2;
     while n > 0 {
         n -= 1;
-        self.sift_down(n);
+        self.sift_down_by(n, f);
     }
 }
 
@@ -304,116 +312,125 @@ fn heapify<T: Comparable<T>>(self: &mut [T]) {
 ///
 /// This variant assumes that the prefix of the slice up to `start - 1` inclusive
 /// already satisfies the heap property.
-fn heapify_tail<T: Comparable<T>>(self: &mut [T], start: usize) {
+fn heapify_tail_by<T, F: Fn(&T, &T) -> Ordering>(self: &mut [T], start: usize, f: F) {
     if start == self.len() {
         return;
     }
 
     let tail_len = self.len() - start;
 
-    fn log2_fast(x: usize) -> usize {
-        mem::size_of::<usize>() * 8 - (x.leading_zeros() as usize) - 1
-    }
-
     let better_to_rebuild = if start < tail_len {
         true
     } else if self.len() <= 2048 {
-        2usize * self.len() < tail_len * log2_fast(start)
+        2usize * self.len() < tail_len * internal::log2_fast(start)
     } else {
         2usize * self.len() < tail_len * 11
     };
 
     if better_to_rebuild {
-        self.heapify();
+        self.heapify_by(f);
     } else {
         for i in start..self.len() {
-            self.sift_up(0, i);
+            self.sift_up_by(0, i, f);
         }
     }
 }
 
 /// Sorts an array satisfying the max heap property in ascending order.
-fn unheapify<T: Comparable<T>>(self: &mut [T]) {
+fn unheapify_by<T, F: Fn(&T, &T) -> Ordering>(self: &mut [T], f: F) {
     let end = self.len();
     while end > 1 {
         end -= 1;
         mem::swap(&self[0], &self[end]);
-        self.sift_down_range(0, end);
+        self.sift_down_range_by(0, end, f);
     }
 }
 
 /// Sifts an element up the heap until it reaches its correct position.
-fn sift_up<T: Comparable<T>>(self: &mut [T], start: usize, pos: usize) -> usize {
+fn sift_up_by<T, F: Fn(&T, &T) -> Ordering>(self: &mut [T], start: usize, pos: usize, f: F) {
+    let elem = self[pos];
     while pos > start {
         let parent = (pos - 1) / 2;
-
-        if self[pos] <= self[parent] {
+        if f(&elem, &self[parent]) != Ordering::Greater {
             break;
         }
-
-        mem::swap(&self[pos],  &self[parent]);
+        self[pos] = self[parent];
         pos = parent;
     }
-    pos
+    self[pos] = elem;
 }
 
 /// Sifts an element down the heap until it reaches its correct position.
-fn sift_down_range<T: Comparable<T>>(self: &mut [T], pos: usize, end: usize) {
-    let start = pos;
+fn sift_down_range_by<T, F: Fn(&T, &T) -> Ordering>(self: &mut [T], pos: usize, end: usize, f: F) {
     let child = 2usize * pos + 1;
+    let elem = self[pos];
 
     while child + 2 <= end {
-        if self[child] <= self[child + 1] {
+        if f(&self[child], &self[child + 1]) == Ordering::Less {
             child += 1;
         }
 
-        if self[pos] >= self[child] {
+        if f(&elem, &self[child]) != Ordering::Less {
+            self[pos] = elem;
             return;
         }
 
-        std::mem::swap(&self[pos], &self[child]);
+        self[pos] = self[child];
         pos = child;
         child = 2 * pos + 1;
     }
 
-    if child == end - 1 && self[pos] < self[child] {
-        mem::swap(&self[pos], &self[child]);
+    if child == end - 1 && f(&elem, &self[child]) == Ordering::Less {
+        self[pos] = self[child];
+        pos = child;
     }
+
+    self[pos] = elem;
 }
 
 /// Sifts an element down the heap until it reaches its correct position.
-fn sift_down<T: Comparable<T>>(self: &mut [T], pos: usize) {
+fn sift_down_by<T, F: Fn(&T, &T) -> Ordering>(self: &mut [T], pos: usize, f: F) {
     let len = self.len();
-    self.sift_down_range(pos, len);
+    self.sift_down_range_by(pos, len, f);
 }
 
 /// Sifts an element to the bottom of the heap, then sifts it up until it reaches
 /// its correct position.
 ///
-/// This is apparently faster than just calling `sift_down` until the element
-/// reaches the correct position.
-fn sift_down_to_bottom<T: Comparable<T>>(self: &mut [T], pos: usize) {
+/// This is faster than just calling `sift_down` until the element reaches the
+/// correct position when the element should be near the bottom of the heap.
+fn sift_down_to_bottom_by<T, F: Fn(&T, &T) -> Ordering>(self: &mut [T], pos: usize, f: F) {
     let end = self.len();
     let start = pos;
+    let elem = self[pos];
 
     let child = 2usize * pos + 1;
     while child + 2 <= end {
-        if self[child] <= self[child + 1] {
+        if f(&self[child], &self[child + 1]) == Ordering::Less {
             child += 1;
         }
-        mem::swap(&self[pos], &self[child]);
+        self[pos] = self[child];
         pos = child;
         child = 2 * pos + 1;
     }
+
     if child == end - 1 {
-        mem::swap(&self[pos], &self[child]);
+        self[pos] = self[child];
         pos = child;
     }
 
-    self.sift_up(start, pos);
+    self[pos] = elem;
+    self.sift_up_by(start, pos, f);
 }
 
-#[cfg(test)]
+mod internal {
+    #[inline]
+    fn log2_fast(x: usize) -> usize {
+        mem::size_of::<usize>() * 8 - (x.leading_zeros() as usize) - 1
+    }
+}
+
+#[cfg(all(test, test_std))]
 mod tests {
     #[test]
     fn test_basic() {
