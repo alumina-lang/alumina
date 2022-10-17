@@ -3,7 +3,7 @@
 //! This module provides an allocating binary heap collection type, [BinaryHeap] as well as
 //! methods for in-place binary heaps over raw slices ([heapify_by], [sift_up_by], [sift_down_by], ...).
 
-use cmp::{Comparable, Ordering};
+use cmp::{Comparable, Ordering, CompareFunction};
 
 /// A binary max-heap (priority queue).
 ///
@@ -59,6 +59,7 @@ struct BinaryHeap<T: Comparable<T>> {
 
 impl BinaryHeap<T: Comparable<T>> {
     use iter::Iterator;
+    use cmp::compare;
 
     /// Creates an empty binary heap.
     ///
@@ -77,15 +78,17 @@ impl BinaryHeap<T: Comparable<T>> {
     /// The vector will be heapified in-place.
     fn from_vector(vector: Vector<T>) -> BinaryHeap<T> {
         let heap = BinaryHeap { _data: vector };
-        heapify_by(heap._data.as_slice_mut(), cmp::internal::default_compare::<T>);
+        heap._data
+            .as_slice_mut()
+            .heapify_by(compare::<T>);
 
         heap
     }
 
     /// Creates a heap from an existing vector.
     ///
-    /// The vector is assumed to be heapified. If it is not, the behavior is
-    /// undefined.
+    /// The vector is assumed to satisfy the max heap property. If it does not,
+    /// the behavior is unspecified.
     fn from_vector_raw(vector: Vector<T>) -> BinaryHeap<T> {
         BinaryHeap { _data: vector }
     }
@@ -144,7 +147,9 @@ impl BinaryHeap<T: Comparable<T>> {
     fn extend_from_slice(self: &mut BinaryHeap<T>, slice: &[T]) {
         let old_len = self.len();
         self._data.extend_from_slice(slice);
-        heapify_tail_by(self._data.as_slice_mut(), old_len, cmp::internal::default_compare::<T>);
+        self._data
+            .as_slice_mut()
+            .heapify_tail_by(old_len, compare::<T>);
     }
 
     /// Inserts an element into the heap.
@@ -152,7 +157,9 @@ impl BinaryHeap<T: Comparable<T>> {
         let old_len = self._data.len();
         self._data.push(value);
 
-        sift_up_by(self._data.as_slice_mut(), 0, old_len, cmp::internal::default_compare::<T>);
+        self._data
+            .as_slice_mut()
+            .sift_up_by(old_len, compare::<T>);
     }
 
     /// Returns the largest element in the heap without removing it.
@@ -169,11 +176,9 @@ impl BinaryHeap<T: Comparable<T>> {
         self._data.pop().map(|=self, item: T| -> T {
             if !self.is_empty() {
                 mem::swap(&item, &self._data._data[0]);
-                sift_down_to_bottom_by(
-                    self._data.as_slice_mut(),
-                    0,
-                    cmp::internal::default_compare::<T>
-                );
+                self._data
+                    .as_slice_mut()
+                    .sift_down_to_bottom_by(0, compare::<T>);
             }
 
             item
@@ -187,6 +192,8 @@ impl BinaryHeap<T: Comparable<T>> {
     }
 
     /// Removes the elements not mathing the given predicate.
+    ///
+    /// The heap property is maintained after the operation.
     ///
     /// Does not remove excess capacity, call [shrink_to_fit] afterwards, if this
     /// is desired.
@@ -203,11 +210,9 @@ impl BinaryHeap<T: Comparable<T>> {
             keep
         });
 
-        heapify_tail_by(
-            self._data.as_slice_mut(),
-            first_removed,
-            cmp::internal::default_compare::<T>
-        );
+        self._data
+            .as_slice_mut()
+            .heapify_tail_by(first_removed, compare::<T>);
     }
 
     /// Returns an iterator over the elements in the heap.
@@ -245,7 +250,9 @@ impl BinaryHeap<T: Comparable<T>> {
     ///
     /// `self` is emptied after this operation (like after [move]).
     fn into_sorted_vector(self: &mut BinaryHeap<T>) -> Vector<T> {
-        unheapify_by(self._data.as_slice_mut(), cmp::internal::default_compare::<T>);
+        self._data
+            .as_slice_mut()
+            .sort_heap_by(compare::<T>);
 
         self.into_vector()
     }
@@ -300,7 +307,18 @@ impl HeapIterator<T: Comparable<T>> {
 }
 
 /// Reorder the elements of a slice so they satisfy the (max) heap property.
-fn heapify_by<T, F: Fn(&T, &T) -> Ordering>(self: &mut [T], f: F) {
+///
+/// ## Example
+/// ```
+/// use std::collections::heap::heapify_by;
+/// use std::cmp::compare;
+///
+/// let v = [3, 5, 1, 2, 9, 8];
+/// v.as_slice_mut().heapify_by(compare::<i32>);
+///
+/// assert_eq!(v[0], 9); // max element
+/// ```
+fn heapify_by<T, F: CompareFunction<T>>(self: &mut [T], f: F) {
     let n = self.len() / 2;
     while n > 0 {
         n -= 1;
@@ -310,9 +328,25 @@ fn heapify_by<T, F: Fn(&T, &T) -> Ordering>(self: &mut [T], f: F) {
 
 /// Reorder the elements of a slice so they satisfy the (max) heap property.
 ///
-/// This variant assumes that the prefix of the slice up to `start - 1` inclusive
-/// already satisfies the heap property.
-fn heapify_tail_by<T, F: Fn(&T, &T) -> Ordering>(self: &mut [T], start: usize, f: F) {
+/// This variant assumes that the slice before `start` already satisfies the
+/// heap property and sifts up the elements in the tail.
+///
+/// The method is adaptive and will perform a standard heapification if that
+/// would be more efficient (if the tail is too long with respect to the existing
+/// heap in the head).
+///
+/// ## Example
+/// ```
+/// use std::collections::heap::{heapify_by, heapify_tail_by};
+/// use std::cmp::compare;
+///
+/// let v = [3, 5, 1, 2, 9, 8].as_slice_mut();
+/// v[0..4].heapify_by(compare::<i32>);
+/// v.heapify_tail_by(4, compare::<i32>);
+///
+/// assert_eq!(v[0], 9); // max element
+/// ```
+fn heapify_tail_by<T, F: CompareFunction<T>>(self: &mut [T], start: usize, f: F) {
     if start == self.len() {
         return;
     }
@@ -331,25 +365,58 @@ fn heapify_tail_by<T, F: Fn(&T, &T) -> Ordering>(self: &mut [T], start: usize, f
         self.heapify_by(f);
     } else {
         for i in start..self.len() {
-            self.sift_up_by(0, i, f);
+            self.sift_up_by(i, f);
         }
     }
 }
 
 /// Sorts an array satisfying the max heap property in ascending order.
-fn unheapify_by<T, F: Fn(&T, &T) -> Ordering>(self: &mut [T], f: F) {
+///
+/// ## Example
+/// ```
+/// use std::collections::heap::{heapify_by, sort_heap_by};
+/// use std::cmp::compare;
+///
+/// fn heapsort(v: &mut [i32]) {
+///     v.heapify_by(compare::<i32>);
+///     v.sort_heap_by(compare::<i32>);
+/// }
+///
+/// let v = [3, 5, 1, 2, 9, 8].as_slice_mut();
+/// v.heapsort();
+///
+/// assert_eq!(v, &[1, 2, 3, 5, 8, 9]);
+/// ```
+fn sort_heap_by<T, F: CompareFunction<T>>(self: &mut [T], f: F) {
     let end = self.len();
     while end > 1 {
         end -= 1;
         mem::swap(&self[0], &self[end]);
-        self.sift_down_range_by(0, end, f);
+        self[..end].sift_down_by(0, f);
     }
 }
 
 /// Sifts an element up the heap until it reaches its correct position.
-fn sift_up_by<T, F: Fn(&T, &T) -> Ordering>(self: &mut [T], start: usize, pos: usize, f: F) {
+///
+/// This is used e.g. to restore the heap property after appending an element to the
+/// end of the heap.
+///
+/// ## Example
+/// ```
+/// use std::collections::heap::{heapify_by, sift_up_by};
+/// use std::cmp::compare;
+///
+/// let v = [1, 2, 3, 4, 5].as_slice_mut();
+/// v.heapify_by(compare::<i32>);
+/// assert_eq!(v[0], 5); // 5 is the max element
+///
+/// v[4] = 100;
+/// v.sift_up_by(4, compare::<i32>);
+/// assert_eq!(v[0], 100); // 100 is the new max element
+/// ```
+fn sift_up_by<T, F: CompareFunction<T>>(self: &mut [T], pos: usize, f: F) {
     let elem = self[pos];
-    while pos > start {
+    while pos > 0 {
         let parent = (pos - 1) / 2;
         if f(&elem, &self[parent]) != Ordering::Greater {
             break;
@@ -361,11 +428,30 @@ fn sift_up_by<T, F: Fn(&T, &T) -> Ordering>(self: &mut [T], start: usize, pos: u
 }
 
 /// Sifts an element down the heap until it reaches its correct position.
-fn sift_down_range_by<T, F: Fn(&T, &T) -> Ordering>(self: &mut [T], pos: usize, end: usize, f: F) {
+///
+/// This is used e.g. to restore the heap property after removing the root element.
+/// If replacing the root element with the last element of the heap, consider using
+/// [sift_down_to_bottom_by] instead, as it can be more efficient when the element
+/// should be close to the bottom of the heap.
+///
+/// ## Example
+/// ```
+/// use std::collections::heap::{heapify_by, sift_down_by};
+/// use std::cmp::compare;
+///
+/// let v = [1, 2, 3, 4, 5].as_slice_mut();
+/// v.heapify_by(compare::<i32>);
+/// assert_eq!(v[0], 5); // 5 is the max element
+///
+/// v[0] = 3;
+/// v.sift_down_by(0, compare::<i32>);
+/// assert_eq!(v[0], 4); // 4 is the new max element
+/// ```
+fn sift_down_by<T, F: CompareFunction<T>>(self: &mut [T], pos: usize, f: F) {
     let child = 2usize * pos + 1;
     let elem = self[pos];
 
-    while child + 2 <= end {
+    while child + 1 < self.len() {
         if f(&self[child], &self[child + 1]) == Ordering::Less {
             child += 1;
         }
@@ -380,7 +466,7 @@ fn sift_down_range_by<T, F: Fn(&T, &T) -> Ordering>(self: &mut [T], pos: usize, 
         child = 2 * pos + 1;
     }
 
-    if child == end - 1 && f(&elem, &self[child]) == Ordering::Less {
+    if child == self.len() - 1 && f(&elem, &self[child]) == Ordering::Less {
         self[pos] = self[child];
         pos = child;
     }
@@ -388,24 +474,35 @@ fn sift_down_range_by<T, F: Fn(&T, &T) -> Ordering>(self: &mut [T], pos: usize, 
     self[pos] = elem;
 }
 
-/// Sifts an element down the heap until it reaches its correct position.
-fn sift_down_by<T, F: Fn(&T, &T) -> Ordering>(self: &mut [T], pos: usize, f: F) {
-    let len = self.len();
-    self.sift_down_range_by(pos, len, f);
-}
-
-/// Sifts an element to the bottom of the heap, then sifts it up until it reaches
+/// Sifts an element at index `pos` to the bottom of the heap, then sifts it up until it reaches
 /// its correct position.
 ///
-/// This is faster than just calling `sift_down` until the element reaches the
-/// correct position when the element should be near the bottom of the heap.
-fn sift_down_to_bottom_by<T, F: Fn(&T, &T) -> Ordering>(self: &mut [T], pos: usize, f: F) {
+/// This avoids extra comparisons on the way down and hence can be faster than just calling
+/// [sift_down_by] until the element reaches the correct position when the element is known
+/// to have to be near the bottom of the heap.
+///
+/// ## Example
+/// ```
+/// use std::collections::heap::{heapify_by, sift_down_to_bottom_by};
+/// use std::cmp::compare;
+/// use std::mem::swap;
+///
+/// let v = [1, 2, 3, 4, 5].as_slice_mut();
+/// v.heapify_by(compare::<i32>);
+///
+/// swap(&v[0], &v[4]);
+/// v = v[..4]; // remove the last element
+///
+/// v.sift_down_to_bottom_by(0, compare::<i32>);
+/// assert_eq!(v[0], 4); // 4 is the new max element
+/// ```
+fn sift_down_to_bottom_by<T, F: CompareFunction<T>>(self: &mut [T], pos: usize, f: F) {
     let end = self.len();
     let start = pos;
     let elem = self[pos];
 
     let child = 2usize * pos + 1;
-    while child + 2 <= end {
+    while child + 1 < end {
         if f(&self[child], &self[child + 1]) == Ordering::Less {
             child += 1;
         }
@@ -420,7 +517,7 @@ fn sift_down_to_bottom_by<T, F: Fn(&T, &T) -> Ordering>(self: &mut [T], pos: usi
     }
 
     self[pos] = elem;
-    self.sift_up_by(start, pos, f);
+    self.sift_up_by(pos, f);
 }
 
 mod internal {

@@ -120,41 +120,37 @@ protocol Comparable<Self: Equatable<Self>> {
     }
 }
 
-/// A wrapper that can be used to reverse the ordering of a Comparable.
+/// Protocol for comparison functions.
 ///
-/// See [reversed] for details.
-struct Reversed<T: Comparable<T>> {
-    value: &T,
+/// See [Comparable] for details.
+type CompareFunction<T> = Fn(&T, &T) -> Ordering;
+
+/// Compare two values using the [Comparable::compare] method of a type
+/// implementing the [Comparable] protocol.
+///
+/// See [Comparable] for details.
+#[inline]
+fn compare<T: Comparable<T>>(a: &T, b: &T) -> Ordering {
+    a.compare(b)
 }
 
-impl Reversed<T: Comparable<T>> {
-    /// @ Comparable::compare
-    fn compare(self: &Reversed<T>, other: &Reversed<T>) -> Ordering {
-        other.value.compare(self.value)
-    }
-
-    /// @ Equatable::equals
-    fn equals(self: &Reversed<T>, other: &Reversed<T>) -> bool {
-        self.value.equals(other.value)
-    }
-
-    mixin Equatable<Reversed<T>>;
-    mixin Comparable<Reversed<T>>;
-}
-
-/// Reverses the ordering of a Comparable.
+/// Compare two values using the [Comparable::compare] method of a type
+/// implementing the [Comparable] protocol, but in reverse order.
+///
+/// Useful for sorting collections in descending order. See also [compare].
 ///
 /// ## Example
 /// ```
-/// use std::cmp::{sort_by_key, reversed};
+/// use std::cmp::{sort_by, reversed};
 ///
 /// let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
-/// slice.sort_by_key(reversed::<i32>);
+/// slice.sort_by(reversed::<i32>);
 ///
 /// assert_eq!(slice, &[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
 /// ```
-fn reversed<T: Comparable<T>>(value: &T) -> Reversed<T> {
-    Reversed { value: value }
+#[inline]
+fn reversed<T: Comparable<T>>(a: &T, b: &T) -> Ordering {
+    b.compare(a)
 }
 
 /// Helper macro for implementing a lexicographic order.
@@ -237,7 +233,7 @@ fn min<T: Comparable<T>>(a: T, b: T) -> T {
 /// assert!(!arr1.is_sorted_by(i32::compare));
 /// assert!(arr2.is_sorted_by(i32::compare));
 /// ```
-fn is_sorted_by<T, F: Fn(&T, &T) -> Ordering>(arr: &[T], f: F) -> bool {
+fn is_sorted_by<T, F: CompareFunction<T>>(arr: &[T], f: F) -> bool {
     for i in 1usize..arr.len() {
         if f(&arr[i - 1], &arr[i]) == Ordering::Greater {
             return false;
@@ -293,7 +289,7 @@ fn is_sorted<T: Comparable<T>>(arr: &[T]) -> bool {
 ///
 /// assert_eq!(slice, &[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
 /// ```
-fn sort_by<T, F: Fn(&T, &T) -> Ordering>(arr: &mut [T], f: F) {
+fn sort_by<T, F: CompareFunction<T>>(arr: &mut [T], f: F) {
     if arr.len() <= 1 {
         return;
     }
@@ -335,7 +331,7 @@ fn sort_by_key<T, F: Fn(&T) -> K, K: Comparable<K>>(arr: &mut [T], key: F) {
 /// assert_eq!(slice, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 /// ```
 fn sort<T: Comparable<T>>(arr: &mut [T]) {
-    arr.sort_by(internal::default_compare::<T>);
+    arr.sort_by(compare::<T>);
 }
 
 /// Sorts a slice using a custom comparison function. The sort is stable (i.e. preserves the
@@ -353,7 +349,7 @@ fn sort<T: Comparable<T>>(arr: &mut [T]) {
 ///
 /// assert_eq!(slice, &[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
 /// ```
-fn stable_sort_by<T, F: Fn(&T, &T) -> Ordering>(arr: &mut [T], f: F) {
+fn stable_sort_by<T, F: CompareFunction<T>>(arr: &mut [T], f: F) {
     if arr.len() < internal::MERGESORT_MIN_SIZE {
         // Avoid an allocation in case the array is small.
         return internal::insertion_sort_by(arr, f);
@@ -362,7 +358,11 @@ fn stable_sort_by<T, F: Fn(&T, &T) -> Ordering>(arr: &mut [T], f: F) {
     let scratch = mem::slice::alloc::<T>(arr.len());
     defer scratch.free();
 
-    internal::merge_sort_by(arr, scratch, f);
+    // Alternating buffers are used to minimize copying and since we
+    // do not know the depth, we ensure that both buffers have the same
+    // by doing a full copy first.
+    arr.copy_to_nonoverlapping(&scratch[0]);
+    internal::merge_sort_by(scratch, arr, f);
 }
 
 /// Sorts a slice using a key extraction function. The sort is stable (i.e. preserves the
@@ -399,7 +399,7 @@ fn stable_sort_by_key<T, F: Fn(&T) -> K, K: Comparable<K>>(arr: &mut [T], key: F
 /// assert_eq!(slice, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 /// ```
 fn stable_sort<T: Comparable<T>>(arr: &mut [T]) {
-    arr.stable_sort_by(internal::default_compare::<T>);
+    arr.stable_sort_by(compare::<T>);
 }
 
 
@@ -476,7 +476,6 @@ fn binary_search_by_key<T, F: Fn(&T) -> K, K: Comparable<K>>(arr: &[T], needle: 
     arr.binary_search_by(|=needle, =key, k: &T| -> Ordering { key(k).compare(needle) })
 }
 
-
 mod internal {
     const NINTHER_THRESHOLD: usize = 128;
     const INTROSORT_MIN_SIZE: usize = 24;
@@ -518,27 +517,21 @@ mod internal {
         lhs.greater_than_or_equal(rhs)
     }
 
-    /// Passthrough for T::compare, but friendlier to the type inferer.
     #[inline]
-    fn default_compare<T: Comparable<T>>(a: &T, b: &T) -> Ordering {
-        a.compare(b)
-    }
-
-    #[inline]
-    fn sort2<T, F: Fn(&T, &T) -> Ordering>(a: &mut T, b: &mut T, f: F) {
+    fn sort2<T, F: CompareFunction<T>>(a: &mut T, b: &mut T, f: F) {
         if f(a, b) == Ordering::Greater {
             std::mem::swap(a, b);
         }
     }
 
     #[inline]
-    fn sort3<T, F: Fn(&T, &T) -> Ordering>(a: &mut T, b: &mut T, c: &mut T, f: F) {
+    fn sort3<T, F: CompareFunction<T>>(a: &mut T, b: &mut T, c: &mut T, f: F) {
         sort2(a, b, f);
         sort2(b, c, f);
         sort2(a, b, f);
     }
 
-    fn partition_by<T, F: Fn(&T, &T) -> Ordering>(arr: &mut [T], f: F) -> usize {
+    fn partition_by<T, F: CompareFunction<T>>(arr: &mut [T], f: F) -> usize {
         use mem::swap;
 
         let mid = arr.len() / 2;
@@ -568,7 +561,7 @@ mod internal {
         i
     }
 
-    fn insertion_sort_by<T, F: Fn(&T, &T) -> Ordering>(arr: &mut [T], f: F) {
+    fn insertion_sort_by<T, F: CompareFunction<T>>(arr: &mut [T], f: F) {
         for i in 1usize..arr.len() {
             let j = i;
             let elem = arr[i];
@@ -580,54 +573,54 @@ mod internal {
         }
     }
 
-    fn merge_sort_by<T, F: Fn(&T, &T) -> Ordering>(arr: &mut [T], scratch: &mut [T], f: F) {
-        if arr.len() < MERGESORT_MIN_SIZE {
-            // Switch to insertion sort when the array is small enough
-            return insertion_sort_by(arr, f);
-        }
-
-        let mid = arr.len() / 2;
-
-        merge_sort_by(arr[..mid], scratch[..mid], f);
-        merge_sort_by(arr[mid..], scratch[mid..], f);
-
+    fn merge<T, F: CompareFunction<T>>(left: &[T], right: &[T], dest: &mut [T], f: F) {
         let i = 0usize;
-        let j = mid;
+        let j = 0usize;
         let k = 0usize;
-
-        while i < mid && j < arr.len() {
-            if f(&arr[i], &arr[j]) != Ordering::Greater {
-                scratch[k] = arr[i];
+        while i < left.len() && j < right.len() {
+            if f(&left[i], &right[j]) != Ordering::Greater {
+                dest[k] = left[i];
                 i += 1;
             } else {
-                scratch[k] = arr[j];
+                dest[k] = right[j];
                 j += 1;
             }
             k += 1;
         }
-
-        while i < mid {
-            scratch[k] = arr[i];
+        while i < left.len() {
+            dest[k] = left[i];
             i += 1;
             k += 1;
         }
-
-        while j < arr.len() {
-            scratch[k] = arr[j];
+        while j < right.len() {
+            dest[k] = right[j];
             j += 1;
             k += 1;
         }
-
-        scratch.copy_to_nonoverlapping(&arr[0]);
     }
 
-    fn introsort_by<T, F: Fn(&T, &T) -> Ordering>(arr: &mut [T], max_depth: usize, f: F) {
+    fn merge_sort_by<T, F: CompareFunction<T>>(src: &mut [T], dest: &mut [T], f: F) {
+        if src.len() < MERGESORT_MIN_SIZE {
+            // Switch to insertion sort when the array is small enough
+            return insertion_sort_by(dest, f);
+        }
+
+        let mid = src.len() / 2;
+
+        // Swap the source and destination arrays in the recursive calls
+        merge_sort_by(dest[..mid], src[..mid], f);
+        merge_sort_by(dest[mid..], src[mid..], f);
+
+        merge(src[..mid], src[mid..], dest, f);
+    }
+
+    fn introsort_by<T, F: CompareFunction<T>>(arr: &mut [T], max_depth: usize, f: F) {
         if arr.len() < INTROSORT_MIN_SIZE {
             internal::insertion_sort_by(arr, f);
         } else if max_depth == 0 {
             // Fall back to heapsort
             collections::heap::heapify_by(arr, f);
-            collections::heap::unheapify_by(arr, f);
+            collections::heap::sort_heap_by(arr, f);
         } else {
             let p = partition_by(arr, f);
             introsort_by(arr[..p], max_depth - 1,  f);
@@ -641,7 +634,7 @@ mod tests {
     #[test]
     fn test_sort() {
         let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
-        sort(slice);
+        slice.sort();
 
         assert_eq!(slice, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     }
@@ -649,7 +642,7 @@ mod tests {
     #[test]
     fn test_sort_by_key() {
         let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
-        sort_by_key(slice, |x: &i32| -> i32 { -*x });
+        slice.sort_by_key(|x: &i32| -> i32 { -*x });
 
         assert_eq!(slice, &[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
     }
@@ -657,9 +650,9 @@ mod tests {
     #[test]
     fn test_sort_by() {
         let slice = [4, 8, 2, 9, 7, 10, 3, 1, 6, 5].as_slice_mut();
-        sort_by(slice, |x: &i32, y: &i32| -> Ordering { x.compare(y) });
+        slice.sort_by(reversed::<i32>);
 
-        assert_eq!(slice, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        assert_eq!(slice, &[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
     }
 
     #[test]

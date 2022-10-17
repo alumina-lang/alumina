@@ -489,6 +489,104 @@ impl ChainIterator<It1: DoubleEndedIterator<It1, T>, It2: DoubleEndedIterator<It
     mixin DoubleEndedIteratorExt<ChainIterator<It1, It2, T>, T>;
 }
 
+/// Merge iterator.
+///
+/// See [IteratorExt::merge_sorted].
+struct MergeIterator<It1: Iterator<It1, T>, It2: Iterator<It2, T>, T: cmp::Comparable<T>> {
+    it1: Option<PeekableIterator<It1, T>>,
+    it2: Option<PeekableIterator<It2, T>>,
+}
+
+impl MergeIterator<It1: Iterator<It1, T>, It2: Iterator<It2, T>, T: cmp::Comparable<T>> {
+    /// @ Iterator::next
+    fn next(self: &mut MergeIterator<It1, It2, T>) -> Option<T> {
+        if self.it1.is_none() {
+            return self.it2.as_mut_ptr().unwrap().next();
+        } else if self.it2.is_none() {
+            return self.it1.as_mut_ptr().unwrap().next();
+        }
+
+        let it1 = self.it1.as_mut_ptr().unwrap();
+        let it2 = self.it2.as_mut_ptr().unwrap();
+
+        let v1 = it1.peek();
+        let v2 = it2.peek();
+
+        if v1.is_none() {
+            it1.next();
+            self.it1 = Option::none();
+
+            it2.next()
+        } else if v2.is_none() {
+            it2.next();
+            self.it2 = Option::none();
+
+            it1.next()
+        } else if v1.unwrap() <= v2.unwrap() {
+            it1.next()
+        } else {
+            it2.next()
+        }
+    }
+
+    /// @ Iterator::size_hint
+    fn size_hint(self: &MergeIterator<It1, It2, T>) -> Option<usize> {
+        if self.it1.is_none() {
+            self.it2.as_ptr().unwrap().size_hint()
+        } else if self.it2.is_none() {
+            self.it1.as_ptr().unwrap().size_hint()
+        } else {
+            self.it1.as_ptr().unwrap().size_hint()
+                .zip(self.it2.as_ptr().unwrap().size_hint())
+                .map(|v: (usize, usize)| -> usize {
+                    v.0 + v.1
+                })
+        }
+    }
+
+    mixin Iterator<MergeIterator<It1, It2, T>, T>;
+    mixin IteratorExt<MergeIterator<It1, It2, T>, T>;
+}
+
+
+impl MergeIterator<It1: DoubleEndedIterator<It1, T>, It2: DoubleEndedIterator<It2, T>, T: cmp::Comparable<T>> {
+    /// @ DoubleEndedIterator::next_back
+    fn next_back(self: &mut MergeIterator<It1, It2, T>) -> Option<T> {
+        if self.it1.is_none() {
+            return self.it2.as_mut_ptr().unwrap().next_back();
+        } else if self.it2.is_none() {
+            return self.it1.as_mut_ptr().unwrap().next_back();
+        }
+
+        let it1 = self.it1.as_mut_ptr().unwrap();
+        let it2 = self.it2.as_mut_ptr().unwrap();
+
+        let v1 = it1.peek_back();
+        let v2 = it2.peek_back();
+
+        if v1.is_none() {
+            it1.next_back();
+            self.it1 = Option::none();
+
+            it2.next_back()
+        } else if v2.is_none() {
+            it2.next_back();
+            self.it2 = Option::none();
+
+            it1.next_back()
+        } else if v1.unwrap() > v2.unwrap() {
+            // Strict greater than to ensure "stable" ordering.
+            it1.next_back()
+        } else {
+            it2.next_back()
+        }
+    }
+
+    mixin DoubleEndedIterator<MergeIterator<It1, It2, T>, T>;
+    mixin DoubleEndedIteratorExt<MergeIterator<It1, It2, T>, T>;
+}
+
+
 /// Inspect iterator.
 ///
 /// See [IteratorExt::inspect].
@@ -660,6 +758,7 @@ impl ChunksIterator<It: Iterator<It, T>, T> {
 struct PeekableIterator<It: Iterator<It, T>, T> {
     it: &mut It,
     peeked: Option<T>,
+    peeked_back: when It: DoubleEndedIterator<It, T> { Option<T> } else { () },
 }
 
 impl PeekableIterator<It: Iterator<It, T>, T> {
@@ -668,25 +767,53 @@ impl PeekableIterator<It: Iterator<It, T>, T> {
         if self.peeked.is_some() {
             self.peeked.move()
         } else {
-            self.it.next()
+            when It: DoubleEndedIterator<It, T> {
+                let next = self.it.next();
+                if !next.is_some() {
+                    self.peeked_back.move()
+                } else {
+                    next
+                }
+            } else {
+                self.it.next()
+            }
         }
     }
 
     /// Return the next element in the iterator without consuming it.
     fn peek(self: &mut PeekableIterator<It, T>) -> Option<T> {
-        if !self.peeked.is_some() {
-            self.peeked = self.it.next();
+        when It: DoubleEndedIterator<It, T> {
+            if !self.peeked.is_some() {
+                self.peeked = self.it.next();
+                if self.peeked.is_some(){
+                    self.peeked
+                } else {
+                    self.peeked_back
+                }
+            } else {
+                self.peeked
+            }
+        } else {
+            if !self.peeked.is_some() {
+                self.peeked = self.it.next();
+            }
+            self.peeked
         }
-        self.peeked
     }
 
     /// @ Iterator::size_hint
     fn size_hint(self: &PeekableIterator<It, T>) -> Option<usize> {
         self.it.size_hint().map(|=self, x: usize| -> usize {
-            if self.peeked.is_some() {
-                x + 1
-            } else {
+            when It: DoubleEndedIterator<It, T> {
                 x
+                + (if self.peeked.is_some() { 1 } else { 0 })
+                + (if self.peeked_back.is_some() { 1 } else { 0 })
+            } else {
+                if self.peeked.is_some() {
+                    x + 1
+                } else {
+                    x
+                }
             }
         })
     }
@@ -695,6 +822,38 @@ impl PeekableIterator<It: Iterator<It, T>, T> {
     mixin IteratorExt<PeekableIterator<It, T>, T>;
 }
 
+impl PeekableIterator<It: DoubleEndedIterator<It, T>, T> {
+    /// @ DoubleEndedIterator::next_back
+    fn next_back(self: &mut PeekableIterator<It, T>) -> Option<T> {
+        if self.peeked_back.is_some() {
+            self.peeked_back.move()
+        } else {
+            let next_back = self.it.next_back();
+            if !next_back.is_some() {
+                self.peeked.move()
+            } else {
+                next_back
+            }
+        }
+    }
+
+    /// Return the next element from the back in the iterator without consuming it.
+    fn peek_back(self: &mut PeekableIterator<It, T>) -> Option<T> {
+        if !self.peeked_back.is_some() {
+            self.peeked_back = self.it.next_back();
+            if self.peeked_back.is_some(){
+                self.peeked_back
+            } else {
+                self.peeked
+            }
+        } else {
+            self.peeked_back
+        }
+    }
+
+    mixin DoubleEndedIterator<PeekableIterator<It, T>, T>;
+    mixin DoubleEndedIteratorExt<PeekableIterator<It, T>, T>;
+}
 
 /// Zip iterator
 ///
@@ -830,6 +989,30 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
         ChainIterator {
             it1: FusedIterator { done: false, it: self },
             it2: FusedIterator { done: false, it: other }
+        }
+    }
+
+    /// Returns an iterator that merges two sorted iterators into one sorted iterator.
+    ///
+    /// `T` must implement [cmp::Comparable]. If the two iterators are not sorted, the
+    /// resulting order is unspecified.
+    ///
+    /// ## Example
+    /// ```
+    /// let range = [0, 2, 4].iter().merge_sorted(&[1, 3].iter());
+    /// assert_eq!(range.size_hint(), Option::some(5usize));
+    ///
+    /// assert_eq!(range.next(), Option::some(0));
+    /// assert_eq!(range.next(), Option::some(1));
+    /// assert_eq!(range.next(), Option::some(2));
+    /// assert_eq!(range.next(), Option::some(3));
+    /// assert_eq!(range.next(), Option::some(4));
+    /// assert_eq!(range.next(), Option::none());
+    /// ```
+    fn merge_sorted<Other: Iterator<Other, T>>(self: &mut Self, other: &mut Other) -> MergeIterator<Self, Other, T> {
+        MergeIterator {
+            it1: Option::some(self.peekable()),
+            it2: Option::some(other.peekable())
         }
     }
 
@@ -1360,6 +1543,11 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
         PeekableIterator {
             it: self,
             peeked: Option::none(),
+            peeked_back: when Self: DoubleEndedIterator<Self, T> {
+                Option::none()
+            } else {
+                ()
+            }
         }
     }
 
@@ -1922,6 +2110,41 @@ mod tests {
     }
 
     #[test]
+    fn test_peekable_rev() {
+        let range = (0..3).peekable();
+        assert_eq!(range.size_hint(), Option::some(3usize));
+        assert_eq!(range.peek_back(), Option::some(2));
+
+        assert_eq!(range.size_hint(), Option::some(3usize));
+        assert_eq!(range.next_back(), Option::some(2));
+        assert_eq!(range.next_back(), Option::some(1));
+        assert_eq!(range.next_back(), Option::some(0));
+        assert_eq!(range.next_back(), Option::none());
+    }
+
+    #[test]
+    fn test_peekable_bidirectional() {
+        let range = (0..3).peekable();
+        assert_eq!(range.size_hint(), Option::some(3usize));
+
+        assert_eq!(range.peek(), Option::some(0));
+        assert_eq!(range.peek_back(), Option::some(2));
+
+        assert_eq!(range.size_hint(), Option::some(3usize));
+        assert_eq!(range.next(), Option::some(0));
+        assert_eq!(range.next_back(), Option::some(2));
+
+        assert_eq!(range.size_hint(), Option::some(1usize));
+        assert_eq!(range.peek(), Option::some(1));
+        assert_eq!(range.peek_back(), Option::some(1));
+
+        assert_eq!(range.next(), Option::some(1));
+        assert_eq!(range.next_back(), Option::none());
+
+        assert_eq!(range.size_hint(), Option::some(0usize));
+    }
+
+    #[test]
     fn test_group_by() {
         let values: &[(i32, i32)] = &[
             (0, 0),
@@ -2270,5 +2493,112 @@ mod tests {
     #[test(should_fail)]
     fn test_chunks_0() {
         (0..10).chunks(0);
+    }
+
+    #[test]
+    fn test_merge_sorted_1() {
+        let iter = [1,3,5,7].iter().merge_sorted(&[2,4,6,8].iter());
+        assert_eq!(iter.size_hint(), Option::some(8usize));
+
+        assert_eq!(iter.next(), Option::some(1));
+        assert_eq!(iter.next(), Option::some(2));
+        assert_eq!(iter.next(), Option::some(3));
+        assert_eq!(iter.next(), Option::some(4));
+        assert_eq!(iter.next(), Option::some(5));
+        assert_eq!(iter.next(), Option::some(6));
+        assert_eq!(iter.next(), Option::some(7));
+        assert_eq!(iter.next(), Option::some(8));
+        assert_eq!(iter.next(), Option::none());
+    }
+
+    #[test]
+    fn test_merge_sorted_reversed() {
+        let iter = [1,3,5,7].iter().merge_sorted(&[2,4,6,8].iter()).rev();
+        assert_eq!(iter.size_hint(), Option::some(8usize));
+
+        assert_eq!(iter.next(), Option::some(8));
+        assert_eq!(iter.next(), Option::some(7));
+        assert_eq!(iter.next(), Option::some(6));
+        assert_eq!(iter.next(), Option::some(5));
+        assert_eq!(iter.next(), Option::some(4));
+        assert_eq!(iter.next(), Option::some(3));
+        assert_eq!(iter.next(), Option::some(2));
+        assert_eq!(iter.next(), Option::some(1));
+        assert_eq!(iter.next(), Option::none());
+    }
+
+    #[test]
+    fn test_merge_sorted_2() {
+        let iter = [1,2,3,4].iter().merge_sorted(&[5,6,7,8].iter());
+        assert_eq!(iter.size_hint(), Option::some(8usize));
+
+        assert_eq!(iter.next(), Option::some(1));
+        assert_eq!(iter.next(), Option::some(2));
+        assert_eq!(iter.next(), Option::some(3));
+        assert_eq!(iter.next(), Option::some(4));
+        assert_eq!(iter.next(), Option::some(5));
+        assert_eq!(iter.next(), Option::some(6));
+        assert_eq!(iter.next(), Option::some(7));
+        assert_eq!(iter.next(), Option::some(8));
+        assert_eq!(iter.next(), Option::none());
+    }
+
+
+    #[test]
+    fn test_merge_sorted_3() {
+        let iter = [5,6,7,8].iter().merge_sorted(&[1,2,3,4].iter());
+        assert_eq!(iter.size_hint(), Option::some(8usize));
+
+        assert_eq!(iter.next(), Option::some(1));
+        assert_eq!(iter.next(), Option::some(2));
+        assert_eq!(iter.next(), Option::some(3));
+        assert_eq!(iter.next(), Option::some(4));
+        assert_eq!(iter.next(), Option::some(5));
+        assert_eq!(iter.next(), Option::some(6));
+        assert_eq!(iter.next(), Option::some(7));
+        assert_eq!(iter.next(), Option::some(8));
+        assert_eq!(iter.next(), Option::none());
+    }
+
+    #[test]
+    fn test_merge_sorted_exhausted_left() {
+        let iter = [1,3].iter().merge_sorted(&[2,4,6,8].iter());
+        assert_eq!(iter.size_hint(), Option::some(6usize));
+
+        assert_eq!(iter.next(), Option::some(1));
+        assert_eq!(iter.size_hint(), Option::some(5usize));
+        assert_eq!(iter.next(), Option::some(2));
+        assert_eq!(iter.size_hint(), Option::some(4usize));
+        assert_eq!(iter.next(), Option::some(3));
+        assert_eq!(iter.size_hint(), Option::some(3usize));
+        assert_eq!(iter.next(), Option::some(4));
+        assert_eq!(iter.size_hint(), Option::some(2usize));
+        assert_eq!(iter.next(), Option::some(6));
+        assert_eq!(iter.size_hint(), Option::some(1usize));
+        assert_eq!(iter.next(), Option::some(8));
+        assert_eq!(iter.size_hint(), Option::some(0usize));
+        assert_eq!(iter.next(), Option::none());
+        assert_eq!(iter.size_hint(), Option::some(0usize));
+    }
+
+    #[test]
+    fn test_merge_sorted_exhausted_right() {
+        let iter = [2,4,6,8].iter().merge_sorted(&[1,3].iter());
+        assert_eq!(iter.size_hint(), Option::some(6usize));
+
+        assert_eq!(iter.next(), Option::some(1));
+        assert_eq!(iter.size_hint(), Option::some(5usize));
+        assert_eq!(iter.next(), Option::some(2));
+        assert_eq!(iter.size_hint(), Option::some(4usize));
+        assert_eq!(iter.next(), Option::some(3));
+        assert_eq!(iter.size_hint(), Option::some(3usize));
+        assert_eq!(iter.next(), Option::some(4));
+        assert_eq!(iter.size_hint(), Option::some(2usize));
+        assert_eq!(iter.next(), Option::some(6));
+        assert_eq!(iter.size_hint(), Option::some(1usize));
+        assert_eq!(iter.next(), Option::some(8));
+        assert_eq!(iter.size_hint(), Option::some(0usize));
+        assert_eq!(iter.next(), Option::none());
+        assert_eq!(iter.size_hint(), Option::some(0usize));
     }
 }
