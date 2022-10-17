@@ -4525,14 +4525,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
     fn lower_index(
         &mut self,
-        inner: ast::ExprP<'ast>,
+        indexee: ast::ExprP<'ast>,
         index: ast::ExprP<'ast>,
         type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let inner_span = inner.span;
+        let inner_span = indexee.span;
         // We put usize as a hint, lower_range has a special case and will take
         let index = self.lower_expr(index, Some(self.types.builtin(BuiltinType::USize)))?;
-        let inner_hint = if let Some(LangTypeKind::Range(bound_ty)) =
+        let indexee_hint = if let Some(LangTypeKind::Range(bound_ty)) =
             self.mono_ctx.get_lang_type_kind(index.ty)
         {
             if let ir::Ty::Builtin(BuiltinType::USize) = bound_ty {
@@ -4549,53 +4549,72 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             type_hint.map(|ty| self.types.array(ty, 0))
         };
 
-        let inner = self.lower_expr(inner, inner_hint)?;
-        let inner_type = self.try_qualify_type(inner.ty)?;
-        let inner = self.try_coerce(inner_type, inner)?;
+        let indexee = self.lower_expr(indexee, indexee_hint)?;
+        let indexee_type = self.try_qualify_type(indexee.ty)?;
+        let mut indexee = self.try_coerce(indexee_type, indexee)?;
 
-        if inner.diverges() || index.diverges() {
-            return Ok(self.exprs.diverges([inner, index]));
+        if indexee.diverges() || index.diverges() {
+            return Ok(self.exprs.diverges([indexee, index]));
         }
 
-        let result = if let Some(LangTypeKind::Range(_)) =
-            self.mono_ctx.get_lang_type_kind(index.ty)
-        {
-            let inner_lang = self.mono_ctx.get_lang_type_kind(inner.ty);
-            if let Some(LangTypeKind::Slice(ptr_ty)) = inner_lang {
-                let item =
-                    self.monomorphize_lang_item(LangItemKind::SliceRangeIndex, [ptr_ty, index.ty])?;
-                let func = self.exprs.function(item);
-                return Ok(self.exprs.call(
-                    func,
-                    [inner, index].into_iter(),
-                    item.get_function().with_no_span()?.return_type,
-                ));
-            } else {
-                return Err(mismatch!(self, "slice", inner.ty)).with_span(inner_span);
+        // Special case for direct indexing of arrays, this is needed to break potential
+        // circular references in the slice implementation. If the indexee is not an array,
+        // we will try to coerce it into a slice and then index it.
+        if matches!(indexee.ty, ir::Ty::Array(_, _)) {
+            if let Ok(index) = self.try_coerce(self.types.builtin(BuiltinType::USize), index) {
+                return Ok(self.exprs.index(indexee, index));
             }
-        } else {
-            let index = self.try_coerce(self.types.builtin(BuiltinType::USize), index)?;
-            match inner.ty {
-                ir::Ty::Array(_, _) => self.exprs.index(inner, index),
-                _ => {
-                    let inner_lang = self.mono_ctx.get_lang_type_kind(inner.ty);
-                    if let Some(LangTypeKind::Slice(ptr_ty)) = inner_lang {
-                        let item =
-                            self.monomorphize_lang_item(LangItemKind::SliceIndex, [ptr_ty])?;
-                        let func = self.exprs.function(item);
-                        return Ok(self.exprs.deref(self.exprs.call(
-                            func,
-                            [inner, index].into_iter(),
-                            ptr_ty,
-                        )));
-                    }
+        }
 
-                    return Err(mismatch!(self, "array or slice", inner.ty)).with_span(inner_span);
-                }
+        let ptr_ty = if let Some(LangTypeKind::Slice(ptr_ty)) =
+            self.mono_ctx.get_lang_type_kind(indexee.ty)
+        {
+            ptr_ty
+        } else {
+            // Try slicifying the indexee
+
+            let canonical = indexee.ty.canonical_type();
+            indexee = self.autoref(indexee, self.types.pointer(canonical, true))?;
+
+            let item = self
+                .monomorphize_lang_item(LangItemKind::SliceSlicify, [canonical, indexee.ty])
+                .map_err(|_| mismatch!(self, "slice", indexee.ty))
+                .with_span(inner_span)?;
+
+            let func = self.exprs.function(item);
+            indexee = self.exprs.call(
+                func,
+                [indexee].into_iter(),
+                item.get_function().with_no_span()?.return_type,
+            );
+
+            if let Some(LangTypeKind::Slice(ptr_ty)) = self.mono_ctx.get_lang_type_kind(indexee.ty)
+            {
+                ptr_ty
+            } else {
+                ice!("slice_slicify did not return a slice");
             }
         };
 
-        Ok(result)
+        if let Some(LangTypeKind::Range(_)) = self.mono_ctx.get_lang_type_kind(index.ty) {
+            let item =
+                self.monomorphize_lang_item(LangItemKind::SliceRangeIndex, [ptr_ty, index.ty])?;
+            let func = self.exprs.function(item);
+            return Ok(self.exprs.call(
+                func,
+                [indexee, index].into_iter(),
+                item.get_function().with_no_span()?.return_type,
+            ));
+        } else {
+            let index = self.try_coerce(self.types.builtin(BuiltinType::USize), index)?;
+            let item = self.monomorphize_lang_item(LangItemKind::SliceIndex, [ptr_ty])?;
+            let func = self.exprs.function(item);
+            return Ok(self.exprs.deref(self.exprs.call(
+                func,
+                [indexee, index].into_iter(),
+                ptr_ty,
+            )));
+        }
     }
 
     fn lower_range(

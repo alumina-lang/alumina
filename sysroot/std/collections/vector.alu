@@ -8,14 +8,13 @@
 /// defer vec.free();
 ///
 /// vec.push(1);
-/// assert_eq!(vec.len(), 1);
-/// assert_eq!(vec.as_slice(), &[1]);
 /// vec.push(2);
-/// assert_eq!(vec.len(), 2);
-/// assert_eq!(vec.as_slice(), &[1, 2]);
 /// vec.push(3);
+///
 /// assert_eq!(vec.len(), 3);
-/// assert_eq!(vec.as_slice(), &[1, 2, 3]);
+/// assert_eq!(vec[0], 1);
+/// assert_eq!(vec[1], 2);
+/// assert_eq!(vec[2], 3);
 /// ```
 struct Vector<T> {
     _data: &mut [T],
@@ -63,7 +62,7 @@ impl Vector<T> {
     ///
     /// let vec = Vector::from_slice(&[1, 2, 3]);
     /// assert_eq!(vec.len(), 3);
-    /// assert_eq!(vec.as_slice(), &[1, 2, 3]);
+    /// assert_eq!(vec[..], &[1, 2, 3]);
     /// ```
     fn from_slice(slice: &[T]) -> Vector<T> {
         let vec = with_capacity::<T>(slice.len());
@@ -84,7 +83,7 @@ impl Vector<T> {
     ///
     /// let vec: Vector<i32> = Vector::from_iter(&(0..3));
     /// assert_eq!(vec.len(), 3);
-    /// assert_eq!(vec.as_slice(), &[0, 1, 2]);
+    /// assert_eq!(vec[..], &[0, 1, 2]);
     /// ```
     fn from_iter<I: Iterator<I, T>>(iter: &mut I) -> Vector<T> {
         let vec = Vector::new::<T>();
@@ -111,7 +110,7 @@ impl Vector<T> {
     /// vec.extend_from_slice(&[1, 2, 3]);
     /// vec.extend_from_slice(&[4, 5, 6]);
     /// assert_eq!(vec.len(), 6);
-    /// assert_eq!(vec.as_slice(), &[1, 2, 3, 4, 5, 6]);
+    /// assert_eq!(vec[..], &[1, 2, 3, 4, 5, 6]);
     /// ```
     fn extend_from_slice(self: &mut Vector<T>, value: &[T]) {
         if value.len() == 0 {
@@ -148,7 +147,7 @@ impl Vector<T> {
     /// vec.insert(0, 100);
     /// vec.insert(4, 200);
     /// vec.insert(7, 300);
-    /// assert_eq!(vec.as_slice(), &[100, 0, 1, 2, 200, 3, 4, 300]);
+    /// assert_eq!(vec[..], &[100, 0, 1, 2, 200, 3, 4, 300]);
     /// ```
     fn insert(self: &mut Vector<T>, index: usize, value: T) {
         self.reserve(1);
@@ -266,7 +265,7 @@ impl Vector<T> {
     /// defer vec.free();
     ///
     /// vec.retain(|x: &i32| -> bool { *x % 2 == 0 });
-    /// assert_eq!(vec.as_slice(), &[0, 2, 4, 6, 8, 10]);
+    /// assert_eq!(vec[..], &[0, 2, 4, 6, 8, 10]);
     /// ```
     fn retain<F: Fn(&T) -> bool>(self: &mut Vector<T>, func: F) {
         let i = 0usize;
@@ -304,7 +303,7 @@ impl Vector<T> {
     /// for elem in vec.iter_mut() {
     ///     *elem *= 2;
     /// }
-    /// assert_eq!(vec.as_slice(), &[2, 4, 6]);
+    /// assert_eq!(vec[..], &[2, 4, 6]);
     /// ```
     #[inline]
     fn iter_mut(self: &mut Vector<T>) -> mem::SliceRefIterator<&mut T> {
@@ -334,7 +333,7 @@ impl Vector<T> {
     /// @ mem::Clonable::clone
     fn clone(self: &Vector<T>) -> Vector<T> {
         let vec = Vector::new::<T>();
-        vec.extend_from_slice(self.as_slice());
+        vec.extend_from_slice(self[..]);
         vec
     }
 }
@@ -356,7 +355,7 @@ impl Vector {
 
     /// @ std::fmt::Formattable::fmt
     fn fmt<F: Formatter<F>>(self: &Vector<u8>, fmt: &mut F) -> Result<(), fmt::Error> {
-        fmt.write_str(self.as_slice())
+        fmt.write_str(self[..])
     }
 }
 
@@ -378,7 +377,7 @@ mod tests {
         defer vec.free();
 
         assert_eq!(vec.len(), 3);
-        assert_eq!(vec.as_slice(), &[1, 2, 3]);
+        assert_eq!(vec[..], &[1, 2, 3]);
     }
 
     #[test]
@@ -387,7 +386,7 @@ mod tests {
         defer vec.free();
 
         assert_eq!(vec.len(), 3);
-        assert_eq!(vec.as_slice(), &[1, 2, 3]);
+        assert_eq!(vec[..], &[1, 2, 3]);
     }
 
     #[test]
@@ -397,7 +396,7 @@ mod tests {
 
         vec.reserve(10);
         assert_eq!(vec.len(), 0);
-        assert_eq!(vec.as_slice(), &[]);
+        assert_eq!(vec[..], &[]);
     }
 
     #[test]
@@ -407,7 +406,7 @@ mod tests {
 
         vec.extend_from_slice(&[1, 2, 3]);
         assert_eq!(vec.len(), 3);
-        assert_eq!(vec.as_slice(), &[1, 2, 3]);
+        assert_eq!(vec[..], &[1, 2, 3]);
     }
 
     #[test]
@@ -417,7 +416,7 @@ mod tests {
 
         vec.extend(&[1, 2, 3].iter());
         assert_eq!(vec.len(), 3);
-        assert_eq!(vec.as_slice(), &[1, 2, 3]);
+        assert_eq!(vec[..], &[1, 2, 3]);
     }
 
     #[test]
@@ -427,13 +426,13 @@ mod tests {
 
         vec.insert(0, 1);
         assert_eq!(vec.len(), 1);
-        assert_eq!(vec.as_slice(), &[1]);
+        assert_eq!(vec[..], &[1]);
         vec.insert(0, 2);
         assert_eq!(vec.len(), 2);
-        assert_eq!(vec.as_slice(), &[2, 1]);
+        assert_eq!(vec[..], &[2, 1]);
         vec.insert(1, 3);
         assert_eq!(vec.len(), 3);
-        assert_eq!(vec.as_slice(), &[2, 3, 1]);
+        assert_eq!(vec[..], &[2, 3, 1]);
     }
 
     #[test]
@@ -459,13 +458,13 @@ mod tests {
 
         vec.push(1);
         assert_eq!(vec.len(), 1);
-        assert_eq!(vec.as_slice(), &[1]);
+        assert_eq!(vec[..], &[1]);
         vec.push(2);
         assert_eq!(vec.len(), 2);
-        assert_eq!(vec.as_slice(), &[1, 2]);
+        assert_eq!(vec[..], &[1, 2]);
         vec.push(3);
         assert_eq!(vec.len(), 3);
-        assert_eq!(vec.as_slice(), &[1, 2, 3]);
+        assert_eq!(vec[..], &[1, 2, 3]);
     }
 
     #[test]
@@ -503,7 +502,7 @@ mod tests {
 
         vec.clear();
         assert_eq!(vec.len(), 0);
-        assert_eq!(vec.as_slice(), &[]);
+        assert_eq!(vec[..], &[]);
     }
 
     #[test]
@@ -527,32 +526,30 @@ mod tests {
 
         assert_eq!(vec.len(), 0);
         assert_eq!(vec2.len(), 3);
-        assert_eq!(vec2.as_slice(), &[1, 2, 3]);
+        assert_eq!(vec2[..], &[1, 2, 3]);
     }
 
     #[test]
     fn test_iter_ref() {
         let vec = Vector::from_slice(&[1, 2, 3]);
-        let as_slice = vec.as_slice();
 
         let it = vec.iter_ref();
 
-        assert_eq!(it.next().unwrap(), &as_slice[0]);
-        assert_eq!(it.next().unwrap(), &as_slice[1]);
-        assert_eq!(it.next().unwrap(), &as_slice[2]);
+        assert_eq!(it.next().unwrap(), &vec[0]);
+        assert_eq!(it.next().unwrap(), &vec[1]);
+        assert_eq!(it.next().unwrap(), &vec[2]);
         assert!(!it.next().is_some());
     }
 
     #[test]
     fn test_iter_mut() {
         let vec = Vector::from_slice(&[1, 2, 3]);
-        let as_slice = vec.as_slice_mut();
 
         let it = vec.iter_mut();
 
-        assert_eq!(it.next().unwrap(), &as_slice[0]);
-        assert_eq!(it.next().unwrap(), &as_slice[1]);
-        assert_eq!(it.next().unwrap(), &as_slice[2]);
+        assert_eq!(it.next().unwrap(), &vec[0]);
+        assert_eq!(it.next().unwrap(), &vec[1]);
+        assert_eq!(it.next().unwrap(), &vec[2]);
         assert!(!it.next().is_some());
     }
 
@@ -562,15 +559,15 @@ mod tests {
         defer vec.free();
 
         vec.retain(|x: &i32| -> bool { true });
-        assert_eq!(vec.as_slice(), &[0, 1, 2, 3, 4, 5, 6]);
+        assert_eq!(vec[..], &[0, 1, 2, 3, 4, 5, 6]);
 
         vec.retain(|x: &i32| -> bool { *x % 2 == 0 });
-        assert_eq!(vec.as_slice(), &[0, 2, 4, 6]);
+        assert_eq!(vec[..], &[0, 2, 4, 6]);
 
         vec.retain(|x: &i32| -> bool { *x % 3 == 0 });
-        assert_eq!(vec.as_slice(), &[0, 6]);
+        assert_eq!(vec[..], &[0, 6]);
 
         vec.retain(|x: &i32| -> bool { false });
-        assert_eq!(vec.as_slice(), &[]);
+        assert_eq!(vec[..], &[]);
     }
 }

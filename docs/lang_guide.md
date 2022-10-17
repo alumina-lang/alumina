@@ -20,8 +20,6 @@ With regards to syntax, the language is very similar to Rust and in terms of sem
   - [Enums](#enums)
   - [Impl blocks](#impl-blocks)
   - [Type attributes](#type-attributes)
-  - [What about strings?](#what-about-strings)
-  - [Zero-sized types](#zero-sized-types)
 - [Macros](#macros)
 - [Statements and expressions](#statements-and-expressions)
   - [Variables](#variables)
@@ -637,6 +635,10 @@ let s = t[1..3]; // [2, 3]
 ```
 
 The syntax for slices (`&[T]`) implies that it is a kind of pointer to some `[T]` type. Unlike Rust, this is **NOT** the case in Alumina and `[T]` is simply invalid syntax. Under the hood slices are [just a struct](https://docs.alumina-lang.net/std/mem/slice.html) with a pointer to the first element and a length. They are commonly passed around by value, as they already contain a pointer inside.
+
+Collection types that are a backed by contiguous memory (e.g. [`Vector`](https://docs.alumina-lang.net/std/collections/Vector.html)) can be indexed directly without converting to a slice first. See [`AsSlice`](https://docs.alumina-lang.net/std/mem/AsSlice.html) and [`AsSliceMut`](https://docs.alumina-lang.net/std/mem/AsSliceMut.html) for more details.
+
+```rust
 
 ## What about strings?
 

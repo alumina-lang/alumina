@@ -103,7 +103,6 @@ struct Pcg32  {
 impl Pcg32 {
     /// Create a Pcg32 random number generator from a given seed.
     fn from_seed(seed: &[u8; 16]) -> Pcg32 {
-        let seed = seed.as_slice();
         let pcg: Pcg32;
 
         seed[0..8].copy_to_nonoverlapping(&pcg.state as &mut u8);
@@ -474,10 +473,10 @@ mod tests {
     fn test_shuffle() {
         let rng = Pcg32::from_seed(&SEED)
         let v = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-        rng.shuffle(v.as_slice_mut());
+        rng.shuffle(&v);
 
-        assert_ne!(v.as_slice(), &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-        cmp::sort(v.as_slice_mut());
-        assert_eq!(v.as_slice(), &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        assert_ne!(v[..], &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        cmp::sort(&v);
+        assert_eq!(v[..], &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     }
 }

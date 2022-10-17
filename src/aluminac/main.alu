@@ -151,14 +151,14 @@ fn main() {
     let source = File::read_to_string(Path::new("./src/aluminac/main.alu")).unwrap();
     defer source.free();
 
-    let tree = parser.parse(source.as_slice());
+    let tree = parser.parse(source[..]);
     defer tree.free();
 
     let root_node = tree.root_node().unwrap();
     let cursor = root_node.walk();
     defer cursor.free();
 
-    let visitor = SampleVisitor::new(source.as_slice(), &cursor);
+    let visitor = SampleVisitor::new(source[..], &cursor);
     visitor.visit(root_node);
 
     llvm_example();

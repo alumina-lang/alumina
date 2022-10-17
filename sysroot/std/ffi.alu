@@ -74,7 +74,7 @@ impl CString {
 
     /// @ mem::Clonable::clone
     fn clone(self: &CString) -> CString {
-        from_slice(self.as_slice())
+        from_slice(self[..])
     }
 
     /// @ mem::Movable::move
@@ -92,7 +92,7 @@ mod tests {
     fn test_cstring() {
         let s = CString::from_raw(c_str!("Hello, World"));
 
-        assert_eq!(s.as_slice(), "Hello, World");
+        assert_eq!(s[..], "Hello, World");
     }
 
     #[test]
@@ -103,7 +103,7 @@ mod tests {
 
         *(s2.ptr as &mut u8) = 'Y';
 
-        assert_eq!(s1.as_slice(), "Hello, World");
-        assert_eq!(s2.as_slice(), "Yello, World");
+        assert_eq!(s1[..], "Hello, World");
+        assert_eq!(s2[..], "Yello, World");
     }
 }

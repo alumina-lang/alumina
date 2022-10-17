@@ -31,7 +31,7 @@ impl EnvVars {
                 break Option::none();
             }
 
-            let env_str = CString::from_raw(*self.ptr).as_slice();
+            let env_str = CString::from_raw(*self.ptr)[..];
             self.ptr += 1;
 
             if env_str.len() == 0 {
@@ -114,7 +114,7 @@ fn current_dir() -> Result<fs::PathBuf> {
 fn set_current_dir(path: fs::Path) -> Result<()> {
     use ffi::CString;
 
-    let path = CString::from_slice(path.as_slice());
+    let path = CString::from_slice(path[..]);
     defer path.free();
 
     errno_try!(libc::chdir(path.ptr as &libc::c_char));
@@ -349,7 +349,7 @@ impl Forked {
 /// defer output.free();
 ///
 /// // Prints "Running on Linux"
-/// println!("Running on {}", output.stdout.as_slice().trim());
+/// println!("Running on {}", output.stdout[..].trim());
 /// ```
 struct Command {
     _path: fs::Path,
@@ -639,7 +639,7 @@ mod internal {
                 }
             }
 
-            let ptr = &storage.as_slice()[0];
+            let ptr = &storage[0];
             let ptrs: Vector<&u8> = args_idxs
                 .iter()
                 .map(|&ptr, idx: usize| -> &u8 { ptr + idx })
@@ -659,15 +659,15 @@ mod internal {
         }
 
         fn name(self: &ExecParams) -> &libc::c_char {
-            &self._chars.as_slice()[0] as &libc::c_char
+            &self._chars[0] as &libc::c_char
         }
 
         fn argv(self: &ExecParams) -> &&libc::c_char {
-            &self._ptrs.as_slice()[0] as &&libc::c_char
+            &self._ptrs[0] as &&libc::c_char
         }
 
         fn envp(self: &ExecParams) -> &&libc::c_char {
-            &self._ptrs.as_slice()[self._argc + 1] as &&libc::c_char
+            &self._ptrs[self._argc + 1] as &&libc::c_char
         }
 
         fn free(self: &mut ExecParams) {
@@ -695,8 +695,8 @@ mod tests {
         defer output.free();
 
         assert_eq!(output.status, 0);
-        assert_eq!(output.stdout.as_slice(), "Hello, World!\n");
-        assert_eq!(output.stderr.as_slice(), &[]);
+        assert_eq!(output.stdout[..] as &[u8], "Hello, World!\n");
+        assert_eq!(output.stderr[..] as &[u8], &[]);
     }
 
     #[test]
@@ -715,8 +715,8 @@ mod tests {
         defer output.free();
 
         assert_eq!(output.status, 0);
-        assert_eq!(output.stdout.as_slice(), "HELLO=world\nFOO=bar\n");
-        assert_eq!(output.stderr.as_slice(), &[]);
+        assert_eq!(output.stdout[..] as &[u8], "HELLO=world\nFOO=bar\n");
+        assert_eq!(output.stderr[..] as &[u8], &[]);
     }
 
     #[test]
@@ -762,8 +762,8 @@ mod tests {
             defer output.free();
 
             assert_eq!((output.status & 0xff00) >> 8, 123);
-            assert_eq!(output.stdout.as_slice(), "Hello");
-            assert_eq!(output.stderr.as_slice(), "World");
+            assert_eq!(output.stdout[..] as &[u8], "Hello");
+            assert_eq!(output.stderr[..] as &[u8], "World");
         }
     }
 
