@@ -84,7 +84,7 @@ macro compile_note($reason) {
 /// ```
 macro assert($cond) {
     if !$cond {
-        panic!("assertion failed");
+        internal::panic_assert(file!(), line!(), column!());
     }
 }
 
@@ -287,56 +287,83 @@ mod internal {
     // These are in a function instead of a macro so we can typecheck and display a nice
     // error message if the argument is Formattable.
 
-    fn assert_eq<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T)  {
+    #[cold]
+    #[no_inline]
+    fn panic_assert(file: &[u8], line: i32, column: i32) -> ! {
         use panicking::internal::panic_impl;
         use fmt::{Formattable, internal::format_arg};
 
-        if !(lhs == rhs) {
-            when T: Formattable<T, panicking::internal::PanicFormatter> {
-                panic_impl(
-                    file, line, column,
-                    &fmt::format_args!(
-                        "assertion failed ({} != {}))",
-                        lhs,
-                        rhs
-                    )
-                )
-            }
-            else {
-                panic_impl(
-                    file, line, column,
-                    &fmt::format_args!(
-                        "assertion failed (does not equal))",
-                    )
-                )
-            }
+        panic_impl(
+            file, line, column,
+            &fmt::format_args!(
+                "assertion failed"
+            )
+        )
+    }
 
+    #[inline]
+    fn assert_eq<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T)  {
+        if !(lhs == rhs) {
+            panic_assert_eq(file, line, column, lhs, rhs)
         }
     }
 
+    #[inline]
     fn assert_ne<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T)  {
+        if lhs == rhs {
+            panic_assert_ne(file, line, column, lhs, rhs)
+        }
+    }
+
+    #[cold]
+    #[no_inline]
+    fn panic_assert_eq<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T) -> ! {
         use panicking::internal::panic_impl;
         use fmt::{Formattable, internal::format_arg};
 
-        if lhs == rhs {
-            when T: Formattable<T, panicking::internal::PanicFormatter> {
-                panic_impl(
-                    file, line, column,
-                    &fmt::format_args!(
-                        "assertion failed ({} == {}))",
-                        lhs,
-                        rhs
-                    )
+        when T: Formattable<T, panicking::internal::PanicFormatter> {
+            panic_impl(
+                file, line, column,
+                &fmt::format_args!(
+                    "assertion failed ({} != {}))",
+                    lhs,
+                    rhs
                 )
-            }
-            else {
-                panic_impl(
-                    file, line, column,
-                    &fmt::format_args!(
-                        "assertion failed (equals))",
-                    )
+            )
+        }
+        else {
+            panic_impl(
+                file, line, column,
+                &fmt::format_args!(
+                    "assertion failed (does not equal))",
                 )
-            }
+            )
+        }
+    }
+
+    #[cold]
+    #[no_inline]
+    fn panic_assert_ne<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T) -> ! {
+        use panicking::internal::panic_impl;
+        use fmt::{Formattable, internal::format_arg};
+
+        when T: Formattable<T, panicking::internal::PanicFormatter> {
+            panic_impl(
+                file, line, column,
+                &fmt::format_args!(
+                    "assertion failed ({} == {}))",
+                    lhs,
+                    rhs
+                )
+            )
+        }
+        else {
+            panic_impl(
+                file, line, column,
+                &fmt::format_args!(
+                    "assertion failed (equals))",
+                )
+            )
         }
     }
 
