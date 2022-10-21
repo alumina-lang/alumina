@@ -14,6 +14,7 @@ mod parser;
 mod utils;
 mod visitors;
 
+use clap::builder::ValueParser;
 use clap::Parser;
 use common::AluminaError;
 use common::CodeError;
@@ -23,40 +24,24 @@ use compiler::SourceFile;
 use global_ctx::GlobalCtx;
 use global_ctx::OutputType;
 
-use std::error::Error;
-
 use std::path::PathBuf;
 use std::time::Instant;
 use walkdir::WalkDir;
 
-/// Parse a single key-value pair
-fn parse_key_val<T, U>(s: &str) -> Result<(T, U), Box<dyn Error + Send + Sync + 'static>>
-where
-    T: std::str::FromStr,
-    T::Err: Error + Send + Sync + 'static,
-    U: std::str::FromStr,
-    U::Err: Error + Send + Sync + 'static,
-{
-    let pos = s
-        .find('=')
-        .ok_or_else(|| format!("invalid KEY=value: no `=` found in `{}`", s))?;
-    Ok((s[..pos].parse()?, s[pos + 1..].parse()?))
+fn parse_module(s: &str) -> Result<(Option<String>, PathBuf), std::convert::Infallible> {
+    Ok(if let Some(pos) = s.find('=') {
+        (Some(s[..pos].to_string()), s[pos + 1..].to_string().into())
+    } else {
+        (None, s.to_string().into())
+    })
 }
 
-fn parse_key_maybe_val<T, U>(
-    s: &str,
-) -> Result<(T, Option<U>), Box<dyn Error + Send + Sync + 'static>>
-where
-    T: std::str::FromStr,
-    T::Err: Error + Send + Sync + 'static,
-    U: std::str::FromStr,
-    U::Err: Error + Send + Sync + 'static,
-{
-    if let Some(pos) = s.find('=') {
-        Ok((s[..pos].parse()?, Some(s[pos + 1..].parse()?)))
+fn parse_cfg(s: &str) -> Result<(String, Option<String>), std::convert::Infallible> {
+    Ok(if let Some(pos) = s.find('=') {
+        (s[..pos].to_string(), Some(s[pos + 1..].to_string()))
     } else {
-        Ok((s.parse()?, None))
-    }
+        (s.to_string(), None)
+    })
 }
 
 #[derive(Parser, Debug)]
@@ -68,12 +53,11 @@ struct Args {
 
     /// Path to the standard library
     #[clap(long, env = "ALUMINA_SYSROOT")]
-    sysroot: PathBuf,
+    sysroot: Option<PathBuf>,
 
-    /// Modules to compile (use 'module::name=filename.alu' syntax). If output type is executable,
-    /// main function is exepcted in the last module.
-    #[clap(parse(try_from_str = parse_key_val))]
-    modules: Vec<(String, PathBuf)>,
+    /// Modules to compile ('module::name=filename.alu')
+    #[clap(value_parser=ValueParser::new(parse_module))]
+    modules: Vec<(Option<String>, PathBuf)>,
 
     /// Compile in debug mode
     #[clap(long, short)]
@@ -88,21 +72,28 @@ struct Args {
     library: bool,
 
     /// Conditional compilation options
-    #[clap(long, parse(try_from_str = parse_key_maybe_val), multiple_occurrences(true))]
+    #[clap(long, value_parser=ValueParser::new(parse_cfg), action=clap::ArgAction::Append)]
     cfg: Vec<(String, Option<String>)>,
 
     /// Unstable compiler options
-    #[clap(long, short('Z'), multiple_occurrences(true))]
+    #[clap(long, short('Z'), action=clap::ArgAction::Append)]
     options: Vec<String>,
+}
+
+fn infer_module_name(path: &std::path::Path) -> &str {
+    path.file_stem().unwrap().to_str().unwrap()
 }
 
 fn get_sysroot(args: &Args) -> Result<Vec<SourceFile>, AluminaError> {
     let mut result = Vec::new();
 
-    for maybe_entry in WalkDir::new(args.sysroot.clone())
-        .follow_links(true)
-        .into_iter()
-    {
+    let sysroot = if let Some(sysroot) = &args.sysroot {
+        sysroot
+    } else {
+        return Ok(vec![]);
+    };
+
+    for maybe_entry in WalkDir::new(sysroot).follow_links(true).into_iter() {
         use std::fmt::Write;
         let entry = maybe_entry?;
         if entry.file_type().is_dir() {
@@ -116,7 +107,7 @@ fn get_sysroot(args: &Args) -> Result<Vec<SourceFile>, AluminaError> {
 
         let path_segments: Vec<_> = entry
             .path()
-            .strip_prefix(args.sysroot.clone())
+            .strip_prefix(sysroot)
             .unwrap()
             .iter()
             .map(|s| s.to_string_lossy())
@@ -162,7 +153,10 @@ fn main() {
     for (path, filename) in &args.modules {
         files.push(SourceFile {
             filename: filename.clone(),
-            path: path.clone(),
+            path: path
+                .as_deref()
+                .unwrap_or_else(|| infer_module_name(filename))
+                .to_string(),
         });
     }
 

@@ -42,7 +42,7 @@ impl Atomic<T: Primitive + !ZeroSized> {
     ///
     /// The pointed-to value needs to be sufficiently aligned for the target platform.
     ///
-    /// # Example
+    /// ## Example
     /// ```
     /// use std::sync::{Atomic, Ordering};
     ///
@@ -61,7 +61,7 @@ impl Atomic<T: Primitive + !ZeroSized> {
     ///
     /// The pointed-to values need to be sufficiently aligned for the target platform.
     ///
-    /// # Example
+    /// ## Example
     /// ```
     /// use std::sync::{Atomic, Ordering};
     ///
@@ -225,7 +225,7 @@ impl Atomic<T: Primitive + !ZeroSized> {
         let prev = self.load(fetch_order);
         loop {
             let updated = f(prev);
-            if !updated.is_some() {
+            if updated.is_none() {
                 return Result::err(prev);
             }
             let maybe_updated = self.compare_exchange_weak(
@@ -845,6 +845,7 @@ impl Oneshot<T> {
     }
 }
 
+#[docs(no_index)]
 mod internal {
     const EVENT_RESET: usize = 0x0;
     const EVENT_SET: usize = 0x1;
@@ -858,6 +859,7 @@ mod internal {
 }
 
 #[cfg(all(test, test_std))]
+#[docs(hide)]
 mod tests {
     use time::Duration;
 

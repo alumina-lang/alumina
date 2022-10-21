@@ -102,7 +102,7 @@ impl Option<T> {
     /// ```
     /// let opt: Option<i32> = Option::none();
     ///
-    /// assert!(!opt.is_some());
+    /// assert!(opt.is_none());
     /// ```
     #[force_inline]
     fn none() -> Option<T> {
@@ -310,6 +310,26 @@ impl Option<T> {
         }
     }
 
+    /// Replaces the value in the option by the value given in parameter,
+    /// returning the old value if present.
+    ///
+    /// ## Example
+    /// ```
+    /// let a = Option::some(42);
+    /// let b = Option::none::<i32>();
+    ///
+    /// assert_eq!(a.replace(1337), Option::some(42));
+    /// assert_eq!(b.replace(1337), Option::none());
+    ///
+    /// assert_eq!(a, Option::some(1337));
+    /// assert_eq!(b, Option::some(1337));
+    /// ```
+    fn replace(self: &mut Option<T>, val: T) -> Option<T> {
+        let old = self.move();
+        *self = Option::some(val);
+        old
+    }
+
     /// Returns pointer to inner or a null pointer if not present.
     ///
     /// ## Example
@@ -375,7 +395,7 @@ impl Option<T> {
     /// assert_eq!(Option::none::<Option<i32>>().flatten(), Option::none());
     /// ```
     fn flatten(self: Option<Option<T>>) -> Option<T> {
-        if !self.is_some() {
+        if self.is_none() {
             Option::none()
         } else {
             self.unwrap()
@@ -467,7 +487,7 @@ impl Option {
                 false
             }
         } else {
-            !rhs.is_some()
+            rhs.is_none()
         }
     }
 
@@ -505,6 +525,7 @@ impl Option {
     mixin<T: Comparable<T>> Comparable<Option<T>;
 }
 
+#[docs(no_index)]
 mod internal {
     #[cold]
     #[no_inline]
@@ -514,6 +535,7 @@ mod internal {
 }
 
 #[cfg(all(test, test_std))]
+#[docs(hide)]
 mod tests {
     static BUF: [u8; 1024];
 
@@ -531,7 +553,7 @@ mod tests {
     #[test]
     fn option_none() {
         let opt = Option::none::<i32>();
-        assert!(!opt.is_some());
+        assert!(opt.is_none());
     }
 
     #[test]

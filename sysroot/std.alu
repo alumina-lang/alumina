@@ -47,7 +47,7 @@ macro compile_fail($reason) {
 /// Emits a compile-time warning.
 ///
 /// ## Example
-/// ```
+/// ```dubious
 /// use std::compile_warn;
 ///
 /// fn md5(data: &[u8]) -> u128 {
@@ -151,7 +151,7 @@ macro unreachable() {
 /// In debug mode, this macro will panic if the condition is false. In release mode, it will
 /// cause undefined behavior.
 ///
-/// ## Example
+/// ## Examples
 /// ```
 /// use std::assume;
 /// use std::collections::Vector;
@@ -166,8 +166,15 @@ macro unreachable() {
 /// // The bounds check in Vector::get *may* be optimized out:
 /// println!("{}", vec.get_unchecked(3));
 ///
-/// // In release mode, this would likely no longer panic and will segfault instead:
+/// // In release mode, this will likely segfault, but can also make demons
+/// // fly out of your nose:
 /// // println!("{}", vec.get_unchecked(10));
+/// ```
+///
+/// ```nasaldemons
+/// use std::assume;
+///
+/// std::assume!(1 > 2); // Ò̴̡̤̗̬̳̱͉̳͓̝̥̞͗́̿͑̂̓̀͋̈́͐̏͝H̷̳̺̝̗̖̖̫͆̀́̚͝ ̷͚̜̟̘̦̺̼̣̘̓N̸̜̞̬̞͓̮̘̣͍͕͍̱̮̍͛̇̋̅̏͒̕͠Ỏ̴̭̯͘̚̕
 /// ```
 macro assume($cond) {
     if !$cond {
@@ -283,6 +290,7 @@ macro dbg($value) {
     val
 }
 
+#[docs(no_index)]
 mod internal {
     // These are in a function instead of a macro so we can typecheck and display a nice
     // error message if the argument is Formattable.
@@ -374,6 +382,7 @@ mod internal {
 }
 
 #[cfg(all(test, test_std))]
+#[docs(hide)]
 mod tests {
     #[test]
     fn test_likely() {

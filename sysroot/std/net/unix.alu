@@ -574,6 +574,7 @@ impl UdpSocket {
     }
 }
 
+#[docs(no_index)]
 mod internal {
     fn sockaddr_to_addr(addr: &libc::sockaddr_storage, len: libc::socklen_t) -> Option<SocketAddr> {
         let result: SocketAddr;
@@ -606,6 +607,7 @@ mod internal {
 }
 
 #[cfg(all(test, test_std))]
+#[docs(hide)]
 mod tests {
     use process::{Forked, Child};
     use string::StringBuf;
@@ -635,7 +637,7 @@ mod tests {
 
         let local_addr = listener.socket_addr().unwrap();
 
-        if !fork().is_some() {
+        if fork().is_none() {
             let socket = TcpStream::connect(&local_addr).unwrap();
             defer socket.close();
 
@@ -659,7 +661,7 @@ mod tests {
         defer peer1.close();
 
         let peer1_addr = peer1.socket_addr().unwrap();
-        if !fork().is_some() {
+        if fork().is_none() {
             let addr = SocketAddr::parse("[::1]:0").unwrap();
             let peer2 = UdpSocket::bind(&addr).unwrap();
             defer peer2.close();
@@ -682,7 +684,7 @@ mod tests {
         let buf: [u8; 128];
 
         let peer1_addr = peer1.socket_addr().unwrap();
-        if !fork().is_some() {
+        if fork().is_none() {
             let addr = SocketAddr::parse("[::1]:0").unwrap();
             let peer2 = UdpSocket::bind(&addr).unwrap();
             defer peer2.close();
@@ -711,7 +713,7 @@ mod tests {
         defer peer1.close();
 
         let peer1_addr = peer1.socket_addr().unwrap();
-        if !fork().is_some() {
+        if fork().is_none() {
             let addr = SocketAddr::parse("[::1]:0").unwrap();
             let peer2 = UdpSocket::bind(&addr).unwrap();
             defer peer2.close();

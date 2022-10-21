@@ -104,7 +104,7 @@ impl Ipv6Addr {
     ///
     /// Returns `Option::none()` if the address is not a valid IPv6 address.
     ///
-    /// # Examples
+    /// ## Examples
     /// ```
     /// use std::net::Ipv6Addr;
     ///
@@ -179,7 +179,7 @@ impl Ipv6Addr {
                     .map(|v: (usize, usize)| -> (usize, usize) { (v.0, v.1 + 1) })
                     .or(Option::some((i, 1usize)));
 
-                if !longest.is_some() || (longest.unwrap().1 < current.unwrap().1) {
+                if longest.is_none() || (longest.unwrap().1 < current.unwrap().1) {
                     longest = current;
                 }
             } else {
@@ -546,6 +546,7 @@ impl SocketAddr {
     mixin cmp::Equatable<SocketAddr>;
 }
 
+#[docs(no_index)]
 mod internal {
     /// Parses A or B for IPv6 addresses in "A::B" format
     fn ipv6_parse_part(s: &[u8], allow_ipv4: bool) -> Option<([u16; 8], usize)> {
@@ -563,7 +564,7 @@ mod internal {
 
         while i < 8 {
             let segment = segments.next();
-            if !segment.is_some() {
+            if segment.is_none() {
                 break;
             }
 
@@ -608,6 +609,7 @@ mod internal {
 }
 
 #[cfg(all(test, test_std))]
+#[docs(hide)]
 mod tests {
     use fmt::format_in;
     static BUF: [u8; 1024];

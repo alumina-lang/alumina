@@ -140,6 +140,8 @@ impl UseClauseVisitor {
 
 macro check_cfg($self, $node) {
     let has_cfg = $self.has_cfg;
+    let hide_from_docs = $self.hide_from_docs;
+    let hide_from_index = $self.hide_from_index;
     let is_builtin_type = $self.is_builtin_type;
 
     $self.has_cfg = false;
@@ -150,7 +152,13 @@ macro check_cfg($self, $node) {
 
     defer {
         $self.has_cfg = has_cfg;
+        $self.hide_from_docs = hide_from_docs;
+        $self.hide_from_index = hide_from_index;
         $self.is_builtin_type = is_builtin_type;
+    };
+
+    if $self.hide_from_docs {
+        return Result::ok(());
     }
 }
 
@@ -162,6 +170,8 @@ struct TopLevelVisitor {
     file_doc_comment: StringBuf,
     container: Option<Node>,
     has_cfg: bool,
+    hide_from_docs: bool,
+    hide_from_index: bool,
     is_builtin_type: bool
 }
 
@@ -175,6 +185,8 @@ impl TopLevelVisitor {
             file_doc_comment: StringBuf::new(),
             container: Option::none(),
             has_cfg: false,
+            hide_from_docs: false,
+            hide_from_index: false,
             is_builtin_type: false
         }
     }
@@ -213,6 +225,7 @@ impl TopLevelVisitor {
             cfg_index: cfg_index,
             parse_context: self.parse_context,
             doc_comment: self.doc_comment.move(),
+            hide_from_index: self.hide_from_index,
             group_node: self.container,
             has_cfg: self.has_cfg,
         });
@@ -239,6 +252,22 @@ impl TopLevelVisitor {
             "cfg" => {
                 self.has_cfg = true;
             }
+            "docs" => {
+                let inner = meta_item
+                    .child_by!(FieldKind::Arguments)
+                    .unwrap()
+                    .child_by!(FieldKind::Argument)
+                    .unwrap()
+                    .text(self.parse_context.source());
+
+                if inner == "hide" {
+                    self.hide_from_docs = true;
+                } else if inner == "no_index" {
+                    self.hide_from_index = true;
+                }
+            }
+            "docs(no_index)" => {
+            }
             "lang" => {
                 let lang = meta_item
                             .child_by!(FieldKind::Arguments)
@@ -257,16 +286,17 @@ impl TopLevelVisitor {
     }
 
     fn visit_source_file(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
+        check_cfg!(self, node);
+
         // Visit children first so we capture the doc comments
         self.visit_children_by_field(node, FieldKind::Body)?;
 
-        // But check cfg later to not make all child items cfg'd.
-        check_cfg!(self, node);
         self.items.add_item(Item {
             kind: ItemKind::Module,
             path: self.path.clone(),
             defined_in: self.path.clone(),
             node: node,
+            hide_from_index: self.hide_from_index,
             cfg_index: 0,
             parse_context: self.parse_context,
             doc_comment: self.file_doc_comment.move(),
