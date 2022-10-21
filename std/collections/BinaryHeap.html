@@ -95,7 +95,7 @@
 <a href="/std/collections/BinaryHeap.html#item.into_vector">into_vector</a>
 </li>
 <li>
-<a href="/std/collections/BinaryHeap.html#item.into_sorted_vector">into_sorted_vector</a>
+<a href="/std/collections/BinaryHeap.html#item.into_vector_sorted">into_vector_sorted</a>
 </li>
 <li>
 <a href="/std/collections/BinaryHeap.html#item.clear">clear</a>
@@ -140,7 +140,7 @@ T: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</
 A binary max-heap (priority queue).
 </p><p>
 </p>
-<h2> Example</h2>
+<h3> Example</h3>
 <p>
 <pre class="with-playground-link"><code class="language-alumina">use std::collections::BinaryHeap;
 
@@ -198,7 +198,7 @@ T: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">new</span>() -> <a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L67-L69"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L77-L79"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -208,6 +208,17 @@ Creates an empty binary heap.
 This will not allocate until the first element is inserted.
 </p><p>
 </p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::collections::BinaryHeap;
+
+let heap: BinaryHeap&lt;i32&gt; = BinaryHeap::new();
+defer heap.free();
+
+assert_eq!(heap.is_empty(), true);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aBinaryHeap%3b%0a%20%20%20%0a%20%20%20let%20heap%3a%20BinaryHeap%3ci32%3e%20%3d%20BinaryHeap%3a%3anew%28%29%3b%0a%20%20%20defer%20heap%2efree%28%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28heap%2eis%5fempty%28%29%2c%20true%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -215,12 +226,23 @@ This will not allocate until the first element is inserted.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">with_capacity</span>(capacity: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> <a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L72-L74"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L92-L94"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Create a heap that can hold up to <code class="language-alumina">capacity</code> elements without reallocating.
+Create a heap that can accept at least <code class="language-alumina">capacity</code> elements without reallocating.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::collections::BinaryHeap;
+
+let heap: BinaryHeap&lt;i32&gt; = BinaryHeap::with_capacity(8);
+defer heap.free();
+
+assert!(heap.capacity() &gt;= 8);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aBinaryHeap%3b%0a%20%20%20%0a%20%20%20let%20heap%3a%20BinaryHeap%3ci32%3e%20%3d%20BinaryHeap%3a%3awith%5fcapacity%288%29%3b%0a%20%20%20defer%20heap%2efree%28%29%3b%0a%20%20%20%0a%20%20%20assert%21%28heap%2ecapacity%28%29%20%3e%3d%208%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -230,7 +252,7 @@ Create a heap that can hold up to <code class="language-alumina">capacity</code>
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">from_vector</span>(vector: <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;T&gt;) -> <a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L79-L86"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L110-L117"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -240,6 +262,18 @@ Creates a heap from an existing vector.
 The vector will be heapified in-place.
 </p><p>
 </p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::collections::{BinaryHeap, Vector};
+
+let vec = Vector::from_slice(&amp;[1, 4, 6, 7, 2, 9, 2]);
+let heap = BinaryHeap::from_vector(vec);
+defer heap.free();
+
+assert_eq!(heap.pop(), Option::some(9));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3a%7bBinaryHeap%2c%20Vector%7d%3b%0a%20%20%20%0a%20%20%20let%20vec%20%3d%20Vector%3a%3afrom%5fslice%28%26%5b1%2c%204%2c%206%2c%207%2c%202%2c%209%2c%202%5d%29%3b%0a%20%20%20let%20heap%20%3d%20BinaryHeap%3a%3afrom%5fvector%28vec%29%3b%0a%20%20%20defer%20heap%2efree%28%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28heap%2epop%28%29%2c%20Option%3a%3asome%289%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -247,15 +281,27 @@ The vector will be heapified in-place.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">from_vector_raw</span>(vector: <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;T&gt;) -> <a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L92-L94"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L134-L136"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Creates a heap from an existing vector.
 </p><p>
-The vector is assumed to satisfy the max heap property. If it does not,
-the behavior is unspecified.
+The vector is assumed to satisfy the max heap property <code class="language-alumina">a[i] &lt;= a[(i-1)/2]</code>.
+If it does not, the behavior is unspecified.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link dubious"><code class="language-alumina">use std::collections::{BinaryHeap, Vector};
+
+let vec = Vector::from_slice(&amp;[1, 2, 3]);
+let heap = BinaryHeap::from_vector_raw(vec);
+defer heap.free();
+
+assert_eq!(heap.pop(), Option::some(1)); // ???
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3a%7bBinaryHeap%2c%20Vector%7d%3b%0a%20%20%20%0a%20%20%20let%20vec%20%3d%20Vector%3a%3afrom%5fslice%28%26%5b1%2c%202%2c%203%5d%29%3b%0a%20%20%20let%20heap%20%3d%20BinaryHeap%3a%3afrom%5fvector%5fraw%28vec%29%3b%0a%20%20%20defer%20heap%2efree%28%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28heap%2epop%28%29%2c%20Option%3a%3asome%281%29%29%3b%20%2f%2f%20%3f%3f%3f%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -265,7 +311,7 @@ the behavior is unspecified.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">from_slice</span>(slice: &amp;[T]) -> <a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L99-L101"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L151-L153"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -273,6 +319,17 @@ the behavior is unspecified.
 Creates a heap from a slice of elements.
 </p><p>
 The elements are copied into the heap and heapified.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::collections::BinaryHeap;
+
+let heap = BinaryHeap::from_slice(&amp;[4, 4, 6, 7, 2, 9, 2]);
+defer heap.free();
+
+assert_eq!(heap.pop(), Option::some(9));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aBinaryHeap%3b%0a%20%20%20%0a%20%20%20let%20heap%20%3d%20BinaryHeap%3a%3afrom%5fslice%28%26%5b4%2c%204%2c%206%2c%207%2c%202%2c%209%2c%202%5d%29%3b%0a%20%20%20defer%20heap%2efree%28%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28heap%2epop%28%29%2c%20Option%3a%3asome%289%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -284,12 +341,24 @@ The elements are copied into the heap and heapified.
 I: <a href="/std/iter/Iterator.html"><span class="identifier-type">Iterator</span></a>&lt;I, T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L104-L108"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L167-L171"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Creates a heap from an iterator.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::collections::BinaryHeap;
+use std::iter::{Iterator};
+
+let heap: BinaryHeap&lt;i32&gt; = BinaryHeap::from_iter(&amp;(1..5));
+defer heap.free();
+
+assert_eq!(heap.pop(), Option::some(4));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aBinaryHeap%3b%0a%20%20%20use%20std%3a%3aiter%3a%3a%7bIterator%7d%3b%0a%20%20%20%0a%20%20%20let%20heap%3a%20BinaryHeap%3ci32%3e%20%3d%20BinaryHeap%3a%3afrom%5fiter%28%26%281%2e%2e5%29%29%3b%0a%20%20%20defer%20heap%2efree%28%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28heap%2epop%28%29%2c%20Option%3a%3asome%284%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -299,13 +368,30 @@ Creates a heap from an iterator.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">reserve</span>(self: &amp;mut <a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;, additional: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L112-L114"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L191-L193"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Reserves capacity for at least <code class="language-alumina">additional</code> more elements
 to be inserted without reallocating.
+</p><p>
+Does nothing if the capacity is already sufficient.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::collections::BinaryHeap;
+
+let heap: BinaryHeap&lt;i32&gt; = BinaryHeap::new();
+defer heap.free();
+
+heap.reserve(1000); // pre-allocate space for 1000 more elements
+
+for i in (1..1000) {
+    heap.push(i); // won't reallocate
+}
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aBinaryHeap%3b%0a%20%20%20%0a%20%20%20let%20heap%3a%20BinaryHeap%3ci32%3e%20%3d%20BinaryHeap%3a%3anew%28%29%3b%0a%20%20%20defer%20heap%2efree%28%29%3b%0a%20%20%20%0a%20%20%20heap%2ereserve%281000%29%3b%20%2f%2f%20pre%2dallocate%20space%20for%201000%20more%20elements%0a%20%20%20%0a%20%20%20for%20i%20in%20%281%2e%2e1000%29%20%7b%0a%20%20%20%20%20%20%20heap%2epush%28i%29%3b%20%2f%2f%20won%27t%20reallocate%0a%20%20%20%7d%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -315,13 +401,28 @@ to be inserted without reallocating.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">capacity</span>(self: &amp;<a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;) -> <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L118-L120"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L211-L213"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Returns the maximum number of elements the heap can hold
 without reallocating.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::collections::BinaryHeap;
+
+let heap: BinaryHeap&lt;i32&gt; = BinaryHeap::with_capacity(100);
+defer heap.free();
+
+let i = 0;
+while heap.len() &lt; heap.capacity() {
+    heap.push(i);
+    i += 1;
+}
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aBinaryHeap%3b%0a%20%20%20%0a%20%20%20let%20heap%3a%20BinaryHeap%3ci32%3e%20%3d%20BinaryHeap%3a%3awith%5fcapacity%28100%29%3b%0a%20%20%20defer%20heap%2efree%28%29%3b%0a%20%20%20%0a%20%20%20let%20i%20%3d%200%3b%0a%20%20%20while%20heap%2elen%28%29%20%3c%20heap%2ecapacity%28%29%20%7b%0a%20%20%20%20%20%20%20heap%2epush%28i%29%3b%0a%20%20%20%20%20%20%20i%20%2b%3d%201%3b%0a%20%20%20%7d%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -331,7 +432,7 @@ without reallocating.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">is_empty</span>(self: &amp;<a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L123-L125"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L216-L218"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -346,12 +447,27 @@ Returns <code class="language-alumina">true</code> if the heap contains no eleme
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">len</span>(self: &amp;<a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;) -> <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L128-L130"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L235-L237"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Returns the number of elements in the heap.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::collections::BinaryHeap;
+
+let heap: BinaryHeap&lt;i32&gt; = BinaryHeap::new();
+defer heap.free();
+
+assert_eq!(heap.len(), 0);
+
+heap.push(3);
+heap.push(6);
+assert_eq!(heap.len(), 2);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aBinaryHeap%3b%0a%20%20%20%0a%20%20%20let%20heap%3a%20BinaryHeap%3ci32%3e%20%3d%20BinaryHeap%3a%3anew%28%29%3b%0a%20%20%20defer%20heap%2efree%28%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28heap%2elen%28%29%2c%200%29%3b%0a%20%20%20%0a%20%20%20heap%2epush%283%29%3b%0a%20%20%20heap%2epush%286%29%3b%0a%20%20%20assert%5feq%21%28heap%2elen%28%29%2c%202%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -363,12 +479,24 @@ Returns the number of elements in the heap.
 I: <a href="/std/iter/Iterator.html"><span class="identifier-type">Iterator</span></a>&lt;I, T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L133-L144"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L251-L262"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Extends the heap from an iterator.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::collections::BinaryHeap;
+
+let heap: BinaryHeap&lt;i32&gt; = BinaryHeap::new();
+defer heap.free();
+
+heap.extend(&amp;(1..5));
+assert_eq!(heap.len(), 4);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aBinaryHeap%3b%0a%20%20%20%0a%20%20%20let%20heap%3a%20BinaryHeap%3ci32%3e%20%3d%20BinaryHeap%3a%3anew%28%29%3b%0a%20%20%20defer%20heap%2efree%28%29%3b%0a%20%20%20%0a%20%20%20heap%2eextend%28%26%281%2e%2e5%29%29%3b%0a%20%20%20assert%5feq%21%28heap%2elen%28%29%2c%204%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -378,12 +506,25 @@ Extends the heap from an iterator.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">extend_from_slice</span>(self: &amp;mut <a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;, slice: &amp;[T])</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L147-L153"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L277-L283"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Extends the heap from a slice of elements.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::collections::BinaryHeap;
+
+let heap: BinaryHeap&lt;i32&gt; = BinaryHeap::new();
+defer heap.free();
+
+heap.extend_from_slice(&amp;[1, 2, 3, 4]);
+heap.extend_from_slice(&amp;[5, 6, 7, 8]);
+assert_eq!(heap.len(), 8);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aBinaryHeap%3b%0a%20%20%20%0a%20%20%20let%20heap%3a%20BinaryHeap%3ci32%3e%20%3d%20BinaryHeap%3a%3anew%28%29%3b%0a%20%20%20defer%20heap%2efree%28%29%3b%0a%20%20%20%0a%20%20%20heap%2eextend%5ffrom%5fslice%28%26%5b1%2c%202%2c%203%2c%204%5d%29%3b%0a%20%20%20heap%2eextend%5ffrom%5fslice%28%26%5b5%2c%206%2c%207%2c%208%5d%29%3b%0a%20%20%20assert%5feq%21%28heap%2elen%28%29%2c%208%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -393,12 +534,23 @@ Extends the heap from a slice of elements.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">push</span>(self: &amp;mut <a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;, value: T)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L156-L163"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L296-L303"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Inserts an element into the heap.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::collections::BinaryHeap;
+
+let heap: BinaryHeap&lt;i32&gt; = BinaryHeap::new();
+defer heap.free();
+
+heap.push(3);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aBinaryHeap%3b%0a%20%20%20%0a%20%20%20let%20heap%3a%20BinaryHeap%3ci32%3e%20%3d%20BinaryHeap%3a%3anew%28%29%3b%0a%20%20%20defer%20heap%2efree%28%29%3b%0a%20%20%20%0a%20%20%20heap%2epush%283%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -408,7 +560,7 @@ Inserts an element into the heap.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">peek</span>(self: &amp;<a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L168-L170"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L323-L325"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -418,6 +570,22 @@ Returns the largest element in the heap without removing it.
 Returns <code class="language-alumina">Option::none()</code> if the heap is empty.
 </p><p>
 </p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::collections::BinaryHeap;
+
+let heap: BinaryHeap&lt;i32&gt; = BinaryHeap::new();
+defer heap.free();
+
+assert_eq!(heap.peek(), Option::none());
+heap.push(3);
+heap.push(7);
+assert_eq!(heap.peek(), Option::some(7));
+assert_eq!(heap.peek(), Option::some(7));
+assert_eq!(heap.len(), 2);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aBinaryHeap%3b%0a%20%20%20%0a%20%20%20let%20heap%3a%20BinaryHeap%3ci32%3e%20%3d%20BinaryHeap%3a%3anew%28%29%3b%0a%20%20%20defer%20heap%2efree%28%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28heap%2epeek%28%29%2c%20Option%3a%3anone%28%29%29%3b%0a%20%20%20heap%2epush%283%29%3b%0a%20%20%20heap%2epush%287%29%3b%0a%20%20%20assert%5feq%21%28heap%2epeek%28%29%2c%20Option%3a%3asome%287%29%29%3b%0a%20%20%20assert%5feq%21%28heap%2epeek%28%29%2c%20Option%3a%3asome%287%29%29%3b%0a%20%20%20assert%5feq%21%28heap%2elen%28%29%2c%202%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -425,7 +593,7 @@ Returns <code class="language-alumina">Option::none()</code> if the heap is empt
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">pop</span>(self: &amp;mut <a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L175-L186"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L342-L353"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -435,6 +603,19 @@ Removes the maximum element in the heap, returning it.
 Returns <code class="language-alumina">Option::none()</code> if the heap is empty.
 </p><p>
 </p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::collections::BinaryHeap;
+
+let heap: BinaryHeap&lt;i32&gt; = BinaryHeap::new();
+defer heap.free();
+
+heap.push(3);
+heap.push(5);
+assert_eq!(heap.pop(), Option::some(5));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aBinaryHeap%3b%0a%20%20%20%0a%20%20%20let%20heap%3a%20BinaryHeap%3ci32%3e%20%3d%20BinaryHeap%3a%3anew%28%29%3b%0a%20%20%20defer%20heap%2efree%28%29%3b%0a%20%20%20%0a%20%20%20heap%2epush%283%29%3b%0a%20%20%20heap%2epush%285%29%3b%0a%20%20%20assert%5feq%21%28heap%2epop%28%29%2c%20Option%3a%3asome%285%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -442,13 +623,27 @@ Returns <code class="language-alumina">Option::none()</code> if the heap is empt
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">shrink_to_fit</span>(self: &amp;mut <a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L190-L192"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L370-L372"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Shrink the size of the underlying buffer to the minimum size
 needed to hold the current elements.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::collections::BinaryHeap;
+
+let heap: BinaryHeap&lt;i32&gt; = BinaryHeap::with_capacity(100000);
+defer heap.free();
+
+heap.push(3);
+heap.shrink_to_fit();
+
+assert!(heap.capacity() == 1);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aBinaryHeap%3b%0a%20%20%20%0a%20%20%20let%20heap%3a%20BinaryHeap%3ci32%3e%20%3d%20BinaryHeap%3a%3awith%5fcapacity%28100000%29%3b%0a%20%20%20defer%20heap%2efree%28%29%3b%0a%20%20%20%0a%20%20%20heap%2epush%283%29%3b%0a%20%20%20heap%2eshrink%5fto%5ffit%28%29%3b%0a%20%20%20%0a%20%20%20assert%21%28heap%2ecapacity%28%29%20%3d%3d%201%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -460,7 +655,7 @@ needed to hold the current elements.
 F: Fn(&amp;T) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L200-L216"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L380-L396"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -480,7 +675,7 @@ is desired.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">iter</span>(self: &amp;<a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;) -> <a href="/std/mem/SliceIterator.html"><span class="identifier-type">SliceIterator</span></a>&lt;&amp;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L222-L224"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L402-L404"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -498,7 +693,7 @@ heap property).
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">iter_ref</span>(self: &amp;<a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;) -> <a href="/std/mem/SliceRefIterator.html"><span class="identifier-type">SliceRefIterator</span></a>&lt;&amp;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L230-L232"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L410-L412"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -516,15 +711,10 @@ heap property).
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">as_slice</span>(self: &amp;<a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;) -> &amp;[T]</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L236-L238"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L415-L417"/>source</a>
 </div>
 </div>
 <div class="item-doc">
-<p>
-View the vector as a slice of elements in arbitrary order (satisfying the
-heap property).
-</p><p>
-</p>
 </div>
 </li>
 <li>
@@ -532,7 +722,7 @@ heap property).
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">into_vector</span>(self: &amp;mut <a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;) -> <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L244-L246"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L441-L443"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -543,14 +733,33 @@ are in no particular order (satisfying the heap property).
 <code class="language-alumina">self</code> is emptied after this operation (like after <a class="path-link" href="/std/collections/heap/BinaryHeap.html#item.move">move</a>).
 </p><p>
 </p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::collections::BinaryHeap;
+
+let heap: BinaryHeap&lt;i32&gt; = BinaryHeap::new();
+defer heap.free();
+
+heap.push(3);
+heap.push(0);
+heap.push(6);
+
+let vec = heap.into_vector();
+defer vec.free();
+
+assert_eq!(vec.len(), 3);
+assert_eq!(heap.len(), 0);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aBinaryHeap%3b%0a%20%20%20%0a%20%20%20let%20heap%3a%20BinaryHeap%3ci32%3e%20%3d%20BinaryHeap%3a%3anew%28%29%3b%0a%20%20%20defer%20heap%2efree%28%29%3b%0a%20%20%20%0a%20%20%20heap%2epush%283%29%3b%0a%20%20%20heap%2epush%280%29%3b%0a%20%20%20heap%2epush%286%29%3b%0a%20%20%20%0a%20%20%20let%20vec%20%3d%20heap%2einto%5fvector%28%29%3b%0a%20%20%20defer%20vec%2efree%28%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28vec%2elen%28%29%2c%203%29%3b%0a%20%20%20assert%5feq%21%28heap%2elen%28%29%2c%200%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
 </div>
 </li>
 <li>
-<div class="signature" id="item.into_sorted_vector">
+<div class="signature" id="item.into_vector_sorted">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">into_sorted_vector</span>(self: &amp;mut <a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;) -> <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;T&gt;</h4>
+<span class="keyword">fn</span> <span class="identifier-function">into_vector_sorted</span>(self: &amp;mut <a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;) -> <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L252-L258"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L462-L468"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -561,6 +770,20 @@ are additionally sorted in ascending order.
 <code class="language-alumina">self</code> is emptied after this operation (like after <a class="path-link" href="/std/collections/heap/BinaryHeap.html#item.move">move</a>).
 </p><p>
 </p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::collections::BinaryHeap;
+
+let heap: BinaryHeap&lt;i32&gt; = BinaryHeap::from_slice(&amp;[5, 3, 4, 1, 2]);
+defer heap.free();
+
+let vec = heap.into_vector_sorted();
+defer vec.free();
+
+assert_eq!(vec[..], &amp;[1, 2, 3, 4, 5]);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aBinaryHeap%3b%0a%20%20%20%0a%20%20%20let%20heap%3a%20BinaryHeap%3ci32%3e%20%3d%20BinaryHeap%3a%3afrom%5fslice%28%26%5b5%2c%203%2c%204%2c%201%2c%202%5d%29%3b%0a%20%20%20defer%20heap%2efree%28%29%3b%0a%20%20%20%0a%20%20%20let%20vec%20%3d%20heap%2einto%5fvector%5fsorted%28%29%3b%0a%20%20%20defer%20vec%2efree%28%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28vec%5b%2e%2e%5d%2c%20%26%5b1%2c%202%2c%203%2c%204%2c%205%5d%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -568,12 +791,30 @@ are additionally sorted in ascending order.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">clear</span>(self: &amp;mut <a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L261-L263"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L488-L490"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Clears the heap, removing all values.
+</p><p>
+This does not reduce the capacity of the heap (use <a class="path-link" href="/std/collections/heap/BinaryHeap.html#item.shrink_to_fit">shrink_to_fit</a> afterwards or
+use <a class="path-link" href="/std/collections/heap/BinaryHeap.html#item.move">move</a> instead).
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::collections::BinaryHeap;
+
+let heap: BinaryHeap&lt;i32&gt; = BinaryHeap::new();
+defer heap.free();
+
+heap.push(3);
+heap.push(5);
+heap.clear();
+
+assert_eq!(heap.len(), 0);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aBinaryHeap%3b%0a%20%20%20%0a%20%20%20let%20heap%3a%20BinaryHeap%3ci32%3e%20%3d%20BinaryHeap%3a%3anew%28%29%3b%0a%20%20%20defer%20heap%2efree%28%29%3b%0a%20%20%20%0a%20%20%20heap%2epush%283%29%3b%0a%20%20%20heap%2epush%285%29%3b%0a%20%20%20heap%2eclear%28%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28heap%2elen%28%29%2c%200%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -583,13 +824,29 @@ Clears the heap, removing all values.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">iter_drain</span>(self: &amp;mut <a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;) -> <a href="/std/collections/heap/HeapIterator.html"><span class="identifier-type">HeapIterator</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L267-L269"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L509-L511"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Returns an iterator that removes all elements from the heap and yields them in
 sorted order (descending).
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::collections::BinaryHeap;
+
+let heap: BinaryHeap&lt;i32&gt; = BinaryHeap::from_slice(&amp;[5, 3, 4, 1, 2]);
+defer heap.free();
+
+// Prints "5 4 3 2 1 "
+for x in heap.iter_drain() {
+    print!("{} ", x);
+}
+
+assert!(heap.is_empty());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aBinaryHeap%3b%0a%20%20%20%0a%20%20%20let%20heap%3a%20BinaryHeap%3ci32%3e%20%3d%20BinaryHeap%3a%3afrom%5fslice%28%26%5b5%2c%203%2c%204%2c%201%2c%202%5d%29%3b%0a%20%20%20defer%20heap%2efree%28%29%3b%0a%20%20%20%0a%20%20%20%2f%2f%20Prints%20%225%204%203%202%201%20%22%0a%20%20%20for%20x%20in%20heap%2eiter%5fdrain%28%29%20%7b%0a%20%20%20%20%20%20%20print%21%28%22%7b%7d%20%22%2c%20x%29%3b%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20assert%21%28heap%2eis%5fempty%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -599,7 +856,7 @@ sorted order (descending).
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">free</span>(self: &amp;mut <a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L272-L274"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L514-L516"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -614,7 +871,7 @@ Frees the memory backing the object.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">move</span>(self: &amp;mut <a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;) -> <a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L277-L279"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L519-L521"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -631,7 +888,7 @@ See <a class="path-link" href="/std/mem/Movable.html">Movable</a> for details.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">clone</span>(self: &amp;<a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;) -> <a href="/std/collections/heap/BinaryHeap.html"><span class="identifier-type">BinaryHeap</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L282-L284"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/heap.alu#L524-L526"/>source</a>
 </div>
 </div>
 <div class="item-doc">

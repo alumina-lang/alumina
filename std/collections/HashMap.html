@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="description" content=" A simple linear probing hash table." />
+<meta name="description" content=" A map (dictionary) implemented as a hash table." />
 <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png" />
 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
 <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
@@ -123,11 +123,14 @@ K: <a href="/std/hash/Hashable.html"><span class="identifier-type">Hashable</spa
 H: <a href="/std/hash/Hasher.html"><span class="identifier-type">Hasher</span></a>&lt;H&gt;</div>
 </h3>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L27-L30"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L30-L33"/>source</a>
 </div>
 </div>
 <p>
-A simple linear probing hash table.
+A map (dictionary) implemented as a hash table.
+</p><p>
+The implementation is a simple linear probing hash table. Keys must satisfy the
+<a class="path-link" href="/std/hash/Hashable.html">Hashable</a> and <a class="path-link" href="/std/cmp/Equatable.html">Equatable</a> traits. There are no restriction on the value type.
 </p><p>
 </p>
 <h3> Example</h3>
@@ -161,7 +164,7 @@ H: <a href="/std/hash/Hasher.html"><span class="identifier-type">Hasher</span></
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">new</span>() -> <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L38-L43"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L41-L46"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -178,7 +181,7 @@ Will not allocate until the first element is inserted.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">with_capacity</span>(capacity: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L47-L49"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L50-L52"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -194,7 +197,7 @@ reallocating.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">with_size</span>(size: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L55-L60"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L58-L63"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -212,7 +215,7 @@ you want to strictly control the size of the underlying array.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">reserve</span>(self: &amp;mut <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;, additional: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L84-L92"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L89-L97"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -228,6 +231,8 @@ This follows the amortized growth strategy.
 <pre class="with-playground-link"><code class="language-alumina">use std::collections::HashMap;
 
 let map: HashMap&lt;i32, i32&gt; = HashMap::new();
+defer map.free();
+
 map.reserve(100);
 
 map.insert(1, 2);
@@ -239,7 +244,7 @@ for i in 1..100 {
 
 /// The first element is still at the same position.
 assert_eq!(ptr, map.get_ref(&amp;1).unwrap());
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aHashMap%3b%0a%20%20%20%0a%20%20%20let%20map%3a%20HashMap%3ci32%2c%20i32%3e%20%3d%20HashMap%3a%3anew%28%29%3b%0a%20%20%20map%2ereserve%28100%29%3b%0a%20%20%20%0a%20%20%20map%2einsert%281%2c%202%29%3b%0a%20%20%20let%20ptr%20%3d%20map%2eget%5fref%28%261%29%2eunwrap%28%29%3b%0a%20%20%20%0a%20%20%20for%20i%20in%201%2e%2e100%20%7b%0a%20%20%20%20%20%20%20map%2einsert%28i%2c%20i%20%2a%202%29%3b%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20%2f%2f%2f%20The%20first%20element%20is%20still%20at%20the%20same%20position%2e%0a%20%20%20assert%5feq%21%28ptr%2c%20map%2eget%5fref%28%261%29%2eunwrap%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aHashMap%3b%0a%20%20%20%0a%20%20%20let%20map%3a%20HashMap%3ci32%2c%20i32%3e%20%3d%20HashMap%3a%3anew%28%29%3b%0a%20%20%20defer%20map%2efree%28%29%3b%0a%20%20%20%0a%20%20%20map%2ereserve%28100%29%3b%0a%20%20%20%0a%20%20%20map%2einsert%281%2c%202%29%3b%0a%20%20%20let%20ptr%20%3d%20map%2eget%5fref%28%261%29%2eunwrap%28%29%3b%0a%20%20%20%0a%20%20%20for%20i%20in%201%2e%2e100%20%7b%0a%20%20%20%20%20%20%20map%2einsert%28i%2c%20i%20%2a%202%29%3b%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20%2f%2f%2f%20The%20first%20element%20is%20still%20at%20the%20same%20position%2e%0a%20%20%20assert%5feq%21%28ptr%2c%20map%2eget%5fref%28%261%29%2eunwrap%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -249,7 +254,7 @@ assert_eq!(ptr, map.get_ref(&amp;1).unwrap());
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">rehash</span>(self: &amp;mut <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;, new_capacity: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L98-L110"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L120-L132"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -257,7 +262,25 @@ assert_eq!(ptr, map.get_ref(&amp;1).unwrap());
 Resizes the underlying array to exactly the given <code class="language-alumina">new_capacity</code>.
 </p><p>
 Note that this could lead to poor performance if the resulting load factor
-is close to 1.
+is close to 1. Prefer to use <a class="path-link" href="/std/collections/hashmap/HashMap.html#item.reserve">reserve</a> to grow the map and <a class="path-link" href="/std/collections/hashmap/HashMap.html#item.shrink_to_fit">shrink_to_fit</a> to
+shrink it.
+</p><p>
+Panics if the new capacity is lower than the current size.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link panics"><code class="language-alumina">use std::collections::HashMap;
+
+let map: HashMap&lt;i32, i32&gt; = HashMap::new();
+defer map.free();
+
+map.insert(1, 2);
+map.insert(2, 4);
+map.insert(3, 5);
+
+map.rehash(1); // panics
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aHashMap%3b%0a%20%20%20%0a%20%20%20let%20map%3a%20HashMap%3ci32%2c%20i32%3e%20%3d%20HashMap%3a%3anew%28%29%3b%0a%20%20%20defer%20map%2efree%28%29%3b%0a%20%20%20%0a%20%20%20map%2einsert%281%2c%202%29%3b%0a%20%20%20map%2einsert%282%2c%204%29%3b%0a%20%20%20map%2einsert%283%2c%205%29%3b%0a%20%20%20%0a%20%20%20map%2erehash%281%29%3b%20%2f%2f%20panics%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -267,12 +290,33 @@ is close to 1.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">shrink_to_fit</span>(self: &amp;mut <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L113-L120"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L155-L161"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Reduces the size of underlying storage to fit the contained elements if needed.
+</p><p>
+Call this method after a lot of elements have been removed to shrink the
+underlying storage. This can also improve map performance as it removes the
+tombstones.
+</p><p>
+This method keeps the load factor below 0.75 after shrinking.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::collections::HashMap;
+
+let map: HashMap&lt;i32, i32&gt; = HashMap::from_iter(
+    &amp;(0..1000)
+        .map(|i: i32| -&gt; (i32, i32) { (i, i * 2) })
+);
+defer map.free();
+
+map.retain(|k: &amp;i32, v: &amp;i32| -&gt; bool { *k % 10 == 0 });
+map.shrink_to_fit(); // shrink the unused space
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3acollections%3a%3aHashMap%3b%0a%20%20%20%0a%20%20%20let%20map%3a%20HashMap%3ci32%2c%20i32%3e%20%3d%20HashMap%3a%3afrom%5fiter%28%0a%20%20%20%20%20%20%20%26%280%2e%2e1000%29%0a%20%20%20%20%20%20%20%20%20%20%20%2emap%28%7ci%3a%20i32%7c%20%2d%3e%20%28i32%2c%20i32%29%20%7b%20%28i%2c%20i%20%2a%202%29%20%7d%29%0a%20%20%20%29%3b%0a%20%20%20defer%20map%2efree%28%29%3b%0a%20%20%20%0a%20%20%20map%2eretain%28%7ck%3a%20%26i32%2c%20v%3a%20%26i32%7c%20%2d%3e%20bool%20%7b%20%2ak%20%25%2010%20%3d%3d%200%20%7d%29%3b%0a%20%20%20map%2eshrink%5fto%5ffit%28%29%3b%20%2f%2f%20shrink%20the%20unused%20space%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -282,7 +326,7 @@ Reduces the size of underlying storage to fit the contained elements if needed.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">insert</span>(self: &amp;mut <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;, key: K, value: V) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;V&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L123-L129"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L164-L170"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -297,7 +341,7 @@ Inserts a value into the map under a given key.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">get</span>(self: &amp;<a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;, key: &amp;K) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;V&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L132-L134"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L173-L175"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -312,7 +356,7 @@ Retreives the value by given key.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">get_ref</span>(self: &amp;<a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;, key: &amp;K) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;&amp;V&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L137-L139"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L178-L180"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -327,7 +371,7 @@ Retreives a pointer to the value by given key.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">get_mut</span>(self: &amp;mut <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;, key: &amp;K) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;&amp;mut V&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L142-L144"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L183-L185"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -342,7 +386,7 @@ Retreives a mutable pointer to the value by given key.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">remove</span>(self: &amp;mut <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;, key: &amp;K) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;V&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L150-L159"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L191-L200"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -360,7 +404,7 @@ returned. Otherwise, <code class="language-alumina">Option::none()</code> is ret
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">len</span>(self: &amp;<a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;) -> <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L172-L175"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L213-L216"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -386,7 +430,7 @@ assert_eq!(map.len(), 1);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">is_empty</span>(self: &amp;<a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L178-L181"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L219-L222"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -401,7 +445,7 @@ Returns <code class="language-alumina">true</code> if the map is empty, <code cl
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">clear</span>(self: &amp;mut <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L187-L192"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L228-L233"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -419,7 +463,7 @@ This does not shrink the underlying array after clearing. If this is desired, ca
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">iter</span>(self: &amp;<a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;) -> <a href="/std/collections/hashmap/HashMapIterator.html"><span class="identifier-type">HashMapIterator</span></a>&lt;K, V&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L195-L200"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L236-L241"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -434,7 +478,7 @@ Returns an iterator over the elements of the array.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">iter_ref</span>(self: &amp;<a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;) -> <a href="/std/collections/hashmap/HashMapRefIterator.html"><span class="identifier-type">HashMapRefIterator</span></a>&lt;K, V&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L203-L208"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L244-L249"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -449,7 +493,7 @@ Returns an iterator of pointers to elements of the array.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">iter_mut</span>(self: &amp;mut <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;) -> <a href="/std/collections/hashmap/HashMapMutIterator.html"><span class="identifier-type">HashMapMutIterator</span></a>&lt;K, V&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L211-L216"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L252-L257"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -466,12 +510,14 @@ Returns an iterator of mutable pointers to elements of the array.
 F: Fn(&amp;K, &amp;V) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L305-L316"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L348-L359"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Removes the elements not mathing the given predicate.
+</p><p>
+This is more efficient than calling <a class="path-link" href="/std/collections/hashmap/HashMap.html#item.remove">remove</a> for each element.
 </p><p>
 Does not remove excess capacity, call <a class="path-link" href="/std/collections/hashmap/HashMap.html#item.shrink_to_fit">shrink_to_fit</a> afterwards, if this
 is desired.
@@ -505,7 +551,7 @@ assert_eq!(map.get(&amp;4), Option::some(4));
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">free</span>(self: &amp;mut <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L319-L321"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L362-L364"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -520,7 +566,7 @@ Frees the memory backing the object.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">move</span>(self: &amp;mut <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;) -> <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L324-L329"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L367-L372"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -537,7 +583,7 @@ See <a class="path-link" href="/std/mem/Movable.html">Movable</a> for details.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">clone</span>(self: &amp;<a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;) -> <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L332-L338"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L375-L381"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -562,7 +608,7 @@ H: <a href="/std/hash/Hasher.html"><span class="identifier-type">Hasher</span></
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">from_iter</span>(iter: &amp;mut I) -> <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L360-L364"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L403-L407"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -590,7 +636,7 @@ assert!(map.get(&amp;1) == Option::some(2));
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">extend</span>(self: &amp;mut <a href="/std/collections/hashmap/HashMap.html"><span class="identifier-type">HashMap</span></a>&lt;K, V, H&gt;, iter: &amp;mut I)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L368-L378"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/collections/hashmap.alu#L411-L421"/>source</a>
 </div>
 </div>
 <div class="item-doc">

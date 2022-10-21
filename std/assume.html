@@ -112,12 +112,6 @@
 <li>
 <a href="/std/util/">util</a>
 </li>
-<li>
-<a href="/std/internal/">internal</a>
-</li>
-<li>
-<a href="/std/tests/">tests</a>
-</li>
 </ul>
 <h2>Macros</h2>
 <ul>
@@ -199,7 +193,7 @@
 <h3>
 <span class="keyword">macro</span> <span class="identifier-function">assume</span>($cond) { ... }</h3>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std.alu#L172-L179"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std.alu#L179-L186"/>source</a>
 </div>
 </div>
 <p>
@@ -211,7 +205,7 @@ In debug mode, this macro will panic if the condition is false. In release mode,
 cause undefined behavior.
 </p><p>
 </p>
-<h3> Example</h3>
+<h3> Examples</h3>
 <p>
 <pre class="with-playground-link"><code class="language-alumina">use std::assume;
 use std::collections::Vector;
@@ -226,9 +220,15 @@ let vec = Vector::from_slice(&amp;[0, 1, 2, 3, 4]);
 // The bounds check in Vector::get *may* be optimized out:
 println!("{}", vec.get_unchecked(3));
 
-// In release mode, this would likely no longer panic and will segfault instead:
+// In release mode, this will likely segfault, but can also make demons
+// fly out of your nose:
 // println!("{}", vec.get_unchecked(10));
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3aassume%3b%0a%20%20%20use%20std%3a%3acollections%3a%3aVector%3b%0a%20%20%20%0a%20%20%20fn%20get%5funchecked%3cT%3e%28vec%3a%20%26Vector%3cT%3e%2c%20index%3a%20usize%29%20%2d%3e%20T%20%7b%0a%20%20%20%20%20%20%20assume%21%28index%20%3c%20vec%2elen%28%29%29%3b%0a%20%20%20%20%20%20%20vec%2eget%28index%29%2eunwrap%28%29%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20let%20vec%20%3d%20Vector%3a%3afrom%5fslice%28%26%5b0%2c%201%2c%202%2c%203%2c%204%5d%29%3b%0a%20%20%20%0a%20%20%20%2f%2f%20The%20bounds%20check%20in%20Vector%3a%3aget%20%2amay%2a%20be%20optimized%20out%3a%0a%20%20%20println%21%28%22%7b%7d%22%2c%20vec%2eget%5funchecked%283%29%29%3b%0a%20%20%20%0a%20%20%20%2f%2f%20In%20release%20mode%2c%20this%20would%20likely%20no%20longer%20panic%20and%20will%20segfault%20instead%3a%0a%20%20%20%2f%2f%20println%21%28%22%7b%7d%22%2c%20vec%2eget%5funchecked%2810%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3aassume%3b%0a%20%20%20use%20std%3a%3acollections%3a%3aVector%3b%0a%20%20%20%0a%20%20%20fn%20get%5funchecked%3cT%3e%28vec%3a%20%26Vector%3cT%3e%2c%20index%3a%20usize%29%20%2d%3e%20T%20%7b%0a%20%20%20%20%20%20%20assume%21%28index%20%3c%20vec%2elen%28%29%29%3b%0a%20%20%20%20%20%20%20vec%2eget%28index%29%2eunwrap%28%29%0a%20%20%20%7d%0a%20%20%20%0a%20%20%20let%20vec%20%3d%20Vector%3a%3afrom%5fslice%28%26%5b0%2c%201%2c%202%2c%203%2c%204%5d%29%3b%0a%20%20%20%0a%20%20%20%2f%2f%20The%20bounds%20check%20in%20Vector%3a%3aget%20%2amay%2a%20be%20optimized%20out%3a%0a%20%20%20println%21%28%22%7b%7d%22%2c%20vec%2eget%5funchecked%283%29%29%3b%0a%20%20%20%0a%20%20%20%2f%2f%20In%20release%20mode%2c%20this%20will%20likely%20segfault%2c%20but%20can%20also%20make%20demons%0a%20%20%20%2f%2f%20fly%20out%20of%20your%20nose%3a%0a%20%20%20%2f%2f%20println%21%28%22%7b%7d%22%2c%20vec%2eget%5funchecked%2810%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+<pre class="with-playground-link panics"><code class="language-alumina">use std::assume;
+
+std::assume!(1 &gt; 2); // Ò̴̡̤̗̬̳̱͉̳͓̝̥̞͗́̿͑̂̓̀͋̈́͐̏͝H̷̳̺̝̗̖̖̫͆̀́̚͝ ̷͚̜̟̘̦̺̼̣̘̓N̸̜̞̬̞͓̮̘̣͍͕͍̱̮̍͛̇̋̅̏͒̕͠Ỏ̴̭̯͘̚̕
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3aassume%3b%0a%20%20%20%0a%20%20%20std%3a%3aassume%21%281%20%3e%202%29%3b%20%2f%2f%20O%cc%b4%cd%9d%cd%80%cd%97%cd%81%cc%bf%cd%91%cc%82%cc%93%cd%80%cd%8b%cd%84%cd%90%cc%8f%cc%a4%cc%97%cc%ac%cc%b3%cc%b1%cd%89%cc%b3%cd%93%cc%9d%cc%a5%cc%9e%cc%a1H%cc%b7%cd%86%cc%9a%cc%80%cd%9d%cc%81%cc%b3%cc%ba%cc%9d%cc%97%cc%96%cc%96%cc%ab%20%cc%b7%cc%93%cd%9a%cc%9c%cc%9f%cc%98%cc%a6%cc%ba%cc%bc%cc%a3%cc%98N%cc%b8%cc%8d%cd%9b%cc%95%cc%87%cc%8b%cd%a0%cc%85%cc%8f%cd%92%cc%9c%cc%9e%cc%ac%cc%9e%cd%93%cc%ae%cc%98%cc%a3%cd%8d%cd%95%cd%8d%cc%b1%cc%aeO%cc%b4%cd%98%cc%9a%cc%89%cc%95%cc%ad%cc%af%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </main>
