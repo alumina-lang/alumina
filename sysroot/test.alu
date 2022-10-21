@@ -104,7 +104,7 @@
             .spawn()
             .unwrap();
 
-        if !child.is_some() {
+        if child.is_none() {
             test.test();
             if should_fail {
                 eprintln!("note: test function completed successfully")
@@ -228,8 +228,16 @@
     /// Test runner entrypoint.
     #[test_main]
     fn main(args: &[&[u8]]) -> i32 {
+        use std::process::env;
+
         let args = parse_args(args);
         let start_time = Instant::now();
+
+        // https://bixense.com/clicolors/
+        let colors = (
+            env().get("CLICOLOR").unwrap_or("1") != "0"
+                && libc::isatty(libc::STDERR_FILENO) != 0
+            ) || env().get("CLICOLOR_FORCE").unwrap_or("0") != "0";
 
         let results: Vector<TestResult> = Vector::new();
         defer results.free_all();
@@ -245,7 +253,11 @@
         for test in test_cases {
             eprint!("test {}::{} ... ", test.path[2..], test.name);
             if test.ignored() {
-                eprintln!("\x1b[0;33mignored\x1b[0m.");
+                if colors {
+                    eprintln!("\x1b[0;33mignored\x1b[0m.");
+                } else {
+                    eprintln!("ignored.");
+                }
                 num_ignored += 1;
                 continue;
             }
@@ -254,10 +266,18 @@
 
             let message = if result.success {
                 num_passed += 1;
-                "\x1b[0;32mok\x1b[0m"
+                if colors {
+                    "\x1b[0;32mok\x1b[0m"
+                } else {
+                    "ok"
+                }
             } else {
                 num_failed += 1;
-                "\x1b[0;31mFAILED\x1b[0m"
+                if colors {
+                    "\x1b[0;31mFAILED\x1b[0m"
+                } else {
+                    "FAILED"
+                }
             };
 
             if args.timings {
@@ -292,21 +312,39 @@
                     }
                 }
             }
-            eprintln!("test result: \x1b[0;31mFAILED\x1b[0m. {} passed; {} failed; {} ignored; finished in {}",
-                num_passed,
-                num_failed,
-                num_ignored,
-                elapsed
-            );
+            if colors {
+                eprintln!("test result: \x1b[0;31mFAILED\x1b[0m. {} passed; {} failed; {} ignored; finished in {}",
+                    num_passed,
+                    num_failed,
+                    num_ignored,
+                    elapsed
+                );
+            } else {
+                eprintln!("test result: FAILED. {} passed; {} failed; {} ignored; finished in {}",
+                    num_passed,
+                    num_failed,
+                    num_ignored,
+                    elapsed
+                );
+            }
             1
         } else {
             eprintln!("");
-            eprintln!("test result: \x1b[0;32mok\x1b[0m. {} passed; {} failed; {} ignored; finished in {}",
-                num_passed,
-                num_failed,
-                num_ignored,
-                elapsed
-            );
+            if colors {
+                eprintln!("test result: \x1b[0;32mok\x1b[0m. {} passed; {} failed; {} ignored; finished in {}",
+                    num_passed,
+                    num_failed,
+                    num_ignored,
+                    elapsed
+                );
+            } else {
+                eprintln!("test result: ok. {} passed; {} failed; {} ignored; finished in {}",
+                    num_passed,
+                    num_failed,
+                    num_ignored,
+                    elapsed
+                );
+            }
             0
         }
     }

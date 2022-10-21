@@ -81,7 +81,6 @@ impl Compiler {
         let ast = AstCtx::new();
         let root_scope = Scope::new_root();
 
-        let mut main_candidate = None;
         let source_files: Vec<_> = source_files
             .iter()
             .map(|source_file| {
@@ -100,6 +99,7 @@ impl Compiler {
 
         timing!(self, cur_time, Stage::Parse);
 
+        let mut main_candidate = None;
         for (ctx, path) in source_files.iter() {
             let scope = root_scope.ensure_module(path.clone()).with_no_span()?;
             scope.set_code(ctx);

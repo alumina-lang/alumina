@@ -185,7 +185,7 @@ impl SkipWhileIterator<It: Iterator<It, T>, F: Fn(T) -> bool, T> {
     fn next(self: &mut SkipWhileIterator<It, F, T>) -> Option<T> {
         loop {
             let v = self.it.next();
-            if self.finished || !v.is_some() {
+            if self.finished || v.is_none() {
                 return v;
             } else if self.fun(v.unwrap()) {
                 continue
@@ -282,7 +282,7 @@ impl SkipIterator<It: Iterator<It, T>, T> {
     fn next(self: &mut SkipIterator<It, T>) -> Option<T> {
         while self.n > 0 {
             self.n -= 1;
-            if !self.it.next().is_some() {
+            if self.it.next().is_none() {
                 return Option::none();
             }
         }
@@ -355,7 +355,7 @@ impl FusedIterator<It: Iterator<It, T>, T> {
             Option::none()
         } else {
             let v = self.it.next();
-            self.done = !v.is_some();
+            self.done = v.is_none();
             v
         }
     }
@@ -380,7 +380,7 @@ impl FusedIterator<It: DoubleEndedIterator<It, T>, T> {
             Option::none()
         } else {
             let v = self.it.next_back();
-            self.done = !v.is_some();
+            self.done = v.is_none();
             v
         }
     }
@@ -628,7 +628,7 @@ impl Grouping<It: Iterator<It, T>, F: Fn(T) -> K, T, K: cmp::Equatable<K>> {
         use option::try;
 
         let v = self.parent.it.peek();
-        if !v.is_some() {
+        if v.is_none() {
             self.parent.last_group = Option::none();
             return self.parent.it.next();
         }
@@ -664,7 +664,7 @@ impl GroupByIterator<It: Iterator<It, T>, F: Fn(T) -> K, T, K: cmp::Equatable<K>
         }
 
         let v = self.it.peek();
-        if !v.is_some() {
+        if v.is_none() {
             self.it.next();
             return Option::none();
         }
@@ -723,7 +723,7 @@ impl ChunksIterator<It: Iterator<It, T>, T> {
         }
 
         let v = self.it.peek();
-        if !v.is_some() {
+        if v.is_none() {
             self.it.next();
             return Option::none();
         }
@@ -769,7 +769,7 @@ impl PeekableIterator<It: Iterator<It, T>, T> {
         } else {
             when It: DoubleEndedIterator<It, T> {
                 let next = self.it.next();
-                if !next.is_some() {
+                if next.is_none() {
                     self.peeked_back.move()
                 } else {
                     next
@@ -783,7 +783,7 @@ impl PeekableIterator<It: Iterator<It, T>, T> {
     /// Return the next element in the iterator without consuming it.
     fn peek(self: &mut PeekableIterator<It, T>) -> Option<T> {
         when It: DoubleEndedIterator<It, T> {
-            if !self.peeked.is_some() {
+            if self.peeked.is_none() {
                 self.peeked = self.it.next();
                 if self.peeked.is_some(){
                     self.peeked
@@ -794,7 +794,7 @@ impl PeekableIterator<It: Iterator<It, T>, T> {
                 self.peeked
             }
         } else {
-            if !self.peeked.is_some() {
+            if self.peeked.is_none() {
                 self.peeked = self.it.next();
             }
             self.peeked
@@ -829,7 +829,7 @@ impl PeekableIterator<It: DoubleEndedIterator<It, T>, T> {
             self.peeked_back.move()
         } else {
             let next_back = self.it.next_back();
-            if !next_back.is_some() {
+            if next_back.is_none() {
                 self.peeked.move()
             } else {
                 next_back
@@ -839,7 +839,7 @@ impl PeekableIterator<It: DoubleEndedIterator<It, T>, T> {
 
     /// Return the next element from the back in the iterator without consuming it.
     fn peek_back(self: &mut PeekableIterator<It, T>) -> Option<T> {
-        if !self.peeked_back.is_some() {
+        if self.peeked_back.is_none() {
             self.peeked_back = self.it.next_back();
             if self.peeked_back.is_some(){
                 self.peeked_back
@@ -897,7 +897,7 @@ impl FlattenIterator<It: Iterator<It, T>, T, Ret> {
         use option::try;
 
         loop {
-            if !self.elem.is_some() {
+            if self.elem.is_none() {
                 // We store the element, as the iterator may require a stable pointer to it.
                 self.elem = Option::some(self.it.next()?);
                 self.elem_iter = self.elem
@@ -1150,7 +1150,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     fn count(self: &mut Self) -> usize {
         let n = 0usize;
         loop {
-            if !self.next().is_some() {
+            if self.next().is_none() {
                 return n;
             }
             n += 1;
@@ -1393,7 +1393,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     fn reduce<U, F: Fn(U, T) -> U>(iter: &mut Self, initial: U, func: F) -> U {
         loop {
             let next = iter.next();
-            if !next.is_some() {
+            if next.is_none() {
                 break
             }
             initial = func(initial, next.unwrap());
@@ -1454,7 +1454,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     fn all<F: Fn(T) -> bool>(iter: &mut Self, fun: F) -> bool {
         loop {
             let next = iter.next();
-            if !next.is_some() {
+            if next.is_none() {
                 break
             }
             if !fun(next.unwrap()) {
@@ -1478,7 +1478,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     fn any<F: Fn(T) -> bool>(iter: &mut Self, fun: F) -> bool {
         loop {
             let next = iter.next();
-            if !next.is_some() {
+            if next.is_none() {
                 break
             }
             if fun(next.unwrap()) {
@@ -1524,7 +1524,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
                 break;
             }
             let next = self.next();
-            if !next.is_some() {
+            if next.is_none() {
                 break;
             }
             slice[index] = next.unwrap();
@@ -1792,6 +1792,7 @@ fn once<T>(value: T) -> OnceIterator<T> {
     OnceIterator { value: Option::some(value) }
 }
 
+#[docs(no_index)]
 mod internal {
     use builtins::Numeric;
     use cmp::Comparable;
@@ -1803,7 +1804,7 @@ mod internal {
 
     // See IteratorExt::min
     fn iter_min<T: Comparable<T>>(a: Option<T>, b: T) -> Option<T> {
-        if !a.is_some() || a.unwrap() > b {
+        if a.is_none() || a.unwrap() > b {
             Option::some(b)
         } else {
             a
@@ -1812,7 +1813,7 @@ mod internal {
 
     // See IteratorExt::max
     fn iter_max<T: Comparable<T>>(a: Option<T>, b: T) -> Option<T> {
-        if !a.is_some() || a.unwrap() < b {
+        if a.is_none() || a.unwrap() < b {
             Option::some(b)
         } else {
             a
@@ -1822,6 +1823,7 @@ mod internal {
 
 
 #[cfg(all(test, test_std))]
+#[docs(hide)]
 mod tests {
     #[test]
     fn test_map() {
@@ -2172,7 +2174,7 @@ mod tests {
         assert_eq!(group.next(), Option::some((2, 2)));
         assert_eq!(group.next(), Option::none());
 
-        assert!(!groups.next().is_some());
+        assert!(groups.next().is_none());
     }
 
     #[test]
@@ -2197,7 +2199,7 @@ mod tests {
         assert_eq!(group.next(), Option::some((2, 2)));
         assert_eq!(group.next(), Option::none());
 
-        assert!(!groups.next().is_some());
+        assert!(groups.next().is_none());
     }
 
     #[test]
@@ -2427,7 +2429,7 @@ mod tests {
         assert_eq!(chunk.next(), Option::some(9));
         assert_eq!(chunk.next(), Option::none());
 
-        assert!(!iter.next().is_some());
+        assert!(iter.next().is_none());
     }
 
     #[test]
@@ -2452,7 +2454,7 @@ mod tests {
         let chunk = iter.next().unwrap();
         assert_eq!(iter.size_hint(), Option::some(0usize));
 
-        assert!(!iter.next().is_some());
+        assert!(iter.next().is_none());
     }
 
     #[test]
@@ -2478,7 +2480,7 @@ mod tests {
         assert_eq!(chunk.next(), Option::some(2));
         assert_eq!(chunk.next(), Option::none());
 
-        assert!(!iter.next().is_some());
+        assert!(iter.next().is_none());
     }
 
     #[test]
@@ -2486,7 +2488,7 @@ mod tests {
         let iter = empty::<i32>().chunks(100);
 
         assert_eq!(iter.size_hint(), Option::some(0usize));
-        assert!(!iter.next().is_some());
+        assert!(iter.next().is_none());
     }
 
     #[test(should_fail)]

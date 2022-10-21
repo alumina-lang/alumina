@@ -341,7 +341,7 @@ impl PageWriter<T: std::io::Writable<T>> {
 
         for grp in nav_items
             .iter()
-            .filter(|i: &Item| -> bool { i.kind.should_show_in_sidebar() })
+            .filter(|i: &Item| -> bool { i.kind.should_show_in_sidebar() && !i.hide_from_index })
             .group_by(|i: &Item| -> ItemKind { i.kind }) {
             wln!(self, "<h2>{}s</h2>", grp.key);
             wln!(self, "<ul>");
@@ -385,7 +385,9 @@ impl PageWriter<T: std::io::Writable<T>> {
         defer methods.free();
 
         if top_level.kind.has_own_page() {
-            for grp in main_items.iter().group_by(|i: &Item| -> ItemKind { i.kind }) {
+            for grp in main_items.iter()
+                .filter(|i: &Item| -> bool { !i.hide_from_index })
+                .group_by(|i: &Item| -> ItemKind { i.kind }) {
                 wln!(self, "<h2 id=\"{}\">{}s</h2>", grp.key, grp.key);
 
                 let first = true;
@@ -621,7 +623,7 @@ impl Processor {
         };
 
         write!(&writer, "const index = [");
-        for item in self.items.all().filter(|v: &Item| -> bool {  v.is_public() && v.kind.is_indexed() }) {
+        for item in self.items.all().filter(|v: &Item| -> bool {  v.is_public() && v.kind.is_indexed() && !v.hide_from_index }) {
             let link_context = LinkContext::new(&self.items, &item.path);
             let link = link_context.link_for_item(item, false, false).unwrap();
             let doc = clean_doc_comment(&link_context, item.doc_comment.as_slice());

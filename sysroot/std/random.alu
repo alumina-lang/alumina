@@ -234,7 +234,7 @@ type DefaultRng = Pcg32;
 ///
 /// The returned pointer is safe to store, but not safe to send across threads.
 fn thread_rng() -> &mut DefaultRng {
-    if !internal::THREAD_RNG.is_some() {
+    if internal::THREAD_RNG.is_none() {
         internal::THREAD_RNG = Option::some(internal::seed_default_rng());
     }
     internal::THREAD_RNG.as_mut_ptr().unwrap()
@@ -367,6 +367,7 @@ protocol RngExt<Self: Rng<Self>> {
     }
 }
 
+#[docs(no_index)]
 mod internal {
     #[thread_local] static THREAD_RNG: Option<Pcg32>;
 
@@ -414,6 +415,7 @@ mod internal {
 }
 
 #[cfg(all(test, test_std))]
+#[docs(hide)]
 mod tests {
     static SEED: [u8; 16] = mem::zeroed();
 

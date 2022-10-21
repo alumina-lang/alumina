@@ -260,6 +260,8 @@ fn write_docstring<T: std::io::Writable<T>>(
         NoTest,         // Not tested
         NoRun,          // Test just compiled, but not run
         Panics,         // Fully tested and expected to panic
+        Dubious,        // Valid Alumina code, but may produce unexpected results
+        NasalDemons,    // Compiles, but produces undefined behavior
         CompileFail,    // Invalid alumina code. Expected to fail to compile
         Bare,           // Playground link without fn main() { ... } wrapper. Not tested.
     }
@@ -295,7 +297,7 @@ fn write_docstring<T: std::io::Writable<T>>(
                         doctest_writer.write_test(
                             name.as_slice(),
                             doctest_source.as_slice(),
-                            cb_type == CodeBlockType::NoRun,
+                            cb_type == CodeBlockType::NoRun || cb_type == CodeBlockType::NasalDemons,
                             cb_type == CodeBlockType::Panics
                         );
                         name.free();
@@ -346,14 +348,20 @@ fn write_docstring<T: std::io::Writable<T>>(
                     "```no_run" => CodeBlockType::NoRun,
                     "```compile_fail" => CodeBlockType::CompileFail,
                     "```panics" => CodeBlockType::Panics,
+                    "```dubious" => CodeBlockType::Dubious,
+                    "```nasaldemons" => CodeBlockType::NasalDemons,
                     "```bare" => CodeBlockType::Bare,
                     _ => CodeBlockType::Default,
                 };
 
                 if tagline_only || cb_type == CodeBlockType::NotAlumina {
                     write!(writer, "<pre>");
-                } else if cb_type == CodeBlockType::Panics || cb_type == CodeBlockType::CompileFail {
+                } else if cb_type == CodeBlockType::Panics
+                    || cb_type == CodeBlockType::CompileFail
+                    || cb_type == CodeBlockType::NasalDemons {
                     write!(writer, "<pre class=\"with-playground-link panics\">");
+                } else if cb_type == CodeBlockType::Dubious {
+                    write!(writer, "<pre class=\"with-playground-link dubious\">");
                 } else {
                     write!(writer, "<pre class=\"with-playground-link\">");
                 }

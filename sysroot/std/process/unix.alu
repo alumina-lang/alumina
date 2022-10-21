@@ -41,7 +41,7 @@ impl EnvVars {
             // Empty environment variable name is consider not valid, so allow
             // it to start with '='
             let sep = env_str[1..].find_char('=');
-            if !sep.is_some() {
+            if sep.is_none() {
                 continue;
             }
 
@@ -432,7 +432,7 @@ impl Command {
             stdout.install(libc::STDOUT_FILENO).unwrap();
             stderr.install(libc::STDERR_FILENO).unwrap();
 
-            if !self._environ.is_some() {
+            if self._environ.is_none() {
                 libc::execv(exec_params.name(), exec_params.argv());
             } else {
                 libc::execve(exec_params.name(), exec_params.argv(), exec_params.envp());
@@ -464,6 +464,7 @@ impl Command {
     }
 }
 
+#[docs(no_index)]
 mod internal {
     use io::{Readable, AsFileDescriptor};
     use io::unix::{ErrorKind, errno_try};
@@ -679,6 +680,7 @@ mod internal {
 
 
 #[cfg(all(test, test_std))]
+#[docs(hide)]
 mod tests {
     use fs::Path;
 
@@ -753,7 +755,7 @@ mod tests {
             .spawn()
             .unwrap();
 
-        if !child.is_some() {
+        if child.is_none() {
             print!("Hello");
             eprint!("World");
             exit(123);
@@ -777,7 +779,7 @@ mod tests {
             .spawn()
             .unwrap();
 
-        if !child.is_some() {
+        if child.is_none() {
             // Write to both pipes and fill up the buffer. Naive implementation would
             // block on write eventually when the pipe capacity is reached. But our's
             // don't!

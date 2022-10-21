@@ -185,8 +185,8 @@ impl Path {
         let iter = self.iter().peekable();
         let last: Option<PathSegment> = Option::none();
         loop {
-            if !iter.peek().is_some() {
-                if !last.is_some() || last.unwrap().kind == PathSegmentKind::Root {
+            if iter.peek().is_none() {
+                if last.is_none() || last.unwrap().kind == PathSegmentKind::Root {
                     return Option::none();
                 } else {
                     let ret = mem::slice::from_raw(&self.inner[0], (&last.unwrap().value[0] - &self.inner[0]) as usize);
@@ -233,7 +233,7 @@ impl Path {
                 }
             }
 
-            if !s1.is_some() && s2.is_some() {
+            if s1.is_none() && s2.is_some() {
                 return Option::none();
             }
 
@@ -406,6 +406,7 @@ impl PathBuf {
 }
 
 #[cfg(all(test, test_std))]
+#[docs(hide)]
 mod tests {
     #[test]
     fn test_path_iter() {

@@ -7,7 +7,7 @@ use cmp::{Comparable, Ordering, CompareFunction};
 
 /// A binary max-heap (priority queue).
 ///
-/// # Example
+/// ## Example
 /// ```
 /// use std::collections::BinaryHeap;
 ///
@@ -64,11 +64,31 @@ impl BinaryHeap<T: Comparable<T>> {
     /// Creates an empty binary heap.
     ///
     /// This will not allocate until the first element is inserted.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::BinaryHeap;
+    ///
+    /// let heap: BinaryHeap<i32> = BinaryHeap::new();
+    /// defer heap.free();
+    ///
+    /// assert_eq!(heap.is_empty(), true);
+    /// ```
     fn new() -> BinaryHeap<T> {
         BinaryHeap { _data: Vector::new() }
     }
 
-    /// Create a heap that can hold up to `capacity` elements without reallocating.
+    /// Create a heap that can accept at least `capacity` elements without reallocating.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::BinaryHeap;
+    ///
+    /// let heap: BinaryHeap<i32> = BinaryHeap::with_capacity(8);
+    /// defer heap.free();
+    ///
+    /// assert!(heap.capacity() >= 8);
+    /// ```
     fn with_capacity(capacity: usize) -> BinaryHeap<T> {
         BinaryHeap { _data: Vector::with_capacity(capacity) }
     }
@@ -76,6 +96,17 @@ impl BinaryHeap<T: Comparable<T>> {
     /// Creates a heap from an existing vector.
     ///
     /// The vector will be heapified in-place.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::{BinaryHeap, Vector};
+    ///
+    /// let vec = Vector::from_slice(&[1, 4, 6, 7, 2, 9, 2]);
+    /// let heap = BinaryHeap::from_vector(vec);
+    /// defer heap.free();
+    ///
+    /// assert_eq!(heap.pop(), Option::some(9));
+    /// ```
     fn from_vector(vector: Vector<T>) -> BinaryHeap<T> {
         let heap = BinaryHeap { _data: vector };
         heap._data
@@ -87,8 +118,19 @@ impl BinaryHeap<T: Comparable<T>> {
 
     /// Creates a heap from an existing vector.
     ///
-    /// The vector is assumed to satisfy the max heap property. If it does not,
-    /// the behavior is unspecified.
+    /// The vector is assumed to satisfy the max heap property `a[i] <= a[(i-1)/2]`.
+    /// If it does not, the behavior is unspecified.
+    ///
+    /// ## Example
+    /// ```dubious
+    /// use std::collections::{BinaryHeap, Vector};
+    ///
+    /// let vec = Vector::from_slice(&[1, 2, 3]);
+    /// let heap = BinaryHeap::from_vector_raw(vec);
+    /// defer heap.free();
+    ///
+    /// assert_eq!(heap.pop(), Option::some(1)); // ???
+    /// ```
     fn from_vector_raw(vector: Vector<T>) -> BinaryHeap<T> {
         BinaryHeap { _data: vector }
     }
@@ -96,11 +138,32 @@ impl BinaryHeap<T: Comparable<T>> {
     /// Creates a heap from a slice of elements.
     ///
     /// The elements are copied into the heap and heapified.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::BinaryHeap;
+    ///
+    /// let heap = BinaryHeap::from_slice(&[4, 4, 6, 7, 2, 9, 2]);
+    /// defer heap.free();
+    ///
+    /// assert_eq!(heap.pop(), Option::some(9));
+    /// ```
     fn from_slice(slice: &[T]) -> BinaryHeap<T> {
         from_vector(Vector::from_slice(slice))
     }
 
     /// Creates a heap from an iterator.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::BinaryHeap;
+    /// use std::iter::{Iterator};
+    ///
+    /// let heap: BinaryHeap<i32> = BinaryHeap::from_iter(&(1..5));
+    /// defer heap.free();
+    ///
+    /// assert_eq!(heap.pop(), Option::some(4));
+    /// ```
     fn from_iter<I: Iterator<I, T>>(iter: &mut I) -> BinaryHeap<T> {
         let heap = BinaryHeap::new::<T>();
         heap.extend(iter);
@@ -109,12 +172,42 @@ impl BinaryHeap<T: Comparable<T>> {
 
     /// Reserves capacity for at least `additional` more elements
     /// to be inserted without reallocating.
+    ///
+    /// Does nothing if the capacity is already sufficient.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::BinaryHeap;
+    ///
+    /// let heap: BinaryHeap<i32> = BinaryHeap::new();
+    /// defer heap.free();
+    ///
+    /// heap.reserve(1000); // pre-allocate space for 1000 more elements
+    ///
+    /// for i in (1..1000) {
+    ///     heap.push(i); // won't reallocate
+    /// }
+    /// ```
     fn reserve(self: &mut BinaryHeap<T>, additional: usize) {
         self._data.reserve(additional);
     }
 
     /// Returns the maximum number of elements the heap can hold
     /// without reallocating.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::BinaryHeap;
+    ///
+    /// let heap: BinaryHeap<i32> = BinaryHeap::with_capacity(100);
+    /// defer heap.free();
+    ///
+    /// let i = 0;
+    /// while heap.len() < heap.capacity() {
+    ///     heap.push(i);
+    ///     i += 1;
+    /// }
+    /// ```
     fn capacity(self: &BinaryHeap<T>) -> usize {
         self._data.capacity()
     }
@@ -125,11 +218,36 @@ impl BinaryHeap<T: Comparable<T>> {
     }
 
     /// Returns the number of elements in the heap.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::BinaryHeap;
+    ///
+    /// let heap: BinaryHeap<i32> = BinaryHeap::new();
+    /// defer heap.free();
+    ///
+    /// assert_eq!(heap.len(), 0);
+    ///
+    /// heap.push(3);
+    /// heap.push(6);
+    /// assert_eq!(heap.len(), 2);
+    /// ```
     fn len(self: &BinaryHeap<T>) -> usize {
         self._data.len()
     }
 
     /// Extends the heap from an iterator.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::BinaryHeap;
+    ///
+    /// let heap: BinaryHeap<i32> = BinaryHeap::new();
+    /// defer heap.free();
+    ///
+    /// heap.extend(&(1..5));
+    /// assert_eq!(heap.len(), 4);
+    /// ```
     fn extend<I: Iterator<I, T>>(self: &mut BinaryHeap<T>, iter: &mut I) {
         self.reserve(iter.size_hint().unwrap_or(0));
 
@@ -144,6 +262,18 @@ impl BinaryHeap<T: Comparable<T>> {
     }
 
     /// Extends the heap from a slice of elements.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::BinaryHeap;
+    ///
+    /// let heap: BinaryHeap<i32> = BinaryHeap::new();
+    /// defer heap.free();
+    ///
+    /// heap.extend_from_slice(&[1, 2, 3, 4]);
+    /// heap.extend_from_slice(&[5, 6, 7, 8]);
+    /// assert_eq!(heap.len(), 8);
+    /// ```
     fn extend_from_slice(self: &mut BinaryHeap<T>, slice: &[T]) {
         let old_len = self.len();
         self._data.extend_from_slice(slice);
@@ -153,6 +283,16 @@ impl BinaryHeap<T: Comparable<T>> {
     }
 
     /// Inserts an element into the heap.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::BinaryHeap;
+    ///
+    /// let heap: BinaryHeap<i32> = BinaryHeap::new();
+    /// defer heap.free();
+    ///
+    /// heap.push(3);
+    /// ```
     fn push(self: &mut BinaryHeap<T>, value: T) {
         let old_len = self._data.len();
         self._data.push(value);
@@ -165,6 +305,21 @@ impl BinaryHeap<T: Comparable<T>> {
     /// Returns the largest element in the heap without removing it.
     ///
     /// Returns `Option::none()` if the heap is empty.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::BinaryHeap;
+    ///
+    /// let heap: BinaryHeap<i32> = BinaryHeap::new();
+    /// defer heap.free();
+    ///
+    /// assert_eq!(heap.peek(), Option::none());
+    /// heap.push(3);
+    /// heap.push(7);
+    /// assert_eq!(heap.peek(), Option::some(7));
+    /// assert_eq!(heap.peek(), Option::some(7));
+    /// assert_eq!(heap.len(), 2);
+    /// ```
     fn peek(self: &BinaryHeap<T>) -> Option<T> {
         self._data.get(0)
     }
@@ -172,6 +327,18 @@ impl BinaryHeap<T: Comparable<T>> {
     /// Removes the maximum element in the heap, returning it.
     ///
     /// Returns `Option::none()` if the heap is empty.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::BinaryHeap;
+    ///
+    /// let heap: BinaryHeap<i32> = BinaryHeap::new();
+    /// defer heap.free();
+    ///
+    /// heap.push(3);
+    /// heap.push(5);
+    /// assert_eq!(heap.pop(), Option::some(5));
+    /// ```
     fn pop(self: &mut BinaryHeap<T>) -> Option<T> {
         self._data.pop().map(|=self, item: T| -> T {
             if !self.is_empty() {
@@ -187,6 +354,19 @@ impl BinaryHeap<T: Comparable<T>> {
 
     /// Shrink the size of the underlying buffer to the minimum size
     /// needed to hold the current elements.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::BinaryHeap;
+    ///
+    /// let heap: BinaryHeap<i32> = BinaryHeap::with_capacity(100000);
+    /// defer heap.free();
+    ///
+    /// heap.push(3);
+    /// heap.shrink_to_fit();
+    ///
+    /// assert!(heap.capacity() == 1);
+    /// ```
     fn shrink_to_fit(self: &mut BinaryHeap<T>) {
         self._data.shrink_to_fit();
     }
@@ -231,8 +411,7 @@ impl BinaryHeap<T: Comparable<T>> {
         self._data.iter_ref()
     }
 
-    /// View the vector as a slice of elements in arbitrary order (satisfying the
-    /// heap property).
+    /// @ std::mem::AsSlice::as_slice
     fn as_slice(self: &BinaryHeap<T>) -> &[T] {
         self._data.as_slice()
     }
@@ -241,7 +420,25 @@ impl BinaryHeap<T: Comparable<T>> {
     /// are in no particular order (satisfying the heap property).
     ///
     /// `self` is emptied after this operation (like after [move]).
-    fn into_vector(self: &mut BinaryHeap<T>) -> Vector<T> {
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::BinaryHeap;
+    ///
+    /// let heap: BinaryHeap<i32> = BinaryHeap::new();
+    /// defer heap.free();
+    ///
+    /// heap.push(3);
+    /// heap.push(0);
+    /// heap.push(6);
+    ///
+    /// let vec = heap.into_vector();
+    /// defer vec.free();
+    ///
+    /// assert_eq!(vec.len(), 3);
+    /// assert_eq!(heap.len(), 0);
+    /// ```
+     fn into_vector(self: &mut BinaryHeap<T>) -> Vector<T> {
         self._data.move()
     }
 
@@ -249,7 +446,20 @@ impl BinaryHeap<T: Comparable<T>> {
     /// are additionally sorted in ascending order.
     ///
     /// `self` is emptied after this operation (like after [move]).
-    fn into_sorted_vector(self: &mut BinaryHeap<T>) -> Vector<T> {
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::BinaryHeap;
+    ///
+    /// let heap: BinaryHeap<i32> = BinaryHeap::from_slice(&[5, 3, 4, 1, 2]);
+    /// defer heap.free();
+    ///
+    /// let vec = heap.into_vector_sorted();
+    /// defer vec.free();
+    ///
+    /// assert_eq!(vec[..], &[1, 2, 3, 4, 5]);
+    /// ```
+    fn into_vector_sorted(self: &mut BinaryHeap<T>) -> Vector<T> {
         self._data
             .as_slice_mut()
             .sort_heap_by(compare::<T>);
@@ -258,12 +468,44 @@ impl BinaryHeap<T: Comparable<T>> {
     }
 
     /// Clears the heap, removing all values.
+    ///
+    /// This does not reduce the capacity of the heap (use [shrink_to_fit] afterwards or
+    /// use [move] instead).
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::BinaryHeap;
+    ///
+    /// let heap: BinaryHeap<i32> = BinaryHeap::new();
+    /// defer heap.free();
+    ///
+    /// heap.push(3);
+    /// heap.push(5);
+    /// heap.clear();
+    ///
+    /// assert_eq!(heap.len(), 0);
+    /// ```
     fn clear(self: &mut BinaryHeap<T>) {
         self._data.clear();
     }
 
     /// Returns an iterator that removes all elements from the heap and yields them in
     /// sorted order (descending).
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::BinaryHeap;
+    ///
+    /// let heap: BinaryHeap<i32> = BinaryHeap::from_slice(&[5, 3, 4, 1, 2]);
+    /// defer heap.free();
+    ///
+    /// // Prints "5 4 3 2 1 "
+    /// for x in heap.iter_drain() {
+    ///     print!("{} ", x);
+    /// }
+    ///
+    /// assert!(heap.is_empty());
+    /// ```
     fn iter_drain(self: &mut BinaryHeap<T>) -> HeapIterator<T> {
         HeapIterator { heap: self }
     }
@@ -520,6 +762,7 @@ fn sift_down_to_bottom_by<T, F: CompareFunction<T>>(self: &mut [T], pos: usize, 
     self.sift_up_by(pos, f);
 }
 
+#[docs(no_index)]
 mod internal {
     #[inline]
     fn log2_fast(x: usize) -> usize {
@@ -528,6 +771,7 @@ mod internal {
 }
 
 #[cfg(all(test, test_std))]
+#[docs(hide)]
 mod tests {
     #[test]
     fn test_basic() {
@@ -708,7 +952,7 @@ mod tests {
         assert_eq!(*iter.next().unwrap(), 1);
         assert_eq!(*iter.next().unwrap(), 7);
         assert_eq!(*iter.next().unwrap(), 4);
-        assert!(!iter.next().is_some());
+        assert!(iter.next().is_none());
     }
 
     #[test]
@@ -734,11 +978,11 @@ mod tests {
     }
 
     #[test]
-    fn test_into_sorted_vector() {
+    fn test_into_vector_sorted() {
         let heap = BinaryHeap::from_slice(&[ 5, 8, 2, 7, 6, 10, 3, 1, 9, 4 ]);
         defer heap.free();
 
-        let vec = heap.into_sorted_vector();
+        let vec = heap.into_vector_sorted();
         defer vec.free();
 
         assert_eq!(vec[..], &[ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]);

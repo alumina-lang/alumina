@@ -6,7 +6,10 @@ use iter::Iterator;
 const INITIAL_SIZE: usize = 32;
 
 
-/// A simple linear probing hash table.
+/// A map (dictionary) implemented as a hash table.
+///
+/// The implementation is a simple linear probing hash table. Keys must satisfy the
+/// [Hashable] and [Equatable] traits. There are no restriction on the value type.
 ///
 /// ## Example
 /// ```
@@ -69,6 +72,8 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     /// use std::collections::HashMap;
     ///
     /// let map: HashMap<i32, i32> = HashMap::new();
+    /// defer map.free();
+    ///
     /// map.reserve(100);
     ///
     /// map.insert(1, 2);
@@ -94,11 +99,28 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     /// Resizes the underlying array to exactly the given `new_capacity`.
     ///
     /// Note that this could lead to poor performance if the resulting load factor
-    /// is close to 1.
+    /// is close to 1. Prefer to use [reserve] to grow the map and [shrink_to_fit] to
+    /// shrink it.
+    ///
+    /// Panics if the new capacity is lower than the current size.
+    ///
+    /// ## Example
+    /// ```panics
+    /// use std::collections::HashMap;
+    ///
+    /// let map: HashMap<i32, i32> = HashMap::new();
+    /// defer map.free();
+    ///
+    /// map.insert(1, 2);
+    /// map.insert(2, 4);
+    /// map.insert(3, 5);
+    ///
+    /// map.rehash(1); // panics
+    /// ```
     #[cold]
     #[no_inline]
     fn rehash(self: &mut HashMap<K, V, H>, new_capacity: usize) {
-        debug_assert!(self._length <= new_capacity);
+        assert!(self._length <= new_capacity);
 
         let new_map = with_size::<K, V, H>(new_capacity);
         for item in self {
@@ -110,10 +132,29 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     }
 
     /// Reduces the size of underlying storage to fit the contained elements if needed.
+    ///
+    /// Call this method after a lot of elements have been removed to shrink the
+    /// underlying storage. This can also improve map performance as it removes the
+    /// tombstones.
+    ///
+    /// This method keeps the load factor below 0.75 after shrinking.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::HashMap;
+    ///
+    /// let map: HashMap<i32, i32> = HashMap::from_iter(
+    ///     &(0..1000)
+    ///         .map(|i: i32| -> (i32, i32) { (i, i * 2) })
+    /// );
+    /// defer map.free();
+    ///
+    /// map.retain(|k: &i32, v: &i32| -> bool { *k % 10 == 0 });
+    /// map.shrink_to_fit(); // shrink the unused space
+    /// ```
     fn shrink_to_fit(self: &mut HashMap<K, V, H>) {
         if self._length == 0 {
-            self.free();
-            self._buckets = mem::slice::empty();
+            self.move();
         } else if self._length * 2 > INITIAL_SIZE {
             self.rehash(self._length * 2);
         }
@@ -279,6 +320,8 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     }
 
     /// Removes the elements not mathing the given predicate.
+    ///
+    /// This is more efficient than calling [remove] for each element.
     ///
     /// Does not remove excess capacity, call [shrink_to_fit] afterwards, if this
     /// is desired.
@@ -520,6 +563,7 @@ impl HashMapIterator<K, V> {
 }
 
 #[cfg(all(test, test_std))]
+#[docs(hide)]
 mod tests {
     struct DummyHasher {
         state: u64
@@ -689,7 +733,7 @@ mod tests {
         assert_eq!(*v.1, 5);
         assert_eq!(iter.size_hint(), Option::some(0usize));
 
-        assert!(!iter.next().is_some());
+        assert!(iter.next().is_none());
 
         let iter = map.iter_ref().rev();
         assert_eq!(iter.size_hint(), Option::some(3usize));
@@ -704,7 +748,7 @@ mod tests {
         assert_eq!(*v.1, 2);
         assert_eq!(iter.size_hint(), Option::some(0usize));
 
-        assert!(!iter.next().is_some());
+        assert!(iter.next().is_none());
     }
 
     #[test]
