@@ -29,6 +29,39 @@
 </a>
 <h1><a class="breadcrumbs" href="/std/">std</a>::<a class="breadcrumbs" href="/std/mem/">mem</a>::<a class="breadcrumbs" href="/std/mem/internal/">internal</a></h1>
 </h1>
+<h2>Functions</h2>
+<ul>
+<li>
+<a href="/std/mem/internal/#item.slice_slicify">slice_slicify</a>
+</li>
+<li>
+<a href="/std/mem/internal/#item.slice_index">slice_index</a>
+</li>
+<li>
+<a href="/std/mem/internal/#item.slice_range_index">slice_range_index</a>
+</li>
+<li>
+<a href="/std/mem/internal/#item.slice_const_coerce">slice_const_coerce</a>
+</li>
+<li>
+<a href="/std/mem/internal/#item.slice_const_cast">slice_const_cast</a>
+</li>
+</ul>
+<h2>Types</h2>
+<ul>
+<li>
+<a href="/std/mem/internal/#item.slicify_element_t">slicify_element_t</a>
+</li>
+<li>
+<a href="/std/mem/internal/#item.slicify_slice_t">slicify_slice_t</a>
+</li>
+</ul>
+<h2>Macros</h2>
+<ul>
+<li>
+<a href="/std/mem/internal/bounds_check.html">bounds_check</a>
+</li>
+</ul>
 </nav>
 <div class="main-container">
 <div id="search-container">
@@ -41,6 +74,135 @@
 <main id="main-content">
 <div class="main-title"><h1>Module <a class="breadcrumbs" href="/std/">std</a>::<a class="breadcrumbs" href="/std/mem/">mem</a>::<a class="breadcrumbs" href="/std/mem/internal/">internal</a></h1>
 </h1>
+</div>
+<h2 id="Function">Functions</h2>
+<ul>
+<li>
+<div class="signature" id="item.slice_slicify">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">slice_slicify</span>&lt;T, Ptr&gt;(ptr: Ptr) -> <a href="/std/mem/internal/#item.slicify_slice_t"><span class="identifier-type">slicify_slice_t</span></a>&lt;T, Ptr&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L466-L475"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Convert anything that has the appropriate as_slice/as_slice_mut methods to a slice.
+Invoked by the compiler when indexing into a collection.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.slice_index">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">slice_index</span>&lt;Ptr&gt;(a: <a href="/std/mem/slice.html"><span class="identifier-type">slice</span></a>&lt;Ptr&gt;, idx: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> Ptr<div class="protocol-bound">
+Ptr: <a href="/std/builtins/Pointer.html"><span class="identifier-type">Pointer</span></a></div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L481-L487"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Implementation for single-element indexing for slices.
+</p><p>
+Compiler will convert <code class="language-alumina">slice[i]</code> to <code class="language-alumina">*slice_index(slice, i)</code>.
+Slice indexing is bounds-checked in debug mode.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.slice_range_index">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">slice_range_index</span>&lt;Ptr, T&gt;(a: <a href="/std/mem/slice.html"><span class="identifier-type">slice</span></a>&lt;Ptr&gt;, range: T) -> <a href="/std/mem/slice.html"><span class="identifier-type">slice</span></a>&lt;Ptr&gt;<div class="protocol-bound">
+Ptr: <a href="/std/builtins/Pointer.html"><span class="identifier-type">Pointer</span></a></div>
+<div class="protocol-bound">
+T: <a href="/std/builtins/RangeOf.html"><span class="identifier-type">RangeOf</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L493-L558"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Implementation for range indexing for slices.
+</p><p>
+Compiler will convert <code class="language-alumina">slice[ran..ge]</code> to <code class="language-alumina">slice_index(slice, ran..ge)</code>.
+It is generic over all range types (<code class="language-alumina">..</code>, <code class="language-alumina">ran..</code>, <code class="language-alumina">..ge</code> and <code class="language-alumina">ran..ge</code>)
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.slice_const_coerce">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">slice_const_coerce</span>&lt;T&gt;(a: <a href="/std/mem/slice.html"><span class="identifier-type">slice</span></a>&lt;&amp;mut T&gt;) -> <a href="/std/mem/slice.html"><span class="identifier-type">slice</span></a>&lt;&amp;T&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L565-L569"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Compiler invokes this function to coerce a mutable slice
+into a const slice.
+</p><p>
+This is necessary, since they are completely
+different types.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.slice_const_cast">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">slice_const_cast</span>&lt;T&gt;(a: <a href="/std/mem/slice.html"><span class="identifier-type">slice</span></a>&lt;&amp;T&gt;) -> <a href="/std/mem/slice.html"><span class="identifier-type">slice</span></a>&lt;&amp;mut T&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L571-L575"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+</div>
+</li>
+</ul>
+<h2 id="Type">Types</h2>
+<ul>
+<li>
+<div class="signature" id="item.slicify_element_t">
+<h4>
+<span class="keyword">type</span> <span class="identifier-type">slicify_element_t</span>&lt;T&gt; = <span class="keyword">typeof</span>(...)</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L455-L455"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+</div>
+</li>
+<li>
+<div class="signature" id="item.slicify_slice_t">
+<h4>
+<span class="keyword">type</span> <span class="identifier-type">slicify_slice_t</span>&lt;T, Ptr&gt; = <span class="keyword-control">when</span> ...<div class="protocol-bound">
+T: <a href="/std/mem/AsSlice.html"><span class="identifier-type">AsSlice</span></a>&lt;T, <a href="/std/mem/internal/#item.slicify_element_t"><span class="identifier-type">slicify_element_t</span></a>&lt;T&gt;&gt;</div>
+<div class="protocol-bound">
+Ptr: <a href="/std/builtins/PointerOf.html"><span class="identifier-type">PointerOf</span></a>&lt;T&gt;</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L456-L462"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+</div>
+</li>
+</ul>
+<h2 id="Macro">Macros</h2>
+<div class="item-short-table">
+<div class="row" id="item.bounds_check">
+<div class="cell-name">
+<a href="/std/mem/internal/bounds_check.html">bounds_check</a>
+</div>
+<div class="cell-doc"></div>
+</div>
 </div>
 </main>
 </div>

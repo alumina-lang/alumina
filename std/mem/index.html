@@ -178,16 +178,27 @@ of memory. <code class="language-alumina">&amp;[T]</code> is a slice (read-only)
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">alloc</span>&lt;T&gt;() -> &amp;mut T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L577-L583"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L593-L599"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Allocates a single object on the heap using a default allocator (<code class="language-alumina">malloc</code>)
 </p><p>
-The value is not initialized.
+The value is not initialized. See <a class="path-link" href="/std/mem/#item.alloc_zeroed">alloc_zeroed</a> which returns zeroed memory.
 </p><p>
 See also a <a class="" href="/std/mem/slice.html#item.alloc">the matching method</a> for allocating a slice.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::mem::{alloc, free};
+
+let x: &amp;mut i32 = alloc();
+*x = 42;
+assert_eq!(*x, 42);
+free(x);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3amem%3a%3a%7balloc%2c%20free%7d%3b%0a%20%20%20%0a%20%20%20let%20x%3a%20%26mut%20i32%20%3d%20alloc%28%29%3b%0a%20%20%20%2ax%20%3d%2042%3b%0a%20%20%20assert%5feq%21%28%2ax%2c%2042%29%3b%0a%20%20%20free%28x%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -197,7 +208,7 @@ See also a <a class="" href="/std/mem/slice.html#item.alloc">the matching method
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">alloc_zeroed</span>&lt;T&gt;() -> &amp;mut T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L590-L596"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L615-L621"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -209,6 +220,16 @@ The value is zero-initialized.
 See also a <a class="" href="/std/mem/slice.html#item.alloc_zeroed">the matching method</a> for allocating a slice.
 </p><p>
 </p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::mem::{alloc_zeroed, free};
+
+let x: &amp;mut i32 = alloc_zeroed();
+assert_eq!(*x, 0);
+free(x);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3amem%3a%3a%7balloc%5fzeroed%2c%20free%7d%3b%0a%20%20%20%0a%20%20%20let%20x%3a%20%26mut%20i32%20%3d%20alloc%5fzeroed%28%29%3b%0a%20%20%20assert%5feq%21%28%2ax%2c%200%29%3b%0a%20%20%20free%28x%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -216,7 +237,7 @@ See also a <a class="" href="/std/mem/slice.html#item.alloc_zeroed">the matching
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">free</span>&lt;T&gt;(a: &amp;mut T)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L618-L620"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L643-L645"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -251,7 +272,7 @@ impl Box&lt;T&gt; {
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">size_of</span>&lt;T&gt;() -> <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L633-L636"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L658-L661"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -277,12 +298,24 @@ assert_eq!(size_of::&lt;u64&gt;(), 8);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">align_of</span>&lt;T&gt;() -> <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L639-L642"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L675-L678"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Minimum alignment for given type in bytes.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::mem::align_of;
+
+// On most platforms
+assert_eq!(align_of::&lt;u8&gt;(), 1);
+assert_eq!(align_of::&lt;u16&gt;(), 2);
+assert_eq!(align_of::&lt;u32&gt;(), 4);
+assert_eq!(align_of::&lt;u64&gt;(), 8);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3amem%3a%3aalign%5fof%3b%0a%20%20%20%0a%20%20%20%2f%2f%20On%20most%20platforms%0a%20%20%20assert%5feq%21%28align%5fof%3a%3a%3cu8%3e%28%29%2c%201%29%3b%0a%20%20%20assert%5feq%21%28align%5fof%3a%3a%3cu16%3e%28%29%2c%202%29%3b%0a%20%20%20assert%5feq%21%28align%5fof%3a%3a%3cu32%3e%28%29%2c%204%29%3b%0a%20%20%20assert%5feq%21%28align%5fof%3a%3a%3cu64%3e%28%29%2c%208%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -292,7 +325,7 @@ Minimum alignment for given type in bytes.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">swap</span>&lt;T&gt;(a: &amp;mut T, b: &amp;mut T)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L658-L662"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L694-L698"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -321,7 +354,7 @@ assert_eq!(b, 1);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">replace</span>&lt;T&gt;(a: &amp;mut T, b: T) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L677-L680"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L713-L716"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -349,12 +382,25 @@ assert_eq!(a, 2);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">zeroed</span>&lt;T&gt;() -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L683-L689"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L731-L741"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Zero-initialized object of a given type.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::mem::zeroed;
+
+struct Foo { a: u8, b: u16 }
+
+let a: Foo = zeroed();
+
+assert_eq!(a.a, 0);
+assert_eq!(a.b, 0);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3amem%3a%3azeroed%3b%0a%20%20%20%0a%20%20%20struct%20Foo%20%7b%20a%3a%20u8%2c%20b%3a%20u16%20%7d%0a%20%20%20%0a%20%20%20let%20a%3a%20Foo%20%3d%20zeroed%28%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28a%2ea%2c%200%29%3b%0a%20%20%20assert%5feq%21%28a%2eb%2c%200%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -364,14 +410,39 @@ Zero-initialized object of a given type.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">uninitialized</span>&lt;T&gt;() -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L694-L698"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L771-L775"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Uninitialized object.
 </p><p>
-Using the return value is undefined behavior.
+Using the return value is usually undefined behavior.
+</p><p>
+</p>
+<h3> Examples</h3>
+<p>
+</p><p>
+This is probably fine:
+</p><p>
+<pre class="with-playground-link"><code class="language-alumina">use std::mem::uninitialized;
+
+struct MyOption&lt;T&gt; { some: bool, val: T }
+
+let a: MyOption&lt;i32&gt; = MyOption { some: true, val: 2 };
+let b: MyOption&lt;i32&gt; = MyOption { some: false, val: uninitialized() };
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3amem%3a%3auninitialized%3b%0a%20%20%20%0a%20%20%20struct%20MyOption%3cT%3e%20%7b%20some%3a%20bool%2c%20val%3a%20T%20%7d%0a%20%20%20%0a%20%20%20let%20a%3a%20MyOption%3ci32%3e%20%3d%20MyOption%20%7b%20some%3a%20true%2c%20val%3a%202%20%7d%3b%0a%20%20%20let%20b%3a%20MyOption%3ci32%3e%20%3d%20MyOption%20%7b%20some%3a%20false%2c%20val%3a%20uninitialized%28%29%20%7d%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+This is not:
+<pre class="with-playground-link panics"><code class="language-alumina">use std::mem::uninitialized;
+
+let val: i32 = uninitialized();
+if val &gt; 0 {  // UB!
+    println!("positive");
+} else {
+    println!("negative");
+}
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3amem%3a%3auninitialized%3b%0a%20%20%20%0a%20%20%20let%20val%3a%20i32%20%3d%20uninitialized%28%29%3b%0a%20%20%20if%20val%20%3e%200%20%7b%20%20%2f%2f%20UB%21%0a%20%20%20%20%20%20%20println%21%28%22positive%22%29%3b%0a%20%20%20%7d%20else%20%7b%0a%20%20%20%20%20%20%20println%21%28%22negative%22%29%3b%0a%20%20%20%7d%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>

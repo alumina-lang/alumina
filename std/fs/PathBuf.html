@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="description" content=" An owned path buffer" />
+<meta name="description" content=" An owned (heap-allocated) path buffer" />
 <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png" />
 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
 <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
@@ -94,11 +94,11 @@
 <h3>
 <span class="keyword">struct</span> <span class="identifier-type">PathBuf</span> { ... }</h3>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L306-L308"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L381-L383"/>source</a>
 </div>
 </div>
 <p>
-An owned path buffer
+An owned (heap-allocated) path buffer
 </p><p>
 </p>
 <h3> Example</h3>
@@ -136,7 +136,7 @@ inner: <a href="/std/string/#item.StringBuf"><span class="identifier-type">Strin
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">new</span>() -> <a href="/std/fs/PathBuf.html"><span class="identifier-type">PathBuf</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L314-L318"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L389-L393"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -151,12 +151,23 @@ Create a new empty path buffer
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">from_path</span>(path: <a href="/std/fs/Path.html"><span class="identifier-type">Path</span></a>) -> <a href="/std/fs/PathBuf.html"><span class="identifier-type">PathBuf</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L321-L323"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L406-L408"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Create a new path buffer from a <a class="path-link" href="/std/fs/Path.html">Path</a> instance
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::fs::{PathBuf, Path};
+
+let path = PathBuf::from_path(Path::new("/home/alumina"));
+defer path.free();
+
+assert_eq!(path.as_path(), Path::new("/home/alumina"));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3afs%3a%3a%7bPathBuf%2c%20Path%7d%3b%0a%20%20%20%0a%20%20%20let%20path%20%3d%20PathBuf%3a%3afrom%5fpath%28Path%3a%3anew%28%22%2fhome%2falumina%22%29%29%3b%0a%20%20%20defer%20path%2efree%28%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28path%2eas%5fpath%28%29%2c%20Path%3a%3anew%28%22%2fhome%2falumina%22%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -166,12 +177,23 @@ Create a new path buffer from a <a class="path-link" href="/std/fs/Path.html">Pa
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">from_str</span>(path: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/fs/PathBuf.html"><span class="identifier-type">PathBuf</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L326-L330"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L421-L425"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Create a new path buffer from a string slice
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::fs::{PathBuf, Path};
+
+let path = PathBuf::from_str("/home/alumina");
+defer path.free();
+
+assert_eq!(path.as_path(), Path::new("/home/alumina"));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3afs%3a%3a%7bPathBuf%2c%20Path%7d%3b%0a%20%20%20%0a%20%20%20let%20path%20%3d%20PathBuf%3a%3afrom%5fstr%28%22%2fhome%2falumina%22%29%3b%0a%20%20%20defer%20path%2efree%28%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28path%2eas%5fpath%28%29%2c%20Path%3a%3anew%28%22%2fhome%2falumina%22%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -181,12 +203,23 @@ Create a new path buffer from a string slice
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">as_path</span>(self: &amp;<a href="/std/fs/PathBuf.html"><span class="identifier-type">PathBuf</span></a>) -> <a href="/std/fs/Path.html"><span class="identifier-type">Path</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L333-L335"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L438-L440"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 View path as <a class="path-link" href="/std/fs/Path.html">Path</a> object
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::fs::{PathBuf, Path};
+
+let path = PathBuf::from_str("/home/alumina");
+defer path.free();
+
+assert_eq!(path.as_path(), Path::new("/home/alumina"));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3afs%3a%3a%7bPathBuf%2c%20Path%7d%3b%0a%20%20%20%0a%20%20%20let%20path%20%3d%20PathBuf%3a%3afrom%5fstr%28%22%2fhome%2falumina%22%29%3b%0a%20%20%20defer%20path%2efree%28%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28path%2eas%5fpath%28%29%2c%20Path%3a%3anew%28%22%2fhome%2falumina%22%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -198,12 +231,29 @@ View path as <a class="path-link" href="/std/fs/Path.html">Path</a> object
 It: <a href="/std/iter/Iterator.html"><span class="identifier-type">Iterator</span></a>&lt;It, <a href="/std/fs/PathSegment.html"><span class="identifier-type">PathSegment</span></a>&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L338-L354"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L459-L475"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Extend the path buffer from an iterator of path segments
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::fs::{PathBuf, Path, PathSegment};
+
+let path = PathBuf::from_str("/home");
+defer path.free();
+
+path.extend(&amp;[
+    PathSegment::parent_dir(),
+    PathSegment::current_dir(),
+    PathSegment::normal("alumina"),
+].iter());
+
+assert_eq!(path.as_path(), Path::new("/home/.././alumina"));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3afs%3a%3a%7bPathBuf%2c%20Path%2c%20PathSegment%7d%3b%0a%20%20%20%0a%20%20%20let%20path%20%3d%20PathBuf%3a%3afrom%5fstr%28%22%2fhome%22%29%3b%0a%20%20%20defer%20path%2efree%28%29%3b%0a%20%20%20%0a%20%20%20path%2eextend%28%26%5b%0a%20%20%20%20%20%20%20PathSegment%3a%3aparent%5fdir%28%29%2c%0a%20%20%20%20%20%20%20PathSegment%3a%3acurrent%5fdir%28%29%2c%0a%20%20%20%20%20%20%20PathSegment%3a%3anormal%28%22alumina%22%29%2c%0a%20%20%20%5d%2eiter%28%29%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28path%2eas%5fpath%28%29%2c%20Path%3a%3anew%28%22%2fhome%2f%2e%2e%2f%2e%2falumina%22%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -213,13 +263,27 @@ Extend the path buffer from an iterator of path segments
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">with_suffix</span>(self: &amp;<a href="/std/fs/PathBuf.html"><span class="identifier-type">PathBuf</span></a>, suffix: <a href="/std/fs/Path.html"><span class="identifier-type">Path</span></a>) -> <a href="/std/fs/PathBuf.html"><span class="identifier-type">PathBuf</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L358-L362"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L492-L496"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Create a new path buffer with the base path of <code class="language-alumina">self</code> and
 extension <code class="language-alumina">suffix</code>.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::fs::{PathBuf, Path};
+
+let path = PathBuf::from_str("/home/alumina");
+defer path.free();
+
+let new_path = path.with_suffix(Path::new("foo/bar"));
+defer new_path.free();
+
+assert_eq!(new_path.as_path(), Path::new("/home/alumina/foo/bar"));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3afs%3a%3a%7bPathBuf%2c%20Path%7d%3b%0a%20%20%20%0a%20%20%20let%20path%20%3d%20PathBuf%3a%3afrom%5fstr%28%22%2fhome%2falumina%22%29%3b%0a%20%20%20defer%20path%2efree%28%29%3b%0a%20%20%20%0a%20%20%20let%20new%5fpath%20%3d%20path%2ewith%5fsuffix%28Path%3a%3anew%28%22foo%2fbar%22%29%29%3b%0a%20%20%20defer%20new%5fpath%2efree%28%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28new%5fpath%2eas%5fpath%28%29%2c%20Path%3a%3anew%28%22%2fhome%2falumina%2ffoo%2fbar%22%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -229,12 +293,25 @@ extension <code class="language-alumina">suffix</code>.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">push</span>(self: &amp;mut <a href="/std/fs/PathBuf.html"><span class="identifier-type">PathBuf</span></a>, suffix: <a href="/std/fs/Path.html"><span class="identifier-type">Path</span></a>)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L365-L367"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L511-L513"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Extend the path buffer with a <a class="path-link" href="/std/fs/Path.html">Path</a> instance
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::fs::{PathBuf, Path};
+
+let path = PathBuf::from_str("/home");
+defer path.free();
+
+path.push(Path::new("alumina"));
+
+assert_eq!(path.as_path(), Path::new("/home/alumina"));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3afs%3a%3a%7bPathBuf%2c%20Path%7d%3b%0a%20%20%20%0a%20%20%20let%20path%20%3d%20PathBuf%3a%3afrom%5fstr%28%22%2fhome%22%29%3b%0a%20%20%20defer%20path%2efree%28%29%3b%0a%20%20%20%0a%20%20%20path%2epush%28Path%3a%3anew%28%22alumina%22%29%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28path%2eas%5fpath%28%29%2c%20Path%3a%3anew%28%22%2fhome%2falumina%22%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -244,12 +321,32 @@ Extend the path buffer with a <a class="path-link" href="/std/fs/Path.html">Path
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">pop</span>(self: &amp;mut <a href="/std/fs/PathBuf.html"><span class="identifier-type">PathBuf</span></a>) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L370-L376"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L535-L541"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Pop the last path segment from the path buffer
+</p><p>
+Returns <code class="language-alumina">true</code> if the path buffer was modified, <code class="language-alumina">false</code> otherwise.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::fs::{PathBuf, Path};
+
+let path = PathBuf::from_str("/home/alumina");
+defer path.free();
+
+assert!(path.pop());
+assert_eq!(path.as_path(), Path::new("/home"));
+
+assert!(path.pop());
+assert_eq!(path.as_path(), Path::new("/"));
+
+assert!(!path.pop());
+assert_eq!(path.as_path(), Path::new("/"));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3afs%3a%3a%7bPathBuf%2c%20Path%7d%3b%0a%20%20%20%0a%20%20%20let%20path%20%3d%20PathBuf%3a%3afrom%5fstr%28%22%2fhome%2falumina%22%29%3b%0a%20%20%20defer%20path%2efree%28%29%3b%0a%20%20%20%0a%20%20%20assert%21%28path%2epop%28%29%29%3b%0a%20%20%20assert%5feq%21%28path%2eas%5fpath%28%29%2c%20Path%3a%3anew%28%22%2fhome%22%29%29%3b%0a%20%20%20%0a%20%20%20assert%21%28path%2epop%28%29%29%3b%0a%20%20%20assert%5feq%21%28path%2eas%5fpath%28%29%2c%20Path%3a%3anew%28%22%2f%22%29%29%3b%0a%20%20%20%0a%20%20%20assert%21%28%21path%2epop%28%29%29%3b%0a%20%20%20assert%5feq%21%28path%2eas%5fpath%28%29%2c%20Path%3a%3anew%28%22%2f%22%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -261,12 +358,26 @@ Pop the last path segment from the path buffer
 It: <a href="/std/iter/Iterator.html"><span class="identifier-type">Iterator</span></a>&lt;It, <a href="/std/fs/PathSegment.html"><span class="identifier-type">PathSegment</span></a>&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L379-L383"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L557-L561"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Create a new path buffer from an iterator of path segments
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::fs::{PathBuf, Path, PathSegment};
+
+let path = PathBuf::from_iter(&amp;[
+    PathSegment::normal("home"),
+    PathSegment::normal("alumina"),
+].iter());
+defer path.free();
+
+assert_eq!(path.as_path(), Path::new("/home/alumina"));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20use%20std%3a%3afs%3a%3a%7bPathBuf%2c%20Path%2c%20PathSegment%7d%3b%0a%20%20%20%0a%20%20%20let%20path%20%3d%20PathBuf%3a%3afrom%5fiter%28%26%5b%0a%20%20%20%20%20%20%20PathSegment%3a%3anormal%28%22home%22%29%2c%0a%20%20%20%20%20%20%20PathSegment%3a%3anormal%28%22alumina%22%29%2c%0a%20%20%20%5d%2eiter%28%29%29%3b%0a%20%20%20defer%20path%2efree%28%29%3b%0a%20%20%20%0a%20%20%20assert%5feq%21%28path%2eas%5fpath%28%29%2c%20Path%3a%3anew%28%22%2fhome%2falumina%22%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -278,7 +389,7 @@ Create a new path buffer from an iterator of path segments
 F: <a href="/std/fmt/Formatter.html"><span class="identifier-type">Formatter</span></a>&lt;F&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L386-L388"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L564-L566"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -295,7 +406,7 @@ See <a class="path-link" href="/std/fmt/Formattable.html">Formattable</a> for de
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">clone</span>(self: &amp;<a href="/std/fs/PathBuf.html"><span class="identifier-type">PathBuf</span></a>) -> <a href="/std/fs/PathBuf.html"><span class="identifier-type">PathBuf</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L391-L395"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L569-L573"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -310,7 +421,7 @@ Returns a copy of the object.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">free</span>(self: &amp;mut <a href="/std/fs/PathBuf.html"><span class="identifier-type">PathBuf</span></a>)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L398-L400"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L576-L578"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -325,7 +436,7 @@ Frees the memory backing the object.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">move</span>(self: &amp;mut <a href="/std/fs/PathBuf.html"><span class="identifier-type">PathBuf</span></a>) -> <a href="/std/fs/PathBuf.html"><span class="identifier-type">PathBuf</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L403-L405"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/fs.alu#L581-L583"/>source</a>
 </div>
 </div>
 <div class="item-doc">
