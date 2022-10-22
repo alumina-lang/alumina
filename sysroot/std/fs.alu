@@ -42,6 +42,38 @@ struct PathSegment {
 }
 
 impl PathSegment {
+    /// Returns the root path segment (e.g. `/` on Unix)
+    fn root() -> PathSegment {
+        PathSegment {
+            kind: PathSegmentKind::Root,
+            value: ""
+        }
+    }
+
+    /// Returns a normal path segment (e.g. a directory or file name)
+    fn normal(value: &[u8]) -> PathSegment {
+        PathSegment {
+            kind: PathSegmentKind::Normal,
+            value: value
+        }
+    }
+
+    /// Returns path segment representing current directory (".")
+    fn current_dir() -> PathSegment {
+        PathSegment {
+            kind: PathSegmentKind::CurDir,
+            value: ""
+        }
+    }
+
+    /// Returns path segment representing parent directory ("..")
+    fn parent_dir() -> PathSegment {
+        PathSegment {
+            kind: PathSegmentKind::ParentDir,
+            value: ""
+        }
+    }
+
     /// @ cmp::Equatable::equals
     fn equals(self: &PathSegment, other: &PathSegment) -> bool {
         self.kind == other.kind && switch self.kind {
@@ -145,6 +177,13 @@ struct Path {
 
 impl Path {
     /// Create a path from a string slice
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::Path;
+    ///
+    /// let p = Path::new("/home/user/file.txt");
+    /// ```
     fn new(inner: &[u8]) -> Path {
         Path { inner: inner }
     }
@@ -157,12 +196,20 @@ impl Path {
         }
     }
 
-    /// View path as a string slice
+    /// @ mem::AsSlice::as_slice
     fn as_slice(self: &Path) -> &[u8] {
         self.inner
     }
 
     /// Returns true if the path is absolute, false otherwise
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::Path;
+    ///
+    /// assert!(Path::new("/home/user/file.txt").is_absolute());
+    /// assert!(!Path::new("file.txt").is_absolute());
+    /// ```
     fn is_absolute(self: &Path) -> bool {
         self
             .iter()
@@ -172,6 +219,14 @@ impl Path {
     }
 
     /// Returns true if the path is relative, false otherwise
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::Path;
+    ///
+    /// assert!(Path::new("file.txt").is_relative());
+    /// assert!(!Path::new("/home/user/file.txt").is_relative());
+    /// ```
     fn is_relative(self: &Path) -> bool {
         !self.is_absolute()
     }
@@ -179,6 +234,16 @@ impl Path {
     /// Returns the parent path of the path
     ///
     /// If the path has no parent, then `Option::none()` is returned.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::Path;
+    ///
+    /// assert_eq!(Path::new("/home/user/file.txt").parent(), Option::some(Path::new("/home/user")));
+    /// assert_eq!(Path::new("/home/user").parent(), Option::some(Path::new("/home")));
+    /// assert_eq!(Path::new("/home").parent(), Option::some(Path::new("/")));
+    /// assert_eq!(Path::new("/").parent(), Option::none());
+    /// ```
     fn parent(self: &Path) -> Option<Path> {
         use string::ends_with;
 
@@ -242,6 +307,16 @@ impl Path {
     }
 
     /// Returns true if `other` is a prefix of the current path, false otherwise
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::Path;
+    ///
+    /// let p = Path::new("/home/user/file.txt");
+    ///
+    /// assert!(p.starts_with(Path::new("/home/user")));
+    /// assert!(!p.starts_with(Path::new("/something/else")));
+    /// ```
     fn starts_with(self: &Path, other: Path) -> bool {
         self.strip_prefix(other).is_some()
     }
@@ -288,7 +363,7 @@ impl Path {
     mixin cmp::Equatable<Path>;
 }
 
-/// An owned path buffer
+/// An owned (heap-allocated) path buffer
 ///
 /// ## Example
 /// ```
@@ -318,11 +393,31 @@ impl PathBuf {
     }
 
     /// Create a new path buffer from a [Path] instance
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::{PathBuf, Path};
+    ///
+    /// let path = PathBuf::from_path(Path::new("/home/alumina"));
+    /// defer path.free();
+    ///
+    /// assert_eq!(path.as_path(), Path::new("/home/alumina"));
+    /// ```
     fn from_path(path: Path) -> PathBuf {
         from_str(path.inner)
     }
 
     /// Create a new path buffer from a string slice
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::{PathBuf, Path};
+    ///
+    /// let path = PathBuf::from_str("/home/alumina");
+    /// defer path.free();
+    ///
+    /// assert_eq!(path.as_path(), Path::new("/home/alumina"));
+    /// ```
     fn from_str(path: &[u8]) -> PathBuf {
         PathBuf {
             inner: StringBuf::from_slice(path)
@@ -330,11 +425,37 @@ impl PathBuf {
     }
 
     /// View path as [Path] object
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::{PathBuf, Path};
+    ///
+    /// let path = PathBuf::from_str("/home/alumina");
+    /// defer path.free();
+    ///
+    /// assert_eq!(path.as_path(), Path::new("/home/alumina"));
+    /// ```
     fn as_path(self: &PathBuf) -> Path {
         Path::new(self.inner[..])
     }
 
     /// Extend the path buffer from an iterator of path segments
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::{PathBuf, Path, PathSegment};
+    ///
+    /// let path = PathBuf::from_str("/home");
+    /// defer path.free();
+    ///
+    /// path.extend(&[
+    ///     PathSegment::parent_dir(),
+    ///     PathSegment::current_dir(),
+    ///     PathSegment::normal("alumina"),
+    /// ].iter());
+    ///
+    /// assert_eq!(path.as_path(), Path::new("/home/.././alumina"));
+    /// ```
     fn extend<It: iter::Iterator<It, PathSegment>>(self: &mut PathBuf, iter: &mut It) {
         use fmt::write;
         let has_root = false;
@@ -355,6 +476,19 @@ impl PathBuf {
 
     /// Create a new path buffer with the base path of `self` and
     /// extension `suffix`.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::{PathBuf, Path};
+    ///
+    /// let path = PathBuf::from_str("/home/alumina");
+    /// defer path.free();
+    ///
+    /// let new_path = path.with_suffix(Path::new("foo/bar"));
+    /// defer new_path.free();
+    ///
+    /// assert_eq!(new_path.as_path(), Path::new("/home/alumina/foo/bar"));
+    /// ```
     fn with_suffix(self: &PathBuf, suffix: Path) -> PathBuf {
         let ret = self.clone();
         ret.push(suffix);
@@ -362,11 +496,42 @@ impl PathBuf {
     }
 
     /// Extend the path buffer with a [Path] instance
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::{PathBuf, Path};
+    ///
+    /// let path = PathBuf::from_str("/home");
+    /// defer path.free();
+    ///
+    /// path.push(Path::new("alumina"));
+    ///
+    /// assert_eq!(path.as_path(), Path::new("/home/alumina"));
+    /// ```
     fn push(self: &mut PathBuf, suffix: Path) {
         self.extend(&suffix.iter());
     }
 
     /// Pop the last path segment from the path buffer
+    ///
+    /// Returns `true` if the path buffer was modified, `false` otherwise.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::{PathBuf, Path};
+    ///
+    /// let path = PathBuf::from_str("/home/alumina");
+    /// defer path.free();
+    ///
+    /// assert!(path.pop());
+    /// assert_eq!(path.as_path(), Path::new("/home"));
+    ///
+    /// assert!(path.pop());
+    /// assert_eq!(path.as_path(), Path::new("/"));
+    ///
+    /// assert!(!path.pop());
+    /// assert_eq!(path.as_path(), Path::new("/"));
+    /// ```
     fn pop(self: &mut PathBuf) -> bool {
         self.as_path().parent().map(|=self, p: Path| -> bool {
             self.inner.truncate(p.inner.len());
@@ -376,6 +541,19 @@ impl PathBuf {
     }
 
     /// Create a new path buffer from an iterator of path segments
+    ///
+    /// ## Example
+    /// ```
+    /// use std::fs::{PathBuf, Path, PathSegment};
+    ///
+    /// let path = PathBuf::from_iter(&[
+    ///     PathSegment::normal("home"),
+    ///     PathSegment::normal("alumina"),
+    /// ].iter());
+    /// defer path.free();
+    ///
+    /// assert_eq!(path.as_path(), Path::new("/home/alumina"));
+    /// ```
     fn from_iter<It: iter::Iterator<It, PathSegment>>(iter: &mut It) -> PathBuf {
         let ret = PathBuf::new();
         ret.extend(iter);

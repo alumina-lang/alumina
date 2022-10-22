@@ -60,6 +60,9 @@ protocol Clonable<Self> {
 /// assert_eq!(v[1], 2);
 /// ```
 protocol AsSlice<Self, T> {
+    /// Returns the contents of the object as a slice.
+    ///
+    /// See [AsSlice] for details.
     fn as_slice(self: &Self) -> &[T];
 }
 
@@ -81,6 +84,9 @@ protocol AsSlice<Self, T> {
 /// assert_eq!(v.pop(), Option::some(4));
 /// ```
 protocol AsSliceMut<Self: AsSlice<Self, T>, T> {
+    /// Returns the contents of the object as a mutable slice.
+    ///
+    /// See [AsSliceMut] for details.
     fn as_slice_mut(self: &mut Self) -> &mut [T];
 }
 
@@ -571,9 +577,19 @@ mod internal {
 
 /// Allocates a single object on the heap using a default allocator (`malloc`)
 ///
-/// The value is not initialized.
+/// The value is not initialized. See [alloc_zeroed] which returns zeroed memory.
 ///
 /// See also a [the matching method](slice::alloc) for allocating a slice.
+///
+/// ## Example
+/// ```
+/// use std::mem::{alloc, free};
+///
+/// let x: &mut i32 = alloc();
+/// *x = 42;
+/// assert_eq!(*x, 42);
+/// free(x);
+/// ```
 fn alloc<T>() -> &mut T {
     when T: builtins::ZeroSized {
         null as &mut T
@@ -587,11 +603,20 @@ fn alloc<T>() -> &mut T {
 /// The value is zero-initialized.
 ///
 /// See also a [the matching method](slice::alloc_zeroed) for allocating a slice.
+///
+/// ## Example
+/// ```
+/// use std::mem::{alloc_zeroed, free};
+///
+/// let x: &mut i32 = alloc_zeroed();
+/// assert_eq!(*x, 0);
+/// free(x);
+/// ```
 fn alloc_zeroed<T>() -> &mut T {
     when T: builtins::ZeroSized {
         null as &mut T
     } else {
-        libc::calloc(size_of::<T>()) as &mut T
+        libc::calloc(1, size_of::<T>()) as &mut T
     }
 }
 
@@ -636,6 +661,17 @@ fn size_of<T>() -> usize {
 }
 
 /// Minimum alignment for given type in bytes.
+///
+/// ## Example
+/// ```
+/// use std::mem::align_of;
+///
+/// // On most platforms
+/// assert_eq!(align_of::<u8>(), 1);
+/// assert_eq!(align_of::<u16>(), 2);
+/// assert_eq!(align_of::<u32>(), 4);
+/// assert_eq!(align_of::<u64>(), 8);
+/// ```
 #[force_inline]
 fn align_of<T>() -> usize {
     intrinsics::align_of::<T>()
@@ -680,9 +716,25 @@ fn replace<T>(a: &mut T, b: T) -> T {
 }
 
 /// Zero-initialized object of a given type.
+///
+/// ## Example
+/// ```
+/// use std::mem::zeroed;
+///
+/// struct Foo { a: u8, b: u16 }
+///
+/// let a: Foo = zeroed();
+///
+/// assert_eq!(a.a, 0);
+/// assert_eq!(a.b, 0);
+/// ```
 fn zeroed<T>() -> T {
     let ret: T;
-    when T: !builtins::ZeroSized {
+    when T: bool {
+        false
+    } else when T: builtins::Primitive + !builtins::ZeroSized {
+        ret = 0 as T;
+    } else when T: !builtins::ZeroSized {
         libc::memset(&ret as &mut void, 0, size_of::<T>());
     }
     ret
@@ -690,7 +742,32 @@ fn zeroed<T>() -> T {
 
 /// Uninitialized object.
 ///
-/// Using the return value is undefined behavior.
+/// Using the return value is usually undefined behavior.
+///
+/// ## Examples
+///
+/// This is probably fine:
+///
+/// ```
+/// use std::mem::uninitialized;
+///
+/// struct MyOption<T> { some: bool, val: T }
+///
+/// let a: MyOption<i32> = MyOption { some: true, val: 2 };
+/// let b: MyOption<i32> = MyOption { some: false, val: uninitialized() };
+/// ```
+///
+/// This is not:
+/// ```nasaldemons
+/// use std::mem::uninitialized;
+///
+/// let val: i32 = uninitialized();
+/// if val > 0 {  // UB!
+///     println!("positive");
+/// } else {
+///     println!("negative");
+/// }
+/// ```
 #[force_inline]
 fn uninitialized<T>() -> T {
     let ret: T;

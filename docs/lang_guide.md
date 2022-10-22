@@ -20,6 +20,8 @@ With regards to syntax, the language is very similar to Rust and in terms of sem
   - [Enums](#enums)
   - [Impl blocks](#impl-blocks)
   - [Type attributes](#type-attributes)
+  - [What about strings?](#what-about-strings)
+  - [Zero-sized types](#zero-sized-types)
 - [Macros](#macros)
 - [Statements and expressions](#statements-and-expressions)
   - [Variables](#variables)
@@ -639,6 +641,12 @@ The syntax for slices (`&[T]`) implies that it is a kind of pointer to some `[T]
 Collection types that are a backed by contiguous memory (e.g. [`Vector`](https://docs.alumina-lang.net/std/collections/Vector.html)) can be indexed directly without converting to a slice first. See [`AsSlice`](https://docs.alumina-lang.net/std/mem/AsSlice.html) and [`AsSliceMut`](https://docs.alumina-lang.net/std/mem/AsSliceMut.html) for more details.
 
 ```rust
+use std::collections::Vector;
+
+let v = Vector::from_slice(&[1, 2, 3, 4, 5]);
+
+v[0] = v[4];
+```
 
 ## What about strings?
 
