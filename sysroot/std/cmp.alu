@@ -290,9 +290,6 @@ fn is_sorted<T: Comparable<T>>(arr: &[T]) -> bool {
 /// assert_eq!(arr[..], &[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
 /// ```
 fn sort_by<T, F: CompareFunction<T>>(arr: &mut [T], f: F) {
-    if arr.len() <= 1 {
-        return;
-    }
     let max_depth = collections::heap::internal::log2_fast(arr.len()) * 2;
     internal::introsort_by(arr, max_depth, f);
 }
@@ -484,37 +481,37 @@ mod internal {
     const INTROSORT_MIN_SIZE: usize = 24;
     const MERGESORT_MIN_SIZE: usize = 32;
 
-    #[force_inline]
+    #[inline(always)]
     #[lang(operator_eq)]
     fn operator_eq<T: Equatable<T>>(lhs: &T, rhs: &T) -> bool {
         lhs.equals(rhs)
     }
 
-    #[force_inline]
+    #[inline(always)]
     #[lang(operator_neq)]
     fn operator_neq<T: Equatable<T>>(lhs: &T, rhs: &T) -> bool {
         lhs.not_equals(rhs)
     }
 
-    #[force_inline]
+    #[inline(always)]
     #[lang(operator_lt)]
     fn operator_lt<T: Comparable<T>>(lhs: &T, rhs: &T) -> bool {
         lhs.less_than(rhs)
     }
 
-    #[force_inline]
+    #[inline(always)]
     #[lang(operator_lte)]
     fn operator_lte<T: Comparable<T>>(lhs: &T, rhs: &T) -> bool {
         lhs.less_than_or_equal(rhs)
     }
 
-    #[force_inline]
+    #[inline(always)]
     #[lang(operator_gt)]
     fn operator_gt<T: Comparable<T>>(lhs: &T, rhs: &T) -> bool {
         lhs.greater_than(rhs)
     }
 
-    #[force_inline]
+    #[inline(always)]
     #[lang(operator_gte)]
     fn operator_gte<T: Comparable<T>>(lhs: &T, rhs: &T) -> bool {
         lhs.greater_than_or_equal(rhs)
@@ -544,24 +541,30 @@ mod internal {
             sort3(&arr[1], &arr[mid - 1], &arr[arr.len() - 2], f);
             sort3(&arr[2], &arr[mid + 1], &arr[arr.len() - 3], f);
             sort3(&arr[mid - 1], &arr[mid], &arr[mid + 1], f);
-            std::mem::swap(&arr[arr.len() - 1], &arr[mid]);
         } else {
             // Median-of-three for smaller slices
-            sort3(&arr[0], &arr[arr.len() - 1], &arr[mid], f);
+            sort3(&arr[0], &arr[mid], &arr[arr.len() - 1], f);
         }
 
-        let pivot = arr[arr.len() - 1];
+        let pivot = arr[mid];
         let i = 0usize;
-        let j = 0usize;
-        while j < arr.len() - 1 {
-            if f(&arr[j], &pivot) == Ordering::Less {
-                swap(&arr[i], &arr[j]);
+        let j = arr.len() - 1;
+
+        loop {
+            while f(&arr[i], &pivot) == Ordering::Less {
                 i += 1;
             }
-            j += 1;
+            while f(&arr[j], &pivot) == Ordering::Greater {
+                j -= 1;
+            }
+            if i >= j {
+                return j;
+            }
+
+            swap(&arr[i], &arr[j]);
+            i += 1;
+            j -= 1;
         }
-        swap(&arr[i], &arr[arr.len() - 1]);
-        i
     }
 
     fn insertion_sort_by<T, F: CompareFunction<T>>(arr: &mut [T], f: F) {
@@ -619,14 +622,14 @@ mod internal {
 
     fn introsort_by<T, F: CompareFunction<T>>(arr: &mut [T], max_depth: usize, f: F) {
         if arr.len() < INTROSORT_MIN_SIZE {
-            internal::insertion_sort_by(arr, f);
+            insertion_sort_by(arr, f);
         } else if max_depth == 0 {
             // Fall back to heapsort
             collections::heap::heapify_by(arr, f);
             collections::heap::sort_heap_by(arr, f);
         } else {
             let p = partition_by(arr, f);
-            introsort_by(arr[..p], max_depth - 1,  f);
+            introsort_by(arr[..p+1], max_depth - 1,  f);
             introsort_by(arr[p+1..], max_depth - 1, f);
         }
     }

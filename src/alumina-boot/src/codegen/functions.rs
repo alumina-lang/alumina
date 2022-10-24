@@ -1,5 +1,5 @@
 use crate::{
-    ast::{Attribute, BinOp, BuiltinType, CodegenType, UnOp},
+    ast::{Attribute, BinOp, BuiltinType, UnOp},
     codegen::CName,
     common::AluminaError,
     intrinsics::CodegenIntrinsicKind,
@@ -36,6 +36,7 @@ pub fn write_function_signature<'ir, 'gen>(
     id: IrId,
     item: &'ir Function<'ir>,
     is_static: bool,
+    is_body: bool,
 ) -> Result<(), AluminaError> {
     let name = ctx.get_name(id);
     let mut is_inline = false;
@@ -107,7 +108,9 @@ pub fn write_function_signature<'ir, 'gen>(
         .next();
 
     if let Some(link_name) = link_name {
-        w!(buf, " asm({})", link_name);
+        if !is_body {
+            w!(buf, " asm({})", link_name);
+        }
     }
 
     Ok(())
@@ -500,24 +503,21 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         id: IrId,
         item: &'ir Function<'ir>,
     ) -> Result<(), AluminaError> {
-        let should_export = item.attributes.contains(&Attribute::Export);
+        let has_link_name = item
+            .attributes
+            .iter()
+            .any(|a| matches!(a, Attribute::LinkName(..)));
+        let should_export = item.attributes.contains(&Attribute::Export) || has_link_name;
 
         self.type_writer.add_type(item.return_type)?;
         for arg in item.args.iter() {
             self.type_writer.add_type(arg.ty)?;
         }
 
-        if item
-            .attributes
-            .contains(&Attribute::Codegen(CodegenType::CMain))
-        {
-            return Ok(());
-        }
-
-        if item.body.get().is_none() || should_export {
+        if !has_link_name && (item.body.get().is_none() || should_export) {
             self.ctx
                 .register_name(id, CName::Native(item.name.unwrap()));
-            write_function_signature(self.ctx, &mut self.fn_decls, id, item, false)?;
+            write_function_signature(self.ctx, &mut self.fn_decls, id, item, false, false)?;
         } else {
             self.ctx.register_name(
                 id,
@@ -531,7 +531,10 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 &mut self.fn_decls,
                 id,
                 item,
-                !self.ctx.global_ctx.has_flag("debug"),
+                item.body.get().is_some()
+                    && !should_export
+                    && !self.ctx.global_ctx.has_flag("debug"),
+                false,
             )?;
         }
 
@@ -594,26 +597,14 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             return Ok(());
         }
 
-        if item
-            .attributes
-            .contains(&Attribute::Codegen(CodegenType::CMain))
-        {
-            // Clang expects an exact signature
-            w!(
-                self.fn_bodies,
-                "int main(int {}, char **{})",
-                self.ctx.get_name(item.args[0].id),
-                self.ctx.get_name(item.args[1].id)
-            );
-        } else {
-            write_function_signature(
-                self.ctx,
-                &mut self.fn_bodies,
-                id,
-                item,
-                !should_export && !self.ctx.global_ctx.has_flag("debug"),
-            )?;
-        }
+        write_function_signature(
+            self.ctx,
+            &mut self.fn_bodies,
+            id,
+            item,
+            !should_export && !self.ctx.global_ctx.has_flag("debug"),
+            true,
+        )?;
 
         let body = item.body.get().unwrap();
         w!(self.fn_bodies, "{{\n");

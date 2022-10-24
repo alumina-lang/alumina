@@ -326,6 +326,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
                 }
             } else if &self.scope.path() == path
                 && name == "main"
+                && !attributes.contains(&Attribute::Export)
+                && !attributes
+                    .iter()
+                    .any(|a| matches!(a, Attribute::LinkName(..)))
                 && self.main_candidate.replace(item).is_some()
             {
                 return Err(CodeErrorKind::MultipleMainFunctions).with_span_from(&self.scope, node);

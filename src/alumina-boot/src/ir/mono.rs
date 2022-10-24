@@ -3202,10 +3202,15 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 // If the user supplied a type hint to the if expression, we can try coercing to it
                 // this is mostly for &T and &U -> &dyn Proto coercion where T and U are distinct types
                 // but satisfy the same protocol
-
                 if let (Ok(a), Ok(b)) = (self.try_coerce(hint, then), self.try_coerce(hint, els)) {
                     then = a;
                     els = b;
+                } else {
+                    return Err(CodeErrorKind::MismatchedBranchTypes(
+                        self.mono_ctx.type_name(then.ty).unwrap(),
+                        self.mono_ctx.type_name(els.ty).unwrap(),
+                    ))
+                    .with_span(els_.span);
                 }
             } else {
                 return Err(CodeErrorKind::MismatchedBranchTypes(

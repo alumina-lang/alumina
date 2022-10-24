@@ -425,14 +425,10 @@ extern "C" fn puts(s: &c_char) -> c_int;
 
     extern "C" fn signal(signum: c_int, handler: sighandler_t) -> sighandler_t;
 
-    #[cfg(target_os="macos")]
+    #[cfg(any(target_os="macos", target_os="linux"))]
     extern "C" fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
     #[cfg(target_os="android")]
     extern "C" fn ioctl(fd: c_int, request: c_int, ...) -> c_int;
-    #[cfg(target_os="linux")]
-    extern "C" fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
-
-    #[codegen(varargs)]
     extern "C" fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
 
     #[cfg(target_os="linux")]
@@ -521,49 +517,32 @@ extern "C" fn puts(s: &c_char) -> c_int;
     ) -> c_int;
     extern "C" fn shutdown(socket: c_int, how: c_int) -> c_int;
 
-    #[cfg(target_os="macos")]
-    #[link_name("_opendir$INODE64")]
-    extern "C" fn opendir(dirname: &c_char) -> &mut DIR;
-    #[cfg(not(target_os="macos"))]
+    #[cfg_attr(target_os="macos", link_name("_opendir$INODE64"))]
     extern "C" fn opendir(dirname: &c_char) -> &mut DIR;
 
-    #[cfg(target_os="macos")]
-    #[link_name("_readdir$INODE64")]
-    extern "C" fn readdir(dirp: &mut DIR) -> &mut dirent;
-
-    #[cfg(not(target_os="macos"))]
+    #[cfg_attr(target_os="macos", link_name("_readdir$INODE64"))]
     extern "C" fn readdir(dirp: &mut DIR) -> &mut dirent;
     extern "C" fn closedir(dirp: &mut DIR) -> c_int;
 
     #[cfg(not(target_os="macos"))]
     extern "C" fn readdir64(dirp: &mut DIR) -> &mut dirent64;
 
-    #[cfg(not(target_os="macos"))]
+    #[cfg_attr(target_os="macos", link_name("_realpath$DARWIN_EXTSN"))]
     extern "C" fn realpath(pathname: &c_char, resolved: &mut c_char) -> &mut c_char;
 
     extern "C" fn getcwd(buf: &mut c_char, size: size_t) -> &mut c_char;
 
     extern "C" fn chdir(dir: &c_char) -> c_int;
 
-    #[cfg(target_os="macos")]
-    #[link_name("_realpath$DARWIN_EXTSN")]
-    extern "C" fn realpath(pathname: &c_char, resolved: &mut c_char) -> &mut c_char;
-
     extern "C" fn mkdir(path: &c_char, mode: mode_t) -> c_int;
 
-    #[cfg(target_os="macos")]
-    #[link_name("_stat$INODE64")]
-    extern "C" fn stat(path: &c_char, buf: &mut t_stat) -> c_int;
-    #[cfg(not(target_os="macos"))]
+    #[cfg_attr(target_os="macos", link_name("_stat$INODE64"))]
     extern "C" fn stat(path: &c_char, buf: &mut t_stat) -> c_int;
 
     #[cfg(not(target_os="macos"))]
     extern "C" fn stat64(path: &c_char, buf: &mut t_stat64) -> c_int;
 
-    #[cfg(target_os="macos")]
-    #[link_name("_fstat$INODE64")]
-    extern "C" fn fstat(fildes: c_int, buf: &mut t_stat) -> c_int;
-    #[cfg(not(target_os="macos"))]
+    #[cfg_attr(target_os="macos", link_name("_fstat$INODE64"))]
     extern "C" fn fstat(fildes: c_int, buf: &mut t_stat) -> c_int;
 
     #[cfg(not(target_os="macos"))]
@@ -1110,21 +1089,14 @@ extern "C" fn puts(s: &c_char) -> c_int;
 #[cfg(target_os = "linux")] {
     type pthread_t = c_ulong;
 
-    #[cfg(target_arch = "aarch64")]
     struct pthread_attr_t {
-        __size: [usize; 8]
-    }
-
-    #[cfg(any(target_arch = "x86", target_arch = "arm"))]
-    struct pthread_attr_t {
-        __size: [u32; 9]
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    struct pthread_attr_t {
-        #[cfg(target_pointer_width = "32")]
+        #[cfg(target_arch = "aarch64")]
+        __size: [usize; 8],
+        #[cfg(any(target_arch = "x86", target_arch = "arm"))]
+        __size: [u32; 9],
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
         __size: [u32; 8],
-        #[cfg(target_pointer_width = "64")]
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
         __size: [u64; 7]
     }
 
@@ -1163,50 +1135,70 @@ extern "C" fn puts(s: &c_char) -> c_int;
         const PTHREAD_RWLOCK_T_SIZE: usize = 32;
     }
 
-    #[cfg(target_arch = "x86")]
-    #[align(4)]
+    #[cfg_attr(target_arch = "x86", align(4))]
+    #[cfg_attr(not(target_arch = "x86"), align(8))]
     struct pthread_cond_t {
         __size: [u8; PTHREAD_COND_T_SIZE],
     }
 
-    #[cfg(not(target_arch = "x86"))]
-    #[align(8)]
-    struct pthread_cond_t {
-        __size: [u8; PTHREAD_COND_T_SIZE],
-    }
-
-    #[cfg(any(target_pointer_width = "64", not(any(target_arch = "arm", target_arch = "x86_64", target_arch = "x86")))]
-    #[align(8)]
+    #[cfg_attr(
+        all(
+            target_pointer_width = "32",
+            any(target_arch = "arm", target_arch = "x86_64", target_arch = "x86")
+        ),
+        align(4)
+    )]
+    #[cfg_attr(
+        not(
+            all(
+                target_pointer_width = "32",
+                any(target_arch = "arm", target_arch = "x86_64", target_arch = "x86")
+            )
+        ),
+        align(8)
+    )]
     struct pthread_mutex_t {
         __size: [u8; PTHREAD_MUTEX_T_SIZE],
     }
 
-    #[cfg(all(target_pointer_width = "32", any(target_arch = "arm", target_arch = "x86_64", target_arch = "x86"))]
-    #[align(4)]
-    struct pthread_mutex_t {
-        __size: [u8; PTHREAD_MUTEX_T_SIZE],
-    }
-
-    #[cfg(any(target_pointer_width = "64", not(any(target_arch = "arm", target_arch = "x86_64", target_arch = "x86")))]
-    #[align(8)]
+    #[cfg_attr(
+        all(
+            target_pointer_width = "32",
+            any(target_arch = "arm", target_arch = "x86_64", target_arch = "x86")
+        ),
+        align(4)
+    )]
+    #[cfg_attr(
+        not(
+            all(
+                target_pointer_width = "32",
+                any(target_arch = "arm", target_arch = "x86_64", target_arch = "x86")
+            )
+        ),
+        align(8)
+    )]
     struct pthread_rwlock_t {
         __size: [u8; PTHREAD_RWLOCK_T_SIZE],
     }
 
-    #[cfg(all(target_pointer_width = "32", any(target_arch = "arm", target_arch = "x86_64", target_arch = "x86"))]
-    #[align(4)]
-    struct pthread_rwlock_t {
-        __size: [u8; PTHREAD_RWLOCK_T_SIZE],
-    }
-
-    #[cfg(any(target_pointer_width = "32", target_arch = "x86_64", target_arch = "aarch64"))]
-    #[align(4)]
-    struct pthread_mutexattr_t {
-        __size: [u8; PTHREAD_MUTEXATTR_T_SIZE],
-    }
-
-    #[cfg(not(any(target_pointer_width = "32", target_arch = "x86_64", target_arch = "aarch64")))]
-    #[align(8)]
+    #[cfg_attr(
+        any(
+            target_pointer_width = "32",
+            target_arch = "x86_64",
+            target_arch = "aarch64"
+        ),
+        align(4)
+    )]
+    #[cfg_attr(
+        not(
+            any(
+                target_pointer_width = "32",
+                target_arch = "x86_64",
+                target_arch = "aarch64"
+            )
+        ),
+        align(8)
+    )]
     struct pthread_mutexattr_t {
         __size: [u8; PTHREAD_MUTEXATTR_T_SIZE],
     }
@@ -1216,14 +1208,8 @@ extern "C" fn puts(s: &c_char) -> c_int;
         __size: [u8; PTHREAD_CONDATTR_T_SIZE],
     }
 
-    #[cfg(target_pointer_width = "32")]
-    #[align(4)]
-    struct pthread_rwlockattr_t {
-        __size: [u8; PTHREAD_RWLOCKATTR_T_SIZE],
-    }
-
-    #[cfg(target_pointer_width = "64")]
-    #[align(8)]
+    #[cfg_attr(target_pointer_width = "32", align(4))]
+    #[cfg_attr(target_pointer_width = "64", align(8))]
     struct pthread_rwlockattr_t {
         __size: [u8; PTHREAD_RWLOCKATTR_T_SIZE],
     }

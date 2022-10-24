@@ -76,7 +76,7 @@ impl Deque<T> {
     }
 
     #[cold]
-    #[no_inline]
+    #[inline(never)]
     fn _resize(self: &mut Deque<T>, new_size: usize) {
         debug_assert!((self.len() == 0 && new_size == 0) || (new_size > self.len()));
 
@@ -192,7 +192,7 @@ impl Deque<T> {
         }
     }
 
-    /// Returns an iterator over the elements of the deque.
+    /// @ iter::Iterable::iter
     fn iter(self: &Deque<T>) -> DequeIterator<T> {
         // Just pass a shallow copy of self and use pop_front and pop to iterate.
         // This works because Deque never shrinks the buffer when popping elements.
@@ -201,7 +201,7 @@ impl Deque<T> {
         DequeIterator { _inner: *self }
     }
 
-    /// Returns a iterator over the pointers to the elements of the deque.
+    /// @ iter::IterableRef::iter_ref
     fn iter_ref(self: &Deque<T>) -> DequeRefIterator<&T> {
         DequeRefIterator::<&T> {
             _data: self._data,
@@ -210,7 +210,7 @@ impl Deque<T> {
         }
     }
 
-    /// Returns a iterator over the mutable pointers to the elements of the deque.
+    /// @ iter::IterableMut::iter_mut
     fn iter_mut(self: &mut Deque<T>) -> DequeRefIterator<&mut T> {
         DequeRefIterator::<&mut T> {
             _data: self._data,

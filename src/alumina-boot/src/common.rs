@@ -76,10 +76,10 @@ pub enum CodeErrorKind {
     MismatchedBranchTypes(String, String),
     #[error("invalid escape sequence")]
     InvalidEscapeSequence,
-    #[error("invalid `#[cfg(...)]` attribute")]
-    InvalidCfgAttribute,
-    #[error("invalid `#[align(...)]` attribute")]
-    InvalidAlignAttribute,
+    #[error("invalid attribute")]
+    InvalidAttribute,
+    #[error("invalid attribute ({})", .0)]
+    InvalidAttributeDetail(String),
     #[error("cannot perform {:?} between `{}` and `{}`", .0, .1, .2)]
     InvalidBinOp(crate::ast::BinOp, String, String),
     #[error("cannot perform {:?} on `{}`", .0, .1)]

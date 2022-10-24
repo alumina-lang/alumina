@@ -166,13 +166,13 @@ mod internal {
     type void_ptr_of<Ptr> = builtins::pointer_with_mut_of<void, Ptr>;
 
     #[lang(enum_variant_new)]
-    #[force_inline]
+    #[inline(always)]
     fn make_enum_variant<E>(name: &[u8], value: E) -> (&[u8], E) {
         (name, value)
     }
 
     #[lang(dyn_new)]
-    #[force_inline]
+    #[inline(always)]
     fn dyn_new<Protos, Ptr>(ptr: Ptr) -> dyn<Protos, void_ptr_of<Ptr>> {
         dyn {
             _ptr: ptr as void_ptr_of<Ptr>,
@@ -181,25 +181,25 @@ mod internal {
     }
 
     #[lang(dyn_const_coerce)]
-    #[force_inline]
+    #[inline(always)]
     fn dyn_const_coerce<Protos>(self: dyn<Protos, &mut void>) -> dyn<Protos, &void> {
         dyn { _ptr: self._ptr, _vtable: self._vtable }
     }
 
     #[lang(dyn_const_cast)]
-    #[force_inline]
+    #[inline(always)]
     fn dyn_const_cast<Protos>(self: dyn<Protos, &void>) -> dyn<Protos, &mut void> {
         dyn { _ptr: self._ptr as &mut void, _vtable: self._vtable }
     }
 
     #[lang(dyn_data)]
-    #[force_inline]
+    #[inline(always)]
     fn dyn_data<Protos, Ptr>(self: dyn<Protos, Ptr>) -> Ptr {
         self._ptr
     }
 
     #[lang(dyn_vtable_index)]
-    #[force_inline]
+    #[inline(always)]
     fn dyn_vtable_index<Protos, Ptr>(self: dyn<Protos, Ptr>, idx: usize) -> fn() {
         *(self._vtable + idx)
     }

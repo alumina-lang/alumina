@@ -278,36 +278,20 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                         self.write_type_body(f.ty)?;
                     }
 
-                    let mut align = 0;
+                    let mut attributes = " ".to_string();
+
                     for attr in s.attributes {
                         if let Attribute::Align(val) = attr {
-                            align = *val;
-                            break;
+                            w!(attributes, "__attribute__((aligned({}))) ", *val);
+                        }
+                        if let Attribute::Packed = attr {
+                            w!(attributes, "__attribute__((packed)) ");
                         }
                     }
-
-                    if align > 0 {
-                        // C11 _Alignas does not work on the entire struct, use an extension
-                        // attribute instead.
-                        if s.is_union {
-                            w!(
-                                self.type_bodies,
-                                "union __attribute__((aligned ({}))) {} {{\n",
-                                align,
-                                name
-                            );
-                        } else {
-                            w!(
-                                self.type_bodies,
-                                "struct __attribute__((aligned ({}))) {} {{\n",
-                                align,
-                                name
-                            );
-                        }
-                    } else if s.is_union {
-                        w!(self.type_bodies, "union {} {{\n", name);
+                    if s.is_union {
+                        w!(self.type_bodies, "union {}{} {{\n", attributes, name);
                     } else {
-                        w!(self.type_bodies, "struct {} {{\n", name);
+                        w!(self.type_bodies, "struct {}{} {{\n", attributes, name);
                     }
 
                     for f in s.fields.iter().filter(|f| !f.ty.is_zero_sized()) {

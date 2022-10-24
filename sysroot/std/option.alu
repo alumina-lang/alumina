@@ -88,7 +88,7 @@ impl Option<T> {
     /// assert!(opt.is_some());
     /// assert_eq!(opt.unwrap(), 42);
     /// ```
-    #[force_inline]
+    #[inline(always)]
     fn some(inner: T) -> Option<T> {
         Option::<T> {
             _is_some: true,
@@ -104,7 +104,7 @@ impl Option<T> {
     ///
     /// assert!(opt.is_none());
     /// ```
-    #[force_inline]
+    #[inline(always)]
     fn none() -> Option<T> {
         Option::<T> {
             _is_some: false,
@@ -113,13 +113,13 @@ impl Option<T> {
     }
 
     /// Returns `true` if the option is populated, `false` otherwise.
-    #[force_inline]
+    #[inline(always)]
     fn is_some(self: &Option<T>) -> bool {
         self._is_some
     }
 
     /// Returns `true` if the option is empty, `false` otherwise.
-    #[force_inline]
+    #[inline(always)]
     fn is_none(self: &Option<T>) -> bool {
         !self._is_some
     }
@@ -135,7 +135,7 @@ impl Option<T> {
     ///
     /// opt.unwrap(); // panics
     /// ```
-    #[force_inline]
+    #[inline(always)]
     fn unwrap(self: Option<T>) -> T {
         if self.is_some() {
             self._inner
@@ -423,7 +423,7 @@ impl Option<T> {
 
     /// @ iter::Iterable::iter
     fn iter(self: &Option<T>) -> iter::OnceIterator<T> {
-        iter::OnceIterator { value: *self }
+        iter::OnceIterator { _value: *self }
     }
 
     /// @ mem::Movable::move
@@ -528,7 +528,7 @@ impl Option {
 #[docs(no_index)]
 mod internal {
     #[cold]
-    #[no_inline]
+    #[inline(never)]
     fn unwrap_panic() -> ! {
         panic!("called `Option::unwrap()` on a `None` value")
     }
