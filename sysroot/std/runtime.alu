@@ -86,9 +86,9 @@ mod internal {
         /// initialization. It converts the `argc` and `argv` arguments to a slice of strings
         /// and calls the user-defined `main` function.
         #[export]
-        #[codegen(c_main)]
+        #[link_name("main")]
         #[lang(entrypoint_glue)]
-        fn main<UserMain: NamedFunction>(argc: libc::c_int, argv: &&libc::c_char) -> libc::c_int {
+        fn c_main<UserMain: NamedFunction>(argc: libc::c_int, argv: &&libc::c_char) -> libc::c_int {
             let func = std::util::unit::<UserMain>();
 
             #[cfg(threading)]

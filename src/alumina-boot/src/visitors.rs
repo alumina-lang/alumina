@@ -1,7 +1,7 @@
 use tree_sitter::Node;
 
 use crate::ast::expressions::parse_string_literal;
-use crate::ast::{AstCtx, Attribute, CodegenType, ItemP, TestMetadata};
+use crate::ast::{AstCtx, Attribute, ItemP, TestMetadata};
 use crate::common::{AluminaError, ArenaAllocatable, CodeErrorKind, WithSpanDuringParsing};
 
 use crate::global_ctx::GlobalCtx;
@@ -418,18 +418,6 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                         .ok_or(CodeErrorKind::CannotBeALangItem)
                         .with_span_from(&self.scope, inner)?,
                 );
-            }
-            "codegen" => {
-                if let Some(argument) = inner
-                    .child_by_field_name("arguments")
-                    .and_then(|n| n.child_by_field_name("argument"))
-                {
-                    let codegen_type = self.code.node_text(argument);
-                    match codegen_type {
-                        "c_main" => self.attributes.push(Attribute::Codegen(CodegenType::CMain)),
-                        _ => {}
-                    }
-                }
             }
             _ => {}
         }

@@ -70,18 +70,24 @@ protocol DoubleEndedIteratorExt<Self: DoubleEndedIterator<Self, T>, T> {
 /// the `iter` method.
 protocol Iterable<Self, It: Iterator<It, T>, T> {
     /// Returns an iterator over the elements of this iterable.
+    ///
+    /// See [Iterable] for details.
     fn iter(self: &Self) -> It;
 }
 
 /// Types that can produce an iterator over pointers to their elements.
 protocol IterableRef<Self, It: Iterator<It, &T>, T> {
-    /// Returns an iterator over the pointers of the items of the collection.
+    /// Returns an iterator over the pointers of the items of this iterable.
+    ///
+    /// See [IterableRef] for details.
     fn iter_ref(self: &Self) -> It;
 }
 
 /// Types that can produce an iterator over mutable pointers to their elements.
 protocol IterableMut<Self, It: Iterator<It, &mut T>, T> {
     /// Returns an iterator over mutable pointers to the elements of the collection.
+    ///
+    /// See [IterableMut] for details.
     fn iter_mut(self: &mut Self) -> It;
 }
 
@@ -225,6 +231,26 @@ impl FilterMapIterator<It: Iterator<It, T>, F: Fn(T) -> Option<U>, T, U> {
 
     mixin Iterator<FilterMapIterator<It, F, T, U>, U>;
     mixin IteratorExt<FilterMapIterator<It, F, T, U>, U>;
+}
+
+
+impl FilterMapIterator<It: DoubleEndedIterator<It, T>, F: Fn(T) -> Option<U>, T, U> {
+    /// @ DoubleEndedIterator::next_back
+    fn next_back(self: &mut FilterMapIterator<It, F, T, U>) -> Option<U> {
+        use option::try;
+
+        loop {
+            let value = self.it.next_back()?;
+            let mapped = self.fun(value);
+
+            if mapped.is_some() {
+                return mapped
+            }
+        }
+    }
+
+    mixin DoubleEndedIterator<FilterMapIterator<It, F, T, U>, U>;
+    mixin DoubleEndedIteratorExt<FilterMapIterator<It, F, T, U>, U>;
 }
 
 /// Filter iterator.
@@ -1887,6 +1913,23 @@ mod tests {
         assert_eq!(range.next(), Option::some(0));
         assert_eq!(range.next(), Option::some(4));
         assert_eq!(range.next(), Option::some(8));
+        assert_eq!(range.next(), Option::none());
+    }
+
+    #[test]
+    fn test_filter_map_rev() {
+        let range = (0..5).filter_map(|x: i32| -> Option<i32> {
+            if x % 2 == 0 {
+                Option::some(x * 2)
+            } else {
+                Option::none()
+            }
+        }).rev();
+        assert_eq!(range.size_hint(), Option::none());
+
+        assert_eq!(range.next(), Option::some(8));
+        assert_eq!(range.next(), Option::some(4));
+        assert_eq!(range.next(), Option::some(0));
         assert_eq!(range.next(), Option::none());
     }
 

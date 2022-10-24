@@ -696,11 +696,6 @@ impl BinOp {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CodegenType {
-    CMain,
-}
-
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Attribute {
@@ -716,7 +711,6 @@ pub enum Attribute {
     ForceInline,
     Intrinsic,
     StaticConstructor,
-    Codegen(CodegenType),
     LinkName(usize, [u8; 255]),
 }
 
