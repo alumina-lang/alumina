@@ -101,7 +101,7 @@ impl Result<T, E> {
     /// assert!(r.is_ok());
     /// assert_eq!(r.unwrap(), 10);
     /// ```
-    #[force_inline]
+    #[inline(always)]
     fn ok(ok: T) -> Result<T, E> {
         Result::<T, E> {
             _is_ok: true,
@@ -120,7 +120,7 @@ impl Result<T, E> {
     /// assert!(r.is_err());
     /// assert_eq!(r.unwrap_err(), 42);
     /// ```
-    #[force_inline]
+    #[inline(always)]
     fn err(err: E) -> Result<T, E> {
         Result::<T, E> {
             _is_ok: false,
@@ -131,14 +131,14 @@ impl Result<T, E> {
     }
 
     /// Returns `true` if the result conains an OK variant, `false` otherwise
-    #[force_inline]
+    #[inline(always)]
     fn is_ok(self: &Result<T, E>) -> bool {
         self._is_ok
     }
 
 
     /// Returns `true` if the result conains an error variant, `false` otherwise
-    #[force_inline]
+    #[inline(always)]
     fn is_err(self: &Result<T, E>) -> bool {
         !self._is_ok
     }
@@ -419,7 +419,7 @@ mod internal {
     use fmt::{write, Formatter, Formattable};
 
     #[cold]
-    #[no_inline]
+    #[inline(never)]
     fn unwrap_panic_err<E>(err: E) -> ! {
         when E: Formattable<E, panicking::internal::PanicFormatter> {
             panic!("unwrap on an err value: {}", err)
@@ -429,7 +429,7 @@ mod internal {
     }
 
     #[cold]
-    #[no_inline]
+    #[inline(never)]
     fn unwrap_panic_ok<T>(ok: T) -> ! {
         when T: Formattable<T, panicking::internal::PanicFormatter> {
             panic!("unwrap on an ok value: {}", ok)

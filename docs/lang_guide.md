@@ -308,7 +308,7 @@ fn main() {
 
 ## Other function attributes
 
-- `#[inline]`, `#[force_inline]` and `#[no_inline]` control the inlining behavior of the function.
+- `#[inline]`, `#[inline(always)]` and `#[inline(never)]` control the inlining behavior of the function.
 - `#[cold]` marks the function as unlikely to be called. Any branch that leads to the function call is marked as unlikely to be taken. Usually used on error handling functions to to optimize for the happy path with regards to branch prediction.
 - `#[link_name("name")]` allows to specify the name of the function in the generated object file. This is useful for linking to C libraries that use non-standard naming conventions.
 
@@ -1353,6 +1353,15 @@ fn fill_with_random_bytes(buf: &mut [u8]) {
     #[cfg(target_os = "macos")]
     libc::getentropy(&buf[0], buf.len());
 }
+```
+
+`#[cfg_attr(cond, ...)]` can be used to apply attributes to items based on the configuration.
+
+For example, to change the symbol name for the import on MacOS:
+
+```rust
+#[cfg_attr(target_os="macos", link_name("_opendir$INODE64"))]
+extern "C" fn opendir(dirname: &c_char) -> &mut DIR;
 ```
 
 ## `typeof` type

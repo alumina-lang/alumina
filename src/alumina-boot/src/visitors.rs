@@ -340,31 +340,44 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
     ) -> Self::ReturnType {
         self.visit_attribute_item(node)
     }
-    fn visit_attribute_item(&mut self, node: Node<'src>) -> Self::ReturnType {
-        let inner = node.child_by_field_name("inner").unwrap();
 
+    fn visit_meta_item(&mut self, node: Node<'src>) -> Self::ReturnType {
         let name = self
             .code
-            .node_text(inner.child_by_field_name("name").unwrap());
+            .node_text(node.child_by_field_name("name").unwrap());
 
         match name {
-            "inline" => self.attributes.push(Attribute::Inline),
             "align" => {
-                let align: u32 = inner
+                let align: u32 = node
                     .child_by_field_name("arguments")
                     .and_then(|n| n.child_by_field_name("argument"))
                     .map(|n| self.code.node_text(n))
                     .and_then(|f| f.parse().ok())
-                    .ok_or(CodeErrorKind::InvalidCfgAttribute)
+                    .ok_or(CodeErrorKind::InvalidAttribute)
                     .with_span_from(&self.scope, node)?;
 
                 self.attributes.push(Attribute::Align(align))
             }
             "cold" => self.attributes.push(Attribute::Cold),
-            "no_inline" => self.attributes.push(Attribute::NoInline),
+            "inline" => {
+                match node
+                    .child_by_field_name("arguments")
+                    .and_then(|n| n.child_by_field_name("argument"))
+                    .map(|n| self.code.node_text(n))
+                {
+                    Some("always") => self.attributes.push(Attribute::ForceInline),
+                    Some("never") => self.attributes.push(Attribute::NoInline),
+                    None => self.attributes.push(Attribute::Inline),
+                    _ => {
+                        return Err(CodeErrorKind::InvalidAttribute)
+                            .with_span_from(&self.scope, node)
+                    }
+                }
+            }
+            "inline(never)" => self.attributes.push(Attribute::NoInline),
             "builtin" => self.attributes.push(Attribute::Builtin),
             "export" => self.attributes.push(Attribute::Export),
-            "force_inline" => self.attributes.push(Attribute::ForceInline),
+            "inline(always)" => self.attributes.push(Attribute::ForceInline),
             "thread_local" => {
                 // We can skip thread-local on programs that are compiled with threads
                 // disabled.
@@ -374,11 +387,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
             }
             "test_main" => self.attributes.push(Attribute::TestMain),
             "link_name" => {
-                let link_name = inner
+                let link_name = node
                     .child_by_field_name("arguments")
                     .and_then(|n| n.child_by_field_name("argument"))
-                    .ok_or(CodeErrorKind::UnknownLangItem(None))
-                    .with_span_from(&self.scope, inner)?;
+                    .ok_or(CodeErrorKind::InvalidAttribute)
+                    .with_span_from(&self.scope, node)?;
 
                 let bytes = self.code.node_text(link_name).as_bytes();
 
@@ -389,8 +402,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
             }
             "test" => {
                 self.test_attributes.push(
-                    inner
-                        .child_by_field_name("arguments")
+                    node.child_by_field_name("arguments")
                         .map(|s| self.code.node_text(s))
                         .unwrap_or("")
                         .to_string(),
@@ -398,31 +410,56 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
             }
             "cfg" => {
                 let mut cfg_visitor = CfgVisitor::new(self.global_ctx.clone(), self.scope.clone());
-                if !cfg_visitor.visit(inner)? {
+                if !cfg_visitor.visit(node)? {
                     self.should_skip = true;
                 }
             }
+            "cfg_attr" => {
+                let mut cursor = node.walk();
+                let args: Vec<_> = node
+                    .child_by_field_name("arguments")
+                    .map(|a| a.children_by_field_name("argument", &mut cursor).collect())
+                    .unwrap_or_default();
+
+                if args.len() < 2 {
+                    return Err(CodeErrorKind::InvalidAttributeDetail(
+                        "cfg_attr requires two arguments".to_string(),
+                    ))
+                    .with_span_from(&self.scope, node);
+                }
+
+                let mut cfg_visitor = CfgVisitor::new(self.global_ctx.clone(), self.scope.clone());
+                if cfg_visitor.visit(args[0])? {
+                    for arg in args.into_iter().skip(1) {
+                        self.visit(arg)?;
+                    }
+                }
+            }
             "lang" => {
-                let lang_type = inner
+                let lang_type = node
                     .child_by_field_name("arguments")
                     .and_then(|n| n.child_by_field_name("argument"))
                     .ok_or(CodeErrorKind::UnknownLangItem(None))
-                    .with_span_from(&self.scope, inner)?;
+                    .with_span_from(&self.scope, node)?;
 
                 self.ast.add_lang_item(
                     self.code
                         .node_text(lang_type)
                         .try_into()
-                        .with_span_from(&self.scope, inner)?,
+                        .with_span_from(&self.scope, node)?,
                     self.item
                         .ok_or(CodeErrorKind::CannotBeALangItem)
-                        .with_span_from(&self.scope, inner)?,
+                        .with_span_from(&self.scope, node)?,
                 );
             }
             _ => {}
         }
 
         Ok(())
+    }
+
+    fn visit_attribute_item(&mut self, node: Node<'src>) -> Self::ReturnType {
+        self.visit(node.child_by_field_name("inner").unwrap())
     }
 }
 
@@ -480,10 +517,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for CfgVisitor<'ast, 'src> {
                     self.state.push(State::Not);
                     self.visit(arguments)?
                 }
-                _ => {
-                    return Err(CodeErrorKind::InvalidCfgAttribute)
-                        .with_span_from(&self.scope, node)
-                }
+                _ => return Err(CodeErrorKind::InvalidAttribute).with_span_from(&self.scope, node),
             };
             self.state.pop();
             Ok(ret)
@@ -518,7 +552,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for CfgVisitor<'ast, 'src> {
             match state {
                 State::Single | State::Not => {
                     if iter.next().is_some() {
-                        return Err(CodeErrorKind::InvalidCfgAttribute)
+                        return Err(CodeErrorKind::InvalidAttribute)
                             .with_span_from(&self.scope, node);
                     }
                     return Ok(matches == matches!(state, State::Single));
@@ -538,7 +572,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for CfgVisitor<'ast, 'src> {
 
         match state {
             State::Single | State::Not => {
-                Err(CodeErrorKind::InvalidCfgAttribute).with_span_from(&self.scope, node)
+                Err(CodeErrorKind::InvalidAttribute).with_span_from(&self.scope, node)
             }
             State::All => Ok(true),
             State::Any => Ok(false),

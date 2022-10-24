@@ -503,14 +503,18 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         id: IrId,
         item: &'ir Function<'ir>,
     ) -> Result<(), AluminaError> {
-        let should_export = item.attributes.contains(&Attribute::Export);
+        let has_link_name = item
+            .attributes
+            .iter()
+            .any(|a| matches!(a, Attribute::LinkName(..)));
+        let should_export = item.attributes.contains(&Attribute::Export) || has_link_name;
 
         self.type_writer.add_type(item.return_type)?;
         for arg in item.args.iter() {
             self.type_writer.add_type(arg.ty)?;
         }
 
-        if item.body.get().is_none() || should_export {
+        if !has_link_name && (item.body.get().is_none() || should_export) {
             self.ctx
                 .register_name(id, CName::Native(item.name.unwrap()));
             write_function_signature(self.ctx, &mut self.fn_decls, id, item, false, false)?;
@@ -527,7 +531,9 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 &mut self.fn_decls,
                 id,
                 item,
-                !self.ctx.global_ctx.has_flag("debug"),
+                item.body.get().is_some()
+                    && !should_export
+                    && !self.ctx.global_ctx.has_flag("debug"),
                 false,
             )?;
         }
