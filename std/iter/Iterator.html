@@ -58,14 +58,63 @@
 <h3>
 <span class="keyword">protocol</span> <span class="identifier-type">Iterator</span>&lt;Self, T&gt; { ... }</h3>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L30-L46"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L76-L90"/>source</a>
 </div>
 </div>
 <p>
 Iterators.
 </p><p>
-Types that implement <code class="language-alumina">Iterator</code> can be used in a for-loop. Types that implement <code class="language-alumina">Iterator</code> should
-also mix in the <a class="path-link" href="/std/iter/IteratorExt.html">IteratorExt</a> protocol so that the combinator methods can be used.
+See <a class="" href="/std/iter/">module-level documentation</a> for more details.
+</p><p>
+</p>
+<h2> Implementing an iterator</h2>
+<p>
+</p><p>
+Types that have <a class="path-link" href="/std/iter/Iterator.html">Iterator</a> semantics should implement <a class="path-link" href="/std/iter/Iterator.html#item.next">next</a> at a minimum. When the iterator can
+cheaply determine the number of remaining elements, it should also implement <a class="path-link" href="/std/iter/Iterator.html#item.size_hint">size_hint</a>. This
+enables the collections constructed from iterators to efficiently reserve space for the elements and
+avoid reallocations. If <a class="path-link" href="/std/iter/Iterator.html#item.size_hint">size_hint</a> returns a value, it should be exact.
+</p><p>
+All types implementing <a class="path-link" href="/std/iter/Iterator.html">Iterator</a> should also mix in <a class="path-link" href="/std/iter/IteratorExt.html">IteratorExt</a>, which provides a number of useful
+extension methods.
+</p><p>
+See also <a class="path-link" href="/std/iter/DoubleEndedIterator.html">DoubleEndedIterator</a> for iterators that can be iterated in reverse order.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">struct Countdown { counter: i32 }
+
+impl Countdown {
+    use std::cmp::max;
+    use std::iter::{Iterator, IteratorExt};
+
+    fn next(self: &amp;mut Countdown) -&gt; Option&lt;i32&gt; {
+        if self.counter &lt;= 0 {
+            Option::none()
+        } else {
+            let ret = Option::some(self.counter);
+            self.counter -= 1;
+            ret
+        }
+    }
+
+    fn size_hint(self: &amp;Countdown) -&gt; Option&lt;usize&gt; {
+        Option::some(max(0, self.counter) as usize)
+    }
+
+    mixin Iterator&lt;Countdown, i32&gt;;
+    mixin IteratorExt&lt;Countdown, i32&gt;;
+}
+
+// use `(1..=5).rev()` in real code
+let countdown = Countdown { counter: 5 };
+
+for i in countdown {
+    println!("{}", i);
+}
+println!("Ignition and Liftoff!");
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20struct%20Countdown%20%7b%20counter%3a%20i32%20%7d%0a%20%20%20%20%0a%20%20%20%20impl%20Countdown%20%7b%0a%20%20%20%20%20%20%20%20use%20std%3a%3acmp%3a%3amax%3b%0a%20%20%20%20%20%20%20%20use%20std%3a%3aiter%3a%3a%7bIterator%2c%20IteratorExt%7d%3b%0a%20%20%20%20%0a%20%20%20%20%20%20%20%20fn%20next%28self%3a%20%26mut%20Countdown%29%20%2d%3e%20Option%3ci32%3e%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20if%20self%2ecounter%20%3c%3d%200%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20Option%3a%3anone%28%29%0a%20%20%20%20%20%20%20%20%20%20%20%20%7d%20else%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20let%20ret%20%3d%20Option%3a%3asome%28self%2ecounter%29%3b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20self%2ecounter%20%2d%3d%201%3b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20ret%0a%20%20%20%20%20%20%20%20%20%20%20%20%7d%0a%20%20%20%20%20%20%20%20%7d%0a%20%20%20%20%0a%20%20%20%20%20%20%20%20fn%20size%5fhint%28self%3a%20%26Countdown%29%20%2d%3e%20Option%3cusize%3e%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20Option%3a%3asome%28max%280%2c%20self%2ecounter%29%20as%20usize%29%0a%20%20%20%20%20%20%20%20%7d%0a%20%20%20%20%0a%20%20%20%20%20%20%20%20mixin%20Iterator%3cCountdown%2c%20i32%3e%3b%0a%20%20%20%20%20%20%20%20mixin%20IteratorExt%3cCountdown%2c%20i32%3e%3b%0a%20%20%20%20%7d%0a%20%20%20%20%0a%20%20%20%20%2f%2f%20use%20%60%281%2e%2e%3d5%29%2erev%28%29%60%20in%20real%20code%0a%20%20%20%20let%20countdown%20%3d%20Countdown%20%7b%20counter%3a%205%20%7d%3b%0a%20%20%20%20%0a%20%20%20%20for%20i%20in%20countdown%20%7b%0a%20%20%20%20%20%20%20%20println%21%28%22%7b%7d%22%2c%20i%29%3b%0a%20%20%20%20%7d%0a%20%20%20%20println%21%28%22Ignition%20and%20Liftoff%21%22%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 <h2 id="Required method">Required methods</h2>
@@ -75,14 +124,16 @@ also mix in the <a class="path-link" href="/std/iter/IteratorExt.html">IteratorE
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">next</span>(self: &amp;mut <a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L34-L34"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L82-L82"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Returns the next item, if any.
 </p><p>
-If the iterator has reached the end, it returns none.
+If the iterator has reached the end, it returns <code class="language-alumina">Option::none()</code>.
+</p><p>
+See <a class="path-link" href="/std/iter/Iterator.html">Iterator</a> for more information.
 </p><p>
 </p>
 </div>
@@ -95,18 +146,14 @@ If the iterator has reached the end, it returns none.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">size_hint</span>(self: &amp;<a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L43-L45"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L87-L89"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Returns the number of remaining elements, if available.
 </p><p>
-This is used for efficiently pre-allocating storage in collections
-that are created from iterators to avoid copies.
-</p><p>
-It the number of remaining elements is unknown, the method should
-return <code class="language-alumina">Option::none()</code>.
+See <a class="path-link" href="/std/iter/Iterator.html">Iterator</a> for more information.
 </p><p>
 </p>
 </div>

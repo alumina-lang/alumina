@@ -54,11 +54,58 @@
 Self: <a href="/std/iter/Iterator.html"><span class="identifier-type">Iterator</span></a>&lt;<a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>, T&gt;</div>
 </h3>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L49-L54"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L137-L144"/>source</a>
 </div>
 </div>
 <p>
 Iterators that can be consumed from both ends.
+</p><p>
+</p>
+<h2> Implementing a double-ended iterator</h2>
+<p>
+</p><p>
+Iterators that can be iterated from both ends efficiently should implement this protocol.
+<a class="path-link" href="/std/iter/DoubleEndedIterator.html#item.next_back">next_back</a> is the method that is used to iterate in reverse order. The
+convention is that <a class="path-link" href="/std/iter/Iterator.html#item.next">next</a> and <a class="path-link" href="/std/iter/DoubleEndedIterator.html#item.next_back">next_back</a> "meet in the middle",
+so that each element is visited once regardless of the direction of iteration.
+</p><p>
+All types implementing <a class="path-link" href="/std/iter/DoubleEndedIterator.html">DoubleEndedIterator</a> should also mix in <a class="path-link" href="/std/iter/DoubleEndedIteratorExt.html">DoubleEndedIteratorExt</a>, which provides
+relevant extension methods, notably <a class="path-link" href="/std/iter/DoubleEndedIteratorExt.html#item.rev">rev</a>, which reverses the direction of
+iteration.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">struct Range { lower: i32, upper: i32 }
+
+impl Range {
+    use std::iter::{Iterator, IteratorExt, DoubleEndedIterator, DoubleEndedIteratorExt};
+
+    fn next(self: &amp;mut Range) -&gt; Option&lt;i32&gt; {
+        if self.lower &lt; self.upper {
+            let result = self.lower;
+            self.lower += 1;
+            Option::some(result)
+        } else {
+            Option::none()
+        }
+    }
+
+    fn next_back(self: &amp;mut Range) -&gt; Option&lt;i32&gt; {
+        if self.lower &lt; self.upper {
+            self.upper -= 1;
+            Option::some(self.upper)
+        } else {
+            Option::none()
+        }
+    }
+
+    mixin Iterator&lt;Range, i32&gt;;
+    mixin IteratorExt&lt;Range, i32&gt;;
+    mixin DoubleEndedIterator&lt;Range, i32&gt;;
+    mixin DoubleEndedIteratorExt&lt;Range, i32&gt;;
+}
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20struct%20Range%20%7b%20lower%3a%20i32%2c%20upper%3a%20i32%20%7d%0a%20%20%20%20%0a%20%20%20%20impl%20Range%20%7b%0a%20%20%20%20%20%20%20%20use%20std%3a%3aiter%3a%3a%7bIterator%2c%20IteratorExt%2c%20DoubleEndedIterator%2c%20DoubleEndedIteratorExt%7d%3b%0a%20%20%20%20%0a%20%20%20%20%20%20%20%20fn%20next%28self%3a%20%26mut%20Range%29%20%2d%3e%20Option%3ci32%3e%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20if%20self%2elower%20%3c%20self%2eupper%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20let%20result%20%3d%20self%2elower%3b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20self%2elower%20%2b%3d%201%3b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20Option%3a%3asome%28result%29%0a%20%20%20%20%20%20%20%20%20%20%20%20%7d%20else%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20Option%3a%3anone%28%29%0a%20%20%20%20%20%20%20%20%20%20%20%20%7d%0a%20%20%20%20%20%20%20%20%7d%0a%20%20%20%20%0a%20%20%20%20%20%20%20%20fn%20next%5fback%28self%3a%20%26mut%20Range%29%20%2d%3e%20Option%3ci32%3e%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20if%20self%2elower%20%3c%20self%2eupper%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20self%2eupper%20%2d%3d%201%3b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20Option%3a%3asome%28self%2eupper%29%0a%20%20%20%20%20%20%20%20%20%20%20%20%7d%20else%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20Option%3a%3anone%28%29%0a%20%20%20%20%20%20%20%20%20%20%20%20%7d%0a%20%20%20%20%20%20%20%20%7d%0a%20%20%20%20%0a%20%20%20%20%20%20%20%20mixin%20Iterator%3cRange%2c%20i32%3e%3b%0a%20%20%20%20%20%20%20%20mixin%20IteratorExt%3cRange%2c%20i32%3e%3b%0a%20%20%20%20%20%20%20%20mixin%20DoubleEndedIterator%3cRange%2c%20i32%3e%3b%0a%20%20%20%20%20%20%20%20mixin%20DoubleEndedIteratorExt%3cRange%2c%20i32%3e%3b%0a%20%20%20%20%7d%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 <h2 id="Required method">Required methods</h2>
@@ -68,7 +115,7 @@ Iterators that can be consumed from both ends.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">next_back</span>(self: &amp;mut <a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L53-L53"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/iter.alu#L143-L143"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -76,6 +123,8 @@ Iterators that can be consumed from both ends.
 Returns the next item from the back, if any.
 </p><p>
 If the iterator has reached the beginning, it returns none.
+</p><p>
+See <a class="path-link" href="/std/iter/DoubleEndedIterator.html">DoubleEndedIterator</a> for more information.
 </p><p>
 </p>
 </div>
