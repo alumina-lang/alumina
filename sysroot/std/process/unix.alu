@@ -81,6 +81,7 @@ fn current_dir() -> Result<fs::PathBuf> {
     use ffi::CString;
 
     let buf: StringBuf = StringBuf::with_capacity(512);
+    defer buf.free();
 
     loop {
         let spare_capacity = buf.spare_capacity();
@@ -94,19 +95,18 @@ fn current_dir() -> Result<fs::PathBuf> {
             let as_errno = error.as_errno();
 
             if as_errno == Option::some(libc::ERANGE) {
-                buf.reserve(1);
+                // Double the allocation and try again
+                buf.reserve(buf.capacity() + 1);
                 continue;
             }
 
             return Result::err(error);
         }
 
-        let len = CString::from_raw(ret).len();
-        // We don't know the exact size of the allocated buffer, so we assume
-        // that it is at least as big as the length of the string plus the null
-        // terminator.
-        let slice = mem::slice::from_raw(ret as &mut u8, len + 1);
-        return Result::ok(fs::PathBuf { inner: collections::Vector::from_raw(slice, len) })
+        assert_eq!(ret, &spare_capacity[0] as &mut libc::c_char);
+
+        buf.truncate(CString::from_raw(ret).len());
+        return Result::ok(fs::PathBuf { inner: buf.move() });
     }
 }
 

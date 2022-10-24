@@ -20,6 +20,7 @@ With regards to syntax, the language is very similar to Rust and in terms of sem
   - [Enums](#enums)
   - [Impl blocks](#impl-blocks)
   - [Type attributes](#type-attributes)
+  - [Slices](#slices)
   - [What about strings?](#what-about-strings)
   - [Zero-sized types](#zero-sized-types)
 - [Macros](#macros)
@@ -610,10 +611,8 @@ let rotated = Point::rotate_180deg::<f64>(&point);
 
 Named types can have attributes.
 
-```rust
-
-- `#[align(n)]` specifies the minimum alignment of the type. The default is 1.
--
+- `#[align(n)]` specifies the minimum alignment of the type. Alignment must be a power of two.
+- `#[packed]` on a struct specifies that the type should be packed (no padding between fields).
 
 ## Slices
 

@@ -356,9 +356,17 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     .ok_or(CodeErrorKind::InvalidAttribute)
                     .with_span_from(&self.scope, node)?;
 
+                if !align.is_power_of_two() {
+                    return Err(CodeErrorKind::InvalidAttributeDetail(
+                        "alignment must be a power of two".to_string(),
+                    ))
+                    .with_span_from(&self.scope, node);
+                }
+
                 self.attributes.push(Attribute::Align(align))
             }
             "cold" => self.attributes.push(Attribute::Cold),
+            "packed" => self.attributes.push(Attribute::Packed),
             "inline" => {
                 match node
                     .child_by_field_name("arguments")

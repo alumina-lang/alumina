@@ -705,6 +705,7 @@ pub enum Attribute {
     TestMain,
     Inline,
     Align(u32),
+    Packed,
     NoInline,
     ThreadLocal,
     Builtin,

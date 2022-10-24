@@ -82,14 +82,16 @@ mod internal {
     {
         /// Program entrypoint glue.
         ///
-        /// This is the entrypoint for the program. It is called by the C runtime after static
-        /// initialization. It converts the `argc` and `argv` arguments to a slice of strings
-        /// and calls the user-defined `main` function.
+        /// This is equivalent to C's `main`, not `_start` as we still want to use the C runtime for
+        /// invoking the static constructors.
+        ///
+        /// It converts the `argc` and `argv` arguments to a slice of strings, initializes the main thread
+        /// associated data (if threading is enabled) and then invokes the user-defined `main` function.
         #[export]
         #[cfg_attr(target_os="macos", link_name("_main"))]
         #[cfg_attr(not(target_os="macos"), link_name("main"))]
         #[lang(entrypoint_glue)]
-        fn c_main<UserMain: NamedFunction>(argc: libc::c_int, argv: &&libc::c_char) -> libc::c_int {
+        fn entrypoint<UserMain: NamedFunction>(argc: libc::c_int, argv: &&libc::c_char) -> libc::c_int {
             let func = std::util::unit::<UserMain>();
 
             #[cfg(threading)]
