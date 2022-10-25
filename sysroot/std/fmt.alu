@@ -310,21 +310,25 @@ mod internal {
         Result::ok(())
     }
 
-    fn format_float<T: builtins::FloatingPoint, F: Formatter<F>>(val: T, fmt: &mut F, precision: u16) -> Result {
+    fn format_float<T: builtins::FloatingPoint, F: Formatter<F>>(
+        val: T,
+        fmt: &mut F,
+        precision: u16
+    ) -> Result {
         // TODO: precision doesn't do anything yet
-
         if val.is_nan() {
             return fmt.write_str("NaN")
         }
 
         if val.is_infinite() {
             if val.is_sign_negative() {
-                fmt.write_char('-')?;
+                return fmt.write_str("-inf");
+            } else {
+                return fmt.write_str("inf");
             }
-            return fmt.write_str("Inf");
         }
 
-        // f64 representations are at most 24 bytes long, f32 are at most 16 bytes long
+        // f64 representations are at most 24 bytes long, f32 ones are at most 16 bytes long
         let buf: [u8; 25];
         let written = when T: f64 {
             ryu::format64(val, &buf[0])
@@ -553,8 +557,8 @@ mod tests {
     #[test]
     fn test_format_float() {
         assert_eq!(fmt!("{}", f64::nan()), "NaN");
-        assert_eq!(fmt!("{}", f64::infinity()), "Inf");
-        assert_eq!(fmt!("{}", f64::neg_infinity()), "-Inf");
+        assert_eq!(fmt!("{}", f64::infinity()), "inf");
+        assert_eq!(fmt!("{}", f64::neg_infinity()), "-inf");
 
         // Basic sanity tests only, comprehensive tests are in ryu module
         assert_eq!(fmt!("{}", 3.1415), "3.1415");
