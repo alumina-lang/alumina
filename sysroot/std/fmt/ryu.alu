@@ -1,0 +1,59 @@
+#![docs(no_index)]
+
+// Translated from Rust to Alumina. The Rust port can be found at https://github.com/dtolnay/ryu
+// The original C code can be found at https://github.com/ulfjack/ryu and carries the following license:
+//
+// Copyright 2018 Ulf Adams
+//
+// The contents of this file may be used under the terms of the Apache License,
+// Version 2.0.
+//
+//    (See accompanying file LICENSE-Apache or copy at
+//     http://www.apache.org/licenses/LICENSE-2.0)
+//
+// Alternatively, the contents of this file may be used under the terms of
+// the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE-Boost or copy at
+//     https://www.boost.org/LICENSE_1_0.txt)
+//
+// Unless required by applicable law or agreed to in writing, this software
+// is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.
+
+//! Alumina port of Ryū algorithm for formatting floating-point numbers.
+//!
+//! Includes the float and double parsing functions.
+//!
+//! Translated from Rust to Alumina The Rust port can be found at [https://github.com/dtolnay/ryu](https://github.com/dtolnay/ryu).
+//! Rust port is in turn based on the reference C implementation, which can be found at
+//! [https://github.com/ulfjack/ryu](https://github.com/ulfjack/ryu)
+
+use pretty::{format32, format64};
+use s2d::parse64;
+use s2f::parse32;
+
+/// Error during parsing
+enum Error {
+    InputTooShort,
+    InputTooLong,
+    MalformedInput,
+}
+
+impl Error {
+    /// @ cmp::Equatable::equals
+    fn equals(self: &Error, other: &Error) -> bool {
+        *self == *other
+    }
+
+    /// @ fmt::Formattable::fmt
+    fn fmt<F: fmt::Formatter<F>>(self: &Error, f: &mut F) -> fmt::Result {
+        switch *self {
+            Error::InputTooShort => f.write_str("input too short"),
+            Error::InputTooLong => f.write_str("input too long"),
+            Error::MalformedInput => f.write_str("malformed input"),
+            _ => unreachable!()
+        }
+    }
+
+    mixin cmp::Equatable<Error>;
+}

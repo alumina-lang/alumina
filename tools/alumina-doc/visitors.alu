@@ -288,10 +288,7 @@ impl TopLevelVisitor {
     fn visit_source_file(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
         check_cfg!(self, node);
 
-        // Visit children first so we capture the doc comments
-        self.visit_children_by_field(node, FieldKind::Body)?;
-
-        self.items.add_item(Item {
+        let item = Item {
             kind: ItemKind::Module,
             path: self.path.clone(),
             defined_in: self.path.clone(),
@@ -299,10 +296,17 @@ impl TopLevelVisitor {
             hide_from_index: self.hide_from_index,
             cfg_index: 0,
             parse_context: self.parse_context,
-            doc_comment: self.file_doc_comment.move(),
+            doc_comment: Vector::new(),
             group_node: Option::none(),
             has_cfg: self.has_cfg,
-        });
+        };
+        defer item.free();
+
+        // Visit children first so we capture the file doc comments
+        self.visit_children_by_field(node, FieldKind::Body)?;
+        item.doc_comment = self.file_doc_comment.move();
+
+        self.items.add_item(item.move());
 
         Result::ok(())
     }

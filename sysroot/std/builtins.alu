@@ -170,6 +170,7 @@ impl never {
 struct u8 {}
 impl u8 {
     mixin internal::BitOps<u8>;
+    mixin internal::WithOverflow<u8>;
     mixin internal::BuiltinComparable<u8>;
     mixin<H: Hasher<H>> Hashable<u8, H>;
     mixin<F: Formatter<F>> internal::IntegerFormattable<u8, F>;
@@ -193,6 +194,7 @@ impl u8 {
 struct u16 {}
 impl u16 {
     mixin internal::BitOps<u16>;
+    mixin internal::WithOverflow<u16>;
     mixin internal::BuiltinComparable<u16>;
     mixin<H: Hasher<H>> Hashable<u16, H>;
     mixin<F: Formatter<F>> internal::IntegerFormattable<u16, F>;
@@ -216,6 +218,7 @@ impl u16 {
 struct u32 {}
 impl u32 {
     mixin internal::BitOps<u32>;
+    mixin internal::WithOverflow<u32>;
     mixin internal::BuiltinComparable<u32>;
     mixin<H: Hasher<H>> Hashable<u32, H>;
     mixin<F: Formatter<F>> internal::IntegerFormattable<u32, F>;
@@ -239,6 +242,7 @@ impl u32 {
 struct u64 {}
 impl u64 {
     mixin internal::BitOps<u64>;
+    mixin internal::WithOverflow<u64>;
     mixin internal::BuiltinComparable<u64>;
     mixin<H: Hasher<H>> Hashable<u64, H>;
     mixin<F: Formatter<F>> internal::IntegerFormattable<u64, F>;
@@ -262,6 +266,7 @@ impl u64 {
 struct u128 {}
 impl u128 {
     mixin internal::BitOps<u128>;
+    mixin internal::WithOverflow<u128>;
     mixin internal::BuiltinComparable<u128>;
     mixin<H: Hasher<H>> Hashable<u128, H>;
     mixin<F: Formatter<F>> internal::IntegerFormattable<u128, F>;
@@ -291,6 +296,7 @@ impl u128 {
 struct usize {}
 impl usize {
     mixin internal::BitOps<usize>;
+    mixin internal::WithOverflow<usize>;
     mixin internal::BuiltinComparable<usize>;
     mixin<H: Hasher<H>> Hashable<usize, H>;
     mixin<F: Formatter<F>> internal::IntegerFormattable<usize, F>;
@@ -327,6 +333,7 @@ impl usize {
 #[lang(builtin_i8)]
 struct i8 {}
 impl i8 {
+    mixin internal::WithOverflow<i8>;
     mixin internal::BuiltinComparable<i8>;
     mixin<H: Hasher<H>> Hashable<i8, H>;
     mixin<F: Formatter<F>> internal::IntegerFormattable<i8, F>;
@@ -349,6 +356,7 @@ impl i8 {
 #[lang(builtin_i16)]
 struct i16 {}
 impl i16 {
+    mixin internal::WithOverflow<i16>;
     mixin internal::BuiltinComparable<i16>;
     mixin<H: Hasher<H>> Hashable<i16, H>;
     mixin<F: Formatter<F>> internal::IntegerFormattable<i16, F>;
@@ -371,6 +379,7 @@ impl i16 {
 #[lang(builtin_i32)]
 struct i32 {}
 impl i32 {
+    mixin internal::WithOverflow<i32>;
     mixin internal::BuiltinComparable<i32>;
     mixin<H: Hasher<H>> Hashable<i32, H>;
     mixin<F: Formatter<F>> internal::IntegerFormattable<i32, F>;
@@ -393,6 +402,7 @@ impl i32 {
 #[lang(builtin_i64)]
 struct i64 {}
 impl i64 {
+    mixin internal::WithOverflow<i64>;
     mixin internal::BuiltinComparable<i64>;
     mixin<H: Hasher<H>> Hashable<i64, H>;
     mixin<F: Formatter<F>> internal::IntegerFormattable<i64, F>;
@@ -415,6 +425,7 @@ impl i64 {
 #[lang(builtin_i128)]
 struct i128 {}
 impl i128 {
+    mixin internal::WithOverflow<i128>;
     mixin internal::BuiltinComparable<i128>;
     mixin<H: Hasher<H>> Hashable<i128, H>;
     mixin<F: Formatter<F>> internal::IntegerFormattable<i128, F>;
@@ -437,6 +448,7 @@ impl i128 {
 #[lang(builtin_isize)]
 struct isize {}
 impl isize {
+    mixin internal::WithOverflow<isize>;
     mixin internal::BuiltinComparable<isize>;
     mixin<H: Hasher<H>> Hashable<isize, H>;
     mixin<F: Formatter<F>> internal::IntegerFormattable<isize, F>;
@@ -478,6 +490,21 @@ impl f32 {
     mixin<F: Formatter<F>> internal::FloatFormattable<f32, F>;
     mixin internal::FloatOps<f32>;
 
+    /// Parses a floating point number from a string.
+    ///
+    /// Returns `None` if the string does not represent a valid floating point
+    /// number.
+    ///
+    /// # Example
+    /// ```
+    /// assert_eq!(f32::parse("3.1415"), Option::some(3.1415f32));
+    /// assert_eq!(f32::parse("inf"), Option::some(f32::infinity()));
+    /// ```
+    #[inline]
+    fn parse(s: &[u8]) -> Option<f32> {
+        string::parse_float::<f32>(s)
+    }
+
     /// Returns `true` if the number has a negative sign, `false` otherwise.
     #[inline(always)]
     fn is_sign_negative(self: f32) -> bool {
@@ -507,6 +534,16 @@ impl f32 {
     #[inline(always)]
     fn epsilon() -> f32 {
         1.19209290e-07f32
+    }
+
+    /// Create `f32` from raw bits
+    fn from_bits(bits: u32) -> f32 {
+        util::transmute(bits)
+    }
+
+    /// Returns the raw bits of `self`
+    fn to_bits(self: f32) -> u32 {
+        util::transmute(self)
     }
 
     /// Inverse cosine
@@ -691,6 +728,21 @@ impl f64 {
     mixin<F: Formatter<F>> internal::FloatFormattable<f64, F>;
     mixin internal::FloatOps<f64>;
 
+    /// Parses a floating point number from a string.
+    ///
+    /// Returns `None` if the string does not represent a valid floating point
+    /// number.
+    ///
+    /// # Example
+    /// ```
+    /// assert_eq!(f64::parse("3.1415"), Option::some(3.1415));
+    /// assert_eq!(f64::parse("inf"), Option::some(f64::infinity()));
+    /// ```
+    #[inline]
+    fn parse(s: &[u8]) -> Option<f64> {
+        string::parse_float::<f64>(s)
+    }
+
     /// @ f32::is_sign_negative
     #[inline(always)]
     fn is_sign_negative(self: f64) -> bool {
@@ -720,6 +772,16 @@ impl f64 {
     #[inline(always)]
     fn epsilon() -> f64 {
         2.2204460492503131e-16f64
+    }
+
+    /// Create `f64` from raw bits
+    fn from_bits(bits: u64) -> f64 {
+        util::transmute(bits)
+    }
+
+    /// Returns the raw bits of `self`
+    fn to_bits(self: f64) -> u64 {
+        util::transmute(self)
     }
 
     /// @ f32::acos
@@ -1295,6 +1357,104 @@ mod internal {
         #[inline]
         fn fmt(self: &Self, formatter: &mut F) -> Result<(), fmt::Error> {
             fmt::internal::format_float(*self, formatter, 15)
+        }
+    }
+
+    /// Mixin for wrapping and checked arithmetic operations.
+    protocol WithOverflow<Self> {
+        /// Adds two numbers, wrapping around at the boundary of the type.
+        #[inline]
+        fn wrapping_add(lhs: Self, rhs: Self) -> Self {
+            let ret: Self;
+            intrinsics::codegen_func::<bool>("__builtin_add_overflow", lhs, rhs, &ret);
+            ret
+        }
+
+        /// Subtracts two numbers, wrapping around at the boundary of the type.
+        #[inline]
+        fn wrapping_sub(lhs: Self, rhs: Self) -> Self {
+            let ret: Self;
+            intrinsics::codegen_func::<bool>("__builtin_sub_overflow", lhs, rhs, &ret);
+            ret
+        }
+
+        /// Multiplies two numbers, wrapping around at the boundary of the type.
+        #[inline]
+        fn wrapping_mul(lhs: Self, rhs: Self) -> Self {
+            let ret: Self;
+            intrinsics::codegen_func::<bool>("__builtin_mul_overflow", lhs, rhs, &ret);
+            ret
+        }
+
+        /// Divides two numbers, wrapping around at the boundary of the type.
+        ///
+        /// The only case where such wrapping can occur is when one divides `MIN / -1` on a
+        /// signed type. This is equivalent to `-MIN`, a number that is too large to represent in
+        /// the type. In such a case, this function returns `MIN` itself.
+        #[inline]
+        fn wrapping_div(lhs: Self, rhs: Self) -> Self {
+            when  Self: Unsigned {
+                lhs / rhs
+            } else {
+                if lhs == Self::min_value() && rhs == -1 {
+                    Self::min_value()
+                } else {
+                    lhs / rhs
+                }
+            }
+        }
+
+        /// Tried to add two numbers, returning `None` if overflow occurred.
+        #[inline]
+        fn checked_add(lhs: Self, rhs: Self) -> Option<Self> {
+            let ret: Self;
+            if intrinsics::codegen_func::<bool>("__builtin_add_overflow", lhs, rhs, &ret) {
+                Option::none()
+            } else {
+                Option::some(ret)
+            }
+        }
+
+        /// Tried to subtract two numbers, returning `None` if overflow occurred.
+        #[inline]
+        fn checked_sub(lhs: Self, rhs: Self) -> Option<Self> {
+            let ret: Self;
+            if intrinsics::codegen_func::<bool>("__builtin_sub_overflow", lhs, rhs, &ret) {
+                Option::none()
+            } else {
+                Option::some(ret)
+            }
+        }
+
+        /// Tried to multiply two numbers, returning `None` if overflow occurred.
+        #[inline]
+        fn checked_mul(lhs: Self, rhs: Self) -> Option<Self> {
+            let ret: Self;
+            if intrinsics::codegen_func::<bool>("__builtin_mul_overflow", lhs, rhs, &ret) {
+                Option::none()
+            } else {
+                Option::some(ret)
+            }
+        }
+
+        /// Tried to divide two numbers, returning `None` if overflow occurred or `rhs` is zero.
+        ///
+        /// This can happen when `rhs` is zero, or when one divides `MIN / -1` on a signed type.
+        #[inline]
+        fn checked_div(lhs: Self, rhs: Self) -> Option<Self> {
+            if rhs == 0 {
+                return Option::none();
+            }
+
+            when Self: Unsigned {
+                Option::some(lhs / rhs)
+            } else {
+                if lhs == Self::min_value() && rhs == -1 {
+                    Option::none()
+                } else {
+                    Option::some(lhs / rhs)
+                }
+            }
         }
     }
 
@@ -1940,5 +2100,236 @@ mod tests {
         assert_type_eq::<typeof(a), typeof(b)>();
         assert_type_eq::<typeof(c), typeof(d)>();
         assert_type_ne::<typeof(a), typeof(c)>();
+    }
+
+    #[test]
+    fn test_wrapping_add() {
+        assert_eq!(u8::max_value().wrapping_add(1), 0);
+        assert_eq!(u16::max_value().wrapping_add(1), 0);
+        assert_eq!(u32::max_value().wrapping_add(1), 0);
+        assert_eq!(u64::max_value().wrapping_add(1), 0);
+        assert_eq!(u128::max_value().wrapping_add(1), 0);
+        assert_eq!(usize::max_value().wrapping_add(1), 0);
+
+        assert_eq!(i8::max_value().wrapping_add(1), i8::min_value());
+        assert_eq!(i16::max_value().wrapping_add(1), i16::min_value());
+        assert_eq!(i32::max_value().wrapping_add(1), i32::min_value());
+        assert_eq!(i64::max_value().wrapping_add(1), i64::min_value());
+        assert_eq!(i128::max_value().wrapping_add(1), i128::min_value());
+        assert_eq!(isize::max_value().wrapping_add(1), isize::min_value());
+
+    }
+
+    #[test]
+    fn test_wrapping_sub() {
+        assert_eq!(u8::min_value().wrapping_sub(1), u8::max_value());
+        assert_eq!(u16::min_value().wrapping_sub(1), u16::max_value());
+        assert_eq!(u32::min_value().wrapping_sub(1), u32::max_value());
+        assert_eq!(u64::min_value().wrapping_sub(1), u64::max_value());
+        assert_eq!(u128::min_value().wrapping_sub(1), u128::max_value());
+        assert_eq!(usize::min_value().wrapping_sub(1), usize::max_value());
+
+        assert_eq!(i8::min_value().wrapping_sub(1), i8::max_value());
+        assert_eq!(i16::min_value().wrapping_sub(1), i16::max_value());
+        assert_eq!(i32::min_value().wrapping_sub(1), i32::max_value());
+        assert_eq!(i64::min_value().wrapping_sub(1), i64::max_value());
+        assert_eq!(i128::min_value().wrapping_sub(1), i128::max_value());
+        assert_eq!(isize::min_value().wrapping_sub(1), isize::max_value());
+    }
+
+    #[test]
+    fn test_wrapping_mul() {
+        assert_eq!(u8::max_value().wrapping_mul(2), u8::max_value() - 1);
+        assert_eq!(u16::max_value().wrapping_mul(2), u16::max_value() - 1);
+        assert_eq!(u32::max_value().wrapping_mul(2), u32::max_value() - 1);
+        assert_eq!(u64::max_value().wrapping_mul(2), u64::max_value() - 1);
+        assert_eq!(u128::max_value().wrapping_mul(2), u128::max_value() - 1);
+        assert_eq!(usize::max_value().wrapping_mul(2), usize::max_value() - 1);
+
+        assert_eq!(i8::max_value().wrapping_mul(2), -2);
+        assert_eq!(i16::max_value().wrapping_mul(2), -2);
+        assert_eq!(i32::max_value().wrapping_mul(2), -2);
+        assert_eq!(i64::max_value().wrapping_mul(2), -2);
+        assert_eq!(i128::max_value().wrapping_mul(2), -2);
+        assert_eq!(isize::max_value().wrapping_mul(2), -2);
+    }
+
+    #[test]
+    fn test_wrapping_div() {
+        assert_eq!(i8::min_value().wrapping_div(-1), i8::min_value());
+        assert_eq!(i16::min_value().wrapping_div(-1), i16::min_value());
+        assert_eq!(i32::min_value().wrapping_div(-1), i32::min_value());
+        assert_eq!(i64::min_value().wrapping_div(-1), i64::min_value());
+        assert_eq!(i128::min_value().wrapping_div(-1), i128::min_value());
+        assert_eq!(isize::min_value().wrapping_div(-1), isize::min_value());
+    }
+
+    #[test]
+    fn test_checked_add() {
+        assert_eq!(u8::max_value().checked_add(1), Option::none());
+        assert_eq!(0u8.checked_add(1), Option::some(1u8));
+
+        assert_eq!(u16::max_value().checked_add(1), Option::none());
+        assert_eq!(0u16.checked_add(1), Option::some(1u16));
+
+        assert_eq!(u32::max_value().checked_add(1), Option::none());
+        assert_eq!(0u32.checked_add(1), Option::some(1u32));
+
+        assert_eq!(u64::max_value().checked_add(1), Option::none());
+        assert_eq!(0u64.checked_add(1), Option::some(1u64));
+
+        assert_eq!(u128::max_value().checked_add(1), Option::none());
+        assert_eq!(0u128.checked_add(1), Option::some(1u128));
+
+        assert_eq!(usize::max_value().checked_add(1), Option::none());
+        assert_eq!(0usize.checked_add(1), Option::some(1usize));
+
+        assert_eq!(i8::max_value().checked_add(1), Option::none());
+        assert_eq!(0i8.checked_add(1), Option::some(1i8));
+
+        assert_eq!(i16::max_value().checked_add(1), Option::none());
+        assert_eq!(0i16.checked_add(1), Option::some(1i16));
+
+        assert_eq!(i32::max_value().checked_add(1), Option::none());
+        assert_eq!(0i32.checked_add(1), Option::some(1i32));
+
+        assert_eq!(i64::max_value().checked_add(1), Option::none());
+        assert_eq!(0i64.checked_add(1), Option::some(1i64));
+
+        assert_eq!(i128::max_value().checked_add(1), Option::none());
+        assert_eq!(0i128.checked_add(1), Option::some(1i128));
+
+        assert_eq!(isize::max_value().checked_add(1), Option::none());
+        assert_eq!(0isize.checked_add(1), Option::some(1isize));
+    }
+
+    #[test]
+    fn test_checked_sub() {
+        assert_eq!(u8::min_value().checked_sub(1), Option::none());
+        assert_eq!(1u8.checked_sub(1), Option::some(0u8));
+
+        assert_eq!(u16::min_value().checked_sub(1), Option::none());
+        assert_eq!(1u16.checked_sub(1), Option::some(0u16));
+
+        assert_eq!(u32::min_value().checked_sub(1), Option::none());
+        assert_eq!(1u32.checked_sub(1), Option::some(0u32));
+
+        assert_eq!(u64::min_value().checked_sub(1), Option::none());
+        assert_eq!(1u64.checked_sub(1), Option::some(0u64));
+
+        assert_eq!(u128::min_value().checked_sub(1), Option::none());
+        assert_eq!(1u128.checked_sub(1), Option::some(0u128));
+
+        assert_eq!(usize::min_value().checked_sub(1), Option::none());
+        assert_eq!(1usize.checked_sub(1), Option::some(0usize));
+
+        assert_eq!(i8::min_value().checked_sub(1), Option::none());
+        assert_eq!(1i8.checked_sub(1), Option::some(0i8));
+
+        assert_eq!(i16::min_value().checked_sub(1), Option::none());
+        assert_eq!(1i16.checked_sub(1), Option::some(0i16));
+
+        assert_eq!(i32::min_value().checked_sub(1), Option::none());
+        assert_eq!(1i32.checked_sub(1), Option::some(0i32));
+
+        assert_eq!(i64::min_value().checked_sub(1), Option::none());
+        assert_eq!(1i64.checked_sub(1), Option::some(0i64));
+
+        assert_eq!(i128::min_value().checked_sub(1), Option::none());
+        assert_eq!(1i128.checked_sub(1), Option::some(0i128));
+
+        assert_eq!(isize::min_value().checked_sub(1), Option::none());
+        assert_eq!(1isize.checked_sub(1), Option::some(0isize));
+    }
+
+    #[test]
+    fn test_checked_mul() {
+        assert_eq!(u8::max_value().checked_mul(2), Option::none());
+        assert_eq!(1u8.checked_mul(2), Option::some(2u8));
+
+        assert_eq!(u16::max_value().checked_mul(2), Option::none());
+        assert_eq!(1u16.checked_mul(2), Option::some(2u16));
+
+        assert_eq!(u32::max_value().checked_mul(2), Option::none());
+        assert_eq!(1u32.checked_mul(2), Option::some(2u32));
+
+        assert_eq!(u64::max_value().checked_mul(2), Option::none());
+        assert_eq!(1u64.checked_mul(2), Option::some(2u64));
+
+        assert_eq!(u128::max_value().checked_mul(2), Option::none());
+        assert_eq!(1u128.checked_mul(2), Option::some(2u128));
+
+        assert_eq!(usize::max_value().checked_mul(2), Option::none());
+        assert_eq!(1usize.checked_mul(2), Option::some(2usize));
+
+        assert_eq!(i8::max_value().checked_mul(2), Option::none());
+        assert_eq!(1i8.checked_mul(2), Option::some(2i8));
+
+        assert_eq!(i16::max_value().checked_mul(2), Option::none());
+        assert_eq!(1i16.checked_mul(2), Option::some(2i16));
+
+        assert_eq!(i32::max_value().checked_mul(2), Option::none());
+        assert_eq!(1i32.checked_mul(2), Option::some(2i32));
+
+        assert_eq!(i64::max_value().checked_mul(2), Option::none());
+        assert_eq!(1i64.checked_mul(2), Option::some(2i64));
+
+        assert_eq!(i128::max_value().checked_mul(2), Option::none());
+        assert_eq!(1i128.checked_mul(2), Option::some(2i128));
+
+        assert_eq!(isize::max_value().checked_mul(2), Option::none());
+        assert_eq!(1isize.checked_mul(2), Option::some(2isize));
+    }
+
+    #[test]
+    fn test_checked_div_unsigned() {
+        assert_eq!(1u8.checked_div(0), Option::none());
+        assert_eq!(1u8.checked_div(1), Option::some(1u8));
+
+        assert_eq!(1u16.checked_div(0), Option::none());
+        assert_eq!(1u16.checked_div(1), Option::some(1u16));
+
+        assert_eq!(1u32.checked_div(0), Option::none());
+        assert_eq!(1u32.checked_div(1), Option::some(1u32));
+
+        assert_eq!(1u64.checked_div(0), Option::none());
+        assert_eq!(1u64.checked_div(1), Option::some(1u64));
+
+        assert_eq!(1u128.checked_div(0), Option::none());
+        assert_eq!(1u128.checked_div(1), Option::some(1u128));
+
+        assert_eq!(1usize.checked_div(0), Option::none());
+        assert_eq!(1usize.checked_div(1), Option::some(1usize));
+    }
+
+    #[test]
+    fn test_checked_div_signed() {
+        assert_eq!(1i8.checked_div(0), Option::none());
+        assert_eq!(1i8.checked_div(1), Option::some(1i8));
+        assert_eq!(i8::min_value().checked_div(-1), Option::none());
+
+        assert_eq!(1i16.checked_div(0), Option::none());
+        assert_eq!(1i16.checked_div(1), Option::some(1i16));
+        assert_eq!(i16::min_value().checked_div(-1), Option::none());
+
+        assert_eq!(1i32.checked_div(0), Option::none());
+        assert_eq!(1i32.checked_div(1), Option::some(1i32));
+        assert_eq!(i32::min_value().checked_div(-1), Option::none());
+
+        assert_eq!(1i64.checked_div(0), Option::none());
+        assert_eq!(1i64.checked_div(1), Option::some(1i64));
+        assert_eq!(i64::min_value().checked_div(-1), Option::none());
+
+        assert_eq!(1i128.checked_div(0), Option::none());
+        assert_eq!(1i128.checked_div(1), Option::some(1i128));
+        assert_eq!(i128::min_value().checked_div(-1), Option::none());
+
+        assert_eq!(1isize.checked_div(0), Option::none());
+        assert_eq!(1isize.checked_div(1), Option::some(1isize));
+        assert_eq!(isize::min_value().checked_div(-1), Option::none());
+
+        assert_eq!(1i8.checked_div(-1), Option::some(-1i8));
+        assert_eq!(1i16.checked_div(-1), Option::some(-1i16));
+        assert_eq!(1i32.checked_div(-1), Option::some(-1i32));
     }
 }

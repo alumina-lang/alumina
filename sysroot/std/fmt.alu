@@ -311,60 +311,28 @@ mod internal {
     }
 
     fn format_float<T: builtins::FloatingPoint, F: Formatter<F>>(val: T, fmt: &mut F, precision: u16) -> Result {
-        // TODO: this is very very VERY bad, replace with Grisu3 or Dragon4 or alike. Correct float parsing
-        // and formatting is a complicated thing. Using libc instead is an option, but that has a
-        // host of other problems: locale-awareness (ideally, Alumina's stdlib is locale-invariant),
-        // use of C-strings, varargs, etc. etc.
-
-        debug_assert!(precision <= 18);
+        // TODO: precision doesn't do anything yet
 
         if val.is_nan() {
             return fmt.write_str("NaN")
         }
-        if val.is_sign_negative() {
-            fmt.write_char('-')?;
-        }
-        val = math::abs(val);
 
         if val.is_infinite() {
+            if val.is_sign_negative() {
+                fmt.write_char('-')?;
+            }
             return fmt.write_str("Inf");
         }
 
-        let (integral, frac) = val.modf();
-
-        let steps = 0usize;
-        while integral >= 1.0e18 {
-            integral /= 1.0e18;
-            steps += 1;
-        }
-
-        let pad = 0usize;
-        while steps > 0 {
-            let part = integral as u64;
-            format_integer(part, 10, pad, fmt)?;
-            integral = (integral - (part as T)) * 1.0e18;
-            steps -= 1;
-            pad = 18;
-        }
-
-        let frac_i = 1u64;
-        for i in 0u16..precision {
-            frac *= 10.0;
-            frac_i *= 10;
-        }
-
-        let rounded = (frac + 0.5) as u64;
-        if rounded == frac_i {
-            format_integer(integral as u64 + 1, 10, pad, fmt)?;
-            fmt.write_char('.')?;
-            format_integer(0, 10, precision as usize, fmt)?;
+        // f64 representations are at most 24 bytes long, f32 are at most 16 bytes long
+        let buf: [u8; 25];
+        let written = when T: f64 {
+            ryu::format64(val, &buf[0])
         } else {
-            format_integer(integral as u64, 10, pad, fmt)?;
-            fmt.write_char('.')?;
-            format_integer(rounded, 10, precision as usize, fmt)?;
-        }
+            ryu::format32(val, &buf[0])
+        };
 
-        Result::ok(())
+        fmt.write_str(buf[..written])
     }
 
     fn write_fmt<F: Formatter<F>>(parts: &[&dyn Formattable<Self, F>], f: &mut F) -> Result {
@@ -584,75 +552,15 @@ mod tests {
 
     #[test]
     fn test_format_float() {
-        // These tests do not assert that float formatting logic is correct. It is in fact
-        // very incorrect.
-
         assert_eq!(fmt!("{}", f64::nan()), "NaN");
         assert_eq!(fmt!("{}", f64::infinity()), "Inf");
         assert_eq!(fmt!("{}", f64::neg_infinity()), "-Inf");
 
-        assert_eq!(fmt!("{}", 0.0), "0.000000000000000");
-        assert_eq!(fmt!("{}", -0.0), "-0.000000000000000");
-
-        assert_eq!(fmt!("{}", 0.1.precision(5)), "0.10000");
-        assert_eq!(fmt!("{}", 0.01.precision(5)), "0.01000");
-        assert_eq!(fmt!("{}", 0.001.precision(5)), "0.00100");
-        assert_eq!(fmt!("{}", 0.0001.precision(5)), "0.00010");
-        assert_eq!(fmt!("{}", 0.00001.precision(5)), "0.00001");
-        assert_eq!(fmt!("{}", 0.000001.precision(5)), "0.00000");
-
-        assert_eq!(fmt!("{}", 1.0.precision(1)), "1.0");
-        assert_eq!(fmt!("{}", 11.0.precision(1)), "11.0");
-        assert_eq!(fmt!("{}", 111.0.precision(1)), "111.0");
-        assert_eq!(fmt!("{}", 1111.0.precision(1)), "1111.0");
-        assert_eq!(fmt!("{}", 11111.0.precision(1)), "11111.0");
-        assert_eq!(fmt!("{}", 111111.0.precision(1)), "111111.0");
-        assert_eq!(fmt!("{}", 1111111.0.precision(1)), "1111111.0");
-        assert_eq!(fmt!("{}", 11111111.0.precision(1)), "11111111.0");
-        assert_eq!(fmt!("{}", 111111111.0.precision(1)), "111111111.0");
-        assert_eq!(fmt!("{}", 1111111111.0.precision(1)), "1111111111.0");
-        assert_eq!(fmt!("{}", 11111111111.0.precision(1)), "11111111111.0");
-        assert_eq!(fmt!("{}", 111111111111.0.precision(1)), "111111111111.0");
-        assert_eq!(fmt!("{}", 1111111111111.0.precision(1)), "1111111111111.0");
-        assert_eq!(fmt!("{}", 11111111111111.0.precision(1)), "11111111111111.0");
-        assert_eq!(fmt!("{}", 111111111111111.0.precision(1)), "111111111111111.0");
-        assert_eq!(fmt!("{}", 1111111111111111.0.precision(1)), "1111111111111111.0");
-
-        assert_eq!(fmt!("{}", 10.0.precision(1)), "10.0");
-        assert_eq!(fmt!("{}", 100.0.precision(1)), "100.0");
-        assert_eq!(fmt!("{}", 1000.0.precision(1)), "1000.0");
-        assert_eq!(fmt!("{}", 10000.0.precision(1)), "10000.0");
-        assert_eq!(fmt!("{}", 100000.0.precision(1)), "100000.0");
-        assert_eq!(fmt!("{}", 1000000.0.precision(1)), "1000000.0");
-        assert_eq!(fmt!("{}", 10000000.0.precision(1)), "10000000.0");
-        assert_eq!(fmt!("{}", 100000000.0.precision(1)), "100000000.0");
-        assert_eq!(fmt!("{}", 1000000000.0.precision(1)), "1000000000.0");
-        assert_eq!(fmt!("{}", 10000000000.0.precision(1)), "10000000000.0");
-        assert_eq!(fmt!("{}", 100000000000.0.precision(1)), "100000000000.0");
-        assert_eq!(fmt!("{}", 1000000000000.0.precision(1)), "1000000000000.0");
-        assert_eq!(fmt!("{}", 10000000000000.0.precision(1)), "10000000000000.0");
-        assert_eq!(fmt!("{}", 100000000000000.0.precision(1)), "100000000000000.0");
-        assert_eq!(fmt!("{}", 1000000000000000.0.precision(1)), "1000000000000000.0");
-        assert_eq!(fmt!("{}", 10000000000000000.0.precision(1)), "10000000000000000.0");
-        assert_eq!(fmt!("{}", 100000000000000000.0.precision(1)), "100000000000000000.0");
-        assert_eq!(fmt!("{}", 1000000000000000000.0.precision(1)), "1000000000000000000.0");
-        assert_eq!(fmt!("{}", 10000000000000000000.0.precision(1)), "10000000000000000000.0");
-
-        assert_eq!(fmt!("{}", 9.0.precision(1)), "9.0");
-        assert_eq!(fmt!("{}", 99.0.precision(1)), "99.0");
-        assert_eq!(fmt!("{}", 999.0.precision(1)), "999.0");
-        assert_eq!(fmt!("{}", 9999.0.precision(1)), "9999.0");
-        assert_eq!(fmt!("{}", 99999.0.precision(1)), "99999.0");
-        assert_eq!(fmt!("{}", 999999.0.precision(1)), "999999.0");
-        assert_eq!(fmt!("{}", 9999999.0.precision(1)), "9999999.0");
-        assert_eq!(fmt!("{}", 99999999.0.precision(1)), "99999999.0");
-        assert_eq!(fmt!("{}", 999999999.0.precision(1)), "999999999.0");
-        assert_eq!(fmt!("{}", 9999999999.0.precision(1)), "9999999999.0");
-        assert_eq!(fmt!("{}", 99999999999.0.precision(1)), "99999999999.0");
-        assert_eq!(fmt!("{}", 999999999999.0.precision(1)), "999999999999.0");
-        assert_eq!(fmt!("{}", 9999999999999.0.precision(1)), "9999999999999.0");
-        assert_eq!(fmt!("{}", 99999999999999.0.precision(1)), "99999999999999.0");
-        assert_eq!(fmt!("{}", 999999999999999.0.precision(1)), "999999999999999.0");
+        // Basic sanity tests only, comprehensive tests are in ryu module
+        assert_eq!(fmt!("{}", 3.1415), "3.1415");
+        assert_eq!(fmt!("{}", 3.1415e100), "3.1415e100");
+        assert_eq!(fmt!("{}", -3.1415), "-3.1415");
+        assert_eq!(fmt!("{}", -3.1415e100), "-3.1415e100");
     }
 
     #[test]

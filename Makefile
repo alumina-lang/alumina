@@ -159,7 +159,7 @@ $(BUILD_DIR)/doctest.alu: $(ALUMINA_DOC) $(SYSROOT_FILES) tools/alumina-doc/stat
 	@rmdir $(BUILD_DIR)/~doctest
 
 $(DOCTEST).c: $(ALUMINA_BOOT) $(SYSROOT_FILES) $(BUILD_DIR)/doctest.alu
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --output $@ main=$(BUILD_DIR)/doctest.alu
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --output $@ $(BUILD_DIR)/doctest.alu
 
 $(DOCTEST): $(DOCTEST).c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)

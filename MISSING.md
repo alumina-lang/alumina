@@ -62,7 +62,7 @@ macro write!($fmt, $s, $args...) {
     - The pattern is well-established (Formattable protocol) and I'm very happy with it,
       but it's very very basic right now
       - update: it's not so basic anymore, it's actually quite fine
-    - formatting for floats is especially terrible, needs to be much better
+    - more control for float formatting (fixed precision)
   - heap-allocating collections
     - Vector, HashMap, HashSet are implemented (very basic, probably do not perform very well)
     - Vector might actually be pretty ok. Hashed collections are probably bad.

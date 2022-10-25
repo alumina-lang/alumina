@@ -447,6 +447,34 @@ fn parse_integer<T: builtins::Integer>(s: &[u8], radix: u16) -> Option<T> {
     }
 }
 
+/// Parses a floating-point number.
+///
+/// See also [f64::parse] and [f32::parse] associated methods
+fn parse_float<T: builtins::FloatingPoint>(s: &[u8]) -> Option<T> {
+    let res = when T: f64 {
+        fmt::ryu::parse64(s)
+    } else {
+        fmt::ryu::parse32(s)
+    };
+
+    if res.is_ok() {
+        return Option::some(res.unwrap());
+    }
+
+    if res.unwrap_err() == fmt::ryu::Error::MalformedInput {
+        // Some special cases on the slow path
+        if s == "inf" || s == "Inf" || s == "INF" {
+            return Option::some(T::infinity());
+        } else if s == "-inf" || s == "-Inf" || s == "-INF" {
+            return Option::some(T::neg_infinity());
+        } else if s == "nan" || s == "NaN" || s == "NAN" {
+            return Option::some(T::nan());
+        }
+    }
+
+    Option::none()
+}
+
 
 #[cfg(all(test, test_std))]
 #[docs(hide)]
@@ -525,6 +553,28 @@ mod tests {
 
         assert_eq!(parse_integer::<u8>("ff", 10), Option::none());
     }
+
+    #[test]
+    fn test_parse_float() {
+        /// Basic sanity tests only. Comprehenive tests are in the `std::fmt::ryu` module.
+
+        assert_eq!(parse_float::<f64>("3.1415"), Option::some(3.1415));
+        assert_eq!(parse_float::<f32>("3.1415"), Option::some(3.1415f32));
+
+        assert_eq!(parse_float::<f64>("inf"), Option::some(f64::infinity()));
+        assert_eq!(parse_float::<f64>("-inf"), Option::some(-f64::infinity()));
+        assert!(parse_float::<f64>("NaN").unwrap().is_nan());
+
+        assert_eq!(parse_float::<f32>("inf"), Option::some(f32::infinity()));
+        assert_eq!(parse_float::<f32>("-inf"), Option::some(-f32::infinity()));
+        assert!(parse_float::<f32>("NaN").unwrap().is_nan());
+
+        assert_eq!(parse_float::<f64>(""), Option::none());
+        assert_eq!(parse_float::<f64>("bad"), Option::none());
+        assert_eq!(parse_float::<f32>(""), Option::none());
+        assert_eq!(parse_float::<f32>("bad"), Option::none());
+    }
+
 
     #[test]
     fn test_trim_start() {

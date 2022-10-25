@@ -1004,7 +1004,7 @@ impl ZipIterator<It1: Iterator<It1, T1>, It2: Iterator<It2, T2>, T1, T2> {
 struct FlattenIterator<It: Iterator<It, T>, T, Ret> {
     _it: &mut It,
     _elem: Option<T>,
-    _elem_iter: typeof((null as &mut T).iter()) // maybe uninitialised
+    _elem_iter: typeof((null as &mut T).iter()) // maybe uninitialized
 }
 
 impl FlattenIterator<It: Iterator<It, T>, T, Ret> {
@@ -1112,6 +1112,10 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     ///
     /// `T` must implement [cmp::Comparable]. If the two iterators are not sorted, the
     /// resulting order is unspecified.
+    ///
+    /// The merge is stable, meaning that the order of equal elements is preserved, with
+    /// the elements from `self` coming before the elements from `other` (and vice-versa
+    /// if the iterator is reversed/used with [DoubleEndedIterator::next_back]).
     ///
     /// ## Example
     /// ```

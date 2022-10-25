@@ -234,7 +234,6 @@ make test-docs
 
 Standard library contributions are especially welcome! Ideas for contribution:
 
-- Native floating point parsing and formatting (e.g. port Grisu3 to Alumina)
 - Better / more performant algorithms and collections (sorting, HashMap, ...)
 - Port the standard library to other platforms (e.g. Windows) or libc implementations (on Linux only glibc is supported, musl would be very nice to have)
 - Unix domain socket support
