@@ -88,6 +88,12 @@
 <li>
 <a href="/std/mem/#item.uninitialized">uninitialized</a>
 </li>
+<li>
+<a href="/std/mem/#item.copy_nonoverlapping">copy_nonoverlapping</a>
+</li>
+<li>
+<a href="/std/mem/#item.copy">copy</a>
+</li>
 </ul>
 </nav>
 <div class="main-container">
@@ -178,7 +184,7 @@ of memory. <code class="language-alumina">&amp;[T]</code> is a slice (read-only)
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">alloc</span>&lt;T&gt;() -> &amp;mut T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L593-L599"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L604-L610"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -208,7 +214,7 @@ free(x);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">alloc_zeroed</span>&lt;T&gt;() -> &amp;mut T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L615-L621"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L626-L632"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -237,7 +243,7 @@ free(x);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">free</span>&lt;T&gt;(a: &amp;mut T)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L643-L645"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L654-L656"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -272,7 +278,7 @@ impl Box&lt;T&gt; {
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">size_of</span>&lt;T&gt;() -> <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L658-L661"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L669-L672"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -298,7 +304,7 @@ assert_eq!(size_of::&lt;u64&gt;(), 8);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">align_of</span>&lt;T&gt;() -> <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L675-L678"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L686-L689"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -325,7 +331,7 @@ assert_eq!(align_of::&lt;u64&gt;(), 8);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">swap</span>&lt;T&gt;(a: &amp;mut T, b: &amp;mut T)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L694-L698"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L705-L709"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -354,7 +360,7 @@ assert_eq!(b, 1);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">replace</span>&lt;T&gt;(a: &amp;mut T, b: T) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L713-L716"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L724-L727"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -382,7 +388,7 @@ assert_eq!(a, 2);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">zeroed</span>&lt;T&gt;() -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L731-L741"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L742-L752"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -410,7 +416,7 @@ assert_eq!(a.b, 0);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">uninitialized</span>&lt;T&gt;() -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L771-L775"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L782-L786"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -443,6 +449,40 @@ if val &gt; 0 {  // UB!
     println!("negative");
 }
 </code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3amem%3a%3auninitialized%3b%0a%20%20%20%20%0a%20%20%20%20let%20val%3a%20i32%20%3d%20uninitialized%28%29%3b%0a%20%20%20%20if%20val%20%3e%200%20%7b%20%20%2f%2f%20UB%21%0a%20%20%20%20%20%20%20%20println%21%28%22positive%22%29%3b%0a%20%20%20%20%7d%20else%20%7b%0a%20%20%20%20%20%20%20%20println%21%28%22negative%22%29%3b%0a%20%20%20%20%7d%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.copy_nonoverlapping">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">copy_nonoverlapping</span>&lt;T&gt;(src: &amp;T, dst: &amp;mut T, count: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>)</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L791-L795"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Copies a region of memory from <code class="language-alumina">src</code> to <code class="language-alumina">dst</code>.
+</p><p>
+The memory ranges must not overlap, use <a class="path-link" href="/std/mem/#item.copy">copy</a> if they may be overlapping.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.copy">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">copy</span>&lt;T&gt;(src: &amp;T, dst: &amp;mut T, count: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>)</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L800-L804"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Copies a region of memory from <code class="language-alumina">src</code> to <code class="language-alumina">dst</code>.
+</p><p>
+The ranges may overlap.
 </p><p>
 </p>
 </div>
