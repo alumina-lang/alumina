@@ -106,6 +106,7 @@ impl DiagnosticContext {
             // An error can happen deep inside the code that we didn't write because most of the typechecking
             // happens during or after monomorphization.
             let mut skip = false;
+            let mut has_backtrace = false;
             for frame in error.backtrace {
                 let span = match (frame, skip) {
                     (Marker::Span(span), false) => {
@@ -129,15 +130,19 @@ impl DiagnosticContext {
                 } else {
                     eprintln!(" --> {{ unresolved location }}");
                 }
+                has_backtrace = true;
             }
 
             if let CodeErrorKind::InternalError(_, backtrace) = error.kind {
                 eprintln!();
                 eprintln!("Compiler backtrace:");
                 eprintln!("{:?}", backtrace);
+                has_backtrace = true;
             }
 
-            eprintln!();
+            if has_backtrace {
+                eprintln!();
+            }
         }
 
         Ok(())

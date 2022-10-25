@@ -221,6 +221,17 @@ impl slice {
         }
     }
 
+    /// Returns the element at the given index.
+    ///
+    /// If the index is out of bounds, the function will return `None`.
+    fn get<T>(self: &[T], index: usize) -> Option<T> {
+        if index < self.len() {
+            Option::some(*(self._ptr + index))
+        } else {
+            Option::none()
+        }
+    }
+
     /// Copy a slice into a fixed-size array.
     ///
     /// The length of the result array must exactly match the length of the slice.
@@ -772,6 +783,24 @@ fn zeroed<T>() -> T {
 fn uninitialized<T>() -> T {
     let ret: T;
     ret
+}
+
+/// Copies a region of memory from `src` to `dst`.
+///
+/// The memory ranges must not overlap, use [copy] if they may be overlapping.
+fn copy_nonoverlapping<T>(src: &T, dst: &mut T, count: usize) {
+    when T: !builtins::ZeroSized {
+        libc::memcpy(dst as &mut void, src as &void, count * size_of::<T>());
+    }
+}
+
+/// Copies a region of memory from `src` to `dst`.
+///
+/// The ranges may overlap.
+fn copy<T>(src: &T, dst: &mut T, count: usize) {
+    when T: !builtins::ZeroSized {
+        libc::memmove(dst as &mut void, src as &void, count * size_of::<T>());
+    }
 }
 
 #[cfg(all(test, test_std))]
