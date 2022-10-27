@@ -487,7 +487,53 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 CodegenIntrinsicKind::Asm(n) => {
                     w!(self.fn_bodies, "asm volatile({:?})", *n);
                 }
+                CodegenIntrinsicKind::Uninitialized => {
+                    // I wish there was a prettier way to do this
+                    w!(
+                        self.fn_bodies,
+                        "({{ {} __discard; __discard; }})",
+                        self.ctx.get_type(expr.ty)
+                    );
+                }
             },
+            ExprKind::Array(elems) => {
+                self.type_writer.add_type(expr.ty)?;
+                w!(self.fn_bodies, "({})", self.ctx.get_type(expr.ty));
+                w!(self.fn_bodies, "{{.__data={{\n");
+                for elem in elems.iter() {
+                    self.indent();
+                    self.write_expr(elem, false)?;
+                    w!(self.fn_bodies, ",\n");
+                }
+                self.indent();
+                w!(self.fn_bodies, "}}}}");
+            }
+            ExprKind::Tuple(inits) => {
+                self.type_writer.add_type(expr.ty)?;
+                w!(self.fn_bodies, "({})", self.ctx.get_type(expr.ty));
+                w!(self.fn_bodies, "{{\n");
+                for init in inits.iter() {
+                    self.indent();
+                    w!(self.fn_bodies, "._{}=", init.index);
+                    self.write_expr(&init.value, false)?;
+                    w!(self.fn_bodies, ",\n");
+                }
+                self.indent();
+                w!(self.fn_bodies, "}}");
+            }
+            ExprKind::Struct(inits) => {
+                self.type_writer.add_type(expr.ty)?;
+                w!(self.fn_bodies, "({})", self.ctx.get_type(expr.ty));
+                w!(self.fn_bodies, "{{\n");
+                for init in inits.iter() {
+                    self.indent();
+                    w!(self.fn_bodies, ".{}=", self.ctx.get_name(init.field));
+                    self.write_expr(&init.value, false)?;
+                    w!(self.fn_bodies, ",\n");
+                }
+                self.indent();
+                w!(self.fn_bodies, "}}");
+            }
             ExprKind::Void => {}
         }
 

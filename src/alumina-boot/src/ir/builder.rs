@@ -95,6 +95,19 @@ impl<'ir> ExpressionBuilder<'ir> {
         result.alloc_on(self.ir)
     }
 
+    pub fn array<I>(&self, args: I, ty: TyP<'ir>) -> ExprP<'ir>
+    where
+        I: IntoIterator<Item = ExprP<'ir>>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        let result = Expr::rvalue(
+            ExprKind::Array(self.ir.arena.alloc_slice_fill_iter(args)),
+            ty,
+        );
+
+        result.alloc_on(self.ir)
+    }
+
     pub fn lit(&self, lit: Lit<'ir>, ty: TyP<'ir>) -> ExprP<'ir> {
         Expr::rvalue(ExprKind::Lit(lit), ty).alloc_on(self.ir)
     }

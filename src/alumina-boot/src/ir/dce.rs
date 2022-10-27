@@ -76,7 +76,21 @@ impl<'ir> DeadCodeEliminator<'ir> {
                 self.visit_expr(then)?;
                 self.visit_expr(els)?;
             }
-
+            ExprKind::Array(e) => {
+                for e in e.iter() {
+                    self.visit_expr(e)?;
+                }
+            }
+            ExprKind::Tuple(e) => {
+                for e in e.iter() {
+                    self.visit_expr(e.value)?;
+                }
+            }
+            ExprKind::Struct(e) => {
+                for e in e.iter() {
+                    self.visit_expr(e.value)?;
+                }
+            }
             ExprKind::Block(stmts, ret) => {
                 for s in stmts {
                     match s {

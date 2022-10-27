@@ -210,6 +210,8 @@ pub enum CodeErrorKind {
     BuiltinTypesAreSpecialMkay,
     #[error("invalid type operator")]
     InvalidTypeOperator,
+    #[error("transparent structs and unions must have exactly one field")]
+    InvalidTransparent,
 
     #[error("cannot determine source span")]
     NoSpanInformation,

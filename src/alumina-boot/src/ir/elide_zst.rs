@@ -3,12 +3,14 @@ use std::collections::HashSet;
 use crate::{
     ast::{BuiltinType, UnOp},
     common::ArenaAllocatable,
+    intrinsics::CodegenIntrinsicKind,
     ir::ValueType,
 };
 
 use super::{
     builder::{ExpressionBuilder, TypeBuilder},
-    Expr, ExprKind, ExprP, FuncBody, IrCtx, IrId, Lit, LocalDef, Statement, Ty, UnqualifiedKind,
+    Expr, ExprKind, ExprP, FuncBody, IrCtx, IrId, Lit, LocalDef, Statement, StructInit, TupleInit,
+    Ty, UnqualifiedKind,
 };
 
 // The purpose of ZST elider is to take all reads and writes of zero-sized types and
@@ -94,6 +96,76 @@ impl<'ir> ZstElider<'ir> {
                 self.elide_zst_expr(rhs),
                 expr.ty,
             ),
+            ExprKind::Tuple(items) => {
+                let mut statements = Vec::new();
+                let mut inits = Vec::new();
+                for arg in items.iter() {
+                    let value = self.elide_zst_expr(arg.value);
+
+                    if value.ty.is_zero_sized() {
+                        statements.push(Statement::Expression(value));
+                    } else {
+                        inits.push(TupleInit {
+                            index: arg.index,
+                            value,
+                        });
+                    }
+                }
+
+                builder.block(
+                    statements,
+                    Expr {
+                        kind: ExprKind::Tuple(
+                            self.ir.arena.alloc_slice_fill_iter(inits.into_iter()),
+                        ),
+                        is_const: expr.is_const,
+                        ty: expr.ty,
+                        value_type: expr.value_type,
+                    }
+                    .alloc_on(self.ir),
+                )
+            }
+            ExprKind::Struct(fields) => {
+                let mut statements = Vec::new();
+                let mut inits = Vec::new();
+                for arg in fields.iter() {
+                    let value = self.elide_zst_expr(arg.value);
+
+                    if value.ty.is_zero_sized() {
+                        statements.push(Statement::Expression(value));
+                    } else {
+                        inits.push(StructInit {
+                            field: arg.field,
+                            value,
+                        });
+                    }
+                }
+
+                builder.block(
+                    statements,
+                    Expr {
+                        kind: ExprKind::Struct(
+                            self.ir.arena.alloc_slice_fill_iter(inits.into_iter()),
+                        ),
+                        is_const: expr.is_const,
+                        ty: expr.ty,
+                        value_type: expr.value_type,
+                    }
+                    .alloc_on(self.ir),
+                )
+            }
+            ExprKind::Array(elems) => {
+                if expr.ty.is_zero_sized() {
+                    builder.block(
+                        elems
+                            .iter()
+                            .map(|e| Statement::Expression(self.elide_zst_expr(*e))),
+                        builder.void(expr.ty, expr.value_type),
+                    )
+                } else {
+                    builder.array(elems.iter().map(|e| self.elide_zst_expr(*e)), expr.ty)
+                }
+            }
             ExprKind::AssignOp(op, lhs, rhs) => {
                 builder.assign_op(op, self.elide_zst_expr(lhs), self.elide_zst_expr(rhs))
             }
@@ -112,7 +184,7 @@ impl<'ir> ZstElider<'ir> {
 
                 let extract_args = match callee.kind {
                     ExprKind::CodegenIntrinsic(_) => false,
-                    _ => args.iter().any(|arg| arg.ty.is_zero_sized()),
+                    _ => args.iter().any(|arg| arg.ty.is_zero_sized() && !arg.pure()),
                 };
 
                 if extract_args {
@@ -237,7 +309,12 @@ impl<'ir> ZstElider<'ir> {
             ExprKind::ConstValue(_) => expr,
             ExprKind::Unreachable => expr,
             ExprKind::Void => expr,
-            ExprKind::CodegenIntrinsic(_) => expr,
+            ExprKind::CodegenIntrinsic(ref kind) => match kind {
+                CodegenIntrinsicKind::Uninitialized if expr.ty.is_zero_sized() => {
+                    builder.void(expr.ty, ValueType::RValue)
+                }
+                _ => expr,
+            },
             ExprKind::Goto(label) => {
                 self.used_ids.insert(label);
                 expr

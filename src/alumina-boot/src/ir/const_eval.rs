@@ -8,6 +8,7 @@ use std::{
 };
 
 use super::{BuiltinType, ExprKind, ExprP, Lit, Statement, Ty, UnOp, UnqualifiedKind};
+use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Hash)]
 pub enum Value<'ir> {
@@ -92,7 +93,6 @@ macro_rules! numeric_of_kind {
 }
 
 pub(crate) use numeric_of_kind;
-use thiserror::Error;
 
 impl<'ir> Value<'ir> {
     pub fn type_kind<'a>(&'a self) -> Ty<'ir> {
@@ -506,17 +506,17 @@ pub fn const_eval(expr: ExprP<'_>) -> Result<Value<'_>> {
         ExprKind::Void => Ok(Value::Void),
         ExprKind::Binary(op, lhs, rhs) => {
             let lhs = const_eval(lhs)?;
-            let rhs = const_eval(rhs)?;
 
+            // Special case for short-circuiting operators
+            match (op, lhs) {
+                (BinOp::Or, Value::Bool(a)) => return if a { Ok(lhs) } else { const_eval(rhs) },
+                (BinOp::And, Value::Bool(a)) => return if a { const_eval(rhs) } else { Ok(lhs) },
+                (BinOp::Or | BinOp::And, _) => return Err(ConstEvalError::CompilerBug),
+                _ => {}
+            };
+
+            let rhs = const_eval(rhs)?;
             match op {
-                BinOp::And => match (lhs, rhs) {
-                    (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a && b)),
-                    _ => Err(ConstEvalError::CompilerBug),
-                },
-                BinOp::Or => match (lhs, rhs) {
-                    (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a || b)),
-                    _ => Err(ConstEvalError::CompilerBug),
-                },
                 BinOp::BitAnd => lhs & rhs,
                 BinOp::BitOr => lhs | rhs,
                 BinOp::BitXor => lhs ^ rhs,
@@ -539,6 +539,7 @@ pub fn const_eval(expr: ExprP<'_>) -> Result<Value<'_>> {
                 BinOp::Mul => lhs * rhs,
                 BinOp::Div => lhs / rhs,
                 BinOp::Mod => lhs % rhs,
+                _ => Err(ConstEvalError::Unsupported),
             }
         }
         ExprKind::Unary(op, inner) => {
@@ -640,8 +641,6 @@ pub fn const_eval(expr: ExprP<'_>) -> Result<Value<'_>> {
         }
         ExprKind::If(cond, then, els) => {
             let cond = const_eval(cond)?;
-            let then = const_eval(then)?;
-            let els = const_eval(els)?;
 
             let cond_value = match cond {
                 Value::Bool(b) => b,
@@ -649,9 +648,9 @@ pub fn const_eval(expr: ExprP<'_>) -> Result<Value<'_>> {
             };
 
             if cond_value {
-                Ok(then)
+                const_eval(then)
             } else {
-                Ok(els)
+                const_eval(els)
             }
         }
         ExprKind::Block(statements, ret) => {

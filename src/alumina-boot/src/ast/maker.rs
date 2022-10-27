@@ -230,6 +230,10 @@ impl<'ast> AstItemMaker<'ast> {
             _ => unimplemented!(),
         };
 
+        if attributes.contains(&Attribute::Transparent) && fields.len() != 1 {
+            return Err(CodeErrorKind::InvalidTransparent).with_span_from(&scope, node);
+        }
+
         let (associated_fns, mixins) = self.resolve_associated_items(impl_scopes)?;
 
         let span = Span {
