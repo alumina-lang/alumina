@@ -56,6 +56,12 @@
 <a href="/std/builtins/f32.html#item.to_bits">to_bits</a>
 </li>
 <li>
+<a href="/std/builtins/f32.html#item.next_up">next_up</a>
+</li>
+<li>
+<a href="/std/builtins/f32.html#item.next_down">next_down</a>
+</li>
+<li>
 <a href="/std/builtins/f32.html#item.acos">acos</a>
 </li>
 <li>
@@ -174,7 +180,7 @@ Returns <code class="language-alumina">None</code> if the string does not repres
 number.
 </p><p>
 </p>
-<h2> Example</h2>
+<h3> Example</h3>
 <p>
 <pre class="with-playground-link"><code class="language-alumina">assert_eq!(f32::parse("3.1415"), Option::some(3.1415f32));
 assert_eq!(f32::parse("inf"), Option::some(f32::infinity()));
@@ -263,12 +269,19 @@ Returns the machine epsilon for <code class="language-alumina">f32</code>.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">from_bits</span>(bits: <a href="/std/builtins/u32.html"><span class="identifier-type">u32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L540-L542"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L546-L549"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Create <code class="language-alumina">f32</code> from raw bits
+Create <code class="language-alumina">f64</code> from raw bits
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let f = f32::from_bits(0x40490fdb);
+assert_eq!(f, std::math::PI as f32);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20let%20f%20%3d%20f32%3a%3afrom%5fbits%280x40490fdb%29%3b%0a%20%20%20%20assert%5feq%21%28f%2c%20std%3a%3amath%3a%3aPI%20as%20f32%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -278,12 +291,75 @@ Create <code class="language-alumina">f32</code> from raw bits
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">to_bits</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/u32.html"><span class="identifier-type">u32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L545-L547"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L558-L561"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Returns the raw bits of <code class="language-alumina">self</code>
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let x = 1.0f32;
+assert_eq!(x.to_bits(), 0x3f800000u32);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20let%20x%20%3d%201%2e0f32%3b%0a%20%20%20%20assert%5feq%21%28x%2eto%5fbits%28%29%2c%200x3f800000u32%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.next_up">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">next_up</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L576-L594"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns the smallest floating point number strictly greater than <code class="language-alumina">self</code>.
+</p><p>
+If <code class="language-alumina">self</code> is NaN or positive infinity, it returns <code class="language-alumina">self</code> unchanged.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">assert_eq!(0.0f32.next_up(), 1.0e-45f32);
+assert_eq!(1.0f32.next_up(), 1.0000001f32);
+assert_eq!((-1.0f32).next_up(), -0.99999994f32);
+assert_eq!(f32::neg_infinity().next_up(), -3.4028235e38f32);
+assert_eq!(f32::infinity().next_up(), f32::infinity());
+assert!(f32::nan().next_up().is_nan());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20assert%5feq%21%280%2e0f32%2enext%5fup%28%29%2c%201%2e0e%2d45f32%29%3b%0a%20%20%20%20assert%5feq%21%281%2e0f32%2enext%5fup%28%29%2c%201%2e0000001f32%29%3b%0a%20%20%20%20assert%5feq%21%28%28%2d1%2e0f32%29%2enext%5fup%28%29%2c%20%2d0%2e99999994f32%29%3b%0a%20%20%20%20assert%5feq%21%28f32%3a%3aneg%5finfinity%28%29%2enext%5fup%28%29%2c%20%2d3%2e4028235e38f32%29%3b%0a%20%20%20%20assert%5feq%21%28f32%3a%3ainfinity%28%29%2enext%5fup%28%29%2c%20f32%3a%3ainfinity%28%29%29%3b%0a%20%20%20%20assert%21%28f32%3a%3anan%28%29%2enext%5fup%28%29%2eis%5fnan%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.next_down">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">next_down</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L609-L627"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns the largest floating point number strictly less than <code class="language-alumina">self</code>.
+</p><p>
+If <code class="language-alumina">self</code> is NaN or negative infinity, it returns <code class="language-alumina">self</code> unchanged.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">assert_eq!(0.0f32.next_down(), -1.0e-45f32);
+assert_eq!(1.0f32.next_down(), 0.99999994f32);
+assert_eq!((-1.0f32).next_down(), -1.0000001f32);
+assert_eq!(f32::infinity().next_down(), 3.4028235e38f32);
+assert_eq!(f32::neg_infinity().next_down(), f32::neg_infinity());
+assert!(f32::nan().next_down().is_nan());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20assert%5feq%21%280%2e0f32%2enext%5fdown%28%29%2c%20%2d1%2e0e%2d45f32%29%3b%0a%20%20%20%20assert%5feq%21%281%2e0f32%2enext%5fdown%28%29%2c%200%2e99999994f32%29%3b%0a%20%20%20%20assert%5feq%21%28%28%2d1%2e0f32%29%2enext%5fdown%28%29%2c%20%2d1%2e0000001f32%29%3b%0a%20%20%20%20assert%5feq%21%28f32%3a%3ainfinity%28%29%2enext%5fdown%28%29%2c%203%2e4028235e38f32%29%3b%0a%20%20%20%20assert%5feq%21%28f32%3a%3aneg%5finfinity%28%29%2enext%5fdown%28%29%2c%20f32%3a%3aneg%5finfinity%28%29%29%3b%0a%20%20%20%20assert%21%28f32%3a%3anan%28%29%2enext%5fdown%28%29%2eis%5fnan%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -293,7 +369,7 @@ Returns the raw bits of <code class="language-alumina">self</code>
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">acos</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L550-L553"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L630-L633"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -308,7 +384,7 @@ Inverse cosine
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">asin</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L556-L559"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L636-L639"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -323,7 +399,7 @@ Inverse sine
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">atan</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L562-L565"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L642-L645"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -338,7 +414,7 @@ Inverse tangent
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">atan2</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>, other: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L568-L571"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L648-L651"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -353,7 +429,7 @@ Four-quadrant inverse tangent
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">atanh</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L574-L577"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L654-L657"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -368,7 +444,7 @@ Inverse hyperbolic cosine
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">cbrt</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L580-L583"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L660-L663"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -383,7 +459,7 @@ Cube root
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">ceil</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L586-L589"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L666-L669"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -398,7 +474,7 @@ Ceiling of number
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">cos</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L592-L595"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L672-L675"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -413,7 +489,7 @@ Cosine
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">cosh</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L598-L601"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L678-L681"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -428,7 +504,7 @@ Hyperbolic cosine
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">erf</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L604-L607"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L684-L687"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -443,7 +519,7 @@ Gauss error function
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">erfc</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L610-L613"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L690-L693"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -458,7 +534,7 @@ Complementary error function (1 - <a class="" href="/std/builtins/f32.html#item.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">exp</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L616-L619"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L696-L699"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -473,7 +549,7 @@ Exponential function (e^<code class="language-alumina">self</code>)
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">floor</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L622-L625"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L702-L705"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -488,7 +564,7 @@ Floor of number
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">frexp</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> (<a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>, <a href="/std/builtins/i32.html"><span class="identifier-type">i32</span></a>)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L630-L635"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L710-L715"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -505,7 +581,7 @@ Inverse of <a class="path-link" href="/std/builtins/f32.html#item.ldexp">ldexp</
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">ldexp</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>, exp: <a href="/std/builtins/i32.html"><span class="identifier-type">i32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L640-L643"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L720-L723"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -522,7 +598,7 @@ Inverse of <a class="path-link" href="/std/builtins/f32.html#item.frexp">frexp</
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">log</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L646-L649"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L726-L729"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -537,7 +613,7 @@ Natural logarithm
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">log2</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L652-L655"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L732-L735"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -552,7 +628,7 @@ Base 2 logarithm
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">log10</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L658-L661"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L738-L741"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -567,7 +643,7 @@ Base 10 logarithm
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">modf</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> (<a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>, <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L664-L669"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L744-L749"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -582,7 +658,7 @@ Decompose <code class="language-alumina">self</code> into a whole and fractional
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">pow</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>, other: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L672-L675"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L752-L755"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -597,7 +673,7 @@ Power function
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">round</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L680-L683"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L760-L763"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -614,7 +690,7 @@ If the number is halfway between two integers, it is rounded away from zero.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">sin</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L686-L689"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L766-L769"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -629,7 +705,7 @@ Sine function
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">sinh</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L692-L695"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L772-L775"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -644,7 +720,7 @@ Hyperbolic sine function
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">sqrt</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L698-L701"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L778-L781"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -659,7 +735,7 @@ Square root
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">tan</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L704-L707"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L784-L787"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -674,7 +750,7 @@ Tangent function
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">tanh</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L710-L713"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L790-L793"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -689,7 +765,7 @@ Hyperbolic tangent function
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">trunc</span>(self: <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a>) -> <a href="/std/builtins/f32.html"><span class="identifier-type">f32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L716-L719"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L796-L799"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -718,7 +794,7 @@ Returns the integer part of <code class="language-alumina">self</code> (round to
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">equals</span>(lhs: &amp;<a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>, rhs: &amp;<a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1287-L1287"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1447-L1447"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -735,7 +811,7 @@ See <a class="path-link" href="/std/cmp/Equatable.html">Equatable</a> for detail
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">not_equals</span>(lhs: &amp;<a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>, rhs: &amp;<a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1289-L1289"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1449-L1449"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -750,7 +826,7 @@ Returns <code class="language-alumina">false</code> if arguments are equal, <cod
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">compare</span>(lhs: &amp;<a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>, rhs: &amp;<a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>) -> <a href="/std/cmp/Ordering.html"><span class="identifier-type">Ordering</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1291-L1300"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1451-L1460"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -767,7 +843,7 @@ See <a class="path-link" href="/std/cmp/Comparable.html">Comparable</a> for deta
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">less_than</span>(lhs: &amp;<a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>, rhs: &amp;<a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1303-L1303"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1463-L1463"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -782,7 +858,7 @@ Returns <code class="language-alumina">true</code> if <code class="language-alum
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">less_than_or_equal</span>(lhs: &amp;<a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>, rhs: &amp;<a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1305-L1305"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1465-L1465"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -797,7 +873,7 @@ Returns <code class="language-alumina">true</code> if <code class="language-alum
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">greater_than</span>(lhs: &amp;<a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>, rhs: &amp;<a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1307-L1307"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1467-L1467"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -812,7 +888,7 @@ Returns <code class="language-alumina">true</code> if <code class="language-alum
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">greater_than_or_equal</span>(lhs: &amp;<a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>, rhs: &amp;<a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1309-L1309"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1469-L1469"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -839,7 +915,7 @@ F: <a href="/std/fmt/Formatter.html"><span class="identifier-type">Formatter</sp
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">fmt</span>(self: &amp;<a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>, formatter: &amp;mut F) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>, <a href="/std/fmt/Error.html"><span class="identifier-type">Error</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1357-L1360"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1517-L1520"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -866,7 +942,7 @@ See <a class="path-link" href="/std/fmt/Formattable.html">Formattable</a> for de
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">nan</span>() -> <a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1793-L1796"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1953-L1956"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -881,7 +957,7 @@ Returns <code class="language-alumina">NaN</code>.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">infinity</span>() -> <a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1799-L1802"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1959-L1962"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -896,7 +972,7 @@ Returns a positive infinity.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">neg_infinity</span>() -> <a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1805-L1808"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1965-L1968"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -911,7 +987,7 @@ Returns a negative infinity.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">is_nan</span>(self: <a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1811-L1814"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1971-L1974"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -926,7 +1002,7 @@ Returns <code class="language-alumina">true</code> if the number is NaN, <code c
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">is_infinite</span>(self: <a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1817-L1820"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1977-L1980"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -941,7 +1017,7 @@ Returns <code class="language-alumina">true</code> if the number is infinite, <c
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">is_finite</span>(self: <a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1823-L1826"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/builtins.alu#L1983-L1986"/>source</a>
 </div>
 </div>
 <div class="item-doc">
