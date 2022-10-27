@@ -495,7 +495,7 @@ impl f32 {
     /// Returns `None` if the string does not represent a valid floating point
     /// number.
     ///
-    /// # Example
+    /// ## Example
     /// ```
     /// assert_eq!(f32::parse("3.1415"), Option::some(3.1415f32));
     /// assert_eq!(f32::parse("inf"), Option::some(f32::infinity()));
@@ -536,14 +536,94 @@ impl f32 {
         1.19209290e-07f32
     }
 
-    /// Create `f32` from raw bits
+    /// Create `f64` from raw bits
+    ///
+    /// ## Example
+    /// ```
+    /// let f = f32::from_bits(0x40490fdb);
+    /// assert_eq!(f, std::math::PI as f32);
+    /// ```
+    #[inline(always)]
     fn from_bits(bits: u32) -> f32 {
         util::transmute(bits)
     }
 
     /// Returns the raw bits of `self`
+    ///
+    /// ## Example
+    /// ```
+    /// let x = 1.0f32;
+    /// assert_eq!(x.to_bits(), 0x3f800000u32);
+    /// ```
+    #[inline(always)]
     fn to_bits(self: f32) -> u32 {
         util::transmute(self)
+    }
+
+    /// Returns the smallest floating point number strictly greater than `self`.
+    ///
+    /// If `self` is NaN or positive infinity, it returns `self` unchanged.
+    ///
+    /// ## Example
+    /// ```
+    /// assert_eq!(0.0f32.next_up(), 1.0e-45f32);
+    /// assert_eq!(1.0f32.next_up(), 1.0000001f32);
+    /// assert_eq!((-1.0f32).next_up(), -0.99999994f32);
+    /// assert_eq!(f32::neg_infinity().next_up(), -3.4028235e38f32);
+    /// assert_eq!(f32::infinity().next_up(), f32::infinity());
+    /// assert!(f32::nan().next_up().is_nan());
+    /// ```
+    fn next_up(self: f32) -> f32 {
+        const TINY_BITS: u32 = 0x1; // Smallest positive f32.
+        const CLEAR_SIGN_MASK: u32 = 0x7fffffff;
+
+        let bits = self.to_bits();
+        if self.is_nan() || bits == f32::infinity().to_bits() {
+            return self;
+        }
+
+        let abs = bits & CLEAR_SIGN_MASK;
+        let next_bits = if abs == 0 {
+            TINY_BITS
+        } else if bits == abs {
+            bits + 1
+        } else {
+            bits - 1
+        };
+        f32::from_bits(next_bits)
+    }
+
+    /// Returns the largest floating point number strictly less than `self`.
+    ///
+    /// If `self` is NaN or negative infinity, it returns `self` unchanged.
+    ///
+    /// ## Example
+    /// ```
+    /// assert_eq!(0.0f32.next_down(), -1.0e-45f32);
+    /// assert_eq!(1.0f32.next_down(), 0.99999994f32);
+    /// assert_eq!((-1.0f32).next_down(), -1.0000001f32);
+    /// assert_eq!(f32::infinity().next_down(), 3.4028235e38f32);
+    /// assert_eq!(f32::neg_infinity().next_down(), f32::neg_infinity());
+    /// assert!(f32::nan().next_down().is_nan());
+    /// ```
+    fn next_down(self: f32) -> f32 {
+        const NEG_TINY_BITS: u32 = 0x80000001; // Smallest (in magnitude) negative f32.
+        const CLEAR_SIGN_MASK: u32 = 0x7fffffff;
+
+        let bits = self.to_bits();
+        if self.is_nan() || bits == f32::neg_infinity().to_bits() {
+            return self;
+        }
+
+        let abs = bits & CLEAR_SIGN_MASK;
+        let next_bits = if abs == 0 {
+            NEG_TINY_BITS
+        } else if bits == abs {
+            bits - 1
+        } else {
+            bits + 1
+        };
+        f32::from_bits(next_bits)
     }
 
     /// Inverse cosine
@@ -733,7 +813,7 @@ impl f64 {
     /// Returns `None` if the string does not represent a valid floating point
     /// number.
     ///
-    /// # Example
+    /// ## Example
     /// ```
     /// assert_eq!(f64::parse("3.1415"), Option::some(3.1415));
     /// assert_eq!(f64::parse("inf"), Option::some(f64::infinity()));
@@ -775,13 +855,93 @@ impl f64 {
     }
 
     /// Create `f64` from raw bits
+    ///
+    /// ## Example
+    /// ```
+    /// let f = f64::from_bits(0x400921fb54442d18);
+    /// assert_eq!(f, std::math::PI);
+    /// ```
+    #[inline(always)]
     fn from_bits(bits: u64) -> f64 {
         util::transmute(bits)
     }
 
     /// Returns the raw bits of `self`
+    ///
+    /// ## Example
+    /// ```
+    /// let x = 1.0f64;
+    /// assert_eq!(x.to_bits(), 0x3ff0000000000000u64);
+    /// ```
+    #[inline(always)]
     fn to_bits(self: f64) -> u64 {
         util::transmute(self)
+    }
+
+    /// Returns the smallest floating point number strictly greater than `self`.
+    ///
+    /// If `self` is NaN or positive infinity, it returns `self` unchanged.
+    ///
+    /// ## Example
+    /// ```
+    /// assert_eq!(0.0.next_up(), 5.0e-324);
+    /// assert_eq!(1.0.next_up(), 1.0000000000000002);
+    /// assert_eq!((-1.0).next_up(), -0.9999999999999999);
+    /// assert_eq!(f64::neg_infinity().next_up(), -1.7976931348623157e308);
+    /// assert_eq!(f64::infinity().next_up(), f64::infinity());
+    /// assert!(f64::nan().next_up().is_nan());
+    /// ```
+    fn next_up(self: f64) -> f64 {
+        const TINY_BITS: u64 = 0x1; // Smallest positive f64.
+        const CLEAR_SIGN_MASK: u64 = 0x7fffffffffffffff;
+
+        let bits = self.to_bits();
+        if self.is_nan() || bits == f64::infinity().to_bits() {
+            return self;
+        }
+
+        let abs = bits & CLEAR_SIGN_MASK;
+        let next_bits = if abs == 0 {
+            TINY_BITS
+        } else if bits == abs {
+            bits + 1
+        } else {
+            bits - 1
+        };
+        f64::from_bits(next_bits)
+    }
+
+    /// Returns the largest floating point number strictly less than `self`.
+    ///
+    /// If `self` is NaN or negative infinity, it returns `self` unchanged.
+    ///
+    /// ## Example
+    /// ```
+    /// assert_eq!(0.0.next_down(), -5.0e-324);
+    /// assert_eq!(1.0.next_down(), 0.9999999999999999);
+    /// assert_eq!((-1.0).next_down(), -1.0000000000000002);
+    /// assert_eq!(f64::neg_infinity().next_down(), f64::neg_infinity());
+    /// assert_eq!(f64::infinity().next_down(), 1.7976931348623157e308);
+    /// assert!(f64::nan().next_down().is_nan());
+    /// ```
+    fn next_down(self: f64) -> f64 {
+        const NEG_TINY_BITS: u64 = 0x8000000000000001; // Smallest (in magnitude) negative f64.
+        const CLEAR_SIGN_MASK: u64 = 0x7fffffffffffffff;
+
+        let bits = self.to_bits();
+        if self.is_nan() || bits == f64::neg_infinity().to_bits() {
+            return self;
+        }
+
+        let abs = bits & CLEAR_SIGN_MASK;
+        let next_bits = if abs == 0 {
+            NEG_TINY_BITS
+        } else if bits == abs {
+            bits - 1
+        } else {
+            bits + 1
+        };
+        f64::from_bits(next_bits)
     }
 
     /// @ f32::acos
@@ -2041,21 +2201,21 @@ mod tests {
         assert!(!1.0f64.is_nan());
         assert!(!(-1.0f64).is_nan());
         assert!(!f64::infinity().is_nan());
-        assert!(!(-f64::infinity()).is_nan());
+        assert!(!f64::neg_infinity().is_nan());
 
         assert!(!f64::nan().is_infinite());
         assert!(!0.0f64.is_infinite());
         assert!(!1.0f64.is_infinite());
         assert!(!(-1.0f64).is_infinite());
         assert!(f64::infinity().is_infinite());
-        assert!((-f64::infinity()).is_infinite());
+        assert!(f64::neg_infinity().is_infinite());
 
         assert!(!f64::nan().is_finite());
         assert!(0.0f64.is_finite());
         assert!(1.0f64.is_finite());
         assert!((-1.0f64).is_finite());
         assert!(!f64::infinity().is_finite());
-        assert!(!(-f64::infinity()).is_finite());
+        assert!(!f64::neg_infinity().is_finite());
     }
 
     #[test]
@@ -2070,21 +2230,21 @@ mod tests {
         assert!(!1.0f32.is_nan());
         assert!(!(-1.0f32).is_nan());
         assert!(!f32::infinity().is_nan());
-        assert!(!(-f32::infinity()).is_nan());
+        assert!(!f32::neg_infinity().is_nan());
 
         assert!(!f32::nan().is_infinite());
         assert!(!0.0f32.is_infinite());
         assert!(!1.0f32.is_infinite());
         assert!(!(-1.0f32).is_infinite());
         assert!(f32::infinity().is_infinite());
-        assert!((-f32::infinity()).is_infinite());
+        assert!(f32::neg_infinity().is_infinite());
 
         assert!(!f32::nan().is_finite());
         assert!(0.0f32.is_finite());
         assert!(1.0f32.is_finite());
         assert!((-1.0f32).is_finite());
         assert!(!f32::infinity().is_finite());
-        assert!(!(-f32::infinity()).is_finite());
+        assert!(!f32::neg_infinity().is_finite());
     }
 
     #[test]

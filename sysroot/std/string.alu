@@ -1,8 +1,8 @@
 //! String functions
 //!
-//! Alumina is not Unicode-aware and strings are simply byte slices (`&[u8]`) without
-//! any assumed encoding. An exception to this are string literals in code. They are
-//! treated as UTF-8 (but not required to be valid UTF-8), e.g.
+//! Alumina "strings" are simply byte slices (`&[u8]`) without any assumed encoding.
+//! An exception to this are string literals in code. They are treated as UTF-8
+//! (but not required to be valid UTF-8), e.g.
 //!
 //! ```
 //! assert_eq!("😊", "\xf0\x9f\x98\x8a");
@@ -233,6 +233,7 @@ fn trim_end(self: &[u8]) -> &[u8] {
 fn trim(self: &[u8]) -> &[u8] {
     self.trim_start().trim_end()
 }
+
 
 /// Iterator over parts of a string split by a delimiter.
 ///
@@ -549,17 +550,17 @@ mod tests {
 
     #[test]
     fn test_parse_float() {
-        /// Basic sanity tests only. Comprehenive tests are in the `std::fmt::ryu` module.
+        /// Basic sanity tests only. Comprehensive tests are in the `std::fmt::ryu` module.
 
         assert_eq!(parse_float::<f64>("3.1415"), Option::some(3.1415));
         assert_eq!(parse_float::<f32>("3.1415"), Option::some(3.1415f32));
 
         assert_eq!(parse_float::<f64>("inf"), Option::some(f64::infinity()));
-        assert_eq!(parse_float::<f64>("-inf"), Option::some(-f64::infinity()));
+        assert_eq!(parse_float::<f64>("-inf"), Option::some(f64::neg_infinity()));
         assert!(parse_float::<f64>("NaN").unwrap().is_nan());
 
         assert_eq!(parse_float::<f32>("inf"), Option::some(f32::infinity()));
-        assert_eq!(parse_float::<f32>("-inf"), Option::some(-f32::infinity()));
+        assert_eq!(parse_float::<f32>("-inf"), Option::some(f32::neg_infinity()));
         assert!(parse_float::<f32>("NaN").unwrap().is_nan());
 
         assert_eq!(parse_float::<f64>(""), Option::none());
