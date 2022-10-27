@@ -1,0 +1,891 @@
+//! Utilities for handling Unicode text
+
+const TAG_CONT: u8 = 0b10000000;
+const TAG_TWO_B: u8 = 0b11000000;
+const TAG_THREE_B: u8 = 0b11100000;
+const TAG_FOUR_B: u8 = 0b11110000;
+const MAX_ONE_B: u32 = 0x80;
+const MAX_TWO_B: u32 = 0x800;
+const MAX_THREE_B: u32 = 0x10000;
+
+/// Error type for Unicode conversion
+enum Error {
+    BufferTooSmall,
+    InvalidCodepoint,
+    InvalidUTF8,
+    InvalidUTF16,
+    SurrogateMismatch
+}
+
+impl Error {
+    /// @ cmp::Equatable::equals
+    fn equals(self: &Error, other: &Error) -> bool {
+        *self == *other
+    }
+
+    /// @ fmt::Formattable::fmt
+    fn fmt<F: fmt::Formatter<F>>(self: &Error, f: &mut F) -> fmt::Result {
+        switch *self {
+            Error::BufferTooSmall => f.write_str("buffer too small"),
+            Error::InvalidCodepoint => f.write_str("invalid codepoint"),
+            Error::InvalidUTF8 => f.write_str("invalid UTF-8"),
+            Error::InvalidUTF16 => f.write_str("invalid UTF-16"),
+            Error::SurrogateMismatch => f.write_str("surrogate mismatch")
+            _ => unreachable!()
+        }
+    }
+
+    mixin cmp::Equatable<Error>;
+}
+
+/// Returns the number of bytes needed to encode the given Unicode
+/// code point as UTF-8.
+fn len_utf8(code: u32) -> usize {
+    if code < MAX_ONE_B {
+        1
+    } else if code < MAX_TWO_B {
+        2
+    } else if code < MAX_THREE_B {
+        3
+    } else {
+        4
+    }
+}
+
+/// Returns the number of 16-bit values needed to encode the
+/// given Unicode code point as UTF-16.
+fn len_utf16(code: u32) -> usize {
+    if code & 0xFFFF == code {
+        1
+    } else {
+        2
+    }
+}
+
+/// Returns `true` if the Unicode code point is a valid
+/// Unicode scalar value.
+///
+/// A Unicode scalar value is a Unicode code point in the range
+/// `U+0000..U+D7FF` or `U+E000..U+10FFFF`.
+///
+/// ## Example
+/// ```
+/// use std::string::unicode::is_scalar_value;
+///
+/// assert!(is_scalar_value(0x61));
+/// assert!(!is_scalar_value(0xD800));
+/// assert!(!is_scalar_value(0x1FFFFF));
+/// ```
+#[inline]
+fn is_scalar_value(code: u32) -> bool {
+    code < 0x110000 && !(code >= 0xD800 && code <= 0xDFFF)
+}
+
+/// Returns `true` if the 16-bit value is a surrogate (either
+/// high or low).
+#[inline]
+fn is_utf16_surrogate(code: u16) -> bool {
+    code >= 0xD800 && code <= 0xDFFF
+}
+
+/// Encodes the given Unicode code point as UTF-8 into the given
+/// byte buffer. Returns the number of bytes written.
+///
+/// Returns an error if the buffer is too small or if the code
+/// point is not a valid Unicode scalar value.
+///
+/// ## Example
+/// ```
+/// use std::string::unicode::encode_utf8;
+///
+/// let buf: [u8; 10];
+/// let size = encode_utf8(0x1F4A9, &buf).unwrap();
+///
+/// assert_eq!(buf[..size] as &[u8], "💩");
+/// ```
+#[inline]
+fn encode_utf8(code: u32, dst: &mut [u8]) -> Result<usize, Error> {
+    if !is_scalar_value(code) {
+        return Result::err(Error::InvalidCodepoint);
+    }
+
+    let len = len_utf8(code);
+    if dst.len() < len {
+        return Result::err(Error::BufferTooSmall);
+    }
+
+    switch len {
+        1 => {
+            dst[0] = code as u8;
+        },
+        2 => {
+            dst[0] = (code >> 6 & 0x1F) as u8 | TAG_TWO_B;
+            dst[1] = (code & 0x3F) as u8 | TAG_CONT;
+        },
+        3 => {
+            dst[0] = (code >> 12 & 0x0F) as u8 | TAG_THREE_B;
+            dst[1] = (code >> 6 & 0x3F) as u8 | TAG_CONT;
+            dst[2] = (code & 0x3F) as u8 | TAG_CONT;
+        },
+        4 => {
+            dst[0] = (code >> 18 & 0x07) as u8 | TAG_FOUR_B;
+            dst[1] = (code >> 12 & 0x3F) as u8 | TAG_CONT;
+            dst[2] = (code >> 6 & 0x3F) as u8 | TAG_CONT;
+            dst[3] = (code & 0x3F) as u8 | TAG_CONT;
+        },
+        _ => unreachable!()
+    }
+
+    Result::ok(len)
+}
+
+
+/// Encodes the given Unicode code point as UTF-16 into the given
+/// 16-bit value buffer. Returns the number of values written.
+///
+/// Returns an error if the buffer is too small or if the code
+/// point is not a valid Unicode scalar value.
+///
+/// ## Example
+/// ```
+/// use std::string::unicode::encode_utf16;
+///
+/// let buf: [u16; 10];
+/// let size = encode_utf16(0x1F4A9, &buf).unwrap();
+///
+/// assert_eq!(size, 2);
+/// assert_eq!(buf[0], 0xD83D);
+/// assert_eq!(buf[1], 0xDCA9);
+/// ```
+#[inline]
+fn encode_utf16(code: u32, dst: &mut [u16]) -> Result<usize, Error> {
+    if !is_scalar_value(code) {
+        return Result::err(Error::InvalidCodepoint);
+    }
+
+    let len = len_utf16(code);
+    if dst.len() < len {
+        return Result::err(Error::BufferTooSmall);
+    }
+
+    if len == 1 {
+        dst[0] = code as u16;
+    } else {
+        code -= 0x10000;
+        dst[0] = ((code >> 10) as u16) + 0xD800;
+        dst[1] = ((code as u16) & 0x3FF) + 0xDC00;
+    }
+
+    Result::ok(len)
+}
+
+/// Decodes a single UTF-8 code point from the given byte slice.
+///
+/// Returns the code point and the number of bytes read. This method ensures
+/// validates that the returned code point is a valid Unicode scalar value and
+/// it that it is encoded with the minimum number of bytes.
+///
+/// See also [decode_utf8_unchecked] which does not perform any validation, but
+/// can be faster.
+///
+/// ## Examples
+/// ```
+/// use std::string::unicode::decode_utf8;
+///
+/// let s = "😊";
+/// let (code, len) = decode_utf8(s).unwrap();
+///
+/// assert_eq!(code, 0x1F60A);
+/// assert_eq!(len, 4);
+/// ```
+///
+/// ```panics
+/// use std::string::unicode::decode_utf8;
+///
+/// let s = "\xed\xa0\x80"; // pseudo-UTF8 representing U+D800 surrogate
+/// let (code, len) = decode_utf8(s).unwrap(); // panics
+/// ```
+#[inline]
+fn decode_utf8(src: &[u8]) -> Result<(u32, usize), Error> {
+    macro check_length($len) {
+        if src.len() < $len {
+            return Result::err(Error::BufferTooSmall);
+        }
+    }
+
+    macro check_continuation($idx) {
+        if (src[$idx] as i8) >= -64 {
+            return Result::err(Error::InvalidUTF8);
+        }
+    }
+
+    check_length!(1);
+    let res = switch internal::UTF8_CHAR_WIDTH[src[0] as usize] {
+        1u8 => (src[0] as u32, 1usize),
+        2u8 => {
+            check_length!(2);
+            check_continuation!(1);
+            ((src[0] as u32 & 0x1F) << 6 | (src[1] as u32 & 0x3F), 2usize)
+        },
+        3u8 => {
+            check_length!(3);
+            if !(src[0] == 0xE0 && src[1] >= 0xA0 && src[1]  <= 0xBF)
+                && !(src[0] >= 0xE1 && src[0] <= 0xEC && src[1] >= 0x80 && src[1] <= 0xBF)
+                && !(src[0] == 0xED && src[1] >= 0x80 && src[1] <= 0x9F)
+                && !(src[0] >= 0xEE && src[0] <= 0xEF && src[1] >= 0x80 && src[1] <= 0xBF) {
+                return Result::err(Error::InvalidUTF8);
+            }
+
+            check_continuation!(2);
+            ((src[0] as u32 & 0x0F) << 12 | (src[1] as u32 & 0x3F) << 6 |
+             (src[2] as u32 & 0x3F), 3usize)
+        },
+        4u8 => {
+            check_length!(4);
+            if !(src[0] == 0xF0 && src[1] >= 0x90 && src[1]  <= 0xBF)
+                && !(src[0] >= 0xF1 && src[0] <=0xF3 && src[1] >= 0x80 && src[1] <= 0xBF)
+                && !(src[0] == 0xF4 && src[1] >= 0x80 && src[1] <= 0x8F) {
+                return Result::err(Error::InvalidUTF8);
+            }
+            check_continuation!(2);
+            check_continuation!(3);
+            ((src[0] as u32 & 0x07) << 18 | (src[1] as u32 & 0x3F) << 12 |
+             (src[2] as u32 & 0x3F) << 6 | (src[3] as u32 & 0x3F), 4usize)
+        }
+        0u8 => return Result::err(Error::InvalidUTF8),
+        _ => unreachable!()
+    };
+
+    Result::ok(res)
+}
+
+/// Decodes a single UTF-8 code point from the given byte slice without any validation.
+///
+/// Returns the code point and the number of bytes read. This method does not
+/// validate that the returned code point is a valid Unicode scalar value or
+/// that it is encoded with the minimum number of bytes.
+///
+/// ## Examples
+/// ```
+/// use std::string::unicode::decode_utf8_unchecked;
+///
+/// let s = "\xed\xa0\x80"; // pseudo-UTF8 representing U+D800 surrogate
+/// let (code, len) = decode_utf8_unchecked(s);
+///
+/// assert_eq!(code, 0xD800);
+/// assert_eq!(len, 3);
+/// ```
+/// ```panics
+/// use std::string::unicode::decode_utf8_unchecked;
+///
+/// let s = "\xed"; // truncated UTF-8 sequence
+/// // panics or UBs depending on whether bound checks are enabled
+/// decode_utf8_unchecked(s);
+/// ```
+#[inline]
+fn decode_utf8_unchecked(src: &[u8]) -> (u32, usize) {
+    if src[0] < TAG_TWO_B {
+        (src[0] as u32, 1)
+    } else if src[0] < TAG_THREE_B {
+        ((src[0] as u32 & 0x1F) << 6 | (src[1] as u32 & 0x3F), 2)
+    } else if src[0] < TAG_FOUR_B {
+        ((src[0] as u32 & 0x0F) << 12 | (src[1] as u32 & 0x3F) << 6 |
+         (src[2] as u32 & 0x3F), 3)
+    } else {
+        ((src[0] as u32 & 0x07) << 18 | (src[1] as u32 & 0x3F) << 12 |
+         (src[2] as u32 & 0x3F) << 6 | (src[3] as u32 & 0x3F), 4)
+    }
+}
+
+#[inline]
+fn decode_utf16(src: &[u16]) -> Result<(u32, usize), Error> {
+    macro check_length($len) {
+        if src.len() < $len {
+            return Result::err(Error::BufferTooSmall);
+        }
+    }
+
+    check_length!(1);
+    let res = if !src[0].is_utf16_surrogate() {
+        // BMP code point
+        (src[0] as u32, 1usize)
+    } else if src[0] >= 0xDC00 {
+        // we expected a high surrogate, but got a low surrogate
+        // this returns a special error code as it can be used to
+        // resynchronize the stream
+        return Result::err(Error::SurrogateMismatch);
+    } else {
+        check_length!(2);
+        if src[1] < 0xDC00 || src[1] > 0xDFFF {
+            // second unit is not a low surrogate
+            return Result::err(Error::InvalidUTF16);
+        }
+        (
+            (((src[0] - 0xD800) as u32 << 10) | ((src[1] - 0xDC00) as u32)) + 0x10000,
+            2usize
+        )
+    };
+
+    if !is_scalar_value(res.0) {
+        return Result::err(Error::InvalidCodepoint);
+    }
+
+    Result::ok(res)
+}
+
+/// Iterator over Unicode scalar values in a UTF-8 string.
+///
+/// See [chars].
+struct CharsIterator {
+    _inner: internal::UTF8CodepointIterator
+}
+
+impl CharsIterator {
+    /// @ iter::Iterator::next
+    #[inline]
+    fn next(self: &mut CharsIterator) -> Option<Result<u32, Error>> {
+        use std::option::try;
+
+        let ret = self._inner.next()?;
+        Option::some(ret.map(|v: (usize, u32)| -> u32 {
+            v.1
+        }))
+    }
+
+    /// @ iter::DoubleEndedIterator::next_back
+    #[inline]
+    fn next_back(self: &mut CharsIterator) -> Option<Result<u32, Error>> {
+        use std::option::try;
+
+        let ret = self._inner.next_back()?;
+        Option::some(ret.map(|v: (usize, u32)| -> u32 {
+            v.1
+        }))
+    }
+
+    mixin iter::Iterator<CharsIterator, Result<u32, Error>>;
+    mixin iter::IteratorExt<CharsIterator, Result<u32, Error>>;
+    mixin iter::DoubleEndedIterator<CharsIterator, Result<u32, Error>>;
+    mixin iter::DoubleEndedIteratorExt<CharsIterator, Result<u32, Error>>;
+}
+
+/// Iterator over indices of Unicode scalar values in a UTF-8 string.
+///
+/// See [char_indices].
+struct CharIndicesIterator {
+    _inner: internal::UTF8CodepointIterator
+}
+
+impl CharIndicesIterator {
+    /// @ iter::Iterator::next
+    #[inline]
+    fn next(self: &mut CharIndicesIterator) -> Option<Result<(usize, u32), Error>> {
+        self._inner.next()
+    }
+
+    /// @ iter::DoubleEndedIterator::next_back
+    #[inline]
+    fn next_back(self: &mut CharIndicesIterator) -> Option<Result<(usize, u32), Error>> {
+        self._inner.next_back()
+    }
+
+    mixin iter::Iterator<CharIndicesIterator, Result<(usize, u32), Error>>;
+    mixin iter::IteratorExt<CharIndicesIterator, Result<(usize, u32), Error>>;
+    mixin iter::DoubleEndedIterator<CharIndicesIterator, Result<(usize, u32), Error>>;
+    mixin iter::DoubleEndedIteratorExt<CharIndicesIterator, Result<(usize, u32), Error>>;
+}
+
+
+/// Iterator over Unicode codepoints of a UTF-8 string.
+///
+/// If the string is not valid UTF-8, then the iterator will return an error when an invalid
+/// sequence is encountered.
+///
+/// ## Examples
+/// ```
+/// use std::string::unicode::chars;
+/// use std::string::unicode::Error;
+///
+/// let ascii = "hello"
+///     .chars()
+///     .map(Result::unwrap::<u32, Error>)
+///     .to_vector();
+/// defer ascii.free();
+///
+/// assert_eq!(ascii[..], &[
+///     'h' as u32,
+///     'e' as u32,
+///     'l' as u32,
+///     'l' as u32,
+///     'o' as u32
+/// ]);
+///
+/// // codepoint != grapheme cluster
+/// let face_in_cloud = "😶‍🌫️"
+///     .chars()
+///     .map(Result::unwrap::<u32, Error>)
+///     .to_vector();
+/// defer face_in_cloud.free();
+///
+/// assert_eq!(face_in_cloud[..], &[
+///     0x1F636, //  Face Without Mouth
+///     0x200D,  //  Zero Width Joiner
+///     0x1F32B, //  Fog
+///     0xFE0F   //  Variation Selector-16
+/// ]);
+/// ```
+///
+/// When invalid UTF-8 is encountered, the iterator will return an error for each byte that is not a start of a valid
+/// sequence, but still advance. This allows for resynchronization of the stream.
+///
+/// ```
+/// use std::string::unicode::chars;
+/// use std::string::unicode::Error;
+///
+/// let it = "a\xed\xa0\x80b" // pseudo-UTF-8 encoding of a surrogate
+///     .chars();
+///
+/// assert_eq!(it.next(), Option::some(Result::ok('a' as u32));
+/// assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
+/// assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
+/// assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
+/// assert_eq!(it.next(), Option::some(Result::ok('b' as u32));
+/// assert_eq!(it.next(), Option::none());
+/// ```
+fn chars(self: &[u8]) -> CharsIterator {
+    CharsIterator {
+        _inner: internal::UTF8CodepointIterator::new(self)
+    }
+}
+
+/// Iterator over byte indices of Unicode codepoints of a UTF-8 string.
+///
+/// If the string is not valid UTF-8, then the iterator will return an error when an invalid
+/// sequence is encountered.
+///
+/// ## Example
+/// ```
+/// use std::string::unicode::char_indices;
+/// use std::string::unicode::Error;
+///
+/// let text = "chữ Quốc ngữ"
+///     .char_indices()
+///     .map(Result::unwrap::<(usize, u32), Error>)
+///     .to_vector();
+/// defer text.free();
+///
+/// assert_eq!(text[..], &[
+///     (0,  'c' as u32),
+///     (1,  'h' as u32),
+///     (2,      0x1EEF),  // ữ
+///     (5,  ' ' as u32),
+///     (6,  'Q' as u32),
+///     (7,  'u' as u32),
+///     (8,      0x1ED1),  // ố
+///     (11, 'c' as u32),
+///     (12, ' ' as u32),
+///     (13, 'n' as u32),
+///     (14, 'g' as u32),
+///     (15,     0x1EEF),  // ữ
+/// ]);
+/// ```
+fn char_indices(self: &[u8]) -> CharIndicesIterator {
+    CharIndicesIterator {
+        _inner: internal::UTF8CodepointIterator::new(self)
+    }
+}
+
+#[docs(no_index)]
+mod internal {
+    static UTF8_CHAR_WIDTH: [u8; 256] = [
+        // 1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 1
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 2
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 3
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 4
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 5
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 6
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 7
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 8
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 9
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // A
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // B
+        0, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, // C
+        2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, // D
+        3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, // E
+        4, 4, 4, 4, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // F
+    ];
+
+    struct UTF8CodepointIterator {
+        _consumed_front: usize,
+        _src: &[u8]
+    }
+
+    impl UTF8CodepointIterator {
+        fn new(slice: &[u8]) -> UTF8CodepointIterator {
+            UTF8CodepointIterator {
+                _consumed_front: 0usize,
+                _src: slice
+            }
+        }
+
+        /// @ iter::Iterator::next
+        fn next(self: &mut UTF8CodepointIterator) -> Option<Result<(usize, u32), Error>> {
+            if self._src.len() == 0 {
+                return Option::none();
+            }
+
+            let ret = decode_utf8(self._src);
+            let ret = if ret.is_ok() {
+                let ret = ret.unwrap();
+                self._src = self._src[ret.1..];
+                self._consumed_front += ret.1;
+
+                (self._consumed_front - ret.1, ret.0)
+            } else {
+                // Advance by one character for potential recovery
+                self._src = self._src[1..];
+                self._consumed_front += 1;
+                // Map all errors to InvalidUTF8 so we have consistent behavior regardless of
+                // direction.
+                return Option::some(Result::err(Error::InvalidUTF8));
+            }
+
+            Option::some(Result::ok(ret))
+        }
+
+        /// @ iter::DoubleEndedIterator::next_back
+        fn next_back(self: &mut UTF8CodepointIterator) -> Option<Result<(usize, u32), Error>> {
+            macro advance() {
+                self._src = self._src[..self._src.len() - 1];
+            }
+
+            if self._src.len() == 0 {
+                return Option::none();
+            }
+
+            let start_index = self._src.len() - 1;
+            if self._src[start_index] < TAG_CONT {
+                /// ASCII character
+                let ret = self._src[start_index] as u32;
+                advance!();
+                return Option::some(Result::ok((start_index, ret)));
+            } else {
+                start_index -= 1;
+            }
+
+            for _ in (0..2) {
+                if start_index == 0 {
+                    advance!();
+                    return Option::some(Result::err(Error::InvalidUTF8));
+                }
+
+                if (self._src[start_index] as i8) >= -64 {
+                    // The byte is not a continuation byte, so we have found the start
+                    // of the codepoint (not necessarily valid).
+                    break;
+                } else {
+                    start_index -= 1;
+                }
+            }
+
+            let ret = decode_utf8(self._src[start_index..]);
+            let ret = if ret.is_ok() {
+                let ret = ret.unwrap();
+
+                // It can happen that there were extra continuation bytes after an otherwise valid
+                // codepoint. We need to check for this and return an error if it happens.
+                if ret.1 != self._src.len() - start_index {
+                    advance!();
+                    return Option::some(Result::err(Error::InvalidUTF8));
+                }
+
+                self._src = self._src[..start_index];
+                (start_index + self._consumed_front, ret.0)
+            } else {
+                advance!();
+                return Option::some(Result::err(Error::InvalidUTF8));
+            };
+
+            Option::some(Result::ok(ret))
+        }
+
+        mixin iter::Iterator<UTF8CodepointIterator, Result<u32, Error>>;
+        mixin iter::IteratorExt<UTF8CodepointIterator, Result<u32, Error>>;
+        mixin iter::DoubleEndedIterator<UTF8CodepointIterator, Result<u32, Error>>;
+        mixin iter::DoubleEndedIteratorExt<UTF8CodepointIterator, Result<u32, Error>>;
+    }
+}
+
+#[docs(hide)]
+#[cfg(all(test_std, test))]
+mod tests {
+    #[test]
+    fn test_utf8() {
+        macro check($ch, $utf8) {
+            let buf: [u8; 4];
+            let len = encode_utf8($ch, &buf).unwrap();
+            assert_eq!(buf[..len], $utf8);
+
+            let (ch, len2) = decode_utf8(&buf).unwrap();
+            assert_eq!(ch, $ch);
+            assert_eq!(len2, len);
+        }
+
+        check!(0x0078, &[0x78]);
+        check!(0x00e9, &[0xc3, 0xa9]);
+        check!(0xa66e, &[0xea, 0x99, 0xae]);
+        check!(0x1f4a9, &[0xf0, 0x9f, 0x92, 0xa9]);
+    }
+
+    #[test]
+    fn test_utf8_unchecked() {
+        macro check($ch, $utf8) {
+            let buf: [u8; 4];
+            let len = encode_utf8($ch, &buf).unwrap();
+            assert_eq!(buf[..len], $utf8);
+
+            let (ch, len2) = decode_utf8_unchecked(&buf);
+            assert_eq!(ch, $ch);
+            assert_eq!(len2, len);
+        }
+
+        check!(0x0078, &[0x78]);
+        check!(0x00e9, &[0xc3, 0xa9]);
+        check!(0xa66e, &[0xea, 0x99, 0xae]);
+        check!(0x1f4a9, &[0xf0, 0x9f, 0x92, 0xa9]);
+
+        // out of range
+        assert_eq!(decode_utf8_unchecked("\xf7\xbf\xbf\xbf"), (0x1fffff, 4));
+
+        // surrogate halves
+        assert_eq!(decode_utf8_unchecked("\xed\xa0\x80"), (0xd800, 3));
+        assert_eq!(decode_utf8_unchecked("\xed\xbf\xbf"), (0xdfff, 3));
+    }
+
+    #[test]
+    fn test_utf8_negative() {
+        let buf: [u8; 10];
+
+        // overlong encoding
+        decode_utf8("\xf0\x80\x80\xb0").unwrap_err();
+        decode_utf8("\xe0\x80\xb0").unwrap_err();
+        decode_utf8("\xc0\xb0").unwrap_err();
+
+        // out of range
+        decode_utf8("\xf7\xbf\xbf\xbf").unwrap_err();
+
+        // surrogate halves
+        decode_utf8("\xed\xa0\x80").unwrap_err();
+        decode_utf8("\xed\xbf\xbf").unwrap_err();
+    }
+
+    #[test]
+    fn test_utf16() {
+        macro check($ch, $utf16) {
+            let buf: [u16; 2];
+            let len = encode_utf16($ch, &buf).unwrap();
+            assert_eq!(buf[..len], $utf16);
+
+            let (ch, len2) = decode_utf16(&buf).unwrap();
+            assert_eq!(ch, $ch);
+            assert_eq!(len2, len);
+        }
+
+        check!(0x0078, &[0x0078]);
+        check!(0x00e9, &[0x00e9]);
+        check!(0xa66e, &[0xa66e]);
+        check!(0x1f4a9, &[0xd83d, 0xdca9]);
+    }
+
+    #[test]
+    fn test_chars() {
+        let vec = "🗾🇯🇵🗻❤️ノルウェイの森"
+            .chars()
+            .map(Result::unwrap::<u32, Error>)
+            .to_vector();
+        defer vec.free();
+
+        assert_eq!(
+            vec[..],
+            &[
+                0x1f5fe,
+                0x1f1ef,
+                0x1f1f5,
+                0x1f5fb,
+                0x2764,
+                0xfe0f,
+                0x30ce,
+                0x30eb,
+                0x30a6,
+                0x30a7,
+                0x30a4,
+                0x306e,
+                0x68ee,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_char_indices() {
+        let vec = "🗾🇯🇵🗻❤️ノルウェイの森"
+            .char_indices()
+            .map(Result::unwrap::<(usize, u32), Error>)
+            .to_vector();
+        defer vec.free();
+
+        assert_eq!(
+            vec[..],
+            &[
+                (0usize, 0x1f5fe),
+                (4usize, 0x1f1ef),
+                (8usize, 0x1f1f5),
+                (12usize, 0x1f5fb),
+                (16usize, 0x2764),
+                (19usize, 0xfe0f),
+                (22usize, 0x30ce),
+                (25usize, 0x30eb),
+                (28usize, 0x30a6),
+                (31usize, 0x30a7),
+                (34usize, 0x30a4),
+                (37usize, 0x306e),
+                (40usize, 0x68ee),
+            ]
+        )
+    }
+
+    #[test]
+    fn test_chars_rev() {
+        let vec = "🗾🇯🇵🗻❤️ノルウェイの森"
+            .chars()
+            .rev()
+            .map(Result::unwrap::<u32, Error>)
+            .to_vector();
+        defer vec.free();
+
+        assert_eq!(
+            vec[..],
+            &[
+                0x68ee,
+                0x306e,
+                0x30a4,
+                0x30a7,
+                0x30a6,
+                0x30eb,
+                0x30ce,
+                0xfe0f,
+                0x2764,
+                0x1f5fb,
+                0x1f1f5,
+                0x1f1ef,
+                0x1f5fe,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_char_indices_rev() {
+        let vec = "🗾🇯🇵🗻❤️ノルウェイの森"
+            .char_indices()
+            .rev()
+            .map(Result::unwrap::<(usize, u32), Error>)
+            .to_vector();
+        defer vec.free();
+
+        assert_eq!(
+            vec[..],
+            &[
+                (40usize, 0x68ee),
+                (37usize, 0x306e),
+                (34usize, 0x30a4),
+                (31usize, 0x30a7),
+                (28usize, 0x30a6),
+                (25usize, 0x30eb),
+                (22usize, 0x30ce),
+                (19usize, 0xfe0f),
+                (16usize, 0x2764),
+                (12usize, 0x1f5fb),
+                (8usize, 0x1f1f5),
+                (4usize, 0x1f1ef),
+                (0usize, 0x1f5fe),
+            ]
+        )
+    }
+
+    #[test]
+    fn test_chars_recovery() {
+        let it = "a\xffb"
+            .chars();
+
+        assert_eq!(it.next(), Option::some(Result::ok('a' as u32));
+        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
+        assert_eq!(it.next(), Option::some(Result::ok('b' as u32));
+        assert_eq!(it.next(), Option::none());
+    }
+
+    #[test]
+    fn test_chars_recovery_multibyte() {
+        // \xed\xa0\x80 is a pseudo UTF-8 encoding of a surrogate, which is
+        // technically decodable, but we treat it as an error.
+        let it = "a\xed\xa0\x80b"
+            .chars();
+
+        assert_eq!(it.next(), Option::some(Result::ok('a' as u32));
+        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
+        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
+        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
+        assert_eq!(it.next(), Option::some(Result::ok('b' as u32));
+        assert_eq!(it.next(), Option::none());
+    }
+
+    #[test]
+    fn test_chars_rev_recovery() {
+        let it = "a\xffb"
+            .chars()
+            .rev();
+
+        assert_eq!(it.next(), Option::some(Result::ok('b' as u32));
+        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
+        assert_eq!(it.next(), Option::some(Result::ok('a' as u32));
+        assert_eq!(it.next(), Option::none());
+    }
+
+    #[test]
+    fn test_chars_rev_recovery_multibyte() {
+        let it = "a\xed\xa0\x80b"
+            .chars()
+            .rev();
+
+        assert_eq!(it.next(), Option::some(Result::ok('b' as u32));
+        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
+        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
+        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
+        assert_eq!(it.next(), Option::some(Result::ok('a' as u32));
+        assert_eq!(it.next(), Option::none());
+    }
+
+    #[test]
+    fn test_chars_rev_recovery_truncated_codepoint() {
+        let it = "a\xe3\x82"
+            .chars()
+            .rev();
+
+        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
+        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
+        assert_eq!(it.next(), Option::some(Result::ok('a' as u32));
+        assert_eq!(it.next(), Option::none());
+    }
+
+    #[test]
+    fn test_chars_rev_recovery_extra_codepoint() {
+        let it = "a\xe3\x82\xa6\xa6"
+            .chars()
+            .rev();
+
+        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
+        assert_eq!(it.next(), Option::some(Result::ok(0x30a6u32));
+        assert_eq!(it.next(), Option::some(Result::ok('a' as u32));
+        assert_eq!(it.next(), Option::none());
+    }
+}

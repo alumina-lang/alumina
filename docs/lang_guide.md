@@ -652,7 +652,7 @@ v[0] = v[4];
 
 Alumina does not have a native string type. String literals in the source code are converted to const slices of bytes (`&[u8]`). They are not guaranteed to be zero-terminated. See [`ffi` module](https://docs.alumina-lang.net/std/ffi/) for utilities needed when interacting with C APIs.
 
-[Standard string functions](https://docs.alumina-lang.net/std/string) are generally not Unicode-aware. However, if the source code contains non-ASCII characters in string literals, they will be represented as UTF-8 bytes. String literals are not required to be valid UTF-8.
+[Standard string functions](https://docs.alumina-lang.net/std/string) are generally not Unicode-aware, unless explicitly marked as such. However, if the source code contains non-ASCII characters in string literals, they will be represented as UTF-8 bytes. String literals are not required to be valid UTF-8 (such strings have to use character escapes though, as the source code itself has to be valid UTF-8).
 
 
 ## Zero-sized types
