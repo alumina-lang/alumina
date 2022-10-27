@@ -3313,24 +3313,18 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let element_types: Vec<_> = lowered.iter().map(|e| e.ty).collect();
         let tuple_type = self.types.tuple(element_types);
 
-        let temporary = self.mono_ctx.ir.make_id();
-        let local = self.exprs.local(temporary, tuple_type);
-        self.local_defs.push(ir::LocalDef {
-            id: temporary,
-            typ: tuple_type,
-        });
-
-        let statements = lowered
-            .into_iter()
-            .enumerate()
-            .map(|(i, e)| {
-                ir::Statement::Expression(
-                    self.exprs.assign(self.exprs.tuple_index(local, i, e.ty), e),
-                )
-            })
-            .collect::<Vec<_>>();
-
-        Ok(self.exprs.block(statements, local))
+        Ok(ir::Expr::rvalue(
+            ir::ExprKind::Tuple(
+                self.mono_ctx.ir.arena.alloc_slice_fill_iter(
+                    lowered
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, value)| ir::TupleInit { index, value }),
+                ),
+            ),
+            tuple_type,
+        )
+        .alloc_on(self.mono_ctx.ir))
     }
 
     fn lower_cast(
@@ -3584,7 +3578,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 if let ir::Ty::Tuple(inner) = generic_args[0] {
                     self.generate_vtable(inner, generic_args[1])
                 } else {
-                    ice!("creating a vtable with something that' snot a tuple of protocols")
+                    ice!("creating a vtable with something that's not a tuple of protocols")
                 }
             }
             IntrinsicKind::EnumVariants => self.generate_enum_variants(generic_args[0]),
@@ -3614,24 +3608,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     {
         let iter = elems.into_iter();
         let array_type = self.types.array(element_type, iter.len());
-        let temporary = self.mono_ctx.ir.make_id();
-        let local = self.exprs.local(temporary, array_type);
-        self.local_defs.push(ir::LocalDef {
-            id: temporary,
-            typ: array_type,
-        });
 
-        let mut statements = vec![];
-        for (idx, elem) in iter.enumerate() {
-            let stmt = ir::Statement::Expression(
-                self.exprs.assign(self.exprs.const_index(local, idx), elem),
-            );
-            statements.push(stmt);
-        }
-
-        Ok(self
-            .exprs
-            .block(statements, self.exprs.local(temporary, array_type)))
+        Ok(self.exprs.array(iter, array_type))
     }
 
     fn generate_test_cases_inner(&mut self) -> Result<(), AluminaError> {
@@ -4891,19 +4869,16 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let struct_type = self.types.named(item);
 
-        let temporary = self.mono_ctx.ir.make_id();
-        let local = self.exprs.local(temporary, struct_type);
-        self.local_defs.push(ir::LocalDef {
-            id: temporary,
-            typ: struct_type,
-        });
-
-        let statements = lowered
-            .into_iter()
-            .map(|(f, e)| {
-                ir::Statement::Expression(self.exprs.assign(self.exprs.field(local, f.id, f.ty), e))
-            })
-            .collect::<Vec<_>>();
+        let ret = ir::Expr::rvalue(
+            ir::ExprKind::Struct(self.mono_ctx.ir.arena.alloc_slice_fill_iter(
+                lowered.into_iter().map(|(field, value)| ir::StructInit {
+                    field: field.id,
+                    value,
+                }),
+            )),
+            struct_type,
+        )
+        .alloc_on(self.mono_ctx.ir);
 
         if !item.get_struct_like().with_no_span()?.is_union {
             for u in uninitialized {
@@ -4914,7 +4889,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
         }
 
-        Ok(self.exprs.block(statements, local))
+        Ok(ret)
     }
 
     fn lower_array_expression(

@@ -143,7 +143,7 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                 self.add_type(inner, false)?;
                 let name = self.ctx.get_type(inner).mangle(self.ctx.make_id());
 
-                w!(self.type_decls, "typedef struct {0} {0};\n", name);
+                w!(self.type_decls, "typedef union {0} {0};\n", name);
                 self.ctx.register_type(ty, name);
 
                 self.needs_body.insert(ty);
@@ -161,7 +161,7 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                             self.ctx.get_name(item.id)
                         };
 
-                        if s.is_union {
+                        if s.is_union || s.attributes.contains(&Attribute::Transparent) {
                             w!(self.type_decls, "typedef union {0} {0};\n", name);
                         } else {
                             w!(self.type_decls, "typedef struct {0} {0};\n", name);
@@ -266,7 +266,11 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
 
                 self.write_type_body(inner)?;
 
-                w!(self.type_bodies, "struct {} {{\n", name);
+                w!(
+                    self.type_bodies,
+                    "union __attribute__((transparent_union)) {} {{\n",
+                    name
+                );
                 w!(self.type_bodies, "  {} __data[{}];\n", inner_name, len);
                 w!(self.type_bodies, "}};\n");
             }
@@ -279,6 +283,7 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                     }
 
                     let mut attributes = " ".to_string();
+                    let mut is_transparent = false;
 
                     for attr in s.attributes {
                         if let Attribute::Align(val) = attr {
@@ -287,8 +292,13 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                         if let Attribute::Packed = attr {
                             w!(attributes, "__attribute__((packed)) ");
                         }
+                        if let Attribute::Transparent = attr {
+                            w!(attributes, "__attribute__((transparent_union)) ");
+                            is_transparent = true;
+                        }
                     }
-                    if s.is_union {
+
+                    if s.is_union || is_transparent {
                         w!(self.type_bodies, "union {}{} {{\n", attributes, name);
                     } else {
                         w!(self.type_bodies, "struct {}{} {{\n", attributes, name);

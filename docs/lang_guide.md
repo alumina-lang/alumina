@@ -613,6 +613,7 @@ Named types can have attributes.
 
 - `#[align(n)]` specifies the minimum alignment of the type. Alignment must be a power of two.
 - `#[packed]` on a struct specifies that the type should be packed (no padding between fields).
+- `#[transparent]` on structs and unions with a single field specifies that the type should be treated as if it were the type of the field from the ABI perspective. This is useful for newtypes.
 
 ## Slices
 

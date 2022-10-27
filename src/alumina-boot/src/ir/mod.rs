@@ -370,6 +370,18 @@ pub struct Const<'ir> {
 }
 
 #[derive(Debug)]
+pub struct StructInit<'ir> {
+    pub field: IrId,
+    pub value: ExprP<'ir>,
+}
+
+#[derive(Debug)]
+pub struct TupleInit<'ir> {
+    pub index: usize,
+    pub value: ExprP<'ir>,
+}
+
+#[derive(Debug)]
 pub enum IRItem<'ir> {
     StructLike(StructLike<'ir>),
     Alias(TyP<'ir>),
@@ -567,7 +579,13 @@ pub enum ExprKind<'ir> {
     TupleIndex(ExprP<'ir>, usize),
     If(ExprP<'ir>, ExprP<'ir>, ExprP<'ir>),
     Cast(ExprP<'ir>),
+
     CodegenIntrinsic(CodegenIntrinsicKind<'ir>),
+
+    Array(&'ir [ExprP<'ir>]),
+    Tuple(&'ir [TupleInit<'ir>]),
+    Struct(&'ir [StructInit<'ir>]),
+
     Unreachable,
     Void,
 }
@@ -641,6 +659,9 @@ impl<'ir> Expr<'ir> {
             ExprKind::Cast(inner) => inner.pure(),
             ExprKind::Field(inner, _) => inner.pure(),
             ExprKind::TupleIndex(inner, _) => inner.pure(),
+            ExprKind::Array(inner) => inner.iter().all(|e| e.pure()),
+            ExprKind::Tuple(inner) => inner.iter().all(|e| e.value.pure()),
+            ExprKind::Struct(inner) => inner.iter().all(|e| e.value.pure()),
 
             ExprKind::Fn(_) => true,
             ExprKind::Local(_) => true,
@@ -672,5 +693,7 @@ impl_allocatable!(
     EnumMember<'_>,
     ProtocolFunction<'_>,
     LocalDef<'_>,
+    StructInit<'_>,
+    TupleInit<'_>,
     IrId
 );

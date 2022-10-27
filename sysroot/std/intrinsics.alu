@@ -2,6 +2,10 @@
 //!
 //! Functions in this module are not intended for general use, and are usually called by
 //! wrapper functions in the standard library (e.g. [mem::size_of] and [std::unreachable]).
+//!
+//! Intrinsic functions are also not first-class citizens. You cannot take a reference to
+//! one, or pass it as an argument to another function. Also, intrinsic functions do not
+//! participate in type inference.
 
 /// Fail the compilation process with a human-readable message.
 ///
@@ -47,9 +51,6 @@ extern "intrinsic" fn type_name<T>() -> &[u8];
 /// Use [mem::align_of] instead.
 extern "intrinsic" fn align_of<T>() -> usize;
 
-/// Allocate the memory on the stack
-extern "intrinsic" fn aligned_alloca(size: usize, align: usize) -> &mut void;
-
 /// Generate a virtual method table for the given protocol and type.
 ///
 /// Do not use directly, use coercion to `&dyn Protocol` instead. Meant to be called
@@ -73,6 +74,11 @@ extern "intrinsic" fn enum_variants<T: builtins::Enum>() -> [(&[u8], T); 0];
 
 /// Inline assembly
 extern "intrinsic" fn asm(assembly: &[u8]);
+
+/// Uninitialized value of type `T`
+///
+/// Use [mem::uninitialized] instead.
+extern "intrinsic" fn uninitialized<T>() -> T;
 
 #[cfg(boot)]
 {

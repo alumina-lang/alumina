@@ -706,6 +706,7 @@ pub enum Attribute {
     Inline,
     Align(u32),
     Packed,
+    Transparent,
     NoInline,
     ThreadLocal,
     Builtin,

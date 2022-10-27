@@ -396,12 +396,12 @@ fn parse_integer<T: builtins::Integer>(s: &[u8], radix: u16) -> Option<T> {
         return Option::none();
     }
 
-    let negative = if s[0] == '-' {
-        when T: builtins::Signed {
+    let negative = when T: builtins::Signed {
+        if s[0] == '-' {
             s = s[1..];
             true
         } else {
-            return Option::none();
+            false
         }
     } else {
         false
@@ -414,16 +414,9 @@ fn parse_integer<T: builtins::Integer>(s: &[u8], radix: u16) -> Option<T> {
         if digit >= radix {
             return Option::none();
         }
-
-        let a = result * radix;
-        if a / radix != result {
-            return Option::none();
-        }
-        let b = a + digit;
-        if b < a {
-            return Option::none();
-        }
-        result = b;
+        result = result
+            .checked_mul(radix)?
+            .checked_add(digit)?;
     }
 
     when T: builtins::Signed {

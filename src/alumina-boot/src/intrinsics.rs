@@ -24,12 +24,12 @@ pub enum IntrinsicKind {
     CompileWarn,
     CompileNote,
     Unreachable,
-    AlignedAlloca,
     TestCases,
     CodegenFunc,
     CodegenConst,
     MakeVtable,
     EnumVariants,
+    Uninitialized,
     Asm,
 }
 
@@ -47,29 +47,17 @@ pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
         map.insert("compile_warn", IntrinsicKind::CompileWarn);
         map.insert("compile_note", IntrinsicKind::CompileNote);
         map.insert("unreachable", IntrinsicKind::Unreachable);
-        map.insert("aligned_alloca", IntrinsicKind::AlignedAlloca);
         map.insert("test_cases", IntrinsicKind::TestCases);
         map.insert("codegen_func", IntrinsicKind::CodegenFunc);
         map.insert("codegen_const", IntrinsicKind::CodegenConst);
         map.insert("vtable", IntrinsicKind::MakeVtable);
         map.insert("enum_variants", IntrinsicKind::EnumVariants);
         map.insert("asm", IntrinsicKind::Asm);
+        map.insert("uninitialized", IntrinsicKind::Uninitialized);
         map
     })
     .get(name)
     .copied()
-}
-
-macro_rules! typecheck {
-    ($expected:expr, $actual:expr) => {
-        if !$expected.assignable_from($actual) {
-            return Err(crate::common::CodeErrorKind::TypeMismatch(
-                format!("{:?}", $expected),
-                format!("{:?}", $actual),
-            ))
-            .with_no_span();
-        }
-    };
 }
 
 #[derive(Debug, Clone)]
@@ -78,6 +66,7 @@ pub enum CodegenIntrinsicKind<'ir> {
     Asm(&'ir str),
     FunctionLike(&'ir str),
     ConstLike(&'ir str),
+    Uninitialized,
 }
 
 pub struct CompilerIntrinsics<'ir> {
@@ -219,35 +208,6 @@ impl<'ir> CompilerIntrinsics<'ir> {
         ))
     }
 
-    fn aligned_alloca(
-        &self,
-        size: ExprP<'ir>,
-        align: ExprP<'ir>,
-    ) -> Result<ExprP<'ir>, AluminaError> {
-        typecheck!(Ty::Builtin(BuiltinType::USize), size.ty);
-        typecheck!(Ty::Builtin(BuiltinType::USize), align.ty);
-
-        let ret_type = self
-            .types
-            .pointer(self.types.builtin(BuiltinType::Void), false);
-        let fn_type = self.types.function(
-            vec![
-                self.types.builtin(BuiltinType::USize),
-                self.types.builtin(BuiltinType::USize),
-            ],
-            ret_type,
-        );
-
-        Ok(self.expressions.call(
-            self.expressions.codegen_intrinsic(
-                CodegenIntrinsicKind::FunctionLike("__builtin_alloca_with_align"),
-                fn_type,
-            ),
-            [size, align],
-            ret_type,
-        ))
-    }
-
     fn codegen_func(
         &self,
         name: ExprP<'ir>,
@@ -288,6 +248,12 @@ impl<'ir> CompilerIntrinsics<'ir> {
             .codegen_intrinsic(CodegenIntrinsicKind::ConstLike(name), ret_ty))
     }
 
+    fn uninitialized(&self, ret_ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
+        Ok(self
+            .expressions
+            .codegen_intrinsic(CodegenIntrinsicKind::Uninitialized, ret_ty))
+    }
+
     pub fn invoke(
         &self,
         kind: IntrinsicKind,
@@ -308,10 +274,10 @@ impl<'ir> CompilerIntrinsics<'ir> {
             IntrinsicKind::CompileNote => self.compile_note(args[0], span),
             IntrinsicKind::Unreachable => self.unreachable(),
             IntrinsicKind::Asm => self.asm(args[0]),
-            IntrinsicKind::AlignedAlloca => self.aligned_alloca(args[0], args[1]),
             IntrinsicKind::CodegenFunc => self.codegen_func(args[0], &args[1..], generic[0]),
             IntrinsicKind::CodegenConst => self.codegen_const(args[0], generic[0]),
-            _ => unimplemented!(),
+            IntrinsicKind::Uninitialized => self.uninitialized(generic[0]),
+            _ => unreachable!(),
         }
     }
 }

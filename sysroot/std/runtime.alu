@@ -2,7 +2,6 @@
 
 #[cfg(not(output_type = "library"))]
 mod internal {
-    use intrinsics::{aligned_alloca, size_of, align_of};
     use builtins::{return_type_of, arguments_of, NamedFunction};
     use mem::slice;
 
@@ -42,10 +41,10 @@ mod internal {
 
     /// Maximum number of program arguments that can be stack-allocated.
     ///
-    /// See [argc_argv_to_slice] for details.
+    /// See [allocate_args] for details.
     const STACK_ARGS_MAX: usize = 1024;
 
-    /// Converts `argc` and `argv` into a `&[&[u8]]` slice of strings.
+    /// Allocates the space for program arguments
     ///
     /// It allocates the memory for the slice on the stack, hence a macro. This is done to avoid
     /// a dependency on `malloc` for simple programs, but it is potentially problematic if a large
@@ -59,23 +58,16 @@ mod internal {
     /// This is not great and probably a reason why Rust has `env::args()` instead of an argument
     /// to the `main` function, but I kind of like the C-style arguments to main, so for now this
     /// is the approach.
-    macro argc_argv_to_slice($argc, $argv) {
+    macro allocate_args($argc) {
+        use intrinsics::{codegen_func, size_of, align_of};
         let argc = $argc as usize;
-        let argv = $argv as &&u8;
 
-        let args = if argc > STACK_ARGS_MAX {
-            aligned_alloca(size_of::<&[u8]>() * argc, align_of::<&[u8]>() * 8) as &mut &[u8]
+        if argc > STACK_ARGS_MAX {
+            // Cannot use __builtin_alloca_with_align as it may not be valid until the end of the function
+            slice::from_raw(codegen_func::<&mut void>("__builtin_alloca", size_of::<&[u8]>() * argc) as &mut &[u8], argc)
         } else {
-            &mem::slice::alloc::<&[u8]>(argc)[0] // will leak
-        };
-
-        let args_ptr = args;
-        while *argv != null {
-            *args_ptr = slice::from_raw(*argv, libc::strlen(*argv as &libc::c_char) as usize);
-            argv += 1;
-            args_ptr += 1;
+            mem::slice::alloc::<&[u8]>(argc)
         }
-        slice::from_raw(args as &&[u8], argc)
     }
 
     #[cfg(not(custom_entrypoint))]
@@ -98,7 +90,12 @@ mod internal {
             std::thread::internal::threading_init();
 
             let ret = when arguments_of<UserMain>: (&[&[u8]]) {
-                func(argc_argv_to_slice!(argc, argv))
+                let args = allocate_args!(argc);
+                for i in 0usize..(argc as usize) {
+                    args[i] = slice::from_raw(*(argv + i) as &u8, libc::strlen(*(argv + i)) as usize);
+                }
+
+                func(args)
             } else when arguments_of<UserMain>: () {
                 func()
             } else {

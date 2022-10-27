@@ -366,6 +366,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                 self.attributes.push(Attribute::Align(align))
             }
             "cold" => self.attributes.push(Attribute::Cold),
+            "transparent" => self.attributes.push(Attribute::Transparent),
             "packed" => self.attributes.push(Attribute::Packed),
             "inline" => {
                 match node
