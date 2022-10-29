@@ -50,6 +50,7 @@ impl<'ir> ZstElider<'ir> {
         FuncBody {
             statements: statements.alloc_on(self.ir),
             local_defs: local_defs.alloc_on(self.ir),
+            raw_body: function_body.raw_body,
         }
     }
 

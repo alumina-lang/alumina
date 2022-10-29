@@ -44,12 +44,6 @@ macro_rules! mismatch {
     };
 }
 
-struct TestCasesStatics<'ir> {
-    test_cases_array: ir::IRItemP<'ir>,
-    #[allow(dead_code)]
-    attributes_array: ir::IRItemP<'ir>,
-}
-
 pub struct MonoCtx<'ast, 'ir> {
     ast: &'ast ast::AstCtx<'ast>,
     ir: &'ir ir::IrCtx<'ir>,
@@ -61,7 +55,6 @@ pub struct MonoCtx<'ast, 'ir> {
     tests: HashMap<ir::IRItemP<'ir>, TestMetadata<'ast>>,
     intrinsics: CompilerIntrinsics<'ir>,
     static_local_defs: HashMap<ir::IRItemP<'ir>, Vec<LocalDef<'ir>>>,
-    test_cases_statics: Option<TestCasesStatics<'ir>>,
     vtable_layouts: HashMap<&'ir [ir::TyP<'ir>], ir::VtableLayout<'ir>>,
 }
 
@@ -88,7 +81,6 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
             static_local_defs: HashMap::new(),
             cycle_guardian: CycleGuardian::new(),
             tests: HashMap::new(),
-            test_cases_statics: None,
             vtable_layouts: HashMap::new(),
         }
     }
@@ -1241,7 +1233,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         child.return_type = Some(return_type);
         if let Some(body) = func.body {
-            let body = child.lower_function_body(body)?;
+            let body = child.lower_function_body(
+                body,
+                func.attributes.contains(&ast::Attribute::InlineDuringMono),
+            )?;
             item.get_function().unwrap().body.set(body).unwrap();
         }
 
@@ -1357,6 +1352,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     pub fn lower_function_body(
         mut self,
         expr: ast::ExprP<'ast>,
+        is_ir_inline: bool,
     ) -> Result<ir::FuncBody<'ir>, AluminaError> {
         let return_type = self.return_type.unwrap();
         let body = self
@@ -1365,8 +1361,19 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let body = self.try_coerce(return_type, body).append_span(expr.span)?;
 
-        let mut statements = Vec::new();
+        let raw_body = if is_ir_inline {
+            if self.defer_context.is_some() {
+                return Err(CodeErrorKind::IrInlineFlowControl).with_span(expr.span);
+            }
+            if !self.local_defs.is_empty() {
+                return Err(CodeErrorKind::IrInlineLocalDefs).with_span(expr.span);
+            }
+            Some(body)
+        } else {
+            None
+        };
 
+        let mut statements = Vec::new();
         if self.defer_context.is_some() {
             self.generate_defer_prologue(&mut statements);
         }
@@ -1385,6 +1392,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let function_body = FuncBody {
             statements: statements.alloc_on(self.mono_ctx.ir),
             local_defs: self.local_defs.alloc_on(self.mono_ctx.ir),
+            raw_body,
         };
 
         let elider = ZstElider::new(self.mono_ctx.ir);
@@ -1607,6 +1615,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let function_body = FuncBody {
             statements: statements.alloc_on(self.mono_ctx.ir),
             local_defs: local_defs.alloc_on(self.mono_ctx.ir),
+            raw_body: None,
         };
 
         let elider = ZstElider::new(self.mono_ctx.ir);
@@ -3635,72 +3644,18 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(self.exprs.array(iter, array_type))
     }
 
-    fn generate_test_cases_inner(&mut self) -> Result<(), AluminaError> {
-        // This is bigger and badder than it ought to be, which is probably why people don't usually
-        // do this in the compiler.
-        // It basically creates two static arrays, one which holds all the test attributes contatenated
-        // and the other that has the TestCaseMeta objects. TestCaseMeta object contains a slice of the
-        // attributes array.
+    fn generate_test_cases_inner(&mut self) -> Result<ir::ExprP<'ir>, AluminaError> {
         let tests = self.mono_ctx.tests.clone();
 
         let string_slice = self.slice_of(self.types.builtin(BuiltinType::U8), true)?;
-        let attrs_static = self.mono_ctx.ir.make_symbol();
-
-        let string_slice_ptr = self.types.pointer(string_slice, true);
-        let string_slice_slice = self.slice_of(string_slice, true)?;
-
-        let mut slices = vec![];
-        let mut attrs = vec![];
-
-        let len = tests.iter().map(|(_, m)| m.attributes.len()).sum();
-        let attrs_static_ty = self.types.array(string_slice, len);
-        let attrs_static_expr = self.exprs.static_var(attrs_static, attrs_static_ty);
-
-        for (_, metadata) in tests.iter() {
-            let start_index = self.exprs.const_value(
-                Value::USize(attrs.len()),
-                self.types.builtin(BuiltinType::USize),
-            );
-            for attr in &metadata.attributes {
-                let elem = self.exprs.const_value(
-                    Value::Str(self.mono_ctx.ir.arena.alloc_slice_copy(attr.as_bytes())),
-                    self.types.unqualified_str(attr.len()),
-                );
-                attrs.push(self.try_coerce(string_slice, elem)?)
-            }
-            let end_index = self.exprs.const_value(
-                Value::USize(attrs.len()),
-                self.types.builtin(BuiltinType::USize),
-            );
-            slices.push((start_index, end_index));
-        }
-
-        let res = self.array_of(string_slice, attrs)?;
-        attrs_static.assign(ir::IRItem::Static(ir::Static {
-            name: None,
-            typ: res.ty,
-            init: Some(res),
-            attributes: &[],
-            r#extern: false,
-        }));
-
-        self.mono_ctx
-            .static_local_defs
-            .insert(attrs_static, std::mem::take(&mut self.local_defs));
-
-        let test_cases_static = self.mono_ctx.ir.make_symbol();
-
         let meta_item = self.monomorphize_lang_item(LangItemKind::TestCaseMeta, [])?;
         let meta_type = self.types.named(meta_item);
         let meta_new = self.monomorphize_lang_item(LangItemKind::TestCaseMetaNew, [])?;
 
         let fn_ptr_type = self.types.function([], self.types.void());
 
-        let attrs_ref = self.r#ref(attrs_static_expr);
-        let attrs_as_slice = self.try_coerce(string_slice_slice, attrs_ref)?;
-
         let mut test_cases = vec![];
-        for ((start_index, end_index), (func, meta)) in slices.into_iter().zip(tests.iter()) {
+        for (func, meta) in tests.iter() {
             let name = meta.name.to_string();
             let name_arg = self.exprs.const_value(
                 Value::Str(self.mono_ctx.ir.arena.alloc_slice_copy(name.as_bytes())),
@@ -3713,71 +3668,30 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.types.unqualified_str(path.len()),
             );
 
-            let range_item = self.monomorphize_lang_item(
-                LangItemKind::RangeNew,
-                [self.types.builtin(BuiltinType::USize)],
-            )?;
-            let range_func = self.exprs.function(range_item);
+            let attrs: Vec<_> = meta
+                .attributes
+                .iter()
+                .map(|s| s.as_bytes())
+                .collect::<Vec<_>>()
+                .join(&b"\0"[..]);
 
-            let range = self.call(
-                range_func,
-                [start_index, end_index].into_iter(),
-                range_item.get_function().with_no_span()?.return_type,
-            )?;
-
-            let item = self.monomorphize_lang_item(
-                LangItemKind::SliceRangeIndex,
-                [string_slice_ptr, range.ty],
-            )?;
-            let attr_slice = self.call(
-                self.exprs.function(item),
-                [attrs_as_slice, range].into_iter(),
-                string_slice_slice,
-            )?;
+            let attrs_arg = self.exprs.const_value(
+                Value::Str(self.mono_ctx.ir.arena.alloc_slice_copy(&attrs[..])),
+                self.types.unqualified_str(attrs.len()),
+            );
 
             let fn_ptr_arg = self.exprs.function(func);
             let args = [
                 self.try_coerce(string_slice, path_arg)?,
                 self.try_coerce(string_slice, name_arg)?,
-                self.try_coerce(string_slice_slice, attr_slice)?,
+                self.try_coerce(string_slice, attrs_arg)?,
                 self.try_coerce(fn_ptr_type, fn_ptr_arg)?,
             ];
 
-            test_cases.push(
-                self.exprs
-                    .call(self.exprs.function(meta_new), args, meta_type),
-            );
+            test_cases.push(self.call(self.exprs.function(meta_new), args, meta_type)?);
         }
 
-        let res = self.array_of(meta_type, test_cases)?;
-        test_cases_static.assign(ir::IRItem::Static(ir::Static {
-            name: None,
-            typ: res.ty,
-            init: Some(res),
-            attributes: &[],
-            r#extern: false,
-        }));
-
-        self.mono_ctx
-            .static_local_defs
-            .insert(test_cases_static, std::mem::take(&mut self.local_defs));
-
-        self.mono_ctx.test_cases_statics.replace(TestCasesStatics {
-            attributes_array: attrs_static,
-            test_cases_array: test_cases_static,
-        });
-
-        let dummy1 = self.mono_ctx.ast.make_symbol();
-        let dummy2 = self.mono_ctx.ast.make_symbol();
-
-        self.mono_ctx
-            .finished
-            .insert(MonoKey::new(dummy1, &[], None, false), test_cases_static);
-        self.mono_ctx
-            .finished
-            .insert(MonoKey::new(dummy2, &[], None, false), attrs_static);
-
-        Ok(())
+        self.array_of(meta_type, test_cases)
     }
 
     pub fn call<I>(
@@ -3794,10 +3708,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ir::ExprKind::Fn(item) => {
                 let func = item.get_function().with_no_span()?;
                 if func.attributes.contains(&ast::Attribute::InlineDuringMono) {
-                    if func.varargs {
-                        ice!("lmao, varargs");
-                    }
-
                     let inliner = IrInliner::with_replacements(
                         self.mono_ctx.ir,
                         func.args
@@ -3808,12 +3718,24 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
                     // no silent fallback to a regular function call, since the only thing that can go wrong is that
                     // the callee is not compatible with IR inlining, so this should not lead to surprises
-                    return inliner.inline(
+                    let expr = inliner.visit_expr(
                         func.body
                             .get()
                             .ok_or(CodeErrorKind::UnpopulatedSymbol)
-                            .with_no_span()?,
-                    );
+                            .with_no_span()?
+                            .raw_body
+                            .unwrap(),
+                    )?;
+
+                    // The inlined function may return a lvalue, which would be very confusing. If this happens, we
+                    // patch up the value kind. C will still consider it a lvalue, but that shouldn't matter.
+                    if expr.value_type == ir::ValueType::LValue {
+                        return Ok(
+                            ir::Expr::rvalue(expr.kind.clone(), expr.ty).alloc_on(self.mono_ctx.ir)
+                        );
+                    } else {
+                        return Ok(expr);
+                    }
                 }
             }
             _ => {}
@@ -3822,25 +3744,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     }
 
     fn generate_test_cases(&mut self) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let meta_item = self.monomorphize_lang_item(LangItemKind::TestCaseMeta, [])?;
-        let meta_type = self.types.named(meta_item);
-        let meta_slice_type = self.slice_of(meta_type, true)?;
-
-        if self.mono_ctx.test_cases_statics.is_none() {
-            let mut child = Self::new(self.mono_ctx, self.tentative, self.current_item);
-            child.generate_test_cases_inner()?;
-        }
-
-        let test_cases_static = self
-            .mono_ctx
-            .test_cases_statics
-            .as_ref()
-            .unwrap()
-            .test_cases_array;
-        let item = test_cases_static.get_static().unwrap();
-        let ret = self.r#ref(self.exprs.static_var(test_cases_static, item.typ));
-
-        self.try_coerce(meta_slice_type, ret)
+        self.generate_test_cases_inner()
     }
 
     fn generate_enum_variants(

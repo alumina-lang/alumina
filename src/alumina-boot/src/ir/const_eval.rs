@@ -7,7 +7,7 @@ use std::{
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub},
 };
 
-use super::{BuiltinType, ExprKind, ExprP, IrCtx, IrId, Lit, Statement, Ty, UnOp};
+use super::{BuiltinType, ExprKind, ExprP, IrCtx, IrId, Lit, Statement, Ty, TyP, UnOp};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -469,6 +469,67 @@ impl<'ir> ConstEvaluator<'ir> {
         Self { ir }
     }
 
+    fn cast(&self, inner: ExprP<'ir>, mut target: TyP<'ir>) -> Result<Value<'ir>> {
+        let val = self.const_eval(inner)?;
+        if inner.ty == target {
+            return Ok(val);
+        }
+
+        if let Ty::NamedType(e) = target {
+            if let Ok(e) = e.get_enum() {
+                target = e.underlying_type;
+            }
+        }
+
+        let promoted = match val {
+            Value::U8(a) => Value::U128(a as u128),
+            Value::U16(a) => Value::U128(a as u128),
+            Value::U32(a) => Value::U128(a as u128),
+            Value::U64(a) => Value::U128(a as u128),
+            Value::U128(a) => Value::U128(a),
+            Value::USize(a) => Value::U128(a as u128),
+            Value::I8(a) => Value::I128(a as i128),
+            Value::I16(a) => Value::I128(a as i128),
+            Value::I32(a) => Value::I128(a as i128),
+            Value::I64(a) => Value::I128(a as i128),
+            Value::I128(a) => Value::I128(a),
+            Value::ISize(a) => Value::I128(a as i128),
+            Value::Bool(a) => Value::U128(if a { 1 } else { 0 }),
+            _ => val,
+        };
+
+        match (promoted, target) {
+            (Value::U128(a), Ty::Builtin(BuiltinType::U8)) => Ok(Value::U8(a as u8)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::U16)) => Ok(Value::U16(a as u16)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::U32)) => Ok(Value::U32(a as u32)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::U64)) => Ok(Value::U64(a as u64)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::U128)) => Ok(Value::U128(a)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::USize)) => Ok(Value::USize(a as usize)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::I8)) => Ok(Value::I8(a as i8)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::I16)) => Ok(Value::I16(a as i16)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::I32)) => Ok(Value::I32(a as i32)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::I64)) => Ok(Value::I64(a as i64)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::I128)) => Ok(Value::I128(a as i128)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::ISize)) => Ok(Value::ISize(a as isize)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::U8)) => Ok(Value::U8(a as u8)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::U16)) => Ok(Value::U16(a as u16)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::U32)) => Ok(Value::U32(a as u32)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::U64)) => Ok(Value::U64(a as u64)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::U128)) => Ok(Value::U128(a as u128)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::USize)) => Ok(Value::USize(a as usize)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::I8)) => Ok(Value::I8(a as i8)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::I16)) => Ok(Value::I16(a as i16)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::I32)) => Ok(Value::I32(a as i32)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::I64)) => Ok(Value::I64(a as i64)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::I128)) => Ok(Value::I128(a)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::ISize)) => Ok(Value::ISize(a as isize)),
+            (Value::F64(a), Ty::Builtin(BuiltinType::F32)) => Ok(Value::F32(a)),
+            (Value::F32(a), Ty::Builtin(BuiltinType::F64)) => Ok(Value::F64(a)),
+            (Value::FunctionPointer(id), Ty::FunctionPointer(..)) => Ok(Value::FunctionPointer(id)),
+            _ => Err(ConstEvalError::Unsupported),
+        }
+    }
+
     pub fn const_eval(&self, expr: ExprP<'ir>) -> Result<Value<'ir>> {
         match &expr.kind {
             ExprKind::Void => Ok(Value::Void),
@@ -550,74 +611,7 @@ impl<'ir> ConstEvaluator<'ir> {
                 Lit::Str(s) => Ok(Value::Str(*s)),
                 _ => Err(ConstEvalError::Unsupported),
             },
-            ExprKind::Cast(inner) => {
-                let val = self.const_eval(inner)?;
-                if *inner.ty == *expr.ty {
-                    Ok(val)
-                } else {
-                    let promoted = match val {
-                        Value::U8(a) => Value::U128(a as u128),
-                        Value::U16(a) => Value::U128(a as u128),
-                        Value::U32(a) => Value::U128(a as u128),
-                        Value::U64(a) => Value::U128(a as u128),
-                        Value::U128(a) => Value::U128(a),
-                        Value::USize(a) => Value::U128(a as u128),
-                        Value::I8(a) => Value::I128(a as i128),
-                        Value::I16(a) => Value::I128(a as i128),
-                        Value::I32(a) => Value::I128(a as i128),
-                        Value::I64(a) => Value::I128(a as i128),
-                        Value::I128(a) => Value::I128(a),
-                        Value::ISize(a) => Value::I128(a as i128),
-                        Value::Bool(a) => Value::U128(if a { 1 } else { 0 }),
-                        _ => val,
-                    };
-
-                    match (promoted, expr.ty) {
-                        (Value::U128(a), Ty::Builtin(BuiltinType::U8)) => Ok(Value::U8(a as u8)),
-                        (Value::U128(a), Ty::Builtin(BuiltinType::U16)) => Ok(Value::U16(a as u16)),
-                        (Value::U128(a), Ty::Builtin(BuiltinType::U32)) => Ok(Value::U32(a as u32)),
-                        (Value::U128(a), Ty::Builtin(BuiltinType::U64)) => Ok(Value::U64(a as u64)),
-                        (Value::U128(a), Ty::Builtin(BuiltinType::U128)) => Ok(Value::U128(a)),
-                        (Value::U128(a), Ty::Builtin(BuiltinType::USize)) => {
-                            Ok(Value::USize(a as usize))
-                        }
-                        (Value::U128(a), Ty::Builtin(BuiltinType::I8)) => Ok(Value::I8(a as i8)),
-                        (Value::U128(a), Ty::Builtin(BuiltinType::I16)) => Ok(Value::I16(a as i16)),
-                        (Value::U128(a), Ty::Builtin(BuiltinType::I32)) => Ok(Value::I32(a as i32)),
-                        (Value::U128(a), Ty::Builtin(BuiltinType::I64)) => Ok(Value::I64(a as i64)),
-                        (Value::U128(a), Ty::Builtin(BuiltinType::I128)) => {
-                            Ok(Value::I128(a as i128))
-                        }
-                        (Value::U128(a), Ty::Builtin(BuiltinType::ISize)) => {
-                            Ok(Value::ISize(a as isize))
-                        }
-                        (Value::I128(a), Ty::Builtin(BuiltinType::U8)) => Ok(Value::U8(a as u8)),
-                        (Value::I128(a), Ty::Builtin(BuiltinType::U16)) => Ok(Value::U16(a as u16)),
-                        (Value::I128(a), Ty::Builtin(BuiltinType::U32)) => Ok(Value::U32(a as u32)),
-                        (Value::I128(a), Ty::Builtin(BuiltinType::U64)) => Ok(Value::U64(a as u64)),
-                        (Value::I128(a), Ty::Builtin(BuiltinType::U128)) => {
-                            Ok(Value::U128(a as u128))
-                        }
-                        (Value::I128(a), Ty::Builtin(BuiltinType::USize)) => {
-                            Ok(Value::USize(a as usize))
-                        }
-                        (Value::I128(a), Ty::Builtin(BuiltinType::I8)) => Ok(Value::I8(a as i8)),
-                        (Value::I128(a), Ty::Builtin(BuiltinType::I16)) => Ok(Value::I16(a as i16)),
-                        (Value::I128(a), Ty::Builtin(BuiltinType::I32)) => Ok(Value::I32(a as i32)),
-                        (Value::I128(a), Ty::Builtin(BuiltinType::I64)) => Ok(Value::I64(a as i64)),
-                        (Value::I128(a), Ty::Builtin(BuiltinType::I128)) => Ok(Value::I128(a)),
-                        (Value::I128(a), Ty::Builtin(BuiltinType::ISize)) => {
-                            Ok(Value::ISize(a as isize))
-                        }
-                        (Value::F64(a), Ty::Builtin(BuiltinType::F32)) => Ok(Value::F32(a)),
-                        (Value::F32(a), Ty::Builtin(BuiltinType::F64)) => Ok(Value::F64(a)),
-                        (Value::FunctionPointer(id), Ty::FunctionPointer(..)) => {
-                            Ok(Value::FunctionPointer(id))
-                        }
-                        _ => Err(ConstEvalError::Unsupported),
-                    }
-                }
-            }
+            ExprKind::Cast(inner) => self.cast(inner, expr.ty),
             ExprKind::If(cond, then, els) => {
                 let cond = self.const_eval(cond)?;
 

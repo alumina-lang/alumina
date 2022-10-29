@@ -2,8 +2,9 @@
 
 ## General
 
-- Function inlining in Alumina compiler proper (rather than relying on C compiler)
-    - It's not a priority, since C compiler can inline perfectly fine, except in special cases like `alloca` where the allocated buffer cannot leave the stack frame. To have a good wrapper around `alloca`, it needs to be force-inlined except if done in a macro (but macros don't really have a good type parameter system, params can only be expressions).
+- Make IR inlining better
+  - Support for functions that use their argument in more than one place (most important)
+  - Better error messages for why recursive functions can't be inlined (rather than just "Unpopulated symbol")
 - stack overflow in codegen stage because infinite size recursive structs are not rejected during monomorphization
     - could be a similar issue with protocols, though these are more coservative vis-a-vis recursion
 - Whole ZST and divergence handling might still be buggy, in particular, uninitialized variables of `!` type might be problematic since lowering is quite liberal with making temporary name bindings for various stuff.
@@ -23,7 +24,6 @@
 - Promoting all variables to function scope is a bit of a unique feature of Alumina and I like it (comes in quite handy for autoref - can take an address of any rvalue and defer), but it may inhibit some optimizations downstream.
 - `if opt.is_some { opt.inner }` and  `if res.is_ok() { res.unwrap() }` do not spark joy. Full pattern matching is overkill, but this is very common and
   deserves a better idiom.
-- vtables are stored in mutable static variables and initialized in the static constructor like all other statics. clang can optimize this to statis storage and even de-virtualize automatically (which is quite amazing really), but gcc seems to not do this. Maybe extend codegen so that they can be properly const-initialized. Might be useful for other things as well (constant arrays, ...)
 - a coherent story for operator overloading
 - `dyn` pointers for certain builtin protocols. Specifically `dyn Callable<...>` would be very useful for being type-erased closures.
 - `format_args` macro is not bad right now, but the generated code is huge. It would be cool to have something like this so the result on `format_args` can still be collected into an array, but can also be unpacked into a sequence of statements directly writing into the formatter
@@ -76,6 +76,7 @@ macro write!($fmt, $s, $args...) {
 
 - Get rid of all the redundant variable assignments and copying. I assume C compiler can optimize those well, but the
   generated code looks very bloated.
+    - IR inlining and struct expressions made this much better
 - Maybe run `elide_zst` on everything, not just when ZSTs are present
   - It works, but simple programs start being like 100,000 lines of generated C code. Not feasible until redundant variables are assigned
 
@@ -106,6 +107,7 @@ macro write!($fmt, $s, $args...) {
 - Most panics should probably use `ice!` macro to report the source span where the compiler panicked
 - Cross-compilation
   - Should be easy enough, as generated C code has almost no platform dependencies. This is more of a concern for the standard library to ensure `cfg` attributes are sprinkled around appropriately.
+    - const eval needs to adjust usizes etc. to the target platform
 - Logging, timings
 
 ## Exploratory

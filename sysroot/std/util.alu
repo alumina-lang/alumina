@@ -65,7 +65,7 @@
 ///
 /// assert_eq!(y, 3.14159265358979323846264338327950288f64);
 /// ```
-#[inline]
+#[inline(ir)]
 fn transmute<T1, T2>(t: T1) -> T2 {
     // Could use pointers, but union makes sure that we have the correct
     // alignment.
@@ -77,7 +77,7 @@ fn transmute<T1, T2>(t: T1) -> T2 {
 }
 
 /// Dereference a pointer.
-#[inline] fn deref<T>(v: &T) -> T { *v }
+#[inline(ir)] fn deref<T>(v: &T) -> T { *v }
 
 /// Produce the only value of a unit type out of thin air.
 ///
@@ -100,10 +100,9 @@ fn transmute<T1, T2>(t: T1) -> T2 {
 ///
 /// call::<hello_world>();
 /// ```
-#[inline]
+#[inline(ir)]
 fn unit<T: builtins::ZeroSized + !!>() -> T {
-    let ret: T;
-    ret
+    mem::uninitialized()
 }
 
 
@@ -122,6 +121,7 @@ fn unit<T: builtins::ZeroSized + !!>() -> T {
 ///
 /// assert_eq!(v, Option::some(3 + 1).unwrap());
 /// ```
+#[inline(ir)]
 fn apply<T, R, F: Fn(T) -> R>(v: T, func: F) -> R {
     func(v)
 }

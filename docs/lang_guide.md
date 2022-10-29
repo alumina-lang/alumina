@@ -327,13 +327,20 @@ let arr: [u32; QUUX];
 
 Const evaluation is fairly limited at the moment, but it will be expanded in the future. The following are supported
 
-- all literals
+- all builtin type literals
 - arithmetic and bitwise operations on integers (not floats)
 - logical operations on booleans
-- casts between integers
+- casts between integers and enums
 - if/else expressions (only if condition and both branches are constant)
 - macro calls (only if the macro is a constant expression)
 - block expressions (only if all statements and the final expression are constant)
+- array, struct and tuple literals (only if all elements are constant)
+- fixed-size array indexing, struct field access and tuple indexing (only if the base expression is constant)
+- calling certain functions in standard library (chiefly constructors and wrapper around intrinsics). User-defined const functions are not supported yet.
+- taking address of named functions (function pointers)
+
+Expressions that would cause undefined behavior at runtime, such as accessing uninitialized memory, division by zero or signed overflow, result in a compile-time error.
+
 
 # Statics
 

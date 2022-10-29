@@ -529,14 +529,12 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 if !self.in_const_init {
                     w!(self.fn_bodies, "({})", self.ctx.get_type(expr.ty));
                 }
-                w!(self.fn_bodies, "{{\n");
+                w!(self.fn_bodies, "{{");
                 for init in inits.iter() {
-                    self.indent();
                     w!(self.fn_bodies, "._{}=", init.index);
                     self.write_expr(&init.value, false)?;
-                    w!(self.fn_bodies, ",\n");
+                    w!(self.fn_bodies, ",");
                 }
-                self.indent();
                 w!(self.fn_bodies, "}}");
             }
             ExprKind::Struct(inits) => {
@@ -544,14 +542,12 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 if !self.in_const_init {
                     w!(self.fn_bodies, "({})", self.ctx.get_type(expr.ty));
                 }
-                w!(self.fn_bodies, "{{\n");
+                w!(self.fn_bodies, "{{");
                 for init in inits.iter() {
-                    self.indent();
                     w!(self.fn_bodies, ".{}=", self.ctx.get_name(init.field));
                     self.write_expr(&init.value, false)?;
-                    w!(self.fn_bodies, ",\n");
+                    w!(self.fn_bodies, ",");
                 }
-                self.indent();
                 w!(self.fn_bodies, "}}");
             }
             ExprKind::Void => {}

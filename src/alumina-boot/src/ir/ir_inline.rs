@@ -1,18 +1,14 @@
 use std::{cell::RefCell, collections::HashMap};
 
-use crate::common::{ice, AluminaError, CodeErrorBuilder, CodeErrorKind};
+use crate::common::{AluminaError, CodeErrorBuilder, CodeErrorKind};
 
-use super::{
-    builder::{ExpressionBuilder, TypeBuilder},
-    ExprKind, ExprP, FuncBody, IrCtx, IrId, Statement,
-};
+use super::{builder::ExpressionBuilder, ExprKind, ExprP, IrCtx, IrId, Statement};
 
 /// Inlining in IR is very experimental and very unstable. Basically, don't do it
 /// unless you are std. The main reason this even exists is to allow some lang functions
 /// that only construct a struct to be used in const contexts (looking at you slice_new!).
 pub struct IrInliner<'ir> {
     exprs: ExpressionBuilder<'ir>,
-    types: TypeBuilder<'ir>,
     replacements: RefCell<HashMap<IrId, Option<ExprP<'ir>>>>,
 }
 
@@ -23,7 +19,6 @@ impl<'ir> IrInliner<'ir> {
     {
         Self {
             exprs: ExpressionBuilder::new(ir),
-            types: TypeBuilder::new(ir),
             replacements: RefCell::new(
                 replacements
                     .into_iter()
@@ -33,38 +28,6 @@ impl<'ir> IrInliner<'ir> {
         }
     }
 
-    pub fn inline(&self, func: &FuncBody<'ir>) -> Result<ExprP<'ir>, AluminaError> {
-        if !func.local_defs.is_empty() {
-            return Err(CodeErrorKind::IrInlineLocalDefs).with_no_span();
-        }
-
-        let mut statements = Vec::new();
-        let mut ret = None;
-
-        for stmt in func.statements {
-            match stmt {
-                Statement::Expression(e) => {
-                    match e.kind {
-                        ExprKind::Return(e) => {
-                            if ret.replace(self.visit_expr(e)?).is_some() {
-                                ice!("multiple returns in single block, this should have been optimized")
-                            }
-                        }
-                        _ => statements.push(Statement::Expression(self.visit_expr(e)?)),
-                    }
-                }
-                Statement::Label(_) => {
-                    return Err(CodeErrorKind::IrInlineFlowControl).with_no_span()
-                }
-            }
-        }
-
-        Ok(self.exprs.block(
-            statements,
-            ret.unwrap_or_else(|| self.exprs.void(self.types.void(), super::ValueType::RValue)),
-        ))
-    }
-
     fn visit_statement(&self, stmt: &Statement<'ir>) -> Result<Statement<'ir>, AluminaError> {
         match stmt {
             Statement::Expression(e) => Ok(Statement::Expression(self.visit_expr(e)?)),
@@ -72,7 +35,7 @@ impl<'ir> IrInliner<'ir> {
         }
     }
 
-    fn visit_expr(&self, expr: ExprP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
+    pub fn visit_expr(&self, expr: ExprP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
         let ret = match expr.kind {
             ExprKind::Block(stmts, ret) => self.exprs.block(
                 stmts

@@ -574,16 +574,16 @@ mod internal {
     ///
     /// This is necessary, since they are completely
     /// different types.
-    #[inline(always)]
+    #[inline(ir)]
     #[lang(slice_const_coerce)]
     fn slice_const_coerce<T>(a: slice<&mut T>) -> slice<&T> {
-        slice::from_raw::<&T>(a._ptr, a.len())
+        util::transmute(a)
     }
 
-    #[inline(always)]
+    #[inline(ir)]
     #[lang(slice_const_cast)]
     fn slice_const_cast<T>(a: slice<&T>) -> slice<&mut T> {
-        slice::from_raw::<&mut T>(a._ptr as &mut T, a.len())
+        util::transmute(a)
     }
 }
 
@@ -780,7 +780,7 @@ fn zeroed<T>() -> T {
 ///     println!("negative");
 /// }
 /// ```
-#[inline(always)]
+#[inline(ir)]
 fn uninitialized<T>() -> T {
     intrinsics::uninitialized::<T>()
 }

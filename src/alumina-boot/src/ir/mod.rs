@@ -305,6 +305,7 @@ pub struct LocalDef<'ir> {
 pub struct FuncBody<'ir> {
     pub local_defs: &'ir [LocalDef<'ir>],
     pub statements: &'ir [Statement<'ir>],
+    pub raw_body: Option<ExprP<'ir>>,
 }
 
 #[derive(Debug)]
