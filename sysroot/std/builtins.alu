@@ -1444,9 +1444,9 @@ mod internal {
     /// equality and comparison operators.
     protocol BuiltinComparable<Self: builtins::Numeric> {
         /// @ cmp::Equatable::equals
-        #[inline(always)] fn equals(lhs: &Self, rhs: &Self) -> bool { *lhs == *rhs }
+        #[inline(ir)] fn equals(lhs: &Self, rhs: &Self) -> bool { *lhs == *rhs }
         /// @ cmp::Equatable::not_equals
-        #[inline(always)] fn not_equals(lhs: &Self, rhs: &Self) -> bool { *lhs != *rhs }
+        #[inline(ir)] fn not_equals(lhs: &Self, rhs: &Self) -> bool { *lhs != *rhs }
         /// @ cmp::Comparable::compare
         #[inline(always)]
         fn compare(lhs: &Self, rhs: &Self) -> Ordering {
@@ -1460,13 +1460,13 @@ mod internal {
         }
 
         /// @ cmp::Comparable::less_than
-        #[inline(always)] fn less_than(lhs: &Self, rhs: &Self) -> bool { *lhs < *rhs }
+        #[inline(ir)] fn less_than(lhs: &Self, rhs: &Self) -> bool { *lhs < *rhs }
         /// @ cmp::Comparable::less_than_or_equal
-        #[inline(always)] fn less_than_or_equal(lhs: &Self, rhs: &Self) -> bool { *lhs <= *rhs }
+        #[inline(ir)] fn less_than_or_equal(lhs: &Self, rhs: &Self) -> bool { *lhs <= *rhs }
         /// @ cmp::Comparable::greater_than
-        #[inline(always)] fn greater_than(lhs: &Self, rhs: &Self) -> bool { *lhs > *rhs }
+        #[inline(ir)] fn greater_than(lhs: &Self, rhs: &Self) -> bool { *lhs > *rhs }
         /// @ cmp::Comparable::greater_than_or_equal
-        #[inline(always)] fn greater_than_or_equal(lhs: &Self, rhs: &Self) -> bool { *lhs >= *rhs }
+        #[inline(ir)] fn greater_than_or_equal(lhs: &Self, rhs: &Self) -> bool { *lhs >= *rhs }
     }
 
     /// Mixin for parsing integers from strings.
@@ -1950,19 +1950,19 @@ mod internal {
     /// Mixin for common floating point functions
     protocol FloatOps<Self> {
         /// Returns `NaN`.
-        #[inline]
+        #[inline(ir)]
         fn nan() -> Self {
             (0.0 as Self) / (0.0 as Self)
         }
 
         /// Returns a positive infinity.
-        #[inline]
+        #[inline(ir)]
         fn infinity() -> Self {
             (1.0 as Self) / (0.0 as Self)
         }
 
         /// Returns a negative infinity.
-        #[inline]
+        #[inline(ir)]
         fn neg_infinity() -> Self {
             (-1.0 as Self) / (0.0 as Self)
         }
@@ -2076,12 +2076,12 @@ mod tests {
         // Totally not an excuse to work in some Shakespeare...
         #[cfg(target_endian = "little")]
         assert_eq!(0x100u16
-            .to_be() | ~ to_be
+            .to_be() | ~ to_be //, that is the question
         (0x1u16), 0xfeffu16);
 
         #[cfg(target_endian = "big")]
         assert_eq!(0x100u16
-            .to_be() | ~ to_be
+            .to_be() | ~ to_be //, that is the question
         (0x1u16), 0xfffeu16);
     }
 

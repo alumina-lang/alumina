@@ -10,8 +10,7 @@ use crate::{
 use super::{
     builder::{ExpressionBuilder, TypeBuilder},
     const_eval::Value,
-    Expr, ExprKind, ExprP, FuncBody, IrCtx, IrId, Lit, LocalDef, Statement, StructInit, TupleInit,
-    Ty, UnqualifiedKind,
+    Expr, ExprKind, ExprP, FuncBody, IrCtx, IrId, Lit, LocalDef, Statement, Ty, UnqualifiedKind,
 };
 
 // The purpose of ZST elider is to take all reads and writes of zero-sized types and
@@ -107,54 +106,39 @@ impl<'ir> ZstElider<'ir> {
                     if value.ty.is_zero_sized() {
                         statements.push(Statement::Expression(value));
                     } else {
-                        inits.push(TupleInit {
-                            index: arg.index,
-                            value,
-                        });
+                        inits.push((arg.index, value));
                     }
                 }
 
-                builder.block(
-                    statements,
-                    Expr {
-                        kind: ExprKind::Tuple(
-                            self.ir.arena.alloc_slice_fill_iter(inits.into_iter()),
-                        ),
-                        is_const: expr.is_const,
-                        ty: expr.ty,
-                        value_type: expr.value_type,
-                    }
-                    .alloc_on(self.ir),
-                )
+                let ret = if expr.ty.is_zero_sized() {
+                    builder.void(expr.ty, ValueType::RValue)
+                } else {
+                    builder.tuple(inits, expr.ty)
+                };
+
+                builder.block(statements, ret)
             }
             ExprKind::Struct(fields) => {
                 let mut statements = Vec::new();
                 let mut inits = Vec::new();
+
                 for arg in fields.iter() {
                     let value = self.elide_zst_expr(arg.value);
 
                     if value.ty.is_zero_sized() {
                         statements.push(Statement::Expression(value));
                     } else {
-                        inits.push(StructInit {
-                            field: arg.field,
-                            value,
-                        });
+                        inits.push((arg.field, value));
                     }
                 }
 
-                builder.block(
-                    statements,
-                    Expr {
-                        kind: ExprKind::Struct(
-                            self.ir.arena.alloc_slice_fill_iter(inits.into_iter()),
-                        ),
-                        is_const: expr.is_const,
-                        ty: expr.ty,
-                        value_type: expr.value_type,
-                    }
-                    .alloc_on(self.ir),
-                )
+                let ret = if expr.ty.is_zero_sized() {
+                    builder.void(expr.ty, ValueType::RValue)
+                } else {
+                    builder.r#struct(inits, expr.ty)
+                };
+
+                builder.block(statements, ret)
             }
             ExprKind::Array(elems) => {
                 if expr.ty.is_zero_sized() {

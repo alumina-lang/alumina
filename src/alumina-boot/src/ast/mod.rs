@@ -704,7 +704,7 @@ pub enum Attribute {
     Cold,
     TestMain,
     Inline,
-    Align(u32),
+    Align(usize),
     Packed,
     Transparent,
     NoInline,

@@ -348,7 +348,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
 
         match name {
             "align" => {
-                let align: u32 = node
+                let align: usize = node
                     .child_by_field_name("arguments")
                     .and_then(|n| n.child_by_field_name("argument"))
                     .map(|n| self.code.node_text(n))

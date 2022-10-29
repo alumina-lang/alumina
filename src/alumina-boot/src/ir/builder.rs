@@ -252,6 +252,12 @@ impl<'ir> ExpressionBuilder<'ir> {
     }
 
     pub fn deref(&self, inner: ExprP<'ir>) -> ExprP<'ir> {
+        // optimize away ref followed by deref
+        match inner.kind {
+            ExprKind::Ref(inner) => return inner,
+            _ => {}
+        };
+
         let result = match inner.ty {
             Ty::Pointer(ty, false) => Expr::lvalue(ExprKind::Deref(inner), ty),
             Ty::Pointer(ty, true) => Expr::const_lvalue(ExprKind::Deref(inner), ty),
@@ -308,6 +314,12 @@ impl<'ir> ExpressionBuilder<'ir> {
     pub fn r#ref(&self, inner: ExprP<'ir>) -> ExprP<'ir> {
         assert!(matches!(inner.value_type, ValueType::LValue));
 
+        // optimize away deref followed by ref
+        match inner.kind {
+            ExprKind::Deref(inner) => return inner,
+            _ => {}
+        };
+
         let result = Expr::rvalue(
             ExprKind::Ref(inner),
             self.ir.intern_type(Ty::Pointer(inner.ty, inner.is_const)),
@@ -319,8 +331,6 @@ impl<'ir> ExpressionBuilder<'ir> {
     pub fn index(&self, inner: ExprP<'ir>, index: ExprP<'ir>) -> ExprP<'ir> {
         let kind = ExprKind::Index(inner, index);
         let result = match inner.ty {
-            Ty::Pointer(ty, false) => Expr::lvalue(kind, ty),
-            Ty::Pointer(ty, true) => Expr::const_lvalue(kind, ty),
             Ty::Array(ty, _) if !inner.is_const => Expr::lvalue(kind, ty),
             Ty::Array(ty, _) if inner.is_const => Expr::const_lvalue(kind, ty),
             _ => panic!("cannot index {:?}", inner.ty),

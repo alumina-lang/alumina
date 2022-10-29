@@ -251,6 +251,8 @@ pub enum CodeErrorKind {
     CannotReadFile(String),
     #[error("type alias must have a target")] // unless it is a blessed builtin :)
     TypedefWithoutTarget,
+    #[error("type with infinite size (recursive type without indirection)")]
+    TypeWithInfiniteSize,
 
     // IR inlining is very restricitve at the moment, these may eventually be removed
     #[error("cannot IR-inline functions that use variables")]

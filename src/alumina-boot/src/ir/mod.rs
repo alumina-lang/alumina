@@ -5,6 +5,7 @@ pub mod elide_zst;
 pub mod infer;
 pub mod ir_inline;
 pub mod lang;
+pub mod layout;
 pub mod mono;
 
 use crate::{
@@ -250,7 +251,7 @@ impl<'ir> Ty<'ir> {
     pub fn is_zero_sized(&self) -> bool {
         match self {
             Ty::Builtin(BuiltinType::Void) => true,
-            Ty::Builtin(BuiltinType::Never) => true, // or false? dunno, never type is weird
+            Ty::Builtin(BuiltinType::Never) => true,
             Ty::Builtin(_) => false,
             Ty::Protocol(_) => unreachable!("used protocol as a concrete type"),
             Ty::NamedType(inner) => match inner.get().unwrap() {
