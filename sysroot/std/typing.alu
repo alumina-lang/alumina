@@ -13,6 +13,7 @@ type TypeId = usize;
 ///
 /// assert_ne!(type_id::<u8>(), type_id::<u16>());
 /// ```
+#[inline(ir)]
 fn type_id<T>() -> TypeId {
     intrinsics::type_id::<T>() as TypeId
 }
@@ -25,6 +26,7 @@ fn type_id<T>() -> TypeId {
 ///
 /// assert_eq!(type_name::<u8>(), "u8");
 /// ```
+#[inline(ir)]
 fn type_name<T>() -> &[u8] {
     intrinsics::type_name::<T>()
 }
@@ -65,7 +67,6 @@ struct dyn<Protos, Ptr> {
 /// A placeholder for the `Self` type in the protocol of a `dyn` object.
 #[lang(dyn_self)]
 struct Self {}
-
 
 /// Returns the names and associated values of enum variants.
 ///
@@ -160,19 +161,19 @@ fn assert_type_ne<T1, T2>() {
 
 #[docs(no_index)]
 mod internal {
-    static ENUM_VARIANTS<E> = intrinsics::enum_variants::<E>();
-    static VTABLE<Protos, T> = intrinsics::vtable::<Protos, T>();
+    const ENUM_VARIANTS<E> = intrinsics::enum_variants::<E>();
+    const VTABLE<Protos, T> = intrinsics::vtable::<Protos, T>();
 
     type void_ptr_of<Ptr> = builtins::pointer_with_mut_of<void, Ptr>;
 
     #[lang(enum_variant_new)]
-    #[inline(always)]
+    #[inline(ir)]
     fn make_enum_variant<E>(name: &[u8], value: E) -> (&[u8], E) {
         (name, value)
     }
 
     #[lang(dyn_new)]
-    #[inline(always)]
+    #[inline(ir)]
     fn dyn_new<Protos, Ptr>(ptr: Ptr) -> dyn<Protos, void_ptr_of<Ptr>> {
         dyn {
             _ptr: ptr as void_ptr_of<Ptr>,
@@ -181,25 +182,25 @@ mod internal {
     }
 
     #[lang(dyn_const_coerce)]
-    #[inline(always)]
+    #[inline(ir)]
     fn dyn_const_coerce<Protos>(self: dyn<Protos, &mut void>) -> dyn<Protos, &void> {
-        dyn { _ptr: self._ptr, _vtable: self._vtable }
+        util::transmute(self)
     }
 
     #[lang(dyn_const_cast)]
-    #[inline(always)]
+    #[inline(ir)]
     fn dyn_const_cast<Protos>(self: dyn<Protos, &void>) -> dyn<Protos, &mut void> {
-        dyn { _ptr: self._ptr as &mut void, _vtable: self._vtable }
+        util::transmute(self)
     }
 
     #[lang(dyn_data)]
-    #[inline(always)]
+    #[inline(ir)]
     fn dyn_data<Protos, Ptr>(self: dyn<Protos, Ptr>) -> Ptr {
         self._ptr
     }
 
     #[lang(dyn_vtable_index)]
-    #[inline(always)]
+    #[inline(ir)]
     fn dyn_vtable_index<Protos, Ptr>(self: dyn<Protos, Ptr>, idx: usize) -> fn() {
         *(self._vtable + idx)
     }
@@ -337,5 +338,20 @@ mod tests {
 
             assert_eq!(p.foo(), if i % 2 == 0 { 42 } else { 1337 });
         }
+    }
+
+    #[test]
+    fn test_enum_variant() {
+        enum Foo {
+            Bar,
+            Quux,
+        }
+        let variants = enum_variants::<Foo>();
+        assert_eq!(variants.len(), 2);
+
+        assert_eq!(variants[0].0, "Bar");
+        assert_eq!(variants[0].1, Foo::Bar);
+        assert_eq!(variants[1].0, "Quux");
+        assert_eq!(variants[1].1, Foo::Quux);
     }
 }

@@ -9,9 +9,10 @@ use indexmap::IndexMap;
 use once_cell::unsync::OnceCell;
 
 use super::builder::{ExpressionBuilder, TypeBuilder};
-use super::const_eval::{const_eval, numeric_of_kind, Value};
+use super::const_eval::{numeric_of_kind, Value};
 use super::elide_zst::ZstElider;
 use super::infer::TypeInferer;
+use super::ir_inline::IrInliner;
 use super::lang::LangTypeKind;
 use super::{FuncBody, IRItemP, Lit, LocalDef, UnqualifiedKind};
 use crate::ast::lang::LangItemKind;
@@ -43,12 +44,6 @@ macro_rules! mismatch {
     };
 }
 
-struct TestCasesStatics<'ir> {
-    test_cases_array: ir::IRItemP<'ir>,
-    #[allow(dead_code)]
-    attributes_array: ir::IRItemP<'ir>,
-}
-
 pub struct MonoCtx<'ast, 'ir> {
     ast: &'ast ast::AstCtx<'ast>,
     ir: &'ir ir::IrCtx<'ir>,
@@ -60,7 +55,6 @@ pub struct MonoCtx<'ast, 'ir> {
     tests: HashMap<ir::IRItemP<'ir>, TestMetadata<'ast>>,
     intrinsics: CompilerIntrinsics<'ir>,
     static_local_defs: HashMap<ir::IRItemP<'ir>, Vec<LocalDef<'ir>>>,
-    test_cases_statics: Option<TestCasesStatics<'ir>>,
     vtable_layouts: HashMap<&'ir [ir::TyP<'ir>], ir::VtableLayout<'ir>>,
 }
 
@@ -87,7 +81,6 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
             static_local_defs: HashMap::new(),
             cycle_guardian: CycleGuardian::new(),
             tests: HashMap::new(),
-            test_cases_statics: None,
             vtable_layouts: HashMap::new(),
         }
     }
@@ -424,23 +417,21 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         for m in valued {
             let expr = child.lower_expr(m.value.unwrap(), type_hint)?;
-            let value = const_eval(expr)
-                .map_err(CodeErrorKind::CannotConstEvaluate)
-                .with_span(m.value.unwrap().span)?;
-
-            let value_type = match value.type_kind() {
-                ir::Ty::Builtin(b) if b.is_integer() => self.types.builtin(b),
+            match expr.ty {
+                ir::Ty::Builtin(b) if b.is_integer() => {}
                 _ => {
                     return Err(CodeErrorKind::InvalidValueForEnumVariant)
                         .with_span(m.value.unwrap().span)?
                 }
             };
 
-            if !type_hint
-                .get_or_insert(value_type)
-                .assignable_from(value_type)
-            {
-                return Err(mismatch!(self, type_hint.unwrap(), value_type)).with_span(m.span);
+            let value = ir::const_eval::ConstEvaluator::new(child.mono_ctx.ir)
+                .const_eval(expr)
+                .map_err(CodeErrorKind::CannotConstEvaluate)
+                .with_span(m.value.unwrap().span)?;
+
+            if !type_hint.get_or_insert(expr.ty).assignable_from(expr.ty) {
+                return Err(mismatch!(self, type_hint.unwrap(), expr.ty)).with_span(m.span);
             }
 
             if !taken_values.insert(value) {
@@ -450,7 +441,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             members.push(ir::EnumMember {
                 id: child.mono_ctx.map_id(m.id),
                 name: m.name.alloc_on(child.mono_ctx.ir),
-                value: child.exprs.const_value(value),
+                value: child.exprs.const_value(value, expr.ty),
             });
         }
 
@@ -460,6 +451,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ir::Ty::Builtin(k) => *k,
             _ => unreachable!(),
         };
+        let enum_type = type_hint.unwrap();
 
         let mut counter = numeric_of_kind!(kind, 0);
         for m in non_valued {
@@ -467,25 +459,26 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 if taken_values.insert(counter) {
                     break counter;
                 }
-                counter = const_eval(self.exprs.binary(
-                    ast::BinOp::Plus,
-                    self.exprs.const_value(counter),
-                    self.exprs.const_value(numeric_of_kind!(kind, 1)),
-                    type_hint.unwrap(),
-                ))
-                .unwrap();
+                counter = ir::const_eval::ConstEvaluator::new(child.mono_ctx.ir)
+                    .const_eval(self.exprs.binary(
+                        ast::BinOp::Plus,
+                        self.exprs.const_value(counter, enum_type),
+                        self.exprs.const_value(numeric_of_kind!(kind, 1), enum_type),
+                        enum_type,
+                    ))
+                    .unwrap();
             };
 
             members.push(ir::EnumMember {
                 id: child.mono_ctx.map_id(m.id),
                 name: m.name.alloc_on(child.mono_ctx.ir),
-                value: self.exprs.const_value(next_non_taken),
+                value: self.exprs.const_value(next_non_taken, enum_type),
             });
         }
 
         let res = ir::IRItem::Enum(ir::Enum {
             name: en.name.map(|n| n.alloc_on(child.mono_ctx.ir)),
-            underlying_type: type_hint.unwrap(),
+            underlying_type: enum_type,
             members: members.alloc_on(child.mono_ctx.ir),
         });
 
@@ -1117,12 +1110,32 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 init.unwrap()
             };
 
-            let value = ir::const_eval::const_eval(init)
+            let value = ir::const_eval::ConstEvaluator::new(child.mono_ctx.ir)
+                .const_eval(init)
                 .map_err(CodeErrorKind::CannotConstEvaluate)
                 .with_span(s.init.unwrap().span)?;
 
+            // Small builtins values for consts are directly inlined in the IR, larger ones are
+            // generated as const statics. Strings are a bit hairy, so they are inlined as well regardless
+            // of size. All C compilers are interning strings anyway, so it should not affect generated code,
+            // even though it is a bit wasteful.
+            let evaluated_init = match init.ty {
+                ir::Ty::Builtin(_) => None,
+                ir::Ty::Unqualified(UnqualifiedKind::String(_)) => None,
+                _ => {
+                    let mut elider = ZstElider::new(child.mono_ctx.ir);
+                    // TODO(tibordp): check that elider didn't produce any temporary local variables.
+                    // It should never happen, but what do you know.
+                    let optimized = elider.elide_zst_expr(child.exprs.const_value(value, init.ty));
+
+                    Some(optimized)
+                }
+            };
+
             let res = ir::IRItem::Const(ir::Const {
                 name: s.name.map(|n| n.alloc_on(child.mono_ctx.ir)),
+                typ: init.ty,
+                init: evaluated_init,
                 value,
             });
 
@@ -1220,7 +1233,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         child.return_type = Some(return_type);
         if let Some(body) = func.body {
-            let body = child.lower_function_body(body)?;
+            let body = child.lower_function_body(
+                body,
+                func.attributes.contains(&ast::Attribute::InlineDuringMono),
+            )?;
             item.get_function().unwrap().body.set(body).unwrap();
         }
 
@@ -1336,6 +1352,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     pub fn lower_function_body(
         mut self,
         expr: ast::ExprP<'ast>,
+        is_ir_inline: bool,
     ) -> Result<ir::FuncBody<'ir>, AluminaError> {
         let return_type = self.return_type.unwrap();
         let body = self
@@ -1344,8 +1361,19 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let body = self.try_coerce(return_type, body).append_span(expr.span)?;
 
-        let mut statements = Vec::new();
+        let raw_body = if is_ir_inline {
+            if self.defer_context.is_some() {
+                return Err(CodeErrorKind::IrInlineFlowControl).with_span(expr.span);
+            }
+            if !self.local_defs.is_empty() {
+                return Err(CodeErrorKind::IrInlineLocalDefs).with_span(expr.span);
+            }
+            Some(body)
+        } else {
+            None
+        };
 
+        let mut statements = Vec::new();
         if self.defer_context.is_some() {
             self.generate_defer_prologue(&mut statements);
         }
@@ -1364,6 +1392,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let function_body = FuncBody {
             statements: statements.alloc_on(self.mono_ctx.ir),
             local_defs: self.local_defs.alloc_on(self.mono_ctx.ir),
+            raw_body,
         };
 
         let elider = ZstElider::new(self.mono_ctx.ir);
@@ -1586,6 +1615,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let function_body = FuncBody {
             statements: statements.alloc_on(self.mono_ctx.ir),
             local_defs: local_defs.alloc_on(self.mono_ctx.ir),
+            raw_body: None,
         };
 
         let elider = ZstElider::new(self.mono_ctx.ir);
@@ -1764,14 +1794,15 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let mut child = self.make_tentative_child();
                 let len_expr =
                     child.lower_expr(len, Some(child.types.builtin(BuiltinType::USize)))?;
-                let len = const_eval(len_expr)
+                let len = ir::const_eval::ConstEvaluator::new(self.mono_ctx.ir)
+                    .const_eval(len_expr)
                     .map_err(CodeErrorKind::CannotConstEvaluate)
                     .and_then(|v| match v {
                         Value::USize(v) => Ok(v),
                         _ => Err(mismatch!(
                             self,
                             self.types.builtin(BuiltinType::USize),
-                            self.mono_ctx.ir.intern_type(v.type_kind())
+                            len_expr.ty
                         )),
                     })
                     .with_span(len.span)?;
@@ -2271,11 +2302,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
                 let item = self.monomorphize_lang_item(LangItemKind::SliceNew, [ptr_type])?;
                 let func = self.exprs.function(item);
-                return Ok(self.exprs.call(
+                return self.call(
                     func,
                     [rhs, size_lit].into_iter(),
                     item.get_function().with_no_span()?.return_type,
-                ));
+                );
             }
             _ => {}
         }
@@ -2289,7 +2320,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                             self.monomorphize_lang_item(LangItemKind::SliceConstCoerce, [*t1])?;
 
                         let func = self.exprs.function(item);
-                        return Ok(self.exprs.call(func, [rhs].into_iter(), lhs_typ));
+                        return self.call(func, [rhs].into_iter(), lhs_typ);
                     }
                     _ => {}
                 }
@@ -2304,7 +2335,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                         self.monomorphize_lang_item(LangItemKind::DynConstCoerce, [*t1_proto])?;
 
                     let func = self.exprs.function(item);
-                    return Ok(self.exprs.call(func, [rhs].into_iter(), lhs_typ));
+                    return self.call(func, [rhs].into_iter(), lhs_typ);
                 }
                 _ => {}
             },
@@ -2334,11 +2365,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                         .exprs
                         .r#ref(self.exprs.const_index(self.exprs.deref(rhs), 0));
 
-                    return Ok(self.exprs.call(
+                    return self.call(
                         func,
                         [data, size_lit],
                         item.get_function().with_no_span()?.return_type,
-                    ));
+                    );
                 }
                 _ => {}
             },
@@ -2349,11 +2380,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                         let item =
                             self.monomorphize_lang_item(LangItemKind::DynNew, [*t1_proto, ty])?;
                         let func = self.exprs.function(item);
-                        return Ok(self.exprs.call(
+                        return self.call(
                             func,
                             [rhs],
                             item.get_function().with_no_span()?.return_type,
-                        ));
+                        );
                     }
                     _ => {}
                 }
@@ -2854,17 +2885,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.exprs
                     .lit(ir::Lit::Float(v.alloc_on(self.mono_ctx.ir)), ty)
             }
-            ast::Lit::Str(v) => {
-                let ptr_type = self
-                    .mono_ctx
-                    .ir
-                    .intern_type(ir::Ty::Unqualified(UnqualifiedKind::String(v.len())));
-
-                self.exprs.lit(
-                    ir::Lit::Str(self.mono_ctx.ir.arena.alloc_slice_copy(v)),
-                    ptr_type,
-                )
-            }
+            ast::Lit::Str(v) => self.exprs.lit(
+                ir::Lit::Str(self.mono_ctx.ir.arena.alloc_slice_copy(v)),
+                self.types.unqualified_str(v.len()),
+            ),
         };
 
         Ok(result)
@@ -2995,12 +3019,27 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     fn lower_const(
         &mut self,
         item: ast::ItemP<'ast>,
+        generic_args: Option<&'ast [ast::TyP<'ast>]>,
         _type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let item_cell = self.monomorphize_item(item, &[])?;
+        let item_cell = if let Some(generic_args) = generic_args {
+            let generic_args = generic_args
+                .iter()
+                .map(|typ| self.lower_type_unrestricted(typ))
+                .collect::<Result<Vec<_>, _>>()?
+                .alloc_on(self.mono_ctx.ir);
+
+            self.monomorphize_item(item, generic_args)?
+        } else {
+            self.monomorphize_item(item, &[])?
+        };
         let r#const = item_cell.get_const().with_no_span()?;
 
-        Ok(self.exprs.const_value(r#const.value))
+        if r#const.init.is_some() {
+            Ok(self.exprs.const_var(item_cell, r#const.typ))
+        } else {
+            Ok(self.exprs.const_value(r#const.value, r#const.typ))
+        }
     }
 
     fn lower_unary(
@@ -3045,11 +3084,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let lhs = self.r#ref(lhs);
         let rhs = self.r#ref(rhs);
 
-        Ok(self.exprs.call(
+        self.call(
             func,
             [lhs, rhs].into_iter(),
             item.get_function().with_no_span()?.return_type,
-        ))
+        )
     }
 
     fn lower_binary(
@@ -3221,7 +3260,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
         }
 
-        if let Ok(Value::Bool(v)) = const_eval(cond) {
+        if let Ok(Value::Bool(v)) =
+            ir::const_eval::ConstEvaluator::new(self.mono_ctx.ir).const_eval(cond)
+        {
             if v {
                 Ok(then)
             } else {
@@ -3313,18 +3354,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let element_types: Vec<_> = lowered.iter().map(|e| e.ty).collect();
         let tuple_type = self.types.tuple(element_types);
 
-        Ok(ir::Expr::rvalue(
-            ir::ExprKind::Tuple(
-                self.mono_ctx.ir.arena.alloc_slice_fill_iter(
-                    lowered
-                        .into_iter()
-                        .enumerate()
-                        .map(|(index, value)| ir::TupleInit { index, value }),
-                ),
-            ),
-            tuple_type,
-        )
-        .alloc_on(self.mono_ctx.ir))
+        Ok(self
+            .exprs
+            .tuple(lowered.into_iter().enumerate(), tuple_type)
+            .alloc_on(self.mono_ctx.ir))
     }
 
     fn lower_cast(
@@ -3358,11 +3391,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let item = self.monomorphize_lang_item(LangItemKind::SliceConstCast, [*t1])?;
 
                 let func = self.exprs.function(item);
-                return Ok(self.exprs.call(
+                return self.call(
                     func,
                     [expr].into_iter(),
                     item.get_function().with_no_span()?.return_type,
-                ));
+                );
             }
             // &dyn Proto -> &mut dyn Proto
             (Some(LangTypeKind::Dyn(t1_proto, _)), Some(LangTypeKind::Dyn(t2_proto, _)))
@@ -3371,11 +3404,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let item = self.monomorphize_lang_item(LangItemKind::DynConstCast, [t1_proto])?;
 
                 let func = self.exprs.function(item);
-                return Ok(self.exprs.call(
+                return self.call(
                     func,
                     [expr].into_iter(),
                     item.get_function().with_no_span()?.return_type,
-                ));
+                );
             }
 
             // &dyn Proto -> any pointer (unchecked downcast)
@@ -3385,15 +3418,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let item =
                     self.monomorphize_lang_item(LangItemKind::DynData, [t2_proto, t2_const])?;
                 let func = self.exprs.function(item);
-
-                return Ok(self.exprs.cast(
-                    self.exprs.call(
-                        func,
-                        [expr].into_iter(),
-                        item.get_function().with_no_span()?.return_type,
-                    ),
-                    typ,
-                ));
+                let call = self.call(
+                    func,
+                    [expr].into_iter(),
+                    item.get_function().with_no_span()?.return_type,
+                )?;
+                return Ok(self.exprs.cast(call, typ));
             }
             _ => {}
         }
@@ -3586,9 +3616,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let typ = generic_args[0];
                 let name = self.mono_ctx.type_name(typ)?;
 
-                Ok(self.exprs.const_value(Value::Str(
-                    self.mono_ctx.ir.arena.alloc_slice_copy(name.as_bytes()),
-                )))
+                let name_as_bytes = name.as_bytes();
+                Ok(self.exprs.const_value(
+                    Value::Str(self.mono_ctx.ir.arena.alloc_slice_copy(name_as_bytes)),
+                    self.types.unqualified_str(name_as_bytes.len()),
+                ))
             }
             _ => self
                 .mono_ctx
@@ -3612,169 +3644,103 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(self.exprs.array(iter, array_type))
     }
 
-    fn generate_test_cases_inner(&mut self) -> Result<(), AluminaError> {
-        // This is bigger and badder than it ought to be, which is probably why people don't usually
-        // do this in the compiler.
-        // It basically creates two static arrays, one which holds all the test attributes contatenated
-        // and the other that has the TestCaseMeta objects. TestCaseMeta object contains a slice of the
-        // attributes array.
+    fn generate_test_cases(&mut self) -> Result<ir::ExprP<'ir>, AluminaError> {
         let tests = self.mono_ctx.tests.clone();
 
         let string_slice = self.slice_of(self.types.builtin(BuiltinType::U8), true)?;
-        let attrs_static = self.mono_ctx.ir.make_symbol();
-
-        let string_slice_ptr = self.types.pointer(string_slice, true);
-        let string_slice_slice = self.slice_of(string_slice, true)?;
-
-        let mut slices = vec![];
-        let mut attrs = vec![];
-
-        let len = tests.iter().map(|(_, m)| m.attributes.len()).sum();
-        let attrs_static_ty = self.types.array(string_slice, len);
-        let attrs_static_expr = self.exprs.static_var(attrs_static, attrs_static_ty);
-
-        for (_, metadata) in tests.iter() {
-            let start_index = self.exprs.const_value(Value::USize(attrs.len()));
-            for attr in &metadata.attributes {
-                let elem = self.exprs.const_value(Value::Str(
-                    self.mono_ctx
-                        .ir
-                        .arena
-                        .alloc_slice_copy(attr.to_string().as_bytes()),
-                ));
-                attrs.push(self.try_coerce(string_slice, elem)?)
-            }
-            let end_index = self.exprs.const_value(Value::USize(attrs.len()));
-            slices.push((start_index, end_index));
-        }
-
-        let res = self.array_of(string_slice, attrs)?;
-        attrs_static.assign(ir::IRItem::Static(ir::Static {
-            name: None,
-            typ: res.ty,
-            init: Some(res),
-            attributes: &[],
-            r#extern: false,
-        }));
-
-        self.mono_ctx
-            .static_local_defs
-            .insert(attrs_static, std::mem::take(&mut self.local_defs));
-
-        let test_cases_static = self.mono_ctx.ir.make_symbol();
-
         let meta_item = self.monomorphize_lang_item(LangItemKind::TestCaseMeta, [])?;
         let meta_type = self.types.named(meta_item);
         let meta_new = self.monomorphize_lang_item(LangItemKind::TestCaseMetaNew, [])?;
 
         let fn_ptr_type = self.types.function([], self.types.void());
 
-        let attrs_ref = self.r#ref(attrs_static_expr);
-        let attrs_as_slice = self.try_coerce(string_slice_slice, attrs_ref)?;
-
         let mut test_cases = vec![];
-        for ((start_index, end_index), (func, meta)) in slices.into_iter().zip(tests.iter()) {
-            let name_arg = self.exprs.const_value(Value::Str(
-                self.mono_ctx
-                    .ir
-                    .arena
-                    .alloc_slice_copy(meta.name.to_string().as_bytes()),
-            ));
-
-            let path_arg = self.exprs.const_value(Value::Str(
-                self.mono_ctx
-                    .ir
-                    .arena
-                    .alloc_slice_copy(meta.path.to_string().as_bytes()),
-            ));
-
-            let range_item = self.monomorphize_lang_item(
-                LangItemKind::RangeNew,
-                [self.types.builtin(BuiltinType::USize)],
-            )?;
-            let range_func = self.exprs.function(range_item);
-
-            let range = self.exprs.call(
-                range_func,
-                [start_index, end_index].into_iter(),
-                range_item.get_function().with_no_span()?.return_type,
+        for (func, meta) in tests.iter() {
+            let name = meta.name.to_string();
+            let name_arg = self.exprs.const_value(
+                Value::Str(self.mono_ctx.ir.arena.alloc_slice_copy(name.as_bytes())),
+                self.types.unqualified_str(name.len()),
             );
 
-            let item = self.monomorphize_lang_item(
-                LangItemKind::SliceRangeIndex,
-                [string_slice_ptr, range.ty],
-            )?;
-            let attr_slice = self.exprs.call(
-                self.exprs.function(item),
-                [attrs_as_slice, range].into_iter(),
-                string_slice_slice,
+            let path = meta.path.to_string();
+            let path_arg = self.exprs.const_value(
+                Value::Str(self.mono_ctx.ir.arena.alloc_slice_copy(path.as_bytes())),
+                self.types.unqualified_str(path.len()),
+            );
+
+            let attrs: Vec<_> = meta
+                .attributes
+                .iter()
+                .map(|s| s.as_bytes())
+                .collect::<Vec<_>>()
+                .join(&b"\0"[..]);
+
+            let attrs_arg = self.exprs.const_value(
+                Value::Str(self.mono_ctx.ir.arena.alloc_slice_copy(&attrs[..])),
+                self.types.unqualified_str(attrs.len()),
             );
 
             let fn_ptr_arg = self.exprs.function(func);
             let args = [
                 self.try_coerce(string_slice, path_arg)?,
                 self.try_coerce(string_slice, name_arg)?,
-                self.try_coerce(string_slice_slice, attr_slice)?,
+                self.try_coerce(string_slice, attrs_arg)?,
                 self.try_coerce(fn_ptr_type, fn_ptr_arg)?,
             ];
 
-            test_cases.push(
-                self.exprs
-                    .call(self.exprs.function(meta_new), args, meta_type),
-            );
+            test_cases.push(self.call(self.exprs.function(meta_new), args, meta_type)?);
         }
 
-        let res = self.array_of(meta_type, test_cases)?;
-        test_cases_static.assign(ir::IRItem::Static(ir::Static {
-            name: None,
-            typ: res.ty,
-            init: Some(res),
-            attributes: &[],
-            r#extern: false,
-        }));
-
-        self.mono_ctx
-            .static_local_defs
-            .insert(test_cases_static, std::mem::take(&mut self.local_defs));
-
-        self.mono_ctx.test_cases_statics.replace(TestCasesStatics {
-            attributes_array: attrs_static,
-            test_cases_array: test_cases_static,
-        });
-
-        let dummy1 = self.mono_ctx.ast.make_symbol();
-        let dummy2 = self.mono_ctx.ast.make_symbol();
-
-        self.mono_ctx
-            .finished
-            .insert(MonoKey::new(dummy1, &[], None, false), test_cases_static);
-        self.mono_ctx
-            .finished
-            .insert(MonoKey::new(dummy2, &[], None, false), attrs_static);
-
-        Ok(())
+        self.array_of(meta_type, test_cases)
     }
 
-    fn generate_test_cases(&mut self) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let meta_item = self.monomorphize_lang_item(LangItemKind::TestCaseMeta, [])?;
-        let meta_type = self.types.named(meta_item);
-        let meta_slice_type = self.slice_of(meta_type, true)?;
+    pub fn call<I>(
+        &mut self,
+        callee: ir::ExprP<'ir>,
+        args: I,
+        return_ty: ir::TyP<'ir>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError>
+    where
+        I: IntoIterator<Item = ir::ExprP<'ir>>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        match callee.kind {
+            ir::ExprKind::Fn(item) => {
+                let func = item.get_function().with_no_span()?;
+                if func.attributes.contains(&ast::Attribute::InlineDuringMono) {
+                    let inliner = IrInliner::with_replacements(
+                        self.mono_ctx.ir,
+                        func.args
+                            .iter()
+                            .zip(args.into_iter())
+                            .map(|(a, b)| (a.id, b)),
+                    );
 
-        if self.mono_ctx.test_cases_statics.is_none() {
-            let mut child = Self::new(self.mono_ctx, self.tentative, self.current_item);
-            child.generate_test_cases_inner()?;
+                    // no silent fallback to a regular function call, since the only thing that can go wrong is that
+                    // the callee is not compatible with IR inlining, so this should not lead to surprises
+                    let expr = inliner.visit_expr(
+                        func.body
+                            .get()
+                            .ok_or(CodeErrorKind::UnpopulatedSymbol)
+                            .with_no_span()?
+                            .raw_body
+                            .unwrap(),
+                    )?;
+
+                    // The inlined function may return a lvalue, which would be very confusing. If this happens, we
+                    // patch up the value kind. C will still consider it a lvalue, but that shouldn't matter.
+                    if expr.value_type == ir::ValueType::LValue {
+                        return Ok(
+                            ir::Expr::rvalue(expr.kind.clone(), expr.ty).alloc_on(self.mono_ctx.ir)
+                        );
+                    } else {
+                        return Ok(expr);
+                    }
+                }
+            }
+            _ => {}
         }
-
-        let test_cases_static = self
-            .mono_ctx
-            .test_cases_statics
-            .as_ref()
-            .unwrap()
-            .test_cases_array;
-        let item = test_cases_static.get_static().unwrap();
-        let ret = self.r#ref(self.exprs.static_var(test_cases_static, item.typ));
-
-        self.try_coerce(meta_slice_type, ret)
+        Ok(self.exprs.call(callee, args, return_ty))
     }
 
     fn generate_enum_variants(
@@ -3791,17 +3757,21 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let mut exprs = Vec::new();
         for member in e.members {
+            let as_bytes = member.name.as_bytes();
             let name = self.try_coerce(
                 enum_variant_new_func.args[0].ty,
-                self.exprs.const_value(Value::Str(member.name.as_bytes())),
+                self.exprs.const_value(
+                    Value::Str(as_bytes),
+                    self.types.unqualified_str(as_bytes.len()),
+                ),
             )?;
             let value = self.exprs.cast(member.value, typ);
 
-            exprs.push(self.exprs.call(
+            exprs.push(self.call(
                 self.exprs.function(enum_variant_new),
                 [name, value].into_iter(),
                 enum_variant_new_func.return_type,
-            ));
+            )?);
         }
 
         self.array_of(enum_variant_new_func.return_type, exprs)
@@ -3953,12 +3923,19 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let data_item = self.monomorphize_lang_item(LangItemKind::DynData, [key, dyn_ptr])?;
         let index_item =
             self.monomorphize_lang_item(LangItemKind::DynVtableIndex, [key, dyn_ptr])?;
+        let call = self.call(
+            self.exprs.function(index_item),
+            [
+                local,
+                self.exprs.const_value(
+                    Value::USize(vtable_index),
+                    self.types.builtin(BuiltinType::USize),
+                ),
+            ],
+            index_item.get_function().with_no_span()?.return_type,
+        )?;
         let callee = self.exprs.cast(
-            self.exprs.call(
-                self.exprs.function(index_item),
-                [local, self.exprs.const_value(Value::USize(vtable_index))],
-                index_item.get_function().with_no_span()?.return_type,
-            ),
+            call,
             self.types
                 .function(func.arg_types.to_vec(), func.return_type),
         );
@@ -3980,11 +3957,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
         }
 
-        let mut args = once(Ok(self.exprs.call(
+        let mut args = once(Ok(self.call(
             self.exprs.function(data_item),
             [local],
             data_item.get_function().with_no_span()?.return_type,
-        )))
+        )?))
         .chain(
             args.iter()
                 .zip(func.arg_types.iter().skip(1))
@@ -4000,9 +3977,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             *arg = self.try_coerce(expected, *arg)?;
         }
 
+        let call = self.call(callee, args, func.return_type)?;
         let ret = self.exprs.block(
             [ir::Statement::Expression(self.exprs.assign(local, tgt))],
-            self.exprs.call(callee, args, func.return_type),
+            call,
         );
 
         Ok(Some(ret))
@@ -4111,7 +4089,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             *arg = self.try_coerce(expected, *arg)?;
         }
 
-        Ok(Some(self.exprs.call(callee, args, return_type)))
+        Ok(Some(self.call(callee, args, return_type)?))
     }
 
     fn resolve_ast_type(
@@ -4300,7 +4278,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             args.insert(0, self_arg);
         }
 
-        Ok(self.exprs.call(callee, args, return_type))
+        self.call(callee, args, return_type)
     }
 
     fn lower_fn(
@@ -4565,11 +4543,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 .with_span(inner_span)?;
 
             let func = self.exprs.function(item);
-            indexee = self.exprs.call(
+            indexee = self.call(
                 func,
                 [indexee].into_iter(),
                 item.get_function().with_no_span()?.return_type,
-            );
+            )?;
 
             if let Some(LangTypeKind::Slice(ptr_ty)) = self.mono_ctx.get_lang_type_kind(indexee.ty)
             {
@@ -4583,20 +4561,17 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             let item =
                 self.monomorphize_lang_item(LangItemKind::SliceRangeIndex, [ptr_ty, index.ty])?;
             let func = self.exprs.function(item);
-            return Ok(self.exprs.call(
+            self.call(
                 func,
                 [indexee, index].into_iter(),
                 item.get_function().with_no_span()?.return_type,
-            ));
+            )
         } else {
             let index = self.try_coerce(self.types.builtin(BuiltinType::USize), index)?;
             let item = self.monomorphize_lang_item(LangItemKind::SliceIndex, [ptr_ty])?;
             let func = self.exprs.function(item);
-            return Ok(self.exprs.deref(self.exprs.call(
-                func,
-                [indexee, index].into_iter(),
-                ptr_ty,
-            )));
+            let call = self.call(func, [indexee, index].into_iter(), ptr_ty)?;
+            return Ok(self.exprs.deref(call));
         }
     }
 
@@ -4649,11 +4624,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 };
                 let func = self.exprs.function(item);
 
-                self.exprs.call(
+                self.call(
                     func,
                     [lower, upper].into_iter(),
                     item.get_function().with_no_span()?.return_type,
-                )
+                )?
             }
             (Some(lower), None) => {
                 let lower = self.try_coerce(bound_ty, lower)?;
@@ -4661,11 +4636,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let item = self.monomorphize_lang_item(LangItemKind::RangeFromNew, [bound_ty])?;
                 let func = self.exprs.function(item);
 
-                self.exprs.call(
+                self.call(
                     func,
                     [lower].into_iter(),
                     item.get_function().with_no_span()?.return_type,
-                )
+                )?
             }
             (None, Some(upper)) => {
                 let upper = self.try_coerce(bound_ty, upper)?;
@@ -4677,21 +4652,21 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 };
                 let func = self.exprs.function(item);
 
-                self.exprs.call(
+                self.call(
                     func,
                     [upper].into_iter(),
                     item.get_function().with_no_span()?.return_type,
-                )
+                )?
             }
             (None, None) => {
                 let item = self.monomorphize_lang_item(LangItemKind::RangeFullNew, [bound_ty])?;
                 let func = self.exprs.function(item);
 
-                self.exprs.call(
+                self.call(
                     func,
                     [].into_iter(),
                     item.get_function().with_no_span()?.return_type,
-                )
+                )?
             }
         };
 
@@ -4835,7 +4810,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         ))
     }
 
-    fn lower_struct_expression(
+    fn lower_struct(
         &mut self,
         typ: ast::TyP<'ast>,
         inits: &[ast::FieldInitializer<'ast>],
@@ -4868,17 +4843,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
 
         let struct_type = self.types.named(item);
-
-        let ret = ir::Expr::rvalue(
-            ir::ExprKind::Struct(self.mono_ctx.ir.arena.alloc_slice_fill_iter(
-                lowered.into_iter().map(|(field, value)| ir::StructInit {
-                    field: field.id,
-                    value,
-                }),
-            )),
+        let ret = self.exprs.r#struct(
+            lowered.into_iter().map(|(f, e)| (f.id, e)).into_iter(),
             struct_type,
-        )
-        .alloc_on(self.mono_ctx.ir);
+        );
 
         if !item.get_struct_like().with_no_span()?.is_union {
             for u in uninitialized {
@@ -5007,7 +4975,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ast::ExprKind::Array(elements) => self.lower_array_expression(elements, type_hint),
             ast::ExprKind::EnumValue(typ, id) => self.lower_enum_value(typ, *id, type_hint),
             ast::ExprKind::Struct(func, initializers) => {
-                self.lower_struct_expression(func, initializers, type_hint, expr.span)
+                self.lower_struct(func, initializers, type_hint, expr.span)
             }
             ast::ExprKind::Index(inner, index) => self.lower_index(inner, index, type_hint),
             ast::ExprKind::Range(lower, upper, inclusive) => {
@@ -5016,7 +4984,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ast::ExprKind::Return(inner) => self.lower_return(*inner, type_hint),
             ast::ExprKind::Fn(item, args) => self.lower_fn(item.clone(), *args, type_hint),
             ast::ExprKind::Static(item, args) => self.lower_static(*item, *args, type_hint),
-            ast::ExprKind::Const(item) => self.lower_const(*item, type_hint),
+            ast::ExprKind::Const(item, args) => self.lower_const(*item, *args, type_hint),
             ast::ExprKind::Defered(def) => self.lower_defered(def, type_hint),
             ast::ExprKind::StaticIf(cond, then, els) => {
                 self.lower_static_if(cond, then, els, type_hint)

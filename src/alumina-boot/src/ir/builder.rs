@@ -21,6 +21,10 @@ impl<'ir> ExpressionBuilder<'ir> {
         Expr::lvalue(ExprKind::Static(item), typ).alloc_on(self.ir)
     }
 
+    pub fn const_var(&self, item: IRItemP<'ir>, typ: TyP<'ir>) -> ExprP<'ir> {
+        Expr::const_lvalue(ExprKind::Const(item), typ).alloc_on(self.ir)
+    }
+
     fn fill_block(
         &self,
         target: &mut Vec<Statement<'ir>>,
@@ -102,6 +106,42 @@ impl<'ir> ExpressionBuilder<'ir> {
     {
         let result = Expr::rvalue(
             ExprKind::Array(self.ir.arena.alloc_slice_fill_iter(args)),
+            ty,
+        );
+
+        result.alloc_on(self.ir)
+    }
+
+    pub fn tuple<I>(&self, args: I, ty: TyP<'ir>) -> ExprP<'ir>
+    where
+        I: IntoIterator<Item = (usize, ExprP<'ir>)>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        let result = Expr::rvalue(
+            ExprKind::Tuple(
+                self.ir.arena.alloc_slice_fill_iter(
+                    args.into_iter()
+                        .map(|(index, value)| super::TupleInit { index, value }),
+                ),
+            ),
+            ty,
+        );
+
+        result.alloc_on(self.ir)
+    }
+
+    pub fn r#struct<I>(&self, args: I, ty: TyP<'ir>) -> ExprP<'ir>
+    where
+        I: IntoIterator<Item = (IrId, ExprP<'ir>)>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        let result = Expr::rvalue(
+            ExprKind::Struct(
+                self.ir.arena.alloc_slice_fill_iter(
+                    args.into_iter()
+                        .map(|(field, value)| super::StructInit { field, value }),
+                ),
+            ),
             ty,
         );
 
@@ -200,13 +240,12 @@ impl<'ir> ExpressionBuilder<'ir> {
         expr.alloc_on(self.ir)
     }
 
-    pub fn const_value(&self, val: Value<'ir>) -> ExprP<'ir> {
-        let value_kind = val.type_kind();
+    pub fn const_value(&self, val: Value<'ir>, typ: TyP<'ir>) -> ExprP<'ir> {
         let expr = Expr {
             kind: ExprKind::ConstValue(val),
             value_type: ValueType::RValue,
             is_const: true,
-            ty: self.ir.intern_type(value_kind),
+            ty: typ,
         };
 
         expr.alloc_on(self.ir)
@@ -322,6 +361,11 @@ impl<'ir> TypeBuilder<'ir> {
 
     pub fn void(&self) -> TyP<'ir> {
         self.ir.intern_type(Ty::Builtin(BuiltinType::Void))
+    }
+
+    pub fn unqualified_str(&self, len: usize) -> TyP<'ir> {
+        self.ir
+            .intern_type(Ty::Unqualified(UnqualifiedKind::String(len)))
     }
 
     pub fn builtin(&self, builtin: BuiltinType) -> TyP<'ir> {

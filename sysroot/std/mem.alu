@@ -132,14 +132,14 @@ impl slice {
     /// let slice = slice::from_raw(ptr, 2);
     /// assert_eq!(slice, &[1, 2]);
     /// ```
-    #[inline(always)]
+    #[inline(ir)]
     #[lang(slice_new)]
     fn from_raw<Ptr: Pointer>(ptr: Ptr, len: usize) -> slice<Ptr> {
         slice::<Ptr> { _ptr: ptr, _len: len }
     }
 
     /// Returns the length of the slice
-    #[inline(always)]
+    #[inline(ir)]
     fn len<Ptr: Pointer>(self: slice<Ptr>) -> usize {
         self._len
     }
@@ -474,6 +474,7 @@ mod internal {
 
     /// Convert anything that has the appropriate as_slice/as_slice_mut methods to a slice.
     /// Invoked by the compiler when indexing into a collection.
+    #[inline(ir)]
     #[lang(slice_slicify)]
     fn slice_slicify<T, Ptr>(ptr: Ptr) -> slicify_slice_t<T, Ptr> {
         when Ptr: &T {
@@ -573,16 +574,16 @@ mod internal {
     ///
     /// This is necessary, since they are completely
     /// different types.
-    #[inline(always)]
+    #[inline(ir)]
     #[lang(slice_const_coerce)]
     fn slice_const_coerce<T>(a: slice<&mut T>) -> slice<&T> {
-        slice::from_raw::<&T>(a._ptr, a.len())
+        util::transmute(a)
     }
 
-    #[inline(always)]
+    #[inline(ir)]
     #[lang(slice_const_cast)]
     fn slice_const_cast<T>(a: slice<&T>) -> slice<&mut T> {
-        slice::from_raw::<&mut T>(a._ptr as &mut T, a.len())
+        util::transmute(a)
     }
 }
 
@@ -666,7 +667,7 @@ fn free<T>(a: &mut T) {
 /// assert_eq!(size_of::<u32>(), 4);
 /// assert_eq!(size_of::<u64>(), 8);
 /// ```
-#[inline(always)]
+#[inline(ir)]
 fn size_of<T>() -> usize {
     intrinsics::size_of::<T>()
 }
@@ -683,7 +684,7 @@ fn size_of<T>() -> usize {
 /// assert_eq!(align_of::<u32>(), 4);
 /// assert_eq!(align_of::<u64>(), 8);
 /// ```
-#[inline(always)]
+#[inline(ir)]
 fn align_of<T>() -> usize {
     intrinsics::align_of::<T>()
 }
@@ -779,7 +780,7 @@ fn zeroed<T>() -> T {
 ///     println!("negative");
 /// }
 /// ```
-#[inline(always)]
+#[inline(ir)]
 fn uninitialized<T>() -> T {
     intrinsics::uninitialized::<T>()
 }

@@ -3,14 +3,14 @@
 use crate::ast::BinOp;
 use std::{
     cmp::Ordering,
-    fmt::{Display, Formatter},
+    collections::HashMap,
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub},
 };
 
-use super::{BuiltinType, ExprKind, ExprP, Lit, Statement, Ty, UnOp, UnqualifiedKind};
+use super::{BuiltinType, ExprKind, ExprP, IrCtx, IrId, Lit, Statement, Ty, TyP, UnOp};
 use thiserror::Error;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Value<'ir> {
     Void,
     Bool(bool),
@@ -29,6 +29,10 @@ pub enum Value<'ir> {
     F32(&'ir str),
     F64(&'ir str),
     Str(&'ir [u8]),
+    Tuple(&'ir [Value<'ir>]),
+    Array(&'ir [Value<'ir>]),
+    Struct(&'ir [(IrId, Value<'ir>)]),
+    FunctionPointer(super::IRItemP<'ir>),
 }
 
 #[derive(Debug, Error, Clone)]
@@ -37,6 +41,10 @@ pub enum ConstEvalError {
     Unsupported,
     #[error("ice: encountered a branch in constant evaluation that should have been rejected during type checking")]
     CompilerBug,
+    #[error("trying to access uninitialized field during constant evaluation")]
+    UninitializedField,
+    #[error("index out of bounds")]
+    IndexOutOfBounds,
     #[error("arithmetic overflow")]
     ArithmeticOverflow,
     #[error("division by zero")]
@@ -44,33 +52,6 @@ pub enum ConstEvalError {
 }
 
 type Result<T> = std::result::Result<T, ConstEvalError>;
-
-impl Display for Value<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Value::Void => write!(f, "void"),
-            Value::Bool(b) => write!(f, "{}", b),
-            Value::U8(b) => write!(f, "{}", b),
-            Value::U16(b) => write!(f, "{}", b),
-            Value::U32(b) => write!(f, "{}", b),
-            Value::U64(b) => write!(f, "{}", b),
-            Value::U128(b) => write!(f, "{}", b),
-            Value::I8(b) => write!(f, "{}", b),
-            Value::I16(b) => write!(f, "{}", b),
-            Value::I32(b) => write!(f, "{}", b),
-            Value::I64(b) => write!(f, "{}", b),
-            Value::I128(b) => write!(f, "{}", b),
-            Value::USize(b) => write!(f, "{}", b),
-            Value::ISize(b) => write!(f, "{}", b),
-            Value::F32(s) | Value::F64(s) => write!(f, "{}", s),
-            Value::Str(s) => {
-                let as_str = std::str::from_utf8(s).map_err(|_| std::fmt::Error)?;
-                write!(f, "{}", as_str)?;
-                Ok(())
-            }
-        }
-    }
-}
 
 macro_rules! numeric_of_kind {
     ($kind:expr, $val:expr) => {
@@ -95,28 +76,6 @@ macro_rules! numeric_of_kind {
 pub(crate) use numeric_of_kind;
 
 impl<'ir> Value<'ir> {
-    pub fn type_kind<'a>(&'a self) -> Ty<'ir> {
-        match self {
-            Value::Void => Ty::Builtin(BuiltinType::Void),
-            Value::Bool(_) => Ty::Builtin(BuiltinType::Bool),
-            Value::U8(_) => Ty::Builtin(BuiltinType::U8),
-            Value::U16(_) => Ty::Builtin(BuiltinType::U16),
-            Value::U32(_) => Ty::Builtin(BuiltinType::U32),
-            Value::U64(_) => Ty::Builtin(BuiltinType::U64),
-            Value::U128(_) => Ty::Builtin(BuiltinType::U128),
-            Value::I8(_) => Ty::Builtin(BuiltinType::I8),
-            Value::I16(_) => Ty::Builtin(BuiltinType::I16),
-            Value::I32(_) => Ty::Builtin(BuiltinType::I32),
-            Value::I64(_) => Ty::Builtin(BuiltinType::I64),
-            Value::I128(_) => Ty::Builtin(BuiltinType::I128),
-            Value::USize(_) => Ty::Builtin(BuiltinType::USize),
-            Value::ISize(_) => Ty::Builtin(BuiltinType::ISize),
-            Value::F32(_) => Ty::Builtin(BuiltinType::F32),
-            Value::F64(_) => Ty::Builtin(BuiltinType::F64),
-            Value::Str(s) => Ty::Unqualified(UnqualifiedKind::String(s.len())),
-        }
-    }
-
     fn equal(self, other: Value) -> Result<Value<'ir>> {
         match (self, other) {
             (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a == b)),
@@ -501,172 +460,246 @@ impl<'ir> Rem for Value<'ir> {
     }
 }
 
-pub fn const_eval(expr: ExprP<'_>) -> Result<Value<'_>> {
-    match &expr.kind {
-        ExprKind::Void => Ok(Value::Void),
-        ExprKind::Binary(op, lhs, rhs) => {
-            let lhs = const_eval(lhs)?;
+pub struct ConstEvaluator<'ir> {
+    ir: &'ir IrCtx<'ir>,
+}
 
-            // Special case for short-circuiting operators
-            match (op, lhs) {
-                (BinOp::Or, Value::Bool(a)) => return if a { Ok(lhs) } else { const_eval(rhs) },
-                (BinOp::And, Value::Bool(a)) => return if a { const_eval(rhs) } else { Ok(lhs) },
-                (BinOp::Or | BinOp::And, _) => return Err(ConstEvalError::CompilerBug),
-                _ => {}
-            };
+impl<'ir> ConstEvaluator<'ir> {
+    pub fn new(ir: &'ir IrCtx<'ir>) -> Self {
+        Self { ir }
+    }
 
-            let rhs = const_eval(rhs)?;
-            match op {
-                BinOp::BitAnd => lhs & rhs,
-                BinOp::BitOr => lhs | rhs,
-                BinOp::BitXor => lhs ^ rhs,
-                BinOp::Eq => lhs.equal(rhs),
-                BinOp::Neq => lhs.equal(rhs).and_then(|v| !v),
-                BinOp::Lt => Ok(Value::Bool(matches!(lhs.cmp(rhs)?, Ordering::Less))),
-                BinOp::LEq => Ok(Value::Bool(matches!(
-                    lhs.cmp(rhs)?,
-                    Ordering::Less | Ordering::Equal
-                ))),
-                BinOp::Gt => Ok(Value::Bool(matches!(lhs.cmp(rhs)?, Ordering::Greater))),
-                BinOp::GEq => Ok(Value::Bool(matches!(
-                    lhs.cmp(rhs)?,
-                    Ordering::Greater | Ordering::Equal
-                ))),
-                BinOp::LShift => lhs << rhs,
-                BinOp::RShift => lhs >> rhs,
-                BinOp::Plus => lhs + rhs,
-                BinOp::Minus => lhs - rhs,
-                BinOp::Mul => lhs * rhs,
-                BinOp::Div => lhs / rhs,
-                BinOp::Mod => lhs % rhs,
-                _ => Err(ConstEvalError::Unsupported),
+    fn cast(&self, inner: ExprP<'ir>, mut target: TyP<'ir>) -> Result<Value<'ir>> {
+        let val = self.const_eval(inner)?;
+        if inner.ty == target {
+            return Ok(val);
+        }
+
+        if let Ty::NamedType(e) = target {
+            if let Ok(e) = e.get_enum() {
+                target = e.underlying_type;
             }
         }
-        ExprKind::Unary(op, inner) => {
-            let inner = const_eval(inner)?;
 
-            match op {
-                UnOp::Not if matches!(inner, Value::Bool(_)) => !inner,
-                UnOp::Neg => -inner,
-                UnOp::BitNot if !matches!(inner, Value::Bool(_)) => !inner,
-                _ => Err(ConstEvalError::CompilerBug),
-            }
-        }
-        ExprKind::ConstValue(value) => Ok(*value),
-        ExprKind::Lit(l) => match l {
-            Lit::Bool(b) => Ok(Value::Bool(*b)),
-            Lit::Int(i) => match expr.ty {
-                Ty::Builtin(BuiltinType::U8) => Ok(Value::U8(*i as u8)),
-                Ty::Builtin(BuiltinType::U16) => Ok(Value::U16(*i as u16)),
-                Ty::Builtin(BuiltinType::U32) => Ok(Value::U32(*i as u32)),
-                Ty::Builtin(BuiltinType::U64) => Ok(Value::U64(*i as u64)),
-                Ty::Builtin(BuiltinType::U128) => Ok(Value::U128(*i as u128)),
-                Ty::Builtin(BuiltinType::I8) => Ok(Value::I8(*i as i8)),
-                Ty::Builtin(BuiltinType::I16) => Ok(Value::I16(*i as i16)),
-                Ty::Builtin(BuiltinType::I32) => Ok(Value::I32(*i as i32)),
-                Ty::Builtin(BuiltinType::I64) => Ok(Value::I64(*i as i64)),
-                Ty::Builtin(BuiltinType::I128) => Ok(Value::I128(*i as i128)),
-                Ty::Builtin(BuiltinType::USize) => Ok(Value::USize(*i as usize)),
-                Ty::Builtin(BuiltinType::ISize) => Ok(Value::ISize(*i as isize)),
-                _ => unreachable!(),
-            },
-            Lit::Float(s) => match expr.ty {
-                Ty::Builtin(BuiltinType::F32) => Ok(Value::F32(*s)),
-                Ty::Builtin(BuiltinType::F64) => Ok(Value::F64(*s)),
-                _ => unreachable!(),
-            },
-            Lit::Str(s) => Ok(Value::Str(*s)),
+        let promoted = match val {
+            Value::U8(a) => Value::U128(a as u128),
+            Value::U16(a) => Value::U128(a as u128),
+            Value::U32(a) => Value::U128(a as u128),
+            Value::U64(a) => Value::U128(a as u128),
+            Value::U128(a) => Value::U128(a),
+            Value::USize(a) => Value::U128(a as u128),
+            Value::I8(a) => Value::I128(a as i128),
+            Value::I16(a) => Value::I128(a as i128),
+            Value::I32(a) => Value::I128(a as i128),
+            Value::I64(a) => Value::I128(a as i128),
+            Value::I128(a) => Value::I128(a),
+            Value::ISize(a) => Value::I128(a as i128),
+            Value::Bool(a) => Value::U128(if a { 1 } else { 0 }),
+            _ => val,
+        };
+
+        match (promoted, target) {
+            (Value::U128(a), Ty::Builtin(BuiltinType::U8)) => Ok(Value::U8(a as u8)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::U16)) => Ok(Value::U16(a as u16)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::U32)) => Ok(Value::U32(a as u32)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::U64)) => Ok(Value::U64(a as u64)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::U128)) => Ok(Value::U128(a)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::USize)) => Ok(Value::USize(a as usize)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::I8)) => Ok(Value::I8(a as i8)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::I16)) => Ok(Value::I16(a as i16)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::I32)) => Ok(Value::I32(a as i32)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::I64)) => Ok(Value::I64(a as i64)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::I128)) => Ok(Value::I128(a as i128)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::ISize)) => Ok(Value::ISize(a as isize)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::U8)) => Ok(Value::U8(a as u8)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::U16)) => Ok(Value::U16(a as u16)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::U32)) => Ok(Value::U32(a as u32)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::U64)) => Ok(Value::U64(a as u64)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::U128)) => Ok(Value::U128(a as u128)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::USize)) => Ok(Value::USize(a as usize)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::I8)) => Ok(Value::I8(a as i8)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::I16)) => Ok(Value::I16(a as i16)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::I32)) => Ok(Value::I32(a as i32)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::I64)) => Ok(Value::I64(a as i64)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::I128)) => Ok(Value::I128(a)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::ISize)) => Ok(Value::ISize(a as isize)),
+            (Value::F64(a), Ty::Builtin(BuiltinType::F32)) => Ok(Value::F32(a)),
+            (Value::F32(a), Ty::Builtin(BuiltinType::F64)) => Ok(Value::F64(a)),
+            (Value::FunctionPointer(id), Ty::FunctionPointer(..)) => Ok(Value::FunctionPointer(id)),
             _ => Err(ConstEvalError::Unsupported),
-        },
-        ExprKind::Cast(inner) => {
-            let val = const_eval(inner)?;
-            if val.type_kind() == *expr.ty {
-                Ok(val)
-            } else {
-                let promoted = match val {
-                    Value::U8(a) => Value::U128(a as u128),
-                    Value::U16(a) => Value::U128(a as u128),
-                    Value::U32(a) => Value::U128(a as u128),
-                    Value::U64(a) => Value::U128(a as u128),
-                    Value::U128(a) => Value::U128(a),
-                    Value::USize(a) => Value::U128(a as u128),
-                    Value::I8(a) => Value::I128(a as i128),
-                    Value::I16(a) => Value::I128(a as i128),
-                    Value::I32(a) => Value::I128(a as i128),
-                    Value::I64(a) => Value::I128(a as i128),
-                    Value::I128(a) => Value::I128(a),
-                    Value::ISize(a) => Value::I128(a as i128),
-                    Value::Bool(a) => Value::U128(if a { 1 } else { 0 }),
-                    _ => val,
+        }
+    }
+
+    pub fn const_eval(&self, expr: ExprP<'ir>) -> Result<Value<'ir>> {
+        match &expr.kind {
+            ExprKind::Void => Ok(Value::Void),
+            ExprKind::Binary(op, lhs, rhs) => {
+                let lhs = self.const_eval(lhs)?;
+
+                // Special case for short-circuiting operators
+                match (op, lhs) {
+                    (BinOp::Or, Value::Bool(a)) => {
+                        return if a { Ok(lhs) } else { self.const_eval(rhs) }
+                    }
+                    (BinOp::And, Value::Bool(a)) => {
+                        return if a { self.const_eval(rhs) } else { Ok(lhs) }
+                    }
+                    (BinOp::Or | BinOp::And, _) => return Err(ConstEvalError::CompilerBug),
+                    _ => {}
                 };
 
-                match (promoted, expr.ty) {
-                    (Value::U128(a), Ty::Builtin(BuiltinType::U8)) => Ok(Value::U8(a as u8)),
-                    (Value::U128(a), Ty::Builtin(BuiltinType::U16)) => Ok(Value::U16(a as u16)),
-                    (Value::U128(a), Ty::Builtin(BuiltinType::U32)) => Ok(Value::U32(a as u32)),
-                    (Value::U128(a), Ty::Builtin(BuiltinType::U64)) => Ok(Value::U64(a as u64)),
-                    (Value::U128(a), Ty::Builtin(BuiltinType::U128)) => Ok(Value::U128(a)),
-                    (Value::U128(a), Ty::Builtin(BuiltinType::USize)) => {
-                        Ok(Value::USize(a as usize))
-                    }
-                    (Value::U128(a), Ty::Builtin(BuiltinType::I8)) => Ok(Value::I8(a as i8)),
-                    (Value::U128(a), Ty::Builtin(BuiltinType::I16)) => Ok(Value::I16(a as i16)),
-                    (Value::U128(a), Ty::Builtin(BuiltinType::I32)) => Ok(Value::I32(a as i32)),
-                    (Value::U128(a), Ty::Builtin(BuiltinType::I64)) => Ok(Value::I64(a as i64)),
-                    (Value::U128(a), Ty::Builtin(BuiltinType::I128)) => Ok(Value::I128(a as i128)),
-                    (Value::U128(a), Ty::Builtin(BuiltinType::ISize)) => {
-                        Ok(Value::ISize(a as isize))
-                    }
-                    (Value::I128(a), Ty::Builtin(BuiltinType::U8)) => Ok(Value::U8(a as u8)),
-                    (Value::I128(a), Ty::Builtin(BuiltinType::U16)) => Ok(Value::U16(a as u16)),
-                    (Value::I128(a), Ty::Builtin(BuiltinType::U32)) => Ok(Value::U32(a as u32)),
-                    (Value::I128(a), Ty::Builtin(BuiltinType::U64)) => Ok(Value::U64(a as u64)),
-                    (Value::I128(a), Ty::Builtin(BuiltinType::U128)) => Ok(Value::U128(a as u128)),
-                    (Value::I128(a), Ty::Builtin(BuiltinType::USize)) => {
-                        Ok(Value::USize(a as usize))
-                    }
-                    (Value::I128(a), Ty::Builtin(BuiltinType::I8)) => Ok(Value::I8(a as i8)),
-                    (Value::I128(a), Ty::Builtin(BuiltinType::I16)) => Ok(Value::I16(a as i16)),
-                    (Value::I128(a), Ty::Builtin(BuiltinType::I32)) => Ok(Value::I32(a as i32)),
-                    (Value::I128(a), Ty::Builtin(BuiltinType::I64)) => Ok(Value::I64(a as i64)),
-                    (Value::I128(a), Ty::Builtin(BuiltinType::I128)) => Ok(Value::I128(a)),
-                    (Value::I128(a), Ty::Builtin(BuiltinType::ISize)) => {
-                        Ok(Value::ISize(a as isize))
-                    }
-                    (Value::F64(a), Ty::Builtin(BuiltinType::F32)) => Ok(Value::F32(a)),
-                    (Value::F32(a), Ty::Builtin(BuiltinType::F64)) => Ok(Value::F64(a)),
+                let rhs = self.const_eval(rhs)?;
+                match op {
+                    BinOp::BitAnd => lhs & rhs,
+                    BinOp::BitOr => lhs | rhs,
+                    BinOp::BitXor => lhs ^ rhs,
+                    BinOp::Eq => lhs.equal(rhs),
+                    BinOp::Neq => lhs.equal(rhs).and_then(|v| !v),
+                    BinOp::Lt => Ok(Value::Bool(matches!(lhs.cmp(rhs)?, Ordering::Less))),
+                    BinOp::LEq => Ok(Value::Bool(matches!(
+                        lhs.cmp(rhs)?,
+                        Ordering::Less | Ordering::Equal
+                    ))),
+                    BinOp::Gt => Ok(Value::Bool(matches!(lhs.cmp(rhs)?, Ordering::Greater))),
+                    BinOp::GEq => Ok(Value::Bool(matches!(
+                        lhs.cmp(rhs)?,
+                        Ordering::Greater | Ordering::Equal
+                    ))),
+                    BinOp::LShift => lhs << rhs,
+                    BinOp::RShift => lhs >> rhs,
+                    BinOp::Plus => lhs + rhs,
+                    BinOp::Minus => lhs - rhs,
+                    BinOp::Mul => lhs * rhs,
+                    BinOp::Div => lhs / rhs,
+                    BinOp::Mod => lhs % rhs,
                     _ => Err(ConstEvalError::Unsupported),
                 }
             }
-        }
-        ExprKind::If(cond, then, els) => {
-            let cond = const_eval(cond)?;
+            ExprKind::Unary(op, inner) => {
+                let inner = self.const_eval(inner)?;
 
-            let cond_value = match cond {
-                Value::Bool(b) => b,
-                _ => return Err(ConstEvalError::CompilerBug),
-            };
-
-            if cond_value {
-                const_eval(then)
-            } else {
-                const_eval(els)
-            }
-        }
-        ExprKind::Block(statements, ret) => {
-            for stmt in *statements {
-                // You can have statements in constant expressions as long as they're constant expressions themselves (and therefore pure)
-                match stmt {
-                    Statement::Expression(expr) => {
-                        const_eval(expr)?;
-                        assert!(expr.pure());
-                    }
-                    _ => return Err(ConstEvalError::Unsupported),
+                match op {
+                    UnOp::Not if matches!(inner, Value::Bool(_)) => !inner,
+                    UnOp::Neg => -inner,
+                    UnOp::BitNot if !matches!(inner, Value::Bool(_)) => !inner,
+                    _ => Err(ConstEvalError::CompilerBug),
                 }
             }
+            ExprKind::ConstValue(value) => Ok(*value),
+            ExprKind::Lit(l) => match l {
+                Lit::Bool(b) => Ok(Value::Bool(*b)),
+                Lit::Int(i) => match expr.ty {
+                    Ty::Builtin(BuiltinType::U8) => Ok(Value::U8(*i as u8)),
+                    Ty::Builtin(BuiltinType::U16) => Ok(Value::U16(*i as u16)),
+                    Ty::Builtin(BuiltinType::U32) => Ok(Value::U32(*i as u32)),
+                    Ty::Builtin(BuiltinType::U64) => Ok(Value::U64(*i as u64)),
+                    Ty::Builtin(BuiltinType::U128) => Ok(Value::U128(*i as u128)),
+                    Ty::Builtin(BuiltinType::I8) => Ok(Value::I8(*i as i8)),
+                    Ty::Builtin(BuiltinType::I16) => Ok(Value::I16(*i as i16)),
+                    Ty::Builtin(BuiltinType::I32) => Ok(Value::I32(*i as i32)),
+                    Ty::Builtin(BuiltinType::I64) => Ok(Value::I64(*i as i64)),
+                    Ty::Builtin(BuiltinType::I128) => Ok(Value::I128(*i as i128)),
+                    Ty::Builtin(BuiltinType::USize) => Ok(Value::USize(*i as usize)),
+                    Ty::Builtin(BuiltinType::ISize) => Ok(Value::ISize(*i as isize)),
+                    _ => unreachable!(),
+                },
+                Lit::Float(s) => match expr.ty {
+                    Ty::Builtin(BuiltinType::F32) => Ok(Value::F32(*s)),
+                    Ty::Builtin(BuiltinType::F64) => Ok(Value::F64(*s)),
+                    _ => unreachable!(),
+                },
+                Lit::Str(s) => Ok(Value::Str(*s)),
+                _ => Err(ConstEvalError::Unsupported),
+            },
+            ExprKind::Cast(inner) => self.cast(inner, expr.ty),
+            ExprKind::If(cond, then, els) => {
+                let cond = self.const_eval(cond)?;
 
-            const_eval(ret)
+                let cond_value = match cond {
+                    Value::Bool(b) => b,
+                    _ => return Err(ConstEvalError::CompilerBug),
+                };
+
+                if cond_value {
+                    self.const_eval(then)
+                } else {
+                    self.const_eval(els)
+                }
+            }
+            ExprKind::Tuple(exprs) => {
+                let mut values = Vec::new();
+                for (idx, init) in exprs.iter().enumerate() {
+                    assert_eq!(idx, init.index);
+                    values.push(self.const_eval(init.value)?);
+                }
+                Ok(Value::Tuple(
+                    self.ir.arena.alloc_slice_fill_iter(values.into_iter()),
+                ))
+            }
+            ExprKind::Array(elems) => {
+                let mut values = Vec::new();
+                for elem in *elems {
+                    values.push(self.const_eval(elem)?);
+                }
+                Ok(Value::Array(
+                    self.ir.arena.alloc_slice_fill_iter(values.into_iter()),
+                ))
+            }
+            ExprKind::Struct(fields) => {
+                // Last assignment wins
+                let mut values = HashMap::new();
+                for field in *fields {
+                    values.insert(field.field, self.const_eval(field.value)?);
+                }
+                Ok(Value::Struct(
+                    self.ir.arena.alloc_slice_fill_iter(values.into_iter()),
+                ))
+            }
+            ExprKind::TupleIndex(tup, idx) => {
+                let tup = self.const_eval(tup)?;
+                match tup {
+                    Value::Tuple(values) => Ok(values[*idx]),
+                    _ => Err(ConstEvalError::CompilerBug),
+                }
+            }
+            ExprKind::Index(array, idx) => {
+                let array = self.const_eval(array)?;
+                let idx = self.const_eval(idx)?;
+                match (array, idx) {
+                    (Value::Array(values), Value::USize(idx)) => values
+                        .get(idx)
+                        .copied()
+                        .ok_or(ConstEvalError::IndexOutOfBounds),
+                    _ => Err(ConstEvalError::Unsupported),
+                }
+            }
+            ExprKind::Field(r#struct, field) => {
+                let r#struct = self.const_eval(r#struct)?;
+                match r#struct {
+                    Value::Struct(fields) => fields
+                        .iter()
+                        .find(|(f, _)| *f == *field)
+                        .map(|(_, v)| *v)
+                        .ok_or(ConstEvalError::UninitializedField),
+                    _ => Err(ConstEvalError::Unsupported),
+                }
+            }
+            ExprKind::Block(statements, ret) => {
+                for stmt in *statements {
+                    // You can have statements in constant expressions as long as they're constant expressions themselves (and therefore pure)
+                    match stmt {
+                        Statement::Expression(expr) => {
+                            self.const_eval(expr)?;
+                            assert!(expr.pure());
+                        }
+                        _ => return Err(ConstEvalError::Unsupported),
+                    }
+                }
+
+                self.const_eval(ret)
+            }
+            ExprKind::Fn(item) => Ok(Value::FunctionPointer(item)),
+            _ => Err(ConstEvalError::Unsupported),
         }
-        _ => Err(ConstEvalError::Unsupported),
     }
 }

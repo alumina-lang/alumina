@@ -35,6 +35,7 @@ struct Atomic<T: Primitive + !ZeroSized> {
 
 impl Atomic<T: Primitive + !ZeroSized> {
     /// Create a new `Atomic` value with the given initial value.
+    #[inline(ir)]
     fn new(inner: T) -> Atomic<T> {
         Atomic { _inner: inner }
     }
@@ -81,19 +82,19 @@ impl Atomic<T: Primitive + !ZeroSized> {
     }
 
     /// Loads a value from the atomic variable.
-    #[inline(always)]
+    #[inline(ir)]
     fn load(self: &Atomic<T>, ordering: Ordering) -> T {
         intrinsics::codegen_func::<T>("__atomic_load_n", &self._inner, ordering as libc::c_int)
     }
 
     /// Stores a value into the atomic variable.
-    #[inline(always)]
+    #[inline(ir)]
     fn store(self: &mut Atomic<T>, value: T, ordering: Ordering) {
         intrinsics::codegen_func::<void>("__atomic_store_n", &self._inner, value, ordering as libc::c_int)
     }
 
     /// Stores a value into the atomic variable, atomically returning the old value.
-    #[inline(always)]
+    #[inline(ir)]
     fn exchange(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
         intrinsics::codegen_func::<T>("__atomic_exchange_n", &self._inner, value, ordering as libc::c_int)
     }
@@ -247,44 +248,44 @@ impl Atomic<T: Primitive + !ZeroSized> {
 
 impl Atomic<T: Integer> {
     /// Atomically adds `value` to the atomic variable and returns the old value.
-    #[inline(always)]
+    #[inline(ir)]
     fn fetch_add(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
         intrinsics::codegen_func::<T>("__atomic_fetch_add", &self._inner, value, ordering as libc::c_int)
     }
 
     /// Atomically subtracts `value` from the atomic variable and returns the old value.
-    #[inline(always)]
+    #[inline(ir)]
     fn fetch_sub(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
         intrinsics::codegen_func::<T>("__atomic_fetch_sub", &self._inner, value, ordering as libc::c_int)
     }
 
     /// Atomically performs `*self &= value` and returns the old value.
-    #[inline(always)]
+    #[inline(ir)]
     fn fetch_and(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
         intrinsics::codegen_func::<T>("__atomic_fetch_and", &self._inner, value, ordering as libc::c_int)
     }
 
     /// Atomically performs `*self |= value` and returns the old value.
-    #[inline(always)]
+    #[inline(ir)]
     fn fetch_or(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
         intrinsics::codegen_func::<T>("__atomic_fetch_or", &self._inner, value, ordering as libc::c_int)
     }
 
     /// Atomically performs `*self ^= value` and returns the old value.
-    #[inline(always)]
+    #[inline(ir)]
     fn fetch_xor(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
         intrinsics::codegen_func::<T>("__atomic_fetch_xor", &self._inner, value, ordering as libc::c_int)
     }
 
     /// Atomically performs `*self = ~(*self & value)` and returns the old value.
-    #[inline(always)]
+    #[inline(ir)]
     fn fetch_nand(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
         intrinsics::codegen_func::<T>("__atomic_fetch_nand", &self._inner, value, ordering as libc::c_int)
     }
 }
 
 /// Memory barrier
-#[inline(always)]
+#[inline(ir)]
 fn fence(ordering: Ordering) {
     intrinsics::codegen_func::<void>("__atomic_thread_fence", ordering as libc::c_int)
 }
@@ -293,7 +294,7 @@ fn fence(ordering: Ordering) {
 ///
 /// This prevents the compiler from reordering memory accesses according to the
 /// memory access ordering, but does not prevent hardware reordering.
-#[inline(always)]
+#[inline(ir)]
 fn compiler_fence(ordering: Ordering) {
     intrinsics::codegen_func::<void>("__atomic_signal_fence", ordering as libc::c_int)
 }
@@ -312,7 +313,7 @@ fn compiler_fence(ordering: Ordering) {
 ///     spin_loop();
 /// }
 /// ```
-#[inline(always)]
+#[inline(ir)]
 fn spin_loop() {
     #[cfg(target_arch = "x86")]
     std::intrinsics::asm("pause");

@@ -479,8 +479,12 @@ module.exports = grammar({
     const_declaration: ($) =>
       seq(
         optional(field("attributes", $.attributes)),
+        optional(
+          seq(field("extern", "extern"), field("abi", $.string_literal))
+        ),
         "const",
         field("name", $.identifier),
+        optional(field("type_arguments", $.generic_argument_list)),
         optional(seq(":", field("type", $._type))),
         seq("=", field("init", $._expression)),
         ";"

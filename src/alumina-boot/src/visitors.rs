@@ -374,8 +374,9 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     .and_then(|n| n.child_by_field_name("argument"))
                     .map(|n| self.code.node_text(n))
                 {
-                    Some("always") => self.attributes.push(Attribute::ForceInline),
+                    Some("always") => self.attributes.push(Attribute::AlwaysInline),
                     Some("never") => self.attributes.push(Attribute::NoInline),
+                    Some("ir") => self.attributes.push(Attribute::InlineDuringMono),
                     None => self.attributes.push(Attribute::Inline),
                     _ => {
                         return Err(CodeErrorKind::InvalidAttribute)
@@ -383,10 +384,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     }
                 }
             }
-            "inline(never)" => self.attributes.push(Attribute::NoInline),
             "builtin" => self.attributes.push(Attribute::Builtin),
             "export" => self.attributes.push(Attribute::Export),
-            "inline(always)" => self.attributes.push(Attribute::ForceInline),
             "thread_local" => {
                 // We can skip thread-local on programs that are compiled with threads
                 // disabled.

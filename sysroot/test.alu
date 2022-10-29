@@ -52,7 +52,7 @@
     use std::process::{Stdio, Forked};
     use std::collections::{Vector, free_all};
     use std::cmp::sort_by_key;
-    use std::string::StringBuf;
+    use std::string::{split, StringBuf};
     use std::runtime::internal::{TEST_CASES, TestCaseMeta};
     use std::time::{Instant, Duration};
 
@@ -75,7 +75,7 @@
 
     /// Whether a failure (non-0 exit code) is expected for this test.
     fn should_fail(test: &TestCaseMeta) -> bool {
-        for attr in test.attributes {
+        for attr in test.attributes.split("\0") {
             if attr == "(should_fail)" {
                 return true;
             }
@@ -85,7 +85,7 @@
 
     /// Whether a test should be ignored.
     fn ignored(test: &TestCaseMeta) -> bool {
-        for attr in test.attributes {
+        for attr in test.attributes.split("\0") {
             if attr == "(ignore)" {
                 return true;
             }

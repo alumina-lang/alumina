@@ -4,8 +4,8 @@ use crate::{
     common::AluminaError,
     intrinsics::CodegenIntrinsicKind,
     ir::{
-        const_eval::Value, Expr, ExprKind, ExprP, Function, IrId, LocalDef, Statement, Static, Ty,
-        ValueType,
+        const_eval::Value, Const, Expr, ExprKind, ExprP, Function, IrId, LocalDef, Statement,
+        Static, Ty, ValueType,
     },
 };
 
@@ -19,6 +19,8 @@ pub struct FunctionWriter<'ir, 'gen> {
     fn_decls: String,
     fn_bodies: String,
     indent: usize,
+
+    in_const_init: bool,
 }
 
 /// Prevent "1f32" from being interpreted as an int constant
@@ -41,7 +43,7 @@ pub fn write_function_signature<'ir, 'gen>(
     let name = ctx.get_name(id);
     let mut is_inline = false;
 
-    let mut attributes = if item.attributes.contains(&Attribute::ForceInline) {
+    let mut attributes = if item.attributes.contains(&Attribute::AlwaysInline) {
         is_inline = true;
         "__attribute__((always_inline)) inline ".to_string()
     } else if item.attributes.contains(&Attribute::NoInline) {
@@ -124,6 +126,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             fn_decls: String::with_capacity(512 * 1024),
             fn_bodies: String::with_capacity(512 * 1024),
             indent: 0,
+            in_const_init: false,
         }
     }
 
@@ -271,7 +274,8 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
 
         match &expr.kind {
             ExprKind::Binary(op, lhs, rhs) => {
-                w!(self.fn_bodies, "(");
+                // Cast to C's automatic promotion of to int
+                w!(self.fn_bodies, "({})(", self.ctx.get_type(expr.ty));
                 self.write_expr(lhs, false)?;
                 self.write_binop(*op);
                 self.write_expr(rhs, false)?;
@@ -312,7 +316,8 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 w!(self.fn_bodies, ")");
             }
             ExprKind::Unary(op, inner) => {
-                w!(self.fn_bodies, "(");
+                // Cast to C's automatic promotion of to int
+                w!(self.fn_bodies, "({})(", self.ctx.get_type(expr.ty));
                 self.write_unop(*op);
                 self.write_expr(inner, false)?;
                 w!(self.fn_bodies, ")");
@@ -334,7 +339,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             ExprKind::Local(id) => {
                 w!(self.fn_bodies, "{}", self.ctx.get_name(*id));
             }
-            ExprKind::Static(item) => {
+            ExprKind::Static(item) | ExprKind::Const(item) => {
                 w!(self.fn_bodies, "{}", self.ctx.get_name(item.id));
             }
             ExprKind::Lit(ref l) => match l {
@@ -407,16 +412,25 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                     w!(self.fn_bodies, "}})");
                 }
             }
-            ExprKind::ConstValue(v) => {
-                if let Value::Str(val) = v {
+            ExprKind::ConstValue(v) => match v {
+                Value::Str(val) => {
                     self.write_string_literal(val);
-                } else {
+                }
+                Value::FunctionPointer(item) => {
+                    w!(
+                        self.fn_bodies,
+                        "({}){}",
+                        self.ctx.get_type(expr.ty),
+                        self.ctx.get_name(item.id)
+                    );
+                }
+                _ => {
                     self.type_writer.add_type(expr.ty)?;
                     w!(self.fn_bodies, "(({})", self.ctx.get_type(expr.ty));
                     self.write_const_val(*v);
                     w!(self.fn_bodies, ")");
                 }
-            }
+            },
             ExprKind::Field(inner, field) => {
                 self.write_expr(inner, false)?;
                 w!(self.fn_bodies, ".{}", self.ctx.get_name(*field));
@@ -498,7 +512,9 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             },
             ExprKind::Array(elems) => {
                 self.type_writer.add_type(expr.ty)?;
-                w!(self.fn_bodies, "({})", self.ctx.get_type(expr.ty));
+                if !self.in_const_init {
+                    w!(self.fn_bodies, "({})", self.ctx.get_type(expr.ty));
+                }
                 w!(self.fn_bodies, "{{.__data={{\n");
                 for elem in elems.iter() {
                     self.indent();
@@ -510,28 +526,28 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             }
             ExprKind::Tuple(inits) => {
                 self.type_writer.add_type(expr.ty)?;
-                w!(self.fn_bodies, "({})", self.ctx.get_type(expr.ty));
-                w!(self.fn_bodies, "{{\n");
+                if !self.in_const_init {
+                    w!(self.fn_bodies, "({})", self.ctx.get_type(expr.ty));
+                }
+                w!(self.fn_bodies, "{{");
                 for init in inits.iter() {
-                    self.indent();
                     w!(self.fn_bodies, "._{}=", init.index);
                     self.write_expr(&init.value, false)?;
-                    w!(self.fn_bodies, ",\n");
+                    w!(self.fn_bodies, ",");
                 }
-                self.indent();
                 w!(self.fn_bodies, "}}");
             }
             ExprKind::Struct(inits) => {
                 self.type_writer.add_type(expr.ty)?;
-                w!(self.fn_bodies, "({})", self.ctx.get_type(expr.ty));
-                w!(self.fn_bodies, "{{\n");
+                if !self.in_const_init {
+                    w!(self.fn_bodies, "({})", self.ctx.get_type(expr.ty));
+                }
+                w!(self.fn_bodies, "{{");
                 for init in inits.iter() {
-                    self.indent();
                     w!(self.fn_bodies, ".{}=", self.ctx.get_name(init.field));
                     self.write_expr(&init.value, false)?;
-                    w!(self.fn_bodies, ",\n");
+                    w!(self.fn_bodies, ",");
                 }
-                self.indent();
                 w!(self.fn_bodies, "}}");
             }
             ExprKind::Void => {}
@@ -628,6 +644,53 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 );
             }
         }
+
+        Ok(())
+    }
+
+    pub fn write_const_decl(
+        &mut self,
+        id: IrId,
+        item: &'ir Const<'ir>,
+    ) -> Result<(), AluminaError> {
+        if item.init.is_none() {
+            return Ok(());
+        }
+
+        if let Some(name) = item.name {
+            self.ctx.register_name(id, CName::Mangled(name, id.id));
+        }
+
+        self.type_writer.add_type(item.typ)?;
+        w!(
+            self.fn_decls,
+            "\nconst static {} {};",
+            self.ctx.get_type(item.typ),
+            self.ctx.get_name(id)
+        );
+
+        Ok(())
+    }
+
+    pub fn write_const(&mut self, id: IrId, item: &'ir Const<'ir>) -> Result<(), AluminaError> {
+        let init = match item.init {
+            Some(init) => init,
+            None => return Ok(()),
+        };
+
+        w!(
+            self.fn_bodies,
+            "\nconst static {} {} = ",
+            self.ctx.get_type(item.typ),
+            self.ctx.get_name(id)
+        );
+
+        self.in_const_init = true;
+        let ret = self.write_expr(&init, false);
+        self.in_const_init = false;
+        ret?;
+
+        w!(self.fn_bodies, ";\n");
 
         Ok(())
     }

@@ -136,13 +136,16 @@ pub fn codegen(global_ctx: GlobalCtx, items: &[IRItemP<'_>]) -> Result<String, A
         match item.get().unwrap() {
             IRItem::Function(f) => function_writer.write_function_decl(item.id, f)?,
             IRItem::Static(t) => function_writer.write_static_decl(item.id, t)?,
+            IRItem::Const(t) => function_writer.write_const_decl(item.id, t)?,
             _ => {}
         }
     }
 
     for item in items {
-        if let IRItem::Function(f) = item.get().unwrap() {
-            function_writer.write_function_body(item.id, f)?
+        match item.get().unwrap() {
+            IRItem::Function(f) => function_writer.write_function_body(item.id, f)?,
+            IRItem::Const(t) => function_writer.write_const(item.id, t)?,
+            _ => {}
         }
     }
 

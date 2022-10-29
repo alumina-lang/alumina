@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     ast::{BuiltinType, UnOp},
@@ -9,6 +9,7 @@ use crate::{
 
 use super::{
     builder::{ExpressionBuilder, TypeBuilder},
+    const_eval::Value,
     Expr, ExprKind, ExprP, FuncBody, IrCtx, IrId, Lit, LocalDef, Statement, StructInit, TupleInit,
     Ty, UnqualifiedKind,
 };
@@ -49,6 +50,7 @@ impl<'ir> ZstElider<'ir> {
         FuncBody {
             statements: statements.alloc_on(self.ir),
             local_defs: local_defs.alloc_on(self.ir),
+            raw_body: function_body.raw_body,
         }
     }
 
@@ -62,10 +64,10 @@ impl<'ir> ZstElider<'ir> {
                 self.used_ids.insert(id);
                 expr
             }
-            ExprKind::Static(_) if expr.ty.is_zero_sized() => {
+            ExprKind::Static(_) | ExprKind::Const(_) if expr.ty.is_zero_sized() => {
                 builder.void(expr.ty, expr.value_type)
             }
-            ExprKind::Static(_) => expr,
+            ExprKind::Static(_) | ExprKind::Const(_) => expr,
             ExprKind::Assign(l, r) if l.ty.is_zero_sized() => {
                 let l = self.elide_zst_expr(l);
                 let r = self.elide_zst_expr(r);
@@ -306,7 +308,59 @@ impl<'ir> ZstElider<'ir> {
             ExprKind::Field(lhs, id) => builder.field(self.elide_zst_expr(lhs), id, expr.ty),
             ExprKind::Fn(_) => expr,
             ExprKind::Lit(_) => expr,
-            ExprKind::ConstValue(_) => expr,
+            ExprKind::ConstValue(v) => match v {
+                Value::Array(elems) => {
+                    let element_type = match expr.ty {
+                        Ty::Array(ty, _) => ty,
+                        _ => unreachable!(),
+                    };
+
+                    builder.array(
+                        elems.iter().map(|val| {
+                            self.elide_zst_expr(builder.const_value(*val, element_type))
+                        }),
+                        expr.ty,
+                    )
+                }
+                Value::Tuple(elems) => {
+                    let element_types = match expr.ty {
+                        Ty::Tuple(tys) => tys,
+                        _ => unreachable!(),
+                    };
+
+                    builder.tuple(
+                        elems.iter().zip(element_types.iter()).enumerate().map(
+                            |(idx, (val, ty))| {
+                                (idx, self.elide_zst_expr(builder.const_value(*val, *ty)))
+                            },
+                        ),
+                        expr.ty,
+                    )
+                }
+                Value::Struct(fields) => {
+                    let element_types: HashMap<_, _> = match expr.ty {
+                        Ty::NamedType(item) => item
+                            .get_struct_like()
+                            .unwrap()
+                            .fields
+                            .iter()
+                            .map(|f| (f.id, f.ty))
+                            .collect(),
+                        _ => unreachable!(),
+                    };
+
+                    builder.r#struct(
+                        fields.iter().map(|(id, val)| {
+                            (
+                                *id,
+                                self.elide_zst_expr(builder.const_value(*val, element_types[id])),
+                            )
+                        }),
+                        expr.ty,
+                    )
+                }
+                _ => expr,
+            },
             ExprKind::Unreachable => expr,
             ExprKind::Void => expr,
             ExprKind::CodegenIntrinsic(ref kind) => match kind {

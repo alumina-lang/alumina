@@ -144,7 +144,7 @@ pub enum CodeErrorKind {
     ConstantStringExpected,
     #[error("this expression is not evaluable at compile time ({})", .0)]
     CannotConstEvaluate(ConstEvalError),
-    #[error("invalid value for enum variant")]
+    #[error("values of enum variants can only be integers")]
     InvalidValueForEnumVariant,
     #[error("{}", .0)]
     UserDefined(String),
@@ -251,6 +251,16 @@ pub enum CodeErrorKind {
     CannotReadFile(String),
     #[error("type alias must have a target")] // unless it is a blessed builtin :)
     TypedefWithoutTarget,
+
+    // IR inlining is very restricitve at the moment, these may eventually be removed
+    #[error("cannot IR-inline functions that use variables")]
+    IrInlineLocalDefs,
+    #[error("cannot IR-inline functions that use flow control")]
+    IrInlineFlowControl,
+    #[error("cannot IR-inline functions that can return early")]
+    IrInlineEarlyReturn,
+    #[error("cannot IR-inline functions that use parameter in more than one place")]
+    IrInlineParameterReused,
 
     // Warnings
     #[error("defer inside a loop: this defered statement will only be executed once")]

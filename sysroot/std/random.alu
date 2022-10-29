@@ -387,7 +387,7 @@ mod internal {
         loop {
             let x: T = rng.gen_unsigned();
             let r = x % upper_bound;
-            if x - r <= ~upper_bound {
+            if x - r <= ~upper_bound + 1 {
                 return r;
             }
         }
@@ -396,6 +396,7 @@ mod internal {
     /// Generate a random integer of any unsigned integer type
     ///
     /// Each possible value that the integer can take is equally likely
+    #[inline]
     fn gen_unsigned<R: Rng<R>, T: Unsigned>(rng: &mut R) -> T {
         when T: u128 {
             ((rng.next_u64() as u128)  << 64) | (rng.next_u64() as u128)
@@ -417,7 +418,7 @@ mod internal {
 #[cfg(all(test, test_std))]
 #[docs(hide)]
 mod tests {
-    static SEED: [u8; 16] = mem::zeroed();
+    static SEED: [u8; 16];
 
     #[test]
     fn test_float() {

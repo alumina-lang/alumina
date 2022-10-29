@@ -12,7 +12,7 @@ mod internal {
         /// `test_cases()` call can be lowered at at any point during the IR lowering processed, ensure
         /// it is called during static initialization, which happens last so that all test cases will have
         /// been discovered.
-        static TEST_CASES: &[TestCaseMeta] = intrinsics::test_cases();
+        const TEST_CASES = intrinsics::test_cases();
 
         /// Test case metadata
         ///
@@ -22,13 +22,14 @@ mod internal {
         struct TestCaseMeta {
             path: &[u8],
             name: &[u8],
-            attributes: &[&[u8]],
+            attributes: &[u8],
             test: fn(),
         }
 
         impl TestCaseMeta {
             #[lang(test_case_meta_new)]
-            fn new(path: &[u8], name: &[u8], attributes: &[&[u8]], test: fn()) -> TestCaseMeta {
+            #[inline(ir)]
+            fn new(path: &[u8], name: &[u8], attributes: &[u8], test: fn()) -> TestCaseMeta {
                 TestCaseMeta {
                     path: path,
                     name: name,

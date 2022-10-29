@@ -76,18 +76,6 @@ pub struct CompilerIntrinsics<'ir> {
     types: TypeBuilder<'ir>,
 }
 
-fn get_const_string(expr: ExprP<'_>) -> Result<&str, AluminaError> {
-    match const_eval::const_eval(expr) {
-        Ok(Value::Str(s)) => Ok(std::str::from_utf8(s).unwrap()),
-        Ok(v) => Err(CodeErrorKind::TypeMismatch(
-            "string".to_string(),
-            format!("{:?}", v.type_kind()),
-        ))
-        .with_no_span(),
-        Err(e) => Err(CodeErrorKind::CannotConstEvaluate(e)).with_no_span(),
-    }
-}
-
 impl<'ir> CompilerIntrinsics<'ir> {
     pub fn new(global_ctx: GlobalCtx, ir: &'ir IrCtx<'ir>) -> Self {
         Self {
@@ -98,9 +86,23 @@ impl<'ir> CompilerIntrinsics<'ir> {
         }
     }
 
+    fn get_const_string(&self, expr: ExprP<'ir>) -> Result<&'ir str, AluminaError> {
+        match const_eval::ConstEvaluator::new(self.ir).const_eval(expr) {
+            Ok(Value::Str(s)) => Ok(std::str::from_utf8(s).unwrap()),
+            Ok(_) => Err(CodeErrorKind::TypeMismatch(
+                "string".to_string(),
+                format!("{:?}", expr.ty),
+            ))
+            .with_no_span(),
+            Err(e) => Err(CodeErrorKind::CannotConstEvaluate(e)).with_no_span(),
+        }
+    }
+
     fn size_of(&self, ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
         if ty.is_zero_sized() {
-            return Ok(self.expressions.const_value(Value::USize(0)));
+            return Ok(self
+                .expressions
+                .const_value(Value::USize(0), self.types.builtin(BuiltinType::USize)));
         }
 
         Ok(self.expressions.codegen_intrinsic(
@@ -117,7 +119,9 @@ impl<'ir> CompilerIntrinsics<'ir> {
         }
 
         if ty.is_zero_sized() {
-            return Ok(self.expressions.const_value(Value::USize(1)));
+            return Ok(self
+                .expressions
+                .const_value(Value::USize(1), self.types.builtin(BuiltinType::USize)));
         }
 
         Ok(self.expressions.codegen_intrinsic(
@@ -135,12 +139,16 @@ impl<'ir> CompilerIntrinsics<'ir> {
         // retought if incremental compilation is ever implemented.
         let id = interned as *const Ty<'ir> as usize;
 
-        Ok(self.expressions.const_value(Value::USize(id)))
+        Ok(self
+            .expressions
+            .const_value(Value::USize(id), self.types.builtin(BuiltinType::USize)))
     }
 
     fn array_length_of(&self, ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
         if let Ty::Array(_, len) = ty {
-            return Ok(self.expressions.const_value(Value::USize(*len)));
+            return Ok(self
+                .expressions
+                .const_value(Value::USize(*len), self.types.builtin(BuiltinType::USize)));
         }
 
         Err(CodeErrorKind::TypeMismatch(
@@ -151,7 +159,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
     }
 
     fn compile_fail(&self, reason: ExprP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
-        let reason = get_const_string(reason)?;
+        let reason = self.get_const_string(reason)?;
 
         Err(CodeErrorKind::UserDefined(reason.to_string())).with_no_span()
     }
@@ -161,7 +169,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
         reason: ExprP<'ir>,
         span: Option<Span>,
     ) -> Result<ExprP<'ir>, AluminaError> {
-        let reason = get_const_string(reason)?;
+        let reason = self.get_const_string(reason)?;
 
         self.global_ctx.diag().add_warning(CodeError::from_kind(
             CodeErrorKind::UserDefined(reason.to_string()),
@@ -178,7 +186,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
         reason: ExprP<'ir>,
         span: Option<Span>,
     ) -> Result<ExprP<'ir>, AluminaError> {
-        let reason = get_const_string(reason)?;
+        let reason = self.get_const_string(reason)?;
 
         self.global_ctx.diag().add_note(CodeError::from_kind(
             CodeErrorKind::UserDefined(reason.to_string()),
@@ -214,7 +222,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
         args: &[ExprP<'ir>],
         ret_ty: TyP<'ir>,
     ) -> Result<ExprP<'ir>, AluminaError> {
-        let name = get_const_string(name)?;
+        let name = self.get_const_string(name)?;
 
         let arg_types = args.iter().map(|arg| arg.ty).collect::<Vec<_>>();
         let fn_type = self.types.function(arg_types, ret_ty);
@@ -228,7 +236,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
     }
 
     fn asm(&self, assembly: ExprP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
-        let assembly = get_const_string(assembly)?;
+        let assembly = self.get_const_string(assembly)?;
 
         Ok(self.expressions.codegen_intrinsic(
             CodegenIntrinsicKind::Asm(assembly),
@@ -241,7 +249,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
         name: ExprP<'ir>,
         ret_ty: TyP<'ir>,
     ) -> Result<ExprP<'ir>, AluminaError> {
-        let name = get_const_string(name)?;
+        let name = self.get_const_string(name)?;
 
         Ok(self
             .expressions

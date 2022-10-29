@@ -3,6 +3,7 @@ pub mod const_eval;
 pub mod dce;
 pub mod elide_zst;
 pub mod infer;
+pub mod ir_inline;
 pub mod lang;
 pub mod mono;
 
@@ -110,7 +111,7 @@ where
     }
 }
 
-#[derive(PartialEq, Copy, Clone, Eq, Hash)]
+#[derive(PartialEq, Copy, Clone, Eq, Hash, PartialOrd, Ord)]
 pub struct IrId {
     pub id: usize,
 }
@@ -304,6 +305,7 @@ pub struct LocalDef<'ir> {
 pub struct FuncBody<'ir> {
     pub local_defs: &'ir [LocalDef<'ir>],
     pub statements: &'ir [Statement<'ir>],
+    pub raw_body: Option<ExprP<'ir>>,
 }
 
 #[derive(Debug)]
@@ -366,7 +368,10 @@ pub struct Static<'ir> {
 #[derive(Debug)]
 pub struct Const<'ir> {
     pub name: Option<&'ir str>,
+    pub typ: TyP<'ir>,
     pub value: Value<'ir>,
+    // If init is None, the const should be inlined
+    pub init: Option<ExprP<'ir>>,
 }
 
 #[derive(Debug)]
@@ -573,6 +578,7 @@ pub enum ExprKind<'ir> {
     Index(ExprP<'ir>, ExprP<'ir>),
     Local(IrId),
     Static(IRItemP<'ir>),
+    Const(IRItemP<'ir>),
     Lit(Lit<'ir>),
     ConstValue(const_eval::Value<'ir>),
     Field(ExprP<'ir>, IrId),
@@ -666,6 +672,7 @@ impl<'ir> Expr<'ir> {
             ExprKind::Fn(_) => true,
             ExprKind::Local(_) => true,
             ExprKind::Static(_) => true,
+            ExprKind::Const(_) => true,
             ExprKind::Lit(_) => true,
             ExprKind::ConstValue(_) => true,
             ExprKind::Void => true,

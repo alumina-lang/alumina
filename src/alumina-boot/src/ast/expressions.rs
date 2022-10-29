@@ -193,7 +193,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                 NamedItemKind::MacroParameter(var, _) => ExprKind::Local(var),
                 NamedItemKind::Parameter(var, _) => ExprKind::Local(var),
                 NamedItemKind::Static(var, _, _) => ExprKind::Static(var, None),
-                NamedItemKind::Const(var, _) => ExprKind::Const(var),
+                NamedItemKind::Const(var, _, _) => ExprKind::Const(var, None),
                 NamedItemKind::EnumMember(typ, var, _) => ExprKind::EnumValue(typ, var),
                 NamedItemKind::Macro(_, _, _) => {
                     return Err(CodeErrorKind::IsAMacro(path.to_string()))
@@ -938,6 +938,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             ExprKind::Defered(def) => FnKind::Defered(*def),
             ExprKind::Static(inner, None) => {
                 let ret = ExprKind::Static(inner, Some(arguments));
+                return Ok(ret.alloc_with_span_from(self.ast, &self.scope, node));
+            }
+            ExprKind::Const(inner, None) => {
+                let ret = ExprKind::Const(inner, Some(arguments));
                 return Ok(ret.alloc_with_span_from(self.ast, &self.scope, node));
             }
             _ => {
