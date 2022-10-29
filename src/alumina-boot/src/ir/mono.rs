@@ -3644,7 +3644,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(self.exprs.array(iter, array_type))
     }
 
-    fn generate_test_cases_inner(&mut self) -> Result<ir::ExprP<'ir>, AluminaError> {
+    fn generate_test_cases(&mut self) -> Result<ir::ExprP<'ir>, AluminaError> {
         let tests = self.mono_ctx.tests.clone();
 
         let string_slice = self.slice_of(self.types.builtin(BuiltinType::U8), true)?;
@@ -3741,10 +3741,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             _ => {}
         }
         Ok(self.exprs.call(callee, args, return_ty))
-    }
-
-    fn generate_test_cases(&mut self) -> Result<ir::ExprP<'ir>, AluminaError> {
-        self.generate_test_cases_inner()
     }
 
     fn generate_enum_variants(
