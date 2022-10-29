@@ -430,6 +430,31 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         Ok(())
     }
 
+    fn visit_const_declaration(&mut self, node: Node<'src>) -> Self::ReturnType {
+        let item = self.ast.make_symbol();
+        let attributes = parse_attributes!(self, node, item);
+
+        let name = self.parse_name(node);
+        let child_scope = self.scope.named_child(ScopeType::Function, name);
+
+        self.add_item(
+            node,
+            name,
+            NamedItem::new(
+                NamedItemKind::Const(item, node, child_scope.clone()),
+                attributes,
+            ),
+        )?;
+
+        with_child_scope!(self, child_scope, {
+            if let Some(f) = node.child_by_field_name("type_arguments") {
+                self.visit(f)?;
+            }
+        });
+
+        Ok(())
+    }
+
     fn visit_generic_argument_list(&mut self, node: Node<'src>) -> Self::ReturnType {
         let mut cursor = node.walk();
         for argument in node.children_by_field_name("argument", &mut cursor) {
@@ -510,21 +535,6 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         with_child_scope!(self, child_scope, {
             self.visit_children_by_field(node, "parameters")?;
         });
-
-        Ok(())
-    }
-
-    fn visit_const_declaration(&mut self, node: Node<'src>) -> Self::ReturnType {
-        let item = self.ast.make_symbol();
-        let attributes = parse_attributes!(self, node, item);
-
-        let name = self.parse_name(node);
-
-        self.add_item(
-            node,
-            name,
-            NamedItem::new(NamedItemKind::Const(item, node), attributes),
-        )?;
 
         Ok(())
     }

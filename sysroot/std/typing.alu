@@ -161,18 +161,18 @@ fn assert_type_ne<T1, T2>() {
 #[docs(no_index)]
 mod internal {
     static ENUM_VARIANTS<E> = intrinsics::enum_variants::<E>();
-    static VTABLE<Protos, T> = intrinsics::vtable::<Protos, T>();
+    const VTABLE<Protos, T> = intrinsics::vtable::<Protos, T>();
 
     type void_ptr_of<Ptr> = builtins::pointer_with_mut_of<void, Ptr>;
 
     #[lang(enum_variant_new)]
-    #[inline(always)]
+    #[inline(ir)]
     fn make_enum_variant<E>(name: &[u8], value: E) -> (&[u8], E) {
         (name, value)
     }
 
     #[lang(dyn_new)]
-    #[inline(always)]
+    #[inline(ir)]
     fn dyn_new<Protos, Ptr>(ptr: Ptr) -> dyn<Protos, void_ptr_of<Ptr>> {
         dyn {
             _ptr: ptr as void_ptr_of<Ptr>,
@@ -193,13 +193,13 @@ mod internal {
     }
 
     #[lang(dyn_data)]
-    #[inline(always)]
+    #[inline(ir)]
     fn dyn_data<Protos, Ptr>(self: dyn<Protos, Ptr>) -> Ptr {
         self._ptr
     }
 
     #[lang(dyn_vtable_index)]
-    #[inline(always)]
+    #[inline(ir)]
     fn dyn_vtable_index<Protos, Ptr>(self: dyn<Protos, Ptr>, idx: usize) -> fn() {
         *(self._vtable + idx)
     }

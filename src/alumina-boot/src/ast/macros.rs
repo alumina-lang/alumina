@@ -365,7 +365,7 @@ impl<'ast> MacroExpander<'ast> {
             | Fn(_, _)
             | Defered(_)
             | Static(_, _)
-            | Const(_) => expr.kind.clone(),
+            | Const(_, _) => expr.kind.clone(),
         };
 
         let result = Expr {

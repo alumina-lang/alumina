@@ -5,7 +5,7 @@ use crate::{
     intrinsics::CodegenIntrinsicKind,
 };
 
-use super::{ExprKind, ExprP, IRItem, IRItemP, Statement, Ty, TyP};
+use super::{const_eval::Value, ExprKind, ExprP, IRItem, IRItemP, Statement, Ty, TyP};
 
 pub struct DeadCodeEliminator<'ir> {
     alive: HashSet<IRItemP<'ir>>,
@@ -107,17 +107,22 @@ impl<'ir> DeadCodeEliminator<'ir> {
                 }
             }
 
-            ExprKind::Fn(i) | ExprKind::Static(i) => {
+            ExprKind::Fn(i) | ExprKind::Static(i) | ExprKind::Const(i) => {
                 self.visit_item(i)?;
             }
 
             ExprKind::CodegenIntrinsic(CodegenIntrinsicKind::SizeOfLike(_, typ)) => {
                 self.visit_typ(typ)?;
             }
+            ExprKind::ConstValue(v) => match v {
+                Value::FunctionPointer(i) => {
+                    self.visit_item(i)?;
+                }
+                _ => {}
+            },
             ExprKind::CodegenIntrinsic(_)
             | ExprKind::Local(_)
             | ExprKind::Lit(_)
-            | ExprKind::ConstValue(_)
             | ExprKind::Goto(_)
             | ExprKind::Unreachable
             | ExprKind::Void => {}
@@ -178,8 +183,15 @@ impl<'ir> DeadCodeEliminator<'ir> {
                 c.function.get().map(|i| self.visit_item(i)).transpose()?;
             }
 
+            IRItem::Const(c) => {
+                self.visit_typ(c.typ)?;
+                self.visit_expr(
+                    c.init
+                        .expect("inlined consts should never appear in the IR"),
+                )?;
+            }
+
             // Should be inlined
-            IRItem::Const(_) => unreachable!(),
             IRItem::Alias(_) => unreachable!(),
             IRItem::Protocol(_) => unreachable!(),
         }
