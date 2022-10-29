@@ -23,6 +23,7 @@ With regards to syntax, the language is very similar to Rust and in terms of sem
   - [Slices](#slices)
   - [What about strings?](#what-about-strings)
   - [Zero-sized types](#zero-sized-types)
+    - [Layout implication of zero-sized types](#layout-implication-of-zero-sized-types)
 - [Macros](#macros)
 - [Statements and expressions](#statements-and-expressions)
   - [Variables](#variables)
@@ -694,6 +695,29 @@ fn invoke<F: NamedFunction + Fn()>() {
 
 // We can pass hello as a type parameter rather than as a value
 invoke::<hello>();
+```
+
+### Layout implication of zero-sized types
+
+When zero-sized types are used in aggregates, such as structs, unions and tuples, their layout is usually equivalent to as if the ZST field was not present at all. However, if a ZST has alignment greater than 1, it can affect the layout of the aggregate.
+
+Most ZSTs have alignment 1, the exception are fixed-size arrays of length 0; they inherit the alignment of their element type (also custom ZSTs with `#[align(...)]` attribute).
+
+```rust
+use std::mem::{size_of, align_of};
+
+assert_eq!(size_of::<[u64; 0]>(), 0);
+assert_eq!(align_of::<[u64; 0]>(), 8);
+
+struct S1 { b: [u64; 0] }
+
+assert_eq!(size_of::<S1>(), 0);
+assert_eq!(align_of::<S1>(), 8);
+
+struct S2 { a: u8, b: [u64; 0] }
+
+assert_eq!(size_of::<S2>(), 8); // size has to be a multiple of alignment, so padding is added
+assert_eq!(align_of::<S2>(), 8);
 ```
 
 # Macros

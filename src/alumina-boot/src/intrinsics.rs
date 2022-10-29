@@ -3,6 +3,7 @@ use crate::common::{CodeError, CodeErrorBuilder, CodeErrorKind};
 use crate::global_ctx::GlobalCtx;
 use crate::ir::builder::TypeBuilder;
 use crate::ir::const_eval::Value;
+use crate::ir::layout::LayoutCalculator;
 use crate::ir::{const_eval, ValueType};
 use crate::{ast::BuiltinType, common::AluminaError};
 
@@ -27,6 +28,7 @@ pub enum IntrinsicKind {
     TestCases,
     CodegenFunc,
     CodegenConst,
+    CodegenTypeFunc,
     MakeVtable,
     EnumVariants,
     Uninitialized,
@@ -50,6 +52,7 @@ pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
         map.insert("test_cases", IntrinsicKind::TestCases);
         map.insert("codegen_func", IntrinsicKind::CodegenFunc);
         map.insert("codegen_const", IntrinsicKind::CodegenConst);
+        map.insert("codegen_type_func", IntrinsicKind::CodegenTypeFunc);
         map.insert("vtable", IntrinsicKind::MakeVtable);
         map.insert("enum_variants", IntrinsicKind::EnumVariants);
         map.insert("asm", IntrinsicKind::Asm);
@@ -98,36 +101,24 @@ impl<'ir> CompilerIntrinsics<'ir> {
         }
     }
 
-    fn size_of(&self, ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
-        if ty.is_zero_sized() {
-            return Ok(self
-                .expressions
-                .const_value(Value::USize(0), self.types.builtin(BuiltinType::USize)));
-        }
+    fn align_of(&self, ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
+        let align = LayoutCalculator::new(self.global_ctx.clone())
+            .layout_of(ty)?
+            .align;
 
-        Ok(self.expressions.codegen_intrinsic(
-            CodegenIntrinsicKind::SizeOfLike("sizeof", ty),
-            self.types.builtin(BuiltinType::USize),
-        ))
+        Ok(self
+            .expressions
+            .const_value(Value::USize(align), self.types.builtin(BuiltinType::USize)))
     }
 
-    fn align_of(&self, ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
-        if let Ty::Array(inner, _) = ty {
-            // In Rust [i32; 0] has alignment of 4 instead of 1 as one would expect as it is a
-            // ZST. I don't really know why, but I assume there's a good reason for it.
-            return self.align_of(inner);
-        }
+    fn size_of(&self, ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
+        let size = LayoutCalculator::new(self.global_ctx.clone())
+            .layout_of(ty)?
+            .size;
 
-        if ty.is_zero_sized() {
-            return Ok(self
-                .expressions
-                .const_value(Value::USize(1), self.types.builtin(BuiltinType::USize)));
-        }
-
-        Ok(self.expressions.codegen_intrinsic(
-            CodegenIntrinsicKind::SizeOfLike("_Alignof", ty),
-            self.types.builtin(BuiltinType::USize),
-        ))
+        Ok(self
+            .expressions
+            .const_value(Value::USize(size), self.types.builtin(BuiltinType::USize)))
     }
 
     fn type_id(&self, ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
@@ -235,6 +226,19 @@ impl<'ir> CompilerIntrinsics<'ir> {
         ))
     }
 
+    fn codegen_type_func(
+        &self,
+        name: ExprP<'ir>,
+        ty: TyP<'ir>,
+        ret_ty: TyP<'ir>,
+    ) -> Result<ExprP<'ir>, AluminaError> {
+        let name = self.get_const_string(name)?;
+
+        Ok(self
+            .expressions
+            .codegen_intrinsic(CodegenIntrinsicKind::SizeOfLike(name, ty), ret_ty))
+    }
+
     fn asm(&self, assembly: ExprP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
         let assembly = self.get_const_string(assembly)?;
 
@@ -284,6 +288,9 @@ impl<'ir> CompilerIntrinsics<'ir> {
             IntrinsicKind::Asm => self.asm(args[0]),
             IntrinsicKind::CodegenFunc => self.codegen_func(args[0], &args[1..], generic[0]),
             IntrinsicKind::CodegenConst => self.codegen_const(args[0], generic[0]),
+            IntrinsicKind::CodegenTypeFunc => {
+                self.codegen_type_func(args[0], generic[0], generic[1])
+            }
             IntrinsicKind::Uninitialized => self.uninitialized(generic[0]),
             _ => unreachable!(),
         }

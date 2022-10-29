@@ -32,7 +32,7 @@ protocol Formatter<Self> {
     /// Write a string
     fn write_str(self: &mut Self, buf: &[u8]) -> Result;
     /// Write a single character
-    fn write_char(self: &mut Self, byte: u8) -> Result {
+    fn write_byte(self: &mut Self, byte: u8) -> Result {
         self.write_str(mem::slice::from_raw(&byte, 1))
     }
 }
@@ -199,9 +199,9 @@ impl SliceFormatter {
         Result::ok(())
     }
 
-    /// @ Formatter::write_char
+    /// @ Formatter::write_byte
     #[inline]
-    fn write_char(self: &mut SliceFormatter, byte: u8) -> Result {
+    fn write_byte(self: &mut SliceFormatter, byte: u8) -> Result {
         if self.buf_pos >= self.buf.len() {
             return Result::err(Error::new());
         }
@@ -226,8 +226,8 @@ impl NullFormatter {
     fn write_str(self: &mut NullFormatter, buf: &[u8]) -> Result {
         Result::ok(())
     }
-    /// @ Formatter::write_char
-    fn write_char(self: &mut NullFormatter, byte: u8) -> Result {
+    /// @ Formatter::write_byte
+    fn write_byte(self: &mut NullFormatter, byte: u8) -> Result {
         Result::ok(())
     }
 }
@@ -257,11 +257,11 @@ impl StreamFormatter<W: io::Writable<W>> {
         }
     }
 
-    /// @ Formatter::write_char
+    /// @ Formatter::write_byte
     #[inline]
-    fn write_char(self: &mut StreamFormatter<W>, byte: u8) -> Result {
+    fn write_byte(self: &mut StreamFormatter<W>, byte: u8) -> Result {
         when W: Formattable<W> {
-            self.inner.write_char(byte)
+            self.inner.write_byte(byte)
         } else {
             self.write_str(mem::slice::from_raw(&byte, 1))
         }
@@ -286,7 +286,7 @@ mod internal {
 
         when T: builtins::Signed {
             if val < 0 {
-                fmt.write_char('-')?;
+                fmt.write_byte('-')?;
             }
         }
 
@@ -298,7 +298,7 @@ mod internal {
 
             if val_u == 0 {
                 while i + 1 < pad {
-                    fmt.write_char('0')?;
+                    fmt.write_byte('0')?;
                     pad -= 1;
                 }
                 fmt.write_str(buf[(buf.len() - i - 1)..])?;
@@ -420,7 +420,7 @@ mod internal {
 
             if s.len() < self.len {
                 for _ in (0usize..self.len - s.len()) {
-                    fmt.write_char(self.pad)?;
+                    fmt.write_byte(self.pad)?;
                 }
             }
             fmt.write_str(s)
