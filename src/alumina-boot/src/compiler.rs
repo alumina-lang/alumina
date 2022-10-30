@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use crate::common::HashSet;
 use std::path::PathBuf;
 
 use crate::codegen;
@@ -134,7 +134,7 @@ impl Compiler {
         let items = item_maker.into_inner();
         let mut mono_ctx = MonoCtx::new(&ast, &ir_ctx, self.global_ctx.clone());
 
-        let mut roots = HashSet::new();
+        let mut roots = HashSet::default();
 
         for item in items {
             let inner = item.get();

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use crate::common::HashMap;
 
 use crate::{
     ast::{Bound, Expr, FieldInitializer, FnKind, StaticIfCondition},

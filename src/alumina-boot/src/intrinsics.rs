@@ -9,10 +9,6 @@ use crate::{ast::BuiltinType, common::AluminaError};
 
 use crate::ir::{builder::ExpressionBuilder, ExprP, IrCtx, Ty, TyP};
 
-use std::collections::HashMap;
-
-use once_cell::sync::OnceCell;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IntrinsicKind {
     SizeOf,
@@ -36,31 +32,29 @@ pub enum IntrinsicKind {
 }
 
 pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
-    static MAP: OnceCell<HashMap<&'static str, IntrinsicKind>> = OnceCell::new();
-    MAP.get_or_init(|| {
-        let mut map = HashMap::new();
-        map.insert("size_of", IntrinsicKind::SizeOf);
-        map.insert("align_of", IntrinsicKind::AlignOf);
-        map.insert("array_length_of", IntrinsicKind::ArrayLengthOf);
-        map.insert("type_id", IntrinsicKind::TypeId);
-        map.insert("type_name", IntrinsicKind::TypeName);
-        map.insert("trap", IntrinsicKind::Trap);
-        map.insert("compile_fail", IntrinsicKind::CompileFail);
-        map.insert("compile_warn", IntrinsicKind::CompileWarn);
-        map.insert("compile_note", IntrinsicKind::CompileNote);
-        map.insert("unreachable", IntrinsicKind::Unreachable);
-        map.insert("test_cases", IntrinsicKind::TestCases);
-        map.insert("codegen_func", IntrinsicKind::CodegenFunc);
-        map.insert("codegen_const", IntrinsicKind::CodegenConst);
-        map.insert("codegen_type_func", IntrinsicKind::CodegenTypeFunc);
-        map.insert("vtable", IntrinsicKind::MakeVtable);
-        map.insert("enum_variants", IntrinsicKind::EnumVariants);
-        map.insert("asm", IntrinsicKind::Asm);
-        map.insert("uninitialized", IntrinsicKind::Uninitialized);
-        map
-    })
-    .get(name)
-    .copied()
+    let ret = match name {
+        "size_of" => IntrinsicKind::SizeOf,
+        "align_of" => IntrinsicKind::AlignOf,
+        "array_length_of" => IntrinsicKind::ArrayLengthOf,
+        "type_id" => IntrinsicKind::TypeId,
+        "type_name" => IntrinsicKind::TypeName,
+        "trap" => IntrinsicKind::Trap,
+        "compile_fail" => IntrinsicKind::CompileFail,
+        "compile_warn" => IntrinsicKind::CompileWarn,
+        "compile_note" => IntrinsicKind::CompileNote,
+        "unreachable" => IntrinsicKind::Unreachable,
+        "test_cases" => IntrinsicKind::TestCases,
+        "codegen_func" => IntrinsicKind::CodegenFunc,
+        "codegen_const" => IntrinsicKind::CodegenConst,
+        "codegen_type_func" => IntrinsicKind::CodegenTypeFunc,
+        "vtable" => IntrinsicKind::MakeVtable,
+        "enum_variants" => IntrinsicKind::EnumVariants,
+        "asm" => IntrinsicKind::Asm,
+        "uninitialized" => IntrinsicKind::Uninitialized,
+        _ => return None,
+    };
+
+    Some(ret)
 }
 
 #[derive(Debug, Clone)]

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use crate::common::HashMap;
 
 use once_cell::unsync::OnceCell;
 
@@ -189,8 +189,8 @@ impl<'ast> MacroExpander<'ast> {
             r#macro,
             args: arguments,
             invocation_span,
-            replacements: HashMap::new(),
-            id_replacements: HashMap::new(),
+            replacements: HashMap::default(),
+            id_replacements: HashMap::default(),
             et_cetera_arg: None,
             et_cetera_index: None,
         }

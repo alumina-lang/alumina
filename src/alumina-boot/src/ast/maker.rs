@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use crate::common::HashSet;
 
 use once_cell::unsync::OnceCell;
 
@@ -111,7 +111,7 @@ impl<'ast> AstItemMaker<'ast> {
     ) -> Result<(&'ast [AssociatedFn<'ast>], &'ast [Mixin<'ast>]), AluminaError> {
         let mut associated_fns = Vec::new();
         let mut mixins = Vec::new();
-        let mut names = HashSet::new();
+        let mut names = HashSet::default();
 
         for impl_scope in impl_scopes {
             for (name, item) in impl_scope.inner().all_items() {

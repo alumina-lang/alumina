@@ -1,4 +1,5 @@
-use std::collections::{HashMap, HashSet};
+use crate::common::HashMap;
+use crate::common::HashSet;
 
 use crate::ast::{AstCtx, FieldInitializer};
 use crate::ast::{BinOp, Expr, ExprP, LetDeclaration, Lit, Statement, UnOp};
@@ -1265,7 +1266,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
         let initializer_node = node.child_by_field_name("arguments").unwrap();
         let mut field_initializers = Vec::new();
-        let mut names = HashSet::new();
+        let mut names = HashSet::default();
 
         with_block_scope!(self, {
             let mut cursor = initializer_node.walk();
@@ -1542,7 +1543,7 @@ impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
             self_param: ast.make_id(),
             parameters: Vec::new(),
             placeholders: Vec::new(),
-            bound_values: HashMap::new(),
+            bound_values: HashMap::default(),
             return_type: None,
             body: None,
             in_a_macro,

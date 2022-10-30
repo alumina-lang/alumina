@@ -15,7 +15,6 @@ use crate::{
 };
 use std::{
     cell::{Cell, RefCell},
-    collections::HashSet,
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
 };
@@ -25,6 +24,7 @@ use bumpalo::Bump;
 use once_cell::unsync::OnceCell;
 
 use self::const_eval::Value;
+use crate::common::HashSet;
 
 pub struct IrCtx<'ir> {
     pub arena: Bump,
@@ -37,7 +37,7 @@ impl<'ir> IrCtx<'ir> {
         Self {
             arena: Bump::new(),
             counter: Cell::new(0),
-            types: RefCell::new(HashSet::new()),
+            types: RefCell::new(HashSet::default()),
         }
     }
 
