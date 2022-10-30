@@ -5,7 +5,7 @@ use crate::global_ctx::GlobalCtx;
 use crate::name_resolution::scope::{NamedItemKind, Scope, ScopeType};
 use crate::parser::{AluminaVisitor, ParseCtx};
 
-use indexmap::IndexMap;
+use crate::common::IndexMap;
 use std::result::Result;
 use tree_sitter::Node;
 
@@ -47,7 +47,7 @@ impl<'ast, 'src> FirstPassVisitor<'ast, 'src> {
             enum_item: None,
             main_module_path: None,
             main_candidate: None,
-            items: IndexMap::new(),
+            items: IndexMap::default(),
         }
     }
 
@@ -67,7 +67,7 @@ impl<'ast, 'src> FirstPassVisitor<'ast, 'src> {
             in_a_container: false,
             enum_item: None,
             main_candidate: None,
-            items: IndexMap::new(),
+            items: IndexMap::default(),
         }
     }
 

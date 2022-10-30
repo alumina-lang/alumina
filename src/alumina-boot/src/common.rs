@@ -22,6 +22,8 @@ pub(crate) use ice;
 
 pub type HashMap<K, V> = rustc_hash::FxHashMap<K, V>;
 pub type HashSet<T> = rustc_hash::FxHashSet<T>;
+pub type IndexMap<K, V> =
+    indexmap::IndexMap<K, V, std::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
 
 #[derive(Debug, Error)]
 pub enum AluminaError {

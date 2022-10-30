@@ -5,6 +5,7 @@ use crate::common::HashSet;
 use std::collections::hash_map::Entry;
 
 use std::iter::{once, repeat};
+use std::rc::Rc;
 
 use once_cell::unsync::OnceCell;
 
@@ -44,6 +45,11 @@ macro_rules! mismatch {
     };
 }
 
+#[derive(Default)]
+pub struct Caches<'ast, 'ir> {
+    associated_fns: HashMap<ir::TyP<'ir>, Rc<HashMap<&'ast str, ast::ItemP<'ast>>>>,
+}
+
 pub struct MonoCtx<'ast, 'ir> {
     ast: &'ast ast::AstCtx<'ast>,
     ir: &'ir ir::IrCtx<'ir>,
@@ -57,6 +63,7 @@ pub struct MonoCtx<'ast, 'ir> {
     static_local_defs: HashMap<ir::IRItemP<'ir>, Vec<LocalDef<'ir>>>,
     vtable_layouts: HashMap<&'ir [ir::TyP<'ir>], ir::VtableLayout<'ir>>,
     static_inits: Vec<ir::IRItemP<'ir>>,
+    caches: Caches<'ast, 'ir>,
 }
 
 enum BoundCheckResult {
@@ -84,6 +91,7 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
             tests: HashMap::default(),
             vtable_layouts: HashMap::default(),
             static_inits: Vec::new(),
+            caches: Caches::default(),
         }
     }
 
@@ -974,8 +982,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
 
         let protocol = protocol_item.get_protocol().with_no_span()?;
-        let ast_type = self.raise_type(ty)?;
-        let associated_fns = self.get_associated_fns(ast_type)?;
+        let associated_fns = self.get_associated_fns(ty)?;
 
         for proto_fun in protocol.methods {
             let item = match associated_fns.get(proto_fun.name) {
@@ -1595,7 +1602,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     self.mono_ctx.static_local_defs.get(v).unwrap().clone(),
                 )
             })
-            .rev()
             .unzip();
 
         let local_defs = local_defs.into_iter().flatten().collect::<Vec<_>>();
@@ -2161,6 +2167,25 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     }
 
     fn get_associated_fns(
+        &mut self,
+        typ: ir::TyP<'ir>,
+    ) -> Result<Rc<HashMap<&'ast str, ast::ItemP<'ast>>>, AluminaError> {
+        if let Some(c) = self.mono_ctx.caches.associated_fns.get(&typ) {
+            return Ok(c.clone());
+        }
+
+        let raised = self.raise_type(typ)?;
+        let associated_fns = Rc::new(self.get_associated_fns_for_ast(raised)?);
+
+        self.mono_ctx
+            .caches
+            .associated_fns
+            .insert(typ, associated_fns.clone());
+
+        Ok(associated_fns)
+    }
+
+    fn get_associated_fns_for_ast(
         &mut self,
         typ: ast::TyP<'ast>,
     ) -> Result<HashMap<&'ast str, ast::ItemP<'ast>>, AluminaError> {
@@ -3819,8 +3844,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .with_no_span()?
             .methods;
 
-        let ast_type = self.raise_type(concrete_type)?;
-        let associated_fns = self.get_associated_fns(ast_type)?;
+        let associated_fns = self.get_associated_fns(concrete_type)?;
         let mut attrs = Vec::new();
 
         for func in vtable_layout {
@@ -4024,9 +4048,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
         }
 
-        let ast_type = self.raise_type(canonical)?;
         let method = self
-            .get_associated_fns(ast_type)?
+            .get_associated_fns(canonical)?
             .get(name)
             .copied()
             .or(unified_fn)
@@ -4132,7 +4155,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         spec: &ast::Defered<'ast>,
     ) -> Result<ast::ItemP<'ast>, AluminaError> {
         let typ = self.resolve_ast_type(spec.typ)?;
-        let associated_fns = self.get_associated_fns(typ)?;
+        let associated_fns = self.get_associated_fns_for_ast(typ)?;
         let func = associated_fns
             .get(spec.name)
             .ok_or_else(|| CodeErrorKind::UnresolvedItem(spec.name.to_string()))

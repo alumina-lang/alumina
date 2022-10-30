@@ -4,12 +4,13 @@ use std::{
     rc::{Rc, Weak},
 };
 
+use crate::common::IndexMap;
 use crate::{
     ast::{AstId, Attribute, ItemP},
     common::CodeErrorKind,
     parser::ParseCtx,
 };
-use indexmap::{map::Entry, IndexMap};
+use indexmap::map::Entry;
 use once_cell::unsync::OnceCell;
 use tree_sitter::Node;
 
@@ -203,7 +204,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
         Scope(Rc::new(RefCell::new(ScopeInner {
             r#type: ScopeType::Root,
             path: Path::root(),
-            items: IndexMap::new(),
+            items: IndexMap::default(),
             shadowed_items: Vec::new(),
             star_imports: Vec::new(),
             parent: None,
@@ -234,7 +235,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
         Scope(Rc::new(RefCell::new(ScopeInner {
             r#type,
             path: new_path,
-            items: IndexMap::new(),
+            items: IndexMap::default(),
             star_imports: Vec::new(),
             shadowed_items: Vec::new(),
             code,
@@ -248,7 +249,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
         Scope(Rc::new(RefCell::new(ScopeInner {
             r#type,
             path: new_path,
-            items: IndexMap::new(),
+            items: IndexMap::default(),
             star_imports: Vec::new(),
             shadowed_items: Vec::new(),
             code: OnceCell::new(),
@@ -262,7 +263,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
         Scope(Rc::new(RefCell::new(ScopeInner {
             r#type,
             path: self.path(),
-            items: IndexMap::new(),
+            items: IndexMap::default(),
             star_imports: Vec::new(),
             shadowed_items: Vec::new(),
             code,
