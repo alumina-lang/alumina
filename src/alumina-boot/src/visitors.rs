@@ -8,6 +8,8 @@ use crate::global_ctx::GlobalCtx;
 use crate::name_resolution::path::{Path, PathSegment};
 use crate::name_resolution::scope::{NamedItem, NamedItemKind, Scope};
 use crate::parser::AluminaVisitor;
+use crate::parser::FieldKind;
+use crate::parser::NodeExt;
 use crate::parser::ParseCtx;
 
 pub struct ScopedPathVisitor<'ast, 'src> {
@@ -97,14 +99,14 @@ impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
     }
 
     fn visit_scoped_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let subpath = match node.child_by_field_name("path") {
+        let subpath = match node.child_by_field(FieldKind::Path) {
             Some(subnode) => self.visit(subnode)?,
             None => Path::root(),
         };
 
         let name = self
             .code
-            .node_text(node.child_by_field_name("name").unwrap())
+            .node_text(node.child_by_field(FieldKind::Name).unwrap())
             .alloc_on(self.ast);
 
         Ok(subpath.extend(PathSegment(name)))
@@ -115,14 +117,14 @@ impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
     }
 
     fn visit_scoped_type_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let subpath = match node.child_by_field_name("path") {
+        let subpath = match node.child_by_field(FieldKind::Path) {
             Some(subnode) => self.visit(subnode)?,
             None => Path::root(),
         };
 
         let name = self
             .code
-            .node_text(node.child_by_field_name("name").unwrap())
+            .node_text(node.child_by_field(FieldKind::Name).unwrap())
             .alloc_on(self.ast);
 
         Ok(subpath.extend(PathSegment(name)))
@@ -167,10 +169,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
     type ReturnType = Result<(), AluminaError>;
 
     fn visit_use_as_clause(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
-        let path = self.parse_use_path(node.child_by_field_name("path").unwrap())?;
+        let path = self.parse_use_path(node.child_by_field(FieldKind::Path).unwrap())?;
         let alias = self
             .code
-            .node_text(node.child_by_field_name("alias").unwrap())
+            .node_text(node.child_by_field(FieldKind::Alias).unwrap())
             .alloc_on(self.ast);
 
         self.scope
@@ -191,11 +193,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
     }
 
     fn visit_scoped_use_list(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
-        let suffix = self.parse_use_path(node.child_by_field_name("path").unwrap())?;
+        let suffix = self.parse_use_path(node.child_by_field(FieldKind::Path).unwrap())?;
         let new_prefix = self.prefix.join_with(suffix);
         let old_prefix = std::mem::replace(&mut self.prefix, new_prefix);
 
-        self.visit(node.child_by_field_name("list").unwrap())?;
+        self.visit(node.child_by_field(FieldKind::List).unwrap())?;
         self.prefix = old_prefix;
 
         Ok(())
@@ -217,20 +219,20 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
     }
 
     fn visit_use_wildcard(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
-        let path = self.parse_use_path(node.child_by_field_name("path").unwrap())?;
+        let path = self.parse_use_path(node.child_by_field(FieldKind::Path).unwrap())?;
         self.scope.add_star_import(self.prefix.join_with(path));
 
         Ok(())
     }
 
     fn visit_scoped_identifier(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
-        let path = match node.child_by_field_name("path") {
+        let path = match node.child_by_field(FieldKind::Path) {
             Some(path) => self.parse_use_path(path)?,
             None => Path::root(),
         };
         let name = self
             .code
-            .node_text(node.child_by_field_name("name").unwrap())
+            .node_text(node.child_by_field(FieldKind::Name).unwrap())
             .alloc_on(self.ast);
 
         self.scope
@@ -282,7 +284,7 @@ impl<'ast, 'src> AttributeVisitor<'ast, 'src> {
             test_attributes: Vec::new(),
         };
 
-        if let Some(node) = node.child_by_field_name("attributes") {
+        if let Some(node) = node.child_by_field(FieldKind::Attributes) {
             visitor.visit(node)?;
         }
 
@@ -307,7 +309,7 @@ impl<'ast, 'src> AttributeVisitor<'ast, 'src> {
                     name: Path::from(PathSegment(
                         self.code
                             .node_text(
-                                node.child_by_field_name("name")
+                                node.child_by_field(FieldKind::Name)
                                     .ok_or(CodeErrorKind::CannotBeATest)
                                     .with_span_from(&self.scope, node)?,
                             )
@@ -344,13 +346,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
     fn visit_meta_item(&mut self, node: Node<'src>) -> Self::ReturnType {
         let name = self
             .code
-            .node_text(node.child_by_field_name("name").unwrap());
+            .node_text(node.child_by_field(FieldKind::Name).unwrap());
 
         match name {
             "align" => {
                 let align: usize = node
-                    .child_by_field_name("arguments")
-                    .and_then(|n| n.child_by_field_name("argument"))
+                    .child_by_field(FieldKind::Arguments)
+                    .and_then(|n| n.child_by_field(FieldKind::Argument))
                     .map(|n| self.code.node_text(n))
                     .and_then(|f| f.parse().ok())
                     .ok_or(CodeErrorKind::InvalidAttribute)
@@ -370,8 +372,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
             "packed" => self.attributes.push(Attribute::Packed),
             "inline" => {
                 match node
-                    .child_by_field_name("arguments")
-                    .and_then(|n| n.child_by_field_name("argument"))
+                    .child_by_field(FieldKind::Arguments)
+                    .and_then(|n| n.child_by_field(FieldKind::Argument))
                     .map(|n| self.code.node_text(n))
                 {
                     Some("always") => self.attributes.push(Attribute::AlwaysInline),
@@ -396,8 +398,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
             "test_main" => self.attributes.push(Attribute::TestMain),
             "link_name" => {
                 let link_name = node
-                    .child_by_field_name("arguments")
-                    .and_then(|n| n.child_by_field_name("argument"))
+                    .child_by_field(FieldKind::Arguments)
+                    .and_then(|n| n.child_by_field(FieldKind::Argument))
                     .ok_or(CodeErrorKind::InvalidAttribute)
                     .with_span_from(&self.scope, node)?;
 
@@ -410,7 +412,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
             }
             "test" => {
                 self.test_attributes.push(
-                    node.child_by_field_name("arguments")
+                    node.child_by_field(FieldKind::Arguments)
                         .map(|s| self.code.node_text(s))
                         .unwrap_or("")
                         .to_string(),
@@ -425,8 +427,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
             "cfg_attr" => {
                 let mut cursor = node.walk();
                 let args: Vec<_> = node
-                    .child_by_field_name("arguments")
-                    .map(|a| a.children_by_field_name("argument", &mut cursor).collect())
+                    .child_by_field(FieldKind::Arguments)
+                    .map(|a| {
+                        a.children_by_field(FieldKind::Argument, &mut cursor)
+                            .collect()
+                    })
                     .unwrap_or_default();
 
                 if args.len() < 2 {
@@ -445,8 +450,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
             }
             "lang" => {
                 let lang_type = node
-                    .child_by_field_name("arguments")
-                    .and_then(|n| n.child_by_field_name("argument"))
+                    .child_by_field(FieldKind::Arguments)
+                    .and_then(|n| n.child_by_field(FieldKind::Argument))
                     .ok_or(CodeErrorKind::UnknownLangItem(None))
                     .with_span_from(&self.scope, node)?;
 
@@ -467,7 +472,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
     }
 
     fn visit_attribute_item(&mut self, node: Node<'src>) -> Self::ReturnType {
-        self.visit(node.child_by_field_name("inner").unwrap())
+        self.visit(node.child_by_field(FieldKind::Inner).unwrap())
     }
 }
 
@@ -505,9 +510,9 @@ impl<'ast, 'src> AluminaVisitor<'src> for CfgVisitor<'ast, 'src> {
     fn visit_meta_item(&mut self, node: Node<'src>) -> Self::ReturnType {
         let name = self
             .code
-            .node_text(node.child_by_field_name("name").unwrap());
+            .node_text(node.child_by_field(FieldKind::Name).unwrap());
 
-        if let Some(arguments) = node.child_by_field_name("arguments") {
+        if let Some(arguments) = node.child_by_field(FieldKind::Arguments) {
             let ret = match name {
                 "cfg" => {
                     self.state.push(State::Single);
@@ -531,7 +536,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for CfgVisitor<'ast, 'src> {
             Ok(ret)
         } else {
             let expected = node
-                .child_by_field_name("value")
+                .child_by_field(FieldKind::Value)
                 .map(|n| self.code.node_text(n))
                 .map(parse_string_literal)
                 .transpose()
@@ -553,7 +558,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for CfgVisitor<'ast, 'src> {
     fn visit_meta_arguments(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let mut cursor = node.walk();
         let state = *self.state.last().unwrap();
-        let mut iter = node.children_by_field_name("argument", &mut cursor);
+        let mut iter = node.children_by_field(FieldKind::Argument, &mut cursor);
 
         while let Some(child) = iter.next() {
             let matches = self.visit(child)?;

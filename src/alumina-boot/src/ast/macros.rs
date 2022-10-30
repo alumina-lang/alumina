@@ -16,6 +16,9 @@ use super::{
     expressions::ExpressionVisitor, AstId, Attribute, ExprP, Macro, MacroParameter, Span, Statement,
 };
 
+use crate::parser::FieldKind;
+use crate::parser::NodeExt;
+
 pub struct MacroMaker<'ast> {
     ast: &'ast AstCtx<'ast>,
     global_ctx: GlobalCtx,
@@ -151,7 +154,7 @@ impl<'ast> MacroMaker<'ast> {
             scope.clone(),
             has_et_cetera,
         )
-        .generate(node.child_by_field_name("body").unwrap())?;
+        .generate(node.child_by_field(FieldKind::Body).unwrap())?;
 
         // Two-step assignment to detect recursion
         symbol.get_macro().body.set(body).unwrap();

@@ -12,6 +12,9 @@ use crate::name_resolution::path::{Path, PathSegment};
 use crate::name_resolution::resolver::ItemResolution;
 use crate::name_resolution::scope::{BoundItemType, NamedItem, ScopeType};
 use crate::parser::AluminaVisitor;
+use crate::parser::FieldKind;
+use crate::parser::NodeExt;
+use crate::parser::NodeKind;
 use crate::parser::ParseCtx;
 
 use crate::visitors::{AttributeVisitor, ScopedPathVisitor};
@@ -220,7 +223,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
         node: tree_sitter::Node<'src>,
     ) -> Result<Vec<Statement<'ast>>, AluminaError> {
         let typ = node
-            .child_by_field_name("type")
+            .child_by_field(FieldKind::Type)
             .map(|n| {
                 TypeVisitor::new(
                     self.global_ctx.clone(),
@@ -233,7 +236,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             .transpose()?;
         let value_id = self.ast.make_id();
         let value = node
-            .child_by_field_name("value")
+            .child_by_field(FieldKind::Value)
             .map(|n| self.visit(n))
             .transpose()?;
         let let_decl = LetDeclaration {
@@ -242,7 +245,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             value,
         };
         let mut statements = Vec::new();
-        if let Some(name) = node.child_by_field_name("name") {
+        if let Some(name) = node.child_by_field(FieldKind::Name) {
             let name = self.code.node_text(name).alloc_on(self.ast);
 
             self.scope
@@ -263,7 +266,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             // Tuple unpacking
             let mut cursor = node.walk();
             for (idx, elem) in node
-                .children_by_field_name("element", &mut cursor)
+                .children_by_field(FieldKind::Element, &mut cursor)
                 .enumerate()
             {
                 let name = self.code.node_text(elem).alloc_on(self.ast);
@@ -319,14 +322,18 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             None => return Ok(ExprKind::Void.alloc_with_no_span(self.ast)),
         };
 
-        let expression_node = match last_node.kind() {
-            "expression_statement" => last_node.child_by_field_name("inner").unwrap(),
+        let expression_node = match last_node.kind_typed() {
+            NodeKind::ExpressionStatement => last_node.child_by_field(FieldKind::Inner).unwrap(),
             _ => return Ok(ExprKind::Void.alloc_with_span_from(self.ast, &self.scope, last_node)),
         };
 
-        match expression_node.kind() {
-            "block" | "if_expression" | "switch_expression" | "while_expression"
-            | "loop_expression" | "for_expression" => match statements.pop() {
+        match expression_node.kind_typed() {
+            NodeKind::Block
+            | NodeKind::IfExpression
+            | NodeKind::SwitchExpression
+            | NodeKind::WhileExpression
+            | NodeKind::LoopExpression
+            | NodeKind::ForExpression => match statements.pop() {
                 Some(Statement {
                     kind: StatementKind::Expression(expr),
                     ..
@@ -409,10 +416,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
         let return_expression = with_block_scope!(self, {
             let mut last_node = None;
-            for node in node.children_by_field_name("statements", &mut cursor) {
-                last_node = Some(node.child_by_field_name("inner").unwrap());
+            for node in node.children_by_field(FieldKind::Statements, &mut cursor) {
+                last_node = Some(node.child_by_field(FieldKind::Inner).unwrap());
 
-                let node = node.child_by_field_name("inner").unwrap();
+                let node = node.child_by_field(FieldKind::Inner).unwrap();
                 match AttributeVisitor::parse_attributes(
                     self.global_ctx.clone(),
                     self.ast,
@@ -424,38 +431,40 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                     None => continue,
                 };
 
-                let result = match node.kind() {
-                    "empty_statement" => vec![],
-                    "let_declaration" => self.visit_let_declaration(node)?,
-                    "expression_statement" => vec![StatementKind::Expression(
-                        self.visit(node.child_by_field_name("inner").unwrap())?,
+                let result = match node.kind_typed() {
+                    NodeKind::EmptyStatement => vec![],
+                    NodeKind::LetDeclaration => self.visit_let_declaration(node)?,
+                    NodeKind::ExpressionStatement => vec![StatementKind::Expression(
+                        self.visit(node.child_by_field(FieldKind::Inner).unwrap())?,
                     )
                     .alloc_with_span_from(self.ast, &self.scope, node)],
-                    "enum_definition"
-                    | "struct_definition"
-                    | "protocol_definition"
-                    | "impl_block"
-                    | "macro_definition"
-                    | "const_declaration"
-                    | "static_declaration"
-                    | "type_definition"
-                    | "function_definition"
-                    | "use_declaration" => {
+                    NodeKind::EnumDefinition
+                    | NodeKind::StructDefinition
+                    | NodeKind::ProtocolDefinition
+                    | NodeKind::ImplBlock
+                    | NodeKind::MacroDefinition
+                    | NodeKind::ConstDeclaration
+                    | NodeKind::StaticDeclaration
+                    | NodeKind::TypeDefinition
+                    | NodeKind::FunctionDefinition
+                    | NodeKind::UseDeclaration => {
                         // In linear scopes named items must be declared first, followed by their impl blocks (with no other
                         // items in between).
                         // In module scopes, this restriction does not apply.
-                        match node.kind() {
-                            "enum_definition" | "struct_definition" | "protocol_definition" => {
+                        match node.kind_typed() {
+                            NodeKind::EnumDefinition
+                            | NodeKind::StructDefinition
+                            | NodeKind::ProtocolDefinition => {
                                 make_stuff!();
                                 item_name = Some(
                                     self.code
-                                        .node_text(node.child_by_field_name("name").unwrap()),
+                                        .node_text(node.child_by_field(FieldKind::Name).unwrap()),
                                 );
                             }
-                            "impl_block" => {
+                            NodeKind::ImplBlock => {
                                 let name = Some(
                                     self.code
-                                        .node_text(node.child_by_field_name("name").unwrap()),
+                                        .node_text(node.child_by_field(FieldKind::Name).unwrap()),
                                 );
                                 if name != item_name {
                                     make_stuff!();
@@ -492,7 +501,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
             make_stuff!();
 
-            match node.child_by_field_name("result") {
+            match node.child_by_field(FieldKind::Result) {
                 Some(return_expression) => self.visit(return_expression)?,
                 None => {
                     // This is a bit of a hack to work around Tree-Sitter. _expression_ending_with_block nodes
@@ -643,18 +652,18 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         &mut self,
         node: tree_sitter::Node<'src>,
     ) -> Self::ReturnType {
-        self.visit(node.child_by_field_name("inner").unwrap())
+        self.visit(node.child_by_field(FieldKind::Inner).unwrap())
     }
 
     fn visit_else_clause(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        self.visit(node.child_by_field_name("inner").unwrap())
+        self.visit(node.child_by_field(FieldKind::Inner).unwrap())
     }
 
     fn visit_binary_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let lhs = self.visit(node.child_by_field_name("left").unwrap())?;
+        let lhs = self.visit(node.child_by_field(FieldKind::Left).unwrap())?;
         let op = match self
             .code
-            .node_text(node.child_by_field_name("operator").unwrap())
+            .node_text(node.child_by_field(FieldKind::Operator).unwrap())
         {
             "&&" => BinOp::And,
             "||" => BinOp::Or,
@@ -676,14 +685,14 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             "%" => BinOp::Mod,
             _ => unimplemented!(),
         };
-        let rhs = self.visit(node.child_by_field_name("right").unwrap())?;
+        let rhs = self.visit(node.child_by_field(FieldKind::Right).unwrap())?;
 
         Ok(ExprKind::Binary(op, lhs, rhs).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_assignment_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let lhs = self.visit(node.child_by_field_name("left").unwrap())?;
-        let rhs = self.visit(node.child_by_field_name("right").unwrap())?;
+        let lhs = self.visit(node.child_by_field(FieldKind::Left).unwrap())?;
+        let rhs = self.visit(node.child_by_field(FieldKind::Right).unwrap())?;
 
         Ok(ExprKind::Assign(lhs, rhs).alloc_with_span_from(self.ast, &self.scope, node))
     }
@@ -692,10 +701,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         &mut self,
         node: tree_sitter::Node<'src>,
     ) -> Self::ReturnType {
-        let lhs = self.visit(node.child_by_field_name("left").unwrap())?;
+        let lhs = self.visit(node.child_by_field(FieldKind::Left).unwrap())?;
         let op = match self
             .code
-            .node_text(node.child_by_field_name("operator").unwrap())
+            .node_text(node.child_by_field(FieldKind::Operator).unwrap())
         {
             "&&=" => BinOp::And,
             "||=" => BinOp::Or,
@@ -711,19 +720,19 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             "%=" => BinOp::Mod,
             _ => unimplemented!(),
         };
-        let rhs = self.visit(node.child_by_field_name("right").unwrap())?;
+        let rhs = self.visit(node.child_by_field(FieldKind::Right).unwrap())?;
         let result = ExprKind::AssignOp(op, lhs, rhs);
 
         Ok(result.alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_call_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let func = self.visit(node.child_by_field_name("function").unwrap())?;
+        let func = self.visit(node.child_by_field(FieldKind::Function).unwrap())?;
         let mut arguments = Vec::new();
 
-        let arguments_node = node.child_by_field_name("arguments").unwrap();
+        let arguments_node = node.child_by_field(FieldKind::Arguments).unwrap();
         let mut cursor = arguments_node.walk();
-        for node in arguments_node.children_by_field_name("inner", &mut cursor) {
+        for node in arguments_node.children_by_field(FieldKind::Inner, &mut cursor) {
             arguments.push(self.visit(node)?);
         }
 
@@ -737,7 +746,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         let mut elements = Vec::new();
 
         let mut cursor = node.walk();
-        for node in node.children_by_field_name("element", &mut cursor) {
+        for node in node.children_by_field(FieldKind::Element, &mut cursor) {
             elements.push(self.visit(node)?);
         }
 
@@ -761,7 +770,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             column: node.start_position().column,
             file: self.scope.code().unwrap().file_id(),
         };
-        let inner = self.visit(node.child_by_field_name("inner").unwrap())?;
+        let inner = self.visit(node.child_by_field(FieldKind::Inner).unwrap())?;
 
         self.visit_macro_invocation_impl(path, vec![inner], span)
     }
@@ -770,7 +779,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         let mut elements = Vec::new();
 
         let mut cursor = node.walk();
-        for node in node.children_by_field_name("element", &mut cursor) {
+        for node in node.children_by_field(FieldKind::Element, &mut cursor) {
             elements.push(self.visit(node)?);
         }
 
@@ -797,10 +806,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_unary_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let value = self.visit(node.child_by_field_name("value").unwrap())?;
+        let value = self.visit(node.child_by_field(FieldKind::Value).unwrap())?;
         let op = match self
             .code
-            .node_text(node.child_by_field_name("operator").unwrap())
+            .node_text(node.child_by_field(FieldKind::Operator).unwrap())
         {
             "-" => UnOp::Neg,
             "!" => UnOp::Not,
@@ -811,23 +820,23 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_reference_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let value = self.visit(node.child_by_field_name("value").unwrap())?;
+        let value = self.visit(node.child_by_field(FieldKind::Value).unwrap())?;
         Ok(ExprKind::Ref(value).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_dereference_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let value = self.visit(node.child_by_field_name("value").unwrap())?;
+        let value = self.visit(node.child_by_field(FieldKind::Value).unwrap())?;
         Ok(ExprKind::Deref(value).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_field_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let value = self.visit(node.child_by_field_name("value").unwrap())?;
+        let value = self.visit(node.child_by_field(FieldKind::Value).unwrap())?;
 
-        let field = node.child_by_field_name("field").unwrap();
+        let field = node.child_by_field(FieldKind::Field).unwrap();
         let field_value = self.code.node_text(field).alloc_on(self.ast);
 
-        let result = match field.kind() {
-            "identifier" => {
+        let result = match field.kind_typed() {
+            NodeKind::Identifier => {
                 let mut resolver = NameResolver::new();
                 let unified_fn = match resolver
                     .resolve_item(self.scope.clone(), PathSegment(field_value).into())
@@ -841,7 +850,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
                 ExprKind::Field(value, field_value.alloc_on(self.ast), unified_fn)
             }
-            "integer_literal" => ExprKind::TupleIndex(value, field_value.parse().unwrap()),
+            NodeKind::IntegerLiteral => ExprKind::TupleIndex(value, field_value.parse().unwrap()),
             _ => unreachable!(),
         };
 
@@ -849,8 +858,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_index_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let value = self.visit(node.child_by_field_name("value").unwrap())?;
-        let index = self.visit(node.child_by_field_name("index").unwrap())?;
+        let value = self.visit(node.child_by_field(FieldKind::Value).unwrap())?;
+        let index = self.visit(node.child_by_field(FieldKind::Index).unwrap())?;
 
         let result = ExprKind::Index(value, index);
 
@@ -859,16 +868,16 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
     fn visit_range_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let lower_bound = node
-            .child_by_field_name("lower")
+            .child_by_field(FieldKind::Lower)
             .map(|n| self.visit(n))
             .transpose()?;
         let upper_bound = node
-            .child_by_field_name("upper")
+            .child_by_field(FieldKind::Upper)
             .map(|n| self.visit(n))
             .transpose()?;
 
         let inclusive = node
-            .child_by_field_name("inclusive")
+            .child_by_field(FieldKind::Inclusive)
             .map(|n| self.code.node_text(n) == "..=")
             .unwrap_or(false);
 
@@ -878,28 +887,28 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_if_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let consequence = self.visit(node.child_by_field_name("consequence").unwrap())?;
-        let alternative = match node.child_by_field_name("alternative") {
+        let consequence = self.visit(node.child_by_field(FieldKind::Consequence).unwrap())?;
+        let alternative = match node.child_by_field(FieldKind::Alternative) {
             Some(node) => self.visit(node)?,
             None => ExprKind::Void.alloc_with_span_from(self.ast, &self.scope, node),
         };
 
         let condition = node
-            .child_by_field_name("condition")
+            .child_by_field(FieldKind::Condition)
             .map(|n| self.visit(n))
             .transpose()?;
 
         let result = if let Some(condition) = condition {
             ExprKind::If(condition, consequence, alternative)
         } else {
-            let typecheck_node = node.child_by_field_name("type_check").unwrap();
+            let typecheck_node = node.child_by_field(FieldKind::TypeCheck).unwrap();
             let typ = TypeVisitor::new(
                 self.global_ctx.clone(),
                 self.ast,
                 self.scope.clone(),
                 self.in_a_macro,
             )
-            .visit(typecheck_node.child_by_field_name("lhs").unwrap())?;
+            .visit(typecheck_node.child_by_field(FieldKind::Lhs).unwrap())?;
             let bounds = TypeVisitor::new(
                 self.global_ctx.clone(),
                 self.ast,
@@ -923,16 +932,16 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             self.in_a_macro,
         );
 
-        let arguments_node = node.child_by_field_name("type_arguments").unwrap();
+        let arguments_node = node.child_by_field(FieldKind::TypeArguments).unwrap();
         let mut cursor = arguments_node.walk();
         let arguments = arguments_node
-            .children_by_field_name("type", &mut cursor)
+            .children_by_field(FieldKind::Type, &mut cursor)
             .map(|child| type_visitor.visit(child))
             .collect::<Result<Vec<_>, _>>()?
             .alloc_on(self.ast);
 
         let fn_kind = match &self
-            .visit(node.child_by_field_name("function").unwrap())?
+            .visit(node.child_by_field(FieldKind::Function).unwrap())?
             .kind
         {
             ExprKind::Fn(fn_kind, None) => fn_kind.clone(),
@@ -956,21 +965,21 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_type_cast_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let value = self.visit(node.child_by_field_name("value").unwrap())?;
+        let value = self.visit(node.child_by_field(FieldKind::Value).unwrap())?;
         let typ = TypeVisitor::new(
             self.global_ctx.clone(),
             self.ast,
             self.scope.clone(),
             self.in_a_macro,
         )
-        .visit(node.child_by_field_name("type").unwrap())?;
+        .visit(node.child_by_field(FieldKind::Type).unwrap())?;
 
         Ok(ExprKind::Cast(value, typ).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_loop_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let was_in_a_loop = std::mem::replace(&mut self.in_a_loop, true);
-        let body = self.visit(node.child_by_field_name("body").unwrap());
+        let body = self.visit(node.child_by_field(FieldKind::Body).unwrap());
         self.in_a_loop = was_in_a_loop;
         let body = body?;
 
@@ -983,7 +992,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         }
 
         let inner = node
-            .child_by_field_name("inner")
+            .child_by_field(FieldKind::Inner)
             .map(|n| self.visit(n))
             .transpose()?;
 
@@ -992,7 +1001,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
     fn visit_return_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let inner = node
-            .child_by_field_name("inner")
+            .child_by_field(FieldKind::Inner)
             .map(|n| self.visit(n))
             .transpose()?;
 
@@ -1000,7 +1009,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_defer_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let inner = self.visit(node.child_by_field_name("inner").unwrap())?;
+        let inner = self.visit(node.child_by_field(FieldKind::Inner).unwrap())?;
 
         Ok(ExprKind::Defer(inner).alloc_with_span_from(self.ast, &self.scope, node))
     }
@@ -1013,7 +1022,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_for_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let iterable_node = node.child_by_field_name("value").unwrap();
+        let iterable_node = node.child_by_field(FieldKind::Value).unwrap();
         let iterable = self.visit(iterable_node)?;
 
         let iterator = self.ast.make_id();
@@ -1021,7 +1030,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
         let id = self.ast.make_id();
 
-        let body = if let Some(name) = node.child_by_field_name("name") {
+        let body = if let Some(name) = node.child_by_field(FieldKind::Name) {
             let name = self.code.node_text(name).alloc_on(self.ast);
 
             with_block_scope!(self, {
@@ -1030,7 +1039,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                     .with_span_from(&self.scope, node)?;
 
                 let was_in_a_loop = std::mem::replace(&mut self.in_a_loop, true);
-                let ret = self.visit(node.child_by_field_name("body").unwrap());
+                let ret = self.visit(node.child_by_field(FieldKind::Body).unwrap());
                 self.in_a_loop = was_in_a_loop;
                 ret?
             })
@@ -1041,7 +1050,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                 let mut cursor = node.walk();
 
                 for (idx, elem) in node
-                    .children_by_field_name("element", &mut cursor)
+                    .children_by_field(FieldKind::Element, &mut cursor)
                     .enumerate()
                 {
                     let name = self.code.node_text(elem).alloc_on(self.ast);
@@ -1076,7 +1085,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                 }
 
                 let was_in_a_loop = std::mem::replace(&mut self.in_a_loop, true);
-                let ret = self.visit(node.child_by_field_name("body").unwrap());
+                let ret = self.visit(node.child_by_field(FieldKind::Body).unwrap());
                 self.in_a_loop = was_in_a_loop;
 
                 ExprKind::Block(statements.alloc_on(self.ast), ret?).alloc_with_span_from(
@@ -1176,25 +1185,25 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_switch_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let value = self.visit(node.child_by_field_name("value").unwrap())?;
+        let value = self.visit(node.child_by_field(FieldKind::Value).unwrap())?;
 
         let mut arms = Vec::new();
         let mut default_arm = None;
 
-        let body = node.child_by_field_name("body").unwrap();
+        let body = node.child_by_field(FieldKind::Body).unwrap();
         let mut cursor = body.walk();
 
         // Switch is desugared into a series of if-else expressions
-        for arm in body.children_by_field_name("arm", &mut cursor) {
+        for arm in body.children_by_field(FieldKind::Arm, &mut cursor) {
             if default_arm.is_some() {
                 return Err(CodeErrorKind::DefaultCaseMustBeLast).with_span_from(&self.scope, arm);
             }
 
-            let pattern = arm.child_by_field_name("pattern").unwrap();
+            let pattern = arm.child_by_field(FieldKind::Pattern).unwrap();
             let mut cursor = pattern.walk();
 
             let alternatives = pattern
-                .children_by_field_name("value", &mut cursor)
+                .children_by_field(FieldKind::Value, &mut cursor)
                 .map(|child| self.visit(child))
                 .collect::<Result<Vec<_>, _>>()?;
 
@@ -1202,10 +1211,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                 arms.push((
                     arm,
                     alternatives,
-                    self.visit(arm.child_by_field_name("value").unwrap())?,
+                    self.visit(arm.child_by_field(FieldKind::Value).unwrap())?,
                 ))
             } else {
-                default_arm = Some(self.visit(arm.child_by_field_name("value").unwrap())?);
+                default_arm = Some(self.visit(arm.child_by_field(FieldKind::Value).unwrap())?);
             }
         }
 
@@ -1262,26 +1271,26 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             self.scope.clone(),
             self.in_a_macro,
         )
-        .visit(node.child_by_field_name("name").unwrap())?;
+        .visit(node.child_by_field(FieldKind::Name).unwrap())?;
 
-        let initializer_node = node.child_by_field_name("arguments").unwrap();
+        let initializer_node = node.child_by_field(FieldKind::Arguments).unwrap();
         let mut field_initializers = Vec::new();
         let mut names = HashSet::default();
 
         with_block_scope!(self, {
             let mut cursor = initializer_node.walk();
 
-            for node in initializer_node.children_by_field_name("item", &mut cursor) {
+            for node in initializer_node.children_by_field(FieldKind::Item, &mut cursor) {
                 let name = self
                     .code
-                    .node_text(node.child_by_field_name("field").unwrap());
+                    .node_text(node.child_by_field(FieldKind::Field).unwrap());
 
                 if !names.insert(name) {
                     return Err(CodeErrorKind::DuplicateFieldInitializer(name.to_string()))
                         .with_span_from(&self.scope, node);
                 }
 
-                let value = self.visit(node.child_by_field_name("value").unwrap())?;
+                let value = self.visit(node.child_by_field(FieldKind::Value).unwrap())?;
 
                 let span = Span {
                     start: node.start_byte(),
@@ -1309,10 +1318,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_while_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let condition = self.visit(node.child_by_field_name("condition").unwrap())?;
+        let condition = self.visit(node.child_by_field(FieldKind::Condition).unwrap())?;
 
         let was_in_a_loop = std::mem::replace(&mut self.in_a_loop, true);
-        let body = self.visit(node.child_by_field_name("body").unwrap());
+        let body = self.visit(node.child_by_field(FieldKind::Body).unwrap());
         self.in_a_loop = was_in_a_loop;
         let body = body?;
 
@@ -1335,14 +1344,14 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             return Err(CodeErrorKind::NoEtCeteraArgs).with_span_from(&self.scope, node);
         }
 
-        let inner = self.visit(node.child_by_field_name("inner").unwrap())?;
+        let inner = self.visit(node.child_by_field(FieldKind::Inner).unwrap())?;
 
         Ok(ExprKind::EtCetera(inner).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_macro_invocation(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone(), self.in_a_macro);
-        let path = visitor.visit(node.child_by_field_name("macro").unwrap())?;
+        let path = visitor.visit(node.child_by_field(FieldKind::Macro).unwrap())?;
 
         let span = Span {
             start: node.start_byte(),
@@ -1353,9 +1362,9 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         };
 
         let mut arguments = Vec::new();
-        let arguments_node = node.child_by_field_name("arguments").unwrap();
+        let arguments_node = node.child_by_field(FieldKind::Arguments).unwrap();
         let mut cursor = arguments_node.walk();
-        for node in arguments_node.children_by_field_name("inner", &mut cursor) {
+        for node in arguments_node.children_by_field(FieldKind::Inner, &mut cursor) {
             arguments.push(self.visit(node)?);
         }
 
@@ -1367,7 +1376,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         node: tree_sitter::Node<'src>,
     ) -> Self::ReturnType {
         let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone(), self.in_a_macro);
-        let path = visitor.visit(node.child_by_field_name("macro").unwrap())?;
+        let path = visitor.visit(node.child_by_field(FieldKind::Macro).unwrap())?;
 
         let span = Span {
             start: node.start_byte(),
@@ -1378,12 +1387,12 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         };
 
         let mut arguments = Vec::new();
-        arguments.push(self.visit(node.child_by_field_name("value").unwrap())?);
+        arguments.push(self.visit(node.child_by_field(FieldKind::Value).unwrap())?);
 
-        let arguments_node = node.child_by_field_name("arguments").unwrap();
+        let arguments_node = node.child_by_field(FieldKind::Arguments).unwrap();
         let mut cursor = arguments_node.walk();
 
-        for node in arguments_node.children_by_field_name("inner", &mut cursor) {
+        for node in arguments_node.children_by_field(FieldKind::Inner, &mut cursor) {
             arguments.push(self.visit(node)?);
         }
         self.visit_macro_invocation_impl(path, arguments, span)
@@ -1628,7 +1637,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
     type ReturnType = Result<(), AluminaError>;
 
     fn visit_parameter(&mut self, node: tree_sitter::Node<'src>) -> Result<(), AluminaError> {
-        let name_node = node.child_by_field_name("name").unwrap();
+        let name_node = node.child_by_field(FieldKind::Name).unwrap();
         let name = self.code.node_text(name_node).alloc_on(self.ast);
         let id = self.ast.make_id();
 
@@ -1645,7 +1654,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
             self.scope.clone(),
             self.in_a_macro,
         )
-        .visit(node.child_by_field_name("type").unwrap())?;
+        .visit(node.child_by_field(FieldKind::Type).unwrap())?;
 
         let span = Span {
             start: node.start_byte(),
@@ -1667,11 +1676,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
     fn visit_bound_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let name = self
             .code
-            .node_text(node.child_by_field_name("name").unwrap())
+            .node_text(node.child_by_field(FieldKind::Name).unwrap())
             .alloc_on(self.ast)
             .trim_start_matches('@');
 
-        let bound_type = if node.child_by_field_name("by_reference").is_some() {
+        let bound_type = if node.child_by_field(FieldKind::ByReference).is_some() {
             BoundItemType::ByReference
         } else {
             BoundItemType::ByValue
@@ -1717,7 +1726,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
     fn visit_closure_parameters(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let mut cursor = node.walk();
 
-        for param in node.children_by_field_name("parameter", &mut cursor) {
+        for param in node.children_by_field(FieldKind::Parameter, &mut cursor) {
             self.visit(param)?
         }
 
@@ -1725,7 +1734,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
     }
 
     fn visit_closure_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        self.visit(node.child_by_field_name("parameters").unwrap())?;
+        self.visit(node.child_by_field(FieldKind::Parameters).unwrap())?;
 
         self.body = Some(
             ExpressionVisitor::new(
@@ -1734,11 +1743,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
                 self.scope.clone(),
                 self.in_a_macro,
             )
-            .generate(node.child_by_field_name("body").unwrap())?,
+            .generate(node.child_by_field(FieldKind::Body).unwrap())?,
         );
 
         self.return_type = Some(
-            node.child_by_field_name("return_type")
+            node.child_by_field(FieldKind::ReturnType)
                 .map(|node| {
                     TypeVisitor::new(
                         self.global_ctx.clone(),
