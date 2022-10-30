@@ -244,6 +244,18 @@ quick: $(BUILD_DIR)/quick
 	ln -sf $^.c $@.c
 	ln -sf $^ $@
 
+## ------------------------------ Benchmarking -------------------------
+
+.PHONY: bench-std bench-std-cc
+
+BENCH_CMD = ./tools/bench.py -n$(if $(TIMES),$(TIMES),20) $(if $(MARKDOWN),--markdown,)
+
+bench-std: $(ALUMINA_BOOT) $(SYSROOT_FILES)
+	$(BENCH_CMD) $(ALUMINA_BOOT) $(ALUMINA_FLAGS) --timings --cfg test --cfg test_std --output /dev/null
+
+bench-std-cc: $(STDLIB_TESTS).c
+	$(BENCH_CMD) $(CC) $(CFLAGS) -o/dev/null $^ $(LDFLAGS)
+
 ## ------------------------------ Dist ----------------------------------
 
 .PHONY: lint-rust dist-check
