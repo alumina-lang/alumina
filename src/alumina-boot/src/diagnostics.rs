@@ -1,4 +1,5 @@
-use std::{cell::RefCell, collections::HashMap, path::PathBuf, rc::Rc};
+use crate::common::HashMap;
+use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
 use colored::Colorize;
 
@@ -27,7 +28,7 @@ impl DiagnosticContext {
     pub fn new() -> Self {
         Self {
             inner: Rc::new(RefCell::new(DiagnosticContextInner {
-                file_map: HashMap::new(),
+                file_map: HashMap::default(),
                 messages: Vec::new(),
                 counter: 0,
             })),

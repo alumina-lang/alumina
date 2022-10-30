@@ -1,4 +1,6 @@
-use std::{cell::RefCell, collections::HashSet, fmt::Write};
+use std::{cell::RefCell, fmt::Write};
+
+use crate::common::HashSet;
 
 use crate::{
     ast::{Attribute, BuiltinType},
@@ -30,8 +32,8 @@ impl<'ir, 'gen> TypeWriter<'ir, 'gen> {
                 ctx,
                 type_decls: String::with_capacity(10 * 1024),
                 type_bodies: String::with_capacity(10 * 1024),
-                body_map: HashSet::new(),
-                needs_body: HashSet::new(),
+                body_map: HashSet::default(),
+                needs_body: HashSet::default(),
             }),
         }
     }

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use crate::common::HashSet;
 
 use crate::{
     common::{AluminaError, CodeErrorBuilder},
@@ -14,7 +14,7 @@ pub struct DeadCodeEliminator<'ir> {
 impl<'ir> DeadCodeEliminator<'ir> {
     pub fn new() -> Self {
         DeadCodeEliminator {
-            alive: HashSet::new(),
+            alive: HashSet::default(),
         }
     }
 

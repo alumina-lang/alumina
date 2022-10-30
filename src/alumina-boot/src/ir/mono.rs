@@ -1,11 +1,11 @@
 use backtrace::Backtrace;
 
+use crate::common::HashMap;
+use crate::common::HashSet;
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
 
 use std::iter::{once, repeat};
 
-use indexmap::IndexMap;
 use once_cell::unsync::OnceCell;
 
 use super::builder::{ExpressionBuilder, TypeBuilder};
@@ -50,12 +50,13 @@ pub struct MonoCtx<'ast, 'ir> {
     global_ctx: GlobalCtx,
     id_map: HashMap<ast::AstId, ir::IrId>,
     cycle_guardian: CycleGuardian<(ast::ItemP<'ast>, &'ir [ir::TyP<'ir>])>,
-    finished: IndexMap<MonoKey<'ast, 'ir>, ir::IRItemP<'ir>>,
+    finished: HashMap<MonoKey<'ast, 'ir>, ir::IRItemP<'ir>>,
     reverse_map: HashMap<ir::IRItemP<'ir>, MonoKey<'ast, 'ir>>,
     tests: HashMap<ir::IRItemP<'ir>, TestMetadata<'ast>>,
     intrinsics: CompilerIntrinsics<'ir>,
     static_local_defs: HashMap<ir::IRItemP<'ir>, Vec<LocalDef<'ir>>>,
     vtable_layouts: HashMap<&'ir [ir::TyP<'ir>], ir::VtableLayout<'ir>>,
+    static_inits: Vec<ir::IRItemP<'ir>>,
 }
 
 enum BoundCheckResult {
@@ -74,14 +75,15 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
             ast,
             ir,
             global_ctx: global_ctx.clone(),
-            id_map: HashMap::new(),
-            finished: IndexMap::new(),
-            reverse_map: HashMap::new(),
+            id_map: HashMap::default(),
+            finished: HashMap::default(),
+            reverse_map: HashMap::default(),
             intrinsics: CompilerIntrinsics::new(global_ctx, ir),
-            static_local_defs: HashMap::new(),
+            static_local_defs: HashMap::default(),
             cycle_guardian: CycleGuardian::new(),
-            tests: HashMap::new(),
-            vtable_layouts: HashMap::new(),
+            tests: HashMap::default(),
+            vtable_layouts: HashMap::default(),
+            static_inits: Vec::new(),
         }
     }
 
@@ -356,13 +358,13 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let ir = mono_ctx.ir;
         Monomorphizer {
             mono_ctx,
-            replacements: HashMap::new(),
-            local_types: HashMap::new(),
+            replacements: HashMap::default(),
+            local_types: HashMap::default(),
             exprs: ExpressionBuilder::new(ir),
             types: TypeBuilder::new(ir),
             return_type: None,
             loop_contexts: Vec::new(),
-            local_type_hints: HashMap::new(),
+            local_type_hints: HashMap::default(),
             local_defs: Vec::new(),
             defer_context: None,
             tentative,
@@ -380,13 +382,13 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Monomorphizer {
             mono_ctx,
             replacements,
-            local_types: HashMap::new(),
+            local_types: HashMap::default(),
             exprs: ExpressionBuilder::new(ir),
             types: TypeBuilder::new(ir),
             return_type: None,
             loop_contexts: Vec::new(),
             local_defs: Vec::new(),
-            local_type_hints: HashMap::new(),
+            local_type_hints: HashMap::default(),
             defer_context: None,
             tentative,
             current_item: parent_item,
@@ -410,7 +412,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let mut members = Vec::new();
         let mut child = Self::new(self.mono_ctx, self.tentative, self.current_item);
         let mut type_hint = None;
-        let mut taken_values = HashSet::new();
+        let mut taken_values = HashSet::default();
 
         let (valued, non_valued): (Vec<_>, Vec<_>) =
             en.members.iter().copied().partition(|m| m.value.is_some());
@@ -1155,7 +1157,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 r#extern: s.r#extern,
             });
             item.assign(res);
-
+            child.mono_ctx.static_inits.push(item);
             child
                 .mono_ctx
                 .static_local_defs
@@ -1486,7 +1488,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 // The cell may be empty at this point if we are dealing with recursive references
                 // In this case, we will just return the item as is, but it will not
                 // be populated until the top-level item is finished.
-                indexmap::map::Entry::Occupied(entry) => {
+                Entry::Occupied(entry) => {
                     if entry.get().get().is_err() {
                         match key.0.get() {
                             ast::Item::StaticOrConst(_) => {
@@ -1498,7 +1500,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     }
                     return Ok(entry.get());
                 }
-                indexmap::map::Entry::Vacant(entry) => {
+                Entry::Vacant(entry) => {
                     let symbol = self.mono_ctx.ir.make_symbol();
                     self.mono_ctx.reverse_map.insert(symbol, key.clone());
                     entry.insert(symbol)
@@ -1578,9 +1580,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let (statements, local_defs): (Vec<_>, Vec<_>) = self
             .mono_ctx
-            .finished
+            .static_inits
             .iter()
-            .filter_map(|(_, v)| match v.get() {
+            .filter_map(|v| match v.get() {
                 Ok(ir::IRItem::Static(s)) if s.init.is_some() && alive.contains(v) => Some((v, s)),
                 _ => None,
             })
@@ -2162,7 +2164,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         &mut self,
         typ: ast::TyP<'ast>,
     ) -> Result<HashMap<&'ast str, ast::ItemP<'ast>>, AluminaError> {
-        let mut associated_fns = HashMap::new();
+        let mut associated_fns = HashMap::default();
 
         let item = match typ {
             ast::Ty::Builtin(kind) => self
@@ -4348,8 +4350,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     // The cell may be empty at this point if we are dealing with recursive references
                     // In this case, we will just return the item as is, but it will not
                     // be populated until the top-level item is finished.
-                    indexmap::map::Entry::Occupied(entry) => self.types.closure(entry.get()),
-                    indexmap::map::Entry::Vacant(entry) => {
+                    Entry::Occupied(entry) => self.types.closure(entry.get()),
+                    Entry::Vacant(entry) => {
                         let closure = self.mono_ctx.ir.make_symbol();
                         self.mono_ctx.reverse_map.insert(closure, key.clone());
                         entry.insert(closure);

@@ -7,7 +7,8 @@ use crate::{
     ast::{self, lang::LangItemKind, rebind::Rebinder, BuiltinType, Placeholder},
     ir,
 };
-use std::collections::HashMap;
+
+use crate::common::HashMap;
 
 pub struct TypeInferer<'a, 'ast, 'ir> {
     ast: &'ast ast::AstCtx<'ast>,
@@ -291,7 +292,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
         self_slot: Option<(ast::TyP<'ast>, ir::TyP<'ir>)>,
         pairs: impl IntoIterator<Item = (ast::TyP<'ast>, ir::TyP<'ir>)>,
     ) -> Option<Vec<ir::TyP<'ir>>> {
-        let mut inferred = HashMap::new();
+        let mut inferred = HashMap::default();
 
         if let Some((src, tgt)) = self_slot {
             let _ = self.match_slot(&mut inferred, src.canonical_type(), tgt.canonical_type());

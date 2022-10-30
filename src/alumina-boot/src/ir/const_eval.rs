@@ -3,9 +3,10 @@
 use crate::ast::BinOp;
 use std::{
     cmp::Ordering,
-    collections::HashMap,
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub},
 };
+
+use crate::common::HashMap;
 
 use super::{BuiltinType, ExprKind, ExprP, IrCtx, IrId, Lit, Statement, Ty, TyP, UnOp};
 use thiserror::Error;
@@ -647,7 +648,7 @@ impl<'ir> ConstEvaluator<'ir> {
             }
             ExprKind::Struct(fields) => {
                 // Last assignment wins
-                let mut values = HashMap::new();
+                let mut values = HashMap::default();
                 for field in *fields {
                     values.insert(field.field, self.const_eval(field.value)?);
                 }

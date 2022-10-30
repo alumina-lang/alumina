@@ -1,4 +1,5 @@
-use std::collections::{HashMap, HashSet};
+use crate::common::HashMap;
+use crate::common::HashSet;
 
 use crate::{
     ast::{BuiltinType, UnOp},
@@ -28,7 +29,7 @@ impl<'ir> ZstElider<'ir> {
         Self {
             ir,
             additional_locals: Vec::new(),
-            used_ids: HashSet::new(),
+            used_ids: HashSet::default(),
         }
     }
 

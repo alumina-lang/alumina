@@ -1,8 +1,10 @@
 use std::{
     cell::{Ref, RefCell},
-    collections::{HashMap, HashSet},
     rc::Rc,
 };
+
+use crate::common::HashMap;
+use crate::common::HashSet;
 
 use crate::diagnostics::DiagnosticContext;
 
@@ -29,7 +31,7 @@ impl GlobalCtx {
         let mut result = Self {
             inner: Rc::new(RefCell::new(GlobalCtxInner {
                 diag: DiagnosticContext::new(),
-                cfg: HashMap::new(),
+                cfg: HashMap::default(),
                 options: options.into_iter().collect(),
                 output_type,
             })),

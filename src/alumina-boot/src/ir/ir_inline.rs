@@ -1,4 +1,5 @@
-use std::{cell::RefCell, collections::HashMap};
+use crate::common::HashMap;
+use std::cell::RefCell;
 
 use crate::common::{AluminaError, CodeErrorBuilder, CodeErrorKind};
 

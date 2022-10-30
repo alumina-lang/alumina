@@ -14,10 +14,11 @@ use std::fmt::Display;
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 
+use crate::common::HashMap;
+use crate::common::HashSet;
 use bumpalo::Bump;
 use once_cell::unsync::OnceCell;
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
 
 use crate::common::impl_allocatable;
 
@@ -41,9 +42,9 @@ impl<'ast> AstCtx<'ast> {
         Self {
             arena: Bump::new(),
             counter: Cell::new(0),
-            types: RefCell::new(HashSet::new()),
-            lang_items: RefCell::new(HashMap::new()),
-            test_metadata: RefCell::new(HashMap::new()),
+            types: RefCell::new(HashSet::default()),
+            lang_items: RefCell::new(HashMap::default()),
+            test_metadata: RefCell::new(HashMap::default()),
         }
     }
 

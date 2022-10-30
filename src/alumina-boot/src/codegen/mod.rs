@@ -3,9 +3,10 @@ pub mod types;
 
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
     fmt::{Display, Write},
 };
+
+use crate::common::HashMap;
 
 use crate::{
     ast::BuiltinType,
@@ -63,8 +64,8 @@ impl<'ir, 'gen> CodegenCtx<'ir, 'gen> {
         Self {
             global_ctx,
             arena: Bump::new(),
-            id_map: RefCell::new(HashMap::new()),
-            type_map: RefCell::new(HashMap::new()),
+            id_map: RefCell::new(HashMap::default()),
+            type_map: RefCell::new(HashMap::default()),
             counter: Cell::new(0),
         }
     }

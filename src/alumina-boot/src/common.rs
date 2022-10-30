@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::io;
@@ -20,6 +19,9 @@ macro_rules! ice {
 }
 
 pub(crate) use ice;
+
+pub type HashMap<K, V> = rustc_hash::FxHashMap<K, V>;
+pub type HashSet<T> = rustc_hash::FxHashSet<T>;
 
 #[derive(Debug, Error)]
 pub enum AluminaError {
@@ -423,7 +425,7 @@ impl<T: Eq + Hash + Clone> Drop for CycleGuard<T> {
 impl<T: Eq + Hash + Clone> CycleGuardian<T> {
     pub fn new() -> Self {
         Self {
-            inner: Rc::new(RefCell::new(HashSet::new())),
+            inner: Rc::new(RefCell::new(HashSet::default())),
         }
     }
 
