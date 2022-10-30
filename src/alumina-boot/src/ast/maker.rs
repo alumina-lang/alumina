@@ -16,6 +16,10 @@ use crate::{
     parser::AluminaVisitor,
 };
 
+use crate::parser::FieldKind;
+use crate::parser::NodeExt;
+use crate::parser::NodeKind;
+
 use super::{
     expressions::ExpressionVisitor, lang::LangItemKind, macros::MacroMaker, types::TypeVisitor,
     AssociatedFn, Attribute, Enum, EnumMember, Intrinsic, Mixin, MixinCell, Placeholder, Protocol,
@@ -69,7 +73,7 @@ impl<'ast> AstItemMaker<'ast> {
                     placeholders.push(Placeholder {
                         id,
                         default: node
-                            .child_by_field_name("default")
+                            .child_by_field(FieldKind::Default)
                             .map(|node| {
                                 // Default values for generic parameters are name-resolved in parent
                                 // scope to avoid cyclic references, like `struct Foo<T2 = T2>`. This
@@ -150,7 +154,7 @@ impl<'ast> AstItemMaker<'ast> {
                             self.in_a_macro,
                         );
                         let protocol_type =
-                            visitor.visit(node.child_by_field_name("protocol").unwrap())?;
+                            visitor.visit(node.child_by_field(FieldKind::Protocol).unwrap())?;
 
                         let span = Span {
                             start: node.start_byte(),
@@ -202,7 +206,8 @@ impl<'ast> AstItemMaker<'ast> {
                         scope.clone(),
                         self.in_a_macro,
                     );
-                    let field_type = visitor.visit(node.child_by_field_name("type").unwrap())?;
+                    let field_type =
+                        visitor.visit(node.child_by_field(FieldKind::Type).unwrap())?;
 
                     let span = Span {
                         start: node.start_byte(),
@@ -224,7 +229,7 @@ impl<'ast> AstItemMaker<'ast> {
         }
 
         let placeholders = self.get_placeholders(&scope)?;
-        let is_union = match code.node_text(node.child_by_field_name("kind").unwrap()) {
+        let is_union = match code.node_text(node.child_by_field(FieldKind::Kind).unwrap()) {
             "struct" => false,
             "union" => true,
             _ => unimplemented!(),
@@ -321,7 +326,7 @@ impl<'ast> AstItemMaker<'ast> {
             match item.kind {
                 NamedItemKind::EnumMember(_, id, node) => {
                     let value = node
-                        .child_by_field_name("value")
+                        .child_by_field(FieldKind::Value)
                         .map(|node| {
                             ExpressionVisitor::new(
                                 self.ast,
@@ -398,7 +403,7 @@ impl<'ast> AstItemMaker<'ast> {
         };
 
         let target = node
-            .child_by_field_name("inner")
+            .child_by_field(FieldKind::Inner)
             .map(|n| {
                 TypeVisitor::new(
                     self.global_ctx.clone(),
@@ -452,10 +457,10 @@ impl<'ast> AstItemMaker<'ast> {
         let mut parameters: Vec<Parameter<'ast>> = Vec::new();
         let code = scope.code().unwrap();
 
-        let is_extern = node.child_by_field_name("extern").is_some();
+        let is_extern = node.child_by_field(FieldKind::Extern).is_some();
         let has_varargs = node
-            .child_by_field_name("parameters")
-            .and_then(|n| n.child_by_field_name("et_cetera"))
+            .child_by_field(FieldKind::Parameters)
+            .and_then(|n| n.child_by_field(FieldKind::EtCetera))
             .is_some();
 
         if has_varargs && !is_extern {
@@ -464,7 +469,9 @@ impl<'ast> AstItemMaker<'ast> {
 
         let is_protocol_fn = matches!(scope.parent().map(|s| s.typ()), Some(ScopeType::Protocol));
 
-        let abi = node.child_by_field_name("abi").map(|n| code.node_text(n));
+        let abi = node
+            .child_by_field(FieldKind::Abi)
+            .map(|n| code.node_text(n));
         let span = Span {
             start: node.start_byte(),
             end: node.end_byte(),
@@ -484,7 +491,7 @@ impl<'ast> AstItemMaker<'ast> {
                         scope.clone(),
                         self.in_a_macro,
                     )
-                    .visit(node.child_by_field_name("type").unwrap())?;
+                    .visit(node.child_by_field(FieldKind::Type).unwrap())?;
 
                     let span = Span {
                         start: node.start_byte(),
@@ -536,7 +543,7 @@ impl<'ast> AstItemMaker<'ast> {
         }
 
         let return_type = node
-            .child_by_field_name("return_type")
+            .child_by_field(FieldKind::ReturnType)
             .map(|n| {
                 TypeVisitor::new(
                     self.global_ctx.clone(),
@@ -596,7 +603,7 @@ impl<'ast> AstItemMaker<'ast> {
         attributes: &'ast [Attribute],
     ) -> Result<(), AluminaError> {
         let typ = node
-            .child_by_field_name("type")
+            .child_by_field(FieldKind::Type)
             .map(|n| {
                 TypeVisitor::new(
                     self.global_ctx.clone(),
@@ -608,11 +615,11 @@ impl<'ast> AstItemMaker<'ast> {
             })
             .transpose()?;
 
-        let is_extern = node.child_by_field_name("extern").is_some();
+        let is_extern = node.child_by_field(FieldKind::Extern).is_some();
         assert!(!is_extern || !is_const);
 
         let init = node
-            .child_by_field_name("init")
+            .child_by_field(FieldKind::Init)
             .map(|body| {
                 ExpressionVisitor::new(
                     self.ast,
@@ -673,11 +680,11 @@ impl<'ast> AstItemMaker<'ast> {
         impl_scopes: &[Scope<'ast, 'src>],
         attributes: &'ast [Attribute],
     ) -> Result<(), AluminaError> {
-        match node.kind() {
-            "struct_definition" => {
+        match node.kind_typed() {
+            NodeKind::StructDefinition => {
                 self.make_struct_like(name, symbol, node, scope, impl_scopes, attributes)?
             }
-            "enum_definition" => {
+            NodeKind::EnumDefinition => {
                 self.make_enum(name, symbol, node, scope, impl_scopes, attributes)?
             }
             _ => unimplemented!(),
@@ -780,7 +787,7 @@ impl<'ast> AstItemMaker<'ast> {
                 symbol,
                 *node,
                 scope.clone(),
-                node.child_by_field_name("body"),
+                node.child_by_field(FieldKind::Body),
                 attributes,
             )?,
             _ => {}

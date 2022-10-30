@@ -14,6 +14,9 @@ use crate::visitors::{AttributeVisitor, UseClauseVisitor, VisitorExt};
 use super::path::Path;
 use super::scope::NamedItem;
 
+use crate::parser::FieldKind;
+use crate::parser::NodeExt;
+
 type ItemMap<'ast, 'src> =
     IndexMap<(Scope<'ast, 'src>, Option<&'ast str>), Vec<NamedItem<'ast, 'src>>>;
 
@@ -129,7 +132,7 @@ macro_rules! with_child_scope_container {
 
 impl<'ast, 'src> FirstPassVisitor<'ast, 'src> {
     fn parse_name(&self, node: Node<'src>) -> &'ast str {
-        let name_node = node.child_by_field_name("name").unwrap();
+        let name_node = node.child_by_field(FieldKind::Name).unwrap();
         self.code.node_text(name_node).alloc_on(self.ast)
     }
 }
@@ -200,7 +203,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         )?;
 
         with_child_scope_container!(self, child_scope, {
-            if let Some(f) = node.child_by_field_name("type_arguments") {
+            if let Some(f) = node.child_by_field(FieldKind::TypeArguments) {
                 self.visit(f)?;
             }
             self.visit_children_by_field(node, "body")?;
@@ -226,7 +229,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         )?;
 
         with_child_scope!(self, child_scope, {
-            if let Some(f) = node.child_by_field_name("type_arguments") {
+            if let Some(f) = node.child_by_field(FieldKind::TypeArguments) {
                 self.visit(f)?;
             }
             self.visit_children_by_field(node, "body")?;
@@ -248,7 +251,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         )?;
 
         with_child_scope_container!(self, child_scope, {
-            if let Some(f) = node.child_by_field_name("type_arguments") {
+            if let Some(f) = node.child_by_field(FieldKind::TypeArguments) {
                 self.visit(f)?;
             }
             self.visit_children_by_field(node, "body")?;
@@ -352,7 +355,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         )?;
 
         with_child_scope!(self, child_scope, {
-            if let Some(f) = node.child_by_field_name("type_arguments") {
+            if let Some(f) = node.child_by_field(FieldKind::TypeArguments) {
                 self.visit(f)?;
             }
             self.visit_children_by_field(node, "parameters")?;
@@ -379,7 +382,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         )?;
 
         with_child_scope!(self, child_scope, {
-            if let Some(f) = node.child_by_field_name("type_arguments") {
+            if let Some(f) = node.child_by_field(FieldKind::TypeArguments) {
                 self.visit(f)?;
             }
         });
@@ -397,7 +400,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         )?;
 
         with_child_scope!(self, child_scope, {
-            if let Some(f) = node.child_by_field_name("type_arguments") {
+            if let Some(f) = node.child_by_field(FieldKind::TypeArguments) {
                 self.visit(f)?;
             }
         });
@@ -422,7 +425,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         )?;
 
         with_child_scope!(self, child_scope, {
-            if let Some(f) = node.child_by_field_name("type_arguments") {
+            if let Some(f) = node.child_by_field(FieldKind::TypeArguments) {
                 self.visit(f)?;
             }
         });
@@ -447,7 +450,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         )?;
 
         with_child_scope!(self, child_scope, {
-            if let Some(f) = node.child_by_field_name("type_arguments") {
+            if let Some(f) = node.child_by_field(FieldKind::TypeArguments) {
                 self.visit(f)?;
             }
         });
@@ -457,10 +460,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
 
     fn visit_generic_argument_list(&mut self, node: Node<'src>) -> Self::ReturnType {
         let mut cursor = node.walk();
-        for argument in node.children_by_field_name("argument", &mut cursor) {
+        for argument in node.children_by_field(FieldKind::Argument, &mut cursor) {
             let name = self
                 .code
-                .node_text(argument.child_by_field_name("placeholder").unwrap())
+                .node_text(argument.child_by_field(FieldKind::Placeholder).unwrap())
                 .alloc_on(self.ast);
             self.add_item(
                 node,
@@ -492,7 +495,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
             name,
             NamedItem::new_default(NamedItemKind::MacroParameter(
                 self.ast.make_id(),
-                node.child_by_field_name("et_cetera").is_some(),
+                node.child_by_field(FieldKind::EtCetera).is_some(),
             )),
         )?;
 
@@ -511,7 +514,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         let attributes = parse_attributes!(self, node);
 
         let mut visitor = UseClauseVisitor::new(self.ast, self.scope.clone(), attributes, false);
-        visitor.visit(node.child_by_field_name("argument").unwrap())?;
+        visitor.visit(node.child_by_field(FieldKind::Argument).unwrap())?;
 
         Ok(())
     }

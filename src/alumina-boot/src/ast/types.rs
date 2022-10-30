@@ -17,6 +17,9 @@ use crate::{
 use super::expressions::ExpressionVisitor;
 use super::{Bound, Defered, ProtocolBounds, ProtocolBoundsKind, Span, StaticIfCondition};
 
+use crate::parser::FieldKind;
+use crate::parser::NodeExt;
+
 pub struct TypeVisitor<'ast, 'src> {
     global_ctx: GlobalCtx,
     ast: &'ast AstCtx<'ast>,
@@ -49,9 +52,9 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
     ) -> Result<ProtocolBounds<'ast>, AluminaError> {
         let mut bounds = Vec::new();
 
-        let (kind, node) = if node.child_by_field_name("all_bounds").is_some() {
+        let (kind, node) = if node.child_by_field(FieldKind::AllBounds).is_some() {
             (ProtocolBoundsKind::All, node)
-        } else if node.child_by_field_name("any_bounds").is_some() {
+        } else if node.child_by_field(FieldKind::AnyBounds).is_some() {
             (ProtocolBoundsKind::Any, node)
         } else {
             // There are no bounds
@@ -59,7 +62,7 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
         };
 
         let mut cursor = node.walk();
-        for bound in node.children_by_field_name("bound", &mut cursor) {
+        for bound in node.children_by_field(FieldKind::Bound, &mut cursor) {
             bounds.push(Bound {
                 span: Some(Span {
                     start: bound.start_byte(),
@@ -68,8 +71,8 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
                     column: bound.start_position().column,
                     file: self.scope.code().unwrap().file_id(),
                 }),
-                negated: bound.child_by_field_name("negated").is_some(),
-                typ: self.visit(bound.child_by_field_name("type").unwrap())?,
+                negated: bound.child_by_field(FieldKind::Negated).is_some(),
+                typ: self.visit(bound.child_by_field(FieldKind::Type).unwrap())?,
             });
         }
 
@@ -114,13 +117,13 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
     ) -> Result<(&'ast [TyP<'ast>], TyP<'ast>), AluminaError> {
         let mut cursor = node.walk();
         let elements = node
-            .child_by_field_name("parameters")
+            .child_by_field(FieldKind::Parameters)
             .unwrap()
-            .children_by_field_name("parameter", &mut cursor)
+            .children_by_field(FieldKind::Parameter, &mut cursor)
             .map(|child| self.visit(child))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let type_node = if let Some(return_type_node) = node.child_by_field_name("return_type") {
+        let type_node = if let Some(return_type_node) = node.child_by_field(FieldKind::ReturnType) {
             self.visit(return_type_node)?
         } else {
             self.ast.intern_type(Ty::Builtin(BuiltinType::Void))
@@ -162,25 +165,25 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
     }
 
     fn visit_pointer_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let ty = self.visit(node.child_by_field_name("inner").unwrap())?;
-        let is_mut = node.child_by_field_name("mut").is_some();
+        let ty = self.visit(node.child_by_field(FieldKind::Inner).unwrap())?;
+        let is_mut = node.child_by_field(FieldKind::Mut).is_some();
 
         Ok(self.ast.intern_type(Ty::Pointer(ty, !is_mut)))
     }
 
     fn visit_slice_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let ty = self.visit(node.child_by_field_name("inner").unwrap())?;
-        let is_mut = node.child_by_field_name("mut").is_some();
+        let ty = self.visit(node.child_by_field(FieldKind::Inner).unwrap())?;
+        let is_mut = node.child_by_field(FieldKind::Mut).is_some();
 
         Ok(self.ast.intern_type(Ty::Slice(ty, !is_mut)))
     }
 
     fn visit_dyn_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let is_mut = node.child_by_field_name("mut").is_some();
+        let is_mut = node.child_by_field(FieldKind::Mut).is_some();
 
         let mut cursor = node.walk();
         let inner = node
-            .children_by_field_name("inner", &mut cursor)
+            .children_by_field(FieldKind::Inner, &mut cursor)
             .map(|child| self.visit(child))
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -190,14 +193,14 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
     }
 
     fn visit_array_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let ty = self.visit(node.child_by_field_name("inner").unwrap())?;
+        let ty = self.visit(node.child_by_field(FieldKind::Inner).unwrap())?;
         let mut visitor = ExpressionVisitor::new(
             self.ast,
             self.global_ctx.clone(),
             self.scope.clone(),
             self.in_a_macro,
         );
-        let size = visitor.visit(node.child_by_field_name("size").unwrap())?;
+        let size = visitor.visit(node.child_by_field(FieldKind::Size).unwrap())?;
 
         Ok(self.ast.intern_type(Ty::Array(ty, size)))
     }
@@ -205,7 +208,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
     fn visit_tuple_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let mut cursor = node.walk();
         let elements = node
-            .children_by_field_name("element", &mut cursor)
+            .children_by_field(FieldKind::Element, &mut cursor)
             .map(|child| self.visit(child))
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -233,18 +236,18 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
             self.scope.clone(),
             self.in_a_macro,
         );
-        let expr = visitor.visit(node.child_by_field_name("inner").unwrap())?;
+        let expr = visitor.visit(node.child_by_field(FieldKind::Inner).unwrap())?;
 
         Ok(self.ast.intern_type(Ty::TypeOf(expr)))
     }
 
     fn visit_generic_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let base = self.visit_typeref(node.child_by_field_name("type").unwrap())?;
+        let base = self.visit_typeref(node.child_by_field(FieldKind::Type).unwrap())?;
 
-        let arguments_node = node.child_by_field_name("type_arguments").unwrap();
+        let arguments_node = node.child_by_field(FieldKind::TypeArguments).unwrap();
         let mut cursor = arguments_node.walk();
         let arguments = arguments_node
-            .children_by_field_name("type", &mut cursor)
+            .children_by_field(FieldKind::Type, &mut cursor)
             .map(|child| self.visit(child))
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -281,13 +284,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
     }
 
     fn visit_when_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let typecheck_node = node.child_by_field_name("type_check").unwrap();
-        let typ = self.visit(typecheck_node.child_by_field_name("lhs").unwrap())?;
+        let typecheck_node = node.child_by_field(FieldKind::TypeCheck).unwrap();
+        let typ = self.visit(typecheck_node.child_by_field(FieldKind::Lhs).unwrap())?;
         let bounds = self.parse_protocol_bounds(typecheck_node)?;
         let cond = StaticIfCondition { typ, bounds };
 
-        let then = self.visit(node.child_by_field_name("consequence").unwrap())?;
-        let els = self.visit(node.child_by_field_name("alternative").unwrap())?;
+        let then = self.visit(node.child_by_field(FieldKind::Consequence).unwrap())?;
+        let els = self.visit(node.child_by_field(FieldKind::Alternative).unwrap())?;
 
         Ok(self.ast.intern_type(Ty::When(cond, then, els)))
     }
