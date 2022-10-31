@@ -148,10 +148,6 @@ impl<'ir> ExpressionBuilder<'ir> {
         result.alloc_on(self.ir)
     }
 
-    pub fn lit(&self, lit: Lit<'ir>, ty: TyP<'ir>) -> ExprP<'ir> {
-        Expr::rvalue(ExprKind::Lit(lit), ty).alloc_on(self.ir)
-    }
-
     pub fn if_then(&self, cond: ExprP<'ir>, then: ExprP<'ir>, els: ExprP<'ir>) -> ExprP<'ir> {
         let result = Expr::rvalue(
             ExprKind::If(cond, then, els),
@@ -231,6 +227,10 @@ impl<'ir> ExpressionBuilder<'ir> {
         };
 
         expr.alloc_on(self.ir)
+    }
+
+    pub fn null(&self, typ: TyP<'ir>) -> ExprP<'ir> {
+        self.const_value(Value::USize(0), typ)
     }
 
     pub fn const_value(&self, val: Value<'ir>, typ: TyP<'ir>) -> ExprP<'ir> {
@@ -333,8 +333,8 @@ impl<'ir> ExpressionBuilder<'ir> {
     }
 
     pub fn const_index(&self, inner: ExprP<'ir>, index: usize) -> ExprP<'ir> {
-        let index = self.lit(
-            Lit::Int(index as u128),
+        let index = self.const_value(
+            Value::USize(index),
             self.ir.intern_type(Ty::Builtin(BuiltinType::USize)),
         );
 
@@ -365,11 +365,6 @@ impl<'ir> TypeBuilder<'ir> {
 
     pub fn void(&self) -> TyP<'ir> {
         self.ir.intern_type(Ty::void())
-    }
-
-    pub fn unqualified_str(&self, len: usize) -> TyP<'ir> {
-        self.ir
-            .intern_type(Ty::Unqualified(UnqualifiedKind::String(len)))
     }
 
     pub fn builtin(&self, builtin: BuiltinType) -> TyP<'ir> {

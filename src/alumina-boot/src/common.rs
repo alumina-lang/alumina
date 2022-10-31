@@ -255,6 +255,8 @@ pub enum CodeErrorKind {
     TypedefWithoutTarget,
     #[error("type with infinite size (recursive type without indirection)")]
     TypeWithInfiniteSize,
+    #[error("integer literal out of range ({} does not fit into {})", .0, .1)]
+    IntegerOutOfRange(String, String),
 
     // IR inlining is very restricitve at the moment, these may eventually be removed
     #[error("cannot IR-inline functions that use variables")]

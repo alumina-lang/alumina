@@ -2,9 +2,9 @@ use crate::common::{AluminaError, CodeErrorBuilder, HashSet};
 use crate::intrinsics::CodegenIntrinsicKind;
 use crate::ir::const_eval::Value;
 use crate::ir::ExpressionVisitor;
-use crate::ir::{ExprKind, ExprP, IRItem, IRItemP, Statement, Ty, TyP};
+use crate::ir::{IRItem, IRItemP, Statement, Ty, TyP};
 
-use super::default_visit_expr;
+use super::{default_visit_expr, ExprP};
 
 pub struct DeadCodeEliminator<'ir> {
     alive: HashSet<IRItemP<'ir>>,
@@ -43,7 +43,6 @@ impl<'ir> DeadCodeEliminator<'ir> {
             }
 
             Ty::Protocol(_) => unreachable!(),
-            Ty::Unqualified(_) => {}
         }
 
         Ok(())

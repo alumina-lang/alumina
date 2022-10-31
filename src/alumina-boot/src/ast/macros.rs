@@ -424,9 +424,9 @@ impl<'ast> MacroExpander<'ast> {
                     .with_span(self.invocation_span)?;
 
                 let kind = if let BuiltinMacroKind::Line = kind {
-                    ExprKind::Lit(Lit::Int(line as u128, None))
+                    ExprKind::Lit(Lit::Int(false, line as u128, None))
                 } else {
-                    ExprKind::Lit(Lit::Int(column as u128, None))
+                    ExprKind::Lit(Lit::Int(false, column as u128, None))
                 };
 
                 Ok(Expr {

@@ -719,7 +719,7 @@ pub enum UnOp {
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum Lit<'ast> {
     Str(&'ast [u8]),
-    Int(u128, Option<BuiltinType>),
+    Int(bool, u128, Option<BuiltinType>),
     Float(&'ast str, Option<BuiltinType>),
     Bool(bool),
     Null,

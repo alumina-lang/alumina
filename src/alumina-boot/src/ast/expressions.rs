@@ -538,7 +538,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_integer_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let (remainder, kind) = suffixed_literals!(self.code.node_text(node),
+        let (mut remainder, kind) = suffixed_literals!(self.code.node_text(node),
             "u8" => BuiltinType::U8,
             "u16" => BuiltinType::U16,
             "u32" => BuiltinType::U32,
@@ -552,6 +552,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             "usize" => BuiltinType::USize,
             "isize" => BuiltinType::ISize,
         );
+
+        let sign = if remainder.starts_with("-") {
+            remainder = &remainder[1..];
+            true
+        } else {
+            false
+        };
 
         let value = if remainder.starts_with("0x") {
             u128::from_str_radix(remainder.trim_start_matches("0x"), 16)
@@ -567,7 +574,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             .map_err(|_| CodeErrorKind::InvalidLiteral)
             .with_span_from(&self.scope, node)?;
 
-        Ok(ExprKind::Lit(Lit::Int(value, kind)).alloc_with_span_from(self.ast, &self.scope, node))
+        Ok(ExprKind::Lit(Lit::Int(sign, value, kind)).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_float_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -603,7 +610,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         };
 
         Ok(
-            ExprKind::Lit(Lit::Int(val as u128, Some(BuiltinType::U8))).alloc_with_span_from(
+            ExprKind::Lit(Lit::Int(false, val as u128, Some(BuiltinType::U8))).alloc_with_span_from(
                 self.ast,
                 &self.scope,
                 node,

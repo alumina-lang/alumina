@@ -4,7 +4,7 @@ use crate::intrinsics::CodegenIntrinsicKind;
 use crate::ir::builder::{ExpressionBuilder, TypeBuilder};
 use crate::ir::const_eval::Value;
 use crate::ir::{
-    Expr, ExprKind, ExprP, FuncBody, IrCtx, IrId, Lit, LocalDef, Statement, Ty, UnqualifiedKind,
+    Expr, ExprKind, ExprP, FuncBody, IrCtx, IrId, LocalDef, Statement, Ty,
     ValueType,
 };
 
@@ -200,11 +200,11 @@ impl<'ir> ZstElider<'ir> {
 
                 if inner.is_void() {
                     // Special case for mutiple pointers to void
-                    builder.lit(Lit::Int(0), expr.ty)
+                    builder.null(expr.ty)
                 } else if inner.ty.is_zero_sized() {
                     builder.block(
                         [Statement::Expression(inner)],
-                        builder.lit(Lit::Int(0), expr.ty),
+                        builder.null(expr.ty),
                     )
                 } else {
                     builder.r#ref(inner)
@@ -286,7 +286,6 @@ impl<'ir> ZstElider<'ir> {
             }
             ExprKind::Field(lhs, id) => builder.field(self.elide_zst_expr(lhs), id, expr.ty),
             ExprKind::Fn(_) => expr,
-            ExprKind::Lit(_) => expr,
             ExprKind::ConstValue(v) => match v {
                 Value::Array(elems) => {
                     let element_type = match expr.ty {
@@ -367,18 +366,6 @@ impl<'ir> ZstElider<'ir> {
 
         if result.is_void() && result.ty.is_never() {
             return builder.unreachable();
-        }
-
-        // At this point unqualified strings are only present as arguments to the string constructor. They are always
-        // `&u8`.
-        if let Ty::Unqualified(UnqualifiedKind::String(_)) = result.ty {
-            return Expr {
-                is_const: result.is_const,
-                ty: types.pointer(types.builtin(BuiltinType::U8), true),
-                value_type: result.value_type,
-                kind: result.kind.clone(),
-            }
-            .alloc_on(self.ir);
         }
 
         result

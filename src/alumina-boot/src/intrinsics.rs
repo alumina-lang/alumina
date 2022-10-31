@@ -84,7 +84,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
 
     fn get_const_string(&self, expr: ExprP<'ir>) -> Result<&'ir str, AluminaError> {
         match const_eval::ConstEvaluator::new(self.ir).const_eval(expr) {
-            Ok(Value::Str(s)) => Ok(std::str::from_utf8(s).unwrap()),
+            Ok(Value::Struct([(_, Value::Str(s)), (_, _)])) => Ok(std::str::from_utf8(s).unwrap()),
             Ok(_) => Err(CodeErrorKind::TypeMismatch(
                 "string".to_string(),
                 format!("{:?}", expr.ty),

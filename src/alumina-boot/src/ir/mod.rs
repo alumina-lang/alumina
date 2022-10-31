@@ -122,10 +122,6 @@ impl Debug for IrId {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash, Copy)]
-pub enum UnqualifiedKind {
-    String(usize),
-}
 
 #[derive(PartialEq, Eq, Clone, Hash, Copy)]
 pub enum Ty<'ir> {
@@ -134,11 +130,6 @@ pub enum Ty<'ir> {
     Builtin(BuiltinType),
     Pointer(TyP<'ir>, bool),
     Array(TyP<'ir>, usize),
-    // TODO: Remove this when you find a better way to do it
-    // Unqualified types are a bit of a hack in IR to support
-    // const strings in intrinsics and other places before they
-    // are coerced into a slice.
-    Unqualified(UnqualifiedKind),
     Tuple(&'ir [TyP<'ir>]),
     FunctionPointer(&'ir [TyP<'ir>], TyP<'ir>),
     // Named functions are a family of unit types, each representing
@@ -180,7 +171,6 @@ impl Debug for Ty<'_> {
                 write!(f, "&{}{:?}", if *is_const { "" } else { "mut " }, ty)
             }
             Ty::Array(ty, len) => write!(f, "[{:?}; {}]", ty, len),
-            Ty::Unqualified(kind) => write!(f, "unqualified {:?}", kind),
             Ty::Tuple(tys) => {
                 write!(f, "(")?;
                 for (i, ty) in tys.iter().enumerate() {
@@ -262,7 +252,6 @@ impl<'ir> Ty<'ir> {
             Ty::Pointer(_, _) => false,
             Ty::Array(inner, size) => *size == 0 || inner.is_zero_sized(),
             Ty::Tuple(elems) => elems.iter().all(|e| e.is_zero_sized()),
-            Ty::Unqualified(_) => false,
             Ty::NamedFunction(_) => true,
             Ty::Closure(inner) => match inner.get().unwrap() {
                 IRItem::Closure(data) => data.fields.iter().all(|f| f.ty.is_zero_sized()),
@@ -554,15 +543,6 @@ impl<'ir> Statement<'ir> {
 }
 
 #[derive(Debug, Clone)]
-pub enum Lit<'ast> {
-    Str(&'ast [u8]),
-    Int(u128),
-    Float(&'ast str),
-    Bool(bool),
-    Null,
-}
-
-#[derive(Debug, Clone)]
 pub enum ExprKind<'ir> {
     Block(&'ir [Statement<'ir>], ExprP<'ir>),
     Binary(BinOp, ExprP<'ir>, ExprP<'ir>),
@@ -579,7 +559,6 @@ pub enum ExprKind<'ir> {
     Local(IrId),
     Static(IRItemP<'ir>),
     Const(IRItemP<'ir>),
-    Lit(Lit<'ir>),
     ConstValue(const_eval::Value<'ir>),
     Field(ExprP<'ir>, IrId),
     TupleIndex(ExprP<'ir>, usize),
@@ -673,7 +652,6 @@ impl<'ir> Expr<'ir> {
             ExprKind::Local(_) => true,
             ExprKind::Static(_) => true,
             ExprKind::Const(_) => true,
-            ExprKind::Lit(_) => true,
             ExprKind::ConstValue(_) => true,
             ExprKind::Void => true,
 
@@ -789,10 +767,6 @@ pub trait ExpressionVisitor<'ir>: Sized {
         Ok(())
     }
 
-    fn visit_lit(&mut self, lit: &Lit<'ir>) -> Result<(), AluminaError> {
-        Ok(())
-    }
-
     fn visit_const_value(&mut self, value: &const_eval::Value<'ir>) -> Result<(), AluminaError> {
         Ok(())
     }
@@ -881,7 +855,6 @@ pub fn default_visit_expr<'ir, V: ExpressionVisitor<'ir>>(
         ExprKind::Local(id) => visitor.visit_local(*id),
         ExprKind::Static(item) => visitor.visit_static(item),
         ExprKind::Const(item) => visitor.visit_const(item),
-        ExprKind::Lit(lit) => visitor.visit_lit(&lit),
         ExprKind::ConstValue(value) => visitor.visit_const_value(value),
         ExprKind::Field(expr, id) => visitor.visit_field(expr, *id),
         ExprKind::TupleIndex(expr, index) => visitor.visit_tuple_index(expr, *index),

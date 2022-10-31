@@ -170,7 +170,6 @@ impl<'ir> LayoutCalculator<'ir> {
             Ty::Closure(item) | Ty::NamedType(item) => self.layout_of_item(item),
 
             Ty::Protocol(_) => Ok(Layout::zst()),
-            Ty::Unqualified(_) => todo!(),
         }
     }
 }

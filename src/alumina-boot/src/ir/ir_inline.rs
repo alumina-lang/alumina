@@ -108,7 +108,6 @@ impl<'ir> IrInliner<'ir> {
             ExprKind::Fn(_) => expr,
             ExprKind::Static(_) => expr,
             ExprKind::Const(_) => expr,
-            ExprKind::Lit(_) => expr,
             ExprKind::ConstValue(_) => expr,
             ExprKind::Unreachable => expr,
             ExprKind::Void => expr,
