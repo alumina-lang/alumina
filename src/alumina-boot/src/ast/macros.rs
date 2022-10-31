@@ -1,23 +1,15 @@
-use crate::common::HashMap;
+use crate::ast::expressions::ExpressionVisitor;
+use crate::ast::lang::LangItemKind;
+use crate::ast::{
+    AstCtx, AstId, Attribute, BuiltinMacro, BuiltinMacroKind, Expr, ExprKind, ExprP,
+    FieldInitializer, FnKind, Item, ItemP, Lit, Macro, MacroParameter, Span, Statement,
+};
+use crate::common::{ice, AluminaError, ArenaAllocatable, CodeErrorKind, HashMap};
+use crate::global_ctx::GlobalCtx;
+use crate::name_resolution::scope::{NamedItemKind, Scope};
+use crate::parser::{FieldKind, NodeExt};
 
 use once_cell::unsync::OnceCell;
-
-use crate::{
-    ast::{
-        lang::LangItemKind, AstCtx, BuiltinMacro, BuiltinMacroKind, Expr, ExprKind,
-        FieldInitializer, FnKind, Item, ItemP, Lit,
-    },
-    common::{ice, AluminaError, ArenaAllocatable, CodeErrorKind},
-    global_ctx::GlobalCtx,
-    name_resolution::scope::{NamedItemKind, Scope},
-};
-
-use super::{
-    expressions::ExpressionVisitor, AstId, Attribute, ExprP, Macro, MacroParameter, Span, Statement,
-};
-
-use crate::parser::FieldKind;
-use crate::parser::NodeExt;
 
 pub struct MacroMaker<'ast> {
     ast: &'ast AstCtx<'ast>,
@@ -273,7 +265,7 @@ impl<'ast> MacroExpander<'ast> {
     }
 
     fn visit(&mut self, expr: ExprP<'ast>) -> Result<ExprP<'ast>, AluminaError> {
-        use super::ExprKind::*;
+        use crate::ast::ExprKind::*;
         use crate::common::CodeErrorBuilder;
 
         let kind = match expr.kind {
@@ -380,7 +372,7 @@ impl<'ast> MacroExpander<'ast> {
     }
 
     fn visit_stmt(&mut self, stmt: &Statement<'ast>) -> Result<Statement<'ast>, AluminaError> {
-        use super::StatementKind::*;
+        use crate::ast::StatementKind::*;
 
         let kind = match &stmt.kind {
             Expression(expr) => Expression(self.visit(expr)?),
@@ -432,9 +424,9 @@ impl<'ast> MacroExpander<'ast> {
                     .with_span(self.invocation_span)?;
 
                 let kind = if let BuiltinMacroKind::Line = kind {
-                    ExprKind::Lit(Lit::Int(line as u128, None))
+                    ExprKind::Lit(Lit::Int(false, line as u128, None))
                 } else {
-                    ExprKind::Lit(Lit::Int(column as u128, None))
+                    ExprKind::Lit(Lit::Int(false, column as u128, None))
                 };
 
                 Ok(Expr {

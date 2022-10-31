@@ -1,21 +1,15 @@
-use crate::common::{AluminaError, ArenaAllocatable, CodeErrorKind, WithSpanDuringParsing};
-
 use crate::ast::{AstCtx, Attribute, ItemP};
+use crate::common::{
+    AluminaError, ArenaAllocatable, CodeErrorKind, IndexMap, WithSpanDuringParsing,
+};
 use crate::global_ctx::GlobalCtx;
-use crate::name_resolution::scope::{NamedItemKind, Scope, ScopeType};
-use crate::parser::{AluminaVisitor, ParseCtx};
-
-use crate::common::IndexMap;
-use std::result::Result;
-use tree_sitter::Node;
-
+use crate::name_resolution::path::Path;
+use crate::name_resolution::scope::{NamedItem, NamedItemKind, Scope, ScopeType};
+use crate::parser::{AluminaVisitor, FieldKind, NodeExt, ParseCtx};
 use crate::visitors::{AttributeVisitor, UseClauseVisitor, VisitorExt};
 
-use super::path::Path;
-use super::scope::NamedItem;
-
-use crate::parser::FieldKind;
-use crate::parser::NodeExt;
+use std::result::Result;
+use tree_sitter::Node;
 
 type ItemMap<'ast, 'src> =
     IndexMap<(Scope<'ast, 'src>, Option<&'ast str>), Vec<NamedItem<'ast, 'src>>>;

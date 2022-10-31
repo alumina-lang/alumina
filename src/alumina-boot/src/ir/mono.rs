@@ -1,33 +1,28 @@
-use backtrace::Backtrace;
-
-use crate::common::HashMap;
-use crate::common::HashSet;
-use std::collections::hash_map::Entry;
-
-use std::iter::{once, repeat};
-use std::rc::Rc;
-
-use once_cell::unsync::OnceCell;
-
-use super::builder::{ExpressionBuilder, TypeBuilder};
-use super::const_eval::{numeric_of_kind, Value};
-use super::elide_zst::ZstElider;
-use super::infer::TypeInferer;
-use super::ir_inline::IrInliner;
-use super::lang::LangTypeKind;
-use super::{FuncBody, IRItemP, Lit, LocalDef, UnqualifiedKind};
 use crate::ast::lang::LangItemKind;
 use crate::ast::rebind::Rebinder;
 use crate::ast::{Attribute, BuiltinType, TestMetadata};
 use crate::common::{
     ice, AluminaError, ArenaAllocatable, CodeError, CodeErrorBacktrace, CodeErrorBuilder,
-    CycleGuardian, Marker,
+    CodeErrorKind, CycleGuardian, HashMap, HashSet, Marker,
 };
 use crate::global_ctx::GlobalCtx;
 use crate::intrinsics::{CompilerIntrinsics, IntrinsicKind};
-use crate::ir::ValueType;
+use crate::ir::builder::{ExpressionBuilder, TypeBuilder};
+use crate::ir::const_eval::{numeric_of_kind, Value};
+use crate::ir::elide_zst::ZstElider;
+use crate::ir::infer::TypeInferer;
+use crate::ir::ir_inline::IrInliner;
+use crate::ir::lang::LangTypeKind;
+use crate::ir::{FuncBody, IRItemP, LocalDef, ValueType};
 use crate::name_resolution::scope::BoundItemType;
-use crate::{ast, common::CodeErrorKind, ir};
+use crate::{ast, ir};
+
+use backtrace::Backtrace;
+use once_cell::unsync::OnceCell;
+
+use std::collections::hash_map::Entry;
+use std::iter::{once, repeat};
+use std::rc::Rc;
 
 macro_rules! mismatch {
     ($self:expr, $expected:literal, $actual:expr) => {
@@ -112,7 +107,7 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
 
     pub fn get_lang_type_kind(&self, typ: ir::TyP<'ir>) -> Option<LangTypeKind<'ir>> {
         let item = match typ {
-            ir::Ty::NamedType(item) => item,
+            ir::Ty::NamedType(item) | ir::Ty::Protocol(item) => item,
             _ => return None,
         };
 
@@ -151,6 +146,18 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
 
         if self.ast.lang_item(LangItemKind::DynSelf).ok() == Some(item.0) {
             return Some(LangTypeKind::DynSelf);
+        }
+
+        if self.ast.lang_item(LangItemKind::ProtoCallable).ok() == Some(item.0) {
+            if let ir::Ty::Tuple(args) = item.1[0] {
+                return Some(LangTypeKind::ProtoCallable(
+                    args,
+                    item.1
+                        .get(1)
+                        .copied()
+                        .unwrap_or_else(|| self.ir.intern_type(ir::Ty::void())),
+                ));
+            }
         }
 
         None
@@ -203,6 +210,21 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
                         }
                         return Ok(f);
                     }
+
+                    Some(LangTypeKind::ProtoCallable(args, ret)) => {
+                        let _ = write!(f, "Fn(");
+                        for (i, arg) in args.iter().enumerate() {
+                            if i > 0 {
+                                let _ = write!(f, ", ");
+                            }
+                            let _ = write!(f, "{}", self.type_name(arg)?);
+                        }
+                        let _ = write!(f, ")");
+                        if !ret.is_void() {
+                            let _ = write!(f, " -> {}", self.type_name(ret)?);
+                        }
+                        return Ok(f);
+                    }
                     _ => {}
                 }
 
@@ -236,7 +258,6 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
             }
             Builtin(builtin) => {
                 let _ = match builtin {
-                    BuiltinType::Void => write!(f, "void"),
                     BuiltinType::Never => write!(f, "!"),
                     BuiltinType::Bool => write!(f, "bool"),
                     BuiltinType::U8 => write!(f, "u8"),
@@ -265,9 +286,6 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
             Array(ty, len) => {
                 let _ = write!(f, "[{}; {}]", self.type_name(*ty)?, len);
             }
-            Unqualified(kind) => {
-                let _ = write!(f, "{{unqualified {:?}}}", kind);
-            }
             Tuple(tys) => {
                 let _ = write!(f, "(");
                 for (i, ty) in tys.iter().enumerate() {
@@ -287,7 +305,7 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
                     let _ = write!(f, "{}", self.type_name(arg)?);
                 }
                 let _ = write!(f, ")");
-                if **ret != Builtin(BuiltinType::Void) {
+                if !ret.is_void() {
                     let _ = write!(f, " -> {}", self.type_name(ret)?);
                 }
             }
@@ -455,7 +473,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             members.push(ir::EnumMember {
                 id: child.mono_ctx.map_id(m.id),
                 name: m.name.alloc_on(child.mono_ctx.ir),
-                value: child.exprs.const_value(value, expr.ty),
+                value: child.exprs.literal(value, expr.ty),
             });
         }
 
@@ -476,8 +494,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 counter = ir::const_eval::ConstEvaluator::new(child.mono_ctx.ir)
                     .const_eval(self.exprs.binary(
                         ast::BinOp::Plus,
-                        self.exprs.const_value(counter, enum_type),
-                        self.exprs.const_value(numeric_of_kind!(kind, 1), enum_type),
+                        self.exprs.literal(counter, enum_type),
+                        self.exprs.literal(numeric_of_kind!(kind, 1), enum_type),
                         enum_type,
                     ))
                     .unwrap();
@@ -486,7 +504,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             members.push(ir::EnumMember {
                 id: child.mono_ctx.map_id(m.id),
                 name: m.name.alloc_on(child.mono_ctx.ir),
-                value: self.exprs.const_value(next_non_taken, enum_type),
+                value: self.exprs.literal(next_non_taken, enum_type),
             });
         }
 
@@ -830,9 +848,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 }
             }
             Some(LangItemKind::ProtoTuple) => match ty {
-                ir::Ty::Builtin(BuiltinType::Void) | ir::Ty::Tuple(_) => {
-                    return Ok(BoundCheckResult::Matches)
-                }
+                ir::Ty::Tuple(_) => return Ok(BoundCheckResult::Matches),
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
             Some(LangItemKind::ProtoFloatingPoint) => match ty {
@@ -912,7 +928,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             Some(LangItemKind::ProtoCallable) => {
                 let proto_args = match proto_generic_args[0] {
                     ir::Ty::Tuple(args) => *args,
-                    ir::Ty::Builtin(BuiltinType::Void) => &[],
                     _ => unreachable!(),
                 };
                 let proto_ret = proto_generic_args
@@ -1136,7 +1151,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let mut init = s.init.map(|t| child.lower_expr(t, typ)).transpose()?;
 
         if s.is_const {
-            // No try_qualify_type here, we want strings to remain unqualified in consts
             let init = if let Some(typ) = typ {
                 child
                     .try_coerce(typ, init.unwrap())
@@ -1156,12 +1170,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             // even though it is a bit wasteful.
             let evaluated_init = match init.ty {
                 ir::Ty::Builtin(_) => None,
-                ir::Ty::Unqualified(UnqualifiedKind::String(_)) => None,
                 _ => {
                     let mut elider = ZstElider::new(child.mono_ctx.ir);
                     // TODO(tibordp): check that elider didn't produce any temporary local variables.
                     // It should never happen, but what do you know.
-                    let optimized = elider.elide_zst_expr(child.exprs.const_value(value, init.ty));
+                    let optimized = elider.elide_zst_expr(child.exprs.literal(value, init.ty));
 
                     Some(optimized)
                 }
@@ -1177,7 +1190,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             item.assign(res);
         } else {
             let typ = typ.or_else(|| init.map(|i| i.ty)).unwrap();
-            let typ = child.try_qualify_type(typ)?;
             if let Some(init) = &mut init {
                 *init = child.try_coerce(typ, init)?;
             }
@@ -1609,7 +1621,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         alive: &HashSet<IRItemP<'ir>>,
     ) -> Result<IRItemP<'ir>, AluminaError> {
         let item = self.mono_ctx.ir.make_symbol();
-        self.return_type = Some(self.types.builtin(BuiltinType::Void));
+        self.return_type = Some(self.types.void());
 
         let mut statements = Vec::new();
         let mut local_defs = Vec::new();
@@ -1638,8 +1650,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let body = self.exprs.block(
             statements,
-            self.exprs
-                .void(self.types.builtin(BuiltinType::Void), ir::ValueType::RValue),
+            self.exprs.void(self.types.void(), ir::ValueType::RValue),
         );
 
         let mut statements = Vec::new();
@@ -1663,7 +1674,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             name: None,
             attributes: [Attribute::StaticConstructor].alloc_on(self.mono_ctx.ir),
             args: [].alloc_on(self.mono_ctx.ir),
-            return_type: self.types.builtin(BuiltinType::Void),
+            return_type: self.types.void(),
             varargs: false,
             body: OnceCell::from(optimized),
         }));
@@ -2107,6 +2118,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     inner,
                     ast::Expr {
                         kind: ast::ExprKind::Lit(ast::Lit::Int(
+                            false,
                             *size as _,
                             Some(ast::BuiltinType::USize),
                         )),
@@ -2162,10 +2174,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ir::Ty::Closure(item) => {
                 let item = self.mono_ctx.reverse_lookup(item);
                 ast::Ty::NamedFunction(item.0)
-            }
-            ir::Ty::Unqualified(_) => {
-                return Err(CodeErrorKind::Unimplemented("unqualified type".to_string()))
-                    .with_no_span()
             }
         };
 
@@ -2329,14 +2337,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
     }
 
-    pub fn try_qualify_type(&mut self, typ: ir::TyP<'ir>) -> Result<ir::TyP<'ir>, AluminaError> {
-        if let ir::Ty::Unqualified(UnqualifiedKind::String(_)) = typ {
-            return self.slice_of(self.types.builtin(BuiltinType::U8), true);
-        }
-
-        Ok(typ)
-    }
-
     fn try_coerce(
         &mut self,
         lhs_typ: ir::TyP<'ir>,
@@ -2377,31 +2377,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let lhs_lang = self.mono_ctx.get_lang_type_kind(lhs_typ);
         let rhs_lang = self.mono_ctx.get_lang_type_kind(rhs.ty);
-
-        // unqualified string -> slice
-        match (&lhs_lang, rhs.ty) {
-            (
-                Some(LangTypeKind::Slice(ir::Ty::Pointer(ir::Ty::Builtin(BuiltinType::U8), true))),
-                ir::Ty::Unqualified(UnqualifiedKind::String(size)),
-            ) => {
-                let ptr_type = self
-                    .types
-                    .pointer(self.types.builtin(BuiltinType::U8), true);
-                let size_lit = self.exprs.lit(
-                    ir::Lit::Int(*size as u128),
-                    self.types.builtin(BuiltinType::USize),
-                );
-
-                let item = self.monomorphize_lang_item(LangItemKind::SliceNew, [ptr_type])?;
-                let func = self.exprs.function(item);
-                return self.call(
-                    func,
-                    [rhs, size_lit].into_iter(),
-                    item.get_function().with_no_span()?.return_type,
-                );
-            }
-            _ => {}
-        }
 
         match (&lhs_lang, rhs_lang) {
             // &mut [T] -> &[T]
@@ -2444,11 +2419,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 ir::Ty::Pointer(ir::Ty::Array(t2, size), t2_const),
             ) => match t1_ptr {
                 ir::Ty::Pointer(t1, t1_const) if *t1 == *t2 && (!t2_const || *t1_const) => {
-                    let size_lit = self.exprs.lit(
-                        ir::Lit::Int(*size as u128),
-                        self.types.builtin(BuiltinType::USize),
-                    );
-
+                    let size_lit = self
+                        .exprs
+                        .literal(Value::USize(*size), self.types.builtin(BuiltinType::USize));
                     let item = self.monomorphize_lang_item(LangItemKind::SliceNew, [*t1_ptr])?;
 
                     let func = self.exprs.function(item);
@@ -2850,16 +2823,13 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                         None
                     }
                     (None, Some(init)) => {
-                        let typ = self.try_qualify_type(init.ty)?;
-
-                        self.local_types.insert(id, typ);
-                        self.local_defs.push(ir::LocalDef { id, typ });
+                        self.local_types.insert(id, init.ty);
+                        self.local_defs.push(ir::LocalDef { id, typ: init.ty });
 
                         if init.diverges() {
                             return Ok(Some(ir::Statement::Expression(init)));
                         }
 
-                        let init = self.try_coerce(typ, init)?;
                         Some(ir::Statement::Expression(
                             self.exprs.assign(self.exprs.local(id, init.ty), init),
                         ))
@@ -2882,6 +2852,60 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         };
 
         Ok(result)
+    }
+
+    fn convert_int_literal(
+        &mut self,
+        sign: bool,
+        value: u128,
+        ty: ir::TyP<'ir>,
+    ) -> Result<Value<'ir>, AluminaError> {
+        let maybe_value = if sign {
+            let as_i128 = if value == (i128::MAX as u128) + 1 {
+                Ok(i128::MIN)
+            } else {
+                let v: Result<i128, _> = value.try_into();
+                v.map(|v| -v)
+            };
+
+            as_i128.and_then(|v| match ty {
+                ir::Ty::Builtin(BuiltinType::I8) => v.try_into().map(Value::I8).map(Some),
+                ir::Ty::Builtin(BuiltinType::I16) => v.try_into().map(Value::I16).map(Some),
+                ir::Ty::Builtin(BuiltinType::I32) => v.try_into().map(Value::I32).map(Some),
+                ir::Ty::Builtin(BuiltinType::I64) => v.try_into().map(Value::I64).map(Some),
+                ir::Ty::Builtin(BuiltinType::I128) => Ok(Some(Value::I128(v))),
+                ir::Ty::Builtin(BuiltinType::ISize) => v.try_into().map(Value::ISize).map(Some),
+                _ => Ok(None),
+            })
+        } else {
+            let val = match ty {
+                ir::Ty::Builtin(BuiltinType::U8) => value.try_into().map(Value::U8),
+                ir::Ty::Builtin(BuiltinType::U16) => value.try_into().map(Value::U16),
+                ir::Ty::Builtin(BuiltinType::U32) => value.try_into().map(Value::U32),
+                ir::Ty::Builtin(BuiltinType::U64) => value.try_into().map(Value::U64),
+                ir::Ty::Builtin(BuiltinType::U128) => Ok(Value::U128(value)),
+                ir::Ty::Builtin(BuiltinType::USize) => value.try_into().map(Value::USize),
+                ir::Ty::Builtin(BuiltinType::I8) => value.try_into().map(Value::I8),
+                ir::Ty::Builtin(BuiltinType::I16) => value.try_into().map(Value::I16),
+                ir::Ty::Builtin(BuiltinType::I32) => value.try_into().map(Value::I32),
+                ir::Ty::Builtin(BuiltinType::I64) => value.try_into().map(Value::I64),
+                ir::Ty::Builtin(BuiltinType::I128) => value.try_into().map(Value::I128),
+                ir::Ty::Builtin(BuiltinType::ISize) => value.try_into().map(Value::ISize),
+                _ => unreachable!(),
+            };
+
+            val.map(Some)
+        };
+
+        match maybe_value {
+            Ok(Some(v)) => Ok(v),
+            _ => {
+                let value = format!("{}{}", if sign { "-" } else { "" }, value);
+                let type_name = self.mono_ctx.type_name(ty)?;
+
+                Err(CodeErrorKind::IntegerOutOfRange(value, type_name)).with_no_span()
+            }
+        }
     }
 
     fn lower_block(
@@ -2944,28 +2968,32 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let result = match ret {
-            ast::Lit::Bool(v) => self.exprs.lit(
-                ir::Lit::Bool(*v),
-                self.types.builtin(ast::BuiltinType::Bool),
-            ),
+            ast::Lit::Bool(v) => self
+                .exprs
+                .literal(Value::Bool(*v), self.types.builtin(BuiltinType::Bool)),
             ast::Lit::Null => {
                 let ty = match type_hint {
                     Some(ir::Ty::Pointer(inner, is_const)) => self.types.pointer(inner, *is_const),
-                    _ => self
-                        .types
-                        .pointer(self.types.builtin(BuiltinType::Void), true),
+                    _ => self.types.pointer(self.types.void(), true),
                 };
 
-                self.exprs.lit(ir::Lit::Null, ty)
+                self.exprs.literal(Value::USize(0), ty)
             }
-            ast::Lit::Int(v, kind) => {
+            ast::Lit::Int(sign, v, kind) => {
                 let ty = match (kind, type_hint) {
                     (Some(t), _) => self.types.builtin(*t),
                     (None, Some(ir::Ty::Builtin(k))) if k.is_integer() => self.types.builtin(*k),
                     _ => self.types.builtin(BuiltinType::I32),
                 };
 
-                self.exprs.lit(ir::Lit::Int(*v), ty)
+                let value = self.convert_int_literal(*sign, *v, ty);
+
+                if let Err(e) = value {
+                    eprintln!("{:?} {:?} {:?}", v, kind, type_hint);
+                    return Err(e);
+                }
+
+                self.exprs.literal(value?, ty)
             }
             ast::Lit::Float(v, kind) => {
                 let ty = match (kind, type_hint) {
@@ -2974,13 +3002,15 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     _ => self.types.builtin(BuiltinType::F64),
                 };
 
-                self.exprs
-                    .lit(ir::Lit::Float(v.alloc_on(self.mono_ctx.ir)), ty)
+                let ir_str = v.alloc_on(self.mono_ctx.ir);
+
+                match ty {
+                    ir::Ty::Builtin(BuiltinType::F32) => self.exprs.literal(Value::F32(ir_str), ty),
+                    ir::Ty::Builtin(BuiltinType::F64) => self.exprs.literal(Value::F64(ir_str), ty),
+                    _ => ice!("unexpected type for the float literal"),
+                }
             }
-            ast::Lit::Str(v) => self.exprs.lit(
-                ir::Lit::Str(self.mono_ctx.ir.arena.alloc_slice_copy(v)),
-                self.types.unqualified_str(v.len()),
-            ),
+            ast::Lit::Str(v) => self.string_of(v)?,
         };
 
         Ok(result)
@@ -3027,9 +3057,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         if inner.diverges() {
             return Ok(inner);
         }
-
-        let typ = self.try_qualify_type(inner.ty)?;
-        let inner = self.try_coerce(typ, inner)?;
 
         Ok(self.r#ref(inner))
     }
@@ -3130,7 +3157,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         if r#const.init.is_some() {
             Ok(self.exprs.const_var(item_cell, r#const.typ))
         } else {
-            Ok(self.exprs.const_value(r#const.value, r#const.typ))
+            Ok(self.exprs.literal(r#const.value, r#const.typ))
         }
     }
 
@@ -3310,8 +3337,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let cond = self.lower_expr(cond_, Some(self.types.builtin(BuiltinType::Bool)))?;
-        let then = self.lower_expr(then, type_hint)?;
-        let els = self.lower_expr(els_, type_hint.or(Some(then.ty)))?;
+        let mut then = self.lower_expr(then, type_hint)?;
+        let mut els = self.lower_expr(els_, type_hint.or(Some(then.ty)))?;
 
         if cond.diverges() {
             return Ok(cond);
@@ -3320,12 +3347,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let cond = self
             .try_coerce(self.types.builtin(BuiltinType::Bool), cond)
             .append_span(cond_.span)?;
-
-        let then_typ = self.try_qualify_type(then.ty)?;
-        let els_typ = self.try_qualify_type(els.ty)?;
-
-        let mut then = self.try_coerce(then_typ, then)?;
-        let mut els = self.try_coerce(els_typ, els)?;
 
         let gcd = ir::Ty::gcd(then.ty, els.ty);
         if !gcd.assignable_from(then.ty) || !gcd.assignable_from(els.ty) {
@@ -3432,11 +3453,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let lowered = exprs
             .iter()
             .zip(type_hints.into_iter())
-            .map(|(expr, hint)| {
-                let obj = self.lower_expr(expr, hint)?;
-                let obj_type = self.try_qualify_type(obj.ty)?;
-                self.try_coerce(obj_type, obj)
-            })
+            .map(|(expr, hint)| self.lower_expr(expr, hint))
             .collect::<Result<Vec<_>, _>>()?;
 
         if lowered.iter().any(|e| e.diverges()) {
@@ -3622,9 +3639,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             return Ok(expr.unwrap());
         }
 
-        let break_typ = expr
-            .map(|e| self.try_qualify_type(e.ty))
-            .unwrap_or_else(|| Ok(self.types.builtin(BuiltinType::Void)))?;
+        let break_typ = expr.map(|e| e.ty).unwrap_or_else(|| self.types.void());
 
         let slot_type = match self.local_types.entry(loop_context.loop_result) {
             Entry::Vacant(v) => {
@@ -3637,10 +3652,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let expr = expr
             .map(|expr| self.try_coerce(slot_type, expr))
             .transpose()?
-            .unwrap_or_else(|| {
-                self.exprs
-                    .void(self.types.builtin(BuiltinType::Void), ir::ValueType::RValue)
-            });
+            .unwrap_or_else(|| self.exprs.void(self.types.void(), ir::ValueType::RValue));
 
         let statements = [ir::Statement::Expression(
             self.exprs
@@ -3708,11 +3720,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let typ = generic_args[0];
                 let name = self.mono_ctx.type_name(typ)?;
 
-                let name_as_bytes = name.as_bytes();
-                Ok(self.exprs.const_value(
-                    Value::Str(self.mono_ctx.ir.arena.alloc_slice_copy(name_as_bytes)),
-                    self.types.unqualified_str(name_as_bytes.len()),
-                ))
+                Ok(self.string_of(name.as_bytes())?)
             }
             _ => self
                 .mono_ctx
@@ -3736,10 +3744,32 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(self.exprs.array(iter, array_type))
     }
 
+    fn string_of(&mut self, value: &[u8]) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let ptr_type = self
+            .types
+            .pointer(self.types.builtin(BuiltinType::U8), true);
+
+        let make_slice = self.monomorphize_lang_item(LangItemKind::SliceNew, [ptr_type])?;
+
+        let data = self.exprs.literal(
+            Value::Str(self.mono_ctx.ir.arena.alloc_slice_copy(value)),
+            ptr_type,
+        );
+        let size = self.exprs.literal(
+            Value::USize(value.len()),
+            self.types.builtin(BuiltinType::USize),
+        );
+
+        self.call(
+            self.exprs.function(make_slice),
+            [data, size],
+            make_slice.get_function().with_no_span()?.return_type,
+        )
+    }
+
     fn generate_test_cases(&mut self) -> Result<ir::ExprP<'ir>, AluminaError> {
         let tests = self.mono_ctx.tests.clone();
 
-        let string_slice = self.slice_of(self.types.builtin(BuiltinType::U8), true)?;
         let meta_item = self.monomorphize_lang_item(LangItemKind::TestCaseMeta, [])?;
         let meta_type = self.types.named(meta_item);
         let meta_new = self.monomorphize_lang_item(LangItemKind::TestCaseMetaNew, [])?;
@@ -3749,17 +3779,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let mut test_cases = vec![];
         for (func, meta) in tests.iter() {
             let name = meta.name.to_string();
-            let name_arg = self.exprs.const_value(
-                Value::Str(self.mono_ctx.ir.arena.alloc_slice_copy(name.as_bytes())),
-                self.types.unqualified_str(name.len()),
-            );
-
             let path = meta.path.to_string();
-            let path_arg = self.exprs.const_value(
-                Value::Str(self.mono_ctx.ir.arena.alloc_slice_copy(path.as_bytes())),
-                self.types.unqualified_str(path.len()),
-            );
-
             let attrs: Vec<_> = meta
                 .attributes
                 .iter()
@@ -3767,16 +3787,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 .collect::<Vec<_>>()
                 .join(&b"\0"[..]);
 
-            let attrs_arg = self.exprs.const_value(
-                Value::Str(self.mono_ctx.ir.arena.alloc_slice_copy(&attrs[..])),
-                self.types.unqualified_str(attrs.len()),
-            );
-
             let fn_ptr_arg = self.exprs.function(func);
             let args = [
-                self.try_coerce(string_slice, path_arg)?,
-                self.try_coerce(string_slice, name_arg)?,
-                self.try_coerce(string_slice, attrs_arg)?,
+                self.string_of(path.as_bytes())?,
+                self.string_of(name.as_bytes())?,
+                self.string_of(&attrs)?,
                 self.try_coerce(fn_ptr_type, fn_ptr_arg)?,
             ];
 
@@ -3800,24 +3815,23 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ir::ExprKind::Fn(item) => {
                 let func = item.get_function().with_no_span()?;
                 if func.attributes.contains(&ast::Attribute::InlineDuringMono) {
-                    let inliner = IrInliner::with_replacements(
-                        self.mono_ctx.ir,
-                        func.args
-                            .iter()
-                            .zip(args.into_iter())
-                            .map(|(a, b)| (a.id, b)),
-                    );
-
                     // no silent fallback to a regular function call, since the only thing that can go wrong is that
                     // the callee is not compatible with IR inlining, so this should not lead to surprises
-                    let expr = inliner.visit_expr(
+                    let (expr, mut additional_defs) = IrInliner::inline(
+                        self.mono_ctx.ir,
                         func.body
                             .get()
                             .ok_or(CodeErrorKind::UnpopulatedSymbol)
                             .with_no_span()?
                             .raw_body
                             .unwrap(),
+                        func.args
+                            .iter()
+                            .zip(args.into_iter())
+                            .map(|(a, b)| (a.id, b)),
                     )?;
+
+                    self.local_defs.append(&mut additional_defs);
 
                     // The inlined function may return a lvalue, which would be very confusing. If this happens, we
                     // patch up the value kind. C will still consider it a lvalue, but that shouldn't matter.
@@ -3849,14 +3863,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let mut exprs = Vec::new();
         for member in e.members {
-            let as_bytes = member.name.as_bytes();
-            let name = self.try_coerce(
-                enum_variant_new_func.args[0].ty,
-                self.exprs.const_value(
-                    Value::Str(as_bytes),
-                    self.types.unqualified_str(as_bytes.len()),
-                ),
-            )?;
+            let name = self.string_of(member.name.as_bytes())?;
             let value = self.exprs.cast(member.value, typ);
 
             exprs.push(self.call(
@@ -4018,7 +4025,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             self.exprs.function(index_item),
             [
                 local,
-                self.exprs.const_value(
+                self.exprs.literal(
                     Value::USize(vtable_index),
                     self.types.builtin(BuiltinType::USize),
                 ),
@@ -4086,8 +4093,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<Option<ir::ExprP<'ir>>, AluminaError> {
         let ir_self_arg = self.lower_expr(self_arg, None)?;
-        let ir_self_arg_type = self.try_qualify_type(ir_self_arg.ty)?;
-        let ir_self_arg = self.try_coerce(ir_self_arg_type, ir_self_arg)?;
 
         // Special case for struct fields (they have precedence over methods in .name resolution)
         if let ir::Ty::NamedType(item) = ir_self_arg.ty.canonical_type() {
@@ -4550,8 +4555,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let obj_span = obj.span;
         let obj = self.lower_expr(obj, None)?;
-        let obj_type = self.try_qualify_type(obj.ty)?;
-        let obj = self.try_coerce(obj_type, obj)?;
 
         let result = match obj.ty.canonical_type() {
             ir::Ty::NamedType(item) => {
@@ -4600,9 +4603,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             type_hint.map(|ty| self.types.array(ty, 0))
         };
 
-        let indexee = self.lower_expr(indexee, indexee_hint)?;
-        let indexee_type = self.try_qualify_type(indexee.ty)?;
-        let mut indexee = self.try_coerce(indexee_type, indexee)?;
+        let mut indexee = self.lower_expr(indexee, indexee_hint)?;
 
         if indexee.diverges() || index.diverges() {
             return Ok(self.exprs.diverges([indexee, index]));
@@ -4772,7 +4773,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     self.exprs
                         .local(*defer_flag, self.types.builtin(BuiltinType::Bool)),
                     self.exprs
-                        .lit(Lit::Bool(false), self.types.builtin(BuiltinType::Bool)),
+                        .literal(Value::Bool(false), self.types.builtin(BuiltinType::Bool)),
                 ),
             ));
         }
@@ -4783,18 +4784,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         statements.push(ir::Statement::Label(defer_context.return_label));
         for (id, expr) in defer_context.defered.iter().rev() {
-            statements.push(ir::Statement::Expression(
-                self.exprs.if_then(
-                    self.exprs.local(*id, self.types.builtin(BuiltinType::Bool)),
-                    self.exprs.block(
-                        [ir::Statement::Expression(expr)],
-                        self.exprs
-                            .void(self.types.builtin(BuiltinType::Void), ir::ValueType::RValue),
-                    ),
-                    self.exprs
-                        .void(self.types.builtin(BuiltinType::Void), ir::ValueType::RValue),
+            statements.push(ir::Statement::Expression(self.exprs.if_then(
+                self.exprs.local(*id, self.types.builtin(BuiltinType::Bool)),
+                self.exprs.block(
+                    [ir::Statement::Expression(expr)],
+                    self.exprs.void(self.types.void(), ir::ValueType::RValue),
                 ),
-            ));
+                self.exprs.void(self.types.void(), ir::ValueType::RValue),
+            )));
         }
         statements.push(ir::Statement::Expression(
             self.exprs.ret(
@@ -4840,10 +4837,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let inner = inner
             .map(|inner| self.lower_expr(inner, self.return_type))
             .transpose()?
-            .unwrap_or_else(|| {
-                self.exprs
-                    .void(self.types.builtin(BuiltinType::Void), ir::ValueType::RValue)
-            });
+            .unwrap_or_else(|| self.exprs.void(self.types.void(), ir::ValueType::RValue));
 
         self.make_return(inner)
     }
@@ -4896,7 +4890,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             self.exprs
                 .local(defer_flag, self.types.builtin(BuiltinType::Bool)),
             self.exprs
-                .lit(Lit::Bool(true), self.types.builtin(BuiltinType::Bool)),
+                .literal(Value::Bool(true), self.types.builtin(BuiltinType::Bool)),
         ))
     }
 
@@ -4965,8 +4959,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         for expr in elements {
             let expr = self.lower_expr(expr, first_elem_type.or(element_type_hint))?;
             if first_elem_type.is_none() {
-                let qualified = self.try_qualify_type(expr.ty)?;
-                first_elem_type = Some(qualified);
+                first_elem_type = Some(expr.ty);
             }
             lowered.push(self.try_coerce(first_elem_type.unwrap(), expr)?);
         }
@@ -5040,9 +5033,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let result = match &expr.kind {
-            ast::ExprKind::Void => Ok(self
-                .exprs
-                .void(self.types.builtin(BuiltinType::Void), ValueType::RValue)),
+            ast::ExprKind::Void => Ok(self.exprs.void(self.types.void(), ValueType::RValue)),
             ast::ExprKind::Block(statements, ret) => self.lower_block(statements, ret, type_hint),
             ast::ExprKind::Lit(lit) => self.lower_lit(lit, type_hint),
             ast::ExprKind::Deref(expr) => self.lower_deref(expr, type_hint),

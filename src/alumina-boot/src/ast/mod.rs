@@ -5,22 +5,21 @@ pub mod maker;
 pub mod rebind;
 pub mod types;
 
-use self::lang::LangItemKind;
-use crate::common::{Allocatable, ArenaAllocatable, CodeErrorKind, FileId, Incrementable};
+use crate::ast::lang::LangItemKind;
+use crate::common::{
+    impl_allocatable, Allocatable, ArenaAllocatable, CodeErrorKind, FileId, HashMap, HashSet,
+    Incrementable,
+};
 use crate::intrinsics::IntrinsicKind;
 use crate::name_resolution::path::{Path, PathSegment};
 use crate::name_resolution::scope::BoundItemType;
-use std::fmt::Display;
-use std::fmt::{Debug, Formatter};
-use std::hash::{Hash, Hasher};
 
-use crate::common::HashMap;
-use crate::common::HashSet;
 use bumpalo::Bump;
 use once_cell::unsync::OnceCell;
-use std::cell::{Cell, RefCell};
 
-use crate::common::impl_allocatable;
+use std::cell::{Cell, RefCell};
+use std::fmt::{Debug, Display, Formatter};
+use std::hash::{Hash, Hasher};
 
 #[derive(Clone)]
 pub struct TestMetadata<'ast> {
@@ -183,7 +182,6 @@ impl Debug for AstId {
 
 #[derive(Debug, PartialEq, Copy, Clone, Eq, Hash)]
 pub enum BuiltinType {
-    Void,
     Never,
     Bool,
     U8,
@@ -280,10 +278,6 @@ impl BuiltinType {
                 | BuiltinType::ISize
         )
     }
-
-    pub fn is_void(&self) -> bool {
-        matches!(self, BuiltinType::Void)
-    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
@@ -307,6 +301,14 @@ pub enum Ty<'ast> {
 }
 
 impl<'ast> Ty<'ast> {
+    pub fn void() -> Ty<'ast> {
+        Ty::Tuple(&[])
+    }
+
+    pub fn is_void(&self) -> bool {
+        matches!(self, Ty::Tuple(tys) if tys.is_empty())
+    }
+
     pub fn canonical_type(&'ast self) -> TyP<'ast> {
         match self {
             Ty::Pointer(inner, _) => inner.canonical_type(),
@@ -340,17 +342,6 @@ impl<'ast> Item<'ast> {
             }) => placeholders.is_empty() && !is_protocol_fn,
             Item::Enum(_) => true,
             Item::StructLike(StructLike { placeholders, .. }) => placeholders.is_empty(),
-            _ => false,
-        }
-    }
-
-    pub fn is_special(&self) -> bool {
-        match self {
-            Item::Function(Function {
-                placeholders,
-                is_protocol_fn,
-                ..
-            }) => placeholders.is_empty() && !is_protocol_fn,
             _ => false,
         }
     }
@@ -728,7 +719,7 @@ pub enum UnOp {
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum Lit<'ast> {
     Str(&'ast [u8]),
-    Int(u128, Option<BuiltinType>),
+    Int(bool, u128, Option<BuiltinType>),
     Float(&'ast str, Option<BuiltinType>),
     Bool(bool),
     Null,

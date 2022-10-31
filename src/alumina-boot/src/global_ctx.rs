@@ -1,12 +1,8 @@
-use std::{
-    cell::{Ref, RefCell},
-    rc::Rc,
-};
-
-use crate::common::HashMap;
-use crate::common::HashSet;
-
+use crate::common::{HashMap, HashSet};
 use crate::diagnostics::DiagnosticContext;
+
+use std::cell::{Ref, RefCell};
+use std::rc::Rc;
 
 #[derive(Copy, Clone)]
 pub enum OutputType {

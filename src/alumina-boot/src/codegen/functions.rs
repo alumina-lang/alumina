@@ -1,17 +1,15 @@
-use crate::{
-    ast::{Attribute, BinOp, BuiltinType, UnOp},
-    codegen::CName,
-    common::AluminaError,
-    intrinsics::CodegenIntrinsicKind,
-    ir::{
-        const_eval::Value, Const, Expr, ExprKind, ExprP, Function, IrId, LocalDef, Statement,
-        Static, Ty, ValueType,
-    },
+use crate::ast::{Attribute, BinOp, BuiltinType, UnOp};
+use crate::codegen::types::TypeWriter;
+use crate::codegen::{w, CName, CodegenCtx};
+use crate::common::AluminaError;
+use crate::intrinsics::CodegenIntrinsicKind;
+use crate::ir::const_eval::Value;
+use crate::ir::{
+    Const, Expr, ExprKind, ExprP, Function, IrId, LocalDef, Statement, Static, Ty, ValueType,
 };
 
-use super::{types::TypeWriter, w, CodegenCtx};
-
-use std::{borrow::Cow, fmt::Write};
+use std::borrow::Cow;
+use std::fmt::Write;
 
 pub struct FunctionWriter<'ir, 'gen> {
     ctx: &'gen CodegenCtx<'ir, 'gen>,
@@ -25,7 +23,7 @@ pub struct FunctionWriter<'ir, 'gen> {
 
 /// Prevent "1f32" from being interpreted as an int constant
 fn force_float(v: &str) -> Cow<'_, str> {
-    if v.chars().all(|ch| ch.is_ascii_digit()) {
+    if v.chars().all(|ch| ch.is_ascii_digit() || ch == '-') {
         Cow::Owned(format!("{}e0", v))
     } else {
         Cow::Borrowed(v)
@@ -66,7 +64,8 @@ pub fn write_function_signature<'ir, 'gen>(
     }
 
     let return_type = if item.return_type.is_zero_sized() {
-        ctx.get_type(&Ty::Builtin(BuiltinType::Void))
+        let void = Ty::void();
+        ctx.get_type(&void)
     } else {
         ctx.get_type(item.return_type)
     };
@@ -207,7 +206,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             Value::U128(val) => {
                 w!(
                     self.fn_bodies,
-                    "((({0}){1}ULL) << 64)|(({0}){2}ULL)",
+                    "(((({0}){1}ULL) << 64)|(({0}){2}ULL))",
                     self.ctx.get_type(&Ty::Builtin(BuiltinType::U128)),
                     (val >> 64) as u64,
                     (val & 0xffff_ffff_ffff_ffff) as u64
@@ -220,7 +219,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             Value::I128(val) => {
                 w!(
                     self.fn_bodies,
-                    "((({0}){1}ULL) << 64)|(({0}){2}ULL)",
+                    "(((({0}){1}ULL) << 64)|(({0}){2}ULL))",
                     self.ctx.get_type(&Ty::Builtin(BuiltinType::U128)),
                     ((val as u128) >> 64) as u64,
                     ((val as u128) & 0xffff_ffff_ffff_ffff) as u64
@@ -342,52 +341,6 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             ExprKind::Static(item) | ExprKind::Const(item) => {
                 w!(self.fn_bodies, "{}", self.ctx.get_name(item.id));
             }
-            ExprKind::Lit(ref l) => match l {
-                crate::ir::Lit::Str(v) => {
-                    self.write_string_literal(v);
-                }
-                crate::ir::Lit::Int(v) => {
-                    self.type_writer.add_type(expr.ty)?;
-                    if matches!(
-                        expr.ty,
-                        Ty::Builtin(BuiltinType::U128) | Ty::Builtin(BuiltinType::I128)
-                    ) {
-                        self.type_writer.add_type(&Ty::Builtin(BuiltinType::U128))?;
-                        w!(
-                            self.fn_bodies,
-                            "({0})(((({1}){2}ULL) << 64)|(({1}){3}ULL))",
-                            self.ctx.get_type(expr.ty),
-                            self.ctx.get_type(&Ty::Builtin(BuiltinType::U128)),
-                            (v >> 64) as u64,
-                            (v & 0xffff_ffff_ffff_ffff) as u64
-                        );
-                    } else {
-                        w!(self.fn_bodies, "(({}){}ULL)", self.ctx.get_type(expr.ty), v);
-                    }
-                }
-                crate::ir::Lit::Float(v) => {
-                    self.type_writer.add_type(expr.ty)?;
-                    if *expr.ty == Ty::Builtin(BuiltinType::F32) {
-                        w!(self.fn_bodies, "({}f)", force_float(v));
-                    } else {
-                        w!(self.fn_bodies, "({})", force_float(v));
-                    }
-                }
-                crate::ir::Lit::Bool(v) => {
-                    w!(
-                        self.fn_bodies,
-                        "{}",
-                        match v {
-                            true => 1,
-                            false => 0,
-                        }
-                    );
-                }
-                crate::ir::Lit::Null => {
-                    self.type_writer.add_type(expr.ty)?;
-                    w!(self.fn_bodies, "(({})0)", self.ctx.get_type(expr.ty));
-                }
-            },
             ExprKind::Block(stmts, ret) => {
                 if bare_block {
                     for stmt in stmts.iter() {
@@ -412,7 +365,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                     w!(self.fn_bodies, "}})");
                 }
             }
-            ExprKind::ConstValue(v) => match v {
+            ExprKind::Literal(v) => match v {
                 Value::Str(val) => {
                     self.write_string_literal(val);
                 }

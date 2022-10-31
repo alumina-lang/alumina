@@ -1,18 +1,14 @@
-use std::collections::HashMap;
-use std::env;
-use std::path::Path;
-use std::path::PathBuf;
-use std::process::Command;
-
+use itertools::Itertools;
 use quote::{format_ident, quote};
 use serde::Deserialize;
 use serde_json::from_slice;
+use std::collections::HashMap;
+use std::env;
 use std::fs::File;
 use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use syn::{parse_quote, TraitItem};
-
-use itertools::Itertools;
-
 #[derive(Deserialize)]
 struct Item {
     name: String,

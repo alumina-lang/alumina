@@ -1,20 +1,16 @@
-use std::{
-    cell::{Ref, RefCell},
-    fmt::{Debug, Display, Formatter},
-    rc::{Rc, Weak},
-};
+use crate::ast::{AstId, Attribute, ItemP};
+use crate::common::{CodeErrorKind, IndexMap};
+use crate::name_resolution::path::{Path, PathSegment};
+use crate::parser::ParseCtx;
 
-use crate::common::IndexMap;
-use crate::{
-    ast::{AstId, Attribute, ItemP},
-    common::CodeErrorKind,
-    parser::ParseCtx,
-};
 use indexmap::map::Entry;
 use once_cell::unsync::OnceCell;
-use tree_sitter::Node;
 
-use super::path::{Path, PathSegment};
+use std::cell::{Ref, RefCell};
+use std::fmt::{Debug, Display, Formatter};
+use std::rc::{Rc, Weak};
+
+use tree_sitter::Node;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
 pub enum BoundItemType {

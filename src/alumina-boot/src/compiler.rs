@@ -1,26 +1,16 @@
-use crate::common::HashSet;
-use std::path::PathBuf;
-
-use crate::codegen;
-use crate::common::AluminaError;
-
-use crate::common::ArenaAllocatable;
-use crate::common::CodeErrorKind;
-use crate::global_ctx::GlobalCtx;
-use crate::ir::dce::DeadCodeEliminator;
-use crate::ir::mono::MonoCtx;
-use crate::ir::mono::Monomorphizer;
-use crate::ir::IrCtx;
-
 use crate::ast::maker::AstItemMaker;
 use crate::ast::AstCtx;
-
-use crate::common::CodeErrorBuilder;
-
+use crate::codegen;
+use crate::common::{AluminaError, ArenaAllocatable, CodeErrorBuilder, CodeErrorKind, HashSet};
+use crate::global_ctx::GlobalCtx;
+use crate::ir::dce::DeadCodeEliminator;
+use crate::ir::mono::{MonoCtx, Monomorphizer};
+use crate::ir::IrCtx;
 use crate::name_resolution::pass1::FirstPassVisitor;
 use crate::name_resolution::scope::Scope;
 use crate::parser::{AluminaVisitor, ParseCtx};
 
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
@@ -105,8 +95,7 @@ impl Compiler {
             scope.set_code(ctx);
 
             if self.global_ctx.should_generate_main_glue() {
-                let mut visitor =
-                    FirstPassVisitor::with_main(self.global_ctx.clone(), &ast, scope.clone());
+                let mut visitor = FirstPassVisitor::with_main(self.global_ctx.clone(), &ast, scope);
                 visitor.visit(ctx.root_node())?;
 
                 if let Some(candidate) = visitor.main_candidate() {
@@ -115,8 +104,7 @@ impl Compiler {
                     }
                 }
             } else {
-                let mut visitor =
-                    FirstPassVisitor::new(self.global_ctx.clone(), &ast, scope.clone());
+                let mut visitor = FirstPassVisitor::new(self.global_ctx.clone(), &ast, scope);
                 visitor.visit(ctx.root_node())?;
             }
         }
@@ -188,6 +176,7 @@ impl Compiler {
 
         // Dunno why the borrow checker is not letting me do that, it should be possible.
         // drop(ast);
+
         let res = codegen::codegen(self.global_ctx.clone(), &items[..]);
         timing!(self, cur_time, Stage::Codegen);
 

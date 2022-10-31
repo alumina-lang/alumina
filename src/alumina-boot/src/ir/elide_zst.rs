@@ -1,18 +1,9 @@
-use crate::common::HashMap;
-use crate::common::HashSet;
-
-use crate::{
-    ast::{BuiltinType, UnOp},
-    common::ArenaAllocatable,
-    intrinsics::CodegenIntrinsicKind,
-    ir::ValueType,
-};
-
-use super::{
-    builder::{ExpressionBuilder, TypeBuilder},
-    const_eval::Value,
-    Expr, ExprKind, ExprP, FuncBody, IrCtx, IrId, Lit, LocalDef, Statement, Ty, UnqualifiedKind,
-};
+use crate::ast::{BuiltinType, UnOp};
+use crate::common::{ArenaAllocatable, HashMap, HashSet};
+use crate::intrinsics::CodegenIntrinsicKind;
+use crate::ir::builder::{ExpressionBuilder, TypeBuilder};
+use crate::ir::const_eval::Value;
+use crate::ir::{Expr, ExprKind, ExprP, FuncBody, IrCtx, IrId, LocalDef, Statement, Ty, ValueType};
 
 // The purpose of ZST elider is to take all reads and writes of zero-sized types and
 // replace them with ExprKind::Void or remove them altogether if the value is not used
@@ -206,12 +197,9 @@ impl<'ir> ZstElider<'ir> {
 
                 if inner.is_void() {
                     // Special case for mutiple pointers to void
-                    builder.lit(Lit::Int(0), expr.ty)
+                    builder.null(expr.ty)
                 } else if inner.ty.is_zero_sized() {
-                    builder.block(
-                        [Statement::Expression(inner)],
-                        builder.lit(Lit::Int(0), expr.ty),
-                    )
+                    builder.block([Statement::Expression(inner)], builder.null(expr.ty))
                 } else {
                     builder.r#ref(inner)
                 }
@@ -249,7 +237,7 @@ impl<'ir> ZstElider<'ir> {
                         [Statement::Expression(builder.if_then(
                             cond,
                             then,
-                            builder.void(types.builtin(BuiltinType::Void), ValueType::RValue),
+                            builder.void(types.void(), ValueType::RValue),
                         ))],
                         els,
                     ),
@@ -257,7 +245,7 @@ impl<'ir> ZstElider<'ir> {
                         [Statement::Expression(builder.if_then(
                             builder.unary(UnOp::Not, cond, types.builtin(BuiltinType::Bool)),
                             els,
-                            builder.void(types.builtin(BuiltinType::Void), ValueType::RValue),
+                            builder.void(types.void(), ValueType::RValue),
                         ))],
                         then,
                     ),
@@ -292,8 +280,7 @@ impl<'ir> ZstElider<'ir> {
             }
             ExprKind::Field(lhs, id) => builder.field(self.elide_zst_expr(lhs), id, expr.ty),
             ExprKind::Fn(_) => expr,
-            ExprKind::Lit(_) => expr,
-            ExprKind::ConstValue(v) => match v {
+            ExprKind::Literal(v) => match v {
                 Value::Array(elems) => {
                     let element_type = match expr.ty {
                         Ty::Array(ty, _) => ty,
@@ -301,9 +288,9 @@ impl<'ir> ZstElider<'ir> {
                     };
 
                     builder.array(
-                        elems.iter().map(|val| {
-                            self.elide_zst_expr(builder.const_value(*val, element_type))
-                        }),
+                        elems
+                            .iter()
+                            .map(|val| self.elide_zst_expr(builder.literal(*val, element_type))),
                         expr.ty,
                     )
                 }
@@ -316,7 +303,7 @@ impl<'ir> ZstElider<'ir> {
                     builder.tuple(
                         elems.iter().zip(element_types.iter()).enumerate().map(
                             |(idx, (val, ty))| {
-                                (idx, self.elide_zst_expr(builder.const_value(*val, *ty)))
+                                (idx, self.elide_zst_expr(builder.literal(*val, *ty)))
                             },
                         ),
                         expr.ty,
@@ -338,7 +325,7 @@ impl<'ir> ZstElider<'ir> {
                         fields.iter().map(|(id, val)| {
                             (
                                 *id,
-                                self.elide_zst_expr(builder.const_value(*val, element_types[id])),
+                                self.elide_zst_expr(builder.literal(*val, element_types[id])),
                             )
                         }),
                         expr.ty,
@@ -373,18 +360,6 @@ impl<'ir> ZstElider<'ir> {
 
         if result.is_void() && result.ty.is_never() {
             return builder.unreachable();
-        }
-
-        // At this point unqualified strings are only present as arguments to the string constructor. They are always
-        // `&u8`.
-        if let Ty::Unqualified(UnqualifiedKind::String(_)) = result.ty {
-            return Expr {
-                is_const: result.is_const,
-                ty: types.pointer(types.builtin(BuiltinType::U8), true),
-                value_type: result.value_type,
-                kind: result.kind.clone(),
-            }
-            .alloc_on(self.ir);
         }
 
         result

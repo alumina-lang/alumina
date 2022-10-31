@@ -1,11 +1,8 @@
-use crate::common::HashMap;
-
-use crate::{
-    ast::{Bound, Expr, FieldInitializer, FnKind, StaticIfCondition},
-    common::{AluminaError, ArenaAllocatable},
+use crate::ast::{
+    AstCtx, AstId, Bound, Expr, ExprP, FieldInitializer, FnKind, Placeholder, ProtocolBounds,
+    Statement, StaticIfCondition, TyP,
 };
-
-use super::{AstCtx, AstId, ExprP, Placeholder, ProtocolBounds, Statement, TyP};
+use crate::common::{AluminaError, ArenaAllocatable, HashMap};
 
 pub struct Rebinder<'ast> {
     pub ast: &'ast AstCtx<'ast>,
@@ -53,7 +50,7 @@ impl<'ast> Rebinder<'ast> {
     }
 
     pub fn visit_typ(&mut self, typ: TyP<'ast>) -> Result<TyP<'ast>, AluminaError> {
-        use super::Ty::*;
+        use crate::ast::Ty::*;
         let kind = match typ {
             Placeholder(id) => match self.replacements.get(id) {
                 Some(typ) => return Ok(typ),
@@ -120,7 +117,7 @@ impl<'ast> Rebinder<'ast> {
     }
 
     pub fn visit_stmt(&mut self, stmt: &Statement<'ast>) -> Result<Statement<'ast>, AluminaError> {
-        use super::StatementKind::*;
+        use crate::ast::StatementKind::*;
 
         let kind = match &stmt.kind {
             Expression(expr) => Expression(self.visit_expr(expr)?),
@@ -140,7 +137,7 @@ impl<'ast> Rebinder<'ast> {
     }
 
     pub fn visit_expr(&mut self, expr: ExprP<'ast>) -> Result<ExprP<'ast>, AluminaError> {
-        use super::ExprKind::*;
+        use crate::ast::ExprKind::*;
         let kind = match expr.kind {
             Call(callee, args) => Call(
                 self.visit_expr(callee)?,

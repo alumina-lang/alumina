@@ -1,41 +1,23 @@
-use crate::common::HashMap;
-use crate::common::HashSet;
-
-use crate::ast::{AstCtx, FieldInitializer};
-use crate::ast::{BinOp, Expr, ExprP, LetDeclaration, Lit, Statement, UnOp};
-use crate::common::ArenaAllocatable;
-use crate::common::CodeErrorKind;
-
+use crate::ast::macros::{MacroExpander, MacroMaker};
+use crate::ast::maker::AstItemMaker;
+use crate::ast::types::TypeVisitor;
+use crate::ast::{
+    AstCtx, AstId, BinOp, BuiltinType, ClosureBinding, Defered, Expr, ExprKind, ExprP,
+    FieldInitializer, FnKind, Function, Item, ItemP, LetDeclaration, Lit, Parameter, Placeholder,
+    Span, Statement, StatementKind, StaticIfCondition, Ty, TyP, UnOp,
+};
+use crate::common::{
+    AluminaError, ArenaAllocatable, CodeErrorKind, HashMap, HashSet, WithSpanDuringParsing,
+};
 use crate::global_ctx::GlobalCtx;
 use crate::name_resolution::pass1::FirstPassVisitor;
 use crate::name_resolution::path::{Path, PathSegment};
-use crate::name_resolution::resolver::ItemResolution;
-use crate::name_resolution::scope::{BoundItemType, NamedItem, ScopeType};
-use crate::parser::AluminaVisitor;
-use crate::parser::FieldKind;
-use crate::parser::NodeExt;
-use crate::parser::NodeKind;
-use crate::parser::ParseCtx;
-
+use crate::name_resolution::resolver::{ItemResolution, NameResolver};
+use crate::name_resolution::scope::{BoundItemType, NamedItem, NamedItemKind, Scope, ScopeType};
+use crate::parser::{AluminaVisitor, FieldKind, NodeExt, NodeKind, ParseCtx};
 use crate::visitors::{AttributeVisitor, ScopedPathVisitor};
-use crate::{
-    common::{AluminaError, WithSpanDuringParsing},
-    name_resolution::{
-        resolver::NameResolver,
-        scope::{NamedItemKind, Scope},
-    },
-};
 
-use super::macros::{MacroExpander, MacroMaker};
-use super::maker::AstItemMaker;
-use super::types::TypeVisitor;
-use super::{
-    AstId, BuiltinType, ClosureBinding, Defered, ExprKind, FnKind, Function, Item, ItemP,
-    Parameter, Placeholder, Span, StatementKind, StaticIfCondition, Ty, TyP,
-};
-
-use indexmap::IndexMap;
-
+use crate::common::IndexMap;
 macro_rules! with_block_scope {
     ($self:ident, $body:expr) => {{
         let child_scope = $self.scope.anonymous_child(ScopeType::Block);
@@ -399,12 +381,12 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         let mut statements = Vec::new();
 
         let mut item_name = None;
-        let mut local_items: IndexMap<_, Vec<_>> = IndexMap::new();
+        let mut local_items: IndexMap<_, Vec<_>> = IndexMap::default();
 
         macro_rules! make_stuff {
             () => {
                 if !local_items.is_empty() {
-                    let local_items = std::mem::replace(&mut local_items, IndexMap::new());
+                    let local_items = std::mem::take(&mut local_items);
                     let mut maker =
                         AstItemMaker::new_local(self.ast, self.global_ctx.clone(), self.in_a_macro);
                     for (name, items) in local_items.into_iter() {
@@ -556,7 +538,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_integer_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let (remainder, kind) = suffixed_literals!(self.code.node_text(node),
+        let (mut remainder, kind) = suffixed_literals!(self.code.node_text(node),
             "u8" => BuiltinType::U8,
             "u16" => BuiltinType::U16,
             "u32" => BuiltinType::U32,
@@ -570,6 +552,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             "usize" => BuiltinType::USize,
             "isize" => BuiltinType::ISize,
         );
+
+        let sign = if remainder.starts_with('-') {
+            remainder = &remainder[1..];
+            true
+        } else {
+            false
+        };
 
         let value = if remainder.starts_with("0x") {
             u128::from_str_radix(remainder.trim_start_matches("0x"), 16)
@@ -585,7 +574,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             .map_err(|_| CodeErrorKind::InvalidLiteral)
             .with_span_from(&self.scope, node)?;
 
-        Ok(ExprKind::Lit(Lit::Int(value, kind)).alloc_with_span_from(self.ast, &self.scope, node))
+        Ok(
+            ExprKind::Lit(Lit::Int(sign, value, kind)).alloc_with_span_from(
+                self.ast,
+                &self.scope,
+                node,
+            ),
+        )
     }
 
     fn visit_float_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -621,11 +616,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         };
 
         Ok(
-            ExprKind::Lit(Lit::Int(val as u128, Some(BuiltinType::U8))).alloc_with_span_from(
-                self.ast,
-                &self.scope,
-                node,
-            ),
+            ExprKind::Lit(Lit::Int(false, val as u128, Some(BuiltinType::U8)))
+                .alloc_with_span_from(self.ast, &self.scope, node),
         )
     }
 
@@ -1758,7 +1750,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
                     .visit(node)
                 })
                 .transpose()?
-                .unwrap_or_else(|| self.ast.intern_type(Ty::Builtin(BuiltinType::Void))),
+                .unwrap_or_else(|| self.ast.intern_type(Ty::void())),
         );
 
         Ok(())

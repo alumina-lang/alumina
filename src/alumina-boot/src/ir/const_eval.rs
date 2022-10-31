@@ -1,14 +1,11 @@
 /// Const evaluation at the moment is very rudimentary and is there only to support things like
 /// the fixed-size array lengths and enum values.
 use crate::ast::BinOp;
-use std::{
-    cmp::Ordering,
-    ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub},
-};
-
 use crate::common::HashMap;
+use crate::ir::{BuiltinType, ExprKind, ExprP, IrCtx, IrId, Statement, Ty, TyP, UnOp};
+use std::cmp::Ordering;
+use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub};
 
-use super::{BuiltinType, ExprKind, ExprP, IrCtx, IrId, Lit, Statement, Ty, TyP, UnOp};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -586,32 +583,7 @@ impl<'ir> ConstEvaluator<'ir> {
                     _ => Err(ConstEvalError::CompilerBug),
                 }
             }
-            ExprKind::ConstValue(value) => Ok(*value),
-            ExprKind::Lit(l) => match l {
-                Lit::Bool(b) => Ok(Value::Bool(*b)),
-                Lit::Int(i) => match expr.ty {
-                    Ty::Builtin(BuiltinType::U8) => Ok(Value::U8(*i as u8)),
-                    Ty::Builtin(BuiltinType::U16) => Ok(Value::U16(*i as u16)),
-                    Ty::Builtin(BuiltinType::U32) => Ok(Value::U32(*i as u32)),
-                    Ty::Builtin(BuiltinType::U64) => Ok(Value::U64(*i as u64)),
-                    Ty::Builtin(BuiltinType::U128) => Ok(Value::U128(*i as u128)),
-                    Ty::Builtin(BuiltinType::I8) => Ok(Value::I8(*i as i8)),
-                    Ty::Builtin(BuiltinType::I16) => Ok(Value::I16(*i as i16)),
-                    Ty::Builtin(BuiltinType::I32) => Ok(Value::I32(*i as i32)),
-                    Ty::Builtin(BuiltinType::I64) => Ok(Value::I64(*i as i64)),
-                    Ty::Builtin(BuiltinType::I128) => Ok(Value::I128(*i as i128)),
-                    Ty::Builtin(BuiltinType::USize) => Ok(Value::USize(*i as usize)),
-                    Ty::Builtin(BuiltinType::ISize) => Ok(Value::ISize(*i as isize)),
-                    _ => unreachable!(),
-                },
-                Lit::Float(s) => match expr.ty {
-                    Ty::Builtin(BuiltinType::F32) => Ok(Value::F32(*s)),
-                    Ty::Builtin(BuiltinType::F64) => Ok(Value::F64(*s)),
-                    _ => unreachable!(),
-                },
-                Lit::Str(s) => Ok(Value::Str(*s)),
-                _ => Err(ConstEvalError::Unsupported),
-            },
+            ExprKind::Literal(value) => Ok(*value),
             ExprKind::Cast(inner) => self.cast(inner, expr.ty),
             ExprKind::If(cond, then, els) => {
                 let cond = self.const_eval(cond)?;

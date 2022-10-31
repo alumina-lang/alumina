@@ -1,4 +1,4 @@
-use super::{BinOp, BuiltinType};
+use crate::ast::{BinOp, BuiltinType};
 use crate::common::CodeErrorKind;
 use crate::utils::regex;
 
@@ -178,7 +178,7 @@ impl TryFrom<&str> for LangItemKind {
             "proto_meta" => Ok(LangItemKind::ProtoMeta),
 
             "builtin_never" => Ok(LangItemKind::ImplBuiltin(BuiltinType::Never)),
-            "builtin_void" => Ok(LangItemKind::ImplBuiltin(BuiltinType::Void)),
+            "builtin_void" => Ok(LangItemKind::ImplTuple(0)),
             "builtin_bool" => Ok(LangItemKind::ImplBuiltin(BuiltinType::Bool)),
             "builtin_u8" => Ok(LangItemKind::ImplBuiltin(BuiltinType::U8)),
             "builtin_u16" => Ok(LangItemKind::ImplBuiltin(BuiltinType::U16)),

@@ -1,16 +1,12 @@
-use tree_sitter::Node;
-
 use crate::ast::expressions::parse_string_literal;
 use crate::ast::{AstCtx, Attribute, ItemP, TestMetadata};
 use crate::common::{AluminaError, ArenaAllocatable, CodeErrorKind, WithSpanDuringParsing};
-
 use crate::global_ctx::GlobalCtx;
 use crate::name_resolution::path::{Path, PathSegment};
 use crate::name_resolution::scope::{NamedItem, NamedItemKind, Scope};
-use crate::parser::AluminaVisitor;
-use crate::parser::FieldKind;
-use crate::parser::NodeExt;
-use crate::parser::ParseCtx;
+use crate::parser::{AluminaVisitor, FieldKind, NodeExt, ParseCtx};
+
+use tree_sitter::Node;
 
 pub struct ScopedPathVisitor<'ast, 'src> {
     ast: &'ast AstCtx<'ast>,

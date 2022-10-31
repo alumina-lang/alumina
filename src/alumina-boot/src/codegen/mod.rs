@@ -1,22 +1,16 @@
 pub mod functions;
 pub mod types;
 
-use std::{
-    cell::{Cell, RefCell},
-    fmt::{Display, Write},
-};
+use crate::codegen::functions::FunctionWriter;
+use crate::codegen::types::TypeWriter;
+use crate::common::{AluminaError, HashMap, Incrementable};
+use crate::global_ctx::GlobalCtx;
+use crate::ir::{IRItem, IRItemP, IrId, Ty, TyP};
 
-use crate::common::HashMap;
-
-use crate::{
-    ast::BuiltinType,
-    common::{AluminaError, Incrementable},
-    global_ctx::GlobalCtx,
-    ir::{IRItem, IRItemP, Ty},
-};
 use bumpalo::Bump;
 
-use crate::ir::{IrId, TyP};
+use std::cell::{Cell, RefCell};
+use std::fmt::{Display, Write};
 
 macro_rules! w {
     ($buf:expr, $($arg:tt)*) => (
@@ -25,8 +19,6 @@ macro_rules! w {
 }
 
 pub(crate) use w;
-
-use self::{functions::FunctionWriter, types::TypeWriter};
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub enum CName<'gen> {
@@ -59,7 +51,10 @@ pub struct CodegenCtx<'ir, 'gen> {
     arena: Bump,
 }
 
-impl<'ir, 'gen> CodegenCtx<'ir, 'gen> {
+impl<'ir, 'gen> CodegenCtx<'ir, 'gen>
+where
+    'ir: 'gen,
+{
     pub fn new(global_ctx: GlobalCtx) -> Self {
         Self {
             global_ctx,
@@ -96,7 +91,11 @@ impl<'ir, 'gen> CodegenCtx<'ir, 'gen> {
             .or_insert_with(|| CName::Mangled(self.arena.alloc_str(name), self.counter.increment()))
     }
 
-    pub fn get_type(&self, typ: TyP<'ir>) -> CName<'gen> {
+    pub fn get_type(&'gen self, typ: &'_ Ty<'ir>) -> CName<'gen> {
+        if typ.is_void() {
+            return CName::Native("void");
+        }
+
         let map = self.type_map.borrow();
         *map.get(typ)
             .unwrap_or_else(|| panic!("type {:?} was not registered", typ))
@@ -128,8 +127,6 @@ impl Display for CName<'_> {
 pub fn codegen(global_ctx: GlobalCtx, items: &[IRItemP<'_>]) -> Result<String, AluminaError> {
     let ctx = CodegenCtx::new(global_ctx);
     let type_writer = TypeWriter::new(&ctx);
-
-    type_writer.add_type(&Ty::Builtin(BuiltinType::Void))?;
 
     let mut function_writer = FunctionWriter::new(&ctx, &type_writer);
 

@@ -1,9 +1,10 @@
-use crate::{
-    ast::Span,
-    common::{AluminaError, CodeError, CodeErrorKind, FileId, Marker},
-};
+use crate::ast::Span;
+use crate::common::{AluminaError, CodeError, CodeErrorKind, FileId, Marker};
+
 use once_cell::unsync::OnceCell;
+
 use std::marker::PhantomData;
+
 use tree_sitter::{Query, QueryCursor};
 
 include!(concat!(env!("OUT_DIR"), "/parser.rs"));

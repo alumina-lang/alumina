@@ -1,30 +1,23 @@
-use crate::common::HashSet;
+use crate::ast::expressions::ExpressionVisitor;
+use crate::ast::lang::LangItemKind;
+use crate::ast::macros::MacroMaker;
+use crate::ast::types::TypeVisitor;
+use crate::ast::{
+    AssociatedFn, AstCtx, Attribute, Enum, EnumMember, Field, Function, Intrinsic, Item, ItemP,
+    Mixin, MixinCell, Parameter, Placeholder, Protocol, Span, StaticOrConst, StructLike, Ty, TyP,
+    TypeDef,
+};
+use crate::common::{
+    AluminaError, ArenaAllocatable, CodeError, CodeErrorKind, HashSet, Marker,
+    WithSpanDuringParsing,
+};
+use crate::global_ctx::GlobalCtx;
+use crate::intrinsics::intrinsic_kind;
+use crate::name_resolution::resolver::NameResolver;
+use crate::name_resolution::scope::{NamedItem, NamedItemKind, Scope, ScopeType};
+use crate::parser::{AluminaVisitor, FieldKind, NodeExt, NodeKind};
 
 use once_cell::unsync::OnceCell;
-
-use crate::{
-    ast::{AstCtx, BuiltinType, Field, Function, Item, ItemP, Parameter, StructLike, Ty},
-    common::{
-        AluminaError, ArenaAllocatable, CodeError, CodeErrorKind, Marker, WithSpanDuringParsing,
-    },
-    global_ctx::GlobalCtx,
-    intrinsics::intrinsic_kind,
-    name_resolution::{
-        resolver::NameResolver,
-        scope::{NamedItem, NamedItemKind, Scope, ScopeType},
-    },
-    parser::AluminaVisitor,
-};
-
-use crate::parser::FieldKind;
-use crate::parser::NodeExt;
-use crate::parser::NodeKind;
-
-use super::{
-    expressions::ExpressionVisitor, lang::LangItemKind, macros::MacroMaker, types::TypeVisitor,
-    AssociatedFn, Attribute, Enum, EnumMember, Intrinsic, Mixin, MixinCell, Placeholder, Protocol,
-    Span, StaticOrConst, TyP, TypeDef,
-};
 
 pub struct AstItemMaker<'ast> {
     ast: &'ast AstCtx<'ast>,
@@ -554,7 +547,7 @@ impl<'ast> AstItemMaker<'ast> {
                 .visit(n)
             })
             .transpose()?
-            .unwrap_or_else(|| self.ast.intern_type(Ty::Builtin(BuiltinType::Void)));
+            .unwrap_or_else(|| self.ast.intern_type(Ty::Tuple(&[])));
 
         self.check_self_confusion(return_type, Some(span));
 

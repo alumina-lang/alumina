@@ -1,14 +1,10 @@
-use super::{
-    lang::LangTypeKind,
-    mono::{MonoCtx, Monomorphizer},
-    UnqualifiedKind,
-};
-use crate::{
-    ast::{self, lang::LangItemKind, rebind::Rebinder, BuiltinType, Placeholder},
-    ir,
-};
-
+use crate::ast::lang::LangItemKind;
+use crate::ast::rebind::Rebinder;
+use crate::ast::Placeholder;
 use crate::common::HashMap;
+use crate::ir::lang::LangTypeKind;
+use crate::ir::mono::MonoCtx;
+use crate::{ast, ir};
 
 pub struct TypeInferer<'a, 'ast, 'ir> {
     ast: &'ast ast::AstCtx<'ast>,
@@ -42,22 +38,12 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                 // those do not participate in inference
             }
             (ast::Ty::Placeholder(id), _) => {
-                let tgt = if let ir::Ty::Unqualified(UnqualifiedKind::String(_)) = tgt {
-                    // Unqualified types cannot be named explicitely, so it is almost certainly not
-                    // the right choice for inference. Use the type it coerces into instead.
-                    // TODO: This is ugly and bad, get rid of unqualified types altogether.
-                    let mut monomorphizer = Monomorphizer::new(self.mono_ctx, true, None);
-                    monomorphizer.try_qualify_type(tgt).unwrap()
-                } else {
-                    tgt
-                };
-
                 if let Some(existing) = inferred.get(id) {
                     if *existing != tgt {
                         return Err(());
                     }
                 } else {
-                    inferred.insert(*id, tgt);
+                    inferred.entry(*id).or_insert(tgt);
                 }
             }
             (ast::Ty::Pointer(a1, a_const), ir::Ty::Pointer(b1, b_const)) => {
@@ -240,9 +226,6 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                     }
                     Some(LangItemKind::ProtoCallable) => match args {
                         [ast::Ty::Tuple(a1), a2] => self.match_callable(inferred, tgt, a1, a2),
-                        [ast::Ty::Builtin(BuiltinType::Void), a2] => {
-                            self.match_callable(inferred, tgt, &[], a2)
-                        }
                         _ => {}
                     },
                     _ => {}

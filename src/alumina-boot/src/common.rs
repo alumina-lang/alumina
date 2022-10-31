@@ -6,7 +6,6 @@ use std::rc::Rc;
 use std::result::Result;
 use thiserror::Error;
 use tree_sitter::Node;
-
 macro_rules! ice {
     ($why:literal) => {{
         use crate::common::CodeErrorBuilder;
@@ -38,7 +37,6 @@ pub enum AluminaError {
 // thiserror uses string matching in its proc macro and assumes that "Backtrace" is
 // "std::backtrace::Backtrace", which is unstable.
 use backtrace::Backtrace as NonStdBacktrace;
-
 #[derive(Debug, Error, Clone)]
 pub enum CodeErrorKind {
     // Errors
@@ -257,6 +255,8 @@ pub enum CodeErrorKind {
     TypedefWithoutTarget,
     #[error("type with infinite size (recursive type without indirection)")]
     TypeWithInfiniteSize,
+    #[error("integer literal out of range ({} does not fit into {})", .0, .1)]
+    IntegerOutOfRange(String, String),
 
     // IR inlining is very restricitve at the moment, these may eventually be removed
     #[error("cannot IR-inline functions that use variables")]
