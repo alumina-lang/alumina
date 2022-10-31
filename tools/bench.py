@@ -9,10 +9,8 @@ import sys
 import re
 import subprocess
 import argparse
-import time
 
 from collections import defaultdict
-
 
 def main():
     parser = argparse.ArgumentParser()
@@ -33,8 +31,6 @@ def main():
     for i in range(args.num_runs):
         print(f"Running {i+1}/{args.num_runs}...")
 
-        # We only care about stderr, discard stdout
-        start = time.time()
         proc = subprocess.run(
             args.cmd,
             stdin=subprocess.DEVNULL,
@@ -44,14 +40,19 @@ def main():
         if proc.returncode != 0:
             print(f"Compiler failed with code {proc.returncode}")
             sys.exit(1)
-        end = time.time()
 
+        total = 0
         for line in proc.stderr.decode("utf-8").splitlines():
             m = re.search(r"stage (\w+) took (\d+)ms", line)
             if m:
-                timings[m.group(1)].append(int(m.group(2)))
+                timing = int(m.group(2))
+                total += timing
+                timings[m.group(1)].append(timing)
 
-        timings["TOTAL"].append(int((end - start) * 1000))
+        if args.markdown:
+            timings["**TOTAL**"].append(total)
+        else:
+            timings["TOTAL"].append(total)
 
     if args.markdown:
         print(

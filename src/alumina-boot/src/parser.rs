@@ -54,6 +54,10 @@ impl<'src> ParseCtx<'src> {
         &'src self,
         node: tree_sitter::Node<'src>,
     ) -> Result<(), AluminaError> {
+        if !node.has_error() {
+            return Ok(());
+        }
+
         let mut cursor = QueryCursor::new();
         let query = ERROR_QUERY.get_or_init(|| Query::new(language(), "(ERROR) @node").unwrap());
 

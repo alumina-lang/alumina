@@ -306,3 +306,29 @@ fn test_nested_zst_layout() {
     struct S { a: u8, b: [[u64; 0]; 1] }
     assert_layout::<S>(8, 8);
 }
+
+
+// Define them in random order; not that it matters.
+static A3: i32 = A2 + 1 + A1;
+static A7: i32 = A6 + 1 + A5;
+static A6: i32 = A5 + 1 + A4;
+static A5: i32 = A4 + 1 + A3;
+static A0: i32 = 1;
+static A2: i32 = A1 + 1 + A0;
+static A4: i32 = A3 + 1 + A2;
+static A8: i32 = A7 + 1 + A6;
+static A1: i32 = 1;
+
+#[test]
+fn test_static_initialization_order() {
+    // https://oeis.org/A001595
+    assert_eq!(A0, 1);
+    assert_eq!(A1, 1);
+    assert_eq!(A2, 3);
+    assert_eq!(A3, 5);
+    assert_eq!(A4, 9);
+    assert_eq!(A5, 15);
+    assert_eq!(A6, 25);
+    assert_eq!(A7, 41);
+    assert_eq!(A8, 67);
+}
