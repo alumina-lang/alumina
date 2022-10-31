@@ -48,6 +48,9 @@ macro_rules! mismatch {
 #[derive(Default)]
 pub struct Caches<'ast, 'ir> {
     associated_fns: HashMap<ir::TyP<'ir>, Rc<HashMap<&'ast str, ast::ItemP<'ast>>>>,
+    associated_fns_ast: HashMap<ast::TyP<'ast>, Rc<HashMap<&'ast str, ast::ItemP<'ast>>>>,
+    struct_field_maps: HashMap<ir::IRItemP<'ir>, Rc<HashMap<&'ast str, &'ir ir::Field<'ir>>>>,
+    protocol_bound_matches: HashMap<(ir::TyP<'ir>, ir::TyP<'ir>), BoundCheckResult>,
 }
 
 pub struct MonoCtx<'ast, 'ir> {
@@ -66,6 +69,7 @@ pub struct MonoCtx<'ast, 'ir> {
     caches: Caches<'ast, 'ir>,
 }
 
+#[derive(Clone)]
 enum BoundCheckResult {
     Matches,
     DoesNotMatch,
@@ -774,7 +778,29 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         bound: ir::TyP<'ir>,
         ty: ir::TyP<'ir>,
     ) -> Result<BoundCheckResult, AluminaError> {
-        // TODO: this can be cached, as it's quite expensive to check
+        if let Some(result) = self
+            .mono_ctx
+            .caches
+            .protocol_bound_matches
+            .get(&(bound, ty))
+        {
+            return Ok(result.clone());
+        }
+
+        let result = self.check_protocol_bound_uncached(bound, ty)?;
+        self.mono_ctx
+            .caches
+            .protocol_bound_matches
+            .insert((bound, ty), result.clone());
+
+        Ok(result)
+    }
+
+    fn check_protocol_bound_uncached(
+        &mut self,
+        bound: ir::TyP<'ir>,
+        ty: ir::TyP<'ir>,
+    ) -> Result<BoundCheckResult, AluminaError> {
         let protocol_item = match bound {
             ir::Ty::Protocol(protocol) => match protocol.get() {
                 Ok(ir::IRItem::Protocol(_)) => protocol,
@@ -1029,7 +1055,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 }
             };
 
-            let monomorphized = match self.monomorphize_item_full(
+            let monomorphized = match self.monomorphize_item_uncached(
                 None,
                 item,
                 generic_args.alloc_on(self.mono_ctx.ir),
@@ -1474,10 +1500,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         item: ast::ItemP<'ast>,
         generic_args: &'ir [ir::TyP<'ir>],
     ) -> Result<ir::IRItemP<'ir>, AluminaError> {
-        self.monomorphize_item_full(None, item, generic_args, false)
+        self.monomorphize_item_uncached(None, item, generic_args, false)
     }
 
-    pub fn monomorphize_item_full(
+    pub fn monomorphize_item_uncached(
         &mut self,
         existing_symbol: Option<IRItemP<'ir>>,
         item: ast::ItemP<'ast>,
@@ -2145,6 +2171,24 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     fn get_struct_field_map(
         &mut self,
         item: ir::IRItemP<'ir>,
+    ) -> Result<Rc<HashMap<&'ast str, &'ir ir::Field<'ir>>>, AluminaError> {
+        if let Some(map) = self.mono_ctx.caches.struct_field_maps.get(&item) {
+            return Ok(map.clone());
+        }
+
+        let map = Rc::new(self.get_struct_field_map_uncached(item)?);
+
+        self.mono_ctx
+            .caches
+            .struct_field_maps
+            .insert(item, map.clone());
+
+        Ok(map)
+    }
+
+    fn get_struct_field_map_uncached(
+        &mut self,
+        item: ir::IRItemP<'ir>,
     ) -> Result<HashMap<&'ast str, &'ir ir::Field<'ir>>, AluminaError> {
         let MonoKey(ast_item, _, _, _) = self.mono_ctx.reverse_lookup(item);
         let ir_struct = item.get_struct_like().with_no_span()?;
@@ -2175,7 +2219,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
 
         let raised = self.raise_type(typ)?;
-        let associated_fns = Rc::new(self.get_associated_fns_for_ast(raised)?);
+        let associated_fns = self.get_associated_fns_for_ast(raised)?;
 
         self.mono_ctx
             .caches
@@ -2186,6 +2230,23 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     }
 
     fn get_associated_fns_for_ast(
+        &mut self,
+        typ: ast::TyP<'ast>,
+    ) -> Result<Rc<HashMap<&'ast str, ast::ItemP<'ast>>>, AluminaError> {
+        if let Some(c) = self.mono_ctx.caches.associated_fns_ast.get(&typ) {
+            return Ok(c.clone());
+        }
+
+        let associated_fns = Rc::new(self.get_associated_fns_uncached(typ)?);
+        self.mono_ctx
+            .caches
+            .associated_fns_ast
+            .insert(typ, associated_fns.clone());
+
+        Ok(associated_fns)
+    }
+
+    fn get_associated_fns_uncached(
         &mut self,
         typ: ast::TyP<'ast>,
     ) -> Result<HashMap<&'ast str, ast::ItemP<'ast>>, AluminaError> {
