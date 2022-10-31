@@ -1,10 +1,7 @@
-use crate::{
-    ast::{Attribute, BuiltinType},
-    common::{AluminaError, CodeErrorBuilder, CodeErrorKind, CycleGuardian},
-    global_ctx::GlobalCtx,
-};
-
-use super::{IRItem, IRItemP, Ty, TyP};
+use crate::ast::{Attribute, BuiltinType};
+use crate::common::{AluminaError, CodeErrorBuilder, CodeErrorKind, CycleGuardian};
+use crate::global_ctx::GlobalCtx;
+use crate::ir::{IRItem, IRItemP, Ty, TyP};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PointerWidth {
@@ -154,7 +151,6 @@ impl<'ir> LayoutCalculator<'ir> {
                 Ok(inner_layout.array(*len))
             }
             Ty::Builtin(kind) => match kind {
-                BuiltinType::Void => Ok(Layout::zst()),
                 BuiltinType::Never => Ok(Layout::zst()),
                 BuiltinType::Bool => Ok(Layout::bool()),
                 BuiltinType::U8 | BuiltinType::I8 => Ok(Layout::integer(8)),

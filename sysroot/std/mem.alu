@@ -490,8 +490,9 @@ mod internal {
     ///
     /// Compiler will convert `slice[i]` to `*slice_index(slice, i)`.
     /// Slice indexing is bounds-checked in debug mode.
-    #[inline(always)]
     #[lang(slice_index)]
+    #[cfg_attr(any(debug, bounds_checks), inline(always))]
+    #[cfg_attr(not(any(debug, bounds_checks)), inline(ir))]
     fn slice_index<Ptr: Pointer>(a: slice<Ptr>, idx: usize) -> Ptr {
         bounds_check!(idx < a.len(), "index out of bounds: the len is {} but the index is {}", a.len(), idx);
 
@@ -502,8 +503,9 @@ mod internal {
     ///
     /// Compiler will convert `slice[ran..ge]` to `slice_index(slice, ran..ge)`.
     /// It is generic over all range types (`..`, `ran..`, `..ge` and `ran..ge`)
-    #[inline(always)]
     #[lang(slice_range_index)]
+    #[cfg_attr(any(debug, bounds_checks), inline(always))]
+    #[cfg_attr(not(any(debug, bounds_checks)), inline(ir))]
     fn slice_range_index<Ptr: Pointer, T: RangeOf<usize>>(a: slice<Ptr>, range: T) -> slice<Ptr> {
         when T: range::Range<usize> {
             bounds_check!(

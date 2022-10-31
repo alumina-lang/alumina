@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+
 use tree_sitter::Node;
 
 pub struct NodeWrapper<'t>(&'t str, Node<'t>, usize);

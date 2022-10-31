@@ -1,9 +1,10 @@
-use crate::common::HashMap;
-use std::{cell::RefCell, path::PathBuf, rc::Rc};
+use crate::common::{AluminaError, CodeError, CodeErrorKind, FileId, HashMap, Marker};
 
 use colored::Colorize;
 
-use crate::common::{AluminaError, CodeError, CodeErrorKind, FileId, Marker};
+use std::cell::RefCell;
+use std::path::PathBuf;
+use std::rc::Rc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum Level {

@@ -8,23 +8,21 @@ pub mod lang;
 pub mod layout;
 pub mod mono;
 
-use crate::{
-    ast::{Attribute, BinOp, BuiltinType, UnOp},
-    common::{impl_allocatable, Allocatable, ArenaAllocatable, CodeErrorKind, Incrementable},
-    intrinsics::CodegenIntrinsicKind,
+use crate::ast::{Attribute, BinOp, BuiltinType, UnOp};
+use crate::common::{
+    impl_allocatable, Allocatable, AluminaError, ArenaAllocatable, CodeErrorKind, HashSet,
+    Incrementable,
 };
-use std::{
-    cell::{Cell, RefCell},
-    fmt::{Debug, Display, Formatter},
-    hash::{Hash, Hasher},
-};
+use crate::intrinsics::CodegenIntrinsicKind;
+use crate::ir::const_eval::Value;
 
 use backtrace::Backtrace;
 use bumpalo::Bump;
 use once_cell::unsync::OnceCell;
 
-use self::const_eval::Value;
-use crate::common::HashSet;
+use std::cell::{Cell, RefCell};
+use std::fmt::{Debug, Display, Formatter};
+use std::hash::{Hash, Hasher};
 
 pub struct IrCtx<'ir> {
     pub arena: Bump,
@@ -48,11 +46,6 @@ impl<'ir> IrCtx<'ir> {
     }
 
     pub fn intern_type(&'ir self, ty: Ty<'ir>) -> TyP<'ir> {
-        // TODO: wrong place for this
-        if let Ty::Tuple([]) = ty {
-            return self.intern_type(Ty::Builtin(BuiltinType::Void));
-        }
-
         if let Some(key) = self.types.borrow().get(&ty) {
             return *key;
         }
@@ -214,6 +207,10 @@ impl Debug for Ty<'_> {
 }
 
 impl<'ir> Ty<'ir> {
+    pub fn void() -> Ty<'ir> {
+        Ty::Tuple(&[])
+    }
+
     /// Returns true if lhs <= rhs on the stric type hierarchy (implicit coercions are not
     /// considered).
     pub fn assignable_from(&self, other: &Ty<'ir>) -> bool {
@@ -232,8 +229,7 @@ impl<'ir> Ty<'ir> {
             (Ty::Pointer(a, _), Ty::Pointer(b, false)) if a == b => Ty::Pointer(a, false),
             (_, Ty::Builtin(BuiltinType::Never)) => *lhs,
             (Ty::Builtin(BuiltinType::Never), _) => *rhs,
-
-            _ => Ty::Builtin(BuiltinType::Void),
+            _ => Ty::void(),
         }
     }
 
@@ -244,13 +240,16 @@ impl<'ir> Ty<'ir> {
         }
     }
 
+    pub fn is_void(&self) -> bool {
+        matches!(self, Ty::Tuple(tys) if tys.is_empty())
+    }
+
     pub fn is_never(&self) -> bool {
         matches!(self, Ty::Builtin(BuiltinType::Never))
     }
 
     pub fn is_zero_sized(&self) -> bool {
         match self {
-            Ty::Builtin(BuiltinType::Void) => true,
             Ty::Builtin(BuiltinType::Never) => true,
             Ty::Builtin(_) => false,
             Ty::Protocol(_) => unreachable!("used protocol as a concrete type"),
@@ -686,6 +685,214 @@ impl<'ir> Expr<'ir> {
             ExprKind::Return(_) => false,
             ExprKind::Goto(_) => false,
         }
+    }
+}
+
+pub trait ExpressionVisitor<'ir>: Sized {
+    fn visit_statement(&mut self, stmt: &Statement<'ir>) -> Result<(), AluminaError> {
+        match stmt {
+            Statement::Expression(expr) => self.visit_expr(expr),
+            Statement::Label(id) => self.visit_label(*id),
+        }
+    }
+
+    fn visit_label(&mut self, label: IrId) -> Result<(), AluminaError> {
+        Ok(())
+    }
+
+    fn visit_block(
+        &mut self,
+        block: &'ir [Statement<'ir>],
+        expr: ExprP<'ir>,
+    ) -> Result<(), AluminaError> {
+        for stmt in block {
+            self.visit_statement(stmt)?;
+        }
+        self.visit_expr(expr)
+    }
+
+    fn visit_binary(
+        &mut self,
+        op: BinOp,
+        a: ExprP<'ir>,
+        b: ExprP<'ir>,
+    ) -> Result<(), AluminaError> {
+        self.visit_expr(a)?;
+        self.visit_expr(b)
+    }
+
+    fn visit_assign_op(
+        &mut self,
+        op: BinOp,
+        lhs: ExprP<'ir>,
+        rhs: ExprP<'ir>,
+    ) -> Result<(), AluminaError> {
+        self.visit_expr(lhs)?;
+        self.visit_expr(rhs)
+    }
+
+    fn visit_call(
+        &mut self,
+        callee: ExprP<'ir>,
+        args: &'ir [ExprP<'ir>],
+    ) -> Result<(), AluminaError> {
+        self.visit_expr(callee)?;
+        for arg in args {
+            self.visit_expr(arg)?;
+        }
+        Ok(())
+    }
+
+    fn visit_fn(&mut self, item: IRItemP<'ir>) -> Result<(), AluminaError> {
+        Ok(())
+    }
+
+    fn visit_ref(&mut self, inner: ExprP<'ir>) -> Result<(), AluminaError> {
+        self.visit_expr(inner)
+    }
+
+    fn visit_deref(&mut self, inner: ExprP<'ir>) -> Result<(), AluminaError> {
+        self.visit_expr(inner)
+    }
+
+    fn visit_return(&mut self, expr: ExprP<'ir>) -> Result<(), AluminaError> {
+        self.visit_expr(expr)
+    }
+
+    fn visit_goto(&mut self, label: IrId) -> Result<(), AluminaError> {
+        Ok(())
+    }
+
+    fn visit_unary(&mut self, op: UnOp, inner: ExprP<'ir>) -> Result<(), AluminaError> {
+        self.visit_expr(inner)
+    }
+
+    fn visit_assign(&mut self, lhs: ExprP<'ir>, rhs: ExprP<'ir>) -> Result<(), AluminaError> {
+        self.visit_expr(lhs)?;
+        self.visit_expr(rhs)
+    }
+
+    fn visit_index(&mut self, lhs: ExprP<'ir>, rhs: ExprP<'ir>) -> Result<(), AluminaError> {
+        self.visit_expr(lhs)?;
+        self.visit_expr(rhs)
+    }
+
+    fn visit_local(&mut self, id: IrId) -> Result<(), AluminaError> {
+        Ok(())
+    }
+
+    fn visit_static(&mut self, item: IRItemP<'ir>) -> Result<(), AluminaError> {
+        Ok(())
+    }
+
+    fn visit_const(&mut self, item: IRItemP<'ir>) -> Result<(), AluminaError> {
+        Ok(())
+    }
+
+    fn visit_lit(&mut self, lit: &Lit<'ir>) -> Result<(), AluminaError> {
+        Ok(())
+    }
+
+    fn visit_const_value(&mut self, value: &const_eval::Value<'ir>) -> Result<(), AluminaError> {
+        Ok(())
+    }
+
+    fn visit_field(&mut self, expr: ExprP<'ir>, id: IrId) -> Result<(), AluminaError> {
+        self.visit_expr(expr)
+    }
+
+    fn visit_tuple_index(&mut self, expr: ExprP<'ir>, index: usize) -> Result<(), AluminaError> {
+        self.visit_expr(expr)
+    }
+
+    fn visit_if(
+        &mut self,
+        cond: ExprP<'ir>,
+        then: ExprP<'ir>,
+        els: ExprP<'ir>,
+    ) -> Result<(), AluminaError> {
+        self.visit_expr(cond)?;
+        self.visit_expr(then)?;
+        self.visit_expr(els)
+    }
+
+    fn visit_cast(&mut self, expr: ExprP<'ir>) -> Result<(), AluminaError> {
+        self.visit_expr(expr)
+    }
+
+    fn visit_codegen_intrinsic(
+        &mut self,
+        kind: &CodegenIntrinsicKind<'ir>,
+    ) -> Result<(), AluminaError> {
+        Ok(())
+    }
+
+    fn visit_array(&mut self, exprs: &'ir [ExprP<'ir>]) -> Result<(), AluminaError> {
+        for expr in exprs {
+            self.visit_expr(expr)?;
+        }
+        Ok(())
+    }
+
+    fn visit_tuple(&mut self, exprs: &'ir [TupleInit<'ir>]) -> Result<(), AluminaError> {
+        for expr in exprs {
+            self.visit_expr(expr.value)?;
+        }
+        Ok(())
+    }
+
+    fn visit_struct(&mut self, exprs: &'ir [StructInit<'ir>]) -> Result<(), AluminaError> {
+        for expr in exprs {
+            self.visit_expr(expr.value)?;
+        }
+        Ok(())
+    }
+
+    fn visit_unreachable(&mut self) -> Result<(), AluminaError> {
+        Ok(())
+    }
+
+    fn visit_void(&mut self) -> Result<(), AluminaError> {
+        Ok(())
+    }
+
+    fn visit_expr(&mut self, expr: ExprP<'ir>) -> Result<(), AluminaError> {
+        default_visit_expr(self, expr)
+    }
+}
+
+pub fn default_visit_expr<'ir, V: ExpressionVisitor<'ir>>(
+    visitor: &mut V,
+    expr: ExprP<'ir>,
+) -> Result<(), AluminaError> {
+    match &expr.kind {
+        ExprKind::Block(block, expr) => visitor.visit_block(block, expr),
+        ExprKind::Binary(op, a, b) => visitor.visit_binary(*op, a, b),
+        ExprKind::AssignOp(op, lhs, rhs) => visitor.visit_assign_op(*op, lhs, rhs),
+        ExprKind::Call(callee, args) => visitor.visit_call(callee, args),
+        ExprKind::Fn(item) => visitor.visit_fn(item),
+        ExprKind::Ref(inner) => visitor.visit_ref(inner),
+        ExprKind::Deref(inner) => visitor.visit_deref(inner),
+        ExprKind::Return(expr) => visitor.visit_return(expr),
+        ExprKind::Goto(label) => visitor.visit_goto(*label),
+        ExprKind::Unary(op, inner) => visitor.visit_unary(*op, inner),
+        ExprKind::Assign(lhs, rhs) => visitor.visit_assign(lhs, rhs),
+        ExprKind::Index(lhs, rhs) => visitor.visit_index(lhs, rhs),
+        ExprKind::Local(id) => visitor.visit_local(*id),
+        ExprKind::Static(item) => visitor.visit_static(item),
+        ExprKind::Const(item) => visitor.visit_const(item),
+        ExprKind::Lit(lit) => visitor.visit_lit(&lit),
+        ExprKind::ConstValue(value) => visitor.visit_const_value(value),
+        ExprKind::Field(expr, id) => visitor.visit_field(expr, *id),
+        ExprKind::TupleIndex(expr, index) => visitor.visit_tuple_index(expr, *index),
+        ExprKind::If(cond, then, els) => visitor.visit_if(cond, then, els),
+        ExprKind::Cast(expr) => visitor.visit_cast(expr),
+        ExprKind::CodegenIntrinsic(kind) => visitor.visit_codegen_intrinsic(&kind),
+        ExprKind::Array(exprs) => visitor.visit_array(exprs),
+        ExprKind::Tuple(exprs) => visitor.visit_tuple(exprs),
+        ExprKind::Struct(exprs) => visitor.visit_struct(exprs),
+        ExprKind::Unreachable => visitor.visit_unreachable(),
+        ExprKind::Void => visitor.visit_void(),
     }
 }
 

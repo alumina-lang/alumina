@@ -1,24 +1,14 @@
-use crate::ast::AstCtx;
-use crate::common::{ArenaAllocatable, CodeErrorKind};
-use crate::global_ctx::GlobalCtx;
-use crate::name_resolution::resolver::ItemResolution;
-use crate::parser::AluminaVisitor;
-use crate::parser::ParseCtx;
-use crate::{
-    ast::{BuiltinType, Ty, TyP},
-    common::{AluminaError, WithSpanDuringParsing},
-    name_resolution::{
-        resolver::NameResolver,
-        scope::{NamedItemKind, Scope},
-    },
-    visitors::ScopedPathVisitor,
+use crate::ast::expressions::ExpressionVisitor;
+use crate::ast::{
+    AstCtx, Bound, BuiltinType, Defered, ProtocolBounds, ProtocolBoundsKind, Span,
+    StaticIfCondition, Ty, TyP,
 };
-
-use super::expressions::ExpressionVisitor;
-use super::{Bound, Defered, ProtocolBounds, ProtocolBoundsKind, Span, StaticIfCondition};
-
-use crate::parser::FieldKind;
-use crate::parser::NodeExt;
+use crate::common::{AluminaError, ArenaAllocatable, CodeErrorKind, WithSpanDuringParsing};
+use crate::global_ctx::GlobalCtx;
+use crate::name_resolution::resolver::{ItemResolution, NameResolver};
+use crate::name_resolution::scope::{NamedItemKind, Scope};
+use crate::parser::{AluminaVisitor, FieldKind, NodeExt, ParseCtx};
+use crate::visitors::ScopedPathVisitor;
 
 pub struct TypeVisitor<'ast, 'src> {
     global_ctx: GlobalCtx,
@@ -126,7 +116,7 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
         let type_node = if let Some(return_type_node) = node.child_by_field(FieldKind::ReturnType) {
             self.visit(return_type_node)?
         } else {
-            self.ast.intern_type(Ty::Builtin(BuiltinType::Void))
+            self.ast.intern_type(Ty::void())
         };
 
         Ok((elements.alloc_on(self.ast), type_node))
@@ -138,7 +128,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
 
     fn visit_primitive_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let builtin = match self.code.node_text(node) {
-            "void" => Ty::Builtin(BuiltinType::Void),
+            "void" => Ty::void(),
             "bool" => Ty::Builtin(BuiltinType::Bool),
             "u8" => Ty::Builtin(BuiltinType::U8),
             "u16" => Ty::Builtin(BuiltinType::U16),
@@ -212,13 +202,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
             .map(|child| self.visit(child))
             .collect::<Result<Vec<_>, _>>()?;
 
-        match &elements[..] {
-            [] => Ok(self.ast.intern_type(Ty::Builtin(BuiltinType::Void))),
-            _ => {
-                let slice = elements.alloc_on(self.ast);
-                Ok(self.ast.intern_type(Ty::Tuple(slice)))
-            }
-        }
+        let slice = elements.alloc_on(self.ast);
+        Ok(self.ast.intern_type(Ty::Tuple(slice)))
     }
 
     fn visit_scoped_type_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {

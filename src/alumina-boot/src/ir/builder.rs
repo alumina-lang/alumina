@@ -1,9 +1,9 @@
-use core::panic;
+use crate::ast::BuiltinType;
+use crate::common::ArenaAllocatable;
+use crate::ir::const_eval::Value;
+use crate::ir::*;
 
-use crate::{ast::BuiltinType, common::ArenaAllocatable, ir::*};
-
-use super::const_eval::Value;
-
+#[derive(Clone)]
 pub struct ExpressionBuilder<'ir> {
     ir: &'ir IrCtx<'ir>,
 }
@@ -168,10 +168,7 @@ impl<'ir> ExpressionBuilder<'ir> {
     pub fn diverges(&self, exprs: impl IntoIterator<Item = ExprP<'ir>>) -> ExprP<'ir> {
         let block = self.block(
             exprs.into_iter().map(Statement::Expression),
-            self.void(
-                self.ir.intern_type(Ty::Builtin(BuiltinType::Void)),
-                ValueType::RValue,
-            ),
+            self.void(self.ir.intern_type(Ty::void()), ValueType::RValue),
         );
 
         // This is a bit of hack, helper function for blocks that diverge. To simplify the caller's code,
@@ -182,11 +179,7 @@ impl<'ir> ExpressionBuilder<'ir> {
     }
 
     pub fn assign(&self, lhs: ExprP<'ir>, rhs: ExprP<'ir>) -> ExprP<'ir> {
-        Expr::rvalue(
-            ExprKind::Assign(lhs, rhs),
-            self.ir.intern_type(Ty::Builtin(BuiltinType::Void)),
-        )
-        .alloc_on(self.ir)
+        Expr::rvalue(ExprKind::Assign(lhs, rhs), self.ir.intern_type(Ty::void())).alloc_on(self.ir)
     }
 
     pub fn goto(&self, label: IrId) -> ExprP<'ir> {
@@ -200,7 +193,7 @@ impl<'ir> ExpressionBuilder<'ir> {
     pub fn assign_op(&self, op: BinOp, lhs: ExprP<'ir>, rhs: ExprP<'ir>) -> ExprP<'ir> {
         Expr::rvalue(
             ExprKind::AssignOp(op, lhs, rhs),
-            self.ir.intern_type(Ty::Builtin(BuiltinType::Void)),
+            self.ir.intern_type(Ty::void()),
         )
         .alloc_on(self.ir)
     }
@@ -360,6 +353,7 @@ impl<'ir> ExpressionBuilder<'ir> {
     }
 }
 
+#[derive(Clone)]
 pub struct TypeBuilder<'ir> {
     ir: &'ir IrCtx<'ir>,
 }
@@ -370,7 +364,7 @@ impl<'ir> TypeBuilder<'ir> {
     }
 
     pub fn void(&self) -> TyP<'ir> {
-        self.ir.intern_type(Ty::Builtin(BuiltinType::Void))
+        self.ir.intern_type(Ty::void())
     }
 
     pub fn unqualified_str(&self, len: usize) -> TyP<'ir> {

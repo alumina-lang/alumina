@@ -6,7 +6,6 @@ use std::rc::Rc;
 use std::result::Result;
 use thiserror::Error;
 use tree_sitter::Node;
-
 macro_rules! ice {
     ($why:literal) => {{
         use crate::common::CodeErrorBuilder;
@@ -38,7 +37,6 @@ pub enum AluminaError {
 // thiserror uses string matching in its proc macro and assumes that "Backtrace" is
 // "std::backtrace::Backtrace", which is unstable.
 use backtrace::Backtrace as NonStdBacktrace;
-
 #[derive(Debug, Error, Clone)]
 pub enum CodeErrorKind {
     // Errors

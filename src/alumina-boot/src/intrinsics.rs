@@ -1,13 +1,12 @@
-use crate::ast::Span;
-use crate::common::{CodeError, CodeErrorBuilder, CodeErrorKind};
+use crate::ast::{BuiltinType, Span};
+use crate::common::{AluminaError, CodeError, CodeErrorBuilder, CodeErrorKind};
 use crate::global_ctx::GlobalCtx;
-use crate::ir::builder::TypeBuilder;
-use crate::ir::const_eval::Value;
+use crate::ir::builder::{ExpressionBuilder, TypeBuilder};
+use crate::ir::const_eval::{
+    Value, {self},
+};
 use crate::ir::layout::LayoutCalculator;
-use crate::ir::{const_eval, ValueType};
-use crate::{ast::BuiltinType, common::AluminaError};
-
-use crate::ir::{builder::ExpressionBuilder, ExprP, IrCtx, Ty, TyP};
+use crate::ir::{ExprP, IrCtx, Ty, TyP, ValueType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IntrinsicKind {
@@ -161,9 +160,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
             span,
         ));
 
-        Ok(self
-            .expressions
-            .void(self.types.builtin(BuiltinType::Void), ValueType::RValue))
+        Ok(self.expressions.void(self.types.void(), ValueType::RValue))
     }
 
     fn compile_note(
@@ -178,9 +175,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
             span,
         ));
 
-        Ok(self
-            .expressions
-            .void(self.types.builtin(BuiltinType::Void), ValueType::RValue))
+        Ok(self.expressions.void(self.types.void(), ValueType::RValue))
     }
 
     fn unreachable(&self) -> Result<ExprP<'ir>, AluminaError> {
@@ -236,10 +231,9 @@ impl<'ir> CompilerIntrinsics<'ir> {
     fn asm(&self, assembly: ExprP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
         let assembly = self.get_const_string(assembly)?;
 
-        Ok(self.expressions.codegen_intrinsic(
-            CodegenIntrinsicKind::Asm(assembly),
-            self.types.builtin(BuiltinType::Void),
-        ))
+        Ok(self
+            .expressions
+            .codegen_intrinsic(CodegenIntrinsicKind::Asm(assembly), self.types.void()))
     }
 
     fn codegen_const(

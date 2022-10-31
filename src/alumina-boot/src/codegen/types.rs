@@ -1,15 +1,11 @@
-use std::{cell::RefCell, fmt::Write};
+use crate::ast::{Attribute, BuiltinType};
+use crate::codegen::{w, CName, CodegenCtx};
+use crate::common::{AluminaError, HashSet};
+use crate::ir::layout::LayoutCalculator;
+use crate::ir::{IRItem, Ty, TyP};
 
-use crate::common::HashSet;
-
-use crate::{
-    ast::{Attribute, BuiltinType},
-    codegen::w,
-    common::AluminaError,
-    ir::{layout::LayoutCalculator, IRItem, Ty, TyP},
-};
-
-use super::{CName, CodegenCtx};
+use std::cell::RefCell;
+use std::fmt::Write;
 
 struct TypeWriterInner<'ir, 'gen> {
     ctx: &'gen CodegenCtx<'ir, 'gen>,
@@ -108,7 +104,6 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                         BuiltinType::USize => "size_t",
                         BuiltinType::ISize => "ptrdiff_t",
                         BuiltinType::Bool => "_Bool",
-                        BuiltinType::Void => "void",
                         BuiltinType::Never => "void",
                         _ => unreachable!(),
                     }),
@@ -121,8 +116,7 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                     self.add_type(inner, true)?;
                     self.ctx.get_type(inner)
                 } else {
-                    self.add_type(&Ty::Builtin(BuiltinType::Void), true)?;
-                    self.ctx.get_type(&Ty::Builtin(BuiltinType::Void))
+                    self.ctx.get_type(&Ty::void())
                 };
 
                 let name = inner.mangle(self.ctx.make_id());

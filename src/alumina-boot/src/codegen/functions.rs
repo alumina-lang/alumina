@@ -1,17 +1,15 @@
-use crate::{
-    ast::{Attribute, BinOp, BuiltinType, UnOp},
-    codegen::CName,
-    common::AluminaError,
-    intrinsics::CodegenIntrinsicKind,
-    ir::{
-        const_eval::Value, Const, Expr, ExprKind, ExprP, Function, IrId, LocalDef, Statement,
-        Static, Ty, ValueType,
-    },
+use crate::ast::{Attribute, BinOp, BuiltinType, UnOp};
+use crate::codegen::types::TypeWriter;
+use crate::codegen::{w, CName, CodegenCtx};
+use crate::common::AluminaError;
+use crate::intrinsics::CodegenIntrinsicKind;
+use crate::ir::const_eval::Value;
+use crate::ir::{
+    Const, Expr, ExprKind, ExprP, Function, IrId, LocalDef, Statement, Static, Ty, ValueType,
 };
 
-use super::{types::TypeWriter, w, CodegenCtx};
-
-use std::{borrow::Cow, fmt::Write};
+use std::borrow::Cow;
+use std::fmt::Write;
 
 pub struct FunctionWriter<'ir, 'gen> {
     ctx: &'gen CodegenCtx<'ir, 'gen>,
@@ -66,7 +64,8 @@ pub fn write_function_signature<'ir, 'gen>(
     }
 
     let return_type = if item.return_type.is_zero_sized() {
-        ctx.get_type(&Ty::Builtin(BuiltinType::Void))
+        let void = Ty::void();
+        ctx.get_type(&void)
     } else {
         ctx.get_type(item.return_type)
     };

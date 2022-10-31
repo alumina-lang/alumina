@@ -1,13 +1,7 @@
-use crate::{
-    ast::Ty,
-    common::{CodeErrorKind, CycleGuardian},
-    name_resolution::{path::Path, scope::NamedItemKind},
-};
-
-use super::{
-    path::PathSegment,
-    scope::{NamedItem, Scope, ScopeInner},
-};
+use crate::ast::Ty;
+use crate::common::{CodeErrorKind, CycleGuardian};
+use crate::name_resolution::path::{Path, PathSegment};
+use crate::name_resolution::scope::{NamedItem, NamedItemKind, Scope, ScopeInner};
 
 pub struct NameResolver<'ast, 'src> {
     cycle_guardian: CycleGuardian<(u32, *const ScopeInner<'ast, 'src>, Path<'ast>)>,

@@ -1,11 +1,10 @@
-use crate::common::HashSet;
+use crate::common::{AluminaError, CodeErrorBuilder, HashSet};
+use crate::intrinsics::CodegenIntrinsicKind;
+use crate::ir::const_eval::Value;
+use crate::ir::ExpressionVisitor;
+use crate::ir::{ExprKind, ExprP, IRItem, IRItemP, Statement, Ty, TyP};
 
-use crate::{
-    common::{AluminaError, CodeErrorBuilder},
-    intrinsics::CodegenIntrinsicKind,
-};
-
-use super::{const_eval::Value, ExprKind, ExprP, IRItem, IRItemP, Statement, Ty, TyP};
+use super::default_visit_expr;
 
 pub struct DeadCodeEliminator<'ir> {
     alive: HashSet<IRItemP<'ir>>,
@@ -45,87 +44,6 @@ impl<'ir> DeadCodeEliminator<'ir> {
 
             Ty::Protocol(_) => unreachable!(),
             Ty::Unqualified(_) => {}
-        }
-
-        Ok(())
-    }
-
-    fn visit_expr(&mut self, expr: ExprP<'ir>) -> Result<(), AluminaError> {
-        self.visit_typ(expr.ty)?;
-
-        match expr.kind {
-            ExprKind::Binary(_, a, b)
-            | ExprKind::AssignOp(_, a, b)
-            | ExprKind::Assign(a, b)
-            | ExprKind::Index(a, b) => {
-                self.visit_expr(a)?;
-                self.visit_expr(b)?;
-            }
-
-            ExprKind::Ref(a)
-            | ExprKind::Deref(a)
-            | ExprKind::Return(a)
-            | ExprKind::Unary(_, a)
-            | ExprKind::Field(a, _)
-            | ExprKind::TupleIndex(a, _)
-            | ExprKind::Cast(a) => {
-                self.visit_expr(a)?;
-            }
-            ExprKind::If(cond, then, els) => {
-                self.visit_expr(cond)?;
-                self.visit_expr(then)?;
-                self.visit_expr(els)?;
-            }
-            ExprKind::Array(e) => {
-                for e in e.iter() {
-                    self.visit_expr(e)?;
-                }
-            }
-            ExprKind::Tuple(e) => {
-                for e in e.iter() {
-                    self.visit_expr(e.value)?;
-                }
-            }
-            ExprKind::Struct(e) => {
-                for e in e.iter() {
-                    self.visit_expr(e.value)?;
-                }
-            }
-            ExprKind::Block(stmts, ret) => {
-                for s in stmts {
-                    match s {
-                        Statement::Expression(e) => self.visit_expr(e)?,
-                        Statement::Label(_) => {}
-                    }
-                }
-                self.visit_expr(ret)?;
-            }
-            ExprKind::Call(callee, args) => {
-                self.visit_expr(callee)?;
-                for arg in args.iter() {
-                    self.visit_expr(arg)?;
-                }
-            }
-
-            ExprKind::Fn(i) | ExprKind::Static(i) | ExprKind::Const(i) => {
-                self.visit_item(i)?;
-            }
-
-            ExprKind::CodegenIntrinsic(CodegenIntrinsicKind::SizeOfLike(_, typ)) => {
-                self.visit_typ(typ)?;
-            }
-            ExprKind::ConstValue(v) => match v {
-                Value::FunctionPointer(i) => {
-                    self.visit_item(i)?;
-                }
-                _ => {}
-            },
-            ExprKind::CodegenIntrinsic(_)
-            | ExprKind::Local(_)
-            | ExprKind::Lit(_)
-            | ExprKind::Goto(_)
-            | ExprKind::Unreachable
-            | ExprKind::Void => {}
         }
 
         Ok(())
@@ -201,5 +119,41 @@ impl<'ir> DeadCodeEliminator<'ir> {
 
     pub fn alive_items(&self) -> &HashSet<IRItemP<'ir>> {
         &self.alive
+    }
+}
+
+impl<'ir> ExpressionVisitor<'ir> for DeadCodeEliminator<'ir> {
+    fn visit_expr(&mut self, expr: ExprP<'ir>) -> Result<(), AluminaError> {
+        self.visit_typ(expr.ty)?;
+        default_visit_expr(self, expr)
+    }
+
+    fn visit_static(&mut self, item: IRItemP<'ir>) -> Result<(), AluminaError> {
+        self.visit_item(item)
+    }
+
+    fn visit_const(&mut self, item: IRItemP<'ir>) -> Result<(), AluminaError> {
+        self.visit_item(item)
+    }
+
+    fn visit_fn(&mut self, item: IRItemP<'ir>) -> Result<(), AluminaError> {
+        self.visit_item(item)
+    }
+
+    fn visit_codegen_intrinsic(
+        &mut self,
+        kind: &CodegenIntrinsicKind<'ir>,
+    ) -> Result<(), AluminaError> {
+        match kind {
+            CodegenIntrinsicKind::SizeOfLike(_, typ) => self.visit_typ(typ),
+            _ => Ok(()),
+        }
+    }
+
+    fn visit_const_value(&mut self, value: &Value<'ir>) -> Result<(), AluminaError> {
+        match value {
+            Value::FunctionPointer(item) => self.visit_item(item),
+            _ => Ok(())
+        }
     }
 }

@@ -1,14 +1,11 @@
 /// Const evaluation at the moment is very rudimentary and is there only to support things like
 /// the fixed-size array lengths and enum values.
 use crate::ast::BinOp;
-use std::{
-    cmp::Ordering,
-    ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub},
-};
-
 use crate::common::HashMap;
+use crate::ir::{BuiltinType, ExprKind, ExprP, IrCtx, IrId, Lit, Statement, Ty, TyP, UnOp};
+use std::cmp::Ordering;
+use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub};
 
-use super::{BuiltinType, ExprKind, ExprP, IrCtx, IrId, Lit, Statement, Ty, TyP, UnOp};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

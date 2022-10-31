@@ -1,17 +1,11 @@
-use crate::common::HashMap;
-use crate::common::HashSet;
-
-use crate::{
-    ast::{BuiltinType, UnOp},
-    common::ArenaAllocatable,
-    intrinsics::CodegenIntrinsicKind,
-    ir::ValueType,
-};
-
-use super::{
-    builder::{ExpressionBuilder, TypeBuilder},
-    const_eval::Value,
+use crate::ast::{BuiltinType, UnOp};
+use crate::common::{ArenaAllocatable, HashMap, HashSet};
+use crate::intrinsics::CodegenIntrinsicKind;
+use crate::ir::builder::{ExpressionBuilder, TypeBuilder};
+use crate::ir::const_eval::Value;
+use crate::ir::{
     Expr, ExprKind, ExprP, FuncBody, IrCtx, IrId, Lit, LocalDef, Statement, Ty, UnqualifiedKind,
+    ValueType,
 };
 
 // The purpose of ZST elider is to take all reads and writes of zero-sized types and
@@ -249,7 +243,7 @@ impl<'ir> ZstElider<'ir> {
                         [Statement::Expression(builder.if_then(
                             cond,
                             then,
-                            builder.void(types.builtin(BuiltinType::Void), ValueType::RValue),
+                            builder.void(types.void(), ValueType::RValue),
                         ))],
                         els,
                     ),
@@ -257,7 +251,7 @@ impl<'ir> ZstElider<'ir> {
                         [Statement::Expression(builder.if_then(
                             builder.unary(UnOp::Not, cond, types.builtin(BuiltinType::Bool)),
                             els,
-                            builder.void(types.builtin(BuiltinType::Void), ValueType::RValue),
+                            builder.void(types.void(), ValueType::RValue),
                         ))],
                         then,
                     ),

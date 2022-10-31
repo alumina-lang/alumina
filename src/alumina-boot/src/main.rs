@@ -14,18 +14,16 @@ mod parser;
 mod utils;
 mod visitors;
 
+use crate::common::{AluminaError, CodeError};
+use crate::compiler::{Compiler, SourceFile};
+use crate::global_ctx::{GlobalCtx, OutputType};
+
 use clap::builder::ValueParser;
 use clap::Parser;
-use common::AluminaError;
-use common::CodeError;
-use compiler::Compiler;
-use compiler::SourceFile;
-
-use global_ctx::GlobalCtx;
-use global_ctx::OutputType;
 
 use std::path::PathBuf;
 use std::time::Instant;
+
 use walkdir::WalkDir;
 
 fn parse_module(s: &str) -> Result<(Option<String>, PathBuf), std::convert::Infallible> {
