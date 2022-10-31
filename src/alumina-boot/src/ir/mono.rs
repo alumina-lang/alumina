@@ -1611,7 +1611,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let item = self.mono_ctx.ir.make_symbol();
         self.return_type = Some(self.types.builtin(BuiltinType::Void));
 
-        let (statements, local_defs): (Vec<_>, Vec<_>) = self
+        let mut statements = Vec::new();
+        let mut local_defs = Vec::new();
+
+        for (v, s) in self
             .mono_ctx
             .static_inits
             .iter()
@@ -1619,18 +1622,19 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 Ok(ir::IRItem::Static(s)) if s.init.is_some() && alive.contains(v) => Some((v, s)),
                 _ => None,
             })
-            .map(|(v, s)| {
-                (
-                    ir::Statement::Expression(
-                        self.exprs
-                            .assign(self.exprs.static_var(v, s.typ), s.init.unwrap()),
-                    ),
-                    self.mono_ctx.static_local_defs.get(v).unwrap().clone(),
-                )
-            })
-            .unzip();
-
-        let local_defs = local_defs.into_iter().flatten().collect::<Vec<_>>();
+        {
+            local_defs.extend(self.mono_ctx.static_local_defs.get(v).unwrap());
+            let init = s.init.unwrap();
+            if init.diverges() {
+                statements.push(ir::Statement::Expression(init));
+                break;
+            } else {
+                statements.push(ir::Statement::Expression(
+                    self.exprs
+                        .assign(self.exprs.static_var(v, s.typ), s.init.unwrap()),
+                ));
+            }
+        }
 
         let body = self.exprs.block(
             statements,
