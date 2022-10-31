@@ -72,6 +72,24 @@ pub struct CompilerIntrinsics<'ir> {
     types: TypeBuilder<'ir>,
 }
 
+/// This is a bit of a hack, ideally a new lang method would be used to extract this,
+/// but I don't particularly want to plum lang methods into this module right now.
+/// String slices are the only thing that can produce Value::Str(...), so this is unlikely
+/// to lead to surprises.
+fn extract_constant_string_from_slice<'ir>(value: &Value<'ir>) -> Option<&'ir [u8]> {
+    match value {
+        Value::Struct(fields) => {
+            for (_id, value) in fields.iter() {
+                if let Value::Str(r) = value {
+                    return Some(r);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
 impl<'ir> CompilerIntrinsics<'ir> {
     pub fn new(global_ctx: GlobalCtx, ir: &'ir IrCtx<'ir>) -> Self {
         Self {
@@ -84,11 +102,16 @@ impl<'ir> CompilerIntrinsics<'ir> {
 
     fn get_const_string(&self, expr: ExprP<'ir>) -> Result<&'ir str, AluminaError> {
         match const_eval::ConstEvaluator::new(self.ir).const_eval(expr) {
-            Ok(Value::Struct([(_, Value::Str(s)), (_, _)])) => Ok(std::str::from_utf8(s).unwrap()),
-            Ok(_) => Err(CodeErrorKind::TypeMismatch(
-                "string".to_string(),
-                format!("{:?}", expr.ty),
-            ))
+            Ok(value) => {
+                if let Some(r) = extract_constant_string_from_slice(&value) {
+                    Ok(std::str::from_utf8(r).unwrap())
+                } else {
+                    Err(CodeErrorKind::TypeMismatch(
+                        "constant string".to_string(),
+                        format!("{:?}", expr.ty),
+                    ))
+                }
+            }
             .with_no_span(),
             Err(e) => Err(CodeErrorKind::CannotConstEvaluate(e)).with_no_span(),
         }
@@ -101,7 +124,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
 
         Ok(self
             .expressions
-            .const_value(Value::USize(align), self.types.builtin(BuiltinType::USize)))
+            .literal(Value::USize(align), self.types.builtin(BuiltinType::USize)))
     }
 
     fn size_of(&self, ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
@@ -111,7 +134,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
 
         Ok(self
             .expressions
-            .const_value(Value::USize(size), self.types.builtin(BuiltinType::USize)))
+            .literal(Value::USize(size), self.types.builtin(BuiltinType::USize)))
     }
 
     fn type_id(&self, ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
@@ -125,14 +148,14 @@ impl<'ir> CompilerIntrinsics<'ir> {
 
         Ok(self
             .expressions
-            .const_value(Value::USize(id), self.types.builtin(BuiltinType::USize)))
+            .literal(Value::USize(id), self.types.builtin(BuiltinType::USize)))
     }
 
     fn array_length_of(&self, ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
         if let Ty::Array(_, len) = ty {
             return Ok(self
                 .expressions
-                .const_value(Value::USize(*len), self.types.builtin(BuiltinType::USize)));
+                .literal(Value::USize(*len), self.types.builtin(BuiltinType::USize)));
         }
 
         Err(CodeErrorKind::TypeMismatch(

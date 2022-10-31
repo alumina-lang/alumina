@@ -122,7 +122,6 @@ impl Debug for IrId {
     }
 }
 
-
 #[derive(PartialEq, Eq, Clone, Hash, Copy)]
 pub enum Ty<'ir> {
     NamedType(IRItemP<'ir>),
@@ -559,7 +558,7 @@ pub enum ExprKind<'ir> {
     Local(IrId),
     Static(IRItemP<'ir>),
     Const(IRItemP<'ir>),
-    ConstValue(const_eval::Value<'ir>),
+    Literal(const_eval::Value<'ir>),
     Field(ExprP<'ir>, IrId),
     TupleIndex(ExprP<'ir>, usize),
     If(ExprP<'ir>, ExprP<'ir>, ExprP<'ir>),
@@ -652,7 +651,7 @@ impl<'ir> Expr<'ir> {
             ExprKind::Local(_) => true,
             ExprKind::Static(_) => true,
             ExprKind::Const(_) => true,
-            ExprKind::ConstValue(_) => true,
+            ExprKind::Literal(_) => true,
             ExprKind::Void => true,
 
             ExprKind::CodegenIntrinsic(_) => false,
@@ -674,7 +673,7 @@ pub trait ExpressionVisitor<'ir>: Sized {
         }
     }
 
-    fn visit_label(&mut self, label: IrId) -> Result<(), AluminaError> {
+    fn visit_label(&mut self, _label: IrId) -> Result<(), AluminaError> {
         Ok(())
     }
 
@@ -691,7 +690,7 @@ pub trait ExpressionVisitor<'ir>: Sized {
 
     fn visit_binary(
         &mut self,
-        op: BinOp,
+        _op: BinOp,
         a: ExprP<'ir>,
         b: ExprP<'ir>,
     ) -> Result<(), AluminaError> {
@@ -701,7 +700,7 @@ pub trait ExpressionVisitor<'ir>: Sized {
 
     fn visit_assign_op(
         &mut self,
-        op: BinOp,
+        _op: BinOp,
         lhs: ExprP<'ir>,
         rhs: ExprP<'ir>,
     ) -> Result<(), AluminaError> {
@@ -721,7 +720,7 @@ pub trait ExpressionVisitor<'ir>: Sized {
         Ok(())
     }
 
-    fn visit_fn(&mut self, item: IRItemP<'ir>) -> Result<(), AluminaError> {
+    fn visit_fn(&mut self, _item: IRItemP<'ir>) -> Result<(), AluminaError> {
         Ok(())
     }
 
@@ -737,11 +736,11 @@ pub trait ExpressionVisitor<'ir>: Sized {
         self.visit_expr(expr)
     }
 
-    fn visit_goto(&mut self, label: IrId) -> Result<(), AluminaError> {
+    fn visit_goto(&mut self, _label: IrId) -> Result<(), AluminaError> {
         Ok(())
     }
 
-    fn visit_unary(&mut self, op: UnOp, inner: ExprP<'ir>) -> Result<(), AluminaError> {
+    fn visit_unary(&mut self, _op: UnOp, inner: ExprP<'ir>) -> Result<(), AluminaError> {
         self.visit_expr(inner)
     }
 
@@ -755,27 +754,27 @@ pub trait ExpressionVisitor<'ir>: Sized {
         self.visit_expr(rhs)
     }
 
-    fn visit_local(&mut self, id: IrId) -> Result<(), AluminaError> {
+    fn visit_local(&mut self, _id: IrId) -> Result<(), AluminaError> {
         Ok(())
     }
 
-    fn visit_static(&mut self, item: IRItemP<'ir>) -> Result<(), AluminaError> {
+    fn visit_static(&mut self, _item: IRItemP<'ir>) -> Result<(), AluminaError> {
         Ok(())
     }
 
-    fn visit_const(&mut self, item: IRItemP<'ir>) -> Result<(), AluminaError> {
+    fn visit_const(&mut self, _item: IRItemP<'ir>) -> Result<(), AluminaError> {
         Ok(())
     }
 
-    fn visit_const_value(&mut self, value: &const_eval::Value<'ir>) -> Result<(), AluminaError> {
+    fn visit_literal(&mut self, _value: &const_eval::Value<'ir>) -> Result<(), AluminaError> {
         Ok(())
     }
 
-    fn visit_field(&mut self, expr: ExprP<'ir>, id: IrId) -> Result<(), AluminaError> {
+    fn visit_field(&mut self, expr: ExprP<'ir>, _id: IrId) -> Result<(), AluminaError> {
         self.visit_expr(expr)
     }
 
-    fn visit_tuple_index(&mut self, expr: ExprP<'ir>, index: usize) -> Result<(), AluminaError> {
+    fn visit_tuple_index(&mut self, expr: ExprP<'ir>, _index: usize) -> Result<(), AluminaError> {
         self.visit_expr(expr)
     }
 
@@ -796,7 +795,7 @@ pub trait ExpressionVisitor<'ir>: Sized {
 
     fn visit_codegen_intrinsic(
         &mut self,
-        kind: &CodegenIntrinsicKind<'ir>,
+        _kind: &CodegenIntrinsicKind<'ir>,
     ) -> Result<(), AluminaError> {
         Ok(())
     }
@@ -855,12 +854,12 @@ pub fn default_visit_expr<'ir, V: ExpressionVisitor<'ir>>(
         ExprKind::Local(id) => visitor.visit_local(*id),
         ExprKind::Static(item) => visitor.visit_static(item),
         ExprKind::Const(item) => visitor.visit_const(item),
-        ExprKind::ConstValue(value) => visitor.visit_const_value(value),
+        ExprKind::Literal(value) => visitor.visit_literal(value),
         ExprKind::Field(expr, id) => visitor.visit_field(expr, *id),
         ExprKind::TupleIndex(expr, index) => visitor.visit_tuple_index(expr, *index),
         ExprKind::If(cond, then, els) => visitor.visit_if(cond, then, els),
         ExprKind::Cast(expr) => visitor.visit_cast(expr),
-        ExprKind::CodegenIntrinsic(kind) => visitor.visit_codegen_intrinsic(&kind),
+        ExprKind::CodegenIntrinsic(kind) => visitor.visit_codegen_intrinsic(kind),
         ExprKind::Array(exprs) => visitor.visit_array(exprs),
         ExprKind::Tuple(exprs) => visitor.visit_tuple(exprs),
         ExprKind::Struct(exprs) => visitor.visit_struct(exprs),

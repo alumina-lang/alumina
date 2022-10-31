@@ -553,7 +553,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             "isize" => BuiltinType::ISize,
         );
 
-        let sign = if remainder.starts_with("-") {
+        let sign = if remainder.starts_with('-') {
             remainder = &remainder[1..];
             true
         } else {
@@ -574,7 +574,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             .map_err(|_| CodeErrorKind::InvalidLiteral)
             .with_span_from(&self.scope, node)?;
 
-        Ok(ExprKind::Lit(Lit::Int(sign, value, kind)).alloc_with_span_from(self.ast, &self.scope, node))
+        Ok(
+            ExprKind::Lit(Lit::Int(sign, value, kind)).alloc_with_span_from(
+                self.ast,
+                &self.scope,
+                node,
+            ),
+        )
     }
 
     fn visit_float_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -610,11 +616,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         };
 
         Ok(
-            ExprKind::Lit(Lit::Int(false, val as u128, Some(BuiltinType::U8))).alloc_with_span_from(
-                self.ast,
-                &self.scope,
-                node,
-            ),
+            ExprKind::Lit(Lit::Int(false, val as u128, Some(BuiltinType::U8)))
+                .alloc_with_span_from(self.ast, &self.scope, node),
         )
     }
 

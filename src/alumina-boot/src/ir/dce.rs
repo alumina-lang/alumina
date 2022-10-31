@@ -149,10 +149,10 @@ impl<'ir> ExpressionVisitor<'ir> for DeadCodeEliminator<'ir> {
         }
     }
 
-    fn visit_const_value(&mut self, value: &Value<'ir>) -> Result<(), AluminaError> {
+    fn visit_literal(&mut self, value: &Value<'ir>) -> Result<(), AluminaError> {
         match value {
             Value::FunctionPointer(item) => self.visit_item(item),
-            _ => Ok(())
+            _ => Ok(()),
         }
     }
 }

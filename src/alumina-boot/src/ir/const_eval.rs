@@ -583,7 +583,7 @@ impl<'ir> ConstEvaluator<'ir> {
                     _ => Err(ConstEvalError::CompilerBug),
                 }
             }
-            ExprKind::ConstValue(value) => Ok(*value),
+            ExprKind::Literal(value) => Ok(*value),
             ExprKind::Cast(inner) => self.cast(inner, expr.ty),
             ExprKind::If(cond, then, els) => {
                 let cond = self.const_eval(cond)?;

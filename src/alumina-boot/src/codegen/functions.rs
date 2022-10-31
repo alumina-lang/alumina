@@ -365,7 +365,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                     w!(self.fn_bodies, "}})");
                 }
             }
-            ExprKind::ConstValue(v) => match v {
+            ExprKind::Literal(v) => match v {
                 Value::Str(val) => {
                     self.write_string_literal(val);
                 }

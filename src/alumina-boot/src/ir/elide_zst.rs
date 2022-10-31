@@ -3,10 +3,7 @@ use crate::common::{ArenaAllocatable, HashMap, HashSet};
 use crate::intrinsics::CodegenIntrinsicKind;
 use crate::ir::builder::{ExpressionBuilder, TypeBuilder};
 use crate::ir::const_eval::Value;
-use crate::ir::{
-    Expr, ExprKind, ExprP, FuncBody, IrCtx, IrId, LocalDef, Statement, Ty,
-    ValueType,
-};
+use crate::ir::{Expr, ExprKind, ExprP, FuncBody, IrCtx, IrId, LocalDef, Statement, Ty, ValueType};
 
 // The purpose of ZST elider is to take all reads and writes of zero-sized types and
 // replace them with ExprKind::Void or remove them altogether if the value is not used
@@ -202,10 +199,7 @@ impl<'ir> ZstElider<'ir> {
                     // Special case for mutiple pointers to void
                     builder.null(expr.ty)
                 } else if inner.ty.is_zero_sized() {
-                    builder.block(
-                        [Statement::Expression(inner)],
-                        builder.null(expr.ty),
-                    )
+                    builder.block([Statement::Expression(inner)], builder.null(expr.ty))
                 } else {
                     builder.r#ref(inner)
                 }
@@ -286,7 +280,7 @@ impl<'ir> ZstElider<'ir> {
             }
             ExprKind::Field(lhs, id) => builder.field(self.elide_zst_expr(lhs), id, expr.ty),
             ExprKind::Fn(_) => expr,
-            ExprKind::ConstValue(v) => match v {
+            ExprKind::Literal(v) => match v {
                 Value::Array(elems) => {
                     let element_type = match expr.ty {
                         Ty::Array(ty, _) => ty,
@@ -294,9 +288,9 @@ impl<'ir> ZstElider<'ir> {
                     };
 
                     builder.array(
-                        elems.iter().map(|val| {
-                            self.elide_zst_expr(builder.const_value(*val, element_type))
-                        }),
+                        elems
+                            .iter()
+                            .map(|val| self.elide_zst_expr(builder.literal(*val, element_type))),
                         expr.ty,
                     )
                 }
@@ -309,7 +303,7 @@ impl<'ir> ZstElider<'ir> {
                     builder.tuple(
                         elems.iter().zip(element_types.iter()).enumerate().map(
                             |(idx, (val, ty))| {
-                                (idx, self.elide_zst_expr(builder.const_value(*val, *ty)))
+                                (idx, self.elide_zst_expr(builder.literal(*val, *ty)))
                             },
                         ),
                         expr.ty,
@@ -331,7 +325,7 @@ impl<'ir> ZstElider<'ir> {
                         fields.iter().map(|(id, val)| {
                             (
                                 *id,
-                                self.elide_zst_expr(builder.const_value(*val, element_types[id])),
+                                self.elide_zst_expr(builder.literal(*val, element_types[id])),
                             )
                         }),
                         expr.ty,

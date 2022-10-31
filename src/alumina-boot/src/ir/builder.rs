@@ -230,12 +230,12 @@ impl<'ir> ExpressionBuilder<'ir> {
     }
 
     pub fn null(&self, typ: TyP<'ir>) -> ExprP<'ir> {
-        self.const_value(Value::USize(0), typ)
+        self.literal(Value::USize(0), typ)
     }
 
-    pub fn const_value(&self, val: Value<'ir>, typ: TyP<'ir>) -> ExprP<'ir> {
+    pub fn literal(&self, val: Value<'ir>, typ: TyP<'ir>) -> ExprP<'ir> {
         let expr = Expr {
-            kind: ExprKind::ConstValue(val),
+            kind: ExprKind::Literal(val),
             value_type: ValueType::RValue,
             is_const: true,
             ty: typ,
@@ -333,7 +333,7 @@ impl<'ir> ExpressionBuilder<'ir> {
     }
 
     pub fn const_index(&self, inner: ExprP<'ir>, index: usize) -> ExprP<'ir> {
-        let index = self.const_value(
+        let index = self.literal(
             Value::USize(index),
             self.ir.intern_type(Ty::Builtin(BuiltinType::USize)),
         );

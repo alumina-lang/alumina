@@ -95,8 +95,7 @@ impl Compiler {
             scope.set_code(ctx);
 
             if self.global_ctx.should_generate_main_glue() {
-                let mut visitor =
-                    FirstPassVisitor::with_main(self.global_ctx.clone(), &ast, scope);
+                let mut visitor = FirstPassVisitor::with_main(self.global_ctx.clone(), &ast, scope);
                 visitor.visit(ctx.root_node())?;
 
                 if let Some(candidate) = visitor.main_candidate() {
@@ -105,8 +104,7 @@ impl Compiler {
                     }
                 }
             } else {
-                let mut visitor =
-                    FirstPassVisitor::new(self.global_ctx.clone(), &ast, scope);
+                let mut visitor = FirstPassVisitor::new(self.global_ctx.clone(), &ast, scope);
                 visitor.visit(ctx.root_node())?;
             }
         }

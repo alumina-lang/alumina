@@ -108,13 +108,11 @@ impl<'ir> IrInliner<'ir> {
             ExprKind::Fn(_) => expr,
             ExprKind::Static(_) => expr,
             ExprKind::Const(_) => expr,
-            ExprKind::ConstValue(_) => expr,
+            ExprKind::Literal(_) => expr,
             ExprKind::Unreachable => expr,
             ExprKind::Void => expr,
             ExprKind::CodegenIntrinsic(_) => expr,
-            ExprKind::Local(id) => {
-                self.replacements.get(&id).copied().unwrap_or(expr)
-            }
+            ExprKind::Local(id) => self.replacements.get(&id).copied().unwrap_or(expr),
             ExprKind::Ref(e) => builder.r#ref(self.visit_expr(e)?),
             ExprKind::Deref(e) => builder.deref(self.visit_expr(e)?),
             ExprKind::Return(_) => return Err(CodeErrorKind::IrInlineEarlyReturn).with_no_span(),
