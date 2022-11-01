@@ -72,14 +72,7 @@ impl<'ast> MacroMaker<'ast> {
         let mut parameters = Vec::new();
         let mut has_et_cetera = false;
 
-        let code = scope.code().unwrap();
-        let span = Span {
-            start: node.start_byte(),
-            end: node.end_byte(),
-            line: node.start_position().row,
-            column: node.start_position().column,
-            file: code.file_id(),
-        };
+        let span = Span::from_node(scope.file_id(), node);
 
         if attributes.iter().any(|a| matches!(a, Attribute::Builtin)) {
             let kind = match name.unwrap() {
@@ -113,13 +106,7 @@ impl<'ast> MacroMaker<'ast> {
                         has_et_cetera = true;
                     }
 
-                    let span = Span {
-                        start: node.start_byte(),
-                        end: node.end_byte(),
-                        line: node.start_position().row,
-                        column: node.start_position().column,
-                        file: code.file_id(),
-                    };
+                    let span = Span::from_node(scope.file_id(), node);
 
                     parameters.push(MacroParameter {
                         id,

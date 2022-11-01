@@ -38,7 +38,11 @@ impl Deque<T> {
      /// Create a deque that can hold up to `capacity` elements without reallocating.
     fn with_capacity(capacity: usize) -> Deque<T> {
         Deque::<T> {
-            _data: mem::slice::alloc::<T>(_cap_to_size(capacity)),
+            _data: if capacity != 0 {
+                mem::slice::alloc::<T>(_cap_to_size(capacity))
+            } else {
+                mem::slice::empty()
+            },
             _tail: 0,
             _head: 0,
         }
@@ -78,7 +82,7 @@ impl Deque<T> {
     #[cold]
     #[inline(never)]
     fn _resize(self: &mut Deque<T>, new_size: usize) {
-        debug_assert!((self.len() == 0 && new_size == 0) || (new_size > self.len()));
+        debug_assert!(new_size > self.len());
 
         let len = self.len();
         let new_data = mem::slice::alloc::<T>(new_size);
@@ -93,7 +97,7 @@ impl Deque<T> {
                 .copy_to_nonoverlapping(&new_data[self._data.len() - self._head]);
         }
 
-        self._data.free();
+        self.free();
         self._data = new_data;
         self._head = 0;
         self._tail = len;
@@ -316,14 +320,16 @@ impl Deque<T> {
     /// @ mem::Movable::move
     fn move(self: &mut Deque<T>) -> Deque<T> {
         let ret = *self;
-        self.clear();
+        self.clear(); // this just resets the head and tail
         self._data = mem::slice::empty();
         ret
     }
 
     /// @ mem::Freeable::free
     fn free(self: &mut Deque<T>) {
-        self._data.free();
+        if !self._data.is_empty() {
+            self._data.free();
+        }
     }
 
     /// @ mem::Clonable::clone

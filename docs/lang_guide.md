@@ -15,6 +15,7 @@ With regards to syntax, the language is very similar to Rust and in terms of sem
   - [Generic statics](#generic-statics)
   - [Thread-local statics](#thread-local-statics)
 - [Types](#types)
+  - [Fixed-size arrays](#fixed-size-arrays)
   - [Type aliases](#type-aliases)
   - [Structs and unions](#structs-and-unions)
   - [Enums](#enums)
@@ -23,7 +24,7 @@ With regards to syntax, the language is very similar to Rust and in terms of sem
   - [Slices](#slices)
   - [What about strings?](#what-about-strings)
   - [Zero-sized types](#zero-sized-types)
-    - [Layout implication of zero-sized types](#layout-implication-of-zero-sized-types)
+    - [Layout implications of zero-sized types](#layout-implications-of-zero-sized-types)
 - [Macros](#macros)
 - [Statements and expressions](#statements-and-expressions)
   - [Variables](#variables)
@@ -468,6 +469,26 @@ There is also a special syntax for two kinds of types that are not technically b
 [Protocols](#protocols-and-mixins) themselves are also technically types (can be used as type arguments), but they are not valid types for values.
 
 
+## Fixed-size arrays
+
+```rust
+let a: [i32; 3] = [1, 2, 3];
+let b: [i32; 0] = [];
+let b: [(); 2] = [(), ()];
+```
+
+Unlike in C, fixed-size arrays do not decay to pointers and can be passed by value like any other type. Depending on ABI, this can also mean that small arrays can be passed in registers, so do not hesitate to use them where it makes sense.
+
+```rust
+fn print_ipv4_addr(addr: [u8; 4]) {
+    // ...
+}
+
+fn print_ipv4_addr(a: u8, b: u8, c: u8, d: u8) {
+    // ...
+}
+```
+
 ## Type aliases
 
 ```rust
@@ -697,11 +718,15 @@ fn invoke<F: NamedFunction + Fn()>() {
 invoke::<hello>();
 ```
 
-### Layout implication of zero-sized types
+### Layout implications of zero-sized types
 
 When zero-sized types are used in aggregates, such as structs, unions and tuples, their layout is usually equivalent to as if the ZST field was not present at all. However, if a ZST has alignment greater than 1, it can affect the layout of the aggregate.
 
-Most ZSTs have alignment 1, the exception are fixed-size arrays of length 0; they inherit the alignment of their element type (also custom ZSTs with `#[align(...)]` attribute).
+Common ZSTs such as `()` and function types all have alignment of 1. The following are the exception
+
+- `[T; 0]` has the same alignment as `T` (e.g. `[u8; 0]` has alignment of 1, but `[u64; 0]` has alignment of 8)
+- Any struct or union with a `#[align(X)]` attribute where X > 1 (e.g `#[align(8)] struct Empty {}`)
+- Any zero-sized composite (struct, union, array, tuple) that contains some of the above
 
 ```rust
 use std::mem::{size_of, align_of};

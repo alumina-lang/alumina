@@ -119,13 +119,7 @@ impl<'ast> AstItemMaker<'ast> {
                             if !names.insert(name) {
                                 self.global_ctx.diag().add_warning(CodeError::from_kind(
                                     CodeErrorKind::DuplicateNameShadow(name.to_string()),
-                                    Some(Span {
-                                        start: node.start_byte(),
-                                        end: node.end_byte(),
-                                        line: node.start_position().row,
-                                        column: node.start_position().column,
-                                        file: impl_scope.code().unwrap().file_id(),
-                                    }),
+                                    Some(Span::from_node(impl_scope.file_id(), *node)),
                                 ));
                             }
                         }
@@ -149,13 +143,7 @@ impl<'ast> AstItemMaker<'ast> {
                         let protocol_type =
                             visitor.visit(node.child_by_field(FieldKind::Protocol).unwrap())?;
 
-                        let span = Span {
-                            start: node.start_byte(),
-                            end: node.end_byte(),
-                            line: node.start_position().row,
-                            column: node.start_position().column,
-                            file: scope.code().unwrap().file_id(),
-                        };
+                        let span = Span::from_node(scope.file_id(), *node);
 
                         mixins.push(Mixin {
                             placeholders,
@@ -187,7 +175,6 @@ impl<'ast> AstItemMaker<'ast> {
         attributes: &'ast [Attribute],
     ) -> Result<(), AluminaError> {
         let mut fields: Vec<Field<'ast>> = Vec::new();
-
         let code = scope.code().unwrap();
 
         for (name, item) in scope.inner().all_items() {
@@ -202,13 +189,7 @@ impl<'ast> AstItemMaker<'ast> {
                     let field_type =
                         visitor.visit(node.child_by_field(FieldKind::Type).unwrap())?;
 
-                    let span = Span {
-                        start: node.start_byte(),
-                        end: node.end_byte(),
-                        line: node.start_position().row,
-                        column: node.start_position().column,
-                        file: code.file_id(),
-                    };
+                    let span = Span::from_node(code.file_id(), node);
 
                     fields.push(Field {
                         id: self.ast.make_id(),
@@ -234,13 +215,7 @@ impl<'ast> AstItemMaker<'ast> {
 
         let (associated_fns, mixins) = self.resolve_associated_items(impl_scopes)?;
 
-        let span = Span {
-            start: node.start_byte(),
-            end: node.end_byte(),
-            line: node.start_position().row,
-            column: node.start_position().column,
-            file: code.file_id(),
-        };
+        let span = Span::from_node(code.file_id(), node);
 
         let result = Item::StructLike(StructLike {
             name,
@@ -272,13 +247,7 @@ impl<'ast> AstItemMaker<'ast> {
         let code = scope.code().unwrap();
         let placeholders = self.get_placeholders(&scope)?;
 
-        let span = Span {
-            start: node.start_byte(),
-            end: node.end_byte(),
-            line: node.start_position().row,
-            column: node.start_position().column,
-            file: code.file_id(),
-        };
+        let span = Span::from_node(code.file_id(), node);
 
         let (associated_fns, _) = self.resolve_associated_items(&[scope])?;
 
@@ -331,13 +300,7 @@ impl<'ast> AstItemMaker<'ast> {
                         })
                         .transpose()?;
 
-                    let span = Span {
-                        start: node.start_byte(),
-                        end: node.end_byte(),
-                        line: node.start_position().row,
-                        column: node.start_position().column,
-                        file: scope.code().unwrap().file_id(),
-                    };
+                    let span = Span::from_node(scope.file_id(), node);
 
                     members.push(EnumMember {
                         name: name.unwrap(),
@@ -352,13 +315,7 @@ impl<'ast> AstItemMaker<'ast> {
 
         let (associated_fns, mixins) = self.resolve_associated_items(impl_scopes)?;
 
-        let span = Span {
-            start: node.start_byte(),
-            end: node.end_byte(),
-            line: node.start_position().row,
-            column: node.start_position().column,
-            file: scope.code().unwrap().file_id(),
-        };
+        let span = Span::from_node(scope.file_id(), node);
 
         let result = Item::Enum(Enum {
             name,
@@ -386,14 +343,7 @@ impl<'ast> AstItemMaker<'ast> {
         attributes: &'ast [Attribute],
     ) -> Result<(), AluminaError> {
         let placeholders = self.get_placeholders(&scope)?;
-
-        let span = Span {
-            start: node.start_byte(),
-            end: node.end_byte(),
-            line: node.start_position().row,
-            column: node.start_position().column,
-            file: scope.code().unwrap().file_id(),
-        };
+        let span = Span::from_node(scope.file_id(), node);
 
         let target = node
             .child_by_field(FieldKind::Inner)
@@ -426,7 +376,7 @@ impl<'ast> AstItemMaker<'ast> {
 
     fn check_self_confusion(&self, typ: TyP<'ast>, span: Option<Span>) {
         match typ {
-            Ty::NamedType(item) | Ty::Pointer(Ty::NamedType(item), _) => {
+            Ty::Item(item) | Ty::Pointer(Ty::Item(item), _) => {
                 if let Some(LangItemKind::DynSelf) = self.ast.lang_item_kind(item) {
                     self.global_ctx.diag().add_warning(CodeError {
                         kind: CodeErrorKind::SelfConfusion,
@@ -465,14 +415,8 @@ impl<'ast> AstItemMaker<'ast> {
         let abi = node
             .child_by_field(FieldKind::Abi)
             .map(|n| code.node_text(n));
-        let span = Span {
-            start: node.start_byte(),
-            end: node.end_byte(),
-            line: node.start_position().row,
-            column: node.start_position().column,
-            file: scope.code().unwrap().file_id(),
-        };
 
+        let span = Span::from_node(scope.file_id(), node);
         let placeholders = self.get_placeholders(&scope)?;
 
         for (_name, item) in scope.inner().all_items() {
@@ -486,14 +430,7 @@ impl<'ast> AstItemMaker<'ast> {
                     )
                     .visit(node.child_by_field(FieldKind::Type).unwrap())?;
 
-                    let span = Span {
-                        start: node.start_byte(),
-                        end: node.end_byte(),
-                        line: node.start_position().row,
-                        column: node.start_position().column,
-                        file: code.file_id(),
-                    };
-
+                    let span = Span::from_node(scope.file_id(), node);
                     self.check_self_confusion(typ, Some(span));
 
                     parameters.push(Parameter {
@@ -637,13 +574,7 @@ impl<'ast> AstItemMaker<'ast> {
             return Err(CodeErrorKind::ExternStaticMustHaveType).with_span_from(&scope, node);
         }
 
-        let span = Span {
-            start: node.start_byte(),
-            end: node.end_byte(),
-            line: node.start_position().row,
-            column: node.start_position().column,
-            file: scope.code().unwrap().file_id(),
-        };
+        let span = Span::from_node(scope.file_id(), node);
 
         let result = Item::StaticOrConst(StaticOrConst {
             name,

@@ -20,7 +20,6 @@ impl<'ir> DeadCodeEliminator<'ir> {
     fn visit_typ(&mut self, typ: TyP<'ir>) -> Result<(), AluminaError> {
         match typ {
             Ty::Builtin(_) => {}
-
             Ty::Pointer(t, _) => {
                 self.visit_typ(t)?;
             }
@@ -38,11 +37,9 @@ impl<'ir> DeadCodeEliminator<'ir> {
                 }
                 self.visit_typ(ret)?;
             }
-            Ty::NamedType(i) | Ty::NamedFunction(i) | Ty::Closure(i) => {
+            Ty::Item(i) => {
                 self.visit_item(i)?;
             }
-
-            Ty::Protocol(_) => unreachable!(),
         }
 
         Ok(())
@@ -94,7 +91,7 @@ impl<'ir> DeadCodeEliminator<'ir> {
                 s.init.map(|v| self.visit_expr(v)).transpose()?;
             }
             IRItem::Closure(c) => {
-                for f in c.fields {
+                for f in c.data.fields {
                     self.visit_typ(f.ty)?;
                 }
                 c.function.get().map(|i| self.visit_item(i)).transpose()?;

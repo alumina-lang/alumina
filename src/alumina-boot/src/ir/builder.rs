@@ -205,9 +205,8 @@ impl<'ir> ExpressionBuilder<'ir> {
     }
 
     pub fn function(&self, item: IRItemP<'ir>) -> ExprP<'ir> {
-        let ty = Ty::NamedFunction(item);
-
-        Expr::const_lvalue(ExprKind::Fn(item), self.ir.intern_type(ty)).alloc_on(self.ir)
+        Expr::const_lvalue(ExprKind::Fn(item), self.ir.intern_type(Ty::Item(item)))
+            .alloc_on(self.ir)
     }
 
     pub fn unreachable(&self) -> ExprP<'ir> {
@@ -229,8 +228,12 @@ impl<'ir> ExpressionBuilder<'ir> {
         expr.alloc_on(self.ir)
     }
 
-    pub fn null(&self, typ: TyP<'ir>) -> ExprP<'ir> {
-        self.literal(Value::USize(0), typ)
+    pub fn dangling(&self, typ: TyP<'ir>) -> ExprP<'ir> {
+        if let Ty::Pointer(ty, _) = typ {
+            self.codegen_intrinsic(CodegenIntrinsicKind::Dangling(ty), typ)
+        } else {
+            unreachable!()
+        }
     }
 
     pub fn literal(&self, val: Value<'ir>, typ: TyP<'ir>) -> ExprP<'ir> {
@@ -380,19 +383,7 @@ impl<'ir> TypeBuilder<'ir> {
     }
 
     pub fn named(&self, item: IRItemP<'ir>) -> TyP<'ir> {
-        self.ir.intern_type(Ty::NamedType(item))
-    }
-
-    pub fn named_function(&self, item: IRItemP<'ir>) -> TyP<'ir> {
-        self.ir.intern_type(Ty::NamedFunction(item))
-    }
-
-    pub fn protocol(&self, item: IRItemP<'ir>) -> TyP<'ir> {
-        self.ir.intern_type(Ty::Protocol(item))
-    }
-
-    pub fn closure(&self, item: IRItemP<'ir>) -> TyP<'ir> {
-        self.ir.intern_type(Ty::Closure(item))
+        self.ir.intern_type(Ty::Item(item))
     }
 
     pub fn function<I>(&self, args: I, ret: TyP<'ir>) -> TyP<'ir>

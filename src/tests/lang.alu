@@ -231,6 +231,9 @@ fn test_union_layout() {
     #[packed] union Inner { a: u8, b: u128 }
     #[packed] union U { a: u32, b: Inner, c: u8 }
     assert_layout::<U>(16, 1);
+
+    union U { a: [u8; 12], b: u64 }
+    assert_layout::<U>(16, 8);
 }
 
 #[test]
@@ -305,6 +308,9 @@ fn test_nested_zst_layout() {
 
     struct S { a: u8, b: [[u64; 0]; 1] }
     assert_layout::<S>(8, 8);
+
+    union U { a: u8, b: [u64; 0] }
+    assert_layout::<U>(8, 8);
 }
 
 

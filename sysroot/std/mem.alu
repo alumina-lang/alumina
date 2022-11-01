@@ -117,7 +117,7 @@ impl slice {
     /// Empty slice
     #[inline(always)]
     fn empty<Ptr: Pointer>() -> slice<Ptr> {
-        slice::<Ptr> { _ptr: null, _len: 0 }
+        slice::<Ptr> { _ptr: dangling::<Ptr>(), _len: 0 }
     }
 
     /// Create a slice from a pointer and length
@@ -154,6 +154,12 @@ impl slice {
         self._ptr
     }
 
+    /// Returns `true` if the slice has a length of 0, and `false` otherwise.
+    #[inline]
+    fn is_empty<Ptr: Pointer>(self: slice<Ptr>) -> bool {
+        self._len == 0
+    }
+
     /// Allocates an array of specified size on the heap.
     ///
     /// The values are not initialized.
@@ -171,7 +177,7 @@ impl slice {
     /// ```
     fn alloc<T>(len: usize) -> &mut [T] {
         let ptr = when T: builtins::ZeroSized {
-            null as &mut T
+            dangling::<&mut T>()
         } else {
             libc::malloc(size_of::<T>() * len) as &mut T
         };
@@ -182,7 +188,7 @@ impl slice {
     /// Resizes a heap-allocated array.
     fn realloc<T>(slice: &mut [T], len: usize) -> &mut [T] {
         let ptr = when T: builtins::ZeroSized {
-            null as &mut T
+            dangling::<&mut T>()
         } else {
             libc::realloc(slice._ptr as &mut void, size_of::<T>() * len) as &mut T
         };
@@ -195,7 +201,7 @@ impl slice {
     /// The values are zero-initialized.
     fn alloc_zeroed<T>(len: usize) -> &mut [T] {
         let ptr = when T: builtins::ZeroSized {
-            null as &mut T
+            dangling::<&mut T>()
         } else {
             libc::calloc(len, size_of::<T>()) as &mut T
         };
@@ -357,7 +363,9 @@ impl slice {
     ///
     /// This requires that the slice was allocated with `alloc` or `alloc_zeroed`.
     fn free<T>(a: &mut [T]) {
-        libc::free(a._ptr as &mut void);
+        when T: !ZeroSized {
+            libc::free(a._ptr as &mut void);
+        }
     }
 
     mixin<T: Equatable<T>, Ptr: PointerOf<T>> Equatable<slice<Ptr>>;
@@ -606,7 +614,7 @@ mod internal {
 /// ```
 fn alloc<T>() -> &mut T {
     when T: builtins::ZeroSized {
-        null as &mut T
+        dangling()
     } else {
         libc::malloc(size_of::<T>()) as &mut T
     }
@@ -628,7 +636,7 @@ fn alloc<T>() -> &mut T {
 /// ```
 fn alloc_zeroed<T>() -> &mut T {
     when T: builtins::ZeroSized {
-        null as &mut T
+        dangling()
     } else {
         libc::calloc(1, size_of::<T>()) as &mut T
     }
@@ -655,7 +663,9 @@ fn alloc_zeroed<T>() -> &mut T {
 /// }
 /// ```
 fn free<T>(a: &mut T) {
-    libc::free(a as &mut void);
+    when T: !builtins::ZeroSized {
+        libc::free(a as &mut void);
+    }
 }
 
 /// Memory size of for a given type in bytes.
@@ -803,6 +813,41 @@ fn copy<T>(src: &T, dst: &mut T, count: usize) {
     when T: !builtins::ZeroSized {
         libc::memmove(dst as &mut void, src as &void, count * size_of::<T>());
     }
+}
+
+/// Returns a dangling non-null pointer.
+///
+/// The pointer is appropriately aligned for the provided type, and is non-null.
+///
+/// This can be used as a sentinel value for e.g. collections of zero-sized types or
+/// empty slices where the pointer is never dereferenced, but `null` cannot be used
+/// for whatever reason.
+///
+/// This is the pointer that is returned when taking an address of a value that has a
+/// zero-sized type.
+///
+/// If the pointer points to a sized type, dereferencing it is undefined behavior. If
+/// the pointer points to a zero-sized type, dereferencing it is no-op.
+///
+/// ## Example
+/// ```
+/// use std::mem::dangling;
+///
+/// struct Foo { a: (), b: [u64; 0] }
+///
+/// let foo: Foo;
+///
+/// assert_eq!(&foo.a, dangling::<&mut ()>());
+/// assert_eq!(&foo.b, dangling::<&mut [u64; 0]>());
+///
+/// // Because the types have different alignment. Currently `dangling`
+/// // just returns the alignment of the type (e.g. 1, 2, 4, ...)
+/// // cast to the pointer type.
+/// assert_ne!(&foo.a as &mut void, &foo.b as &mut void);
+/// ```
+#[inline(ir)]
+fn dangling<Ptr: builtins::Pointer>() -> Ptr {
+    intrinsics::dangling::<Ptr>()
 }
 
 #[cfg(all(test, test_std))]

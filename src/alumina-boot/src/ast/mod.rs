@@ -283,9 +283,7 @@ impl BuiltinType {
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum Ty<'ast> {
     Placeholder(AstId),
-    Protocol(ItemP<'ast>),
-    NamedType(ItemP<'ast>),
-    NamedFunction(ItemP<'ast>),
+    Item(ItemP<'ast>),
     Builtin(BuiltinType),
     Pointer(TyP<'ast>, bool),
     Slice(TyP<'ast>, bool),
@@ -807,6 +805,18 @@ pub struct Span {
     pub line: usize,
     pub column: usize,
     pub file: FileId,
+}
+
+impl Span {
+    pub fn from_node(file: FileId, node: tree_sitter::Node<'_>) -> Self {
+        Self {
+            start: node.start_byte(),
+            end: node.end_byte(),
+            line: node.start_position().row,
+            column: node.start_position().column,
+            file,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]

@@ -57,7 +57,11 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     /// you want to strictly control the size of the underlying array.
     fn with_size(size: usize) -> HashMap<K, V, H> {
         HashMap::<K, V, H> {
-            _buckets: slice::alloc_zeroed::<HashItem<(K, V)>>(size),
+            _buckets: if size != 0 {
+                slice::alloc_zeroed::<HashItem<(K, V)>>(size)
+            } else {
+                slice::empty()
+            },
             _length: 0,
         }
     }
@@ -360,7 +364,9 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
 
     /// @ std::mem::Freeable::free
     fn free(self: &mut HashMap<K, V, H>) {
-        self._buckets.free();
+        if self._buckets.len() > 0 {
+            self._buckets.free();
+        }
     }
 
     /// @ std::mem::Movable::move

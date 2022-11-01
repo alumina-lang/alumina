@@ -32,9 +32,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
         tgt: ir::TyP<'ir>,
     ) -> Result<(), ()> {
         match (src, tgt) {
-            (ast::Ty::NamedFunction(_), _)
-            | (ast::Ty::NamedType(_), _)
-            | (ast::Ty::Builtin(_), _) => {
+            (ast::Ty::Item(_), _) | (ast::Ty::Builtin(_), _) => {
                 // those do not participate in inference
             }
             (ast::Ty::Placeholder(id), _) => {
@@ -56,7 +54,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
             (ast::Ty::Array(a1, _), ir::Ty::Array(b1, _)) => {
                 self.match_slot(inferred, a1, b1)?;
             }
-            (ast::Ty::Slice(a1, a_const), ir::Ty::NamedType(_t)) => {
+            (ast::Ty::Slice(a1, a_const), ir::Ty::Item(_t)) => {
                 let lang_item_kind = self.mono_ctx.get_lang_type_kind(tgt);
                 if let Some(LangTypeKind::Slice(ir::Ty::Pointer(b1, b_const))) = lang_item_kind {
                     // mut slices coerce into const slices
@@ -89,19 +87,18 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                 }
                 self.match_slot(inferred, a2, b2)?;
             }
-            (ast::Ty::FunctionPointer(a1, a2), ir::Ty::NamedFunction(item)) => {
-                if let Ok(fun) = item.get_function() {
+            (ast::Ty::FunctionPointer(a1, a2), ir::Ty::Item(item)) => match item.get() {
+                Ok(ir::IRItem::Function(fun)) => {
                     for (a, b) in a1.iter().zip(fun.args.iter()) {
                         self.match_slot(inferred, a, b.ty)?;
                     }
                     self.match_slot(inferred, a2, fun.return_type)?;
                 }
-            }
-            (ast::Ty::Generic(inner, holders), ir::Ty::NamedType(t) | ir::Ty::NamedFunction(t)) => {
+                _ => return Err(()),
+            },
+            (ast::Ty::Generic(inner, holders), ir::Ty::Item(t)) => {
                 let item = match inner {
-                    ast::Ty::NamedType(item) => item,
-                    ast::Ty::NamedFunction(item) => item,
-                    ast::Ty::Protocol(item) => item,
+                    ast::Ty::Item(item) => item,
                     _ => return Err(()),
                 };
 
@@ -142,12 +139,12 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                 {
                     for (a_typ, b_typ) in a_protos.iter().zip(b_protos.iter()) {
                         let (item, holders) = match a_typ {
-                            ast::Ty::Generic(ast::Ty::Protocol(item), holders) => (item, holders),
+                            ast::Ty::Generic(ast::Ty::Item(item), holders) => (item, holders),
                             _ => return Err(()),
                         };
 
                         let proto = match b_typ {
-                            ir::Ty::Protocol(proto) => proto,
+                            ir::Ty::Item(proto) => proto,
                             _ => return Err(()),
                         };
 
@@ -190,9 +187,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
 
             for bound in placeholder.bounds.bounds {
                 let (item, args) = match bound.typ {
-                    ast::Ty::Generic(ast::Ty::NamedType(item), args) => (item, args),
-                    ast::Ty::Generic(ast::Ty::NamedFunction(item), args) => (item, args),
-                    ast::Ty::Generic(ast::Ty::Protocol(item), args) => (item, args),
+                    ast::Ty::Generic(ast::Ty::Item(item), args) => (item, args),
                     ast::Ty::FunctionProtocol(args, ret) => {
                         self.match_callable(inferred, tgt, args, ret);
                         continue;
@@ -248,16 +243,8 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                 }
                 let _ = self.match_slot(inferred, a2, b2);
             }
-            ir::Ty::NamedFunction(item) => {
-                if let Ok(fun) = item.get_function() {
-                    for (a, b) in a1.iter().zip(fun.args.iter()) {
-                        let _ = self.match_slot(inferred, a, b.ty);
-                    }
-                    let _ = self.match_slot(inferred, a2, fun.return_type);
-                }
-            }
-            ir::Ty::Closure(item) => {
-                if let Ok(clos) = item.get_closure() {
+            ir::Ty::Item(item) => match item.get() {
+                Ok(ir::IRItem::Closure(clos)) => {
                     if let Ok(fun) = clos.function.get().unwrap().get_function() {
                         for (a, b) in a1.iter().zip(fun.args.iter().skip(1)) {
                             let _ = self.match_slot(inferred, a, b.ty);
@@ -265,7 +252,14 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                         let _ = self.match_slot(inferred, a2, fun.return_type);
                     }
                 }
-            }
+                Ok(ir::IRItem::Function(fun)) => {
+                    for (a, b) in a1.iter().zip(fun.args.iter()) {
+                        let _ = self.match_slot(inferred, a, b.ty);
+                    }
+                    let _ = self.match_slot(inferred, a2, fun.return_type);
+                }
+                _ => {}
+            },
             _ => {}
         }
     }
