@@ -3,13 +3,15 @@ use crate::common::{AluminaError, CodeErrorBuilder, CodeErrorKind, CycleGuardian
 use crate::global_ctx::GlobalCtx;
 use crate::ir::{IRItem, IRItemP, Ty, TyP};
 
+use super::Closure;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PointerWidth {
     U32,
     U64,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Layout {
     pub size: usize,
     pub align: usize,
@@ -20,12 +22,16 @@ impl Layout {
         Self { size, align }
     }
 
-    pub fn zst() -> Self {
+    pub fn default_zst() -> Self {
         Self::new(0, 1)
     }
 
     pub fn bool() -> Self {
         Self::new(1, 1)
+    }
+
+    pub fn padding(size: usize) -> Self {
+        Self::new(size, 1)
     }
 
     pub fn integer(bit_width: usize) -> Self {
@@ -46,14 +52,24 @@ impl Layout {
     pub fn array(&self, len: usize) -> Self {
         Self::new(self.size * len, self.align)
     }
+
+    pub fn is_zero_sized(&self) -> bool {
+        self.size == 0
+    }
+
+    pub fn is_compatible_with(&self, other: &Self) -> bool {
+        self.size == other.size && self.align == other.align
+    }
 }
 
-pub struct LayoutCalculator<'ir> {
+type FieldLayout<T> = (Layout, Vec<(Option<T>, Layout)>);
+
+pub struct Layouter<'ir> {
     pointer_width: PointerWidth,
     cycle_guardian: CycleGuardian<IRItemP<'ir>>,
 }
 
-impl<'ir> LayoutCalculator<'ir> {
+impl<'ir> Layouter<'ir> {
     pub fn new(global_ctx: GlobalCtx) -> Self {
         let pointer_width = match global_ctx
             .cfg("target_pointer_width")
@@ -71,7 +87,7 @@ impl<'ir> LayoutCalculator<'ir> {
         }
     }
 
-    fn size_of_aggregate<I>(
+    fn layout_of_aggregate<I>(
         &self,
         custom_align: Option<usize>,
         is_union: bool,
@@ -98,9 +114,59 @@ impl<'ir> LayoutCalculator<'ir> {
         }
 
         align = align.max(custom_align.unwrap_or(1));
+        assert!(align == 1 || !is_packed);
+
         size = (size + align - 1) / align * align; // add padding at the end
 
         Ok(Layout::new(size, align))
+    }
+
+    pub fn field_layout_of_aggregate<I, T>(
+        &self,
+        custom_align: Option<usize>,
+        is_union: bool,
+        is_packed: bool,
+        fields: I,
+    ) -> Result<FieldLayout<T>, AluminaError>
+    where
+        I: IntoIterator<Item = (T, TyP<'ir>)>,
+    {
+        let mut result = Vec::new();
+
+        let mut align = 1;
+        let mut size = 0;
+
+        for (elem, field_ty) in fields {
+            let field_layout = self.layout_of(field_ty)?;
+            let field_align = if is_packed { 1 } else { field_layout.align };
+
+            align = align.max(field_align);
+            if is_union {
+                size = size.max(field_layout.size);
+            } else {
+                let padding_size = (size + field_align - 1) / field_align * field_align - size;
+                if padding_size > 0 {
+                    result.push((None, Layout::padding(padding_size)));
+                }
+                size += padding_size + field_layout.size;
+            }
+
+            result.push((Some(elem), field_layout));
+        }
+
+        align = align.max(custom_align.unwrap_or(1));
+        assert!(align == 1 || !is_packed);
+
+        let final_size = (size + align - 1) / align * align;
+        if final_size > size {
+            if is_union {
+                result.push((None, Layout::padding(final_size)));
+            } else {
+                result.push((None, Layout::padding(final_size - size)));
+            }
+        }
+
+        Ok((Layout::new(final_size, align), result))
     }
 
     pub fn layout_of_item(&self, item: IRItemP<'ir>) -> Result<Layout, AluminaError> {
@@ -111,7 +177,7 @@ impl<'ir> LayoutCalculator<'ir> {
             .with_no_span()?;
 
         let ret = match item.get().with_no_span()? {
-            IRItem::StructLike(s) => {
+            IRItem::StructLike(s) | IRItem::Closure(Closure { data: s, .. }) => {
                 let mut custom_align = None;
                 let mut is_packed = false;
 
@@ -123,7 +189,7 @@ impl<'ir> LayoutCalculator<'ir> {
                         _ => {}
                     }
                 }
-                self.size_of_aggregate(
+                self.layout_of_aggregate(
                     custom_align,
                     s.is_union,
                     is_packed,
@@ -131,14 +197,11 @@ impl<'ir> LayoutCalculator<'ir> {
                 )?
             }
             IRItem::Alias(i) => self.layout_of(i)?,
-            IRItem::Protocol(_) => Layout::zst(),
-            IRItem::Function(_) => Layout::zst(),
+            IRItem::Protocol(_) => Layout::default_zst(),
+            IRItem::Function(_) => Layout::default_zst(),
             IRItem::Enum(e) => self.layout_of(e.underlying_type)?,
             IRItem::Static(_) => unreachable!(),
             IRItem::Const(_) => unreachable!(),
-            IRItem::Closure(c) => {
-                self.size_of_aggregate(None, false, false, c.fields.iter().map(|f| f.ty))?
-            }
         };
 
         Ok(ret)
@@ -151,7 +214,7 @@ impl<'ir> LayoutCalculator<'ir> {
                 Ok(inner_layout.array(*len))
             }
             Ty::Builtin(kind) => match kind {
-                BuiltinType::Never => Ok(Layout::zst()),
+                BuiltinType::Never => Ok(Layout::default_zst()),
                 BuiltinType::Bool => Ok(Layout::bool()),
                 BuiltinType::U8 | BuiltinType::I8 => Ok(Layout::integer(8)),
                 BuiltinType::U16 | BuiltinType::I16 => Ok(Layout::integer(16)),
@@ -164,12 +227,9 @@ impl<'ir> LayoutCalculator<'ir> {
             },
 
             Ty::Pointer(_, _) => Ok(Layout::pointer(self.pointer_width)),
-            Ty::NamedFunction(_) => Ok(Layout::zst()),
             Ty::FunctionPointer(_, _) => Ok(Layout::pointer(self.pointer_width)),
-            Ty::Tuple(elems) => self.size_of_aggregate(None, false, false, elems.iter().copied()),
-            Ty::Closure(item) | Ty::NamedType(item) => self.layout_of_item(item),
-
-            Ty::Protocol(_) => Ok(Layout::zst()),
+            Ty::Tuple(elems) => self.layout_of_aggregate(None, false, false, elems.iter().copied()),
+            Ty::Item(item) => self.layout_of_item(item),
         }
     }
 }

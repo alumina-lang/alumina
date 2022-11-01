@@ -3,7 +3,7 @@ pub mod const_eval;
 pub mod dce;
 pub mod elide_zst;
 pub mod infer;
-pub mod ir_inline;
+pub mod inline;
 pub mod lang;
 pub mod layout;
 pub mod mono;
@@ -124,26 +124,18 @@ impl Debug for IrId {
 
 #[derive(PartialEq, Eq, Clone, Hash, Copy)]
 pub enum Ty<'ir> {
-    NamedType(IRItemP<'ir>),
-    Protocol(IRItemP<'ir>),
+    Item(IRItemP<'ir>),
     Builtin(BuiltinType),
     Pointer(TyP<'ir>, bool),
     Array(TyP<'ir>, usize),
     Tuple(&'ir [TyP<'ir>]),
     FunctionPointer(&'ir [TyP<'ir>], TyP<'ir>),
-    // Named functions are a family of unit types, each representing
-    // a specific (monomorphized) function. They coerce into function
-    // pointers when arg and return types match. They are proper types,
-    // so they can be stored in variables, passed as arguments and as they
-    // are ZSTs, all writes and reads will be elided.
-    NamedFunction(IRItemP<'ir>),
-    Closure(IRItemP<'ir>),
 }
 
 impl Debug for Ty<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Ty::Protocol(cell) | Ty::NamedType(cell) | Ty::NamedFunction(cell) => {
+            Ty::Item(cell) => {
                 let inner = cell.get();
                 match inner {
                     Ok(IRItem::StructLike(s)) => {
@@ -161,6 +153,9 @@ impl Debug for Ty<'_> {
                     }
                     Ok(IRItem::Function(s)) => {
                         write!(f, "{}", s.name.unwrap_or("(unnamed function)"))
+                    }
+                    Ok(IRItem::Closure(_)) => {
+                        write!(f, "(closure)")
                     }
                     _ => write!(f, "ERROR"),
                 }
@@ -190,7 +185,6 @@ impl Debug for Ty<'_> {
                 }
                 write!(f, ") -> {:?}", ret)
             }
-            Ty::Closure(_) => write!(f, "closure"),
         }
     }
 }
@@ -241,21 +235,19 @@ impl<'ir> Ty<'ir> {
         match self {
             Ty::Builtin(BuiltinType::Never) => true,
             Ty::Builtin(_) => false,
-            Ty::Protocol(_) => unreachable!("used protocol as a concrete type"),
-            Ty::NamedType(inner) => match inner.get().unwrap() {
+            Ty::Item(inner) => match inner.get().unwrap() {
                 IRItem::Alias(inner) => inner.is_zero_sized(),
                 IRItem::StructLike(s) => s.fields.iter().all(|f| f.ty.is_zero_sized()),
+                IRItem::Closure(c) => c.data.fields.iter().all(|f| f.ty.is_zero_sized()),
+                IRItem::Function(_) => true,
                 IRItem::Enum(e) => e.underlying_type.is_zero_sized(),
-                _ => unreachable!(),
+                IRItem::Protocol(_) => unreachable!(),
+                IRItem::Static(_) => unreachable!(),
+                IRItem::Const(_) => unreachable!(),
             },
             Ty::Pointer(_, _) => false,
             Ty::Array(inner, size) => *size == 0 || inner.is_zero_sized(),
             Ty::Tuple(elems) => elems.iter().all(|e| e.is_zero_sized()),
-            Ty::NamedFunction(_) => true,
-            Ty::Closure(inner) => match inner.get().unwrap() {
-                IRItem::Closure(data) => data.fields.iter().all(|f| f.ty.is_zero_sized()),
-                _ => unreachable!(),
-            },
             Ty::FunctionPointer(_, _) => false,
         }
     }
@@ -308,7 +300,7 @@ pub struct Function<'ir> {
 
 #[derive(Debug)]
 pub struct Closure<'ir> {
-    pub fields: &'ir [Field<'ir>],
+    pub data: StructLike<'ir>,
     pub function: OnceCell<IRItemP<'ir>>,
 }
 
@@ -654,7 +646,14 @@ impl<'ir> Expr<'ir> {
             ExprKind::Literal(_) => true,
             ExprKind::Void => true,
 
-            ExprKind::CodegenIntrinsic(_) => false,
+            ExprKind::CodegenIntrinsic(ref kind) => match kind {
+                CodegenIntrinsicKind::SizeOfLike(_, _) => true,
+                CodegenIntrinsicKind::Dangling(_) => true,
+                CodegenIntrinsicKind::Asm(_) => false,
+                CodegenIntrinsicKind::FunctionLike(_) => false,
+                CodegenIntrinsicKind::ConstLike(_) => false,
+                CodegenIntrinsicKind::Uninitialized => true,
+            },
             ExprKind::Unreachable => false, // ?
             ExprKind::Call(_, _) => false,  // for now
             ExprKind::Assign(_, _) => false,

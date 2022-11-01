@@ -1,5 +1,5 @@
 use crate::ast::{AstId, Attribute, ItemP};
-use crate::common::{CodeErrorKind, IndexMap};
+use crate::common::{CodeErrorKind, FileId, IndexMap};
 use crate::name_resolution::path::{Path, PathSegment};
 use crate::parser::ParseCtx;
 
@@ -196,6 +196,10 @@ impl<'ast, 'src> Debug for Scope<'ast, 'src> {
 }
 
 impl<'ast, 'src> Scope<'ast, 'src> {
+    pub fn file_id(&self) -> FileId {
+        self.code().unwrap().file_id()
+    }
+
     pub fn new_root() -> Self {
         Scope(Rc::new(RefCell::new(ScopeInner {
             r#type: ScopeType::Root,

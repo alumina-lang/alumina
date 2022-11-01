@@ -110,7 +110,7 @@ impl<'ast> Rebinder<'ast> {
                 self.visit_typ(then)?,
                 self.visit_typ(els)?,
             ),
-            NamedFunction(_) | NamedType(_) | Builtin(_) | Protocol(_) => return Ok(typ),
+            Item(_) | Builtin(_) => return Ok(typ),
         };
 
         Ok(self.ast.intern_type(kind))

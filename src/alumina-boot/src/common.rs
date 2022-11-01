@@ -82,6 +82,8 @@ pub enum CodeErrorKind {
     InvalidAttribute,
     #[error("invalid attribute ({})", .0)]
     InvalidAttributeDetail(String),
+    #[error("duplicate attribute `{}`", .0)]
+    DuplicateAttribute(String),
     #[error("cannot perform {:?} between `{}` and `{}`", .0, .1, .2)]
     InvalidBinOp(crate::ast::BinOp, String, String),
     #[error("cannot perform {:?} on `{}`", .0, .1)]
@@ -257,6 +259,10 @@ pub enum CodeErrorKind {
     TypeWithInfiniteSize,
     #[error("integer literal out of range ({} does not fit into {})", .0, .1)]
     IntegerOutOfRange(String, String),
+    #[error(
+        "`#[align(...)]` cannot be used together with `#[packed]` (alignment will always be 1)"
+    )]
+    AlignAndPacked,
 
     // IR inlining is very restricitve at the moment, these may eventually be removed
     #[error("cannot IR-inline functions that use variables")]
@@ -265,8 +271,6 @@ pub enum CodeErrorKind {
     IrInlineFlowControl,
     #[error("cannot IR-inline functions that can return early")]
     IrInlineEarlyReturn,
-    #[error("cannot IR-inline functions that use parameter in more than one place")]
-    IrInlineParameterReused,
 
     // Warnings
     #[error("defer inside a loop: this defered statement will only be executed once")]
@@ -277,6 +281,8 @@ pub enum CodeErrorKind {
     UninitializedField(String),
     #[error("This is `std::typing::Self`, did you mean the enclosing type?")]
     SelfConfusion,
+    #[error("`#[align(1)]` has no effect, did you mean to use `#[packed]`?")]
+    Align1,
 }
 
 #[derive(Debug, Clone)]
@@ -331,14 +337,7 @@ where
         scope: &Scope<'ast, 'src>,
         node: Node<'src>,
     ) -> Result<T, AluminaError> {
-        let span = Span {
-            start: node.start_byte(),
-            end: node.end_byte(),
-            line: node.start_position().row,
-            column: node.start_position().column,
-            file: scope.code().unwrap().file_id(),
-        };
-
+        let span = Span::from_node(scope.code().unwrap().file_id(), node);
         self.map_err(|e| {
             AluminaError::CodeErrors(vec![CodeError {
                 kind: e.into(),

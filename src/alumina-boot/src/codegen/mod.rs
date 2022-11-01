@@ -5,6 +5,7 @@ use crate::codegen::functions::FunctionWriter;
 use crate::codegen::types::TypeWriter;
 use crate::common::{AluminaError, HashMap, Incrementable};
 use crate::global_ctx::GlobalCtx;
+use crate::ir::layout::Layouter;
 use crate::ir::{IRItem, IRItemP, IrId, Ty, TyP};
 
 use bumpalo::Bump;
@@ -45,6 +46,7 @@ impl<'gen> CName<'gen> {
 
 pub struct CodegenCtx<'ir, 'gen> {
     global_ctx: GlobalCtx,
+    layouter: Layouter<'ir>,
     id_map: RefCell<HashMap<IrId, CName<'gen>>>,
     type_map: RefCell<HashMap<TyP<'ir>, CName<'gen>>>,
     counter: Cell<usize>,
@@ -57,6 +59,7 @@ where
 {
     pub fn new(global_ctx: GlobalCtx) -> Self {
         Self {
+            layouter: Layouter::new(global_ctx.clone()),
             global_ctx,
             arena: Bump::new(),
             id_map: RefCell::new(HashMap::default()),
@@ -125,10 +128,13 @@ impl Display for CName<'_> {
 }
 
 pub fn codegen(global_ctx: GlobalCtx, items: &[IRItemP<'_>]) -> Result<String, AluminaError> {
-    let ctx = CodegenCtx::new(global_ctx);
-    let type_writer = TypeWriter::new(&ctx);
+    // Empirically, ~600 bytes per item, round it up to 1000 to minimize reallocations
+    let size_estimate = 1000 * items.len();
 
-    let mut function_writer = FunctionWriter::new(&ctx, &type_writer);
+    let ctx = CodegenCtx::new(global_ctx);
+    let type_writer = TypeWriter::new(&ctx, size_estimate);
+
+    let mut function_writer = FunctionWriter::new(&ctx, &type_writer, size_estimate);
 
     for item in items {
         match item.get().unwrap() {
@@ -147,7 +153,7 @@ pub fn codegen(global_ctx: GlobalCtx, items: &[IRItemP<'_>]) -> Result<String, A
         }
     }
 
-    let mut buf = String::with_capacity(512 * 1024);
+    let mut buf = String::with_capacity(size_estimate);
     writeln!(buf, "#include <stdint.h>").unwrap();
     writeln!(buf, "#include <stddef.h>").unwrap();
     writeln!(

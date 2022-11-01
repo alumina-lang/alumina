@@ -4,6 +4,7 @@ use crate::codegen::{w, CName, CodegenCtx};
 use crate::common::AluminaError;
 use crate::intrinsics::CodegenIntrinsicKind;
 use crate::ir::const_eval::Value;
+use crate::ir::layout::Layouter;
 use crate::ir::{
     Const, Expr, ExprKind, ExprP, Function, IrId, LocalDef, Statement, Static, Ty, ValueType,
 };
@@ -118,12 +119,16 @@ pub fn write_function_signature<'ir, 'gen>(
 }
 
 impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
-    pub fn new(ctx: &'gen CodegenCtx<'ir, 'gen>, type_writer: &'gen TypeWriter<'ir, 'gen>) -> Self {
+    pub fn new(
+        ctx: &'gen CodegenCtx<'ir, 'gen>,
+        type_writer: &'gen TypeWriter<'ir, 'gen>,
+        size_estimate: usize,
+    ) -> Self {
         Self {
             ctx,
             type_writer,
-            fn_decls: String::with_capacity(512 * 1024),
-            fn_bodies: String::with_capacity(512 * 1024),
+            fn_decls: String::with_capacity(size_estimate / 3 * 2),
+            fn_bodies: String::with_capacity(size_estimate),
             indent: 0,
             in_const_init: false,
         }
@@ -460,6 +465,16 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                         self.fn_bodies,
                         "({{ {} __discard; __discard; }})",
                         self.ctx.get_type(expr.ty)
+                    );
+                }
+                CodegenIntrinsicKind::Dangling(inner) => {
+                    let layout = Layouter::new(self.ctx.global_ctx.clone()).layout_of(*inner)?;
+
+                    w!(
+                        self.fn_bodies,
+                        "(({}){})",
+                        self.ctx.get_type(expr.ty),
+                        layout.align
                     );
                 }
             },

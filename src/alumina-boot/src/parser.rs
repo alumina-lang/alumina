@@ -68,13 +68,7 @@ impl<'src> ParseCtx<'src> {
             let error_node = m.nodes_for_capture_index(0).next().unwrap();
             errors.push(CodeError {
                 kind: CodeErrorKind::ParseError(self.node_text(error_node).to_string()),
-                backtrace: vec![Marker::Span(Span {
-                    start: error_node.start_byte(),
-                    end: error_node.end_byte(),
-                    line: error_node.start_position().row,
-                    column: error_node.start_position().column,
-                    file: self.file_id,
-                })],
+                backtrace: vec![Marker::Span(Span::from_node(self.file_id, error_node))],
             })
         }
 

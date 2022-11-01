@@ -473,7 +473,7 @@ impl<'ir> ConstEvaluator<'ir> {
             return Ok(val);
         }
 
-        if let Ty::NamedType(e) = target {
+        if let Ty::Item(e) = target {
             if let Ok(e) = e.get_enum() {
                 target = e.underlying_type;
             }

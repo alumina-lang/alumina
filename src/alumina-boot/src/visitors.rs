@@ -1,6 +1,8 @@
 use crate::ast::expressions::parse_string_literal;
-use crate::ast::{AstCtx, Attribute, ItemP, TestMetadata};
-use crate::common::{AluminaError, ArenaAllocatable, CodeErrorKind, WithSpanDuringParsing};
+use crate::ast::{AstCtx, Attribute, ItemP, Span, TestMetadata};
+use crate::common::{
+    AluminaError, ArenaAllocatable, CodeError, CodeErrorKind, Marker, WithSpanDuringParsing,
+};
 use crate::global_ctx::GlobalCtx;
 use crate::name_resolution::path::{Path, PathSegment};
 use crate::name_resolution::scope::{NamedItem, NamedItemKind, Scope};
@@ -344,8 +346,21 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
             .code
             .node_text(node.child_by_field(FieldKind::Name).unwrap());
 
+        let span = Span::from_node(self.scope.file_id(), node);
+
+        macro_rules! check_duplicate {
+            ($attr:pat) => {
+                if self.attributes.iter().any(|a| matches!(a, $attr)) {
+                    return Err(CodeErrorKind::DuplicateAttribute(name.to_string()))
+                        .with_span_from(&self.scope, node)?;
+                }
+            };
+        }
+
         match name {
             "align" => {
+                check_duplicate!(Attribute::Align(_));
+
                 let align: usize = node
                     .child_by_field(FieldKind::Arguments)
                     .and_then(|n| n.child_by_field(FieldKind::Argument))
@@ -354,19 +369,54 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     .ok_or(CodeErrorKind::InvalidAttribute)
                     .with_span_from(&self.scope, node)?;
 
-                if !align.is_power_of_two() {
+                if align == 1 {
+                    self.global_ctx.diag().add_warning(CodeError {
+                        kind: CodeErrorKind::Align1,
+                        backtrace: vec![Marker::Span(span)],
+                    })
+                } else if !align.is_power_of_two() {
                     return Err(CodeErrorKind::InvalidAttributeDetail(
                         "alignment must be a power of two".to_string(),
                     ))
                     .with_span_from(&self.scope, node);
+                } else {
+                    if self
+                        .attributes
+                        .iter()
+                        .any(|a| matches!(a, Attribute::Packed))
+                    {
+                        return Err(CodeErrorKind::AlignAndPacked)
+                            .with_span_from(&self.scope, node);
+                    }
+
+                    self.attributes.push(Attribute::Align(align))
+                }
+            }
+            "cold" => {
+                check_duplicate!(Attribute::Cold);
+                self.attributes.push(Attribute::Cold);
+            }
+            "transparent" => {
+                check_duplicate!(Attribute::Transparent);
+                self.attributes.push(Attribute::Transparent);
+            }
+            "packed" => {
+                check_duplicate!(Attribute::Packed);
+
+                if self
+                    .attributes
+                    .iter()
+                    .any(|a| matches!(a, Attribute::Align(_)))
+                {
+                    return Err(CodeErrorKind::AlignAndPacked).with_span_from(&self.scope, node);
                 }
 
-                self.attributes.push(Attribute::Align(align))
+                self.attributes.push(Attribute::Packed);
             }
-            "cold" => self.attributes.push(Attribute::Cold),
-            "transparent" => self.attributes.push(Attribute::Transparent),
-            "packed" => self.attributes.push(Attribute::Packed),
             "inline" => {
+                check_duplicate!(
+                    Attribute::Inline | Attribute::AlwaysInline | Attribute::InlineDuringMono
+                );
                 match node
                     .child_by_field(FieldKind::Arguments)
                     .and_then(|n| n.child_by_field(FieldKind::Argument))
@@ -382,9 +432,16 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     }
                 }
             }
-            "builtin" => self.attributes.push(Attribute::Builtin),
-            "export" => self.attributes.push(Attribute::Export),
+            "builtin" => {
+                check_duplicate!(Attribute::Builtin);
+                self.attributes.push(Attribute::Builtin);
+            }
+            "export" => {
+                check_duplicate!(Attribute::Export);
+                self.attributes.push(Attribute::Export);
+            }
             "thread_local" => {
+                check_duplicate!(Attribute::ThreadLocal);
                 // We can skip thread-local on programs that are compiled with threads
                 // disabled.
                 if self.global_ctx.has_flag("threading") {
@@ -393,6 +450,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
             }
             "test_main" => self.attributes.push(Attribute::TestMain),
             "link_name" => {
+                check_duplicate!(Attribute::LinkName(..));
+
                 let link_name = node
                     .child_by_field(FieldKind::Arguments)
                     .and_then(|n| n.child_by_field(FieldKind::Argument))

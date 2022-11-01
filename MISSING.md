@@ -3,7 +3,6 @@
 ## General
 
 - Make IR inlining better
-  - Support for functions that use their argument in more than one place (most important)
   - Better error messages for why recursive functions can't be inlined (rather than just "Unpopulated symbol")
 - stack overflow in codegen stage because infinite size recursive structs are not rejected during monomorphization
     - could be a similar issue with protocols, though these are more coservative vis-a-vis recursion
@@ -12,7 +11,6 @@
 - if tentative monomorphization fails (e.g. error), but type inference still succeeds, we are left with unpopulated symbols
     - this is now especially an issue with `when` expressions which do tentative mono during proto bound checking
     - This is a big problem, unfortunately there is no easy solution with the current `mono` architecture
-- statics in function scope
 - "any/don't care" in protocol bounds. Especially for things like `Hashable` and `Formattable`, it would be great if users didn't need to introduce a new generic parameter for the hasher and formatter (since that complicates type inference).
   - Alternatively, allow pre-monomorphized types to be used as protocol bounds
   - This could be solved by `infer`. It needs to do the same thing as `check_protocol_bounds` - go through all the AST methods of the protocol in the bound and IR method of the type in the slot and
@@ -27,7 +25,6 @@
 - a coherent story for operator overloading
 - `dyn` pointers for certain builtin protocols. Specifically `dyn Callable<...>` would be very useful for being type-erased closures.
 - `format_args` macro is not bad right now, but the generated code is huge. It would be cool to have something like this so the result on `format_args` can still be collected into an array, but can also be unpacked into a sequence of statements directly writing into the formatter
-- unify `void` type and empty tuple in `mono`. They are the same thing. Maybe just hack it in `intern_type`?
 - docstrings for fields and enum variants
 
 ```

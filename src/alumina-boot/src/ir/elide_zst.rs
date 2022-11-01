@@ -5,6 +5,8 @@ use crate::ir::builder::{ExpressionBuilder, TypeBuilder};
 use crate::ir::const_eval::Value;
 use crate::ir::{Expr, ExprKind, ExprP, FuncBody, IrCtx, IrId, LocalDef, Statement, Ty, ValueType};
 
+use super::IRItem;
+
 // The purpose of ZST elider is to take all reads and writes of zero-sized types and
 // replace them with ExprKind::Void or remove them altogether if the value is not used
 // e.g. in a function call. Expressions of ZST type still remain in the IR but they are
@@ -197,9 +199,9 @@ impl<'ir> ZstElider<'ir> {
 
                 if inner.is_void() {
                     // Special case for mutiple pointers to void
-                    builder.null(expr.ty)
+                    builder.dangling(expr.ty)
                 } else if inner.ty.is_zero_sized() {
-                    builder.block([Statement::Expression(inner)], builder.null(expr.ty))
+                    builder.block([Statement::Expression(inner)], builder.dangling(expr.ty))
                 } else {
                     builder.r#ref(inner)
                 }
@@ -311,7 +313,7 @@ impl<'ir> ZstElider<'ir> {
                 }
                 Value::Struct(fields) => {
                     let element_types: HashMap<_, _> = match expr.ty {
-                        Ty::NamedType(item) => item
+                        Ty::Item(item) => item
                             .get_struct_like()
                             .unwrap()
                             .fields
@@ -352,9 +354,11 @@ impl<'ir> ZstElider<'ir> {
         // Named function types are unit types, hence ZSTs, and will get elided away if e.g. stored
         // in variables, passed as arguments, ... If this happens, we still need to make sure that
         // codegen invokes it correctly.
-        if let crate::ir::Ty::NamedFunction(item) = result.ty {
-            if result.is_void() {
-                return builder.function(item);
+        if let crate::ir::Ty::Item(item) = result.ty {
+            if let IRItem::Function(_) = item.get().unwrap() {
+                if result.is_void() {
+                    return builder.function(item);
+                }
             }
         }
 

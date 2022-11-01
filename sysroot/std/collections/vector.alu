@@ -49,7 +49,11 @@ impl Vector<T> {
     /// Create a vector that can hold up to `capacity` elements without reallocating.
     fn with_capacity(capacity: usize) -> Vector<T> {
         Vector {
-            _data: slice::alloc::<T>(capacity),
+            _data: if capacity == 0 {
+                slice::empty()
+            } else {
+                slice::alloc::<T>(capacity)
+            },
             _length: 0,
         }
     }
@@ -94,9 +98,12 @@ impl Vector<T> {
     /// Reserve capacity for at least `additional` elements.
     fn reserve(self: &mut Vector<T>, additional: usize) {
         if self._length + additional > self._data.len() {
-            self._data = self._data.realloc(
-                cmp::max(self._length * 2, self._length + additional)
-            );
+            let new_size = cmp::max(self._length * 2, self._length + additional);
+            if self._data.is_empty() {
+                self._data = mem::slice::alloc(new_size);
+            } else {
+                self._data = self._data.realloc(new_size);
+            }
         }
     }
 
@@ -301,14 +308,19 @@ impl Vector<T> {
 
     /// Shrink the underlying buffer to the length of the vector.
     fn shrink_to_fit(self: &mut Vector<T>) {
-        if self._length < self._data.len()  {
+        if self._length == 0 {
+            self._data.free();
+            self._data = slice::empty();
+        } else {
             self._data = self._data.realloc(self._length);
         }
     }
 
     /// @ std::mem::Freeable::free
     fn free(self: &mut Vector<T>) {
-        self._data.free();
+        if !self._data.is_empty() {
+            self._data.free();
+        }
     }
 
     /// @ std::mem::Movable::move

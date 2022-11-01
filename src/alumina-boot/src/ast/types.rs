@@ -54,13 +54,7 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
         let mut cursor = node.walk();
         for bound in node.children_by_field(FieldKind::Bound, &mut cursor) {
             bounds.push(Bound {
-                span: Some(Span {
-                    start: bound.start_byte(),
-                    end: bound.end_byte(),
-                    line: bound.start_position().row,
-                    column: bound.start_position().column,
-                    file: self.scope.code().unwrap().file_id(),
-                }),
+                span: Some(Span::from_node(self.scope.file_id(), bound)),
                 negated: bound.child_by_field(FieldKind::Negated).is_some(),
                 typ: self.visit(bound.child_by_field(FieldKind::Type).unwrap())?,
             });
@@ -81,11 +75,11 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
             .with_span_from(&self.scope, node)?
         {
             ItemResolution::Item(item) => match item.kind {
-                NamedItemKind::Type(ty, _, _) => self.ast.intern_type(Ty::NamedType(ty)),
-                NamedItemKind::TypeDef(ty, _, _) => self.ast.intern_type(Ty::NamedType(ty)),
+                NamedItemKind::Type(ty, _, _) => self.ast.intern_type(Ty::Item(ty)),
+                NamedItemKind::TypeDef(ty, _, _) => self.ast.intern_type(Ty::Item(ty)),
+                NamedItemKind::Function(ty, _, _) => self.ast.intern_type(Ty::Item(ty)),
+                NamedItemKind::Protocol(ty, _, _) => self.ast.intern_type(Ty::Item(ty)),
                 NamedItemKind::Placeholder(ty, _) => self.ast.intern_type(Ty::Placeholder(ty)),
-                NamedItemKind::Function(ty, _, _) => self.ast.intern_type(Ty::NamedFunction(ty)),
-                NamedItemKind::Protocol(ty, _, _) => self.ast.intern_type(Ty::Protocol(ty)),
                 kind => {
                     return Err(CodeErrorKind::Unexpected(format!("{}", kind)))
                         .with_span_from(&self.scope, node)
@@ -237,7 +231,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
             .collect::<Result<Vec<_>, _>>()?;
 
         match *base {
-            Ty::NamedType(_) | Ty::NamedFunction(_) | Ty::Protocol(_) | Ty::Defered(_) => {}
+            Ty::Item(_) | Ty::Defered(_) => {}
             _ => {
                 return Err(CodeErrorKind::UnexpectedGenericParams)
                     .with_span_from(&self.scope, node)

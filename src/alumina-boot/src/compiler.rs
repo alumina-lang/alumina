@@ -154,7 +154,7 @@ impl Compiler {
                     .with_no_span()?;
                 let mut monomorphizer = Monomorphizer::new(&mut mono_ctx, false, None);
 
-                let main_ty = ir_ctx.intern_type(crate::ir::Ty::NamedFunction(user_main));
+                let main_ty = ir_ctx.intern_type(crate::ir::Ty::Item(user_main));
 
                 roots.insert(monomorphizer.monomorphize_item(glue, [main_ty].alloc_on(&ir_ctx))?);
             }

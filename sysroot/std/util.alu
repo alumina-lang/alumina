@@ -54,9 +54,10 @@
 /// ```
 #[inline] fn coerce<T1, T2>(t: T1) -> T2 { t }
 
-/// Reinterpret the bits of the value as another type.
+/// Reinterpret the bits of the value as another type. Requires that the
+/// types have the same size and alignment.
 ///
-/// ## Example
+/// ## Examples
 /// ```
 /// use std::util::transmute;
 ///
@@ -65,10 +66,17 @@
 ///
 /// assert_eq!(y, 3.14159265358979323846264338327950288f64);
 /// ```
+/// ```compile_fail
+/// use std::util::transmute;
+///
+/// let x: u8 = 123;
+/// let y: u32 = transmute(x); // compile error
+/// ```
 #[inline(ir)]
 fn transmute<T1, T2>(t: T1) -> T2 {
-    // Could use pointers, but union makes sure that we have the correct
-    // alignment.
+    when T1: !builtins::SameLayoutAs<T2> {
+        compile_fail!("types do not have the same layout");
+    }
     union BitCastT<A, B> {
         a: A,
         b: B,

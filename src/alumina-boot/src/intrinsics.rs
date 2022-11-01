@@ -5,7 +5,7 @@ use crate::ir::builder::{ExpressionBuilder, TypeBuilder};
 use crate::ir::const_eval::{
     Value, {self},
 };
-use crate::ir::layout::LayoutCalculator;
+use crate::ir::layout::Layouter;
 use crate::ir::{ExprP, IrCtx, Ty, TyP, ValueType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -27,6 +27,7 @@ pub enum IntrinsicKind {
     MakeVtable,
     EnumVariants,
     Uninitialized,
+    Dangling,
     Asm,
 }
 
@@ -50,6 +51,7 @@ pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
         "enum_variants" => IntrinsicKind::EnumVariants,
         "asm" => IntrinsicKind::Asm,
         "uninitialized" => IntrinsicKind::Uninitialized,
+        "dangling" => IntrinsicKind::Dangling,
         _ => return None,
     };
 
@@ -59,6 +61,7 @@ pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
 #[derive(Debug, Clone)]
 pub enum CodegenIntrinsicKind<'ir> {
     SizeOfLike(&'ir str, TyP<'ir>),
+    Dangling(TyP<'ir>),
     Asm(&'ir str),
     FunctionLike(&'ir str),
     ConstLike(&'ir str),
@@ -69,6 +72,7 @@ pub struct CompilerIntrinsics<'ir> {
     ir: &'ir IrCtx<'ir>,
     global_ctx: GlobalCtx,
     expressions: ExpressionBuilder<'ir>,
+    layouter: Layouter<'ir>,
     types: TypeBuilder<'ir>,
 }
 
@@ -96,6 +100,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
             ir,
             expressions: ExpressionBuilder::new(ir),
             types: TypeBuilder::new(ir),
+            layouter: Layouter::new(global_ctx.clone()),
             global_ctx,
         }
     }
@@ -118,9 +123,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
     }
 
     fn align_of(&self, ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
-        let align = LayoutCalculator::new(self.global_ctx.clone())
-            .layout_of(ty)?
-            .align;
+        let align = self.layouter.layout_of(ty)?.align;
 
         Ok(self
             .expressions
@@ -128,9 +131,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
     }
 
     fn size_of(&self, ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
-        let size = LayoutCalculator::new(self.global_ctx.clone())
-            .layout_of(ty)?
-            .size;
+        let size = self.layouter.layout_of(ty)?.size;
 
         Ok(self
             .expressions
@@ -277,6 +278,20 @@ impl<'ir> CompilerIntrinsics<'ir> {
             .codegen_intrinsic(CodegenIntrinsicKind::Uninitialized, ret_ty))
     }
 
+    fn dangling(&self, ret_ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
+        if let Ty::Pointer(inner, _) = ret_ty {
+            Ok(self
+                .expressions
+                .codegen_intrinsic(CodegenIntrinsicKind::Dangling(inner), ret_ty))
+        } else {
+            Err(CodeErrorKind::TypeMismatch(
+                "pointer".to_string(),
+                format!("{:?}", ret_ty),
+            ))
+            .with_no_span()
+        }
+    }
+
     pub fn invoke(
         &self,
         kind: IntrinsicKind,
@@ -303,6 +318,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
                 self.codegen_type_func(args[0], generic[0], generic[1])
             }
             IntrinsicKind::Uninitialized => self.uninitialized(generic[0]),
+            IntrinsicKind::Dangling => self.dangling(generic[0]),
             _ => unreachable!(),
         }
     }
