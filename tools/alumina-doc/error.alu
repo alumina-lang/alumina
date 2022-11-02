@@ -32,6 +32,14 @@ impl Error {
     }
 }
 
+macro from_io($a) {
+    $a.map_err(Error::from::<std::io::Error>)
+}
+
+macro from_fmt($a) {
+    $a.map_err(Error::from::<std::fmt::Error>)
+}
+
 macro anywho($fmt, $args...) {
     use std::fmt::format;
     Error { inner: format!($fmt, $args...).unwrap() }

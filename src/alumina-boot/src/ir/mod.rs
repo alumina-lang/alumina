@@ -407,7 +407,7 @@ impl<'ir> IRItemCell<'ir> {
             Some(IRItem::Function(f)) => Ok(f),
             Some(_) => Err(CodeErrorKind::InternalError(
                 "function expected".into(),
-                Backtrace::new(),
+                Backtrace::new().into(),
             )),
             None => Err(CodeErrorKind::UnpopulatedSymbol),
         }
@@ -418,7 +418,7 @@ impl<'ir> IRItemCell<'ir> {
             Some(IRItem::Closure(c)) => Ok(c),
             Some(_) => Err(CodeErrorKind::InternalError(
                 "closure expected".into(),
-                Backtrace::new(),
+                Backtrace::new().into(),
             )),
             None => Err(CodeErrorKind::UnpopulatedSymbol),
         }
@@ -429,7 +429,7 @@ impl<'ir> IRItemCell<'ir> {
             Some(IRItem::Protocol(p)) => Ok(p),
             Some(_) => Err(CodeErrorKind::InternalError(
                 "protocol expected".into(),
-                Backtrace::new(),
+                Backtrace::new().into(),
             )),
             None => Err(CodeErrorKind::UnpopulatedSymbol),
         }
@@ -440,7 +440,7 @@ impl<'ir> IRItemCell<'ir> {
             Some(IRItem::StructLike(p)) => Ok(p),
             Some(_) => Err(CodeErrorKind::InternalError(
                 "struct expected".into(),
-                Backtrace::new(),
+                Backtrace::new().into(),
             )),
             None => Err(CodeErrorKind::UnpopulatedSymbol),
         }
@@ -451,7 +451,7 @@ impl<'ir> IRItemCell<'ir> {
             Some(IRItem::Enum(p)) => Ok(p),
             Some(_) => Err(CodeErrorKind::InternalError(
                 "enum expected".into(),
-                Backtrace::new(),
+                Backtrace::new().into(),
             )),
             None => Err(CodeErrorKind::UnpopulatedSymbol),
         }
@@ -462,7 +462,7 @@ impl<'ir> IRItemCell<'ir> {
             Some(IRItem::Static(s)) => Ok(s),
             Some(_) => Err(CodeErrorKind::InternalError(
                 "static expected".into(),
-                Backtrace::new(),
+                Backtrace::new().into(),
             )),
             None => Err(CodeErrorKind::UnpopulatedSymbol),
         }
@@ -473,7 +473,7 @@ impl<'ir> IRItemCell<'ir> {
             Some(IRItem::Const(c)) => Ok(c),
             Some(_) => Err(CodeErrorKind::InternalError(
                 "const expected".into(),
-                Backtrace::new(),
+                Backtrace::new().into(),
             )),
             None => Err(CodeErrorKind::UnpopulatedSymbol),
         }
