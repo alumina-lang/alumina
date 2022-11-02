@@ -250,7 +250,7 @@ fn write_docstring<T: std::io::Writable<T>>(
     }
 
     if !tagline_only {
-        writeln!(writer, "<p>");
+        writeln!(writer, "<p>")?;
     }
 
     enum CodeBlockType {
@@ -304,7 +304,7 @@ fn write_docstring<T: std::io::Writable<T>>(
                     }
 
                 }
-                write!(writer, "</code>");
+                write!(writer, "</code>")?;
 
                 if !tagline_only &&
                     cb_type != CodeBlockType::NotAlumina &&
@@ -322,7 +322,7 @@ fn write_docstring<T: std::io::Writable<T>>(
                             if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
                                 code.push(c);
                             } else {
-                                write!(&code, "%{}", c.hex().zero_pad(2));
+                                write!(&code, "%{}", c.hex().zero_pad(2))?;
                             }
                         }
                     }
@@ -334,11 +334,11 @@ fn write_docstring<T: std::io::Writable<T>>(
                             .get("ALUMINADOC_PLAYGROUND_URL")
                             .unwrap_or("https://play.alumina-lang.net/"),
                         code
-                    );
+                    )?;
                     code.free();
                 }
 
-                writeln!(writer, "</pre>");
+                writeln!(writer, "</pre>")?;
             } else {
                 doctest_source.clear();
                 cb_type = switch docline.trim() {
@@ -355,21 +355,21 @@ fn write_docstring<T: std::io::Writable<T>>(
                 };
 
                 if tagline_only || cb_type == CodeBlockType::NotAlumina {
-                    write!(writer, "<pre>");
+                    write!(writer, "<pre>")?;
                 } else if cb_type == CodeBlockType::Panics
                     || cb_type == CodeBlockType::CompileFail
                     || cb_type == CodeBlockType::NasalDemons {
-                    write!(writer, "<pre class=\"with-playground-link panics\">");
+                    write!(writer, "<pre class=\"with-playground-link panics\">")?;
                 } else if cb_type == CodeBlockType::Dubious {
-                    write!(writer, "<pre class=\"with-playground-link dubious\">");
+                    write!(writer, "<pre class=\"with-playground-link dubious\">")?;
                 } else {
-                    write!(writer, "<pre class=\"with-playground-link\">");
+                    write!(writer, "<pre class=\"with-playground-link\">")?;
                 }
 
                 if cb_type == CodeBlockType::NotAlumina {
-                    write!(writer, "<code>");
+                    write!(writer, "<code>")?;
                 } else {
-                    write!(writer, "<code class=\"language-alumina\">");
+                    write!(writer, "<code class=\"language-alumina\">")?;
                 }
             };
             in_a_code_block = !in_a_code_block;
@@ -380,58 +380,58 @@ fn write_docstring<T: std::io::Writable<T>>(
                 if tagline_only {
                     return Result::ok(());
                 } else {
-                    writeln!(writer, "</p><p>");
+                    writeln!(writer, "</p><p>")?;
                 }
             } else if docline.starts_with("###") {
                 md_state.reset()?;
-                writeln!(writer, "</p>");
+                writeln!(writer, "</p>")?;
                 writeln!(writer, "<h4>{}</h4>", InlineMarkdown::new(
                     docline.trim_prefix("###"), &md_state,
                     link_context
-                ));
+                ))?;
                 md_state.reset()?;
-                writeln!(writer, "<p>");
+                writeln!(writer, "<p>")?;
             } else if docline.starts_with("##") {
                 md_state.reset()?;
-                writeln!(writer, "</p>");
+                writeln!(writer, "</p>")?;
                 writeln!(writer, "<h3>{}</h3>", InlineMarkdown::new(
                     docline.trim_prefix("##"), &md_state,
                     link_context
-                ));
+                ))?;
                 md_state.reset()?;
-                writeln!(writer, "<p>");
+                writeln!(writer, "<p>")?;
             } else if docline.starts_with("#!") {
                 md_state.reset()?;
-                writeln!(writer, "</p>");
+                writeln!(writer, "</p>")?;
                 writeln!(writer, "<h1>{}</h1>", InlineMarkdown::new(
                     docline.trim_prefix("#!"), &md_state,
                     link_context
-                ));
+                ))?;
                 md_state.reset()?;
-                writeln!(writer, "<p>");
+                writeln!(writer, "<p>")?;
             } else if docline.starts_with("#") {
                 md_state.reset()?;
-                writeln!(writer, "</p>");
+                writeln!(writer, "</p>")?;
                 writeln!(writer, "<h2>{}</h2>", InlineMarkdown::new(
                     docline.trim_prefix("#"), &md_state,
                     link_context
-                ));
+                ))?;
                 md_state.reset()?;
-                writeln!(writer, "<p>");
+                writeln!(writer, "<p>")?;
             } else {
                 writeln!(writer, "{}", InlineMarkdown::new(
                     docline,
                     &md_state,
                     link_context
-                ));
+                ))?;
             }
         } else {
             if cb_type == CodeBlockType::Bare {
-                writeln!(&doctest_source, "{}", docline);
+                writeln!(&doctest_source, "{}", docline)?;
             } else {
-                writeln!(&doctest_source, "    {}", docline);
+                writeln!(&doctest_source, "    {}", docline)?;
             }
-            writeln!(writer, "{}", HtmlEscaped::str(docline));
+            writeln!(writer, "{}", HtmlEscaped::str(docline))?;
         }
     }
 
@@ -440,7 +440,7 @@ fn write_docstring<T: std::io::Writable<T>>(
     }
 
     if !tagline_only {
-        writeln!(writer, "</p>");
+        writeln!(writer, "</p>")?;
     }
     Result::ok(())
 }

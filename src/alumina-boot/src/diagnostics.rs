@@ -1,4 +1,4 @@
-use crate::common::{AluminaError, CodeError, CodeErrorKind, FileId, HashMap, Marker};
+use crate::common::{AluminaError, CodeError, CodeErrorKind, FileId, HashMap, IndexSet, Marker};
 
 use colored::Colorize;
 
@@ -16,7 +16,7 @@ enum Level {
 
 struct DiagnosticContextInner {
     file_map: HashMap<FileId, PathBuf>,
-    messages: Vec<(Level, CodeError)>,
+    messages: IndexSet<(Level, CodeError)>,
     counter: usize,
 }
 
@@ -30,7 +30,7 @@ impl DiagnosticContext {
         Self {
             inner: Rc::new(RefCell::new(DiagnosticContextInner {
                 file_map: HashMap::default(),
-                messages: Vec::new(),
+                messages: Default::default(),
                 counter: 0,
             })),
         }
@@ -61,20 +61,23 @@ impl DiagnosticContext {
     }
 
     pub fn add_error(&self, err: CodeError) {
-        self.inner.borrow_mut().messages.push((Level::Error, err));
+        self.inner.borrow_mut().messages.insert((Level::Error, err));
     }
 
     pub fn add_warning(&self, err: CodeError) {
-        self.inner.borrow_mut().messages.push((Level::Warning, err));
+        self.inner
+            .borrow_mut()
+            .messages
+            .insert((Level::Warning, err));
     }
 
     pub fn add_note(&self, err: CodeError) {
-        self.inner.borrow_mut().messages.push((Level::Note, err));
+        self.inner.borrow_mut().messages.insert((Level::Note, err));
     }
 
     pub fn print_error_report(&self) -> Result<(), AluminaError> {
         let inner = self.inner.borrow();
-        let mut all_errors: Vec<_> = inner.messages.clone();
+        let mut all_errors: Vec<_> = inner.messages.iter().collect();
         all_errors.sort_by_key(|(level, err)| {
             err.backtrace
                 .iter()
@@ -109,7 +112,7 @@ impl DiagnosticContext {
             // happens during or after monomorphization.
             let mut skip = false;
             let mut has_backtrace = false;
-            for frame in error.backtrace {
+            for frame in &error.backtrace {
                 let span = match (frame, skip) {
                     (Marker::Span(span), false) => {
                         skip = true;
@@ -135,7 +138,7 @@ impl DiagnosticContext {
                 has_backtrace = true;
             }
 
-            if let CodeErrorKind::InternalError(_, backtrace) = error.kind {
+            if let CodeErrorKind::InternalError(_, backtrace) = &error.kind {
                 eprintln!();
                 eprintln!("Compiler backtrace:");
                 eprintln!("{:?}", backtrace);

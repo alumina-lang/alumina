@@ -1954,7 +1954,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 .ok_or_else(|| {
                     CodeErrorKind::InternalError(
                         "unbound placeholder".to_string(),
-                        Backtrace::new(),
+                        Backtrace::new().into(),
                     )
                 })
                 .with_no_span()?,
@@ -2845,6 +2845,25 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let result = match &stmt.kind {
             ast::StatementKind::Expression(expr) => {
                 let expr = self.lower_expr(expr, None)?;
+
+                let must_use = match expr.ty {
+                    ir::Ty::Item(item) => match item.get().with_no_span()? {
+                        ir::IRItem::StructLike(s) => {
+                            s.attributes.contains(&ast::Attribute::MustUse)
+                        }
+                        _ => false,
+                    },
+                    _ => false,
+                };
+
+                if must_use && !self.tentative {
+                    let type_name = self.mono_ctx.type_name(expr.ty)?;
+                    self.mono_ctx.global_ctx.diag().add_warning(CodeError {
+                        kind: CodeErrorKind::UnusedMustUse(type_name),
+                        backtrace: stmt.span.iter().map(|s| Marker::Span(*s)).collect(),
+                    })
+                }
+
                 Some(ir::Statement::Expression(expr))
             }
             ast::StatementKind::LetDeclaration(decl) => {
@@ -3963,7 +3982,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .ok_or_else(|| {
                 CodeErrorKind::InternalError(
                     "vtable layout not found".to_string(),
-                    Backtrace::new(),
+                    Backtrace::new().into(),
                 )
             })
             .with_no_span()?
@@ -4035,7 +4054,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .ok_or_else(|| {
                 CodeErrorKind::InternalError(
                     "vtable layout not found".to_string(),
-                    Backtrace::new(),
+                    Backtrace::new().into(),
                 )
             })
             .with_no_span()?;
@@ -4914,7 +4933,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             return Err(CodeErrorKind::NotInAFunctionScope).with_no_span();
         }
 
-        if !self.loop_contexts.is_empty() {
+        if !self.loop_contexts.is_empty() && !self.tentative {
             self.mono_ctx.global_ctx.diag().add_warning(CodeError {
                 kind: CodeErrorKind::DeferInALoop,
                 backtrace: inner.span.iter().map(|s| Marker::Span(*s)).collect(),
@@ -4995,7 +5014,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             struct_type,
         );
 
-        if !item.get_struct_like().with_no_span()?.is_union {
+        if !item.get_struct_like().with_no_span()?.is_union && !self.tentative {
             for u in uninitialized {
                 self.mono_ctx.global_ctx.diag().add_warning(CodeError {
                     kind: CodeErrorKind::UninitializedField(u.to_string()),

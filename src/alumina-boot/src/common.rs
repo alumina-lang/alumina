@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::fmt::Debug;
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 use std::io;
 use std::rc::Rc;
 use std::result::Result;
@@ -11,7 +11,7 @@ macro_rules! ice {
         use crate::common::CodeErrorBuilder;
         return Err(CodeErrorKind::InternalError(
             $why.to_string(),
-            backtrace::Backtrace::new(),
+            backtrace::Backtrace::new().into(),
         ))
         .with_no_span();
     }};
@@ -23,6 +23,35 @@ pub type HashMap<K, V> = rustc_hash::FxHashMap<K, V>;
 pub type HashSet<T> = rustc_hash::FxHashSet<T>;
 pub type IndexMap<K, V> =
     indexmap::IndexMap<K, V, std::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
+pub type IndexSet<K> = indexmap::IndexSet<K, std::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
+
+/// Newtype wrapper for non-comparable subobjects where it does not matter
+pub struct ExcludeFromEq<T>(pub T);
+impl<T> Hash for ExcludeFromEq<T> {
+    fn hash<H: Hasher>(&self, _state: &mut H) {}
+}
+impl<T> PartialEq for ExcludeFromEq<T> {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+impl<T> Eq for ExcludeFromEq<T> {}
+impl<T: Debug> Debug for ExcludeFromEq<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+impl<T> From<T> for ExcludeFromEq<T> {
+    fn from(t: T) -> Self {
+        Self(t)
+    }
+}
+impl<T: Clone> Clone for ExcludeFromEq<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+impl<T: Copy> Copy for ExcludeFromEq<T> {}
 
 #[derive(Debug, Error)]
 pub enum AluminaError {
@@ -37,7 +66,7 @@ pub enum AluminaError {
 // thiserror uses string matching in its proc macro and assumes that "Backtrace" is
 // "std::backtrace::Backtrace", which is unstable.
 use backtrace::Backtrace as NonStdBacktrace;
-#[derive(Debug, Error, Clone)]
+#[derive(Debug, Error, Clone, Hash, PartialEq, Eq)]
 pub enum CodeErrorKind {
     // Errors
     #[error("syntax error: unexpected `{}`", .0)]
@@ -127,7 +156,7 @@ pub enum CodeErrorKind {
     #[error("only slices can be range-indexed")]
     RangeIndexNonSlice,
     #[error("internal error: {}", .0)]
-    InternalError(String, NonStdBacktrace),
+    InternalError(String, ExcludeFromEq<NonStdBacktrace>),
     // This error is a compiler bug if it happens on its own, but it can pop up when
     // we abort early due to a previous error.
     #[error("local with unknown type")]
@@ -283,15 +312,17 @@ pub enum CodeErrorKind {
     SelfConfusion,
     #[error("`#[align(1)]` has no effect, did you mean to use `#[packed]`?")]
     Align1,
+    #[error("unused `{}` that must be used", .0)]
+    UnusedMustUse(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum Marker {
     Span(Span),
     Monomorphization,
 }
 
-#[derive(Debug, Error, Clone)]
+#[derive(Debug, Error, Clone, Hash, PartialEq, Eq)]
 #[error("{}", .kind)]
 pub struct CodeError {
     pub kind: CodeErrorKind,

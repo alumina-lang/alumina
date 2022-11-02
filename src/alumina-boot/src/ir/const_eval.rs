@@ -33,7 +33,7 @@ pub enum Value<'ir> {
     FunctionPointer(super::IRItemP<'ir>),
 }
 
-#[derive(Debug, Error, Clone)]
+#[derive(Debug, Error, Clone, Hash, PartialEq, Eq)]
 pub enum ConstEvalError {
     #[error("not constant or unsupported expression")]
     Unsupported,

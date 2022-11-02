@@ -696,6 +696,7 @@ pub enum Attribute {
     Inline,
     Align(usize),
     Packed,
+    MustUse,
     Transparent,
     NoInline,
     ThreadLocal,

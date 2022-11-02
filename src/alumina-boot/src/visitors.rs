@@ -373,7 +373,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     self.global_ctx.diag().add_warning(CodeError {
                         kind: CodeErrorKind::Align1,
                         backtrace: vec![Marker::Span(span)],
-                    })
+                    });
                 } else if !align.is_power_of_two() {
                     return Err(CodeErrorKind::InvalidAttributeDetail(
                         "alignment must be a power of two".to_string(),
@@ -502,6 +502,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                         self.visit(arg)?;
                     }
                 }
+            }
+            "must_use" => {
+                check_duplicate!(Attribute::MustUse);
+                self.attributes.push(Attribute::MustUse);
             }
             "lang" => {
                 let lang_type = node

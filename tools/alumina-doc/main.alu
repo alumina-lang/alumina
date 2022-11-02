@@ -10,7 +10,7 @@ use aluminac::lib::common::{NodeVisitorExt, child_by, children_by};
 use aluminac::lib::arena::Arena;
 use aluminac::lib::node_kinds::{NodeVisitor, FieldKind};
 
-use alumina_doc::error::{Error, Result, anywho, bail};
+use alumina_doc::error::{Error, Result, anywho, bail, from_io, from_fmt};
 use alumina_doc::common::{Item, ItemKind, Path, ParseContext, DoctestWriter, ItemBag, LinkContext};
 use alumina_doc::visitors::{TopLevelVisitor, CodePrinter};
 use alumina_doc::markdown::write_docstring;
@@ -19,11 +19,11 @@ use std::collections::HashSet;
 extern "C" fn tree_sitter_alumina() -> &TSLanguage;
 
 macro w($self, $fmt, $args...) {
-    std::fmt::write!($self.writer, $fmt, $args...).map_err(Error::from::<std::fmt::Error>)?
+    std::fmt::write!($self.writer, $fmt, $args...).from_fmt!()?
 }
 
 macro wln($self, $fmt, $args...) {
-    std::fmt::writeln!($self.writer, $fmt, $args...).map_err(Error::from::<std::fmt::Error>)?
+    std::fmt::writeln!($self.writer, $fmt, $args...).from_fmt!()?
 }
 
 
@@ -95,7 +95,7 @@ impl PageWriter<T: std::io::Writable<T>> {
             wln!(self, "<span class=\"badge\">#[cfg]</span>");
         }
         let printer = CodePrinter::new(item.parse_context, &link_context, self.writer);
-        printer.visit(item.node);
+        printer.visit(item.node)?;
 
         child_by!(item.node, FieldKind::TypeArguments)
             .map(|=self, &printer, node: Node| -> Result<()> {
@@ -109,7 +109,7 @@ impl PageWriter<T: std::io::Writable<T>> {
                         continue;
                     }
                     wln!(self, "<div class=\"protocol-bound\">");
-                    printer.visit(child);
+                    printer.visit(child)?;
                     wln!(self, "</div>");
                 }
 
@@ -154,7 +154,8 @@ impl PageWriter<T: std::io::Writable<T>> {
         }
 
         let printer = CodePrinter::new(item.parse_context, &link_context, self.writer);
-        printer.visit(node);
+        printer.visit(node)?;
+
         child_by!(node, FieldKind::TypeArguments)
             .map(|=self, &printer, node: Node| -> Result<()> {
                 let cursor = node.walk();
@@ -167,7 +168,7 @@ impl PageWriter<T: std::io::Writable<T>> {
                         continue;
                     }
                     wln!(self, "<div class=\"protocol-bound\">");
-                    printer.visit(child);
+                    printer.visit(child)?;
                     wln!(self, "</div>");
                 }
 
@@ -199,7 +200,7 @@ impl PageWriter<T: std::io::Writable<T>> {
         wln!(self, "</div>");
         w!(self, "<div class=\"cell-doc\">");
         write_docstring(self.writer, item.doc_comment.as_slice(), true, &link_context, item, self.processor.doctest_writer)
-        .map_err(Error::from::<std::fmt::Error>)?;
+        .from_fmt!()?;
         wln!(self, "</div>");
         wln!(self, "</div>");
 
@@ -220,8 +221,16 @@ impl PageWriter<T: std::io::Writable<T>> {
             null
         };
 
-        write_docstring(self.writer, item.doc_comment.as_slice(), false, &link_context, doctest_item, self.processor.doctest_writer)
-            .map_err(Error::from::<std::fmt::Error>)?;
+        write_docstring(
+            self.writer,
+            item.doc_comment.as_slice(),
+            false,
+            &link_context,
+            doctest_item,
+            self.processor.doctest_writer
+        )
+        .from_fmt!()?;
+
         wln!(self, "</div>");
         wln!(self, "</li>");
 
@@ -378,8 +387,15 @@ impl PageWriter<T: std::io::Writable<T>> {
             self.write_signature(top_level, true)?;
         }
 
-        write_docstring(self.writer, top_level.doc_comment.as_slice(), false, &link_context, top_level, self.processor.doctest_writer)
-        .map_err(Error::from::<std::fmt::Error>)?;
+        write_docstring(
+            self.writer,
+            top_level.doc_comment.as_slice(),
+            false,
+            &link_context,
+            top_level,
+            self.processor.doctest_writer
+        )
+        .from_fmt!()?
 
         let methods: HashSet<&[u8]> = HashSet::new();
         defer methods.free();
@@ -521,7 +537,7 @@ impl Processor {
         let visitor = TopLevelVisitor::new(parse_context, path.clone(), &self.items);
         defer visitor.free();
 
-        visitor.visit(parse_context.root_node());
+        visitor.visit(parse_context.root_node())?;
 
         Result::ok(())
     }
@@ -543,15 +559,14 @@ impl Processor {
         let filename = filename.as_path();
 
         std::fs::DirBuilder::new().recursive(true).create(filename.parent().unwrap())
-            .map_err(Error::from::<std::io::Error>)?;
+            .from_io!()?
 
-        let file = std::fs::File::create(filename)
-            .map_err(Error::from::<std::io::Error>)?;
+        let file = std::fs::File::create(filename).from_io!()?
         defer file.close();
 
         let writer = std::io::BufferedWriter::new(&file, 1024);
         defer {
-            writer.flush();
+            writer.flush().from_io!()?;
             writer.free();
         };
 
@@ -609,20 +624,20 @@ impl Processor {
         defer filename.free();
 
         std::fs::DirBuilder::new().recursive(true).create(filename.as_path().parent().unwrap())
-            .map_err(Error::from::<std::io::Error>)?;
+            .from_io!()?
 
         let file = std::fs::File::create(filename.as_path())
-            .map_err(Error::from::<std::io::Error>)?;
+            .from_io!()?
 
         defer file.close();
 
         let writer = std::io::BufferedWriter::new(&file, 1024);
         defer {
-            writer.flush();
+            writer.flush().from_io!()?;
             writer.free();
         };
 
-        write!(&writer, "const index = [");
+        write!(&writer, "const index = [").from_fmt!()?;
         for item in self.items.all().filter(|v: &Item| -> bool {  v.is_public() && v.kind.is_indexed() && !v.hide_from_index }) {
             let link_context = LinkContext::new(&self.items, &item.path);
             let link = link_context.link_for_item(item, false, false).unwrap();
@@ -632,13 +647,15 @@ impl Processor {
                 item.path,
                 doc.as_slice(),
                 link
-            ).map_err(Error::from::<std::fmt::Error>)?;
+            ).from_fmt!()?;
 
             link.free();
             doc.free();
         }
-        writeln!(&writer, "];");
-        writeln!(&writer, "if (typeof window.loadSearchIndex !== \"undefined\") {{ window.loadSearchIndex(index); }}");
+        writeln!(&writer, "];").from_fmt!()?;
+        writeln!(&writer,
+            "if (typeof window.loadSearchIndex !== \"undefined\") {{ window.loadSearchIndex(index); }}"
+        ).from_fmt!()?;;
 
         Result::ok(())
     }
@@ -655,7 +672,7 @@ fn main_inner(args: &[&[u8]]) -> Result<()> {
     defer doctest_path.free();
 
     let doctest = File::create(doctest_path.as_path())
-        .map_err(Error::from::<std::io::Error>)?;
+        .from_io!()?;
     defer doctest.close();
 
     let processor = Processor::new(output_dir.move(), &DoctestWriter::new(&doctest));
