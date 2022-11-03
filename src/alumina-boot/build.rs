@@ -127,8 +127,7 @@ fn generate_visitor(language_info: LanguageInfo) -> String {
 
         let trait_fn: TraitItem = parse_quote! {
             #[doc=#doc_string]
-            #[allow(non_snake_case)]
-            #[allow(unused_variables)]
+                        #[allow(unused_variables)]
             fn #method_name(&mut self, node: ::tree_sitter::Node<'tree>) -> Self::ReturnType {
                 unimplemented!(#sanitized_name)
             }

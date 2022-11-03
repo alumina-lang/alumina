@@ -362,9 +362,7 @@ struct Command {
 
 impl Command {
     use internal::ChildStdio;
-    use ffi::CString;
     use fs::Path;
-    use collections::{Vector, free_all};
 
     fn new(path: Path) -> Command {
         Command {
@@ -588,7 +586,6 @@ mod internal {
         }
 
         fn install(self: &mut ChildStdio, fd: libc::c_int) -> Result<()> {
-            use fs::{File, OpenOptions};
             if self.theirs.is_some() {
                 errno_try!(libc::dup2(self.theirs.unwrap().value, fd));
             }
@@ -783,7 +780,7 @@ mod tests {
             // Write to both pipes and fill up the buffer. Naive implementation would
             // block on write eventually when the pipe capacity is reached. But our's
             // don't!
-            for i in 0..1024 {
+            for _ in 0..1024 {
                 print!("{}", "A".repeat(1024));
                 eprint!("{}", "B".repeat(1024));
             }

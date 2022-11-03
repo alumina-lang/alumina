@@ -36,7 +36,7 @@ struct Channel<T> {
 }
 
 impl Channel<T> {
-    use time::{Instant, Duration};
+    use time::Duration;
 
     /// Creates a new channel with a given capacity
     fn new(capacity: usize) -> Channel<T> {
@@ -208,7 +208,7 @@ struct UnboundedChannel<T> {
 }
 
 impl UnboundedChannel<T> {
-    use time::{Instant, Duration};
+    use time::Duration;
 
     /// Creates a new unbounded channel
     fn new() -> UnboundedChannel<T> {
@@ -351,15 +351,14 @@ enum ChannelError {
 }
 
 impl ChannelError {
-    use fmt::{write, Formattable, Formatter, Result};
-    use cmp::Equatable;
+    use fmt::{write, Formatter, Result};
 
-    /// @ Equatable::equals
+    /// @ cmp::Equatable::equals
     fn equals(self: &ChannelError, other: &ChannelError) -> bool {
         *self as i32 == *other as i32
     }
 
-    /// @ Formattable::fmt
+    /// @ fmt::Formattable::fmt
     fn fmt<F: Formatter<F>>(self: &ChannelError, f: &mut F) -> Result {
         switch *self {
             ChannelError::Closed => write!(f, "channel closed"),
@@ -374,7 +373,6 @@ impl ChannelError {
 #[docs(no_index)]
 mod internal {
     protocol ConditionExt<Self> {
-        use builtins::Callable;
         use time::{Instant, Duration};
 
         fn _wait<F: Fn(&Self) -> bool>(self: &mut Self, cond: F) {

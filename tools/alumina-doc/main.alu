@@ -104,7 +104,7 @@ impl PageWriter<T: std::io::Writable<T>> {
 
                 printer.protocol_bounds = true;
 
-                for (idx, child) in children_by!(node, FieldKind::Argument, &cursor).enumerate() {
+                for child in children_by!(node, FieldKind::Argument, &cursor) {
                     if !child_by!(child, FieldKind::Bound).is_some() {
                         continue;
                     }
@@ -163,7 +163,7 @@ impl PageWriter<T: std::io::Writable<T>> {
 
                 printer.protocol_bounds = true;
 
-                for (idx, child) in children_by!(node, FieldKind::Argument, &cursor).enumerate() {
+                for child in children_by!(node, FieldKind::Argument, &cursor) {
                     if !child_by!(child, FieldKind::Bound).is_some() {
                         continue;
                     }
@@ -240,9 +240,6 @@ impl PageWriter<T: std::io::Writable<T>> {
     fn expand_mixin(self: &PageWriter<T>, item: &Item, methods: &mut HashSet<&[u8]>) -> Result<()> {
         use aluminac::lib::common::child_by;
         use aluminac::lib::node_kinds::FieldKind;
-        use visitors::get_name;
-
-        let link_context = LinkContext::new(self.item_bag, &item.defined_in);
 
         let proto_path = item.node
             .child_by!(FieldKind::Protocol)
@@ -602,9 +599,6 @@ impl Processor {
     }
 
     fn write_pages(self: &Processor) -> Result<()> {
-        use std::string::join_fmt;
-        use std::fmt::format;
-
         for top_level in self.items.all().filter(|v: &Item| -> bool {  v.is_public() && v.kind.has_own_page() }) {
             self.write_page(top_level)
                 .map_err(|=top_level, e: Error| -> Error {
@@ -618,7 +612,6 @@ impl Processor {
 
     fn write_index(self: &Processor) -> Result<()> {
         use std::fmt::{write, writeln};
-        use std::string::replace_fmt;
 
         let filename = self.output_dir.with_suffix(std::fs::Path::new("html/search_index.js"));
         defer filename.free();
@@ -655,7 +648,7 @@ impl Processor {
         writeln!(&writer, "];").from_fmt!()?;
         writeln!(&writer,
             "if (typeof window.loadSearchIndex !== \"undefined\") {{ window.loadSearchIndex(index); }}"
-        ).from_fmt!()?;;
+        ).from_fmt!()?;
 
         Result::ok(())
     }

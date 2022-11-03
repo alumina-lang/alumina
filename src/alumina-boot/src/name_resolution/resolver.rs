@@ -64,28 +64,41 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
             segments: path.segments[1..].to_vec(),
         };
 
+        let mut result = None;
         for item in self_scope.inner().items_with_name(path.segments[0].0) {
             match &item.kind {
                 NamedItemKind::Placeholder(sym, _) if path.segments.len() == 1 => {
-                    return Ok(ScopeResolution::Defered(Ty::Placeholder(*sym)))
+                    result = Some(Ok(ScopeResolution::Defered(Ty::Placeholder(*sym))));
+                    break;
                 }
                 NamedItemKind::Type(item, _, _) if path.segments.len() == 1 => {
-                    return Ok(ScopeResolution::Defered(Ty::Item(item)))
+                    result = Some(Ok(ScopeResolution::Defered(Ty::Item(item))));
+                    break;
                 }
                 NamedItemKind::TypeDef(item, _, _) if path.segments.len() == 1 => {
-                    return Ok(ScopeResolution::Defered(Ty::Item(item)))
+                    result = Some(Ok(ScopeResolution::Defered(Ty::Item(item))));
+                    break;
                 }
                 NamedItemKind::Protocol(_, _, child_scope) => {
-                    return self.resolve_scope(child_scope.clone(), remainder);
+                    result = Some(self.resolve_scope(child_scope.clone(), remainder));
+                    break;
                 }
                 NamedItemKind::Module(child_scope) => {
-                    return self.resolve_scope(child_scope.clone(), remainder);
+                    result = Some(self.resolve_scope(child_scope.clone(), remainder));
+                    break;
                 }
                 NamedItemKind::Alias(target, _) => {
-                    return self.resolve_scope(self_scope.clone(), target.join_with(remainder));
+                    result =
+                        Some(self.resolve_scope(self_scope.clone(), target.join_with(remainder)));
+                    break;
                 }
                 _ => {}
             }
+        }
+
+        if let Some(result) = result {
+            self_scope.mark_used(path.segments[0].0);
+            return result;
         }
 
         for import in self_scope.inner().star_imports() {
@@ -140,31 +153,42 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
             }
         };
 
+        let mut result = None;
         for item in containing_scope.inner().items_with_name(last_segment.0) {
             match &item.kind {
                 NamedItemKind::Impl(_, _) => continue,
                 NamedItemKind::Alias(target, _) => {
-                    return self.resolve_item_impl(
-                        self_scope,
+                    result = Some(self.resolve_item_impl(
+                        self_scope.clone(),
                         containing_scope.clone(),
                         target.clone(),
                         true,
-                    );
+                    ));
+                    break;
                 }
                 NamedItemKind::Macro(_, _, _)
-                | NamedItemKind::Local(_)
+                | NamedItemKind::Local(_, _)
                 | NamedItemKind::Parameter(..) => {
                     let original_func = self_scope.find_containing_function();
                     let current_func = containing_scope.find_containing_function();
 
                     if current_func.is_none() || (original_func == current_func) {
-                        return Ok(ItemResolution::Item(item.clone()));
+                        result = Some(Ok(ItemResolution::Item(item.clone())));
+                        break;
                     } else {
                         return Err(CodeErrorKind::CannotReferenceLocal(path.to_string()));
                     }
                 }
-                _ => return Ok(ItemResolution::Item(item.clone())),
+                _ => {
+                    result = Some(Ok(ItemResolution::Item(item.clone())));
+                    break;
+                }
             }
+        }
+
+        if let Some(result) = result {
+            containing_scope.mark_used(last_segment.0);
+            return result;
         }
 
         for import in containing_scope.inner().star_imports() {

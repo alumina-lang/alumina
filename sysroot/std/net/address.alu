@@ -120,7 +120,6 @@ impl Ipv6Addr {
     fn parse(s: &[u8]) -> Option<Ipv6Addr> {
         use option::try;
         use string::split;
-        use collections::Vector
         use internal::ipv6_parse_part;
 
         let s = split(s, "::");
@@ -154,7 +153,7 @@ impl Ipv6Addr {
 
     /// @ std::fmt::Formattable::fmt
     fn fmt<F: fmt::Formatter<F>>(self: &Ipv6Addr, f: &mut F) -> fmt::Result {
-        use fmt::{hex, zero_pad, write};
+        use fmt::{hex, write};
 
         // IPv4-compatible formats
         let segments = self.to_segments();
@@ -292,7 +291,6 @@ impl Ipv4Addr {
     fn parse(s: &[u8]) -> Option<Ipv4Addr> {
         use option::try;
         use string::split;
-        use collections::Vector
 
         let segments = s.split(".");
         let a = segments.next().and_then(u8::parse)?;
@@ -311,7 +309,7 @@ impl Ipv4Addr {
 
     /// @ fmt::Formattable::fmt
     fn fmt<F: fmt::Formatter<F>>(self: &Ipv4Addr, f: &mut F) -> fmt::Result {
-        use fmt::{hex, zero_pad, write};
+        use fmt::write;
 
         let octets = self.to_octets();
         write!(f,
@@ -471,7 +469,7 @@ impl SocketAddr {
     /// Parses a socket address from a string.
     fn parse(s: &[u8]) -> Option<SocketAddr> {
         use option::try;
-        use string::{split, starts_with, ends_with, contains};
+        use string::{split, starts_with, ends_with};
 
         let i = s.len();
         let split_at = loop {

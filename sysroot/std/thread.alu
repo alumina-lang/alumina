@@ -328,7 +328,6 @@ impl Thread {
     /// use std::thread::{Thread, spawn, sleep};
     /// use std::time::Duration;
     ///
-    /// let main_thread = Thread::current();
     /// let flag: Atomic<bool> = Atomic::new(false);
     /// let parked = spawn(|&flag| {
     ///     while !flag.load(Ordering::SeqCst) {
@@ -583,7 +582,7 @@ mod tests {
 
     #[test]
     fn test_spawn_custom() {
-        let t = Builder::new()
+        Builder::new()
             .stack_size(1)
             .spawn(|| -> i32 { 42 })
             .unwrap_err();
@@ -591,7 +590,7 @@ mod tests {
 
     #[test(should_fail)]
     fn test_spawn_detached() {
-        let t = Builder::new()
+        Builder::new()
             .spawn_detached(|| { panic!("hello") })
             .unwrap();
 
@@ -600,7 +599,7 @@ mod tests {
 
     #[test(should_fail)]
     fn test_spawn_no_catch_panic() {
-        let t = Builder::new()
+        let _ = Builder::new()
             .catch_panic(false)
             .spawn(|| { panic!("hello") })
             .unwrap()
@@ -723,7 +722,7 @@ mod tests {
         libc::pthread_create(
             &id,
             null,
-            |arg: &mut void| -> &mut void {
+            |_arg: &mut void| -> &mut void {
                 Thread::current(); // panics
                 null
             },

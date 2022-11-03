@@ -59,7 +59,7 @@ impl SampleVisitor {
         Result::ok(())
     }
 
-    fn visit_use_declaration(self: &mut SampleVisitor, node: Node) -> Result<(), Error> {
+    fn visit_use_declaration(self: &mut SampleVisitor, _node: Node) -> Result<(), Error> {
         Result::ok(())
     }
 
@@ -72,7 +72,6 @@ use llvm::execution_engine::*;
 use llvm::target::*;
 
 fn llvm_example() {
-    use std::util::{cast, transmute};
     use std::ffi::c_str;
 
     let context = LLVMContextCreate();
@@ -159,7 +158,7 @@ fn main() {
     defer cursor.free();
 
     let visitor = SampleVisitor::new(source[..], &cursor);
-    visitor.visit(root_node);
+    visitor.visit(root_node).unwrap();
 
     llvm_example();
 }

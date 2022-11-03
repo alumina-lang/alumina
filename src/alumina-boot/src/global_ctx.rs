@@ -1,5 +1,5 @@
 use crate::common::{HashMap, HashSet};
-use crate::diagnostics::DiagnosticContext;
+use crate::diagnostics::{self, DiagnosticContext};
 
 use std::cell::{Ref, RefCell};
 use std::rc::Rc;
@@ -58,6 +58,22 @@ impl GlobalCtx {
                 result.add_cfg("output_type", "library");
             }
         };
+
+        if result.has_option("deny-warnings") {
+            result.diag().add_override(diagnostics::Override {
+                span: None,
+                kind: None,
+                action: diagnostics::Action::Deny,
+            });
+        }
+
+        if result.has_option("allow-warnings") {
+            result.diag().add_override(diagnostics::Override {
+                span: None,
+                kind: None,
+                action: diagnostics::Action::Allow,
+            });
+        }
 
         result
     }

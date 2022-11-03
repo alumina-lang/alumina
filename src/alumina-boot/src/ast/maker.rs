@@ -157,6 +157,8 @@ impl<'ast> AstItemMaker<'ast> {
                     _ => {}
                 }
             }
+
+            impl_scope.check_unused_items(&self.global_ctx.diag());
         }
 
         let associated_fns = associated_fns.alloc_on(self.ast);
@@ -268,7 +270,7 @@ impl<'ast> AstItemMaker<'ast> {
     fn make_impl<'src>(&mut self, scope: Scope<'ast, 'src>) -> Result<(), AluminaError> {
         // Ambient placeholders on impl blocks
         self.ambient_placeholders = self.get_placeholders(&scope)?.to_vec();
-        let res = self.make(scope);
+        let res = self.make(scope.clone());
         self.ambient_placeholders.clear();
         res
     }
@@ -504,6 +506,11 @@ impl<'ast> AstItemMaker<'ast> {
             return Err(CodeErrorKind::FunctionMustHaveBody).with_span_from(&scope, node);
         }
 
+        if function_body.is_some() {
+            // Allow unused parameters in extern functions
+            scope.check_unused_items(&self.global_ctx.diag());
+        }
+
         let result = Item::Function(Function {
             name,
             attributes,
@@ -680,8 +687,8 @@ impl<'ast> AstItemMaker<'ast> {
                 kind: Protocol(symbol, node, scope),
                 attributes,
             }] => {
-                self.make_protocol(name, *symbol, *node, scope.clone(), attributes)?;
                 self.make(scope.clone())?;
+                self.make_protocol(name, *symbol, *node, scope.clone(), attributes)?;
             }
             [NI {
                 kind: Static(symbol, node, scope),

@@ -46,6 +46,7 @@ With regards to syntax, the language is very similar to Rust and in terms of sem
   - [Dyn pointers](#dyn-pointers)
   - [Operator overloading](#operator-overloading)
 - [Miscellaneous](#miscellaneous)
+  - [Lints (warnings)](#lints-warnings)
   - [Style conventions](#style-conventions)
 
 
@@ -1620,6 +1621,24 @@ assert!(FancyInt { inner: 3 } == FancyInt { inner: 3 });
 ```
 
 # Miscellaneous
+
+## Lints (warnings)
+
+Alumina has a small number of compile-time warnings for code that is not invalid per se but may be a sign of a bug or a potential performance issue. Lints emit a compile-time warning enabled by default and can be disabled with the `#[allow(lint_name)]` on whichever scope enclosing the code that triggers the lint.
+
+The innermost scope takes precedence, so if a lint is disabled on a function, it will be disabled for the entire function body, but for example it can be re-enabled for a specific statement.
+
+Similarly, lints can be turned into errors with the `#[deny(lint_name)]` attribute.
+
+Lints can be globally disabled with `-Zallow-warnings` or denied with `-Zdeny-warnings` command line flags. When an attribute is used to disable or deny a lint, it overrides the global setting.
+
+Common lints:
+ - `defer_in_a_loop` - A `defer` statement is used in a loop. See [this section](#defer-expressions) for more details.
+ - `uninitialized_field` - A field is skipped in a struct initializer.
+ - `unused_must_use` - A result of a function call is not used. This is notably used on functions that return a `Result` to guard against forgetting to handle the error case.
+ - `unused_variable` - A variable is declared but not used.
+ - `unused_parameter` - A function parameter is declared but not used.
+ - `unused_import` - An item is imported but not used.
 
 ## Style conventions
 

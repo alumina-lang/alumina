@@ -26,7 +26,7 @@
 /// ```
 ///
 /// ```
-/// fn type_of_value<T>(t: T) -> &[u8] {
+/// fn type_of_value<T>(_: T) -> &[u8] {
 ///     when T: i32 {
 ///         "i32"
 ///     } else when T: &[u8] {
@@ -50,7 +50,7 @@ macro compile_fail($reason) {
 /// ```dubious
 /// use std::compile_warn;
 ///
-/// fn md5(data: &[u8]) -> u128 {
+/// fn md5(_data: &[u8]) -> u128 {
 ///     compile_warn!("md5 is a dead algorithm, use something better");
 ///     0xdeadDEADdeadDEADdeadDEADdeadDEAD
 /// }
@@ -174,7 +174,7 @@ macro unreachable() {
 /// ```nasaldemons
 /// use std::assume;
 ///
-/// std::assume!(1 > 2); // Ò̴̡̤̗̬̳̱͉̳͓̝̥̞͗́̿͑̂̓̀͋̈́͐̏͝H̷̳̺̝̗̖̖̫͆̀́̚͝ ̷͚̜̟̘̦̺̼̣̘̓N̸̜̞̬̞͓̮̘̣͍͕͍̱̮̍͛̇̋̅̏͒̕͠Ỏ̴̭̯͘̚̕
+/// assume!(1 > 2); // Ò̴̡̤̗̬̳̱͉̳͓̝̥̞͗́̿͑̂̓̀͋̈́͐̏͝H̷̳̺̝̗̖̖̫͆̀́̚͝ ̷͚̜̟̘̦̺̼̣̘̓N̸̜̞̬̞͓̮̘̣͍͕͍̱̮̍͛̇̋̅̏͒̕͠Ỏ̴̭̯͘̚̕
 /// ```
 macro assume($cond) {
     if !$cond {
@@ -299,7 +299,6 @@ mod internal {
     #[no_inline]
     fn panic_assert(file: &[u8], line: i32, column: i32) -> ! {
         use panicking::internal::panic_impl;
-        use fmt::{Formattable, internal::format_arg};
 
         panic_impl(
             file, line, column,
@@ -327,7 +326,7 @@ mod internal {
     #[no_inline]
     fn panic_assert_eq<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T) -> ! {
         use panicking::internal::panic_impl;
-        use fmt::{Formattable, internal::format_arg};
+        use fmt::Formattable;
 
         when T: Formattable<T, panicking::internal::PanicFormatter> {
             panic_impl(
@@ -353,7 +352,7 @@ mod internal {
     #[no_inline]
     fn panic_assert_ne<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T) -> ! {
         use panicking::internal::panic_impl;
-        use fmt::{Formattable, internal::format_arg};
+        use fmt::Formattable;
 
         when T: Formattable<T, panicking::internal::PanicFormatter> {
             panic_impl(

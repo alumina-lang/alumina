@@ -72,7 +72,7 @@ $(ALUMINA_BOOT): $(BOOTSTRAP_SOURCES) $(COMMON_SOURCES) $(BUILD_DIR)/.build
 
 # Stdlib tests
 $(STDLIB_TESTS).c: $(ALUMINA_BOOT) $(SYSROOT_FILES)
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --cfg test_std --output $@
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) -Zdeny-warnings --cfg test --cfg test_std --output $@
 
 $(STDLIB_TESTS): $(STDLIB_TESTS).c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
@@ -82,7 +82,7 @@ $(STDLIB_TESTS): $(STDLIB_TESTS).c
 LANG_TEST_FILES = $(shell find src/tests -type f -name '*.alu')
 
 $(LANG_TESTS).c: $(ALUMINA_BOOT) $(SYSROOT_FILES) $(LANG_TEST_FILES)
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --output $@ \
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) -Zdeny-warnings --cfg test --output $@ \
 		$(foreach src,$(LANG_TEST_FILES),$(subst /,::,$(basename $(subst src/tests/,lang_tests/,$(src))))=$(src)) \
 
 $(LANG_TESTS): $(LANG_TESTS).c
@@ -213,7 +213,7 @@ alumina-boot: $(ALUMINA_BOOT)
 aluminac: $(ALUMINAC)
 	ln -sf $(ALUMINAC) $@
 
-.PHONY: test-std test-examples  test-alumina-boot test-aluminac test-lang test
+.PHONY: test-std test-examples test-alumina-boot test-aluminac test-lang test
 
 test-std: alumina-boot $(STDLIB_TESTS)
 	$(STDLIB_TESTS) $(TEST_FLAGS)

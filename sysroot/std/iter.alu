@@ -741,8 +741,6 @@ struct Grouping<It: Iterator<It, T>, F: Fn(T) -> K, T, K: cmp::Equatable<K>> {
 impl Grouping<It: Iterator<It, T>, F: Fn(T) -> K, T, K: cmp::Equatable<K>> {
     /// @ Iterator::next
     fn next(self: &mut Grouping<It, F, T, K>) -> Option<T> {
-        use option::try;
-
         let v = self._parent._it.peek();
         if v.is_none() {
             self._parent._last_group = Option::none();
@@ -1056,7 +1054,7 @@ type iterable_yield_t<T> = typeof((null as &mut T).iter().next().unwrap());
 /// use std::iter::iterator_yield_t;
 /// use std::range::Range;
 ///
-/// let v: iterator_yield_t<Range<i32>>; // = i32
+/// let _: iterator_yield_t<Range<i32>>; // = i32
 /// ```
 type iterator_yield_t<T> = typeof((null as &mut T).next().unwrap());
 
@@ -1253,7 +1251,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// ```
     fn nth(self: &mut Self, n: usize) -> Option<T> {
         use option::try;
-        for i in 0usize..n {
+        for _ in 0usize..n {
             self.next()?;
         }
         self.next()
@@ -1360,7 +1358,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
     /// ```
     /// use std::fmt::format;
     ///
-    /// let range = (0..5)
+    /// (0..5)
     ///     .iter()
     ///     .foreach(|x: i32| {
     ///         let f = format!("{}", x).unwrap();
@@ -2155,7 +2153,7 @@ mod tests {
         let sum1 = 0;
         let sum2 = 0;
         let sum3 = 0;
-        let count = (0..5)
+        (0..5)
             .iter()
             .inspect(|&sum1, x: i32| { sum1 += x })
             .inspect(|&sum2, x: i32| { sum2 += x * x })
@@ -2328,8 +2326,8 @@ mod tests {
         let groups = values.iter().group_by(|v: (i32, i32)| -> i32 { v.0 });
 
         assert_eq!(groups.size_hint(), Option::none());
-        let group = groups.next().unwrap();
-        let group = groups.next().unwrap();
+        groups.next().unwrap();
+        groups.next().unwrap();
         let group = groups.next().unwrap();
         assert_eq!(group.next(), Option::some((2, 0)));
         assert_eq!(group.next(), Option::some((2, 1)));
@@ -2574,7 +2572,7 @@ mod tests {
         let iter = (0..10).chunks(3);
         assert_eq!(iter.size_hint(), Option::some(4usize));
 
-        let chunk = iter.next().unwrap();
+        iter.next().unwrap();
         assert_eq!(iter.size_hint(), Option::some(3usize));
 
         let chunk = iter.next().unwrap();
@@ -2585,10 +2583,10 @@ mod tests {
         assert_eq!(chunk.next(), Option::some(5));
         assert_eq!(chunk.next(), Option::none());
 
-        let chunk = iter.next().unwrap();
+        iter.next().unwrap();
         assert_eq!(iter.size_hint(), Option::some(1usize));
 
-        let chunk = iter.next().unwrap();
+        iter.next().unwrap();
         assert_eq!(iter.size_hint(), Option::some(0usize));
 
         assert!(iter.next().is_none());

@@ -137,7 +137,7 @@ impl DirBuilder {
 
     /// Sets whether to create a recursive directory structure.
     fn recursive(self: &mut DirBuilder, recursive: bool) -> &mut DirBuilder {
-        self._recursive = true;
+        self._recursive = recursive;
         self
     }
 
@@ -308,7 +308,7 @@ impl File {
         let string: StringBuf = StringBuf::with_capacity(attrs.size() as usize);
         defer string.free();
 
-        let ret = file.read_to_end(&string)?;
+        file.read_to_end(&string)?;
 
         Result::ok(string.move())
     }
@@ -330,7 +330,7 @@ impl File {
 
     /// Flushes disk buffers to disk (`fsync`)
     fn sync(self: &mut File) -> Result<()> {
-        let ret = errno_try!(libc::fsync(self.fd.value));
+        errno_try!(libc::fsync(self.fd.value));
         Result::ok(())
     }
 
@@ -626,7 +626,7 @@ mod tests {
 
         file.close().unwrap();
 
-        let attrs2 = FileAttr::from_path(filename.as_path()).unwrap();
+        FileAttr::from_path(filename.as_path()).unwrap();
         assert_eq!(attrs.size(), 13);
         assert_eq!(attrs.file_type(), FileType::Regular);
 

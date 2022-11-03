@@ -97,7 +97,7 @@ impl SanitizedIdentifier {
     }
 }
 
-fn main(args: &[&[u8]]) {
+fn main() {
     let language = tree_sitter_alumina();
 
     let unique_symbol_names : HashSet<&[u8]> = HashSet::new();
@@ -144,12 +144,12 @@ fn main(args: &[&[u8]]) {
     println!("];");
     println!("protocol NodeVisitor<Self, ReturnType> {{")
     for name in unique_symbol_names {
-        println!("    fn visit_{}(self: &mut Self, node: Node) -> ReturnType {{", SanitizedIdentifier::default(name));
+        println!("    fn visit_{}(self: &mut Self, _node: Node) -> ReturnType {{", SanitizedIdentifier::default(name));
         println!("        panic!(\"unimplemented: visit_{}\");", SanitizedIdentifier::default(name));
         println!("    }}");
     }
 
-    println!("    fn visit_unknown(self: &mut Self, node: Node) -> ReturnType {{");
+    println!("    fn visit_unknown(self: &mut Self, _node: Node) -> ReturnType {{");
     println!("        panic!(\"unimplemented: visit unknown\");");
     println!("    }}");
 

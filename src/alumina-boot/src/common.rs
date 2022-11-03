@@ -4,8 +4,10 @@ use std::hash::{Hash, Hasher};
 use std::io;
 use std::rc::Rc;
 use std::result::Result;
+use strum_macros::{AsRefStr, EnumVariantNames};
 use thiserror::Error;
 use tree_sitter::Node;
+
 macro_rules! ice {
     ($why:literal) => {{
         use crate::common::CodeErrorBuilder;
@@ -66,7 +68,10 @@ pub enum AluminaError {
 // thiserror uses string matching in its proc macro and assumes that "Backtrace" is
 // "std::backtrace::Backtrace", which is unstable.
 use backtrace::Backtrace as NonStdBacktrace;
-#[derive(Debug, Error, Clone, Hash, PartialEq, Eq)]
+
+/// Main enum for all errors and warnings that can occur during compilation
+#[derive(AsRefStr, EnumVariantNames, Debug, Error, Clone, Hash, PartialEq, Eq)]
+#[strum(serialize_all = "snake_case")]
 pub enum CodeErrorKind {
     // Errors
     #[error("syntax error: unexpected `{}`", .0)]
@@ -314,6 +319,16 @@ pub enum CodeErrorKind {
     Align1,
     #[error("unused `{}` that must be used", .0)]
     UnusedMustUse(String),
+    #[error("unused variable `{}`", .0)]
+    UnusedVariable(String),
+    #[error("unused closure binding `{}`", .0)]
+    UnusedClosureBinding(String),
+    #[error("unused parameter `{}` (prefix with `_` if required)", .0)]
+    UnusedParameter(String),
+    #[error("unused import `{}`", .0)]
+    UnusedImport(String),
+    #[error("#[{}({})] refers to a lint that does not currently exist", .0, .1)]
+    ImSoMetaEvenThisAcronym(String, String),
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
