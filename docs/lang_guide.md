@@ -328,22 +328,43 @@ const QUUX: usize = (1 + BAR) as usize;
 let arr: [u32; QUUX];
 ```
 
-Const evaluation is fairly limited at the moment, but it will be expanded in the future. The following are supported
+Constant evaluation supports many of the language features, including variable assignments, loops, conditionals, function calls, etc. Functions do not have to be specifically marked as `const` or `constexpr` in order to use them in constant expressions. The following are not supported:
 
-- all builtin type literals
-- arithmetic and bitwise operations on integers (not floats)
-- logical operations on booleans
-- casts between integers and enums
-- if/else expressions (only if condition and both branches are constant)
-- macro calls (only if the macro is a constant expression)
-- block expressions (only if all statements and the final expression are constant)
-- array, struct and tuple literals (only if all elements are constant)
-- fixed-size array indexing, struct field access and tuple indexing (only if the base expression is constant)
-- calling certain functions in standard library (chiefly constructors and wrapper around intrinsics). User-defined const functions are not supported yet.
-- taking address of named functions (function pointers)
+- arithmetic operations and comparisons of floating point numbers
+- foreign function calls, including `libc` functions
+- inline assembly and most other compiler intrinsics
+- atomic operations
+- `dyn` pointers and virtual dispatch
+- string formatting
+- dynamic memory allocation (`malloc` is a foreign function call)
+- type punning of any sort (e.g. via a union, `std::util::transmute` or pointer casts)
+- pointer arithmetic between pointers of different provenance
+  ```rust
+  const _ = {
+        let a: [u8; 10];
+        let b: [u8; 10];
 
-Expressions that would cause undefined behavior at runtime, such as accessing uninitialized memory, division by zero or signed overflow, result in a compile-time error.
+        let diff1 = &a[7] - &a[3]; // this is allowed
+        let diff2 = &a[7] - &b[3]; // but this is not
+  }
+  ```
+- all operations[^1] that would cause undefined behavior at runtime (out of bounds array access, signed overflow, division by zero, reaching `std::unreachable()`, etc.)
+  - uninitialized memory is not forbidden - a constant is allowed e.g. to evaluate to a struct with an uninitialized field, but if the uninitialized value is used for computation during constant evaluation itself, this will result in a compile-time error.
+    ```rust
+    struct Maybe<T> { just: bool, val: T }
 
+    const _: Maybe<i32> = {
+        let x: i32;
+        x = x + 1;                     // this is not allowed
+        Maybe { just: false, val: x }  // but this is
+    };
+    ```
+
+Call to `std::runtime::in_const_context` function evaluates to `true` during constant evaluation and `false` during code generation. This can be used to make functions const-compatible (e.g. by using an implementation not relying on foreign functions).
+
+There are also limits on how complex a constant expression can be. The compiler will reject constant expressions that are too complex to evaluate at compile time. The current hard-coded limits is 10000 steps and a maximum recursion depth of 100 per constant expression.
+
+[^1]: If you can produce UB during const-eval, please file a bug.
 
 # Statics
 

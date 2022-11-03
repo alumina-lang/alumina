@@ -2,7 +2,7 @@ use crate::ast::{Attribute, BinOp, BuiltinType, UnOp};
 use crate::codegen::types::TypeWriter;
 use crate::codegen::{w, CName, CodegenCtx};
 use crate::common::AluminaError;
-use crate::intrinsics::CodegenIntrinsicKind;
+use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::const_eval::Value;
 use crate::ir::layout::Layouter;
 use crate::ir::{
@@ -234,6 +234,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             Value::ISize(val) => w!(self.fn_bodies, "{}LL", val),
             Value::F32(val) => w!(self.fn_bodies, "{}f", force_float(val)),
             Value::F64(val) => w!(self.fn_bodies, "{}", force_float(val)),
+            Value::Uninitialized => w!(self.fn_bodies, "{{0}}"),
             _ => unimplemented!(),
         }
     }
@@ -371,8 +372,8 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 }
             }
             ExprKind::Literal(v) => match v {
-                Value::Str(val) => {
-                    self.write_string_literal(val);
+                Value::Str(val, offset) => {
+                    self.write_string_literal(&val[*offset..]);
                 }
                 Value::FunctionPointer(item) => {
                     w!(
@@ -445,21 +446,21 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             ExprKind::Unreachable => {
                 w!(self.fn_bodies, "__builtin_unreachable()");
             }
-            ExprKind::CodegenIntrinsic(kind) => match kind {
-                CodegenIntrinsicKind::SizeOfLike(n, typ) => {
+            ExprKind::Intrinsic(kind) => match kind {
+                IntrinsicValueKind::SizeOfLike(n, typ) => {
                     self.type_writer.add_type(typ)?;
                     w!(self.fn_bodies, "{}({})", n, self.ctx.get_type(typ));
                 }
-                CodegenIntrinsicKind::FunctionLike(n) => {
+                IntrinsicValueKind::FunctionLike(n) => {
                     w!(self.fn_bodies, "{}", n);
                 }
-                CodegenIntrinsicKind::ConstLike(n) => {
+                IntrinsicValueKind::ConstLike(n) => {
                     w!(self.fn_bodies, "{}", n);
                 }
-                CodegenIntrinsicKind::Asm(n) => {
+                IntrinsicValueKind::Asm(n) => {
                     w!(self.fn_bodies, "asm volatile({:?})", *n);
                 }
-                CodegenIntrinsicKind::Uninitialized => {
+                IntrinsicValueKind::Uninitialized => {
                     // I wish there was a prettier way to do this
                     w!(
                         self.fn_bodies,
@@ -467,8 +468,8 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                         self.ctx.get_type(expr.ty)
                     );
                 }
-                CodegenIntrinsicKind::Dangling(inner) => {
-                    let layout = Layouter::new(self.ctx.global_ctx.clone()).layout_of(*inner)?;
+                IntrinsicValueKind::Dangling(inner) => {
+                    let layout = Layouter::new(self.ctx.global_ctx.clone()).layout_of(inner)?;
 
                     w!(
                         self.fn_bodies,
@@ -476,6 +477,9 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                         self.ctx.get_type(expr.ty),
                         layout.align
                     );
+                }
+                IntrinsicValueKind::InConstContext => {
+                    w!(self.fn_bodies, "({})0", self.ctx.get_type(expr.ty));
                 }
             },
             ExprKind::Array(elems) => {

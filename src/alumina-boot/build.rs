@@ -355,6 +355,6 @@ fn compile_grammar(src_dir: &Path, parser_path: &Path) {
         .flag_if_supported("-Wno-unused-const-variable")
         .flag_if_supported("-Wno-unused-but-set-variable")
         .flag_if_supported("-Wno-trigraphs")
-        .file(&parser_path)
+        .file(parser_path)
         .compile("parser");
 }

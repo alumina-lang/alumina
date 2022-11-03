@@ -13,7 +13,7 @@ use crate::common::{
     impl_allocatable, Allocatable, AluminaError, ArenaAllocatable, CodeErrorKind, HashSet,
     Incrementable,
 };
-use crate::intrinsics::CodegenIntrinsicKind;
+use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::const_eval::Value;
 
 use backtrace::Backtrace;
@@ -47,7 +47,7 @@ impl<'ir> IrCtx<'ir> {
 
     pub fn intern_type(&'ir self, ty: Ty<'ir>) -> TyP<'ir> {
         if let Some(key) = self.types.borrow().get(&ty) {
-            return *key;
+            return key;
         }
 
         let inner = self.arena.alloc(ty);
@@ -556,7 +556,7 @@ pub enum ExprKind<'ir> {
     If(ExprP<'ir>, ExprP<'ir>, ExprP<'ir>),
     Cast(ExprP<'ir>),
 
-    CodegenIntrinsic(CodegenIntrinsicKind<'ir>),
+    Intrinsic(IntrinsicValueKind<'ir>),
 
     Array(&'ir [ExprP<'ir>]),
     Tuple(&'ir [TupleInit<'ir>]),
@@ -646,14 +646,16 @@ impl<'ir> Expr<'ir> {
             ExprKind::Literal(_) => true,
             ExprKind::Void => true,
 
-            ExprKind::CodegenIntrinsic(ref kind) => match kind {
-                CodegenIntrinsicKind::SizeOfLike(_, _) => true,
-                CodegenIntrinsicKind::Dangling(_) => true,
-                CodegenIntrinsicKind::Asm(_) => false,
-                CodegenIntrinsicKind::FunctionLike(_) => false,
-                CodegenIntrinsicKind::ConstLike(_) => false,
-                CodegenIntrinsicKind::Uninitialized => true,
+            ExprKind::Intrinsic(ref kind) => match kind {
+                IntrinsicValueKind::SizeOfLike(_, _) => true,
+                IntrinsicValueKind::Dangling(_) => true,
+                IntrinsicValueKind::Asm(_) => false,
+                IntrinsicValueKind::FunctionLike(_) => false,
+                IntrinsicValueKind::ConstLike(_) => false,
+                IntrinsicValueKind::Uninitialized => true,
+                IntrinsicValueKind::InConstContext => true,
             },
+
             ExprKind::Unreachable => false, // ?
             ExprKind::Call(_, _) => false,  // for now
             ExprKind::Assign(_, _) => false,
@@ -794,7 +796,7 @@ pub trait ExpressionVisitor<'ir>: Sized {
 
     fn visit_codegen_intrinsic(
         &mut self,
-        _kind: &CodegenIntrinsicKind<'ir>,
+        _kind: &IntrinsicValueKind<'ir>,
     ) -> Result<(), AluminaError> {
         Ok(())
     }
@@ -858,7 +860,7 @@ pub fn default_visit_expr<'ir, V: ExpressionVisitor<'ir>>(
         ExprKind::TupleIndex(expr, index) => visitor.visit_tuple_index(expr, *index),
         ExprKind::If(cond, then, els) => visitor.visit_if(cond, then, els),
         ExprKind::Cast(expr) => visitor.visit_cast(expr),
-        ExprKind::CodegenIntrinsic(kind) => visitor.visit_codegen_intrinsic(kind),
+        ExprKind::Intrinsic(kind) => visitor.visit_codegen_intrinsic(kind),
         ExprKind::Array(exprs) => visitor.visit_array(exprs),
         ExprKind::Tuple(exprs) => visitor.visit_tuple(exprs),
         ExprKind::Struct(exprs) => visitor.visit_struct(exprs),
@@ -881,5 +883,7 @@ impl_allocatable!(
     LocalDef<'_>,
     StructInit<'_>,
     TupleInit<'_>,
+    const_eval::Value<'_>,
+    const_eval::LValue<'_>,
     IrId
 );

@@ -128,7 +128,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                 }
 
                 for (holder, t) in holders.iter().zip(mono_key.1.iter()) {
-                    self.match_slot(inferred, *holder, *t)?;
+                    self.match_slot(inferred, holder, t)?;
                 }
             }
             (ast::Ty::Dyn(a_protos, a_const), _) => {
@@ -158,7 +158,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                         }
 
                         for (holder, t) in holders.iter().zip(mono_key.1.iter()) {
-                            self.match_slot(inferred, *holder, *t)?;
+                            self.match_slot(inferred, holder, t)?;
                         }
                     }
                 } else {

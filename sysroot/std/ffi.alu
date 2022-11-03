@@ -84,6 +84,11 @@ impl CString {
         self.ptr = null;
         ret
     }
+
+    /// @ fmt::Formattable::fmt
+    fn fmt<F: fmt::Formatter<F>>(self: &CString, f: &mut F) -> fmt::Result {
+        f.write_str(self.as_slice())
+    }
 }
 
 
@@ -95,6 +100,10 @@ mod tests {
         let s = CString::from_raw(c_str!("Hello, World"));
 
         assert_eq!(s[..], "Hello, World");
+        let f = fmt::format!("{}", s).unwrap();
+        defer f.free();
+
+        assert_eq!(f[..] as &[u8], "Hello, World");
     }
 
     #[test]

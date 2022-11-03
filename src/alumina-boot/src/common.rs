@@ -305,6 +305,10 @@ pub enum CodeErrorKind {
     IrInlineFlowControl,
     #[error("cannot IR-inline functions that can return early")]
     IrInlineEarlyReturn,
+    #[error("cannot define new items in a macro body (yet)")]
+    MacrosCannotDefineItems,
+    #[error("anonymous functions are not supported in a macro body (yet)")]
+    MacrosCannotDefineLambdas,
 
     // Warnings
     #[error("defer inside a loop: this defered statement will only be executed once")]

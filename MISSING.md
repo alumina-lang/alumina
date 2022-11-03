@@ -18,7 +18,8 @@
 - Some limited pattern matching in macros (optional arguments)
 - Local items (functions, structs defined in linear scopes) that bind ambient generic parameters
   - Right now there is not even a good error message to say that this is not supported, just a cryptic "unbound placeholder" during mono
-- Lambdas in macros are broken.
+- Recursive local functions lead to stack overflow as mono monomorphizes them over and over again. The local item handling for functions was designed for lambdas that cannot be recursive (without indirection)
+- Macros cannot define local items or use anonymous function. This is quite bad and should be fixed.
 - Promoting all variables to function scope is a bit of a unique feature of Alumina and I like it (comes in quite handy for autoref - can take an address of any rvalue and defer), but it may inhibit some optimizations downstream.
 - `if opt.is_some { opt.inner }` and  `if res.is_ok() { res.unwrap() }` do not spark joy. Full pattern matching is overkill, but this is very common and
   deserves a better idiom.
@@ -83,6 +84,7 @@ macro write!($fmt, $s, $args...) {
   - Allocating collections and not freeing them - this would be pretty great to have if I can figure out a way to do it without false positives and in a generic enough fashion
     - OTOH, this is a bit of a slippery slope. Do I need to invent whole ownership system for this? If so, it's not happening, Alumina is not C++ or Rust even though it doesn't try very hard to not look like them.
 - Add more specific spans to compile errors. It's pretty good right now, but could be better.
+- Spans in IR expressions. Needed to generate debug info eventually, but also for pin-pointing const-eval errors.
 - proper backtraces for compiler warnings (currently just the span itself is shown, not it's mono stack). Might be a good to have an explicit stack in `mono` anyway and get rid of this nasty `with_no_span` hack that populates the error backtrace when unwinding.
 - do not panic on cyclic/recursive protocol bounds (figure out which ones are appropriate), but rather give a meaningful error message
 

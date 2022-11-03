@@ -1,5 +1,21 @@
 //! Run time glue code (program entrypoint, tests, ...)
 
+/// Returns `true` when evaluated in a const context and `false` otherwise.
+///
+/// ## Example
+/// ```
+/// use std::runtime::in_const_context;
+///
+/// const IN_CONST_CONTEXT: bool = in_const_context();
+///
+/// assert!(IN_CONST_CONTEXT);
+/// assert!(!in_const_context());
+/// ```
+#[inline(ir)]
+fn in_const_context() -> bool {
+    intrinsics::in_const_context()
+}
+
 #[cfg(not(output_type = "library"))]
 mod internal {
     use builtins::{return_type_of, arguments_of, NamedFunction};

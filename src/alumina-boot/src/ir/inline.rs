@@ -101,7 +101,7 @@ impl<'ir> IrInliner<'ir> {
             ExprKind::Call(callee, args) => builder.call(
                 self.visit_expr(callee)?,
                 args.iter()
-                    .map(|a| self.visit_expr(*a))
+                    .map(|a| self.visit_expr(a))
                     .collect::<Result<Vec<_>, _>>()?,
                 expr.ty,
             ),
@@ -111,7 +111,7 @@ impl<'ir> IrInliner<'ir> {
             ExprKind::Literal(_) => expr,
             ExprKind::Unreachable => expr,
             ExprKind::Void => expr,
-            ExprKind::CodegenIntrinsic(_) => expr,
+            ExprKind::Intrinsic(_) => expr,
             ExprKind::Local(id) => self.replacements.get(&id).copied().unwrap_or(expr),
             ExprKind::Ref(e) => builder.r#ref(self.visit_expr(e)?),
             ExprKind::Deref(e) => builder.deref(self.visit_expr(e)?),
@@ -131,7 +131,7 @@ impl<'ir> IrInliner<'ir> {
             ExprKind::Array(elems) => builder.array(
                 elems
                     .iter()
-                    .map(|e| self.visit_expr(*e))
+                    .map(|e| self.visit_expr(e))
                     .collect::<Result<Vec<_>, _>>()?,
                 expr.ty,
             ),

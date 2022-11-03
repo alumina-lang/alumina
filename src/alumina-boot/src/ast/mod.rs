@@ -84,7 +84,7 @@ impl<'ast> AstCtx<'ast> {
 
     pub fn intern_type(&'ast self, ty: Ty<'ast>) -> TyP<'ast> {
         if let Some(key) = self.types.borrow().get(&ty) {
-            return *key;
+            return key;
         }
 
         let inner = self.arena.alloc(ty);

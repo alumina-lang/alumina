@@ -29,6 +29,7 @@ pub enum IntrinsicKind {
     Uninitialized,
     Dangling,
     Asm,
+    InConstContext,
 }
 
 pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
@@ -52,6 +53,7 @@ pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
         "asm" => IntrinsicKind::Asm,
         "uninitialized" => IntrinsicKind::Uninitialized,
         "dangling" => IntrinsicKind::Dangling,
+        "in_const_context" => IntrinsicKind::InConstContext,
         _ => return None,
     };
 
@@ -59,13 +61,14 @@ pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
 }
 
 #[derive(Debug, Clone)]
-pub enum CodegenIntrinsicKind<'ir> {
+pub enum IntrinsicValueKind<'ir> {
     SizeOfLike(&'ir str, TyP<'ir>),
     Dangling(TyP<'ir>),
     Asm(&'ir str),
     FunctionLike(&'ir str),
     ConstLike(&'ir str),
     Uninitialized,
+    InConstContext,
 }
 
 pub struct CompilerIntrinsics<'ir> {
@@ -83,12 +86,22 @@ pub struct CompilerIntrinsics<'ir> {
 fn extract_constant_string_from_slice<'ir>(value: &Value<'ir>) -> Option<&'ir [u8]> {
     match value {
         Value::Struct(fields) => {
+            let mut buf = None;
+            let mut len = None;
             for (_id, value) in fields.iter() {
-                if let Value::Str(r) = value {
-                    return Some(r);
+                if let Value::Str(r, offset) = value {
+                    buf = r.get(*offset..);
+                }
+                if let Value::USize(len_) = value {
+                    len = Some(*len_);
                 }
             }
-            None
+
+            if let (Some(buf), Some(len)) = (buf, len) {
+                Some(&buf[..len])
+            } else {
+                None
+            }
         }
         _ => None,
     }
@@ -106,7 +119,8 @@ impl<'ir> CompilerIntrinsics<'ir> {
     }
 
     fn get_const_string(&self, expr: ExprP<'ir>) -> Result<&'ir str, AluminaError> {
-        match const_eval::ConstEvaluator::new(self.ir).const_eval(expr) {
+        // TODO: It would be quite weird if someone actualy elied on this, but anyway
+        match const_eval::ConstEvaluator::new(self.ir, []).const_eval(expr) {
             Ok(value) => {
                 if let Some(r) = extract_constant_string_from_slice(&value) {
                     Ok(std::str::from_utf8(r).unwrap())
@@ -211,10 +225,8 @@ impl<'ir> CompilerIntrinsics<'ir> {
         let fn_type = self.types.function([], ret_type);
 
         Ok(self.expressions.call(
-            self.expressions.codegen_intrinsic(
-                CodegenIntrinsicKind::FunctionLike("__builtin_trap"),
-                fn_type,
-            ),
+            self.expressions
+                .codegen_intrinsic(IntrinsicValueKind::FunctionLike("__builtin_trap"), fn_type),
             [],
             ret_type,
         ))
@@ -233,7 +245,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
 
         Ok(self.expressions.call(
             self.expressions
-                .codegen_intrinsic(CodegenIntrinsicKind::FunctionLike(name), fn_type),
+                .codegen_intrinsic(IntrinsicValueKind::FunctionLike(name), fn_type),
             args.iter().copied(),
             ret_ty,
         ))
@@ -249,7 +261,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
 
         Ok(self
             .expressions
-            .codegen_intrinsic(CodegenIntrinsicKind::SizeOfLike(name, ty), ret_ty))
+            .codegen_intrinsic(IntrinsicValueKind::SizeOfLike(name, ty), ret_ty))
     }
 
     fn asm(&self, assembly: ExprP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
@@ -257,7 +269,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
 
         Ok(self
             .expressions
-            .codegen_intrinsic(CodegenIntrinsicKind::Asm(assembly), self.types.void()))
+            .codegen_intrinsic(IntrinsicValueKind::Asm(assembly), self.types.void()))
     }
 
     fn codegen_const(
@@ -269,20 +281,20 @@ impl<'ir> CompilerIntrinsics<'ir> {
 
         Ok(self
             .expressions
-            .codegen_intrinsic(CodegenIntrinsicKind::ConstLike(name), ret_ty))
+            .codegen_intrinsic(IntrinsicValueKind::ConstLike(name), ret_ty))
     }
 
     fn uninitialized(&self, ret_ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
         Ok(self
             .expressions
-            .codegen_intrinsic(CodegenIntrinsicKind::Uninitialized, ret_ty))
+            .codegen_intrinsic(IntrinsicValueKind::Uninitialized, ret_ty))
     }
 
     fn dangling(&self, ret_ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
         if let Ty::Pointer(inner, _) = ret_ty {
             Ok(self
                 .expressions
-                .codegen_intrinsic(CodegenIntrinsicKind::Dangling(inner), ret_ty))
+                .codegen_intrinsic(IntrinsicValueKind::Dangling(inner), ret_ty))
         } else {
             Err(CodeErrorKind::TypeMismatch(
                 "pointer".to_string(),
@@ -290,6 +302,13 @@ impl<'ir> CompilerIntrinsics<'ir> {
             ))
             .with_no_span()
         }
+    }
+
+    fn in_const_context(&self) -> Result<ExprP<'ir>, AluminaError> {
+        Ok(self.expressions.codegen_intrinsic(
+            IntrinsicValueKind::InConstContext,
+            self.types.builtin(BuiltinType::Bool),
+        ))
     }
 
     pub fn invoke(
@@ -319,6 +338,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
             }
             IntrinsicKind::Uninitialized => self.uninitialized(generic[0]),
             IntrinsicKind::Dangling => self.dangling(generic[0]),
+            IntrinsicKind::InConstContext => self.in_const_context(),
             _ => unreachable!(),
         }
     }

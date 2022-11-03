@@ -1,5 +1,5 @@
 use crate::common::{AluminaError, CodeErrorBuilder, HashSet};
-use crate::intrinsics::CodegenIntrinsicKind;
+use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::const_eval::Value;
 use crate::ir::ExpressionVisitor;
 use crate::ir::{IRItem, IRItemP, Statement, Ty, TyP};
@@ -138,10 +138,10 @@ impl<'ir> ExpressionVisitor<'ir> for DeadCodeEliminator<'ir> {
 
     fn visit_codegen_intrinsic(
         &mut self,
-        kind: &CodegenIntrinsicKind<'ir>,
+        kind: &IntrinsicValueKind<'ir>,
     ) -> Result<(), AluminaError> {
         match kind {
-            CodegenIntrinsicKind::SizeOfLike(_, typ) => self.visit_typ(typ),
+            IntrinsicValueKind::SizeOfLike(_, typ) => self.visit_typ(typ),
             _ => Ok(()),
         }
     }
