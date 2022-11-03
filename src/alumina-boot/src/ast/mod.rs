@@ -818,6 +818,14 @@ impl Span {
             file,
         }
     }
+
+    pub fn contains(&self, other: Span) -> bool {
+        self.start <= other.start && self.end >= other.end && self.file == other.file
+    }
+
+    pub fn len(&self) -> usize {
+        self.end - self.start
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]

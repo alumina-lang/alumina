@@ -1,4 +1,4 @@
-use crate::ast::{AstCtx, Attribute, ItemP};
+use crate::ast::{AstCtx, Attribute, ItemP, Span};
 use crate::common::{
     AluminaError, ArenaAllocatable, CodeErrorKind, IndexMap, WithSpanDuringParsing,
 };
@@ -490,6 +490,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
             NamedItem::new_default(NamedItemKind::MacroParameter(
                 self.ast.make_id(),
                 node.child_by_field(FieldKind::EtCetera).is_some(),
+                Span::from_node(self.scope.file_id(), node),
             )),
         )?;
 

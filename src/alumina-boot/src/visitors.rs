@@ -3,11 +3,13 @@ use crate::ast::{AstCtx, Attribute, ItemP, Span, TestMetadata};
 use crate::common::{
     AluminaError, ArenaAllocatable, CodeError, CodeErrorKind, Marker, WithSpanDuringParsing,
 };
+use crate::diagnostics;
 use crate::global_ctx::GlobalCtx;
 use crate::name_resolution::path::{Path, PathSegment};
 use crate::name_resolution::scope::{NamedItem, NamedItemKind, Scope};
 use crate::parser::{AluminaVisitor, FieldKind, NodeExt, ParseCtx};
 
+use strum::VariantNames;
 use tree_sitter::Node;
 
 pub struct ScopedPathVisitor<'ast, 'src> {
@@ -257,6 +259,7 @@ pub struct AttributeVisitor<'ast, 'src> {
     scope: Scope<'ast, 'src>,
     item: Option<ItemP<'ast>>,
     attributes: Vec<Attribute>,
+    applies_to_node: Node<'src>,
     should_skip: bool,
     test_attributes: Vec<String>,
 }
@@ -278,6 +281,7 @@ impl<'ast, 'src> AttributeVisitor<'ast, 'src> {
             scope,
             item,
             attributes: Vec::new(),
+            applies_to_node: node,
             should_skip: false,
             test_attributes: Vec::new(),
         };
@@ -412,6 +416,53 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                 }
 
                 self.attributes.push(Attribute::Packed);
+            }
+            "allow" | "deny" | "warn" => {
+                let lint_name = node
+                    .child_by_field(FieldKind::Arguments)
+                    .and_then(|n| n.child_by_field(FieldKind::Argument))
+                    .map(|n| self.code.node_text(n))
+                    .ok_or_else(|| {
+                        CodeErrorKind::InvalidAttributeDetail("missing lint name".to_string())
+                    })
+                    .with_span_from(&self.scope, node)?;
+
+                let action = match name {
+                    "allow" => diagnostics::Action::Allow,
+                    "deny" => diagnostics::Action::Deny,
+                    "warn" => diagnostics::Action::Keep,
+                    _ => unreachable!(),
+                };
+
+                let enclosing_span = Span::from_node(self.scope.file_id(), self.applies_to_node);
+
+                match CodeErrorKind::VARIANTS.iter().find(|v| **v == lint_name) {
+                    Some(lint) => {
+                        self.global_ctx.diag().add_override(diagnostics::Override {
+                            span: Some(enclosing_span),
+                            kind: Some(lint),
+                            action,
+                        });
+                    }
+                    None if lint_name.starts_with("warnings") => {
+                        // all warnings
+                        self.global_ctx.diag().add_override(diagnostics::Override {
+                            span: Some(enclosing_span),
+                            kind: None,
+                            action,
+                        });
+                    }
+                    None => {
+                        // ironic really
+                        self.global_ctx.diag().add_warning(CodeError {
+                            kind: CodeErrorKind::ImSoMetaEvenThisAcronym(
+                                name.to_string(),
+                                lint_name.to_string(),
+                            ),
+                            backtrace: vec![Marker::Span(span)],
+                        })
+                    }
+                }
             }
             "inline" => {
                 check_duplicate!(

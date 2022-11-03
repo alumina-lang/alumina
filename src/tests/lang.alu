@@ -80,8 +80,6 @@ fn assert_layout<T>(size: usize, align: usize) {
 
 #[test]
 fn test_builtin_layout() {
-    use std::mem::{align_of, size_of};
-
     assert_layout::<bool>(1, 1);
     assert_layout::<u8>(1, 1);
     assert_layout::<u16>(2, 2);
@@ -133,8 +131,6 @@ fn test_builtin_layout() {
 
 #[test]
 fn test_struct_layout() {
-    use std::mem::{align_of, size_of};
-
     struct S {}
     assert_layout::<S>(0, 1);
 
@@ -192,8 +188,6 @@ fn test_struct_layout() {
 
 #[test]
 fn test_union_layout() {
-    use std::mem::{align_of, size_of};
-
     union U { }
     assert_layout::<U>(0, 1);
 
@@ -235,8 +229,6 @@ fn test_union_layout() {
 
 #[test]
 fn test_tuple_layout() {
-    use std::mem::{align_of, size_of};
-
     assert_layout::<()>(0, 1);
     assert_layout::<(u8,)>(1, 1);
 
@@ -247,30 +239,26 @@ fn test_tuple_layout() {
 
 #[test]
 fn test_closure_layout() {
-    use std::mem::{align_of, size_of};
-
     let f = || {};
     assert_layout::<typeof(f)>(0, 1);
 
-    let f = |a: u8| {};
+    let f = |_a: u8| {};
     assert_layout::<typeof(f)>(0, 1);
 
     let a: ();
     let b: u8;
     let c: u64;
 
-    let f = |=a| {};
+    let f = |=a| { a; };
     assert_layout::<typeof(f)>(0, 1);
-    let f = |=a, =b| {};
+    let f = |=a, =b| { a; b; };
     assert_layout::<typeof(f)>(1, 1);
-    let f = |=a, =b, =c| {};
+    let f = |=a, =b, =c| { a; b; c; };
     assert_layout::<typeof(f)>(16, 8);
 }
 
 #[test]
 fn test_array_layout() {
-    use std::mem::{align_of, size_of};
-
     assert_layout::<[u8; 0]>(0, 1);
     assert_layout::<[u8; 1]>(1, 1);
     assert_layout::<[u8; 2]>(2, 1);
@@ -284,8 +272,6 @@ fn test_array_layout() {
 
 #[test]
 fn test_nested_zst_layout() {
-    use std::mem::{align_of, size_of};
-
     #[packed] struct S { a: u8, b: [u64; 0] }
     assert_layout::<S>(1, 1);
 

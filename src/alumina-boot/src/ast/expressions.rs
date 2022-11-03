@@ -23,6 +23,7 @@ macro_rules! with_block_scope {
         let child_scope = $self.scope.anonymous_child(ScopeType::Block);
         let previous_scope = std::mem::replace(&mut $self.scope, child_scope);
         let result = $body;
+        $self.scope.check_unused_items(&$self.global_ctx.diag());
         $self.scope = previous_scope;
         result
     }};
@@ -163,11 +164,11 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             ItemResolution::Item(item) => match item.kind {
                 NamedItemKind::Function(fun, _, _) => ExprKind::Fn(FnKind::Normal(fun), None),
                 NamedItemKind::Method(fun, _, _) => ExprKind::Fn(FnKind::Normal(fun), None),
-                NamedItemKind::Local(var) => ExprKind::Local(var),
-                NamedItemKind::BoundValue(self_id, var, bound_type) => {
+                NamedItemKind::Local(var, _) => ExprKind::Local(var),
+                NamedItemKind::BoundValue(self_id, var, bound_type, _) => {
                     ExprKind::BoundParam(self_id, var, bound_type)
                 }
-                NamedItemKind::MacroParameter(var, _) => ExprKind::Local(var),
+                NamedItemKind::MacroParameter(var, _, _) => ExprKind::Local(var),
                 NamedItemKind::Parameter(var, _) => ExprKind::Local(var),
                 NamedItemKind::Static(var, _, _) => ExprKind::Static(var, None),
                 NamedItemKind::Const(var, _, _) => ExprKind::Const(var, None),
@@ -218,13 +219,16 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             value,
         };
         let mut statements = Vec::new();
-        if let Some(name) = node.child_by_field(FieldKind::Name) {
-            let name = self.code.node_text(name).alloc_on(self.ast);
+        if let Some(name_node) = node.child_by_field(FieldKind::Name) {
+            let name = self.code.node_text(name_node).alloc_on(self.ast);
 
             self.scope
                 .add_item(
                     Some(name),
-                    NamedItem::new_default(NamedItemKind::Local(value_id)),
+                    NamedItem::new_default(NamedItemKind::Local(
+                        value_id,
+                        Span::from_node(self.scope.file_id(), name_node),
+                    )),
                 )
                 .with_span_from(&self.scope, node)?;
 
@@ -238,18 +242,22 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
         } else {
             // Tuple unpacking
             let mut cursor = node.walk();
-            for (idx, elem) in node
+            for (idx, name_node) in node
                 .children_by_field(FieldKind::Element, &mut cursor)
                 .enumerate()
             {
-                let name = self.code.node_text(elem).alloc_on(self.ast);
+                let name = self.code.node_text(name_node).alloc_on(self.ast);
                 let elem_id = self.ast.make_id();
 
                 let rhs = ExprKind::TupleIndex(
-                    ExprKind::Local(value_id).alloc_with_span_from(self.ast, &self.scope, elem),
+                    ExprKind::Local(value_id).alloc_with_span_from(
+                        self.ast,
+                        &self.scope,
+                        name_node,
+                    ),
                     idx,
                 )
-                .alloc_with_span_from(self.ast, &self.scope, elem);
+                .alloc_with_span_from(self.ast, &self.scope, name_node);
 
                 let elem_decl = LetDeclaration {
                     id: elem_id,
@@ -268,9 +276,12 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                 self.scope
                     .add_item(
                         Some(name),
-                        NamedItem::new_default(NamedItemKind::Local(elem_id)),
+                        NamedItem::new_default(NamedItemKind::Local(
+                            elem_id,
+                            Span::from_node(self.scope.file_id(), name_node),
+                        )),
                     )
-                    .with_span_from(&self.scope, elem)?;
+                    .with_span_from(&self.scope, name_node)?;
             }
 
             statements.insert(
@@ -474,7 +485,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
             make_stuff!();
 
-            match node.child_by_field(FieldKind::Result) {
+            let ret = match node.child_by_field(FieldKind::Result) {
                 Some(return_expression) => self.visit(return_expression)?,
                 None => {
                     // This is a bit of a hack to work around Tree-Sitter. _expression_ending_with_block nodes
@@ -482,7 +493,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                     // actually statements (semicolon), there is another empty_statement inserted, so it's fine.
                     self.extract_expression_ending_with_block(last_node, &mut statements)?
                 }
-            }
+            };
+            ret
         });
 
         let result = if statements.is_empty() {
@@ -996,12 +1008,18 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
         let id = self.ast.make_id();
 
-        let body = if let Some(name) = node.child_by_field(FieldKind::Name) {
-            let name = self.code.node_text(name).alloc_on(self.ast);
+        let body = if let Some(name_node) = node.child_by_field(FieldKind::Name) {
+            let name = self.code.node_text(name_node).alloc_on(self.ast);
 
             with_block_scope!(self, {
                 self.scope
-                    .add_item(Some(name), NamedItem::new_default(NamedItemKind::Local(id)))
+                    .add_item(
+                        Some(name),
+                        NamedItem::new_default(NamedItemKind::Local(
+                            id,
+                            Span::from_node(self.scope.file_id(), name_node),
+                        )),
+                    )
                     .with_span_from(&self.scope, node)?;
 
                 self.visit(node.child_by_field(FieldKind::Body).unwrap())?
@@ -1012,18 +1030,18 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                 let mut statements = Vec::new();
                 let mut cursor = node.walk();
 
-                for (idx, elem) in node
+                for (idx, name_node) in node
                     .children_by_field(FieldKind::Element, &mut cursor)
                     .enumerate()
                 {
-                    let name = self.code.node_text(elem).alloc_on(self.ast);
+                    let name = self.code.node_text(name_node).alloc_on(self.ast);
                     let elem_id = self.ast.make_id();
 
                     let rhs = ExprKind::TupleIndex(
-                        ExprKind::Local(id).alloc_with_span_from(self.ast, &self.scope, elem),
+                        ExprKind::Local(id).alloc_with_span_from(self.ast, &self.scope, name_node),
                         idx,
                     )
-                    .alloc_with_span_from(self.ast, &self.scope, elem);
+                    .alloc_with_span_from(self.ast, &self.scope, name_node);
 
                     let elem_decl = LetDeclaration {
                         id: elem_id,
@@ -1042,9 +1060,12 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                     self.scope
                         .add_item(
                             Some(name),
-                            NamedItem::new_default(NamedItemKind::Local(elem_id)),
+                            NamedItem::new_default(NamedItemKind::Local(
+                                elem_id,
+                                Span::from_node(self.scope.file_id(), name_node),
+                            )),
                         )
-                        .with_span_from(&self.scope, elem)?;
+                        .with_span_from(&self.scope, name_node)?;
                 }
 
                 let ret = self.visit(node.child_by_field(FieldKind::Body).unwrap())?;
@@ -1531,6 +1552,8 @@ impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
             );
         }
 
+        self.scope.check_unused_items(&self.global_ctx.diag());
+
         symbol.assign(Item::Function(Function {
             name: None,
             attributes: [].alloc_on(self.ast),
@@ -1612,11 +1635,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
             .with_span_from(&self.scope, node)?
         {
             ItemResolution::Item(NamedItem {
-                kind: NamedItemKind::Local(id) | NamedItemKind::Parameter(id, _),
+                kind: NamedItemKind::Local(id, _) | NamedItemKind::Parameter(id, _),
                 ..
             }) => ExprKind::Local(id),
             ItemResolution::Item(NamedItem {
-                kind: NamedItemKind::BoundValue(self_arg, id, bound_type),
+                kind: NamedItemKind::BoundValue(self_arg, id, bound_type, _),
                 ..
             }) => ExprKind::BoundParam(self_arg, id, bound_type),
             _ => {
@@ -1628,7 +1651,12 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
         self.scope
             .add_item(
                 Some(name),
-                NamedItem::new_default(NamedItemKind::BoundValue(self.self_param, id, bound_type)),
+                NamedItem::new_default(NamedItemKind::BoundValue(
+                    self.self_param,
+                    id,
+                    bound_type,
+                    Span::from_node(self.scope.file_id(), node),
+                )),
             )
             .with_span_from(&self.scope, node)?;
 

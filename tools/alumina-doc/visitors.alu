@@ -244,7 +244,7 @@ impl TopLevelVisitor {
     }
 
     fn visit_attribute_item(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
-        use std::string::{starts_with, ends_with};
+        use std::string::starts_with;
         let meta_item = child_by!(node, FieldKind::Inner).unwrap();
         let attr_name = get_name!(self, meta_item);
 
@@ -570,7 +570,7 @@ impl CodePrinter<W: Writable<W>> {
 
         w!(self.writer, "(");
         let first = true;
-        for (idx, child) in children_by!(node, FieldKind::Parameter, &cursor).enumerate() {
+        for child in children_by!(node, FieldKind::Parameter, &cursor) {
             if first {
                 first = false
             } else {
@@ -663,7 +663,7 @@ impl CodePrinter<W: Writable<W>> {
         Result::ok(())
     }
 
-    fn visit_never_type(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
+    fn visit_never_type(self: &mut CodePrinter<W>, _node: Node) -> Result<()> {
         let path = common::Path::from_str("std::builtins::never");
         defer path.free();
 
@@ -687,12 +687,12 @@ impl CodePrinter<W: Writable<W>> {
         self.visit_type_identifier(node)
     }
 
-    fn visit_type_of(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
+    fn visit_type_of(self: &mut CodePrinter<W>, _node: Node) -> Result<()> {
         w!(self.writer, "<span class=\"keyword\">typeof</span>(...)");
         Result::ok(())
     }
 
-    fn visit_when_type(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
+    fn visit_when_type(self: &mut CodePrinter<W>, _node: Node) -> Result<()> {
         w!(self.writer, "<span class=\"keyword-control\">when</span> ...");
         Result::ok(())
     }
@@ -978,7 +978,7 @@ impl CodePrinter<W: Writable<W>> {
             .transpose()?;
 
         child_by!(node, FieldKind::Init)
-            .map(|=self, child: Node| -> Result<()> {
+            .map(|=self, _child: Node| -> Result<()> {
                 w!(self.writer, " = ...");
                 Result::ok(())
             })

@@ -223,11 +223,11 @@ struct NullFormatter {}
 
 impl NullFormatter {
     /// @ Formatter::write_str
-    fn write_str(self: &mut NullFormatter, buf: &[u8]) -> Result {
+    fn write_str(self: &mut NullFormatter, _buf: &[u8]) -> Result {
         Result::ok(())
     }
     /// @ Formatter::write_byte
-    fn write_byte(self: &mut NullFormatter, byte: u8) -> Result {
+    fn write_byte(self: &mut NullFormatter, _byte: u8) -> Result {
         Result::ok(())
     }
 }
@@ -313,7 +313,7 @@ mod internal {
     fn format_float<T: builtins::FloatingPoint, F: Formatter<F>>(
         val: T,
         fmt: &mut F,
-        precision: u16
+        _precision: u16
     ) -> Result {
         // TODO: precision doesn't do anything yet
         if val.is_nan() {
@@ -392,7 +392,7 @@ mod internal {
 
     impl RepeatAdapter {
         fn fmt<T: Formattable<T, F>, F: Formatter<F>>(self: &RepeatAdapter<T>, fmt: &mut F) -> Result {
-            for i in 0usize..self.times {
+            for _ in 0usize..self.times {
                 self.inner.fmt(fmt)?;
             }
             Result::ok(())
@@ -570,9 +570,9 @@ mod tests {
     #[test]
     fn test_format_args() {
         /// Compile-only test
-        let f: [&dyn Formattable<Self, NullFormatter>; 0] = format_args!("");
-        let f: [&dyn Formattable<Self, NullFormatter>; 1] = format_args!("hello");
-        let f: [&dyn Formattable<Self, NullFormatter>; 2] = format_args!("hello {}", 1);
-        let f: [&dyn Formattable<Self, NullFormatter>; 4] = format_args!("hello {} {}", 1, 2);
+        let _: [&dyn Formattable<Self, NullFormatter>; 0] = format_args!("");
+        let _: [&dyn Formattable<Self, NullFormatter>; 1] = format_args!("hello");
+        let _: [&dyn Formattable<Self, NullFormatter>; 2] = format_args!("hello {}", 1);
+        let _: [&dyn Formattable<Self, NullFormatter>; 4] = format_args!("hello {} {}", 1, 2);
     }
 }

@@ -99,7 +99,7 @@ impl<'ast> MacroMaker<'ast> {
 
         for (_name, item) in scope.inner().all_items() {
             match item.kind {
-                NamedItemKind::MacroParameter(id, et_cetera) => {
+                NamedItemKind::MacroParameter(id, et_cetera, _) => {
                     if has_et_cetera && et_cetera {
                         return Err(CodeErrorKind::MultipleEtCeteras).with_span_from(&scope, node);
                     } else if et_cetera {
@@ -134,6 +134,8 @@ impl<'ast> MacroMaker<'ast> {
             has_et_cetera,
         )
         .generate(node.child_by_field(FieldKind::Body).unwrap())?;
+
+        scope.check_unused_items(&self.global_ctx.diag());
 
         // Two-step assignment to detect recursion
         symbol.get_macro().body.set(body).unwrap();

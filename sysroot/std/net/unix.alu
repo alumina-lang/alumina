@@ -482,7 +482,7 @@ impl UdpSocket {
     /// Subsequent calls to [recv] and [send] will only receive and send data
     /// from and to this address.
     fn connect(self: &UdpSocket, addr: &SocketAddr) -> Result<()> {
-        let (family, addr_len) = internal::addr_to_family(addr);
+        let (_, addr_len) = internal::addr_to_family(addr);
 
         errno_try!(libc::connect(
             self.socket.fd.value,
@@ -576,7 +576,7 @@ impl UdpSocket {
 
 #[docs(no_index)]
 mod internal {
-    fn sockaddr_to_addr(addr: &libc::sockaddr_storage, len: libc::socklen_t) -> Option<SocketAddr> {
+    fn sockaddr_to_addr(addr: &libc::sockaddr_storage, _len: libc::socklen_t) -> Option<SocketAddr> {
         let result: SocketAddr;
         switch addr.ss_family as libc::c_int {
             libc::AF_INET => {
@@ -644,7 +644,7 @@ mod tests {
             socket.write_all("Hello, world!").unwrap();
             socket.shutdown(Shutdown::Both).unwrap();
         } else {
-            let (socket, peer_addr) = listener.accept().unwrap();
+            let (socket, _) = listener.accept().unwrap();
             defer socket.close();
 
             let buf: StringBuf = StringBuf::new();
@@ -669,7 +669,7 @@ mod tests {
             peer2.send_to("Hello, world!", &peer1_addr).unwrap();
         } else {
             let buf: [u8; 128];
-            let (n, peer) = peer1.recv_from(&buf).unwrap();
+            let (n, _) = peer1.recv_from(&buf).unwrap();
 
             assert_eq!(buf[..n] as &[u8], "Hello, world!");
         }
@@ -697,11 +697,11 @@ mod tests {
 
         } else {
             let buf: [u8; 128];
-            let (n, peer) = peer1.recv_from(&buf).unwrap();
+            let (_, peer) = peer1.recv_from(&buf).unwrap();
 
             peer1.send_to("AAAAAAA", &peer).unwrap();
 
-            let (n, peer) = peer1.recv_from(&buf).unwrap();
+            let (n, _) = peer1.recv_from(&buf).unwrap();
             assert_eq!(buf[..n] as &[u8], "AAAAAAA");
         }
     }
@@ -722,10 +722,10 @@ mod tests {
         } else {
             let buf1: [u8; 128];
             let buf2: [u8; 128];
-            let (n, peer) = peer1.peek_from(&buf1).unwrap();
+            let (n, _) = peer1.peek_from(&buf1).unwrap();
             assert_eq!(buf1[..n] as &[u8], "Hello, world!");
 
-            let (n, peer) = peer1.recv_from(&buf2).unwrap();
+            let (n, _) = peer1.recv_from(&buf2).unwrap();
             assert_eq!(buf2[..n] as &[u8], "Hello, world!");
         }
     }

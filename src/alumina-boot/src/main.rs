@@ -183,6 +183,9 @@ fn main() {
                 }
             }
             diag_ctx.print_error_report().unwrap();
+            if diag_ctx.has_errors() {
+                std::process::exit(1);
+            }
             match args.output {
                 Some(filename) => std::fs::write(filename, program).unwrap(),
                 None => {

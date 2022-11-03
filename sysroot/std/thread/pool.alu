@@ -42,9 +42,9 @@ impl TaskHandle<T> {
 ///
 /// // Use 10 threads
 /// let pool = ThreadPool::unbounded(10);
-/// let counter = sync::Atomic::new(0);
+/// let counter = Atomic::new(0);
 ///
-/// for i in 0..1000 {
+/// for _ in 0..1000 {
 ///     pool
 ///         .spawn_detached(|&counter| {
 ///             counter.fetch_add(1, sync::Ordering::Relaxed);
@@ -191,7 +191,7 @@ mod internal {
     }
 
     impl Task {
-        use builtins::{FunctionPointer, NamedFunction, ZeroSized};
+        use builtins::{FunctionPointer, NamedFunction};
 
         fn new<F: Fn()>(f: F) -> Task {
             Task {
@@ -295,7 +295,7 @@ mod tests {
         let pool = ThreadPool::bounded(10, 10);
         let counter = sync::Atomic::new(0);
 
-        for i in 0..100 {
+        for _ in 0..100 {
             pool.spawn_detached(|&counter| {
                 let ret = 0;
                 for i in 0..1000 {
@@ -333,7 +333,7 @@ mod tests {
         let pool = ThreadPool::unbounded(10);
         let counter = sync::Atomic::new(0);
 
-        for i in 0..100 {
+        for _ in 0..100 {
             pool.spawn_detached(|&counter| {
                 let ret = 0;
                 for i in 0..1000 {

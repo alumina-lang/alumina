@@ -1,5 +1,6 @@
-use crate::ast::{AstId, Attribute, ItemP};
-use crate::common::{CodeErrorKind, FileId, IndexMap};
+use crate::ast::{AstId, Attribute, ItemP, Span};
+use crate::common::{CodeError, CodeErrorKind, FileId, HashSet, IndexMap, Marker};
+use crate::diagnostics::DiagnosticContext;
 use crate::name_resolution::path::{Path, PathSegment};
 use crate::parser::ParseCtx;
 
@@ -36,10 +37,10 @@ pub enum NamedItemKind<'ast, 'src> {
 
     Placeholder(AstId, Node<'src>),
     Field(Node<'src>),
-    Local(AstId),
-    BoundValue(AstId, AstId, BoundItemType),
+    Local(AstId, Span),
+    BoundValue(AstId, AstId, BoundItemType, Span),
     Parameter(AstId, Node<'src>),
-    MacroParameter(AstId, bool),
+    MacroParameter(AstId, bool, Span),
 }
 
 impl Display for NamedItemKind<'_, '_> {
@@ -60,10 +61,10 @@ impl Display for NamedItemKind<'_, '_> {
             NamedItemKind::Placeholder(_, _) => write!(f, "placeholder"),
             NamedItemKind::Field(_) => write!(f, "field"),
             NamedItemKind::EnumMember(_, _, _) => write!(f, "enum member"),
-            NamedItemKind::Local(_) => write!(f, "local"),
-            NamedItemKind::BoundValue(_, _, _) => write!(f, "bound value"),
+            NamedItemKind::Local(_, _) => write!(f, "local"),
+            NamedItemKind::BoundValue(_, _, _, _) => write!(f, "bound value"),
             NamedItemKind::Parameter(_, _) => write!(f, "parameter"),
-            NamedItemKind::MacroParameter(_, _) => write!(f, "macro parameter"),
+            NamedItemKind::MacroParameter(_, _, _) => write!(f, "macro parameter"),
         }
     }
 }
@@ -113,6 +114,8 @@ pub struct ScopeInner<'ast, 'src> {
     pub star_imports: Vec<Path<'ast>>,
     pub parent: Option<Weak<RefCell<ScopeInner<'ast, 'src>>>>,
 
+    // This is additional information only used during construction and is not serialized.
+    used_items: RefCell<HashSet<&'ast str>>,
     code: OnceCell<&'src ParseCtx<'src>>,
 }
 
@@ -147,6 +150,20 @@ impl<'ast, 'src> ScopeInner<'ast, 'src> {
             .get(&Some(name))
             .into_iter()
             .flat_map(|its| its.iter())
+    }
+
+    pub fn unused_items<'i>(
+        &'i self,
+    ) -> impl Iterator<Item = (&'ast str, &'i NamedItem<'ast, 'src>)> {
+        let used_items = self.used_items.borrow();
+        self.items
+            .iter()
+            .filter_map(move |(n, its)| match n {
+                Some(n) if used_items.contains(n) => None,
+                Some(n) => Some(its.iter().map(|v| (*n, v))),
+                None => None,
+            })
+            .flatten()
     }
 
     pub fn star_imports<'i>(&'i self) -> impl Iterator<Item = &'i Path<'ast>> {
@@ -209,6 +226,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             star_imports: Vec::new(),
             parent: None,
             code: OnceCell::new(),
+            used_items: RefCell::default(),
         })))
     }
 
@@ -240,6 +258,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             shadowed_items: Vec::new(),
             code,
             parent: Some(Rc::downgrade(&self.0)),
+            used_items: RefCell::default(),
         })))
     }
 
@@ -254,6 +273,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             shadowed_items: Vec::new(),
             code: OnceCell::new(),
             parent: Some(Rc::downgrade(&self.0)),
+            used_items: RefCell::default(),
         })))
     }
 
@@ -268,6 +288,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             shadowed_items: Vec::new(),
             code,
             parent: Some(Rc::downgrade(&self.0)),
+            used_items: RefCell::default(),
         })))
     }
 
@@ -405,5 +426,49 @@ impl<'ast, 'src> Scope<'ast, 'src> {
         )?;
 
         child_scope.ensure_module(remainder)
+    }
+
+    pub fn mark_used(&self, name: &'ast str) {
+        self.0.borrow().used_items.borrow_mut().insert(name);
+    }
+
+    pub fn check_unused_items(&self, diag: &DiagnosticContext) {
+        let inner = self.inner();
+        for (name, item) in self.inner().unused_items() {
+            if name.starts_with('_') {
+                continue;
+            }
+
+            let (kind, span) = match item.kind {
+                NamedItemKind::Local(_, span) => {
+                    (CodeErrorKind::UnusedVariable(name.to_string()), span)
+                }
+                NamedItemKind::BoundValue(_, _, _, span) => {
+                    (CodeErrorKind::UnusedClosureBinding(name.to_string()), span)
+                }
+                NamedItemKind::Alias(_, node) => (
+                    CodeErrorKind::UnusedImport(name.to_string()),
+                    Span::from_node(inner.code.get().unwrap().file_id(), node),
+                ),
+                NamedItemKind::MacroParameter(_, _, span) => {
+                    (CodeErrorKind::UnusedParameter(name.to_string()), span)
+                }
+                NamedItemKind::Parameter(_, node) => {
+                    if name == "self" {
+                        continue;
+                    }
+                    (
+                        CodeErrorKind::UnusedParameter(name.to_string()),
+                        Span::from_node(inner.code.get().unwrap().file_id(), node),
+                    )
+                }
+                _ => continue,
+            };
+
+            diag.add_warning(CodeError {
+                kind,
+                backtrace: vec![Marker::Span(span)],
+            })
+        }
     }
 }
