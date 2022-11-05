@@ -350,8 +350,7 @@ pub struct Const<'ir> {
     pub name: Option<&'ir str>,
     pub typ: TyP<'ir>,
     pub value: Value<'ir>,
-    // If init is None, the const should be inlined
-    pub init: Option<ExprP<'ir>>,
+    pub init: ExprP<'ir>,
 }
 
 #[derive(Debug)]

@@ -456,6 +456,59 @@ fn test_const_eval_library_functions() {
 }
 
 #[test]
+fn test_const_eval_const() {
+    const A: [i32; 3] = [1, 2, 3];
+    const B: &i32 = &A[2];
+
+    const C: i32 = 5;
+    const D: &i32 = &C;
+
+    assert_eq!(*B, 3);
+    assert_eq!(*D, 5);
+}
+
+
+#[test]
+fn test_const_zst() {
+    struct S<T> {
+        a: T,
+        b: i32,
+    };
+
+    const A = ();
+    const B1: [i32; 0] = [];
+    const B2: [(); 3] = [(), (), ()];
+    const C = ((),(()),((())));
+    const D1 = S { a: (), b: 5 };
+    const D2 = S { a: [(), (), ()], b: 5 };
+    const E = ((), 5);
+
+    const F = &A;
+    const G1 = &B1;
+    const G2 = &B2[1];
+    const H = &C;
+    const I1 = &D1.a;
+    const I2 = &D2.a[1];
+    const J = &E.0;
+
+    assert_eq!(A, ());
+    assert_eq!(B1, []);
+    assert_eq!(B2, [(), (), ()]);
+    assert_eq!(C, ((),(()),((()))));
+    assert_eq!(D1.b, 5);
+    assert_eq!(D2.b, 5);
+    assert_eq!(E.1, 5);
+
+    assert_eq!(F, &());
+    assert_eq!(G1, &[]);
+    assert_eq!(G2, &());
+    assert_eq!(H, &((),(()),((()))));
+    assert_eq!(I1, &());
+    assert_eq!(I2, &());
+    assert_eq!(J, &());
+}
+
+#[test]
 fn test_const_eval_intrinsics() {
     std::compile_note!("this is a warning"[3..7]);
 }

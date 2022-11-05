@@ -99,10 +99,7 @@ impl<'ir> DeadCodeEliminator<'ir> {
 
             IRItem::Const(c) => {
                 self.visit_typ(c.typ)?;
-                self.visit_expr(
-                    c.init
-                        .expect("inlined consts should never appear in the IR"),
-                )?;
+                self.visit_expr(c.init)?;
             }
 
             // Should be inlined
