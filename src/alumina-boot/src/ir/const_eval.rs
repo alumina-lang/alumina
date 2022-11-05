@@ -44,6 +44,7 @@ pub enum Value<'ir> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LValue<'ir> {
+    Const(IRItemP<'ir>),
     Variable(IrId),
     Field(&'ir LValue<'ir>, IrId),
     Index(&'ir LValue<'ir>, usize),
@@ -124,6 +125,8 @@ macro_rules! numeric_of_kind {
 }
 
 pub(crate) use numeric_of_kind;
+
+use super::IRItemP;
 
 impl<'ir> Value<'ir> {
     fn equal(self, other: Value) -> Result<Value<'ir>> {
@@ -299,13 +302,13 @@ impl<'ir> Shl<Value<'ir>> for Value<'ir> {
     fn shl(self, other: Value) -> Result<Value<'ir>> {
         use Value::*;
 
-        let other: std::result::Result<usize, TryFromIntError> = match other {
+        let other: std::result::Result<u32, TryFromIntError> = match other {
             U8(other) => Ok(other as _),
             U16(other) => Ok(other as _),
-            U32(other) => other.try_into(),
+            U32(other) => Ok(other),
             U64(other) => other.try_into(),
             U128(other) => other.try_into(),
-            USize(other) => Ok(other),
+            USize(other) => other.try_into(),
             I8(other) => other.try_into(),
             I16(other) => other.try_into(),
             I32(other) => other.try_into(),
@@ -316,21 +319,23 @@ impl<'ir> Shl<Value<'ir>> for Value<'ir> {
         };
         let other = other.map_err(|_| ConstEvalErrorKind::ArithmeticOverflow)?;
 
-        match self {
-            U8(a) => Ok(U8(a << other)),
-            U16(a) => Ok(U16(a << other)),
-            U32(a) => Ok(U32(a << other)),
-            U64(a) => Ok(U64(a << other)),
-            U128(a) => Ok(U128(a << other)),
-            I8(a) => Ok(I8(a << other)),
-            I16(a) => Ok(I16(a << other)),
-            I32(a) => Ok(I32(a << other)),
-            I64(a) => Ok(I64(a << other)),
-            I128(a) => Ok(I128(a << other)),
-            USize(a) => Ok(USize(a << other)),
-            ISize(a) => Ok(ISize(a << other)),
-            _ => Err(ConstEvalErrorKind::Unsupported.into()),
-        }
+        let ret = match self {
+            U8(a) => a.checked_shl(other).map(U8),
+            U16(a) => a.checked_shl(other).map(U16),
+            U32(a) => a.checked_shl(other).map(U32),
+            U64(a) => a.checked_shl(other).map(U64),
+            U128(a) => a.checked_shl(other).map(U128),
+            USize(a) => a.checked_shl(other).map(USize),
+            I8(a) => a.checked_shl(other).map(I8),
+            I16(a) => a.checked_shl(other).map(I16),
+            I32(a) => a.checked_shl(other).map(I32),
+            I64(a) => a.checked_shl(other).map(I64),
+            I128(a) => a.checked_shl(other).map(I128),
+            ISize(a) => a.checked_shl(other).map(ISize),
+            _ => return Err(ConstEvalErrorKind::Unsupported.into()),
+        };
+
+        ret.ok_or_else(|| ConstEvalErrorKind::ArithmeticOverflow.into())
     }
 }
 
@@ -380,13 +385,13 @@ impl<'ir> Shr<Value<'ir>> for Value<'ir> {
     fn shr(self, other: Value) -> Result<Value<'ir>> {
         use Value::*;
 
-        let other: std::result::Result<usize, TryFromIntError> = match other {
+        let other: std::result::Result<u32, TryFromIntError> = match other {
             U8(other) => Ok(other as _),
             U16(other) => Ok(other as _),
-            U32(other) => other.try_into(),
+            U32(other) => Ok(other),
             U64(other) => other.try_into(),
             U128(other) => other.try_into(),
-            USize(other) => Ok(other),
+            USize(other) => other.try_into(),
             I8(other) => other.try_into(),
             I16(other) => other.try_into(),
             I32(other) => other.try_into(),
@@ -397,21 +402,23 @@ impl<'ir> Shr<Value<'ir>> for Value<'ir> {
         };
         let other = other.map_err(|_| ConstEvalErrorKind::ArithmeticOverflow)?;
 
-        match self {
-            U8(a) => Ok(U8(a >> other)),
-            U16(a) => Ok(U16(a >> other)),
-            U32(a) => Ok(U32(a >> other)),
-            U64(a) => Ok(U64(a >> other)),
-            U128(a) => Ok(U128(a >> other)),
-            I8(a) => Ok(I8(a >> other)),
-            I16(a) => Ok(I16(a >> other)),
-            I32(a) => Ok(I32(a >> other)),
-            I64(a) => Ok(I64(a >> other)),
-            I128(a) => Ok(I128(a >> other)),
-            USize(a) => Ok(USize(a >> other)),
-            ISize(a) => Ok(ISize(a >> other)),
-            _ => Err(ConstEvalErrorKind::Unsupported.into()),
-        }
+        let ret = match self {
+            U8(a) => a.checked_shr(other).map(U8),
+            U16(a) => a.checked_shr(other).map(U16),
+            U32(a) => a.checked_shr(other).map(U32),
+            U64(a) => a.checked_shr(other).map(U64),
+            U128(a) => a.checked_shr(other).map(U128),
+            USize(a) => a.checked_shr(other).map(USize),
+            I8(a) => a.checked_shr(other).map(I8),
+            I16(a) => a.checked_shr(other).map(I16),
+            I32(a) => a.checked_shr(other).map(I32),
+            I64(a) => a.checked_shr(other).map(I64),
+            I128(a) => a.checked_shr(other).map(I128),
+            ISize(a) => a.checked_shr(other).map(ISize),
+            _ => return Err(ConstEvalErrorKind::Unsupported.into()),
+        };
+
+        ret.ok_or_else(|| ConstEvalErrorKind::ArithmeticOverflow.into())
     }
 }
 
@@ -782,6 +789,10 @@ impl<'ir> ConstEvaluator<'ir> {
 
     fn materialize_lvalue(&mut self, value: LValue<'ir>) -> Result<Value<'ir>> {
         match value {
+            LValue::Const(item) => Ok(item
+                .get_const()
+                .map_err(|_| ConstEvalErrorKind::CompilerBug)?
+                .value),
             LValue::Variable(id) => Ok(self.ctx.load_var(id)),
             LValue::Field(lvalue, field) => {
                 let base = self.materialize_lvalue(*lvalue)?;
@@ -800,6 +811,10 @@ impl<'ir> ConstEvaluator<'ir> {
 
     fn assign(&mut self, lhs: LValue<'ir>, value: Value<'ir>) -> Result<()> {
         match lhs {
+            LValue::Const(_) => {
+                // mono should reject assignment to const lvalue
+                Err(ConstEvalErrorKind::CompilerBug.into())
+            }
             LValue::Variable(id) => {
                 self.ctx.assign(id, value);
                 Ok(())
@@ -950,10 +965,7 @@ impl<'ir> ConstEvaluator<'ir> {
                 }
             }
             ExprKind::Literal(value) => Ok(*value),
-            ExprKind::Const(item) => item
-                .get_const()
-                .map(|c| c.value)
-                .map_err(|_| ConstEvalErrorKind::CompilerBug.into()),
+            ExprKind::Const(item) => Ok(Value::LValue(LValue::Const(item))),
             ExprKind::Cast(inner) => self.cast(inner, expr.ty),
             ExprKind::If(cond, then, els) => {
                 let condv = self.const_eval_rvalue(cond)?;
@@ -1211,7 +1223,7 @@ impl<'ir> ConstEvaluator<'ir> {
 
 fn check_lvalue_leak(value: &Value<'_>) -> Result<()> {
     match value {
-        Value::Pointer(_) | Value::LValue(_) => Err(ConstEvalErrorKind::LValueLeak.into()),
+        Value::Pointer(lvalue) | Value::LValue(lvalue) => check_lvalue_leak_lvalue(lvalue),
         Value::Tuple(values) => values.iter().try_for_each(check_lvalue_leak),
         Value::Struct(fields) => fields
             .iter()
@@ -1219,6 +1231,16 @@ fn check_lvalue_leak(value: &Value<'_>) -> Result<()> {
             .try_for_each(check_lvalue_leak),
         Value::Array(values) => values.iter().try_for_each(check_lvalue_leak),
         _ => Ok(()),
+    }
+}
+
+fn check_lvalue_leak_lvalue(value: &LValue<'_>) -> Result<()> {
+    match value {
+        LValue::Const(_) => Ok(()),
+        LValue::Variable(_) => Err(ConstEvalErrorKind::LValueLeak.into()),
+        LValue::Field(inner, _) | LValue::Index(inner, _) | LValue::TupleIndex(inner, _) => {
+            check_lvalue_leak_lvalue(inner)
+        }
     }
 }
 

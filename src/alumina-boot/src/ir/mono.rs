@@ -1195,26 +1195,15 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .map_err(CodeErrorKind::CannotConstEvaluate)
             .with_span(s.init.unwrap().span)?;
 
-            // Small builtins values for consts are directly inlined in the IR, larger ones are
-            // generated as const statics. Strings are a bit hairy, so they are inlined as well regardless
-            // of size. All C compilers are interning strings anyway, so it should not affect generated code,
-            // even though it is a bit wasteful.
-            let evaluated_init = match init.ty {
-                ir::Ty::Builtin(_) => None,
-                _ => {
-                    let mut elider = ZstElider::new(child.mono_ctx.ir);
-                    // TODO(tibordp): check that elider didn't produce any temporary local variables.
-                    // It should never happen, but what do you know.
-                    let optimized = elider.elide_zst_expr(child.exprs.literal(value, init.ty));
-
-                    Some(optimized)
-                }
-            };
+            let mut elider = ZstElider::new(child.mono_ctx.ir);
+            // TODO(tibordp): check that elider didn't produce any temporary local variables.
+            // It should never happen, but what do you know.
+            let optimized = elider.elide_zst_expr(child.exprs.literal(value, init.ty));
 
             let res = ir::IRItem::Const(ir::Const {
                 name: s.name.map(|n| n.alloc_on(child.mono_ctx.ir)),
                 typ: init.ty,
-                init: evaluated_init,
+                init: optimized,
                 value,
             });
 
@@ -3227,12 +3216,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             self.monomorphize_item(item, &[])?
         };
         let r#const = item_cell.get_const().with_no_span()?;
-
-        if r#const.init.is_some() {
-            Ok(self.exprs.const_var(item_cell, r#const.typ))
-        } else {
-            Ok(self.exprs.literal(r#const.value, r#const.typ))
-        }
+        Ok(self.exprs.const_var(item_cell, r#const.typ))
     }
 
     fn lower_unary(

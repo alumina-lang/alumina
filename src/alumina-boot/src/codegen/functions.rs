@@ -503,6 +503,9 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 }
                 w!(self.fn_bodies, "{{");
                 for init in inits.iter() {
+                    if init.value.ty.is_zero_sized() {
+                        continue;
+                    }
                     w!(self.fn_bodies, "._{}=", init.index);
                     self.write_expr(&init.value, false)?;
                     w!(self.fn_bodies, ",");
@@ -516,6 +519,9 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 }
                 w!(self.fn_bodies, "{{");
                 for init in inits.iter() {
+                    if init.value.ty.is_zero_sized() {
+                        continue;
+                    }
                     w!(self.fn_bodies, ".{}=", self.ctx.get_name(init.field));
                     self.write_expr(&init.value, false)?;
                     w!(self.fn_bodies, ",");
@@ -625,10 +631,6 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         id: IrId,
         item: &'ir Const<'ir>,
     ) -> Result<(), AluminaError> {
-        if item.init.is_none() {
-            return Ok(());
-        }
-
         if let Some(name) = item.name {
             self.ctx.register_name(id, CName::Mangled(name, id.id));
         }
@@ -645,11 +647,6 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
     }
 
     pub fn write_const(&mut self, id: IrId, item: &'ir Const<'ir>) -> Result<(), AluminaError> {
-        let init = match item.init {
-            Some(init) => init,
-            None => return Ok(()),
-        };
-
         w!(
             self.fn_bodies,
             "\nconst static {} {} = ",
@@ -658,7 +655,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         );
 
         self.in_const_init = true;
-        let ret = self.write_expr(&init, false);
+        let ret = self.write_expr(&item.init, false);
         self.in_const_init = false;
         ret?;
 

@@ -5,6 +5,7 @@ use crate::ir::builder::{ExpressionBuilder, TypeBuilder};
 use crate::ir::const_eval::Value;
 use crate::ir::{Expr, ExprKind, ExprP, FuncBody, IrCtx, IrId, LocalDef, Statement, Ty, ValueType};
 
+use super::const_eval::LValue;
 use super::IRItem;
 
 // The purpose of ZST elider is to take all reads and writes of zero-sized types and
@@ -288,7 +289,6 @@ impl<'ir> ZstElider<'ir> {
                         Ty::Array(ty, _) => ty,
                         _ => unreachable!(),
                     };
-
                     builder.array(
                         elems
                             .iter()
@@ -336,6 +336,10 @@ impl<'ir> ZstElider<'ir> {
                 Value::Uninitialized if expr.ty.is_zero_sized() => {
                     builder.void(expr.ty, ValueType::RValue)
                 }
+                Value::Pointer(lvalue) => {
+                    let lvalue_expr = self.elide_zst_lvalue(&lvalue);
+                    self.elide_zst_expr(builder.r#ref(lvalue_expr))
+                }
                 Value::Void => builder.void(expr.ty, ValueType::RValue),
                 _ => expr,
             },
@@ -371,6 +375,44 @@ impl<'ir> ZstElider<'ir> {
         }
 
         result
+    }
+
+    fn elide_zst_lvalue(&mut self, value: &LValue<'ir>) -> ExprP<'ir> {
+        let builder = ExpressionBuilder::new(self.ir);
+
+        match value {
+            LValue::Const(item) => {
+                let r#const = item.get_const().unwrap();
+                builder.const_var(item, r#const.typ)
+            }
+            LValue::Variable(_) => unreachable!(),
+            LValue::Field(inner, field) => {
+                let inner_expr = self.elide_zst_lvalue(inner);
+                if let Ty::Item(item) = inner_expr.ty {
+                    if let IRItem::StructLike(struct_like) = item.get().unwrap() {
+                        let field_type = struct_like
+                            .fields
+                            .iter()
+                            .find(|f| f.id == *field)
+                            .unwrap()
+                            .ty;
+                        return builder.field(inner_expr, *field, field_type);
+                    }
+                }
+                unreachable!()
+            }
+            LValue::Index(inner, idx) => {
+                let inner_expr = self.elide_zst_lvalue(inner);
+                builder.const_index(inner_expr, *idx)
+            }
+            LValue::TupleIndex(inner, idx) => {
+                let inner_expr = self.elide_zst_lvalue(inner);
+                if let Ty::Tuple(tys) = inner_expr.ty {
+                    return builder.tuple_index(inner_expr, *idx, tys[*idx]);
+                }
+                unreachable!()
+            }
+        }
     }
 
     fn elide_zst_stmt(&mut self, stmt: &Statement<'ir>, statements: &mut Vec<Statement<'ir>>) {
