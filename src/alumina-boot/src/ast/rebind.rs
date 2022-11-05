@@ -58,7 +58,7 @@ impl<'ast> Rebinder<'ast> {
             },
             Pointer(inner, is_const) => Pointer(self.visit_typ(inner)?, *is_const),
             Slice(inner, is_const) => Slice(self.visit_typ(inner)?, *is_const),
-            Array(inner, len) => Array(self.visit_typ(inner)?, *len),
+            Array(inner, len) => Array(self.visit_typ(inner)?, len),
             Tuple(elems) => Tuple(
                 elems
                     .iter()

@@ -189,7 +189,7 @@ impl DiagnosticContext {
             } = error
             {
                 // This usually means that something before the error failed, so it's just noise.
-                continue;
+                //continue;
             }
 
             let tagline = format!("{}: {}", level_string, error.kind).bold();

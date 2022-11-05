@@ -220,8 +220,8 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
 
                 self.write_type_body(inner)?;
 
+                #[allow(unused_mut)]
                 let mut attributes = " ".to_string();
-                w!(attributes, "__attribute__((transparent_union)) ");
 
                 w!(self.type_bodies, "union {}{} {{\n", attributes, name);
                 w!(self.type_bodies, "  {} __data[{}];\n", inner_name, len);
@@ -276,8 +276,6 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
 
                     if is_transparent {
                         assert!(s.fields.len() == 1);
-
-                        w!(attributes, "__attribute__((transparent_union)) ");
                         w!(
                             self.type_bodies,
                             "  {} {};\n",

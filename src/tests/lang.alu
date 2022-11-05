@@ -321,3 +321,141 @@ fn test_static_initialization_order() {
     assert_eq!(A7, 41);
     assert_eq!(A8, 67);
 }
+
+
+
+#[test]
+fn test_const_eval_basic() {
+    const A = 1;
+    assert_eq!(A, 1);
+
+    const A = 1 + 1;
+    assert_eq!(A, 2);
+
+    const A = {
+        let a = 1;
+        a + 2
+    };
+
+    assert_eq!(A, 3);
+
+    const A = "hello world";
+    assert_eq!(A, "hello world");
+
+    const A = [1, 2, 3];
+    assert_eq!(A, [1, 2, 3]);
+
+    const A = [1, 2, 3][1];
+    assert_eq!(A, 2);
+
+    const A = [1, 2, 3][1] + 1;
+    assert_eq!(A, 3);
+
+    const A = "hello world"[2..5];
+    assert_eq!(A, "llo");
+
+    const A = "hello world"[2..5].len();
+    assert_eq!(A, 3);
+}
+
+
+fn fib(n: i32) -> i32 {
+    if n < 2 {
+        n
+    } else {
+        fib(n - 1) + fib(n - 2)
+    }
+}
+
+#[test]
+fn test_const_eval_fancy() {
+    const FIB_50 = {
+        let a = 0u64;
+        let b = 1u64;
+
+        for _ in 0..50 {
+            let c = a + b;
+            a = b;
+            b = c;
+        }
+
+        a
+    };
+    assert_eq!(FIB_50, 12586269025u64);
+
+    const FIB_10 = fib(10);
+    assert_eq!(FIB_10, 55);
+}
+
+
+#[test]
+fn test_const_eval_uninitialized() {
+    const MATRIX = {
+        let a: [[i32; 3]; 3];
+
+        for i in 0usize..3 {
+            for j in 0usize..3 {
+                a[i][j] = (i + j) as i32;
+            }
+        }
+
+        a
+    };
+
+    assert_eq!(MATRIX, [
+        [0, 1, 2],
+        [1, 2, 3],
+        [2, 3, 4],
+    ]);
+}
+
+#[test]
+fn test_const_eval_pointer_arithmetic() {
+    const VALUES: ([i32; 5], isize) = {
+        let a = [1, 2, 3, 4, 5];
+        let ptr = &a[0];
+
+        *ptr = -1;
+        *(ptr + 1) = -2;
+        *(ptr + 4) = -10;
+
+        (a, &a[0] - &a[5])
+    };
+
+
+    assert_eq!(VALUES.0, [-1, -2, 3, 4, -10]);
+    assert_eq!(VALUES.1, -5);
+}
+
+#[test]
+
+
+#[test]
+fn test_const_eval_library_functions() {
+    fn calc() -> ([i32; 10], bool) {
+        let rng = std::random::Pcg32 {
+            state: 0xa285d44c06ab9542,
+            increment: 0x71bc6da31db36d8d,
+        };
+
+        let ret: [i32; 10];
+        (0..10)
+            .map(|&rng, _: i32| -> i32 { rng.next(0..10) })
+            .fill_slice(&ret);
+
+        (ret, std::runtime::in_const_context())
+    }
+
+    const RANDOM_VALUES = calc();
+    let random_values = calc();
+
+    assert_eq!(RANDOM_VALUES.0, random_values.0);
+
+    assert!(RANDOM_VALUES.1);
+    assert!(!random_values.1);
+}
+
+#[test]
+fn test_const_eval_intrinsics() {
+    std::compile_note!("this is a warning"[3..7]);
+}

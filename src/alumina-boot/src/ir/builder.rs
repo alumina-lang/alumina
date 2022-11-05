@@ -25,6 +25,7 @@ impl<'ir> ExpressionBuilder<'ir> {
         Expr::const_lvalue(ExprKind::Const(item), typ).alloc_on(self.ir)
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn fill_block(
         &self,
         target: &mut Vec<Statement<'ir>>,
@@ -157,8 +158,8 @@ impl<'ir> ExpressionBuilder<'ir> {
         result.alloc_on(self.ir)
     }
 
-    pub fn codegen_intrinsic(&self, kind: CodegenIntrinsicKind<'ir>, ty: TyP<'ir>) -> ExprP<'ir> {
-        Expr::rvalue(ExprKind::CodegenIntrinsic(kind), ty).alloc_on(self.ir)
+    pub fn codegen_intrinsic(&self, kind: IntrinsicValueKind<'ir>, ty: TyP<'ir>) -> ExprP<'ir> {
+        Expr::rvalue(ExprKind::Intrinsic(kind), ty).alloc_on(self.ir)
     }
 
     pub fn diverges(&self, exprs: impl IntoIterator<Item = ExprP<'ir>>) -> ExprP<'ir> {
@@ -230,7 +231,7 @@ impl<'ir> ExpressionBuilder<'ir> {
 
     pub fn dangling(&self, typ: TyP<'ir>) -> ExprP<'ir> {
         if let Ty::Pointer(ty, _) = typ {
-            self.codegen_intrinsic(CodegenIntrinsicKind::Dangling(ty), typ)
+            self.codegen_intrinsic(IntrinsicValueKind::Dangling(ty), typ)
         } else {
             unreachable!()
         }

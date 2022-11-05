@@ -19,6 +19,7 @@ Non-exhaustive list of distinguishing features:
   - first-class 0-sized types (unit/void, 0-sized arrays, structs with no fields, ...),
   - never type
 - Hygienic expression macros
+- [Compile-time constant evaluation](./examples/constants.alu) (including loops, function calls, etc.)
 - [Unified call syntax](https://en.wikipedia.org/wiki/Uniform_Function_Call_Syntax) for functions and macros in scope
 - [Defer expressions](./examples/defer_and_move.alu)
 

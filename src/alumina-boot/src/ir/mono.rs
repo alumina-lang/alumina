@@ -208,9 +208,9 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
 
                     Some(LangTypeKind::Slice(ir::Ty::Pointer(inner, is_const))) => {
                         if *is_const {
-                            let _ = write!(f, "&[{}]", self.type_name(*inner)?);
+                            let _ = write!(f, "&[{}]", self.type_name(inner)?);
                         } else {
-                            let _ = write!(f, "&mut [{}]", self.type_name(*inner)?);
+                            let _ = write!(f, "&mut [{}]", self.type_name(inner)?);
                         }
                         return Ok(f);
                     }
@@ -276,13 +276,13 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
             }
             Pointer(ty, is_const) => {
                 if *is_const {
-                    let _ = write!(f, "&{}", self.type_name(*ty)?);
+                    let _ = write!(f, "&{}", self.type_name(ty)?);
                 } else {
-                    let _ = write!(f, "&mut {}", self.type_name(*ty)?);
+                    let _ = write!(f, "&mut {}", self.type_name(ty)?);
                 }
             }
             Array(ty, len) => {
-                let _ = write!(f, "[{}; {}]", self.type_name(*ty)?, len);
+                let _ = write!(f, "[{}; {}]", self.type_name(ty)?, len);
             }
             Tuple(tys) => {
                 let _ = write!(f, "(");
@@ -455,10 +455,13 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 }
             };
 
-            let value = ir::const_eval::ConstEvaluator::new(child.mono_ctx.ir)
-                .const_eval(expr)
-                .map_err(CodeErrorKind::CannotConstEvaluate)
-                .with_span(m.value.unwrap().span)?;
+            let value = ir::const_eval::ConstEvaluator::new(
+                child.mono_ctx.ir,
+                child.local_types.iter().map(|(k, v)| (*k, *v)),
+            )
+            .const_eval(expr)
+            .map_err(CodeErrorKind::CannotConstEvaluate)
+            .with_span(m.value.unwrap().span)?;
 
             if !type_hint.get_or_insert(expr.ty).assignable_from(expr.ty) {
                 return Err(mismatch!(self, type_hint.unwrap(), expr.ty)).with_span(m.span);
@@ -489,14 +492,17 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 if taken_values.insert(counter) {
                     break counter;
                 }
-                counter = ir::const_eval::ConstEvaluator::new(child.mono_ctx.ir)
-                    .const_eval(self.exprs.binary(
-                        ast::BinOp::Plus,
-                        self.exprs.literal(counter, enum_type),
-                        self.exprs.literal(numeric_of_kind!(kind, 1), enum_type),
-                        enum_type,
-                    ))
-                    .unwrap();
+                counter = ir::const_eval::ConstEvaluator::new(
+                    child.mono_ctx.ir,
+                    child.local_types.iter().map(|(k, v)| (*k, *v)),
+                )
+                .const_eval(self.exprs.binary(
+                    ast::BinOp::Plus,
+                    self.exprs.literal(counter, enum_type),
+                    self.exprs.literal(numeric_of_kind!(kind, 1), enum_type),
+                    enum_type,
+                ))
+                .unwrap();
             };
 
             members.push(ir::EnumMember {
@@ -1181,10 +1187,13 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 init.unwrap()
             };
 
-            let value = ir::const_eval::ConstEvaluator::new(child.mono_ctx.ir)
-                .const_eval(init)
-                .map_err(CodeErrorKind::CannotConstEvaluate)
-                .with_span(s.init.unwrap().span)?;
+            let value = ir::const_eval::ConstEvaluator::new(
+                child.mono_ctx.ir,
+                child.local_types.iter().map(|(k, v)| (*k, *v)),
+            )
+            .const_eval(init)
+            .map_err(CodeErrorKind::CannotConstEvaluate)
+            .with_span(s.init.unwrap().span)?;
 
             // Small builtins values for consts are directly inlined in the IR, larger ones are
             // generated as const statics. Strings are a bit hairy, so they are inlined as well regardless
@@ -1433,17 +1442,13 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .append_span(expr.span)?;
 
         let body = self.try_coerce(return_type, body).append_span(expr.span)?;
-
-        let raw_body = if is_ir_inline {
+        if is_ir_inline {
             if self.defer_context.is_some() {
                 return Err(CodeErrorKind::IrInlineFlowControl).with_span(expr.span);
             }
             if !self.local_defs.is_empty() {
                 return Err(CodeErrorKind::IrInlineLocalDefs).with_span(expr.span);
             }
-            Some(body)
-        } else {
-            None
         };
 
         let mut statements = Vec::new();
@@ -1465,7 +1470,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let function_body = FuncBody {
             statements: statements.alloc_on(self.mono_ctx.ir),
             local_defs: self.local_defs.alloc_on(self.mono_ctx.ir),
-            raw_body,
+            raw_body: Some(body),
         };
 
         let elider = ZstElider::new(self.mono_ctx.ir);
@@ -1896,18 +1901,21 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let mut child = self.make_tentative_child();
                 let len_expr =
                     child.lower_expr(len, Some(child.types.builtin(BuiltinType::USize)))?;
-                let len = ir::const_eval::ConstEvaluator::new(self.mono_ctx.ir)
-                    .const_eval(len_expr)
-                    .map_err(CodeErrorKind::CannotConstEvaluate)
-                    .and_then(|v| match v {
-                        Value::USize(v) => Ok(v),
-                        _ => Err(mismatch!(
-                            self,
-                            self.types.builtin(BuiltinType::USize),
-                            len_expr.ty
-                        )),
-                    })
-                    .with_span(len.span)?;
+                let len = ir::const_eval::ConstEvaluator::new(
+                    child.mono_ctx.ir,
+                    child.local_types.iter().map(|(k, v)| (*k, *v)),
+                )
+                .const_eval(len_expr)
+                .map_err(CodeErrorKind::CannotConstEvaluate)
+                .and_then(|v| match v {
+                    Value::USize(v) => Ok(v),
+                    _ => Err(mismatch!(
+                        self,
+                        self.types.builtin(BuiltinType::USize),
+                        len_expr.ty
+                    )),
+                })
+                .with_span(len.span)?;
 
                 self.types.array(inner, len)
             }
@@ -2083,7 +2091,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 args.iter().any(|arg| self.contains_type(arg, needle))
                     || self.contains_type(ret, needle)
             }
-            ir::Ty::Tuple(tys) => tys.iter().any(|ty| self.contains_type(*ty, needle)),
+            ir::Ty::Tuple(tys) => tys.iter().any(|ty| self.contains_type(ty, needle)),
             ir::Ty::Item(item) => match item.get().with_no_span() {
                 Ok(ir::IRItem::Protocol(_)) => false,
                 _ => self
@@ -2091,7 +2099,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .reverse_lookup(item)
                     .1
                     .iter()
-                    .any(|ty| self.contains_type(*ty, needle)),
+                    .any(|ty| self.contains_type(ty, needle)),
             },
             _ => false,
         }
@@ -2129,7 +2137,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let args = match proto_fun.arg_types {
                     [ir::Ty::Pointer(typ, is_const), rest @ ..] => {
                         if *typ != dyn_self
-                            || rest.iter().any(|ty| self.contains_type(*ty, dyn_self))
+                            || rest.iter().any(|ty| self.contains_type(ty, dyn_self))
                         {
                             bail!()
                         }
@@ -3439,17 +3447,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
         }
 
-        if let Ok(Value::Bool(v)) =
-            ir::const_eval::ConstEvaluator::new(self.mono_ctx.ir).const_eval(cond)
-        {
-            if v {
-                Ok(then)
-            } else {
-                Ok(els)
-            }
-        } else {
-            Ok(self.exprs.if_then(cond, then, els))
-        }
+        Ok(self.exprs.if_then(cond, then, els))
     }
 
     fn static_cond_matches(
@@ -3676,10 +3674,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             Some(typ) => {
                 self.local_defs.push(ir::LocalDef {
                     id: loop_result,
-                    typ: *typ,
+                    typ,
                 });
                 self.exprs
-                    .block(statements, self.exprs.local(loop_result, *typ))
+                    .block(statements, self.exprs.local(loop_result, typ))
             }
         };
 
@@ -3824,7 +3822,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let make_slice = self.monomorphize_lang_item(LangItemKind::SliceNew, [ptr_type])?;
 
         let data = self.exprs.literal(
-            Value::Str(self.mono_ctx.ir.arena.alloc_slice_copy(value)),
+            Value::Str(self.mono_ctx.ir.arena.alloc_slice_copy(value), 0),
             ptr_type,
         );
         let size = self.exprs.literal(
@@ -4144,7 +4142,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
 
         for (expected, arg) in func.arg_types.iter().zip(args.iter_mut()) {
-            *arg = self.try_coerce(expected, *arg)?;
+            *arg = self.try_coerce(expected, arg)?;
         }
 
         let call = self.call(callee, args, func.return_type)?;
@@ -4253,7 +4251,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
 
         for (expected, arg) in arg_types.iter().zip(args.iter_mut()) {
-            *arg = self.try_coerce(expected, *arg)?;
+            *arg = self.try_coerce(expected, arg)?;
         }
 
         Ok(Some(self.call(callee, args, return_type)?))
@@ -4438,7 +4436,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .collect::<Result<Vec<_>, _>>()?;
 
         for (expected, arg) in arg_types.iter().zip(args.iter_mut()) {
-            *arg = self.try_coerce(expected, *arg)?;
+            *arg = self.try_coerce(expected, arg)?;
         }
 
         if callee.diverges() || args.iter().any(|e| e.diverges()) {
@@ -4558,24 +4556,13 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     }
                 };
 
-                let temporary = self.mono_ctx.ir.make_id();
-                let local = self.exprs.local(temporary, closure_typ);
-                self.local_defs.push(ir::LocalDef {
-                    id: temporary,
-                    typ: closure_typ,
-                });
-
-                let statements = fields
-                    .iter()
-                    .zip(bound_values.iter())
-                    .map(|(f, e)| {
-                        ir::Statement::Expression(
-                            self.exprs.assign(self.exprs.field(local, f.id, f.ty), e),
-                        )
-                    })
-                    .collect::<Vec<_>>();
-
-                self.exprs.block(statements, local)
+                self.exprs.r#struct(
+                    fields
+                        .into_iter()
+                        .zip(bound_values.into_iter())
+                        .map(|(f, e)| (f.id, e)),
+                    closure_typ,
+                )
             }
             ast::FnKind::Defered(spec) => {
                 let func = self.resolve_defered_func(&spec)?;
@@ -5129,7 +5116,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ast::ExprKind::Binary(op, lhs, rhs) => self.lower_binary(*op, lhs, rhs, type_hint),
             ast::ExprKind::AssignOp(op, lhs, rhs) => self.lower_assign_op(*op, lhs, rhs, type_hint),
             ast::ExprKind::Break(value) => self.lower_break(*value, type_hint),
-            ast::ExprKind::Defer(value) => self.lower_defer(*value, type_hint),
+            ast::ExprKind::Defer(value) => self.lower_defer(value, type_hint),
             ast::ExprKind::Continue => self.lower_continue(type_hint),
             ast::ExprKind::Tuple(exprs) => self.lower_tuple(exprs, type_hint),
             ast::ExprKind::TupleIndex(tup, index) => self.lower_tuple_index(tup, *index, type_hint),
@@ -5146,8 +5133,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
             ast::ExprKind::Return(inner) => self.lower_return(*inner, type_hint),
             ast::ExprKind::Fn(item, args) => self.lower_fn(item.clone(), *args, type_hint),
-            ast::ExprKind::Static(item, args) => self.lower_static(*item, *args, type_hint),
-            ast::ExprKind::Const(item, args) => self.lower_const(*item, *args, type_hint),
+            ast::ExprKind::Static(item, args) => self.lower_static(item, *args, type_hint),
+            ast::ExprKind::Const(item, args) => self.lower_const(item, *args, type_hint),
             ast::ExprKind::Defered(def) => self.lower_defered(def, type_hint),
             ast::ExprKind::StaticIf(cond, then, els) => {
                 self.lower_static_if(cond, then, els, type_hint)

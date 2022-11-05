@@ -468,10 +468,16 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                         )
                         .visit_local(node)?;
 
+                        if !items.is_empty() && self.in_a_macro {
+                            return Err(CodeErrorKind::MacrosCannotDefineItems)
+                                .with_span_from(&self.scope, node);
+                        }
+
                         for ((scope, name), values) in items.into_iter() {
                             if scope != self.scope {
                                 continue;
                             }
+
                             local_items.entry(name).or_default().extend(values);
                         }
 
@@ -512,6 +518,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_closure_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        if self.in_a_macro {
+            return Err(CodeErrorKind::MacrosCannotDefineLambdas).with_span_from(&self.scope, node);
+        }
+
         let visitor = ClosureVisitor::new(
             self.ast,
             self.global_ctx.clone(),
@@ -1572,7 +1582,7 @@ impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
             .iter()
             .map(|(k, (t, v))| super::ClosureBinding {
                 id: *k,
-                value: *v,
+                value: v,
                 binding_type: *t,
             })
             .collect::<Vec<_>>()

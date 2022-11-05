@@ -1,6 +1,6 @@
 use crate::ast::{BuiltinType, UnOp};
 use crate::common::{ArenaAllocatable, HashMap, HashSet};
-use crate::intrinsics::CodegenIntrinsicKind;
+use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::builder::{ExpressionBuilder, TypeBuilder};
 use crate::ir::const_eval::Value;
 use crate::ir::{Expr, ExprKind, ExprP, FuncBody, IrCtx, IrId, LocalDef, Statement, Ty, ValueType};
@@ -139,11 +139,11 @@ impl<'ir> ZstElider<'ir> {
                     builder.block(
                         elems
                             .iter()
-                            .map(|e| Statement::Expression(self.elide_zst_expr(*e))),
+                            .map(|e| Statement::Expression(self.elide_zst_expr(e))),
                         builder.void(expr.ty, expr.value_type),
                     )
                 } else {
-                    builder.array(elems.iter().map(|e| self.elide_zst_expr(*e)), expr.ty)
+                    builder.array(elems.iter().map(|e| self.elide_zst_expr(e)), expr.ty)
                 }
             }
             ExprKind::AssignOp(op, lhs, rhs) => {
@@ -163,7 +163,7 @@ impl<'ir> ZstElider<'ir> {
                     .collect::<Vec<_>>();
 
                 let extract_args = match callee.kind {
-                    ExprKind::CodegenIntrinsic(_) => false,
+                    ExprKind::Intrinsic(_) => false,
                     _ => args.iter().any(|arg| arg.ty.is_zero_sized() && !arg.pure()),
                 };
 
@@ -305,7 +305,7 @@ impl<'ir> ZstElider<'ir> {
                     builder.tuple(
                         elems.iter().zip(element_types.iter()).enumerate().map(
                             |(idx, (val, ty))| {
-                                (idx, self.elide_zst_expr(builder.literal(*val, *ty)))
+                                (idx, self.elide_zst_expr(builder.literal(*val, ty)))
                             },
                         ),
                         expr.ty,
@@ -333,12 +333,16 @@ impl<'ir> ZstElider<'ir> {
                         expr.ty,
                     )
                 }
+                Value::Uninitialized if expr.ty.is_zero_sized() => {
+                    builder.void(expr.ty, ValueType::RValue)
+                }
+                Value::Void => builder.void(expr.ty, ValueType::RValue),
                 _ => expr,
             },
             ExprKind::Unreachable => expr,
             ExprKind::Void => expr,
-            ExprKind::CodegenIntrinsic(ref kind) => match kind {
-                CodegenIntrinsicKind::Uninitialized if expr.ty.is_zero_sized() => {
+            ExprKind::Intrinsic(ref kind) => match kind {
+                IntrinsicValueKind::Uninitialized if expr.ty.is_zero_sized() => {
                     builder.void(expr.ty, ValueType::RValue)
                 }
                 _ => expr,

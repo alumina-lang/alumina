@@ -1,23 +1,25 @@
 // Simple constant values
 const INT: u32 = 1;
 const STR = "Hello";
+const ARR = [1, 2, 3];
 
 // Constants with compile-time evaluation
-const EVAL1: u32 = 1 + 1;
-const EVAL2: u32 = {
-    1 + 2; // Only pure statements allowed in constant expressions
-    2 + 3;
-    EVAL1
-};
+const EVAL: u32 = 1 + 1;
 
-const AACS_ENCRYPTION_KEY: u128 = {
-    // This warning will only be shown if the constant is used in the program
-    std::compile_warn!("MPAA will sue you if you use this key");
-    0x09f911029d74e35bd84156c5635688c0
-};
+// Complex expressions with loops and function calls
+const RANDOM_NUMBERS: [i32; 20] = {
+    let rng = std::random::Pcg32 {
+        state: 0xa285d44c06ab9542,
+        increment: 0x71bc6da31db36d8d,
+    };
 
-// if expressions and casts are supported
-const EVAL3 = if EVAL1 > 2 { EVAL1 as usize } else { 7usize };
+    let ret: [i32; 20];
+    (0..20)
+        .map(|&rng, _: i32| -> i32 { rng.next(-10..=10) })
+        .fill_slice(&ret);
+
+    ret
+};
 
 // Enum variants can have constant values
 enum Color {
@@ -31,41 +33,34 @@ struct Foo {
 }
 
 // arrays, tuples and structs are supported
+const OPT: Option<i32> = Option::none();
+
 const COMPLEX_CONST: [(Foo, Foo); 2] = [
     (Foo { range: 1..2 }, Foo { range: 3..4 }),
     (Foo { range: 5..6 }, Foo { range: 7..8 }),
 ];
 
-macro times($x, $y) {
-    $x * $y
-}
-
 fn main() {
     use std::fmt::{hex, zero_pad};
-    use std::mem::size_of;
+
+    print!("RANDOM NUMBERS = [");
+    for (idx, num) in RANDOM_NUMBERS.iter().enumerate() {
+        if idx == 0 {
+            print!("{}", num);
+        } else {
+            print!(", {}", num);
+        }
+    }
+    println!("]");
 
     // Constants can be used e.g. in array sizes
-    let arr: [i32; EVAL3];
+    let arr: [i32; RANDOM_NUMBERS[5] as usize];
     println!("arr.len() = {}", arr.len());
-
-    let arr_of_ints: [u8; size_of::<i32>() * 10];
-    println!("arr_of_ints.len() = {}", arr_of_ints.len());
-
-    println!("{}", AACS_ENCRYPTION_KEY);
-
-    // Macros work too. Who doesn't love arrays that change length depending on
-    // the source code line they are declared on?
-    let wacky: [i32; std::line!().times!(10)];
-    let odd: [i32; std::line!().times!(100)];
-    let quirky: [i32; std::line!().times!(1000)];
-    let weird: [i32; std::line!().times!(10000)];
-
-    println!("wacky.len() = {}", wacky.len());
-    println!("odd.len() = {}", odd.len());
-    println!("quirky.len() = {}", quirky.len());
-    println!("weird.len() = {}", weird.len());
 
     for color in [Color::Red, Color::Green, Color::Blue] {
         println!("{}", (color as i32).hex().zero_pad(6));
     }
+
+    println!("OPT = {}", OPT);
+    println!("COMPLEX_CONST[0].1.range.lower = {}", COMPLEX_CONST[0].1.range.lower);
 }

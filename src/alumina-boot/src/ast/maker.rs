@@ -595,6 +595,8 @@ impl<'ast> AstItemMaker<'ast> {
             r#extern: is_extern,
         });
 
+        scope.check_unused_items(&self.global_ctx.diag());
+
         symbol.assign(result);
 
         self.symbols.push(symbol);
@@ -670,7 +672,7 @@ impl<'ast> AstItemMaker<'ast> {
                 }
                 self.make_type(
                     name,
-                    *symbol,
+                    symbol,
                     *node,
                     scope.clone(),
                     &impl_scopes[..],
@@ -681,33 +683,33 @@ impl<'ast> AstItemMaker<'ast> {
                 kind: TypeDef(symbol, node, scope),
                 attributes,
             }] => {
-                self.make_typedef(name, *symbol, *node, scope.clone(), attributes)?;
+                self.make_typedef(name, symbol, *node, scope.clone(), attributes)?;
             }
             [NI {
                 kind: Protocol(symbol, node, scope),
                 attributes,
             }] => {
                 self.make(scope.clone())?;
-                self.make_protocol(name, *symbol, *node, scope.clone(), attributes)?;
+                self.make_protocol(name, symbol, *node, scope.clone(), attributes)?;
             }
             [NI {
                 kind: Static(symbol, node, scope),
                 attributes,
             }] => {
-                self.make_static_or_const(false, name, *symbol, *node, scope.clone(), attributes)?;
+                self.make_static_or_const(false, name, symbol, *node, scope.clone(), attributes)?;
             }
             [NI {
                 kind: Const(symbol, node, scope),
                 attributes,
             }] => {
-                self.make_static_or_const(true, name, *symbol, *node, scope.clone(), attributes)?;
+                self.make_static_or_const(true, name, symbol, *node, scope.clone(), attributes)?;
             }
             [NI {
                 kind: Macro(symbol, node, scope),
                 attributes,
             }] => {
                 let mut macro_maker = MacroMaker::new(self.ast, self.global_ctx.clone());
-                macro_maker.make(name, *symbol, *node, scope.clone(), attributes)?;
+                macro_maker.make(name, symbol, *node, scope.clone(), attributes)?;
                 self.symbols.push(symbol);
             }
             [NI {
