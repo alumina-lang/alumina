@@ -8,7 +8,7 @@ pub mod lang;
 pub mod layout;
 pub mod mono;
 
-use crate::ast::{Attribute, BinOp, BuiltinType, UnOp};
+use crate::ast::{Attribute, BinOp, BuiltinType, Span, UnOp};
 use crate::common::{
     impl_allocatable, Allocatable, AluminaError, ArenaAllocatable, CodeErrorKind, HashSet,
     Incrementable,
@@ -576,34 +576,38 @@ pub struct Expr<'ir> {
     pub value_type: ValueType,
     pub is_const: bool,
     pub kind: ExprKind<'ir>,
+    pub span: Option<Span>,
     pub ty: TyP<'ir>,
 }
 
 impl<'ir> Expr<'ir> {
-    pub fn lvalue(kind: ExprKind<'ir>, typ: TyP<'ir>) -> Self {
+    pub fn lvalue(kind: ExprKind<'ir>, typ: TyP<'ir>, span: Option<Span>) -> Self {
         Self {
             kind,
             value_type: ValueType::LValue,
             is_const: false,
             ty: typ,
+            span,
         }
     }
 
-    pub fn rvalue(kind: ExprKind<'ir>, typ: TyP<'ir>) -> Self {
+    pub fn rvalue(kind: ExprKind<'ir>, typ: TyP<'ir>, span: Option<Span>) -> Self {
         Self {
             kind,
             value_type: ValueType::RValue,
             is_const: false,
             ty: typ,
+            span,
         }
     }
 
-    pub fn const_lvalue(kind: ExprKind<'ir>, typ: TyP<'ir>) -> Self {
+    pub fn const_lvalue(kind: ExprKind<'ir>, typ: TyP<'ir>, span: Option<Span>) -> Self {
         Self {
             kind,
             value_type: ValueType::LValue,
             is_const: true,
             ty: typ,
+            span,
         }
     }
 

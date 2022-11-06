@@ -401,7 +401,6 @@ impl<'ir> Shr<Value<'ir>> for Value<'ir> {
             _ => return Err(ConstEvalErrorKind::CompilerBug.into()),
         };
         let other = other.map_err(|_| ConstEvalErrorKind::ArithmeticOverflow)?;
-
         let ret = match self {
             U8(a) => a.checked_shr(other).map(U8),
             U16(a) => a.checked_shr(other).map(U16),

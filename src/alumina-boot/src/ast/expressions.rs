@@ -1584,6 +1584,7 @@ impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
                 id: *k,
                 value: v,
                 binding_type: *t,
+                span: v.span,
             })
             .collect::<Vec<_>>()
             .alloc_on(self.ast);

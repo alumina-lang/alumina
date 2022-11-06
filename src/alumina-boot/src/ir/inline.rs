@@ -61,11 +61,13 @@ impl<'ir> IrInliner<'ir> {
                 let new_id = ir.make_id();
                 let ty = expr.ty;
 
-                let expr = std::mem::replace(expr, builder.local(new_id, ty));
+                let expr = std::mem::replace(expr, builder.local(new_id, ty, expr.span));
 
-                statements.push(Statement::Expression(
-                    builder.assign(builder.local(new_id, ty), expr),
-                ));
+                statements.push(Statement::Expression(builder.assign(
+                    builder.local(new_id, ty, expr.span),
+                    expr,
+                    expr.span,
+                )));
                 local_defs.push(LocalDef {
                     id: new_id,
                     typ: ty,
@@ -76,7 +78,7 @@ impl<'ir> IrInliner<'ir> {
         let mut inliner = Self { ir, replacements };
 
         Ok((
-            builder.block(statements, inliner.visit_expr(body)?),
+            builder.block(statements, inliner.visit_expr(body)?, body.span),
             local_defs,
         ))
     }
@@ -91,12 +93,17 @@ impl<'ir> IrInliner<'ir> {
                     .map(|s| self.visit_statement(s))
                     .collect::<Result<Vec<_>, _>>()?,
                 self.visit_expr(ret)?,
+                expr.span,
             ),
-            ExprKind::Binary(op, a, b) => {
-                builder.binary(op, self.visit_expr(a)?, self.visit_expr(b)?, expr.ty)
-            }
+            ExprKind::Binary(op, a, b) => builder.binary(
+                op,
+                self.visit_expr(a)?,
+                self.visit_expr(b)?,
+                expr.ty,
+                expr.span,
+            ),
             ExprKind::AssignOp(op, a, b) => {
-                builder.assign_op(op, self.visit_expr(a)?, self.visit_expr(b)?)
+                builder.assign_op(op, self.visit_expr(a)?, self.visit_expr(b)?, expr.span)
             }
             ExprKind::Call(callee, args) => builder.call(
                 self.visit_expr(callee)?,
@@ -104,6 +111,7 @@ impl<'ir> IrInliner<'ir> {
                     .map(|a| self.visit_expr(a))
                     .collect::<Result<Vec<_>, _>>()?,
                 expr.ty,
+                expr.span,
             ),
             ExprKind::Fn(_) => expr,
             ExprKind::Static(_) => expr,
@@ -113,27 +121,35 @@ impl<'ir> IrInliner<'ir> {
             ExprKind::Void => expr,
             ExprKind::Intrinsic(_) => expr,
             ExprKind::Local(id) => self.replacements.get(&id).copied().unwrap_or(expr),
-            ExprKind::Ref(e) => builder.r#ref(self.visit_expr(e)?),
-            ExprKind::Deref(e) => builder.deref(self.visit_expr(e)?),
+            ExprKind::Ref(e) => builder.r#ref(self.visit_expr(e)?, expr.span),
+            ExprKind::Deref(e) => builder.deref(self.visit_expr(e)?, expr.span),
             ExprKind::Return(_) => return Err(CodeErrorKind::IrInlineEarlyReturn).with_no_span(),
             ExprKind::Goto(_) => return Err(CodeErrorKind::IrInlineFlowControl).with_no_span(),
-            ExprKind::Unary(op, e) => builder.unary(op, self.visit_expr(e)?, expr.ty),
-            ExprKind::Assign(a, b) => builder.assign(self.visit_expr(a)?, self.visit_expr(b)?),
-            ExprKind::Index(a, b) => builder.index(self.visit_expr(a)?, self.visit_expr(b)?),
-            ExprKind::Field(e, f) => builder.field(self.visit_expr(e)?, f, expr.ty),
-            ExprKind::TupleIndex(e, i) => builder.tuple_index(self.visit_expr(e)?, i, expr.ty),
+            ExprKind::Unary(op, e) => builder.unary(op, self.visit_expr(e)?, expr.ty, expr.span),
+            ExprKind::Assign(a, b) => {
+                builder.assign(self.visit_expr(a)?, self.visit_expr(b)?, expr.span)
+            }
+            ExprKind::Index(a, b) => {
+                builder.index(self.visit_expr(a)?, self.visit_expr(b)?, expr.span)
+            }
+            ExprKind::Field(e, f) => builder.field(self.visit_expr(e)?, f, expr.ty, expr.span),
+            ExprKind::TupleIndex(e, i) => {
+                builder.tuple_index(self.visit_expr(e)?, i, expr.ty, expr.span)
+            }
             ExprKind::If(cond, then, els) => builder.if_then(
                 self.visit_expr(cond)?,
                 self.visit_expr(then)?,
                 self.visit_expr(els)?,
+                expr.span,
             ),
-            ExprKind::Cast(inner) => builder.cast(self.visit_expr(inner)?, expr.ty),
+            ExprKind::Cast(inner) => builder.cast(self.visit_expr(inner)?, expr.ty, expr.span),
             ExprKind::Array(elems) => builder.array(
                 elems
                     .iter()
                     .map(|e| self.visit_expr(e))
                     .collect::<Result<Vec<_>, _>>()?,
                 expr.ty,
+                expr.span,
             ),
             ExprKind::Tuple(elems) => builder.tuple(
                 elems
@@ -141,6 +157,7 @@ impl<'ir> IrInliner<'ir> {
                     .map(|e| self.visit_expr(e.value).map(|v| (e.index, v)))
                     .collect::<Result<Vec<_>, _>>()?,
                 expr.ty,
+                expr.span,
             ),
             ExprKind::Struct(fields) => builder.r#struct(
                 fields
@@ -148,6 +165,7 @@ impl<'ir> IrInliner<'ir> {
                     .map(|f| self.visit_expr(f.value).map(|v| (f.field, v)))
                     .collect::<Result<Vec<_>, _>>()?,
                 expr.ty,
+                expr.span,
             ),
         };
 

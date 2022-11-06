@@ -136,23 +136,27 @@ impl<'ir> CompilerIntrinsics<'ir> {
         }
     }
 
-    fn align_of(&self, ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
+    fn align_of(&self, ty: TyP<'ir>, span: Option<Span>) -> Result<ExprP<'ir>, AluminaError> {
         let align = self.layouter.layout_of(ty)?.align;
 
-        Ok(self
-            .expressions
-            .literal(Value::USize(align), self.types.builtin(BuiltinType::USize)))
+        Ok(self.expressions.literal(
+            Value::USize(align),
+            self.types.builtin(BuiltinType::USize),
+            span,
+        ))
     }
 
-    fn size_of(&self, ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
+    fn size_of(&self, ty: TyP<'ir>, span: Option<Span>) -> Result<ExprP<'ir>, AluminaError> {
         let size = self.layouter.layout_of(ty)?.size;
 
-        Ok(self
-            .expressions
-            .literal(Value::USize(size), self.types.builtin(BuiltinType::USize)))
+        Ok(self.expressions.literal(
+            Value::USize(size),
+            self.types.builtin(BuiltinType::USize),
+            span,
+        ))
     }
 
-    fn type_id(&self, ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
+    fn type_id(&self, ty: TyP<'ir>, span: Option<Span>) -> Result<ExprP<'ir>, AluminaError> {
         // just in case someone made a copy
         let interned = self.ir.intern_type(*ty);
 
@@ -161,16 +165,24 @@ impl<'ir> CompilerIntrinsics<'ir> {
         // retought if incremental compilation is ever implemented.
         let id = interned as *const Ty<'ir> as usize;
 
-        Ok(self
-            .expressions
-            .literal(Value::USize(id), self.types.builtin(BuiltinType::USize)))
+        Ok(self.expressions.literal(
+            Value::USize(id),
+            self.types.builtin(BuiltinType::USize),
+            span,
+        ))
     }
 
-    fn array_length_of(&self, ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
+    fn array_length_of(
+        &self,
+        ty: TyP<'ir>,
+        span: Option<Span>,
+    ) -> Result<ExprP<'ir>, AluminaError> {
         if let Ty::Array(_, len) = ty {
-            return Ok(self
-                .expressions
-                .literal(Value::USize(*len), self.types.builtin(BuiltinType::USize)));
+            return Ok(self.expressions.literal(
+                Value::USize(*len),
+                self.types.builtin(BuiltinType::USize),
+                span,
+            ));
         }
 
         Err(CodeErrorKind::TypeMismatch(
@@ -180,7 +192,11 @@ impl<'ir> CompilerIntrinsics<'ir> {
         .with_no_span()
     }
 
-    fn compile_fail(&self, reason: ExprP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
+    fn compile_fail(
+        &self,
+        reason: ExprP<'ir>,
+        _span: Option<Span>,
+    ) -> Result<ExprP<'ir>, AluminaError> {
         let reason = self.get_const_string(reason)?;
 
         Err(CodeErrorKind::UserDefined(reason.to_string())).with_no_span()
@@ -198,7 +214,9 @@ impl<'ir> CompilerIntrinsics<'ir> {
             span,
         ));
 
-        Ok(self.expressions.void(self.types.void(), ValueType::RValue))
+        Ok(self
+            .expressions
+            .void(self.types.void(), ValueType::RValue, span))
     }
 
     fn compile_note(
@@ -213,22 +231,28 @@ impl<'ir> CompilerIntrinsics<'ir> {
             span,
         ));
 
-        Ok(self.expressions.void(self.types.void(), ValueType::RValue))
+        Ok(self
+            .expressions
+            .void(self.types.void(), ValueType::RValue, span))
     }
 
-    fn unreachable(&self) -> Result<ExprP<'ir>, AluminaError> {
-        Ok(self.expressions.unreachable())
+    fn unreachable(&self, span: Option<Span>) -> Result<ExprP<'ir>, AluminaError> {
+        Ok(self.expressions.unreachable(span))
     }
 
-    fn trap(&self) -> Result<ExprP<'ir>, AluminaError> {
+    fn trap(&self, span: Option<Span>) -> Result<ExprP<'ir>, AluminaError> {
         let ret_type = self.types.builtin(BuiltinType::Never);
         let fn_type = self.types.function([], ret_type);
 
         Ok(self.expressions.call(
-            self.expressions
-                .codegen_intrinsic(IntrinsicValueKind::FunctionLike("__builtin_trap"), fn_type),
+            self.expressions.codegen_intrinsic(
+                IntrinsicValueKind::FunctionLike("__builtin_trap"),
+                fn_type,
+                span,
+            ),
             [],
             ret_type,
+            span,
         ))
     }
 
@@ -237,6 +261,7 @@ impl<'ir> CompilerIntrinsics<'ir> {
         name: ExprP<'ir>,
         args: &[ExprP<'ir>],
         ret_ty: TyP<'ir>,
+        span: Option<Span>,
     ) -> Result<ExprP<'ir>, AluminaError> {
         let name = self.get_const_string(name)?;
 
@@ -244,10 +269,14 @@ impl<'ir> CompilerIntrinsics<'ir> {
         let fn_type = self.types.function(arg_types, ret_ty);
 
         Ok(self.expressions.call(
-            self.expressions
-                .codegen_intrinsic(IntrinsicValueKind::FunctionLike(name), fn_type),
+            self.expressions.codegen_intrinsic(
+                IntrinsicValueKind::FunctionLike(name),
+                fn_type,
+                span,
+            ),
             args.iter().copied(),
             ret_ty,
+            span,
         ))
     }
 
@@ -256,45 +285,57 @@ impl<'ir> CompilerIntrinsics<'ir> {
         name: ExprP<'ir>,
         ty: TyP<'ir>,
         ret_ty: TyP<'ir>,
+        span: Option<Span>,
     ) -> Result<ExprP<'ir>, AluminaError> {
         let name = self.get_const_string(name)?;
 
-        Ok(self
-            .expressions
-            .codegen_intrinsic(IntrinsicValueKind::SizeOfLike(name, ty), ret_ty))
+        Ok(self.expressions.codegen_intrinsic(
+            IntrinsicValueKind::SizeOfLike(name, ty),
+            ret_ty,
+            span,
+        ))
     }
 
-    fn asm(&self, assembly: ExprP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
+    fn asm(&self, assembly: ExprP<'ir>, span: Option<Span>) -> Result<ExprP<'ir>, AluminaError> {
         let assembly = self.get_const_string(assembly)?;
 
-        Ok(self
-            .expressions
-            .codegen_intrinsic(IntrinsicValueKind::Asm(assembly), self.types.void()))
+        Ok(self.expressions.codegen_intrinsic(
+            IntrinsicValueKind::Asm(assembly),
+            self.types.void(),
+            span,
+        ))
     }
 
     fn codegen_const(
         &self,
         name: ExprP<'ir>,
         ret_ty: TyP<'ir>,
+        span: Option<Span>,
     ) -> Result<ExprP<'ir>, AluminaError> {
         let name = self.get_const_string(name)?;
 
         Ok(self
             .expressions
-            .codegen_intrinsic(IntrinsicValueKind::ConstLike(name), ret_ty))
+            .codegen_intrinsic(IntrinsicValueKind::ConstLike(name), ret_ty, span))
     }
 
-    fn uninitialized(&self, ret_ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
+    fn uninitialized(
+        &self,
+        ret_ty: TyP<'ir>,
+        span: Option<Span>,
+    ) -> Result<ExprP<'ir>, AluminaError> {
         Ok(self
             .expressions
-            .codegen_intrinsic(IntrinsicValueKind::Uninitialized, ret_ty))
+            .codegen_intrinsic(IntrinsicValueKind::Uninitialized, ret_ty, span))
     }
 
-    fn dangling(&self, ret_ty: TyP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
+    fn dangling(&self, ret_ty: TyP<'ir>, span: Option<Span>) -> Result<ExprP<'ir>, AluminaError> {
         if let Ty::Pointer(inner, _) = ret_ty {
-            Ok(self
-                .expressions
-                .codegen_intrinsic(IntrinsicValueKind::Dangling(inner), ret_ty))
+            Ok(self.expressions.codegen_intrinsic(
+                IntrinsicValueKind::Dangling(inner),
+                ret_ty,
+                span,
+            ))
         } else {
             Err(CodeErrorKind::TypeMismatch(
                 "pointer".to_string(),
@@ -304,10 +345,11 @@ impl<'ir> CompilerIntrinsics<'ir> {
         }
     }
 
-    fn in_const_context(&self) -> Result<ExprP<'ir>, AluminaError> {
+    fn in_const_context(&self, span: Option<Span>) -> Result<ExprP<'ir>, AluminaError> {
         Ok(self.expressions.codegen_intrinsic(
             IntrinsicValueKind::InConstContext,
             self.types.builtin(BuiltinType::Bool),
+            span,
         ))
     }
 
@@ -321,24 +363,24 @@ impl<'ir> CompilerIntrinsics<'ir> {
         // Fine to panic when indexing here, if someone tried to change the signature
         // of the intrinsic in standard library, they deserve to have the compiler crash.
         match kind {
-            IntrinsicKind::SizeOf => self.size_of(generic[0]),
-            IntrinsicKind::AlignOf => self.align_of(generic[0]),
-            IntrinsicKind::TypeId => self.type_id(generic[0]),
-            IntrinsicKind::ArrayLengthOf => self.array_length_of(generic[0]),
-            IntrinsicKind::Trap => self.trap(),
-            IntrinsicKind::CompileFail => self.compile_fail(args[0]),
+            IntrinsicKind::SizeOf => self.size_of(generic[0], span),
+            IntrinsicKind::AlignOf => self.align_of(generic[0], span),
+            IntrinsicKind::TypeId => self.type_id(generic[0], span),
+            IntrinsicKind::ArrayLengthOf => self.array_length_of(generic[0], span),
+            IntrinsicKind::Trap => self.trap(span),
+            IntrinsicKind::CompileFail => self.compile_fail(args[0], span),
             IntrinsicKind::CompileWarn => self.compile_warn(args[0], span),
             IntrinsicKind::CompileNote => self.compile_note(args[0], span),
-            IntrinsicKind::Unreachable => self.unreachable(),
-            IntrinsicKind::Asm => self.asm(args[0]),
-            IntrinsicKind::CodegenFunc => self.codegen_func(args[0], &args[1..], generic[0]),
-            IntrinsicKind::CodegenConst => self.codegen_const(args[0], generic[0]),
+            IntrinsicKind::Unreachable => self.unreachable(span),
+            IntrinsicKind::Asm => self.asm(args[0], span),
+            IntrinsicKind::CodegenFunc => self.codegen_func(args[0], &args[1..], generic[0], span),
+            IntrinsicKind::CodegenConst => self.codegen_const(args[0], generic[0], span),
             IntrinsicKind::CodegenTypeFunc => {
-                self.codegen_type_func(args[0], generic[0], generic[1])
+                self.codegen_type_func(args[0], generic[0], generic[1], span)
             }
-            IntrinsicKind::Uninitialized => self.uninitialized(generic[0]),
-            IntrinsicKind::Dangling => self.dangling(generic[0]),
-            IntrinsicKind::InConstContext => self.in_const_context(),
+            IntrinsicKind::Uninitialized => self.uninitialized(generic[0], span),
+            IntrinsicKind::Dangling => self.dangling(generic[0], span),
+            IntrinsicKind::InConstContext => self.in_const_context(span),
             _ => unreachable!(),
         }
     }
