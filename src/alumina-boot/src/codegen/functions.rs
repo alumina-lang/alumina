@@ -1,4 +1,4 @@
-use crate::ast::{Attribute, BinOp, BuiltinType, UnOp};
+use crate::ast::{Attribute, BinOp, BuiltinType, Span, UnOp};
 use crate::codegen::types::TypeWriter;
 use crate::codegen::{w, CName, CodegenCtx};
 use crate::common::AluminaError;
@@ -18,8 +18,9 @@ pub struct FunctionWriter<'ir, 'gen> {
     fn_decls: String,
     fn_bodies: String,
     indent: usize,
-
+    debug_info: bool,
     in_const_init: bool,
+    last_span: Option<Span>,
 }
 
 /// Prevent "1f32" from being interpreted as an int constant
@@ -130,7 +131,17 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             fn_decls: String::with_capacity(size_estimate / 3 * 2),
             fn_bodies: String::with_capacity(size_estimate),
             indent: 0,
+            debug_info: ctx.global_ctx.has_flag("debug"),
             in_const_init: false,
+            last_span: None,
+        }
+    }
+
+    fn endl(&self) -> &'static str {
+        if self.debug_info {
+            ""
+        } else {
+            "\n"
         }
     }
 
@@ -240,7 +251,9 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
     }
 
     fn indent(&mut self) {
-        w!(self.fn_bodies, "{}", " ".repeat(self.indent));
+        if !self.debug_info {
+            w!(self.fn_bodies, "{}", " ".repeat(self.indent));
+        }
     }
 
     pub fn write_local_def(&mut self, def: &LocalDef<'ir>) -> Result<(), AluminaError> {
@@ -262,12 +275,17 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 if !(e.is_void() && e.is_unreachable()) {
                     self.indent();
                     self.write_expr(e, false)?;
-                    w!(self.fn_bodies, ";\n");
+                    w!(self.fn_bodies, ";{}", self.endl());
                 }
             }
             Statement::Label(id) => {
                 self.indent();
-                w!(self.fn_bodies, "{}: ;\n", self.ctx.get_name(*id));
+                w!(
+                    self.fn_bodies,
+                    "{}: ;{}",
+                    self.ctx.get_name(*id),
+                    self.endl()
+                );
             }
         }
 
@@ -276,6 +294,22 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
 
     pub fn write_expr(&mut self, expr: &ExprP<'ir>, bare_block: bool) -> Result<(), AluminaError> {
         self.type_writer.add_type(expr.ty)?;
+
+        if let Some(span) = expr.span {
+            if self.last_span.map(|s| (s.file, s.line)) != Some((span.file, span.line)) {
+                if let Some(filename) = self.ctx.global_ctx.diag().get_file_path(span.file) {
+                    w!(
+                        self.fn_bodies,
+                        "\n#line {} {:?}\n",
+                        span.line + 1,
+                        filename.display()
+                    );
+                }
+                self.last_span = Some(span);
+            }
+        } else {
+            self.last_span = None;
+        }
 
         match &expr.kind {
             ExprKind::Binary(op, lhs, rhs) => {
@@ -358,7 +392,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                         self.write_expr(ret, true)?;
                     }
                 } else {
-                    w!(self.fn_bodies, "__extension__({{\n");
+                    w!(self.fn_bodies, "__extension__({{{}", self.endl());
                     for stmt in stmts.iter() {
                         self.write_stmt(stmt)?;
                     }
@@ -366,7 +400,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                     if !(ret.is_void() && ret.is_unreachable()) {
                         self.indent();
                         self.write_expr(ret, false)?;
-                        w!(self.fn_bodies, ";\n");
+                        w!(self.fn_bodies, ";{}", self.endl());
                     }
                     w!(self.fn_bodies, "}})");
                 }
@@ -401,21 +435,21 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             ExprKind::If(cond, then, els) if expr.ty.is_zero_sized() => {
                 w!(self.fn_bodies, "if (");
                 self.write_expr(cond, false)?;
-                w!(self.fn_bodies, ") {{\n");
+                w!(self.fn_bodies, ") {{{}", self.endl());
                 self.indent += 2;
                 self.write_expr(then, true)?;
                 self.indent -= 2;
-                w!(self.fn_bodies, "\n");
+                w!(self.fn_bodies, "{}", self.endl());
 
                 self.indent();
 
                 if els.is_void() || els.is_unreachable() {
                 } else {
-                    w!(self.fn_bodies, "}} else {{\n");
+                    w!(self.fn_bodies, "}} else {{{}", self.endl());
                     self.indent += 2;
                     self.write_expr(els, true)?;
                     self.indent -= 2;
-                    w!(self.fn_bodies, "\n");
+                    w!(self.fn_bodies, "{}", self.endl());
                     self.indent();
                 }
 
@@ -487,11 +521,11 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 if !self.in_const_init {
                     w!(self.fn_bodies, "({})", self.ctx.get_type(expr.ty));
                 }
-                w!(self.fn_bodies, "{{.__data={{\n");
+                w!(self.fn_bodies, "{{.__data={{{}", self.endl());
                 for elem in elems.iter() {
                     self.indent();
                     self.write_expr(elem, false)?;
-                    w!(self.fn_bodies, ",\n");
+                    w!(self.fn_bodies, ",{}", self.endl());
                 }
                 self.indent();
                 w!(self.fn_bodies, "}}}}");
@@ -697,6 +731,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 kind: ExprKind::Unreachable,
                 value_type: ValueType::RValue,
                 is_const: false,
+                span: None,
             }))?;
         } else {
             for def in body.local_defs.iter() {

@@ -1,4 +1,4 @@
-use crate::ast::{BuiltinType, UnOp};
+use crate::ast::{BuiltinType, Span, UnOp};
 use crate::common::{ArenaAllocatable, HashMap, HashSet};
 use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::builder::{ExpressionBuilder, TypeBuilder};
@@ -53,13 +53,15 @@ impl<'ir> ZstElider<'ir> {
         let types = TypeBuilder::new(self.ir);
 
         let result = match expr.kind {
-            ExprKind::Local(_) if expr.ty.is_zero_sized() => builder.void(expr.ty, expr.value_type),
+            ExprKind::Local(_) if expr.ty.is_zero_sized() => {
+                builder.void(expr.ty, expr.value_type, expr.span)
+            }
             ExprKind::Local(id) => {
                 self.used_ids.insert(id);
                 expr
             }
             ExprKind::Static(_) | ExprKind::Const(_) if expr.ty.is_zero_sized() => {
-                builder.void(expr.ty, expr.value_type)
+                builder.void(expr.ty, expr.value_type, expr.span)
             }
             ExprKind::Static(_) | ExprKind::Const(_) => expr,
             ExprKind::Assign(l, r) if l.ty.is_zero_sized() => {
@@ -67,11 +69,12 @@ impl<'ir> ZstElider<'ir> {
                 let r = self.elide_zst_expr(r);
                 builder.block(
                     [Statement::Expression(l), Statement::Expression(r)],
-                    builder.void(expr.ty, ValueType::RValue),
+                    builder.void(expr.ty, ValueType::RValue, expr.span),
+                    expr.span,
                 )
             }
             ExprKind::Assign(l, r) => {
-                builder.assign(self.elide_zst_expr(l), self.elide_zst_expr(r))
+                builder.assign(self.elide_zst_expr(l), self.elide_zst_expr(r), expr.span)
             }
             ExprKind::Block(stmts, ret) => {
                 let mut statements = Vec::new();
@@ -84,13 +87,14 @@ impl<'ir> ZstElider<'ir> {
                     Statement::Label(id) => self.used_ids.contains(id),
                     _ => true,
                 });
-                builder.block(statements, ret)
+                builder.block(statements, ret, expr.span)
             }
             ExprKind::Binary(op, lhs, rhs) => builder.binary(
                 op,
                 self.elide_zst_expr(lhs),
                 self.elide_zst_expr(rhs),
                 expr.ty,
+                expr.span,
             ),
             ExprKind::Tuple(items) => {
                 let mut statements = Vec::new();
@@ -106,12 +110,12 @@ impl<'ir> ZstElider<'ir> {
                 }
 
                 let ret = if expr.ty.is_zero_sized() {
-                    builder.void(expr.ty, ValueType::RValue)
+                    builder.void(expr.ty, ValueType::RValue, expr.span)
                 } else {
-                    builder.tuple(inits, expr.ty)
+                    builder.tuple(inits, expr.ty, expr.span)
                 };
 
-                builder.block(statements, ret)
+                builder.block(statements, ret, expr.span)
             }
             ExprKind::Struct(fields) => {
                 let mut statements = Vec::new();
@@ -128,12 +132,12 @@ impl<'ir> ZstElider<'ir> {
                 }
 
                 let ret = if expr.ty.is_zero_sized() {
-                    builder.void(expr.ty, ValueType::RValue)
+                    builder.void(expr.ty, ValueType::RValue, expr.span)
                 } else {
-                    builder.r#struct(inits, expr.ty)
+                    builder.r#struct(inits, expr.ty, expr.span)
                 };
 
-                builder.block(statements, ret)
+                builder.block(statements, ret, expr.span)
             }
             ExprKind::Array(elems) => {
                 if expr.ty.is_zero_sized() {
@@ -141,15 +145,23 @@ impl<'ir> ZstElider<'ir> {
                         elems
                             .iter()
                             .map(|e| Statement::Expression(self.elide_zst_expr(e))),
-                        builder.void(expr.ty, expr.value_type),
+                        builder.void(expr.ty, expr.value_type, expr.span),
+                        expr.span,
                     )
                 } else {
-                    builder.array(elems.iter().map(|e| self.elide_zst_expr(e)), expr.ty)
+                    builder.array(
+                        elems.iter().map(|e| self.elide_zst_expr(e)),
+                        expr.ty,
+                        expr.span,
+                    )
                 }
             }
-            ExprKind::AssignOp(op, lhs, rhs) => {
-                builder.assign_op(op, self.elide_zst_expr(lhs), self.elide_zst_expr(rhs))
-            }
+            ExprKind::AssignOp(op, lhs, rhs) => builder.assign_op(
+                op,
+                self.elide_zst_expr(lhs),
+                self.elide_zst_expr(rhs),
+                expr.span,
+            ),
             ExprKind::Call(callee, args) => {
                 // Functions that receive a zero-sized argument are a bit tricky. In order to be able
                 // to replace the argument with a void expression, we need to evaluate the expression
@@ -175,24 +187,34 @@ impl<'ir> ZstElider<'ir> {
                     for arg in args.iter() {
                         if arg.ty.is_zero_sized() {
                             statements.push(Statement::Expression(arg));
-                            arguments.push(builder.void(arg.ty, arg.value_type));
+                            arguments.push(builder.void(arg.ty, arg.value_type, arg.span));
                         } else {
                             let id = self.ir.make_id();
                             self.additional_locals.push(LocalDef { id, typ: arg.ty });
-                            let local = builder.local(id, arg.ty);
-                            statements.push(Statement::Expression(builder.assign(local, arg)));
-                            arguments.push(builder.local(id, arg.ty));
+                            let local = builder.local(id, arg.ty, arg.span);
+                            statements
+                                .push(Statement::Expression(builder.assign(local, arg, arg.span)));
+                            arguments.push(local);
                         }
                     }
 
                     builder.block(
                         statements,
-                        Expr::rvalue(ExprKind::Call(callee, arguments.alloc_on(self.ir)), expr.ty)
-                            .alloc_on(self.ir),
+                        Expr::rvalue(
+                            ExprKind::Call(callee, arguments.alloc_on(self.ir)),
+                            expr.ty,
+                            expr.span,
+                        )
+                        .alloc_on(self.ir),
+                        expr.span,
                     )
                 } else {
-                    Expr::rvalue(ExprKind::Call(callee, args.alloc_on(self.ir)), expr.ty)
-                        .alloc_on(self.ir)
+                    Expr::rvalue(
+                        ExprKind::Call(callee, args.alloc_on(self.ir)),
+                        expr.ty,
+                        expr.span,
+                    )
+                    .alloc_on(self.ir)
                 }
             }
             ExprKind::Ref(inner) => {
@@ -200,11 +222,15 @@ impl<'ir> ZstElider<'ir> {
 
                 if inner.is_void() {
                     // Special case for mutiple pointers to void
-                    builder.dangling(expr.ty)
+                    builder.dangling(expr.ty, expr.span)
                 } else if inner.ty.is_zero_sized() {
-                    builder.block([Statement::Expression(inner)], builder.dangling(expr.ty))
+                    builder.block(
+                        [Statement::Expression(inner)],
+                        builder.dangling(expr.ty, expr.span),
+                        expr.span,
+                    )
                 } else {
-                    builder.r#ref(inner)
+                    builder.r#ref(inner, expr.span)
                 }
             }
             ExprKind::Deref(inner) => {
@@ -212,10 +238,11 @@ impl<'ir> ZstElider<'ir> {
                 if expr.ty.is_zero_sized() {
                     builder.block(
                         [Statement::Expression(inner)],
-                        builder.void(expr.ty, expr.value_type),
+                        builder.void(expr.ty, expr.value_type, expr.span),
+                        expr.span,
                     )
                 } else {
-                    builder.deref(inner)
+                    builder.deref(inner, expr.span)
                 }
             }
             ExprKind::Return(inner) => {
@@ -223,13 +250,16 @@ impl<'ir> ZstElider<'ir> {
                 if inner.ty.is_zero_sized() {
                     builder.block(
                         [Statement::Expression(inner)],
-                        builder.ret(builder.void(expr.ty, expr.value_type)),
+                        builder.ret(builder.void(expr.ty, expr.value_type, expr.span), expr.span),
+                        expr.span,
                     )
                 } else {
-                    builder.ret(inner)
+                    builder.ret(inner, expr.span)
                 }
             }
-            ExprKind::Unary(op, inner) => builder.unary(op, self.elide_zst_expr(inner), expr.ty),
+            ExprKind::Unary(op, inner) => {
+                builder.unary(op, self.elide_zst_expr(inner), expr.ty, expr.span)
+            }
             ExprKind::If(cond, then, els) => {
                 let cond = self.elide_zst_expr(cond);
                 let then = self.elide_zst_expr(then);
@@ -240,22 +270,31 @@ impl<'ir> ZstElider<'ir> {
                         [Statement::Expression(builder.if_then(
                             cond,
                             then,
-                            builder.void(types.void(), ValueType::RValue),
+                            builder.void(types.void(), ValueType::RValue, els.span),
+                            expr.span,
                         ))],
                         els,
+                        expr.span,
                     ),
                     (false, true) => builder.block(
                         [Statement::Expression(builder.if_then(
-                            builder.unary(UnOp::Not, cond, types.builtin(BuiltinType::Bool)),
+                            builder.unary(
+                                UnOp::Not,
+                                cond,
+                                types.builtin(BuiltinType::Bool),
+                                cond.span,
+                            ),
                             els,
-                            builder.void(types.void(), ValueType::RValue),
+                            builder.void(types.void(), ValueType::RValue, els.span),
+                            expr.span,
                         ))],
                         then,
+                        expr.span,
                     ),
-                    _ => builder.if_then(cond, then, els),
+                    _ => builder.if_then(cond, then, els, expr.span),
                 }
             }
-            ExprKind::Cast(inner) => builder.cast(self.elide_zst_expr(inner), expr.ty),
+            ExprKind::Cast(inner) => builder.cast(self.elide_zst_expr(inner), expr.ty, expr.span),
             ExprKind::Index(lhs, rhs) => {
                 let indexee = self.elide_zst_expr(lhs);
                 let index = self.elide_zst_expr(rhs);
@@ -263,25 +302,30 @@ impl<'ir> ZstElider<'ir> {
                 if indexee.ty.is_zero_sized() {
                     builder.block(
                         [Statement::Expression(indexee), Statement::Expression(index)],
-                        builder.void(expr.ty, expr.value_type),
+                        builder.void(expr.ty, expr.value_type, expr.span),
+                        expr.span,
                     )
                 } else {
-                    builder.index(indexee, index)
+                    builder.index(indexee, index, expr.span)
                 }
             }
 
             ExprKind::TupleIndex(lhs, _) if expr.ty.is_zero_sized() => builder.block(
                 [Statement::Expression(self.elide_zst_expr(lhs))],
-                builder.void(expr.ty, expr.value_type),
+                builder.void(expr.ty, expr.value_type, expr.span),
+                expr.span,
             ),
             ExprKind::Field(lhs, _) if expr.ty.is_zero_sized() => builder.block(
                 [Statement::Expression(self.elide_zst_expr(lhs))],
-                builder.void(expr.ty, expr.value_type),
+                builder.void(expr.ty, expr.value_type, expr.span),
+                expr.span,
             ),
             ExprKind::TupleIndex(lhs, idx) => {
-                builder.tuple_index(self.elide_zst_expr(lhs), idx, expr.ty)
+                builder.tuple_index(self.elide_zst_expr(lhs), idx, expr.ty, expr.span)
             }
-            ExprKind::Field(lhs, id) => builder.field(self.elide_zst_expr(lhs), id, expr.ty),
+            ExprKind::Field(lhs, id) => {
+                builder.field(self.elide_zst_expr(lhs), id, expr.ty, expr.span)
+            }
             ExprKind::Fn(_) => expr,
             ExprKind::Literal(v) => match v {
                 Value::Array(elems) => {
@@ -290,10 +334,11 @@ impl<'ir> ZstElider<'ir> {
                         _ => unreachable!(),
                     };
                     builder.array(
-                        elems
-                            .iter()
-                            .map(|val| self.elide_zst_expr(builder.literal(*val, element_type))),
+                        elems.iter().map(|val| {
+                            self.elide_zst_expr(builder.literal(*val, element_type, expr.span))
+                        }),
                         expr.ty,
+                        expr.span,
                     )
                 }
                 Value::Tuple(elems) => {
@@ -305,10 +350,14 @@ impl<'ir> ZstElider<'ir> {
                     builder.tuple(
                         elems.iter().zip(element_types.iter()).enumerate().map(
                             |(idx, (val, ty))| {
-                                (idx, self.elide_zst_expr(builder.literal(*val, ty)))
+                                (
+                                    idx,
+                                    self.elide_zst_expr(builder.literal(*val, ty, expr.span)),
+                                )
                             },
                         ),
                         expr.ty,
+                        expr.span,
                     )
                 }
                 Value::Struct(fields) => {
@@ -327,27 +376,32 @@ impl<'ir> ZstElider<'ir> {
                         fields.iter().map(|(id, val)| {
                             (
                                 *id,
-                                self.elide_zst_expr(builder.literal(*val, element_types[id])),
+                                self.elide_zst_expr(builder.literal(
+                                    *val,
+                                    element_types[id],
+                                    expr.span,
+                                )),
                             )
                         }),
                         expr.ty,
+                        expr.span,
                     )
                 }
                 Value::Uninitialized if expr.ty.is_zero_sized() => {
-                    builder.void(expr.ty, ValueType::RValue)
+                    builder.void(expr.ty, ValueType::RValue, expr.span)
                 }
                 Value::Pointer(lvalue) => {
-                    let lvalue_expr = self.elide_zst_lvalue(&lvalue);
-                    self.elide_zst_expr(builder.r#ref(lvalue_expr))
+                    let lvalue_expr = self.elide_zst_lvalue(&lvalue, expr.span);
+                    self.elide_zst_expr(builder.r#ref(lvalue_expr, expr.span))
                 }
-                Value::Void => builder.void(expr.ty, ValueType::RValue),
+                Value::Void => builder.void(expr.ty, ValueType::RValue, expr.span),
                 _ => expr,
             },
             ExprKind::Unreachable => expr,
             ExprKind::Void => expr,
             ExprKind::Intrinsic(ref kind) => match kind {
                 IntrinsicValueKind::Uninitialized if expr.ty.is_zero_sized() => {
-                    builder.void(expr.ty, ValueType::RValue)
+                    builder.void(expr.ty, ValueType::RValue, expr.span)
                 }
                 _ => expr,
             },
@@ -365,29 +419,29 @@ impl<'ir> ZstElider<'ir> {
         if let crate::ir::Ty::Item(item) = result.ty {
             if let IRItem::Function(_) = item.get().unwrap() {
                 if result.is_void() {
-                    return builder.function(item);
+                    return builder.function(item, expr.span);
                 }
             }
         }
 
         if result.is_void() && result.ty.is_never() {
-            return builder.unreachable();
+            return builder.unreachable(expr.span);
         }
 
         result
     }
 
-    fn elide_zst_lvalue(&mut self, value: &LValue<'ir>) -> ExprP<'ir> {
+    fn elide_zst_lvalue(&mut self, value: &LValue<'ir>, span: Option<Span>) -> ExprP<'ir> {
         let builder = ExpressionBuilder::new(self.ir);
 
         match value {
             LValue::Const(item) => {
                 let r#const = item.get_const().unwrap();
-                builder.const_var(item, r#const.typ)
+                builder.const_var(item, r#const.typ, span)
             }
             LValue::Variable(_) => unreachable!(),
             LValue::Field(inner, field) => {
-                let inner_expr = self.elide_zst_lvalue(inner);
+                let inner_expr = self.elide_zst_lvalue(inner, span);
                 if let Ty::Item(item) = inner_expr.ty {
                     if let IRItem::StructLike(struct_like) = item.get().unwrap() {
                         let field_type = struct_like
@@ -396,19 +450,19 @@ impl<'ir> ZstElider<'ir> {
                             .find(|f| f.id == *field)
                             .unwrap()
                             .ty;
-                        return builder.field(inner_expr, *field, field_type);
+                        return builder.field(inner_expr, *field, field_type, span);
                     }
                 }
                 unreachable!()
             }
             LValue::Index(inner, idx) => {
-                let inner_expr = self.elide_zst_lvalue(inner);
-                builder.const_index(inner_expr, *idx)
+                let inner_expr = self.elide_zst_lvalue(inner, span);
+                builder.const_index(inner_expr, *idx, span)
             }
             LValue::TupleIndex(inner, idx) => {
-                let inner_expr = self.elide_zst_lvalue(inner);
+                let inner_expr = self.elide_zst_lvalue(inner, span);
                 if let Ty::Tuple(tys) = inner_expr.ty {
-                    return builder.tuple_index(inner_expr, *idx, tys[*idx]);
+                    return builder.tuple_index(inner_expr, *idx, tys[*idx], span);
                 }
                 unreachable!()
             }

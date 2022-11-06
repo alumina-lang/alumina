@@ -742,6 +742,7 @@ pub struct ClosureBinding<'ast> {
     pub id: AstId,
     pub value: ExprP<'ast>,
     pub binding_type: BoundItemType,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
