@@ -25,7 +25,11 @@ else
 	ALUMINA_FLAGS += --sysroot $(SYSROOT) --debug
 endif
 
-LDFLAGS = -lm
+LDFLAGS ?= -lm
+ifndef STD_BACKTRACE
+	ALUMINA_FLAGS += --cfg use_libbacktrace
+	LDFLAGS += -lbacktrace
+endif
 ifndef NO_THREADS
 	ALUMINA_FLAGS += --cfg threading
 	LDFLAGS += -lpthread

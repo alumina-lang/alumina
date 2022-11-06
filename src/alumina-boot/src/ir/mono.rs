@@ -3967,6 +3967,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                             .iter()
                             .zip(args.into_iter())
                             .map(|(a, b)| (a.id, b)),
+                        span,
                     )?;
 
                     self.local_defs.append(&mut additional_defs);

@@ -168,14 +168,21 @@ Additionally, to compile `aluminac`, these prerequisites are needed:
 
   - LLVM 13 shared libraries and headers (`llvm-13-dev`)
   - Tree-sitter runtime library (`libtree-sitter.a`/`libtree-sitter.so`):
-
-```bash
-git clone https://github.com/tree-sitter/tree-sitter
-cd tree-sitter
-make
-sudo make install
-# sudo ldconfig
-```
+   ```bash
+   git clone https://github.com/tree-sitter/tree-sitter
+   cd tree-sitter
+   make
+   sudo make install
+   # sudo ldconfig
+   ```
+  - [`libbacktrace`](https://github.com/ianlancetaylor/libbacktrace/) is an optional dependency for nice stack backtraces on panics. If disabled, pass `STD_BACKTRACE=1` when builting `aluminac` to use the libc's backtrace function instead.
+   ```bash
+   git clone https://github.com/ianlancetaylor/libbacktrace
+   cd libbacktrace
+   ./configure
+   make
+   sudo make install
+   ```
 
 ## Building
 
