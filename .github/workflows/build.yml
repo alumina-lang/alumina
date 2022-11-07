@@ -30,6 +30,15 @@ jobs:
       - name: Install Tree-sitter
         run: npm install -g tree-sitter-cli
 
+      - name: Install libbacktrace
+        if: matrix.os == 'macos-11'
+        run: |
+          git clone https://github.com/ianlancetaylor/libbacktrace
+          cd libbacktrace
+          ./configure
+          make -j8
+          sudo make install
+
       - name: Run all tests
         timeout-minutes: 10
         run: make test -j8

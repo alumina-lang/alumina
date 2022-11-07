@@ -1,0 +1,123 @@
+//! Bindings to `libbacktrace`
+
+// Translated from C to Alumina. Original source available at
+// https://github.com/ianlancetaylor/libbacktrace. The original license
+// is reproduced below.
+//
+// Copyright (C) 2012-2016 Free Software Foundation, Inc.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are
+// met:
+//
+//     (1) Redistributions of source code must retain the above copyright
+//     notice, this list of conditions and the following disclaimer.
+//
+//     (2) Redistributions in binary form must reproduce the above copyright
+//     notice, this list of conditions and the following disclaimer in
+//     the documentation and/or other materials provided with the
+//     distribution.
+//
+//     (3) The name of the author may not be used to
+//     endorse or promote products derived from this software without
+//     specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+// WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
+// INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+// (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, `data`, OR PROFITS; OR BUSINESS INTERRUPTION)
+// HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+// STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
+// IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+
+/// The backtrace state.
+
+/// This struct is intentionally not defined in the public interface.
+struct BacktraceState {}
+
+/// The type of the error callback argument to backtrace functions.
+///
+/// This function, if not `null`, will be called for certain error cases.
+/// The `data` argument is passed to the function that calls this one.
+/// The MSG argument is an error message.  The `errnum` argument, if
+/// greater than 0, holds an errno value.  The MSG buffer may become
+/// invalid after this function returns.
+///
+/// As a special case, the `errnum` argument will be passed as -1 if no
+/// debug info can be found for the executable, or if the debug info
+/// exists but has an unsupported version, but the function requires
+/// debug info (e.g., [backtrace_full], `backtrace_pcinfo`).  The MSG in
+/// this case will be something along the lines of "no debug info".
+/// Similarly, `errnum` will be passed as -1 if there is no symbol table,
+/// but the function requires a symbol table (e.g., `backtrace_syminfo`).
+/// This may be used as a signal that some other approach should be
+/// tried.
+type BacktraceErrorCallback = fn(
+    &mut void,      // state
+    &libc::c_char,  // msg
+    libc::c_int);   // errnum
+
+/// Create state information for the backtrace routines.
+///
+/// This must be called before any of the other routines, and its return value must
+/// be passed to all of the other routines.  `filename` is the path name
+/// of the executable file; if it is `null` the library will try
+/// system-specific path names.  If not `null`, `filename` must point to a
+/// permanent buffer.  If `threaded` is non-zero the state may be
+/// accessed by multiple threads simultaneously, and the library will
+/// use appropriate atomic operations.  If `threaded` is zero the state
+/// may only be accessed by one thread at a time.  This returns a state
+/// pointer on success, `null` on error.  If an error occurs, this will
+/// call the `error_callback` routine.
+///
+/// Calling this function allocates resources that cannot be freed.
+/// There is no `backtrace_free_state` function.  The state is used to
+/// cache information that is expensive to recompute.  Programs are
+/// expected to call this function at most once and to save the return
+/// value for all later calls to backtrace functions.
+extern "C" fn backtrace_create_state(
+    filename: &libc::c_char,
+    threaded: libc::c_int,
+    error: BacktraceErrorCallback,
+    data: &mut void
+) -> &mut BacktraceState;
+
+
+/// The type of the callback argument to the backtrace_full function.
+///
+/// `data` is the argument passed to backtrace_full.  `pc` is the program
+/// counter.  `filename` is the name of the file containing `pc`, or `null`
+/// if not available.  `lineno` is the line number in `filename` containing
+/// `pc`, or 0 if not available.  `function` is the name of the function
+/// containing `pc`, or `null` if not available.  This should return 0 to
+/// continuing tracing.  The `filename` and `function` buffers may become
+/// invalid after this function returns.
+type BacktraceFullCallback = fn(
+    &mut void,       // data
+    usize,           // pc
+    &libc::c_char,   // filename
+    libc::c_int,     // lineno
+    &libc::c_char    // function
+) -> libc::c_int;
+
+/// Get a full stack backtrace.
+///
+/// `skip` is the number of frames to skip; passing 0 will start the trace with the
+/// function calling backtrace_full.  `data` is passed to the callback routine.
+/// If any call to `callback` returns a non-zero value, the stack backtrace
+/// stops, and backtrace returns that value; this may be used to limit
+/// the number of stack frames desired.  If all calls to `callback`
+/// return 0, backtrace returns 0.  The [backtrace_full] function will
+/// make at least one call to either `callback` or `error_callback`.  This
+/// function requires debug info for the executable.
+extern "C" fn backtrace_full(
+    state: &mut BacktraceState,
+    skip: libc::c_int,
+    callback: BacktraceFullCallback,
+    error: BacktraceErrorCallback,
+    data: &mut void
+) -> libc::c_int;

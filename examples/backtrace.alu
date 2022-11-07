@@ -1,0 +1,21 @@
+use std::cmp::{Ordering, sort_by};
+use std::random::thread_rng;
+
+fn chaos_comparer(a: &i32, b: &i32) -> Ordering {
+    let r: f64 = thread_rng().next_float();
+    if r < 0.0001 {
+        panic!("oops, I'm a bad comparer");
+    } else {
+        a.compare(b)
+    }
+}
+
+fn main() {
+    let vec =
+        (0..10000)
+            .map(|_: i32| -> i32 { thread_rng().next(..) })
+            .to_vector();
+    defer vec.free();
+
+    vec[..].sort_by(chaos_comparer);
+}
