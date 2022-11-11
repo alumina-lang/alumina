@@ -2,10 +2,9 @@ use crate::ast::lang::LangItemKind;
 use crate::ast::rebind::Rebinder;
 use crate::ast::{Attribute, BuiltinType, Span, TestMetadata};
 use crate::common::{
-    ice, AluminaError, ArenaAllocatable, CodeError, CodeErrorKind, CycleGuardian, HashMap, HashSet,
-    Marker,
+    ice, AluminaError, ArenaAllocatable, CodeErrorKind, CycleGuardian, HashMap, HashSet, Marker,
 };
-use crate::diagnostics::{DiagnosticContext, DiagnosticsStack};
+use crate::diagnostics::DiagnosticsStack;
 use crate::global_ctx::GlobalCtx;
 use crate::intrinsics::{IntrinsicKind, IntrinsicValueKind};
 use crate::ir::builder::{ExpressionBuilder, TypeBuilder};
@@ -21,7 +20,6 @@ use crate::{ast, ir};
 use backtrace::Backtrace;
 use once_cell::unsync::OnceCell;
 
-use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::iter::{once, repeat};
 use std::rc::Rc;
@@ -43,7 +41,6 @@ macro_rules! mismatch {
         ))
     };
 }
-
 
 #[derive(Default)]
 pub struct Caches<'ast, 'ir> {
@@ -377,7 +374,6 @@ impl<'ast, 'ir> MonoKey<'ast, 'ir> {
         MonoKey(item, tys, index, tentative)
     }
 }
-
 
 impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     pub fn new<'b>(
@@ -3859,7 +3855,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             IntrinsicKind::CompileNote => self.compile_note(args[0], span),
             IntrinsicKind::Unreachable => self.unreachable(span),
             IntrinsicKind::Asm => self.asm(args[0], span),
-            IntrinsicKind::CodegenFunc => self.codegen_func(args[0], &args[1..], generic_args[0], span),
+            IntrinsicKind::CodegenFunc => {
+                self.codegen_func(args[0], &args[1..], generic_args[0], span)
+            }
             IntrinsicKind::CodegenConst => self.codegen_const(args[0], generic_args[0], span),
             IntrinsicKind::CodegenTypeFunc => {
                 self.codegen_type_func(args[0], generic_args[0], generic_args[1], span)
@@ -5158,7 +5156,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             && !self.tentative
         {
             for u in uninitialized {
-                self.diag.warn(CodeErrorKind::UninitializedField(u.to_string()));
+                self.diag
+                    .warn(CodeErrorKind::UninitializedField(u.to_string()));
             }
         }
 
@@ -5335,11 +5334,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 /// Intrinsic functions
 impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     fn get_const_string(&self, expr: ir::ExprP<'ir>) -> Result<&'ir str, AluminaError> {
-        match ir::const_eval::ConstEvaluator::new(
-            self.diag.fork(),
-            self.mono_ctx.ir,
-            []
-        ).const_eval(expr) {
+        match ir::const_eval::ConstEvaluator::new(self.diag.fork(), self.mono_ctx.ir, [])
+            .const_eval(expr)
+        {
             Ok(value) => {
                 if let Some(r) = extract_constant_string_from_slice(&value) {
                     Ok(std::str::from_utf8(r).unwrap())
@@ -5351,7 +5348,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
     }
 
-    fn align_of(&self, ty: ir::TyP<'ir>, span: Option<Span>) -> Result<ir::ExprP<'ir>, AluminaError> {
+    fn align_of(
+        &self,
+        ty: ir::TyP<'ir>,
+        span: Option<Span>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let align = self.mono_ctx.layouter.layout_of(ty)?.align;
 
         Ok(self.exprs.literal(
@@ -5361,7 +5362,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         ))
     }
 
-    fn size_of(&self, ty: ir::TyP<'ir>, span: Option<Span>) -> Result<ir::ExprP<'ir>, AluminaError> {
+    fn size_of(
+        &self,
+        ty: ir::TyP<'ir>,
+        span: Option<Span>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let size = self.mono_ctx.layouter.layout_of(ty)?.size;
 
         Ok(self.exprs.literal(
@@ -5371,7 +5376,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         ))
     }
 
-    fn type_id(&self, ty: ir::TyP<'ir>, span: Option<Span>) -> Result<ir::ExprP<'ir>, AluminaError> {
+    fn type_id(
+        &self,
+        ty: ir::TyP<'ir>,
+        span: Option<Span>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
         // just in case someone made a copy
         let interned = self.mono_ctx.ir.intern_type(*ty);
 
@@ -5413,7 +5422,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let reason = self.get_const_string(reason)?;
 
-        Err(self.diag.err(CodeErrorKind::UserDefined(reason.to_string())))
+        Err(self
+            .diag
+            .err(CodeErrorKind::UserDefined(reason.to_string())))
     }
 
     fn compile_warn(
@@ -5423,13 +5434,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let reason = self.get_const_string(reason)?;
 
-        self.diag.warn(
-            CodeErrorKind::UserDefined(reason.to_string())
-        );
+        self.diag
+            .warn(CodeErrorKind::UserDefined(reason.to_string()));
 
-        Ok(self
-            .exprs
-            .void(self.types.void(), ValueType::RValue, span))
+        Ok(self.exprs.void(self.types.void(), ValueType::RValue, span))
     }
 
     fn compile_note(
@@ -5439,11 +5447,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let reason = self.get_const_string(reason)?;
 
-        self.diag.note(CodeErrorKind::UserDefined(reason.to_string()));
+        self.diag
+            .note(CodeErrorKind::UserDefined(reason.to_string()));
 
-        Ok(self
-            .exprs
-            .void(self.types.void(), ValueType::RValue, span))
+        Ok(self.exprs.void(self.types.void(), ValueType::RValue, span))
     }
 
     fn unreachable(&self, span: Option<Span>) -> Result<ir::ExprP<'ir>, AluminaError> {
@@ -5479,11 +5486,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let fn_type = self.types.function(arg_types, ret_ty);
 
         Ok(self.exprs.call(
-            self.exprs.codegen_intrinsic(
-                IntrinsicValueKind::FunctionLike(name),
-                fn_type,
-                span,
-            ),
+            self.exprs
+                .codegen_intrinsic(IntrinsicValueKind::FunctionLike(name), fn_type, span),
             args.iter().copied(),
             ret_ty,
             span,
@@ -5499,21 +5503,21 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let name = self.get_const_string(name)?;
 
-        Ok(self.exprs.codegen_intrinsic(
-            IntrinsicValueKind::SizeOfLike(name, ty),
-            ret_ty,
-            span,
-        ))
+        Ok(self
+            .exprs
+            .codegen_intrinsic(IntrinsicValueKind::SizeOfLike(name, ty), ret_ty, span))
     }
 
-    fn asm(&self, assembly: ir::ExprP<'ir>, span: Option<Span>) -> Result<ir::ExprP<'ir>, AluminaError> {
+    fn asm(
+        &self,
+        assembly: ir::ExprP<'ir>,
+        span: Option<Span>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let assembly = self.get_const_string(assembly)?;
 
-        Ok(self.exprs.codegen_intrinsic(
-            IntrinsicValueKind::Asm(assembly),
-            self.types.void(),
-            span,
-        ))
+        Ok(self
+            .exprs
+            .codegen_intrinsic(IntrinsicValueKind::Asm(assembly), self.types.void(), span))
     }
 
     fn codegen_const(
@@ -5539,13 +5543,15 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .codegen_intrinsic(IntrinsicValueKind::Uninitialized, ret_ty, span))
     }
 
-    fn dangling(&self, ret_ty: ir::TyP<'ir>, span: Option<Span>) -> Result<ir::ExprP<'ir>, AluminaError> {
+    fn dangling(
+        &self,
+        ret_ty: ir::TyP<'ir>,
+        span: Option<Span>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
         if let ir::Ty::Pointer(inner, _) = ret_ty {
-            Ok(self.exprs.codegen_intrinsic(
-                IntrinsicValueKind::Dangling(inner),
-                ret_ty,
-                span,
-            ))
+            Ok(self
+                .exprs
+                .codegen_intrinsic(IntrinsicValueKind::Dangling(inner), ret_ty, span))
         } else {
             Err(self.diag.err(CodeErrorKind::TypeMismatch(
                 "pointer".to_string(),
@@ -5561,9 +5567,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             span,
         ))
     }
-
 }
-
 
 fn extract_constant_string_from_slice<'ir>(value: &Value<'ir>) -> Option<&'ir [u8]> {
     match value {

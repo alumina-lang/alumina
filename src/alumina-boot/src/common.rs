@@ -482,7 +482,7 @@ pub(crate) use impl_allocatable;
 
 use crate::ast::lang::LangItemKind;
 use crate::ast::Span;
-use crate::ir::const_eval::{ConstEvalErrorKind};
+use crate::ir::const_eval::ConstEvalErrorKind;
 use crate::name_resolution::scope::Scope;
 
 pub trait Incrementable<T> {

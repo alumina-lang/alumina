@@ -1,13 +1,4 @@
-use crate::ast::{BuiltinType, Span};
-use crate::common::{AluminaError, CodeError, CodeErrorBuilder, CodeErrorKind};
-use crate::diagnostics::{self, DiagnosticsStack};
-use crate::global_ctx::GlobalCtx;
-use crate::ir::builder::{ExpressionBuilder, TypeBuilder};
-use crate::ir::const_eval::{
-    Value, {self},
-};
-use crate::ir::layout::Layouter;
-use crate::ir::{ExprP, IrCtx, Ty, TyP, ValueType};
+use crate::ir::TyP;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IntrinsicKind {
@@ -71,5 +62,3 @@ pub enum IntrinsicValueKind<'ir> {
     Uninitialized,
     InConstContext,
 }
-
-

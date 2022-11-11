@@ -144,7 +144,6 @@ impl DiagnosticsStack {
     }
 }
 
-
 #[derive(Clone)]
 pub struct DiagnosticContext {
     inner: Rc<RefCell<DiagnosticContextInner>>,
@@ -284,15 +283,12 @@ impl DiagnosticContext {
 
         let mut kinds = HashSet::default();
 
-
-
         for (level, error) in all_errors {
             let level_string = match level {
                 Level::Error => "error".red(),
                 Level::Warning => "warning".yellow(),
                 Level::Note => "note".green(),
             };
-
 
             if let CodeError {
                 kind: CodeErrorKind::LocalWithUnknownType,
@@ -306,7 +302,6 @@ impl DiagnosticContext {
             let tagline = format!("{}: {}", level_string, error.kind).bold();
             eprintln!("{}", tagline);
 
-
             // An error can happen deep inside the code that we didn't write because most of the typechecking
             // happens during or after monomorphization.
             let mut needs_padding = false;
@@ -318,9 +313,9 @@ impl DiagnosticContext {
                         if let Some(Marker::Span(last)) = filtered_frames.last_mut() {
                             if last.contains(i) {
                                 *last = *i;
-                                continue
+                                continue;
                             } else if i.contains(last) {
-                                continue
+                                continue;
                             }
                         }
                     }
