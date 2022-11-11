@@ -37,6 +37,114 @@ struct DiagnosticContextInner {
     counter: usize,
 }
 
+struct DiagNode {
+    marker: Marker,
+    parent: Option<Rc<DiagNode>>,
+}
+
+#[derive(Clone)]
+pub struct DiagnosticsStack {
+    diag_ctx: DiagnosticContext,
+    tail: Rc<RefCell<Rc<DiagNode>>>,
+}
+
+#[derive(Default)]
+pub struct DiagnosticsStackGuard {
+    stack: Option<DiagnosticsStack>,
+}
+
+impl Drop for DiagnosticsStackGuard {
+    fn drop(&mut self) {
+        if let Some(stack) = self.stack.take() {
+            stack.pop();
+        }
+    }
+}
+
+impl DiagnosticsStack {
+    pub fn new(diag_ctx: DiagnosticContext) -> Self {
+        Self {
+            diag_ctx,
+            tail: Rc::new(RefCell::new(Rc::new(DiagNode {
+                marker: Marker::Root,
+                parent: None,
+            }))),
+        }
+    }
+
+    pub fn pop(&self) {
+        let mut tail = self.tail.borrow_mut();
+
+        let new_tail = Rc::clone(tail.parent.as_ref().unwrap());
+        *tail = new_tail;
+    }
+
+    pub fn push(&self, marker: Marker) -> DiagnosticsStackGuard {
+        let mut tail = self.tail.borrow_mut();
+
+        let new_tail = Rc::new(DiagNode {
+            marker,
+            parent: Some(Rc::clone(&*tail)),
+        });
+
+        *tail = new_tail;
+
+        DiagnosticsStackGuard {
+            stack: Some(self.clone()),
+        }
+    }
+
+    fn materialize(&self) -> Vec<Marker> {
+        let mut tail = self.tail.borrow_mut().clone();
+
+        let mut markers = vec![];
+        while let Some(ref parent) = tail.parent {
+            markers.push(tail.marker.clone());
+            tail = parent.clone();
+        }
+
+        //markers.reverse();
+        markers
+    }
+
+    pub fn err(&self, kind: CodeErrorKind) -> AluminaError {
+        AluminaError::CodeErrors(vec![CodeError {
+            kind,
+            backtrace: self.materialize(),
+        }])
+    }
+
+    pub fn warn(&self, kind: CodeErrorKind) {
+        self.diag_ctx.add_warning(CodeError {
+            kind,
+            backtrace: self.materialize(),
+        });
+    }
+
+    pub fn note(&self, kind: CodeErrorKind) {
+        self.diag_ctx.add_note(CodeError {
+            kind,
+            backtrace: self.materialize(),
+        });
+    }
+
+    pub fn push_span(&self, span: Option<Span>) -> DiagnosticsStackGuard {
+        if let Some(span) = span {
+            self.push(Marker::Span(span))
+        } else {
+            DiagnosticsStackGuard::default()
+        }
+    }
+
+    pub fn fork(&self) -> DiagnosticsStack {
+        DiagnosticsStack {
+            diag_ctx: self.diag_ctx.clone(),
+            tail: Rc::new(RefCell::new(Rc::clone(&*self.tail.borrow()))),
+        }
+    }
+}
+
+
 #[derive(Clone)]
 pub struct DiagnosticContext {
     inner: Rc<RefCell<DiagnosticContextInner>>,
@@ -118,7 +226,7 @@ impl DiagnosticContext {
             // wins. Global overrides (no span) are always overridden by local ones.
             if let Some(override_span) = r#override.span {
                 if let Some(error_span) = error_span {
-                    if !override_span.contains(error_span) {
+                    if !override_span.contains(&error_span) {
                         continue;
                     }
                 } else {
@@ -176,12 +284,15 @@ impl DiagnosticContext {
 
         let mut kinds = HashSet::default();
 
+
+
         for (level, error) in all_errors {
             let level_string = match level {
                 Level::Error => "error".red(),
                 Level::Warning => "warning".yellow(),
                 Level::Note => "note".green(),
             };
+
 
             if let CodeError {
                 kind: CodeErrorKind::LocalWithUnknownType,
@@ -195,22 +306,32 @@ impl DiagnosticContext {
             let tagline = format!("{}: {}", level_string, error.kind).bold();
             eprintln!("{}", tagline);
 
+
             // An error can happen deep inside the code that we didn't write because most of the typechecking
             // happens during or after monomorphization.
-            let mut skip = false;
             let mut needs_padding = false;
+            let mut filtered_frames = vec![];
+
             for frame in &error.backtrace {
-                let span = match (frame, skip) {
-                    (Marker::Span(span), false) => {
-                        skip = true;
-                        span
+                match frame {
+                    Marker::Span(i) => {
+                        if let Some(Marker::Span(last)) = filtered_frames.last_mut() {
+                            if last.contains(i) {
+                                *last = *i;
+                                continue
+                            } else if i.contains(last) {
+                                continue
+                            }
+                        }
                     }
-                    (Marker::Span(_), true) => continue,
-                    (Marker::Monomorphization, _) => {
-                        skip = false;
-                        continue;
-                    }
+                    _ => {}
                 };
+
+                filtered_frames.push(frame.clone());
+            }
+
+            for marker in filtered_frames {
+                let Marker::Span(span) = marker else { continue };
 
                 if let Some(file_name) = inner.file_map.get(&span.file) {
                     eprintln!(
@@ -220,7 +341,7 @@ impl DiagnosticContext {
                         span.column + 1
                     );
                 } else {
-                    eprintln!("  --> {{ unresolved location }}");
+                    eprintln!("  --> {{ unknown location }}");
                 }
                 needs_padding = true;
             }

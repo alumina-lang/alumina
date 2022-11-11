@@ -181,7 +181,7 @@ pub enum CodeErrorKind {
     #[error("constant string expected")]
     ConstantStringExpected,
     #[error("this expression is not evaluable at compile time ({})", .0)]
-    CannotConstEvaluate(ConstEvalError),
+    CannotConstEvaluate(ConstEvalErrorKind),
     #[error("values of enum variants can only be integers")]
     InvalidValueForEnumVariant,
     #[error("{}", .0)]
@@ -339,6 +339,8 @@ pub enum CodeErrorKind {
 pub enum Marker {
     Span(Span),
     Monomorphization,
+    ConstEval,
+    Root,
 }
 
 #[derive(Debug, Error, Clone, Hash, PartialEq, Eq)]
@@ -346,7 +348,6 @@ pub enum Marker {
 pub struct CodeError {
     pub kind: CodeErrorKind,
     pub backtrace: Vec<Marker>,
-    //pub code_backtrace: Backtrace,
 }
 
 impl CodeError {
@@ -393,39 +394,6 @@ where
                 kind: e.into(),
                 backtrace: vec![Marker::Span(span)],
             }])
-        })
-    }
-}
-
-pub trait CodeErrorBacktrace<T> {
-    fn append_span(self, span: Option<Span>) -> Self;
-    fn append_mono_marker(self) -> Self;
-}
-
-impl<T> CodeErrorBacktrace<T> for Result<T, AluminaError> {
-    fn append_span(self, span: Option<Span>) -> Self {
-        self.map_err(|mut e| match &mut e {
-            AluminaError::CodeErrors(errors) => {
-                for error in errors {
-                    error
-                        .backtrace
-                        .extend(span.iter().map(|s| Marker::Span(*s)));
-                }
-                e
-            }
-            _ => e,
-        })
-    }
-
-    fn append_mono_marker(self) -> Self {
-        self.map_err(|mut e| match &mut e {
-            AluminaError::CodeErrors(errors) => {
-                for error in errors {
-                    error.backtrace.push(Marker::Monomorphization);
-                }
-                e
-            }
-            _ => e,
         })
     }
 }
@@ -514,7 +482,7 @@ pub(crate) use impl_allocatable;
 
 use crate::ast::lang::LangItemKind;
 use crate::ast::Span;
-use crate::ir::const_eval::ConstEvalError;
+use crate::ir::const_eval::{ConstEvalErrorKind};
 use crate::name_resolution::scope::Scope;
 
 pub trait Incrementable<T> {

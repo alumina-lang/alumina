@@ -1545,6 +1545,7 @@ impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
                     kind: super::ProtocolBoundsKind::All,
                     bounds: &[],
                 },
+                span: None,
                 default: None,
             });
 

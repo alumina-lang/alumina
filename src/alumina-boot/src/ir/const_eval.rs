@@ -1,6 +1,7 @@
 /// An interpreter for constant expressions. It's quite slow.
 use crate::ast::BinOp;
-use crate::common::{ArenaAllocatable, HashMap, Marker};
+use crate::common::{AluminaError, ArenaAllocatable, CodeError, CodeErrorKind, HashMap};
+use crate::diagnostics::DiagnosticsStack;
 use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::{BuiltinType, ExprKind, ExprP, IRItem, IrCtx, IrId, Statement, Ty, TyP, UnOp};
 use std::cell::RefCell;
@@ -86,24 +87,6 @@ pub enum ConstEvalErrorKind {
     Return,
 }
 
-#[derive(Debug, Error, Clone, Hash, PartialEq, Eq)]
-#[error("{}", .kind)]
-pub struct ConstEvalError {
-    pub kind: ConstEvalErrorKind,
-    pub backtrace: Vec<Marker>,
-}
-
-impl From<ConstEvalErrorKind> for ConstEvalError {
-    fn from(kind: ConstEvalErrorKind) -> Self {
-        Self {
-            kind,
-            backtrace: Vec::new(),
-        }
-    }
-}
-
-type Result<T> = std::result::Result<T, ConstEvalError>;
-
 macro_rules! numeric_of_kind {
     ($kind:expr, $val:expr) => {
         match $kind {
@@ -124,12 +107,28 @@ macro_rules! numeric_of_kind {
     };
 }
 
+macro_rules! unsupported {
+    ($self:expr) => {
+        return Err($self.diag.err(CodeErrorKind::CannotConstEvaluate(
+            ConstEvalErrorKind::Unsupported,
+        )))
+    };
+}
+
+macro_rules! bug {
+    ($self:expr) => {
+        return Err($self.diag.err(CodeErrorKind::CannotConstEvaluate(
+            ConstEvalErrorKind::CompilerBug,
+        )))
+    };
+}
+
 pub(crate) use numeric_of_kind;
 
 use super::IRItemP;
 
 impl<'ir> Value<'ir> {
-    fn equal(self, other: Value) -> Result<Value<'ir>> {
+    fn equal(self, other: Value) -> Result<Value<'ir>, ConstEvalErrorKind> {
         match (self, other) {
             (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a == b)),
             (Value::U8(a), Value::U8(b)) => Ok(Value::Bool(a == b)),
@@ -144,11 +143,11 @@ impl<'ir> Value<'ir> {
             (Value::I128(a), Value::I128(b)) => Ok(Value::Bool(a == b)),
             (Value::USize(a), Value::USize(b)) => Ok(Value::Bool(a == b)),
             (Value::ISize(a), Value::ISize(b)) => Ok(Value::Bool(a == b)),
-            _ => Err(ConstEvalErrorKind::Unsupported.into()),
+            _ => Err(ConstEvalErrorKind::Unsupported),
         }
     }
 
-    fn cmp(self, other: Value) -> Result<Ordering> {
+    fn cmp(self, other: Value) -> Result<Ordering, ConstEvalErrorKind> {
         match (self, other) {
             (Value::U8(a), Value::U8(b)) => Ok(a.cmp(&b)),
             (Value::U16(a), Value::U16(b)) => Ok(a.cmp(&b)),
@@ -163,14 +162,14 @@ impl<'ir> Value<'ir> {
             (Value::USize(a), Value::USize(b)) => Ok(a.cmp(&b)),
             (Value::ISize(a), Value::ISize(b)) => Ok(a.cmp(&b)),
             (Value::Bool(a), Value::Bool(b)) => Ok(a.cmp(&b)),
-            _ => Err(ConstEvalErrorKind::Unsupported.into()),
+            _ => Err(ConstEvalErrorKind::Unsupported),
         }
     }
 }
 
 impl<'ir> Add for Value<'ir> {
-    type Output = Result<Value<'ir>>;
-    fn add(self, other: Value) -> Result<Value<'ir>> {
+    type Output = Result<Value<'ir>, ConstEvalErrorKind>;
+    fn add(self, other: Value) -> Result<Value<'ir>, ConstEvalErrorKind> {
         use Value::*;
 
         match (self, other) {
@@ -212,8 +211,8 @@ impl<'ir> Add for Value<'ir> {
 }
 
 impl<'ir> Sub for Value<'ir> {
-    type Output = Result<Value<'ir>>;
-    fn sub(self, other: Value) -> Result<Value<'ir>> {
+    type Output = Result<Value<'ir>, ConstEvalErrorKind>;
+    fn sub(self, other: Value) -> Result<Value<'ir>, ConstEvalErrorKind> {
         use Value::*;
 
         match (self, other) {
@@ -255,8 +254,8 @@ impl<'ir> Sub for Value<'ir> {
 }
 
 impl<'ir> Mul for Value<'ir> {
-    type Output = Result<Value<'ir>>;
-    fn mul(self, other: Value) -> Result<Value<'ir>> {
+    type Output = Result<Value<'ir>, ConstEvalErrorKind>;
+    fn mul(self, other: Value) -> Result<Value<'ir>, ConstEvalErrorKind> {
         use Value::*;
 
         match (self, other) {
@@ -298,11 +297,11 @@ impl<'ir> Mul for Value<'ir> {
 }
 
 impl<'ir> Shl<Value<'ir>> for Value<'ir> {
-    type Output = Result<Value<'ir>>;
-    fn shl(self, other: Value) -> Result<Value<'ir>> {
+    type Output = Result<Value<'ir>, ConstEvalErrorKind>;
+    fn shl(self, other: Value) -> Result<Value<'ir>, ConstEvalErrorKind> {
         use Value::*;
 
-        let other: std::result::Result<u32, TryFromIntError> = match other {
+        let other: Result<u32, TryFromIntError> = match other {
             U8(other) => Ok(other as _),
             U16(other) => Ok(other as _),
             U32(other) => Ok(other),
@@ -340,8 +339,8 @@ impl<'ir> Shl<Value<'ir>> for Value<'ir> {
 }
 
 impl<'ir> Neg for Value<'ir> {
-    type Output = Result<Value<'ir>>;
-    fn neg(self) -> Result<Value<'ir>> {
+    type Output = Result<Value<'ir>, ConstEvalErrorKind>;
+    fn neg(self) -> Result<Value<'ir>, ConstEvalErrorKind> {
         use Value::*;
 
         match self {
@@ -357,8 +356,8 @@ impl<'ir> Neg for Value<'ir> {
 }
 
 impl<'ir> Not for Value<'ir> {
-    type Output = Result<Value<'ir>>;
-    fn not(self) -> Result<Value<'ir>> {
+    type Output = Result<Value<'ir>, ConstEvalErrorKind>;
+    fn not(self) -> Result<Value<'ir>, ConstEvalErrorKind> {
         use Value::*;
 
         match self {
@@ -381,11 +380,11 @@ impl<'ir> Not for Value<'ir> {
 }
 
 impl<'ir> Shr<Value<'ir>> for Value<'ir> {
-    type Output = Result<Value<'ir>>;
-    fn shr(self, other: Value) -> Result<Value<'ir>> {
+    type Output = Result<Value<'ir>, ConstEvalErrorKind>;
+    fn shr(self, other: Value) -> Result<Value<'ir>, ConstEvalErrorKind> {
         use Value::*;
 
-        let other: std::result::Result<u32, TryFromIntError> = match other {
+        let other: Result<u32, TryFromIntError> = match other {
             U8(other) => Ok(other as _),
             U16(other) => Ok(other as _),
             U32(other) => Ok(other),
@@ -422,8 +421,8 @@ impl<'ir> Shr<Value<'ir>> for Value<'ir> {
 }
 
 impl<'ir> BitOr for Value<'ir> {
-    type Output = Result<Value<'ir>>;
-    fn bitor(self, other: Value) -> Result<Value<'ir>> {
+    type Output = Result<Value<'ir>, ConstEvalErrorKind>;
+    fn bitor(self, other: Value) -> Result<Value<'ir>, ConstEvalErrorKind> {
         use Value::*;
 
         match (self, other) {
@@ -445,8 +444,8 @@ impl<'ir> BitOr for Value<'ir> {
 }
 
 impl<'ir> BitXor for Value<'ir> {
-    type Output = Result<Value<'ir>>;
-    fn bitxor(self, other: Value) -> Result<Value<'ir>> {
+    type Output = Result<Value<'ir>, ConstEvalErrorKind>;
+    fn bitxor(self, other: Value) -> Result<Value<'ir>, ConstEvalErrorKind> {
         use Value::*;
 
         match (self, other) {
@@ -468,8 +467,8 @@ impl<'ir> BitXor for Value<'ir> {
 }
 
 impl<'ir> BitAnd for Value<'ir> {
-    type Output = Result<Value<'ir>>;
-    fn bitand(self, other: Value) -> Result<Value<'ir>> {
+    type Output = Result<Value<'ir>, ConstEvalErrorKind>;
+    fn bitand(self, other: Value) -> Result<Value<'ir>, ConstEvalErrorKind> {
         use Value::*;
 
         match (self, other) {
@@ -491,8 +490,8 @@ impl<'ir> BitAnd for Value<'ir> {
 }
 
 impl<'ir> Div for Value<'ir> {
-    type Output = Result<Value<'ir>>;
-    fn div(self, other: Value) -> Result<Value<'ir>> {
+    type Output = Result<Value<'ir>, ConstEvalErrorKind>;
+    fn div(self, other: Value) -> Result<Value<'ir>, ConstEvalErrorKind> {
         use Value::*;
 
         let result = match (self, other) {
@@ -516,8 +515,8 @@ impl<'ir> Div for Value<'ir> {
 }
 
 impl<'ir> Rem for Value<'ir> {
-    type Output = Result<Value<'ir>>;
-    fn rem(self, other: Value) -> Result<Value<'ir>> {
+    type Output = Result<Value<'ir>, ConstEvalErrorKind>;
+    fn rem(self, other: Value) -> Result<Value<'ir>, ConstEvalErrorKind> {
         use Value::*;
 
         let result = match (self, other) {
@@ -562,7 +561,7 @@ impl<'ir> ConstEvalCtx<'ir> {
         }
     }
 
-    pub fn step(&self) -> Result<()> {
+    pub fn step(&self) -> Result<(), ConstEvalErrorKind> {
         let mut inner = self.inner.borrow_mut();
         if inner.steps_remaining == 0 {
             return Err(ConstEvalErrorKind::TooManyIterations.into());
@@ -602,10 +601,11 @@ pub struct ConstEvaluator<'ir> {
     return_slot: Option<Value<'ir>>,
     remaining_depth: usize,
     remapped_variables: HashMap<IrId, IrId>,
+    diag: DiagnosticsStack,
 }
 
 impl<'ir> ConstEvaluator<'ir> {
-    pub fn new<I>(ir: &'ir IrCtx<'ir>, local_types: I) -> Self
+    pub fn new<I>(diag: DiagnosticsStack, ir: &'ir IrCtx<'ir>, local_types: I) -> Self
     where
         I: IntoIterator<Item = (IrId, TyP<'ir>)>,
     {
@@ -619,24 +619,31 @@ impl<'ir> ConstEvaluator<'ir> {
             return_slot: None,
             remaining_depth: MAX_RECURSION_DEPTH,
             remapped_variables: Default::default(),
+            diag,
             ctx,
         }
     }
 
-    fn make_child(&self, remapped_variables: HashMap<IrId, IrId>) -> Result<Self> {
+    fn make_child(&self, remapped_variables: HashMap<IrId, IrId>) -> Result<Self, AluminaError> {
         Ok(Self {
             ir: self.ir,
             ctx: self.ctx.clone(),
             return_slot: None,
-            remaining_depth: self
-                .remaining_depth
-                .checked_sub(1)
-                .ok_or(ConstEvalErrorKind::TooDeep)?,
+            remaining_depth: self.remaining_depth.checked_sub(1).ok_or_else(|| {
+                self.diag.err(CodeErrorKind::CannotConstEvaluate(
+                    ConstEvalErrorKind::TooDeep,
+                ))
+            })?,
             remapped_variables,
+            diag: self.diag.fork(),
         })
     }
 
-    fn cast(&mut self, inner: ExprP<'ir>, mut target: TyP<'ir>) -> Result<Value<'ir>> {
+    fn cast(
+        &mut self,
+        inner: ExprP<'ir>,
+        mut target: TyP<'ir>,
+    ) -> Result<Value<'ir>, AluminaError> {
         let val = self.const_eval_rvalue(inner)?;
         if inner.ty == target {
             return Ok(val);
@@ -693,11 +700,11 @@ impl<'ir> ConstEvaluator<'ir> {
             (Value::F64(a), Ty::Builtin(BuiltinType::F32)) => Ok(Value::F32(a)),
             (Value::F32(a), Ty::Builtin(BuiltinType::F64)) => Ok(Value::F64(a)),
             (Value::FunctionPointer(id), Ty::FunctionPointer(..)) => Ok(Value::FunctionPointer(id)),
-            _ => Err(ConstEvalErrorKind::Unsupported.into()),
+            _ => unsupported!(self),
         }
     }
 
-    fn field(&mut self, r#struct: Value<'ir>, field: IrId) -> Result<Value<'ir>> {
+    fn field(&mut self, r#struct: Value<'ir>, field: IrId) -> Result<Value<'ir>, AluminaError> {
         match r#struct {
             Value::LValue(lv) => Ok(Value::LValue(LValue::Field(lv.alloc_on(self.ir), field))),
             Value::Struct(fields) => Ok(fields
@@ -705,49 +712,53 @@ impl<'ir> ConstEvaluator<'ir> {
                 .find(|(f, _)| *f == field)
                 .map(|(_, v)| *v)
                 .unwrap_or(Value::Uninitialized)),
-            _ => Err(ConstEvalErrorKind::Unsupported.into()),
+            _ => Err(self.diag.err(CodeErrorKind::CannotConstEvaluate(
+                ConstEvalErrorKind::Unsupported,
+            ))),
         }
     }
 
-    fn index(&mut self, array: Value<'ir>, idx: usize) -> Result<Value<'ir>> {
+    fn index(&mut self, array: Value<'ir>, idx: usize) -> Result<Value<'ir>, AluminaError> {
         match array {
             Value::LValue(lv) => Ok(Value::LValue(LValue::Index(lv.alloc_on(self.ir), idx))),
-            Value::Array(values) => values
-                .get(idx)
-                .copied()
-                .ok_or_else(|| ConstEvalErrorKind::IndexOutOfBounds.into()),
-            _ => Err(ConstEvalErrorKind::Unsupported.into()),
+            Value::Array(values) => values.get(idx).copied().ok_or_else(|| {
+                self.diag.err(CodeErrorKind::CannotConstEvaluate(
+                    ConstEvalErrorKind::IndexOutOfBounds,
+                ))
+            }),
+            _ => unsupported!(self),
         }
     }
 
-    fn tuple_index(&mut self, tup: Value<'ir>, idx: usize) -> Result<Value<'ir>> {
+    fn tuple_index(&mut self, tup: Value<'ir>, idx: usize) -> Result<Value<'ir>, AluminaError> {
         match tup {
             Value::LValue(lv) => Ok(Value::LValue(LValue::TupleIndex(lv.alloc_on(self.ir), idx))),
             Value::Tuple(values) => Ok(values.get(idx).cloned().unwrap_or(Value::Uninitialized)),
-            _ => Err(ConstEvalErrorKind::CompilerBug.into()),
+            _ => bug!(self),
         }
     }
 
-    pub fn const_eval(&mut self, expr: ExprP<'ir>) -> Result<Value<'ir>> {
+    pub fn const_eval(&mut self, expr: ExprP<'ir>) -> Result<Value<'ir>, AluminaError> {
         // public facing interface. we clean up things that should not appear in the IR
         let ret = self.const_eval_rvalue(expr)?;
-        check_lvalue_leak(&ret)?;
+        check_lvalue_leak(&ret)
+            .map_err(|e| self.diag.err(CodeErrorKind::CannotConstEvaluate(e)))?;
         Ok(ret)
     }
 
-    fn materialize(&mut self, value: Value<'ir>) -> Result<Value<'ir>> {
+    fn materialize(&mut self, value: Value<'ir>) -> Result<Value<'ir>, AluminaError> {
         match value {
             Value::LValue(v) => self.materialize_lvalue(v),
             _ => Ok(value),
         }
     }
 
-    fn const_eval_rvalue(&mut self, expr: ExprP<'ir>) -> Result<Value<'ir>> {
+    fn const_eval_rvalue(&mut self, expr: ExprP<'ir>) -> Result<Value<'ir>, AluminaError> {
         self.const_eval_defered(expr)
             .and_then(|v| self.materialize(v))
     }
 
-    fn eval_statements(&mut self, statements: &[Statement<'ir>]) -> Result<()> {
+    fn eval_statements(&mut self, statements: &[Statement<'ir>]) -> Result<(), AluminaError> {
         let label_indexes: HashMap<IrId, usize> = statements
             .iter()
             .enumerate()
@@ -763,19 +774,18 @@ impl<'ir> ConstEvaluator<'ir> {
                 Statement::Expression(expr) => {
                     match self.const_eval_rvalue(expr) {
                         Ok(_) => {}
-                        Err(ConstEvalError {
-                            kind: ConstEvalErrorKind::Jump(label),
-                            ..
-                        }) => {
+                        Err(e) => {
+                            let AluminaError::CodeErrors(ref v) = e else { return Err(e); };
+                            let [CodeError { kind: CodeErrorKind::CannotConstEvaluate(ConstEvalErrorKind::Jump(label)), .. }] = v[..] else { return Err(e) };
+
                             if let Some(new_ip) = label_indexes.get(&label) {
                                 ip = *new_ip;
                                 continue;
                             } else {
                                 // Go up one level
-                                return Err(ConstEvalErrorKind::Jump(label).into());
+                                return Err(e);
                             }
                         }
-                        Err(e) => return Err(e),
                     }
                 }
                 Statement::Label(_) => {}
@@ -786,12 +796,12 @@ impl<'ir> ConstEvaluator<'ir> {
         Ok(())
     }
 
-    fn materialize_lvalue(&mut self, value: LValue<'ir>) -> Result<Value<'ir>> {
+    fn materialize_lvalue(&mut self, value: LValue<'ir>) -> Result<Value<'ir>, AluminaError> {
         match value {
-            LValue::Const(item) => Ok(item
-                .get_const()
-                .map_err(|_| ConstEvalErrorKind::CompilerBug)?
-                .value),
+            LValue::Const(item) => {
+                let Ok(item) = item.get_const() else { bug!(self) };
+                Ok(item.value)
+            }
             LValue::Variable(id) => Ok(self.ctx.load_var(id)),
             LValue::Field(lvalue, field) => {
                 let base = self.materialize_lvalue(*lvalue)?;
@@ -808,11 +818,11 @@ impl<'ir> ConstEvaluator<'ir> {
         }
     }
 
-    fn assign(&mut self, lhs: LValue<'ir>, value: Value<'ir>) -> Result<()> {
+    fn assign(&mut self, lhs: LValue<'ir>, value: Value<'ir>) -> Result<(), AluminaError> {
         match lhs {
             LValue::Const(_) => {
                 // mono should reject assignment to const lvalue
-                Err(ConstEvalErrorKind::CompilerBug.into())
+                bug!(self)
             }
             LValue::Variable(id) => {
                 self.ctx.assign(id, value);
@@ -835,7 +845,7 @@ impl<'ir> ConstEvaluator<'ir> {
                             Value::Struct(self.ir.arena.alloc_slice_copy(&new_fields[..])),
                         )
                     }
-                    _ => Err(ConstEvalErrorKind::CompilerBug.into()),
+                    _ => bug!(self),
                 }
             }
             LValue::Index(lvalue, idx) => {
@@ -854,7 +864,7 @@ impl<'ir> ConstEvaluator<'ir> {
                             Value::Array(self.ir.arena.alloc_slice_copy(&new_values[..])),
                         )
                     }
-                    _ => Err(ConstEvalErrorKind::CompilerBug.into()),
+                    _ => bug!(self),
                 }
             }
             LValue::TupleIndex(lvalue, idx) => {
@@ -873,38 +883,26 @@ impl<'ir> ConstEvaluator<'ir> {
                             Value::Tuple(self.ir.arena.alloc_slice_copy(&new_values[..])),
                         )
                     }
-                    _ => Err(ConstEvalErrorKind::CompilerBug.into()),
+                    _ => bug!(self),
                 }
             }
         }
     }
 
     #[allow(unreachable_code)]
-    fn const_eval_defered(&mut self, expr: ExprP<'ir>) -> Result<Value<'ir>> {
+    fn const_eval_defered(&mut self, expr: ExprP<'ir>) -> Result<Value<'ir>, AluminaError> {
         // Comment this line to debug expressions not being evaluated
         // successfully
         return self.const_eval_defered_inner(expr);
-
-        match self.const_eval_defered_inner(expr) {
-            Ok(v) => Ok(v),
-            Err(ref err @ ConstEvalError { ref kind, .. })
-                if !matches!(
-                    kind,
-                    ConstEvalErrorKind::Jump(..) | ConstEvalErrorKind::Return
-                ) =>
-            {
-                panic!(
-                    "Could not const-evaluate: {}\nEXPRESSION:\n{:#?}",
-                    err, expr
-                )
-            }
-            Err(e) => Err(e),
-        }
     }
 
     /// Variant of const-eval that leaves LValues in place
-    fn const_eval_defered_inner(&mut self, expr: ExprP<'ir>) -> Result<Value<'ir>> {
-        self.ctx.step()?;
+    fn const_eval_defered_inner(&mut self, expr: ExprP<'ir>) -> Result<Value<'ir>, AluminaError> {
+        let _guard = self.diag.push_span(expr.span);
+
+        self.ctx
+            .step()
+            .map_err(|e| self.diag.err(CodeErrorKind::CannotConstEvaluate(e)))?;
 
         match &expr.kind {
             ExprKind::Void => Ok(Value::Void),
@@ -928,7 +926,7 @@ impl<'ir> ConstEvaluator<'ir> {
                         }
                     }
                     (BinOp::Or | BinOp::And, _) => {
-                        return Err(ConstEvalErrorKind::CompilerBug.into())
+                        bug!(self)
                     }
                     _ => {}
                 };
@@ -942,25 +940,27 @@ impl<'ir> ConstEvaluator<'ir> {
             ExprKind::Unary(op, inner) => {
                 let inner = self.const_eval_rvalue(inner)?;
 
-                match op {
+                let ret = match op {
                     UnOp::Not if matches!(inner, Value::Bool(_)) => !inner,
                     UnOp::Neg => -inner,
                     UnOp::BitNot if !matches!(inner, Value::Bool(_)) => !inner,
-                    _ => Err(ConstEvalErrorKind::CompilerBug.into()),
-                }
+                    _ => bug!(self),
+                };
+
+                ret.map_err(|e| self.diag.err(CodeErrorKind::CannotConstEvaluate(e)))
             }
             ExprKind::Ref(value) => {
                 let value = self.const_eval_defered(value)?;
                 match value {
                     Value::LValue(lvalue) => Ok(Value::Pointer(lvalue)),
-                    _ => Err(ConstEvalErrorKind::Unsupported.into()),
+                    _ => unsupported!(self),
                 }
             }
             ExprKind::Deref(value) => {
                 let value = self.const_eval_rvalue(value)?;
                 match value {
                     Value::Pointer(lvalue) => Ok(Value::LValue(lvalue)),
-                    _ => Err(ConstEvalErrorKind::Unsupported.into()),
+                    _ => unsupported!(self),
                 }
             }
             ExprKind::Literal(value) => Ok(*value),
@@ -971,7 +971,7 @@ impl<'ir> ConstEvaluator<'ir> {
 
                 let cond_value = match condv {
                     Value::Bool(b) => b,
-                    _ => return Err(ConstEvalErrorKind::CompilerBug.into()),
+                    _ => bug!(self),
                 };
 
                 if cond_value {
@@ -999,7 +999,9 @@ impl<'ir> ConstEvaluator<'ir> {
                     self.ir.arena.alloc_slice_fill_iter(values.into_iter()),
                 ))
             }
-            ExprKind::Goto(id) => Err(ConstEvalErrorKind::Jump(*id).into()),
+            ExprKind::Goto(id) => Err(self.diag.err(CodeErrorKind::CannotConstEvaluate(
+                ConstEvalErrorKind::Jump(*id),
+            ))),
             ExprKind::Struct(fields) => {
                 // Last assignment wins
                 let mut values = HashMap::default();
@@ -1018,7 +1020,7 @@ impl<'ir> ConstEvaluator<'ir> {
                 let array = self.const_eval_defered(array)?;
                 let idx = match self.const_eval_rvalue(idx)? {
                     Value::USize(idx) => idx,
-                    _ => return Err(ConstEvalErrorKind::CompilerBug.into()),
+                    _ => bug!(self),
                 };
                 self.index(array, idx)
             }
@@ -1034,7 +1036,7 @@ impl<'ir> ConstEvaluator<'ir> {
                         self.assign(lvalue, rhs)?;
                         Ok(Value::Void)
                     }
-                    _ => Err(ConstEvalErrorKind::CompilerBug.into()),
+                    _ => bug!(self),
                 }
             }
             ExprKind::AssignOp(op, lhs, rhs) => {
@@ -1047,7 +1049,7 @@ impl<'ir> ConstEvaluator<'ir> {
                         self.assign(lvalue, res)?;
                         Ok(Value::Void)
                     }
-                    _ => Err(ConstEvalErrorKind::CompilerBug.into()),
+                    _ => bug!(self),
                 }
             }
             ExprKind::Block(statements, ret) => {
@@ -1057,38 +1059,44 @@ impl<'ir> ConstEvaluator<'ir> {
             ExprKind::Intrinsic(kind) => match kind {
                 IntrinsicValueKind::Uninitialized => Ok(Value::Uninitialized),
                 IntrinsicValueKind::Dangling(..) => Ok(Value::Uninitialized),
-                IntrinsicValueKind::SizeOfLike(_, _) => Err(ConstEvalErrorKind::Unsupported.into()),
-                IntrinsicValueKind::Asm(_) => Err(ConstEvalErrorKind::Unsupported.into()),
-                IntrinsicValueKind::FunctionLike(_) => Err(ConstEvalErrorKind::Unsupported.into()),
-                IntrinsicValueKind::ConstLike(_) => Err(ConstEvalErrorKind::Unsupported.into()),
+                IntrinsicValueKind::SizeOfLike(_, _) => unsupported!(self),
+                IntrinsicValueKind::Asm(_) => unsupported!(self),
+                IntrinsicValueKind::FunctionLike(_) => unsupported!(self),
+                IntrinsicValueKind::ConstLike(_) => unsupported!(self),
                 IntrinsicValueKind::InConstContext => Ok(Value::Bool(true)),
             },
             ExprKind::Fn(item) => Ok(Value::FunctionPointer(item)),
             ExprKind::Return(value) => {
                 self.return_slot = Some(self.const_eval_rvalue(value)?);
-                Err(ConstEvalErrorKind::Return.into())
+                Err(self.diag.err(CodeErrorKind::CannotConstEvaluate(
+                    ConstEvalErrorKind::Return,
+                )))
             }
             ExprKind::Call(callee, args) => {
                 let callee = self.const_eval_rvalue(callee)?;
                 let (arg_spec, expr, local_defs) = match callee {
                     Value::FunctionPointer(fun) => {
-                        let func = fun
-                            .get_function()
-                            .map_err(|_| ConstEvalErrorKind::Unsupported)?;
+                        let func = fun.get_function().map_err(|_| {
+                            self.diag.err(CodeErrorKind::CannotConstEvaluate(
+                                ConstEvalErrorKind::Unsupported,
+                            ))
+                        })?;
 
                         let (body, local_defs) = func
                             .body
                             .get()
                             .and_then(|b| b.raw_body.map(|rb| (rb, b.local_defs)))
                             .ok_or_else(|| {
-                                ConstEvalErrorKind::UnsupportedFunction(
-                                    func.name.unwrap_or("<unnamed>").to_string(),
-                                )
+                                self.diag.err(CodeErrorKind::CannotConstEvaluate(
+                                    ConstEvalErrorKind::UnsupportedFunction(
+                                        func.name.unwrap_or("<unnamed>").to_string(),
+                                    ),
+                                ))
                             })?;
 
                         (func.args, body, local_defs)
                     }
-                    _ => return Err(ConstEvalErrorKind::Unsupported.into()),
+                    _ => unsupported!(self),
                 };
 
                 let mut remapped_variables = HashMap::default();
@@ -1111,32 +1119,39 @@ impl<'ir> ConstEvaluator<'ir> {
 
                 let ret = match child.const_eval_rvalue(expr) {
                     Ok(value) => Ok(value),
-                    Err(ConstEvalError {
-                        kind: ConstEvalErrorKind::Return,
-                        ..
-                    }) => {
+                    Err(e) => {
+                        let AluminaError::CodeErrors(ref v) = e else {
+                            return Err(e);
+                        };
+                        let [CodeError { kind: CodeErrorKind::CannotConstEvaluate(ConstEvalErrorKind::Return), .. }] = v[..] else { return Err(e) };
                         let value = child.return_slot.take().unwrap();
                         Ok(value)
                     }
-                    Err(e) => Err(e),
                 };
                 ret
             }
 
-            ExprKind::Static(_) => Err(ConstEvalErrorKind::Unsupported.into()),
-            ExprKind::Unreachable => Err(ConstEvalErrorKind::ToReachTheUnreachableStar.into()),
+            ExprKind::Static(_) => unsupported!(self),
+            ExprKind::Unreachable => Err(self.diag.err(CodeErrorKind::CannotConstEvaluate(
+                ConstEvalErrorKind::ToReachTheUnreachableStar,
+            ))),
         }
     }
 
     // Handle pointer arithmetic
-    fn plus_minus(&mut self, lhs: Value<'ir>, op: BinOp, rhs: Value<'ir>) -> Result<Value<'ir>> {
+    fn plus_minus(
+        &mut self,
+        lhs: Value<'ir>,
+        op: BinOp,
+        rhs: Value<'ir>,
+    ) -> Result<Value<'ir>, AluminaError> {
         macro_rules! offset {
             () => {
                 match rhs {
                     // if you do offsets > isize::MAX in const-eval, you are on your own
                     Value::USize(i) => i as isize,
                     Value::ISize(i) => i,
-                    _ => return Err(ConstEvalErrorKind::Unsupported.into()),
+                    _ => unsupported!(self),
                 }
             };
         }
@@ -1147,7 +1162,9 @@ impl<'ir> ConstEvaluator<'ir> {
                 Value::Pointer(LValue::Index(b, b_offset)),
             ) if op == BinOp::Minus => {
                 if b != a {
-                    return Err(ConstEvalErrorKind::IndexOutOfBounds.into());
+                    return Err(self.diag.err(CodeErrorKind::CannotConstEvaluate(
+                        ConstEvalErrorKind::IndexOutOfBounds,
+                    )));
                 }
 
                 let diff = (a_offset as isize) - (b_offset as isize);
@@ -1157,26 +1174,30 @@ impl<'ir> ConstEvaluator<'ir> {
                 let new_offset = match op {
                     BinOp::Plus => (offset as isize) + offset!(),
                     BinOp::Minus => (offset as isize) + offset!(),
-                    _ => return Err(ConstEvalErrorKind::CompilerBug.into()),
+                    _ => bug!(self),
                 };
                 if new_offset < 0 || new_offset > (buf.len() as isize) {
-                    return Err(ConstEvalErrorKind::IndexOutOfBounds.into());
+                    return Err(self.diag.err(CodeErrorKind::CannotConstEvaluate(
+                        ConstEvalErrorKind::IndexOutOfBounds,
+                    )));
                 }
                 return Ok(Value::Str(buf, new_offset as usize));
             }
             (Value::Pointer(LValue::Index(inner, offset)), _) => {
                 let arr = match self.materialize_lvalue(*inner)? {
                     Value::Array(arr) => arr,
-                    _ => return Err(ConstEvalErrorKind::Unsupported.into()),
+                    _ => unsupported!(self),
                 };
 
                 let new_offset = match op {
                     BinOp::Plus => (offset as isize) + offset!(),
                     BinOp::Minus => (offset as isize) + offset!(),
-                    _ => return Err(ConstEvalErrorKind::CompilerBug.into()),
+                    _ => bug!(self),
                 };
                 if new_offset < 0 || new_offset > (arr.len() as isize) {
-                    return Err(ConstEvalErrorKind::IndexOutOfBounds.into());
+                    return Err(self.diag.err(CodeErrorKind::CannotConstEvaluate(
+                        ConstEvalErrorKind::IndexOutOfBounds,
+                    )));
                 }
                 return Ok(Value::Pointer(LValue::Index(inner, new_offset as usize)));
             }
@@ -1184,15 +1205,22 @@ impl<'ir> ConstEvaluator<'ir> {
             _ => {}
         }
 
-        match op {
+        let ret = match op {
             BinOp::Plus => lhs + rhs,
             BinOp::Minus => lhs - rhs,
             _ => unreachable!(),
-        }
+        };
+
+        ret.map_err(|e| self.diag.err(CodeErrorKind::CannotConstEvaluate(e)))
     }
 
-    fn bin_op(&mut self, lhs: Value<'ir>, op: BinOp, rhs: Value<'ir>) -> Result<Value<'ir>> {
-        match op {
+    fn bin_op(
+        &mut self,
+        lhs: Value<'ir>,
+        op: BinOp,
+        rhs: Value<'ir>,
+    ) -> Result<Value<'ir>, AluminaError> {
+        let ret = match op {
             BinOp::BitAnd => lhs & rhs,
             BinOp::BitOr => lhs | rhs,
             BinOp::BitXor => lhs ^ rhs,
@@ -1200,14 +1228,24 @@ impl<'ir> ConstEvaluator<'ir> {
             BinOp::And => lhs & rhs,
             BinOp::Eq => lhs.equal(rhs),
             BinOp::Neq => lhs.equal(rhs).and_then(|v| !v),
-            BinOp::Lt => Ok(Value::Bool(matches!(lhs.cmp(rhs)?, Ordering::Less))),
+            BinOp::Lt => Ok(Value::Bool(matches!(
+                lhs.cmp(rhs)
+                    .map_err(|e| self.diag.err(CodeErrorKind::CannotConstEvaluate(e)))?,
+                Ordering::Less
+            ))),
             BinOp::LEq => Ok(Value::Bool(matches!(
-                lhs.cmp(rhs)?,
+                lhs.cmp(rhs)
+                    .map_err(|e| self.diag.err(CodeErrorKind::CannotConstEvaluate(e)))?,
                 Ordering::Less | Ordering::Equal
             ))),
-            BinOp::Gt => Ok(Value::Bool(matches!(lhs.cmp(rhs)?, Ordering::Greater))),
+            BinOp::Gt => Ok(Value::Bool(matches!(
+                lhs.cmp(rhs)
+                    .map_err(|e| self.diag.err(CodeErrorKind::CannotConstEvaluate(e)))?,
+                Ordering::Greater
+            ))),
             BinOp::GEq => Ok(Value::Bool(matches!(
-                lhs.cmp(rhs)?,
+                lhs.cmp(rhs)
+                    .map_err(|e| self.diag.err(CodeErrorKind::CannotConstEvaluate(e)))?,
                 Ordering::Greater | Ordering::Equal
             ))),
             BinOp::LShift => lhs << rhs,
@@ -1215,12 +1253,14 @@ impl<'ir> ConstEvaluator<'ir> {
             BinOp::Mul => lhs * rhs,
             BinOp::Div => lhs / rhs,
             BinOp::Mod => lhs % rhs,
-            BinOp::Plus | BinOp::Minus => self.plus_minus(lhs, op, rhs),
-        }
+            BinOp::Plus | BinOp::Minus => return self.plus_minus(lhs, op, rhs),
+        };
+
+        ret.map_err(|e| self.diag.err(CodeErrorKind::CannotConstEvaluate(e)))
     }
 }
 
-fn check_lvalue_leak(value: &Value<'_>) -> Result<()> {
+fn check_lvalue_leak(value: &Value<'_>) -> Result<(), ConstEvalErrorKind> {
     match value {
         Value::Pointer(lvalue) | Value::LValue(lvalue) => check_lvalue_leak_lvalue(lvalue),
         Value::Tuple(values) => values.iter().try_for_each(check_lvalue_leak),
@@ -1233,7 +1273,7 @@ fn check_lvalue_leak(value: &Value<'_>) -> Result<()> {
     }
 }
 
-fn check_lvalue_leak_lvalue(value: &LValue<'_>) -> Result<()> {
+fn check_lvalue_leak_lvalue(value: &LValue<'_>) -> Result<(), ConstEvalErrorKind> {
     match value {
         LValue::Const(_) => Ok(()),
         LValue::Variable(_) => Err(ConstEvalErrorKind::LValueLeak.into()),

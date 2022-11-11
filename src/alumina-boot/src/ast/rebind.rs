@@ -21,6 +21,7 @@ impl<'ast> Rebinder<'ast> {
         Ok(Placeholder {
             bounds: self.visit_bounds(&placeholder.bounds)?,
             default: placeholder.default.map(|d| self.visit_typ(d)).transpose()?,
+            span: placeholder.span,
             id: placeholder.id,
         })
     }

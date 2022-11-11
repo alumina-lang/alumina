@@ -86,6 +86,7 @@ impl<'ast> AstItemMaker<'ast> {
                             .transpose()?,
                         // Unlike defaults, bounds can refer to self and this is in fact quite central
                         // to how Alumina protocols work.
+                        span: Some(Span::from_node(scope.file_id(), node)),
                         bounds: TypeVisitor::new(
                             self.global_ctx.clone(),
                             self.ast,
