@@ -100,7 +100,8 @@ impl Compiler {
 
                 if let Some(candidate) = visitor.main_candidate() {
                     if main_candidate.replace(candidate).is_some() {
-                        return Err(CodeErrorKind::MultipleMainFunctions).with_no_span();
+                        return Err(CodeErrorKind::MultipleMainFunctions)
+                            .with_span(candidate.get_function().span);
                     }
                 }
             } else {

@@ -1,7 +1,7 @@
 use crate::ast::{Attribute, BinOp, BuiltinType, Span, UnOp};
 use crate::codegen::types::TypeWriter;
 use crate::codegen::{w, CName, CodegenCtx};
-use crate::common::AluminaError;
+use crate::common::{AluminaError, CodeErrorBuilder};
 use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::const_eval::Value;
 use crate::ir::layout::Layouter;
@@ -503,7 +503,9 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                     );
                 }
                 IntrinsicValueKind::Dangling(inner) => {
-                    let layout = Layouter::new(self.ctx.global_ctx.clone()).layout_of(inner)?;
+                    let layout = Layouter::new(self.ctx.global_ctx.clone())
+                        .layout_of(inner)
+                        .with_no_span()?;
 
                     w!(
                         self.fn_bodies,

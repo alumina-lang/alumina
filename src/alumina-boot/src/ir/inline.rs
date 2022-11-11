@@ -1,5 +1,6 @@
 use crate::ast::Span;
-use crate::common::{AluminaError, ArenaAllocatable, CodeErrorBuilder, CodeErrorKind, HashMap};
+use crate::common::{AluminaError, ArenaAllocatable, CodeErrorKind, HashMap};
+use crate::diagnostics::DiagnosticsStack;
 use crate::ir::builder::ExpressionBuilder;
 use crate::ir::{ExprKind, ExprP, IrCtx, IrId, Statement};
 
@@ -30,6 +31,7 @@ impl<'ir> ExpressionVisitor<'ir> for LocalUsageCounter {
 /// unless you are std. The main reason this even exists is to allow some lang functions
 /// that only construct a struct to be used in const contexts (looking at you slice_new!).
 pub struct IrInliner<'ir> {
+    diag: DiagnosticsStack,
     ir: &'ir IrCtx<'ir>,
     replacements: HashMap<IrId, ExprP<'ir>>,
     span: Option<Span>,
@@ -39,11 +41,12 @@ impl<'ir> IrInliner<'ir> {
     fn visit_statement(&mut self, stmt: &Statement<'ir>) -> Result<Statement<'ir>, AluminaError> {
         match stmt {
             Statement::Expression(e) => Ok(Statement::Expression(self.visit_expr(e)?)),
-            Statement::Label(_) => Err(CodeErrorKind::IrInlineFlowControl).with_no_span(),
+            Statement::Label(_) => Err(self.diag.err(CodeErrorKind::IrInlineFlowControl)),
         }
     }
 
     pub fn inline<I>(
+        diag: DiagnosticsStack,
         ir: &'ir IrCtx<'ir>,
         body: ExprP<'ir>,
         args: I,
@@ -79,6 +82,7 @@ impl<'ir> IrInliner<'ir> {
         }
 
         let mut inliner = Self {
+            diag,
             ir,
             replacements,
             span,
@@ -123,8 +127,8 @@ impl<'ir> IrInliner<'ir> {
             ExprKind::Local(id) => self.replacements.get(&id).copied().unwrap_or(expr),
             ExprKind::Ref(e) => builder.r#ref(self.visit_expr(e)?, self.span),
             ExprKind::Deref(e) => builder.deref(self.visit_expr(e)?, self.span),
-            ExprKind::Return(_) => return Err(CodeErrorKind::IrInlineEarlyReturn).with_no_span(),
-            ExprKind::Goto(_) => return Err(CodeErrorKind::IrInlineFlowControl).with_no_span(),
+            ExprKind::Return(_) => return Err(self.diag.err(CodeErrorKind::IrInlineEarlyReturn)),
+            ExprKind::Goto(_) => return Err(self.diag.err(CodeErrorKind::IrInlineFlowControl)),
             ExprKind::Unary(op, e) => builder.unary(op, self.visit_expr(e)?, expr.ty, self.span),
             ExprKind::Assign(a, b) => {
                 builder.assign(self.visit_expr(a)?, self.visit_expr(b)?, self.span)

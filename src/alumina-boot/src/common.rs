@@ -9,13 +9,11 @@ use thiserror::Error;
 use tree_sitter::Node;
 
 macro_rules! ice {
-    ($why:literal) => {{
-        use crate::common::CodeErrorBuilder;
-        return Err(CodeErrorKind::InternalError(
+    ($diag:expr, $why:literal) => {{
+        return Err($diag.err(CodeErrorKind::InternalError(
             $why.to_string(),
             backtrace::Backtrace::new().into(),
-        ))
-        .with_no_span();
+        )));
     }};
 }
 

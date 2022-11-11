@@ -83,7 +83,7 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
             ast,
             ir,
             layouter: Layouter::new(global_ctx.clone()),
-            global_ctx: global_ctx.clone(),
+            global_ctx,
             id_map: HashMap::default(),
             finished: HashMap::default(),
             reverse_map: HashMap::default(),
@@ -1031,8 +1031,16 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
             Some(LangItemKind::ProtoSameLayoutAs) => {
-                let ty_layout = self.mono_ctx.layouter.layout_of(ty)?;
-                let arg_layout = self.mono_ctx.layouter.layout_of(proto_generic_args[0])?;
+                let ty_layout = self
+                    .mono_ctx
+                    .layouter
+                    .layout_of(ty)
+                    .map_err(|e| self.diag.err(e))?;
+                let arg_layout = self
+                    .mono_ctx
+                    .layouter
+                    .layout_of(proto_generic_args[0])
+                    .map_err(|e| self.diag.err(e))?;
 
                 if ty_layout.is_compatible_with(&arg_layout) {
                     return Ok(BoundCheckResult::Matches);
@@ -1622,13 +1630,13 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.monomorphize_static_or_const(item, s, key.1)?;
             }
             ast::Item::Macro(_) => {
-                ice!("macros should have been expanded by now");
+                ice!(self.diag, "macros should have been expanded by now");
             }
             ast::Item::BuiltinMacro(_) => {
-                ice!("macros should have been expanded by now");
+                ice!(self.diag, "macros should have been expanded by now");
             }
             ast::Item::Intrinsic(_) => {
-                ice!("intrinsics shouldn't be monomorphized");
+                ice!(self.diag, "intrinsics shouldn't be monomorphized");
             }
             ast::Item::Protocol(p) => {
                 self.monomorphize_protocol(item, p, key.1)?;
@@ -1978,7 +1986,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let item = match inner {
                     ast::Ty::Item(item) => item,
                     ast::Ty::Defered(spec) => self.resolve_defered_func(spec)?,
-                    _ => ice!("unsupported generic type"),
+                    _ => ice!(self.diag, "unsupported generic type"),
                 };
 
                 let args = args
@@ -2336,7 +2344,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ast::Item::StructLike(s) => (s.associated_fns, s.mixins),
             ast::Item::Enum(e) => (e.associated_fns, e.mixins),
             // ast::Item::TypeDef(e) => (e.),
-            _ => ice!("no associated functions for this type"),
+            _ => ice!(self.diag, "no associated functions for this type"),
         };
 
         associated_fns.extend(fns.iter().map(|f| (f.name, f.item)));
@@ -3097,7 +3105,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     ir::Ty::Builtin(BuiltinType::F64) => {
                         self.exprs.literal(Value::F64(ir_str), ty, ast_span)
                     }
-                    _ => ice!("unexpected type for the float literal"),
+                    _ => ice!(self.diag, "unexpected type for the float literal"),
                 }
             }
             ast::Lit::Str(v) => self.string_of(v, ast_span)?,
@@ -3835,14 +3843,16 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 if let ir::Ty::Tuple(inner) = generic_args[0] {
                     self.generate_vtable(inner, generic_args[1])
                 } else {
-                    ice!("creating a vtable with something that's not a tuple of protocols")
+                    ice!(
+                        self.diag,
+                        "creating a vtable with something that's not a tuple of protocols"
+                    )
                 }
             }
             IntrinsicKind::EnumVariants => self.generate_enum_variants(generic_args[0]),
             IntrinsicKind::TypeName => {
                 let typ = generic_args[0];
                 let name = self.mono_ctx.type_name(typ)?;
-
                 Ok(self.string_of(name.as_bytes(), span)?)
             }
             IntrinsicKind::SizeOf => self.size_of(generic_args[0], span),
@@ -3917,45 +3927,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         )
     }
 
-    fn generate_test_cases(&mut self) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let tests = self.mono_ctx.tests.clone();
-
-        let meta_item = self.monomorphize_lang_item(LangItemKind::TestCaseMeta, [])?;
-        let meta_type = self.types.named(meta_item);
-        let meta_new = self.monomorphize_lang_item(LangItemKind::TestCaseMetaNew, [])?;
-
-        let fn_ptr_type = self.types.function([], self.types.void());
-
-        let mut test_cases = vec![];
-        for (func, meta) in tests.iter() {
-            let name = meta.name.to_string();
-            let path = meta.path.to_string();
-            let attrs: Vec<_> = meta
-                .attributes
-                .iter()
-                .map(|s| s.as_bytes())
-                .collect::<Vec<_>>()
-                .join(&b"\0"[..]);
-
-            let fn_ptr_arg = self.exprs.function(func, None);
-            let args = [
-                self.string_of(path.as_bytes(), None)?,
-                self.string_of(name.as_bytes(), None)?,
-                self.string_of(&attrs, None)?,
-                self.try_coerce(fn_ptr_type, fn_ptr_arg)?,
-            ];
-
-            test_cases.push(self.call(
-                self.exprs.function(meta_new, None),
-                args,
-                meta_type,
-                None,
-            )?);
-        }
-
-        self.array_of(meta_type, test_cases, None)
-    }
-
     pub fn call<I>(
         &mut self,
         callee: ir::ExprP<'ir>,
@@ -3974,6 +3945,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     // no silent fallback to a regular function call, since the only thing that can go wrong is that
                     // the callee is not compatible with IR inlining, so this should not lead to surprises
                     let (expr, mut additional_defs) = IrInliner::inline(
+                        self.diag.fork(),
                         self.mono_ctx.ir,
                         func.body
                             .get()
@@ -4002,126 +3974,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             _ => {}
         }
         Ok(self.exprs.call(callee, args, return_ty, span))
-    }
-
-    fn generate_enum_variants(
-        &mut self,
-        typ: ir::TyP<'ir>,
-    ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let e = match typ {
-            ir::Ty::Item(item) => item.get_enum().map_err(|e| self.diag.err(e))?,
-            _ => ice!("enum expected"),
-        };
-
-        let enum_variant_new = self.monomorphize_lang_item(LangItemKind::EnumVariantNew, [typ])?;
-        let enum_variant_new_func = enum_variant_new
-            .get_function()
-            .map_err(|e| self.diag.err(e))?;
-
-        let mut exprs = Vec::new();
-        for member in e.members {
-            let name = self.string_of(member.name.as_bytes(), None)?;
-            let value = self.exprs.cast(member.value, typ, None);
-
-            exprs.push(self.call(
-                self.exprs.function(enum_variant_new, None),
-                [name, value].into_iter(),
-                enum_variant_new_func.return_type,
-                None,
-            )?);
-        }
-
-        self.array_of(enum_variant_new_func.return_type, exprs, None)
-    }
-
-    fn generate_vtable(
-        &mut self,
-        protocol_types: &'ir [ir::TyP<'ir>],
-        concrete_type: ir::TyP<'ir>,
-    ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        for protocol_type in protocol_types.iter() {
-            let protocol = match protocol_type {
-                ir::Ty::Item(protocol) => protocol,
-                _ => ice!("protocol expected"),
-            };
-            let proto_key = self.mono_ctx.reverse_lookup(protocol);
-            // Replace the dyn_self placeholder
-            let args = std::iter::once(concrete_type)
-                .chain(proto_key.1[1..].iter().copied())
-                .collect::<Vec<_>>()
-                .alloc_on(self.mono_ctx.ir);
-            let actual_protocol = self.monomorphize_item(proto_key.0, args)?;
-            let actual_protocol_type = self.types.named(actual_protocol);
-
-            // We only rely on standard protocol bound matching to see if the vtable is compatible
-            self.check_protocol_bounds(
-                ast::ProtocolBoundsKind::All,
-                concrete_type,
-                vec![(None, actual_protocol_type, false)],
-            )?;
-        }
-
-        let vtable_layout = self
-            .mono_ctx
-            .vtable_layouts
-            .get(protocol_types)
-            .ok_or_else(|| {
-                self.diag.err(CodeErrorKind::InternalError(
-                    "vtable layout not found".to_string(),
-                    Backtrace::new().into(),
-                ))
-            })?
-            .methods;
-
-        let associated_fns = self.get_associated_fns(concrete_type)?;
-        let mut attrs = Vec::new();
-
-        for func in vtable_layout {
-            // If the function is not found, that can only mean that someone is trying to convert a `dyn` into another
-            // dyn. If it were not so, the compiler would have errored earlier (when checking the protocol bounds).
-            // We'd need to generate a thunk for it and it's not worth the hassle.
-            let function = associated_fns
-                .get(&func.name)
-                .ok_or_else(|| self.diag.err(CodeErrorKind::IndirectDyn))?;
-
-            let candidate_fun = function.get_function();
-
-            let mut type_inferer = TypeInferer::new(
-                self.mono_ctx.ast,
-                self.mono_ctx,
-                candidate_fun.placeholders.to_vec(),
-            );
-
-            let infer_slots = candidate_fun
-                .args
-                .iter()
-                .zip(
-                    once(self.types.pointer(
-                        concrete_type,
-                        func.arg_types[0] == self.types.pointer(self.types.void(), true),
-                    ))
-                    .chain(func.arg_types.iter().skip(1).copied()),
-                )
-                .map(|(p, t)| (p.typ, t))
-                .chain(once((candidate_fun.return_type, func.return_type)));
-
-            let monomorphized = match type_inferer.try_infer(None, infer_slots) {
-                Some(placeholders) => {
-                    self.monomorphize_item(function, placeholders.alloc_on(self.mono_ctx.ir))?
-                }
-                _ => ice!("cannot infer types while generating vtable"),
-            };
-
-            attrs.push(self.exprs.cast(
-                self.exprs.function(monomorphized, None),
-                self.types.function([], self.types.void()),
-                None,
-            ));
-        }
-
-        let ret = self.array_of(self.types.function([], self.types.void()), attrs, None)?;
-
-        Ok(ret)
     }
 
     fn lower_virtual_call(
@@ -4816,7 +4668,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             {
                 ptr_ty
             } else {
-                ice!("slice_slicify did not return a slice");
+                ice!(self.diag, "slice_slicify did not return a slice");
             }
         };
 
@@ -5325,8 +5177,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ast::ExprKind::BoundParam(self_arg, field_id, bound_type) => {
                 self.lower_bound_param(*self_arg, *field_id, *bound_type, type_hint, expr.span)
             }
-            ast::ExprKind::EtCetera(_) => ice!("macros should have been expanded by now"),
-            ast::ExprKind::DeferedMacro(_, _) => ice!("macros should have been expanded by now"),
+            ast::ExprKind::EtCetera(_) => {
+                ice!(self.diag, "macros should have been expanded by now")
+            }
+            ast::ExprKind::DeferedMacro(_, _) => {
+                ice!(self.diag, "macros should have been expanded by now")
+            }
         }
     }
 }
@@ -5353,7 +5209,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         ty: ir::TyP<'ir>,
         span: Option<Span>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let align = self.mono_ctx.layouter.layout_of(ty)?.align;
+        let align = self
+            .mono_ctx
+            .layouter
+            .layout_of(ty)
+            .map_err(|e| self.diag.err(e))?
+            .align;
 
         Ok(self.exprs.literal(
             Value::USize(align),
@@ -5367,7 +5228,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         ty: ir::TyP<'ir>,
         span: Option<Span>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let size = self.mono_ctx.layouter.layout_of(ty)?.size;
+        let size = self
+            .mono_ctx
+            .layouter
+            .layout_of(ty)
+            .map_err(|e| self.diag.err(e))?
+            .size;
 
         Ok(self.exprs.literal(
             Value::USize(size),
@@ -5566,6 +5432,165 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             self.types.builtin(BuiltinType::Bool),
             span,
         ))
+    }
+
+    fn generate_test_cases(&mut self) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let tests = self.mono_ctx.tests.clone();
+
+        let meta_item = self.monomorphize_lang_item(LangItemKind::TestCaseMeta, [])?;
+        let meta_type = self.types.named(meta_item);
+        let meta_new = self.monomorphize_lang_item(LangItemKind::TestCaseMetaNew, [])?;
+
+        let fn_ptr_type = self.types.function([], self.types.void());
+
+        let mut test_cases = vec![];
+        for (func, meta) in tests.iter() {
+            let name = meta.name.to_string();
+            let path = meta.path.to_string();
+            let attrs: Vec<_> = meta
+                .attributes
+                .iter()
+                .map(|s| s.as_bytes())
+                .collect::<Vec<_>>()
+                .join(&b"\0"[..]);
+
+            let fn_ptr_arg = self.exprs.function(func, None);
+            let args = [
+                self.string_of(path.as_bytes(), None)?,
+                self.string_of(name.as_bytes(), None)?,
+                self.string_of(&attrs, None)?,
+                self.try_coerce(fn_ptr_type, fn_ptr_arg)?,
+            ];
+
+            test_cases.push(self.call(
+                self.exprs.function(meta_new, None),
+                args,
+                meta_type,
+                None,
+            )?);
+        }
+
+        self.array_of(meta_type, test_cases, None)
+    }
+
+    fn generate_vtable(
+        &mut self,
+        protocol_types: &'ir [ir::TyP<'ir>],
+        concrete_type: ir::TyP<'ir>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        for protocol_type in protocol_types.iter() {
+            let protocol = match protocol_type {
+                ir::Ty::Item(protocol) => protocol,
+                _ => ice!(self.diag, "protocol expected"),
+            };
+            let proto_key = self.mono_ctx.reverse_lookup(protocol);
+            // Replace the dyn_self placeholder
+            let args = std::iter::once(concrete_type)
+                .chain(proto_key.1[1..].iter().copied())
+                .collect::<Vec<_>>()
+                .alloc_on(self.mono_ctx.ir);
+            let actual_protocol = self.monomorphize_item(proto_key.0, args)?;
+            let actual_protocol_type = self.types.named(actual_protocol);
+
+            // We only rely on standard protocol bound matching to see if the vtable is compatible
+            self.check_protocol_bounds(
+                ast::ProtocolBoundsKind::All,
+                concrete_type,
+                vec![(None, actual_protocol_type, false)],
+            )?;
+        }
+
+        let vtable_layout = self
+            .mono_ctx
+            .vtable_layouts
+            .get(protocol_types)
+            .ok_or_else(|| {
+                self.diag.err(CodeErrorKind::InternalError(
+                    "vtable layout not found".to_string(),
+                    Backtrace::new().into(),
+                ))
+            })?
+            .methods;
+
+        let associated_fns = self.get_associated_fns(concrete_type)?;
+        let mut attrs = Vec::new();
+
+        for func in vtable_layout {
+            // If the function is not found, that can only mean that someone is trying to convert a `dyn` into another
+            // dyn. If it were not so, the compiler would have errored earlier (when checking the protocol bounds).
+            // We'd need to generate a thunk for it and it's not worth the hassle.
+            let function = associated_fns
+                .get(&func.name)
+                .ok_or_else(|| self.diag.err(CodeErrorKind::IndirectDyn))?;
+
+            let candidate_fun = function.get_function();
+
+            let mut type_inferer = TypeInferer::new(
+                self.mono_ctx.ast,
+                self.mono_ctx,
+                candidate_fun.placeholders.to_vec(),
+            );
+
+            let infer_slots = candidate_fun
+                .args
+                .iter()
+                .zip(
+                    once(self.types.pointer(
+                        concrete_type,
+                        func.arg_types[0] == self.types.pointer(self.types.void(), true),
+                    ))
+                    .chain(func.arg_types.iter().skip(1).copied()),
+                )
+                .map(|(p, t)| (p.typ, t))
+                .chain(once((candidate_fun.return_type, func.return_type)));
+
+            let monomorphized = match type_inferer.try_infer(None, infer_slots) {
+                Some(placeholders) => {
+                    self.monomorphize_item(function, placeholders.alloc_on(self.mono_ctx.ir))?
+                }
+                _ => ice!(self.diag, "cannot infer types while generating vtable"),
+            };
+
+            attrs.push(self.exprs.cast(
+                self.exprs.function(monomorphized, None),
+                self.types.function([], self.types.void()),
+                None,
+            ));
+        }
+
+        let ret = self.array_of(self.types.function([], self.types.void()), attrs, None)?;
+
+        Ok(ret)
+    }
+
+    fn generate_enum_variants(
+        &mut self,
+        typ: ir::TyP<'ir>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let e = match typ {
+            ir::Ty::Item(item) => item.get_enum().map_err(|e| self.diag.err(e))?,
+            _ => ice!(self.diag, "enum expected"),
+        };
+
+        let enum_variant_new = self.monomorphize_lang_item(LangItemKind::EnumVariantNew, [typ])?;
+        let enum_variant_new_func = enum_variant_new
+            .get_function()
+            .map_err(|e| self.diag.err(e))?;
+
+        let mut exprs = Vec::new();
+        for member in e.members {
+            let name = self.string_of(member.name.as_bytes(), None)?;
+            let value = self.exprs.cast(member.value, typ, None);
+
+            exprs.push(self.call(
+                self.exprs.function(enum_variant_new, None),
+                [name, value].into_iter(),
+                enum_variant_new_func.return_type,
+                None,
+            )?);
+        }
+
+        self.array_of(enum_variant_new_func.return_type, exprs, None)
     }
 }
 

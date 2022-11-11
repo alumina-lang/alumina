@@ -4,7 +4,7 @@ use crate::ast::{
     AstCtx, AstId, Attribute, BuiltinMacro, BuiltinMacroKind, Expr, ExprKind, ExprP,
     FieldInitializer, FnKind, Item, ItemP, Lit, Macro, MacroParameter, Span, Statement,
 };
-use crate::common::{ice, AluminaError, ArenaAllocatable, CodeErrorKind, HashMap};
+use crate::common::{AluminaError, ArenaAllocatable, CodeErrorKind, HashMap};
 use crate::global_ctx::GlobalCtx;
 use crate::name_resolution::scope::{NamedItemKind, Scope};
 use crate::parser::{FieldKind, NodeExt};
@@ -396,7 +396,7 @@ impl<'ast> MacroExpander<'ast> {
 
                 let value = match std::str::from_utf8(name).map(std::env::var) {
                     Ok(Ok(v)) => self.ast.arena.alloc_slice_copy(v.as_bytes()),
-                    _ => ice!("invalid UTF-8 in environment variable name"),
+                    _ => unreachable!(),
                 };
 
                 Ok(Expr {
@@ -452,7 +452,7 @@ impl<'ast> MacroExpander<'ast> {
             BuiltinMacroKind::IncludeBytes => {
                 let filename = match std::str::from_utf8(string_arg!(self, 0)) {
                     Ok(v) => v,
-                    _ => ice!("invalid UTF-8 in filename"),
+                    _ => unreachable!(),
                 };
 
                 let data = std::fs::read(filename)

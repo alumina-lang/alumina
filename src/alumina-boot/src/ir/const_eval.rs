@@ -184,28 +184,28 @@ impl<'ir> Add for Value<'ir> {
             (I8(a), I8(b)) => a
                 .checked_add(b)
                 .map(I8)
-                .ok_or_else(|| ConstEvalErrorKind::ArithmeticOverflow.into()),
+                .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
             (I16(a), I16(b)) => a
                 .checked_add(b)
                 .map(I16)
-                .ok_or_else(|| ConstEvalErrorKind::ArithmeticOverflow.into()),
+                .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
             (I32(a), I32(b)) => a
                 .checked_add(b)
                 .map(I32)
-                .ok_or_else(|| ConstEvalErrorKind::ArithmeticOverflow.into()),
+                .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
             (I64(a), I64(b)) => a
                 .checked_add(b)
                 .map(I64)
-                .ok_or_else(|| ConstEvalErrorKind::ArithmeticOverflow.into()),
+                .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
             (I128(a), I128(b)) => a
                 .checked_add(b)
                 .map(I128)
-                .ok_or_else(|| ConstEvalErrorKind::ArithmeticOverflow.into()),
+                .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
             (ISize(a), ISize(b)) => a
                 .checked_add(b)
                 .map(ISize)
-                .ok_or_else(|| ConstEvalErrorKind::ArithmeticOverflow.into()),
-            _ => Err(ConstEvalErrorKind::Unsupported.into()),
+                .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
+            _ => Err(ConstEvalErrorKind::Unsupported),
         }
     }
 }
@@ -227,28 +227,28 @@ impl<'ir> Sub for Value<'ir> {
             (I8(a), I8(b)) => a
                 .checked_sub(b)
                 .map(I8)
-                .ok_or_else(|| ConstEvalErrorKind::ArithmeticOverflow.into()),
+                .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
             (I16(a), I16(b)) => a
                 .checked_sub(b)
                 .map(I16)
-                .ok_or_else(|| ConstEvalErrorKind::ArithmeticOverflow.into()),
+                .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
             (I32(a), I32(b)) => a
                 .checked_sub(b)
                 .map(I32)
-                .ok_or_else(|| ConstEvalErrorKind::ArithmeticOverflow.into()),
+                .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
             (I64(a), I64(b)) => a
                 .checked_sub(b)
                 .map(I64)
-                .ok_or_else(|| ConstEvalErrorKind::ArithmeticOverflow.into()),
+                .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
             (I128(a), I128(b)) => a
                 .checked_sub(b)
                 .map(I128)
-                .ok_or_else(|| ConstEvalErrorKind::ArithmeticOverflow.into()),
+                .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
             (ISize(a), ISize(b)) => a
                 .checked_sub(b)
                 .map(ISize)
-                .ok_or_else(|| ConstEvalErrorKind::ArithmeticOverflow.into()),
-            _ => Err(ConstEvalErrorKind::Unsupported.into()),
+                .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
+            _ => Err(ConstEvalErrorKind::Unsupported),
         }
     }
 }
@@ -270,28 +270,28 @@ impl<'ir> Mul for Value<'ir> {
             (I8(a), I8(b)) => a
                 .checked_mul(b)
                 .map(I8)
-                .ok_or_else(|| ConstEvalErrorKind::ArithmeticOverflow.into()),
+                .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
             (I16(a), I16(b)) => a
                 .checked_mul(b)
                 .map(I16)
-                .ok_or_else(|| ConstEvalErrorKind::ArithmeticOverflow.into()),
+                .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
             (I32(a), I32(b)) => a
                 .checked_mul(b)
                 .map(I32)
-                .ok_or_else(|| ConstEvalErrorKind::ArithmeticOverflow.into()),
+                .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
             (I64(a), I64(b)) => a
                 .checked_mul(b)
                 .map(I64)
-                .ok_or_else(|| ConstEvalErrorKind::ArithmeticOverflow.into()),
+                .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
             (I128(a), I128(b)) => a
                 .checked_mul(b)
                 .map(I128)
-                .ok_or_else(|| ConstEvalErrorKind::ArithmeticOverflow.into()),
+                .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
             (ISize(a), ISize(b)) => a
                 .checked_mul(b)
                 .map(ISize)
-                .ok_or_else(|| ConstEvalErrorKind::ArithmeticOverflow.into()),
-            _ => Err(ConstEvalErrorKind::Unsupported.into()),
+                .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
+            _ => Err(ConstEvalErrorKind::Unsupported),
         }
     }
 }
@@ -314,7 +314,7 @@ impl<'ir> Shl<Value<'ir>> for Value<'ir> {
             I64(other) => other.try_into(),
             I128(other) => other.try_into(),
             ISize(other) => other.try_into(),
-            _ => return Err(ConstEvalErrorKind::CompilerBug.into()),
+            _ => return Err(ConstEvalErrorKind::CompilerBug),
         };
         let other = other.map_err(|_| ConstEvalErrorKind::ArithmeticOverflow)?;
 
@@ -331,10 +331,10 @@ impl<'ir> Shl<Value<'ir>> for Value<'ir> {
             I64(a) => a.checked_shl(other).map(I64),
             I128(a) => a.checked_shl(other).map(I128),
             ISize(a) => a.checked_shl(other).map(ISize),
-            _ => return Err(ConstEvalErrorKind::Unsupported.into()),
+            _ => return Err(ConstEvalErrorKind::Unsupported),
         };
 
-        ret.ok_or_else(|| ConstEvalErrorKind::ArithmeticOverflow.into())
+        ret.ok_or(ConstEvalErrorKind::ArithmeticOverflow)
     }
 }
 
@@ -350,7 +350,7 @@ impl<'ir> Neg for Value<'ir> {
             I64(a) => Ok(I64(-a)),
             I128(a) => Ok(I128(-a)),
             ISize(a) => Ok(ISize(-a)),
-            _ => Err(ConstEvalErrorKind::Unsupported.into()),
+            _ => Err(ConstEvalErrorKind::Unsupported),
         }
     }
 }
@@ -374,7 +374,7 @@ impl<'ir> Not for Value<'ir> {
             USize(a) => Ok(USize(!a)),
             ISize(a) => Ok(ISize(!a)),
             Bool(a) => Ok(Bool(!a)),
-            _ => Err(ConstEvalErrorKind::Unsupported.into()),
+            _ => Err(ConstEvalErrorKind::Unsupported),
         }
     }
 }
@@ -397,7 +397,7 @@ impl<'ir> Shr<Value<'ir>> for Value<'ir> {
             I64(other) => other.try_into(),
             I128(other) => other.try_into(),
             ISize(other) => other.try_into(),
-            _ => return Err(ConstEvalErrorKind::CompilerBug.into()),
+            _ => return Err(ConstEvalErrorKind::CompilerBug),
         };
         let other = other.map_err(|_| ConstEvalErrorKind::ArithmeticOverflow)?;
         let ret = match self {
@@ -413,10 +413,10 @@ impl<'ir> Shr<Value<'ir>> for Value<'ir> {
             I64(a) => a.checked_shr(other).map(I64),
             I128(a) => a.checked_shr(other).map(I128),
             ISize(a) => a.checked_shr(other).map(ISize),
-            _ => return Err(ConstEvalErrorKind::Unsupported.into()),
+            _ => return Err(ConstEvalErrorKind::Unsupported),
         };
 
-        ret.ok_or_else(|| ConstEvalErrorKind::ArithmeticOverflow.into())
+        ret.ok_or(ConstEvalErrorKind::ArithmeticOverflow)
     }
 }
 
@@ -438,7 +438,7 @@ impl<'ir> BitOr for Value<'ir> {
             (I128(a), I128(b)) => Ok(I128(a | b)),
             (USize(a), USize(b)) => Ok(USize(a | b)),
             (ISize(a), ISize(b)) => Ok(ISize(a | b)),
-            _ => Err(ConstEvalErrorKind::Unsupported.into()),
+            _ => Err(ConstEvalErrorKind::Unsupported),
         }
     }
 }
@@ -461,7 +461,7 @@ impl<'ir> BitXor for Value<'ir> {
             (I128(a), I128(b)) => Ok(I128(a ^ b)),
             (USize(a), USize(b)) => Ok(USize(a ^ b)),
             (ISize(a), ISize(b)) => Ok(ISize(a ^ b)),
-            _ => Err(ConstEvalErrorKind::Unsupported.into()),
+            _ => Err(ConstEvalErrorKind::Unsupported),
         }
     }
 }
@@ -484,7 +484,7 @@ impl<'ir> BitAnd for Value<'ir> {
             (I128(a), I128(b)) => Ok(I128(a & b)),
             (USize(a), USize(b)) => Ok(USize(a & b)),
             (ISize(a), ISize(b)) => Ok(ISize(a & b)),
-            _ => Err(ConstEvalErrorKind::Unsupported.into()),
+            _ => Err(ConstEvalErrorKind::Unsupported),
         }
     }
 }
@@ -510,7 +510,7 @@ impl<'ir> Div for Value<'ir> {
             _ => None,
         };
 
-        result.ok_or_else(|| ConstEvalErrorKind::DivisionByZero.into())
+        result.ok_or(ConstEvalErrorKind::DivisionByZero)
     }
 }
 
@@ -535,7 +535,7 @@ impl<'ir> Rem for Value<'ir> {
             _ => None,
         };
 
-        result.ok_or_else(|| ConstEvalErrorKind::DivisionByZero.into())
+        result.ok_or(ConstEvalErrorKind::DivisionByZero)
     }
 }
 
@@ -564,7 +564,7 @@ impl<'ir> ConstEvalCtx<'ir> {
     pub fn step(&self) -> Result<(), ConstEvalErrorKind> {
         let mut inner = self.inner.borrow_mut();
         if inner.steps_remaining == 0 {
-            return Err(ConstEvalErrorKind::TooManyIterations.into());
+            return Err(ConstEvalErrorKind::TooManyIterations);
         }
         inner.steps_remaining -= 1;
         Ok(())
@@ -893,7 +893,7 @@ impl<'ir> ConstEvaluator<'ir> {
     fn const_eval_defered(&mut self, expr: ExprP<'ir>) -> Result<Value<'ir>, AluminaError> {
         // Comment this line to debug expressions not being evaluated
         // successfully
-        return self.const_eval_defered_inner(expr);
+        self.const_eval_defered_inner(expr)
     }
 
     /// Variant of const-eval that leaves LValues in place
@@ -1276,7 +1276,7 @@ fn check_lvalue_leak(value: &Value<'_>) -> Result<(), ConstEvalErrorKind> {
 fn check_lvalue_leak_lvalue(value: &LValue<'_>) -> Result<(), ConstEvalErrorKind> {
     match value {
         LValue::Const(_) => Ok(()),
-        LValue::Variable(_) => Err(ConstEvalErrorKind::LValueLeak.into()),
+        LValue::Variable(_) => Err(ConstEvalErrorKind::LValueLeak),
         LValue::Field(inner, _) | LValue::Index(inner, _) | LValue::TupleIndex(inner, _) => {
             check_lvalue_leak_lvalue(inner)
         }
