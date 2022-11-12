@@ -145,9 +145,9 @@ You can do it with Podman/Docker:
 
 ```bash
 # With Podman
-alias alumina-boot='podman run -v $(pwd):/workspace ghcr.io/tibordp/alumina-boot:latest'
+alias alumina-boot='podman run -v $(pwd):/workspace ghcr.io/alumina-lang/alumina-boot:latest'
 # With Docker
-alias alumina-boot='docker run -u $(id -u ${USER}):$(id -g ${USER}) -v $(pwd):/workspace ghcr.io/tibordp/alumina-boot:latest'
+alias alumina-boot='docker run -u $(id -u ${USER}):$(id -g ${USER}) -v $(pwd):/workspace ghcr.io/alumina-lang/alumina-boot:latest'
 
 alumina-boot hello_world=./examples/hello_world.alu -o hello.c
 cc hello.c -o hello
