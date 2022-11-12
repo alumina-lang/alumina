@@ -76,12 +76,11 @@ mod internal {
     /// to the `main` function, but I kind of like the C-style arguments to main, so for now this
     /// is the approach.
     macro allocate_args($argc) {
-        use intrinsics::{codegen_func, size_of};
         let argc = $argc as usize;
 
         if argc > STACK_ARGS_MAX {
             // Cannot use __builtin_alloca_with_align as it may not be valid until the end of the function
-            slice::from_raw(codegen_func::<&mut void>("__builtin_alloca", size_of::<&[u8]>() * argc) as &mut &[u8], argc)
+            mem::stack_alloc::<&[u8]>(argc)
         } else {
             mem::slice::alloc::<&[u8]>(argc)
         }
