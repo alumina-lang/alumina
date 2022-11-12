@@ -84,8 +84,6 @@ macro write!($fmt, $s, $args...) {
   - Allocating collections and not freeing them - this would be pretty great to have if I can figure out a way to do it without false positives and in a generic enough fashion
     - OTOH, this is a bit of a slippery slope. Do I need to invent whole ownership system for this? If so, it's not happening, Alumina is not C++ or Rust even though it doesn't try very hard to not look like them.
 - Add more specific spans to compile errors. It's pretty good right now, but could be better.
-- Spans in IR expressions. Needed to generate debug info eventually, but also for pin-pointing const-eval errors.
-- proper backtraces for compiler warnings (currently just the span itself is shown, not it's mono stack). Might be a good to have an explicit stack in `mono` anyway and get rid of this nasty `with_no_span` hack that populates the error backtrace when unwinding.
 - do not panic on cyclic/recursive protocol bounds (figure out which ones are appropriate), but rather give a meaningful error message
 
 ## Compiler architecture
