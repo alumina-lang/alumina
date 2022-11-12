@@ -9,13 +9,11 @@ use thiserror::Error;
 use tree_sitter::Node;
 
 macro_rules! ice {
-    ($why:literal) => {{
-        use crate::common::CodeErrorBuilder;
-        return Err(CodeErrorKind::InternalError(
+    ($diag:expr, $why:literal) => {{
+        return Err($diag.err(CodeErrorKind::InternalError(
             $why.to_string(),
             backtrace::Backtrace::new().into(),
-        ))
-        .with_no_span();
+        )));
     }};
 }
 
@@ -181,7 +179,7 @@ pub enum CodeErrorKind {
     #[error("constant string expected")]
     ConstantStringExpected,
     #[error("this expression is not evaluable at compile time ({})", .0)]
-    CannotConstEvaluate(ConstEvalError),
+    CannotConstEvaluate(ConstEvalErrorKind),
     #[error("values of enum variants can only be integers")]
     InvalidValueForEnumVariant,
     #[error("{}", .0)]
@@ -339,6 +337,8 @@ pub enum CodeErrorKind {
 pub enum Marker {
     Span(Span),
     Monomorphization,
+    ConstEval,
+    Root,
 }
 
 #[derive(Debug, Error, Clone, Hash, PartialEq, Eq)]
@@ -346,7 +346,6 @@ pub enum Marker {
 pub struct CodeError {
     pub kind: CodeErrorKind,
     pub backtrace: Vec<Marker>,
-    //pub code_backtrace: Backtrace,
 }
 
 impl CodeError {
@@ -397,42 +396,10 @@ where
     }
 }
 
-pub trait CodeErrorBacktrace<T> {
-    fn append_span(self, span: Option<Span>) -> Self;
-    fn append_mono_marker(self) -> Self;
-}
-
-impl<T> CodeErrorBacktrace<T> for Result<T, AluminaError> {
-    fn append_span(self, span: Option<Span>) -> Self {
-        self.map_err(|mut e| match &mut e {
-            AluminaError::CodeErrors(errors) => {
-                for error in errors {
-                    error
-                        .backtrace
-                        .extend(span.iter().map(|s| Marker::Span(*s)));
-                }
-                e
-            }
-            _ => e,
-        })
-    }
-
-    fn append_mono_marker(self) -> Self {
-        self.map_err(|mut e| match &mut e {
-            AluminaError::CodeErrors(errors) => {
-                for error in errors {
-                    error.backtrace.push(Marker::Monomorphization);
-                }
-                e
-            }
-            _ => e,
-        })
-    }
-}
-
 pub trait CodeErrorBuilder<T> {
     fn with_no_span(self) -> Result<T, AluminaError>;
     fn with_span(self, span: Option<Span>) -> Result<T, AluminaError>;
+    fn with_backtrace(self, stack: &DiagnosticsStack) -> Result<T, AluminaError>;
 }
 
 impl<T, E> CodeErrorBuilder<T> for Result<T, E>
@@ -455,6 +422,10 @@ where
                 backtrace: span.iter().map(|s| Marker::Span(*s)).collect(),
             }])
         })
+    }
+
+    fn with_backtrace(self, stack: &DiagnosticsStack) -> Result<T, AluminaError> {
+        self.map_err(|e| stack.err(e.into()))
     }
 }
 
@@ -514,7 +485,8 @@ pub(crate) use impl_allocatable;
 
 use crate::ast::lang::LangItemKind;
 use crate::ast::Span;
-use crate::ir::const_eval::ConstEvalError;
+use crate::diagnostics::DiagnosticsStack;
+use crate::ir::const_eval::ConstEvalErrorKind;
 use crate::name_resolution::scope::Scope;
 
 pub trait Incrementable<T> {

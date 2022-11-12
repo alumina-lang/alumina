@@ -150,7 +150,7 @@ fn generate_visitor(language_info: LanguageInfo) -> String {
 
     let mut node_kind_map = Vec::new();
 
-    let max_id = id_map.iter().map(|(id, _)| *id).max().unwrap();
+    let max_id = id_map.keys().copied().max().unwrap();
     for i in 0..=max_id {
         if let Some(enum_member) = id_map.get(&i) {
             node_kind_map.push(quote! {

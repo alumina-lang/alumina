@@ -86,6 +86,7 @@ impl<'ast> AstItemMaker<'ast> {
                             .transpose()?,
                         // Unlike defaults, bounds can refer to self and this is in fact quite central
                         // to how Alumina protocols work.
+                        span: Some(Span::from_node(scope.file_id(), node)),
                         bounds: TypeVisitor::new(
                             self.global_ctx.clone(),
                             self.ast,
@@ -218,7 +219,6 @@ impl<'ast> AstItemMaker<'ast> {
         let (associated_fns, mixins) = self.resolve_associated_items(impl_scopes)?;
 
         let span = Span::from_node(code.file_id(), node);
-
         let result = Item::StructLike(StructLike {
             name,
             placeholders,

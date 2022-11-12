@@ -1,7 +1,7 @@
 use crate::ast::{Attribute, BinOp, BuiltinType, Span, UnOp};
 use crate::codegen::types::TypeWriter;
 use crate::codegen::{w, CName, CodegenCtx};
-use crate::common::AluminaError;
+use crate::common::{AluminaError, CodeErrorBuilder};
 use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::const_eval::Value;
 use crate::ir::layout::Layouter;
@@ -296,8 +296,11 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         self.type_writer.add_type(expr.ty)?;
 
         if let Some(span) = expr.span {
-            if self.last_span.map(|s| (s.file, s.line)) != Some((span.file, span.line)) {
-                if let Some(filename) = self.ctx.global_ctx.diag().get_file_path(span.file) {
+            let prev_line = self.last_span.map(|s| (s.file, s.line + 1));
+            if prev_line != Some((span.file, span.line + 1)) {
+                if prev_line == Some((span.file, span.line)) {
+                    w!(self.fn_bodies, "\n");
+                } else if let Some(filename) = self.ctx.global_ctx.diag().get_file_path(span.file) {
                     w!(
                         self.fn_bodies,
                         "\n#line {} {:?}\n",
@@ -503,7 +506,9 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                     );
                 }
                 IntrinsicValueKind::Dangling(inner) => {
-                    let layout = Layouter::new(self.ctx.global_ctx.clone()).layout_of(inner)?;
+                    let layout = Layouter::new(self.ctx.global_ctx.clone())
+                        .layout_of(inner)
+                        .with_no_span()?;
 
                     w!(
                         self.fn_bodies,
@@ -737,6 +742,8 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             for def in body.local_defs.iter() {
                 self.write_local_def(def)?;
             }
+
+            self.last_span = None;
             for stmt in body.statements.iter() {
                 self.write_stmt(stmt)?;
             }

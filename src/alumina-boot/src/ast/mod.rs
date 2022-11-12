@@ -510,6 +510,7 @@ pub struct ProtocolBounds<'ast> {
 pub struct Placeholder<'ast> {
     pub id: AstId,
     pub bounds: ProtocolBounds<'ast>,
+    pub span: Option<Span>,
     pub default: Option<TyP<'ast>>,
 }
 
@@ -820,7 +821,7 @@ impl Span {
         }
     }
 
-    pub fn contains(&self, other: Span) -> bool {
+    pub fn contains(&self, other: &Span) -> bool {
         self.start <= other.start && self.end >= other.end && self.file == other.file
     }
 

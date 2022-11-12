@@ -643,6 +643,43 @@ fn alloc_zeroed<T>() -> &mut T {
     }
 }
 
+/// Allocates an array of specified size on the stack.
+///
+/// The values are not initialized. The array is allocated on the stack, so it will be
+/// deallocated when the function returns. 
+///
+/// Care must be taken to ensure that the array is not accessed after the function returns.
+/// Additionally, there is no protection against stack overflow, so allocated arrays should 
+/// not be too large.
+///
+/// ## Example
+/// ```
+/// use std::mem::stack_alloc;
+///
+/// let hw = "Hello, World!";
+/// let s = stack_alloc::<u8>(hw.len());
+///
+/// hw.copy_to(&s[0]);
+/// assert_eq!(hw, s);
+/// ```
+///
+/// ```nasaldemons
+/// use std::mem::stack_alloc;
+///
+/// stack_alloc::<i32>(10000000); // stack overflow, probably
+/// ```
+#[inline(ir)]
+fn stack_alloc<T>(len: usize) -> &mut [T] {
+    slice::from_raw(when T: builtins::ZeroSized {
+        dangling::<&mut T>()
+    } else {
+        intrinsics::codegen_func::<&mut void>(
+            "__builtin_alloca",
+            size_of::<T>() * len
+        ) as &mut T
+    }, len)
+}
+
 /// Frees a heap-allocated object
 ///
 /// The pointer must be allocated with the default allocator (`malloc`).
@@ -981,5 +1018,14 @@ mod tests {
             let a = [1,2,3,4,5].as_slice();
             a[0..=5];
         }
+    }
+
+    #[test]
+    fn test_stack_alloc() {
+        let a: &mut [i32] = stack_alloc(10);
+
+        (0..10).fill_slice(a);
+
+        assert_eq!(a, &[0,1,2,3,4,5,6,7,8,9]);
     }
 }

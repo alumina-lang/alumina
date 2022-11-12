@@ -1,6 +1,6 @@
 use crate::ast::{Attribute, BuiltinType};
 use crate::codegen::{w, CName, CodegenCtx};
-use crate::common::{AluminaError, HashSet};
+use crate::common::{AluminaError, CodeErrorBuilder, HashSet};
 use crate::ir::{Closure, IRItem, Ty, TyP};
 
 use std::cell::RefCell;
@@ -253,12 +253,16 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                         }
                     }
 
-                    let (agg_layout, field_layout) = self.ctx.layouter.field_layout_of_aggregate(
-                        alignment,
-                        s.is_union,
-                        is_packed,
-                        s.fields.iter().map(|f| (f, f.ty)),
-                    )?;
+                    let (agg_layout, field_layout) = self
+                        .ctx
+                        .layouter
+                        .field_layout_of_aggregate(
+                            alignment,
+                            s.is_union,
+                            is_packed,
+                            s.fields.iter().map(|f| (f, f.ty)),
+                        )
+                        .with_no_span()?;
 
                     if agg_layout.align > 1 {
                         w!(
@@ -318,16 +322,20 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                 }
 
                 let mut attributes = " ".to_string();
-                let (agg_layout, field_layout) = self.ctx.layouter.field_layout_of_aggregate(
-                    None,
-                    false,
-                    false,
-                    items
-                        .iter()
-                        .copied()
-                        .enumerate()
-                        .map(|(idx, ty)| ((idx, ty), ty)),
-                )?;
+                let (agg_layout, field_layout) = self
+                    .ctx
+                    .layouter
+                    .field_layout_of_aggregate(
+                        None,
+                        false,
+                        false,
+                        items
+                            .iter()
+                            .copied()
+                            .enumerate()
+                            .map(|(idx, ty)| ((idx, ty), ty)),
+                    )
+                    .with_no_span()?;
 
                 if agg_layout.align > 1 {
                     w!(
