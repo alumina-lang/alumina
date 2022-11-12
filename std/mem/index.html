@@ -68,6 +68,9 @@
 <a href="/std/mem/#item.alloc_zeroed">alloc_zeroed</a>
 </li>
 <li>
+<a href="/std/mem/#item.stack_alloc">stack_alloc</a>
+</li>
+<li>
 <a href="/std/mem/#item.free">free</a>
 </li>
 <li>
@@ -242,11 +245,50 @@ free(x);
 </div>
 </li>
 <li>
+<div class="signature" id="item.stack_alloc">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">stack_alloc</span>&lt;T&gt;(len: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> &amp;mut [T]</h4>
+<div class="source-link">
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L671-L681"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Allocates an array of specified size on the stack.
+</p><p>
+The values are not initialized. The array is allocated on the stack, so it will be
+deallocated when the function returns. 
+</p><p>
+Care must be taken to ensure that the array is not accessed after the function returns.
+Additionally, there is no protection against stack overflow, so allocated arrays should 
+not be too large.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::mem::stack_alloc;
+
+let hw = "Hello, World!";
+let s = stack_alloc::&lt;u8&gt;(hw.len());
+
+hw.copy_to(&amp;s[0]);
+assert_eq!(hw, s);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3amem%3a%3astack%5falloc%3b%0a%20%20%20%20%0a%20%20%20%20let%20hw%20%3d%20%22Hello%2c%20World%21%22%3b%0a%20%20%20%20let%20s%20%3d%20stack%5falloc%3a%3a%3cu8%3e%28hw%2elen%28%29%29%3b%0a%20%20%20%20%0a%20%20%20%20hw%2ecopy%5fto%28%26s%5b0%5d%29%3b%0a%20%20%20%20assert%5feq%21%28hw%2c%20s%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+<pre class="with-playground-link panics"><code class="language-alumina">use std::mem::stack_alloc;
+
+stack_alloc::&lt;i32&gt;(10000000); // stack overflow, probably
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3amem%3a%3astack%5falloc%3b%0a%20%20%20%20%0a%20%20%20%20stack%5falloc%3a%3a%3ci32%3e%2810000000%29%3b%20%2f%2f%20stack%20overflow%2c%20probably%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
 <div class="signature" id="item.free">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">free</span>&lt;T&gt;(a: &amp;mut T)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L666-L670"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L703-L707"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -281,7 +323,7 @@ impl Box&lt;T&gt; {
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">size_of</span>&lt;T&gt;() -> <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L683-L686"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L720-L723"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -307,7 +349,7 @@ assert_eq!(size_of::&lt;u64&gt;(), 8);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">align_of</span>&lt;T&gt;() -> <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L700-L703"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L737-L740"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -334,7 +376,7 @@ assert_eq!(align_of::&lt;u64&gt;(), 8);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">swap</span>&lt;T&gt;(a: &amp;mut T, b: &amp;mut T)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L719-L723"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L756-L760"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -363,7 +405,7 @@ assert_eq!(b, 1);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">replace</span>&lt;T&gt;(a: &amp;mut T, b: T) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L738-L741"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L775-L778"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -391,7 +433,7 @@ assert_eq!(a, 2);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">zeroed</span>&lt;T&gt;() -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L756-L766"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L793-L803"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -419,7 +461,7 @@ assert_eq!(a.b, 0);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">uninitialized</span>&lt;T&gt;() -> T</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L796-L799"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L833-L836"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -461,7 +503,7 @@ if val &gt; 0 {  // UB!
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">copy_nonoverlapping</span>&lt;T&gt;(src: &amp;T, dst: &amp;mut T, count: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L804-L808"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L841-L845"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -478,7 +520,7 @@ The memory ranges must not overlap, use <a class="path-link" href="/std/mem/#ite
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">copy</span>&lt;T&gt;(src: &amp;T, dst: &amp;mut T, count: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>)</h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L813-L817"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L850-L854"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -497,7 +539,7 @@ The ranges may overlap.
 Ptr: <a href="/std/builtins/Pointer.html"><span class="identifier-type">Pointer</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L849-L852"/>source</a>
+<a href="https://github.com/tibordp/alumina/blob/master/sysroot/std/mem.alu#L886-L889"/>source</a>
 </div>
 </div>
 <div class="item-doc">
