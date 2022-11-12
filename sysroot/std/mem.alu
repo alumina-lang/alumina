@@ -185,6 +185,33 @@ impl slice {
         from_raw(ptr, len)
     }
 
+    /// Allocates an array of specified size on the heap.
+    ///
+    /// The values are not initialized.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::mem::slice;
+    ///
+    /// let hw = "Hello, World!";
+    /// let s = slice::alloc::<u8>(hw.len());
+    /// defer s.free();
+    ///
+    /// hw.copy_to(&s[0]);
+    /// assert_eq!(hw, s);
+    /// ```
+    #[inline(ir)]
+    fn stack_alloc<T>(len: usize) -> &mut [T] {
+        from_raw(when T: builtins::ZeroSized {
+            dangling::<&mut T>()
+        } else {
+            intrinsics::codegen_func::<&mut void>(
+                "__builtin_alloca",
+                size_of::<T>() * len
+            ) as &mut T
+        }, len)
+    }
+
     /// Resizes a heap-allocated array.
     fn realloc<T>(slice: &mut [T], len: usize) -> &mut [T] {
         let ptr = when T: builtins::ZeroSized {

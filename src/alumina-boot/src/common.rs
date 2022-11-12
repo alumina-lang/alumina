@@ -399,6 +399,7 @@ where
 pub trait CodeErrorBuilder<T> {
     fn with_no_span(self) -> Result<T, AluminaError>;
     fn with_span(self, span: Option<Span>) -> Result<T, AluminaError>;
+    fn with_backtrace(self, stack: &DiagnosticsStack) -> Result<T, AluminaError>;
 }
 
 impl<T, E> CodeErrorBuilder<T> for Result<T, E>
@@ -421,6 +422,10 @@ where
                 backtrace: span.iter().map(|s| Marker::Span(*s)).collect(),
             }])
         })
+    }
+
+    fn with_backtrace(self, stack: &DiagnosticsStack) -> Result<T, AluminaError> {
+        self.map_err(|e| stack.err(e.into()))
     }
 }
 
@@ -480,6 +485,7 @@ pub(crate) use impl_allocatable;
 
 use crate::ast::lang::LangItemKind;
 use crate::ast::Span;
+use crate::diagnostics::DiagnosticsStack;
 use crate::ir::const_eval::ConstEvalErrorKind;
 use crate::name_resolution::scope::Scope;
 

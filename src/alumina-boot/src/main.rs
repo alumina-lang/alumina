@@ -1,4 +1,3 @@
-#![warn(clippy::pedantic)]
 #![allow(clippy::single_match)]
 #![allow(clippy::mutable_key_type)]
 

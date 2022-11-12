@@ -193,17 +193,15 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
 
         for import in containing_scope.inner().star_imports() {
             match self.resolve_scope(scope.clone(), import.clone()) {
-                Ok(ScopeResolution::Scope(scope)) => {
-                    match self.resolve_item_impl(
-                        self_scope.clone(),
-                        scope,
-                        last_segment.clone().into(),
-                        false,
-                    ) {
-                        Ok(item) => return Ok(item),
-                        _ => {}
-                    }
-                }
+                Ok(ScopeResolution::Scope(scope)) => match self.resolve_item_impl(
+                    self_scope.clone(),
+                    scope,
+                    last_segment.clone().into(),
+                    false,
+                ) {
+                    Ok(item) => return Ok(item),
+                    _ => {}
+                },
                 _ => {}
             }
         }

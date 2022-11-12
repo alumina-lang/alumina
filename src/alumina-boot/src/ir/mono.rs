@@ -2,7 +2,8 @@ use crate::ast::lang::LangItemKind;
 use crate::ast::rebind::Rebinder;
 use crate::ast::{Attribute, BuiltinType, Span, TestMetadata};
 use crate::common::{
-    ice, AluminaError, ArenaAllocatable, CodeErrorKind, CycleGuardian, HashMap, HashSet, Marker,
+    ice, AluminaError, ArenaAllocatable, CodeErrorBuilder, CodeErrorKind, CycleGuardian, HashMap,
+    HashSet, Marker,
 };
 use crate::diagnostics::DiagnosticsStack;
 use crate::global_ctx::GlobalCtx;
@@ -39,6 +40,12 @@ macro_rules! mismatch {
             $self.mono_ctx.type_name($expected).unwrap(),
             $self.mono_ctx.type_name($actual).unwrap(),
         ))
+    };
+}
+
+macro_rules! bail {
+    ($self:expr, $kind:expr) => {
+        return Err($self.diag.err($kind))
     };
 }
 
@@ -434,10 +441,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let _guard = self.diag.push_span(en.span);
 
         if !generic_args.is_empty() {
-            return Err(self.diag.err(CodeErrorKind::GenericParamCountMismatch(
-                0,
-                generic_args.len(),
-            )));
+            bail!(
+                self,
+                CodeErrorKind::GenericParamCountMismatch(0, generic_args.len())
+            );
         }
 
         let mut members = Vec::new();
@@ -454,7 +461,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             let expr = child.lower_expr(m.value.unwrap(), type_hint)?;
             match expr.ty {
                 ir::Ty::Builtin(b) if b.is_integer() => {}
-                _ => return Err(self.diag.err(CodeErrorKind::InvalidValueForEnumVariant)),
+                _ => bail!(self, CodeErrorKind::InvalidValueForEnumVariant),
             };
 
             let value = ir::const_eval::ConstEvaluator::new(
@@ -469,7 +476,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
 
             if !taken_values.insert(value) {
-                return Err(self.diag.err(CodeErrorKind::DuplicateEnumMember));
+                bail!(self, CodeErrorKind::DuplicateEnumMember);
             }
 
             members.push(ir::EnumMember {
@@ -538,10 +545,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         generic_args: &[ir::TyP<'ir>],
     ) -> Result<HashMap<ast::AstId, ir::TyP<'ir>>, AluminaError> {
         if generic_args.len() != placeholders.len() {
-            return Err(self.diag.err(CodeErrorKind::GenericParamCountMismatch(
-                placeholders.len(),
-                generic_args.len(),
-            )));
+            bail!(
+                self,
+                CodeErrorKind::GenericParamCountMismatch(placeholders.len(), generic_args.len())
+            );
         }
 
         let replacements = self
@@ -699,7 +706,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         for m in s.associated_fns {
             let fun = m.item.get_function();
             if !fun.placeholders.is_empty() {
-                return Err(self.diag.err(CodeErrorKind::MixinOnlyProtocol));
+                bail!(self, CodeErrorKind::MixinOnlyProtocol);
             }
 
             let mut param_types = Vec::new();
@@ -748,30 +755,39 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                         continue;
                     }
                     if negated {
-                        return Err(self.diag.err(CodeErrorKind::ProtocolMatch(
-                            self.mono_ctx.type_name(typ).unwrap(),
-                            self.mono_ctx.type_name(bound).unwrap(),
-                        )));
+                        bail!(
+                            self,
+                            CodeErrorKind::ProtocolMatch(
+                                self.mono_ctx.type_name(typ).unwrap(),
+                                self.mono_ctx.type_name(bound).unwrap()
+                            )
+                        );
                     }
                 }
                 BoundCheckResult::DoesNotMatch if !negated => {
                     if kind == ast::ProtocolBoundsKind::Any {
                         continue;
                     }
-                    return Err(self.diag.err(CodeErrorKind::ProtocolMismatch(
-                        self.mono_ctx.type_name(typ).unwrap(),
-                        self.mono_ctx.type_name(bound).unwrap(),
-                    )));
+                    bail!(
+                        self,
+                        CodeErrorKind::ProtocolMismatch(
+                            self.mono_ctx.type_name(typ).unwrap(),
+                            self.mono_ctx.type_name(bound).unwrap()
+                        )
+                    );
                 }
                 BoundCheckResult::DoesNotMatchBecause(detail) if !negated => {
                     if kind == ast::ProtocolBoundsKind::Any {
                         continue;
                     }
-                    return Err(self.diag.err(CodeErrorKind::ProtocolMismatchDetail(
-                        self.mono_ctx.type_name(typ).unwrap(),
-                        self.mono_ctx.type_name(bound).unwrap(),
-                        detail,
-                    )));
+                    bail!(
+                        self,
+                        CodeErrorKind::ProtocolMismatchDetail(
+                            self.mono_ctx.type_name(typ).unwrap(),
+                            self.mono_ctx.type_name(bound).unwrap(),
+                            detail
+                        )
+                    );
                 }
                 _ => {
                     found = true;
@@ -785,20 +801,21 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         if !found {
             let _guard = self.diag.push_span(bounds[0].0);
 
-            return Err(self.diag.err(CodeErrorKind::ProtocolMismatch(
-                self.mono_ctx.type_name(typ).unwrap(),
-                bounds
-                    .iter()
-                    .map(|(_, bound, negated)| {
-                        if *negated {
+            bail!(
+                self,
+                CodeErrorKind::ProtocolMismatch(
+                    self.mono_ctx.type_name(typ).unwrap(),
+                    bounds
+                        .iter()
+                        .map(|(_, bound, negated)| if *negated {
                             format!("!{}", self.mono_ctx.type_name(bound).unwrap())
                         } else {
                             self.mono_ctx.type_name(bound).unwrap()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" | "),
-            )));
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" | ")
+                )
+            );
         }
 
         Ok(())
@@ -835,7 +852,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let protocol_item = match bound {
             ir::Ty::Item(protocol) => match protocol.get() {
                 Ok(ir::IRItem::Protocol(_)) => protocol,
-                Err(_) => return Err(self.diag.err(CodeErrorKind::CyclicProtocolBound)),
+                Err(_) => bail!(self, CodeErrorKind::CyclicProtocolBound),
                 _ => {
                     if bound == ty {
                         return Ok(BoundCheckResult::Matches);
@@ -956,14 +973,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let actual_args: Vec<_>;
                 let (args, ret) = match ty {
                     ir::Ty::FunctionPointer(args, ret) => (*args, *ret),
-                    ir::Ty::Item(item) => match item.get().map_err(|e| self.diag.err(e))? {
+                    ir::Ty::Item(item) => match item.get().with_backtrace(&self.diag)? {
                         ir::IRItem::Closure(fun_item) => {
                             let fun = fun_item
                                 .function
                                 .get()
                                 .unwrap()
                                 .get_function()
-                                .map_err(|e| self.diag.err(e))?;
+                                .with_backtrace(&self.diag)?;
                             actual_args = fun.args.iter().skip(1).map(|arg| arg.ty).collect();
                             (&actual_args[..], fun.return_type)
                         }
@@ -1006,7 +1023,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             Some(LangItemKind::ProtoNamedFunction) => match ty {
                 ir::Ty::Item(item)
                     if matches!(
-                        item.get().map_err(|e| self.diag.err(e))?,
+                        item.get().with_backtrace(&self.diag)?,
                         ir::IRItem::Function(_)
                     ) =>
                 {
@@ -1035,12 +1052,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .mono_ctx
                     .layouter
                     .layout_of(ty)
-                    .map_err(|e| self.diag.err(e))?;
+                    .with_backtrace(&self.diag)?;
                 let arg_layout = self
                     .mono_ctx
                     .layouter
                     .layout_of(proto_generic_args[0])
-                    .map_err(|e| self.diag.err(e))?;
+                    .with_backtrace(&self.diag)?;
 
                 if ty_layout.is_compatible_with(&arg_layout) {
                     return Ok(BoundCheckResult::Matches);
@@ -1070,7 +1087,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
         }
 
-        let protocol = protocol_item.get_protocol().map_err(|e| self.diag.err(e))?;
+        let protocol = protocol_item.get_protocol().with_backtrace(&self.diag)?;
         let associated_fns = self.get_associated_fns(ty)?;
 
         for proto_fun in protocol.methods {
@@ -1124,7 +1141,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 generic_args.alloc_on(self.mono_ctx.ir),
                 true,
             ) {
-                Ok(mono) => mono.get_function().map_err(|e| self.diag.err(e))?,
+                Ok(mono) => mono.get_function().with_backtrace(&self.diag)?,
                 Err(AluminaError::CodeErrors(code))
                     if code.iter().all(|c| {
                         matches!(
@@ -1313,7 +1330,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         // We need the item to be assigned before we monomorphize the body, as the
         // function can be recursive and we need to be able to get the signature for
         // typechecking purposes.
-
         if signature_only {
             return Ok(());
         }
@@ -1330,7 +1346,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(())
     }
 
-    // Mixin expansion shouldn't really happen here, as it onyl touches the AST and does not
+    // Mixin expansion shouldn't really happen here, as it only touches the AST and does not
     // create any IR. However, it happens here as all the AST items have surely been populated
     // by now. In the future this should probably be a separate pass.
     pub fn expand_mixin(&mut self, mixin: &ast::Mixin<'ast>) -> Result<(), AluminaError> {
@@ -1347,21 +1363,23 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             {
                 (item, args.to_vec())
             }
-            _ => {
-                return Err(self
-                    .diag
-                    .err(CodeErrorKind::NotAProtocol(format!("{:?}", mixin.protocol))))
-            }
+            _ => bail!(
+                self,
+                CodeErrorKind::NotAProtocol(format!("{:?}", mixin.protocol))
+            ),
         };
 
         let protocol = protocol.get_protocol();
 
         // TODO: Default generic args
         if protocol.placeholders.len() != generic_args.len() {
-            return Err(self.diag.err(CodeErrorKind::GenericParamCountMismatch(
-                protocol.placeholders.len(),
-                generic_args.len(),
-            )));
+            bail!(
+                self,
+                CodeErrorKind::GenericParamCountMismatch(
+                    protocol.placeholders.len(),
+                    generic_args.len()
+                )
+            );
         }
 
         let mut rebinder = Rebinder::new(
@@ -1453,10 +1471,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let body = self.try_coerce(return_type, body)?;
         if is_ir_inline {
             if self.defer_context.is_some() {
-                return Err(self.diag.err(CodeErrorKind::IrInlineFlowControl));
+                bail!(self, CodeErrorKind::IrInlineFlowControl);
             }
             if !self.local_defs.is_empty() {
-                return Err(self.diag.err(CodeErrorKind::IrInlineLocalDefs));
+                bail!(self, CodeErrorKind::IrInlineLocalDefs);
             }
         };
 
@@ -1574,9 +1592,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     if entry.get().get().is_err() {
                         match key.0.get() {
                             ast::Item::StaticOrConst(_) => {
-                                return Err(self
-                                    .diag
-                                    .err(CodeErrorKind::RecursiveStaticInitialization))
+                                bail!(self, CodeErrorKind::RecursiveStaticInitialization)
                             }
                             _ => {}
                         }
@@ -1616,7 +1632,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 if !self.tentative && func.attributes.contains(&ast::Attribute::Test) {
                     let fun = item.get_function().unwrap();
                     if !fun.args.is_empty() || fun.return_type != self.types.void() {
-                        return Err(self.diag.err(CodeErrorKind::InvalidTestCaseSignature));
+                        bail!(self, CodeErrorKind::InvalidTestCaseSignature);
                     }
 
                     let metadata = self.mono_ctx.ast.test_metadata(key.0).unwrap();
@@ -1731,7 +1747,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .mono_ctx
             .ast
             .lang_item(kind)
-            .map_err(|e| self.diag.err(e))?;
+            .with_backtrace(&self.diag)?;
         let args = self.mono_ctx.ir.arena.alloc_slice_fill_iter(generic_args);
         self.monomorphize_item(item, args)
     }
@@ -1758,9 +1774,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         // ensure a unique monomorphized version for each distinct protocol.
         if let ir::Ty::Item(item) = typ {
             if let Ok(ir::IRItem::Protocol(_)) = item.get() {
-                return Err(self.diag.err(CodeErrorKind::ProtocolsAreSpecialMkay(
-                    self.mono_ctx.type_name(typ).unwrap(),
-                )));
+                bail!(
+                    self,
+                    CodeErrorKind::ProtocolsAreSpecialMkay(self.mono_ctx.type_name(typ).unwrap())
+                );
             }
         }
 
@@ -1776,7 +1793,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         macro_rules! arg_count {
             ($count:expr) => {
                 if args.len() != $count {
-                    return Err(self.diag.err(CodeErrorKind::InvalidTypeOperator));
+                    bail!(self, CodeErrorKind::InvalidTypeOperator);
                 }
             };
         }
@@ -1813,7 +1830,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                         }
                     }
                 }
-                return Err(self.diag.err(CodeErrorKind::InvalidTypeOperator));
+                bail!(self, CodeErrorKind::InvalidTypeOperator);
             }
             Some(LangItemKind::TypeopGenericArgsOf) => {
                 arg_count!(1);
@@ -1828,7 +1845,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     }
                     _ => {}
                 }
-                return Err(self.diag.err(CodeErrorKind::InvalidTypeOperator));
+                bail!(self, CodeErrorKind::InvalidTypeOperator);
             }
             Some(LangItemKind::TypeopReturnTypeOf) => {
                 arg_count!(1);
@@ -1836,7 +1853,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     return Ok(Some(*ret));
                 }
                 if let ir::Ty::Item(f) = args[0] {
-                    match f.get().map_err(|e| self.diag.err(e))? {
+                    match f.get().with_backtrace(&self.diag)? {
                         ir::IRItem::Function(f) => {
                             return Ok(Some(f.return_type));
                         }
@@ -1846,7 +1863,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                                     .get()
                                     .unwrap()
                                     .get_function()
-                                    .map_err(|e| self.diag.err(e))?
+                                    .with_backtrace(&self.diag)?
                                     .return_type,
                             ));
                         }
@@ -1861,7 +1878,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 }
 
                 if let ir::Ty::Item(f) = args[0] {
-                    match f.get().map_err(|e| self.diag.err(e))? {
+                    match f.get().with_backtrace(&self.diag)? {
                         ir::IRItem::Function(f) => {
                             return Ok(Some(self.types.tuple(f.args.iter().map(|a| a.ty))));
                         }
@@ -1872,7 +1889,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                                         .get()
                                         .unwrap()
                                         .get_function()
-                                        .map_err(|e| self.diag.err(e))?
+                                        .with_backtrace(&self.diag)?
                                         .args
                                         .iter()
                                         .map(|a| a.ty)
@@ -1971,7 +1988,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ast::Ty::Item(item) => match self.mono_ctx.ast.lang_item_kind(item) {
                 Some(LangItemKind::ImplBuiltin(kind)) => self.types.builtin(kind),
                 Some(LangItemKind::ImplArray | LangItemKind::ImplTuple(..)) => {
-                    return Err(self.diag.err(CodeErrorKind::BuiltinTypesAreSpecialMkay));
+                    bail!(self, CodeErrorKind::BuiltinTypesAreSpecialMkay);
                 }
                 _ => {
                     let item = self.monomorphize_item(item, &[])?;
@@ -2027,7 +2044,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     match protocol {
                         ir::Ty::Item(protocol_item)
                             if matches!(
-                                protocol_item.get().map_err(|e| self.diag.err(e))?,
+                                protocol_item.get().with_backtrace(&self.diag)?,
                                 ir::IRItem::Protocol(_)
                             ) =>
                         {
@@ -2036,13 +2053,13 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
                             if let Some(p) = self.mono_ctx.ast.lang_item_kind(ast_item) {
                                 if p.is_builtin_protocol() {
-                                    return Err(self.diag.err(CodeErrorKind::BuiltinProtocolDyn));
+                                    bail!(self, CodeErrorKind::BuiltinProtocolDyn);
                                 }
                             }
 
                             protocol_items.push(*protocol_item)
                         }
-                        _ => return Err(self.diag.err(CodeErrorKind::NonProtocolDyn)),
+                        _ => bail!(self, CodeErrorKind::NonProtocolDyn),
                     };
                 }
 
@@ -2094,7 +2111,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     || self.contains_type(ret, needle)
             }
             ir::Ty::Tuple(tys) => tys.iter().any(|ty| self.contains_type(ty, needle)),
-            ir::Ty::Item(item) => match item.get().map_err(|e| self.diag.err(e)) {
+            ir::Ty::Item(item) => match item.get().with_backtrace(&self.diag) {
                 Ok(ir::IRItem::Protocol(_)) => false,
                 _ => self
                     .mono_ctx
@@ -2121,18 +2138,19 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 _ => unreachable!(),
             };
 
-            let protocol = protocol_item.get_protocol().map_err(|e| self.diag.err(e))?;
+            let protocol = protocol_item.get_protocol().with_backtrace(&self.diag)?;
             for proto_fun in protocol.methods {
-                macro_rules! bail {
+                macro_rules! nope {
                     () => {
-                        return Err(self.diag.err(CodeErrorKind::NonDynnableFunction(
-                            proto_fun.name.to_string(),
-                        )))
+                        bail!(
+                            self,
+                            CodeErrorKind::NonDynnableFunction(proto_fun.name.to_string())
+                        )
                     };
                 }
 
                 if self.contains_type(proto_fun.return_type, dyn_self) {
-                    bail!()
+                    nope!()
                 }
 
                 let args = match proto_fun.arg_types {
@@ -2140,7 +2158,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                         if *typ != dyn_self
                             || rest.iter().any(|ty| self.contains_type(ty, dyn_self))
                         {
-                            bail!()
+                            nope!()
                         }
 
                         std::iter::once(self.types.pointer(self.types.void(), *is_const))
@@ -2148,7 +2166,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                             .collect::<Vec<_>>()
                             .alloc_on(self.mono_ctx.ir)
                     }
-                    _ => bail!(),
+                    _ => nope!(),
                 };
 
                 vtable_methods.push(ir::ProtocolFunction {
@@ -2257,7 +2275,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         item: ir::IRItemP<'ir>,
     ) -> Result<HashMap<&'ast str, &'ir ir::Field<'ir>>, AluminaError> {
         let MonoKey(ast_item, _, _, _) = self.mono_ctx.reverse_lookup(item);
-        let ir_struct = item.get_struct_like().map_err(|e| self.diag.err(e))?;
+        let ir_struct = item.get_struct_like().with_backtrace(&self.diag)?;
         let ast_struct = ast_item.get_struct_like();
 
         let res = ast_struct
@@ -2323,17 +2341,17 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 .mono_ctx
                 .ast
                 .lang_item(LangItemKind::ImplBuiltin(*kind))
-                .map_err(|e| self.diag.err(e))?,
+                .with_backtrace(&self.diag)?,
             ast::Ty::Array(_, _) => self
                 .mono_ctx
                 .ast
                 .lang_item(LangItemKind::ImplArray)
-                .map_err(|e| self.diag.err(e))?,
+                .with_backtrace(&self.diag)?,
             ast::Ty::Tuple(items) => self
                 .mono_ctx
                 .ast
                 .lang_item(LangItemKind::ImplTuple(items.len()))
-                .map_err(|e| self.diag.err(e))?,
+                .with_backtrace(&self.diag)?,
 
             ast::Ty::Item(item) => item,
             ast::Ty::Generic(ast::Ty::Item(item), _) => item,
@@ -2397,13 +2415,15 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         lhs_typ: ir::TyP<'ir>,
         rhs: ir::ExprP<'ir>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let _guard = self.diag.push_span(rhs.span);
+
         if lhs_typ.assignable_from(rhs.ty) {
             return Ok(rhs);
         }
 
         match (lhs_typ, rhs.ty) {
             (ir::Ty::FunctionPointer(args, ret), ir::Ty::Item(item)) => {
-                match item.get().map_err(|e| self.diag.err(e))? {
+                match item.get().with_backtrace(&self.diag)? {
                     ir::IRItem::Function(fun) => {
                         if fun.args.len() != args.len() {
                             return Err(mismatch!(self, lhs_typ, rhs.ty));
@@ -2425,9 +2445,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
                         return Ok(result.alloc_on(self.mono_ctx.ir));
                     }
-                    ir::IRItem::Closure(_) => {
-                        return Err(self.diag.err(CodeErrorKind::ClosuresAreNotFns))
-                    }
+                    ir::IRItem::Closure(_) => bail!(self, CodeErrorKind::ClosuresAreNotFns),
                     _ => {}
                 }
             }
@@ -2496,9 +2514,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     return self.call(
                         func,
                         [data, size_lit],
-                        item.get_function()
-                            .map_err(|e| self.diag.err(e))?
-                            .return_type,
+                        item.get_function().with_backtrace(&self.diag)?.return_type,
                         rhs.span,
                     );
                 }
@@ -2514,9 +2530,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                         return self.call(
                             func,
                             [rhs],
-                            item.get_function()
-                                .map_err(|e| self.diag.err(e))?
-                                .return_type,
+                            item.get_function().with_backtrace(&self.diag)?.return_type,
                             rhs.span,
                         );
                     }
@@ -2571,10 +2585,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         if let Some(args) = tentative_args {
             if fun.args.len() != args.len() + self_count {
-                return Err(self.diag.err(CodeErrorKind::ParamCountMismatch(
-                    fun.args.len() - self_count,
-                    args.len(),
-                )));
+                bail!(
+                    self,
+                    CodeErrorKind::ParamCountMismatch(fun.args.len() - self_count, args.len())
+                );
             }
 
             let mut child = self.make_tentative_child();
@@ -2643,14 +2657,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let lowered = self.lower_type_for_value(typ)?;
                 match lowered {
                     ir::Ty::Item(item) if item.is_struct_like() => return Ok(item),
-                    _ => return Err(self.diag.err(CodeErrorKind::StructLikeExpectedHere)),
+                    _ => bail!(self, CodeErrorKind::StructLikeExpectedHere),
                 }
             }
         };
 
         let r#struct = match item.get() {
             ast::Item::StructLike(s) => s,
-            _ => return Err(self.diag.err(CodeErrorKind::StructLikeExpectedHere)),
+            _ => bail!(self, CodeErrorKind::StructLikeExpectedHere),
         };
 
         if let Some(generic_args) = generic_args {
@@ -2809,8 +2823,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
             // Equality comparison for enums
             (Item(l), Eq | Neq, Item(r))
-                if l == r
-                    && matches!(l.get().map_err(|e| self.diag.err(e))?, ir::IRItem::Enum(_)) =>
+                if l == r && matches!(l.get().with_backtrace(&self.diag)?, ir::IRItem::Enum(_)) =>
             {
                 self.types.builtin(BuiltinType::Bool)
             }
@@ -2849,13 +2862,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 lhs.ty
             }
 
-            _ => {
-                return Err(self.diag.err(CodeErrorKind::InvalidBinOp(
+            _ => bail!(
+                self,
+                CodeErrorKind::InvalidBinOp(
                     op,
                     self.mono_ctx.type_name(lhs.ty).unwrap(),
-                    self.mono_ctx.type_name(rhs.ty).unwrap(),
-                )))
-            }
+                    self.mono_ctx.type_name(rhs.ty).unwrap()
+                )
+            ),
         };
 
         Ok(result_typ)
@@ -2870,7 +2884,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let expr = self.lower_expr(expr, None)?;
 
                 let must_use = match expr.ty {
-                    ir::Ty::Item(item) => match item.get().map_err(|e| self.diag.err(e))? {
+                    ir::Ty::Item(item) => match item.get().with_backtrace(&self.diag)? {
                         ir::IRItem::StructLike(s) => {
                             s.attributes.contains(&ast::Attribute::MustUse)
                         }
@@ -2900,7 +2914,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .transpose()?;
 
                 match (type_hint, init) {
-                    (None, None) => return Err(self.diag.err(CodeErrorKind::TypeHintRequired)),
+                    (None, None) => bail!(self, CodeErrorKind::TypeHintRequired),
                     (Some(ty), None) => {
                         self.local_types.insert(id, ty);
                         self.local_defs.push(ir::LocalDef { id, typ: ty });
@@ -3196,7 +3210,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         match typ.canonical_type() {
             ir::Ty::Item(item) => {
-                let closure = item.get_closure().map_err(|e| self.diag.err(e))?;
+                let closure = item.get_closure().with_backtrace(&self.diag)?;
                 let field_ty = closure
                     .data
                     .fields
@@ -3241,7 +3255,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             self.monomorphize_item(item, &[])?
         };
 
-        let item = item_cell.get_static().map_err(|e| self.diag.err(e))?;
+        let item = item_cell.get_static().with_backtrace(&self.diag)?;
         Ok(self.exprs.static_var(item_cell, item.typ, ast_span))
     }
 
@@ -3263,7 +3277,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         } else {
             self.monomorphize_item(item, &[])?
         };
-        let r#const = item_cell.get_const().map_err(|e| self.diag.err(e))?;
+        let r#const = item_cell.get_const().with_backtrace(&self.diag)?;
         Ok(self.exprs.const_var(item_cell, r#const.typ, ast_span))
     }
 
@@ -3285,10 +3299,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             (ast::UnOp::Neg, ir::Ty::Builtin(b))
                 if (b.is_integer() && b.is_signed()) || b.is_float() => {}
             _ => {
-                return Err(self.diag.err(CodeErrorKind::InvalidUnOp(
-                    op,
-                    self.mono_ctx.type_name(inner.ty).unwrap(),
-                )));
+                bail!(
+                    self,
+                    CodeErrorKind::InvalidUnOp(op, self.mono_ctx.type_name(inner.ty).unwrap())
+                );
             }
         };
 
@@ -3313,9 +3327,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         self.call(
             func,
             [lhs, rhs].into_iter(),
-            item.get_function()
-                .map_err(|e| self.diag.err(e))?
-                .return_type,
+            item.get_function().with_backtrace(&self.diag)?.return_type,
             ast_span,
         )
     }
@@ -3403,11 +3415,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
 
         if lhs.value_type != ir::ValueType::LValue {
-            return Err(self.diag.err(CodeErrorKind::CannotAssignToRValue));
+            bail!(self, CodeErrorKind::CannotAssignToRValue);
         }
 
         if lhs.is_const {
-            return Err(self.diag.err(CodeErrorKind::CannotAssignToConst));
+            bail!(self, CodeErrorKind::CannotAssignToConst);
         }
 
         self.typecheck_binary(op, lhs, rhs)?;
@@ -3430,11 +3442,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
 
         if lhs.value_type != ir::ValueType::LValue {
-            return Err(self.diag.err(CodeErrorKind::CannotAssignToRValue));
+            bail!(self, CodeErrorKind::CannotAssignToRValue);
         }
 
         if lhs.is_const {
-            return Err(self.diag.err(CodeErrorKind::CannotAssignToConst));
+            bail!(self, CodeErrorKind::CannotAssignToConst);
         }
 
         let rhs = self.try_coerce(lhs.ty, rhs)?;
@@ -3470,16 +3482,22 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     then = a;
                     els = b;
                 } else {
-                    return Err(self.diag.err(CodeErrorKind::MismatchedBranchTypes(
-                        self.mono_ctx.type_name(then.ty).unwrap(),
-                        self.mono_ctx.type_name(els.ty).unwrap(),
-                    )));
+                    bail!(
+                        self,
+                        CodeErrorKind::MismatchedBranchTypes(
+                            self.mono_ctx.type_name(then.ty).unwrap(),
+                            self.mono_ctx.type_name(els.ty).unwrap()
+                        )
+                    );
                 }
             } else {
-                return Err(self.diag.err(CodeErrorKind::MismatchedBranchTypes(
-                    self.mono_ctx.type_name(then.ty).unwrap(),
-                    self.mono_ctx.type_name(els.ty).unwrap(),
-                )));
+                bail!(
+                    self,
+                    CodeErrorKind::MismatchedBranchTypes(
+                        self.mono_ctx.type_name(then.ty).unwrap(),
+                        self.mono_ctx.type_name(els.ty).unwrap()
+                    )
+                );
             }
         }
 
@@ -3605,9 +3623,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 return self.call(
                     func,
                     [expr].into_iter(),
-                    item.get_function()
-                        .map_err(|e| self.diag.err(e))?
-                        .return_type,
+                    item.get_function().with_backtrace(&self.diag)?.return_type,
                     ast_span,
                 );
             }
@@ -3621,9 +3637,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 return self.call(
                     func,
                     [expr].into_iter(),
-                    item.get_function()
-                        .map_err(|e| self.diag.err(e))?
-                        .return_type,
+                    item.get_function().with_backtrace(&self.diag)?.return_type,
                     ast_span,
                 );
             }
@@ -3638,9 +3652,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let call = self.call(
                     func,
                     [expr].into_iter(),
-                    item.get_function()
-                        .map_err(|e| self.diag.err(e))?
-                        .return_type,
+                    item.get_function().with_backtrace(&self.diag)?.return_type,
                     ast_span,
                 )?;
                 return Ok(self.exprs.cast(call, typ, ast_span));
@@ -3656,10 +3668,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
             // Enums
             (ir::Ty::Item(a), ir::Ty::Builtin(b))
-                if matches!(a.get().map_err(|e| self.diag.err(e))?, ir::IRItem::Enum(_))
+                if matches!(a.get().with_backtrace(&self.diag)?, ir::IRItem::Enum(_))
                     && b.is_numeric() => {}
             (ir::Ty::Builtin(a), ir::Ty::Item(b))
-                if matches!(b.get().map_err(|e| self.diag.err(e))?, ir::IRItem::Enum(_))
+                if matches!(b.get().with_backtrace(&self.diag)?, ir::IRItem::Enum(_))
                     && a.is_numeric() => {}
 
             // Pointer casts
@@ -3678,12 +3690,13 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 ir::Ty::Builtin(BuiltinType::USize),
             ) => {}
 
-            _ => {
-                return Err(self.diag.err(CodeErrorKind::InvalidCast(
+            _ => bail!(
+                self,
+                CodeErrorKind::InvalidCast(
                     self.mono_ctx.type_name(expr.ty).unwrap(),
-                    self.mono_ctx.type_name(typ).unwrap(),
-                )))
-            }
+                    self.mono_ctx.type_name(typ).unwrap()
+                )
+            ),
         }
 
         Ok(self.exprs.cast(expr, typ, ast_span))
@@ -3814,17 +3827,17 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         args: &[ast::ExprP<'ast>],
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         if callee.generic_count != generic_args.len() {
-            return Err(self.diag.err(CodeErrorKind::GenericParamCountMismatch(
-                callee.generic_count,
-                generic_args.len(),
-            )));
+            bail!(
+                self,
+                CodeErrorKind::GenericParamCountMismatch(callee.generic_count, generic_args.len())
+            );
         }
 
         if (callee.arg_count != args.len()) && !(callee.varargs && args.len() >= callee.arg_count) {
-            return Err(self.diag.err(CodeErrorKind::ParamCountMismatch(
-                callee.arg_count,
-                args.len(),
-            )));
+            bail!(
+                self,
+                CodeErrorKind::ParamCountMismatch(callee.arg_count, args.len())
+            );
         }
 
         let generic_args = generic_args
@@ -3921,7 +3934,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             [data, size],
             make_slice
                 .get_function()
-                .map_err(|e| self.diag.err(e))?
+                .with_backtrace(&self.diag)?
                 .return_type,
             span,
         )
@@ -3940,7 +3953,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     {
         match callee.kind {
             ir::ExprKind::Fn(item) => {
-                let func = item.get_function().map_err(|e| self.diag.err(e))?;
+                let func = item.get_function().with_backtrace(&self.diag)?;
                 if func.attributes.contains(&ast::Attribute::InlineDuringMono) {
                     // no silent fallback to a regular function call, since the only thing that can go wrong is that
                     // the callee is not compatible with IR inlining, so this should not lead to surprises
@@ -4008,10 +4021,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         };
 
         if func.arg_types.len() != args.len() + 1 {
-            return Err(self.diag.err(CodeErrorKind::ParamCountMismatch(
-                func.arg_types.len() - 1,
-                args.len(),
-            )));
+            bail!(
+                self,
+                CodeErrorKind::ParamCountMismatch(func.arg_types.len() - 1, args.len())
+            );
         }
 
         // We need to store the dyn object in a temporary as it may have been produced by
@@ -4041,7 +4054,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ],
             index_item
                 .get_function()
-                .map_err(|e| self.diag.err(e))?
+                .with_backtrace(&self.diag)?
                 .return_type,
             ast_span,
         )?;
@@ -4062,7 +4075,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let mut_dyn = self
                     .monomorphize_lang_item(LangItemKind::DynConstCast, [key])?
                     .get_function()
-                    .map_err(|e| self.diag.err(e))?
+                    .with_backtrace(&self.diag)?
                     .return_type;
 
                 return Err(mismatch!(self, mut_dyn, self_arg.ty));
@@ -4074,7 +4087,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             [local],
             data_item
                 .get_function()
-                .map_err(|e| self.diag.err(e))?
+                .with_backtrace(&self.diag)?
                 .return_type,
             ast_span,
         )?))
@@ -4118,7 +4131,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         // Special case for struct fields (they have precedence over methods in .name resolution)
         if let ir::Ty::Item(item) = ir_self_arg.ty.canonical_type() {
-            if let ir::IRItem::StructLike(_) = item.get().map_err(|e| self.diag.err(e))? {
+            if let ir::IRItem::StructLike(_) = item.get().with_backtrace(&self.diag)? {
                 let fields = self.get_struct_field_map(item)?;
                 if fields.contains_key(name) {
                     // This is not a method, but a field (e.g. a function pointer), go back to lower_call
@@ -4167,7 +4180,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let (arg_types, return_type) = match callee.ty {
             ir::Ty::FunctionPointer(arg_types, return_type) => (*arg_types, *return_type),
             ir::Ty::Item(item) => {
-                let fun = item.get_function().map_err(|e| self.diag.err(e))?;
+                let fun = item.get_function().with_backtrace(&self.diag)?;
                 fn_arg_types = fun.args.iter().map(|p| p.ty).collect();
                 (&fn_arg_types[..], fun.return_type)
             }
@@ -4175,14 +4188,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         };
 
         if arg_types.is_empty() {
-            return Err(self.diag.err(CodeErrorKind::NotAMethod));
+            bail!(self, CodeErrorKind::NotAMethod);
         }
 
         if arg_types.len() != args.len() + 1 {
-            return Err(self.diag.err(CodeErrorKind::ParamCountMismatch(
-                arg_types.len() - 1,
-                args.len(),
-            )));
+            bail!(
+                self,
+                CodeErrorKind::ParamCountMismatch(arg_types.len() - 1, args.len())
+            );
         }
 
         let ir_self_arg = self.autoref(ir_self_arg, arg_types[0], self_arg.span)?;
@@ -4323,12 +4336,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let fn_arg_types: Vec<_>;
         let (arg_types, return_type, callee) = match callee.ty {
             ir::Ty::FunctionPointer(arg_types, return_type) => (*arg_types, *return_type, callee),
-            ir::Ty::Item(item) => match item.get().map_err(|e| self.diag.err(e))? {
+            ir::Ty::Item(item) => match item.get().with_backtrace(&self.diag)? {
                 ir::IRItem::Closure(closure) => {
                     self_arg = Some(self.r#ref(callee, callee.span));
 
                     let fun_item = closure.function.get().unwrap();
-                    let fun = fun_item.get_function().map_err(|e| self.diag.err(e))?;
+                    let fun = fun_item.get_function().with_backtrace(&self.diag)?;
                     fn_arg_types = fun.args.iter().skip(1).map(|p| p.ty).collect();
 
                     (
@@ -4346,26 +4359,26 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     (&fn_arg_types[..], fun.return_type, callee)
                 }
                 _ => {
-                    return Err(self.diag.err(CodeErrorKind::FunctionOrStaticExpectedHere));
+                    bail!(self, CodeErrorKind::FunctionOrStaticExpectedHere);
                 }
             },
             _ => {
-                return Err(self.diag.err(CodeErrorKind::FunctionOrStaticExpectedHere));
+                bail!(self, CodeErrorKind::FunctionOrStaticExpectedHere);
             }
         };
 
         if !varargs && (arg_types.len() != args.len()) {
-            return Err(self.diag.err(CodeErrorKind::ParamCountMismatch(
-                arg_types.len(),
-                args.len(),
-            )));
+            bail!(
+                self,
+                CodeErrorKind::ParamCountMismatch(arg_types.len(), args.len())
+            );
         }
 
         if varargs && (arg_types.len() > args.len()) {
-            return Err(self.diag.err(CodeErrorKind::ParamCountMismatch(
-                arg_types.len(),
-                args.len(),
-            )));
+            bail!(
+                self,
+                CodeErrorKind::ParamCountMismatch(arg_types.len(), args.len())
+            );
         }
 
         let mut args = args
@@ -4411,11 +4424,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
             Some(ir::Ty::Item(item))
                 if matches!(
-                    item.get().map_err(|e| self.diag.err(e))?,
+                    item.get().with_backtrace(&self.diag)?,
                     ir::IRItem::Function(_)
                 ) =>
             {
-                let fun = item.get_function().map_err(|e| self.diag.err(e))?;
+                let fun = item.get_function().with_backtrace(&self.diag)?;
                 fn_arg_types = fun.args.iter().map(|p| p.ty).collect();
                 (Some(&fn_arg_types[..]), Some(fun.return_type))
             }
@@ -4425,7 +4438,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let result = match kind {
             ast::FnKind::Normal(item) => {
                 if let ast::Item::Intrinsic(_) = item.get() {
-                    return Err(self.diag.err(CodeErrorKind::IntrinsicsAreSpecialMkay));
+                    bail!(self, CodeErrorKind::IntrinsicsAreSpecialMkay);
                 }
 
                 let item = self.try_resolve_function(
@@ -4500,7 +4513,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
                         closure
                             .get_closure()
-                            .map_err(|e| self.diag.err(e))?
+                            .with_backtrace(&self.diag)?
                             .function
                             .set(item)
                             .unwrap();
@@ -4548,7 +4561,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let result = match tup.ty.canonical_type() {
             ir::Ty::Tuple(types) => {
                 if types.len() <= index {
-                    return Err(self.diag.err(CodeErrorKind::TupleIndexOutOfBounds));
+                    bail!(self, CodeErrorKind::TupleIndexOutOfBounds);
                 }
 
                 let mut tup = tup;
@@ -4594,7 +4607,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
                 self.exprs.field(obj, field.id, field.ty, ast_span)
             }
-            _ => return Err(self.diag.err(CodeErrorKind::StructLikeExpectedHere)),
+            _ => bail!(self, CodeErrorKind::StructLikeExpectedHere),
         };
 
         Ok(result)
@@ -4658,9 +4671,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             indexee = self.call(
                 func,
                 [indexee].into_iter(),
-                item.get_function()
-                    .map_err(|e| self.diag.err(e))?
-                    .return_type,
+                item.get_function().with_backtrace(&self.diag)?.return_type,
                 ast_span,
             )?;
 
@@ -4679,9 +4690,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             self.call(
                 func,
                 [indexee, index].into_iter(),
-                item.get_function()
-                    .map_err(|e| self.diag.err(e))?
-                    .return_type,
+                item.get_function().with_backtrace(&self.diag)?.return_type,
                 ast_span,
             )
         } else {
@@ -4746,9 +4755,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.call(
                     func,
                     [lower, upper].into_iter(),
-                    item.get_function()
-                        .map_err(|e| self.diag.err(e))?
-                        .return_type,
+                    item.get_function().with_backtrace(&self.diag)?.return_type,
                     ast_span,
                 )?
             }
@@ -4761,9 +4768,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.call(
                     func,
                     [lower].into_iter(),
-                    item.get_function()
-                        .map_err(|e| self.diag.err(e))?
-                        .return_type,
+                    item.get_function().with_backtrace(&self.diag)?.return_type,
                     ast_span,
                 )?
             }
@@ -4780,9 +4785,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.call(
                     func,
                     [upper].into_iter(),
-                    item.get_function()
-                        .map_err(|e| self.diag.err(e))?
-                        .return_type,
+                    item.get_function().with_backtrace(&self.diag)?.return_type,
                     ast_span,
                 )?
             }
@@ -4793,9 +4796,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.call(
                     func,
                     [].into_iter(),
-                    item.get_function()
-                        .map_err(|e| self.diag.err(e))?
-                        .return_type,
+                    item.get_function().with_backtrace(&self.diag)?.return_type,
                     ast_span,
                 )?
             }
@@ -4890,7 +4891,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         ast_span: Option<Span>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         if self.return_type.is_none() {
-            return Err(self.diag.err(CodeErrorKind::NotInAFunctionScope));
+            bail!(self, CodeErrorKind::NotInAFunctionScope);
         }
 
         let inner = inner
@@ -4911,7 +4912,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         ast_span: Option<Span>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         if self.return_type.is_none() {
-            return Err(self.diag.err(CodeErrorKind::NotInAFunctionScope));
+            bail!(self, CodeErrorKind::NotInAFunctionScope);
         }
 
         if !self.loop_contexts.is_empty() && !self.tentative {
@@ -4929,7 +4930,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 });
                 self.defer_context = Some(ctx);
             }
-            Some(ctx) if ctx.in_defer => return Err(self.diag.err(CodeErrorKind::DeferInDefer)),
+            Some(ctx) if ctx.in_defer => bail!(self, CodeErrorKind::DeferInDefer),
             Some(ctx) => ctx.in_defer = true,
         };
 
@@ -5001,12 +5002,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             span,
         );
 
-        if !item
-            .get_struct_like()
-            .map_err(|e| self.diag.err(e))?
-            .is_union
-            && !self.tentative
-        {
+        if !item.get_struct_like().with_backtrace(&self.diag)?.is_union && !self.tentative {
             for u in uninitialized {
                 self.diag
                     .warn(CodeErrorKind::UninitializedField(u.to_string()));
@@ -5066,7 +5062,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     ast_span,
                 )
             }
-            _ => return Err(self.diag.err(CodeErrorKind::CycleDetected)),
+            _ => bail!(self, CodeErrorKind::CycleDetected),
         };
 
         Ok(result.alloc_on(self.mono_ctx.ir))
@@ -5213,7 +5209,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .mono_ctx
             .layouter
             .layout_of(ty)
-            .map_err(|e| self.diag.err(e))?
+            .with_backtrace(&self.diag)?
             .align;
 
         Ok(self.exprs.literal(
@@ -5232,7 +5228,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .mono_ctx
             .layouter
             .layout_of(ty)
-            .map_err(|e| self.diag.err(e))?
+            .with_backtrace(&self.diag)?
             .size;
 
         Ok(self.exprs.literal(
@@ -5568,14 +5564,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         typ: ir::TyP<'ir>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let e = match typ {
-            ir::Ty::Item(item) => item.get_enum().map_err(|e| self.diag.err(e))?,
+            ir::Ty::Item(item) => item.get_enum().with_backtrace(&self.diag)?,
             _ => ice!(self.diag, "enum expected"),
         };
 
         let enum_variant_new = self.monomorphize_lang_item(LangItemKind::EnumVariantNew, [typ])?;
-        let enum_variant_new_func = enum_variant_new
-            .get_function()
-            .map_err(|e| self.diag.err(e))?;
+        let enum_variant_new_func = enum_variant_new.get_function().with_backtrace(&self.diag)?;
 
         let mut exprs = Vec::new();
         for member in e.members {

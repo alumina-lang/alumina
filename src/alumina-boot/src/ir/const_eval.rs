@@ -1,6 +1,8 @@
 /// An interpreter for constant expressions. It's quite slow.
 use crate::ast::BinOp;
-use crate::common::{AluminaError, ArenaAllocatable, CodeError, CodeErrorKind, HashMap};
+use crate::common::{
+    AluminaError, ArenaAllocatable, CodeError, CodeErrorBuilder, CodeErrorKind, HashMap,
+};
 use crate::diagnostics::DiagnosticsStack;
 use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::{BuiltinType, ExprKind, ExprP, IRItem, IrCtx, IrId, Statement, Ty, TyP, UnOp};
@@ -87,6 +89,12 @@ pub enum ConstEvalErrorKind {
     Return,
 }
 
+impl From<ConstEvalErrorKind> for CodeErrorKind {
+    fn from(kind: ConstEvalErrorKind) -> Self {
+        CodeErrorKind::CannotConstEvaluate(kind)
+    }
+}
+
 macro_rules! numeric_of_kind {
     ($kind:expr, $val:expr) => {
         match $kind {
@@ -109,17 +117,13 @@ macro_rules! numeric_of_kind {
 
 macro_rules! unsupported {
     ($self:expr) => {
-        return Err($self.diag.err(CodeErrorKind::CannotConstEvaluate(
-            ConstEvalErrorKind::Unsupported,
-        )))
+        return Err(ConstEvalErrorKind::Unsupported).with_backtrace(&$self.diag)
     };
 }
 
 macro_rules! bug {
     ($self:expr) => {
-        return Err($self.diag.err(CodeErrorKind::CannotConstEvaluate(
-            ConstEvalErrorKind::CompilerBug,
-        )))
+        return Err(ConstEvalErrorKind::CompilerBug).with_backtrace(&$self.diag)
     };
 }
 
@@ -629,11 +633,11 @@ impl<'ir> ConstEvaluator<'ir> {
             ir: self.ir,
             ctx: self.ctx.clone(),
             return_slot: None,
-            remaining_depth: self.remaining_depth.checked_sub(1).ok_or_else(|| {
-                self.diag.err(CodeErrorKind::CannotConstEvaluate(
-                    ConstEvalErrorKind::TooDeep,
-                ))
-            })?,
+            remaining_depth: self
+                .remaining_depth
+                .checked_sub(1)
+                .ok_or(ConstEvalErrorKind::TooDeep)
+                .with_backtrace(&self.diag)?,
             remapped_variables,
             diag: self.diag.fork(),
         })
@@ -712,20 +716,18 @@ impl<'ir> ConstEvaluator<'ir> {
                 .find(|(f, _)| *f == field)
                 .map(|(_, v)| *v)
                 .unwrap_or(Value::Uninitialized)),
-            _ => Err(self.diag.err(CodeErrorKind::CannotConstEvaluate(
-                ConstEvalErrorKind::Unsupported,
-            ))),
+            _ => unsupported!(self),
         }
     }
 
     fn index(&mut self, array: Value<'ir>, idx: usize) -> Result<Value<'ir>, AluminaError> {
         match array {
             Value::LValue(lv) => Ok(Value::LValue(LValue::Index(lv.alloc_on(self.ir), idx))),
-            Value::Array(values) => values.get(idx).copied().ok_or_else(|| {
-                self.diag.err(CodeErrorKind::CannotConstEvaluate(
-                    ConstEvalErrorKind::IndexOutOfBounds,
-                ))
-            }),
+            Value::Array(values) => values
+                .get(idx)
+                .copied()
+                .ok_or(ConstEvalErrorKind::IndexOutOfBounds)
+                .with_backtrace(&self.diag),
             _ => unsupported!(self),
         }
     }
@@ -741,8 +743,7 @@ impl<'ir> ConstEvaluator<'ir> {
     pub fn const_eval(&mut self, expr: ExprP<'ir>) -> Result<Value<'ir>, AluminaError> {
         // public facing interface. we clean up things that should not appear in the IR
         let ret = self.const_eval_rvalue(expr)?;
-        check_lvalue_leak(&ret)
-            .map_err(|e| self.diag.err(CodeErrorKind::CannotConstEvaluate(e)))?;
+        check_lvalue_leak(&ret).with_backtrace(&self.diag)?;
         Ok(ret)
     }
 
@@ -900,9 +901,7 @@ impl<'ir> ConstEvaluator<'ir> {
     fn const_eval_defered_inner(&mut self, expr: ExprP<'ir>) -> Result<Value<'ir>, AluminaError> {
         let _guard = self.diag.push_span(expr.span);
 
-        self.ctx
-            .step()
-            .map_err(|e| self.diag.err(CodeErrorKind::CannotConstEvaluate(e)))?;
+        self.ctx.step().with_backtrace(&self.diag)?;
 
         match &expr.kind {
             ExprKind::Void => Ok(Value::Void),
@@ -947,7 +946,7 @@ impl<'ir> ConstEvaluator<'ir> {
                     _ => bug!(self),
                 };
 
-                ret.map_err(|e| self.diag.err(CodeErrorKind::CannotConstEvaluate(e)))
+                ret.with_backtrace(&self.diag)
             }
             ExprKind::Ref(value) => {
                 let value = self.const_eval_defered(value)?;
@@ -999,9 +998,7 @@ impl<'ir> ConstEvaluator<'ir> {
                     self.ir.arena.alloc_slice_fill_iter(values.into_iter()),
                 ))
             }
-            ExprKind::Goto(id) => Err(self.diag.err(CodeErrorKind::CannotConstEvaluate(
-                ConstEvalErrorKind::Jump(*id),
-            ))),
+            ExprKind::Goto(id) => Err(ConstEvalErrorKind::Jump(*id)).with_backtrace(&self.diag),
             ExprKind::Struct(fields) => {
                 // Last assignment wins
                 let mut values = HashMap::default();
@@ -1068,31 +1065,24 @@ impl<'ir> ConstEvaluator<'ir> {
             ExprKind::Fn(item) => Ok(Value::FunctionPointer(item)),
             ExprKind::Return(value) => {
                 self.return_slot = Some(self.const_eval_rvalue(value)?);
-                Err(self.diag.err(CodeErrorKind::CannotConstEvaluate(
-                    ConstEvalErrorKind::Return,
-                )))
+                Err(ConstEvalErrorKind::Return).with_backtrace(&self.diag)
             }
             ExprKind::Call(callee, args) => {
                 let callee = self.const_eval_rvalue(callee)?;
                 let (arg_spec, expr, local_defs) = match callee {
                     Value::FunctionPointer(fun) => {
-                        let func = fun.get_function().map_err(|_| {
-                            self.diag.err(CodeErrorKind::CannotConstEvaluate(
-                                ConstEvalErrorKind::Unsupported,
-                            ))
-                        })?;
+                        let func = fun.get_function().with_backtrace(&self.diag)?;
 
                         let (body, local_defs) = func
                             .body
                             .get()
                             .and_then(|b| b.raw_body.map(|rb| (rb, b.local_defs)))
                             .ok_or_else(|| {
-                                self.diag.err(CodeErrorKind::CannotConstEvaluate(
-                                    ConstEvalErrorKind::UnsupportedFunction(
-                                        func.name.unwrap_or("<unnamed>").to_string(),
-                                    ),
-                                ))
-                            })?;
+                                ConstEvalErrorKind::UnsupportedFunction(
+                                    func.name.unwrap_or("<unnamed>").to_string(),
+                                )
+                            })
+                            .with_backtrace(&self.diag)?;
 
                         (func.args, body, local_defs)
                     }
@@ -1132,9 +1122,9 @@ impl<'ir> ConstEvaluator<'ir> {
             }
 
             ExprKind::Static(_) => unsupported!(self),
-            ExprKind::Unreachable => Err(self.diag.err(CodeErrorKind::CannotConstEvaluate(
-                ConstEvalErrorKind::ToReachTheUnreachableStar,
-            ))),
+            ExprKind::Unreachable => {
+                Err(ConstEvalErrorKind::ToReachTheUnreachableStar).with_backtrace(&self.diag)
+            }
         }
     }
 
@@ -1162,9 +1152,7 @@ impl<'ir> ConstEvaluator<'ir> {
                 Value::Pointer(LValue::Index(b, b_offset)),
             ) if op == BinOp::Minus => {
                 if b != a {
-                    return Err(self.diag.err(CodeErrorKind::CannotConstEvaluate(
-                        ConstEvalErrorKind::IndexOutOfBounds,
-                    )));
+                    return Err(ConstEvalErrorKind::IndexOutOfBounds).with_backtrace(&self.diag);
                 }
 
                 let diff = (a_offset as isize) - (b_offset as isize);
@@ -1177,9 +1165,7 @@ impl<'ir> ConstEvaluator<'ir> {
                     _ => bug!(self),
                 };
                 if new_offset < 0 || new_offset > (buf.len() as isize) {
-                    return Err(self.diag.err(CodeErrorKind::CannotConstEvaluate(
-                        ConstEvalErrorKind::IndexOutOfBounds,
-                    )));
+                    return Err(ConstEvalErrorKind::IndexOutOfBounds).with_backtrace(&self.diag);
                 }
                 return Ok(Value::Str(buf, new_offset as usize));
             }
@@ -1195,9 +1181,7 @@ impl<'ir> ConstEvaluator<'ir> {
                     _ => bug!(self),
                 };
                 if new_offset < 0 || new_offset > (arr.len() as isize) {
-                    return Err(self.diag.err(CodeErrorKind::CannotConstEvaluate(
-                        ConstEvalErrorKind::IndexOutOfBounds,
-                    )));
+                    return Err(ConstEvalErrorKind::IndexOutOfBounds).with_backtrace(&self.diag);
                 }
                 return Ok(Value::Pointer(LValue::Index(inner, new_offset as usize)));
             }
@@ -1211,7 +1195,7 @@ impl<'ir> ConstEvaluator<'ir> {
             _ => unreachable!(),
         };
 
-        ret.map_err(|e| self.diag.err(CodeErrorKind::CannotConstEvaluate(e)))
+        ret.with_backtrace(&self.diag)
     }
 
     fn bin_op(
@@ -1229,23 +1213,19 @@ impl<'ir> ConstEvaluator<'ir> {
             BinOp::Eq => lhs.equal(rhs),
             BinOp::Neq => lhs.equal(rhs).and_then(|v| !v),
             BinOp::Lt => Ok(Value::Bool(matches!(
-                lhs.cmp(rhs)
-                    .map_err(|e| self.diag.err(CodeErrorKind::CannotConstEvaluate(e)))?,
+                lhs.cmp(rhs).with_backtrace(&self.diag)?,
                 Ordering::Less
             ))),
             BinOp::LEq => Ok(Value::Bool(matches!(
-                lhs.cmp(rhs)
-                    .map_err(|e| self.diag.err(CodeErrorKind::CannotConstEvaluate(e)))?,
+                lhs.cmp(rhs).with_backtrace(&self.diag)?,
                 Ordering::Less | Ordering::Equal
             ))),
             BinOp::Gt => Ok(Value::Bool(matches!(
-                lhs.cmp(rhs)
-                    .map_err(|e| self.diag.err(CodeErrorKind::CannotConstEvaluate(e)))?,
+                lhs.cmp(rhs).with_backtrace(&self.diag)?,
                 Ordering::Greater
             ))),
             BinOp::GEq => Ok(Value::Bool(matches!(
-                lhs.cmp(rhs)
-                    .map_err(|e| self.diag.err(CodeErrorKind::CannotConstEvaluate(e)))?,
+                lhs.cmp(rhs).with_backtrace(&self.diag)?,
                 Ordering::Greater | Ordering::Equal
             ))),
             BinOp::LShift => lhs << rhs,
@@ -1256,7 +1236,7 @@ impl<'ir> ConstEvaluator<'ir> {
             BinOp::Plus | BinOp::Minus => return self.plus_minus(lhs, op, rhs),
         };
 
-        ret.map_err(|e| self.diag.err(CodeErrorKind::CannotConstEvaluate(e)))
+        ret.with_backtrace(&self.diag)
     }
 }
 

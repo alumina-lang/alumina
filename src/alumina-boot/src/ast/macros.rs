@@ -494,19 +494,19 @@ impl<'ast> MacroExpander<'ast> {
                 .alloc_on(self.ast))
             }
             BuiltinMacroKind::FormatArgs => {
-                if self.args.is_empty() {
-                    return Err(CodeErrorKind::NotEnoughMacroArguments(1))
-                        .with_span(self.invocation_span);
-                }
-
-                let fmt_string = string_arg!(self, 0);
-
                 #[derive(PartialEq, Eq, Debug)]
                 enum State {
                     Normal,
                     BraceOpen,
                     BraceClose,
                 }
+
+                if self.args.is_empty() {
+                    return Err(CodeErrorKind::NotEnoughMacroArguments(1))
+                        .with_span(self.invocation_span);
+                }
+
+                let fmt_string = string_arg!(self, 0);
 
                 let mut args = Vec::new();
                 let mut string_part = Vec::new();

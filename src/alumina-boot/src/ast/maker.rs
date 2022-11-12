@@ -219,7 +219,6 @@ impl<'ast> AstItemMaker<'ast> {
         let (associated_fns, mixins) = self.resolve_associated_items(impl_scopes)?;
 
         let span = Span::from_node(code.file_id(), node);
-
         let result = Item::StructLike(StructLike {
             name,
             placeholders,

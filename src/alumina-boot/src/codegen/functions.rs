@@ -296,8 +296,11 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         self.type_writer.add_type(expr.ty)?;
 
         if let Some(span) = expr.span {
-            if self.last_span.map(|s| (s.file, s.line)) != Some((span.file, span.line)) {
-                if let Some(filename) = self.ctx.global_ctx.diag().get_file_path(span.file) {
+            let prev_line = self.last_span.map(|s| (s.file, s.line + 1));
+            if prev_line != Some((span.file, span.line + 1)) {
+                if prev_line == Some((span.file, span.line)) {
+                    w!(self.fn_bodies, "\n");
+                } else if let Some(filename) = self.ctx.global_ctx.diag().get_file_path(span.file) {
                     w!(
                         self.fn_bodies,
                         "\n#line {} {:?}\n",
@@ -739,6 +742,8 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             for def in body.local_defs.iter() {
                 self.write_local_def(def)?;
             }
+
+            self.last_span = None;
             for stmt in body.statements.iter() {
                 self.write_stmt(stmt)?;
             }
