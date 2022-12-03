@@ -426,6 +426,16 @@ mod internal {
             fmt.write_str(s)
         }
     }
+
+    struct CharAdapter {
+        inner: u8
+    }
+
+    impl CharAdapter {
+        fn fmt<F: Formatter<F>>(self: &CharAdapter, fmt: &mut F) -> Result {
+            fmt.write_byte(self.inner)
+        }
+    }
 }
 
 /// Write value as a hexadecimal number
@@ -504,6 +514,20 @@ fn pad_with<T: Formattable<T>>(val: T, len: usize, pad: u8) -> internal::Generic
     internal::GenericPadAdapter { len: len, pad: pad, inner: val }
 }
 
+/// Writes a single [u8] as a character (byte).
+///
+/// By default, [u8] is written as a number.
+///
+/// ## Example
+/// ```
+/// use std::fmt::char;
+///
+/// println!("{}", 'A'); // prints '65'
+/// println!("{}", 'A'.char()); // prints 'A'
+/// ```
+fn char(val: u8) -> internal::CharAdapter {
+    internal::CharAdapter { inner: val }
+}
 
 #[cfg(all(test, test_std))]
 #[docs(hide)]

@@ -3572,7 +3572,17 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let lowered = exprs
             .iter()
             .zip(type_hints.into_iter())
-            .map(|(expr, hint)| self.lower_expr(expr, hint))
+            .map(|(expr, hint)| {
+                self.lower_expr(expr, hint).map(|expr| {
+                    if let Some(hint) = hint {
+                        if let Ok(a) = self.try_coerce(hint, expr) {
+                            return a;
+                        }
+                    }
+
+                    expr
+                })
+            })
             .collect::<Result<Vec<_>, _>>()?;
 
         if lowered.iter().any(|e| e.diverges()) {
@@ -5026,7 +5036,13 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let mut first_elem_type = None;
         let mut lowered = Vec::new();
         for expr in elements {
-            let expr = self.lower_expr(expr, first_elem_type.or(element_type_hint))?;
+            let mut expr = self.lower_expr(expr, first_elem_type.or(element_type_hint))?;
+            if let Some(hint) = element_type_hint {
+                if let Ok(a) = self.try_coerce(hint, expr) {
+                    expr = a;
+                }
+            }
+
             if first_elem_type.is_none() {
                 first_elem_type = Some(expr.ty);
             }

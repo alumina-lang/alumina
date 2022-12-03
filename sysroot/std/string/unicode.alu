@@ -18,13 +18,15 @@ enum Error {
 }
 
 impl Error {
+    use fmt::{Formatter, Result};
+
     /// @ cmp::Equatable::equals
     fn equals(self: &Error, other: &Error) -> bool {
         *self == *other
     }
 
     /// @ fmt::Formattable::fmt
-    fn fmt<F: fmt::Formatter<F>>(self: &Error, f: &mut F) -> fmt::Result {
+    fn fmt<F: Formatter<F>>(self: &Error, f: &mut F) -> Result {
         switch *self {
             Error::BufferTooSmall => f.write_str("buffer too small"),
             Error::InvalidCodepoint => f.write_str("invalid codepoint"),
@@ -492,6 +494,55 @@ fn chars(self: &[u8]) -> CharsIterator {
 fn char_indices(self: &[u8]) -> CharIndicesIterator {
     CharIndicesIterator {
         _inner: internal::UTF8CodepointIterator::new(self)
+    }
+}
+
+/// Returns a formattable object that writes a sequence of
+/// Unicode codepoints as a UTF-8 encoded string.
+///
+/// It accepts an iterator over `u32` values. Panics if the iterator
+/// yields a value that is not a valid Unicode scalar value.
+///
+/// ## Example
+/// ```
+/// use std::string::unicode::utf8_chars;
+///
+/// let seq = [
+///     0x1f4a9u32,
+///     '=' as u32,
+///     0x1fa99,
+///     ' ' as u32,
+///     '&' as u32,
+///     ' ' as u32,
+///     0x1fa99,
+///     '=' as u32,
+///     0x1f4a9
+/// ];
+///
+/// // https://sl.wikisource.org/wiki/Kons._5
+/// println!("{}", seq.iter().utf8_chars()); // prints "💩=🪙 & 💩=🪙"
+/// ```
+fn utf8_chars<It: iter::Iterator<It, u32>>(iter: &mut It) -> Utf8Adapter<It> {
+    Utf8Adapter { inner: iter }
+}
+
+struct Utf8Adapter<It: iter::Iterator<It, u32>> {
+    inner: &mut It
+}
+
+impl Utf8Adapter<It: iter::Iterator<It, u32>> {
+    use fmt::{Formatter, Result};
+
+    fn fmt<F: Formatter<F>>(self: &Utf8Adapter<It>, f: &mut F) -> Result {
+        let buf: [u8; 4];
+        let codepoint = self.inner.next();
+        if codepoint.is_none() {
+            return Result::ok(());
+        }
+
+        let codepoint = codepoint.unwrap();
+        let len = codepoint.encode_utf8(&buf).unwrap();
+        f.write_str(buf[..len])
     }
 }
 
