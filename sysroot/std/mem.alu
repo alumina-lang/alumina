@@ -646,10 +646,10 @@ fn alloc_zeroed<T>() -> &mut T {
 /// Allocates an array of specified size on the stack.
 ///
 /// The values are not initialized. The array is allocated on the stack, so it will be
-/// deallocated when the function returns. 
+/// deallocated when the function returns.
 ///
 /// Care must be taken to ensure that the array is not accessed after the function returns.
-/// Additionally, there is no protection against stack overflow, so allocated arrays should 
+/// Additionally, there is no protection against stack overflow, so allocated arrays should
 /// not be too large.
 ///
 /// ## Example
@@ -673,6 +673,7 @@ fn stack_alloc<T>(len: usize) -> &mut [T] {
     slice::from_raw(when T: builtins::ZeroSized {
         dangling::<&mut T>()
     } else {
+        // Cannot use __builtin_alloca_with_align as it may not be valid until the end of the function
         intrinsics::codegen_func::<&mut void>(
             "__builtin_alloca",
             size_of::<T>() * len
