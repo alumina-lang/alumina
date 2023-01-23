@@ -519,7 +519,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
     fn visit_closure_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         if self.in_a_macro {
-            return Err(CodeErrorKind::MacrosCannotDefineLambdas).with_span_from(&self.scope, node);
+            //    return Err(CodeErrorKind::MacrosCannotDefineLambdas).with_span_from(&self.scope, node);
         }
 
         let visitor = ClosureVisitor::new(

@@ -243,7 +243,7 @@ impl PageWriter<T: std::io::Writable<T>> {
 
         let proto_path = item.node
             .child_by!(FieldKind::Protocol)
-            .unwrap()
+            .unwrap();
 
         let proto_path = Path::from_str(proto_path
             .child_by!(FieldKind::Type)
@@ -392,7 +392,7 @@ impl PageWriter<T: std::io::Writable<T>> {
             top_level,
             self.processor.doctest_writer
         )
-        .from_fmt!()?
+        .from_fmt!()?;
 
         let methods: HashSet<&[u8]> = HashSet::new();
         defer methods.free();
@@ -556,9 +556,9 @@ impl Processor {
         let filename = filename.as_path();
 
         std::fs::DirBuilder::new().recursive(true).create(filename.parent().unwrap())
-            .from_io!()?
+            .from_io!()?;
 
-        let file = std::fs::File::create(filename).from_io!()?
+        let file = std::fs::File::create(filename).from_io!()?;
         defer file.close();
 
         let writer = std::io::BufferedWriter::new(&file, 1024);
@@ -617,10 +617,10 @@ impl Processor {
         defer filename.free();
 
         std::fs::DirBuilder::new().recursive(true).create(filename.as_path().parent().unwrap())
-            .from_io!()?
+            .from_io!()?;
 
         let file = std::fs::File::create(filename.as_path())
-            .from_io!()?
+            .from_io!()?;
 
         defer file.close();
 
@@ -680,7 +680,7 @@ fn main_inner(args: &[&[u8]]) -> Result<()> {
             use std::option::try;
 
             let segments = s.split("=");
-            let module_path = segments.next()?
+            let module_path = segments.next()?;
             let filename = std::fs::Path::new(segments.next()?);
 
             Option::some((module_path, filename))

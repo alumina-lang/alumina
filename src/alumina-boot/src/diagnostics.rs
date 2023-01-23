@@ -355,7 +355,7 @@ impl DiagnosticContext {
             if let CodeErrorKind::InternalError(_, backtrace) = &error.kind {
                 eprintln!();
                 eprintln!("Compiler backtrace:");
-                eprintln!("{:?}", backtrace);
+                eprintln!("{}", backtrace);
                 needs_padding = true;
             }
 

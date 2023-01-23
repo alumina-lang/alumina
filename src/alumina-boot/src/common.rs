@@ -1,5 +1,7 @@
+use std::backtrace::Backtrace;
 use std::cell::RefCell;
 use std::fmt::Debug;
+use std::fmt::Display;
 use std::hash::{Hash, Hasher};
 use std::io;
 use std::rc::Rc;
@@ -12,7 +14,7 @@ macro_rules! ice {
     ($diag:expr, $why:literal) => {{
         return Err($diag.err(CodeErrorKind::InternalError(
             $why.to_string(),
-            backtrace::Backtrace::new().into(),
+            std::backtrace::Backtrace::capture().into(),
         )));
     }};
 }
@@ -25,33 +27,40 @@ pub type IndexMap<K, V> =
     indexmap::IndexMap<K, V, std::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
 pub type IndexSet<K> = indexmap::IndexSet<K, std::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
 
-/// Newtype wrapper for non-comparable subobjects where it does not matter
-pub struct ExcludeFromEq<T>(pub T);
-impl<T> Hash for ExcludeFromEq<T> {
-    fn hash<H: Hasher>(&self, _state: &mut H) {}
-}
-impl<T> PartialEq for ExcludeFromEq<T> {
-    fn eq(&self, _other: &Self) -> bool {
-        true
+/// A clonable (Rc) wrapper using pointer equality for `Hash` and `PartialEq`
+pub struct ByRef<T>(pub Rc<T>);
+
+impl<T> Hash for ByRef<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Rc::as_ptr(&self.0).hash(state);
     }
 }
-impl<T> Eq for ExcludeFromEq<T> {}
-impl<T: Debug> Debug for ExcludeFromEq<T> {
+impl<T> PartialEq for ByRef<T> {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+impl<T> Eq for ByRef<T> {}
+impl<T: Debug> Debug for ByRef<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
     }
 }
-impl<T> From<T> for ExcludeFromEq<T> {
+impl<T: Display> Display for ByRef<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+impl<T> From<T> for ByRef<T> {
     fn from(t: T) -> Self {
-        Self(t)
+        Self(Rc::new(t))
     }
 }
-impl<T: Clone> Clone for ExcludeFromEq<T> {
+impl<T> Clone for ByRef<T> {
     fn clone(&self) -> Self {
-        Self(self.0.clone())
+        Self(Rc::clone(&self.0))
     }
 }
-impl<T: Copy> Copy for ExcludeFromEq<T> {}
 
 #[derive(Debug, Error)]
 pub enum AluminaError {
@@ -63,10 +72,6 @@ pub enum AluminaError {
     WalkDir(#[from] walkdir::Error),
 }
 
-// thiserror uses string matching in its proc macro and assumes that "Backtrace" is
-// "std::backtrace::Backtrace", which is unstable.
-use backtrace::Backtrace as NonStdBacktrace;
-
 /// Main enum for all errors and warnings that can occur during compilation
 #[derive(AsRefStr, EnumVariantNames, Debug, Error, Clone, Hash, PartialEq, Eq)]
 #[strum(serialize_all = "snake_case")]
@@ -74,6 +79,8 @@ pub enum CodeErrorKind {
     // Errors
     #[error("syntax error: unexpected `{}`", .0)]
     ParseError(String),
+    #[error("syntax error: missing `{}`", .0)]
+    ParseErrorMissing(String),
     #[error("unexpected `{}` here", .0)]
     Unexpected(String),
     #[error("could not resolve the path `{}`", .0)]
@@ -159,7 +166,7 @@ pub enum CodeErrorKind {
     #[error("only slices can be range-indexed")]
     RangeIndexNonSlice,
     #[error("internal error: {}", .0)]
-    InternalError(String, ExcludeFromEq<NonStdBacktrace>),
+    InternalError(String, ByRef<Backtrace>),
     // This error is a compiler bug if it happens on its own, but it can pop up when
     // we abort early due to a previous error.
     #[error("local with unknown type")]
