@@ -32,7 +32,7 @@ impl Error {
             Error::InvalidCodepoint => f.write_str("invalid codepoint"),
             Error::InvalidUTF8 => f.write_str("invalid UTF-8"),
             Error::InvalidUTF16 => f.write_str("invalid UTF-16"),
-            Error::SurrogateMismatch => f.write_str("surrogate mismatch")
+            Error::SurrogateMismatch => f.write_str("surrogate mismatch"),
             _ => unreachable!()
         }
     }
@@ -447,11 +447,11 @@ impl CharIndicesIterator {
 /// let it = "a\xed\xa0\x80b" // pseudo-UTF-8 encoding of a surrogate
 ///     .chars();
 ///
-/// assert_eq!(it.next(), Option::some(Result::ok('a' as u32));
-/// assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
-/// assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
-/// assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
-/// assert_eq!(it.next(), Option::some(Result::ok('b' as u32));
+/// assert_eq!(it.next(), Option::some(Result::ok('a' as u32)));
+/// assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8)));
+/// assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8)));
+/// assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8)));
+/// assert_eq!(it.next(), Option::some(Result::ok('b' as u32)));
 /// assert_eq!(it.next(), Option::none());
 /// ```
 fn chars(self: &[u8]) -> CharsIterator {
@@ -601,7 +601,7 @@ mod internal {
                 // Map all errors to InvalidUTF8 so we have consistent behavior regardless of
                 // direction.
                 return Option::some(Result::err(Error::InvalidUTF8));
-            }
+            };
 
             Option::some(Result::ok(ret))
         }
@@ -867,9 +867,9 @@ mod tests {
         let it = "a\xffb"
             .chars();
 
-        assert_eq!(it.next(), Option::some(Result::ok('a' as u32));
-        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
-        assert_eq!(it.next(), Option::some(Result::ok('b' as u32));
+        assert_eq!(it.next(), Option::some(Result::ok('a' as u32)));
+        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8)));
+        assert_eq!(it.next(), Option::some(Result::ok('b' as u32)));
         assert_eq!(it.next(), Option::none());
     }
 
@@ -880,11 +880,11 @@ mod tests {
         let it = "a\xed\xa0\x80b"
             .chars();
 
-        assert_eq!(it.next(), Option::some(Result::ok('a' as u32));
-        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
-        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
-        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
-        assert_eq!(it.next(), Option::some(Result::ok('b' as u32));
+        assert_eq!(it.next(), Option::some(Result::ok('a' as u32)));
+        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8)));
+        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8)));
+        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8)));
+        assert_eq!(it.next(), Option::some(Result::ok('b' as u32)));
         assert_eq!(it.next(), Option::none());
     }
 
@@ -894,9 +894,9 @@ mod tests {
             .chars()
             .rev();
 
-        assert_eq!(it.next(), Option::some(Result::ok('b' as u32));
-        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
-        assert_eq!(it.next(), Option::some(Result::ok('a' as u32));
+        assert_eq!(it.next(), Option::some(Result::ok('b' as u32)));
+        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8)));
+        assert_eq!(it.next(), Option::some(Result::ok('a' as u32)));
         assert_eq!(it.next(), Option::none());
     }
 
@@ -906,11 +906,11 @@ mod tests {
             .chars()
             .rev();
 
-        assert_eq!(it.next(), Option::some(Result::ok('b' as u32));
-        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
-        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
-        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
-        assert_eq!(it.next(), Option::some(Result::ok('a' as u32));
+        assert_eq!(it.next(), Option::some(Result::ok('b' as u32)));
+        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8)));
+        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8)));
+        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8)));
+        assert_eq!(it.next(), Option::some(Result::ok('a' as u32)));
         assert_eq!(it.next(), Option::none());
     }
 
@@ -920,9 +920,9 @@ mod tests {
             .chars()
             .rev();
 
-        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
-        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
-        assert_eq!(it.next(), Option::some(Result::ok('a' as u32));
+        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8)));
+        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8)));
+        assert_eq!(it.next(), Option::some(Result::ok('a' as u32)));
         assert_eq!(it.next(), Option::none());
     }
 
@@ -932,9 +932,9 @@ mod tests {
             .chars()
             .rev();
 
-        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8));
-        assert_eq!(it.next(), Option::some(Result::ok(0x30a6u32));
-        assert_eq!(it.next(), Option::some(Result::ok('a' as u32));
+        assert_eq!(it.next(), Option::some(Result::err(Error::InvalidUTF8)));
+        assert_eq!(it.next(), Option::some(Result::ok(0x30a6u32)));
+        assert_eq!(it.next(), Option::some(Result::ok('a' as u32)));
         assert_eq!(it.next(), Option::none());
     }
 }

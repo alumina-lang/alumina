@@ -270,37 +270,7 @@ protocol RngExt<Self: Rng<Self>> {
     /// // Any possible value of i32
     /// ```
     fn next<T: Integer, R: builtins::RangeOf<T>>(rng: &mut Self, range: R) -> T {
-        use builtins::unsigned_of;
-        use range::{Range, RangeInclusive, RangeTo, RangeToInclusive, RangeFrom, RangeFull};
-
-        when R: Range<T> {
-            assert!(range.lower < range.upper);
-
-            let bound = (range.upper as unsigned_of<T>) - (range.lower as unsigned_of<T>);
-            let ret = (range.lower as unsigned_of<T>) + internal::gen_uniform(rng, bound);
-
-            ret as T
-        } else when R: RangeInclusive<T> {
-            assert!(range.lower <= range.upper);
-
-            let bound = ((range.upper as unsigned_of<T>) - (range.lower as unsigned_of<T>)) + 1;
-            if bound == 0 {
-                internal::gen_unsigned::<Self, unsigned_of<T>>(rng) as T
-            } else {
-                let ret = (range.lower as unsigned_of<T>) + internal::gen_uniform(rng, bound);
-                ret as T
-            }
-        } else when R: RangeTo<T> {
-            rng.next(T::min_value()..range.upper)
-        } else when R: RangeToInclusive<T> {
-            rng.next(T::min_value()..=range.upper)
-        } else when R: RangeFrom<T> {
-            rng.next(range.lower..=T::max_value())
-        } else when R: RangeFull<T> {
-            internal::gen_unsigned::<Self, unsigned_of<T>>(rng) as T
-        } else {
-            compile_fail!("unsupported range type")
-        }
+        internal::gen_integer::<Self, T, R>(rng, range)
     }
 
     /// Generate a random floating point number in `[0, 1)` interval
@@ -392,6 +362,40 @@ mod internal {
         }
     }
 
+    fn gen_integer<R: Rng<R>, T: Integer, U: builtins::RangeOf<T>>(rng: &mut R, range: U) -> T {
+        use builtins::unsigned_of;
+        use range::{Range, RangeInclusive, RangeTo, RangeToInclusive, RangeFrom, RangeFull};
+
+        when U: Range<T> {
+            assert!(range.lower < range.upper);
+
+            let bound = (range.upper as unsigned_of<T>) - (range.lower as unsigned_of<T>);
+            let ret = (range.lower as unsigned_of<T>) + gen_uniform(rng, bound);
+
+            ret as T
+        } else when U: RangeInclusive<T> {
+            assert!(range.lower <= range.upper);
+
+            let bound = ((range.upper as unsigned_of<T>) - (range.lower as unsigned_of<T>)) + 1;
+            if bound == 0 {
+                gen_unsigned::<R, unsigned_of<T>>(rng) as T
+            } else {
+                let ret = (range.lower as unsigned_of<T>) + gen_uniform(rng, bound);
+                ret as T
+            }
+        } else when U: RangeTo<T> {
+            rng.next(T::min_value()..range.upper)
+        } else when U: RangeToInclusive<T> {
+            rng.next(T::min_value()..=range.upper)
+        } else when U: RangeFrom<T> {
+            rng.next(range.lower..=T::max_value())
+        } else when U: RangeFull<T> {
+            gen_unsigned::<R, unsigned_of<T>>(rng) as T
+        } else {
+            compile_fail!("unsupported range type")
+        }
+    }
+
     /// Generate a random integer of any unsigned integer type
     ///
     /// Each possible value that the integer can take is equally likely
@@ -421,14 +425,14 @@ mod tests {
 
     #[test]
     fn test_float() {
-        let rng = Pcg32::from_seed(&SEED)
+        let rng = Pcg32::from_seed(&SEED);
         let _: f32 = rng.next_float();
         let _: f64 = rng.next_float();
     }
 
     #[test]
     fn test_range() {
-        let rng = Pcg32::from_seed(&SEED)
+        let rng = Pcg32::from_seed(&SEED);
         let _: i32 = rng.next(-10i32..10i32);
         let _: i64 = rng.next(-10i64..10i64);
         let _: i128 = rng.next(-10i128..10i128);
@@ -437,7 +441,7 @@ mod tests {
 
     #[test]
     fn test_range_inclusive() {
-        let rng = Pcg32::from_seed(&SEED)
+        let rng = Pcg32::from_seed(&SEED);
         let _: i32 = rng.next(-10i32..=10i32);
         let _: i64 = rng.next(-10i64..=10i64);
         let _: i128 = rng.next(-10i128..=10i128);
@@ -446,7 +450,7 @@ mod tests {
 
     #[test]
     fn test_range_from() {
-        let rng = Pcg32::from_seed(&SEED)
+        let rng = Pcg32::from_seed(&SEED);
         let _: i32 = rng.next(0i32..);
         let _: i64 = rng.next(0i64..);
         let _: i128 = rng.next(0i128..);
@@ -455,7 +459,7 @@ mod tests {
 
     #[test]
     fn test_range_to() {
-        let rng = Pcg32::from_seed(&SEED)
+        let rng = Pcg32::from_seed(&SEED);
         let _: i32 = rng.next(..10i32);
         let _: i64 = rng.next(..10i64);
         let _: i128 = rng.next(..10i128);
@@ -464,7 +468,7 @@ mod tests {
 
     #[test]
     fn test_range_to_inclusive() {
-        let rng = Pcg32::from_seed(&SEED)
+        let rng = Pcg32::from_seed(&SEED);
         let _: i32 = rng.next(..=10i32);
         let _: i64 = rng.next(..=10i64);
         let _: i128 = rng.next(..=10i128);
@@ -473,7 +477,7 @@ mod tests {
 
     #[test]
     fn test_shuffle() {
-        let rng = Pcg32::from_seed(&SEED)
+        let rng = Pcg32::from_seed(&SEED);
         let v = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
         rng.shuffle(&v);
 

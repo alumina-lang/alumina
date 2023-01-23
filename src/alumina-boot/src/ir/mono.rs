@@ -18,8 +18,8 @@ use crate::ir::{FuncBody, IRItemP, LocalDef, ValueType};
 use crate::name_resolution::scope::BoundItemType;
 use crate::{ast, ir};
 
-use backtrace::Backtrace;
 use once_cell::unsync::OnceCell;
+use std::backtrace::Backtrace;
 
 use std::collections::hash_map::Entry;
 use std::iter::{once, repeat};
@@ -1982,7 +1982,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ast::Ty::Placeholder(id) => self.replacements.get(&id).copied().ok_or_else(|| {
                 self.diag.err(CodeErrorKind::InternalError(
                     "unbound placeholder".to_string(),
-                    Backtrace::new().into(),
+                    Backtrace::capture().into(),
                 ))
             })?,
             ast::Ty::Item(item) => match self.mono_ctx.ast.lang_item_kind(item) {
@@ -4015,7 +4015,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .ok_or_else(|| {
                 self.diag.err(CodeErrorKind::InternalError(
                     "vtable layout not found".to_string(),
-                    Backtrace::new().into(),
+                    Backtrace::capture().into(),
                 ))
             })?;
 
@@ -5519,7 +5519,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .ok_or_else(|| {
                 self.diag.err(CodeErrorKind::InternalError(
                     "vtable layout not found".to_string(),
-                    Backtrace::new().into(),
+                    Backtrace::capture().into(),
                 ))
             })?
             .methods;

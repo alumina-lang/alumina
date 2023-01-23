@@ -117,21 +117,21 @@ fn main() {
     println!("use std::collections::HashMap;");
     println!("use tree_sitter::{{TSSymbol, Node}};");
     println!("");
-    println!("enum NodeKind {{")
+    println!("enum NodeKind {{");
     println!("    Invalid,");
     for name in unique_symbol_names {
         println!("    {},", SanitizedIdentifier::pascal(name));
     }
-    println!("}}")
-    println!("")
-    println!("enum FieldKind {{")
+    println!("}}");
+    println!("");
+    println!("enum FieldKind {{");
     for field in language.fields() {
         let name = language.field_name(field);
         println!("    {} = {}u16,", SanitizedIdentifier::pascal(name), field);
     }
     println!("}}");
-    println!("")
-    println!("const NODE_KINDS: [NodeKind; {}] = [", language.symbols().size_hint().unwrap() + 1)
+    println!("");
+    println!("const NODE_KINDS: [NodeKind; {}] = [", language.symbols().size_hint().unwrap() + 1);
     for symbol in (0 as TSSymbol)..(max_symbol_id + 1) {
         if symbol == 0 || language.symbol_type(symbol) != TSSymbolType::Regular {
             println!("    NodeKind::Invalid,");
@@ -142,7 +142,7 @@ fn main() {
         println!("    NodeKind::{},", SanitizedIdentifier::pascal(name));
     }
     println!("];");
-    println!("protocol NodeVisitor<Self, ReturnType> {{")
+    println!("protocol NodeVisitor<Self, ReturnType> {{");
     for name in unique_symbol_names {
         println!("    fn visit_{}(self: &mut Self, _node: Node) -> ReturnType {{", SanitizedIdentifier::default(name));
         println!("        panic!(\"unimplemented: visit_{}\");", SanitizedIdentifier::default(name));

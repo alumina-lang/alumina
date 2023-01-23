@@ -5,11 +5,9 @@ use once_cell::unsync::OnceCell;
 
 use std::marker::PhantomData;
 
-use tree_sitter::{Query, QueryCursor};
+use tree_sitter_traversal::{traverse, Order};
 
 include!(concat!(env!("OUT_DIR"), "/parser.rs"));
-
-static ERROR_QUERY: once_cell::sync::OnceCell<Query> = once_cell::sync::OnceCell::new();
 
 pub struct ParseCtx<'src> {
     source: String,
@@ -55,21 +53,21 @@ impl<'src> ParseCtx<'src> {
         &'src self,
         node: tree_sitter::Node<'src>,
     ) -> Result<(), AluminaError> {
-        if !node.has_error() {
-            return Ok(());
-        }
-
-        let mut cursor = QueryCursor::new();
-        let query = ERROR_QUERY.get_or_init(|| Query::new(language(), "(ERROR) @node").unwrap());
-
-        let matches = cursor.matches(query, node, self.source.as_bytes());
+        //return Ok(());
         let mut errors = Vec::new();
-        for m in matches {
-            let error_node = m.nodes_for_capture_index(0).next().unwrap();
-            errors.push(CodeError {
-                kind: CodeErrorKind::ParseError(self.node_text(error_node).to_string()),
-                backtrace: vec![Marker::Span(Span::from_node(self.file_id, error_node))],
-            })
+
+        for node in traverse(node.walk(), Order::Pre) {
+            if node.is_error() {
+                errors.push(CodeError {
+                    kind: CodeErrorKind::ParseError(self.node_text(node).to_string()),
+                    backtrace: vec![Marker::Span(Span::from_node(self.file_id, node))],
+                })
+            } else if node.is_missing() {
+                errors.push(CodeError {
+                    kind: CodeErrorKind::ParseErrorMissing(node.kind().to_string()),
+                    backtrace: vec![Marker::Span(Span::from_node(self.file_id, node))],
+                })
+            }
         }
 
         if errors.is_empty() {
