@@ -53,7 +53,6 @@ impl<'src> ParseCtx<'src> {
         &'src self,
         node: tree_sitter::Node<'src>,
     ) -> Result<(), AluminaError> {
-        //return Ok(());
         let mut errors = Vec::new();
 
         for node in traverse(node.walk(), Order::Pre) {
