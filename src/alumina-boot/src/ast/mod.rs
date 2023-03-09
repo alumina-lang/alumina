@@ -1,4 +1,5 @@
 pub mod expressions;
+pub mod format;
 pub mod lang;
 pub mod macros;
 pub mod maker;
@@ -291,7 +292,7 @@ pub enum Ty<'ast> {
     TypeOf(ExprP<'ast>),
     Array(TyP<'ast>, ExprP<'ast>),
     Tuple(&'ast [TyP<'ast>]),
-    When(StaticIfCondition<'ast>, TyP<'ast>, TyP<'ast>),
+    When(ExprP<'ast>, TyP<'ast>, TyP<'ast>),
     FunctionPointer(&'ast [TyP<'ast>], TyP<'ast>),
     FunctionProtocol(&'ast [TyP<'ast>], TyP<'ast>),
     Generic(TyP<'ast>, &'ast [TyP<'ast>]),
@@ -753,12 +754,6 @@ pub enum FnKind<'ast> {
     Defered(Defered<'ast>),
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash, Copy)]
-pub struct StaticIfCondition<'ast> {
-    pub typ: TyP<'ast>,
-    pub bounds: ProtocolBounds<'ast>,
-}
-
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum ExprKind<'ast> {
     Block(&'ast [Statement<'ast>], ExprP<'ast>),
@@ -795,7 +790,8 @@ pub enum ExprKind<'ast> {
     Index(ExprP<'ast>, ExprP<'ast>),
     Range(Option<ExprP<'ast>>, Option<ExprP<'ast>>, bool),
     If(ExprP<'ast>, ExprP<'ast>, ExprP<'ast>),
-    StaticIf(StaticIfCondition<'ast>, ExprP<'ast>, ExprP<'ast>),
+    TypeCheck(ExprP<'ast>, TyP<'ast>),
+    StaticIf(ExprP<'ast>, ExprP<'ast>, ExprP<'ast>),
     Cast(ExprP<'ast>, TyP<'ast>),
 
     Void,

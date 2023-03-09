@@ -1,6 +1,7 @@
 use crate::ast::{AstCtx, Attribute, ItemP, Span};
 use crate::common::{
-    AluminaError, ArenaAllocatable, CodeErrorKind, IndexMap, WithSpanDuringParsing,
+    AluminaError, ArenaAllocatable, CodeError, CodeErrorKind, IndexMap, Marker,
+    WithSpanDuringParsing,
 };
 use crate::global_ctx::GlobalCtx;
 use crate::name_resolution::path::Path;
@@ -176,6 +177,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
 
     fn visit_top_level_block(&mut self, node: Node<'src>) -> Self::ReturnType {
         let _ = parse_attributes!(self, node);
+
+        if node.child_by_field(FieldKind::Attributes).is_none() {
+            self.global_ctx.diag().add_warning(CodeError {
+                kind: CodeErrorKind::TopLevelBlockWithoutAttributes,
+                backtrace: vec![Marker::Span(Span::from_node(self.code.file_id(), node))],
+            })
+        }
 
         self.visit_children_by_field(node, "items")
     }

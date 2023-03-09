@@ -1,6 +1,6 @@
 use crate::ast::{
     AstCtx, AstId, Bound, Expr, ExprP, FieldInitializer, FnKind, Placeholder, ProtocolBounds,
-    Statement, StaticIfCondition, TyP,
+    Statement, TyP,
 };
 use crate::common::{AluminaError, ArenaAllocatable, HashMap};
 
@@ -104,10 +104,7 @@ impl<'ast> Rebinder<'ast> {
                 name,
             }),
             When(cond, then, els) => When(
-                StaticIfCondition {
-                    bounds: self.visit_bounds(&cond.bounds)?,
-                    typ: self.visit_typ(typ)?,
-                },
+                self.visit_expr(cond)?,
                 self.visit_typ(then)?,
                 self.visit_typ(els)?,
             ),
@@ -263,29 +260,12 @@ impl<'ast> Rebinder<'ast> {
 
                 Const(item, generic_args)
             }
-            StaticIf(ref cond, then, els) => {
-                let cond = StaticIfCondition {
-                    typ: self.visit_typ(cond.typ)?,
-                    bounds: ProtocolBounds {
-                        kind: cond.bounds.kind,
-                        bounds: cond
-                            .bounds
-                            .bounds
-                            .iter()
-                            .map(|b| {
-                                self.visit_typ(b.typ).map(|t| Bound {
-                                    span: b.span,
-                                    negated: b.negated,
-                                    typ: t,
-                                })
-                            })
-                            .collect::<Result<Vec<_>, _>>()?
-                            .alloc_on(self.ast),
-                    },
-                };
-
-                StaticIf(cond, self.visit_expr(then)?, self.visit_expr(els)?)
-            }
+            StaticIf(cond, then, els) => StaticIf(
+                self.visit_expr(cond)?,
+                self.visit_expr(then)?,
+                self.visit_expr(els)?,
+            ),
+            TypeCheck(lhs, rhs) => TypeCheck(self.visit_expr(lhs)?, self.visit_typ(rhs)?),
             Local(_) | BoundParam(_, _, _) | Continue | EnumValue(_, _) | Lit(_) | Void => {
                 expr.kind.clone()
             }

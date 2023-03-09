@@ -4,7 +4,7 @@ use crate::ast::types::TypeVisitor;
 use crate::ast::{
     AstCtx, AstId, BinOp, BuiltinType, ClosureBinding, Defered, Expr, ExprKind, ExprP,
     FieldInitializer, FnKind, Function, Item, ItemP, LetDeclaration, Lit, Parameter, Placeholder,
-    Span, Statement, StatementKind, StaticIfCondition, Ty, TyP, UnOp,
+    Span, Statement, StatementKind, Ty, TyP, UnOp,
 };
 use crate::common::{
     AluminaError, ArenaAllocatable, CodeErrorKind, HashMap, HashSet, WithSpanDuringParsing,
@@ -18,6 +18,7 @@ use crate::parser::{AluminaVisitor, FieldKind, NodeExt, NodeKind, ParseCtx};
 use crate::visitors::{AttributeVisitor, ScopedPathVisitor};
 
 use crate::common::IndexMap;
+
 macro_rules! with_block_scope {
     ($self:ident, $body:expr) => {{
         let child_scope = $self.scope.anonymous_child(ScopeType::Block);
@@ -892,35 +893,31 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             None => ExprKind::Void.alloc_with_span_from(self.ast, &self.scope, node),
         };
 
-        let condition = node
-            .child_by_field(FieldKind::Condition)
-            .map(|n| self.visit(n))
-            .transpose()?;
+        let condition = self.visit(node.child_by_field(FieldKind::Condition).unwrap())?;
 
-        let result = if let Some(condition) = condition {
-            ExprKind::If(condition, consequence, alternative)
-        } else {
-            let typecheck_node = node.child_by_field(FieldKind::TypeCheck).unwrap();
-            let typ = TypeVisitor::new(
-                self.global_ctx.clone(),
-                self.ast,
-                self.scope.clone(),
-                self.in_a_macro,
-            )
-            .visit(typecheck_node.child_by_field(FieldKind::Lhs).unwrap())?;
-            let bounds = TypeVisitor::new(
-                self.global_ctx.clone(),
-                self.ast,
-                self.scope.clone(),
-                self.in_a_macro,
-            )
-            .parse_protocol_bounds(typecheck_node)?;
-
-            let cond = StaticIfCondition { typ, bounds };
-            ExprKind::StaticIf(cond, consequence, alternative)
+        let result = match self
+            .code
+            .node_text(node.child_by_field(FieldKind::Kind).unwrap())
+        {
+            "if" => ExprKind::If(condition, consequence, alternative),
+            "when" => ExprKind::StaticIf(condition, consequence, alternative),
+            _ => unreachable!(),
         };
 
         return Ok(result.alloc_with_span_from(self.ast, &self.scope, node));
+    }
+
+    fn visit_type_check_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let lhs = self.visit(node.child_by_field(FieldKind::Value).unwrap())?;
+        let typ = TypeVisitor::new(
+            self.global_ctx.clone(),
+            self.ast,
+            self.scope.clone(),
+            self.in_a_macro,
+        )
+        .visit(node.child_by_field(FieldKind::Type).unwrap())?;
+
+        Ok(ExprKind::TypeCheck(lhs, typ).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_turbofish(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {

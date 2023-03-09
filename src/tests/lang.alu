@@ -72,7 +72,7 @@ fn assert_layout<T>(size: usize, align: usize) {
     assert_eq!(align_of::<T>(), align);
 
     // Check that our own layout computation agrees with C's.
-    when T: !std::builtins::ZeroSized {
+    when !std::typing::is_zero_sized::<T>() {
         assert_eq!(std::intrinsics::codegen_type_func::<T, usize>("sizeof"), size);
         assert_eq!(std::intrinsics::codegen_type_func::<T, usize>("_Alignof"), align);
     }

@@ -45,10 +45,10 @@ enum NodeKind {
     VoidLiteral,
     Attributes,
     MetaArguments,
+    TypeCheckExpression,
     RangeExpression,
     WhenType,
     DereferenceExpression,
-    TypeCheck,
     FileDocComment,
     MacroParameterList,
     TypeIdentifier,
@@ -145,33 +145,31 @@ enum FieldKind {
     Items = 27u16,
     Kind = 28u16,
     Left = 29u16,
-    Lhs = 30u16,
-    List = 31u16,
-    Lower = 32u16,
-    Macro = 33u16,
-    Mut = 34u16,
-    Name = 35u16,
-    Negated = 36u16,
-    Operator = 37u16,
-    Parameter = 38u16,
-    Parameters = 39u16,
-    Path = 40u16,
-    Pattern = 41u16,
-    Placeholder = 42u16,
-    Protocol = 43u16,
-    Result = 44u16,
-    ReturnType = 45u16,
-    Right = 46u16,
-    Size = 47u16,
-    Statements = 48u16,
-    Type = 49u16,
-    TypeArguments = 50u16,
-    TypeCheck = 51u16,
-    Upper = 52u16,
-    Value = 53u16,
+    List = 30u16,
+    Lower = 31u16,
+    Macro = 32u16,
+    Mut = 33u16,
+    Name = 34u16,
+    Negated = 35u16,
+    Operator = 36u16,
+    Parameter = 37u16,
+    Parameters = 38u16,
+    Path = 39u16,
+    Pattern = 40u16,
+    Placeholder = 41u16,
+    Protocol = 42u16,
+    Result = 43u16,
+    ReturnType = 44u16,
+    Right = 45u16,
+    Size = 46u16,
+    Statements = 47u16,
+    Type = 48u16,
+    TypeArguments = 49u16,
+    Upper = 50u16,
+    Value = 51u16,
 }
 
-const NODE_KINDS: [NodeKind; 253] = [
+const NODE_KINDS: [NodeKind; 254] = [
     NodeKind::Invalid,
     NodeKind::Identifier,
     NodeKind::DocComment,
@@ -233,6 +231,7 @@ const NODE_KINDS: [NodeKind; 253] = [
     NodeKind::Identifier,
     NodeKind::Identifier,
     NodeKind::Identifier,
+    NodeKind::Invalid,
     NodeKind::Invalid,
     NodeKind::Invalid,
     NodeKind::Invalid,
@@ -362,6 +361,7 @@ const NODE_KINDS: [NodeKind; 253] = [
     NodeKind::RangeExpression,
     NodeKind::CompoundAssignmentExpr,
     NodeKind::TypeCastExpression,
+    NodeKind::TypeCheckExpression,
     NodeKind::CallExpression,
     NodeKind::MacroInvocation,
     NodeKind::StructInitializerItem,
@@ -373,7 +373,6 @@ const NODE_KINDS: [NodeKind; 253] = [
     NodeKind::StructInitializer,
     NodeKind::StructExpression,
     NodeKind::ParenthesizedExpression,
-    NodeKind::TypeCheck,
     NodeKind::IfExpression,
     NodeKind::WhenType,
     NodeKind::SwitchArm,
@@ -544,6 +543,9 @@ protocol NodeVisitor<Self, ReturnType> {
     fn visit_meta_arguments(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_meta_arguments");
     }
+    fn visit_type_check_expression(self: &mut Self, _node: Node) -> ReturnType {
+        panic!("unimplemented: visit_type_check_expression");
+    }
     fn visit_range_expression(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_range_expression");
     }
@@ -552,9 +554,6 @@ protocol NodeVisitor<Self, ReturnType> {
     }
     fn visit_dereference_expression(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_dereference_expression");
-    }
-    fn visit_type_check(self: &mut Self, _node: Node) -> ReturnType {
-        panic!("unimplemented: visit_type_check");
     }
     fn visit_file_doc_comment(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_file_doc_comment");
@@ -792,10 +791,10 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::VoidLiteral => self.visit_void_literal(node),
             NodeKind::Attributes => self.visit_attributes(node),
             NodeKind::MetaArguments => self.visit_meta_arguments(node),
+            NodeKind::TypeCheckExpression => self.visit_type_check_expression(node),
             NodeKind::RangeExpression => self.visit_range_expression(node),
             NodeKind::WhenType => self.visit_when_type(node),
             NodeKind::DereferenceExpression => self.visit_dereference_expression(node),
-            NodeKind::TypeCheck => self.visit_type_check(node),
             NodeKind::FileDocComment => self.visit_file_doc_comment(node),
             NodeKind::MacroParameterList => self.visit_macro_parameter_list(node),
             NodeKind::TypeIdentifier => self.visit_type_identifier(node),

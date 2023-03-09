@@ -872,7 +872,11 @@ impl ChunksIterator<It: Iterator<It, T>, T> {
 struct PeekableIterator<It: Iterator<It, T>, T> {
     _it: &mut It,
     _peeked: Option<T>,
-    _peeked_back: when It: DoubleEndedIterator<It, T> { Option<T> } else { () },
+    _peeked_back: when typing::matches::<It, DoubleEndedIterator<It, T>>() {
+        Option<T>
+    } else {
+        ()
+    },
 }
 
 impl PeekableIterator<It: Iterator<It, T>, T> {
@@ -881,7 +885,7 @@ impl PeekableIterator<It: Iterator<It, T>, T> {
         if self._peeked.is_some() {
             self._peeked.move()
         } else {
-            when It: DoubleEndedIterator<It, T> {
+            when *self._it is DoubleEndedIterator<It, T> {
                 let next = self._it.next();
                 if next.is_none() {
                     self._peeked_back.move()
@@ -896,7 +900,7 @@ impl PeekableIterator<It: Iterator<It, T>, T> {
 
     /// Return the next element in the iterator without consuming it.
     fn peek(self: &mut PeekableIterator<It, T>) -> Option<T> {
-        when It: DoubleEndedIterator<It, T> {
+        when *self._it is DoubleEndedIterator<It, T> {
             if self._peeked.is_none() {
                 self._peeked = self._it.next();
                 if self._peeked.is_some(){
@@ -918,7 +922,7 @@ impl PeekableIterator<It: Iterator<It, T>, T> {
     /// @ Iterator::size_hint
     fn size_hint(self: &PeekableIterator<It, T>) -> Option<usize> {
         self._it.size_hint().map(|=self, x: usize| -> usize {
-            when It: DoubleEndedIterator<It, T> {
+            when *self._it is DoubleEndedIterator<It, T> {
                 x
                 + (self._peeked.is_some() as usize)
                 + (self._peeked_back.is_some() as usize)
@@ -1661,7 +1665,7 @@ protocol IteratorExt<Self: Iterator<Self, T>, T> {
         PeekableIterator {
             _it: self,
             _peeked: Option::none(),
-            _peeked_back: when Self: DoubleEndedIterator<Self, T> {
+            _peeked_back: when *self is DoubleEndedIterator<Self, T> {
                 Option::none()
             } else {
                 ()

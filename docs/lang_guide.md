@@ -873,6 +873,7 @@ Alumina has the following types of expressions
 - try operator (`expr?`)
 - unary operations (`-expr`, `~expr`)
 - casts (`expr as typ`)
+- type checks (`expr is typ`)
 - multiplication and division (`lhs * rhs`, `lhs / rhs`),
 - addition and subtraction (`lhs + rhs`, `lhs - rhs`)
 - bitwise shift (`expr << n`, `expr >> n`)
@@ -1470,7 +1471,7 @@ println!("{}", x.first_element()); // 1
 
 ## `when` types and expressions
 
-`when` expressions can be used as a means to have different implementations for different type parameters in generic functions. During monomorphization, only one of the branches will be taken and the other one ignored. The non-taken branch can contain meaningless code that would otherwise fail to compile.
+`when` expressions (akin to ) can be used as a means to have different implementations for different type parameters in generic functions. During monomorphization, only one of the branches will be taken and the other one ignored. The non-taken branch can contain meaningless code that would otherwise fail to compile.
 
 The condition in the `when` expression follows the same syntax as generic/protocol bounds
 
@@ -1478,14 +1479,14 @@ The condition in the `when` expression follows the same syntax as generic/protoc
 use std::builtins::{Pointer, Unsigned, ZeroSized, deref_of};
 
 fn print_type<T>() {
-    when T: u8 {
+    when T is u8 {
         println!("u8");
-    } else when T: Unsigned {
+    } else when T is Unsigned {
         println!("some other unsigned type");
-    } else when T: Pointer {
+    } else when T is Pointer {
         print!("pointer to ");
         print_type::<deref_of<T>>();
-    } else when T: !ZeroSized {
+    } else when !(T is !ZeroSized {
         println!("some sized type");
     } else {
         compile_fail!("zero-sized types are not supported");
@@ -1500,7 +1501,7 @@ print_type::<Option<i32>>(); // ""some sized type"
 Similarly, a `when` type in type context to select the appropriate type
 
 ```rust
-type ensure_pointer_t<T> = when T: Pointer { T } else { &T };
+type ensure_pointer_t<T> = when T is Pointer { T } else { &T };
 
 let x: ensure_pointer_t<u8> = &5;
 let y: ensure_pointer_t<&&u16> = &&5;

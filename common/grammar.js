@@ -53,7 +53,6 @@ module.exports = grammar({
   extras: ($) => [$.file_doc_comment, $.doc_comment, $._comment, /[\s]+/],
 
   word: ($) => $.identifier,
-
   inline: ($) => [
     $._path,
     $._non_special_token,
@@ -570,6 +569,7 @@ module.exports = grammar({
         $.assignment_expression,
         $.compound_assignment_expr,
         $.type_cast_expression,
+        $.type_check_expression,
         $.call_expression,
         $.universal_macro_invocation,
         $.field_expression,
@@ -712,6 +712,16 @@ module.exports = grammar({
         seq(field("value", $._expression), "as", field("type", $._type))
       ),
 
+    type_check_expression: ($) =>
+      prec(
+        PREC.cast,
+        seq(
+          field("value", $._expression),
+          "is",
+          field("type", $._type)
+        )
+      ),
+
     call_expression: ($) =>
       prec(
         PREC.call,
@@ -845,22 +855,10 @@ module.exports = grammar({
         $.for_expression
       ),
 
-    type_check: ($) =>
-      seq(
-        field("lhs", $._type),
-        ":",
-        choice(
-          field("all_bounds", sepBy("+", field("bound", $.protocol_bound))),
-          field("any_bounds", sepBy("|", field("bound", $.protocol_bound))),
-        )
-      ),
-
     if_expression: ($) =>
       seq(
-        choice(
-          seq("if", field("condition", $._expression)),
-          seq("when", field("type_check", $.type_check))
-        ),
+        field("kind", choice("if", "when")),
+        field("condition", $._expression),
         field("consequence", $.block),
         optional(field("alternative", $.else_clause))
       ),
@@ -868,7 +866,7 @@ module.exports = grammar({
     when_type: ($) =>
       seq(
         "when",
-        field("type_check", $.type_check),
+        field("condition", $._expression),
         "{",
         field("consequence", $._type),
         "}",

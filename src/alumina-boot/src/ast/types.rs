@@ -1,7 +1,6 @@
 use crate::ast::expressions::ExpressionVisitor;
 use crate::ast::{
-    AstCtx, Bound, BuiltinType, Defered, ProtocolBounds, ProtocolBoundsKind, Span,
-    StaticIfCondition, Ty, TyP,
+    AstCtx, Bound, BuiltinType, Defered, ProtocolBounds, ProtocolBoundsKind, Span, Ty, TyP,
 };
 use crate::common::{AluminaError, ArenaAllocatable, CodeErrorKind, WithSpanDuringParsing};
 use crate::global_ctx::GlobalCtx;
@@ -263,11 +262,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
     }
 
     fn visit_when_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let typecheck_node = node.child_by_field(FieldKind::TypeCheck).unwrap();
-        let typ = self.visit(typecheck_node.child_by_field(FieldKind::Lhs).unwrap())?;
-        let bounds = self.parse_protocol_bounds(typecheck_node)?;
-        let cond = StaticIfCondition { typ, bounds };
-
+        let mut visitor = ExpressionVisitor::new(
+            self.ast,
+            self.global_ctx.clone(),
+            self.scope.clone(),
+            self.in_a_macro,
+        );
+        let cond = visitor.visit(node.child_by_field(FieldKind::Condition).unwrap())?;
         let then = self.visit(node.child_by_field(FieldKind::Consequence).unwrap())?;
         let els = self.visit(node.child_by_field(FieldKind::Alternative).unwrap())?;
 

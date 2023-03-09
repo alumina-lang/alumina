@@ -22,6 +22,7 @@ pub enum IntrinsicKind {
     Dangling,
     Asm,
     InConstContext,
+    IsConstEvaluable,
 }
 
 pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
@@ -46,6 +47,7 @@ pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
         "uninitialized" => IntrinsicKind::Uninitialized,
         "dangling" => IntrinsicKind::Dangling,
         "in_const_context" => IntrinsicKind::InConstContext,
+        "is_const_evaluable" => IntrinsicKind::IsConstEvaluable,
         _ => return None,
     };
 

@@ -322,7 +322,7 @@ pub enum CodeErrorKind {
     DuplicateNameShadow(String),
     #[error("field `{}` is not initialized", .0)]
     UninitializedField(String),
-    #[error("This is `std::typing::Self`, did you mean the enclosing type?")]
+    #[error("this is `std::typing::Self`, did you mean the enclosing type?")]
     SelfConfusion,
     #[error("`#[align(1)]` has no effect, did you mean to use `#[packed]`?")]
     Align1,
@@ -338,6 +338,12 @@ pub enum CodeErrorKind {
     UnusedImport(String),
     #[error("#[{}({})] refers to a lint that does not currently exist", .0, .1)]
     ImSoMetaEvenThisAcronym(String, String),
+    #[error("redundant top level block (no attributes)")]
+    TopLevelBlockWithoutAttributes,
+    #[error("condition is always `{}`, did you mean to use `when`?", .0)]
+    ConstantCondition(bool),
+    #[error("statement has no effect")]
+    PureStatement,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -377,6 +383,7 @@ pub struct FileId {
 }
 
 pub trait WithSpanDuringParsing<T> {
+    #[allow(clippy::needless_lifetimes)]
     fn with_span_from<'ast, 'src>(
         self,
         scope: &Scope<'ast, 'src>,
@@ -388,6 +395,7 @@ impl<T, E> WithSpanDuringParsing<T> for Result<T, E>
 where
     CodeErrorKind: From<E>,
 {
+    #[allow(clippy::needless_lifetimes)]
     fn with_span_from<'ast, 'src>(
         self,
         scope: &Scope<'ast, 'src>,

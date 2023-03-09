@@ -1,5 +1,6 @@
 use std::builtins::{generic_args_of, tuple_head_of};
 use std::util::unit;
+use std::typing::matches;
 
 // Peano integers 0, S(0), S(S(0)), ...
 struct Zero {}
@@ -26,14 +27,14 @@ type Ten = Succ<Nine>;
 type Eleven = Succ<Ten>;
 type Twelve = Succ<Eleven>;
 
-type Prev<T> = when T: Zero { Zero } else { tuple_head_of<generic_args_of<T>> };
-type Add<A, B> = when B: Zero { A } else { Succ<Add<A, Prev<B>>> };
-type Sub<A, B> = when B: Zero { A } else { Sub<Prev<A>, Prev<B>> };
-type Mul<A, B> =  when B: Zero { Zero } else { Add<A, Mul<A, Prev<B>>> };
+type Prev<T> = when matches::<T, Zero>() { Zero } else { tuple_head_of<generic_args_of<T>> };
+type Add<A, B> = when matches::<B, Zero>() { A } else { Succ<Add<A, Prev<B>>> };
+type Sub<A, B> = when matches::<B, Zero>() { A } else { Sub<Prev<A>, Prev<B>> };
+type Mul<A, B> =  when matches::<B, Zero>() { Zero } else { Add<A, Mul<A, Prev<B>>> };
 
-type DivT<A, B, Idx> = when B: Zero {
+type DivT<A, B, Idx> = when matches::<B, Zero>() {
     typeof(compile_fail!("division by zero"))
-} else when Sub<Succ<A>, B>: Zero {
+} else when matches::<Sub<Succ<A>, B>, Zero>() {
     Idx
 } else {
     DivT<Sub<A, B>, B, Succ<Idx>>
@@ -42,21 +43,21 @@ type DivT<A, B, Idx> = when B: Zero {
 type Div<A, B> = DivT<A, B, Zero>;
 type Mod<A, B> = Sub<A, Mul<Div<A, B>, B>>;
 
-type Fibonacci<T> = when Prev<T>: Zero {
+type Fibonacci<T> = when matches::<Prev<T>, Zero>() {
     T
 } else {
     Add<Fibonacci<Prev<T>>, Fibonacci<Prev<Prev<T>>>>
 };
 
-type IsPrimeT<A, Idx> = when Idx: A {
+type IsPrimeT<A, Idx> = when matches::<Idx, A>() {
     One // = true
-} else when Mod<A, Idx>: Zero {
+} else when matches::<Mod<A, Idx>, Zero>() {
     Zero // = false
 } else {
     IsPrimeT<A, Succ<Idx>>
 };
 
-type IsPrime<A> = when Prev<A>: Zero {
+type IsPrime<A> = when matches::<Prev<A>, Zero>() {
     Zero // = false
 } else {
     IsPrimeT<A, Two>

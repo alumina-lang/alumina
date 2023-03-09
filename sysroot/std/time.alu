@@ -25,9 +25,9 @@ const MICROS_PER_SEC: u64 = 1000000;
 /// assert!(Instant::now().duration_since(&start).total_secs() >= 0.5);
 /// ```
 struct Instant {
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(all(target_os = "macos", not(target_arch = "aarch64"))))]
     spec: libc::timespec,
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(target_arch = "aarch64")))]
     inner: u64,
 }
 
@@ -36,14 +36,17 @@ impl Instant {
 
     /// Current instant
     fn now() -> Instant {
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(all(target_os = "macos", not(target_arch = "aarch64"))))]
         {
             let spec: libc::timespec;
+            #[cfg(target_os = "macos")]
+            libc::clock_gettime(libc::CLOCK_UPTIME_RAW, &spec);
+            #[cfg(not(target_os = "macos"))]
             libc::clock_gettime(libc::CLOCK_MONOTONIC, &spec);
             Instant { spec: spec }
         }
 
-        #[cfg(target_os = "macos")] {
+        #[cfg(all(target_os = "macos", not(target_arch = "aarch64")))] {
             Instant { inner: internal::mach_absolute_time() }
         }
     }
@@ -52,7 +55,7 @@ impl Instant {
     ///
     /// If `earlier` is after the current instant, then a negative duration is returned.
     fn duration_since(self: &Instant, earlier: &Instant) -> Duration {
-        #[cfg(not(target_os = "macos"))] {
+        #[cfg(not(all(target_os = "macos", not(target_arch = "aarch64"))))] {
             let secs = (self.spec.tv_sec as i64) - (earlier.spec.tv_sec as i64);
             let nanos = (self.spec.tv_nsec as i32) - (earlier.spec.tv_nsec as i32);
 
@@ -64,7 +67,7 @@ impl Instant {
         }
 
 
-        #[cfg(target_os = "macos")] {
+        #[cfg(all(target_os = "macos", not(target_arch = "aarch64")))] {
             let diff = self.inner - earlier.inner;
             let total_nanos = ((diff as i128) * (internal::TIMEBASE.numer as i128) /
                 (internal::TIMEBASE.denom as i128)) as i64;
@@ -75,7 +78,7 @@ impl Instant {
 
     /// Add a specific duration to an instant.
     fn add(lhs: &Instant, rhs: &Duration) -> Instant {
-        #[cfg(not(target_os = "macos"))] {
+        #[cfg(not(all(target_os = "macos", not(target_arch = "aarch64"))))] {
             let secs = lhs.spec.tv_sec + util::cast(rhs.secs);
             let nanos = lhs.spec.tv_nsec as u32 + rhs.nanos;
 
@@ -92,7 +95,7 @@ impl Instant {
             }
         }
 
-        #[cfg(target_os = "macos")] {
+        #[cfg(all(target_os = "macos", not(target_arch = "aarch64")))] {
             let total_nanos = (rhs.nanos as u128) + (rhs.secs as u128) * (NANOS_PER_SEC as u128);
             let nanos = (total_nanos * (internal::TIMEBASE.denom as u128) /
                 (internal::TIMEBASE.numer as u128)) as u64;
@@ -105,7 +108,7 @@ impl Instant {
 
     /// Subtract a specific duration from an instant.
     fn sub(lhs: &Instant, rhs: &Duration) -> Instant {
-        #[cfg(not(target_os = "macos"))] {
+        #[cfg(not(all(target_os = "macos", not(target_arch = "aarch64"))))] {
             let secs = lhs.spec.tv_sec - util::cast(rhs.secs);
             let nsec = lhs.spec.tv_nsec as i32 - (rhs.nanos as i32);
 
@@ -122,7 +125,7 @@ impl Instant {
             }
         }
 
-        #[cfg(target_os = "macos")] {
+        #[cfg(all(target_os = "macos", not(target_arch = "aarch64")))] {
             let total_nanos = (rhs.nanos as u128) + (rhs.secs as u128) * (NANOS_PER_SEC as u128);
             let nanos = (total_nanos * (internal::TIMEBASE.denom as u128) /
                 (internal::TIMEBASE.numer as u128)) as u64;
@@ -135,32 +138,32 @@ impl Instant {
 
     /// @ cmp::Equatable::equals
     fn equals(lhs: &Instant, rhs: &Instant) -> bool {
-        #[cfg(not(target_os = "macos"))] {
+        #[cfg(not(all(target_os = "macos", not(target_arch = "aarch64"))))] {
             lhs.spec.tv_sec == rhs.spec.tv_sec && lhs.spec.tv_nsec == rhs.spec.tv_nsec
         }
-        #[cfg(target_os = "macos")] {
+        #[cfg(all(target_os = "macos", not(target_arch = "aarch64")))] {
             lhs.inner == rhs.inner
         }
     }
 
     /// @ hash::Hashable::hash
     fn hash<H: Hasher<H>>(self: &Instant, hasher: &mut H) {
-        #[cfg(not(target_os = "macos"))] {
+        #[cfg(not(all(target_os = "macos", not(target_arch = "aarch64"))))] {
             self.spec.tv_sec.hash(hasher);
             self.spec.tv_nsec.hash(hasher);
         }
-        #[cfg(target_os = "macos")] {
+        #[cfg(all(target_os = "macos", not(target_arch = "aarch64")))] {
             self.inner.hash(hasher);
         }
     }
 
     /// @ cmp::Comparable::compare
     fn compare(lhs: &Instant, rhs: &Instant) -> cmp::Ordering {
-        #[cfg(not(target_os = "macos"))] {
+        #[cfg(not(all(target_os = "macos", not(target_arch = "aarch64"))))] {
             cmp::lex_compare!(lhs.spec.tv_sec, rhs.spec.tv_sec);
             lhs.spec.tv_nsec.compare(&rhs.spec.tv_nsec)
         }
-        #[cfg(target_os = "macos")] {
+        #[cfg(all(target_os = "macos", not(target_arch = "aarch64")))] {
             lhs.inner.compare(&rhs.inner)
         }
     }
@@ -169,7 +172,7 @@ impl Instant {
     mixin cmp::Equatable<Instant>;
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(target_arch = "aarch64")))]
 {
     /// Darwin-specific implementation.
     #[docs(no_index)]

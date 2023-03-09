@@ -873,6 +873,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let MonoKey(ast_item, proto_generic_args, _, _) =
             self.mono_ctx.reverse_lookup(protocol_item);
         match self.mono_ctx.ast.lang_item_kind(ast_item) {
+            Some(LangItemKind::ProtoAny) => return Ok(BoundCheckResult::Matches),
+            Some(LangItemKind::ProtoNone) => return Ok(BoundCheckResult::DoesNotMatch),
             Some(LangItemKind::ProtoZeroSized) => {
                 if ty.is_zero_sized() {
                     return Ok(BoundCheckResult::Matches);
@@ -1485,9 +1487,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         if let ir::ExprKind::Block(block, ret) = body.kind {
             statements.extend(block.iter().cloned());
-            statements.push(ir::Statement::Expression(self.make_return(ret, None)?));
+            statements.push(ir::Statement::Expression(self.make_return(ret, ret.span)?));
         } else {
-            statements.push(ir::Statement::Expression(self.make_return(body, None)?));
+            statements.push(ir::Statement::Expression(
+                self.make_return(body, body.span)?,
+            ));
         };
 
         if self.defer_context.is_some() {
@@ -2078,10 +2082,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let expr = child.lower_expr(inner, None)?;
                 expr.ty
             }
-            ast::Ty::When(cond, then, els) => {
+            ast::Ty::When(ref cond, then, els) => {
                 // Do not move outside the branch, this must evaluate lazily as the non-matching
                 // branch may contain a compile error.
-                if self.static_cond_matches(&cond)? {
+                if self.static_cond_matches(cond)? {
                     self.lower_type_unrestricted(then)?
                 } else {
                     self.lower_type_unrestricted(els)?
@@ -2898,6 +2902,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     self.diag.warn(CodeErrorKind::UnusedMustUse(type_name))
                 }
 
+                if expr.pure() && !expr.is_void() {
+                    self.diag.warn(CodeErrorKind::PureStatement);
+                }
+
                 Some(ir::Statement::Expression(expr))
             }
             ast::StatementKind::LetDeclaration(decl) => {
@@ -3501,49 +3509,66 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
         }
 
+        let child = self.make_tentative_child();
+        match ir::const_eval::ConstEvaluator::new(
+            child.diag.fork(),
+            child.mono_ctx.ir,
+            child.local_types.iter().map(|(k, v)| (*k, *v)),
+        )
+        .const_eval(cond)
+        {
+            Ok(Value::Bool(v)) => self.diag.warn(CodeErrorKind::ConstantCondition(v)),
+            _ => {}
+        }
+
         Ok(self.exprs.if_then(cond, then, els, ast_span))
     }
 
-    fn static_cond_matches(
+    fn static_cond_matches(&mut self, cond: &ast::ExprP<'ast>) -> Result<bool, AluminaError> {
+        let mut child = self.make_tentative_child();
+        let ir_expr = child.lower_expr(cond, Some(child.types.builtin(BuiltinType::Bool)))?;
+        let ret = ir::const_eval::ConstEvaluator::new(
+            child.diag.fork(),
+            child.mono_ctx.ir,
+            child.local_types.iter().map(|(k, v)| (*k, *v)),
+        )
+        .const_eval(ir_expr)
+        .and_then(|v| match v {
+            Value::Bool(v) => Ok(v),
+            _ => Err(mismatch!(
+                self,
+                self.types.builtin(BuiltinType::Bool),
+                ir_expr.ty
+            )),
+        })?;
+
+        Ok(ret)
+    }
+
+    fn lower_typecheck(
         &mut self,
-        cond: &ast::StaticIfCondition<'ast>,
-    ) -> Result<bool, AluminaError> {
-        let typ = self.lower_type_unrestricted(cond.typ)?;
+        value: &ast::ExprP<'ast>,
+        typ: &ast::TyP<'ast>,
+        _type_hint: Option<ir::TyP<'ir>>,
+        ast_span: Option<Span>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let value = self.lower_expr(value, None)?;
+        let typ = self.lower_type_unrestricted(typ)?;
+        let value = matches!(
+            self.check_protocol_bound(typ, value.ty)?,
+            BoundCheckResult::Matches
+        );
 
-        let mut found = false;
-        for bound in cond.bounds.bounds {
-            let _guard = self.diag.push_span(bound.span);
-
-            let bound_typ = self.lower_type_unrestricted(bound.typ)?;
-            match self.check_protocol_bound(bound_typ, typ)? {
-                BoundCheckResult::Matches if bound.negated => {
-                    if cond.bounds.kind == ast::ProtocolBoundsKind::Any {
-                        continue;
-                    }
-                    return Ok(false);
-                }
-                BoundCheckResult::DoesNotMatch | BoundCheckResult::DoesNotMatchBecause(_)
-                    if !bound.negated =>
-                {
-                    if cond.bounds.kind == ast::ProtocolBoundsKind::Any {
-                        continue;
-                    }
-                    return Ok(false);
-                }
-                _ => {
-                    found = true;
-                    if cond.bounds.kind == ast::ProtocolBoundsKind::Any {
-                        break;
-                    }
-                }
-            }
-        }
-        Ok(found)
+        Ok(self.exprs.literal(
+            Value::Bool(value),
+            self.types.builtin(BuiltinType::Bool),
+            ast_span,
+        ))
     }
 
     fn lower_static_if(
         &mut self,
-        cond: &ast::StaticIfCondition<'ast>,
+        cond: &ast::ExprP<'ast>,
         then: ast::ExprP<'ast>,
         els: ast::ExprP<'ast>,
         type_hint: Option<ir::TyP<'ir>>,
@@ -3898,6 +3923,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             IntrinsicKind::Uninitialized => self.uninitialized(generic_args[0], span),
             IntrinsicKind::Dangling => self.dangling(generic_args[0], span),
             IntrinsicKind::InConstContext => self.in_const_context(span),
+            IntrinsicKind::IsConstEvaluable => self.is_const_evaluable(args[0], span),
         }
     }
 
@@ -5182,6 +5208,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
             ast::ExprKind::Const(item, args) => self.lower_const(item, *args, type_hint, expr.span),
             ast::ExprKind::Defered(def) => self.lower_defered(def, type_hint, expr.span),
+            ast::ExprKind::TypeCheck(value, typ) => {
+                self.lower_typecheck(value, typ, type_hint, expr.span)
+            }
             ast::ExprKind::StaticIf(cond, then, els) => {
                 self.lower_static_if(cond, then, els, type_hint, expr.span)
             }
@@ -5441,6 +5470,27 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     fn in_const_context(&self, span: Option<Span>) -> Result<ir::ExprP<'ir>, AluminaError> {
         Ok(self.exprs.codegen_intrinsic(
             IntrinsicValueKind::InConstContext,
+            self.types.builtin(BuiltinType::Bool),
+            span,
+        ))
+    }
+
+    fn is_const_evaluable(
+        &mut self,
+        expr: ir::ExprP<'ir>,
+        span: Option<Span>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let child = self.make_tentative_child();
+        let ret = ir::const_eval::ConstEvaluator::new(
+            child.diag.fork(),
+            child.mono_ctx.ir,
+            child.local_types.iter().map(|(k, v)| (*k, *v)),
+        )
+        .const_eval(expr)
+        .is_ok();
+
+        Ok(self.exprs.literal(
+            Value::Bool(ret),
             self.types.builtin(BuiltinType::Bool),
             span,
         ))

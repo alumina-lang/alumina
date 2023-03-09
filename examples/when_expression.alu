@@ -1,13 +1,14 @@
 use std::builtins::Primitive;
+use std::typing::{is_primitive, matches};
 
 fn type_name<T>() -> &[u8] {
-    when T: !Primitive {
+    when !is_primitive::<T>() {
         compile_fail!("only primitive types are supported");
     }
 
-    when T: u8 {
+    when matches::<T, u8>() {
         "u8"
-    } else when T: u16 {
+    } else when matches::<T, u16>() {
         "u16"
     } else {
         "something else, lol"
