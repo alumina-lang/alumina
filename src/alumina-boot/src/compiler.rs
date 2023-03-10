@@ -1,5 +1,5 @@
 use crate::ast::maker::AstItemMaker;
-use crate::ast::AstCtx;
+use crate::ast::{AstCtx, MacroCtx};
 use crate::codegen;
 use crate::common::{AluminaError, ArenaAllocatable, CodeErrorBuilder, CodeErrorKind, HashSet};
 use crate::global_ctx::GlobalCtx;
@@ -95,7 +95,12 @@ impl Compiler {
             scope.set_code(ctx);
 
             if self.global_ctx.should_generate_main_glue() {
-                let mut visitor = FirstPassVisitor::with_main(self.global_ctx.clone(), &ast, scope);
+                let mut visitor = FirstPassVisitor::with_main(
+                    self.global_ctx.clone(),
+                    &ast,
+                    scope,
+                    MacroCtx::default(),
+                );
                 visitor.visit(ctx.root_node())?;
 
                 if let Some(candidate) = visitor.main_candidate() {
@@ -105,14 +110,19 @@ impl Compiler {
                     }
                 }
             } else {
-                let mut visitor = FirstPassVisitor::new(self.global_ctx.clone(), &ast, scope);
+                let mut visitor = FirstPassVisitor::new(
+                    self.global_ctx.clone(),
+                    &ast,
+                    scope,
+                    MacroCtx::default(),
+                );
                 visitor.visit(ctx.root_node())?;
             }
         }
 
         timing!(self, cur_time, Stage::Pass1);
 
-        let mut item_maker = AstItemMaker::new(&ast, self.global_ctx.clone(), false);
+        let mut item_maker = AstItemMaker::new(&ast, self.global_ctx.clone(), MacroCtx::default());
         item_maker.make(root_scope)?;
 
         timing!(self, cur_time, Stage::Ast);

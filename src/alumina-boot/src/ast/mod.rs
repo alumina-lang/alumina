@@ -599,6 +599,8 @@ pub enum BuiltinMacroKind {
     File,
     IncludeBytes,
     FormatArgs,
+    Bind,
+    Reduce,
 }
 
 #[derive(Debug)]
@@ -761,7 +763,9 @@ pub enum ExprKind<'ast> {
     Call(ExprP<'ast>, &'ast [ExprP<'ast>]),
 
     Defered(Defered<'ast>),
-    DeferedMacro(ItemP<'ast>, &'ast [ExprP<'ast>]),
+
+    Macro(ItemP<'ast>, &'ast [ExprP<'ast>]),
+    MacroInvocation(ExprP<'ast>, &'ast [ExprP<'ast>]),
 
     Fn(FnKind<'ast>, Option<&'ast [TyP<'ast>]>),
 
@@ -833,6 +837,21 @@ pub struct Expr<'ast> {
 }
 
 pub type ExprP<'ast> = &'ast Expr<'ast>;
+
+#[derive(Default, Copy, Clone)]
+pub struct MacroCtx {
+    pub in_a_macro: bool,
+    pub has_et_cetera: bool,
+}
+
+impl MacroCtx {
+    pub fn for_macro(has_et_cetera: bool) -> Self {
+        Self {
+            in_a_macro: true,
+            has_et_cetera,
+        }
+    }
+}
 
 impl_allocatable!(
     Expr<'_>,

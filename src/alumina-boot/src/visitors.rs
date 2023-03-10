@@ -1,5 +1,5 @@
 use crate::ast::expressions::parse_string_literal;
-use crate::ast::{AstCtx, Attribute, ItemP, Span, TestMetadata};
+use crate::ast::{AstCtx, Attribute, ItemP, MacroCtx, Span, TestMetadata};
 use crate::common::{
     AluminaError, ArenaAllocatable, CodeError, CodeErrorKind, Marker, WithSpanDuringParsing,
 };
@@ -16,18 +16,18 @@ pub struct ScopedPathVisitor<'ast, 'src> {
     ast: &'ast AstCtx<'ast>,
     code: &'src ParseCtx<'src>,
     scope: Scope<'ast, 'src>, // ast: &'ast AstCtx<'ast>
-    in_a_macro: bool,
+    macro_ctx: MacroCtx,
 }
 
 impl<'ast, 'src> ScopedPathVisitor<'ast, 'src> {
-    pub fn new(ast: &'ast AstCtx<'ast>, scope: Scope<'ast, 'src>, in_a_macro: bool) -> Self {
+    pub fn new(ast: &'ast AstCtx<'ast>, scope: Scope<'ast, 'src>, macro_ctx: MacroCtx) -> Self {
         Self {
             ast,
             code: scope
                 .code()
                 .expect("cannot run on scope without parse context"),
             scope,
-            in_a_macro,
+            macro_ctx,
         }
     }
 }
@@ -83,7 +83,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
     }
 
     fn visit_macro_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        if !self.in_a_macro {
+        if !self.macro_ctx.in_a_macro {
             return Err(CodeErrorKind::DollaredOutsideOfMacro).with_span_from(&self.scope, node);
         }
 
@@ -137,7 +137,7 @@ pub struct UseClauseVisitor<'ast, 'src> {
     prefix: Path<'ast>,
     scope: Scope<'ast, 'src>,
     attributes: &'ast [Attribute],
-    in_a_macro: bool,
+    macro_ctx: MacroCtx,
 }
 
 impl<'ast, 'src> UseClauseVisitor<'ast, 'src> {
@@ -145,7 +145,7 @@ impl<'ast, 'src> UseClauseVisitor<'ast, 'src> {
         ast: &'ast AstCtx<'ast>,
         scope: Scope<'ast, 'src>,
         attributes: &'ast [Attribute],
-        in_a_macro: bool,
+        macro_ctx: MacroCtx,
     ) -> Self {
         Self {
             ast,
@@ -155,12 +155,12 @@ impl<'ast, 'src> UseClauseVisitor<'ast, 'src> {
                 .expect("cannot run on scope without parse context"),
             scope,
             attributes,
-            in_a_macro,
+            macro_ctx,
         }
     }
 
     fn parse_use_path(&mut self, node: Node<'src>) -> Result<Path<'ast>, AluminaError> {
-        let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone(), self.in_a_macro);
+        let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone(), self.macro_ctx);
         visitor.visit(node)
     }
 }

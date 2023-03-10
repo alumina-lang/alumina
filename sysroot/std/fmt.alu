@@ -61,35 +61,42 @@ protocol Formattable<Self, F: Formatter<F> = NullFormatter> {
     fn fmt(self: &Self, f: &mut F) -> Result;
 }
 
-/// Constructs an array of pieces from a format string and arguments.
+/// Transforms a format string and arguments into a sequence of chunks.
 ///
 /// This macro is implemented in the compiler, and is used as a foundation for other formatting macros,
 /// such as [format] and [println]. You probably want to use one of those formatting macros instead.
 ///
 /// ```pseudo_alumina
-/// format_args!(f, "{} = {}", a, b);  // Expands to: [f(&a), f(&" = "), f(&b)]
+/// format_args!(receiver, "{} = {}", a, b);  // Expands to: receiver!(a, " = ", b)
 /// ```
 ///
-/// See also [internal::format_arg], which is a function that coerces passed pieces to the type-erased
-/// `&dyn Formattable<...>`. As it wraps a pointer to the original arguments, it is generally not safe to
-/// store the array that is returned by `format_args`.
-///
-/// ## Example
+/// ## Examples
 /// ```
-/// use std::fmt::{format_args, Formattable, StreamFormatter};
-/// use std::io::StdioStream;
+/// use std::fmt::format_args;
+/// use std::concat;
 ///
-/// let stdout = StreamFormatter::new(&StdioStream::stdout());
+/// // This only works where all format arguments are string literals.
+/// let s = format_args!(concat, "{} + {} = {}", "1", "2", "3");
 ///
-/// // Type hint is required here in order to infer the formatter type
-/// let args: [&dyn Formattable<Self, StreamFormatter<StdioStream>>; 5]
-///     = format_args!(std::fmt::internal::format_arg, "{} + {} = {}", 1, 2, 3);
+/// assert_eq!(s, "1 + 2 = 3");
+/// ```
+/// ```
+/// use std::fmt::format_args;
+/// use std::typing::type_name;
 ///
-/// let _ = args[0].fmt(&stdout); // "1"
-/// let _ = args[1].fmt(&stdout); // " + "
-/// let _ = args[2].fmt(&stdout); // "2"
-/// let _ = args[3].fmt(&stdout); // " = "
-/// let _ = args[4].fmt(&stdout); // "3"
+/// macro debug($arg...)  {
+///     {
+///         let arg = $arg;
+///         println!("'{}' {}", arg, type_name::<typeof(arg)>());
+///     }...;
+/// }
+///
+/// // '1' i32
+/// // ' + ' &[u8]
+/// // '2' i32
+/// // ' = ' &[u8]
+/// // '3' i32
+/// format_args!(debug, "{} + {} = {}", 1, 2, 3);
 /// ```
 #[builtin] macro format_args($fmt, $args...) { }
 
@@ -107,7 +114,11 @@ protocol Formattable<Self, F: Formatter<F> = NullFormatter> {
 /// ```
 macro write($fmt, $fmt_str, $arg...) {
     internal::write_fmt(
-        &format_args!(fmt::internal::format_arg, $fmt_str, $arg...),
+        &format_args!(
+            internal::dyn_format_args,
+            $fmt_str,
+            $arg...
+        ),
         $fmt
     )
 }
@@ -115,7 +126,11 @@ macro write($fmt, $fmt_str, $arg...) {
 /// Write a formatted string and a newline into a given formatter.
 macro writeln($fmt, $fmt_str, $arg...) {
     internal::write_fmt(
-        &format_args!(fmt::internal::format_arg, concat!($fmt_str, "\n"), $arg...),
+        &format_args!(
+            fmt::internal::dyn_format_args,
+            concat!($fmt_str, "\n"),
+            $arg...
+        ),
         $fmt
     )
 }
@@ -268,8 +283,13 @@ mod internal {
     /// Returns a type-erased wrapper around a formattable object.
     #[lang(format_arg)]
     #[inline(always)]
-    fn format_arg<F: Formatter<F>, T: Formattable<T, F>>(self: &T) -> &dyn Formattable<Self, F> {
+    fn dyn_format_arg<F: Formatter<F>, T: Formattable<T, F>>(self: &T) -> &dyn Formattable<Self, F> {
         self
+    }
+
+    /// Receiver macro for [format_args]
+    macro dyn_format_args($args...) {
+        [dyn_format_arg(&$args)...]
     }
 
     fn format_integer<T: builtins::Integer, F: Formatter<F>>(val: T, radix: u16, pad: usize, fmt: &mut F) -> Result {
@@ -587,9 +607,10 @@ mod tests {
     #[test]
     fn test_format_args() {
         /// Compile-only test
-        let _: [&dyn Formattable<Self, NullFormatter>; 0] = format_args!(fmt::internal::format_arg, "");
-        let _: [&dyn Formattable<Self, NullFormatter>; 1] = format_args!(fmt::internal::format_arg, "hello");
-        let _: [&dyn Formattable<Self, NullFormatter>; 2] = format_args!(fmt::internal::format_arg, "hello {}", 1);
-        let _: [&dyn Formattable<Self, NullFormatter>; 4] = format_args!(fmt::internal::format_arg, "hello {} {}", 1, 2);
+        let _: [&dyn Formattable<Self, NullFormatter>; 0] = format_args!(fmt::internal::dyn_format_args,  "");
+        let _: [&dyn Formattable<Self, NullFormatter>; 1] = format_args!(fmt::internal::dyn_format_args,  "hello");
+        let _: [&dyn Formattable<Self, NullFormatter>; 2] = format_args!(fmt::internal::dyn_format_args,  "hello {}", 1);
+        let _: [&dyn Formattable<Self, NullFormatter>; 4] = format_args!(fmt::internal::dyn_format_args,  "hello {} {}", 1, 2);
     }
 }
+

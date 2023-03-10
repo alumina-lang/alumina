@@ -5214,16 +5214,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ast::ExprKind::StaticIf(cond, then, els) => {
                 self.lower_static_if(cond, then, els, type_hint, expr.span)
             }
-
             ast::ExprKind::BoundParam(self_arg, field_id, bound_type) => {
                 self.lower_bound_param(*self_arg, *field_id, *bound_type, type_hint, expr.span)
             }
-            ast::ExprKind::EtCetera(_) => {
-                ice!(self.diag, "macros should have been expanded by now")
-            }
-            ast::ExprKind::DeferedMacro(_, _) => {
-                ice!(self.diag, "macros should have been expanded by now")
-            }
+            ast::ExprKind::EtCetera(_)
+            | ast::ExprKind::MacroInvocation(_, _)
+            | ast::ExprKind::Macro(_, _) => Err(self.diag.err(CodeErrorKind::IsAMacro)),
         }
     }
 }

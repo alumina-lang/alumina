@@ -1,4 +1,4 @@
-use crate::ast::{AstCtx, Attribute, ItemP, Span};
+use crate::ast::{AstCtx, Attribute, ItemP, MacroCtx, Span};
 use crate::common::{
     AluminaError, ArenaAllocatable, CodeError, CodeErrorKind, IndexMap, Marker,
     WithSpanDuringParsing,
@@ -27,10 +27,16 @@ pub struct FirstPassVisitor<'ast, 'src> {
     main_candidate: Option<ItemP<'ast>>,
 
     items: ItemMap<'ast, 'src>,
+    macro_ctx: MacroCtx,
 }
 
 impl<'ast, 'src> FirstPassVisitor<'ast, 'src> {
-    pub fn new(global_ctx: GlobalCtx, ast: &'ast AstCtx<'ast>, scope: Scope<'ast, 'src>) -> Self {
+    pub fn new(
+        global_ctx: GlobalCtx,
+        ast: &'ast AstCtx<'ast>,
+        scope: Scope<'ast, 'src>,
+        macro_ctx: MacroCtx,
+    ) -> Self {
         Self {
             global_ctx,
             ast,
@@ -43,6 +49,7 @@ impl<'ast, 'src> FirstPassVisitor<'ast, 'src> {
             main_module_path: None,
             main_candidate: None,
             items: IndexMap::default(),
+            macro_ctx,
         }
     }
 
@@ -50,6 +57,7 @@ impl<'ast, 'src> FirstPassVisitor<'ast, 'src> {
         global_ctx: GlobalCtx,
         ast: &'ast AstCtx<'ast>,
         scope: Scope<'ast, 'src>,
+        macro_ctx: MacroCtx,
     ) -> Self {
         Self {
             global_ctx,
@@ -63,6 +71,7 @@ impl<'ast, 'src> FirstPassVisitor<'ast, 'src> {
             enum_item: None,
             main_candidate: None,
             items: IndexMap::default(),
+            macro_ctx,
         }
     }
 
@@ -516,7 +525,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     fn visit_use_declaration(&mut self, node: Node<'src>) -> Self::ReturnType {
         let attributes = parse_attributes!(self, node);
 
-        let mut visitor = UseClauseVisitor::new(self.ast, self.scope.clone(), attributes, false);
+        let mut visitor =
+            UseClauseVisitor::new(self.ast, self.scope.clone(), attributes, self.macro_ctx);
         visitor.visit(node.child_by_field(FieldKind::Argument).unwrap())?;
 
         Ok(())

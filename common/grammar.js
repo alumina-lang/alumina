@@ -1,4 +1,5 @@
 const PREC = {
+  universal_macro: 16,
   call: 15,
   field: 14,
   try: 13,
@@ -576,7 +577,7 @@ module.exports = grammar({
         $.index_expression,
         $.tuple_expression,
         $.array_expression,
-        prec(1, $.macro_invocation),
+        prec.left(1, $.macro_invocation),
         $.et_cetera_expression,
         $.closure_expression,
         $._literal,
@@ -640,7 +641,7 @@ module.exports = grammar({
     },
 
     field_expression: ($) =>
-      prec(
+      prec.left(
         PREC.field,
         seq(
           field("value", $._expression),
@@ -651,7 +652,7 @@ module.exports = grammar({
 
     universal_macro_invocation: ($) =>
       prec(
-        PREC.field,
+        PREC.universal_macro,
         seq(
           field("value", $._expression),
           ".",
@@ -731,12 +732,12 @@ module.exports = grammar({
         )
       ),
 
-    macro_invocation: ($) =>
+    macro_invocation: ($) => prec.left(1,
       seq(
-        field("macro", choice($.scoped_identifier, $.identifier)),
+        field("macro", $._expression_except_range),
         "!",
         field("arguments", $.arguments)
-      ),
+      )),
 
     struct_initializer_item: ($) =>
       seq(field("field", $.identifier), ":", field("value", $._expression)),

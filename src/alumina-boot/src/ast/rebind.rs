@@ -59,7 +59,7 @@ impl<'ast> Rebinder<'ast> {
             },
             Pointer(inner, is_const) => Pointer(self.visit_typ(inner)?, *is_const),
             Slice(inner, is_const) => Slice(self.visit_typ(inner)?, *is_const),
-            Array(inner, len) => Array(self.visit_typ(inner)?, len),
+            Array(inner, len) => Array(self.visit_typ(inner)?, self.visit_expr(len)?),
             Tuple(elems) => Tuple(
                 elems
                     .iter()
@@ -156,10 +156,7 @@ impl<'ast> Rebinder<'ast> {
                     .collect::<Result<Vec<_>, _>>()?
                     .alloc_on(self.ast),
             ),
-            DeferedMacro(_, _) => {
-                unreachable!("macros should have been expanded by now")
-            }
-            EtCetera(_) => {
+            Macro(_, _) | MacroInvocation(_, _) | EtCetera(_) => {
                 unreachable!("macros should have been expanded by now")
             }
             Block(statements, ret) => {

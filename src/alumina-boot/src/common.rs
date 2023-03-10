@@ -185,6 +185,8 @@ pub enum CodeErrorKind {
     ExternCGenericParams,
     #[error("constant string expected")]
     ConstantStringExpected,
+    #[error("macro expected")]
+    MacroExpected,
     #[error("this expression is not evaluable at compile time ({})", .0)]
     CannotConstEvaluate(ConstEvalErrorKind),
     #[error("values of enum variants can only be integers")]
@@ -203,16 +205,16 @@ pub enum CodeErrorKind {
     MultipleEtCeteras,
     #[error("recursive macro calls are not allowed")]
     RecursiveMacroCall,
-    #[error("`{}` is not a macro", .0)]
-    NotAMacro(String),
+    #[error("expression is not a macro")]
+    NotAMacro,
     #[error("not enough macro arguments, at least {} expected", .0)]
     NotEnoughMacroArguments(usize),
     #[error("nested `...` expansions are not supported (yet)")]
     EtCeteraInEtCetera,
     #[error("`...` expansion is not allowed in this position")]
     CannotEtCeteraHere,
-    #[error("`{}` is a macro (hint: append `!`)", .0)]
-    IsAMacro(String),
+    #[error("unexpanded macro (hint: append `!` to invoke it)")]
+    IsAMacro,
     #[error("cyclic dependency during static initialization")]
     RecursiveStaticInitialization,
     #[error("can only do that in function scope")]

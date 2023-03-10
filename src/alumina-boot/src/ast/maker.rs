@@ -19,34 +19,36 @@ use crate::parser::{AluminaVisitor, FieldKind, NodeExt, NodeKind};
 
 use once_cell::unsync::OnceCell;
 
+use super::MacroCtx;
+
 pub struct AstItemMaker<'ast> {
     ast: &'ast AstCtx<'ast>,
     global_ctx: GlobalCtx,
     symbols: Vec<ItemP<'ast>>,
     ambient_placeholders: Vec<Placeholder<'ast>>,
-    in_a_macro: bool,
+    macro_ctx: MacroCtx,
     local: bool,
 }
 
 impl<'ast> AstItemMaker<'ast> {
-    pub fn new(ast: &'ast AstCtx<'ast>, global_ctx: GlobalCtx, in_a_macro: bool) -> Self {
+    pub fn new(ast: &'ast AstCtx<'ast>, global_ctx: GlobalCtx, macro_ctx: MacroCtx) -> Self {
         Self {
             ast,
             global_ctx,
             symbols: Vec::new(),
             ambient_placeholders: Vec::new(),
-            in_a_macro,
+            macro_ctx,
             local: false,
         }
     }
 
-    pub fn new_local(ast: &'ast AstCtx<'ast>, global_ctx: GlobalCtx, in_a_macro: bool) -> Self {
+    pub fn new_local(ast: &'ast AstCtx<'ast>, global_ctx: GlobalCtx, macro_ctx: MacroCtx) -> Self {
         Self {
             ast,
             global_ctx,
             symbols: Vec::new(),
             ambient_placeholders: Vec::new(),
-            in_a_macro,
+            macro_ctx,
             local: true,
         }
     }
@@ -79,7 +81,7 @@ impl<'ast> AstItemMaker<'ast> {
                                     self.global_ctx.clone(),
                                     self.ast,
                                     scope.parent().unwrap(),
-                                    self.in_a_macro,
+                                    self.macro_ctx,
                                 )
                                 .visit(node)
                             })
@@ -91,7 +93,7 @@ impl<'ast> AstItemMaker<'ast> {
                             self.global_ctx.clone(),
                             self.ast,
                             scope.clone(),
-                            self.in_a_macro,
+                            self.macro_ctx,
                         )
                         .parse_protocol_bounds(node)?,
                     });
@@ -139,7 +141,7 @@ impl<'ast> AstItemMaker<'ast> {
                             self.global_ctx.clone(),
                             self.ast,
                             scope.clone(),
-                            self.in_a_macro,
+                            self.macro_ctx,
                         );
                         let protocol_type =
                             visitor.visit(node.child_by_field(FieldKind::Protocol).unwrap())?;
@@ -187,7 +189,7 @@ impl<'ast> AstItemMaker<'ast> {
                         self.global_ctx.clone(),
                         self.ast,
                         scope.clone(),
-                        self.in_a_macro,
+                        self.macro_ctx,
                     );
                     let field_type =
                         visitor.visit(node.child_by_field(FieldKind::Type).unwrap())?;
@@ -296,7 +298,7 @@ impl<'ast> AstItemMaker<'ast> {
                                 self.ast,
                                 self.global_ctx.clone(),
                                 scope.clone(),
-                                self.in_a_macro,
+                                self.macro_ctx,
                             )
                             .generate(node)
                         })
@@ -354,7 +356,7 @@ impl<'ast> AstItemMaker<'ast> {
                     self.global_ctx.clone(),
                     self.ast,
                     scope.clone(),
-                    self.in_a_macro,
+                    self.macro_ctx,
                 )
                 .visit(n)
             })
@@ -428,7 +430,7 @@ impl<'ast> AstItemMaker<'ast> {
                         self.global_ctx.clone(),
                         self.ast,
                         scope.clone(),
-                        self.in_a_macro,
+                        self.macro_ctx,
                     )
                     .visit(node.child_by_field(FieldKind::Type).unwrap())?;
 
@@ -481,7 +483,7 @@ impl<'ast> AstItemMaker<'ast> {
                     self.global_ctx.clone(),
                     self.ast,
                     scope.clone(),
-                    self.in_a_macro,
+                    self.macro_ctx,
                 )
                 .visit(n)
             })
@@ -496,7 +498,7 @@ impl<'ast> AstItemMaker<'ast> {
                     self.ast,
                     self.global_ctx.clone(),
                     scope.clone(),
-                    self.in_a_macro,
+                    self.macro_ctx,
                 )
                 .generate(body)
             })
@@ -546,7 +548,7 @@ impl<'ast> AstItemMaker<'ast> {
                     self.global_ctx.clone(),
                     self.ast,
                     scope.clone(),
-                    self.in_a_macro,
+                    self.macro_ctx,
                 )
                 .visit(n)
             })
@@ -562,7 +564,7 @@ impl<'ast> AstItemMaker<'ast> {
                     self.ast,
                     self.global_ctx.clone(),
                     scope.clone(),
-                    self.in_a_macro,
+                    self.macro_ctx,
                 )
                 .generate(body)
             })
