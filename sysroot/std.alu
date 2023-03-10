@@ -390,11 +390,52 @@ mod internal {
     fn expect(cond: bool, expected: bool) -> bool {
         intrinsics::codegen_func::<bool>("__builtin_expect", cond, expected)
     }
+
+    mod const_format {
+        macro fold_result($left, $right) {
+            let left = $left;
+            if left.is_err() {
+                left
+            } else {
+                $right
+            }
+        }
+
+        macro const_format_args($fmt, $arg...) {
+            macros::reduce!(
+                fold_result,
+                Result::ok::<(), fmt::Error>(()),
+                $arg.fmt($fmt)...
+            )
+        }
+
+        macro format($fmt_str, $arg...) {
+            let BUF: [u8; 2048];
+            let fmt = fmt::SliceFormatter::new(&BUF);
+            fmt::format_args!(
+                macros::bind!(const_format_args, &fmt),
+                $fmt_str,
+                $arg...
+            ).unwrap();
+            fmt.get()
+        }
+    }
+
 }
 
 #[cfg(all(test, test_std))]
 #[docs(hide)]
 mod tests {
+    #[test]
+    fn test_const_format() {
+        const FOO: &[u8] = {
+            std::intrinsics::const_panic(internal::const_format::format!("Hello"));
+            "hello"
+        };
+
+        println!("{}", FOO);
+    }
+
     #[test]
     fn test_likely() {
         assert!(likely!(true));

@@ -657,6 +657,7 @@ impl<'ir> Expr<'ir> {
                 IntrinsicValueKind::ConstLike(_) => false,
                 IntrinsicValueKind::Uninitialized => true,
                 IntrinsicValueKind::InConstContext => true,
+                IntrinsicValueKind::ConstPanic(_) => false,
             },
 
             ExprKind::Unreachable => false, // ?

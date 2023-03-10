@@ -80,6 +80,8 @@ pub enum ConstEvalErrorKind {
     TooManyIterations,
     #[error("contains pointer to a local variable")]
     LValueLeak,
+    #[error("panic during constant evaluation: {}", .0)]
+    ConstPanic(String),
 
     // These are not errors, but they are used to signal that the evaluation should stop.
     // They are bugs if they leak to the caller
@@ -704,6 +706,7 @@ impl<'ir> ConstEvaluator<'ir> {
             (Value::F64(a), Ty::Builtin(BuiltinType::F32)) => Ok(Value::F32(a)),
             (Value::F32(a), Ty::Builtin(BuiltinType::F64)) => Ok(Value::F64(a)),
             (Value::FunctionPointer(id), Ty::FunctionPointer(..)) => Ok(Value::FunctionPointer(id)),
+            (Value::Pointer(value), Ty::Pointer(..)) => Ok(Value::Pointer(value)),
             _ => unsupported!(self),
         }
     }
@@ -959,6 +962,13 @@ impl<'ir> ConstEvaluator<'ir> {
                 let value = self.const_eval_rvalue(value)?;
                 match value {
                     Value::Pointer(lvalue) => Ok(Value::LValue(lvalue)),
+                    Value::Str(arr, off) => {
+                        if off >= arr.len() {
+                            return Err(ConstEvalErrorKind::IndexOutOfBounds).with_backtrace(&self.diag);
+                        }
+
+                        Ok(Value::U8(arr[off]))
+                    },
                     _ => unsupported!(self),
                 }
             }
@@ -1061,6 +1071,10 @@ impl<'ir> ConstEvaluator<'ir> {
                 IntrinsicValueKind::FunctionLike(_) => unsupported!(self),
                 IntrinsicValueKind::ConstLike(_) => unsupported!(self),
                 IntrinsicValueKind::InConstContext => Ok(Value::Bool(true)),
+                IntrinsicValueKind::ConstPanic(reason) => {
+                    return Err(ConstEvalErrorKind::ConstPanic(reason.to_string()))
+                        .with_backtrace(&self.diag)
+                }
             },
             ExprKind::Fn(item) => Ok(Value::FunctionPointer(item)),
             ExprKind::Return(value) => {
@@ -1188,6 +1202,7 @@ impl<'ir> ConstEvaluator<'ir> {
 
             _ => {}
         }
+
 
         let ret = match op {
             BinOp::Plus => lhs + rhs,

@@ -848,7 +848,7 @@ assert_eq!(
 As macros operate on the AST level, they are not quite first-class citizens, however, a "reference to a macro" can be passed as a parameter to another macro.
 
 ```rust
-macro print($arg) {
+macro echo($arg) {
     println!("{}", $arg);
 }
 
@@ -860,7 +860,7 @@ macro foreach($f, $arg...) {
 // 2
 // 3
 foreach!(
-    print_prefixed, // macro "pointer"
+    echo, // macro "pointer"
     1,
     2,
     3

@@ -3923,6 +3923,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             IntrinsicKind::Uninitialized => self.uninitialized(generic_args[0], span),
             IntrinsicKind::Dangling => self.dangling(generic_args[0], span),
             IntrinsicKind::InConstContext => self.in_const_context(span),
+            IntrinsicKind::ConstPanic => self.const_panic(args[0], span),
             IntrinsicKind::IsConstEvaluable => self.is_const_evaluable(args[0], span),
         }
     }
@@ -5467,6 +5468,20 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(self.exprs.codegen_intrinsic(
             IntrinsicValueKind::InConstContext,
             self.types.builtin(BuiltinType::Bool),
+            span,
+        ))
+    }
+
+    fn const_panic(
+        &self,
+        reason: ir::ExprP<'ir>,
+        span: Option<Span>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let reason = self.get_const_string(reason)?;
+
+        Ok(self.exprs.codegen_intrinsic(
+            IntrinsicValueKind::ConstPanic(reason),
+            self.types.builtin(BuiltinType::Never),
             span,
         ))
     }

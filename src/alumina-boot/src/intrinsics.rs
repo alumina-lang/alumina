@@ -23,6 +23,7 @@ pub enum IntrinsicKind {
     Asm,
     InConstContext,
     IsConstEvaluable,
+    ConstPanic,
 }
 
 pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
@@ -48,6 +49,7 @@ pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
         "dangling" => IntrinsicKind::Dangling,
         "in_const_context" => IntrinsicKind::InConstContext,
         "is_const_evaluable" => IntrinsicKind::IsConstEvaluable,
+        "const_panic" => IntrinsicKind::ConstPanic,
         _ => return None,
     };
 
@@ -61,6 +63,7 @@ pub enum IntrinsicValueKind<'ir> {
     Asm(&'ir str),
     FunctionLike(&'ir str),
     ConstLike(&'ir str),
+    ConstPanic(&'ir str),
     Uninitialized,
     InConstContext,
 }

@@ -214,7 +214,14 @@ impl slice {
     /// The memory ranges must not overlap, use [copy_to] if they may be overlapping.
     fn copy_to_nonoverlapping<T>(src: &[T], dst: &mut T) {
         when !(src[0] is builtins::ZeroSized) {
-            libc::memcpy(dst as &mut void, src._ptr as &void, src.len() * size_of::<T>());
+            #[allow(constant_condition)]
+            if runtime::in_const_context() {
+                for i in 0usize..src.len() {
+                    *(dst + i) = src[i];
+                }
+            } else {
+                libc::memcpy(dst as &mut void, src._ptr as &void, src.len() * size_of::<T>());
+            }
         }
     }
 
@@ -223,7 +230,14 @@ impl slice {
     /// The ranges may overlap.
     fn copy_to<T>(src: &[T], dst: &mut T) {
         when !(src[0] is builtins::ZeroSized) {
-            libc::memmove(dst as &mut void, src._ptr as &void, src.len() * size_of::<T>());
+            #[allow(constant_condition)]
+            if runtime::in_const_context() {
+                for i in 0usize..src.len() {
+                    *(dst + i) = src[i];
+                }
+            } else {
+                libc::memmove(dst as &mut void, src._ptr as &void, src.len() * size_of::<T>());
+            }
         }
     }
 
@@ -588,7 +602,7 @@ mod internal {
     #[inline(ir)]
     #[lang(slice_const_coerce)]
     fn slice_const_coerce<T>(a: slice<&mut T>) -> slice<&T> {
-        util::transmute(a)
+        slice { _ptr: a._ptr as &T, _len: a._len }
     }
 
     #[inline(ir)]

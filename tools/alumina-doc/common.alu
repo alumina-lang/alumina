@@ -434,6 +434,9 @@ impl ItemBag {
     }
 
     fn sync_reexport(self: &mut ItemBag, source: &Path, dst: &Path) {
+        let new_items: Vector<Item> = Vector::new();
+        defer new_items.free();
+
         for i in self.items.iter() {
             if !i.path.starts_with(dst) {
                 continue
@@ -445,7 +448,7 @@ impl ItemBag {
             }
 
             if !self.lookup.get(&src_path).is_some() {
-                self.add_item(Item {
+                new_items.push(Item {
                     kind: i.kind,
                     cfg_index: i.cfg_index,
                     parse_context: i.parse_context,
@@ -460,6 +463,10 @@ impl ItemBag {
             }
 
             src_path.free();
+        }
+
+        for new_item in new_items.iter_mut() {
+            self.add_item(new_item.move());
         }
     }
 
