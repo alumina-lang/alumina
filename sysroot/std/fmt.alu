@@ -113,26 +113,17 @@ protocol Formattable<Self, F: Formatter<F> = NullFormatter> {
 /// assert_eq!(fmt.get()[0..9], "1 + 2 = 3");
 /// ```
 macro write($fmt, $fmt_str, $arg...) {
-    internal::write_fmt(
-        &format_args!(
-            internal::dyn_format_args,
+    let fmt = $fmt;
+    format_args!(
+            macros::bind!(internal::static_format_args, fmt),
             $fmt_str,
             $arg...
-        ),
-        $fmt
     )
 }
 
 /// Write a formatted string and a newline into a given formatter.
 macro writeln($fmt, $fmt_str, $arg...) {
-    internal::write_fmt(
-        &format_args!(
-            fmt::internal::dyn_format_args,
-            concat!($fmt_str, "\n"),
-            $arg...
-        ),
-        $fmt
-    )
+    write!($fmt, concat!($fmt_str, "\n"), $arg...)
 }
 
 /// Format a string into a `StringBuf`.
@@ -294,6 +285,23 @@ mod internal {
     /// is used primarily to reduce code size as doing it statically would lead to
     macro dyn_format_args($args...) {
         [dyn_format_arg(&$args)...]
+    }
+
+    macro fold_result($left, $right) {
+        let left = $left;
+        if left.is_err() {
+            left
+        } else {
+            $right
+        }
+    }
+
+    macro static_format_args($fmt, $arg...) {
+        macros::reduce!(
+            fold_result,
+            Result::ok::<(), fmt::Error>(()),
+            $arg.fmt($fmt)...
+        )
     }
 
     fn format_integer<T: builtins::Integer, F: Formatter<F>>(val: T, radix: u16, pad: usize, fmt: &mut F) -> Result {

@@ -1,16 +1,18 @@
 /// An interpreter for constant expressions. It's quite slow.
 use crate::ast::BinOp;
 use crate::common::{
-    AluminaError, ArenaAllocatable, CodeError, CodeErrorBuilder, CodeErrorKind, HashMap,
+    AluminaError, ArenaAllocatable, ByRef, CodeError, CodeErrorBuilder, CodeErrorKind, HashMap,
 };
 use crate::diagnostics::DiagnosticsStack;
 use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::{BuiltinType, ExprKind, ExprP, IRItem, IrCtx, IrId, Statement, Ty, TyP, UnOp};
+use std::backtrace::Backtrace;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::num::TryFromIntError;
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use thiserror::Error;
 
@@ -49,6 +51,7 @@ pub enum Value<'ir> {
 pub enum LValue<'ir> {
     Const(IRItemP<'ir>),
     Variable(IrId),
+    Alloc(IrId),
     Field(&'ir LValue<'ir>, IrId),
     Index(&'ir LValue<'ir>, usize),
     TupleIndex(&'ir LValue<'ir>, usize),
@@ -61,7 +64,7 @@ pub enum ConstEvalErrorKind {
     #[error("function `{}` is not supported in constant context", .0)]
     UnsupportedFunction(String),
     #[error("ice: encountered a branch that should have been rejected during type checking")]
-    CompilerBug,
+    CompilerBug(ByRef<Backtrace>),
     #[error("cyclic reference")]
     CyclicReference,
     #[error("trying to access uninitialized value")]
@@ -80,8 +83,10 @@ pub enum ConstEvalErrorKind {
     TooManyIterations,
     #[error("contains pointer to a local variable")]
     LValueLeak,
-    #[error("panic during constant evaluation: {}", .0)]
-    ConstPanic(String),
+    #[error("dynamically allocated memory used after being freed")]
+    UseAfterFree,
+    #[error("invalid pointer used to free memory")]
+    InvalidFree,
 
     // These are not errors, but they are used to signal that the evaluation should stop.
     // They are bugs if they leak to the caller
@@ -124,13 +129,15 @@ macro_rules! unsupported {
 }
 
 macro_rules! bug {
-    ($self:expr) => {
-        return Err(ConstEvalErrorKind::CompilerBug).with_backtrace(&$self.diag)
-    };
+    ($self:expr) => {{
+        return Err(ConstEvalErrorKind::CompilerBug(Backtrace::capture().into()))
+            .with_backtrace(&$self.diag);
+    }};
 }
 
 pub(crate) use numeric_of_kind;
 
+use super::builder::TypeBuilder;
 use super::IRItemP;
 
 impl<'ir> Value<'ir> {
@@ -320,7 +327,7 @@ impl<'ir> Shl<Value<'ir>> for Value<'ir> {
             I64(other) => other.try_into(),
             I128(other) => other.try_into(),
             ISize(other) => other.try_into(),
-            _ => return Err(ConstEvalErrorKind::CompilerBug),
+            _ => return Err(ConstEvalErrorKind::CompilerBug(Backtrace::capture().into())),
         };
         let other = other.map_err(|_| ConstEvalErrorKind::ArithmeticOverflow)?;
 
@@ -403,7 +410,7 @@ impl<'ir> Shr<Value<'ir>> for Value<'ir> {
             I64(other) => other.try_into(),
             I128(other) => other.try_into(),
             ISize(other) => other.try_into(),
-            _ => return Err(ConstEvalErrorKind::CompilerBug),
+            _ => return Err(ConstEvalErrorKind::CompilerBug(Backtrace::capture().into())),
         };
         let other = other.map_err(|_| ConstEvalErrorKind::ArithmeticOverflow)?;
         let ret = match self {
@@ -553,13 +560,54 @@ struct ConstEvalCtxInner<'ir> {
 #[derive(Clone)]
 pub struct ConstEvalCtx<'ir> {
     ir: &'ir IrCtx<'ir>,
+    malloc_bag: MallocBag<'ir>,
     inner: Rc<RefCell<ConstEvalCtxInner<'ir>>>,
 }
 
+struct MallocBagInner<'ir> {
+    variables: HashMap<IrId, Value<'ir>>,
+}
+
+#[derive(Clone)]
+pub struct MallocBag<'ir> {
+    inner: Rc<RefCell<MallocBagInner<'ir>>>,
+}
+
+impl<'ir> MallocBag<'ir> {
+    pub fn new() -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(MallocBagInner {
+                variables: HashMap::default(),
+            })),
+        }
+    }
+
+    pub fn define(&self, id: IrId, value: Value<'ir>) {
+        self.inner.borrow_mut().variables.insert(id, value);
+    }
+
+    pub fn assign(&self, id: IrId, value: Value<'ir>) -> Option<Value<'ir>> {
+        let mut inner = self.inner.borrow_mut();
+        match inner.variables.entry(id) {
+            std::collections::hash_map::Entry::Occupied(mut val) => Some(val.insert(value)),
+            std::collections::hash_map::Entry::Vacant(_) => None,
+        }
+    }
+
+    pub fn free(&self, id: IrId) -> Option<Value<'ir>> {
+        self.inner.borrow_mut().variables.remove(&id)
+    }
+
+    pub fn get(&self, id: IrId) -> Option<Value<'ir>> {
+        self.inner.borrow().variables.get(&id).cloned()
+    }
+}
+
 impl<'ir> ConstEvalCtx<'ir> {
-    pub fn new(ir: &'ir IrCtx<'ir>) -> Self {
+    pub fn new(ir: &'ir IrCtx<'ir>, malloc_bag: MallocBag<'ir>) -> Self {
         Self {
             ir,
+            malloc_bag,
             inner: Rc::new(RefCell::new(ConstEvalCtxInner {
                 variables: HashMap::default(),
                 steps_remaining: MAX_ITERATIONS,
@@ -607,15 +655,21 @@ pub struct ConstEvaluator<'ir> {
     return_slot: Option<Value<'ir>>,
     remaining_depth: usize,
     remapped_variables: HashMap<IrId, IrId>,
+    types: TypeBuilder<'ir>,
     diag: DiagnosticsStack,
 }
 
 impl<'ir> ConstEvaluator<'ir> {
-    pub fn new<I>(diag: DiagnosticsStack, ir: &'ir IrCtx<'ir>, local_types: I) -> Self
+    pub fn new<I>(
+        diag: DiagnosticsStack,
+        malloc_bag: MallocBag<'ir>,
+        ir: &'ir IrCtx<'ir>,
+        local_types: I,
+    ) -> Self
     where
         I: IntoIterator<Item = (IrId, TyP<'ir>)>,
     {
-        let ctx = ConstEvalCtx::new(ir);
+        let ctx = ConstEvalCtx::new(ir, malloc_bag);
         for (id, typ) in local_types {
             ctx.declare(id, typ);
         }
@@ -626,6 +680,7 @@ impl<'ir> ConstEvaluator<'ir> {
             remaining_depth: MAX_RECURSION_DEPTH,
             remapped_variables: Default::default(),
             diag,
+            types: TypeBuilder::new(ir),
             ctx,
         }
     }
@@ -641,6 +696,7 @@ impl<'ir> ConstEvaluator<'ir> {
                 .ok_or(ConstEvalErrorKind::TooDeep)
                 .with_backtrace(&self.diag)?,
             remapped_variables,
+            types: TypeBuilder::new(self.ir),
             diag: self.diag.fork(),
         })
     }
@@ -706,7 +762,6 @@ impl<'ir> ConstEvaluator<'ir> {
             (Value::F64(a), Ty::Builtin(BuiltinType::F32)) => Ok(Value::F32(a)),
             (Value::F32(a), Ty::Builtin(BuiltinType::F64)) => Ok(Value::F64(a)),
             (Value::FunctionPointer(id), Ty::FunctionPointer(..)) => Ok(Value::FunctionPointer(id)),
-            (Value::Pointer(value), Ty::Pointer(..)) => Ok(Value::Pointer(value)),
             _ => unsupported!(self),
         }
     }
@@ -807,6 +862,12 @@ impl<'ir> ConstEvaluator<'ir> {
                 Ok(item.value)
             }
             LValue::Variable(id) => Ok(self.ctx.load_var(id)),
+            LValue::Alloc(id) => Ok(self
+                .ctx
+                .malloc_bag
+                .get(id)
+                .ok_or(ConstEvalErrorKind::UseAfterFree)
+                .with_backtrace(&self.diag)?),
             LValue::Field(lvalue, field) => {
                 let base = self.materialize_lvalue(*lvalue)?;
                 self.field(base, field)
@@ -831,6 +892,15 @@ impl<'ir> ConstEvaluator<'ir> {
             LValue::Variable(id) => {
                 self.ctx.assign(id, value);
                 Ok(())
+            }
+            LValue::Alloc(id) => {
+                if self.ctx.malloc_bag.assign(id, value).is_none() {
+                    Err(ConstEvalErrorKind::UseAfterFree)
+                        .with_backtrace(&self.diag)
+                        .into()
+                } else {
+                    Ok(())
+                }
             }
             LValue::Field(lvalue, field) => {
                 let base = self.materialize_lvalue(*lvalue)?;
@@ -941,7 +1011,6 @@ impl<'ir> ConstEvaluator<'ir> {
             ))),
             ExprKind::Unary(op, inner) => {
                 let inner = self.const_eval_rvalue(inner)?;
-
                 let ret = match op {
                     UnOp::Not if matches!(inner, Value::Bool(_)) => !inner,
                     UnOp::Neg => -inner,
@@ -964,11 +1033,12 @@ impl<'ir> ConstEvaluator<'ir> {
                     Value::Pointer(lvalue) => Ok(Value::LValue(lvalue)),
                     Value::Str(arr, off) => {
                         if off >= arr.len() {
-                            return Err(ConstEvalErrorKind::IndexOutOfBounds).with_backtrace(&self.diag);
+                            return Err(ConstEvalErrorKind::IndexOutOfBounds)
+                                .with_backtrace(&self.diag);
                         }
 
                         Ok(Value::U8(arr[off]))
-                    },
+                    }
                     _ => unsupported!(self),
                 }
             }
@@ -1071,9 +1141,51 @@ impl<'ir> ConstEvaluator<'ir> {
                 IntrinsicValueKind::FunctionLike(_) => unsupported!(self),
                 IntrinsicValueKind::ConstLike(_) => unsupported!(self),
                 IntrinsicValueKind::InConstContext => Ok(Value::Bool(true)),
-                IntrinsicValueKind::ConstPanic(reason) => {
-                    return Err(ConstEvalErrorKind::ConstPanic(reason.to_string()))
-                        .with_backtrace(&self.diag)
+                IntrinsicValueKind::ConstPanic(expr) => {
+                    let value = self.const_eval_rvalue(expr)?;
+                    match self.extract_constant_string_from_slice(&value) {
+                        Some(msg) => {
+                            return Err(CodeErrorKind::ConstPanic(
+                                std::str::from_utf8(msg).unwrap().to_string(),
+                            ))
+                            .with_backtrace(&self.diag)
+                        }
+                        None => {
+                            unsupported!(self);
+                        }
+                    }
+                }
+                IntrinsicValueKind::ConstAlloc(ty, size, zeroed) => {
+                    let size = self.const_eval_rvalue(size)?;
+                    match size {
+                        Value::USize(size) => {
+                            let id = self.ir.make_id();
+                            let value = if *zeroed {
+                                make_zeroed(self.ir, self.types.array(ty, size))
+                            } else {
+                                make_uninitialized(self.ir, self.types.array(ty, size))
+                            };
+                            self.ctx.malloc_bag.define(id, value);
+
+                            Ok(Value::Pointer(LValue::Index(
+                                LValue::Alloc(id).alloc_on(self.ir),
+                                0,
+                            )))
+                        }
+                        _ => bug!(self),
+                    }
+                }
+                IntrinsicValueKind::ConstFree(ptr) => {
+                    let ptr = self.const_eval_rvalue(ptr)?;
+                    match ptr {
+                        Value::Pointer(LValue::Index(LValue::Alloc(id), 0))
+                            if self.ctx.malloc_bag.free(*id).is_some() =>
+                        {
+                            Ok(Value::Void)
+                        }
+
+                        _ => Err(ConstEvalErrorKind::InvalidFree).with_backtrace(&self.diag),
+                    }
                 }
             },
             ExprKind::Fn(item) => Ok(Value::FunctionPointer(item)),
@@ -1203,7 +1315,6 @@ impl<'ir> ConstEvaluator<'ir> {
             _ => {}
         }
 
-
         let ret = match op {
             BinOp::Plus => lhs + rhs,
             BinOp::Minus => lhs - rhs,
@@ -1253,6 +1364,48 @@ impl<'ir> ConstEvaluator<'ir> {
 
         ret.with_backtrace(&self.diag)
     }
+
+    pub fn extract_constant_string_from_slice(&mut self, value: &Value<'ir>) -> Option<&'ir [u8]> {
+        match value {
+            Value::Struct(fields) => {
+                let mut buf = None;
+                let mut len = None;
+                for (_id, value) in fields.iter() {
+                    match value {
+                        Value::USize(len_) => {
+                            len = Some(*len_);
+                        }
+                        Value::Str(r, offset) => {
+                            buf = r.get(*offset..);
+                        }
+                        Value::Pointer(LValue::Index(r, offset)) => {
+                            let r = self.materialize_lvalue(**r).unwrap();
+                            if let Value::Array(elems) = r {
+                                let mut bytes = Vec::with_capacity(elems.len());
+                                for elem in elems.iter().skip(*offset) {
+                                    if let Value::U8(byte) = elem {
+                                        bytes.push(*byte);
+                                    } else {
+                                        // Uninitialized bytes are zero?
+                                        bytes.push(0);
+                                    }
+                                }
+                                buf = Some(self.ir.arena.alloc_slice_copy(&bytes[..]));
+                            }
+                        }
+                        _ => return None,
+                    }
+                }
+
+                if let (Some(buf), Some(len)) = (buf, len) {
+                    Some(&buf[..len])
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
 }
 
 fn check_lvalue_leak(value: &Value<'_>) -> Result<(), ConstEvalErrorKind> {
@@ -1271,6 +1424,7 @@ fn check_lvalue_leak(value: &Value<'_>) -> Result<(), ConstEvalErrorKind> {
 fn check_lvalue_leak_lvalue(value: &LValue<'_>) -> Result<(), ConstEvalErrorKind> {
     match value {
         LValue::Const(_) => Ok(()),
+        LValue::Alloc(_) => Err(ConstEvalErrorKind::LValueLeak),
         LValue::Variable(_) => Err(ConstEvalErrorKind::LValueLeak),
         LValue::Field(inner, _) | LValue::Index(inner, _) | LValue::TupleIndex(inner, _) => {
             check_lvalue_leak_lvalue(inner)
@@ -1302,6 +1456,59 @@ fn make_uninitialized<'ir>(ir: &'ir IrCtx<'ir>, typ: TyP<'ir>) -> Value<'ir> {
             }
             _ => Value::Uninitialized,
         },
+        _ => Value::Uninitialized,
+    }
+}
+
+fn make_zeroed<'ir>(ir: &'ir IrCtx<'ir>, typ: TyP<'ir>) -> Value<'ir> {
+    match typ {
+        Ty::Array(inner, size) => {
+            let inner = make_zeroed(ir, inner);
+            let buf = ir.arena.alloc_slice_fill_copy(*size, inner);
+
+            Value::Array(buf)
+        }
+        Ty::Tuple(tys) => {
+            let elems = tys.iter().map(|t| make_zeroed(ir, t));
+
+            Value::Tuple(ir.arena.alloc_slice_fill_iter(elems))
+        }
+        Ty::Item(item) => match item.get().unwrap() {
+            IRItem::StructLike(s) => {
+                let fields = s.fields.iter().map(|f| {
+                    let value = make_zeroed(ir, f.ty);
+                    (f.id, value)
+                });
+
+                Value::Struct(ir.arena.alloc_slice_fill_iter(fields))
+            }
+            IRItem::Enum(e) => {
+                make_zeroed(ir, e.underlying_type)
+            }
+            _ => Value::Uninitialized,
+        },
+        Ty::Pointer(_, _) => {
+            Value::USize(0)
+        }
+        Ty::Builtin(kind) => match kind {
+            BuiltinType::Never => Value::Uninitialized,
+            BuiltinType::Bool => Value::Bool(false),
+            BuiltinType::U8 => Value::U8(0),
+            BuiltinType::U16 => Value::U16(0),
+            BuiltinType::U32 => Value::U32(0),
+            BuiltinType::U64 => Value::U64(0),
+            BuiltinType::U128 => Value::U128(0),
+            BuiltinType::USize => Value::USize(0),
+            BuiltinType::ISize => Value::ISize(0),
+            BuiltinType::I8 => Value::I8(0),
+            BuiltinType::I16 => Value::I16(0),
+            BuiltinType::I32 => Value::I32(0),
+            BuiltinType::I64 => Value::I64(0),
+            BuiltinType::I128 => Value::I128(0),
+            BuiltinType::F32 => Value::F32("0"),
+            BuiltinType::F64 => Value::F64("0"),
+        }
+
         _ => Value::Uninitialized,
     }
 }

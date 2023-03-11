@@ -658,6 +658,8 @@ impl<'ir> Expr<'ir> {
                 IntrinsicValueKind::Uninitialized => true,
                 IntrinsicValueKind::InConstContext => true,
                 IntrinsicValueKind::ConstPanic(_) => false,
+                IntrinsicValueKind::ConstAlloc(_, _, _) => false,
+                IntrinsicValueKind::ConstFree(_) => false,
             },
 
             ExprKind::Unreachable => false, // ?

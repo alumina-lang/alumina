@@ -392,28 +392,13 @@ mod internal {
     }
 
     mod const_format {
-        macro fold_result($left, $right) {
-            let left = $left;
-            if left.is_err() {
-                left
-            } else {
-                $right
-            }
-        }
 
-        macro const_format_args($fmt, $arg...) {
-            macros::reduce!(
-                fold_result,
-                Result::ok::<(), fmt::Error>(()),
-                $arg.fmt($fmt)...
-            )
-        }
 
         macro format($fmt_str, $arg...) {
             let BUF: [u8; 2048];
             let fmt = fmt::SliceFormatter::new(&BUF);
             fmt::format_args!(
-                macros::bind!(const_format_args, &fmt),
+                macros::bind!(fmt::internal::static_format_args, &fmt),
                 $fmt_str,
                 $arg...
             ).unwrap();
@@ -428,12 +413,9 @@ mod internal {
 mod tests {
     #[test]
     fn test_const_format() {
-        const FOO: &[u8] = {
-            std::intrinsics::const_panic(internal::const_format::format!("Hello"));
-            "hello"
+        const FOO: () = {
+            std::intrinsics::const_panic(internal::const_format::format!("Hello {} {} {} {}", 1, 2, 3, std::fmt::hex(100)));
         };
-
-        println!("{}", FOO);
     }
 
     #[test]

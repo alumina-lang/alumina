@@ -25,6 +25,7 @@ use std::collections::hash_map::Entry;
 use std::iter::{once, repeat};
 use std::rc::Rc;
 
+use super::const_eval::MallocBag;
 use super::layout::Layouter;
 
 macro_rules! mismatch {
@@ -70,6 +71,7 @@ pub struct MonoCtx<'ast, 'ir> {
     static_local_defs: HashMap<ir::IRItemP<'ir>, Vec<LocalDef<'ir>>>,
     vtable_layouts: HashMap<&'ir [ir::TyP<'ir>], ir::VtableLayout<'ir>>,
     static_inits: Vec<ir::IRItemP<'ir>>,
+    malloc_bag: MallocBag<'ir>,
     caches: Caches<'ast, 'ir>,
 }
 
@@ -98,6 +100,7 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
             cycle_guardian: CycleGuardian::new(),
             tests: HashMap::default(),
             vtable_layouts: HashMap::default(),
+            malloc_bag: MallocBag::new(),
             static_inits: Vec::new(),
             caches: Caches::default(),
         }
@@ -466,6 +469,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
             let value = ir::const_eval::ConstEvaluator::new(
                 child.diag.fork(),
+                child.mono_ctx.malloc_bag.clone(),
                 child.mono_ctx.ir,
                 child.local_types.iter().map(|(k, v)| (*k, *v)),
             )
@@ -502,6 +506,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 }
                 counter = ir::const_eval::ConstEvaluator::new(
                     child.diag.fork(),
+                    child.mono_ctx.malloc_bag.clone(),
                     child.mono_ctx.ir,
                     child.local_types.iter().map(|(k, v)| (*k, *v)),
                 )
@@ -1228,6 +1233,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
             let value = ir::const_eval::ConstEvaluator::new(
                 child.diag.fork(),
+                child.mono_ctx.malloc_bag.clone(),
                 child.mono_ctx.ir,
                 child.local_types.iter().map(|(k, v)| (*k, *v)),
             )
@@ -1932,6 +1938,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     child.lower_expr(len, Some(child.types.builtin(BuiltinType::USize)))?;
                 let len = ir::const_eval::ConstEvaluator::new(
                     child.diag.fork(),
+                    child.mono_ctx.malloc_bag.clone(),
                     child.mono_ctx.ir,
                     child.local_types.iter().map(|(k, v)| (*k, *v)),
                 )
@@ -3512,6 +3519,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let child = self.make_tentative_child();
         match ir::const_eval::ConstEvaluator::new(
             child.diag.fork(),
+            child.mono_ctx.malloc_bag.clone(),
             child.mono_ctx.ir,
             child.local_types.iter().map(|(k, v)| (*k, *v)),
         )
@@ -3529,6 +3537,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let ir_expr = child.lower_expr(cond, Some(child.types.builtin(BuiltinType::Bool)))?;
         let ret = ir::const_eval::ConstEvaluator::new(
             child.diag.fork(),
+            child.mono_ctx.malloc_bag.clone(),
             child.mono_ctx.ir,
             child.local_types.iter().map(|(k, v)| (*k, *v)),
         )
@@ -3924,6 +3933,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             IntrinsicKind::Dangling => self.dangling(generic_args[0], span),
             IntrinsicKind::InConstContext => self.in_const_context(span),
             IntrinsicKind::ConstPanic => self.const_panic(args[0], span),
+            IntrinsicKind::ConstAlloc => self.const_alloc(generic_args[0], args[0], false, span),
+            IntrinsicKind::ConstAllocZeroed => self.const_alloc(generic_args[0], args[0], true, span),
+            IntrinsicKind::ConstFree => self.const_free(args[0], span),
             IntrinsicKind::IsConstEvaluable => self.is_const_evaluable(args[0], span),
         }
     }
@@ -5228,11 +5240,16 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 /// Intrinsic functions
 impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     fn get_const_string(&self, expr: ir::ExprP<'ir>) -> Result<&'ir str, AluminaError> {
-        match ir::const_eval::ConstEvaluator::new(self.diag.fork(), self.mono_ctx.ir, [])
-            .const_eval(expr)
-        {
+        let mut evaluator = ir::const_eval::ConstEvaluator::new(
+            self.diag.fork(),
+            self.mono_ctx.malloc_bag.clone(),
+            self.mono_ctx.ir,
+            [],
+        );
+
+        match evaluator.const_eval(expr) {
             Ok(value) => {
-                if let Some(r) = extract_constant_string_from_slice(&value) {
+                if let Some(r) = evaluator.extract_constant_string_from_slice(&value) {
                     Ok(std::str::from_utf8(r).unwrap())
                 } else {
                     Err(mismatch!(self, "constant string", expr.ty))
@@ -5477,11 +5494,35 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         reason: ir::ExprP<'ir>,
         span: Option<Span>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let reason = self.get_const_string(reason)?;
-
         Ok(self.exprs.codegen_intrinsic(
             IntrinsicValueKind::ConstPanic(reason),
             self.types.builtin(BuiltinType::Never),
+            span,
+        ))
+    }
+
+    fn const_alloc(
+        &self,
+        typ: ir::TyP<'ir>,
+        size: ir::ExprP<'ir>,
+        zeroed: bool,
+        span: Option<Span>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        Ok(self.exprs.codegen_intrinsic(
+            IntrinsicValueKind::ConstAlloc(typ, size, zeroed),
+            self.types.pointer(typ, false),
+            span,
+        ))
+    }
+
+    fn const_free(
+        &self,
+        ptr: ir::ExprP<'ir>,
+        span: Option<Span>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        Ok(self.exprs.codegen_intrinsic(
+            IntrinsicValueKind::ConstFree(ptr),
+            self.types.void(),
             span,
         ))
     }
@@ -5494,6 +5535,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let child = self.make_tentative_child();
         let ret = ir::const_eval::ConstEvaluator::new(
             child.diag.fork(),
+            child.mono_ctx.malloc_bag.clone(),
             child.mono_ctx.ir,
             child.local_types.iter().map(|(k, v)| (*k, *v)),
         )
@@ -5662,29 +5704,5 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
 
         self.array_of(enum_variant_new_func.return_type, exprs, None)
-    }
-}
-
-fn extract_constant_string_from_slice<'ir>(value: &Value<'ir>) -> Option<&'ir [u8]> {
-    match value {
-        Value::Struct(fields) => {
-            let mut buf = None;
-            let mut len = None;
-            for (_id, value) in fields.iter() {
-                if let Value::Str(r, offset) = value {
-                    buf = r.get(*offset..);
-                }
-                if let Value::USize(len_) = value {
-                    len = Some(*len_);
-                }
-            }
-
-            if let (Some(buf), Some(len)) = (buf, len) {
-                Some(&buf[..len])
-            } else {
-                None
-            }
-        }
-        _ => None,
     }
 }

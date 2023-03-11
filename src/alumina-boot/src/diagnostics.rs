@@ -2,6 +2,7 @@ use crate::ast::Span;
 use crate::common::{
     AluminaError, CodeError, CodeErrorKind, FileId, HashMap, HashSet, IndexSet, Marker,
 };
+use crate::ir::const_eval::ConstEvalErrorKind;
 use colored::Colorize;
 
 use std::cell::RefCell;
@@ -353,6 +354,13 @@ impl DiagnosticContext {
             }
 
             if let CodeErrorKind::InternalError(_, backtrace) = &error.kind {
+                eprintln!();
+                eprintln!("Compiler backtrace:");
+                eprintln!("{}", backtrace);
+                needs_padding = true;
+            }
+
+            if let CodeErrorKind::CannotConstEvaluate(ConstEvalErrorKind::CompilerBug(backtrace)) = &error.kind {
                 eprintln!();
                 eprintln!("Compiler backtrace:");
                 eprintln!("{}", backtrace);

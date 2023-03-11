@@ -1,4 +1,4 @@
-use crate::ir::TyP;
+use crate::ir::{TyP, ExprP};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IntrinsicKind {
@@ -24,6 +24,9 @@ pub enum IntrinsicKind {
     InConstContext,
     IsConstEvaluable,
     ConstPanic,
+    ConstAlloc,
+    ConstAllocZeroed,
+    ConstFree,
 }
 
 pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
@@ -50,6 +53,9 @@ pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
         "in_const_context" => IntrinsicKind::InConstContext,
         "is_const_evaluable" => IntrinsicKind::IsConstEvaluable,
         "const_panic" => IntrinsicKind::ConstPanic,
+        "const_alloc" => IntrinsicKind::ConstAlloc,
+        "const_alloc_zeroed" => IntrinsicKind::ConstAllocZeroed,
+        "const_free" => IntrinsicKind::ConstFree,
         _ => return None,
     };
 
@@ -63,7 +69,9 @@ pub enum IntrinsicValueKind<'ir> {
     Asm(&'ir str),
     FunctionLike(&'ir str),
     ConstLike(&'ir str),
-    ConstPanic(&'ir str),
+    ConstPanic(ExprP<'ir>),
+    ConstAlloc(TyP<'ir>, ExprP<'ir>, bool),
+    ConstFree(ExprP<'ir>),
     Uninitialized,
     InConstContext,
 }

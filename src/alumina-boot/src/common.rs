@@ -316,6 +316,8 @@ pub enum CodeErrorKind {
     MacrosCannotDefineItems,
     #[error("anonymous functions are not supported in a macro body (yet)")]
     MacrosCannotDefineLambdas,
+    #[error("panic during constant evaluation: {}", .0)]
+    ConstPanic(String),
 
     // Warnings
     #[error("defer inside a loop: this defered statement will only be executed once")]

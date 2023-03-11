@@ -520,9 +520,11 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 IntrinsicValueKind::InConstContext => {
                     w!(self.fn_bodies, "({})0", self.ctx.get_type(expr.ty));
                 }
-                IntrinsicValueKind::ConstPanic(_) => {
-                    w!(self.fn_bodies, "__builtin_unreachable()");
-                },
+                IntrinsicValueKind::ConstPanic(_)
+                | IntrinsicValueKind::ConstAlloc(_, _, _)
+                | IntrinsicValueKind::ConstFree(_) => {
+                    unreachable!()
+                }
             },
             ExprKind::Array(elems) => {
                 self.type_writer.add_type(expr.ty)?;

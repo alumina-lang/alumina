@@ -403,6 +403,9 @@ impl<'ir> ZstElider<'ir> {
                 IntrinsicValueKind::Uninitialized if expr.ty.is_zero_sized() => {
                     builder.void(expr.ty, ValueType::RValue, expr.span)
                 }
+                IntrinsicValueKind::ConstPanic(_)
+                | IntrinsicValueKind::ConstAlloc(_, _, _)
+                | IntrinsicValueKind::ConstFree(_) => builder.unreachable(expr.span),
                 _ => expr,
             },
             ExprKind::Goto(label) => {
@@ -466,6 +469,7 @@ impl<'ir> ZstElider<'ir> {
                 }
                 unreachable!()
             }
+            LValue::Alloc(_) => unreachable!(),
         }
     }
 

@@ -176,8 +176,11 @@ impl slice {
     /// assert_eq!(hw, s);
     /// ```
     fn alloc<T>(len: usize) -> &mut [T] {
+        #[allow(constant_condition)]
         let ptr = when typing::is_zero_sized::<T>() {
             dangling::<&mut T>()
+        } else if runtime::in_const_context() {
+            std::intrinsics::const_alloc::<T>(len)
         } else {
             libc::malloc(size_of::<T>() * len) as &mut T
         };
@@ -187,8 +190,14 @@ impl slice {
 
     /// Resizes a heap-allocated array.
     fn realloc<T>(slice: &mut [T], len: usize) -> &mut [T] {
+        #[allow(constant_condition)]
         let ptr = when slice[0] is builtins::ZeroSized {
             dangling::<&mut T>()
+        } else if runtime::in_const_context() {
+            let new = std::intrinsics::const_alloc::<T>(len);
+            slice.copy_to_nonoverlapping(new);
+            slice.free();
+            new
         } else {
             libc::realloc(slice._ptr as &mut void, size_of::<T>() * len) as &mut T
         };
@@ -202,6 +211,8 @@ impl slice {
     fn alloc_zeroed<T>(len: usize) -> &mut [T] {
         let ptr = when typing::matches::<T, builtins::ZeroSized>() {
             dangling::<&mut T>()
+        } else if runtime::in_const_context() {
+            std::intrinsics::const_alloc_zeroed::<T>(len)
         } else {
             libc::calloc(len, size_of::<T>()) as &mut T
         };
@@ -378,7 +389,12 @@ impl slice {
     /// This requires that the slice was allocated with `alloc` or `alloc_zeroed`.
     fn free<T>(a: &mut [T]) {
         when !(*a._ptr is builtins::ZeroSized) {
-            libc::free(a._ptr as &mut void);
+            #[allow(constant_condition)]
+            if runtime::in_const_context() {
+                std::intrinsics::const_free::<T>(a._ptr);
+            } else {
+                libc::free(a._ptr as &mut void);
+            }
         }
     }
 
@@ -608,7 +624,7 @@ mod internal {
     #[inline(ir)]
     #[lang(slice_const_cast)]
     fn slice_const_cast<T>(a: slice<&T>) -> slice<&mut T> {
-        util::transmute(a)
+        slice { _ptr: a._ptr as &mut T, _len: a._len }
     }
 }
 
