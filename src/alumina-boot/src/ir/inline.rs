@@ -140,10 +140,11 @@ impl<'ir> IrInliner<'ir> {
             ExprKind::TupleIndex(e, i) => {
                 builder.tuple_index(self.visit_expr(e)?, i, expr.ty, self.span)
             }
-            ExprKind::If(cond, then, els) => builder.if_then(
+            ExprKind::If(cond, then, els, const_cond) => builder.if_then(
                 self.visit_expr(cond)?,
                 self.visit_expr(then)?,
                 self.visit_expr(els)?,
+                const_cond,
                 self.span,
             ),
             ExprKind::Cast(inner) => builder.cast(self.visit_expr(inner)?, expr.ty, self.span),

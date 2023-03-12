@@ -1239,10 +1239,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             )
             .const_eval(init)?;
 
-            let mut elider = ZstElider::new(child.mono_ctx.ir);
+            let mut elider = ZstElider::new(self.diag.fork(), child.mono_ctx.ir);
             // TODO(tibordp): check that elider didn't produce any temporary local variables.
             // It should never happen, but what do you know.
-            let optimized = elider.elide_zst_expr(child.exprs.literal(value, init.ty, init.span));
+            let optimized =
+                elider.elide_zst_expr(child.exprs.literal(value, init.ty, init.span))?;
 
             let res = ir::IRItem::Const(ir::Const {
                 name: s.name.map(|n| n.alloc_on(child.mono_ctx.ir)),
@@ -1510,8 +1511,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             raw_body: Some(body),
         };
 
-        let elider = ZstElider::new(self.mono_ctx.ir);
-        let optimized = elider.elide_zst_func_body(function_body);
+        let elider = ZstElider::new(self.diag.fork(), self.mono_ctx.ir);
+        let optimized = elider.elide_zst_func_body(function_body)?;
 
         Ok(optimized)
     }
@@ -1729,8 +1730,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             raw_body: None,
         };
 
-        let elider = ZstElider::new(self.mono_ctx.ir);
-        let optimized = elider.elide_zst_func_body(function_body);
+        let elider = ZstElider::new(self.diag.fork(), self.mono_ctx.ir);
+        let optimized = elider.elide_zst_func_body(function_body)?;
 
         item.assign(ir::IRItem::Function(ir::Function {
             name: None,
@@ -3516,6 +3517,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
         }
 
+        // This is a bit nasty since runtime::in_const_context behaves differently in
+        // const context and in runtie context, so we don't want to warn if that is the case
+        // but also exclude inreachable branches in codegen (so we don't accidentally codegen
+        // const-only code)
+        let mut const_cond = None;
         let child = self.make_tentative_child();
         match ir::const_eval::ConstEvaluator::new(
             child.diag.fork(),
@@ -3525,11 +3531,29 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         )
         .const_eval(cond)
         {
-            Ok(Value::Bool(v)) => self.diag.warn(CodeErrorKind::ConstantCondition(v)),
+            Ok(Value::Bool(for_const_eval)) => {
+                match ir::const_eval::ConstEvaluator::for_codegen(
+                    child.diag.fork(),
+                    child.mono_ctx.malloc_bag.clone(),
+                    child.mono_ctx.ir,
+                    child.local_types.iter().map(|(k, v)| (*k, *v)),
+                )
+                .const_eval(cond)
+                {
+                    Ok(Value::Bool(for_codegen)) => {
+                        if for_const_eval == for_codegen {
+                            self.diag
+                                .warn(CodeErrorKind::ConstantCondition(for_const_eval));
+                        }
+                        const_cond = Some(for_codegen);
+                    }
+                    _ => {}
+                }
+            }
             _ => {}
         }
 
-        Ok(self.exprs.if_then(cond, then, els, ast_span))
+        Ok(self.exprs.if_then(cond, then, els, const_cond, ast_span))
     }
 
     fn static_cond_matches(&mut self, cond: &ast::ExprP<'ast>) -> Result<bool, AluminaError> {
@@ -3934,7 +3958,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             IntrinsicKind::InConstContext => self.in_const_context(span),
             IntrinsicKind::ConstPanic => self.const_panic(args[0], span),
             IntrinsicKind::ConstAlloc => self.const_alloc(generic_args[0], args[0], false, span),
-            IntrinsicKind::ConstAllocZeroed => self.const_alloc(generic_args[0], args[0], true, span),
+            IntrinsicKind::ConstAllocZeroed => {
+                self.const_alloc(generic_args[0], args[0], true, span)
+            }
             IntrinsicKind::ConstFree => self.const_free(args[0], span),
             IntrinsicKind::IsConstEvaluable => self.is_const_evaluable(args[0], span),
         }
@@ -4890,6 +4916,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     ),
                     self.exprs
                         .void(self.types.void(), ir::ValueType::RValue, None),
+                    None,
                     None,
                 ),
             ));

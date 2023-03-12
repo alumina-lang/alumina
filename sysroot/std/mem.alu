@@ -176,7 +176,6 @@ impl slice {
     /// assert_eq!(hw, s);
     /// ```
     fn alloc<T>(len: usize) -> &mut [T] {
-        #[allow(constant_condition)]
         let ptr = when typing::is_zero_sized::<T>() {
             dangling::<&mut T>()
         } else if runtime::in_const_context() {
@@ -190,7 +189,6 @@ impl slice {
 
     /// Resizes a heap-allocated array.
     fn realloc<T>(slice: &mut [T], len: usize) -> &mut [T] {
-        #[allow(constant_condition)]
         let ptr = when slice[0] is builtins::ZeroSized {
             dangling::<&mut T>()
         } else if runtime::in_const_context() {
@@ -225,7 +223,6 @@ impl slice {
     /// The memory ranges must not overlap, use [copy_to] if they may be overlapping.
     fn copy_to_nonoverlapping<T>(src: &[T], dst: &mut T) {
         when !(src[0] is builtins::ZeroSized) {
-            #[allow(constant_condition)]
             if runtime::in_const_context() {
                 for i in 0usize..src.len() {
                     *(dst + i) = src[i];
@@ -241,7 +238,6 @@ impl slice {
     /// The ranges may overlap.
     fn copy_to<T>(src: &[T], dst: &mut T) {
         when !(src[0] is builtins::ZeroSized) {
-            #[allow(constant_condition)]
             if runtime::in_const_context() {
                 for i in 0usize..src.len() {
                     *(dst + i) = src[i];
@@ -389,7 +385,6 @@ impl slice {
     /// This requires that the slice was allocated with `alloc` or `alloc_zeroed`.
     fn free<T>(a: &mut [T]) {
         when !(*a._ptr is builtins::ZeroSized) {
-            #[allow(constant_condition)]
             if runtime::in_const_context() {
                 std::intrinsics::const_free::<T>(a._ptr);
             } else {

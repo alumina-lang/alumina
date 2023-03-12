@@ -435,7 +435,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 self.write_expr(inner, false)?;
                 w!(self.fn_bodies, "._{}", idx);
             }
-            ExprKind::If(cond, then, els) if expr.ty.is_zero_sized() => {
+            ExprKind::If(cond, then, els, _) if expr.ty.is_zero_sized() => {
                 w!(self.fn_bodies, "if (");
                 self.write_expr(cond, false)?;
                 w!(self.fn_bodies, ") {{{}", self.endl());
@@ -458,7 +458,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
 
                 w!(self.fn_bodies, "}}");
             }
-            ExprKind::If(cond, then, els) => {
+            ExprKind::If(cond, then, els, _) => {
                 w!(self.fn_bodies, "(");
                 self.write_expr(cond, false)?;
                 w!(self.fn_bodies, "?");

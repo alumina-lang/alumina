@@ -657,6 +657,7 @@ pub struct ConstEvaluator<'ir> {
     remapped_variables: HashMap<IrId, IrId>,
     types: TypeBuilder<'ir>,
     diag: DiagnosticsStack,
+    codegen: bool,
 }
 
 impl<'ir> ConstEvaluator<'ir> {
@@ -682,7 +683,22 @@ impl<'ir> ConstEvaluator<'ir> {
             diag,
             types: TypeBuilder::new(ir),
             ctx,
+            codegen: false,
         }
+    }
+
+    pub fn for_codegen<I>(
+        diag: DiagnosticsStack,
+        malloc_bag: MallocBag<'ir>,
+        ir: &'ir IrCtx<'ir>,
+        local_types: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = (IrId, TyP<'ir>)>,
+    {
+        let mut ret = Self::new(diag, malloc_bag, ir, local_types);
+        ret.codegen = true;
+        ret
     }
 
     fn make_child(&self, remapped_variables: HashMap<IrId, IrId>) -> Result<Self, AluminaError> {
@@ -698,6 +714,7 @@ impl<'ir> ConstEvaluator<'ir> {
             remapped_variables,
             types: TypeBuilder::new(self.ir),
             diag: self.diag.fork(),
+            codegen: self.codegen,
         })
     }
 
@@ -762,6 +779,11 @@ impl<'ir> ConstEvaluator<'ir> {
             (Value::F64(a), Ty::Builtin(BuiltinType::F32)) => Ok(Value::F32(a)),
             (Value::F32(a), Ty::Builtin(BuiltinType::F64)) => Ok(Value::F64(a)),
             (Value::FunctionPointer(id), Ty::FunctionPointer(..)) => Ok(Value::FunctionPointer(id)),
+            (Value::Pointer(value), Ty::Pointer(underlying, is_const))
+                if inner.ty == *underlying =>
+            {
+                Ok(Value::Pointer(value))
+            }
             _ => unsupported!(self),
         }
     }
@@ -1045,7 +1067,7 @@ impl<'ir> ConstEvaluator<'ir> {
             ExprKind::Literal(value) => Ok(*value),
             ExprKind::Const(item) => Ok(Value::LValue(LValue::Const(item))),
             ExprKind::Cast(inner) => self.cast(inner, expr.ty),
-            ExprKind::If(cond, then, els) => {
+            ExprKind::If(cond, then, els, _) => {
                 let condv = self.const_eval_rvalue(cond)?;
 
                 let cond_value = match condv {
@@ -1140,7 +1162,7 @@ impl<'ir> ConstEvaluator<'ir> {
                 IntrinsicValueKind::Asm(_) => unsupported!(self),
                 IntrinsicValueKind::FunctionLike(_) => unsupported!(self),
                 IntrinsicValueKind::ConstLike(_) => unsupported!(self),
-                IntrinsicValueKind::InConstContext => Ok(Value::Bool(true)),
+                IntrinsicValueKind::InConstContext => Ok(Value::Bool(!self.codegen)),
                 IntrinsicValueKind::ConstPanic(expr) => {
                     let value = self.const_eval_rvalue(expr)?;
                     match self.extract_constant_string_from_slice(&value) {
@@ -1482,14 +1504,10 @@ fn make_zeroed<'ir>(ir: &'ir IrCtx<'ir>, typ: TyP<'ir>) -> Value<'ir> {
 
                 Value::Struct(ir.arena.alloc_slice_fill_iter(fields))
             }
-            IRItem::Enum(e) => {
-                make_zeroed(ir, e.underlying_type)
-            }
+            IRItem::Enum(e) => make_zeroed(ir, e.underlying_type),
             _ => Value::Uninitialized,
         },
-        Ty::Pointer(_, _) => {
-            Value::USize(0)
-        }
+        Ty::Pointer(_, _) => Value::USize(0),
         Ty::Builtin(kind) => match kind {
             BuiltinType::Never => Value::Uninitialized,
             BuiltinType::Bool => Value::Bool(false),
@@ -1507,7 +1525,7 @@ fn make_zeroed<'ir>(ir: &'ir IrCtx<'ir>, typ: TyP<'ir>) -> Value<'ir> {
             BuiltinType::I128 => Value::I128(0),
             BuiltinType::F32 => Value::F32("0"),
             BuiltinType::F64 => Value::F64("0"),
-        }
+        },
 
         _ => Value::Uninitialized,
     }

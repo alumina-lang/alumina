@@ -1,5 +1,8 @@
 use crate::ast::{BuiltinType, Span, UnOp};
-use crate::common::{ArenaAllocatable, HashMap, HashSet};
+use crate::common::{
+    AluminaError, ArenaAllocatable, CodeErrorBuilder, CodeErrorKind, HashMap, HashSet,
+};
+use crate::diagnostics::DiagnosticsStack;
 use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::builder::{ExpressionBuilder, TypeBuilder};
 use crate::ir::const_eval::Value;
@@ -14,23 +17,28 @@ use super::IRItem;
 // safe to ignore by codegen.
 pub struct ZstElider<'ir> {
     ir: &'ir IrCtx<'ir>,
+    diag: DiagnosticsStack,
     additional_locals: Vec<LocalDef<'ir>>,
     used_ids: HashSet<IrId>,
 }
 
 impl<'ir> ZstElider<'ir> {
-    pub fn new(ir: &'ir IrCtx<'ir>) -> Self {
+    pub fn new(diag: DiagnosticsStack, ir: &'ir IrCtx<'ir>) -> Self {
         Self {
             ir,
+            diag,
             additional_locals: Vec::new(),
             used_ids: HashSet::default(),
         }
     }
 
-    pub fn elide_zst_func_body(mut self, function_body: FuncBody<'ir>) -> FuncBody<'ir> {
+    pub fn elide_zst_func_body(
+        mut self,
+        function_body: FuncBody<'ir>,
+    ) -> Result<FuncBody<'ir>, AluminaError> {
         let mut statements = Vec::new();
         for stmt in function_body.statements {
-            self.elide_zst_stmt(stmt, &mut statements);
+            self.elide_zst_stmt(stmt, &mut statements)?;
         }
 
         let local_defs = function_body
@@ -41,16 +49,18 @@ impl<'ir> ZstElider<'ir> {
             .chain(self.additional_locals.into_iter())
             .collect::<Vec<_>>();
 
-        FuncBody {
+        Ok(FuncBody {
             statements: statements.alloc_on(self.ir),
             local_defs: local_defs.alloc_on(self.ir),
             raw_body: function_body.raw_body,
-        }
+        })
     }
 
-    pub fn elide_zst_expr(&mut self, expr: ExprP<'ir>) -> ExprP<'ir> {
+    pub fn elide_zst_expr(&mut self, expr: ExprP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
         let builder = ExpressionBuilder::new(self.ir);
         let types = TypeBuilder::new(self.ir);
+
+        let _guard = self.diag.push_span(expr.span);
 
         let result = match expr.kind {
             ExprKind::Local(_) if expr.ty.is_zero_sized() => {
@@ -65,8 +75,8 @@ impl<'ir> ZstElider<'ir> {
             }
             ExprKind::Static(_) | ExprKind::Const(_) => expr,
             ExprKind::Assign(l, r) if l.ty.is_zero_sized() => {
-                let l = self.elide_zst_expr(l);
-                let r = self.elide_zst_expr(r);
+                let l = self.elide_zst_expr(l)?;
+                let r = self.elide_zst_expr(r)?;
                 builder.block(
                     [Statement::Expression(l), Statement::Expression(r)],
                     builder.void(expr.ty, ValueType::RValue, expr.span),
@@ -74,15 +84,15 @@ impl<'ir> ZstElider<'ir> {
                 )
             }
             ExprKind::Assign(l, r) => {
-                builder.assign(self.elide_zst_expr(l), self.elide_zst_expr(r), expr.span)
+                builder.assign(self.elide_zst_expr(l)?, self.elide_zst_expr(r)?, expr.span)
             }
             ExprKind::Block(stmts, ret) => {
                 let mut statements = Vec::new();
                 for stmt in stmts {
-                    self.elide_zst_stmt(stmt, &mut statements);
+                    self.elide_zst_stmt(stmt, &mut statements)?;
                 }
 
-                let ret = self.elide_zst_expr(ret);
+                let ret = self.elide_zst_expr(ret)?;
                 statements.retain(|s| match s {
                     Statement::Label(id) => self.used_ids.contains(id),
                     _ => true,
@@ -91,8 +101,8 @@ impl<'ir> ZstElider<'ir> {
             }
             ExprKind::Binary(op, lhs, rhs) => builder.binary(
                 op,
-                self.elide_zst_expr(lhs),
-                self.elide_zst_expr(rhs),
+                self.elide_zst_expr(lhs)?,
+                self.elide_zst_expr(rhs)?,
                 expr.ty,
                 expr.span,
             ),
@@ -100,7 +110,7 @@ impl<'ir> ZstElider<'ir> {
                 let mut statements = Vec::new();
                 let mut inits = Vec::new();
                 for arg in items.iter() {
-                    let value = self.elide_zst_expr(arg.value);
+                    let value = self.elide_zst_expr(arg.value)?;
 
                     if value.ty.is_zero_sized() {
                         statements.push(Statement::Expression(value));
@@ -122,7 +132,7 @@ impl<'ir> ZstElider<'ir> {
                 let mut inits = Vec::new();
 
                 for arg in fields.iter() {
-                    let value = self.elide_zst_expr(arg.value);
+                    let value = self.elide_zst_expr(arg.value)?;
 
                     if value.ty.is_zero_sized() {
                         statements.push(Statement::Expression(value));
@@ -144,13 +154,17 @@ impl<'ir> ZstElider<'ir> {
                     builder.block(
                         elems
                             .iter()
-                            .map(|e| Statement::Expression(self.elide_zst_expr(e))),
+                            .map(|e| self.elide_zst_expr(e).map(Statement::Expression))
+                            .collect::<Result<Vec<_>, _>>()?,
                         builder.void(expr.ty, expr.value_type, expr.span),
                         expr.span,
                     )
                 } else {
                     builder.array(
-                        elems.iter().map(|e| self.elide_zst_expr(e)),
+                        elems
+                            .iter()
+                            .map(|e| self.elide_zst_expr(e))
+                            .collect::<Result<Vec<_>, _>>()?,
                         expr.ty,
                         expr.span,
                     )
@@ -158,8 +172,8 @@ impl<'ir> ZstElider<'ir> {
             }
             ExprKind::AssignOp(op, lhs, rhs) => builder.assign_op(
                 op,
-                self.elide_zst_expr(lhs),
-                self.elide_zst_expr(rhs),
+                self.elide_zst_expr(lhs)?,
+                self.elide_zst_expr(rhs)?,
                 expr.span,
             ),
             ExprKind::Call(callee, args) => {
@@ -169,11 +183,11 @@ impl<'ir> ZstElider<'ir> {
                 // we maintain a strict left-to-right evaluation order. So currently we bind all non-ZST
                 // arguments as local variables and evaluate them in the order they appear in the call.
                 // This is a bit pessimistic, but C compiler should still be able to optimize it away.
-                let callee = self.elide_zst_expr(callee);
+                let callee = self.elide_zst_expr(callee)?;
                 let args = args
                     .iter()
                     .map(|arg| self.elide_zst_expr(arg))
-                    .collect::<Vec<_>>();
+                    .collect::<Result<Vec<_>, _>>()?;
 
                 let extract_args = match callee.kind {
                     ExprKind::Intrinsic(_) => false,
@@ -218,7 +232,7 @@ impl<'ir> ZstElider<'ir> {
                 }
             }
             ExprKind::Ref(inner) => {
-                let inner = self.elide_zst_expr(inner);
+                let inner = self.elide_zst_expr(inner)?;
 
                 if inner.is_void() {
                     // Special case for mutiple pointers to void
@@ -234,7 +248,7 @@ impl<'ir> ZstElider<'ir> {
                 }
             }
             ExprKind::Deref(inner) => {
-                let inner = self.elide_zst_expr(inner);
+                let inner = self.elide_zst_expr(inner)?;
                 if expr.ty.is_zero_sized() {
                     builder.block(
                         [Statement::Expression(inner)],
@@ -246,7 +260,7 @@ impl<'ir> ZstElider<'ir> {
                 }
             }
             ExprKind::Return(inner) => {
-                let inner = self.elide_zst_expr(inner);
+                let inner = self.elide_zst_expr(inner)?;
                 if inner.ty.is_zero_sized() {
                     builder.block(
                         [Statement::Expression(inner)],
@@ -258,46 +272,52 @@ impl<'ir> ZstElider<'ir> {
                 }
             }
             ExprKind::Unary(op, inner) => {
-                builder.unary(op, self.elide_zst_expr(inner), expr.ty, expr.span)
+                builder.unary(op, self.elide_zst_expr(inner)?, expr.ty, expr.span)
             }
-            ExprKind::If(cond, then, els) => {
-                let cond = self.elide_zst_expr(cond);
-                let then = self.elide_zst_expr(then);
-                let els = self.elide_zst_expr(els);
+            ExprKind::If(cond, then, els, const_cond) => match const_cond {
+                Some(true) => self.elide_zst_expr(then)?,
+                Some(false) => self.elide_zst_expr(els)?,
+                None => {
+                    let cond = self.elide_zst_expr(cond)?;
+                    let then = self.elide_zst_expr(then)?;
+                    let els = self.elide_zst_expr(els)?;
 
-                match (then.ty.is_zero_sized(), els.ty.is_zero_sized()) {
-                    (true, false) => builder.block(
-                        [Statement::Expression(builder.if_then(
-                            cond,
-                            then,
-                            builder.void(types.void(), ValueType::RValue, els.span),
-                            expr.span,
-                        ))],
-                        els,
-                        expr.span,
-                    ),
-                    (false, true) => builder.block(
-                        [Statement::Expression(builder.if_then(
-                            builder.unary(
-                                UnOp::Not,
+                    match (then.ty.is_zero_sized(), els.ty.is_zero_sized()) {
+                        (true, false) => builder.block(
+                            [Statement::Expression(builder.if_then(
                                 cond,
-                                types.builtin(BuiltinType::Bool),
-                                cond.span,
-                            ),
+                                then,
+                                builder.void(types.void(), ValueType::RValue, els.span),
+                                None,
+                                expr.span,
+                            ))],
                             els,
-                            builder.void(types.void(), ValueType::RValue, els.span),
                             expr.span,
-                        ))],
-                        then,
-                        expr.span,
-                    ),
-                    _ => builder.if_then(cond, then, els, expr.span),
+                        ),
+                        (false, true) => builder.block(
+                            [Statement::Expression(builder.if_then(
+                                builder.unary(
+                                    UnOp::Not,
+                                    cond,
+                                    types.builtin(BuiltinType::Bool),
+                                    cond.span,
+                                ),
+                                els,
+                                builder.void(types.void(), ValueType::RValue, els.span),
+                                None,
+                                expr.span,
+                            ))],
+                            then,
+                            expr.span,
+                        ),
+                        _ => builder.if_then(cond, then, els, None, expr.span),
+                    }
                 }
-            }
-            ExprKind::Cast(inner) => builder.cast(self.elide_zst_expr(inner), expr.ty, expr.span),
+            },
+            ExprKind::Cast(inner) => builder.cast(self.elide_zst_expr(inner)?, expr.ty, expr.span),
             ExprKind::Index(lhs, rhs) => {
-                let indexee = self.elide_zst_expr(lhs);
-                let index = self.elide_zst_expr(rhs);
+                let indexee = self.elide_zst_expr(lhs)?;
+                let index = self.elide_zst_expr(rhs)?;
 
                 if indexee.ty.is_zero_sized() {
                     builder.block(
@@ -311,20 +331,20 @@ impl<'ir> ZstElider<'ir> {
             }
 
             ExprKind::TupleIndex(lhs, _) if expr.ty.is_zero_sized() => builder.block(
-                [Statement::Expression(self.elide_zst_expr(lhs))],
+                [Statement::Expression(self.elide_zst_expr(lhs)?)],
                 builder.void(expr.ty, expr.value_type, expr.span),
                 expr.span,
             ),
             ExprKind::Field(lhs, _) if expr.ty.is_zero_sized() => builder.block(
-                [Statement::Expression(self.elide_zst_expr(lhs))],
+                [Statement::Expression(self.elide_zst_expr(lhs)?)],
                 builder.void(expr.ty, expr.value_type, expr.span),
                 expr.span,
             ),
             ExprKind::TupleIndex(lhs, idx) => {
-                builder.tuple_index(self.elide_zst_expr(lhs), idx, expr.ty, expr.span)
+                builder.tuple_index(self.elide_zst_expr(lhs)?, idx, expr.ty, expr.span)
             }
             ExprKind::Field(lhs, id) => {
-                builder.field(self.elide_zst_expr(lhs), id, expr.ty, expr.span)
+                builder.field(self.elide_zst_expr(lhs)?, id, expr.ty, expr.span)
             }
             ExprKind::Fn(_) => expr,
             ExprKind::Literal(v) => match v {
@@ -334,9 +354,12 @@ impl<'ir> ZstElider<'ir> {
                         _ => unreachable!(),
                     };
                     builder.array(
-                        elems.iter().map(|val| {
-                            self.elide_zst_expr(builder.literal(*val, element_type, expr.span))
-                        }),
+                        elems
+                            .iter()
+                            .map(|val| {
+                                self.elide_zst_expr(builder.literal(*val, element_type, expr.span))
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
                         expr.ty,
                         expr.span,
                     )
@@ -348,14 +371,15 @@ impl<'ir> ZstElider<'ir> {
                     };
 
                     builder.tuple(
-                        elems.iter().zip(element_types.iter()).enumerate().map(
-                            |(idx, (val, ty))| {
-                                (
-                                    idx,
-                                    self.elide_zst_expr(builder.literal(*val, ty, expr.span)),
-                                )
-                            },
-                        ),
+                        elems
+                            .iter()
+                            .zip(element_types.iter())
+                            .enumerate()
+                            .map(|(idx, (val, ty))| {
+                                self.elide_zst_expr(builder.literal(*val, ty, expr.span))
+                                    .map(|e| (idx, e))
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
                         expr.ty,
                         expr.span,
                     )
@@ -373,16 +397,17 @@ impl<'ir> ZstElider<'ir> {
                     };
 
                     builder.r#struct(
-                        fields.iter().map(|(id, val)| {
-                            (
-                                *id,
+                        fields
+                            .iter()
+                            .map(|(id, val)| {
                                 self.elide_zst_expr(builder.literal(
                                     *val,
                                     element_types[id],
                                     expr.span,
-                                )),
-                            )
-                        }),
+                                ))
+                                .map(|e| (*id, e))
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
                         expr.ty,
                         expr.span,
                     )
@@ -392,7 +417,7 @@ impl<'ir> ZstElider<'ir> {
                 }
                 Value::Pointer(lvalue) => {
                     let lvalue_expr = self.elide_zst_lvalue(&lvalue, expr.span);
-                    self.elide_zst_expr(builder.r#ref(lvalue_expr, expr.span))
+                    self.elide_zst_expr(builder.r#ref(lvalue_expr, expr.span))?
                 }
                 Value::Void => builder.void(expr.ty, ValueType::RValue, expr.span),
                 _ => expr,
@@ -405,7 +430,11 @@ impl<'ir> ZstElider<'ir> {
                 }
                 IntrinsicValueKind::ConstPanic(_)
                 | IntrinsicValueKind::ConstAlloc(_, _, _)
-                | IntrinsicValueKind::ConstFree(_) => builder.unreachable(expr.span),
+                | IntrinsicValueKind::ConstFree(_) => {
+                    return Err(CodeErrorKind::ConstOnlyIntrinsic)
+                        .with_backtrace(&self.diag)
+                        .into()
+                }
                 _ => expr,
             },
             ExprKind::Goto(label) => {
@@ -422,16 +451,16 @@ impl<'ir> ZstElider<'ir> {
         if let crate::ir::Ty::Item(item) = result.ty {
             if let IRItem::Function(_) = item.get().unwrap() {
                 if result.is_void() {
-                    return builder.function(item, expr.span);
+                    return Ok(builder.function(item, expr.span));
                 }
             }
         }
 
         if result.is_void() && result.ty.is_never() {
-            return builder.unreachable(expr.span);
+            return Ok(builder.unreachable(expr.span));
         }
 
-        result
+        Ok(result)
     }
 
     fn elide_zst_lvalue(&mut self, value: &LValue<'ir>, span: Option<Span>) -> ExprP<'ir> {
@@ -473,16 +502,20 @@ impl<'ir> ZstElider<'ir> {
         }
     }
 
-    fn elide_zst_stmt(&mut self, stmt: &Statement<'ir>, statements: &mut Vec<Statement<'ir>>) {
+    fn elide_zst_stmt(
+        &mut self,
+        stmt: &Statement<'ir>,
+        statements: &mut Vec<Statement<'ir>>,
+    ) -> Result<(), AluminaError> {
         match stmt {
             Statement::Expression(expr) => {
-                let expr = self.elide_zst_expr(expr);
+                let expr = self.elide_zst_expr(expr)?;
                 if expr.is_void() {
-                    return;
+                    return Ok(());
                 }
 
                 if expr.pure() {
-                    return;
+                    return Ok(());
                 }
 
                 // Reduce nesting of void blocks
@@ -497,5 +530,7 @@ impl<'ir> ZstElider<'ir> {
             }
             _ => statements.push(stmt.clone()),
         }
+
+        Ok(())
     }
 }

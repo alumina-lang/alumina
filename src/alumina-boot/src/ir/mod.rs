@@ -552,7 +552,7 @@ pub enum ExprKind<'ir> {
     Literal(const_eval::Value<'ir>),
     Field(ExprP<'ir>, IrId),
     TupleIndex(ExprP<'ir>, usize),
-    If(ExprP<'ir>, ExprP<'ir>, ExprP<'ir>),
+    If(ExprP<'ir>, ExprP<'ir>, ExprP<'ir>, Option<bool>),
     Cast(ExprP<'ir>),
 
     Intrinsic(IntrinsicValueKind<'ir>),
@@ -634,7 +634,7 @@ impl<'ir> Expr<'ir> {
             ExprKind::Deref(inner) => inner.pure(),
             ExprKind::Unary(_, inner) => inner.pure(),
             ExprKind::Index(a, b) => a.pure() && b.pure(),
-            ExprKind::If(a, b, c) => a.pure() && b.pure() && c.pure(),
+            ExprKind::If(a, b, c, _) => a.pure() && b.pure() && c.pure(),
             ExprKind::Cast(inner) => inner.pure(),
             ExprKind::Field(inner, _) => inner.pure(),
             ExprKind::TupleIndex(inner, _) => inner.pure(),
@@ -790,6 +790,7 @@ pub trait ExpressionVisitor<'ir>: Sized {
         cond: ExprP<'ir>,
         then: ExprP<'ir>,
         els: ExprP<'ir>,
+        const_cond: Option<bool>,
     ) -> Result<(), AluminaError> {
         self.visit_expr(cond)?;
         self.visit_expr(then)?;
@@ -864,7 +865,7 @@ pub fn default_visit_expr<'ir, V: ExpressionVisitor<'ir>>(
         ExprKind::Literal(value) => visitor.visit_literal(value),
         ExprKind::Field(expr, id) => visitor.visit_field(expr, *id),
         ExprKind::TupleIndex(expr, index) => visitor.visit_tuple_index(expr, *index),
-        ExprKind::If(cond, then, els) => visitor.visit_if(cond, then, els),
+        ExprKind::If(cond, then, els, const_cond) => visitor.visit_if(cond, then, els, *const_cond),
         ExprKind::Cast(expr) => visitor.visit_cast(expr),
         ExprKind::Intrinsic(kind) => visitor.visit_codegen_intrinsic(kind),
         ExprKind::Array(exprs) => visitor.visit_array(exprs),

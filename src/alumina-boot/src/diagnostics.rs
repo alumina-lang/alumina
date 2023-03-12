@@ -360,7 +360,9 @@ impl DiagnosticContext {
                 needs_padding = true;
             }
 
-            if let CodeErrorKind::CannotConstEvaluate(ConstEvalErrorKind::CompilerBug(backtrace)) = &error.kind {
+            if let CodeErrorKind::CannotConstEvaluate(ConstEvalErrorKind::CompilerBug(backtrace)) =
+                &error.kind
+            {
                 eprintln!();
                 eprintln!("Compiler backtrace:");
                 eprintln!("{}", backtrace);

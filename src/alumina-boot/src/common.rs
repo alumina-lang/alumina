@@ -318,6 +318,8 @@ pub enum CodeErrorKind {
     MacrosCannotDefineLambdas,
     #[error("panic during constant evaluation: {}", .0)]
     ConstPanic(String),
+    #[error("cannot generate code for a const-only intrinsic (guard with `std::runtime::in_const_context()`)")]
+    ConstOnlyIntrinsic,
 
     // Warnings
     #[error("defer inside a loop: this defered statement will only be executed once")]

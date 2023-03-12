@@ -1,4 +1,4 @@
-use crate::ir::{TyP, ExprP};
+use crate::ir::{ExprP, TyP};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IntrinsicKind {
