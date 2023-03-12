@@ -12,7 +12,6 @@ use std::cmp::Ordering;
 use std::num::TryFromIntError;
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub};
 use std::rc::Rc;
-use std::sync::Arc;
 
 use thiserror::Error;
 
@@ -779,7 +778,7 @@ impl<'ir> ConstEvaluator<'ir> {
             (Value::F64(a), Ty::Builtin(BuiltinType::F32)) => Ok(Value::F32(a)),
             (Value::F32(a), Ty::Builtin(BuiltinType::F64)) => Ok(Value::F64(a)),
             (Value::FunctionPointer(id), Ty::FunctionPointer(..)) => Ok(Value::FunctionPointer(id)),
-            (Value::Pointer(value), Ty::Pointer(underlying, is_const))
+            (Value::Pointer(value), Ty::Pointer(underlying, _is_const))
                 if inner.ty == *underlying =>
             {
                 Ok(Value::Pointer(value))
@@ -917,9 +916,7 @@ impl<'ir> ConstEvaluator<'ir> {
             }
             LValue::Alloc(id) => {
                 if self.ctx.malloc_bag.assign(id, value).is_none() {
-                    Err(ConstEvalErrorKind::UseAfterFree)
-                        .with_backtrace(&self.diag)
-                        .into()
+                    Err(ConstEvalErrorKind::UseAfterFree).with_backtrace(&self.diag)
                 } else {
                     Ok(())
                 }

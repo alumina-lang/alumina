@@ -431,9 +431,7 @@ impl<'ir> ZstElider<'ir> {
                 IntrinsicValueKind::ConstPanic(_)
                 | IntrinsicValueKind::ConstAlloc(_, _, _)
                 | IntrinsicValueKind::ConstFree(_) => {
-                    return Err(CodeErrorKind::ConstOnlyIntrinsic)
-                        .with_backtrace(&self.diag)
-                        .into()
+                    return Err(CodeErrorKind::ConstOnlyIntrinsic).with_backtrace(&self.diag)
                 }
                 _ => expr,
             },

@@ -5073,7 +5073,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let struct_type = self.types.named(item);
         let ret = self.exprs.r#struct(
-            lowered.into_iter().map(|(f, e)| (f.id, e)).into_iter(),
+            lowered.into_iter().map(|(f, e)| (f.id, e)),
             struct_type,
             span,
         );

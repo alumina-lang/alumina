@@ -790,7 +790,7 @@ pub trait ExpressionVisitor<'ir>: Sized {
         cond: ExprP<'ir>,
         then: ExprP<'ir>,
         els: ExprP<'ir>,
-        const_cond: Option<bool>,
+        _const_cond: Option<bool>,
     ) -> Result<(), AluminaError> {
         self.visit_expr(cond)?;
         self.visit_expr(then)?;
