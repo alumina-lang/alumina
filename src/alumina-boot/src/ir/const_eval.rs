@@ -779,7 +779,7 @@ impl<'ir> ConstEvaluator<'ir> {
             (Value::F64(a), Ty::Builtin(BuiltinType::F32)) => Ok(Value::F32(a)),
             (Value::F32(a), Ty::Builtin(BuiltinType::F64)) => Ok(Value::F64(a)),
             (Value::FunctionPointer(id), Ty::FunctionPointer(..)) => Ok(Value::FunctionPointer(id)),
-            (Value::Pointer(value), Ty::Pointer(underlying, _is_const)) => {
+            (Value::Pointer(value), Ty::Pointer(_underlying, _is_const)) => {
                 Ok(Value::Pointer(value))
             }
             _ => unsupported!(self),
