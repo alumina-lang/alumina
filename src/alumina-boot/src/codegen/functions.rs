@@ -522,6 +522,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 }
                 IntrinsicValueKind::ConstPanic(_)
                 | IntrinsicValueKind::ConstAlloc(_, _, _)
+                | IntrinsicValueKind::ConstWrite(_, _)
                 | IntrinsicValueKind::ConstFree(_) => {
                     unreachable!()
                 }

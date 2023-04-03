@@ -102,13 +102,33 @@ extern "intrinsic" fn is_const_evaluable(...) -> bool;
 /// Use [panic] instead.
 extern "intrinsic" fn const_panic(msg: &[u8]) -> !;
 
-/// Allocates memory during constant evaluation.
-extern "intrinsic" fn const_alloc<T>(size: usize) -> &mut T;
+/// Writes a note during constant evaluation.
+///
+/// Invoking this during normal runtime is undefined behavior.
+///
+/// Use [println] instead.
+extern "intrinsic" fn const_note(msg: &[u8]);
+
+/// Writes a warning during constant evaluation.
+///
+/// Invoking this during normal runtime is undefined behavior.
+///
+/// Use [eprintln] instead.
+extern "intrinsic" fn const_warning(msg: &[u8]);
 
 /// Allocates memory during constant evaluation.
+///
+/// Use [mem::slice::alloc] in const context instead.
+extern "intrinsic" fn const_alloc<T>(size: usize) -> &mut T;
+
+/// Allocates memory during constant evaluation (zeroed).
+///
+/// Use [mem::slice::alloc_zeroed] in const context instead.
 extern "intrinsic" fn const_alloc_zeroed<T>(size: usize) -> &mut T;
 
 /// Frees memory allocated during constant evaluation.
+///
+/// Use [mem::slice::free] in const context instead.
 extern "intrinsic" fn const_free<T>(ptr: &mut T);
 
 #[cfg(boot)]

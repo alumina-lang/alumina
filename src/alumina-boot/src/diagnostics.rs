@@ -353,20 +353,16 @@ impl DiagnosticContext {
                 needs_padding = true;
             }
 
-            if let CodeErrorKind::InternalError(_, backtrace) = &error.kind {
-                eprintln!();
-                eprintln!("Compiler backtrace:");
-                eprintln!("{}", backtrace);
-                needs_padding = true;
-            }
-
-            if let CodeErrorKind::CannotConstEvaluate(ConstEvalErrorKind::CompilerBug(backtrace)) =
-                &error.kind
-            {
-                eprintln!();
-                eprintln!("Compiler backtrace:");
-                eprintln!("{}", backtrace);
-                needs_padding = true;
+            match &error.kind {
+                CodeErrorKind::InternalError(_, backtrace)
+                | CodeErrorKind::CannotConstEvaluate(ConstEvalErrorKind::CompilerBug(backtrace))
+                | CodeErrorKind::CannotConstEvaluate(ConstEvalErrorKind::Unsupported(backtrace)) => {
+                    eprintln!();
+                    eprintln!("Compiler backtrace:");
+                    eprintln!("{}", backtrace);
+                    needs_padding = true;
+                }
+                _ => {}
             }
 
             if needs_padding {
