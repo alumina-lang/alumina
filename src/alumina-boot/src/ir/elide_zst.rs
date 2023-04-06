@@ -45,8 +45,8 @@ impl<'ir> ZstElider<'ir> {
             .local_defs
             .iter()
             .copied()
-            .filter(|def| self.used_ids.contains(&def.id) && !def.typ.is_zero_sized())
             .chain(self.additional_locals.into_iter())
+            .filter(|def| self.used_ids.remove(&def.id) && !def.typ.is_zero_sized())
             .collect::<Vec<_>>();
 
         Ok(FuncBody {

@@ -3957,6 +3957,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             IntrinsicKind::Dangling => self.dangling(generic_args[0], span),
             IntrinsicKind::InConstContext => self.in_const_context(span),
             IntrinsicKind::ConstPanic => self.const_panic(args[0], span),
+            IntrinsicKind::ConstWarning => self.const_write(args[0], true, span),
+            IntrinsicKind::ConstNote => self.const_write(args[0], false, span),
             IntrinsicKind::ConstAlloc => self.const_alloc(generic_args[0], args[0], false, span),
             IntrinsicKind::ConstAllocZeroed => {
                 self.const_alloc(generic_args[0], args[0], true, span)
@@ -5524,6 +5526,19 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(self.exprs.codegen_intrinsic(
             IntrinsicValueKind::ConstPanic(reason),
             self.types.builtin(BuiltinType::Never),
+            span,
+        ))
+    }
+
+    fn const_write(
+        &self,
+        reason: ir::ExprP<'ir>,
+        warning: bool,
+        span: Option<Span>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        Ok(self.exprs.codegen_intrinsic(
+            IntrinsicValueKind::ConstWrite(reason, warning),
+            self.types.void(),
             span,
         ))
     }

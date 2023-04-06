@@ -193,6 +193,8 @@ pub enum CodeErrorKind {
     InvalidValueForEnumVariant,
     #[error("{}", .0)]
     UserDefined(String),
+    #[error("{}", .0)]
+    ConstMessage(String),
     #[error("cannot defer inside a defered expression")]
     DeferInDefer,
     #[error("`...` expressions can only be used in macros")]

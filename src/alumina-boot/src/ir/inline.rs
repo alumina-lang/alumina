@@ -1,6 +1,7 @@
 use crate::ast::Span;
 use crate::common::{AluminaError, ArenaAllocatable, CodeErrorKind, HashMap};
 use crate::diagnostics::DiagnosticsStack;
+use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::builder::ExpressionBuilder;
 use crate::ir::{ExprKind, ExprP, IrCtx, IrId, Statement};
 
@@ -172,13 +173,48 @@ impl<'ir> IrInliner<'ir> {
                 expr.ty,
                 self.span,
             ),
+            ExprKind::Intrinsic(ref kind) => match kind {
+                IntrinsicValueKind::ConstPanic(expr) => builder.codegen_intrinsic(
+                    IntrinsicValueKind::ConstPanic(self.visit_expr(expr)?),
+                    expr.ty,
+                    self.span,
+                ),
+                IntrinsicValueKind::ConstWrite(expr, b) => builder.codegen_intrinsic(
+                    IntrinsicValueKind::ConstWrite(self.visit_expr(expr)?, *b),
+                    expr.ty,
+                    self.span,
+                ),
+                IntrinsicValueKind::ConstAlloc(ty, expr, b) => builder.codegen_intrinsic(
+                    IntrinsicValueKind::ConstAlloc(ty, self.visit_expr(expr)?, *b),
+                    expr.ty,
+                    self.span,
+                ),
+                IntrinsicValueKind::ConstFree(expr) => builder.codegen_intrinsic(
+                    IntrinsicValueKind::ConstFree(self.visit_expr(expr)?),
+                    expr.ty,
+                    self.span,
+                ),
+                IntrinsicValueKind::SizeOfLike(_, _)
+                | IntrinsicValueKind::Dangling(_)
+                | IntrinsicValueKind::Asm(_)
+                | IntrinsicValueKind::FunctionLike(_)
+                | IntrinsicValueKind::ConstLike(_)
+                | IntrinsicValueKind::Uninitialized
+                | IntrinsicValueKind::InConstContext => Expr {
+                    is_const: expr.is_const,
+                    ty: expr.ty,
+                    kind: expr.kind.clone(),
+                    value_type: expr.value_type,
+                    span: self.span,
+                }
+                .alloc_on(self.ir),
+            },
             ExprKind::Fn(_)
             | ExprKind::Static(_)
             | ExprKind::Const(_)
             | ExprKind::Literal(_)
             | ExprKind::Unreachable
-            | ExprKind::Void
-            | ExprKind::Intrinsic(_) => {
+            | ExprKind::Void => {
                 // Just replace span
                 Expr {
                     is_const: expr.is_const,

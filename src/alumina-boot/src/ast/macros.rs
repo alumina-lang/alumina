@@ -684,6 +684,9 @@ impl<'ast> MacroExpander<'ast> {
                         Piece::Argument(index) => {
                             args.push(self.args[index + 2]);
                         }
+                        Piece::Adapter(name, inner) => {
+                            args.push(self.args[index + 2]);
+                        }
                     }
                 }
 

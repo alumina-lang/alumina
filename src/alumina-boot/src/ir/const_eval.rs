@@ -59,7 +59,7 @@ pub enum LValue<'ir> {
 #[derive(Debug, Error, Clone, Hash, PartialEq, Eq)]
 pub enum ConstEvalErrorKind {
     #[error("not constant or unsupported expression")]
-    Unsupported,
+    Unsupported(ByRef<Backtrace>),
     #[error("function `{}` is not supported in constant context", .0)]
     UnsupportedFunction(String),
     #[error("ice: encountered a branch that should have been rejected during type checking")]
@@ -123,7 +123,8 @@ macro_rules! numeric_of_kind {
 
 macro_rules! unsupported {
     ($self:expr) => {
-        return Err(ConstEvalErrorKind::Unsupported).with_backtrace(&$self.diag)
+        return Err(ConstEvalErrorKind::Unsupported(Backtrace::capture().into()))
+            .with_backtrace(&$self.diag)
     };
 }
 
@@ -155,7 +156,7 @@ impl<'ir> Value<'ir> {
             (Value::I128(a), Value::I128(b)) => Ok(Value::Bool(a == b)),
             (Value::USize(a), Value::USize(b)) => Ok(Value::Bool(a == b)),
             (Value::ISize(a), Value::ISize(b)) => Ok(Value::Bool(a == b)),
-            _ => Err(ConstEvalErrorKind::Unsupported),
+            _ => Err(ConstEvalErrorKind::Unsupported(Backtrace::capture().into())),
         }
     }
 
@@ -174,7 +175,7 @@ impl<'ir> Value<'ir> {
             (Value::USize(a), Value::USize(b)) => Ok(a.cmp(&b)),
             (Value::ISize(a), Value::ISize(b)) => Ok(a.cmp(&b)),
             (Value::Bool(a), Value::Bool(b)) => Ok(a.cmp(&b)),
-            _ => Err(ConstEvalErrorKind::Unsupported),
+            _ => Err(ConstEvalErrorKind::Unsupported(Backtrace::capture().into())),
         }
     }
 }
@@ -217,7 +218,7 @@ impl<'ir> Add for Value<'ir> {
                 .checked_add(b)
                 .map(ISize)
                 .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
-            _ => Err(ConstEvalErrorKind::Unsupported),
+            _ => Err(ConstEvalErrorKind::Unsupported(Backtrace::capture().into())),
         }
     }
 }
@@ -260,7 +261,7 @@ impl<'ir> Sub for Value<'ir> {
                 .checked_sub(b)
                 .map(ISize)
                 .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
-            _ => Err(ConstEvalErrorKind::Unsupported),
+            _ => Err(ConstEvalErrorKind::Unsupported(Backtrace::capture().into())),
         }
     }
 }
@@ -303,7 +304,7 @@ impl<'ir> Mul for Value<'ir> {
                 .checked_mul(b)
                 .map(ISize)
                 .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
-            _ => Err(ConstEvalErrorKind::Unsupported),
+            _ => Err(ConstEvalErrorKind::Unsupported(Backtrace::capture().into())),
         }
     }
 }
@@ -343,7 +344,7 @@ impl<'ir> Shl<Value<'ir>> for Value<'ir> {
             I64(a) => a.checked_shl(other).map(I64),
             I128(a) => a.checked_shl(other).map(I128),
             ISize(a) => a.checked_shl(other).map(ISize),
-            _ => return Err(ConstEvalErrorKind::Unsupported),
+            _ => return Err(ConstEvalErrorKind::Unsupported(Backtrace::capture().into())),
         };
 
         ret.ok_or(ConstEvalErrorKind::ArithmeticOverflow)
@@ -362,7 +363,7 @@ impl<'ir> Neg for Value<'ir> {
             I64(a) => Ok(I64(-a)),
             I128(a) => Ok(I128(-a)),
             ISize(a) => Ok(ISize(-a)),
-            _ => Err(ConstEvalErrorKind::Unsupported),
+            _ => Err(ConstEvalErrorKind::Unsupported(Backtrace::capture().into())),
         }
     }
 }
@@ -386,7 +387,7 @@ impl<'ir> Not for Value<'ir> {
             USize(a) => Ok(USize(!a)),
             ISize(a) => Ok(ISize(!a)),
             Bool(a) => Ok(Bool(!a)),
-            _ => Err(ConstEvalErrorKind::Unsupported),
+            _ => Err(ConstEvalErrorKind::Unsupported(Backtrace::capture().into())),
         }
     }
 }
@@ -425,7 +426,7 @@ impl<'ir> Shr<Value<'ir>> for Value<'ir> {
             I64(a) => a.checked_shr(other).map(I64),
             I128(a) => a.checked_shr(other).map(I128),
             ISize(a) => a.checked_shr(other).map(ISize),
-            _ => return Err(ConstEvalErrorKind::Unsupported),
+            _ => return Err(ConstEvalErrorKind::Unsupported(Backtrace::capture().into())),
         };
 
         ret.ok_or(ConstEvalErrorKind::ArithmeticOverflow)
@@ -450,7 +451,7 @@ impl<'ir> BitOr for Value<'ir> {
             (I128(a), I128(b)) => Ok(I128(a | b)),
             (USize(a), USize(b)) => Ok(USize(a | b)),
             (ISize(a), ISize(b)) => Ok(ISize(a | b)),
-            _ => Err(ConstEvalErrorKind::Unsupported),
+            _ => Err(ConstEvalErrorKind::Unsupported(Backtrace::capture().into())),
         }
     }
 }
@@ -473,7 +474,7 @@ impl<'ir> BitXor for Value<'ir> {
             (I128(a), I128(b)) => Ok(I128(a ^ b)),
             (USize(a), USize(b)) => Ok(USize(a ^ b)),
             (ISize(a), ISize(b)) => Ok(ISize(a ^ b)),
-            _ => Err(ConstEvalErrorKind::Unsupported),
+            _ => Err(ConstEvalErrorKind::Unsupported(Backtrace::capture().into())),
         }
     }
 }
@@ -496,7 +497,7 @@ impl<'ir> BitAnd for Value<'ir> {
             (I128(a), I128(b)) => Ok(I128(a & b)),
             (USize(a), USize(b)) => Ok(USize(a & b)),
             (ISize(a), ISize(b)) => Ok(ISize(a & b)),
-            _ => Err(ConstEvalErrorKind::Unsupported),
+            _ => Err(ConstEvalErrorKind::Unsupported(Backtrace::capture().into())),
         }
     }
 }
@@ -778,9 +779,7 @@ impl<'ir> ConstEvaluator<'ir> {
             (Value::F64(a), Ty::Builtin(BuiltinType::F32)) => Ok(Value::F32(a)),
             (Value::F32(a), Ty::Builtin(BuiltinType::F64)) => Ok(Value::F64(a)),
             (Value::FunctionPointer(id), Ty::FunctionPointer(..)) => Ok(Value::FunctionPointer(id)),
-            (Value::Pointer(value), Ty::Pointer(underlying, _is_const))
-                if inner.ty == *underlying =>
-            {
+            (Value::Pointer(value), Ty::Pointer(_underlying, _is_const)) => {
                 Ok(Value::Pointer(value))
             }
             _ => unsupported!(self),
@@ -795,7 +794,9 @@ impl<'ir> ConstEvaluator<'ir> {
                 .find(|(f, _)| *f == field)
                 .map(|(_, v)| *v)
                 .unwrap_or(Value::Uninitialized)),
-            _ => unsupported!(self),
+            _ => {
+                unsupported!(self)
+            }
         }
     }
 
@@ -1168,6 +1169,26 @@ impl<'ir> ConstEvaluator<'ir> {
                                 std::str::from_utf8(msg).unwrap().to_string(),
                             ))
                             .with_backtrace(&self.diag)
+                        }
+                        None => {
+                            unsupported!(self);
+                        }
+                    }
+                }
+                IntrinsicValueKind::ConstWrite(expr, is_warning) => {
+                    let value = self.const_eval_rvalue(expr)?;
+                    match self.extract_constant_string_from_slice(&value) {
+                        Some(msg) => {
+                            if *is_warning {
+                                self.diag.warn(CodeErrorKind::ConstMessage(
+                                    std::str::from_utf8(msg).unwrap().to_string(),
+                                ));
+                            } else {
+                                self.diag.note(CodeErrorKind::ConstMessage(
+                                    std::str::from_utf8(msg).unwrap().to_string(),
+                                ));
+                            }
+                            Ok(Value::Void)
                         }
                         None => {
                             unsupported!(self);
