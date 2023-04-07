@@ -179,7 +179,7 @@ impl slice {
         let ptr = when typing::is_zero_sized::<T>() {
             dangling::<&mut T>()
         } else if runtime::in_const_context() {
-            std::intrinsics::const_alloc::<T>(len)
+            intrinsics::const_alloc::<T>(len)
         } else {
             libc::malloc(size_of::<T>() * len) as &mut T
         };
@@ -192,7 +192,7 @@ impl slice {
         let ptr = when slice[0] is builtins::ZeroSized {
             dangling::<&mut T>()
         } else if runtime::in_const_context() {
-            let new = std::intrinsics::const_alloc::<T>(len);
+            let new = intrinsics::const_alloc::<T>(len);
             slice.copy_to_nonoverlapping(new);
             slice.free();
             new
@@ -210,7 +210,7 @@ impl slice {
         let ptr = when typing::matches::<T, builtins::ZeroSized>() {
             dangling::<&mut T>()
         } else if runtime::in_const_context() {
-            std::intrinsics::const_alloc_zeroed::<T>(len)
+            intrinsics::const_alloc_zeroed::<T>(len)
         } else {
             libc::calloc(len, size_of::<T>()) as &mut T
         };
@@ -318,17 +318,19 @@ impl slice {
             true
         } else when *lhs._ptr is Primitive {
             // Optimization for slices of primitive types
-            memcmp(lhs._ptr as &void, rhs._ptr as &void, lhs.len() * size_of::<T>()) == 0
-        } else {
-            let idx = 0usize;
-            while idx < lhs.len() {
-                if (*lhs)[idx] != (*rhs)[idx] {
-                    return false;
-                }
-                idx += 1;
+            if !runtime::in_const_context() {
+                return memcmp(lhs._ptr as &void, rhs._ptr as &void, lhs.len() * size_of::<T>()) == 0;
             }
-            true
         }
+
+        let idx = 0usize;
+        while idx < lhs.len() {
+            if (*lhs)[idx] != (*rhs)[idx] {
+                return false;
+            }
+            idx += 1;
+        }
+        true
     }
 
     /// @ std::cmp::Comparable::compare
@@ -386,7 +388,7 @@ impl slice {
     fn free<T>(a: &mut [T]) {
         when !(*a._ptr is builtins::ZeroSized) {
             if runtime::in_const_context() {
-                std::intrinsics::const_free::<T>(a._ptr);
+                intrinsics::const_free::<T>(a._ptr);
             } else {
                 libc::free(a._ptr as &mut void);
             }
@@ -641,6 +643,8 @@ mod internal {
 fn alloc<T>() -> &mut T {
     when typing::is_zero_sized::<T>() {
         dangling()
+    } else if runtime::in_const_context() {
+        intrinsics::const_alloc::<T>(1usize)
     } else {
         libc::malloc(size_of::<T>()) as &mut T
     }
@@ -663,6 +667,8 @@ fn alloc<T>() -> &mut T {
 fn alloc_zeroed<T>() -> &mut T {
     when typing::is_zero_sized::<T>() {
         dangling()
+    } else if runtime::in_const_context() {
+        intrinsics::const_alloc_zeroed::<T>(1usize)
     } else {
         libc::calloc(1, size_of::<T>()) as &mut T
     }
@@ -697,6 +703,8 @@ fn alloc_zeroed<T>() -> &mut T {
 fn stack_alloc<T>(len: usize) -> &mut [T] {
     slice::from_raw(when typing::is_zero_sized::<T>() {
         dangling::<&mut T>()
+    } else if runtime::in_const_context() {
+        intrinsics::const_alloc::<T>(len)
     } else {
         // Cannot use __builtin_alloca_with_align as it may not be valid until the end of the function
         intrinsics::codegen_func::<&mut void>(
@@ -728,7 +736,11 @@ fn stack_alloc<T>(len: usize) -> &mut [T] {
 /// ```
 fn free<T>(a: &mut T) {
     when !(*a is builtins::ZeroSized) {
-        libc::free(a as &mut void);
+        if runtime::in_const_context() {
+            intrinsics::const_free::<T>(a);
+        } else {
+            libc::free(a as &mut void);
+        }
     }
 }
 
@@ -866,7 +878,13 @@ fn uninitialized<T>() -> T {
 /// The memory ranges must not overlap, use [copy] if they may be overlapping.
 fn copy_nonoverlapping<T>(src: &T, dst: &mut T, count: usize) {
     when !(*src is builtins::ZeroSized) {
-        libc::memcpy(dst as &mut void, src as &void, count * size_of::<T>());
+        if runtime::in_const_context() {
+            for i in 0usize..count {
+                *(dst + i) = *(src + i);
+            }
+        } else {
+            libc::memcpy(dst as &mut void, src as &void, count * size_of::<T>());
+        }
     }
 }
 
@@ -875,7 +893,13 @@ fn copy_nonoverlapping<T>(src: &T, dst: &mut T, count: usize) {
 /// The ranges may overlap.
 fn copy<T>(src: &T, dst: &mut T, count: usize) {
     when !(*src is builtins::ZeroSized) {
-        libc::memmove(dst as &mut void, src as &void, count * size_of::<T>());
+        if runtime::in_const_context() {
+            for i in 0usize..count {
+                *(dst + i) = *(src + i);
+            }
+        } else {
+            libc::memmove(dst as &mut void, src as &void, count * size_of::<T>());
+        }
     }
 }
 
@@ -1053,5 +1077,73 @@ mod tests {
         (0..10).fill_slice(a);
 
         assert_eq!(a, &[0,1,2,3,4,5,6,7,8,9]);
+    }
+
+    #[test]
+    fn test_const_alloc() {
+        const FOO: bool = {
+            let a = alloc::<i32>();
+            *a = 42;
+            assert_eq!(*a, 42);
+            free(a);
+            true
+        };
+
+        assert!(FOO);
+    }
+
+    #[test]
+    fn test_const_alloc_zeroed() {
+        const FOO: bool = {
+            let a = alloc_zeroed::<i32>();
+            assert_eq!(*a, 0);
+            free(a);
+            true
+        };
+
+        assert!(FOO);
+    }
+
+    #[test]
+    fn test_const_stack_alloc() {
+        const FOO: bool = {
+            let a = stack_alloc::<i32>(10);
+            for (idx, ptr) in a.iter_mut().enumerate() {
+                *ptr = idx as i32;
+            }
+
+            assert_eq!(a, &[0,1,2,3,4,5,6,7,8,9]);
+            true
+        };
+
+        assert!(FOO);
+    }
+
+    #[test]
+    fn test_const_slice_alloc() {
+        const FOO: bool = {
+            let a = slice::alloc::<i32>(10);
+            for (idx, ptr) in a.iter_mut().enumerate() {
+                *ptr = idx as i32;
+            }
+
+            assert_eq!(a, &[0,1,2,3,4,5,6,7,8,9]);
+            a.free();
+            true
+        };
+
+        assert!(FOO);
+    }
+
+    #[test]
+    fn test_const_slice_alloc_zeroed() {
+        const FOO: bool = {
+            let a = slice::alloc_zeroed::<i32>(10);
+            assert_eq!(a, &[0,0,0,0,0,0,0,0,0,0]);
+            a.free();
+            true
+        };
+
+        assert!(FOO);
     }
 }

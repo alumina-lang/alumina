@@ -7,7 +7,8 @@ use crate::ast::{
     Span, Statement, StatementKind, Ty, TyP, UnOp,
 };
 use crate::common::{
-    AluminaError, ArenaAllocatable, CodeErrorKind, HashMap, HashSet, WithSpanDuringParsing,
+    AluminaError, ArenaAllocatable, CodeErrorBuilder, CodeErrorKind, HashMap, HashSet,
+    WithSpanDuringParsing,
 };
 use crate::global_ctx::GlobalCtx;
 use crate::name_resolution::pass1::FirstPassVisitor;
@@ -37,7 +38,7 @@ where
     Self: Sized,
 {
     type ReturnType;
-    fn alloc_with_span(self, ast: &'ast AstCtx<'ast>, span: Span) -> Self::ReturnType;
+    fn alloc_with_span(self, ast: &'ast AstCtx<'ast>, span: Option<Span>) -> Self::ReturnType;
 
     fn alloc_with_span_from(
         self,
@@ -46,47 +47,23 @@ where
         node: tree_sitter::Node<'src>,
     ) -> Self::ReturnType {
         let span = Span::from_node(scope.code().unwrap().file_id(), node);
-        self.alloc_with_span(ast, span)
+        self.alloc_with_span(ast, Some(span))
     }
-
-    fn alloc_with_no_span(self, ast: &'ast AstCtx<'ast>) -> Self::ReturnType;
 }
 
 impl<'ast, 'src> Spannable<'ast, 'src> for ExprKind<'ast> {
     type ReturnType = ExprP<'ast>;
 
-    fn alloc_with_span(self, ast: &'ast AstCtx<'ast>, span: Span) -> ExprP<'ast> {
-        Expr {
-            kind: self,
-            span: Some(span),
-        }
-        .alloc_on(ast)
-    }
-
-    fn alloc_with_no_span(self, ast: &'ast AstCtx<'ast>) -> ExprP<'ast> {
-        Expr {
-            kind: self,
-            span: None,
-        }
-        .alloc_on(ast)
+    fn alloc_with_span(self, ast: &'ast AstCtx<'ast>, span: Option<Span>) -> ExprP<'ast> {
+        Expr { kind: self, span }.alloc_on(ast)
     }
 }
 
 impl<'ast, 'src> Spannable<'ast, 'src> for StatementKind<'ast> {
     type ReturnType = Statement<'ast>;
 
-    fn alloc_with_span(self, _ast: &'ast AstCtx<'ast>, span: Span) -> Statement<'ast> {
-        Statement {
-            kind: self,
-            span: Some(span),
-        }
-    }
-
-    fn alloc_with_no_span(self, _ast: &'ast AstCtx<'ast>) -> Statement<'ast> {
-        Statement {
-            kind: self,
-            span: None,
-        }
+    fn alloc_with_span(self, _ast: &'ast AstCtx<'ast>, span: Option<Span>) -> Statement<'ast> {
+        Statement { kind: self, span }
     }
 }
 
@@ -138,49 +115,14 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
     fn visit_ref(&mut self, node: tree_sitter::Node<'src>) -> Result<ExprP<'ast>, AluminaError> {
         let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone(), self.macro_ctx);
         let path = visitor.visit(node)?;
-        let mut resolver = NameResolver::new();
 
-        let expr = match resolver
-            .resolve_item(self.scope.clone(), path.clone())
-            .with_span_from(&self.scope, node)?
-        {
-            ItemResolution::Item(named_item) => match named_item.kind {
-                NamedItemKind::Function(fun, _, _) => ExprKind::Fn(FnKind::Normal(fun), None),
-                NamedItemKind::Method(fun, _, _) => ExprKind::Fn(FnKind::Normal(fun), None),
-                NamedItemKind::Local(var, _) => ExprKind::Local(var),
-                NamedItemKind::BoundValue(self_id, var, bound_type, _) => {
-                    ExprKind::BoundParam(self_id, var, bound_type)
-                }
-                NamedItemKind::MacroParameter(var, _, _) => ExprKind::Local(var),
-                NamedItemKind::Parameter(var, _) => ExprKind::Local(var),
-                NamedItemKind::Static(var, _, _) => ExprKind::Static(var, None),
-                NamedItemKind::Const(var, _, _) => ExprKind::Const(var, None),
-                NamedItemKind::EnumMember(typ, var, _) => ExprKind::EnumValue(typ, var),
-                NamedItemKind::Macro(symbol, node, scope) => {
-                    let mut macro_maker = MacroMaker::new(self.ast, self.global_ctx.clone());
-                    macro_maker.make(
-                        Some(path.segments.last().unwrap().0),
-                        symbol,
-                        node,
-                        scope.clone(),
-                        named_item.attributes,
-                    )?;
-
-                    ExprKind::Macro(symbol, &[])
-                }
-                kind => {
-                    return Err(CodeErrorKind::Unexpected(format!("{}", kind)))
-                        .with_span_from(&self.scope, node)
-                }
-            },
-            ItemResolution::Defered(ty, name) => {
-                let name = name.0.alloc_on(self.ast);
-                let typ = self.ast.intern_type(ty);
-                ExprKind::Defered(Defered { typ, name })
-            }
-        };
-
-        Ok(expr.alloc_with_span_from(self.ast, &self.scope, node))
+        resolve_name(
+            self.global_ctx.clone(),
+            self.ast,
+            &self.scope,
+            path,
+            Some(Span::from_node(self.scope.file_id(), node)),
+        )
     }
 
     fn visit_let_declaration(
@@ -294,7 +236,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
     ) -> Result<ExprP<'ast>, AluminaError> {
         let last_node = match last_node {
             Some(n) => n,
-            None => return Ok(ExprKind::Void.alloc_with_no_span(self.ast)),
+            None => return Ok(ExprKind::Void.alloc_with_span(self.ast, None)),
         };
 
         let expression_node = match last_node.kind_typed() {
@@ -329,8 +271,6 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
         args: Vec<ExprP<'ast>>,
         span: Span,
     ) -> Result<ExprP<'ast>, AluminaError> {
-        use crate::common::CodeErrorBuilder;
-
         let mut resolver = NameResolver::new();
 
         let r#macro = match resolver
@@ -356,10 +296,10 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
 
         let result = if self.macro_ctx.in_a_macro {
             ExprKind::MacroInvocation(
-                ExprKind::Macro(r#macro, &[]).alloc_with_span(self.ast, span),
+                ExprKind::Macro(r#macro, &[]).alloc_with_span(self.ast, Some(span)),
                 args.alloc_on(self.ast),
             )
-            .alloc_with_span(self.ast, span)
+            .alloc_with_span(self.ast, Some(span))
         } else {
             let expander =
                 MacroExpander::new(self.ast, self.global_ctx.clone(), Some(span), r#macro, args);
@@ -1093,30 +1033,30 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
         let loop_if = ExprKind::If(
             ExprKind::Field(
-                ExprKind::Local(iterator_result).alloc_with_no_span(self.ast),
+                ExprKind::Local(iterator_result).alloc_with_span(self.ast, None),
                 "_is_some",
                 None,
             )
-            .alloc_with_no_span(self.ast),
+            .alloc_with_span(self.ast, None),
             ExprKind::Block(
                 vec![StatementKind::LetDeclaration(LetDeclaration {
                     id,
                     typ: None,
                     value: Some(
                         ExprKind::Field(
-                            ExprKind::Local(iterator_result).alloc_with_no_span(self.ast),
+                            ExprKind::Local(iterator_result).alloc_with_span(self.ast, None),
                             "_inner",
                             None,
                         )
-                        .alloc_with_no_span(self.ast),
+                        .alloc_with_span(self.ast, None),
                     ),
                 })
-                .alloc_with_no_span(self.ast)]
+                .alloc_with_span(self.ast, None)]
                 .alloc_on(self.ast),
                 body,
             )
-            .alloc_with_no_span(self.ast),
-            ExprKind::Break(None).alloc_with_no_span(self.ast),
+            .alloc_with_span(self.ast, None),
+            ExprKind::Break(None).alloc_with_span(self.ast, None),
         );
 
         let loop_body = ExprKind::Loop(
@@ -1127,19 +1067,19 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                     value: Some(
                         ExprKind::Call(
                             ExprKind::Field(
-                                ExprKind::Local(iterator).alloc_with_no_span(self.ast),
+                                ExprKind::Local(iterator).alloc_with_span(self.ast, None),
                                 "next",
                                 None,
                             )
-                            .alloc_with_no_span(self.ast),
+                            .alloc_with_span(self.ast, None),
                             vec![].alloc_on(self.ast),
                         )
-                        .alloc_with_no_span(self.ast),
+                        .alloc_with_span(self.ast, None),
                     ),
                 })
-                .alloc_with_no_span(self.ast)]
+                .alloc_with_span(self.ast, None)]
                 .alloc_on(self.ast),
-                loop_if.alloc_with_no_span(self.ast),
+                loop_if.alloc_with_span(self.ast, None),
             )
             .alloc_with_span_from(self.ast, &self.scope, node),
         );
@@ -1162,7 +1102,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             })
             .alloc_with_span_from(self.ast, &self.scope, node)]
             .alloc_on(self.ast),
-            loop_body.alloc_with_no_span(self.ast),
+            loop_body.alloc_with_span(self.ast, None),
         );
 
         Ok(result.alloc_with_span_from(self.ast, &self.scope, node))
@@ -1209,10 +1149,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             typ: None,
             value: Some(value),
         })
-        .alloc_with_no_span(self.ast)];
+        .alloc_with_span(self.ast, None)];
 
         let ret = arms.into_iter().rfold(
-            default_arm.unwrap_or_else(|| ExprKind::Void.alloc_with_no_span(self.ast)),
+            default_arm.unwrap_or_else(|| ExprKind::Void.alloc_with_span(self.ast, None)),
             |acc, (arm_node, alternatives, value)| {
                 // TODO: add spans here
                 let cmp = alternatives
@@ -1223,13 +1163,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                                 BinOp::Or,
                                 acc,
                                 ExprKind::Binary(BinOp::Eq, local, alternative)
-                                    .alloc_with_no_span(self.ast),
+                                    .alloc_with_span(self.ast, None),
                             )
-                            .alloc_with_no_span(self.ast),
+                            .alloc_with_span(self.ast, None),
                         ),
                         None => Some(
                             ExprKind::Binary(BinOp::Eq, local, alternative)
-                                .alloc_with_no_span(self.ast),
+                                .alloc_with_span(self.ast, None),
                         ),
                     })
                     .unwrap();
@@ -1336,7 +1276,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
         if self.macro_ctx.in_a_macro {
             Ok(ExprKind::MacroInvocation(expr, args.alloc_on(self.ast))
-                .alloc_with_span(self.ast, span))
+                .alloc_with_span(self.ast, Some(span)))
         } else {
             let r#macro = match expr.kind {
                 ExprKind::Macro(item, bound_params) => {
@@ -1733,4 +1673,52 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
 
         Ok(())
     }
+}
+
+pub fn resolve_name<'ast, 'src>(
+    global_ctx: GlobalCtx,
+    ast: &'ast AstCtx<'ast>,
+    scope: &Scope<'ast, 'src>,
+    path: Path<'ast>,
+    span: Option<Span>,
+) -> Result<ExprP<'ast>, AluminaError> {
+    let mut resolver = NameResolver::new();
+    let expr = match resolver
+        .resolve_item(scope.clone(), path.clone())
+        .with_span(span)?
+    {
+        ItemResolution::Item(named_item) => match named_item.kind {
+            NamedItemKind::Function(fun, _, _) => ExprKind::Fn(FnKind::Normal(fun), None),
+            NamedItemKind::Method(fun, _, _) => ExprKind::Fn(FnKind::Normal(fun), None),
+            NamedItemKind::Local(var, _) => ExprKind::Local(var),
+            NamedItemKind::BoundValue(self_id, var, bound_type, _) => {
+                ExprKind::BoundParam(self_id, var, bound_type)
+            }
+            NamedItemKind::MacroParameter(var, _, _) => ExprKind::Local(var),
+            NamedItemKind::Parameter(var, _) => ExprKind::Local(var),
+            NamedItemKind::Static(var, _, _) => ExprKind::Static(var, None),
+            NamedItemKind::Const(var, _, _) => ExprKind::Const(var, None),
+            NamedItemKind::EnumMember(typ, var, _) => ExprKind::EnumValue(typ, var),
+            NamedItemKind::Macro(symbol, node, scope) => {
+                let mut macro_maker = MacroMaker::new(ast, global_ctx.clone());
+                macro_maker.make(
+                    Some(path.segments.last().unwrap().0),
+                    symbol,
+                    node,
+                    scope.clone(),
+                    named_item.attributes,
+                )?;
+
+                ExprKind::Macro(symbol, &[])
+            }
+            kind => return Err(CodeErrorKind::Unexpected(format!("{}", kind))).with_span(span),
+        },
+        ItemResolution::Defered(ty, name) => {
+            let name = name.0.alloc_on(ast);
+            let typ = ast.intern_type(ty);
+            ExprKind::Defered(Defered { typ, name })
+        }
+    };
+
+    Ok(expr.alloc_with_span(ast, span))
 }

@@ -4,7 +4,6 @@ use super::Span;
 
 pub enum Piece {
     String(Vec<u8>),
-    Adapter(Vec<u8>, Box<Piece>),
     Argument(usize),
 }
 
@@ -18,7 +17,6 @@ pub fn format_args(
         Normal,
         BraceOpen,
         Index,
-        Adapter,
         BraceClose,
     }
 
@@ -31,21 +29,17 @@ pub fn format_args(
     let mut arg_index = 0;
 
     let mut index_part = Vec::new();
-    let mut adapter_part = Vec::new();
 
     macro_rules! push_arg {
         () => {
             let index_part = std::mem::take(&mut index_part);
-            let adapter_part = std::mem::take(&mut adapter_part);
 
             let index = if !index_part.is_empty() {
                 std::str::from_utf8(&index_part)
                     .ok()
                     .and_then(|idx| idx.parse().ok())
                     .ok_or_else(|| {
-                        CodeErrorKind::InvalidFormatString(
-                            "invalid argument index".to_string(),
-                        )
+                        CodeErrorKind::InvalidFormatString("invalid argument index".to_string())
                     })
                     .with_span(span)?
             } else {
@@ -66,15 +60,7 @@ pub fn format_args(
             }
 
             used_arguments.insert(index);
-
-            if !adapter_part.is_empty() {
-                args.push(Piece::Adapter(
-                    adapter_part,
-                    Box::new(Piece::Argument(index)),
-                ));
-            } else {
-                args.push(Piece::Argument(index));
-            }
+            args.push(Piece::Argument(index));
         };
     }
 
@@ -106,7 +92,6 @@ pub fn format_args(
                     index_part.push(ch);
                     State::Index
                 }
-                b':' => State::Adapter,
                 b'}' => {
                     push_arg!();
                     State::Normal
@@ -117,16 +102,6 @@ pub fn format_args(
                         ch as char
                     )))
                     .with_span(span);
-                }
-            },
-            State::Adapter => match ch {
-                b'}' => {
-                    push_arg!();
-                    State::Normal
-                }
-                _ => {
-                    adapter_part.push(ch);
-                    State::Adapter
                 }
             },
             State::BraceOpen => match ch {
@@ -142,7 +117,6 @@ pub fn format_args(
                     index_part.push(ch);
                     State::Index
                 }
-                b':' => State::Adapter,
                 _ => {
                     return Err(CodeErrorKind::InvalidFormatString(format!(
                         "unexpected {:?}",
