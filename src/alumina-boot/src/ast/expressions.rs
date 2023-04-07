@@ -1675,6 +1675,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn resolve_name<'ast, 'src>(
     global_ctx: GlobalCtx,
     ast: &'ast AstCtx<'ast>,
@@ -1700,7 +1701,7 @@ pub fn resolve_name<'ast, 'src>(
             NamedItemKind::Const(var, _, _) => ExprKind::Const(var, None),
             NamedItemKind::EnumMember(typ, var, _) => ExprKind::EnumValue(typ, var),
             NamedItemKind::Macro(symbol, node, scope) => {
-                let mut macro_maker = MacroMaker::new(ast, global_ctx.clone());
+                let mut macro_maker = MacroMaker::new(ast, global_ctx);
                 macro_maker.make(
                     Some(path.segments.last().unwrap().0),
                     symbol,
