@@ -355,8 +355,7 @@ impl DiagnosticContext {
 
             match &error.kind {
                 CodeErrorKind::InternalError(_, backtrace)
-                | CodeErrorKind::CannotConstEvaluate(ConstEvalErrorKind::CompilerBug(backtrace))
-                | CodeErrorKind::CannotConstEvaluate(ConstEvalErrorKind::Unsupported(backtrace)) => {
+                | CodeErrorKind::CannotConstEvaluate(ConstEvalErrorKind::CompilerBug(backtrace)) => {
                     eprintln!();
                     eprintln!("Compiler backtrace:");
                     eprintln!("{}", backtrace);

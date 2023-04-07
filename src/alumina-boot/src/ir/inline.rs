@@ -184,8 +184,8 @@ impl<'ir> IrInliner<'ir> {
                     expr.ty,
                     self.span,
                 ),
-                IntrinsicValueKind::ConstAlloc(ty, expr, b) => builder.codegen_intrinsic(
-                    IntrinsicValueKind::ConstAlloc(ty, self.visit_expr(expr)?, *b),
+                IntrinsicValueKind::ConstAlloc(ty, expr) => builder.codegen_intrinsic(
+                    IntrinsicValueKind::ConstAlloc(ty, self.visit_expr(expr)?),
                     expr.ty,
                     self.span,
                 ),

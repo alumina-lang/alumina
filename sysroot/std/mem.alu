@@ -210,7 +210,11 @@ impl slice {
         let ptr = when typing::matches::<T, builtins::ZeroSized>() {
             dangling::<&mut T>()
         } else if runtime::in_const_context() {
-            intrinsics::const_alloc_zeroed::<T>(len)
+            let ptr = intrinsics::const_alloc::<T>(len);
+            for i in 0usize..len {
+                *(ptr + i) = zeroed::<T>();
+            }
+            ptr
         } else {
             libc::calloc(len, size_of::<T>()) as &mut T
         };
@@ -285,14 +289,14 @@ impl slice {
             // nop
         } else when slice[0] is u8 {
             if runtime::in_const_context() {
-                for i in 0..slice.len() {
+                for i in 0usize..slice.len() {
                     slice[i] = value;
                 }
             } else {
                 libc::memset(slice._ptr as &mut void, value as libc::c_int, slice.len());
             }
         } else {
-            for i in 0..slice.len() {
+            for i in 0usize..slice.len() {
                 slice[i] = value;
             }
         }
@@ -673,7 +677,9 @@ fn alloc_zeroed<T>() -> &mut T {
     when typing::is_zero_sized::<T>() {
         dangling()
     } else if runtime::in_const_context() {
-        intrinsics::const_alloc_zeroed::<T>(1usize)
+        let ret = intrinsics::const_alloc::<T>(1usize);
+        *ret = zeroed::<T>();
+        ret
     } else {
         libc::calloc(1, size_of::<T>()) as &mut T
     }
@@ -833,16 +839,9 @@ fn replace<T>(a: &mut T, b: T) -> T {
 /// assert_eq!(a.a, 0);
 /// assert_eq!(a.b, 0);
 /// ```
+#[inline(ir)]
 fn zeroed<T>() -> T {
-    let ret: T;
-    when ret is bool {
-        false
-    } else when (ret is builtins::Primitive) && !(ret is builtins::ZeroSized) {
-        ret = 0 as T;
-    } else when !(ret is builtins::ZeroSized) {
-        libc::memset(&ret as &mut void, 0, size_of::<T>());
-    }
-    ret
+    intrinsics::zeroed::<T>()
 }
 
 /// Uninitialized object.
@@ -983,6 +982,15 @@ mod tests {
 
         assert_eq!(a[..] as &[u8], "aaaaaaaaaa");
     }
+
+    #[test]
+    fn test_fill_custom() {
+        let a: [(i32, i32); 5];
+        a[..].fill((1, 2));
+
+        assert_eq!(a[..], &[(1, 2), (1, 2), (1, 2), (1, 2), (1, 2)]);
+    }
+
 
     #[test]
     fn test_copy_nonoverlapping() {
@@ -1153,5 +1161,59 @@ mod tests {
         };
 
         assert!(FOO);
+    }
+
+    #[test]
+    fn test_zeroed() {
+        struct Struct {
+            a: u32,
+            b: u32,
+        }
+
+        union Union {
+            a: u32,
+            b: u32,
+        }
+
+        assert_eq!(zeroed::<bool>(), false);
+        assert_eq!(zeroed::<u8>(), 0);
+        assert_eq!(zeroed::<u16>(), 0);
+        assert_eq!(zeroed::<u32>(), 0);
+        assert_eq!(zeroed::<u64>(), 0);
+        assert_eq!(zeroed::<usize>(), 0);
+        assert_eq!(zeroed::<i8>(), 0);
+        assert_eq!(zeroed::<i16>(), 0);
+        assert_eq!(zeroed::<i32>(), 0);
+        assert_eq!(zeroed::<i64>(), 0);
+        assert_eq!(zeroed::<isize>(), 0);
+        assert_eq!(zeroed::<f32>(), 0.0);
+        assert_eq!(zeroed::<f64>(), 0.0);
+
+        assert_eq!(zeroed::<&u8>(), null);
+        assert_eq!(zeroed::<&mut u8>(), null);
+
+        let construct = zeroed::<Struct>();
+        assert_eq!(construct.a, 0);
+        assert_eq!(construct.b, 0);
+
+        let funion = zeroed::<Union>();
+        assert_eq!(funion.a, 0);
+        assert_eq!(funion.b, 0);
+
+        assert_eq!(zeroed::<[i32; 4]>(), [0,0,0,0]);
+        assert_eq!(zeroed::<[i32; 0]>(), []);
+
+        assert_eq!(zeroed::<(i32, u8, bool)>(), (0, 0, false));
+    }
+
+    #[test]
+    fn test_zeroed_closure() {
+        let a = 42;
+
+        let closure = |=a| -> i32 { a };
+        let zeroed = zeroed::<typeof(closure)>();
+
+        assert_eq!(closure(), 42);
+        assert_eq!(zeroed(), 0);
     }
 }

@@ -3954,15 +3954,13 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.codegen_type_func(args[0], generic_args[0], generic_args[1], span)
             }
             IntrinsicKind::Uninitialized => self.uninitialized(generic_args[0], span),
+            IntrinsicKind::Zeroed => self.zeroed(generic_args[0], span),
             IntrinsicKind::Dangling => self.dangling(generic_args[0], span),
             IntrinsicKind::InConstContext => self.in_const_context(span),
             IntrinsicKind::ConstPanic => self.const_panic(args[0], span),
             IntrinsicKind::ConstWarning => self.const_write(args[0], true, span),
             IntrinsicKind::ConstNote => self.const_write(args[0], false, span),
-            IntrinsicKind::ConstAlloc => self.const_alloc(generic_args[0], args[0], false, span),
-            IntrinsicKind::ConstAllocZeroed => {
-                self.const_alloc(generic_args[0], args[0], true, span)
-            }
+            IntrinsicKind::ConstAlloc => self.const_alloc(generic_args[0], args[0], span),
             IntrinsicKind::ConstFree => self.const_free(args[0], span),
             IntrinsicKind::IsConstEvaluable => self.is_const_evaluable(args[0], span),
         }
@@ -5493,6 +5491,16 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .codegen_intrinsic(IntrinsicValueKind::Uninitialized, ret_ty, span))
     }
 
+    fn zeroed(
+        &self,
+        ret_ty: ir::TyP<'ir>,
+        span: Option<Span>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let val = crate::ir::const_eval::make_zeroed(self.mono_ctx.ir, ret_ty);
+
+        Ok(self.exprs.literal(val, ret_ty, span))
+    }
+
     fn dangling(
         &self,
         ret_ty: ir::TyP<'ir>,
@@ -5547,11 +5555,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         &self,
         typ: ir::TyP<'ir>,
         size: ir::ExprP<'ir>,
-        zeroed: bool,
         span: Option<Span>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         Ok(self.exprs.codegen_intrinsic(
-            IntrinsicValueKind::ConstAlloc(typ, size, zeroed),
+            IntrinsicValueKind::ConstAlloc(typ, size),
             self.types.pointer(typ, false),
             span,
         ))

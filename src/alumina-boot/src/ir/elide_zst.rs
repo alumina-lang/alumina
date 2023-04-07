@@ -1,6 +1,6 @@
 use crate::ast::{BuiltinType, Span, UnOp};
 use crate::common::{
-    AluminaError, ArenaAllocatable, CodeErrorBuilder, CodeErrorKind, HashMap, HashSet,
+    ice, AluminaError, ArenaAllocatable, CodeErrorBuilder, CodeErrorKind, HashMap, HashSet,
 };
 use crate::diagnostics::DiagnosticsStack;
 use crate::intrinsics::IntrinsicValueKind;
@@ -385,16 +385,17 @@ impl<'ir> ZstElider<'ir> {
                     )
                 }
                 Value::Struct(fields) => {
-                    let element_types: HashMap<_, _> = match expr.ty {
-                        Ty::Item(item) => item
-                            .get_struct_like()
-                            .unwrap()
-                            .fields
-                            .iter()
-                            .map(|f| (f.id, f.ty))
-                            .collect(),
-                        _ => unreachable!(),
+                    let struct_like = match expr.ty {
+                        Ty::Item(item) => match item.get().unwrap() {
+                            IRItem::Closure(c) => &c.data,
+                            IRItem::StructLike(s) => s,
+                            _ => ice!(self.diag, "expected struct-like item"),
+                        },
+                        _ => ice!(self.diag, "expected struct-like item"),
                     };
+
+                    let element_types: HashMap<_, _> =
+                        struct_like.fields.iter().map(|f| (f.id, f.ty)).collect();
 
                     builder.r#struct(
                         fields
@@ -429,7 +430,7 @@ impl<'ir> ZstElider<'ir> {
                     builder.void(expr.ty, ValueType::RValue, expr.span)
                 }
                 IntrinsicValueKind::ConstPanic(_)
-                | IntrinsicValueKind::ConstAlloc(_, _, _)
+                | IntrinsicValueKind::ConstAlloc(_, _)
                 | IntrinsicValueKind::ConstFree(_) => {
                     return Err(CodeErrorKind::ConstOnlyIntrinsic).with_backtrace(&self.diag)
                 }

@@ -521,7 +521,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                     w!(self.fn_bodies, "({})0", self.ctx.get_type(expr.ty));
                 }
                 IntrinsicValueKind::ConstPanic(_)
-                | IntrinsicValueKind::ConstAlloc(_, _, _)
+                | IntrinsicValueKind::ConstAlloc(_, _)
                 | IntrinsicValueKind::ConstWrite(_, _)
                 | IntrinsicValueKind::ConstFree(_) => {
                     unreachable!()

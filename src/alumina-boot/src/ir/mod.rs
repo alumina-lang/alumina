@@ -659,7 +659,7 @@ impl<'ir> Expr<'ir> {
                 IntrinsicValueKind::InConstContext => true,
                 IntrinsicValueKind::ConstPanic(_) => false,
                 IntrinsicValueKind::ConstWrite(_, _) => false,
-                IntrinsicValueKind::ConstAlloc(_, _, _) => false,
+                IntrinsicValueKind::ConstAlloc(_, _) => false,
                 IntrinsicValueKind::ConstFree(_) => false,
             },
 
