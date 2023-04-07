@@ -1,6 +1,5 @@
 use std::builtins::{generic_args_of, tuple_head_of};
 use std::util::unit;
-use std::typing::matches;
 
 // Peano integers 0, S(0), S(S(0)), ...
 struct Zero {}
@@ -12,6 +11,10 @@ impl Zero {
 
 impl Succ<T> {
     fn val(_v: Succ<T>) -> i32 { unit::<T>().val() + 1 }
+}
+
+fn is_zero<T>() -> bool {
+    std::typing::matches::<T, Zero>()
 }
 
 type One = Succ<Zero>;
@@ -27,14 +30,14 @@ type Ten = Succ<Nine>;
 type Eleven = Succ<Ten>;
 type Twelve = Succ<Eleven>;
 
-type Prev<T> = when matches::<T, Zero>() { Zero } else { tuple_head_of<generic_args_of<T>> };
-type Add<A, B> = when matches::<B, Zero>() { A } else { Succ<Add<A, Prev<B>>> };
-type Sub<A, B> = when matches::<B, Zero>() { A } else { Sub<Prev<A>, Prev<B>> };
-type Mul<A, B> =  when matches::<B, Zero>() { Zero } else { Add<A, Mul<A, Prev<B>>> };
+type Prev<T> = when is_zero::<T>() { Zero } else { tuple_head_of<generic_args_of<T>> };
+type Add<A, B> = when is_zero::<B>() { A } else { Succ<Add<A, Prev<B>>> };
+type Sub<A, B> = when is_zero::<B>() { A } else { Sub<Prev<A>, Prev<B>> };
+type Mul<A, B> =  when is_zero::<B>() { Zero } else { Add<A, Mul<A, Prev<B>>> };
 
-type DivT<A, B, Idx> = when matches::<B, Zero>() {
+type DivT<A, B, Idx> = when is_zero::<B>() {
     typeof(compile_fail!("division by zero"))
-} else when matches::<Sub<Succ<A>, B>, Zero>() {
+} else when is_zero::<Sub<Succ<A>, B>>() {
     Idx
 } else {
     DivT<Sub<A, B>, B, Succ<Idx>>
@@ -43,21 +46,21 @@ type DivT<A, B, Idx> = when matches::<B, Zero>() {
 type Div<A, B> = DivT<A, B, Zero>;
 type Mod<A, B> = Sub<A, Mul<Div<A, B>, B>>;
 
-type Fibonacci<T> = when matches::<Prev<T>, Zero>() {
+type Fibonacci<T> = when is_zero::<Prev<T>>() {
     T
 } else {
     Add<Fibonacci<Prev<T>>, Fibonacci<Prev<Prev<T>>>>
 };
 
-type IsPrimeT<A, Idx> = when matches::<Idx, A>() {
+type IsPrimeT<A, Idx> = when std::typing::matches::<Idx, A>() {
     One // = true
-} else when matches::<Mod<A, Idx>, Zero>() {
+} else when is_zero::<Mod<A, Idx>>() {
     Zero // = false
 } else {
     IsPrimeT<A, Succ<Idx>>
 };
 
-type IsPrime<A> = when matches::<Prev<A>, Zero>() {
+type IsPrime<A> = when is_zero::<Prev<A>>() {
     Zero // = false
 } else {
     IsPrimeT<A, Two>

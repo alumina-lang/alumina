@@ -222,30 +222,14 @@ impl slice {
     ///
     /// The memory ranges must not overlap, use [copy_to] if they may be overlapping.
     fn copy_to_nonoverlapping<T>(src: &[T], dst: &mut T) {
-        when !(src[0] is builtins::ZeroSized) {
-            if runtime::in_const_context() {
-                for i in 0usize..src.len() {
-                    *(dst + i) = src[i];
-                }
-            } else {
-                libc::memcpy(dst as &mut void, src._ptr as &void, src.len() * size_of::<T>());
-            }
-        }
+        copy_nonoverlapping(src._ptr, dst, src.len());
     }
 
     /// Copies a region of memory from `src` to `dst`.
     ///
     /// The ranges may overlap.
     fn copy_to<T>(src: &[T], dst: &mut T) {
-        when !(src[0] is builtins::ZeroSized) {
-            if runtime::in_const_context() {
-                for i in 0usize..src.len() {
-                    *(dst + i) = src[i];
-                }
-            } else {
-                libc::memmove(dst as &mut void, src._ptr as &void, src.len() * size_of::<T>());
-            }
-        }
+        copy(src._ptr, dst, src.len());
     }
 
     /// Returns the element at the given index.
@@ -300,7 +284,13 @@ impl slice {
         when slice[0] is ZeroSized {
             // nop
         } else when slice[0] is u8 {
-            libc::memset(slice._ptr as &mut void, value as libc::c_int, slice.len());
+            if runtime::in_const_context() {
+                for i in 0..slice.len() {
+                    slice[i] = value;
+                }
+            } else {
+                libc::memset(slice._ptr as &mut void, value as libc::c_int, slice.len());
+            }
         } else {
             for i in 0..slice.len() {
                 slice[i] = value;
@@ -310,27 +300,19 @@ impl slice {
 
     /// @ std::cmp::Equatable::equals
     fn equals<T: Equatable<T>, Ptr: PointerOf<T>>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> bool {
-        if lhs.len() != rhs.len() {
-            return false;
-        }
-
         when *lhs._ptr is ZeroSized {
-            true
+            lhs.len() == rhs.len()
         } else when *lhs._ptr is Primitive {
             // Optimization for slices of primitive types
-            if !runtime::in_const_context() {
-                return memcmp(lhs._ptr as &void, rhs._ptr as &void, lhs.len() * size_of::<T>()) == 0;
+            if runtime::in_const_context() {
+                internal::default_equals::<Ptr>(lhs, rhs)
+            } else {
+                lhs.len() == rhs.len() &&
+                    (memcmp(lhs._ptr as &void, rhs._ptr as &void, lhs.len() * size_of::<T>()) == 0)
             }
+        } else {
+            internal::default_equals::<Ptr>(lhs, rhs)
         }
-
-        let idx = 0usize;
-        while idx < lhs.len() {
-            if (*lhs)[idx] != (*rhs)[idx] {
-                return false;
-            }
-            idx += 1;
-        }
-        true
     }
 
     /// @ std::cmp::Comparable::compare
@@ -340,25 +322,20 @@ impl slice {
         when *lhs._ptr is ZeroSized {
             lhs.len().compare(&rhs.len())
         } else when *lhs._ptr is u8 {
-            let cmp = memcmp(lhs._ptr as &void, rhs._ptr as &void, min(lhs.len(), rhs.len()) * size_of::<T>());
-            if cmp < 0 {
-                Ordering::Less
-            } else if cmp > 0 {
-                Ordering::Greater
+            if runtime::in_const_context() {
+                internal::default_compare::<Ptr>(lhs, rhs)
             } else {
-                lhs.len().compare(&rhs.len())
+                let cmp = memcmp(lhs._ptr as &void, rhs._ptr as &void, min(lhs.len(), rhs.len()) * size_of::<T>());
+                if cmp < 0 {
+                    Ordering::Less
+                } else if cmp > 0 {
+                    Ordering::Greater
+                } else {
+                    lhs.len().compare(&rhs.len())
+                }
             }
         } else {
-            let idx = 0usize;
-            let len = min(lhs.len(), rhs.len());
-            while idx < len {
-                let cmp = (*lhs)[idx].compare(&(*rhs)[idx]);
-                if cmp != Ordering::Equal {
-                    return cmp;
-                }
-                idx += 1;
-            }
-            lhs.len().compare(&rhs.len())
+            internal::default_compare::<Ptr>(lhs, rhs)
         }
     }
 
@@ -622,6 +599,34 @@ mod internal {
     #[lang(slice_const_cast)]
     fn slice_const_cast<T>(a: slice<&T>) -> slice<&mut T> {
         slice { _ptr: a._ptr as &mut T, _len: a._len }
+    }
+
+    fn default_equals<Ptr>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> bool {
+        if lhs._len != rhs._len {
+            return false;
+        }
+
+        let idx = 0usize;
+        while idx < lhs._len {
+            if *(lhs._ptr + idx) != *(rhs._ptr + idx) {
+                return false;
+            }
+            idx += 1;
+        }
+        true
+    }
+
+    fn default_compare<Ptr>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> cmp::Ordering {
+        let idx = 0usize;
+        let len = cmp::min(lhs._len, rhs._len);
+        while idx < len {
+            let cmp = (*(lhs._ptr + idx)).compare(rhs._ptr + idx);
+            if cmp != cmp::Ordering::Equal {
+                return cmp;
+            }
+            idx += 1;
+        }
+        lhs._len.compare(&rhs._len)
     }
 }
 
@@ -894,9 +899,12 @@ fn copy_nonoverlapping<T>(src: &T, dst: &mut T, count: usize) {
 fn copy<T>(src: &T, dst: &mut T, count: usize) {
     when !(*src is builtins::ZeroSized) {
         if runtime::in_const_context() {
-            for i in 0usize..count {
-                *(dst + i) = *(src + i);
-            }
+            // Not super efficient, but it doesn't matter since this is only used in
+            // const contexts (which are very slow anyway).
+            let tmp = intrinsics::const_alloc::<T>(count);
+            copy_nonoverlapping(src, tmp, count);
+            copy_nonoverlapping(tmp, dst, count);
+            intrinsics::const_free::<T>(tmp);
         } else {
             libc::memmove(dst as &mut void, src as &void, count * size_of::<T>());
         }
