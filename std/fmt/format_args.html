@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="description" content=" Constructs an array of pieces from a format string and arguments." />
+<meta name="description" content=" Transforms a format string and arguments into a sequence of chunks." />
 <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png" />
 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
 <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
@@ -125,43 +125,42 @@
 </div>
 </div>
 <p>
-Constructs an array of pieces from a format string and arguments.
+Transforms a format string and arguments into a sequence of chunks.
 </p><p>
 This macro is implemented in the compiler, and is used as a foundation for other formatting macros,
 such as <a class="path-link" href="/std/fmt/format.html">format</a> and <a class="path-link" href="/std/io/println.html">println</a>. You probably want to use one of those formatting macros instead.
 </p><p>
-<pre class="with-playground-link"><code class="language-alumina">format_args!("{} = {}", a, b);
-// Expands to:
-[
-    ::std::fmt::internal::format_arg(&amp;a),
-    ::std::fmt::internal::format_arg(&amp;" = "),
-    ::std::fmt::internal::format_arg(&amp;b)
-]
+<pre class="with-playground-link"><code class="language-alumina">format_args!(receiver, "{} = {}", a, b);  // Expands to: receiver!(a, " = ", b)
 </code></pre>
 </p><p>
-See also <a class="path-link" href="/std/fmt/internal/#item.format_arg">format_arg</a>.
-</p><p>
-As the type-erased <code class="language-alumina">&amp;dyn Formattable&lt;...&gt;</code> wraps a pointer to the original arguments, it is generally not safe to
-store the array that is returned by <code class="language-alumina">format_args</code>.
-</p><p>
 </p>
-<h3> Example</h3>
+<h3> Examples</h3>
 <p>
-<pre class="with-playground-link"><code class="language-alumina">use std::fmt::{format_args, Formattable, StreamFormatter};
-use std::io::StdioStream;
+<pre class="with-playground-link"><code class="language-alumina">use std::fmt::format_args;
+use std::concat;
 
-let stdout = StreamFormatter::new(&amp;StdioStream::stdout());
+// This only works where all format arguments are string literals.
+let s = format_args!(concat, "{} + {} = {}", "1", "2", "3");
 
-// Type hint is required here in order to infer the formatter type
-let args: [&amp;dyn Formattable&lt;Self, StreamFormatter&lt;StdioStream&gt;&gt;; 5]
-    = format_args!("{} + {} = {}", 1, 2, 3);
+assert_eq!(s, "1 + 2 = 3");
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3afmt%3a%3aformat%5fargs%3b%0a%20%20%20%20use%20std%3a%3aconcat%3b%0a%20%20%20%20%0a%20%20%20%20%2f%2f%20This%20only%20works%20where%20all%20format%20arguments%20are%20string%20literals%2e%0a%20%20%20%20let%20s%20%3d%20format%5fargs%21%28concat%2c%20%22%7b%7d%20%2b%20%7b%7d%20%3d%20%7b%7d%22%2c%20%221%22%2c%20%222%22%2c%20%223%22%29%3b%0a%20%20%20%20%0a%20%20%20%20assert%5feq%21%28s%2c%20%221%20%2b%202%20%3d%203%22%29%3b%0a%7d%0a">Run this example</a></pre>
+<pre class="with-playground-link"><code class="language-alumina">use std::fmt::format_args;
+use std::typing::type_name;
 
-let _ = args[0].fmt(&amp;stdout); // "1"
-let _ = args[1].fmt(&amp;stdout); // " + "
-let _ = args[2].fmt(&amp;stdout); // "2"
-let _ = args[3].fmt(&amp;stdout); // " = "
-let _ = args[4].fmt(&amp;stdout); // "3"
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3afmt%3a%3a%7bformat%5fargs%2c%20Formattable%2c%20StreamFormatter%7d%3b%0a%20%20%20%20use%20std%3a%3aio%3a%3aStdioStream%3b%0a%20%20%20%20%0a%20%20%20%20let%20stdout%20%3d%20StreamFormatter%3a%3anew%28%26StdioStream%3a%3astdout%28%29%29%3b%0a%20%20%20%20%0a%20%20%20%20%2f%2f%20Type%20hint%20is%20required%20here%20in%20order%20to%20infer%20the%20formatter%20type%0a%20%20%20%20let%20args%3a%20%5b%26dyn%20Formattable%3cSelf%2c%20StreamFormatter%3cStdioStream%3e%3e%3b%205%5d%0a%20%20%20%20%20%20%20%20%3d%20format%5fargs%21%28%22%7b%7d%20%2b%20%7b%7d%20%3d%20%7b%7d%22%2c%201%2c%202%2c%203%29%3b%0a%20%20%20%20%0a%20%20%20%20let%20%5f%20%3d%20args%5b0%5d%2efmt%28%26stdout%29%3b%20%2f%2f%20%221%22%0a%20%20%20%20let%20%5f%20%3d%20args%5b1%5d%2efmt%28%26stdout%29%3b%20%2f%2f%20%22%20%2b%20%22%0a%20%20%20%20let%20%5f%20%3d%20args%5b2%5d%2efmt%28%26stdout%29%3b%20%2f%2f%20%222%22%0a%20%20%20%20let%20%5f%20%3d%20args%5b3%5d%2efmt%28%26stdout%29%3b%20%2f%2f%20%22%20%3d%20%22%0a%20%20%20%20let%20%5f%20%3d%20args%5b4%5d%2efmt%28%26stdout%29%3b%20%2f%2f%20%223%22%0a%7d%0a">Run this example</a></pre>
+macro debug($arg...)  {
+    {
+        let arg = $arg;
+        println!("'{}' {}", arg, type_name::&lt;typeof(arg)&gt;());
+    }...;
+}
+
+// '1' i32
+// ' + ' &amp;[u8]
+// '2' i32
+// ' = ' &amp;[u8]
+// '3' i32
+format_args!(debug, "{} + {} = {}", 1, 2, 3);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3afmt%3a%3aformat%5fargs%3b%0a%20%20%20%20use%20std%3a%3atyping%3a%3atype%5fname%3b%0a%20%20%20%20%0a%20%20%20%20macro%20debug%28%24arg%2e%2e%2e%29%20%20%7b%0a%20%20%20%20%20%20%20%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20let%20arg%20%3d%20%24arg%3b%0a%20%20%20%20%20%20%20%20%20%20%20%20println%21%28%22%27%7b%7d%27%20%7b%7d%22%2c%20arg%2c%20type%5fname%3a%3a%3ctypeof%28arg%29%3e%28%29%29%3b%0a%20%20%20%20%20%20%20%20%7d%2e%2e%2e%3b%0a%20%20%20%20%7d%0a%20%20%20%20%0a%20%20%20%20%2f%2f%20%271%27%20i32%0a%20%20%20%20%2f%2f%20%27%20%2b%20%27%20%26%5bu8%5d%0a%20%20%20%20%2f%2f%20%272%27%20i32%0a%20%20%20%20%2f%2f%20%27%20%3d%20%27%20%26%5bu8%5d%0a%20%20%20%20%2f%2f%20%273%27%20i32%0a%20%20%20%20format%5fargs%21%28debug%2c%20%22%7b%7d%20%2b%20%7b%7d%20%3d%20%7b%7d%22%2c%201%2c%202%2c%203%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </main>

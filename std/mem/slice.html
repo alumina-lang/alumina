@@ -50,10 +50,10 @@
 <a href="/std/mem/slice.html#item.alloc">alloc</a>
 </li>
 <li>
-<a href="/std/mem/slice.html#item.realloc">realloc</a>
+<a href="/std/mem/slice.html#item.alloc_zeroed">alloc_zeroed</a>
 </li>
 <li>
-<a href="/std/mem/slice.html#item.alloc_zeroed">alloc_zeroed</a>
+<a href="/std/mem/slice.html#item.realloc">realloc</a>
 </li>
 <li>
 <a href="/std/mem/slice.html#item.copy_to_nonoverlapping">copy_to_nonoverlapping</a>
@@ -240,7 +240,7 @@ Returns <code class="language-alumina">true</code> if the slice has a length of 
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">alloc</span>&lt;T&gt;(len: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> &amp;mut [T]</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L178-L186"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L178-L188"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -266,26 +266,11 @@ assert_eq!(hw, s);
 </div>
 </li>
 <li>
-<div class="signature" id="item.realloc">
-<h4>
-<span class="keyword">fn</span> <span class="identifier-function">realloc</span>&lt;T&gt;(slice: &amp;mut [T], len: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> &amp;mut [T]</h4>
-<div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L189-L197"/>source</a>
-</div>
-</div>
-<div class="item-doc">
-<p>
-Resizes a heap-allocated array.
-</p><p>
-</p>
-</div>
-</li>
-<li>
 <div class="signature" id="item.alloc_zeroed">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">alloc_zeroed</span>&lt;T&gt;(len: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> &amp;mut [T]</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L202-L210"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L203-L217"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -295,6 +280,53 @@ Allocates an array of specified size on the heap.
 The values are zero-initialized.
 </p><p>
 </p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::mem::slice;
+
+let s = slice::alloc_zeroed::&lt;u8&gt;(10);
+defer s.free();
+
+assert_eq!(s, &amp;[0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3amem%3a%3aslice%3b%0a%20%20%20%20%0a%20%20%20%20let%20s%20%3d%20slice%3a%3aalloc%5fzeroed%3a%3a%3cu8%3e%2810%29%3b%0a%20%20%20%20defer%20s%2efree%28%29%3b%0a%20%20%20%20%0a%20%20%20%20assert%5feq%21%28s%2c%20%26%5b0%2c%200%2c%200%2c%200%2c%200%2c%200%2c%200%2c%200%2c%200%2c%200%5d%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.realloc">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">realloc</span>&lt;T&gt;(slice: &amp;mut [T], len: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> &amp;mut [T]</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L240-L253"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Resizes a heap-allocated array. The original array must have been
+allocated with <a class="path-link" href="/std/mem/slice.html#item.alloc">alloc</a>.
+</p><p>
+If the new size is larger than the old size, the new elements are
+uninitialized.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::mem::slice;
+
+let v = slice::alloc::&lt;i32&gt;(2);
+defer v.free();
+
+v[0] = 1;
+v[1] = 2;
+
+v = v.realloc(3);
+v[2] = 3;
+
+assert_eq!(v, &amp;[1, 2, 3]);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3amem%3a%3aslice%3b%0a%20%20%20%20%0a%20%20%20%20let%20v%20%3d%20slice%3a%3aalloc%3a%3a%3ci32%3e%282%29%3b%0a%20%20%20%20defer%20v%2efree%28%29%3b%0a%20%20%20%20%0a%20%20%20%20v%5b0%5d%20%3d%201%3b%0a%20%20%20%20v%5b1%5d%20%3d%202%3b%0a%20%20%20%20%0a%20%20%20%20v%20%3d%20v%2erealloc%283%29%3b%0a%20%20%20%20v%5b2%5d%20%3d%203%3b%0a%20%20%20%20%0a%20%20%20%20assert%5feq%21%28v%2c%20%26%5b1%2c%202%2c%203%5d%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -302,14 +334,25 @@ The values are zero-initialized.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">copy_to_nonoverlapping</span>&lt;T&gt;(src: &amp;[T], dst: &amp;mut T)</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L215-L219"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L268-L270"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Copies a region of memory from <code class="language-alumina">src</code> to <code class="language-alumina">dst</code>.
 </p><p>
-The memory ranges must not overlap, use <a class="path-link" href="/std/mem/slice.html#item.copy_to">copy_to</a> if they may be overlapping.
+The memory regions must not overlap, use <a class="path-link" href="/std/mem/slice.html#item.copy_to">copy_to</a> if they may
+be overlapping.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let src = [1, 2, 3];
+let dst: [i32; 3];
+
+src[..].copy_to_nonoverlapping(&amp;dst[0]);
+assert_eq!(dst, [1, 2, 3]);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20let%20src%20%3d%20%5b1%2c%202%2c%203%5d%3b%0a%20%20%20%20let%20dst%3a%20%5bi32%3b%203%5d%3b%0a%20%20%20%20%0a%20%20%20%20src%5b%2e%2e%5d%2ecopy%5fto%5fnonoverlapping%28%26dst%5b0%5d%29%3b%0a%20%20%20%20assert%5feq%21%28dst%2c%20%5b1%2c%202%2c%203%5d%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -319,14 +362,25 @@ The memory ranges must not overlap, use <a class="path-link" href="/std/mem/slic
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">copy_to</span>&lt;T&gt;(src: &amp;[T], dst: &amp;mut T)</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L224-L228"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L285-L287"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Copies a region of memory from <code class="language-alumina">src</code> to <code class="language-alumina">dst</code>.
 </p><p>
-The ranges may overlap.
+The regions may overlap. Using <a class="path-link" href="/std/mem/slice.html#item.copy_to_nonoverlapping">copy_to_nonoverlapping</a> can be more
+efficient if the ranges do not in fact overlap.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let src = [1, 2, 3, 4, 5, 6];
+
+src[..3].copy_to(&amp;src[1]);
+src[4..].copy_to(&amp;src[3]);
+assert_eq!(src, [1, 1, 2, 5, 6, 6]);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20let%20src%20%3d%20%5b1%2c%202%2c%203%2c%204%2c%205%2c%206%5d%3b%0a%20%20%20%20%0a%20%20%20%20src%5b%2e%2e3%5d%2ecopy%5fto%28%26src%5b1%5d%29%3b%0a%20%20%20%20src%5b4%2e%2e%5d%2ecopy%5fto%28%26src%5b3%5d%29%3b%0a%20%20%20%20assert%5feq%21%28src%2c%20%5b1%2c%201%2c%202%2c%205%2c%206%2c%206%5d%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -336,7 +390,7 @@ The ranges may overlap.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">get</span>&lt;T&gt;(self: &amp;[T], index: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L233-L239"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L299-L305"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -344,6 +398,14 @@ The ranges may overlap.
 Returns the element at the given index.
 </p><p>
 If the index is out of bounds, the function will return <code class="language-alumina">None</code>.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let hw = "Hello, world";
+assert_eq!(hw[..5].get(0), Option::some('H'));
+assert_eq!(hw[..5].get(5), Option::none());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20let%20hw%20%3d%20%22Hello%2c%20world%22%3b%0a%20%20%20%20assert%5feq%21%28hw%5b%2e%2e5%5d%2eget%280%29%2c%20Option%3a%3asome%28%27H%27%29%29%3b%0a%20%20%20%20assert%5feq%21%28hw%5b%2e%2e5%5d%2eget%285%29%2c%20Option%3a%3anone%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -355,7 +417,7 @@ If the index is out of bounds, the function will return <code class="language-al
 Arr: <a href="/std/builtins/ArrayOf.html"><span class="identifier-type">ArrayOf</span></a>&lt;T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L252-L257"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L318-L323"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -383,7 +445,7 @@ assert_eq!(hw[..] as &amp;[u8], "Hello");
 Ptr: <a href="/std/builtins/Pointer.html"><span class="identifier-type">Pointer</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L260-L263"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L326-L329"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -402,7 +464,7 @@ See <a class="path-link" href="/std/iter/Iterable.html">Iterable</a> for details
 Ptr: <a href="/std/builtins/Pointer.html"><span class="identifier-type">Pointer</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L266-L269"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L332-L335"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -419,7 +481,7 @@ See <a class="path-link" href="/std/iter/IterableRef.html">IterableRef</a> for d
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">iter_mut</span>&lt;T&gt;(self: &amp;mut [T]) -> <a href="/std/mem/SliceRefIterator.html"><span class="identifier-type">SliceRefIterator</span></a>&lt;&amp;mut T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L272-L275"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L338-L341"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -436,12 +498,20 @@ See <a class="path-link" href="/std/iter/IterableMut.html">IterableMut</a> for d
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">fill</span>&lt;T&gt;(slice: &amp;mut [T], value: T)</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L278-L288"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L351-L367"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Fill slice with a value
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">let v = [0, 0, 0];
+v[..].fill(1);
+assert_eq!(v, [1, 1, 1]);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20let%20v%20%3d%20%5b0%2c%200%2c%200%5d%3b%0a%20%20%20%20v%5b%2e%2e%5d%2efill%281%29%3b%0a%20%20%20%20assert%5feq%21%28v%2c%20%5b1%2c%201%2c%201%5d%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -455,7 +525,7 @@ T: <a href="/std/cmp/Equatable.html"><span class="identifier-type">Equatable</sp
 Ptr: <a href="/std/builtins/PointerOf.html"><span class="identifier-type">PointerOf</span></a>&lt;T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L291-L311"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L370-L384"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -476,7 +546,7 @@ T: <a href="/std/cmp/Comparable.html"><span class="identifier-type">Comparable</
 Ptr: <a href="/std/builtins/PointerOf.html"><span class="identifier-type">PointerOf</span></a>&lt;T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L314-L340"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L387-L408"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -499,7 +569,7 @@ Ptr: <a href="/std/builtins/PointerOf.html"><span class="identifier-type">Pointe
 H: <a href="/std/hash/Hasher.html"><span class="identifier-type">Hasher</span></a>&lt;H&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L343-L355"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L411-L423"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -520,7 +590,7 @@ Ptr: <a href="/std/builtins/PointerOf.html"><span class="identifier-type">Pointe
 F: <a href="/std/fmt/Formatter.html"><span class="identifier-type">Formatter</span></a>&lt;F&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L358-L360"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L426-L428"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -537,7 +607,7 @@ See <a class="path-link" href="/std/fmt/Formattable.html">Formattable</a> for de
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">free</span>&lt;T&gt;(a: &amp;mut [T])</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L365-L369"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L433-L441"/>source</a>
 </div>
 </div>
 <div class="item-doc">

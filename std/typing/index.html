@@ -50,10 +50,70 @@
 <a href="/std/typing/#item.enum_variants">enum_variants</a>
 </li>
 <li>
-<a href="/std/typing/#item.assert_type_eq">assert_type_eq</a>
+<a href="/std/typing/#item.matches">matches</a>
 </li>
 <li>
-<a href="/std/typing/#item.assert_type_ne">assert_type_ne</a>
+<a href="/std/typing/#item.is_same">is_same</a>
+</li>
+<li>
+<a href="/std/typing/#item.is_zero_sized">is_zero_sized</a>
+</li>
+<li>
+<a href="/std/typing/#item.is_primitive">is_primitive</a>
+</li>
+<li>
+<a href="/std/typing/#item.is_numeric">is_numeric</a>
+</li>
+<li>
+<a href="/std/typing/#item.is_integer">is_integer</a>
+</li>
+<li>
+<a href="/std/typing/#item.is_floating_point">is_floating_point</a>
+</li>
+<li>
+<a href="/std/typing/#item.is_signed">is_signed</a>
+</li>
+<li>
+<a href="/std/typing/#item.is_unsigned">is_unsigned</a>
+</li>
+<li>
+<a href="/std/typing/#item.is_pointer">is_pointer</a>
+</li>
+<li>
+<a href="/std/typing/#item.is_array">is_array</a>
+</li>
+<li>
+<a href="/std/typing/#item.is_tuple">is_tuple</a>
+</li>
+<li>
+<a href="/std/typing/#item.is_struct">is_struct</a>
+</li>
+<li>
+<a href="/std/typing/#item.is_union">is_union</a>
+</li>
+<li>
+<a href="/std/typing/#item.is_range">is_range</a>
+</li>
+<li>
+<a href="/std/typing/#item.is_named_function">is_named_function</a>
+</li>
+<li>
+<a href="/std/typing/#item.is_function_pointer">is_function_pointer</a>
+</li>
+<li>
+<a href="/std/typing/#item.is_protocol">is_protocol</a>
+</li>
+<li>
+<a href="/std/typing/#item.is_same_layout_as">is_same_layout_as</a>
+</li>
+<li>
+<a href="/std/typing/#item.is_array_of">is_array_of</a>
+</li>
+<li>
+<a href="/std/typing/#item.is_pointer_of">is_pointer_of</a>
+</li>
+<li>
+<a href="/std/typing/#item.is_range_of">is_range_of</a>
 </li>
 </ul>
 <h2>Types</h2>
@@ -77,6 +137,9 @@
 </div>
 <p>
 Type reflection and <code class="language-alumina">dyn</code> objects
+</p><p>
+Most functions in this module are const-evaluable, so they can be used in <code class="language-alumina">when</code>
+expression for conditional compilation based on e.g. the generic parameter.
 </p><p>
 </p>
 <h2 id="Struct">Structs</h2>
@@ -103,7 +166,7 @@ Type reflection and <code class="language-alumina">dyn</code> objects
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">type_id</span>&lt;T&gt;() -> <a href="/std/typing/#item.TypeId"><span class="identifier-type">TypeId</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L16-L19"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L19-L22"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -129,7 +192,7 @@ assert_ne!(type_id::&lt;u8&gt;(), type_id::&lt;u16&gt;());
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">type_name</span>&lt;T&gt;() -> &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L29-L32"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L32-L35"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -154,7 +217,7 @@ assert_eq!(type_name::&lt;u8&gt;(), "u8");
 E: <a href="/std/builtins/Enum.html"><span class="identifier-type">Enum</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L90-L92"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L93-L95"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -184,85 +247,444 @@ assert_eq!(variants[1].1, Foo::Quux);
 </div>
 </li>
 <li>
-<div class="signature" id="item.assert_type_eq">
+<div class="signature" id="item.matches">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">assert_type_eq</span>&lt;T1, T2&gt;()</h4>
+<span class="keyword">fn</span> <span class="identifier-function">matches</span>&lt;T1, T2&gt;() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L123-L128"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L114-L117"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Asserts that the types are equal.
+Returns <code class="language-alumina">true</code> if type T1 matches bound T2.
+</p><p>
+T2 can be a protocol or a type (in which case the result indicates
+whether T1 and T2 refer to the same type).
+</p><p>
+See also <a class="path-link" href="/std/typing/#item.is_same">is_same</a>.
 </p><p>
 </p>
-<h3> Examples</h3>
+<h3> Example</h3>
 <p>
-<pre class="with-playground-link"><code class="language-alumina">use std::typing::assert_type_eq;
-use std::string::StringBuf;
-use std::collections::Vector;
+<pre class="with-playground-link"><code class="language-alumina">use std::typing::matches;
+use std::builtins::Primitive;
 
-assert_type_eq::&lt;u8, u8&gt;();
-assert_type_eq::&lt;StringBuf, Vector&lt;u8&gt;&gt;();
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3atyping%3a%3aassert%5ftype%5feq%3b%0a%20%20%20%20use%20std%3a%3astring%3a%3aStringBuf%3b%0a%20%20%20%20use%20std%3a%3acollections%3a%3aVector%3b%0a%20%20%20%20%0a%20%20%20%20assert%5ftype%5feq%3a%3a%3cu8%2c%20u8%3e%28%29%3b%0a%20%20%20%20assert%5ftype%5feq%3a%3a%3cStringBuf%2c%20Vector%3cu8%3e%3e%28%29%3b%0a%7d%0a">Run this example</a></pre>
-</p><p>
-<pre class="with-playground-link panics"><code class="language-alumina">use std::typing::assert_type_eq;
-
-assert_type_eq::&lt;u64, usize&gt;(); // panics
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3atyping%3a%3aassert%5ftype%5feq%3b%0a%20%20%20%20%0a%20%20%20%20assert%5ftype%5feq%3a%3a%3cu64%2c%20usize%3e%28%29%3b%20%2f%2f%20panics%0a%7d%0a">Run this example</a></pre>
-</p><p>
-</p>
-<h3> Note</h3>
-<p>
-This causes a run-time panic if the types are not equal rather than a compile-time error.
-If a compile time error is desired, it is recommended to use a <code class="language-alumina">when</code> expression and <a class="path-link" href="/std/compile_fail.html">compile_fail</a>:
-</p><p>
-<pre class="with-playground-link"><code class="language-alumina">type T = u8;
-
-when T: !u8 {
-    compile_fail!("T is not equal to u8");
-}
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20type%20T%20%3d%20u8%3b%0a%20%20%20%20%0a%20%20%20%20when%20T%3a%20%21u8%20%7b%0a%20%20%20%20%20%20%20%20compile%5ffail%21%28%22T%20is%20not%20equal%20to%20u8%22%29%3b%0a%20%20%20%20%7d%0a%7d%0a">Run this example</a></pre>
+assert!(matches::&lt;u8, u8&gt;());
+assert!(!matches::&lt;u8, u16&gt;());
+assert!(matches::&lt;u8, Primitive&gt;());
+assert!(!matches::&lt;&amp;[u8], Primitive&gt;());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3atyping%3a%3amatches%3b%0a%20%20%20%20use%20std%3a%3abuiltins%3a%3aPrimitive%3b%0a%20%20%20%20%0a%20%20%20%20assert%21%28matches%3a%3a%3cu8%2c%20u8%3e%28%29%29%3b%0a%20%20%20%20assert%21%28%21matches%3a%3a%3cu8%2c%20u16%3e%28%29%29%3b%0a%20%20%20%20assert%21%28matches%3a%3a%3cu8%2c%20Primitive%3e%28%29%29%3b%0a%20%20%20%20assert%21%28%21matches%3a%3a%3c%26%5bu8%5d%2c%20Primitive%3e%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
 </li>
 <li>
-<div class="signature" id="item.assert_type_ne">
+<div class="signature" id="item.is_same">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">assert_type_ne</span>&lt;T1, T2&gt;()</h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_same</span>&lt;T1, T2&gt;() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L155-L160"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L134-L137"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Asserts that the types are not equal.
+Returns <code class="language-alumina">true</code> if type T1 is exactly the same type as T2.
+</p><p>
+See also <a class="path-link" href="/std/typing/#item.matches">matches</a>.
 </p><p>
 </p>
-<h3> Examples</h3>
+<h3> Example</h3>
 <p>
-<pre class="with-playground-link"><code class="language-alumina">use std::typing::assert_type_ne;
+<pre class="with-playground-link"><code class="language-alumina">use std::typing::is_same;
+use std::builtins::Primitive;
 
-assert_type_ne::&lt;u8, u16&gt;();
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3atyping%3a%3aassert%5ftype%5fne%3b%0a%20%20%20%20%0a%20%20%20%20assert%5ftype%5fne%3a%3a%3cu8%2c%20u16%3e%28%29%3b%0a%7d%0a">Run this example</a></pre>
+assert!(is_same::&lt;u8, u8&gt;());
+assert!(!is_same::&lt;u8, u16&gt;());
+// Protocols can also be compared for equality
+assert!(is_same::&lt;Fn(u8) -&gt; u8, std::builtins::Callable&lt;(u8), u8&gt;&gt;());
+assert!(!is_same::&lt;u8, Primitive&gt;());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3atyping%3a%3ais%5fsame%3b%0a%20%20%20%20use%20std%3a%3abuiltins%3a%3aPrimitive%3b%0a%20%20%20%20%0a%20%20%20%20assert%21%28is%5fsame%3a%3a%3cu8%2c%20u8%3e%28%29%29%3b%0a%20%20%20%20assert%21%28%21is%5fsame%3a%3a%3cu8%2c%20u16%3e%28%29%29%3b%0a%20%20%20%20%2f%2f%20Protocols%20can%20also%20be%20compared%20for%20equality%0a%20%20%20%20assert%21%28is%5fsame%3a%3a%3cFn%28u8%29%20%2d%3e%20u8%2c%20std%3a%3abuiltins%3a%3aCallable%3c%28u8%29%2c%20u8%3e%3e%28%29%29%3b%0a%20%20%20%20assert%21%28%21is%5fsame%3a%3a%3cu8%2c%20Primitive%3e%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
-<pre class="with-playground-link panics"><code class="language-alumina">use std::typing::assert_type_ne;
-
-assert_type_ne::&lt;u64, u64&gt;(); // panics
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3atyping%3a%3aassert%5ftype%5fne%3b%0a%20%20%20%20%0a%20%20%20%20assert%5ftype%5fne%3a%3a%3cu64%2c%20u64%3e%28%29%3b%20%2f%2f%20panics%0a%7d%0a">Run this example</a></pre>
 </p>
-<h3> Note</h3>
+</div>
+</li>
+<li>
+<div class="signature" id="item.is_zero_sized">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_zero_sized</span>&lt;T&gt;() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L151-L154"/>source</a>
+</div>
+</div>
+<div class="item-doc">
 <p>
-This causes a run-time panic if the types are equal rather than a compile-time error.
-If a compile time error is desired, it is recommended to use a <code class="language-alumina">when</code> expression and <a class="path-link" href="/std/compile_fail.html">compile_fail</a>:
+Returns <code class="language-alumina">true</code> if T is zero sized.
 </p><p>
-<pre class="with-playground-link"><code class="language-alumina">type T = u16;
+See also <a class="path-link" href="/std/builtins/ZeroSized.html">ZeroSized</a>.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::typing::*;
 
-when T: u8 {
-    compile_fail!("T is equal to u8");
-}
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20type%20T%20%3d%20u16%3b%0a%20%20%20%20%0a%20%20%20%20when%20T%3a%20u8%20%7b%0a%20%20%20%20%20%20%20%20compile%5ffail%21%28%22T%20is%20equal%20to%20u8%22%29%3b%0a%20%20%20%20%7d%0a%7d%0a">Run this example</a></pre>
+assert!(is_zero_sized::&lt;()&gt;());
+assert!(is_zero_sized::&lt;([u8; 0], ())&gt;());
+assert!(!is_zero_sized::&lt;u8&gt;());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3atyping%3a%3a%2a%3b%0a%20%20%20%20%0a%20%20%20%20assert%21%28is%5fzero%5fsized%3a%3a%3c%28%29%3e%28%29%29%3b%0a%20%20%20%20assert%21%28is%5fzero%5fsized%3a%3a%3c%28%5bu8%3b%200%5d%2c%20%28%29%29%3e%28%29%29%3b%0a%20%20%20%20assert%21%28%21is%5fzero%5fsized%3a%3a%3cu8%3e%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.is_primitive">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_primitive</span>&lt;T&gt;() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L166-L169"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if T is primitive.
+</p><p>
+See also <a class="path-link" href="/std/builtins/Primitive.html">Primitive</a>.
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::typing::*;
+
+assert!(is_primitive::&lt;u8&gt;());
+assert!(!is_primitive::&lt;(u8, bool)&gt;());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3atyping%3a%3a%2a%3b%0a%20%20%20%20%0a%20%20%20%20assert%21%28is%5fprimitive%3a%3a%3cu8%3e%28%29%29%3b%0a%20%20%20%20assert%21%28%21is%5fprimitive%3a%3a%3c%28u8%2c%20bool%29%3e%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.is_numeric">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_numeric</span>&lt;T&gt;() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L184-L187"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if T is numeric.
+</p><p>
+See also <a class="path-link" href="/std/builtins/Numeric.html">Numeric</a>.
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::typing::*;
+
+assert!(is_numeric::&lt;u8&gt;());
+assert!(is_numeric::&lt;i32&gt;());
+assert!(is_numeric::&lt;f64&gt;());
+assert!(!is_numeric::&lt;bool&gt;());
+assert!(!is_numeric::&lt;&amp;u8&gt;());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3atyping%3a%3a%2a%3b%0a%20%20%20%20%0a%20%20%20%20assert%21%28is%5fnumeric%3a%3a%3cu8%3e%28%29%29%3b%0a%20%20%20%20assert%21%28is%5fnumeric%3a%3a%3ci32%3e%28%29%29%3b%0a%20%20%20%20assert%21%28is%5fnumeric%3a%3a%3cf64%3e%28%29%29%3b%0a%20%20%20%20assert%21%28%21is%5fnumeric%3a%3a%3cbool%3e%28%29%29%3b%0a%20%20%20%20assert%21%28%21is%5fnumeric%3a%3a%3c%26u8%3e%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.is_integer">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_integer</span>&lt;T&gt;() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L201-L204"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if T is integer.
+</p><p>
+See also <a class="path-link" href="/std/builtins/Integer.html">Integer</a>.
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::typing::*;
+
+assert!(is_integer::&lt;u8&gt;());
+assert!(is_integer::&lt;i32&gt;());
+assert!(!is_integer::&lt;f64&gt;());
+assert!(!is_numeric::&lt;bool&gt;());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3atyping%3a%3a%2a%3b%0a%20%20%20%20%0a%20%20%20%20assert%21%28is%5finteger%3a%3a%3cu8%3e%28%29%29%3b%0a%20%20%20%20assert%21%28is%5finteger%3a%3a%3ci32%3e%28%29%29%3b%0a%20%20%20%20assert%21%28%21is%5finteger%3a%3a%3cf64%3e%28%29%29%3b%0a%20%20%20%20assert%21%28%21is%5fnumeric%3a%3a%3cbool%3e%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.is_floating_point">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_floating_point</span>&lt;T&gt;() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L209-L212"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if T is a floating point type.
+</p><p>
+See also <a class="path-link" href="/std/builtins/FloatingPoint.html">FloatingPoint</a>.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.is_signed">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_signed</span>&lt;T&gt;() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L217-L220"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if T is a signed type.
+</p><p>
+See also <a class="path-link" href="/std/builtins/Signed.html">Signed</a>.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.is_unsigned">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_unsigned</span>&lt;T&gt;() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L225-L228"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if T is an unsigned type.
+</p><p>
+See also <a class="path-link" href="/std/builtins/Unsigned.html">Unsigned</a>.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.is_pointer">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_pointer</span>&lt;T&gt;() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L233-L236"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if T is a pointer.
+</p><p>
+See also <a class="path-link" href="/std/builtins/Pointer.html">Pointer</a>.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.is_array">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_array</span>&lt;T&gt;() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L241-L244"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if T is array.
+</p><p>
+See also <a class="path-link" href="/std/builtins/Array.html">Array</a>.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.is_tuple">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_tuple</span>&lt;T&gt;() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L249-L252"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if T is tuple.
+</p><p>
+See also <a class="path-link" href="/std/builtins/Tuple.html">Tuple</a>.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.is_struct">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_struct</span>&lt;T&gt;() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L257-L260"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if T is a struct.
+</p><p>
+See also <a class="path-link" href="/std/builtins/Struct.html">Struct</a>.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.is_union">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_union</span>&lt;T&gt;() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L265-L268"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if T is a union.
+</p><p>
+See also <a class="path-link" href="/std/builtins/Union.html">Union</a>.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.is_range">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_range</span>&lt;T&gt;() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L273-L276"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if T is a range.
+</p><p>
+See also <a class="path-link" href="/std/builtins/Range.html">Range</a> and <a class="path-link" href="/std/typing/#item.is_range_of">is_range_of</a>.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.is_named_function">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_named_function</span>&lt;T&gt;() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L281-L284"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if T is named function.
+</p><p>
+See also <a class="path-link" href="/std/builtins/NamedFunction.html">NamedFunction</a>.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.is_function_pointer">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_function_pointer</span>&lt;T&gt;() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L289-L292"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if T is function pointer.
+</p><p>
+See also <a class="path-link" href="/std/builtins/FunctionPointer.html">FunctionPointer</a>.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.is_protocol">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_protocol</span>&lt;T&gt;() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L297-L300"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if T is protocol.
+</p><p>
+See also <a class="path-link" href="/std/builtins/Protocol.html">Protocol</a>.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.is_same_layout_as">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_same_layout_as</span>&lt;T1, T2&gt;() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L305-L308"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if T1 and T2 have the same memory layout.
+</p><p>
+See also <a class="path-link" href="/std/builtins/SameLayoutAs.html">SameLayoutAs</a>.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.is_array_of">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_array_of</span>&lt;T, U&gt;() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L314-L317"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if T is an array of any size of elements
+with type U.
+</p><p>
+See also <a class="path-link" href="/std/builtins/ArrayOf.html">ArrayOf</a>.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.is_pointer_of">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_pointer_of</span>&lt;T, U&gt;() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L323-L326"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if T is an array of any size of elements
+with type Elem.
+</p><p>
+See also <a class="path-link" href="/std/builtins/PointerOf.html">PointerOf</a>.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.is_range_of">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_range_of</span>&lt;T, U&gt;() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L331-L334"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if T is a range over U.
+</p><p>
+See also <a class="path-link" href="/std/builtins/RangeOf.html">RangeOf</a>.
 </p><p>
 </p>
 </div>
@@ -275,7 +697,7 @@ when T: u8 {
 <h4>
 <span class="keyword">type</span> <span class="identifier-type">TypeId</span> = <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L3-L3"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L6-L6"/>source</a>
 </div>
 </div>
 <div class="item-doc">
