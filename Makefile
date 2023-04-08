@@ -125,18 +125,11 @@ $(ALUMINAC_TESTS).c: $(ALU_DEPS) $(SELFHOSTED_SOURCES) src/aluminac/lib/node_kin
 		$(foreach src,$(ALU_LIBRARIES),$(subst /,::,$(basename $(subst libraries/,,$(src))))=$(src)) \
 		$(foreach src,$(SELFHOSTED_SOURCES),$(subst /,::,$(basename $(src)))=$(src))
 
-LLVM_CFLAGS = $(shell llvm-config-13 --cflags)
-LLVM_LDFLAGS = $(shell llvm-config-13 --ldflags)
-LLVM_LIBS = $(shell llvm-config-13 --libs engine)
+$(ALUMINAC): $(ALUMINAC).c $(BUILD_DIR)/parser.o
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -ltree-sitter
 
-$(BUILD_DIR)/llvm_target.o: libraries/llvm/target.c
-	$(CC) $(CFLAGS) $(LLVM_CFLAGS) -c $^ -o $@ $(LDFLAGS)
-
-$(ALUMINAC): $(ALUMINAC).c $(BUILD_DIR)/parser.o $(BUILD_DIR)/llvm_target.o
-	$(CC) $(CFLAGS) -o $@ $^ $(LLVM_LDFLAGS) $(LLVM_LIBS) $(LDFLAGS) -ltree-sitter
-
-$(ALUMINAC_TESTS): $(ALUMINAC_TESTS).c $(BUILD_DIR)/parser.o $(BUILD_DIR)/llvm_target.o
-	$(CC) $(CFLAGS) -o $@ $^ $(LLVM_LDFLAGS) $(LLVM_LIBS) $(LDFLAGS) -ltree-sitter
+$(ALUMINAC_TESTS): $(ALUMINAC_TESTS).c $(BUILD_DIR)/parser.o
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -ltree-sitter
 
 ## --------------------------------Tools -------------------------------
 

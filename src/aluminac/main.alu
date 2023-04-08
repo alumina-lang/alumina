@@ -5,7 +5,6 @@ use aluminac::lib::node_kinds::{NodeVisitor, FieldKind};
 use std::fs::File;
 
 extern "C" fn tree_sitter_alumina() -> &TSLanguage;
-use llvm::core;
 
 struct SampleVisitor {
     cursor: &mut TSTreeCursor,
@@ -67,79 +66,6 @@ impl SampleVisitor {
     mixin NodeVisitorExt<SampleVisitor, Result<(), Error>>;
 }
 
-use llvm::core::*;
-use llvm::execution_engine::*;
-use llvm::target::*;
-
-fn llvm_example() {
-    use std::ffi::c_str;
-
-    let context = LLVMContextCreate();
-    defer context.LLVMContextDispose();
-
-    let module = LLVMModuleCreateWithNameInContext(c_str!("sum"), context);
-    let builder = LLVMCreateBuilderInContext(context);
-
-    // get a type for sum function
-    let i64t = LLVMInt64TypeInContext(context);
-    let argts = [i64t, i64t, i64t].as_slice_mut();
-    let function_type = LLVMFunctionType(i64t, &argts[0], argts.len() as u32, 0);
-
-    // add it to our module
-    let function = LLVMAddFunction(module, c_str!("sum"), function_type);
-
-    // Create a basic block in the function and set our builder to generate
-    // code in it.
-    let bb = LLVMAppendBasicBlockInContext(context, function, c_str!("entry"));
-
-    LLVMPositionBuilderAtEnd(builder, bb);
-
-    // get the function's arguments
-    let x = LLVMGetParam(function, 0);
-    let y = LLVMGetParam(function, 1);
-    let z = LLVMGetParam(function, 2);
-
-    let sum = LLVMBuildAdd(builder, x, y, c_str!("sum.1"));
-    let sum = LLVMBuildAdd(builder, sum, z, c_str!("sum.2"));
-
-    // Emit a `ret void` into the function
-    LLVMBuildRet(builder, sum);
-
-    // done building
-    LLVMDisposeBuilder(builder);
-
-    // Dump the module as IR to stdout.
-    LLVMDumpModule(module);
-
-    // build an execution engine
-    let ee: LLVMExecutionEngineRef;
-    let out: &mut std::libc::c_char = null;
-
-    // robust code should check that these calls complete successfully
-    // each of these calls is necessary to setup an execution engine which compiles to native
-    // code
-    LLVMLinkInMCJIT();
-    LLVM_InitializeNativeTarget();
-    LLVM_InitializeNativeAsmPrinter();
-
-    // takes ownership of the module
-    LLVMCreateExecutionEngineForModule(&ee, module, &out);
-    defer ee.LLVMDisposeExecutionEngine();
-
-    let addr = LLVMGetFunctionAddress(ee, c_str!("sum"));
-
-    let f: fn(u64, u64, u64) -> u64 = std::util::transmute(addr);
-
-    let x: u64 = 1;
-    let y: u64 = 1;
-    let z: u64 = 1;
-    let res = f(x, y, z);
-
-    println!("{} + {} + {} = {}", x, y, z, res);
-
-    // Clean up the rest.
-}
-
 fn main() {
     use std::fs::{Path, File};
 
@@ -159,8 +85,6 @@ fn main() {
 
     let visitor = SampleVisitor::new(source[..], &cursor);
     visitor.visit(root_node).unwrap();
-
-    llvm_example();
 }
 
 
