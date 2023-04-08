@@ -187,25 +187,19 @@ impl slice {
         from_raw(ptr, len)
     }
 
-    /// Resizes a heap-allocated array.
-    fn realloc<T>(slice: &mut [T], len: usize) -> &mut [T] {
-        let ptr = when slice[0] is builtins::ZeroSized {
-            dangling::<&mut T>()
-        } else if runtime::in_const_context() {
-            let new = intrinsics::const_alloc::<T>(len);
-            slice.copy_to_nonoverlapping(new);
-            slice.free();
-            new
-        } else {
-            libc::realloc(slice._ptr as &mut void, size_of::<T>() * len) as &mut T
-        };
-
-        from_raw(ptr, len)
-    }
-
     /// Allocates an array of specified size on the heap.
     ///
     /// The values are zero-initialized.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::mem::slice;
+    ///
+    /// let s = slice::alloc_zeroed::<u8>(10);
+    /// defer s.free();
+    ///
+    /// assert_eq!(s, &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    /// ```
     fn alloc_zeroed<T>(len: usize) -> &mut [T] {
         let ptr = when typing::matches::<T, builtins::ZeroSized>() {
             dangling::<&mut T>()
@@ -222,16 +216,72 @@ impl slice {
         from_raw(ptr, len)
     }
 
+    /// Resizes a heap-allocated array. The original array must have been
+    /// allocated with [slice::alloc].
+    ///
+    /// If the new size is larger than the old size, the new elements are
+    /// uninitialized.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::mem::slice;
+    ///
+    /// let v = slice::alloc::<i32>(2);
+    /// defer v.free();
+    ///
+    /// v[0] = 1;
+    /// v[1] = 2;
+    ///
+    /// v = v.realloc(3);
+    /// v[2] = 3;
+    ///
+    /// assert_eq!(v, &[1, 2, 3]);
+    /// ```
+    fn realloc<T>(slice: &mut [T], len: usize) -> &mut [T] {
+        let ptr = when slice[0] is builtins::ZeroSized {
+            dangling::<&mut T>()
+        } else if runtime::in_const_context() {
+            let new = intrinsics::const_alloc::<T>(len);
+            slice.copy_to_nonoverlapping(new);
+            slice.free();
+            new
+        } else {
+            libc::realloc(slice._ptr as &mut void, size_of::<T>() * len) as &mut T
+        };
+
+        from_raw(ptr, len)
+    }
+
     /// Copies a region of memory from `src` to `dst`.
     ///
-    /// The memory ranges must not overlap, use [copy_to] if they may be overlapping.
+    /// The memory regions must not overlap, use [copy_to] if they may
+    /// be overlapping.
+    ///
+    /// ## Example
+    /// ```
+    /// let src = [1, 2, 3];
+    /// let dst: [i32; 3];
+    ///
+    /// src[..].copy_to_nonoverlapping(&dst[0]);
+    /// assert_eq!(dst, [1, 2, 3]);
+    /// ```
     fn copy_to_nonoverlapping<T>(src: &[T], dst: &mut T) {
         copy_nonoverlapping(src._ptr, dst, src.len());
     }
 
     /// Copies a region of memory from `src` to `dst`.
     ///
-    /// The ranges may overlap.
+    /// The regions may overlap. Using [copy_to_nonoverlapping] can be more
+    /// efficient if the ranges do not in fact overlap.
+    ///
+    /// ## Example
+    /// ```
+    /// let src = [1, 2, 3, 4, 5, 6];
+    ///
+    /// src[..3].copy_to(&src[1]);
+    /// src[4..].copy_to(&src[3]);
+    /// assert_eq!(src, [1, 1, 2, 5, 6, 6]);
+    /// ```
     fn copy_to<T>(src: &[T], dst: &mut T) {
         copy(src._ptr, dst, src.len());
     }
@@ -239,6 +289,13 @@ impl slice {
     /// Returns the element at the given index.
     ///
     /// If the index is out of bounds, the function will return `None`.
+    ///
+    /// ## Example
+    /// ```
+    /// let hw = "Hello, world";
+    /// assert_eq!(hw[..5].get(0), Option::some('H'));
+    /// assert_eq!(hw[..5].get(5), Option::none());
+    /// ```
     fn get<T>(self: &[T], index: usize) -> Option<T> {
         if index < self.len() {
             Option::some(*(self._ptr + index))
@@ -284,6 +341,13 @@ impl slice {
     }
 
     /// Fill slice with a value
+    ///
+    /// ## Example
+    /// ```
+    /// let v = [0, 0, 0];
+    /// v[..].fill(1);
+    /// assert_eq!(v, [1, 1, 1]);
+    /// ```
     fn fill<T>(slice: &mut [T], value: T) {
         when slice[0] is ZeroSized {
             // nop
