@@ -166,7 +166,6 @@ To compile `alumina-boot` compiler from source, these prerequisites are needed:
 
 Additionally, to compile `aluminac`, these prerequisites are needed:
 
-  - LLVM 13 shared libraries and headers (`llvm-13-dev`)
   - Tree-sitter runtime library (`libtree-sitter.a`/`libtree-sitter.so`):
    ```bash
    git clone https://github.com/tree-sitter/tree-sitter
