@@ -31,7 +31,11 @@ macro panic($reason, $args...) {
         file!(),
         line!(),
         column!(),
-        &fmt::format_args!($reason, $args...)
+        &fmt::format_args!(
+            fmt::internal::dyn_format_args,
+            $reason,
+            $args...
+        )
     )
 }
 
@@ -196,34 +200,38 @@ mod internal {
         column: i32,
         args: &[&dyn Formattable<Self, PanicFormatter>]
     ) -> ! {
-        #[cfg(panic_trap)]
-        std::intrinsics::trap();
+        if runtime::in_const_context() {
+            std::intrinsics::const_panic("panicked");
+        } else {
+            #[cfg(panic_trap)]
+            std::intrinsics::trap();
 
-        #[cfg(panic_abort)]
-        libc::abort();
-
-        #[cfg(all(not(panic_trap), not(panic_abort)))] {
-            if mem::replace(&PANICKING, true) {
-                // If we panic during a panic handler, nuclear abort.
-                std::intrinsics::trap();
-            }
-
-            let panic_info = PanicInfo {
-                file: file,
-                line: line,
-                column: column,
-                args: args
-            };
-
-            if PANIC_HOOK.is_some() {
-                let (state, callback) = PANIC_HOOK.unwrap();
-                callback(state, &panic_info);
-            }
-
-            // Swallow errors from print_panic_message, because at this point, what can we do, panic?
-            // We still bail early if it fails.
-            let _ = print_panic_message(&panic_info);
+            #[cfg(panic_abort)]
             libc::abort();
+
+            #[cfg(all(not(panic_trap), not(panic_abort)))] {
+                if mem::replace(&PANICKING, true) {
+                    // If we panic during a panic handler, nuclear abort.
+                    std::intrinsics::trap();
+                }
+
+                let panic_info = PanicInfo {
+                    file: file,
+                    line: line,
+                    column: column,
+                    args: args
+                };
+
+                if PANIC_HOOK.is_some() {
+                    let (state, callback) = PANIC_HOOK.unwrap();
+                    callback(state, &panic_info);
+                }
+
+                // Swallow errors from print_panic_message, because at this point, what can we do, panic?
+                // We still bail early if it fails.
+                let _ = print_panic_message(&panic_info);
+                libc::abort();
+            }
         }
     }
 }

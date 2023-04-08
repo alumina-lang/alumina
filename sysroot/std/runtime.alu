@@ -16,6 +16,22 @@ fn in_const_context() -> bool {
     intrinsics::in_const_context()
 }
 
+/// Returns `true` when the argument is an expression that can be evaluated
+/// at compile time.
+///
+/// ## Example
+/// ```
+/// use std::runtime::is_const_evaluable;
+/// use std::libc::abort;
+///
+/// assert!(is_const_evaluable!(1 + 1));
+/// assert!(!is_const_evaluable!(abort()));
+/// ```
+macro is_const_evaluable($arg) {
+    intrinsics::is_const_evaluable($arg)
+}
+
+
 #[cfg(not(output_type = "library"))]
 mod internal {
     use builtins::{return_type_of, arguments_of, NamedFunction};
@@ -104,25 +120,25 @@ mod internal {
             #[cfg(threading)]
             std::thread::internal::threading_init();
 
-            let ret = when arguments_of<UserMain>: (&[&[u8]]) {
+            let ret = when typing::matches::<arguments_of<UserMain>, (&[&[u8]])>() {
                 let args = allocate_args!(argc);
                 for i in 0usize..(argc as usize) {
                     args[i] = slice::from_raw(*(argv + i) as &u8, libc::strlen(*(argv + i)) as usize);
                 }
 
                 func(args)
-            } else when arguments_of<UserMain>: () {
+            } else when typing::matches::<arguments_of<UserMain>, ()>() {
                 func()
             } else {
                 compile_fail!("invalid signature for the main function")
             };
 
 
-            when return_type_of<UserMain>: ! {
+            when ret is ! {
                 std::intrinsics::unreachable()
-            } else when return_type_of<UserMain>: void {
+            } else when ret is void {
                 libc::EXIT_SUCCESS
-            } else when return_type_of<UserMain>: builtins::Integer {
+            } else when ret is builtins::Integer {
                 ret as libc::c_int
             } else {
                 compile_fail!("invalid signature for the main function")

@@ -28,9 +28,15 @@ type Result<T> = std::result::Result<T, Error>;
 /// print!("Hello, world");
 /// ```
 macro print($fmt_str, $arg...) {
-    let fmt = BufferedWriter::from_slice(&StdioStream::stdout(), &FMT_BUF);
-    fmt::write!(&fmt, $fmt_str, $arg...).unwrap();
-    fmt.flush().unwrap();
+    if runtime::in_const_context() {
+        let buf = fmt::format!($fmt_str, $arg...).unwrap();
+        intrinsics::const_note(buf[..]);
+        buf.free();
+    } else {
+        let fmt = BufferedWriter::from_slice(&StdioStream::stdout(), &FMT_BUF);
+        fmt::write!(&fmt, $fmt_str, $arg...).unwrap();
+        fmt.flush().unwrap();
+    }
 }
 
 /// Prints a formatted string to standard output with newline.
@@ -40,9 +46,13 @@ macro print($fmt_str, $arg...) {
 /// println!("Hello, world");
 /// ```
 macro println($fmt_str, $arg...) {
-    let fmt = BufferedWriter::from_slice(&StdioStream::stdout(), &FMT_BUF);
-    fmt::writeln!(&fmt, $fmt_str, $arg...).unwrap();
-    fmt.flush().unwrap();
+    if runtime::in_const_context() {
+        print!($fmt_str, $arg...);
+    } else {
+        let fmt = BufferedWriter::from_slice(&StdioStream::stdout(), &FMT_BUF);
+        fmt::writeln!(&fmt, $fmt_str, $arg...).unwrap();
+        fmt.flush().unwrap();
+    }
 }
 
 /// Prints a formatted string to standard error.
@@ -52,9 +62,15 @@ macro println($fmt_str, $arg...) {
 /// eprint!("Something went wrong :(");
 /// ```
 macro eprint($fmt_str, $arg...) {
-    let fmt = BufferedWriter::from_slice(&StdioStream::stderr(), &FMT_BUF);
-    fmt::write!(&fmt, $fmt_str, $arg...).unwrap();
-    fmt.flush().unwrap();
+    if runtime::in_const_context() {
+        let buf = fmt::format!($fmt_str, $arg...).unwrap();
+        intrinsics::const_warning(buf[..]);
+        buf.free();
+    } else {
+        let fmt = BufferedWriter::from_slice(&StdioStream::stderr(), &FMT_BUF);
+        fmt::write!(&fmt, $fmt_str, $arg...).unwrap();
+        fmt.flush().unwrap();
+    }
 }
 
 /// Prints a formatted string to standard error with newline.
@@ -64,9 +80,13 @@ macro eprint($fmt_str, $arg...) {
 /// eprintln!("Something went wrong :(");
 /// ```
 macro eprintln($fmt_str, $arg...) {
-    let fmt = BufferedWriter::from_slice(&StdioStream::stderr(), &FMT_BUF);
-    fmt::writeln!(&fmt, $fmt_str, $arg...).unwrap();
-    fmt.flush().unwrap();
+    if runtime::in_const_context() {
+        eprint!($fmt_str, $arg...);
+    } else {
+        let fmt = BufferedWriter::from_slice(&StdioStream::stderr(), &FMT_BUF);
+        fmt::writeln!(&fmt, $fmt_str, $arg...).unwrap();
+        fmt.flush().unwrap();
+    }
 }
 
 /// Types that are wrappers over a file descriptor.

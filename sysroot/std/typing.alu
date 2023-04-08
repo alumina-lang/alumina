@@ -1,4 +1,7 @@
 //! Type reflection and `dyn` objects
+//!
+//! Most functions in this module are const-evaluable, so they can be used in `when`
+//! expression for conditional compilation based on e.g. the generic parameter.
 
 type TypeId = usize;
 
@@ -91,72 +94,243 @@ fn enum_variants<E: builtins::Enum>() -> &[(&[u8], E)] {
     (internal::ENUM_VARIANTS::<E>)[..]
 }
 
-/// Asserts that the types are equal.
+/// Returns `true` if type T1 matches bound T2.
 ///
-/// ## Examples
+/// T2 can be a protocol or a type (in which case the result indicates
+/// whether T1 and T2 refer to the same type).
+///
+/// See also [is_same].
+///
+/// ## Example
 /// ```
-/// use std::typing::assert_type_eq;
-/// use std::string::StringBuf;
-/// use std::collections::Vector;
+/// use std::typing::matches;
+/// use std::builtins::Primitive;
 ///
-/// assert_type_eq::<u8, u8>();
-/// assert_type_eq::<StringBuf, Vector<u8>>();
+/// assert!(matches::<u8, u8>());
+/// assert!(!matches::<u8, u16>());
+/// assert!(matches::<u8, Primitive>());
+/// assert!(!matches::<&[u8], Primitive>());
 /// ```
-///
-/// ```panics
-/// use std::typing::assert_type_eq;
-///
-/// assert_type_eq::<u64, usize>(); // panics
-/// ```
-///
-/// ## Note
-/// This causes a run-time panic if the types are not equal rather than a compile-time error.
-/// If a compile time error is desired, it is recommended to use a `when` expression and [std::compile_fail]:
-///
-/// ```
-/// type T = u8;
-///
-/// when T: !u8 {
-///     compile_fail!("T is not equal to u8");
-/// }
-/// ```
-fn assert_type_eq<T1, T2>() {
-    when T1: T2 {
-    } else {
-        panic!("{} is not equal to {}", type_name::<T1>(), type_name::<T2>());
-    }
+#[inline(ir)]
+fn matches<T1, T2>() -> bool {
+    intrinsics::uninitialized::<T1>() is T2
 }
 
-/// Asserts that the types are not equal.
+/// Returns `true` if type T1 is exactly the same type as T2.
 ///
-/// ## Examples
+/// See also [matches].
+///
+/// ## Example
 /// ```
-/// use std::typing::assert_type_ne;
+/// use std::typing::is_same;
+/// use std::builtins::Primitive;
 ///
-/// assert_type_ne::<u8, u16>();
+/// assert!(is_same::<u8, u8>());
+/// assert!(!is_same::<u8, u16>());
+/// // Protocols can also be compared for equality
+/// assert!(is_same::<Fn(u8) -> u8, std::builtins::Callable<(u8), u8>>());
+/// assert!(!is_same::<u8, Primitive>());
 /// ```
+#[inline(ir)]
+fn is_same<T1, T2>() -> bool {
+    intrinsics::type_id::<T1>() == intrinsics::type_id::<T2>()
+}
+
+/// Returns `true` if T is zero sized.
 ///
-/// ```panics
-/// use std::typing::assert_type_ne;
+/// See also [builtins::ZeroSized].
 ///
-/// assert_type_ne::<u64, u64>(); // panics
+/// ## Example
 /// ```
-/// ## Note
-/// This causes a run-time panic if the types are equal rather than a compile-time error.
-/// If a compile time error is desired, it is recommended to use a `when` expression and [std::compile_fail]:
+/// use std::typing::*;
 ///
+/// assert!(is_zero_sized::<()>());
+/// assert!(is_zero_sized::<([u8; 0], ())>());
+/// assert!(!is_zero_sized::<u8>());
 /// ```
-/// type T = u16;
+#[inline(ir)]
+fn is_zero_sized<T>() -> bool {
+    matches::<T, builtins::ZeroSized>()
+}
+
+/// Returns `true` if T is primitive.
 ///
-/// when T: u8 {
-///     compile_fail!("T is equal to u8");
-/// }
+/// See also [builtins::Primitive].
+/// ## Example
 /// ```
-fn assert_type_ne<T1, T2>() {
-    when T1: !T2 {
-    } else {
-        panic!("{} is equal to {}", type_name::<T1>(), type_name::<T2>());
-    }
+/// use std::typing::*;
+///
+/// assert!(is_primitive::<u8>());
+/// assert!(!is_primitive::<(u8, bool)>());
+/// ```
+#[inline(ir)]
+fn is_primitive<T>() -> bool {
+    matches::<T, builtins::Primitive>()
+}
+
+/// Returns `true` if T is numeric.
+///
+/// See also [builtins::Numeric].
+/// ## Example
+/// ```
+/// use std::typing::*;
+///
+/// assert!(is_numeric::<u8>());
+/// assert!(is_numeric::<i32>());
+/// assert!(is_numeric::<f64>());
+/// assert!(!is_numeric::<bool>());
+/// assert!(!is_numeric::<&u8>());
+/// ```
+#[inline(ir)]
+fn is_numeric<T>() -> bool {
+    matches::<T, builtins::Numeric>()
+}
+
+/// Returns `true` if T is integer.
+///
+/// See also [builtins::Integer].
+/// ## Example
+/// ```
+/// use std::typing::*;
+///
+/// assert!(is_integer::<u8>());
+/// assert!(is_integer::<i32>());
+/// assert!(!is_integer::<f64>());
+/// assert!(!is_numeric::<bool>());
+/// ```
+#[inline(ir)]
+fn is_integer<T>() -> bool {
+    matches::<T, builtins::Integer>()
+}
+
+/// Returns `true` if T is a floating point type.
+///
+/// See also [builtins::FloatingPoint].
+#[inline(ir)]
+fn is_floating_point<T>() -> bool {
+    matches::<T, builtins::FloatingPoint>()
+}
+
+/// Returns `true` if T is a signed type.
+///
+/// See also [builtins::Signed].
+#[inline(ir)]
+fn is_signed<T>() -> bool {
+    matches::<T, builtins::Signed>()
+}
+
+/// Returns `true` if T is an unsigned type.
+///
+/// See also [builtins::Unsigned].
+#[inline(ir)]
+fn is_unsigned<T>() -> bool {
+    matches::<T, builtins::Unsigned>()
+}
+
+/// Returns `true` if T is a pointer.
+///
+/// See also [builtins::Pointer].
+#[inline(ir)]
+fn is_pointer<T>() -> bool {
+    matches::<T, builtins::Pointer>()
+}
+
+/// Returns `true` if T is array.
+///
+/// See also [builtins::Array].
+#[inline(ir)]
+fn is_array<T>() -> bool {
+    matches::<T, builtins::Array>()
+}
+
+/// Returns `true` if T is tuple.
+///
+/// See also [builtins::Tuple].
+#[inline(ir)]
+fn is_tuple<T>() -> bool {
+    matches::<T, builtins::Tuple>()
+}
+
+/// Returns `true` if T is a struct.
+///
+/// See also [builtins::Struct].
+#[inline(ir)]
+fn is_struct<T>() -> bool {
+    matches::<T, builtins::Struct>()
+}
+
+/// Returns `true` if T is a union.
+///
+/// See also [builtins::Union].
+#[inline(ir)]
+fn is_union<T>() -> bool {
+    matches::<T, builtins::Union>()
+}
+
+/// Returns `true` if T is a range.
+///
+/// See also [builtins::Range] and [is_range_of].
+#[inline(ir)]
+fn is_range<T>() -> bool {
+    matches::<T, builtins::Range>()
+}
+
+/// Returns `true` if T is named function.
+///
+/// See also [builtins::NamedFunction].
+#[inline(ir)]
+fn is_named_function<T>() -> bool {
+    matches::<T, builtins::NamedFunction>()
+}
+
+/// Returns `true` if T is function pointer.
+///
+/// See also [builtins::FunctionPointer].
+#[inline(ir)]
+fn is_function_pointer<T>() -> bool {
+    matches::<T, builtins::FunctionPointer>()
+}
+
+/// Returns `true` if T is protocol.
+///
+/// See also [builtins::Protocol].
+#[inline(ir)]
+fn is_protocol<T>() -> bool {
+    matches::<T, builtins::Protocol>()
+}
+
+/// Returns `true` if T1 and T2 have the same memory layout.
+///
+/// See also [builtins::SameLayoutAs].
+#[inline(ir)]
+fn is_same_layout_as<T1, T2>() -> bool {
+    matches::<T1, builtins::SameLayoutAs<T2>>()
+}
+
+/// Returns `true` if T is an array of any size of elements
+/// with type U.
+///
+/// See also [builtins::ArrayOf].
+#[inline(ir)]
+fn is_array_of<T, U>() -> bool {
+    matches::<T, builtins::ArrayOf<U>>()
+}
+
+/// Returns `true` if T is an array of any size of elements
+/// with type Elem.
+///
+/// See also [builtins::PointerOf].
+#[inline(ir)]
+fn is_pointer_of<T, U>() -> bool {
+    matches::<T, builtins::PointerOf<U>>()
+}
+
+/// Returns `true` if T is a range over U.
+///
+/// See also [builtins::RangeOf].
+#[inline(ir)]
+fn is_range_of<T, U>() -> bool {
+    matches::<T, builtins::RangeOf<U>>()
 }
 
 #[docs(no_index)]
@@ -184,13 +358,13 @@ mod internal {
     #[lang(dyn_const_coerce)]
     #[inline(ir)]
     fn dyn_const_coerce<Protos>(self: dyn<Protos, &mut void>) -> dyn<Protos, &void> {
-        util::transmute(self)
+        dyn { _ptr: self._ptr as &void, _vtable: self._vtable }
     }
 
     #[lang(dyn_const_cast)]
     #[inline(ir)]
     fn dyn_const_cast<Protos>(self: dyn<Protos, &void>) -> dyn<Protos, &mut void> {
-        util::transmute(self)
+        dyn { _ptr: self._ptr as &mut void, _vtable: self._vtable }
     }
 
     #[lang(dyn_data)]
@@ -227,7 +401,6 @@ mod tests {
 
         // inception
         assert_eq!(type_name::<type_name<type_name<u32>>>(), "type_name<type_name<u32>>");
-
     }
 
     #[test]
@@ -298,7 +471,7 @@ mod tests {
         assert_eq!(c.foo(), 42);
         assert_eq!(c.bar(), 1337);
 
-        assert_type_ne::<typeof(b), typeof(c)>();
+        assert!(!matches::<typeof(b), typeof(c)>());
     }
 
     #[test]

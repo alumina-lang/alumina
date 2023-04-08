@@ -198,9 +198,9 @@ mod internal {
                 callback: Task::_invoke_noreturn::<F>,
                 // Allocate the storage for the closure. If the function does not capture any
                 // variables, we can avoid an allocation
-                data: when F: NamedFunction {
+                data: when f is NamedFunction {
                     null
-                } else when F: FunctionPointer {
+                } else when f is FunctionPointer {
                     f as &mut void
                 } else {
                     let storage = mem::alloc::<F>();
@@ -233,10 +233,10 @@ mod internal {
         }
 
         fn _invoke_noreturn<F: Fn()>(data: &mut void) {
-            when F: NamedFunction {
+            when typing::is_named_function::<F>() {
                 let f = util::unit::<F>();
                 f();
-            } else when F: FunctionPointer {
+            } else when typing::is_function_pointer::<F>() {
                 (data as fn())();
             } else {
                 (*(data as &mut F))();

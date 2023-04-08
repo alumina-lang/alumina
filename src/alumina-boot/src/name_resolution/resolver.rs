@@ -11,7 +11,7 @@ pub struct NameResolver<'ast, 'src> {
 pub enum ScopeResolution<'ast, 'src> {
     Scope(Scope<'ast, 'src>),
     // Defered scope resolution is used where we cannot determine the item type during
-    // the first pass, e.g. when resolving a T::associated_fn where T is not monomorphized yet,
+    // the first pass, e.g. when resolving a T is:associated_fn where T is not monomorphized yet,
     // but also to be able to resolve mixin methods, enum members and other type-associated
     // items (type is TBD).
     Defered(Ty<'ast>),

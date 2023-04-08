@@ -1,0 +1,55 @@
+//! Utilities for advanced macro usage
+
+/// Create a macro "closure"
+///
+/// This built-in macro takes another macro and an arbitrarty number or arguments
+/// as parameters and returns a reference to a macro that has these arguments
+/// appended on every invocation.
+///
+/// ## Example
+/// ```
+/// use std::macros::bind;
+///
+/// macro print_prefixed($prefix, $arg) {
+///     println!("{}{}", $prefix, $arg);
+/// }
+///
+/// macro foreach($f, $arg...) {
+///     $f!($arg)...;
+/// }
+///
+/// // prefix1
+/// // prefix2
+/// // prefix3
+/// foreach!(
+///     bind!(print_prefixed, "prefix"),
+///     1,
+///     2,
+///     3
+/// );
+/// ```
+#[builtin] macro bind($mac, $arg...) {}
+
+/// Perform a left-associative fold over the arguments
+///
+/// `$mac` is a reference to a macro, `$base` is a mandatory base case followed
+/// by a variable number of extra arguments to fold.
+///
+/// ```pseudo_alumina
+/// reduce!(m, a1, a2, b3, a4, a5)
+/// // Expands to
+/// m!(m!(m!(m!(a1, a2), a3), a4), a5)
+/// ```
+///
+/// ## Example
+/// ```
+/// use std::macros::reduce;
+///
+/// macro plus($a, $b) {
+///     $a + $b
+/// }
+///
+/// assert_eq!(reduce!(plus, 0, 1, 2, 3, 4, 5), 15);
+/// ```
+#[builtin] macro reduce($mac, $base, $arg...) {}
+

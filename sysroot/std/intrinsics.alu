@@ -80,6 +80,11 @@ extern "intrinsic" fn asm(assembly: &[u8]);
 /// Use [mem::uninitialized] instead.
 extern "intrinsic" fn uninitialized<T>() -> T;
 
+/// Zero-initialized value of type `T`
+///
+/// Use [mem::zeroed] instead.
+extern "intrinsic" fn zeroed<T>() -> T;
+
 /// Appropriately aligned non-null pointer
 ///
 /// Use [mem::dangling] instead.
@@ -89,6 +94,42 @@ extern "intrinsic" fn dangling<Ptr: builtins::Pointer>() -> Ptr;
 ///
 /// Use [runtime::in_const_context] instead.
 extern "intrinsic" fn in_const_context() -> bool;
+
+/// Returns `true` if the expression is evaluable at compile-time.
+///
+/// Use [runtime::is_const_evaluable] instead.
+extern "intrinsic" fn is_const_evaluable(...) -> bool;
+
+/// Panics during constant evaluation (aborts compilation).
+///
+/// Invoking this during normal runtime is undefined behavior.
+///
+/// Use [panic] instead.
+extern "intrinsic" fn const_panic(msg: &[u8]) -> !;
+
+/// Writes a note during constant evaluation.
+///
+/// Invoking this during normal runtime is undefined behavior.
+///
+/// Use [println] instead.
+extern "intrinsic" fn const_note(msg: &[u8]);
+
+/// Writes a warning during constant evaluation.
+///
+/// Invoking this during normal runtime is undefined behavior.
+///
+/// Use [eprintln] instead.
+extern "intrinsic" fn const_warning(msg: &[u8]);
+
+/// Allocates memory during constant evaluation.
+///
+/// Use [mem::slice::alloc] in const context instead.
+extern "intrinsic" fn const_alloc<T>(size: usize) -> &mut T;
+
+/// Frees memory allocated during constant evaluation.
+///
+/// Use [mem::slice::free] in const context instead.
+extern "intrinsic" fn const_free<T>(ptr: &mut T);
 
 #[cfg(boot)]
 {

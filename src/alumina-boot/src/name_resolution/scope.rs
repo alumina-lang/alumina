@@ -435,7 +435,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
     pub fn check_unused_items(&self, diag: &DiagnosticContext) {
         let inner = self.inner();
         for (name, item) in self.inner().unused_items() {
-            if name.starts_with('_') {
+            if name.starts_with('_') || name.starts_with("$_") {
                 continue;
             }
 

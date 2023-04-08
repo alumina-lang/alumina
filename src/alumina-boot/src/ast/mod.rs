@@ -1,4 +1,5 @@
 pub mod expressions;
+pub mod format;
 pub mod lang;
 pub mod macros;
 pub mod maker;
@@ -291,7 +292,7 @@ pub enum Ty<'ast> {
     TypeOf(ExprP<'ast>),
     Array(TyP<'ast>, ExprP<'ast>),
     Tuple(&'ast [TyP<'ast>]),
-    When(StaticIfCondition<'ast>, TyP<'ast>, TyP<'ast>),
+    When(ExprP<'ast>, TyP<'ast>, TyP<'ast>),
     FunctionPointer(&'ast [TyP<'ast>], TyP<'ast>),
     FunctionProtocol(&'ast [TyP<'ast>], TyP<'ast>),
     Generic(TyP<'ast>, &'ast [TyP<'ast>]),
@@ -598,6 +599,8 @@ pub enum BuiltinMacroKind {
     File,
     IncludeBytes,
     FormatArgs,
+    Bind,
+    Reduce,
 }
 
 #[derive(Debug)]
@@ -753,12 +756,6 @@ pub enum FnKind<'ast> {
     Defered(Defered<'ast>),
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash, Copy)]
-pub struct StaticIfCondition<'ast> {
-    pub typ: TyP<'ast>,
-    pub bounds: ProtocolBounds<'ast>,
-}
-
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum ExprKind<'ast> {
     Block(&'ast [Statement<'ast>], ExprP<'ast>),
@@ -766,7 +763,9 @@ pub enum ExprKind<'ast> {
     Call(ExprP<'ast>, &'ast [ExprP<'ast>]),
 
     Defered(Defered<'ast>),
-    DeferedMacro(ItemP<'ast>, &'ast [ExprP<'ast>]),
+
+    Macro(ItemP<'ast>, &'ast [ExprP<'ast>]),
+    MacroInvocation(ExprP<'ast>, &'ast [ExprP<'ast>]),
 
     Fn(FnKind<'ast>, Option<&'ast [TyP<'ast>]>),
 
@@ -795,7 +794,8 @@ pub enum ExprKind<'ast> {
     Index(ExprP<'ast>, ExprP<'ast>),
     Range(Option<ExprP<'ast>>, Option<ExprP<'ast>>, bool),
     If(ExprP<'ast>, ExprP<'ast>, ExprP<'ast>),
-    StaticIf(StaticIfCondition<'ast>, ExprP<'ast>, ExprP<'ast>),
+    TypeCheck(ExprP<'ast>, TyP<'ast>),
+    StaticIf(ExprP<'ast>, ExprP<'ast>, ExprP<'ast>),
     Cast(ExprP<'ast>, TyP<'ast>),
 
     Void,
@@ -837,6 +837,21 @@ pub struct Expr<'ast> {
 }
 
 pub type ExprP<'ast> = &'ast Expr<'ast>;
+
+#[derive(Default, Copy, Clone)]
+pub struct MacroCtx {
+    pub in_a_macro: bool,
+    pub has_et_cetera: bool,
+}
+
+impl MacroCtx {
+    pub fn for_macro(has_et_cetera: bool) -> Self {
+        Self {
+            in_a_macro: true,
+            has_et_cetera,
+        }
+    }
+}
 
 impl_allocatable!(
     Expr<'_>,

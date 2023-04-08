@@ -185,12 +185,16 @@ pub enum CodeErrorKind {
     ExternCGenericParams,
     #[error("constant string expected")]
     ConstantStringExpected,
+    #[error("macro expected")]
+    MacroExpected,
     #[error("this expression is not evaluable at compile time ({})", .0)]
     CannotConstEvaluate(ConstEvalErrorKind),
     #[error("values of enum variants can only be integers")]
     InvalidValueForEnumVariant,
     #[error("{}", .0)]
     UserDefined(String),
+    #[error("{}", .0)]
+    ConstMessage(String),
     #[error("cannot defer inside a defered expression")]
     DeferInDefer,
     #[error("`...` expressions can only be used in macros")]
@@ -203,16 +207,16 @@ pub enum CodeErrorKind {
     MultipleEtCeteras,
     #[error("recursive macro calls are not allowed")]
     RecursiveMacroCall,
-    #[error("`{}` is not a macro", .0)]
-    NotAMacro(String),
+    #[error("expression is not a macro")]
+    NotAMacro,
     #[error("not enough macro arguments, at least {} expected", .0)]
     NotEnoughMacroArguments(usize),
     #[error("nested `...` expansions are not supported (yet)")]
     EtCeteraInEtCetera,
     #[error("`...` expansion is not allowed in this position")]
     CannotEtCeteraHere,
-    #[error("`{}` is a macro (hint: append `!`)", .0)]
-    IsAMacro(String),
+    #[error("unexpanded macro (hint: append `!` to invoke it)")]
+    IsAMacro,
     #[error("cyclic dependency during static initialization")]
     RecursiveStaticInitialization,
     #[error("can only do that in function scope")]
@@ -314,6 +318,10 @@ pub enum CodeErrorKind {
     MacrosCannotDefineItems,
     #[error("anonymous functions are not supported in a macro body (yet)")]
     MacrosCannotDefineLambdas,
+    #[error("panic during constant evaluation: {}", .0)]
+    ConstPanic(String),
+    #[error("cannot generate code for a const-only intrinsic (guard with `std::runtime::in_const_context()`)")]
+    ConstOnlyIntrinsic,
 
     // Warnings
     #[error("defer inside a loop: this defered statement will only be executed once")]
@@ -322,7 +330,7 @@ pub enum CodeErrorKind {
     DuplicateNameShadow(String),
     #[error("field `{}` is not initialized", .0)]
     UninitializedField(String),
-    #[error("This is `std::typing::Self`, did you mean the enclosing type?")]
+    #[error("this is `std::typing::Self`, did you mean the enclosing type?")]
     SelfConfusion,
     #[error("`#[align(1)]` has no effect, did you mean to use `#[packed]`?")]
     Align1,
@@ -338,6 +346,12 @@ pub enum CodeErrorKind {
     UnusedImport(String),
     #[error("#[{}({})] refers to a lint that does not currently exist", .0, .1)]
     ImSoMetaEvenThisAcronym(String, String),
+    #[error("redundant top level block (no attributes)")]
+    TopLevelBlockWithoutAttributes,
+    #[error("condition is always `{}`, did you mean to use `when`?", .0)]
+    ConstantCondition(bool),
+    #[error("statement has no effect")]
+    PureStatement,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -377,6 +391,7 @@ pub struct FileId {
 }
 
 pub trait WithSpanDuringParsing<T> {
+    #[allow(clippy::needless_lifetimes)]
     fn with_span_from<'ast, 'src>(
         self,
         scope: &Scope<'ast, 'src>,
@@ -388,6 +403,7 @@ impl<T, E> WithSpanDuringParsing<T> for Result<T, E>
 where
     CodeErrorKind: From<E>,
 {
+    #[allow(clippy::needless_lifetimes)]
     fn with_span_from<'ast, 'src>(
         self,
         scope: &Scope<'ast, 'src>,

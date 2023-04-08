@@ -1,7 +1,6 @@
 use crate::ast::expressions::ExpressionVisitor;
 use crate::ast::{
-    AstCtx, Bound, BuiltinType, Defered, ProtocolBounds, ProtocolBoundsKind, Span,
-    StaticIfCondition, Ty, TyP,
+    AstCtx, Bound, BuiltinType, Defered, ProtocolBounds, ProtocolBoundsKind, Span, Ty, TyP,
 };
 use crate::common::{AluminaError, ArenaAllocatable, CodeErrorKind, WithSpanDuringParsing};
 use crate::global_ctx::GlobalCtx;
@@ -10,12 +9,14 @@ use crate::name_resolution::scope::{NamedItemKind, Scope};
 use crate::parser::{AluminaVisitor, FieldKind, NodeExt, ParseCtx};
 use crate::visitors::ScopedPathVisitor;
 
+use super::MacroCtx;
+
 pub struct TypeVisitor<'ast, 'src> {
     global_ctx: GlobalCtx,
     ast: &'ast AstCtx<'ast>,
     code: &'src ParseCtx<'src>,
     scope: Scope<'ast, 'src>,
-    in_a_macro: bool,
+    macro_ctx: MacroCtx,
 }
 
 impl<'ast, 'src> TypeVisitor<'ast, 'src> {
@@ -23,7 +24,7 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
         global_ctx: GlobalCtx,
         ast: &'ast AstCtx<'ast>,
         scope: Scope<'ast, 'src>,
-        in_a_macro: bool,
+        macro_ctx: MacroCtx,
     ) -> Self {
         TypeVisitor {
             global_ctx,
@@ -32,7 +33,7 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
                 .code()
                 .expect("cannot run on scope without parse context"),
             scope,
-            in_a_macro,
+            macro_ctx,
         }
     }
 
@@ -66,7 +67,7 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
     }
 
     fn visit_typeref(&mut self, node: tree_sitter::Node<'src>) -> Result<TyP<'ast>, AluminaError> {
-        let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone(), self.in_a_macro);
+        let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone(), self.macro_ctx);
         let path = visitor.visit(node)?;
         let mut resolver = NameResolver::new();
 
@@ -182,7 +183,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
             self.ast,
             self.global_ctx.clone(),
             self.scope.clone(),
-            self.in_a_macro,
+            self.macro_ctx,
         );
         let size = visitor.visit(node.child_by_field(FieldKind::Size).unwrap())?;
 
@@ -213,7 +214,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
             self.ast,
             self.global_ctx.clone(),
             self.scope.clone(),
-            self.in_a_macro,
+            self.macro_ctx,
         );
         let expr = visitor.visit(node.child_by_field(FieldKind::Inner).unwrap())?;
 
@@ -263,11 +264,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
     }
 
     fn visit_when_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let typecheck_node = node.child_by_field(FieldKind::TypeCheck).unwrap();
-        let typ = self.visit(typecheck_node.child_by_field(FieldKind::Lhs).unwrap())?;
-        let bounds = self.parse_protocol_bounds(typecheck_node)?;
-        let cond = StaticIfCondition { typ, bounds };
-
+        let mut visitor = ExpressionVisitor::new(
+            self.ast,
+            self.global_ctx.clone(),
+            self.scope.clone(),
+            self.macro_ctx,
+        );
+        let cond = visitor.visit(node.child_by_field(FieldKind::Condition).unwrap())?;
         let then = self.visit(node.child_by_field(FieldKind::Consequence).unwrap())?;
         let els = self.visit(node.child_by_field(FieldKind::Alternative).unwrap())?;
 

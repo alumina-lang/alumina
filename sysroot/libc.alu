@@ -389,7 +389,7 @@ extern "C" fn puts(s: &c_char) -> c_int;
     extern "C" fn getrandom(buf: &mut void, buflen: size_t, flags: c_uint) -> ssize_t;
     extern "C" fn write(fd: c_int, buf: &void, len: size_t) -> ssize_t;
     extern "C" fn read(fd: c_int, buf: &mut void, len: size_t) -> ssize_t;
-    extern "C" fn open(path: &c_char, oflag: c_int, mode: mode_t) -> c_int;
+    extern "C" fn open(path: &c_char, oflag: c_int, ...) -> c_int;
     extern "C" fn lseek(fd: c_int, offset: off_t, whence: c_int) -> off_t;
 
     #[cfg(not(target_os="macos"))]
@@ -518,10 +518,10 @@ extern "C" fn puts(s: &c_char) -> c_int;
     ) -> c_int;
     extern "C" fn shutdown(socket: c_int, how: c_int) -> c_int;
 
-    #[cfg_attr(target_os="macos", link_name("_opendir$INODE64"))]
+    #[cfg_attr(all(target_os="macos", not(target_arch = "aarch64")), link_name("_opendir$INODE64"))]
     extern "C" fn opendir(dirname: &c_char) -> &mut DIR;
 
-    #[cfg_attr(target_os="macos", link_name("_readdir$INODE64"))]
+    #[cfg_attr(all(target_os="macos", not(target_arch = "aarch64")), link_name("_readdir$INODE64"))]
     extern "C" fn readdir(dirp: &mut DIR) -> &mut dirent;
     extern "C" fn closedir(dirp: &mut DIR) -> c_int;
 
@@ -537,13 +537,13 @@ extern "C" fn puts(s: &c_char) -> c_int;
 
     extern "C" fn mkdir(path: &c_char, mode: mode_t) -> c_int;
 
-    #[cfg_attr(target_os="macos", link_name("_stat$INODE64"))]
+    #[cfg_attr(all(target_os="macos", not(target_arch = "aarch64")), link_name("_stat$INODE64"))]
     extern "C" fn stat(path: &c_char, buf: &mut t_stat) -> c_int;
 
     #[cfg(not(target_os="macos"))]
     extern "C" fn stat64(path: &c_char, buf: &mut t_stat64) -> c_int;
 
-    #[cfg_attr(target_os="macos", link_name("_fstat$INODE64"))]
+    #[cfg_attr(all(target_os="macos", not(target_arch = "aarch64")), link_name("_fstat$INODE64"))]
     extern "C" fn fstat(fildes: c_int, buf: &mut t_stat) -> c_int;
 
     #[cfg(not(target_os="macos"))]
@@ -784,17 +784,32 @@ extern "C" fn puts(s: &c_char) -> c_int;
         const O_TRUNC: c_int = 1024;
     }
 
-    const CLOCK_REALTIME: clockid_t = 0;
-    const CLOCK_MONOTONIC: clockid_t = 1;
-    const CLOCK_PROCESS_CPUTIME_ID: clockid_t = 2;
-    const CLOCK_THREAD_CPUTIME_ID: clockid_t = 3;
-    const CLOCK_MONOTONIC_RAW: clockid_t = 4;
-    const CLOCK_REALTIME_COARSE: clockid_t = 5;
-    const CLOCK_MONOTONIC_COARSE: clockid_t = 6;
-    const CLOCK_BOOTTIME: clockid_t = 7;
-    const CLOCK_REALTIME_ALARM: clockid_t = 8;
-    const CLOCK_BOOTTIME_ALARM: clockid_t = 9;
-    const CLOCK_TAI: clockid_t = 11;
+    #[cfg(any(target_os="linux", target_os="android"))]
+    {
+        const CLOCK_REALTIME: clockid_t = 0;
+        const CLOCK_MONOTONIC: clockid_t = 1;
+        const CLOCK_PROCESS_CPUTIME_ID: clockid_t = 2;
+        const CLOCK_THREAD_CPUTIME_ID: clockid_t = 3;
+        const CLOCK_MONOTONIC_RAW: clockid_t = 4;
+        const CLOCK_REALTIME_COARSE: clockid_t = 5;
+        const CLOCK_MONOTONIC_COARSE: clockid_t = 6;
+        const CLOCK_BOOTTIME: clockid_t = 7;
+        const CLOCK_REALTIME_ALARM: clockid_t = 8;
+        const CLOCK_BOOTTIME_ALARM: clockid_t = 9;
+        const CLOCK_TAI: clockid_t = 11;
+    }
+
+    #[cfg(target_os="macos")]
+    {
+        const CLOCK_REALTIME: clockid_t = 0;
+        const CLOCK_MONOTONIC_RAW: clockid_t = 4;
+        const CLOCK_MONOTONIC_RAW_APPROX: clockid_t = 5;
+        const CLOCK_MONOTONIC: clockid_t = 6;
+        const CLOCK_UPTIME_RAW: clockid_t = 8;
+        const CLOCK_UPTIME_RAW_APPROX: clockid_t = 9;
+        const CLOCK_PROCESS_CPUTIME_ID: clockid_t = 12;
+        const CLOCK_THREAD_CPUTIME_ID: clockid_t = 16;
+    }
 
     const SOCK_STREAM: c_int = 1;
     const SOCK_DGRAM: c_int = 2;

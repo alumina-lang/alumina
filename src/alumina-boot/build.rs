@@ -25,11 +25,7 @@ fn sanitize_identifier(name: &str, pascal_case: bool) -> String {
     let mut result = String::with_capacity(name.len());
     let mut first_char = true;
     for c in name.chars() {
-        if ('a'..='z').contains(&c)
-            || ('A'..='Z').contains(&c)
-            || ('0'..='9').contains(&c)
-            || c == '_'
-        {
+        if c.is_ascii_lowercase() || c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_' {
             if pascal_case {
                 if c == '_' {
                     first_char = true;

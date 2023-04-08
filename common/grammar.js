@@ -1,4 +1,5 @@
 const PREC = {
+  universal_macro: 16,
   call: 15,
   field: 14,
   try: 13,
@@ -53,7 +54,6 @@ module.exports = grammar({
   extras: ($) => [$.file_doc_comment, $.doc_comment, $._comment, /[\s]+/],
 
   word: ($) => $.identifier,
-
   inline: ($) => [
     $._path,
     $._non_special_token,
@@ -570,13 +570,14 @@ module.exports = grammar({
         $.assignment_expression,
         $.compound_assignment_expr,
         $.type_cast_expression,
+        $.type_check_expression,
         $.call_expression,
         $.universal_macro_invocation,
         $.field_expression,
         $.index_expression,
         $.tuple_expression,
         $.array_expression,
-        prec(1, $.macro_invocation),
+        prec.left(1, $.macro_invocation),
         $.et_cetera_expression,
         $.closure_expression,
         $._literal,
@@ -640,7 +641,7 @@ module.exports = grammar({
     },
 
     field_expression: ($) =>
-      prec(
+      prec.left(
         PREC.field,
         seq(
           field("value", $._expression),
@@ -651,7 +652,7 @@ module.exports = grammar({
 
     universal_macro_invocation: ($) =>
       prec(
-        PREC.field,
+        PREC.universal_macro,
         seq(
           field("value", $._expression),
           ".",
@@ -712,6 +713,16 @@ module.exports = grammar({
         seq(field("value", $._expression), "as", field("type", $._type))
       ),
 
+    type_check_expression: ($) =>
+      prec(
+        PREC.cast,
+        seq(
+          field("value", $._expression),
+          "is",
+          field("type", $._type)
+        )
+      ),
+
     call_expression: ($) =>
       prec(
         PREC.call,
@@ -721,12 +732,12 @@ module.exports = grammar({
         )
       ),
 
-    macro_invocation: ($) =>
+    macro_invocation: ($) => prec.left(1,
       seq(
-        field("macro", choice($.scoped_identifier, $.identifier)),
+        field("macro", $._expression_except_range),
         "!",
         field("arguments", $.arguments)
-      ),
+      )),
 
     struct_initializer_item: ($) =>
       seq(field("field", $.identifier), ":", field("value", $._expression)),
@@ -845,22 +856,10 @@ module.exports = grammar({
         $.for_expression
       ),
 
-    type_check: ($) =>
-      seq(
-        field("lhs", $._type),
-        ":",
-        choice(
-          field("all_bounds", sepBy("+", field("bound", $.protocol_bound))),
-          field("any_bounds", sepBy("|", field("bound", $.protocol_bound))),
-        )
-      ),
-
     if_expression: ($) =>
       seq(
-        choice(
-          seq("if", field("condition", $._expression)),
-          seq("when", field("type_check", $.type_check))
-        ),
+        field("kind", choice("if", "when")),
+        field("condition", $._expression),
         field("consequence", $.block),
         optional(field("alternative", $.else_clause))
       ),
@@ -868,7 +867,7 @@ module.exports = grammar({
     when_type: ($) =>
       seq(
         "when",
-        field("type_check", $.type_check),
+        field("condition", $._expression),
         "{",
         field("consequence", $._type),
         "}",

@@ -46,11 +46,11 @@ const TAU: f64 = 6.28318530717958647692528676655900577f64;
 /// Absolute value of a number
 #[inline]
 fn abs<T: Numeric>(a: T) -> T {
-    when T: Unsigned {
+    when a is Unsigned {
         a
-    } else when T: f64 {
+    } else when a is f64 {
         libc::fabs(a)
-    } else when T: f32 {
+    } else when a is f32 {
         libc::fabsf(a)
     } else {
         if a < (0 as T) {
@@ -71,7 +71,7 @@ fn abs<T: Numeric>(a: T) -> T {
 /// ```
 #[inline]
 fn widening_abs<T: Integer>(a: T) -> builtins::unsigned_of<T> {
-    when T: Unsigned {
+    when a is Unsigned {
         a
     } else {
         if a < 0 {
@@ -98,7 +98,7 @@ fn widening_abs<T: Integer>(a: T) -> builtins::unsigned_of<T> {
 /// assert_eq!(a.div_floor(b), (-2, 1));
 /// ```
 fn div_floor<T: Integer>(a: T, b: T) -> (T, T) {
-    when T: Unsigned {
+    when a is Unsigned {
         (a / b, a % b)
     } else {
         let (q, r) = (a / b, a % b);

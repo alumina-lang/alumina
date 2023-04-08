@@ -31,7 +31,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-11]
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v2
       - name: Install Rust
@@ -45,7 +45,7 @@ jobs:
         run: npm install -g tree-sitter-cli
 
       - name: Install libbacktrace
-        if: matrix.os == 'macos-11'
+        if: matrix.os == 'macos-latest'
         run: |
           git clone https://github.com/ianlancetaylor/libbacktrace
           cd libbacktrace
@@ -96,8 +96,8 @@ jobs:
       - name: Install Tree-sitter (with runtime)
         run: |
           npm install -g tree-sitter-cli
-          git clone https://github.com/tree-sitter/tree-sitter
-          cd tree-sitter
+          curl -fsSL https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.20.7.tar.gz | tar -xz
+          cd tree-sitter-*
           make
           sudo make install
           sudo ldconfig

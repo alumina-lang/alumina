@@ -402,7 +402,7 @@ fn parse_integer<T: builtins::Integer>(s: &[u8], radix: u16) -> Option<T> {
         return Option::none();
     }
 
-    let negative = when T: builtins::Signed {
+    let negative = when typing::is_signed::<T>() {
         if s[0] == '-' {
             s = s[1..];
             true
@@ -425,7 +425,7 @@ fn parse_integer<T: builtins::Integer>(s: &[u8], radix: u16) -> Option<T> {
             .checked_add(digit)?;
     }
 
-    when T: builtins::Signed {
+    when typing::is_signed::<T>() {
         // We only need to check for unsigned-to-signed conversion overflow, other
         // cases have already been handled.
         if negative {
@@ -450,7 +450,7 @@ fn parse_integer<T: builtins::Integer>(s: &[u8], radix: u16) -> Option<T> {
 ///
 /// See also [f64::parse] and [f32::parse] associated methods
 fn parse_float<T: builtins::FloatingPoint>(s: &[u8]) -> Option<T> {
-    let res = when T: f64 {
+    let res = when typing::matches::<T, f64>() {
         fmt::ryu::parse64(s)
     } else {
         fmt::ryu::parse32(s)

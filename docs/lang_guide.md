@@ -845,6 +845,28 @@ assert_eq!(
 );
 ```
 
+As macros operate on the AST level, they are not quite first-class citizens, however, a "reference to a macro" can be passed as a parameter to another macro.
+
+```rust
+macro echo($arg) {
+    println!("{}", $arg);
+}
+
+macro foreach($f, $arg...) {
+    $f!($arg)...;
+}
+
+// 1
+// 2
+// 3
+foreach!(
+    echo, // macro "pointer"
+    1,
+    2,
+    3
+);
+```
+
 # Statements and expressions
 
 In Alumina "everything is an expression" (except statements that introduce new named items, such as `let` bindings or named type definitions). For example, one can write
@@ -873,6 +895,7 @@ Alumina has the following types of expressions
 - try operator (`expr?`)
 - unary operations (`-expr`, `~expr`)
 - casts (`expr as typ`)
+- type checks (`expr is typ`)
 - multiplication and division (`lhs * rhs`, `lhs / rhs`),
 - addition and subtraction (`lhs + rhs`, `lhs - rhs`)
 - bitwise shift (`expr << n`, `expr >> n`)
@@ -1470,22 +1493,22 @@ println!("{}", x.first_element()); // 1
 
 ## `when` types and expressions
 
-`when` expressions can be used as a means to have different implementations for different type parameters in generic functions. During monomorphization, only one of the branches will be taken and the other one ignored. The non-taken branch can contain meaningless code that would otherwise fail to compile.
+`when` expressions (static `if`) can be used to conditionally compile code that based on a condition that is constant at compile time. Unlike `#[cfg(...)]` attributes which are evaluated very early in the compilation process, `when` expressions run at monomorphization time, which means that the type information is already available.
 
-The condition in the `when` expression follows the same syntax as generic/protocol bounds
+Unlike `if` expressions, the non-taken branch is not monomorphized, so it can contain code that would not otherwise compile. The most common usage is as a means of generic specialization (different behavior based on the generic parameter).
 
 ```rust
-use std::builtins::{Pointer, Unsigned, ZeroSized, deref_of};
+use std::typing::{is_same, is_unsigned, is_pointer, is_zero_sized};
 
 fn print_type<T>() {
-    when T: u8 {
+    when is_same::<T, u8>() {
         println!("u8");
-    } else when T: Unsigned {
+    } else when is_unsigned::<T>() {
         println!("some other unsigned type");
-    } else when T: Pointer {
+    } else when is_pointer::<T>() {
         print!("pointer to ");
-        print_type::<deref_of<T>>();
-    } else when T: !ZeroSized {
+        print_type::<deref_of<T>>(); // this would not compile if T was not a pointer
+    } else when !is_zero_sized::<T>() {
         println!("some sized type");
     } else {
         compile_fail!("zero-sized types are not supported");
@@ -1500,7 +1523,9 @@ print_type::<Option<i32>>(); // ""some sized type"
 Similarly, a `when` type in type context to select the appropriate type
 
 ```rust
-type ensure_pointer_t<T> = when T: Pointer { T } else { &T };
+use std::typing::pointer;
+
+type ensure_pointer_t<T> = when is_pointer::<T>() { T } else { &T };
 
 let x: ensure_pointer_t<u8> = &5;
 let y: ensure_pointer_t<&&u16> = &&5;

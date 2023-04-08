@@ -176,21 +176,12 @@ impl slice {
     /// assert_eq!(hw, s);
     /// ```
     fn alloc<T>(len: usize) -> &mut [T] {
-        let ptr = when T: builtins::ZeroSized {
+        let ptr = when typing::is_zero_sized::<T>() {
             dangling::<&mut T>()
+        } else if runtime::in_const_context() {
+            intrinsics::const_alloc::<T>(len)
         } else {
             libc::malloc(size_of::<T>() * len) as &mut T
-        };
-
-        from_raw(ptr, len)
-    }
-
-    /// Resizes a heap-allocated array.
-    fn realloc<T>(slice: &mut [T], len: usize) -> &mut [T] {
-        let ptr = when T: builtins::ZeroSized {
-            dangling::<&mut T>()
-        } else {
-            libc::realloc(slice._ptr as &mut void, size_of::<T>() * len) as &mut T
         };
 
         from_raw(ptr, len)
@@ -199,9 +190,25 @@ impl slice {
     /// Allocates an array of specified size on the heap.
     ///
     /// The values are zero-initialized.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::mem::slice;
+    ///
+    /// let s = slice::alloc_zeroed::<u8>(10);
+    /// defer s.free();
+    ///
+    /// assert_eq!(s, &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    /// ```
     fn alloc_zeroed<T>(len: usize) -> &mut [T] {
-        let ptr = when T: builtins::ZeroSized {
+        let ptr = when typing::matches::<T, builtins::ZeroSized>() {
             dangling::<&mut T>()
+        } else if runtime::in_const_context() {
+            let ptr = intrinsics::const_alloc::<T>(len);
+            for i in 0usize..len {
+                *(ptr + i) = zeroed::<T>();
+            }
+            ptr
         } else {
             libc::calloc(len, size_of::<T>()) as &mut T
         };
@@ -209,27 +216,86 @@ impl slice {
         from_raw(ptr, len)
     }
 
-    /// Copies a region of memory from `src` to `dst`.
+    /// Resizes a heap-allocated array. The original array must have been
+    /// allocated with [slice::alloc].
     ///
-    /// The memory ranges must not overlap, use [copy_to] if they may be overlapping.
-    fn copy_to_nonoverlapping<T>(src: &[T], dst: &mut T) {
-        when T: !builtins::ZeroSized {
-            libc::memcpy(dst as &mut void, src._ptr as &void, src.len() * size_of::<T>());
-        }
+    /// If the new size is larger than the old size, the new elements are
+    /// uninitialized.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::mem::slice;
+    ///
+    /// let v = slice::alloc::<i32>(2);
+    /// defer v.free();
+    ///
+    /// v[0] = 1;
+    /// v[1] = 2;
+    ///
+    /// v = v.realloc(3);
+    /// v[2] = 3;
+    ///
+    /// assert_eq!(v, &[1, 2, 3]);
+    /// ```
+    fn realloc<T>(slice: &mut [T], len: usize) -> &mut [T] {
+        let ptr = when slice[0] is builtins::ZeroSized {
+            dangling::<&mut T>()
+        } else if runtime::in_const_context() {
+            let new = intrinsics::const_alloc::<T>(len);
+            slice.copy_to_nonoverlapping(new);
+            slice.free();
+            new
+        } else {
+            libc::realloc(slice._ptr as &mut void, size_of::<T>() * len) as &mut T
+        };
+
+        from_raw(ptr, len)
     }
 
     /// Copies a region of memory from `src` to `dst`.
     ///
-    /// The ranges may overlap.
+    /// The memory regions must not overlap, use [copy_to] if they may
+    /// be overlapping.
+    ///
+    /// ## Example
+    /// ```
+    /// let src = [1, 2, 3];
+    /// let dst: [i32; 3];
+    ///
+    /// src[..].copy_to_nonoverlapping(&dst[0]);
+    /// assert_eq!(dst, [1, 2, 3]);
+    /// ```
+    fn copy_to_nonoverlapping<T>(src: &[T], dst: &mut T) {
+        copy_nonoverlapping(src._ptr, dst, src.len());
+    }
+
+    /// Copies a region of memory from `src` to `dst`.
+    ///
+    /// The regions may overlap. Using [copy_to_nonoverlapping] can be more
+    /// efficient if the ranges do not in fact overlap.
+    ///
+    /// ## Example
+    /// ```
+    /// let src = [1, 2, 3, 4, 5, 6];
+    ///
+    /// src[..3].copy_to(&src[1]);
+    /// src[4..].copy_to(&src[3]);
+    /// assert_eq!(src, [1, 1, 2, 5, 6, 6]);
+    /// ```
     fn copy_to<T>(src: &[T], dst: &mut T) {
-        when T: !builtins::ZeroSized {
-            libc::memmove(dst as &mut void, src._ptr as &void, src.len() * size_of::<T>());
-        }
+        copy(src._ptr, dst, src.len());
     }
 
     /// Returns the element at the given index.
     ///
     /// If the index is out of bounds, the function will return `None`.
+    ///
+    /// ## Example
+    /// ```
+    /// let hw = "Hello, world";
+    /// assert_eq!(hw[..5].get(0), Option::some('H'));
+    /// assert_eq!(hw[..5].get(5), Option::none());
+    /// ```
     fn get<T>(self: &[T], index: usize) -> Option<T> {
         if index < self.len() {
             Option::some(*(self._ptr + index))
@@ -275,13 +341,26 @@ impl slice {
     }
 
     /// Fill slice with a value
+    ///
+    /// ## Example
+    /// ```
+    /// let v = [0, 0, 0];
+    /// v[..].fill(1);
+    /// assert_eq!(v, [1, 1, 1]);
+    /// ```
     fn fill<T>(slice: &mut [T], value: T) {
-        when T: ZeroSized {
+        when slice[0] is ZeroSized {
             // nop
-        } else when T: u8 {
-            libc::memset(slice._ptr as &mut void, value as libc::c_int, slice.len());
+        } else when slice[0] is u8 {
+            if runtime::in_const_context() {
+                for i in 0usize..slice.len() {
+                    slice[i] = value;
+                }
+            } else {
+                libc::memset(slice._ptr as &mut void, value as libc::c_int, slice.len());
+            }
         } else {
-            for i in 0..slice.len() {
+            for i in 0usize..slice.len() {
                 slice[i] = value;
             }
         }
@@ -289,24 +368,18 @@ impl slice {
 
     /// @ std::cmp::Equatable::equals
     fn equals<T: Equatable<T>, Ptr: PointerOf<T>>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> bool {
-        if lhs.len() != rhs.len() {
-            return false;
-        }
-
-        when T: ZeroSized {
-            true
-        } else when T: Primitive {
+        when *lhs._ptr is ZeroSized {
+            lhs.len() == rhs.len()
+        } else when *lhs._ptr is Primitive {
             // Optimization for slices of primitive types
-            memcmp(lhs._ptr as &void, rhs._ptr as &void, lhs.len() * size_of::<T>()) == 0
-        } else {
-            let idx = 0usize;
-            while idx < lhs.len() {
-                if (*lhs)[idx] != (*rhs)[idx] {
-                    return false;
-                }
-                idx += 1;
+            if runtime::in_const_context() {
+                internal::default_equals::<Ptr>(lhs, rhs)
+            } else {
+                lhs.len() == rhs.len() &&
+                    (memcmp(lhs._ptr as &void, rhs._ptr as &void, lhs.len() * size_of::<T>()) == 0)
             }
-            true
+        } else {
+            internal::default_equals::<Ptr>(lhs, rhs)
         }
     }
 
@@ -314,36 +387,31 @@ impl slice {
     fn compare<T: Comparable<T>, Ptr: PointerOf<T>>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> Ordering {
         use cmp::min;
 
-        when T: ZeroSized {
+        when *lhs._ptr is ZeroSized {
             lhs.len().compare(&rhs.len())
-        } else when T: u8 {
-            let cmp = memcmp(lhs._ptr as &void, rhs._ptr as &void, min(lhs.len(), rhs.len()) * size_of::<T>());
-            if cmp < 0 {
-                Ordering::Less
-            } else if cmp > 0 {
-                Ordering::Greater
+        } else when *lhs._ptr is u8 {
+            if runtime::in_const_context() {
+                internal::default_compare::<Ptr>(lhs, rhs)
             } else {
-                lhs.len().compare(&rhs.len())
+                let cmp = memcmp(lhs._ptr as &void, rhs._ptr as &void, min(lhs.len(), rhs.len()) * size_of::<T>());
+                if cmp < 0 {
+                    Ordering::Less
+                } else if cmp > 0 {
+                    Ordering::Greater
+                } else {
+                    lhs.len().compare(&rhs.len())
+                }
             }
         } else {
-            let idx = 0usize;
-            let len = min(lhs.len(), rhs.len());
-            while idx < len {
-                let cmp = (*lhs)[idx].compare(&(*rhs)[idx]);
-                if cmp != Ordering::Equal {
-                    return cmp;
-                }
-                idx += 1;
-            }
-            lhs.len().compare(&rhs.len())
+            internal::default_compare::<Ptr>(lhs, rhs)
         }
     }
 
     /// @ std::hash::Hashable::hash
     fn hash<T: Hashable<T, H>, Ptr: PointerOf<T>, H: Hasher<H>>(self: &slice<Ptr>, hasher: &mut H) {
-        when T: ZeroSized {
+        when *self._ptr is ZeroSized {
             // no-op
-        } else when T: u8 {
+        } else when *self._ptr is u8 {
             hasher.write(*self);
         } else {
             let idx = 0usize;
@@ -363,8 +431,12 @@ impl slice {
     ///
     /// This requires that the slice was allocated with `alloc` or `alloc_zeroed`.
     fn free<T>(a: &mut [T]) {
-        when T: !ZeroSized {
-            libc::free(a._ptr as &mut void);
+        when !(*a._ptr is builtins::ZeroSized) {
+            if runtime::in_const_context() {
+                intrinsics::const_free::<T>(a._ptr);
+            } else {
+                libc::free(a._ptr as &mut void);
+            }
         }
     }
 
@@ -473,9 +545,9 @@ mod internal {
     // Some gnarly metaprogramming to determine whether collection-to-slice coercion is possible,
     // what the slice element type is, and with what mutability.
     type slicify_element_t<T> = typeof(*(null as &T).as_slice()._ptr);
-    type slicify_slice_t<T: AsSlice<T, slicify_element_t<T>>, Ptr: builtins::PointerOf<T>> = when Ptr: &T {
+    type slicify_slice_t<T: AsSlice<T, slicify_element_t<T>>, Ptr: builtins::PointerOf<T>> = when typing::matches::<Ptr, &T>() {
         &[slicify_element_t<T>]
-    } else when T: AsSliceMut<T, slicify_element_t<T>> {
+    } else when typing::matches::<T, AsSliceMut<T, slicify_element_t<T>>>() {
         &mut [slicify_element_t<T>]
     } else {
         &[slicify_element_t<T>]
@@ -486,9 +558,9 @@ mod internal {
     #[inline(ir)]
     #[lang(slice_slicify)]
     fn slice_slicify<T, Ptr>(ptr: Ptr) -> slicify_slice_t<T, Ptr> {
-        when Ptr: &T {
+        when ptr is &T {
             ptr.as_slice()
-        } else when T: AsSliceMut<T, slicify_element_t<T>> {
+        } else when typing::matches::<T, AsSliceMut<T, slicify_element_t<T>>>() {
             ptr.as_slice_mut()
         } else {
             ptr.as_slice()
@@ -516,7 +588,7 @@ mod internal {
     #[cfg_attr(any(debug, bounds_checks), inline(always))]
     #[cfg_attr(not(any(debug, bounds_checks)), inline(ir))]
     fn slice_range_index<Ptr: Pointer, T: RangeOf<usize>>(a: slice<Ptr>, range: T) -> slice<Ptr> {
-        when T: range::Range<usize> {
+        when range is range::Range<usize> {
             bounds_check!(
                 range.lower <= range.upper,
                 "index out of bounds: lower bound {} is greater than upper bound {}",
@@ -531,7 +603,7 @@ mod internal {
             );
 
             slice::from_raw::<Ptr>(a._ptr + range.lower, range.upper - range.lower)
-        } else when T: range::RangeInclusive<usize> {
+        } else when range is range::RangeInclusive<usize> {
             bounds_check!(
                 range.lower <= range.upper,
                 "index out of bounds: lower bound {} is greater than upper bound {}",
@@ -546,7 +618,7 @@ mod internal {
             );
 
             slice::from_raw::<Ptr>(a._ptr + range.lower, range.upper - range.lower + 1)
-        } else when T: range::RangeTo<usize> {
+        } else when range is range::RangeTo<usize> {
             bounds_check!(
                 range.upper <= a.len(),
                 "index out of bounds: the len is {} but the upper bound is {}",
@@ -555,7 +627,7 @@ mod internal {
             );
 
             slice::from_raw::<Ptr>(a._ptr, range.upper)
-        } else when T: range::RangeToInclusive<usize> {
+        } else when range is range::RangeToInclusive<usize> {
             bounds_check!(
                 range.upper < a.len(),
                 "index out of bounds: the len is {} but the inclusive upper bound is {}",
@@ -564,7 +636,7 @@ mod internal {
             );
 
             slice::from_raw::<Ptr>(a._ptr, range.upper + 1)
-        } else when T: range::RangeFrom<usize> {
+        } else when range is range::RangeFrom<usize> {
             bounds_check!(
                 range.lower <= a.len(),
                 "index out of bounds: the len is {} but the lower bound is {}",
@@ -573,7 +645,7 @@ mod internal {
             );
 
             slice::from_raw::<Ptr>(a._ptr + range.lower, a.len() - range.lower)
-        } else when T: range::RangeFull<usize> {
+        } else when range is range::RangeFull<usize> {
             a
         } else {
             compile_fail!("unsupported range type");
@@ -588,13 +660,41 @@ mod internal {
     #[inline(ir)]
     #[lang(slice_const_coerce)]
     fn slice_const_coerce<T>(a: slice<&mut T>) -> slice<&T> {
-        util::transmute(a)
+        slice { _ptr: a._ptr as &T, _len: a._len }
     }
 
     #[inline(ir)]
     #[lang(slice_const_cast)]
     fn slice_const_cast<T>(a: slice<&T>) -> slice<&mut T> {
-        util::transmute(a)
+        slice { _ptr: a._ptr as &mut T, _len: a._len }
+    }
+
+    fn default_equals<Ptr>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> bool {
+        if lhs._len != rhs._len {
+            return false;
+        }
+
+        let idx = 0usize;
+        while idx < lhs._len {
+            if *(lhs._ptr + idx) != *(rhs._ptr + idx) {
+                return false;
+            }
+            idx += 1;
+        }
+        true
+    }
+
+    fn default_compare<Ptr>(lhs: &slice<Ptr>, rhs: &slice<Ptr>) -> cmp::Ordering {
+        let idx = 0usize;
+        let len = cmp::min(lhs._len, rhs._len);
+        while idx < len {
+            let cmp = (*(lhs._ptr + idx)).compare(rhs._ptr + idx);
+            if cmp != cmp::Ordering::Equal {
+                return cmp;
+            }
+            idx += 1;
+        }
+        lhs._len.compare(&rhs._len)
     }
 }
 
@@ -614,8 +714,10 @@ mod internal {
 /// free(x);
 /// ```
 fn alloc<T>() -> &mut T {
-    when T: builtins::ZeroSized {
+    when typing::is_zero_sized::<T>() {
         dangling()
+    } else if runtime::in_const_context() {
+        intrinsics::const_alloc::<T>(1usize)
     } else {
         libc::malloc(size_of::<T>()) as &mut T
     }
@@ -636,8 +738,12 @@ fn alloc<T>() -> &mut T {
 /// free(x);
 /// ```
 fn alloc_zeroed<T>() -> &mut T {
-    when T: builtins::ZeroSized {
+    when typing::is_zero_sized::<T>() {
         dangling()
+    } else if runtime::in_const_context() {
+        let ret = intrinsics::const_alloc::<T>(1usize);
+        *ret = zeroed::<T>();
+        ret
     } else {
         libc::calloc(1, size_of::<T>()) as &mut T
     }
@@ -670,8 +776,10 @@ fn alloc_zeroed<T>() -> &mut T {
 /// ```
 #[inline(ir)]
 fn stack_alloc<T>(len: usize) -> &mut [T] {
-    slice::from_raw(when T: builtins::ZeroSized {
+    slice::from_raw(when typing::is_zero_sized::<T>() {
         dangling::<&mut T>()
+    } else if runtime::in_const_context() {
+        intrinsics::const_alloc::<T>(len)
     } else {
         // Cannot use __builtin_alloca_with_align as it may not be valid until the end of the function
         intrinsics::codegen_func::<&mut void>(
@@ -702,8 +810,12 @@ fn stack_alloc<T>(len: usize) -> &mut [T] {
 /// }
 /// ```
 fn free<T>(a: &mut T) {
-    when T: !builtins::ZeroSized {
-        libc::free(a as &mut void);
+    when !(*a is builtins::ZeroSized) {
+        if runtime::in_const_context() {
+            intrinsics::const_free::<T>(a);
+        } else {
+            libc::free(a as &mut void);
+        }
     }
 }
 
@@ -791,16 +903,9 @@ fn replace<T>(a: &mut T, b: T) -> T {
 /// assert_eq!(a.a, 0);
 /// assert_eq!(a.b, 0);
 /// ```
+#[inline(ir)]
 fn zeroed<T>() -> T {
-    let ret: T;
-    when T: bool {
-        false
-    } else when T: builtins::Primitive + !builtins::ZeroSized {
-        ret = 0 as T;
-    } else when T: !builtins::ZeroSized {
-        libc::memset(&ret as &mut void, 0, size_of::<T>());
-    }
-    ret
+    intrinsics::zeroed::<T>()
 }
 
 /// Uninitialized object.
@@ -840,8 +945,14 @@ fn uninitialized<T>() -> T {
 ///
 /// The memory ranges must not overlap, use [copy] if they may be overlapping.
 fn copy_nonoverlapping<T>(src: &T, dst: &mut T, count: usize) {
-    when T: !builtins::ZeroSized {
-        libc::memcpy(dst as &mut void, src as &void, count * size_of::<T>());
+    when !(*src is builtins::ZeroSized) {
+        if runtime::in_const_context() {
+            for i in 0usize..count {
+                *(dst + i) = *(src + i);
+            }
+        } else {
+            libc::memcpy(dst as &mut void, src as &void, count * size_of::<T>());
+        }
     }
 }
 
@@ -849,8 +960,17 @@ fn copy_nonoverlapping<T>(src: &T, dst: &mut T, count: usize) {
 ///
 /// The ranges may overlap.
 fn copy<T>(src: &T, dst: &mut T, count: usize) {
-    when T: !builtins::ZeroSized {
-        libc::memmove(dst as &mut void, src as &void, count * size_of::<T>());
+    when !(*src is builtins::ZeroSized) {
+        if runtime::in_const_context() {
+            // Not super efficient, but it doesn't matter since this is only used in
+            // const contexts (which are very slow anyway).
+            let tmp = intrinsics::const_alloc::<T>(count);
+            copy_nonoverlapping(src, tmp, count);
+            copy_nonoverlapping(tmp, dst, count);
+            intrinsics::const_free::<T>(tmp);
+        } else {
+            libc::memmove(dst as &mut void, src as &void, count * size_of::<T>());
+        }
     }
 }
 
@@ -926,6 +1046,15 @@ mod tests {
 
         assert_eq!(a[..] as &[u8], "aaaaaaaaaa");
     }
+
+    #[test]
+    fn test_fill_custom() {
+        let a: [(i32, i32); 5];
+        a[..].fill((1, 2));
+
+        assert_eq!(a[..], &[(1, 2), (1, 2), (1, 2), (1, 2), (1, 2)]);
+    }
+
 
     #[test]
     fn test_copy_nonoverlapping() {
@@ -1028,5 +1157,127 @@ mod tests {
         (0..10).fill_slice(a);
 
         assert_eq!(a, &[0,1,2,3,4,5,6,7,8,9]);
+    }
+
+    #[test]
+    fn test_const_alloc() {
+        const FOO: bool = {
+            let a = alloc::<i32>();
+            *a = 42;
+            assert_eq!(*a, 42);
+            free(a);
+            true
+        };
+
+        assert!(FOO);
+    }
+
+    #[test]
+    fn test_const_alloc_zeroed() {
+        const FOO: bool = {
+            let a = alloc_zeroed::<i32>();
+            assert_eq!(*a, 0);
+            free(a);
+            true
+        };
+
+        assert!(FOO);
+    }
+
+    #[test]
+    fn test_const_stack_alloc() {
+        const FOO: bool = {
+            let a = stack_alloc::<i32>(10);
+            for (idx, ptr) in a.iter_mut().enumerate() {
+                *ptr = idx as i32;
+            }
+
+            assert_eq!(a, &[0,1,2,3,4,5,6,7,8,9]);
+            true
+        };
+
+        assert!(FOO);
+    }
+
+    #[test]
+    fn test_const_slice_alloc() {
+        const FOO: bool = {
+            let a = slice::alloc::<i32>(10);
+            for (idx, ptr) in a.iter_mut().enumerate() {
+                *ptr = idx as i32;
+            }
+
+            assert_eq!(a, &[0,1,2,3,4,5,6,7,8,9]);
+            a.free();
+            true
+        };
+
+        assert!(FOO);
+    }
+
+    #[test]
+    fn test_const_slice_alloc_zeroed() {
+        const FOO: bool = {
+            let a = slice::alloc_zeroed::<i32>(10);
+            assert_eq!(a, &[0,0,0,0,0,0,0,0,0,0]);
+            a.free();
+            true
+        };
+
+        assert!(FOO);
+    }
+
+    #[test]
+    fn test_zeroed() {
+        struct Struct {
+            a: u32,
+            b: u32,
+        }
+
+        union Union {
+            a: u32,
+            b: u32,
+        }
+
+        assert_eq!(zeroed::<bool>(), false);
+        assert_eq!(zeroed::<u8>(), 0);
+        assert_eq!(zeroed::<u16>(), 0);
+        assert_eq!(zeroed::<u32>(), 0);
+        assert_eq!(zeroed::<u64>(), 0);
+        assert_eq!(zeroed::<usize>(), 0);
+        assert_eq!(zeroed::<i8>(), 0);
+        assert_eq!(zeroed::<i16>(), 0);
+        assert_eq!(zeroed::<i32>(), 0);
+        assert_eq!(zeroed::<i64>(), 0);
+        assert_eq!(zeroed::<isize>(), 0);
+        assert_eq!(zeroed::<f32>(), 0.0);
+        assert_eq!(zeroed::<f64>(), 0.0);
+
+        assert_eq!(zeroed::<&u8>(), null);
+        assert_eq!(zeroed::<&mut u8>(), null);
+
+        let construct = zeroed::<Struct>();
+        assert_eq!(construct.a, 0);
+        assert_eq!(construct.b, 0);
+
+        let funion = zeroed::<Union>();
+        assert_eq!(funion.a, 0);
+        assert_eq!(funion.b, 0);
+
+        assert_eq!(zeroed::<[i32; 4]>(), [0,0,0,0]);
+        assert_eq!(zeroed::<[i32; 0]>(), []);
+
+        assert_eq!(zeroed::<(i32, u8, bool)>(), (0, 0, false));
+    }
+
+    #[test]
+    fn test_zeroed_closure() {
+        let a = 42;
+
+        let closure = |=a| -> i32 { a };
+        let zeroed = zeroed::<typeof(closure)>();
+
+        assert_eq!(closure(), 42);
+        assert_eq!(zeroed(), 0);
     }
 }

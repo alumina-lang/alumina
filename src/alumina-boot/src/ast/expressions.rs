@@ -4,10 +4,11 @@ use crate::ast::types::TypeVisitor;
 use crate::ast::{
     AstCtx, AstId, BinOp, BuiltinType, ClosureBinding, Defered, Expr, ExprKind, ExprP,
     FieldInitializer, FnKind, Function, Item, ItemP, LetDeclaration, Lit, Parameter, Placeholder,
-    Span, Statement, StatementKind, StaticIfCondition, Ty, TyP, UnOp,
+    Span, Statement, StatementKind, Ty, TyP, UnOp,
 };
 use crate::common::{
-    AluminaError, ArenaAllocatable, CodeErrorKind, HashMap, HashSet, WithSpanDuringParsing,
+    AluminaError, ArenaAllocatable, CodeErrorBuilder, CodeErrorKind, HashMap, HashSet,
+    WithSpanDuringParsing,
 };
 use crate::global_ctx::GlobalCtx;
 use crate::name_resolution::pass1::FirstPassVisitor;
@@ -18,6 +19,9 @@ use crate::parser::{AluminaVisitor, FieldKind, NodeExt, NodeKind, ParseCtx};
 use crate::visitors::{AttributeVisitor, ScopedPathVisitor};
 
 use crate::common::IndexMap;
+
+use super::MacroCtx;
+
 macro_rules! with_block_scope {
     ($self:ident, $body:expr) => {{
         let child_scope = $self.scope.anonymous_child(ScopeType::Block);
@@ -34,7 +38,7 @@ where
     Self: Sized,
 {
     type ReturnType;
-    fn alloc_with_span(self, ast: &'ast AstCtx<'ast>, span: Span) -> Self::ReturnType;
+    fn alloc_with_span(self, ast: &'ast AstCtx<'ast>, span: Option<Span>) -> Self::ReturnType;
 
     fn alloc_with_span_from(
         self,
@@ -43,47 +47,23 @@ where
         node: tree_sitter::Node<'src>,
     ) -> Self::ReturnType {
         let span = Span::from_node(scope.code().unwrap().file_id(), node);
-        self.alloc_with_span(ast, span)
+        self.alloc_with_span(ast, Some(span))
     }
-
-    fn alloc_with_no_span(self, ast: &'ast AstCtx<'ast>) -> Self::ReturnType;
 }
 
 impl<'ast, 'src> Spannable<'ast, 'src> for ExprKind<'ast> {
     type ReturnType = ExprP<'ast>;
 
-    fn alloc_with_span(self, ast: &'ast AstCtx<'ast>, span: Span) -> ExprP<'ast> {
-        Expr {
-            kind: self,
-            span: Some(span),
-        }
-        .alloc_on(ast)
-    }
-
-    fn alloc_with_no_span(self, ast: &'ast AstCtx<'ast>) -> ExprP<'ast> {
-        Expr {
-            kind: self,
-            span: None,
-        }
-        .alloc_on(ast)
+    fn alloc_with_span(self, ast: &'ast AstCtx<'ast>, span: Option<Span>) -> ExprP<'ast> {
+        Expr { kind: self, span }.alloc_on(ast)
     }
 }
 
 impl<'ast, 'src> Spannable<'ast, 'src> for StatementKind<'ast> {
     type ReturnType = Statement<'ast>;
 
-    fn alloc_with_span(self, _ast: &'ast AstCtx<'ast>, span: Span) -> Statement<'ast> {
-        Statement {
-            kind: self,
-            span: Some(span),
-        }
-    }
-
-    fn alloc_with_no_span(self, _ast: &'ast AstCtx<'ast>) -> Statement<'ast> {
-        Statement {
-            kind: self,
-            span: None,
-        }
+    fn alloc_with_span(self, _ast: &'ast AstCtx<'ast>, span: Option<Span>) -> Statement<'ast> {
+        Statement { kind: self, span }
     }
 }
 
@@ -92,8 +72,7 @@ pub struct ExpressionVisitor<'ast, 'src> {
     code: &'src ParseCtx<'src>,
     global_ctx: GlobalCtx,
     scope: Scope<'ast, 'src>,
-    in_a_macro: bool,
-    has_et_cetera: bool,
+    macro_ctx: MacroCtx,
 }
 
 macro_rules! suffixed_literals {
@@ -115,7 +94,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
         ast: &'ast AstCtx<'ast>,
         global_ctx: GlobalCtx,
         scope: Scope<'ast, 'src>,
-        in_a_macro: bool,
+        macro_ctx: MacroCtx,
     ) -> Self {
         ExpressionVisitor {
             ast,
@@ -124,26 +103,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                 .expect("cannot run on scope without parse context"),
             scope,
             global_ctx,
-            in_a_macro,
-            has_et_cetera: false,
-        }
-    }
-
-    pub fn new_for_macro(
-        ast: &'ast AstCtx<'ast>,
-        global_ctx: GlobalCtx,
-        scope: Scope<'ast, 'src>,
-        has_et_cetera: bool,
-    ) -> Self {
-        ExpressionVisitor {
-            ast,
-            code: scope
-                .code()
-                .expect("cannot run on scope without parse context"),
-            scope,
-            global_ctx,
-            in_a_macro: true,
-            has_et_cetera,
+            macro_ctx,
         }
     }
 
@@ -153,43 +113,16 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_ref(&mut self, node: tree_sitter::Node<'src>) -> Result<ExprP<'ast>, AluminaError> {
-        let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone(), self.in_a_macro);
+        let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone(), self.macro_ctx);
         let path = visitor.visit(node)?;
-        let mut resolver = NameResolver::new();
 
-        let expr = match resolver
-            .resolve_item(self.scope.clone(), path.clone())
-            .with_span_from(&self.scope, node)?
-        {
-            ItemResolution::Item(item) => match item.kind {
-                NamedItemKind::Function(fun, _, _) => ExprKind::Fn(FnKind::Normal(fun), None),
-                NamedItemKind::Method(fun, _, _) => ExprKind::Fn(FnKind::Normal(fun), None),
-                NamedItemKind::Local(var, _) => ExprKind::Local(var),
-                NamedItemKind::BoundValue(self_id, var, bound_type, _) => {
-                    ExprKind::BoundParam(self_id, var, bound_type)
-                }
-                NamedItemKind::MacroParameter(var, _, _) => ExprKind::Local(var),
-                NamedItemKind::Parameter(var, _) => ExprKind::Local(var),
-                NamedItemKind::Static(var, _, _) => ExprKind::Static(var, None),
-                NamedItemKind::Const(var, _, _) => ExprKind::Const(var, None),
-                NamedItemKind::EnumMember(typ, var, _) => ExprKind::EnumValue(typ, var),
-                NamedItemKind::Macro(_, _, _) => {
-                    return Err(CodeErrorKind::IsAMacro(path.to_string()))
-                        .with_span_from(&self.scope, node)
-                }
-                kind => {
-                    return Err(CodeErrorKind::Unexpected(format!("{}", kind)))
-                        .with_span_from(&self.scope, node)
-                }
-            },
-            ItemResolution::Defered(ty, name) => {
-                let name = name.0.alloc_on(self.ast);
-                let typ = self.ast.intern_type(ty);
-                ExprKind::Defered(Defered { typ, name })
-            }
-        };
-
-        Ok(expr.alloc_with_span_from(self.ast, &self.scope, node))
+        resolve_name(
+            self.global_ctx.clone(),
+            self.ast,
+            &self.scope,
+            path,
+            Some(Span::from_node(self.scope.file_id(), node)),
+        )
     }
 
     fn visit_let_declaration(
@@ -203,7 +136,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                     self.global_ctx.clone(),
                     self.ast,
                     self.scope.clone(),
-                    self.in_a_macro,
+                    self.macro_ctx,
                 )
                 .visit(n)
             })
@@ -303,7 +236,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
     ) -> Result<ExprP<'ast>, AluminaError> {
         let last_node = match last_node {
             Some(n) => n,
-            None => return Ok(ExprKind::Void.alloc_with_no_span(self.ast)),
+            None => return Ok(ExprKind::Void.alloc_with_span(self.ast, None)),
         };
 
         let expression_node = match last_node.kind_typed() {
@@ -338,8 +271,6 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
         args: Vec<ExprP<'ast>>,
         span: Span,
     ) -> Result<ExprP<'ast>, AluminaError> {
-        use crate::common::CodeErrorBuilder;
-
         let mut resolver = NameResolver::new();
 
         let r#macro = match resolver
@@ -360,11 +291,15 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                 )?;
                 symbol
             }
-            _ => return Err(CodeErrorKind::NotAMacro(path.to_string())).with_span(Some(span)),
+            _ => return Err(CodeErrorKind::NotAMacro).with_span(Some(span)),
         };
 
-        let result = if self.in_a_macro {
-            ExprKind::DeferedMacro(r#macro, args.alloc_on(self.ast)).alloc_with_span(self.ast, span)
+        let result = if self.macro_ctx.in_a_macro {
+            ExprKind::MacroInvocation(
+                ExprKind::Macro(r#macro, &[]).alloc_with_span(self.ast, Some(span)),
+                args.alloc_on(self.ast),
+            )
+            .alloc_with_span(self.ast, Some(span))
         } else {
             let expander =
                 MacroExpander::new(self.ast, self.global_ctx.clone(), Some(span), r#macro, args);
@@ -390,7 +325,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                 if !local_items.is_empty() {
                     let local_items = std::mem::take(&mut local_items);
                     let mut maker =
-                        AstItemMaker::new_local(self.ast, self.global_ctx.clone(), self.in_a_macro);
+                        AstItemMaker::new_local(self.ast, self.global_ctx.clone(), self.macro_ctx);
                     for (name, items) in local_items.into_iter() {
                         maker.make_item_group(self.scope.clone(), name, &items[..])?;
                     }
@@ -465,10 +400,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                             self.global_ctx.clone(),
                             self.ast,
                             self.scope.clone(),
+                            self.macro_ctx,
                         )
                         .visit_local(node)?;
 
-                        if !items.is_empty() && self.in_a_macro {
+                        if !items.is_empty() && self.macro_ctx.in_a_macro {
                             return Err(CodeErrorKind::MacrosCannotDefineItems)
                                 .with_span_from(&self.scope, node);
                         }
@@ -518,7 +454,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_closure_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        if self.in_a_macro {
+        if self.macro_ctx.in_a_macro {
             return Err(CodeErrorKind::MacrosCannotDefineLambdas).with_span_from(&self.scope, node);
         }
 
@@ -526,7 +462,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             self.ast,
             self.global_ctx.clone(),
             self.scope.anonymous_child(ScopeType::Closure),
-            self.in_a_macro,
+            self.macro_ctx,
         );
 
         let (func, bindings) = visitor.generate(node)?;
@@ -793,7 +729,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_macro_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        if !self.in_a_macro {
+        if !self.macro_ctx.in_a_macro {
             return Err(CodeErrorKind::DollaredOutsideOfMacro).with_span_from(&self.scope, node);
         }
 
@@ -892,35 +828,31 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             None => ExprKind::Void.alloc_with_span_from(self.ast, &self.scope, node),
         };
 
-        let condition = node
-            .child_by_field(FieldKind::Condition)
-            .map(|n| self.visit(n))
-            .transpose()?;
+        let condition = self.visit(node.child_by_field(FieldKind::Condition).unwrap())?;
 
-        let result = if let Some(condition) = condition {
-            ExprKind::If(condition, consequence, alternative)
-        } else {
-            let typecheck_node = node.child_by_field(FieldKind::TypeCheck).unwrap();
-            let typ = TypeVisitor::new(
-                self.global_ctx.clone(),
-                self.ast,
-                self.scope.clone(),
-                self.in_a_macro,
-            )
-            .visit(typecheck_node.child_by_field(FieldKind::Lhs).unwrap())?;
-            let bounds = TypeVisitor::new(
-                self.global_ctx.clone(),
-                self.ast,
-                self.scope.clone(),
-                self.in_a_macro,
-            )
-            .parse_protocol_bounds(typecheck_node)?;
-
-            let cond = StaticIfCondition { typ, bounds };
-            ExprKind::StaticIf(cond, consequence, alternative)
+        let result = match self
+            .code
+            .node_text(node.child_by_field(FieldKind::Kind).unwrap())
+        {
+            "if" => ExprKind::If(condition, consequence, alternative),
+            "when" => ExprKind::StaticIf(condition, consequence, alternative),
+            _ => unreachable!(),
         };
 
         return Ok(result.alloc_with_span_from(self.ast, &self.scope, node));
+    }
+
+    fn visit_type_check_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let lhs = self.visit(node.child_by_field(FieldKind::Value).unwrap())?;
+        let typ = TypeVisitor::new(
+            self.global_ctx.clone(),
+            self.ast,
+            self.scope.clone(),
+            self.macro_ctx,
+        )
+        .visit(node.child_by_field(FieldKind::Type).unwrap())?;
+
+        Ok(ExprKind::TypeCheck(lhs, typ).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_turbofish(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -928,7 +860,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             self.global_ctx.clone(),
             self.ast,
             self.scope.clone(),
-            self.in_a_macro,
+            self.macro_ctx,
         );
 
         let arguments_node = node.child_by_field(FieldKind::TypeArguments).unwrap();
@@ -969,7 +901,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             self.global_ctx.clone(),
             self.ast,
             self.scope.clone(),
-            self.in_a_macro,
+            self.macro_ctx,
         )
         .visit(node.child_by_field(FieldKind::Type).unwrap())?;
 
@@ -1101,30 +1033,30 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
         let loop_if = ExprKind::If(
             ExprKind::Field(
-                ExprKind::Local(iterator_result).alloc_with_no_span(self.ast),
+                ExprKind::Local(iterator_result).alloc_with_span(self.ast, None),
                 "_is_some",
                 None,
             )
-            .alloc_with_no_span(self.ast),
+            .alloc_with_span(self.ast, None),
             ExprKind::Block(
                 vec![StatementKind::LetDeclaration(LetDeclaration {
                     id,
                     typ: None,
                     value: Some(
                         ExprKind::Field(
-                            ExprKind::Local(iterator_result).alloc_with_no_span(self.ast),
+                            ExprKind::Local(iterator_result).alloc_with_span(self.ast, None),
                             "_inner",
                             None,
                         )
-                        .alloc_with_no_span(self.ast),
+                        .alloc_with_span(self.ast, None),
                     ),
                 })
-                .alloc_with_no_span(self.ast)]
+                .alloc_with_span(self.ast, None)]
                 .alloc_on(self.ast),
                 body,
             )
-            .alloc_with_no_span(self.ast),
-            ExprKind::Break(None).alloc_with_no_span(self.ast),
+            .alloc_with_span(self.ast, None),
+            ExprKind::Break(None).alloc_with_span(self.ast, None),
         );
 
         let loop_body = ExprKind::Loop(
@@ -1135,19 +1067,19 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                     value: Some(
                         ExprKind::Call(
                             ExprKind::Field(
-                                ExprKind::Local(iterator).alloc_with_no_span(self.ast),
+                                ExprKind::Local(iterator).alloc_with_span(self.ast, None),
                                 "next",
                                 None,
                             )
-                            .alloc_with_no_span(self.ast),
+                            .alloc_with_span(self.ast, None),
                             vec![].alloc_on(self.ast),
                         )
-                        .alloc_with_no_span(self.ast),
+                        .alloc_with_span(self.ast, None),
                     ),
                 })
-                .alloc_with_no_span(self.ast)]
+                .alloc_with_span(self.ast, None)]
                 .alloc_on(self.ast),
-                loop_if.alloc_with_no_span(self.ast),
+                loop_if.alloc_with_span(self.ast, None),
             )
             .alloc_with_span_from(self.ast, &self.scope, node),
         );
@@ -1170,7 +1102,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             })
             .alloc_with_span_from(self.ast, &self.scope, node)]
             .alloc_on(self.ast),
-            loop_body.alloc_with_no_span(self.ast),
+            loop_body.alloc_with_span(self.ast, None),
         );
 
         Ok(result.alloc_with_span_from(self.ast, &self.scope, node))
@@ -1217,10 +1149,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             typ: None,
             value: Some(value),
         })
-        .alloc_with_no_span(self.ast)];
+        .alloc_with_span(self.ast, None)];
 
         let ret = arms.into_iter().rfold(
-            default_arm.unwrap_or_else(|| ExprKind::Void.alloc_with_no_span(self.ast)),
+            default_arm.unwrap_or_else(|| ExprKind::Void.alloc_with_span(self.ast, None)),
             |acc, (arm_node, alternatives, value)| {
                 // TODO: add spans here
                 let cmp = alternatives
@@ -1231,13 +1163,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                                 BinOp::Or,
                                 acc,
                                 ExprKind::Binary(BinOp::Eq, local, alternative)
-                                    .alloc_with_no_span(self.ast),
+                                    .alloc_with_span(self.ast, None),
                             )
-                            .alloc_with_no_span(self.ast),
+                            .alloc_with_span(self.ast, None),
                         ),
                         None => Some(
                             ExprKind::Binary(BinOp::Eq, local, alternative)
-                                .alloc_with_no_span(self.ast),
+                                .alloc_with_span(self.ast, None),
                         ),
                     })
                     .unwrap();
@@ -1261,7 +1193,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             self.global_ctx.clone(),
             self.ast,
             self.scope.clone(),
-            self.in_a_macro,
+            self.macro_ctx,
         )
         .visit(node.child_by_field(FieldKind::Name).unwrap())?;
 
@@ -1318,11 +1250,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_et_cetera_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        if !self.in_a_macro {
+        if !self.macro_ctx.in_a_macro {
             return Err(CodeErrorKind::EtCeteraOutsideOfMacro).with_span_from(&self.scope, node);
         }
 
-        if !self.has_et_cetera {
+        if !self.macro_ctx.has_et_cetera {
             return Err(CodeErrorKind::NoEtCeteraArgs).with_span_from(&self.scope, node);
         }
 
@@ -1332,25 +1264,43 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_macro_invocation(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone(), self.in_a_macro);
-        let path = visitor.visit(node.child_by_field(FieldKind::Macro).unwrap())?;
+        let expr = self.visit(node.child_by_field(FieldKind::Macro).unwrap())?;
 
         let span = Span::from_node(self.scope.file_id(), node);
-        let mut arguments = Vec::new();
+        let mut args = Vec::new();
         let arguments_node = node.child_by_field(FieldKind::Arguments).unwrap();
         let mut cursor = arguments_node.walk();
         for node in arguments_node.children_by_field(FieldKind::Inner, &mut cursor) {
-            arguments.push(self.visit(node)?);
+            args.push(self.visit(node)?);
         }
 
-        self.visit_macro_invocation_impl(path, arguments, span)
+        if self.macro_ctx.in_a_macro {
+            Ok(ExprKind::MacroInvocation(expr, args.alloc_on(self.ast))
+                .alloc_with_span(self.ast, Some(span)))
+        } else {
+            let r#macro = match expr.kind {
+                ExprKind::Macro(item, bound_params) => {
+                    args = bound_params
+                        .iter()
+                        .copied()
+                        .chain(args.into_iter())
+                        .collect();
+                    item
+                }
+                _ => return Err(CodeErrorKind::NotAMacro).with_span_from(&self.scope, node),
+            };
+
+            let expander =
+                MacroExpander::new(self.ast, self.global_ctx.clone(), Some(span), r#macro, args);
+            expander.expand()
+        }
     }
 
     fn visit_universal_macro_invocation(
         &mut self,
         node: tree_sitter::Node<'src>,
     ) -> Self::ReturnType {
-        let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone(), self.in_a_macro);
+        let mut visitor = ScopedPathVisitor::new(self.ast, self.scope.clone(), self.macro_ctx);
         let path = visitor.visit(node.child_by_field(FieldKind::Macro).unwrap())?;
 
         let span = Span::from_node(self.scope.file_id(), node);
@@ -1501,7 +1451,7 @@ pub struct ClosureVisitor<'ast, 'src> {
     placeholders: Vec<Placeholder<'ast>>,
     return_type: Option<TyP<'ast>>,
     body: Option<ExprP<'ast>>,
-    in_a_macro: bool,
+    macro_ctx: MacroCtx,
 }
 
 impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
@@ -1509,7 +1459,7 @@ impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
         ast: &'ast AstCtx<'ast>,
         global_ctx: GlobalCtx,
         scope: Scope<'ast, 'src>,
-        in_a_macro: bool,
+        macro_ctx: MacroCtx,
     ) -> Self {
         Self {
             ast,
@@ -1524,7 +1474,7 @@ impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
             bound_values: HashMap::default(),
             return_type: None,
             body: None,
-            in_a_macro,
+            macro_ctx,
         }
     }
 
@@ -1613,7 +1563,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
             self.global_ctx.clone(),
             self.ast,
             self.scope.clone(),
-            self.in_a_macro,
+            self.macro_ctx,
         )
         .visit(node.child_by_field(FieldKind::Type).unwrap())?;
 
@@ -1701,7 +1651,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
                 self.ast,
                 self.global_ctx.clone(),
                 self.scope.clone(),
-                self.in_a_macro,
+                self.macro_ctx,
             )
             .generate(node.child_by_field(FieldKind::Body).unwrap())?,
         );
@@ -1713,7 +1663,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
                         self.global_ctx.clone(),
                         self.ast,
                         self.scope.clone(),
-                        self.in_a_macro,
+                        self.macro_ctx,
                     )
                     .visit(node)
                 })
@@ -1723,4 +1673,53 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
 
         Ok(())
     }
+}
+
+#[allow(clippy::needless_lifetimes)]
+pub fn resolve_name<'ast, 'src>(
+    global_ctx: GlobalCtx,
+    ast: &'ast AstCtx<'ast>,
+    scope: &Scope<'ast, 'src>,
+    path: Path<'ast>,
+    span: Option<Span>,
+) -> Result<ExprP<'ast>, AluminaError> {
+    let mut resolver = NameResolver::new();
+    let expr = match resolver
+        .resolve_item(scope.clone(), path.clone())
+        .with_span(span)?
+    {
+        ItemResolution::Item(named_item) => match named_item.kind {
+            NamedItemKind::Function(fun, _, _) => ExprKind::Fn(FnKind::Normal(fun), None),
+            NamedItemKind::Method(fun, _, _) => ExprKind::Fn(FnKind::Normal(fun), None),
+            NamedItemKind::Local(var, _) => ExprKind::Local(var),
+            NamedItemKind::BoundValue(self_id, var, bound_type, _) => {
+                ExprKind::BoundParam(self_id, var, bound_type)
+            }
+            NamedItemKind::MacroParameter(var, _, _) => ExprKind::Local(var),
+            NamedItemKind::Parameter(var, _) => ExprKind::Local(var),
+            NamedItemKind::Static(var, _, _) => ExprKind::Static(var, None),
+            NamedItemKind::Const(var, _, _) => ExprKind::Const(var, None),
+            NamedItemKind::EnumMember(typ, var, _) => ExprKind::EnumValue(typ, var),
+            NamedItemKind::Macro(symbol, node, scope) => {
+                let mut macro_maker = MacroMaker::new(ast, global_ctx);
+                macro_maker.make(
+                    Some(path.segments.last().unwrap().0),
+                    symbol,
+                    node,
+                    scope.clone(),
+                    named_item.attributes,
+                )?;
+
+                ExprKind::Macro(symbol, &[])
+            }
+            kind => return Err(CodeErrorKind::Unexpected(format!("{}", kind))).with_span(span),
+        },
+        ItemResolution::Defered(ty, name) => {
+            let name = name.0.alloc_on(ast);
+            let typ = ast.intern_type(ty);
+            ExprKind::Defered(Defered { typ, name })
+        }
+    };
+
+    Ok(expr.alloc_with_span(ast, span))
 }

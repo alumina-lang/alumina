@@ -284,11 +284,11 @@ protocol RngExt<Self: Rng<Self>> {
     /// assert!(value >= 0.0 && value < 1.0);
     /// ```
     fn next_float<T: FloatingPoint>(rng: &mut Self) -> T {
-        when T: f32 {
+        when typing::is_same::<T, f32>() {
             let scale = 1.0f32 / ((1u32 << 24) as f32);
             let x = rng.next_u32() >> 8;
             (x as f32) * scale
-        } else when T: f64 {
+        } else when typing::is_same::<T, f64>() {
             let scale = 1.0f64 / ((1u64 << 53) as f64);
             let x = rng.next_u64() >> 11;
             (x as f64) * scale
@@ -366,14 +366,14 @@ mod internal {
         use builtins::unsigned_of;
         use range::{Range, RangeInclusive, RangeTo, RangeToInclusive, RangeFrom, RangeFull};
 
-        when U: Range<T> {
+        when range is Range<T> {
             assert!(range.lower < range.upper);
 
             let bound = (range.upper as unsigned_of<T>) - (range.lower as unsigned_of<T>);
             let ret = (range.lower as unsigned_of<T>) + gen_uniform(rng, bound);
 
             ret as T
-        } else when U: RangeInclusive<T> {
+        } else when range is RangeInclusive<T> {
             assert!(range.lower <= range.upper);
 
             let bound = ((range.upper as unsigned_of<T>) - (range.lower as unsigned_of<T>)) + 1;
@@ -383,13 +383,13 @@ mod internal {
                 let ret = (range.lower as unsigned_of<T>) + gen_uniform(rng, bound);
                 ret as T
             }
-        } else when U: RangeTo<T> {
+        } else when range is RangeTo<T> {
             rng.next(T::min_value()..range.upper)
-        } else when U: RangeToInclusive<T> {
+        } else when range is RangeToInclusive<T> {
             rng.next(T::min_value()..=range.upper)
-        } else when U: RangeFrom<T> {
+        } else when range is RangeFrom<T> {
             rng.next(range.lower..=T::max_value())
-        } else when U: RangeFull<T> {
+        } else when range is RangeFull<T> {
             gen_unsigned::<R, unsigned_of<T>>(rng) as T
         } else {
             compile_fail!("unsupported range type")
@@ -401,11 +401,11 @@ mod internal {
     /// Each possible value that the integer can take is equally likely
     #[inline]
     fn gen_unsigned<R: Rng<R>, T: Unsigned>(rng: &mut R) -> T {
-        when T: u128 {
+        when typing::matches::<T, u128>() {
             ((rng.next_u64() as u128)  << 64) | (rng.next_u64() as u128)
-        } else when T: u64 {
+        } else when typing::matches::<T, u64>() {
             rng.next_u64()
-        } else when T: usize {
+        } else when typing::matches::<T, usize>() {
             let x: T;
             #[cfg(target_pointer_width = "32")]
             x = rng.next_u32() as usize;

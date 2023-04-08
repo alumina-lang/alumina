@@ -165,10 +165,11 @@ impl<'ir> ExpressionBuilder<'ir> {
         cond: ExprP<'ir>,
         then: ExprP<'ir>,
         els: ExprP<'ir>,
+        const_cond: Option<bool>,
         span: Option<Span>,
     ) -> ExprP<'ir> {
         let result = Expr::rvalue(
-            ExprKind::If(cond, then, els),
+            ExprKind::If(cond, then, els, const_cond),
             self.ir.intern_type(Ty::gcd(then.ty, els.ty)),
             span,
         );

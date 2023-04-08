@@ -1,4 +1,5 @@
 use std::result::{Result, try};
+use std::typing::matches;
 use tree_sitter::{Node, TSFieldId};
 use node_kinds::{FieldKind};
 
@@ -15,7 +16,7 @@ protocol NodeVisitorExt<Self, ReturnType> {
         let cursor = node.walk();
         defer cursor.free();
 
-        when ReturnType: () {
+        when matches::<ReturnType, ()>() {
             for node in node.children(&cursor) {
                 self.visit(node);
             }
@@ -31,7 +32,7 @@ protocol NodeVisitorExt<Self, ReturnType> {
         let cursor = node.walk();
         defer cursor.free();
 
-        when ReturnType: () {
+        when matches::<ReturnType, ()>() {
             for node in children_by!(node, field, &cursor) {
                 self.visit(node);
             }

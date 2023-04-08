@@ -1,15 +1,16 @@
 use std::io::println;
 use std::builtins::{Array, ZeroSized, Numeric};
 use std::fmt::{Formattable, format};
+use std::typing::matches;
 use std::string::StringBuf;
 
 type element_type<T> = typeof({ let v: T; v[0] });
 
 fn last_element<T>(v: T) -> element_type<T> {
-    when T: Array + ZeroSized {
+    when (v is Array) && (v is ZeroSized) {
         // We want to allow e.g. [(); 42], where the whole array is still zero-sized but has
         // a non-zero length.
-        when element_type<T>: !ZeroSized {
+        when !(v[0] is ZeroSized) {
             compile_fail!("Cannot get the last element of a zero-length array");
         }
     }
@@ -17,8 +18,8 @@ fn last_element<T>(v: T) -> element_type<T> {
     v[v.len() - 1]
 }
 
-fn plus<T: Numeric | Formattable<T>>(lhs: T, rhs: T) -> when T: Numeric { T } else { StringBuf } {
-    when T: Numeric {
+fn plus<T: Numeric | Formattable<T>>(lhs: T, rhs: T) -> when typing::is_numeric::<T>() { T } else { StringBuf } {
+    when lhs is Numeric {
         lhs + rhs
     } else {
         format!("{}{}", lhs, rhs).unwrap()

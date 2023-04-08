@@ -47,6 +47,8 @@ pub enum LangItemKind {
     ProtoRangeOf,
     ProtoMeta,
     ProtoSameLayoutAs,
+    ProtoAny,
+    ProtoNone,
 
     ImplBuiltin(BuiltinType),
     ImplTuple(usize),
@@ -178,6 +180,8 @@ impl TryFrom<&str> for LangItemKind {
             "proto_range_of" => Ok(LangItemKind::ProtoRangeOf),
             "proto_meta" => Ok(LangItemKind::ProtoMeta),
             "proto_same_layout_as" => Ok(LangItemKind::ProtoSameLayoutAs),
+            "proto_any" => Ok(LangItemKind::ProtoAny),
+            "proto_none" => Ok(LangItemKind::ProtoNone),
 
             "builtin_never" => Ok(LangItemKind::ImplBuiltin(BuiltinType::Never)),
             "builtin_void" => Ok(LangItemKind::ImplTuple(0)),

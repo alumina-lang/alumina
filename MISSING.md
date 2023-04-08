@@ -25,14 +25,7 @@
   deserves a better idiom.
 - a coherent story for operator overloading
 - `dyn` pointers for certain builtin protocols. Specifically `dyn Callable<...>` would be very useful for being type-erased closures.
-- `format_args` macro is not bad right now, but the generated code is huge. It would be cool to have something like this so the result on `format_args` can still be collected into an array, but can also be unpacked into a sequence of statements directly writing into the formatter
 - docstrings for fields and enum variants
-
-```
-macro write!($fmt, $s, $args...) {
-    { format_arg!($s, $args).fmt($fmt); }...
-}
-```
 
 ## Grammar, parsing, AST
 

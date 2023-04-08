@@ -1,8 +1,8 @@
 use crate::ast::expressions::ExpressionVisitor;
-use crate::ast::lang::LangItemKind;
+use crate::ast::format::{format_args, Piece};
 use crate::ast::{
     AstCtx, AstId, Attribute, BuiltinMacro, BuiltinMacroKind, Expr, ExprKind, ExprP,
-    FieldInitializer, FnKind, Item, ItemP, Lit, Macro, MacroParameter, Span, Statement,
+    FieldInitializer, FnKind, Item, ItemP, Lit, Macro, MacroCtx, MacroParameter, Span, Statement,
 };
 use crate::common::{AluminaError, ArenaAllocatable, CodeErrorKind, HashMap};
 use crate::global_ctx::GlobalCtx;
@@ -10,6 +10,8 @@ use crate::name_resolution::scope::{NamedItemKind, Scope};
 use crate::parser::{FieldKind, NodeExt};
 
 use once_cell::unsync::OnceCell;
+
+use super::TyP;
 
 pub struct MacroMaker<'ast> {
     ast: &'ast AstCtx<'ast>,
@@ -33,6 +35,18 @@ macro_rules! string_arg {
             _ => {
                 use crate::common::CodeErrorBuilder;
                 return Err(CodeErrorKind::ConstantStringExpected).with_span($self.invocation_span);
+            }
+        }
+    };
+}
+
+macro_rules! macro_arg {
+    ($self:expr, $index:expr) => {
+        match $self.args[$index].kind {
+            ExprKind::Macro(item, bound_args) => (item, bound_args),
+            _ => {
+                use crate::common::CodeErrorBuilder;
+                return Err(CodeErrorKind::MacroExpected).with_span($self.invocation_span);
             }
         }
     };
@@ -83,6 +97,8 @@ impl<'ast> MacroMaker<'ast> {
                 "column" => BuiltinMacroKind::Column,
                 "file" => BuiltinMacroKind::File,
                 "format_args" => BuiltinMacroKind::FormatArgs,
+                "bind" => BuiltinMacroKind::Bind,
+                "reduce" => BuiltinMacroKind::Reduce,
                 s => {
                     return Err(CodeErrorKind::UnknownBuiltinMacro(s.to_string()))
                         .with_span_from(&scope, node)
@@ -127,11 +143,11 @@ impl<'ast> MacroMaker<'ast> {
 
         symbol.assign(result);
 
-        let body = ExpressionVisitor::new_for_macro(
+        let body = ExpressionVisitor::new(
             self.ast,
             self.global_ctx.clone(),
             scope.clone(),
-            has_et_cetera,
+            MacroCtx::for_macro(has_et_cetera),
         )
         .generate(node.child_by_field(FieldKind::Body).unwrap())?;
 
@@ -228,7 +244,7 @@ impl<'ast> MacroExpander<'ast> {
             }
         }
 
-        self.visit(r#macro.body.get().unwrap())
+        self.visit_expr(r#macro.body.get().unwrap())
     }
 
     fn expand_args(&mut self, args: &[ExprP<'ast>]) -> Result<&'ast [ExprP<'ast>], AluminaError> {
@@ -242,32 +258,107 @@ impl<'ast> MacroExpander<'ast> {
                 }
                 for idx in 0..self.et_cetera_arg.as_ref().unwrap().1.len() {
                     self.et_cetera_index = Some(idx);
-                    new_args.push(self.visit(inner)?);
+                    new_args.push(self.visit_expr(inner)?);
                 }
                 self.et_cetera_index = None;
             } else {
-                new_args.push(self.visit(arg)?);
+                new_args.push(self.visit_expr(arg)?);
             }
         }
 
         Ok(new_args.alloc_on(self.ast))
     }
 
-    fn visit(&mut self, expr: ExprP<'ast>) -> Result<ExprP<'ast>, AluminaError> {
+    fn visit_typ(&mut self, ty: TyP<'ast>) -> Result<TyP<'ast>, AluminaError> {
+        use crate::ast::Ty::*;
+
+        let ret = match ty {
+            Pointer(inner, a) => Pointer(self.visit_typ(inner)?, *a),
+            Slice(inner, a) => Slice(self.visit_typ(inner)?, *a),
+            Dyn(protos, a) => {
+                let elements = protos
+                    .iter()
+                    .map(|ty| self.visit_typ(ty))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                let slice = elements.alloc_on(self.ast);
+                Dyn(slice, *a)
+            }
+            TypeOf(expr) => TypeOf(self.visit_expr(expr)?),
+            Array(inner, len) => Array(self.visit_typ(inner)?, self.visit_expr(len)?),
+            Tuple(elems) => {
+                let elements = elems
+                    .iter()
+                    .map(|ty| self.visit_typ(ty))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                let slice = elements.alloc_on(self.ast);
+                Tuple(slice)
+            }
+            When(cond, a, b) => When(
+                self.visit_expr(cond)?,
+                self.visit_typ(a)?,
+                self.visit_typ(b)?,
+            ),
+            FunctionPointer(args, ret) => {
+                let elements = args
+                    .iter()
+                    .map(|ty| self.visit_typ(ty))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                let slice = elements.alloc_on(self.ast);
+                FunctionPointer(slice, ret)
+            }
+            FunctionProtocol(args, ret) => {
+                let elements = args
+                    .iter()
+                    .map(|ty| self.visit_typ(ty))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                let slice = elements.alloc_on(self.ast);
+                FunctionProtocol(slice, ret)
+            }
+            Generic(item, args) => Generic(
+                item,
+                args.iter()
+                    .map(|e| self.visit_typ(e))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .alloc_on(self.ast),
+            ),
+            Defered(super::Defered { typ, name }) => Defered(super::Defered {
+                typ: self.visit_typ(typ)?,
+                name,
+            }),
+            Placeholder(_) | Item(_) | Builtin(_) => return Ok(ty),
+        };
+
+        Ok(self.ast.intern_type(ret))
+    }
+
+    fn visit_expr(&mut self, expr: ExprP<'ast>) -> Result<ExprP<'ast>, AluminaError> {
         use crate::ast::ExprKind::*;
         use crate::common::CodeErrorBuilder;
 
         let kind = match expr.kind {
-            Call(callee, args) => Call(self.visit(callee)?, self.expand_args(args)?),
+            Call(callee, args) => Call(self.visit_expr(callee)?, self.expand_args(args)?),
             Tuple(args) => Tuple(self.expand_args(args)?),
             Array(args) => Array(self.expand_args(args)?),
-            DeferedMacro(item, args) => {
+            MacroInvocation(inner, args) => {
+                let inner = self.visit_expr(inner)?;
+                let (item, bound_args) = match inner.kind {
+                    ExprKind::Macro(m, b) => (m, b),
+                    _ => return Err(CodeErrorKind::NotAMacro).with_span(inner.span),
+                };
                 let child = MacroExpander::new(
                     self.ast,
                     self.global_ctx.clone(),
                     self.invocation_span,
                     item,
-                    self.expand_args(args)?.to_vec(),
+                    bound_args
+                        .iter()
+                        .copied()
+                        .chain(self.expand_args(args)?.iter().copied())
+                        .collect(),
                 );
                 return child.expand();
             }
@@ -299,62 +390,136 @@ impl<'ast> MacroExpander<'ast> {
             Block(statements, ret) => {
                 let mut new_statements = Vec::new();
                 for statement in statements {
-                    new_statements.push(self.visit_stmt(statement)?);
+                    if let super::StatementKind::Expression(Expr {
+                        kind: super::ExprKind::EtCetera(inner),
+                        span,
+                    }) = statement.kind
+                    {
+                        if self.et_cetera_index.is_some() {
+                            return Err(CodeErrorKind::EtCeteraInEtCetera).with_span(*span);
+                        }
+                        for idx in 0..self.et_cetera_arg.as_ref().unwrap().1.len() {
+                            self.et_cetera_index = Some(idx);
+                            new_statements.push(Statement {
+                                kind: super::StatementKind::Expression(self.visit_expr(inner)?),
+                                span: *span,
+                            });
+                        }
+                        self.et_cetera_index = None;
+                    } else {
+                        new_statements.push(self.visit_stmt(statement)?);
+                    }
                 }
-                Block(new_statements.alloc_on(self.ast), self.visit(ret)?)
+                Block(new_statements.alloc_on(self.ast), self.visit_expr(ret)?)
             }
-            Binary(op, lhs, rhs) => Binary(op, self.visit(lhs)?, self.visit(rhs)?),
-            Ref(inner) => Ref(self.visit(inner)?),
-            Deref(inner) => Deref(self.visit(inner)?),
+            Binary(op, lhs, rhs) => Binary(op, self.visit_expr(lhs)?, self.visit_expr(rhs)?),
+            Ref(inner) => Ref(self.visit_expr(inner)?),
+            Deref(inner) => Deref(self.visit_expr(inner)?),
 
-            Unary(op, inner) => Unary(op, self.visit(inner)?),
-            Assign(lhs, rhs) => Assign(self.visit(lhs)?, self.visit(rhs)?),
-            AssignOp(op, lhs, rhs) => AssignOp(op, self.visit(lhs)?, self.visit(rhs)?),
-            Loop(inner) => Loop(self.visit(inner)?),
-            Break(inner) => Break(inner.map(|i| self.visit(i)).transpose()?),
-            Return(inner) => Return(inner.map(|i| self.visit(i)).transpose()?),
-            Defer(inner) => Defer(self.visit(inner)?),
-            Field(a, name, assoc_fn) => Field(self.visit(a)?, name, assoc_fn),
+            Unary(op, inner) => Unary(op, self.visit_expr(inner)?),
+            Assign(lhs, rhs) => Assign(self.visit_expr(lhs)?, self.visit_expr(rhs)?),
+            AssignOp(op, lhs, rhs) => AssignOp(op, self.visit_expr(lhs)?, self.visit_expr(rhs)?),
+            Loop(inner) => Loop(self.visit_expr(inner)?),
+            Break(inner) => Break(inner.map(|i| self.visit_expr(i)).transpose()?),
+            Return(inner) => Return(inner.map(|i| self.visit_expr(i)).transpose()?),
+            Defer(inner) => Defer(self.visit_expr(inner)?),
+            Field(a, name, assoc_fn) => Field(self.visit_expr(a)?, name, assoc_fn),
             Struct(ty, inits) => {
                 let inits: Vec<_> = inits
                     .iter()
                     .map(|init| {
-                        self.visit(init.value).map(|value| FieldInitializer {
+                        self.visit_expr(init.value).map(|value| FieldInitializer {
                             name: init.name,
                             value,
-                            span: self.invocation_span,
+                            span: init.span,
                         })
                     })
                     .collect::<Result<_, _>>()?;
 
-                Struct(ty, inits.alloc_on(self.ast))
+                Struct(self.visit_typ(ty)?, inits.alloc_on(self.ast))
             }
-            TupleIndex(inner, idx) => TupleIndex(self.visit(inner)?, idx),
-            Index(inner, idx) => Index(self.visit(inner)?, self.visit(idx)?),
+            TupleIndex(inner, idx) => TupleIndex(self.visit_expr(inner)?, idx),
+            Index(inner, idx) => Index(self.visit_expr(inner)?, self.visit_expr(idx)?),
             Range(lower, upper, inclusive) => Range(
-                lower.map(|i| self.visit(i)).transpose()?,
-                upper.map(|i| self.visit(i)).transpose()?,
+                lower.map(|i| self.visit_expr(i)).transpose()?,
+                upper.map(|i| self.visit_expr(i)).transpose()?,
                 inclusive,
             ),
-            If(condition, then, els) => {
-                If(self.visit(condition)?, self.visit(then)?, self.visit(els)?)
+            If(condition, then, els) => If(
+                self.visit_expr(condition)?,
+                self.visit_expr(then)?,
+                self.visit_expr(els)?,
+            ),
+            StaticIf(cond, then, els) => StaticIf(
+                self.visit_expr(cond)?,
+                self.visit_expr(then)?,
+                self.visit_expr(els)?,
+            ),
+            TypeCheck(expr, ty) => TypeCheck(self.visit_expr(expr)?, self.visit_typ(ty)?),
+            Cast(inner, ty) => Cast(self.visit_expr(inner)?, self.visit_typ(ty)?),
+            Fn(ref kind, generic_args) => {
+                let kind = match kind {
+                    FnKind::Normal(_) => kind.clone(),
+                    FnKind::Closure(..) => kind.clone(),
+                    FnKind::Defered(def) => FnKind::Defered(crate::ast::Defered {
+                        typ: self.visit_typ(def.typ)?,
+                        name: def.name,
+                    }),
+                };
+
+                let generic_args = match generic_args {
+                    Some(args) => Some(
+                        args.iter()
+                            .map(|e| self.visit_typ(e))
+                            .collect::<Result<Vec<_>, _>>()?
+                            .alloc_on(self.ast),
+                    ),
+                    None => None,
+                };
+
+                Fn(kind, generic_args)
             }
-            StaticIf(cond, then, els) => StaticIf(cond, self.visit(then)?, self.visit(els)?),
-            Cast(inner, typ) => Cast(self.visit(inner)?, typ),
+            Defered(ref def) => Defered(crate::ast::Defered {
+                typ: self.visit_typ(def.typ)?,
+                name: def.name,
+            }),
+            Static(item, generic_args) => {
+                let generic_args = match generic_args {
+                    Some(args) => Some(
+                        args.iter()
+                            .map(|e| self.visit_typ(e))
+                            .collect::<Result<Vec<_>, _>>()?
+                            .alloc_on(self.ast),
+                    ),
+                    None => None,
+                };
+
+                Static(item, generic_args)
+            }
+            Const(item, generic_args) => {
+                let generic_args = match generic_args {
+                    Some(args) => Some(
+                        args.iter()
+                            .map(|e| self.visit_typ(e))
+                            .collect::<Result<Vec<_>, _>>()?
+                            .alloc_on(self.ast),
+                    ),
+                    None => None,
+                };
+
+                Const(item, generic_args)
+            }
             Continue
             | EnumValue(_, _)
+            | Macro(_, _ /* bound values are "invisible" and should not be replaced */)
             | Lit(_)
             | BoundParam(_, _, _)
-            | Void
-            | Fn(_, _)
-            | Defered(_)
-            | Static(_, _)
-            | Const(_, _) => expr.kind.clone(),
+            | Void => expr.kind.clone(),
         };
 
         let result = Expr {
             kind,
-            span: self.invocation_span,
+            span: expr.span,
         };
 
         Ok(result.alloc_on(self.ast))
@@ -364,7 +529,7 @@ impl<'ast> MacroExpander<'ast> {
         use crate::ast::StatementKind::*;
 
         let kind = match &stmt.kind {
-            Expression(expr) => Expression(self.visit(expr)?),
+            Expression(expr) => Expression(self.visit_expr(expr)?),
             LetDeclaration(decl) => {
                 // Local variables declared in a macro must be renamed to avoid clashes if
                 // same macro is evaluated multiple times in one scope.
@@ -373,15 +538,15 @@ impl<'ast> MacroExpander<'ast> {
 
                 LetDeclaration(crate::ast::LetDeclaration {
                     id: replacement,
-                    typ: decl.typ,
-                    value: decl.value.map(|v| self.visit(v)).transpose()?,
+                    typ: decl.typ.map(|ty| self.visit_typ(ty)).transpose()?,
+                    value: decl.value.map(|v| self.visit_expr(v)).transpose()?,
                 })
             }
         };
 
         let result = Statement {
             kind,
-            span: self.invocation_span,
+            span: stmt.span,
         };
 
         Ok(result)
@@ -494,59 +659,19 @@ impl<'ast> MacroExpander<'ast> {
                 .alloc_on(self.ast))
             }
             BuiltinMacroKind::FormatArgs => {
-                #[derive(PartialEq, Eq, Debug)]
-                enum State {
-                    Normal,
-                    BraceOpen,
-                    BraceClose,
-                }
-
-                if self.args.is_empty() {
-                    return Err(CodeErrorKind::NotEnoughMacroArguments(1))
+                if self.args.len() < 2 {
+                    return Err(CodeErrorKind::NotEnoughMacroArguments(2))
                         .with_span(self.invocation_span);
                 }
 
-                let fmt_string = string_arg!(self, 0);
+                let (wrapper, bound_args) = macro_arg!(self, 0);
+                let fmt_string = string_arg!(self, 1);
+                let mut args = bound_args.to_vec();
 
-                let mut args = Vec::new();
-                let mut string_part = Vec::new();
-
-                let make_arg = |arg: ExprP<'ast>| {
-                    let ret = Expr {
-                        kind: ExprKind::Call(
-                            Expr {
-                                kind: ExprKind::Fn(
-                                    FnKind::Normal(
-                                        self.ast
-                                            .lang_item(LangItemKind::FormatArg)
-                                            .with_span(self.invocation_span)?,
-                                    ),
-                                    None,
-                                ),
-                                span: self.invocation_span,
-                            }
-                            .alloc_on(self.ast),
-                            [Expr {
-                                kind: ExprKind::Ref(arg),
-                                span: self.invocation_span,
-                            }
-                            .alloc_on(self.ast)]
-                            .alloc_on(self.ast),
-                        ),
-                        span: self.invocation_span,
-                    }
-                    .alloc_on(self.ast);
-
-                    Ok::<_, AluminaError>(ret)
-                };
-
-                let mut state = State::Normal;
-                let mut arg_index = 0;
-
-                macro_rules! push_string_part {
-                    () => {
-                        if !string_part.is_empty() {
-                            args.push(make_arg(
+                for piece in format_args(self.invocation_span, fmt_string, self.args.len() - 2)? {
+                    match piece {
+                        Piece::String(string_part) => {
+                            args.push(
                                 Expr {
                                     kind: ExprKind::Lit(Lit::Str(
                                         self.ast.arena.alloc_slice_copy(string_part.as_slice()),
@@ -554,86 +679,65 @@ impl<'ast> MacroExpander<'ast> {
                                     span: self.invocation_span,
                                 }
                                 .alloc_on(self.ast),
-                            )?);
-                            string_part.clear();
+                            );
                         }
-                    };
+                        Piece::Argument(index) => {
+                            args.push(self.args[index + 2]);
+                        }
+                    }
                 }
 
-                for ch in fmt_string.iter().copied() {
-                    state = match state {
-                        State::Normal => match ch {
-                            b'{' => State::BraceOpen,
-                            b'}' => State::BraceClose,
-                            _ => {
-                                string_part.push(ch);
-                                State::Normal
-                            }
-                        },
-                        State::BraceClose => match ch {
-                            b'}' => {
-                                string_part.push(ch);
-                                State::Normal
-                            }
-                            _ => {
-                                return Err(CodeErrorKind::InvalidFormatString(format!(
-                                    "unexpected {:?}",
-                                    ch as char
-                                )))
-                                .with_span(self.args[0].span);
-                            }
-                        },
-                        State::BraceOpen => match ch {
-                            b'{' => {
-                                string_part.push(ch);
-                                State::Normal
-                            }
-                            b'}' => {
-                                push_string_part!();
-
-                                if self.args.len() <= arg_index + 1 {
-                                    return Err(CodeErrorKind::InvalidFormatString(
-                                        "not enough arguments".to_string(),
-                                    ))
-                                    .with_span(self.invocation_span);
-                                }
-
-                                args.push(make_arg(self.args[arg_index + 1])?);
-                                arg_index += 1;
-
-                                State::Normal
-                            }
-                            _ => {
-                                return Err(CodeErrorKind::InvalidFormatString(format!(
-                                    "unexpected {:?}",
-                                    ch as char
-                                )))
-                                .with_span(self.invocation_span);
-                            }
-                        },
-                    };
+                let child = MacroExpander::new(
+                    self.ast,
+                    self.global_ctx.clone(),
+                    self.invocation_span,
+                    wrapper,
+                    args,
+                );
+                child.expand()
+            }
+            BuiltinMacroKind::Bind => {
+                if self.args.is_empty() {
+                    return Err(CodeErrorKind::NotEnoughMacroArguments(1))
+                        .with_span(self.invocation_span);
                 }
 
-                if state != State::Normal {
-                    return Err(CodeErrorKind::InvalidFormatString(
-                        "unexpected end of format string".to_string(),
-                    ))
-                    .with_span(self.invocation_span);
-                }
+                let (bindee, prev_bound_args) = macro_arg!(self, 0);
+                let mut new_args: Vec<_> = prev_bound_args.to_vec();
+                new_args.extend(self.args.iter().copied().skip(1));
 
-                if self.args.len() > arg_index + 1 {
-                    return Err(CodeErrorKind::InvalidFormatString(
-                        "too many arguments".to_string(),
-                    ))
-                    .with_span(self.invocation_span);
-                }
-                push_string_part!();
+                let bound_args = self.ast.arena.alloc_slice_copy(&new_args[..]);
 
                 Ok(Expr {
-                    kind: ExprKind::Array(args.alloc_on(self.ast)),
+                    kind: ExprKind::Macro(bindee, bound_args),
                     span: self.invocation_span,
                 }
                 .alloc_on(self.ast))
+            }
+            BuiltinMacroKind::Reduce => {
+                if self.args.len() < 2 {
+                    return Err(CodeErrorKind::NotEnoughMacroArguments(2))
+                        .with_span(self.invocation_span);
+                }
+
+                let (f, bound_args) = macro_arg!(self, 0);
+                let mut expr = self.args[1];
+
+                for arg in self.args.iter().skip(2) {
+                    let mut new_args: Vec<_> = bound_args.to_vec();
+                    new_args.push(expr);
+                    new_args.push(arg);
+                    let child = MacroExpander::new(
+                        self.ast,
+                        self.global_ctx.clone(),
+                        self.invocation_span,
+                        f,
+                        new_args,
+                    );
+                    expr = child.expand()?;
+                }
+
+                Ok(expr)
             }
         }
     }

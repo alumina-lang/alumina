@@ -1160,25 +1160,25 @@ impl array<Arr: builtins::Array> {
 ///
 /// ## Example
 /// ```
-/// use std::typing::assert_type_eq;
+/// use std::typing::matches;
 /// use std::builtins::unsigned_of;
 ///
-/// assert_type_eq::<unsigned_of<i32>, u32>();
-/// assert_type_eq::<unsigned_of<isize>, usize>();
+/// assert!(matches::<unsigned_of<i32>, u32>());
+/// assert!(matches::<unsigned_of<isize>, usize>());
 ///
-/// assert_type_eq::<unsigned_of<u8>, u8>();
+/// assert!(matches::<unsigned_of<u8>, u8>());
 /// ```
-type unsigned_of<T: Integer> = when T: i8 {
+type unsigned_of<T: Integer> = when typing::matches::<T, i8>() {
     u8
-} else when T: i16 {
+} else when typing::matches::<T, i16>() {
     u16
-} else when T: i32 {
+} else when typing::matches::<T, i32>() {
     u32
-} else when T: i64 {
+} else when typing::matches::<T, i64>() {
     u64
-} else when T: i128 {
+} else when typing::matches::<T, i128>() {
     u128
-} else when T: isize {
+} else when typing::matches::<T, isize>() {
     usize
 } else {
     T
@@ -1188,25 +1188,25 @@ type unsigned_of<T: Integer> = when T: i8 {
 ///
 /// ## Example
 /// ```
-/// use std::typing::assert_type_eq;
+/// use std::typing::matches;
 /// use std::builtins::signed_of;
 ///
-/// assert_type_eq::<signed_of<u32>, i32>();
-/// assert_type_eq::<signed_of<usize>, isize>();
+/// assert!(matches::<signed_of<u32>, i32>());
+/// assert!(matches::<signed_of<usize>, isize>());
 ///
-/// assert_type_eq::<signed_of<i8>, i8>();
+/// assert!(matches::<signed_of<i8>, i8>());
 /// ```
-type signed_of<T: Integer> = when T: u8 {
+type signed_of<T: Integer> = when typing::is_same::<T, u8>() {
     i8
-} else when T: u16 {
+} else when typing::is_same::<T, u16>() {
     i16
-} else when T: u32 {
+} else when typing::is_same::<T, u32>() {
     i32
-} else when T: u64 {
+} else when typing::is_same::<T, u64>() {
     i64
-} else when T: u128 {
+} else when typing::is_same::<T, u128>() {
     i128
-} else when T: usize {
+} else when typing::is_same::<T, usize>() {
     isize
 } else {
     T
@@ -1216,10 +1216,10 @@ type signed_of<T: Integer> = when T: u8 {
 ///
 /// ## Example
 /// ```
-/// use std::typing::assert_type_eq;
+/// use std::typing::matches;
 /// use std::builtins::element_of;
 ///
-/// assert_type_eq::<element_of<[i32; 3]>, i32>();
+/// assert!(matches::<element_of<[i32; 3]>, i32>());
 /// ```
 type element_of<T: Array> = typeof({ let t: T; t[0] });
 
@@ -1227,11 +1227,11 @@ type element_of<T: Array> = typeof({ let t: T; t[0] });
 ///
 /// ## Example
 /// ```
-/// use std::typing::assert_type_eq;
+/// use std::typing::matches;
 /// use std::builtins::deref_of;
 ///
-/// assert_type_eq::<deref_of<&i32>, i32>();
-/// assert_type_eq::<deref_of<&mut i32>, i32>();
+/// assert!(matches::<deref_of<&i32>, i32>());
+/// assert!(matches::<deref_of<&mut i32>, i32>());
 /// ```
 type deref_of<T: Pointer> = typeof({ let t: T; *t });
 
@@ -1239,10 +1239,10 @@ type deref_of<T: Pointer> = typeof({ let t: T; *t });
 ///
 /// ## Example
 /// ```
-/// use std::typing::assert_type_eq;
+/// use std::typing::matches;
 /// use std::builtins::tuple_head_of;
 ///
-/// assert_type_eq::<tuple_head_of<(i32, u8, ())>, i32>();
+/// assert!(matches::<tuple_head_of<(i32, u8, ())>, i32>());
 /// ```
 #[lang(typeop_tuple_head_of)]
 type tuple_head_of<T: builtins::Tuple>;
@@ -1253,11 +1253,11 @@ type tuple_head_of<T: builtins::Tuple>;
 ///
 /// ## Example
 /// ```
-/// use std::typing::assert_type_eq;
+/// use std::typing::matches;
 /// use std::builtins::tuple_tail_of;
 ///
-/// assert_type_eq::<tuple_tail_of<(i32, u8, ())>, (u8, ())>();
-/// assert_type_eq::<tuple_tail_of<(i32,)>, ()>();
+/// assert!(matches::<tuple_tail_of<(i32, u8, ())>, (u8, ())>());
+/// assert!(matches::<tuple_tail_of<(i32,)>, ()>());
 /// ```
 #[lang(typeop_tuple_tail_of)]
 type tuple_tail_of<T: builtins::Tuple>;
@@ -1266,13 +1266,13 @@ type tuple_tail_of<T: builtins::Tuple>;
 ///
 /// ## Example
 /// ```
-/// use std::typing::assert_type_eq;
+/// use std::typing::matches;
 /// use std::builtins::return_type_of;
 ///
 /// fn add(x: i32, y: i32) -> i32 { x + y }
 ///
-/// assert_type_eq::<return_type_of<add>, i32>();
-/// assert_type_eq::<return_type_of<fn() -> u8>, u8>();
+/// assert!(matches::<return_type_of<add>, i32>());
+/// assert!(matches::<return_type_of<fn() -> u8>, u8>());
 /// ```
 #[lang(typeop_return_type_of)]
 type return_type_of<T>;
@@ -1281,13 +1281,13 @@ type return_type_of<T>;
 ///
 /// ## Example
 /// ```
-/// use std::typing::assert_type_eq;
+/// use std::typing::matches;
 /// use std::builtins::arguments_of;
 ///
 /// fn add(x: i32, y: i32) -> i32 { x + y }
 ///
-/// assert_type_eq::<arguments_of<add>, (i32, i32)>();
-/// assert_type_eq::<arguments_of<fn() -> u8>, ()>();
+/// assert!(matches::<arguments_of<add>, (i32, i32)>());
+/// assert!(matches::<arguments_of<fn() -> u8>, ()>());
 /// ```
 #[lang(typeop_arguments_of)]
 type arguments_of<T>;
@@ -1296,14 +1296,14 @@ type arguments_of<T>;
 ///
 /// ## Example
 /// ```
-/// use std::typing::assert_type_eq;
+/// use std::typing::matches;
 /// use std::builtins::generic_args_of;
 ///
 /// fn add<T>(x: T, y: T) -> T { x + y }
 ///
-/// assert_type_eq::<generic_args_of<add<i32>>, (i32,)>();
-/// assert_type_eq::<generic_args_of<Result<&[u8], i32>>, (&[u8], i32)>();
-/// assert_type_eq::<generic_args_of<std::cmp::Ordering>, ()>();
+/// assert!(matches::<generic_args_of<add<i32>>, (i32,)>());
+/// assert!(matches::<generic_args_of<Result<&[u8], i32>>, (&[u8], i32)>());
+/// assert!(matches::<generic_args_of<std::cmp::Ordering>, ()>());
 /// ```
 #[lang(typeop_generic_args_of)]
 type generic_args_of<T>;
@@ -1312,11 +1312,11 @@ type generic_args_of<T>;
 ///
 /// ## Example
 /// ```
-/// use std::typing::assert_type_eq;
+/// use std::typing::matches;
 /// use std::builtins::pointer_with_mut_of;
 ///
-/// assert_type_eq::<pointer_with_mut_of<void, &i32>, &void>();
-/// assert_type_eq::<pointer_with_mut_of<usize, &mut Option<usize>>, &mut usize>();
+/// assert!(matches::<pointer_with_mut_of<void, &i32>, &void>());
+/// assert!(matches::<pointer_with_mut_of<usize, &mut Option<usize>>, &mut usize>());
 /// ```
 #[lang(typeop_pointer_with_mut_of)]
 type pointer_with_mut_of<T, Ptr: Pointer>;
@@ -1325,11 +1325,11 @@ type pointer_with_mut_of<T, Ptr: Pointer>;
 ///
 /// ## Example
 /// ```
-/// use std::typing::assert_type_eq;
+/// use std::typing::matches;
 /// use std::builtins::array_with_length_of;
 ///
-/// assert_type_eq::<array_with_length_of<i32, [(); 42]>, [i32; 42]>();
-/// assert_type_eq::<array_with_length_of<Option<bool>, [i64; 1337]>, [Option<bool>; 1337]>();
+/// assert!(matches::<array_with_length_of<i32, [(); 42]>, [i32; 42]>());
+/// assert!(matches::<array_with_length_of<Option<bool>, [i64; 1337]>, [Option<bool>; 1337]>());
 /// ```
 #[lang(typeop_array_with_length_of)]
 type array_with_length_of<T, Arr: Array>;
@@ -1338,14 +1338,14 @@ type array_with_length_of<T, Arr: Array>;
 ///
 /// ## Example
 /// ```
-/// use std::typing::assert_type_eq;
+/// use std::typing::matches;
 /// use std::builtins::enum_type_of;
 ///
 /// enum Foo { A, B, C }
 /// enum Bar { A = 0usize, B, C }
 ///
-/// assert_type_eq::<enum_type_of<Foo>, i32>();
-/// assert_type_eq::<enum_type_of<Bar>, usize>();
+/// assert!(matches::<enum_type_of<Foo>, i32>());
+/// assert!(matches::<enum_type_of<Bar>, usize>());
 /// ```
 #[lang(typeop_enum_type_of)]
 type enum_type_of<T: Enum>;
@@ -1422,6 +1422,12 @@ type enum_type_of<T: Enum>;
 
 /// Matches types that have layout compatible with `T` (same size and alignment)
 #[lang(proto_same_layout_as)] protocol SameLayoutAs<T> {}
+
+/// A special protocol that matches any type
+#[lang(proto_any)] protocol Any {}
+
+/// A special protocol that never matches
+#[lang(proto_none)] protocol None {}
 
 #[docs(no_index)]
 mod internal {
@@ -1538,7 +1544,7 @@ mod internal {
         /// the type. In such a case, this function returns `MIN` itself.
         #[inline]
         fn wrapping_div(lhs: Self, rhs: Self) -> Self {
-            when  Self: Unsigned {
+            when lhs is Unsigned {
                 lhs / rhs
             } else {
                 if lhs == Self::min_value() && rhs == -1 {
@@ -1592,7 +1598,7 @@ mod internal {
                 return Option::none();
             }
 
-            when Self: Unsigned {
+            when lhs is Unsigned {
                 Option::some(lhs / rhs)
             } else {
                 if lhs == Self::min_value() && rhs == -1 {
@@ -1614,7 +1620,7 @@ mod internal {
         /// ```
         #[inline]
         fn swap_bytes(self: Self) -> Self {
-            when Self: usize {
+            when self is usize {
                 #[cfg(target_pointer_width = "64")]
                 {
                     (self as u64).swap_bytes() as usize
@@ -1623,16 +1629,16 @@ mod internal {
                 {
                     (self as u32).swap_bytes() as usize
                 }
-            } else when Self: u8 {
+            } else when self is u8 {
                 self
-            } else when Self: u16 {
+            } else when self is u16 {
                 (self >> 8) | (self << 8)
-            } else when Self: u32 {
+            } else when self is u32 {
                 (self >> 24)
                 | ((self >> 8) & 0x0000FF00u32)
                 | ((self << 8) & 0x00FF0000u32)
                 | (self << 24)
-            } else when Self: u64 {
+            } else when self is u64 {
                 (self >> 56)
                 | ((self >> 40) & 0x000000000000FF00u64)
                 | ((self >> 24) & 0x0000000000FF0000u64)
@@ -1641,7 +1647,7 @@ mod internal {
                 | ((self << 24) & 0x0000FF0000000000u64)
                 | ((self << 40) & 0x00FF000000000000u64)
                 | (self << 56)
-            } else when Self: u128 {
+            } else when self is u128 {
                 (self >> 120)
                 | ((self >> 104) & 0x0000000000000000000000000000FF00u128)
                 | ((self >> 88) & 0x00000000000000000000000000FF0000u128)
@@ -1760,7 +1766,7 @@ mod internal {
         fn count_ones(self: Self) -> u32 {
             use libc::{c_int, c_ulong, c_ulonglong, c_uint};
 
-            when Self: usize {
+            when self is usize {
                 #[cfg(target_pointer_width = "64")]
                 {
                     (self as u64).count_ones()
@@ -1770,11 +1776,11 @@ mod internal {
                     (self as u32).count_ones()
                 }
             } else {
-                let ret = when Self: u128 {
+                let ret = when self is u128 {
                     return ((self >> 64) as u64).count_ones() + (self as u64).count_ones();
-                } else when Self: c_ulonglong {
+                } else when self is c_ulonglong {
                     intrinsics::codegen_func::<c_int>("__builtin_popcountll", self)
-                } else when Self: c_ulong {
+                } else when self is c_ulong {
                     intrinsics::codegen_func::<c_int>("__builtin_popcountl", self)
                 } else {
                     intrinsics::codegen_func::<c_int>("__builtin_popcount", self as c_uint)
@@ -1804,7 +1810,7 @@ mod internal {
             use libc::{c_int, c_ulong, c_uint, c_ulonglong};
             use mem::size_of;
 
-            when Self: usize {
+            when self is usize {
                 #[cfg(target_pointer_width = "64")]
                 {
                     (self as u64).leading_zeros()
@@ -1818,18 +1824,18 @@ mod internal {
                     return (size_of::<Self>() * 8) as u32;
                 }
 
-                let ret = when Self: u128 {
+                let ret = when self is u128 {
                     let head = (self >> 64) as u64;
                     if head == 0 {
                         return (self as u64).leading_zeros() + 64;
                     } else {
                         return head.leading_zeros();
                     }
-                } else when Self: c_ulonglong {
+                } else when self is c_ulonglong {
                     intrinsics::codegen_func::<c_int>("__builtin_clzll", self)
-                } else when Self: c_ulong {
+                } else when self is c_ulong {
                     intrinsics::codegen_func::<c_int>("__builtin_clzl", self)
-                } else when Self: c_uint {
+                } else when self is c_uint {
                     intrinsics::codegen_func::<c_int>("__builtin_clz", self)
                 } else {
                     let val =
@@ -1853,7 +1859,7 @@ mod internal {
             use libc::{c_int, c_ulong, c_uint, c_ulonglong};
             use mem::size_of;
 
-            when Self: usize {
+            when self is usize {
                 #[cfg(target_pointer_width = "64")]
                 {
                     (self as u64).trailing_zeros()
@@ -1867,18 +1873,18 @@ mod internal {
                     return (size_of::<Self>() * 8) as u32;
                 }
 
-                let ret = when Self: u128 {
+                let ret = when self is u128 {
                     let tail = self as u64;
                     if tail == 0 {
                         return ((self >> 64) as u64).trailing_zeros() + 64;
                     } else {
                         return tail.trailing_zeros();
                     }
-                } else when Self: c_ulonglong {
+                } else when self is c_ulonglong {
                     intrinsics::codegen_func::<c_int>("__builtin_ctzll", self)
-                } else when Self: c_ulong {
+                } else when self is c_ulong {
                     intrinsics::codegen_func::<c_int>("__builtin_ctzl", self)
-                } else when Self: c_uint {
+                } else when self is c_uint {
                     intrinsics::codegen_func::<c_int>("__builtin_ctz", self)
                 } else {
                     let val =
@@ -2234,7 +2240,7 @@ mod tests {
 
     #[test]
     fn test_array_size_constexpr() {
-        use typing::{assert_type_eq, assert_type_ne};
+        use typing::matches;
 
         const SIZE = 5usize;
 
@@ -2243,9 +2249,9 @@ mod tests {
         let c: [u8; 1 + SIZE * 2];
         let d: [u8; 11];
 
-        assert_type_eq::<typeof(a), typeof(b)>();
-        assert_type_eq::<typeof(c), typeof(d)>();
-        assert_type_ne::<typeof(a), typeof(c)>();
+        assert!(matches::<typeof(a), typeof(b)>());
+        assert!(matches::<typeof(c), typeof(d)>());
+        assert!(!matches::<typeof(a), typeof(c)>());
     }
 
     #[test]
