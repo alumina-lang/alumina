@@ -388,7 +388,7 @@ assert_eq!(r2.unwrap_or(40), 40);
 <div class="signature" id="item.unwrap_or_else">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">unwrap_or_else</span>&lt;F&gt;(self: <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, E&gt;, func: F) -> T<div class="protocol-bound">
-F: Fn() -> T</div>
+F: Fn(E) -> T</div>
 </h4>
 <div class="source-link">
 <a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/result.alu#L267-L273"/>source</a>
@@ -404,9 +404,9 @@ Return the success value or a default value provided by a callback
 <pre class="with-playground-link"><code class="language-alumina">let r1: Result&lt;i32, i32&gt; = Result::ok(10);
 let r2: Result&lt;i32, i32&gt; = Result::err(20);
 
-assert_eq!(r1.unwrap_or_else(i32::max_value), 10);
-assert_eq!(r2.unwrap_or_else(i32::max_value), i32::max_value());
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20let%20r1%3a%20Result%3ci32%2c%20i32%3e%20%3d%20Result%3a%3aok%2810%29%3b%0a%20%20%20%20let%20r2%3a%20Result%3ci32%2c%20i32%3e%20%3d%20Result%3a%3aerr%2820%29%3b%0a%20%20%20%20%0a%20%20%20%20assert%5feq%21%28r1%2eunwrap%5for%5felse%28i32%3a%3amax%5fvalue%29%2c%2010%29%3b%0a%20%20%20%20assert%5feq%21%28r2%2eunwrap%5for%5felse%28i32%3a%3amax%5fvalue%29%2c%20i32%3a%3amax%5fvalue%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+assert_eq!(r1.unwrap_or_else(|_: i32| -&gt; i32 { i32::max_value() }), 10);
+assert_eq!(r2.unwrap_or_else(|_: i32| -&gt; i32 { i32::max_value() }), i32::max_value());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20let%20r1%3a%20Result%3ci32%2c%20i32%3e%20%3d%20Result%3a%3aok%2810%29%3b%0a%20%20%20%20let%20r2%3a%20Result%3ci32%2c%20i32%3e%20%3d%20Result%3a%3aerr%2820%29%3b%0a%20%20%20%20%0a%20%20%20%20assert%5feq%21%28r1%2eunwrap%5for%5felse%28%7c%5f%3a%20i32%7c%20%2d%3e%20i32%20%7b%20i32%3a%3amax%5fvalue%28%29%20%7d%29%2c%2010%29%3b%0a%20%20%20%20assert%5feq%21%28r2%2eunwrap%5for%5felse%28%7c%5f%3a%20i32%7c%20%2d%3e%20i32%20%7b%20i32%3a%3amax%5fvalue%28%29%20%7d%29%2c%20i32%3a%3amax%5fvalue%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
