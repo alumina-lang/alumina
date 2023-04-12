@@ -7,8 +7,7 @@ use crate::ast::{
     Span, Statement, StatementKind, Ty, TyP, UnOp,
 };
 use crate::common::{
-    AluminaError, ArenaAllocatable, CodeErrorBuilder, CodeErrorKind, HashMap, HashSet,
-    WithSpanDuringParsing,
+    AluminaError, ArenaAllocatable, CodeErrorBuilder, CodeErrorKind, HashSet, WithSpanDuringParsing,
 };
 use crate::global_ctx::GlobalCtx;
 use crate::name_resolution::pass1::FirstPassVisitor;

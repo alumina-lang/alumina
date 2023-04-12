@@ -1,11 +1,10 @@
 use crate::name_resolution::scope::BoundItemType;
 
 use super::{
-    format, AstCtx, AstId, BinOp, BuiltinType, ClosureBinding, ExprKind, ExprP, FnKind, Function,
-    Item, ItemP, Lit, Statement, StatementKind, Ty, TyP, UnOp,
+    AstCtx, AstId, BinOp, BuiltinType, ClosureBinding, ExprKind, ExprP, FnKind, Function, Item,
+    ItemP, Lit, Statement, StatementKind, Ty, TyP, UnOp,
 };
 use std::fmt::Write;
-use std::{fmt::format, marker::PhantomData, sync::Arc};
 
 pub struct PrettyPrinter<'ast> {
     ast: &'ast AstCtx<'ast>,
@@ -38,22 +37,22 @@ impl<'ast> PrettyPrinter<'ast> {
 
     pub fn print_builtin_type(&mut self, kind: BuiltinType) -> String {
         match kind {
-            BuiltinType::Never => format!("!"),
-            BuiltinType::Bool => format!("bool"),
-            BuiltinType::U8 => format!("u8"),
-            BuiltinType::U16 => format!("u16"),
-            BuiltinType::U32 => format!("u32"),
-            BuiltinType::U64 => format!("u64"),
-            BuiltinType::U128 => format!("u128"),
-            BuiltinType::USize => format!("usize"),
-            BuiltinType::ISize => format!("isize"),
-            BuiltinType::I8 => format!("i8"),
-            BuiltinType::I16 => format!("i16"),
-            BuiltinType::I32 => format!("i32"),
-            BuiltinType::I64 => format!("i64"),
-            BuiltinType::I128 => format!("i128"),
-            BuiltinType::F32 => format!("f32"),
-            BuiltinType::F64 => format!("f64"),
+            BuiltinType::Never => "!".to_string(),
+            BuiltinType::Bool => "bool".to_string(),
+            BuiltinType::U8 => "u8".to_string(),
+            BuiltinType::U16 => "u16".to_string(),
+            BuiltinType::U32 => "u32".to_string(),
+            BuiltinType::U64 => "u64".to_string(),
+            BuiltinType::U128 => "u128".to_string(),
+            BuiltinType::USize => "usize".to_string(),
+            BuiltinType::ISize => "isize".to_string(),
+            BuiltinType::I8 => "i8".to_string(),
+            BuiltinType::I16 => "i16".to_string(),
+            BuiltinType::I32 => "i32".to_string(),
+            BuiltinType::I64 => "i64".to_string(),
+            BuiltinType::I128 => "i128".to_string(),
+            BuiltinType::F32 => "f32".to_string(),
+            BuiltinType::F64 => "f64".to_string(),
         }
     }
 
@@ -283,7 +282,7 @@ impl<'ast> PrettyPrinter<'ast> {
                 let mut s = String::new();
                 for stmt in stmts {
                     s.push_str(&self.print_stmt(stmt));
-                    s.push_str(" ");
+                    s.push(' ');
                 }
 
                 // Return to not add extra braces
@@ -528,7 +527,7 @@ impl<'ast> PrettyPrinter<'ast> {
                 }
                 Lit::Float(val, kind) => {
                     let mut s = String::new();
-                    s.push_str(&val.to_string());
+                    s.push_str(val.as_ref());
                     if let Some(kind) = kind {
                         s.push_str(&self.print_builtin_type(*kind));
                     }
@@ -543,7 +542,7 @@ impl<'ast> PrettyPrinter<'ast> {
                     add_parens = true;
                     format!("break {}", self.print_expr_parens(val))
                 } else {
-                    format!("break")
+                    "break".to_string()
                 }
             }
             ExprKind::Return(val) => {
@@ -551,14 +550,14 @@ impl<'ast> PrettyPrinter<'ast> {
                     add_parens = true;
                     format!("return {}", self.print_expr_parens(val))
                 } else {
-                    format!("return")
+                    "return".to_string()
                 }
             }
             ExprKind::Defer(val) => {
                 add_parens = true;
                 format!("defer {}", self.print_expr_parens(val))
             }
-            ExprKind::Continue => format!("continue"),
+            ExprKind::Continue => "continue".to_string(),
             ExprKind::Tuple(args) => {
                 let mut s = String::new();
                 for (i, arg) in args.iter().enumerate() {
@@ -625,7 +624,7 @@ impl<'ast> PrettyPrinter<'ast> {
                             format!("..{}", self.print_expr_parens(upper))
                         }
                     }
-                    (None, None) => format!(".."),
+                    (None, None) => "..".to_string(),
                 }
             }
             ExprKind::TypeCheck(inner, typ) => {
@@ -672,9 +671,9 @@ impl<'ast> PrettyPrinter<'ast> {
             }
             ExprKind::Void => {
                 if braces {
-                    return format!("{{}}");
+                    return "{}".to_string();
                 } else {
-                    format!("()")
+                    "()".to_string()
                 }
             }
             // Those will never appear in the AST post-macro expansion
