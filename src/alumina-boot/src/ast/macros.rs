@@ -560,7 +560,7 @@ impl<'ast> MacroExpander<'ast> {
             BuiltinMacroKind::Stringify => {
                 assert_args!(self, 1);
 
-                let mut printer = PrettyPrinter::new(self.ast, false);
+                let mut printer = PrettyPrinter::new(self.ast);
                 let value = self
                     .ast
                     .arena

@@ -8,12 +8,11 @@ use std::fmt::Write;
 
 pub struct PrettyPrinter<'ast> {
     ast: &'ast AstCtx<'ast>,
-    indent: bool,
 }
 
 impl<'ast> PrettyPrinter<'ast> {
-    pub fn new(ast: &'ast AstCtx<'ast>, indent: bool) -> Self {
-        Self { ast, indent }
+    pub fn new(ast: &'ast AstCtx<'ast>) -> Self {
+        Self { ast }
     }
 
     pub fn print_stmt(&mut self, stmt: &Statement<'ast>) -> String {
