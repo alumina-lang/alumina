@@ -335,8 +335,6 @@ Constant evaluation supports many of the language features, including variable a
 - inline assembly and most other compiler intrinsics
 - atomic operations
 - `dyn` pointers and virtual dispatch
-- string formatting
-- dynamic memory allocation (`malloc` is a foreign function call)
 - type punning of any sort (e.g. via a union, `std::util::transmute` or pointer casts)
 - pointer arithmetic between pointers of different provenance
   ```rust
@@ -477,7 +475,7 @@ Alumina's type system consists of the following types:
 - fixed-size arrays (e.g. `[i32; 3]`, `[i32; 10]`)
 - [never type](https://docs.alumina-lang.net/std/builtins/never.html) (`!`)
 - function pointers (e.g. `fn(i32) -> i32`)
-- Named types (can have `impl` blocks)
+- named types (can have `impl` blocks)
     - structs (`struct Foo { x: i32, y: i32 }`)
     - enums (`enum Foo { A, B, C }`)
     - unions (`union Foo { x: i32, y: i32 }`)

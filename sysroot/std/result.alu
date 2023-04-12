@@ -261,14 +261,14 @@ impl Result<T, E> {
     /// let r1: Result<i32, i32> = Result::ok(10);
     /// let r2: Result<i32, i32> = Result::err(20);
     ///
-    /// assert_eq!(r1.unwrap_or_else(i32::max_value), 10);
-    /// assert_eq!(r2.unwrap_or_else(i32::max_value), i32::max_value());
+    /// assert_eq!(r1.unwrap_or_else(|_: i32| -> i32 { i32::max_value() }), 10);
+    /// assert_eq!(r2.unwrap_or_else(|_: i32| -> i32 { i32::max_value() }), i32::max_value());
     /// ```
-    fn unwrap_or_else<F: Fn() -> T>(self: Result<T, E>, func: F) -> T {
+    fn unwrap_or_else<F: Fn(E) -> T>(self: Result<T, E>, func: F) -> T {
         if self.is_ok() {
             self.unwrap()
         } else {
-            func()
+            func(self.unwrap_err())
         }
     }
 

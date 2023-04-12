@@ -12,8 +12,10 @@
 //! ```
 //!
 //! This module consists of a protocol [Rng] which can be used to implement a random number
-//! generator that provides "raw randomness" and an extension mixin [RngExt] which adds common
-//! functionality to create various kinds of random numbers.
+//! generator that provides "raw randomness", [Distribution] protocol and various concrete
+//! implementations, such as [Normal] and [Bernoulli] that can be used to sample random values
+//! of a particular kind, and [RngExt] mixin which provides convenience methods for common use
+//! cases.
 //!
 //! The module also provides a [Pcg32], a decent general purpose pseudo-random generator, [OsRng] backed by the OS-provided
 //! random number generator, and [thread_rng], a convenience thread-local random generator that does not need manual seeding.
@@ -87,6 +89,444 @@ protocol Rng<Self> {
             }
         }
     }
+}
+
+/// Iterator yielding random samples from a distribution.
+///
+/// See [Distribution::sample_iter].
+struct DistIterator<D, T, R> {
+    dist: &D,
+    rng: &mut R
+}
+
+impl DistIterator<D, T, R> {
+    /// @ iter::Iterator::next
+    fn next(self: &mut DistIterator<D, T, R>) -> Option<T> {
+        Option::some(self.dist.sample(self.rng))
+    }
+
+    mixin iter::Iterator<DistIterator<D, T, R>, T>;
+    mixin iter::IteratorExt<DistIterator<D, T, R>, T>;
+}
+
+/// Probability distributions
+///
+/// Objects implementing [Distribution] can be used to sample random values using an arbitrary
+/// random number generator implementing [Rng].
+///
+/// Distributions should be cheap to clone and should not store any state. The state should be
+/// stored in the random number generator.
+protocol Distribution<Self, T, R: Rng<R>> {
+    /// Samples a distribution using a provided random number generator.
+    fn sample(self: &Self, rng: &mut R) -> T;
+
+    /// Raturns an iterator producing an infinite stream of values
+    /// sampled from the distribution.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::random::{thread_rng, UniformInteger};
+    ///
+    /// let dist = UniformInteger::new(0..=5);
+    ///
+    /// // Prints 10 random numbers between 0 and 5 inclusive
+    /// for i in dist.sample_iter(thread_rng()).take(10) {
+    ///     println!("{}", i);
+    /// }
+    /// ```
+    fn sample_iter(self: &Self, rng: &mut R) -> DistIterator<Self, T, R> {
+        DistIterator {
+            dist: self,
+            rng: rng
+        }
+    }
+}
+
+/// Uniform [distribution](Distribution) over a range of integers.
+///
+/// Each integer in the range will be equally likely to be sampled regardless
+/// of the range kind.
+///
+/// ## Example
+/// ```
+/// use std::random::{thread_rng, UniformInteger};
+///
+/// let dist = UniformInteger::new(0..=5);
+/// println!("{}", dist.sample(thread_rng()));
+/// // Equivalent to
+/// // println!("{}", thread_rng().next(0..=5));
+/// ```
+struct UniformInteger<T: builtins::Integer, Range: builtins::RangeOf<T>> {
+    _range: Range
+}
+
+impl UniformInteger<T: builtins::Integer, Range: builtins::RangeOf<T>> {
+    /// Creates a new uniform distribution from an integer range
+    ///
+    /// ## Example
+    /// ```
+    /// use std::random::{thread_rng, UniformInteger};
+    ///
+    /// let dist = UniformInteger::new(0..=5);
+    /// println!("{}", dist.sample(thread_rng()));
+    /// ```
+    fn new(range: Range) -> UniformInteger<T, Range> {
+        UniformInteger::<T, Range> { _range: range }
+    }
+
+    /// @ Distribution::sample
+    fn sample<R: Rng<R>>(self: &UniformInteger<T, Range>, rng: &mut R) -> T {
+        rng.next(self._range)
+    }
+
+    mixin<R: Rng<R>> Distribution<UniformInteger<T, Range>, T, R>;
+}
+
+/// Bernoulli distribution. Returns `true` with probability `p` and `false` with
+/// probability `1 - p`.
+///
+/// ## Example
+/// ```
+/// use std::random::{thread_rng, Bernoulli};
+///
+/// let dist = Bernoulli::new(0.5);
+/// if dist.sample(thread_rng()) {
+///     println!("Heads");
+/// } else {
+///     println!("Tails");
+/// }
+/// ```
+struct Bernoulli {
+    _threshold: u64
+}
+
+impl Bernoulli {
+    /// Creates a new Bernoulli distribution with the given probability.
+    ///
+    /// Panics if `p` is not in the range `[0, 1]`.
+    fn new(p: f64) -> Bernoulli {
+        assert!(p >= 0.0 && p <= 1.0);
+
+        Bernoulli {
+            _threshold: (p * 2.0 * ((1u64 << 63) as f64)) as u64
+        }
+    }
+
+    /// @ Distribution::sample
+    fn sample<R: Rng<R>>(self: &Bernoulli, rng: &mut R) -> bool {
+        self._threshold == u64::max_value() ||
+            (rng.next_u64() < self._threshold)
+    }
+
+    mixin<R: Rng<R>> Distribution<Bernoulli, bool, R>;
+}
+
+/// Weighted discrete distribution.
+///
+/// Returns an index from `0..weights.len()` with probability proportional to
+/// the weight at that index.
+///
+/// Sampling from this distributions has a complexity of `O(log n)` where `n` is the number of
+/// weights.
+///
+/// This distribution allocates a vector of cumulative weights on construction, so it needs to be
+/// freed when it is no longer needed.
+///
+/// ## Example
+/// ```
+/// use std::random::{thread_rng, WeightedIndex};
+///
+/// let values = ["Mayo", "Mustard", "Ketchup", "BBQ Sauce"];
+/// let dist = WeightedIndex::new(&[1, 0, 1, 2]);
+/// defer dist.free();
+///
+/// // Prints "BBQ Sauce" with probability 1/2, and "Ketchup" or "Mayo"
+/// // with probability 1/4 each
+/// println!("{}", values[dist.sample(thread_rng())]);
+/// ```
+struct WeightedIndex<T: builtins::Numeric> {
+    _cumulative_weights: collections::Vector<T>,
+    _total_weight: T
+}
+
+impl WeightedIndex<T: builtins::Numeric> {
+    /// Creates a new weighted index distribution from a slice of weights.
+    ///
+    /// Panics if the slice is empty, if any of the weights are negative, or if the total weight is
+    /// zero.
+    fn new(slice: &[T]) -> WeightedIndex<T> {
+        from_iter(&slice.iter())
+    }
+
+    /// Creates a new weighted index distribution from an iterator of weights.
+    ///
+    /// Panics if the iterator is empty, if any of the weights are negative, or if the total weight is
+    /// zero.
+    fn from_iter<I: iter::Iterator<I, T>>(iter: &mut I) -> WeightedIndex<T> {
+        let cumulative = iter.next().unwrap();
+        if cumulative < (0 as T) {
+            panic!("negative weight");
+        }
+
+        let weights = iter
+            .map(|&cumulative, v: T| -> T {
+                let ret = cumulative;
+                if v < (0 as T) {
+                    panic!("negative weight");
+                }
+
+                cumulative += v;
+                ret
+            })
+            .to_vector();
+
+        if cumulative == (0 as T) {
+            panic!("zero total weight");
+        }
+
+        WeightedIndex::<T> {
+            _cumulative_weights: weights,
+            _total_weight: cumulative
+        }
+    }
+
+    /// @ Distribution::sample
+    fn sample<R: Rng<R>>(self: &WeightedIndex<T>, rng: &mut R) -> usize {
+        use cmp::{Ordering, binary_search_by};
+
+        let sample: T = when typing::is_integer::<T>() {
+            rng.next((0 as T)..self._total_weight)
+        } else when typing::is_floating_point::<T>() {
+            rng.next_float() * self._total_weight
+        };
+
+        self._cumulative_weights[..]
+            .binary_search_by(|=sample, w: &T| -> Ordering {
+                if *w <= sample {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                }
+            })
+            .unwrap_or_else(|i: usize| -> usize { i })
+    }
+
+    /// @ mem::Movable::move
+    fn move(self: &mut WeightedIndex<T>) -> WeightedIndex<T> {
+        WeightedIndex::<T> {
+            _cumulative_weights: self._cumulative_weights.move(),
+            _total_weight: self._total_weight
+        }
+    }
+
+    /// @ mem::Freeable::free
+    fn free(self: &mut WeightedIndex<T>) {
+        self._cumulative_weights.free();
+    }
+
+    mixin<R: Rng<R>> Distribution<WeightedIndex<T>, usize, R>;
+}
+
+
+
+/// Uniform floating point distribution over the `[0, 1)` interval.
+///
+/// Sampling from this distribution is equivalent to calling [RngExt::next_float].
+///
+/// See also [OpenClosed01] and [Open01].
+///
+/// ## Example
+/// ```
+/// use std::random::{thread_rng, StandardFloat};
+///
+/// let dist: StandardFloat<f64> = StandardFloat::new();
+/// // Prints a random float between 0 (inclusive) and 1 (exclusive)
+/// println!("{}", dist.sample(thread_rng()));
+/// ```
+struct StandardFloat<F: builtins::FloatingPoint> {}
+impl StandardFloat<F: builtins::FloatingPoint> {
+    fn new() -> StandardFloat<F> {
+        StandardFloat::<F> { }
+    }
+
+    /// @ Distribution::sample
+    fn sample<R: Rng<R>>(self: &StandardFloat<F>, rng: &mut R) -> F {
+        when typing::is_same::<F, f32>() {
+            let scale = 1.0f32 / ((1u32 << 24) as f32);
+            let x = rng.next_u32() >> 8;
+            (x as f32) * scale
+        } else when typing::is_same::<F, f64>() {
+            let scale = 1.0f64 / ((1u64 << 53) as f64);
+            let x = rng.next_u64() >> 11;
+            (x as f64) * scale
+        }
+    }
+
+    mixin<R: Rng<R>> Distribution<StandardFloat<F>, F, R>;
+}
+
+/// Uniform floating point distribution over the `(0, 1]` interval.
+///
+/// See also [StandardFloat] and [Open01].
+///
+/// ## Example
+/// ```
+/// use std::random::{thread_rng, OpenClosed01};
+///
+/// let dist: OpenClosed01<f64> = OpenClosed01::new();
+/// // Prints a random float between 0 (exclusive) and 1 (inclusive)
+/// println!("{}", dist.sample(thread_rng()));
+/// ```
+struct OpenClosed01<F: builtins::FloatingPoint> {}
+impl OpenClosed01<F: builtins::FloatingPoint> {
+    fn new() -> OpenClosed01<F> {
+        OpenClosed01::<F> { }
+    }
+
+    /// @ Distribution::sample
+    fn sample<R: Rng<R>>(self: &OpenClosed01<F>, rng: &mut R) -> F {
+        when typing::is_same::<F, f32>() {
+            let scale = 1.0f32 / ((1u32 << 24) as f32);
+            let x = rng.next_u32() >> 8;
+            ((x + 1) as f32) * scale
+        } else when typing::is_same::<F, f64>() {
+            let scale = 1.0f64 / ((1u64 << 53) as f64);
+            let x = rng.next_u64() >> 11;
+            ((x + 1) as f64) * scale
+        }
+    }
+
+    mixin<R: Rng<R>> Distribution<OpenClosed01<F>, F, R>;
+}
+
+
+/// Uniform floating point distribution over the `(0, 1)` interval.
+///
+/// See also [StandardFloat] and [OpenClosed01].
+///
+/// ## Example
+/// ```
+/// use std::random::{thread_rng, Open01};
+///
+/// let dist: Open01<f64> = Open01::new();
+/// // Prints a random float between 0 and 1 exclusive
+/// println!("{}", dist.sample(thread_rng()));
+/// ```
+struct Open01<F: builtins::FloatingPoint> {}
+impl Open01<F: builtins::FloatingPoint> {
+    fn new() -> Open01<F> {
+        Open01::<F> { }
+    }
+
+    /// @ Distribution::sample
+    fn sample<R: Rng<R>>(self: &Open01<F>, rng: &mut R) -> F {
+        when typing::is_same::<F, f32>() {
+            let float_size = mem::size_of::<f32>() as u32 * 8;
+            let value: u32 = rng.next(range::RangeFull::new::<u32>());
+            let fraction = value >> (float_size - 23);
+
+            f32::from_bits(fraction | (127u32 << 23)) - (1.0 - f32::epsilon() / 2.0)
+        } else when typing::is_same::<F, f64>() {
+            let float_size = mem::size_of::<f64>() as u64 * 8;
+            let value: u64 = rng.next(range::RangeFull::new::<u64>());
+            let fraction = value >> (float_size - 52);
+
+            f64::from_bits(fraction | (1023u64 << 52)) - (1.0 - f64::epsilon() / 2.0)
+        }
+    }
+
+    mixin<R: Rng<R>> Distribution<Open01<F>, F, R>;
+}
+
+/// Normal (Gaussian) distribution over the real numbers.
+///
+/// This distribution is parameterized by a mean and a standard deviation.
+/// The mean is the center of the distribution, and the standard deviation
+/// controls the spread.
+///
+/// ## Example
+/// ```
+/// use std::random::{thread_rng, Normal};
+///
+/// let dist: Normal<f64> = Normal::new(2.0, 3.0);
+/// // Prints a random number from a normal distribution with mean 2 and
+/// // standard deviation 3
+/// println!("{}", dist.sample(thread_rng()));
+/// ```
+struct Normal<F: builtins::FloatingPoint> {
+    _mean: F,
+    _std_dev: F,
+}
+
+impl Normal<F: builtins::FloatingPoint> {
+    /// Create a normal distribution with a given mean and
+    /// standard deviation.
+    fn new(mean: F, std_dev: F) -> Normal<F> {
+        Normal::<F> { _mean: mean, _std_dev: std_dev }
+    }
+
+    /// Create a standard normal distribution
+    ///
+    /// Standard normal distribution has a mean of 0 and
+    /// standard deviation of 1.
+    fn standard() -> Normal<F> {
+        Normal::<F> { _mean: 0.0, _std_dev: 1.0 }
+    }
+
+    /// @ Distribution::sample
+    fn sample<R: Rng<R>>(self: &Normal<F>, rng: &mut R) -> F {
+        let zscore: F = ziggurat::ziggurat(
+            rng,
+            true, // this is symmetric
+            &ziggurat::ZIG_NORM_X,
+            &ziggurat::ZIG_NORM_F,
+            internal::normal_pdf,
+            internal::normal_zero_case::<R>,
+        ) as F;
+        self._mean + self._std_dev * zscore
+    }
+
+    mixin<R: Rng<R>> Distribution<Normal<F>, F, R>;
+}
+
+/// Exponential distribution over the positive real numbers.
+///
+/// This distribution is parameterized by a rate parameter `lambda`.
+/// The rate parameter is the inverse of the mean of the distribution.
+///
+/// ## Example
+/// ```
+/// use std::random::{thread_rng, Exponential};
+///
+/// let dist: Exponential<f64> = Exponential::new(2.0);
+/// // Prints a random number from an exponential distribution with rate 2
+/// println!("{}", dist.sample(thread_rng()));
+/// ```
+struct Exponential<F: builtins::FloatingPoint> {
+    _lambda_inv: F,
+}
+
+impl Exponential<F: builtins::FloatingPoint> {
+    /// Create an exponential distribution with a given rate `lambda`.
+    fn new(lambda: F) -> Exponential<F> {
+        Exponential::<F> { _lambda_inv: (1.0 as F) / lambda }
+    }
+
+    /// @ Distribution::sample
+    fn sample<R: Rng<R>>(self: &Exponential<F>, rng: &mut R) -> F {
+        let ret: F = ziggurat::ziggurat(
+            rng,
+            false,
+            &ziggurat::ZIG_EXP_X,
+            &ziggurat::ZIG_EXP_F,
+            internal::exponential_pdf,
+            internal::exponential_zero_case::<R>,
+        ) as F;
+
+        ret * self._lambda_inv
+    }
+
+    mixin<R: Rng<R>> Distribution<Exponential<F>, F, R>;
 }
 
 /// PCG-32 random number generator
@@ -239,7 +679,7 @@ fn thread_rng() -> &mut DefaultRng {
     internal::THREAD_RNG.as_mut_ptr().unwrap()
 }
 
-/// Extension mixin for the [Rng] trait
+/// Extension mixin for the [Rng] protocol
 ///
 /// Contains useful methods for random number generation.
 protocol RngExt<Self: Rng<Self>> {
@@ -273,7 +713,9 @@ protocol RngExt<Self: Rng<Self>> {
         internal::gen_integer::<Self, T, R>(rng, range)
     }
 
-    /// Generate a random floating point number in `[0, 1)` interval
+    /// Generate a random floating point number in `[0, 1)` interval.
+    ///
+    /// This is equivalent to sampling from [StandardFloat] distribution.
     ///
     /// ## Example
     /// ```
@@ -284,15 +726,7 @@ protocol RngExt<Self: Rng<Self>> {
     /// assert!(value >= 0.0 && value < 1.0);
     /// ```
     fn next_float<T: FloatingPoint>(rng: &mut Self) -> T {
-        when typing::is_same::<T, f32>() {
-            let scale = 1.0f32 / ((1u32 << 24) as f32);
-            let x = rng.next_u32() >> 8;
-            (x as f32) * scale
-        } else when typing::is_same::<T, f64>() {
-            let scale = 1.0f64 / ((1u64 << 53) as f64);
-            let x = rng.next_u64() >> 11;
-            (x as f64) * scale
-        }
+        StandardFloat::new::<T>().sample(rng)
     }
 
     /// Permute a slice of elements in random order.
@@ -401,78 +835,208 @@ mod internal {
     /// Each possible value that the integer can take is equally likely
     #[inline]
     fn gen_unsigned<R: Rng<R>, T: Unsigned>(rng: &mut R) -> T {
-        when typing::matches::<T, u128>() {
-            ((rng.next_u64() as u128)  << 64) | (rng.next_u64() as u128)
-        } else when typing::matches::<T, u64>() {
-            rng.next_u64()
-        } else when typing::matches::<T, usize>() {
-            let x: T;
-            #[cfg(target_pointer_width = "32")]
-            x = rng.next_u32() as usize;
-            #[cfg(target_pointer_width = "64")]
-            x = rng.next_u64() as usize;
-            x
+        when mem::size_of::<T>() == 16 {
+            (((rng.next_u64() as u128)  << 64) | (rng.next_u64() as u128)) as T
+        } else when mem::size_of::<T>() == 8 {
+            rng.next_u64() as T
         } else {
             rng.next_u32() as T
         }
+    }
+
+    #[inline]
+    fn normal_pdf(x: f64) -> f64 {
+        (-x * x / 2.0).exp()
+    }
+
+    #[inline]
+    fn normal_zero_case<R: Rng<R>>(rng: &mut R, u: f64) -> f64 {
+        // compute a random number in the tail by hand
+
+        // strange initial conditions, because the loop is not
+        // do-while, so the condition should be true on the first
+        // run, they get overwritten anyway (0 < 1, so these are
+        // good).
+        let x = 1.0f64;
+        let y = 0.0f64;
+
+        while -2.0 * y < x * x {
+            let open = Open01::new::<f64>();
+            let x_: f64 = open.sample(rng);
+            let y_: f64 = open.sample(rng);
+
+            x = x_.log() / ziggurat::ZIG_NORM_R;
+            y = y_.log();
+        }
+
+        if u < 0.0 {
+            x - ziggurat::ZIG_NORM_R
+        } else {
+            ziggurat::ZIG_NORM_R - x
+        }
+    }
+
+    #[inline]
+    fn exponential_pdf(x: f64) -> f64 {
+        (-x).exp()
+    }
+
+    #[inline]
+    fn exponential_zero_case<R: Rng<R>>(rng: &mut R, _u: f64) -> f64 {
+        let std = StandardFloat::new::<f64>();
+        ziggurat::ZIG_EXP_R - std.sample(rng).log()
     }
 }
 
 #[cfg(all(test, test_std))]
 #[docs(hide)]
 mod tests {
-    static SEED: [u8; 16];
+    const SEED: [u8; 16] = [
+        0x54, 0x64, 0xda, 0x73,
+        0x58, 0x9c, 0xd3, 0x59,
+        0xdc, 0x2a, 0x0b, 0xab,
+        0xc7, 0xa5, 0x75, 0x06
+    ];
 
     #[test]
     fn test_float() {
         let rng = Pcg32::from_seed(&SEED);
-        let _: f32 = rng.next_float();
-        let _: f64 = rng.next_float();
+        let f: f32 = rng.next_float();
+        assert!(f >= 0.0 && f < 1.0);
+
+        let d: f64 = rng.next_float();
+        assert!(d >= 0.0 && d < 1.0);
     }
 
     #[test]
     fn test_range() {
         let rng = Pcg32::from_seed(&SEED);
-        let _: i32 = rng.next(-10i32..10i32);
-        let _: i64 = rng.next(-10i64..10i64);
-        let _: i128 = rng.next(-10i128..10i128);
-        let _: usize = rng.next(0usize..10usize);
+        let i: i8 = rng.next(0i8..10i8);
+        assert!(i >= 0 && i < 10);
+
+        let i: i16 = rng.next(0i16..10i16);
+        assert!(i >= 0 && i < 10);
+
+        let i: i32 = rng.next(0i32..10i32);
+        assert!(i >= 0 && i < 10);
+
+        let i: i64 = rng.next(0i64..10i64);
+        assert!(i >= 0 && i < 10);
+
+        let i: i128 = rng.next(0i128..10i128);
+        assert!(i >= 0 && i < 10);
+
+        let i: u8 = rng.next(0u8..10u8);
+        assert!(i >= 0 && i < 10);
+
+        let i: u16 = rng.next(0u16..10u16);
+        assert!(i >= 0 && i < 10);
+
+        let i: u32 = rng.next(0u32..10u32);
+        assert!(i >= 0 && i < 10);
+
+        let i: u64 = rng.next(0u64..10u64);
+        assert!(i >= 0 && i < 10);
+
+        let i: u128 = rng.next(0u128..10u128);
+        assert!(i >= 0 && i < 10);
+
+        let i: usize = rng.next(0usize..10usize);
+        assert!(i >= 0 && i < 10);
+
+        let i: isize = rng.next(0isize..10isize);
+        assert!(i >= 0 && i < 10);
     }
 
     #[test]
     fn test_range_inclusive() {
         let rng = Pcg32::from_seed(&SEED);
-        let _: i32 = rng.next(-10i32..=10i32);
-        let _: i64 = rng.next(-10i64..=10i64);
-        let _: i128 = rng.next(-10i128..=10i128);
-        let _: usize = rng.next(0usize..=10usize);
+        let i: i8 = rng.next(0i8..=10i8);
+        assert!(i >= 0 && i <= 10);
+
+        let i: i16 = rng.next(0i16..=10i16);
+        assert!(i >= 0 && i <= 10);
+
+        let i: i32 = rng.next(0i32..=10i32);
+        assert!(i >= 0 && i <= 10);
+
+        let i: i64 = rng.next(0i64..=10i64);
+        assert!(i >= 0 && i <= 10);
+
+        let i: i128 = rng.next(0i128..=10i128);
+        assert!(i >= 0 && i <= 10);
+
+        let i: u8 = rng.next(0u8..=10u8);
+        assert!(i >= 0 && i <= 10);
+
+        let i: u16 = rng.next(0u16..=10u16);
+        assert!(i >= 0 && i <= 10);
+
+        let i: u32 = rng.next(0u32..=10u32);
+        assert!(i >= 0 && i <= 10);
+
+        let i: u64 = rng.next(0u64..=10u64);
+        assert!(i >= 0 && i <= 10);
+
+        let i: u128 = rng.next(0u128..=10u128);
+        assert!(i >= 0 && i <= 10);
+
+        let i: usize = rng.next(0usize..=10usize);
+        assert!(i >= 0 && i <= 10);
+
+        let i: isize = rng.next(0isize..=10isize);
+        assert!(i >= 0 && i <= 10);
     }
 
     #[test]
     fn test_range_from() {
         let rng = Pcg32::from_seed(&SEED);
-        let _: i32 = rng.next(0i32..);
-        let _: i64 = rng.next(0i64..);
-        let _: i128 = rng.next(0i128..);
-        let _: usize = rng.next(0usize..);
+        assert!(rng.next(10i8..) >= 10);
+        assert!(rng.next(10i16..) >= 10);
+        assert!(rng.next(10i32..) >= 10);
+        assert!(rng.next(10i64..) >= 10);
+        assert!(rng.next(10i128..) >= 10);
+        assert!(rng.next(10u8..) >= 10);
+        assert!(rng.next(10u16..) >= 10);
+        assert!(rng.next(10u32..) >= 10);
+        assert!(rng.next(10u64..) >= 10);
+        assert!(rng.next(10u128..) >= 10);
+        assert!(rng.next(10usize..) >= 10);
+        assert!(rng.next(10isize..) >= 10);
     }
 
     #[test]
     fn test_range_to() {
         let rng = Pcg32::from_seed(&SEED);
-        let _: i32 = rng.next(..10i32);
-        let _: i64 = rng.next(..10i64);
-        let _: i128 = rng.next(..10i128);
-        let _: usize = rng.next(..10usize);
+        assert!(rng.next(..10i8) < 10);
+        assert!(rng.next(..10i16) < 10);
+        assert!(rng.next(..10i32) < 10);
+        assert!(rng.next(..10i64) < 10);
+        assert!(rng.next(..10i128) < 10);
+        assert!(rng.next(..10u8) < 10);
+        assert!(rng.next(..10u16) < 10);
+        assert!(rng.next(..10u32) < 10);
+        assert!(rng.next(..10u64) < 10);
+        assert!(rng.next(..10u128) < 10);
+        assert!(rng.next(..10usize) < 10);
+        assert!(rng.next(..10isize) < 10);
     }
 
     #[test]
     fn test_range_to_inclusive() {
         let rng = Pcg32::from_seed(&SEED);
-        let _: i32 = rng.next(..=10i32);
-        let _: i64 = rng.next(..=10i64);
-        let _: i128 = rng.next(..=10i128);
-        let _: usize = rng.next(..=10usize);
+        assert!(rng.next(..=10i8) <= 10);
+        assert!(rng.next(..=10i16) <= 10);
+        assert!(rng.next(..=10i32) <= 10);
+        assert!(rng.next(..=10i64) <= 10);
+        assert!(rng.next(..=10i128) <= 10);
+        assert!(rng.next(..=10u8) <= 10);
+        assert!(rng.next(..=10u16) <= 10);
+        assert!(rng.next(..=10u32) <= 10);
+        assert!(rng.next(..=10u64) <= 10);
+        assert!(rng.next(..=10u128) <= 10);
+        assert!(rng.next(..=10usize) <= 10);
+        assert!(rng.next(..=10isize) <= 10);
     }
 
     #[test]
@@ -484,5 +1048,181 @@ mod tests {
         assert_ne!(v[..], &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
         cmp::sort(&v);
         assert_eq!(v[..], &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    }
+
+    struct CannedRng {
+        val_u32: u32,
+        val_u64: u64,
+    }
+
+    impl CannedRng {
+        fn new(val_u32: u32, val_u64: u64) -> CannedRng {
+            CannedRng { val_u32: val_u32, val_u64: val_u64 }
+        }
+
+        fn next_u32(self: &mut CannedRng) -> u32 {
+            self.val_u32
+        }
+
+        fn next_u64(self: &mut CannedRng) -> u64 {
+            self.val_u64
+        }
+
+        mixin Rng<CannedRng>;
+        mixin RngExt<CannedRng>;
+    }
+
+    #[test]
+    fn test_distr_uniform() {
+        let dist = UniformInteger::new(10..20);
+
+        assert_eq!(dist.sample(&CannedRng::new(0, 0)), 10);
+    }
+
+    #[test]
+    fn test_distr_StandardFloat() {
+        let dist = StandardFloat::new::<f64>();
+        assert_eq!(dist.sample(&CannedRng::new(0, 0)), 0.0);
+        assert_eq!(dist.sample(&CannedRng::new(0, u64::max_value())), 1f64.next_down());
+
+        let dist = StandardFloat::new::<f32>();
+        assert_eq!(dist.sample(&CannedRng::new(0, 0)), 0.0);
+        assert_eq!(dist.sample(&CannedRng::new(u32::max_value(), 0)), 1f32.next_down());
+    }
+
+    #[test]
+    fn test_distr_OpenClosed01() {
+        let dist = OpenClosed01::new::<f64>();
+        assert_eq!(dist.sample(&CannedRng::new(0, 0)), 1.0f64.ldexp(-53));
+        assert_eq!(dist.sample(&CannedRng::new(0, u64::max_value())), 1f64);
+
+        let dist = OpenClosed01::new::<f32>();
+        assert_eq!(dist.sample(&CannedRng::new(0, 0)), 1.0f32.ldexp(-24));
+        assert_eq!(dist.sample(&CannedRng::new(u32::max_value(), 0)), 1f32);
+    }
+
+    #[test]
+    fn test_distr_open01() {
+        let dist = Open01::new::<f64>();
+        assert_eq!(dist.sample(&CannedRng::new(0, 0)), 1.0f64.ldexp(-53));
+        assert_eq!(dist.sample(&CannedRng::new(0, u64::max_value())), 1f64.next_down());
+
+        let dist = Open01::new::<f32>();
+        assert_eq!(dist.sample(&CannedRng::new(0, 0)), 1.0f32.ldexp(-24));
+        assert_eq!(dist.sample(&CannedRng::new(u32::max_value(), 0)), 1f32.next_down());
+    }
+
+    #[test]
+    fn test_distr_normal() {
+        let dist = Normal::standard::<f64>();
+
+        const cases: [(u64, f64); 19] = [
+            (0x3800000000000000, -2.1998013522396134),
+            (0x4000000000000000, -1.955378979768545),
+            (0x4800000000000000, -1.710956607297477),
+            (0x5000000000000000, -1.4665342348264088),
+            (0x5800000000000000, -1.2221118623553406),
+            (0x6000000000000000, -0.9776894898842725),
+            (0x6800000000000000, -0.7332671174132044),
+            (0x7000000000000000, -0.48884474494213626),
+            (0x7800000000000000, -0.24442237247106813),
+            (0x8000000000000000, 0.0),
+            (0x8800000000000000, 0.24442237247106813),
+            (0x9000000000000000, 0.48884474494213626),
+            (0x9800000000000000, 0.7332671174132044),
+            (0xa000000000000000, 0.9776894898842725),
+            (0xa800000000000000, 1.2221118623553406),
+            (0xb000000000000000, 1.4665342348264088),
+            (0xb800000000000000, 1.710956607297477),
+            (0xc000000000000000, 1.955378979768545),
+            (0xc800000000000000, 2.1998013522396134),
+        ];
+
+        for (seed, expected) in cases {
+            assert_eq!(dist.sample(&CannedRng::new(0, seed)), expected);
+        }
+    }
+
+    #[test]
+    fn test_distr_exponential() {
+        let dist = Exponential::new::<f64>(1.0);
+
+        const cases: [(u64, f64); 8] = [
+            (0x0000000000000000, 9.655740063209187e-16),
+            (0x2000000000000000, 1.0871396837663825),
+            (0x4000000000000000, 2.174279367532764),
+            (0x6000000000000000, 3.261419051299146),
+            (0x8000000000000000, 4.348558735065527),
+            (0xa000000000000000, 5.435698418831909),
+            (0xc000000000000000, 6.522838102598291),
+            (0xe000000000000000, 7.609977786364672),
+        ];
+
+        for (seed, expected) in cases {
+            assert_eq!(dist.sample(&CannedRng::new(0, seed)), expected);
+        }
+    }
+
+    #[test]
+    fn test_distr_bernoulli() {
+        let dist = Bernoulli::new(0.5);
+
+        assert_eq!(dist.sample(&CannedRng::new(0, 0)), true);
+        assert_eq!(dist.sample(&CannedRng::new(0, u64::max_value())), false);
+    }
+
+    #[test]
+    fn test_distr_weighted_index() {
+        let dist = WeightedIndex::new(&[0, 1, 2, 3, 4, 5]);
+        defer dist.free();
+
+        assert_eq!(dist.sample(&CannedRng::new(0, 0)), 1);
+        assert_eq!(dist.sample(&CannedRng::new(1, 0)), 2);
+        assert_eq!(dist.sample(&CannedRng::new(2, 0)), 2);
+        assert_eq!(dist.sample(&CannedRng::new(3, 0)), 3);
+        assert_eq!(dist.sample(&CannedRng::new(4, 0)), 3);
+        assert_eq!(dist.sample(&CannedRng::new(5, 0)), 3);
+        assert_eq!(dist.sample(&CannedRng::new(6, 0)), 4);
+        assert_eq!(dist.sample(&CannedRng::new(7, 0)), 4);
+        assert_eq!(dist.sample(&CannedRng::new(8, 0)), 4);
+        assert_eq!(dist.sample(&CannedRng::new(9, 0)), 4);
+        assert_eq!(dist.sample(&CannedRng::new(10, 0)), 5);
+        assert_eq!(dist.sample(&CannedRng::new(11, 0)), 5);
+        assert_eq!(dist.sample(&CannedRng::new(12, 0)), 5);
+        assert_eq!(dist.sample(&CannedRng::new(13, 0)), 5);
+        assert_eq!(dist.sample(&CannedRng::new(14, 0)), 5);
+    }
+
+    #[test]
+    fn test_distr_weighted_index_float() {
+        let dist = WeightedIndex::new(&[0.5, 0.5]);
+        defer dist.free();
+
+        assert_eq!(dist.sample(&CannedRng::new(0, u64::max_value() / 5 * 0)), 0);
+        assert_eq!(dist.sample(&CannedRng::new(0, u64::max_value() / 5 * 1)), 0);
+        assert_eq!(dist.sample(&CannedRng::new(0, u64::max_value() / 5 * 2)), 0);
+        assert_eq!(dist.sample(&CannedRng::new(0, u64::max_value() / 5 * 3)), 1);
+        assert_eq!(dist.sample(&CannedRng::new(0, u64::max_value() / 5 * 4)), 1);
+        assert_eq!(dist.sample(&CannedRng::new(0, u64::max_value() / 5 * 5)), 1);
+    }
+
+    #[test(should_fail)]
+    fn test_distr_weighted_index_empty() {
+        WeightedIndex::new::<i32>(&[]);
+    }
+
+    #[test(should_fail)]
+    fn test_distr_weighted_index_zero_weight() {
+        WeightedIndex::new(&[0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test(should_fail)]
+    fn test_distr_weighted_index_negative_weight() {
+        WeightedIndex::new(&[0, 1, 2, 3, 4, -5]);
+    }
+
+    #[test(should_fail)]
+    fn test_distr_weighted_index_negative_weight_1() {
+        WeightedIndex::new(&[-1, 1, 2, 3, 4]);
     }
 }

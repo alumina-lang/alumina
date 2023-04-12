@@ -513,3 +513,161 @@ fn test_const_zst() {
 fn test_const_eval_intrinsics() {
     std::compile_note!("this is a warning"[3..7]);
 }
+
+
+#[test]
+#[allow(unused_parameter)]
+#[allow(unused_closure_binding)]
+#[allow(unused_variable)]
+#[allow(pure_statement)]
+fn test_pretty_print() {
+    use std::stringify;
+
+    let a = 1;
+    let b = 2;
+    let c = 3;
+
+    fn foo() {}
+    fn bar<T>() {}
+
+    enum E {
+        A,
+        B,
+        Card,
+    }
+
+    struct S {
+        a: i32,
+        b: i32,
+        c: i32,
+    }
+
+    /*
+        Block(&'ast [Statement<'ast>], ExprP<'ast>),
+        Call(ExprP<'ast>, &'ast [ExprP<'ast>]),
+        Static(ItemP<'ast>, Option<&'ast [TyP<'ast>]>),
+        Const(ItemP<'ast>, Option<&'ast [TyP<'ast>]>),
+    */
+
+    // Test all expression types
+    assert_eq!(stringify!(()), "()");
+    assert_eq!(stringify!(a), "a");
+    assert_eq!(stringify!(a + b), "a + b");
+    assert_eq!(stringify!(a = b), "a = b");
+    assert_eq!(stringify!(a += b), "a += b");
+    assert_eq!(stringify!(-a), "-a");
+    assert_eq!(stringify!(*a), "*a");
+    assert_eq!(stringify!(&a), "&a");
+    assert_eq!(stringify!({ a; b; c }), "{ a; b; c }");
+    assert_eq!(stringify!({ a; b; }), "{ a; b; }");
+    assert_eq!(stringify!({ a }), "a");
+    assert_eq!(stringify!({}), "()");
+    assert_eq!(stringify!(defer a), "defer a");
+    assert_eq!(stringify!(a as i32), "a as i32");
+    assert_eq!(stringify!(a is i32), "a is i32");
+    assert_eq!(stringify!(a..b), "a..b");
+    assert_eq!(stringify!(a..=b), "a..=b");
+    assert_eq!(stringify!(a..), "a..");
+    assert_eq!(stringify!(..b), "..b");
+    assert_eq!(stringify!(..=b), "..=b");
+    assert_eq!(stringify!(..), "..");
+    assert_eq!(stringify!(return), "return");
+    assert_eq!(stringify!(return a), "return a");
+
+    loop {
+        // We need to use a loop here because using them outside of a loop
+        // is a compile error.
+        assert_eq!(stringify!(break), "break");
+        assert_eq!(stringify!(break a), "break a");
+        assert_eq!(stringify!(continue), "continue");
+        break;
+    }
+
+    assert_eq!(stringify!(if a { b } else { c }), "if a { b } else { c }");
+    assert_eq!(stringify!(if a { b }), "if a { b }");
+    assert_eq!(stringify!(if a { b } else { }), "if a { b }");
+
+    assert_eq!(stringify!(when a { b } else { c }), "when a { b } else { c }");
+    assert_eq!(stringify!(when a { b }), "when a { b }");
+    assert_eq!(stringify!(when a { b } else { }), "when a { b }");
+
+    assert_eq!(stringify!(E::A), "E::A");
+    assert_eq!(stringify!(S { a: 1, b: 2, c: 3 }), "S { a: 1, b: 2, c: 3 }");
+    assert_eq!(stringify!((1, 2, 3)), "(1, 2, 3)");
+    assert_eq!(stringify!([1, 2, 3]), "[1, 2, 3]");
+    assert_eq!(stringify!(foo()), "foo()");
+    assert_eq!(stringify!(foo(a, b, c)), "foo(a, b, c)");
+    assert_eq!(stringify!("ahoj"), "\"ahoj\"");
+    assert_eq!(stringify!("\0\r\t\n\"'\xff\x01"), "\"\\0\\r\\t\\n\\\"'\\xff\\x01\"");
+    assert_eq!(stringify!('A'), "65u8");
+    assert_eq!(stringify!(true), "true");
+    assert_eq!(stringify!(false), "false");
+    assert_eq!(stringify!(3.14159), "3.14159");
+    assert_eq!(stringify!(-3.14159e12), "-3.14159e12");
+    assert_eq!(stringify!(3.14159f32), "3.14159f32");
+    assert_eq!(stringify!(3.14159f64), "3.14159f64");
+    assert_eq!(stringify!(3i32), "3i32");
+    assert_eq!(stringify!(-3i32), "-3i32");
+    assert_eq!(stringify!(null), "null");
+    assert_eq!(stringify!(a.0), "a.0");
+    assert_eq!(stringify!(a.field), "a.field");
+    assert_eq!(stringify!(a.0.nested.field.1), "a.0.nested.field.1");
+    assert_eq!(stringify!(a[b]), "a[b]");
+
+    assert_eq!(stringify!(|x: i32| {}), "|x: i32| {}");
+    assert_eq!(stringify!(|x: i32| -> i32 {}), "|x: i32| -> i32 {}");
+    assert_eq!(stringify!(|=a, &b, x: i32| -> i32 { x }), "|=a, &b, x: i32| -> i32 { x }");
+    assert_eq!(stringify!(|=a, &b, x: i32| -> i32 { a }), "|=a, &b, x: i32| -> i32 { a }");
+
+    let _: ();
+
+    assert_eq!(stringify!(_ as (i32, i64)), "_ as (i32, i64)");
+    assert_eq!(stringify!(_ as Fn(i32) -> i32), "_ as Fn(i32) -> i32");
+    assert_eq!(stringify!(_ as &i32), "_ as &i32");
+    assert_eq!(stringify!(_ as &mut i32), "_ as &mut i32");
+    assert_eq!(stringify!(_ as &[i32]), "_ as &[i32]");
+    assert_eq!(stringify!(_ as &mut [i32]), "_ as &mut [i32]");
+    assert_eq!(stringify!(_ as &dyn i32), "_ as &dyn i32");
+    assert_eq!(stringify!(_ as &mut dyn i32), "_ as &mut dyn i32");
+    assert_eq!(stringify!(_ as &mut dyn (i32 + i64)), "_ as &mut dyn (i32 + i64)");
+
+    assert_eq!(stringify!(_ as [i32; 3]), "_ as [i32; 3]");
+    assert_eq!(stringify!(_ as [i32; 1 + 2]), "_ as [i32; 1 + 2]");
+    assert_eq!(stringify!(_ as typeof(1 + 2)), "_ as typeof(1 + 2)");
+
+    fn generic<T>(_: ()) {
+        assert_eq!(stringify!(_ as T), "_ as T");
+        // Defered name resolution
+        assert_eq!(stringify!(_ as T::associated_type), "_ as T::associated_type");
+        assert_eq!(stringify!(T::associated_function()), "T::associated_function()");
+    }
+    generic::<i32>(_);
+
+    assert_eq!(stringify!(_ as generic<i32>), "_ as generic<i32>");
+    assert_eq!(stringify!(generic::<i32>()), "generic::<i32>()");
+
+    // Loops are desugared during 'src -> 'ast
+    assert_eq!(stringify!(loop {}), "loop {}");
+    assert_eq!(stringify!(while true {}), "loop { if true {} else { break } }");
+
+    // for loop is too complex to assert on and it uses anonymous let bindings
+    // that we cannot predict the name of
+    stringify!(for i in a {});
+
+    // Macros are eagerly expanded during 'src -> 'ast (except if defered, but it
+    // doesn't matter here)
+    assert_eq!(stringify!(stringify!(a)), "\"a\"");
+
+    macro try($expr) {
+        std::concat!("I tried ", stringify!($expr), " but I could not")
+    }
+    assert_eq!(stringify!(a?), "\"I tried a but I could not\"");
+    assert_eq!(stringify!(stringify), "stringify");
+
+    // Test parentheses
+    assert_eq!(stringify!((a)), "a");
+    assert_eq!(stringify!(a + b + c), "(a + b) + c");
+    assert_eq!(stringify!(a + b(c)), "a + b(c)");
+    assert_eq!(stringify!(a + (a + b)..(b +c) + c), "(a + (a + b))..((b + c) + c)");
+    assert_eq!(stringify!(a + ((a + b)..(b +c)) + c), "(a + ((a + b)..(b + c))) + c");
+}

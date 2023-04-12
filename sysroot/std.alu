@@ -83,10 +83,7 @@ macro compile_note($reason) {
 /// assert!(1 + 1 == 3); // panics
 /// ```
 macro assert($cond) {
-    #[allow(constant_condition)]
-    if !$cond {
-        internal::panic_assert(file!(), line!(), column!());
-    }
+    internal::assert_impl(file!(), line!(), column!(), $cond);
 }
 
 /// Panics if `lhs` and `rhs` are not equal.
@@ -148,12 +145,12 @@ macro unreachable() {
     std::intrinsics::unreachable();
 }
 
-/// Assume that the condition is true.
+/// Assume that the condition is always true.
 ///
 /// This *may* enable additional optimizations when you know better than the compiler.
 ///
-/// In debug mode, this macro will panic if the condition is false. In release mode, it will
-/// cause undefined behavior.
+/// If the condition is false, this is equivalent to [assert] in debug mode. In release mode,
+/// it will cause undefined behavior.
 ///
 /// ## Examples
 /// ```
@@ -181,13 +178,10 @@ macro unreachable() {
 /// assume!(1 > 2); // Ò̴̡̤̗̬̳̱͉̳͓̝̥̞͗́̿͑̂̓̀͋̈́͐̏͝H̷̳̺̝̗̖̖̫͆̀́̚͝ ̷͚̜̟̘̦̺̼̣̘̓N̸̜̞̬̞͓̮̘̣͍͕͍̱̮̍͛̇̋̅̏͒̕͠Ỏ̴̭̯͘̚̕
 /// ```
 macro assume($cond) {
-    #[allow(constant_condition)]
-    if !$cond {
-        #[cfg(debug)]
-        panic!("called assume with a false condition");
-        #[cfg(not(debug))]
-        std::intrinsics::unreachable();
-    }
+    #[cfg(debug)]
+    internal::assert_impl(file!(), line!(), column!(), $cond);
+    #[cfg(not(debug))]
+    internal::assume_impl($cond);
 }
 
 /// Hint to the compiler that a particular boolean expression is likely true.
@@ -269,6 +263,16 @@ macro unlikely($cond) {
 /// ```
 #[builtin] macro concat($parts...) {  }
 
+/// Stringifies an expression.
+///
+/// ## Example
+/// ```
+/// use std::stringify;
+///
+/// assert_eq!(stringify!(1 + 2), "1 + 2");
+/// ```
+#[builtin] macro stringify($expr) {  }
+
 /// A helper for printing a value of a subexpression for debugging purposes.
 ///
 /// It prints the value to standard error with code location (file, line, column) and
@@ -300,8 +304,40 @@ mod internal {
     // These are in a function instead of a macro so we can typecheck and display a nice
     // error message if the argument is Formattable.
 
+    #[inline(always)]
+    fn assume_impl(cond: bool) {
+        #[allow(constant_condition)]
+        if !cond {
+            std::intrinsics::unreachable();
+        }
+    }
+
+    #[inline(always)]
+    fn assert_impl(file: &[u8], line: i32, column: i32, cond: bool) {
+        #[allow(constant_condition)]
+        if !cond {
+            panic_assert(file, line, column);
+        }
+    }
+
+    #[inline(always)]
+    fn assert_eq<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T)  {
+        #[allow(constant_condition)]
+        if !(lhs == rhs) {
+            panic_assert_eq(file, line, column, lhs, rhs)
+        }
+    }
+
+    #[inline(always)]
+    fn assert_ne<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T)  {
+        #[allow(constant_condition)]
+        if lhs == rhs {
+            panic_assert_ne(file, line, column, lhs, rhs)
+        }
+    }
+
     #[cold]
-    #[no_inline]
+    #[inline(never)]
     fn panic_assert(file: &[u8], line: i32, column: i32) -> ! {
         use panicking::internal::panic_impl;
 
@@ -314,24 +350,8 @@ mod internal {
         )
     }
 
-    #[inline]
-    fn assert_eq<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T)  {
-        #[allow(constant_condition)]
-        if !(lhs == rhs) {
-            panic_assert_eq(file, line, column, lhs, rhs)
-        }
-    }
-
-    #[inline]
-    fn assert_ne<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T)  {
-        #[allow(constant_condition)]
-        if lhs == rhs {
-            panic_assert_ne(file, line, column, lhs, rhs)
-        }
-    }
-
     #[cold]
-    #[no_inline]
+    #[inline(never)]
     fn panic_assert_eq<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T) -> ! {
         use panicking::internal::panic_impl;
         use fmt::Formattable;
@@ -390,34 +410,11 @@ mod internal {
     fn expect(cond: bool, expected: bool) -> bool {
         intrinsics::codegen_func::<bool>("__builtin_expect", cond, expected)
     }
-
-    mod const_format {
-
-
-        macro format($fmt_str, $arg...) {
-            let BUF: [u8; 2048];
-            let fmt = fmt::SliceFormatter::new(&BUF);
-            fmt::format_args!(
-                macros::bind!(fmt::internal::static_format_args, &fmt),
-                $fmt_str,
-                $arg...
-            ).unwrap();
-            fmt.get()
-        }
-    }
-
 }
 
 #[cfg(all(test, test_std))]
 #[docs(hide)]
 mod tests {
-    #[test]
-    fn test_const_format() {
-        const FOO: () = {
-            std::intrinsics::const_panic(internal::const_format::format!("Hello {} {} {} {}", 1, 2, 3, std::fmt::hex(100)));
-        };
-    }
-
     #[test]
     fn test_likely() {
         assert!(likely!(true));

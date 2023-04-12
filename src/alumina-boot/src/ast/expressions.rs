@@ -7,8 +7,7 @@ use crate::ast::{
     Span, Statement, StatementKind, Ty, TyP, UnOp,
 };
 use crate::common::{
-    AluminaError, ArenaAllocatable, CodeErrorBuilder, CodeErrorKind, HashMap, HashSet,
-    WithSpanDuringParsing,
+    AluminaError, ArenaAllocatable, CodeErrorBuilder, CodeErrorKind, HashSet, WithSpanDuringParsing,
 };
 use crate::global_ctx::GlobalCtx;
 use crate::name_resolution::pass1::FirstPassVisitor;
@@ -154,7 +153,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
         let mut statements = Vec::new();
         if let Some(name_node) = node.child_by_field(FieldKind::Name) {
             let name = self.code.node_text(name_node).alloc_on(self.ast);
-
+            self.ast.add_local_name(value_id, name);
             self.scope
                 .add_item(
                     Some(name),
@@ -206,6 +205,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                     ),
                 );
 
+                self.ast.add_local_name(elem_id, name);
                 self.scope
                     .add_item(
                         Some(name),
@@ -954,6 +954,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             let name = self.code.node_text(name_node).alloc_on(self.ast);
 
             with_block_scope!(self, {
+                self.ast.add_local_name(id, name);
                 self.scope
                     .add_item(
                         Some(name),
@@ -998,7 +999,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                             node,
                         ),
                     );
-
+                    self.ast.add_local_name(elem_id, name);
                     self.scope
                         .add_item(
                             Some(name),
@@ -1447,7 +1448,7 @@ pub struct ClosureVisitor<'ast, 'src> {
     self_param: AstId,
 
     parameters: Vec<Parameter<'ast>>,
-    bound_values: HashMap<AstId, (BoundItemType, ExprP<'ast>)>,
+    bound_values: IndexMap<AstId, (BoundItemType, ExprP<'ast>)>,
     placeholders: Vec<Placeholder<'ast>>,
     return_type: Option<TyP<'ast>>,
     body: Option<ExprP<'ast>>,
@@ -1471,7 +1472,7 @@ impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
             self_param: ast.make_id(),
             parameters: Vec::new(),
             placeholders: Vec::new(),
-            bound_values: HashMap::default(),
+            bound_values: IndexMap::default(),
             return_type: None,
             body: None,
             macro_ctx,
@@ -1525,6 +1526,7 @@ impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
             varargs: false,
             span: Some(span),
             is_local: true,
+            is_lambda: true,
             is_protocol_fn: false,
         }));
 
@@ -1552,6 +1554,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
         let name = self.code.node_text(name_node).alloc_on(self.ast);
         let id = self.ast.make_id();
 
+        self.ast.add_local_name(id, name);
         self.scope
             .add_item(
                 Some(name),
@@ -1610,6 +1613,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
         };
 
         let id = self.ast.make_id();
+        self.ast.add_local_name(id, name);
         self.scope
             .add_item(
                 Some(name),

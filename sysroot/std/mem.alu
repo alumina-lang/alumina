@@ -46,7 +46,7 @@ protocol Clonable<Self> {
 
 /// Types that can be viewed as const slices
 ///
-/// Types that implement this trait can be indexed as if they were slices.
+/// Types that implement this protocol can be indexed as if they were slices.
 ///
 /// ## Example
 /// ```
@@ -68,7 +68,7 @@ protocol AsSlice<Self, T> {
 
 /// Types that can be viewed as mutable slices
 ///
-/// Types that implement this trait can be indexed as if they were slices.
+/// Types that implement this protocol can be indexed as if they were slices.
 ///
 /// ## Example
 /// ```
@@ -1160,48 +1160,43 @@ mod tests {
     }
 
     #[test]
+    #[allow(pure_statement)]
     fn test_const_alloc() {
-        const FOO: bool = {
+        runtime::const_eval!({
             let a = alloc::<i32>();
             *a = 42;
             assert_eq!(*a, 42);
             free(a);
-            true
-        };
-
-        assert!(FOO);
+        });
     }
 
     #[test]
+    #[allow(pure_statement)]
     fn test_const_alloc_zeroed() {
-        const FOO: bool = {
+        runtime::const_eval!({
             let a = alloc_zeroed::<i32>();
             assert_eq!(*a, 0);
             free(a);
-            true
-        };
-
-        assert!(FOO);
+        });
     }
 
     #[test]
+    #[allow(pure_statement)]
     fn test_const_stack_alloc() {
-        const FOO: bool = {
+        runtime::const_eval!({
             let a = stack_alloc::<i32>(10);
             for (idx, ptr) in a.iter_mut().enumerate() {
                 *ptr = idx as i32;
             }
 
             assert_eq!(a, &[0,1,2,3,4,5,6,7,8,9]);
-            true
-        };
-
-        assert!(FOO);
+        });
     }
 
     #[test]
+    #[allow(pure_statement)]
     fn test_const_slice_alloc() {
-        const FOO: bool = {
+        runtime::const_eval!({
             let a = slice::alloc::<i32>(10);
             for (idx, ptr) in a.iter_mut().enumerate() {
                 *ptr = idx as i32;
@@ -1209,22 +1204,17 @@ mod tests {
 
             assert_eq!(a, &[0,1,2,3,4,5,6,7,8,9]);
             a.free();
-            true
-        };
-
-        assert!(FOO);
+        });
     }
 
     #[test]
+    #[allow(pure_statement)]
     fn test_const_slice_alloc_zeroed() {
-        const FOO: bool = {
+        runtime::const_eval!({
             let a = slice::alloc_zeroed::<i32>(10);
             assert_eq!(a, &[0,0,0,0,0,0,0,0,0,0]);
             a.free();
-            true
-        };
-
-        assert!(FOO);
+        });
     }
 
     #[test]

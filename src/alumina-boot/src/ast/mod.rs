@@ -3,6 +3,7 @@ pub mod format;
 pub mod lang;
 pub mod macros;
 pub mod maker;
+pub mod pretty;
 pub mod rebind;
 pub mod types;
 
@@ -33,7 +34,9 @@ pub struct AstCtx<'ast> {
     pub arena: Bump,
     pub counter: Cell<usize>,
     types: RefCell<HashSet<TyP<'ast>>>,
+    strings: RefCell<HashSet<&'ast str>>,
     lang_items: RefCell<HashMap<LangItemKind, ItemP<'ast>>>,
+    local_names: RefCell<HashMap<AstId, &'ast str>>,
     test_metadata: RefCell<HashMap<ItemP<'ast>, TestMetadata<'ast>>>,
 }
 
@@ -43,7 +46,9 @@ impl<'ast> AstCtx<'ast> {
             arena: Bump::new(),
             counter: Cell::new(0),
             types: RefCell::new(HashSet::default()),
+            strings: RefCell::new(HashSet::default()),
             lang_items: RefCell::new(HashMap::default()),
+            local_names: RefCell::new(HashMap::default()),
             test_metadata: RefCell::new(HashMap::default()),
         }
     }
@@ -77,6 +82,25 @@ impl<'ast> AstCtx<'ast> {
 
     pub fn add_test_metadata(&'ast self, item: ItemP<'ast>, metadata: TestMetadata<'ast>) {
         self.test_metadata.borrow_mut().insert(item, metadata);
+    }
+
+    pub fn intern_str(&'ast self, name: &'_ str) -> &'ast str {
+        if let Some(key) = self.strings.borrow().get(name) {
+            return key;
+        }
+
+        let inner = self.arena.alloc_str(name);
+        self.strings.borrow_mut().insert(inner);
+
+        inner
+    }
+
+    pub fn add_local_name(&'ast self, id: AstId, name: &'ast str) {
+        self.local_names.borrow_mut().insert(id, name);
+    }
+
+    pub fn local_name(&self, id: AstId) -> Option<&'ast str> {
+        self.local_names.borrow().get(&id).copied()
     }
 
     pub fn test_metadata(&self, item: ItemP<'ast>) -> Option<TestMetadata<'ast>> {
@@ -149,7 +173,7 @@ impl<'gcx> ArenaAllocatable<'gcx, AstCtx<'gcx>> for &str {
     type ReturnType = &'gcx str;
 
     fn alloc_on(self, ctx: &'gcx AstCtx<'gcx>) -> Self::ReturnType {
-        ctx.arena.alloc_str(self)
+        ctx.intern_str(self)
     }
 }
 
@@ -402,6 +426,13 @@ impl<'ast> ItemCell<'ast> {
         }
     }
 
+    pub fn get_enum(&'ast self) -> &'ast Enum<'ast> {
+        match self.contents.get() {
+            Some(Item::Enum(t)) => t,
+            _ => panic!("enum expected"),
+        }
+    }
+
     pub fn is_struct_like(&self) -> bool {
         matches!(self.contents.get(), Some(Item::StructLike(_)))
     }
@@ -601,6 +632,7 @@ pub enum BuiltinMacroKind {
     FormatArgs,
     Bind,
     Reduce,
+    Stringify,
 }
 
 #[derive(Debug)]
@@ -619,6 +651,7 @@ pub struct Function<'ast> {
     pub body: Option<ExprP<'ast>>,
     pub span: Option<Span>,
     pub is_local: bool,
+    pub is_lambda: bool,
     pub varargs: bool,
     pub is_protocol_fn: bool,
 }

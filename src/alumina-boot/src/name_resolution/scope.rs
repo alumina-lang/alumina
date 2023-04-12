@@ -86,6 +86,30 @@ impl<'ast, 'src> NamedItem<'ast, 'src> {
             attributes: &[],
         }
     }
+
+    pub fn ast_id(&self) -> Option<AstId> {
+        match &self.kind {
+            NamedItemKind::Alias(_, _) => None,
+            NamedItemKind::Function(item, _, _) => Some(item.id),
+            NamedItemKind::Method(item, _, _) => Some(item.id),
+            NamedItemKind::Static(item, _, _) => Some(item.id),
+            NamedItemKind::Const(item, _, _) => Some(item.id),
+            NamedItemKind::Macro(item, _, _) => Some(item.id),
+            NamedItemKind::Type(item, _, _) => Some(item.id),
+            NamedItemKind::Mixin(_, _) => None,
+            NamedItemKind::Module(_) => None,
+            NamedItemKind::Protocol(item, _, _) => Some(item.id),
+            NamedItemKind::TypeDef(item, _, _) => Some(item.id),
+            NamedItemKind::Impl(_, _) => None,
+            NamedItemKind::EnumMember(_, id, _) => Some(*id),
+            NamedItemKind::Placeholder(id, _) => Some(*id),
+            NamedItemKind::Field(_) => None,
+            NamedItemKind::Local(id, _) => Some(*id),
+            NamedItemKind::BoundValue(_, id, _, _) => Some(*id),
+            NamedItemKind::Parameter(id, _) => Some(*id),
+            NamedItemKind::MacroParameter(id, _, _) => Some(*id),
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
