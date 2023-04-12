@@ -17,6 +17,15 @@ else ifdef FAST_DEBUG
 	CARGO_TARGET_DIR = target/release
 	CFLAGS += -g0
 	ALUMINA_FLAGS += --sysroot $(SYSROOT) --debug
+else ifdef COVERAGE
+	CC = clang
+	BUILD_DIR = $(BUILD_ROOT)/coverage
+	CARGO_FLAGS = --profile coverage
+	CARGO_TARGET_DIR = target/coverage
+	CFLAGS += -g3 -fPIE -rdynamic -fprofile-instr-generate -fcoverage-mapping
+	ALUMINA_FLAGS += --sysroot $(SYSROOT) --debug
+	export RUSTFLAGS += -Cinstrument-coverage
+	export LLVM_PROFILE_FILE = $(BUILD_ROOT)/coverage/profiles/%p-%m.profraw
 else
 	BUILD_DIR = $(BUILD_ROOT)/debug
 	CARGO_FLAGS =
@@ -252,6 +261,26 @@ bench-std: $(ALUMINA_BOOT) $(SYSROOT_FILES)
 
 bench-std-cc: $(STDLIB_TESTS).c
 	$(BENCH_CMD) $(CC) $(CFLAGS) -o/dev/null $^ $(LDFLAGS)
+
+## ------------------------------ Coverage ------------------------------
+.PHONY: coverage dist-check-with-coverage
+coverage:
+	COVERAGE=1 $(MAKE) dist-check-with-coverage
+
+dist-check-with-coverage: dist-check
+	llvm-profdata merge \
+		-sparse  \
+		$(BUILD_DIR)/profiles/* \
+		-o $(BUILD_DIR)/profiles/merged.profdata
+	llvm-cov show \
+		-Xdemangler=rustfilt \
+		-format=html \
+		-instr-profile=$(BUILD_DIR)/profiles/merged.profdata $(ALUMINA_BOOT) \
+		-output-dir=$(BUILD_DIR)/html \
+		$(BOOTSTRAP_SOURCES)
+
+serve-coverage:
+	@cd $(BUILD_ROOT)/coverage/html && python3 -m http.server
 
 ## ------------------------------ Dist ----------------------------------
 

@@ -523,6 +523,7 @@ impl<'ast> AstItemMaker<'ast> {
             varargs: has_varargs,
             span: Some(span),
             is_local: self.local,
+            is_lambda: false,
             is_protocol_fn,
         });
 

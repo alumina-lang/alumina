@@ -1451,6 +1451,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 span: fun.span,
                 varargs: false,
                 is_local: fun.is_local,
+                is_lambda: false,
                 is_protocol_fn: false,
             }));
 
@@ -3957,6 +3958,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             IntrinsicKind::Zeroed => self.zeroed(generic_args[0], span),
             IntrinsicKind::Dangling => self.dangling(generic_args[0], span),
             IntrinsicKind::InConstContext => self.in_const_context(span),
+            IntrinsicKind::ConstEval => self.const_eval(args[0], span),
             IntrinsicKind::ConstPanic => self.const_panic(args[0], span),
             IntrinsicKind::ConstWarning => self.const_write(args[0], true, span),
             IntrinsicKind::ConstNote => self.const_write(args[0], false, span),
@@ -5524,6 +5526,23 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             self.types.builtin(BuiltinType::Bool),
             span,
         ))
+    }
+
+    fn const_eval(
+        &self,
+        expr: ir::ExprP<'ir>,
+        span: Option<Span>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let mut evaluator = ir::const_eval::ConstEvaluator::new(
+            self.diag.fork(),
+            self.mono_ctx.malloc_bag.clone(),
+            self.mono_ctx.ir,
+            [],
+        );
+
+        let val = evaluator.const_eval(expr)?;
+
+        Ok(self.exprs.literal(val, expr.ty, span))
     }
 
     fn const_panic(

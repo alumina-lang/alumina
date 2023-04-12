@@ -31,6 +31,23 @@ macro is_const_evaluable($arg) {
     intrinsics::is_const_evaluable($arg)
 }
 
+/// Forces the evaluation of the argument at compile time.
+///
+/// ## Example
+/// ```
+/// use std::runtime::const_eval;
+///
+/// assert_eq!(const_eval!(1 + 1), 2);
+/// ```
+/// ```compile_fail
+/// use std::runtime::const_eval;
+/// use std::libc::abort;
+///
+/// const_eval!(abort()); // compile error
+/// ```
+macro const_eval($arg) {
+    intrinsics::const_eval($arg)
+}
 
 #[cfg(not(output_type = "library"))]
 mod internal {
@@ -144,5 +161,26 @@ mod internal {
                 compile_fail!("invalid signature for the main function")
             }
         }
+    }
+}
+
+
+#[cfg(all(test, test_std))]
+#[docs(hide)]
+mod tests {
+    #[test]
+    fn test_in_const_context() {
+        assert!(!in_const_context());
+    }
+
+    #[test]
+    fn test_is_const_evaluable() {
+        assert!(is_const_evaluable!(1 + 1));
+        assert!(!is_const_evaluable!(libc::abort()));
+    }
+
+    #[test]
+    fn test_const_eval() {
+        assert_eq!(const_eval!(1 + 1), 2);
     }
 }

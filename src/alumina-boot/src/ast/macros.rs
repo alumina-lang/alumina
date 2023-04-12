@@ -1,5 +1,6 @@
 use crate::ast::expressions::ExpressionVisitor;
 use crate::ast::format::{format_args, Piece};
+use crate::ast::pretty::PrettyPrinter;
 use crate::ast::{
     AstCtx, AstId, Attribute, BuiltinMacro, BuiltinMacroKind, Expr, ExprKind, ExprP,
     FieldInitializer, FnKind, Item, ItemP, Lit, Macro, MacroCtx, MacroParameter, Span, Statement,
@@ -99,6 +100,7 @@ impl<'ast> MacroMaker<'ast> {
                 "format_args" => BuiltinMacroKind::FormatArgs,
                 "bind" => BuiltinMacroKind::Bind,
                 "reduce" => BuiltinMacroKind::Reduce,
+                "stringify" => BuiltinMacroKind::Stringify,
                 s => {
                     return Err(CodeErrorKind::UnknownBuiltinMacro(s.to_string()))
                         .with_span_from(&scope, node)
@@ -431,7 +433,7 @@ impl<'ast> MacroExpander<'ast> {
                         self.visit_expr(init.value).map(|value| FieldInitializer {
                             name: init.name,
                             value,
-                            span: init.span,
+                            span: self.invocation_span,
                         })
                     })
                     .collect::<Result<_, _>>()?;
@@ -519,7 +521,7 @@ impl<'ast> MacroExpander<'ast> {
 
         let result = Expr {
             kind,
-            span: expr.span,
+            span: self.invocation_span,
         };
 
         Ok(result.alloc_on(self.ast))
@@ -546,7 +548,7 @@ impl<'ast> MacroExpander<'ast> {
 
         let result = Statement {
             kind,
-            span: stmt.span,
+            span: self.invocation_span,
         };
 
         Ok(result)
@@ -555,6 +557,21 @@ impl<'ast> MacroExpander<'ast> {
     fn expand_builtin(&self, kind: &BuiltinMacroKind) -> Result<ExprP<'ast>, AluminaError> {
         use crate::common::CodeErrorBuilder;
         match kind {
+            BuiltinMacroKind::Stringify => {
+                assert_args!(self, 1);
+
+                let mut printer = PrettyPrinter::new(self.ast, false);
+                let value = self
+                    .ast
+                    .arena
+                    .alloc_slice_copy(printer.print_expr(self.args[0]).as_bytes());
+
+                Ok(Expr {
+                    kind: ExprKind::Lit(Lit::Str(value)),
+                    span: self.invocation_span,
+                }
+                .alloc_on(self.ast))
+            }
             BuiltinMacroKind::Env => {
                 assert_args!(self, 1);
                 let name = string_arg!(self, 0);

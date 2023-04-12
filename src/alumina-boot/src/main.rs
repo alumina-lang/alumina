@@ -22,6 +22,7 @@ use clap::builder::ValueParser;
 use clap::Parser;
 
 use std::path::PathBuf;
+use std::process::ExitCode;
 use std::time::Instant;
 
 use walkdir::WalkDir;
@@ -134,10 +135,8 @@ fn get_sysroot(args: &Args) -> Result<Vec<SourceFile>, AluminaError> {
     Ok(result)
 }
 
-fn main() {
+fn run(args: Args) -> Result<(), ()> {
     let start_time = Instant::now();
-    let args = Args::parse();
-
     let output_type = if args.library {
         OutputType::Library
     } else {
@@ -184,7 +183,7 @@ fn main() {
             }
             diag_ctx.print_error_report().unwrap();
             if diag_ctx.has_errors() {
-                std::process::exit(1);
+                return Err(());
             }
             match args.output {
                 Some(filename) => std::fs::write(filename, program).unwrap(),
@@ -197,7 +196,18 @@ fn main() {
             let diag_ctx = global_ctx.diag();
             diag_ctx.add_from_error(e).unwrap();
             diag_ctx.print_error_report().unwrap();
-            std::process::exit(1);
+            return Err(());
         }
+    }
+
+    Ok(())
+}
+
+fn main() -> ExitCode {
+    let args = Args::parse();
+    if run(args).is_err() {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
     }
 }

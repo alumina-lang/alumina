@@ -90,6 +90,9 @@ impl<'ast, 'src> FirstPassVisitor<'ast, 'src> {
         name: &'ast str,
         item: NamedItem<'ast, 'src>,
     ) -> Result<(), AluminaError> {
+        if let Some(id) = item.ast_id() {
+            self.ast.add_local_name(id, name)
+        }
         self.scope
             .add_item(Some(name), item.clone())
             .with_span_from(&self.scope, node)?;
