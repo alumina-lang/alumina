@@ -272,6 +272,13 @@ dist-check-with-coverage: dist-check
 		-sparse  \
 		$(BUILD_DIR)/profiles/* \
 		-o $(BUILD_DIR)/profiles/merged.profdata
+
+	llvm-cov export \
+		-Xdemangler=rustfilt \
+		-format=lcov \
+		-instr-profile=$(BUILD_DIR)/profiles/merged.profdata $(ALUMINA_BOOT) \
+		$(BOOTSTRAP_SOURCES) > $(BUILD_DIR)/coverage.txt
+
 	llvm-cov show \
 		-Xdemangler=rustfilt \
 		-format=html \

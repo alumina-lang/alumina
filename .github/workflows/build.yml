@@ -104,6 +104,35 @@ jobs:
       - name: Test aluminac
         run: make test-aluminac
 
+  code-coverage:
+    name: Build examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
+      - name: Install Tree-sitter
+        run: npm install -g tree-sitter-cli
+      - name: Install rustfilt
+        run: cargo install rustfilt
+
+      - name: Build dist-check with coverage
+        timeout-minutes: 10
+        run: make coverage -j8
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./build/coverage/coverage.txt
+          fail_ci_if_error: true
+
+
   docker:
     name: Build docker image
     runs-on: ubuntu-latest
