@@ -1,7 +1,7 @@
 use crate::ast::expressions::parse_string_literal;
 use crate::ast::{AstCtx, Attribute, ItemP, MacroCtx, Span, TestMetadata};
 use crate::common::{
-    AluminaError, ArenaAllocatable, CodeError, CodeErrorKind, Marker, WithSpanDuringParsing,
+    AluminaError, ArenaAllocatable, CodeDiagnostic, CodeError, Marker, WithSpanDuringParsing,
 };
 use crate::diagnostics;
 use crate::global_ctx::GlobalCtx;
@@ -84,7 +84,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
 
     fn visit_macro_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         if !self.macro_ctx.in_a_macro {
-            return Err(CodeErrorKind::DollaredOutsideOfMacro).with_span_from(&self.scope, node);
+            return Err(CodeDiagnostic::DollaredOutsideOfMacro).with_span_from(&self.scope, node);
         }
 
         let name = self.code.node_text(node).alloc_on(self.ast);
@@ -113,7 +113,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ScopedPathVisitor<'ast, 'src> {
     }
 
     fn visit_generic_type(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        Err(CodeErrorKind::GenericArgsInPath).with_span_from(&self.scope, node)
+        Err(CodeDiagnostic::GenericArgsInPath).with_span_from(&self.scope, node)
     }
 
     fn visit_scoped_type_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -303,7 +303,7 @@ impl<'ast, 'src> AttributeVisitor<'ast, 'src> {
         if !self.test_attributes.is_empty() {
             self.ast.add_test_metadata(
                 self.item
-                    .ok_or(CodeErrorKind::CannotBeATest)
+                    .ok_or(CodeDiagnostic::CannotBeATest)
                     .with_span_from(&self.scope, node)?,
                 TestMetadata {
                     attributes: std::mem::take(&mut self.test_attributes),
@@ -312,7 +312,7 @@ impl<'ast, 'src> AttributeVisitor<'ast, 'src> {
                         self.code
                             .node_text(
                                 node.child_by_field(FieldKind::Name)
-                                    .ok_or(CodeErrorKind::CannotBeATest)
+                                    .ok_or(CodeDiagnostic::CannotBeATest)
                                     .with_span_from(&self.scope, node)?,
                             )
                             .alloc_on(self.ast),
@@ -355,7 +355,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
         macro_rules! check_duplicate {
             ($attr:pat) => {
                 if self.attributes.iter().any(|a| matches!(a, $attr)) {
-                    return Err(CodeErrorKind::DuplicateAttribute(name.to_string()))
+                    return Err(CodeDiagnostic::DuplicateAttribute(name.to_string()))
                         .with_span_from(&self.scope, node)?;
                 }
             };
@@ -370,16 +370,16 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     .and_then(|n| n.child_by_field(FieldKind::Argument))
                     .map(|n| self.code.node_text(n))
                     .and_then(|f| f.parse().ok())
-                    .ok_or(CodeErrorKind::InvalidAttribute)
+                    .ok_or(CodeDiagnostic::InvalidAttribute)
                     .with_span_from(&self.scope, node)?;
 
                 if align == 1 {
                     self.global_ctx.diag().add_warning(CodeError {
-                        kind: CodeErrorKind::Align1,
+                        kind: CodeDiagnostic::Align1,
                         backtrace: vec![Marker::Span(span)],
                     });
                 } else if !align.is_power_of_two() {
-                    return Err(CodeErrorKind::InvalidAttributeDetail(
+                    return Err(CodeDiagnostic::InvalidAttributeDetail(
                         "alignment must be a power of two".to_string(),
                     ))
                     .with_span_from(&self.scope, node);
@@ -389,7 +389,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                         .iter()
                         .any(|a| matches!(a, Attribute::Packed))
                     {
-                        return Err(CodeErrorKind::AlignAndPacked)
+                        return Err(CodeDiagnostic::AlignAndPacked)
                             .with_span_from(&self.scope, node);
                     }
 
@@ -412,7 +412,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     .iter()
                     .any(|a| matches!(a, Attribute::Align(_)))
                 {
-                    return Err(CodeErrorKind::AlignAndPacked).with_span_from(&self.scope, node);
+                    return Err(CodeDiagnostic::AlignAndPacked).with_span_from(&self.scope, node);
                 }
 
                 self.attributes.push(Attribute::Packed);
@@ -423,7 +423,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     .and_then(|n| n.child_by_field(FieldKind::Argument))
                     .map(|n| self.code.node_text(n))
                     .ok_or_else(|| {
-                        CodeErrorKind::InvalidAttributeDetail("missing lint name".to_string())
+                        CodeDiagnostic::InvalidAttributeDetail("missing lint name".to_string())
                     })
                     .with_span_from(&self.scope, node)?;
 
@@ -436,7 +436,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
 
                 let enclosing_span = Span::from_node(self.scope.file_id(), self.applies_to_node);
 
-                match CodeErrorKind::VARIANTS.iter().find(|v| **v == lint_name) {
+                match CodeDiagnostic::VARIANTS.iter().find(|v| **v == lint_name) {
                     Some(lint) => {
                         self.global_ctx.diag().add_override(diagnostics::Override {
                             span: Some(enclosing_span),
@@ -455,7 +455,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     None => {
                         // ironic really
                         self.global_ctx.diag().add_warning(CodeError {
-                            kind: CodeErrorKind::ImSoMetaEvenThisAcronym(
+                            kind: CodeDiagnostic::ImSoMetaEvenThisAcronym(
                                 name.to_string(),
                                 lint_name.to_string(),
                             ),
@@ -478,7 +478,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     Some("ir") => self.attributes.push(Attribute::InlineDuringMono),
                     None => self.attributes.push(Attribute::Inline),
                     _ => {
-                        return Err(CodeErrorKind::InvalidAttribute)
+                        return Err(CodeDiagnostic::InvalidAttribute)
                             .with_span_from(&self.scope, node)
                     }
                 }
@@ -506,7 +506,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                 let link_name = node
                     .child_by_field(FieldKind::Arguments)
                     .and_then(|n| n.child_by_field(FieldKind::Argument))
-                    .ok_or(CodeErrorKind::InvalidAttribute)
+                    .ok_or(CodeDiagnostic::InvalidAttribute)
                     .with_span_from(&self.scope, node)?;
 
                 let bytes = self.code.node_text(link_name).as_bytes();
@@ -541,7 +541,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     .unwrap_or_default();
 
                 if args.len() < 2 {
-                    return Err(CodeErrorKind::InvalidAttributeDetail(
+                    return Err(CodeDiagnostic::InvalidAttributeDetail(
                         "cfg_attr requires two arguments".to_string(),
                     ))
                     .with_span_from(&self.scope, node);
@@ -562,7 +562,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                 let lang_type = node
                     .child_by_field(FieldKind::Arguments)
                     .and_then(|n| n.child_by_field(FieldKind::Argument))
-                    .ok_or(CodeErrorKind::UnknownLangItem(None))
+                    .ok_or(CodeDiagnostic::UnknownLangItem(None))
                     .with_span_from(&self.scope, node)?;
 
                 self.ast.add_lang_item(
@@ -571,7 +571,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                         .try_into()
                         .with_span_from(&self.scope, node)?,
                     self.item
-                        .ok_or(CodeErrorKind::CannotBeALangItem)
+                        .ok_or(CodeDiagnostic::CannotBeALangItem)
                         .with_span_from(&self.scope, node)?,
                 );
             }
@@ -640,7 +640,9 @@ impl<'ast, 'src> AluminaVisitor<'src> for CfgVisitor<'ast, 'src> {
                     self.state.push(State::Not);
                     self.visit(arguments)?
                 }
-                _ => return Err(CodeErrorKind::InvalidAttribute).with_span_from(&self.scope, node),
+                _ => {
+                    return Err(CodeDiagnostic::InvalidAttribute).with_span_from(&self.scope, node)
+                }
             };
             self.state.pop();
             Ok(ret)
@@ -675,7 +677,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for CfgVisitor<'ast, 'src> {
             match state {
                 State::Single | State::Not => {
                     if iter.next().is_some() {
-                        return Err(CodeErrorKind::InvalidAttribute)
+                        return Err(CodeDiagnostic::InvalidAttribute)
                             .with_span_from(&self.scope, node);
                     }
                     return Ok(matches == matches!(state, State::Single));
@@ -695,7 +697,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for CfgVisitor<'ast, 'src> {
 
         match state {
             State::Single | State::Not => {
-                Err(CodeErrorKind::InvalidAttribute).with_span_from(&self.scope, node)
+                Err(CodeDiagnostic::InvalidAttribute).with_span_from(&self.scope, node)
             }
             State::All => Ok(true),
             State::Any => Ok(false),

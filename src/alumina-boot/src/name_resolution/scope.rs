@@ -1,5 +1,5 @@
 use crate::ast::{AstId, Attribute, ItemP, Span};
-use crate::common::{CodeError, CodeErrorKind, FileId, HashSet, IndexMap, Marker};
+use crate::common::{CodeDiagnostic, CodeError, FileId, HashSet, IndexMap, Marker};
 use crate::diagnostics::DiagnosticContext;
 use crate::name_resolution::path::{Path, PathSegment};
 use crate::parser::ParseCtx;
@@ -329,7 +329,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
         &self,
         name: Option<&'ast str>,
         item: NamedItem<'ast, 'src>,
-    ) -> Result<(), CodeErrorKind> {
+    ) -> Result<(), CodeDiagnostic> {
         let mut current_scope = self.0.borrow_mut();
         let scope_type = current_scope.r#type;
 
@@ -382,7 +382,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             }
         }
 
-        Err(CodeErrorKind::DuplicateName(name.unwrap().into()))
+        Err(CodeDiagnostic::DuplicateName(name.unwrap().into()))
     }
 
     pub fn add_star_import(&self, path: Path<'ast>) {
@@ -420,7 +420,7 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             .map(|parent| Self(parent.upgrade().unwrap()))
     }
 
-    pub fn ensure_module(&self, path: Path<'ast>) -> Result<Scope<'ast, 'src>, CodeErrorKind> {
+    pub fn ensure_module(&self, path: Path<'ast>) -> Result<Scope<'ast, 'src>, CodeDiagnostic> {
         if path.absolute {
             return self.find_root().ensure_module(Path {
                 absolute: false,
@@ -465,24 +465,24 @@ impl<'ast, 'src> Scope<'ast, 'src> {
 
             let (kind, span) = match item.kind {
                 NamedItemKind::Local(_, span) => {
-                    (CodeErrorKind::UnusedVariable(name.to_string()), span)
+                    (CodeDiagnostic::UnusedVariable(name.to_string()), span)
                 }
                 NamedItemKind::BoundValue(_, _, _, span) => {
-                    (CodeErrorKind::UnusedClosureBinding(name.to_string()), span)
+                    (CodeDiagnostic::UnusedClosureBinding(name.to_string()), span)
                 }
                 NamedItemKind::Alias(_, node) => (
-                    CodeErrorKind::UnusedImport(name.to_string()),
+                    CodeDiagnostic::UnusedImport(name.to_string()),
                     Span::from_node(inner.code.get().unwrap().file_id(), node),
                 ),
                 NamedItemKind::MacroParameter(_, _, span) => {
-                    (CodeErrorKind::UnusedParameter(name.to_string()), span)
+                    (CodeDiagnostic::UnusedParameter(name.to_string()), span)
                 }
                 NamedItemKind::Parameter(_, node) => {
                     if name == "self" {
                         continue;
                     }
                     (
-                        CodeErrorKind::UnusedParameter(name.to_string()),
+                        CodeDiagnostic::UnusedParameter(name.to_string()),
                         Span::from_node(inner.code.get().unwrap().file_id(), node),
                     )
                 }

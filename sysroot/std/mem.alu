@@ -304,6 +304,58 @@ impl slice {
         }
     }
 
+    /// Returns a subslice of the given slice.
+    ///
+    /// This is a safe version of range indexing (`slice[a..b]`, `slice[a..]`, ...). Instead
+    /// of panicking or causing UB when the range is out of bounds, this function returns
+    /// `Option::none()`.
+    ///
+    /// ## Example
+    /// ```
+    /// let hw = "Hello, world";
+    /// assert_eq!(hw.get_range(..5usize), Option::some("Hello"));
+    /// assert_eq!(hw.get_range(7usize..), Option::some("world"));
+    /// assert_eq!(hw.get_range(7usize..12), Option::some("world"));
+    /// assert_eq!(hw.get_range(7usize..13), Option::none());
+    /// ```
+    fn get_range<Ptr: Pointer, T: builtins::RangeOf<usize>>(self: slice<Ptr>, range: T) -> Option<slice<Ptr>> {
+        when range is range::Range<usize> {
+            if (range.lower <= range.upper && range.upper <= self.len()) {
+                Option::some(slice::from_raw::<Ptr>(self._ptr + range.lower, range.upper - range.lower))
+            } else {
+                Option::none()
+            }
+        } else when range is range::RangeInclusive<usize> {
+            if (range.lower <= range.upper && range.upper < self.len()) {
+                Option::some(slice::from_raw::<Ptr>(self._ptr + range.lower, range.upper - range.lower + 1))
+            } else {
+                Option::none()
+            }
+        } else when range is range::RangeTo<usize> {
+            if (range.upper <= self.len()) {
+                Option::some(slice::from_raw::<Ptr>(self._ptr, range.upper))
+            } else {
+                Option::none()
+            }
+        } else when range is range::RangeToInclusive<usize> {
+            if (range.upper < self.len()) {
+                Option::some(slice::from_raw::<Ptr>(self._ptr, range.upper + 1))
+            } else {
+                Option::none()
+            }
+        } else when range is range::RangeFrom<usize> {
+            if (range.lower <= self.len()) {
+                Option::some(slice::from_raw::<Ptr>(self._ptr + range.lower, self.len() - range.lower))
+            } else {
+                Option::none()
+            }
+        } else when range is range::RangeFull<usize> {
+            Option::some(self)
+        } else {
+            compile_fail!("unsupported range type");
+        }
+    }
+
     /// Copy a slice into a fixed-size array.
     ///
     /// The length of the result array must exactly match the length of the slice.

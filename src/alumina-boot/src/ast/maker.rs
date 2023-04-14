@@ -8,7 +8,7 @@ use crate::ast::{
     TypeDef,
 };
 use crate::common::{
-    AluminaError, ArenaAllocatable, CodeError, CodeErrorKind, HashSet, Marker,
+    AluminaError, ArenaAllocatable, CodeDiagnostic, CodeError, HashSet, Marker,
     WithSpanDuringParsing,
 };
 use crate::global_ctx::GlobalCtx;
@@ -121,7 +121,7 @@ impl<'ast> AstItemMaker<'ast> {
                         if let Some(name) = name {
                             if !names.insert(name) {
                                 self.global_ctx.diag().add_warning(CodeError::from_kind(
-                                    CodeErrorKind::DuplicateNameShadow(name.to_string()),
+                                    CodeDiagnostic::DuplicateNameShadow(name.to_string()),
                                     Some(Span::from_node(impl_scope.file_id(), *node)),
                                 ));
                             }
@@ -215,7 +215,7 @@ impl<'ast> AstItemMaker<'ast> {
         };
 
         if attributes.contains(&Attribute::Transparent) && fields.len() != 1 {
-            return Err(CodeErrorKind::InvalidTransparent).with_span_from(&scope, node);
+            return Err(CodeDiagnostic::InvalidTransparent).with_span_from(&scope, node);
         }
 
         let (associated_fns, mixins) = self.resolve_associated_items(impl_scopes)?;
@@ -383,7 +383,7 @@ impl<'ast> AstItemMaker<'ast> {
             Ty::Item(item) | Ty::Pointer(Ty::Item(item), _) => {
                 if let Some(LangItemKind::DynSelf) = self.ast.lang_item_kind(item) {
                     self.global_ctx.diag().add_warning(CodeError {
-                        kind: CodeErrorKind::SelfConfusion,
+                        kind: CodeDiagnostic::SelfConfusion,
                         backtrace: span.map(Marker::Span).into_iter().collect(),
                     })
                 }
@@ -411,7 +411,7 @@ impl<'ast> AstItemMaker<'ast> {
             .is_some();
 
         if has_varargs && !is_extern {
-            return Err(CodeErrorKind::VarArgsCanOnlyBeExtern).with_span_from(&scope, node);
+            return Err(CodeDiagnostic::VarArgsCanOnlyBeExtern).with_span_from(&scope, node);
         }
 
         let is_protocol_fn = matches!(scope.parent().map(|s| s.typ()), Some(ScopeType::Protocol));
@@ -448,19 +448,19 @@ impl<'ast> AstItemMaker<'ast> {
         }
 
         if is_protocol_fn && is_extern {
-            return Err(CodeErrorKind::ProtocolFnsCannotBeExtern).with_span_from(&scope, node);
+            return Err(CodeDiagnostic::ProtocolFnsCannotBeExtern).with_span_from(&scope, node);
         }
 
         match abi {
             None | Some("\"C\"") => {
                 if is_extern && !placeholders.is_empty() {
-                    return Err(CodeErrorKind::ExternCGenericParams).with_span_from(&scope, node);
+                    return Err(CodeDiagnostic::ExternCGenericParams).with_span_from(&scope, node);
                 }
             }
             Some("\"intrinsic\"") => {
                 let result = Item::Intrinsic(Intrinsic {
                     kind: intrinsic_kind(name.unwrap())
-                        .ok_or_else(|| CodeErrorKind::UnknownIntrinsic(name.unwrap().to_string()))
+                        .ok_or_else(|| CodeDiagnostic::UnknownIntrinsic(name.unwrap().to_string()))
                         .with_span_from(&scope, node)?,
                     generic_count: placeholders.len(),
                     arg_count: parameters.len(),
@@ -471,7 +471,7 @@ impl<'ast> AstItemMaker<'ast> {
                 return Ok(());
             }
             Some(abi) => {
-                return Err(CodeErrorKind::UnsupportedABI(abi.to_string()))
+                return Err(CodeDiagnostic::UnsupportedABI(abi.to_string()))
                     .with_span_from(&scope, node)
             }
         }
@@ -505,7 +505,7 @@ impl<'ast> AstItemMaker<'ast> {
             .transpose()?;
 
         if function_body.is_none() && !is_extern && !is_protocol_fn {
-            return Err(CodeErrorKind::FunctionMustHaveBody).with_span_from(&scope, node);
+            return Err(CodeDiagnostic::FunctionMustHaveBody).with_span_from(&scope, node);
         }
 
         if function_body.is_some() {
@@ -573,15 +573,15 @@ impl<'ast> AstItemMaker<'ast> {
 
         let placeholders = self.get_placeholders(&scope)?;
         if !placeholders.is_empty() && is_extern {
-            return Err(CodeErrorKind::ExternStaticCannotBeGeneric).with_span_from(&scope, node);
+            return Err(CodeDiagnostic::ExternStaticCannotBeGeneric).with_span_from(&scope, node);
         }
 
         if typ.is_none() && init.is_none() {
-            return Err(CodeErrorKind::TypeHintRequired).with_span_from(&scope, node);
+            return Err(CodeDiagnostic::TypeHintRequired).with_span_from(&scope, node);
         }
 
         if is_extern && (typ.is_none() || init.is_some()) {
-            return Err(CodeErrorKind::ExternStaticMustHaveType).with_span_from(&scope, node);
+            return Err(CodeDiagnostic::ExternStaticMustHaveType).with_span_from(&scope, node);
         }
 
         let span = Span::from_node(scope.file_id(), node);
@@ -658,7 +658,7 @@ impl<'ast> AstItemMaker<'ast> {
             [NI {
                 kind: Impl(node, scope),
                 ..
-            }] => return Err(CodeErrorKind::NoFreeStandingImpl).with_span_from(scope, *node),
+            }] => return Err(CodeDiagnostic::NoFreeStandingImpl).with_span_from(scope, *node),
             [NI {
                 kind: Type(symbol, node, scope),
                 attributes,

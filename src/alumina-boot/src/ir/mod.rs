@@ -1,7 +1,6 @@
 pub mod builder;
 pub mod const_eval;
 pub mod dce;
-pub mod elide_zst;
 pub mod infer;
 pub mod inline;
 pub mod lang;
@@ -10,7 +9,7 @@ pub mod mono;
 
 use crate::ast::{Attribute, BinOp, BuiltinType, Span, UnOp};
 use crate::common::{
-    impl_allocatable, Allocatable, AluminaError, ArenaAllocatable, CodeErrorKind, HashSet,
+    impl_allocatable, Allocatable, AluminaError, ArenaAllocatable, CodeDiagnostic, HashSet,
     Incrementable,
 };
 use crate::intrinsics::IntrinsicValueKind;
@@ -28,6 +27,7 @@ pub struct IrCtx<'ir> {
     pub arena: Bump,
     pub counter: Cell<usize>,
     types: RefCell<HashSet<TyP<'ir>>>,
+    strings: RefCell<HashSet<&'ir str>>,
 }
 
 impl<'ir> IrCtx<'ir> {
@@ -36,6 +36,7 @@ impl<'ir> IrCtx<'ir> {
             arena: Bump::new(),
             counter: Cell::new(0),
             types: RefCell::new(HashSet::default()),
+            strings: RefCell::new(HashSet::default()),
         }
     }
 
@@ -52,6 +53,17 @@ impl<'ir> IrCtx<'ir> {
 
         let inner = self.arena.alloc(ty);
         self.types.borrow_mut().insert(inner);
+
+        inner
+    }
+
+    pub fn intern_str(&'ir self, s: &'_ str) -> &'ir str {
+        if let Some(key) = self.strings.borrow().get(s) {
+            return key;
+        }
+
+        let inner = self.arena.alloc_str(s);
+        self.strings.borrow_mut().insert(inner);
 
         inner
     }
@@ -90,7 +102,7 @@ impl<'ir> ArenaAllocatable<'ir, IrCtx<'ir>> for &str {
     type ReturnType = &'ir str;
 
     fn alloc_on(self, ctx: &'ir IrCtx<'ir>) -> Self::ReturnType {
-        ctx.arena.alloc_str(self)
+        ctx.intern_str(self)
     }
 }
 
@@ -267,6 +279,7 @@ pub struct StructLike<'ir> {
     pub attributes: &'ir [Attribute],
     pub fields: &'ir [Field<'ir>],
     pub is_union: bool,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -284,8 +297,7 @@ pub struct LocalDef<'ir> {
 #[derive(Debug)]
 pub struct FuncBody<'ir> {
     pub local_defs: &'ir [LocalDef<'ir>],
-    pub statements: &'ir [Statement<'ir>],
-    pub raw_body: Option<ExprP<'ir>>,
+    pub expr: ExprP<'ir>,
 }
 
 #[derive(Debug)]
@@ -295,6 +307,7 @@ pub struct Function<'ir> {
     pub args: &'ir [Parameter<'ir>],
     pub return_type: TyP<'ir>,
     pub body: OnceCell<FuncBody<'ir>>,
+    pub span: Option<Span>,
     pub varargs: bool,
 }
 
@@ -308,6 +321,7 @@ pub struct Closure<'ir> {
 pub struct Protocol<'ir> {
     pub name: Option<&'ir str>,
     pub methods: &'ir [ProtocolFunction<'ir>],
+    pub span: Option<Span>,
 }
 
 #[derive(Debug)]
@@ -334,6 +348,7 @@ pub struct Enum<'ir> {
     pub name: Option<&'ir str>,
     pub underlying_type: TyP<'ir>,
     pub members: &'ir [EnumMember<'ir>],
+    pub span: Option<Span>,
 }
 
 #[derive(Debug)]
@@ -343,6 +358,7 @@ pub struct Static<'ir> {
     pub init: Option<ExprP<'ir>>,
     pub attributes: &'ir [Attribute],
     pub r#extern: bool,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug)]
@@ -351,6 +367,7 @@ pub struct Const<'ir> {
     pub typ: TyP<'ir>,
     pub value: Value<'ir>,
     pub init: ExprP<'ir>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug)]
@@ -387,10 +404,10 @@ impl<'ir> IRItemCell<'ir> {
             .expect("assigning the same symbol twice");
     }
 
-    pub fn get(&'ir self) -> Result<&'ir IRItem<'ir>, CodeErrorKind> {
+    pub fn get(&'ir self) -> Result<&'ir IRItem<'ir>, CodeDiagnostic> {
         match self.contents.get() {
             Some(item) => Ok(item),
-            None => Err(CodeErrorKind::UnpopulatedSymbol),
+            None => Err(CodeDiagnostic::UnpopulatedSymbol),
         }
     }
 
@@ -401,80 +418,80 @@ impl<'ir> IRItemCell<'ir> {
         }
     }
 
-    pub fn get_function(&'ir self) -> Result<&'ir Function<'ir>, CodeErrorKind> {
+    pub fn get_function(&'ir self) -> Result<&'ir Function<'ir>, CodeDiagnostic> {
         match self.contents.get() {
             Some(IRItem::Function(f)) => Ok(f),
-            Some(_) => Err(CodeErrorKind::InternalError(
+            Some(_) => Err(CodeDiagnostic::InternalError(
                 "function expected".into(),
                 Backtrace::capture().into(),
             )),
-            None => Err(CodeErrorKind::UnpopulatedSymbol),
+            None => Err(CodeDiagnostic::UnpopulatedSymbol),
         }
     }
 
-    pub fn get_closure(&'ir self) -> Result<&'ir Closure<'ir>, CodeErrorKind> {
+    pub fn get_closure(&'ir self) -> Result<&'ir Closure<'ir>, CodeDiagnostic> {
         match self.contents.get() {
             Some(IRItem::Closure(c)) => Ok(c),
-            Some(_) => Err(CodeErrorKind::InternalError(
+            Some(_) => Err(CodeDiagnostic::InternalError(
                 "closure expected".into(),
                 Backtrace::capture().into(),
             )),
-            None => Err(CodeErrorKind::UnpopulatedSymbol),
+            None => Err(CodeDiagnostic::UnpopulatedSymbol),
         }
     }
 
-    pub fn get_protocol(&'ir self) -> Result<&'ir Protocol<'ir>, CodeErrorKind> {
+    pub fn get_protocol(&'ir self) -> Result<&'ir Protocol<'ir>, CodeDiagnostic> {
         match self.contents.get() {
             Some(IRItem::Protocol(p)) => Ok(p),
-            Some(_) => Err(CodeErrorKind::InternalError(
+            Some(_) => Err(CodeDiagnostic::InternalError(
                 "protocol expected".into(),
                 Backtrace::capture().into(),
             )),
-            None => Err(CodeErrorKind::UnpopulatedSymbol),
+            None => Err(CodeDiagnostic::UnpopulatedSymbol),
         }
     }
 
-    pub fn get_struct_like(&'ir self) -> Result<&'ir StructLike<'ir>, CodeErrorKind> {
+    pub fn get_struct_like(&'ir self) -> Result<&'ir StructLike<'ir>, CodeDiagnostic> {
         match self.contents.get() {
             Some(IRItem::StructLike(p)) => Ok(p),
-            Some(_) => Err(CodeErrorKind::InternalError(
+            Some(_) => Err(CodeDiagnostic::InternalError(
                 "struct expected".into(),
                 Backtrace::capture().into(),
             )),
-            None => Err(CodeErrorKind::UnpopulatedSymbol),
+            None => Err(CodeDiagnostic::UnpopulatedSymbol),
         }
     }
 
-    pub fn get_enum(&'ir self) -> Result<&'ir Enum<'ir>, CodeErrorKind> {
+    pub fn get_enum(&'ir self) -> Result<&'ir Enum<'ir>, CodeDiagnostic> {
         match self.contents.get() {
             Some(IRItem::Enum(p)) => Ok(p),
-            Some(_) => Err(CodeErrorKind::InternalError(
+            Some(_) => Err(CodeDiagnostic::InternalError(
                 "enum expected".into(),
                 Backtrace::capture().into(),
             )),
-            None => Err(CodeErrorKind::UnpopulatedSymbol),
+            None => Err(CodeDiagnostic::UnpopulatedSymbol),
         }
     }
 
-    pub fn get_static(&'ir self) -> Result<&'ir Static<'ir>, CodeErrorKind> {
+    pub fn get_static(&'ir self) -> Result<&'ir Static<'ir>, CodeDiagnostic> {
         match self.contents.get() {
             Some(IRItem::Static(s)) => Ok(s),
-            Some(_) => Err(CodeErrorKind::InternalError(
+            Some(_) => Err(CodeDiagnostic::InternalError(
                 "static expected".into(),
                 Backtrace::capture().into(),
             )),
-            None => Err(CodeErrorKind::UnpopulatedSymbol),
+            None => Err(CodeDiagnostic::UnpopulatedSymbol),
         }
     }
 
-    pub fn get_const(&'ir self) -> Result<&'ir Const<'ir>, CodeErrorKind> {
+    pub fn get_const(&'ir self) -> Result<&'ir Const<'ir>, CodeDiagnostic> {
         match self.contents.get() {
             Some(IRItem::Const(c)) => Ok(c),
-            Some(_) => Err(CodeErrorKind::InternalError(
+            Some(_) => Err(CodeDiagnostic::InternalError(
                 "const expected".into(),
                 Backtrace::capture().into(),
             )),
-            None => Err(CodeErrorKind::UnpopulatedSymbol),
+            None => Err(CodeDiagnostic::UnpopulatedSymbol),
         }
     }
 
@@ -554,6 +571,7 @@ pub enum ExprKind<'ir> {
     TupleIndex(ExprP<'ir>, usize),
     If(ExprP<'ir>, ExprP<'ir>, ExprP<'ir>, Option<bool>),
     Cast(ExprP<'ir>),
+    Tag(&'ir str, ExprP<'ir>),
 
     Intrinsic(IntrinsicValueKind<'ir>),
 
@@ -650,6 +668,7 @@ impl<'ir> Expr<'ir> {
             ExprKind::Void => true,
 
             ExprKind::Intrinsic(ref kind) => match kind {
+                IntrinsicValueKind::Transmute(inner) => inner.pure(),
                 IntrinsicValueKind::SizeOfLike(_, _) => true,
                 IntrinsicValueKind::Dangling(_) => true,
                 IntrinsicValueKind::Asm(_) => false,
@@ -669,6 +688,11 @@ impl<'ir> Expr<'ir> {
             ExprKind::AssignOp(_, _, _) => false,
             ExprKind::Return(_) => false,
             ExprKind::Goto(_) => false,
+            ExprKind::Tag(tag, inner) => match tag {
+                "non_pure" => false,
+                "pure" => true,
+                _ => inner.pure(),
+            },
         }
     }
 }
@@ -838,6 +862,11 @@ pub trait ExpressionVisitor<'ir>: Sized {
         Ok(())
     }
 
+    fn visit_tag(&mut self, _tag: &'ir str, inner: ExprP<'ir>) -> Result<(), AluminaError> {
+        self.visit_expr(inner)?;
+        Ok(())
+    }
+
     fn visit_expr(&mut self, expr: ExprP<'ir>) -> Result<(), AluminaError> {
         default_visit_expr(self, expr)
     }
@@ -874,6 +903,7 @@ pub fn default_visit_expr<'ir, V: ExpressionVisitor<'ir>>(
         ExprKind::Struct(exprs) => visitor.visit_struct(exprs),
         ExprKind::Unreachable => visitor.visit_unreachable(),
         ExprKind::Void => visitor.visit_void(),
+        ExprKind::Tag(tag, inner) => visitor.visit_tag(tag, inner),
     }
 }
 

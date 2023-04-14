@@ -9,7 +9,7 @@ pub mod types;
 
 use crate::ast::lang::LangItemKind;
 use crate::common::{
-    impl_allocatable, Allocatable, ArenaAllocatable, CodeErrorKind, FileId, HashMap, HashSet,
+    impl_allocatable, Allocatable, ArenaAllocatable, CodeDiagnostic, FileId, HashMap, HashSet,
     Incrementable,
 };
 use crate::intrinsics::IntrinsicKind;
@@ -59,12 +59,12 @@ impl<'ast> AstCtx<'ast> {
         }
     }
 
-    pub fn lang_item(&self, kind: LangItemKind) -> Result<ItemP<'ast>, CodeErrorKind> {
+    pub fn lang_item(&self, kind: LangItemKind) -> Result<ItemP<'ast>, CodeDiagnostic> {
         self.lang_items
             .borrow()
             .get(&kind)
             .copied()
-            .ok_or(CodeErrorKind::MissingLangItem(kind))
+            .ok_or(CodeDiagnostic::MissingLangItem(kind))
     }
 
     pub fn lang_item_kind(&self, item: ItemP<'ast>) -> Option<LangItemKind> {
@@ -628,6 +628,7 @@ pub enum BuiltinMacroKind {
     Line,
     Column,
     File,
+    Cfg,
     IncludeBytes,
     FormatArgs,
     Bind,
@@ -752,7 +753,7 @@ pub enum UnOp {
     BitNot,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Lit<'ast> {
     Str(&'ast [u8]),
     Int(bool, u128, Option<BuiltinType>),
@@ -830,6 +831,7 @@ pub enum ExprKind<'ast> {
     TypeCheck(ExprP<'ast>, TyP<'ast>),
     StaticIf(ExprP<'ast>, ExprP<'ast>, ExprP<'ast>),
     Cast(ExprP<'ast>, TyP<'ast>),
+    Tag(&'ast str, ExprP<'ast>),
 
     Void,
 }

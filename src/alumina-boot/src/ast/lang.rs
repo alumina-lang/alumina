@@ -1,5 +1,5 @@
 use crate::ast::{BinOp, BuiltinType};
-use crate::common::CodeErrorKind;
+use crate::common::CodeDiagnostic;
 use crate::utils::regex;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -132,7 +132,7 @@ impl LangItemKind {
 }
 
 impl TryFrom<&str> for LangItemKind {
-    type Error = CodeErrorKind;
+    type Error = CodeDiagnostic;
 
     fn try_from(s: &str) -> Result<Self, Self::Error> {
         match s {
@@ -239,7 +239,7 @@ impl TryFrom<&str> for LangItemKind {
                     let n = matches[1].parse::<usize>().unwrap();
                     Ok(LangItemKind::ImplTuple(n))
                 } else {
-                    Err(CodeErrorKind::UnknownLangItem(Some(t.to_string())))
+                    Err(CodeDiagnostic::UnknownLangItem(Some(t.to_string())))
                 }
             }
         }

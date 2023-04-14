@@ -1,5 +1,5 @@
 use crate::ast::{Attribute, BuiltinType};
-use crate::common::{CodeErrorKind, CycleGuardian};
+use crate::common::{CodeDiagnostic, CycleGuardian};
 use crate::global_ctx::GlobalCtx;
 use crate::ir::{IRItem, IRItemP, Ty, TyP};
 
@@ -93,7 +93,7 @@ impl<'ir> Layouter<'ir> {
         is_union: bool,
         is_packed: bool,
         fields: I,
-    ) -> Result<Layout, CodeErrorKind>
+    ) -> Result<Layout, CodeDiagnostic>
     where
         I: IntoIterator<Item = TyP<'ir>>,
     {
@@ -127,7 +127,7 @@ impl<'ir> Layouter<'ir> {
         is_union: bool,
         is_packed: bool,
         fields: I,
-    ) -> Result<FieldLayout<T>, CodeErrorKind>
+    ) -> Result<FieldLayout<T>, CodeDiagnostic>
     where
         I: IntoIterator<Item = (T, TyP<'ir>)>,
     {
@@ -169,11 +169,11 @@ impl<'ir> Layouter<'ir> {
         Ok((Layout::new(final_size, align), result))
     }
 
-    pub fn layout_of_item(&self, item: IRItemP<'ir>) -> Result<Layout, CodeErrorKind> {
+    pub fn layout_of_item(&self, item: IRItemP<'ir>) -> Result<Layout, CodeDiagnostic> {
         let _guard = self
             .cycle_guardian
             .guard(item)
-            .map_err(|_| CodeErrorKind::TypeWithInfiniteSize)?;
+            .map_err(|_| CodeDiagnostic::TypeWithInfiniteSize)?;
 
         let ret = match item.get()? {
             IRItem::StructLike(s) | IRItem::Closure(Closure { data: s, .. }) => {
@@ -206,7 +206,7 @@ impl<'ir> Layouter<'ir> {
         Ok(ret)
     }
 
-    pub fn layout_of(&self, ty: TyP<'ir>) -> Result<Layout, CodeErrorKind> {
+    pub fn layout_of(&self, ty: TyP<'ir>) -> Result<Layout, CodeDiagnostic> {
         match ty {
             Ty::Array(inner, len) => {
                 let inner_layout = self.layout_of(inner)?;

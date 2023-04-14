@@ -7,7 +7,8 @@ use crate::ast::{
     Span, Statement, StatementKind, Ty, TyP, UnOp,
 };
 use crate::common::{
-    AluminaError, ArenaAllocatable, CodeErrorBuilder, CodeErrorKind, HashSet, WithSpanDuringParsing,
+    AluminaError, ArenaAllocatable, CodeDiagnostic, CodeErrorBuilder, HashSet,
+    WithSpanDuringParsing,
 };
 use crate::global_ctx::GlobalCtx;
 use crate::name_resolution::pass1::FirstPassVisitor;
@@ -291,7 +292,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                 )?;
                 symbol
             }
-            _ => return Err(CodeErrorKind::NotAMacro).with_span(Some(span)),
+            _ => return Err(CodeDiagnostic::NotAMacro).with_span(Some(span)),
         };
 
         let result = if self.macro_ctx.in_a_macro {
@@ -405,7 +406,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                         .visit_local(node)?;
 
                         if !items.is_empty() && self.macro_ctx.in_a_macro {
-                            return Err(CodeErrorKind::MacrosCannotDefineItems)
+                            return Err(CodeDiagnostic::MacrosCannotDefineItems)
                                 .with_span_from(&self.scope, node);
                         }
 
@@ -455,7 +456,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
     fn visit_closure_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         if self.macro_ctx.in_a_macro {
-            return Err(CodeErrorKind::MacrosCannotDefineLambdas).with_span_from(&self.scope, node);
+            return Err(CodeDiagnostic::MacrosCannotDefineLambdas)
+                .with_span_from(&self.scope, node);
         }
 
         let visitor = ClosureVisitor::new(
@@ -520,7 +522,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         };
 
         let value = value
-            .map_err(|_| CodeErrorKind::InvalidLiteral)
+            .map_err(|_| CodeDiagnostic::InvalidLiteral)
             .with_span_from(&self.scope, node)?;
 
         Ok(
@@ -561,7 +563,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             .as_slice()
         {
             [v] => *v,
-            _ => return Err(CodeErrorKind::InvalidCharLiteral).with_span_from(&self.scope, node),
+            _ => return Err(CodeDiagnostic::InvalidCharLiteral).with_span_from(&self.scope, node),
         };
 
         Ok(
@@ -575,7 +577,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             .code
             .node_text(node)
             .parse()
-            .map_err(|_| CodeErrorKind::InvalidLiteral)
+            .map_err(|_| CodeDiagnostic::InvalidLiteral)
             .with_span_from(&self.scope, node)?;
 
         Ok(ExprKind::Lit(Lit::Bool(value)).alloc_with_span_from(self.ast, &self.scope, node))
@@ -730,7 +732,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
     fn visit_macro_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         if !self.macro_ctx.in_a_macro {
-            return Err(CodeErrorKind::DollaredOutsideOfMacro).with_span_from(&self.scope, node);
+            return Err(CodeDiagnostic::DollaredOutsideOfMacro).with_span_from(&self.scope, node);
         }
 
         self.visit_ref(node)
@@ -886,7 +888,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                 return Ok(ret.alloc_with_span_from(self.ast, &self.scope, node));
             }
             _ => {
-                return Err(CodeErrorKind::FunctionOrStaticExpectedHere)
+                return Err(CodeDiagnostic::FunctionOrStaticExpectedHere)
                     .with_span_from(&self.scope, node);
             }
         };
@@ -1121,7 +1123,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         // Switch is desugared into a series of if-else expressions
         for arm in body.children_by_field(FieldKind::Arm, &mut cursor) {
             if default_arm.is_some() {
-                return Err(CodeErrorKind::DefaultCaseMustBeLast).with_span_from(&self.scope, arm);
+                return Err(CodeDiagnostic::DefaultCaseMustBeLast).with_span_from(&self.scope, arm);
             }
 
             let pattern = arm.child_by_field(FieldKind::Pattern).unwrap();
@@ -1211,7 +1213,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                     .node_text(node.child_by_field(FieldKind::Field).unwrap());
 
                 if !names.insert(name) {
-                    return Err(CodeErrorKind::DuplicateFieldInitializer(name.to_string()))
+                    return Err(CodeDiagnostic::DuplicateFieldInitializer(name.to_string()))
                         .with_span_from(&self.scope, node);
                 }
 
@@ -1252,11 +1254,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
     fn visit_et_cetera_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         if !self.macro_ctx.in_a_macro {
-            return Err(CodeErrorKind::EtCeteraOutsideOfMacro).with_span_from(&self.scope, node);
+            return Err(CodeDiagnostic::EtCeteraOutsideOfMacro).with_span_from(&self.scope, node);
         }
 
         if !self.macro_ctx.has_et_cetera {
-            return Err(CodeErrorKind::NoEtCeteraArgs).with_span_from(&self.scope, node);
+            return Err(CodeDiagnostic::NoEtCeteraArgs).with_span_from(&self.scope, node);
         }
 
         let inner = self.visit(node.child_by_field(FieldKind::Inner).unwrap())?;
@@ -1288,7 +1290,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                         .collect();
                     item
                 }
-                _ => return Err(CodeErrorKind::NotAMacro).with_span_from(&self.scope, node),
+                _ => return Err(CodeDiagnostic::NotAMacro).with_span_from(&self.scope, node),
             };
 
             let expander =
@@ -1319,7 +1321,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 }
 
-pub fn parse_string_literal(lit: &str) -> Result<Vec<u8>, CodeErrorKind> {
+pub fn parse_string_literal(lit: &str) -> Result<Vec<u8>, CodeDiagnostic> {
     let mut result = Vec::<u8>::with_capacity(lit.len());
 
     enum State {
@@ -1375,7 +1377,7 @@ pub fn parse_string_literal(lit: &str) -> Result<Vec<u8>, CodeErrorKind> {
                 b'x' => State::Hex,
                 b'u' => State::UnicodeStart,
                 _ => {
-                    return Err(CodeErrorKind::InvalidEscapeSequence);
+                    return Err(CodeDiagnostic::InvalidEscapeSequence);
                 }
             },
             State::Hex => {
@@ -1401,10 +1403,10 @@ pub fn parse_string_literal(lit: &str) -> Result<Vec<u8>, CodeErrorKind> {
                 if buf.len() == 3 {
                     buf.push(ch as char);
                     let ch = u32::from_str_radix(&buf, 16)
-                        .map_err(|_| CodeErrorKind::InvalidEscapeSequence)?;
+                        .map_err(|_| CodeDiagnostic::InvalidEscapeSequence)?;
 
                     let utf8 = char::from_u32(ch)
-                        .ok_or(CodeErrorKind::InvalidEscapeSequence)?
+                        .ok_or(CodeDiagnostic::InvalidEscapeSequence)?
                         .to_string();
 
                     result.extend(utf8.as_bytes());
@@ -1418,9 +1420,9 @@ pub fn parse_string_literal(lit: &str) -> Result<Vec<u8>, CodeErrorKind> {
             State::UnicodeLong => match ch {
                 b'}' => {
                     let ch = u32::from_str_radix(&buf, 16)
-                        .map_err(|_| CodeErrorKind::InvalidEscapeSequence)?;
+                        .map_err(|_| CodeDiagnostic::InvalidEscapeSequence)?;
                     let utf8 = char::from_u32(ch)
-                        .ok_or(CodeErrorKind::InvalidEscapeSequence)?
+                        .ok_or(CodeDiagnostic::InvalidEscapeSequence)?
                         .to_string();
                     result.extend(utf8.as_bytes());
                     buf.clear();
@@ -1436,7 +1438,7 @@ pub fn parse_string_literal(lit: &str) -> Result<Vec<u8>, CodeErrorKind> {
 
     match state {
         State::Normal => Ok(result),
-        _ => Err(CodeErrorKind::InvalidEscapeSequence),
+        _ => Err(CodeDiagnostic::InvalidEscapeSequence),
     }
 }
 
@@ -1608,7 +1610,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
                 ..
             }) => ExprKind::BoundParam(self_arg, id, bound_type),
             _ => {
-                return Err(CodeErrorKind::CanOnlyCloseOverLocals).with_span_from(&self.scope, node)
+                return Err(CodeDiagnostic::CanOnlyCloseOverLocals)
+                    .with_span_from(&self.scope, node)
             }
         };
 
@@ -1716,7 +1719,7 @@ pub fn resolve_name<'ast, 'src>(
 
                 ExprKind::Macro(symbol, &[])
             }
-            kind => return Err(CodeErrorKind::Unexpected(format!("{}", kind))).with_span(span),
+            kind => return Err(CodeDiagnostic::Unexpected(format!("{}", kind))).with_span(span),
         },
         ItemResolution::Defered(ty, name) => {
             let name = name.0.alloc_on(ast);

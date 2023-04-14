@@ -330,12 +330,10 @@ let arr: [u32; QUUX];
 
 Constant evaluation supports many of the language features, including variable assignments, loops, conditionals, function calls, etc. Functions do not have to be specifically marked as `const` or `constexpr` in order to use them in constant expressions. The following are not supported:
 
-- arithmetic operations and comparisons of floating point numbers
 - foreign function calls, including `libc` functions
 - inline assembly and most other compiler intrinsics
-- atomic operations
-- `dyn` pointers and virtual dispatch
-- type punning of any sort (e.g. via a union, `std::util::transmute` or pointer casts)
+- type punning (via `transmute`, `union` or pointer casts)
+    - exception: transmuting integers of same size and floating point numbers to integers and back is supported
 - pointer arithmetic between pointers of different provenance
   ```rust
   const _ = {
@@ -346,6 +344,7 @@ Constant evaluation supports many of the language features, including variable a
         let diff2 = &a[7] - &b[3]; // but this is not
   }
   ```
+- converting between pointers and integers
 - all operations[^1] that would cause undefined behavior at runtime (out of bounds array access, signed overflow, division by zero, reaching `std::unreachable()`, etc.)
   - uninitialized memory is not forbidden - a constant is allowed e.g. to evaluate to a struct with an uninitialized field, but if the uninitialized value is used for computation during constant evaluation itself, this will result in a compile-time error.
     ```rust
@@ -360,7 +359,7 @@ Constant evaluation supports many of the language features, including variable a
 
 Call to `std::runtime::in_const_context` function evaluates to `true` during constant evaluation and `false` during code generation. This can be used to make functions const-compatible (e.g. by using an implementation not relying on foreign functions).
 
-There are also limits on how complex a constant expression can be. The compiler will reject constant expressions that are too complex to evaluate at compile time. The current hard-coded limits is 10000 steps and a maximum recursion depth of 100 per constant expression.
+There are also limits on how complex a constant expression can be. The compiler will reject constant expressions that are too complex to evaluate at compile time. The current hard-coded limits are 10000 steps and a maximum recursion depth of 100 per constant expression.
 
 [^1]: If you can produce UB during const-eval, please file a bug.
 

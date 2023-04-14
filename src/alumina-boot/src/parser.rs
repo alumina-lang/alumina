@@ -1,5 +1,5 @@
 use crate::ast::Span;
-use crate::common::{AluminaError, CodeError, CodeErrorKind, FileId, Marker};
+use crate::common::{AluminaError, CodeDiagnostic, CodeError, FileId, Marker};
 
 use once_cell::unsync::OnceCell;
 
@@ -58,12 +58,12 @@ impl<'src> ParseCtx<'src> {
         for node in traverse(node.walk(), Order::Pre) {
             if node.is_error() {
                 errors.push(CodeError {
-                    kind: CodeErrorKind::ParseError(self.node_text(node).to_string()),
+                    kind: CodeDiagnostic::ParseError(self.node_text(node).to_string()),
                     backtrace: vec![Marker::Span(Span::from_node(self.file_id, node))],
                 })
             } else if node.is_missing() {
                 errors.push(CodeError {
-                    kind: CodeErrorKind::ParseErrorMissing(node.kind().to_string()),
+                    kind: CodeDiagnostic::ParseErrorMissing(node.kind().to_string()),
                     backtrace: vec![Marker::Span(Span::from_node(self.file_id, node))],
                 })
             }

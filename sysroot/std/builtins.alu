@@ -1516,25 +1516,37 @@ mod internal {
         /// Adds two numbers, wrapping around at the boundary of the type.
         #[inline]
         fn wrapping_add(lhs: Self, rhs: Self) -> Self {
-            let ret: Self;
-            intrinsics::codegen_func::<bool>("__builtin_add_overflow", lhs, rhs, &ret);
-            ret
+            if runtime::in_const_context() {
+                ((lhs as unsigned_of<Self>) + (rhs as unsigned_of<Self>)) as Self
+            } else {
+                let ret: Self;
+                intrinsics::codegen_func::<bool>("__builtin_add_overflow", lhs, rhs, &ret);
+                ret
+            }
         }
 
         /// Subtracts two numbers, wrapping around at the boundary of the type.
         #[inline]
         fn wrapping_sub(lhs: Self, rhs: Self) -> Self {
-            let ret: Self;
-            intrinsics::codegen_func::<bool>("__builtin_sub_overflow", lhs, rhs, &ret);
-            ret
+            if runtime::in_const_context() {
+                ((lhs as unsigned_of<Self>) - (rhs as unsigned_of<Self>)) as Self
+            } else {
+                let ret: Self;
+                intrinsics::codegen_func::<bool>("__builtin_sub_overflow", lhs, rhs, &ret);
+                ret
+            }
         }
 
         /// Multiplies two numbers, wrapping around at the boundary of the type.
         #[inline]
         fn wrapping_mul(lhs: Self, rhs: Self) -> Self {
-            let ret: Self;
-            intrinsics::codegen_func::<bool>("__builtin_mul_overflow", lhs, rhs, &ret);
-            ret
+            if runtime::in_const_context() {
+                ((lhs as unsigned_of<Self>) * (rhs as unsigned_of<Self>)) as Self
+            } else {
+                let ret: Self;
+                intrinsics::codegen_func::<bool>("__builtin_mul_overflow", lhs, rhs, &ret);
+                ret
+            }
         }
 
         /// Divides two numbers, wrapping around at the boundary of the type.

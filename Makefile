@@ -252,7 +252,7 @@ quick: $(BUILD_DIR)/quick
 
 ## ------------------------------ Benchmarking -------------------------
 
-.PHONY: bench-std bench-std-cc
+.PHONY: bench-std bench-std-cc flamegraph
 
 BENCH_CMD = ./tools/bench.py -n$(if $(TIMES),$(TIMES),20) $(if $(MARKDOWN),--markdown,)
 
@@ -261,6 +261,12 @@ bench-std: $(ALUMINA_BOOT) $(SYSROOT_FILES)
 
 bench-std-cc: $(STDLIB_TESTS).c
 	$(BENCH_CMD) $(CC) $(CFLAGS) -o/dev/null $^ $(LDFLAGS)
+
+$(BUILD_DIR)/flamegraph.svg: $(ALUMINA_BOOT) $(SYSROOT_FILES)
+	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
+		-o $@ -- $(ALUMINA_FLAGS) --timings --cfg test --cfg test_std --output /dev/null
+
+flamegraph: $(BUILD_DIR)/flamegraph.svg
 
 ## ------------------------------ Coverage ------------------------------
 .PHONY: coverage dist-check-with-coverage

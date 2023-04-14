@@ -1,5 +1,8 @@
 //! Tests for various language features and constructs.
 
+use std::runtime::const_eval;
+use std::runtime::is_const_evaluable;
+
 #[test]
 fn test_linear_scope_shadowing_fn() {
     fn foo() -> i32 {
@@ -411,25 +414,87 @@ fn test_const_eval_uninitialized() {
 }
 
 #[test]
-fn test_const_eval_pointer_arithmetic() {
-    const VALUES: ([i32; 5], isize) = {
-        let a = [1, 2, 3, 4, 5];
-        let ptr = &a[0];
+fn test_const_pointer_operations() {
+    assert_eq!(const_eval!({ let a: [i32; 10]; &a[7] - &a[3] }), 4);
+    assert_eq!(const_eval!({ let a = "hello world"; &a[7] - &a[3] }), 4);
 
-        *ptr = -1;
-        *(ptr + 1) = -2;
-        *(ptr + 4) = -10;
+    assert!(const_eval!({ let a: [i32; 10]; &a[7] > &a[3] }));
+    assert!(const_eval!({ let a = "hello world"; &a[7] > &a[3] }));
+    assert!(const_eval!({ let a: [i32; 10]; &a[3] < &a[7] }));
+    assert!(const_eval!({ let a = "hello world"; &a[3] < &a[7] }));
+    assert!(const_eval!({ let a: [i32; 10]; &a[7] >= &a[3] }));
+    assert!(const_eval!({ let a = "hello world"; &a[7] >= &a[3] }));
+    assert!(const_eval!({ let a: [i32; 10]; &a[3] <= &a[7] }));
+    assert!(const_eval!({ let a = "hello world"; &a[3] <= &a[7] }));
+    assert!(const_eval!({ let a: [i32; 10]; &a[3] == &a[3] }));
+    assert!(const_eval!({ let a = "hello world"; &a[3] == &a[3] }));
+    assert!(const_eval!({ let a: [i32; 10]; &a[3] != &a[7] }));
+    assert!(const_eval!({ let a = "hello world"; &a[3] != &a[7] }));
 
-        (a, &a[0] - &a[5])
-    };
+    // This is a (surprising) special case for strings. Since the provenance checker
+    // compares the underlying buffer by value and not by address, we can do pointer
+    // operations across string literals that are identical.
+    assert_eq!(const_eval!({
+        let a = "hello world";
+        let b = "hello world";
+        &a[0] - &b[0]
+    }), 0);
 
+    assert!(!is_const_evaluable!({
+        let a = "bye world";
+        let b = "hello world";
+        &a[0] - &b[0]
+    }));
 
-    assert_eq!(VALUES.0, [-1, -2, 3, 4, -10]);
-    assert_eq!(VALUES.1, -5);
+    assert_eq!(const_eval!({ let a: i32; &a - &a }), 0);
+    assert!(const_eval!({ let a: i32; &a == &a }));
+    assert!(!is_const_evaluable!({ let a: i32; let b: i32; &a - &b }));
+
+    assert!(const_eval!({
+        let func = || {};
+        let a: fn() = func;
+        let b: fn() = func;
+
+        a == b
+    }));
 }
 
 #[test]
+#[allow(pure_statement)]
+#[allow(unused_variable)]
+fn test_const_pointer_punning() {
+    assert!(is_const_evaluable!({
+        let a = [1, 2, 3];
+        let b = (&a[0] as &u8);
+    }));
 
+    assert!(!is_const_evaluable!({
+        let a = [1, 2, 3];
+        let b = (&a[0] as &u8) + 1;
+    }));
+
+    assert!(!is_const_evaluable!({
+        let a = [1, 2, 3];
+        let b = (&a[0] as &u8) - (&a[0] as &u8);
+    }));
+
+    // Comparison through incompatible pointer type is allowed, just dereferencing
+    // and arithmetic are not
+    assert!(is_const_evaluable!({
+        let a = [1, 2, 3];
+        let b = (&a[0] as &u8) == (&a[0] as &u8);
+    }));
+
+    assert!(is_const_evaluable!({
+        let a = [1, 2, 3];
+        let b = (&a[0] as &u8) < (&a[0] as &u8);
+    }));
+
+    assert!(is_const_evaluable!({
+        let a = [1, 2, 3];
+        let b = (&a[0] as &u8 as &i32) + 1;
+    }));
+}
 
 #[test]
 fn test_const_eval_library_functions() {

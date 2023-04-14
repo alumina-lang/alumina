@@ -557,25 +557,25 @@ impl BufferedWriter<W: Writable<W>> {
         }
     }
 
-    #[cold]
-    #[inline(never)]
-    fn write_full(self: &mut BufferedWriter<W>, buf: &[u8]) -> Result<usize> {
-        if buf.len() > self.buf.len() - self.pos {
-            self._flush_buffer()?;
-        }
-
-        if buf.len() >= self.buf.len()  {
-            // Bypass the buffer if we need to write more than buffer size
-            self.inner.write(buf)
-        } else {
-            self._write_to_buffer(buf);
-            Result::ok(buf.len())
-        }
-    }
-
     /// @ Writable::write
     #[inline]
     fn write(self: &mut BufferedWriter<W>, buf: &[u8]) -> Result<usize> {
+        #[cold]
+        #[inline(never)]
+        fn write_full(self: &mut BufferedWriter<W>, buf: &[u8]) -> Result<usize> {
+            if buf.len() > self.buf.len() - self.pos {
+                self._flush_buffer()?;
+            }
+
+            if buf.len() >= self.buf.len()  {
+                // Bypass the buffer if we need to write more than buffer size
+                self.inner.write(buf)
+            } else {
+                self._write_to_buffer(buf);
+                Result::ok(buf.len())
+            }
+        }
+
         if buf.len() < self.buf.len() - self.pos {
             self._write_to_buffer(buf);
             Result::ok(buf.len())
@@ -587,11 +587,27 @@ impl BufferedWriter<W: Writable<W>> {
     /// @ Writable::write_all
     #[inline]
     fn write_all(self: &mut BufferedWriter<W>, buf: &[u8]) -> Result<()> {
+        #[cold]
+        #[inline(never)]
+        fn write_all_full(self: &mut BufferedWriter<W>, buf: &[u8]) -> Result<()> {
+            if buf.len() > self.buf.len() - self.pos {
+                self._flush_buffer()?;
+            }
+
+            if buf.len() >= self.buf.len() {
+                // Bypass the buffer if we need to write more than buffer size
+                self.inner.write_all(buf)
+            } else {
+                self._write_to_buffer(buf);
+                Result::ok(())
+            }
+        }
+
         if buf.len() < self.buf.len() - self.pos {
             self._write_to_buffer(buf);
             Result::ok(())
         } else {
-            self._write_all_full(buf)
+            self.write_all_full(buf)
         }
     }
 
@@ -603,12 +619,15 @@ impl BufferedWriter<W: Writable<W>> {
 
     #[inline]
     fn _write_to_buffer(self: &mut BufferedWriter<W>, buf: &[u8]) {
-        if buf.len() > 0 {
-            // This guard is technically redundant, but to avoid the debug assertion
-            // when indexing past the end of the buffer with 0-length writes.
-            buf.copy_to_nonoverlapping(&self.buf[self.pos]);
-            self.pos += buf.len();
+        // This guard is technically redundant, but to avoid the debug assertion
+        // when indexing past the end of the buffer with 0-length writes.
+        #[cfg(any(debug, bounds_checks))]
+        if buf.len() == 0 {
+            return;
         }
+
+        buf.copy_to_nonoverlapping(&self.buf[self.pos]);
+        self.pos += buf.len();
     }
 
     fn _flush_buffer(self: &mut BufferedWriter<W>) -> Result<()> {
@@ -619,22 +638,6 @@ impl BufferedWriter<W: Writable<W>> {
         self.pos = 0;
 
         Result::ok(())
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn _write_all_full(self: &mut BufferedWriter<W>, buf: &[u8]) -> Result<()> {
-        if buf.len() > self.buf.len() - self.pos {
-            self._flush_buffer()?;
-        }
-
-        if buf.len() >= self.buf.len() {
-            // Bypass the buffer if we need to write more than buffer size
-            self.inner.write_all(buf)
-        } else {
-            self._write_to_buffer(buf);
-            Result::ok(())
-        }
     }
 
     /// @ std::mem::Freeable::free
@@ -667,18 +670,67 @@ const DEFAULT_BUFFER_SIZE: usize = 8192;
 // Extension methods
 
 /// Returns an adapter for a stream that returns EOF after `limit` bytes have been read.
+///
+/// ## Example
+/// ```
+/// use std::io::{SliceReader, take};
+/// use std::string::StringBuf;
+///
+/// let reader = SliceReader::new("Hello, world!");
+///
+/// let buf: StringBuf = StringBuf::new();
+/// defer buf.free();
+///
+/// reader.take(5).read_to_end(&buf).unwrap();
+///
+/// assert_eq!(buf[..] as &[u8], "Hello");
+/// ```
 fn take<R: Readable<R>>(self: &mut R, limit: u64) -> TakeAdapter<R> {
     TakeAdapter::new(self, limit)
 }
 
 /// Chains the two streams together
+///
+/// The resulting stream will first read all bytes from `self`, then all bytes from `other`.
+///
+/// ## Example
+/// ```
+/// use std::io::{SliceReader, chain};
+/// use std::string::StringBuf;
+///
+/// let reader1 = SliceReader::new("Hello, ");
+/// let reader2 = SliceReader::new("world!");
+///
+/// let buf: StringBuf = StringBuf::new();
+/// defer buf.free();
+///
+/// reader1.chain(&reader2).read_to_end(&buf).unwrap();
+///
+/// assert_eq!(buf[..] as &[u8], "Hello, world!");
+/// ```
 fn chain<R1: Readable<R1>, R2: Readable<R2>>(self: &mut R1, other: &mut R2) -> ChainAdapter<R1, R2> {
     ChainAdapter::new(self, other)
 }
 
 /// Copy the entire stream `src` into `dst`
 ///
-/// Internally allocates a buffer with the size of [DEFAULT_BUFFER_SIZE].
+/// Internally allocates a buffer with the size of [DEFAULT_BUFFER_SIZE]. If you want to use a
+/// custom buffer, use [copy_using].
+///
+/// ## Example
+/// ```
+/// use std::io::{copy, SliceReader, StringWriter};
+/// use std::string::StringBuf;
+///
+/// let str: StringBuf = StringBuf::new();
+/// defer str.free();
+///
+/// let writer = StringWriter::new(&str);
+/// let reader = SliceReader::new("Hello, world!");
+///
+/// copy(&reader, &writer).unwrap();
+/// assert_eq!(str[..] as &[u8], "Hello, world!");
+/// ```
 fn copy<S: Readable<S>, D: Writable<D>>(src: &mut S, dst: &mut D) -> Result<u64> {
     let buf = mem::slice::alloc::<u8>(DEFAULT_BUFFER_SIZE);
     defer buf.free();

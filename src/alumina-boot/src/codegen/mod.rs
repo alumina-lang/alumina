@@ -1,12 +1,14 @@
+pub mod elide_zst;
 pub mod functions;
 pub mod types;
 
 use crate::codegen::functions::FunctionWriter;
 use crate::codegen::types::TypeWriter;
 use crate::common::{AluminaError, HashMap, Incrementable};
+use crate::diagnostics::DiagnosticsStack;
 use crate::global_ctx::GlobalCtx;
 use crate::ir::layout::Layouter;
-use crate::ir::{IRItem, IRItemP, IrId, Ty, TyP};
+use crate::ir::{IRItem, IRItemP, IrCtx, IrId, Ty, TyP};
 
 use bumpalo::Bump;
 
@@ -45,6 +47,7 @@ impl<'gen> CName<'gen> {
 }
 
 pub struct CodegenCtx<'ir, 'gen> {
+    pub(super) ir: &'ir IrCtx<'ir>,
     global_ctx: GlobalCtx,
     layouter: Layouter<'ir>,
     id_map: RefCell<HashMap<IrId, CName<'gen>>>,
@@ -57,8 +60,9 @@ impl<'ir, 'gen> CodegenCtx<'ir, 'gen>
 where
     'ir: 'gen,
 {
-    pub fn new(global_ctx: GlobalCtx) -> Self {
+    pub fn new(global_ctx: GlobalCtx, ir: &'ir IrCtx<'ir>) -> Self {
         Self {
+            ir,
             layouter: Layouter::new(global_ctx.clone()),
             global_ctx,
             arena: Bump::new(),
@@ -127,28 +131,32 @@ impl Display for CName<'_> {
     }
 }
 
-pub fn codegen(global_ctx: GlobalCtx, items: &[IRItemP<'_>]) -> Result<String, AluminaError> {
+pub fn codegen<'ir>(
+    ir_ctx: &'ir IrCtx<'ir>,
+    global_ctx: GlobalCtx,
+    items: &[IRItemP<'ir>],
+) -> Result<String, AluminaError> {
     // Empirically, ~600 bytes per item, round it up to 1000 to minimize reallocations
     let size_estimate = 1000 * items.len();
+    let diag = DiagnosticsStack::new(global_ctx.diag().to_owned());
+    let ctx = CodegenCtx::new(global_ctx, ir_ctx);
 
-    let ctx = CodegenCtx::new(global_ctx);
     let type_writer = TypeWriter::new(&ctx, size_estimate);
-
     let mut function_writer = FunctionWriter::new(&ctx, &type_writer, size_estimate);
 
     for item in items {
         match item.get().unwrap() {
-            IRItem::Function(f) => function_writer.write_function_decl(item.id, f)?,
-            IRItem::Static(t) => function_writer.write_static_decl(item.id, t)?,
-            IRItem::Const(t) => function_writer.write_const_decl(item.id, t)?,
+            IRItem::Function(f) => function_writer.write_function_decl(&diag, item.id, f)?,
+            IRItem::Static(t) => function_writer.write_static_decl(&diag, item.id, t)?,
+            IRItem::Const(t) => function_writer.write_const_decl(&diag, item.id, t)?,
             _ => {}
         }
     }
 
     for item in items {
         match item.get().unwrap() {
-            IRItem::Function(f) => function_writer.write_function_body(item.id, f)?,
-            IRItem::Const(t) => function_writer.write_const(item.id, t)?,
+            IRItem::Function(f) => function_writer.write_function_body(&diag, item.id, f)?,
+            IRItem::Const(t) => function_writer.write_const(&diag, item.id, t)?,
             _ => {}
         }
     }
@@ -164,6 +172,11 @@ pub fn codegen(global_ctx: GlobalCtx, items: &[IRItemP<'_>]) -> Result<String, A
     writeln!(
         buf,
         "#pragma clang diagnostic ignored \"-Wparentheses-equality\""
+    )
+    .unwrap();
+    writeln!(
+        buf,
+        "#pragma clang diagnostic ignored \"-Winitializer-overrides\""
     )
     .unwrap();
     writeln!(

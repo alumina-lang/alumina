@@ -26,6 +26,7 @@
 - a coherent story for operator overloading
 - `dyn` pointers for certain builtin protocols. Specifically `dyn Callable<...>` would be very useful for being type-erased closures.
 - docstrings for fields and enum variants
+- Fix that damn "local with unkown type" issue. It can happen that compilation will fail with 0 errors and 0 warnings now.
 
 ## Grammar, parsing, AST
 
@@ -62,6 +63,7 @@
   - date/time???? this is a big can of worms
     - durations/monotonic timer are implemented
   - regexes? probably not, maybe a PCRE wrapper outside stdlib
+  - JSON? Some sort of Serde-like generic serialization/deserialization would be nice to have built-in
 
 ## Optimizations
 
@@ -99,13 +101,9 @@
 - Cross-compilation
   - Should be easy enough, as generated C code has almost no platform dependencies. This is more of a concern for the standard library to ensure `cfg` attributes are sprinkled around appropriately.
     - const eval needs to adjust usizes etc. to the target platform
-- Logging, timings
 
 ## Exploratory
 
-- specialization/SFINAE/function overloading?
-  - I am leaning pretty strongly towards not having either of these. With protocols the language
-    is expressive enough to do string formatting, iterators and collections, which are a good litmus test if generics are any good.
 - tagged unions
   - I miss them quite a lot from Rust. They are not hard, but need a good syntax for `match`
 - full Hindley-Milner type inference. Global type inference will pretty much require a full rewrite of `mono`, so whis would be a massive project, but it would also be super awesome to have
@@ -119,6 +117,8 @@
 ## Tooling
 
 - a compiler driver (i.e. Cargo)
+- integrated codegen (a la `go generate` or procedural macros)
+- a REPL. Totally doable with const-eval.
 
 ## Bikeshedding
 
@@ -126,4 +126,5 @@
   - This is settled now. See: Rust.
 - Why "Alumina"?
   - Because it's another metal oxide, like Rust
-    - Rust begets more Rust until everything is oxidized. Aluminium forms just a thin passivation layer leaving "bare metal" just under the surface.
+  - Rust begets more Rust until everything is oxidized. Aluminium forms just a thin passivation layer leaving "bare metal" just under the surface.
+  -

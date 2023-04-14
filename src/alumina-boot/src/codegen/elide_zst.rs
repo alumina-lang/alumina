@@ -1,20 +1,20 @@
 use crate::ast::{BuiltinType, Span, UnOp};
-use crate::common::{
-    ice, AluminaError, ArenaAllocatable, CodeErrorBuilder, CodeErrorKind, HashMap, HashSet,
-};
+use crate::common::{ice, AluminaError, ArenaAllocatable, CodeDiagnostic, HashMap, HashSet};
 use crate::diagnostics::DiagnosticsStack;
 use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::builder::{ExpressionBuilder, TypeBuilder};
+use crate::ir::const_eval::LValue;
 use crate::ir::const_eval::Value;
+use crate::ir::IRItem;
 use crate::ir::{Expr, ExprKind, ExprP, FuncBody, IrCtx, IrId, LocalDef, Statement, Ty, ValueType};
-
-use super::const_eval::LValue;
-use super::IRItem;
 
 // The purpose of ZST elider is to take all reads and writes of zero-sized types and
 // replace them with ExprKind::Void or remove them altogether if the value is not used
 // e.g. in a function call. Expressions of ZST type still remain in the IR but they are
 // safe to ignore by codegen.
+//
+// It does some more specific fixups to the IR to make it ready for codegen. The resulting
+// IR is generally not suitable for any further passes.
 pub struct ZstElider<'ir> {
     ir: &'ir IrCtx<'ir>,
     diag: DiagnosticsStack,
@@ -34,11 +34,29 @@ impl<'ir> ZstElider<'ir> {
 
     pub fn elide_zst_func_body(
         mut self,
-        function_body: FuncBody<'ir>,
-    ) -> Result<FuncBody<'ir>, AluminaError> {
+        function_body: &FuncBody<'ir>,
+    ) -> Result<(&'ir [LocalDef<'ir>], &'ir [Statement<'ir>]), AluminaError> {
+        let builder = ExpressionBuilder::new(self.ir);
         let mut statements = Vec::new();
-        for stmt in function_body.statements {
-            self.elide_zst_stmt(stmt, &mut statements)?;
+
+        match function_body.expr.kind {
+            ExprKind::Block(stmts, ret) => {
+                for stmt in stmts {
+                    self.elide_zst_stmt(stmt, &mut statements)?;
+                }
+                self.elide_zst_stmt(
+                    &Statement::Expression(builder.ret(ret, ret.span)),
+                    &mut statements,
+                )?;
+            }
+            _ => {
+                self.elide_zst_stmt(
+                    &Statement::Expression(
+                        builder.ret(function_body.expr, function_body.expr.span),
+                    ),
+                    &mut statements,
+                )?;
+            }
         }
 
         let local_defs = function_body
@@ -49,11 +67,7 @@ impl<'ir> ZstElider<'ir> {
             .filter(|def| self.used_ids.remove(&def.id) && !def.typ.is_zero_sized())
             .collect::<Vec<_>>();
 
-        Ok(FuncBody {
-            statements: statements.alloc_on(self.ir),
-            local_defs: local_defs.alloc_on(self.ir),
-            raw_body: function_body.raw_body,
-        })
+        Ok((local_defs.alloc_on(self.ir), statements.alloc_on(self.ir)))
     }
 
     pub fn elide_zst_expr(&mut self, expr: ExprP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
@@ -416,7 +430,7 @@ impl<'ir> ZstElider<'ir> {
                 Value::Uninitialized if expr.ty.is_zero_sized() => {
                     builder.void(expr.ty, ValueType::RValue, expr.span)
                 }
-                Value::Pointer(lvalue) => {
+                Value::Pointer(lvalue, _) => {
                     let lvalue_expr = self.elide_zst_lvalue(&lvalue, expr.span);
                     self.elide_zst_expr(builder.r#ref(lvalue_expr, expr.span))?
                 }
@@ -429,16 +443,41 @@ impl<'ir> ZstElider<'ir> {
                 IntrinsicValueKind::Uninitialized if expr.ty.is_zero_sized() => {
                     builder.void(expr.ty, ValueType::RValue, expr.span)
                 }
-                IntrinsicValueKind::ConstPanic(_)
-                | IntrinsicValueKind::ConstAlloc(_, _)
-                | IntrinsicValueKind::ConstFree(_) => {
-                    return Err(CodeErrorKind::ConstOnlyIntrinsic).with_backtrace(&self.diag)
+                IntrinsicValueKind::Transmute(inner) if expr.ty.is_zero_sized() => builder.block(
+                    [Statement::Expression(self.elide_zst_expr(inner)?)],
+                    builder.void(expr.ty, expr.value_type, expr.span),
+                    expr.span,
+                ),
+                IntrinsicValueKind::Transmute(inner) => builder.codegen_intrinsic(
+                    IntrinsicValueKind::Transmute(self.elide_zst_expr(inner)?),
+                    expr.ty,
+                    expr.span,
+                ),
+                IntrinsicValueKind::ConstPanic(_) => builder.unreachable(expr.span),
+                IntrinsicValueKind::ConstAlloc(_, size) => builder.block(
+                    [Statement::Expression(self.elide_zst_expr(size)?)],
+                    builder.literal(Value::USize(0), expr.ty, expr.span),
+                    expr.span,
+                ),
+                IntrinsicValueKind::ConstWrite(inner, _) | IntrinsicValueKind::ConstFree(inner) => {
+                    builder.block(
+                        [Statement::Expression(self.elide_zst_expr(inner)?)],
+                        builder.void(expr.ty, expr.value_type, expr.span),
+                        expr.span,
+                    )
                 }
                 _ => expr,
             },
             ExprKind::Goto(label) => {
                 self.used_ids.insert(label);
                 expr
+            }
+            ExprKind::Tag(tag, inner) => {
+                match tag {
+                    "const_only" => self.diag.warn(CodeDiagnostic::ConstOnly),
+                    _ => {}
+                }
+                builder.tag(tag, self.elide_zst_expr(inner)?, expr.span)
             }
         };
 

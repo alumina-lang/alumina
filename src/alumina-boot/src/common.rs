@@ -12,7 +12,7 @@ use tree_sitter::Node;
 
 macro_rules! ice {
     ($diag:expr, $why:literal) => {{
-        return Err($diag.err(CodeErrorKind::InternalError(
+        return Err($diag.err(CodeDiagnostic::InternalError(
             $why.to_string(),
             std::backtrace::Backtrace::capture().into(),
         )));
@@ -75,7 +75,7 @@ pub enum AluminaError {
 /// Main enum for all errors and warnings that can occur during compilation
 #[derive(AsRefStr, EnumVariantNames, Debug, Error, Clone, Hash, PartialEq, Eq)]
 #[strum(serialize_all = "snake_case")]
-pub enum CodeErrorKind {
+pub enum CodeDiagnostic {
     // Errors
     #[error("syntax error: unexpected `{}`", .0)]
     ParseError(String),
@@ -302,6 +302,8 @@ pub enum CodeErrorKind {
     TypeWithInfiniteSize,
     #[error("integer literal out of range ({} does not fit into {})", .0, .1)]
     IntegerOutOfRange(String, String),
+    #[error("float literal out of range ({} does not fit into {})", .0, .1)]
+    FloatOutOfRange(String, String),
     #[error(
         "`#[align(...)]` cannot be used together with `#[packed]` (alignment will always be 1)"
     )]
@@ -320,8 +322,6 @@ pub enum CodeErrorKind {
     MacrosCannotDefineLambdas,
     #[error("panic during constant evaluation: {}", .0)]
     ConstPanic(String),
-    #[error("cannot generate code for a const-only intrinsic (guard with `std::runtime::in_const_context()`)")]
-    ConstOnlyIntrinsic,
 
     // Warnings
     #[error("defer inside a loop: this defered statement will only be executed once")]
@@ -330,6 +330,8 @@ pub enum CodeErrorKind {
     DuplicateNameShadow(String),
     #[error("field `{}` is not initialized", .0)]
     UninitializedField(String),
+    #[error("initializer overrides prior initialization of this union")]
+    UnionInitializerOverride,
     #[error("this is `std::typing::Self`, did you mean the enclosing type?")]
     SelfConfusion,
     #[error("`#[align(1)]` has no effect, did you mean to use `#[packed]`?")]
@@ -352,6 +354,12 @@ pub enum CodeErrorKind {
     ConstantCondition(bool),
     #[error("statement has no effect")]
     PureStatement,
+    #[error("intrinsics are not meant to be called directly (use a wrapper function instead)")]
+    IntrinsicCall,
+    #[error("const-only functions should not be used at runtime (guard with `std::runtime::in_const_context()`)")]
+    ConstOnly,
+    #[error("this code is unreachable (dead code)")]
+    DeadCode,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -365,12 +373,12 @@ pub enum Marker {
 #[derive(Debug, Error, Clone, Hash, PartialEq, Eq)]
 #[error("{}", .kind)]
 pub struct CodeError {
-    pub kind: CodeErrorKind,
+    pub kind: CodeDiagnostic,
     pub backtrace: Vec<Marker>,
 }
 
 impl CodeError {
-    pub fn from_kind(kind: CodeErrorKind, span: Option<Span>) -> Self {
+    pub fn from_kind(kind: CodeDiagnostic, span: Option<Span>) -> Self {
         Self {
             kind,
             backtrace: span.into_iter().map(Marker::Span).collect(),
@@ -379,7 +387,7 @@ impl CodeError {
 
     pub fn freeform(s: impl ToString) -> Self {
         Self {
-            kind: CodeErrorKind::UserDefined(s.to_string()),
+            kind: CodeDiagnostic::UserDefined(s.to_string()),
             backtrace: vec![],
         }
     }
@@ -401,7 +409,7 @@ pub trait WithSpanDuringParsing<T> {
 
 impl<T, E> WithSpanDuringParsing<T> for Result<T, E>
 where
-    CodeErrorKind: From<E>,
+    CodeDiagnostic: From<E>,
 {
     #[allow(clippy::needless_lifetimes)]
     fn with_span_from<'ast, 'src>(
@@ -427,7 +435,7 @@ pub trait CodeErrorBuilder<T> {
 
 impl<T, E> CodeErrorBuilder<T> for Result<T, E>
 where
-    CodeErrorKind: From<E>,
+    CodeDiagnostic: From<E>,
 {
     fn with_no_span(self) -> Result<T, AluminaError> {
         self.map_err(|e| {

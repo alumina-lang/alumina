@@ -2,8 +2,9 @@ use crate::common::{AluminaError, CodeErrorBuilder, HashSet};
 use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::const_eval::Value;
 use crate::ir::ExpressionVisitor;
-use crate::ir::{IRItem, IRItemP, Statement, Ty, TyP};
+use crate::ir::{IRItem, IRItemP, Ty, TyP};
 
+use super::const_eval::LValue;
 use super::{default_visit_expr, ExprP};
 
 pub struct DeadCodeEliminator<'ir> {
@@ -46,6 +47,20 @@ impl<'ir> DeadCodeEliminator<'ir> {
     }
 
     pub fn visit_item(&mut self, item: IRItemP<'ir>) -> Result<(), AluminaError> {
+        match item.get().with_no_span()? {
+            IRItem::Static(s) => {
+                if s.typ.is_zero_sized() {
+                    return Ok(());
+                }
+            }
+            IRItem::Const(c) => {
+                if c.typ.is_zero_sized() {
+                    return Ok(());
+                }
+            }
+            _ => {}
+        };
+
         if !self.alive.insert(item) {
             return Ok(());
         }
@@ -68,12 +83,7 @@ impl<'ir> DeadCodeEliminator<'ir> {
                             self.visit_typ(d.typ)?;
                         }
 
-                        for s in b.statements {
-                            match s {
-                                Statement::Expression(e) => self.visit_expr(e)?,
-                                Statement::Label(_) => {}
-                            }
-                        }
+                        self.visit_expr(b.expr)?;
 
                         Ok::<_, AluminaError>(())
                     })
@@ -110,6 +120,17 @@ impl<'ir> DeadCodeEliminator<'ir> {
         Ok(())
     }
 
+    fn visit_lvalue(&mut self, lvalue: &LValue<'ir>) -> Result<(), AluminaError> {
+        match lvalue {
+            LValue::Const(item) => self.visit_item(item),
+            LValue::Variable(_) => unreachable!(),
+            LValue::Alloc(_) => unreachable!(),
+            LValue::Field(inner, _) => self.visit_lvalue(inner),
+            LValue::Index(inner, _) => self.visit_lvalue(inner),
+            LValue::TupleIndex(inner, _) => self.visit_lvalue(inner),
+        }
+    }
+
     pub fn alive_items(&self) -> &HashSet<IRItemP<'ir>> {
         &self.alive
     }
@@ -143,9 +164,46 @@ impl<'ir> ExpressionVisitor<'ir> for DeadCodeEliminator<'ir> {
         }
     }
 
+    fn visit_if(
+        &mut self,
+        cond: ExprP<'ir>,
+        then: ExprP<'ir>,
+        els: ExprP<'ir>,
+        const_cond: Option<bool>,
+    ) -> Result<(), AluminaError> {
+        match const_cond {
+            Some(true) => self.visit_expr(then),
+            Some(false) => self.visit_expr(els),
+            None => {
+                self.visit_expr(cond)?;
+                self.visit_expr(then)?;
+                self.visit_expr(els)
+            }
+        }
+    }
+
     fn visit_literal(&mut self, value: &Value<'ir>) -> Result<(), AluminaError> {
         match value {
             Value::FunctionPointer(item) => self.visit_item(item),
+            Value::Array(values) => {
+                for v in *values {
+                    self.visit_literal(v)?;
+                }
+                Ok(())
+            }
+            Value::Struct(fields) => {
+                for (_, value) in *fields {
+                    self.visit_literal(value)?;
+                }
+                Ok(())
+            }
+            Value::Tuple(elems) => {
+                for e in *elems {
+                    self.visit_literal(e)?;
+                }
+                Ok(())
+            }
+            Value::Pointer(lvalue, _) => self.visit_lvalue(lvalue),
             _ => Ok(()),
         }
     }

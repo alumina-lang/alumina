@@ -83,7 +83,10 @@ macro compile_note($reason) {
 /// assert!(1 + 1 == 3); // panics
 /// ```
 macro assert($cond) {
-    internal::assert_impl(file!(), line!(), column!(), $cond);
+    #[cfg(debug)]
+    internal::assert(file!(), line!(), column!(), stringify!($cond), $cond);
+    #[cfg(not(debug))]
+    internal::assert(file!(), line!(), column!(), $cond);
 }
 
 /// Panics if `lhs` and `rhs` are not equal.
@@ -179,9 +182,9 @@ macro unreachable() {
 /// ```
 macro assume($cond) {
     #[cfg(debug)]
-    internal::assert_impl(file!(), line!(), column!(), $cond);
+    assert!($cond);
     #[cfg(not(debug))]
-    internal::assume_impl($cond);
+    internal::assume($cond);
 }
 
 /// Hint to the compiler that a particular boolean expression is likely true.
@@ -236,7 +239,40 @@ macro unlikely($cond) {
 #[builtin] macro file() {  }
 
 /// Returns the value of an environment variable during compilation.
+///
+/// Not to be confused with [std::process::env], which can be used to access environment
+/// variables at runtime.
+///
+/// ## Example
+/// ```
+/// use std::env;
+///
+/// let build_host = env!("HOSTNAME");
+///
+/// println!("This program was built on {}", build_host);
+/// ```
 #[builtin] macro env($s) {  }
+
+/// Returns the value of a configuration flag during compilation.
+///
+/// This can be used as an alternative to `#[cfg]` attributes. The difference is that
+/// `cfg!` can be used in any expression position, while `#[cfg]` can only be used on
+/// statements and items.
+///
+/// ## Example
+/// ```
+/// use std::cfg;
+/// use std::time::Duration;
+/// use std::thread::sleep;
+///
+/// when cfg!("debug") {
+///     sleep(Duration::from_millis(100));
+///     println!("program was built in debug mode, that's why it's so slow ;)");
+/// } else {
+///     println!("program was built in release mode and is blazing fast!");
+/// }
+/// ```
+#[builtin] macro cfg($s) {  }
 
 /// Reads a file during compilation and returns its contents as a string slice.
 ///
@@ -281,7 +317,7 @@ macro unlikely($cond) {
 /// ## Example
 /// ```
 /// let a = 1;
-/// // Prints "[<filename>:<line>:<column>] 2"
+/// // Prints "[<filename>:<line>:<column>] a + 1 = 2"
 /// let b = 2 * dbg!(a + 1);
 ///
 /// assert_eq!(b, 4);
@@ -290,10 +326,11 @@ macro dbg($value) {
     let val = $value;
     let f = panicking::internal::PanicFormatter {};
     fmt::writeln!(&f,
-        "[{}:{}:{}] {}",
+        "[{}:{}:{}] {} = {}",
         file!(),
         line!(),
         column!(),
+        stringify!($value),
         val
     ).unwrap();
     val
@@ -305,23 +342,90 @@ mod internal {
     // error message if the argument is Formattable.
 
     #[inline(always)]
-    fn assume_impl(cond: bool) {
+    fn assume(cond: bool) {
         #[allow(constant_condition)]
         if !cond {
             std::intrinsics::unreachable();
         }
     }
 
+    #[cfg(not(debug))]
     #[inline(always)]
-    fn assert_impl(file: &[u8], line: i32, column: i32, cond: bool) {
+    fn assert(file: &[u8], line: i32, column: i32, cond: bool) {
+        #[cold]
+        #[inline(never)]
+        fn panic_assert(file: &[u8], line: i32, column: i32) -> ! {
+            use panicking::internal::panic_impl;
+
+            panic_impl(
+                file, line, column,
+                &fmt::format_args!(
+                    fmt::internal::dyn_format_args,
+                    "assertion failed"
+                )
+            )
+        }
+
         #[allow(constant_condition)]
         if !cond {
             panic_assert(file, line, column);
         }
     }
 
+    #[cfg(debug)]
+    #[inline(always)]
+    fn assert(file: &[u8], line: i32, column: i32, expr: &[u8], cond: bool) {
+        #[cold]
+        #[inline(never)]
+        fn panic_assert(file: &[u8], line: i32, expr: &[u8], column: i32) -> ! {
+            use panicking::internal::panic_impl;
+
+            panic_impl(
+                file, line, column,
+                &fmt::format_args!(
+                    fmt::internal::dyn_format_args,
+                    "assertion `{}` failed",
+                    expr
+                )
+            )
+        }
+
+        #[allow(constant_condition)]
+        if !cond {
+            panic_assert(file, line, expr, column);
+        }
+    }
+
     #[inline(always)]
     fn assert_eq<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T)  {
+        #[cold]
+        #[inline(never)]
+        fn panic_assert_eq(file: &[u8], line: i32, column: i32, lhs: T, rhs: T) -> ! {
+            use panicking::internal::panic_impl;
+            use fmt::Formattable;
+
+            when lhs is Formattable<T, panicking::internal::PanicFormatter> {
+                panic_impl(
+                    file, line, column,
+                    &fmt::format_args!(
+                        fmt::internal::dyn_format_args,
+                        "assertion failed ({} != {}))",
+                        lhs,
+                        rhs
+                    )
+                )
+            }
+            else {
+                panic_impl(
+                    file, line, column,
+                    &fmt::format_args!(
+                        fmt::internal::dyn_format_args,
+                        "assertion failed (does not equal))",
+                    )
+                )
+            }
+        }
+
         #[allow(constant_condition)]
         if !(lhs == rhs) {
             panic_assert_eq(file, line, column, lhs, rhs)
@@ -330,79 +434,37 @@ mod internal {
 
     #[inline(always)]
     fn assert_ne<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T)  {
+        #[cold]
+        #[no_inline]
+        fn panic_assert_ne(file: &[u8], line: i32, column: i32, lhs: T, rhs: T) -> ! {
+            use panicking::internal::panic_impl;
+            use fmt::Formattable;
+
+            when lhs is Formattable<T, panicking::internal::PanicFormatter> {
+                panic_impl(
+                    file, line, column,
+                    &fmt::format_args!(
+                        fmt::internal::dyn_format_args,
+                        "assertion failed ({} == {}))",
+                        lhs,
+                        rhs
+                    )
+                )
+            }
+            else {
+                panic_impl(
+                    file, line, column,
+                    &fmt::format_args!(
+                        fmt::internal::dyn_format_args,
+                        "assertion failed (equals))",
+                    )
+                )
+            }
+        }
+
         #[allow(constant_condition)]
         if lhs == rhs {
             panic_assert_ne(file, line, column, lhs, rhs)
-        }
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn panic_assert(file: &[u8], line: i32, column: i32) -> ! {
-        use panicking::internal::panic_impl;
-
-        panic_impl(
-            file, line, column,
-            &fmt::format_args!(
-                fmt::internal::dyn_format_args,
-                "assertion failed"
-            )
-        )
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn panic_assert_eq<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T) -> ! {
-        use panicking::internal::panic_impl;
-        use fmt::Formattable;
-
-        when lhs is Formattable<T, panicking::internal::PanicFormatter> {
-            panic_impl(
-                file, line, column,
-                &fmt::format_args!(
-                    fmt::internal::dyn_format_args,
-                    "assertion failed ({} != {}))",
-                    lhs,
-                    rhs
-                )
-            )
-        }
-        else {
-            panic_impl(
-                file, line, column,
-                &fmt::format_args!(
-                    fmt::internal::dyn_format_args,
-                    "assertion failed (does not equal))",
-                )
-            )
-        }
-    }
-
-    #[cold]
-    #[no_inline]
-    fn panic_assert_ne<T>(file: &[u8], line: i32, column: i32, lhs: T, rhs: T) -> ! {
-        use panicking::internal::panic_impl;
-        use fmt::Formattable;
-
-        when lhs is Formattable<T, panicking::internal::PanicFormatter> {
-            panic_impl(
-                file, line, column,
-                &fmt::format_args!(
-                    fmt::internal::dyn_format_args,
-                    "assertion failed ({} == {}))",
-                    lhs,
-                    rhs
-                )
-            )
-        }
-        else {
-            panic_impl(
-                file, line, column,
-                &fmt::format_args!(
-                    fmt::internal::dyn_format_args,
-                    "assertion failed (equals))",
-                )
-            )
         }
     }
 

@@ -266,6 +266,7 @@ impl<'ast> Rebinder<'ast> {
             Local(_) | BoundParam(_, _, _) | Continue | EnumValue(_, _) | Lit(_) | Void => {
                 expr.kind.clone()
             }
+            Tag(tag, inner) => Tag(tag, self.visit_expr(inner)?),
         };
 
         let result = Expr {

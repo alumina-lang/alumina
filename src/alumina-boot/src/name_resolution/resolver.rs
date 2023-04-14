@@ -1,5 +1,5 @@
 use crate::ast::Ty;
-use crate::common::{CodeErrorKind, CycleGuardian};
+use crate::common::{CodeDiagnostic, CycleGuardian};
 use crate::name_resolution::path::{Path, PathSegment};
 use crate::name_resolution::scope::{NamedItem, NamedItemKind, Scope, ScopeInner};
 
@@ -39,11 +39,11 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
         &mut self,
         self_scope: Scope<'ast, 'src>,
         path: Path<'ast>,
-    ) -> Result<ScopeResolution<'ast, 'src>, CodeErrorKind> {
+    ) -> Result<ScopeResolution<'ast, 'src>, CodeDiagnostic> {
         let _guard = self
             .cycle_guardian
             .guard((1, self_scope.0.as_ptr(), path.clone()))
-            .map_err(|_| CodeErrorKind::CycleDetected)?;
+            .map_err(|_| CodeDiagnostic::CycleDetected)?;
 
         if path.absolute {
             return self.resolve_scope(
@@ -117,14 +117,14 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
             return self.resolve_scope(parent, path);
         }
 
-        Err(CodeErrorKind::UnresolvedPath(path.to_string()))
+        Err(CodeDiagnostic::UnresolvedPath(path.to_string()))
     }
 
     pub fn resolve_item(
         &mut self,
         scope: Scope<'ast, 'src>,
         path: Path<'ast>,
-    ) -> Result<ItemResolution<'ast, 'src>, CodeErrorKind> {
+    ) -> Result<ItemResolution<'ast, 'src>, CodeDiagnostic> {
         self.resolve_item_impl(scope.clone(), scope, path, true)
     }
 
@@ -134,14 +134,14 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
         scope: Scope<'ast, 'src>,
         path: Path<'ast>,
         go_down: bool,
-    ) -> Result<ItemResolution<'ast, 'src>, CodeErrorKind> {
+    ) -> Result<ItemResolution<'ast, 'src>, CodeDiagnostic> {
         let _guard = self
             .cycle_guardian
             .guard((1, scope.0.as_ptr(), path.clone()))
-            .map_err(|_| CodeErrorKind::CycleDetected)?;
+            .map_err(|_| CodeDiagnostic::CycleDetected)?;
 
         if path.segments.is_empty() {
-            return Err(CodeErrorKind::UnresolvedPath(path.to_string()));
+            return Err(CodeDiagnostic::UnresolvedPath(path.to_string()));
         }
 
         let last_segment = path.segments.last().unwrap();
@@ -176,7 +176,7 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
                         result = Some(Ok(ItemResolution::Item(item.clone())));
                         break;
                     } else {
-                        return Err(CodeErrorKind::CannotReferenceLocal(path.to_string()));
+                        return Err(CodeDiagnostic::CannotReferenceLocal(path.to_string()));
                     }
                 }
                 _ => {
@@ -212,6 +212,6 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
             }
         }
 
-        Err(CodeErrorKind::UnresolvedPath(path.to_string()))
+        Err(CodeDiagnostic::UnresolvedPath(path.to_string()))
     }
 }

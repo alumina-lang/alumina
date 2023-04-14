@@ -526,7 +526,7 @@ impl<'ast> PrettyPrinter<'ast> {
                 }
                 Lit::Float(val, kind) => {
                     let mut s = String::new();
-                    s.push_str(val.as_ref());
+                    write!(s, "{}", val).unwrap();
                     if let Some(kind) = kind {
                         s.push_str(&self.print_builtin_type(*kind));
                     }
@@ -677,6 +677,7 @@ impl<'ast> PrettyPrinter<'ast> {
             }
             // Those will never appear in the AST post-macro expansion
             ExprKind::EtCetera(_) | ExprKind::MacroInvocation(_, _) => unreachable!(),
+            ExprKind::Tag(tag, inner) => format!("/* {} */ {}", tag, self.print_expr(inner)),
         };
 
         if braces {

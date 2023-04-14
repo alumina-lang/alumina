@@ -1,5 +1,5 @@
 use crate::ast::Span;
-use crate::common::{AluminaError, ArenaAllocatable, CodeErrorKind, HashMap};
+use crate::common::{AluminaError, ArenaAllocatable, CodeDiagnostic, HashMap};
 use crate::diagnostics::DiagnosticsStack;
 use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::builder::ExpressionBuilder;
@@ -42,7 +42,7 @@ impl<'ir> IrInliner<'ir> {
     fn visit_statement(&mut self, stmt: &Statement<'ir>) -> Result<Statement<'ir>, AluminaError> {
         match stmt {
             Statement::Expression(e) => Ok(Statement::Expression(self.visit_expr(e)?)),
-            Statement::Label(_) => Err(self.diag.err(CodeErrorKind::IrInlineFlowControl)),
+            Statement::Label(_) => Err(self.diag.err(CodeDiagnostic::IrInlineFlowControl)),
         }
     }
 
@@ -128,8 +128,8 @@ impl<'ir> IrInliner<'ir> {
             ExprKind::Local(id) => self.replacements.get(&id).copied().unwrap_or(expr),
             ExprKind::Ref(e) => builder.r#ref(self.visit_expr(e)?, self.span),
             ExprKind::Deref(e) => builder.deref(self.visit_expr(e)?, self.span),
-            ExprKind::Return(_) => return Err(self.diag.err(CodeErrorKind::IrInlineEarlyReturn)),
-            ExprKind::Goto(_) => return Err(self.diag.err(CodeErrorKind::IrInlineFlowControl)),
+            ExprKind::Return(_) => return Err(self.diag.err(CodeDiagnostic::IrInlineEarlyReturn)),
+            ExprKind::Goto(_) => return Err(self.diag.err(CodeDiagnostic::IrInlineFlowControl)),
             ExprKind::Unary(op, e) => builder.unary(op, self.visit_expr(e)?, expr.ty, self.span),
             ExprKind::Assign(a, b) => {
                 builder.assign(self.visit_expr(a)?, self.visit_expr(b)?, self.span)
@@ -141,6 +141,14 @@ impl<'ir> IrInliner<'ir> {
             ExprKind::TupleIndex(e, i) => {
                 builder.tuple_index(self.visit_expr(e)?, i, expr.ty, self.span)
             }
+            ExprKind::Tag(tag, inner) => Expr {
+                kind: ExprKind::Tag(tag, self.visit_expr(inner)?),
+                ty: expr.ty,
+                is_const: expr.is_const,
+                value_type: expr.value_type,
+                span: self.span,
+            }
+            .alloc_on(self.ir),
             ExprKind::If(cond, then, els, const_cond) => builder.if_then(
                 self.visit_expr(cond)?,
                 self.visit_expr(then)?,
@@ -174,23 +182,28 @@ impl<'ir> IrInliner<'ir> {
                 self.span,
             ),
             ExprKind::Intrinsic(ref kind) => match kind {
-                IntrinsicValueKind::ConstPanic(expr) => builder.codegen_intrinsic(
-                    IntrinsicValueKind::ConstPanic(self.visit_expr(expr)?),
+                IntrinsicValueKind::ConstPanic(inner) => builder.codegen_intrinsic(
+                    IntrinsicValueKind::ConstPanic(self.visit_expr(inner)?),
                     expr.ty,
                     self.span,
                 ),
-                IntrinsicValueKind::ConstWrite(expr, b) => builder.codegen_intrinsic(
-                    IntrinsicValueKind::ConstWrite(self.visit_expr(expr)?, *b),
+                IntrinsicValueKind::ConstWrite(inner, b) => builder.codegen_intrinsic(
+                    IntrinsicValueKind::ConstWrite(self.visit_expr(inner)?, *b),
                     expr.ty,
                     self.span,
                 ),
-                IntrinsicValueKind::ConstAlloc(ty, expr) => builder.codegen_intrinsic(
-                    IntrinsicValueKind::ConstAlloc(ty, self.visit_expr(expr)?),
+                IntrinsicValueKind::ConstAlloc(ty, inner) => builder.codegen_intrinsic(
+                    IntrinsicValueKind::ConstAlloc(ty, self.visit_expr(inner)?),
                     expr.ty,
                     self.span,
                 ),
-                IntrinsicValueKind::ConstFree(expr) => builder.codegen_intrinsic(
-                    IntrinsicValueKind::ConstFree(self.visit_expr(expr)?),
+                IntrinsicValueKind::ConstFree(inner) => builder.codegen_intrinsic(
+                    IntrinsicValueKind::ConstFree(self.visit_expr(inner)?),
+                    expr.ty,
+                    self.span,
+                ),
+                IntrinsicValueKind::Transmute(inner) => builder.codegen_intrinsic(
+                    IntrinsicValueKind::Transmute(self.visit_expr(inner)?),
                     expr.ty,
                     self.span,
                 ),

@@ -2,7 +2,7 @@ use crate::ast::expressions::ExpressionVisitor;
 use crate::ast::{
     AstCtx, Bound, BuiltinType, Defered, ProtocolBounds, ProtocolBoundsKind, Span, Ty, TyP,
 };
-use crate::common::{AluminaError, ArenaAllocatable, CodeErrorKind, WithSpanDuringParsing};
+use crate::common::{AluminaError, ArenaAllocatable, CodeDiagnostic, WithSpanDuringParsing};
 use crate::global_ctx::GlobalCtx;
 use crate::name_resolution::resolver::{ItemResolution, NameResolver};
 use crate::name_resolution::scope::{NamedItemKind, Scope};
@@ -82,7 +82,7 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
                 NamedItemKind::Protocol(ty, _, _) => self.ast.intern_type(Ty::Item(ty)),
                 NamedItemKind::Placeholder(ty, _) => self.ast.intern_type(Ty::Placeholder(ty)),
                 kind => {
-                    return Err(CodeErrorKind::Unexpected(format!("{}", kind)))
+                    return Err(CodeDiagnostic::Unexpected(format!("{}", kind)))
                         .with_span_from(&self.scope, node)
                 }
             },
@@ -234,7 +234,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
         match *base {
             Ty::Item(_) | Ty::Defered(_) => {}
             _ => {
-                return Err(CodeErrorKind::UnexpectedGenericParams)
+                return Err(CodeDiagnostic::UnexpectedGenericParams)
                     .with_span_from(&self.scope, node)
             }
         };

@@ -1,6 +1,6 @@
 use crate::ast::Span;
 use crate::common::{
-    AluminaError, CodeError, CodeErrorKind, FileId, HashMap, HashSet, IndexSet, Marker,
+    AluminaError, CodeDiagnostic, CodeError, FileId, HashMap, HashSet, IndexSet, Marker,
 };
 use crate::ir::const_eval::ConstEvalErrorKind;
 use colored::Colorize;
@@ -108,21 +108,21 @@ impl DiagnosticsStack {
         markers
     }
 
-    pub fn err(&self, kind: CodeErrorKind) -> AluminaError {
+    pub fn err(&self, kind: CodeDiagnostic) -> AluminaError {
         AluminaError::CodeErrors(vec![CodeError {
             kind,
             backtrace: self.materialize(),
         }])
     }
 
-    pub fn warn(&self, kind: CodeErrorKind) {
+    pub fn warn(&self, kind: CodeDiagnostic) {
         self.diag_ctx.add_warning(CodeError {
             kind,
             backtrace: self.materialize(),
         });
     }
 
-    pub fn note(&self, kind: CodeErrorKind) {
+    pub fn note(&self, kind: CodeDiagnostic) {
         self.diag_ctx.add_note(CodeError {
             kind,
             backtrace: self.materialize(),
@@ -294,7 +294,7 @@ impl DiagnosticContext {
             /*
 
             if let CodeError {
-                kind: CodeErrorKind::LocalWithUnknownType,
+                kind: CodeDiagnostic::LocalWithUnknownType,
                 ..
             } = error
             {
@@ -359,8 +359,9 @@ impl DiagnosticContext {
             }
 
             match &error.kind {
-                CodeErrorKind::InternalError(_, backtrace)
-                | CodeErrorKind::CannotConstEvaluate(ConstEvalErrorKind::CompilerBug(backtrace)) => {
+                CodeDiagnostic::InternalError(_, backtrace)
+                | CodeDiagnostic::CannotConstEvaluate(ConstEvalErrorKind::CompilerBug(backtrace)) =>
+                {
                     eprintln!();
                     eprintln!("Compiler backtrace:");
                     eprintln!("{}", backtrace);
