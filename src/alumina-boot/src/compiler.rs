@@ -126,8 +126,8 @@ impl Compiler {
         item_maker.make(root_scope)?;
 
         timing!(self, cur_time, Stage::Ast);
-
         drop(source_files);
+
 
         let ir_ctx = IrCtx::new();
         let items = item_maker.into_inner();
@@ -171,6 +171,8 @@ impl Compiler {
             }
         }
 
+        drop(main_candidate);
+
         timing!(self, cur_time, Stage::Mono);
 
         let mut dce = DeadCodeEliminator::new();
@@ -186,7 +188,8 @@ impl Compiler {
         timing!(self, cur_time, Stage::Optimizations);
 
         // Dunno why the borrow checker is not letting me do that, it should be possible.
-        // drop(ast);
+        drop(mono_ctx);
+        drop(ast);
 
         let res = codegen::codegen(&ir_ctx, self.global_ctx.clone(), &items[..]);
         timing!(self, cur_time, Stage::Codegen);

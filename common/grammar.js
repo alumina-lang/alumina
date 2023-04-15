@@ -248,6 +248,7 @@ module.exports = grammar({
 
     enum_item: ($) =>
       seq(
+        repeat(field("docstring", $.doc_comment)),
         optional(field("attributes", $.attributes)),
         field("name", $.identifier),
         optional(seq("=", field("value", $._expression)))
@@ -255,6 +256,7 @@ module.exports = grammar({
 
     struct_field: ($) =>
       seq(
+        repeat(field("docstring", $.doc_comment)),
         optional(field("attributes", $.attributes)),
         field("name", $.identifier),
         ":",

@@ -885,7 +885,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             Some(LangItemKind::ProtoAny) => return Ok(BoundCheckResult::Matches),
             Some(LangItemKind::ProtoNone) => return Ok(BoundCheckResult::DoesNotMatch),
             Some(LangItemKind::ProtoZeroSized) => {
-                if ty.is_zero_sized() {
+                let layout = self.mono_ctx.layouter.layout_of(ty).with_backtrace(&self.diag)?;
+                if layout.is_zero_sized() {
                     return Ok(BoundCheckResult::Matches);
                 } else {
                     return Ok(BoundCheckResult::DoesNotMatch);

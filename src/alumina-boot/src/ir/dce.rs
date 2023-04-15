@@ -92,7 +92,6 @@ impl<'ir> DeadCodeEliminator<'ir> {
             IRItem::Enum(e) => {
                 self.visit_typ(e.underlying_type)?;
                 for v in e.members {
-                    // TODO: is this needed? It should always be a constant value
                     self.visit_expr(v.value)?;
                 }
             }

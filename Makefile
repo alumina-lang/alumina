@@ -269,11 +269,11 @@ $(BUILD_DIR)/flamegraph.svg: $(ALUMINA_BOOT) $(SYSROOT_FILES)
 flamegraph: $(BUILD_DIR)/flamegraph.svg
 
 ## ------------------------------ Coverage ------------------------------
-.PHONY: coverage dist-check-with-coverage
+.PHONY: coverage all-tests-with-coverage
 coverage:
-	COVERAGE=1 $(MAKE) dist-check-with-coverage
+	COVERAGE=1 $(MAKE) all-tests-with-coverage
 
-dist-check-with-coverage: dist-check
+all-tests-with-coverage: aluminac test-docs test examples
 	llvm-profdata merge \
 		-sparse  \
 		$(BUILD_DIR)/profiles/* \

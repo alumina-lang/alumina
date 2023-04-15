@@ -10,7 +10,7 @@ pub mod mono;
 use crate::ast::{Attribute, BinOp, BuiltinType, Span, UnOp};
 use crate::common::{
     impl_allocatable, Allocatable, AluminaError, ArenaAllocatable, CodeDiagnostic, HashSet,
-    Incrementable,
+    Incrementable, CycleGuardian,
 };
 use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::const_eval::Value;

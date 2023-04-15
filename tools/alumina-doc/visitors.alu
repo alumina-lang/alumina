@@ -359,7 +359,9 @@ impl TopLevelVisitor {
     fn visit_enum_item(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
         check_cfg!(self, node);
 
+        self.visit_children_by_field(node, FieldKind::Docstring)?;
         self.add_item(ItemKind::Variant, get_name!(self, node), node);
+
         Result::ok(())
     }
 
@@ -421,6 +423,8 @@ impl TopLevelVisitor {
 
     fn visit_struct_field(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
         check_cfg!(self, node);
+
+        self.visit_children_by_field(node, FieldKind::Docstring)?;
         self.add_item(ItemKind::Field, get_name!(self, node), node);
         Result::ok(())
     }
