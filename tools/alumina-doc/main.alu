@@ -119,7 +119,7 @@ impl PageWriter<T: std::io::Writable<T>> {
 
         wln!(self, "{}", if top_level { "</h3>" } else { "</h4>" });
         if item.kind.show_source_link() {
-            let file = item.parse_context.filename.as_path().strip_prefix(std::fs::Path::new("./")).unwrap();
+            let file = item.parse_context.filename.as_path();
             let start = item.node.start_point();
             let end = item.node.end_point();
             wln!(self, "<div class=\"source-link\">");
@@ -656,7 +656,7 @@ impl Processor {
 
 fn main_inner(args: &[&[u8]]) -> Result<()> {
     let output_dir = std::fs::PathBuf::from_str(std::process::env()
-        .get("ALUMINADOC_OUTPUT_DIR")
+        .get("ALUMINA_DOC_OUTPUT_DIR")
         .unwrap()
     );
     defer output_dir.free();
@@ -671,7 +671,7 @@ fn main_inner(args: &[&[u8]]) -> Result<()> {
     let processor = Processor::new(output_dir.move(), &DoctestWriter::new(&doctest));
     defer processor.free();
 
-    processor.base_domain = std::process::env().get("ALUMINADOC_BASE_PATH");
+    processor.base_domain = std::process::env().get("ALUMINA_DOC_BASE_PATH");
 
     let inputs = args
         .iter()
