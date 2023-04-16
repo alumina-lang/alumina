@@ -60,6 +60,8 @@ impl Compiler {
         self.timings.iter().cloned()
     }
 
+    /// Main compile sequence. Takes a list of Alumina source files and compiles them into a single
+    /// C source file.
     pub fn compile(
         &mut self,
         source_files: Vec<SourceFile>,
@@ -128,7 +130,6 @@ impl Compiler {
         timing!(self, cur_time, Stage::Ast);
         drop(source_files);
 
-
         let ir_ctx = IrCtx::new();
         let items = item_maker.into_inner();
         let mut mono_ctx = MonoCtx::new(&ast, &ir_ctx, self.global_ctx.clone());
@@ -171,8 +172,6 @@ impl Compiler {
             }
         }
 
-        drop(main_candidate);
-
         timing!(self, cur_time, Stage::Mono);
 
         let mut dce = DeadCodeEliminator::new();
@@ -188,8 +187,7 @@ impl Compiler {
         timing!(self, cur_time, Stage::Optimizations);
 
         // Dunno why the borrow checker is not letting me do that, it should be possible.
-        drop(mono_ctx);
-        drop(ast);
+        // drop(ast);
 
         let res = codegen::codegen(&ir_ctx, self.global_ctx.clone(), &items[..]);
         timing!(self, cur_time, Stage::Codegen);

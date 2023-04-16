@@ -520,6 +520,35 @@ impl BinaryHeap<T: Comparable<T>> {
         self._data.free();
     }
 
+    /// Helper for collections that own heap-allocated objects. This is used to
+    /// be able to do `defer col.free_all()` without much boilerplate.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::BinaryHeap;
+    /// use std::string::StringBuf;
+    /// use std::fmt::format;
+    ///
+    /// let v: BinaryHeap<StringBuf> = BinaryHeap::new();
+    /// defer v.free_all();
+    ///
+    /// for i in 1..10 {
+    ///     v.push("{} + {} = {}".format!(i, i, i + i).unwrap());
+    /// }
+    /// ```
+    fn free_all(self: &mut BinaryHeap<T>) {
+        use typing::matches;
+        use mem::Freeable;
+
+        when matches::<T, Freeable<T>>() {
+            for i in 0usize..self._data.len() {
+                self._data[i].free();
+            }
+        }
+
+        self.free();
+    }
+
     /// @ mem::Movable::move
     fn move(self: &mut BinaryHeap<T>) -> BinaryHeap<T> {
         BinaryHeap { _data: self._data.move() }

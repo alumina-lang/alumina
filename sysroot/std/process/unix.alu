@@ -80,7 +80,7 @@ fn current_dir() -> Result<fs::PathBuf> {
     use string::StringBuf;
     use ffi::CString;
 
-    let buf: StringBuf = StringBuf::with_capacity(512);
+    let buf = StringBuf::with_capacity(512);
     defer buf.free();
 
     loop {
@@ -178,10 +178,10 @@ impl Child {
             .map(io::FileDescriptor::close)
             .transpose()?;
 
-        let stdout : StringBuf = StringBuf::new();
+        let stdout  = StringBuf::new();
         defer stdout.free();
 
-        let stderr : StringBuf = StringBuf::new();
+        let stderr  = StringBuf::new();
         defer stderr.free();
 
         if self.stdout.is_some() && self.stderr.is_some() {
@@ -605,7 +605,7 @@ mod internal {
     /// Needs to be allocated before we fork as we should not call `malloc` after
     /// fork in multithreaded programs.
     struct ExecParams {
-        _chars: collections::Vector<u8>,
+        _chars: string::StringBuf,
         _ptrs: collections::Vector<&u8>,
         _argc: usize,
     }
@@ -614,7 +614,7 @@ mod internal {
         use collections::Vector;
 
         fn new(command: &Command) -> ExecParams {
-            let storage: Vector<u8> = Vector::new();
+            let storage = string::StringBuf::new();
             defer storage.free();
             let args_idxs: Vector<usize> = Vector::new();
             defer args_idxs.free();

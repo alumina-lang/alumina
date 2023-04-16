@@ -230,7 +230,7 @@ fn remove_directory(path: Path) -> Result<()> {
 /// let file = File::open(Path::new("/etc/passwd")).unwrap();
 /// defer file.close();
 ///
-/// let buf: StringBuf = StringBuf::new();
+/// let buf = StringBuf::new();
 /// defer buf.free();
 ///
 /// file.read_to_end(&buf).unwrap();
@@ -305,7 +305,7 @@ impl File {
 
         let attrs = file.attributes()?;
 
-        let string: StringBuf = StringBuf::with_capacity(attrs.size() as usize);
+        let string = StringBuf::with_capacity(attrs.size() as usize);
         defer string.free();
 
         file.read_to_end(&string)?;
@@ -470,6 +470,7 @@ fn read_directory(path: Path) -> Result<DirIterator> {
 /// ```
 fn canonicalize(path: Path) -> Result<PathBuf> {
     use ffi::CString;
+    use string::StringBuf;
 
     let path_c = CString::from_slice(path.inner);
     defer path_c.free();
@@ -484,7 +485,7 @@ fn canonicalize(path: Path) -> Result<PathBuf> {
         // terminator.
         let slice = mem::slice::from_raw(ret as &mut u8, len + 1);
 
-        Result::ok(PathBuf { inner: collections::Vector::from_raw(slice, len) })
+        Result::ok(PathBuf { inner: StringBuf::from_raw(slice, len) })
     }
 }
 
@@ -575,7 +576,6 @@ impl FileAttr {
 mod tests {
     use fmt::{hex, zero_pad, format, format_in};
     use cmp::sort_by_key;
-    use collections::free_all;
     use string::StringBuf;
 
     static BUF: [u8; 1024];
@@ -663,7 +663,7 @@ mod tests {
         entries[..]
             .sort_by_key(|e: &StringBuf| -> &[u8] { e[..] });
 
-        let it = entries.iter_ref().map(StringBuf::as_slice::<u8>);
+        let it = entries.iter_ref().map(StringBuf::as_slice);
 
         assert_eq!(it.next(), Option::some("hello00.txt"));
         assert_eq!(it.next(), Option::some("hello01.txt"));

@@ -201,7 +201,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     }
 
     fn visit_protocol_definition(&mut self, node: Node<'src>) -> Self::ReturnType {
-        let item = self.ast.make_symbol();
+        let item = self.ast.make_item();
         let attributes = parse_attributes!(self, node, item);
 
         let name = self.parse_name(node);
@@ -227,7 +227,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     }
 
     fn visit_struct_definition(&mut self, node: Node<'src>) -> Self::ReturnType {
-        let item = self.ast.make_symbol();
+        let item = self.ast.make_item();
         let attributes = parse_attributes!(self, node, item);
 
         let name = self.parse_name(node);
@@ -275,7 +275,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     }
 
     fn visit_enum_definition(&mut self, node: Node<'src>) -> Self::ReturnType {
-        let item = self.ast.make_symbol();
+        let item = self.ast.make_item();
         let attributes = parse_attributes!(self, node, item);
 
         let name = self.parse_name(node);
@@ -328,7 +328,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     }
 
     fn visit_function_definition(&mut self, node: Node<'src>) -> Self::ReturnType {
-        let item = self.ast.make_symbol();
+        let item = self.ast.make_item();
         let attributes = parse_attributes!(self, node, item);
 
         let name = self.parse_name(node);
@@ -380,7 +380,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     }
 
     fn visit_type_definition(&mut self, node: Node<'src>) -> Self::ReturnType {
-        let item = self.ast.make_symbol();
+        let item = self.ast.make_item();
         let attributes = parse_attributes!(self, node, item);
 
         let name = self.parse_name(node);
@@ -424,7 +424,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     }
 
     fn visit_static_declaration(&mut self, node: Node<'src>) -> Self::ReturnType {
-        let item = self.ast.make_symbol();
+        let item = self.ast.make_item();
         let attributes = parse_attributes!(self, node, item);
 
         let name = self.parse_name(node);
@@ -449,7 +449,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     }
 
     fn visit_const_declaration(&mut self, node: Node<'src>) -> Self::ReturnType {
-        let item = self.ast.make_symbol();
+        let item = self.ast.make_item();
         let attributes = parse_attributes!(self, node, item);
 
         let name = self.parse_name(node);
@@ -537,7 +537,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     }
 
     fn visit_macro_definition(&mut self, node: Node<'src>) -> Self::ReturnType {
-        let item = self.ast.make_symbol();
+        let item = self.ast.make_item();
         let attributes = parse_attributes!(self, node, item);
 
         let name = self.parse_name(node);

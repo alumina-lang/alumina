@@ -6,29 +6,6 @@ use hashset::HashSet;
 use deque::Deque;
 use heap::BinaryHeap;
 
-/// Helper for collections that own heap-allocated objects. This is used to
-/// be able to do `defer col.free_all()` without much boilerplate.
-///
-/// ## Example
-/// ```
-/// use std::collections::{Vector, free_all};
-/// use std::string::StringBuf;
-/// use std::fmt::format;
-///
-/// let v: Vector<StringBuf> = Vector::new();
-/// defer v.free_all();
-///
-/// for i in 1..10 {
-///     v.push("{} + {} = {}".format!(i, i, i + i).unwrap());
-/// }
-/// ```
-fn free_all<T: mem::Freeable<T>>(col: &mut T) {
-    for i in col {
-        i.free();
-    }
-    col.free();
-}
-
 
 #[cfg(all(test_std, test))]
 #[docs(hide)]

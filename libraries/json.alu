@@ -1,0 +1,386 @@
+use std::iter::{Iterator, IteratorExt};
+use std::cmp::Equatable;
+use std::fmt::{Formattable, Formatter, write};
+use std::string::StringBuf;
+use std::collections::{Vector, HashMap};
+
+type Result<T> = std::result::Result<T, Error>;
+
+enum ErrorKind {
+    Unexpected,
+    UnexpectedToken,
+    Eof,
+    Malformed,
+}
+
+impl ErrorKind {
+    fn equals(self: &ErrorKind, other: &ErrorKind) -> bool {
+        *self == *other
+    }
+
+    mixin Equatable<ErrorKind>;
+}
+
+struct Error {
+    kind: ErrorKind,
+    token_kind: Option<lexer::TokenKind>,
+    position: Option<usize>,
+}
+
+impl Error {
+    fn new(kind: ErrorKind) -> Error {
+        Error {
+            kind: kind,
+            token_kind: mem::uninitialized(),
+            position: Option::none(),
+        }
+    }
+
+    fn during_lexing(kind: ErrorKind, position: usize) -> Error {
+        Error {
+            kind: kind,
+            token_kind: Option::none(),
+            position: Option::some(position),
+        }
+    }
+
+    fn unexpected_token(token_kind: lexer::TokenKind) -> Error {
+        Error {
+            kind: ErrorKind::UnexpectedToken,
+            token_kind: Option::some(token_kind),
+            position: Option::none(),
+        }
+    }
+
+    fn equals(self: &Error, other: &Error) -> bool {
+        self.kind == other.kind
+            && self.token_kind == other.token_kind
+            && self.position == other.position
+    }
+
+    fn fmt<F: Formatter<F>>(self: &Error, f: &mut F) -> std::fmt::Result {
+        switch self.kind {
+            ErrorKind::Unexpected => write!(f, "unexpected character at position {}", self.position),
+            ErrorKind::UnexpectedToken => write!(f, "unexpected token {}", self.token_kind),
+            ErrorKind::Eof => write!(f, "unexpected end of input"),
+            ErrorKind::Malformed => write!(f, "malformed JSON"),
+            _ => unreachable!(),
+        }
+    }
+
+    mixin Equatable<Error>;
+}
+
+union JsonValueT {
+    string: StringBuf,
+    number: f64,
+    boolean: bool,
+    object: HashMap<StringBuf, JsonValue>,
+    array: Vector<JsonValue>,
+}
+
+enum JsonValueKind {
+    String,
+    Number,
+    Boolean,
+    Object,
+    Array,
+    Null
+}
+
+struct JsonValue {
+    kind: JsonValueKind,
+    inner: JsonValueT,
+}
+
+impl JsonValue {
+    fn string(value: StringBuf) -> JsonValue {
+        JsonValue {
+            kind: JsonValueKind::String,
+            inner: JsonValueT {
+                string: value,
+            },
+        }
+    }
+
+    fn number<T: builtins::Numeric>(value: T) -> JsonValue {
+        JsonValue {
+            kind: JsonValueKind::Number,
+            inner: JsonValueT {
+                number: value as f64,
+            },
+        }
+    }
+
+    fn boolean(value: bool) -> JsonValue {
+        JsonValue {
+            kind: JsonValueKind::Boolean,
+            inner: JsonValueT {
+                boolean: value,
+            },
+        }
+    }
+
+    fn object(value: HashMap<StringBuf, JsonValue>) -> JsonValue {
+        JsonValue {
+            kind: JsonValueKind::Object,
+            inner: JsonValueT {
+                object: value,
+            },
+        }
+    }
+
+    fn array(value: Vector<JsonValue>) -> JsonValue {
+        JsonValue {
+            kind: JsonValueKind::Array,
+            inner: JsonValueT {
+                array: value,
+            },
+        }
+    }
+
+    fn null() -> JsonValue {
+        JsonValue {
+            kind: JsonValueKind::Null,
+            inner: mem::uninitialized()
+        }
+    }
+
+    fn as_string(self: &JsonValue) -> Option<&[u8]> {
+        switch self.kind {
+            JsonValueKind::String => Option::some(self.inner.string[..]),
+            _ => Option::none(),
+        }
+    }
+
+    fn as_number<T: builtins::Numeric>(self: &JsonValue) -> Option<T> {
+        switch self.kind {
+            JsonValueKind::Number => Option::some(self.inner.number as T),
+            _ => Option::none(),
+        }
+    }
+
+    fn as_boolean(self: &JsonValue) -> Option<bool> {
+        switch self.kind {
+            JsonValueKind::Boolean => Option::some(self.inner.boolean),
+            _ => Option::none(),
+        }
+    }
+
+    fn as_object(self: &JsonValue) -> Option<&HashMap<StringBuf, JsonValue>> {
+        switch self.kind {
+            JsonValueKind::Object => Option::some(&self.inner.object),
+            _ => Option::none(),
+        }
+    }
+
+    fn as_array(self: &JsonValue) -> Option<&[JsonValue]> {
+        switch self.kind {
+            JsonValueKind::Array => Option::some(self.inner.array[..]),
+            _ => Option::none(),
+        }
+    }
+
+    fn is_null(self: &JsonValue) -> bool {
+        self.kind == JsonValueKind::Null
+    }
+
+    fn move(self: &mut JsonValue) -> JsonValue {
+        JsonValue {
+            kind: std::mem::replace(&self.kind, JsonValueKind::Null),
+            inner: self.inner,
+        }
+    }
+
+    fn free(self: &mut JsonValue) {
+        switch self.kind {
+            JsonValueKind::String => {
+                self.inner.string.free();
+            },
+            JsonValueKind::Number => {},
+            JsonValueKind::Boolean => {},
+            JsonValueKind::Object => {
+                for (key, value) in self.inner.object {
+                    key.free();
+                    value.free();
+                }
+                self.inner.object.free();
+            },
+            JsonValueKind::Array => {
+                self.inner.array.free_all();
+            },
+            JsonValueKind::Null => {},
+            _ => unreachable!()
+        }
+    }
+
+    fn equals(self: &JsonValue, other: &JsonValue) -> bool {
+        if self.kind != other.kind {
+            return false;
+        }
+
+        switch self.kind {
+            JsonValueKind::String => self.inner.string == other.inner.string,
+            JsonValueKind::Number => self.inner.number == other.inner.number,
+            JsonValueKind::Boolean => self.inner.boolean == other.inner.boolean,
+            JsonValueKind::Object => {
+                if self.inner.object.len() != other.inner.object.len() {
+                    return false;
+                }
+
+                for (key, value) in self.inner.object.iter_ref() {
+                    let other_value = other.inner.object.get_ref(key);
+                    if other_value.is_none() || !value.equals(other_value.unwrap()) {
+                        return false;
+                    }
+                }
+
+                true
+            },
+            JsonValueKind::Array => {
+                if self.inner.array.len() != other.inner.array.len() {
+                    return false;
+                }
+
+                let it = self.inner.array.iter_ref()
+                    .zip(&other.inner.array.iter_ref());
+
+                for (value, other_value) in it {
+                    if !value.equals(other_value) {
+                        return false;
+                    }
+                }
+
+                true
+            },
+            JsonValueKind::Null => true,
+            _ => unreachable!()
+        }
+    }
+
+    fn fmt<F: std::fmt::Formatter<F>>(self: &JsonValue, f: &mut F) -> std::fmt::Result {
+        use std::fmt::write;
+
+        switch self.kind {
+            JsonValueKind::String => {
+                write!(f, "string({})", self.inner.string)?;
+            },
+            JsonValueKind::Number => {
+                write!(f, "number({})", self.inner.number)?;
+            },
+            JsonValueKind::Boolean => {
+                write!(f, "boolean({})", self.inner.boolean)?;
+            },
+            JsonValueKind::Object => {
+                f.write_str("object(")?;
+                for (idx, kv) in self.inner.object.iter_ref().enumerate() {
+                    if idx > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{} => {}", kv.0, kv.1)?;
+                }
+                f.write_str(")")?;
+            },
+            JsonValueKind::Array => {
+                f.write_str("array(")?;
+                for (idx, value) in self.inner.array.iter_ref().enumerate() {
+                    if idx > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{}", value)?;
+                }
+                f.write_str(")")?;
+            },
+            JsonValueKind::Null => {
+                f.write_str("null")?;
+            },
+            _ => unreachable!()
+        }
+
+        Result::ok(())
+    }
+
+    mixin std::cmp::Equatable<JsonValue>;
+}
+
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_json_value() {
+        let value = JsonValue::string(StringBuf::from_slice("test"));
+        defer value.free();
+
+        assert_eq!(value.as_string(), Option::some("test"));
+        assert!(value.as_number::<i32>().is_none());
+        assert!(value.as_boolean().is_none());
+        assert!(value.as_object().is_none());
+        assert!(value.as_array().is_none());
+        assert!(!value.is_null());
+
+        let value = JsonValue::number(42);
+        defer value.free();
+
+        assert!(value.as_string().is_none());
+        assert_eq!(value.as_number::<i32>(), Option::some(42));
+        assert_eq!(value.as_number::<f64>(), Option::some(42.0));
+        assert!(value.as_boolean().is_none());
+        assert!(value.as_object().is_none());
+        assert!(value.as_array().is_none());
+        assert!(!value.is_null());
+
+        let value = JsonValue::number(2.4601);
+
+        assert!(value.as_string().is_none());
+        assert_eq!(value.as_number::<i32>(), Option::some(2));
+        assert_eq!(value.as_number::<f64>(), Option::some(2.4601));
+        assert!(value.as_boolean().is_none());
+        assert!(value.as_object().is_none());
+        assert!(value.as_array().is_none());
+        assert!(!value.is_null());
+
+        let value = JsonValue::boolean(true);
+        defer value.free();
+
+        assert!(value.as_string().is_none());
+        assert!(value.as_number::<i32>().is_none());
+        assert_eq!(value.as_boolean(), Option::some(true));
+        assert!(value.as_object().is_none());
+        assert!(value.as_array().is_none());
+        assert!(!value.is_null());
+    }
+
+    #[test]
+    fn test_json_value_equals() {
+        let a = JsonValue::string(StringBuf::from_slice("test"));
+        defer a.free();
+
+        let b = JsonValue::string(StringBuf::from_slice("test"));
+        defer b.free();
+
+        let c = JsonValue::string(StringBuf::from_slice("toast"));
+        defer c.free();
+
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+
+        let a = JsonValue::number(42);
+        let b = JsonValue::number(42);
+        let c = JsonValue::number(43);
+
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+
+        let a = JsonValue::boolean(true);
+        let b = JsonValue::boolean(true);
+        let c = JsonValue::boolean(false);
+
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+
+        let a = JsonValue::null();
+        let b = JsonValue::null();
+
+        assert_eq!(a, b);
+    }
+}

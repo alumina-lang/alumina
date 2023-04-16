@@ -15,8 +15,268 @@ const RADIX_DIGITS = "0123456789abcdefghijklmnopqrstuvwxyz";
 
 /// A heap-allocated string.
 ///
-/// `StringBuf` is just a vector of bytes.
-type StringBuf = std::collections::Vector<u8>;
+/// It is a wrapper around a [collections::Vector] of bytes. In addition to the
+/// methods provided by [collections::Vector], it provides protocol implementations
+/// for [fmt::Formatter] (allowing it to be a sink for [fmt::write]), [hash::Hashable],
+/// [cmp::Equatable] and [cmp::Comparable].
+struct StringBuf {
+    _inner: collections::Vector<u8>,
+}
+
+impl StringBuf {
+    use collections::Vector;
+
+    /// Create an empty string buffer.
+    ///
+    /// This will not allocate until the first byte is inserted.
+    fn new() -> StringBuf {
+        from_vector(Vector::new())
+    }
+
+    /// Create a string buffer from an existing vector.
+    fn from_vector(vector: Vector<u8>) -> StringBuf {
+        StringBuf {
+            _inner: vector
+        }
+    }
+
+    /// Create a string buffer from a raw slice and a length.
+    ///
+    /// The slice must be allocated with [mem::slice::alloc] and its length must be greater
+    /// than or equal to `length`.
+    fn from_raw(data: &mut [u8], length: usize) -> StringBuf {
+        from_vector(Vector::from_raw(data, length))
+    }
+
+    /// Create a string buffer that can hold up to `capacity` bytes without reallocating.
+    fn with_capacity(capacity: usize) -> StringBuf {
+        from_vector(Vector::with_capacity(capacity))
+    }
+
+    /// Create a string buffer from a slice, copying the bytes.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::Vector;
+    ///
+    /// let vec = Vector::from_slice(&[1, 2, 3]);
+    /// assert_eq!(vec.len(), 3);
+    /// assert_eq!(vec[..], &[1, 2, 3]);
+    /// ```
+    fn from_slice(slice: &[u8]) -> StringBuf {
+        from_vector(Vector::from_slice(slice))
+    }
+
+    /// Create a string buffer from an iterator.
+    ///
+    /// See also [iter::IteratorExt::to_vector] for a chainable version.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::Vector;
+    ///
+    /// let vec: Vector<i32> = Vector::from_iter(&(0..3));
+    /// assert_eq!(vec.len(), 3);
+    /// assert_eq!(vec[..], &[0, 1, 2]);
+    /// ```
+    fn from_iter<I: iter::Iterator<I, u8>>(iter: &mut I) -> StringBuf {
+        from_vector(Vector::from_iter::<I>(iter))
+    }
+
+    /// Reserve capacity for at least `additional` bytes.
+    fn reserve(self: &mut StringBuf, additional: usize) {
+        self._inner.reserve(additional);
+    }
+
+    /// Extend the string buffer with the bytes from a slice.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::Vector;
+    ///
+    /// let vec = Vector::new::<i32>();
+    /// vec.extend_from_slice(&[1, 2, 3]);
+    /// vec.extend_from_slice(&[4, 5, 6]);
+    /// assert_eq!(vec.len(), 6);
+    /// assert_eq!(vec[..], &[1, 2, 3, 4, 5, 6]);
+    /// ```
+    fn extend_from_slice(self: &mut StringBuf, value: &[u8]) {
+        self._inner.extend_from_slice(value);
+    }
+
+    /// Extend the string buffer with the bytes from an iterator.
+    fn extend<I: iter::Iterator<I, u8>>(self: &mut StringBuf, iter: &mut I) {
+        self._inner.extend(iter);
+    }
+
+    /// Insert an byte at the given index, shifting all bytes after it.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::Vector;
+    ///
+    /// let vec = Vector::from_slice(&[0, 1, 2, 3, 4]);
+    /// vec.insert(0, 100);
+    /// vec.insert(4, 200);
+    /// vec.insert(7, 300);
+    /// assert_eq!(vec[..], &[100, 0, 1, 2, 200, 3, 4, 300]);
+    /// ```
+    fn insert(self: &mut StringBuf, index: usize, value: u8) {
+        self._inner.insert(index, value);
+    }
+
+    /// Get the byte at the given index.
+    ///
+    /// If the index is out of bounds, it returns `Option::none()`.
+    fn get(self: &StringBuf, index: usize) -> Option<u8> {
+        self._inner.get(index)
+    }
+
+    /// @ mem::AsSlice::as_slice
+    fn as_slice(self: &StringBuf) -> &[u8] {
+        self._inner.as_slice()
+    }
+
+    /// @ mem::AsSliceMut::as_slice_mut
+    fn as_slice_mut(self: &mut StringBuf) -> &mut [u8] {
+        self._inner.as_slice_mut()
+    }
+
+    /// Push an byte to the end of the string buffer.
+    fn push(self: &mut StringBuf, value: u8) {
+        self._inner.push(value);
+    }
+
+    /// Pop an byte from the end of the string buffer.
+    ///
+    /// If the string buffer is empty, it returns `Option::none()`.
+    fn pop(self: &mut StringBuf) -> Option<u8> {
+        self._inner.pop()
+    }
+
+    /// Return the length of the string buffer.
+    fn len(self: &StringBuf) -> usize {
+        self._inner.len()
+    }
+
+    /// Return the size of the underlying buffer.
+    fn capacity(self: &StringBuf) -> usize {
+        self._inner.capacity()
+    }
+
+    /// Returns a region of memory "after the last byte".
+    ///
+    /// This can be used to efficiently append bytes to the string buffer. The memory
+    /// may not be initialized.
+    fn spare_capacity(self: &mut StringBuf) -> &mut [u8] {
+        self._inner.spare_capacity()
+    }
+
+    /// Returns `true` if the string buffer is empty, `false` otherwise.
+    #[inline]
+    fn is_empty(self: &StringBuf) -> bool {
+        self._inner.is_empty()
+    }
+
+    /// Clear the string buffer, removing all bytes.
+    ///
+    /// Does not remove excess capacity, call [shrink_to_fit] afterwards, if this
+    /// is desired.
+    fn clear(self: &mut StringBuf) {
+        self._inner.clear()
+    }
+
+    /// Truncate the string buffer, removing all but the first `new_size` bytes.
+    ///
+    /// `new_size` should not be greater than the current capacity of the string buffer, but it may be
+    /// greater than the current length of the string buffer. In this case the string buffer will grow to the
+    /// specified capacity.
+    ///
+    /// `vec.truncate(0)` is equivalent to `vec.clear()`.
+    fn truncate(self: &mut StringBuf, new_size: usize) {
+        self._inner.truncate(new_size);
+    }
+
+    /// @ iter::Iterable::iter
+    #[inline]
+    fn iter(self: &StringBuf) -> mem::SliceIterator<&u8> {
+        self._inner.iter()
+    }
+
+    /// @ iter::IterableRef::iter_ref
+    #[inline]
+    fn iter_ref(self: &StringBuf) -> mem::SliceRefIterator<&u8> {
+        self._inner.iter_ref()
+    }
+
+    /// @ iter::IterableMut::iter_mut
+    #[inline]
+    fn iter_mut(self: &mut StringBuf) -> mem::SliceRefIterator<&mut u8> {
+        self._inner.iter_mut()
+    }
+
+    /// Shrink the underlying buffer to the length of the string buffer.
+    fn shrink_to_fit(self: &mut StringBuf) {
+        self._inner.shrink_to_fit();
+    }
+
+    /// @ std::mem::Freeable::free
+    fn free(self: &mut StringBuf) {
+        self._inner.free();
+    }
+
+    /// @ std::mem::Movable::move
+    fn move(self: &mut StringBuf) -> StringBuf {
+        StringBuf::from_vector(self._inner.move())
+    }
+
+    /// @ mem::Clonable::clone
+    fn clone(self: &StringBuf) -> StringBuf {
+        StringBuf::from_vector(self._inner.clone())
+    }
+
+    /// @ std::fmt::Formatter::write_str
+    #[inline]
+    fn write_str(self: &mut StringBuf, buf: &[u8]) -> Result<(), fmt::Error> {
+        self.extend_from_slice(buf);
+        Result::ok(())
+    }
+
+    /// @ std::fmt::Formatter::write_byte
+    #[inline]
+    fn write_byte(self: &mut StringBuf, c: u8) -> Result<(), fmt::Error> {
+        self.push(c);
+        Result::ok(())
+    }
+
+    /// @ std::fmt::Formattable::fmt
+    #[inline]
+    fn fmt<F: fmt::Formatter<F>>(self: &StringBuf, fmt: &mut F) -> Result<(), fmt::Error> {
+        fmt.write_str(self[..])
+    }
+
+    /// @ std::cmp::Equatable::equals
+    #[inline]
+    fn equals(self: &StringBuf, other: &StringBuf) -> bool {
+        self[..] == other[..]
+    }
+
+    /// @ std::cmp::Comparable::compare
+    #[inline]
+    fn compare(self: &StringBuf, other: &StringBuf) -> cmp::Ordering {
+        self[..].compare(&other[..])
+    }
+
+    /// @ std::hash::Hashable::hash
+    #[inline]
+    fn hash<H: hash::Hasher<H>>(self: &StringBuf, state: &mut H) {
+        self[..].hash(state)
+    }
+
+    mixin cmp::Equatable<StringBuf>;
+    mixin cmp::Comparable<StringBuf>;
+    mixin<H: hash::Hasher<H>> hash::Hashable<StringBuf, H>;
+}
 
 /// Returns `true` if character is an ASCII whitespace character, `false` otherwise.
 fn is_whitespace(c: u8) -> bool {
@@ -325,7 +585,7 @@ impl ReplaceAdapter {
 ///
 /// See also [replace_fmt] for a non-allocating variant.
 fn replace(self: &[u8], needle: &[u8], replacement: &[u8]) -> StringBuf {
-    let ret: StringBuf = StringBuf::new();
+    let ret = StringBuf::new();
     self.replace_fmt(needle, replacement).fmt(&ret).unwrap();
     ret
 }
@@ -370,7 +630,7 @@ impl JoinAdapter<It: iter::Iterator<It, &[u8]>> {
 ///
 /// See also [join_fmt] for a non-allocating string formatting adapter.
 fn join<It: iter::Iterator<It, &[u8]>>(self: &[u8], iter: &mut It) -> StringBuf {
-    let ret: StringBuf = StringBuf::new();
+    let ret = StringBuf::new();
     self.join_fmt(iter).fmt(&ret).unwrap();
     ret
 }

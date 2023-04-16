@@ -92,11 +92,11 @@ $(STDLIB_TESTS): $(STDLIB_TESTS).c
 
 ## ---------------------------- Lang tests -----------------------------
 
-LANG_TEST_FILES = $(shell find src/tests -type f -name '*.alu')
+LANG_TEST_FILES = $(shell find tests/lang -type f -name '*.alu')
 
 $(LANG_TESTS).c: $(ALUMINA_BOOT) $(SYSROOT_FILES) $(LANG_TEST_FILES)
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) -Zdeny-warnings --cfg test --output $@ \
-		$(foreach src,$(LANG_TEST_FILES),$(subst /,::,$(basename $(subst src/tests/,lang_tests/,$(src))))=$(src)) \
+		$(foreach src,$(LANG_TEST_FILES),$(subst /,::,$(basename $(subst tests/lang/,lang_tests/,$(src))))=$(src)) \
 
 $(LANG_TESTS): $(LANG_TESTS).c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
@@ -233,7 +233,7 @@ test-alumina-boot:
 test-aluminac: $(ALUMINAC_TESTS)
 	$(ALUMINAC_TESTS) $(TEST_FLAGS)
 
-test: test-alumina-boot test-std test-lang
+test: test-alumina-boot test-std test-lang test-aluminac
 
 .DEFAULT_GOAL := all
 all: alumina-boot aluminac

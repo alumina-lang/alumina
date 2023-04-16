@@ -9,8 +9,11 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-enum Level {
+use serde::Serialize;
+
+#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum Level {
     Error = 2,
     Warning = 1,
     #[allow(dead_code)]
@@ -145,6 +148,21 @@ impl DiagnosticsStack {
     }
 }
 
+#[derive(Serialize)]
+pub struct Location {
+    pub file: String,
+    pub line: usize,
+    pub column: usize,
+}
+
+#[derive(Serialize)]
+pub struct Diagnostic {
+    pub level: Level,
+    pub kind: String,
+    pub message: String,
+    pub backtrace: Vec<Option<Location>>,
+}
+
 #[derive(Clone)]
 pub struct DiagnosticContext {
     inner: Rc<RefCell<DiagnosticContextInner>>,
@@ -268,7 +286,8 @@ impl DiagnosticContext {
             .any(|(level, _)| *level == Level::Error)
     }
 
-    pub fn print_error_report(&self) -> Result<(), AluminaError> {
+    /// Prints a human readable diagnostic report to stderr
+    pub fn print_report(&self) -> Result<(), AluminaError> {
         let inner = self.inner.borrow();
         let mut all_errors: Vec<_> = inner.messages.iter().collect();
         all_errors.sort_by_key(|(level, err)| {
@@ -376,5 +395,67 @@ impl DiagnosticContext {
         }
 
         Ok(())
+    }
+
+    /// Creates a serializable report of all errors and warnings
+    pub fn create_report(&self) -> Result<Vec<Diagnostic>, AluminaError> {
+        let inner = self.inner.borrow();
+        let mut all_errors: Vec<_> = inner.messages.iter().collect();
+        all_errors.sort_by_key(|(level, err)| {
+            err.backtrace
+                .iter()
+                .filter_map(|m| match m {
+                    Marker::Span(span) => Some((*level, Some((span.file, span.start)))),
+                    _ => None,
+                })
+                .last()
+                .unwrap_or((*level, None))
+        });
+
+        let mut diagnostics = Vec::new();
+        for (level, error) in all_errors {
+            let message = error.kind.to_string();
+
+            let mut filtered_frames = vec![];
+            for frame in &error.backtrace {
+                match frame {
+                    Marker::Span(i) => {
+                        if let Some(Marker::Span(last)) = filtered_frames.last_mut() {
+                            if last.contains(i) {
+                                *last = *i;
+                                continue;
+                            } else if i.contains(last) {
+                                continue;
+                            }
+                        }
+                    }
+                    _ => {}
+                };
+                filtered_frames.push(frame.clone());
+            }
+
+            let mut backtrace = vec![];
+            for marker in filtered_frames {
+                let Marker::Span(span) = marker else { continue };
+                if let Some(file_name) = inner.file_map.get(&span.file) {
+                    backtrace.push(Some(Location {
+                        file: file_name.display().to_string(),
+                        line: span.line + 1,
+                        column: span.column + 1,
+                    }));
+                } else {
+                    backtrace.push(None);
+                }
+            }
+
+            diagnostics.push(Diagnostic {
+                level: *level,
+                kind: error.kind.as_ref().to_string(),
+                message,
+                backtrace,
+            });
+        }
+
+        Ok(diagnostics)
     }
 }

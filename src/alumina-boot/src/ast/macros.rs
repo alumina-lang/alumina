@@ -62,14 +62,14 @@ impl<'ast> MacroMaker<'ast> {
     pub fn make<'src>(
         &mut self,
         name: Option<&'ast str>,
-        symbol: ItemP<'ast>,
+        item: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         attributes: &'ast [Attribute],
     ) -> Result<(), AluminaError> {
         use crate::common::WithSpanDuringParsing;
 
-        if let Some(inner) = symbol.try_get() {
+        if let Some(inner) = item.try_get() {
             match inner {
                 Item::Macro(m) => {
                     if m.body.get().is_some() {
@@ -110,7 +110,7 @@ impl<'ast> MacroMaker<'ast> {
                 }
             };
 
-            symbol.assign(Item::BuiltinMacro(BuiltinMacro {
+            item.assign(Item::BuiltinMacro(BuiltinMacro {
                 kind,
                 span: Some(span),
             }));
@@ -146,7 +146,7 @@ impl<'ast> MacroMaker<'ast> {
             span: Some(span),
         });
 
-        symbol.assign(result);
+        item.assign(result);
 
         let body = ExpressionVisitor::new(
             self.ast,
@@ -159,7 +159,7 @@ impl<'ast> MacroMaker<'ast> {
         scope.check_unused_items(&self.global_ctx.diag());
 
         // Two-step assignment to detect recursion
-        symbol.get_macro().body.set(body).unwrap();
+        item.get_macro().body.set(body).unwrap();
 
         Ok(())
     }
@@ -428,7 +428,21 @@ impl<'ast> MacroExpander<'ast> {
             Break(inner) => Break(inner.map(|i| self.visit_expr(i)).transpose()?),
             Return(inner) => Return(inner.map(|i| self.visit_expr(i)).transpose()?),
             Defer(inner) => Defer(self.visit_expr(inner)?),
-            Field(a, name, assoc_fn) => Field(self.visit_expr(a)?, name, assoc_fn),
+            Field(a, name, assoc_fn, generic_args) => Field(
+                self.visit_expr(a)?,
+                name,
+                assoc_fn,
+                generic_args
+                    .map(|args| {
+                        Ok::<_, AluminaError>(
+                            args.iter()
+                                .map(|e| self.visit_typ(e))
+                                .collect::<Result<Vec<_>, _>>()?
+                                .alloc_on(self.ast),
+                        )
+                    })
+                    .transpose()?,
+            ),
             Struct(ty, inits) => {
                 let inits: Vec<_> = inits
                     .iter()

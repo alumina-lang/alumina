@@ -24,7 +24,7 @@ use super::MacroCtx;
 pub struct AstItemMaker<'ast> {
     ast: &'ast AstCtx<'ast>,
     global_ctx: GlobalCtx,
-    symbols: Vec<ItemP<'ast>>,
+    items: Vec<ItemP<'ast>>,
     ambient_placeholders: Vec<Placeholder<'ast>>,
     macro_ctx: MacroCtx,
     local: bool,
@@ -35,7 +35,7 @@ impl<'ast> AstItemMaker<'ast> {
         Self {
             ast,
             global_ctx,
-            symbols: Vec::new(),
+            items: Vec::new(),
             ambient_placeholders: Vec::new(),
             macro_ctx,
             local: false,
@@ -46,7 +46,7 @@ impl<'ast> AstItemMaker<'ast> {
         Self {
             ast,
             global_ctx,
-            symbols: Vec::new(),
+            items: Vec::new(),
             ambient_placeholders: Vec::new(),
             macro_ctx,
             local: true,
@@ -54,7 +54,7 @@ impl<'ast> AstItemMaker<'ast> {
     }
 
     pub fn into_inner(self) -> Vec<ItemP<'ast>> {
-        self.symbols
+        self.items
     }
 
     pub fn get_placeholders<'src>(
@@ -116,8 +116,8 @@ impl<'ast> AstItemMaker<'ast> {
         for impl_scope in impl_scopes {
             for (name, item) in impl_scope.inner().all_items() {
                 match &item.kind {
-                    NamedItemKind::Function(symbol, node, _)
-                    | NamedItemKind::Method(symbol, node, _) => {
+                    NamedItemKind::Function(item, node, _)
+                    | NamedItemKind::Method(item, node, _) => {
                         if let Some(name) = name {
                             if !names.insert(name) {
                                 self.global_ctx.diag().add_warning(CodeError::from_kind(
@@ -128,7 +128,7 @@ impl<'ast> AstItemMaker<'ast> {
                         }
                         associated_fns.push(AssociatedFn {
                             name: name.unwrap(),
-                            item: symbol,
+                            item,
                         })
                     }
                     NamedItemKind::Mixin(node, scope) => {
@@ -173,7 +173,7 @@ impl<'ast> AstItemMaker<'ast> {
     fn make_struct_like<'src>(
         &mut self,
         name: Option<&'ast str>,
-        symbol: ItemP<'ast>,
+        item: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         impl_scopes: &[Scope<'ast, 'src>],
@@ -233,9 +233,9 @@ impl<'ast> AstItemMaker<'ast> {
             is_union,
         });
 
-        symbol.assign(result);
+        item.assign(result);
 
-        self.symbols.push(symbol);
+        self.items.push(item);
 
         Ok(())
     }
@@ -243,7 +243,7 @@ impl<'ast> AstItemMaker<'ast> {
     fn make_protocol<'src>(
         &mut self,
         name: Option<&'ast str>,
-        symbol: ItemP<'ast>,
+        item: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         attributes: &'ast [Attribute],
@@ -264,7 +264,7 @@ impl<'ast> AstItemMaker<'ast> {
             span: Some(span),
         });
 
-        symbol.assign(result);
+        item.assign(result);
 
         Ok(())
     }
@@ -280,7 +280,7 @@ impl<'ast> AstItemMaker<'ast> {
     fn make_enum<'src>(
         &mut self,
         name: Option<&'ast str>,
-        symbol: ItemP<'ast>,
+        item: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         impl_scopes: &[Scope<'ast, 'src>],
@@ -331,9 +331,9 @@ impl<'ast> AstItemMaker<'ast> {
             span: Some(span),
         });
 
-        symbol.assign(result);
+        item.assign(result);
 
-        self.symbols.push(symbol);
+        self.items.push(item);
 
         Ok(())
     }
@@ -341,7 +341,7 @@ impl<'ast> AstItemMaker<'ast> {
     fn make_typedef<'src>(
         &mut self,
         name: Option<&'ast str>,
-        symbol: ItemP<'ast>,
+        item: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         attributes: &'ast [Attribute],
@@ -371,9 +371,9 @@ impl<'ast> AstItemMaker<'ast> {
             attributes,
         });
 
-        symbol.assign(result);
+        item.assign(result);
 
-        self.symbols.push(symbol);
+        self.items.push(item);
 
         Ok(())
     }
@@ -395,7 +395,7 @@ impl<'ast> AstItemMaker<'ast> {
     fn make_function<'src>(
         &mut self,
         name: Option<&'ast str>,
-        symbol: ItemP<'ast>,
+        item: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         body: Option<tree_sitter::Node<'src>>,
@@ -462,12 +462,9 @@ impl<'ast> AstItemMaker<'ast> {
                     kind: intrinsic_kind(name.unwrap())
                         .ok_or_else(|| CodeDiagnostic::UnknownIntrinsic(name.unwrap().to_string()))
                         .with_span_from(&scope, node)?,
-                    generic_count: placeholders.len(),
-                    arg_count: parameters.len(),
-                    varargs: has_varargs,
                     span: Some(span),
                 });
-                symbol.assign(result);
+                item.assign(result);
                 return Ok(());
             }
             Some(abi) => {
@@ -527,8 +524,8 @@ impl<'ast> AstItemMaker<'ast> {
             is_protocol_fn,
         });
 
-        symbol.assign(result);
-        self.symbols.push(symbol);
+        item.assign(result);
+        self.items.push(item);
 
         Ok(())
     }
@@ -537,7 +534,7 @@ impl<'ast> AstItemMaker<'ast> {
         &mut self,
         is_const: bool,
         name: Option<&'ast str>,
-        symbol: ItemP<'ast>,
+        item: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         attributes: &'ast [Attribute],
@@ -600,9 +597,9 @@ impl<'ast> AstItemMaker<'ast> {
 
         scope.check_unused_items(&self.global_ctx.diag());
 
-        symbol.assign(result);
+        item.assign(result);
 
-        self.symbols.push(symbol);
+        self.items.push(item);
 
         Ok(())
     }
@@ -610,7 +607,7 @@ impl<'ast> AstItemMaker<'ast> {
     fn make_type<'src>(
         &mut self,
         name: Option<&'ast str>,
-        symbol: ItemP<'ast>,
+        item: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         impl_scopes: &[Scope<'ast, 'src>],
@@ -618,10 +615,10 @@ impl<'ast> AstItemMaker<'ast> {
     ) -> Result<(), AluminaError> {
         match node.kind_typed() {
             NodeKind::StructDefinition => {
-                self.make_struct_like(name, symbol, node, scope, impl_scopes, attributes)?
+                self.make_struct_like(name, item, node, scope, impl_scopes, attributes)?
             }
             NodeKind::EnumDefinition => {
-                self.make_enum(name, symbol, node, scope, impl_scopes, attributes)?
+                self.make_enum(name, item, node, scope, impl_scopes, attributes)?
             }
             _ => unimplemented!(),
         };
@@ -660,7 +657,7 @@ impl<'ast> AstItemMaker<'ast> {
                 ..
             }] => return Err(CodeDiagnostic::NoFreeStandingImpl).with_span_from(scope, *node),
             [NI {
-                kind: Type(symbol, node, scope),
+                kind: Type(item, node, scope),
                 attributes,
             }, rest @ ..] => {
                 let mut impl_scopes = Vec::with_capacity(rest.len());
@@ -675,7 +672,7 @@ impl<'ast> AstItemMaker<'ast> {
                 }
                 self.make_type(
                     name,
-                    symbol,
+                    item,
                     *node,
                     scope.clone(),
                     &impl_scopes[..],
@@ -683,44 +680,44 @@ impl<'ast> AstItemMaker<'ast> {
                 )?;
             }
             [NI {
-                kind: TypeDef(symbol, node, scope),
+                kind: TypeDef(item, node, scope),
                 attributes,
             }] => {
-                self.make_typedef(name, symbol, *node, scope.clone(), attributes)?;
+                self.make_typedef(name, item, *node, scope.clone(), attributes)?;
             }
             [NI {
-                kind: Protocol(symbol, node, scope),
+                kind: Protocol(item, node, scope),
                 attributes,
             }] => {
                 self.make(scope.clone())?;
-                self.make_protocol(name, symbol, *node, scope.clone(), attributes)?;
+                self.make_protocol(name, item, *node, scope.clone(), attributes)?;
             }
             [NI {
-                kind: Static(symbol, node, scope),
+                kind: Static(item, node, scope),
                 attributes,
             }] => {
-                self.make_static_or_const(false, name, symbol, *node, scope.clone(), attributes)?;
+                self.make_static_or_const(false, name, item, *node, scope.clone(), attributes)?;
             }
             [NI {
-                kind: Const(symbol, node, scope),
+                kind: Const(item, node, scope),
                 attributes,
             }] => {
-                self.make_static_or_const(true, name, symbol, *node, scope.clone(), attributes)?;
+                self.make_static_or_const(true, name, item, *node, scope.clone(), attributes)?;
             }
             [NI {
-                kind: Macro(symbol, node, scope),
+                kind: Macro(item, node, scope),
                 attributes,
             }] => {
                 let mut macro_maker = MacroMaker::new(self.ast, self.global_ctx.clone());
-                macro_maker.make(name, symbol, *node, scope.clone(), attributes)?;
-                self.symbols.push(symbol);
+                macro_maker.make(name, item, *node, scope.clone(), attributes)?;
+                self.items.push(item);
             }
             [NI {
-                kind: Function(symbol, node, scope),
+                kind: Function(item, node, scope),
                 attributes,
             }] => self.make_function(
                 name,
-                symbol,
+                item,
                 *node,
                 scope.clone(),
                 node.child_by_field(FieldKind::Body),

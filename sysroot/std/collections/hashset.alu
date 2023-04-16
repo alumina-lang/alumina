@@ -257,6 +257,26 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, H: Hasher<H> = DefaultHash> {
         self._inner.free();
     }
 
+    /// Helper for collections that own heap-allocated objects. This is used to
+    /// be able to do `defer col.free_all()` without much boilerplate.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::HashSet;
+    /// use std::string::StringBuf;
+    /// use std::fmt::format;
+    ///
+    /// let v: HashSet<StringBuf> = HashSet::new();
+    /// defer v.free_all();
+    ///
+    /// for i in 1..10 {
+    ///     v.insert("{} + {} = {}".format!(i, i, i + i).unwrap());
+    /// }
+    /// ```
+    fn free_all(self: &mut HashSet<K, H>) {
+        self._inner.free_all();
+    }
+
     /// @ mem::Movable::move
     fn move(self: &mut HashSet<K, H>) -> HashSet<K, H> {
         HashSet::<K, H> {

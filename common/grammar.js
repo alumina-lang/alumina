@@ -581,7 +581,7 @@ module.exports = grammar({
         $.array_expression,
         prec.left(1, $.macro_invocation),
         $.et_cetera_expression,
-        $.closure_expression,
+        $.lambda_expression,
         $._literal,
         prec.left($.identifier),
         prec.left($.macro_identifier),
@@ -658,7 +658,7 @@ module.exports = grammar({
         seq(
           field("value", $._expression),
           ".",
-          field("macro", choice($.scoped_identifier, $.identifier)),
+          field("macro", $.identifier),
           "!",
           field("arguments", $.arguments)
         )
@@ -994,7 +994,7 @@ module.exports = grammar({
         )
       ),
 
-    closure_expression: ($) =>
+    lambda_expression: ($) =>
       prec(
         PREC.closure,
         seq(

@@ -10,7 +10,7 @@ pub mod mono;
 use crate::ast::{Attribute, BinOp, BuiltinType, Span, UnOp};
 use crate::common::{
     impl_allocatable, Allocatable, AluminaError, ArenaAllocatable, CodeDiagnostic, HashSet,
-    Incrementable, CycleGuardian,
+    Incrementable,
 };
 use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::const_eval::Value;
@@ -68,7 +68,7 @@ impl<'ir> IrCtx<'ir> {
         inner
     }
 
-    pub fn make_symbol(&'ir self) -> IRItemP<'ir> {
+    pub fn make_item(&'ir self) -> IRItemP<'ir> {
         self.arena.alloc(IRItemCell {
             id: self.make_id(),
             contents: OnceCell::new(),
@@ -398,16 +398,16 @@ pub type IRItemP<'ir> = &'ir IRItemCell<'ir>;
 
 impl<'ir> IRItemCell<'ir> {
     pub fn assign(&self, value: IRItem<'ir>) {
-        // Panic if we try to assign the same symbol twice
+        // Panic if we try to assign the same item twice
         self.contents
             .set(value)
-            .expect("assigning the same symbol twice");
+            .expect("assigning the same item twice");
     }
 
     pub fn get(&'ir self) -> Result<&'ir IRItem<'ir>, CodeDiagnostic> {
         match self.contents.get() {
             Some(item) => Ok(item),
-            None => Err(CodeDiagnostic::UnpopulatedSymbol),
+            None => Err(CodeDiagnostic::UnpopulatedItem),
         }
     }
 
@@ -425,7 +425,7 @@ impl<'ir> IRItemCell<'ir> {
                 "function expected".into(),
                 Backtrace::capture().into(),
             )),
-            None => Err(CodeDiagnostic::UnpopulatedSymbol),
+            None => Err(CodeDiagnostic::UnpopulatedItem),
         }
     }
 
@@ -436,7 +436,7 @@ impl<'ir> IRItemCell<'ir> {
                 "closure expected".into(),
                 Backtrace::capture().into(),
             )),
-            None => Err(CodeDiagnostic::UnpopulatedSymbol),
+            None => Err(CodeDiagnostic::UnpopulatedItem),
         }
     }
 
@@ -447,7 +447,7 @@ impl<'ir> IRItemCell<'ir> {
                 "protocol expected".into(),
                 Backtrace::capture().into(),
             )),
-            None => Err(CodeDiagnostic::UnpopulatedSymbol),
+            None => Err(CodeDiagnostic::UnpopulatedItem),
         }
     }
 
@@ -458,7 +458,7 @@ impl<'ir> IRItemCell<'ir> {
                 "struct expected".into(),
                 Backtrace::capture().into(),
             )),
-            None => Err(CodeDiagnostic::UnpopulatedSymbol),
+            None => Err(CodeDiagnostic::UnpopulatedItem),
         }
     }
 
@@ -469,7 +469,7 @@ impl<'ir> IRItemCell<'ir> {
                 "enum expected".into(),
                 Backtrace::capture().into(),
             )),
-            None => Err(CodeDiagnostic::UnpopulatedSymbol),
+            None => Err(CodeDiagnostic::UnpopulatedItem),
         }
     }
 
@@ -480,7 +480,7 @@ impl<'ir> IRItemCell<'ir> {
                 "static expected".into(),
                 Backtrace::capture().into(),
             )),
-            None => Err(CodeDiagnostic::UnpopulatedSymbol),
+            None => Err(CodeDiagnostic::UnpopulatedItem),
         }
     }
 
@@ -491,7 +491,7 @@ impl<'ir> IRItemCell<'ir> {
                 "const expected".into(),
                 Backtrace::capture().into(),
             )),
-            None => Err(CodeDiagnostic::UnpopulatedSymbol),
+            None => Err(CodeDiagnostic::UnpopulatedItem),
         }
     }
 
@@ -510,7 +510,7 @@ impl Hash for IRItemCell<'_> {
     }
 }
 
-/// Symbols have reference semantics. Two structs with the same fields
+/// Items have reference semantics. Two structs with the same fields
 /// are not considered equal.
 impl PartialEq for IRItemCell<'_> {
     fn eq(&self, other: &Self) -> bool {

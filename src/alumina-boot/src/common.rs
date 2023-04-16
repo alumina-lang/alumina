@@ -143,6 +143,8 @@ pub enum CodeDiagnostic {
     TupleIndexOutOfBounds,
     #[error("function or static expected")]
     FunctionOrStaticExpectedHere,
+    #[error("unexpected generic arguments (is this a method that needs to be called?)")]
+    UnexpectedGenericArgs,
     #[error("could not resolve item `{}`", .0)]
     UnresolvedItem(String),
     #[error("duplicate field `{}` in struct initializer", .0)]
@@ -247,8 +249,8 @@ pub enum CodeDiagnostic {
     MultipleMainFunctions,
     #[error("type aliases cannot have their own impl block")]
     NoImplForTypedefs,
-    #[error("unpopulated symbol")]
-    UnpopulatedSymbol,
+    #[error("unpopulated item")]
+    UnpopulatedItem,
     #[error(
         "generic type parameters cannot be used in this context (did you mean to call a function?)"
     )]

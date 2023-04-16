@@ -885,7 +885,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             Some(LangItemKind::ProtoAny) => return Ok(BoundCheckResult::Matches),
             Some(LangItemKind::ProtoNone) => return Ok(BoundCheckResult::DoesNotMatch),
             Some(LangItemKind::ProtoZeroSized) => {
-                let layout = self.mono_ctx.layouter.layout_of(ty).with_backtrace(&self.diag)?;
+                let layout = self
+                    .mono_ctx
+                    .layouter
+                    .layout_of(ty)
+                    .with_backtrace(&self.diag)?;
                 if layout.is_zero_sized() {
                     return Ok(BoundCheckResult::Matches);
                 } else {
@@ -1432,7 +1436,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 None => continue,
             };
 
-            let new_func = self.mono_ctx.ast.make_symbol();
+            let new_func = self.mono_ctx.ast.make_item();
             new_func.assign(ast::Item::Function(ast::Function {
                 name: fun.name,
                 attributes: fun.attributes,
@@ -1583,19 +1587,19 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
     pub fn monomorphize_item_uncached(
         &mut self,
-        existing_symbol: Option<IRItemP<'ir>>,
+        existing_item: Option<IRItemP<'ir>>,
         item: ast::ItemP<'ast>,
         generic_args: &'ir [ir::TyP<'ir>],
         signature_only: bool,
     ) -> Result<ir::IRItemP<'ir>, AluminaError> {
-        // Protocol bounds checking uses signature_only to avoid infinite recursion/unpopulated symbols,
+        // Protocol bounds checking uses signature_only to avoid infinite recursion/unpopulated items,
         // make sure other cases are appropriately handled before allowing them.
         assert!(!signature_only || matches!(item.get(), ast::Item::Function(_)));
 
         let key = self.get_mono_key(item, generic_args, signature_only)?;
 
         let item: ir::IRItemP =
-            existing_symbol.unwrap_or(match self.mono_ctx.finished.entry(key.clone()) {
+            existing_item.unwrap_or(match self.mono_ctx.finished.entry(key.clone()) {
                 // The cell may be empty at this point if we are dealing with recursive references
                 // In this case, we will just return the item as is, but it will not
                 // be populated until the top-level item is finished.
@@ -1611,9 +1615,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     return Ok(entry.get());
                 }
                 Entry::Vacant(entry) => {
-                    let symbol = self.mono_ctx.ir.make_symbol();
-                    self.mono_ctx.reverse_map.insert(symbol, key.clone());
-                    entry.insert(symbol)
+                    let item = self.mono_ctx.ir.make_item();
+                    self.mono_ctx.reverse_map.insert(item, key.clone());
+                    entry.insert(item)
                 }
             });
 
@@ -1680,7 +1684,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         &mut self,
         alive: &HashSet<IRItemP<'ir>>,
     ) -> Result<IRItemP<'ir>, AluminaError> {
-        let item = self.mono_ctx.ir.make_symbol();
+        let item = self.mono_ctx.ir.make_item();
         self.return_type = Some(self.types.void());
 
         let mut statements = Vec::new();
@@ -2556,7 +2560,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     ) -> Result<ir::IRItemP<'ir>, AluminaError> {
         let fun = item.get_function();
 
-        // If the function is not generic, we don't need to infer the args
+        // If the generic args are provided, we don't need to infer them
         if let Some(generic_args) = generic_args {
             let generic_args = generic_args
                 .iter()
@@ -4077,7 +4081,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                         self.mono_ctx.ir,
                         func.body
                             .get()
-                            .ok_or_else(|| self.diag.err(CodeDiagnostic::UnpopulatedSymbol))?
+                            .ok_or_else(|| self.diag.err(CodeDiagnostic::UnpopulatedItem))?
                             .expr,
                         func.args
                             .iter()
@@ -4232,12 +4236,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(Some(ret))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn lower_method_call(
         &mut self,
         self_arg: ast::ExprP<'ast>,
         unified_fn: Option<ast::ItemP<'ast>>,
         name: &'ast str,
         args: &[ast::ExprP<'ast>],
+        generic_args: Option<&[ast::TyP<'ast>]>,
         type_hint: Option<ir::TyP<'ir>>,
         ast_span: Option<Span>,
     ) -> Result<Option<ir::ExprP<'ir>>, AluminaError> {
@@ -4281,7 +4287,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let method = self.try_resolve_function(
             method,
-            None,
+            generic_args,
             Some(ir_self_arg),
             Some(args),
             type_hint,
@@ -4432,11 +4438,19 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
                 self.exprs.function(item, callee.span)
             }
-            ast::ExprKind::Field(e, field, unified_fn) => {
+            ast::ExprKind::Field(e, field, unified_fn, generic_args) => {
                 // Methods are resolved in the following order - field has precedence, then associated
                 // functions, then free functions with UFCS. We never want UFCS to shadow native fields
                 // and methods.
-                match self.lower_method_call(e, *unified_fn, field, args, type_hint, ast_span)? {
+                match self.lower_method_call(
+                    e,
+                    *unified_fn,
+                    field,
+                    args,
+                    *generic_args,
+                    type_hint,
+                    ast_span,
+                )? {
                     Some(result) => return Ok(result),
                     None => self.lower_expr(callee, None)?,
                 }
@@ -4597,7 +4611,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     // be populated until the top-level item is finished.
                     Entry::Occupied(entry) => self.types.named(entry.get()),
                     Entry::Vacant(entry) => {
-                        let closure = self.mono_ctx.ir.make_symbol();
+                        let closure = self.mono_ctx.ir.make_item();
                         self.mono_ctx.reverse_map.insert(closure, key.clone());
                         entry.insert(closure);
 
@@ -4702,10 +4716,15 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         &mut self,
         obj: ast::ExprP<'ast>,
         field: &'ast str,
+        generic_args: Option<&'ast [ast::TyP<'ast>]>,
         _type_hint: Option<ir::TyP<'ir>>,
         ast_span: Option<Span>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let obj = self.lower_expr(obj, None)?;
+
+        if generic_args.is_some() {
+            bail!(self, CodeDiagnostic::UnexpectedGenericArgs);
+        }
 
         let result = match obj.ty.canonical_type() {
             ir::Ty::Item(item) => {
@@ -5269,8 +5288,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             ast::ExprKind::TupleIndex(tup, index) => {
                 self.lower_tuple_index(tup, *index, type_hint, expr.span)
             }
-            ast::ExprKind::Field(tup, field, _) => {
-                self.lower_field(tup, field, type_hint, expr.span)
+            ast::ExprKind::Field(tup, field, _, generic_args) => {
+                self.lower_field(tup, field, *generic_args, type_hint, expr.span)
             }
             ast::ExprKind::Call(func, args) => self.lower_call(func, args, type_hint, expr.span),
             ast::ExprKind::Array(elements) => {

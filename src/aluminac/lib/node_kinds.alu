@@ -88,7 +88,6 @@ enum NodeKind {
     EtCeteraExpression,
     FunctionPointer,
     EmptyStatement,
-    ClosureExpression,
     SwitchBody,
     ClosureParameters,
     ReferenceExpression,
@@ -108,6 +107,7 @@ enum NodeKind {
     ParenthesizedExpression,
     CharLiteral,
     ForExpression,
+    LambdaExpression,
     IntegerLiteral,
     StructField,
     TopLevelAttributeItem,
@@ -388,7 +388,7 @@ const NODE_KINDS: [NodeKind; 255] = [
     NodeKind::EtCeteraExpression,
     NodeKind::ForExpression,
     NodeKind::Invalid,
-    NodeKind::ClosureExpression,
+    NodeKind::LambdaExpression,
     NodeKind::ClosureParameters,
     NodeKind::BoundIdentifier,
     NodeKind::BooleanLiteral,
@@ -674,9 +674,6 @@ protocol NodeVisitor<Self, ReturnType> {
     fn visit_empty_statement(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_empty_statement");
     }
-    fn visit_closure_expression(self: &mut Self, _node: Node) -> ReturnType {
-        panic!("unimplemented: visit_closure_expression");
-    }
     fn visit_switch_body(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_switch_body");
     }
@@ -733,6 +730,9 @@ protocol NodeVisitor<Self, ReturnType> {
     }
     fn visit_for_expression(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_for_expression");
+    }
+    fn visit_lambda_expression(self: &mut Self, _node: Node) -> ReturnType {
+        panic!("unimplemented: visit_lambda_expression");
     }
     fn visit_integer_literal(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_integer_literal");
@@ -836,7 +836,6 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::EtCeteraExpression => self.visit_et_cetera_expression(node),
             NodeKind::FunctionPointer => self.visit_function_pointer(node),
             NodeKind::EmptyStatement => self.visit_empty_statement(node),
-            NodeKind::ClosureExpression => self.visit_closure_expression(node),
             NodeKind::SwitchBody => self.visit_switch_body(node),
             NodeKind::ClosureParameters => self.visit_closure_parameters(node),
             NodeKind::ReferenceExpression => self.visit_reference_expression(node),
@@ -856,6 +855,7 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::ParenthesizedExpression => self.visit_parenthesized_expression(node),
             NodeKind::CharLiteral => self.visit_char_literal(node),
             NodeKind::ForExpression => self.visit_for_expression(node),
+            NodeKind::LambdaExpression => self.visit_lambda_expression(node),
             NodeKind::IntegerLiteral => self.visit_integer_literal(node),
             NodeKind::StructField => self.visit_struct_field(node),
             NodeKind::TopLevelAttributeItem => self.visit_top_level_attribute_item(node),
