@@ -594,9 +594,9 @@ impl<'ast> MacroExpander<'ast> {
                 assert_args!(self, 1);
                 let name = string_arg!(self, 0);
 
-                let value = match std::str::from_utf8(name).map(std::env::var) {
+                let value: &[u8] = match std::str::from_utf8(name).map(std::env::var) {
                     Ok(Ok(v)) => self.ast.arena.alloc_slice_copy(v.as_bytes()),
-                    _ => unreachable!(),
+                    _ => b"",
                 };
 
                 Ok(Expr {
