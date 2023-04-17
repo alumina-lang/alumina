@@ -1517,7 +1517,7 @@ impl<'ir> ConstEvaluator<'ir> {
             }
             ExprKind::Call(callee, args) => {
                 let callee = self.const_eval_rvalue(callee)?;
-                let (arg_spec, func_body, ret) = match callee {
+                let (arg_spec, func_body, _ret) = match callee {
                     Value::FunctionPointer(fun) => {
                         let func = fun.get_function().with_backtrace(&self.diag)?;
                         let func_body = func
@@ -1543,23 +1543,7 @@ impl<'ir> ConstEvaluator<'ir> {
                     self.ctx.declare(new_id, local_def.typ);
                 }
 
-                // To avoid function pointer casting shenanigans, we check that the signature matches the
-                // actual call. Mono does not help us here, because function pointer punning is perfectly valid.
-                // We could disallow function pointer casting in const-eval, but that would make dyn pointers
-                // unusable.
-                if !expr.ty.assignable_from(ret) {
-                    return Err(ConstEvalErrorKind::InvalidCall).with_backtrace(&self.diag);
-                }
-
-                if args.len() != arg_spec.len() {
-                    return Err(ConstEvalErrorKind::InvalidCall).with_backtrace(&self.diag);
-                }
-
                 for (arg, arg_spec) in args.iter().zip(arg_spec) {
-                    if !arg_spec.ty.assignable_from(arg.ty) {
-                        return Err(ConstEvalErrorKind::InvalidCall).with_backtrace(&self.diag);
-                    }
-
                     let arg = self.const_eval_rvalue(arg)?;
                     let new_id = self.ir.make_id();
                     remapped_variables.insert(arg_spec.id, new_id);

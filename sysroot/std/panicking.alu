@@ -71,13 +71,54 @@ mod internal {
     /// directly to fd 2. This is both for reliability, to allow higher-level IO
     /// code to panic safely but also to break potential circular dependencies in static
     /// initialization.
-    struct PanicFormatter {}
+    ///
+    /// If the buffer is provided, it will write the message there instead. This is used
+    /// to capture the panics when using managed threads and during constant evaluation.
+    /// Unlike [fmt::SliceFormatter], this will try to write as much as possible to the
+    /// buffer, even if it is not large enough to hold the entire message.
+    struct PanicFormatter {
+        buf: Option<&mut [u8]>,
+        written: usize
+    }
+
     impl PanicFormatter {
+        /// Create a new formatter that writes to fd 2.
+        fn new() -> PanicFormatter {
+            PanicFormatter { buf: Option::none(), written: 0 }
+        }
+
+        /// Create a new formatter that writes to the provided buffer.
+        fn with_buffer(buf: &mut [u8]) -> PanicFormatter {
+            PanicFormatter { buf: Option::some(buf), written: 0 }
+        }
+
         fn write_str(self: &mut PanicFormatter, buf: &[u8]) -> Result<(), fmt::Error> {
-            if libc::write(libc::STDERR_FILENO, &buf[0] as &void, buf.len()) < 0 {
-                Result::err(fmt::Error::new())
+            if self.buf.is_some() {
+                let tgt = self.buf.as_mut_ptr().unwrap();
+                let n = cmp::min(tgt.len(), buf.len());
+
+                buf[..n].copy_to_nonoverlapping(tgt.as_ptr());
+                *tgt = (*tgt)[n..];
+                self.written += n;
+
+                if n < buf.len() {
+                    Result::err(fmt::Error::new())
+                } else {
+                    Result::ok(())
+                }
             } else {
-                Result::ok(())
+                let written = libc::write(libc::STDERR_FILENO, &buf[0] as &void, buf.len());
+                if written > 0 {
+                    self.written += written as usize;
+
+                    if written as usize == buf.len() {
+                        Result::ok(())
+                    } else {
+                        Result::err(fmt::Error::new())
+                    }
+                } else {
+                    Result::err(fmt::Error::new())
+                }
             }
         }
         mixin Formatter<PanicFormatter>;
@@ -92,7 +133,7 @@ mod internal {
 
     #[inline(never)]
     fn print_panic_message(info: &PanicInfo) -> Result<(), fmt::Error> {
-        let formatter = PanicFormatter {};
+        let formatter = PanicFormatter::new();
         fmt::write!(
             &formatter,
             "panic at {}:{}:{}: ",
@@ -198,6 +239,24 @@ mod internal {
         Result::ok(())
     }
 
+    #[const_only]
+    fn const_panic_impl(
+        file: &[u8],
+        line: i32,
+        column: i32,
+        args: &[&dyn Formattable<Self, PanicFormatter>]
+    ) -> Result<!, fmt::Error> {
+        let buf: [u8; 1024];
+        let formatter = PanicFormatter::with_buffer(&buf);
+        fmt::write!(&formatter, "panic during constant evaluation at {}:{}:{}: ", file, line, column)?;
+
+        for arg in args {
+            arg.fmt(&formatter)?;
+        }
+
+        std::intrinsics::const_panic(buf[..formatter.written]);
+    }
+
     #[cold]
     #[inline(never)]
     fn panic_impl(
@@ -207,7 +266,11 @@ mod internal {
         args: &[&dyn Formattable<Self, PanicFormatter>]
     ) -> ! {
         if runtime::in_const_context() {
-            std::intrinsics::const_panic("panicked");
+            let _ = const_panic_impl(file, line, column, args);
+
+            // The above line should never return, but if it does, something went wrong with constructing
+            // the error message (e.g. it is too long, or the custom formatter returned an error)
+            std::intrinsics::const_panic("panic during constant evaluation (could not construct error message)");
         } else {
             #[cfg(panic_trap)]
             std::intrinsics::trap();

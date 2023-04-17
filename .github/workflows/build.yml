@@ -27,7 +27,7 @@ jobs:
         run: make lint-rust
 
   tests:
-    name: Build and test
+    name: Build and test (base only)
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -57,27 +57,8 @@ jobs:
         timeout-minutes: 10
         run: make test -j8
 
-  examples:
-    name: Build examples
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          components: rustfmt, clippy
-      - name: Install Tree-sitter
-        run: npm install -g tree-sitter-cli
-
-      - name: Build examples
-        timeout-minutes: 10
-        run: make examples -j8
-
-  aluminac:
-    name: Build aluminac
+  dist-check:
+    name: Build and test (full)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -99,10 +80,7 @@ jobs:
           sudo ldconfig
 
       - name: Build aluminac
-        run: make -j8
-
-      - name: Test aluminac
-        run: make test-aluminac
+        run: make dist-check -j8
 
   code-coverage:
     name: Collect code coverage

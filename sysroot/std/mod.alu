@@ -127,6 +127,60 @@ macro debug_assert_eq($lhs, $rhs) { #[cfg(debug)] assert_eq!($lhs, $rhs); }
 #[allow(unused_parameter)]
 macro debug_assert_ne($lhs, $rhs) { #[cfg(debug)] assert_ne!($lhs, $rhs); }
 
+/// Aborts the compilation if `cond` evaluates to false during compilation.
+///
+/// `cond` must be a constant expression.
+///
+/// ## Examples
+/// ```
+/// use std::const_assert;
+/// use std::mem::size_of;
+///
+/// // Check we are not compiling for a 16-bit system
+/// const_assert!(size_of::<usize>() > 2);
+/// ```
+/// ```compile_fail
+/// use std::const_assert;
+/// use std::mem::size_of;
+///
+/// const_assert!(size_of::<i32>() < size_of::<i16>()); // fails to compile
+/// ```
+macro const_assert($cond) { runtime::const_eval!(assert!($cond)); }
+
+/// Aborts the compilation if `lhs` and `rhs` are not equal during compilation.
+///
+/// `lhs` and `rhs` must be constant expressions.
+///
+/// ## Examples
+/// ```
+/// use std::const_assert_eq;
+///
+/// const_assert_eq!(1 + 1, 2);
+/// ```
+/// ```compile_fail
+/// use std::const_assert_eq;
+///
+/// const_assert_eq!(std::math::PI, 3.14); // fails to compile
+/// ```
+macro const_assert_eq($lhs, $rhs) { runtime::const_eval!(assert_eq!($lhs, $rhs)); }
+
+/// Aborts the compilation if `lhs` and `rhs` are equal during compilation.
+///
+/// `lhs` and `rhs` must be constant expressions.
+///
+/// ## Examples
+/// ```
+/// use std::const_assert_ne;
+///
+/// const_assert_ne!(1 + 1, 3);
+/// ```
+/// ```compile_fail
+/// use std::const_assert_ne;
+///
+/// const_assert_ne!(1 + 1, 2); // fails to compile
+/// ```
+macro const_assert_ne($lhs, $rhs) { runtime::const_eval!(assert_ne!($lhs, $rhs)); }
+
 /// Treats the location as unreachable during program flow.
 ///
 /// In debug mode, this macro will panic if ever reached. In release mode, it will cause
@@ -324,7 +378,7 @@ macro unlikely($cond) {
 /// ```
 macro dbg($value) {
     let val = $value;
-    let f = panicking::internal::PanicFormatter {};
+    let f = panicking::internal::PanicFormatter::new();
     fmt::writeln!(&f,
         "[{}:{}:{}] {} = {}",
         file!(),

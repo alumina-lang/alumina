@@ -9,6 +9,11 @@ type Result<T> = std::result::Result<T, Error>;
 enum ErrorKind {
     Unexpected,
     UnexpectedToken,
+    InvalidEscape,
+    InvalidUnicodeEscape,
+    NumberNotRepresentable,
+    NumberNotRepresentableExactly,
+    Formatting,
     Eof,
     Malformed,
 }
@@ -20,6 +25,7 @@ impl ErrorKind {
 
     mixin Equatable<ErrorKind>;
 }
+
 
 struct Error {
     kind: ErrorKind,
@@ -64,6 +70,11 @@ impl Error {
             ErrorKind::UnexpectedToken => write!(f, "unexpected token {}", self.token_kind),
             ErrorKind::Eof => write!(f, "unexpected end of input"),
             ErrorKind::Malformed => write!(f, "malformed JSON"),
+            ErrorKind::NumberNotRepresentable => write!(f, "number not representable in JSON"),
+            ErrorKind::NumberNotRepresentableExactly => write!(f, "number not representable exactly in JSON"),
+            ErrorKind::InvalidEscape => write!(f, "invalid escape sequence"),
+            ErrorKind::InvalidUnicodeEscape => write!(f, "invalid unicode escape sequence"),
+            ErrorKind::Formatting => write!(f, "error while writing JSON"),
             _ => unreachable!(),
         }
     }
@@ -94,6 +105,18 @@ struct JsonValue {
 }
 
 impl JsonValue {
+    /// Create a new JSON value from a string buffer
+    ///
+    /// The string is moved into the JSON value.
+    ///
+    /// # Example
+    /// ```
+    /// use std::string::StringBuf;
+    /// use json::JsonValue;
+    ///
+    /// let value = JsonValue::string(StringBuf::from_slice("foo"));
+    ///
+    /// ```
     fn string(value: StringBuf) -> JsonValue {
         JsonValue {
             kind: JsonValueKind::String,
@@ -146,9 +169,9 @@ impl JsonValue {
         }
     }
 
-    fn as_string(self: &JsonValue) -> Option<&[u8]> {
+    fn as_string(self: &JsonValue) -> Option<&StringBuf> {
         switch self.kind {
-            JsonValueKind::String => Option::some(self.inner.string[..]),
+            JsonValueKind::String => Option::some(&self.inner.string),
             _ => Option::none(),
         }
     }
@@ -174,9 +197,9 @@ impl JsonValue {
         }
     }
 
-    fn as_array(self: &JsonValue) -> Option<&[JsonValue]> {
+    fn as_array(self: &JsonValue) -> Option<&Vector<JsonValue>> {
         switch self.kind {
-            JsonValueKind::Array => Option::some(self.inner.array[..]),
+            JsonValueKind::Array => Option::some(&self.inner.array),
             _ => Option::none(),
         }
     }
@@ -258,46 +281,71 @@ impl JsonValue {
         }
     }
 
-    fn fmt<F: std::fmt::Formatter<F>>(self: &JsonValue, f: &mut F) -> std::fmt::Result {
-        use std::fmt::write;
-
+    fn write<J: writer::JsonWriter<J>>(self: &JsonValue, writer: &mut J) -> Result<()> {
         switch self.kind {
-            JsonValueKind::String => {
-                write!(f, "string({})", self.inner.string)?;
-            },
-            JsonValueKind::Number => {
-                write!(f, "number({})", self.inner.number)?;
-            },
-            JsonValueKind::Boolean => {
-                write!(f, "boolean({})", self.inner.boolean)?;
-            },
+            JsonValueKind::String => writer.write_string(self.inner.string[..]),
+            JsonValueKind::Number => writer.write_number(self.inner.number),
+            JsonValueKind::Boolean => writer.write_bool(self.inner.boolean),
             JsonValueKind::Object => {
-                f.write_str("object(")?;
-                for (idx, kv) in self.inner.object.iter_ref().enumerate() {
-                    if idx > 0 {
-                        f.write_str(", ")?;
+                writer.write_object(
+                    &self.inner.object.iter_ref(),
+                    |w: &mut J, item: (&StringBuf, &JsonValue)| -> Result<()> {
+                        w.write_object_key(item.0[..])?;
+                        item.1.write(w)
                     }
-                    write!(f, "{} => {}", kv.0, kv.1)?;
-                }
-                f.write_str(")")?;
+                )
             },
             JsonValueKind::Array => {
-                f.write_str("array(")?;
-                for (idx, value) in self.inner.array.iter_ref().enumerate() {
-                    if idx > 0 {
-                        f.write_str(", ")?;
+                writer.write_array(
+                    &self.inner.array.iter_ref(),
+                    |w: &mut J, item: &JsonValue| -> Result<()> {
+                        item.write(w)
                     }
-                    write!(f, "{}", value)?;
-                }
-                f.write_str(")")?;
+                )
             },
-            JsonValueKind::Null => {
-                f.write_str("null")?;
-            },
+            JsonValueKind::Null => writer.write_null(),
             _ => unreachable!()
         }
+    }
 
-        Result::ok(())
+    fn fmt<F: std::fmt::Formatter<F>>(self: &JsonValue, f: &mut F) -> std::fmt::Result {
+        let writer = writer::JsonFormatter::new(f);
+        self.write(&writer).map_err(std::fmt::Error::from::<Error>)
+    }
+
+    fn clone(self: &JsonValue) -> JsonValue {
+        JsonValue {
+            kind: self.kind,
+            inner: switch self.kind {
+                JsonValueKind::Number, JsonValueKind::Boolean, JsonValueKind::Null => {
+                    return *self;
+                },
+                JsonValueKind::String => {
+                    JsonValueT {
+                        string: self.inner.string.clone()
+                    }
+                },
+                JsonValueKind::Object => {
+                    let object = HashMap::with_capacity::<StringBuf, JsonValue>(self.inner.object.len());
+                    for (key, value) in self.inner.object.iter_ref() {
+                        object.insert(key.clone(), value.clone());
+                    }
+                    JsonValueT {
+                        object: object
+                    }
+                },
+                JsonValueKind::Array => {
+                    let array = Vector::with_capacity::<JsonValue>(self.inner.array.len());
+                    for value in self.inner.array.iter_ref() {
+                        array.push(value.clone());
+                    }
+                    JsonValueT {
+                        array: array
+                    }
+                },
+                _ => unreachable!()
+            }
+        }
     }
 
     mixin std::cmp::Equatable<JsonValue>;
@@ -306,12 +354,25 @@ impl JsonValue {
 
 #[cfg(test)]
 mod tests {
+    macro vector($elem...) {
+        Vector::from_slice(&[$elem...])
+    }
+
+    macro hashmap($elem...) {
+        let h = HashMap::new();
+        {
+            let elem = $elem;
+            h.insert(StringBuf::from_slice(elem.0), elem.1);
+        }...;
+        h
+    }
+
     #[test]
     fn test_json_value() {
         let value = JsonValue::string(StringBuf::from_slice("test"));
         defer value.free();
 
-        assert_eq!(value.as_string(), Option::some("test"));
+        assert_eq!(value.as_string().unwrap()[..], "test");
         assert!(value.as_number::<i32>().is_none());
         assert!(value.as_boolean().is_none());
         assert!(value.as_object().is_none());
@@ -382,5 +443,49 @@ mod tests {
         let b = JsonValue::null();
 
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_json_value_clone() {
+        let a = JsonValue::string(StringBuf::from_slice("test"));
+        defer a.free();
+
+        let b = a.clone();
+        defer b.free();
+
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_json_value_format() {
+        let a = JsonValue::string(StringBuf::from_slice("test"));
+        defer a.free();
+
+        let b = a.clone();
+        defer b.free();
+
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_json_value_fmt() {
+        let val = JsonValue::object(hashmap!(
+            ("a", JsonValue::number(42.0)),
+            ("b", JsonValue::array(vector!(
+                JsonValue::number(1.0),
+                JsonValue::number(2.0),
+                JsonValue::number(3.0)
+            ))),
+            ("c", JsonValue::object(hashmap!(
+                ("d", JsonValue::boolean(true)),
+                ("e", JsonValue::boolean(false))
+            )))
+        ));
+        defer val.free();
+
+        let formatted = std::fmt::format!("{}", val).unwrap();
+        defer formatted.free();
+
+        assert_eq!(formatted[..] as &[u8], "{\"c\":{\"e\":false,\"d\":true},\"b\":[1,2,3],\"a\":42}");
     }
 }

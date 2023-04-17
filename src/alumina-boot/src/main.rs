@@ -181,16 +181,18 @@ fn run(args: Args) -> Result<(), ()> {
                     )));
                 }
             }
+
             if diag_ctx.has_errors() {
-                return Err(());
-            }
-            match args.output {
-                Some(filename) => std::fs::write(filename, program).unwrap(),
-                None => {
-                    print!("{}", program);
+                Err(())
+            } else {
+                match args.output {
+                    Some(filename) => std::fs::write(filename, program).unwrap(),
+                    None => {
+                        print!("{}", program);
+                    }
                 }
+                Ok(())
             }
-            Ok(())
         }
         Err(e) => {
             diag_ctx.add_from_error(e).unwrap();

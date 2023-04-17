@@ -66,8 +66,133 @@ impl Parser {
     fn parse_string(self: &mut Parser) -> Result<JsonValue> {
         let token = self.expect_token!(TokenKind::String);
 
-        // TODO: Unescape properly
-        Result::ok(JsonValue::string(StringBuf::from_slice(token.value[1..token.value.len() - 1])))
+        enum State {
+            Normal,
+            Escape,
+            Unicode
+        }
+
+        // This will always be enough, since escapes can only make the representation longer (even for
+        // unicode escapes).
+        let value = StringBuf::with_capacity(token.value.len() - 2);
+        let surrogate_pair: [u16; 2];
+        let surrogate_index = 0usize;
+        let nibble_count = 0;
+
+        let state = State::Normal;
+        for idx in 1usize..(token.value.len() - 1) {
+            let ch = token.value[idx];
+            state = switch state {
+                State::Normal => {
+                    switch ch {
+                        '\\' => State::Escape,
+                        _ => {
+                            if surrogate_index != 0 {
+                                // Expecting a surrogate pair, but got a normal character.
+                                return Result::err(Error::new(ErrorKind::InvalidUnicodeEscape));
+                            }
+                            value.push(ch);
+                            State::Normal
+                        }
+                    }
+                },
+                State::Escape => {
+                    if surrogate_index != 0 && ch != 'u' {
+                        // Expecting a surrogate pair, but got a normal character.
+                        return Result::err(Error::new(ErrorKind::InvalidUnicodeEscape));
+                    }
+
+                    switch ch {
+                        '"' => {
+                            value.push('"');
+                            State::Normal
+                        },
+                        '\\' => {
+                            value.push('\\');
+                            State::Normal
+                        },
+                        '/' => {
+                            value.push('/');
+                            State::Normal
+                        },
+                        'b' => {
+                            value.push('\x08');
+                            State::Normal
+                        },
+                        'f' => {
+                            value.push('\x0C');
+                            State::Normal
+                        },
+                        'n' => {
+                            value.push('\n');
+                            State::Normal
+                        },
+                        'r' => {
+                            value.push('\r');
+                            State::Normal
+                        },
+                        't' => {
+                            value.push('\t');
+                            State::Normal
+                        },
+                        'u' => {
+                            State::Unicode
+                        }
+                        _ => unreachable!() // Lexer should have caught this.
+                    }
+                },
+                State::Unicode => {
+                    use string::unicode::{decode_utf16, encode_utf8, Error as UnicodeError};
+
+                    nibble_count += 1;
+                    if nibble_count == 4 {
+                        // From RFC 8259:
+                        // To escape an extended character that is not in the Basic Multilingual
+                        // Plane, the character is represented as a 12-character sequence,
+                        // encoding the UTF-16 surrogate pair.  So, for example, a string
+                        // containing only the G clef character (U+1D11E) may be represented as
+                        // "\uD834\uDD1E".
+                        surrogate_pair[surrogate_index] = u16::parse_with_radix(token.value[idx - 3..=idx], 16)
+                            .unwrap();
+                        surrogate_index += 1;
+
+                        let res = decode_utf16(surrogate_pair[0..surrogate_index]);
+                        if res.is_ok() {
+                            let (codepoint, size) = res.unwrap();
+                            std::debug_assert!(size == surrogate_index);
+
+                            // We know that the we have enough space in the buffer, since we
+                            // allocated enough space for the worst case. Also, the codepoint
+                            // is guaranteed to be valid, since we just decoded it from UTF-16.
+                            let written = encode_utf8(codepoint, value.spare_capacity()).unwrap();
+                            value.truncate(value.len() + written);
+
+                            surrogate_index = 0;
+                        } else {
+                            // We may need another surrogate, in which case we continue
+                            if !(res.unwrap_err() == UnicodeError::BufferTooSmall && surrogate_index == 1) {
+                                return Result::err(Error::new(ErrorKind::InvalidUnicodeEscape));
+                            }
+                        }
+
+                        nibble_count = 0;
+                        State::Normal
+                    } else {
+                        State::Unicode
+                    }
+                }
+                _ => unreachable!()
+            }
+        }
+
+        if state != State::Normal {
+            return Result::err(Error::new(ErrorKind::InvalidEscape));
+        }
+        if surrogate_index != 0 {
+            return Result::err(Error::new(ErrorKind::InvalidUnicodeEscape));
+        }
+
+        Result::ok(JsonValue::string(value))
     }
 
     fn parse_array(self: &mut Parser) -> Result<JsonValue> {
@@ -179,6 +304,32 @@ mod tests {
     #[test]
     fn test_parse_string() {
         chk!("\"hello\"", JsonValue::string(StringBuf::from_slice("hello")));
+        chk!("\"hello\\nworld\"", JsonValue::string(StringBuf::from_slice("hello\nworld")));
+        // unicode escapes
+        chk!("\"hello\\u0020world\"", JsonValue::string(StringBuf::from_slice("hello world")));
+        chk!("\"hello\\u0000world\"", JsonValue::string(StringBuf::from_slice("hello\0world")));
+
+        // non-BMP codepoints
+        chk!("\"hello\\uD83D\\uDE00world\"", JsonValue::string(StringBuf::from_slice("hello😀world")));
+        chk!("\"hello\\ud83d\\ude00world\"", JsonValue::string(StringBuf::from_slice("hello😀world")));
+
+        // invalid escapes
+        chk_err!("\"hello\\x\"", ErrorKind::Unexpected);
+        chk_err!("\"hello\\u\"", ErrorKind::Unexpected);
+        chk_err!("\"hello\\u0\"", ErrorKind::Unexpected);
+        chk_err!("\"hello\\u00\"", ErrorKind::Unexpected);
+        chk_err!("\"hello\\u000\"", ErrorKind::Unexpected);
+
+        // newline in string
+        chk_err!("\"hello\nworld\"", ErrorKind::Unexpected);
+
+        // unmatched surrogate
+        chk_err!("\"hello\\uD83D\"", ErrorKind::InvalidUnicodeEscape);
+        // something else before the second surrogate
+        chk_err!("\"hello\\uD83D \\uDE00\"", ErrorKind::InvalidUnicodeEscape);
+        chk_err!("\"hello\\uD83D\\n\\uDE00\"", ErrorKind::InvalidUnicodeEscape);
+        // invalid UTF-16
+        chk_err!("\"hello\\uDE00\\uD83Dworld\"", ErrorKind::InvalidUnicodeEscape);
     }
 
     #[test]

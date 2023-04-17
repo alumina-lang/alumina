@@ -70,7 +70,7 @@ struct LexerIterator {
 impl LexerIterator {
     fn new(value: &[u8]) -> LexerIterator {
         LexerIterator {
-            state: 24,
+            state: 30,
             value: value,
             start: 0,
             end: 0,
@@ -106,61 +106,188 @@ impl LexerIterator {
             switch self.state {
                 0 => {
                     if has_next!() &&
-                        ch!() == 'u' {
-                        self.state = 26;
-                    }
-                    else if !has_next!() {
+                        (ch!() == '+'
+                        || ch!() == '-') {
+                        self.state = 12;
+                    } else if has_next!() &&
+                        ch!() == '0' {
+                        self.state = 17;
+                    } else if has_next!() &&
+                        (ch!() >= '1' && ch!() <= '9') {
+                        self.state = 5;
+                    } else if !has_next!() {
                         bail!(ErrorKind::Eof);
                     } else {
                         bail!(ErrorKind::Unexpected);
                     }
                 },
                 1 => {
-                    self.state = 24;
-                    token!(TokenKind::Literal);
-                },
-                2 => {
                     if has_next!() &&
                         ((ch!() >= '0' && ch!() <= '9')
                         || (ch!() >= 'A' && ch!() <= 'F')
                         || (ch!() >= 'a' && ch!() <= 'f')) {
-                        self.state = 30;
-                    }
-                    else if !has_next!() {
+                        self.state = 32;
+                    } else if !has_next!() {
                         bail!(ErrorKind::Eof);
                     } else {
                         bail!(ErrorKind::Unexpected);
                     }
                 },
+                2 => {
+                    self.state = 30;
+                    token!(TokenKind::String);
+                },
                 3 => {
                     if has_next!() &&
-                        ((ch!() >= '0' && ch!() <= '9')
-                        || (ch!() >= 'A' && ch!() <= 'F')
-                        || (ch!() >= 'a' && ch!() <= 'f')) {
-                        self.state = 27;
-                    }
-                    else if !has_next!() {
+                        ((ch!() >= ' ' && ch!() <= '!')
+                        || (ch!() >= '#' && ch!() <= '[')
+                        || (ch!() >= ']' && ch!() <= '\xff')) {
+                    } else if has_next!() &&
+                        ch!() == '"' {
+                        self.state = 2;
+                    } else if has_next!() &&
+                        ch!() == '\\' {
+                        self.state = 19;
+                    } else if !has_next!() {
                         bail!(ErrorKind::Eof);
                     } else {
                         bail!(ErrorKind::Unexpected);
                     }
                 },
                 4 => {
+                    self.state = 30;
+                    token!(TokenKind::ArrOpen);
+                },
+                5 => {
                     if has_next!() &&
-                        ch!() == '0' {
-                        self.state = 12;
+                        (ch!() >= '0' && ch!() <= '9') {
+                    } else {
+                        self.state = 30;
+                        token!(TokenKind::Number);
                     }
-                    else if has_next!() &&
-                        (ch!() >= '1' && ch!() <= '9') {
-                        self.state = 7;
-                    }
-                    else if !has_next!() {
+                },
+                6 => {
+                    if has_next!() &&
+                        ch!() == 'l' {
+                        self.state = 18;
+                    } else if !has_next!() {
                         bail!(ErrorKind::Eof);
                     } else {
                         bail!(ErrorKind::Unexpected);
                     }
                 },
-                5 => {
+                7 => {
+                    if has_next!() &&
+                        ch!() == '.' {
+                        self.state = 23;
+                    } else if has_next!() &&
+                        (ch!() == 'E'
+                        || ch!() == 'e') {
+                        self.state = 0;
+                    } else {
+                        self.state = 30;
+                        token!(TokenKind::Number);
+                    }
+                },
+                8 => {
+                    self.state = 30;
+                    token!(TokenKind::Literal);
+                },
+                9 => {
+                    if has_next!() &&
+                        (ch!() >= '0' && ch!() <= '9') {
+                    } else if has_next!() &&
+                        (ch!() == 'E'
+                        || ch!() == 'e') {
+                        self.state = 0;
+                    } else {
+                        self.state = 30;
+                        token!(TokenKind::Number);
+                    }
+                },
+                10 => {
+                    if has_next!() &&
+                        ((ch!() >= '0' && ch!() <= '9')
+                        || (ch!() >= 'A' && ch!() <= 'F')
+                        || (ch!() >= 'a' && ch!() <= 'f')) {
+                        self.state = 22;
+                    } else if !has_next!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                11 => {
+                    self.state = 30;
+                    token!(TokenKind::Comma);
+                },
+                12 => {
+                    if has_next!() &&
+                        ch!() == '0' {
+                        self.state = 17;
+                    } else if has_next!() &&
+                        (ch!() >= '1' && ch!() <= '9') {
+                        self.state = 5;
+                    } else if !has_next!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                13 => {
+                    if has_next!() &&
+                        ch!() == '.' {
+                        self.state = 23;
+                    } else if has_next!() &&
+                        (ch!() == 'E'
+                        || ch!() == 'e') {
+                        self.state = 0;
+                    } else if has_next!() &&
+                        (ch!() >= '0' && ch!() <= '9') {
+                    } else {
+                        self.state = 30;
+                        token!(TokenKind::Number);
+                    }
+                },
+                14 => {
+                    if has_next!() &&
+                        ch!() == 'l' {
+                        self.state = 15;
+                    } else if !has_next!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                15 => {
+                    if has_next!() &&
+                        ch!() == 's' {
+                        self.state = 31;
+                    } else if !has_next!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                16 => {
+                    self.state = 30;
+                    token!(TokenKind::ObjOpen);
+                },
+                17 => {
+                    self.state = 30;
+                    token!(TokenKind::Number);
+                },
+                18 => {
+                    if has_next!() &&
+                        ch!() == 'l' {
+                        self.state = 8;
+                    } else if !has_next!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                19 => {
                     if has_next!() &&
                         (ch!() == '"'
                         || ch!() == '/'
@@ -170,194 +297,53 @@ impl LexerIterator {
                         || ch!() == 'n'
                         || ch!() == 'r'
                         || ch!() == 't') {
-                        self.state = 15;
-                    }
-                    else if has_next!() &&
-                        ch!() == 'u' {
                         self.state = 3;
-                    }
-                    else if !has_next!() {
-                        bail!(ErrorKind::Eof);
-                    } else {
-                        bail!(ErrorKind::Unexpected);
-                    }
-                },
-                6 => {
-                    if has_next!() &&
-                        (ch!() == '+'
-                        || ch!() == '-') {
-                        self.state = 13;
-                    }
-                    else if has_next!() &&
-                        ch!() == '0' {
-                        self.state = 17;
-                    }
-                    else if has_next!() &&
-                        (ch!() >= '1' && ch!() <= '9') {
-                        self.state = 10;
-                    }
-                    else if !has_next!() {
-                        bail!(ErrorKind::Eof);
-                    } else {
-                        bail!(ErrorKind::Unexpected);
-                    }
-                },
-                7 => {
-                    if has_next!() &&
-                        ch!() == '.' {
-                        self.state = 29;
-                    }
-                    else if has_next!() &&
-                        (ch!() == 'E'
-                        || ch!() == 'e') {
-                        self.state = 6;
-                    }
-                    else if has_next!() &&
-                        (ch!() >= '0' && ch!() <= '9') {
-                    }
-                    else {
-                        self.state = 24;
-                        token!(TokenKind::Number);
-                    }
-                },
-                8 => {
-                    self.state = 24;
-                    token!(TokenKind::Colon);
-                },
-                9 => {
-                    if has_next!() &&
-                        ch!() == 'l' {
-                        self.state = 14;
-                    }
-                    else if !has_next!() {
-                        bail!(ErrorKind::Eof);
-                    } else {
-                        bail!(ErrorKind::Unexpected);
-                    }
-                },
-                10 => {
-                    if has_next!() &&
-                        (ch!() >= '0' && ch!() <= '9') {
-                    }
-                    else {
-                        self.state = 24;
-                        token!(TokenKind::Number);
-                    }
-                },
-                11 => {
-                    if has_next!() &&
-                        ch!() == 'l' {
-                        self.state = 18;
-                    }
-                    else if !has_next!() {
-                        bail!(ErrorKind::Eof);
-                    } else {
-                        bail!(ErrorKind::Unexpected);
-                    }
-                },
-                12 => {
-                    if has_next!() &&
-                        ch!() == '.' {
-                        self.state = 29;
-                    }
-                    else if has_next!() &&
-                        (ch!() == 'E'
-                        || ch!() == 'e') {
-                        self.state = 6;
-                    }
-                    else {
-                        self.state = 24;
-                        token!(TokenKind::Number);
-                    }
-                },
-                13 => {
-                    if has_next!() &&
-                        ch!() == '0' {
-                        self.state = 17;
-                    }
-                    else if has_next!() &&
-                        (ch!() >= '1' && ch!() <= '9') {
-                        self.state = 10;
-                    }
-                    else if !has_next!() {
-                        bail!(ErrorKind::Eof);
-                    } else {
-                        bail!(ErrorKind::Unexpected);
-                    }
-                },
-                14 => {
-                    if has_next!() &&
-                        ch!() == 's' {
-                        self.state = 26;
-                    }
-                    else if !has_next!() {
-                        bail!(ErrorKind::Eof);
-                    } else {
-                        bail!(ErrorKind::Unexpected);
-                    }
-                },
-                15 => {
-                    if has_next!() &&
-                        ((ch!() >= '\x80' && ch!() <= '\xff')
-                        || (ch!() >= ' ' && ch!() <= '!')
-                        || (ch!() >= '#' && ch!() <= '[')
-                        || (ch!() >= ']' && ch!() <= '\x7f')) {
-                    }
-                    else if has_next!() &&
-                        ch!() == '"' {
-                        self.state = 21;
-                    }
-                    else if has_next!() &&
-                        ch!() == '\\' {
-                        self.state = 5;
-                    }
-                    else if !has_next!() {
-                        bail!(ErrorKind::Eof);
-                    } else {
-                        bail!(ErrorKind::Unexpected);
-                    }
-                },
-                16 => {
-                    self.state = 24;
-                    token!(TokenKind::ObjOpen);
-                },
-                17 => {
-                    self.state = 24;
-                    token!(TokenKind::Number);
-                },
-                18 => {
-                    if has_next!() &&
-                        ch!() == 'l' {
+                    } else if has_next!() &&
+                        ch!() == 'u' {
                         self.state = 1;
-                    }
-                    else if !has_next!() {
+                    } else if !has_next!() {
                         bail!(ErrorKind::Eof);
                     } else {
                         bail!(ErrorKind::Unexpected);
                     }
-                },
-                19 => {
-                    self.state = 24;
-                    token!(TokenKind::ArrOpen);
                 },
                 20 => {
-                    self.state = 24;
-                    token!(TokenKind::Comma);
+                    if has_next!() &&
+                        ch!() == 'u' {
+                        self.state = 31;
+                    } else if !has_next!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
                 },
                 21 => {
-                    self.state = 24;
-                    token!(TokenKind::String);
+                    if has_next!() &&
+                        ch!() == 'a' {
+                        self.state = 14;
+                    } else if !has_next!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
                 },
                 22 => {
-                    self.state = 24;
-                    token!(TokenKind::ObjClose);
+                    if has_next!() &&
+                        ((ch!() >= '0' && ch!() <= '9')
+                        || (ch!() >= 'A' && ch!() <= 'F')
+                        || (ch!() >= 'a' && ch!() <= 'f')) {
+                        self.state = 3;
+                    } else if !has_next!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
                 },
                 23 => {
                     if has_next!() &&
-                        ch!() == 'u' {
-                        self.state = 11;
-                    }
-                    else if !has_next!() {
+                        (ch!() >= '0' && ch!() <= '9') {
+                        self.state = 9;
+                    } else if !has_next!() {
                         bail!(ErrorKind::Eof);
                     } else {
                         bail!(ErrorKind::Unexpected);
@@ -365,86 +351,26 @@ impl LexerIterator {
                 },
                 24 => {
                     if has_next!() &&
-                        ((ch!() >= '\t' && ch!() <= '\n')
-                        || ch!() == '\r'
-                        || ch!() == ' ') {
-                        self.state = 33;
-                    }
-                    else if has_next!() &&
-                        ch!() == ',' {
-                        self.state = 20;
-                    }
-                    else if has_next!() &&
-                        ch!() == '-' {
-                        self.state = 4;
-                    }
-                    else if has_next!() &&
                         ch!() == '0' {
-                        self.state = 12;
-                    }
-                    else if has_next!() &&
-                        ch!() == ':' {
-                        self.state = 8;
-                    }
-                    else if has_next!() &&
-                        ch!() == '[' {
-                        self.state = 19;
-                    }
-                    else if has_next!() &&
-                        ch!() == ']' {
-                        self.state = 32;
-                    }
-                    else if has_next!() &&
-                        ch!() == 'f' {
-                        self.state = 25;
-                    }
-                    else if has_next!() &&
-                        ch!() == 'n' {
-                        self.state = 23;
-                    }
-                    else if has_next!() &&
-                        ch!() == 't' {
-                        self.state = 31;
-                    }
-                    else if has_next!() &&
-                        ch!() == '{' {
-                        self.state = 16;
-                    }
-                    else if has_next!() &&
-                        ch!() == '}' {
-                        self.state = 22;
-                    }
-                    else if has_next!() &&
-                        ch!() == '"' {
-                        self.state = 15;
-                    }
-                    else if has_next!() &&
-                        (ch!() >= '1' && ch!() <= '9') {
                         self.state = 7;
-                    }
-                    else if !has_next!() {
-                        return Option::none();
-                    } else {
-                        bail!(ErrorKind::Unexpected);
-                    }
-                },
-                25 => {
-                    if has_next!() &&
-                        ch!() == 'a' {
-                        self.state = 9;
-                    }
-                    else if !has_next!() {
+                    } else if has_next!() &&
+                        (ch!() >= '1' && ch!() <= '9') {
+                        self.state = 13;
+                    } else if !has_next!() {
                         bail!(ErrorKind::Eof);
                     } else {
                         bail!(ErrorKind::Unexpected);
                     }
                 },
+                25 => {
+                    self.state = 30;
+                    token!(TokenKind::ArrClose);
+                },
                 26 => {
                     if has_next!() &&
-                        ch!() == 'e' {
-                        self.state = 1;
-                    }
-                    else if !has_next!() {
+                        ch!() == 'r' {
+                        self.state = 20;
+                    } else if !has_next!() {
                         bail!(ErrorKind::Eof);
                     } else {
                         bail!(ErrorKind::Unexpected);
@@ -452,37 +378,24 @@ impl LexerIterator {
                 },
                 27 => {
                     if has_next!() &&
-                        ((ch!() >= '0' && ch!() <= '9')
-                        || (ch!() >= 'A' && ch!() <= 'F')
-                        || (ch!() >= 'a' && ch!() <= 'f')) {
-                        self.state = 2;
-                    }
-                    else if !has_next!() {
-                        bail!(ErrorKind::Eof);
+                        ((ch!() >= '\t' && ch!() <= '\n')
+                        || ch!() == '\r'
+                        || ch!() == ' ') {
                     } else {
-                        bail!(ErrorKind::Unexpected);
+                        self.state = 30;
+                        self.start = self.end;
+                        continue;
                     }
                 },
                 28 => {
-                    if has_next!() &&
-                        (ch!() >= '0' && ch!() <= '9') {
-                    }
-                    else if has_next!() &&
-                        (ch!() == 'E'
-                        || ch!() == 'e') {
-                        self.state = 6;
-                    }
-                    else {
-                        self.state = 24;
-                        token!(TokenKind::Number);
-                    }
+                    self.state = 30;
+                    token!(TokenKind::ObjClose);
                 },
                 29 => {
                     if has_next!() &&
-                        (ch!() >= '0' && ch!() <= '9') {
-                        self.state = 28;
-                    }
-                    else if !has_next!() {
+                        ch!() == 'u' {
+                        self.state = 6;
+                    } else if !has_next!() {
                         bail!(ErrorKind::Eof);
                     } else {
                         bail!(ErrorKind::Unexpected);
@@ -490,43 +403,80 @@ impl LexerIterator {
                 },
                 30 => {
                     if has_next!() &&
-                        ((ch!() >= '0' && ch!() <= '9')
-                        || (ch!() >= 'A' && ch!() <= 'F')
-                        || (ch!() >= 'a' && ch!() <= 'f')) {
-                        self.state = 15;
-                    }
-                    else if !has_next!() {
-                        bail!(ErrorKind::Eof);
+                        ((ch!() >= '\t' && ch!() <= '\n')
+                        || ch!() == '\r'
+                        || ch!() == ' ') {
+                        self.state = 27;
+                    } else if has_next!() &&
+                        ch!() == '"' {
+                        self.state = 3;
+                    } else if has_next!() &&
+                        ch!() == ',' {
+                        self.state = 11;
+                    } else if has_next!() &&
+                        ch!() == '-' {
+                        self.state = 24;
+                    } else if has_next!() &&
+                        ch!() == '0' {
+                        self.state = 7;
+                    } else if has_next!() &&
+                        ch!() == ':' {
+                        self.state = 33;
+                    } else if has_next!() &&
+                        ch!() == '[' {
+                        self.state = 4;
+                    } else if has_next!() &&
+                        ch!() == ']' {
+                        self.state = 25;
+                    } else if has_next!() &&
+                        ch!() == 'f' {
+                        self.state = 21;
+                    } else if has_next!() &&
+                        ch!() == 'n' {
+                        self.state = 29;
+                    } else if has_next!() &&
+                        ch!() == 't' {
+                        self.state = 26;
+                    } else if has_next!() &&
+                        ch!() == '{' {
+                        self.state = 16;
+                    } else if has_next!() &&
+                        ch!() == '}' {
+                        self.state = 28;
+                    } else if has_next!() &&
+                        (ch!() >= '1' && ch!() <= '9') {
+                        self.state = 13;
+                    } else if !has_next!() {
+                        return Option::none();
                     } else {
                         bail!(ErrorKind::Unexpected);
                     }
                 },
                 31 => {
                     if has_next!() &&
-                        ch!() == 'r' {
-                        self.state = 0;
-                    }
-                    else if !has_next!() {
+                        ch!() == 'e' {
+                        self.state = 8;
+                    } else if !has_next!() {
                         bail!(ErrorKind::Eof);
                     } else {
                         bail!(ErrorKind::Unexpected);
                     }
                 },
                 32 => {
-                    self.state = 24;
-                    token!(TokenKind::ArrClose);
+                    if has_next!() &&
+                        ((ch!() >= '0' && ch!() <= '9')
+                        || (ch!() >= 'A' && ch!() <= 'F')
+                        || (ch!() >= 'a' && ch!() <= 'f')) {
+                        self.state = 10;
+                    } else if !has_next!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
                 },
                 33 => {
-                    if has_next!() &&
-                        ((ch!() >= '\t' && ch!() <= '\n')
-                        || ch!() == '\r'
-                        || ch!() == ' ') {
-                    }
-                    else {
-                        self.state = 24;
-                        self.start = self.end;
-                        continue;
-                    }
+                    self.state = 30;
+                    token!(TokenKind::Colon);
                 },
                 _ => unreachable!(),
             }
@@ -554,6 +504,24 @@ mod tests {
 
         assert_eq!(it.next(), Option::some(Result::ok(Token{ kind: TokenKind::ObjOpen, value: "{" })));
         assert_eq!(it.next(), Option::some(Result::ok(Token{ kind: TokenKind::String, value: "\"obj\"" })));
+        assert_eq!(it.next(), Option::some(Result::ok(Token{ kind: TokenKind::Colon, value: ":" })));
+        assert_eq!(it.next(), Option::some(Result::ok(Token{ kind: TokenKind::ArrOpen, value: "[" })));
+        assert_eq!(it.next(), Option::some(Result::ok(Token{ kind: TokenKind::Number, value: "1" })));
+        assert_eq!(it.next(), Option::some(Result::ok(Token{ kind: TokenKind::Comma, value: "," })));
+        assert_eq!(it.next(), Option::some(Result::ok(Token{ kind: TokenKind::Number, value: "2" })));
+        assert_eq!(it.next(), Option::some(Result::ok(Token{ kind: TokenKind::Comma, value: "," })));
+        assert_eq!(it.next(), Option::some(Result::ok(Token{ kind: TokenKind::Number, value: "3" })));
+        assert_eq!(it.next(), Option::some(Result::ok(Token{ kind: TokenKind::ArrClose, value: "]" })));
+        assert_eq!(it.next(), Option::some(Result::ok(Token{ kind: TokenKind::ObjClose, value: "}" })));
+        assert!(it.next().is_none());
+    }
+
+    #[test]
+    fn test_whitespace() {
+        let it = LexerIterator::new(" { \"o b j\" : \n\t [ 1 ,\n 2\t , 3 ]\r } ");
+
+        assert_eq!(it.next(), Option::some(Result::ok(Token{ kind: TokenKind::ObjOpen, value: "{" })));
+        assert_eq!(it.next(), Option::some(Result::ok(Token{ kind: TokenKind::String, value: "\"o b j\"" })));
         assert_eq!(it.next(), Option::some(Result::ok(Token{ kind: TokenKind::Colon, value: ":" })));
         assert_eq!(it.next(), Option::some(Result::ok(Token{ kind: TokenKind::ArrOpen, value: "[" })));
         assert_eq!(it.next(), Option::some(Result::ok(Token{ kind: TokenKind::Number, value: "1" })));

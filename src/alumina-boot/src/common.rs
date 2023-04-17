@@ -322,8 +322,14 @@ pub enum CodeDiagnostic {
     MacrosCannotDefineItems,
     #[error("anonymous functions are not supported in a macro body (yet)")]
     MacrosCannotDefineLambdas,
-    #[error("panic during constant evaluation: {}", .0)]
+    #[error("{}", .0)]
     ConstPanic(String),
+    // This is an error unlike ZstPointerOffset, which is just a warning. If you think about it,
+    // it is equivalent to division by zero, except where the pointers are exactly equal. This could
+    // be a runtime panic, but it is simpler and safer to just disallow it (why would you want to do
+    // ZST pointer arithmetic anyway?)
+    #[error("pointer difference on zero-sized types is meaningless")]
+    ZstPointerDifference,
 
     // Warnings
     #[error("defer inside a loop: this defered statement will only be executed once")]
@@ -362,6 +368,8 @@ pub enum CodeDiagnostic {
     ConstOnly,
     #[error("this code is unreachable (dead code)")]
     DeadCode,
+    #[error("pointer offset on zero-sized types is a no-op")]
+    ZstPointerOffset,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]

@@ -1,0 +1,385 @@
+use std::iter::Iterator;
+use std::builtins::{Numeric, FloatingPoint};
+use std::fmt::Formatter;
+
+const MAX_SAFE_INTEGER: f64 = 9007199254740991f64;
+const MIN_SAFE_INTEGER: f64 = -9007199254740991f64;
+
+protocol JsonWriter<Self> {
+    fn write_float(self: &mut Self, value: f64) -> Result<()>;
+    fn write_string(self: &mut Self, value: &[u8]) -> Result<()>;
+    fn write_bool(self: &mut Self, value: bool) -> Result<()>;
+    fn write_null(self: &mut Self) -> Result<()>;
+    fn write_array_start(self: &mut Self) -> Result<()>;
+    fn write_array_end(self: &mut Self) -> Result<()>;
+    fn write_object_start(self: &mut Self) -> Result<()>;
+    fn write_object_end(self: &mut Self) -> Result<()>;
+    fn write_object_key(self: &mut Self, key: &[u8]) -> Result<()>;
+}
+
+protocol JsonWriterExt<Self: JsonWriter<Self>> {
+    fn write_number<T: Numeric>(self: &mut Self, value: T) -> Result<()> {
+        let as_float = value as f64;
+        if as_float < MIN_SAFE_INTEGER || as_float > MAX_SAFE_INTEGER {
+            return Result::err(Error::NumberNotRepresentableExactly);
+        }
+
+        self.write_float(as_float)
+    }
+
+    fn write_array<T, It: Iterator<It, T>, F: Fn(&mut Self, T) -> Result<()>>(
+        self: &mut Self,
+        it: &mut It,
+        f: F
+    ) -> Result<()> {
+        self.write_array_start()?;
+        for value in it {
+            f(self, value)?;
+        }
+        self.write_array_end()
+    }
+
+    fn write_object<T, It: Iterator<It, T>, F: Fn(&mut Self, T) -> Result<()>>(
+        self: &mut Self,
+        it: &mut It, f: F
+    ) -> Result<()> {
+        self.write_object_start()?;
+        for value in it {
+            f(self, value)?;
+        }
+        self.write_object_end()
+    }
+}
+
+struct JsonFormatter<F: Formatter<F>> {
+    _fmt: &mut F,
+    _pretty: bool,
+    _indent: usize,
+    _cur_indent: usize,
+    _first_element: bool,
+    _object_value: bool,
+    _always_decimal_point: bool
+}
+
+#[inline]
+fn _map_err(_: std::fmt::Error) -> Error {
+    Error::new(ErrorKind::Formatting)
+}
+
+macro w($self, $args...) {
+    std::fmt::write!($self._fmt, $args...).map_err(_map_err)
+}
+
+macro wln($self, $args...) {
+    std::fmt::writeln!($self._fmt, $args...).map_err(_map_err)
+}
+
+impl JsonFormatter<F: Formatter<F>> {
+    fn new(fmt: &mut F) -> JsonFormatter<F> {
+        JsonFormatter {
+            _fmt: fmt,
+            _pretty: false,
+            _cur_indent: 0,
+            _indent: 0,
+            _first_element: true,
+            _object_value: false,
+            _always_decimal_point: false
+        }
+    }
+
+    fn pretty(fmt: &mut F, indent: usize) -> JsonFormatter<F> {
+        let self = JsonFormatter::new(fmt);
+        self._pretty = true;
+        self._indent = indent;
+        self
+    }
+
+    fn _write_preamble(self: &mut JsonFormatter<F>) -> Result<()> {
+        use std::fmt::repeat;
+
+        if self._pretty {
+            if self._object_value {
+                w!(self, ": ")?;
+                self._object_value = false;
+                self._first_element = true;
+            } else {
+                if self._first_element {
+                    self._first_element = false;
+                    if self._cur_indent > 0 {
+                        // No newline before the very first element.
+                        wln!(self, "")?;
+                    }
+                } else {
+                    wln!(self, ",")?;
+                }
+                w!(self, "{}", " ".repeat(self._cur_indent))?;
+            }
+        } else {
+            if self._object_value {
+                w!(self, ":")?;
+                self._object_value = false;
+            } else if self._first_element {
+                self._first_element = false;
+            } else {
+                w!(self, ",")?;
+            }
+        }
+
+        Result::ok(())
+    }
+
+    #[inline]
+    fn write_float(self: &mut JsonFormatter<F>, value: f64) -> Result<()> {
+        self.write_number::<F, f64>(value)
+    }
+
+    fn write_number<T: Numeric>(self: &mut JsonFormatter<F>, value: T) -> Result<()> {
+        when value is FloatingPoint {
+            if !value.is_finite() {
+                return Result::err(Error::new(ErrorKind::NumberNotRepresentable));
+            }
+
+            // If the number is exactly an integer, we can print it as an integer.
+            if !self._always_decimal_point
+                && (value <= MAX_SAFE_INTEGER && value >= MIN_SAFE_INTEGER)
+                && (value as i64 as f64 == value) {
+                return self.write_number::<F, i64>(value as i64)
+            }
+        }
+
+        // If T is an integer type, we just print it out directly. If it is outside the safe range,
+        // we won't be able to parse it back precisely (since the parser and JsonValue use f64 internally),
+        // and neither will OG Javascript, but that's probably better than erroring out or losing
+        // precision while writing.
+        self._write_preamble()?;
+        w!(self, "{}", value)?;
+
+        Result::ok(())
+    }
+
+    fn write_bool(self: &mut JsonFormatter<F>, value: bool) -> Result<()> {
+        self._write_preamble()?;
+        w!(self, "{}", value)?;
+
+        Result::ok(())
+    }
+
+    fn write_null(self: &mut JsonFormatter<F>) -> Result<()> {
+        self._write_preamble()?;
+        w!(self, "null")?;
+
+        Result::ok(())
+    }
+
+    fn write_string(self: &mut JsonFormatter<F>, value: &[u8]) -> Result<()> {
+        use std::fmt::hex;
+
+        self._write_preamble()?;
+
+        w!(self, "\"")?;
+        for ch in value {
+            let ret = switch ch {
+                '"' => w!(self, "\\\""),
+                '\\' => w!(self, "\\\\"),
+                '\x08' => w!(self, "\\b"),
+                '\x0c' => w!(self, "\\f"),
+                '\x0a' => w!(self, "\\n"),
+                '\x0d' => w!(self, "\\r"),
+                '\x09' => w!(self, "\\t"),
+                _ => {
+                    if ch < 0x20 {
+                        w!(self, "\\u{}", ch.hex().zero_pad(4))
+                    } else {
+                        self._fmt.write_byte(ch).map_err(_map_err)
+                    }
+                }
+            };
+
+            ret?;
+        }
+        w!(self, "\"")?;
+
+        Result::ok(())
+    }
+
+    fn write_array_start(self: &mut JsonFormatter<F>) -> Result<()> {
+        self._write_preamble()?;
+        w!(self, "[")?;
+        self._cur_indent += 2;
+        self._first_element = true;
+        Result::ok(())
+    }
+
+    fn write_array_end(self: &mut JsonFormatter<F>) -> Result<()> {
+        use std::fmt::repeat;
+        self._cur_indent -= 2;
+
+        // Empty array is on the same line.
+        if self._pretty && !self._first_element {
+            wln!(self, "")?;
+            w!(self, "{}", " ".repeat(self._cur_indent))?;
+        }
+        w!(self, "]")?;
+
+        self._first_element = false;
+        Result::ok(())
+    }
+
+    fn write_object_start(self: &mut JsonFormatter<F>) -> Result<()> {
+        self._write_preamble()?;
+        w!(self, "{{")?;
+        self._cur_indent += 2;
+        self._first_element = true;
+        Result::ok(())
+    }
+
+    fn write_object_end(self: &mut JsonFormatter<F>) -> Result<()> {
+        use std::fmt::repeat;
+        self._cur_indent -= 2;
+
+        // Empty object is on the same line.
+        if self._pretty && !self._first_element {
+            wln!(self, "")?;
+            w!(self, "{}", " ".repeat(self._cur_indent))?;
+        }
+        w!(self, "}}")?;
+
+        self._first_element = false;
+        Result::ok(())
+    }
+
+    #[inline]
+    fn write_object_key(self: &mut JsonFormatter<F>, key: &[u8]) -> Result<()> {
+        self.write_string(key)?;
+        self._object_value = true;
+        Result::ok(())
+    }
+
+    mixin JsonWriterExt<JsonFormatter<F>>;
+}
+
+#[cfg(test)]
+mod tests {
+    macro try($a) {
+        $a.unwrap() // yolo
+    }
+
+    #[test]
+    fn test_basic() {
+        use std::string::StringBuf;
+
+        let buf = StringBuf::new();
+        let formatter = JsonFormatter::new(&buf);
+
+        formatter.write_array_start()?;
+        formatter.write_number(1)?;
+        formatter.write_number(1.1)?;
+        formatter.write_string("hello")?;
+        formatter.write_bool(true)?;
+        formatter.write_bool(false)?;
+        formatter.write_object_start()?;
+        formatter.write_object_key("hello")?;
+        formatter.write_null()?;
+        formatter.write_object_end()?;
+        formatter.write_array_end()?;
+
+        assert_eq!(buf[..] as &[u8], "[1,1.1,\"hello\",true,false,{\"hello\":null}]");
+    }
+
+    #[test]
+    fn test_string_escaping() {
+        use std::string::StringBuf;
+
+        let buf = StringBuf::new();
+        let formatter = JsonFormatter::new(&buf);
+        formatter.write_string("hello\\\"\n\r\t\x08\x0c\0\x01\x02\xff")?;
+
+        assert_eq!(buf[..] as &[u8], "\"hello\\\\\\\"\\n\\r\\t\\b\\f\\u0000\\u0001\\u0002\xff\"");
+    }
+
+    #[test]
+    fn test_errors() {
+        use std::string::StringBuf;
+
+        let buf = StringBuf::new();
+        let formatter = JsonFormatter::new(&buf);
+
+        assert_eq!(formatter.write_number(f64::infinity()).unwrap_err().kind, ErrorKind::NumberNotRepresentable);
+        assert_eq!(formatter.write_number(f64::neg_infinity()).unwrap_err().kind, ErrorKind::NumberNotRepresentable);
+        assert_eq!(formatter.write_number(f64::nan()).unwrap_err().kind, ErrorKind::NumberNotRepresentable);
+    }
+
+    #[test]
+    fn test_json_formatter_complex() {
+        use std::string::StringBuf;
+
+        let buf = StringBuf::new();
+        let formatter = JsonFormatter::new(&buf);
+
+        formatter.write_object_start()?;
+        formatter.write_object_key("a")?;
+        formatter.write_number(1)?;
+        formatter.write_object_key("b")?;
+        formatter.write_number(2)?;
+        formatter.write_object_key("c")?;
+        formatter.write_array_start()?;
+        formatter.write_number(1)?;
+        formatter.write_number(2)?;
+        formatter.write_array_start()?;
+        formatter.write_number(1)?;
+        formatter.write_number(2)?;
+        formatter.write_array_end()?;
+        formatter.write_array_start()?;
+        formatter.write_array_end()?;
+        formatter.write_number(3)?;
+        formatter.write_array_end()?;
+        formatter.write_object_key("foo")?;
+        formatter.write_object_start()?;
+        formatter.write_object_end()?;
+        formatter.write_object_end()?;
+
+        println!("{}", buf);
+
+        assert_eq!(buf[..] as &[u8], "{\"a\":1,\"b\":2,\"c\":[1,2,[1,2],[],3],\"foo\":{}}");
+    }
+
+    #[test]
+    fn test_json_formatter_complex_pretty() {
+        use std::string::StringBuf;
+
+        let buf = StringBuf::new();
+        let formatter = JsonFormatter::pretty(&buf, 2);
+
+        formatter.write_object_start()?;
+        formatter.write_object_key("a")?;
+        formatter.write_number(1)?;
+        formatter.write_object_key("b")?;
+        formatter.write_number(2)?;
+        formatter.write_object_key("c")?;
+        formatter.write_array_start()?;
+        formatter.write_number(1)?;
+        formatter.write_number(2)?;
+        formatter.write_array_start()?;
+        formatter.write_number(1)?;
+        formatter.write_number(2)?;
+        formatter.write_array_end()?;
+        formatter.write_array_start()?;
+        formatter.write_array_end()?;
+        formatter.write_number(3)?;
+        formatter.write_array_end()?;
+        formatter.write_object_key("foo")?;
+        formatter.write_object_start()?;
+        formatter.write_object_end()?;
+        formatter.write_object_end()?;
+
+        println!("{}", buf);
+
+        assert_eq!(
+            buf[..] as &[u8],
+            std::concat!(
+                "{\n  \"a\": 1\n  \"b\": 2\n  \"c\": [\n    1,\n    2,\n    ",
+                "[\n      1,\n      2\n    ],\n    [],\n    3\n  ],\n  \"foo\": {}\n}"
+            )
+        );
+    }
+}

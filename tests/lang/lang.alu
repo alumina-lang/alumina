@@ -82,6 +82,52 @@ fn assert_layout<T>(size: usize, align: usize) {
 }
 
 #[test]
+#[allow(zst_pointer_offset)]
+fn test_zst_pointer_arithmetic() {
+    let f: &void = null;
+
+    assert_eq!((f + 1), f);
+
+    // test side effects
+
+    let counter = 0;
+    let f1 = |&counter| -> &void { counter += 1; null };
+    let f2 = |&counter| -> isize { counter *= 3; 1 };
+
+    assert_eq!(f1() + 1, null);
+    assert_eq!(counter, 1);
+
+    assert_eq!(null + f2(), null);
+    assert_eq!(counter, 3);
+
+    // test order of evaluation
+    assert_eq!(f1() + f2(), null);
+    assert_eq!(counter, 12); // not 10
+
+    // compound assignment
+    let f = null;
+    f += 1;
+
+    assert_eq!(f, null);
+
+    // test side effects
+
+    let counter = 0;
+    let val: &void = null;
+
+    let f1 = |&counter, &val| -> &mut &void { counter += 1; &val };
+    let f2 = |&counter| -> isize { counter *= 3; 1 };
+
+    *f1() += 1;
+    assert_eq!(counter, 1);
+
+    // test order of evaluation
+    *f1() += f2();
+    assert_eq!(counter, 6); // not 4
+}
+
+
+#[test]
 fn test_builtin_layout() {
     assert_layout::<bool>(1, 1);
     assert_layout::<u8>(1, 1);

@@ -2806,7 +2806,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         op: ast::BinOp,
         lhs: ir::ExprP<'ir>,
         rhs: ir::ExprP<'ir>,
-    ) -> Result<ir::TyP<'ir>, AluminaError> {
+    ) -> Result<ir::TyP<'ir>, CodeDiagnostic> {
         use ast::BinOp::*;
         use ir::Ty::*;
 
@@ -2826,9 +2826,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
 
             // Equality comparison for enums
-            (Item(l), Eq | Neq, Item(r))
-                if l == r && matches!(l.get().with_backtrace(&self.diag)?, ir::IRItem::Enum(_)) =>
-            {
+            (Item(l), Eq | Neq, Item(r)) if l == r && matches!(l.get()?, ir::IRItem::Enum(_)) => {
                 self.types.builtin(BuiltinType::Bool)
             }
 
@@ -2867,20 +2865,27 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
             // Pointer arithmetic
             (Pointer(l, l_const), Minus, Pointer(r, r_const)) if l == r && l_const == r_const => {
-                self.types.builtin(BuiltinType::ISize)
+                if l.is_zero_sized() {
+                    return Err(CodeDiagnostic::ZstPointerDifference);
+                } else {
+                    self.types.builtin(BuiltinType::ISize)
+                }
             }
-            (Pointer(_l, _), Plus | Minus, Builtin(BuiltinType::ISize | BuiltinType::USize)) => {
-                lhs.ty
+            (Pointer(l, _), Plus | Minus, Builtin(BuiltinType::ISize | BuiltinType::USize)) => {
+                if l.is_zero_sized() {
+                    return Err(CodeDiagnostic::ZstPointerOffset);
+                } else {
+                    lhs.ty
+                }
             }
 
-            _ => bail!(
-                self,
-                CodeDiagnostic::InvalidBinOp(
+            _ => {
+                return Err(CodeDiagnostic::InvalidBinOp(
                     op,
                     self.mono_ctx.type_name(lhs.ty).unwrap(),
-                    self.mono_ctx.type_name(rhs.ty).unwrap()
-                )
-            ),
+                    self.mono_ctx.type_name(rhs.ty).unwrap(),
+                ))
+            }
         };
 
         Ok(result_typ)
@@ -3411,18 +3416,39 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         match self.typecheck_binary(op, lhs, rhs) {
             Ok(result_typ) => Ok(self.exprs.binary(op, lhs, rhs, result_typ, ast_span)),
             // Operator overloading
-            Err(AluminaError::CodeErrors(errors1))
+            Err(original_diag @ CodeDiagnostic::InvalidBinOp(..))
                 if matches!(op, Eq | Neq | Lt | Gt | GEq | LEq) =>
             {
                 match self.invoke_custom_binary(op, lhs, rhs, ast_span) {
                     Ok(expr) => Ok(expr),
-                    Err(AluminaError::CodeErrors(errors2)) => Err(AluminaError::CodeErrors(
-                        errors1.into_iter().chain(errors2).collect(),
-                    )),
-                    Err(e) => Err(e),
+                    Err(e) => {
+                        self.diag.err(original_diag);
+                        Err(e)
+                    }
                 }
             }
-            Err(e) => Err(e),
+            Err(original_diag @ CodeDiagnostic::ZstPointerOffset) => {
+                // special case for ZST pointer offsets, which are a no-op
+                self.diag.warn(original_diag);
+
+                // More complicated than it should be because of strict left-to-right evaluation
+                let temporary = self.mono_ctx.ir.make_id();
+                let local = self.exprs.local(temporary, lhs.ty, lhs.span);
+                self.local_defs.push(ir::LocalDef {
+                    id: temporary,
+                    typ: lhs.ty,
+                });
+
+                Ok(self.exprs.block(
+                    [
+                        ir::Statement::Expression(self.exprs.assign(local, lhs, lhs.span)),
+                        ir::Statement::Expression(rhs),
+                    ],
+                    self.exprs.local(temporary, lhs.ty, lhs.span),
+                    ast_span,
+                ))
+            }
+            Err(e) => Err(e).with_backtrace(&self.diag),
         }
     }
 
@@ -3462,7 +3488,23 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             bail!(self, CodeDiagnostic::CannotAssignToConst);
         }
 
-        self.typecheck_binary(op, lhs, rhs)?;
+        match self.typecheck_binary(op, lhs, rhs) {
+            Ok(_) => {}
+            Err(original_diag @ CodeDiagnostic::ZstPointerOffset) => {
+                // special case for ZST pointer offsets, which are a no-op
+                self.diag.warn(original_diag);
+                return Ok(self.exprs.block(
+                    [
+                        ir::Statement::Expression(lhs),
+                        ir::Statement::Expression(rhs),
+                    ],
+                    self.exprs
+                        .void(self.types.void(), ir::ValueType::RValue, ast_span),
+                    ast_span,
+                ));
+            }
+            Err(e) => return Err(e).with_backtrace(&self.diag),
+        }
 
         Ok(self.exprs.assign_op(op, lhs, rhs, ast_span))
     }

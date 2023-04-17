@@ -231,7 +231,7 @@ test-libraries: alumina-boot $(LIBRARIES_TESTS)
 test-alumina-boot:
 	cargo test $(CARGO_FLAGS) --all-targets
 
-test: test-alumina-boot test-std test-lang test-libraries
+test: test-alumina-boot test-std test-lang
 
 .DEFAULT_GOAL := all
 all: alumina-boot aluminac
@@ -301,4 +301,4 @@ lint-rust: $(BOOTSTRAP_SOURCES) $(COMMON_SOURCES) $(BUILD_DIR)/.build
 	cargo fmt -- --check
 	cargo clippy $(CARGO_FLAGS) --all-targets
 
-dist-check: lint-rust aluminac test-docs test examples
+dist-check: lint-rust aluminac test-libraries test-docs test examples
