@@ -113,19 +113,13 @@
 <a href="/std/collections/vector/Vector.html#item.free">free</a>
 </li>
 <li>
+<a href="/std/collections/vector/Vector.html#item.free_all">free_all</a>
+</li>
+<li>
 <a href="/std/collections/vector/Vector.html#item.move">move</a>
 </li>
 <li>
 <a href="/std/collections/vector/Vector.html#item.clone">clone</a>
-</li>
-<li>
-<a href="/std/collections/vector/Vector.html#item.write_str">write_str</a>
-</li>
-<li>
-<a href="/std/collections/vector/Vector.html#item.write_byte">write_byte</a>
-</li>
-<li>
-<a href="/std/collections/vector/Vector.html#item.fmt">fmt</a>
 </li>
 </ul>
 </nav>
@@ -676,11 +670,42 @@ Frees the memory backing the object.
 </div>
 </li>
 <li>
+<div class="signature" id="item.free_all">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">free_all</span>(self: &amp;mut <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;T&gt;)</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/collections/vector.alu#L342-L353"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Helper for collections that own heap-allocated objects. This is used to
+be able to do <code class="language-alumina">defer col.free_all()</code> without much boilerplate.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::collections::Vector;
+use std::string::StringBuf;
+use std::fmt::format;
+
+let v: Vector&lt;StringBuf&gt; = Vector::new();
+defer v.free_all();
+
+for i in 1..10 {
+    v.push("{} + {} = {}".format!(i, i, i + i).unwrap());
+}
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3acollections%3a%3aVector%3b%0a%20%20%20%20use%20std%3a%3astring%3a%3aStringBuf%3b%0a%20%20%20%20use%20std%3a%3afmt%3a%3aformat%3b%0a%20%20%20%20%0a%20%20%20%20let%20v%3a%20Vector%3cStringBuf%3e%20%3d%20Vector%3a%3anew%28%29%3b%0a%20%20%20%20defer%20v%2efree%5fall%28%29%3b%0a%20%20%20%20%0a%20%20%20%20for%20i%20in%201%2e%2e10%20%7b%0a%20%20%20%20%20%20%20%20v%2epush%28%22%7b%7d%20%2b%20%7b%7d%20%3d%20%7b%7d%22%2eformat%21%28i%2c%20i%2c%20i%20%2b%20i%29%2eunwrap%28%29%29%3b%0a%20%20%20%20%7d%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
 <div class="signature" id="item.move">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">move</span>(self: &amp;mut <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;T&gt;) -> <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/collections/vector.alu#L327-L332"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/collections/vector.alu#L356-L361"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -697,65 +722,12 @@ See <a class="path-link" href="/std/mem/Movable.html">Movable</a> for details.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">clone</span>(self: &amp;<a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;T&gt;) -> <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/collections/vector.alu#L335-L339"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/collections/vector.alu#L364-L368"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Returns a copy of the object.
-</p><p>
-</p>
-</div>
-</li>
-</ul>
-<div class="signature impl-header not-first"><h3>
-<span class="keyword">impl</span> <span class="identifier-type">Vector</span> { ... }</h3></div>
-<ul>
-<li>
-<div class="signature" id="item.write_str">
-<h4>
-<span class="keyword">fn</span> <span class="identifier-function">write_str</span>(self: &amp;mut <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>&gt;, buf: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>, <a href="/std/fmt/Error.html"><span class="identifier-type">Error</span></a>&gt;</h4>
-<div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/collections/vector.alu#L346-L349"/>source</a>
-</div>
-</div>
-<div class="item-doc">
-<p>
-Write a string
-</p><p>
-</p>
-</div>
-</li>
-<li>
-<div class="signature" id="item.write_byte">
-<h4>
-<span class="keyword">fn</span> <span class="identifier-function">write_byte</span>(self: &amp;mut <a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>&gt;, c: <a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>, <a href="/std/fmt/Error.html"><span class="identifier-type">Error</span></a>&gt;</h4>
-<div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/collections/vector.alu#L352-L355"/>source</a>
-</div>
-</div>
-<div class="item-doc">
-<p>
-Write a single character
-</p><p>
-</p>
-</div>
-</li>
-<li>
-<div class="signature" id="item.fmt">
-<h4>
-<span class="keyword">fn</span> <span class="identifier-function">fmt</span>&lt;F&gt;(self: &amp;<a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>&gt;, fmt: &amp;mut F) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>, <a href="/std/fmt/Error.html"><span class="identifier-type">Error</span></a>&gt;<div class="protocol-bound">
-F: <a href="/std/fmt/Formatter.html"><span class="identifier-type">Formatter</span></a>&lt;F&gt;</div>
-</h4>
-<div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/collections/vector.alu#L358-L360"/>source</a>
-</div>
-</div>
-<div class="item-doc">
-<p>
-Write the object into a given formatter.
-</p><p>
-See <a class="path-link" href="/std/fmt/Formattable.html">Formattable</a> for details.
 </p><p>
 </p>
 </div>

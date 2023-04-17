@@ -62,10 +62,10 @@
 <a href="/std/io/FileDescriptor.html">FileDescriptor</a>
 </li>
 <li>
-<a href="/std/io/StdioStream.html">StdioStream</a>
+<a href="/std/io/NullStream.html">NullStream</a>
 </li>
 <li>
-<a href="/std/io/NullStream.html">NullStream</a>
+<a href="/std/io/StdioStream.html">StdioStream</a>
 </li>
 <li>
 <a href="/std/io/Pipe.html">Pipe</a>
@@ -235,18 +235,18 @@ Streams and other byte I/O functionality
 <div class="cell-doc">Platform specific file descriptor.
 </div>
 </div>
-<div class="row" id="item.StdioStream">
-<div class="cell-name">
-<a href="/std/io/StdioStream.html">StdioStream</a>
-</div>
-<div class="cell-doc">Standard I/O stream.
-</div>
-</div>
 <div class="row" id="item.NullStream">
 <div class="cell-name">
 <a href="/std/io/NullStream.html">NullStream</a>
 </div>
 <div class="cell-doc">A null stream (similar to <code class="language-alumina">/dev/null</code>).
+</div>
+</div>
+<div class="row" id="item.StdioStream">
+<div class="cell-name">
+<a href="/std/io/StdioStream.html">StdioStream</a>
+</div>
+<div class="cell-doc">Standard I/O stream.
 </div>
 </div>
 <div class="row" id="item.Pipe">
@@ -281,7 +281,7 @@ Streams and other byte I/O functionality
 <div class="cell-name">
 <a href="/std/io/StringWriter.html">StringWriter</a>
 </div>
-<div class="cell-doc">A writable stream backed by <a class="path-link" href="/std/string/#item.StringBuf">StringBuf</a>.
+<div class="cell-doc">A writable stream backed by <a class="path-link" href="/std/string/StringBuf.html">StringBuf</a>.
 </div>
 </div>
 <div class="row" id="item.BufferedReader">
@@ -315,12 +315,28 @@ Streams and other byte I/O functionality
 R: <a href="/std/io/Readable.html"><span class="identifier-type">Readable</span></a>&lt;R&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/io.alu#L670-L672"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/io/mod.alu#L691-L693"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Returns an adapter for a stream that returns EOF after <code class="language-alumina">limit</code> bytes have been read.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::io::{SliceReader, take};
+use std::string::StringBuf;
+
+let reader = SliceReader::new("Hello, world!");
+
+let buf = StringBuf::new();
+defer buf.free();
+
+reader.take(5).read_to_end(&amp;buf).unwrap();
+
+assert_eq!(buf[..] as &amp;[u8], "Hello");
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3aio%3a%3a%7bSliceReader%2c%20take%7d%3b%0a%20%20%20%20use%20std%3a%3astring%3a%3aStringBuf%3b%0a%20%20%20%20%0a%20%20%20%20let%20reader%20%3d%20SliceReader%3a%3anew%28%22Hello%2c%20world%21%22%29%3b%0a%20%20%20%20%0a%20%20%20%20let%20buf%20%3d%20StringBuf%3a%3anew%28%29%3b%0a%20%20%20%20defer%20buf%2efree%28%29%3b%0a%20%20%20%20%0a%20%20%20%20reader%2etake%285%29%2eread%5fto%5fend%28%26buf%29%2eunwrap%28%29%3b%0a%20%20%20%20%0a%20%20%20%20assert%5feq%21%28buf%5b%2e%2e%5d%20as%20%26%5bu8%5d%2c%20%22Hello%22%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -334,12 +350,31 @@ R1: <a href="/std/io/Readable.html"><span class="identifier-type">Readable</span
 R2: <a href="/std/io/Readable.html"><span class="identifier-type">Readable</span></a>&lt;R2&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/io.alu#L675-L677"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/io/mod.alu#L714-L716"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Chains the two streams together
+</p><p>
+The resulting stream will first read all bytes from <code class="language-alumina">self</code>, then all bytes from <code class="language-alumina">other</code>.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::io::{SliceReader, chain};
+use std::string::StringBuf;
+
+let reader1 = SliceReader::new("Hello, ");
+let reader2 = SliceReader::new("world!");
+
+let buf = StringBuf::new();
+defer buf.free();
+
+reader1.chain(&amp;reader2).read_to_end(&amp;buf).unwrap();
+
+assert_eq!(buf[..] as &amp;[u8], "Hello, world!");
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3aio%3a%3a%7bSliceReader%2c%20chain%7d%3b%0a%20%20%20%20use%20std%3a%3astring%3a%3aStringBuf%3b%0a%20%20%20%20%0a%20%20%20%20let%20reader1%20%3d%20SliceReader%3a%3anew%28%22Hello%2c%20%22%29%3b%0a%20%20%20%20let%20reader2%20%3d%20SliceReader%3a%3anew%28%22world%21%22%29%3b%0a%20%20%20%20%0a%20%20%20%20let%20buf%20%3d%20StringBuf%3a%3anew%28%29%3b%0a%20%20%20%20defer%20buf%2efree%28%29%3b%0a%20%20%20%20%0a%20%20%20%20reader1%2echain%28%26reader2%29%2eread%5fto%5fend%28%26buf%29%2eunwrap%28%29%3b%0a%20%20%20%20%0a%20%20%20%20assert%5feq%21%28buf%5b%2e%2e%5d%20as%20%26%5bu8%5d%2c%20%22Hello%2c%20world%21%22%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -353,14 +388,31 @@ S: <a href="/std/io/Readable.html"><span class="identifier-type">Readable</span>
 D: <a href="/std/io/Writable.html"><span class="identifier-type">Writable</span></a>&lt;D&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/io.alu#L682-L687"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/io/mod.alu#L737-L742"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Copy the entire stream <code class="language-alumina">src</code> into <code class="language-alumina">dst</code>
 </p><p>
-Internally allocates a buffer with the size of <a class="path-link" href="/std/io/#item.DEFAULT_BUFFER_SIZE">DEFAULT_BUFFER_SIZE</a>.
+Internally allocates a buffer with the size of <a class="path-link" href="/std/io/#item.DEFAULT_BUFFER_SIZE">DEFAULT_BUFFER_SIZE</a>. If you want to use a
+custom buffer, use <a class="path-link" href="/std/io/#item.copy_using">copy_using</a>.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::io::{copy, SliceReader, StringWriter};
+use std::string::StringBuf;
+
+let str = StringBuf::new();
+defer str.free();
+
+let writer = StringWriter::new(&amp;str);
+let reader = SliceReader::new("Hello, world!");
+
+copy(&amp;reader, &amp;writer).unwrap();
+assert_eq!(str[..] as &amp;[u8], "Hello, world!");
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3aio%3a%3a%7bcopy%2c%20SliceReader%2c%20StringWriter%7d%3b%0a%20%20%20%20use%20std%3a%3astring%3a%3aStringBuf%3b%0a%20%20%20%20%0a%20%20%20%20let%20str%20%3d%20StringBuf%3a%3anew%28%29%3b%0a%20%20%20%20defer%20str%2efree%28%29%3b%0a%20%20%20%20%0a%20%20%20%20let%20writer%20%3d%20StringWriter%3a%3anew%28%26str%29%3b%0a%20%20%20%20let%20reader%20%3d%20SliceReader%3a%3anew%28%22Hello%2c%20world%21%22%29%3b%0a%20%20%20%20%0a%20%20%20%20copy%28%26reader%2c%20%26writer%29%2eunwrap%28%29%3b%0a%20%20%20%20assert%5feq%21%28str%5b%2e%2e%5d%20as%20%26%5bu8%5d%2c%20%22Hello%2c%20world%21%22%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -374,7 +426,7 @@ S: <a href="/std/io/Readable.html"><span class="identifier-type">Readable</span>
 D: <a href="/std/io/Writable.html"><span class="identifier-type">Writable</span></a>&lt;D&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/io.alu#L690-L702"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/io/mod.alu#L745-L757"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -391,7 +443,7 @@ Copy the entire stream <code class="language-alumina">src</code> into <code clas
 R: <a href="/std/io/Readable.html"><span class="identifier-type">Readable</span></a>&lt;R&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/io.alu#L707-L712"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/io/mod.alu#L762-L767"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -406,11 +458,11 @@ Returns <code class="language-alumina">Error::eof</code> if the stream has no by
 <li>
 <div class="signature" id="item.read_until">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">read_until</span>&lt;R&gt;(r: &amp;mut R, delim: <a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>, buf: &amp;mut <a href="/std/string/#item.StringBuf"><span class="identifier-type">StringBuf</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;<div class="protocol-bound">
+<span class="keyword">fn</span> <span class="identifier-function">read_until</span>&lt;R&gt;(r: &amp;mut R, delim: <a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>, buf: &amp;mut <a href="/std/string/StringBuf.html"><span class="identifier-type">StringBuf</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;<div class="protocol-bound">
 R: <a href="/std/io/BufferedReadable.html"><span class="identifier-type">BufferedReadable</span></a>&lt;R&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/io.alu#L732-L754"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/io/mod.alu#L787-L809"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -425,7 +477,7 @@ The <code class="language-alumina">delim</code> terminator is included.
 use std::string::StringBuf;
 
 let stream = SliceReader::new("Hello\nWorld\n");
-let buf: StringBuf = StringBuf::new();
+let buf = StringBuf::new();
 defer buf.free();
 
 stream.read_until('\n', &amp;buf).unwrap();
@@ -433,7 +485,7 @@ assert_eq!(buf[..] as &amp;[u8], "Hello\n");
 buf.clear();
 stream.read_until('\n', &amp;buf).unwrap();
 assert_eq!(buf[..] as &amp;[u8], "World\n");
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3aio%3a%3a%7bSliceReader%2c%20read%5funtil%7d%3b%0a%20%20%20%20use%20std%3a%3astring%3a%3aStringBuf%3b%0a%20%20%20%20%0a%20%20%20%20let%20stream%20%3d%20SliceReader%3a%3anew%28%22Hello%5cnWorld%5cn%22%29%3b%0a%20%20%20%20let%20buf%3a%20StringBuf%20%3d%20StringBuf%3a%3anew%28%29%3b%0a%20%20%20%20defer%20buf%2efree%28%29%3b%0a%20%20%20%20%0a%20%20%20%20stream%2eread%5funtil%28%27%5cn%27%2c%20%26buf%29%2eunwrap%28%29%3b%0a%20%20%20%20assert%5feq%21%28buf%5b%2e%2e%5d%20as%20%26%5bu8%5d%2c%20%22Hello%5cn%22%29%3b%0a%20%20%20%20buf%2eclear%28%29%3b%0a%20%20%20%20stream%2eread%5funtil%28%27%5cn%27%2c%20%26buf%29%2eunwrap%28%29%3b%0a%20%20%20%20assert%5feq%21%28buf%5b%2e%2e%5d%20as%20%26%5bu8%5d%2c%20%22World%5cn%22%29%3b%0a%7d%0a">Run this example</a></pre>
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3aio%3a%3a%7bSliceReader%2c%20read%5funtil%7d%3b%0a%20%20%20%20use%20std%3a%3astring%3a%3aStringBuf%3b%0a%20%20%20%20%0a%20%20%20%20let%20stream%20%3d%20SliceReader%3a%3anew%28%22Hello%5cnWorld%5cn%22%29%3b%0a%20%20%20%20let%20buf%20%3d%20StringBuf%3a%3anew%28%29%3b%0a%20%20%20%20defer%20buf%2efree%28%29%3b%0a%20%20%20%20%0a%20%20%20%20stream%2eread%5funtil%28%27%5cn%27%2c%20%26buf%29%2eunwrap%28%29%3b%0a%20%20%20%20assert%5feq%21%28buf%5b%2e%2e%5d%20as%20%26%5bu8%5d%2c%20%22Hello%5cn%22%29%3b%0a%20%20%20%20buf%2eclear%28%29%3b%0a%20%20%20%20stream%2eread%5funtil%28%27%5cn%27%2c%20%26buf%29%2eunwrap%28%29%3b%0a%20%20%20%20assert%5feq%21%28buf%5b%2e%2e%5d%20as%20%26%5bu8%5d%2c%20%22World%5cn%22%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -445,7 +497,7 @@ assert_eq!(buf[..] as &amp;[u8], "World\n");
 R: <a href="/std/io/BufferedReadable.html"><span class="identifier-type">BufferedReadable</span></a>&lt;R&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/io.alu#L846-L848"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/io/mod.alu#L901-L903"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -483,7 +535,7 @@ assert_eq!(lines.next(), Option::none());
 <h4>
 <span class="keyword">type</span> <span class="identifier-type">Result</span>&lt;T&gt; = <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, <a href="/std/io/unix/Error.html"><span class="identifier-type">Error</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/io.alu#L13-L13"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/io/mod.alu#L13-L13"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -544,7 +596,7 @@ See also <a class="path-link" href="/std/io/unix/Error.html">Error</a> and the m
 <h4>
 <span class="keyword">const</span> <span class="identifier-constant">DEFAULT_BUFFER_SIZE</span>: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a> = ...</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/io.alu#L665-L665"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/io/mod.alu#L671-L671"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -562,7 +614,7 @@ Default buffer size for I/O methods that allocate a buffer.
 <h4>
 <span class="keyword">static</span> <span class="identifier-constant">FMT_BUF</span>: [<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>; 256]</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/io.alu#L22-L22"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/io/mod.alu#L22-L22"/>source</a>
 </div>
 </div>
 <div class="item-doc">

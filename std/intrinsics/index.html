@@ -107,6 +107,12 @@
 <a href="/std/intrinsics/#item.const_free">const_free</a>
 </li>
 <li>
+<a href="/std/intrinsics/#item.transmute">transmute</a>
+</li>
+<li>
+<a href="/std/intrinsics/#item.tag">tag</a>
+</li>
+<li>
 <a href="/std/intrinsics/#item.codegen_const">codegen_const</a>
 </li>
 <li>
@@ -135,9 +141,11 @@ Functions implemented directly in the compiler.
 Functions in this module are not intended for general use, and are usually called by
 wrapper functions in the standard library (e.g. <a class="path-link" href="/std/mem/#item.size_of">size_of</a> and <a class="path-link" href="/std/unreachable.html">unreachable</a>).
 </p><p>
-Intrinsic functions are also not first-class citizens. You cannot take a reference to
-one, or pass it as an argument to another function. Also, intrinsic functions do not
-participate in type inference.
+Intrinsic functions are not first-class citizens. You cannot take a reference to
+one, or pass it as an argument to another function. The intrinsic call signature is not
+strictly enforced (pass as many arguments as you want, they will be ignored, the intrinsic
+may return a value of different type, etc.). Needless to say, intrinsics do not participate
+in type inference.
 </p><p>
 </p>
 <h2 id="Function">Functions</h2>
@@ -147,7 +155,7 @@ participate in type inference.
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">compile_fail</span>(reason: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/builtins/never.html"><span class="identifier-type">!</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L13-L13"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L15-L15"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -164,7 +172,7 @@ Use <a class="path-link" href="/std/compile_fail.html">compile_fail</a> instead.
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">compile_warn</span>(reason: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>])</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L16-L16"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L18-L18"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -179,7 +187,7 @@ Emit a warning message during compilation.
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">compile_note</span>(reason: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>])</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L19-L19"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L21-L21"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -194,7 +202,7 @@ Emit a note during compilation.
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">unreachable</span>() -> <a href="/std/builtins/never.html"><span class="identifier-type">!</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L24-L24"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L26-L26"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -211,7 +219,7 @@ Use <a class="path-link" href="/std/unreachable.html">unreachable</a> instead.
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">trap</span>() -> <a href="/std/builtins/never.html"><span class="identifier-type">!</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L27-L27"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L29-L29"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -226,7 +234,7 @@ Trigger a trap (e.g. through an invalid instruction).
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">size_of</span>&lt;T&gt;() -> <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L32-L32"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L34-L34"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -245,7 +253,7 @@ Use <a class="path-link" href="/std/mem/#item.size_of">size_of</a> instead.
 T: <a href="/std/builtins/Array.html"><span class="identifier-type">Array</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L37-L37"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L39-L39"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -262,7 +270,7 @@ Use <a class="path-link" href="/std/builtins/array.html#item.len">len</a> instea
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">type_id</span>&lt;T&gt;() -> <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L42-L42"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L44-L44"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -279,7 +287,7 @@ Use <a class="path-link" href="/std/typing/#item.type_id">type_id</a> instead.
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">type_name</span>&lt;T&gt;() -> &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L47-L47"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L49-L49"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -296,7 +304,7 @@ Use <a class="path-link" href="/std/typing/#item.type_name">type_name</a> instea
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">align_of</span>&lt;T&gt;() -> <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L52-L52"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L54-L54"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -313,7 +321,7 @@ Use <a class="path-link" href="/std/mem/#item.align_of">align_of</a> instead.
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">vtable</span>&lt;Proto, T&gt;() -> [&amp;fn(); 0]</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L58-L58"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L60-L60"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -331,7 +339,7 @@ from a static initializer.
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">test_cases</span>() -> &amp;[TestCaseMeta]</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L67-L67"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L69-L69"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -354,7 +362,7 @@ Do not use this directly. If implementing a custom test framework, use the
 T: <a href="/std/builtins/Enum.html"><span class="identifier-type">Enum</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L73-L73"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L75-L75"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -372,7 +380,7 @@ from a static initializer (see <a class="path-link" href="/std/typing/internal/#
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">asm</span>(assembly: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>])</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L76-L76"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L78-L78"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -387,7 +395,7 @@ Inline assembly
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">uninitialized</span>&lt;T&gt;() -> T</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L81-L81"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L83-L83"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -404,7 +412,7 @@ Use <a class="path-link" href="/std/mem/#item.uninitialized">uninitialized</a> i
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">zeroed</span>&lt;T&gt;() -> T</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L86-L86"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L88-L88"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -423,7 +431,7 @@ Use <a class="path-link" href="/std/mem/#item.zeroed">zeroed</a> instead.
 Ptr: <a href="/std/builtins/Pointer.html"><span class="identifier-type">Pointer</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L91-L91"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L93-L93"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -440,7 +448,7 @@ Use <a class="path-link" href="/std/mem/#item.dangling">dangling</a> instead.
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">in_const_context</span>() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L96-L96"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L98-L98"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -455,9 +463,9 @@ Use <a class="path-link" href="/std/runtime/#item.in_const_context">in_const_con
 <li>
 <div class="signature" id="item.is_const_evaluable">
 <h4>
-<span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">is_const_evaluable</span>(...) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">is_const_evaluable</span>&lt;T&gt;(expr: T) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L101-L101"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L103-L103"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -472,9 +480,9 @@ Use <a class="path-link" href="/std/runtime/is_const_evaluable.html">is_const_ev
 <li>
 <div class="signature" id="item.const_eval">
 <h4>
-<span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">const_eval</span>(...)</h4>
+<span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">const_eval</span>&lt;T&gt;(expr: T) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L106-L106"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L108-L108"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -491,7 +499,7 @@ Use <a class="path-link" href="/std/runtime/const_eval.html">const_eval</a> inst
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">const_panic</span>(msg: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/builtins/never.html"><span class="identifier-type">!</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L113-L113"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L115-L115"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -510,7 +518,7 @@ Use <a class="path-link" href="/std/panicking/panic.html">panic</a> instead.
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">const_note</span>(msg: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>])</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L120-L120"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L122-L122"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -529,7 +537,7 @@ Use <a class="path-link" href="/std/io/println.html">println</a> instead.
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">const_warning</span>(msg: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>])</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L127-L127"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L129-L129"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -548,7 +556,7 @@ Use <a class="path-link" href="/std/io/eprintln.html">eprintln</a> instead.
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">const_alloc</span>&lt;T&gt;(size: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> &amp;mut T</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L132-L132"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L134-L134"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -565,7 +573,7 @@ Use <a class="path-link" href="/std/mem/slice.html#item.alloc">alloc</a> in cons
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">const_free</span>&lt;T&gt;(ptr: &amp;mut T)</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L137-L137"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L139-L139"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -578,11 +586,59 @@ Use <a class="path-link" href="/std/mem/slice.html#item.free">free</a> in const 
 </div>
 </li>
 <li>
+<div class="signature" id="item.transmute">
+<h4>
+<span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">transmute</span>&lt;T1, T2&gt;(val: T1) -> T2</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L144-L144"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Transmute a value from one type to another.
+</p><p>
+Use <a class="path-link" href="/std/util/#item.transmute">transmute</a> instead.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.tag">
+<h4>
+<span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">tag</span>&lt;T&gt;(tag: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], val: T) -> T</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L164-L164"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Identity function.
+</p><p>
+Adds a tag to the IR subtree. This has no effect on the generated code, but is generally preserved
+accross passes until codegen. Tags control certain aspects of const evaluation and compiler
+diagnostics. They are not meant to be used by user code.
+</p><p>
+Tags are currently added when desugaring certain language constructs, such as <code class="language-alumina">for</code> loops and <code class="language-alumina">defer</code>
+expressions.
+</p><p>
+The type, constness and value-kind of the tagged expression are preserved.
+<pre class="with-playground-link"><code class="language-alumina">let x = 0;
+std::intrinsics::tag("foo", x) += 1; // this is valid
+
+assert_eq!(x, 1);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20let%20x%20%3d%200%3b%0a%20%20%20%20std%3a%3aintrinsics%3a%3atag%28%22foo%22%2c%20x%29%20%2b%3d%201%3b%20%2f%2f%20this%20is%20valid%0a%20%20%20%20%0a%20%20%20%20assert%5feq%21%28x%2c%201%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+No user-facing equivalent.
+</p><p>
+</p>
+</div>
+</li>
+<li>
 <div class="signature" id="item.codegen_const">
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">codegen_const</span>&lt;T&gt;(name: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L145-L145"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L173-L173"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -597,7 +653,7 @@ Return the value of a C builtin constant
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">codegen_func</span>&lt;T&gt;(name: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], ...) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L147-L147"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L175-L175"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -612,7 +668,7 @@ Call a builtin C function
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">codegen_type_func</span>&lt;T, Ret&gt;(name: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L149-L149"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L177-L177"/>source</a>
 </div>
 </div>
 <div class="item-doc">
