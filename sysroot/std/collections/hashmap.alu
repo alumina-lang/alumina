@@ -236,7 +236,7 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
         self._length = 0;
     }
 
-    /// @ iter::Iterable::iter
+    /// @ iter::IterableRef::iter_ref
     fn iter(self: &HashMap<K, V, H>) -> HashMapIterator<K, V> {
         HashMapIterator::<K, V> {
             inner: self._buckets.iter_ref(),
@@ -244,7 +244,7 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
         }
     }
 
-    /// @ iter::IterableRef::iter_ref
+    /// @ iter::Iterable::iter
     fn iter_ref(self: &HashMap<K, V, H>) -> HashMapRefIterator<K, V> {
         HashMapRefIterator::<K, V> {
             inner: self._buckets.iter_ref(),
@@ -367,6 +367,43 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
         if self._buckets.len() > 0 {
             self._buckets.free();
         }
+    }
+
+    /// Helper for collections that own heap-allocated objects. This is used to
+    /// be able to do `defer col.free_all()` without much boilerplate.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::HashMap;
+    /// use std::string::StringBuf;
+    /// use std::fmt::format;
+    ///
+    /// let v: HashMap<StringBuf, StringBuf> = HashMap::new();
+    /// defer v.free_all();
+    ///
+    /// for i in 1..10 {
+    ///     v.insert(
+    ///         "{} + {}".format!(i, i).unwrap(),
+    ///         "{}".format!(i + i).unwrap()
+    ///     );
+    /// }
+    /// ```
+    fn free_all(self: &mut HashMap<K, V, H>) {
+        use typing::matches;
+        use mem::Freeable;
+
+        when matches::<K, Freeable<K>>() || matches::<V, Freeable<V>>() {
+            for (key, value) in self {
+                when matches::<K, Freeable<K>>() {
+                    key.free();
+                }
+                when matches::<V, Freeable<V>>() {
+                    value.free();
+                }
+            }
+        }
+
+        self.free();
     }
 
     /// @ std::mem::Movable::move

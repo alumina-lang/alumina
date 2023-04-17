@@ -133,18 +133,18 @@ macro writeln($fmt, $fmt_str, $arg...) {
 /// use std::fmt::format;
 /// use std::string::StringBuf;
 ///
-/// let s: StringBuf = format!("{} + {} = {}", 1, 2, 3).unwrap();
+/// let s = format!("{} + {} = {}", 1, 2, 3).unwrap();
 /// defer s.free();
 ///
 /// assert_eq!(s[..] as &[u8], "1 + 2 = 3");
 /// ```
 macro format($fmt_str, $arg...) {
-    let vec = collections::Vector::with_capacity::<u8>($fmt_str.len());
-    let ret = fmt::write!(&vec, $fmt_str, $arg...);
+    let buf = string::StringBuf::with_capacity($fmt_str.len());
+    let ret = fmt::write!(&buf, $fmt_str, $arg...);
     if ret.is_ok() {
-        Result::ok::<string::StringBuf, Error>(vec)
+        Result::ok::<string::StringBuf, Error>(buf)
     } else {
-        vec.free();
+        buf.free();
         Result::err::<string::StringBuf, Error>(Error::new())
     }
 }

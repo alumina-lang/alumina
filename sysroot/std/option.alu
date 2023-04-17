@@ -124,7 +124,7 @@ impl Option<T> {
         !self._is_some
     }
 
-    /// Returns a value, if present, panic otherwise.
+    /// Returns a value, if present, panics otherwise.
     ///
     /// ## Examples
     /// ```
@@ -137,10 +137,16 @@ impl Option<T> {
     /// ```
     #[inline(always)]
     fn unwrap(self: Option<T>) -> T {
+        #[cold]
+        #[inline(never)]
+        fn unwrap_panic() -> ! {
+            panic!("called `Option::unwrap()` on a `none` value")
+        }
+
         if self.is_some() {
             self._inner
         } else {
-            internal::unwrap_panic();
+            unwrap_panic();
         }
     }
 
@@ -523,15 +529,6 @@ impl Option {
 
     mixin<T: Equatable<T>> Equatable<Option<T>>;
     mixin<T: Comparable<T>> Comparable<Option<T>>;
-}
-
-#[docs(no_index)]
-mod internal {
-    #[cold]
-    #[inline(never)]
-    fn unwrap_panic() -> ! {
-        panic!("called `Option::unwrap()` on a `None` value")
-    }
 }
 
 #[cfg(all(test, test_std))]

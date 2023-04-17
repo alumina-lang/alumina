@@ -1,4 +1,4 @@
-use crate::common::{AluminaError, CodeErrorBuilder, CodeErrorKind, HashSet};
+use crate::common::{AluminaError, CodeDiagnostic, CodeErrorBuilder, HashSet};
 
 use super::Span;
 
@@ -39,7 +39,7 @@ pub fn format_args(
                     .ok()
                     .and_then(|idx| idx.parse().ok())
                     .ok_or_else(|| {
-                        CodeErrorKind::InvalidFormatString("invalid argument index".to_string())
+                        CodeDiagnostic::InvalidFormatString("invalid argument index".to_string())
                     })
                     .with_span(span)?
             } else {
@@ -53,7 +53,7 @@ pub fn format_args(
             }
 
             if num_args <= index {
-                return Err(CodeErrorKind::InvalidFormatString(
+                return Err(CodeDiagnostic::InvalidFormatString(
                     "not enough arguments".to_string(),
                 ))
                 .with_span(span);
@@ -80,7 +80,7 @@ pub fn format_args(
                     State::Normal
                 }
                 _ => {
-                    return Err(CodeErrorKind::InvalidFormatString(format!(
+                    return Err(CodeDiagnostic::InvalidFormatString(format!(
                         "unexpected {:?}",
                         ch as char
                     )))
@@ -97,7 +97,7 @@ pub fn format_args(
                     State::Normal
                 }
                 _ => {
-                    return Err(CodeErrorKind::InvalidFormatString(format!(
+                    return Err(CodeDiagnostic::InvalidFormatString(format!(
                         "unexpected {:?}",
                         ch as char
                     )))
@@ -118,7 +118,7 @@ pub fn format_args(
                     State::Index
                 }
                 _ => {
-                    return Err(CodeErrorKind::InvalidFormatString(format!(
+                    return Err(CodeDiagnostic::InvalidFormatString(format!(
                         "unexpected {:?}",
                         ch as char
                     )))
@@ -129,14 +129,14 @@ pub fn format_args(
     }
 
     if state != State::Normal {
-        return Err(CodeErrorKind::InvalidFormatString(
+        return Err(CodeDiagnostic::InvalidFormatString(
             "unexpected end of format string".to_string(),
         ))
         .with_span(span);
     }
 
     if num_args > used_arguments.len() {
-        return Err(CodeErrorKind::InvalidFormatString(
+        return Err(CodeDiagnostic::InvalidFormatString(
             "unused arguments".to_string(),
         ))
         .with_span(span);

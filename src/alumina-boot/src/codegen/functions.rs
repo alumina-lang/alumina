@@ -1,7 +1,9 @@
 use crate::ast::{Attribute, BinOp, BuiltinType, Span, UnOp};
+use crate::codegen::elide_zst::ZstElider;
 use crate::codegen::types::TypeWriter;
 use crate::codegen::{w, CName, CodegenCtx};
 use crate::common::{AluminaError, CodeErrorBuilder};
+use crate::diagnostics::DiagnosticsStack;
 use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::const_eval::Value;
 use crate::ir::layout::Layouter;
@@ -9,7 +11,6 @@ use crate::ir::{
     Const, Expr, ExprKind, ExprP, Function, IrId, LocalDef, Statement, Static, Ty, ValueType,
 };
 
-use std::borrow::Cow;
 use std::fmt::Write;
 
 pub struct FunctionWriter<'ir, 'gen> {
@@ -21,15 +22,6 @@ pub struct FunctionWriter<'ir, 'gen> {
     debug_info: bool,
     in_const_init: bool,
     last_span: Option<Span>,
-}
-
-/// Prevent "1f32" from being interpreted as an int constant
-fn force_float(v: &str) -> Cow<'_, str> {
-    if v.chars().all(|ch| ch.is_ascii_digit() || ch == '-') {
-        Cow::Owned(format!("{}e0", v))
-    } else {
-        Cow::Borrowed(v)
-    }
 }
 
 pub fn write_function_signature<'ir, 'gen>(
@@ -243,8 +235,32 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             }
             Value::USize(val) => w!(self.fn_bodies, "{}ULL", val),
             Value::ISize(val) => w!(self.fn_bodies, "{}LL", val),
-            Value::F32(val) => w!(self.fn_bodies, "{}f", force_float(val)),
-            Value::F64(val) => w!(self.fn_bodies, "{}", force_float(val)),
+            Value::F32(val) => {
+                if val.is_nan() {
+                    w!(self.fn_bodies, "(0.0f/0.0f)");
+                } else if val.is_infinite() {
+                    if val.is_sign_positive() {
+                        w!(self.fn_bodies, "(1.0f/0.0f)");
+                    } else {
+                        w!(self.fn_bodies, "(-1.0f/0.0f)");
+                    }
+                } else {
+                    w!(self.fn_bodies, "{:?}f", val);
+                }
+            }
+            Value::F64(val) => {
+                if val.is_nan() {
+                    w!(self.fn_bodies, "(0.0/0.0)");
+                } else if val.is_infinite() {
+                    if val.is_sign_positive() {
+                        w!(self.fn_bodies, "(1.0/0.0)");
+                    } else {
+                        w!(self.fn_bodies, "(-1.0/0.0)");
+                    }
+                } else {
+                    w!(self.fn_bodies, "{:?}", val);
+                }
+            }
             Value::Uninitialized => w!(self.fn_bodies, "{{0}}"),
             _ => unimplemented!(),
         }
@@ -269,12 +285,16 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         Ok(())
     }
 
-    pub fn write_stmt(&mut self, stmt: &Statement<'ir>) -> Result<(), AluminaError> {
+    pub fn write_stmt(
+        &mut self,
+        diag: &DiagnosticsStack,
+        stmt: &Statement<'ir>,
+    ) -> Result<(), AluminaError> {
         match stmt {
             Statement::Expression(e) => {
                 if !(e.is_void() && e.is_unreachable()) {
                     self.indent();
-                    self.write_expr(e, false)?;
+                    self.write_expr(diag, e, false)?;
                     w!(self.fn_bodies, ";{}", self.endl());
                 }
             }
@@ -292,7 +312,14 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         Ok(())
     }
 
-    pub fn write_expr(&mut self, expr: &ExprP<'ir>, bare_block: bool) -> Result<(), AluminaError> {
+    pub fn write_expr(
+        &mut self,
+        diag: &DiagnosticsStack,
+        expr: &ExprP<'ir>,
+        bare_block: bool,
+    ) -> Result<(), AluminaError> {
+        let _guard = diag.push_span(expr.span);
+
         self.type_writer.add_type(expr.ty)?;
 
         if let Some(span) = expr.span {
@@ -318,19 +345,19 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             ExprKind::Binary(op, lhs, rhs) => {
                 // Cast to C's automatic promotion of to int
                 w!(self.fn_bodies, "({})(", self.ctx.get_type(expr.ty));
-                self.write_expr(lhs, false)?;
+                self.write_expr(diag, lhs, false)?;
                 self.write_binop(*op);
-                self.write_expr(rhs, false)?;
+                self.write_expr(diag, rhs, false)?;
                 w!(self.fn_bodies, ")");
             }
             ExprKind::AssignOp(op, lhs, rhs) => {
-                self.write_expr(lhs, false)?;
+                self.write_expr(diag, lhs, false)?;
                 self.write_binop(*op);
                 w!(self.fn_bodies, "=");
-                self.write_expr(rhs, false)?;
+                self.write_expr(diag, rhs, false)?;
             }
             ExprKind::Call(callee, args) => {
-                self.write_expr(callee, false)?;
+                self.write_expr(diag, callee, false)?;
                 w!(self.fn_bodies, "(");
                 for (idx, arg) in args
                     .iter()
@@ -340,7 +367,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                     if idx > 0 {
                         w!(self.fn_bodies, ", ");
                     }
-                    self.write_expr(arg, false)?;
+                    self.write_expr(diag, arg, false)?;
                 }
                 w!(self.fn_bodies, ")");
             }
@@ -349,33 +376,33 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             }
             ExprKind::Ref(inner) => {
                 w!(self.fn_bodies, "(&");
-                self.write_expr(inner, false)?;
+                self.write_expr(diag, inner, false)?;
                 w!(self.fn_bodies, ")");
             }
             ExprKind::Deref(inner) => {
                 w!(self.fn_bodies, "(*");
-                self.write_expr(inner, false)?;
+                self.write_expr(diag, inner, false)?;
                 w!(self.fn_bodies, ")");
             }
             ExprKind::Unary(op, inner) => {
                 // Cast to C's automatic promotion of to int
                 w!(self.fn_bodies, "({})(", self.ctx.get_type(expr.ty));
                 self.write_unop(*op);
-                self.write_expr(inner, false)?;
+                self.write_expr(diag, inner, false)?;
                 w!(self.fn_bodies, ")");
             }
             ExprKind::Assign(lhs, rhs) => {
-                self.write_expr(lhs, false)?;
+                self.write_expr(diag, lhs, false)?;
                 w!(self.fn_bodies, "=");
-                self.write_expr(rhs, false)?;
+                self.write_expr(diag, rhs, false)?;
             }
             ExprKind::Index(lhs, rhs) => {
-                self.write_expr(lhs, false)?;
+                self.write_expr(diag, lhs, false)?;
                 if let Ty::Array(_, _) = lhs.ty {
                     w!(self.fn_bodies, ".__data");
                 }
                 w!(self.fn_bodies, "[");
-                self.write_expr(rhs, false)?;
+                self.write_expr(diag, rhs, false)?;
                 w!(self.fn_bodies, "]");
             }
             ExprKind::Local(id) => {
@@ -387,29 +414,29 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             ExprKind::Block(stmts, ret) => {
                 if bare_block {
                     for stmt in stmts.iter() {
-                        self.write_stmt(stmt)?;
+                        self.write_stmt(diag, stmt)?;
                     }
 
                     if !ret.is_void() {
                         self.indent();
-                        self.write_expr(ret, true)?;
+                        self.write_expr(diag, ret, true)?;
                     }
                 } else {
                     w!(self.fn_bodies, "__extension__({{{}", self.endl());
                     for stmt in stmts.iter() {
-                        self.write_stmt(stmt)?;
+                        self.write_stmt(diag, stmt)?;
                     }
 
                     if !(ret.is_void() && ret.is_unreachable()) {
                         self.indent();
-                        self.write_expr(ret, false)?;
+                        self.write_expr(diag, ret, false)?;
                         w!(self.fn_bodies, ";{}", self.endl());
                     }
                     w!(self.fn_bodies, "}})");
                 }
             }
             ExprKind::Literal(v) => match v {
-                Value::Str(val, offset) => {
+                Value::Bytes(val, offset) => {
                     self.write_string_literal(&val[*offset..]);
                 }
                 Value::FunctionPointer(item) => {
@@ -428,19 +455,19 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 }
             },
             ExprKind::Field(inner, field) => {
-                self.write_expr(inner, false)?;
+                self.write_expr(diag, inner, false)?;
                 w!(self.fn_bodies, ".{}", self.ctx.get_name(*field));
             }
             ExprKind::TupleIndex(inner, idx) => {
-                self.write_expr(inner, false)?;
+                self.write_expr(diag, inner, false)?;
                 w!(self.fn_bodies, "._{}", idx);
             }
             ExprKind::If(cond, then, els, _) if expr.ty.is_zero_sized() => {
                 w!(self.fn_bodies, "if (");
-                self.write_expr(cond, false)?;
+                self.write_expr(diag, cond, false)?;
                 w!(self.fn_bodies, ") {{{}", self.endl());
                 self.indent += 2;
-                self.write_expr(then, true)?;
+                self.write_expr(diag, then, true)?;
                 self.indent -= 2;
                 w!(self.fn_bodies, "{}", self.endl());
 
@@ -450,7 +477,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 } else {
                     w!(self.fn_bodies, "}} else {{{}", self.endl());
                     self.indent += 2;
-                    self.write_expr(els, true)?;
+                    self.write_expr(diag, els, true)?;
                     self.indent -= 2;
                     w!(self.fn_bodies, "{}", self.endl());
                     self.indent();
@@ -460,17 +487,17 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             }
             ExprKind::If(cond, then, els, _) => {
                 w!(self.fn_bodies, "(");
-                self.write_expr(cond, false)?;
+                self.write_expr(diag, cond, false)?;
                 w!(self.fn_bodies, "?");
-                self.write_expr(then, false)?;
+                self.write_expr(diag, then, false)?;
                 w!(self.fn_bodies, ":");
-                self.write_expr(els, false)?;
+                self.write_expr(diag, els, false)?;
                 w!(self.fn_bodies, ")");
             }
             ExprKind::Cast(inner) => {
                 self.type_writer.add_type(expr.ty)?;
                 w!(self.fn_bodies, "(({})", self.ctx.get_type(expr.ty));
-                self.write_expr(inner, false)?;
+                self.write_expr(diag, inner, false)?;
                 w!(self.fn_bodies, ")");
             }
             ExprKind::Goto(label) => {
@@ -478,7 +505,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             }
             ExprKind::Return(inner) => {
                 w!(self.fn_bodies, "return ");
-                self.write_expr(inner, false)?;
+                self.write_expr(diag, inner, false)?;
             }
             ExprKind::Unreachable => {
                 w!(self.fn_bodies, "__builtin_unreachable()");
@@ -496,6 +523,17 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 }
                 IntrinsicValueKind::Asm(n) => {
                     w!(self.fn_bodies, "asm volatile({:?})", *n);
+                }
+                IntrinsicValueKind::Transmute(inner) => {
+                    self.type_writer.add_type(inner.ty)?;
+                    w!(
+                        self.fn_bodies,
+                        "(union {{ {} _1; {} _2; }}){{ ._1 = ",
+                        self.ctx.get_type(inner.ty),
+                        self.ctx.get_type(expr.ty)
+                    );
+                    self.write_expr(diag, inner, false)?;
+                    w!(self.fn_bodies, " }}._2");
                 }
                 IntrinsicValueKind::Uninitialized => {
                     // I wish there was a prettier way to do this
@@ -535,7 +573,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 w!(self.fn_bodies, "{{.__data={{{}", self.endl());
                 for elem in elems.iter() {
                     self.indent();
-                    self.write_expr(elem, false)?;
+                    self.write_expr(diag, elem, false)?;
                     w!(self.fn_bodies, ",{}", self.endl());
                 }
                 self.indent();
@@ -552,7 +590,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                         continue;
                     }
                     w!(self.fn_bodies, "._{}=", init.index);
-                    self.write_expr(&init.value, false)?;
+                    self.write_expr(diag, &init.value, false)?;
                     w!(self.fn_bodies, ",");
                 }
                 w!(self.fn_bodies, "}}");
@@ -568,10 +606,13 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                         continue;
                     }
                     w!(self.fn_bodies, ".{}=", self.ctx.get_name(init.field));
-                    self.write_expr(&init.value, false)?;
+                    self.write_expr(diag, &init.value, false)?;
                     w!(self.fn_bodies, ",");
                 }
                 w!(self.fn_bodies, "}}");
+            }
+            ExprKind::Tag(_tag, value) => {
+                self.write_expr(diag, value, false)?;
             }
             ExprKind::Void => {}
         }
@@ -585,9 +626,11 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
 
     pub fn write_function_decl(
         &mut self,
+        diag: &DiagnosticsStack,
         id: IrId,
         item: &'ir Function<'ir>,
     ) -> Result<(), AluminaError> {
+        let _guard = diag.push_span(item.span);
         let has_link_name = item
             .attributes
             .iter()
@@ -630,9 +673,11 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
 
     pub fn write_static_decl(
         &mut self,
+        diag: &DiagnosticsStack,
         id: IrId,
         item: &'ir Static<'ir>,
     ) -> Result<(), AluminaError> {
+        let _guard = diag.push_span(item.span);
         self.type_writer.add_type(item.typ)?;
 
         let attributes = if item.attributes.contains(&Attribute::ThreadLocal) {
@@ -673,9 +718,11 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
 
     pub fn write_const_decl(
         &mut self,
+        diag: &DiagnosticsStack,
         id: IrId,
         item: &'ir Const<'ir>,
     ) -> Result<(), AluminaError> {
+        let _guard = diag.push_span(item.span);
         if let Some(name) = item.name {
             self.ctx.register_name(id, CName::Mangled(name, id.id));
         }
@@ -691,7 +738,13 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         Ok(())
     }
 
-    pub fn write_const(&mut self, id: IrId, item: &'ir Const<'ir>) -> Result<(), AluminaError> {
+    pub fn write_const(
+        &mut self,
+        diag: &DiagnosticsStack,
+        id: IrId,
+        item: &'ir Const<'ir>,
+    ) -> Result<(), AluminaError> {
+        let _guard = diag.push_span(item.span);
         w!(
             self.fn_bodies,
             "\nconst static {} {} = ",
@@ -700,7 +753,9 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         );
 
         self.in_const_init = true;
-        let ret = self.write_expr(&item.init, false);
+        let mut elider = ZstElider::new(diag.clone(), self.ctx.ir);
+        let optimized = elider.elide_zst_expr(item.init).unwrap();
+        let ret = self.write_expr(diag, &optimized, false);
         self.in_const_init = false;
         ret?;
 
@@ -711,9 +766,11 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
 
     pub fn write_function_body(
         &mut self,
+        diag: &DiagnosticsStack,
         id: IrId,
         item: &'ir Function<'ir>,
     ) -> Result<(), AluminaError> {
+        let _guard = diag.push_span(item.span);
         let should_export = item.attributes.contains(&Attribute::Export);
 
         if item.body.get().is_none() {
@@ -730,6 +787,10 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         )?;
 
         let body = item.body.get().unwrap();
+
+        let elider = ZstElider::new(diag.clone(), self.ctx.ir);
+        let (local_defs, statements) = elider.elide_zst_func_body(body).unwrap();
+
         w!(self.fn_bodies, "{{\n");
         self.indent += 2;
 
@@ -737,21 +798,24 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             // functions that accept a parameter that is of never type can never be legally called,
             // so we add this to keep C compiler from complaining. If someone called it, it's already
             // UB.
-            self.write_stmt(&Statement::Expression(&Expr {
-                ty: &Ty::Builtin(BuiltinType::Never),
-                kind: ExprKind::Unreachable,
-                value_type: ValueType::RValue,
-                is_const: false,
-                span: None,
-            }))?;
+            self.write_stmt(
+                diag,
+                &Statement::Expression(&Expr {
+                    ty: &Ty::Builtin(BuiltinType::Never),
+                    kind: ExprKind::Unreachable,
+                    value_type: ValueType::RValue,
+                    is_const: false,
+                    span: None,
+                }),
+            )?;
         } else {
-            for def in body.local_defs.iter() {
+            for def in local_defs.iter() {
                 self.write_local_def(def)?;
             }
 
             self.last_span = None;
-            for stmt in body.statements.iter() {
-                self.write_stmt(stmt)?;
+            for stmt in statements.iter() {
+                self.write_stmt(diag, stmt)?;
             }
         }
         self.indent -= 2;

@@ -1,14 +1,16 @@
 /// An interpreter for constant expressions. It's quite slow.
 use crate::ast::BinOp;
 use crate::common::{
-    AluminaError, ArenaAllocatable, ByRef, CodeError, CodeErrorBuilder, CodeErrorKind, HashMap,
+    AluminaError, ArenaAllocatable, ByRef, CodeDiagnostic, CodeError, CodeErrorBuilder, HashMap,
 };
 use crate::diagnostics::DiagnosticsStack;
+use crate::global_ctx::GlobalCtx;
 use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::{BuiltinType, ExprKind, ExprP, IRItem, IrCtx, IrId, Statement, Ty, TyP, UnOp};
 use std::backtrace::Backtrace;
 use std::cell::RefCell;
 use std::cmp::Ordering;
+use std::hash::Hash;
 use std::num::TryFromIntError;
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub};
 use std::rc::Rc;
@@ -18,7 +20,7 @@ use thiserror::Error;
 const MAX_RECURSION_DEPTH: usize = 100;
 const MAX_ITERATIONS: usize = 10000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy)]
 pub enum Value<'ir> {
     Void,
     Uninitialized,
@@ -35,15 +37,147 @@ pub enum Value<'ir> {
     I128(i128),
     USize(usize),
     ISize(isize),
-    F32(&'ir str),
-    F64(&'ir str),
-    Str(&'ir [u8], usize),
+    F32(f32),
+    F64(f64),
+    Bytes(&'ir [u8], usize),
     Tuple(&'ir [Value<'ir>]),
     Array(&'ir [Value<'ir>]),
     Struct(&'ir [(IrId, Value<'ir>)]),
     FunctionPointer(super::IRItemP<'ir>),
-    Pointer(LValue<'ir>),
+    Pointer(LValue<'ir>, TyP<'ir>),
     LValue(LValue<'ir>),
+}
+
+impl PartialEq for Value<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Void, Value::Void) => true,
+            (Value::Uninitialized, Value::Uninitialized) => true,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::U8(a), Value::U8(b)) => a == b,
+            (Value::U16(a), Value::U16(b)) => a == b,
+            (Value::U32(a), Value::U32(b)) => a == b,
+            (Value::U64(a), Value::U64(b)) => a == b,
+            (Value::U128(a), Value::U128(b)) => a == b,
+            (Value::I8(a), Value::I8(b)) => a == b,
+            (Value::I16(a), Value::I16(b)) => a == b,
+            (Value::I32(a), Value::I32(b)) => a == b,
+            (Value::I64(a), Value::I64(b)) => a == b,
+            (Value::I128(a), Value::I128(b)) => a == b,
+            (Value::USize(a), Value::USize(b)) => a == b,
+            (Value::ISize(a), Value::ISize(b)) => a == b,
+            (Value::F32(a), Value::F32(b)) => a.to_bits() == b.to_bits(),
+            (Value::F64(a), Value::F64(b)) => a.to_bits() == b.to_bits(),
+            (Value::Bytes(a, a_len), Value::Bytes(b, b_len)) => a_len == b_len && a == b,
+            (Value::Tuple(a), Value::Tuple(b)) => a == b,
+            (Value::Array(a), Value::Array(b)) => a == b,
+            (Value::Struct(a), Value::Struct(b)) => a == b,
+            (Value::FunctionPointer(a), Value::FunctionPointer(b)) => a == b,
+            (Value::Pointer(a, _), Value::Pointer(b, _)) => a == b,
+            (Value::LValue(a), Value::LValue(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Value<'_> {}
+impl Hash for Value<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Value::Void => state.write_u8(0),
+            Value::Uninitialized => state.write_u8(1),
+            Value::Bool(a) => {
+                state.write_u8(2);
+                state.write_u8(*a as u8);
+            }
+            Value::U8(a) => {
+                state.write_u8(3);
+                state.write_u8(*a);
+            }
+            Value::U16(a) => {
+                state.write_u8(4);
+                state.write_u16(*a);
+            }
+            Value::U32(a) => {
+                state.write_u8(5);
+                state.write_u32(*a);
+            }
+            Value::U64(a) => {
+                state.write_u8(6);
+                state.write_u64(*a);
+            }
+            Value::U128(a) => {
+                state.write_u8(7);
+                state.write_u128(*a);
+            }
+            Value::I8(a) => {
+                state.write_u8(8);
+                state.write_u8(*a as u8);
+            }
+            Value::I16(a) => {
+                state.write_u8(9);
+                state.write_u16(*a as u16);
+            }
+            Value::I32(a) => {
+                state.write_u8(10);
+                state.write_u32(*a as u32);
+            }
+            Value::I64(a) => {
+                state.write_u8(11);
+                state.write_u64(*a as u64);
+            }
+            Value::I128(a) => {
+                state.write_u8(12);
+                state.write_u128(*a as u128);
+            }
+            Value::USize(a) => {
+                state.write_u8(13);
+                state.write_usize(*a);
+            }
+            Value::ISize(a) => {
+                state.write_u8(14);
+                state.write_usize(*a as usize);
+            }
+            Value::F32(a) => {
+                state.write_u8(15);
+                state.write_u32(a.to_bits());
+            }
+            Value::F64(a) => {
+                state.write_u8(16);
+                state.write_u64(a.to_bits());
+            }
+            Value::Bytes(a, a_len) => {
+                state.write_u8(17);
+                a.hash(state);
+                a_len.hash(state);
+            }
+            Value::Tuple(a) => {
+                state.write_u8(18);
+                a.hash(state);
+            }
+            Value::Array(a) => {
+                state.write_u8(19);
+                a.hash(state);
+            }
+            Value::Struct(a) => {
+                state.write_u8(20);
+                a.hash(state);
+            }
+            Value::FunctionPointer(a) => {
+                state.write_u8(21);
+                a.hash(state);
+            }
+            Value::Pointer(a, ty) => {
+                state.write_u8(22);
+                a.hash(state);
+                ty.hash(state);
+            }
+            Value::LValue(a) => {
+                state.write_u8(23);
+                a.hash(state);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -66,8 +200,12 @@ pub enum ConstEvalErrorKind {
     CompilerBug(ByRef<Backtrace>),
     #[error("cyclic reference")]
     CyclicReference,
+    #[error("performing pointer operations on pointers of different provenance")]
+    ProvenanceMismatch,
     #[error("trying to access uninitialized value")]
     Uninitialized,
+    #[error("accessing memory location via an incompatible pointer")]
+    IncompatiblePointer,
     #[error("index out of bounds")]
     IndexOutOfBounds,
     #[error("arithmetic overflow")]
@@ -86,6 +224,8 @@ pub enum ConstEvalErrorKind {
     UseAfterFree,
     #[error("invalid pointer used to free memory")]
     InvalidFree,
+    #[error("function call with an wrong signature")]
+    InvalidCall,
 
     // These are not errors, but they are used to signal that the evaluation should stop.
     // They are bugs if they leak to the caller
@@ -95,9 +235,9 @@ pub enum ConstEvalErrorKind {
     Return,
 }
 
-impl From<ConstEvalErrorKind> for CodeErrorKind {
+impl From<ConstEvalErrorKind> for CodeDiagnostic {
     fn from(kind: ConstEvalErrorKind) -> Self {
-        CodeErrorKind::CannotConstEvaluate(kind)
+        CodeDiagnostic::CannotConstEvaluate(kind)
     }
 }
 
@@ -140,7 +280,7 @@ use super::builder::TypeBuilder;
 use super::IRItemP;
 
 impl<'ir> Value<'ir> {
-    fn equal(self, other: Value) -> Result<Value<'ir>, ConstEvalErrorKind> {
+    fn equals(self, other: Value<'ir>) -> Result<Value<'ir>, ConstEvalErrorKind> {
         match (self, other) {
             (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a == b)),
             (Value::U8(a), Value::U8(b)) => Ok(Value::Bool(a == b)),
@@ -153,27 +293,82 @@ impl<'ir> Value<'ir> {
             (Value::I32(a), Value::I32(b)) => Ok(Value::Bool(a == b)),
             (Value::I64(a), Value::I64(b)) => Ok(Value::Bool(a == b)),
             (Value::I128(a), Value::I128(b)) => Ok(Value::Bool(a == b)),
+            (Value::F32(a), Value::F32(b)) => Ok(Value::Bool(a == b)),
+            (Value::F64(a), Value::F64(b)) => Ok(Value::Bool(a == b)),
             (Value::USize(a), Value::USize(b)) => Ok(Value::Bool(a == b)),
             (Value::ISize(a), Value::ISize(b)) => Ok(Value::Bool(a == b)),
+            (Value::Bytes(a_slice, a_index), Value::Bytes(b_slice, b_index)) => {
+                Ok(Value::Bool(a_slice == b_slice && a_index == b_index))
+            }
+            (Value::FunctionPointer(a), Value::FunctionPointer(b)) => Ok(Value::Bool(a == b)),
+            (Value::Pointer(a, _), Value::Pointer(b, _)) => Ok(Value::Bool(a == b)),
             _ => Err(ConstEvalErrorKind::Unsupported),
         }
     }
 
-    fn cmp(self, other: Value) -> Result<Ordering, ConstEvalErrorKind> {
+    fn compare(self, other: Value<'ir>) -> Result<Option<Ordering>, ConstEvalErrorKind> {
         match (self, other) {
-            (Value::U8(a), Value::U8(b)) => Ok(a.cmp(&b)),
-            (Value::U16(a), Value::U16(b)) => Ok(a.cmp(&b)),
-            (Value::U32(a), Value::U32(b)) => Ok(a.cmp(&b)),
-            (Value::U64(a), Value::U64(b)) => Ok(a.cmp(&b)),
-            (Value::U128(a), Value::U128(b)) => Ok(a.cmp(&b)),
-            (Value::I8(a), Value::I8(b)) => Ok(a.cmp(&b)),
-            (Value::I16(a), Value::I16(b)) => Ok(a.cmp(&b)),
-            (Value::I32(a), Value::I32(b)) => Ok(a.cmp(&b)),
-            (Value::I64(a), Value::I64(b)) => Ok(a.cmp(&b)),
-            (Value::I128(a), Value::I128(b)) => Ok(a.cmp(&b)),
-            (Value::USize(a), Value::USize(b)) => Ok(a.cmp(&b)),
-            (Value::ISize(a), Value::ISize(b)) => Ok(a.cmp(&b)),
-            (Value::Bool(a), Value::Bool(b)) => Ok(a.cmp(&b)),
+            (Value::U8(a), Value::U8(b)) => Ok(a.partial_cmp(&b)),
+            (Value::U16(a), Value::U16(b)) => Ok(a.partial_cmp(&b)),
+            (Value::U32(a), Value::U32(b)) => Ok(a.partial_cmp(&b)),
+            (Value::U64(a), Value::U64(b)) => Ok(a.partial_cmp(&b)),
+            (Value::U128(a), Value::U128(b)) => Ok(a.partial_cmp(&b)),
+            (Value::I8(a), Value::I8(b)) => Ok(a.partial_cmp(&b)),
+            (Value::I16(a), Value::I16(b)) => Ok(a.partial_cmp(&b)),
+            (Value::I32(a), Value::I32(b)) => Ok(a.partial_cmp(&b)),
+            (Value::I64(a), Value::I64(b)) => Ok(a.partial_cmp(&b)),
+            (Value::I128(a), Value::I128(b)) => Ok(a.partial_cmp(&b)),
+            (Value::F32(a), Value::F32(b)) => Ok(a.partial_cmp(&b)),
+            (Value::F64(a), Value::F64(b)) => Ok(a.partial_cmp(&b)),
+            (Value::USize(a), Value::USize(b)) => Ok(a.partial_cmp(&b)),
+            (Value::ISize(a), Value::ISize(b)) => Ok(a.partial_cmp(&b)),
+            (Value::Bool(a), Value::Bool(b)) => Ok(a.partial_cmp(&b)),
+            (Value::Bytes(a_slice, a_index), Value::Bytes(b_slice, b_index)) => {
+                if a_slice == b_slice {
+                    Ok(a_index.partial_cmp(&b_index))
+                } else {
+                    Err(ConstEvalErrorKind::ProvenanceMismatch)
+                }
+            }
+            (Value::Pointer(a, _), Value::Pointer(b, _)) => match (a, b) {
+                (LValue::Const(a), LValue::Const(b)) => {
+                    if a == b {
+                        Ok(Some(Ordering::Equal))
+                    } else {
+                        Err(ConstEvalErrorKind::ProvenanceMismatch)
+                    }
+                }
+                (LValue::Variable(a), LValue::Variable(b))
+                | (LValue::Alloc(a), LValue::Alloc(b)) => {
+                    if a == b {
+                        Ok(Some(Ordering::Equal))
+                    } else {
+                        Err(ConstEvalErrorKind::ProvenanceMismatch)
+                    }
+                }
+                (LValue::Field(a, a_id), LValue::Field(b, b_id)) => {
+                    if a == b && a_id == b_id {
+                        Ok(Some(Ordering::Equal))
+                    } else {
+                        Err(ConstEvalErrorKind::ProvenanceMismatch)
+                    }
+                }
+                (LValue::TupleIndex(a, a_idx), LValue::TupleIndex(b, b_idx)) => {
+                    if a == b && a_idx == b_idx {
+                        Ok(Some(Ordering::Equal))
+                    } else {
+                        Err(ConstEvalErrorKind::ProvenanceMismatch)
+                    }
+                }
+                (LValue::Index(a, a_idx), LValue::Index(b, b_idx)) => {
+                    if a == b {
+                        Ok(a_idx.partial_cmp(&b_idx))
+                    } else {
+                        Err(ConstEvalErrorKind::ProvenanceMismatch)
+                    }
+                }
+                _ => Err(ConstEvalErrorKind::Unsupported),
+            },
             _ => Err(ConstEvalErrorKind::Unsupported),
         }
     }
@@ -217,6 +412,8 @@ impl<'ir> Add for Value<'ir> {
                 .checked_add(b)
                 .map(ISize)
                 .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
+            (F32(a), F32(b)) => Ok(F32(a + b)),
+            (F64(a), F64(b)) => Ok(F64(a + b)),
             _ => Err(ConstEvalErrorKind::Unsupported),
         }
     }
@@ -260,6 +457,8 @@ impl<'ir> Sub for Value<'ir> {
                 .checked_sub(b)
                 .map(ISize)
                 .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
+            (F32(a), F32(b)) => Ok(F32(a - b)),
+            (F64(a), F64(b)) => Ok(F64(a - b)),
             _ => Err(ConstEvalErrorKind::Unsupported),
         }
     }
@@ -303,6 +502,8 @@ impl<'ir> Mul for Value<'ir> {
                 .checked_mul(b)
                 .map(ISize)
                 .ok_or(ConstEvalErrorKind::ArithmeticOverflow),
+            (F32(a), F32(b)) => Ok(F32(a * b)),
+            (F64(a), F64(b)) => Ok(F64(a * b)),
             _ => Err(ConstEvalErrorKind::Unsupported),
         }
     }
@@ -519,6 +720,8 @@ impl<'ir> Div for Value<'ir> {
             (I128(a), I128(b)) => a.checked_div(b).map(I128),
             (USize(a), USize(b)) => a.checked_div(b).map(USize),
             (ISize(a), ISize(b)) => a.checked_div(b).map(ISize),
+            (F32(a), F32(b)) => Some(F32(a / b)),
+            (F64(a), F64(b)) => Some(F64(a / b)),
             _ => None,
         };
 
@@ -558,6 +761,7 @@ struct ConstEvalCtxInner<'ir> {
 
 #[derive(Clone)]
 pub struct ConstEvalCtx<'ir> {
+    global_ctx: GlobalCtx,
     ir: &'ir IrCtx<'ir>,
     malloc_bag: MallocBag<'ir>,
     inner: Rc<RefCell<ConstEvalCtxInner<'ir>>>,
@@ -603,8 +807,9 @@ impl<'ir> MallocBag<'ir> {
 }
 
 impl<'ir> ConstEvalCtx<'ir> {
-    pub fn new(ir: &'ir IrCtx<'ir>, malloc_bag: MallocBag<'ir>) -> Self {
+    pub fn new(global_ctx: GlobalCtx, ir: &'ir IrCtx<'ir>, malloc_bag: MallocBag<'ir>) -> Self {
         Self {
+            global_ctx,
             ir,
             malloc_bag,
             inner: Rc::new(RefCell::new(ConstEvalCtxInner {
@@ -661,6 +866,7 @@ pub struct ConstEvaluator<'ir> {
 
 impl<'ir> ConstEvaluator<'ir> {
     pub fn new<I>(
+        global_ctx: GlobalCtx,
         diag: DiagnosticsStack,
         malloc_bag: MallocBag<'ir>,
         ir: &'ir IrCtx<'ir>,
@@ -669,7 +875,7 @@ impl<'ir> ConstEvaluator<'ir> {
     where
         I: IntoIterator<Item = (IrId, TyP<'ir>)>,
     {
-        let ctx = ConstEvalCtx::new(ir, malloc_bag);
+        let ctx = ConstEvalCtx::new(global_ctx, ir, malloc_bag);
         for (id, typ) in local_types {
             ctx.declare(id, typ);
         }
@@ -687,6 +893,7 @@ impl<'ir> ConstEvaluator<'ir> {
     }
 
     pub fn for_codegen<I>(
+        global_ctx: GlobalCtx,
         diag: DiagnosticsStack,
         malloc_bag: MallocBag<'ir>,
         ir: &'ir IrCtx<'ir>,
@@ -695,7 +902,7 @@ impl<'ir> ConstEvaluator<'ir> {
     where
         I: IntoIterator<Item = (IrId, TyP<'ir>)>,
     {
-        let mut ret = Self::new(diag, malloc_bag, ir, local_types);
+        let mut ret = Self::new(global_ctx, diag, malloc_bag, ir, local_types);
         ret.codegen = true;
         ret
     }
@@ -738,7 +945,6 @@ impl<'ir> ConstEvaluator<'ir> {
             Value::U16(a) => Value::U128(a as u128),
             Value::U32(a) => Value::U128(a as u128),
             Value::U64(a) => Value::U128(a as u128),
-            Value::U128(a) => Value::U128(a),
             Value::USize(a) => Value::U128(a as u128),
             Value::I8(a) => Value::I128(a as i128),
             Value::I16(a) => Value::I128(a as i128),
@@ -747,6 +953,7 @@ impl<'ir> ConstEvaluator<'ir> {
             Value::I128(a) => Value::I128(a),
             Value::ISize(a) => Value::I128(a as i128),
             Value::Bool(a) => Value::U128(a as u128),
+            Value::F32(a) => Value::F64(a as f64),
             _ => val,
         };
 
@@ -763,6 +970,9 @@ impl<'ir> ConstEvaluator<'ir> {
             (Value::U128(a), Ty::Builtin(BuiltinType::I64)) => Ok(Value::I64(a as i64)),
             (Value::U128(a), Ty::Builtin(BuiltinType::I128)) => Ok(Value::I128(a as i128)),
             (Value::U128(a), Ty::Builtin(BuiltinType::ISize)) => Ok(Value::ISize(a as isize)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::F64)) => Ok(Value::F64(a as f64)),
+            (Value::U128(a), Ty::Builtin(BuiltinType::F32)) => Ok(Value::F32(a as f32)),
+
             (Value::I128(a), Ty::Builtin(BuiltinType::U8)) => Ok(Value::U8(a as u8)),
             (Value::I128(a), Ty::Builtin(BuiltinType::U16)) => Ok(Value::U16(a as u16)),
             (Value::I128(a), Ty::Builtin(BuiltinType::U32)) => Ok(Value::U32(a as u32)),
@@ -775,11 +985,27 @@ impl<'ir> ConstEvaluator<'ir> {
             (Value::I128(a), Ty::Builtin(BuiltinType::I64)) => Ok(Value::I64(a as i64)),
             (Value::I128(a), Ty::Builtin(BuiltinType::I128)) => Ok(Value::I128(a)),
             (Value::I128(a), Ty::Builtin(BuiltinType::ISize)) => Ok(Value::ISize(a as isize)),
-            (Value::F64(a), Ty::Builtin(BuiltinType::F32)) => Ok(Value::F32(a)),
-            (Value::F32(a), Ty::Builtin(BuiltinType::F64)) => Ok(Value::F64(a)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::F64)) => Ok(Value::F64(a as f64)),
+            (Value::I128(a), Ty::Builtin(BuiltinType::F32)) => Ok(Value::F32(a as f32)),
+
+            (Value::F64(a), Ty::Builtin(BuiltinType::U8)) => Ok(Value::U8(a as u8)),
+            (Value::F64(a), Ty::Builtin(BuiltinType::U16)) => Ok(Value::U16(a as u16)),
+            (Value::F64(a), Ty::Builtin(BuiltinType::U32)) => Ok(Value::U32(a as u32)),
+            (Value::F64(a), Ty::Builtin(BuiltinType::U64)) => Ok(Value::U64(a as u64)),
+            (Value::F64(a), Ty::Builtin(BuiltinType::U128)) => Ok(Value::U128(a as u128)),
+            (Value::F64(a), Ty::Builtin(BuiltinType::USize)) => Ok(Value::USize(a as usize)),
+            (Value::F64(a), Ty::Builtin(BuiltinType::I8)) => Ok(Value::I8(a as i8)),
+            (Value::F64(a), Ty::Builtin(BuiltinType::I16)) => Ok(Value::I16(a as i16)),
+            (Value::F64(a), Ty::Builtin(BuiltinType::I32)) => Ok(Value::I32(a as i32)),
+            (Value::F64(a), Ty::Builtin(BuiltinType::I64)) => Ok(Value::I64(a as i64)),
+            (Value::F64(a), Ty::Builtin(BuiltinType::I128)) => Ok(Value::I128(a as i128)),
+            (Value::F64(a), Ty::Builtin(BuiltinType::ISize)) => Ok(Value::ISize(a as isize)),
+
+            (Value::F64(a), Ty::Builtin(BuiltinType::F32)) => Ok(Value::F32(a as f32)),
+
             (Value::FunctionPointer(id), Ty::FunctionPointer(..)) => Ok(Value::FunctionPointer(id)),
-            (Value::Pointer(value), Ty::Pointer(_underlying, _is_const)) => {
-                Ok(Value::Pointer(value))
+            (Value::Pointer(value, original_typ), Ty::Pointer(_, _)) => {
+                Ok(Value::Pointer(value, original_typ))
             }
             _ => unsupported!(self),
         }
@@ -856,7 +1082,7 @@ impl<'ir> ConstEvaluator<'ir> {
                         Ok(_) => {}
                         Err(e) => {
                             let AluminaError::CodeErrors(ref v) = e else { return Err(e); };
-                            let [CodeError { kind: CodeErrorKind::CannotConstEvaluate(ConstEvalErrorKind::Jump(label)), .. }] = v[..] else { return Err(e) };
+                            let [CodeError { kind: CodeDiagnostic::CannotConstEvaluate(ConstEvalErrorKind::Jump(label)), .. }] = v[..] else { return Err(e) };
 
                             if let Some(new_ip) = label_indexes.get(&label) {
                                 ip = *new_ip;
@@ -997,8 +1223,8 @@ impl<'ir> ConstEvaluator<'ir> {
 
         match &expr.kind {
             ExprKind::Void => Ok(Value::Void),
-            ExprKind::Binary(op, lhs, rhs) => {
-                let lhs = self.const_eval_rvalue(lhs)?;
+            ExprKind::Binary(op, lhs_e, rhs_e) => {
+                let lhs = self.const_eval_rvalue(lhs_e)?;
 
                 // Special case for short-circuiting operators
                 match (op, lhs) {
@@ -1006,12 +1232,12 @@ impl<'ir> ConstEvaluator<'ir> {
                         return if a {
                             Ok(lhs)
                         } else {
-                            self.const_eval_rvalue(rhs)
+                            self.const_eval_rvalue(rhs_e)
                         }
                     }
                     (BinOp::And, Value::Bool(a)) => {
                         return if a {
-                            self.const_eval_rvalue(rhs)
+                            self.const_eval_rvalue(rhs_e)
                         } else {
                             Ok(lhs)
                         }
@@ -1022,8 +1248,8 @@ impl<'ir> ConstEvaluator<'ir> {
                     _ => {}
                 };
 
-                let rhs = self.const_eval_rvalue(rhs)?;
-                self.bin_op(lhs, *op, rhs)
+                let rhs = self.const_eval_rvalue(rhs_e)?;
+                self.bin_op(lhs, lhs_e.ty, *op, rhs, rhs_e.ty)
             }
             ExprKind::Local(id) => Ok(Value::LValue(LValue::Variable(
                 *self.remapped_variables.get(id).unwrap_or(id),
@@ -1039,18 +1265,21 @@ impl<'ir> ConstEvaluator<'ir> {
 
                 ret.with_backtrace(&self.diag)
             }
-            ExprKind::Ref(value) => {
-                let value = self.const_eval_defered(value)?;
-                match value {
-                    Value::LValue(lvalue) => Ok(Value::Pointer(lvalue)),
-                    _ => unsupported!(self),
-                }
-            }
+            ExprKind::Ref(value) => match self.const_eval_defered(value)? {
+                Value::LValue(lvalue) => Ok(Value::Pointer(lvalue, value.ty)),
+                _ => unsupported!(self),
+            },
             ExprKind::Deref(value) => {
                 let value = self.const_eval_rvalue(value)?;
                 match value {
-                    Value::Pointer(lvalue) => Ok(Value::LValue(lvalue)),
-                    Value::Str(arr, off) => {
+                    Value::Pointer(lvalue, original_typ) => {
+                        if expr.ty != original_typ {
+                            Err(ConstEvalErrorKind::IncompatiblePointer).with_backtrace(&self.diag)
+                        } else {
+                            Ok(Value::LValue(lvalue))
+                        }
+                    }
+                    Value::Bytes(arr, off) => {
                         if off >= arr.len() {
                             return Err(ConstEvalErrorKind::IndexOutOfBounds)
                                 .with_backtrace(&self.diag);
@@ -1135,13 +1364,13 @@ impl<'ir> ConstEvaluator<'ir> {
                     _ => bug!(self),
                 }
             }
-            ExprKind::AssignOp(op, lhs, rhs) => {
-                let lhs = self.const_eval_defered(lhs)?;
-                let rhs = self.const_eval_rvalue(rhs)?;
+            ExprKind::AssignOp(op, lhs_e, rhs_e) => {
+                let lhs = self.const_eval_defered(lhs_e)?;
+                let rhs = self.const_eval_rvalue(rhs_e)?;
                 match lhs {
                     Value::LValue(lvalue) => {
                         let normalized = self.materialize(lhs)?;
-                        let res = self.bin_op(normalized, *op, rhs)?;
+                        let res = self.bin_op(normalized, lhs_e.ty, *op, rhs, rhs_e.ty)?;
                         self.assign(lvalue, res)?;
                         Ok(Value::Void)
                     }
@@ -1156,15 +1385,72 @@ impl<'ir> ConstEvaluator<'ir> {
                 IntrinsicValueKind::Uninitialized => Ok(Value::Uninitialized),
                 IntrinsicValueKind::Dangling(..) => Ok(Value::Uninitialized),
                 IntrinsicValueKind::SizeOfLike(_, _) => unsupported!(self),
+                IntrinsicValueKind::Transmute(inner) => {
+                    let inner = self.const_eval_rvalue(inner)?;
+
+                    // Very limited transmutations
+                    match (inner, expr.ty) {
+                        (Value::U8(a), Ty::Builtin(BuiltinType::I8)) => Ok(Value::I8(a as i8)),
+                        (Value::U16(a), Ty::Builtin(BuiltinType::I16)) => Ok(Value::I16(a as i16)),
+                        (Value::U32(a), Ty::Builtin(BuiltinType::I32)) => Ok(Value::I32(a as i32)),
+                        (Value::U64(a), Ty::Builtin(BuiltinType::I64)) => Ok(Value::I64(a as i64)),
+                        (Value::U128(a), Ty::Builtin(BuiltinType::I128)) => {
+                            Ok(Value::I128(a as i128))
+                        }
+                        (Value::USize(a), Ty::Builtin(BuiltinType::ISize)) => {
+                            Ok(Value::ISize(a as isize))
+                        }
+
+                        (Value::I8(a), Ty::Builtin(BuiltinType::U8)) => Ok(Value::U8(a as u8)),
+                        (Value::I16(a), Ty::Builtin(BuiltinType::U16)) => Ok(Value::U16(a as u16)),
+                        (Value::I32(a), Ty::Builtin(BuiltinType::U32)) => Ok(Value::U32(a as u32)),
+                        (Value::I64(a), Ty::Builtin(BuiltinType::U64)) => Ok(Value::U64(a as u64)),
+                        (Value::I128(a), Ty::Builtin(BuiltinType::U128)) => {
+                            Ok(Value::U128(a as u128))
+                        }
+                        (Value::ISize(a), Ty::Builtin(BuiltinType::USize)) => {
+                            Ok(Value::USize(a as usize))
+                        }
+
+                        (Value::F64(a), Ty::Builtin(BuiltinType::U64)) => {
+                            Ok(Value::U64(a.to_bits()))
+                        }
+                        (Value::F64(a), Ty::Builtin(BuiltinType::I64)) => {
+                            Ok(Value::I64(a.to_bits() as i64))
+                        }
+                        (Value::F32(a), Ty::Builtin(BuiltinType::U32)) => {
+                            Ok(Value::U32(a.to_bits()))
+                        }
+                        (Value::F32(a), Ty::Builtin(BuiltinType::I32)) => {
+                            Ok(Value::I32(a.to_bits() as i32))
+                        }
+
+                        (Value::U64(a), Ty::Builtin(BuiltinType::F64)) => {
+                            Ok(Value::F64(f64::from_bits(a)))
+                        }
+                        (Value::I64(a), Ty::Builtin(BuiltinType::F64)) => {
+                            Ok(Value::F64(f64::from_bits(a as u64)))
+                        }
+                        (Value::U32(a), Ty::Builtin(BuiltinType::F32)) => {
+                            Ok(Value::F32(f32::from_bits(a)))
+                        }
+                        (Value::I32(a), Ty::Builtin(BuiltinType::F32)) => {
+                            Ok(Value::F32(f32::from_bits(a as u32)))
+                        }
+                        _ => unsupported!(self),
+                    }
+                }
                 IntrinsicValueKind::Asm(_) => unsupported!(self),
                 IntrinsicValueKind::FunctionLike(_) => unsupported!(self),
                 IntrinsicValueKind::ConstLike(_) => unsupported!(self),
-                IntrinsicValueKind::InConstContext => Ok(Value::Bool(!self.codegen)),
+                IntrinsicValueKind::InConstContext => Ok(Value::Bool(
+                    !self.codegen || self.ctx.global_ctx.has_option("force-const-context"),
+                )),
                 IntrinsicValueKind::ConstPanic(expr) => {
                     let value = self.const_eval_rvalue(expr)?;
                     match self.extract_constant_string_from_slice(&value) {
                         Some(msg) => {
-                            return Err(CodeErrorKind::ConstPanic(
+                            return Err(CodeDiagnostic::ConstPanic(
                                 std::str::from_utf8(msg).unwrap().to_string(),
                             ))
                             .with_backtrace(&self.diag)
@@ -1179,11 +1465,11 @@ impl<'ir> ConstEvaluator<'ir> {
                     match self.extract_constant_string_from_slice(&value) {
                         Some(msg) => {
                             if *is_warning {
-                                self.diag.warn(CodeErrorKind::ConstMessage(
+                                self.diag.warn(CodeDiagnostic::ConstMessage(
                                     std::str::from_utf8(msg).unwrap().to_string(),
                                 ));
                             } else {
-                                self.diag.note(CodeErrorKind::ConstMessage(
+                                self.diag.note(CodeDiagnostic::ConstMessage(
                                     std::str::from_utf8(msg).unwrap().to_string(),
                                 ));
                             }
@@ -1202,10 +1488,10 @@ impl<'ir> ConstEvaluator<'ir> {
                             let value = make_uninitialized(self.ir, self.types.array(ty, size));
                             self.ctx.malloc_bag.define(id, value);
 
-                            Ok(Value::Pointer(LValue::Index(
-                                LValue::Alloc(id).alloc_on(self.ir),
-                                0,
-                            )))
+                            Ok(Value::Pointer(
+                                LValue::Index(LValue::Alloc(id).alloc_on(self.ir), 0),
+                                ty,
+                            ))
                         }
                         _ => bug!(self),
                     }
@@ -1213,7 +1499,8 @@ impl<'ir> ConstEvaluator<'ir> {
                 IntrinsicValueKind::ConstFree(ptr) => {
                     let ptr = self.const_eval_rvalue(ptr)?;
                     match ptr {
-                        Value::Pointer(LValue::Index(LValue::Alloc(id), 0))
+                        // don't need to check that it's a compatible pointer here really
+                        Value::Pointer(LValue::Index(LValue::Alloc(id), 0), _)
                             if self.ctx.malloc_bag.free(*id).is_some() =>
                         {
                             Ok(Value::Void)
@@ -1230,14 +1517,12 @@ impl<'ir> ConstEvaluator<'ir> {
             }
             ExprKind::Call(callee, args) => {
                 let callee = self.const_eval_rvalue(callee)?;
-                let (arg_spec, expr, local_defs) = match callee {
+                let (arg_spec, func_body, _ret) = match callee {
                     Value::FunctionPointer(fun) => {
                         let func = fun.get_function().with_backtrace(&self.diag)?;
-
-                        let (body, local_defs) = func
+                        let func_body = func
                             .body
                             .get()
-                            .and_then(|b| b.raw_body.map(|rb| (rb, b.local_defs)))
                             .ok_or_else(|| {
                                 ConstEvalErrorKind::UnsupportedFunction(
                                     func.name.unwrap_or("<unnamed>").to_string(),
@@ -1245,13 +1530,13 @@ impl<'ir> ConstEvaluator<'ir> {
                             })
                             .with_backtrace(&self.diag)?;
 
-                        (func.args, body, local_defs)
+                        (func.args, func_body, func.return_type)
                     }
                     _ => unsupported!(self),
                 };
 
                 let mut remapped_variables = HashMap::default();
-                for local_def in local_defs {
+                for local_def in func_body.local_defs {
                     let new_id = self.ir.make_id();
                     remapped_variables.insert(local_def.id, new_id);
 
@@ -1268,13 +1553,13 @@ impl<'ir> ConstEvaluator<'ir> {
 
                 let mut child = self.make_child(remapped_variables)?;
 
-                let ret = match child.const_eval_rvalue(expr) {
+                let ret = match child.const_eval_rvalue(func_body.expr) {
                     Ok(value) => Ok(value),
                     Err(e) => {
                         let AluminaError::CodeErrors(ref v) = e else {
                             return Err(e);
                         };
-                        let [CodeError { kind: CodeErrorKind::CannotConstEvaluate(ConstEvalErrorKind::Return), .. }] = v[..] else { return Err(e) };
+                        let [CodeError { kind: CodeDiagnostic::CannotConstEvaluate(ConstEvalErrorKind::Return), .. }] = v[..] else { return Err(e) };
                         let value = child.return_slot.take().unwrap();
                         Ok(value)
                     }
@@ -1286,6 +1571,16 @@ impl<'ir> ConstEvaluator<'ir> {
             ExprKind::Unreachable => {
                 Err(ConstEvalErrorKind::ToReachTheUnreachableStar).with_backtrace(&self.diag)
             }
+            ExprKind::Tag(tag, inner) => match *tag {
+                "non_const" => {
+                    if self.codegen {
+                        self.const_eval_rvalue(inner)
+                    } else {
+                        unsupported!(self)
+                    }
+                }
+                _ => self.const_eval_rvalue(inner),
+            },
         }
     }
 
@@ -1293,8 +1588,10 @@ impl<'ir> ConstEvaluator<'ir> {
     fn plus_minus(
         &mut self,
         lhs: Value<'ir>,
+        lhs_typ: TyP<'ir>,
         op: BinOp,
         rhs: Value<'ir>,
+        rhs_typ: TyP<'ir>,
     ) -> Result<Value<'ir>, AluminaError> {
         macro_rules! offset {
             () => {
@@ -1307,44 +1604,80 @@ impl<'ir> ConstEvaluator<'ir> {
             };
         }
 
+        macro_rules! check_type_match {
+            ($original:expr, $current:expr) => {{
+                let Ty::Pointer(current, _) = $current else { bug!(self); };
+
+                if $original != *current {
+                    return Err(ConstEvalErrorKind::IncompatiblePointer).with_backtrace(&self.diag);
+                }
+            }};
+        }
+
         match (lhs, rhs) {
             (
-                Value::Pointer(LValue::Index(a, a_offset)),
-                Value::Pointer(LValue::Index(b, b_offset)),
+                Value::Pointer(LValue::Index(a, a_offset), a_orig),
+                Value::Pointer(LValue::Index(b, b_offset), b_orig),
             ) if op == BinOp::Minus => {
                 if b != a {
-                    return Err(ConstEvalErrorKind::IndexOutOfBounds).with_backtrace(&self.diag);
+                    return Err(ConstEvalErrorKind::ProvenanceMismatch).with_backtrace(&self.diag);
+                }
+
+                check_type_match!(a_orig, lhs_typ);
+                check_type_match!(b_orig, rhs_typ);
+
+                let diff = (a_offset as isize) - (b_offset as isize);
+                return Ok(Value::ISize(diff));
+            }
+            (Value::Bytes(a, a_offset), Value::Bytes(b, b_offset)) if op == BinOp::Minus => {
+                if b != a {
+                    return Err(ConstEvalErrorKind::ProvenanceMismatch).with_backtrace(&self.diag);
                 }
 
                 let diff = (a_offset as isize) - (b_offset as isize);
                 return Ok(Value::ISize(diff));
             }
-            (Value::Str(buf, offset), _) => {
+            (Value::Pointer(a, a_orig), Value::Pointer(b, b_orig)) if op == BinOp::Minus => {
+                if a == b {
+                    check_type_match!(a_orig, lhs_typ);
+                    check_type_match!(b_orig, rhs_typ);
+
+                    return Ok(Value::ISize(0));
+                } else {
+                    return Err(ConstEvalErrorKind::ProvenanceMismatch).with_backtrace(&self.diag);
+                }
+            }
+            (Value::Bytes(buf, offset), _) => {
                 let new_offset = match op {
                     BinOp::Plus => (offset as isize) + offset!(),
-                    BinOp::Minus => (offset as isize) + offset!(),
+                    BinOp::Minus => (offset as isize) - offset!(),
                     _ => bug!(self),
                 };
                 if new_offset < 0 || new_offset > (buf.len() as isize) {
                     return Err(ConstEvalErrorKind::IndexOutOfBounds).with_backtrace(&self.diag);
                 }
-                return Ok(Value::Str(buf, new_offset as usize));
+                return Ok(Value::Bytes(buf, new_offset as usize));
             }
-            (Value::Pointer(LValue::Index(inner, offset)), _) => {
+            (Value::Pointer(LValue::Index(inner, offset), orig), _) => {
                 let arr = match self.materialize_lvalue(*inner)? {
                     Value::Array(arr) => arr,
                     _ => unsupported!(self),
                 };
 
+                check_type_match!(orig, lhs_typ);
+
                 let new_offset = match op {
                     BinOp::Plus => (offset as isize) + offset!(),
-                    BinOp::Minus => (offset as isize) + offset!(),
+                    BinOp::Minus => (offset as isize) - offset!(),
                     _ => bug!(self),
                 };
                 if new_offset < 0 || new_offset > (arr.len() as isize) {
                     return Err(ConstEvalErrorKind::IndexOutOfBounds).with_backtrace(&self.diag);
                 }
-                return Ok(Value::Pointer(LValue::Index(inner, new_offset as usize)));
+                return Ok(Value::Pointer(
+                    LValue::Index(inner, new_offset as usize),
+                    orig,
+                ));
             }
 
             _ => {}
@@ -1362,8 +1695,10 @@ impl<'ir> ConstEvaluator<'ir> {
     fn bin_op(
         &mut self,
         lhs: Value<'ir>,
+        lhs_typ: TyP<'ir>,
         op: BinOp,
         rhs: Value<'ir>,
+        rhs_typ: TyP<'ir>,
     ) -> Result<Value<'ir>, AluminaError> {
         let ret = match op {
             BinOp::BitAnd => lhs & rhs,
@@ -1371,30 +1706,30 @@ impl<'ir> ConstEvaluator<'ir> {
             BinOp::BitXor => lhs ^ rhs,
             BinOp::Or => lhs | rhs,
             BinOp::And => lhs & rhs,
-            BinOp::Eq => lhs.equal(rhs),
-            BinOp::Neq => lhs.equal(rhs).and_then(|v| !v),
+            BinOp::Eq => lhs.equals(rhs),
+            BinOp::Neq => lhs.equals(rhs).and_then(|v| !v),
             BinOp::Lt => Ok(Value::Bool(matches!(
-                lhs.cmp(rhs).with_backtrace(&self.diag)?,
-                Ordering::Less
+                lhs.compare(rhs).with_backtrace(&self.diag)?,
+                Some(Ordering::Less)
             ))),
             BinOp::LEq => Ok(Value::Bool(matches!(
-                lhs.cmp(rhs).with_backtrace(&self.diag)?,
-                Ordering::Less | Ordering::Equal
+                lhs.compare(rhs).with_backtrace(&self.diag)?,
+                Some(Ordering::Less | Ordering::Equal)
             ))),
             BinOp::Gt => Ok(Value::Bool(matches!(
-                lhs.cmp(rhs).with_backtrace(&self.diag)?,
-                Ordering::Greater
+                lhs.compare(rhs).with_backtrace(&self.diag)?,
+                Some(Ordering::Greater)
             ))),
             BinOp::GEq => Ok(Value::Bool(matches!(
-                lhs.cmp(rhs).with_backtrace(&self.diag)?,
-                Ordering::Greater | Ordering::Equal
+                lhs.compare(rhs).with_backtrace(&self.diag)?,
+                Some(Ordering::Greater | Ordering::Equal)
             ))),
             BinOp::LShift => lhs << rhs,
             BinOp::RShift => lhs >> rhs,
             BinOp::Mul => lhs * rhs,
             BinOp::Div => lhs / rhs,
             BinOp::Mod => lhs % rhs,
-            BinOp::Plus | BinOp::Minus => return self.plus_minus(lhs, op, rhs),
+            BinOp::Plus | BinOp::Minus => return self.plus_minus(lhs, lhs_typ, op, rhs, rhs_typ),
         };
 
         ret.with_backtrace(&self.diag)
@@ -1410,10 +1745,10 @@ impl<'ir> ConstEvaluator<'ir> {
                         Value::USize(len_) => {
                             len = Some(*len_);
                         }
-                        Value::Str(r, offset) => {
+                        Value::Bytes(r, offset) => {
                             buf = r.get(*offset..);
                         }
-                        Value::Pointer(LValue::Index(r, offset)) => {
+                        Value::Pointer(LValue::Index(r, offset), _) => {
                             let r = self.materialize_lvalue(**r).unwrap();
                             if let Value::Array(elems) = r {
                                 let mut bytes = Vec::with_capacity(elems.len());
@@ -1433,7 +1768,7 @@ impl<'ir> ConstEvaluator<'ir> {
                 }
 
                 if let (Some(buf), Some(len)) = (buf, len) {
-                    Some(&buf[..len])
+                    buf.get(..len)
                 } else {
                     None
                 }
@@ -1445,7 +1780,7 @@ impl<'ir> ConstEvaluator<'ir> {
 
 fn check_lvalue_leak(value: &Value<'_>) -> Result<(), ConstEvalErrorKind> {
     match value {
-        Value::Pointer(lvalue) | Value::LValue(lvalue) => check_lvalue_leak_lvalue(lvalue),
+        Value::Pointer(lvalue, _) | Value::LValue(lvalue) => check_lvalue_leak_lvalue(lvalue),
         Value::Tuple(values) => values.iter().try_for_each(check_lvalue_leak),
         Value::Struct(fields) => fields
             .iter()
@@ -1541,8 +1876,10 @@ pub fn make_zeroed<'ir>(ir: &'ir IrCtx<'ir>, typ: TyP<'ir>) -> Value<'ir> {
             BuiltinType::I32 => Value::I32(0),
             BuiltinType::I64 => Value::I64(0),
             BuiltinType::I128 => Value::I128(0),
-            BuiltinType::F32 => Value::F32("0"),
-            BuiltinType::F64 => Value::F64("0"),
+
+            // All 0 bit patterns are valid for floats (representing +0.0)
+            BuiltinType::F32 => Value::F32(0.0),
+            BuiltinType::F64 => Value::F64(0.0),
         },
     }
 }

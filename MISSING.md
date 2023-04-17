@@ -25,7 +25,7 @@
   deserves a better idiom.
 - a coherent story for operator overloading
 - `dyn` pointers for certain builtin protocols. Specifically `dyn Callable<...>` would be very useful for being type-erased closures.
-- docstrings for fields and enum variants
+- Fix that damn "local with unknown type" issue. It can happen that compilation will fail with 0 errors and 0 warnings now.
 
 ## Grammar, parsing, AST
 
@@ -34,34 +34,14 @@
 
 ## Std library
 
-- basic structure and philosophy. how big should it be?
-  - Philosophy is settled: see Rust standard library.
-  - Rely on libc as little as possible. I'd like to use Alumina on bare-metal.
-  - Ignore ^ for now. libc is fine. Rust relies heavily on libc. That said, no libc in following areas:
-    - no string formatting, anything locale dependent really
-    - no buffered I/O (fwrite/...). Native Alumina IO primitives should be much more ergonomic.
-    - no random small functions where it can be done efficiently in Alumina (memfrob, htonl, ...)
-      - memcpy/memove/strlen are an exception. these are heavily optimized an may actually be compiler builtins
-    - I really wanted to say *absolutely nothing with varargs*, but unfortunately `ioctl` and `fcntl` are varargs :(
-- Windows and non-glibc support on Linux (specifically musl)
-- these are definitely needed:
-  - file IO and streams
-    - done
-  - process/exec
-    - done
-  - string formatting
-    - The pattern is well-established (Formattable protocol) and I'm very happy with it,
-      but it's very very basic right now
-      - update: it's not so basic anymore, it's actually quite fine
-    - more control for float formatting (fixed precision)
-  - heap-allocating collections
-    - Vector, HashMap, HashSet are implemented (very basic, probably do not perform very well)
-    - Vector might actually be pretty ok. Hashed collections are probably bad.
 
+- proper float parsing that can handle all the edge cases (curront one will reject numbers with a lot of digits)
 - extras, nice to have:
   - date/time???? this is a big can of worms
     - durations/monotonic timer are implemented
   - regexes? probably not, maybe a PCRE wrapper outside stdlib
+  - JSON? Some sort of Serde-like generic serialization/deserialization would be nice to have built-in
+  - vectored I/O?
 
 ## Optimizations
 
@@ -99,15 +79,12 @@
 - Cross-compilation
   - Should be easy enough, as generated C code has almost no platform dependencies. This is more of a concern for the standard library to ensure `cfg` attributes are sprinkled around appropriately.
     - const eval needs to adjust usizes etc. to the target platform
-- Logging, timings
 
 ## Exploratory
 
-- specialization/SFINAE/function overloading?
-  - I am leaning pretty strongly towards not having either of these. With protocols the language
-    is expressive enough to do string formatting, iterators and collections, which are a good litmus test if generics are any good.
 - tagged unions
   - I miss them quite a lot from Rust. They are not hard, but need a good syntax for `match`
+- ability to monkey-patch in a nice way without linker tricks
 - full Hindley-Milner type inference. Global type inference will pretty much require a full rewrite of `mono`, so whis would be a massive project, but it would also be super awesome to have
   - Type inference gaps are a big pain point right now, especially since there are so many places where adding a type hint is not even possible (e.g. when chaining methods).
 - true variadic functions (certainly they'd be generic and variadic only pre-monomorphization, varargs is an abomination). This is hard to do, both from the syntax and `mono` perspective but the payoff is that tuples can have nice protocol implementations.
@@ -119,6 +96,8 @@
 ## Tooling
 
 - a compiler driver (i.e. Cargo)
+- integrated codegen (a la `go generate` or procedural macros)
+- a REPL. Totally doable with const-eval.
 
 ## Bikeshedding
 
@@ -126,4 +105,5 @@
   - This is settled now. See: Rust.
 - Why "Alumina"?
   - Because it's another metal oxide, like Rust
-    - Rust begets more Rust until everything is oxidized. Aluminium forms just a thin passivation layer leaving "bare metal" just under the surface.
+  - Rust begets more Rust until everything is oxidized. Aluminium forms just a thin passivation layer leaving "bare metal" just under the surface.
+  -

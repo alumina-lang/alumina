@@ -2,20 +2,23 @@ use std::mem::{size_of, align_of};
 
 const DEFAULT_CAPACITY: usize = 4096;
 
+#[cfg_attr(target_pointer_width = "32", align(16))]
+#[cfg_attr(target_pointer_width = "64", align(32))]
 struct ArenaNode {
-    ptr: &mut void,
+    ptr: &mut u8,
     remaining: usize,
     next: &mut ArenaNode,
-    _pad: &mut void
 }
 
 impl ArenaNode {
     fn create(capacity: usize) -> &mut ArenaNode {
-        let mem: &mut void = std::libc::malloc(size_of::<ArenaNode>() + capacity);
+        let mem = std::libc::malloc(size_of::<ArenaNode>() + capacity) as &mut u8;
         let node = mem as &mut ArenaNode;
+
         node.ptr = mem + size_of::<ArenaNode>();
         node.remaining = capacity;
         node.next = null;
+
         node
     }
 
@@ -69,7 +72,7 @@ impl Arena {
             self.tail.remaining -= bump;
             let result = self.tail.ptr + offset;
             self.tail.ptr += bump;
-            result
+            result as &mut void
         } else {
             self.grow(size);
             self.aligned_alloc(size, alignment)

@@ -526,7 +526,7 @@ impl<'ast> PrettyPrinter<'ast> {
                 }
                 Lit::Float(val, kind) => {
                     let mut s = String::new();
-                    s.push_str(val.as_ref());
+                    write!(s, "{}", val).unwrap();
                     if let Some(kind) = kind {
                         s.push_str(&self.print_builtin_type(*kind));
                     }
@@ -588,8 +588,20 @@ impl<'ast> PrettyPrinter<'ast> {
                 format!("{} {{ {} }}", self.print_typ_full(typ, true), s)
             }
             ExprKind::BoundParam(_, id, _) => self.id_to_name(id),
-            ExprKind::Field(base, field, _) => {
-                format!("{}.{}", self.print_expr(base), field)
+            ExprKind::Field(base, field, _, generic_args) => {
+                if let Some(args) = generic_args {
+                    let mut s = String::new();
+                    for (i, arg) in args.iter().enumerate() {
+                        if i != 0 {
+                            s.push_str(", ");
+                        }
+                        s.push_str(&self.print_typ(arg));
+                    }
+
+                    format!("{}.{}::<{}>", self.print_expr(base), s, field)
+                } else {
+                    format!("{}.{}", self.print_expr(base), field)
+                }
             }
             ExprKind::TupleIndex(base, idx) => {
                 format!("{}.{}", self.print_expr(base), idx)
@@ -677,6 +689,7 @@ impl<'ast> PrettyPrinter<'ast> {
             }
             // Those will never appear in the AST post-macro expansion
             ExprKind::EtCetera(_) | ExprKind::MacroInvocation(_, _) => unreachable!(),
+            ExprKind::Tag(tag, inner) => format!("/* {} */ {}", tag, self.print_expr(inner)),
         };
 
         if braces {

@@ -332,6 +332,35 @@ impl Deque<T> {
         }
     }
 
+    /// Helper for collections that own heap-allocated objects. This is used to
+    /// be able to do `defer col.free_all()` without much boilerplate.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::collections::Deque;
+    /// use std::string::StringBuf;
+    /// use std::fmt::format;
+    ///
+    /// let v: Deque<StringBuf> = Deque::new();
+    /// defer v.free_all();
+    ///
+    /// for i in 1..10 {
+    ///     v.push("{} + {} = {}".format!(i, i, i + i).unwrap());
+    /// }
+    /// ```
+    fn free_all(self: &mut Deque<T>) {
+        use typing::matches;
+        use mem::Freeable;
+
+        when matches::<T, Freeable<T>>() {
+            for v in self.iter_mut() {
+                v.free();
+            }
+        }
+
+        self.free();
+    }
+
     /// @ mem::Clonable::clone
     fn clone(self: &Deque<T>) -> Deque<T> {
         let cloned = with_capacity(self.len());

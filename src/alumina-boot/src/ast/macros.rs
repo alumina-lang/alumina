@@ -5,7 +5,7 @@ use crate::ast::{
     AstCtx, AstId, Attribute, BuiltinMacro, BuiltinMacroKind, Expr, ExprKind, ExprP,
     FieldInitializer, FnKind, Item, ItemP, Lit, Macro, MacroCtx, MacroParameter, Span, Statement,
 };
-use crate::common::{AluminaError, ArenaAllocatable, CodeErrorKind, HashMap};
+use crate::common::{AluminaError, ArenaAllocatable, CodeDiagnostic, HashMap};
 use crate::global_ctx::GlobalCtx;
 use crate::name_resolution::scope::{NamedItemKind, Scope};
 use crate::parser::{FieldKind, NodeExt};
@@ -23,7 +23,7 @@ macro_rules! assert_args {
     ($self:expr, $count:expr) => {
         if $self.args.len() != $count {
             use crate::common::CodeErrorBuilder;
-            return Err(CodeErrorKind::ParamCountMismatch($count, $self.args.len()))
+            return Err(CodeDiagnostic::ParamCountMismatch($count, $self.args.len()))
                 .with_span($self.invocation_span);
         }
     };
@@ -35,7 +35,8 @@ macro_rules! string_arg {
             ExprKind::Lit(Lit::Str(s)) => s,
             _ => {
                 use crate::common::CodeErrorBuilder;
-                return Err(CodeErrorKind::ConstantStringExpected).with_span($self.invocation_span);
+                return Err(CodeDiagnostic::ConstantStringExpected)
+                    .with_span($self.invocation_span);
             }
         }
     };
@@ -47,7 +48,7 @@ macro_rules! macro_arg {
             ExprKind::Macro(item, bound_args) => (item, bound_args),
             _ => {
                 use crate::common::CodeErrorBuilder;
-                return Err(CodeErrorKind::MacroExpected).with_span($self.invocation_span);
+                return Err(CodeDiagnostic::MacroExpected).with_span($self.invocation_span);
             }
         }
     };
@@ -61,20 +62,21 @@ impl<'ast> MacroMaker<'ast> {
     pub fn make<'src>(
         &mut self,
         name: Option<&'ast str>,
-        symbol: ItemP<'ast>,
+        item: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         attributes: &'ast [Attribute],
     ) -> Result<(), AluminaError> {
         use crate::common::WithSpanDuringParsing;
 
-        if let Some(inner) = symbol.try_get() {
+        if let Some(inner) = item.try_get() {
             match inner {
                 Item::Macro(m) => {
                     if m.body.get().is_some() {
                         return Ok(());
                     } else {
-                        return Err(CodeErrorKind::RecursiveMacroCall).with_span_from(&scope, node);
+                        return Err(CodeDiagnostic::RecursiveMacroCall)
+                            .with_span_from(&scope, node);
                     }
                 }
                 Item::BuiltinMacro(_) => {
@@ -92,6 +94,7 @@ impl<'ast> MacroMaker<'ast> {
         if attributes.iter().any(|a| matches!(a, Attribute::Builtin)) {
             let kind = match name.unwrap() {
                 "env" => BuiltinMacroKind::Env,
+                "cfg" => BuiltinMacroKind::Cfg,
                 "include_bytes" => BuiltinMacroKind::IncludeBytes,
                 "concat" => BuiltinMacroKind::Concat,
                 "line" => BuiltinMacroKind::Line,
@@ -102,12 +105,12 @@ impl<'ast> MacroMaker<'ast> {
                 "reduce" => BuiltinMacroKind::Reduce,
                 "stringify" => BuiltinMacroKind::Stringify,
                 s => {
-                    return Err(CodeErrorKind::UnknownBuiltinMacro(s.to_string()))
+                    return Err(CodeDiagnostic::UnknownBuiltinMacro(s.to_string()))
                         .with_span_from(&scope, node)
                 }
             };
 
-            symbol.assign(Item::BuiltinMacro(BuiltinMacro {
+            item.assign(Item::BuiltinMacro(BuiltinMacro {
                 kind,
                 span: Some(span),
             }));
@@ -119,7 +122,7 @@ impl<'ast> MacroMaker<'ast> {
             match item.kind {
                 NamedItemKind::MacroParameter(id, et_cetera, _) => {
                     if has_et_cetera && et_cetera {
-                        return Err(CodeErrorKind::MultipleEtCeteras).with_span_from(&scope, node);
+                        return Err(CodeDiagnostic::MultipleEtCeteras).with_span_from(&scope, node);
                     } else if et_cetera {
                         has_et_cetera = true;
                     }
@@ -143,7 +146,7 @@ impl<'ast> MacroMaker<'ast> {
             span: Some(span),
         });
 
-        symbol.assign(result);
+        item.assign(result);
 
         let body = ExpressionVisitor::new(
             self.ast,
@@ -156,7 +159,7 @@ impl<'ast> MacroMaker<'ast> {
         scope.check_unused_items(&self.global_ctx.diag());
 
         // Two-step assignment to detect recursion
-        symbol.get_macro().body.set(body).unwrap();
+        item.get_macro().body.set(body).unwrap();
 
         Ok(())
     }
@@ -213,7 +216,7 @@ impl<'ast> MacroExpander<'ast> {
 
         if let Some(et_cetera_index) = et_cetera_index {
             if self.args.len() < r#macro.args.len() - 1 {
-                return Err(CodeErrorKind::NotEnoughMacroArguments(
+                return Err(CodeDiagnostic::NotEnoughMacroArguments(
                     r#macro.args.len() - 1,
                 ))
                 .with_span(self.invocation_span);
@@ -234,7 +237,7 @@ impl<'ast> MacroExpander<'ast> {
             self.et_cetera_arg = Some((r#macro.args[et_cetera_index].id, etc_args));
         } else {
             if self.args.len() != r#macro.args.len() {
-                return Err(CodeErrorKind::ParamCountMismatch(
+                return Err(CodeDiagnostic::ParamCountMismatch(
                     r#macro.args.len(),
                     self.args.len(),
                 ))
@@ -256,7 +259,7 @@ impl<'ast> MacroExpander<'ast> {
         for arg in args {
             if let super::ExprKind::EtCetera(inner) = arg.kind {
                 if self.et_cetera_index.is_some() {
-                    return Err(CodeErrorKind::EtCeteraInEtCetera).with_span(arg.span);
+                    return Err(CodeDiagnostic::EtCeteraInEtCetera).with_span(arg.span);
                 }
                 for idx in 0..self.et_cetera_arg.as_ref().unwrap().1.len() {
                     self.et_cetera_index = Some(idx);
@@ -349,7 +352,7 @@ impl<'ast> MacroExpander<'ast> {
                 let inner = self.visit_expr(inner)?;
                 let (item, bound_args) = match inner.kind {
                     ExprKind::Macro(m, b) => (m, b),
-                    _ => return Err(CodeErrorKind::NotAMacro).with_span(inner.span),
+                    _ => return Err(CodeDiagnostic::NotAMacro).with_span(inner.span),
                 };
                 let child = MacroExpander::new(
                     self.ast,
@@ -372,7 +375,7 @@ impl<'ast> MacroExpander<'ast> {
                     if let Some(index) = self.et_cetera_index {
                         return Ok(self.et_cetera_arg.as_ref().unwrap().1[index]);
                     } else {
-                        return Err(CodeErrorKind::CannotEtCeteraHere).with_span(expr.span);
+                        return Err(CodeDiagnostic::CannotEtCeteraHere).with_span(expr.span);
                     }
                 } else {
                     let id = match self.id_replacements.get(&id) {
@@ -387,7 +390,7 @@ impl<'ast> MacroExpander<'ast> {
                 }
             }
             EtCetera(_) => {
-                return Err(CodeErrorKind::CannotEtCeteraHere).with_span(expr.span);
+                return Err(CodeDiagnostic::CannotEtCeteraHere).with_span(expr.span);
             }
             Block(statements, ret) => {
                 let mut new_statements = Vec::new();
@@ -398,7 +401,7 @@ impl<'ast> MacroExpander<'ast> {
                     }) = statement.kind
                     {
                         if self.et_cetera_index.is_some() {
-                            return Err(CodeErrorKind::EtCeteraInEtCetera).with_span(*span);
+                            return Err(CodeDiagnostic::EtCeteraInEtCetera).with_span(*span);
                         }
                         for idx in 0..self.et_cetera_arg.as_ref().unwrap().1.len() {
                             self.et_cetera_index = Some(idx);
@@ -425,7 +428,21 @@ impl<'ast> MacroExpander<'ast> {
             Break(inner) => Break(inner.map(|i| self.visit_expr(i)).transpose()?),
             Return(inner) => Return(inner.map(|i| self.visit_expr(i)).transpose()?),
             Defer(inner) => Defer(self.visit_expr(inner)?),
-            Field(a, name, assoc_fn) => Field(self.visit_expr(a)?, name, assoc_fn),
+            Field(a, name, assoc_fn, generic_args) => Field(
+                self.visit_expr(a)?,
+                name,
+                assoc_fn,
+                generic_args
+                    .map(|args| {
+                        Ok::<_, AluminaError>(
+                            args.iter()
+                                .map(|e| self.visit_typ(e))
+                                .collect::<Result<Vec<_>, _>>()?
+                                .alloc_on(self.ast),
+                        )
+                    })
+                    .transpose()?,
+            ),
             Struct(ty, inits) => {
                 let inits: Vec<_> = inits
                     .iter()
@@ -511,6 +528,7 @@ impl<'ast> MacroExpander<'ast> {
 
                 Const(item, generic_args)
             }
+            Tag(tag, inner) => Tag(tag, self.visit_expr(inner)?),
             Continue
             | EnumValue(_, _)
             | Macro(_, _ /* bound values are "invisible" and should not be replaced */)
@@ -576,9 +594,9 @@ impl<'ast> MacroExpander<'ast> {
                 assert_args!(self, 1);
                 let name = string_arg!(self, 0);
 
-                let value = match std::str::from_utf8(name).map(std::env::var) {
+                let value: &[u8] = match std::str::from_utf8(name).map(std::env::var) {
                     Ok(Ok(v)) => self.ast.arena.alloc_slice_copy(v.as_bytes()),
-                    _ => unreachable!(),
+                    _ => b"",
                 };
 
                 Ok(Expr {
@@ -591,7 +609,7 @@ impl<'ast> MacroExpander<'ast> {
                 let (line, column) = self
                     .invocation_span
                     .map(|s| (s.line + 1, s.column + 1))
-                    .ok_or(CodeErrorKind::NoSpanInformation)
+                    .ok_or(CodeDiagnostic::NoSpanInformation)
                     .with_span(self.invocation_span)?;
 
                 let kind = if let BuiltinMacroKind::Line = kind {
@@ -620,7 +638,7 @@ impl<'ast> MacroExpander<'ast> {
                                     .alloc_slice_copy(filename.to_string_lossy().as_bytes())
                             })
                     })
-                    .ok_or(CodeErrorKind::NoSpanInformation)
+                    .ok_or(CodeDiagnostic::NoSpanInformation)
                     .with_span(self.invocation_span)?;
 
                 let kind = ExprKind::Lit(Lit::Str(filename));
@@ -638,7 +656,7 @@ impl<'ast> MacroExpander<'ast> {
                 };
 
                 let data = std::fs::read(filename)
-                    .map_err(|_| CodeErrorKind::CannotReadFile(filename.to_string()))
+                    .map_err(|_| CodeDiagnostic::CannotReadFile(filename.to_string()))
                     .with_span(self.invocation_span)?;
 
                 Ok(Expr {
@@ -653,7 +671,7 @@ impl<'ast> MacroExpander<'ast> {
                     .iter()
                     .map(|arg| match arg.kind {
                         ExprKind::Lit(Lit::Str(s)) => Ok(s),
-                        _ => Err(CodeErrorKind::ConstantStringExpected)
+                        _ => Err(CodeDiagnostic::ConstantStringExpected)
                             .with_span(self.invocation_span),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
@@ -677,7 +695,7 @@ impl<'ast> MacroExpander<'ast> {
             }
             BuiltinMacroKind::FormatArgs => {
                 if self.args.len() < 2 {
-                    return Err(CodeErrorKind::NotEnoughMacroArguments(2))
+                    return Err(CodeDiagnostic::NotEnoughMacroArguments(2))
                         .with_span(self.invocation_span);
                 }
 
@@ -715,7 +733,7 @@ impl<'ast> MacroExpander<'ast> {
             }
             BuiltinMacroKind::Bind => {
                 if self.args.is_empty() {
-                    return Err(CodeErrorKind::NotEnoughMacroArguments(1))
+                    return Err(CodeDiagnostic::NotEnoughMacroArguments(1))
                         .with_span(self.invocation_span);
                 }
 
@@ -733,7 +751,7 @@ impl<'ast> MacroExpander<'ast> {
             }
             BuiltinMacroKind::Reduce => {
                 if self.args.len() < 2 {
-                    return Err(CodeErrorKind::NotEnoughMacroArguments(2))
+                    return Err(CodeDiagnostic::NotEnoughMacroArguments(2))
                         .with_span(self.invocation_span);
                 }
 
@@ -755,6 +773,18 @@ impl<'ast> MacroExpander<'ast> {
                 }
 
                 Ok(expr)
+            }
+            BuiltinMacroKind::Cfg => {
+                assert_args!(self, 1);
+                let name = string_arg!(self, 0);
+
+                Ok(Expr {
+                    kind: ExprKind::Lit(Lit::Bool(
+                        self.global_ctx.has_flag(std::str::from_utf8(name).unwrap()),
+                    )),
+                    span: self.invocation_span,
+                }
+                .alloc_on(self.ast))
             }
         }
     }

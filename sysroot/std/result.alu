@@ -205,12 +205,24 @@ impl Result<T, E> {
     ///
     /// r.unwrap(); // panics
     /// ```
-    #[inline]
+    #[inline(always)]
     fn unwrap(self: Result<T, E>) -> T {
+        #[cold]
+        #[inline(never)]
+        fn unwrap_panic_err(err: E) -> ! {
+            use fmt::Formattable;
+
+            when err is Formattable<E, panicking::internal::PanicFormatter> {
+                panic!("unwrap on an err value: {}", err)
+            } else {
+                panic!("unwrap on an err value")
+            }
+        }
+
         if self.is_ok() {
             self._inner.ok
         } else {
-            internal::unwrap_panic_err(self._inner.err);
+            unwrap_panic_err(self._inner.err);
         }
     }
 
@@ -227,12 +239,24 @@ impl Result<T, E> {
     ///
     /// r.unwrap_err(); // panics
     /// ```
-    #[inline]
+    #[inline(always)]
     fn unwrap_err(self: Result<T, E>) -> E {
+        #[cold]
+        #[inline(never)]
+        fn unwrap_panic_ok(ok: T) -> ! {
+            use fmt::Formattable;
+
+            when ok is Formattable<T, panicking::internal::PanicFormatter> {
+                panic!("unwrap on an ok value: {}", ok)
+            } else {
+                panic!("unwrap on an ok value")
+            }
+        }
+
         if self.is_err() {
             self._inner.err
         } else {
-            internal::unwrap_panic_ok(self._inner.ok);
+            unwrap_panic_ok(self._inner.ok);
         }
     }
 
@@ -411,29 +435,4 @@ impl Result {
     }
 
     mixin<T: Equatable<T>, E: Equatable<E>> Equatable<Result<T, E>>;
-}
-
-#[docs(no_index)]
-mod internal {
-    use fmt::{write, Formatter, Formattable};
-
-    #[cold]
-    #[inline(never)]
-    fn unwrap_panic_err<E>(err: E) -> ! {
-        when err is Formattable<E, panicking::internal::PanicFormatter> {
-            panic!("unwrap on an err value: {}", err)
-        } else {
-            panic!("unwrap on an err value")
-        }
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn unwrap_panic_ok<T>(ok: T) -> ! {
-        when ok is Formattable<T, panicking::internal::PanicFormatter> {
-            panic!("unwrap on an ok value: {}", ok)
-        } else {
-            panic!("unwrap on an ok value")
-        }
-    }
 }

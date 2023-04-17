@@ -1,7 +1,7 @@
 use crate::ast::maker::AstItemMaker;
 use crate::ast::{AstCtx, MacroCtx};
 use crate::codegen;
-use crate::common::{AluminaError, ArenaAllocatable, CodeErrorBuilder, CodeErrorKind, HashSet};
+use crate::common::{AluminaError, ArenaAllocatable, CodeDiagnostic, CodeErrorBuilder, HashSet};
 use crate::global_ctx::GlobalCtx;
 use crate::ir::dce::DeadCodeEliminator;
 use crate::ir::mono::{MonoCtx, Monomorphizer};
@@ -60,6 +60,8 @@ impl Compiler {
         self.timings.iter().cloned()
     }
 
+    /// Main compile sequence. Takes a list of Alumina source files and compiles them into a single
+    /// C source file.
     pub fn compile(
         &mut self,
         source_files: Vec<SourceFile>,
@@ -105,7 +107,7 @@ impl Compiler {
 
                 if let Some(candidate) = visitor.main_candidate() {
                     if main_candidate.replace(candidate).is_some() {
-                        return Err(CodeErrorKind::MultipleMainFunctions)
+                        return Err(CodeDiagnostic::MultipleMainFunctions)
                             .with_span(candidate.get_function().span);
                     }
                 }
@@ -126,7 +128,6 @@ impl Compiler {
         item_maker.make(root_scope)?;
 
         timing!(self, cur_time, Stage::Ast);
-
         drop(source_files);
 
         let ir_ctx = IrCtx::new();
@@ -188,7 +189,7 @@ impl Compiler {
         // Dunno why the borrow checker is not letting me do that, it should be possible.
         // drop(ast);
 
-        let res = codegen::codegen(self.global_ctx.clone(), &items[..]);
+        let res = codegen::codegen(&ir_ctx, self.global_ctx.clone(), &items[..]);
         timing!(self, cur_time, Stage::Codegen);
 
         res

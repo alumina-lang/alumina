@@ -77,11 +77,8 @@ fn transmute<T1, T2>(t: T1) -> T2 {
     when !(t is builtins::SameLayoutAs<T2>) {
         compile_fail!("types do not have the same layout");
     }
-    union BitCastT<A, B> {
-        a: A,
-        b: B,
-    }
-    (BitCastT::<T1, T2> { a: t }).b
+
+    intrinsics::transmute::<T1, T2>(t)
 }
 
 /// Dereference a pointer.

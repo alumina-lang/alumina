@@ -8,6 +8,7 @@ pub enum IntrinsicKind {
     TypeId,
     TypeName,
     Trap,
+    Transmute,
     CompileFail,
     CompileWarn,
     CompileNote,
@@ -30,6 +31,7 @@ pub enum IntrinsicKind {
     ConstNote,
     ConstAlloc,
     ConstFree,
+    Tag,
 }
 
 pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
@@ -40,6 +42,7 @@ pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
         "type_id" => IntrinsicKind::TypeId,
         "type_name" => IntrinsicKind::TypeName,
         "trap" => IntrinsicKind::Trap,
+        "transmute" => IntrinsicKind::Transmute,
         "compile_fail" => IntrinsicKind::CompileFail,
         "compile_warn" => IntrinsicKind::CompileWarn,
         "compile_note" => IntrinsicKind::CompileNote,
@@ -62,6 +65,7 @@ pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
         "const_note" => IntrinsicKind::ConstNote,
         "const_alloc" => IntrinsicKind::ConstAlloc,
         "const_free" => IntrinsicKind::ConstFree,
+        "tag" => IntrinsicKind::Tag,
         _ => return None,
     };
 
@@ -75,6 +79,7 @@ pub enum IntrinsicValueKind<'ir> {
     Asm(&'ir str),
     FunctionLike(&'ir str),
     ConstLike(&'ir str),
+    Transmute(ExprP<'ir>),
     ConstPanic(ExprP<'ir>),
     ConstWrite(ExprP<'ir>, bool),
     ConstAlloc(TyP<'ir>, ExprP<'ir>),

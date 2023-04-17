@@ -1,0 +1,396 @@
+use std::iter::PeekableIterator;
+
+use json::lexer::{Token, TokenKind, LexerIterator};
+use json::{Result, Error};
+
+struct Parser {
+    iter: PeekableIterator<LexerIterator, Result<Token>>
+}
+
+fn get_kind(token: Token) -> TokenKind {
+    token.kind
+}
+
+macro expect_token($self, $kind) {
+    let token = $self.iter.next().transpose()?;
+    switch token.map(get_kind) {
+        Option::some($kind) => token.unwrap(),
+        Option::none() => return Result::err(Error::new(ErrorKind::Eof)),
+        _ => return Result::err(Error::unexpected_token(token.unwrap().kind))
+    }
+}
+
+macro peek_kind($self) {
+    $self.iter.peek().transpose()?.map(get_kind)
+}
+
+impl Parser {
+    fn new(iter: &mut LexerIterator) -> Parser {
+        Parser { iter: iter.peekable() }
+    }
+
+    fn parse(self: &mut Parser) -> Result<JsonValue> {
+        let kind = self.peek_kind!();
+        switch kind {
+            Option::some(TokenKind::Number) => self.parse_number(),
+            Option::some(TokenKind::Literal) => self.parse_literal(),
+            Option::some(TokenKind::String) => self.parse_string(),
+            Option::some(TokenKind::ArrOpen) => self.parse_array(),
+            Option::some(TokenKind::ObjOpen) => self.parse_object(),
+
+            Option::none() => return Result::err(Error::new(ErrorKind::Eof)),
+            _ => return Result::err(Error::unexpected_token(kind.unwrap()))
+        }
+    }
+
+    fn parse_number(self: &mut Parser) -> Result<JsonValue> {
+        let token = self.expect_token!(TokenKind::Number);
+        let value = f64::parse(token.value).ok_or_else(|| -> Error { Error::new(ErrorKind::Malformed) })?;
+
+        Result::ok(JsonValue::number(value))
+    }
+
+    fn parse_literal(self: &mut Parser) -> Result<JsonValue> {
+        let token = self.expect_token!(TokenKind::Literal);
+
+        let value = switch token.value {
+            "true" => JsonValue::boolean(true),
+            "false" => JsonValue::boolean(false),
+            "null" => JsonValue::null(),
+            _ => unreachable!()
+        };
+
+        Result::ok(value)
+    }
+
+    fn parse_string(self: &mut Parser) -> Result<JsonValue> {
+        let token = self.expect_token!(TokenKind::String);
+
+        enum State {
+            Normal,
+            Escape,
+            Unicode
+        }
+
+        // This will always be enough, since escapes can only make the representation longer (even for
+        // unicode escapes).
+        let value = StringBuf::with_capacity(token.value.len() - 2);
+        let surrogate_pair: [u16; 2];
+        let surrogate_index = 0usize;
+        let nibble_count = 0;
+
+        let state = State::Normal;
+        for idx in 1usize..(token.value.len() - 1) {
+            let ch = token.value[idx];
+            state = switch state {
+                State::Normal => {
+                    switch ch {
+                        '\\' => State::Escape,
+                        _ => {
+                            if surrogate_index != 0 {
+                                // Expecting a surrogate pair, but got a normal character.
+                                return Result::err(Error::new(ErrorKind::InvalidUnicodeEscape));
+                            }
+                            value.push(ch);
+                            State::Normal
+                        }
+                    }
+                },
+                State::Escape => {
+                    if surrogate_index != 0 && ch != 'u' {
+                        // Expecting a surrogate pair, but got a normal character.
+                        return Result::err(Error::new(ErrorKind::InvalidUnicodeEscape));
+                    }
+
+                    switch ch {
+                        '"' => {
+                            value.push('"');
+                            State::Normal
+                        },
+                        '\\' => {
+                            value.push('\\');
+                            State::Normal
+                        },
+                        '/' => {
+                            value.push('/');
+                            State::Normal
+                        },
+                        'b' => {
+                            value.push('\x08');
+                            State::Normal
+                        },
+                        'f' => {
+                            value.push('\x0C');
+                            State::Normal
+                        },
+                        'n' => {
+                            value.push('\n');
+                            State::Normal
+                        },
+                        'r' => {
+                            value.push('\r');
+                            State::Normal
+                        },
+                        't' => {
+                            value.push('\t');
+                            State::Normal
+                        },
+                        'u' => {
+                            State::Unicode
+                        }
+                        _ => unreachable!() // Lexer should have caught this.
+                    }
+                },
+                State::Unicode => {
+                    use string::unicode::{decode_utf16, encode_utf8, Error as UnicodeError};
+
+                    nibble_count += 1;
+                    if nibble_count == 4 {
+                        // From RFC 8259:
+                        // To escape an extended character that is not in the Basic Multilingual
+                        // Plane, the character is represented as a 12-character sequence,
+                        // encoding the UTF-16 surrogate pair.  So, for example, a string
+                        // containing only the G clef character (U+1D11E) may be represented as
+                        // "\uD834\uDD1E".
+                        surrogate_pair[surrogate_index] = u16::parse_with_radix(token.value[idx - 3..=idx], 16)
+                            .unwrap();
+                        surrogate_index += 1;
+
+                        let res = decode_utf16(surrogate_pair[0..surrogate_index]);
+                        if res.is_ok() {
+                            let (codepoint, size) = res.unwrap();
+                            std::debug_assert!(size == surrogate_index);
+
+                            // We know that the we have enough space in the buffer, since we
+                            // allocated enough space for the worst case. Also, the codepoint
+                            // is guaranteed to be valid, since we just decoded it from UTF-16.
+                            let written = encode_utf8(codepoint, value.spare_capacity()).unwrap();
+                            value.truncate(value.len() + written);
+
+                            surrogate_index = 0;
+                        } else {
+                            // We may need another surrogate, in which case we continue
+                            if !(res.unwrap_err() == UnicodeError::BufferTooSmall && surrogate_index == 1) {
+                                return Result::err(Error::new(ErrorKind::InvalidUnicodeEscape));
+                            }
+                        }
+
+                        nibble_count = 0;
+                        State::Normal
+                    } else {
+                        State::Unicode
+                    }
+                }
+                _ => unreachable!()
+            }
+        }
+
+        if state != State::Normal {
+            return Result::err(Error::new(ErrorKind::InvalidEscape));
+        }
+        if surrogate_index != 0 {
+            return Result::err(Error::new(ErrorKind::InvalidUnicodeEscape));
+        }
+
+        Result::ok(JsonValue::string(value))
+    }
+
+    fn parse_array(self: &mut Parser) -> Result<JsonValue> {
+        self.expect_token!(TokenKind::ArrOpen);
+
+        let values: Vector<JsonValue> = Vector::new();
+        defer values.free_all();
+
+        loop {
+            switch self.peek_kind!() {
+                Option::some(TokenKind::ArrClose) => {
+                    self.iter.next().transpose()?;
+                    break;
+                },
+                Option::some(TokenKind::Comma) => {
+                    self.iter.next().transpose()?;
+                    // Trailing comma not allowed
+                    let value = self.parse()?;
+                    values.push(value);
+                },
+                _ => {
+                    let value = self.parse()?;
+                    values.push(value);
+                }
+            }
+        }
+
+        Result::ok(JsonValue::array(values.move()))
+    }
+
+    fn parse_object(self: &mut Parser) -> Result<JsonValue> {
+        self.expect_token!(TokenKind::ObjOpen);
+
+        let properties: HashMap<StringBuf, JsonValue> = HashMap::new();
+        defer properties.free_all();
+
+        loop {
+            switch self.peek_kind!() {
+                Option::some(TokenKind::ObjClose) => {
+                    self.iter.next().transpose()?;
+                    break;
+                },
+                Option::some(TokenKind::Comma) => {
+                    self.iter.next().transpose()?;
+                    // Trailing comma not allowed
+                    let (key, value) = self.parse_property()?;
+                    properties.insert(key, value);
+                },
+                _ => {
+                    let (key, value) = self.parse_property()?;
+                    properties.insert(key, value);
+                }
+            }
+        }
+
+        Result::ok(JsonValue::object(properties.move()))
+    }
+
+    fn parse_property(self: &mut Parser) -> Result<(StringBuf, JsonValue)> {
+        let key = self.parse_string()?;
+        defer key.free();
+        self.expect_token!(TokenKind::Colon);
+        let value = self.parse()?;
+
+        Result::ok((key.inner.string.move(), value))
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    macro chk($str, $expected) {
+        let expected = $expected;
+        defer expected.free();
+
+        let iter = LexerIterator::new($str);
+        let parser = Parser::new(&iter);
+
+        let result = parser.parse();
+        assert_eq!(result.unwrap(), expected);
+    }
+
+    macro chk_err($str, $expected_err_kind) {
+        let iter = LexerIterator::new($str);
+        let parser = Parser::new(&iter);
+
+        let result = parser.parse();
+        assert_eq!(result.unwrap_err().kind, $expected_err_kind);
+    }
+
+    macro vector($elem...) {
+        Vector::from_slice(&[$elem...])
+    }
+
+    macro hashmap($elem...) {
+        let h = HashMap::new();
+        {
+            let elem = $elem;
+            h.insert(StringBuf::from_slice(elem.0), elem.1);
+        }...;
+        h
+    }
+
+    #[test]
+    fn test_parse_number() {
+        chk!("42", JsonValue::number(42.0));
+    }
+
+    #[test]
+    fn test_parse_string() {
+        chk!("\"hello\"", JsonValue::string(StringBuf::from_slice("hello")));
+        chk!("\"hello\\nworld\"", JsonValue::string(StringBuf::from_slice("hello\nworld")));
+        // unicode escapes
+        chk!("\"hello\\u0020world\"", JsonValue::string(StringBuf::from_slice("hello world")));
+        chk!("\"hello\\u0000world\"", JsonValue::string(StringBuf::from_slice("hello\0world")));
+
+        // non-BMP codepoints
+        chk!("\"hello\\uD83D\\uDE00world\"", JsonValue::string(StringBuf::from_slice("hello😀world")));
+        chk!("\"hello\\ud83d\\ude00world\"", JsonValue::string(StringBuf::from_slice("hello😀world")));
+
+        // invalid escapes
+        chk_err!("\"hello\\x\"", ErrorKind::Unexpected);
+        chk_err!("\"hello\\u\"", ErrorKind::Unexpected);
+        chk_err!("\"hello\\u0\"", ErrorKind::Unexpected);
+        chk_err!("\"hello\\u00\"", ErrorKind::Unexpected);
+        chk_err!("\"hello\\u000\"", ErrorKind::Unexpected);
+
+        // newline in string
+        chk_err!("\"hello\nworld\"", ErrorKind::Unexpected);
+
+        // unmatched surrogate
+        chk_err!("\"hello\\uD83D\"", ErrorKind::InvalidUnicodeEscape);
+        // something else before the second surrogate
+        chk_err!("\"hello\\uD83D \\uDE00\"", ErrorKind::InvalidUnicodeEscape);
+        chk_err!("\"hello\\uD83D\\n\\uDE00\"", ErrorKind::InvalidUnicodeEscape);
+        // invalid UTF-16
+        chk_err!("\"hello\\uDE00\\uD83Dworld\"", ErrorKind::InvalidUnicodeEscape);
+    }
+
+    #[test]
+    fn test_parse_literal() {
+        chk!("true", JsonValue::boolean(true));
+        chk!("false", JsonValue::boolean(false));
+        chk!("null", JsonValue::null());
+    }
+
+    #[test]
+    fn test_parse_array() {
+        chk!("[]", JsonValue::array(Vector::new()));
+        chk!("[42]", JsonValue::array(vector!(
+            JsonValue::number(42.0)
+        )));
+        chk!("[42, 43]", JsonValue::array(vector!(
+            JsonValue::number(42.0),
+            JsonValue::number(43.0)
+        )));
+    }
+
+    #[test]
+    fn test_parse_object() {
+        chk!("{}", JsonValue::object(HashMap::new()));
+        chk!("{\"a\": 42}", JsonValue::object(hashmap!(
+            ("a", JsonValue::number(42.0))
+        )));
+
+        chk!("{\"a\": 42, \"b\": 43}", JsonValue::object(hashmap!(
+            ("a", JsonValue::number(42.0)),
+            ("b", JsonValue::number(43.0))
+        )));
+    }
+
+    #[test]
+    fn test_complex() {
+        chk!(
+            "{\"a\": 42,\"b\": [1, 2, 3],\"c\": {\"d\": true,\"e\": false}}",
+            JsonValue::object(hashmap!(
+                ("a", JsonValue::number(42.0)),
+                ("b", JsonValue::array(vector!(
+                    JsonValue::number(1.0),
+                    JsonValue::number(2.0),
+                    JsonValue::number(3.0)
+                ))),
+                ("c", JsonValue::object(hashmap!(
+                    ("d", JsonValue::boolean(true)),
+                    ("e", JsonValue::boolean(false))
+                )))
+            ))
+        );
+    }
+
+    #[test]
+    fn test_parse_error() {
+        chk_err!("", ErrorKind::Eof);
+        chk_err!("{", ErrorKind::Eof);
+        chk_err!("[", ErrorKind::Eof);
+        chk_err!("[42,", ErrorKind::Eof);
+        chk_err!("[42,]", ErrorKind::UnexpectedToken);
+        chk_err!("{\"hello\" 42}", ErrorKind::UnexpectedToken);
+        chk_err!("\"\\+\"", ErrorKind::Unexpected);
+    }
+}

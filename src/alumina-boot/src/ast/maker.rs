@@ -8,7 +8,7 @@ use crate::ast::{
     TypeDef,
 };
 use crate::common::{
-    AluminaError, ArenaAllocatable, CodeError, CodeErrorKind, HashSet, Marker,
+    AluminaError, ArenaAllocatable, CodeDiagnostic, CodeError, HashSet, Marker,
     WithSpanDuringParsing,
 };
 use crate::global_ctx::GlobalCtx;
@@ -24,7 +24,7 @@ use super::MacroCtx;
 pub struct AstItemMaker<'ast> {
     ast: &'ast AstCtx<'ast>,
     global_ctx: GlobalCtx,
-    symbols: Vec<ItemP<'ast>>,
+    items: Vec<ItemP<'ast>>,
     ambient_placeholders: Vec<Placeholder<'ast>>,
     macro_ctx: MacroCtx,
     local: bool,
@@ -35,7 +35,7 @@ impl<'ast> AstItemMaker<'ast> {
         Self {
             ast,
             global_ctx,
-            symbols: Vec::new(),
+            items: Vec::new(),
             ambient_placeholders: Vec::new(),
             macro_ctx,
             local: false,
@@ -46,7 +46,7 @@ impl<'ast> AstItemMaker<'ast> {
         Self {
             ast,
             global_ctx,
-            symbols: Vec::new(),
+            items: Vec::new(),
             ambient_placeholders: Vec::new(),
             macro_ctx,
             local: true,
@@ -54,7 +54,7 @@ impl<'ast> AstItemMaker<'ast> {
     }
 
     pub fn into_inner(self) -> Vec<ItemP<'ast>> {
-        self.symbols
+        self.items
     }
 
     pub fn get_placeholders<'src>(
@@ -116,19 +116,19 @@ impl<'ast> AstItemMaker<'ast> {
         for impl_scope in impl_scopes {
             for (name, item) in impl_scope.inner().all_items() {
                 match &item.kind {
-                    NamedItemKind::Function(symbol, node, _)
-                    | NamedItemKind::Method(symbol, node, _) => {
+                    NamedItemKind::Function(item, node, _)
+                    | NamedItemKind::Method(item, node, _) => {
                         if let Some(name) = name {
                             if !names.insert(name) {
                                 self.global_ctx.diag().add_warning(CodeError::from_kind(
-                                    CodeErrorKind::DuplicateNameShadow(name.to_string()),
+                                    CodeDiagnostic::DuplicateNameShadow(name.to_string()),
                                     Some(Span::from_node(impl_scope.file_id(), *node)),
                                 ));
                             }
                         }
                         associated_fns.push(AssociatedFn {
                             name: name.unwrap(),
-                            item: symbol,
+                            item,
                         })
                     }
                     NamedItemKind::Mixin(node, scope) => {
@@ -173,7 +173,7 @@ impl<'ast> AstItemMaker<'ast> {
     fn make_struct_like<'src>(
         &mut self,
         name: Option<&'ast str>,
-        symbol: ItemP<'ast>,
+        item: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         impl_scopes: &[Scope<'ast, 'src>],
@@ -215,7 +215,7 @@ impl<'ast> AstItemMaker<'ast> {
         };
 
         if attributes.contains(&Attribute::Transparent) && fields.len() != 1 {
-            return Err(CodeErrorKind::InvalidTransparent).with_span_from(&scope, node);
+            return Err(CodeDiagnostic::InvalidTransparent).with_span_from(&scope, node);
         }
 
         let (associated_fns, mixins) = self.resolve_associated_items(impl_scopes)?;
@@ -233,9 +233,9 @@ impl<'ast> AstItemMaker<'ast> {
             is_union,
         });
 
-        symbol.assign(result);
+        item.assign(result);
 
-        self.symbols.push(symbol);
+        self.items.push(item);
 
         Ok(())
     }
@@ -243,7 +243,7 @@ impl<'ast> AstItemMaker<'ast> {
     fn make_protocol<'src>(
         &mut self,
         name: Option<&'ast str>,
-        symbol: ItemP<'ast>,
+        item: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         attributes: &'ast [Attribute],
@@ -264,7 +264,7 @@ impl<'ast> AstItemMaker<'ast> {
             span: Some(span),
         });
 
-        symbol.assign(result);
+        item.assign(result);
 
         Ok(())
     }
@@ -280,7 +280,7 @@ impl<'ast> AstItemMaker<'ast> {
     fn make_enum<'src>(
         &mut self,
         name: Option<&'ast str>,
-        symbol: ItemP<'ast>,
+        item: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         impl_scopes: &[Scope<'ast, 'src>],
@@ -331,9 +331,9 @@ impl<'ast> AstItemMaker<'ast> {
             span: Some(span),
         });
 
-        symbol.assign(result);
+        item.assign(result);
 
-        self.symbols.push(symbol);
+        self.items.push(item);
 
         Ok(())
     }
@@ -341,7 +341,7 @@ impl<'ast> AstItemMaker<'ast> {
     fn make_typedef<'src>(
         &mut self,
         name: Option<&'ast str>,
-        symbol: ItemP<'ast>,
+        item: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         attributes: &'ast [Attribute],
@@ -371,9 +371,9 @@ impl<'ast> AstItemMaker<'ast> {
             attributes,
         });
 
-        symbol.assign(result);
+        item.assign(result);
 
-        self.symbols.push(symbol);
+        self.items.push(item);
 
         Ok(())
     }
@@ -383,7 +383,7 @@ impl<'ast> AstItemMaker<'ast> {
             Ty::Item(item) | Ty::Pointer(Ty::Item(item), _) => {
                 if let Some(LangItemKind::DynSelf) = self.ast.lang_item_kind(item) {
                     self.global_ctx.diag().add_warning(CodeError {
-                        kind: CodeErrorKind::SelfConfusion,
+                        kind: CodeDiagnostic::SelfConfusion,
                         backtrace: span.map(Marker::Span).into_iter().collect(),
                     })
                 }
@@ -395,7 +395,7 @@ impl<'ast> AstItemMaker<'ast> {
     fn make_function<'src>(
         &mut self,
         name: Option<&'ast str>,
-        symbol: ItemP<'ast>,
+        item: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         body: Option<tree_sitter::Node<'src>>,
@@ -411,7 +411,7 @@ impl<'ast> AstItemMaker<'ast> {
             .is_some();
 
         if has_varargs && !is_extern {
-            return Err(CodeErrorKind::VarArgsCanOnlyBeExtern).with_span_from(&scope, node);
+            return Err(CodeDiagnostic::VarArgsCanOnlyBeExtern).with_span_from(&scope, node);
         }
 
         let is_protocol_fn = matches!(scope.parent().map(|s| s.typ()), Some(ScopeType::Protocol));
@@ -448,30 +448,27 @@ impl<'ast> AstItemMaker<'ast> {
         }
 
         if is_protocol_fn && is_extern {
-            return Err(CodeErrorKind::ProtocolFnsCannotBeExtern).with_span_from(&scope, node);
+            return Err(CodeDiagnostic::ProtocolFnsCannotBeExtern).with_span_from(&scope, node);
         }
 
         match abi {
             None | Some("\"C\"") => {
                 if is_extern && !placeholders.is_empty() {
-                    return Err(CodeErrorKind::ExternCGenericParams).with_span_from(&scope, node);
+                    return Err(CodeDiagnostic::ExternCGenericParams).with_span_from(&scope, node);
                 }
             }
             Some("\"intrinsic\"") => {
                 let result = Item::Intrinsic(Intrinsic {
                     kind: intrinsic_kind(name.unwrap())
-                        .ok_or_else(|| CodeErrorKind::UnknownIntrinsic(name.unwrap().to_string()))
+                        .ok_or_else(|| CodeDiagnostic::UnknownIntrinsic(name.unwrap().to_string()))
                         .with_span_from(&scope, node)?,
-                    generic_count: placeholders.len(),
-                    arg_count: parameters.len(),
-                    varargs: has_varargs,
                     span: Some(span),
                 });
-                symbol.assign(result);
+                item.assign(result);
                 return Ok(());
             }
             Some(abi) => {
-                return Err(CodeErrorKind::UnsupportedABI(abi.to_string()))
+                return Err(CodeDiagnostic::UnsupportedABI(abi.to_string()))
                     .with_span_from(&scope, node)
             }
         }
@@ -505,7 +502,7 @@ impl<'ast> AstItemMaker<'ast> {
             .transpose()?;
 
         if function_body.is_none() && !is_extern && !is_protocol_fn {
-            return Err(CodeErrorKind::FunctionMustHaveBody).with_span_from(&scope, node);
+            return Err(CodeDiagnostic::FunctionMustHaveBody).with_span_from(&scope, node);
         }
 
         if function_body.is_some() {
@@ -527,8 +524,8 @@ impl<'ast> AstItemMaker<'ast> {
             is_protocol_fn,
         });
 
-        symbol.assign(result);
-        self.symbols.push(symbol);
+        item.assign(result);
+        self.items.push(item);
 
         Ok(())
     }
@@ -537,7 +534,7 @@ impl<'ast> AstItemMaker<'ast> {
         &mut self,
         is_const: bool,
         name: Option<&'ast str>,
-        symbol: ItemP<'ast>,
+        item: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         attributes: &'ast [Attribute],
@@ -573,15 +570,15 @@ impl<'ast> AstItemMaker<'ast> {
 
         let placeholders = self.get_placeholders(&scope)?;
         if !placeholders.is_empty() && is_extern {
-            return Err(CodeErrorKind::ExternStaticCannotBeGeneric).with_span_from(&scope, node);
+            return Err(CodeDiagnostic::ExternStaticCannotBeGeneric).with_span_from(&scope, node);
         }
 
         if typ.is_none() && init.is_none() {
-            return Err(CodeErrorKind::TypeHintRequired).with_span_from(&scope, node);
+            return Err(CodeDiagnostic::TypeHintRequired).with_span_from(&scope, node);
         }
 
         if is_extern && (typ.is_none() || init.is_some()) {
-            return Err(CodeErrorKind::ExternStaticMustHaveType).with_span_from(&scope, node);
+            return Err(CodeDiagnostic::ExternStaticMustHaveType).with_span_from(&scope, node);
         }
 
         let span = Span::from_node(scope.file_id(), node);
@@ -600,9 +597,9 @@ impl<'ast> AstItemMaker<'ast> {
 
         scope.check_unused_items(&self.global_ctx.diag());
 
-        symbol.assign(result);
+        item.assign(result);
 
-        self.symbols.push(symbol);
+        self.items.push(item);
 
         Ok(())
     }
@@ -610,7 +607,7 @@ impl<'ast> AstItemMaker<'ast> {
     fn make_type<'src>(
         &mut self,
         name: Option<&'ast str>,
-        symbol: ItemP<'ast>,
+        item: ItemP<'ast>,
         node: tree_sitter::Node<'src>,
         scope: Scope<'ast, 'src>,
         impl_scopes: &[Scope<'ast, 'src>],
@@ -618,10 +615,10 @@ impl<'ast> AstItemMaker<'ast> {
     ) -> Result<(), AluminaError> {
         match node.kind_typed() {
             NodeKind::StructDefinition => {
-                self.make_struct_like(name, symbol, node, scope, impl_scopes, attributes)?
+                self.make_struct_like(name, item, node, scope, impl_scopes, attributes)?
             }
             NodeKind::EnumDefinition => {
-                self.make_enum(name, symbol, node, scope, impl_scopes, attributes)?
+                self.make_enum(name, item, node, scope, impl_scopes, attributes)?
             }
             _ => unimplemented!(),
         };
@@ -658,9 +655,9 @@ impl<'ast> AstItemMaker<'ast> {
             [NI {
                 kind: Impl(node, scope),
                 ..
-            }] => return Err(CodeErrorKind::NoFreeStandingImpl).with_span_from(scope, *node),
+            }] => return Err(CodeDiagnostic::NoFreeStandingImpl).with_span_from(scope, *node),
             [NI {
-                kind: Type(symbol, node, scope),
+                kind: Type(item, node, scope),
                 attributes,
             }, rest @ ..] => {
                 let mut impl_scopes = Vec::with_capacity(rest.len());
@@ -675,7 +672,7 @@ impl<'ast> AstItemMaker<'ast> {
                 }
                 self.make_type(
                     name,
-                    symbol,
+                    item,
                     *node,
                     scope.clone(),
                     &impl_scopes[..],
@@ -683,44 +680,44 @@ impl<'ast> AstItemMaker<'ast> {
                 )?;
             }
             [NI {
-                kind: TypeDef(symbol, node, scope),
+                kind: TypeDef(item, node, scope),
                 attributes,
             }] => {
-                self.make_typedef(name, symbol, *node, scope.clone(), attributes)?;
+                self.make_typedef(name, item, *node, scope.clone(), attributes)?;
             }
             [NI {
-                kind: Protocol(symbol, node, scope),
+                kind: Protocol(item, node, scope),
                 attributes,
             }] => {
                 self.make(scope.clone())?;
-                self.make_protocol(name, symbol, *node, scope.clone(), attributes)?;
+                self.make_protocol(name, item, *node, scope.clone(), attributes)?;
             }
             [NI {
-                kind: Static(symbol, node, scope),
+                kind: Static(item, node, scope),
                 attributes,
             }] => {
-                self.make_static_or_const(false, name, symbol, *node, scope.clone(), attributes)?;
+                self.make_static_or_const(false, name, item, *node, scope.clone(), attributes)?;
             }
             [NI {
-                kind: Const(symbol, node, scope),
+                kind: Const(item, node, scope),
                 attributes,
             }] => {
-                self.make_static_or_const(true, name, symbol, *node, scope.clone(), attributes)?;
+                self.make_static_or_const(true, name, item, *node, scope.clone(), attributes)?;
             }
             [NI {
-                kind: Macro(symbol, node, scope),
+                kind: Macro(item, node, scope),
                 attributes,
             }] => {
                 let mut macro_maker = MacroMaker::new(self.ast, self.global_ctx.clone());
-                macro_maker.make(name, symbol, *node, scope.clone(), attributes)?;
-                self.symbols.push(symbol);
+                macro_maker.make(name, item, *node, scope.clone(), attributes)?;
+                self.items.push(item);
             }
             [NI {
-                kind: Function(symbol, node, scope),
+                kind: Function(item, node, scope),
                 attributes,
             }] => self.make_function(
                 name,
-                symbol,
+                item,
                 *node,
                 scope.clone(),
                 node.child_by_field(FieldKind::Body),

@@ -9,7 +9,7 @@ pub mod types;
 
 use crate::ast::lang::LangItemKind;
 use crate::common::{
-    impl_allocatable, Allocatable, ArenaAllocatable, CodeErrorKind, FileId, HashMap, HashSet,
+    impl_allocatable, Allocatable, ArenaAllocatable, CodeDiagnostic, FileId, HashMap, HashSet,
     Incrementable,
 };
 use crate::intrinsics::IntrinsicKind;
@@ -59,12 +59,12 @@ impl<'ast> AstCtx<'ast> {
         }
     }
 
-    pub fn lang_item(&self, kind: LangItemKind) -> Result<ItemP<'ast>, CodeErrorKind> {
+    pub fn lang_item(&self, kind: LangItemKind) -> Result<ItemP<'ast>, CodeDiagnostic> {
         self.lang_items
             .borrow()
             .get(&kind)
             .copied()
-            .ok_or(CodeErrorKind::MissingLangItem(kind))
+            .ok_or(CodeDiagnostic::MissingLangItem(kind))
     }
 
     pub fn lang_item_kind(&self, item: ItemP<'ast>) -> Option<LangItemKind> {
@@ -118,7 +118,7 @@ impl<'ast> AstCtx<'ast> {
         inner
     }
 
-    pub fn make_symbol(&'ast self) -> ItemP<'ast> {
+    pub fn make_item(&'ast self) -> ItemP<'ast> {
         self.arena.alloc(ItemCell {
             id: self.make_id(),
             contents: OnceCell::new(),
@@ -384,10 +384,10 @@ pub type ItemP<'ast> = &'ast ItemCell<'ast>;
 
 impl<'ast> ItemCell<'ast> {
     pub fn assign(&self, value: Item<'ast>) {
-        // Panic if we try to assign the same symbol twice
+        // Panic if we try to assign the same item twice
         self.contents
             .set(value)
-            .expect("assigning the same symbol twice");
+            .expect("assigning the same item twice");
     }
 
     pub fn try_get(&'ast self) -> Option<&'ast Item<'ast>> {
@@ -445,10 +445,10 @@ impl<'ast> ItemCell<'ast> {
     }
 }
 
-/// SymbolCell is a wrapper that allows us to build recursive structures incrementally.
-/// This allows us to assign symbols to syntax early in name resolution and fill them in
+/// ItemCell is a wrapper that allows us to build recursive structures incrementally.
+/// This allows us to assign items to syntax early in name resolution and fill them in
 /// later.
-/// Symbols are immutable once they are assigned.
+/// Items are immutable once they are assigned.
 pub struct ItemCell<'ast> {
     pub id: AstId,
     pub contents: OnceCell<Item<'ast>>,
@@ -460,7 +460,7 @@ impl Hash for ItemCell<'_> {
     }
 }
 
-/// Symbols have reference semantics. Two structs with the same fields
+/// Items have reference semantics. Two structs with the same fields
 /// are not considered equal.
 impl PartialEq for ItemCell<'_> {
     fn eq(&self, other: &Self) -> bool {
@@ -601,9 +601,6 @@ pub struct Parameter<'ast> {
 pub struct Intrinsic {
     pub kind: IntrinsicKind,
     pub span: Option<Span>,
-    pub generic_count: usize,
-    pub arg_count: usize,
-    pub varargs: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -628,6 +625,7 @@ pub enum BuiltinMacroKind {
     Line,
     Column,
     File,
+    Cfg,
     IncludeBytes,
     FormatArgs,
     Bind,
@@ -752,7 +750,7 @@ pub enum UnOp {
     BitNot,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Lit<'ast> {
     Str(&'ast [u8]),
     Int(bool, u128, Option<BuiltinType>),
@@ -822,7 +820,12 @@ pub enum ExprKind<'ast> {
     Array(&'ast [ExprP<'ast>]),
     Struct(TyP<'ast>, &'ast [FieldInitializer<'ast>]),
     BoundParam(AstId, AstId, BoundItemType),
-    Field(ExprP<'ast>, &'ast str, Option<ItemP<'ast>>),
+    Field(
+        ExprP<'ast>,
+        &'ast str,
+        Option<ItemP<'ast>>,
+        Option<&'ast [TyP<'ast>]>,
+    ),
     TupleIndex(ExprP<'ast>, usize),
     Index(ExprP<'ast>, ExprP<'ast>),
     Range(Option<ExprP<'ast>>, Option<ExprP<'ast>>, bool),
@@ -830,6 +833,7 @@ pub enum ExprKind<'ast> {
     TypeCheck(ExprP<'ast>, TyP<'ast>),
     StaticIf(ExprP<'ast>, ExprP<'ast>, ExprP<'ast>),
     Cast(ExprP<'ast>, TyP<'ast>),
+    Tag(&'ast str, ExprP<'ast>),
 
     Void,
 }

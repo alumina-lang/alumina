@@ -284,6 +284,18 @@ impl<'ir> ExpressionBuilder<'ir> {
         expr.alloc_on(self.ir)
     }
 
+    pub fn tag(&self, tag: &'_ str, inner: ExprP<'ir>, span: Option<Span>) -> ExprP<'ir> {
+        let expr = Expr {
+            kind: ExprKind::Tag(self.ir.intern_str(tag), inner),
+            value_type: inner.value_type,
+            is_const: inner.is_const,
+            ty: inner.ty,
+            span,
+        };
+
+        expr.alloc_on(self.ir)
+    }
+
     pub fn dangling(&self, typ: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
         if let Ty::Pointer(ty, _) = typ {
             self.codegen_intrinsic(IntrinsicValueKind::Dangling(ty), typ, span)

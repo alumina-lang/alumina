@@ -84,19 +84,31 @@ impl Atomic<T: Primitive + !ZeroSized> {
     /// Loads a value from the atomic variable.
     #[inline(ir)]
     fn load(self: &Atomic<T>, ordering: Ordering) -> T {
-        intrinsics::codegen_func::<T>("__atomic_load_n", &self._inner, ordering as libc::c_int)
+        if runtime::in_const_context() {
+            self._inner
+        } else {
+            intrinsics::codegen_func::<T>("__atomic_load_n", &self._inner, ordering as libc::c_int)
+        }
     }
 
     /// Stores a value into the atomic variable.
     #[inline(ir)]
     fn store(self: &mut Atomic<T>, value: T, ordering: Ordering) {
-        intrinsics::codegen_func::<void>("__atomic_store_n", &self._inner, value, ordering as libc::c_int)
+        if runtime::in_const_context() {
+            self._inner = value;
+        } else {
+            intrinsics::codegen_func::<void>("__atomic_store_n", &self._inner, value, ordering as libc::c_int)
+        }
     }
 
     /// Stores a value into the atomic variable, atomically returning the old value.
     #[inline(ir)]
     fn exchange(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
-        intrinsics::codegen_func::<T>("__atomic_exchange_n", &self._inner, value, ordering as libc::c_int)
+        if runtime::in_const_context() {
+            mem::replace(&self._inner, value)
+        } else {
+            intrinsics::codegen_func::<T>("__atomic_exchange_n", &self._inner, value, ordering as libc::c_int)
+        }
     }
 
     /// Atomically compares the value in the atomic variable to `expected` and, if they are equal,
@@ -139,18 +151,27 @@ impl Atomic<T: Primitive + !ZeroSized> {
         success_ordering: Ordering,
         failure_ordering: Ordering
     ) -> Result<T, T> {
-        if intrinsics::codegen_func::<bool>(
-            "__atomic_compare_exchange_n",
-            &self._inner,
-            &expected,
-            desired,
-            false,
-            success_ordering as libc::c_int,
-            failure_ordering as libc::c_int
-        ) {
-            Result::ok(expected)
+        if runtime::in_const_context() {
+            if self._inner == expected {
+                self._inner = desired;
+                Result::ok(expected)
+            } else {
+                Result::err(self._inner)
+            }
         } else {
-            Result::err(expected)
+            if intrinsics::codegen_func::<bool>(
+                "__atomic_compare_exchange_n",
+                &self._inner,
+                &expected,
+                desired,
+                false,
+                success_ordering as libc::c_int,
+                failure_ordering as libc::c_int
+            ) {
+                Result::ok(expected)
+            } else {
+                Result::err(expected)
+            }
         }
     }
 
@@ -169,18 +190,22 @@ impl Atomic<T: Primitive + !ZeroSized> {
         success_ordering: Ordering,
         failure_ordering: Ordering
     ) -> Result<T, T> {
-        if intrinsics::codegen_func::<bool>(
-            "__atomic_compare_exchange_n",
-            &self._inner,
-            &expected,
-            desired,
-            true,
-            success_ordering as libc::c_int,
-            failure_ordering as libc::c_int
-        ) {
-            Result::ok(expected)
+        if runtime::in_const_context() {
+            self.compare_exchange(expected, desired, success_ordering, failure_ordering)
         } else {
-            Result::err(expected)
+            if intrinsics::codegen_func::<bool>(
+                "__atomic_compare_exchange_n",
+                &self._inner,
+                &expected,
+                desired,
+                true,
+                success_ordering as libc::c_int,
+                failure_ordering as libc::c_int
+            ) {
+                Result::ok(expected)
+            } else {
+                Result::err(expected)
+            }
         }
     }
 
@@ -250,44 +275,70 @@ impl Atomic<T: Integer> {
     /// Atomically adds `value` to the atomic variable and returns the old value.
     #[inline(ir)]
     fn fetch_add(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
-        intrinsics::codegen_func::<T>("__atomic_fetch_add", &self._inner, value, ordering as libc::c_int)
+        if runtime::in_const_context() {
+            internal::const_atomic_update(self, value, |x: T, y: T| -> T { x + y })
+        } else {
+            intrinsics::codegen_func::<T>("__atomic_fetch_add", &self._inner, value, ordering as libc::c_int)
+        }
     }
 
     /// Atomically subtracts `value` from the atomic variable and returns the old value.
     #[inline(ir)]
     fn fetch_sub(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
-        intrinsics::codegen_func::<T>("__atomic_fetch_sub", &self._inner, value, ordering as libc::c_int)
+        if runtime::in_const_context() {
+            internal::const_atomic_update(self, value, |x: T, y: T| -> T { x - y })
+        } else {
+            intrinsics::codegen_func::<T>("__atomic_fetch_sub", &self._inner, value, ordering as libc::c_int)
+        }
     }
 
     /// Atomically performs `*self &= value` and returns the old value.
     #[inline(ir)]
     fn fetch_and(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
-        intrinsics::codegen_func::<T>("__atomic_fetch_and", &self._inner, value, ordering as libc::c_int)
+        if runtime::in_const_context() {
+            internal::const_atomic_update(self, value, |x: T, y: T| -> T { x & y })
+        } else {
+            intrinsics::codegen_func::<T>("__atomic_fetch_and", &self._inner, value, ordering as libc::c_int)
+        }
     }
 
     /// Atomically performs `*self |= value` and returns the old value.
     #[inline(ir)]
     fn fetch_or(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
-        intrinsics::codegen_func::<T>("__atomic_fetch_or", &self._inner, value, ordering as libc::c_int)
+        if runtime::in_const_context() {
+            internal::const_atomic_update(self, value, |x: T, y: T| -> T { x | y })
+        } else {
+            intrinsics::codegen_func::<T>("__atomic_fetch_or", &self._inner, value, ordering as libc::c_int)
+        }
     }
 
     /// Atomically performs `*self ^= value` and returns the old value.
     #[inline(ir)]
     fn fetch_xor(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
-        intrinsics::codegen_func::<T>("__atomic_fetch_xor", &self._inner, value, ordering as libc::c_int)
+        if runtime::in_const_context() {
+            internal::const_atomic_update(self, value, |x: T, y: T| -> T { x ^ y })
+        } else {
+            intrinsics::codegen_func::<T>("__atomic_fetch_xor", &self._inner, value, ordering as libc::c_int)
+        }
     }
 
     /// Atomically performs `*self = ~(*self & value)` and returns the old value.
     #[inline(ir)]
     fn fetch_nand(self: &mut Atomic<T>, value: T, ordering: Ordering) -> T {
-        intrinsics::codegen_func::<T>("__atomic_fetch_nand", &self._inner, value, ordering as libc::c_int)
+        if runtime::in_const_context() {
+            internal::const_atomic_update(self, value, |x: T, y: T| -> T { ~(x & y) })
+        } else {
+            intrinsics::codegen_func::<T>("__atomic_fetch_nand", &self._inner, value, ordering as libc::c_int)
+        }
     }
 }
 
 /// Memory barrier
 #[inline(ir)]
 fn fence(ordering: Ordering) {
-    intrinsics::codegen_func::<void>("__atomic_thread_fence", ordering as libc::c_int)
+    if !runtime::in_const_context() {
+        intrinsics::codegen_func::<void>("__atomic_thread_fence", ordering as libc::c_int)
+    }
 }
 
 /// Compiler-only memory barrier
@@ -296,7 +347,9 @@ fn fence(ordering: Ordering) {
 /// memory access ordering, but does not prevent hardware reordering.
 #[inline(ir)]
 fn compiler_fence(ordering: Ordering) {
-    intrinsics::codegen_func::<void>("__atomic_signal_fence", ordering as libc::c_int)
+    if !runtime::in_const_context() {
+        intrinsics::codegen_func::<void>("__atomic_thread_fence", ordering as libc::c_int)
+    }
 }
 
 /// A hint to the CPU that we are spinning
@@ -315,14 +368,16 @@ fn compiler_fence(ordering: Ordering) {
 /// ```
 #[inline(ir)]
 fn spin_loop() {
-    #[cfg(target_arch = "x86")]
-    std::intrinsics::asm("pause");
-    #[cfg(target_arch = "x86_64")]
-    std::intrinsics::asm("pause");
-    #[cfg(target_arch = "arm")]
-    std::intrinsics::asm("yield");
-    #[cfg(target_arch = "aarch64")]
-    std::intrinsics::asm("isb sy");
+    if !runtime::in_const_context() {
+        #[cfg(target_arch = "x86")]
+        std::intrinsics::asm("pause");
+        #[cfg(target_arch = "x86_64")]
+        std::intrinsics::asm("pause");
+        #[cfg(target_arch = "arm")]
+        std::intrinsics::asm("yield");
+        #[cfg(target_arch = "aarch64")]
+        std::intrinsics::asm("isb sy");
+    }
 }
 
 /// Protocol for types implementing mutex-like semantics.
@@ -855,6 +910,14 @@ mod internal {
         thread: thread::Thread,
         signaled: Atomic<bool>,
         next: &mut EventWaiter,
+    }
+
+    // Used only in the const context, extracted as a function so the main atomic operation
+    // can be IR-inlined
+    fn const_atomic_update<T>(a: &mut Atomic<T>, b: T, op: fn(T, T) -> T) -> T {
+        let old = a._inner;
+        a._inner = op(old, b);
+        old
     }
 }
 

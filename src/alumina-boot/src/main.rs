@@ -118,7 +118,7 @@ fn get_sysroot(args: &Args) -> Result<Vec<SourceFile>, AluminaError> {
                 write!(module_path, "::{}", segment).unwrap();
             } else {
                 let module_name = segment.strip_suffix(".alu").unwrap();
-                if module_name != "__root__" {
+                if module_name != "mod" {
                     write!(module_path, "::{}", module_name).unwrap();
                 }
             }
@@ -169,9 +169,9 @@ fn run(args: Args) -> Result<(), ()> {
         global_ctx.add_flag("debug");
     }
 
-    match compiler.compile(files, start_time) {
+    let diag_ctx = global_ctx.diag();
+    let ret = match compiler.compile(files, start_time) {
         Ok(program) => {
-            let diag_ctx = global_ctx.diag();
             if args.timings {
                 for (stage, duration) in compiler.timings() {
                     diag_ctx.add_note(CodeError::freeform(format!(
@@ -181,26 +181,33 @@ fn run(args: Args) -> Result<(), ()> {
                     )));
                 }
             }
-            diag_ctx.print_error_report().unwrap();
+
             if diag_ctx.has_errors() {
-                return Err(());
-            }
-            match args.output {
-                Some(filename) => std::fs::write(filename, program).unwrap(),
-                None => {
-                    print!("{}", program);
+                Err(())
+            } else {
+                match args.output {
+                    Some(filename) => std::fs::write(filename, program).unwrap(),
+                    None => {
+                        print!("{}", program);
+                    }
                 }
+                Ok(())
             }
         }
         Err(e) => {
-            let diag_ctx = global_ctx.diag();
             diag_ctx.add_from_error(e).unwrap();
-            diag_ctx.print_error_report().unwrap();
-            return Err(());
+            Err(())
         }
+    };
+
+    if global_ctx.has_option("diag-report") {
+        let diagnostics = diag_ctx.create_report().unwrap();
+        serde_json::to_writer(std::io::stderr(), &diagnostics).unwrap();
+    } else {
+        diag_ctx.print_report().unwrap();
     }
 
-    Ok(())
+    ret
 }
 
 fn main() -> ExitCode {

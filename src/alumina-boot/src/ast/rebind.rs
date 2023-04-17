@@ -177,7 +177,19 @@ impl<'ast> Rebinder<'ast> {
             Break(inner) => Break(inner.map(|i| self.visit_expr(i)).transpose()?),
             Return(inner) => Return(inner.map(|i| self.visit_expr(i)).transpose()?),
             Defer(inner) => Defer(self.visit_expr(inner)?),
-            Field(a, name, assoc_fn) => Field(self.visit_expr(a)?, name, assoc_fn),
+            Field(a, name, assoc_fn, generic_args) => {
+                let generic_args = match generic_args {
+                    Some(args) => Some(
+                        args.iter()
+                            .map(|e| self.visit_typ(e))
+                            .collect::<Result<Vec<_>, _>>()?
+                            .alloc_on(self.ast),
+                    ),
+                    None => None,
+                };
+
+                Field(self.visit_expr(a)?, name, assoc_fn, generic_args)
+            }
             Struct(ty, inits) => {
                 let inits: Vec<_> = inits
                     .iter()
@@ -266,6 +278,7 @@ impl<'ast> Rebinder<'ast> {
             Local(_) | BoundParam(_, _, _) | Continue | EnumValue(_, _) | Lit(_) | Void => {
                 expr.kind.clone()
             }
+            Tag(tag, inner) => Tag(tag, self.visit_expr(inner)?),
         };
 
         let result = Expr {

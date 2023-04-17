@@ -4,8 +4,11 @@ use io::unix::{errno_try, FdReadWrite};
 
 /// Which end(s) of the socket to shutdown
 enum Shutdown {
+    /// Shut down the reading end of the socket
     Read = libc::SHUT_RD,
+    /// Shut down the writing end of the socket
     Write = libc::SHUT_WR,
+    /// Shut down both ends of the socket
     Both = libc::SHUT_RDWR,
 }
 
@@ -647,7 +650,7 @@ mod tests {
             let (socket, _) = listener.accept().unwrap();
             defer socket.close();
 
-            let buf: StringBuf = StringBuf::new();
+            let buf = StringBuf::new();
             socket.read_to_end(&buf).unwrap();
 
             assert_eq!(buf[..] as &[u8], "Hello, world!");

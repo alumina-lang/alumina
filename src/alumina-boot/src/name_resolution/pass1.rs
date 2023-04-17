@@ -1,6 +1,6 @@
 use crate::ast::{AstCtx, Attribute, ItemP, MacroCtx, Span};
 use crate::common::{
-    AluminaError, ArenaAllocatable, CodeError, CodeErrorKind, IndexMap, Marker,
+    AluminaError, ArenaAllocatable, CodeDiagnostic, CodeError, IndexMap, Marker,
     WithSpanDuringParsing,
 };
 use crate::global_ctx::GlobalCtx;
@@ -192,7 +192,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
 
         if node.child_by_field(FieldKind::Attributes).is_none() {
             self.global_ctx.diag().add_warning(CodeError {
-                kind: CodeErrorKind::TopLevelBlockWithoutAttributes,
+                kind: CodeDiagnostic::TopLevelBlockWithoutAttributes,
                 backtrace: vec![Marker::Span(Span::from_node(self.code.file_id(), node))],
             })
         }
@@ -201,7 +201,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     }
 
     fn visit_protocol_definition(&mut self, node: Node<'src>) -> Self::ReturnType {
-        let item = self.ast.make_symbol();
+        let item = self.ast.make_item();
         let attributes = parse_attributes!(self, node, item);
 
         let name = self.parse_name(node);
@@ -227,7 +227,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     }
 
     fn visit_struct_definition(&mut self, node: Node<'src>) -> Self::ReturnType {
-        let item = self.ast.make_symbol();
+        let item = self.ast.make_item();
         let attributes = parse_attributes!(self, node, item);
 
         let name = self.parse_name(node);
@@ -275,7 +275,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     }
 
     fn visit_enum_definition(&mut self, node: Node<'src>) -> Self::ReturnType {
-        let item = self.ast.make_symbol();
+        let item = self.ast.make_item();
         let attributes = parse_attributes!(self, node, item);
 
         let name = self.parse_name(node);
@@ -328,7 +328,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     }
 
     fn visit_function_definition(&mut self, node: Node<'src>) -> Self::ReturnType {
-        let item = self.ast.make_symbol();
+        let item = self.ast.make_item();
         let attributes = parse_attributes!(self, node, item);
 
         let name = self.parse_name(node);
@@ -338,7 +338,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
                 if attributes.contains(&Attribute::TestMain)
                     && self.main_candidate.replace(item).is_some()
                 {
-                    return Err(CodeErrorKind::MultipleMainFunctions)
+                    return Err(CodeDiagnostic::MultipleMainFunctions)
                         .with_span_from(&self.scope, node);
                 }
             } else if &self.scope.path() == path
@@ -349,7 +349,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
                     .any(|a| matches!(a, Attribute::LinkName(..)))
                 && self.main_candidate.replace(item).is_some()
             {
-                return Err(CodeErrorKind::MultipleMainFunctions).with_span_from(&self.scope, node);
+                return Err(CodeDiagnostic::MultipleMainFunctions)
+                    .with_span_from(&self.scope, node);
             }
         }
 
@@ -379,7 +380,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     }
 
     fn visit_type_definition(&mut self, node: Node<'src>) -> Self::ReturnType {
-        let item = self.ast.make_symbol();
+        let item = self.ast.make_item();
         let attributes = parse_attributes!(self, node, item);
 
         let name = self.parse_name(node);
@@ -423,7 +424,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     }
 
     fn visit_static_declaration(&mut self, node: Node<'src>) -> Self::ReturnType {
-        let item = self.ast.make_symbol();
+        let item = self.ast.make_item();
         let attributes = parse_attributes!(self, node, item);
 
         let name = self.parse_name(node);
@@ -448,7 +449,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     }
 
     fn visit_const_declaration(&mut self, node: Node<'src>) -> Self::ReturnType {
-        let item = self.ast.make_symbol();
+        let item = self.ast.make_item();
         let attributes = parse_attributes!(self, node, item);
 
         let name = self.parse_name(node);
@@ -536,7 +537,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
     }
 
     fn visit_macro_definition(&mut self, node: Node<'src>) -> Self::ReturnType {
-        let item = self.ast.make_symbol();
+        let item = self.ast.make_item();
         let attributes = parse_attributes!(self, node, item);
 
         let name = self.parse_name(node);

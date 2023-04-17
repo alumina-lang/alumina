@@ -3,9 +3,11 @@
 //! Functions in this module are not intended for general use, and are usually called by
 //! wrapper functions in the standard library (e.g. [mem::size_of] and [std::unreachable]).
 //!
-//! Intrinsic functions are also not first-class citizens. You cannot take a reference to
-//! one, or pass it as an argument to another function. Also, intrinsic functions do not
-//! participate in type inference.
+//! Intrinsic functions are not first-class citizens. You cannot take a reference to
+//! one, or pass it as an argument to another function. The intrinsic call signature is not
+//! strictly enforced (pass as many arguments as you want, they will be ignored, the intrinsic
+//! may return a value of different type, etc.). Needless to say, intrinsics do not participate
+//! in type inference.
 
 /// Fail the compilation process with a human-readable message.
 ///
@@ -98,12 +100,12 @@ extern "intrinsic" fn in_const_context() -> bool;
 /// Returns `true` if the expression is evaluable at compile-time.
 ///
 /// Use [runtime::is_const_evaluable] instead.
-extern "intrinsic" fn is_const_evaluable(...) -> bool;
+extern "intrinsic" fn is_const_evaluable<T>(expr: T) -> bool;
 
 /// Forces the argument to be evaluated at compile-time.
 ///
 /// Use [runtime::const_eval] instead.
-extern "intrinsic" fn const_eval(...);
+extern "intrinsic" fn const_eval<T>(expr: T) -> T;
 
 /// Panics during constant evaluation (aborts compilation).
 ///
@@ -135,6 +137,32 @@ extern "intrinsic" fn const_alloc<T>(size: usize) -> &mut T;
 ///
 /// Use [mem::slice::free] in const context instead.
 extern "intrinsic" fn const_free<T>(ptr: &mut T);
+
+/// Transmute a value from one type to another.
+///
+/// Use [util::transmute] instead.
+extern "intrinsic" fn transmute<T1, T2>(val: T1) -> T2;
+
+/// Identity function.
+///
+/// Adds a tag to the IR subtree. This has no effect on the generated code, but is generally preserved
+/// accross passes until codegen. Tags control certain aspects of const evaluation and compiler
+/// diagnostics. They are not meant to be used by user code.
+///
+/// Tags are currently added when desugaring certain language constructs, such as `for` loops and `defer`
+/// expressions.
+///
+/// The type, constness and value-kind of the tagged expression are preserved.
+/// ```
+/// let x = 0;
+/// std::intrinsics::tag("foo", x) += 1; // this is valid
+///
+/// assert_eq!(x, 1);
+/// ```
+///
+/// No user-facing equivalent.
+extern "intrinsic" fn tag<T>(tag: &[u8], val: T) -> T;
+
 
 #[cfg(boot)]
 {

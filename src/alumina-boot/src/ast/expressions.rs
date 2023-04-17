@@ -7,7 +7,8 @@ use crate::ast::{
     Span, Statement, StatementKind, Ty, TyP, UnOp,
 };
 use crate::common::{
-    AluminaError, ArenaAllocatable, CodeErrorBuilder, CodeErrorKind, HashSet, WithSpanDuringParsing,
+    AluminaError, ArenaAllocatable, CodeDiagnostic, CodeErrorBuilder, HashSet,
+    WithSpanDuringParsing,
 };
 use crate::global_ctx::GlobalCtx;
 use crate::name_resolution::pass1::FirstPassVisitor;
@@ -278,20 +279,20 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             .with_span(Some(span))?
         {
             ItemResolution::Item(NamedItem {
-                kind: NamedItemKind::Macro(symbol, node, scope),
+                kind: NamedItemKind::Macro(item, node, scope),
                 attributes,
             }) => {
                 let mut macro_maker = MacroMaker::new(self.ast, self.global_ctx.clone());
                 macro_maker.make(
                     Some(path.segments.last().unwrap().0),
-                    symbol,
+                    item,
                     node,
                     scope.clone(),
                     attributes,
                 )?;
-                symbol
+                item
             }
-            _ => return Err(CodeErrorKind::NotAMacro).with_span(Some(span)),
+            _ => return Err(CodeDiagnostic::NotAMacro).with_span(Some(span)),
         };
 
         let result = if self.macro_ctx.in_a_macro {
@@ -405,7 +406,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                         .visit_local(node)?;
 
                         if !items.is_empty() && self.macro_ctx.in_a_macro {
-                            return Err(CodeErrorKind::MacrosCannotDefineItems)
+                            return Err(CodeDiagnostic::MacrosCannotDefineItems)
                                 .with_span_from(&self.scope, node);
                         }
 
@@ -453,12 +454,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         Ok(result)
     }
 
-    fn visit_closure_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+    fn visit_lambda_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         if self.macro_ctx.in_a_macro {
-            return Err(CodeErrorKind::MacrosCannotDefineLambdas).with_span_from(&self.scope, node);
+            return Err(CodeDiagnostic::MacrosCannotDefineLambdas)
+                .with_span_from(&self.scope, node);
         }
 
-        let visitor = ClosureVisitor::new(
+        let visitor = LambdaVisitor::new(
             self.ast,
             self.global_ctx.clone(),
             self.scope.anonymous_child(ScopeType::Closure),
@@ -520,7 +522,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         };
 
         let value = value
-            .map_err(|_| CodeErrorKind::InvalidLiteral)
+            .map_err(|_| CodeDiagnostic::InvalidLiteral)
             .with_span_from(&self.scope, node)?;
 
         Ok(
@@ -561,7 +563,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             .as_slice()
         {
             [v] => *v,
-            _ => return Err(CodeErrorKind::InvalidCharLiteral).with_span_from(&self.scope, node),
+            _ => return Err(CodeDiagnostic::InvalidCharLiteral).with_span_from(&self.scope, node),
         };
 
         Ok(
@@ -575,7 +577,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             .code
             .node_text(node)
             .parse()
-            .map_err(|_| CodeErrorKind::InvalidLiteral)
+            .map_err(|_| CodeDiagnostic::InvalidLiteral)
             .with_span_from(&self.scope, node)?;
 
         Ok(ExprKind::Lit(Lit::Bool(value)).alloc_with_span_from(self.ast, &self.scope, node))
@@ -730,7 +732,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
     fn visit_macro_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         if !self.macro_ctx.in_a_macro {
-            return Err(CodeErrorKind::DollaredOutsideOfMacro).with_span_from(&self.scope, node);
+            return Err(CodeDiagnostic::DollaredOutsideOfMacro).with_span_from(&self.scope, node);
         }
 
         self.visit_ref(node)
@@ -783,7 +785,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                     _ => None,
                 };
 
-                ExprKind::Field(value, field_value.alloc_on(self.ast), unified_fn)
+                ExprKind::Field(value, field_value.alloc_on(self.ast), unified_fn, None)
             }
             NodeKind::IntegerLiteral => ExprKind::TupleIndex(value, field_value.parse().unwrap()),
             _ => unreachable!(),
@@ -885,8 +887,14 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                 let ret = ExprKind::Const(inner, Some(arguments));
                 return Ok(ret.alloc_with_span_from(self.ast, &self.scope, node));
             }
+            ExprKind::Field(base, field, unified_fn, generic_args) => {
+                assert!(generic_args.is_none());
+
+                let ret = ExprKind::Field(base, field, *unified_fn, Some(arguments));
+                return Ok(ret.alloc_with_span_from(self.ast, &self.scope, node));
+            }
             _ => {
-                return Err(CodeErrorKind::FunctionOrStaticExpectedHere)
+                return Err(CodeDiagnostic::FunctionOrStaticExpectedHere)
                     .with_span_from(&self.scope, node);
             }
         };
@@ -1037,6 +1045,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                 ExprKind::Local(iterator_result).alloc_with_span(self.ast, None),
                 "_is_some",
                 None,
+                None,
             )
             .alloc_with_span(self.ast, None),
             ExprKind::Block(
@@ -1047,6 +1056,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                         ExprKind::Field(
                             ExprKind::Local(iterator_result).alloc_with_span(self.ast, None),
                             "_inner",
+                            None,
                             None,
                         )
                         .alloc_with_span(self.ast, None),
@@ -1071,6 +1081,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                                 ExprKind::Local(iterator).alloc_with_span(self.ast, None),
                                 "next",
                                 None,
+                                None,
                             )
                             .alloc_with_span(self.ast, None),
                             vec![].alloc_on(self.ast),
@@ -1091,7 +1102,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                 typ: None,
                 value: Some(
                     ExprKind::Call(
-                        ExprKind::Field(iterable, "iter", unified_fn).alloc_with_span_from(
+                        ExprKind::Field(iterable, "iter", unified_fn, None).alloc_with_span_from(
                             self.ast,
                             &self.scope,
                             iterable_node,
@@ -1121,7 +1132,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         // Switch is desugared into a series of if-else expressions
         for arm in body.children_by_field(FieldKind::Arm, &mut cursor) {
             if default_arm.is_some() {
-                return Err(CodeErrorKind::DefaultCaseMustBeLast).with_span_from(&self.scope, arm);
+                return Err(CodeDiagnostic::DefaultCaseMustBeLast).with_span_from(&self.scope, arm);
             }
 
             let pattern = arm.child_by_field(FieldKind::Pattern).unwrap();
@@ -1154,7 +1165,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
         let ret = arms.into_iter().rfold(
             default_arm.unwrap_or_else(|| ExprKind::Void.alloc_with_span(self.ast, None)),
-            |acc, (arm_node, alternatives, value)| {
+            |acc, (_arm_node, alternatives, value)| {
                 // TODO: add spans here
                 let cmp = alternatives
                     .into_iter()
@@ -1176,7 +1187,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                     .unwrap();
                 let branch = ExprKind::If(cmp, value, acc);
 
-                branch.alloc_with_span_from(self.ast, &self.scope, arm_node)
+                branch.alloc_with_span(self.ast, None)
             },
         );
 
@@ -1211,7 +1222,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                     .node_text(node.child_by_field(FieldKind::Field).unwrap());
 
                 if !names.insert(name) {
-                    return Err(CodeErrorKind::DuplicateFieldInitializer(name.to_string()))
+                    return Err(CodeDiagnostic::DuplicateFieldInitializer(name.to_string()))
                         .with_span_from(&self.scope, node);
                 }
 
@@ -1252,11 +1263,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
     fn visit_et_cetera_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         if !self.macro_ctx.in_a_macro {
-            return Err(CodeErrorKind::EtCeteraOutsideOfMacro).with_span_from(&self.scope, node);
+            return Err(CodeDiagnostic::EtCeteraOutsideOfMacro).with_span_from(&self.scope, node);
         }
 
         if !self.macro_ctx.has_et_cetera {
-            return Err(CodeErrorKind::NoEtCeteraArgs).with_span_from(&self.scope, node);
+            return Err(CodeDiagnostic::NoEtCeteraArgs).with_span_from(&self.scope, node);
         }
 
         let inner = self.visit(node.child_by_field(FieldKind::Inner).unwrap())?;
@@ -1288,7 +1299,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                         .collect();
                     item
                 }
-                _ => return Err(CodeErrorKind::NotAMacro).with_span_from(&self.scope, node),
+                _ => return Err(CodeDiagnostic::NotAMacro).with_span_from(&self.scope, node),
             };
 
             let expander =
@@ -1319,7 +1330,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 }
 
-pub fn parse_string_literal(lit: &str) -> Result<Vec<u8>, CodeErrorKind> {
+pub fn parse_string_literal(lit: &str) -> Result<Vec<u8>, CodeDiagnostic> {
     let mut result = Vec::<u8>::with_capacity(lit.len());
 
     enum State {
@@ -1375,7 +1386,7 @@ pub fn parse_string_literal(lit: &str) -> Result<Vec<u8>, CodeErrorKind> {
                 b'x' => State::Hex,
                 b'u' => State::UnicodeStart,
                 _ => {
-                    return Err(CodeErrorKind::InvalidEscapeSequence);
+                    return Err(CodeDiagnostic::InvalidEscapeSequence);
                 }
             },
             State::Hex => {
@@ -1401,10 +1412,10 @@ pub fn parse_string_literal(lit: &str) -> Result<Vec<u8>, CodeErrorKind> {
                 if buf.len() == 3 {
                     buf.push(ch as char);
                     let ch = u32::from_str_radix(&buf, 16)
-                        .map_err(|_| CodeErrorKind::InvalidEscapeSequence)?;
+                        .map_err(|_| CodeDiagnostic::InvalidEscapeSequence)?;
 
                     let utf8 = char::from_u32(ch)
-                        .ok_or(CodeErrorKind::InvalidEscapeSequence)?
+                        .ok_or(CodeDiagnostic::InvalidEscapeSequence)?
                         .to_string();
 
                     result.extend(utf8.as_bytes());
@@ -1418,9 +1429,9 @@ pub fn parse_string_literal(lit: &str) -> Result<Vec<u8>, CodeErrorKind> {
             State::UnicodeLong => match ch {
                 b'}' => {
                     let ch = u32::from_str_radix(&buf, 16)
-                        .map_err(|_| CodeErrorKind::InvalidEscapeSequence)?;
+                        .map_err(|_| CodeDiagnostic::InvalidEscapeSequence)?;
                     let utf8 = char::from_u32(ch)
-                        .ok_or(CodeErrorKind::InvalidEscapeSequence)?
+                        .ok_or(CodeDiagnostic::InvalidEscapeSequence)?
                         .to_string();
                     result.extend(utf8.as_bytes());
                     buf.clear();
@@ -1436,11 +1447,11 @@ pub fn parse_string_literal(lit: &str) -> Result<Vec<u8>, CodeErrorKind> {
 
     match state {
         State::Normal => Ok(result),
-        _ => Err(CodeErrorKind::InvalidEscapeSequence),
+        _ => Err(CodeDiagnostic::InvalidEscapeSequence),
     }
 }
 
-pub struct ClosureVisitor<'ast, 'src> {
+pub struct LambdaVisitor<'ast, 'src> {
     ast: &'ast AstCtx<'ast>,
     global_ctx: GlobalCtx,
     code: &'src ParseCtx<'src>,
@@ -1455,7 +1466,7 @@ pub struct ClosureVisitor<'ast, 'src> {
     macro_ctx: MacroCtx,
 }
 
-impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
+impl<'ast, 'src> LambdaVisitor<'ast, 'src> {
     pub fn new(
         ast: &'ast AstCtx<'ast>,
         global_ctx: GlobalCtx,
@@ -1485,7 +1496,7 @@ impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
     ) -> Result<(ItemP<'ast>, &'ast [ClosureBinding<'ast>]), AluminaError> {
         self.visit(node)?;
 
-        let symbol = self.ast.make_symbol();
+        let item = self.ast.make_item();
         let span = Span::from_node(self.scope.file_id(), node);
 
         if !self.bound_values.is_empty() {
@@ -1516,7 +1527,7 @@ impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
 
         self.scope.check_unused_items(&self.global_ctx.diag());
 
-        symbol.assign(Item::Function(Function {
+        item.assign(Item::Function(Function {
             name: None,
             attributes: [].alloc_on(self.ast),
             placeholders: self.placeholders.alloc_on(self.ast),
@@ -1542,11 +1553,11 @@ impl<'ast, 'src> ClosureVisitor<'ast, 'src> {
             .collect::<Vec<_>>()
             .alloc_on(self.ast);
 
-        Ok((symbol, bindings))
+        Ok((item, bindings))
     }
 }
 
-impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
+impl<'ast, 'src> AluminaVisitor<'src> for LambdaVisitor<'ast, 'src> {
     type ReturnType = Result<(), AluminaError>;
 
     fn visit_parameter(&mut self, node: tree_sitter::Node<'src>) -> Result<(), AluminaError> {
@@ -1608,7 +1619,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
                 ..
             }) => ExprKind::BoundParam(self_arg, id, bound_type),
             _ => {
-                return Err(CodeErrorKind::CanOnlyCloseOverLocals).with_span_from(&self.scope, node)
+                return Err(CodeDiagnostic::CanOnlyCloseOverLocals)
+                    .with_span_from(&self.scope, node)
             }
         };
 
@@ -1647,7 +1659,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ClosureVisitor<'ast, 'src> {
         Ok(())
     }
 
-    fn visit_closure_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+    fn visit_lambda_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         self.visit(node.child_by_field(FieldKind::Parameters).unwrap())?;
 
         self.body = Some(
@@ -1703,20 +1715,20 @@ pub fn resolve_name<'ast, 'src>(
             NamedItemKind::Parameter(var, _) => ExprKind::Local(var),
             NamedItemKind::Static(var, _, _) => ExprKind::Static(var, None),
             NamedItemKind::Const(var, _, _) => ExprKind::Const(var, None),
-            NamedItemKind::EnumMember(typ, var, _) => ExprKind::EnumValue(typ, var),
-            NamedItemKind::Macro(symbol, node, scope) => {
+            //NamedItemKind::EnumMember(typ, var, _) => ExprKind::EnumValue(typ, var),
+            NamedItemKind::Macro(item, node, scope) => {
                 let mut macro_maker = MacroMaker::new(ast, global_ctx);
                 macro_maker.make(
                     Some(path.segments.last().unwrap().0),
-                    symbol,
+                    item,
                     node,
                     scope.clone(),
                     named_item.attributes,
                 )?;
 
-                ExprKind::Macro(symbol, &[])
+                ExprKind::Macro(item, &[])
             }
-            kind => return Err(CodeErrorKind::Unexpected(format!("{}", kind))).with_span(span),
+            kind => return Err(CodeDiagnostic::Unexpected(format!("{}", kind))).with_span(span),
         },
         ItemResolution::Defered(ty, name) => {
             let name = name.0.alloc_on(ast);

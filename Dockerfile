@@ -36,19 +36,3 @@ WORKDIR /workspace
 ENV ALUMINA_SYSROOT=/usr/include/alumina
 
 ENTRYPOINT [ "/usr/bin/alumina-boot" ]
-
-FROM ubuntu:22.04 as aluminac
-
-COPY --from=builder \
-    /usr/local/lib/libtree-sitter.a \
-    /usr/local/lib/libtree-sitter.so.0.0 \
-    /usr/local/lib/
-
-RUN ln -s /usr/local/lib/libtree-sitter.so.0.0 \
-    /usr/local/lib/libtree-sitter.so && \
-    ln -s /usr/local/lib/libtree-sitter.so.0.0 \
-    /usr/local/lib/libtree-sitter.so.0 && \
-    ldconfig
-
-COPY --from=builder /alumina/build/release/aluminac .
-
