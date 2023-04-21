@@ -57,7 +57,6 @@ endef
 
 
 ALUMINA_BOOT = $(BUILD_DIR)/alumina-boot
-ALUMINAC_TESTS = $(BUILD_DIR)/aluminac-tests
 CODEGEN = $(BUILD_DIR)/aluminac-generate
 STDLIB_TESTS = $(BUILD_DIR)/stdlib-tests
 LIBRARIES_TESTS = $(BUILD_DIR)/libraries-tests
@@ -154,14 +153,16 @@ $(ALUMINA_DOC): $(ALUMINA_DOC).c $(BUILD_DIR)/parser.o
 $(BUILD_DIR)/doctest.alu: $(ALUMINA_DOC) $(SYSROOT_FILES) tools/alumina-doc/static/*
 	@mkdir -p $(BUILD_DIR)/~doctest
 	ALUMINA_DOC_OUTPUT_DIR=$(BUILD_DIR)/~doctest $(ALUMINA_DOC) \
-		$(call alumina_modules,$(SYSROOT_FILES),sysroot/,/)
+		$(call alumina_modules,$(SYSROOT_FILES),sysroot/,/) \
+		$(call alumina_modules,$(ALU_LIBRARIES),libraries/,/)
 	@cp -rf tools/alumina-doc/static $(BUILD_DIR)/~doctest/html/
 	@rm -rf $(BUILD_DIR)/html $(BUILD_DIR)/doctest.alu
 	mv $(BUILD_DIR)/~doctest/* $(BUILD_DIR)/
 	@rmdir $(BUILD_DIR)/~doctest
 
 $(DOCTEST).c: $(ALUMINA_BOOT) $(SYSROOT_FILES) $(BUILD_DIR)/doctest.alu
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --output $@ $(BUILD_DIR)/doctest.alu
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --output $@ $(BUILD_DIR)/doctest.alu \
+		$(call alumina_modules,$(ALU_LIBRARIES),libraries/,/)
 
 $(DOCTEST): $(DOCTEST).c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
@@ -202,7 +203,7 @@ examples: $(patsubst examples/%.alu,$(BUILD_DIR)/examples/%,$(EXAMPLES))
 clean:
 	cargo clean
 	rm -rf $(BUILD_ROOT)/
-	rm -f quick.c quick alumina-boot aluminac
+	rm -f quick.c quick alumina-boot
 
 install: $(ALUMINA_BOOT) $(SYSROOT_FILES)
 	install -T $(ALUMINA_BOOT) $(PREFIX)/bin/alumina-boot
@@ -213,9 +214,6 @@ install: $(ALUMINA_BOOT) $(SYSROOT_FILES)
 # Some convenience symlinks
 alumina-boot: $(ALUMINA_BOOT)
 	ln -sf $(ALUMINA_BOOT) $@
-
-aluminac: $(ALUMINAC)
-	ln -sf $(ALUMINAC) $@
 
 .PHONY: test-std test-examples test-alumina-boot test-libraries test-lang test
 
@@ -234,7 +232,7 @@ test-alumina-boot:
 test: test-alumina-boot test-std test-lang
 
 .DEFAULT_GOAL := all
-all: alumina-boot aluminac
+all: alumina-boot
 
 ## ------------------ Ad-hoc manual testing shortcuts ------------------
 
@@ -271,7 +269,7 @@ flamegraph: $(BUILD_DIR)/flamegraph.svg
 coverage:
 	COVERAGE=1 $(MAKE) all-tests-with-coverage
 
-all-tests-with-coverage: aluminac test-docs test examples
+all-tests-with-coverage: test test-docs test-libraries examples
 	llvm-profdata merge \
 		-sparse  \
 		$(BUILD_DIR)/profiles/* \
@@ -301,4 +299,4 @@ lint-rust: $(BOOTSTRAP_SOURCES) $(COMMON_SOURCES) $(BUILD_DIR)/.build
 	cargo fmt -- --check
 	cargo clippy $(CARGO_FLAGS) --all-targets
 
-dist-check: lint-rust aluminac test-libraries test-docs test examples
+dist-check: lint-rust test-libraries test-docs test examples

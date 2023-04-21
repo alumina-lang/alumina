@@ -1081,6 +1081,34 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     return Ok(BoundCheckResult::DoesNotMatch);
                 }
             }
+            Some(LangItemKind::ProtoSameBaseAs) => {
+                let ty_item = match ty {
+                    ir::Ty::Item(i) => i,
+                    _ => {
+                        return Ok(BoundCheckResult::DoesNotMatchBecause(
+                            "it is not a named type".into(),
+                        ))
+                    }
+                };
+                let param_item = match proto_generic_args[0] {
+                    ir::Ty::Item(i) => i,
+                    _ => {
+                        return Ok(BoundCheckResult::DoesNotMatchBecause(format!(
+                            "{} is not a named type",
+                            self.mono_ctx.type_name(proto_generic_args[0])?
+                        )))
+                    }
+                };
+
+                let MonoKey(ty_ast, _, _, _) = self.mono_ctx.reverse_lookup(ty_item);
+                let MonoKey(param_ast, _, _, _) = self.mono_ctx.reverse_lookup(param_item);
+
+                if ty_ast == param_ast {
+                    return Ok(BoundCheckResult::Matches);
+                } else {
+                    return Ok(BoundCheckResult::DoesNotMatch);
+                }
+            }
             Some(_) | None => {}
         };
 

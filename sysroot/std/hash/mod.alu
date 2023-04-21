@@ -12,7 +12,7 @@
 ///
 /// ## Example
 /// ```
-/// use std::hash::hash_of;
+/// use std::hash::hash_of_val;
 ///
 /// // A bad hash, do not use
 /// struct CountingHash {
@@ -25,9 +25,9 @@
 ///     fn finish(self: &mut CountingHash) -> u64 { self.length as u64 }
 /// }
 ///
-/// assert_eq!(hash_of::<&[u8], CountingHash>(""), 0);
-/// assert_eq!(hash_of::<&[u8], CountingHash>("a"), 1);
-/// assert_eq!(hash_of::<&[u8], CountingHash>("ab"), 2);
+/// assert_eq!(hash_of_val::<&[u8], CountingHash>(""), 0);
+/// assert_eq!(hash_of_val::<&[u8], CountingHash>("a"), 1);
+/// assert_eq!(hash_of_val::<&[u8], CountingHash>("ab"), 2);
 /// ```
 protocol Hasher<Self> {
     /// Create a new hasher.
@@ -58,14 +58,14 @@ protocol Hasher<Self> {
 ///    mixin<H: Hasher<H>> Hashable<FancyI32, H>;
 /// }
 ///
-/// use std::hash::hash_of;
+/// use std::hash::hash_of_val;
 ///
 /// let x = FancyI32 { a: 1 };
 /// let y = FancyI32 { a: 1 };
 /// let z = FancyI32 { a: 2 };
 ///
-/// assert_eq!(hash_of(x), hash_of(y));
-/// assert_ne!(hash_of(x), hash_of(z));
+/// assert_eq!(hash_of_val(x), hash_of_val(y));
+/// assert_ne!(hash_of_val(x), hash_of_val(z));
 /// ```
 /// ### A custom implementation
 /// ```
@@ -81,14 +81,14 @@ protocol Hasher<Self> {
 ///     }
 /// }
 ///
-/// use std::hash::hash_of;
+/// use std::hash::hash_of_val;
 ///
 /// let v1 = Foo { a: 1, b: "foo", extra: 0 };
 /// let v2 = Foo { a: 1, b: "foo", extra: 1 };
 /// let v3 = Foo { a: 1, b: "bar", extra: 0 };
 ///
-/// assert_eq!(hash_of(v1), hash_of(v2));
-/// assert_ne!(hash_of(v1), hash_of(v3));
+/// assert_eq!(hash_of_val(v1), hash_of_val(v2));
+/// assert_ne!(hash_of_val(v1), hash_of_val(v3));
 /// ```
 protocol Hashable<Self, H: Hasher<H>> {
     /// Update hasher state with the contents of this object.
@@ -102,7 +102,14 @@ protocol Hashable<Self, H: Hasher<H>> {
 }
 
 /// Calculate the hash of a value.
-fn hash_of<T: Hashable<T, H>, H: Hasher<H> = DefaultHash>(val: T) -> u64 {
+fn hash_of_val<T: Hashable<T, H>, H: Hasher<H> = DefaultHash>(val: T) -> u64 {
+    let hasher = H::new();
+    val.hash(&hasher);
+    hasher.finish()
+}
+
+/// Calculate the hash of a value passed by pointer.
+fn hash_of<T: Hashable<T, H>, H: Hasher<H> = DefaultHash>(val: &T) -> u64 {
     let hasher = H::new();
     val.hash(&hasher);
     hasher.finish()

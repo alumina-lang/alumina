@@ -53,3 +53,36 @@
 /// ```
 #[builtin] macro reduce($mac, $base, $arg...) {}
 
+
+/// Count the number of arguments
+///
+/// This macro counts the number of arguments passed to it. The result is a
+/// [usize] constant expression.
+///
+/// ## Example
+/// ```
+/// use std::macros::count;
+///
+/// assert_eq!(count!(), 0);
+/// assert_eq!(count!("a", 1, true), 3);
+/// ```
+macro count($arg...) {
+    reduce!(internal::count_reducer, 0usize, $arg...)
+}
+
+#[docs(no_index)]
+mod internal {
+    macro count_reducer($acc, $_) {
+        $acc + 1usize
+    }
+}
+
+#[cfg(all(test, test_std))]
+#[docs(hide)]
+mod tests {
+    #[test]
+    fn test_count() {
+        assert_eq!(count!(), 0);
+        assert_eq!(count!("a", 1, true), 3);
+    }
+}

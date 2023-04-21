@@ -1,0 +1,145 @@
+//! Convenience macros for constructing JSON values.
+
+use std::builtins::{Numeric, Array};
+
+fn _to_json<T>(val: T) -> JsonValue {
+    when val is JsonValue {
+        val
+    } else when val is () {
+        JsonValue::null()
+    }  else when val is Numeric {
+        JsonValue::number(val as f64)
+    } else when val is bool {
+        JsonValue::boolean(val)
+    } else when val is StringBuf {
+        JsonValue::string(val)
+    } else when val is std::option::AnyOption {
+        if val.is_none() {
+            JsonValue::null()
+        } else {
+            _to_json(val.unwrap())
+        }
+    } else when val is Array {
+        let array = Vector::with_capacity::<JsonValue>(val.len());
+        for item in val {
+            array.push(_to_json(item));
+        }
+        JsonValue::array(array)
+    } else when (val is &[u8]) || (val is &mut [u8]) {
+        JsonValue::string(StringBuf::from_slice(val))
+    } else {
+        std::compile_fail!("unsupported type for into!(...)");
+    }
+}
+
+fn _to_json_propery<K, V>(prop: (K, V)) -> (StringBuf, JsonValue) {
+    let key = when prop.0 is StringBuf {
+        prop.0
+    } else when (prop.0 is &[u8]) || (prop.0 is &mut [u8]) {
+        StringBuf::from_slice(prop.0)
+    } else {
+        std::compile_fail!("unsupported type for json property key");
+    };
+
+    (key, _to_json(prop.1))
+}
+
+/// Convert any supported value into a [JsonValue].
+///
+/// ## Examples
+/// ```
+/// use json::builder::into;
+///
+/// true.into!(); // true
+/// 1.into!(); // 1
+/// (3.1415).into!(); // 3.1415
+/// ().into!(); // null
+/// "hello".into!(); // "hello"
+/// [1, 2, 3].into!(); // [1, 2, 3]
+/// Option::some(42).into!(); // 42
+/// Option::none::<i32>().into!(); // null
+/// ```
+macro into($val) {
+    _to_json($val)
+}
+
+/// Construct a JSON object into a [JsonValue].
+///
+/// The arguments are a list of key-value pairs, where the key is a string-like value
+/// and the value is any supported value.
+///
+/// ## Example
+/// ```
+/// use json::builder::object;
+///
+/// let value = object!(
+///     ("name", "John"),
+///     ("age", 42),
+///     ("is_admin", false)
+/// );
+/// defer value.free();
+///
+/// println!("{}", value); // {"name":"John","age":42,"is_admin":false}
+/// ```
+/// ## Note
+/// If the expressions in the key-value pairs perform flow control (e.g. through try operator `?`),
+/// the `object!` macro may leak memory. For example, the following code will leak memory:
+///
+/// ```dubious
+/// use json::JsonValue;
+/// use json::builder::object;
+///
+/// fn is_admin(name: &[u8]) -> Result<bool, ()> {
+///     Result::err(())  // Not yet implemented
+/// }
+///
+/// fn serialize_user(name: &[u8]) -> Result<JsonValue, ()> {
+///     let value = object!(
+///         ("name", name),
+///         ("is_admin", is_admin(name)?) // <-- Leaks memory
+///     );
+///
+///     Result::ok(value)
+/// }
+///
+/// serialize_user("John");
+/// ```
+macro object($val...) {
+    use std::macros::count;
+    use std::collections::HashMap;
+    use std::string::StringBuf;
+
+    let object: HashMap<StringBuf, JsonValue> = HashMap::with_capacity(count!($val...));
+    {
+        let prop = _to_json_propery($val);
+        object.insert(prop.0, prop.1);
+    }...;
+
+    JsonValue::object(object)
+}
+
+/// Construct a JSON array into a [JsonValue].
+///
+/// The arguments are a list of values, where each value is any supported value.
+///
+/// ## Example
+/// ```
+/// use json::builder::array;
+///
+/// let value = array!(1, true, "hello");
+/// defer value.free();
+///
+/// println!("{}", value); // [1,true,"hello"]
+/// ```
+/// ## Note
+/// If the expressions in the array perform flow control, the `array!` macro may leak memory.
+/// See the note in the [object] macro for an example.
+macro array($val...) {
+    use std::macros::count;
+    use std::collections::Vector;
+
+    let array: Vector<JsonValue> = Vector::with_capacity(count!($val...));
+    { array.push(_to_json($val)); }...;
+
+    JsonValue::array(array)
+}

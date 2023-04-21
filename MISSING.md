@@ -26,6 +26,8 @@
 - a coherent story for operator overloading
 - `dyn` pointers for certain builtin protocols. Specifically `dyn Callable<...>` would be very useful for being type-erased closures.
 - Fix that damn "local with unknown type" issue. It can happen that compilation will fail with 0 errors and 0 warnings now.
+- make compile_fail take format string and arguments
+- get rid of println! and eprintln! in const-eval, give them separate names
 
 ## Grammar, parsing, AST
 

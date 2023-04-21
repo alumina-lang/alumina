@@ -1,4 +1,4 @@
-use hash::{Hashable, Hasher, DefaultHash, hash_of};
+use hash::{Hashable, Hasher, DefaultHash, hash_of_val, hash_of};
 use option::{Option, try};
 use cmp::Equatable;
 use iter::Iterator;
@@ -175,17 +175,20 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
 
     /// Retreives the value by given key.
     fn get(self: &HashMap<K, V, H>, key: &K) -> Option<V> {
-        Option::some(self._get_slot(key)?.item.1)
+        let comparer = |=key, c: &K| -> bool { c.equals(key) };
+        Option::some(self._get_slot(hash_of::<K, H>(key), comparer)?.item.1)
     }
 
     /// Retreives a pointer to the value by given key.
     fn get_ref(self: &HashMap<K, V, H>, key: &K) -> Option<&V> {
-        Option::some(&self._get_slot(key)?.item.1 as &V)
+        let comparer = |=key, c: &K| -> bool { c.equals(key) };
+        Option::some(&self._get_slot(hash_of::<K, H>(key), comparer)?.item.1 as &V)
     }
 
     /// Retreives a mutable pointer to the value by given key.
     fn get_mut(self: &mut HashMap<K, V, H>, key: &K) -> Option<&mut V> {
-        Option::some(&self._get_slot(key)?.item.1)
+        let comparer = |=key, c: &K| -> bool { c.equals(key) };
+        Option::some(&self._get_slot(hash_of::<K, H>(key), comparer)?.item.1)
     }
 
     /// Removes the element from the map.
@@ -193,7 +196,8 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     /// If the element with the given key was present in the map, the corresponding value is
     /// returned. Otherwise, `Option::none()` is returned.
     fn remove(self: &mut HashMap<K, V, H>, key: &K) -> Option<V> {
-        let item = self._get_slot(key)?;
+        let comparer = |=key, c: &K| -> bool { c.equals(key) };
+        let item = self._get_slot(hash_of::<K, H>(key), comparer)?;
         self._length -= 1;
         item.state = State::Deleted;
 
@@ -261,7 +265,7 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     }
 
     fn _insert(self: &mut HashMap<K, V, H>, item: (K, V), grow: bool) -> Option<V> {
-        let initial_index = (hash_of::<K, H>(item.0) as usize) % self._buckets.len();
+        let initial_index = (hash_of_val::<K, H>(item.0) as usize) % self._buckets.len();
         let index = initial_index;
 
         loop {
@@ -294,14 +298,12 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
         }
     }
 
-    fn _get_slot(self: &HashMap<K, V, H>, key: &K) -> Option<&mut HashItem<(K, V)>> {
+    fn _get_slot<Eq: Fn(&K) -> bool>(self: &HashMap<K, V, H>, hash: u64, equals: Eq) -> Option<&mut HashItem<(K, V)>> {
         if self._length == 0 {
             return Option::none();
         }
 
-        let hasher = H::new();
-        key.hash(&hasher);
-        let initial_index = (hasher.finish() as usize) % self._buckets.len();
+        let initial_index = (hash as usize) % self._buckets.len();
         let index = initial_index;
 
         loop {
@@ -310,7 +312,7 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
                     return Option::none();
                 }
                 State::Occupied => {
-                    if self._buckets[index].item.0.equals(key) {
+                    if equals(&self._buckets[index].item.0) {
                         return Option::some(&self._buckets[index]);
                     }
                 }
@@ -421,6 +423,42 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
             ret.insert(item.0, item.1);
         }
         ret
+    }
+}
+
+impl HashMap<B: Hashable<B, H> + Equatable<B>, K: mem::Borrowable<K, B>, V, H: Hasher<H> = DefaultHash> {
+    /// Retreives the value by given borrowing of a key.
+    fn get_borrowed(self: &HashMap<K, V, H>, key: B) -> Option<V> {
+        let comparer = |=key, c: &K| -> bool { c.borrow().equals(&key) };
+        Option::some(self._get_slot(hash_of_val::<B, H>(key), comparer)?.item.1)
+    }
+
+    /// Retreives a pointer to the value by given borrowing of a key.
+    fn get_borrowed_ref(self: &HashMap<K, V, H>, key: B) -> Option<&V> {
+        let comparer = |=key, c: &K| -> bool { c.borrow().equals(&key) };
+        Option::some(&self._get_slot(hash_of_val::<B, H>(key), comparer)?.item.1 as &V)
+    }
+
+    /// Retreives a mutable pointer to the value by given key.
+    fn get_borrowed_mut(self: &mut HashMap<K, V, H>, key: B) -> Option<&mut V> {
+        let comparer = |=key, c: &K| -> bool { c.borrow().equals(&key) };
+        Option::some(&self._get_slot(hash_of_val::<B, H>(key), comparer)?.item.1)
+    }
+
+    /// Removes the element from the map by given borrowing of a key.
+    ///
+    /// If the element with the given key was present in the map, the corresponding value is
+    /// returned along with the key. Otherwise, `Option::none()` is returned.
+    fn remove_borrowed(self: &mut HashMap<K, V, H>, key: B) -> Option<(K, V)> {
+        let comparer = |=key, c: &K| -> bool { c.borrow().equals(&key) };
+        let item = self._get_slot(hash_of_val::<B, H>(key), comparer)?;
+        self._length -= 1;
+        item.state = State::Deleted;
+
+        // We leave the tombstones in the map and do not clean them up, which will lead to sub-optimal
+        // performance when a lot of items are deleted. Call shrink_to_fit() to get rid of them.
+
+        Option::some((item.item.0, item.item.1))
     }
 }
 
@@ -877,5 +915,26 @@ mod tests {
 
         assert!(map.len() == 0);
         assert!(map2.len() == 3);
+    }
+
+    #[test]
+    fn test_hashmap_borrowed() {
+        use std::string::StringBuf;
+
+        let map = HashMap::new::<StringBuf, i32>();
+        defer map.free_all();
+
+        map.insert(StringBuf::from_slice("hello"), 42);
+        map.insert(StringBuf::from_slice("world"), 420);
+
+        assert_eq!(*map.get_borrowed_ref("world").unwrap(), 420);
+        *map.get_borrowed_mut("hello").unwrap() = 24;
+
+        assert_eq!(map.get_borrowed("hello"), Option::some(24));
+        let (k, _) = map.remove_borrowed("world").unwrap();
+        assert_eq!(k[..] as &[u8], "world");
+        k.free();
+
+        assert_eq!(map.len(), 1);
     }
 }

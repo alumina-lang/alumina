@@ -60,6 +60,22 @@ macro try($opt) {
     }
 }
 
+/// Protocol that matches all [Option] types
+///
+/// # Example
+/// ```
+/// use std::option::AnyOption;
+///
+/// let a = Option::some(1);
+/// let b: Option<i32> = Option::none();
+/// let c = 42;
+///
+/// assert!(a is AnyOption);
+/// assert!(b is AnyOption);
+/// assert!(!(c is AnyOption));
+/// ```
+type AnyOption = builtins::SameBaseAs<Option<()>>;
+
 /// Optional value
 ///
 /// Optional values can either contain a value or they can be empty.
@@ -646,7 +662,7 @@ mod tests {
     }
 
     fn hash<T>(value: T) -> u64 {
-        hash::hash_of::<T, hash::DefaultHash>(value)
+        hash::hash_of_val::<T, hash::DefaultHash>(value)
     }
 
     #[test]

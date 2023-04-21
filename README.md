@@ -133,8 +133,6 @@ To be done:
 - A good story for third-party libraries (something like `crates.io` maybe?)
 - Various rough edges and missing features
 
-A self-hosted compiler ([`aluminac`](./src/aluminac)) is also being written. It is in very early stages (is only able to parse source at the moment). It will eventually have a LLVM backend.
-
 Full list of missing features, open questions, bugs and ideas for the future is in [MISSING.md](./MISSING.md)
 
 # Try it out
@@ -164,7 +162,7 @@ To compile `alumina-boot` compiler from source, these prerequisites are needed:
   - A Rust toolchain (`rustup install stable`)
   - Node.js and Tree-sitter CLI (`npm install -g tree-sitter-cli` or `cargo install tree-sitter-cli`)
 
-Additionally, to compile `aluminac`, these prerequisites are needed:
+Additionally, to compile the tools, such as `alumina-doc`, these prerequisites are needed:
 
   - Tree-sitter runtime library (`libtree-sitter.a`/`libtree-sitter.so`):
    ```bash
@@ -220,7 +218,7 @@ To compile the self-hosted compiler, run:
 make aluminac
 ```
 
-See the [language guide](./docs/lang_guide.md), assorted [examples](./examples), [standard library](./sysroot) and the [self-hosted compiler](./src/aluminac) for a tour of the language.
+See the [language guide](./docs/lang_guide.md), assorted [examples](./examples), [standard library](./sysroot) for a tour of the language.
 
 
 # Contributing
