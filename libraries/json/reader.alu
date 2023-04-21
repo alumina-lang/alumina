@@ -1,0 +1,771 @@
+//! Low level JSON lexer.
+//!
+//! Auto-generated using [supercomplex](https://github.com/tibordp/supercomplex/blob/master/examples/codegen_alumina_json.cpp)
+
+use std::iter::{Iterator, IteratorExt};
+use std::cmp::Equatable;
+use std::fmt::{Formattable, Formatter, write};
+use std::io::BufferedReadable;
+use std::string::StringBuf;
+
+use json::{Error, Result};
+
+enum TokenKind {
+    /// A JSON literal (`true`, `false`, `null`)
+    Literal,
+    /// A JSON number
+    Number,
+    /// A JSON colon (`:`)
+    Colon,
+    /// A JSON object open (`{`)
+    ObjOpen,
+    /// A JSON array open (`[`)
+    ArrOpen,
+    /// A JSON comma (`,`)
+    Comma,
+    /// A JSON string
+    String,
+    /// A JSON object close (`}`)
+    ObjClose,
+    /// A JSON array close (`]`)
+    ArrClose,
+}
+
+impl TokenKind {
+    /// @ std::cmp::Equatable::equals
+    fn equals(self: &TokenKind, other: &TokenKind) -> bool {
+        *self == *other
+    }
+
+    /// @ std::fmt::Formattable::fmt
+    fn fmt<F: Formatter<F>>(self: &TokenKind, f: &mut F) -> std::fmt::Result {
+        switch *self {
+            TokenKind::Literal => write!(f, "Literal"),
+            TokenKind::Number => write!(f, "Number"),
+            TokenKind::Colon => write!(f, "Colon"),
+            TokenKind::ObjOpen => write!(f, "ObjOpen"),
+            TokenKind::ArrOpen => write!(f, "ArrOpen"),
+            TokenKind::Comma => write!(f, "Comma"),
+            TokenKind::String => write!(f, "String"),
+            TokenKind::ObjClose => write!(f, "ObjClose"),
+            TokenKind::ArrClose => write!(f, "ArrClose"),
+            _ => unreachable!(),
+        }
+    }
+
+    mixin Equatable<TokenKind>;
+}
+
+/// A JSON token.
+///
+/// Token contains a pointer to the reader's internal buffer, so it is only
+/// valid as long until the next call to `next()`.
+struct Token {
+    /// The type of the token.
+    kind: TokenKind,
+    /// Raw text of the token.
+    value: &mut StringBuf,
+}
+
+impl Token {
+    /// @ std::cmp::Equatable::equals
+    fn equals(self: &Token, other: &Token) -> bool {
+        self.kind == other.kind && self.value.equals(other.value)
+    }
+
+    /// @ std::fmt::Formattable::fmt
+    fn fmt<F: Formatter<F>>(self: &Token, f: &mut F) -> std::fmt::Result {
+        write!(f, "{}({})", self.kind, *self.value)
+    }
+
+    mixin Equatable<Token>;
+}
+
+struct JsonReader<R: BufferedReadable<R>> {
+    state: i32,
+    reader: &mut R,
+    buf: StringBuf
+}
+
+impl JsonReader<R: BufferedReadable<R>> {
+    fn new(reader: &mut R) -> JsonReader<R> {
+        JsonReader {
+            state: 30,
+            reader: reader,
+            buf: StringBuf::new(),
+        }
+    }
+
+    /// @ std::iter::Iterator::next
+    fn next(self: &mut JsonReader<R>) -> Option<Result<Token>> {
+        let i = 0usize;
+        let buf: &[u8] = &[];
+        self.buf.clear();
+
+        macro token($kind) {
+            return Option::some(Result::ok(Token {
+                kind: $kind,
+                value: &self.buf,
+            }));
+        }
+
+        macro bail($error_kind) {
+            return Option::some(Result::err(Error::new(
+                $error_kind,
+            )));
+        }
+
+        macro has_more() {
+            i < buf.len()
+        }
+
+        loop {
+            if !has_more!() {
+                let maybe_buf = self.reader
+                    .fill_buffer()
+                    .map_err(Error::from_io);
+
+                if maybe_buf.is_err() {
+                    return Option::some(Result::err(maybe_buf.unwrap_err()));
+                }
+
+                buf = maybe_buf.unwrap();
+                i = 0;
+            }
+
+            switch self.state {
+                0 => {
+                    if has_more!() &&
+                        (buf[i] == '+'
+                        || buf[i] == '-') {
+                        self.state = 12;
+                    } else if has_more!() &&
+                        buf[i] == '0' {
+                        self.state = 17;
+                    } else if has_more!() &&
+                        (buf[i] >= '1' && buf[i] <= '9') {
+                        self.state = 5;
+                    } else if !has_more!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                1 => {
+                    if has_more!() &&
+                        ((buf[i] >= '0' && buf[i] <= '9')
+                        || (buf[i] >= 'A' && buf[i] <= 'F')
+                        || (buf[i] >= 'a' && buf[i] <= 'f')) {
+                        self.state = 32;
+                    } else if !has_more!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                2 => {
+                    self.state = 30;
+                    token!(TokenKind::String);
+                },
+                3 => {
+                    if has_more!() &&
+                        ((buf[i] >= ' ' && buf[i] <= '!')
+                        || (buf[i] >= '#' && buf[i] <= '[')
+                        || (buf[i] >= ']' && buf[i] <= '\xff')) {
+                    } else if has_more!() &&
+                        buf[i] == '"' {
+                        self.state = 2;
+                    } else if has_more!() &&
+                        buf[i] == '\\' {
+                        self.state = 19;
+                    } else if !has_more!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                4 => {
+                    self.state = 30;
+                    token!(TokenKind::ArrOpen);
+                },
+                5 => {
+                    if has_more!() &&
+                        (buf[i] >= '0' && buf[i] <= '9') {
+                    } else {
+                        self.state = 30;
+                        token!(TokenKind::Number);
+                    }
+                },
+                6 => {
+                    if has_more!() &&
+                        buf[i] == 'l' {
+                        self.state = 18;
+                    } else if !has_more!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                7 => {
+                    if has_more!() &&
+                        buf[i] == '.' {
+                        self.state = 23;
+                    } else if has_more!() &&
+                        (buf[i] == 'E'
+                        || buf[i] == 'e') {
+                        self.state = 0;
+                    } else {
+                        self.state = 30;
+                        token!(TokenKind::Number);
+                    }
+                },
+                8 => {
+                    self.state = 30;
+                    token!(TokenKind::Literal);
+                },
+                9 => {
+                    if has_more!() &&
+                        (buf[i] >= '0' && buf[i] <= '9') {
+                    } else if has_more!() &&
+                        (buf[i] == 'E'
+                        || buf[i] == 'e') {
+                        self.state = 0;
+                    } else {
+                        self.state = 30;
+                        token!(TokenKind::Number);
+                    }
+                },
+                10 => {
+                    if has_more!() &&
+                        ((buf[i] >= '0' && buf[i] <= '9')
+                        || (buf[i] >= 'A' && buf[i] <= 'F')
+                        || (buf[i] >= 'a' && buf[i] <= 'f')) {
+                        self.state = 22;
+                    } else if !has_more!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                11 => {
+                    self.state = 30;
+                    token!(TokenKind::Comma);
+                },
+                12 => {
+                    if has_more!() &&
+                        buf[i] == '0' {
+                        self.state = 17;
+                    } else if has_more!() &&
+                        (buf[i] >= '1' && buf[i] <= '9') {
+                        self.state = 5;
+                    } else if !has_more!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                13 => {
+                    if has_more!() &&
+                        buf[i] == '.' {
+                        self.state = 23;
+                    } else if has_more!() &&
+                        (buf[i] == 'E'
+                        || buf[i] == 'e') {
+                        self.state = 0;
+                    } else if has_more!() &&
+                        (buf[i] >= '0' && buf[i] <= '9') {
+                    } else {
+                        self.state = 30;
+                        token!(TokenKind::Number);
+                    }
+                },
+                14 => {
+                    if has_more!() &&
+                        buf[i] == 'l' {
+                        self.state = 15;
+                    } else if !has_more!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                15 => {
+                    if has_more!() &&
+                        buf[i] == 's' {
+                        self.state = 31;
+                    } else if !has_more!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                16 => {
+                    self.state = 30;
+                    token!(TokenKind::ObjOpen);
+                },
+                17 => {
+                    self.state = 30;
+                    token!(TokenKind::Number);
+                },
+                18 => {
+                    if has_more!() &&
+                        buf[i] == 'l' {
+                        self.state = 8;
+                    } else if !has_more!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                19 => {
+                    if has_more!() &&
+                        (buf[i] == '"'
+                        || buf[i] == '/'
+                        || buf[i] == '\\'
+                        || buf[i] == 'b'
+                        || buf[i] == 'f'
+                        || buf[i] == 'n'
+                        || buf[i] == 'r'
+                        || buf[i] == 't') {
+                        self.state = 3;
+                    } else if has_more!() &&
+                        buf[i] == 'u' {
+                        self.state = 1;
+                    } else if !has_more!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                20 => {
+                    if has_more!() &&
+                        buf[i] == 'u' {
+                        self.state = 31;
+                    } else if !has_more!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                21 => {
+                    if has_more!() &&
+                        buf[i] == 'a' {
+                        self.state = 14;
+                    } else if !has_more!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                22 => {
+                    if has_more!() &&
+                        ((buf[i] >= '0' && buf[i] <= '9')
+                        || (buf[i] >= 'A' && buf[i] <= 'F')
+                        || (buf[i] >= 'a' && buf[i] <= 'f')) {
+                        self.state = 3;
+                    } else if !has_more!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                23 => {
+                    if has_more!() &&
+                        (buf[i] >= '0' && buf[i] <= '9') {
+                        self.state = 9;
+                    } else if !has_more!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                24 => {
+                    if has_more!() &&
+                        buf[i] == '0' {
+                        self.state = 7;
+                    } else if has_more!() &&
+                        (buf[i] >= '1' && buf[i] <= '9') {
+                        self.state = 13;
+                    } else if !has_more!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                25 => {
+                    self.state = 30;
+                    token!(TokenKind::ArrClose);
+                },
+                26 => {
+                    if has_more!() &&
+                        buf[i] == 'r' {
+                        self.state = 20;
+                    } else if !has_more!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                27 => {
+                    if has_more!() &&
+                        ((buf[i] >= '\t' && buf[i] <= '\n')
+                        || buf[i] == '\r'
+                        || buf[i] == ' ') {
+                    } else {
+                        self.state = 30;
+                        self.buf.clear();
+                        continue;
+                    }
+                },
+                28 => {
+                    self.state = 30;
+                    token!(TokenKind::ObjClose);
+                },
+                29 => {
+                    if has_more!() &&
+                        buf[i] == 'u' {
+                        self.state = 6;
+                    } else if !has_more!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                30 => {
+                    if has_more!() &&
+                        ((buf[i] >= '\t' && buf[i] <= '\n')
+                        || buf[i] == '\r'
+                        || buf[i] == ' ') {
+                        self.state = 27;
+                    } else if has_more!() &&
+                        buf[i] == '"' {
+                        self.state = 3;
+                    } else if has_more!() &&
+                        buf[i] == ',' {
+                        self.state = 11;
+                    } else if has_more!() &&
+                        buf[i] == '-' {
+                        self.state = 24;
+                    } else if has_more!() &&
+                        buf[i] == '0' {
+                        self.state = 7;
+                    } else if has_more!() &&
+                        buf[i] == ':' {
+                        self.state = 33;
+                    } else if has_more!() &&
+                        buf[i] == '[' {
+                        self.state = 4;
+                    } else if has_more!() &&
+                        buf[i] == ']' {
+                        self.state = 25;
+                    } else if has_more!() &&
+                        buf[i] == 'f' {
+                        self.state = 21;
+                    } else if has_more!() &&
+                        buf[i] == 'n' {
+                        self.state = 29;
+                    } else if has_more!() &&
+                        buf[i] == 't' {
+                        self.state = 26;
+                    } else if has_more!() &&
+                        buf[i] == '{' {
+                        self.state = 16;
+                    } else if has_more!() &&
+                        buf[i] == '}' {
+                        self.state = 28;
+                    } else if has_more!() &&
+                        (buf[i] >= '1' && buf[i] <= '9') {
+                        self.state = 13;
+                    } else if !has_more!() {
+                        return Option::none();
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                31 => {
+                    if has_more!() &&
+                        buf[i] == 'e' {
+                        self.state = 8;
+                    } else if !has_more!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                32 => {
+                    if has_more!() &&
+                        ((buf[i] >= '0' && buf[i] <= '9')
+                        || (buf[i] >= 'A' && buf[i] <= 'F')
+                        || (buf[i] >= 'a' && buf[i] <= 'f')) {
+                        self.state = 10;
+                    } else if !has_more!() {
+                        bail!(ErrorKind::Eof);
+                    } else {
+                        bail!(ErrorKind::Unexpected);
+                    }
+                },
+                33 => {
+                    self.state = 30;
+                    token!(TokenKind::Colon);
+                },
+                _ => unreachable!(),
+            }
+
+            self.buf.push(buf[i]);
+            self.reader.consume(1);
+            i += 1;
+        }
+    }
+
+    /// @ std::mem::Movable::move
+    fn move(self: &mut JsonReader<R>) -> JsonReader<R> {
+        JsonReader {
+            reader: self.reader,
+            state: self.state,
+            buf: self.buf.move(),
+        }
+    }
+
+    /// @ std::mem::Freeable::free
+    fn free(self: &mut JsonReader<R>) {
+        self.buf.free();
+    }
+
+    mixin Iterator<JsonReader<R>, Result<Token>>;
+    mixin IteratorExt<JsonReader<R>, Result<Token>>;
+}
+
+/// Unescape a JSON string in place.
+///
+/// This function takes a string that has been escaped according to the JSON specification and
+/// unescapes it. The input string must be a valid JSON string, i.e. it must start and end with
+/// double quotes. It returns the length of the unescaped string.
+///
+/// ## Example
+/// ```
+/// use json::reader::unescape_string;
+///
+/// let s: [u8; 24] = "\"hello\\uD83D\\uDE00world\"".to_array();
+/// let len = unescape_string(&s).unwrap();
+///
+/// assert_eq!(s[..len] as &[u8], "hello😀world");
+/// ```
+fn unescape_string(value: &mut [u8]) -> Result<usize> {
+    enum State {
+        Normal,
+        Escape,
+        Unicode
+    }
+
+    if value.len() < 2 || value[0] != '"' || value[value.len() - 1] != '"' {
+        return Result::err(Error::new(ErrorKind::InvalidUnicodeEscape));
+    }
+
+    let surrogate_pair: [u16; 2];
+    let surrogate_index = 0usize;
+    let nibble_count = 0;
+
+    let write_index = 0usize;
+
+    macro push($ch) {
+        value[write_index] = $ch;
+        write_index += 1;
+    }
+
+    let state = State::Normal;
+    for idx in 1usize..(value.len() - 1) {
+        let ch = value[idx];
+        state = switch state {
+            State::Normal => {
+                switch ch {
+                    '\\' => State::Escape,
+                    _ => {
+                        if surrogate_index != 0 {
+                            // Expecting a surrogate pair, but got a normal character.
+                            return Result::err(Error::new(ErrorKind::InvalidUnicodeEscape));
+                        }
+
+                        push!(ch);
+                        State::Normal
+                    }
+                }
+            },
+            State::Escape => {
+                if surrogate_index != 0 && ch != 'u' {
+                    // Expecting a surrogate pair, but got a normal character.
+                    return Result::err(Error::new(ErrorKind::InvalidUnicodeEscape));
+                }
+
+                switch ch {
+                    '"' => {
+                        push!('"');
+                        State::Normal
+                    },
+                    '\\' => {
+                        push!('\\');
+                        State::Normal
+                    },
+                    '/' => {
+                        push!('/');
+                        State::Normal
+                    },
+                    'b' => {
+                        push!('\x08');
+                        State::Normal
+                    },
+                    'f' => {
+                        push!('\x0C');
+                        State::Normal
+                    },
+                    'n' => {
+                        push!('\n');
+                        State::Normal
+                    },
+                    'r' => {
+                        push!('\r');
+                        State::Normal
+                    },
+                    't' => {
+                        push!('\t');
+                        State::Normal
+                    },
+                    'u' => {
+                        State::Unicode
+                    }
+                    _ => unreachable!() // Lexer should have caught this.
+                }
+            },
+            State::Unicode => {
+                use string::unicode::{decode_utf16, encode_utf8, Error as UnicodeError};
+
+                nibble_count += 1;
+                if nibble_count == 4 {
+                    // From RFC 8259:
+                    // To escape an extended character that is not in the Basic Multilingual
+                    // Plane, the character is represented as a 12-character sequence,
+                    // encoding the UTF-16 surrogate pair.  So, for example, a string
+                    // containing only the G clef character (U+1D11E) may be represented as
+                    // "\uD834\uDD1E".
+                    surrogate_pair[surrogate_index] = u16::parse_with_radix(value[idx - 3..=idx], 16)
+                        .ok_or(Error::new(ErrorKind::InvalidUnicodeEscape))?;
+
+                    surrogate_index += 1;
+
+                    let res = decode_utf16(surrogate_pair[0..surrogate_index]);
+                    if res.is_ok() {
+                        let (codepoint, size) = res.unwrap();
+                        std::debug_assert!(size == surrogate_index);
+
+                        // We know that the we have enough space in the buffer, since we
+                        // allocated enough space for the worst case. Also, the codepoint
+                        // is guaranteed to be valid, since we just decoded it from UTF-16.
+                        let written = encode_utf8(codepoint, value[write_index..])
+                            .map_err(|_: UnicodeError| -> Error {
+                                Error::new(ErrorKind::InvalidUnicodeEscape)
+                            })?;
+                        write_index += written;
+
+                        surrogate_index = 0;
+                    } else {
+                        // We may need another surrogate, in which case we continue
+                        if !(res.unwrap_err() == UnicodeError::BufferTooSmall && surrogate_index == 1) {
+                            return Result::err(Error::new(ErrorKind::InvalidUnicodeEscape));
+                        }
+                    }
+
+                    nibble_count = 0;
+                    State::Normal
+                } else {
+                    State::Unicode
+                }
+            }
+            _ => unreachable!()
+        }
+    }
+
+    if state != State::Normal {
+        return Result::err(Error::new(ErrorKind::InvalidEscape));
+    }
+    if surrogate_index != 0 {
+        return Result::err(Error::new(ErrorKind::InvalidUnicodeEscape));
+    }
+
+    Result::ok(write_index)
+}
+
+
+
+#[docs(hide)]
+#[cfg(test)]
+mod tests {
+    use std::io::SliceReader;
+
+    #[test]
+    fn test_empty() {
+        let reader = SliceReader::new("");
+        let it = JsonReader::new(&reader);
+        defer it.free();
+
+        assert!(it.next().is_none());
+    }
+
+    static BUF: StringBuf = StringBuf::new();
+
+    macro assert_token($it, $kind, $value) {
+        BUF.clear();
+        BUF.extend_from_slice($value);
+
+        assert_eq!($it.next(), Option::some(Result::ok(Token{ kind: $kind, value: &BUF })));
+    }
+
+    #[test]
+    fn test_basic() {
+        let reader = SliceReader::new("{\"obj\":[1,2,3]}");
+        let it = JsonReader::new(&reader);
+        defer it.free();
+
+        assert_token!(it, TokenKind::ObjOpen, "{");
+        assert_token!(it, TokenKind::String, "\"obj\"");
+        assert_token!(it, TokenKind::Colon, ":");
+        assert_token!(it, TokenKind::ArrOpen, "[");
+        assert_token!(it, TokenKind::Number, "1");
+        assert_token!(it, TokenKind::Comma, ",");
+        assert_token!(it, TokenKind::Number, "2");
+        assert_token!(it, TokenKind::Comma, ",");
+        assert_token!(it, TokenKind::Number, "3");
+        assert_token!(it, TokenKind::ArrClose, "]");
+        assert_token!(it, TokenKind::ObjClose, "}");
+        assert!(it.next().is_none());
+    }
+
+    #[test]
+    fn test_whitespace() {
+        let reader = SliceReader::new(" { \"o b j\" : \n\t [ 1 ,\n 2\t , 3 ]\r } ");
+        let it = JsonReader::new(&reader);
+        defer it.free();
+
+        assert_token!(it, TokenKind::ObjOpen, "{");
+        assert_token!(it, TokenKind::String, "\"o b j\"");
+        assert_token!(it, TokenKind::Colon, ":");
+        assert_token!(it, TokenKind::ArrOpen, "[");
+        assert_token!(it, TokenKind::Number, "1");
+        assert_token!(it, TokenKind::Comma, ",");
+        assert_token!(it, TokenKind::Number, "2");
+        assert_token!(it, TokenKind::Comma, ",");
+        assert_token!(it, TokenKind::Number, "3");
+        assert_token!(it, TokenKind::ArrClose, "]");
+        assert_token!(it, TokenKind::ObjClose, "}");
+
+        assert!(it.next().is_none());
+    }
+
+    #[test]
+    fn test_truncated() {
+        let reader = SliceReader::new("{\"obj");
+        let it = JsonReader::new(&reader);
+        defer it.free();
+
+        assert_token!(it, TokenKind::ObjOpen, "{" );
+        assert_eq!(it.next(), Option::some(Result::err(Error::new(ErrorKind::Eof))));
+    }
+}

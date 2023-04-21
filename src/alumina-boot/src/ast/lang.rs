@@ -47,6 +47,7 @@ pub enum LangItemKind {
     ProtoRangeOf,
     ProtoMeta,
     ProtoSameLayoutAs,
+    ProtoSameBaseAs,
     ProtoAny,
     ProtoNone,
 
@@ -180,6 +181,7 @@ impl TryFrom<&str> for LangItemKind {
             "proto_range_of" => Ok(LangItemKind::ProtoRangeOf),
             "proto_meta" => Ok(LangItemKind::ProtoMeta),
             "proto_same_layout_as" => Ok(LangItemKind::ProtoSameLayoutAs),
+            "proto_same_base_as" => Ok(LangItemKind::ProtoSameBaseAs),
             "proto_any" => Ok(LangItemKind::ProtoAny),
             "proto_none" => Ok(LangItemKind::ProtoNone),
 

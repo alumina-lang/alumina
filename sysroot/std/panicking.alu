@@ -241,6 +241,7 @@ mod internal {
 
     #[const_only]
     fn const_panic_impl(
+        bare: bool,
         file: &[u8],
         line: i32,
         column: i32,
@@ -248,7 +249,10 @@ mod internal {
     ) -> Result<!, fmt::Error> {
         let buf: [u8; 1024];
         let formatter = PanicFormatter::with_buffer(&buf);
-        fmt::write!(&formatter, "panic during constant evaluation at {}:{}:{}: ", file, line, column)?;
+
+        if !bare {
+            fmt::write!(&formatter, "panic during constant evaluation at {}:{}:{}: ", file, line, column)?;
+        }
 
         for arg in args {
             arg.fmt(&formatter)?;
@@ -266,7 +270,7 @@ mod internal {
         args: &[&dyn Formattable<Self, PanicFormatter>]
     ) -> ! {
         if runtime::in_const_context() {
-            let _ = const_panic_impl(file, line, column, args);
+            let _ = const_panic_impl(false, file, line, column, args);
 
             // The above line should never return, but if it does, something went wrong with constructing
             // the error message (e.g. it is too long, or the custom formatter returned an error)

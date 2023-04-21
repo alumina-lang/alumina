@@ -8,6 +8,9 @@
 /// This is useful when conditional compilation is used with `#[cfg(...)]` attributes, but it can also be used
 /// in generic context (e.g. with `when` expressions).
 ///
+/// Can accept format arguments, which are formatted using the same syntax as `std::fmt::format_args!`. For obvious reasons,
+/// they must be const-evaluable.
+///
 /// ## Examples
 /// ```
 /// fn fork() -> bool {
@@ -40,8 +43,20 @@
 /// println!("{}", type_of_value("hello world")); // "&[u8]"
 /// // println!("{}", type_of_value(true)); // Would fail to compile
 /// ```
-macro compile_fail($reason) {
-    intrinsics::compile_fail($reason);
+macro compile_fail($reason, $args...) {
+    runtime::const_eval!(
+        panicking::internal::const_panic_impl(
+            true,
+            file!(),
+            line!(),
+            column!(),
+            &fmt::format_args!(
+                fmt::internal::dyn_format_args,
+                $reason,
+                $args...
+            )
+        )
+    )
 }
 
 /// Emits a compile-time warning.
