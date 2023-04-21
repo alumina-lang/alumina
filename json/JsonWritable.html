@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>json::JsonWritable - Alumina Docs</title>
+<link rel="stylesheet" href="/static/styles.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="description" content=" Protocol for values that can be serialized to JSON" />
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png" />
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
+<link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
+<link rel="manifest" href="/static/manifest.json" />
+<link rel="mask-icon" href="/static/safari-pinned-tab.svg" color="#5bbad5" />
+<link rel="shortcut icon" href="/static/favicon.ico" />
+<link rel="canonical" href="https://docs.alumina-lang.net/json/JsonWritable.html" />
+<meta name="msapplication-TileColor" content="#da532c" />
+<meta name="msapplication-config" content="/static/browserconfig.xml" />
+<meta name="description" content="Documentation for the Alumina standard library" />
+<script src="/static/site.js"></script>
+<script src="/search_index.js" async></script>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500&family=Source+Code+Pro:wght@400;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,700&display=swap" rel="stylesheet">
+</head>
+<body>
+<nav>
+<a href="/">
+<img width="100px" height="100px" class="logo" src="/static/logo.svg" alt="Alumina Docs">
+</a>
+<h1><a class="breadcrumbs" href="/json/">json</a>::<a class="breadcrumbs" href="/json/JsonWritable.html">JsonWritable</a></h1>
+</h1>
+<h2>Required methods</h2>
+<ul>
+<li>
+<a href="/json/JsonWritable.html#item.write_json">write_json</a>
+</li>
+</ul>
+</nav>
+<div class="main-container">
+<div id="search-container">
+<a class="mobile-only" href="/">
+<img width="40px" height="40px" class="logo" src="/static/logo.svg" alt="Alumina Docs">
+</a>
+<input id="search-input" class="search-input" autocomplete="off" spellcheck="false" placeholder="Search the documentation..." type="search"></input>
+</div>
+<div id="search-results"></div>
+<main id="main-content">
+<div class="main-title"><h1>Protocol <a class="breadcrumbs" href="/json/">json</a>::<a class="breadcrumbs" href="/json/JsonWritable.html">JsonWritable</a></h1>
+</h1>
+</div>
+<div class="signature" data-nosnippet>
+<h3>
+<span class="keyword">protocol</span> <span class="identifier-type">JsonWritable</span>&lt;Self, W&gt; { ... }<div class="protocol-bound">
+W: <a href="/json/JsonWriter.html"><span class="identifier-type">JsonWriter</span></a>&lt;W&gt;</div>
+</h3>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/mod.alu#L211-L216"/>source</a>
+</div>
+</div>
+<p>
+Protocol for values that can be serialized to JSON
+</p><p>
+This is a JSON analogue of <a class="path-link" href="/std/fmt/Formattable.html">Formattable</a> protocol. Types implementing
+this protocol can be writen into a provided writer using the 
+<a class="path-link" href="/json/JsonWritable.html#item.write_json">write_json</a>method
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">struct Point3D {
+   x: i32,
+   y: i32,
+   z: i32,
+}
+
+impl Point3D {
+    use json::{Result, JsonWriter};
+
+    fn write_json&lt;W: JsonWriter&lt;W&gt;&gt;(self: &amp;Point3D, writer: &amp;mut W) -&gt; Result&lt;()&gt; {
+        writer.write_array_start()?;
+        writer.write_number(self.x)?;
+        writer.write_number(self.y)?;
+        writer.write_number(self.z)?;
+        writer.write_array_end()?;
+
+        Result::ok(())
+    }
+}
+
+use json::writer::JsonFormatter;
+use std::string::StringBuf;
+
+let buf = StringBuf::new();
+let formatter = JsonFormatter::new(&amp;buf); // This can also be e.g. a stream writer
+let point = Point3D { x: 1, y: 2, z: 3 };
+
+point.write_json(&amp;formatter).unwrap();
+assert_eq!(buf.as_slice(), "[1,2,3]");
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20struct%20Point3D%20%7b%0a%20%20%20%20%20%20%20x%3a%20i32%2c%0a%20%20%20%20%20%20%20y%3a%20i32%2c%0a%20%20%20%20%20%20%20z%3a%20i32%2c%0a%20%20%20%20%7d%0a%20%20%20%20%0a%20%20%20%20impl%20Point3D%20%7b%0a%20%20%20%20%20%20%20%20use%20json%3a%3a%7bResult%2c%20JsonWriter%7d%3b%0a%20%20%20%20%0a%20%20%20%20%20%20%20%20fn%20write%5fjson%3cW%3a%20JsonWriter%3cW%3e%3e%28self%3a%20%26Point3D%2c%20writer%3a%20%26mut%20W%29%20%2d%3e%20Result%3c%28%29%3e%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20writer%2ewrite%5farray%5fstart%28%29%3f%3b%0a%20%20%20%20%20%20%20%20%20%20%20%20writer%2ewrite%5fnumber%28self%2ex%29%3f%3b%0a%20%20%20%20%20%20%20%20%20%20%20%20writer%2ewrite%5fnumber%28self%2ey%29%3f%3b%0a%20%20%20%20%20%20%20%20%20%20%20%20writer%2ewrite%5fnumber%28self%2ez%29%3f%3b%0a%20%20%20%20%20%20%20%20%20%20%20%20writer%2ewrite%5farray%5fend%28%29%3f%3b%0a%20%20%20%20%0a%20%20%20%20%20%20%20%20%20%20%20%20Result%3a%3aok%28%28%29%29%0a%20%20%20%20%20%20%20%20%7d%0a%20%20%20%20%7d%0a%20%20%20%20%0a%20%20%20%20use%20json%3a%3awriter%3a%3aJsonFormatter%3b%0a%20%20%20%20use%20std%3a%3astring%3a%3aStringBuf%3b%0a%20%20%20%20%0a%20%20%20%20let%20buf%20%3d%20StringBuf%3a%3anew%28%29%3b%0a%20%20%20%20let%20formatter%20%3d%20JsonFormatter%3a%3anew%28%26buf%29%3b%20%2f%2f%20This%20can%20also%20be%20e%2eg%2e%20a%20stream%20writer%0a%20%20%20%20let%20point%20%3d%20Point3D%20%7b%20x%3a%201%2c%20y%3a%202%2c%20z%3a%203%20%7d%3b%0a%20%20%20%20%0a%20%20%20%20point%2ewrite%5fjson%28%26formatter%29%2eunwrap%28%29%3b%0a%20%20%20%20assert%5feq%21%28buf%2eas%5fslice%28%29%2c%20%22%5b1%2c2%2c3%5d%22%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+<h2 id="Required method">Required methods</h2>
+<ul>
+<li>
+<div class="signature" id="item.write_json">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">write_json</span>(self: &amp;<a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>, writer: &amp;mut W) -> <a href="/json/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/mod.alu#L215-L215"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Writes a JSON representation of the value into the provided writer
+</p><p>
+See <a class="path-link" href="/json/JsonWritable.html">JsonWritable</a> protocol documentation for more details.
+</p><p>
+</p>
+</div>
+</li>
+</ul>
+</main>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.28.0/prism.min.js" integrity="sha512-RDQSW3KoqJMiX0L/UBgwBmH1EmRYp8LBOiLaA8rBHIy+7OGP/7Gxg8vbt8wG4ZYd29P0Fnoq6+LOytCqx3cyoQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="/static/prism-alumina.js"></script>
+</body>
+</html>

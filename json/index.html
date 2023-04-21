@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>json - Alumina Docs</title>
+<link rel="stylesheet" href="/static/styles.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="description" content=" A JSON library for Alumina" />
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png" />
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
+<link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
+<link rel="manifest" href="/static/manifest.json" />
+<link rel="mask-icon" href="/static/safari-pinned-tab.svg" color="#5bbad5" />
+<link rel="shortcut icon" href="/static/favicon.ico" />
+<link rel="canonical" href="https://docs.alumina-lang.net/json/" />
+<meta name="msapplication-TileColor" content="#da532c" />
+<meta name="msapplication-config" content="/static/browserconfig.xml" />
+<meta name="description" content="Documentation for the Alumina standard library" />
+<script src="/static/site.js"></script>
+<script src="/search_index.js" async></script>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500&family=Source+Code+Pro:wght@400;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,700&display=swap" rel="stylesheet">
+</head>
+<body>
+<nav>
+<a href="/">
+<img width="100px" height="100px" class="logo" src="/static/logo.svg" alt="Alumina Docs">
+</a>
+<h1><a class="breadcrumbs" href="/json/">json</a></h1>
+</h1>
+<h2>Modules</h2>
+<ul>
+<li>
+<a href="/json/builder/">builder</a>
+</li>
+<li>
+<a href="/json/parser/">parser</a>
+</li>
+<li>
+<a href="/json/reader/">reader</a>
+</li>
+<li>
+<a href="/json/writer/">writer</a>
+</li>
+</ul>
+<h2>Protocols</h2>
+<ul>
+<li>
+<a href="/json/JsonWritable.html">JsonWritable</a>
+</li>
+<li>
+<a href="/json/JsonWriter.html">JsonWriter</a>
+</li>
+<li>
+<a href="/json/JsonWriterExt.html">JsonWriterExt</a>
+</li>
+</ul>
+<h2>Structs</h2>
+<ul>
+<li>
+<a href="/json/Error.html">Error</a>
+</li>
+<li>
+<a href="/json/JsonValue.html">JsonValue</a>
+</li>
+</ul>
+<h2>Functions</h2>
+<ul>
+<li>
+<a href="/json/#item.is_safe_integer">is_safe_integer</a>
+</li>
+</ul>
+<h2>Types</h2>
+<ul>
+<li>
+<a href="/json/#item.Result">Result</a>
+</li>
+</ul>
+<h2>Enums</h2>
+<ul>
+<li>
+<a href="/json/ErrorKind.html">ErrorKind</a>
+</li>
+<li>
+<a href="/json/JsonValueKind.html">JsonValueKind</a>
+</li>
+</ul>
+</nav>
+<div class="main-container">
+<div id="search-container">
+<a class="mobile-only" href="/">
+<img width="40px" height="40px" class="logo" src="/static/logo.svg" alt="Alumina Docs">
+</a>
+<input id="search-input" class="search-input" autocomplete="off" spellcheck="false" placeholder="Search the documentation..." type="search"></input>
+</div>
+<div id="search-results"></div>
+<main id="main-content">
+<div class="main-title"><h1>Module <a class="breadcrumbs" href="/json/">json</a></h1>
+</h1>
+</div>
+<p>
+A JSON library for Alumina
+</p><p>
+This library provides a JSON parser and writer. It is designed to be ergonomic and
+easy to use. The main feature of this library is <a class="path-link" href="/json/JsonValue.html">JsonValue</a>, a dynamic object that
+can represent any JSON value.
+</p><p>
+It also provides a lower-level API for making custom types JSON-serializable. See
+<a class="path-link" href="/json/JsonWritable.html">JsonWritable</a> protocol for more details, as well as an streaming JSON reader
+<a class="path-link" href="/json/reader/JsonReader.html">JsonReader</a> that can be used to read JSON values incrementally without
+allocating a full tree in memory.
+</p><p>
+<pre class="with-playground-link"><code class="language-alumina">use json::JsonValue;
+use json::builder::{object, array, into};
+
+let obj = object!(
+    ("foo", "bar"),
+    ("baz", array!(1, 2, 3)),
+    ("qux", object!(
+        ("quux", "quuz")
+    ))
+);
+defer obj.free();
+
+println!("{}", obj); // {"foo":"bar","baz":[1,2,3],"qux":{"quux":"quuz"}}
+
+let parsed = JsonValue::parse("[1, 2, 3]").unwrap();
+defer parsed.free();
+
+println!("{}", parsed); // [1,2,3]
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20json%3a%3aJsonValue%3b%0a%20%20%20%20use%20json%3a%3abuilder%3a%3a%7bobject%2c%20array%2c%20into%7d%3b%0a%20%20%20%20%0a%20%20%20%20let%20obj%20%3d%20object%21%28%0a%20%20%20%20%20%20%20%20%28%22foo%22%2c%20%22bar%22%29%2c%0a%20%20%20%20%20%20%20%20%28%22baz%22%2c%20array%21%281%2c%202%2c%203%29%29%2c%0a%20%20%20%20%20%20%20%20%28%22qux%22%2c%20object%21%28%0a%20%20%20%20%20%20%20%20%20%20%20%20%28%22quux%22%2c%20%22quuz%22%29%0a%20%20%20%20%20%20%20%20%29%29%0a%20%20%20%20%29%3b%0a%20%20%20%20defer%20obj%2efree%28%29%3b%0a%20%20%20%20%0a%20%20%20%20println%21%28%22%7b%7d%22%2c%20obj%29%3b%20%2f%2f%20%7b%22foo%22%3a%22bar%22%2c%22baz%22%3a%5b1%2c2%2c3%5d%2c%22qux%22%3a%7b%22quux%22%3a%22quuz%22%7d%7d%0a%20%20%20%20%0a%20%20%20%20let%20parsed%20%3d%20JsonValue%3a%3aparse%28%22%5b1%2c%202%2c%203%5d%22%29%2eunwrap%28%29%3b%0a%20%20%20%20defer%20parsed%2efree%28%29%3b%0a%20%20%20%20%0a%20%20%20%20println%21%28%22%7b%7d%22%2c%20parsed%29%3b%20%2f%2f%20%5b1%2c2%2c3%5d%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+<h2 id="Module">Modules</h2>
+<div class="item-short-table">
+<div class="row" id="item.builder">
+<div class="cell-name">
+<a href="/json/builder/">builder</a>
+</div>
+<div class="cell-doc">Convenience macros for constructing JSON values.
+</div>
+</div>
+<div class="row" id="item.parser">
+<div class="cell-name">
+<a href="/json/parser/">parser</a>
+</div>
+<div class="cell-doc">JSON parsing functionality.
+</div>
+</div>
+<div class="row" id="item.reader">
+<div class="cell-name">
+<a href="/json/reader/">reader</a>
+</div>
+<div class="cell-doc">Low level JSON lexer.
+</div>
+</div>
+<div class="row" id="item.writer">
+<div class="cell-name">
+<a href="/json/writer/">writer</a>
+</div>
+<div class="cell-doc"></div>
+</div>
+</div>
+<h2 id="Protocol">Protocols</h2>
+<div class="item-short-table">
+<div class="row" id="item.JsonWritable">
+<div class="cell-name">
+<a href="/json/JsonWritable.html">JsonWritable</a>
+</div>
+<div class="cell-doc">Protocol for values that can be serialized to JSON
+</div>
+</div>
+<div class="row" id="item.JsonWriter">
+<div class="cell-name">
+<a href="/json/JsonWriter.html">JsonWriter</a>
+</div>
+<div class="cell-doc">Protocol for JSON writers
+</div>
+</div>
+<div class="row" id="item.JsonWriterExt">
+<div class="cell-name">
+<a href="/json/JsonWriterExt.html">JsonWriterExt</a>
+</div>
+<div class="cell-doc">Extension mixin for <a class="path-link" href="/json/JsonWriter.html">JsonWriter</a> protocol
+</div>
+</div>
+</div>
+<h2 id="Struct">Structs</h2>
+<div class="item-short-table">
+<div class="row" id="item.Error">
+<div class="cell-name">
+<a href="/json/Error.html">Error</a>
+</div>
+<div class="cell-doc">Common error type for JSON operations
+</div>
+</div>
+<div class="row" id="item.JsonValue">
+<div class="cell-name">
+<a href="/json/JsonValue.html">JsonValue</a>
+</div>
+<div class="cell-doc">A JSON value
+</div>
+</div>
+</div>
+<h2 id="Function">Functions</h2>
+<ul>
+<li>
+<div class="signature" id="item.is_safe_integer">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_safe_integer</span>&lt;T&gt;(value: T) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a><div class="protocol-bound">
+T: Numeric</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/mod.alu#L320-L334"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Whether an integer is exactly representable as a 64-bit
+floating point number
+</p><p>
+This is equivalent to ECMAScript's <code class="language-alumina">Number.isSafeInteger</code>.
+It can be used to check whether a number is "safe" to to
+represent in a JSON value. Note that the JSON specification
+does not put any constraints on the range of numbers that
+can be encoded in JSON, but many JSON implementations either
+reject or lose precision for numbers outside the safe range.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use json::is_safe_integer;
+
+assert!(is_safe_integer(42));
+assert!(is_safe_integer(9007199254740991i64));
+assert!(!is_safe_integer(9007199254740992i64));
+assert!(!is_safe_integer(-9007199254740992i64));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20json%3a%3ais%5fsafe%5finteger%3b%0a%20%20%20%20%0a%20%20%20%20assert%21%28is%5fsafe%5finteger%2842%29%29%3b%0a%20%20%20%20assert%21%28is%5fsafe%5finteger%289007199254740991i64%29%29%3b%0a%20%20%20%20assert%21%28%21is%5fsafe%5finteger%289007199254740992i64%29%29%3b%0a%20%20%20%20assert%21%28%21is%5fsafe%5finteger%28%2d9007199254740992i64%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+</ul>
+<h2 id="Type">Types</h2>
+<ul>
+<li>
+<div class="signature" id="item.Result">
+<h4>
+<span class="keyword">type</span> <span class="identifier-type">Result</span>&lt;T&gt; = <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, <a href="/json/Error.html"><span class="identifier-type">Error</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/mod.alu#L40-L40"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+</div>
+</li>
+</ul>
+<h2 id="Enum">Enums</h2>
+<div class="item-short-table">
+<div class="row" id="item.ErrorKind">
+<div class="cell-name">
+<a href="/json/ErrorKind.html">ErrorKind</a>
+</div>
+<div class="cell-doc">Type of the error that occured during a JSON operation
+</div>
+</div>
+<div class="row" id="item.JsonValueKind">
+<div class="cell-name">
+<a href="/json/JsonValueKind.html">JsonValueKind</a>
+</div>
+<div class="cell-doc">The kind of a JSON value
+</div>
+</div>
+</div>
+</main>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.28.0/prism.min.js" integrity="sha512-RDQSW3KoqJMiX0L/UBgwBmH1EmRYp8LBOiLaA8rBHIy+7OGP/7Gxg8vbt8wG4ZYd29P0Fnoq6+LOytCqx3cyoQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="/static/prism-alumina.js"></script>
+</body>
+</html>
