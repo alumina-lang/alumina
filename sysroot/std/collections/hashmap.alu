@@ -448,8 +448,8 @@ impl HashMap<B: Hashable<B, H> + Equatable<B>, K: mem::Borrowable<K, B>, V, H: H
     /// Removes the element from the map by given borrowing of a key.
     ///
     /// If the element with the given key was present in the map, the corresponding value is
-    /// returned. Otherwise, `Option::none()` is returned.
-    fn remove_borrowed(self: &mut HashMap<K, V, H>, key: B) -> Option<V> {
+    /// returned along with the key. Otherwise, `Option::none()` is returned.
+    fn remove_borrowed(self: &mut HashMap<K, V, H>, key: B) -> Option<(K, V)> {
         let comparer = |=key, c: &K| -> bool { c.borrow().equals(&key) };
         let item = self._get_slot(hash_of_val::<B, H>(key), comparer)?;
         self._length -= 1;
@@ -458,7 +458,7 @@ impl HashMap<B: Hashable<B, H> + Equatable<B>, K: mem::Borrowable<K, B>, V, H: H
         // We leave the tombstones in the map and do not clean them up, which will lead to sub-optimal
         // performance when a lot of items are deleted. Call shrink_to_fit() to get rid of them.
 
-        Option::some(item.item.1)
+        Option::some((item.item.0, item.item.1))
     }
 }
 
@@ -931,7 +931,9 @@ mod tests {
         *map.get_borrowed_mut("hello").unwrap() = 24;
 
         assert_eq!(map.get_borrowed("hello"), Option::some(24));
-        map.remove_borrowed("world");
+        let (k, _) = map.remove_borrowed("world").unwrap();
+        assert_eq!(k[..] as &[u8], "world");
+        k.free();
 
         assert_eq!(map.len(), 1);
     }

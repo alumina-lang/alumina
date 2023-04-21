@@ -328,6 +328,21 @@ impl HashSet<K: Hashable<K, H> + Equatable<K>, I: Iterator<I, K>, H: Hasher<H> =
     }
 }
 
+impl HashSet<B: Hashable<B, H> + Equatable<B>, K: mem::Borrowable<K, B>, H: Hasher<H> = DefaultHash> {
+    /// Checks if the value is present in the map by given borrowing of a key.
+    fn contains_borrowed(self: &HashSet<K, H>, key: B) -> bool {
+        self._inner.get_borrowed(key).is_some()
+    }
+
+    /// Removes the element from the set by given borrowing of a key.
+    ///
+    /// If the element with the given key was present in the set, it is removed
+    /// and returned. Otherwise, `Option::none()` is returned.
+    fn remove_borrowed(self: &mut HashSet<K, H>, key: B) -> Option<K> {
+        self._inner.remove_borrowed(key).map(|v: (K, ())| -> K { v.0 })
+    }
+}
+
 /// Iterator over the values in the hashset
 struct HashSetIterator<K> {
     inner: hashmap::HashMapRefIterator<K, ()>
@@ -558,5 +573,25 @@ mod tests {
         assert!(set.contains(&1));
         assert!(set.contains(&2));
         assert!(set.contains(&3));
+    }
+
+    #[test]
+    fn test_hashset_borrowed() {
+        use std::string::StringBuf;
+
+        let set = HashSet::new::<StringBuf>();
+        defer set.free_all();
+
+        set.insert(StringBuf::from_slice("hello"));
+        set.insert(StringBuf::from_slice("world"));
+
+        assert!(set.contains_borrowed("hello"));
+        assert!(!set.contains_borrowed("moon"));
+
+        let k = set.remove_borrowed("world").unwrap();
+        assert_eq!(k[..] as &[u8], "world");
+        k.free();
+
+        assert_eq!(set.len(), 1);
     }
 }
