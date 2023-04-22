@@ -646,7 +646,7 @@ impl<'ast> AstItemMaker<'ast> {
             [NI {
                 kind: Alias(path),
                 node: Some(node),
-                scope: Some(scope),
+                scope: _,
                 attributes: _,
             }] => {
                 let mut resolver = NameResolver::new();

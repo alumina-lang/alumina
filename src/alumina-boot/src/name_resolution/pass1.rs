@@ -202,7 +202,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
             })
         }
 
-        self.visit_children_by_field(node, FieldKind::Body)
+        self.visit_children_by_field(node, FieldKind::Items)
     }
 
     fn visit_protocol_definition(&mut self, node: Node<'src>) -> Self::ReturnType {

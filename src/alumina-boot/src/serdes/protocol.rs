@@ -83,8 +83,8 @@ macro_rules! read_varint {
         let mut shift = 0;
 
         // Type hint only
-        #[inline]
-        fn identity_with_ref<T>(value: T, _ref: T) -> T {
+        #[inline(always)]
+        fn _coerce<T>(value: T, _ref: T) -> T {
             value
         }
 
@@ -98,7 +98,7 @@ macro_rules! read_varint {
 
             // TODO: This is a hack to get around the fact that we can't
             // use `as` on a generic type parameter.
-            value |= identity_with_ref((byte & 0x7F) as _, value) << shift;
+            value |= _coerce((byte & 0x7F) as _, value) << shift;
             shift += 7;
 
             if byte & 0x80 == 0 {

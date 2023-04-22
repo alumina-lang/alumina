@@ -774,7 +774,7 @@ impl BinOp {
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AstSerializable)]
-pub enum Attribute<'lif> {
+pub enum Attribute<'ast> {
     Export,
     Test,
     Cold,
@@ -791,13 +791,13 @@ pub enum Attribute<'lif> {
     InlineDuringMono,
     Intrinsic,
     StaticConstructor,
-    LinkName(&'lif str),
+    LinkName(&'ast str),
 }
 
-impl<'lif> Attribute<'lif> {
-    pub fn realloc_on<'new, F>(&'lif self, f: F) -> Attribute<'new>
+impl<'ast> Attribute<'ast> {
+    pub fn realloc_on<'new, F>(&'ast self, f: F) -> Attribute<'new>
     where
-        F: Fn(&'lif str) -> &'new str,
+        F: Fn(&'ast str) -> &'new str,
     {
         match self {
             Attribute::LinkName(s) => Attribute::LinkName(f(s)),

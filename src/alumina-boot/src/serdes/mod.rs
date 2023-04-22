@@ -55,11 +55,11 @@ impl_serdes_for_primitive!(u64, i64, write_u64, read_u64);
 impl_serdes_for_primitive!(u128, i128, write_u128, read_u128);
 impl_serdes_for_primitive!(usize, isize, write_usize, read_usize);
 
-impl<'lif, T> AstSerializable<'lif> for Option<T>
+impl<'ast, T> AstSerializable<'ast> for Option<T>
 where
-    T: AstSerializable<'lif>,
+    T: AstSerializable<'ast>,
 {
-    fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'lif, W>) -> Result<()> {
+    fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'ast, W>) -> Result<()> {
         match self {
             Some(v) => {
                 serializer.write_u8(1)?;
@@ -72,7 +72,7 @@ where
         }
     }
 
-    fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'lif, R>) -> Result<Self> {
+    fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'ast, R>) -> Result<Self> {
         match deserializer.read_u8()? {
             0 => Ok(None),
             1 => {
@@ -84,12 +84,12 @@ where
     }
 }
 
-impl<'lif> AstSerializable<'lif> for () {
-    fn serialize<W: Write>(&self, _serializer: &mut AstSerializer<'lif, W>) -> Result<()> {
+impl<'ast> AstSerializable<'ast> for () {
+    fn serialize<W: Write>(&self, _serializer: &mut AstSerializer<'ast, W>) -> Result<()> {
         Ok(())
     }
 
-    fn deserialize<R: Read>(_deserializer: &mut AstDeserializer<'lif, R>) -> Result<Self> {
+    fn deserialize<R: Read>(_deserializer: &mut AstDeserializer<'ast, R>) -> Result<Self> {
         Ok(())
     }
 }
@@ -110,15 +110,15 @@ impl<'a> AstSerializable<'a> for bool {
 
 macro_rules! impl_serdes_for_tuple {
     ( $( $name:ident )+ ) => {
-        impl<'lif, $($name: AstSerializable<'lif>),+> AstSerializable<'lif> for ($($name,)+) {
-            fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'lif, W>) -> Result<()> {
+        impl<'ast, $($name: AstSerializable<'ast>),+> AstSerializable<'ast> for ($($name,)+) {
+            fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'ast, W>) -> Result<()> {
                 #[allow(non_snake_case)]
                 let ($($name,)+) = self;
                 $($name.serialize(serializer)?;)+
                 Ok(())
             }
 
-            fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'lif, R>) -> Result<Self> {
+            fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'ast, R>) -> Result<Self> {
                 Ok(($($name::deserialize(deserializer)?,)+))
             }
         }
@@ -133,29 +133,29 @@ impl_serdes_for_tuple! { T1 T2 T3 T4 T5 }
 impl_serdes_for_tuple! { T1 T2 T3 T4 T5 T6 }
 impl_serdes_for_tuple! { T1 T2 T3 T4 T5 T6 T7 }
 
-impl<'lif, T> AstSerializable<'lif> for &'lif T
+impl<'ast, T> AstSerializable<'ast> for &'ast T
 where
-    T: AstSerializable<'lif> + ArenaAllocatable<'lif, AstCtx<'lif>>,
-    Self: From<<T as ArenaAllocatable<'lif, AstCtx<'lif>>>::ReturnType>,
+    T: AstSerializable<'ast> + ArenaAllocatable<'ast, AstCtx<'ast>>,
+    Self: From<<T as ArenaAllocatable<'ast, AstCtx<'ast>>>::ReturnType>,
 {
-    fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'lif, W>) -> Result<()> {
+    fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'ast, W>) -> Result<()> {
         (*self).serialize(serializer)
     }
 
-    fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'lif, R>) -> Result<Self> {
+    fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'ast, R>) -> Result<Self> {
         let inner = T::deserialize(deserializer)?;
 
         Ok(inner.alloc_on(deserializer.ast).into())
     }
 }
 
-impl<'lif> AstSerializable<'lif> for &'lif str {
-    fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'lif, W>) -> Result<()> {
+impl<'ast> AstSerializable<'ast> for &'ast str {
+    fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'ast, W>) -> Result<()> {
         serializer.write_usize(self.len())?;
         serializer.write_bytes(self.as_bytes())
     }
 
-    fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'lif, R>) -> Result<Self> {
+    fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'ast, R>) -> Result<Self> {
         let size = deserializer.read_usize()?;
         let mut bytes = vec![0; size];
 
@@ -167,13 +167,13 @@ impl<'lif> AstSerializable<'lif> for &'lif str {
     }
 }
 
-impl<'lif> AstSerializable<'lif> for &'lif [u8] {
-    fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'lif, W>) -> Result<()> {
+impl<'ast> AstSerializable<'ast> for &'ast [u8] {
+    fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'ast, W>) -> Result<()> {
         serializer.write_usize(self.len())?;
         serializer.write_bytes(self)
     }
 
-    fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'lif, R>) -> Result<Self> {
+    fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'ast, R>) -> Result<Self> {
         let size = deserializer.read_usize()?;
         let mut bytes = vec![0; size];
 
@@ -183,13 +183,13 @@ impl<'lif> AstSerializable<'lif> for &'lif [u8] {
     }
 }
 
-impl<'lif, T> AstSerializable<'lif> for &'lif [T]
+impl<'ast, T> AstSerializable<'ast> for &'ast [T]
 where
-    T: AstSerializable<'lif> + Allocatable,
-    Vec<T>: ArenaAllocatable<'lif, AstCtx<'lif>>,
-    Self: From<<Vec<T> as ArenaAllocatable<'lif, AstCtx<'lif>>>::ReturnType>,
+    T: AstSerializable<'ast> + Allocatable,
+    Vec<T>: ArenaAllocatable<'ast, AstCtx<'ast>>,
+    Self: From<<Vec<T> as ArenaAllocatable<'ast, AstCtx<'ast>>>::ReturnType>,
 {
-    fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'lif, W>) -> Result<()> {
+    fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'ast, W>) -> Result<()> {
         serializer.write_usize(self.len())?;
         for item in *self {
             item.serialize(serializer)?;
@@ -198,7 +198,7 @@ where
         Ok(())
     }
 
-    fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'lif, R>) -> Result<Self> {
+    fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'ast, R>) -> Result<Self> {
         let size = deserializer.read_usize()?;
         let mut vec = Vec::with_capacity(size);
 
@@ -210,11 +210,11 @@ where
     }
 }
 
-impl<'lif, T> AstSerializable<'lif> for Vec<T>
+impl<'ast, T> AstSerializable<'ast> for Vec<T>
 where
-    T: AstSerializable<'lif>,
+    T: AstSerializable<'ast>,
 {
-    fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'lif, W>) -> Result<()> {
+    fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'ast, W>) -> Result<()> {
         serializer.write_usize(self.len())?;
         for item in self {
             item.serialize(serializer)?;
@@ -223,7 +223,7 @@ where
         Ok(())
     }
 
-    fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'lif, R>) -> Result<Self> {
+    fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'ast, R>) -> Result<Self> {
         let size = deserializer.read_usize()?;
         let mut vec = Vec::with_capacity(size);
 
@@ -235,8 +235,8 @@ where
     }
 }
 
-impl<'lif, T: AstSerializable<'lif>> AstSerializable<'lif> for OnceCell<T> {
-    fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'lif, W>) -> Result<()> {
+impl<'ast, T: AstSerializable<'ast>> AstSerializable<'ast> for OnceCell<T> {
+    fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'ast, W>) -> Result<()> {
         match self.get() {
             Some(v) => {
                 serializer.write_u8(1)?;
@@ -249,7 +249,7 @@ impl<'lif, T: AstSerializable<'lif>> AstSerializable<'lif> for OnceCell<T> {
         }
     }
 
-    fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'lif, R>) -> Result<Self> {
+    fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'ast, R>) -> Result<Self> {
         match deserializer.read_u8()? {
             0 => Ok(OnceCell::new()),
             1 => {

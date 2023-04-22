@@ -80,11 +80,13 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
                     break;
                 }
                 NamedItemKind::Protocol(_) => {
-                    result = Some(self.resolve_scope(item.scope.as_ref().unwrap().clone(), remainder));
+                    result =
+                        Some(self.resolve_scope(item.scope.as_ref().unwrap().clone(), remainder));
                     break;
                 }
                 NamedItemKind::Module => {
-                    result = Some(self.resolve_scope(item.scope.as_ref().unwrap().clone(), remainder));
+                    result =
+                        Some(self.resolve_scope(item.scope.as_ref().unwrap().clone(), remainder));
                     break;
                 }
                 NamedItemKind::Alias(target) => {
@@ -166,9 +168,7 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
                     ));
                     break;
                 }
-                NamedItemKind::Macro(_)
-                | NamedItemKind::Local(_)
-                | NamedItemKind::Parameter(_) => {
+                NamedItemKind::Macro(_) | NamedItemKind::Local(_) | NamedItemKind::Parameter(_) => {
                     let original_func = self_scope.find_containing_function();
                     let current_func = containing_scope.find_containing_function();
 
