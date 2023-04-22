@@ -73,7 +73,7 @@ impl Display for NamedItemKind<'_, '_> {
 #[derive(Debug, Clone)]
 pub struct NamedItem<'ast, 'src> {
     pub kind: NamedItemKind<'ast, 'src>,
-    pub attributes: &'ast [Attribute],
+    pub attributes: &'ast [Attribute<'ast>],
 }
 
 impl<'ast, 'src> NamedItem<'ast, 'src> {

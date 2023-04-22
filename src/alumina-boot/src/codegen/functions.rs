@@ -95,9 +95,7 @@ pub fn write_function_signature<'ir, 'gen>(
         .attributes
         .iter()
         .filter_map(|a| match a {
-            Attribute::LinkName(size, name) => {
-                Some(std::str::from_utf8(&name.as_slice()[..*size]).unwrap())
-            }
+            Attribute::LinkName(name) => Some(*name),
             _ => None,
         })
         .next();

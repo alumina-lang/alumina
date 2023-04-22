@@ -1,3 +1,4 @@
+use alumina_boot_derive::AstSerializable;
 use std::backtrace::Backtrace;
 use std::cell::RefCell;
 use std::fmt::Debug;
@@ -6,7 +7,6 @@ use std::hash::{Hash, Hasher};
 use std::io;
 use std::rc::Rc;
 use std::result::Result;
-use alumina_boot_derive::AstSerializable;
 use strum_macros::{AsRefStr, EnumVariantNames};
 use thiserror::Error;
 use tree_sitter::Node;

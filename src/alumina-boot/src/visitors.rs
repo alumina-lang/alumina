@@ -136,7 +136,7 @@ pub struct UseClauseVisitor<'ast, 'src> {
     code: &'src ParseCtx<'src>,
     prefix: Path<'ast>,
     scope: Scope<'ast, 'src>,
-    attributes: &'ast [Attribute],
+    attributes: &'ast [Attribute<'ast>],
     macro_ctx: MacroCtx,
 }
 
@@ -258,7 +258,7 @@ pub struct AttributeVisitor<'ast, 'src> {
     code: &'src ParseCtx<'src>,
     scope: Scope<'ast, 'src>,
     item: Option<ItemP<'ast>>,
-    attributes: Vec<Attribute>,
+    attributes: Vec<Attribute<'ast>>,
     applies_to_node: Node<'src>,
     should_skip: bool,
     test_attributes: Vec<String>,
@@ -271,7 +271,7 @@ impl<'ast, 'src> AttributeVisitor<'ast, 'src> {
         scope: Scope<'ast, 'src>,
         node: Node<'src>,
         item: Option<ItemP<'ast>>,
-    ) -> Result<Option<&'ast [Attribute]>, AluminaError> {
+    ) -> Result<Option<&'ast [Attribute<'ast>]>, AluminaError> {
         let mut visitor = AttributeVisitor {
             global_ctx,
             ast,
@@ -509,12 +509,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     .ok_or(CodeDiagnostic::InvalidAttribute)
                     .with_span_from(&self.scope, node)?;
 
-                let bytes = self.code.node_text(link_name).as_bytes();
-
-                let mut val = [0; 255];
-                val.as_mut_slice()[0..bytes.len()].copy_from_slice(bytes);
-
-                self.attributes.push(Attribute::LinkName(bytes.len(), val));
+                let bytes = self.code.node_text(link_name).alloc_on(self.ast);
+                self.attributes.push(Attribute::LinkName(bytes));
             }
             "test" => {
                 self.test_attributes.push(

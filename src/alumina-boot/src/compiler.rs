@@ -9,7 +9,10 @@ use crate::ir::IrCtx;
 use crate::name_resolution::pass1::FirstPassVisitor;
 use crate::name_resolution::scope::Scope;
 use crate::parser::{AluminaVisitor, ParseCtx};
+use crate::serdes::AstSerializable;
 
+use std::fmt::write;
+use std::io::Write;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -19,6 +22,8 @@ pub enum Stage {
     Parse,
     Pass1,
     Ast,
+    Serialize,
+    Deserialize,
     Mono,
     Optimizations,
     Codegen,
@@ -132,6 +137,46 @@ impl Compiler {
 
         let ir_ctx = IrCtx::new();
         let items = item_maker.into_inner();
+
+        {
+            let writer = std::fs::File::create("./ast.dump").unwrap();
+            let mut buf_writer = std::io::BufWriter::new(writer);
+            let mut writer = crate::serdes::protocol::AstSerializer::new(&mut buf_writer);
+            writer.write_usize(items.len()).unwrap();
+            for item in items.iter() {
+                let inner = item.get();
+                inner.serialize(&mut writer).unwrap();
+            }
+            buf_writer.flush().unwrap();
+        }
+
+        timing!(self, cur_time, Stage::Serialize);
+
+        {
+            let reader = std::fs::File::open("./ast.dump").unwrap();
+            let mut buf_reader = std::io::BufReader::new(reader);
+            let mut reader = crate::serdes::protocol::AstDeserializer::new(&ast, &mut buf_reader);
+            let len = reader.read_usize().unwrap();
+
+            for _ in 0..len {
+                let item = crate::ast::Item::deserialize(&mut reader).unwrap();
+            } /*
+                  match item {
+                      crate::ast::Item::Enum(e) => println!("Enum {:?}", e.name),
+                      crate::ast::Item::StructLike(s) => println!("StructLike {:?}", s.name),
+                      crate::ast::Item::TypeDef(t) => println!("TypeDef {:?}", t.name),
+                      crate::ast::Item::Protocol(p) => println!("Protocol {:?}", p.name),
+                      crate::ast::Item::Function(f) => println!("Function {:?}", f.name),
+                      crate::ast::Item::StaticOrConst(s) => println!("StaticOrConst {:?}", s.name),
+                      crate::ast::Item::Macro(m) => println!("Macro {:?}", m.name),
+                      crate::ast::Item::BuiltinMacro(m) => println!("BuiltinMacro {:?}", m.kind),
+                      crate::ast::Item::Intrinsic(i) => println!("Intrinsic {:?}", i.kind),
+                  }
+              }*/
+        }
+
+        timing!(self, cur_time, Stage::Deserialize);
+
         let mut mono_ctx = MonoCtx::new(&ast, &ir_ctx, self.global_ctx.clone());
 
         let mut roots = HashSet::default();

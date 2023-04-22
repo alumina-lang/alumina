@@ -5,9 +5,7 @@ extern crate syn;
 
 extern crate proc_macro;
 
-use std::sync::Arc;
-
-use proc_macro::{Span, TokenStream};
+use proc_macro::TokenStream;
 use syn::{spanned::Spanned, DeriveInput, Lifetime};
 
 #[proc_macro_derive(AstSerializable)]
@@ -45,20 +43,17 @@ pub fn alumina_serdes(input: TokenStream) -> TokenStream {
                     });
 
                 let desers = variant.fields.iter().enumerate()
-                    .map(|(i, f)| {
+                    .map(|(_i, f)| {
                         let ty = &f.ty;
                         quote! {
                             <#ty as crate::serdes::AstSerializable<#lifetime>>::deserialize(deserializer)?
                         }
                     });
 
-                let fields = (0..variant.fields.len())
-                    .map(|i| {
-                        format_ident!("__f_{}", i)
-                    });
+                let fields = (0..variant.fields.len()).map(|i| format_ident!("__f_{}", i));
 
                 let var_ident = &variant.ident;
-                if variant.fields.len() == 0 {
+                if variant.fields.is_empty() {
                     ser_match_arms.push(quote! {
                         #ident::#var_ident => {
                             serializer.write_u8(#variant_index)?;
@@ -99,21 +94,36 @@ pub fn alumina_serdes(input: TokenStream) -> TokenStream {
             (ser_body, deser_body)
         }
         syn::Data::Struct(r#struct) => {
+            let mut tuple_struct = false;
+
             let sers = r#struct.fields.iter().enumerate()
                 .map(|(i, f)| {
-                    let field = &f.ident;
                     let ty = &f.ty;
-                    quote! {
-                        <#ty as crate::serdes::AstSerializable<#lifetime>>::serialize(&self.#field, serializer)?;
+                    if let Some(field) = &f.ident {
+                        quote! {
+                            <#ty as crate::serdes::AstSerializable<#lifetime>>::serialize(&self.#field, serializer)?;
+                        }
+                    } else {
+                        let index = syn::Index::from(i);
+                        tuple_struct = true;
+
+                        quote! {
+                            <#ty as crate::serdes::AstSerializable<#lifetime>>::serialize(&self.#index, serializer)?;
+                        }
                     }
                 });
 
             let desers = r#struct.fields.iter().enumerate()
-                .map(|(i, f)| {
-                    let field = &f.ident;
+                .map(|(_i, f)| {
                     let ty = &f.ty;
-                    quote! {
-                        #field: <#ty as crate::serdes::AstSerializable<#lifetime>>::deserialize(deserializer)?
+                    if let Some(field) = &f.ident {
+                        quote! {
+                            #field: <#ty as crate::serdes::AstSerializable<#lifetime>>::deserialize(deserializer)?
+                        }
+                    } else {
+                        quote! {
+                            <#ty as crate::serdes::AstSerializable<#lifetime>>::deserialize(deserializer)?
+                        }
                     }
                 });
 
@@ -122,10 +132,18 @@ pub fn alumina_serdes(input: TokenStream) -> TokenStream {
                 Ok(())
             };
 
-            let deser_body = quote! {
-                Ok(#ident {
-                    #(#desers,)*
-                })
+            let deser_body = if tuple_struct {
+                quote! {
+                    Ok(#ident (
+                        #(#desers,)*
+                    ))
+                }
+            } else {
+                quote! {
+                    Ok(#ident {
+                        #(#desers,)*
+                    })
+                }
             };
 
             (ser_body, deser_body)
@@ -135,11 +153,11 @@ pub fn alumina_serdes(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         impl<#lifetime> crate::serdes::AstSerializable<#lifetime> for #ident #generics {
-            fn serialize<S: crate::serdes::AstSerializer<#lifetime>>(&self, serializer: &mut S) -> crate::serdes::Result<()> {
+            fn serialize<W: ::std::io::Write>(&self, serializer: &mut crate::serdes::protocol::AstSerializer<#lifetime, W>) -> crate::serdes::Result<()> {
                 #ser_body
             }
 
-            fn deserialize<D: crate::serdes::AstDeserializer<#lifetime>>(deserializer: &mut D) -> crate::serdes::Result<Self> {
+            fn deserialize<R: ::std::io::Read>(deserializer: &mut crate::serdes::protocol::AstDeserializer<#lifetime, R>) -> crate::serdes::Result<Self> {
                 #deser_body
             }
 

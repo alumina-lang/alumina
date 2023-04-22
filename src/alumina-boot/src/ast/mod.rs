@@ -16,7 +16,9 @@ use crate::intrinsics::IntrinsicKind;
 use crate::name_resolution::path::{Path, PathSegment};
 use crate::name_resolution::scope::BoundItemType;
 
-use crate::serdes::{AstDeserializer, AstSerializable, AstSerializer, Error as SerdesError};
+use crate::serdes::protocol::{AstDeserializer, AstSerializer};
+use crate::serdes::AstSerializable;
+
 use alumina_boot_derive::AstSerializable;
 
 use bumpalo::Bump;
@@ -25,6 +27,7 @@ use once_cell::unsync::OnceCell;
 use std::cell::{Cell, RefCell};
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
+use std::io::{Read, Write};
 
 #[derive(Clone)]
 pub struct TestMetadata<'ast> {
@@ -197,13 +200,16 @@ pub struct AstId {
 }
 
 impl<'a> AstSerializable<'a> for AstId {
-    fn serialize<S: AstSerializer<'a>>(&self, serializer: &mut S) -> crate::serdes::Result<()> {
-        let ast_id = serializer.map_id(*self);
-
-        ast_id.id.serialize(serializer)
+    fn serialize<W: Write>(
+        &self,
+        serializer: &mut AstSerializer<'a, W>,
+    ) -> crate::serdes::Result<()> {
+        self.id.serialize(serializer)
     }
 
-    fn deserialize<D: AstDeserializer<'a>>(deserializer: &mut D) -> crate::serdes::Result<Self> {
+    fn deserialize<R: Read>(
+        deserializer: &mut AstDeserializer<'a, R>,
+    ) -> crate::serdes::Result<Self> {
         let id = <usize as AstSerializable>::deserialize(deserializer)?;
         Ok(deserializer.map_id(AstId { id }))
     }
@@ -357,7 +363,19 @@ impl<'ast> Ty<'ast> {
 }
 
 pub type TyP<'ast> = &'ast Ty<'ast>;
+/*
+impl<'ast> AstSerializable<'ast> for TyP<'ast> {
+    fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'ast, W>) -> crate::serdes::Result<()> {
+        (*self).serialize(serializer)
+    }
 
+    fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'ast, R>) -> crate::serdes::Result<Self> {
+        let ty = <Ty<'ast> as AstSerializable>::deserialize(deserializer)?;
+
+        Ok(deserializer.ast.intern_type(ty))
+    }
+}
+*/
 #[derive(Debug, AstSerializable)]
 pub enum Item<'ast> {
     Enum(Enum<'ast>),
@@ -399,11 +417,16 @@ impl<'ast> Item<'ast> {
 pub type ItemP<'ast> = &'ast ItemCell<'ast>;
 
 impl<'ast> AstSerializable<'ast> for ItemP<'ast> {
-    fn serialize<S: AstSerializer<'ast>>(&self, serializer: &mut S) -> crate::serdes::Result<()> {
+    fn serialize<W: Write>(
+        &self,
+        serializer: &mut AstSerializer<'ast, W>,
+    ) -> crate::serdes::Result<()> {
         self.id.serialize(serializer)
     }
 
-    fn deserialize<D: AstDeserializer<'ast>>(deserializer: &mut D) -> crate::serdes::Result<Self> {
+    fn deserialize<R: Read>(
+        deserializer: &mut AstDeserializer<'ast, R>,
+    ) -> crate::serdes::Result<Self> {
         let id = AstId::deserialize(deserializer)?;
 
         Ok(deserializer.get_cell(id))
@@ -579,7 +602,7 @@ pub struct Protocol<'ast> {
     pub name: Option<&'ast str>,
     pub placeholders: &'ast [Placeholder<'ast>],
     pub associated_fns: &'ast [AssociatedFn<'ast>],
-    pub attributes: &'ast [Attribute],
+    pub attributes: &'ast [Attribute<'ast>],
     pub is_local: bool,
     pub span: Option<Span>,
 }
@@ -590,7 +613,7 @@ pub struct StructLike<'ast> {
     pub placeholders: &'ast [Placeholder<'ast>],
     pub associated_fns: &'ast [AssociatedFn<'ast>],
     pub mixins: &'ast [Mixin<'ast>],
-    pub attributes: &'ast [Attribute],
+    pub attributes: &'ast [Attribute<'ast>],
     pub fields: &'ast [Field<'ast>],
     pub span: Option<Span>,
     pub is_local: bool,
@@ -601,7 +624,7 @@ pub struct StructLike<'ast> {
 pub struct TypeDef<'ast> {
     pub name: Option<&'ast str>,
     pub placeholders: &'ast [Placeholder<'ast>],
-    pub attributes: &'ast [Attribute],
+    pub attributes: &'ast [Attribute<'ast>],
     pub target: Option<TyP<'ast>>,
     pub is_local: bool,
     pub span: Option<Span>,
@@ -612,7 +635,7 @@ pub struct Enum<'ast> {
     pub name: Option<&'ast str>,
     pub associated_fns: &'ast [AssociatedFn<'ast>],
     pub mixins: &'ast [Mixin<'ast>],
-    pub attributes: &'ast [Attribute],
+    pub attributes: &'ast [Attribute<'ast>],
     pub members: &'ast [EnumMember<'ast>],
     pub is_local: bool,
     pub span: Option<Span>,
@@ -670,7 +693,7 @@ pub struct BuiltinMacro {
 #[derive(Debug, AstSerializable)]
 pub struct Function<'ast> {
     pub name: Option<&'ast str>,
-    pub attributes: &'ast [Attribute],
+    pub attributes: &'ast [Attribute<'ast>],
     pub placeholders: &'ast [Placeholder<'ast>],
     pub args: &'ast [Parameter<'ast>],
     pub return_type: TyP<'ast>,
@@ -685,7 +708,7 @@ pub struct Function<'ast> {
 #[derive(Debug, AstSerializable)]
 pub struct StaticOrConst<'ast> {
     pub name: Option<&'ast str>,
-    pub attributes: &'ast [Attribute],
+    pub attributes: &'ast [Attribute<'ast>],
     pub placeholders: &'ast [Placeholder<'ast>],
     pub typ: Option<TyP<'ast>>,
     pub init: Option<ExprP<'ast>>,
@@ -695,20 +718,20 @@ pub struct StaticOrConst<'ast> {
     pub r#extern: bool,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash, AstSerializable)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, AstSerializable)]
 pub struct LetDeclaration<'ast> {
     pub id: AstId,
     pub typ: Option<TyP<'ast>>,
     pub value: Option<ExprP<'ast>>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash, AstSerializable)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, AstSerializable)]
 pub enum StatementKind<'ast> {
     Expression(ExprP<'ast>),
     LetDeclaration(LetDeclaration<'ast>),
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash, AstSerializable)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, AstSerializable)]
 pub struct Statement<'ast> {
     pub kind: StatementKind<'ast>,
     pub span: Option<Span>,
@@ -751,7 +774,7 @@ impl BinOp {
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AstSerializable)]
-pub enum Attribute {
+pub enum Attribute<'lif> {
     Export,
     Test,
     Cold,
@@ -768,7 +791,34 @@ pub enum Attribute {
     InlineDuringMono,
     Intrinsic,
     StaticConstructor,
-    LinkName(usize, [u8; 255]),
+    LinkName(&'lif str),
+}
+
+impl<'lif> Attribute<'lif> {
+    pub fn realloc_on<'new, F>(&'lif self, f: F) -> Attribute<'new>
+    where
+        F: Fn(&'lif str) -> &'new str,
+    {
+        match self {
+            Attribute::LinkName(s) => Attribute::LinkName(f(*s)),
+            Attribute::Export => Attribute::Export,
+            Attribute::Test => Attribute::Test,
+            Attribute::Cold => Attribute::Cold,
+            Attribute::TestMain => Attribute::TestMain,
+            Attribute::Inline => Attribute::Inline,
+            Attribute::Align(i) => Attribute::Align(*i),
+            Attribute::Packed => Attribute::Packed,
+            Attribute::MustUse => Attribute::MustUse,
+            Attribute::Transparent => Attribute::Transparent,
+            Attribute::NoInline => Attribute::NoInline,
+            Attribute::ThreadLocal => Attribute::ThreadLocal,
+            Attribute::Builtin => Attribute::Builtin,
+            Attribute::AlwaysInline => Attribute::AlwaysInline,
+            Attribute::InlineDuringMono => Attribute::InlineDuringMono,
+            Attribute::Intrinsic => Attribute::Intrinsic,
+            Attribute::StaticConstructor => Attribute::StaticConstructor,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, AstSerializable)]
@@ -778,7 +828,7 @@ pub enum UnOp {
     BitNot,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, AstSerializable)]
+#[derive(Debug, Clone, PartialEq, Copy, Eq, Hash, AstSerializable)]
 pub enum Lit<'ast> {
     Str(&'ast [u8]),
     Int(bool, u128, Option<BuiltinType>),
@@ -787,7 +837,7 @@ pub enum Lit<'ast> {
     Null,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash, AstSerializable)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, AstSerializable)]
 pub struct FieldInitializer<'ast> {
     pub name: &'ast str,
     pub value: ExprP<'ast>,
@@ -800,7 +850,7 @@ pub struct Defered<'ast> {
     pub name: &'ast str,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash, AstSerializable)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, AstSerializable)]
 pub struct ClosureBinding<'ast> {
     pub id: AstId,
     pub value: ExprP<'ast>,
@@ -808,14 +858,14 @@ pub struct ClosureBinding<'ast> {
     pub span: Option<Span>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash, AstSerializable)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, AstSerializable)]
 pub enum FnKind<'ast> {
     Normal(ItemP<'ast>),
     Closure(&'ast [ClosureBinding<'ast>], ItemP<'ast>),
     Defered(Defered<'ast>),
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash, AstSerializable)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, AstSerializable)]
 pub enum ExprKind<'ast> {
     Block(&'ast [Statement<'ast>], ExprP<'ast>),
     Binary(BinOp, ExprP<'ast>, ExprP<'ast>),
@@ -927,12 +977,13 @@ impl_allocatable!(
     Parameter<'_>,
     MacroParameter,
     ItemCell<'_>,
+    MixinCell<'_>,
     FieldInitializer<'_>,
     Bound<'_>,
     AssociatedFn<'_>,
     ClosureBinding<'_>,
     EnumMember<'_>,
     Placeholder<'_>,
-    Attribute,
+    Attribute<'_>,
     AstId
 );
