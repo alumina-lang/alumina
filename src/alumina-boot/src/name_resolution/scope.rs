@@ -4,6 +4,7 @@ use crate::diagnostics::DiagnosticContext;
 use crate::name_resolution::path::{Path, PathSegment};
 use crate::parser::ParseCtx;
 
+use alumina_boot_derive::AstSerializable;
 use indexmap::map::Entry;
 use once_cell::unsync::OnceCell;
 
@@ -13,7 +14,7 @@ use std::rc::{Rc, Weak};
 
 use tree_sitter::Node;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy, AstSerializable)]
 pub enum BoundItemType {
     ByValue,
     ByReference,

@@ -1,6 +1,8 @@
+use alumina_boot_derive::AstSerializable;
+
 use crate::ir::{ExprP, TyP};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AstSerializable)]
 pub enum IntrinsicKind {
     SizeOf,
     AlignOf,

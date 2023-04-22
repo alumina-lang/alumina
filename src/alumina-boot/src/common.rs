@@ -6,6 +6,7 @@ use std::hash::{Hash, Hasher};
 use std::io;
 use std::rc::Rc;
 use std::result::Result;
+use alumina_boot_derive::AstSerializable;
 use strum_macros::{AsRefStr, EnumVariantNames};
 use thiserror::Error;
 use tree_sitter::Node;
@@ -403,7 +404,7 @@ impl CodeError {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, AstSerializable)]
 pub struct FileId {
     pub id: usize,
 }

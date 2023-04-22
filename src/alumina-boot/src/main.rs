@@ -11,6 +11,7 @@ mod intrinsics;
 mod ir;
 mod name_resolution;
 mod parser;
+mod serdes;
 mod utils;
 mod visitors;
 
