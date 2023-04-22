@@ -800,7 +800,7 @@ impl<'lif> Attribute<'lif> {
         F: Fn(&'lif str) -> &'new str,
     {
         match self {
-            Attribute::LinkName(s) => Attribute::LinkName(f(*s)),
+            Attribute::LinkName(s) => Attribute::LinkName(f(s)),
             Attribute::Export => Attribute::Export,
             Attribute::Test => Attribute::Test,
             Attribute::Cold => Attribute::Cold,

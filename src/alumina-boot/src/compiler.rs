@@ -11,7 +11,6 @@ use crate::name_resolution::scope::Scope;
 use crate::parser::{AluminaVisitor, ParseCtx};
 use crate::serdes::AstSerializable;
 
-use std::fmt::write;
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -159,7 +158,7 @@ impl Compiler {
             let len = reader.read_usize().unwrap();
 
             for _ in 0..len {
-                let item = crate::ast::Item::deserialize(&mut reader).unwrap();
+                let _item = crate::ast::Item::deserialize(&mut reader).unwrap();
             } /*
                   match item {
                       crate::ast::Item::Enum(e) => println!("Enum {:?}", e.name),

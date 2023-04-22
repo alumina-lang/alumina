@@ -877,7 +877,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             .visit(node.child_by_field(FieldKind::Function).unwrap())?
             .kind
         {
-            ExprKind::Fn(fn_kind, None) => fn_kind.clone(),
+            ExprKind::Fn(fn_kind, None) => *fn_kind,
             ExprKind::Defered(def) => FnKind::Defered(*def),
             ExprKind::Static(inner, None) => {
                 let ret = ExprKind::Static(inner, Some(arguments));

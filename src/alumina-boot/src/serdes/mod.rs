@@ -1,14 +1,11 @@
 pub mod protocol;
 
-use std::{
-    io::{Read, Write},
-    mem::MaybeUninit,
-};
+use std::io::{Read, Write};
 
 use once_cell::unsync::OnceCell;
 
 use crate::{
-    ast::{AstCtx, AstId, ItemCell},
+    ast::AstCtx,
     common::{Allocatable, ArenaAllocatable},
 };
 
@@ -88,11 +85,11 @@ where
 }
 
 impl<'lif> AstSerializable<'lif> for () {
-    fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'lif, W>) -> Result<()> {
+    fn serialize<W: Write>(&self, _serializer: &mut AstSerializer<'lif, W>) -> Result<()> {
         Ok(())
     }
 
-    fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'lif, R>) -> Result<Self> {
+    fn deserialize<R: Read>(_deserializer: &mut AstDeserializer<'lif, R>) -> Result<Self> {
         Ok(())
     }
 }
@@ -148,7 +145,7 @@ where
     fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'lif, R>) -> Result<Self> {
         let inner = T::deserialize(deserializer)?;
 
-        Ok(inner.alloc_on(&deserializer.ast).into())
+        Ok(inner.alloc_on(deserializer.ast).into())
     }
 }
 
@@ -209,7 +206,7 @@ where
             vec.push(T::deserialize(deserializer)?);
         }
 
-        Ok(vec.alloc_on(&deserializer.ast).into())
+        Ok(vec.alloc_on(deserializer.ast).into())
     }
 }
 

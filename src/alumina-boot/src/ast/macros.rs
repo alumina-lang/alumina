@@ -478,8 +478,8 @@ impl<'ast> MacroExpander<'ast> {
             Cast(inner, ty) => Cast(self.visit_expr(inner)?, self.visit_typ(ty)?),
             Fn(ref kind, generic_args) => {
                 let kind = match kind {
-                    FnKind::Normal(_) => kind.clone(),
-                    FnKind::Closure(..) => kind.clone(),
+                    FnKind::Normal(_) => *kind,
+                    FnKind::Closure(..) => *kind,
                     FnKind::Defered(def) => FnKind::Defered(crate::ast::Defered {
                         typ: self.visit_typ(def.typ)?,
                         name: def.name,
@@ -534,7 +534,7 @@ impl<'ast> MacroExpander<'ast> {
             | Macro(_, _ /* bound values are "invisible" and should not be replaced */)
             | Lit(_)
             | BoundParam(_, _, _)
-            | Void => expr.kind.clone(),
+            | Void => expr.kind,
         };
 
         let result = Expr {

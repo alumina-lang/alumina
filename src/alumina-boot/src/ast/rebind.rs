@@ -223,8 +223,8 @@ impl<'ast> Rebinder<'ast> {
             }),
             Fn(ref kind, generic_args) => {
                 let kind = match kind {
-                    FnKind::Normal(_) => kind.clone(),
-                    FnKind::Closure(..) => kind.clone(),
+                    FnKind::Normal(_) => *kind,
+                    FnKind::Closure(..) => *kind,
                     FnKind::Defered(def) => FnKind::Defered(crate::ast::Defered {
                         typ: self.visit_typ(def.typ)?,
                         name: def.name,
@@ -276,7 +276,7 @@ impl<'ast> Rebinder<'ast> {
             ),
             TypeCheck(lhs, rhs) => TypeCheck(self.visit_expr(lhs)?, self.visit_typ(rhs)?),
             Local(_) | BoundParam(_, _, _) | Continue | EnumValue(_, _) | Lit(_) | Void => {
-                expr.kind.clone()
+                expr.kind
             }
             Tag(tag, inner) => Tag(tag, self.visit_expr(inner)?),
         };

@@ -1,4 +1,4 @@
-use std::{collections::hash_map::Entry, io::Write, mem::MaybeUninit};
+use std::io::Write;
 
 use crate::{ast::AstCtx, common::HashMap};
 
