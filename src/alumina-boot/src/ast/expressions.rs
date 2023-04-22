@@ -158,10 +158,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             self.scope
                 .add_item(
                     Some(name),
-                    NamedItem::new_default(NamedItemKind::Local(
-                        value_id,
-                        Span::from_node(self.scope.file_id(), name_node),
-                    )),
+                    NamedItem::new_default(NamedItemKind::Local(value_id), name_node, None),
                 )
                 .with_span_from(&self.scope, node)?;
 
@@ -210,10 +207,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                 self.scope
                     .add_item(
                         Some(name),
-                        NamedItem::new_default(NamedItemKind::Local(
-                            elem_id,
-                            Span::from_node(self.scope.file_id(), name_node),
-                        )),
+                        NamedItem::new_default(NamedItemKind::Local(elem_id), name_node, None),
                     )
                     .with_span_from(&self.scope, name_node)?;
             }
@@ -279,17 +273,21 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             .with_span(Some(span))?
         {
             ItemResolution::Item(NamedItem {
-                kind: NamedItemKind::Macro(item, node, scope),
+                kind: NamedItemKind::Macro(item),
                 attributes,
+                node,
+                scope,
             }) => {
-                let mut macro_maker = MacroMaker::new(self.ast, self.global_ctx.clone());
-                macro_maker.make(
-                    Some(path.segments.last().unwrap().0),
-                    item,
-                    node,
-                    scope.clone(),
-                    attributes,
-                )?;
+                if let (Some(node), Some(scope)) = (node, scope) {
+                    let mut macro_maker = MacroMaker::new(self.ast, self.global_ctx.clone());
+                    macro_maker.make(
+                        Some(path.segments.last().unwrap().0),
+                        item,
+                        node,
+                        scope.clone(),
+                        attributes,
+                    )?;
+                }
                 item
             }
             _ => return Err(CodeDiagnostic::NotAMacro).with_span(Some(span)),
@@ -779,7 +777,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                     .resolve_item(self.scope.clone(), PathSegment(field_value).into())
                 {
                     Ok(ItemResolution::Item(NamedItem {
-                        kind: NamedItemKind::Function(item, _, _),
+                        kind: NamedItemKind::Function(item),
                         ..
                     })) => Some(item),
                     _ => None,
@@ -966,10 +964,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                 self.scope
                     .add_item(
                         Some(name),
-                        NamedItem::new_default(NamedItemKind::Local(
-                            id,
-                            Span::from_node(self.scope.file_id(), name_node),
-                        )),
+                        NamedItem::new_default(NamedItemKind::Local(id), name_node, None),
                     )
                     .with_span_from(&self.scope, node)?;
 
@@ -1011,10 +1006,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                     self.scope
                         .add_item(
                             Some(name),
-                            NamedItem::new_default(NamedItemKind::Local(
-                                elem_id,
-                                Span::from_node(self.scope.file_id(), name_node),
-                            )),
+                            NamedItem::new_default(NamedItemKind::Local(elem_id), name_node, None),
                         )
                         .with_span_from(&self.scope, name_node)?;
                 }
@@ -1034,7 +1026,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         let unified_fn = match resolver.resolve_item(self.scope.clone(), PathSegment("iter").into())
         {
             Ok(ItemResolution::Item(NamedItem {
-                kind: NamedItemKind::Function(item, _, _),
+                kind: NamedItemKind::Function(item),
                 ..
             })) => Some(item),
             _ => None,
@@ -1569,7 +1561,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for LambdaVisitor<'ast, 'src> {
         self.scope
             .add_item(
                 Some(name),
-                NamedItem::new_default(NamedItemKind::Parameter(id, node)),
+                NamedItem::new_default(NamedItemKind::Parameter(id), node, None),
             )
             .with_span_from(&self.scope, node)?;
 
@@ -1611,11 +1603,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for LambdaVisitor<'ast, 'src> {
             .with_span_from(&self.scope, node)?
         {
             ItemResolution::Item(NamedItem {
-                kind: NamedItemKind::Local(id, _) | NamedItemKind::Parameter(id, _),
+                kind: NamedItemKind::Local(id) | NamedItemKind::Parameter(id),
                 ..
             }) => ExprKind::Local(id),
             ItemResolution::Item(NamedItem {
-                kind: NamedItemKind::BoundValue(self_arg, id, bound_type, _),
+                kind: NamedItemKind::BoundValue(self_arg, id, bound_type),
                 ..
             }) => ExprKind::BoundParam(self_arg, id, bound_type),
             _ => {
@@ -1629,12 +1621,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for LambdaVisitor<'ast, 'src> {
         self.scope
             .add_item(
                 Some(name),
-                NamedItem::new_default(NamedItemKind::BoundValue(
-                    self.self_param,
-                    id,
-                    bound_type,
-                    Span::from_node(self.scope.file_id(), node),
-                )),
+                NamedItem::new_default(
+                    NamedItemKind::BoundValue(self.self_param, id, bound_type),
+                    node,
+                    None,
+                ),
             )
             .with_span_from(&self.scope, node)?;
 
@@ -1705,26 +1696,28 @@ pub fn resolve_name<'ast, 'src>(
         .with_span(span)?
     {
         ItemResolution::Item(named_item) => match named_item.kind {
-            NamedItemKind::Function(fun, _, _) => ExprKind::Fn(FnKind::Normal(fun), None),
-            NamedItemKind::Method(fun, _, _) => ExprKind::Fn(FnKind::Normal(fun), None),
-            NamedItemKind::Local(var, _) => ExprKind::Local(var),
-            NamedItemKind::BoundValue(self_id, var, bound_type, _) => {
+            NamedItemKind::Function(fun) => ExprKind::Fn(FnKind::Normal(fun), None),
+            NamedItemKind::Method(fun) => ExprKind::Fn(FnKind::Normal(fun), None),
+            NamedItemKind::Local(var) => ExprKind::Local(var),
+            NamedItemKind::BoundValue(self_id, var, bound_type) => {
                 ExprKind::BoundParam(self_id, var, bound_type)
             }
-            NamedItemKind::MacroParameter(var, _, _) => ExprKind::Local(var),
-            NamedItemKind::Parameter(var, _) => ExprKind::Local(var),
-            NamedItemKind::Static(var, _, _) => ExprKind::Static(var, None),
-            NamedItemKind::Const(var, _, _) => ExprKind::Const(var, None),
+            NamedItemKind::MacroParameter(var, _) => ExprKind::Local(var),
+            NamedItemKind::Parameter(var) => ExprKind::Local(var),
+            NamedItemKind::Static(var) => ExprKind::Static(var, None),
+            NamedItemKind::Const(var) => ExprKind::Const(var, None),
             //NamedItemKind::EnumMember(typ, var, _) => ExprKind::EnumValue(typ, var),
-            NamedItemKind::Macro(item, node, scope) => {
-                let mut macro_maker = MacroMaker::new(ast, global_ctx);
-                macro_maker.make(
-                    Some(path.segments.last().unwrap().0),
-                    item,
-                    node,
-                    scope.clone(),
-                    named_item.attributes,
-                )?;
+            NamedItemKind::Macro(item) => {
+                if let (Some(node), Some(ref scope)) = (named_item.node, named_item.scope) {
+                    let mut macro_maker = MacroMaker::new(ast, global_ctx);
+                    macro_maker.make(
+                        Some(path.segments.last().unwrap().0),
+                        item,
+                        node,
+                        scope.clone(),
+                        named_item.attributes,
+                    )?;
+                }
 
                 ExprKind::Macro(item, &[])
             }

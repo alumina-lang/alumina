@@ -166,7 +166,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
 
     fn visit_source_file(&mut self, node: Node<'src>) -> Self::ReturnType {
         parse_attributes!(self, node);
-        self.visit_children_by_field(node, "body")
+        self.visit_children_by_field(node, FieldKind::Body)
     }
 
     fn visit_mod_definition(&mut self, node: Node<'src>) -> Self::ReturnType {
@@ -177,11 +177,16 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         self.add_item(
             node,
             name,
-            NamedItem::new(NamedItemKind::Module(child_scope.clone()), attributes),
+            NamedItem::new(
+                NamedItemKind::Module,
+                attributes,
+                node,
+                Some(child_scope.clone()),
+            ),
         )?;
 
         with_child_scope!(self, child_scope, {
-            self.visit_children_by_field(node, "body")?;
+            self.visit_children_by_field(node, FieldKind::Body)?;
         });
 
         Ok(())
@@ -197,7 +202,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
             })
         }
 
-        self.visit_children_by_field(node, "items")
+        self.visit_children_by_field(node, FieldKind::Body)
     }
 
     fn visit_protocol_definition(&mut self, node: Node<'src>) -> Self::ReturnType {
@@ -211,8 +216,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
             node,
             name,
             NamedItem::new(
-                NamedItemKind::Protocol(item, node, child_scope.clone()),
+                NamedItemKind::Protocol(item),
                 attributes,
+                node,
+                Some(child_scope.clone()),
             ),
         )?;
 
@@ -220,7 +227,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
             if let Some(f) = node.child_by_field(FieldKind::TypeArguments) {
                 self.visit(f)?;
             }
-            self.visit_children_by_field(node, "body")?;
+            self.visit_children_by_field(node, FieldKind::Body)?;
         });
 
         Ok(())
@@ -237,8 +244,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
             node,
             name,
             NamedItem::new(
-                NamedItemKind::Type(item, node, child_scope.clone()),
+                NamedItemKind::Type(item),
                 attributes,
+                node,
+                Some(child_scope.clone()),
             ),
         )?;
 
@@ -246,7 +255,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
             if let Some(f) = node.child_by_field(FieldKind::TypeArguments) {
                 self.visit(f)?;
             }
-            self.visit_children_by_field(node, "body")?;
+            self.visit_children_by_field(node, FieldKind::Body)?;
         });
 
         Ok(())
@@ -261,14 +270,19 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         self.add_item(
             node,
             name,
-            NamedItem::new(NamedItemKind::Impl(node, child_scope.clone()), attributes),
+            NamedItem::new(
+                NamedItemKind::Impl,
+                attributes,
+                node,
+                Some(child_scope.clone()),
+            ),
         )?;
 
         with_child_scope_container!(self, child_scope, {
             if let Some(f) = node.child_by_field(FieldKind::TypeArguments) {
                 self.visit(f)?;
             }
-            self.visit_children_by_field(node, "body")?;
+            self.visit_children_by_field(node, FieldKind::Body)?;
         });
 
         Ok(())
@@ -285,14 +299,16 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
             node,
             name,
             NamedItem::new(
-                NamedItemKind::Type(item, node, child_scope.clone()),
+                NamedItemKind::Type(item),
                 attributes,
+                node,
+                Some(child_scope.clone()),
             ),
         )?;
 
         with_child_scope!(self, child_scope, {
             self.enum_item = Some(item);
-            self.visit_children_by_field(node, "body")?;
+            self.visit_children_by_field(node, FieldKind::Body)?;
         });
 
         Ok(())
@@ -306,8 +322,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
             node,
             name,
             NamedItem::new(
-                NamedItemKind::EnumMember(self.enum_item.unwrap(), self.ast.make_id(), node),
+                NamedItemKind::EnumMember(self.enum_item.unwrap(), self.ast.make_id()),
                 attributes,
+                node,
+                None,
             ),
         )?;
 
@@ -321,7 +339,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         self.add_item(
             node,
             name,
-            NamedItem::new(NamedItemKind::Field(node), attributes),
+            NamedItem::new(NamedItemKind::Field, attributes, node, None),
         )?;
 
         Ok(())
@@ -361,11 +379,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
             name,
             NamedItem::new(
                 if self.in_a_container {
-                    NamedItemKind::Method(item, node, child_scope.clone())
+                    NamedItemKind::Method(item)
                 } else {
-                    NamedItemKind::Function(item, node, child_scope.clone())
+                    NamedItemKind::Function(item)
                 },
                 attributes,
+                node,
+                Some(child_scope.clone()),
             ),
         )?;
 
@@ -373,7 +393,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
             if let Some(f) = node.child_by_field(FieldKind::TypeArguments) {
                 self.visit(f)?;
             }
-            self.visit_children_by_field(node, "parameters")?;
+            self.visit_children_by_field(node, FieldKind::Parameters)?;
         });
 
         Ok(())
@@ -391,8 +411,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
             node,
             name,
             NamedItem::new(
-                NamedItemKind::TypeDef(item, node, child_scope.clone()),
+                NamedItemKind::TypeDef(item),
                 attributes,
+                node,
+                Some(child_scope.clone()),
             ),
         )?;
 
@@ -411,7 +433,12 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
 
         self.add_unnamed_item(
             node,
-            NamedItem::new(NamedItemKind::Mixin(node, child_scope.clone()), attributes),
+            NamedItem::new(
+                NamedItemKind::Mixin,
+                attributes,
+                node,
+                Some(child_scope.clone()),
+            ),
         )?;
 
         with_child_scope!(self, child_scope, {
@@ -434,8 +461,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
             node,
             name,
             NamedItem::new(
-                NamedItemKind::Static(item, node, child_scope.clone()),
+                NamedItemKind::Static(item),
                 attributes,
+                node,
+                Some(child_scope.clone()),
             ),
         )?;
 
@@ -459,8 +488,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
             node,
             name,
             NamedItem::new(
-                NamedItemKind::Const(item, node, child_scope.clone()),
+                NamedItemKind::Const(item),
                 attributes,
+                node,
+                Some(child_scope.clone()),
             ),
         )?;
 
@@ -483,7 +514,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
             self.add_item(
                 node,
                 name,
-                NamedItem::new_default(NamedItemKind::Placeholder(self.ast.make_id(), argument)),
+                NamedItem::new_default(
+                    NamedItemKind::Placeholder(self.ast.make_id()),
+                    argument,
+                    None,
+                ),
             )?;
         }
 
@@ -496,7 +531,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         self.add_item(
             node,
             name,
-            NamedItem::new_default(NamedItemKind::Parameter(self.ast.make_id(), node)),
+            NamedItem::new_default(NamedItemKind::Parameter(self.ast.make_id()), node, None),
         )?;
 
         Ok(())
@@ -508,22 +543,25 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
         self.add_item(
             node,
             name,
-            NamedItem::new_default(NamedItemKind::MacroParameter(
-                self.ast.make_id(),
-                node.child_by_field(FieldKind::EtCetera).is_some(),
-                Span::from_node(self.scope.file_id(), node),
-            )),
+            NamedItem::new_default(
+                NamedItemKind::MacroParameter(
+                    self.ast.make_id(),
+                    node.child_by_field(FieldKind::EtCetera).is_some(),
+                ),
+                node,
+                None,
+            ),
         )?;
 
         Ok(())
     }
 
     fn visit_parameter_list(&mut self, node: Node<'src>) -> Self::ReturnType {
-        self.visit_children_by_field(node, "parameter")
+        self.visit_children_by_field(node, FieldKind::Parameter)
     }
 
     fn visit_macro_parameter_list(&mut self, node: Node<'src>) -> Self::ReturnType {
-        self.visit_children_by_field(node, "parameter")
+        self.visit_children_by_field(node, FieldKind::Parameter)
     }
 
     fn visit_use_declaration(&mut self, node: Node<'src>) -> Self::ReturnType {
@@ -547,13 +585,15 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
             node,
             name,
             NamedItem::new(
-                NamedItemKind::Macro(item, node, child_scope.clone()),
+                NamedItemKind::Macro(item),
                 attributes,
+                node,
+                Some(child_scope.clone()),
             ),
         )?;
 
         with_child_scope!(self, child_scope, {
-            self.visit_children_by_field(node, "parameters")?;
+            self.visit_children_by_field(node, FieldKind::Parameters)?;
         });
 
         Ok(())

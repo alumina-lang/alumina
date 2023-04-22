@@ -120,7 +120,7 @@ impl<'ast> MacroMaker<'ast> {
 
         for (_name, item) in scope.inner().all_items() {
             match item.kind {
-                NamedItemKind::MacroParameter(id, et_cetera, _) => {
+                NamedItemKind::MacroParameter(id, et_cetera) => {
                     if has_et_cetera && et_cetera {
                         return Err(CodeDiagnostic::MultipleEtCeteras).with_span_from(&scope, node);
                     } else if et_cetera {

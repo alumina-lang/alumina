@@ -40,7 +40,7 @@ pub trait VisitorExt<'src> {
     fn visit_children_by_field(
         &mut self,
         node: tree_sitter::Node<'src>,
-        field: &'static str,
+        field: FieldKind,
     ) -> Self::ReturnType;
 }
 
@@ -62,10 +62,10 @@ where
     fn visit_children_by_field(
         &mut self,
         node: tree_sitter::Node<'src>,
-        field: &'static str,
+        field: FieldKind,
     ) -> Result<(), E> {
         let mut cursor = node.walk();
-        for node in node.children_by_field_name(field, &mut cursor) {
+        for node in node.children_by_field(field, &mut cursor) {
             self.visit(node)?;
         }
 
@@ -179,8 +179,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
             .add_item(
                 Some(alias),
                 NamedItem::new(
-                    NamedItemKind::Alias(self.prefix.join_with(path), node),
+                    NamedItemKind::Alias(self.prefix.join_with(path)),
                     self.attributes,
+                    node,
+                    None,
                 ),
             )
             .with_span_from(&self.scope, node)?;
@@ -189,7 +191,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
     }
 
     fn visit_use_list(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
-        self.visit_children_by_field(node, "item")
+        self.visit_children_by_field(node, FieldKind::Item)
     }
 
     fn visit_scoped_use_list(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
@@ -209,8 +211,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
             .add_item(
                 Some(alias),
                 NamedItem::new(
-                    NamedItemKind::Alias(self.prefix.extend(PathSegment(alias)), node),
+                    NamedItemKind::Alias(self.prefix.extend(PathSegment(alias))),
                     self.attributes,
+                    node,
+                    None,
                 ),
             )
             .with_span_from(&self.scope, node)?;
@@ -239,11 +243,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
             .add_item(
                 Some(name),
                 NamedItem::new(
-                    NamedItemKind::Alias(
-                        self.prefix.join_with(path.extend(PathSegment(name))),
-                        node,
-                    ),
+                    NamedItemKind::Alias(self.prefix.join_with(path.extend(PathSegment(name)))),
                     self.attributes,
+                    node,
+                    None,
                 ),
             )
             .with_span_from(&self.scope, node)?;
