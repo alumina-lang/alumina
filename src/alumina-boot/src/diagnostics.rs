@@ -190,12 +190,16 @@ impl DiagnosticContext {
         self.inner.borrow().file_map.get(&file_id).cloned()
     }
 
-    pub fn add_file(&self, source_file: PathBuf) -> FileId {
+    pub fn make_file_id(&self) -> FileId {
         let mut inner = self.inner.borrow_mut();
         let file_id = FileId { id: inner.counter };
         inner.counter += 1;
-        inner.file_map.insert(file_id, source_file);
         file_id
+    }
+
+    pub fn add_file(&self, file_id: FileId, source_file: PathBuf) {
+        let mut inner = self.inner.borrow_mut();
+        inner.file_map.insert(file_id, source_file);
     }
 
     pub fn add_override(&self, r#override: Override) {

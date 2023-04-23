@@ -138,9 +138,33 @@ impl<'ast, 'src> NamedItem<'ast, 'src> {
             NamedItemKind::MacroParameter(id, _) => Some(*id),
         }
     }
+
+    pub fn item(&self) -> Option<ItemP<'ast>> {
+        match &self.kind {
+            NamedItemKind::Alias(_) => None,
+            NamedItemKind::Function(item) => Some(*item),
+            NamedItemKind::Method(item) => Some(*item),
+            NamedItemKind::Static(item) => Some(*item),
+            NamedItemKind::Const(item) => Some(*item),
+            NamedItemKind::Macro(item) => Some(*item),
+            NamedItemKind::Type(item) => Some(*item),
+            NamedItemKind::Mixin => None,
+            NamedItemKind::Module => None,
+            NamedItemKind::Protocol(item) => Some(*item),
+            NamedItemKind::TypeDef(item) => Some(*item),
+            NamedItemKind::Impl => None,
+            NamedItemKind::EnumMember(item, _) => Some(*item),
+            NamedItemKind::Placeholder(_) => None,
+            NamedItemKind::Field => None,
+            NamedItemKind::Local(_) => None,
+            NamedItemKind::BoundValue(_, _, _) => None,
+            NamedItemKind::Parameter(_) => None,
+            NamedItemKind::MacroParameter(_, _) => None,
+        }
+    }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, AstSerializable)]
 pub enum ScopeType {
     Root,
     Module,

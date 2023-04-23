@@ -574,7 +574,30 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                         .with_span_from(&self.scope, node)?,
                 );
             }
-            _ => {}
+            "const" => {
+                check_duplicate!(Attribute::ConstOnly | Attribute::NoConst);
+                match node
+                    .child_by_field(FieldKind::Arguments)
+                    .and_then(|n| n.child_by_field(FieldKind::Argument))
+                    .map(|n| self.code.node_text(n))
+                {
+                    Some("always") => self.attributes.push(Attribute::ConstOnly),
+                    Some("never") => self.attributes.push(Attribute::NoConst),
+                    _ => {
+                        return Err(CodeDiagnostic::InvalidAttribute)
+                            .with_span_from(&self.scope, node)
+                    }
+                }
+            }
+            "docs" | "obsolete" => {
+                // Attributes for other tools
+            }
+            _ => {
+                self.global_ctx.diag().add_warning(CodeError {
+                    kind: CodeDiagnostic::UnknownAttribute(name.to_string()),
+                    backtrace: vec![Marker::Span(span)],
+                });
+            }
         }
 
         Ok(())

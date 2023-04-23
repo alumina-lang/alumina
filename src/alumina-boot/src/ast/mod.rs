@@ -5,6 +5,7 @@ pub mod macros;
 pub mod maker;
 pub mod pretty;
 pub mod rebind;
+pub mod serialization;
 pub mod types;
 
 use crate::ast::lang::LangItemKind;
@@ -16,8 +17,7 @@ use crate::intrinsics::IntrinsicKind;
 use crate::name_resolution::path::{Path, PathSegment};
 use crate::name_resolution::scope::BoundItemType;
 
-use crate::serdes::protocol::{AstDeserializer, AstSerializer};
-use crate::serdes::AstSerializable;
+use crate::ast::serialization::{AstDeserializer, AstSerializable, AstSerializer};
 
 use alumina_boot_derive::AstSerializable;
 
@@ -29,7 +29,7 @@ use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};
 
-#[derive(Clone)]
+#[derive(Clone, AstSerializable)]
 pub struct TestMetadata<'ast> {
     pub path: Path<'ast>,
     pub name: Path<'ast>,
@@ -203,15 +203,16 @@ impl<'a> AstSerializable<'a> for AstId {
     fn serialize<W: Write>(
         &self,
         serializer: &mut AstSerializer<'a, W>,
-    ) -> crate::serdes::Result<()> {
+    ) -> crate::ast::serialization::Result<()> {
+        serializer.mark_ast_id_seen(*self);
         self.id.serialize(serializer)
     }
 
     fn deserialize<R: Read>(
         deserializer: &mut AstDeserializer<'a, R>,
-    ) -> crate::serdes::Result<Self> {
+    ) -> crate::ast::serialization::Result<Self> {
         let id = <usize as AstSerializable>::deserialize(deserializer)?;
-        Ok(deserializer.map_id(AstId { id }))
+        Ok(deserializer.map_ast_id(AstId { id }))
     }
 }
 
@@ -365,11 +366,11 @@ impl<'ast> Ty<'ast> {
 pub type TyP<'ast> = &'ast Ty<'ast>;
 /*
 impl<'ast> AstSerializable<'ast> for TyP<'ast> {
-    fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'ast, W>) -> crate::serdes::Result<()> {
+    fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'ast, W>) -> crate::ast::serialization::Result<()> {
         (*self).serialize(serializer)
     }
 
-    fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'ast, R>) -> crate::serdes::Result<Self> {
+    fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'ast, R>) -> crate::ast::serialization::Result<Self> {
         let ty = <Ty<'ast> as AstSerializable>::deserialize(deserializer)?;
 
         Ok(deserializer.ast.intern_type(ty))
@@ -420,13 +421,13 @@ impl<'ast> AstSerializable<'ast> for ItemP<'ast> {
     fn serialize<W: Write>(
         &self,
         serializer: &mut AstSerializer<'ast, W>,
-    ) -> crate::serdes::Result<()> {
+    ) -> crate::ast::serialization::Result<()> {
         self.id.serialize(serializer)
     }
 
     fn deserialize<R: Read>(
         deserializer: &mut AstDeserializer<'ast, R>,
-    ) -> crate::serdes::Result<Self> {
+    ) -> crate::ast::serialization::Result<Self> {
         let id = AstId::deserialize(deserializer)?;
 
         Ok(deserializer.get_cell(id))
@@ -782,6 +783,8 @@ pub enum Attribute<'ast> {
     Inline,
     Align(usize),
     Packed,
+    ConstOnly,
+    NoConst,
     MustUse,
     Transparent,
     NoInline,
@@ -817,6 +820,8 @@ impl<'ast> Attribute<'ast> {
             Attribute::InlineDuringMono => Attribute::InlineDuringMono,
             Attribute::Intrinsic => Attribute::Intrinsic,
             Attribute::StaticConstructor => Attribute::StaticConstructor,
+            Attribute::ConstOnly => Attribute::ConstOnly,
+            Attribute::NoConst => Attribute::NoConst,
         }
     }
 }

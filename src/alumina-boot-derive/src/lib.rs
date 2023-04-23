@@ -21,6 +21,7 @@ pub fn ast_serializable(input: TokenStream) -> TokenStream {
 
     let ident = input.ident.clone();
     let generics = input.generics.clone();
+    let module_path: syn::Path = syn::parse_quote!(crate::ast::serialization);
 
     let (ser_body, deser_body) = match &input.data {
         syn::Data::Enum(e) => {
@@ -36,7 +37,7 @@ pub fn ast_serializable(input: TokenStream) -> TokenStream {
                         let field = format_ident!("__f_{}", i);
                         let ty = &f.ty;
                         quote! {
-                            <#ty as crate::serdes::AstSerializable<#lifetime>>::serialize(#field, serializer)?;
+                            <#ty as #module_path::AstSerializable<#lifetime>>::serialize(#field, serializer)?;
                         }
                     });
 
@@ -44,7 +45,7 @@ pub fn ast_serializable(input: TokenStream) -> TokenStream {
                     .map(|(_i, f)| {
                         let ty = &f.ty;
                         quote! {
-                            <#ty as crate::serdes::AstSerializable<#lifetime>>::deserialize(deserializer)?
+                            <#ty as #module_path::AstSerializable<#lifetime>>::deserialize(deserializer)?
                         }
                     });
 
@@ -99,14 +100,14 @@ pub fn ast_serializable(input: TokenStream) -> TokenStream {
                     let ty = &f.ty;
                     if let Some(field) = &f.ident {
                         quote! {
-                            <#ty as crate::serdes::AstSerializable<#lifetime>>::serialize(&self.#field, serializer)?;
+                            <#ty as #module_path::AstSerializable<#lifetime>>::serialize(&self.#field, serializer)?;
                         }
                     } else {
                         let index = syn::Index::from(i);
                         tuple_struct = true;
 
                         quote! {
-                            <#ty as crate::serdes::AstSerializable<#lifetime>>::serialize(&self.#index, serializer)?;
+                            <#ty as #module_path::AstSerializable<#lifetime>>::serialize(&self.#index, serializer)?;
                         }
                     }
                 });
@@ -116,11 +117,11 @@ pub fn ast_serializable(input: TokenStream) -> TokenStream {
                     let ty = &f.ty;
                     if let Some(field) = &f.ident {
                         quote! {
-                            #field: <#ty as crate::serdes::AstSerializable<#lifetime>>::deserialize(deserializer)?
+                            #field: <#ty as #module_path::AstSerializable<#lifetime>>::deserialize(deserializer)?
                         }
                     } else {
                         quote! {
-                            <#ty as crate::serdes::AstSerializable<#lifetime>>::deserialize(deserializer)?
+                            <#ty as #module_path::AstSerializable<#lifetime>>::deserialize(deserializer)?
                         }
                     }
                 });
@@ -142,17 +143,17 @@ pub fn ast_serializable(input: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(quote! {
-        impl<#lifetime> crate::serdes::AstSerializable<#lifetime> for #ident #generics {
+        impl<#lifetime> #module_path::AstSerializable<#lifetime> for #ident #generics {
             fn serialize<W: ::std::io::Write>(
                 &self,
-                serializer: &mut crate::serdes::protocol::AstSerializer<#lifetime, W>
-            ) -> crate::serdes::Result<()> {
+                serializer: &mut #module_path::AstSerializer<#lifetime, W>
+            ) -> #module_path::Result<()> {
                 #ser_body
             }
 
             fn deserialize<R: ::std::io::Read>(
-                deserializer: &mut crate::serdes::protocol::AstDeserializer<#lifetime, R>
-            ) -> crate::serdes::Result<Self> {
+                deserializer: &mut #module_path::AstDeserializer<#lifetime, R>
+            ) -> #module_path::Result<Self> {
                 #deser_body
             }
         }

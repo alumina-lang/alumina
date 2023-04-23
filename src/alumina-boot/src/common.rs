@@ -1,4 +1,5 @@
 use alumina_boot_derive::AstSerializable;
+
 use std::backtrace::Backtrace;
 use std::cell::RefCell;
 use std::fmt::Debug;
@@ -69,6 +70,8 @@ pub enum AluminaError {
     CodeErrors(Vec<CodeError>),
     #[error("io error: {0}")]
     Io(#[from] io::Error),
+    #[error("serialization error: {0}")]
+    Serialization(#[from] crate::ast::serialization::Error),
     #[error("{0}")]
     WalkDir(#[from] walkdir::Error),
 }
@@ -371,6 +374,8 @@ pub enum CodeDiagnostic {
     DeadCode,
     #[error("pointer offset on zero-sized types is a no-op")]
     ZstPointerOffset,
+    #[error("unknown attribute `{}`", .0)]
+    UnknownAttribute(String),
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -404,9 +409,29 @@ impl CodeError {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, AstSerializable)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FileId {
     pub id: usize,
+}
+
+impl<'ast> AstSerializable<'ast> for FileId {
+    fn serialize<W: io::Write>(
+        &self,
+        serializer: &mut crate::ast::serialization::AstSerializer<'ast, W>,
+    ) -> crate::ast::serialization::Result<()> {
+        serializer.mark_file_seen(*self);
+        serializer.write_usize(self.id)
+    }
+
+    fn deserialize<R: io::Read>(
+        deserializer: &mut crate::ast::serialization::AstDeserializer<'ast, R>,
+    ) -> crate::ast::serialization::Result<Self> {
+        let id = FileId {
+            id: deserializer.read_usize()?,
+        };
+
+        Ok(deserializer.map_file_id(id))
+    }
 }
 
 pub trait WithSpanDuringParsing<T> {
@@ -526,6 +551,7 @@ macro_rules! impl_allocatable {
 pub(crate) use impl_allocatable;
 
 use crate::ast::lang::LangItemKind;
+use crate::ast::serialization::AstSerializable;
 use crate::ast::Span;
 use crate::diagnostics::DiagnosticsStack;
 use crate::ir::const_eval::ConstEvalErrorKind;

@@ -1,4 +1,5 @@
 use crate::ast::maker::AstItemMaker;
+use crate::ast::serialization::{AstSaver, AstSerializable};
 use crate::ast::{AstCtx, MacroCtx};
 use crate::codegen;
 use crate::common::{AluminaError, ArenaAllocatable, CodeDiagnostic, CodeErrorBuilder, HashSet};
@@ -9,7 +10,6 @@ use crate::ir::IrCtx;
 use crate::name_resolution::pass1::FirstPassVisitor;
 use crate::name_resolution::scope::Scope;
 use crate::parser::{AluminaVisitor, ParseCtx};
-use crate::serdes::AstSerializable;
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -80,12 +80,12 @@ impl Compiler {
         let source_files: Vec<_> = source_files
             .iter()
             .map(|source_file| {
-                let file_id = self
-                    .global_ctx
-                    .diag()
-                    .add_file(source_file.filename.clone());
-                let source = std::fs::read_to_string(&source_file.filename)?;
+                let diag = self.global_ctx.diag();
 
+                let file_id = diag.make_file_id();
+                diag.add_file(file_id, source_file.filename.clone());
+
+                let source = std::fs::read_to_string(&source_file.filename)?;
                 let parse_tree = ParseCtx::from_source(file_id, source);
                 parse_tree.check_syntax_errors(parse_tree.root_node())?;
 
@@ -129,24 +129,22 @@ impl Compiler {
         timing!(self, cur_time, Stage::Pass1);
 
         let mut item_maker = AstItemMaker::new(&ast, self.global_ctx.clone(), MacroCtx::default());
-        item_maker.make(root_scope)?;
+        item_maker.make(root_scope.clone())?;
 
         timing!(self, cur_time, Stage::Ast);
-        drop(source_files);
 
         let ir_ctx = IrCtx::new();
         let items = item_maker.into_inner();
 
         {
-            let writer = std::fs::File::create("./ast.dump").unwrap();
-            let mut buf_writer = std::io::BufWriter::new(writer);
-            let mut writer = crate::serdes::protocol::AstSerializer::new(&mut buf_writer);
-            writer.write_usize(items.len()).unwrap();
-            for item in items.iter() {
-                let inner = item.get();
-                inner.serialize(&mut writer).unwrap();
-            }
-            buf_writer.flush().unwrap();
+            let writer: std::fs::File = std::fs::File::create("./ast.dump")?;
+            let mut writer = std::io::BufWriter::new(writer);
+
+            let mut saver = AstSaver::new( "hello", self.global_ctx.clone(), &ast);
+            saver.visit_scope(&root_scope)?;
+            saver.serialize(writer.by_ref())?;
+
+            writer.flush()?;
         }
 
         timing!(self, cur_time, Stage::Serialize);
@@ -154,27 +152,10 @@ impl Compiler {
         {
             let reader = std::fs::File::open("./ast.dump").unwrap();
             let mut buf_reader = std::io::BufReader::new(reader);
-            let mut reader = crate::serdes::protocol::AstDeserializer::new(&ast, &mut buf_reader);
-            let len = reader.read_usize().unwrap();
-
-            for _ in 0..len {
-                let _item = crate::ast::Item::deserialize(&mut reader).unwrap();
-            } /*
-                  match item {
-                      crate::ast::Item::Enum(e) => println!("Enum {:?}", e.name),
-                      crate::ast::Item::StructLike(s) => println!("StructLike {:?}", s.name),
-                      crate::ast::Item::TypeDef(t) => println!("TypeDef {:?}", t.name),
-                      crate::ast::Item::Protocol(p) => println!("Protocol {:?}", p.name),
-                      crate::ast::Item::Function(f) => println!("Function {:?}", f.name),
-                      crate::ast::Item::StaticOrConst(s) => println!("StaticOrConst {:?}", s.name),
-                      crate::ast::Item::Macro(m) => println!("Macro {:?}", m.name),
-                      crate::ast::Item::BuiltinMacro(m) => println!("BuiltinMacro {:?}", m.kind),
-                      crate::ast::Item::Intrinsic(i) => println!("Intrinsic {:?}", i.kind),
-                  }
-              }*/
         }
 
         timing!(self, cur_time, Stage::Deserialize);
+        drop(source_files);
 
         let mut mono_ctx = MonoCtx::new(&ast, &ir_ctx, self.global_ctx.clone());
 
