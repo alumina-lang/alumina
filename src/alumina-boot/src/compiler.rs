@@ -1,5 +1,5 @@
 use crate::ast::maker::AstItemMaker;
-use crate::ast::serialization::{AstSaver, AstSerializable};
+use crate::ast::serialization::AstSaver;
 use crate::ast::{AstCtx, MacroCtx};
 use crate::codegen;
 use crate::common::{AluminaError, ArenaAllocatable, CodeDiagnostic, CodeErrorBuilder, HashSet};
@@ -140,7 +140,7 @@ impl Compiler {
             let writer: std::fs::File = std::fs::File::create("./ast.dump")?;
             let mut writer = std::io::BufWriter::new(writer);
 
-            let mut saver = AstSaver::new( "hello", self.global_ctx.clone(), &ast);
+            let mut saver = AstSaver::new("hello", self.global_ctx.clone(), &ast);
             saver.visit_scope(&root_scope)?;
             saver.serialize(writer.by_ref())?;
 
@@ -151,7 +151,7 @@ impl Compiler {
 
         {
             let reader = std::fs::File::open("./ast.dump").unwrap();
-            let mut buf_reader = std::io::BufReader::new(reader);
+            let _buf_reader = std::io::BufReader::new(reader);
         }
 
         timing!(self, cur_time, Stage::Deserialize);

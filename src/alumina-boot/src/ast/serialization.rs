@@ -1,5 +1,4 @@
 use std::{
-    ffi::OsString,
     io::{Read, Write},
     path::PathBuf,
 };
@@ -10,7 +9,7 @@ use once_cell::unsync::OnceCell;
 use crate::{
     ast::AstCtx,
     common::{Allocatable, AluminaError, ArenaAllocatable, FileId, HashMap, HashSet},
-    global_ctx::{self, GlobalCtx},
+    global_ctx::GlobalCtx,
     name_resolution::{
         path::Path,
         scope::{Scope, ScopeType},
@@ -19,7 +18,7 @@ use crate::{
 
 use thiserror::Error;
 
-use super::{AstId, Item, ItemCell, ItemP};
+use super::{AstId, ItemP};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -592,7 +591,7 @@ impl<'ast> AstSaver<'ast> {
 
         // And finally the extra info (such as source filenames for spans in AST)
         let seen_files = serializer.seen_files.clone();
-        let seen_ids = serializer.seen_ids.clone();
+        let _seen_ids = serializer.seen_ids.clone();
 
         serializer.write_usize(seen_files.len())?;
 

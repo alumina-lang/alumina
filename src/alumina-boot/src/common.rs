@@ -1,5 +1,3 @@
-use alumina_boot_derive::AstSerializable;
-
 use std::backtrace::Backtrace;
 use std::cell::RefCell;
 use std::fmt::Debug;
