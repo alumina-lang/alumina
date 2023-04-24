@@ -70,6 +70,7 @@ macro count($arg...) {
     reduce!(internal::count_reducer, 0usize, $arg...)
 }
 
+
 #[docs(no_index)]
 mod internal {
     macro count_reducer($acc, $_) {
@@ -84,5 +85,32 @@ mod tests {
     fn test_count() {
         assert_eq!(count!(), 0);
         assert_eq!(count!("a", 1, true), 3);
+    }
+
+    #[test]
+    fn test_bind_reduce() {
+        macro times($a, $b) {
+            $a * $b
+        }
+
+        macro plus($a, $b) {
+            $a + $b
+        }
+
+        macro sum($arg...) {
+            reduce!(plus, 0, $arg...)
+        }
+
+        macro map($receiver, $m, $arg...) {
+            $receiver!($m!($arg)...)
+        }
+
+        // prefix1
+        // prefix2
+        // prefix3
+        let x = map!(sum, bind!(times, 3), 1, 2, 3);
+        assert_eq!(x, 18); // 1 * 3 + 2 * 3 + 3 * 3
+        let x = map!(sum, bind!(times, 10), 1, 2, 3);
+        assert_eq!(x, 60); // 1 * 10 + 2 * 10 + 3 * 10
     }
 }

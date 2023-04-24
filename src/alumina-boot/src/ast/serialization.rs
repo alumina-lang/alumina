@@ -29,14 +29,14 @@ use super::{lang::LangItemKind, AstId, Item, ItemP, TestMetadata};
 pub enum Error {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("malformed ast")]
+    #[error("malformed AST")]
     Malformed,
-    #[error("invalid magic number")]
+    #[error("invalid AST magic number")]
     InvalidMagicNumber,
-    #[error("incompatible version")]
+    #[error("incompatible AST version")]
     IncompatibleVersion,
-    #[error("AST serialized with different --cfg options")]
-    IncompatibleCfgs,
+    #[error("AST serialized with different --cfg options (expected: [{0}], actual: [{1}])")]
+    IncompatibleCfgs(String, String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -794,10 +794,8 @@ impl<'ast> AstLoader<'ast> {
         let mut version = [0; 512];
         match reader.read_exact(&mut version[..self.version_string.len()]) {
             Ok(()) if &version[..self.version_string.len()] == self.version_string => {}
-            Err(e) if e.kind() != std::io::ErrorKind::UnexpectedEof => {
-                return Err(e.into())
-            }
-            _ => return Err(Error::IncompatibleVersion.into())
+            Err(e) if e.kind() != std::io::ErrorKind::UnexpectedEof => return Err(e.into()),
+            _ => return Err(Error::IncompatibleVersion.into()),
         }
 
         let mut deserializer = AstDeserializer::new(
@@ -808,9 +806,19 @@ impl<'ast> AstLoader<'ast> {
         );
         let cfgs: Vec<(String, Option<String>)> = Vec::deserialize(&mut deserializer)?;
         if cfgs != self.global_ctx.cfgs() {
-            println!("expected: {:?}", self.global_ctx.cfgs());
-            println!("actual: {:?}", cfgs);
-            return Err(Error::IncompatibleCfgs.into());
+            fn render(cfgs: impl IntoIterator<Item = (String, Option<String>)>) -> String {
+                cfgs.into_iter()
+                    .map(|(k, v)| match v {
+                        Some(v) => format!("{}={}", k, v),
+                        None => k,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+
+            return Err(
+                Error::IncompatibleCfgs(render(self.global_ctx.cfgs()), render(cfgs)).into(),
+            );
         }
 
         let num_scopes = deserializer.read_usize()?;

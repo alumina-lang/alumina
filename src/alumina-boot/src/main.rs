@@ -20,6 +20,7 @@ use crate::global_ctx::{GlobalCtx, OutputType};
 
 use clap::builder::ValueParser;
 use clap::Parser;
+use colored::Colorize;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -139,7 +140,6 @@ fn get_sysroot(args: &Args) -> Result<Vec<SourceFile>, AluminaError> {
     Ok(result)
 }
 
-
 fn run(args: Args) -> Result<(), ()> {
     let start_time = Instant::now();
     let output_type = if args.library {
@@ -204,7 +204,10 @@ fn run(args: Args) -> Result<(), ()> {
             }
         }
         Err(e) => {
-            diag_ctx.add_from_error(e).unwrap();
+            if let Err(e) = diag_ctx.add_from_error(e) {
+                let tagline = format!("{}: {}", "error".red(), e).bold();
+                eprintln!("{}", tagline);
+            }
             Err(())
         }
     };
