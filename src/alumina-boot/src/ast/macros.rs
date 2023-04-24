@@ -780,7 +780,7 @@ impl<'ast> MacroExpander<'ast> {
 
                 Ok(Expr {
                     kind: ExprKind::Lit(Lit::Bool(
-                        self.global_ctx.has_flag(std::str::from_utf8(name).unwrap()),
+                        self.global_ctx.has_cfg(std::str::from_utf8(name).unwrap()),
                     )),
                     span: self.invocation_span,
                 }

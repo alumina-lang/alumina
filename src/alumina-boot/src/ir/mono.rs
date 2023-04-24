@@ -4486,6 +4486,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let ast_callee = callee;
         let callee = match &callee.kind {
             ast::ExprKind::Fn(ast::FnKind::Normal(item), generic_args) => {
+                if item.contents.get().is_none() {
+                    bail!(self, CodeDiagnostic::Align1);
+                }
                 if let ast::Item::Intrinsic(intrinsic) = item.get() {
                     return self.lower_intrinsic(
                         ast_callee.span,
@@ -4653,6 +4656,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let result = match kind {
             ast::FnKind::Normal(item) => {
+                if item.contents.get().is_none() {
+                    bail!(self, CodeDiagnostic::Align1);
+                }
+
                 if let ast::Item::Intrinsic(_) = item.get() {
                     bail!(self, CodeDiagnostic::IntrinsicsAreSpecialMkay);
                 }

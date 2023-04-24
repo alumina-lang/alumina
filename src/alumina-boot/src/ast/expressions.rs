@@ -25,7 +25,13 @@ use super::MacroCtx;
 macro_rules! with_block_scope {
     ($self:ident, $body:expr) => {{
         let child_scope = $self.scope.anonymous_child(ScopeType::Block);
-        let previous_scope = std::mem::replace(&mut $self.scope, child_scope);
+        let previous_scope = std::mem::replace(&mut $self.scope, child_scope.clone());
+        previous_scope
+            .add_item(
+                None,
+                NamedItem::new_no_node(NamedItemKind::Anonymous, Some(child_scope)),
+            )
+            .unwrap();
         let result = $body;
         $self.scope.check_unused_items(&$self.global_ctx.diag());
         $self.scope = previous_scope;
@@ -458,14 +464,22 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                 .with_span_from(&self.scope, node);
         }
 
+        let child_scope = self.scope.anonymous_child(ScopeType::Closure);
         let visitor = LambdaVisitor::new(
             self.ast,
             self.global_ctx.clone(),
-            self.scope.anonymous_child(ScopeType::Closure),
+            child_scope.clone(),
             self.macro_ctx,
         );
 
         let (func, bindings) = visitor.generate(node)?;
+
+        self.scope
+            .add_item(
+                None,
+                NamedItem::new_no_node(NamedItemKind::Closure(func), Some(child_scope)),
+            )
+            .unwrap();
 
         if bindings.is_empty() {
             Ok(

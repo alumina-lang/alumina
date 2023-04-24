@@ -76,4 +76,8 @@ impl<'ast> Path<'ast> {
             segments: self.segments[..self.segments.len() - 1].to_vec(),
         }
     }
+
+    pub fn is_root(&self) -> bool {
+        self.segments.is_empty() && self.absolute
+    }
 }

@@ -428,7 +428,7 @@ impl<'ast> AstSerializable<'ast> for FileId {
             id: deserializer.read_usize()?,
         };
 
-        Ok(deserializer.map_file_id(id))
+        Ok(deserializer.context().map_file_id(id))
     }
 }
 

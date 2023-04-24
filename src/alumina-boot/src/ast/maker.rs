@@ -24,7 +24,6 @@ use super::MacroCtx;
 pub struct AstItemMaker<'ast> {
     ast: &'ast AstCtx<'ast>,
     global_ctx: GlobalCtx,
-    items: Vec<ItemP<'ast>>,
     ambient_placeholders: Vec<Placeholder<'ast>>,
     macro_ctx: MacroCtx,
     local: bool,
@@ -35,7 +34,6 @@ impl<'ast> AstItemMaker<'ast> {
         Self {
             ast,
             global_ctx,
-            items: Vec::new(),
             ambient_placeholders: Vec::new(),
             macro_ctx,
             local: false,
@@ -46,15 +44,10 @@ impl<'ast> AstItemMaker<'ast> {
         Self {
             ast,
             global_ctx,
-            items: Vec::new(),
             ambient_placeholders: Vec::new(),
             macro_ctx,
             local: true,
         }
-    }
-
-    pub fn into_inner(self) -> Vec<ItemP<'ast>> {
-        self.items
     }
 
     pub fn get_placeholders<'src>(
@@ -240,9 +233,6 @@ impl<'ast> AstItemMaker<'ast> {
         });
 
         item.assign(result);
-
-        self.items.push(item);
-
         Ok(())
     }
 
@@ -340,8 +330,6 @@ impl<'ast> AstItemMaker<'ast> {
 
         item.assign(result);
 
-        self.items.push(item);
-
         Ok(())
     }
 
@@ -379,8 +367,6 @@ impl<'ast> AstItemMaker<'ast> {
         });
 
         item.assign(result);
-
-        self.items.push(item);
 
         Ok(())
     }
@@ -533,7 +519,6 @@ impl<'ast> AstItemMaker<'ast> {
         });
 
         item.assign(result);
-        self.items.push(item);
 
         Ok(())
     }
@@ -606,8 +591,6 @@ impl<'ast> AstItemMaker<'ast> {
         scope.check_unused_items(&self.global_ctx.diag());
 
         item.assign(result);
-
-        self.items.push(item);
 
         Ok(())
     }
@@ -738,7 +721,6 @@ impl<'ast> AstItemMaker<'ast> {
             }] => {
                 let mut macro_maker = MacroMaker::new(self.ast, self.global_ctx.clone());
                 macro_maker.make(name, item, *node, scope.clone(), attributes)?;
-                self.items.push(item);
             }
             [NI {
                 kind: Function(item),

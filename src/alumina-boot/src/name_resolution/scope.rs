@@ -42,6 +42,8 @@ pub enum NamedItemKind<'ast> {
     BoundValue(AstId, AstId, BoundItemType),
     Parameter(AstId),
     MacroParameter(AstId, bool),
+    Closure(ItemP<'ast>),
+    Anonymous,
 }
 
 impl Display for NamedItemKind<'_> {
@@ -66,6 +68,8 @@ impl Display for NamedItemKind<'_> {
             NamedItemKind::BoundValue(..) => write!(f, "bound value"),
             NamedItemKind::Parameter(..) => write!(f, "parameter"),
             NamedItemKind::MacroParameter(..) => write!(f, "macro parameter"),
+            NamedItemKind::Closure(..) => write!(f, "closure"),
+            NamedItemKind::Anonymous => write!(f, "anonymous"),
         }
     }
 }
@@ -136,6 +140,8 @@ impl<'ast, 'src> NamedItem<'ast, 'src> {
             NamedItemKind::BoundValue(_, id, _) => Some(*id),
             NamedItemKind::Parameter(id) => Some(*id),
             NamedItemKind::MacroParameter(id, _) => Some(*id),
+            NamedItemKind::Anonymous => None,
+            NamedItemKind::Closure(item) => Some(item.id),
         }
     }
 
@@ -160,6 +166,8 @@ impl<'ast, 'src> NamedItem<'ast, 'src> {
             NamedItemKind::BoundValue(_, _, _) => None,
             NamedItemKind::Parameter(_) => None,
             NamedItemKind::MacroParameter(_, _) => None,
+            NamedItemKind::Anonymous => None,
+            NamedItemKind::Closure(item) => Some(*item),
         }
     }
 }
@@ -472,15 +480,29 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             .map(|parent| Self(parent.upgrade().unwrap()))
     }
 
-    pub fn ensure_module(&self, path: Path<'ast>) -> Result<Scope<'ast, 'src>, CodeDiagnostic> {
+    pub fn ensure_module(
+        &self,
+        path: Path<'ast>,
+        kind: ScopeType,
+    ) -> Result<Scope<'ast, 'src>, CodeDiagnostic> {
         if path.absolute {
-            return self.find_root().ensure_module(Path {
-                absolute: false,
-                segments: path.segments.clone(),
-            });
+            return self.find_root().ensure_module(
+                Path {
+                    absolute: false,
+                    segments: path.segments.clone(),
+                },
+                kind,
+            );
         }
 
         if path.segments.is_empty() {
+            if self.typ() != kind {
+                panic!(
+                    "Scope type mismatch: expected {:?}, got {:?}",
+                    kind,
+                    self.typ()
+                );
+            }
             return Ok(self.clone());
         }
 
@@ -492,21 +514,41 @@ impl<'ast, 'src> Scope<'ast, 'src> {
         for item in self.inner().items_with_name(path.segments[0].0) {
             if let NamedItemKind::Module = &item.kind {
                 let child_scope = item.scope.as_ref().unwrap();
-                return child_scope.ensure_module(remainder);
+                return child_scope.ensure_module(remainder, kind);
             }
         }
 
-        let child_scope = self.named_child_without_code(ScopeType::Module, path.segments[0].0);
+        let child_scope = self.named_child_without_code(
+            if path.segments.len() == 1 {
+                kind
+            } else {
+                ScopeType::Module
+            },
+            path.segments[0].0,
+        );
         self.add_item(
             Some(path.segments[0].0),
             NamedItem::new_no_node(NamedItemKind::Module, Some(child_scope.clone())),
         )?;
 
-        child_scope.ensure_module(remainder)
+        child_scope.ensure_module(remainder, kind)
     }
 
     pub fn mark_used(&self, name: &'ast str) {
         self.0.borrow().used_items.borrow_mut().insert(name);
+    }
+
+    pub fn collect_items(&self, target: &mut HashSet<ItemP<'ast>>) {
+        let inner = self.0.borrow();
+
+        for (_, named_item) in inner.all_items() {
+            if let Some(item) = named_item.item() {
+                target.insert(item);
+            }
+            if let Some(scope) = &named_item.scope {
+                scope.collect_items(target);
+            }
+        }
     }
 
     pub fn check_unused_items(&self, diag: &DiagnosticContext) {

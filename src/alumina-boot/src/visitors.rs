@@ -443,7 +443,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     Some(lint) => {
                         self.global_ctx.diag().add_override(diagnostics::Override {
                             span: Some(enclosing_span),
-                            kind: Some(lint),
+                            kind: Some(lint.to_string()),
                             action,
                         });
                     }
@@ -498,7 +498,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                 check_duplicate!(Attribute::ThreadLocal);
                 // We can skip thread-local on programs that are compiled with threads
                 // disabled.
-                if self.global_ctx.has_flag("threading") {
+                if self.global_ctx.has_cfg("threading") {
                     self.attributes.push(Attribute::ThreadLocal)
                 }
             }

@@ -3,6 +3,7 @@ use crate::common::{
     AluminaError, CodeDiagnostic, CodeError, FileId, HashMap, HashSet, IndexSet, Marker,
 };
 use crate::ir::const_eval::ConstEvalErrorKind;
+use alumina_boot_derive::AstSerializable;
 use colored::Colorize;
 
 use std::cell::RefCell;
@@ -20,17 +21,17 @@ pub enum Level {
     Note = 0,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, AstSerializable)]
 pub enum Action {
     Keep,
     Allow,
     Deny,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, AstSerializable)]
 pub struct Override {
     pub span: Option<Span>,
-    pub kind: Option<&'static str>,
+    pub kind: Option<String>,
     pub action: Action,
 }
 
@@ -206,6 +207,10 @@ impl DiagnosticContext {
         self.inner.borrow_mut().overrides.push(r#override);
     }
 
+    pub fn overrides(&self) -> Vec<Override> {
+        self.inner.borrow().overrides.clone()
+    }
+
     pub fn add_from_error(&self, err: AluminaError) -> Result<(), AluminaError> {
         match err {
             AluminaError::CodeErrors(errors) => {
@@ -240,7 +245,7 @@ impl DiagnosticContext {
 
         for r#override in &inner.overrides {
             // Lint name has to match
-            if r#override.kind.is_some() && r#override.kind != Some(err.kind.as_ref()) {
+            if r#override.kind.is_some() && r#override.kind.as_deref() != Some(err.kind.as_ref()) {
                 continue;
             }
 

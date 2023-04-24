@@ -1,6 +1,8 @@
 use std::{
+    cell::RefCell,
     io::{Read, Write},
     path::PathBuf,
+    rc::Rc,
 };
 
 use alumina_boot_derive::AstSerializable;
@@ -8,17 +10,21 @@ use once_cell::unsync::OnceCell;
 
 use crate::{
     ast::AstCtx,
-    common::{Allocatable, AluminaError, ArenaAllocatable, FileId, HashMap, HashSet},
+    common::{
+        Allocatable, AluminaError, ArenaAllocatable, CodeErrorBuilder, FileId, HashMap, HashSet,
+    },
+    diagnostics::{DiagnosticsStack, Override},
     global_ctx::GlobalCtx,
     name_resolution::{
-        path::Path,
-        scope::{Scope, ScopeType},
+        path::{Path, PathSegment},
+        resolver::{self, NameResolver, ScopeResolution},
+        scope::{NamedItem, NamedItemKind, Scope, ScopeType},
     },
 };
 
 use thiserror::Error;
 
-use super::{AstId, ItemP};
+use super::{lang::LangItemKind, AstId, Item, ItemP, TestMetadata};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -26,6 +32,12 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("malformed ast")]
     Malformed,
+    #[error("invalid magic number")]
+    InvalidMagicNumber,
+    #[error("incompatible version")]
+    IncompatibleVersion,
+    #[error("AST serialized with different --cfg options")]
+    IncompatibleCfgs,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -249,6 +261,20 @@ where
     }
 }
 
+impl<'ast, T> AstSerializable<'ast> for Box<T>
+where
+    T: AstSerializable<'ast>,
+{
+    fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'ast, W>) -> Result<()> {
+        <T as AstSerializable<'ast>>::serialize(&*self, serializer)?;
+        Ok(())
+    }
+
+    fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'ast, R>) -> Result<Self> {
+        Ok(Box::new(T::deserialize(deserializer)?))
+    }
+}
+
 impl<'ast> AstSerializable<'ast> for String {
     fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'ast, W>) -> Result<()> {
         serializer.write_usize(self.as_bytes().len())?;
@@ -395,12 +421,62 @@ impl<'ast, W: Write> AstSerializer<'ast, W> {
     }
 }
 
-pub struct AstDeserializer<'ast, R: std::io::Read> {
-    pub global_ctx: GlobalCtx,
-    pub ast: &'ast AstCtx<'ast>,
+struct DeserializeContextInner<'ast> {
     ast_id_map: HashMap<AstId, AstId>,
     file_id_map: HashMap<FileId, FileId>,
     cell_map: HashMap<AstId, ItemP<'ast>>,
+}
+
+#[derive(Clone)]
+pub struct DeserializeContext<'ast> {
+    global_ctx: GlobalCtx,
+    ast: &'ast AstCtx<'ast>,
+    inner: Rc<RefCell<DeserializeContextInner<'ast>>>,
+}
+
+impl<'ast> DeserializeContext<'ast> {
+    pub fn new(global_ctx: GlobalCtx, ast: &'ast AstCtx<'ast>) -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(DeserializeContextInner {
+                ast_id_map: HashMap::default(),
+                file_id_map: HashMap::default(),
+                cell_map: HashMap::default(),
+            })),
+            global_ctx,
+            ast,
+        }
+    }
+
+    pub fn map_ast_id(&self, id: crate::ast::AstId) -> crate::ast::AstId {
+        let mut inner = self.inner.borrow_mut();
+        *inner
+            .ast_id_map
+            .entry(id)
+            .or_insert_with(|| self.ast.make_id())
+    }
+
+    pub fn map_file_id(&self, id: crate::ast::FileId) -> crate::ast::FileId {
+        let mut inner = self.inner.borrow_mut();
+        *inner
+            .file_id_map
+            .entry(id)
+            .or_insert_with(|| self.global_ctx.diag().make_file_id())
+    }
+
+    pub fn get_cell(&self, id: crate::ast::AstId) -> &'ast crate::ast::ItemCell<'ast> {
+        let mut inner = self.inner.borrow_mut();
+
+        inner
+            .cell_map
+            .entry(id)
+            .or_insert_with(|| self.ast.make_item())
+    }
+}
+
+pub struct AstDeserializer<'ast, R: std::io::Read> {
+    pub global_ctx: GlobalCtx,
+    pub ast: &'ast AstCtx<'ast>,
+    context: DeserializeContext<'ast>,
     inner: R,
 }
 
@@ -435,14 +511,17 @@ macro_rules! read_varint {
 }
 
 impl<'ast, R: std::io::Read> AstDeserializer<'ast, R> {
-    pub fn new(global_ctx: GlobalCtx, ast: &'ast AstCtx<'ast>, inner: R) -> Self {
+    pub fn new(
+        global_ctx: GlobalCtx,
+        deserialize_context: DeserializeContext<'ast>,
+        ast: &'ast AstCtx<'ast>,
+        inner: R,
+    ) -> Self {
         Self {
             global_ctx,
             ast,
             inner,
-            ast_id_map: HashMap::default(),
-            file_id_map: HashMap::default(),
-            cell_map: HashMap::default(),
+            context: deserialize_context,
         }
     }
 
@@ -478,33 +557,24 @@ impl<'ast, R: std::io::Read> AstDeserializer<'ast, R> {
         Ok(())
     }
 
-    pub fn map_ast_id(&mut self, id: crate::ast::AstId) -> crate::ast::AstId {
-        *self
-            .ast_id_map
-            .entry(id)
-            .or_insert_with(|| self.ast.make_id())
-    }
-
-    pub fn map_file_id(&mut self, id: crate::ast::FileId) -> crate::ast::FileId {
-        *self
-            .file_id_map
-            .entry(id)
-            .or_insert_with(|| self.global_ctx.diag().make_file_id())
-    }
-
-    pub fn get_cell(&mut self, id: crate::ast::AstId) -> &'ast crate::ast::ItemCell<'ast> {
-        let mapped = self.map_ast_id(id);
-        self.cell_map
-            .entry(mapped)
-            .or_insert_with(|| self.ast.make_item())
+    pub fn context(&self) -> DeserializeContext<'ast> {
+        self.context.clone()
     }
 }
 
-#[derive(AstSerializable)]
+#[derive(AstSerializable, Debug)]
+struct SerializedItem<'ast> {
+    name: &'ast str,
+    kind: NamedItemKind<'ast>,
+    scope: Option<SerializedScope<'ast>>,
+}
+
+#[derive(AstSerializable, Debug)]
 struct SerializedScope<'ast> {
     r#type: ScopeType,
     path: Path<'ast>,
-    items: Vec<(&'ast str, ItemP<'ast>)>,
+    items: Vec<SerializedItem<'ast>>,
+    star_imports: Vec<Path<'ast>>,
 }
 
 const MAGIC: &[u8] = b"\xa1\x00mina";
@@ -519,9 +589,9 @@ pub struct AstSaver<'ast> {
 
 impl<'ast> AstSaver<'ast> {
     pub fn new(
-        version_string: &'static str,
         global_ctx: GlobalCtx,
         ast: &'ast AstCtx<'ast>,
+        version_string: &'static str,
     ) -> Self {
         Self {
             global_ctx,
@@ -532,30 +602,52 @@ impl<'ast> AstSaver<'ast> {
         }
     }
 
-    pub fn visit_scope<'src>(
+    pub fn add_scope<'src>(
         &mut self,
         scope: &Scope<'ast, 'src>,
     ) -> std::result::Result<(), AluminaError> {
+        if let Some(scope) = self.serialize_scope(scope)? {
+            self.all_scopes.push(scope);
+        }
+
+        Ok(())
+    }
+
+    fn serialize_scope<'src>(
+        &mut self,
+        scope: &Scope<'ast, 'src>,
+    ) -> std::result::Result<Option<SerializedScope<'ast>>, AluminaError> {
         let mut items = Vec::default();
-        for (name, item) in scope.inner().all_items() {
-            if let Some(inner) = item.scope.as_ref() {
-                self.visit_scope(inner)?;
+        let inner = scope.inner();
+        for (name, named_item) in inner.all_items() {
+            let inner_scope = if let Some(inner) = named_item.scope.as_ref() {
+                self.serialize_scope(inner)?
+            } else {
+                None
+            };
+
+            if let Some(item) = named_item.item() {
+                self.all_items.insert(item);
             }
 
-            let Some(item) = item.item() else { continue; };
-            self.all_items.insert(item);
-
-            let Some(name) = name else { continue; };
-            items.push((name, item));
+            if let Some(name) = name {
+                items.push(SerializedItem {
+                    name,
+                    kind: named_item.kind.clone(),
+                    scope: inner_scope,
+                });
+            }
+            // TODO: Resolve aliases
         }
 
         match scope.typ() {
             ScopeType::Root | ScopeType::StructLike | ScopeType::Protocol | ScopeType::Module => {
-                self.all_scopes.push(SerializedScope {
+                Ok(Some(SerializedScope {
                     r#type: scope.typ(),
                     path: scope.path().clone(),
+                    star_imports: inner.star_imports().cloned().collect(),
                     items,
-                });
+                }))
             }
 
             ScopeType::Function
@@ -566,18 +658,19 @@ impl<'ast> AstSaver<'ast> {
             | ScopeType::Block => {
                 // those are not reachable via name resolution, so they don't need to be serialized
                 // we still need to visit them though to collect all the items
+                Ok(None)
             }
         }
-
-        Ok(())
     }
 
-    pub fn serialize<W: Write>(&mut self, mut writer: W) -> std::result::Result<(), AluminaError> {
+    pub fn save<W: Write>(&mut self, mut writer: W) -> Result<()> {
         writer.write_all(MAGIC)?;
         writer.write_all(self.version_string.as_bytes())?;
 
         let mut serializer = AstSerializer::new(&mut writer);
         // First serialize all scopes
+
+        self.global_ctx.cfgs().serialize(&mut serializer)?;
         self.all_scopes.serialize(&mut serializer)?;
 
         let defined_ids: HashSet<_> = self.all_items.iter().map(|item| item.id).collect();
@@ -624,6 +717,148 @@ impl<'ast> AstSaver<'ast> {
         for (item, test_metadata) in test_metadatas {
             item.serialize(&mut serializer)?;
             test_metadata.serialize(&mut serializer)?;
+        }
+
+        self.global_ctx
+            .diag()
+            .overrides()
+            .serialize(&mut serializer)?;
+
+        Ok(())
+    }
+}
+
+pub struct AstLoader<'ast> {
+    global_ctx: GlobalCtx,
+    ast: &'ast AstCtx<'ast>,
+    version_string: &'static str,
+    context: DeserializeContext<'ast>,
+}
+
+impl<'ast> AstLoader<'ast> {
+    pub fn new(
+        global_ctx: GlobalCtx,
+        ast: &'ast AstCtx<'ast>,
+        version_string: &'static str,
+    ) -> Self {
+        Self {
+            context: DeserializeContext::new(global_ctx.clone(), ast),
+            global_ctx,
+            ast,
+            version_string,
+        }
+    }
+
+    fn populate_scope<'src>(
+        &mut self,
+        diag: &DiagnosticsStack,
+        target: &Scope<'ast, 'src>,
+        scope: SerializedScope<'ast>,
+    ) -> std::result::Result<(), AluminaError> {
+        for item in scope.items {
+            let child_scope = if let Some(inner) = item.scope {
+                let child_scope = target.named_child(inner.r#type, item.name);
+                self.populate_scope(diag, &child_scope, inner)?;
+                Some(child_scope)
+            } else {
+                None
+            };
+
+            target
+                .add_item(
+                    Some(item.name),
+                    NamedItem::new_no_node(item.kind, child_scope),
+                )
+                .with_backtrace(diag)?;
+        }
+
+        for import in scope.star_imports {
+            target.add_star_import(import);
+        }
+
+        Ok(())
+    }
+
+    pub fn load<'src, R: Read>(
+        &mut self,
+        mut reader: R,
+        root_scope: Scope<'ast, 'src>,
+    ) -> std::result::Result<(), AluminaError> {
+        let mut magic = [0; MAGIC.len()];
+        reader.read_exact(&mut magic)?;
+
+        if magic != MAGIC {
+            return Err(Error::InvalidMagicNumber.into());
+        }
+
+        let mut version = [0; 128];
+        reader.read_exact(&mut version[..self.version_string.len()])?;
+
+        if &version[..self.version_string.len()] != self.version_string.as_bytes() {
+            return Err(Error::IncompatibleVersion.into());
+        }
+
+        let mut deserializer = AstDeserializer::new(
+            self.global_ctx.clone(),
+            self.context.clone(),
+            self.ast,
+            &mut reader,
+        );
+        let cfgs: Vec<(String, Option<String>)> = Vec::deserialize(&mut deserializer)?;
+        if cfgs != self.global_ctx.cfgs() {
+            println!("expected: {:?}", self.global_ctx.cfgs());
+            println!("actual: {:?}", cfgs);
+            return Err(Error::IncompatibleCfgs.into());
+        }
+
+        let num_scopes = deserializer.read_usize()?;
+        let diag = DiagnosticsStack::new(self.global_ctx.diag().clone());
+        for _ in 0..num_scopes {
+            let scope: SerializedScope = SerializedScope::deserialize(&mut deserializer)?;
+            let target = root_scope
+                .ensure_module(scope.path.clone(), scope.r#type)
+                .with_backtrace(&diag)?;
+            self.populate_scope(&diag, &target, scope)?;
+        }
+
+        let num_items = deserializer.read_usize()?;
+        for _ in 0..num_items {
+            let id = AstId::deserialize(&mut deserializer)?;
+            let contents = OnceCell::<Item>::deserialize(&mut deserializer)?;
+
+            if let Some(contents) = contents.into_inner() {
+                self.context.get_cell(id).assign(contents);
+            }
+        }
+
+        let num_files = deserializer.read_usize()?;
+        for _ in 0..num_files {
+            let file_id = FileId::deserialize(&mut deserializer)?;
+            let filename = PathBuf::deserialize(&mut deserializer)?;
+
+            self.global_ctx.diag().add_file(file_id, filename);
+        }
+
+        let num_lang_items = deserializer.read_usize()?;
+        for _ in 0..num_lang_items {
+            let kind = LangItemKind::deserialize(&mut deserializer)?;
+            let id = AstId::deserialize(&mut deserializer)?;
+
+            self.ast.add_lang_item(kind, self.context.get_cell(id))
+        }
+
+        let num_test_metadatas = deserializer.read_usize()?;
+        for _ in 0..num_test_metadatas {
+            let item = AstId::deserialize(&mut deserializer)?;
+            let test_metadata = TestMetadata::deserialize(&mut deserializer)?;
+
+            self.ast
+                .add_test_metadata(self.context.get_cell(item), test_metadata);
+        }
+
+        let overrides: Vec<Override> = Vec::deserialize(&mut deserializer)?;
+        for r#override in overrides {
+            self.global_ctx.diag().add_override(r#override);
         }
 
         Ok(())

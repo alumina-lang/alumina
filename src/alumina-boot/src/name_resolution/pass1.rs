@@ -24,7 +24,6 @@ pub struct FirstPassVisitor<'ast, 'src> {
 
     in_a_container: bool,
     main_module_path: Option<Path<'ast>>,
-    main_candidate: Option<ItemP<'ast>>,
 
     items: ItemMap<'ast, 'src>,
     macro_ctx: MacroCtx,
@@ -47,7 +46,6 @@ impl<'ast, 'src> FirstPassVisitor<'ast, 'src> {
             in_a_container: false,
             enum_item: None,
             main_module_path: None,
-            main_candidate: None,
             items: IndexMap::default(),
             macro_ctx,
         }
@@ -69,14 +67,9 @@ impl<'ast, 'src> FirstPassVisitor<'ast, 'src> {
             scope,
             in_a_container: false,
             enum_item: None,
-            main_candidate: None,
             items: IndexMap::default(),
             macro_ctx,
         }
-    }
-
-    pub fn main_candidate(&self) -> Option<ItemP<'ast>> {
-        self.main_candidate
     }
 
     pub fn visit_local(mut self, node: Node<'src>) -> Result<ItemMap<'ast, 'src>, AluminaError> {
@@ -347,28 +340,25 @@ impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
 
     fn visit_function_definition(&mut self, node: Node<'src>) -> Self::ReturnType {
         let item = self.ast.make_item();
-        let attributes = parse_attributes!(self, node, item);
+        let mut attributes = parse_attributes!(self, node, item);
 
         let name = self.parse_name(node);
 
         if let Some(path) = self.main_module_path.as_ref() {
-            if self.global_ctx.cfg("test").is_some() {
-                if attributes.contains(&Attribute::TestMain)
-                    && self.main_candidate.replace(item).is_some()
-                {
-                    return Err(CodeDiagnostic::MultipleMainFunctions)
-                        .with_span_from(&self.scope, node);
-                }
-            } else if &self.scope.path() == path
-                && name == "main"
-                && !attributes.contains(&Attribute::Export)
-                && !attributes
-                    .iter()
-                    .any(|a| matches!(a, Attribute::LinkName(..)))
-                && self.main_candidate.replace(item).is_some()
+            if (self.global_ctx.cfg("test").is_some() && attributes.contains(&Attribute::TestMain))
+                || (&self.scope.path() == path
+                    && name == "main"
+                    && !attributes.contains(&Attribute::Export)
+                    && !attributes
+                        .iter()
+                        .any(|a| matches!(a, Attribute::LinkName(..))))
             {
-                return Err(CodeDiagnostic::MultipleMainFunctions)
-                    .with_span_from(&self.scope, node);
+                attributes = attributes
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(Attribute::Main))
+                    .collect::<Vec<_>>()
+                    .alloc_on(self.ast);
             }
         }
 

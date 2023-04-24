@@ -8,7 +8,6 @@ ifdef RELEASE
 	CARGO_FLAGS = --release
 	CARGO_TARGET_DIR = target/release
 	CFLAGS += -O3
-	ALUMINA_FLAGS += --sysroot $(SYSROOT)
 else ifdef FAST_DEBUG
 	# Compile in debug mode, but with alumina-boot compiled in release mode.
 	# It is significantly faster.
@@ -16,14 +15,14 @@ else ifdef FAST_DEBUG
 	CARGO_FLAGS = --release
 	CARGO_TARGET_DIR = target/release
 	CFLAGS += -g0
-	ALUMINA_FLAGS += --sysroot $(SYSROOT) --debug
+	ALUMINA_FLAGS += --debug
 else ifdef COVERAGE
 	CC = clang
 	BUILD_DIR = $(BUILD_ROOT)/coverage
 	CARGO_FLAGS = --profile coverage
 	CARGO_TARGET_DIR = target/coverage
 	CFLAGS += -g3 -fPIE -rdynamic -fprofile-instr-generate -fcoverage-mapping
-	ALUMINA_FLAGS += --sysroot $(SYSROOT) --debug
+	ALUMINA_FLAGS += --debug
 	export RUSTFLAGS += -Cinstrument-coverage
 	export LLVM_PROFILE_FILE = $(BUILD_ROOT)/coverage/profiles/%p-%m.profraw
 else
@@ -31,7 +30,7 @@ else
 	CARGO_FLAGS =
 	CARGO_TARGET_DIR = target/debug
 	CFLAGS += -g3 -fPIE -rdynamic
-	ALUMINA_FLAGS += --sysroot $(SYSROOT) --debug
+	ALUMINA_FLAGS += --debug
 endif
 
 LDFLAGS ?= -lm
@@ -63,13 +62,25 @@ LIBRARIES_TESTS = $(BUILD_DIR)/libraries-tests
 LANG_TESTS = $(BUILD_DIR)/lang-tests
 DOCTEST = $(BUILD_DIR)/doctest
 
+SYSROOT_AST = $(BUILD_DIR)/sysroot.ast
+SYSROOT_TEST_AST = $(BUILD_DIR)/sysroot-test.ast
+SYSROOT_TEST_STD_AST = $(BUILD_DIR)/sysroot-test-std.ast
+
+ifdef AST_SERIALIZATION
+	ALUMINA_FLAGS_COMMON = --ast $(SYSROOT_AST) $(ALUMINA_FLAGS)
+	ALUMINA_FLAGS_TEST = --ast $(SYSROOT_TEST_AST) $(ALUMINA_FLAGS) --cfg test
+	ALUMINA_FLAGS_TEST_STD = --ast $(SYSROOT_TEST_STD_AST) $(ALUMINA_FLAGS) --cfg test --cfg test_std
+else
+	ALUMINA_FLAGS_COMMON = --sysroot $(SYSROOT) $(ALUMINA_FLAGS)
+	ALUMINA_FLAGS_TEST = --sysroot $(SYSROOT) $(ALUMINA_FLAGS) --cfg test
+	ALUMINA_FLAGS_TEST_STD = --sysroot $(SYSROOT) $(ALUMINA_FLAGS) --cfg test --cfg test_std
+endif
+
 # If grammar changes, we need to rebuild the world
 COMMON_SOURCES = common/grammar.js
-BOOTSTRAP_SOURCES = $(shell find src/alumina-boot/ -type f)
+BOOTSTRAP_SOURCES = $(shell find src/alumina-boot/ -type f) $(shell find src/alumina-boot-derive/ -type f)
 SYSROOT_FILES = $(shell find $(SYSROOT) -type f -name '*.alu')
 ALU_LIBRARIES = $(shell find libraries/ -type f -name '*.alu')
-
-ALU_DEPS = $(ALUMINA_BOOT) $(SYSROOT_FILES) $(ALU_LIBRARIES)
 
 # Ensure build directory exists, but do not pollute all the rules with it
 $(BUILD_DIR)/.build:
@@ -84,11 +95,31 @@ $(ALUMINA_BOOT): $(BOOTSTRAP_SOURCES) $(COMMON_SOURCES) $(BUILD_DIR)/.build
 	cargo build $(CARGO_FLAGS)
 	cp $(CARGO_TARGET_DIR)/alumina-boot $(ALUMINA_BOOT)
 
+## --------------------------- Sysroot AST ----------------------------
+
+ifdef AST_SERIALIZATION
+$(SYSROOT_AST): $(ALUMINA_BOOT) $(SYSROOT_FILES)
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --sysroot $(SYSROOT) -Zdump-ast=$@ -Zast-only
+
+$(SYSROOT_TEST_AST): $(ALUMINA_BOOT) $(SYSROOT_FILES)
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --sysroot $(SYSROOT) -Zdump-ast=$@ -Zast-only --cfg test
+
+$(SYSROOT_TEST_STD_AST): $(ALUMINA_BOOT) $(SYSROOT_FILES)
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --sysroot $(SYSROOT) -Zdump-ast=$@ -Zast-only --cfg test --cfg test_std
+else
+$(SYSROOT_AST): $(ALUMINA_BOOT) $(SYSROOT_FILES)
+
+$(SYSROOT_TEST_AST): $(ALUMINA_BOOT) $(SYSROOT_FILES)
+
+$(SYSROOT_TEST_STD_AST): $(ALUMINA_BOOT) $(SYSROOT_FILES)
+
+endif
+
 ## --------------------------- Stdlib tests ----------------------------
 
 # Stdlib tests
-$(STDLIB_TESTS).c: $(ALUMINA_BOOT) $(SYSROOT_FILES)
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) -Zdeny-warnings --cfg test --cfg test_std --output $@
+$(STDLIB_TESTS).c: $(SYSROOT_TEST_STD_AST)
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_TEST_STD) -Zdeny-warnings --output $@
 
 $(STDLIB_TESTS): $(STDLIB_TESTS).c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
@@ -97,8 +128,8 @@ $(STDLIB_TESTS): $(STDLIB_TESTS).c
 
 LANG_TEST_FILES = $(shell find tests/lang -type f -name '*.alu')
 
-$(LANG_TESTS).c: $(ALUMINA_BOOT) $(SYSROOT_FILES) $(LANG_TEST_FILES)
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) -Zdeny-warnings --cfg test --output $@ \
+$(LANG_TESTS).c: $(SYSROOT_TEST_AST) $(LANG_TEST_FILES)
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_TEST) -Zdeny-warnings --output $@ \
 		$(call alumina_modules,$(LANG_TEST_FILES),tests/,)
 
 $(LANG_TESTS): $(LANG_TESTS).c
@@ -118,8 +149,8 @@ $(BUILD_DIR)/parser.o: $(BUILD_DIR)/src/parser.c
 CODEGEN_SOURCES = $(shell find tools/tree-sitter-codegen/ -type f -name '*.alu')
 TREE_SITTER_SOURCES = $(shell find libraries/tree_sitter/ -type f -name '*.alu')
 
-$(CODEGEN).c: $(ALUMINA_BOOT) $(TREE_SITTER_SOURCES) $(SYSROOT_FILES) $(CODEGEN_SOURCES)
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --output $@ \
+$(CODEGEN).c: $(SYSROOT_AST) $(TREE_SITTER_SOURCES) $(CODEGEN_SOURCES)
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --output $@ \
 		$(call alumina_modules,$(TREE_SITTER_SOURCES),libraries/,/) \
 		$(call alumina_modules,$(CODEGEN_SOURCES),tools/,/)
 
@@ -129,8 +160,8 @@ $(CODEGEN): $(CODEGEN).c $(BUILD_DIR)/parser.o
 libraries/aluminac/lib/node_kinds.alu: $(CODEGEN)
 	$(CODEGEN) --output $@
 
-$(LIBRARIES_TESTS).c: $(ALUMINA_BOOT) $(SYSROOT_FILES) $(ALU_LIBRARIES)
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) -Zdeny-warnings --cfg test --cfg test_libraries --output $@ \
+$(LIBRARIES_TESTS).c: $(SYSROOT_TEST_AST) $(ALU_LIBRARIES)
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_TEST) -Zdeny-warnings --output $@ \
 		$(call alumina_modules,$(ALU_LIBRARIES),libraries/,/)
 
 $(LIBRARIES_TESTS): $(LIBRARIES_TESTS).c
@@ -141,10 +172,9 @@ $(LIBRARIES_TESTS): $(LIBRARIES_TESTS).c
 ALUMINA_DOC = $(BUILD_DIR)/alumina-doc
 ALUMINA_DOC_SOURCES = $(shell find tools/alumina-doc/ -type f -name '*.alu')
 
-$(ALUMINA_DOC).c: $(ALU_DEPS) $(ALUMINAC_LIB_SOURCES) $(ALUMINA_DOC_SOURCES) libraries/aluminac/lib/node_kinds.alu
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --output $@ \
+$(ALUMINA_DOC).c: $(SYSROOT_AST) $(ALU_LIBRARIES) $(ALUMINA_DOC_SOURCES) libraries/aluminac/lib/node_kinds.alu
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --output $@ \
 		$(call alumina_modules,$(ALU_LIBRARIES),libraries/,/) \
-		$(call alumina_modules,$(ALUMINAC_LIB_SOURCES),src/,/) \
 		$(call alumina_modules,$(ALUMINA_DOC_SOURCES),tools/,/)
 
 $(ALUMINA_DOC): $(ALUMINA_DOC).c $(BUILD_DIR)/parser.o
@@ -160,8 +190,8 @@ $(BUILD_DIR)/doctest.alu: $(ALUMINA_DOC) $(SYSROOT_FILES) tools/alumina-doc/stat
 	mv $(BUILD_DIR)/~doctest/* $(BUILD_DIR)/
 	@rmdir $(BUILD_DIR)/~doctest
 
-$(DOCTEST).c: $(ALUMINA_BOOT) $(SYSROOT_FILES) $(BUILD_DIR)/doctest.alu
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --cfg test --output $@ $(BUILD_DIR)/doctest.alu \
+$(DOCTEST).c: $(ALUMINA_BOOT) $(SYSROOT_TEST_AST) $(BUILD_DIR)/doctest.alu
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_TEST) --output $@ $(BUILD_DIR)/doctest.alu \
 		$(call alumina_modules,$(ALU_LIBRARIES),libraries/,/)
 
 $(DOCTEST): $(DOCTEST).c
@@ -189,8 +219,8 @@ $(BUILD_DIR)/examples/.build:
 	mkdir -p $(BUILD_DIR)/examples
 	touch $@
 
-$(BUILD_DIR)/examples/%.c: examples/%.alu $(ALUMINA_BOOT) $(SYSROOT_FILES) $(BUILD_DIR)/examples/.build
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --output $@ main=$<
+$(BUILD_DIR)/examples/%.c: examples/%.alu $(SYSROOT_AST) $(BUILD_DIR)/examples/.build
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --output $@ main=$<
 
 $(BUILD_DIR)/examples/%: $(BUILD_DIR)/examples/%.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
@@ -236,8 +266,8 @@ all: alumina-boot
 
 ## ------------------ Ad-hoc manual testing shortcuts ------------------
 
-$(BUILD_DIR)/quick.c: $(ALUMINA_BOOT) $(SYSROOT_FILES) quick.alu
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --output $@ quick=./quick.alu
+$(BUILD_DIR)/quick.c: $(SYSROOT_AST) quick.alu
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --output $@ quick=./quick.alu
 
 $(BUILD_DIR)/quick: $(BUILD_DIR)/quick.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
@@ -253,14 +283,14 @@ quick: $(BUILD_DIR)/quick
 BENCH_CMD = ./tools/bench.py -n$(if $(TIMES),$(TIMES),20) $(if $(MARKDOWN),--markdown,)
 
 bench-std: $(ALUMINA_BOOT) $(SYSROOT_FILES)
-	$(BENCH_CMD) $(ALUMINA_BOOT) $(ALUMINA_FLAGS) --timings --cfg test --cfg test_std --output /dev/null
+	$(BENCH_CMD) $(ALUMINA_BOOT) $(ALUMINA_FLAGS) --sysroot $(SYSROOT) --timings --cfg test --cfg test_std --output /dev/null
 
 bench-std-cc: $(STDLIB_TESTS).c
 	$(BENCH_CMD) $(CC) $(CFLAGS) -o/dev/null $^ $(LDFLAGS)
 
 $(BUILD_DIR)/flamegraph.svg: $(ALUMINA_BOOT) $(SYSROOT_FILES)
 	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-		-o $@ -- $(ALUMINA_FLAGS) --timings --cfg test --cfg test_std --output /dev/null
+		-o $@ -- $(ALUMINA_FLAGS) --sysroot $(SYSROOT) --timings --cfg test --cfg test_std --output /dev/null
 
 flamegraph: $(BUILD_DIR)/flamegraph.svg
 

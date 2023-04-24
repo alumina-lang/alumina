@@ -13,7 +13,7 @@ pub enum OutputType {
 struct GlobalCtxInner {
     pub diag: DiagnosticContext,
     pub cfg: HashMap<String, Option<String>>,
-    pub options: HashSet<String>,
+    pub options: HashMap<String, Option<String>>,
     pub output_type: OutputType,
 }
 
@@ -23,7 +23,7 @@ pub struct GlobalCtx {
 }
 
 impl GlobalCtx {
-    pub fn new(output_type: OutputType, options: Vec<String>) -> Self {
+    pub fn new(output_type: OutputType, options: Vec<(String, Option<String>)>) -> Self {
         let mut result = Self {
             inner: Rc::new(RefCell::new(GlobalCtxInner {
                 diag: DiagnosticContext::new(),
@@ -34,7 +34,7 @@ impl GlobalCtx {
         };
 
         // We are the alumina-boot compiler
-        result.add_flag("boot");
+        result.add_cfg_flag("boot");
 
         // No cross-compilation, so we just use whatever the compiler was compiled with
         result.add_cfg("target_os", std::env::consts::OS);
@@ -82,21 +82,21 @@ impl GlobalCtx {
         matches!(self.inner.borrow().output_type, OutputType::Executable)
     }
 
-    pub fn has_option(&self, name: &str) -> bool {
-        self.inner.borrow().options.contains(name)
-    }
-
     pub fn diag(&self) -> Ref<'_, DiagnosticContext> {
         Ref::map(self.inner.borrow(), |inner| &inner.diag)
     }
 
-    pub fn add_flag(&mut self, value: impl ToString) {
-        let mut borrowed = self.inner.borrow_mut();
-        borrowed.cfg.insert(value.to_string(), None);
+    pub fn has_cfg(&self, name: &str) -> bool {
+        self.inner.borrow().cfg.contains_key(name)
     }
 
-    pub fn has_flag(&self, name: &str) -> bool {
-        self.inner.borrow().cfg.contains_key(name)
+    pub fn has_option(&self, name: &str) -> bool {
+        self.inner.borrow().options.contains_key(name)
+    }
+
+    pub fn add_cfg_flag(&mut self, value: impl ToString) {
+        let mut borrowed = self.inner.borrow_mut();
+        borrowed.cfg.insert(value.to_string(), None);
     }
 
     pub fn add_cfg(&mut self, value: impl ToString, value_str: impl ToString) {
@@ -106,8 +106,25 @@ impl GlobalCtx {
             .insert(value.to_string(), Some(value_str.to_string()));
     }
 
-    pub fn cfg(&self, key: impl ToString) -> Option<Option<String>> {
+    pub fn cfg(&self, key: &str) -> Option<Option<String>> {
         let borrowed = self.inner.borrow();
-        borrowed.cfg.get(&key.to_string()).cloned()
+        borrowed.cfg.get(key).cloned()
+    }
+
+    pub fn option(&self, key: &str) -> Option<Option<String>> {
+        let borrowed = self.inner.borrow();
+        borrowed.options.get(key).cloned()
+    }
+
+    pub fn cfgs(&self) -> Vec<(String, Option<String>)> {
+        let borrowed = self.inner.borrow();
+        let mut ret: Vec<_> = borrowed
+            .cfg
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        ret.sort_by(|(a, _), (b, _)| a.cmp(b));
+        ret
     }
 }

@@ -121,7 +121,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             fn_decls: String::with_capacity(size_estimate / 3 * 2),
             fn_bodies: String::with_capacity(size_estimate),
             indent: 0,
-            debug_info: ctx.global_ctx.has_flag("debug"),
+            debug_info: ctx.global_ctx.has_cfg("debug"),
             in_const_init: false,
             last_span: None,
         }
@@ -659,7 +659,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 item,
                 item.body.get().is_some()
                     && !should_export
-                    && !self.ctx.global_ctx.has_flag("debug"),
+                    && !self.ctx.global_ctx.has_cfg("debug"),
                 false,
             )?;
         }
@@ -780,7 +780,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             &mut self.fn_bodies,
             id,
             item,
-            !should_export && !self.ctx.global_ctx.has_flag("debug"),
+            !should_export && !self.ctx.global_ctx.has_cfg("debug"),
             true,
         )?;
 

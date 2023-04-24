@@ -212,7 +212,7 @@ impl<'a> AstSerializable<'a> for AstId {
         deserializer: &mut AstDeserializer<'a, R>,
     ) -> crate::ast::serialization::Result<Self> {
         let id = <usize as AstSerializable>::deserialize(deserializer)?;
-        Ok(deserializer.map_ast_id(AstId { id }))
+        Ok(deserializer.context().map_ast_id(AstId { id }))
     }
 }
 
@@ -413,6 +413,22 @@ impl<'ast> Item<'ast> {
                 _ => false,
             }
     }
+
+    pub fn is_main_candidate(&self) -> bool {
+        match self {
+            Item::Function(Function { attributes, .. }) => attributes.contains(&Attribute::Main),
+            _ => false,
+        }
+    }
+
+    pub fn is_test_main_candidate(&self) -> bool {
+        match self {
+            Item::Function(Function { attributes, .. }) => {
+                attributes.contains(&Attribute::TestMain)
+            }
+            _ => false,
+        }
+    }
 }
 
 pub type ItemP<'ast> = &'ast ItemCell<'ast>;
@@ -430,7 +446,7 @@ impl<'ast> AstSerializable<'ast> for ItemP<'ast> {
     ) -> crate::ast::serialization::Result<Self> {
         let id = AstId::deserialize(deserializer)?;
 
-        Ok(deserializer.get_cell(id))
+        Ok(deserializer.context().get_cell(id))
     }
 }
 
@@ -780,6 +796,7 @@ pub enum Attribute<'ast> {
     Test,
     Cold,
     TestMain,
+    Main,
     Inline,
     Align(usize),
     Packed,
@@ -808,6 +825,7 @@ impl<'ast> Attribute<'ast> {
             Attribute::Test => Attribute::Test,
             Attribute::Cold => Attribute::Cold,
             Attribute::TestMain => Attribute::TestMain,
+            Attribute::Main => Attribute::Main,
             Attribute::Inline => Attribute::Inline,
             Attribute::Align(i) => Attribute::Align(*i),
             Attribute::Packed => Attribute::Packed,
