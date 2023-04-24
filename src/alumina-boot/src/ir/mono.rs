@@ -615,10 +615,16 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             })
             .collect::<Result<Vec<_>, AluminaError>>()?;
 
+        let attributes = s
+            .attributes
+            .iter()
+            .map(|a| a.realloc_on(|s| s.alloc_on(child.mono_ctx.ir)))
+            .collect::<Vec<_>>();
+
         let res = ir::IRItem::StructLike(ir::StructLike {
             name: s.name.map(|n| n.alloc_on(child.mono_ctx.ir)),
             fields: fields.alloc_on(child.mono_ctx.ir),
-            attributes: s.attributes.alloc_on(child.mono_ctx.ir),
+            attributes: attributes.alloc_on(child.mono_ctx.ir),
             is_union: s.is_union,
             span: s.span,
         });
@@ -1292,11 +1298,17 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 *init = child.try_coerce(typ, init)?;
             }
 
+            let attributes = s
+                .attributes
+                .iter()
+                .map(|a| a.realloc_on(|s| s.alloc_on(child.mono_ctx.ir)))
+                .collect::<Vec<_>>();
+
             let res = ir::IRItem::Static(ir::Static {
                 name: s.name.map(|n| n.alloc_on(child.mono_ctx.ir)),
                 typ,
                 init,
-                attributes: s.attributes.alloc_on(child.mono_ctx.ir),
+                attributes: attributes.alloc_on(child.mono_ctx.ir),
                 span: s.span,
                 r#extern: s.r#extern,
             });
@@ -1354,10 +1366,16 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             })
             .collect::<Result<Vec<_>, AluminaError>>()?;
 
+        let attributes = func
+            .attributes
+            .iter()
+            .map(|a| a.realloc_on(|s| s.alloc_on(child.mono_ctx.ir)))
+            .collect::<Vec<_>>();
+
         let return_type = child.lower_type_for_value(func.return_type)?;
         let res = ir::IRItem::Function(ir::Function {
             name: func.name.map(|n| n.alloc_on(child.mono_ctx.ir)),
-            attributes: func.attributes.alloc_on(child.mono_ctx.ir),
+            attributes: attributes.alloc_on(child.mono_ctx.ir),
             args: parameters.alloc_on(child.mono_ctx.ir),
             varargs: func.varargs,
             span: func.span,
@@ -5378,9 +5396,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.lower_range(*lower, *upper, *inclusive, type_hint, expr.span)
             }
             ast::ExprKind::Return(inner) => self.lower_return(*inner, type_hint, expr.span),
-            ast::ExprKind::Fn(item, args) => {
-                self.lower_fn(item.clone(), *args, type_hint, expr.span)
-            }
+            ast::ExprKind::Fn(item, args) => self.lower_fn(*item, *args, type_hint, expr.span),
             ast::ExprKind::Static(item, args) => {
                 self.lower_static(item, *args, type_hint, expr.span)
             }

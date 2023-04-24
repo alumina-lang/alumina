@@ -60,6 +60,9 @@ jobs:
   dist-check:
     name: Build and test (full)
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        cache_ast: [with-ast-cache, without-ast-cache]
     steps:
       - uses: actions/checkout@v2
       - name: Install Rust
@@ -81,6 +84,13 @@ jobs:
 
       - name: Build full
         run: make dist-check -j8
+        if: ${{ matrix.cache_ast == 'without-ast-cache' }}
+
+      - name: Build full (with AST cache)
+        run: make dist-check -j8
+        if: ${{ matrix.cache_ast == 'with-ast-cache' }}
+        env:
+          CACHE_AST: 1
 
   code-coverage:
     name: Collect code coverage

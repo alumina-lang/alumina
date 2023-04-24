@@ -276,7 +276,7 @@ pub struct Field<'ir> {
 #[derive(Debug)]
 pub struct StructLike<'ir> {
     pub name: Option<&'ir str>,
-    pub attributes: &'ir [Attribute],
+    pub attributes: &'ir [Attribute<'ir>],
     pub fields: &'ir [Field<'ir>],
     pub is_union: bool,
     pub span: Option<Span>,
@@ -303,7 +303,7 @@ pub struct FuncBody<'ir> {
 #[derive(Debug)]
 pub struct Function<'ir> {
     pub name: Option<&'ir str>,
-    pub attributes: &'ir [Attribute],
+    pub attributes: &'ir [Attribute<'ir>],
     pub args: &'ir [Parameter<'ir>],
     pub return_type: TyP<'ir>,
     pub body: OnceCell<FuncBody<'ir>>,
@@ -356,7 +356,7 @@ pub struct Static<'ir> {
     pub name: Option<&'ir str>,
     pub typ: TyP<'ir>,
     pub init: Option<ExprP<'ir>>,
-    pub attributes: &'ir [Attribute],
+    pub attributes: &'ir [Attribute<'ir>],
     pub r#extern: bool,
     pub span: Option<Span>,
 }

@@ -24,7 +24,6 @@ use super::MacroCtx;
 pub struct AstItemMaker<'ast> {
     ast: &'ast AstCtx<'ast>,
     global_ctx: GlobalCtx,
-    items: Vec<ItemP<'ast>>,
     ambient_placeholders: Vec<Placeholder<'ast>>,
     macro_ctx: MacroCtx,
     local: bool,
@@ -35,7 +34,6 @@ impl<'ast> AstItemMaker<'ast> {
         Self {
             ast,
             global_ctx,
-            items: Vec::new(),
             ambient_placeholders: Vec::new(),
             macro_ctx,
             local: false,
@@ -46,15 +44,10 @@ impl<'ast> AstItemMaker<'ast> {
         Self {
             ast,
             global_ctx,
-            items: Vec::new(),
             ambient_placeholders: Vec::new(),
             macro_ctx,
             local: true,
         }
-    }
-
-    pub fn into_inner(self) -> Vec<ItemP<'ast>> {
-        self.items
     }
 
     pub fn get_placeholders<'src>(
@@ -64,7 +57,8 @@ impl<'ast> AstItemMaker<'ast> {
         let mut placeholders = self.ambient_placeholders.clone();
         for (_name, item) in scope.inner().all_items() {
             match item.kind {
-                NamedItemKind::Placeholder(id, node) => {
+                NamedItemKind::Placeholder(id) => {
+                    let node = item.node.unwrap();
                     placeholders.push(Placeholder {
                         id,
                         default: node
@@ -114,15 +108,15 @@ impl<'ast> AstItemMaker<'ast> {
         let mut names = HashSet::default();
 
         for impl_scope in impl_scopes {
-            for (name, item) in impl_scope.inner().all_items() {
-                match &item.kind {
-                    NamedItemKind::Function(item, node, _)
-                    | NamedItemKind::Method(item, node, _) => {
+            for (name, named_item) in impl_scope.inner().all_items() {
+                match &named_item.kind {
+                    NamedItemKind::Function(item) | NamedItemKind::Method(item) => {
+                        let node = named_item.node.unwrap();
                         if let Some(name) = name {
                             if !names.insert(name) {
                                 self.global_ctx.diag().add_warning(CodeError::from_kind(
                                     CodeDiagnostic::DuplicateNameShadow(name.to_string()),
-                                    Some(Span::from_node(impl_scope.file_id(), *node)),
+                                    Some(Span::from_node(impl_scope.file_id(), node)),
                                 ));
                             }
                         }
@@ -131,7 +125,10 @@ impl<'ast> AstItemMaker<'ast> {
                             item,
                         })
                     }
-                    NamedItemKind::Mixin(node, scope) => {
+                    NamedItemKind::Mixin => {
+                        let node = named_item.node.unwrap();
+                        let scope = named_item.scope.as_ref().unwrap();
+
                         // FIXME: Unify this between functions and mixin
                         let mut placeholders = self.get_placeholders(impl_scope)?.to_vec();
                         placeholders.extend_from_slice(self.get_placeholders(scope)?);
@@ -146,7 +143,7 @@ impl<'ast> AstItemMaker<'ast> {
                         let protocol_type =
                             visitor.visit(node.child_by_field(FieldKind::Protocol).unwrap())?;
 
-                        let span = Span::from_node(scope.file_id(), *node);
+                        let span = Span::from_node(scope.file_id(), node);
 
                         mixins.push(Mixin {
                             placeholders,
@@ -184,7 +181,9 @@ impl<'ast> AstItemMaker<'ast> {
 
         for (name, item) in scope.inner().all_items() {
             match item.kind {
-                NamedItemKind::Field(node) => {
+                NamedItemKind::Field => {
+                    let node = item.node.unwrap();
+
                     let mut visitor = TypeVisitor::new(
                         self.global_ctx.clone(),
                         self.ast,
@@ -234,9 +233,6 @@ impl<'ast> AstItemMaker<'ast> {
         });
 
         item.assign(result);
-
-        self.items.push(item);
-
         Ok(())
     }
 
@@ -290,7 +286,8 @@ impl<'ast> AstItemMaker<'ast> {
 
         for (name, item) in scope.inner().all_items() {
             match item.kind {
-                NamedItemKind::EnumMember(_, id, node) => {
+                NamedItemKind::EnumMember(_, id) => {
+                    let node = item.node.unwrap();
                     let value = node
                         .child_by_field(FieldKind::Value)
                         .map(|node| {
@@ -333,8 +330,6 @@ impl<'ast> AstItemMaker<'ast> {
 
         item.assign(result);
 
-        self.items.push(item);
-
         Ok(())
     }
 
@@ -372,8 +367,6 @@ impl<'ast> AstItemMaker<'ast> {
         });
 
         item.assign(result);
-
-        self.items.push(item);
 
         Ok(())
     }
@@ -425,7 +418,8 @@ impl<'ast> AstItemMaker<'ast> {
 
         for (_name, item) in scope.inner().all_items() {
             match item.kind {
-                NamedItemKind::Parameter(id, node) => {
+                NamedItemKind::Parameter(id) => {
+                    let node = item.node.unwrap();
                     let typ = TypeVisitor::new(
                         self.global_ctx.clone(),
                         self.ast,
@@ -525,7 +519,6 @@ impl<'ast> AstItemMaker<'ast> {
         });
 
         item.assign(result);
-        self.items.push(item);
 
         Ok(())
     }
@@ -599,8 +592,6 @@ impl<'ast> AstItemMaker<'ast> {
 
         item.assign(result);
 
-        self.items.push(item);
-
         Ok(())
     }
 
@@ -636,8 +627,10 @@ impl<'ast> AstItemMaker<'ast> {
         use NamedItemKind::*;
         match item_group {
             [NI {
-                kind: Alias(path, node),
-                ..
+                kind: Alias(path),
+                node: Some(node),
+                scope: _,
+                attributes: _,
             }] => {
                 let mut resolver = NameResolver::new();
 
@@ -647,23 +640,31 @@ impl<'ast> AstItemMaker<'ast> {
                     .with_span_from(&scope, *node)?;
             }
             [NI {
-                kind: Module(module),
-                ..
+                kind: Module,
+                node: _,
+                scope: Some(scope),
+                attributes: _,
             }] => {
-                self.make(module.clone())?;
+                self.make(scope.clone())?;
             }
             [NI {
-                kind: Impl(node, scope),
-                ..
+                kind: Impl,
+                node: Some(node),
+                scope: Some(scope),
+                attributes: _,
             }] => return Err(CodeDiagnostic::NoFreeStandingImpl).with_span_from(scope, *node),
             [NI {
-                kind: Type(item, node, scope),
+                kind: Type(item),
                 attributes,
+                node: Some(node),
+                scope: Some(scope),
             }, rest @ ..] => {
                 let mut impl_scopes = Vec::with_capacity(rest.len());
                 for impl_item in rest {
                     match &impl_item.kind {
-                        NamedItemKind::Impl(_, scope) => {
+                        NamedItemKind::Impl => {
+                            let scope = impl_item.scope.as_ref().unwrap();
+
                             self.make_impl(scope.clone())?;
                             impl_scopes.push(scope.clone());
                         }
@@ -680,41 +681,52 @@ impl<'ast> AstItemMaker<'ast> {
                 )?;
             }
             [NI {
-                kind: TypeDef(item, node, scope),
+                kind: TypeDef(item),
                 attributes,
+                node: Some(node),
+                scope: Some(scope),
             }] => {
                 self.make_typedef(name, item, *node, scope.clone(), attributes)?;
             }
             [NI {
-                kind: Protocol(item, node, scope),
+                kind: Protocol(item),
                 attributes,
+                node: Some(node),
+                scope: Some(scope),
             }] => {
                 self.make(scope.clone())?;
                 self.make_protocol(name, item, *node, scope.clone(), attributes)?;
             }
             [NI {
-                kind: Static(item, node, scope),
+                kind: Static(item),
                 attributes,
+                node: Some(node),
+                scope: Some(scope),
             }] => {
                 self.make_static_or_const(false, name, item, *node, scope.clone(), attributes)?;
             }
             [NI {
-                kind: Const(item, node, scope),
+                kind: Const(item),
                 attributes,
+                node: Some(node),
+                scope: Some(scope),
             }] => {
                 self.make_static_or_const(true, name, item, *node, scope.clone(), attributes)?;
             }
             [NI {
-                kind: Macro(item, node, scope),
+                kind: Macro(item),
                 attributes,
+                node: Some(node),
+                scope: Some(scope),
             }] => {
                 let mut macro_maker = MacroMaker::new(self.ast, self.global_ctx.clone());
                 macro_maker.make(name, item, *node, scope.clone(), attributes)?;
-                self.items.push(item);
             }
             [NI {
-                kind: Function(item, node, scope),
+                kind: Function(item),
                 attributes,
+                node: Some(node),
+                scope: Some(scope),
             }] => self.make_function(
                 name,
                 item,

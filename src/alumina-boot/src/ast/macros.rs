@@ -120,7 +120,7 @@ impl<'ast> MacroMaker<'ast> {
 
         for (_name, item) in scope.inner().all_items() {
             match item.kind {
-                NamedItemKind::MacroParameter(id, et_cetera, _) => {
+                NamedItemKind::MacroParameter(id, et_cetera) => {
                     if has_et_cetera && et_cetera {
                         return Err(CodeDiagnostic::MultipleEtCeteras).with_span_from(&scope, node);
                     } else if et_cetera {
@@ -478,8 +478,8 @@ impl<'ast> MacroExpander<'ast> {
             Cast(inner, ty) => Cast(self.visit_expr(inner)?, self.visit_typ(ty)?),
             Fn(ref kind, generic_args) => {
                 let kind = match kind {
-                    FnKind::Normal(_) => kind.clone(),
-                    FnKind::Closure(..) => kind.clone(),
+                    FnKind::Normal(_) => *kind,
+                    FnKind::Closure(..) => *kind,
                     FnKind::Defered(def) => FnKind::Defered(crate::ast::Defered {
                         typ: self.visit_typ(def.typ)?,
                         name: def.name,
@@ -534,7 +534,7 @@ impl<'ast> MacroExpander<'ast> {
             | Macro(_, _ /* bound values are "invisible" and should not be replaced */)
             | Lit(_)
             | BoundParam(_, _, _)
-            | Void => expr.kind.clone(),
+            | Void => expr.kind,
         };
 
         let result = Expr {
@@ -780,7 +780,7 @@ impl<'ast> MacroExpander<'ast> {
 
                 Ok(Expr {
                     kind: ExprKind::Lit(Lit::Bool(
-                        self.global_ctx.has_flag(std::str::from_utf8(name).unwrap()),
+                        self.global_ctx.has_cfg(std::str::from_utf8(name).unwrap()),
                     )),
                     span: self.invocation_span,
                 }

@@ -40,7 +40,7 @@ pub trait VisitorExt<'src> {
     fn visit_children_by_field(
         &mut self,
         node: tree_sitter::Node<'src>,
-        field: &'static str,
+        field: FieldKind,
     ) -> Self::ReturnType;
 }
 
@@ -62,10 +62,10 @@ where
     fn visit_children_by_field(
         &mut self,
         node: tree_sitter::Node<'src>,
-        field: &'static str,
+        field: FieldKind,
     ) -> Result<(), E> {
         let mut cursor = node.walk();
-        for node in node.children_by_field_name(field, &mut cursor) {
+        for node in node.children_by_field(field, &mut cursor) {
             self.visit(node)?;
         }
 
@@ -136,7 +136,7 @@ pub struct UseClauseVisitor<'ast, 'src> {
     code: &'src ParseCtx<'src>,
     prefix: Path<'ast>,
     scope: Scope<'ast, 'src>,
-    attributes: &'ast [Attribute],
+    attributes: &'ast [Attribute<'ast>],
     macro_ctx: MacroCtx,
 }
 
@@ -179,8 +179,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
             .add_item(
                 Some(alias),
                 NamedItem::new(
-                    NamedItemKind::Alias(self.prefix.join_with(path), node),
+                    NamedItemKind::Alias(self.prefix.join_with(path)),
                     self.attributes,
+                    node,
+                    None,
                 ),
             )
             .with_span_from(&self.scope, node)?;
@@ -189,7 +191,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
     }
 
     fn visit_use_list(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
-        self.visit_children_by_field(node, "item")
+        self.visit_children_by_field(node, FieldKind::Item)
     }
 
     fn visit_scoped_use_list(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
@@ -209,8 +211,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
             .add_item(
                 Some(alias),
                 NamedItem::new(
-                    NamedItemKind::Alias(self.prefix.extend(PathSegment(alias)), node),
+                    NamedItemKind::Alias(self.prefix.extend(PathSegment(alias))),
                     self.attributes,
+                    node,
+                    None,
                 ),
             )
             .with_span_from(&self.scope, node)?;
@@ -239,11 +243,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
             .add_item(
                 Some(name),
                 NamedItem::new(
-                    NamedItemKind::Alias(
-                        self.prefix.join_with(path.extend(PathSegment(name))),
-                        node,
-                    ),
+                    NamedItemKind::Alias(self.prefix.join_with(path.extend(PathSegment(name)))),
                     self.attributes,
+                    node,
+                    None,
                 ),
             )
             .with_span_from(&self.scope, node)?;
@@ -258,7 +261,7 @@ pub struct AttributeVisitor<'ast, 'src> {
     code: &'src ParseCtx<'src>,
     scope: Scope<'ast, 'src>,
     item: Option<ItemP<'ast>>,
-    attributes: Vec<Attribute>,
+    attributes: Vec<Attribute<'ast>>,
     applies_to_node: Node<'src>,
     should_skip: bool,
     test_attributes: Vec<String>,
@@ -271,7 +274,7 @@ impl<'ast, 'src> AttributeVisitor<'ast, 'src> {
         scope: Scope<'ast, 'src>,
         node: Node<'src>,
         item: Option<ItemP<'ast>>,
-    ) -> Result<Option<&'ast [Attribute]>, AluminaError> {
+    ) -> Result<Option<&'ast [Attribute<'ast>]>, AluminaError> {
         let mut visitor = AttributeVisitor {
             global_ctx,
             ast,
@@ -440,7 +443,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     Some(lint) => {
                         self.global_ctx.diag().add_override(diagnostics::Override {
                             span: Some(enclosing_span),
-                            kind: Some(lint),
+                            kind: Some(lint.to_string()),
                             action,
                         });
                     }
@@ -495,7 +498,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                 check_duplicate!(Attribute::ThreadLocal);
                 // We can skip thread-local on programs that are compiled with threads
                 // disabled.
-                if self.global_ctx.has_flag("threading") {
+                if self.global_ctx.has_cfg("threading") {
                     self.attributes.push(Attribute::ThreadLocal)
                 }
             }
@@ -509,12 +512,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     .ok_or(CodeDiagnostic::InvalidAttribute)
                     .with_span_from(&self.scope, node)?;
 
-                let bytes = self.code.node_text(link_name).as_bytes();
-
-                let mut val = [0; 255];
-                val.as_mut_slice()[0..bytes.len()].copy_from_slice(bytes);
-
-                self.attributes.push(Attribute::LinkName(bytes.len(), val));
+                let bytes = self.code.node_text(link_name).alloc_on(self.ast);
+                self.attributes.push(Attribute::LinkName(bytes));
             }
             "test" => {
                 self.test_attributes.push(
@@ -575,7 +574,30 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                         .with_span_from(&self.scope, node)?,
                 );
             }
-            _ => {}
+            "const" => {
+                check_duplicate!(Attribute::ConstOnly | Attribute::NoConst);
+                match node
+                    .child_by_field(FieldKind::Arguments)
+                    .and_then(|n| n.child_by_field(FieldKind::Argument))
+                    .map(|n| self.code.node_text(n))
+                {
+                    Some("always") => self.attributes.push(Attribute::ConstOnly),
+                    Some("never") => self.attributes.push(Attribute::NoConst),
+                    _ => {
+                        return Err(CodeDiagnostic::InvalidAttribute)
+                            .with_span_from(&self.scope, node)
+                    }
+                }
+            }
+            "docs" | "obsolete" => {
+                // Attributes for other tools
+            }
+            _ => {
+                self.global_ctx.diag().add_warning(CodeError {
+                    kind: CodeDiagnostic::UnknownAttribute(name.to_string()),
+                    backtrace: vec![Marker::Span(span)],
+                });
+            }
         }
 
         Ok(())

@@ -1,17 +1,26 @@
 use crate::ast::maker::AstItemMaker;
+use crate::ast::serialization::{AstLoader, AstSaver};
 use crate::ast::{AstCtx, MacroCtx};
 use crate::codegen;
 use crate::common::{AluminaError, ArenaAllocatable, CodeDiagnostic, CodeErrorBuilder, HashSet};
+
 use crate::global_ctx::GlobalCtx;
 use crate::ir::dce::DeadCodeEliminator;
 use crate::ir::mono::{MonoCtx, Monomorphizer};
 use crate::ir::IrCtx;
 use crate::name_resolution::pass1::FirstPassVisitor;
-use crate::name_resolution::scope::Scope;
+use crate::name_resolution::scope::{Scope, ScopeType};
 use crate::parser::{AluminaVisitor, ParseCtx};
 
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+
+// AST serialization is very tightly coupled to the compiler, so if anything changes,
+// we invalidate the version (preventing an incompatible AST from being loaded). This is
+// currently based on the compound hash of all the source files, but it could be changed to
+// git revision or something else.
+const VERSION_STRING: &[u8] = alumina_boot_macros::sources_hash!();
 
 #[derive(Debug, Clone)]
 pub enum Stage {
@@ -19,6 +28,8 @@ pub enum Stage {
     Parse,
     Pass1,
     Ast,
+    Serialize,
+    Deserialize,
     Mono,
     Optimizations,
     Codegen,
@@ -64,24 +75,37 @@ impl Compiler {
     /// C source file.
     pub fn compile(
         &mut self,
+        precompiled: Vec<PathBuf>,
         source_files: Vec<SourceFile>,
         start_time: Instant,
-    ) -> Result<String, AluminaError> {
+    ) -> Result<Option<String>, AluminaError> {
         let mut cur_time = start_time;
         timing!(self, cur_time, Stage::Init);
 
         let ast = AstCtx::new();
         let root_scope = Scope::new_root();
 
+        if !precompiled.is_empty() {
+            let mut loader = AstLoader::new(self.global_ctx.clone(), &ast, VERSION_STRING);
+
+            for precompiled_file in precompiled {
+                let reader = std::fs::File::open(precompiled_file)?;
+                let mut buf_reader = std::io::BufReader::new(reader);
+
+                loader.load(buf_reader.by_ref(), root_scope.clone())?;
+            }
+            timing!(self, cur_time, Stage::Deserialize);
+        }
+
         let source_files: Vec<_> = source_files
             .iter()
             .map(|source_file| {
-                let file_id = self
-                    .global_ctx
-                    .diag()
-                    .add_file(source_file.filename.clone());
-                let source = std::fs::read_to_string(&source_file.filename)?;
+                let diag = self.global_ctx.diag();
 
+                let file_id = diag.make_file_id();
+                diag.add_file(file_id, source_file.filename.clone());
+
+                let source = std::fs::read_to_string(&source_file.filename)?;
                 let parse_tree = ParseCtx::from_source(file_id, source);
                 parse_tree.check_syntax_errors(parse_tree.root_node())?;
 
@@ -91,9 +115,17 @@ impl Compiler {
 
         timing!(self, cur_time, Stage::Parse);
 
-        let mut main_candidate = None;
         for (ctx, path) in source_files.iter() {
-            let scope = root_scope.ensure_module(path.clone()).with_no_span()?;
+            let scope = root_scope
+                .ensure_module(
+                    path.clone(),
+                    if path.is_root() {
+                        ScopeType::Root
+                    } else {
+                        ScopeType::Module
+                    },
+                )
+                .with_no_span()?;
             scope.set_code(ctx);
 
             if self.global_ctx.should_generate_main_glue() {
@@ -104,13 +136,6 @@ impl Compiler {
                     MacroCtx::default(),
                 );
                 visitor.visit(ctx.root_node())?;
-
-                if let Some(candidate) = visitor.main_candidate() {
-                    if main_candidate.replace(candidate).is_some() {
-                        return Err(CodeDiagnostic::MultipleMainFunctions)
-                            .with_span(candidate.get_function().span);
-                    }
-                }
             } else {
                 let mut visitor = FirstPassVisitor::new(
                     self.global_ctx.clone(),
@@ -125,16 +150,42 @@ impl Compiler {
         timing!(self, cur_time, Stage::Pass1);
 
         let mut item_maker = AstItemMaker::new(&ast, self.global_ctx.clone(), MacroCtx::default());
-        item_maker.make(root_scope)?;
+        item_maker.make(root_scope.clone())?;
 
         timing!(self, cur_time, Stage::Ast);
-        drop(source_files);
+
+        if let Some(filename) = self.global_ctx.option("dump-ast") {
+            let writer: Box<dyn Write> = if let Some(filename) = filename {
+                Box::new(std::fs::File::create(filename)?)
+            } else {
+                Box::new(std::io::stdout())
+            };
+
+            let mut writer = std::io::BufWriter::new(writer);
+            let mut saver = AstSaver::new(self.global_ctx.clone(), &ast, VERSION_STRING);
+            saver.add_scope(&root_scope)?;
+            saver.save(writer.by_ref())?;
+
+            writer.flush()?;
+            timing!(self, cur_time, Stage::Serialize);
+        }
+
+        if self.global_ctx.has_option("ast-only") {
+            return Ok(None);
+        }
+
+        let mut items = HashSet::default();
+        root_scope.collect_items(&mut items);
 
         let ir_ctx = IrCtx::new();
-        let items = item_maker.into_inner();
+        drop(source_files);
+
         let mut mono_ctx = MonoCtx::new(&ast, &ir_ctx, self.global_ctx.clone());
 
         let mut roots = HashSet::default();
+
+        let mut test_main_candidates = Vec::new();
+        let mut main_candidates = Vec::new();
 
         for item in items {
             let inner = item.get();
@@ -149,6 +200,14 @@ impl Compiler {
                 inner.should_compile()
             };
 
+            if self.global_ctx.should_generate_main_glue() && inner.is_main_candidate() {
+                if inner.is_test_main_candidate() {
+                    test_main_candidates.push(item);
+                } else {
+                    main_candidates.push(item);
+                }
+            }
+
             if compile {
                 let mut monomorphizer = Monomorphizer::new(&mut mono_ctx, false, None);
                 roots.insert(monomorphizer.monomorphize_item(item, &[])?);
@@ -157,6 +216,18 @@ impl Compiler {
 
         // Main glue code
         if self.global_ctx.should_generate_main_glue() {
+            let main_candidate = if test_main_candidates.len() > 1 {
+                return Err(CodeDiagnostic::MultipleMainFunctions)
+                    .with_span(test_main_candidates[1].get_function().span);
+            } else if !test_main_candidates.is_empty() {
+                test_main_candidates.pop()
+            } else if main_candidates.len() > 1 {
+                return Err(CodeDiagnostic::MultipleMainFunctions)
+                    .with_span(main_candidates[1].get_function().span);
+            } else {
+                main_candidates.pop()
+            };
+
             if let Some(main_candidate) = main_candidate {
                 let mut monomorphizer = Monomorphizer::new(&mut mono_ctx, false, None);
                 let user_main = monomorphizer.monomorphize_item(main_candidate, &[])?;
@@ -189,9 +260,9 @@ impl Compiler {
         // Dunno why the borrow checker is not letting me do that, it should be possible.
         // drop(ast);
 
-        let res = codegen::codegen(&ir_ctx, self.global_ctx.clone(), &items[..]);
+        let res = codegen::codegen(&ir_ctx, self.global_ctx.clone(), &items[..])?;
         timing!(self, cur_time, Stage::Codegen);
 
-        res
+        Ok(Some(res))
     }
 }

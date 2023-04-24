@@ -20,6 +20,7 @@ use crate::global_ctx::{GlobalCtx, OutputType};
 
 use clap::builder::ValueParser;
 use clap::Parser;
+use colored::Colorize;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -54,6 +55,10 @@ struct Args {
     #[clap(long, env = "ALUMINA_SYSROOT")]
     sysroot: Option<PathBuf>,
 
+    /// Pre-parsed AST files to load
+    #[clap(long)]
+    ast: Vec<PathBuf>,
+
     /// Modules to compile ('module::name=filename.alu')
     #[clap(value_parser=ValueParser::new(parse_module))]
     modules: Vec<(Option<String>, PathBuf)>,
@@ -75,8 +80,8 @@ struct Args {
     cfg: Vec<(String, Option<String>)>,
 
     /// Unstable compiler options
-    #[clap(long, short('Z'), action=clap::ArgAction::Append)]
-    options: Vec<String>,
+    #[clap(short('Z'), value_parser=ValueParser::new(parse_cfg), action=clap::ArgAction::Append)]
+    options: Vec<(String, Option<String>)>,
 }
 
 fn infer_module_name(path: &std::path::Path) -> &str {
@@ -161,41 +166,48 @@ fn run(args: Args) -> Result<(), ()> {
         if let Some(value) = value {
             global_ctx.add_cfg(key, value)
         } else {
-            global_ctx.add_flag(key)
+            global_ctx.add_cfg_flag(key)
         }
     }
 
     if args.debug {
-        global_ctx.add_flag("debug");
+        global_ctx.add_cfg_flag("debug");
     }
 
     let diag_ctx = global_ctx.diag();
-    let ret = match compiler.compile(files, start_time) {
-        Ok(program) => {
-            if args.timings {
-                for (stage, duration) in compiler.timings() {
-                    diag_ctx.add_note(CodeError::freeform(format!(
-                        "compiler timings: stage {:?} took {}ms",
-                        stage,
-                        duration.as_millis()
-                    )));
-                }
-            }
+    let result = compiler.compile(args.ast, files, start_time);
 
+    if args.timings {
+        for (stage, duration) in compiler.timings() {
+            diag_ctx.add_note(CodeError::freeform(format!(
+                "compiler timings: stage {:?} took {}ms",
+                stage,
+                duration.as_millis()
+            )));
+        }
+    }
+
+    let ret = match result {
+        Ok(program) => {
             if diag_ctx.has_errors() {
                 Err(())
             } else {
-                match args.output {
-                    Some(filename) => std::fs::write(filename, program).unwrap(),
-                    None => {
-                        print!("{}", program);
+                if let Some(program) = program {
+                    match args.output {
+                        Some(filename) => std::fs::write(filename, program).unwrap(),
+                        None => {
+                            print!("{}", program);
+                        }
                     }
                 }
                 Ok(())
             }
         }
         Err(e) => {
-            diag_ctx.add_from_error(e).unwrap();
+            if let Err(e) = diag_ctx.add_from_error(e) {
+                let tagline = format!("{}: {}", "error".red(), e).bold();
+                eprintln!("{}", tagline);
+            }
             Err(())
         }
     };

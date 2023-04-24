@@ -67,27 +67,29 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
         let mut result = None;
         for item in self_scope.inner().items_with_name(path.segments[0].0) {
             match &item.kind {
-                NamedItemKind::Placeholder(sym, _) if path.segments.len() == 1 => {
+                NamedItemKind::Placeholder(sym) if path.segments.len() == 1 => {
                     result = Some(Ok(ScopeResolution::Defered(Ty::Placeholder(*sym))));
                     break;
                 }
-                NamedItemKind::Type(item, _, _) if path.segments.len() == 1 => {
+                NamedItemKind::Type(item) if path.segments.len() == 1 => {
                     result = Some(Ok(ScopeResolution::Defered(Ty::Item(item))));
                     break;
                 }
-                NamedItemKind::TypeDef(item, _, _) if path.segments.len() == 1 => {
+                NamedItemKind::TypeDef(item) if path.segments.len() == 1 => {
                     result = Some(Ok(ScopeResolution::Defered(Ty::Item(item))));
                     break;
                 }
-                NamedItemKind::Protocol(_, _, child_scope) => {
-                    result = Some(self.resolve_scope(child_scope.clone(), remainder));
+                NamedItemKind::Protocol(_) => {
+                    result =
+                        Some(self.resolve_scope(item.scope.as_ref().unwrap().clone(), remainder));
                     break;
                 }
-                NamedItemKind::Module(child_scope) => {
-                    result = Some(self.resolve_scope(child_scope.clone(), remainder));
+                NamedItemKind::Module => {
+                    result =
+                        Some(self.resolve_scope(item.scope.as_ref().unwrap().clone(), remainder));
                     break;
                 }
-                NamedItemKind::Alias(target, _) => {
+                NamedItemKind::Alias(target) => {
                     result =
                         Some(self.resolve_scope(self_scope.clone(), target.join_with(remainder)));
                     break;
@@ -156,8 +158,8 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
         let mut result = None;
         for item in containing_scope.inner().items_with_name(last_segment.0) {
             match &item.kind {
-                NamedItemKind::Impl(_, _) => continue,
-                NamedItemKind::Alias(target, _) => {
+                NamedItemKind::Impl => continue,
+                NamedItemKind::Alias(target) => {
                     result = Some(self.resolve_item_impl(
                         self_scope.clone(),
                         containing_scope.clone(),
@@ -166,9 +168,7 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
                     ));
                     break;
                 }
-                NamedItemKind::Macro(_, _, _)
-                | NamedItemKind::Local(_, _)
-                | NamedItemKind::Parameter(..) => {
+                NamedItemKind::Macro(_) | NamedItemKind::Local(_) | NamedItemKind::Parameter(_) => {
                     let original_func = self_scope.find_containing_function();
                     let current_func = containing_scope.find_containing_function();
 

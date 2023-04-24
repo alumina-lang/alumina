@@ -1,8 +1,10 @@
+use alumina_boot_macros::AstSerializable;
+
 use crate::ast::{BinOp, BuiltinType};
 use crate::common::CodeDiagnostic;
 use crate::utils::regex;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AstSerializable)]
 pub enum LangItemKind {
     Slice,
     SliceNew,

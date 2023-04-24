@@ -1,6 +1,8 @@
 use std::fmt::{Debug, Display, Formatter};
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+use alumina_boot_macros::AstSerializable;
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, AstSerializable)]
 pub struct PathSegment<'ast>(pub &'ast str);
 
 impl<'ast> Display for PathSegment<'ast> {
@@ -9,7 +11,7 @@ impl<'ast> Display for PathSegment<'ast> {
     }
 }
 
-#[derive(Default, PartialEq, Eq, Hash, Clone, Debug)]
+#[derive(Default, PartialEq, Eq, Hash, Clone, Debug, AstSerializable)]
 pub struct Path<'ast> {
     pub absolute: bool,
     pub segments: Vec<PathSegment<'ast>>,
@@ -73,5 +75,9 @@ impl<'ast> Path<'ast> {
             absolute: self.absolute,
             segments: self.segments[..self.segments.len() - 1].to_vec(),
         }
+    }
+
+    pub fn is_root(&self) -> bool {
+        self.segments.is_empty() && self.absolute
     }
 }

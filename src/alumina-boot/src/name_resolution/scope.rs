@@ -4,6 +4,7 @@ use crate::diagnostics::DiagnosticContext;
 use crate::name_resolution::path::{Path, PathSegment};
 use crate::parser::ParseCtx;
 
+use alumina_boot_macros::AstSerializable;
 use indexmap::map::Entry;
 use once_cell::unsync::OnceCell;
 
@@ -13,106 +14,165 @@ use std::rc::{Rc, Weak};
 
 use tree_sitter::Node;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy, AstSerializable)]
 pub enum BoundItemType {
     ByValue,
     ByReference,
 }
 
-#[derive(Debug, Clone)]
-pub enum NamedItemKind<'ast, 'src> {
-    Alias(Path<'ast>, Node<'src>),
-    Function(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
-    Method(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
-    TypeDef(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
-    Static(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
-    Const(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
-    Macro(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
-    Type(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
-    Mixin(Node<'src>, Scope<'ast, 'src>),
-    Module(Scope<'ast, 'src>),
-    Protocol(ItemP<'ast>, Node<'src>, Scope<'ast, 'src>),
-    Impl(Node<'src>, Scope<'ast, 'src>),
-    EnumMember(ItemP<'ast>, AstId, Node<'src>),
+#[derive(Debug, Clone, AstSerializable)]
+pub enum NamedItemKind<'ast> {
+    Alias(Path<'ast>),
+    Function(ItemP<'ast>),
+    Method(ItemP<'ast>),
+    TypeDef(ItemP<'ast>),
+    Static(ItemP<'ast>),
+    Const(ItemP<'ast>),
+    Macro(ItemP<'ast>),
+    Type(ItemP<'ast>),
+    Mixin,
+    Module,
+    Protocol(ItemP<'ast>),
+    Impl,
+    EnumMember(ItemP<'ast>, AstId),
 
-    Placeholder(AstId, Node<'src>),
-    Field(Node<'src>),
-    Local(AstId, Span),
-    BoundValue(AstId, AstId, BoundItemType, Span),
-    Parameter(AstId, Node<'src>),
-    MacroParameter(AstId, bool, Span),
+    Placeholder(AstId),
+    Field,
+    Local(AstId),
+    BoundValue(AstId, AstId, BoundItemType),
+    Parameter(AstId),
+    MacroParameter(AstId, bool),
+    Closure(ItemP<'ast>),
+    Anonymous,
 }
 
-impl Display for NamedItemKind<'_, '_> {
+impl Display for NamedItemKind<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            NamedItemKind::Alias(_, _) => write!(f, "alias"),
-            NamedItemKind::Function(_, _, _) => write!(f, "function"),
-            NamedItemKind::Method(_, _, _) => write!(f, "method"),
-            NamedItemKind::Static(_, _, _) => write!(f, "static"),
-            NamedItemKind::Const(_, _, _) => write!(f, "const"),
-            NamedItemKind::Macro(_, _, _) => write!(f, "macro"),
-            NamedItemKind::Type(_, _, _) => write!(f, "type"),
-            NamedItemKind::Mixin(_, _) => write!(f, "mixin"),
-            NamedItemKind::Module(_) => write!(f, "module"),
-            NamedItemKind::Protocol(_, _, _) => write!(f, "protocol"),
-            NamedItemKind::TypeDef(_, _, _) => write!(f, "typedef"),
-            NamedItemKind::Impl(_, _) => write!(f, "impl"),
-            NamedItemKind::Placeholder(_, _) => write!(f, "placeholder"),
-            NamedItemKind::Field(_) => write!(f, "field"),
-            NamedItemKind::EnumMember(_, _, _) => write!(f, "enum member"),
-            NamedItemKind::Local(_, _) => write!(f, "local"),
-            NamedItemKind::BoundValue(_, _, _, _) => write!(f, "bound value"),
-            NamedItemKind::Parameter(_, _) => write!(f, "parameter"),
-            NamedItemKind::MacroParameter(_, _, _) => write!(f, "macro parameter"),
+            NamedItemKind::Alias(..) => write!(f, "alias"),
+            NamedItemKind::Function(..) => write!(f, "function"),
+            NamedItemKind::Method(..) => write!(f, "method"),
+            NamedItemKind::Static(..) => write!(f, "static"),
+            NamedItemKind::Const(..) => write!(f, "const"),
+            NamedItemKind::Macro(..) => write!(f, "macro"),
+            NamedItemKind::Type(..) => write!(f, "type"),
+            NamedItemKind::Mixin => write!(f, "mixin"),
+            NamedItemKind::Module => write!(f, "module"),
+            NamedItemKind::Protocol(..) => write!(f, "protocol"),
+            NamedItemKind::TypeDef(..) => write!(f, "typedef"),
+            NamedItemKind::Impl => write!(f, "impl"),
+            NamedItemKind::Placeholder(..) => write!(f, "placeholder"),
+            NamedItemKind::Field => write!(f, "field"),
+            NamedItemKind::EnumMember(..) => write!(f, "enum member"),
+            NamedItemKind::Local(..) => write!(f, "local"),
+            NamedItemKind::BoundValue(..) => write!(f, "bound value"),
+            NamedItemKind::Parameter(..) => write!(f, "parameter"),
+            NamedItemKind::MacroParameter(..) => write!(f, "macro parameter"),
+            NamedItemKind::Closure(..) => write!(f, "closure"),
+            NamedItemKind::Anonymous => write!(f, "anonymous"),
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct NamedItem<'ast, 'src> {
-    pub kind: NamedItemKind<'ast, 'src>,
-    pub attributes: &'ast [Attribute],
+    pub kind: NamedItemKind<'ast>,
+    pub node: Option<Node<'src>>,
+    pub scope: Option<Scope<'ast, 'src>>,
+    pub attributes: &'ast [Attribute<'ast>],
 }
 
 impl<'ast, 'src> NamedItem<'ast, 'src> {
-    pub fn new(kind: NamedItemKind<'ast, 'src>, attributes: &'ast [Attribute]) -> Self {
-        Self { kind, attributes }
+    pub fn new(
+        kind: NamedItemKind<'ast>,
+        attributes: &'ast [Attribute],
+        node: Node<'src>,
+        child_scope: Option<Scope<'ast, 'src>>,
+    ) -> Self {
+        Self {
+            kind,
+            attributes,
+            node: Some(node),
+            scope: child_scope,
+        }
     }
 
-    pub fn new_default(kind: NamedItemKind<'ast, 'src>) -> Self {
+    pub fn new_default(
+        kind: NamedItemKind<'ast>,
+        node: Node<'src>,
+        scope: Option<Scope<'ast, 'src>>,
+    ) -> Self {
         Self {
             kind,
             attributes: &[],
+            node: Some(node),
+            scope,
+        }
+    }
+
+    pub fn new_no_node(kind: NamedItemKind<'ast>, scope: Option<Scope<'ast, 'src>>) -> Self {
+        Self {
+            kind,
+            attributes: &[],
+            node: None,
+            scope,
         }
     }
 
     pub fn ast_id(&self) -> Option<AstId> {
         match &self.kind {
-            NamedItemKind::Alias(_, _) => None,
-            NamedItemKind::Function(item, _, _) => Some(item.id),
-            NamedItemKind::Method(item, _, _) => Some(item.id),
-            NamedItemKind::Static(item, _, _) => Some(item.id),
-            NamedItemKind::Const(item, _, _) => Some(item.id),
-            NamedItemKind::Macro(item, _, _) => Some(item.id),
-            NamedItemKind::Type(item, _, _) => Some(item.id),
-            NamedItemKind::Mixin(_, _) => None,
-            NamedItemKind::Module(_) => None,
-            NamedItemKind::Protocol(item, _, _) => Some(item.id),
-            NamedItemKind::TypeDef(item, _, _) => Some(item.id),
-            NamedItemKind::Impl(_, _) => None,
-            NamedItemKind::EnumMember(_, id, _) => Some(*id),
-            NamedItemKind::Placeholder(id, _) => Some(*id),
-            NamedItemKind::Field(_) => None,
-            NamedItemKind::Local(id, _) => Some(*id),
-            NamedItemKind::BoundValue(_, id, _, _) => Some(*id),
-            NamedItemKind::Parameter(id, _) => Some(*id),
-            NamedItemKind::MacroParameter(id, _, _) => Some(*id),
+            NamedItemKind::Alias(_) => None,
+            NamedItemKind::Function(item) => Some(item.id),
+            NamedItemKind::Method(item) => Some(item.id),
+            NamedItemKind::Static(item) => Some(item.id),
+            NamedItemKind::Const(item) => Some(item.id),
+            NamedItemKind::Macro(item) => Some(item.id),
+            NamedItemKind::Type(item) => Some(item.id),
+            NamedItemKind::Mixin => None,
+            NamedItemKind::Module => None,
+            NamedItemKind::Protocol(item) => Some(item.id),
+            NamedItemKind::TypeDef(item) => Some(item.id),
+            NamedItemKind::Impl => None,
+            NamedItemKind::EnumMember(_, id) => Some(*id),
+            NamedItemKind::Placeholder(id) => Some(*id),
+            NamedItemKind::Field => None,
+            NamedItemKind::Local(id) => Some(*id),
+            NamedItemKind::BoundValue(_, id, _) => Some(*id),
+            NamedItemKind::Parameter(id) => Some(*id),
+            NamedItemKind::MacroParameter(id, _) => Some(*id),
+            NamedItemKind::Anonymous => None,
+            NamedItemKind::Closure(item) => Some(item.id),
+        }
+    }
+
+    pub fn item(&self) -> Option<ItemP<'ast>> {
+        match &self.kind {
+            NamedItemKind::Alias(_) => None,
+            NamedItemKind::Function(item) => Some(*item),
+            NamedItemKind::Method(item) => Some(*item),
+            NamedItemKind::Static(item) => Some(*item),
+            NamedItemKind::Const(item) => Some(*item),
+            NamedItemKind::Macro(item) => Some(*item),
+            NamedItemKind::Type(item) => Some(*item),
+            NamedItemKind::Mixin => None,
+            NamedItemKind::Module => None,
+            NamedItemKind::Protocol(item) => Some(*item),
+            NamedItemKind::TypeDef(item) => Some(*item),
+            NamedItemKind::Impl => None,
+            NamedItemKind::EnumMember(item, _) => Some(*item),
+            NamedItemKind::Placeholder(_) => None,
+            NamedItemKind::Field => None,
+            NamedItemKind::Local(_) => None,
+            NamedItemKind::BoundValue(_, _, _) => None,
+            NamedItemKind::Parameter(_) => None,
+            NamedItemKind::MacroParameter(_, _) => None,
+            NamedItemKind::Anonymous => None,
+            NamedItemKind::Closure(item) => Some(*item),
         }
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, AstSerializable)]
 pub enum ScopeType {
     Root,
     Module,
@@ -351,21 +411,21 @@ impl<'ast, 'src> Scope<'ast, 'src> {
                         existing
                             .iter()
                             .fold((0, 0), |(type_count, impl_count), item| match item.kind {
-                                NamedItemKind::Type(_, _, _) => (type_count + 1, impl_count),
-                                NamedItemKind::Impl(_, _) => (type_count, impl_count + 1),
+                                NamedItemKind::Type(_) => (type_count + 1, impl_count),
+                                NamedItemKind::Impl => (type_count, impl_count + 1),
                                 _ => (type_count, impl_count),
                             });
 
                     if ((type_count == 1 || impl_count > 0)
-                        && matches!(item.kind, NamedItemKind::Impl(_, _)))
+                        && matches!(item.kind, NamedItemKind::Impl))
                         || (type_count == 0
                             && impl_count > 0
-                            && matches!(item.kind, NamedItemKind::Type(_, _, _)))
+                            && matches!(item.kind, NamedItemKind::Type(_)))
                     {
                         existing.push(item);
                         existing.sort_by_key(|i| match i.kind {
-                            NamedItemKind::Type(_, _, _) => 0,
-                            NamedItemKind::Impl(_, _) => 1,
+                            NamedItemKind::Type(_) => 0,
+                            NamedItemKind::Impl => 1,
                             _ => unreachable!(),
                         });
                         return Ok(());
@@ -420,15 +480,29 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             .map(|parent| Self(parent.upgrade().unwrap()))
     }
 
-    pub fn ensure_module(&self, path: Path<'ast>) -> Result<Scope<'ast, 'src>, CodeDiagnostic> {
+    pub fn ensure_module(
+        &self,
+        path: Path<'ast>,
+        kind: ScopeType,
+    ) -> Result<Scope<'ast, 'src>, CodeDiagnostic> {
         if path.absolute {
-            return self.find_root().ensure_module(Path {
-                absolute: false,
-                segments: path.segments.clone(),
-            });
+            return self.find_root().ensure_module(
+                Path {
+                    absolute: false,
+                    segments: path.segments.clone(),
+                },
+                kind,
+            );
         }
 
         if path.segments.is_empty() {
+            if self.typ() != kind {
+                panic!(
+                    "Scope type mismatch: expected {:?}, got {:?}",
+                    kind,
+                    self.typ()
+                );
+            }
             return Ok(self.clone());
         }
 
@@ -438,56 +512,75 @@ impl<'ast, 'src> Scope<'ast, 'src> {
         };
 
         for item in self.inner().items_with_name(path.segments[0].0) {
-            if let NamedItemKind::Module(child_scope) = &item.kind {
-                return child_scope.ensure_module(remainder);
+            if let NamedItemKind::Module = &item.kind {
+                let child_scope = item.scope.as_ref().unwrap();
+                return child_scope.ensure_module(remainder, kind);
             }
         }
 
-        let child_scope = self.named_child_without_code(ScopeType::Module, path.segments[0].0);
+        let child_scope = self.named_child_without_code(
+            if path.segments.len() == 1 {
+                kind
+            } else {
+                ScopeType::Module
+            },
+            path.segments[0].0,
+        );
         self.add_item(
             Some(path.segments[0].0),
-            NamedItem::new_default(NamedItemKind::Module(child_scope.clone())),
+            NamedItem::new_no_node(NamedItemKind::Module, Some(child_scope.clone())),
         )?;
 
-        child_scope.ensure_module(remainder)
+        child_scope.ensure_module(remainder, kind)
     }
 
     pub fn mark_used(&self, name: &'ast str) {
         self.0.borrow().used_items.borrow_mut().insert(name);
     }
 
+    pub fn collect_items(&self, target: &mut HashSet<ItemP<'ast>>) {
+        let inner = self.0.borrow();
+
+        for (_, named_item) in inner.all_items() {
+            if let Some(item) = named_item.item() {
+                target.insert(item);
+            }
+            if let Some(scope) = &named_item.scope {
+                scope.collect_items(target);
+            }
+        }
+    }
+
     pub fn check_unused_items(&self, diag: &DiagnosticContext) {
-        let inner = self.inner();
         for (name, item) in self.inner().unused_items() {
             if name.starts_with('_') || name.starts_with("$_") {
                 continue;
             }
 
-            let (kind, span) = match item.kind {
-                NamedItemKind::Local(_, span) => {
-                    (CodeDiagnostic::UnusedVariable(name.to_string()), span)
+            let Some(node) = item.node else {
+                continue;
+            };
+
+            let kind = match item.kind {
+                NamedItemKind::Local(_) => CodeDiagnostic::UnusedVariable(name.to_string()),
+                NamedItemKind::BoundValue(_, _, _) => {
+                    CodeDiagnostic::UnusedClosureBinding(name.to_string())
                 }
-                NamedItemKind::BoundValue(_, _, _, span) => {
-                    (CodeDiagnostic::UnusedClosureBinding(name.to_string()), span)
+                NamedItemKind::Alias(_) => CodeDiagnostic::UnusedImport(name.to_string()),
+                NamedItemKind::MacroParameter(_, _) => {
+                    CodeDiagnostic::UnusedParameter(name.to_string())
                 }
-                NamedItemKind::Alias(_, node) => (
-                    CodeDiagnostic::UnusedImport(name.to_string()),
-                    Span::from_node(inner.code.get().unwrap().file_id(), node),
-                ),
-                NamedItemKind::MacroParameter(_, _, span) => {
-                    (CodeDiagnostic::UnusedParameter(name.to_string()), span)
-                }
-                NamedItemKind::Parameter(_, node) => {
+                NamedItemKind::Parameter(_) => {
                     if name == "self" {
                         continue;
                     }
-                    (
-                        CodeDiagnostic::UnusedParameter(name.to_string()),
-                        Span::from_node(inner.code.get().unwrap().file_id(), node),
-                    )
+
+                    CodeDiagnostic::UnusedParameter(name.to_string())
                 }
                 _ => continue,
             };
+
+            let span = Span::from_node(self.file_id(), node);
 
             diag.add_warning(CodeError {
                 kind,

@@ -3,6 +3,7 @@ use crate::common::{
     AluminaError, CodeDiagnostic, CodeError, FileId, HashMap, HashSet, IndexSet, Marker,
 };
 use crate::ir::const_eval::ConstEvalErrorKind;
+use alumina_boot_macros::AstSerializable;
 use colored::Colorize;
 
 use std::cell::RefCell;
@@ -20,17 +21,17 @@ pub enum Level {
     Note = 0,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, AstSerializable)]
 pub enum Action {
     Keep,
     Allow,
     Deny,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, AstSerializable)]
 pub struct Override {
     pub span: Option<Span>,
-    pub kind: Option<&'static str>,
+    pub kind: Option<String>,
     pub action: Action,
 }
 
@@ -190,16 +191,24 @@ impl DiagnosticContext {
         self.inner.borrow().file_map.get(&file_id).cloned()
     }
 
-    pub fn add_file(&self, source_file: PathBuf) -> FileId {
+    pub fn make_file_id(&self) -> FileId {
         let mut inner = self.inner.borrow_mut();
         let file_id = FileId { id: inner.counter };
         inner.counter += 1;
-        inner.file_map.insert(file_id, source_file);
         file_id
+    }
+
+    pub fn add_file(&self, file_id: FileId, source_file: PathBuf) {
+        let mut inner = self.inner.borrow_mut();
+        inner.file_map.insert(file_id, source_file);
     }
 
     pub fn add_override(&self, r#override: Override) {
         self.inner.borrow_mut().overrides.push(r#override);
+    }
+
+    pub fn overrides(&self) -> Vec<Override> {
+        self.inner.borrow().overrides.clone()
     }
 
     pub fn add_from_error(&self, err: AluminaError) -> Result<(), AluminaError> {
@@ -236,7 +245,7 @@ impl DiagnosticContext {
 
         for r#override in &inner.overrides {
             // Lint name has to match
-            if r#override.kind.is_some() && r#override.kind != Some(err.kind.as_ref()) {
+            if r#override.kind.is_some() && r#override.kind.as_deref() != Some(err.kind.as_ref()) {
                 continue;
             }
 

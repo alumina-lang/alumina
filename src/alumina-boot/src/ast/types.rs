@@ -76,11 +76,11 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
             .with_span_from(&self.scope, node)?
         {
             ItemResolution::Item(item) => match item.kind {
-                NamedItemKind::Type(ty, _, _) => self.ast.intern_type(Ty::Item(ty)),
-                NamedItemKind::TypeDef(ty, _, _) => self.ast.intern_type(Ty::Item(ty)),
-                NamedItemKind::Function(ty, _, _) => self.ast.intern_type(Ty::Item(ty)),
-                NamedItemKind::Protocol(ty, _, _) => self.ast.intern_type(Ty::Item(ty)),
-                NamedItemKind::Placeholder(ty, _) => self.ast.intern_type(Ty::Placeholder(ty)),
+                NamedItemKind::Type(ty) => self.ast.intern_type(Ty::Item(ty)),
+                NamedItemKind::TypeDef(ty) => self.ast.intern_type(Ty::Item(ty)),
+                NamedItemKind::Function(ty) => self.ast.intern_type(Ty::Item(ty)),
+                NamedItemKind::Protocol(ty) => self.ast.intern_type(Ty::Item(ty)),
+                NamedItemKind::Placeholder(ty) => self.ast.intern_type(Ty::Placeholder(ty)),
                 kind => {
                     return Err(CodeDiagnostic::Unexpected(format!("{}", kind)))
                         .with_span_from(&self.scope, node)
