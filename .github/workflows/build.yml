@@ -62,7 +62,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        cache_ast: [true, false]
+        cache_ast: [ast-cache, no-ast-cache]
     steps:
       - uses: actions/checkout@v2
       - name: Install Rust
@@ -84,11 +84,11 @@ jobs:
 
       - name: Build full
         run: make dist-check -j8
-        if: ${{ matrix.cache_ast == false }}
+        if: ${{ matrix.cache_ast == "no-ast-cache" }}
 
       - name: Build full (with AST cache)
         run: make dist-check -j8
-        if: ${{ matrix.cache_ast == true }}
+        if: ${{ matrix.cache_ast == "ast-cache"}}
         env:
           CACHE_AST: 1
 
