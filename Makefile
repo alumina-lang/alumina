@@ -47,13 +47,11 @@ ifdef TIMINGS
 	ALUMINA_FLAGS += --timings
 endif
 
-
 # Convert a list of source files to a list of <module>=<file> pairs. mod.alu files are treated
 # specially, they represent a module with the same name as the directory they are in.
 define alumina_modules
     $(foreach src,$(1),$(subst -,_,$(subst ::mod,::,$(subst /,::,$(basename $(subst $(2),$(3),$(src))))))=$(src))
 endef
-
 
 ALUMINA_BOOT = $(BUILD_DIR)/alumina-boot
 CODEGEN = $(BUILD_DIR)/aluminac-generate
@@ -66,7 +64,7 @@ SYSROOT_AST = $(BUILD_DIR)/sysroot.ast
 SYSROOT_TEST_AST = $(BUILD_DIR)/sysroot-test.ast
 SYSROOT_TEST_STD_AST = $(BUILD_DIR)/sysroot-test-std.ast
 
-ifdef AST_SERIALIZATION
+ifdef CACHE_AST
 	ALUMINA_FLAGS_COMMON = --ast $(SYSROOT_AST) $(ALUMINA_FLAGS)
 	ALUMINA_FLAGS_TEST = --ast $(SYSROOT_TEST_AST) $(ALUMINA_FLAGS) --cfg test
 	ALUMINA_FLAGS_TEST_STD = --ast $(SYSROOT_TEST_STD_AST) $(ALUMINA_FLAGS) --cfg test --cfg test_std
@@ -78,7 +76,7 @@ endif
 
 # If grammar changes, we need to rebuild the world
 COMMON_SOURCES = common/grammar.js
-BOOTSTRAP_SOURCES = $(shell find src/alumina-boot/ -type f) $(shell find src/alumina-boot-derive/ -type f)
+BOOTSTRAP_SOURCES = $(shell find src/alumina-boot/ -type f) $(shell find src/alumina-boot-macros/ -type f)
 SYSROOT_FILES = $(shell find $(SYSROOT) -type f -name '*.alu')
 ALU_LIBRARIES = $(shell find libraries/ -type f -name '*.alu')
 
@@ -97,7 +95,7 @@ $(ALUMINA_BOOT): $(BOOTSTRAP_SOURCES) $(COMMON_SOURCES) $(BUILD_DIR)/.build
 
 ## --------------------------- Sysroot AST ----------------------------
 
-ifdef AST_SERIALIZATION
+ifdef CACHE_AST
 $(SYSROOT_AST): $(ALUMINA_BOOT) $(SYSROOT_FILES)
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS) --sysroot $(SYSROOT) -Zdump-ast=$@ -Zast-only
 
@@ -229,11 +227,13 @@ examples: $(patsubst examples/%.alu,$(BUILD_DIR)/examples/%,$(EXAMPLES))
 
 ## ------------------------------ Various ------------------------------
 
-.PHONY: clean all install
+.PHONY: clean clean-all all install
 clean:
-	cargo clean
 	rm -rf $(BUILD_ROOT)/
 	rm -f quick.c quick alumina-boot
+
+clean-all: clean
+	cargo clean
 
 install: $(ALUMINA_BOOT) $(SYSROOT_FILES)
 	install -T $(ALUMINA_BOOT) $(PREFIX)/bin/alumina-boot

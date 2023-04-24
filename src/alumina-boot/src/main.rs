@@ -139,6 +139,7 @@ fn get_sysroot(args: &Args) -> Result<Vec<SourceFile>, AluminaError> {
     Ok(result)
 }
 
+
 fn run(args: Args) -> Result<(), ()> {
     let start_time = Instant::now();
     let output_type = if args.library {

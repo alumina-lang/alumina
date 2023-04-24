@@ -4,7 +4,7 @@ use crate::diagnostics::DiagnosticContext;
 use crate::name_resolution::path::{Path, PathSegment};
 use crate::parser::ParseCtx;
 
-use alumina_boot_derive::AstSerializable;
+use alumina_boot_macros::AstSerializable;
 use indexmap::map::Entry;
 use once_cell::unsync::OnceCell;
 

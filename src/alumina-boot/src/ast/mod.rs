@@ -19,7 +19,7 @@ use crate::name_resolution::scope::BoundItemType;
 
 use crate::ast::serialization::{AstDeserializer, AstSerializable, AstSerializer};
 
-use alumina_boot_derive::AstSerializable;
+use alumina_boot_macros::AstSerializable;
 
 use bumpalo::Bump;
 use once_cell::unsync::OnceCell;
@@ -131,6 +131,13 @@ impl<'ast> AstCtx<'ast> {
         })
     }
 
+    pub fn make_item_with(&'ast self, id: AstId) -> ItemP<'ast> {
+        self.arena.alloc(ItemCell {
+            id,
+            contents: OnceCell::new(),
+        })
+    }
+
     pub fn parse_path(&'ast self, path: &'_ str) -> Path<'ast> {
         let (path, absolute) = if path.starts_with("::") {
             (path.strip_prefix("::").unwrap(), true)
@@ -204,7 +211,6 @@ impl<'a> AstSerializable<'a> for AstId {
         &self,
         serializer: &mut AstSerializer<'a, W>,
     ) -> crate::ast::serialization::Result<()> {
-        serializer.mark_ast_id_seen(*self);
         self.id.serialize(serializer)
     }
 

@@ -1,4 +1,4 @@
-use alumina_boot_derive::AstSerializable;
+use alumina_boot_macros::AstSerializable;
 
 use crate::ir::{ExprP, TyP};
 

@@ -3,7 +3,7 @@ use crate::ast::serialization::{AstLoader, AstSaver};
 use crate::ast::{AstCtx, MacroCtx};
 use crate::codegen;
 use crate::common::{AluminaError, ArenaAllocatable, CodeDiagnostic, CodeErrorBuilder, HashSet};
-use crate::diagnostics::DiagnosticsStack;
+
 use crate::global_ctx::GlobalCtx;
 use crate::ir::dce::DeadCodeEliminator;
 use crate::ir::mono::{MonoCtx, Monomorphizer};
@@ -15,6 +15,12 @@ use crate::parser::{AluminaVisitor, ParseCtx};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+
+// AST serialization is very tightly coupled to the compiler, so if anything changes,
+// we invalidate the version (preventing an incompatible AST from being loaded). This is
+// currently based on the compound hash of all the source files, but it could be changed to
+// git revision or something else.
+const VERSION_STRING: &[u8] = alumina_boot_macros::sources_hash!();
 
 #[derive(Debug, Clone)]
 pub enum Stage {
@@ -80,7 +86,7 @@ impl Compiler {
         let root_scope = Scope::new_root();
 
         if !precompiled.is_empty() {
-            let mut loader = AstLoader::new(self.global_ctx.clone(), &ast, "hello");
+            let mut loader = AstLoader::new(self.global_ctx.clone(), &ast, VERSION_STRING);
 
             for precompiled_file in precompiled {
                 let reader = std::fs::File::open(precompiled_file)?;
@@ -156,7 +162,7 @@ impl Compiler {
             };
 
             let mut writer = std::io::BufWriter::new(writer);
-            let mut saver = AstSaver::new(self.global_ctx.clone(), &ast, "hello");
+            let mut saver = AstSaver::new(self.global_ctx.clone(), &ast, VERSION_STRING);
             saver.add_scope(&root_scope)?;
             saver.save(writer.by_ref())?;
 

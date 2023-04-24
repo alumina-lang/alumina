@@ -5,7 +5,7 @@ use std::{
     rc::Rc,
 };
 
-use alumina_boot_derive::AstSerializable;
+use alumina_boot_macros::AstSerializable;
 use once_cell::unsync::OnceCell;
 
 use crate::{
@@ -16,8 +16,7 @@ use crate::{
     diagnostics::{DiagnosticsStack, Override},
     global_ctx::GlobalCtx,
     name_resolution::{
-        path::{Path, PathSegment},
-        resolver::{self, NameResolver, ScopeResolution},
+        path::Path,
         scope::{NamedItem, NamedItemKind, Scope, ScopeType},
     },
 };
@@ -266,7 +265,7 @@ where
     T: AstSerializable<'ast>,
 {
     fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'ast, W>) -> Result<()> {
-        <T as AstSerializable<'ast>>::serialize(&*self, serializer)?;
+        <T as AstSerializable<'ast>>::serialize(&**self, serializer)?;
         Ok(())
     }
 
@@ -342,7 +341,6 @@ impl<'ast, T: AstSerializable<'ast>> AstSerializable<'ast> for OnceCell<T> {
 pub struct AstSerializer<'ast, W: Write> {
     inner: W,
     seen_files: HashSet<FileId>,
-    seen_ids: HashSet<AstId>,
     _marker: std::marker::PhantomData<&'ast ()>,
 }
 
@@ -371,7 +369,6 @@ impl<'ast, W: Write> AstSerializer<'ast, W> {
         Self {
             inner,
             seen_files: HashSet::default(),
-            seen_ids: HashSet::default(),
             _marker: std::marker::PhantomData,
         }
     }
@@ -414,10 +411,6 @@ impl<'ast, W: Write> AstSerializer<'ast, W> {
 
     pub fn mark_file_seen(&mut self, file_id: FileId) {
         self.seen_files.insert(file_id);
-    }
-
-    pub fn mark_ast_id_seen(&mut self, ast_id: AstId) {
-        self.seen_ids.insert(ast_id);
     }
 }
 
@@ -469,7 +462,7 @@ impl<'ast> DeserializeContext<'ast> {
         inner
             .cell_map
             .entry(id)
-            .or_insert_with(|| self.ast.make_item())
+            .or_insert_with(|| self.ast.make_item_with(id))
     }
 }
 
@@ -577,6 +570,37 @@ struct SerializedScope<'ast> {
     star_imports: Vec<Path<'ast>>,
 }
 
+impl<'ast> SerializedScope<'ast> {
+    fn rehydrate<'src>(
+        self,
+        diag: &DiagnosticsStack,
+        target: &Scope<'ast, 'src>,
+    ) -> std::result::Result<(), AluminaError> {
+        for item in self.items {
+            let child_scope = if let Some(inner) = item.scope {
+                let child_scope = target.named_child(inner.r#type, item.name);
+                inner.rehydrate(diag, &child_scope)?;
+                Some(child_scope)
+            } else {
+                None
+            };
+
+            target
+                .add_item(
+                    Some(item.name),
+                    NamedItem::new_no_node(item.kind, child_scope),
+                )
+                .with_backtrace(diag)?;
+        }
+
+        for import in self.star_imports {
+            target.add_star_import(import);
+        }
+
+        Ok(())
+    }
+}
+
 const MAGIC: &[u8] = b"\xa1\x00mina";
 
 pub struct AstSaver<'ast> {
@@ -584,14 +608,14 @@ pub struct AstSaver<'ast> {
     ast: &'ast AstCtx<'ast>,
     all_items: HashSet<ItemP<'ast>>,
     all_scopes: Vec<SerializedScope<'ast>>,
-    version_string: &'static str,
+    version_string: &'static [u8],
 }
 
 impl<'ast> AstSaver<'ast> {
     pub fn new(
         global_ctx: GlobalCtx,
         ast: &'ast AstCtx<'ast>,
-        version_string: &'static str,
+        version_string: &'static [u8],
     ) -> Self {
         Self {
             global_ctx,
@@ -665,7 +689,7 @@ impl<'ast> AstSaver<'ast> {
 
     pub fn save<W: Write>(&mut self, mut writer: W) -> Result<()> {
         writer.write_all(MAGIC)?;
-        writer.write_all(self.version_string.as_bytes())?;
+        writer.write_all(self.version_string)?;
 
         let mut serializer = AstSerializer::new(&mut writer);
         // First serialize all scopes
@@ -683,9 +707,15 @@ impl<'ast> AstSaver<'ast> {
         }
 
         // And finally the extra info (such as source filenames for spans in AST)
-        let seen_files = serializer.seen_files.clone();
-        let _seen_ids = serializer.seen_ids.clone();
+        let local_names: Vec<_> = self
+            .all_items
+            .iter()
+            .filter_map(|item| Some(item.id).zip(self.ast.local_name(item.id)))
+            .collect();
 
+        local_names.serialize(&mut serializer)?;
+
+        let seen_files = serializer.seen_files.clone();
         serializer.write_usize(seen_files.len())?;
 
         for file_id in seen_files {
@@ -731,7 +761,7 @@ impl<'ast> AstSaver<'ast> {
 pub struct AstLoader<'ast> {
     global_ctx: GlobalCtx,
     ast: &'ast AstCtx<'ast>,
-    version_string: &'static str,
+    version_string: &'static [u8],
     context: DeserializeContext<'ast>,
 }
 
@@ -739,7 +769,7 @@ impl<'ast> AstLoader<'ast> {
     pub fn new(
         global_ctx: GlobalCtx,
         ast: &'ast AstCtx<'ast>,
-        version_string: &'static str,
+        version_string: &'static [u8],
     ) -> Self {
         Self {
             context: DeserializeContext::new(global_ctx.clone(), ast),
@@ -747,36 +777,6 @@ impl<'ast> AstLoader<'ast> {
             ast,
             version_string,
         }
-    }
-
-    fn populate_scope<'src>(
-        &mut self,
-        diag: &DiagnosticsStack,
-        target: &Scope<'ast, 'src>,
-        scope: SerializedScope<'ast>,
-    ) -> std::result::Result<(), AluminaError> {
-        for item in scope.items {
-            let child_scope = if let Some(inner) = item.scope {
-                let child_scope = target.named_child(inner.r#type, item.name);
-                self.populate_scope(diag, &child_scope, inner)?;
-                Some(child_scope)
-            } else {
-                None
-            };
-
-            target
-                .add_item(
-                    Some(item.name),
-                    NamedItem::new_no_node(item.kind, child_scope),
-                )
-                .with_backtrace(diag)?;
-        }
-
-        for import in scope.star_imports {
-            target.add_star_import(import);
-        }
-
-        Ok(())
     }
 
     pub fn load<'src, R: Read>(
@@ -791,11 +791,13 @@ impl<'ast> AstLoader<'ast> {
             return Err(Error::InvalidMagicNumber.into());
         }
 
-        let mut version = [0; 128];
-        reader.read_exact(&mut version[..self.version_string.len()])?;
-
-        if &version[..self.version_string.len()] != self.version_string.as_bytes() {
-            return Err(Error::IncompatibleVersion.into());
+        let mut version = [0; 512];
+        match reader.read_exact(&mut version[..self.version_string.len()]) {
+            Ok(()) if &version[..self.version_string.len()] == self.version_string => {}
+            Err(e) if e.kind() != std::io::ErrorKind::UnexpectedEof => {
+                return Err(e.into())
+            }
+            _ => return Err(Error::IncompatibleVersion.into())
         }
 
         let mut deserializer = AstDeserializer::new(
@@ -818,7 +820,8 @@ impl<'ast> AstLoader<'ast> {
             let target = root_scope
                 .ensure_module(scope.path.clone(), scope.r#type)
                 .with_backtrace(&diag)?;
-            self.populate_scope(&diag, &target, scope)?;
+
+            scope.rehydrate(&diag, &target)?;
         }
 
         let num_items = deserializer.read_usize()?;
@@ -829,6 +832,14 @@ impl<'ast> AstLoader<'ast> {
             if let Some(contents) = contents.into_inner() {
                 self.context.get_cell(id).assign(contents);
             }
+        }
+
+        let num_local_names = deserializer.read_usize()?;
+        for _ in 0..num_local_names {
+            let id = AstId::deserialize(&mut deserializer)?;
+            let name = <&'ast str as AstSerializable<'ast>>::deserialize(&mut deserializer)?;
+
+            self.ast.add_local_name(id, name);
         }
 
         let num_files = deserializer.read_usize()?;

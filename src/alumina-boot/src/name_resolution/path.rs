@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display, Formatter};
 
-use alumina_boot_derive::AstSerializable;
+use alumina_boot_macros::AstSerializable;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, AstSerializable)]
 pub struct PathSegment<'ast>(pub &'ast str);

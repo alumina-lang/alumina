@@ -3,7 +3,7 @@ use crate::common::{
     AluminaError, CodeDiagnostic, CodeError, FileId, HashMap, HashSet, IndexSet, Marker,
 };
 use crate::ir::const_eval::ConstEvalErrorKind;
-use alumina_boot_derive::AstSerializable;
+use alumina_boot_macros::AstSerializable;
 use colored::Colorize;
 
 use std::cell::RefCell;

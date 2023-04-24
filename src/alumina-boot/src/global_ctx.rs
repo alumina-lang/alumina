@@ -1,4 +1,4 @@
-use crate::common::{HashMap, HashSet};
+use crate::common::HashMap;
 use crate::diagnostics::{self, DiagnosticContext};
 
 use std::cell::{Ref, RefCell};

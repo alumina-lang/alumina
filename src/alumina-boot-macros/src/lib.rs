@@ -5,8 +5,63 @@ extern crate syn;
 
 extern crate proc_macro;
 
-use proc_macro::TokenStream;
+use std::path::{Path, PathBuf};
+
+use proc_macro::{Span, TokenStream};
+use quote::ToTokens;
+use std::io::Read;
 use syn::{spanned::Spanned, DeriveInput, Lifetime};
+
+fn hash_file(path: &Path) -> std::io::Result<blake3::Hash> {
+    let mut hasher = blake3::Hasher::new();
+    let mut file = std::fs::File::open(path)?;
+
+    // could just read the whole file into memory, but mono.rs is like 220 kB
+    let mut buffer = [0; 65536];
+    loop {
+        match file.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(n) => {
+                hasher.update(&buffer[..n]);
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+
+    Ok(hasher.finalize())
+}
+
+#[proc_macro]
+pub fn sources_hash(input: TokenStream) -> TokenStream {
+    parse_macro_input!(input as syn::parse::Nothing);
+
+    // Calculate a compound hash of all the .rs files in CARGO_MANIFEST_DIR. NB: this is not env!() macro,
+    // as that would give the manifest directory of this crate (alumina-boot-macros) rather than the crate
+    // that is using the macro.
+    let crate_directory =
+        PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
+
+    let mut hashes: Vec<_> = walkdir::WalkDir::new(&crate_directory)
+        .into_iter()
+        .map(|e| e.expect("failed to walk directory"))
+        .filter(|entry| {
+            entry.file_type().is_file() && entry.path().extension() == Some("rs".as_ref())
+        })
+        .map(|entry| hash_file(entry.path()).expect("failed to hash file"))
+        .collect();
+
+    hashes.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+
+    let mut hasher = blake3::Hasher::new();
+    for hash in hashes {
+        hasher.update(hash.as_bytes());
+    }
+
+    let result = syn::LitByteStr::new(hasher.finalize().as_bytes(), Span::call_site().into());
+
+    TokenStream::from(result.into_token_stream())
+}
 
 /// Procedural macro for deriving the AstSerializable trait.
 #[proc_macro_derive(AstSerializable)]
