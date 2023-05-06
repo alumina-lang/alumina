@@ -158,8 +158,22 @@ impl<'ir> ExpressionVisitor<'ir> for DeadCodeEliminator<'ir> {
         kind: &IntrinsicValueKind<'ir>,
     ) -> Result<(), AluminaError> {
         match kind {
-            IntrinsicValueKind::SizeOfLike(_, typ) => self.visit_typ(typ),
-            _ => Ok(()),
+            IntrinsicValueKind::SizeOfLike(_, typ) | IntrinsicValueKind::Dangling(typ) => {
+                self.visit_typ(typ)
+            }
+            IntrinsicValueKind::FunctionLike(_)
+            | IntrinsicValueKind::ConstLike(_)
+            | IntrinsicValueKind::InConstContext
+            | IntrinsicValueKind::Uninitialized
+            | IntrinsicValueKind::Asm(_) => Ok(()),
+            IntrinsicValueKind::Transmute(inner) | IntrinsicValueKind::Volatile(inner) => {
+                self.visit_expr(inner)
+            }
+            // These should be unreachable
+            IntrinsicValueKind::ConstPanic(_)
+            | IntrinsicValueKind::ConstWrite(_, _)
+            | IntrinsicValueKind::ConstAlloc(_, _)
+            | IntrinsicValueKind::ConstFree(_) => Ok(()),
         }
     }
 

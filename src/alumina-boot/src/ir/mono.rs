@@ -4073,6 +4073,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             IntrinsicKind::ArrayLengthOf => self.array_length_of(generic!(0), span),
             IntrinsicKind::Trap => self.trap(span),
             IntrinsicKind::Transmute => self.transmute(generic!(1), arg!(0), span),
+            IntrinsicKind::Volatile => self.volatile(arg!(0), span),
             IntrinsicKind::CompileFail => self.compile_fail(arg!(0), span),
             IntrinsicKind::CompileWarn => self.compile_warn(arg!(0), span),
             IntrinsicKind::CompileNote => self.compile_note(arg!(0), span),
@@ -5590,6 +5591,30 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 .exprs
                 .codegen_intrinsic(IntrinsicValueKind::Transmute(arg), to, span))
         }
+    }
+
+    fn volatile(
+        &self,
+        arg: ir::ExprP<'ir>,
+        span: Option<Span>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        match arg.ty {
+            ir::Ty::Pointer(inner, _) => {
+                if inner.is_zero_sized() {
+                    ice!(self.diag, "zero-sized volatile not supported")
+                }
+            }
+            _ => {
+                return Err(self.diag.err(CodeDiagnostic::TypeMismatch(
+                    "pointer".to_string(),
+                    format!("{:?}", arg.ty),
+                )))
+            }
+        };
+
+        Ok(self
+            .exprs
+            .codegen_intrinsic(IntrinsicValueKind::Volatile(arg), arg.ty, span))
     }
 
     fn codegen_func(

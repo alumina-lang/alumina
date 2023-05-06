@@ -1384,6 +1384,7 @@ impl<'ir> ConstEvaluator<'ir> {
             ExprKind::Intrinsic(kind) => match kind {
                 IntrinsicValueKind::Uninitialized => Ok(Value::Uninitialized),
                 IntrinsicValueKind::Dangling(..) => Ok(Value::Uninitialized),
+                IntrinsicValueKind::Volatile(inner) => self.const_eval_defered(inner),
                 IntrinsicValueKind::SizeOfLike(_, _) => unsupported!(self),
                 IntrinsicValueKind::Transmute(inner) => {
                     let inner = self.const_eval_rvalue(inner)?;

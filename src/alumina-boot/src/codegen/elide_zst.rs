@@ -453,6 +453,11 @@ impl<'ir> ZstElider<'ir> {
                     expr.ty,
                     expr.span,
                 ),
+                IntrinsicValueKind::Volatile(inner) => builder.codegen_intrinsic(
+                    IntrinsicValueKind::Volatile(self.elide_zst_expr(inner)?),
+                    expr.ty,
+                    expr.span,
+                ),
                 IntrinsicValueKind::ConstPanic(_) => builder.unreachable(expr.span),
                 IntrinsicValueKind::ConstAlloc(_, size) => builder.block(
                     [Statement::Expression(self.elide_zst_expr(size)?)],

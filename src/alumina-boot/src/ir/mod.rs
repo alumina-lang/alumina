@@ -669,6 +669,7 @@ impl<'ir> Expr<'ir> {
 
             ExprKind::Intrinsic(ref kind) => match kind {
                 IntrinsicValueKind::Transmute(inner) => inner.pure(),
+                IntrinsicValueKind::Volatile(inner) => inner.pure(),
                 IntrinsicValueKind::SizeOfLike(_, _) => true,
                 IntrinsicValueKind::Dangling(_) => true,
                 IntrinsicValueKind::Asm(_) => false,

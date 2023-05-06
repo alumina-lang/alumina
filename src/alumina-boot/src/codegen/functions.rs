@@ -533,6 +533,28 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                     self.write_expr(diag, inner, false)?;
                     w!(self.fn_bodies, " }}._2");
                 }
+                IntrinsicValueKind::Volatile(inner) => {
+                    let Ty::Pointer(pointee, is_const) = expr.ty else {
+                         unreachable!()
+                    };
+
+                    if *is_const {
+                        w!(
+                            self.fn_bodies,
+                            "((volatile const {}*)",
+                            self.ctx.get_type(pointee)
+                        );
+                    } else {
+                        w!(
+                            self.fn_bodies,
+                            "((volatile {}*)",
+                            self.ctx.get_type(pointee)
+                        );
+                    }
+
+                    self.write_expr(diag, inner, false)?;
+                    w!(self.fn_bodies, ")");
+                }
                 IntrinsicValueKind::Uninitialized => {
                     // I wish there was a prettier way to do this
                     w!(

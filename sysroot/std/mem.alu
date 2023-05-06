@@ -1036,6 +1036,64 @@ fn copy<T>(src: &T, dst: &mut T, count: usize) {
     }
 }
 
+/// Performs a volatile read from a memory location.
+///
+/// This is useful in limited situations such as when dealing with signals/interrupts
+/// and is not likely to do what you'd expect in a multi-threaded scenario. Use [sync::Atomic] instead.
+///
+/// When pointed-to type is zero-sized, no read is performed.
+///
+/// ## Example
+/// ```no_run
+/// use std::mem::{write_volatile, read_volatile};
+///
+/// static FLAG: i32;
+///
+/// fn signal_handler() {
+///     FLAG.write_volatile(1);
+/// }
+///
+/// while FLAG.read_volatile() == 0 {
+///     // wait for something to set the flag
+/// }
+/// ```
+#[inline(ir)]
+fn read_volatile<T>(ptr: &T) -> T {
+    when *ptr is builtins::ZeroSized {
+        util::unit()
+    } else {
+        *intrinsics::volatile(ptr)
+    }
+}
+
+/// Performs a volatile write to a memory location.
+///
+/// This is useful in limited situations such as when dealing with signals/interrupts
+/// and is not likely to do what you'd expect in a multi-threaded scenario. Use [sync::Atomic] instead.
+///
+/// When pointed-to type is zero-sized, no write is performed.
+///
+/// ## Example
+/// ```no_run
+/// use std::mem::{write_volatile, read_volatile};
+///
+/// static FLAG: i32;
+///
+/// fn signal_handler() {
+///     FLAG.write_volatile(1);
+/// }
+///
+/// while FLAG.read_volatile() == 0 {
+///     // wait for something to set the flag
+/// }
+/// ```
+#[inline(ir)]
+fn write_volatile<T>(ptr: &mut T, val: T) {
+    when !(*ptr is builtins::ZeroSized) {
+        *intrinsics::volatile(ptr) = val;
+    }
+}
+
 /// Returns a dangling non-null pointer.
 ///
 /// The pointer is appropriately aligned for the provided type, and is non-null.
@@ -1332,5 +1390,25 @@ mod tests {
 
         assert_eq!(closure(), 42);
         assert_eq!(zeroed(), 0);
+    }
+
+    #[test]
+    fn test_volatile() {
+        let a = 42;
+
+        assert_eq!(a.read_volatile(), 42);
+        a.write_volatile(0);
+
+        assert_eq!(a, 0);
+    }
+
+    #[test]
+    fn test_volatile_zst() {
+        let a = ();
+
+        assert_eq!(a.read_volatile(), ());
+        a.write_volatile(());
+
+        assert_eq!(a, ());
     }
 }
