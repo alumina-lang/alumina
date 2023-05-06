@@ -104,6 +104,12 @@
 <a href="/std/mem/#item.copy">copy</a>
 </li>
 <li>
+<a href="/std/mem/#item.read_volatile">read_volatile</a>
+</li>
+<li>
+<a href="/std/mem/#item.write_volatile">write_volatile</a>
+</li>
+<li>
 <a href="/std/mem/#item.dangling">dangling</a>
 </li>
 </ul>
@@ -551,13 +557,85 @@ The ranges may overlap.
 </div>
 </li>
 <li>
+<div class="signature" id="item.read_volatile">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">read_volatile</span>&lt;T&gt;(ptr: &amp;T) -> T</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L1060-L1067"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Performs a volatile read from a memory location.
+</p><p>
+This is useful in limited situations such as when dealing with signals/interrupts
+and is not likely to do what you'd expect in a multi-threaded scenario. Use <a class="path-link" href="/std/sync/Atomic.html">Atomic</a> instead.
+</p><p>
+When pointed-to type is zero-sized, no read is performed.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::mem::{write_volatile, read_volatile};
+
+static FLAG: i32;
+
+fn signal_handler() {
+    FLAG.write_volatile(1);
+}
+
+while FLAG.read_volatile() == 0 {
+    // wait for something to set the flag
+}
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3amem%3a%3a%7bwrite%5fvolatile%2c%20read%5fvolatile%7d%3b%0a%20%20%20%20%0a%20%20%20%20static%20FLAG%3a%20i32%3b%0a%20%20%20%20%0a%20%20%20%20fn%20signal%5fhandler%28%29%20%7b%0a%20%20%20%20%20%20%20%20FLAG%2ewrite%5fvolatile%281%29%3b%0a%20%20%20%20%7d%0a%20%20%20%20%0a%20%20%20%20while%20FLAG%2eread%5fvolatile%28%29%20%3d%3d%200%20%7b%0a%20%20%20%20%20%20%20%20%2f%2f%20wait%20for%20something%20to%20set%20the%20flag%0a%20%20%20%20%7d%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.write_volatile">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">write_volatile</span>&lt;T&gt;(ptr: &amp;mut T, val: T)</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L1090-L1095"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Performs a volatile write to a memory location.
+</p><p>
+This is useful in limited situations such as when dealing with signals/interrupts
+and is not likely to do what you'd expect in a multi-threaded scenario. Use <a class="path-link" href="/std/sync/Atomic.html">Atomic</a> instead.
+</p><p>
+When pointed-to type is zero-sized, no write is performed.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::mem::{write_volatile, read_volatile};
+
+static FLAG: i32;
+
+fn signal_handler() {
+    FLAG.write_volatile(1);
+}
+
+while FLAG.read_volatile() == 0 {
+    // wait for something to set the flag
+}
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3amem%3a%3a%7bwrite%5fvolatile%2c%20read%5fvolatile%7d%3b%0a%20%20%20%20%0a%20%20%20%20static%20FLAG%3a%20i32%3b%0a%20%20%20%20%0a%20%20%20%20fn%20signal%5fhandler%28%29%20%7b%0a%20%20%20%20%20%20%20%20FLAG%2ewrite%5fvolatile%281%29%3b%0a%20%20%20%20%7d%0a%20%20%20%20%0a%20%20%20%20while%20FLAG%2eread%5fvolatile%28%29%20%3d%3d%200%20%7b%0a%20%20%20%20%20%20%20%20%2f%2f%20wait%20for%20something%20to%20set%20the%20flag%0a%20%20%20%20%7d%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
 <div class="signature" id="item.dangling">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">dangling</span>&lt;Ptr&gt;() -> Ptr<div class="protocol-bound">
 Ptr: <a href="/std/builtins/Pointer.html"><span class="identifier-type">Pointer</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L1069-L1072"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/mem.alu#L1127-L1130"/>source</a>
 </div>
 </div>
 <div class="item-doc">
