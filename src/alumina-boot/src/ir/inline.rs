@@ -207,6 +207,11 @@ impl<'ir> IrInliner<'ir> {
                     expr.ty,
                     self.span,
                 ),
+                IntrinsicValueKind::Volatile(inner) => builder.codegen_intrinsic(
+                    IntrinsicValueKind::Volatile(self.visit_expr(inner)?),
+                    expr.ty,
+                    self.span,
+                ),
                 IntrinsicValueKind::SizeOfLike(_, _)
                 | IntrinsicValueKind::Dangling(_)
                 | IntrinsicValueKind::Asm(_)
