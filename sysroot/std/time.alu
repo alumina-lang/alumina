@@ -47,7 +47,7 @@ impl Instant {
         }
 
         #[cfg(all(target_os = "macos", not(target_arch = "aarch64")))] {
-            Instant { inner: internal::mach_absolute_time() }
+            Instant { inner: libc::mach_absolute_time() }
         }
     }
 
@@ -177,18 +177,9 @@ impl Instant {
     /// Darwin-specific implementation.
     #[docs(no_index)]
     mod internal {
-        struct mach_timebase_info_t {
-            numer: u32,
-            denom: u32,
-        }
-        use libc::c_int as kern_return_t;
-
-        extern "C" fn mach_absolute_time() -> u64;
-        extern "C" fn mach_timebase_info(info: &mut mach_timebase_info_t) -> kern_return_t;
-
         static TIMEBASE: mach_timebase_info_t = {
-            let v: mach_timebase_info_t;
-            mach_timebase_info(&v);
+            let v: libc::mach_timebase_info_t;
+            libc::mach_timebase_info(&v);
             v
         };
     }

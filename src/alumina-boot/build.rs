@@ -310,6 +310,7 @@ fn main() {
         .unwrap();
 
     println!("cargo:rerun-if-changed={}", grammar_path.display());
+    println!("cargo:rustc-env=ALUMINA_BUILD_TARGET_ENV={}", env::var("CARGO_CFG_TARGET_ENV").unwrap());
 }
 
 fn get_language_info(

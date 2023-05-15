@@ -1,3 +1,11 @@
+//! "FFI" interfaces to libc.
+//!
+//! Target-specific interfaces are in submodules of this module and they are conditionally *-imported,
+//! so e.g. `libc::pause()` can be used instead of `libc::x86_64_unknown_linux_gnu::pause()` and it will
+//! select the appropriate target.
+//!
+//! Mostly copied/adapted from [Rust's libc crate](https://github.com/rust-lang/libc).
+
 type c_void = void;
 
 // FFI bindings to the standard C math library.
@@ -102,14 +110,14 @@ use libc::x86_64_apple_darwin::*;
 #[cfg(all(target_arch = "aarch64", target_os = "android"))]
 use libc::aarch64_linux_android::*;
 
-#[cfg(musl)]
+#[cfg(target_env = "musl")]
 {
     #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
     use libc::aarch64_unknown_linux_musl::*;
     #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
     use libc::x86_64_unknown_linux_musl::*;
 }
-#[cfg(not(musl))]
+#[cfg(target_env = "gnu")]
 {
     #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
     use libc::aarch64_unknown_linux_gnu::*;
