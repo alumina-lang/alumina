@@ -362,7 +362,7 @@ impl DirIterator {
     /// @ std::iter::Iterator::next
     fn next(self: &mut DirIterator) -> Option<Result<DirEntry>> {
         loop {
-            *libc::__errno() = 0;
+            *libc::__errno_location() = 0;
 
             #[cfg(target_os = "macos")]
             let ent = libc::readdir(self.inner);
@@ -537,9 +537,9 @@ impl FileType {
 /// File attributes (`stat`)
 struct FileAttr {
     #[cfg(target_os = "macos")]
-    inner: libc::t_stat,
+    inner: libc::stat_t,
     #[cfg(not(target_os = "macos"))]
-    inner: libc::t_stat64,
+    inner: libc::stat64_t,
 }
 
 impl FileAttr {

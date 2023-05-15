@@ -244,7 +244,7 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                         if let Attribute::Align(val) = attr {
                             alignment = Some(*val);
                         }
-                        if let Attribute::Packed = attr {
+                        if let Attribute::Packed(_) = attr {
                             is_packed = true;
                             w!(attributes, "__attribute__((packed)) ");
                         }

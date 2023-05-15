@@ -102,7 +102,11 @@ impl<'ir> Layouter<'ir> {
 
         for field_ty in fields {
             let field_layout = self.layout_of(field_ty)?;
-            let field_align = if is_packed { 1 } else { field_layout.align };
+            let field_align = if is_packed {
+                field_layout.align.min(custom_align.unwrap_or(1))
+            } else {
+                field_layout.align
+            };
 
             align = align.max(field_align);
             if is_union {
@@ -138,7 +142,7 @@ impl<'ir> Layouter<'ir> {
 
         for (elem, field_ty) in fields {
             let field_layout = self.layout_of(field_ty)?;
-            let field_align = if is_packed { 1 } else { field_layout.align };
+            let field_align = if is_packed { field_layout.align.min(custom_align.unwrap_or(1)) } else { field_layout.align };
 
             align = align.max(field_align);
             if is_union {
@@ -183,7 +187,10 @@ impl<'ir> Layouter<'ir> {
                 for attr in s.attributes {
                     match attr {
                         Attribute::Align(a) => custom_align = Some(*a),
-                        Attribute::Packed => is_packed = true,
+                        Attribute::Packed(a) => {
+                            custom_align = Some(*a);
+                            is_packed = true;
+                        }
                         Attribute::Transparent => {}
                         _ => {}
                     }

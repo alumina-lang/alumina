@@ -390,7 +390,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     if self
                         .attributes
                         .iter()
-                        .any(|a| matches!(a, Attribute::Packed))
+                        .any(|a| matches!(a, Attribute::Packed(_)))
                     {
                         return Err(CodeDiagnostic::AlignAndPacked)
                             .with_span_from(&self.scope, node);
@@ -408,7 +408,23 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                 self.attributes.push(Attribute::Transparent);
             }
             "packed" => {
-                check_duplicate!(Attribute::Packed);
+                check_duplicate!(Attribute::Packed(_));
+
+                let size: usize = node
+                    .child_by_field(FieldKind::Arguments)
+                    .and_then(|n| n.child_by_field(FieldKind::Argument))
+                    .map(|n| self.code.node_text(n))
+                    .map(|f| f.parse().map_err(|_| CodeDiagnostic::InvalidAttribute))
+                    .transpose()
+                    .with_span_from(&self.scope, node)?
+                    .unwrap_or(1);
+
+                if !size.is_power_of_two() {
+                    return Err(CodeDiagnostic::InvalidAttributeDetail(
+                        "packed alignment must be a power of two".to_string(),
+                    ))
+                    .with_span_from(&self.scope, node);
+                }
 
                 if self
                     .attributes
@@ -418,7 +434,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     return Err(CodeDiagnostic::AlignAndPacked).with_span_from(&self.scope, node);
                 }
 
-                self.attributes.push(Attribute::Packed);
+                self.attributes.push(Attribute::Packed(size));
             }
             "allow" | "deny" | "warn" => {
                 let lint_name = node
