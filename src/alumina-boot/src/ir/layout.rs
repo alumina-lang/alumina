@@ -118,7 +118,6 @@ impl<'ir> Layouter<'ir> {
         }
 
         align = align.max(custom_align.unwrap_or(1));
-        assert!(align == 1 || !is_packed);
 
         size = (size + align - 1) / align * align; // add padding at the end
 
@@ -142,7 +141,11 @@ impl<'ir> Layouter<'ir> {
 
         for (elem, field_ty) in fields {
             let field_layout = self.layout_of(field_ty)?;
-            let field_align = if is_packed { field_layout.align.min(custom_align.unwrap_or(1)) } else { field_layout.align };
+            let field_align = if is_packed {
+                field_layout.align.min(custom_align.unwrap_or(1))
+            } else {
+                field_layout.align
+            };
 
             align = align.max(field_align);
             if is_union {
@@ -159,7 +162,6 @@ impl<'ir> Layouter<'ir> {
         }
 
         align = align.max(custom_align.unwrap_or(1));
-        assert!(align == 1 || !is_packed);
 
         let final_size = (size + align - 1) / align * align;
         if final_size > size {
