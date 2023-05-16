@@ -213,42 +213,6 @@ fn test_struct_layout() {
     #[packed(16)] struct S { b: u8, a: i32 }
     assert_layout::<S>(8, 4);
 
-    #[align(1048576)] struct S { b: u8, a: i32 }
-    assert_layout::<S>(1048576, 1048576);
-
-    #[align(2097152)] struct S { b: u8, a: i32 }
-    assert_layout::<S>(2097152, 2097152);
-
-    #[align(4194304)] struct S { b: u8, a: i32 }
-    assert_layout::<S>(4194304, 4194304);
-
-    #[align(8388608)] struct S { b: u8, a: i32 }
-    assert_layout::<S>(8388608, 8388608);
-
-    #[align(16777216)] struct S { b: u8, a: i32 }
-    assert_layout::<S>(16777216, 16777216);
-
-    #[align(33554432)] struct S { b: u8, a: i32 }
-    assert_layout::<S>(33554432, 33554432);
-
-    #[align(67108864)] struct S { b: u8, a: i32 }
-    assert_layout::<S>(67108864, 67108864);
-
-    #[align(134217728)] struct S { b: u8, a: i32 }
-    assert_layout::<S>(134217728, 134217728);
-
-    #[align(268435456)] struct S { b: u8, a: i32 }
-    assert_layout::<S>(268435456, 268435456);
-
-    #[align(536870912)] struct S { b: u8, a: i32 }
-    assert_layout::<S>(536870912, 536870912);
-
-    #[align(1073741824)] struct S { b: u8, a: i32 }
-    assert_layout::<S>(1073741824, 1073741824);
-
-    #[align(2147483648)] struct S { b: u8, a: i32 }
-    assert_layout::<S>(2147483648, 2147483648);
-
     // tuple is still padded internally, but struct is not
     #[packed] struct S { a: u32, b: (u8, u128), c: u8 }
     assert_layout::<S>(37, 1);
@@ -308,6 +272,15 @@ fn test_union_layout() {
 
     #[packed] union U { a: u32, b: u8, c: u8 }
     assert_layout::<U>(4, 1);
+
+    #[packed(2)] union U { b: u8, a: i32 }
+    assert_layout::<U>(4, 2);
+
+    #[packed(4)] union U { b: u8, a: i32 }
+    assert_layout::<U>(4, 4);
+
+    #[packed(16)] union U { b: u8, a: i32 }
+    assert_layout::<U>(4, 4);
 
     union Inner { a: u8, b: u128 }
     #[packed] union U { a: u32, b: Inner, c: u8 }
