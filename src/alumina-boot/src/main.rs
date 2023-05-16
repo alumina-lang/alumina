@@ -24,7 +24,7 @@ use colored::Colorize;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 
 use walkdir::WalkDir;
 
@@ -187,7 +187,11 @@ fn run(args: Args) -> Result<(), ()> {
         }
         diag_ctx.add_note(CodeError::freeform(format!(
             "compiler timings: TOTAL took {}ms",
-            compiler.timings().map(|(_, t)| t).sum::<Duration>().as_millis()
+            compiler
+                .timings()
+                .map(|(_, t)| t)
+                .sum::<Duration>()
+                .as_millis()
         )));
     }
 
