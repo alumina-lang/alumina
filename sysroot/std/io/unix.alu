@@ -4,7 +4,7 @@ enum ErrorKind {
     UnexpectedEof,
     /// An error returned by the operating system.
     Os,
-    /// An error returned by [libc::getaddrinfo].
+    /// An error returned by `libc::getaddrinfo`.
     GetAddrInfo,
     /// A custom error.
     UserDefined
@@ -29,7 +29,7 @@ impl Error {
     fn from_errno() -> Error {
         Error {
             kind: ErrorKind::Os,
-            inner: _ErrorInner { errno: *libc::__errno() },
+            inner: _ErrorInner { errno: *libc::__errno_location() },
         }
     }
 
@@ -41,7 +41,7 @@ impl Error {
         }
     }
 
-    /// Create `Error` from the code returned by [libc::getaddrinfo].
+    /// Create `Error` from the code returned by `libc::getaddrinfo`.
     fn from_gai(gai_err: libc::c_int) -> Error {
         Error {
             kind: ErrorKind::GetAddrInfo,

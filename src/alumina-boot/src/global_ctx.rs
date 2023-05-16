@@ -40,6 +40,7 @@ impl GlobalCtx {
         result.add_cfg("target_os", std::env::consts::OS);
         result.add_cfg("target_family", std::env::consts::FAMILY);
         result.add_cfg("target_arch", std::env::consts::ARCH);
+        result.add_cfg("target_env", std::env!("ALUMINA_BUILD_TARGET_ENV"));
         result.add_cfg(
             "target_pointer_width",
             (std::mem::size_of::<usize>() * 8).to_string(),

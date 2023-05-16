@@ -204,6 +204,15 @@ fn test_struct_layout() {
     #[packed] struct S { a: u32, b: u8, c: u8 }
     assert_layout::<S>(6, 1);
 
+    #[packed(2)] struct S { b: u8, a: i32 }
+    assert_layout::<S>(6, 2);
+
+    #[packed(4)] struct S { b: u8, a: i32 }
+    assert_layout::<S>(8, 4);
+
+    #[packed(16)] struct S { b: u8, a: i32 }
+    assert_layout::<S>(8, 4);
+
     // tuple is still padded internally, but struct is not
     #[packed] struct S { a: u32, b: (u8, u128), c: u8 }
     assert_layout::<S>(37, 1);
@@ -263,6 +272,15 @@ fn test_union_layout() {
 
     #[packed] union U { a: u32, b: u8, c: u8 }
     assert_layout::<U>(4, 1);
+
+    #[packed(2)] union U { b: u8, a: i32 }
+    assert_layout::<U>(4, 2);
+
+    #[packed(4)] union U { b: u8, a: i32 }
+    assert_layout::<U>(4, 4);
+
+    #[packed(16)] union U { b: u8, a: i32 }
+    assert_layout::<U>(4, 4);
 
     union Inner { a: u8, b: u128 }
     #[packed] union U { a: u32, b: Inner, c: u8 }

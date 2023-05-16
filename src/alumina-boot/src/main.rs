@@ -24,7 +24,7 @@ use colored::Colorize;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use walkdir::WalkDir;
 
@@ -180,11 +180,19 @@ fn run(args: Args) -> Result<(), ()> {
     if args.timings {
         for (stage, duration) in compiler.timings() {
             diag_ctx.add_note(CodeError::freeform(format!(
-                "compiler timings: stage {:?} took {}ms",
+                "compiler timings: {:?} took {}ms",
                 stage,
                 duration.as_millis()
             )));
         }
+        diag_ctx.add_note(CodeError::freeform(format!(
+            "compiler timings: TOTAL took {}ms",
+            compiler
+                .timings()
+                .map(|(_, t)| t)
+                .sum::<Duration>()
+                .as_millis()
+        )));
     }
 
     let ret = match result {

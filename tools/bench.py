@@ -41,18 +41,15 @@ def main():
             print(f"Compiler failed with code {proc.returncode}")
             sys.exit(1)
 
-        total = 0
         for line in proc.stderr.decode("utf-8").splitlines():
-            m = re.search(r"stage (\w+) took (\d+)ms", line)
+            m = re.search(r"(\w+) took (\d+)ms", line)
             if m:
+                stage = m.group(1)
                 timing = int(m.group(2))
-                total += timing
-                timings[m.group(1)].append(timing)
+                if stage == "TOTAL" and args.markdown:
+                    stage = "**TOTAL**"
 
-        if args.markdown:
-            timings["**TOTAL**"].append(total)
-        else:
-            timings["TOTAL"].append(total)
+                timings[stage].append(timing)
 
     if args.markdown:
         print(

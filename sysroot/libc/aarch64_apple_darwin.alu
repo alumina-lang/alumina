@@ -1,0 +1,4699 @@
+#![cfg(all(target_arch = "aarch64", target_os = "macos"))]
+
+type int8_t = i8;
+type int16_t = i16;
+type int32_t = i32;
+type int64_t = i64;
+type uint8_t = u8;
+type uint16_t = u16;
+type uint32_t = u32;
+type uint64_t = u64;
+type __int128 = i128;
+type __uint128 = u128;
+type __int128_t = i128;
+type __uint128_t = u128;
+const _SIZE_128: usize = 16;
+const _ALIGN_128: usize = 16;
+type c_schar = i8;
+type c_uchar = u8;
+type c_short = i16;
+type c_ushort = u16;
+type c_int = i32;
+type c_uint = u32;
+type c_float = f32;
+type c_double = f64;
+type c_longlong = i64;
+type c_ulonglong = u64;
+type intmax_t = i64;
+type uintmax_t = u64;
+type size_t = usize;
+type ptrdiff_t = isize;
+type intptr_t = isize;
+type uintptr_t = usize;
+type ssize_t = isize;
+type pid_t = i32;
+type in_addr_t = u32;
+type in_port_t = u16;
+type sighandler_t = size_t;
+type cc_t = c_uchar;
+type uid_t = u32;
+type gid_t = u32;
+enum DIR {}
+type locale_t = &mut c_void;
+struct group {
+    gr_name: &mut c_char,
+    gr_passwd: &mut c_char,
+    gr_gid: gid_t,
+    gr_mem: &mut &mut c_char,
+}
+struct utimbuf {
+    actime: time_t,
+    modtime: time_t,
+}
+struct timeval {
+    tv_sec: time_t,
+    tv_usec: suseconds_t,
+}
+struct timespec {
+    tv_sec: time_t,
+
+    tv_nsec: c_long,
+}
+struct rlimit {
+    rlim_cur: rlim_t,
+    rlim_max: rlim_t,
+}
+struct rusage {
+    ru_utime: timeval,
+    ru_stime: timeval,
+    ru_maxrss: c_long,
+    ru_ixrss: c_long,
+    ru_idrss: c_long,
+    ru_isrss: c_long,
+    ru_minflt: c_long,
+    ru_majflt: c_long,
+    ru_nswap: c_long,
+    ru_inblock: c_long,
+    ru_oublock: c_long,
+    ru_msgsnd: c_long,
+    ru_msgrcv: c_long,
+    ru_nsignals: c_long,
+    ru_nvcsw: c_long,
+    ru_nivcsw: c_long,
+}
+struct ipv6_mreq {
+    ipv6mr_multiaddr: in6_addr,
+
+    ipv6mr_interface: c_uint,
+}
+struct hostent {
+    h_name: &mut c_char,
+    h_aliases: &mut &mut c_char,
+    h_addrtype: c_int,
+    h_length: c_int,
+    h_addr_list: &mut &mut c_char,
+}
+struct iovec {
+    iov_base: &mut c_void,
+    iov_len: size_t,
+}
+struct pollfd {
+    fd: c_int,
+    events: c_short,
+    revents: c_short,
+}
+struct winsize {
+    ws_row: c_ushort,
+    ws_col: c_ushort,
+    ws_xpixel: c_ushort,
+    ws_ypixel: c_ushort,
+}
+struct linger {
+    l_onoff: c_int,
+    l_linger: c_int,
+}
+struct sigval {
+    sival_ptr: &mut c_void,
+}
+struct itimerval {
+    it_interval: timeval,
+    it_value: timeval,
+}
+struct tms {
+    tms_utime: clock_t,
+    tms_stime: clock_t,
+    tms_cutime: clock_t,
+    tms_cstime: clock_t,
+}
+struct servent {
+    s_name: &mut c_char,
+    s_aliases: &mut &mut c_char,
+    s_port: c_int,
+    s_proto: &mut c_char,
+}
+struct protoent {
+    p_name: &mut c_char,
+    p_aliases: &mut &mut c_char,
+    p_proto: c_int,
+}
+const INT_MIN: c_int = -2147483648;
+const INT_MAX: c_int = 2147483647;
+const SIG_DFL: sighandler_t = 0 as sighandler_t;
+const SIG_IGN: sighandler_t = 1 as sighandler_t;
+const SIG_ERR: sighandler_t = !0 as sighandler_t;
+const DT_UNKNOWN: u8 = 0;
+const DT_FIFO: u8 = 1;
+const DT_CHR: u8 = 2;
+const DT_DIR: u8 = 4;
+const DT_BLK: u8 = 6;
+const DT_REG: u8 = 8;
+const DT_LNK: u8 = 10;
+const DT_SOCK: u8 = 12;
+const FD_CLOEXEC: c_int = 0x1;
+const USRQUOTA: c_int = 0;
+const GRPQUOTA: c_int = 1;
+const SIGIOT: c_int = 6;
+const S_ISUID: mode_t = 0x800;
+const S_ISGID: mode_t = 0x400;
+const S_ISVTX: mode_t = 0x200;
+const IF_NAMESIZE: size_t = 16;
+const IFNAMSIZ: size_t = IF_NAMESIZE;
+const LOG_EMERG: c_int = 0;
+const LOG_ALERT: c_int = 1;
+const LOG_CRIT: c_int = 2;
+const LOG_ERR: c_int = 3;
+const LOG_WARNING: c_int = 4;
+const LOG_NOTICE: c_int = 5;
+const LOG_INFO: c_int = 6;
+const LOG_DEBUG: c_int = 7;
+const LOG_KERN: c_int = 0;
+const LOG_USER: c_int = 1 << 3;
+const LOG_MAIL: c_int = 2 << 3;
+const LOG_DAEMON: c_int = 3 << 3;
+const LOG_AUTH: c_int = 4 << 3;
+const LOG_SYSLOG: c_int = 5 << 3;
+const LOG_LPR: c_int = 6 << 3;
+const LOG_NEWS: c_int = 7 << 3;
+const LOG_UUCP: c_int = 8 << 3;
+const LOG_LOCAL0: c_int = 16 << 3;
+const LOG_LOCAL1: c_int = 17 << 3;
+const LOG_LOCAL2: c_int = 18 << 3;
+const LOG_LOCAL3: c_int = 19 << 3;
+const LOG_LOCAL4: c_int = 20 << 3;
+const LOG_LOCAL5: c_int = 21 << 3;
+const LOG_LOCAL6: c_int = 22 << 3;
+const LOG_LOCAL7: c_int = 23 << 3;
+const LOG_PID: c_int = 0x01;
+const LOG_CONS: c_int = 0x02;
+const LOG_ODELAY: c_int = 0x04;
+const LOG_NDELAY: c_int = 0x08;
+const LOG_NOWAIT: c_int = 0x10;
+const LOG_PRIMASK: c_int = 7;
+const LOG_FACMASK: c_int = 0x3f8;
+const PRIO_MIN: c_int = -20;
+const PRIO_MAX: c_int = 20;
+const IPPROTO_ICMP: c_int = 1;
+const IPPROTO_ICMPV6: c_int = 58;
+const IPPROTO_TCP: c_int = 6;
+const IPPROTO_UDP: c_int = 17;
+const IPPROTO_IP: c_int = 0;
+const IPPROTO_IPV6: c_int = 41;
+const INADDR_LOOPBACK: in_addr_t = 2130706433;
+const INADDR_ANY: in_addr_t = 0;
+const INADDR_BROADCAST: in_addr_t = 4294967295;
+const INADDR_NONE: in_addr_t = 4294967295;
+const ARPOP_REQUEST: u16 = 1;
+const ARPOP_REPLY: u16 = 2;
+const ATF_COM: c_int = 0x02;
+const ATF_PERM: c_int = 0x04;
+const ATF_PUBL: c_int = 0x08;
+const ATF_USETRAILERS: c_int = 0x10;
+enum FILE {}
+enum fpos_t {}
+extern "C" fn isalnum(c: c_int) -> c_int;
+extern "C" fn isalpha(c: c_int) -> c_int;
+extern "C" fn iscntrl(c: c_int) -> c_int;
+extern "C" fn isdigit(c: c_int) -> c_int;
+extern "C" fn isgraph(c: c_int) -> c_int;
+extern "C" fn islower(c: c_int) -> c_int;
+extern "C" fn isprint(c: c_int) -> c_int;
+extern "C" fn ispunct(c: c_int) -> c_int;
+extern "C" fn isspace(c: c_int) -> c_int;
+extern "C" fn isupper(c: c_int) -> c_int;
+extern "C" fn isxdigit(c: c_int) -> c_int;
+extern "C" fn isblank(c: c_int) -> c_int;
+extern "C" fn tolower(c: c_int) -> c_int;
+extern "C" fn toupper(c: c_int) -> c_int;
+extern "C" fn qsort(base: &mut c_void, num: size_t, size: size_t, compar: fn(&c_void, &c_void) -> c_int);
+extern "C" fn bsearch(key: &c_void, base: &c_void, num: size_t, size: size_t, compar: fn(&c_void, &c_void) -> c_int) -> &mut c_void;
+extern "C" fn fopen(filename: &c_char, mode: &c_char) -> &mut FILE;
+extern "C" fn freopen(filename: &c_char, mode: &c_char, file: &mut FILE) -> &mut FILE;
+extern "C" fn fflush(file: &mut FILE) -> c_int;
+extern "C" fn fclose(file: &mut FILE) -> c_int;
+extern "C" fn remove(filename: &c_char) -> c_int;
+extern "C" fn rename(oldname: &c_char, newname: &c_char) -> c_int;
+extern "C" fn tmpfile() -> &mut FILE;
+extern "C" fn setvbuf(stream: &mut FILE, buffer: &mut c_char, mode: c_int, size: size_t) -> c_int;
+extern "C" fn setbuf(stream: &mut FILE, buf: &mut c_char);
+extern "C" fn getchar() -> c_int;
+extern "C" fn putchar(c: c_int) -> c_int;
+extern "C" fn fgetc(stream: &mut FILE) -> c_int;
+extern "C" fn fgets(buf: &mut c_char, n: c_int, stream: &mut FILE) -> &mut c_char;
+extern "C" fn fputc(c: c_int, stream: &mut FILE) -> c_int;
+extern "C" fn fputs(s: &c_char, stream: &mut FILE) -> c_int;
+extern "C" fn puts(s: &c_char) -> c_int;
+extern "C" fn ungetc(c: c_int, stream: &mut FILE) -> c_int;
+extern "C" fn fread(ptr: &mut c_void, size: size_t, nobj: size_t, stream: &mut FILE) -> size_t;
+extern "C" fn fwrite(ptr: &c_void, size: size_t, nobj: size_t, stream: &mut FILE) -> size_t;
+extern "C" fn fseek(stream: &mut FILE, offset: c_long, whence: c_int) -> c_int;
+extern "C" fn ftell(stream: &mut FILE) -> c_long;
+extern "C" fn rewind(stream: &mut FILE);
+extern "C" fn fgetpos(stream: &mut FILE, ptr: &mut fpos_t) -> c_int;
+extern "C" fn fsetpos(stream: &mut FILE, ptr: &fpos_t) -> c_int;
+extern "C" fn feof(stream: &mut FILE) -> c_int;
+extern "C" fn ferror(stream: &mut FILE) -> c_int;
+extern "C" fn clearerr(stream: &mut FILE);
+extern "C" fn perror(s: &c_char);
+extern "C" fn atof(s: &c_char) -> c_double;
+extern "C" fn atoi(s: &c_char) -> c_int;
+extern "C" fn atol(s: &c_char) -> c_long;
+extern "C" fn atoll(s: &c_char) -> c_longlong;
+extern "C" fn strtod(s: &c_char, endp: &mut &mut c_char) -> c_double;
+extern "C" fn strtof(s: &c_char, endp: &mut &mut c_char) -> c_float;
+extern "C" fn strtol(s: &c_char, endp: &mut &mut c_char, base: c_int) -> c_long;
+extern "C" fn strtoll(s: &c_char, endp: &mut &mut c_char, base: c_int) -> c_longlong;
+extern "C" fn strtoul(s: &c_char, endp: &mut &mut c_char, base: c_int) -> c_ulong;
+extern "C" fn strtoull(s: &c_char, endp: &mut &mut c_char, base: c_int) -> c_ulonglong;
+extern "C" fn calloc(nobj: size_t, size: size_t) -> &mut c_void;
+extern "C" fn malloc(size: size_t) -> &mut c_void;
+extern "C" fn realloc(p: &mut c_void, size: size_t) -> &mut c_void;
+extern "C" fn free(p: &mut c_void);
+extern "C" fn abort() -> !;
+extern "C" fn exit(status: c_int) -> !;
+extern "C" fn _exit(status: c_int) -> !;
+extern "C" fn system(s: &c_char) -> c_int;
+extern "C" fn getenv(s: &c_char) -> &mut c_char;
+extern "C" fn strcpy(dst: &mut c_char, src: &c_char) -> &mut c_char;
+extern "C" fn strncpy(dst: &mut c_char, src: &c_char, n: size_t) -> &mut c_char;
+extern "C" fn stpcpy(dst: &mut c_char, src: &c_char) -> &mut c_char;
+extern "C" fn strcat(s: &mut c_char, ct: &c_char) -> &mut c_char;
+extern "C" fn strncat(s: &mut c_char, ct: &c_char, n: size_t) -> &mut c_char;
+extern "C" fn strcmp(cs: &c_char, ct: &c_char) -> c_int;
+extern "C" fn strncmp(cs: &c_char, ct: &c_char, n: size_t) -> c_int;
+extern "C" fn strcoll(cs: &c_char, ct: &c_char) -> c_int;
+extern "C" fn strchr(cs: &c_char, c: c_int) -> &mut c_char;
+extern "C" fn strrchr(cs: &c_char, c: c_int) -> &mut c_char;
+extern "C" fn strspn(cs: &c_char, ct: &c_char) -> size_t;
+extern "C" fn strcspn(cs: &c_char, ct: &c_char) -> size_t;
+extern "C" fn strdup(cs: &c_char) -> &mut c_char;
+extern "C" fn strndup(cs: &c_char, n: size_t) -> &mut c_char;
+extern "C" fn strpbrk(cs: &c_char, ct: &c_char) -> &mut c_char;
+extern "C" fn strstr(cs: &c_char, ct: &c_char) -> &mut c_char;
+extern "C" fn strcasecmp(s1: &c_char, s2: &c_char) -> c_int;
+extern "C" fn strncasecmp(s1: &c_char, s2: &c_char, n: size_t) -> c_int;
+extern "C" fn strlen(cs: &c_char) -> size_t;
+extern "C" fn strnlen(cs: &c_char, maxlen: size_t) -> size_t;
+extern "C" fn strerror(n: c_int) -> &mut c_char;
+extern "C" fn strtok(s: &mut c_char, t: &c_char) -> &mut c_char;
+extern "C" fn strtok_r(s: &mut c_char, t: &c_char, p: &mut &mut c_char) -> &mut c_char;
+extern "C" fn strxfrm(s: &mut c_char, ct: &c_char, n: size_t) -> size_t;
+extern "C" fn strsignal(sig: c_int) -> &mut c_char;
+extern "C" fn wcslen(buf: &wchar_t) -> size_t;
+extern "C" fn wcstombs(dest: &mut c_char, src: &wchar_t, n: size_t) -> size_t;
+extern "C" fn memchr(cx: &c_void, c: c_int, n: size_t) -> &mut c_void;
+extern "C" fn wmemchr(cx: &wchar_t, c: wchar_t, n: size_t) -> &mut wchar_t;
+extern "C" fn memcmp(cx: &c_void, ct: &c_void, n: size_t) -> c_int;
+extern "C" fn memcpy(dest: &mut c_void, src: &c_void, n: size_t) -> &mut c_void;
+extern "C" fn memmove(dest: &mut c_void, src: &c_void, n: size_t) -> &mut c_void;
+extern "C" fn memset(dest: &mut c_void, c: c_int, n: size_t) -> &mut c_void;
+extern "C" fn getpwnam(name: &c_char) -> &mut passwd;
+extern "C" fn getpwuid(uid: uid_t) -> &mut passwd;
+extern "C" fn fprintf(stream: &mut FILE, format: &c_char, ...) -> c_int;
+extern "C" fn printf(format: &c_char, ...) -> c_int;
+extern "C" fn snprintf(s: &mut c_char, n: size_t, format: &c_char, ...) -> c_int;
+extern "C" fn sprintf(s: &mut c_char, format: &c_char, ...) -> c_int;
+extern "C" fn fscanf(stream: &mut FILE, format: &c_char, ...) -> c_int;
+extern "C" fn scanf(format: &c_char, ...) -> c_int;
+extern "C" fn sscanf(s: &c_char, format: &c_char, ...) -> c_int;
+extern "C" fn getchar_unlocked() -> c_int;
+extern "C" fn putchar_unlocked(c: c_int) -> c_int;
+extern "C" fn socket(domain: c_int, ty: c_int, protocol: c_int) -> c_int;
+extern "C" fn connect(socket: c_int, address: &sockaddr, len: socklen_t) -> c_int;
+extern "C" fn listen(socket: c_int, backlog: c_int) -> c_int;
+extern "C" fn accept(socket: c_int, address: &mut sockaddr, address_len: &mut socklen_t) -> c_int;
+extern "C" fn getpeername(socket: c_int, address: &mut sockaddr, address_len: &mut socklen_t) -> c_int;
+extern "C" fn getsockname(socket: c_int, address: &mut sockaddr, address_len: &mut socklen_t) -> c_int;
+extern "C" fn setsockopt(socket: c_int, level: c_int, name: c_int, value: &c_void, option_len: socklen_t) -> c_int;
+extern "C" fn socketpair(domain: c_int, type_: c_int, protocol: c_int, socket_vector: &mut c_int) -> c_int;
+extern "C" fn sendto(socket: c_int, buf: &c_void, len: size_t, flags: c_int, addr: &sockaddr, addrlen: socklen_t) -> ssize_t;
+extern "C" fn shutdown(socket: c_int, how: c_int) -> c_int;
+extern "C" fn chmod(path: &c_char, mode: mode_t) -> c_int;
+extern "C" fn fchmod(fd: c_int, mode: mode_t) -> c_int;
+extern "C" fn fstat(fildes: c_int, buf: &mut stat_t) -> c_int;
+extern "C" fn mkdir(path: &c_char, mode: mode_t) -> c_int;
+extern "C" fn stat(path: &c_char, buf: &mut stat_t) -> c_int;
+extern "C" fn pclose(stream: &mut FILE) -> c_int;
+extern "C" fn fdopen(fd: c_int, mode: &c_char) -> &mut FILE;
+extern "C" fn fileno(stream: &mut FILE) -> c_int;
+extern "C" fn open(path: &c_char, oflag: c_int, ...) -> c_int;
+extern "C" fn creat(path: &c_char, mode: mode_t) -> c_int;
+extern "C" fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
+extern "C" fn opendir(dirname: &c_char) -> &mut DIR;
+extern "C" fn readdir(dirp: &mut DIR) -> &mut dirent;
+extern "C" fn closedir(dirp: &mut DIR) -> c_int;
+extern "C" fn rewinddir(dirp: &mut DIR);
+extern "C" fn fchmodat(dirfd: c_int, pathname: &c_char, mode: mode_t, flags: c_int) -> c_int;
+extern "C" fn fchown(fd: c_int, owner: uid_t, group: gid_t) -> c_int;
+extern "C" fn fchownat(dirfd: c_int, pathname: &c_char, owner: uid_t, group: gid_t, flags: c_int) -> c_int;
+extern "C" fn fstatat(dirfd: c_int, pathname: &c_char, buf: &mut stat_t, flags: c_int) -> c_int;
+extern "C" fn linkat(olddirfd: c_int, oldpath: &c_char, newdirfd: c_int, newpath: &c_char, flags: c_int) -> c_int;
+extern "C" fn renameat(olddirfd: c_int, oldpath: &c_char, newdirfd: c_int, newpath: &c_char) -> c_int;
+extern "C" fn symlinkat(target: &c_char, newdirfd: c_int, linkpath: &c_char) -> c_int;
+extern "C" fn unlinkat(dirfd: c_int, pathname: &c_char, flags: c_int) -> c_int;
+extern "C" fn access(path: &c_char, amode: c_int) -> c_int;
+extern "C" fn alarm(seconds: c_uint) -> c_uint;
+extern "C" fn chdir(dir: &c_char) -> c_int;
+extern "C" fn fchdir(dirfd: c_int) -> c_int;
+extern "C" fn chown(path: &c_char, uid: uid_t, gid: gid_t) -> c_int;
+extern "C" fn lchown(path: &c_char, uid: uid_t, gid: gid_t) -> c_int;
+extern "C" fn close(fd: c_int) -> c_int;
+extern "C" fn dup(fd: c_int) -> c_int;
+extern "C" fn dup2(src: c_int, dst: c_int) -> c_int;
+extern "C" fn execl(path: &c_char, arg0: &c_char, ...) -> c_int;
+extern "C" fn execle(path: &c_char, arg0: &c_char, ...) -> c_int;
+extern "C" fn execlp(file: &c_char, arg0: &c_char, ...) -> c_int;
+extern "C" fn execv(prog: &c_char, argv: &&c_char) -> c_int;
+extern "C" fn execve(prog: &c_char, argv: &&c_char, envp: &&c_char) -> c_int;
+extern "C" fn execvp(c: &c_char, argv: &&c_char) -> c_int;
+extern "C" fn fork() -> pid_t;
+extern "C" fn fpathconf(filedes: c_int, name: c_int) -> c_long;
+extern "C" fn getcwd(buf: &mut c_char, size: size_t) -> &mut c_char;
+extern "C" fn getegid() -> gid_t;
+extern "C" fn geteuid() -> uid_t;
+extern "C" fn getgid() -> gid_t;
+extern "C" fn getgroups(ngroups_max: c_int, groups: &mut gid_t) -> c_int;
+extern "C" fn getlogin() -> &mut c_char;
+extern "C" fn getopt(argc: c_int, argv: &&mut c_char, optstr: &c_char) -> c_int;
+extern "C" fn getpgid(pid: pid_t) -> pid_t;
+extern "C" fn getpgrp() -> pid_t;
+extern "C" fn getpid() -> pid_t;
+extern "C" fn getppid() -> pid_t;
+extern "C" fn getuid() -> uid_t;
+extern "C" fn isatty(fd: c_int) -> c_int;
+extern "C" fn link(src: &c_char, dst: &c_char) -> c_int;
+extern "C" fn lseek(fd: c_int, offset: off_t, whence: c_int) -> off_t;
+extern "C" fn pathconf(path: &c_char, name: c_int) -> c_long;
+extern "C" fn pipe(fds: &mut c_int) -> c_int;
+extern "C" fn posix_memalign(memptr: &mut &mut c_void, align: size_t, size: size_t) -> c_int;
+extern "C" fn read(fd: c_int, buf: &mut c_void, count: size_t) -> ssize_t;
+extern "C" fn rmdir(path: &c_char) -> c_int;
+extern "C" fn seteuid(uid: uid_t) -> c_int;
+extern "C" fn setegid(gid: gid_t) -> c_int;
+extern "C" fn setgid(gid: gid_t) -> c_int;
+extern "C" fn setpgid(pid: pid_t, pgid: pid_t) -> c_int;
+extern "C" fn setsid() -> pid_t;
+extern "C" fn setuid(uid: uid_t) -> c_int;
+extern "C" fn setreuid(ruid: uid_t, euid: uid_t) -> c_int;
+extern "C" fn setregid(rgid: gid_t, egid: gid_t) -> c_int;
+extern "C" fn sleep(secs: c_uint) -> c_uint;
+extern "C" fn nanosleep(rqtp: &timespec, rmtp: &mut timespec) -> c_int;
+extern "C" fn tcgetpgrp(fd: c_int) -> pid_t;
+extern "C" fn tcsetpgrp(fd: c_int, pgrp: pid_t) -> c_int;
+extern "C" fn ttyname(fd: c_int) -> &mut c_char;
+extern "C" fn ttyname_r(fd: c_int, buf: &mut c_char, buflen: size_t) -> c_int;
+extern "C" fn unlink(c: &c_char) -> c_int;
+extern "C" fn wait(status: &mut c_int) -> pid_t;
+extern "C" fn waitpid(pid: pid_t, status: &mut c_int, options: c_int) -> pid_t;
+extern "C" fn write(fd: c_int, buf: &c_void, count: size_t) -> ssize_t;
+extern "C" fn pread(fd: c_int, buf: &mut c_void, count: size_t, offset: off_t) -> ssize_t;
+extern "C" fn pwrite(fd: c_int, buf: &c_void, count: size_t, offset: off_t) -> ssize_t;
+extern "C" fn umask(mask: mode_t) -> mode_t;
+extern "C" fn utime(file: &c_char, buf: &utimbuf) -> c_int;
+extern "C" fn kill(pid: pid_t, sig: c_int) -> c_int;
+extern "C" fn killpg(pgrp: pid_t, sig: c_int) -> c_int;
+extern "C" fn mlock(addr: &c_void, len: size_t) -> c_int;
+extern "C" fn munlock(addr: &c_void, len: size_t) -> c_int;
+extern "C" fn mlockall(flags: c_int) -> c_int;
+extern "C" fn munlockall() -> c_int;
+extern "C" fn mmap(addr: &mut c_void, len: size_t, prot: c_int, flags: c_int, fd: c_int, offset: off_t) -> &mut c_void;
+extern "C" fn munmap(addr: &mut c_void, len: size_t) -> c_int;
+extern "C" fn if_nametoindex(ifname: &c_char) -> c_uint;
+extern "C" fn if_indextoname(ifindex: c_uint, ifname: &mut c_char) -> &mut c_char;
+extern "C" fn lstat(path: &c_char, buf: &mut stat_t) -> c_int;
+extern "C" fn fsync(fd: c_int) -> c_int;
+extern "C" fn setenv(name: &c_char, val: &c_char, overwrite: c_int) -> c_int;
+extern "C" fn unsetenv(name: &c_char) -> c_int;
+extern "C" fn symlink(path1: &c_char, path2: &c_char) -> c_int;
+extern "C" fn truncate(path: &c_char, length: off_t) -> c_int;
+extern "C" fn ftruncate(fd: c_int, length: off_t) -> c_int;
+extern "C" fn signal(signum: c_int, handler: sighandler_t) -> sighandler_t;
+extern "C" fn getrusage(resource: c_int, usage: &mut rusage) -> c_int;
+#[link_name("_realpath$DARWIN_EXTSN")]
+extern "C" fn realpath(pathname: &c_char, resolved: &mut c_char) -> &mut c_char;
+extern "C" fn flock(fd: c_int, operation: c_int) -> c_int;
+extern "C" fn times(buf: &mut tms) -> clock_t;
+extern "C" fn pthread_self() -> pthread_t;
+extern "C" fn pthread_join(native: pthread_t, value: &mut &mut c_void) -> c_int;
+extern "C" fn pthread_exit(value: &mut c_void) -> !;
+extern "C" fn pthread_attr_init(attr: &mut pthread_attr_t) -> c_int;
+extern "C" fn pthread_attr_destroy(attr: &mut pthread_attr_t) -> c_int;
+extern "C" fn pthread_attr_setstacksize(attr: &mut pthread_attr_t, stack_size: size_t) -> c_int;
+extern "C" fn pthread_attr_setdetachstate(attr: &mut pthread_attr_t, state: c_int) -> c_int;
+extern "C" fn pthread_detach(thread: pthread_t) -> c_int;
+extern "C" fn sched_yield() -> c_int;
+extern "C" fn pthread_key_create(key: &mut pthread_key_t, dtor: fn(&mut c_void)) -> c_int;
+extern "C" fn pthread_key_delete(key: pthread_key_t) -> c_int;
+extern "C" fn pthread_getspecific(key: pthread_key_t) -> &mut c_void;
+extern "C" fn pthread_setspecific(key: pthread_key_t, value: &c_void) -> c_int;
+extern "C" fn pthread_mutex_init(lock: &mut pthread_mutex_t, attr: &pthread_mutexattr_t) -> c_int;
+extern "C" fn pthread_mutex_destroy(lock: &mut pthread_mutex_t) -> c_int;
+extern "C" fn pthread_mutex_lock(lock: &mut pthread_mutex_t) -> c_int;
+extern "C" fn pthread_mutex_trylock(lock: &mut pthread_mutex_t) -> c_int;
+extern "C" fn pthread_mutex_unlock(lock: &mut pthread_mutex_t) -> c_int;
+extern "C" fn pthread_mutexattr_init(attr: &mut pthread_mutexattr_t) -> c_int;
+extern "C" fn pthread_mutexattr_destroy(attr: &mut pthread_mutexattr_t) -> c_int;
+extern "C" fn pthread_mutexattr_settype(attr: &mut pthread_mutexattr_t, _type: c_int) -> c_int;
+extern "C" fn pthread_cond_init(cond: &mut pthread_cond_t, attr: &pthread_condattr_t) -> c_int;
+extern "C" fn pthread_cond_wait(cond: &mut pthread_cond_t, lock: &mut pthread_mutex_t) -> c_int;
+extern "C" fn pthread_cond_timedwait(cond: &mut pthread_cond_t, lock: &mut pthread_mutex_t, abstime: &timespec) -> c_int;
+extern "C" fn pthread_cond_signal(cond: &mut pthread_cond_t) -> c_int;
+extern "C" fn pthread_cond_broadcast(cond: &mut pthread_cond_t) -> c_int;
+extern "C" fn pthread_cond_destroy(cond: &mut pthread_cond_t) -> c_int;
+extern "C" fn pthread_condattr_init(attr: &mut pthread_condattr_t) -> c_int;
+extern "C" fn pthread_condattr_destroy(attr: &mut pthread_condattr_t) -> c_int;
+extern "C" fn pthread_rwlock_init(lock: &mut pthread_rwlock_t, attr: &pthread_rwlockattr_t) -> c_int;
+extern "C" fn pthread_rwlock_destroy(lock: &mut pthread_rwlock_t) -> c_int;
+extern "C" fn pthread_rwlock_rdlock(lock: &mut pthread_rwlock_t) -> c_int;
+extern "C" fn pthread_rwlock_tryrdlock(lock: &mut pthread_rwlock_t) -> c_int;
+extern "C" fn pthread_rwlock_wrlock(lock: &mut pthread_rwlock_t) -> c_int;
+extern "C" fn pthread_rwlock_trywrlock(lock: &mut pthread_rwlock_t) -> c_int;
+extern "C" fn pthread_rwlock_unlock(lock: &mut pthread_rwlock_t) -> c_int;
+extern "C" fn pthread_rwlockattr_init(attr: &mut pthread_rwlockattr_t) -> c_int;
+extern "C" fn pthread_rwlockattr_destroy(attr: &mut pthread_rwlockattr_t) -> c_int;
+extern "C" fn getsockopt(sockfd: c_int, level: c_int, optname: c_int, optval: &mut c_void, optlen: &mut socklen_t) -> c_int;
+extern "C" fn raise(signum: c_int) -> c_int;
+extern "C" fn utimes(filename: &c_char, times: &timeval) -> c_int;
+extern "C" fn dlopen(filename: &c_char, flag: c_int) -> &mut c_void;
+extern "C" fn dlerror() -> &mut c_char;
+extern "C" fn dlsym(handle: &mut c_void, symbol: &c_char) -> &mut c_void;
+extern "C" fn dlclose(handle: &mut c_void) -> c_int;
+extern "C" fn getaddrinfo(node: &c_char, service: &c_char, hints: &addrinfo, res: &mut &mut addrinfo) -> c_int;
+extern "C" fn freeaddrinfo(res: &mut addrinfo);
+extern "C" fn hstrerror(errcode: c_int) -> &c_char;
+extern "C" fn gai_strerror(errcode: c_int) -> &c_char;
+#[link_name("_res_9_init")]
+extern "C" fn res_init() -> c_int;
+extern "C" fn gmtime_r(time_p: &time_t, result: &mut tm) -> &mut tm;
+extern "C" fn localtime_r(time_p: &time_t, result: &mut tm) -> &mut tm;
+extern "C" fn mktime(tm_: &mut tm) -> time_t;
+extern "C" fn time(time: &mut time_t) -> time_t;
+extern "C" fn gmtime(time_p: &time_t) -> &mut tm;
+extern "C" fn localtime(time_p: &time_t) -> &mut tm;
+extern "C" fn difftime(time1: time_t, time0: time_t) -> c_double;
+extern "C" fn timegm(tm_: &mut tm) -> time_t;
+extern "C" fn mknod(pathname: &c_char, mode: mode_t, dev: dev_t) -> c_int;
+extern "C" fn gethostname(name: &mut c_char, len: size_t) -> c_int;
+extern "C" fn endservent();
+extern "C" fn getservbyname(name: &c_char, proto: &c_char) -> &mut servent;
+extern "C" fn getservbyport(port: c_int, proto: &c_char) -> &mut servent;
+extern "C" fn getservent() -> &mut servent;
+extern "C" fn setservent(stayopen: c_int);
+extern "C" fn getprotobyname(name: &c_char) -> &mut protoent;
+extern "C" fn getprotobynumber(proto: c_int) -> &mut protoent;
+extern "C" fn chroot(name: &c_char) -> c_int;
+extern "C" fn usleep(secs: c_uint) -> c_int;
+extern "C" fn send(socket: c_int, buf: &c_void, len: size_t, flags: c_int) -> ssize_t;
+extern "C" fn recv(socket: c_int, buf: &mut c_void, len: size_t, flags: c_int) -> ssize_t;
+extern "C" fn putenv(string: &mut c_char) -> c_int;
+extern "C" fn poll(fds: &mut pollfd, nfds: nfds_t, timeout: c_int) -> c_int;
+extern "C" fn select(nfds: c_int, readfds: &mut fd_set, writefds: &mut fd_set, errorfds: &mut fd_set, timeout: &mut timeval) -> c_int;
+extern "C" fn setlocale(category: c_int, locale: &c_char) -> &mut c_char;
+extern "C" fn localeconv() -> &mut lconv;
+extern "C" fn sem_wait(sem: &mut sem_t) -> c_int;
+extern "C" fn sem_trywait(sem: &mut sem_t) -> c_int;
+extern "C" fn sem_post(sem: &mut sem_t) -> c_int;
+extern "C" fn statvfs(path: &c_char, buf: &mut statvfs_t) -> c_int;
+extern "C" fn fstatvfs(fd: c_int, buf: &mut statvfs_t) -> c_int;
+extern "C" fn sigemptyset(set: &mut sigset_t) -> c_int;
+extern "C" fn sigaddset(set: &mut sigset_t, signum: c_int) -> c_int;
+extern "C" fn sigfillset(set: &mut sigset_t) -> c_int;
+extern "C" fn sigdelset(set: &mut sigset_t, signum: c_int) -> c_int;
+extern "C" fn sigismember(set: &sigset_t, signum: c_int) -> c_int;
+extern "C" fn sigprocmask(how: c_int, set: &sigset_t, oldset: &mut sigset_t) -> c_int;
+extern "C" fn sigpending(set: &mut sigset_t) -> c_int;
+extern "C" fn sysconf(name: c_int) -> c_long;
+extern "C" fn mkfifo(path: &c_char, mode: mode_t) -> c_int;
+extern "C" fn fseeko(stream: &mut FILE, offset: off_t, whence: c_int) -> c_int;
+extern "C" fn ftello(stream: &mut FILE) -> off_t;
+extern "C" fn tcdrain(fd: c_int) -> c_int;
+extern "C" fn cfgetispeed(termios_: &termios) -> speed_t;
+extern "C" fn cfgetospeed(termios_: &termios) -> speed_t;
+extern "C" fn cfsetispeed(termios_: &mut termios, speed: speed_t) -> c_int;
+extern "C" fn cfsetospeed(termios_: &mut termios, speed: speed_t) -> c_int;
+extern "C" fn tcgetattr(fd: c_int, termios_: &mut termios) -> c_int;
+extern "C" fn tcsetattr(fd: c_int, optional_actions: c_int, termios_: &termios) -> c_int;
+extern "C" fn tcflow(fd: c_int, action: c_int) -> c_int;
+extern "C" fn tcflush(fd: c_int, action: c_int) -> c_int;
+extern "C" fn tcgetsid(fd: c_int) -> pid_t;
+extern "C" fn tcsendbreak(fd: c_int, duration: c_int) -> c_int;
+extern "C" fn mkstemp(template: &mut c_char) -> c_int;
+extern "C" fn mkdtemp(template: &mut c_char) -> &mut c_char;
+extern "C" fn tmpnam(ptr: &mut c_char) -> &mut c_char;
+extern "C" fn openlog(ident: &c_char, logopt: c_int, facility: c_int);
+extern "C" fn closelog();
+extern "C" fn setlogmask(maskpri: c_int) -> c_int;
+#[link_name("_syslog$DARWIN_EXTSN")]
+extern "C" fn syslog(priority: c_int, message: &c_char, ...);
+extern "C" fn nice(incr: c_int) -> c_int;
+extern "C" fn grantpt(fd: c_int) -> c_int;
+extern "C" fn posix_openpt(flags: c_int) -> c_int;
+extern "C" fn ptsname(fd: c_int) -> &mut c_char;
+extern "C" fn unlockpt(fd: c_int) -> c_int;
+extern "C" fn strcasestr(cs: &c_char, ct: &c_char) -> &mut c_char;
+extern "C" fn getline(lineptr: &mut &mut c_char, n: &mut size_t, stream: &mut FILE) -> ssize_t;
+extern "C" fn lockf(fd: c_int, cmd: c_int, len: off_t) -> c_int;
+extern "C" fn adjtime(delta: &timeval, olddelta: &mut timeval) -> c_int;
+extern "C" fn stpncpy(dst: &mut c_char, src: &c_char, n: size_t) -> &mut c_char;
+extern "C" fn dladdr(addr: &c_void, info: &mut Dl_info) -> c_int;
+extern "C" fn open_wmemstream(ptr: &mut &mut wchar_t, sizeloc: &mut size_t) -> &mut FILE;
+extern "C" fn getsid(pid: pid_t) -> pid_t;
+extern "C" fn pause() -> c_int;
+extern "C" fn mkdirat(dirfd: c_int, pathname: &c_char, mode: mode_t) -> c_int;
+extern "C" fn openat(dirfd: c_int, pathname: &c_char, flags: c_int, ...) -> c_int;
+extern "C" fn fdopendir(fd: c_int) -> &mut DIR;
+extern "C" fn readdir_r(dirp: &mut DIR, entry: &mut dirent, result: &mut &mut dirent) -> c_int;
+extern "C" fn readlinkat(dirfd: c_int, pathname: &c_char, buf: &mut c_char, bufsiz: size_t) -> ssize_t;
+extern "C" fn fmemopen(buf: &mut c_void, size: size_t, mode: &c_char) -> &mut FILE;
+extern "C" fn open_memstream(ptr: &mut &mut c_char, sizeloc: &mut size_t) -> &mut FILE;
+extern "C" fn atexit(cb: fn()) -> c_int;
+extern "C" fn sigaction(signum: c_int, act: &sigaction_t, oldact: &mut sigaction_t) -> c_int;
+extern "C" fn readlink(path: &c_char, buf: &mut c_char, bufsz: size_t) -> ssize_t;
+extern "C" fn pselect(nfds: c_int, readfds: &mut fd_set, writefds: &mut fd_set, errorfds: &mut fd_set, timeout: &timespec, sigmask: &sigset_t) -> c_int;
+extern "C" fn cfmakeraw(termios_: &mut termios);
+extern "C" fn cfsetspeed(termios_: &mut termios, speed: speed_t) -> c_int;
+type off_t = i64;
+type useconds_t = u32;
+type blkcnt_t = i64;
+type socklen_t = u32;
+type sa_family_t = u8;
+type pthread_t = uintptr_t;
+type nfds_t = c_uint;
+type regoff_t = off_t;
+struct sockaddr {
+    sa_len: u8,
+    sa_family: sa_family_t,
+    sa_data: [c_char; 14],
+}
+struct sockaddr_in6 {
+    sin6_len: u8,
+    sin6_family: sa_family_t,
+    sin6_port: in_port_t,
+    sin6_flowinfo: u32,
+    sin6_addr: in6_addr,
+    sin6_scope_id: u32,
+}
+struct passwd {
+    pw_name: &mut c_char,
+    pw_passwd: &mut c_char,
+    pw_uid: uid_t,
+    pw_gid: gid_t,
+    pw_change: time_t,
+    pw_class: &mut c_char,
+    pw_gecos: &mut c_char,
+    pw_dir: &mut c_char,
+    pw_shell: &mut c_char,
+    pw_expire: time_t,
+}
+struct ifaddrs {
+    ifa_next: &mut ifaddrs,
+    ifa_name: &mut c_char,
+    ifa_flags: c_uint,
+    ifa_addr: &mut sockaddr,
+    ifa_netmask: &mut sockaddr,
+    ifa_dstaddr: &mut sockaddr,
+    ifa_data: &mut c_void,
+}
+struct fd_set {
+    fds_bits: [i32; FD_SETSIZE / 32],
+}
+struct tm {
+    tm_sec: c_int,
+    tm_min: c_int,
+    tm_hour: c_int,
+    tm_mday: c_int,
+    tm_mon: c_int,
+    tm_year: c_int,
+    tm_wday: c_int,
+    tm_yday: c_int,
+    tm_isdst: c_int,
+    tm_gmtoff: c_long,
+    tm_zone: &mut c_char,
+}
+struct msghdr {
+    msg_name: &mut c_void,
+    msg_namelen: socklen_t,
+    msg_iov: &mut iovec,
+    msg_iovlen: c_int,
+    msg_control: &mut c_void,
+    msg_controllen: socklen_t,
+    msg_flags: c_int,
+}
+struct cmsghdr {
+    cmsg_len: socklen_t,
+    cmsg_level: c_int,
+    cmsg_type: c_int,
+}
+struct fsid_t {
+    __fsid_val: [i32; 2],
+}
+struct if_nameindex_t {
+    if_index: c_uint,
+    if_name: &mut c_char,
+}
+struct regex_t {
+    __re_magic: c_int,
+    __re_nsub: size_t,
+    __re_endp: &c_char,
+    __re_g: &mut c_void,
+}
+struct regmatch_t {
+    rm_so: regoff_t,
+    rm_eo: regoff_t,
+}
+struct option {
+    name: &c_char,
+    has_arg: c_int,
+    flag: &mut c_int,
+    val: c_int,
+}
+struct sockaddr_un {
+    sun_len: u8,
+    sun_family: sa_family_t,
+    sun_path: [c_char; 104],
+}
+struct utsname {
+    sysname: [c_char; 256],
+
+    nodename: [c_char; 256],
+
+    release: [c_char; 256],
+
+    version: [c_char; 256],
+
+    machine: [c_char; 256],
+}
+const LC_ALL: c_int = 0;
+const LC_COLLATE: c_int = 1;
+const LC_CTYPE: c_int = 2;
+const LC_MONETARY: c_int = 3;
+const LC_NUMERIC: c_int = 4;
+const LC_TIME: c_int = 5;
+const LC_MESSAGES: c_int = 6;
+const FIOCLEX: c_ulong = 0x20006601;
+const FIONCLEX: c_ulong = 0x20006602;
+const FIONREAD: c_ulong = 0x4004667f;
+const FIONBIO: c_ulong = 0x8004667e;
+const FIOASYNC: c_ulong = 0x8004667d;
+const FIOSETOWN: c_ulong = 0x8004667c;
+const FIOGETOWN: c_ulong = 0x4004667b;
+const PATH_MAX: c_int = 1024;
+const MAXPATHLEN: c_int = PATH_MAX;
+const IOV_MAX: c_int = 1024;
+const SA_ONSTACK: c_int = 0x0001;
+const SA_SIGINFO: c_int = 0x0040;
+const SA_RESTART: c_int = 0x0002;
+const SA_RESETHAND: c_int = 0x0004;
+const SA_NOCLDSTOP: c_int = 0x0008;
+const SA_NODEFER: c_int = 0x0010;
+const SA_NOCLDWAIT: c_int = 0x0020;
+const SS_ONSTACK: c_int = 1;
+const SS_DISABLE: c_int = 4;
+const SIGCHLD: c_int = 20;
+const SIGBUS: c_int = 10;
+const SIGUSR1: c_int = 30;
+const SIGUSR2: c_int = 31;
+const SIGCONT: c_int = 19;
+const SIGSTOP: c_int = 17;
+const SIGTSTP: c_int = 18;
+const SIGURG: c_int = 16;
+const SIGIO: c_int = 23;
+const SIGSYS: c_int = 12;
+const SIGTTIN: c_int = 21;
+const SIGTTOU: c_int = 22;
+const SIGXCPU: c_int = 24;
+const SIGXFSZ: c_int = 25;
+const SIGVTALRM: c_int = 26;
+const SIGPROF: c_int = 27;
+const SIGWINCH: c_int = 28;
+const SIGINFO: c_int = 29;
+const SIG_SETMASK: c_int = 3;
+const SIG_BLOCK: c_int = 0x1;
+const SIG_UNBLOCK: c_int = 0x2;
+const IP_TOS: c_int = 3;
+const IP_MULTICAST_IF: c_int = 9;
+const IP_MULTICAST_TTL: c_int = 10;
+const IP_MULTICAST_LOOP: c_int = 11;
+const IPV6_UNICAST_HOPS: c_int = 4;
+const IPV6_MULTICAST_IF: c_int = 9;
+const IPV6_MULTICAST_HOPS: c_int = 10;
+const IPV6_MULTICAST_LOOP: c_int = 11;
+const IPV6_V6ONLY: c_int = 27;
+const IPTOS_ECN_NOTECT: u8 = 0x00;
+const IPTOS_ECN_MASK: u8 = 0x03;
+const IPTOS_ECN_ECT1: u8 = 0x01;
+const IPTOS_ECN_ECT0: u8 = 0x02;
+const IPTOS_ECN_CE: u8 = 0x03;
+const ST_RDONLY: c_ulong = 1;
+const SCM_RIGHTS: c_int = 0x01;
+const NCCS: usize = 20;
+const O_ACCMODE: c_int = 0x3;
+const O_RDONLY: c_int = 0;
+const O_WRONLY: c_int = 1;
+const O_RDWR: c_int = 2;
+const O_APPEND: c_int = 8;
+const O_CREAT: c_int = 512;
+const O_TRUNC: c_int = 1024;
+const O_EXCL: c_int = 2048;
+const O_ASYNC: c_int = 0x40;
+const O_SYNC: c_int = 0x80;
+const O_NONBLOCK: c_int = 0x4;
+const O_NOFOLLOW: c_int = 0x100;
+const O_SHLOCK: c_int = 0x10;
+const O_EXLOCK: c_int = 0x20;
+const O_FSYNC: c_int = O_SYNC;
+const O_NDELAY: c_int = O_NONBLOCK;
+const F_GETOWN: c_int = 5;
+const F_SETOWN: c_int = 6;
+const F_RDLCK: c_short = 1;
+const F_UNLCK: c_short = 2;
+const F_WRLCK: c_short = 3;
+const MNT_RDONLY: c_int = 0x00000001;
+const MNT_SYNCHRONOUS: c_int = 0x00000002;
+const MNT_NOEXEC: c_int = 0x00000004;
+const MNT_NOSUID: c_int = 0x00000008;
+const MNT_ASYNC: c_int = 0x00000040;
+const MNT_EXPORTED: c_int = 0x00000100;
+const MNT_UPDATE: c_int = 0x00010000;
+const MNT_RELOAD: c_int = 0x00040000;
+const MNT_FORCE: c_int = 0x00080000;
+const Q_SYNC: c_int = 0x600;
+const Q_QUOTAON: c_int = 0x100;
+const Q_QUOTAOFF: c_int = 0x200;
+const TCIOFF: c_int = 3;
+const TCION: c_int = 4;
+const TCOOFF: c_int = 1;
+const TCOON: c_int = 2;
+const TCIFLUSH: c_int = 1;
+const TCOFLUSH: c_int = 2;
+const TCIOFLUSH: c_int = 3;
+const TCSANOW: c_int = 0;
+const TCSADRAIN: c_int = 1;
+const TCSAFLUSH: c_int = 2;
+const VEOF: usize = 0;
+const VEOL: usize = 1;
+const VEOL2: usize = 2;
+const VERASE: usize = 3;
+const VWERASE: usize = 4;
+const VKILL: usize = 5;
+const VREPRINT: usize = 6;
+const VINTR: usize = 8;
+const VQUIT: usize = 9;
+const VSUSP: usize = 10;
+const VDSUSP: usize = 11;
+const VSTART: usize = 12;
+const VSTOP: usize = 13;
+const VLNEXT: usize = 14;
+const VDISCARD: usize = 15;
+const VMIN: usize = 16;
+const VTIME: usize = 17;
+const VSTATUS: usize = 18;
+const _POSIX_VDISABLE: cc_t = 0xff;
+const IGNBRK: tcflag_t = 0x00000001;
+const BRKINT: tcflag_t = 0x00000002;
+const IGNPAR: tcflag_t = 0x00000004;
+const PARMRK: tcflag_t = 0x00000008;
+const INPCK: tcflag_t = 0x00000010;
+const ISTRIP: tcflag_t = 0x00000020;
+const INLCR: tcflag_t = 0x00000040;
+const IGNCR: tcflag_t = 0x00000080;
+const ICRNL: tcflag_t = 0x00000100;
+const IXON: tcflag_t = 0x00000200;
+const IXOFF: tcflag_t = 0x00000400;
+const IXANY: tcflag_t = 0x00000800;
+const IMAXBEL: tcflag_t = 0x00002000;
+const OPOST: tcflag_t = 0x1;
+const ONLCR: tcflag_t = 0x2;
+const OXTABS: tcflag_t = 0x4;
+const ONOEOT: tcflag_t = 0x8;
+const CIGNORE: tcflag_t = 0x00000001;
+const CSIZE: tcflag_t = 0x00000300;
+const CS5: tcflag_t = 0x00000000;
+const CS6: tcflag_t = 0x00000100;
+const CS7: tcflag_t = 0x00000200;
+const CS8: tcflag_t = 0x00000300;
+const CSTOPB: tcflag_t = 0x00000400;
+const CREAD: tcflag_t = 0x00000800;
+const PARENB: tcflag_t = 0x00001000;
+const PARODD: tcflag_t = 0x00002000;
+const HUPCL: tcflag_t = 0x00004000;
+const CLOCAL: tcflag_t = 0x00008000;
+const ECHOKE: tcflag_t = 0x00000001;
+const ECHOE: tcflag_t = 0x00000002;
+const ECHOK: tcflag_t = 0x00000004;
+const ECHO: tcflag_t = 0x00000008;
+const ECHONL: tcflag_t = 0x00000010;
+const ECHOPRT: tcflag_t = 0x00000020;
+const ECHOCTL: tcflag_t = 0x00000040;
+const ISIG: tcflag_t = 0x00000080;
+const ICANON: tcflag_t = 0x00000100;
+const ALTWERASE: tcflag_t = 0x00000200;
+const IEXTEN: tcflag_t = 0x00000400;
+const EXTPROC: tcflag_t = 0x00000800;
+const TOSTOP: tcflag_t = 0x00400000;
+const FLUSHO: tcflag_t = 0x00800000;
+const NOKERNINFO: tcflag_t = 0x02000000;
+const PENDIN: tcflag_t = 0x20000000;
+const NOFLSH: tcflag_t = 0x80000000;
+const MDMBUF: tcflag_t = 0x00100000;
+const WNOHANG: c_int = 0x00000001;
+const WUNTRACED: c_int = 0x00000002;
+const RTLD_LAZY: c_int = 0x1;
+const RTLD_NOW: c_int = 0x2;
+const RTLD_NEXT: &mut c_void = -1isize as &mut c_void;
+const RTLD_DEFAULT: &mut c_void = -2isize as &mut c_void;
+const RTLD_SELF: &mut c_void = -3isize as &mut c_void;
+const LOG_CRON: c_int = 9 << 3;
+const LOG_AUTHPRIV: c_int = 10 << 3;
+const LOG_FTP: c_int = 11 << 3;
+const LOG_PERROR: c_int = 0x20;
+const TCP_NODELAY: c_int = 1;
+const TCP_MAXSEG: c_int = 2;
+const PIPE_BUF: usize = 512;
+const BUS_ADRALN: c_int = 1;
+const BUS_ADRERR: c_int = 2;
+const BUS_OBJERR: c_int = 3;
+const CLD_EXITED: c_int = 1;
+const CLD_KILLED: c_int = 2;
+const CLD_DUMPED: c_int = 3;
+const CLD_TRAPPED: c_int = 4;
+const CLD_STOPPED: c_int = 5;
+const CLD_CONTINUED: c_int = 6;
+const POLLIN: c_short = 0x1;
+const POLLPRI: c_short = 0x2;
+const POLLOUT: c_short = 0x4;
+const POLLERR: c_short = 0x8;
+const POLLHUP: c_short = 0x10;
+const POLLNVAL: c_short = 0x20;
+const POLLRDNORM: c_short = 0x040;
+const POLLWRNORM: c_short = 0x004;
+const POLLRDBAND: c_short = 0x080;
+const POLLWRBAND: c_short = 0x100;
+const BIOCGBLEN: c_ulong = 0x40044266;
+const BIOCSBLEN: c_ulong = 0xc0044266;
+const BIOCFLUSH: c_uint = 0x20004268;
+const BIOCPROMISC: c_uint = 0x20004269;
+const BIOCGDLT: c_ulong = 0x4004426a;
+const BIOCGETIF: c_ulong = 0x4020426b;
+const BIOCSETIF: c_ulong = 0x8020426c;
+const BIOCGSTATS: c_ulong = 0x4008426f;
+const BIOCIMMEDIATE: c_ulong = 0x80044270;
+const BIOCVERSION: c_ulong = 0x40044271;
+const BIOCGHDRCMPLT: c_ulong = 0x40044274;
+const BIOCSHDRCMPLT: c_ulong = 0x80044275;
+const SIOCGIFADDR: c_ulong = 0xc0206921;
+const REG_BASIC: c_int = 0o0000;
+const REG_EXTENDED: c_int = 0o0001;
+const REG_ICASE: c_int = 0o0002;
+const REG_NOSUB: c_int = 0o0004;
+const REG_NEWLINE: c_int = 0o0010;
+const REG_NOSPEC: c_int = 0o0020;
+const REG_PEND: c_int = 0o0040;
+const REG_DUMP: c_int = 0o0200;
+const REG_NOMATCH: c_int = 1;
+const REG_BADPAT: c_int = 2;
+const REG_ECOLLATE: c_int = 3;
+const REG_ECTYPE: c_int = 4;
+const REG_EESCAPE: c_int = 5;
+const REG_ESUBREG: c_int = 6;
+const REG_EBRACK: c_int = 7;
+const REG_EPAREN: c_int = 8;
+const REG_EBRACE: c_int = 9;
+const REG_BADBR: c_int = 10;
+const REG_ERANGE: c_int = 11;
+const REG_ESPACE: c_int = 12;
+const REG_BADRPT: c_int = 13;
+const REG_EMPTY: c_int = 14;
+const REG_ASSERT: c_int = 15;
+const REG_INVARG: c_int = 16;
+const REG_ATOI: c_int = 255;
+const REG_ITOA: c_int = 0o0400;
+const REG_NOTBOL: c_int = 0o00001;
+const REG_NOTEOL: c_int = 0o00002;
+const REG_STARTEND: c_int = 0o00004;
+const REG_TRACE: c_int = 0o00400;
+const REG_LARGE: c_int = 0o01000;
+const REG_BACKR: c_int = 0o02000;
+const TIOCCBRK: c_uint = 0x2000747a;
+const TIOCSBRK: c_uint = 0x2000747b;
+const PRIO_PROCESS: c_int = 0;
+const PRIO_PGRP: c_int = 1;
+const PRIO_USER: c_int = 2;
+const ITIMER_REAL: c_int = 0;
+const ITIMER_VIRTUAL: c_int = 1;
+const ITIMER_PROF: c_int = 2;
+#[inline]
+fn CMSG_FIRSTHDR(mhdr: &msghdr) -> &mut cmsghdr {
+    if (*mhdr).msg_controllen as usize >= std::mem::size_of::<cmsghdr>() {
+        (*mhdr).msg_control as &mut cmsghdr
+    } else {
+        0 as &mut cmsghdr
+    }
+}
+#[inline]
+fn FD_CLR(fd: c_int, set: &mut fd_set) -> () {
+    let bits = std::mem::size_of::<typeof((*set).fds_bits[0])>() * 8;
+    let fd = fd as usize;
+    (*set).fds_bits[fd / bits] &= !(1 << (fd % bits));
+    return;
+}
+#[inline]
+fn FD_ISSET(fd: c_int, set: &fd_set) -> bool {
+    let bits = std::mem::size_of::<typeof((*set).fds_bits[0])>() * 8;
+    let fd = fd as usize;
+    return ((*set).fds_bits[fd / bits] & (1 << (fd % bits))) != 0;
+}
+#[inline]
+fn FD_SET(fd: c_int, set: &mut fd_set) -> () {
+    let bits = std::mem::size_of::<typeof((*set).fds_bits[0])>() * 8;
+    let fd = fd as usize;
+    (*set).fds_bits[fd / bits] |= 1 << (fd % bits);
+    return;
+}
+#[inline]
+fn FD_ZERO(set: &mut fd_set) -> () {
+    for slot in (*set).fds_bits.iter_mut() {
+        *slot = 0;
+    }
+}
+#[inline]
+fn WTERMSIG(status: c_int) -> c_int {
+    status & 0o177
+}
+#[inline]
+fn WIFEXITED(status: c_int) -> bool {
+    (status & 0o177) == 0
+}
+#[inline]
+fn WEXITSTATUS(status: c_int) -> c_int {
+    status >> 8
+}
+#[inline]
+fn WCOREDUMP(status: c_int) -> bool {
+    (status & 0o200) != 0
+}
+#[inline]
+fn QCMD(cmd: c_int, type_: c_int) -> c_int {
+    (cmd << 8) | (type_ & 0x00ff)
+}
+extern "C" fn getrlimit(resource: c_int, rlim: &mut rlimit) -> c_int;
+extern "C" fn setrlimit(resource: c_int, rlim: &rlimit) -> c_int;
+extern "C" fn strerror_r(errnum: c_int, buf: &mut c_char, buflen: size_t) -> c_int;
+extern "C" fn abs(i: c_int) -> c_int;
+extern "C" fn labs(i: c_long) -> c_long;
+extern "C" fn rand() -> c_int;
+extern "C" fn srand(seed: c_uint);
+extern "C" fn getifaddrs(ifap: &mut &mut ifaddrs) -> c_int;
+extern "C" fn freeifaddrs(ifa: &mut ifaddrs);
+extern "C" fn setgroups(ngroups: c_int, ptr: &gid_t) -> c_int;
+extern "C" fn setlogin(name: &c_char) -> c_int;
+extern "C" fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
+extern "C" fn kqueue() -> c_int;
+extern "C" fn unmount(target: &c_char, arg: c_int) -> c_int;
+extern "C" fn syscall(num: c_int, ...) -> c_int;
+extern "C" fn getpwent() -> &mut passwd;
+extern "C" fn setpwent();
+extern "C" fn endpwent();
+extern "C" fn endgrent();
+extern "C" fn getgrent() -> &mut group;
+extern "C" fn getprogname() -> &c_char;
+extern "C" fn setprogname(name: &c_char);
+extern "C" fn getloadavg(loadavg: &mut c_double, nelem: c_int) -> c_int;
+extern "C" fn if_nameindex() -> &mut if_nameindex_t;
+extern "C" fn if_freenameindex(ptr: &mut if_nameindex_t);
+extern "C" fn getpeereid(socket: c_int, euid: &mut uid_t, egid: &mut gid_t) -> c_int;
+extern "C" fn glob(pattern: &c_char, flags: c_int, errfunc: fn(&c_char, c_int) -> c_int, pglob: &mut glob_t) -> c_int;
+extern "C" fn globfree(pglob: &mut glob_t);
+extern "C" fn posix_madvise(addr: &mut c_void, len: size_t, advice: c_int) -> c_int;
+extern "C" fn shm_unlink(name: &c_char) -> c_int;
+extern "C" fn seekdir(dirp: &mut DIR, loc: c_long);
+extern "C" fn telldir(dirp: &mut DIR) -> c_long;
+extern "C" fn madvise(addr: &mut c_void, len: size_t, advice: c_int) -> c_int;
+extern "C" fn msync(addr: &mut c_void, len: size_t, flags: c_int) -> c_int;
+extern "C" fn recvfrom(socket: c_int, buf: &mut c_void, len: size_t, flags: c_int, addr: &mut sockaddr, addrlen: &mut socklen_t) -> ssize_t;
+extern "C" fn mkstemps(template: &mut c_char, suffixlen: c_int) -> c_int;
+extern "C" fn futimes(fd: c_int, times: &timeval) -> c_int;
+extern "C" fn nl_langinfo(item: nl_item) -> &mut c_char;
+extern "C" fn bind(socket: c_int, address: &sockaddr, address_len: socklen_t) -> c_int;
+extern "C" fn writev(fd: c_int, iov: &iovec, iovcnt: c_int) -> ssize_t;
+extern "C" fn readv(fd: c_int, iov: &iovec, iovcnt: c_int) -> ssize_t;
+extern "C" fn sendmsg(fd: c_int, msg: &msghdr, flags: c_int) -> ssize_t;
+extern "C" fn recvmsg(fd: c_int, msg: &mut msghdr, flags: c_int) -> ssize_t;
+extern "C" fn sync();
+extern "C" fn getgrgid_r(gid: gid_t, grp: &mut group, buf: &mut c_char, buflen: size_t, result: &mut &mut group) -> c_int;
+extern "C" fn sigaltstack(ss: &stack_t, oss: &mut stack_t) -> c_int;
+extern "C" fn sem_close(sem: &mut sem_t) -> c_int;
+extern "C" fn getdtablesize() -> c_int;
+extern "C" fn getgrnam_r(name: &c_char, grp: &mut group, buf: &mut c_char, buflen: size_t, result: &mut &mut group) -> c_int;
+extern "C" fn pthread_sigmask(how: c_int, set: &sigset_t, oldset: &mut sigset_t) -> c_int;
+extern "C" fn sem_open(name: &c_char, oflag: c_int, ...) -> &mut sem_t;
+extern "C" fn getgrnam(name: &c_char) -> &mut group;
+extern "C" fn pthread_cancel(thread: pthread_t) -> c_int;
+extern "C" fn pthread_kill(thread: pthread_t, sig: c_int) -> c_int;
+extern "C" fn sched_get_priority_min(policy: c_int) -> c_int;
+extern "C" fn sched_get_priority_max(policy: c_int) -> c_int;
+extern "C" fn sem_unlink(name: &c_char) -> c_int;
+extern "C" fn getpwnam_r(name: &c_char, pwd: &mut passwd, buf: &mut c_char, buflen: size_t, result: &mut &mut passwd) -> c_int;
+extern "C" fn getpwuid_r(uid: uid_t, pwd: &mut passwd, buf: &mut c_char, buflen: size_t, result: &mut &mut passwd) -> c_int;
+extern "C" fn sigwait(set: &sigset_t, sig: &mut c_int) -> c_int;
+extern "C" fn pthread_atfork(prepare: fn(), parent: fn(), child: fn()) -> c_int;
+extern "C" fn getgrgid(gid: gid_t) -> &mut group;
+extern "C" fn popen(command: &c_char, mode: &c_char) -> &mut FILE;
+extern "C" fn faccessat(dirfd: c_int, pathname: &c_char, mode: c_int, flags: c_int) -> c_int;
+extern "C" fn pthread_create(native: &mut pthread_t, attr: &pthread_attr_t, f: fn(&mut c_void) -> &mut c_void, value: &mut c_void) -> c_int;
+extern "C" fn acct(filename: &c_char) -> c_int;
+extern "C" fn wait4(pid: pid_t, status: &mut c_int, options: c_int, rusage_: &mut rusage) -> pid_t;
+extern "C" fn getitimer(which: c_int, curr_value: &mut itimerval) -> c_int;
+extern "C" fn setitimer(which: c_int, new_value: &itimerval, old_value: &mut itimerval) -> c_int;
+extern "C" fn regcomp(preg: &mut regex_t, pattern: &c_char, cflags: c_int) -> c_int;
+extern "C" fn regexec(preg: &regex_t, input: &c_char, nmatch: size_t, pmatch: &mut regmatch_t, eflags: c_int) -> c_int;
+extern "C" fn regerror(errcode: c_int, preg: &regex_t, errbuf: &mut c_char, errbuf_size: size_t) -> size_t;
+extern "C" fn regfree(preg: &mut regex_t);
+extern "C" fn arc4random() -> u32;
+extern "C" fn arc4random_buf(buf: &mut c_void, size: size_t);
+extern "C" fn arc4random_uniform(l: u32) -> u32;
+extern "C" fn drand48() -> c_double;
+extern "C" fn erand48(xseed: &mut c_ushort) -> c_double;
+extern "C" fn lrand48() -> c_long;
+extern "C" fn nrand48(xseed: &mut c_ushort) -> c_long;
+extern "C" fn mrand48() -> c_long;
+extern "C" fn jrand48(xseed: &mut c_ushort) -> c_long;
+extern "C" fn srand48(seed: c_long);
+extern "C" fn seed48(xseed: &mut c_ushort) -> &mut c_ushort;
+extern "C" fn lcong48(p: &mut c_ushort);
+extern "C" fn getopt_long(argc: c_int, argv: &&mut c_char, optstring: &c_char, longopts: &option, longindex: &mut c_int) -> c_int;
+type c_char = i8;
+type wchar_t = i32;
+type clock_t = c_ulong;
+type time_t = c_long;
+type suseconds_t = i32;
+type dev_t = i32;
+type ino_t = u64;
+type mode_t = u16;
+type nlink_t = u16;
+type blksize_t = i32;
+type rlim_t = u64;
+type pthread_key_t = c_ulong;
+type sigset_t = u32;
+type clockid_t = c_uint;
+type fsblkcnt_t = c_uint;
+type fsfilcnt_t = c_uint;
+type speed_t = c_ulong;
+type tcflag_t = c_ulong;
+type nl_item = c_int;
+type id_t = c_uint;
+type sem_t = c_int;
+type idtype_t = c_uint;
+type integer_t = c_int;
+type cpu_type_t = integer_t;
+type cpu_subtype_t = integer_t;
+type natural_t = u32;
+type mach_msg_type_number_t = natural_t;
+type kern_return_t = c_int;
+type uuid_t = [u8; 16];
+type task_info_t = &mut integer_t;
+type host_info_t = &mut integer_t;
+type task_flavor_t = natural_t;
+type rusage_info_t = &mut c_void;
+type vm_offset_t = uintptr_t;
+type vm_size_t = uintptr_t;
+type vm_address_t = vm_offset_t;
+type posix_spawnattr_t = &mut c_void;
+type posix_spawn_file_actions_t = &mut c_void;
+type key_t = c_int;
+type shmatt_t = c_ushort;
+type sae_associd_t = u32;
+type sae_connid_t = u32;
+type mach_port_t = c_uint;
+type host_t = c_uint;
+type host_flavor_t = integer_t;
+type host_info64_t = &mut integer_t;
+type processor_flavor_t = c_int;
+type thread_flavor_t = natural_t;
+type thread_inspect_t = mach_port_t;
+type thread_act_t = mach_port_t;
+type thread_act_array_t = &mut thread_act_t;
+type policy_t = c_int;
+type mach_vm_address_t = u64;
+type mach_vm_offset_t = u64;
+type mach_vm_size_t = u64;
+type vm_map_t = mach_port_t;
+type mem_entry_name_port_t = mach_port_t;
+type memory_object_t = mach_port_t;
+type memory_object_offset_t = c_ulonglong;
+type vm_inherit_t = c_uint;
+type vm_prot_t = c_int;
+type ledger_t = mach_port_t;
+type ledger_array_t = &mut ledger_t;
+type iconv_t = &mut c_void;
+type processor_cpu_load_info_t = &mut processor_cpu_load_info;
+type processor_cpu_load_info_data_t = processor_cpu_load_info;
+type processor_basic_info_t = &mut processor_basic_info;
+type processor_basic_info_data_t = processor_basic_info;
+type processor_set_basic_info_data_t = processor_set_basic_info;
+type processor_set_basic_info_t = &mut processor_set_basic_info;
+type processor_set_load_info_data_t = processor_set_load_info;
+type processor_set_load_info_t = &mut processor_set_load_info;
+type processor_info_t = &mut integer_t;
+type processor_info_array_t = &mut integer_t;
+type mach_task_basic_info_data_t = mach_task_basic_info;
+type mach_task_basic_info_t = &mut mach_task_basic_info;
+type task_thread_times_info_data_t = task_thread_times_info;
+type task_thread_times_info_t = &mut task_thread_times_info;
+type thread_info_t = &mut integer_t;
+type thread_basic_info_t = &mut thread_basic_info;
+type thread_basic_info_data_t = thread_basic_info;
+type thread_identifier_info_t = &mut thread_identifier_info;
+type thread_identifier_info_data_t = thread_identifier_info;
+type thread_extended_info_t = &mut thread_extended_info;
+type thread_extended_info_data_t = thread_extended_info;
+type thread_t = mach_port_t;
+type thread_policy_flavor_t = natural_t;
+type thread_policy_t = &mut integer_t;
+type thread_latency_qos_t = integer_t;
+type thread_throughput_qos_t = integer_t;
+type thread_standard_policy_data_t = thread_standard_policy;
+type thread_standard_policy_t = &mut thread_standard_policy;
+type thread_extended_policy_data_t = thread_extended_policy;
+type thread_extended_policy_t = &mut thread_extended_policy;
+type thread_time_constraint_policy_data_t = thread_time_constraint_policy;
+type thread_time_constraint_policy_t = &mut thread_time_constraint_policy;
+type thread_precedence_policy_data_t = thread_precedence_policy;
+type thread_precedence_policy_t = &mut thread_precedence_policy;
+type thread_affinity_policy_data_t = thread_affinity_policy;
+type thread_affinity_policy_t = &mut thread_affinity_policy;
+type thread_background_policy_data_t = thread_background_policy;
+type thread_background_policy_t = &mut thread_background_policy;
+type thread_latency_qos_policy_data_t = thread_latency_qos_policy;
+type thread_latency_qos_policy_t = &mut thread_latency_qos_policy;
+type thread_throughput_qos_policy_data_t = thread_throughput_qos_policy;
+type thread_throughput_qos_policy_t = &mut thread_throughput_qos_policy;
+type pthread_introspection_hook_t = fn(c_uint, pthread_t, &mut c_void, size_t);
+type pthread_jit_write_callback_t = fn(&mut c_void) -> c_int;
+type os_unfair_lock = os_unfair_lock_s;
+type os_unfair_lock_t = &mut os_unfair_lock;
+type os_log_t = &mut c_void;
+type os_log_type_t = u8;
+type os_signpost_id_t = u64;
+type os_signpost_type_t = u8;
+type vm_statistics_t = &mut vm_statistics;
+type vm_statistics_data_t = vm_statistics;
+type vm_statistics64_t = &mut vm_statistics64;
+type vm_statistics64_data_t = vm_statistics64;
+type task_t = mach_port_t;
+type task_inspect_t = mach_port_t;
+type sysdir_search_path_enumeration_state = c_uint;
+type CCStatus = i32;
+type CCCryptorStatus = i32;
+type CCRNGStatus = CCCryptorStatus;
+type copyfile_state_t = &mut c_void;
+type copyfile_flags_t = u32;
+type attrgroup_t = u32;
+type vol_capabilities_set_t = [u32; 4];
+type mach_timebase_info_data_t = mach_timebase_info_t;
+enum timezone {}
+enum qos_class_t {
+    QOS_CLASS_USER_INTERACTIVE = 0x21u32,
+    QOS_CLASS_USER_INITIATED = 0x19,
+    QOS_CLASS_DEFAULT = 0x15,
+    QOS_CLASS_UTILITY = 0x11,
+    QOS_CLASS_BACKGROUND = 0x09,
+    QOS_CLASS_UNSPECIFIED = 0x00,
+}
+enum sysdir_search_path_directory_t {
+    SYSDIR_DIRECTORY_APPLICATION = 1u32,
+    SYSDIR_DIRECTORY_DEMO_APPLICATION = 2,
+    SYSDIR_DIRECTORY_DEVELOPER_APPLICATION = 3,
+    SYSDIR_DIRECTORY_ADMIN_APPLICATION = 4,
+    SYSDIR_DIRECTORY_LIBRARY = 5,
+    SYSDIR_DIRECTORY_DEVELOPER = 6,
+    SYSDIR_DIRECTORY_USER = 7,
+    SYSDIR_DIRECTORY_DOCUMENTATION = 8,
+    SYSDIR_DIRECTORY_DOCUMENT = 9,
+    SYSDIR_DIRECTORY_CORESERVICE = 10,
+    SYSDIR_DIRECTORY_AUTOSAVED_INFORMATION = 11,
+    SYSDIR_DIRECTORY_DESKTOP = 12,
+    SYSDIR_DIRECTORY_CACHES = 13,
+    SYSDIR_DIRECTORY_APPLICATION_SUPPORT = 14,
+    SYSDIR_DIRECTORY_DOWNLOADS = 15,
+    SYSDIR_DIRECTORY_INPUT_METHODS = 16,
+    SYSDIR_DIRECTORY_MOVIES = 17,
+    SYSDIR_DIRECTORY_MUSIC = 18,
+    SYSDIR_DIRECTORY_PICTURES = 19,
+    SYSDIR_DIRECTORY_PRINTER_DESCRIPTION = 20,
+    SYSDIR_DIRECTORY_SHARED_PUBLIC = 21,
+    SYSDIR_DIRECTORY_PREFERENCE_PANES = 22,
+    SYSDIR_DIRECTORY_ALL_APPLICATIONS = 100,
+    SYSDIR_DIRECTORY_ALL_LIBRARIES = 101,
+}
+enum sysdir_search_path_domain_mask_t {
+    SYSDIR_DOMAIN_MASK_USER = (1u32 << 0),
+    SYSDIR_DOMAIN_MASK_LOCAL = (1 << 1),
+    SYSDIR_DOMAIN_MASK_NETWORK = (1 << 2),
+    SYSDIR_DOMAIN_MASK_SYSTEM = (1 << 3),
+    SYSDIR_DOMAIN_MASK_ALL = 0x0ffff,
+}
+struct ip_mreq {
+    imr_multiaddr: in_addr,
+    imr_interface: in_addr,
+}
+struct ip_mreqn {
+    imr_multiaddr: in_addr,
+    imr_address: in_addr,
+    imr_ifindex: c_int,
+}
+struct ip_mreq_source {
+    imr_multiaddr: in_addr,
+    imr_sourceaddr: in_addr,
+    imr_interface: in_addr,
+}
+struct aiocb {
+    aio_fildes: c_int,
+    aio_offset: off_t,
+    aio_buf: &mut c_void,
+    aio_nbytes: size_t,
+    aio_reqprio: c_int,
+    aio_sigevent: sigevent,
+    aio_lio_opcode: c_int,
+}
+struct glob_t {
+    gl_pathc: size_t,
+    __unused1: c_int,
+    gl_offs: size_t,
+    __unused2: c_int,
+    gl_pathv: &mut &mut c_char,
+    __unused3: &mut c_void,
+    __unused4: &mut c_void,
+    __unused5: &mut c_void,
+    __unused6: &mut c_void,
+    __unused7: &mut c_void,
+    __unused8: &mut c_void,
+}
+struct addrinfo {
+    ai_flags: c_int,
+    ai_family: c_int,
+    ai_socktype: c_int,
+    ai_protocol: c_int,
+    ai_addrlen: socklen_t,
+    ai_canonname: &mut c_char,
+    ai_addr: &mut sockaddr,
+    ai_next: &mut addrinfo,
+}
+struct mach_timebase_info_t {
+    numer: u32,
+    denom: u32,
+}
+struct stat_t {
+    st_dev: dev_t,
+    st_mode: mode_t,
+    st_nlink: nlink_t,
+    st_ino: ino_t,
+    st_uid: uid_t,
+    st_gid: gid_t,
+    st_rdev: dev_t,
+    st_atime: time_t,
+    st_atime_nsec: c_long,
+    st_mtime: time_t,
+    st_mtime_nsec: c_long,
+    st_ctime: time_t,
+    st_ctime_nsec: c_long,
+    st_birthtime: time_t,
+    st_birthtime_nsec: c_long,
+    st_size: off_t,
+    st_blocks: blkcnt_t,
+    st_blksize: blksize_t,
+    st_flags: u32,
+    st_gen: u32,
+    st_lspare: i32,
+    st_qspare: [i64; 2],
+}
+struct pthread_mutexattr_t {
+    __sig: c_long,
+    __opaque: [u8; 8],
+}
+struct pthread_condattr_t {
+    __sig: c_long,
+    __opaque: [u8; __PTHREAD_CONDATTR_SIZE__],
+}
+struct pthread_rwlockattr_t {
+    __sig: c_long,
+    __opaque: [u8; __PTHREAD_RWLOCKATTR_SIZE__],
+}
+struct siginfo_t {
+    si_signo: c_int,
+    si_errno: c_int,
+    si_code: c_int,
+    si_pid: pid_t,
+    si_uid: uid_t,
+    si_status: c_int,
+    si_addr: &mut c_void,
+    _pad: [usize; 9],
+}
+struct sigaction_t {
+    sa_sigaction: sighandler_t,
+    sa_mask: sigset_t,
+    sa_flags: c_int,
+}
+struct stack_t {
+    ss_sp: &mut c_void,
+    ss_size: size_t,
+    ss_flags: c_int,
+}
+struct fstore_t {
+    fst_flags: c_uint,
+    fst_posmode: c_int,
+    fst_offset: off_t,
+    fst_length: off_t,
+    fst_bytesalloc: off_t,
+}
+struct radvisory {
+    ra_offset: off_t,
+    ra_count: c_int,
+}
+struct statvfs_t {
+    f_bsize: c_ulong,
+    f_frsize: c_ulong,
+    f_blocks: fsblkcnt_t,
+    f_bfree: fsblkcnt_t,
+    f_bavail: fsblkcnt_t,
+    f_files: fsfilcnt_t,
+    f_ffree: fsfilcnt_t,
+    f_favail: fsfilcnt_t,
+    f_fsid: c_ulong,
+    f_flag: c_ulong,
+    f_namemax: c_ulong,
+}
+struct Dl_info {
+    dli_fname: &c_char,
+    dli_fbase: &mut c_void,
+    dli_sname: &c_char,
+    dli_saddr: &mut c_void,
+}
+struct sockaddr_in {
+    sin_len: u8,
+    sin_family: sa_family_t,
+    sin_port: in_port_t,
+    sin_addr: in_addr,
+    sin_zero: [c_char; 8],
+}
+struct kevent64_s {
+    ident: u64,
+    filter: i16,
+    flags: u16,
+    fflags: u32,
+    data: i64,
+    udata: u64,
+    ext: [u64; 2],
+}
+struct dqblk {
+    dqb_bhardlimit: u64,
+    dqb_bsoftlimit: u64,
+    dqb_curbytes: u64,
+    dqb_ihardlimit: u32,
+    dqb_isoftlimit: u32,
+    dqb_curinodes: u32,
+    dqb_btime: u32,
+    dqb_itime: u32,
+    dqb_id: u32,
+    dqb_spare: [u32; 4],
+}
+struct if_msghdr {
+    ifm_msglen: c_ushort,
+    ifm_version: c_uchar,
+    ifm_type: c_uchar,
+    ifm_addrs: c_int,
+    ifm_flags: c_int,
+    ifm_index: c_ushort,
+    ifm_data: if_data,
+}
+struct ifa_msghdr {
+    ifam_msglen: c_ushort,
+    ifam_version: c_uchar,
+    ifam_type: c_uchar,
+    ifam_addrs: c_int,
+    ifam_flags: c_int,
+    ifam_index: c_ushort,
+    ifam_metric: c_int,
+}
+struct ifma_msghdr {
+    ifmam_msglen: c_ushort,
+    ifmam_version: c_uchar,
+    ifmam_type: c_uchar,
+    ifmam_addrs: c_int,
+    ifmam_flags: c_int,
+    ifmam_index: c_ushort,
+}
+struct ifma_msghdr2 {
+    ifmam_msglen: c_ushort,
+    ifmam_version: c_uchar,
+    ifmam_type: c_uchar,
+    ifmam_addrs: c_int,
+    ifmam_flags: c_int,
+    ifmam_index: c_ushort,
+    ifmam_refcount: i32,
+}
+struct rt_metrics {
+    rmx_locks: u32,
+    rmx_mtu: u32,
+    rmx_hopcount: u32,
+    rmx_expire: i32,
+    rmx_recvpipe: u32,
+    rmx_sendpipe: u32,
+    rmx_ssthresh: u32,
+    rmx_rtt: u32,
+    rmx_rttvar: u32,
+    rmx_pksent: u32,
+    rmx_state: u32,
+    rmx_filler: [u32; 3],
+}
+struct rt_msghdr {
+    rtm_msglen: c_ushort,
+    rtm_version: c_uchar,
+    rtm_type: c_uchar,
+    rtm_index: c_ushort,
+    rtm_flags: c_int,
+    rtm_addrs: c_int,
+    rtm_pid: pid_t,
+    rtm_seq: c_int,
+    rtm_errno: c_int,
+    rtm_use: c_int,
+    rtm_inits: u32,
+    rtm_rmx: rt_metrics,
+}
+struct rt_msghdr2 {
+    rtm_msglen: c_ushort,
+    rtm_version: c_uchar,
+    rtm_type: c_uchar,
+    rtm_index: c_ushort,
+    rtm_flags: c_int,
+    rtm_addrs: c_int,
+    rtm_refcnt: i32,
+    rtm_parentflags: c_int,
+    rtm_reserved: c_int,
+    rtm_use: c_int,
+    rtm_inits: u32,
+    rtm_rmx: rt_metrics,
+}
+struct termios {
+    c_iflag: tcflag_t,
+    c_oflag: tcflag_t,
+    c_cflag: tcflag_t,
+    c_lflag: tcflag_t,
+    c_cc: [cc_t; NCCS],
+    c_ispeed: speed_t,
+    c_ospeed: speed_t,
+}
+struct flock_t {
+    l_start: off_t,
+    l_len: off_t,
+    l_pid: pid_t,
+    l_type: c_short,
+    l_whence: c_short,
+}
+struct sf_hdtr {
+    headers: &mut iovec,
+    hdr_cnt: c_int,
+    trailers: &mut iovec,
+    trl_cnt: c_int,
+}
+struct lconv {
+    decimal_point: &mut c_char,
+    thousands_sep: &mut c_char,
+    grouping: &mut c_char,
+    int_curr_symbol: &mut c_char,
+    currency_symbol: &mut c_char,
+    mon_decimal_point: &mut c_char,
+    mon_thousands_sep: &mut c_char,
+    mon_grouping: &mut c_char,
+    positive_sign: &mut c_char,
+    negative_sign: &mut c_char,
+    int_frac_digits: c_char,
+    frac_digits: c_char,
+    p_cs_precedes: c_char,
+    p_sep_by_space: c_char,
+    n_cs_precedes: c_char,
+    n_sep_by_space: c_char,
+    p_sign_posn: c_char,
+    n_sign_posn: c_char,
+    int_p_cs_precedes: c_char,
+    int_n_cs_precedes: c_char,
+    int_p_sep_by_space: c_char,
+    int_n_sep_by_space: c_char,
+    int_p_sign_posn: c_char,
+    int_n_sign_posn: c_char,
+}
+struct proc_taskinfo {
+    pti_virtual_size: u64,
+    pti_resident_size: u64,
+    pti_total_user: u64,
+    pti_total_system: u64,
+    pti_threads_user: u64,
+    pti_threads_system: u64,
+    pti_policy: i32,
+    pti_faults: i32,
+    pti_pageins: i32,
+    pti_cow_faults: i32,
+    pti_messages_sent: i32,
+    pti_messages_received: i32,
+    pti_syscalls_mach: i32,
+    pti_syscalls_unix: i32,
+    pti_csw: i32,
+    pti_threadnum: i32,
+    pti_numrunning: i32,
+    pti_priority: i32,
+}
+struct proc_bsdinfo {
+    pbi_flags: u32,
+    pbi_status: u32,
+    pbi_xstatus: u32,
+    pbi_pid: u32,
+    pbi_ppid: u32,
+    pbi_uid: uid_t,
+    pbi_gid: gid_t,
+    pbi_ruid: uid_t,
+    pbi_rgid: gid_t,
+    pbi_svuid: uid_t,
+    pbi_svgid: gid_t,
+    rfu_1: u32,
+    pbi_comm: [c_char; MAXCOMLEN],
+    pbi_name: [c_char; 32],
+    pbi_nfiles: u32,
+    pbi_pgid: u32,
+    pbi_pjobc: u32,
+    e_tdev: u32,
+    e_tpgid: u32,
+    pbi_nice: i32,
+    pbi_start_tvsec: u64,
+    pbi_start_tvusec: u64,
+}
+struct proc_taskallinfo {
+    pbsd: proc_bsdinfo,
+    ptinfo: proc_taskinfo,
+}
+struct xsw_usage {
+    xsu_total: u64,
+    xsu_avail: u64,
+    xsu_used: u64,
+    xsu_pagesize: u32,
+    xsu_encrypted: boolean_t,
+}
+struct xucred {
+    cr_version: c_uint,
+    cr_uid: uid_t,
+    cr_ngroups: c_short,
+    cr_groups: [gid_t; 16],
+}
+struct mach_header {
+    magic: u32,
+    cputype: cpu_type_t,
+    cpusubtype: cpu_subtype_t,
+    filetype: u32,
+    ncmds: u32,
+    sizeofcmds: u32,
+    flags: u32,
+}
+struct mach_header_64 {
+    magic: u32,
+    cputype: cpu_type_t,
+    cpusubtype: cpu_subtype_t,
+    filetype: u32,
+    ncmds: u32,
+    sizeofcmds: u32,
+    flags: u32,
+    reserved: u32,
+}
+struct segment_command {
+    cmd: u32,
+    cmdsize: u32,
+    segname: [c_char; 16],
+    vmaddr: u32,
+    vmsize: u32,
+    fileoff: u32,
+    filesize: u32,
+    maxprot: vm_prot_t,
+    initprot: vm_prot_t,
+    nsects: u32,
+    flags: u32,
+}
+struct segment_command_64 {
+    cmd: u32,
+    cmdsize: u32,
+    segname: [c_char; 16],
+    vmaddr: u64,
+    vmsize: u64,
+    fileoff: u64,
+    filesize: u64,
+    maxprot: vm_prot_t,
+    initprot: vm_prot_t,
+    nsects: u32,
+    flags: u32,
+}
+struct load_command {
+    cmd: u32,
+    cmdsize: u32,
+}
+struct sockaddr_dl {
+    sdl_len: c_uchar,
+    sdl_family: c_uchar,
+    sdl_index: c_ushort,
+    sdl_type: c_uchar,
+    sdl_nlen: c_uchar,
+    sdl_alen: c_uchar,
+    sdl_slen: c_uchar,
+    sdl_data: [c_char; 12],
+}
+struct sockaddr_inarp {
+    sin_len: c_uchar,
+    sin_family: c_uchar,
+    sin_port: c_ushort,
+    sin_addr: in_addr,
+    sin_srcaddr: in_addr,
+    sin_tos: c_ushort,
+    sin_other: c_ushort,
+}
+struct sockaddr_ctl {
+    sc_len: c_uchar,
+    sc_family: c_uchar,
+    ss_sysaddr: u16,
+    sc_id: u32,
+    sc_unit: u32,
+    sc_reserved: [u32; 5],
+}
+struct in_pktinfo {
+    ipi_ifindex: c_uint,
+    ipi_spec_dst: in_addr,
+    ipi_addr: in_addr,
+}
+struct in6_pktinfo {
+    ipi6_addr: in6_addr,
+    ipi6_ifindex: c_uint,
+}
+struct ipc_perm {
+    uid: uid_t,
+    gid: gid_t,
+    cuid: uid_t,
+    cgid: gid_t,
+    mode: mode_t,
+    _seq: c_ushort,
+    _key: key_t,
+}
+struct sembuf {
+    sem_num: c_ushort,
+    sem_op: c_short,
+    sem_flg: c_short,
+}
+struct arphdr {
+    ar_hrd: u16,
+    ar_pro: u16,
+    ar_hln: u8,
+    ar_pln: u8,
+    ar_op: u16,
+}
+struct in_addr {
+    s_addr: in_addr_t,
+}
+struct sockaddr_ndrv {
+    snd_len: c_uchar,
+    snd_family: c_uchar,
+    snd_name: [c_uchar; 16],
+}
+struct sa_endpoints_t {
+    sae_srcif: c_uint,
+    sae_srcaddr: &sockaddr,
+    sae_srcaddrlen: socklen_t,
+    sae_dstaddr: &sockaddr,
+    sae_dstaddrlen: socklen_t,
+}
+struct timex {
+    modes: c_uint,
+    offset: c_long,
+    freq: c_long,
+    maxerror: c_long,
+    esterror: c_long,
+    status: c_int,
+    constant: c_long,
+    precision: c_long,
+    tolerance: c_long,
+    ppsfreq: c_long,
+    jitter: c_long,
+    shift: c_int,
+    stabil: c_long,
+    jitcnt: c_long,
+    calcnt: c_long,
+    errcnt: c_long,
+    stbcnt: c_long,
+}
+struct ntptimeval {
+    time: timespec,
+    maxerror: c_long,
+    esterror: c_long,
+    tai: c_long,
+    time_state: c_int,
+}
+struct thread_standard_policy {
+    no_data: natural_t,
+}
+struct thread_extended_policy {
+    timeshare: boolean_t,
+}
+struct thread_time_constraint_policy {
+    period: u32,
+    computation: u32,
+    constraint: u32,
+    preemptible: boolean_t,
+}
+struct thread_precedence_policy {
+    importance: integer_t,
+}
+struct thread_affinity_policy {
+    affinity_tag: integer_t,
+}
+struct thread_background_policy {
+    priority: integer_t,
+}
+struct thread_latency_qos_policy {
+    thread_latency_qos_tier: thread_latency_qos_t,
+}
+struct thread_throughput_qos_policy {
+    thread_throughput_qos_tier: thread_throughput_qos_t,
+}
+struct malloc_statistics_t {
+    blocks_in_use: c_uint,
+    size_in_use: size_t,
+    max_size_in_use: size_t,
+    size_allocated: size_t,
+}
+struct mstats_t {
+    bytes_total: size_t,
+    chunks_used: size_t,
+    bytes_used: size_t,
+    chunks_free: size_t,
+    bytes_free: size_t,
+}
+struct vm_range_t {
+    address: vm_address_t,
+    size: vm_size_t,
+}
+struct sched_param {
+    sched_priority: c_int,
+    __opaque: [c_char; 4],
+}
+struct vinfo_stat {
+    vst_dev: u32,
+    vst_mode: u16,
+    vst_nlink: u16,
+    vst_ino: u64,
+    vst_uid: uid_t,
+    vst_gid: gid_t,
+    vst_atime: i64,
+    vst_atimensec: i64,
+    vst_mtime: i64,
+    vst_mtimensec: i64,
+    vst_ctime: i64,
+    vst_ctimensec: i64,
+    vst_birthtime: i64,
+    vst_birthtimensec: i64,
+    vst_size: off_t,
+    vst_blocks: i64,
+    vst_blksize: i32,
+    vst_flags: u32,
+    vst_gen: u32,
+    vst_rdev: u32,
+    vst_qspare: [i64; 2],
+}
+struct vnode_info {
+    vi_stat: vinfo_stat,
+    vi_type: c_int,
+    vi_pad: c_int,
+    vi_fsid: fsid_t,
+}
+struct vnode_info_path {
+    vip_vi: vnode_info,
+    vip_path: [[c_char; 32]; 32],
+}
+struct proc_vnodepathinfo {
+    pvi_cdir: vnode_info_path,
+    pvi_rdir: vnode_info_path,
+}
+struct vm_statistics {
+    free_count: natural_t,
+    active_count: natural_t,
+    inactive_count: natural_t,
+    wire_count: natural_t,
+    zero_fill_count: natural_t,
+    reactivations: natural_t,
+    pageins: natural_t,
+    pageouts: natural_t,
+    faults: natural_t,
+    cow_faults: natural_t,
+    lookups: natural_t,
+    hits: natural_t,
+    purgeable_count: natural_t,
+    purges: natural_t,
+    speculative_count: natural_t,
+}
+struct task_thread_times_info {
+    user_time: time_value_t,
+    system_time: time_value_t,
+}
+struct rusage_info_v0 {
+    ri_uuid: [u8; 16],
+    ri_user_time: u64,
+    ri_system_time: u64,
+    ri_pkg_idle_wkups: u64,
+    ri_interrupt_wkups: u64,
+    ri_pageins: u64,
+    ri_wired_size: u64,
+    ri_resident_size: u64,
+    ri_phys_footprint: u64,
+    ri_proc_start_abstime: u64,
+    ri_proc_exit_abstime: u64,
+}
+struct rusage_info_v1 {
+    ri_uuid: [u8; 16],
+    ri_user_time: u64,
+    ri_system_time: u64,
+    ri_pkg_idle_wkups: u64,
+    ri_interrupt_wkups: u64,
+    ri_pageins: u64,
+    ri_wired_size: u64,
+    ri_resident_size: u64,
+    ri_phys_footprint: u64,
+    ri_proc_start_abstime: u64,
+    ri_proc_exit_abstime: u64,
+    ri_child_user_time: u64,
+    ri_child_system_time: u64,
+    ri_child_pkg_idle_wkups: u64,
+    ri_child_interrupt_wkups: u64,
+    ri_child_pageins: u64,
+    ri_child_elapsed_abstime: u64,
+}
+struct rusage_info_v2 {
+    ri_uuid: [u8; 16],
+    ri_user_time: u64,
+    ri_system_time: u64,
+    ri_pkg_idle_wkups: u64,
+    ri_interrupt_wkups: u64,
+    ri_pageins: u64,
+    ri_wired_size: u64,
+    ri_resident_size: u64,
+    ri_phys_footprint: u64,
+    ri_proc_start_abstime: u64,
+    ri_proc_exit_abstime: u64,
+    ri_child_user_time: u64,
+    ri_child_system_time: u64,
+    ri_child_pkg_idle_wkups: u64,
+    ri_child_interrupt_wkups: u64,
+    ri_child_pageins: u64,
+    ri_child_elapsed_abstime: u64,
+    ri_diskio_bytesread: u64,
+    ri_diskio_byteswritten: u64,
+}
+struct rusage_info_v3 {
+    ri_uuid: [u8; 16],
+    ri_user_time: u64,
+    ri_system_time: u64,
+    ri_pkg_idle_wkups: u64,
+    ri_interrupt_wkups: u64,
+    ri_pageins: u64,
+    ri_wired_size: u64,
+    ri_resident_size: u64,
+    ri_phys_footprint: u64,
+    ri_proc_start_abstime: u64,
+    ri_proc_exit_abstime: u64,
+    ri_child_user_time: u64,
+    ri_child_system_time: u64,
+    ri_child_pkg_idle_wkups: u64,
+    ri_child_interrupt_wkups: u64,
+    ri_child_pageins: u64,
+    ri_child_elapsed_abstime: u64,
+    ri_diskio_bytesread: u64,
+    ri_diskio_byteswritten: u64,
+    ri_cpu_time_qos_default: u64,
+    ri_cpu_time_qos_maintenance: u64,
+    ri_cpu_time_qos_background: u64,
+    ri_cpu_time_qos_utility: u64,
+    ri_cpu_time_qos_legacy: u64,
+    ri_cpu_time_qos_user_initiated: u64,
+    ri_cpu_time_qos_user_interactive: u64,
+    ri_billed_system_time: u64,
+    ri_serviced_system_time: u64,
+}
+struct rusage_info_v4 {
+    ri_uuid: [u8; 16],
+    ri_user_time: u64,
+    ri_system_time: u64,
+    ri_pkg_idle_wkups: u64,
+    ri_interrupt_wkups: u64,
+    ri_pageins: u64,
+    ri_wired_size: u64,
+    ri_resident_size: u64,
+    ri_phys_footprint: u64,
+    ri_proc_start_abstime: u64,
+    ri_proc_exit_abstime: u64,
+    ri_child_user_time: u64,
+    ri_child_system_time: u64,
+    ri_child_pkg_idle_wkups: u64,
+    ri_child_interrupt_wkups: u64,
+    ri_child_pageins: u64,
+    ri_child_elapsed_abstime: u64,
+    ri_diskio_bytesread: u64,
+    ri_diskio_byteswritten: u64,
+    ri_cpu_time_qos_default: u64,
+    ri_cpu_time_qos_maintenance: u64,
+    ri_cpu_time_qos_background: u64,
+    ri_cpu_time_qos_utility: u64,
+    ri_cpu_time_qos_legacy: u64,
+    ri_cpu_time_qos_user_initiated: u64,
+    ri_cpu_time_qos_user_interactive: u64,
+    ri_billed_system_time: u64,
+    ri_serviced_system_time: u64,
+    ri_logical_writes: u64,
+    ri_lifetime_max_phys_footprint: u64,
+    ri_instructions: u64,
+    ri_cycles: u64,
+    ri_billed_energy: u64,
+    ri_serviced_energy: u64,
+    ri_interval_max_phys_footprint: u64,
+    ri_runnable_time: u64,
+}
+struct image_offset {
+    uuid: uuid_t,
+    offset: u32,
+}
+struct attrlist {
+    bitmapcount: c_ushort,
+    reserved: u16,
+    commonattr: attrgroup_t,
+    volattr: attrgroup_t,
+    dirattr: attrgroup_t,
+    fileattr: attrgroup_t,
+    forkattr: attrgroup_t,
+}
+struct attrreference_t {
+    attr_dataoffset: i32,
+    attr_length: u32,
+}
+struct vol_capabilities_attr_t {
+    capabilities: vol_capabilities_set_t,
+    valid: vol_capabilities_set_t,
+}
+struct attribute_set_t {
+    commonattr: attrgroup_t,
+    volattr: attrgroup_t,
+    dirattr: attrgroup_t,
+    fileattr: attrgroup_t,
+    forkattr: attrgroup_t,
+}
+struct vol_attributes_attr_t {
+    validattr: attribute_set_t,
+    nativeattr: attribute_set_t,
+}
+#[packed(4)]
+struct kevent_t {
+    ident: uintptr_t,
+    filter: i16,
+    flags: u16,
+    fflags: u32,
+    data: intptr_t,
+    udata: &mut c_void,
+}
+#[packed(4)]
+struct semid_ds {
+    sem_perm: ipc_perm,
+    sem_base: i32,
+    sem_nsems: c_ushort,
+    sem_otime: time_t,
+    sem_pad1: i32,
+    sem_ctime: time_t,
+    sem_pad2: i32,
+    sem_pad3: [i32; 4],
+}
+#[packed(4)]
+struct shmid_ds {
+    shm_perm: ipc_perm,
+    shm_segsz: size_t,
+    shm_lpid: pid_t,
+    shm_cpid: pid_t,
+    shm_nattch: shmatt_t,
+    shm_atime: time_t,
+    shm_dtime: time_t,
+    shm_ctime: time_t,
+    shm_internal: &mut c_void,
+}
+struct proc_threadinfo {
+    pth_user_time: u64,
+    pth_system_time: u64,
+    pth_cpu_usage: i32,
+    pth_policy: i32,
+    pth_run_state: i32,
+    pth_flags: i32,
+    pth_sleep_time: i32,
+    pth_curpri: i32,
+    pth_priority: i32,
+    pth_maxpriority: i32,
+    pth_name: [c_char; MAXTHREADNAMESIZE],
+}
+struct statfs_t {
+    f_bsize: u32,
+    f_iosize: i32,
+    f_blocks: u64,
+    f_bfree: u64,
+    f_bavail: u64,
+    f_files: u64,
+    f_ffree: u64,
+    f_fsid: fsid_t,
+    f_owner: uid_t,
+    f_type: u32,
+    f_flags: u32,
+    f_fssubtype: u32,
+    f_fstypename: [c_char; 16],
+    f_mntonname: [c_char; 1024],
+    f_mntfromname: [c_char; 1024],
+    f_flags_ext: u32,
+    f_reserved: [u32; 7],
+}
+struct dirent {
+    d_ino: u64,
+    d_seekoff: u64,
+    d_reclen: u16,
+    d_namlen: u16,
+    d_type: u8,
+    d_name: [c_char; 1024],
+}
+struct pthread_rwlock_t {
+    __sig: c_long,
+    __opaque: [u8; __PTHREAD_RWLOCK_SIZE__],
+}
+struct pthread_mutex_t {
+    __sig: c_long,
+    __opaque: [u8; __PTHREAD_MUTEX_SIZE__],
+}
+struct pthread_cond_t {
+    __sig: c_long,
+    __opaque: [u8; __PTHREAD_COND_SIZE__],
+}
+struct sockaddr_storage {
+    ss_len: u8,
+    ss_family: sa_family_t,
+    __ss_pad1: [u8; 6],
+    __ss_align: i64,
+    __ss_pad2: [u8; 112],
+}
+struct utmpx {
+    ut_user: [c_char; _UTX_USERSIZE],
+    ut_id: [c_char; _UTX_IDSIZE],
+    ut_line: [c_char; _UTX_LINESIZE],
+    ut_pid: pid_t,
+    ut_type: c_short,
+    ut_tv: timeval,
+    ut_host: [c_char; _UTX_HOSTSIZE],
+    ut_pad: [u32; 16],
+}
+struct sigevent {
+    sigev_notify: c_int,
+    sigev_signo: c_int,
+    sigev_value: sigval,
+    __unused1: &mut c_void,
+    sigev_notify_attributes: &mut pthread_attr_t,
+}
+struct processor_cpu_load_info {
+    cpu_ticks: [c_uint; CPU_STATE_MAX as usize],
+}
+struct processor_basic_info {
+    cpu_type: cpu_type_t,
+    cpu_subtype: cpu_subtype_t,
+    running: boolean_t,
+    slot_num: c_int,
+    is_master: boolean_t,
+}
+struct processor_set_basic_info {
+    processor_count: c_int,
+    default_policy: c_int,
+}
+struct processor_set_load_info {
+    task_count: c_int,
+    thread_count: c_int,
+    load_average: integer_t,
+    mach_factor: integer_t,
+}
+struct time_value_t {
+    seconds: integer_t,
+    microseconds: integer_t,
+}
+struct thread_basic_info {
+    user_time: time_value_t,
+    system_time: time_value_t,
+    cpu_usage: integer_t,
+    policy: policy_t,
+    run_state: integer_t,
+    flags: integer_t,
+    suspend_count: integer_t,
+    sleep_time: integer_t,
+}
+struct thread_identifier_info {
+    thread_id: u64,
+    thread_handle: u64,
+    dispatch_qaddr: u64,
+}
+struct thread_extended_info {
+    pth_user_time: u64,
+    pth_system_time: u64,
+    pth_cpu_usage: i32,
+    pth_policy: i32,
+    pth_run_state: i32,
+    pth_flags: i32,
+    pth_sleep_time: i32,
+    pth_curpri: i32,
+    pth_priority: i32,
+    pth_maxpriority: i32,
+    pth_name: [c_char; MAXTHREADNAMESIZE],
+}
+#[packed(4)]
+struct if_data64 {
+    ifi_type: c_uchar,
+    ifi_typelen: c_uchar,
+    ifi_physical: c_uchar,
+    ifi_addrlen: c_uchar,
+    ifi_hdrlen: c_uchar,
+    ifi_recvquota: c_uchar,
+    ifi_xmitquota: c_uchar,
+    ifi_unused1: c_uchar,
+    ifi_mtu: u32,
+    ifi_metric: u32,
+    ifi_baudrate: u64,
+    ifi_ipackets: u64,
+    ifi_ierrors: u64,
+    ifi_opackets: u64,
+    ifi_oerrors: u64,
+    ifi_collisions: u64,
+    ifi_ibytes: u64,
+    ifi_obytes: u64,
+    ifi_imcasts: u64,
+    ifi_omcasts: u64,
+    ifi_iqdrops: u64,
+    ifi_noproto: u64,
+    ifi_recvtiming: u32,
+    ifi_xmittiming: u32,
+
+    ifi_lastchange: timeval32,
+}
+#[packed(4)]
+struct if_msghdr2 {
+    ifm_msglen: c_ushort,
+    ifm_version: c_uchar,
+    ifm_type: c_uchar,
+    ifm_addrs: c_int,
+    ifm_flags: c_int,
+    ifm_index: c_ushort,
+    ifm_snd_len: c_int,
+    ifm_snd_maxlen: c_int,
+    ifm_snd_drops: c_int,
+    ifm_timer: c_int,
+    ifm_data: if_data64,
+}
+#[packed(8)]
+struct vm_statistics64 {
+    free_count: natural_t,
+    active_count: natural_t,
+    inactive_count: natural_t,
+    wire_count: natural_t,
+    zero_fill_count: u64,
+    reactivations: u64,
+    pageins: u64,
+    pageouts: u64,
+    faults: u64,
+    cow_faults: u64,
+    lookups: u64,
+    hits: u64,
+    purges: u64,
+    purgeable_count: natural_t,
+    speculative_count: natural_t,
+    decompressions: u64,
+    compressions: u64,
+    swapins: u64,
+    swapouts: u64,
+    compressor_page_count: natural_t,
+    throttled_count: natural_t,
+    external_page_count: natural_t,
+    internal_page_count: natural_t,
+    total_uncompressed_pages_in_compressor: u64,
+}
+#[packed(4)]
+struct mach_task_basic_info {
+    virtual_size: mach_vm_size_t,
+    resident_size: mach_vm_size_t,
+    resident_size_max: mach_vm_size_t,
+    user_time: time_value_t,
+    system_time: time_value_t,
+    policy: policy_t,
+    suspend_count: integer_t,
+}
+#[packed(4)]
+struct log2phys {
+    l2p_flags: c_uint,
+    l2p_contigbytes: off_t,
+    l2p_devoffset: off_t,
+}
+struct os_unfair_lock_s {
+    _os_unfair_lock_opaque: u32,
+}
+impl siginfo_t {
+    fn si_addr(self: &siginfo_t) -> &mut c_void {
+        self.si_addr
+    }
+    fn si_value(self: &siginfo_t) -> sigval {
+        struct siginfo_timer {
+            _si_signo: c_int,
+            _si_errno: c_int,
+            _si_code: c_int,
+            _si_pid: pid_t,
+            _si_uid: uid_t,
+            _si_status: c_int,
+            _si_addr: &mut c_void,
+            si_value: sigval,
+        }
+        (*(self as &siginfo_t as &siginfo_timer)).si_value
+    }
+    fn si_pid(self: &siginfo_t) -> pid_t {
+        self.si_pid
+    }
+    fn si_uid(self: &siginfo_t) -> uid_t {
+        self.si_uid
+    }
+    fn si_status(self: &siginfo_t) -> c_int {
+        self.si_status
+    }
+}
+union semun {
+    val: c_int,
+    buf: &mut semid_ds,
+    array: &mut c_ushort,
+}
+const _UTX_USERSIZE: usize = 256;
+const _UTX_LINESIZE: usize = 32;
+const _UTX_IDSIZE: usize = 4;
+const _UTX_HOSTSIZE: usize = 256;
+const EMPTY: c_short = 0;
+const RUN_LVL: c_short = 1;
+const BOOT_TIME: c_short = 2;
+const OLD_TIME: c_short = 3;
+const NEW_TIME: c_short = 4;
+const INIT_PROCESS: c_short = 5;
+const LOGIN_PROCESS: c_short = 6;
+const USER_PROCESS: c_short = 7;
+const DEAD_PROCESS: c_short = 8;
+const ACCOUNTING: c_short = 9;
+const SIGNATURE: c_short = 10;
+const SHUTDOWN_TIME: c_short = 11;
+const LC_COLLATE_MASK: c_int = 1 << 0;
+const LC_CTYPE_MASK: c_int = 1 << 1;
+const LC_MESSAGES_MASK: c_int = 1 << 2;
+const LC_MONETARY_MASK: c_int = 1 << 3;
+const LC_NUMERIC_MASK: c_int = 1 << 4;
+const LC_TIME_MASK: c_int = 1 << 5;
+const LC_ALL_MASK: c_int = LC_COLLATE_MASK | LC_CTYPE_MASK | LC_MESSAGES_MASK | LC_MONETARY_MASK | LC_NUMERIC_MASK | LC_TIME_MASK;
+const CODESET: nl_item = 0;
+const D_T_FMT: nl_item = 1;
+const D_FMT: nl_item = 2;
+const T_FMT: nl_item = 3;
+const T_FMT_AMPM: nl_item = 4;
+const AM_STR: nl_item = 5;
+const PM_STR: nl_item = 6;
+const DAY_1: nl_item = 7;
+const DAY_2: nl_item = 8;
+const DAY_3: nl_item = 9;
+const DAY_4: nl_item = 10;
+const DAY_5: nl_item = 11;
+const DAY_6: nl_item = 12;
+const DAY_7: nl_item = 13;
+const ABDAY_1: nl_item = 14;
+const ABDAY_2: nl_item = 15;
+const ABDAY_3: nl_item = 16;
+const ABDAY_4: nl_item = 17;
+const ABDAY_5: nl_item = 18;
+const ABDAY_6: nl_item = 19;
+const ABDAY_7: nl_item = 20;
+const MON_1: nl_item = 21;
+const MON_2: nl_item = 22;
+const MON_3: nl_item = 23;
+const MON_4: nl_item = 24;
+const MON_5: nl_item = 25;
+const MON_6: nl_item = 26;
+const MON_7: nl_item = 27;
+const MON_8: nl_item = 28;
+const MON_9: nl_item = 29;
+const MON_10: nl_item = 30;
+const MON_11: nl_item = 31;
+const MON_12: nl_item = 32;
+const ABMON_1: nl_item = 33;
+const ABMON_2: nl_item = 34;
+const ABMON_3: nl_item = 35;
+const ABMON_4: nl_item = 36;
+const ABMON_5: nl_item = 37;
+const ABMON_6: nl_item = 38;
+const ABMON_7: nl_item = 39;
+const ABMON_8: nl_item = 40;
+const ABMON_9: nl_item = 41;
+const ABMON_10: nl_item = 42;
+const ABMON_11: nl_item = 43;
+const ABMON_12: nl_item = 44;
+const CLOCK_REALTIME: clockid_t = 0;
+const CLOCK_MONOTONIC_RAW: clockid_t = 4;
+const CLOCK_MONOTONIC_RAW_APPROX: clockid_t = 5;
+const CLOCK_MONOTONIC: clockid_t = 6;
+const CLOCK_UPTIME_RAW: clockid_t = 8;
+const CLOCK_UPTIME_RAW_APPROX: clockid_t = 9;
+const CLOCK_PROCESS_CPUTIME_ID: clockid_t = 12;
+const CLOCK_THREAD_CPUTIME_ID: clockid_t = 16;
+const ERA: nl_item = 45;
+const ERA_D_FMT: nl_item = 46;
+const ERA_D_T_FMT: nl_item = 47;
+const ERA_T_FMT: nl_item = 48;
+const ALT_DIGITS: nl_item = 49;
+const RADIXCHAR: nl_item = 50;
+const THOUSEP: nl_item = 51;
+const YESEXPR: nl_item = 52;
+const NOEXPR: nl_item = 53;
+const YESSTR: nl_item = 54;
+const NOSTR: nl_item = 55;
+const CRNCYSTR: nl_item = 56;
+const D_MD_ORDER: nl_item = 57;
+const EXIT_FAILURE: c_int = 1;
+const EXIT_SUCCESS: c_int = 0;
+const RAND_MAX: c_int = 2147483647;
+const EOF: c_int = -1;
+const SEEK_SET: c_int = 0;
+const SEEK_CUR: c_int = 1;
+const SEEK_END: c_int = 2;
+const SEEK_HOLE: c_int = 3;
+const SEEK_DATA: c_int = 4;
+const _IOFBF: c_int = 0;
+const _IONBF: c_int = 2;
+const _IOLBF: c_int = 1;
+const BUFSIZ: c_uint = 1024;
+const FOPEN_MAX: c_uint = 20;
+const FILENAME_MAX: c_uint = 1024;
+const L_tmpnam: c_uint = 1024;
+const TMP_MAX: c_uint = 308915776;
+const _PC_LINK_MAX: c_int = 1;
+const _PC_MAX_CANON: c_int = 2;
+const _PC_MAX_INPUT: c_int = 3;
+const _PC_NAME_MAX: c_int = 4;
+const _PC_PATH_MAX: c_int = 5;
+const _PC_PIPE_BUF: c_int = 6;
+const _PC_CHOWN_RESTRICTED: c_int = 7;
+const _PC_NO_TRUNC: c_int = 8;
+const _PC_VDISABLE: c_int = 9;
+const O_EVTONLY: c_int = 0x00008000;
+const O_NOCTTY: c_int = 0x00020000;
+const O_DIRECTORY: c_int = 0x00100000;
+const O_SYMLINK: c_int = 0x00200000;
+const O_DSYNC: c_int = 0x00400000;
+const O_CLOEXEC: c_int = 0x01000000;
+const O_NOFOLLOW_ANY: c_int = 0x20000000;
+const S_IFIFO: mode_t = 4096;
+const S_IFCHR: mode_t = 8192;
+const S_IFBLK: mode_t = 24576;
+const S_IFDIR: mode_t = 16384;
+const S_IFREG: mode_t = 32768;
+const S_IFLNK: mode_t = 40960;
+const S_IFSOCK: mode_t = 49152;
+const S_IFMT: mode_t = 61440;
+const S_IEXEC: mode_t = 64;
+const S_IWRITE: mode_t = 128;
+const S_IREAD: mode_t = 256;
+const S_IRWXU: mode_t = 448;
+const S_IXUSR: mode_t = 64;
+const S_IWUSR: mode_t = 128;
+const S_IRUSR: mode_t = 256;
+const S_IRWXG: mode_t = 56;
+const S_IXGRP: mode_t = 8;
+const S_IWGRP: mode_t = 16;
+const S_IRGRP: mode_t = 32;
+const S_IRWXO: mode_t = 7;
+const S_IXOTH: mode_t = 1;
+const S_IWOTH: mode_t = 2;
+const S_IROTH: mode_t = 4;
+const F_OK: c_int = 0;
+const R_OK: c_int = 4;
+const W_OK: c_int = 2;
+const X_OK: c_int = 1;
+const STDIN_FILENO: c_int = 0;
+const STDOUT_FILENO: c_int = 1;
+const STDERR_FILENO: c_int = 2;
+const F_LOCK: c_int = 1;
+const F_TEST: c_int = 3;
+const F_TLOCK: c_int = 2;
+const F_ULOCK: c_int = 0;
+const F_GETLK: c_int = 7;
+const F_SETLK: c_int = 8;
+const F_SETLKW: c_int = 9;
+const SIGHUP: c_int = 1;
+const SIGINT: c_int = 2;
+const SIGQUIT: c_int = 3;
+const SIGILL: c_int = 4;
+const SIGABRT: c_int = 6;
+const SIGEMT: c_int = 7;
+const SIGFPE: c_int = 8;
+const SIGKILL: c_int = 9;
+const SIGSEGV: c_int = 11;
+const SIGPIPE: c_int = 13;
+const SIGALRM: c_int = 14;
+const SIGTERM: c_int = 15;
+const PROT_NONE: c_int = 0;
+const PROT_READ: c_int = 1;
+const PROT_WRITE: c_int = 2;
+const PROT_EXEC: c_int = 4;
+const PT_TRACE_ME: c_int = 0;
+const PT_READ_I: c_int = 1;
+const PT_READ_D: c_int = 2;
+const PT_READ_U: c_int = 3;
+const PT_WRITE_I: c_int = 4;
+const PT_WRITE_D: c_int = 5;
+const PT_WRITE_U: c_int = 6;
+const PT_CONTINUE: c_int = 7;
+const PT_KILL: c_int = 8;
+const PT_STEP: c_int = 9;
+const PT_ATTACH: c_int = 10;
+const PT_DETACH: c_int = 11;
+const PT_SIGEXC: c_int = 12;
+const PT_THUPDATE: c_int = 13;
+const PT_ATTACHEXC: c_int = 14;
+const PT_FORCEQUOTA: c_int = 30;
+const PT_DENY_ATTACH: c_int = 31;
+const PT_FIRSTMACH: c_int = 32;
+const MAP_FILE: c_int = 0x0000;
+const MAP_SHARED: c_int = 0x0001;
+const MAP_PRIVATE: c_int = 0x0002;
+const MAP_FIXED: c_int = 0x0010;
+const MAP_ANON: c_int = 0x1000;
+const MAP_ANONYMOUS: c_int = MAP_ANON;
+const CPU_STATE_USER: c_int = 0;
+const CPU_STATE_SYSTEM: c_int = 1;
+const CPU_STATE_IDLE: c_int = 2;
+const CPU_STATE_NICE: c_int = 3;
+const CPU_STATE_MAX: c_int = 4;
+const PROCESSOR_BASIC_INFO: c_int = 1;
+const PROCESSOR_CPU_LOAD_INFO: c_int = 2;
+const PROCESSOR_PM_REGS_INFO: c_int = 0x10000001;
+const PROCESSOR_TEMPERATURE: c_int = 0x10000002;
+const PROCESSOR_SET_LOAD_INFO: c_int = 4;
+const PROCESSOR_SET_BASIC_INFO: c_int = 5;
+const VM_FLAGS_FIXED: c_int = 0x0000;
+const VM_FLAGS_ANYWHERE: c_int = 0x0001;
+const VM_FLAGS_PURGABLE: c_int = 0x0002;
+const VM_FLAGS_RANDOM_ADDR: c_int = 0x0008;
+const VM_FLAGS_NO_CACHE: c_int = 0x0010;
+const VM_FLAGS_RESILIENT_CODESIGN: c_int = 0x0020;
+const VM_FLAGS_RESILIENT_MEDIA: c_int = 0x0040;
+const VM_FLAGS_OVERWRITE: c_int = 0x4000;
+const VM_FLAGS_SUPERPAGE_MASK: c_int = 0x70000;
+const VM_FLAGS_RETURN_DATA_ADDR: c_int = 0x100000;
+const VM_FLAGS_RETURN_4K_DATA_ADDR: c_int = 0x800000;
+const VM_FLAGS_ALIAS_MASK: c_int = 0xFF000000;
+const VM_FLAGS_USER_ALLOCATE: c_int = 0xff07401f;
+const VM_FLAGS_USER_MAP: c_int = 0xff97401f;
+const VM_FLAGS_USER_REMAP: c_int = VM_FLAGS_FIXED | VM_FLAGS_ANYWHERE | VM_FLAGS_RANDOM_ADDR | VM_FLAGS_OVERWRITE | VM_FLAGS_RETURN_DATA_ADDR | VM_FLAGS_RESILIENT_CODESIGN;
+const VM_FLAGS_SUPERPAGE_SHIFT: c_int = 16;
+const SUPERPAGE_NONE: c_int = 0;
+const SUPERPAGE_SIZE_ANY: c_int = 1;
+const VM_FLAGS_SUPERPAGE_NONE: c_int = SUPERPAGE_NONE << VM_FLAGS_SUPERPAGE_SHIFT;
+const VM_FLAGS_SUPERPAGE_SIZE_ANY: c_int = SUPERPAGE_SIZE_ANY << VM_FLAGS_SUPERPAGE_SHIFT;
+const SUPERPAGE_SIZE_2MB: c_int = 2;
+const VM_FLAGS_SUPERPAGE_SIZE_2MB: c_int = SUPERPAGE_SIZE_2MB << VM_FLAGS_SUPERPAGE_SHIFT;
+const VM_MEMORY_MALLOC: c_int = 1;
+const VM_MEMORY_MALLOC_SMALL: c_int = 2;
+const VM_MEMORY_MALLOC_LARGE: c_int = 3;
+const VM_MEMORY_MALLOC_HUGE: c_int = 4;
+const VM_MEMORY_SBRK: c_int = 5;
+const VM_MEMORY_REALLOC: c_int = 6;
+const VM_MEMORY_MALLOC_TINY: c_int = 7;
+const VM_MEMORY_MALLOC_LARGE_REUSABLE: c_int = 8;
+const VM_MEMORY_MALLOC_LARGE_REUSED: c_int = 9;
+const VM_MEMORY_ANALYSIS_TOOL: c_int = 10;
+const VM_MEMORY_MALLOC_NANO: c_int = 11;
+const VM_MEMORY_MACH_MSG: c_int = 20;
+const VM_MEMORY_IOKIT: c_int = 21;
+const VM_MEMORY_STACK: c_int = 30;
+const VM_MEMORY_GUARD: c_int = 31;
+const VM_MEMORY_SHARED_PMAP: c_int = 32;
+const VM_MEMORY_DYLIB: c_int = 33;
+const VM_MEMORY_OBJC_DISPATCHERS: c_int = 34;
+const VM_MEMORY_UNSHARED_PMAP: c_int = 35;
+const VM_MEMORY_APPKIT: c_int = 40;
+const VM_MEMORY_FOUNDATION: c_int = 41;
+const VM_MEMORY_COREGRAPHICS: c_int = 42;
+const VM_MEMORY_CORESERVICES: c_int = 43;
+const VM_MEMORY_CARBON: c_int = VM_MEMORY_CORESERVICES;
+const VM_MEMORY_JAVA: c_int = 44;
+const VM_MEMORY_COREDATA: c_int = 45;
+const VM_MEMORY_COREDATA_OBJECTIDS: c_int = 46;
+const VM_MEMORY_ATS: c_int = 50;
+const VM_MEMORY_LAYERKIT: c_int = 51;
+const VM_MEMORY_CGIMAGE: c_int = 52;
+const VM_MEMORY_TCMALLOC: c_int = 53;
+const VM_MEMORY_COREGRAPHICS_DATA: c_int = 54;
+const VM_MEMORY_COREGRAPHICS_SHARED: c_int = 55;
+const VM_MEMORY_COREGRAPHICS_FRAMEBUFFERS: c_int = 56;
+const VM_MEMORY_COREGRAPHICS_BACKINGSTORES: c_int = 57;
+const VM_MEMORY_COREGRAPHICS_XALLOC: c_int = 58;
+const VM_MEMORY_COREGRAPHICS_MISC: c_int = VM_MEMORY_COREGRAPHICS;
+const VM_MEMORY_DYLD: c_int = 60;
+const VM_MEMORY_DYLD_MALLOC: c_int = 61;
+const VM_MEMORY_SQLITE: c_int = 62;
+const VM_MEMORY_JAVASCRIPT_CORE: c_int = 63;
+const VM_MEMORY_JAVASCRIPT_JIT_EXECUTABLE_ALLOCATOR: c_int = 64;
+const VM_MEMORY_JAVASCRIPT_JIT_REGISTER_FILE: c_int = 65;
+const VM_MEMORY_GLSL: c_int = 66;
+const VM_MEMORY_OPENCL: c_int = 67;
+const VM_MEMORY_COREIMAGE: c_int = 68;
+const VM_MEMORY_WEBCORE_PURGEABLE_BUFFERS: c_int = 69;
+const VM_MEMORY_IMAGEIO: c_int = 70;
+const VM_MEMORY_COREPROFILE: c_int = 71;
+const VM_MEMORY_ASSETSD: c_int = 72;
+const VM_MEMORY_OS_ALLOC_ONCE: c_int = 73;
+const VM_MEMORY_LIBDISPATCH: c_int = 74;
+const VM_MEMORY_ACCELERATE: c_int = 75;
+const VM_MEMORY_COREUI: c_int = 76;
+const VM_MEMORY_COREUIFILE: c_int = 77;
+const VM_MEMORY_GENEALOGY: c_int = 78;
+const VM_MEMORY_RAWCAMERA: c_int = 79;
+const VM_MEMORY_CORPSEINFO: c_int = 80;
+const VM_MEMORY_ASL: c_int = 81;
+const VM_MEMORY_SWIFT_RUNTIME: c_int = 82;
+const VM_MEMORY_SWIFT_METADATA: c_int = 83;
+const VM_MEMORY_DHMM: c_int = 84;
+const VM_MEMORY_SCENEKIT: c_int = 86;
+const VM_MEMORY_SKYWALK: c_int = 87;
+const VM_MEMORY_APPLICATION_SPECIFIC_1: c_int = 240;
+const VM_MEMORY_APPLICATION_SPECIFIC_16: c_int = 255;
+const MAP_FAILED: &mut c_void = !0 as &mut c_void;
+const MCL_CURRENT: c_int = 0x0001;
+const MCL_FUTURE: c_int = 0x0002;
+const MS_ASYNC: c_int = 0x0001;
+const MS_INVALIDATE: c_int = 0x0002;
+const MS_SYNC: c_int = 0x0010;
+const MS_KILLPAGES: c_int = 0x0004;
+const MS_DEACTIVATE: c_int = 0x0008;
+const EPERM: c_int = 1;
+const ENOENT: c_int = 2;
+const ESRCH: c_int = 3;
+const EINTR: c_int = 4;
+const EIO: c_int = 5;
+const ENXIO: c_int = 6;
+const E2BIG: c_int = 7;
+const ENOEXEC: c_int = 8;
+const EBADF: c_int = 9;
+const ECHILD: c_int = 10;
+const EDEADLK: c_int = 11;
+const ENOMEM: c_int = 12;
+const EACCES: c_int = 13;
+const EFAULT: c_int = 14;
+const ENOTBLK: c_int = 15;
+const EBUSY: c_int = 16;
+const EEXIST: c_int = 17;
+const EXDEV: c_int = 18;
+const ENODEV: c_int = 19;
+const ENOTDIR: c_int = 20;
+const EISDIR: c_int = 21;
+const EINVAL: c_int = 22;
+const ENFILE: c_int = 23;
+const EMFILE: c_int = 24;
+const ENOTTY: c_int = 25;
+const ETXTBSY: c_int = 26;
+const EFBIG: c_int = 27;
+const ENOSPC: c_int = 28;
+const ESPIPE: c_int = 29;
+const EROFS: c_int = 30;
+const EMLINK: c_int = 31;
+const EPIPE: c_int = 32;
+const EDOM: c_int = 33;
+const ERANGE: c_int = 34;
+const EAGAIN: c_int = 35;
+const EWOULDBLOCK: c_int = EAGAIN;
+const EINPROGRESS: c_int = 36;
+const EALREADY: c_int = 37;
+const ENOTSOCK: c_int = 38;
+const EDESTADDRREQ: c_int = 39;
+const EMSGSIZE: c_int = 40;
+const EPROTOTYPE: c_int = 41;
+const ENOPROTOOPT: c_int = 42;
+const EPROTONOSUPPORT: c_int = 43;
+const ESOCKTNOSUPPORT: c_int = 44;
+const ENOTSUP: c_int = 45;
+const EPFNOSUPPORT: c_int = 46;
+const EAFNOSUPPORT: c_int = 47;
+const EADDRINUSE: c_int = 48;
+const EADDRNOTAVAIL: c_int = 49;
+const ENETDOWN: c_int = 50;
+const ENETUNREACH: c_int = 51;
+const ENETRESET: c_int = 52;
+const ECONNABORTED: c_int = 53;
+const ECONNRESET: c_int = 54;
+const ENOBUFS: c_int = 55;
+const EISCONN: c_int = 56;
+const ENOTCONN: c_int = 57;
+const ESHUTDOWN: c_int = 58;
+const ETOOMANYREFS: c_int = 59;
+const ETIMEDOUT: c_int = 60;
+const ECONNREFUSED: c_int = 61;
+const ELOOP: c_int = 62;
+const ENAMETOOLONG: c_int = 63;
+const EHOSTDOWN: c_int = 64;
+const EHOSTUNREACH: c_int = 65;
+const ENOTEMPTY: c_int = 66;
+const EPROCLIM: c_int = 67;
+const EUSERS: c_int = 68;
+const EDQUOT: c_int = 69;
+const ESTALE: c_int = 70;
+const EREMOTE: c_int = 71;
+const EBADRPC: c_int = 72;
+const ERPCMISMATCH: c_int = 73;
+const EPROGUNAVAIL: c_int = 74;
+const EPROGMISMATCH: c_int = 75;
+const EPROCUNAVAIL: c_int = 76;
+const ENOLCK: c_int = 77;
+const ENOSYS: c_int = 78;
+const EFTYPE: c_int = 79;
+const EAUTH: c_int = 80;
+const ENEEDAUTH: c_int = 81;
+const EPWROFF: c_int = 82;
+const EDEVERR: c_int = 83;
+const EOVERFLOW: c_int = 84;
+const EBADEXEC: c_int = 85;
+const EBADARCH: c_int = 86;
+const ESHLIBVERS: c_int = 87;
+const EBADMACHO: c_int = 88;
+const ECANCELED: c_int = 89;
+const EIDRM: c_int = 90;
+const ENOMSG: c_int = 91;
+const EILSEQ: c_int = 92;
+const ENOATTR: c_int = 93;
+const EBADMSG: c_int = 94;
+const EMULTIHOP: c_int = 95;
+const ENODATA: c_int = 96;
+const ENOLINK: c_int = 97;
+const ENOSR: c_int = 98;
+const ENOSTR: c_int = 99;
+const EPROTO: c_int = 100;
+const ETIME: c_int = 101;
+const EOPNOTSUPP: c_int = 102;
+const ENOPOLICY: c_int = 103;
+const ENOTRECOVERABLE: c_int = 104;
+const EOWNERDEAD: c_int = 105;
+const EQFULL: c_int = 106;
+const ELAST: c_int = 106;
+const EAI_AGAIN: c_int = 2;
+const EAI_BADFLAGS: c_int = 3;
+const EAI_FAIL: c_int = 4;
+const EAI_FAMILY: c_int = 5;
+const EAI_MEMORY: c_int = 6;
+const EAI_NODATA: c_int = 7;
+const EAI_NONAME: c_int = 8;
+const EAI_SERVICE: c_int = 9;
+const EAI_SOCKTYPE: c_int = 10;
+const EAI_SYSTEM: c_int = 11;
+const EAI_OVERFLOW: c_int = 14;
+const F_DUPFD: c_int = 0;
+const F_DUPFD_CLOEXEC: c_int = 67;
+const F_GETFD: c_int = 1;
+const F_SETFD: c_int = 2;
+const F_GETFL: c_int = 3;
+const F_SETFL: c_int = 4;
+const F_PREALLOCATE: c_int = 42;
+const F_RDADVISE: c_int = 44;
+const F_RDAHEAD: c_int = 45;
+const F_NOCACHE: c_int = 48;
+const F_LOG2PHYS: c_int = 49;
+const F_GETPATH: c_int = 50;
+const F_FULLFSYNC: c_int = 51;
+const F_FREEZE_FS: c_int = 53;
+const F_THAW_FS: c_int = 54;
+const F_GLOBAL_NOCACHE: c_int = 55;
+const F_NODIRECT: c_int = 62;
+const F_LOG2PHYS_EXT: c_int = 65;
+const F_BARRIERFSYNC: c_int = 85;
+const F_GETPATH_NOFIRMLINK: c_int = 102;
+const F_ALLOCATECONTIG: c_uint = 0x02;
+const F_ALLOCATEALL: c_uint = 0x04;
+const F_PEOFPOSMODE: c_int = 3;
+const F_VOLPOSMODE: c_int = 4;
+const AT_FDCWD: c_int = -2;
+const AT_EACCESS: c_int = 0x0010;
+const AT_SYMLINK_NOFOLLOW: c_int = 0x0020;
+const AT_SYMLINK_FOLLOW: c_int = 0x0040;
+const AT_REMOVEDIR: c_int = 0x0080;
+const PTHREAD_INTROSPECTION_THREAD_CREATE: c_uint = 1;
+const PTHREAD_INTROSPECTION_THREAD_START: c_uint = 2;
+const PTHREAD_INTROSPECTION_THREAD_TERMINATE: c_uint = 3;
+const PTHREAD_INTROSPECTION_THREAD_DESTROY: c_uint = 4;
+const TIOCMODG: c_ulong = 0x40047403;
+const TIOCMODS: c_ulong = 0x80047404;
+const TIOCM_LE: c_int = 0x1;
+const TIOCM_DTR: c_int = 0x2;
+const TIOCM_RTS: c_int = 0x4;
+const TIOCM_ST: c_int = 0x8;
+const TIOCM_SR: c_int = 0x10;
+const TIOCM_CTS: c_int = 0x20;
+const TIOCM_CAR: c_int = 0x40;
+const TIOCM_CD: c_int = 0x40;
+const TIOCM_RNG: c_int = 0x80;
+const TIOCM_RI: c_int = 0x80;
+const TIOCM_DSR: c_int = 0x100;
+const TIOCEXCL: c_int = 0x2000740d;
+const TIOCNXCL: c_int = 0x2000740e;
+const TIOCFLUSH: c_ulong = 0x80047410;
+const TIOCGETD: c_ulong = 0x4004741a;
+const TIOCSETD: c_ulong = 0x8004741b;
+const TIOCIXON: c_uint = 0x20007481;
+const TIOCIXOFF: c_uint = 0x20007480;
+const TIOCSDTR: c_uint = 0x20007479;
+const TIOCCDTR: c_uint = 0x20007478;
+const TIOCGPGRP: c_ulong = 0x40047477;
+const TIOCSPGRP: c_ulong = 0x80047476;
+const TIOCOUTQ: c_ulong = 0x40047473;
+const TIOCSTI: c_ulong = 0x80017472;
+const TIOCNOTTY: c_uint = 0x20007471;
+const TIOCPKT: c_ulong = 0x80047470;
+const TIOCPKT_DATA: c_int = 0x0;
+const TIOCPKT_FLUSHREAD: c_int = 0x1;
+const TIOCPKT_FLUSHWRITE: c_int = 0x2;
+const TIOCPKT_STOP: c_int = 0x4;
+const TIOCPKT_START: c_int = 0x8;
+const TIOCPKT_NOSTOP: c_int = 0x10;
+const TIOCPKT_DOSTOP: c_int = 0x20;
+const TIOCPKT_IOCTL: c_int = 0x40;
+const TIOCSTOP: c_uint = 0x2000746f;
+const TIOCSTART: c_uint = 0x2000746e;
+const TIOCMSET: c_ulong = 0x8004746d;
+const TIOCMBIS: c_ulong = 0x8004746c;
+const TIOCMBIC: c_ulong = 0x8004746b;
+const TIOCMGET: c_ulong = 0x4004746a;
+const TIOCREMOTE: c_ulong = 0x80047469;
+const TIOCGWINSZ: c_ulong = 0x40087468;
+const TIOCSWINSZ: c_ulong = 0x80087467;
+const TIOCUCNTL: c_ulong = 0x80047466;
+const TIOCSTAT: c_uint = 0x20007465;
+const TIOCSCONS: c_uint = 0x20007463;
+const TIOCCONS: c_ulong = 0x80047462;
+const TIOCSCTTY: c_uint = 0x20007461;
+const TIOCEXT: c_ulong = 0x80047460;
+const TIOCSIG: c_uint = 0x2000745f;
+const TIOCDRAIN: c_uint = 0x2000745e;
+const TIOCMSDTRWAIT: c_ulong = 0x8004745b;
+const TIOCMGDTRWAIT: c_ulong = 0x4004745a;
+const TIOCSDRAINWAIT: c_ulong = 0x80047457;
+const TIOCGDRAINWAIT: c_ulong = 0x40047456;
+const TIOCDSIMICROCODE: c_uint = 0x20007455;
+const TIOCPTYGRANT: c_uint = 0x20007454;
+const TIOCPTYGNAME: c_uint = 0x40807453;
+const TIOCPTYUNLK: c_uint = 0x20007452;
+const BIOCGRSIG: c_ulong = 0x40044272;
+const BIOCSRSIG: c_ulong = 0x80044273;
+const BIOCSDLT: c_ulong = 0x80044278;
+const BIOCGSEESENT: c_ulong = 0x40044276;
+const BIOCSSEESENT: c_ulong = 0x80044277;
+const BIOCGDLTLIST: c_ulong = 0xc00c4279;
+const FIODTYPE: c_ulong = 0x4004667a;
+const B0: speed_t = 0;
+const B50: speed_t = 50;
+const B75: speed_t = 75;
+const B110: speed_t = 110;
+const B134: speed_t = 134;
+const B150: speed_t = 150;
+const B200: speed_t = 200;
+const B300: speed_t = 300;
+const B600: speed_t = 600;
+const B1200: speed_t = 1200;
+const B1800: speed_t = 1800;
+const B2400: speed_t = 2400;
+const B4800: speed_t = 4800;
+const B9600: speed_t = 9600;
+const B19200: speed_t = 19200;
+const B38400: speed_t = 38400;
+const B7200: speed_t = 7200;
+const B14400: speed_t = 14400;
+const B28800: speed_t = 28800;
+const B57600: speed_t = 57600;
+const B76800: speed_t = 76800;
+const B115200: speed_t = 115200;
+const B230400: speed_t = 230400;
+const EXTA: speed_t = 19200;
+const EXTB: speed_t = 38400;
+const SIGTRAP: c_int = 5;
+const GLOB_APPEND: c_int = 0x0001;
+const GLOB_DOOFFS: c_int = 0x0002;
+const GLOB_ERR: c_int = 0x0004;
+const GLOB_MARK: c_int = 0x0008;
+const GLOB_NOCHECK: c_int = 0x0010;
+const GLOB_NOSORT: c_int = 0x0020;
+const GLOB_NOESCAPE: c_int = 0x2000;
+const GLOB_NOSPACE: c_int = -1;
+const GLOB_ABORTED: c_int = -2;
+const GLOB_NOMATCH: c_int = -3;
+const POSIX_MADV_NORMAL: c_int = 0;
+const POSIX_MADV_RANDOM: c_int = 1;
+const POSIX_MADV_SEQUENTIAL: c_int = 2;
+const POSIX_MADV_WILLNEED: c_int = 3;
+const POSIX_MADV_DONTNEED: c_int = 4;
+const _SC_IOV_MAX: c_int = 56;
+const _SC_GETGR_R_SIZE_MAX: c_int = 70;
+const _SC_GETPW_R_SIZE_MAX: c_int = 71;
+const _SC_LOGIN_NAME_MAX: c_int = 73;
+const _SC_MQ_PRIO_MAX: c_int = 75;
+const _SC_THREAD_ATTR_STACKADDR: c_int = 82;
+const _SC_THREAD_ATTR_STACKSIZE: c_int = 83;
+const _SC_THREAD_DESTRUCTOR_ITERATIONS: c_int = 85;
+const _SC_THREAD_KEYS_MAX: c_int = 86;
+const _SC_THREAD_PRIO_INHERIT: c_int = 87;
+const _SC_THREAD_PRIO_PROTECT: c_int = 88;
+const _SC_THREAD_PRIORITY_SCHEDULING: c_int = 89;
+const _SC_THREAD_PROCESS_SHARED: c_int = 90;
+const _SC_THREAD_SAFE_FUNCTIONS: c_int = 91;
+const _SC_THREAD_STACK_MIN: c_int = 93;
+const _SC_THREAD_THREADS_MAX: c_int = 94;
+const _SC_THREADS: c_int = 96;
+const _SC_TTY_NAME_MAX: c_int = 101;
+const _SC_ATEXIT_MAX: c_int = 107;
+const _SC_XOPEN_CRYPT: c_int = 108;
+const _SC_XOPEN_ENH_I18N: c_int = 109;
+const _SC_XOPEN_LEGACY: c_int = 110;
+const _SC_XOPEN_REALTIME: c_int = 111;
+const _SC_XOPEN_REALTIME_THREADS: c_int = 112;
+const _SC_XOPEN_SHM: c_int = 113;
+const _SC_XOPEN_UNIX: c_int = 115;
+const _SC_XOPEN_VERSION: c_int = 116;
+const _SC_XOPEN_XCU_VERSION: c_int = 121;
+const _SC_PHYS_PAGES: c_int = 200;
+const PTHREAD_PROCESS_PRIVATE: c_int = 2;
+const PTHREAD_PROCESS_SHARED: c_int = 1;
+const PTHREAD_CREATE_JOINABLE: c_int = 1;
+const PTHREAD_CREATE_DETACHED: c_int = 2;
+const PTHREAD_STACK_MIN: size_t = 16384;
+const RLIMIT_CPU: c_int = 0;
+const RLIMIT_FSIZE: c_int = 1;
+const RLIMIT_DATA: c_int = 2;
+const RLIMIT_STACK: c_int = 3;
+const RLIMIT_CORE: c_int = 4;
+const RLIMIT_AS: c_int = 5;
+const RLIMIT_RSS: c_int = RLIMIT_AS;
+const RLIMIT_MEMLOCK: c_int = 6;
+const RLIMIT_NPROC: c_int = 7;
+const RLIMIT_NOFILE: c_int = 8;
+const RLIM_NLIMITS: c_int = 9;
+const _RLIMIT_POSIX_FLAG: c_int = 0x1000;
+const RLIM_INFINITY: rlim_t = 0x7fffffffffffffff;
+const RUSAGE_SELF: c_int = 0;
+const RUSAGE_CHILDREN: c_int = -1;
+const MADV_NORMAL: c_int = 0;
+const MADV_RANDOM: c_int = 1;
+const MADV_SEQUENTIAL: c_int = 2;
+const MADV_WILLNEED: c_int = 3;
+const MADV_DONTNEED: c_int = 4;
+const MADV_FREE: c_int = 5;
+const MADV_ZERO_WIRED_PAGES: c_int = 6;
+const MADV_FREE_REUSABLE: c_int = 7;
+const MADV_FREE_REUSE: c_int = 8;
+const MADV_CAN_REUSE: c_int = 9;
+const MINCORE_INCORE: c_int = 0x1;
+const MINCORE_REFERENCED: c_int = 0x2;
+const MINCORE_MODIFIED: c_int = 0x4;
+const MINCORE_REFERENCED_OTHER: c_int = 0x8;
+const MINCORE_MODIFIED_OTHER: c_int = 0x10;
+const CTLIOCGINFO: c_ulong = 0xc0644e03;
+const IPPROTO_HOPOPTS: c_int = 0;
+const IPPROTO_IGMP: c_int = 2;
+const IPPROTO_GGP: c_int = 3;
+const IPPROTO_IPIP: c_int = 4;
+const IPPROTO_ST: c_int = 7;
+const IPPROTO_EGP: c_int = 8;
+const IPPROTO_PIGP: c_int = 9;
+const IPPROTO_RCCMON: c_int = 10;
+const IPPROTO_NVPII: c_int = 11;
+const IPPROTO_PUP: c_int = 12;
+const IPPROTO_ARGUS: c_int = 13;
+const IPPROTO_EMCON: c_int = 14;
+const IPPROTO_XNET: c_int = 15;
+const IPPROTO_CHAOS: c_int = 16;
+const IPPROTO_MUX: c_int = 18;
+const IPPROTO_MEAS: c_int = 19;
+const IPPROTO_HMP: c_int = 20;
+const IPPROTO_PRM: c_int = 21;
+const IPPROTO_IDP: c_int = 22;
+const IPPROTO_TRUNK1: c_int = 23;
+const IPPROTO_TRUNK2: c_int = 24;
+const IPPROTO_LEAF1: c_int = 25;
+const IPPROTO_LEAF2: c_int = 26;
+const IPPROTO_RDP: c_int = 27;
+const IPPROTO_IRTP: c_int = 28;
+const IPPROTO_TP: c_int = 29;
+const IPPROTO_BLT: c_int = 30;
+const IPPROTO_NSP: c_int = 31;
+const IPPROTO_INP: c_int = 32;
+const IPPROTO_SEP: c_int = 33;
+const IPPROTO_3PC: c_int = 34;
+const IPPROTO_IDPR: c_int = 35;
+const IPPROTO_XTP: c_int = 36;
+const IPPROTO_DDP: c_int = 37;
+const IPPROTO_CMTP: c_int = 38;
+const IPPROTO_TPXX: c_int = 39;
+const IPPROTO_IL: c_int = 40;
+const IPPROTO_SDRP: c_int = 42;
+const IPPROTO_ROUTING: c_int = 43;
+const IPPROTO_FRAGMENT: c_int = 44;
+const IPPROTO_IDRP: c_int = 45;
+const IPPROTO_RSVP: c_int = 46;
+const IPPROTO_GRE: c_int = 47;
+const IPPROTO_MHRP: c_int = 48;
+const IPPROTO_BHA: c_int = 49;
+const IPPROTO_ESP: c_int = 50;
+const IPPROTO_AH: c_int = 51;
+const IPPROTO_INLSP: c_int = 52;
+const IPPROTO_SWIPE: c_int = 53;
+const IPPROTO_NHRP: c_int = 54;
+const IPPROTO_NONE: c_int = 59;
+const IPPROTO_DSTOPTS: c_int = 60;
+const IPPROTO_AHIP: c_int = 61;
+const IPPROTO_CFTP: c_int = 62;
+const IPPROTO_HELLO: c_int = 63;
+const IPPROTO_SATEXPAK: c_int = 64;
+const IPPROTO_KRYPTOLAN: c_int = 65;
+const IPPROTO_RVD: c_int = 66;
+const IPPROTO_IPPC: c_int = 67;
+const IPPROTO_ADFS: c_int = 68;
+const IPPROTO_SATMON: c_int = 69;
+const IPPROTO_VISA: c_int = 70;
+const IPPROTO_IPCV: c_int = 71;
+const IPPROTO_CPNX: c_int = 72;
+const IPPROTO_CPHB: c_int = 73;
+const IPPROTO_WSN: c_int = 74;
+const IPPROTO_PVP: c_int = 75;
+const IPPROTO_BRSATMON: c_int = 76;
+const IPPROTO_ND: c_int = 77;
+const IPPROTO_WBMON: c_int = 78;
+const IPPROTO_WBEXPAK: c_int = 79;
+const IPPROTO_EON: c_int = 80;
+const IPPROTO_VMTP: c_int = 81;
+const IPPROTO_SVMTP: c_int = 82;
+const IPPROTO_VINES: c_int = 83;
+const IPPROTO_TTP: c_int = 84;
+const IPPROTO_IGP: c_int = 85;
+const IPPROTO_DGP: c_int = 86;
+const IPPROTO_TCF: c_int = 87;
+const IPPROTO_IGRP: c_int = 88;
+const IPPROTO_OSPFIGP: c_int = 89;
+const IPPROTO_SRPC: c_int = 90;
+const IPPROTO_LARP: c_int = 91;
+const IPPROTO_MTP: c_int = 92;
+const IPPROTO_AX25: c_int = 93;
+const IPPROTO_IPEIP: c_int = 94;
+const IPPROTO_MICP: c_int = 95;
+const IPPROTO_SCCSP: c_int = 96;
+const IPPROTO_ETHERIP: c_int = 97;
+const IPPROTO_ENCAP: c_int = 98;
+const IPPROTO_APES: c_int = 99;
+const IPPROTO_GMTP: c_int = 100;
+const IPPROTO_PIM: c_int = 103;
+const IPPROTO_IPCOMP: c_int = 108;
+const IPPROTO_PGM: c_int = 113;
+const IPPROTO_SCTP: c_int = 132;
+const IPPROTO_DIVERT: c_int = 254;
+const IPPROTO_RAW: c_int = 255;
+const IPPROTO_MAX: c_int = 256;
+const IPPROTO_DONE: c_int = 257;
+const AF_UNSPEC: c_int = 0;
+const AF_LOCAL: c_int = 1;
+const AF_UNIX: c_int = AF_LOCAL;
+const AF_INET: c_int = 2;
+const AF_IMPLINK: c_int = 3;
+const AF_PUP: c_int = 4;
+const AF_CHAOS: c_int = 5;
+const AF_NS: c_int = 6;
+const AF_ISO: c_int = 7;
+const AF_OSI: c_int = AF_ISO;
+const AF_ECMA: c_int = 8;
+const AF_DATAKIT: c_int = 9;
+const AF_CCITT: c_int = 10;
+const AF_SNA: c_int = 11;
+const AF_DECnet: c_int = 12;
+const AF_DLI: c_int = 13;
+const AF_LAT: c_int = 14;
+const AF_HYLINK: c_int = 15;
+const AF_APPLETALK: c_int = 16;
+const AF_ROUTE: c_int = 17;
+const AF_LINK: c_int = 18;
+const pseudo_AF_XTP: c_int = 19;
+const AF_COIP: c_int = 20;
+const AF_CNT: c_int = 21;
+const pseudo_AF_RTIP: c_int = 22;
+const AF_IPX: c_int = 23;
+const AF_SIP: c_int = 24;
+const pseudo_AF_PIP: c_int = 25;
+const AF_NDRV: c_int = 27;
+const AF_ISDN: c_int = 28;
+const AF_E164: c_int = AF_ISDN;
+const pseudo_AF_KEY: c_int = 29;
+const AF_INET6: c_int = 30;
+const AF_NATM: c_int = 31;
+const AF_SYSTEM: c_int = 32;
+const AF_NETBIOS: c_int = 33;
+const AF_PPP: c_int = 34;
+const pseudo_AF_HDRCMPLT: c_int = 35;
+const AF_SYS_CONTROL: c_int = 2;
+const SYSPROTO_EVENT: c_int = 1;
+const SYSPROTO_CONTROL: c_int = 2;
+const PF_UNSPEC: c_int = AF_UNSPEC;
+const PF_LOCAL: c_int = AF_LOCAL;
+const PF_UNIX: c_int = PF_LOCAL;
+const PF_INET: c_int = AF_INET;
+const PF_IMPLINK: c_int = AF_IMPLINK;
+const PF_PUP: c_int = AF_PUP;
+const PF_CHAOS: c_int = AF_CHAOS;
+const PF_NS: c_int = AF_NS;
+const PF_ISO: c_int = AF_ISO;
+const PF_OSI: c_int = AF_ISO;
+const PF_ECMA: c_int = AF_ECMA;
+const PF_DATAKIT: c_int = AF_DATAKIT;
+const PF_CCITT: c_int = AF_CCITT;
+const PF_SNA: c_int = AF_SNA;
+const PF_DECnet: c_int = AF_DECnet;
+const PF_DLI: c_int = AF_DLI;
+const PF_LAT: c_int = AF_LAT;
+const PF_HYLINK: c_int = AF_HYLINK;
+const PF_APPLETALK: c_int = AF_APPLETALK;
+const PF_ROUTE: c_int = AF_ROUTE;
+const PF_LINK: c_int = AF_LINK;
+const PF_XTP: c_int = pseudo_AF_XTP;
+const PF_COIP: c_int = AF_COIP;
+const PF_CNT: c_int = AF_CNT;
+const PF_SIP: c_int = AF_SIP;
+const PF_IPX: c_int = AF_IPX;
+const PF_RTIP: c_int = pseudo_AF_RTIP;
+const PF_PIP: c_int = pseudo_AF_PIP;
+const PF_NDRV: c_int = AF_NDRV;
+const PF_ISDN: c_int = AF_ISDN;
+const PF_KEY: c_int = pseudo_AF_KEY;
+const PF_INET6: c_int = AF_INET6;
+const PF_NATM: c_int = AF_NATM;
+const PF_SYSTEM: c_int = AF_SYSTEM;
+const PF_NETBIOS: c_int = AF_NETBIOS;
+const PF_PPP: c_int = AF_PPP;
+const NET_RT_DUMP: c_int = 1;
+const NET_RT_FLAGS: c_int = 2;
+const NET_RT_IFLIST: c_int = 3;
+const SOMAXCONN: c_int = 128;
+const SOCK_MAXADDRLEN: c_int = 255;
+const SOCK_STREAM: c_int = 1;
+const SOCK_DGRAM: c_int = 2;
+const SOCK_RAW: c_int = 3;
+const SOCK_RDM: c_int = 4;
+const SOCK_SEQPACKET: c_int = 5;
+const IP_TTL: c_int = 4;
+const IP_HDRINCL: c_int = 2;
+const IP_RECVDSTADDR: c_int = 7;
+const IP_ADD_MEMBERSHIP: c_int = 12;
+const IP_DROP_MEMBERSHIP: c_int = 13;
+const IP_RECVIF: c_int = 20;
+const IP_BOUND_IF: c_int = 25;
+const IP_PKTINFO: c_int = 26;
+const IP_RECVTOS: c_int = 27;
+const IP_DONTFRAG: c_int = 28;
+const IPV6_JOIN_GROUP: c_int = 12;
+const IPV6_LEAVE_GROUP: c_int = 13;
+const IPV6_CHECKSUM: c_int = 26;
+const IPV6_RECVTCLASS: c_int = 35;
+const IPV6_TCLASS: c_int = 36;
+const IPV6_PKTINFO: c_int = 46;
+const IPV6_HOPLIMIT: c_int = 47;
+const IPV6_RECVPKTINFO: c_int = 61;
+const IPV6_DONTFRAG: c_int = 62;
+const IP_ADD_SOURCE_MEMBERSHIP: c_int = 70;
+const IP_DROP_SOURCE_MEMBERSHIP: c_int = 71;
+const IP_BLOCK_SOURCE: c_int = 72;
+const IP_UNBLOCK_SOURCE: c_int = 73;
+const IPV6_BOUND_IF: c_int = 125;
+const TCP_NOPUSH: c_int = 4;
+const TCP_NOOPT: c_int = 8;
+const TCP_KEEPALIVE: c_int = 0x10;
+const TCP_KEEPINTVL: c_int = 0x101;
+const TCP_KEEPCNT: c_int = 0x102;
+const TCP_FASTOPEN: c_int = 0x105;
+const SOL_LOCAL: c_int = 0;
+const LOCAL_PEERCRED: c_int = 0x001;
+const LOCAL_PEERPID: c_int = 0x002;
+const LOCAL_PEEREPID: c_int = 0x003;
+const LOCAL_PEERUUID: c_int = 0x004;
+const LOCAL_PEEREUUID: c_int = 0x005;
+const SOL_SOCKET: c_int = 0xffff;
+const SO_DEBUG: c_int = 0x01;
+const SO_ACCEPTCONN: c_int = 0x0002;
+const SO_REUSEADDR: c_int = 0x0004;
+const SO_KEEPALIVE: c_int = 0x0008;
+const SO_DONTROUTE: c_int = 0x0010;
+const SO_BROADCAST: c_int = 0x0020;
+const SO_USELOOPBACK: c_int = 0x0040;
+const SO_LINGER: c_int = 0x0080;
+const SO_OOBINLINE: c_int = 0x0100;
+const SO_REUSEPORT: c_int = 0x0200;
+const SO_TIMESTAMP: c_int = 0x0400;
+const SO_TIMESTAMP_MONOTONIC: c_int = 0x0800;
+const SO_DONTTRUNC: c_int = 0x2000;
+const SO_WANTMORE: c_int = 0x4000;
+const SO_WANTOOBFLAG: c_int = 0x8000;
+const SO_SNDBUF: c_int = 0x1001;
+const SO_RCVBUF: c_int = 0x1002;
+const SO_SNDLOWAT: c_int = 0x1003;
+const SO_RCVLOWAT: c_int = 0x1004;
+const SO_SNDTIMEO: c_int = 0x1005;
+const SO_RCVTIMEO: c_int = 0x1006;
+const SO_ERROR: c_int = 0x1007;
+const SO_TYPE: c_int = 0x1008;
+const SO_LABEL: c_int = 0x1010;
+const SO_PEERLABEL: c_int = 0x1011;
+const SO_NREAD: c_int = 0x1020;
+const SO_NKE: c_int = 0x1021;
+const SO_NOSIGPIPE: c_int = 0x1022;
+const SO_NOADDRERR: c_int = 0x1023;
+const SO_NWRITE: c_int = 0x1024;
+const SO_REUSESHAREUID: c_int = 0x1025;
+const SO_NOTIFYCONFLICT: c_int = 0x1026;
+const SO_LINGER_SEC: c_int = 0x1080;
+const SO_RANDOMPORT: c_int = 0x1082;
+const SO_NP_EXTENSIONS: c_int = 0x1083;
+const MSG_OOB: c_int = 0x1;
+const MSG_PEEK: c_int = 0x2;
+const MSG_DONTROUTE: c_int = 0x4;
+const MSG_EOR: c_int = 0x8;
+const MSG_TRUNC: c_int = 0x10;
+const MSG_CTRUNC: c_int = 0x20;
+const MSG_WAITALL: c_int = 0x40;
+const MSG_DONTWAIT: c_int = 0x80;
+const MSG_EOF: c_int = 0x100;
+const MSG_FLUSH: c_int = 0x400;
+const MSG_HOLD: c_int = 0x800;
+const MSG_SEND: c_int = 0x1000;
+const MSG_HAVEMORE: c_int = 0x2000;
+const MSG_RCVMORE: c_int = 0x4000;
+const SCM_TIMESTAMP: c_int = 0x02;
+const SCM_CREDS: c_int = 0x03;
+const IFF_UP: c_int = 0x1;
+const IFF_BROADCAST: c_int = 0x2;
+const IFF_DEBUG: c_int = 0x4;
+const IFF_LOOPBACK: c_int = 0x8;
+const IFF_POINTOPOINT: c_int = 0x10;
+const IFF_NOTRAILERS: c_int = 0x20;
+const IFF_RUNNING: c_int = 0x40;
+const IFF_NOARP: c_int = 0x80;
+const IFF_PROMISC: c_int = 0x100;
+const IFF_ALLMULTI: c_int = 0x200;
+const IFF_OACTIVE: c_int = 0x400;
+const IFF_SIMPLEX: c_int = 0x800;
+const IFF_LINK0: c_int = 0x1000;
+const IFF_LINK1: c_int = 0x2000;
+const IFF_LINK2: c_int = 0x4000;
+const IFF_ALTPHYS: c_int = IFF_LINK2;
+const IFF_MULTICAST: c_int = 0x8000;
+const SHUT_RD: c_int = 0;
+const SHUT_WR: c_int = 1;
+const SHUT_RDWR: c_int = 2;
+const SAE_ASSOCID_ANY: sae_associd_t = 0;
+const SAE_ASSOCID_ALL: sae_associd_t = 0xffffffff;
+const SAE_CONNID_ANY: sae_connid_t = 0;
+const SAE_CONNID_ALL: sae_connid_t = 0xffffffff;
+const CONNECT_RESUME_ON_READ_WRITE: c_uint = 0x1;
+const CONNECT_DATA_IDEMPOTENT: c_uint = 0x2;
+const CONNECT_DATA_AUTHENTICATED: c_uint = 0x4;
+const LOCK_SH: c_int = 1;
+const LOCK_EX: c_int = 2;
+const LOCK_NB: c_int = 4;
+const LOCK_UN: c_int = 8;
+const MAP_COPY: c_int = 0x0002;
+const MAP_RENAME: c_int = 0x0020;
+const MAP_NORESERVE: c_int = 0x0040;
+const MAP_NOEXTEND: c_int = 0x0100;
+const MAP_HASSEMAPHORE: c_int = 0x0200;
+const MAP_NOCACHE: c_int = 0x0400;
+const MAP_JIT: c_int = 0x0800;
+const _SC_ARG_MAX: c_int = 1;
+const _SC_CHILD_MAX: c_int = 2;
+const _SC_CLK_TCK: c_int = 3;
+const _SC_NGROUPS_MAX: c_int = 4;
+const _SC_OPEN_MAX: c_int = 5;
+const _SC_JOB_CONTROL: c_int = 6;
+const _SC_SAVED_IDS: c_int = 7;
+const _SC_VERSION: c_int = 8;
+const _SC_BC_BASE_MAX: c_int = 9;
+const _SC_BC_DIM_MAX: c_int = 10;
+const _SC_BC_SCALE_MAX: c_int = 11;
+const _SC_BC_STRING_MAX: c_int = 12;
+const _SC_COLL_WEIGHTS_MAX: c_int = 13;
+const _SC_EXPR_NEST_MAX: c_int = 14;
+const _SC_LINE_MAX: c_int = 15;
+const _SC_RE_DUP_MAX: c_int = 16;
+const _SC_2_VERSION: c_int = 17;
+const _SC_2_C_BIND: c_int = 18;
+const _SC_2_C_DEV: c_int = 19;
+const _SC_2_CHAR_TERM: c_int = 20;
+const _SC_2_FORT_DEV: c_int = 21;
+const _SC_2_FORT_RUN: c_int = 22;
+const _SC_2_LOCALEDEF: c_int = 23;
+const _SC_2_SW_DEV: c_int = 24;
+const _SC_2_UPE: c_int = 25;
+const _SC_STREAM_MAX: c_int = 26;
+const _SC_TZNAME_MAX: c_int = 27;
+const _SC_ASYNCHRONOUS_IO: c_int = 28;
+const _SC_PAGESIZE: c_int = 29;
+const _SC_MEMLOCK: c_int = 30;
+const _SC_MEMLOCK_RANGE: c_int = 31;
+const _SC_MEMORY_PROTECTION: c_int = 32;
+const _SC_MESSAGE_PASSING: c_int = 33;
+const _SC_PRIORITIZED_IO: c_int = 34;
+const _SC_PRIORITY_SCHEDULING: c_int = 35;
+const _SC_REALTIME_SIGNALS: c_int = 36;
+const _SC_SEMAPHORES: c_int = 37;
+const _SC_FSYNC: c_int = 38;
+const _SC_SHARED_MEMORY_OBJECTS: c_int = 39;
+const _SC_SYNCHRONIZED_IO: c_int = 40;
+const _SC_TIMERS: c_int = 41;
+const _SC_AIO_LISTIO_MAX: c_int = 42;
+const _SC_AIO_MAX: c_int = 43;
+const _SC_AIO_PRIO_DELTA_MAX: c_int = 44;
+const _SC_DELAYTIMER_MAX: c_int = 45;
+const _SC_MQ_OPEN_MAX: c_int = 46;
+const _SC_MAPPED_FILES: c_int = 47;
+const _SC_RTSIG_MAX: c_int = 48;
+const _SC_SEM_NSEMS_MAX: c_int = 49;
+const _SC_SEM_VALUE_MAX: c_int = 50;
+const _SC_SIGQUEUE_MAX: c_int = 51;
+const _SC_TIMER_MAX: c_int = 52;
+const _SC_NPROCESSORS_CONF: c_int = 57;
+const _SC_NPROCESSORS_ONLN: c_int = 58;
+const _SC_2_PBS: c_int = 59;
+const _SC_2_PBS_ACCOUNTING: c_int = 60;
+const _SC_2_PBS_CHECKPOINT: c_int = 61;
+const _SC_2_PBS_LOCATE: c_int = 62;
+const _SC_2_PBS_MESSAGE: c_int = 63;
+const _SC_2_PBS_TRACK: c_int = 64;
+const _SC_ADVISORY_INFO: c_int = 65;
+const _SC_BARRIERS: c_int = 66;
+const _SC_CLOCK_SELECTION: c_int = 67;
+const _SC_CPUTIME: c_int = 68;
+const _SC_FILE_LOCKING: c_int = 69;
+const _SC_HOST_NAME_MAX: c_int = 72;
+const _SC_MONOTONIC_CLOCK: c_int = 74;
+const _SC_READER_WRITER_LOCKS: c_int = 76;
+const _SC_REGEXP: c_int = 77;
+const _SC_SHELL: c_int = 78;
+const _SC_SPAWN: c_int = 79;
+const _SC_SPIN_LOCKS: c_int = 80;
+const _SC_SPORADIC_SERVER: c_int = 81;
+const _SC_THREAD_CPUTIME: c_int = 84;
+const _SC_THREAD_SPORADIC_SERVER: c_int = 92;
+const _SC_TIMEOUTS: c_int = 95;
+const _SC_TRACE: c_int = 97;
+const _SC_TRACE_EVENT_FILTER: c_int = 98;
+const _SC_TRACE_INHERIT: c_int = 99;
+const _SC_TRACE_LOG: c_int = 100;
+const _SC_TYPED_MEMORY_OBJECTS: c_int = 102;
+const _SC_V6_ILP32_OFF32: c_int = 103;
+const _SC_V6_ILP32_OFFBIG: c_int = 104;
+const _SC_V6_LP64_OFF64: c_int = 105;
+const _SC_V6_LPBIG_OFFBIG: c_int = 106;
+const _SC_IPV6: c_int = 118;
+const _SC_RAW_SOCKETS: c_int = 119;
+const _SC_SYMLOOP_MAX: c_int = 120;
+const _SC_PAGE_SIZE: c_int = _SC_PAGESIZE;
+const _SC_XOPEN_STREAMS: c_int = 114;
+const _SC_XBS5_ILP32_OFF32: c_int = 122;
+const _SC_XBS5_ILP32_OFFBIG: c_int = 123;
+const _SC_XBS5_LP64_OFF64: c_int = 124;
+const _SC_XBS5_LPBIG_OFFBIG: c_int = 125;
+const _SC_SS_REPL_MAX: c_int = 126;
+const _SC_TRACE_EVENT_NAME_MAX: c_int = 127;
+const _SC_TRACE_NAME_MAX: c_int = 128;
+const _SC_TRACE_SYS_MAX: c_int = 129;
+const _SC_TRACE_USER_EVENT_MAX: c_int = 130;
+const _SC_PASS_MAX: c_int = 131;
+const _CS_PATH: c_int = 1;
+const _CS_DARWIN_USER_DIR: c_int = 65536;
+const _CS_DARWIN_USER_TEMP_DIR: c_int = 65537;
+const _CS_DARWIN_USER_CACHE_DIR: c_int = 65538;
+const PTHREAD_MUTEX_NORMAL: c_int = 0;
+const PTHREAD_MUTEX_ERRORCHECK: c_int = 1;
+const PTHREAD_MUTEX_RECURSIVE: c_int = 2;
+const PTHREAD_MUTEX_DEFAULT: c_int = PTHREAD_MUTEX_NORMAL;
+const _PTHREAD_MUTEX_SIG_init: c_long = 0x32AAABA7;
+const _PTHREAD_COND_SIG_init: c_long = 0x3CB0B1BB;
+const _PTHREAD_RWLOCK_SIG_init: c_long = 0x2DA8B3B4;
+const PTHREAD_MUTEX_INITIALIZER: pthread_mutex_t = pthread_mutex_t { __sig: _PTHREAD_MUTEX_SIG_init, __opaque: std::mem::zeroed() };
+const PTHREAD_COND_INITIALIZER: pthread_cond_t = pthread_cond_t { __sig: _PTHREAD_COND_SIG_init, __opaque: std::mem::zeroed() };
+const PTHREAD_RWLOCK_INITIALIZER: pthread_rwlock_t = pthread_rwlock_t { __sig: _PTHREAD_RWLOCK_SIG_init, __opaque: std::mem::zeroed() };
+const OS_UNFAIR_LOCK_INIT: os_unfair_lock = os_unfair_lock { _os_unfair_lock_opaque: 0 };
+const OS_LOG_TYPE_DEFAULT: os_log_type_t = 0x00;
+const OS_LOG_TYPE_INFO: os_log_type_t = 0x01;
+const OS_LOG_TYPE_DEBUG: os_log_type_t = 0x02;
+const OS_LOG_TYPE_ERROR: os_log_type_t = 0x10;
+const OS_LOG_TYPE_FAULT: os_log_type_t = 0x11;
+const OS_SIGNPOST_EVENT: os_signpost_type_t = 0x00;
+const OS_SIGNPOST_INTERVAL_BEGIN: os_signpost_type_t = 0x01;
+const OS_SIGNPOST_INTERVAL_END: os_signpost_type_t = 0x02;
+const MINSIGSTKSZ: size_t = 32768;
+const SIGSTKSZ: size_t = 131072;
+const FD_SETSIZE: usize = 1024;
+const ST_NOSUID: c_ulong = 2;
+const SCHED_OTHER: c_int = 1;
+const SCHED_FIFO: c_int = 4;
+const SCHED_RR: c_int = 2;
+const EVFILT_READ: i16 = -1;
+const EVFILT_WRITE: i16 = -2;
+const EVFILT_AIO: i16 = -3;
+const EVFILT_VNODE: i16 = -4;
+const EVFILT_PROC: i16 = -5;
+const EVFILT_SIGNAL: i16 = -6;
+const EVFILT_TIMER: i16 = -7;
+const EVFILT_MACHPORT: i16 = -8;
+const EVFILT_FS: i16 = -9;
+const EVFILT_USER: i16 = -10;
+const EVFILT_VM: i16 = -12;
+const EV_ADD: u16 = 0x1;
+const EV_DELETE: u16 = 0x2;
+const EV_ENABLE: u16 = 0x4;
+const EV_DISABLE: u16 = 0x8;
+const EV_ONESHOT: u16 = 0x10;
+const EV_CLEAR: u16 = 0x20;
+const EV_RECEIPT: u16 = 0x40;
+const EV_DISPATCH: u16 = 0x80;
+const EV_FLAG0: u16 = 0x1000;
+const EV_POLL: u16 = 0x1000;
+const EV_FLAG1: u16 = 0x2000;
+const EV_OOBAND: u16 = 0x2000;
+const EV_ERROR: u16 = 0x4000;
+const EV_EOF: u16 = 0x8000;
+const EV_SYSFLAGS: u16 = 0xf000;
+const NOTE_TRIGGER: u32 = 0x01000000;
+const NOTE_FFNOP: u32 = 0x00000000;
+const NOTE_FFAND: u32 = 0x40000000;
+const NOTE_FFOR: u32 = 0x80000000;
+const NOTE_FFCOPY: u32 = 0xc0000000;
+const NOTE_FFCTRLMASK: u32 = 0xc0000000;
+const NOTE_FFLAGSMASK: u32 = 0x00ffffff;
+const NOTE_LOWAT: u32 = 0x00000001;
+const NOTE_DELETE: u32 = 0x00000001;
+const NOTE_WRITE: u32 = 0x00000002;
+const NOTE_EXTEND: u32 = 0x00000004;
+const NOTE_ATTRIB: u32 = 0x00000008;
+const NOTE_LINK: u32 = 0x00000010;
+const NOTE_RENAME: u32 = 0x00000020;
+const NOTE_REVOKE: u32 = 0x00000040;
+const NOTE_NONE: u32 = 0x00000080;
+const NOTE_EXIT: u32 = 0x80000000;
+const NOTE_FORK: u32 = 0x40000000;
+const NOTE_EXEC: u32 = 0x20000000;
+const NOTE_REAP: u32 = 0x10000000;
+const NOTE_SIGNAL: u32 = 0x08000000;
+const NOTE_EXITSTATUS: u32 = 0x04000000;
+const NOTE_EXIT_DETAIL: u32 = 0x02000000;
+const NOTE_PDATAMASK: u32 = 0x000fffff;
+const NOTE_PCTRLMASK: u32 = 0xfff00000;
+const NOTE_EXIT_REPARENTED: u32 = 0x00080000;
+const NOTE_EXIT_DETAIL_MASK: u32 = 0x00070000;
+const NOTE_EXIT_DECRYPTFAIL: u32 = 0x00010000;
+const NOTE_EXIT_MEMORY: u32 = 0x00020000;
+const NOTE_EXIT_CSERROR: u32 = 0x00040000;
+const NOTE_VM_PRESSURE: u32 = 0x80000000;
+const NOTE_VM_PRESSURE_TERMINATE: u32 = 0x40000000;
+const NOTE_VM_PRESSURE_SUDDEN_TERMINATE: u32 = 0x20000000;
+const NOTE_VM_ERROR: u32 = 0x10000000;
+const NOTE_SECONDS: u32 = 0x00000001;
+const NOTE_USECONDS: u32 = 0x00000002;
+const NOTE_NSECONDS: u32 = 0x00000004;
+const NOTE_ABSOLUTE: u32 = 0x00000008;
+const NOTE_LEEWAY: u32 = 0x00000010;
+const NOTE_CRITICAL: u32 = 0x00000020;
+const NOTE_BACKGROUND: u32 = 0x00000040;
+const NOTE_TRACK: u32 = 0x00000001;
+const NOTE_TRACKERR: u32 = 0x00000002;
+const NOTE_CHILD: u32 = 0x00000004;
+const OCRNL: tcflag_t = 0x00000010;
+const ONOCR: tcflag_t = 0x00000020;
+const ONLRET: tcflag_t = 0x00000040;
+const OFILL: tcflag_t = 0x00000080;
+const NLDLY: tcflag_t = 0x00000300;
+const TABDLY: tcflag_t = 0x00000c04;
+const CRDLY: tcflag_t = 0x00003000;
+const FFDLY: tcflag_t = 0x00004000;
+const BSDLY: tcflag_t = 0x00008000;
+const VTDLY: tcflag_t = 0x00010000;
+const OFDEL: tcflag_t = 0x00020000;
+const NL0: tcflag_t = 0x00000000;
+const NL1: tcflag_t = 0x00000100;
+const TAB0: tcflag_t = 0x00000000;
+const TAB1: tcflag_t = 0x00000400;
+const TAB2: tcflag_t = 0x00000800;
+const CR0: tcflag_t = 0x00000000;
+const CR1: tcflag_t = 0x00001000;
+const CR2: tcflag_t = 0x00002000;
+const CR3: tcflag_t = 0x00003000;
+const FF0: tcflag_t = 0x00000000;
+const FF1: tcflag_t = 0x00004000;
+const BS0: tcflag_t = 0x00000000;
+const BS1: tcflag_t = 0x00008000;
+const TAB3: tcflag_t = 0x00000004;
+const VT0: tcflag_t = 0x00000000;
+const VT1: tcflag_t = 0x00010000;
+const IUTF8: tcflag_t = 0x00004000;
+const CRTSCTS: tcflag_t = 0x00030000;
+const NI_MAXHOST: socklen_t = 1025;
+const NI_MAXSERV: socklen_t = 32;
+const NI_NOFQDN: c_int = 0x00000001;
+const NI_NUMERICHOST: c_int = 0x00000002;
+const NI_NAMEREQD: c_int = 0x00000004;
+const NI_NUMERICSERV: c_int = 0x00000008;
+const NI_NUMERICSCOPE: c_int = 0x00000100;
+const NI_DGRAM: c_int = 0x00000010;
+const Q_GETQUOTA: c_int = 0x300;
+const Q_SETQUOTA: c_int = 0x400;
+const RENAME_SWAP: c_uint = 0x00000002;
+const RENAME_EXCL: c_uint = 0x00000004;
+const RTLD_LOCAL: c_int = 0x4;
+const RTLD_FIRST: c_int = 0x100;
+const RTLD_NODELETE: c_int = 0x80;
+const RTLD_NOLOAD: c_int = 0x10;
+const RTLD_GLOBAL: c_int = 0x8;
+const _WSTOPPED: c_int = 0o177;
+const LOG_NETINFO: c_int = 12 << 3;
+const LOG_REMOTEAUTH: c_int = 13 << 3;
+const LOG_INSTALL: c_int = 14 << 3;
+const LOG_RAS: c_int = 15 << 3;
+const LOG_LAUNCHD: c_int = 24 << 3;
+const LOG_NFACILITIES: c_int = 25;
+const CTLTYPE: c_int = 0xf;
+const CTLTYPE_NODE: c_int = 1;
+const CTLTYPE_INT: c_int = 2;
+const CTLTYPE_STRING: c_int = 3;
+const CTLTYPE_QUAD: c_int = 4;
+const CTLTYPE_OPAQUE: c_int = 5;
+const CTLTYPE_STRUCT: c_int = CTLTYPE_OPAQUE;
+const CTLFLAG_RD: c_int = 0x80000000;
+const CTLFLAG_WR: c_int = 0x40000000;
+const CTLFLAG_RW: c_int = CTLFLAG_RD | CTLFLAG_WR;
+const CTLFLAG_NOLOCK: c_int = 0x20000000;
+const CTLFLAG_ANYBODY: c_int = 0x10000000;
+const CTLFLAG_SECURE: c_int = 0x08000000;
+const CTLFLAG_MASKED: c_int = 0x04000000;
+const CTLFLAG_NOAUTO: c_int = 0x02000000;
+const CTLFLAG_KERN: c_int = 0x01000000;
+const CTLFLAG_LOCKED: c_int = 0x00800000;
+const CTLFLAG_OID2: c_int = 0x00400000;
+const CTL_UNSPEC: c_int = 0;
+const CTL_KERN: c_int = 1;
+const CTL_VM: c_int = 2;
+const CTL_VFS: c_int = 3;
+const CTL_NET: c_int = 4;
+const CTL_DEBUG: c_int = 5;
+const CTL_HW: c_int = 6;
+const CTL_MACHDEP: c_int = 7;
+const CTL_USER: c_int = 8;
+const CTL_MAXID: c_int = 9;
+const KERN_OSTYPE: c_int = 1;
+const KERN_OSRELEASE: c_int = 2;
+const KERN_OSREV: c_int = 3;
+const KERN_VERSION: c_int = 4;
+const KERN_MAXVNODES: c_int = 5;
+const KERN_MAXPROC: c_int = 6;
+const KERN_MAXFILES: c_int = 7;
+const KERN_ARGMAX: c_int = 8;
+const KERN_SECURELVL: c_int = 9;
+const KERN_HOSTNAME: c_int = 10;
+const KERN_HOSTID: c_int = 11;
+const KERN_CLOCKRATE: c_int = 12;
+const KERN_VNODE: c_int = 13;
+const KERN_PROC: c_int = 14;
+const KERN_FILE: c_int = 15;
+const KERN_PROF: c_int = 16;
+const KERN_POSIX1: c_int = 17;
+const KERN_NGROUPS: c_int = 18;
+const KERN_JOB_CONTROL: c_int = 19;
+const KERN_SAVED_IDS: c_int = 20;
+const KERN_BOOTTIME: c_int = 21;
+const KERN_NISDOMAINNAME: c_int = 22;
+const KERN_DOMAINNAME: c_int = KERN_NISDOMAINNAME;
+const KERN_MAXPARTITIONS: c_int = 23;
+const KERN_KDEBUG: c_int = 24;
+const KERN_UPDATEINTERVAL: c_int = 25;
+const KERN_OSRELDATE: c_int = 26;
+const KERN_NTP_PLL: c_int = 27;
+const KERN_BOOTFILE: c_int = 28;
+const KERN_MAXFILESPERPROC: c_int = 29;
+const KERN_MAXPROCPERUID: c_int = 30;
+const KERN_DUMPDEV: c_int = 31;
+const KERN_IPC: c_int = 32;
+const KERN_DUMMY: c_int = 33;
+const KERN_PS_STRINGS: c_int = 34;
+const KERN_USRSTACK32: c_int = 35;
+const KERN_LOGSIGEXIT: c_int = 36;
+const KERN_SYMFILE: c_int = 37;
+const KERN_PROCARGS: c_int = 38;
+const KERN_NETBOOT: c_int = 40;
+const KERN_SYSV: c_int = 42;
+const KERN_AFFINITY: c_int = 43;
+const KERN_TRANSLATE: c_int = 44;
+const KERN_CLASSIC: c_int = KERN_TRANSLATE;
+const KERN_EXEC: c_int = 45;
+const KERN_CLASSICHANDLER: c_int = KERN_EXEC;
+const KERN_AIOMAX: c_int = 46;
+const KERN_AIOPROCMAX: c_int = 47;
+const KERN_AIOTHREADS: c_int = 48;
+const KERN_COREFILE: c_int = 50;
+const KERN_COREDUMP: c_int = 51;
+const KERN_SUGID_COREDUMP: c_int = 52;
+const KERN_PROCDELAYTERM: c_int = 53;
+const KERN_SHREG_PRIVATIZABLE: c_int = 54;
+const KERN_LOW_PRI_WINDOW: c_int = 56;
+const KERN_LOW_PRI_DELAY: c_int = 57;
+const KERN_POSIX: c_int = 58;
+const KERN_USRSTACK64: c_int = 59;
+const KERN_NX_PROTECTION: c_int = 60;
+const KERN_TFP: c_int = 61;
+const KERN_PROCNAME: c_int = 62;
+const KERN_THALTSTACK: c_int = 63;
+const KERN_SPECULATIVE_READS: c_int = 64;
+const KERN_OSVERSION: c_int = 65;
+const KERN_SAFEBOOT: c_int = 66;
+const KERN_RAGEVNODE: c_int = 68;
+const KERN_TTY: c_int = 69;
+const KERN_CHECKOPENEVT: c_int = 70;
+const KERN_THREADNAME: c_int = 71;
+const KERN_MAXID: c_int = 72;
+const KERN_RAGE_PROC: c_int = 1;
+const KERN_RAGE_THREAD: c_int = 2;
+const KERN_UNRAGE_PROC: c_int = 3;
+const KERN_UNRAGE_THREAD: c_int = 4;
+const KERN_OPENEVT_PROC: c_int = 1;
+const KERN_UNOPENEVT_PROC: c_int = 2;
+const KERN_TFP_POLICY: c_int = 1;
+const KERN_TFP_POLICY_DENY: c_int = 0;
+const KERN_TFP_POLICY_DEFAULT: c_int = 2;
+const KERN_KDEFLAGS: c_int = 1;
+const KERN_KDDFLAGS: c_int = 2;
+const KERN_KDENABLE: c_int = 3;
+const KERN_KDSETBUF: c_int = 4;
+const KERN_KDGETBUF: c_int = 5;
+const KERN_KDSETUP: c_int = 6;
+const KERN_KDREMOVE: c_int = 7;
+const KERN_KDSETREG: c_int = 8;
+const KERN_KDGETREG: c_int = 9;
+const KERN_KDREADTR: c_int = 10;
+const KERN_KDPIDTR: c_int = 11;
+const KERN_KDTHRMAP: c_int = 12;
+const KERN_KDPIDEX: c_int = 14;
+const KERN_KDSETRTCDEC: c_int = 15;
+const KERN_KDGETENTROPY: c_int = 16;
+const KERN_KDWRITETR: c_int = 17;
+const KERN_KDWRITEMAP: c_int = 18;
+const KERN_KDENABLE_BG_TRACE: c_int = 19;
+const KERN_KDDISABLE_BG_TRACE: c_int = 20;
+const KERN_KDREADCURTHRMAP: c_int = 21;
+const KERN_KDSET_TYPEFILTER: c_int = 22;
+const KERN_KDBUFWAIT: c_int = 23;
+const KERN_KDCPUMAP: c_int = 24;
+const KERN_PROC_ALL: c_int = 0;
+const KERN_PROC_PID: c_int = 1;
+const KERN_PROC_PGRP: c_int = 2;
+const KERN_PROC_SESSION: c_int = 3;
+const KERN_PROC_TTY: c_int = 4;
+const KERN_PROC_UID: c_int = 5;
+const KERN_PROC_RUID: c_int = 6;
+const KERN_PROC_LCID: c_int = 7;
+const KERN_SUCCESS: c_int = 0;
+const KERN_INVALID_ADDRESS: c_int = 1;
+const KERN_PROTECTION_FAILURE: c_int = 2;
+const KERN_NO_SPACE: c_int = 3;
+const KERN_INVALID_ARGUMENT: c_int = 4;
+const KERN_FAILURE: c_int = 5;
+const KERN_RESOURCE_SHORTAGE: c_int = 6;
+const KERN_NOT_RECEIVER: c_int = 7;
+const KERN_NO_ACCESS: c_int = 8;
+const KERN_MEMORY_FAILURE: c_int = 9;
+const KERN_MEMORY_ERROR: c_int = 10;
+const KERN_ALREADY_IN_SET: c_int = 11;
+const KERN_NOT_IN_SET: c_int = 12;
+const KERN_NAME_EXISTS: c_int = 13;
+const KERN_ABORTED: c_int = 14;
+const KERN_INVALID_NAME: c_int = 15;
+const KERN_INVALID_TASK: c_int = 16;
+const KERN_INVALID_RIGHT: c_int = 17;
+const KERN_INVALID_VALUE: c_int = 18;
+const KERN_UREFS_OVERFLOW: c_int = 19;
+const KERN_INVALID_CAPABILITY: c_int = 20;
+const KERN_RIGHT_EXISTS: c_int = 21;
+const KERN_INVALID_HOST: c_int = 22;
+const KERN_MEMORY_PRESENT: c_int = 23;
+const KERN_MEMORY_DATA_MOVED: c_int = 24;
+const KERN_MEMORY_RESTART_COPY: c_int = 25;
+const KERN_INVALID_PROCESSOR_SET: c_int = 26;
+const KERN_POLICY_LIMIT: c_int = 27;
+const KERN_INVALID_POLICY: c_int = 28;
+const KERN_INVALID_OBJECT: c_int = 29;
+const KERN_ALREADY_WAITING: c_int = 30;
+const KERN_DEFAULT_SET: c_int = 31;
+const KERN_EXCEPTION_PROTECTED: c_int = 32;
+const KERN_INVALID_LEDGER: c_int = 33;
+const KERN_INVALID_MEMORY_CONTROL: c_int = 34;
+const KERN_INVALID_SECURITY: c_int = 35;
+const KERN_NOT_DEPRESSED: c_int = 36;
+const KERN_TERMINATED: c_int = 37;
+const KERN_LOCK_SET_DESTROYED: c_int = 38;
+const KERN_LOCK_UNSTABLE: c_int = 39;
+const KERN_LOCK_OWNED: c_int = 40;
+const KERN_LOCK_OWNED_SELF: c_int = 41;
+const KERN_SEMAPHORE_DESTROYED: c_int = 42;
+const KERN_RPC_SERVER_TERMINATED: c_int = 43;
+const KERN_RPC_TERMINATE_ORPHAN: c_int = 44;
+const KERN_RPC_CONTINUE_ORPHAN: c_int = 45;
+const KERN_NOT_SUPPORTED: c_int = 46;
+const KERN_NODE_DOWN: c_int = 47;
+const KERN_NOT_WAITING: c_int = 48;
+const KERN_OPERATION_TIMED_OUT: c_int = 49;
+const KERN_CODESIGN_ERROR: c_int = 50;
+const KERN_POLICY_STATIC: c_int = 51;
+const KERN_INSUFFICIENT_BUFFER_SIZE: c_int = 52;
+const KIPC_MAXSOCKBUF: c_int = 1;
+const KIPC_SOCKBUF_WASTE: c_int = 2;
+const KIPC_SOMAXCONN: c_int = 3;
+const KIPC_MAX_LINKHDR: c_int = 4;
+const KIPC_MAX_PROTOHDR: c_int = 5;
+const KIPC_MAX_HDR: c_int = 6;
+const KIPC_MAX_DATALEN: c_int = 7;
+const KIPC_MBSTAT: c_int = 8;
+const KIPC_NMBCLUSTERS: c_int = 9;
+const KIPC_SOQLIMITCOMPAT: c_int = 10;
+const VM_METER: c_int = 1;
+const VM_LOADAVG: c_int = 2;
+const VM_MACHFACTOR: c_int = 4;
+const VM_SWAPUSAGE: c_int = 5;
+const VM_MAXID: c_int = 6;
+const VM_PROT_NONE: vm_prot_t = 0x00;
+const VM_PROT_READ: vm_prot_t = 0x01;
+const VM_PROT_WRITE: vm_prot_t = 0x02;
+const VM_PROT_EXECUTE: vm_prot_t = 0x04;
+const MEMORY_OBJECT_NULL: memory_object_t = 0;
+const HW_MACHINE: c_int = 1;
+const HW_MODEL: c_int = 2;
+const HW_NCPU: c_int = 3;
+const HW_BYTEORDER: c_int = 4;
+const HW_PHYSMEM: c_int = 5;
+const HW_USERMEM: c_int = 6;
+const HW_PAGESIZE: c_int = 7;
+const HW_DISKNAMES: c_int = 8;
+const HW_DISKSTATS: c_int = 9;
+const HW_EPOCH: c_int = 10;
+const HW_FLOATINGPT: c_int = 11;
+const HW_MACHINE_ARCH: c_int = 12;
+const HW_VECTORUNIT: c_int = 13;
+const HW_BUS_FREQ: c_int = 14;
+const HW_CPU_FREQ: c_int = 15;
+const HW_CACHELINE: c_int = 16;
+const HW_L1ICACHESIZE: c_int = 17;
+const HW_L1DCACHESIZE: c_int = 18;
+const HW_L2SETTINGS: c_int = 19;
+const HW_L2CACHESIZE: c_int = 20;
+const HW_L3SETTINGS: c_int = 21;
+const HW_L3CACHESIZE: c_int = 22;
+const HW_TB_FREQ: c_int = 23;
+const HW_MEMSIZE: c_int = 24;
+const HW_AVAILCPU: c_int = 25;
+const HW_TARGET: c_int = 26;
+const HW_PRODUCT: c_int = 27;
+const HW_MAXID: c_int = 28;
+const USER_CS_PATH: c_int = 1;
+const USER_BC_BASE_MAX: c_int = 2;
+const USER_BC_DIM_MAX: c_int = 3;
+const USER_BC_SCALE_MAX: c_int = 4;
+const USER_BC_STRING_MAX: c_int = 5;
+const USER_COLL_WEIGHTS_MAX: c_int = 6;
+const USER_EXPR_NEST_MAX: c_int = 7;
+const USER_LINE_MAX: c_int = 8;
+const USER_RE_DUP_MAX: c_int = 9;
+const USER_POSIX2_VERSION: c_int = 10;
+const USER_POSIX2_C_BIND: c_int = 11;
+const USER_POSIX2_C_DEV: c_int = 12;
+const USER_POSIX2_CHAR_TERM: c_int = 13;
+const USER_POSIX2_FORT_DEV: c_int = 14;
+const USER_POSIX2_FORT_RUN: c_int = 15;
+const USER_POSIX2_LOCALEDEF: c_int = 16;
+const USER_POSIX2_SW_DEV: c_int = 17;
+const USER_POSIX2_UPE: c_int = 18;
+const USER_STREAM_MAX: c_int = 19;
+const USER_TZNAME_MAX: c_int = 20;
+const USER_MAXID: c_int = 21;
+const CTL_DEBUG_NAME: c_int = 0;
+const CTL_DEBUG_VALUE: c_int = 1;
+const CTL_DEBUG_MAXID: c_int = 20;
+const PRIO_DARWIN_THREAD: c_int = 3;
+const PRIO_DARWIN_PROCESS: c_int = 4;
+const PRIO_DARWIN_BG: c_int = 0x1000;
+const PRIO_DARWIN_NONUI: c_int = 0x1001;
+const SEM_FAILED: &mut sem_t = -1isize as &mut sem_t;
+const AI_PASSIVE: c_int = 0x00000001;
+const AI_CANONNAME: c_int = 0x00000002;
+const AI_NUMERICHOST: c_int = 0x00000004;
+const AI_NUMERICSERV: c_int = 0x00001000;
+const AI_MASK: c_int = AI_PASSIVE | AI_CANONNAME | AI_NUMERICHOST | AI_NUMERICSERV | AI_ADDRCONFIG;
+const AI_ALL: c_int = 0x00000100;
+const AI_V4MAPPED_CFG: c_int = 0x00000200;
+const AI_ADDRCONFIG: c_int = 0x00000400;
+const AI_V4MAPPED: c_int = 0x00000800;
+const AI_DEFAULT: c_int = AI_V4MAPPED_CFG | AI_ADDRCONFIG;
+const AI_UNUSABLE: c_int = 0x10000000;
+const SIGEV_NONE: c_int = 0;
+const SIGEV_SIGNAL: c_int = 1;
+const SIGEV_THREAD: c_int = 3;
+const AIO_CANCELED: c_int = 2;
+const AIO_NOTCANCELED: c_int = 4;
+const AIO_ALLDONE: c_int = 1;
+const AIO_LISTIO_MAX: c_int = 16;
+const LIO_NOP: c_int = 0;
+const LIO_WRITE: c_int = 2;
+const LIO_READ: c_int = 1;
+const LIO_WAIT: c_int = 2;
+const LIO_NOWAIT: c_int = 1;
+const WEXITED: c_int = 0x00000004;
+const WSTOPPED: c_int = 0x00000008;
+const WCONTINUED: c_int = 0x00000010;
+const WNOWAIT: c_int = 0x00000020;
+const P_ALL: idtype_t = 0;
+const P_PID: idtype_t = 1;
+const P_PGID: idtype_t = 2;
+const UTIME_OMIT: c_long = -2;
+const UTIME_NOW: c_long = -1;
+const XATTR_NOFOLLOW: c_int = 0x0001;
+const XATTR_CREATE: c_int = 0x0002;
+const XATTR_REPLACE: c_int = 0x0004;
+const XATTR_NOSECURITY: c_int = 0x0008;
+const XATTR_NODEFAULT: c_int = 0x0010;
+const XATTR_SHOWCOMPRESSION: c_int = 0x0020;
+const NET_RT_IFLIST2: c_int = 0x0006;
+const RTF_UP: c_int = 0x1;
+const RTF_GATEWAY: c_int = 0x2;
+const RTF_HOST: c_int = 0x4;
+const RTF_REJECT: c_int = 0x8;
+const RTF_DYNAMIC: c_int = 0x10;
+const RTF_MODIFIED: c_int = 0x20;
+const RTF_DONE: c_int = 0x40;
+const RTF_DELCLONE: c_int = 0x80;
+const RTF_CLONING: c_int = 0x100;
+const RTF_XRESOLVE: c_int = 0x200;
+const RTF_LLINFO: c_int = 0x400;
+const RTF_STATIC: c_int = 0x800;
+const RTF_BLACKHOLE: c_int = 0x1000;
+const RTF_NOIFREF: c_int = 0x2000;
+const RTF_PROTO2: c_int = 0x4000;
+const RTF_PROTO1: c_int = 0x8000;
+const RTF_PRCLONING: c_int = 0x10000;
+const RTF_WASCLONED: c_int = 0x20000;
+const RTF_PROTO3: c_int = 0x40000;
+const RTF_PINNED: c_int = 0x100000;
+const RTF_LOCAL: c_int = 0x200000;
+const RTF_BROADCAST: c_int = 0x400000;
+const RTF_MULTICAST: c_int = 0x800000;
+const RTF_IFSCOPE: c_int = 0x1000000;
+const RTF_CONDEMNED: c_int = 0x2000000;
+const RTF_IFREF: c_int = 0x4000000;
+const RTF_PROXY: c_int = 0x8000000;
+const RTF_ROUTER: c_int = 0x10000000;
+const RTF_DEAD: c_int = 0x20000000;
+const RTF_GLOBAL: c_int = 0x40000000;
+const RTM_VERSION: c_int = 5;
+const RTM_ADD: c_int = 0x1;
+const RTM_DELETE: c_int = 0x2;
+const RTM_CHANGE: c_int = 0x3;
+const RTM_GET: c_int = 0x4;
+const RTM_LOSING: c_int = 0x5;
+const RTM_REDIRECT: c_int = 0x6;
+const RTM_MISS: c_int = 0x7;
+const RTM_LOCK: c_int = 0x8;
+const RTM_OLDADD: c_int = 0x9;
+const RTM_OLDDEL: c_int = 0xa;
+const RTM_RESOLVE: c_int = 0xb;
+const RTM_NEWADDR: c_int = 0xc;
+const RTM_DELADDR: c_int = 0xd;
+const RTM_IFINFO: c_int = 0xe;
+const RTM_NEWMADDR: c_int = 0xf;
+const RTM_DELMADDR: c_int = 0x10;
+const RTM_IFINFO2: c_int = 0x12;
+const RTM_NEWMADDR2: c_int = 0x13;
+const RTM_GET2: c_int = 0x14;
+const RTV_MTU: c_int = 0x1;
+const RTV_HOPCOUNT: c_int = 0x2;
+const RTV_EXPIRE: c_int = 0x4;
+const RTV_RPIPE: c_int = 0x8;
+const RTV_SPIPE: c_int = 0x10;
+const RTV_SSTHRESH: c_int = 0x20;
+const RTV_RTT: c_int = 0x40;
+const RTV_RTTVAR: c_int = 0x80;
+const RTA_DST: c_int = 0x1;
+const RTA_GATEWAY: c_int = 0x2;
+const RTA_NETMASK: c_int = 0x4;
+const RTA_GENMASK: c_int = 0x8;
+const RTA_IFP: c_int = 0x10;
+const RTA_IFA: c_int = 0x20;
+const RTA_AUTHOR: c_int = 0x40;
+const RTA_BRD: c_int = 0x80;
+const RTAX_DST: c_int = 0;
+const RTAX_GATEWAY: c_int = 1;
+const RTAX_NETMASK: c_int = 2;
+const RTAX_GENMASK: c_int = 3;
+const RTAX_IFP: c_int = 4;
+const RTAX_IFA: c_int = 5;
+const RTAX_AUTHOR: c_int = 6;
+const RTAX_BRD: c_int = 7;
+const RTAX_MAX: c_int = 8;
+const KERN_PROCARGS2: c_int = 49;
+const PROC_PIDTASKALLINFO: c_int = 2;
+const PROC_PIDTBSDINFO: c_int = 3;
+const PROC_PIDTASKINFO: c_int = 4;
+const PROC_PIDTHREADINFO: c_int = 5;
+const PROC_PIDVNODEPATHINFO: c_int = 9;
+const PROC_PIDPATHINFO_MAXSIZE: c_int = 4096;
+const PROC_CSM_ALL: c_uint = 0x0001;
+const PROC_CSM_NOSMT: c_uint = 0x0002;
+const PROC_CSM_TECS: c_uint = 0x0004;
+const MAXCOMLEN: usize = 16;
+const MAXTHREADNAMESIZE: usize = 64;
+const XUCRED_VERSION: c_uint = 0;
+const LC_SEGMENT: u32 = 0x1;
+const LC_SEGMENT_64: u32 = 0x19;
+const MH_MAGIC: u32 = 0xfeedface;
+const MH_MAGIC_64: u32 = 0xfeedfacf;
+const UTUN_OPT_FLAGS: c_int = 1;
+const UTUN_OPT_IFNAME: c_int = 2;
+const DLT_NULL: c_uint = 0;
+const DLT_EN10MB: c_uint = 1;
+const DLT_EN3MB: c_uint = 2;
+const DLT_AX25: c_uint = 3;
+const DLT_PRONET: c_uint = 4;
+const DLT_CHAOS: c_uint = 5;
+const DLT_IEEE802: c_uint = 6;
+const DLT_ARCNET: c_uint = 7;
+const DLT_SLIP: c_uint = 8;
+const DLT_PPP: c_uint = 9;
+const DLT_FDDI: c_uint = 10;
+const DLT_ATM_RFC1483: c_uint = 11;
+const DLT_RAW: c_uint = 12;
+const DLT_LOOP: c_uint = 108;
+const BPF_ALIGNMENT: c_int = 4;
+const MNT_NODEV: c_int = 0x00000010;
+const MNT_UNION: c_int = 0x00000020;
+const MNT_CPROTECT: c_int = 0x00000080;
+const MNT_QUARANTINE: c_int = 0x00000400;
+const MNT_LOCAL: c_int = 0x00001000;
+const MNT_QUOTA: c_int = 0x00002000;
+const MNT_ROOTFS: c_int = 0x00004000;
+const MNT_DOVOLFS: c_int = 0x00008000;
+const MNT_DONTBROWSE: c_int = 0x00100000;
+const MNT_IGNORE_OWNERSHIP: c_int = 0x00200000;
+const MNT_AUTOMOUNTED: c_int = 0x00400000;
+const MNT_JOURNALED: c_int = 0x00800000;
+const MNT_NOUSERXATTR: c_int = 0x01000000;
+const MNT_DEFWRITE: c_int = 0x02000000;
+const MNT_MULTILABEL: c_int = 0x04000000;
+const MNT_NOATIME: c_int = 0x10000000;
+const MNT_SNAPSHOT: c_int = 0x40000000;
+const MNT_NOBLOCK: c_int = 0x00020000;
+const POSIX_SPAWN_RESETIDS: c_int = 0x01;
+const POSIX_SPAWN_SETPGROUP: c_int = 0x02;
+const POSIX_SPAWN_SETSIGDEF: c_int = 0x04;
+const POSIX_SPAWN_SETSIGMASK: c_int = 0x08;
+const POSIX_SPAWN_SETEXEC: c_int = 0x40;
+const POSIX_SPAWN_START_SUSPENDED: c_int = 0x80;
+const POSIX_SPAWN_CLOEXEC_DEFAULT: c_int = 0x4000;
+const IPC_CREAT: c_int = 0x200;
+const IPC_EXCL: c_int = 0x400;
+const IPC_NOWAIT: c_int = 0x800;
+const IPC_PRIVATE: key_t = 0;
+const IPC_RMID: c_int = 0;
+const IPC_SET: c_int = 1;
+const IPC_STAT: c_int = 2;
+const IPC_R: c_int = 0x100;
+const IPC_W: c_int = 0x80;
+const IPC_M: c_int = 0x1000;
+const SEM_UNDO: c_int = 0o10000;
+const GETNCNT: c_int = 3;
+const GETPID: c_int = 4;
+const GETVAL: c_int = 5;
+const GETALL: c_int = 6;
+const GETZCNT: c_int = 7;
+const SETVAL: c_int = 8;
+const SETALL: c_int = 9;
+const SHM_RDONLY: c_int = 0x1000;
+const SHM_RND: c_int = 0x2000;
+const SHMLBA: c_int = 16 * 1024;
+const SHM_R: c_int = IPC_R;
+const SHM_W: c_int = IPC_W;
+const UF_SETTABLE: c_uint = 0x0000ffff;
+const UF_NODUMP: c_uint = 0x00000001;
+const UF_IMMUTABLE: c_uint = 0x00000002;
+const UF_APPEND: c_uint = 0x00000004;
+const UF_OPAQUE: c_uint = 0x00000008;
+const UF_COMPRESSED: c_uint = 0x00000020;
+const UF_TRACKED: c_uint = 0x00000040;
+const SF_SETTABLE: c_uint = 0xffff0000;
+const SF_ARCHIVED: c_uint = 0x00010000;
+const SF_IMMUTABLE: c_uint = 0x00020000;
+const SF_APPEND: c_uint = 0x00040000;
+const UF_HIDDEN: c_uint = 0x00008000;
+const NTP_API: c_int = 4;
+const MAXPHASE: c_long = 500000000;
+const MAXFREQ: c_long = 500000;
+const MINSEC: c_int = 256;
+const MAXSEC: c_int = 2048;
+const NANOSECOND: c_long = 1000000000;
+const SCALE_PPM: c_int = 65;
+const MAXTC: c_int = 10;
+const MOD_OFFSET: c_uint = 0x0001;
+const MOD_FREQUENCY: c_uint = 0x0002;
+const MOD_MAXERROR: c_uint = 0x0004;
+const MOD_ESTERROR: c_uint = 0x0008;
+const MOD_STATUS: c_uint = 0x0010;
+const MOD_TIMECONST: c_uint = 0x0020;
+const MOD_PPSMAX: c_uint = 0x0040;
+const MOD_TAI: c_uint = 0x0080;
+const MOD_MICRO: c_uint = 0x1000;
+const MOD_NANO: c_uint = 0x2000;
+const MOD_CLKB: c_uint = 0x4000;
+const MOD_CLKA: c_uint = 0x8000;
+const STA_PLL: c_int = 0x0001;
+const STA_PPSFREQ: c_int = 0x0002;
+const STA_PPSTIME: c_int = 0x0004;
+const STA_FLL: c_int = 0x0008;
+const STA_INS: c_int = 0x0010;
+const STA_DEL: c_int = 0x0020;
+const STA_UNSYNC: c_int = 0x0040;
+const STA_FREQHOLD: c_int = 0x0080;
+const STA_PPSSIGNAL: c_int = 0x0100;
+const STA_PPSJITTER: c_int = 0x0200;
+const STA_PPSWANDER: c_int = 0x0400;
+const STA_PPSERROR: c_int = 0x0800;
+const STA_CLOCKERR: c_int = 0x1000;
+const STA_NANO: c_int = 0x2000;
+const STA_MODE: c_int = 0x4000;
+const STA_CLK: c_int = 0x8000;
+const STA_RONLY: c_int = STA_PPSSIGNAL | STA_PPSJITTER | STA_PPSWANDER | STA_PPSERROR | STA_CLOCKERR | STA_NANO | STA_MODE | STA_CLK;
+const TIME_OK: c_int = 0;
+const TIME_INS: c_int = 1;
+const TIME_DEL: c_int = 2;
+const TIME_OOP: c_int = 3;
+const TIME_WAIT: c_int = 4;
+const TIME_ERROR: c_int = 5;
+const MNT_WAIT: c_int = 1;
+const MNT_NOWAIT: c_int = 2;
+const THREAD_STANDARD_POLICY: c_int = 1;
+const THREAD_STANDARD_POLICY_COUNT: c_int = 0;
+const THREAD_EXTENDED_POLICY: c_int = 1;
+const THREAD_TIME_CONSTRAINT_POLICY: c_int = 2;
+const THREAD_PRECEDENCE_POLICY: c_int = 3;
+const THREAD_AFFINITY_POLICY: c_int = 4;
+const THREAD_AFFINITY_TAG_NULL: c_int = 0;
+const THREAD_BACKGROUND_POLICY: c_int = 5;
+const THREAD_BACKGROUND_POLICY_DARWIN_BG: c_int = 0x1000;
+const THREAD_LATENCY_QOS_POLICY: c_int = 7;
+const THREAD_THROUGHPUT_QOS_POLICY: c_int = 8;
+const TH_STATE_RUNNING: c_int = 1;
+const TH_STATE_STOPPED: c_int = 2;
+const TH_STATE_WAITING: c_int = 3;
+const TH_STATE_UNINTERRUPTIBLE: c_int = 4;
+const TH_STATE_HALTED: c_int = 5;
+const TH_FLAGS_SWAPPED: c_int = 0x1;
+const TH_FLAGS_IDLE: c_int = 0x2;
+const TH_FLAGS_GLOBAL_FORCED_IDLE: c_int = 0x4;
+const THREAD_BASIC_INFO: c_int = 3;
+const THREAD_IDENTIFIER_INFO: c_int = 4;
+const THREAD_EXTENDED_INFO: c_int = 5;
+const kCCSuccess: i32 = 0;
+const kCCParamError: i32 = -4300;
+const kCCBufferTooSmall: i32 = -4301;
+const kCCMemoryFailure: i32 = -4302;
+const kCCAlignmentError: i32 = -4303;
+const kCCDecodeError: i32 = -4304;
+const kCCUnimplemented: i32 = -4305;
+const kCCOverflow: i32 = -4306;
+const kCCRNGFailure: i32 = -4307;
+const kCCUnspecifiedError: i32 = -4308;
+const kCCCallSequenceError: i32 = -4309;
+const kCCKeySizeError: i32 = -4310;
+const kCCInvalidKey: i32 = -4311;
+const HOST_LOAD_INFO: i32 = 1;
+const HOST_VM_INFO: i32 = 2;
+const HOST_CPU_LOAD_INFO: i32 = 3;
+const HOST_VM_INFO64: i32 = 4;
+const HOST_EXTMOD_INFO64: i32 = 5;
+const HOST_EXPIRED_TASK_INFO: i32 = 6;
+const VM_PAGE_QUERY_PAGE_PRESENT: i32 = 0x1;
+const VM_PAGE_QUERY_PAGE_FICTITIOUS: i32 = 0x2;
+const VM_PAGE_QUERY_PAGE_REF: i32 = 0x4;
+const VM_PAGE_QUERY_PAGE_DIRTY: i32 = 0x8;
+const VM_PAGE_QUERY_PAGE_PAGED_OUT: i32 = 0x10;
+const VM_PAGE_QUERY_PAGE_COPIED: i32 = 0x20;
+const VM_PAGE_QUERY_PAGE_SPECULATIVE: i32 = 0x40;
+const VM_PAGE_QUERY_PAGE_EXTERNAL: i32 = 0x80;
+const VM_PAGE_QUERY_PAGE_CS_VALIDATED: i32 = 0x100;
+const VM_PAGE_QUERY_PAGE_CS_TAINTED: i32 = 0x200;
+const VM_PAGE_QUERY_PAGE_CS_NX: i32 = 0x400;
+const TASK_THREAD_TIMES_INFO: u32 = 3;
+const HOST_CPU_LOAD_INFO_COUNT: u32 = 4;
+const MACH_TASK_BASIC_INFO: u32 = 20;
+const MACH_PORT_NULL: i32 = 0;
+const RUSAGE_INFO_V0: c_int = 0;
+const RUSAGE_INFO_V1: c_int = 1;
+const RUSAGE_INFO_V2: c_int = 2;
+const RUSAGE_INFO_V3: c_int = 3;
+const RUSAGE_INFO_V4: c_int = 4;
+const COPYFILE_ACL: copyfile_flags_t = 1 << 0;
+const COPYFILE_STAT: copyfile_flags_t = 1 << 1;
+const COPYFILE_XATTR: copyfile_flags_t = 1 << 2;
+const COPYFILE_DATA: copyfile_flags_t = 1 << 3;
+const COPYFILE_SECURITY: copyfile_flags_t = COPYFILE_STAT | COPYFILE_ACL;
+const COPYFILE_METADATA: copyfile_flags_t = COPYFILE_SECURITY | COPYFILE_XATTR;
+const COPYFILE_RECURSIVE: copyfile_flags_t = 1 << 15;
+const COPYFILE_CHECK: copyfile_flags_t = 1 << 16;
+const COPYFILE_EXCL: copyfile_flags_t = 1 << 17;
+const COPYFILE_NOFOLLOW_SRC: copyfile_flags_t = 1 << 18;
+const COPYFILE_NOFOLLOW_DST: copyfile_flags_t = 1 << 19;
+const COPYFILE_MOVE: copyfile_flags_t = 1 << 20;
+const COPYFILE_UNLINK: copyfile_flags_t = 1 << 21;
+const COPYFILE_NOFOLLOW: copyfile_flags_t = COPYFILE_NOFOLLOW_SRC | COPYFILE_NOFOLLOW_DST;
+const COPYFILE_PACK: copyfile_flags_t = 1 << 22;
+const COPYFILE_UNPACK: copyfile_flags_t = 1 << 23;
+const COPYFILE_CLONE: copyfile_flags_t = 1 << 24;
+const COPYFILE_CLONE_FORCE: copyfile_flags_t = 1 << 25;
+const COPYFILE_RUN_IN_PLACE: copyfile_flags_t = 1 << 26;
+const COPYFILE_DATA_SPARSE: copyfile_flags_t = 1 << 27;
+const COPYFILE_PRESERVE_DST_TRACKED: copyfile_flags_t = 1 << 28;
+const COPYFILE_VERBOSE: copyfile_flags_t = 1 << 30;
+const COPYFILE_RECURSE_ERROR: c_int = 0;
+const COPYFILE_RECURSE_FILE: c_int = 1;
+const COPYFILE_RECURSE_DIR: c_int = 2;
+const COPYFILE_RECURSE_DIR_CLEANUP: c_int = 3;
+const COPYFILE_COPY_DATA: c_int = 4;
+const COPYFILE_COPY_XATTR: c_int = 5;
+const COPYFILE_START: c_int = 1;
+const COPYFILE_FINISH: c_int = 2;
+const COPYFILE_ERR: c_int = 3;
+const COPYFILE_PROGRESS: c_int = 4;
+const COPYFILE_CONTINUE: c_int = 0;
+const COPYFILE_SKIP: c_int = 1;
+const COPYFILE_QUIT: c_int = 2;
+const ATTR_BIT_MAP_COUNT: c_ushort = 5;
+const FSOPT_NOFOLLOW: u32 = 0x1;
+const FSOPT_NOFOLLOW_ANY: u32 = 0x800;
+const FSOPT_REPORT_FULLSIZE: u32 = 0x4;
+const FSOPT_PACK_INVAL_ATTRS: u32 = 0x8;
+const FSOPT_ATTR_CMN_EXTENDED: u32 = 0x20;
+const FSOPT_RETURN_REALDEV: u32 = 0x200;
+const ATTR_CMN_NAME: attrgroup_t = 0x00000001;
+const ATTR_CMN_DEVID: attrgroup_t = 0x00000002;
+const ATTR_CMN_FSID: attrgroup_t = 0x00000004;
+const ATTR_CMN_OBJTYPE: attrgroup_t = 0x00000008;
+const ATTR_CMN_OBJTAG: attrgroup_t = 0x00000010;
+const ATTR_CMN_OBJID: attrgroup_t = 0x00000020;
+const ATTR_CMN_OBJPERMANENTID: attrgroup_t = 0x00000040;
+const ATTR_CMN_PAROBJID: attrgroup_t = 0x00000080;
+const ATTR_CMN_SCRIPT: attrgroup_t = 0x00000100;
+const ATTR_CMN_CRTIME: attrgroup_t = 0x00000200;
+const ATTR_CMN_MODTIME: attrgroup_t = 0x00000400;
+const ATTR_CMN_CHGTIME: attrgroup_t = 0x00000800;
+const ATTR_CMN_ACCTIME: attrgroup_t = 0x00001000;
+const ATTR_CMN_BKUPTIME: attrgroup_t = 0x00002000;
+const ATTR_CMN_FNDRINFO: attrgroup_t = 0x00004000;
+const ATTR_CMN_OWNERID: attrgroup_t = 0x00008000;
+const ATTR_CMN_GRPID: attrgroup_t = 0x00010000;
+const ATTR_CMN_ACCESSMASK: attrgroup_t = 0x00020000;
+const ATTR_CMN_FLAGS: attrgroup_t = 0x00040000;
+const ATTR_CMN_GEN_COUNT: attrgroup_t = 0x00080000;
+const ATTR_CMN_DOCUMENT_ID: attrgroup_t = 0x00100000;
+const ATTR_CMN_USERACCESS: attrgroup_t = 0x00200000;
+const ATTR_CMN_EXTENDED_SECURITY: attrgroup_t = 0x00400000;
+const ATTR_CMN_UUID: attrgroup_t = 0x00800000;
+const ATTR_CMN_GRPUUID: attrgroup_t = 0x01000000;
+const ATTR_CMN_FILEID: attrgroup_t = 0x02000000;
+const ATTR_CMN_PARENTID: attrgroup_t = 0x04000000;
+const ATTR_CMN_FULLPATH: attrgroup_t = 0x08000000;
+const ATTR_CMN_ADDEDTIME: attrgroup_t = 0x10000000;
+const ATTR_CMN_DATA_PROTECT_FLAGS: attrgroup_t = 0x40000000;
+const ATTR_CMN_RETURNED_ATTRS: attrgroup_t = 0x80000000;
+const ATTR_VOL_FSTYPE: attrgroup_t = 0x00000001;
+const ATTR_VOL_SIGNATURE: attrgroup_t = 0x00000002;
+const ATTR_VOL_SIZE: attrgroup_t = 0x00000004;
+const ATTR_VOL_SPACEFREE: attrgroup_t = 0x00000008;
+const ATTR_VOL_SPACEAVAIL: attrgroup_t = 0x00000010;
+const ATTR_VOL_MINALLOCATION: attrgroup_t = 0x00000020;
+const ATTR_VOL_ALLOCATIONCLUMP: attrgroup_t = 0x00000040;
+const ATTR_VOL_IOBLOCKSIZE: attrgroup_t = 0x00000080;
+const ATTR_VOL_OBJCOUNT: attrgroup_t = 0x00000100;
+const ATTR_VOL_FILECOUNT: attrgroup_t = 0x00000200;
+const ATTR_VOL_DIRCOUNT: attrgroup_t = 0x00000400;
+const ATTR_VOL_MAXOBJCOUNT: attrgroup_t = 0x00000800;
+const ATTR_VOL_MOUNTPOINT: attrgroup_t = 0x00001000;
+const ATTR_VOL_NAME: attrgroup_t = 0x00002000;
+const ATTR_VOL_MOUNTFLAGS: attrgroup_t = 0x00004000;
+const ATTR_VOL_MOUNTEDDEVICE: attrgroup_t = 0x00008000;
+const ATTR_VOL_ENCODINGSUSED: attrgroup_t = 0x00010000;
+const ATTR_VOL_CAPABILITIES: attrgroup_t = 0x00020000;
+const ATTR_VOL_UUID: attrgroup_t = 0x00040000;
+const ATTR_VOL_SPACEUSED: attrgroup_t = 0x00800000;
+const ATTR_VOL_QUOTA_SIZE: attrgroup_t = 0x10000000;
+const ATTR_VOL_RESERVED_SIZE: attrgroup_t = 0x20000000;
+const ATTR_VOL_ATTRIBUTES: attrgroup_t = 0x40000000;
+const ATTR_VOL_INFO: attrgroup_t = 0x80000000;
+const ATTR_DIR_LINKCOUNT: attrgroup_t = 0x00000001;
+const ATTR_DIR_ENTRYCOUNT: attrgroup_t = 0x00000002;
+const ATTR_DIR_MOUNTSTATUS: attrgroup_t = 0x00000004;
+const ATTR_DIR_ALLOCSIZE: attrgroup_t = 0x00000008;
+const ATTR_DIR_IOBLOCKSIZE: attrgroup_t = 0x00000010;
+const ATTR_DIR_DATALENGTH: attrgroup_t = 0x00000020;
+const ATTR_FILE_LINKCOUNT: attrgroup_t = 0x00000001;
+const ATTR_FILE_TOTALSIZE: attrgroup_t = 0x00000002;
+const ATTR_FILE_ALLOCSIZE: attrgroup_t = 0x00000004;
+const ATTR_FILE_IOBLOCKSIZE: attrgroup_t = 0x00000008;
+const ATTR_FILE_DEVTYPE: attrgroup_t = 0x00000020;
+const ATTR_FILE_FORKCOUNT: attrgroup_t = 0x00000080;
+const ATTR_FILE_FORKLIST: attrgroup_t = 0x00000100;
+const ATTR_FILE_DATALENGTH: attrgroup_t = 0x00000200;
+const ATTR_FILE_DATAALLOCSIZE: attrgroup_t = 0x00000400;
+const ATTR_FILE_RSRCLENGTH: attrgroup_t = 0x00001000;
+const ATTR_FILE_RSRCALLOCSIZE: attrgroup_t = 0x00002000;
+const ATTR_CMNEXT_RELPATH: attrgroup_t = 0x00000004;
+const ATTR_CMNEXT_PRIVATESIZE: attrgroup_t = 0x00000008;
+const ATTR_CMNEXT_LINKID: attrgroup_t = 0x00000010;
+const ATTR_CMNEXT_NOFIRMLINKPATH: attrgroup_t = 0x00000020;
+const ATTR_CMNEXT_REALDEVID: attrgroup_t = 0x00000040;
+const ATTR_CMNEXT_REALFSID: attrgroup_t = 0x00000080;
+const ATTR_CMNEXT_CLONEID: attrgroup_t = 0x00000100;
+const ATTR_CMNEXT_EXT_FLAGS: attrgroup_t = 0x00000200;
+const ATTR_CMNEXT_RECURSIVE_GENCOUNT: attrgroup_t = 0x00000400;
+const DIR_MNTSTATUS_MNTPOINT: u32 = 0x1;
+const VOL_CAPABILITIES_FORMAT: usize = 0;
+const VOL_CAPABILITIES_INTERFACES: usize = 1;
+const VOL_CAP_FMT_PERSISTENTOBJECTIDS: attrgroup_t = 0x00000001;
+const VOL_CAP_FMT_SYMBOLICLINKS: attrgroup_t = 0x00000002;
+const VOL_CAP_FMT_HARDLINKS: attrgroup_t = 0x00000004;
+const VOL_CAP_FMT_JOURNAL: attrgroup_t = 0x00000008;
+const VOL_CAP_FMT_JOURNAL_ACTIVE: attrgroup_t = 0x00000010;
+const VOL_CAP_FMT_NO_ROOT_TIMES: attrgroup_t = 0x00000020;
+const VOL_CAP_FMT_SPARSE_FILES: attrgroup_t = 0x00000040;
+const VOL_CAP_FMT_ZERO_RUNS: attrgroup_t = 0x00000080;
+const VOL_CAP_FMT_CASE_SENSITIVE: attrgroup_t = 0x00000100;
+const VOL_CAP_FMT_CASE_PRESERVING: attrgroup_t = 0x00000200;
+const VOL_CAP_FMT_FAST_STATFS: attrgroup_t = 0x00000400;
+const VOL_CAP_FMT_2TB_FILESIZE: attrgroup_t = 0x00000800;
+const VOL_CAP_FMT_OPENDENYMODES: attrgroup_t = 0x00001000;
+const VOL_CAP_FMT_HIDDEN_FILES: attrgroup_t = 0x00002000;
+const VOL_CAP_FMT_PATH_FROM_ID: attrgroup_t = 0x00004000;
+const VOL_CAP_FMT_NO_VOLUME_SIZES: attrgroup_t = 0x00008000;
+const VOL_CAP_FMT_DECMPFS_COMPRESSION: attrgroup_t = 0x00010000;
+const VOL_CAP_FMT_64BIT_OBJECT_IDS: attrgroup_t = 0x00020000;
+const VOL_CAP_FMT_DIR_HARDLINKS: attrgroup_t = 0x00040000;
+const VOL_CAP_FMT_DOCUMENT_ID: attrgroup_t = 0x00080000;
+const VOL_CAP_FMT_WRITE_GENERATION_COUNT: attrgroup_t = 0x00100000;
+const VOL_CAP_FMT_NO_IMMUTABLE_FILES: attrgroup_t = 0x00200000;
+const VOL_CAP_FMT_NO_PERMISSIONS: attrgroup_t = 0x00400000;
+const VOL_CAP_FMT_SHARED_SPACE: attrgroup_t = 0x00800000;
+const VOL_CAP_FMT_VOL_GROUPS: attrgroup_t = 0x01000000;
+const VOL_CAP_FMT_SEALED: attrgroup_t = 0x02000000;
+const VOL_CAP_INT_SEARCHFS: attrgroup_t = 0x00000001;
+const VOL_CAP_INT_ATTRLIST: attrgroup_t = 0x00000002;
+const VOL_CAP_INT_NFSEXPORT: attrgroup_t = 0x00000004;
+const VOL_CAP_INT_READDIRATTR: attrgroup_t = 0x00000008;
+const VOL_CAP_INT_EXCHANGEDATA: attrgroup_t = 0x00000010;
+const VOL_CAP_INT_COPYFILE: attrgroup_t = 0x00000020;
+const VOL_CAP_INT_ALLOCATE: attrgroup_t = 0x00000040;
+const VOL_CAP_INT_VOL_RENAME: attrgroup_t = 0x00000080;
+const VOL_CAP_INT_ADVLOCK: attrgroup_t = 0x00000100;
+const VOL_CAP_INT_FLOCK: attrgroup_t = 0x00000200;
+const VOL_CAP_INT_EXTENDED_SECURITY: attrgroup_t = 0x00000400;
+const VOL_CAP_INT_USERACCESS: attrgroup_t = 0x00000800;
+const VOL_CAP_INT_MANLOCK: attrgroup_t = 0x00001000;
+const VOL_CAP_INT_NAMEDSTREAMS: attrgroup_t = 0x00002000;
+const VOL_CAP_INT_EXTENDED_ATTR: attrgroup_t = 0x00004000;
+const VOL_CAP_INT_CLONE: attrgroup_t = 0x00010000;
+const VOL_CAP_INT_SNAPSHOT: attrgroup_t = 0x00020000;
+const VOL_CAP_INT_RENAME_SWAP: attrgroup_t = 0x00040000;
+const VOL_CAP_INT_RENAME_EXCL: attrgroup_t = 0x00080000;
+const VOL_CAP_INT_RENAME_OPENFAIL: attrgroup_t = 0x00100000;
+const SIDL: u32 = 1;
+const SRUN: u32 = 2;
+const SSLEEP: u32 = 3;
+const SSTOP: u32 = 4;
+const SZOMB: u32 = 5;
+fn __DARWIN_ALIGN32(p: usize) -> usize {
+    const __DARWIN_ALIGNBYTES32: usize = std::mem::size_of::<u32>() - 1;
+    p + __DARWIN_ALIGNBYTES32 & !__DARWIN_ALIGNBYTES32
+}
+const THREAD_EXTENDED_POLICY_COUNT: mach_msg_type_number_t = (std::mem::size_of::<thread_extended_policy_data_t>() / std::mem::size_of::<integer_t>()) as mach_msg_type_number_t;
+const THREAD_TIME_CONSTRAINT_POLICY_COUNT: mach_msg_type_number_t = (std::mem::size_of::<thread_time_constraint_policy_data_t>() / std::mem::size_of::<integer_t>()) as mach_msg_type_number_t;
+const THREAD_PRECEDENCE_POLICY_COUNT: mach_msg_type_number_t = (std::mem::size_of::<thread_precedence_policy_data_t>() / std::mem::size_of::<integer_t>()) as mach_msg_type_number_t;
+const THREAD_AFFINITY_POLICY_COUNT: mach_msg_type_number_t = (std::mem::size_of::<thread_affinity_policy_data_t>() / std::mem::size_of::<integer_t>()) as mach_msg_type_number_t;
+const THREAD_BACKGROUND_POLICY_COUNT: mach_msg_type_number_t = (std::mem::size_of::<thread_background_policy_data_t>() / std::mem::size_of::<integer_t>()) as mach_msg_type_number_t;
+const THREAD_LATENCY_QOS_POLICY_COUNT: mach_msg_type_number_t = (std::mem::size_of::<thread_latency_qos_policy_data_t>() / std::mem::size_of::<integer_t>()) as mach_msg_type_number_t;
+const THREAD_THROUGHPUT_QOS_POLICY_COUNT: mach_msg_type_number_t = (std::mem::size_of::<thread_throughput_qos_policy_data_t>() / std::mem::size_of::<integer_t>()) as mach_msg_type_number_t;
+const THREAD_BASIC_INFO_COUNT: mach_msg_type_number_t = (std::mem::size_of::<thread_basic_info_data_t>() / std::mem::size_of::<integer_t>()) as mach_msg_type_number_t;
+const THREAD_IDENTIFIER_INFO_COUNT: mach_msg_type_number_t = (std::mem::size_of::<thread_identifier_info_data_t>() / std::mem::size_of::<integer_t>()) as mach_msg_type_number_t;
+const THREAD_EXTENDED_INFO_COUNT: mach_msg_type_number_t = (std::mem::size_of::<thread_extended_info_data_t>() / std::mem::size_of::<integer_t>()) as mach_msg_type_number_t;
+const TASK_THREAD_TIMES_INFO_COUNT: u32 = (std::mem::size_of::<task_thread_times_info_data_t>() / std::mem::size_of::<natural_t>()) as u32;
+const MACH_TASK_BASIC_INFO_COUNT: u32 = (std::mem::size_of::<mach_task_basic_info_data_t>() / std::mem::size_of::<natural_t>()) as u32;
+const HOST_VM_INFO64_COUNT: mach_msg_type_number_t = (std::mem::size_of::<vm_statistics64_data_t>() / std::mem::size_of::<integer_t>()) as mach_msg_type_number_t;
+#[inline]
+fn CMSG_NXTHDR(mhdr: &msghdr, cmsg: &cmsghdr) -> &mut cmsghdr {
+    if cmsg.is_null() {
+        return CMSG_FIRSTHDR(mhdr);
+        let cmsg_len = (*cmsg).cmsg_len as usize;
+        let next = cmsg as usize + __DARWIN_ALIGN32(cmsg_len as usize);
+        let max = (*mhdr).msg_control as usize + (*mhdr).msg_controllen as usize;
+        if next + __DARWIN_ALIGN32(std::mem::size_of::<cmsghdr>()) > max {
+            0 as &mut cmsghdr
+        } else {
+            next as &mut cmsghdr
+        }
+    }
+}
+#[inline]
+fn CMSG_DATA(cmsg: &cmsghdr) -> &mut c_uchar {
+    (cmsg as &mut c_uchar).offset(__DARWIN_ALIGN32(std::mem::size_of::<cmsghdr>()) as isize)
+}
+#[inline]
+fn CMSG_SPACE(length: c_uint) -> c_uint {
+    (__DARWIN_ALIGN32(std::mem::size_of::<cmsghdr>()) + __DARWIN_ALIGN32(length as usize)) as c_uint
+}
+#[inline]
+fn CMSG_LEN(length: c_uint) -> c_uint {
+    (__DARWIN_ALIGN32(std::mem::size_of::<cmsghdr>()) + length as usize) as c_uint
+}
+#[inline]
+fn VM_MAKE_TAG(id: u8) -> u32 {
+    (id as u32) << 24u32
+}
+#[inline]
+fn major(dev: dev_t) -> i32 {
+    (dev >> 24) & 0xff
+}
+#[inline]
+fn minor(dev: dev_t) -> i32 {
+    dev & 0xffffff
+}
+#[inline]
+fn makedev(major: i32, minor: i32) -> dev_t {
+    (major << 24) | minor
+}
+#[inline]
+fn WSTOPSIG(status: c_int) -> c_int {
+    status >> 8
+}
+#[inline]
+fn _WSTATUS(status: c_int) -> c_int {
+    status & 0x7f
+}
+#[inline]
+fn WIFCONTINUED(status: c_int) -> bool {
+    _WSTATUS(status) == _WSTOPPED && WSTOPSIG(status) == 0x13
+}
+#[inline]
+fn WIFSIGNALED(status: c_int) -> bool {
+    _WSTATUS(status) != _WSTOPPED && _WSTATUS(status) != 0
+}
+#[inline]
+fn WIFSTOPPED(status: c_int) -> bool {
+    _WSTATUS(status) == _WSTOPPED && WSTOPSIG(status) != 0x13
+}
+extern "C" fn setgrent();
+extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int;
+extern "C" fn sem_destroy(sem: &mut sem_t) -> c_int;
+extern "C" fn sem_init(sem: &mut sem_t, pshared: c_int, value: c_uint) -> c_int;
+extern "C" fn aio_read(aiocbp: &mut aiocb) -> c_int;
+extern "C" fn aio_write(aiocbp: &mut aiocb) -> c_int;
+extern "C" fn aio_fsync(op: c_int, aiocbp: &mut aiocb) -> c_int;
+extern "C" fn aio_error(aiocbp: &aiocb) -> c_int;
+extern "C" fn aio_return(aiocbp: &mut aiocb) -> ssize_t;
+extern "C" fn aio_suspend(aiocb_list: &&aiocb, nitems: c_int, timeout: &timespec) -> c_int;
+extern "C" fn aio_cancel(fd: c_int, aiocbp: &mut aiocb) -> c_int;
+extern "C" fn chflags(path: &c_char, flags: c_uint) -> c_int;
+extern "C" fn fchflags(fd: c_int, flags: c_uint) -> c_int;
+extern "C" fn clock_getres(clk_id: clockid_t, tp: &mut timespec) -> c_int;
+extern "C" fn clock_gettime(clk_id: clockid_t, tp: &mut timespec) -> c_int;
+extern "C" fn confstr(name: c_int, buf: &mut c_char, len: size_t) -> size_t;
+extern "C" fn lio_listio(mode: c_int, aiocb_list: &&mut aiocb, nitems: c_int, sevp: &mut sigevent) -> c_int;
+extern "C" fn dirfd(dirp: &mut DIR) -> c_int;
+extern "C" fn lutimes(file: &c_char, times: &timeval) -> c_int;
+extern "C" fn gettimeofday(tp: &mut timeval, tz: &mut c_void) -> c_int;
+extern "C" fn getutxent() -> &mut utmpx;
+extern "C" fn getutxid(ut: &utmpx) -> &mut utmpx;
+extern "C" fn getutxline(ut: &utmpx) -> &mut utmpx;
+extern "C" fn pututxline(ut: &utmpx) -> &mut utmpx;
+extern "C" fn setutxent();
+extern "C" fn endutxent();
+extern "C" fn utmpxname(file: &c_char) -> c_int;
+extern "C" fn asctime(tm_: &tm) -> &mut c_char;
+extern "C" fn ctime(clock: &time_t) -> &mut c_char;
+extern "C" fn getdate(datestr: &c_char) -> &mut tm;
+extern "C" fn strftime(buf: &mut c_char, maxsize: size_t, format: &c_char, timeptr: &tm) -> size_t;
+extern "C" fn strptime(buf: &c_char, format: &c_char, timeptr: &mut tm) -> &mut c_char;
+extern "C" fn asctime_r(tm_: &tm, result: &mut c_char) -> &mut c_char;
+extern "C" fn ctime_r(clock: &time_t, result: &mut c_char) -> &mut c_char;
+extern "C" fn getnameinfo(sa: &sockaddr, salen: socklen_t, host: &mut c_char, hostlen: socklen_t, serv: &mut c_char, sevlen: socklen_t, flags: c_int) -> c_int;
+extern "C" fn mincore(addr: &c_void, len: size_t, vec: &mut c_char) -> c_int;
+extern "C" fn sysctlnametomib(name: &c_char, mibp: &mut c_int, sizep: &mut size_t) -> c_int;
+extern "C" fn mprotect(addr: &mut c_void, len: size_t, prot: c_int) -> c_int;
+extern "C" fn semget(key: key_t, nsems: c_int, semflg: c_int) -> c_int;
+extern "C" fn semctl(semid: c_int, semnum: c_int, cmd: c_int, ...) -> c_int;
+extern "C" fn semop(semid: c_int, sops: &mut sembuf, nsops: size_t) -> c_int;
+extern "C" fn shm_open(name: &c_char, oflag: c_int, ...) -> c_int;
+extern "C" fn ftok(pathname: &c_char, proj_id: c_int) -> key_t;
+extern "C" fn shmat(shmid: c_int, shmaddr: &c_void, shmflg: c_int) -> &mut c_void;
+extern "C" fn shmdt(shmaddr: &c_void) -> c_int;
+extern "C" fn shmctl(shmid: c_int, cmd: c_int, buf: &mut shmid_ds) -> c_int;
+extern "C" fn shmget(key: key_t, size: size_t, shmflg: c_int) -> c_int;
+extern "C" fn sysctl(name: &mut c_int, namelen: c_uint, oldp: &mut c_void, oldlenp: &mut size_t, newp: &mut c_void, newlen: size_t) -> c_int;
+extern "C" fn sysctlbyname(name: &c_char, oldp: &mut c_void, oldlenp: &mut size_t, newp: &mut c_void, newlen: size_t) -> c_int;
+extern "C" fn mach_absolute_time() -> u64;
+extern "C" fn mach_timebase_info(info: &mut mach_timebase_info_t) -> c_int;
+extern "C" fn mach_host_self() -> mach_port_t;
+extern "C" fn mach_thread_self() -> mach_port_t;
+extern "C" fn pthread_setname_np(name: &c_char) -> c_int;
+extern "C" fn pthread_getname_np(thread: pthread_t, name: &mut c_char, len: size_t) -> c_int;
+extern "C" fn pthread_mach_thread_np(thread: pthread_t) -> mach_port_t;
+extern "C" fn pthread_from_mach_thread_np(port: mach_port_t) -> pthread_t;
+extern "C" fn pthread_create_from_mach_thread(thread: &mut pthread_t, attr: &pthread_attr_t, f: fn(&mut c_void) -> &mut c_void, value: &mut c_void) -> c_int;
+extern "C" fn pthread_stack_frame_decode_np(frame_addr: uintptr_t, return_addr: &mut uintptr_t) -> uintptr_t;
+extern "C" fn pthread_get_stackaddr_np(thread: pthread_t) -> &mut c_void;
+extern "C" fn pthread_get_stacksize_np(thread: pthread_t) -> size_t;
+extern "C" fn pthread_condattr_setpshared(attr: &mut pthread_condattr_t, pshared: c_int) -> c_int;
+extern "C" fn pthread_condattr_getpshared(attr: &pthread_condattr_t, pshared: &mut c_int) -> c_int;
+extern "C" fn pthread_main_np() -> c_int;
+extern "C" fn pthread_mutexattr_setpshared(attr: &mut pthread_mutexattr_t, pshared: c_int) -> c_int;
+extern "C" fn pthread_mutexattr_getpshared(attr: &pthread_mutexattr_t, pshared: &mut c_int) -> c_int;
+extern "C" fn pthread_rwlockattr_getpshared(attr: &pthread_rwlockattr_t, val: &mut c_int) -> c_int;
+extern "C" fn pthread_rwlockattr_setpshared(attr: &mut pthread_rwlockattr_t, val: c_int) -> c_int;
+extern "C" fn pthread_threadid_np(thread: pthread_t, thread_id: &mut u64) -> c_int;
+extern "C" fn pthread_attr_set_qos_class_np(attr: &mut pthread_attr_t, class: qos_class_t, priority: c_int) -> c_int;
+extern "C" fn pthread_attr_get_qos_class_np(attr: &mut pthread_attr_t, class: &mut qos_class_t, priority: &mut c_int) -> c_int;
+extern "C" fn pthread_set_qos_class_self_np(class: qos_class_t, priority: c_int) -> c_int;
+extern "C" fn pthread_get_qos_class_np(thread: pthread_t, class: &mut qos_class_t, priority: &mut c_int) -> c_int;
+extern "C" fn pthread_attr_getschedparam(attr: &pthread_attr_t, param: &mut sched_param) -> c_int;
+extern "C" fn pthread_attr_setschedparam(attr: &mut pthread_attr_t, param: &sched_param) -> c_int;
+extern "C" fn pthread_getschedparam(thread: pthread_t, policy: &mut c_int, param: &mut sched_param) -> c_int;
+extern "C" fn pthread_setschedparam(thread: pthread_t, policy: c_int, param: &sched_param) -> c_int;
+extern "C" fn pthread_introspection_hook_install(hook: pthread_introspection_hook_t) -> pthread_introspection_hook_t;
+extern "C" fn pthread_introspection_setspecific_np(thread: pthread_t, key: pthread_key_t, value: &c_void) -> c_int;
+extern "C" fn pthread_introspection_getspecific_np(thread: pthread_t, key: pthread_key_t) -> &mut c_void;
+extern "C" fn pthread_jit_write_protect_np(enabled: c_int);
+extern "C" fn pthread_jit_write_protect_supported_np() -> c_int;
+extern "C" fn pthread_jit_write_with_callback_np(callback: pthread_jit_write_callback_t, ctx: &mut c_void) -> c_int;
+extern "C" fn pthread_jit_write_freeze_callbacks_np();
+extern "C" fn pthread_cpu_number_np(cpu_number_out: &mut size_t) -> c_int;
+extern "C" fn os_unfair_lock_lock(lock: os_unfair_lock_t);
+extern "C" fn os_unfair_lock_trylock(lock: os_unfair_lock_t) -> bool;
+extern "C" fn os_unfair_lock_unlock(lock: os_unfair_lock_t);
+extern "C" fn os_unfair_lock_assert_owner(lock: os_unfair_lock_t);
+extern "C" fn os_unfair_lock_assert_not_owner(lock: os_unfair_lock_t);
+extern "C" fn os_log_create(subsystem: &c_char, category: &c_char) -> os_log_t;
+extern "C" fn os_log_type_enabled(oslog: os_log_t, tpe: os_log_type_t) -> bool;
+extern "C" fn os_signpost_id_make_with_pointer(log: os_log_t, ptr: &c_void) -> os_signpost_id_t;
+extern "C" fn os_signpost_id_generate(log: os_log_t) -> os_signpost_id_t;
+extern "C" fn os_signpost_enabled(log: os_log_t) -> bool;
+extern "C" fn thread_policy_set(thread: thread_t, flavor: thread_policy_flavor_t, policy_info: thread_policy_t, count: mach_msg_type_number_t) -> kern_return_t;
+extern "C" fn thread_policy_get(thread: thread_t, flavor: thread_policy_flavor_t, policy_info: thread_policy_t, count: &mut mach_msg_type_number_t, get_default: &mut boolean_t) -> kern_return_t;
+extern "C" fn thread_info(target_act: thread_inspect_t, flavor: thread_flavor_t, thread_info_out: thread_info_t, thread_info_outCnt: &mut mach_msg_type_number_t) -> kern_return_t;
+extern "C" fn __error() -> &mut c_int;
+#[inline] fn __errno_location() -> &mut c_int { __error() }
+extern "C" fn backtrace(buf: &mut &mut c_void, sz: c_int) -> c_int;
+extern "C" fn backtrace_symbols(addrs: &&mut c_void, sz: c_int) -> &mut &mut c_char;
+extern "C" fn backtrace_symbols_fd(addrs: &&mut c_void, sz: c_int, fd: c_int);
+extern "C" fn backtrace_from_fp(startfp: &mut c_void, array: &mut &mut c_void, size: c_int) -> c_int;
+extern "C" fn backtrace_image_offsets(array: &&mut c_void, image_offsets: &mut image_offset, size: c_int);
+extern "C" fn backtrace_async(array: &mut &mut c_void, length: size_t, task_id: &mut u32) -> size_t;
+extern "C" fn statfs(path: &c_char, buf: &mut statfs_t) -> c_int;
+extern "C" fn fstatfs(fd: c_int, buf: &mut statfs_t) -> c_int;
+extern "C" fn kevent(kq: c_int, changelist: &kevent_t, nchanges: c_int, eventlist: &mut kevent_t, nevents: c_int, timeout: &timespec) -> c_int;
+extern "C" fn kevent64(kq: c_int, changelist: &kevent64_s, nchanges: c_int, eventlist: &mut kevent64_s, nevents: c_int, flags: c_uint, timeout: &timespec) -> c_int;
+extern "C" fn mount(src: &c_char, target: &c_char, flags: c_int, data: &mut c_void) -> c_int;
+extern "C" fn fmount(src: &c_char, fd: c_int, flags: c_int, data: &mut c_void) -> c_int;
+extern "C" fn ptrace(request: c_int, pid: pid_t, addr: &mut c_char, data: c_int) -> c_int;
+extern "C" fn quotactl(special: &c_char, cmd: c_int, id: c_int, data: &mut c_char) -> c_int;
+extern "C" fn sethostname(name: &c_char, len: c_int) -> c_int;
+extern "C" fn sendfile(fd: c_int, s: c_int, offset: off_t, len: &mut off_t, hdtr: &mut sf_hdtr, flags: c_int) -> c_int;
+extern "C" fn futimens(fd: c_int, times: &timespec) -> c_int;
+extern "C" fn utimensat(dirfd: c_int, path: &c_char, times: &timespec, flag: c_int) -> c_int;
+extern "C" fn openpty(amaster: &mut c_int, aslave: &mut c_int, name: &mut c_char, termp: &mut termios, winp: &mut winsize) -> c_int;
+extern "C" fn forkpty(amaster: &mut c_int, name: &mut c_char, termp: &mut termios, winp: &mut winsize) -> pid_t;
+extern "C" fn login_tty(fd: c_int) -> c_int;
+extern "C" fn duplocale(base: locale_t) -> locale_t;
+extern "C" fn freelocale(loc: locale_t) -> c_int;
+extern "C" fn localeconv_l(loc: locale_t) -> &mut lconv;
+extern "C" fn newlocale(mask: c_int, locale: &c_char, base: locale_t) -> locale_t;
+extern "C" fn uselocale(loc: locale_t) -> locale_t;
+extern "C" fn querylocale(mask: c_int, loc: locale_t) -> &c_char;
+extern "C" fn getpriority(which: c_int, who: id_t) -> c_int;
+extern "C" fn setpriority(which: c_int, who: id_t, prio: c_int) -> c_int;
+extern "C" fn getdomainname(name: &mut c_char, len: c_int) -> c_int;
+extern "C" fn setdomainname(name: &c_char, len: c_int) -> c_int;
+extern "C" fn preadv(fd: c_int, iov: &iovec, iovcnt: c_int, offset: off_t) -> ssize_t;
+extern "C" fn pwritev(fd: c_int, iov: &iovec, iovcnt: c_int, offset: off_t) -> ssize_t;
+extern "C" fn getxattr(path: &c_char, name: &c_char, value: &mut c_void, size: size_t, position: u32, flags: c_int) -> ssize_t;
+extern "C" fn fgetxattr(filedes: c_int, name: &c_char, value: &mut c_void, size: size_t, position: u32, flags: c_int) -> ssize_t;
+extern "C" fn setxattr(path: &c_char, name: &c_char, value: &c_void, size: size_t, position: u32, flags: c_int) -> c_int;
+extern "C" fn fsetxattr(filedes: c_int, name: &c_char, value: &c_void, size: size_t, position: u32, flags: c_int) -> c_int;
+extern "C" fn listxattr(path: &c_char, list: &mut c_char, size: size_t, flags: c_int) -> ssize_t;
+extern "C" fn flistxattr(filedes: c_int, list: &mut c_char, size: size_t, flags: c_int) -> ssize_t;
+extern "C" fn removexattr(path: &c_char, name: &c_char, flags: c_int) -> c_int;
+extern "C" fn renamex_np(from: &c_char, to: &c_char, flags: c_uint) -> c_int;
+extern "C" fn renameatx_np(fromfd: c_int, from: &c_char, tofd: c_int, to: &c_char, flags: c_uint) -> c_int;
+extern "C" fn fremovexattr(filedes: c_int, name: &c_char, flags: c_int) -> c_int;
+extern "C" fn getgrouplist(name: &c_char, basegid: c_int, groups: &mut c_int, ngroups: &mut c_int) -> c_int;
+extern "C" fn initgroups(user: &c_char, basegroup: c_int) -> c_int;
+extern "C" fn waitid(idtype: idtype_t, id: id_t, infop: &mut siginfo_t, options: c_int) -> c_int;
+extern "C" fn brk(addr: &c_void) -> &mut c_void;
+extern "C" fn sbrk(increment: c_int) -> &mut c_void;
+extern "C" fn settimeofday(tv: &timeval, tz: &timezone) -> c_int;
+extern "C" fn _dyld_image_count() -> u32;
+extern "C" fn _dyld_get_image_header(image_index: u32) -> &mach_header;
+extern "C" fn _dyld_get_image_vmaddr_slide(image_index: u32) -> intptr_t;
+extern "C" fn _dyld_get_image_name(image_index: u32) -> &c_char;
+extern "C" fn posix_spawn(pid: &mut pid_t, path: &c_char, file_actions: &posix_spawn_file_actions_t, attrp: &posix_spawnattr_t, argv: &&mut c_char, envp: &&mut c_char) -> c_int;
+extern "C" fn posix_spawnp(pid: &mut pid_t, file: &c_char, file_actions: &posix_spawn_file_actions_t, attrp: &posix_spawnattr_t, argv: &&mut c_char, envp: &&mut c_char) -> c_int;
+extern "C" fn posix_spawnattr_init(attr: &mut posix_spawnattr_t) -> c_int;
+extern "C" fn posix_spawnattr_destroy(attr: &mut posix_spawnattr_t) -> c_int;
+extern "C" fn posix_spawnattr_getsigdefault(attr: &posix_spawnattr_t, default: &mut sigset_t) -> c_int;
+extern "C" fn posix_spawnattr_setsigdefault(attr: &mut posix_spawnattr_t, default: &sigset_t) -> c_int;
+extern "C" fn posix_spawnattr_getsigmask(attr: &posix_spawnattr_t, default: &mut sigset_t) -> c_int;
+extern "C" fn posix_spawnattr_setsigmask(attr: &mut posix_spawnattr_t, default: &sigset_t) -> c_int;
+extern "C" fn posix_spawnattr_getflags(attr: &posix_spawnattr_t, flags: &mut c_short) -> c_int;
+extern "C" fn posix_spawnattr_setflags(attr: &mut posix_spawnattr_t, flags: c_short) -> c_int;
+extern "C" fn posix_spawnattr_getpgroup(attr: &posix_spawnattr_t, flags: &mut pid_t) -> c_int;
+extern "C" fn posix_spawnattr_setpgroup(attr: &mut posix_spawnattr_t, flags: pid_t) -> c_int;
+extern "C" fn posix_spawnattr_setarchpref_np(attr: &mut posix_spawnattr_t, count: size_t, pref: &mut cpu_type_t, subpref: &mut cpu_subtype_t, ocount: &mut size_t) -> c_int;
+extern "C" fn posix_spawnattr_getarchpref_np(attr: &posix_spawnattr_t, count: size_t, pref: &mut cpu_type_t, subpref: &mut cpu_subtype_t, ocount: &mut size_t) -> c_int;
+extern "C" fn posix_spawnattr_set_qos_class_np(attr: &mut posix_spawnattr_t, qos_class: qos_class_t) -> c_int;
+extern "C" fn posix_spawnattr_get_qos_class_np(attr: &posix_spawnattr_t, qos_class: &mut qos_class_t) -> c_int;
+extern "C" fn posix_spawn_file_actions_init(actions: &mut posix_spawn_file_actions_t) -> c_int;
+extern "C" fn posix_spawn_file_actions_destroy(actions: &mut posix_spawn_file_actions_t) -> c_int;
+extern "C" fn posix_spawn_file_actions_addopen(actions: &mut posix_spawn_file_actions_t, fd: c_int, path: &c_char, oflag: c_int, mode: mode_t) -> c_int;
+extern "C" fn posix_spawn_file_actions_addclose(actions: &mut posix_spawn_file_actions_t, fd: c_int) -> c_int;
+extern "C" fn posix_spawn_file_actions_adddup2(actions: &mut posix_spawn_file_actions_t, fd: c_int, newfd: c_int) -> c_int;
+extern "C" fn uname(buf: &mut utsname) -> c_int;
+extern "C" fn connectx(socket: c_int, endpoints: &sa_endpoints_t, associd: sae_associd_t, flags: c_uint, iov: &iovec, iovcnt: c_uint, len: &mut size_t, connid: &mut sae_connid_t) -> c_int;
+extern "C" fn disconnectx(socket: c_int, associd: sae_associd_t, connid: sae_connid_t) -> c_int;
+extern "C" fn ntp_adjtime(buf: &mut timex) -> c_int;
+extern "C" fn ntp_gettime(buf: &mut ntptimeval) -> c_int;
+extern "C" fn getmntinfo(mntbufp: &mut &mut statfs_t, flags: c_int) -> c_int;
+extern "C" fn getfsstat(mntbufp: &mut statfs_t, bufsize: c_int, flags: c_int) -> c_int;
+extern "C" fn clonefile(src: &c_char, dst: &c_char, flags: u32) -> c_int;
+extern "C" fn clonefileat(src_dirfd: c_int, src: &c_char, dst_dirfd: c_int, dst: &c_char, flags: u32) -> c_int;
+extern "C" fn fclonefileat(srcfd: c_int, dst_dirfd: c_int, dst: &c_char, flags: u32) -> c_int;
+extern "C" fn copyfile(from: &c_char, to: &c_char, state: copyfile_state_t, flags: copyfile_flags_t) -> c_int;
+extern "C" fn fcopyfile(from: c_int, to: c_int, state: copyfile_state_t, flags: copyfile_flags_t) -> c_int;
+extern "C" fn memset_s(s: &mut c_void, smax: size_t, c: c_int, n: size_t) -> c_int;
+extern "C" fn memset_pattern4(b: &mut c_void, pattern4: &c_void, len: size_t);
+extern "C" fn memset_pattern8(b: &mut c_void, pattern8: &c_void, len: size_t);
+extern "C" fn memset_pattern16(b: &mut c_void, pattern16: &c_void, len: size_t);
+extern "C" fn strtonum(__numstr: &c_char, __minval: c_longlong, __maxval: c_longlong, errstrp: &mut &c_char) -> c_longlong;
+extern "C" fn mstats() -> mstats_t;
+extern "C" fn malloc_printf(format: &c_char, ...);
+extern "C" fn malloc_zone_check(zone: &mut malloc_zone_t) -> boolean_t;
+extern "C" fn malloc_zone_print(zone: &mut malloc_zone_t, verbose: boolean_t);
+extern "C" fn malloc_zone_statistics(zone: &mut malloc_zone_t, stats: &mut malloc_statistics_t);
+extern "C" fn malloc_zone_log(zone: &mut malloc_zone_t, address: &mut c_void);
+extern "C" fn malloc_zone_print_ptr_info(ptr: &mut c_void);
+extern "C" fn malloc_default_zone() -> &mut malloc_zone_t;
+extern "C" fn malloc_zone_from_ptr(ptr: &c_void) -> &mut malloc_zone_t;
+extern "C" fn malloc_zone_malloc(zone: &mut malloc_zone_t, size: size_t) -> &mut c_void;
+extern "C" fn malloc_zone_valloc(zone: &mut malloc_zone_t, size: size_t) -> &mut c_void;
+extern "C" fn malloc_zone_calloc(zone: &mut malloc_zone_t, num_items: size_t, size: size_t) -> &mut c_void;
+extern "C" fn malloc_zone_realloc(zone: &mut malloc_zone_t, ptr: &mut c_void, size: size_t) -> &mut c_void;
+extern "C" fn malloc_zone_free(zone: &mut malloc_zone_t, ptr: &mut c_void);
+extern "C" fn proc_listpids(t: u32, typeinfo: u32, buffer: &mut c_void, buffersize: c_int) -> c_int;
+extern "C" fn proc_listallpids(buffer: &mut c_void, buffersize: c_int) -> c_int;
+extern "C" fn proc_listpgrppids(pgrpid: pid_t, buffer: &mut c_void, buffersize: c_int) -> c_int;
+extern "C" fn proc_listchildpids(ppid: pid_t, buffer: &mut c_void, buffersize: c_int) -> c_int;
+extern "C" fn proc_pidinfo(pid: c_int, flavor: c_int, arg: u64, buffer: &mut c_void, buffersize: c_int) -> c_int;
+extern "C" fn proc_pidfdinfo(pid: c_int, fd: c_int, flavor: c_int, buffer: &mut c_void, buffersize: c_int) -> c_int;
+extern "C" fn proc_pidfileportinfo(pid: c_int, fileport: u32, flavor: c_int, buffer: &mut c_void, buffersize: c_int) -> c_int;
+extern "C" fn proc_pidpath(pid: c_int, buffer: &mut c_void, buffersize: u32) -> c_int;
+extern "C" fn proc_name(pid: c_int, buffer: &mut c_void, buffersize: u32) -> c_int;
+extern "C" fn proc_regionfilename(pid: c_int, address: u64, buffer: &mut c_void, buffersize: u32) -> c_int;
+extern "C" fn proc_kmsgbuf(buffer: &mut c_void, buffersize: u32) -> c_int;
+extern "C" fn proc_libversion(major: &mut c_int, mintor: &mut c_int) -> c_int;
+extern "C" fn proc_pid_rusage(pid: c_int, flavor: c_int, buffer: &mut rusage_info_t) -> c_int;
+extern "C" fn proc_set_no_smt() -> c_int;
+extern "C" fn proc_setthread_no_smt() -> c_int;
+extern "C" fn proc_set_csm(flags: u32) -> c_int;
+extern "C" fn proc_setthread_csm(flags: u32) -> c_int;
+extern "C" fn gethostuuid(id: &mut u8, timeout: &timespec) -> c_int;
+extern "C" fn gethostid() -> c_long;
+extern "C" fn sethostid(hostid: c_long);
+extern "C" fn CCRandomGenerateBytes(bytes: &mut c_void, size: size_t) -> CCRNGStatus;
+extern "C" fn _NSGetExecutablePath(buf: &mut c_char, bufsize: &mut u32) -> c_int;
+extern "C" fn _NSGetEnviron() -> &mut &mut &mut c_char;
+extern "C" fn mach_vm_map(target_task: vm_map_t, address: &mut mach_vm_address_t, size: mach_vm_size_t, mask: mach_vm_offset_t, flags: c_int, object: mem_entry_name_port_t, offset: memory_object_offset_t, copy: boolean_t, cur_protection: vm_prot_t, max_protection: vm_prot_t, inheritance: vm_inherit_t) -> kern_return_t;
+extern "C" fn vm_deallocate(target_task: vm_map_t, address: vm_address_t, size: vm_size_t) -> kern_return_t;
+extern "C" fn host_statistics64(host_priv: host_t, flavor: host_flavor_t, host_info64_out: host_info64_t, host_info64_outCnt: &mut mach_msg_type_number_t) -> kern_return_t;
+extern "C" fn host_processor_info(host: host_t, flavor: processor_flavor_t, out_processor_count: &mut natural_t, out_processor_info: &mut processor_info_array_t, out_processor_infoCnt: &mut mach_msg_type_number_t) -> kern_return_t;
+static mach_task_self_: mach_port_t;
+extern "C" fn task_for_pid(host: mach_port_t, pid: pid_t, task: &mut mach_port_t) -> kern_return_t;
+extern "C" fn task_info(host: mach_port_t, flavor: task_flavor_t, task_info_out: task_info_t, task_info_count: &mut mach_msg_type_number_t) -> kern_return_t;
+extern "C" fn task_create(target_task: task_t, ledgers: ledger_array_t, ledgersCnt: mach_msg_type_number_t, inherit_memory: boolean_t, child_task: &mut task_t) -> kern_return_t;
+extern "C" fn task_terminate(target_task: task_t) -> kern_return_t;
+extern "C" fn task_threads(target_task: task_inspect_t, act_list: &mut thread_act_array_t, act_listCnt: &mut mach_msg_type_number_t) -> kern_return_t;
+extern "C" fn host_statistics(host_priv: host_t, flavor: host_flavor_t, host_info_out: host_info_t, host_info_outCnt: &mut mach_msg_type_number_t) -> kern_return_t;
+extern "C" fn sysdir_start_search_path_enumeration(dir: sysdir_search_path_directory_t, domainMask: sysdir_search_path_domain_mask_t) -> sysdir_search_path_enumeration_state;
+extern "C" fn sysdir_get_next_search_path_enumeration(state: sysdir_search_path_enumeration_state, path: &mut c_char) -> sysdir_search_path_enumeration_state;
+static vm_page_size: vm_size_t;
+extern "C" fn getattrlist(path: &c_char, attrList: &mut c_void, attrBuf: &mut c_void, attrBufSize: size_t, options: u32) -> c_int;
+extern "C" fn fgetattrlist(fd: c_int, attrList: &mut c_void, attrBuf: &mut c_void, attrBufSize: size_t, options: u32) -> c_int;
+extern "C" fn getattrlistat(fd: c_int, path: &c_char, attrList: &mut c_void, attrBuf: &mut c_void, attrBufSize: size_t, options: c_ulong) -> c_int;
+extern "C" fn setattrlist(path: &c_char, attrList: &mut c_void, attrBuf: &mut c_void, attrBufSize: size_t, options: u32) -> c_int;
+extern "C" fn fsetattrlist(fd: c_int, attrList: &mut c_void, attrBuf: &mut c_void, attrBufSize: size_t, options: u32) -> c_int;
+extern "C" fn setattrlistat(dir_fd: c_int, path: &c_char, attrList: &mut c_void, attrBuf: &mut c_void, attrBufSize: size_t, options: u32) -> c_int;
+extern "C" fn getattrlistbulk(dirfd: c_int, attrList: &mut c_void, attrBuf: &mut c_void, attrBufSize: size_t, options: u64) -> c_int;
+extern "C" fn malloc_size(ptr: &c_void) -> size_t;
+extern "C" fn malloc_good_size(size: size_t) -> size_t;
+extern "C" fn dirname(path: &mut c_char) -> &mut c_char;
+extern "C" fn basename(path: &mut c_char) -> &mut c_char;
+extern "C" fn mach_task_self() -> mach_port_t {
+    mach_task_self_
+}
+extern "C" fn clock_settime(clock_id: clockid_t, tp: &timespec) -> c_int;
+extern "C" fn memmem(haystack: &c_void, haystacklen: size_t, needle: &c_void, needlelen: size_t) -> &mut c_void;
+extern "C" fn task_set_info(target_task: task_t, flavor: task_flavor_t, task_info_in: task_info_t, task_info_inCnt: mach_msg_type_number_t) -> kern_return_t;
+extern "C" fn iconv_open(tocode: &c_char, fromcode: &c_char) -> iconv_t;
+extern "C" fn iconv(cd: iconv_t, inbuf: &mut &mut c_char, inbytesleft: &mut size_t, outbuf: &mut &mut c_char, outbytesleft: &mut size_t) -> size_t;
+extern "C" fn iconv_close(cd: iconv_t) -> c_int;
+type c_long = i64;
+type c_ulong = u64;
+struct timeval32 {
+    tv_sec: i32,
+    tv_usec: i32,
+}
+struct if_data {
+    ifi_type: c_uchar,
+    ifi_typelen: c_uchar,
+    ifi_physical: c_uchar,
+    ifi_addrlen: c_uchar,
+    ifi_hdrlen: c_uchar,
+    ifi_recvquota: c_uchar,
+    ifi_xmitquota: c_uchar,
+    ifi_unused1: c_uchar,
+    ifi_mtu: u32,
+    ifi_metric: u32,
+    ifi_baudrate: u32,
+    ifi_ipackets: u32,
+    ifi_ierrors: u32,
+    ifi_opackets: u32,
+    ifi_oerrors: u32,
+    ifi_collisions: u32,
+    ifi_ibytes: u32,
+    ifi_obytes: u32,
+    ifi_imcasts: u32,
+    ifi_omcasts: u32,
+    ifi_iqdrops: u32,
+    ifi_noproto: u32,
+    ifi_recvtiming: u32,
+    ifi_xmittiming: u32,
+    ifi_lastchange: timeval32,
+    ifi_unused2: u32,
+    ifi_hwassist: u32,
+    ifi_reserved1: u32,
+    ifi_reserved2: u32,
+}
+struct bpf_hdr {
+    bh_tstamp: timeval32,
+    bh_caplen: u32,
+    bh_datalen: u32,
+    bh_hdrlen: c_ushort,
+}
+struct pthread_attr_t {
+    __sig: c_long,
+    __opaque: [c_char; 56],
+}
+const NET_RT_MAXID: c_int = 11;
+const __PTHREAD_MUTEX_SIZE__: usize = 56;
+const __PTHREAD_COND_SIZE__: usize = 40;
+const __PTHREAD_CONDATTR_SIZE__: usize = 8;
+const __PTHREAD_RWLOCK_SIZE__: usize = 192;
+const __PTHREAD_RWLOCKATTR_SIZE__: usize = 16;
+const TIOCTIMESTAMP: c_ulong = 0x40107459;
+const TIOCDCDTIMESTAMP: c_ulong = 0x40107458;
+const BIOCSETF: c_ulong = 0x80104267;
+const BIOCSRTIMEOUT: c_ulong = 0x8010426d;
+const BIOCGRTIMEOUT: c_ulong = 0x4010426e;
+const BIOCSETFNR: c_ulong = 0x8010427e;
+extern "C" fn exchangedata(path1: &c_char, path2: &c_char, options: c_uint) -> c_int;
+type boolean_t = c_int;
+struct malloc_zone_t {
+    __private: [uintptr_t; 18],
+}
+type mcontext_t = &mut __darwin_mcontext64;
+struct max_align_t {
+    priv_: f64,
+}
+struct ucontext_t {
+    uc_onstack: c_int,
+    uc_sigmask: sigset_t,
+    uc_stack: stack_t,
+    uc_link: &mut ucontext_t,
+    uc_mcsize: usize,
+    uc_mcontext: mcontext_t,
+    __mcontext_data: __darwin_mcontext64,
+}
+struct __darwin_mcontext64 {
+    __es: __darwin_arm_exception_state64,
+    __ss: __darwin_arm_thread_state64,
+    __ns: __darwin_arm_neon_state64,
+}
+struct __darwin_arm_exception_state64 {
+    __far: u64,
+    __esr: u32,
+    __exception: u32,
+}
+struct __darwin_arm_thread_state64 {
+    __x: [u64; 29],
+    __fp: u64,
+    __lr: u64,
+    __sp: u64,
+    __pc: u64,
+    __cpsr: u32,
+    __pad: u32,
+}
+struct __darwin_arm_neon_state64 {
+    __v: [__uint128_t; 32],
+    __fpsr: u32,
+    __fpcr: u32,
+}
+struct ctl_info {
+    ctl_id: u32,
+    ctl_name: [c_char; MAX_KCTL_NAME],
+}
+const MAX_KCTL_NAME: usize = 96;
+#[align(4)]
+struct in6_addr {
+    s6_addr: [u8; 16],
+}

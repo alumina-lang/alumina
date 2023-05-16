@@ -1,0 +1,126 @@
+//! "FFI" interfaces to libc.
+//!
+//! Target-specific interfaces are in submodules of this module and they are conditionally `*`-imported,
+//! so e.g. `libc::pause()` can be used instead of `libc::x86_64_unknown_linux_gnu::pause()` and it will
+//! select the appropriate target.
+//!
+//! Mostly copied/adapted from [Rust's libc crate](https://github.com/rust-lang/libc).
+
+type c_void = void;
+
+// FFI bindings to the standard C math library.
+
+extern "C" fn acos(x: f64) -> f64;
+extern "C" fn acosf(x: f32) -> f32;
+extern "C" fn acosh(x: f64) -> f64;
+extern "C" fn acoshf(x: f32) -> f32;
+extern "C" fn asin(x: f64) -> f64;
+extern "C" fn asinf(x: f32) -> f32;
+extern "C" fn asinh(x: f64) -> f64;
+extern "C" fn asinhf(x: f32) -> f32;
+extern "C" fn atan(x: f64) -> f64;
+extern "C" fn atan2(y: f64, x: f64) -> f64;
+extern "C" fn atan2f(y: f32, x: f32) -> f32;
+extern "C" fn atanf(x: f32) -> f32;
+extern "C" fn atanh(x: f64) -> f64;
+extern "C" fn atanhf(x: f32) -> f32;
+extern "C" fn cbrt(x: f64) -> f64;
+extern "C" fn cbrtf(x: f32) -> f32;
+extern "C" fn ceil(x: f64) -> f64;
+extern "C" fn ceilf(x: f32) -> f32;
+extern "C" fn copysign(x: f64, y: f64) -> f64;
+extern "C" fn copysignf(x: f32, y: f32) -> f32;
+extern "C" fn cos(x: f64) -> f64;
+extern "C" fn cosf(x: f32) -> f32;
+extern "C" fn cosh(x: f64) -> f64;
+extern "C" fn coshf(x: f32) -> f32;
+extern "C" fn erf(x: f64) -> f64;
+extern "C" fn erfc(x: f64) -> f64;
+extern "C" fn erff(x: f32) -> f32;
+extern "C" fn erfcf(x: f32) -> f32;
+extern "C" fn exp(x: f64) -> f64;
+extern "C" fn expf(x: f32) -> f32;
+extern "C" fn expm1(x: f64) -> f64;
+extern "C" fn expm1f(x: f32) -> f32;
+extern "C" fn fabs(x: f64) -> f64;
+extern "C" fn fabsf(x: f32) -> f32;
+extern "C" fn fdim(x: f64, y: f64) -> f64;
+extern "C" fn fdimf(x: f32, y: f32) -> f32;
+extern "C" fn floor(x: f64) -> f64;
+extern "C" fn floorf(x: f32) -> f32;
+extern "C" fn fma(x: f64, y: f64, z: f64) -> f64;
+extern "C" fn fmaf(x: f32, y: f32, z: f32) -> f32;
+extern "C" fn fmax(x: f64, y: f64) -> f64;
+extern "C" fn fmaxf(x: f32, y: f32) -> f32;
+extern "C" fn fmin(x: f64, y: f64) -> f64;
+extern "C" fn fminf(x: f32, y: f32) -> f32;
+extern "C" fn fmod(x: f64, y: f64) -> f64;
+extern "C" fn fmodf(x: f32, y: f32) -> f32;
+extern "C" fn frexp(x: f64, exp: &mut i32) -> f64;
+extern "C" fn frexpf(x: f32, exp: &mut i32) -> f32;
+extern "C" fn hypot(x: f64, y: f64) -> f64;
+extern "C" fn hypotf(x: f32, y: f32) -> f32;
+extern "C" fn ilogb(x: f64) -> i32;
+extern "C" fn ilogbf(x: f32) -> i32;
+extern "C" fn ldexp(x: f64, n: i32) -> f64;
+extern "C" fn ldexpf(x: f32, n: i32) -> f32;
+extern "C" fn lgamma(x: f64) -> f64;
+extern "C" fn lgammaf(x: f32) -> f32;
+extern "C" fn log(x: f64) -> f64;
+extern "C" fn log10(x: f64) -> f64;
+extern "C" fn log10f(x: f32) -> f32;
+extern "C" fn log1p(x: f64) -> f64;
+extern "C" fn log1pf(x: f32) -> f32;
+extern "C" fn log2(x: f64) -> f64;
+extern "C" fn log2f(x: f32) -> f32;
+extern "C" fn logf(x: f32) -> f32;
+extern "C" fn modf(x: f64, iptr: &mut f64) -> f64;
+extern "C" fn modff(x: f32, iptr: &mut f32) -> f32;
+extern "C" fn nextafter(x: f64, y: f64) -> f64;
+extern "C" fn nextafterf(x: f32, y: f32) -> f32;
+extern "C" fn pow(x: f64, y: f64) -> f64;
+extern "C" fn powf(x: f32, y: f32) -> f32;
+extern "C" fn remainder(x: f64, y: f64) -> f64;
+extern "C" fn remainderf(x: f32, y: f32) -> f32;
+extern "C" fn remquo(x: f64, y: f64, quo: &mut i32) -> f64;
+extern "C" fn remquof(x: f32, y: f32, quo: &mut i32) -> f32;
+extern "C" fn round(x: f64) -> f64;
+extern "C" fn roundf(x: f32) -> f32;
+extern "C" fn scalbn(x: f64, n: i32) -> f64;
+extern "C" fn scalbnf(x: f32, n: i32) -> f32;
+extern "C" fn sin(x: f64) -> f64;
+extern "C" fn sinf(x: f32) -> f32;
+extern "C" fn sinh(x: f64) -> f64;
+extern "C" fn sinhf(x: f32) -> f32;
+extern "C" fn sqrt(x: f64) -> f64;
+extern "C" fn sqrtf(x: f32) -> f32;
+extern "C" fn tan(x: f64) -> f64;
+extern "C" fn tanf(x: f32) -> f32;
+extern "C" fn tanh(x: f64) -> f64;
+extern "C" fn tanhf(x: f32) -> f32;
+extern "C" fn tgamma(x: f64) -> f64;
+extern "C" fn tgammaf(x: f32) -> f32;
+extern "C" fn trunc(x: f64) -> f64;
+extern "C" fn truncf(x: f32) -> f32;
+
+#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+use libc::aarch64_apple_darwin::*;
+#[cfg(all(target_arch = "x86_64", target_os = "macos"))]
+use libc::x86_64_apple_darwin::*;
+#[cfg(all(target_arch = "aarch64", target_os = "android"))]
+use libc::aarch64_linux_android::*;
+
+#[cfg(target_env = "musl")]
+{
+    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+    use libc::aarch64_unknown_linux_musl::*;
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    use libc::x86_64_unknown_linux_musl::*;
+}
+#[cfg(target_env = "gnu")]
+{
+    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+    use libc::aarch64_unknown_linux_gnu::*;
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    use libc::x86_64_unknown_linux_gnu::*;
+}
