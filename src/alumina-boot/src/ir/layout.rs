@@ -117,7 +117,9 @@ impl<'ir> Layouter<'ir> {
             }
         }
 
-        align = align.max(custom_align.unwrap_or(1));
+        if !is_packed {
+            align = align.max(custom_align.unwrap_or(1));
+        }
 
         size = (size + align - 1) / align * align; // add padding at the end
 
@@ -161,7 +163,9 @@ impl<'ir> Layouter<'ir> {
             result.push((Some(elem), field_layout));
         }
 
-        align = align.max(custom_align.unwrap_or(1));
+        if !is_packed {
+            align = align.max(custom_align.unwrap_or(1));
+        }
 
         let final_size = (size + align - 1) / align * align;
         if final_size > size {
