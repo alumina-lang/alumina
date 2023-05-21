@@ -808,7 +808,6 @@ mod tests {
         assert_eq!(child.unwrap_err().inner.errno, libc::ENOENT);
     }
 
-    #[cfg(any(target_os = "linux"))]
     #[test]
     fn test_kill() {
         let child = Command::new(Path::new("/bin/sleep"))
@@ -819,9 +818,8 @@ mod tests {
         child.kill().unwrap();
 
         let status = child.wait().unwrap();
-        assert_eq!(status, libc::SIGKILL);
+        assert_eq!(status.signal(), Option::some(libc::SIGKILL));
     }
-
 
     #[test]
     fn test_fork() {
