@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
 """
-Simple benchmarking tool that collects timings from the compiler run multiple
-times and prints the per-stage results.
+Test runner for compile-time (diagnostics) tests. It takes the expected compile errors/warnings/notes from comments
+in source files and matches them against the actual compilation results.
 """
 
 import sys
@@ -15,10 +15,10 @@ import sys
 import dataclasses
 import functools
 
+from collections import defaultdict
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-from collections import defaultdict
 
 
 @functools.total_ordering
@@ -36,7 +36,7 @@ class Diagnostic:
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("file", help="File to test")
     parser.add_argument(
         "--fix",
@@ -122,9 +122,9 @@ def main():
             if match := re.fullmatch(r"^.*\s*// diag: (.*)$", s):
                 diags = list(
                     sorted(
-                        Diagnostic(*vals)
+                        Diagnostic(vals[0], vals[1], json.loads(vals[2]))
                         for vals in re.findall(
-                            r'([a-z]+)\(([a-z0-9_]+)\): "(.*?)(?<!\\)"', match[1]
+                            r'([a-z]+)\(([a-z0-9_]+)\): ("(.*?)(?<!\\)")', match[1]
                         )
                     )
                 )

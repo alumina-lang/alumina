@@ -303,7 +303,7 @@ flamegraph: $(BUILD_DIR)/flamegraph.svg
 
 ## ------------------------------ Diag tests ----------------------------
 
-DIAG_CMD = ./tools/diag_test.py
+DIAG_CMD = ./tools/diag.py
 DIAG_CASES = $(shell find tests/diag -type f -name '*.alu')
 
 $(BUILD_DIR)/diag/.build:
