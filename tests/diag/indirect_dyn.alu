@@ -1,0 +1,26 @@
+//! exit_code: 1
+protocol Foo<Self> {
+    fn foo(self: &Self);
+}
+
+protocol Foo2<Self> {
+    fn foo(self: &Self);
+}
+
+struct Concrete {
+}
+
+impl Concrete {
+    fn foo(self: &Concrete) {
+
+    }
+}
+
+fn coerced<F: Foo<F>>(f: &F) {
+    let _: &dyn Foo<Self> = f;  // diag: error(indirect_dyn): "indirect `dyn` pointers are not supported"
+}
+
+fn main() {
+    let f: &dyn (Foo<Self> + Foo2<Self>) = &Concrete {};
+    coerced(&f);
+}

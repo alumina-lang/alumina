@@ -198,12 +198,8 @@ pub enum ConstEvalErrorKind {
     UnsupportedFunction(String),
     #[error("ice: encountered a branch that should have been rejected during type checking")]
     CompilerBug(ByRef<Backtrace>),
-    #[error("cyclic reference")]
-    CyclicReference,
     #[error("performing pointer operations on pointers of different provenance")]
     ProvenanceMismatch,
-    #[error("trying to access uninitialized value")]
-    Uninitialized,
     #[error("accessing memory location via an incompatible pointer")]
     IncompatiblePointer,
     #[error("index out of bounds")]

@@ -1,0 +1,17 @@
+//! exit_code: 1
+protocol Foo<Self> {
+    fn foo(self: &Self);
+    fn bar();
+}
+
+struct Concrete {
+}
+
+impl Concrete {
+    fn foo(self: &Concrete) {}
+    fn bar() {}
+}
+
+fn main() {
+    let _: &dyn Foo<Self> = &Concrete {};  // diag: error(non_dynnable_function): "signature of `bar` is incompatible with virtual dispatch"
+}

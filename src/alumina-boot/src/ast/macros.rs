@@ -48,7 +48,7 @@ macro_rules! macro_arg {
             ExprKind::Macro(item, bound_args) => (item, bound_args),
             _ => {
                 use crate::common::CodeErrorBuilder;
-                return Err(CodeDiagnostic::MacroExpected).with_span($self.invocation_span);
+                return Err(CodeDiagnostic::NotAMacro).with_span($self.invocation_span);
             }
         }
     };

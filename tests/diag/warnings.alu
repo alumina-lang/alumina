@@ -1,0 +1,51 @@
+//! exit_code: 0
+
+struct Foo { a: i32 }
+
+
+impl Foo {
+    fn foo() {}
+}
+
+impl Foo {
+    fn foo() {}  // diag: warning(duplicate_name_shadow): "duplicate function name \"foo\" (this function will shadow a previous one)"
+
+    fn hey(a: Self) {}  // diag: warning(self_confusion): "this is `std::typing::Self`, did you mean the enclosing type?", warning(unused_parameter): "unused parameter `a` (prefix with `_` if required)"
+}
+
+#[align(1)]  // diag: warning(align1): "`#[align(1)]` has no effect, did you mean to use `#[packed]`?"
+union Bar { a: i32, b: i32 }
+
+fn maybe() -> Result<(),()> {
+    Result::ok(())
+}
+
+{}  // diag: warning(top_level_block_without_attributes): "redundant top level block (no attributes)"
+
+fn main() {
+    loop { defer {}; break; }  // diag: warning(defer_in_a_loop): "defer inside a loop: this defered statement will only be executed once"
+    let f = Foo {};  // diag: warning(uninitialized_field): "field `a` is not initialized"
+    let f = Bar { a: 1, b: 2 };  // diag: warning(union_initializer_override): "initializer overrides prior initialization of this union"
+    maybe();  // diag: warning(unused_must_use): "unused `Result<(), ()>` that must be used"
+    let abcd: i32;  // diag: warning(unused_variable): "unused variable `abcd`"
+    let _ = |=f| {};  // diag: warning(unused_closure_binding): "unused closure binding `f`"
+    fn foo (a: i32) {}  // diag: warning(unused_parameter): "unused parameter `a` (prefix with `_` if required)"
+    use std::io::Error;  // diag: warning(unused_import): "unused import `Error`"
+    #[allow(lol_what_is_this_even)] {}  // diag: warning(im_so_meta_even_this_acronym): "#[allow(lol_what_is_this_even)] refers to a lint that does not currently exist"
+
+    if true { println!("yay"); }  // diag: warning(constant_condition): "condition is always `true`, did you mean to use `when`?"
+
+    42;  // diag: warning(pure_statement): "statement has no effect"
+    std::intrinsics::const_alloc::<i32>(42);  // diag: warning(const_only): "const-only functions should not be used at runtime (guard with `std::runtime::in_const_context()`)"
+
+    let a: ();
+    &a + 100;  // diag: warning(zst_pointer_offset): "pointer offset on zero-sized types is a no-op"
+
+    #[sdhfkjsdf] {}  // diag: warning(unknown_attribute): "unknown attribute `sdhfkjsdf`"
+
+    let _ = 1i32 as i32;  // diag: warning(unnecessary_cast): "unnecessary cast (value is already `i32`)"
+
+    while 1 > 2 {};  // diag: warning(constant_condition): "condition is always `false`, did you mean to use `when`?"
+    loop{}
+    println!("Yay");  // diag: warning(dead_code): "this code is unreachable (dead code)"
+}

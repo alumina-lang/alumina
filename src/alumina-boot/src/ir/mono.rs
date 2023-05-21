@@ -480,7 +480,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             }
 
             if !taken_values.insert(value) {
-                bail!(self, CodeDiagnostic::DuplicateEnumMember);
+                ice!(self.diag, "duplicate enum member");
             }
 
             members.push(ir::EnumMember {
@@ -1425,10 +1425,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             {
                 (item, args.to_vec())
             }
-            _ => bail!(
-                self,
-                CodeDiagnostic::NotAProtocol(format!("{:?}", mixin.protocol))
-            ),
+            _ => bail!(self, CodeDiagnostic::NotAProtocol),
         };
 
         let protocol = protocol.get_protocol();
@@ -1693,6 +1690,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 if !self.tentative && func.attributes.contains(&ast::Attribute::Test) {
                     let fun = item.get_function().unwrap();
                     if !fun.args.is_empty() || fun.return_type != self.types.void() {
+                        let _guard = self.diag.push_span(fun.span);
                         bail!(self, CodeDiagnostic::InvalidTestCaseSignature);
                     }
 
@@ -2653,9 +2651,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     .filter_map(|(p, e)| match child.lower_expr(e, None) {
                         Ok(e) => Some(Ok((p.typ, e.ty))),
                         Err(AluminaError::CodeErrors(errors)) => {
-                            tentative_errors.extend(errors.into_iter().filter(|f| {
-                                !matches!(f.kind, CodeDiagnostic::TypeInferenceFailed)
-                            }));
+                            tentative_errors.extend(
+                                errors.into_iter().filter(|f| {
+                                    !matches!(f.kind, CodeDiagnostic::TypeHintRequired)
+                                }),
+                            );
                             None
                         }
                         Err(e) => Some(Err(e)),
@@ -2691,7 +2691,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             Some(generic_args) => {
                 self.monomorphize_item(item, generic_args.alloc_on(self.mono_ctx.ir))
             }
-            None => Err(self.diag.err(CodeDiagnostic::TypeInferenceFailed)),
+            None => Err(self.diag.err(CodeDiagnostic::TypeHintRequired)),
         }
     }
 
@@ -2761,7 +2761,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     tentative_errors.extend(
                         errors
                             .into_iter()
-                            .filter(|f| !matches!(f.kind, CodeDiagnostic::TypeInferenceFailed)),
+                            .filter(|f| !matches!(f.kind, CodeDiagnostic::TypeHintRequired)),
                     );
                     None
                 }
@@ -2784,7 +2784,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             Some(generic_args) => {
                 self.monomorphize_item(item, generic_args.alloc_on(self.mono_ctx.ir))
             }
-            None => Err(self.diag.err(CodeDiagnostic::TypeInferenceFailed)),
+            None => Err(self.diag.err(CodeDiagnostic::TypeHintRequired)),
         }
     }
 
@@ -5297,7 +5297,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let element_type = first_elem_type
             .or(element_type_hint)
-            .ok_or_else(|| self.diag.err(CodeDiagnostic::TypeInferenceFailed))?;
+            .ok_or_else(|| self.diag.err(CodeDiagnostic::TypeHintRequired))?;
 
         self.array_of(element_type, lowered, ast_span)
     }

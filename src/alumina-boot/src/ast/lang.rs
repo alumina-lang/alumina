@@ -243,7 +243,7 @@ impl TryFrom<&str> for LangItemKind {
                     let n = matches[1].parse::<usize>().unwrap();
                     Ok(LangItemKind::ImplTuple(n))
                 } else {
-                    Err(CodeDiagnostic::UnknownLangItem(Some(t.to_string())))
+                    Err(CodeDiagnostic::UnknownLangItem(t.to_string()))
                 }
             }
         }
