@@ -8,7 +8,7 @@
 ///
 /// assert_eq!(identity(1), 1);
 /// ```
-#[inline] fn identity<T>(t: T) -> T { t }
+#[inline(ir)] fn identity<T>(t: T) -> T { t }
 
 /// Take any parameter and discard the result
 ///
@@ -21,7 +21,7 @@
 ///     .inspect(|i: i32| { println!("{}", i); })
 ///     .foreach(discard::<i32>);
 /// ```
-#[inline] fn discard<T>(_: T) { }
+#[inline(ir)] fn discard<T>(_: T) { }
 
 /// Cast a value to a different type.
 ///
@@ -38,7 +38,11 @@
 /// // fits in either.
 /// x = cast(10);
 /// ```
-#[inline] fn cast<T1, T2>(t: T1) -> T2 { t as T2 }
+#[inline]
+#[allow(unnecessary_cast)]
+fn cast<T1, T2>(t: T1) -> T2 {
+    t as T2
+}
 
 /// Coerce a value to a different type without casting
 ///

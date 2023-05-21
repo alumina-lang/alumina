@@ -278,6 +278,7 @@ impl<'ast> MacroExpander<'ast> {
         use crate::ast::Ty::*;
 
         let ret = match ty {
+            Tag(tag, inner) => Tag(tag, self.visit_typ(inner)?),
             Pointer(inner, a) => Pointer(self.visit_typ(inner)?, *a),
             Slice(inner, a) => Slice(self.visit_typ(inner)?, *a),
             Dyn(protos, a) => {

@@ -82,6 +82,9 @@ impl<'ast> PrettyPrinter<'ast> {
 
     fn print_typ_full(&mut self, typ: TyP<'ast>, turbofish: bool) -> String {
         match typ {
+            Ty::Tag(tag, inner) => {
+                format!("/* {} */ {}", tag, self.print_typ_full(inner, turbofish))
+            }
             Ty::Placeholder(id) => self.id_to_name(*id),
             Ty::Item(item) => self.print_item(item, None, false),
             Ty::Builtin(kind) => self.print_builtin_type(*kind),

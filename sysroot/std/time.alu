@@ -56,8 +56,8 @@ impl Instant {
     /// If `earlier` is after the current instant, then a negative duration is returned.
     fn duration_since(self: &Instant, earlier: &Instant) -> Duration {
         #[cfg(not(all(target_os = "macos", not(target_arch = "aarch64"))))] {
-            let secs = (self.spec.tv_sec as i64) - (earlier.spec.tv_sec as i64);
-            let nanos = (self.spec.tv_nsec as i32) - (earlier.spec.tv_nsec as i32);
+            let secs: i64 = util::cast(self.spec.tv_sec) - util::cast(earlier.spec.tv_sec);
+            let nanos: i32 = util::cast(self.spec.tv_nsec) - util::cast(earlier.spec.tv_nsec);
 
             if nanos < 0 {
                 secs -= 1;
@@ -82,8 +82,8 @@ impl Instant {
             let secs = lhs.spec.tv_sec + util::cast(rhs.secs);
             let nanos = lhs.spec.tv_nsec as u32 + rhs.nanos;
 
-            if nanos >= NANOS_PER_SEC as u32 {
-                nanos -= NANOS_PER_SEC as u32;
+            if nanos >= NANOS_PER_SEC {
+                nanos -= NANOS_PER_SEC;
                 secs += 1;
             }
 

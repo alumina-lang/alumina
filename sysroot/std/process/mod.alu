@@ -2,7 +2,10 @@
 
 #[cfg(any(target_os="linux", target_os="macos", target_os="android"))]
 {
-    use unix::{Command, Forked, Output, Child, EnvVars, env, current_dir};
+    use unix::{
+        ExitStatus, Command, Forked, Output, Child, EnvVars, env,
+        current_dir, set_current_dir
+    };
 }
 
 /// Exits the process with a given return code.
@@ -10,11 +13,15 @@
 /// This is a graceful exit (`atexit` handlers will run). For an immediate abort,
 /// see `libc::_exit` or `libc::abort`.
 ///
-/// ## Example
+/// ## Examples
 /// ```
 /// use std::process::exit;
 ///
 /// exit(0); // Exit with success
+/// ```
+/// ```panics
+/// use std::process::exit;
+///
 /// exit(1); // Exit with error
 /// ```
 fn exit(code: i32) -> ! {

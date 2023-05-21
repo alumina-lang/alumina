@@ -13,7 +13,7 @@
 //!
 //! ```
 //! use json::JsonValue;
-//! use json::builder::{object, array, into};
+//! use json::builder::{object, array};
 //!
 //! let obj = object!(
 //!     ("foo", "bar"),
@@ -329,7 +329,8 @@ fn is_safe_integer<T: builtins::Numeric>(value: T) -> bool {
         // is always safe
         true
     } else {
-        (value as f64) >= MIN_SAFE_INTEGER && (value as f64) <= MAX_SAFE_INTEGER
+        let value: f64 = std::util::cast(value);
+        value >= MIN_SAFE_INTEGER && value <= MAX_SAFE_INTEGER
     }
 }
 
@@ -418,7 +419,7 @@ impl JsonValue {
         JsonValue {
             _kind: JsonValueKind::Number,
             _inner: _JsonValueT {
-                number: value as f64,
+                number: std::util::cast(value)
             },
         }
     }
@@ -450,7 +451,7 @@ impl JsonValue {
     /// ```
     /// use std::string::StringBuf;
     /// use std::collections::HashMap;
-    /// use json::{JsonValue, JsonValueKind};
+    /// use json::JsonValue;
     ///
     /// let obj: HashMap<StringBuf, JsonValue> = HashMap::new();
     /// obj.insert(StringBuf::from_slice("foo"), JsonValue::number(42));
@@ -477,7 +478,7 @@ impl JsonValue {
     /// ## Example
     /// ```
     /// use std::collections::Vector;
-    /// use json::{JsonValue, JsonValueKind};
+    /// use json::JsonValue;
     ///
     /// let arr: Vector<JsonValue> = Vector::new();
     /// arr.push(JsonValue::number(42));
@@ -501,7 +502,7 @@ impl JsonValue {
     ///
     /// ## Example
     /// ```
-    /// use json::{JsonValue, JsonValueKind};
+    /// use json::JsonValue;
     ///
     /// let value = JsonValue::null();
     /// println!("{}", value); // null
@@ -555,7 +556,6 @@ impl JsonValue {
     ///
     /// ## Example
     /// ```
-    /// use json::JsonValue;
     /// use json::builder::into;
     ///
     /// let value = 420.into!();
@@ -594,7 +594,6 @@ impl JsonValue {
     ///
     /// ## Example
     /// ```
-    /// use json::JsonValue;
     /// use json::builder::into;
     ///
     /// let value = true.into!();
@@ -618,7 +617,6 @@ impl JsonValue {
     ///
     /// ## Example
     /// ```
-    /// use json::JsonValue;
     /// use json::builder::into;
     ///
     /// let value = "Hello, world!".into!();
@@ -642,7 +640,6 @@ impl JsonValue {
     ///
     /// ## Example
     /// ```
-    /// use json::JsonValue;
     /// use json::builder::{object, into};
     ///
     /// let value = object!(
@@ -670,7 +667,6 @@ impl JsonValue {
     ///
     /// ## Example
     /// ```
-    /// use json::JsonValue;
     /// use json::builder::{array, into};
     ///
     /// let value = array!(1, 2, 3);
@@ -695,9 +691,7 @@ impl JsonValue {
     ///
     /// ## Example
     /// ```
-    /// use json::JsonValue;
     /// use json::builder::into;
-    /// use std::fmt::format;
     ///
     /// let value = "Hello, world!".into!();
     /// defer value.free();
@@ -722,7 +716,6 @@ impl JsonValue {
     ///
     /// ## Example
     /// ```
-    /// use json::JsonValue;
     /// use json::builder::{object, into};
     /// use std::string::StringBuf;
     ///
@@ -752,7 +745,6 @@ impl JsonValue {
     ///
     /// ## Example
     /// ```
-    /// use json::JsonValue;
     /// use json::builder::{array, into};
     ///
     /// let value = array!(1, 2, 3);

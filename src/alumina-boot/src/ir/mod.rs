@@ -637,7 +637,7 @@ impl<'ir> Expr<'ir> {
     }
 
     pub fn is_void(&self) -> bool {
-        matches!(self.kind, ExprKind::Void)
+        matches!(self.kind, ExprKind::Void | ExprKind::Literal(Value::Void))
     }
 
     pub fn is_unreachable(&self) -> bool {

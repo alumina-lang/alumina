@@ -349,6 +349,7 @@ pub enum Ty<'ast> {
     FunctionPointer(&'ast [TyP<'ast>], TyP<'ast>),
     FunctionProtocol(&'ast [TyP<'ast>], TyP<'ast>),
     Generic(TyP<'ast>, &'ast [TyP<'ast>]),
+    Tag(&'ast str, TyP<'ast>),
     Defered(Defered<'ast>),
 }
 
@@ -365,6 +366,21 @@ impl<'ast> Ty<'ast> {
         match self {
             Ty::Pointer(inner, _) => inner.canonical_type(),
             _ => self,
+        }
+    }
+
+    pub fn is_dynamic(&self) -> bool {
+        match self {
+            Ty::Tag("dynamic", _) => true,
+            Ty::Tag(_, inner) => inner.is_dynamic(),
+            Ty::Placeholder(_) | Ty::TypeOf(_) | Ty::When(_, _, _) | Ty::Defered(_) => true,
+            Ty::Item(_) | Ty::Builtin(_) => false,
+            Ty::Pointer(inner, _) | Ty::Slice(inner, _) | Ty::Array(inner, _) => inner.is_dynamic(),
+            Ty::Dyn(inner, _) | Ty::Tuple(inner) => inner.iter().any(|s| s.is_dynamic()),
+            Ty::FunctionPointer(params, ret) | Ty::FunctionProtocol(params, ret) => {
+                params.iter().any(|s| s.is_dynamic()) || ret.is_dynamic()
+            }
+            Ty::Generic(base, params) => base.is_dynamic() || params.iter().any(|s| s.is_dynamic()),
         }
     }
 }
