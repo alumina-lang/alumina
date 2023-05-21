@@ -91,28 +91,18 @@ pub enum CodeDiagnostic {
     CycleDetected,
     #[error("duplicate name `{}`", .0)]
     DuplicateName(String),
-    #[error("duplicate name `{}` ({} cannot shadow a {})", .0, .1, .2)]
-    CannotShadow(String, String, String),
-    #[error("generic associated types are not supported, soz")]
-    NoAssociatedTypes,
     #[error("invalid literal")]
     InvalidLiteral,
     #[error("character literals must be exactly one byte")]
     InvalidCharLiteral,
     #[error("{} generic parameters expected, {} found" , .0, .1)]
     GenericParamCountMismatch(usize, usize),
-    #[error("type expected here")]
-    TypeExpectedHere,
     #[error("only enums and structs can have generic parameters")]
     UnexpectedGenericParams,
     #[error("type is recursive without indirection")]
     RecursiveWithoutIndirection,
     #[error("type hint required")]
     TypeHintRequired,
-    // This is a separate error type so that it can be filtered out during failed tentative
-    // monomorphization
-    #[error("type hint required (type inference)")]
-    TypeInferenceFailed,
     #[error("type mismatch: `{}` expected, `{}` found", .0, .1)]
     TypeMismatch(String, String),
     #[error("branches have incompatible types (`{}`, `{}`)", .0, .1)]
@@ -155,16 +145,12 @@ pub enum CodeDiagnostic {
     StructLikeExpectedHere,
     #[error("method `{}` not found on `{}`", .0, .1)]
     MethodNotFound(String, String),
-    #[error("duplicate enum member")]
-    DuplicateEnumMember,
     #[error("cannot be called as a method")]
     NotAMethod,
     #[error("default case must be last in a switch expression")]
     DefaultCaseMustBeLast,
     #[error("cannot reference `{}` in a nested function", .0)]
     CannotReferenceLocal(String),
-    #[error("local items cannot bind ambient generic placeholders (yet)")]
-    LocalItemsCannotBindGenericPlaceholders,
     #[error("missing lang item: {:?}", .0)]
     MissingLangItem(LangItemKind),
     #[error("only slices can be range-indexed")]
@@ -179,8 +165,8 @@ pub enum CodeDiagnostic {
     UnsupportedABI(String),
     #[error("unknown intrinsic `{}`", .0)]
     UnknownIntrinsic(String),
-    #[error("unknown lang item {:?}", .0)]
-    UnknownLangItem(Option<String>),
+    #[error("unknown lang item {}", .0)]
+    UnknownLangItem(String),
     #[error("this cannot be a lang item")]
     CannotBeALangItem,
     #[error("cannot take address of a compiler intrinsic")]
@@ -189,8 +175,6 @@ pub enum CodeDiagnostic {
     ExternCGenericParams,
     #[error("constant string expected")]
     ConstantStringExpected,
-    #[error("macro expected")]
-    MacroExpected,
     #[error("this expression is not evaluable at compile time ({})", .0)]
     CannotConstEvaluate(ConstEvalErrorKind),
     #[error("values of enum variants can only be integers")]
@@ -227,10 +211,8 @@ pub enum CodeDiagnostic {
     NotInAFunctionScope,
     #[error("unknown builtin macro `{}`", .0)]
     UnknownBuiltinMacro(String),
-    #[error("`{}` is not a protocol", .0)]
-    NotAProtocol(String),
-    #[error("protocol is not expected here")]
-    UnexpectedProtocol,
+    #[error("type is not a protocol")]
+    NotAProtocol,
     #[error("function must have a body")]
     FunctionMustHaveBody,
     #[error("protocol functions cannot be extern")]
@@ -245,12 +227,8 @@ pub enum CodeDiagnostic {
     ProtocolMismatchDetail(String, String, String),
     #[error("recursive protocol bounds are not supported")]
     CyclicProtocolBound,
-    #[error("unimplemented: {}", .0)]
-    Unimplemented(String),
     #[error("multiple `main` functions found")]
     MultipleMainFunctions,
-    #[error("type aliases cannot have their own impl block")]
-    NoImplForTypedefs,
     #[error("unpopulated item")]
     UnpopulatedItem,
     #[error(
@@ -280,8 +258,6 @@ pub enum CodeDiagnostic {
     CanOnlyCloseOverLocals,
     #[error("anonymous functions that bind environment variables cannot be coerced to a function pointer")]
     ClosuresAreNotFns,
-    #[error("thread local storage is not supported")]
-    ThreadLocalNotSupported,
     #[error("dyn requires a protocol")]
     NonProtocolDyn,
     #[error("builtin protocols cannot be used with `dyn`")]
@@ -292,8 +268,6 @@ pub enum CodeDiagnostic {
     ProtocolsAreSpecialMkay(String),
     #[error("indirect `dyn` pointers are not supported")]
     IndirectDyn,
-    #[error("`{}` cannot be used as a concrete type", .0)]
-    SpecialNamedType(String),
     #[error("signature of `{}` is incompatible with virtual dispatch", .0)]
     NonDynnableFunction(String),
     #[error("invalid format string ({})", .0)]
@@ -308,11 +282,8 @@ pub enum CodeDiagnostic {
     IntegerOutOfRange(String, String),
     #[error("float literal out of range ({} does not fit into {})", .0, .1)]
     FloatOutOfRange(String, String),
-    #[error(
-        "`#[align(...)]` cannot be used together with `#[packed]` (alignment will always be 1)"
-    )]
+    #[error("`#[align(...)]` cannot be used together with `#[packed]`")]
     AlignAndPacked,
-
     // IR inlining is very restricitve at the moment, these may eventually be removed
     #[error("cannot IR-inline functions that use variables")]
     IrInlineLocalDefs,
@@ -364,8 +335,6 @@ pub enum CodeDiagnostic {
     ConstantCondition(bool),
     #[error("statement has no effect")]
     PureStatement,
-    #[error("intrinsics are not meant to be called directly (use a wrapper function instead)")]
-    IntrinsicCall,
     #[error("const-only functions should not be used at runtime (guard with `std::runtime::in_const_context()`)")]
     ConstOnly,
     #[error("this code is unreachable (dead code)")]

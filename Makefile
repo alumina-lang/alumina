@@ -73,7 +73,7 @@ ALU_LIBRARIES = $(shell find libraries/ -type f -name '*.alu')
 # Ensure build directory exists, but do not pollute all the rules with it
 $(BUILD_DIR)/.build:
 	mkdir -p $(BUILD_DIR)
-	touch $@
+	@touch $@
 
 ## ----------------- Bootstrap compiler (alumina-boot) -----------------
 
@@ -215,7 +215,7 @@ EXAMPLES = $(shell find examples/ -type f -name '*.alu')
 
 $(BUILD_DIR)/examples/.build:
 	mkdir -p $(BUILD_DIR)/examples
-	touch $@
+	@touch $@
 
 $(BUILD_DIR)/examples/%.c: examples/%.alu $(ALU_DEPS) $(BUILD_DIR)/examples/.build
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --output $@ main=$<
@@ -301,12 +301,32 @@ $(BUILD_DIR)/flamegraph.svg: $(ALUMINA_BOOT) $(SYSROOT_FILES)
 
 flamegraph: $(BUILD_DIR)/flamegraph.svg
 
+## ------------------------------ Diag tests ----------------------------
+
+DIAG_CMD = ./tools/diag.py
+DIAG_CASES = $(shell find tests/diag -type f -name '*.alu')
+
+$(BUILD_DIR)/diag/.build:
+	mkdir -p $(BUILD_DIR)/diag
+	@touch $@
+
+$(BUILD_DIR)/diag/%-check: tests/diag/%.alu $(ALU_DEPS) $(BUILD_DIR)/diag/.build
+	@$(DIAG_CMD) $< $(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON)
+	@touch $@
+
+$(BUILD_DIR)/diag/%-annotate: tests/diag/%.alu $(ALU_DEPS) $(BUILD_DIR)/diag/.build
+	$(DIAG_CMD) --fix $< $(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON)
+	@touch $@
+
+test-diag: $(patsubst tests/diag/%.alu,$(BUILD_DIR)/diag/%-check,$(DIAG_CASES))
+diag-fix: $(patsubst tests/diag/%.alu,$(BUILD_DIR)/diag/%-annotate,$(DIAG_CASES))
+
 ## ------------------------------ Coverage ------------------------------
 .PHONY: coverage all-tests-with-coverage
 coverage:
 	COVERAGE=1 CACHE_AST=1 $(MAKE) all-tests-with-coverage
 
-all-tests-with-coverage: test test-docs test-libraries examples
+all-tests-with-coverage: test test-docs test-libraries test-diag examples
 	llvm-profdata merge \
 		-sparse  \
 		$(BUILD_DIR)/profiles/* \
@@ -336,4 +356,4 @@ lint-rust: $(BOOTSTRAP_SOURCES) $(COMMON_SOURCES) $(BUILD_DIR)/.build
 	cargo fmt -- --check
 	cargo clippy $(CARGO_FLAGS) --all-targets
 
-dist-check: lint-rust test-libraries test-docs test examples
+dist-check: lint-rust test-libraries test-docs test-diag test examples

@@ -13,7 +13,7 @@ import argparse
 from collections import defaultdict
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "-n", "--num-runs", type=int, default=10,
         help="Number of times to run the compiler",

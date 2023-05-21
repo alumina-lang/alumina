@@ -577,7 +577,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                 let lang_type = node
                     .child_by_field(FieldKind::Arguments)
                     .and_then(|n| n.child_by_field(FieldKind::Argument))
-                    .ok_or(CodeDiagnostic::UnknownLangItem(None))
+                    .ok_or(CodeDiagnostic::InvalidAttribute)
                     .with_span_from(&self.scope, node)?;
 
                 self.ast.add_lang_item(
