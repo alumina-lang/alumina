@@ -31,6 +31,10 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
         src: ast::TyP<'ast>,
         tgt: ir::TyP<'ir>,
     ) -> Result<(), ()> {
+        if let ast::Ty::Tag(_, inner) = src {
+            return self.match_slot(inferred, inner, tgt);
+        }
+
         match (src, tgt) {
             (ast::Ty::Item(_), _) | (ast::Ty::Builtin(_), _) => {
                 // those do not participate in inference

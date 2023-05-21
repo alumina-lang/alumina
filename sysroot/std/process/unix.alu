@@ -122,10 +122,86 @@ fn set_current_dir(path: fs::Path) -> Result<()> {
     Result::ok(())
 }
 
+/// Describes the result of a process after it has terminated.
+struct ExitStatus {
+    _wait_status: libc::c_int
+}
+
+impl ExitStatus {
+    /// Create `ExitStatus` from an wait status (not exit code).
+    ///
+    /// Wait status is the return value of functions such as `wait` and `waitpid`.
+    fn from_wait_status(wait_status: libc::c_int) -> ExitStatus {
+        ExitStatus {
+            _wait_status: wait_status
+        }
+    }
+
+    /// Returns true if process completed successfully
+    ///
+    /// This implies that the process was not terminated by a signal and that the exit
+    /// code is 0.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::process::Command;
+    /// use std::fs::Path;
+    ///
+    /// let command = Command::new(Path::new("/usr/bin/true"));
+    /// let status = command.spawn().unwrap().wait().unwrap();
+    ///
+    /// assert!(status.success());
+    /// ```
+    fn success(self: &ExitStatus) -> bool {
+        self._wait_status == 0
+    }
+
+    // Returns true if process dumped core when terminated by a signal.
+    fn core_dumped(self: &ExitStatus) -> bool {
+        libc::WCOREDUMP(self._wait_status)
+    }
+
+    /// Returns exit code of a process, if present.
+    ///
+    /// If the process was terminated by a signal, this will return `Option::none()`
+    /// (see [signal]).
+    fn code(self: &ExitStatus) -> Option<i32> {
+        if libc::WIFEXITED(self._wait_status) {
+            Option::some(util::cast(libc::WEXITSTATUS(self._wait_status)))
+        } else {
+            Option::none()
+        }
+    }
+
+    /// Returns the signal number the process was terminated by.
+    ///
+    /// If the process was not temrinated by a  signal, this will return `Option::none()`
+    /// (see [code]).
+    fn signal(self: &ExitStatus) -> Option<i32> {
+        if libc::WIFSIGNALED(self._wait_status) {
+            Option::some(util::cast(libc::WTERMSIG(self._wait_status)))
+        } else {
+            Option::none()
+        }
+    }
+
+    /// @ cmp::Equatable::equals
+    fn equals(self: &ExitStatus, other: &ExitStatus) -> bool {
+        self._wait_status == other._wait_status
+    }
+
+    /// @ hash::Hashable::hash
+    fn hash<H: hash::Hasher<H>>(self: &ExitStatus, h: &mut H) {
+        self._wait_status.hash(h);
+    }
+
+    mixin cmp::Equatable<ExitStatus>;
+}
+
 /// Captured output of a child process.
 struct Output {
     /// Exit status of the child process.
-    status: i32,
+    status: ExitStatus,
     /// Standard output of the child process.
     stdout: string::StringBuf,
     /// Standard error of the child process.
@@ -207,7 +283,7 @@ impl Child {
         errno_try!(libc::waitpid(self.pid, &status, 0));
 
         let res = Output {
-            status: status as i32,
+            status: ExitStatus::from_wait_status(status),
             stdout: stdout.move(),
             stderr: stderr.move()
         };
@@ -216,7 +292,7 @@ impl Child {
     }
 
     /// Wait for child to exit, returning the exit status.
-    fn wait(self: &mut Child) -> Result<i32> {
+    fn wait(self: &mut Child) -> Result<ExitStatus> {
         self.stdin
             .move()
             .as_mut_ptr()
@@ -226,7 +302,7 @@ impl Child {
         let status: libc::c_int = 0;
         errno_try!(libc::waitpid(self.pid, &status, 0));
 
-        Result::ok(status as i32)
+        Result::ok(ExitStatus::from_wait_status(status))
     }
 
     /// Kill the child process.
@@ -696,7 +772,7 @@ mod tests {
         let output = child.wait_with_output().unwrap();
         defer output.free();
 
-        assert_eq!(output.status, 0);
+        assert!(output.status.success());
         assert_eq!(output.stdout[..] as &[u8], "Hello, World!\n");
         assert_eq!(output.stderr[..] as &[u8], &[]);
     }
@@ -716,7 +792,7 @@ mod tests {
         let output = child.wait_with_output().unwrap();
         defer output.free();
 
-        assert_eq!(output.status, 0);
+        assert!(output.status.success());
         assert_eq!(output.stdout[..] as &[u8], "HELLO=world\nFOO=bar\n");
         assert_eq!(output.stderr[..] as &[u8], &[]);
     }
@@ -763,7 +839,7 @@ mod tests {
             let output = child.unwrap().wait_with_output().unwrap();
             defer output.free();
 
-            assert_eq!((output.status & 0xff00) >> 8, 123);
+            assert_eq!(output.status.code(), Option::some(123));
             assert_eq!(output.stdout[..] as &[u8], "Hello");
             assert_eq!(output.stderr[..] as &[u8], "World");
         }
@@ -792,7 +868,7 @@ mod tests {
             let output = child.unwrap().wait_with_output().unwrap();
             defer output.free();
 
-            assert_eq!((output.status & 0xff00) >> 8, 123);
+            assert_eq!(output.status.code(), Option::some(123));
             assert_eq!(output.stdout.len(), 1024 * 1024);
             assert_eq!(output.stderr.len(), 1024 * 1024);
         }

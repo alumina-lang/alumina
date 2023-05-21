@@ -1970,6 +1970,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         typ: ast::TyP<'ast>,
     ) -> Result<ir::TyP<'ir>, AluminaError> {
         let result = match *typ {
+            ast::Ty::Tag(_, inner) => self.lower_type_unrestricted(inner)?,
             ast::Ty::Builtin(kind) => self.types.builtin(kind),
             ast::Ty::Array(inner, len) => {
                 let inner = self.lower_type_for_value(inner)?;
@@ -3656,8 +3657,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 {
                     Ok(Value::Bool(for_codegen)) => {
                         if for_const_eval == for_codegen {
-                            self.diag
-                                .warn(CodeDiagnostic::ConstantCondition(for_const_eval));
+                            if matches!(cond_.kind, ast::ExprKind::Tag("loop_condition", _))
+                                && for_codegen
+                            {
+                                self.diag.warn(CodeDiagnostic::WhileTrue);
+                            } else {
+                                self.diag
+                                    .warn(CodeDiagnostic::ConstantCondition(for_const_eval));
+                            }
                         }
                         const_cond = Some(for_codegen);
                     }
@@ -3796,6 +3803,17 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
 
         let typ = self.lower_type_for_value(target_type)?;
+
+        if expr.ty == typ && !target_type.is_dynamic() {
+            // ignore casts to same typee via a type alias or a placeholder, those can be
+            // necessary in a different instantiation
+            // of the generic method or platform.
+            if self.raise_type(typ)? == target_type {
+                self.diag.warn(CodeDiagnostic::UnnecessaryCast(
+                    self.mono_ctx.type_name(expr.ty).unwrap(),
+                ));
+            }
+        }
 
         // If the type coerces automatically, no cast is required
         if let Ok(expr) = self.try_coerce(typ, expr) {
@@ -4449,6 +4467,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
                 ast_type
             }
+            ast::Ty::Tag(_, inner) => self.resolve_ast_type(inner)?,
             ast::Ty::Placeholder(_) => {
                 let ir_type = self.lower_type_for_value(ast_type)?;
                 self.raise_type(ir_type)?

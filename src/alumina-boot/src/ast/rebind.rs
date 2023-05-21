@@ -54,9 +54,10 @@ impl<'ast> Rebinder<'ast> {
         use crate::ast::Ty::*;
         let kind = match typ {
             Placeholder(id) => match self.replacements.get(id) {
-                Some(typ) => return Ok(typ),
+                Some(typ) => Tag("dynamic", typ),
                 None => Placeholder(*id),
             },
+            Tag(tag, inner) => Tag(tag, self.visit_typ(inner)?),
             Pointer(inner, is_const) => Pointer(self.visit_typ(inner)?, *is_const),
             Slice(inner, is_const) => Slice(self.visit_typ(inner)?, *is_const),
             Array(inner, len) => Array(self.visit_typ(inner)?, self.visit_expr(len)?),

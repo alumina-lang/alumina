@@ -1258,6 +1258,9 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         let body = self.visit(node.child_by_field(FieldKind::Body).unwrap())?;
 
         let r#break = ExprKind::Break(None).alloc_with_span_from(self.ast, &self.scope, node);
+        let condition =
+            ExprKind::Tag("loop_condition", condition).alloc_with_span(self.ast, condition.span);
+
         let body = ExprKind::If(condition, body, r#break).alloc_with_span_from(
             self.ast,
             &self.scope,

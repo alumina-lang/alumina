@@ -374,6 +374,10 @@ pub enum CodeDiagnostic {
     ZstPointerOffset,
     #[error("unknown attribute `{}`", .0)]
     UnknownAttribute(String),
+    #[error("unnecessary cast (value is already `{}`)", .0)]
+    UnnecessaryCast(String),
+    #[error("loop condition is always `true` (hint: `loop {{ ... }}` is the idiomatic way of expressing infinite loops)")]
+    WhileTrue,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
