@@ -758,11 +758,49 @@ mod internal {
 #[cfg(all(test, test_std))]
 #[docs(hide)]
 mod tests {
-    use fs::Path;
+    use fs::{Path, PathBuf, PathSegmentKind, FileAttr};
+
+    /// Finds the binary using the PATH environment variable.
+    fn find_binary(command: &[u8]) -> Option<PathBuf> {
+        use std::option::try;
+        use std::string::split;
+
+        let original = Path::new(command);
+
+        // If the path looks like an absolute or relative path, do
+        // not try to resolve it using PATH
+        let segments = original.iter();
+        let first_segment = segments.next()?;
+
+        if first_segment.kind != PathSegmentKind::Normal
+            || segments.next().is_some()  {
+            return Option::none()
+        }
+
+        env()
+            .get("PATH")?
+            .split(":")
+            .filter_map(|=original, i: &[u8]| -> Option<PathBuf> {
+                let resolved = PathBuf::from_str(i);
+                defer resolved.free();
+
+                resolved.push(original);
+
+                if FileAttr::from_path(resolved.as_path()).is_ok() {
+                    Option::some(resolved.move())
+                } else {
+                    Option::none()
+                }
+            })
+            .next()
+    }
 
     #[test]
     fn test_spawn_args() {
-        let child = Command::new(Path::new("/bin/echo"))
+        let cmd = find_binary("echo").unwrap();
+        defer cmd.free();
+
+        let child = Command::new(cmd.as_path())
             .args(&["Hello, World!"])
             .stdout(Stdio::Piped)
             .stderr(Stdio::Piped)
@@ -779,7 +817,10 @@ mod tests {
 
     #[test]
     fn test_spawn_env() {
-        let child = Command::new(Path::new("/usr/bin/env"))
+        let cmd = find_binary("env").unwrap();
+        defer cmd.free();
+
+        let child = Command::new(cmd.as_path())
             .env(&[
                 ("HELLO", "world"),
                 ("FOO", "bar")
@@ -810,7 +851,10 @@ mod tests {
 
     #[test]
     fn test_kill() {
-        let child = Command::new(Path::new("/bin/sleep"))
+        let cmd = find_binary("sleep").unwrap();
+        defer cmd.free();
+
+        let child = Command::new(cmd.as_path())
             .args(&["10000"])
             .spawn()
             .unwrap();
