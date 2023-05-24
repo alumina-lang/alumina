@@ -35,6 +35,9 @@
 <a href="/std/process/unix/ExitStatus.html#item.from_wait_status">from_wait_status</a>
 </li>
 <li>
+<a href="/std/process/unix/ExitStatus.html#item.wait_status">wait_status</a>
+</li>
+<li>
 <a href="/std/process/unix/ExitStatus.html#item.success">success</a>
 </li>
 <li>
@@ -99,11 +102,38 @@ Wait status is the return value of functions such as <code class="language-alumi
 </div>
 </li>
 <li>
+<div class="signature" id="item.wait_status">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">wait_status</span>(self: &amp;<a href="/std/process/unix/ExitStatus.html"><span class="identifier-type">ExitStatus</span></a>) -> <a href="/std/builtins/i32.html"><span class="identifier-type">i32</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/process/unix.alu#L152-L154"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns the raw wait status of the process.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::process::Command;
+use std::fs::Path;
+
+let command = Command::new(Path::new("/usr/bin/false"));
+let status = command.spawn().unwrap().wait().unwrap();
+
+assert_eq!(status.wait_status(), 256); // (1 &lt;&lt; 8) | 0
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3aprocess%3a%3aCommand%3b%0a%20%20%20%20use%20std%3a%3afs%3a%3aPath%3b%0a%20%20%20%20%0a%20%20%20%20let%20command%20%3d%20Command%3a%3anew%28Path%3a%3anew%28%22%2fusr%2fbin%2ffalse%22%29%29%3b%0a%20%20%20%20let%20status%20%3d%20command%2espawn%28%29%2eunwrap%28%29%2ewait%28%29%2eunwrap%28%29%3b%0a%20%20%20%20%0a%20%20%20%20assert%5feq%21%28status%2ewait%5fstatus%28%29%2c%20256%29%3b%20%2f%2f%20%281%20%3c%3c%208%29%20%7c%200%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
 <div class="signature" id="item.success">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">success</span>(self: &amp;<a href="/std/process/unix/ExitStatus.html"><span class="identifier-type">ExitStatus</span></a>) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/process/unix.alu#L155-L157"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/process/unix.alu#L171-L173"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -133,7 +163,7 @@ assert!(status.success());
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">core_dumped</span>(self: &amp;<a href="/std/process/unix/ExitStatus.html"><span class="identifier-type">ExitStatus</span></a>) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/process/unix.alu#L160-L162"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/process/unix.alu#L176-L178"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -144,7 +174,7 @@ assert!(status.success());
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">code</span>(self: &amp;<a href="/std/process/unix/ExitStatus.html"><span class="identifier-type">ExitStatus</span></a>) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;<a href="/std/builtins/i32.html"><span class="identifier-type">i32</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/process/unix.alu#L168-L174"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/process/unix.alu#L184-L190"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -162,7 +192,7 @@ If the process was terminated by a signal, this will return <code class="languag
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">signal</span>(self: &amp;<a href="/std/process/unix/ExitStatus.html"><span class="identifier-type">ExitStatus</span></a>) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;<a href="/std/builtins/i32.html"><span class="identifier-type">i32</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/process/unix.alu#L180-L186"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/process/unix.alu#L196-L202"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -180,7 +210,7 @@ If the process was not temrinated by a  signal, this will return <code class="la
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">equals</span>(self: &amp;<a href="/std/process/unix/ExitStatus.html"><span class="identifier-type">ExitStatus</span></a>, other: &amp;<a href="/std/process/unix/ExitStatus.html"><span class="identifier-type">ExitStatus</span></a>) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/process/unix.alu#L189-L191"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/process/unix.alu#L205-L207"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -199,7 +229,7 @@ See <a class="path-link" href="/std/cmp/Equatable.html">Equatable</a> for detail
 H: <a href="/std/hash/Hasher.html"><span class="identifier-type">Hasher</span></a>&lt;H&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/process/unix.alu#L194-L196"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/process/unix.alu#L210-L212"/>source</a>
 </div>
 </div>
 <div class="item-doc">
