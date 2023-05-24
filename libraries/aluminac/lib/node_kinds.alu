@@ -22,8 +22,9 @@ enum NodeKind {
     DeferExpression,
     ParameterTypeList,
     Pattern,
-    Turbofish,
+    BlockComment,
     DocComment,
+    Turbofish,
     Arguments,
     TryExpression,
     TypeArguments,
@@ -98,6 +99,7 @@ enum NodeKind {
     ReturnExpression,
     DynOf,
     IfExpression,
+    LineComment,
     SwitchArm,
     StructDefinition,
     Statement,
@@ -170,12 +172,13 @@ enum FieldKind {
     Value = 52u16,
 }
 
-const NODE_KINDS: [NodeKind; 255] = [
+const NODE_KINDS: [NodeKind; 256] = [
     NodeKind::Invalid,
     NodeKind::Identifier,
     NodeKind::DocComment,
     NodeKind::FileDocComment,
-    NodeKind::Invalid,
+    NodeKind::LineComment,
+    NodeKind::BlockComment,
     NodeKind::Invalid,
     NodeKind::Invalid,
     NodeKind::Invalid,
@@ -476,11 +479,14 @@ protocol NodeVisitor<Self, ReturnType> {
     fn visit_pattern(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_pattern");
     }
-    fn visit_turbofish(self: &mut Self, _node: Node) -> ReturnType {
-        panic!("unimplemented: visit_turbofish");
+    fn visit_block_comment(self: &mut Self, _node: Node) -> ReturnType {
+        panic!("unimplemented: visit_block_comment");
     }
     fn visit_doc_comment(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_doc_comment");
+    }
+    fn visit_turbofish(self: &mut Self, _node: Node) -> ReturnType {
+        panic!("unimplemented: visit_turbofish");
     }
     fn visit_arguments(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_arguments");
@@ -704,6 +710,9 @@ protocol NodeVisitor<Self, ReturnType> {
     fn visit_if_expression(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_if_expression");
     }
+    fn visit_line_comment(self: &mut Self, _node: Node) -> ReturnType {
+        panic!("unimplemented: visit_line_comment");
+    }
     fn visit_switch_arm(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_switch_arm");
     }
@@ -770,8 +779,9 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::DeferExpression => self.visit_defer_expression(node),
             NodeKind::ParameterTypeList => self.visit_parameter_type_list(node),
             NodeKind::Pattern => self.visit_pattern(node),
-            NodeKind::Turbofish => self.visit_turbofish(node),
+            NodeKind::BlockComment => self.visit_block_comment(node),
             NodeKind::DocComment => self.visit_doc_comment(node),
+            NodeKind::Turbofish => self.visit_turbofish(node),
             NodeKind::Arguments => self.visit_arguments(node),
             NodeKind::TryExpression => self.visit_try_expression(node),
             NodeKind::TypeArguments => self.visit_type_arguments(node),
@@ -846,6 +856,7 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::ReturnExpression => self.visit_return_expression(node),
             NodeKind::DynOf => self.visit_dyn_of(node),
             NodeKind::IfExpression => self.visit_if_expression(node),
+            NodeKind::LineComment => self.visit_line_comment(node),
             NodeKind::SwitchArm => self.visit_switch_arm(node),
             NodeKind::StructDefinition => self.visit_struct_definition(node),
             NodeKind::Statement => self.visit_statement(node),
