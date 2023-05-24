@@ -51,7 +51,7 @@ function sepBy(sep, rule) {
 
 module.exports = grammar({
   name: "alumina",
-  extras: ($) => [$.file_doc_comment, $.doc_comment, $._comment, /[\s]+/],
+  extras: ($) => [$.file_doc_comment, $.doc_comment, $.block_comment, $.line_comment, /[\s]+/],
 
   word: ($) => $.identifier,
   inline: ($) => [
@@ -70,16 +70,9 @@ module.exports = grammar({
       ),
 
     doc_comment: ($) => token(seq("///", /[^\n\r]*/)),
-
     file_doc_comment: ($) => token(seq("//!", /[^\n\r]*/)),
-
-    _comment: ($) =>
-      token(
-        choice(
-          seq("//", /[^\n\r]*/),
-          seq("/*", /[^*]*\*+([^/*][^*]*\*+)*/, "/")
-        )
-      ),
+    line_comment: ($) => token(seq("//", /.*/)),
+    block_comment: ($) => token(seq("/*", /[^*]*\*+([^/*][^*]*\*+)*/, "/")),
 
     top_level_attributes: ($) => repeat1($.top_level_attribute_item),
     top_level_attribute_item: ($) =>

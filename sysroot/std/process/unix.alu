@@ -137,6 +137,22 @@ impl ExitStatus {
         }
     }
 
+    /// Returns the raw wait status of the process.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::process::Command;
+    /// use std::fs::Path;
+    ///
+    /// let command = Command::new(Path::new("/usr/bin/false"));
+    /// let status = command.spawn().unwrap().wait().unwrap();
+    ///
+    /// assert_eq!(status.wait_status(), 256); // (1 << 8) | 0
+    /// ```
+    fn wait_status(self: &ExitStatus) -> i32 {
+        self._wait_status
+    }
+
     /// Returns true if process completed successfully
     ///
     /// This implies that the process was not terminated by a signal and that the exit

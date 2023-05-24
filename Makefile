@@ -5,21 +5,21 @@ SYSROOT = sysroot
 
 ifdef RELEASE
 	BUILD_DIR = $(BUILD_ROOT)/release
-	CARGO_FLAGS = --release
+	CARGO_FLAGS += --release
 	CARGO_TARGET_DIR = target/release
 	CFLAGS += -O3
 else ifdef FAST_DEBUG
 	# Compile in debug mode, but with alumina-boot compiled in release mode.
 	# It is significantly faster.
 	BUILD_DIR = $(BUILD_ROOT)/fast-debug
-	CARGO_FLAGS = --release
+	CARGO_FLAGS += --release
 	CARGO_TARGET_DIR = target/release
 	CFLAGS += -g0
 	ALUMINA_FLAGS += --debug
 else ifdef COVERAGE
 	CC = clang
 	BUILD_DIR = $(BUILD_ROOT)/coverage
-	CARGO_FLAGS = --profile coverage
+	CARGO_FLAGS += --profile coverage
 	CARGO_TARGET_DIR = target/coverage
 	CFLAGS += -g3 -fPIE -rdynamic -fprofile-instr-generate -fcoverage-mapping
 	ALUMINA_FLAGS += --debug
@@ -27,7 +27,6 @@ else ifdef COVERAGE
 	export LLVM_PROFILE_FILE = $(BUILD_ROOT)/coverage/profiles/%p-%m.profraw
 else
 	BUILD_DIR = $(BUILD_ROOT)/debug
-	CARGO_FLAGS =
 	CARGO_TARGET_DIR = target/debug
 	CFLAGS += -g3 -fPIE -rdynamic
 	ALUMINA_FLAGS += --debug
