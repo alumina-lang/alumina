@@ -3,13 +3,16 @@ FROM ubuntu:22.04 as environment
 ENV DEBIAN_FRONTEND noninteractive
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL sparse
 
-RUN apt-get update && apt-get install -y software-properties-common curl build-essential git
+RUN apt-get update && apt-get install -y software-properties-common curl build-essential git ca-certificates gnupg
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
-RUN apt-get install -y nodejs
+RUN mkdir -p /etc/apt/keyrings && \
+    (curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg) && \
+    (echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_18.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list) && \
+    apt-get update && \
+    apt-get install -y nodejs
 
 RUN cargo install tree-sitter-cli
 

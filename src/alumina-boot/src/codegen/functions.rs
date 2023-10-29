@@ -535,7 +535,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 }
                 IntrinsicValueKind::Volatile(inner) => {
                     let Ty::Pointer(pointee, is_const) = expr.ty else {
-                         unreachable!()
+                        unreachable!()
                     };
 
                     if *is_const {

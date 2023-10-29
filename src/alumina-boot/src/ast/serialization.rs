@@ -719,7 +719,9 @@ impl<'ast> AstSaver<'ast> {
         serializer.write_usize(seen_files.len())?;
 
         for file_id in seen_files {
-            let Some(filename) = self.global_ctx.diag().get_file_path(file_id) else { continue; };
+            let Some(filename) = self.global_ctx.diag().get_file_path(file_id) else {
+                continue;
+            };
 
             file_id.serialize(&mut serializer)?;
             filename.serialize(&mut serializer)?;

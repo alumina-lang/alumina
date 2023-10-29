@@ -1077,8 +1077,17 @@ impl<'ir> ConstEvaluator<'ir> {
                     match self.const_eval_rvalue(expr) {
                         Ok(_) => {}
                         Err(e) => {
-                            let AluminaError::CodeErrors(ref v) = e else { return Err(e); };
-                            let [CodeError { kind: CodeDiagnostic::CannotConstEvaluate(ConstEvalErrorKind::Jump(label)), .. }] = v[..] else { return Err(e) };
+                            let AluminaError::CodeErrors(ref v) = e else {
+                                return Err(e);
+                            };
+                            let [CodeError {
+                                kind:
+                                    CodeDiagnostic::CannotConstEvaluate(ConstEvalErrorKind::Jump(label)),
+                                ..
+                            }] = v[..]
+                            else {
+                                return Err(e);
+                            };
 
                             if let Some(new_ip) = label_indexes.get(&label) {
                                 ip = *new_ip;
@@ -1101,7 +1110,9 @@ impl<'ir> ConstEvaluator<'ir> {
     fn materialize_lvalue(&mut self, value: LValue<'ir>) -> Result<Value<'ir>, AluminaError> {
         match value {
             LValue::Const(item) => {
-                let Ok(item) = item.get_const() else { bug!(self) };
+                let Ok(item) = item.get_const() else {
+                    bug!(self)
+                };
                 Ok(item.value)
             }
             LValue::Variable(id) => Ok(self.ctx.load_var(id)),
@@ -1309,18 +1320,14 @@ impl<'ir> ConstEvaluator<'ir> {
                     assert_eq!(idx, init.index);
                     values.push(self.const_eval_rvalue(init.value)?);
                 }
-                Ok(Value::Tuple(
-                    self.ir.arena.alloc_slice_fill_iter(values.into_iter()),
-                ))
+                Ok(Value::Tuple(self.ir.arena.alloc_slice_fill_iter(values)))
             }
             ExprKind::Array(elems) => {
                 let mut values = Vec::new();
                 for elem in *elems {
                     values.push(self.const_eval_rvalue(elem)?);
                 }
-                Ok(Value::Array(
-                    self.ir.arena.alloc_slice_fill_iter(values.into_iter()),
-                ))
+                Ok(Value::Array(self.ir.arena.alloc_slice_fill_iter(values)))
             }
             ExprKind::Goto(id) => Err(ConstEvalErrorKind::Jump(*id)).with_backtrace(&self.diag),
             ExprKind::Struct(fields) => {
@@ -1329,9 +1336,7 @@ impl<'ir> ConstEvaluator<'ir> {
                 for field in *fields {
                     values.insert(field.field, self.const_eval_rvalue(field.value)?);
                 }
-                Ok(Value::Struct(
-                    self.ir.arena.alloc_slice_fill_iter(values.into_iter()),
-                ))
+                Ok(Value::Struct(self.ir.arena.alloc_slice_fill_iter(values)))
             }
             ExprKind::TupleIndex(tup, idx) => {
                 let tup = self.const_eval_defered(tup)?;
@@ -1556,7 +1561,13 @@ impl<'ir> ConstEvaluator<'ir> {
                         let AluminaError::CodeErrors(ref v) = e else {
                             return Err(e);
                         };
-                        let [CodeError { kind: CodeDiagnostic::CannotConstEvaluate(ConstEvalErrorKind::Return), .. }] = v[..] else { return Err(e) };
+                        let [CodeError {
+                            kind: CodeDiagnostic::CannotConstEvaluate(ConstEvalErrorKind::Return),
+                            ..
+                        }] = v[..]
+                        else {
+                            return Err(e);
+                        };
                         let value = child.return_slot.take().unwrap();
                         Ok(value)
                     }
@@ -1603,7 +1614,9 @@ impl<'ir> ConstEvaluator<'ir> {
 
         macro_rules! check_type_match {
             ($original:expr, $current:expr) => {{
-                let Ty::Pointer(current, _) = $current else { bug!(self); };
+                let Ty::Pointer(current, _) = $current else {
+                    bug!(self);
+                };
 
                 if $original != *current {
                     return Err(ConstEvalErrorKind::IncompatiblePointer).with_backtrace(&self.diag);

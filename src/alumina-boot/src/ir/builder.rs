@@ -76,7 +76,7 @@ impl<'ir> ExpressionBuilder<'ir> {
     ) -> ExprP<'ir> {
         let mut merged = Vec::new();
 
-        let ret = match self.fill_block(&mut merged, statements.into_iter()) {
+        let ret = match self.fill_block(&mut merged, statements) {
             Ok(()) => ret,
             Err(expr) => expr,
         };
