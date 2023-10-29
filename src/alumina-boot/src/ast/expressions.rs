@@ -1301,11 +1301,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         } else {
             let r#macro = match expr.kind {
                 ExprKind::Macro(item, bound_params) => {
-                    args = bound_params
-                        .iter()
-                        .copied()
-                        .chain(args.into_iter())
-                        .collect();
+                    args = bound_params.iter().copied().chain(args).collect();
                     item
                 }
                 _ => return Err(CodeDiagnostic::NotAMacro).with_span_from(&self.scope, node),

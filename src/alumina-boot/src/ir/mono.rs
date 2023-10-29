@@ -2515,7 +2515,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                             self.monomorphize_lang_item(LangItemKind::SliceConstCoerce, [*t1])?;
 
                         let func = self.exprs.function(item, rhs.span);
-                        return self.call(func, [rhs].into_iter(), lhs_typ, rhs.span);
+                        return self.call(func, [rhs], lhs_typ, rhs.span);
                     }
                     _ => {}
                 }
@@ -2530,7 +2530,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                         self.monomorphize_lang_item(LangItemKind::DynConstCoerce, [*t1_proto])?;
 
                     let func = self.exprs.function(item, rhs.span);
-                    return self.call(func, [rhs].into_iter(), lhs_typ, rhs.span);
+                    return self.call(func, [rhs], lhs_typ, rhs.span);
                 }
                 _ => {}
             },
@@ -3418,7 +3418,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         self.call(
             func,
-            [lhs, rhs].into_iter(),
+            [lhs, rhs],
             item.get_function().with_backtrace(&self.diag)?.return_type,
             ast_span,
         )
@@ -3835,7 +3835,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let func = self.exprs.function(item, ast_span);
                 return self.call(
                     func,
-                    [expr].into_iter(),
+                    [expr],
                     item.get_function().with_backtrace(&self.diag)?.return_type,
                     ast_span,
                 );
@@ -3849,7 +3849,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 let func = self.exprs.function(item, ast_span);
                 return self.call(
                     func,
-                    [expr].into_iter(),
+                    [expr],
                     item.get_function().with_backtrace(&self.diag)?.return_type,
                     ast_span,
                 );
@@ -4760,10 +4760,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 };
 
                 self.exprs.r#struct(
-                    fields
-                        .into_iter()
-                        .zip(bound_values.into_iter())
-                        .map(|(f, e)| (f.id, e)),
+                    fields.into_iter().zip(bound_values).map(|(f, e)| (f.id, e)),
                     closure_typ,
                     ast_span,
                 )
@@ -4931,7 +4928,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             let func = self.exprs.function(item, ast_span);
             self.call(
                 func,
-                [indexee, index].into_iter(),
+                [indexee, index],
                 item.get_function().with_backtrace(&self.diag)?.return_type,
                 ast_span,
             )
@@ -5292,7 +5289,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
 
         if lowered.iter().any(|e| e.diverges()) {
-            return Ok(self.exprs.diverges(lowered.into_iter(), ast_span));
+            return Ok(self.exprs.diverges(lowered, ast_span));
         }
 
         let element_type = first_elem_type
