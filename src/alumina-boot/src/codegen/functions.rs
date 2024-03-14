@@ -183,9 +183,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                             // length of a hexadecimal escape sequence. It would be easier to
                             // just hex-escape everything, but that makes the generated C
                             // less readable.
-                            if did_we_just_write_a_hex_escape
-                                && matches!(c, b'a'..=b'f' | b'A'..=b'F' | b'0'..=b'9')
-                            {
+                            if did_we_just_write_a_hex_escape && c.is_ascii_hexdigit() {
                                 w!(self.fn_bodies, "\"\"");
                             }
                             w!(self.fn_bodies, "{}", c as char);

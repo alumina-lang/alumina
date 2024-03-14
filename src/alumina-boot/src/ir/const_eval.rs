@@ -45,6 +45,7 @@ pub enum Value<'ir> {
     Struct(&'ir [(IrId, Value<'ir>)]),
     FunctionPointer(super::IRItemP<'ir>),
     Pointer(LValue<'ir>, TyP<'ir>),
+    #[allow(clippy::enum_variant_names)]
     LValue(LValue<'ir>),
 }
 

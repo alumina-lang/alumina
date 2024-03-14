@@ -1128,7 +1128,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                         self.mono_ctx.reverse_lookup(inner_proto);
 
                     if ast_item == inner_ast
-                        && proto_generic_args.get(0).copied() == Some(ty)
+                        && proto_generic_args.first().copied() == Some(ty)
                         && proto_generic_args.get(1..) == inner_args.get(1..)
                     {
                         return Ok(BoundCheckResult::Matches);

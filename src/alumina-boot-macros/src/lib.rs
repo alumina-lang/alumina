@@ -42,7 +42,7 @@ pub fn sources_hash(input: TokenStream) -> TokenStream {
     let crate_directory =
         PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
 
-    let mut hashes: Vec<_> = walkdir::WalkDir::new(&crate_directory)
+    let mut hashes: Vec<_> = walkdir::WalkDir::new(crate_directory)
         .into_iter()
         .map(|e| e.expect("failed to walk directory"))
         .filter(|entry| {
