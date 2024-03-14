@@ -1094,6 +1094,52 @@ fn write_volatile<T>(ptr: &mut T, val: T) {
     }
 }
 
+/// Performs an unaligned read from a memory location.
+///
+/// When pointed-to type is zero-sized, no read is performed.
+///
+/// ## Example
+/// ```
+/// use std::mem::read_unaligned;
+///
+/// let a = [255u8, 1, 0, 0, 0];
+/// let b: u32 = (&a[1] as &u32).read_unaligned();
+///
+/// assert_eq!(b, 1);
+/// ```
+#[inline]
+fn read_unaligned<T>(ptr: &T) -> T {
+    when *ptr is builtins::ZeroSized {
+        util::unit()
+    } else {
+        let ret: T;
+        libc::memcpy(&ret as &mut void, ptr as &void, size_of::<T>());
+        ret
+    }
+}
+
+/// Performs an unaligned write to a memory location.
+///
+/// When pointed-to type is zero-sized, no write is performed.
+///
+/// ## Example
+/// ```
+/// use std::mem::write_unaligned;
+///
+/// let a = [0u8, 0, 0, 0, 0];
+/// (&a[1] as &mut u32).write_unaligned(2);
+///
+///
+/// assert_eq!(a, [0, 2, 0, 0, 0]);
+/// ```
+#[inline]
+fn write_unaligned<T>(ptr: &mut T, val: T) {
+    when !(*ptr is builtins::ZeroSized) {
+        libc::memcpy(ptr as &mut void, &val as &void, size_of::<T>());
+    }
+}
+
+
 /// Returns a dangling non-null pointer.
 ///
 /// The pointer is appropriately aligned for the provided type, and is non-null.

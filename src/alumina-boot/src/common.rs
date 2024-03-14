@@ -6,7 +6,8 @@ use std::hash::{Hash, Hasher};
 use std::io;
 use std::rc::Rc;
 use std::result::Result;
-use strum_macros::{AsRefStr, EnumVariantNames};
+use strum_macros::AsRefStr;
+use strum_macros::VariantNames;
 use thiserror::Error;
 use tree_sitter::Node;
 
@@ -75,7 +76,7 @@ pub enum AluminaError {
 }
 
 /// Main enum for all errors and warnings that can occur during compilation
-#[derive(AsRefStr, EnumVariantNames, Debug, Error, Clone, Hash, PartialEq, Eq)]
+#[derive(AsRefStr, VariantNames, Debug, Error, Clone, Hash, PartialEq, Eq)]
 #[strum(serialize_all = "snake_case")]
 pub enum CodeDiagnostic {
     // Errors

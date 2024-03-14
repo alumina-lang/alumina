@@ -225,7 +225,7 @@ fn generate_visitor(language_info: LanguageInfo) -> String {
 
             fn next(&mut self) -> Option<Self::Item> {
                 if !self.done {
-                    while self.cursor.field_id() != Some(self.field as u16) {
+                    while self.cursor.field_id() != Some(std::num::NonZeroU16::new(self.field as u16).unwrap()) {
                         if !self.cursor.goto_next_sibling() {
                             return None;
                         }
