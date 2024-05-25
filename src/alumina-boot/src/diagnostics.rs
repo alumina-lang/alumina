@@ -35,9 +35,18 @@ pub struct Override {
     pub action: Action,
 }
 
+#[derive(Debug, Clone)]
+pub struct LocationOverride {
+    pub span: Span,
+
+    pub new_file: FileId,
+    pub new_line: usize,
+}
+
 struct DiagnosticContextInner {
     file_map: HashMap<FileId, PathBuf>,
     messages: IndexSet<(Level, CodeError)>,
+    location_overrides: HashMap<FileId, Vec<LocationOverride>>,
     overrides: Vec<Override>,
     counter: usize,
 }
@@ -153,7 +162,7 @@ impl DiagnosticsStack {
 pub struct Location {
     pub file: String,
     pub line: usize,
-    pub column: usize,
+    pub column: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -181,6 +190,7 @@ impl DiagnosticContext {
             inner: Rc::new(RefCell::new(DiagnosticContextInner {
                 file_map: HashMap::default(),
                 messages: Default::default(),
+                location_overrides: Default::default(),
                 overrides: Default::default(),
                 counter: 0,
             })),
@@ -205,6 +215,71 @@ impl DiagnosticContext {
 
     pub fn add_override(&self, r#override: Override) {
         self.inner.borrow_mut().overrides.push(r#override);
+    }
+
+    pub fn add_location_override(&self, span: Span, new_file: PathBuf, new_line: usize) {
+        let mut inner = self.inner.borrow_mut();
+
+        let new_file_id = match inner
+            .file_map
+            .iter()
+            .find(|(_, v)| v == &&new_file)
+            .map(|(k, _)| *k)
+        {
+            Some(file_id) => file_id,
+            None => {
+                let file_id = FileId { id: inner.counter };
+                inner.counter += 1;
+                inner.file_map.insert(file_id, new_file);
+                file_id
+            }
+        };
+
+        inner
+            .location_overrides
+            .entry(span.file)
+            .or_default()
+            .push(LocationOverride {
+                span,
+                new_file: new_file_id,
+                new_line,
+            });
+    }
+
+    pub fn map_span(&self, mut span: Span) -> Span {
+        let inner = self.inner.borrow();
+        let Some(overrides) = inner.location_overrides.get(&span.file) else {
+            return span;
+        };
+
+        let mut innermost_override = None;
+
+        for r#override in overrides {
+            if r#override.span.contains(&span) {
+                match innermost_override {
+                    None => {
+                        innermost_override = Some(r#override);
+                    }
+                    Some(innermost) => {
+                        if innermost.span.contains(&r#override.span) {
+                            innermost_override = Some(r#override);
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(r#override) = innermost_override {
+            span.file = r#override.new_file;
+            span.line = ((span.line as isize - r#override.span.line as isize)
+                + r#override.new_line as isize)
+                .max(0) as usize;
+
+            // Columns cannot really be mapped, so just drop them.
+            span.column = None;
+        }
+
+        span
     }
 
     pub fn overrides(&self) -> Vec<Override> {
@@ -361,14 +436,22 @@ impl DiagnosticContext {
 
             for marker in filtered_frames {
                 let Marker::Span(span) = marker else { continue };
+                let span = self.map_span(span);
 
                 if let Some(file_name) = inner.file_map.get(&span.file) {
-                    eprintln!(
-                        "  --> {}:{}:{}",
-                        file_name.display(),
-                        span.line + 1,
-                        span.column + 1
-                    );
+                    match span.column {
+                        Some(column) => {
+                            eprintln!(
+                                "  --> {}:{}:{}",
+                                file_name.display(),
+                                span.line + 1,
+                                column + 1
+                            );
+                        }
+                        None => {
+                            eprintln!("  --> {}:{}", file_name.display(), span.line + 1);
+                        }
+                    }
                 } else {
                     eprintln!("  --> {{ unknown location }}");
                 }
@@ -446,11 +529,13 @@ impl DiagnosticContext {
             let mut backtrace = vec![];
             for marker in filtered_frames {
                 let Marker::Span(span) = marker else { continue };
+                let span = self.map_span(span);
+
                 if let Some(file_name) = inner.file_map.get(&span.file) {
                     backtrace.push(Some(Location {
                         file: file_name.display().to_string(),
                         line: span.line + 1,
-                        column: span.column + 1,
+                        column: span.column.map(|c| c + 1),
                     }));
                 } else {
                     backtrace.push(None);

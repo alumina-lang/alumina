@@ -637,7 +637,7 @@ impl DoctestWriter {
         }
     }
 
-    fn write_test(self: &mut DoctestWriter, name: &[u8], source: &[u8], no_run: bool, panics: bool) {
+    fn write_test(self: &mut DoctestWriter, name: &[u8], source: &[u8], no_run: bool, panics: bool, filename: &[u8], line: usize) {
         use std::fmt::writeln;
         let fmt = StreamFormatter::new(&self.writer);
 
@@ -648,6 +648,7 @@ impl DoctestWriter {
         } else {
             writeln!(&fmt, "#[test]").unwrap();
         }
+        writeln!(&fmt, "#[location(\"{}\", {})]", filename, line).unwrap();
         writeln!(&fmt, "fn test_{}_{}() {{", name, self.index).unwrap();
         writeln!(&fmt, "{}", source).unwrap();
         writeln!(&fmt, "}}").unwrap();

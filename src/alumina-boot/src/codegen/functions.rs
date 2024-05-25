@@ -318,7 +318,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
 
         self.type_writer.add_type(expr.ty)?;
 
-        if let Some(span) = expr.span {
+        if let Some(span) = expr.span.map(|s| self.ctx.global_ctx.diag().map_span(s)) {
             let prev_line = self.last_span.map(|s| (s.file, s.line + 1));
             if prev_line != Some((span.file, span.line + 1)) {
                 if prev_line == Some((span.file, span.line)) {

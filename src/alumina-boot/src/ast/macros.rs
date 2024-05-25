@@ -609,14 +609,15 @@ impl<'ast> MacroExpander<'ast> {
             BuiltinMacroKind::Line | BuiltinMacroKind::Column => {
                 let (line, column) = self
                     .invocation_span
-                    .map(|s| (s.line + 1, s.column + 1))
+                    .map(|s| self.global_ctx.diag().map_span(s))
+                    .map(|s| (s.line + 1, s.column.map(|c| c + 1)))
                     .ok_or(CodeDiagnostic::NoSpanInformation)
                     .with_span(self.invocation_span)?;
 
                 let kind = if let BuiltinMacroKind::Line = kind {
                     ExprKind::Lit(Lit::Int(false, line as u128, None))
                 } else {
-                    ExprKind::Lit(Lit::Int(false, column as u128, None))
+                    ExprKind::Lit(Lit::Int(false, column.unwrap_or(0) as u128, None))
                 };
 
                 Ok(Expr {
@@ -627,17 +628,17 @@ impl<'ast> MacroExpander<'ast> {
             }
             BuiltinMacroKind::File => {
                 assert_args!(self, 0);
+                let diag = self.global_ctx.diag();
+
                 let filename = self
                     .invocation_span
+                    .map(|s| diag.map_span(s))
                     .and_then(|s| {
-                        self.global_ctx
-                            .diag()
-                            .get_file_path(s.file)
-                            .map(|filename| {
-                                self.ast
-                                    .arena
-                                    .alloc_slice_copy(filename.to_string_lossy().as_bytes())
-                            })
+                        diag.get_file_path(s.file).map(|filename| {
+                            self.ast
+                                .arena
+                                .alloc_slice_copy(filename.to_string_lossy().as_bytes())
+                        })
                     })
                     .ok_or(CodeDiagnostic::NoSpanInformation)
                     .with_span(self.invocation_span)?;
