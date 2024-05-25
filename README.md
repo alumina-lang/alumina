@@ -1,5 +1,5 @@
 # Alumina Programming Language
-
+  
 Alumina is an imperative, general-purpose, statically typed, compiled system programming language.
 
 Non-exhaustive list of distinguishing features:
