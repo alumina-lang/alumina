@@ -1,4 +1,4 @@
-FROM ubuntu:22.04 as environment
+FROM ubuntu:24.04 as environment
 
 ENV DEBIAN_FRONTEND noninteractive
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL sparse
@@ -30,7 +30,7 @@ ADD . .
 ENV RELEASE=1
 RUN make -j8
 
-FROM ubuntu:22.04 as alumina-boot
+FROM ubuntu:24.04 as alumina-boot
 
 COPY --from=builder /alumina/build/release/alumina-boot /usr/bin/alumina-boot
 COPY ./sysroot /usr/include/alumina
