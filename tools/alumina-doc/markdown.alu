@@ -275,7 +275,10 @@ fn write_docstring<T: std::io::Writable<T>>(
     let doctest_source = StringBuf::new();
     defer doctest_source.free();
 
-    for i in doc_comment.split("\n") {
+    let num_lines = doc_comment.split("\n").count();
+    let doctest_start: Option<usize> = Option::none();
+
+    for (line_num, i) in doc_comment.split("\n").enumerate() {
         let docline =  if i.starts_with("///") {
             i.trim_prefix("///").trim_prefix(" ")
         } else {
@@ -298,7 +301,12 @@ fn write_docstring<T: std::io::Writable<T>>(
                             name.as_slice(),
                             doctest_source.as_slice(),
                             cb_type == CodeBlockType::NoRun || cb_type == CodeBlockType::NasalDemons,
-                            cb_type == CodeBlockType::Panics
+                            cb_type == CodeBlockType::Panics,
+                            doctest_item.parse_context.filename[..],
+                            // We assume that the docstring is contiguous (no empty or other comment lines in between)
+                            // and that the item is directly after the docstring. This is not exact, but we cannot
+                            // really do better than that easily.
+                            doctest_item.node.start_point().row as usize + doctest_start.unwrap() - num_lines
                         );
                         name.free();
                     }
@@ -340,6 +348,7 @@ fn write_docstring<T: std::io::Writable<T>>(
 
                 writeln!(writer, "</pre>")?;
             } else {
+                doctest_start = Option::some(line_num);
                 doctest_source.clear();
                 cb_type = switch docline.trim() {
                     "```not_alumina" => CodeBlockType::NotAlumina,

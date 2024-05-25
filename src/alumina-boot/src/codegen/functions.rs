@@ -121,7 +121,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             fn_decls: String::with_capacity(size_estimate / 3 * 2),
             fn_bodies: String::with_capacity(size_estimate),
             indent: 0,
-            debug_info: ctx.global_ctx.has_cfg("debug"),
+            debug_info: !ctx.global_ctx.has_option("no-debug-info"),
             in_const_init: false,
             last_span: None,
         }
@@ -318,23 +318,26 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
 
         self.type_writer.add_type(expr.ty)?;
 
-        if let Some(span) = expr.span {
-            let prev_line = self.last_span.map(|s| (s.file, s.line + 1));
-            if prev_line != Some((span.file, span.line + 1)) {
-                if prev_line == Some((span.file, span.line)) {
-                    w!(self.fn_bodies, "\n");
-                } else if let Some(filename) = self.ctx.global_ctx.diag().get_file_path(span.file) {
-                    w!(
-                        self.fn_bodies,
-                        "\n#line {} {:?}\n",
-                        span.line + 1,
-                        filename.display()
-                    );
+        if self.debug_info {
+            if let Some(span) = expr.span.map(|s| self.ctx.global_ctx.diag().map_span(s)) {
+                let prev_line = self.last_span.map(|s| (s.file, s.line + 1));
+                if prev_line != Some((span.file, span.line + 1)) {
+                    if prev_line == Some((span.file, span.line)) {
+                        w!(self.fn_bodies, "\n");
+                    } else if let Some(filename) =
+                        self.ctx.global_ctx.diag().get_file_path(span.file)
+                    {
+                        w!(
+                            self.fn_bodies,
+                            "\n#line {} {:?}\n",
+                            span.line + 1,
+                            filename.display()
+                        );
+                    }
+                } else {
+                    self.last_span = None;
                 }
-                self.last_span = Some(span);
             }
-        } else {
-            self.last_span = None;
         }
 
         match &expr.kind {

@@ -801,3 +801,27 @@ fn test_pretty_print() {
     assert_eq!(stringify!(a + (a + b)..(b +c) + c), "(a + (a + b))..((b + c) + c)");
     assert_eq!(stringify!(a + ((a + b)..(b +c)) + c), "(a + ((a + b)..(b + c))) + c");
 }
+
+
+#[test]
+#[location("test/location.alu", 1337)]
+fn test_location() {
+    assert_eq!(std::file!(), "test/location.alu");
+    assert_eq!(std::line!(), 1341); // 1337 + 4, the location attribute offsets from the whole item it is attached to (including any previous attributes)
+    assert_eq!(std::column!(), 0); // Column information is discarded when location is overridden
+}
+
+
+#[test]
+#[location("test/location.alu", 1337)]
+fn test_location_nested() {
+
+    #[location("test/other.alu", 1337)]
+    fn nested() {
+        assert_eq!(std::file!(), "test/other.alu");
+        assert_eq!(std::line!(), 1340);
+        assert_eq!(std::column!(), 0);
+    }
+
+    nested();
+}

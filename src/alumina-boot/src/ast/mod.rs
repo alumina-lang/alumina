@@ -966,7 +966,7 @@ pub struct Span {
     pub start: usize,
     pub end: usize,
     pub line: usize,
-    pub column: usize,
+    pub column: Option<usize>,
     pub file: FileId,
 }
 
@@ -976,7 +976,7 @@ impl Span {
             start: node.start_byte(),
             end: node.end_byte(),
             line: node.start_position().row,
-            column: node.start_position().column,
+            column: Some(node.start_position().column),
             file,
         }
     }

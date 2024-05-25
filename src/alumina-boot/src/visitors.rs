@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::ast::expressions::parse_string_literal;
 use crate::ast::{AstCtx, Attribute, ItemP, MacroCtx, Span, TestMetadata};
 use crate::common::{
@@ -406,6 +408,44 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
             "transparent" => {
                 check_duplicate!(Attribute::Transparent);
                 self.attributes.push(Attribute::Transparent);
+            }
+            "location" => {
+                let mut cursor = node.walk();
+                let args: Vec<_> = node
+                    .child_by_field(FieldKind::Arguments)
+                    .map(|a| {
+                        a.children_by_field(FieldKind::Argument, &mut cursor)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                if args.len() != 2 {
+                    return Err(CodeDiagnostic::InvalidAttributeDetail(
+                        "location requires two arguments".to_string(),
+                    ))
+                    .with_span_from(&self.scope, node);
+                }
+
+                let file = parse_string_literal(self.code.node_text(args[0]))
+                    .map_err(|_| ())
+                    .and_then(|a| String::from_utf8(a).map_err(|_| ()))
+                    .map(PathBuf::from)
+                    .map_err(|_| {
+                        CodeDiagnostic::InvalidAttributeDetail("invalid file name".to_string())
+                    })
+                    .with_span_from(&self.scope, node)?;
+
+                let line: usize = self
+                    .code
+                    .node_text(args[1])
+                    .parse()
+                    .map_err(|_| CodeDiagnostic::InvalidAttribute)
+                    .with_span_from(&self.scope, node)?;
+
+                let enclosing_span = Span::from_node(self.scope.file_id(), self.applies_to_node);
+                self.global_ctx
+                    .diag()
+                    .add_location_override(enclosing_span, file, line - 1);
             }
             "packed" => {
                 check_duplicate!(Attribute::Packed(_));
