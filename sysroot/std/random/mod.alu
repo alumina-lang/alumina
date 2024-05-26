@@ -588,77 +588,63 @@ impl Pcg32 {
 /// Default general purpose random number generator.
 type DefaultRng = Pcg32;
 
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-{
-    /// RNG backed by a OS-provided random number generation facility
-    ///
-    /// On Linux, this is based on `libc::getrandom`, on other UNIX-like platforms, this
-    /// reads random bytes from `/dev/urandom`.
-    ///
-    /// ## Usage notes
-    /// `OsRng` is generally considered to be safe to use for cryptographic purposes. However, since
-    /// it results in a syscall for each operation, it may be too slow when used as a general-purpose RNG.
-    ///
-    /// Good choice for seeding other RNGs.
-    struct OsRng {
-        #[cfg(not(target_os = "linux"))]
-        file: fs::File
+
+/// RNG backed by a OS-provided random number generation facility
+///
+/// On Linux, this is based on `libc::getrandom`, on MacOS it is based on `libc::getentropy`.
+///
+/// ## Usage notes
+/// `OsRng` is generally considered to be safe to use for cryptographic purposes. However, since
+/// it results in a syscall for each operation, it may be too slow when used as a general-purpose RNG.
+///
+/// Good choice for seeding other RNGs.
+///
+/// ## Example
+/// ```
+/// use std::random::OsRng;
+///
+/// let rng = OsRng::new();
+/// println!("{}", rng.next_u64()); // prints a random u64
+/// ```
+struct OsRng {}
+
+impl OsRng {
+    use mem::{size_of, slice};
+
+    /// Create a new instance of OsRng
+    fn new() -> OsRng {
+        OsRng {}
     }
 
-    impl OsRng {
-        use mem::{size_of, slice};
-
-        /// Create a new instance of OsRng
-        #[cfg(not(target_os = "linux"))]
-        fn new() -> OsRng {
-            use fs::Path;
-
-            OsRng {
-                file: fs::File::open(Path::new("/dev/urandom"))
-                .unwrap()
-            }
-        }
-
-        /// Create a new instance of OsRng
-        #[cfg(target_os = "linux")]
-        fn new() -> OsRng {
-            OsRng {}
-        }
-
-        /// @ Rng::next_u32
-        fn next_u32(self: &mut OsRng) -> u32 {
-            let ret: u32;
-            self.fill_bytes(slice::from_raw(&ret as &mut u8, size_of::<u32>()));
-            ret
-        }
-
-        /// @ Rng::next_u64
-        fn next_u64(self: &mut OsRng) -> u64 {
-            let ret: u64;
-            self.fill_bytes(slice::from_raw(&ret as &mut u8, size_of::<u64>()));
-            ret
-        }
-
-        /// @ Rng::fill_bytes
-        fn fill_bytes(self: &mut OsRng, dest: &mut [u8]) {
-            #[cfg(not(target_os = "linux"))]
-            self.file.read_exact(dest).unwrap();
-            #[cfg(target_os = "linux")]
-            libc::getrandom(&dest[0] as &mut void, dest.len(), 0);
-        }
-
-        /// Close the file descriptor
-        ///
-        /// On Linux this is a no-op.
-        fn close(self: &mut OsRng) {
-            #[cfg(not(target_os = "linux"))]
-            self.file.close().unwrap();
-        }
-
-        mixin Rng<OsRng>;
-        mixin RngExt<OsRng>;
+    /// @ Rng::next_u32
+    #[inline]
+    fn next_u32(self: &mut OsRng) -> u32 {
+        let ret: u32;
+        self.fill_bytes(slice::from_raw(&ret as &mut u8, size_of::<u32>()));
+        ret
     }
+
+    /// @ Rng::next_u64
+    #[inline]
+    fn next_u64(self: &mut OsRng) -> u64 {
+        let ret: u64;
+        self.fill_bytes(slice::from_raw(&ret as &mut u8, size_of::<u64>()));
+        ret
+    }
+
+    /// @ Rng::fill_bytes
+    #[inline]
+    fn fill_bytes(self: &mut OsRng, dest: &mut [u8]) {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        libc::getrandom(&dest[0] as &mut void, dest.len(), 0);
+        #[cfg(target_os = "macos")]
+        libc::getentropy(&dest[0] as &mut void, dest.len());
+    }
+
+    mixin Rng<OsRng>;
+    mixin RngExt<OsRng>;
 }
+
 
 /// A thread-local RNG.
 ///
@@ -776,10 +762,8 @@ mod internal {
 
     fn seed_default_rng() -> Pcg32 {
         let seed: [u8; 16];
-        let seeder = OsRng::new();
-        defer seeder.close();
 
-        seeder.fill_bytes(&seed);
+        OsRng::new().fill_bytes(&seed);
         Pcg32::from_seed(&seed)
     }
 
