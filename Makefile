@@ -326,18 +326,18 @@ coverage:
 	COVERAGE=1 CACHE_AST=1 $(MAKE) all-tests-with-coverage
 
 all-tests-with-coverage: test test-docs test-libraries test-diag examples
-	llvm-profdata merge \
+	llvm-profdata$(LLVM_SUFFIX) merge \
 		-sparse  \
 		$(BUILD_DIR)/profiles/* \
 		-o $(BUILD_DIR)/profiles/merged.profdata
 
-	llvm-cov export \
+	llvm-cov$(LLVM_SUFFIX) export \
 		-Xdemangler=rustfilt \
 		-format=lcov \
 		-instr-profile=$(BUILD_DIR)/profiles/merged.profdata $(ALUMINA_BOOT) \
 		$(BOOTSTRAP_SOURCES) > $(BUILD_DIR)/coverage.txt
 
-	llvm-cov show \
+	llvm-cov$(LLVM_SUFFIX) show \
 		-Xdemangler=rustfilt \
 		-format=html \
 		-instr-profile=$(BUILD_DIR)/profiles/merged.profdata $(ALUMINA_BOOT) \
