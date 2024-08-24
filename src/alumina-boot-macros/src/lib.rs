@@ -96,8 +96,8 @@ pub fn ast_serializable(input: TokenStream) -> TokenStream {
                         }
                     });
 
-                let deserialize_fields = variant.fields.iter().enumerate()
-                    .map(|(_i, f)| {
+                let deserialize_fields = variant.fields.iter()
+                    .map(|f| {
                         let ty = &f.ty;
                         quote! {
                             <#ty as #module_path::AstSerializable<#lifetime>>::deserialize(deserializer)?
@@ -167,8 +167,8 @@ pub fn ast_serializable(input: TokenStream) -> TokenStream {
                     }
                 });
 
-            let deserialize_fields = r#struct.fields.iter().enumerate()
-                .map(|(_i, f)| {
+            let deserialize_fields = r#struct.fields.iter()
+                .map(|f| {
                     let ty = &f.ty;
                     if let Some(field) = &f.ident {
                         quote! {

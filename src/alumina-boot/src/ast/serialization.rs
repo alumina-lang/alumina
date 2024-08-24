@@ -467,6 +467,7 @@ impl<'ast> DeserializeContext<'ast> {
 }
 
 pub struct AstDeserializer<'ast, R: std::io::Read> {
+    #[allow(dead_code)]
     pub global_ctx: GlobalCtx,
     pub ast: &'ast AstCtx<'ast>,
     context: DeserializeContext<'ast>,

@@ -95,8 +95,6 @@ jobs:
   code-coverage:
     name: Collect code coverage
     runs-on: ubuntu-latest
-    # Temporarily disabled due to clang miscompilation?
-    if: false
     steps:
       - uses: actions/checkout@v2
       - name: Install Rust
@@ -109,7 +107,10 @@ jobs:
 
       - name: Install LLVM
         run: |
-          sudo apt-get install -y llvm
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 18
+          sudo apt-get install -y llvm-18 llvm-18-dev clang-tools-18
 
       - name: Install Tree-sitter (with runtime)
         run: |
@@ -125,7 +126,7 @@ jobs:
 
       - name: Build dist-check with coverage
         timeout-minutes: 10
-        run: make coverage -j8
+        run: CC=clang-18 LLVM_SUFFIX=-18 make coverage -j8
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v3
