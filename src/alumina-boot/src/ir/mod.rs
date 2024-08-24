@@ -279,6 +279,7 @@ pub struct StructLike<'ir> {
     pub attributes: &'ir [Attribute<'ir>],
     pub fields: &'ir [Field<'ir>],
     pub is_union: bool,
+    #[allow(dead_code)]
     pub span: Option<Span>,
 }
 
@@ -321,6 +322,7 @@ pub struct Closure<'ir> {
 pub struct Protocol<'ir> {
     pub name: Option<&'ir str>,
     pub methods: &'ir [ProtocolFunction<'ir>],
+    #[allow(dead_code)]
     pub span: Option<Span>,
 }
 
@@ -348,6 +350,7 @@ pub struct Enum<'ir> {
     pub name: Option<&'ir str>,
     pub underlying_type: TyP<'ir>,
     pub members: &'ir [EnumMember<'ir>],
+    #[allow(dead_code)]
     pub span: Option<Span>,
 }
 
