@@ -107,7 +107,8 @@ jobs:
 
       - name: Install LLVM
         run: |
-          sudo apt-get install -y llvm
+          bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)"
+          sudo apt-get install -y llvm-18 llvm-18-dev clang-tools-18
 
       - name: Install Tree-sitter (with runtime)
         run: |
@@ -123,7 +124,7 @@ jobs:
 
       - name: Build dist-check with coverage
         timeout-minutes: 10
-        run: make coverage -j8
+        run: CC=clang-18 make coverage -j8
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v3

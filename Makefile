@@ -17,7 +17,7 @@ else ifdef FAST_DEBUG
 	CFLAGS += -g0
 	ALUMINA_FLAGS += --debug
 else ifdef COVERAGE
-	CC = clang
+	CC ?= clang
 	BUILD_DIR = $(BUILD_ROOT)/coverage
 	CARGO_FLAGS += --profile coverage
 	CARGO_TARGET_DIR = target/coverage
