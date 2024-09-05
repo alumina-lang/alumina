@@ -89,7 +89,7 @@ Prism.languages.alumina = {
         /\b(?:null|void|bool|f(?:32|64)|[ui](?:8|16|32|64|128|size))\b/
     ],
     'control-keyword': [
-        /\b(?:break|continue|else|for|if|in|defer|loop|switch|return|when|while)\b/,
+        /\b(?:break|continue|else|for|if|in|defer|loop|switch|return|yield|when|while)\b/,
     ],
 
     'function': /\b[a-z_]\w*(?=\s*(?:::\s*<|\())/,

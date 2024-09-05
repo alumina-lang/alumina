@@ -265,15 +265,10 @@ all: alumina-boot
 
 ## ------------------ Ad-hoc manual testing shortcuts ------------------
 
-$(BUILD_DIR)/quick.c: $(ALU_DEPS) $(ALU_LIBRARIES) quick.alu
-	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --output $@ \
-		$(call alumina_modules,$(ALU_LIBRARIES),libraries/,/) \
-		quick=./quick.alu
+$(BUILD_DIR)/quick.c: $(ALU_DEPS) quick.alu
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --output $@ quick=./quick.alu
 
-$(BUILD_DIR)/minicoro.o: libraries/minicoro/minicoro.c
-	$(CC) $(CFLAGS) -c $^ -o $@
-
-$(BUILD_DIR)/quick: $(BUILD_DIR)/quick.c $(BUILD_DIR)/minicoro.o
+$(BUILD_DIR)/quick: $(BUILD_DIR)/quick.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 quick: $(BUILD_DIR)/quick

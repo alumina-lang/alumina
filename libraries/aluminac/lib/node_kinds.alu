@@ -105,6 +105,7 @@ enum NodeKind {
     Statement,
     TupleExpression,
     EnumItem,
+    YieldExpression,
     PointerOf,
     ParenthesizedExpression,
     CharLiteral,
@@ -173,7 +174,7 @@ enum FieldKind {
     Value = 53u16,
 }
 
-const NODE_KINDS: [NodeKind; 257] = [
+const NODE_KINDS: [NodeKind; 259] = [
     NodeKind::Invalid,
     NodeKind::Identifier,
     NodeKind::DocComment,
@@ -236,6 +237,7 @@ const NODE_KINDS: [NodeKind; 257] = [
     NodeKind::Identifier,
     NodeKind::Identifier,
     NodeKind::Identifier,
+    NodeKind::Invalid,
     NodeKind::Invalid,
     NodeKind::Invalid,
     NodeKind::Invalid,
@@ -348,6 +350,7 @@ const NODE_KINDS: [NodeKind; 257] = [
     NodeKind::Invalid,
     NodeKind::ExpressionStatement,
     NodeKind::ReturnExpression,
+    NodeKind::YieldExpression,
     NodeKind::DeferExpression,
     NodeKind::Arguments,
     NodeKind::MacroArguments,
@@ -733,6 +736,9 @@ protocol NodeVisitor<Self, ReturnType> {
     fn visit_enum_item(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_enum_item");
     }
+    fn visit_yield_expression(self: &mut Self, _node: Node) -> ReturnType {
+        panic!("unimplemented: visit_yield_expression");
+    }
     fn visit_pointer_of(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_pointer_of");
     }
@@ -868,6 +874,7 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::Statement => self.visit_statement(node),
             NodeKind::TupleExpression => self.visit_tuple_expression(node),
             NodeKind::EnumItem => self.visit_enum_item(node),
+            NodeKind::YieldExpression => self.visit_yield_expression(node),
             NodeKind::PointerOf => self.visit_pointer_of(node),
             NodeKind::ParenthesizedExpression => self.visit_parenthesized_expression(node),
             NodeKind::CharLiteral => self.visit_char_literal(node),
