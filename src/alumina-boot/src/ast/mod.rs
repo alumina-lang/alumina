@@ -740,6 +740,7 @@ pub struct Function<'ast> {
     pub span: Option<Span>,
     pub is_local: bool,
     pub is_lambda: bool,
+    pub is_generator: bool,
     pub varargs: bool,
     pub is_protocol_fn: bool,
 }
@@ -937,6 +938,7 @@ pub enum ExprKind<'ast> {
     EtCetera(ExprP<'ast>),
     Break(Option<ExprP<'ast>>),
     Return(Option<ExprP<'ast>>),
+    Yield(Option<ExprP<'ast>>),
     Defer(ExprP<'ast>),
     Continue,
     Tuple(&'ast [ExprP<'ast>]),

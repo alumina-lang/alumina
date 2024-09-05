@@ -177,6 +177,7 @@ impl<'ast> Rebinder<'ast> {
             Loop(inner) => Loop(self.visit_expr(inner)?),
             Break(inner) => Break(inner.map(|i| self.visit_expr(i)).transpose()?),
             Return(inner) => Return(inner.map(|i| self.visit_expr(i)).transpose()?),
+            Yield(inner) => Yield(inner.map(|i| self.visit_expr(i)).transpose()?),
             Defer(inner) => Defer(self.visit_expr(inner)?),
             Field(a, name, assoc_fn, generic_args) => {
                 let generic_args = match generic_args {

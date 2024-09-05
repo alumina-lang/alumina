@@ -416,17 +416,17 @@ fn sleep(duration: time::Duration) {
 /// /// A bad way to sleep. Use std::thread::sleep instead
 /// fn bad_sleep(duration: Duration) {
 ///     use std::time::Instant;
-///     use std::thread::yield;
+///     use std::thread::yield_thread;
 ///
 ///     let start = time::Instant::now();
 ///     while Instant::now().duration_since(&start) < duration {
-///         yield();
+///         yield_thread();
 ///     }
 /// }
 ///
 /// bad_sleep(Duration::from_millis(10));
 /// ```
-fn yield() {
+fn yield_thread() {
     libc::sched_yield();
 }
 
@@ -654,7 +654,7 @@ mod tests {
             if t._handle.ret.is_ok() {
                 break;
             } else {
-                yield();
+                yield_thread();
             }
         }
 

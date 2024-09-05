@@ -1503,6 +1503,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 is_local: fun.is_local,
                 is_lambda: false,
                 is_protocol_fn: false,
+                is_generator: fun.is_generator,
             }));
 
             result.push(ast::AssociatedFn {
@@ -5413,6 +5414,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.lower_range(*lower, *upper, *inclusive, type_hint, expr.span)
             }
             ast::ExprKind::Return(inner) => self.lower_return(*inner, type_hint, expr.span),
+            ast::ExprKind::Yield(_inner) => ice!(self.diag, "yield not implemented"),
             ast::ExprKind::Fn(item, args) => self.lower_fn(*item, *args, type_hint, expr.span),
             ast::ExprKind::Static(item, args) => {
                 self.lower_static(item, *args, type_hint, expr.span)

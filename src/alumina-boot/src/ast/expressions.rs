@@ -951,6 +951,15 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         Ok(ExprKind::Return(inner).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
+    fn visit_yield_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let inner = node
+            .child_by_field(FieldKind::Inner)
+            .map(|n| self.visit(n))
+            .transpose()?;
+
+        Ok(ExprKind::Yield(inner).alloc_with_span_from(self.ast, &self.scope, node))
+    }
+
     fn visit_defer_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let inner = self.visit(node.child_by_field(FieldKind::Inner).unwrap())?;
 
@@ -1544,6 +1553,7 @@ impl<'ast, 'src> LambdaVisitor<'ast, 'src> {
             is_local: true,
             is_lambda: true,
             is_protocol_fn: false,
+            is_generator: false,
         }));
 
         let bindings = self
