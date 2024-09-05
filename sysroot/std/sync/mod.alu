@@ -354,7 +354,7 @@ fn compiler_fence(ordering: Ordering) {
 
 /// A hint to the CPU that we are spinning
 ///
-/// This does not result in a system call like [thread::yield], but can reduce power usage
+/// This does not result in a system call like [thread::yield_thread], but can reduce power usage
 /// or allow other hyperthreads to run.
 ///
 /// ## Example
@@ -1151,7 +1151,7 @@ mod tests {
     #[cfg(threading)]
     #[test]
     fn test_oneshot_blocking() {
-        use thread::{spawn, yield, Thread};
+        use thread::{spawn, yield_thread, Thread};
 
         let chan: Oneshot<i32> = Oneshot::new();
         let main_thread = Thread::current();
@@ -1176,7 +1176,7 @@ mod tests {
         }
         /// Make sure the threads are really blocked.
         for _ in 0..100 {
-            yield();
+            yield_thread();
         }
 
         chan.send(42);

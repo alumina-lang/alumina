@@ -220,6 +220,10 @@ pub enum CodeDiagnostic {
     ProtocolFnsCannotBeExtern,
     #[error("varargs functions can only be extern")]
     VarArgsCanOnlyBeExtern,
+    #[error("generators cannot be extern")]
+    ExternGenerator,
+    #[error("generators cannot be protocol functions")]
+    ProtocolGenerator,
     #[error("type `{}` matches `{}`, which it should not", .0, .1)]
     ProtocolMatch(String, String),
     #[error("type `{}` does not match `{}`", .0, .1)]

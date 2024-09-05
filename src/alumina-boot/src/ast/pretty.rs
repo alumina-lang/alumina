@@ -555,6 +555,14 @@ impl<'ast> PrettyPrinter<'ast> {
                     "return".to_string()
                 }
             }
+            ExprKind::Yield(val) => {
+                if let Some(val) = val {
+                    add_parens = true;
+                    format!("yield {}", self.print_expr_parens(val))
+                } else {
+                    "yield".to_string()
+                }
+            }
             ExprKind::Defer(val) => {
                 add_parens = true;
                 format!("defer {}", self.print_expr_parens(val))

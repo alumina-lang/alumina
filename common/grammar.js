@@ -156,6 +156,7 @@ module.exports = grammar({
           seq(field("extern", "extern"), field("abi", $.string_literal))
         ),
         "fn",
+        field("generator", optional("*")),
         field("name", $.identifier),
         optional(field("type_arguments", $.generic_argument_list)),
         field("parameters", $.parameter_list),
@@ -523,11 +524,24 @@ module.exports = grammar({
         prec(-1, "return")
       ),
 
+    yield_expression: ($) =>
+        choice(
+          prec.left(seq("yield", field("inner", $._expression))),
+          prec(-1, "yield")
+        ),
+
     defer_expression: ($) =>
       prec.left(seq("defer", field("inner", $._expression))),
 
     arguments: ($) =>
       seq("(", sepBy(",", field("inner", $._expression)), optional(","), ")"),
+
+    macro_arguments: ($) =>
+      choice(
+        seq("(", sepBy(",", field("inner", $._expression)), optional(","), ")"),
+        seq("[", sepBy(",", field("inner", $._expression)), optional(","), "]"),
+        seq("{", sepBy(",", field("inner", $._expression)), optional(","), "}")
+      ),
 
     tuple_expression: ($) =>
       seq(
@@ -554,6 +568,7 @@ module.exports = grammar({
     _expression_except_range: ($) =>
       choice(
         $.return_expression,
+        $.yield_expression,
         $.defer_expression,
         $.break_expression,
         $.continue_expression,
@@ -653,7 +668,7 @@ module.exports = grammar({
           ".",
           field("macro", $.identifier),
           "!",
-          field("arguments", $.arguments)
+          field("arguments", $.macro_arguments)
         )
       ),
 
@@ -731,7 +746,7 @@ module.exports = grammar({
       seq(
         field("macro", $._expression_except_range),
         "!",
-        field("arguments", $.arguments)
+        field("arguments", $.macro_arguments)
       )),
 
     struct_initializer_item: ($) =>
