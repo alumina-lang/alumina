@@ -347,6 +347,12 @@ all-tests-with-coverage: test test-docs test-libraries test-diag examples
 serve-coverage:
 	@cd $(BUILD_ROOT)/coverage/html && python3 -m http.server
 
+## ----------------------------- Random ---------------------------------
+
+.PHONY: cloc
+cloc:
+	@cloc --read-lang-def=tools/cloc_language_def.txt $(shell git ls-files)
+
 ## ------------------------------ Dist ----------------------------------
 
 .PHONY: lint-rust dist-check
