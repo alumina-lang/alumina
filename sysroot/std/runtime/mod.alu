@@ -49,14 +49,126 @@ macro const_eval($arg) {
     intrinsics::const_eval($arg)
 }
 
+#[lang(generator)]
+struct Generator<T> {
+    _coro: &mut minicoro::mco_coro
+}
+
+/// A generator that yields values of type `T`.
+///
+/// This is the return type
+impl Generator<T> {
+    use internal::minicoro_check;
+    use mem::size_of;
+
+    /// @ iter::Iterator::next
+    fn next(self: &mut Generator<T>) -> Option<T> {
+        use minicoro::mco_state;
+        minicoro::mco_resume(self._coro).minicoro_check!();
+
+        switch minicoro::mco_status(self._coro) {
+            mco_state::MCO_DEAD => {
+                Option::none()
+            }
+            mco_state::MCO_SUSPENDED => {
+                when !typing::is_zero_sized::<T>() {
+                    let value: T;
+                    minicoro::mco_pop(self._coro, &value as &mut (), size_of::<T>()).minicoro_check!();
+                    Option::some(value)
+                } else {
+                    Option::some(std::util::unit::<()>())
+                }
+            }
+            _ => unreachable!()
+        }
+    }
+
+    /// @ iter::Iterator::size_hint
+    fn size_hint(self: &Generator<T>) -> Option<usize> {
+        Option::none()
+    }
+
+    /// Closes the generator
+    ///
+    /// This method can be used to gracefully close the generator early, allowing any `defer` statements
+    /// in it to run.
+    ///
+    /// It is still necessary to call [free] to free the generator's resources after it has been closed.
+    fn close(self: &mut Generator<T>) {
+        switch minicoro::mco_status(self._coro) {
+            minicoro::mco_state::MCO_DEAD => {}
+            minicoro::mco_state::MCO_SUSPENDED => {
+                self._coro.user_data = std::mem::dangling();
+                minicoro::mco_resume(self._coro).minicoro_check!();
+            }
+        }
+    }
+
+    /// @ mem::Freeable::free
+    fn free(self: &mut Generator<T>) {
+        if self._coro != null {
+            minicoro::mco_destroy(self._coro).minicoro_check!();
+        }
+    }
+
+    // @ mem::Movable::move
+    fn move(self: &mut Generator<T>) -> Generator<T> {
+        let ret = *self;
+        self._coro = null;
+        ret
+    }
+
+    mixin iter::Iterator<Generator<T>, T>;
+    mixin iter::IteratorExt<Generator<T>, T>;
+}
+
 #[cfg(not(output_type = "library"))]
 mod internal {
     use builtins::{return_type_of, arguments_of, NamedFunction};
-    use mem::slice;
+    use mem::{slice, size_of};
 
-    #[lang(generator)]
-    struct Generator<T> {
-        coro: &mut minicoro::mco_coro
+    macro minicoro_check($result) {
+        let result = $result;
+        if result != minicoro::mco_result::MCO_SUCCESS {
+            panic!("{}", ffi::CString::from_raw(minicoro::mco_result_description(result))[..]);
+        }
+    }
+
+    #[lang(generator_new)]
+    #[inline(always)]
+    fn generator_new<Func: NamedFunction, Args: builtins::Tuple, YieldType>(args: Args) -> Generator<YieldType> {
+        fn _coro_entry<Fun, Args>(coro: &mut minicoro::mco_coro) {
+            let f = std::util::unit::<Fun>();
+            let args: Args;
+            when !typing::is_zero_sized::<Args>() {
+                minicoro::mco_pop(coro, &args as &mut (), size_of::<Args>()).minicoro_check!();
+            }
+            std::util::invoke(f, args);
+        }
+
+        let coro: &mut minicoro::mco_coro;
+        minicoro::mco_create(&coro, &minicoro::mco_desc_init(
+            _coro_entry::<Func, Args>,
+            0
+        )).minicoro_check!();
+
+        when !typing::is_zero_sized::<YieldType>() {
+            minicoro::mco_push(coro, &args as &(), size_of::<Args>()).minicoro_check!();
+        }
+        Generator::<YieldType> {
+            _coro: coro
+        }
+    }
+
+    #[lang(generator_yield)]
+    #[inline(always)]
+    fn generator_yield<T>(value: &T) -> bool {
+        let running = minicoro::mco_running();
+        when !typing::is_zero_sized::<T>() {
+            minicoro::mco_push(running, value as &(), size_of::<T>()).minicoro_check!();
+        }
+        minicoro::mco_yield(running).minicoro_check!();
+        return running.user_data == std::mem::dangling();
     }
 
     #[cfg(all(test))]
