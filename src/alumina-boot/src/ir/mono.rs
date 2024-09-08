@@ -1164,6 +1164,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             // is no way for the user to annotate them.
             let mut type_inferer = TypeInferer::new(
                 self.mono_ctx.ast,
+                self.mono_ctx.ir,
                 self.mono_ctx,
                 candidate_fun.placeholders.to_vec(),
             );
@@ -1353,7 +1354,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             protocol_bounds.push((placeholder.bounds.kind, *ty, grouped_bounds));
         }
 
-        let parameters = func
+        let mut parameters = func
             .args
             .iter()
             .map(|p| {
@@ -1373,13 +1374,46 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .collect::<Vec<_>>();
 
         let return_type = child.lower_type_for_value(func.return_type)?;
+        let generator_type = func
+            .is_generator
+            .then(|| child.monomorphize_lang_item(LangItemKind::Generator, [return_type]))
+            .transpose()?
+            .map(|i| child.types.named(i));
+
+        let tuple_args_arg = if attributes.contains(&ast::Attribute::TupleCall) {
+            if parameters.len() != 1 {
+                bail!(self, CodeDiagnostic::TupleCallArgCount);
+            }
+
+            let ir::Ty::Tuple(args) = parameters[0].ty else {
+                bail!(self, CodeDiagnostic::TupleCallArgType);
+            };
+
+            let tuple_param = parameters[0];
+            parameters = args
+                .iter()
+                .map(|ty| {
+                    let param = ir::Parameter {
+                        id: child.mono_ctx.ir.make_id(),
+                        ty,
+                    };
+                    child.local_types.insert(param.id, param.ty);
+                    param
+                })
+                .collect();
+
+            Some((tuple_param, &parameters[..]))
+        } else {
+            None
+        };
+
         let res = ir::IRItem::Function(ir::Function {
             name: func.name.map(|n| n.alloc_on(child.mono_ctx.ir)),
             attributes: attributes.alloc_on(child.mono_ctx.ir),
-            args: parameters.alloc_on(child.mono_ctx.ir),
+            args: (&parameters[..]).alloc_on(child.mono_ctx.ir),
             varargs: func.varargs,
             span: func.span,
-            return_type,
+            return_type: generator_type.unwrap_or(return_type),
             body: OnceCell::new(),
         });
         item.assign(res);
@@ -1401,6 +1435,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             let body = child.lower_function_body(
                 body,
                 func.attributes.contains(&ast::Attribute::InlineDuringMono),
+                tuple_args_arg,
             )?;
             item.get_function().unwrap().body.set(body).unwrap();
         }
@@ -1525,9 +1560,33 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         mut self,
         expr: ast::ExprP<'ast>,
         is_ir_inline: bool,
+        tuple_args_args: Option<(ir::Parameter<'ir>, &[ir::Parameter<'ir>])>,
     ) -> Result<ir::FuncBody<'ir>, AluminaError> {
         let return_type = self.return_type.unwrap();
-        let body = self.lower_expr(expr, Some(return_type))?;
+        let body = match tuple_args_args {
+            Some((tuple_param, params)) => {
+                let tuple_var = self.exprs.local(tuple_param.id, tuple_param.ty, expr.span);
+                self.local_defs.push(ir::LocalDef {
+                    id: tuple_param.id,
+                    typ: tuple_param.ty,
+                });
+
+                let stmts: Vec<_> = params
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, param)| {
+                        ir::Statement::Expression(self.exprs.assign(
+                            self.exprs.tuple_index(tuple_var, idx, param.ty, expr.span),
+                            self.exprs.local(param.id, param.ty, expr.span),
+                            expr.span,
+                        ))
+                    })
+                    .collect();
+                let actual_expr = self.lower_expr(expr, Some(return_type))?;
+                self.exprs.block(stmts, actual_expr, expr.span)
+            }
+            None => self.lower_expr(expr, Some(return_type))?,
+        };
 
         let body = self.try_coerce(return_type, body)?;
         if is_ir_inline {
@@ -1878,6 +1937,20 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                             return Ok(Some(self.mono_ctx.ir.intern_type(ir::Ty::Tuple(&tys[1..]))))
                         }
                     }
+                }
+                bail!(self, CodeDiagnostic::InvalidTypeOperator);
+            }
+            Some(LangItemKind::TypeopTupleConcatOf) => {
+                arg_count!(2);
+                if let (ir::Ty::Tuple(a), ir::Ty::Tuple(b)) = (&args[0], &args[1]) {
+                    // Cannot use chain because it is not ExactSizeIterator
+                    return Ok(Some(self.types.tuple((0..a.len() + b.len()).map(|i| {
+                        if i < a.len() {
+                            a[i]
+                        } else {
+                            b[i - a.len()]
+                        }
+                    }))));
                 }
                 bail!(self, CodeDiagnostic::InvalidTypeOperator);
             }
@@ -2413,8 +2486,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         let (fns, mixins) = match item.get() {
             ast::Item::StructLike(s) => (s.associated_fns, s.mixins),
             ast::Item::Enum(e) => (e.associated_fns, e.mixins),
-            // ast::Item::TypeDef(e) => (e.),
-            _ => ice!(self.diag, "no associated functions for this type"),
+            _ => return Ok(associated_fns),
         };
 
         associated_fns.extend(fns.iter().map(|f| (f.name, f.item)));
@@ -2628,67 +2700,115 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         // If the monomorphization of an argument fails for whatever reason, we skip that arg,
         // but do not rethrow the error as the resolution might still succeed.
 
-        let mut infer_pairs = Vec::new();
-
-        let self_slot = self_expr.map(|self_expr| (fun.args[0].typ, self_expr.ty));
+        let mut infer_pairs: Vec<(ast::TyP<'ast>, ir::TyP<'ir>)> = Vec::new();
 
         let mut tentative_errors = Vec::new();
         let self_count = self_expr.iter().count();
 
-        if let Some(args) = tentative_args {
-            if fun.args.len() != args.len() + self_count {
-                bail!(
-                    self,
-                    CodeDiagnostic::ParamCountMismatch(fun.args.len() - self_count, args.len())
-                );
-            }
-
+        let arg_types = if let Some(tentative_args) = tentative_args {
             let mut child = self.make_tentative_child();
-            infer_pairs.extend(
-                fun.args
-                    .iter()
-                    .skip(self_count)
-                    .zip(args.iter())
-                    .filter_map(|(p, e)| match child.lower_expr(e, None) {
-                        Ok(e) => Some(Ok((p.typ, e.ty))),
-                        Err(AluminaError::CodeErrors(errors)) => {
-                            tentative_errors.extend(
-                                errors.into_iter().filter(|f| {
-                                    !matches!(f.kind, CodeDiagnostic::TypeHintRequired)
-                                }),
-                            );
-                            None
-                        }
-                        Err(e) => Some(Err(e)),
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            );
+            let arg_types = tentative_args
+                .iter()
+                .map(|e| match child.lower_expr(e, None) {
+                    Ok(e) => Ok(Some(e.ty)),
+                    Err(AluminaError::CodeErrors(errors)) => {
+                        tentative_errors.extend(
+                            errors
+                                .into_iter()
+                                .filter(|f| !matches!(f.kind, CodeDiagnostic::TypeHintRequired)),
+                        );
+                        Ok(None)
+                    }
+                    Err(e) => Err(e),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
 
             if !tentative_errors.is_empty() {
                 return Err(AluminaError::CodeErrors(tentative_errors));
             }
-        }
 
-        if let Some(args_hint) = args_hint {
-            assert!(tentative_args.is_none());
+            Some(arg_types)
+        } else {
+            args_hint.map(|args_hint| args_hint.iter().copied().map(Some).collect())
+        };
 
-            infer_pairs.extend(
-                fun.args
-                    .iter()
-                    .skip(self_count)
-                    .zip(args_hint.iter())
-                    .map(|(p, e)| (p.typ, *e)),
-            );
+        let mut self_slot = fun.args.first().zip(self_expr).map(|(a, e)| (a.typ, e.ty));
+        if let Some(mut arg_types) = arg_types {
+            if fun.attributes.contains(&ast::Attribute::TupleCall) {
+                // If the function argument is explicitely a tuple in AST (which is not terribly useful), we can do better
+                // than if it is provided as e.g. generic argument.
+                if let Some(ast::Ty::Tuple(inner)) = fun.args.first().map(|a| a.typ) {
+                    if inner.len() != self_count + arg_types.len() {
+                        bail!(
+                            self,
+                            if inner.len() < self_count {
+                                CodeDiagnostic::NotAMethod
+                            } else {
+                                CodeDiagnostic::ParamCountMismatch(
+                                    inner.len() - self_count,
+                                    arg_types.len(),
+                                )
+                            }
+                        );
+                    }
+
+                    self_slot = self_expr.map(|e| (inner[0], e.ty));
+                    infer_pairs.extend(
+                        inner
+                            .iter()
+                            .skip(self_count)
+                            .zip(arg_types)
+                            .filter_map(|(p, e)| Some(*p).zip(e)),
+                    );
+                } else {
+                    self_slot = None;
+                    if let Some(self_arg) = self_expr {
+                        // This will probably not work correctly with autoref, but OTOH, don't put
+                        // #[tuple_args] on methods.
+                        arg_types.insert(0, Some(self_arg.ty));
+                    }
+
+                    if let Some(arg_types) = arg_types.into_iter().collect::<Option<Vec<_>>>() {
+                        infer_pairs.push((fun.args[0].typ, self.types.tuple(arg_types)));
+                    }
+                }
+            } else {
+                if fun.args.len() != arg_types.len() + self_count {
+                    bail!(
+                        self,
+                        if fun.args.len() < self_count {
+                            CodeDiagnostic::NotAMethod
+                        } else {
+                            CodeDiagnostic::ParamCountMismatch(
+                                fun.args.len() - self_count,
+                                arg_types.len(),
+                            )
+                        }
+                    );
+                }
+                self_slot = self_expr.map(|e| (fun.args[0].typ, e.ty));
+                infer_pairs.extend(
+                    fun.args
+                        .iter()
+                        .skip(self_count)
+                        .zip(arg_types)
+                        .filter_map(|(p, e)| Some(p.typ).zip(e)),
+                );
+            }
         }
 
         if let Some(return_type_hint) = return_type_hint {
             infer_pairs.push((fun.return_type, return_type_hint));
         }
 
-        let mut type_inferer =
-            TypeInferer::new(self.mono_ctx.ast, self.mono_ctx, fun.placeholders.to_vec());
+        let mut type_inferer = TypeInferer::new(
+            self.mono_ctx.ast,
+            self.mono_ctx.ir,
+            self.mono_ctx,
+            fun.placeholders.to_vec(),
+        );
 
-        match type_inferer.try_infer(self_slot, infer_pairs) {
+        match type_inferer.try_infer(self_slot, infer_pairs.clone()) {
             Some(generic_args) => {
                 self.monomorphize_item(item, generic_args.alloc_on(self.mono_ctx.ir))
             }
@@ -2776,6 +2896,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let mut type_inferer = TypeInferer::new(
             self.mono_ctx.ast,
+            self.mono_ctx.ir,
             self.mono_ctx,
             r#struct.placeholders.to_vec(),
         );
@@ -4115,6 +4236,9 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             IntrinsicKind::ConstAlloc => self.const_alloc(generic!(0), arg!(0), span),
             IntrinsicKind::ConstFree => self.const_free(arg!(0), span),
             IntrinsicKind::IsConstEvaluable => self.is_const_evaluable(arg!(0), span),
+            IntrinsicKind::TupleInvoke => self.tuple_invoke(arg!(0), arg!(1), span),
+            IntrinsicKind::TupleTail => self.tuple_tail(arg!(0), span),
+            IntrinsicKind::TupleConcat => self.tuple_concat(arg!(0), arg!(1), span),
         }
     }
 
@@ -5859,6 +5983,186 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         ))
     }
 
+    fn ensure_local(
+        &mut self,
+        expr: ir::ExprP<'ir>,
+    ) -> (ir::ExprP<'ir>, Option<ir::Statement<'ir>>) {
+        match expr.kind {
+            ir::ExprKind::Local(_) => (expr, None),
+            _ => {
+                let local = self.mono_ctx.ir.make_id();
+                self.local_defs.push(ir::LocalDef {
+                    id: local,
+                    typ: expr.ty,
+                });
+                let stmt = ir::Statement::Expression(self.exprs.assign(
+                    self.exprs.local(local, expr.ty, None),
+                    expr,
+                    None,
+                ));
+                (self.exprs.local(local, expr.ty, None), Some(stmt))
+            }
+        }
+    }
+
+    fn tuple_invoke(
+        &mut self,
+        callee: ir::ExprP<'ir>,
+        tuple: ir::ExprP<'ir>,
+        ast_span: Option<Span>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let (local_expr, stmt) = self.ensure_local(tuple);
+
+        let mut args: Vec<_> = match tuple.ty {
+            ir::Ty::Tuple(args) => args
+                .iter()
+                .enumerate()
+                .map(|(idx, t)| self.exprs.tuple_index(local_expr, idx, t, ast_span))
+                .collect(),
+            _ => ice!(self.diag, "tuple expected"),
+        };
+
+        let mut varargs = false;
+        let mut self_arg = None;
+
+        let fn_arg_types: Vec<_>;
+        let (arg_types, return_type, callee) = match callee.ty {
+            ir::Ty::FunctionPointer(arg_types, return_type) => (*arg_types, *return_type, callee),
+            ir::Ty::Item(item) => match item.get().with_backtrace(&self.diag)? {
+                ir::IRItem::Closure(closure) => {
+                    self_arg = Some(self.r#ref(callee, callee.span));
+
+                    let fun_item = closure.function.get().unwrap();
+                    let fun = fun_item.get_function().with_backtrace(&self.diag)?;
+                    fn_arg_types = fun.args.iter().skip(1).map(|p| p.ty).collect();
+
+                    (
+                        &fn_arg_types[..],
+                        fun.return_type,
+                        self.exprs.function(fun_item, callee.span),
+                    )
+                }
+                ir::IRItem::Function(fun) => {
+                    if fun.varargs {
+                        varargs = true;
+                    }
+                    fn_arg_types = fun.args.iter().map(|p| p.ty).collect();
+
+                    (&fn_arg_types[..], fun.return_type, callee)
+                }
+                _ => {
+                    bail!(self, CodeDiagnostic::FunctionOrStaticExpectedHere);
+                }
+            },
+            _ => {
+                bail!(self, CodeDiagnostic::FunctionOrStaticExpectedHere);
+            }
+        };
+
+        if !varargs && (arg_types.len() != args.len()) {
+            bail!(
+                self,
+                CodeDiagnostic::ParamCountMismatch(arg_types.len(), args.len())
+            );
+        }
+
+        if varargs && (arg_types.len() > args.len()) {
+            bail!(
+                self,
+                CodeDiagnostic::ParamCountMismatch(arg_types.len(), args.len())
+            );
+        }
+
+        for (expected, arg) in arg_types.iter().zip(args.iter_mut()) {
+            *arg = self.try_coerce(expected, arg)?;
+        }
+
+        if callee.diverges() || args.iter().any(|e| e.diverges()) {
+            return Ok(self.exprs.diverges(once(callee).chain(args), ast_span));
+        }
+
+        if let Some(self_arg) = self_arg {
+            args.insert(0, self_arg);
+        }
+
+        let ret = self.call(callee, args, return_type, ast_span)?;
+        Ok(self.exprs.block(stmt, ret, ast_span))
+    }
+
+    fn tuple_tail(
+        &mut self,
+        tuple: ir::ExprP<'ir>,
+        ast_span: Option<Span>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let args = match tuple.ty {
+            ir::Ty::Tuple([_, rest @ ..]) => rest,
+            ir::Ty::Tuple(_) => ice!(self.diag, "non-empty tuple expected"),
+            _ => ice!(self.diag, "tuple expected"),
+        };
+
+        let (local_expr, stmt) = self.ensure_local(tuple);
+
+        let ty = self.types.tuple(args.iter().copied());
+        let ret = self.exprs.tuple(
+            (0..args.len())
+                .map(|i| self.exprs.tuple_index(local_expr, i + 1, args[i], ast_span))
+                .enumerate(),
+            ty,
+            ast_span,
+        );
+
+        Ok(self.exprs.block(stmt, ret, ast_span))
+    }
+
+    fn tuple_concat(
+        &mut self,
+        lhs: ir::ExprP<'ir>,
+        rhs: ir::ExprP<'ir>,
+        ast_span: Option<Span>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let (lhs_args, rhs_args) = match (lhs.ty, rhs.ty) {
+            (ir::Ty::Tuple(lhs_args), ir::Ty::Tuple(rhs_args)) => (lhs_args, rhs_args),
+            _ => ice!(self.diag, "tuples expected"),
+        };
+
+        let (lhs_local, lhs_stmt) = self.ensure_local(lhs);
+        let (rhs_local, rhs_stmt) = self.ensure_local(rhs);
+
+        // Cannot use chain because it is not ExactSizeIterator
+        let ty = self
+            .types
+            .tuple((0..lhs_args.len() + rhs_args.len()).map(|i| {
+                if i < lhs_args.len() {
+                    lhs_args[i]
+                } else {
+                    rhs_args[i - lhs_args.len()]
+                }
+            }));
+
+        let ret = self.exprs.tuple(
+            (0..lhs_args.len() + rhs_args.len())
+                .map(|i| {
+                    if i < lhs_args.len() {
+                        self.exprs.tuple_index(lhs_local, i, lhs_args[i], ast_span)
+                    } else {
+                        self.exprs.tuple_index(
+                            rhs_local,
+                            i - lhs_args.len(),
+                            rhs_args[i - lhs_args.len()],
+                            ast_span,
+                        )
+                    }
+                })
+                .enumerate(),
+            ty,
+            ast_span,
+        );
+
+        Ok(self
+            .exprs
+            .block(lhs_stmt.into_iter().chain(rhs_stmt), ret, ast_span))
+    }
+
     fn generate_test_cases(&mut self) -> Result<ir::ExprP<'ir>, AluminaError> {
         let tests = self.mono_ctx.tests.clone();
 
@@ -5952,6 +6256,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
             let mut type_inferer = TypeInferer::new(
                 self.mono_ctx.ast,
+                self.mono_ctx.ir,
                 self.mono_ctx,
                 candidate_fun.placeholders.to_vec(),
             );

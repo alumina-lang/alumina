@@ -6,8 +6,11 @@ use crate::ir::lang::LangTypeKind;
 use crate::ir::mono::MonoCtx;
 use crate::{ast, ir};
 
+use super::builder::TypeBuilder;
+
 pub struct TypeInferer<'a, 'ast, 'ir> {
     ast: &'ast ast::AstCtx<'ast>,
+    types: TypeBuilder<'ir>,
     mono_ctx: &'a mut MonoCtx<'ast, 'ir>,
     placeholders: Vec<ast::Placeholder<'ast>>,
 }
@@ -15,11 +18,13 @@ pub struct TypeInferer<'a, 'ast, 'ir> {
 impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
     pub fn new(
         ast: &'ast ast::AstCtx<'ast>,
+        ir: &'ir ir::IrCtx<'ir>,
         mono_ctx: &'a mut MonoCtx<'ast, 'ir>,
         placeholders: Vec<ast::Placeholder<'ast>>,
     ) -> Self {
         TypeInferer {
             ast,
+            types: TypeBuilder::new(ir),
             mono_ctx,
             placeholders,
         }
@@ -193,7 +198,8 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                 let (item, args) = match bound.typ {
                     ast::Ty::Generic(ast::Ty::Item(item), args) => (item, args),
                     ast::Ty::FunctionProtocol(args, ret) => {
-                        self.match_callable(inferred, tgt, args, ret);
+                        let tup = self.ast.intern_type(ast::Ty::Tuple(args));
+                        self.match_callable(inferred, tgt, tup, ret);
                         continue;
                     }
                     _ => continue,
@@ -224,7 +230,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                         }
                     }
                     Some(LangItemKind::ProtoCallable) => match args {
-                        [ast::Ty::Tuple(a1), a2] => self.match_callable(inferred, tgt, a1, a2),
+                        [a1, a2] => self.match_callable(inferred, tgt, a1, a2),
                         _ => {}
                     },
                     _ => {}
@@ -237,30 +243,27 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
         &mut self,
         inferred: &mut HashMap<ast::AstId, ir::TyP<'ir>>,
         tgt: ir::TyP<'ir>,
-        a1: &'ast [ast::TyP<'ast>],
-        a2: ast::TyP<'ast>,
+        ast_args: ast::TyP<'ast>,
+        ast_ret: ast::TyP<'ast>,
     ) {
         match tgt {
             ir::Ty::FunctionPointer(b1, b2) => {
-                for (a, b) in a1.iter().zip(b1.iter()) {
-                    let _ = self.match_slot(inferred, a, b);
-                }
-                let _ = self.match_slot(inferred, a2, b2);
+                let tup = self.types.tuple(b1.iter().copied());
+                let _ = self.match_slot(inferred, ast_args, tup);
+                let _ = self.match_slot(inferred, ast_ret, b2);
             }
             ir::Ty::Item(item) => match item.get() {
                 Ok(ir::IRItem::Closure(clos)) => {
                     if let Ok(fun) = clos.function.get().unwrap().get_function() {
-                        for (a, b) in a1.iter().zip(fun.args.iter().skip(1)) {
-                            let _ = self.match_slot(inferred, a, b.ty);
-                        }
-                        let _ = self.match_slot(inferred, a2, fun.return_type);
+                        let tup = self.types.tuple(fun.args.iter().skip(1).map(|a| a.ty));
+                        let _ = self.match_slot(inferred, ast_args, tup);
+                        let _ = self.match_slot(inferred, ast_ret, fun.return_type);
                     }
                 }
                 Ok(ir::IRItem::Function(fun)) => {
-                    for (a, b) in a1.iter().zip(fun.args.iter()) {
-                        let _ = self.match_slot(inferred, a, b.ty);
-                    }
-                    let _ = self.match_slot(inferred, a2, fun.return_type);
+                    let tup = self.types.tuple(fun.args.iter().map(|a| a.ty));
+                    let _ = self.match_slot(inferred, ast_args, tup);
+                    let _ = self.match_slot(inferred, ast_ret, fun.return_type);
                 }
                 _ => {}
             },

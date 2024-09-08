@@ -823,6 +823,7 @@ pub enum Attribute<'ast> {
     Inline,
     Align(usize),
     Packed(usize),
+    TupleCall,
     ConstOnly,
     NoConst,
     MustUse,
@@ -863,6 +864,7 @@ impl<'ast> Attribute<'ast> {
             Attribute::StaticConstructor => Attribute::StaticConstructor,
             Attribute::ConstOnly => Attribute::ConstOnly,
             Attribute::NoConst => Attribute::NoConst,
+            Attribute::TupleCall => Attribute::TupleCall,
         }
     }
 }

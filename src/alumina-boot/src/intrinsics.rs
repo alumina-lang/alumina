@@ -35,6 +35,9 @@ pub enum IntrinsicKind {
     ConstAlloc,
     ConstFree,
     Tag,
+    TupleInvoke,
+    TupleTail,
+    TupleConcat,
 }
 
 pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
@@ -70,6 +73,9 @@ pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
         "const_alloc" => IntrinsicKind::ConstAlloc,
         "const_free" => IntrinsicKind::ConstFree,
         "tag" => IntrinsicKind::Tag,
+        "tuple_invoke" => IntrinsicKind::TupleInvoke,
+        "tuple_tail" => IntrinsicKind::TupleTail,
+        "tuple_concat" => IntrinsicKind::TupleConcat,
         _ => return None,
     };
 

@@ -308,6 +308,10 @@ pub enum CodeDiagnostic {
     // ZST pointer arithmetic anyway?)
     #[error("pointer difference on zero-sized types is meaningless")]
     ZstPointerDifference,
+    #[error("functions with #[tuple_args] must have a single argument")]
+    TupleCallArgCount,
+    #[error("the argument to a #[tuple_args] function must be a tuple")]
+    TupleCallArgType,
 
     // Warnings
     #[error("defer inside a loop: this defered statement will only be executed once")]
