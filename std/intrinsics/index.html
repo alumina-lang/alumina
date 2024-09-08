@@ -116,6 +116,15 @@
 <a href="/std/intrinsics/#item.tag">tag</a>
 </li>
 <li>
+<a href="/std/intrinsics/#item.tuple_invoke">tuple_invoke</a>
+</li>
+<li>
+<a href="/std/intrinsics/#item.tuple_tail">tuple_tail</a>
+</li>
+<li>
+<a href="/std/intrinsics/#item.tuple_concat">tuple_concat</a>
+</li>
+<li>
 <a href="/std/intrinsics/#item.codegen_const">codegen_const</a>
 </li>
 <li>
@@ -332,7 +341,7 @@ Use <a class="path-link" href="/std/mem/#item.align_of">align_of</a> instead.
 Generate a virtual method table for the given protocol and type.
 </p><p>
 Do not use directly, use coercion to <code class="language-alumina">&amp;dyn Protocol</code> instead. Meant to be called
-from a static initializer.
+from a const initializer.
 </p><p>
 </p>
 </div>
@@ -353,7 +362,7 @@ During AST construction, compiler will collect all the methods with <code class=
 make them available via this intrinsic.
 </p><p>
 Do not use this directly. If implementing a custom test framework, use the
-<a class="path-link" href="/std/runtime/internal/#item.TEST_CASES">TEST_CASES</a> static instead to ensure that all test cases have been discovered.
+<a class="path-link" href="/std/runtime/internal/#item.TEST_CASES">TEST_CASES</a> constant instead to ensure that all test cases have been discovered.
 </p><p>
 </p>
 </div>
@@ -373,7 +382,7 @@ T: <a href="/std/builtins/Enum.html"><span class="identifier-type">Enum</span></
 Enum variants
 </p><p>
 Do not use directly, use <a class="path-link" href="/std/typing/#item.enum_variants">enum_variants</a> instead. Meant to be called
-from a static initializer (see <a class="path-link" href="/std/typing/internal/#item.ENUM_VARIANTS">ENUM_VARIANTS</a>).
+from a const initializer (see <a class="path-link" href="/std/typing/internal/#item.ENUM_VARIANTS">ENUM_VARIANTS</a>).
 </p><p>
 </p>
 </div>
@@ -656,11 +665,68 @@ No user-facing equivalent.
 </div>
 </li>
 <li>
+<div class="signature" id="item.tuple_invoke">
+<h4>
+<span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">tuple_invoke</span>&lt;Fun, Args, Ret&gt;(f: Fun, args: Args) -> Ret</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L175-L175"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Invoke a function with arguments passed as a tuple.
+</p><p>
+Use <a class="path-link" href="/std/util/#item.invoke">invoke</a> instead.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.tuple_tail">
+<h4>
+<span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">tuple_tail</span>&lt;T&gt;(t: T) -> <a href="/std/builtins/#item.tuple_tail_of"><span class="identifier-type">tuple_tail_of</span></a>&lt;T&gt;<div class="protocol-bound">
+T: <a href="/std/builtins/Tuple.html"><span class="identifier-type">Tuple</span></a></div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L181-L181"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Tail of a tuple.
+</p><p>
+Use <a class="path-link" href="/std/util/#item.tail">tail</a> instead.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.tuple_concat">
+<h4>
+<span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">tuple_concat</span>&lt;T1, T2&gt;(t1: T1, t2: T2) -> <a href="/std/builtins/#item.tuple_concat_of"><span class="identifier-type">tuple_concat_of</span></a>&lt;T1, T2&gt;<div class="protocol-bound">
+T1: <a href="/std/builtins/Tuple.html"><span class="identifier-type">Tuple</span></a></div>
+<div class="protocol-bound">
+T2: <a href="/std/builtins/Tuple.html"><span class="identifier-type">Tuple</span></a></div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L187-L187"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Concatenate two tuples.
+</p><p>
+Use <a class="path-link" href="/std/util/#item.concat">concat</a> instead.
+</p><p>
+</p>
+</div>
+</li>
+<li>
 <div class="signature" id="item.codegen_const">
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">codegen_const</span>&lt;T&gt;(name: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L178-L178"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L196-L196"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -675,7 +741,7 @@ Return the value of a C builtin constant
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">codegen_func</span>&lt;T&gt;(name: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], ...) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L180-L180"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L198-L198"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -690,7 +756,7 @@ Call a builtin C function
 <h4>
 <span class="keyword">extern</span> <span class="literal-string">"intrinsic"</span> <span class="keyword">fn</span> <span class="identifier-function">codegen_type_func</span>&lt;T, Ret&gt;(name: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> T</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L182-L182"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/intrinsics.alu#L200-L200"/>source</a>
 </div>
 </div>
 <div class="item-doc">
