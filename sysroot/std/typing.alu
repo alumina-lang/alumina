@@ -3,6 +3,10 @@
 //! Most functions in this module are const-evaluable, so they can be used in `when`
 //! expression for conditional compilation based on e.g. the generic parameter.
 
+/// Type identifier.
+///
+/// Currently, this is just a `usize`, but it is not guaranteed to be so in the future.
+/// It is guaranteed to be comparable and hashable.
 type TypeId = usize;
 
 /// Returns a unique identifer for the type passed as the generic parameter.
@@ -134,6 +138,20 @@ fn matches<T1, T2>() -> bool {
 #[inline(ir)]
 fn is_same<T1, T2>() -> bool {
     intrinsics::type_id::<T1>() == intrinsics::type_id::<T2>()
+}
+
+/// Returns `true` if T is [`()`](void)
+///
+/// ## Example
+/// ```
+/// use std::typing::*;
+///
+/// assert!(is_void::<()>());
+/// assert!(!is_void::<u8>());
+/// ```
+#[inline(ir)]
+fn is_void<T>() -> bool {
+    matches::<T, ()>()
 }
 
 /// Returns `true` if T is zero sized.

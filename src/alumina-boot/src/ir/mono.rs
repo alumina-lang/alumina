@@ -2741,10 +2741,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                     if inner.len() != self_count + arg_types.len() {
                         bail!(
                             self,
-                            CodeDiagnostic::ParamCountMismatch(
-                                inner.len() - self_count,
-                                arg_types.len()
-                            )
+                            if inner.len() < self_count {
+                                CodeDiagnostic::NotAMethod
+                            } else {
+                                CodeDiagnostic::ParamCountMismatch(
+                                    inner.len() - self_count,
+                                    arg_types.len(),
+                                )
+                            }
                         );
                     }
 
@@ -2772,10 +2776,14 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 if fun.args.len() != arg_types.len() + self_count {
                     bail!(
                         self,
-                        CodeDiagnostic::ParamCountMismatch(
-                            fun.args.len() - self_count,
-                            arg_types.len()
-                        )
+                        if fun.args.len() < self_count {
+                            CodeDiagnostic::NotAMethod
+                        } else {
+                            CodeDiagnostic::ParamCountMismatch(
+                                fun.args.len() - self_count,
+                                arg_types.len(),
+                            )
+                        }
                     );
                 }
                 self_slot = self_expr.map(|e| (fun.args[0].typ, e.ty));

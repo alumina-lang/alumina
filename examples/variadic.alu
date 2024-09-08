@@ -1,14 +1,27 @@
 use std::builtins::{Tuple, tuple_tail_of};
 use std::util::{tail, invoke};
-use std::typing::{matches, type_name};
+use std::typing::{type_name, is_void};
+
+/// Returns the length of a tuple
+fn len<T: Tuple>(_: T) -> usize {
+  fn _len<T: Tuple>() -> usize {
+    when is_void::<T>() {
+      0
+    } else {
+      1 + _len::<tuple_tail_of<T>>()
+    }
+  }
+
+  _len::<T>()
+}
 
 // #[tuple_args] attribute is used to make the function receive its arguments as a single tuple
 // instead of multiple arguments.
 #[tuple_args]
 fn print_debug<T: Tuple>(args: T) {
-  when args is () {
+  when args.len() == 0 {
     println!("");
-  } else when matches::<tuple_tail_of<T>, ()>() {
+  } else when args.len() == 1 {
     println!("[{}] {}", type_name::<typeof(args.0)>(), args.0);
   } else {
     print!("[{}] {}, ", type_name::<typeof(args.0)>(), args.0);
@@ -19,9 +32,28 @@ fn print_debug<T: Tuple>(args: T) {
   }
 }
 
+#[tuple_args]
+fn make_array<T: Tuple + !()>(t: T) ->  [typeof(t.0); t.len()] {
+    #[inline(always)]
+    fn tuple_to_array_helper<ElemType, T: Tuple>(t: T, ptr: &mut ElemType) {
+      when !(t is ()) {
+        *ptr = t.0;
+        tuple_to_array_helper::<ElemType, tuple_tail_of<T>>(t.tail(), ptr + 1);
+      }
+    }
+
+    let arr: [typeof(t.0); t.len()];
+    tuple_to_array_helper::<typeof(t.0), T>(t, &arr[0]);
+    arr
+}
+
+const ARR = make_array(1, 2, 3);
+
 fn main() {
   print_debug();
   print_debug(1);
   print_debug(1, "hello");
   print_debug(1, "hello", true);
+
+  println!("{}, {}, {}", ARR[0], ARR[1], ARR[2]);
 }
