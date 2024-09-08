@@ -59,6 +59,7 @@ pub enum LangItemKind {
 
     TypeopTupleHeadOf,
     TypeopTupleTailOf,
+    TypeopTupleConcatOf,
     TypeopReturnTypeOf,
     TypeopArgumentsOf,
     TypeopPointerWithMutOf,
@@ -77,6 +78,8 @@ pub enum LangItemKind {
     DynConstCast,
     DynData,
     DynVtableIndex,
+
+    Generator,
 
     Operator(BinOp),
 
@@ -216,6 +219,7 @@ impl TryFrom<&str> for LangItemKind {
 
             "typeop_tuple_head_of" => Ok(LangItemKind::TypeopTupleHeadOf),
             "typeop_tuple_tail_of" => Ok(LangItemKind::TypeopTupleTailOf),
+            "typeop_tuple_concat_of" => Ok(LangItemKind::TypeopTupleConcatOf),
             "typeop_return_type_of" => Ok(LangItemKind::TypeopReturnTypeOf),
             "typeop_arguments_of" => Ok(LangItemKind::TypeopArgumentsOf),
             "typeop_pointer_with_mut_of" => Ok(LangItemKind::TypeopPointerWithMutOf),
@@ -234,6 +238,8 @@ impl TryFrom<&str> for LangItemKind {
             "dyn_const_cast" => Ok(LangItemKind::DynConstCast),
             "dyn_data" => Ok(LangItemKind::DynData),
             "dyn_vtable_index" => Ok(LangItemKind::DynVtableIndex),
+
+            "generator" => Ok(LangItemKind::Generator),
 
             "format_arg" => Ok(LangItemKind::FormatArg),
             "enum_variant_new" => Ok(LangItemKind::EnumVariantNew),

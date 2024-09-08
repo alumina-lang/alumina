@@ -1,0 +1,27 @@
+use std::builtins::{Tuple, tuple_tail_of};
+use std::util::{tail, invoke};
+use std::typing::{matches, type_name};
+
+// #[tuple_args] attribute is used to make the function receive its arguments as a single tuple
+// instead of multiple arguments.
+#[tuple_args]
+fn print_debug<T: Tuple>(args: T) {
+  when args is () {
+    println!("");
+  } else when matches::<tuple_tail_of<T>, ()>() {
+    println!("[{}] {}", type_name::<typeof(args.0)>(), args.0);
+  } else {
+    print!("[{}] {}, ", type_name::<typeof(args.0)>(), args.0);
+
+    // invoke is the converse of #[tuple_args], it allows us to call a function with a
+    // tuple of arguments.
+    (print_debug::<tuple_tail_of<T>>).invoke(args.tail());
+  }
+}
+
+fn main() {
+  print_debug();
+  print_debug(1);
+  print_debug(1, "hello");
+  print_debug(1, "hello", true);
+}

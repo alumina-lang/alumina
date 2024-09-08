@@ -134,3 +134,58 @@ fn unit<T: builtins::ZeroSized + !!>() -> T {
 fn apply<T, R, F: Fn(T) -> R>(v: T, func: F) -> R {
     func(v)
 }
+
+
+/// Call a function with arguments passed as a tuple.
+///
+/// ## Example
+/// ```
+/// use std::util::invoke;
+///
+/// fn add(a: i32, b: i32) -> i32 {
+///     a + b
+/// }
+///
+/// let args = (1, 2);
+/// let result = add.invoke(args);
+///
+/// assert_eq!(result, 3);
+/// ```
+#[inline(ir)]
+fn invoke<Args, Ret, F: builtins::Callable<Args, Ret>>(f: F, args: Args) -> Ret {
+    intrinsics::tuple_invoke(f, args)
+}
+
+
+/// Tail of a tuple
+///
+/// ## Example
+/// ```
+/// use std::util::tail;
+///
+/// let tuple = (1, 2, 3);
+/// let tail = tuple.tail();
+///
+/// assert_eq!(tail, (2, 3));
+/// ```
+#[inline(ir)]
+fn tail<T: builtins::Tuple + !()>(t: T) -> builtins::tuple_tail_of<T> {
+    intrinsics::tuple_tail(t)
+}
+
+/// Concatenate two tuples
+///
+/// ## Example
+/// ```
+/// use std::util::concat;
+///
+/// let t1 = (1, 2);
+/// let t2 = (3, 4);
+/// let t3 = t1.concat(t2);
+///
+/// assert_eq!(t3, (1, 2, 3, 4));
+/// ```
+#[inline(ir)]
+fn concat<T1: builtins::Tuple, T2: builtins::Tuple>(t1: T1, t2: T2) -> builtins::tuple_concat_of<T1, T2> {
+    intrinsics::tuple_concat(t1, t2)
+}

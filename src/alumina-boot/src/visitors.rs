@@ -405,6 +405,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                 check_duplicate!(Attribute::Cold);
                 self.attributes.push(Attribute::Cold);
             }
+            "tuple_args" => {
+                check_duplicate!(Attribute::TupleCall);
+                self.attributes.push(Attribute::TupleCall);
+            }
             "transparent" => {
                 check_duplicate!(Attribute::Transparent);
                 self.attributes.push(Attribute::Transparent);
