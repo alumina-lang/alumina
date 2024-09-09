@@ -49,85 +49,122 @@ macro const_eval($arg) {
     intrinsics::const_eval($arg)
 }
 
-/// A generator that yields values of type `T`.
+/// Coroutine object
 ///
-/// This is the return type of generator functions.
+/// Coroutine object is a reference to a running coroutine, which receives values of type `RecvT` and
+/// yields values of type `YieldT`. It is used to control the execution of the coroutine and to pass
+/// values to and from it.
+///
+/// A special case of coroutine is a generator (`RecvT` is not provided, defaults to `()`), which does
+/// not receive any values, but only yields values. Generators also implement the [iter::Iterator] trait,
+/// allowing them to be used in for loops.
 ///
 /// ## Example
 /// ```
-/// fn* basic_gen() -> i32 {
-///     yield 1;
-///     yield 2;
-///     yield 3;
+/// fn* coroutine() -> Coroutine<i32, i32> {
+///     for i in 0..3 {
+///         let val = yield i;
+///         println!("[in] got {}", val);
+///     }
 /// }
 ///
-/// let gen = basic_gen();
-/// defer gen.free();
+/// let gen = coroutine();
+/// for i in 0..3 {
+///     let val = gen.send(i);
+///     println!("[out] got {}", val.unwrap());
+/// }
 ///
-/// assert_eq!(gen.next(), Option::some(1));
-/// assert_eq!(gen.next(), Option::some(2));
-/// assert_eq!(gen.next(), Option::some(3));
-/// assert_eq!(gen.next(), Option::none());
+/// // Output:
+/// // [in] got 0
+/// // [out] got 0
+/// // [in] got 1
+/// // [out] got 1
+/// // [in] got 2
+/// // [out] got 2
 /// ```
-#[lang(generator)]
-struct Generator<T> {
+#[lang(coroutine)]
+struct Coroutine<YieldT, RecvT = ()> {
     _coro: &mut minicoro::mco_coro
 }
 
-impl Generator<T> {
-    use internal::_minicoro_check;
+
+impl Coroutine<YieldT, RecvT> {
+    use minicoro::*;
+    use internal::_ensure_coroutines;
+    use internal::_minicoro_check as chk;
     use mem::size_of;
 
-    /// @ iter::Iterator::next
-    fn next(self: &mut Generator<T>) -> Option<T> {
-        internal::_ensure_coroutines!({
-            use minicoro::mco_state;
-            if minicoro::mco_status(self._coro) == mco_state::MCO_DEAD {
-                return Option::none();
-            }
-            minicoro::mco_resume(self._coro)._minicoro_check!();
-
-            switch minicoro::mco_status(self._coro) {
-                mco_state::MCO_DEAD => {
-                    Option::none()
-                }
+    /// Cancels the coroutine
+    ///
+    /// This method can be used to gracefully stop the coroutine early, allowing any `defer` statements
+    /// in it to run. If the coroutine already ran to completion, this method has no effect.
+    ///
+    /// It is still necessary to call [free] to free the coroutine's resources after it has been closed.
+    ///
+    /// See [close] for an example of usage.
+    fn cancel(self: &mut Coroutine<YieldT, RecvT>) {
+        _ensure_coroutines!({
+            switch mco_status(self._coro) {
+                mco_state::MCO_DEAD => {}
                 mco_state::MCO_SUSPENDED => {
-                    when !typing::is_zero_sized::<T>() {
-                        let value: T;
-                        minicoro::mco_pop(self._coro, &value as &mut (), size_of::<T>())._minicoro_check!();
-                        Option::some(value)
-                    } else {
-                        Option::some(std::util::unit::<()>())
+                    self._coro.user_data = std::mem::dangling();
+                    mco_resume(self._coro).chk!();
+                }
+            }
+        })
+    }
+
+    /// Returns `true` if the coroutine has completed.
+    ///
+    /// ## Example
+    /// ```
+    /// fn* gen() -> Coroutine<()> { }
+    ///
+    /// let gen = gen();
+    /// defer gen.free();
+    ///
+    /// assert!(!gen.is_complete()); // Coroutines start in a suspended state.
+    /// gen.next();
+    /// assert!(gen.is_complete());
+    /// ```
+    #[inline(always)]
+    fn is_complete(self: &Coroutine<YieldT, RecvT>) -> bool {
+        _ensure_coroutines!({
+            mco_status(self._coro) == mco_state::MCO_DEAD
+        })
+    }
+
+    /// Sends a value to the coroutine and resumes its execution.
+    ///
+    /// This method can be used to send a value to the coroutine and resume its execution. The coroutine
+    /// will continue executing from the point where it last yielded, or from the beginning if it has
+    /// not been started yet.
+    ///
+    /// If the coroutine runs to completion after the value is sent, this method will return `Option::none()`.
+    /// If the coroutine yields a value, this method will return `Option::some(value)`.
+    fn send(self: &mut Coroutine<YieldT, RecvT>, val: RecvT) -> Option<YieldT> {
+        _ensure_coroutines!({
+            when !typing::is_zero_sized::<RecvT>() {
+                mco_push(self._coro, &val as &(), mem::size_of::<RecvT>()).chk!();
+            }
+            mco_resume(self._coro).chk!();
+            switch mco_status(self._coro) {
+                mco_state::MCO_DEAD => Option::none(),
+                mco_state::MCO_SUSPENDED => {
+                    let value: YieldT;
+                    when !typing::is_zero_sized::<YieldT>() {
+                        mco_pop(self._coro, &value as &mut (), size_of::<YieldT>()).chk!();
                     }
+                    Option::some(value)
                 }
                 _ => unreachable!()
             }
         })
     }
 
-    /// Cancels the generator
+    /// Cancels the coroutine and frees its resources.
     ///
-    /// This method can be used to gracefully stop the generator early, allowing any `defer` statements
-    /// in it to run. If the generator already ran to completion, this method has no effect.
-    ///
-    /// It is still necessary to call [free] to free the generator's resources after it has been closed.
-    ///
-    /// See [close] for an example of usage.
-    fn cancel(self: &mut Generator<T>) {
-        internal::_ensure_coroutines!({
-            switch minicoro::mco_status(self._coro) {
-                minicoro::mco_state::MCO_DEAD => {}
-                minicoro::mco_state::MCO_SUSPENDED => {
-                    self._coro.user_data = std::mem::dangling();
-                    minicoro::mco_resume(self._coro)._minicoro_check!();
-                }
-            }
-        })
-    }
-
-    /// Cancels the generator and frees its resources.
-    ///
-    /// Cancels the generator, allowing any `defer` statements in it to run, and frees the generator's
+    /// Cancels the coroutine, allowing any `defer` statements in it to run, and frees the coroutine's
     /// resources.
     ///
     /// ## Example
@@ -136,7 +173,7 @@ impl Generator<T> {
     /// use std::string::starts_with;
     /// use std::io::{BufferedReader, lines as io_lines};
     ///
-    /// fn* read_lines(path: Path) -> &[u8] {
+    /// fn* read_lines(path: Path) -> Coroutine<&[u8]> {
     ///     let file = File::open(path).unwrap();
     ///     defer file.close();
     ///
@@ -162,28 +199,38 @@ impl Generator<T> {
     ///     println!("{}", line);
     /// }
     /// ```
-    fn close(self: &mut Generator<T>) {
+    fn close(self: &mut Coroutine<YieldT, RecvT>) {
         self.cancel();
         self.free();
     }
 
-
     /// @ mem::Freeable::free
-    fn free(self: &mut Generator<T>) {
+    fn free(self: &mut Coroutine<YieldT, RecvT>) {
         if self._coro != null {
-            minicoro::mco_destroy(self._coro)._minicoro_check!();
+            mco_destroy(self._coro).chk!();
         }
     }
 
     /// @ mem::Movable::move
-    fn move(self: &mut Generator<T>) -> Generator<T> {
+    fn move(self: &mut Coroutine<YieldT, RecvT>) -> Coroutine<YieldT, RecvT> {
         let ret = *self;
         self._coro = null;
         ret
     }
+}
 
-    mixin iter::Iterator<Generator<T>, T>;
-    mixin iter::IteratorExt<Generator<T>, T>;
+impl Coroutine<T> {
+    /// @ iter::Iterator::next
+    #[inline(always)]
+    fn next(self: &mut Coroutine<T>) -> Option<T> {
+        if self.is_complete() {
+            return Option::none();
+        }
+        self.send(())
+    }
+
+    mixin iter::Iterator<Coroutine<T>, T>;
+    mixin iter::IteratorExt<Coroutine<T>, T>;
 }
 
 /// Returns `true` if the current code is running in a coroutine.
@@ -192,7 +239,7 @@ impl Generator<T> {
 /// ```
 /// use std::runtime::in_coroutine;
 ///
-/// fn* gen() -> bool {
+/// fn* gen() -> Coroutine<bool> {
 ///     yield in_coroutine();
 /// }
 ///
@@ -222,41 +269,44 @@ mod internal {
     }
 
     macro _minicoro_check($result) {
-        _ensure_coroutines!({
-            let result = $result;
+        let result = $result;
+        when cfg!("debug") {
             if result != minicoro::mco_result::MCO_SUCCESS {
                 panic!("{}", ffi::CString::from_raw(minicoro::mco_result_description(result))[..]);
             }
-        })
+        }
     }
 
     /// Glue code for creating a generator.
     ///
     /// Calls to this function are generated by the compiler when a generator function is called. Not
     /// meant to be called directly.
-    #[lang(generator_new)]
+    #[lang(coroutine_new)]
     #[inline(always)]
-    fn generator_new<Func: NamedFunction, Args: builtins::Tuple, YieldType>(args: Args) -> Generator<YieldType> {
+    fn coroutine_new<Func: NamedFunction, Args: builtins::Tuple, YieldT, RecvT>(args: Args) -> Coroutine<YieldT, RecvT> {
+        use minicoro::*;
+        use _minicoro_check as chk;
+
         _ensure_coroutines!({
-            fn _coroutine_entry<Fun, Args>(coro: &mut minicoro::mco_coro) {
+            fn _coroutine_entry<Fun, Args>(coro: &mut mco_coro) {
                 let f = std::util::unit::<Fun>();
                 let args: Args;
                 when !typing::is_zero_sized::<Args>() {
-                    minicoro::mco_pop(coro, &args as &mut (), size_of::<Args>())._minicoro_check!();
+                    mco_pop(coro, &args as &mut (), size_of::<Args>()).chk!();
                 }
                 std::util::invoke(f, args);
             }
 
-            let coro: &mut minicoro::mco_coro;
-            minicoro::mco_create(&coro, &minicoro::mco_desc_init(
+            let coro: &mut mco_coro;
+            mco_create(&coro, &mco_desc_init(
                 _coroutine_entry::<Func, Args>,
                 0
-            ))._minicoro_check!();
+            )).chk!();
 
-            when !typing::is_zero_sized::<YieldType>() {
-                minicoro::mco_push(coro, &args as &(), size_of::<Args>())._minicoro_check!();
+            when !typing::is_zero_sized::<Args>() {
+                mco_push(coro, &args as &(), size_of::<Args>()).chk!();
             }
-            Generator::<YieldType> {
+            Coroutine::<YieldT, RecvT> {
                 _coro: coro
             }
         })
@@ -272,16 +322,26 @@ mod internal {
     ///
     /// Calling this function outside of a generator or yielding a different type than the generator
     /// expects is undefined behavior.
-    #[lang(generator_yield)]
+    #[lang(coroutine_yield)]
     #[inline(always)]
-    fn generator_yield<T>(value: &T) -> bool {
+    fn coroutine_yield<YieldT, RecvT>(val: &YieldT, out: &mut RecvT) -> bool {
+        use minicoro::*;
+
         _ensure_coroutines!({
-            let running = minicoro::mco_running();
-            when !typing::is_zero_sized::<T>() {
-                minicoro::mco_push(running, value as &(), size_of::<T>())._minicoro_check!();
+            let running = mco_running();
+            when !typing::is_zero_sized::<YieldT>() {
+                mco_push(running, val as &(), size_of::<YieldT>())._minicoro_check!();
             }
-            minicoro::mco_yield(running)._minicoro_check!();
-            return running.user_data == std::mem::dangling();
+            mco_yield(running)._minicoro_check!();
+            if running.user_data == std::mem::dangling() {
+                return true;
+            }
+
+            when !typing::is_zero_sized::<RecvT>() {
+                mco_pop(running, out as &mut (), size_of::<RecvT>())._minicoro_check!();
+            }
+
+            false
         })
     }
 
@@ -419,7 +479,7 @@ mod tests {
     #[test]
     #[cfg(coroutines)]
     fn test_generator() {
-        fn* basic_gen() -> i32 {
+        fn* basic_gen() -> Coroutine<i32> {
             yield 1;
             yield 2;
             yield 3;
@@ -437,7 +497,7 @@ mod tests {
     #[test]
     #[cfg(coroutines)]
     fn test_generator_cancel() {
-        fn* gen(flag: &mut bool) -> i32 {
+        fn* gen(flag: &mut bool) -> Coroutine<i32> {
             defer { *flag = true };
             yield 1;
             yield 2;
@@ -456,8 +516,9 @@ mod tests {
         assert!(flag);
     }
 
+    #[cfg(coroutines)]
     #[test(should_fail)]
     fn test_yield_outside_coroutine() {
-       internal::generator_yield(&());
+       internal::coroutine_yield(&(), &());
     }
 }

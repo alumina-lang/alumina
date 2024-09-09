@@ -156,7 +156,7 @@ module.exports = grammar({
           seq(field("extern", "extern"), field("abi", $.string_literal))
         ),
         "fn",
-        field("generator", optional("*")),
+        field("coroutine", optional("*")),
         field("name", $.identifier),
         optional(field("type_arguments", $.generic_argument_list)),
         field("parameters", $.parameter_list),

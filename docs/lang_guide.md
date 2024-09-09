@@ -9,7 +9,7 @@ With regards to syntax, the language is very similar to Rust and in terms of sem
 - [Functions](#functions)
   - [Generic functions](#generic-functions)
   - [Foreign functions](#foreign-functions)
-  - [Generator functions](#generator-functions)
+  - [Coroutines](#coroutines)
     - [Implementation details](#implementation-details)
   - [Other function attributes](#other-function-attributes)
 - [Constants](#constants)
@@ -314,12 +314,14 @@ fn main() {
 ```
 
 
-## Generator functions
+## Coroutines
 
-Generator functions are functions that can yield multiple values before returning. They are defined using the `fn*` keyword. The return type of a generator is `Generator<T>`, where `T` is the type of the value that the generator yields. Generators can yield values using the `yield` keyword and terminate with `return`.
+Coroutines are a functions that can suspend their execution and resume later, while also sending and receiving values from the outside. They are defined using the `fn*` keyword. The return type of a coroutine is `Coroutine<YieldT, RecvT>`, where `YieldT` is the type of values that the coroutine can yield and `RecvT` is the type of values that the coroutine can receive.
+
+A special case of a coroutine is a so-called generator, which only yields values (`RecvT` is `()`). Generators can be used as iterators (e.g. in for loops) and are a convenient way to implement lazy sequences.
 
 ```rust
-fn* fibonacci() -> i32 {
+fn* fibonacci() -> Coroutine<i32> {
     let a = 0;
     let b = 1;
 
@@ -332,32 +334,32 @@ fn* fibonacci() -> i32 {
 }
 ```
 
-Generator instance is created by simply calling the generator function, after which it can be used as any other iterator.
+Coroutine instance is created by simply calling the coroutine function.
 
 ```rust
 fn main() {
-    let generator = fibonacci();
-    defer generator.close();
+    let gen = fibonacci();
+    defer gen.close();
 
-    for val in generator.take(10) {
+    for val in gen.take(10) {
         println!("{}", val);
     }
 }
 ```
 
-Generators allocate memory on the heap to store the state of the generator and need to be freed when they are no longer needed. See [std::runtime::Generator](https://docs.alumina-lang.net/std/runtime/Generator.html) for more details.
+Coroutines allocate memory on the heap to store the state of the coroutine and need to be freed when they are no longer needed. See [Coroutine](https://docs.alumina-lang.net/std/runtime/Generator.html) for more details.
 
 ### Implementation details
 
-Generators are currently implemented using stackful coroutines using [minicoro](https://github.com/edubart/minicoro) library. The stack size of a generator is fixed at 64KB. It requires the `minicoro` library to be linked in the final binary. Default stack size is set to 56 kB, which can be controlled by compile flags of the `minicoro` library.
+Coroutines are currently implemented using stackful coroutines using [minicoro](https://github.com/edubart/minicoro) library. The stack size of a coroutine is fixed at 64KB. It requires the `minicoro` library to be linked in the final binary. Default stack size is set to 56 kB, which can be controlled by compile flags of the `minicoro` library.
 
-For CPU-bound code generators are roughly an order of magnitude slower than hand-crafted iterators, but they can be significantly faster than using an external thread (which offers similar ergonomics). The following table shows the results of a simple benchmark that calculates the sum of 10 million random numbers with a fixed seed (numbers are generated in the iterator/generator/thread, and summed outside of it).
+For CPU-bound code, coroutines that context-switch often are roughly an order of magnitude slower than hand-crafted iterators, but they can be significantly faster than using an external thread (which offers similar ergonomics). The following table shows the results of a simple benchmark that calculates the sum of 10 million random numbers with a fixed seed (numbers are generated in the iterator/coroutine/thread, and summed outside of it).
 
 
 | Test case                               | Time (ms) |
 |-----------------------------------------|----------:|
 | iterators                               |       17  |
-| generators                              |      325  |
+| coroutines                              |      325  |
 | two threads (with a rendezvous channel) |   22,264  |
 
 
