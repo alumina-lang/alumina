@@ -400,9 +400,9 @@ impl<'ast> AstItemMaker<'ast> {
         let code = scope.code().unwrap();
 
         let is_extern = node.child_by_field(FieldKind::Extern).is_some();
-        let is_generator = node.child_by_field(FieldKind::Generator).is_some();
-        if is_generator {
-            attributes.push(Attribute::Generator);
+        let is_coroutine = node.child_by_field(FieldKind::Coroutine).is_some();
+        if is_coroutine {
+            attributes.push(Attribute::Coroutine);
         }
 
         let has_varargs = node
@@ -414,14 +414,15 @@ impl<'ast> AstItemMaker<'ast> {
             return Err(CodeDiagnostic::VarArgsCanOnlyBeExtern).with_span_from(&scope, node);
         }
 
-        if is_generator && is_extern {
-            return Err(CodeDiagnostic::ExternGenerator).with_span_from(&scope, node);
+        if is_coroutine && is_extern {
+            return Err(CodeDiagnostic::ExternCoroutine).with_span_from(&scope, node);
         }
 
         let is_protocol_fn = matches!(scope.parent().map(|s| s.typ()), Some(ScopeType::Protocol));
 
-        if is_protocol_fn && is_generator {
-            return Err(CodeDiagnostic::ProtocolGenerator).with_span_from(&scope, node);
+        if is_protocol_fn && is_coroutine {
+            // for now
+            return Err(CodeDiagnostic::ProtocolCoroutine).with_span_from(&scope, node);
         }
 
         let abi = node

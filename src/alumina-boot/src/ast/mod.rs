@@ -835,7 +835,7 @@ pub enum Attribute<'ast> {
     Intrinsic,
     StaticConstructor,
     LinkName(&'ast str),
-    Generator,
+    Coroutine,
 }
 
 impl<'ast> Attribute<'ast> {
@@ -865,7 +865,7 @@ impl<'ast> Attribute<'ast> {
             Attribute::ConstOnly => Attribute::ConstOnly,
             Attribute::NoConst => Attribute::NoConst,
             Attribute::TupleCall => Attribute::TupleCall,
-            Attribute::Generator => Attribute::Generator,
+            Attribute::Coroutine => Attribute::Coroutine,
         }
     }
 }

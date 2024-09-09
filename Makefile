@@ -120,8 +120,8 @@ endif
 
 ## ----------------------------- Minicoro ------------------------------
 
-$(BUILD_DIR)/minicoro.o: common/minicoro/minicoro.c
-	$(CC) $(CFLAGS) -c $^ -o $@
+$(BUILD_DIR)/minicoro.o: common/minicoro/minicoro.h
+	$(CC) $(CFLAGS) -DMINICORO_IMPL -xc -c $^ -o $@
 
 ## --------------------------- Stdlib tests ----------------------------
 

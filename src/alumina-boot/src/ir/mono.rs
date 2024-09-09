@@ -357,6 +357,7 @@ pub struct Monomorphizer<'a, 'ast, 'ir> {
     replacements: HashMap<ast::AstId, ir::TyP<'ir>>,
     return_type: Option<ir::TyP<'ir>>,
     yield_type: Option<ir::TyP<'ir>>,
+    recv_type: Option<ir::TyP<'ir>>,
     loop_contexts: Vec<LoopContext<'ir>>,
     local_types: HashMap<ir::IrId, ir::TyP<'ir>>,
     local_type_hints: HashMap<ir::IrId, ir::TyP<'ir>>,
@@ -401,6 +402,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             types: TypeBuilder::new(ir),
             return_type: None,
             yield_type: None,
+            recv_type: None,
             loop_contexts: Vec::new(),
             local_type_hints: HashMap::default(),
             local_defs: Vec::new(),
@@ -427,6 +429,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             types: TypeBuilder::new(ir),
             return_type: None,
             yield_type: None,
+            recv_type: None,
             loop_contexts: Vec::new(),
             local_defs: Vec::new(),
             local_type_hints: HashMap::default(),
@@ -1377,13 +1380,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             .collect::<Vec<_>>();
 
         let return_type = child.lower_type_for_value(func.return_type)?;
-        let generator_type = func
-            .attributes
-            .contains(&ast::Attribute::Generator)
-            .then(|| child.monomorphize_lang_item(LangItemKind::Generator, [return_type]))
-            .transpose()?
-            .map(|i| child.types.named(i));
-
         let tuple_args_arg = if attributes.contains(&ast::Attribute::TupleCall) {
             if parameters.len() != 1 {
                 bail!(self, CodeDiagnostic::TupleCallArgCount);
@@ -1418,7 +1414,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             args: parameters,
             varargs: func.varargs,
             span: func.span,
-            return_type: generator_type.unwrap_or(return_type),
+            return_type,
             body: OnceCell::new(),
         });
         item.assign(res);
@@ -1428,6 +1424,27 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             child.check_protocol_bounds(kind, ty, bounds)?;
         }
 
+        let coroutine_types = if func.attributes.contains(&ast::Attribute::Coroutine) {
+            match return_type {
+                ir::Ty::Item(item) => {
+                    let MonoKey(ast_item, args, _, _) = child.mono_ctx.reverse_lookup(item);
+                    if child.mono_ctx.ast.lang_item_kind(ast_item) != Some(LangItemKind::Coroutine)
+                    {
+                        bail!(self, CodeDiagnostic::CoroutineReturnType);
+                    }
+
+                    Some((
+                        #[allow(clippy::get_first)]
+                        args.get(0).expect("incompatible signature for Coroutine"),
+                        args.get(1).expect("incompatible signature for Coroutine"),
+                    ))
+                }
+                _ => bail!(self, CodeDiagnostic::CoroutineReturnType),
+            }
+        } else {
+            None
+        };
+
         // We need the item to be assigned before we monomorphize the body, as the
         // function can be recursive and we need to be able to get the signature for
         // typechecking purposes.
@@ -1435,44 +1452,48 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             return Ok(());
         }
 
-        if generator_type.is_some() {
-            let mut grandchild = Self::with_replacements(
-                child.mono_ctx,
-                child.replacements.clone(),
-                child.tentative,
-                child.current_item,
-                child.diag.fork(),
-            );
-            grandchild.local_types = child.local_types.clone();
+        child.return_type = Some(return_type);
 
-            let inner = grandchild.mono_ctx.ir.make_item();
-            inner.assign(ir::IRItem::Function(ir::Function {
-                name: None,
-                attributes: [ast::Attribute::InlineDuringMono].alloc_on(grandchild.mono_ctx.ir),
-                args: parameters,
-                varargs: false,
-                span: func.span,
-                return_type: child.types.void(),
-                body: OnceCell::new(),
-            }));
+        if let Some(func_body) = func.body {
+            if let Some((yield_type, recv_type)) = coroutine_types {
+                let mut grandchild = Self::with_replacements(
+                    child.mono_ctx,
+                    child.replacements.clone(),
+                    child.tentative,
+                    child.current_item,
+                    child.diag.fork(),
+                );
+                grandchild.local_types = child.local_types.clone();
 
-            grandchild.return_type = Some(grandchild.types.void());
-            grandchild.yield_type = Some(return_type);
+                let inner = grandchild.mono_ctx.ir.make_item();
+                inner.assign(ir::IRItem::Function(ir::Function {
+                    name: None,
+                    attributes: [ast::Attribute::InlineDuringMono].alloc_on(grandchild.mono_ctx.ir),
+                    args: parameters,
+                    varargs: false,
+                    span: func.span,
+                    return_type: child.types.void(),
+                    body: OnceCell::new(),
+                }));
 
-            let body = grandchild.lower_function_body(
-                func.body.expect("generator without body"),
-                func.attributes.contains(&ast::Attribute::InlineDuringMono),
-                tuple_args_arg,
-            )?;
-            inner.get_function().unwrap().body.set(body).unwrap();
+                grandchild.return_type = Some(grandchild.types.void());
+                grandchild.yield_type = Some(yield_type);
+                grandchild.recv_type = Some(recv_type);
 
-            let body = child.generate_generator_new(parameters, return_type, inner, func.span)?;
-            item.get_function().unwrap().body.set(body).unwrap();
-        } else {
-            child.return_type = Some(return_type);
-            if let Some(body) = func.body {
+                let body = grandchild.lower_function_body(
+                    func_body,
+                    func.attributes.contains(&ast::Attribute::InlineDuringMono),
+                    tuple_args_arg,
+                )?;
+                inner.get_function().unwrap().body.set(body).unwrap();
+
+                let body = child
+                    .generate_coroutine_new(parameters, yield_type, recv_type, inner, func.span)?;
+
+                item.get_function().unwrap().body.set(body).unwrap();
+            } else {
                 let body = child.lower_function_body(
-                    body,
+                    func_body,
                     func.attributes.contains(&ast::Attribute::InlineDuringMono),
                     tuple_args_arg,
                 )?;
@@ -1483,10 +1504,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         Ok(())
     }
 
-    pub fn generate_generator_new(
+    pub fn generate_coroutine_new(
         &mut self,
         args: &[ir::Parameter<'ir>],
         yield_type: ir::TyP<'ir>,
+        recv_type: ir::TyP<'ir>,
         item: ir::IRItemP<'ir>,
         span: Option<Span>,
     ) -> Result<FuncBody<'ir>, AluminaError> {
@@ -1500,8 +1522,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         );
 
         let t1 = self.types.named(item);
-        let glue_item =
-            self.monomorphize_lang_item(LangItemKind::GeneratorNew, [t1, tup_type, yield_type])?;
+        let glue_item = self.monomorphize_lang_item(
+            LangItemKind::CoroutineNew,
+            [t1, tup_type, yield_type, recv_type],
+        )?;
         let glue_func = self.exprs.function(glue_item, span);
 
         let return_type = glue_item.get_function().unwrap().return_type;
@@ -2597,6 +2621,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             types: TypeBuilder::new(ir),
             return_type: self.return_type,
             yield_type: self.yield_type,
+            recv_type: self.recv_type,
             loop_contexts: self.loop_contexts.clone(),
             local_defs: self.local_defs.clone(),
             local_type_hints: self.local_type_hints.clone(),
@@ -2871,23 +2896,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
 
         if let Some(return_type_hint) = return_type_hint {
-            if fun.attributes.contains(&ast::Attribute::Generator) {
-                let item = self
-                    .mono_ctx
-                    .ast
-                    .lang_item(LangItemKind::Generator)
-                    .with_backtrace(&self.diag)?;
-
-                let wrapped = ast::Ty::Generic(
-                    ast::Ty::Item(item).alloc_on(self.mono_ctx.ast),
-                    [fun.return_type].alloc_on(self.mono_ctx.ast),
-                )
-                .alloc_on(self.mono_ctx.ast);
-
-                infer_pairs.push((wrapped, return_type_hint));
-            } else {
-                infer_pairs.push((fun.return_type, return_type_hint));
-            }
+            infer_pairs.push((fun.return_type, return_type_hint));
         }
 
         let mut type_inferer = TypeInferer::new(
@@ -5366,7 +5375,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         ast_span: Option<Span>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         if self.yield_type.is_none() {
-            bail!(self, CodeDiagnostic::YieldOutsideOfGenerator);
+            bail!(self, CodeDiagnostic::YieldOutsideOfCoroutine);
         }
 
         if self.defer_context.as_ref().is_some_and(|d| d.in_defer) {
@@ -5384,11 +5393,21 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         if inner.diverges() {
             return Ok(inner);
         }
-        let inner = self.try_coerce(self.yield_type.unwrap(), inner)?;
-        let as_ref = self.r#ref(inner, ast_span);
+        let val = self.try_coerce(self.yield_type.unwrap(), inner)?;
+        let val_ref = self.r#ref(val, ast_span);
 
-        let yield_item =
-            self.monomorphize_lang_item(LangItemKind::GeneratorYield, [self.yield_type.unwrap()])?;
+        let out_id = self.mono_ctx.ir.make_id();
+        self.local_defs.push(ir::LocalDef {
+            id: out_id,
+            typ: self.recv_type.unwrap(),
+        });
+        let out = self.exprs.local(out_id, self.recv_type.unwrap(), ast_span);
+        let out_ref = self.exprs.r#ref(out, ast_span);
+
+        let yield_item = self.monomorphize_lang_item(
+            LangItemKind::CoroutineYield,
+            [self.yield_type.unwrap(), self.recv_type.unwrap()],
+        )?;
         let yield_func = self.exprs.function(yield_item, ast_span);
 
         let void = self
@@ -5397,12 +5416,12 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let cond = self.call(
             yield_func,
-            [as_ref].into_iter(),
+            [val_ref, out_ref].into_iter(),
             self.types.void(),
             ast_span,
         )?;
         let early_return = self.make_return(void, ast_span)?;
-        Ok(self.exprs.if_then(cond, early_return, void, None, ast_span))
+        Ok(self.exprs.if_then(cond, early_return, out, None, ast_span))
     }
 
     fn lower_defer(

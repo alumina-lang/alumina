@@ -79,9 +79,9 @@ pub enum LangItemKind {
     DynData,
     DynVtableIndex,
 
-    Generator,
-    GeneratorNew,
-    GeneratorYield,
+    Coroutine,
+    CoroutineNew,
+    CoroutineYield,
 
     Operator(BinOp),
 
@@ -241,9 +241,9 @@ impl TryFrom<&str> for LangItemKind {
             "dyn_data" => Ok(LangItemKind::DynData),
             "dyn_vtable_index" => Ok(LangItemKind::DynVtableIndex),
 
-            "generator" => Ok(LangItemKind::Generator),
-            "generator_new" => Ok(LangItemKind::GeneratorNew),
-            "generator_yield" => Ok(LangItemKind::GeneratorYield),
+            "coroutine" => Ok(LangItemKind::Coroutine),
+            "coroutine_new" => Ok(LangItemKind::CoroutineNew),
+            "coroutine_yield" => Ok(LangItemKind::CoroutineYield),
 
             "format_arg" => Ok(LangItemKind::FormatArg),
             "enum_variant_new" => Ok(LangItemKind::EnumVariantNew),

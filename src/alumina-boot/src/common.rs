@@ -212,8 +212,8 @@ pub enum CodeDiagnostic {
     RecursiveStaticInitialization,
     #[error("can only do that in function scope")]
     NotInAFunctionScope,
-    #[error("yield can only be used in a generator")]
-    YieldOutsideOfGenerator,
+    #[error("yield can only be used in a coroutine")]
+    YieldOutsideOfCoroutine,
     #[error("unknown builtin macro `{}`", .0)]
     UnknownBuiltinMacro(String),
     #[error("type is not a protocol")]
@@ -224,10 +224,12 @@ pub enum CodeDiagnostic {
     ProtocolFnsCannotBeExtern,
     #[error("varargs functions can only be extern")]
     VarArgsCanOnlyBeExtern,
-    #[error("generators cannot be extern")]
-    ExternGenerator,
-    #[error("generators cannot be protocol functions")]
-    ProtocolGenerator,
+    #[error("coroutines cannot be extern")]
+    ExternCoroutine,
+    #[error("coroutines cannot be protocol functions")]
+    ProtocolCoroutine,
+    #[error("coroutines must have Coroutine<_, _> as return type")]
+    CoroutineReturnType,
     #[error("type `{}` matches `{}`, which it should not", .0, .1)]
     ProtocolMatch(String, String),
     #[error("type `{}` does not match `{}`", .0, .1)]

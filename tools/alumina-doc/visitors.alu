@@ -533,11 +533,17 @@ impl CodePrinter<W: Writable<W>> {
             })
             .transpose()?;
 
-        if child_by!(node, FieldKind::Generator).is_some() {
-            w!(self.writer, "<span class=\"keyword\">fn*</span> <span class=\"identifier-function\">{}</span>", get_name!(self, node));
-        } else {
-            w!(self.writer, "<span class=\"keyword\">fn</span> <span class=\"identifier-function\">{}</span>", get_name!(self, node));
-        }
+        w!(
+            self.writer,
+            "<span class=\"keyword\">{}</span> <span class=\"identifier-function\">{}</span>",
+            if child_by!(node, FieldKind::Coroutine).is_some() {
+                "fn*"
+            } else {
+                "fn"
+            },
+            get_name!(self, node)
+        );
+
 
         child_by!(node, FieldKind::TypeArguments)
             .map(|=self, child: Node| -> Result<()> { self.visit(child) })
