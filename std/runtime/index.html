@@ -38,10 +38,19 @@
 <a href="/std/runtime/internal/">internal</a>
 </li>
 </ul>
+<h2>Structs</h2>
+<ul>
+<li>
+<a href="/std/runtime/Generator.html">Generator</a>
+</li>
+</ul>
 <h2>Functions</h2>
 <ul>
 <li>
 <a href="/std/runtime/#item.in_const_context">in_const_context</a>
+</li>
+<li>
+<a href="/std/runtime/#item.in_coroutine">in_coroutine</a>
 </li>
 </ul>
 <h2>Macros</h2>
@@ -87,6 +96,16 @@ Run time glue code (program entrypoint, tests, ...)
 <div class="cell-doc"></div>
 </div>
 </div>
+<h2 id="Struct">Structs</h2>
+<div class="item-short-table">
+<div class="row" id="item.Generator">
+<div class="cell-name">
+<a href="/std/runtime/Generator.html">Generator</a>
+</div>
+<div class="cell-doc">A generator that yields values of type <code class="language-alumina">T</code>.
+</div>
+</div>
+</div>
 <h2 id="Function">Functions</h2>
 <ul>
 <li>
@@ -111,6 +130,37 @@ const IN_CONST_CONTEXT: bool = in_const_context();
 assert!(IN_CONST_CONTEXT);
 assert!(!in_const_context());
 </code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3aruntime%3a%3ain%5fconst%5fcontext%3b%0a%20%20%20%20%0a%20%20%20%20const%20IN%5fCONST%5fCONTEXT%3a%20bool%20%3d%20in%5fconst%5fcontext%28%29%3b%0a%20%20%20%20%0a%20%20%20%20assert%21%28IN%5fCONST%5fCONTEXT%29%3b%0a%20%20%20%20assert%21%28%21in%5fconst%5fcontext%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.in_coroutine">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">in_coroutine</span>() -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/runtime/mod.alu#L205-L209"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns <code class="language-alumina">true</code> if the current code is running in a coroutine.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::runtime::in_coroutine;
+
+fn* gen() -&gt; bool {
+    yield in_coroutine();
+}
+
+let gen = gen();
+defer gen.free();
+
+assert!(!in_coroutine());
+assert!(gen.next().unwrap());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3aruntime%3a%3ain%5fcoroutine%3b%0a%20%20%20%20%0a%20%20%20%20fn%2a%20gen%28%29%20%2d%3e%20bool%20%7b%0a%20%20%20%20%20%20%20%20yield%20in%5fcoroutine%28%29%3b%0a%20%20%20%20%7d%0a%20%20%20%20%0a%20%20%20%20let%20gen%20%3d%20gen%28%29%3b%0a%20%20%20%20defer%20gen%2efree%28%29%3b%0a%20%20%20%20%0a%20%20%20%20assert%21%28%21in%5fcoroutine%28%29%29%3b%0a%20%20%20%20assert%21%28gen%2enext%28%29%2eunwrap%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
