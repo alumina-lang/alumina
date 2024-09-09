@@ -2,19 +2,19 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>std::runtime::Generator - Alumina Docs</title>
+<title>std::runtime::Coroutine - Alumina Docs</title>
 <link rel="stylesheet" href="/static/styles.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="description" content=" A generator that yields values of type `T`." />
+<meta name="description" content=" Coroutine object" />
 <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png" />
 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
 <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
 <link rel="manifest" href="/static/manifest.json" />
 <link rel="mask-icon" href="/static/safari-pinned-tab.svg" color="#5bbad5" />
 <link rel="shortcut icon" href="/static/favicon.ico" />
-<link rel="canonical" href="https://docs.alumina-lang.net/std/runtime/Generator.html" />
+<link rel="canonical" href="https://docs.alumina-lang.net/std/runtime/Coroutine.html" />
 <meta name="msapplication-TileColor" content="#da532c" />
 <meta name="msapplication-config" content="/static/browserconfig.xml" />
 <meta name="description" content="Documentation for the Alumina standard library" />
@@ -27,24 +27,30 @@
 <a href="/">
 <img width="100px" height="100px" class="logo" src="/static/logo.svg" alt="Alumina Docs">
 </a>
-<h1><a class="breadcrumbs" href="/std/">std</a>::<a class="breadcrumbs" href="/std/runtime/">runtime</a>::<a class="breadcrumbs" href="/std/runtime/Generator.html">Generator</a></h1>
+<h1><a class="breadcrumbs" href="/std/">std</a>::<a class="breadcrumbs" href="/std/runtime/">runtime</a>::<a class="breadcrumbs" href="/std/runtime/Coroutine.html">Coroutine</a></h1>
 </h1>
 <h2>Methods</h2>
 <ul>
 <li>
-<a href="/std/runtime/Generator.html#item.next">next</a>
+<a href="/std/runtime/Coroutine.html#item.cancel">cancel</a>
 </li>
 <li>
-<a href="/std/runtime/Generator.html#item.cancel">cancel</a>
+<a href="/std/runtime/Coroutine.html#item.is_complete">is_complete</a>
 </li>
 <li>
-<a href="/std/runtime/Generator.html#item.close">close</a>
+<a href="/std/runtime/Coroutine.html#item.send">send</a>
 </li>
 <li>
-<a href="/std/runtime/Generator.html#item.free">free</a>
+<a href="/std/runtime/Coroutine.html#item.close">close</a>
 </li>
 <li>
-<a href="/std/runtime/Generator.html#item.move">move</a>
+<a href="/std/runtime/Coroutine.html#item.free">free</a>
+</li>
+<li>
+<a href="/std/runtime/Coroutine.html#item.move">move</a>
+</li>
+<li>
+<a href="/std/runtime/Coroutine.html#item.next">next</a>
 </li>
 </ul>
 </nav>
@@ -57,81 +63,125 @@
 </div>
 <div id="search-results"></div>
 <main id="main-content">
-<div class="main-title"><h1>Struct <a class="breadcrumbs" href="/std/">std</a>::<a class="breadcrumbs" href="/std/runtime/">runtime</a>::<a class="breadcrumbs" href="/std/runtime/Generator.html">Generator</a></h1>
+<div class="main-title"><h1>Struct <a class="breadcrumbs" href="/std/">std</a>::<a class="breadcrumbs" href="/std/runtime/">runtime</a>::<a class="breadcrumbs" href="/std/runtime/Coroutine.html">Coroutine</a></h1>
 </h1>
 </div>
 <div class="signature" data-nosnippet>
 <h3>
-<span class="keyword">struct</span> <span class="identifier-type">Generator</span>&lt;T&gt; { ... }</h3>
+<span class="keyword">struct</span> <span class="identifier-type">Coroutine</span>&lt;YieldT, RecvT = <a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt; { ... }</h3>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/runtime/mod.alu#L72-L75"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/runtime/mod.alu#L85-L88"/>source</a>
 </div>
 </div>
 <p>
-A generator that yields values of type <code class="language-alumina">T</code>.
+Coroutine object
 </p><p>
-This is the return type of generator functions.
+Coroutine object is a reference to a running coroutine, which receives values of type <code class="language-alumina">RecvT</code> and
+yields values of type <code class="language-alumina">YieldT</code>. It is used to control the execution of the coroutine and to pass
+values to and from it.
+</p><p>
+A special case of coroutine is a generator (<code class="language-alumina">RecvT</code> is not provided, defaults to <code class="language-alumina">()</code>), which does
+not receive any values, but only yields values. Generators also implement the <a class="path-link" href="/std/iter/Iterator.html">Iterator</a> trait,
+allowing them to be used in for loops.
 </p><p>
 </p>
 <h3> Example</h3>
 <p>
-<pre class="with-playground-link"><code class="language-alumina">fn* basic_gen() -&gt; i32 {
-    yield 1;
-    yield 2;
-    yield 3;
+<pre class="with-playground-link"><code class="language-alumina">fn* coroutine() -&gt; Coroutine&lt;i32, i32&gt; {
+    for i in 0..3 {
+        let val = yield i;
+        println!("[in] got {}", val);
+    }
 }
 
-let gen = basic_gen();
-defer gen.free();
+let gen = coroutine();
+for i in 0..3 {
+    let val = gen.send(i);
+    println!("[out] got {}", val.unwrap());
+}
 
-assert_eq!(gen.next(), Option::some(1));
-assert_eq!(gen.next(), Option::some(2));
-assert_eq!(gen.next(), Option::some(3));
-assert_eq!(gen.next(), Option::none());
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20fn%2a%20basic%5fgen%28%29%20%2d%3e%20i32%20%7b%0a%20%20%20%20%20%20%20%20yield%201%3b%0a%20%20%20%20%20%20%20%20yield%202%3b%0a%20%20%20%20%20%20%20%20yield%203%3b%0a%20%20%20%20%7d%0a%20%20%20%20%0a%20%20%20%20let%20gen%20%3d%20basic%5fgen%28%29%3b%0a%20%20%20%20defer%20gen%2efree%28%29%3b%0a%20%20%20%20%0a%20%20%20%20assert%5feq%21%28gen%2enext%28%29%2c%20Option%3a%3asome%281%29%29%3b%0a%20%20%20%20assert%5feq%21%28gen%2enext%28%29%2c%20Option%3a%3asome%282%29%29%3b%0a%20%20%20%20assert%5feq%21%28gen%2enext%28%29%2c%20Option%3a%3asome%283%29%29%3b%0a%20%20%20%20assert%5feq%21%28gen%2enext%28%29%2c%20Option%3a%3anone%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+// Output:
+// [in] got 0
+// [out] got 0
+// [in] got 1
+// [out] got 1
+// [in] got 2
+// [out] got 2
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20fn%2a%20coroutine%28%29%20%2d%3e%20Coroutine%3ci32%2c%20i32%3e%20%7b%0a%20%20%20%20%20%20%20%20for%20i%20in%200%2e%2e3%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20let%20val%20%3d%20yield%20i%3b%0a%20%20%20%20%20%20%20%20%20%20%20%20println%21%28%22%5bin%5d%20got%20%7b%7d%22%2c%20val%29%3b%0a%20%20%20%20%20%20%20%20%7d%0a%20%20%20%20%7d%0a%20%20%20%20%0a%20%20%20%20let%20gen%20%3d%20coroutine%28%29%3b%0a%20%20%20%20for%20i%20in%200%2e%2e3%20%7b%0a%20%20%20%20%20%20%20%20let%20val%20%3d%20gen%2esend%28i%29%3b%0a%20%20%20%20%20%20%20%20println%21%28%22%5bout%5d%20got%20%7b%7d%22%2c%20val%2eunwrap%28%29%29%3b%0a%20%20%20%20%7d%0a%20%20%20%20%0a%20%20%20%20%2f%2f%20Output%3a%0a%20%20%20%20%2f%2f%20%5bin%5d%20got%200%0a%20%20%20%20%2f%2f%20%5bout%5d%20got%200%0a%20%20%20%20%2f%2f%20%5bin%5d%20got%201%0a%20%20%20%20%2f%2f%20%5bout%5d%20got%201%0a%20%20%20%20%2f%2f%20%5bin%5d%20got%202%0a%20%20%20%20%2f%2f%20%5bout%5d%20got%202%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 <h2 id="Method">Methods</h2>
 <div class="signature impl-header"><h3>
-<span class="keyword">impl</span> <span class="identifier-type">Generator</span>&lt;T&gt; { ... }</h3></div>
+<span class="keyword">impl</span> <span class="identifier-type">Coroutine</span>&lt;YieldT, RecvT&gt; { ... }</h3></div>
 <ul>
 <li>
-<div class="signature" id="item.next">
+<div class="signature" id="item.cancel">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">next</span>(self: &amp;mut <a href="/std/runtime/Generator.html"><span class="identifier-type">Generator</span></a>&lt;T&gt;) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;</h4>
+<span class="keyword">fn</span> <span class="identifier-function">cancel</span>(self: &amp;mut <a href="/std/runtime/Coroutine.html"><span class="identifier-type">Coroutine</span></a>&lt;YieldT, RecvT&gt;)</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/runtime/mod.alu#L82-L106"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/runtime/mod.alu#L105-L115"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Returns the next item, if any.
+Cancels the coroutine
 </p><p>
-If the iterator has reached the end, it returns <code class="language-alumina">Option::none()</code>.
+This method can be used to gracefully stop the coroutine early, allowing any <code class="language-alumina">defer</code> statements
+in it to run. If the coroutine already ran to completion, this method has no effect.
 </p><p>
-See <a class="path-link" href="/std/iter/Iterator.html">Iterator</a> for more information.
+It is still necessary to call <a class="path-link" href="/std/runtime/Coroutine.html#item.free">free</a> to free the coroutine's resources after it has been closed.
+</p><p>
+See <a class="path-link" href="/std/runtime/Coroutine.html#item.close">close</a> for an example of usage.
 </p><p>
 </p>
 </div>
 </li>
 <li>
-<div class="signature" id="item.cancel">
+<div class="signature" id="item.is_complete">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">cancel</span>(self: &amp;mut <a href="/std/runtime/Generator.html"><span class="identifier-type">Generator</span></a>&lt;T&gt;)</h4>
+<span class="keyword">fn</span> <span class="identifier-function">is_complete</span>(self: &amp;<a href="/std/runtime/Coroutine.html"><span class="identifier-type">Coroutine</span></a>&lt;YieldT, RecvT&gt;) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/runtime/mod.alu#L116-L126"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/runtime/mod.alu#L130-L135"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Cancels the generator
+Returns <code class="language-alumina">true</code> if the coroutine has completed.
 </p><p>
-This method can be used to gracefully stop the generator early, allowing any <code class="language-alumina">defer</code> statements
-in it to run. If the generator already ran to completion, this method has no effect.
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">fn* gen() -&gt; Coroutine&lt;()&gt; { }
+
+let gen = gen();
+defer gen.free();
+
+assert!(!gen.is_complete()); // Coroutines start in a suspended state.
+gen.next();
+assert!(gen.is_complete());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20fn%2a%20gen%28%29%20%2d%3e%20Coroutine%3c%28%29%3e%20%7b%20%7d%0a%20%20%20%20%0a%20%20%20%20let%20gen%20%3d%20gen%28%29%3b%0a%20%20%20%20defer%20gen%2efree%28%29%3b%0a%20%20%20%20%0a%20%20%20%20assert%21%28%21gen%2eis%5fcomplete%28%29%29%3b%20%2f%2f%20Coroutines%20start%20in%20a%20suspended%20state%2e%0a%20%20%20%20gen%2enext%28%29%3b%0a%20%20%20%20assert%21%28gen%2eis%5fcomplete%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
-It is still necessary to call <a class="path-link" href="/std/runtime/Generator.html#item.free">free</a> to free the generator's resources after it has been closed.
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.send">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">send</span>(self: &amp;mut <a href="/std/runtime/Coroutine.html"><span class="identifier-type">Coroutine</span></a>&lt;YieldT, RecvT&gt;, val: RecvT) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;YieldT&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/runtime/mod.alu#L145-L163"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Sends a value to the coroutine and resumes its execution.
 </p><p>
-See <a class="path-link" href="/std/runtime/Generator.html#item.close">close</a> for an example of usage.
+This method can be used to send a value to the coroutine and resume its execution. The coroutine
+will continue executing from the point where it last yielded, or from the beginning if it has
+not been started yet.
+</p><p>
+If the coroutine runs to completion after the value is sent, this method will return <code class="language-alumina">Option::none()</code>.
+If the coroutine yields a value, this method will return <code class="language-alumina">Option::some(value)</code>.
 </p><p>
 </p>
 </div>
@@ -139,16 +189,16 @@ See <a class="path-link" href="/std/runtime/Generator.html#item.close">close</a>
 <li>
 <div class="signature" id="item.close">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">close</span>(self: &amp;mut <a href="/std/runtime/Generator.html"><span class="identifier-type">Generator</span></a>&lt;T&gt;)</h4>
+<span class="keyword">fn</span> <span class="identifier-function">close</span>(self: &amp;mut <a href="/std/runtime/Coroutine.html"><span class="identifier-type">Coroutine</span></a>&lt;YieldT, RecvT&gt;)</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/runtime/mod.alu#L165-L168"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/runtime/mod.alu#L202-L205"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Cancels the generator and frees its resources.
+Cancels the coroutine and frees its resources.
 </p><p>
-Cancels the generator, allowing any <code class="language-alumina">defer</code> statements in it to run, and frees the generator's
+Cancels the coroutine, allowing any <code class="language-alumina">defer</code> statements in it to run, and frees the coroutine's
 resources.
 </p><p>
 </p>
@@ -158,7 +208,7 @@ resources.
 use std::string::starts_with;
 use std::io::{BufferedReader, lines as io_lines};
 
-fn* read_lines(path: Path) -&gt; &amp;[u8] {
+fn* read_lines(path: Path) -&gt; Coroutine&lt;&amp;[u8]&gt; {
     let file = File::open(path).unwrap();
     defer file.close();
 
@@ -183,7 +233,7 @@ for line in lines {
     }
     println!("{}", line);
 }
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3afs%3a%3a%7bPath%2c%20File%7d%3b%0a%20%20%20%20use%20std%3a%3astring%3a%3astarts%5fwith%3b%0a%20%20%20%20use%20std%3a%3aio%3a%3a%7bBufferedReader%2c%20lines%20as%20io%5flines%7d%3b%0a%20%20%20%20%0a%20%20%20%20fn%2a%20read%5flines%28path%3a%20Path%29%20%2d%3e%20%26%5bu8%5d%20%7b%0a%20%20%20%20%20%20%20%20let%20file%20%3d%20File%3a%3aopen%28path%29%2eunwrap%28%29%3b%0a%20%20%20%20%20%20%20%20defer%20file%2eclose%28%29%3b%0a%20%20%20%20%0a%20%20%20%20%20%20%20%20let%20reader%20%3d%20BufferedReader%3a%3anew%28%26file%2c%201024%20%2a%2064%29%3b%0a%20%20%20%20%20%20%20%20defer%20reader%2efree%28%29%3b%0a%20%20%20%20%0a%20%20%20%20%20%20%20%20let%20lines%20%3d%20reader%2eio%5flines%28%29%3b%0a%20%20%20%20%20%20%20%20defer%20lines%2efree%28%29%3b%0a%20%20%20%20%0a%20%20%20%20%20%20%20%20for%20line%20in%20lines%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20yield%20line%2eunwrap%28%29%3b%0a%20%20%20%20%20%20%20%20%7d%0a%20%20%20%20%7d%0a%20%20%20%20%0a%20%20%20%20let%20lines%20%3d%20read%5flines%28Path%3a%3anew%28%22%2fproc%2fstat%22%29%29%3b%0a%20%20%20%20defer%20lines%2eclose%28%29%3b%0a%20%20%20%20%0a%20%20%20%20for%20line%20in%20lines%20%7b%0a%20%20%20%20%20%20%20%20%2f%2f%20All%20resources%20will%20be%20freed%2c%20even%20if%20we%20break%20out%20early%2e%0a%20%20%20%20%20%20%20%20if%20%21line%2estarts%5fwith%28%22cpu%22%29%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20break%3b%0a%20%20%20%20%20%20%20%20%7d%0a%20%20%20%20%20%20%20%20println%21%28%22%7b%7d%22%2c%20line%29%3b%0a%20%20%20%20%7d%0a%7d%0a">Run this example</a></pre>
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3afs%3a%3a%7bPath%2c%20File%7d%3b%0a%20%20%20%20use%20std%3a%3astring%3a%3astarts%5fwith%3b%0a%20%20%20%20use%20std%3a%3aio%3a%3a%7bBufferedReader%2c%20lines%20as%20io%5flines%7d%3b%0a%20%20%20%20%0a%20%20%20%20fn%2a%20read%5flines%28path%3a%20Path%29%20%2d%3e%20Coroutine%3c%26%5bu8%5d%3e%20%7b%0a%20%20%20%20%20%20%20%20let%20file%20%3d%20File%3a%3aopen%28path%29%2eunwrap%28%29%3b%0a%20%20%20%20%20%20%20%20defer%20file%2eclose%28%29%3b%0a%20%20%20%20%0a%20%20%20%20%20%20%20%20let%20reader%20%3d%20BufferedReader%3a%3anew%28%26file%2c%201024%20%2a%2064%29%3b%0a%20%20%20%20%20%20%20%20defer%20reader%2efree%28%29%3b%0a%20%20%20%20%0a%20%20%20%20%20%20%20%20let%20lines%20%3d%20reader%2eio%5flines%28%29%3b%0a%20%20%20%20%20%20%20%20defer%20lines%2efree%28%29%3b%0a%20%20%20%20%0a%20%20%20%20%20%20%20%20for%20line%20in%20lines%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20yield%20line%2eunwrap%28%29%3b%0a%20%20%20%20%20%20%20%20%7d%0a%20%20%20%20%7d%0a%20%20%20%20%0a%20%20%20%20let%20lines%20%3d%20read%5flines%28Path%3a%3anew%28%22%2fproc%2fstat%22%29%29%3b%0a%20%20%20%20defer%20lines%2eclose%28%29%3b%0a%20%20%20%20%0a%20%20%20%20for%20line%20in%20lines%20%7b%0a%20%20%20%20%20%20%20%20%2f%2f%20All%20resources%20will%20be%20freed%2c%20even%20if%20we%20break%20out%20early%2e%0a%20%20%20%20%20%20%20%20if%20%21line%2estarts%5fwith%28%22cpu%22%29%20%7b%0a%20%20%20%20%20%20%20%20%20%20%20%20break%3b%0a%20%20%20%20%20%20%20%20%7d%0a%20%20%20%20%20%20%20%20println%21%28%22%7b%7d%22%2c%20line%29%3b%0a%20%20%20%20%7d%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -191,9 +241,9 @@ for line in lines {
 <li>
 <div class="signature" id="item.free">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">free</span>(self: &amp;mut <a href="/std/runtime/Generator.html"><span class="identifier-type">Generator</span></a>&lt;T&gt;)</h4>
+<span class="keyword">fn</span> <span class="identifier-function">free</span>(self: &amp;mut <a href="/std/runtime/Coroutine.html"><span class="identifier-type">Coroutine</span></a>&lt;YieldT, RecvT&gt;)</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/runtime/mod.alu#L172-L176"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/runtime/mod.alu#L208-L212"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -206,9 +256,9 @@ Frees the memory backing the object.
 <li>
 <div class="signature" id="item.move">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">move</span>(self: &amp;mut <a href="/std/runtime/Generator.html"><span class="identifier-type">Generator</span></a>&lt;T&gt;) -> <a href="/std/runtime/Generator.html"><span class="identifier-type">Generator</span></a>&lt;T&gt;</h4>
+<span class="keyword">fn</span> <span class="identifier-function">move</span>(self: &amp;mut <a href="/std/runtime/Coroutine.html"><span class="identifier-type">Coroutine</span></a>&lt;YieldT, RecvT&gt;) -> <a href="/std/runtime/Coroutine.html"><span class="identifier-type">Coroutine</span></a>&lt;YieldT, RecvT&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/runtime/mod.alu#L179-L183"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/runtime/mod.alu#L215-L219"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -221,14 +271,37 @@ See <a class="path-link" href="/std/mem/Movable.html">Movable</a> for details.
 </div>
 </li>
 </ul>
-<h2 id="Mixin">Mixins</h2>
-<div class="signature impl-header"><h3>
-<span class="keyword">impl</span> <span class="identifier-type">Generator</span>&lt;T&gt; { ... }</h3></div>
+<div class="signature impl-header not-first"><h3>
+<span class="keyword">impl</span> <span class="identifier-type">Coroutine</span>&lt;T&gt; { ... }</h3></div>
 <ul>
 <li>
-<div class="signature" id="item.mixin iter::Iterator<Generator<T>, T>;">
+<div class="signature" id="item.next">
 <h4>
-<span class="keyword">mixin</span> <a href="/std/iter/Iterator.html"><span class="identifier-type">Iterator</span></a>&lt;<a href="/std/runtime/Generator.html"><span class="identifier-type">Generator</span></a>&lt;T&gt;, T&gt;</h4>
+<span class="keyword">fn</span> <span class="identifier-function">next</span>(self: &amp;mut <a href="/std/runtime/Coroutine.html"><span class="identifier-type">Coroutine</span></a>&lt;T&gt;) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;T&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/runtime/mod.alu#L224-L230"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns the next item, if any.
+</p><p>
+If the iterator has reached the end, it returns <code class="language-alumina">Option::none()</code>.
+</p><p>
+See <a class="path-link" href="/std/iter/Iterator.html">Iterator</a> for more information.
+</p><p>
+</p>
+</div>
+</li>
+</ul>
+<h2 id="Mixin">Mixins</h2>
+<div class="signature impl-header"><h3>
+<span class="keyword">impl</span> <span class="identifier-type">Coroutine</span>&lt;T&gt; { ... }</h3></div>
+<ul>
+<li>
+<div class="signature" id="item.mixin iter::Iterator<Coroutine<T>, T>;">
+<h4>
+<span class="keyword">mixin</span> <a href="/std/iter/Iterator.html"><span class="identifier-type">Iterator</span></a>&lt;<a href="/std/runtime/Coroutine.html"><span class="identifier-type">Coroutine</span></a>&lt;T&gt;, T&gt;</h4>
 </div>
 <div class="item-doc">
 </div>
@@ -253,9 +326,9 @@ See <a class="path-link" href="/std/iter/Iterator.html">Iterator</a> for more in
 </li>
 </ul>
 <li>
-<div class="signature" id="item.mixin iter::IteratorExt<Generator<T>, T>;">
+<div class="signature" id="item.mixin iter::IteratorExt<Coroutine<T>, T>;">
 <h4>
-<span class="keyword">mixin</span> <a href="/std/iter/IteratorExt.html"><span class="identifier-type">IteratorExt</span></a>&lt;<a href="/std/runtime/Generator.html"><span class="identifier-type">Generator</span></a>&lt;T&gt;, T&gt;</h4>
+<span class="keyword">mixin</span> <a href="/std/iter/IteratorExt.html"><span class="identifier-type">IteratorExt</span></a>&lt;<a href="/std/runtime/Coroutine.html"><span class="identifier-type">Coroutine</span></a>&lt;T&gt;, T&gt;</h4>
 </div>
 <div class="item-doc">
 </div>
