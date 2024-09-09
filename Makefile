@@ -43,6 +43,9 @@ ifndef NO_THREADS
 endif
 ifndef NO_MINICORO
 	MINICORO = $(BUILD_DIR)/minicoro.o
+	ALUMINA_FLAGS += --cfg coroutines
+else
+	MINICORO =
 endif
 
 ifdef TIMINGS

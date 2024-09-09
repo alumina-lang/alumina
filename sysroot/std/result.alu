@@ -64,6 +64,29 @@ macro try($res) {
     }
 }
 
+/// Extract the success value or yield the calling generator.
+///
+/// This is similar to [try], but usable in generator functions that yield [Result] values.
+///
+/// Expands to the following expression
+/// ```pseudo_alumina
+/// if $.is_ok() {
+///     $.unwrap()
+/// } else {
+///     yield Result::err(self.unwrap_err())
+///     return
+/// }
+/// ```
+macro yield_try($res) {
+    let res = $res;
+    if res.is_ok() {
+        res.unwrap()
+    } else {
+        yield ::std::result::Result::err(res.unwrap_err());
+        return;
+    }
+}
+
 /// Either a success value or an error value.
 ///
 /// See [module level documentation](std::result) for more information.
