@@ -5353,6 +5353,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             bail!(self, CodeDiagnostic::YieldOutsideOfGenerator);
         }
 
+        if self.defer_context.as_ref().is_some_and(|d| d.in_defer) {
+            bail!(self, CodeDiagnostic::YieldInDefer);
+        }
+
         let inner = inner
             .map(|inner| self.lower_expr(inner, self.yield_type))
             .transpose()?
