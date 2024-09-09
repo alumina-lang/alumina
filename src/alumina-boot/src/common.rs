@@ -186,6 +186,8 @@ pub enum CodeDiagnostic {
     ConstMessage(String),
     #[error("cannot defer inside a defered expression")]
     DeferInDefer,
+    #[error("cannot yield inside a defered expression")]
+    YieldInDefer,
     #[error("`...` expressions can only be used in macros")]
     EtCeteraOutsideOfMacro,
     #[error("`$` identifiers can only be used in macros")]

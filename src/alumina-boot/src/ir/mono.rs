@@ -1378,7 +1378,8 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
 
         let return_type = child.lower_type_for_value(func.return_type)?;
         let generator_type = func
-            .is_generator
+            .attributes
+            .contains(&ast::Attribute::Generator)
             .then(|| child.monomorphize_lang_item(LangItemKind::Generator, [return_type]))
             .transpose()?
             .map(|i| child.types.named(i));
@@ -1434,7 +1435,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             return Ok(());
         }
 
-        if func.is_generator {
+        if generator_type.is_some() {
             let mut grandchild = Self::with_replacements(
                 child.mono_ctx,
                 child.replacements.clone(),
@@ -1610,7 +1611,6 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 is_local: fun.is_local,
                 is_lambda: false,
                 is_protocol_fn: false,
-                is_generator: fun.is_generator,
             }));
 
             result.push(ast::AssociatedFn {
@@ -2871,7 +2871,23 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         }
 
         if let Some(return_type_hint) = return_type_hint {
-            infer_pairs.push((fun.return_type, return_type_hint));
+            if fun.attributes.contains(&ast::Attribute::Generator) {
+                let item = self
+                    .mono_ctx
+                    .ast
+                    .lang_item(LangItemKind::Generator)
+                    .with_backtrace(&self.diag)?;
+
+                let wrapped = ast::Ty::Generic(
+                    ast::Ty::Item(item).alloc_on(self.mono_ctx.ast),
+                    [fun.return_type].alloc_on(self.mono_ctx.ast),
+                )
+                .alloc_on(self.mono_ctx.ast);
+
+                infer_pairs.push((wrapped, return_type_hint));
+            } else {
+                infer_pairs.push((fun.return_type, return_type_hint));
+            }
         }
 
         let mut type_inferer = TypeInferer::new(
@@ -5351,6 +5367,10 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         if self.yield_type.is_none() {
             bail!(self, CodeDiagnostic::YieldOutsideOfGenerator);
+        }
+
+        if self.defer_context.as_ref().is_some_and(|d| d.in_defer) {
+            bail!(self, CodeDiagnostic::YieldInDefer);
         }
 
         let inner = inner

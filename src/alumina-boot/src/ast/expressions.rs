@@ -1553,7 +1553,6 @@ impl<'ast, 'src> LambdaVisitor<'ast, 'src> {
             is_local: true,
             is_lambda: true,
             is_protocol_fn: false,
-            is_generator: false,
         }));
 
         let bindings = self

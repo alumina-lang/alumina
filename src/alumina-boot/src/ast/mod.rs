@@ -740,7 +740,6 @@ pub struct Function<'ast> {
     pub span: Option<Span>,
     pub is_local: bool,
     pub is_lambda: bool,
-    pub is_generator: bool,
     pub varargs: bool,
     pub is_protocol_fn: bool,
 }
@@ -836,6 +835,7 @@ pub enum Attribute<'ast> {
     Intrinsic,
     StaticConstructor,
     LinkName(&'ast str),
+    Generator,
 }
 
 impl<'ast> Attribute<'ast> {
@@ -865,6 +865,7 @@ impl<'ast> Attribute<'ast> {
             Attribute::ConstOnly => Attribute::ConstOnly,
             Attribute::NoConst => Attribute::NoConst,
             Attribute::TupleCall => Attribute::TupleCall,
+            Attribute::Generator => Attribute::Generator,
         }
     }
 }

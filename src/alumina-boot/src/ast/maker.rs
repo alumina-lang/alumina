@@ -394,11 +394,16 @@ impl<'ast> AstItemMaker<'ast> {
         body: Option<tree_sitter::Node<'src>>,
         attributes: &'ast [Attribute],
     ) -> Result<(), AluminaError> {
+        let mut attributes = attributes.to_vec();
+
         let mut parameters: Vec<Parameter<'ast>> = Vec::new();
         let code = scope.code().unwrap();
 
         let is_extern = node.child_by_field(FieldKind::Extern).is_some();
         let is_generator = node.child_by_field(FieldKind::Generator).is_some();
+        if is_generator {
+            attributes.push(Attribute::Generator);
+        }
 
         let has_varargs = node
             .child_by_field(FieldKind::Parameters)
@@ -516,7 +521,7 @@ impl<'ast> AstItemMaker<'ast> {
 
         let result = Item::Function(Function {
             name,
-            attributes,
+            attributes: attributes.alloc_on(self.ast),
             placeholders,
             args: parameters.alloc_on(self.ast),
             return_type,
@@ -526,7 +531,6 @@ impl<'ast> AstItemMaker<'ast> {
             is_local: self.local,
             is_lambda: false,
             is_protocol_fn,
-            is_generator,
         });
 
         item.assign(result);
