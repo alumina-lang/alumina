@@ -11,6 +11,7 @@ Non-exhaustive list of distinguishing features:
 - Limited operator overloading (via `Equatable` and `Comparable` protocols)
 - Block expressions
 - Anonymous functions (including closures)
+- Generators (stackful coroutines)
 - Richer type system:
   - strong enums,
   - array slices,

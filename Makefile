@@ -41,6 +41,12 @@ ifndef NO_THREADS
 	ALUMINA_FLAGS += --cfg threading
 	LDFLAGS += -lpthread
 endif
+ifndef NO_MINICORO
+	MINICORO = $(BUILD_DIR)/minicoro.o
+	ALUMINA_FLAGS += --cfg coroutines
+else
+	MINICORO =
+endif
 
 ifdef TIMINGS
 	ALUMINA_FLAGS += --timings
@@ -112,13 +118,18 @@ ALUMINA_FLAGS_TEST = --sysroot $(SYSROOT) $(ALUMINA_FLAGS) --cfg test
 ALUMINA_FLAGS_TEST_STD = --sysroot $(SYSROOT) $(ALUMINA_FLAGS) --cfg test --cfg test_std
 endif
 
+## ----------------------------- Minicoro ------------------------------
+
+$(BUILD_DIR)/minicoro.o: common/minicoro/minicoro.c
+	$(CC) $(CFLAGS) -c $^ -o $@
+
 ## --------------------------- Stdlib tests ----------------------------
 
 # Stdlib tests
 $(STDLIB_TESTS).c: $(ALU_TEST_STD_DEPS)
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_TEST_STD) -Zdeny-warnings --output $@
 
-$(STDLIB_TESTS): $(STDLIB_TESTS).c
+$(STDLIB_TESTS): $(STDLIB_TESTS).c $(MINICORO)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 ## ---------------------------- Lang tests -----------------------------
@@ -129,7 +140,7 @@ $(LANG_TESTS).c: $(ALU_TEST_DEPS) $(LANG_TEST_FILES)
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_TEST) -Zdeny-warnings --output $@ \
 		$(call alumina_modules,$(LANG_TEST_FILES),tests/,)
 
-$(LANG_TESTS): $(LANG_TESTS).c
+$(LANG_TESTS): $(LANG_TESTS).c $(MINICORO)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 ## ------------------ Libraries  ------------------
@@ -151,7 +162,7 @@ $(CODEGEN).c: $(ALU_DEPS) $(TREE_SITTER_SOURCES) $(CODEGEN_SOURCES)
 		$(call alumina_modules,$(TREE_SITTER_SOURCES),libraries/,/) \
 		$(call alumina_modules,$(CODEGEN_SOURCES),tools/,/)
 
-$(CODEGEN): $(CODEGEN).c $(BUILD_DIR)/parser.o
+$(CODEGEN): $(CODEGEN).c $(BUILD_DIR)/parser.o $(MINICORO)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -ltree-sitter
 
 libraries/aluminac/lib/node_kinds.alu: $(CODEGEN)
@@ -161,7 +172,7 @@ $(LIBRARIES_TESTS).c: $(ALU_TEST_DEPS) $(ALU_LIBRARIES)
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_TEST) -Zdeny-warnings --output $@ \
 		$(call alumina_modules,$(ALU_LIBRARIES),libraries/,/)
 
-$(LIBRARIES_TESTS): $(LIBRARIES_TESTS).c
+$(LIBRARIES_TESTS): $(LIBRARIES_TESTS).c $(MINICORO)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -ltree-sitter
 
 ## --------------------------------Tools -------------------------------
@@ -174,7 +185,7 @@ $(ALUMINA_DOC).c: $(ALU_DEPS) $(ALU_LIBRARIES) $(ALUMINA_DOC_SOURCES) libraries/
 		$(call alumina_modules,$(ALU_LIBRARIES),libraries/,/) \
 		$(call alumina_modules,$(ALUMINA_DOC_SOURCES),tools/,/)
 
-$(ALUMINA_DOC): $(ALUMINA_DOC).c $(BUILD_DIR)/parser.o
+$(ALUMINA_DOC): $(ALUMINA_DOC).c $(BUILD_DIR)/parser.o $(MINICORO)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -ltree-sitter
 
 $(BUILD_DIR)/doctest.alu: $(ALUMINA_DOC) $(SYSROOT_FILES) tools/alumina-doc/static/*
@@ -191,7 +202,7 @@ $(DOCTEST).c: $(ALU_TEST_DEPS) $(BUILD_DIR)/doctest.alu
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_TEST) --output $@ $(BUILD_DIR)/doctest.alu \
 		$(call alumina_modules,$(ALU_LIBRARIES),libraries/,/)
 
-$(DOCTEST): $(DOCTEST).c
+$(DOCTEST): $(DOCTEST).c $(MINICORO)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 .PHONY: docs test-docs serve-docs watch-docs
@@ -219,7 +230,7 @@ $(BUILD_DIR)/examples/.build:
 $(BUILD_DIR)/examples/%.c: examples/%.alu $(ALU_DEPS) $(BUILD_DIR)/examples/.build
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --output $@ main=$<
 
-$(BUILD_DIR)/examples/%: $(BUILD_DIR)/examples/%.c
+$(BUILD_DIR)/examples/%: $(BUILD_DIR)/examples/%.c $(MINICORO)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 examples: $(patsubst examples/%.alu,$(BUILD_DIR)/examples/%,$(EXAMPLES))
@@ -268,7 +279,7 @@ all: alumina-boot
 $(BUILD_DIR)/quick.c: $(ALU_DEPS) quick.alu
 	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --output $@ quick=./quick.alu
 
-$(BUILD_DIR)/quick: $(BUILD_DIR)/quick.c
+$(BUILD_DIR)/quick: $(BUILD_DIR)/quick.c $(MINICORO)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 quick: $(BUILD_DIR)/quick
@@ -291,7 +302,7 @@ bench-std-cached: $(ALU_TEST_STD_DEPS)
 	fi
 	$(BENCH_CMD) $(ALUMINA_BOOT) $(ALUMINA_FLAGS_TEST_STD) --timings --cfg test --cfg test_std --output /dev/null
 
-bench-std-cc: $(STDLIB_TESTS).c
+bench-std-cc: $(STDLIB_TESTS).c $(MINICORO)
 	$(BENCH_CMD) $(CC) $(CFLAGS) -o/dev/null $^ $(LDFLAGS)
 
 $(BUILD_DIR)/flamegraph.svg: $(ALUMINA_BOOT) $(SYSROOT_FILES)

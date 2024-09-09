@@ -356,6 +356,7 @@ pub struct Monomorphizer<'a, 'ast, 'ir> {
 
     replacements: HashMap<ast::AstId, ir::TyP<'ir>>,
     return_type: Option<ir::TyP<'ir>>,
+    yield_type: Option<ir::TyP<'ir>>,
     loop_contexts: Vec<LoopContext<'ir>>,
     local_types: HashMap<ir::IrId, ir::TyP<'ir>>,
     local_type_hints: HashMap<ir::IrId, ir::TyP<'ir>>,
@@ -399,6 +400,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             exprs: ExpressionBuilder::new(ir),
             types: TypeBuilder::new(ir),
             return_type: None,
+            yield_type: None,
             loop_contexts: Vec::new(),
             local_type_hints: HashMap::default(),
             local_defs: Vec::new(),
@@ -424,6 +426,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             exprs: ExpressionBuilder::new(ir),
             types: TypeBuilder::new(ir),
             return_type: None,
+            yield_type: None,
             loop_contexts: Vec::new(),
             local_defs: Vec::new(),
             local_type_hints: HashMap::default(),
@@ -1407,10 +1410,11 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             None
         };
 
+        let parameters = (&parameters[..]).alloc_on(child.mono_ctx.ir);
         let res = ir::IRItem::Function(ir::Function {
             name: func.name.map(|n| n.alloc_on(child.mono_ctx.ir)),
             attributes: attributes.alloc_on(child.mono_ctx.ir),
-            args: (&parameters[..]).alloc_on(child.mono_ctx.ir),
+            args: parameters,
             varargs: func.varargs,
             span: func.span,
             return_type: generator_type.unwrap_or(return_type),
@@ -1430,17 +1434,85 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             return Ok(());
         }
 
-        child.return_type = Some(return_type);
-        if let Some(body) = func.body {
-            let body = child.lower_function_body(
-                body,
+        if func.is_generator {
+            let mut grandchild = Self::with_replacements(
+                child.mono_ctx,
+                child.replacements.clone(),
+                child.tentative,
+                child.current_item,
+                child.diag.fork(),
+            );
+            grandchild.local_types = child.local_types.clone();
+
+            let inner = grandchild.mono_ctx.ir.make_item();
+            inner.assign(ir::IRItem::Function(ir::Function {
+                name: None,
+                attributes: [ast::Attribute::InlineDuringMono].alloc_on(grandchild.mono_ctx.ir),
+                args: parameters,
+                varargs: false,
+                span: func.span,
+                return_type: child.types.void(),
+                body: OnceCell::new(),
+            }));
+
+            grandchild.return_type = Some(grandchild.types.void());
+            grandchild.yield_type = Some(return_type);
+
+            let body = grandchild.lower_function_body(
+                func.body.expect("generator without body"),
                 func.attributes.contains(&ast::Attribute::InlineDuringMono),
                 tuple_args_arg,
             )?;
+            inner.get_function().unwrap().body.set(body).unwrap();
+
+            let body = child.generate_generator_new(parameters, return_type, inner, func.span)?;
             item.get_function().unwrap().body.set(body).unwrap();
+        } else {
+            child.return_type = Some(return_type);
+            if let Some(body) = func.body {
+                let body = child.lower_function_body(
+                    body,
+                    func.attributes.contains(&ast::Attribute::InlineDuringMono),
+                    tuple_args_arg,
+                )?;
+                item.get_function().unwrap().body.set(body).unwrap();
+            }
         }
 
         Ok(())
+    }
+
+    pub fn generate_generator_new(
+        &mut self,
+        args: &[ir::Parameter<'ir>],
+        yield_type: ir::TyP<'ir>,
+        item: ir::IRItemP<'ir>,
+        span: Option<Span>,
+    ) -> Result<FuncBody<'ir>, AluminaError> {
+        let tup_type = self.types.tuple(args.iter().map(|p| p.ty));
+        let tup = self.exprs.tuple(
+            args.iter()
+                .map(|p| self.exprs.local(p.id, p.ty, span))
+                .enumerate(),
+            tup_type,
+            span,
+        );
+
+        let t1 = self.types.named(item);
+        let glue_item =
+            self.monomorphize_lang_item(LangItemKind::GeneratorNew, [t1, tup_type, yield_type])?;
+        let glue_func = self.exprs.function(glue_item, span);
+
+        let return_type = glue_item.get_function().unwrap().return_type;
+
+        assert!(self.local_defs.is_empty(), "generate_generator_new should not define any locals, so that the glue can be IR-inlined");
+
+        let function_body = FuncBody {
+            local_defs: &[],
+            expr: self.call(glue_func, [tup], return_type, span)?,
+        };
+
+        Ok(function_body)
     }
 
     // Mixin expansion shouldn't really happen here, as it only touches the AST and does not
@@ -2524,6 +2596,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
             exprs: ExpressionBuilder::new(ir),
             types: TypeBuilder::new(ir),
             return_type: self.return_type,
+            yield_type: self.yield_type,
             loop_contexts: self.loop_contexts.clone(),
             local_defs: self.local_defs.clone(),
             local_type_hints: self.local_type_hints.clone(),
@@ -5270,6 +5343,48 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
         self.make_return(inner, ast_span)
     }
 
+    fn lower_yield(
+        &mut self,
+        inner: Option<ast::ExprP<'ast>>,
+        _type_hint: Option<ir::TyP<'ir>>,
+        ast_span: Option<Span>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        if self.yield_type.is_none() {
+            bail!(self, CodeDiagnostic::YieldOutsideOfGenerator);
+        }
+
+        let inner = inner
+            .map(|inner| self.lower_expr(inner, self.yield_type))
+            .transpose()?
+            .unwrap_or_else(|| {
+                self.exprs
+                    .void(self.types.void(), ir::ValueType::RValue, ast_span)
+            });
+
+        if inner.diverges() {
+            return Ok(inner);
+        }
+        let inner = self.try_coerce(self.yield_type.unwrap(), inner)?;
+        let as_ref = self.r#ref(inner, ast_span);
+
+        let yield_item =
+            self.monomorphize_lang_item(LangItemKind::GeneratorYield, [self.yield_type.unwrap()])?;
+        let yield_func = self.exprs.function(yield_item, ast_span);
+
+        let void = self
+            .exprs
+            .void(self.types.void(), ir::ValueType::RValue, ast_span);
+
+        let cond = self.call(
+            yield_func,
+            [as_ref].into_iter(),
+            self.types.void(),
+            ast_span,
+        )?;
+        let early_return = self.make_return(void, ast_span)?;
+        Ok(self.exprs.if_then(cond, early_return, void, None, ast_span))
+    }
+
     fn lower_defer(
         &mut self,
         inner: ast::ExprP<'ast>,
@@ -5538,7 +5653,7 @@ impl<'a, 'ast, 'ir> Monomorphizer<'a, 'ast, 'ir> {
                 self.lower_range(*lower, *upper, *inclusive, type_hint, expr.span)
             }
             ast::ExprKind::Return(inner) => self.lower_return(*inner, type_hint, expr.span),
-            ast::ExprKind::Yield(_inner) => ice!(self.diag, "yield not implemented"),
+            ast::ExprKind::Yield(inner) => self.lower_yield(*inner, type_hint, expr.span),
             ast::ExprKind::Fn(item, args) => self.lower_fn(*item, *args, type_hint, expr.span),
             ast::ExprKind::Static(item, args) => {
                 self.lower_static(item, *args, type_hint, expr.span)

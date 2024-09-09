@@ -57,11 +57,9 @@ mod internal {
     use fmt::{Formatter, Formattable};
     use sync::{Atomic, Ordering};
 
-    // libc runtime backtrace support
-    #[cfg(all(debug, not(no_backtrace), not(target_os = "android")))]
+    // glibc runtime backtrace support
+    #[cfg(all(debug, target_env = "gnu", not(no_backtrace), not(target_os = "android")))]
     {
-        extern "C" fn backtrace(buffer: &mut &mut void, size: libc::c_int) -> libc::c_int;
-        extern "C" fn backtrace_symbols(buffer: &mut &void, size: libc::c_int) -> &mut &mut libc::c_char;
         extern "C" fn backtrace_symbols_fd(buffer: &mut &void, size: libc::c_int, fd: libc::c_int);
     }
 
@@ -132,7 +130,7 @@ mod internal {
     }
 
     #[inline(never)]
-    fn print_panic_message(info: &PanicInfo) -> Result<(), fmt::Error> {
+    fn print_panic_message(info: &PanicInfo, backtrace: bool) -> Result<(), fmt::Error> {
         let formatter = PanicFormatter::new();
         fmt::write!(
             &formatter,
@@ -142,98 +140,101 @@ mod internal {
         let _ = fmt::internal::write_fmt(info.args, &formatter);
         formatter.write_byte('\n')?;
 
-        #[cfg(all(debug, use_libbacktrace, not(no_backtrace)))]
-        {
-            // Preferably use libbacktrace to print a backtrace.
-            use ffi::CString;
-            use runtime::backtrace::{backtrace_create_state, backtrace_full};
+        #[allow(pure_statement)]
+        if backtrace {
+            #[cfg(all(debug, use_libbacktrace, not(no_backtrace)))]
+            {
+                // Preferably use libbacktrace to print a backtrace.
+                use ffi::CString;
+                use runtime::backtrace::{backtrace_create_state, backtrace_full};
 
-            fn backtrace_error_callback(
-                state: &mut void,
-                message: &libc::c_char,
-                _errno: libc::c_int
-            ) {
-                let formatter = state as &mut PanicFormatter;
-                let msg = CString::from_raw(message);
-                let _ = fmt::write!(formatter, "error while printing backtrace: {}\n", msg);
-            }
-
-            fn demangle_alumina(name: &[u8]) -> Option<&[u8]> {
-                use string::{starts_with, is_digit};
-                use option::try;
-
-                if name.starts_with("_AL0") {
-                    return Option::some("<anonymous>");
+                fn backtrace_error_callback(
+                    state: &mut void,
+                    message: &libc::c_char,
+                    _errno: libc::c_int
+                ) {
+                    let formatter = state as &mut PanicFormatter;
+                    let msg = CString::from_raw(message);
+                    let _ = fmt::write!(formatter, "error while printing backtrace: {}\n", msg);
                 }
 
-                if !name.starts_with("_AL")
-                    || name.len() < 5
-                    || !name[3].is_digit() {
-                    return Option::none();
-                }
+                fn demangle_alumina(name: &[u8]) -> Option<&[u8]> {
+                    use string::{starts_with, is_digit};
+                    use option::try;
 
-                let end_index = 3usize;
-                while name[end_index].is_digit() {
-                    end_index += 1;
-                    if end_index == name.len() {
+                    if name.starts_with("_AL0") {
+                        return Option::some("<anonymous>");
+                    }
+
+                    if !name.starts_with("_AL")
+                        || name.len() < 5
+                        || !name[3].is_digit() {
                         return Option::none();
                     }
+
+                    let end_index = 3usize;
+                    while name[end_index].is_digit() {
+                        end_index += 1;
+                        if end_index == name.len() {
+                            return Option::none();
+                        }
+                    }
+
+                    let len = usize::parse(name[3..end_index])?;
+                    Option::some(name[end_index..end_index + len])
                 }
 
-                let len = usize::parse(name[3..end_index])?;
-                Option::some(name[end_index..end_index + len])
-            }
+                fn backtrace_callback(
+                    state: &mut void,
+                    _pc: usize,
+                    filename: &libc::c_char,
+                    lineno: libc::c_int,
+                    function: &libc::c_char
+                ) -> libc::c_int {
+                    let formatter = state as &mut PanicFormatter;
+                    let res = if filename != null && function != null {
+                        let function = ffi::CString::from_raw(function)[..];
+                        let filename = ffi::CString::from_raw(filename)[..];
 
-            fn backtrace_callback(
-                state: &mut void,
-                _pc: usize,
-                filename: &libc::c_char,
-                lineno: libc::c_int,
-                function: &libc::c_char
-            ) -> libc::c_int {
-                let formatter = state as &mut PanicFormatter;
-                let res = if filename != null && function != null {
-                    let function = ffi::CString::from_raw(function)[..];
-                    let filename = ffi::CString::from_raw(filename)[..];
+                        let demangled = demangle_alumina(function)
+                            .unwrap_or(function);
 
-                    let demangled = demangle_alumina(function)
-                        .unwrap_or(function);
+                        fmt::writeln!(formatter, "--> {} at {}:{}", demangled, filename, lineno)
+                    } else {
+                        fmt::writeln!(formatter, "--> <unknown>")
+                    };
 
-                    fmt::writeln!(formatter, "--> {} at {}:{}", demangled, filename, lineno)
-                } else {
-                    fmt::writeln!(formatter, "--> <unknown>")
-                };
-
-                res.is_err() as libc::c_int
-            }
+                    res.is_err() as libc::c_int
+                }
 
 
-            #[cfg(threading)]
-            let state = backtrace_create_state(null, 1, backtrace_error_callback, null);
-            #[cfg(not(threading))]
-            let state = backtrace_create_state(null, 0, backtrace_error_callback, null);
+                #[cfg(threading)]
+                let state = backtrace_create_state(null, 1, backtrace_error_callback, null);
+                #[cfg(not(threading))]
+                let state = backtrace_create_state(null, 0, backtrace_error_callback, null);
 
-            if state != null {
-                fmt::writeln!(&formatter, "stack backtrace:")?;
-                let ret = backtrace_full(
-                    state,
-                    2, // skip this function and panic_impl
-                    backtrace_callback,
-                    backtrace_error_callback,
-                    &formatter as &mut void
-                );
-                if ret != 0 {
-                    return Result::err(fmt::Error::new());
+                if state != null {
+                    fmt::writeln!(&formatter, "stack backtrace:")?;
+                    let ret = backtrace_full(
+                        state,
+                        2, // skip this function and panic_impl
+                        backtrace_callback,
+                        backtrace_error_callback,
+                        &formatter as &mut void
+                    );
+                    if ret != 0 {
+                        return Result::err(fmt::Error::new());
+                    }
                 }
             }
-        }
 
-        #[cfg(all(debug, not(use_libbacktrace), not(no_backtrace), not(target_os = "android")))]
-        {
-            // Fallback use glibc's backtrace
-            let buf: [&mut void; 128];
-            let size = backtrace(&buf[0], 128);
-            backtrace_symbols_fd(&buf[0] as &mut &void, size, libc::STDERR_FILENO);
+            #[cfg(all(debug, target_env = "gnu", not(use_libbacktrace), not(no_backtrace), not(target_os = "android")))]
+            {
+                // Fallback use glibc's backtrace
+                let buf: [&mut void; 128];
+                let size = libc::backtrace(&buf[0], 128);
+                backtrace_symbols_fd(&buf[0] as &mut &void, size, libc::STDERR_FILENO);
+            }
         }
 
         Result::ok(())
@@ -302,7 +303,14 @@ mod internal {
 
                 // Swallow errors from print_panic_message, because at this point, what can we do, panic?
                 // We still bail early if it fails.
-                let _ = print_panic_message(&panic_info);
+
+                // minicoro does not play well with unwinding, so if we are inside a coroutine,
+                // we suppress the backtrace to avoid segfaults
+                #[cfg(coroutines)]{}
+                let _ = print_panic_message(&panic_info, !runtime::in_coroutine());
+                #[cfg(not(coroutines))]
+                let _ = print_panic_message(&panic_info, true);
+
                 libc::abort();
             }
         }

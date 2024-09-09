@@ -80,6 +80,8 @@ pub enum LangItemKind {
     DynVtableIndex,
 
     Generator,
+    GeneratorNew,
+    GeneratorYield,
 
     Operator(BinOp),
 
@@ -240,6 +242,8 @@ impl TryFrom<&str> for LangItemKind {
             "dyn_vtable_index" => Ok(LangItemKind::DynVtableIndex),
 
             "generator" => Ok(LangItemKind::Generator),
+            "generator_new" => Ok(LangItemKind::GeneratorNew),
+            "generator_yield" => Ok(LangItemKind::GeneratorYield),
 
             "format_arg" => Ok(LangItemKind::FormatArg),
             "enum_variant_new" => Ok(LangItemKind::EnumVariantNew),

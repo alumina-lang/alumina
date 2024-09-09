@@ -210,6 +210,8 @@ pub enum CodeDiagnostic {
     RecursiveStaticInitialization,
     #[error("can only do that in function scope")]
     NotInAFunctionScope,
+    #[error("yield can only be used in a generator")]
+    YieldOutsideOfGenerator,
     #[error("unknown builtin macro `{}`", .0)]
     UnknownBuiltinMacro(String),
     #[error("type is not a protocol")]

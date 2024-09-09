@@ -1,0 +1,36 @@
+use std::fs::{Path, File};
+use std::string::starts_with;
+use std::io::{BufferedReader, lines, Error};
+
+// `fn*` denotes a generator function with the yield type in return position. The actual
+// return type when called  is `std::runtime::Generator<Result<&[u8], Error>>`
+fn* read_lines(path: Path) -> Result<&[u8], Error> {
+    use std::result::yield_try as try;
+
+    let file = File::open(path)?;
+    defer file.close();
+
+    let reader = BufferedReader::new(&file, 1024 * 64);
+    defer reader.free();
+
+    let lines = reader.lines();
+    defer lines.free();
+
+    for line in lines {
+        yield line;
+    }
+}
+
+fn main() {
+    let lines = read_lines(Path::new("/proc/stat"));
+    defer lines.close(); // All the defered calls in the generator will be executed, even if we break out early.
+
+    for line in lines {
+        let line = line.unwrap();
+
+        if !line.starts_with("cpu") {
+            break;
+        }
+        println!("{}", line);
+    }
+}

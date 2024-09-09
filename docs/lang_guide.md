@@ -9,6 +9,8 @@ With regards to syntax, the language is very similar to Rust and in terms of sem
 - [Functions](#functions)
   - [Generic functions](#generic-functions)
   - [Foreign functions](#foreign-functions)
+  - [Generator functions](#generator-functions)
+    - [Implementation details](#implementation-details)
   - [Other function attributes](#other-function-attributes)
 - [Constants](#constants)
 - [Statics](#statics)
@@ -239,6 +241,7 @@ fn main(args: &[&[]]) -> i32 {
 }
 ```
 
+
 ## Generic functions
 
 Generic functions are defined using the `<...>` syntax.
@@ -309,6 +312,54 @@ fn main() {
     println!("{}", add(1, 2));
 }
 ```
+
+
+## Generator functions
+
+Generator functions are functions that can yield multiple values before returning. They are defined using the `fn*` keyword. The return type of a generator is `Generator<T>`, where `T` is the type of the value that the generator yields. Generators can yield values using the `yield` keyword and terminate with `return`.
+
+```rust
+fn* fibonacci() -> i32 {
+    let a = 0;
+    let b = 1;
+
+    loop {
+        yield a;
+        let tmp = a;
+        a = b;
+        b = tmp + b;
+    }
+}
+```
+
+Generator instance is created by simply calling the generator function, after which it can be used as any other iterator.
+
+```rust
+fn main() {
+    let generator = fibonacci();
+    defer generator.close();
+
+    for val in generator.take(10) {
+        println!("{}", val);
+    }
+}
+```
+
+Generators allocate memory on the heap to store the state of the generator and need to be freed when they are no longer needed. See [std::runtime::Generator](https://docs.alumina-lang.net/std/runtime/Generator.html) for more details.
+
+### Implementation details
+
+Generators are currently implemented using stackful coroutines using [minicoro](https://github.com/edubart/minicoro) library. The stack size of a generator is fixed at 64KB. It requires the `minicoro` library to be linked in the final binary. Default stack size is set to 56 kB, which can be controlled by compile flags of the `minicoro` library.
+
+For CPU-bound code generators are roughly an order of magnitude slower than hand-crafted iterators, but they can be significantly faster than using an external thread (which offers similar ergonomics). The following table shows the results of a simple benchmark that calculates the sum of 10 million random numbers with a fixed seed (numbers are generated in the iterator/generator/thread, and summed outside of it).
+
+
+| Test case                               | Time (ms) |
+|-----------------------------------------|----------:|
+| iterators                               |       17  |
+| generators                              |      325  |
+| two threads (with a rendezvous channel) |   22,264  |
+
 
 ## Other function attributes
 
@@ -939,6 +990,7 @@ Alumina has the following types of expressions
 - switch: `switch expr { ... }`
 - [defer](#defer-expressions): `defer expr`
 - return: `return expr`
+- yield: `yield expr`
 - break: `break expr`
 - continue: `continue`
 
@@ -1732,11 +1784,3 @@ Some other conventions:
 - Private fields and methods are prefixed with an underscore
 - `Self` is used as the first type parameter of protocols
 - Protocol names are usually adjectives. They will often have the -able suffix where applicable (e.g. `Equatable`, `Comparable`, `Cloneable`)
-
-
-
-
-
-
-
-
