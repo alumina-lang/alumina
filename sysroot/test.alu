@@ -28,7 +28,7 @@
 //!         assert_eq!(1.sub(2), -1);
 //!     }
 //!
-//!     #[test(should_fail)]
+//!     #[test::should_fail]
 //!     fn test_panic() {
 //!         panic!("oops");
 //!     }
@@ -37,8 +37,8 @@
 //!
 //! ## Test attributes
 //!
-//! The following attributes are supported: `#[test(ignore)]` to skip execution of a test (useful e.g. to make sure
-//! that a test compiles but is not run), `#[test(should_fail)]` to mark a test as expected to fail (e.g. through
+//! The following attributes are supported: `#[test::ignore]` to skip execution of a test (useful e.g. to make sure
+//! that a test compiles but is not run), `#[test::should_fail]` to mark a test as expected to fail (e.g. through
 //! panic).
 //!
 //! ## Custom test frameworks
@@ -49,11 +49,50 @@
 
 #[cfg(all(test, not(custom_test_framework)))]
 {
+    /// Test case metadata
+    struct TestCaseMeta {
+        path: &[u8],
+        name: &[u8],
+        test: fn(),
+
+        /// Whether this test is expected to fail
+        should_fail: bool,
+        // Whether this test is ignored
+        ignore: bool
+    }
+
+    /// List of test cases
+    const TEST_CASES = {
+        use std::typing::type_of;
+        use std::intrinsics::{attributed, has_attribute};
+        use util::concat;
+
+        let cases = concat(
+            attributed::<()>("test"),
+            concat(
+                attributed::<()>("test::should_fail"),
+                attributed::<()>("test::ignore")
+            )
+        );
+
+        let ret: [TestCaseMeta; cases.len()];
+        for const idx in 0usize..cases.len() {
+            let desc = cases.(idx);
+            ret[idx] = TestCaseMeta {
+                path: desc.module_path().unwrap_or(""),
+                name: desc.name().unwrap_or(""),
+                test: desc.as_fn(),
+                should_fail: has_attribute::<type_of<typeof(desc)>>("test::should_fail"),
+                ignore: has_attribute::<type_of<typeof(desc)>>("test::ignore")
+            };
+        }
+        ret
+    };
+
     use std::process::{Stdio, Forked, ExitStatus};
     use std::collections::Vector;
     use std::cmp::sort_by_key;
     use std::string::{split, StringBuf};
-    use std::runtime::internal::{TEST_CASES, TestCaseMeta};
     use std::time::{Instant, Duration};
 
     /// Holder for the results of a test case.
@@ -73,29 +112,8 @@
         }
     }
 
-    /// Whether a failure (non-0 exit code) is expected for this test.
-    fn should_fail(test: &TestCaseMeta) -> bool {
-        for attr in test.attributes.split("\0") {
-            if attr == "(should_fail)" {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /// Whether a test should be ignored.
-    fn ignored(test: &TestCaseMeta) -> bool {
-        for attr in test.attributes.split("\0") {
-            if attr == "(ignore)" {
-                return true;
-            }
-        }
-        return false;
-    }
-
     /// Run a single test case in a forked process and collect output.
     fn run(test: &TestCaseMeta) -> TestResult {
-        let should_fail = test.should_fail();
         let start_time = Instant::now();
         let child = Forked::new()
             .stdin(Stdio::Null)
@@ -106,7 +124,7 @@
 
         if child.is_none() {
             test.test();
-            if should_fail {
+            if test.should_fail {
                 eprintln!("note: test function completed successfully")
             }
             process::exit(0);
@@ -121,7 +139,7 @@
         TestResult {
             test: *test,
             duration: end_time.duration_since(&start_time),
-            success: should_fail ^ (output.status.success()),
+            success: test.should_fail ^ (output.status.success()),
             stdout: output.stdout.move(),
             stderr: output.stderr.move(),
             status: output.status
@@ -252,7 +270,8 @@
         eprintln!("running {} tests ({} filtered out)", test_cases.len(), filtered_count);
         for test in test_cases {
             eprint!("test {}::{} ... ", test.path[2..], test.name);
-            if test.ignored() {
+            #[allow(warnings)]
+            if test.ignore {
                 if colors {
                     eprintln!("\x1b[0;33mignored\x1b[0m.");
                 } else {
@@ -360,10 +379,10 @@
         fn regular_test() {
         }
 
-        #[test(ignore)]
+        #[test::ignore]
         fn ignored_test() {}
 
-        #[test(should_fail)]
+        #[test::should_fail]
         fn should_fail_test() {
             panic!("oops")
         }

@@ -244,7 +244,6 @@ impl TopLevelVisitor {
     }
 
     fn visit_attribute_item(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
-        use std::string::starts_with;
         let meta_item = child_by!(node, FieldKind::Inner).unwrap();
         let attr_name = get_name!(self, meta_item);
 
@@ -264,19 +263,7 @@ impl TopLevelVisitor {
                     self.hide_from_docs = true;
                 } else if inner == "no_index" {
                     self.hide_from_index = true;
-                }
-            }
-            "docs(no_index)" => {
-            }
-            "lang" => {
-                let lang = meta_item
-                            .child_by!(FieldKind::Arguments)
-                            .unwrap()
-                            .child_by!(FieldKind::Argument)
-                            .unwrap()
-                            .text(self.parse_context.source());
-
-                if lang.starts_with("builtin_") {
+                } else if inner == "builtin" {
                     self.is_builtin_type = true;
                 }
             }
@@ -368,7 +355,13 @@ impl TopLevelVisitor {
     fn visit_type_definition(self: &mut TopLevelVisitor, node: Node) -> Result<()> {
         check_cfg!(self, node);
 
-        self.add_item(ItemKind::TypeDef, get_name!(self, node), node);
+        let kind = if self.is_builtin_type {
+            ItemKind::BuiltinType
+        } else {
+            ItemKind::TypeDef
+        };
+
+        self.add_item(kind, get_name!(self, node), node);
         Result::ok(())
     }
 

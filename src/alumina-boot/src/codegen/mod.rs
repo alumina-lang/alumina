@@ -23,6 +23,17 @@ macro_rules! w {
 
 pub(crate) use w;
 
+// These are the diagnostics that we suppress in the generated code.
+const DIAGNOSTIC_SUPRESSIONS: &[(&str, &str)] = &[
+    ("clang", "-Wunknown-warning-option"),
+    ("clang", "-Wparentheses-equality"),
+    ("clang", "-Winitializer-overrides"),
+    ("clang", "-Wincompatible-library-redeclaration"),
+    ("clang", "-Wunused-value"),
+    ("clang", "-Wincompatible-pointer-types"),
+    ("GCC", "-Wbuiltin-declaration-mismatch"),
+];
+
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub enum CName<'gen> {
     Native(&'gen str),
@@ -164,32 +175,9 @@ pub fn codegen<'ir>(
     let mut buf = String::with_capacity(size_estimate);
     writeln!(buf, "#include <stdint.h>").unwrap();
     writeln!(buf, "#include <stddef.h>").unwrap();
-    writeln!(
-        buf,
-        "#pragma clang diagnostic ignored \"-Wunknown-warning-option\""
-    )
-    .unwrap();
-    writeln!(
-        buf,
-        "#pragma clang diagnostic ignored \"-Wparentheses-equality\""
-    )
-    .unwrap();
-    writeln!(
-        buf,
-        "#pragma clang diagnostic ignored \"-Winitializer-overrides\""
-    )
-    .unwrap();
-    writeln!(
-        buf,
-        "#pragma clang diagnostic ignored \"-Wincompatible-library-redeclaration\""
-    )
-    .unwrap();
-    writeln!(buf, "#pragma clang diagnostic ignored \"-Wunused-value\"").unwrap();
-    writeln!(
-        buf,
-        "#pragma GCC diagnostic ignored \"-Wbuiltin-declaration-mismatch\""
-    )
-    .unwrap();
+    for (compiler, flag) in DIAGNOSTIC_SUPRESSIONS {
+        writeln!(buf, "#pragma {} diagnostic ignored \"{}\"", compiler, flag).unwrap();
+    }
     type_writer.write(&mut buf);
     function_writer.write(&mut buf);
 

@@ -1941,6 +1941,22 @@ mod internal {
             a
         }
     }
+
+    #[lang(static_for_iter)]
+    fn static_for_iter<T>(val: &mut T) -> typeof(val.iter()) {
+        val.iter()
+    }
+
+    #[lang(static_for_next)]
+    fn static_for_next<T>(iter: &mut T) -> iterator_yield_t<T> {
+        let res = iter.next();
+        if res.is_some() {
+            res._inner
+        } else {
+            intrinsics::stop_iteration();
+        }
+    }
+
 }
 
 
@@ -2630,7 +2646,7 @@ mod tests {
         assert!(iter.next().is_none());
     }
 
-    #[test(should_fail)]
+    #[test::should_fail]
     fn test_chunks_0() {
         (0..10).chunks(0);
     }

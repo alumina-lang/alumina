@@ -476,6 +476,9 @@ impl<'ast> MacroExpander<'ast> {
                 self.visit_expr(then)?,
                 self.visit_expr(els)?,
             ),
+            StaticFor(id, range, body) => {
+                StaticFor(id, self.visit_expr(range)?, self.visit_expr(body)?)
+            }
             TypeCheck(expr, ty) => TypeCheck(self.visit_expr(expr)?, self.visit_typ(ty)?),
             Cast(inner, ty) => Cast(self.visit_expr(inner)?, self.visit_typ(ty)?),
             Fn(ref kind, generic_args) => {

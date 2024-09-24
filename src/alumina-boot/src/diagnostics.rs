@@ -6,6 +6,7 @@ use crate::ir::const_eval::ConstEvalErrorKind;
 use alumina_boot_macros::AstSerializable;
 use colored::Colorize;
 
+use std::backtrace::Backtrace;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -91,6 +92,28 @@ impl DiagnosticsStack {
 
         let new_tail = Rc::clone(tail.parent.as_ref().unwrap());
         *tail = new_tail;
+    }
+
+    pub fn overflow_check(&self) -> Result<(), AluminaError> {
+        // calculate the length of the backtrace
+        let mut tail = self.tail.borrow_mut().clone();
+        let mut len = 0;
+        while let Some(ref parent) = tail.parent {
+            len += 1;
+            tail = parent.clone();
+        }
+
+        if len > 1000 {
+            return Err(AluminaError::CodeErrors(vec![CodeError {
+                kind: CodeDiagnostic::InternalError(
+                    "backtrace overflow".into(),
+                    Backtrace::capture().into(),
+                ),
+                backtrace: self.materialize(),
+            }]));
+        }
+
+        Ok(())
     }
 
     pub fn push(&self, marker: Marker) -> DiagnosticsStackGuard {

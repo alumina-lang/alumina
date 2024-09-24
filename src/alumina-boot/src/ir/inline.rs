@@ -218,6 +218,7 @@ impl<'ir> IrInliner<'ir> {
                 | IntrinsicValueKind::FunctionLike(_)
                 | IntrinsicValueKind::ConstLike(_)
                 | IntrinsicValueKind::Uninitialized
+                | IntrinsicValueKind::StopIteration
                 | IntrinsicValueKind::InConstContext => Expr {
                     is_const: expr.is_const,
                     ty: expr.ty,

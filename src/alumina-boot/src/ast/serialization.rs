@@ -23,7 +23,7 @@ use crate::{
 
 use thiserror::Error;
 
-use super::{lang::LangItemKind, AstId, Item, ItemP, TestMetadata};
+use super::{lang::LangItemKind, AstId, AstMetadata, Item, ItemP};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -740,7 +740,7 @@ impl<'ast> AstSaver<'ast> {
             lang_item.id.serialize(&mut serializer)?;
         }
 
-        let test_metadatas = self.ast.test_metadata.borrow();
+        let test_metadatas = self.ast.metadata.borrow();
         let test_metadatas: Vec<_> = test_metadatas
             .iter()
             .filter(|(item, _)| defined_ids.contains(&item.id))
@@ -872,10 +872,10 @@ impl<'ast> AstLoader<'ast> {
         let num_test_metadatas = deserializer.read_usize()?;
         for _ in 0..num_test_metadatas {
             let item = AstId::deserialize(&mut deserializer)?;
-            let test_metadata = TestMetadata::deserialize(&mut deserializer)?;
+            let test_metadata = AstMetadata::deserialize(&mut deserializer)?;
 
             self.ast
-                .add_test_metadata(self.context.get_cell(item), test_metadata);
+                .add_metadata(self.context.get_cell(item), test_metadata);
         }
 
         let overrides: Vec<Override> = Vec::deserialize(&mut deserializer)?;

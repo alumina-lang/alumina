@@ -91,7 +91,6 @@ struct Coroutine<YieldT, RecvT = ()> {
 impl Coroutine<YieldT, RecvT> {
     use minicoro::*;
     use internal::_ensure_coroutines;
-    use internal::_minicoro_check as chk;
     use mem::size_of;
 
     /// Cancels the coroutine
@@ -103,6 +102,8 @@ impl Coroutine<YieldT, RecvT> {
     ///
     /// See [close] for an example of usage.
     fn cancel(self: &mut Coroutine<YieldT, RecvT>) {
+        use internal::_minicoro_check as chk;
+
         _ensure_coroutines!({
             switch mco_status(self._coro) {
                 mco_state::MCO_DEAD => {}
@@ -143,6 +144,8 @@ impl Coroutine<YieldT, RecvT> {
     /// If the coroutine runs to completion after the value is sent, this method will return `Option::none()`.
     /// If the coroutine yields a value, this method will return `Option::some(value)`.
     fn send(self: &mut Coroutine<YieldT, RecvT>, val: RecvT) -> Option<YieldT> {
+        use internal::_minicoro_check as chk;
+
         _ensure_coroutines!({
             when !typing::is_zero_sized::<RecvT>() {
                 mco_push(self._coro, &val as &(), mem::size_of::<RecvT>()).chk!();
@@ -206,6 +209,8 @@ impl Coroutine<YieldT, RecvT> {
 
     /// @ mem::Freeable::free
     fn free(self: &mut Coroutine<YieldT, RecvT>) {
+        use internal::_minicoro_check as chk;
+
         if self._coro != null {
             mco_destroy(self._coro).chk!();
         }
@@ -326,58 +331,24 @@ mod internal {
     #[inline(always)]
     fn coroutine_yield<YieldT, RecvT>(val: &YieldT, out: &mut RecvT) -> bool {
         use minicoro::*;
+        use _minicoro_check as chk;
 
         _ensure_coroutines!({
             let running = mco_running();
             when !typing::is_zero_sized::<YieldT>() {
-                mco_push(running, val as &(), size_of::<YieldT>())._minicoro_check!();
+                mco_push(running, val as &(), size_of::<YieldT>()).chk!();
             }
-            mco_yield(running)._minicoro_check!();
+            mco_yield(running).chk!();
             if running.user_data == std::mem::dangling() {
                 return true;
             }
 
             when !typing::is_zero_sized::<RecvT>() {
-                mco_pop(running, out as &mut (), size_of::<RecvT>())._minicoro_check!();
+                mco_pop(running, out as &mut (), size_of::<RecvT>()).chk!();
             }
 
             false
         })
-    }
-
-    #[cfg(all(test))]
-    {
-        /// Discovered unit test cases.
-        ///
-        /// `test_cases()` call can be lowered at at any point during the IR lowering processed, ensure
-        /// it is called during static initialization, which happens last so that all test cases will have
-        /// been discovered.
-        const TEST_CASES = intrinsics::test_cases();
-
-        /// Test case metadata
-        ///
-        /// Contains the module path, name, attributes and the function pointer
-        /// to invoke the test.
-        #[lang(test_case_meta)]
-        struct TestCaseMeta {
-            path: &[u8],
-            name: &[u8],
-            attributes: &[u8],
-            test: fn(),
-        }
-
-        impl TestCaseMeta {
-            #[lang(test_case_meta_new)]
-            #[inline(ir)]
-            fn new(path: &[u8], name: &[u8], attributes: &[u8], test: fn()) -> TestCaseMeta {
-                TestCaseMeta {
-                    path: path,
-                    name: name,
-                    attributes: attributes,
-                    test: test,
-                }
-            }
-        }
     }
 
     /// Maximum number of program arguments that can be stack-allocated.
@@ -516,8 +487,8 @@ mod tests {
         assert!(flag);
     }
 
-    #[cfg(coroutines)]
-    #[test(should_fail)]
+    #[cfg(all(coroutines, debug))]
+    #[test::should_fail]
     fn test_yield_outside_coroutine() {
        internal::coroutine_yield(&(), &());
     }

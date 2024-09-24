@@ -219,6 +219,7 @@ impl<'ir> ZstElider<'ir> {
                         } else {
                             let id = self.ir.make_id();
                             self.additional_locals.push(LocalDef { id, typ: arg.ty });
+                            self.used_ids.insert(id);
                             let local = builder.local(id, arg.ty, arg.span);
                             statements
                                 .push(Statement::Expression(builder.assign(local, arg, arg.span)));
@@ -458,7 +459,9 @@ impl<'ir> ZstElider<'ir> {
                     expr.ty,
                     expr.span,
                 ),
-                IntrinsicValueKind::ConstPanic(_) => builder.unreachable(expr.span),
+                IntrinsicValueKind::StopIteration | IntrinsicValueKind::ConstPanic(_) => {
+                    builder.unreachable(expr.span)
+                }
                 IntrinsicValueKind::ConstAlloc(_, size) => builder.block(
                     [Statement::Expression(self.elide_zst_expr(size)?)],
                     builder.literal(Value::USize(0), expr.ty, expr.span),

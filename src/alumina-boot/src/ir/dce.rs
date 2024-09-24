@@ -173,6 +173,7 @@ impl<'ir> ExpressionVisitor<'ir> for DeadCodeEliminator<'ir> {
             IntrinsicValueKind::ConstPanic(_)
             | IntrinsicValueKind::ConstWrite(_, _)
             | IntrinsicValueKind::ConstAlloc(_, _)
+            | IntrinsicValueKind::StopIteration
             | IntrinsicValueKind::ConstFree(_) => Ok(()),
         }
     }

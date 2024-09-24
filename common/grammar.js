@@ -447,9 +447,7 @@ module.exports = grammar({
           field("name", $.identifier),
           seq(
             "(",
-            seq(field("element", $.identifier), ","),
-            repeat(seq(field("element", $.identifier), ",")),
-            optional(field("element", $.identifier)),
+            sepBy(",", field("element", $.identifier)), optional(","),
             ")"
           )
         ),
@@ -656,9 +654,17 @@ module.exports = grammar({
         seq(
           field("value", $._expression),
           ".",
-          field("field", choice($.identifier, $.integer_literal))
+          choice(
+            field("field", $.identifier),
+            field("field", $.tuple_index_expression),
+          )
         )
       ),
+
+    tuple_index_expression: ($) => choice(
+      field("field", $.integer_literal),
+      seq('(', field('field', $._expression), ')')
+    ),
 
     universal_macro_invocation: ($) =>
       prec(
@@ -863,7 +869,8 @@ module.exports = grammar({
         $.switch_expression,
         $.while_expression,
         $.loop_expression,
-        $.for_expression
+        $.for_expression,
+        $.static_for_expression,
       ),
 
     if_expression: ($) =>
@@ -947,6 +954,23 @@ module.exports = grammar({
     et_cetera_expression: ($) =>
       prec.right(PREC.et_cetera, seq(field("inner", $._expression), "...")),
 
+    static_for_expression: ($) =>
+      seq(
+        "for",
+        "const",
+        choice(
+          field("name", $.identifier),
+          seq(
+            "(",
+              sepBy(",", field("element", $.identifier)), optional(","),
+            ")"
+          )
+        ),
+        "in",
+        field("value", $._expression),
+        field("body", $.block)
+      ),
+
     for_expression: ($) =>
       seq(
         "for",
@@ -954,9 +978,7 @@ module.exports = grammar({
           field("name", $.identifier),
           seq(
             "(",
-            seq(field("element", $.identifier), ","),
-            repeat(seq(field("element", $.identifier), ",")),
-            optional(field("element", $.identifier)),
+              sepBy(",", field("element", $.identifier)), optional(","),
             ")"
           )
         ),

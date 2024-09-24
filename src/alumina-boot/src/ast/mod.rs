@@ -24,16 +24,16 @@ use alumina_boot_macros::AstSerializable;
 use bumpalo::Bump;
 use once_cell::unsync::OnceCell;
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, Ref, RefCell};
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};
 
 #[derive(Clone, AstSerializable)]
-pub struct TestMetadata<'ast> {
+pub struct AstMetadata<'ast> {
     pub path: Path<'ast>,
     pub name: Path<'ast>,
-    pub attributes: Vec<String>,
+    pub attributes: Vec<Attribute<'ast>>,
 }
 
 pub struct AstCtx<'ast> {
@@ -43,7 +43,7 @@ pub struct AstCtx<'ast> {
     strings: RefCell<HashSet<&'ast str>>,
     lang_items: RefCell<HashMap<LangItemKind, ItemP<'ast>>>,
     local_names: RefCell<HashMap<AstId, &'ast str>>,
-    test_metadata: RefCell<HashMap<ItemP<'ast>, TestMetadata<'ast>>>,
+    metadata: RefCell<HashMap<ItemP<'ast>, AstMetadata<'ast>>>,
 }
 
 impl<'ast> AstCtx<'ast> {
@@ -55,7 +55,7 @@ impl<'ast> AstCtx<'ast> {
             strings: RefCell::new(HashSet::default()),
             lang_items: RefCell::new(HashMap::default()),
             local_names: RefCell::new(HashMap::default()),
-            test_metadata: RefCell::new(HashMap::default()),
+            metadata: RefCell::new(HashMap::default()),
         }
     }
 
@@ -86,8 +86,8 @@ impl<'ast> AstCtx<'ast> {
         self.lang_items.borrow_mut().insert(kind, item);
     }
 
-    pub fn add_test_metadata(&'ast self, item: ItemP<'ast>, metadata: TestMetadata<'ast>) {
-        self.test_metadata.borrow_mut().insert(item, metadata);
+    pub fn add_metadata(&'ast self, item: ItemP<'ast>, metadata: AstMetadata<'ast>) {
+        self.metadata.borrow_mut().insert(item, metadata);
     }
 
     pub fn intern_str(&'ast self, name: &'_ str) -> &'ast str {
@@ -109,8 +109,12 @@ impl<'ast> AstCtx<'ast> {
         self.local_names.borrow().get(&id).copied()
     }
 
-    pub fn test_metadata(&self, item: ItemP<'ast>) -> Option<TestMetadata<'ast>> {
-        self.test_metadata.borrow().get(&item).cloned()
+    pub fn metadata(&self, item: ItemP<'ast>) -> Option<AstMetadata<'ast>> {
+        self.metadata.borrow().get(&item).cloned()
+    }
+
+    pub fn metadated<'a>(&'a self) -> Ref<'a, HashMap<ItemP<'ast>, AstMetadata<'ast>>> {
+        self.metadata.borrow()
     }
 
     pub fn intern_type(&'ast self, ty: Ty<'ast>) -> TyP<'ast> {
@@ -430,7 +434,7 @@ impl<'ast> Item<'ast> {
         self.can_compile()
             && match self {
                 Item::Function(Function { attributes, .. }) => {
-                    attributes.contains(&Attribute::Test) || attributes.contains(&Attribute::Export)
+                    attributes.contains(&Attribute::Export)
                 }
                 _ => false,
             }
@@ -578,6 +582,7 @@ impl Debug for ItemCell<'_> {
 pub struct Field<'ast> {
     pub id: AstId,
     pub name: &'ast str,
+    pub attributes: &'ast [Attribute<'ast>],
     pub typ: TyP<'ast>,
     pub span: Option<Span>,
 }
@@ -586,6 +591,7 @@ pub struct Field<'ast> {
 pub struct EnumMember<'ast> {
     pub id: AstId,
     pub name: &'ast str,
+    pub attributes: &'ast [Attribute<'ast>],
     pub value: Option<ExprP<'ast>>,
     pub span: Option<Span>,
 }
@@ -815,7 +821,6 @@ impl BinOp {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AstSerializable)]
 pub enum Attribute<'ast> {
     Export,
-    Test,
     Cold,
     TestMain,
     Main,
@@ -836,38 +841,19 @@ pub enum Attribute<'ast> {
     StaticConstructor,
     LinkName(&'ast str),
     Coroutine,
+    Custom(CustomAttribute<'ast>),
 }
 
-impl<'ast> Attribute<'ast> {
-    pub fn realloc_on<'new, F>(&'ast self, f: F) -> Attribute<'new>
-    where
-        F: Fn(&'ast str) -> &'new str,
-    {
-        match self {
-            Attribute::LinkName(s) => Attribute::LinkName(f(s)),
-            Attribute::Export => Attribute::Export,
-            Attribute::Test => Attribute::Test,
-            Attribute::Cold => Attribute::Cold,
-            Attribute::TestMain => Attribute::TestMain,
-            Attribute::Main => Attribute::Main,
-            Attribute::Inline => Attribute::Inline,
-            Attribute::Align(i) => Attribute::Align(*i),
-            Attribute::Packed(i) => Attribute::Packed(*i),
-            Attribute::MustUse => Attribute::MustUse,
-            Attribute::Transparent => Attribute::Transparent,
-            Attribute::NoInline => Attribute::NoInline,
-            Attribute::ThreadLocal => Attribute::ThreadLocal,
-            Attribute::Builtin => Attribute::Builtin,
-            Attribute::AlwaysInline => Attribute::AlwaysInline,
-            Attribute::InlineDuringMono => Attribute::InlineDuringMono,
-            Attribute::Intrinsic => Attribute::Intrinsic,
-            Attribute::StaticConstructor => Attribute::StaticConstructor,
-            Attribute::ConstOnly => Attribute::ConstOnly,
-            Attribute::NoConst => Attribute::NoConst,
-            Attribute::TupleCall => Attribute::TupleCall,
-            Attribute::Coroutine => Attribute::Coroutine,
-        }
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AstSerializable)]
+pub enum CustomAttributeValue<'ast> {
+    Attribute(CustomAttribute<'ast>),
+    Value(Lit<'ast>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AstSerializable)]
+pub struct CustomAttribute<'ast> {
+    pub name: &'ast str,
+    pub values: &'ast [CustomAttributeValue<'ast>],
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, AstSerializable)]
@@ -915,6 +901,12 @@ pub enum FnKind<'ast> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, AstSerializable)]
+pub enum StaticForLoopVariable<'ast> {
+    Single(AstId),
+    Tuple(&'ast [AstId]),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, AstSerializable)]
 pub enum ExprKind<'ast> {
     Block(&'ast [Statement<'ast>], ExprP<'ast>),
     Binary(BinOp, ExprP<'ast>, ExprP<'ast>),
@@ -954,12 +946,13 @@ pub enum ExprKind<'ast> {
         Option<ItemP<'ast>>,
         Option<&'ast [TyP<'ast>]>,
     ),
-    TupleIndex(ExprP<'ast>, usize),
+    TupleIndex(ExprP<'ast>, ExprP<'ast>),
     Index(ExprP<'ast>, ExprP<'ast>),
     Range(Option<ExprP<'ast>>, Option<ExprP<'ast>>, bool),
     If(ExprP<'ast>, ExprP<'ast>, ExprP<'ast>),
     TypeCheck(ExprP<'ast>, TyP<'ast>),
     StaticIf(ExprP<'ast>, ExprP<'ast>, ExprP<'ast>),
+    StaticFor(StaticForLoopVariable<'ast>, ExprP<'ast>, ExprP<'ast>),
     Cast(ExprP<'ast>, TyP<'ast>),
     Tag(&'ast str, ExprP<'ast>),
 
@@ -1035,5 +1028,7 @@ impl_allocatable!(
     EnumMember<'_>,
     Placeholder<'_>,
     Attribute<'_>,
+    CustomAttribute<'_>,
+    CustomAttributeValue<'_>,
     AstId
 );

@@ -1633,7 +1633,7 @@ mod tests {
         assert_eq!(1.sub(2), -1);
     }
 
-    #[test(should_fail)]
+    #[test::should_fail]
     fn test_panic() {
         panic!("oops");
     }

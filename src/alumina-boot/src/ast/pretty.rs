@@ -1,4 +1,4 @@
-use crate::name_resolution::scope::BoundItemType;
+use crate::{ast::StaticForLoopVariable, name_resolution::scope::BoundItemType};
 
 use super::{
     AstCtx, AstId, BinOp, BuiltinType, ClosureBinding, ExprKind, ExprP, FnKind, Function, Item,
@@ -505,6 +505,32 @@ impl<'ast> PrettyPrinter<'ast> {
                 }
             }
             ExprKind::Local(id) => self.id_to_name(id),
+            ExprKind::StaticFor(loop_var, range, body) => match loop_var {
+                StaticForLoopVariable::Single(id) => {
+                    format!(
+                        "for const {} in {} {}",
+                        self.id_to_name(id),
+                        self.print_expr(range),
+                        self.print_expr_full(body, true, false)
+                    )
+                }
+                StaticForLoopVariable::Tuple(ids) => {
+                    let mut s = String::new();
+                    for (i, id) in ids.iter().enumerate() {
+                        if i != 0 {
+                            s.push_str(", ");
+                        }
+                        s.push_str(&self.id_to_name(*id));
+                    }
+
+                    format!(
+                        "for const ({}) in {} {}",
+                        s,
+                        self.print_expr(range),
+                        self.print_expr_full(body, true, false)
+                    )
+                }
+            },
             ExprKind::Static(item, generic_args) => self.print_item(item, generic_args, true),
             ExprKind::Const(item, generic_args) => self.print_item(item, generic_args, true),
             ExprKind::EnumValue(item, id) => {
@@ -614,9 +640,12 @@ impl<'ast> PrettyPrinter<'ast> {
                     format!("{}.{}", self.print_expr(base), field)
                 }
             }
-            ExprKind::TupleIndex(base, idx) => {
-                format!("{}.{}", self.print_expr(base), idx)
-            }
+            ExprKind::TupleIndex(base, idx) => match idx.kind {
+                ExprKind::Lit(Lit::Int(false, idx, None | Some(BuiltinType::USize))) => {
+                    format!("{}.{}", self.print_expr(base), idx)
+                }
+                _ => format!("{}.({})", self.print_expr(base), self.print_expr(idx)),
+            },
             ExprKind::Index(base, idx) => {
                 format!("{}[{}]", self.print_expr_parens(base), self.print_expr(idx))
             }

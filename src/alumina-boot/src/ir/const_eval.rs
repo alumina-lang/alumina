@@ -18,7 +18,7 @@ use std::rc::Rc;
 use thiserror::Error;
 
 const MAX_RECURSION_DEPTH: usize = 100;
-const MAX_ITERATIONS: usize = 10000;
+const MAX_ITERATIONS: usize = 100000;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Value<'ir> {
@@ -230,6 +230,8 @@ pub enum ConstEvalErrorKind {
     Jump(IrId),
     #[error("ice: return from a constant expression")]
     Return,
+    #[error("ice: stop iteration")]
+    StopIteration,
 }
 
 impl From<ConstEvalErrorKind> for CodeDiagnostic {
@@ -1277,8 +1279,8 @@ impl<'ir> ConstEvaluator<'ir> {
                 Value::LValue(lvalue) => Ok(Value::Pointer(lvalue, value.ty)),
                 _ => unsupported!(self),
             },
-            ExprKind::Deref(value) => {
-                let value = self.const_eval_rvalue(value)?;
+            ExprKind::Deref(value1) => {
+                let value = self.const_eval_rvalue(value1)?;
                 match value {
                     Value::Pointer(lvalue, original_typ) => {
                         if expr.ty != original_typ {
@@ -1384,7 +1386,7 @@ impl<'ir> ConstEvaluator<'ir> {
                 self.const_eval_rvalue(ret)
             }
             ExprKind::Intrinsic(kind) => match kind {
-                IntrinsicValueKind::Uninitialized => Ok(Value::Uninitialized),
+                IntrinsicValueKind::Uninitialized => Ok(make_uninitialized(self.ir, expr.ty)),
                 IntrinsicValueKind::Dangling(..) => Ok(Value::Uninitialized),
                 IntrinsicValueKind::Volatile(inner) => self.const_eval_defered(inner),
                 IntrinsicValueKind::SizeOfLike(_, _) => unsupported!(self),
@@ -1449,6 +1451,9 @@ impl<'ir> ConstEvaluator<'ir> {
                 IntrinsicValueKind::InConstContext => Ok(Value::Bool(
                     !self.codegen || self.ctx.global_ctx.has_option("force-const-context"),
                 )),
+                IntrinsicValueKind::StopIteration => {
+                    Err(ConstEvalErrorKind::StopIteration).with_backtrace(&self.diag)
+                }
                 IntrinsicValueKind::ConstPanic(expr) => {
                     let value = self.const_eval_rvalue(expr)?;
                     match self.extract_constant_string_from_slice(&value) {
@@ -1835,6 +1840,7 @@ fn make_uninitialized<'ir>(ir: &'ir IrCtx<'ir>, typ: TyP<'ir>) -> Value<'ir> {
 
                 Value::Struct(ir.arena.alloc_slice_fill_iter(fields))
             }
+            IRItem::Function(_) => Value::FunctionPointer(item),
             _ => Value::Uninitialized,
         },
         _ => Value::Uninitialized,

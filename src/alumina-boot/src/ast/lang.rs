@@ -2,7 +2,6 @@ use alumina_boot_macros::AstSerializable;
 
 use crate::ast::{BinOp, BuiltinType};
 use crate::common::CodeDiagnostic;
-use crate::utils::regex;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AstSerializable)]
 pub enum LangItemKind {
@@ -44,6 +43,7 @@ pub enum LangItemKind {
     ProtoCallable,
     ProtoNamedFunction,
     ProtoFunctionPointer,
+    ProtoClosure,
     ProtoArrayOf,
     ProtoPointerOf,
     ProtoRangeOf,
@@ -54,7 +54,7 @@ pub enum LangItemKind {
     ProtoNone,
 
     ImplBuiltin(BuiltinType),
-    ImplTuple(usize),
+    ImplTuple,
     ImplArray,
 
     TypeopTupleHeadOf,
@@ -65,11 +65,11 @@ pub enum LangItemKind {
     TypeopPointerWithMutOf,
     TypeopArrayWithLengthOf,
     TypeopGenericArgsOf,
+    TypeopReplaceGenericArgsOf,
+    TypeopFunctionPointerOf,
     TypeopEnumTypeOf,
 
     EntrypointGlue,
-    TestCaseMeta,
-    TestCaseMetaNew,
 
     Dyn,
     DynSelf,
@@ -87,6 +87,11 @@ pub enum LangItemKind {
 
     FormatArg,
     EnumVariantNew,
+    FieldDescriptorNew,
+    TypeDescriptorNew,
+
+    StaticForIter,
+    StaticForNext,
 }
 
 impl LangItemKind {
@@ -110,6 +115,7 @@ impl LangItemKind {
                 | LangItemKind::ProtoCallable
                 | LangItemKind::ProtoNamedFunction
                 | LangItemKind::ProtoFunctionPointer
+                | LangItemKind::ProtoClosure
                 | LangItemKind::ProtoArrayOf
                 | LangItemKind::ProtoPointerOf
                 | LangItemKind::ProtoMeta
@@ -128,13 +134,15 @@ impl LangItemKind {
                 | LangItemKind::TypeopArrayWithLengthOf
                 | LangItemKind::TypeopEnumTypeOf
                 | LangItemKind::TypeopGenericArgsOf
+                | LangItemKind::TypeopReplaceGenericArgsOf
+                | LangItemKind::TypeopFunctionPointerOf
         )
     }
 
     pub fn is_builtin_impl(&self) -> bool {
         matches!(
             self,
-            LangItemKind::ImplBuiltin(_) | LangItemKind::ImplTuple(_) | LangItemKind::ImplArray
+            LangItemKind::ImplBuiltin(_) | LangItemKind::ImplTuple | LangItemKind::ImplArray
         )
     }
 }
@@ -182,6 +190,7 @@ impl TryFrom<&str> for LangItemKind {
             "proto_range" => Ok(LangItemKind::ProtoRange),
             "proto_named_function" => Ok(LangItemKind::ProtoNamedFunction),
             "proto_function_pointer" => Ok(LangItemKind::ProtoFunctionPointer),
+            "proto_closure" => Ok(LangItemKind::ProtoClosure),
             "proto_callable" => Ok(LangItemKind::ProtoCallable),
             "proto_array_of" => Ok(LangItemKind::ProtoArrayOf),
             "proto_pointer_of" => Ok(LangItemKind::ProtoPointerOf),
@@ -193,7 +202,6 @@ impl TryFrom<&str> for LangItemKind {
             "proto_none" => Ok(LangItemKind::ProtoNone),
 
             "builtin_never" => Ok(LangItemKind::ImplBuiltin(BuiltinType::Never)),
-            "builtin_void" => Ok(LangItemKind::ImplTuple(0)),
             "builtin_bool" => Ok(LangItemKind::ImplBuiltin(BuiltinType::Bool)),
             "builtin_u8" => Ok(LangItemKind::ImplBuiltin(BuiltinType::U8)),
             "builtin_u16" => Ok(LangItemKind::ImplBuiltin(BuiltinType::U16)),
@@ -211,6 +219,7 @@ impl TryFrom<&str> for LangItemKind {
             "builtin_f64" => Ok(LangItemKind::ImplBuiltin(BuiltinType::F64)),
 
             "builtin_array" => Ok(LangItemKind::ImplArray),
+            "builtin_tuple" => Ok(LangItemKind::ImplTuple),
 
             "operator_eq" => Ok(LangItemKind::Operator(BinOp::Eq)),
             "operator_neq" => Ok(LangItemKind::Operator(BinOp::Neq)),
@@ -227,11 +236,11 @@ impl TryFrom<&str> for LangItemKind {
             "typeop_pointer_with_mut_of" => Ok(LangItemKind::TypeopPointerWithMutOf),
             "typeop_array_with_length_of" => Ok(LangItemKind::TypeopArrayWithLengthOf),
             "typeop_generic_args_of" => Ok(LangItemKind::TypeopGenericArgsOf),
+            "typeop_replace_generic_args_of" => Ok(LangItemKind::TypeopReplaceGenericArgsOf),
+            "typeop_function_pointer_of" => Ok(LangItemKind::TypeopFunctionPointerOf),
             "typeop_enum_type_of" => Ok(LangItemKind::TypeopEnumTypeOf),
 
             "entrypoint_glue" => Ok(LangItemKind::EntrypointGlue),
-            "test_case_meta" => Ok(LangItemKind::TestCaseMeta),
-            "test_case_meta_new" => Ok(LangItemKind::TestCaseMetaNew),
 
             "dyn" => Ok(LangItemKind::Dyn),
             "dyn_self" => Ok(LangItemKind::DynSelf),
@@ -247,15 +256,13 @@ impl TryFrom<&str> for LangItemKind {
 
             "format_arg" => Ok(LangItemKind::FormatArg),
             "enum_variant_new" => Ok(LangItemKind::EnumVariantNew),
+            "field_descriptor_new" => Ok(LangItemKind::FieldDescriptorNew),
+            "type_descriptor_new" => Ok(LangItemKind::TypeDescriptorNew),
 
-            t => {
-                if let Some(matches) = regex!(r"^builtin_tuple_(\d+)$").captures(t) {
-                    let n = matches[1].parse::<usize>().unwrap();
-                    Ok(LangItemKind::ImplTuple(n))
-                } else {
-                    Err(CodeDiagnostic::UnknownLangItem(t.to_string()))
-                }
-            }
+            "static_for_iter" => Ok(LangItemKind::StaticForIter),
+            "static_for_next" => Ok(LangItemKind::StaticForNext),
+
+            t => Err(CodeDiagnostic::UnknownLangItem(t.to_string())),
         }
     }
 }

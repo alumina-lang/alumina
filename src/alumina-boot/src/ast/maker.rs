@@ -198,6 +198,7 @@ impl<'ast> AstItemMaker<'ast> {
                     fields.push(Field {
                         id: self.ast.make_id(),
                         name: name.unwrap(),
+                        attributes: item.attributes,
                         typ: field_type,
                         span: Some(span),
                     });
@@ -306,6 +307,7 @@ impl<'ast> AstItemMaker<'ast> {
                     members.push(EnumMember {
                         name: name.unwrap(),
                         id,
+                        attributes: item.attributes,
                         value,
                         span: Some(span),
                     });

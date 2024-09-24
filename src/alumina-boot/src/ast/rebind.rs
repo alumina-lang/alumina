@@ -218,6 +218,9 @@ impl<'ast> Rebinder<'ast> {
                 self.visit_expr(then)?,
                 self.visit_expr(els)?,
             ),
+            StaticFor(id, range, body) => {
+                StaticFor(id, self.visit_expr(range)?, self.visit_expr(body)?)
+            }
             Cast(inner, typ) => Cast(self.visit_expr(inner)?, self.visit_typ(typ)?),
             Defered(ref def) => Defered(crate::ast::Defered {
                 typ: self.visit_typ(def.typ)?,

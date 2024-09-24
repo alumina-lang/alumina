@@ -318,6 +318,8 @@ pub enum CodeDiagnostic {
     TupleCallArgCount,
     #[error("the argument to a #[tuple_args] function must be a tuple")]
     TupleCallArgType,
+    #[error("too many loop variables (iterator yields {})", .0)]
+    TooManyLoopVars(String),
 
     // Warnings
     #[error("defer inside a loop: this defered statement will only be executed once")]

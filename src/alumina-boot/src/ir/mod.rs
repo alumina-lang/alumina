@@ -269,6 +269,7 @@ pub type TyP<'ir> = &'ir Ty<'ir>;
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash, Copy)]
 pub struct Field<'ir> {
+    pub name: Option<&'ir str>,
     pub id: IrId,
     pub ty: TyP<'ir>,
 }
@@ -322,6 +323,7 @@ pub struct Closure<'ir> {
 pub struct Protocol<'ir> {
     pub name: Option<&'ir str>,
     pub methods: &'ir [ProtocolFunction<'ir>],
+    pub attributes: &'ir [Attribute<'ir>],
     #[allow(dead_code)]
     pub span: Option<Span>,
 }
@@ -350,6 +352,7 @@ pub struct Enum<'ir> {
     pub name: Option<&'ir str>,
     pub underlying_type: TyP<'ir>,
     pub members: &'ir [EnumMember<'ir>],
+    pub attributes: &'ir [Attribute<'ir>],
     #[allow(dead_code)]
     pub span: Option<Span>,
 }
@@ -370,6 +373,7 @@ pub struct Const<'ir> {
     pub typ: TyP<'ir>,
     pub value: Value<'ir>,
     pub init: ExprP<'ir>,
+    pub attributes: &'ir [Attribute<'ir>],
     pub span: Option<Span>,
 }
 
@@ -495,6 +499,20 @@ impl<'ir> IRItemCell<'ir> {
                 Backtrace::capture().into(),
             )),
             None => Err(CodeDiagnostic::UnpopulatedItem),
+        }
+    }
+
+    pub fn attributes(&'ir self) -> &'ir [Attribute<'ir>] {
+        match self.contents.get() {
+            Some(IRItem::StructLike(s)) => s.attributes,
+            Some(IRItem::Function(f)) => f.attributes,
+            Some(IRItem::Enum(e)) => e.attributes,
+            Some(IRItem::Protocol(p)) => p.attributes,
+            Some(IRItem::Closure(c)) => c.data.attributes,
+            Some(IRItem::Alias(_)) => &[],
+            Some(IRItem::Static(s)) => s.attributes,
+            Some(IRItem::Const(c)) => c.attributes,
+            None => &[],
         }
     }
 
@@ -684,6 +702,7 @@ impl<'ir> Expr<'ir> {
                 IntrinsicValueKind::ConstWrite(_, _) => false,
                 IntrinsicValueKind::ConstAlloc(_, _) => false,
                 IntrinsicValueKind::ConstFree(_) => false,
+                IntrinsicValueKind::StopIteration => false,
             },
 
             ExprKind::Unreachable => false, // ?

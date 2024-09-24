@@ -12,6 +12,7 @@ enum NodeKind {
     AssignmentExpression,
     StructInitializerItem,
     ScopedTypeIdentifier,
+    TupleIndexExpression,
     UseList,
     TopLevelBlock,
     ExpressionStatement,
@@ -73,6 +74,7 @@ enum NodeKind {
     TypeOf,
     LetDeclaration,
     StaticDeclaration,
+    StaticForExpression,
     MacroParameter,
     PrimitiveType,
     ModDefinition,
@@ -174,7 +176,7 @@ enum FieldKind {
     Value = 53u16,
 }
 
-const NODE_KINDS: [NodeKind; 259] = [
+const NODE_KINDS: [NodeKind; 261] = [
     NodeKind::Invalid,
     NodeKind::Identifier,
     NodeKind::DocComment,
@@ -364,6 +366,7 @@ const NODE_KINDS: [NodeKind; 259] = [
     NodeKind::TryExpression,
     NodeKind::BinaryExpression,
     NodeKind::FieldExpression,
+    NodeKind::TupleIndexExpression,
     NodeKind::UniversalMacroInvocation,
     NodeKind::AssignmentExpression,
     NodeKind::IndexExpression,
@@ -394,6 +397,7 @@ const NODE_KINDS: [NodeKind; 259] = [
     NodeKind::BreakExpression,
     NodeKind::LoopExpression,
     NodeKind::EtCeteraExpression,
+    NodeKind::StaticForExpression,
     NodeKind::ForExpression,
     NodeKind::Invalid,
     NodeKind::LambdaExpression,
@@ -456,6 +460,9 @@ protocol NodeVisitor<Self, ReturnType> {
     }
     fn visit_scoped_type_identifier(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_scoped_type_identifier");
+    }
+    fn visit_tuple_index_expression(self: &mut Self, _node: Node) -> ReturnType {
+        panic!("unimplemented: visit_tuple_index_expression");
     }
     fn visit_use_list(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_use_list");
@@ -640,6 +647,9 @@ protocol NodeVisitor<Self, ReturnType> {
     fn visit_static_declaration(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_static_declaration");
     }
+    fn visit_static_for_expression(self: &mut Self, _node: Node) -> ReturnType {
+        panic!("unimplemented: visit_static_for_expression");
+    }
     fn visit_macro_parameter(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_macro_parameter");
     }
@@ -781,6 +791,7 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::AssignmentExpression => self.visit_assignment_expression(node),
             NodeKind::StructInitializerItem => self.visit_struct_initializer_item(node),
             NodeKind::ScopedTypeIdentifier => self.visit_scoped_type_identifier(node),
+            NodeKind::TupleIndexExpression => self.visit_tuple_index_expression(node),
             NodeKind::UseList => self.visit_use_list(node),
             NodeKind::TopLevelBlock => self.visit_top_level_block(node),
             NodeKind::ExpressionStatement => self.visit_expression_statement(node),
@@ -842,6 +853,7 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::TypeOf => self.visit_type_of(node),
             NodeKind::LetDeclaration => self.visit_let_declaration(node),
             NodeKind::StaticDeclaration => self.visit_static_declaration(node),
+            NodeKind::StaticForExpression => self.visit_static_for_expression(node),
             NodeKind::MacroParameter => self.visit_macro_parameter(node),
             NodeKind::PrimitiveType => self.visit_primitive_type(node),
             NodeKind::ModDefinition => self.visit_mod_definition(node),

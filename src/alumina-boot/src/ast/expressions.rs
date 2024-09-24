@@ -4,7 +4,7 @@ use crate::ast::types::TypeVisitor;
 use crate::ast::{
     AstCtx, AstId, BinOp, BuiltinType, ClosureBinding, Defered, Expr, ExprKind, ExprP,
     FieldInitializer, FnKind, Function, Item, ItemP, LetDeclaration, Lit, Parameter, Placeholder,
-    Span, Statement, StatementKind, Ty, TyP, UnOp,
+    Span, Statement, StatementKind, StaticForLoopVariable, Ty, TyP, UnOp,
 };
 use crate::common::{
     AluminaError, ArenaAllocatable, CodeDiagnostic, CodeErrorBuilder, HashSet,
@@ -191,7 +191,8 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                         &self.scope,
                         name_node,
                     ),
-                    idx,
+                    ExprKind::Lit(Lit::Int(false, idx as u128, Some(BuiltinType::USize)))
+                        .alloc_with_span_from(self.ast, &self.scope, name_node),
                 )
                 .alloc_with_span_from(self.ast, &self.scope, name_node);
 
@@ -251,6 +252,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             | NodeKind::SwitchExpression
             | NodeKind::WhileExpression
             | NodeKind::LoopExpression
+            | NodeKind::StaticForExpression
             | NodeKind::ForExpression => match statements.pop() {
                 Some(Statement {
                     kind: StatementKind::Expression(expr),
@@ -799,8 +801,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
                 ExprKind::Field(value, field_value.alloc_on(self.ast), unified_fn, None)
             }
-            NodeKind::IntegerLiteral => ExprKind::TupleIndex(value, field_value.parse().unwrap()),
-            _ => unreachable!(),
+
+            _ => ExprKind::TupleIndex(
+                value,
+                self.visit(field.child_by_field(FieldKind::Field).unwrap())?,
+            ),
         };
 
         Ok(result.alloc_with_span_from(self.ast, &self.scope, node))
@@ -970,6 +975,55 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         Ok(ExprKind::Continue.alloc_with_span_from(self.ast, &self.scope, node))
     }
 
+    fn visit_static_for_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let range = self.visit(node.child_by_field(FieldKind::Value).unwrap())?;
+
+        let body;
+        let loop_var;
+        if let Some(name_node) = node.child_by_field(FieldKind::Name) {
+            let name = self.code.node_text(name_node).alloc_on(self.ast);
+            let id = self.ast.make_id();
+
+            body = with_block_scope!(self, {
+                self.ast.add_local_name(id, name);
+                self.scope
+                    .add_item(
+                        Some(name),
+                        NamedItem::new_default(NamedItemKind::Local(id), name_node, None),
+                    )
+                    .with_span_from(&self.scope, node)?;
+
+                self.visit(node.child_by_field(FieldKind::Body).unwrap())?
+            });
+            loop_var = StaticForLoopVariable::Single(id);
+        } else {
+            body = with_block_scope!(self, {
+                let mut cursor = node.walk();
+                let mut loop_vars = vec![];
+
+                for name_node in node.children_by_field(FieldKind::Element, &mut cursor) {
+                    let name = self.code.node_text(name_node).alloc_on(self.ast);
+                    let elem_id = self.ast.make_id();
+
+                    loop_vars.push(elem_id);
+                    self.ast.add_local_name(elem_id, name);
+                    self.scope
+                        .add_item(
+                            Some(name),
+                            NamedItem::new_default(NamedItemKind::Local(elem_id), name_node, None),
+                        )
+                        .with_span_from(&self.scope, name_node)?;
+                }
+
+                loop_var = StaticForLoopVariable::Tuple(loop_vars.alloc_on(self.ast));
+                self.visit(node.child_by_field(FieldKind::Body).unwrap())?
+            });
+        };
+
+        let result = ExprKind::StaticFor(loop_var, range, body);
+        Ok(result.alloc_with_span_from(self.ast, &self.scope, node))
+    }
+
     fn visit_for_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let iterable_node = node.child_by_field(FieldKind::Value).unwrap();
         let iterable = self.visit(iterable_node)?;
@@ -1008,7 +1062,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
                     let rhs = ExprKind::TupleIndex(
                         ExprKind::Local(id).alloc_with_span_from(self.ast, &self.scope, name_node),
-                        idx,
+                        ExprKind::Lit(Lit::Int(false, idx as u128, None)).alloc_with_span_from(
+                            self.ast,
+                            &self.scope,
+                            name_node,
+                        ),
                     )
                     .alloc_with_span_from(self.ast, &self.scope, name_node);
 
