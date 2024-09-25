@@ -75,10 +75,7 @@ impl<'ir> IrInliner<'ir> {
                     expr,
                     expr.span,
                 )));
-                local_defs.push(LocalDef {
-                    id: new_id,
-                    typ: ty,
-                });
+                local_defs.push(LocalDef { id: new_id, ty });
             }
         }
 

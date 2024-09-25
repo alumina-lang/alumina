@@ -64,7 +64,7 @@ impl<'ir> ZstElider<'ir> {
             .iter()
             .copied()
             .chain(self.additional_locals)
-            .filter(|def| self.used_ids.remove(&def.id) && !def.typ.is_zero_sized())
+            .filter(|def| self.used_ids.remove(&def.id) && !def.ty.is_zero_sized())
             .collect::<Vec<_>>();
 
         Ok((local_defs.alloc_on(self.ir), statements.alloc_on(self.ir)))
@@ -218,7 +218,7 @@ impl<'ir> ZstElider<'ir> {
                             arguments.push(builder.void(arg.ty, arg.value_type, arg.span));
                         } else {
                             let id = self.ir.make_id();
-                            self.additional_locals.push(LocalDef { id, typ: arg.ty });
+                            self.additional_locals.push(LocalDef { id, ty: arg.ty });
                             self.used_ids.insert(id);
                             let local = builder.local(id, arg.ty, arg.span);
                             statements
@@ -515,7 +515,7 @@ impl<'ir> ZstElider<'ir> {
         match value {
             LValue::Const(item) => {
                 let r#const = item.get_const().unwrap();
-                builder.const_var(item, r#const.typ, span)
+                builder.const_var(item, r#const.ty, span)
             }
             LValue::Variable(_) => unreachable!(),
             LValue::Field(inner, field) => {

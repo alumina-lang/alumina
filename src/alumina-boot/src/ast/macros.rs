@@ -331,8 +331,8 @@ impl<'ast> MacroExpander<'ast> {
                     .collect::<Result<Vec<_>, _>>()?
                     .alloc_on(self.ast),
             ),
-            Defered(super::Defered { typ, name }) => Defered(super::Defered {
-                typ: self.visit_typ(typ)?,
+            Defered(super::Defered { ty: typ, name }) => Defered(super::Defered {
+                ty: self.visit_typ(typ)?,
                 name,
             }),
             Placeholder(_) | Item(_) | Builtin(_) => return Ok(ty),
@@ -486,7 +486,7 @@ impl<'ast> MacroExpander<'ast> {
                     FnKind::Normal(_) => *kind,
                     FnKind::Closure(..) => *kind,
                     FnKind::Defered(def) => FnKind::Defered(crate::ast::Defered {
-                        typ: self.visit_typ(def.typ)?,
+                        ty: self.visit_typ(def.ty)?,
                         name: def.name,
                     }),
                 };
@@ -504,7 +504,7 @@ impl<'ast> MacroExpander<'ast> {
                 Fn(kind, generic_args)
             }
             Defered(ref def) => Defered(crate::ast::Defered {
-                typ: self.visit_typ(def.typ)?,
+                ty: self.visit_typ(def.ty)?,
                 name: def.name,
             }),
             Static(item, generic_args) => {
@@ -563,7 +563,7 @@ impl<'ast> MacroExpander<'ast> {
 
                 LetDeclaration(crate::ast::LetDeclaration {
                     id: replacement,
-                    typ: decl.typ.map(|ty| self.visit_typ(ty)).transpose()?,
+                    ty: decl.ty.map(|ty| self.visit_typ(ty)).transpose()?,
                     value: decl.value.map(|v| self.visit_expr(v)).transpose()?,
                 })
             }

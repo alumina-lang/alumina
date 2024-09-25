@@ -18,16 +18,16 @@ impl<'ast> PrettyPrinter<'ast> {
     pub fn print_stmt(&mut self, stmt: &Statement<'ast>) -> String {
         match &stmt.kind {
             StatementKind::Expression(e) => format!("{};", self.print_expr(e)),
-            StatementKind::LetDeclaration(l) => match (l.typ, l.value) {
+            StatementKind::LetDeclaration(l) => match (l.ty, l.value) {
                 (None, None) => format!("let {};", self.id_to_name(l.id)),
-                (Some(t), None) => format!("let {}: {};", self.id_to_name(l.id), self.print_typ(t)),
+                (Some(t), None) => format!("let {}: {};", self.id_to_name(l.id), self.print_ty(t)),
                 (None, Some(v)) => {
                     format!("let {} = {};", self.id_to_name(l.id), self.print_expr(v))
                 }
                 (Some(t), Some(v)) => format!(
                     "let {}: {} = {};",
                     self.id_to_name(l.id),
-                    self.print_typ(t),
+                    self.print_ty(t),
                     self.print_expr(v)
                 ),
             },
@@ -55,8 +55,8 @@ impl<'ast> PrettyPrinter<'ast> {
         }
     }
 
-    pub fn print_typ(&mut self, typ: TyP<'ast>) -> String {
-        self.print_typ_full(typ, false)
+    pub fn print_ty(&mut self, ty: TyP<'ast>) -> String {
+        self.print_ty_full(ty, false)
     }
 
     fn print_string_literal(&mut self, s: &[u8]) -> String {
@@ -80,10 +80,10 @@ impl<'ast> PrettyPrinter<'ast> {
         out
     }
 
-    fn print_typ_full(&mut self, typ: TyP<'ast>, turbofish: bool) -> String {
-        match typ {
+    fn print_ty_full(&mut self, ty: TyP<'ast>, turbofish: bool) -> String {
+        match ty {
             Ty::Tag(tag, inner) => {
-                format!("/* {} */ {}", tag, self.print_typ_full(inner, turbofish))
+                format!("/* {} */ {}", tag, self.print_ty_full(inner, turbofish))
             }
             Ty::Placeholder(id) => self.id_to_name(*id),
             Ty::Item(item) => self.print_item(item, None, false),
@@ -91,12 +91,12 @@ impl<'ast> PrettyPrinter<'ast> {
             Ty::Pointer(inner, is_const) => format!(
                 "&{}{}",
                 if *is_const { "" } else { "mut " },
-                self.print_typ_full(inner, turbofish)
+                self.print_ty_full(inner, turbofish)
             ),
             Ty::Slice(inner, is_const) => format!(
                 "&{}[{}]",
                 if *is_const { "" } else { "mut " },
-                self.print_typ_full(inner, turbofish)
+                self.print_ty_full(inner, turbofish)
             ),
             Ty::Dyn(protos, is_const) => {
                 let mut s = String::new();
@@ -104,7 +104,7 @@ impl<'ast> PrettyPrinter<'ast> {
                     if i != 0 {
                         s.push_str(" + ");
                     }
-                    s.push_str(&self.print_typ_full(proto, turbofish));
+                    s.push_str(&self.print_ty_full(proto, turbofish));
                 }
 
                 if protos.len() > 1 {
@@ -117,7 +117,7 @@ impl<'ast> PrettyPrinter<'ast> {
             Ty::Array(inner, len) => {
                 format!(
                     "[{}; {}]",
-                    self.print_typ_full(inner, turbofish),
+                    self.print_ty_full(inner, turbofish),
                     self.print_expr(len)
                 )
             }
@@ -127,16 +127,16 @@ impl<'ast> PrettyPrinter<'ast> {
                     if i != 0 {
                         s.push_str(", ");
                     }
-                    s.push_str(&self.print_typ_full(elem, turbofish));
+                    s.push_str(&self.print_ty_full(elem, turbofish));
                 }
 
                 format!("({})", s)
             }
             Ty::When(cond, then, els) => format!(
                 "when {} {{ {} }} else {{ {} }}",
-                self.print_typ_full(then, turbofish),
+                self.print_ty_full(then, turbofish),
                 self.print_expr(cond),
-                self.print_typ_full(els, turbofish)
+                self.print_ty_full(els, turbofish)
             ),
             Ty::FunctionPointer(args, ret) => {
                 let mut s = String::new();
@@ -144,10 +144,10 @@ impl<'ast> PrettyPrinter<'ast> {
                     if i != 0 {
                         s.push_str(", ");
                     }
-                    s.push_str(&self.print_typ_full(arg, turbofish));
+                    s.push_str(&self.print_ty_full(arg, turbofish));
                 }
 
-                format!("fn({}) -> {}", s, self.print_typ_full(ret, turbofish))
+                format!("fn({}) -> {}", s, self.print_ty_full(ret, turbofish))
             }
             Ty::FunctionProtocol(args, ret) => {
                 let mut s = String::new();
@@ -155,10 +155,10 @@ impl<'ast> PrettyPrinter<'ast> {
                     if i != 0 {
                         s.push_str(", ");
                     }
-                    s.push_str(&self.print_typ_full(arg, turbofish));
+                    s.push_str(&self.print_ty_full(arg, turbofish));
                 }
 
-                format!("Fn({}) -> {}", s, self.print_typ_full(ret, turbofish))
+                format!("Fn({}) -> {}", s, self.print_ty_full(ret, turbofish))
             }
             Ty::Generic(base, args) => {
                 let mut s = String::new();
@@ -166,21 +166,17 @@ impl<'ast> PrettyPrinter<'ast> {
                     if i != 0 {
                         s.push_str(", ");
                     }
-                    s.push_str(&self.print_typ_full(arg, turbofish));
+                    s.push_str(&self.print_ty_full(arg, turbofish));
                 }
 
                 if turbofish {
-                    format!("{}::<{}>", self.print_typ(base), s)
+                    format!("{}::<{}>", self.print_ty(base), s)
                 } else {
-                    format!("{}<{}>", self.print_typ(base), s)
+                    format!("{}<{}>", self.print_ty(base), s)
                 }
             }
             Ty::Defered(spec) => {
-                format!(
-                    "{}::{}",
-                    self.print_typ_full(spec.typ, turbofish),
-                    spec.name
-                )
+                format!("{}::{}", self.print_ty_full(spec.ty, turbofish), spec.name)
             }
         }
     }
@@ -199,7 +195,7 @@ impl<'ast> PrettyPrinter<'ast> {
                 if i != 0 {
                     s.push_str(", ");
                 }
-                s.push_str(&self.print_typ(arg));
+                s.push_str(&self.print_ty(arg));
             }
 
             if turbofish {
@@ -249,19 +245,13 @@ impl<'ast> PrettyPrinter<'ast> {
             if !s.is_empty() {
                 s.push_str(", ");
             }
-            write!(
-                s,
-                "{}: {}",
-                self.id_to_name(arg.id),
-                self.print_typ(arg.typ)
-            )
-            .unwrap();
+            write!(s, "{}: {}", self.id_to_name(arg.id), self.print_ty(arg.ty)).unwrap();
         }
 
         let ret = if let Ty::Tuple(&[]) = func.return_type {
             String::new()
         } else {
-            format!(" -> {}", self.print_typ(func.return_type))
+            format!(" -> {}", self.print_ty(func.return_type))
         };
 
         format!(
@@ -401,7 +391,7 @@ impl<'ast> PrettyPrinter<'ast> {
                 format!("{}({})", self.print_expr_parens(callee), s)
             }
             ExprKind::Defered(spec) => {
-                format!("{}::{}", self.print_typ(spec.typ), spec.name)
+                format!("{}::{}", self.print_ty(spec.ty), spec.name)
             }
 
             // TODO: Somehow print macros with bound variables
@@ -416,7 +406,7 @@ impl<'ast> PrettyPrinter<'ast> {
                     self.print_lambda(Some(*bindings), fun)
                 }
                 FnKind::Defered(spec) => {
-                    format!("{}::{}", self.print_typ(spec.typ), spec.name)
+                    format!("{}::{}", self.print_ty(spec.ty), spec.name)
                 }
             },
             ExprKind::Ref(inner) => {
@@ -622,7 +612,7 @@ impl<'ast> PrettyPrinter<'ast> {
                     }
                     s.push_str(&format!("{}: {}", field.name, self.print_expr(field.value)));
                 }
-                format!("{} {{ {} }}", self.print_typ_full(typ, true), s)
+                format!("{} {{ {} }}", self.print_ty_full(typ, true), s)
             }
             ExprKind::BoundParam(_, id, _) => self.id_to_name(id),
             ExprKind::Field(base, field, _, generic_args) => {
@@ -632,7 +622,7 @@ impl<'ast> PrettyPrinter<'ast> {
                         if i != 0 {
                             s.push_str(", ");
                         }
-                        s.push_str(&self.print_typ(arg));
+                        s.push_str(&self.print_ty(arg));
                     }
 
                     format!("{}.{}::<{}>", self.print_expr(base), s, field)
@@ -683,7 +673,7 @@ impl<'ast> PrettyPrinter<'ast> {
                 format!(
                     "{} is {}",
                     self.print_expr_parens(inner),
-                    self.print_typ(typ)
+                    self.print_ty(typ)
                 )
             }
             ExprKind::If(cond, then, els) | ExprKind::StaticIf(cond, then, els) => {
@@ -717,7 +707,7 @@ impl<'ast> PrettyPrinter<'ast> {
                 format!(
                     "{} as {}",
                     self.print_expr_parens(inner),
-                    self.print_typ(typ)
+                    self.print_ty(typ)
                 )
             }
             ExprKind::Void => {

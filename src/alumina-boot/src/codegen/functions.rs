@@ -269,12 +269,12 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
     }
 
     pub fn write_local_def(&mut self, def: &LocalDef<'ir>) -> Result<(), AluminaError> {
-        self.type_writer.add_type(def.typ)?;
+        self.type_writer.add_type(def.ty)?;
         self.indent();
         w!(
             self.fn_bodies,
             "{} {};\n",
-            self.ctx.get_type(def.typ),
+            self.ctx.get_type(def.ty),
             self.ctx.get_name(def.id)
         );
 
@@ -700,7 +700,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         item: &'ir Static<'ir>,
     ) -> Result<(), AluminaError> {
         let _guard = diag.push_span(item.span);
-        self.type_writer.add_type(item.typ)?;
+        self.type_writer.add_type(item.ty)?;
 
         let attributes = if item.attributes.contains(&Attribute::ThreadLocal) {
             " __thread"
@@ -715,13 +715,13 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             self.ctx.register_name(id, CName::Mangled(name, id.id));
         }
 
-        if !item.typ.is_zero_sized() {
+        if !item.ty.is_zero_sized() {
             if item.r#extern {
                 w!(
                     self.fn_decls,
                     "\nextern{} {} {};",
                     attributes,
-                    self.ctx.get_type(item.typ),
+                    self.ctx.get_type(item.ty),
                     self.ctx.get_name(id)
                 );
             } else {
@@ -729,7 +729,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                     self.fn_decls,
                     "\nstatic{} {} {};",
                     attributes,
-                    self.ctx.get_type(item.typ),
+                    self.ctx.get_type(item.ty),
                     self.ctx.get_name(id)
                 );
             }
@@ -749,11 +749,11 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             self.ctx.register_name(id, CName::Mangled(name, id.id));
         }
 
-        self.type_writer.add_type(item.typ)?;
+        self.type_writer.add_type(item.ty)?;
         w!(
             self.fn_decls,
             "\nconst static {} {};",
-            self.ctx.get_type(item.typ),
+            self.ctx.get_type(item.ty),
             self.ctx.get_name(id)
         );
 
@@ -770,7 +770,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         w!(
             self.fn_bodies,
             "\nconst static {} {} = ",
-            self.ctx.get_type(item.typ),
+            self.ctx.get_type(item.ty),
             self.ctx.get_name(id)
         );
 

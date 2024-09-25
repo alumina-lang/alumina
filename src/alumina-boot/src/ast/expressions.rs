@@ -82,16 +82,16 @@ pub struct ExpressionVisitor<'ast, 'src> {
 }
 
 macro_rules! suffixed_literals {
-    ($e:expr, $($suffix:literal => $typ:path),+) => {
+    ($e:expr, $($suffix:literal => $ty:path),+) => {
         match $e {
             $(
-                v if v.ends_with($suffix) => (&v[..v.len() - $suffix.len()], Some($typ)),
+                v if v.ends_with($suffix) => (&v[..v.len() - $suffix.len()], Some($ty)),
             )+
             v => (v, None)
         }
     };
-    ($e:expr, $($suffix:literal => $typ:path,)+) => {
-        suffixed_literals!($e, $($suffix => $typ),+)
+    ($e:expr, $($suffix:literal => $ty:path,)+) => {
+        suffixed_literals!($e, $($suffix => $ty),+)
     };
 }
 
@@ -154,7 +154,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             .transpose()?;
         let let_decl = LetDeclaration {
             id: value_id,
-            typ,
+            ty: typ,
             value,
         };
         let mut statements = Vec::new();
@@ -198,7 +198,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
 
                 let elem_decl = LetDeclaration {
                     id: elem_id,
-                    typ: None,
+                    ty: None,
                     value: Some(rhs),
                 };
 
@@ -1072,7 +1072,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
                     let elem_decl = LetDeclaration {
                         id: elem_id,
-                        typ: None,
+                        ty: None,
                         value: Some(rhs),
                     };
 
@@ -1124,7 +1124,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             ExprKind::Block(
                 vec![StatementKind::LetDeclaration(LetDeclaration {
                     id,
-                    typ: None,
+                    ty: None,
                     value: Some(
                         ExprKind::Field(
                             ExprKind::Local(iterator_result).alloc_with_span(self.ast, None),
@@ -1147,7 +1147,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             ExprKind::Block(
                 vec![StatementKind::LetDeclaration(LetDeclaration {
                     id: iterator_result,
-                    typ: None,
+                    ty: None,
                     value: Some(
                         ExprKind::Call(
                             ExprKind::Field(
@@ -1172,7 +1172,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         let result = ExprKind::Block(
             vec![StatementKind::LetDeclaration(LetDeclaration {
                 id: iterator,
-                typ: None,
+                ty: None,
                 value: Some(
                     ExprKind::Call(
                         ExprKind::Field(iterable, "iter", unified_fn, None).alloc_with_span_from(
@@ -1231,7 +1231,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         let local = ExprKind::Local(local_id).alloc_with_span_from(self.ast, &self.scope, node);
         let stmts = vec![StatementKind::LetDeclaration(LetDeclaration {
             id: local_id,
-            typ: None,
+            ty: None,
             value: Some(value),
         })
         .alloc_with_span(self.ast, None)];
@@ -1591,7 +1591,7 @@ impl<'ast, 'src> LambdaVisitor<'ast, 'src> {
                 0,
                 Parameter {
                     id: self.self_param,
-                    typ: self.ast.intern_type(Ty::Pointer(placeholder_ty, false)),
+                    ty: self.ast.intern_type(Ty::Pointer(placeholder_ty, false)),
                     span: Some(span),
                 },
             );
@@ -1657,7 +1657,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for LambdaVisitor<'ast, 'src> {
 
         self.parameters.push(Parameter {
             id,
-            typ: field_type,
+            ty: field_type,
             span: Some(span),
         });
 
@@ -1806,7 +1806,7 @@ pub fn resolve_name<'ast, 'src>(
         ItemResolution::Defered(ty, name) => {
             let name = name.0.alloc_on(ast);
             let typ = ast.intern_type(ty);
-            ExprKind::Defered(Defered { typ, name })
+            ExprKind::Defered(Defered { ty: typ, name })
         }
     };
 

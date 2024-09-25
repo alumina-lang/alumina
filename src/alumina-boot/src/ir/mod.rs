@@ -251,11 +251,11 @@ impl<'ir> Ty<'ir> {
                 IRItem::Alias(inner) => inner.is_zero_sized(),
                 IRItem::StructLike(s) => s.fields.iter().all(|f| f.ty.is_zero_sized()),
                 IRItem::Closure(c) => c.data.fields.iter().all(|f| f.ty.is_zero_sized()),
-                IRItem::Function(_) => true,
                 IRItem::Enum(e) => e.underlying_type.is_zero_sized(),
-                IRItem::Protocol(_) => unreachable!(),
-                IRItem::Static(_) => unreachable!(),
-                IRItem::Const(_) => unreachable!(),
+                IRItem::Function(_)
+                | IRItem::Protocol(_)
+                | IRItem::Static(_)
+                | IRItem::Const(_) => true,
             },
             Ty::Pointer(_, _) => false,
             Ty::Array(inner, size) => *size == 0 || inner.is_zero_sized(),
@@ -293,7 +293,7 @@ pub struct Parameter<'ir> {
 #[derive(Debug, Copy, Clone)]
 pub struct LocalDef<'ir> {
     pub id: IrId,
-    pub typ: TyP<'ir>,
+    pub ty: TyP<'ir>,
 }
 
 #[derive(Debug)]
@@ -360,7 +360,7 @@ pub struct Enum<'ir> {
 #[derive(Debug)]
 pub struct Static<'ir> {
     pub name: Option<&'ir str>,
-    pub typ: TyP<'ir>,
+    pub ty: TyP<'ir>,
     pub init: Option<ExprP<'ir>>,
     pub attributes: &'ir [Attribute<'ir>],
     pub r#extern: bool,
@@ -370,7 +370,7 @@ pub struct Static<'ir> {
 #[derive(Debug)]
 pub struct Const<'ir> {
     pub name: Option<&'ir str>,
-    pub typ: TyP<'ir>,
+    pub ty: TyP<'ir>,
     pub value: Value<'ir>,
     pub init: ExprP<'ir>,
     pub attributes: &'ir [Attribute<'ir>],
@@ -620,32 +620,32 @@ pub struct Expr<'ir> {
 }
 
 impl<'ir> Expr<'ir> {
-    pub fn lvalue(kind: ExprKind<'ir>, typ: TyP<'ir>, span: Option<Span>) -> Self {
+    pub fn lvalue(kind: ExprKind<'ir>, ty: TyP<'ir>, span: Option<Span>) -> Self {
         Self {
             kind,
             value_type: ValueType::LValue,
             is_const: false,
-            ty: typ,
+            ty,
             span,
         }
     }
 
-    pub fn rvalue(kind: ExprKind<'ir>, typ: TyP<'ir>, span: Option<Span>) -> Self {
+    pub fn rvalue(kind: ExprKind<'ir>, ty: TyP<'ir>, span: Option<Span>) -> Self {
         Self {
             kind,
             value_type: ValueType::RValue,
             is_const: false,
-            ty: typ,
+            ty,
             span,
         }
     }
 
-    pub fn const_lvalue(kind: ExprKind<'ir>, typ: TyP<'ir>, span: Option<Span>) -> Self {
+    pub fn const_lvalue(kind: ExprKind<'ir>, ty: TyP<'ir>, span: Option<Span>) -> Self {
         Self {
             kind,
             value_type: ValueType::LValue,
             is_const: true,
-            ty: typ,
+            ty,
             span,
         }
     }

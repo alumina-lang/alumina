@@ -209,11 +209,10 @@ impl<'ir> Layouter<'ir> {
                 )?
             }
             IRItem::Alias(i) => self.layout_of(i)?,
-            IRItem::Protocol(_) => Layout::default_zst(),
-            IRItem::Function(_) => Layout::default_zst(),
             IRItem::Enum(e) => self.layout_of(e.underlying_type)?,
-            IRItem::Static(_) => unreachable!(),
-            IRItem::Const(_) => unreachable!(),
+            IRItem::Protocol(_) | IRItem::Function(_) | IRItem::Static(_) | IRItem::Const(_) => {
+                Layout::default_zst()
+            }
         };
 
         Ok(ret)

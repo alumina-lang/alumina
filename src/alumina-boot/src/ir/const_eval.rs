@@ -831,11 +831,11 @@ impl<'ir> ConstEvalCtx<'ir> {
         self.inner.borrow_mut().variables.insert(id, value);
     }
 
-    pub fn declare(&self, id: IrId, typ: TyP<'ir>) {
+    pub fn declare(&self, id: IrId, ty: TyP<'ir>) {
         self.inner
             .borrow_mut()
             .variables
-            .insert(id, make_uninitialized(self.ir, typ));
+            .insert(id, make_uninitialized(self.ir, ty));
     }
 
     pub fn assign(&self, id: IrId, value: Value<'ir>) {
@@ -1548,7 +1548,7 @@ impl<'ir> ConstEvaluator<'ir> {
                     let new_id = self.ir.make_id();
                     remapped_variables.insert(local_def.id, new_id);
 
-                    self.ctx.declare(new_id, local_def.typ);
+                    self.ctx.declare(new_id, local_def.ty);
                 }
 
                 for (arg, arg_spec) in args.iter().zip(arg_spec) {
@@ -1602,10 +1602,10 @@ impl<'ir> ConstEvaluator<'ir> {
     fn plus_minus(
         &mut self,
         lhs: Value<'ir>,
-        lhs_typ: TyP<'ir>,
+        lhs_ty: TyP<'ir>,
         op: BinOp,
         rhs: Value<'ir>,
-        rhs_typ: TyP<'ir>,
+        rhs_ty: TyP<'ir>,
     ) -> Result<Value<'ir>, AluminaError> {
         macro_rules! offset {
             () => {
@@ -1639,8 +1639,8 @@ impl<'ir> ConstEvaluator<'ir> {
                     return Err(ConstEvalErrorKind::ProvenanceMismatch).with_backtrace(&self.diag);
                 }
 
-                check_type_match!(a_orig, lhs_typ);
-                check_type_match!(b_orig, rhs_typ);
+                check_type_match!(a_orig, lhs_ty);
+                check_type_match!(b_orig, rhs_ty);
 
                 let diff = (a_offset as isize) - (b_offset as isize);
                 return Ok(Value::ISize(diff));
@@ -1655,8 +1655,8 @@ impl<'ir> ConstEvaluator<'ir> {
             }
             (Value::Pointer(a, a_orig), Value::Pointer(b, b_orig)) if op == BinOp::Minus => {
                 if a == b {
-                    check_type_match!(a_orig, lhs_typ);
-                    check_type_match!(b_orig, rhs_typ);
+                    check_type_match!(a_orig, lhs_ty);
+                    check_type_match!(b_orig, rhs_ty);
 
                     return Ok(Value::ISize(0));
                 } else {
@@ -1680,7 +1680,7 @@ impl<'ir> ConstEvaluator<'ir> {
                     _ => unsupported!(self),
                 };
 
-                check_type_match!(orig, lhs_typ);
+                check_type_match!(orig, lhs_ty);
 
                 let new_offset = match op {
                     BinOp::Plus => (offset as isize) + offset!(),
@@ -1711,10 +1711,10 @@ impl<'ir> ConstEvaluator<'ir> {
     fn bin_op(
         &mut self,
         lhs: Value<'ir>,
-        lhs_typ: TyP<'ir>,
+        lhs_ty: TyP<'ir>,
         op: BinOp,
         rhs: Value<'ir>,
-        rhs_typ: TyP<'ir>,
+        rhs_ty: TyP<'ir>,
     ) -> Result<Value<'ir>, AluminaError> {
         let ret = match op {
             BinOp::BitAnd => lhs & rhs,
@@ -1745,7 +1745,7 @@ impl<'ir> ConstEvaluator<'ir> {
             BinOp::Mul => lhs * rhs,
             BinOp::Div => lhs / rhs,
             BinOp::Mod => lhs % rhs,
-            BinOp::Plus | BinOp::Minus => return self.plus_minus(lhs, lhs_typ, op, rhs, rhs_typ),
+            BinOp::Plus | BinOp::Minus => return self.plus_minus(lhs, lhs_ty, op, rhs, rhs_ty),
         };
 
         ret.with_backtrace(&self.diag)
@@ -1818,8 +1818,8 @@ fn check_lvalue_leak_lvalue(value: &LValue<'_>) -> Result<(), ConstEvalErrorKind
     }
 }
 
-fn make_uninitialized<'ir>(ir: &'ir IrCtx<'ir>, typ: TyP<'ir>) -> Value<'ir> {
-    match typ {
+fn make_uninitialized<'ir>(ir: &'ir IrCtx<'ir>, ty: TyP<'ir>) -> Value<'ir> {
+    match ty {
         Ty::Array(inner, size) => {
             let inner = make_uninitialized(ir, inner);
             let buf = ir.arena.alloc_slice_fill_copy(*size, inner);
@@ -1847,8 +1847,8 @@ fn make_uninitialized<'ir>(ir: &'ir IrCtx<'ir>, typ: TyP<'ir>) -> Value<'ir> {
     }
 }
 
-pub fn make_zeroed<'ir>(ir: &'ir IrCtx<'ir>, typ: TyP<'ir>) -> Value<'ir> {
-    match typ {
+pub fn make_zeroed<'ir>(ir: &'ir IrCtx<'ir>, ty: TyP<'ir>) -> Value<'ir> {
+    match ty {
         Ty::Array(inner, size) => {
             let inner = make_zeroed(ir, inner);
             let buf = ir.arena.alloc_slice_fill_copy(*size, inner);

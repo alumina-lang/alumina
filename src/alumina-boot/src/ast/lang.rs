@@ -44,6 +44,8 @@ pub enum LangItemKind {
     ProtoNamedFunction,
     ProtoFunctionPointer,
     ProtoClosure,
+    ProtoConst,
+    ProtoStatic,
     ProtoArrayOf,
     ProtoPointerOf,
     ProtoRangeOf,
@@ -116,6 +118,8 @@ impl LangItemKind {
                 | LangItemKind::ProtoNamedFunction
                 | LangItemKind::ProtoFunctionPointer
                 | LangItemKind::ProtoClosure
+                | LangItemKind::ProtoConst
+                | LangItemKind::ProtoStatic
                 | LangItemKind::ProtoArrayOf
                 | LangItemKind::ProtoPointerOf
                 | LangItemKind::ProtoMeta
@@ -128,14 +132,15 @@ impl LangItemKind {
             self,
             LangItemKind::TypeopTupleHeadOf
                 | LangItemKind::TypeopTupleTailOf
+                | LangItemKind::TypeopTupleConcatOf
                 | LangItemKind::TypeopReturnTypeOf
                 | LangItemKind::TypeopArgumentsOf
                 | LangItemKind::TypeopPointerWithMutOf
                 | LangItemKind::TypeopArrayWithLengthOf
-                | LangItemKind::TypeopEnumTypeOf
                 | LangItemKind::TypeopGenericArgsOf
                 | LangItemKind::TypeopReplaceGenericArgsOf
                 | LangItemKind::TypeopFunctionPointerOf
+                | LangItemKind::TypeopEnumTypeOf
         )
     }
 
@@ -191,6 +196,8 @@ impl TryFrom<&str> for LangItemKind {
             "proto_named_function" => Ok(LangItemKind::ProtoNamedFunction),
             "proto_function_pointer" => Ok(LangItemKind::ProtoFunctionPointer),
             "proto_closure" => Ok(LangItemKind::ProtoClosure),
+            "proto_const" => Ok(LangItemKind::ProtoConst),
+            "proto_static" => Ok(LangItemKind::ProtoStatic),
             "proto_callable" => Ok(LangItemKind::ProtoCallable),
             "proto_array_of" => Ok(LangItemKind::ProtoArrayOf),
             "proto_pointer_of" => Ok(LangItemKind::ProtoPointerOf),

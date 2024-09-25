@@ -199,7 +199,7 @@ impl<'ast> AstItemMaker<'ast> {
                         id: self.ast.make_id(),
                         name: name.unwrap(),
                         attributes: item.attributes,
-                        typ: field_type,
+                        ty: field_type,
                         span: Some(span),
                     });
                 }
@@ -373,8 +373,8 @@ impl<'ast> AstItemMaker<'ast> {
         Ok(())
     }
 
-    fn check_self_confusion(&self, typ: TyP<'ast>, span: Option<Span>) {
-        match typ {
+    fn check_self_confusion(&self, ty: TyP<'ast>, span: Option<Span>) {
+        match ty {
             Ty::Item(item) | Ty::Pointer(Ty::Item(item), _) => {
                 if let Some(LangItemKind::DynSelf) = self.ast.lang_item_kind(item) {
                     self.global_ctx.diag().add_warning(CodeError {
@@ -451,7 +451,7 @@ impl<'ast> AstItemMaker<'ast> {
 
                     parameters.push(Parameter {
                         id,
-                        typ,
+                        ty: typ,
                         span: Some(span),
                     });
                 }
@@ -597,7 +597,7 @@ impl<'ast> AstItemMaker<'ast> {
         let result = Item::StaticOrConst(StaticOrConst {
             name,
             attributes,
-            typ,
+            ty: typ,
             init,
             span: Some(span),
             is_const,

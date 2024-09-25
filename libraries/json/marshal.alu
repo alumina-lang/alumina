@@ -1,0 +1,354 @@
+//! Serialization and deserialization of JSON data into arbitrary types.
+//!
+//! This module provides an alternative to [JsonValue] for working with JSON data. It allows
+//! serializing and deserializing JSON data into arbitrary types using compile-time reflection.
+//! As a motivating example, consider
+//!
+//! ```
+//! use json::marshal::unmarshal;
+//! use std::string::StringBuf;
+//!
+//! struct Foo {
+//!     str: StringBuf,
+//!     tuple: (i32, bool),
+//! }
+//!
+//! let val = unmarshal::<Foo>("{\"str\":\"hello\",\"tuple\":[42,true]}").unwrap();
+//!
+//! assert_eq!(val.str.as_slice(), "hello");
+//! assert_eq!(val.tuple, (42, true));
+//! ```
+//!
+//! Currently, the following types are supported: all numeric types, tuples of supported types, fixed-size arrays of supported types,
+//! [std::collections::Vector], [std::collections::HashMap], pointers to any supported type (if not `null`, the value is allocated on the heap),
+//! [std::option::Option], strings ([std::string::StringBuf] and `&[u8]`) as well as custom structs.
+//!
+//! Unmarshal API is more dangerous to use than [JsonValue] because errors during unmarshalling can very easily lead to leaking memory of partially
+//! deserialized objects. To help prevent memory leaks avoid using raw pointers and slices and prefer using objects that implement [std::mem::Freeable]
+//! and [std::mem::Movable] protocols. Those objects will be automatically freed when an error occurs during unmarshalling.
+use std::iter::{Iterator, PeekableIterator};
+use std::io::BufferedReadable;
+use json::reader::{Token, TokenKind, JsonReader};
+use json::{Result, Error};
+
+struct JsonUnmarshaller<It: Iterator<It, Result<Token>>> {
+    iter: PeekableIterator<It, Result<Token>>
+}
+
+impl JsonUnmarshaller<It: Iterator<It, Result<Token>>> {
+    use json::parser::{JsonParser, _expect_token, _peek_kind, _get_kind};
+
+    fn new(iter: &mut It) -> JsonUnmarshaller<It> {
+        JsonUnmarshaller { iter: iter.peekable() }
+    }
+
+    fn parse_string(self: &mut JsonUnmarshaller<It>) -> Result<StringBuf> {
+        let token = self._expect_token!(TokenKind::String);
+        let read = reader::unescape_string(token.value[..])?;
+
+        // Steal the buffer from the token
+        let value = token.value.move();
+        value.truncate(read);
+
+        Result::ok(value)
+    }
+
+    fn unmarshal_struct_field<T>(self: &mut JsonUnmarshaller<It>, out: &mut T) -> Result<()> {
+        use std::typing::Type;
+
+        let desc = Type::new::<T>();
+        let key = self.parse_string()?;
+        defer key.free();
+
+        self._expect_token!(TokenKind::Colon);
+
+        let fields = desc.fields();
+        for const i in 0usize..fields.len() {
+            if fields.(i).name() == key[..] {
+                self.unmarshal(fields.(i).as_ptr(out))?;
+            }
+        }
+
+        Result::ok(())
+    }
+
+    fn unmarshal_property_map<T>(self: &mut JsonUnmarshaller<It>, out: &mut T) -> Result<()> {
+        use std::typing::type_name;
+
+        let key = self.parse_string()?;
+        defer key.free();
+
+        self._expect_token!(TokenKind::Colon);
+
+        let (actual_key, value): typeof(out.iter().next().unwrap());
+        self.unmarshal(&value)?;
+
+        actual_key = when actual_key is StringBuf {
+            key.move()
+        } else when actual_key is &[u8] || actual_key is &mut [u8] {
+            key.shrink_to_fit();
+            key.move()[..]
+        } else {
+            std::compile_fail!("unsupported type for JSON map key: {}", type_name::<typeof(actual_key)>());
+        };
+
+        out.insert(actual_key, value);
+        Result::ok(())
+    }
+
+    fn unmarshal_optional<T>(self: &mut JsonUnmarshaller<It>, out: &mut T) -> Result<()> {
+        use std::typing::{Type, is_same_base_as};
+        use std::mem::alloc;
+        use std::builtins::deref_of;
+
+        let desc = Type::new::<T>();
+        when desc.is_pointer() {
+            let token = self.iter.peek().transpose()?;
+            if token.map(_get_kind) == Option::some(TokenKind::Literal)
+                && token.unwrap().value[..] as &[u8] == "null" {
+                self.iter.next();
+                *out = null as T;
+                return Result::ok(());
+            }
+
+            let slot: deref_of<T>;
+            self.unmarshal(&slot)?;
+
+            let mem = alloc::<deref_of<T>>();
+            *mem = slot;
+            *out = mem;
+        } else when is_same_base_as::<T, Option<()>>() {
+            let token = self.iter.peek().transpose()?;
+            if token.map(_get_kind) == Option::some(TokenKind::Literal)
+                && token.unwrap().value[..] as &[u8] == "null" {
+                    self.iter.next();
+                    out._is_some = false;
+                    return Result::ok(());
+            }
+
+            self.unmarshal(&out._inner)?;
+            out._is_some = true;
+        } else {
+            unreachable!();
+        }
+
+        Result::ok(())
+    }
+
+    fn unmarshal<T>(self: &mut JsonUnmarshaller<It>, out: &mut T) -> Result<()> {
+        use std::typing::{Type, is_same_base_as};
+
+        let desc = Type::new::<T>();
+        when *out is JsonValue {
+            let parser = JsonParser::new(&self.iter);
+            *out = parser.parse()?;
+        } else when desc.is_numeric() {
+            let token = self._expect_token!(TokenKind::Number);
+            *out = T::parse(token.value[..]).ok_or_else(|| -> Error { Error::new(ErrorKind::InvalidNumber) })?;
+        } else when *out is bool {
+            let token = self._expect_token!(TokenKind::Literal);
+            *out = switch token.value[..] as &[u8] {
+                "true" => true,
+                "false" => false,
+                _ => return Result::err(Error::unexpected_token(token.kind))
+            }
+        } else when desc.is_pointer() || is_same_base_as::<T, Option<()>>() {
+            self.unmarshal_optional(out)?;
+        } else when *out is StringBuf {
+            *out = self.parse_string()?;
+        } else when *out is &[u8] || *out is &mut [u8] {
+            // This can be either a string or an array of bytes
+            switch self._peek_kind!() {
+                Option::some(TokenKind::String) => {
+                    let buf = self.parse_string()?;
+                    buf.shrink_to_fit();
+                    *out = buf[..];
+                },
+                _ => {
+                    let vec: Vector<typeof((*out)[0])>;
+                    self.unmarshal(&vec)?;
+                    vec.shrink_to_fit();
+
+                    *out = vec[..];
+                }
+            }
+        } else when desc.is_array() {
+            self._expect_token!(TokenKind::ArrOpen);
+            for i in 0usize..desc.len() {
+                self.unmarshal(&out[i])?;
+                if i < desc.len() - 1 {
+                    self._expect_token!(TokenKind::Comma);
+                }
+            }
+            self._expect_token!(TokenKind::ArrClose);
+        } else when desc.is_tuple() {
+            self._expect_token!(TokenKind::ArrOpen);
+            for const i in 0usize..desc.len() {
+                self.unmarshal(&out.(i))?;
+                when i < desc.len() - 1 {
+                    self._expect_token!(TokenKind::Comma);
+                }
+            }
+            self._expect_token!(TokenKind::ArrClose);
+        } else when is_same_base_as::<T, Vector<()>>() {
+            let vec: T = Vector::new();
+            defer vec.free_all();
+
+            self._expect_token!(TokenKind::ArrOpen);
+            loop {
+                switch self._peek_kind!() {
+                    Option::some(TokenKind::ArrClose) => {
+                        self.iter.next().transpose()?;
+                        break;
+                    },
+                    Option::some(TokenKind::Comma) => {
+                        self.iter.next().transpose()?;
+                        // Trailing comma not allowed
+                        let elem: typeof(vec[0]);
+                        self.unmarshal(&elem)?;
+                        vec.push(elem);
+                    },
+                    _ => {
+                        let elem: typeof(vec[0]);
+                        self.unmarshal(&elem)?;
+                        vec.push(elem);
+                    }
+                }
+            }
+            *out = vec.move();
+        } else when desc.is_slice() {
+            let vec: Vector<typeof((*out)[0])>;
+            self.unmarshal(&vec)?;
+            vec.shrink_to_fit();
+
+            *out = vec[..];
+        } else when is_same_base_as::<T, HashMap<(), ()>>() {
+            let map: T = T::new();
+            defer map.free_all();
+
+            self._expect_token!(TokenKind::ObjOpen);
+            loop {
+                switch self._peek_kind!() {
+                    Option::some(TokenKind::ObjClose) => {
+                        self.iter.next().transpose()?;
+                        break;
+                    },
+                    Option::some(TokenKind::Comma) => {
+                        self.iter.next().transpose()?;
+                        // Trailing comma not allowed
+                        self.unmarshal_property_map(&map)?;
+                    },
+                    _ => {
+                        self.unmarshal_property_map(&map)?;
+                    }
+                }
+            }
+            *out = map.move();
+        }
+        else when desc.is_struct() {
+            self._expect_token!(TokenKind::ObjOpen);
+            loop {
+                switch self._peek_kind!() {
+                    Option::some(TokenKind::ObjClose) => {
+                        self.iter.next().transpose()?;
+                        break;
+                    },
+                    Option::some(TokenKind::Comma) => {
+                        self.iter.next().transpose()?;
+                        // Trailing comma not allowed
+                        self.unmarshal_struct_field(out)?;
+                    },
+                    _ => {
+                        self.unmarshal_struct_field(out)?;
+                    }
+                }
+            }
+        } else {
+            std::compile_fail!("unsupported type for JSON: {}", desc.debug_name());
+        }
+
+        Result::ok(())
+    }
+}
+
+/// Convenience function for unmarshalling JSON data into a value of type `T`.
+fn unmarshal<T>(input: &[u8]) -> Result<T> {
+    use std::io::SliceReader;
+
+    let reader = SliceReader::new(input);
+    let iter = JsonReader::new(&reader);
+    defer iter.free();
+
+    let unmarshaller = JsonUnmarshaller::new(&iter);
+
+    let out: T;
+    unmarshaller.unmarshal(&out)?;
+
+    Result::ok(out)
+}
+
+#[docs(hide)]
+#[cfg(test)]
+mod tests {
+    use std::io::SliceReader;
+    use json::builder::{object, array, into};
+
+    fn chk<T>(input: &[u8], expected: T) {
+        assert_eq!(unmarshal::<T>(input).unwrap(), expected);
+    }
+
+    struct Test {
+        a: i32,
+        b: bool,
+    }
+
+    impl Test {
+        fn equals(self: &Test, other: &Test) -> bool {
+            self.a == other.a && self.b == other.b
+        }
+        mixin std::cmp::Equatable<Test>;
+    }
+
+    #[test]
+    fn test_unmarshal() {
+        chk("42", 42);
+        chk("true", true);
+        chk("false", false);
+        chk("null", null as &mut i32);
+        assert_eq!(*unmarshal::<&mut i32>("42").unwrap(), 42);
+        chk("null", null as &i32);
+        assert_eq!(*unmarshal::<&i32>("42").unwrap(),  42);
+        chk("null", Option::none::<i32>());
+        chk("null", Option::none::<bool>());
+        chk("true", Option::some(true));
+        chk("42", Option::some(42));
+
+        chk("[1, 2, 3]", [1, 2, 3]);
+        chk("[1, 2, 3]", (1, 2, 3));
+        chk("[1, true, \"foo\"]", (1, true, "foo"));
+
+        chk("[1, 2, 3]", &[1, 2, 3] as &[i32]);
+        chk("[1, 2, 3]", &[1, 2, 3] as &mut [i32]);
+
+        let vec = unmarshal::<Vector<i32>>("[1, 2, 3]").unwrap();
+        assert_eq!(vec[..], &[1, 2, 3]);
+
+        chk("\"hello\"", "hello");
+        chk("[104, 101, 108, 108, 111]", "hello");
+        chk("\"hello\"", "hello" as &mut [u8]);
+        chk("[104, 101, 108, 108, 111]", "hello" as &mut [u8]);
+        chk("\"hello\"", StringBuf::from_slice("hello"));
+
+        chk("{\"a\": 42, \"b\": true}", Test { a: 42, b: true });
+
+        let map = unmarshal::<HashMap<StringBuf, i32>>("{\"a\": 42, \"b\": 43}").unwrap();
+        assert_eq!(map.get_borrowed("a").unwrap(), 42);
+        assert_eq!(map.get_borrowed("b").unwrap(), 43);
+
+        let map = unmarshal::<HashMap<&[u8], i32>>("{\"a\": 42, \"b\": 43}").unwrap();
+        assert_eq!(map.get(&"a").unwrap(), 42);
+        assert_eq!(map.get(&"b").unwrap(), 43);
+
+        chk("\"hello\"", "hello".into!());
+    }
+}

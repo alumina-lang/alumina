@@ -583,7 +583,7 @@ pub struct Field<'ast> {
     pub id: AstId,
     pub name: &'ast str,
     pub attributes: &'ast [Attribute<'ast>],
-    pub typ: TyP<'ast>,
+    pub ty: TyP<'ast>,
     pub span: Option<Span>,
 }
 
@@ -619,7 +619,7 @@ pub struct Mixin<'ast> {
 pub struct Bound<'ast> {
     pub negated: bool,
     pub span: Option<Span>,
-    pub typ: TyP<'ast>,
+    pub ty: TyP<'ast>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AstSerializable)]
@@ -689,7 +689,7 @@ pub struct Enum<'ast> {
 #[derive(Debug, Clone, Copy, AstSerializable)]
 pub struct Parameter<'ast> {
     pub id: AstId,
-    pub typ: TyP<'ast>,
+    pub ty: TyP<'ast>,
     pub span: Option<Span>,
 }
 
@@ -755,7 +755,7 @@ pub struct StaticOrConst<'ast> {
     pub name: Option<&'ast str>,
     pub attributes: &'ast [Attribute<'ast>],
     pub placeholders: &'ast [Placeholder<'ast>],
-    pub typ: Option<TyP<'ast>>,
+    pub ty: Option<TyP<'ast>>,
     pub init: Option<ExprP<'ast>>,
     pub span: Option<Span>,
     pub is_local: bool,
@@ -766,7 +766,7 @@ pub struct StaticOrConst<'ast> {
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, AstSerializable)]
 pub struct LetDeclaration<'ast> {
     pub id: AstId,
-    pub typ: Option<TyP<'ast>>,
+    pub ty: Option<TyP<'ast>>,
     pub value: Option<ExprP<'ast>>,
 }
 
@@ -881,7 +881,7 @@ pub struct FieldInitializer<'ast> {
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash, Copy, AstSerializable)]
 pub struct Defered<'ast> {
-    pub typ: TyP<'ast>,
+    pub ty: TyP<'ast>,
     pub name: &'ast str,
 }
 

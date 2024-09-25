@@ -13,16 +13,16 @@ impl<'ir> ExpressionBuilder<'ir> {
         Self { ir }
     }
 
-    pub fn local(&self, id: IrId, typ: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
-        Expr::lvalue(ExprKind::Local(id), typ, span).alloc_on(self.ir)
+    pub fn local(&self, id: IrId, ty: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
+        Expr::lvalue(ExprKind::Local(id), ty, span).alloc_on(self.ir)
     }
 
-    pub fn static_var(&self, item: IRItemP<'ir>, typ: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
-        Expr::lvalue(ExprKind::Static(item), typ, span).alloc_on(self.ir)
+    pub fn static_var(&self, item: IRItemP<'ir>, ty: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
+        Expr::lvalue(ExprKind::Static(item), ty, span).alloc_on(self.ir)
     }
 
-    pub fn const_var(&self, item: IRItemP<'ir>, typ: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
-        Expr::const_lvalue(ExprKind::Const(item), typ, span).alloc_on(self.ir)
+    pub fn const_var(&self, item: IRItemP<'ir>, ty: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
+        Expr::const_lvalue(ExprKind::Const(item), ty, span).alloc_on(self.ir)
     }
 
     #[allow(clippy::only_used_in_recursion)]
@@ -270,14 +270,14 @@ impl<'ir> ExpressionBuilder<'ir> {
         &self,
         tuple: ExprP<'ir>,
         index: usize,
-        typ: TyP<'ir>,
+        ty: TyP<'ir>,
         span: Option<Span>,
     ) -> ExprP<'ir> {
         let expr = Expr {
             kind: ExprKind::TupleIndex(tuple, index),
             value_type: tuple.value_type,
             is_const: tuple.is_const,
-            ty: typ,
+            ty,
             span,
         };
 
@@ -296,20 +296,20 @@ impl<'ir> ExpressionBuilder<'ir> {
         expr.alloc_on(self.ir)
     }
 
-    pub fn dangling(&self, typ: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
-        if let Ty::Pointer(ty, _) = typ {
-            self.codegen_intrinsic(IntrinsicValueKind::Dangling(ty), typ, span)
+    pub fn dangling(&self, ty: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
+        if let Ty::Pointer(inner, _) = ty {
+            self.codegen_intrinsic(IntrinsicValueKind::Dangling(inner), ty, span)
         } else {
             unreachable!()
         }
     }
 
-    pub fn literal(&self, val: Value<'ir>, typ: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
+    pub fn literal(&self, val: Value<'ir>, ty: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
         let expr = Expr {
             kind: ExprKind::Literal(val),
             value_type: ValueType::RValue,
             is_const: true,
-            ty: typ,
+            ty,
             span,
         };
 
@@ -337,10 +337,10 @@ impl<'ir> ExpressionBuilder<'ir> {
         op: BinOp,
         lhs: ExprP<'ir>,
         rhs: ExprP<'ir>,
-        result_typ: TyP<'ir>,
+        result_ty: TyP<'ir>,
         span: Option<Span>,
     ) -> ExprP<'ir> {
-        let result = Expr::rvalue(ExprKind::Binary(op, lhs, rhs), result_typ, span);
+        let result = Expr::rvalue(ExprKind::Binary(op, lhs, rhs), result_ty, span);
 
         result.alloc_on(self.ir)
     }
@@ -355,18 +355,18 @@ impl<'ir> ExpressionBuilder<'ir> {
         result.alloc_on(self.ir)
     }
 
-    pub fn cast(&self, expr: ExprP<'ir>, typ: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
-        let result = Expr::rvalue(ExprKind::Cast(expr), typ, span);
+    pub fn cast(&self, expr: ExprP<'ir>, ty: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
+        let result = Expr::rvalue(ExprKind::Cast(expr), ty, span);
 
         result.alloc_on(self.ir)
     }
 
-    pub fn coerce(&self, expr: ExprP<'ir>, typ: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
+    pub fn coerce(&self, expr: ExprP<'ir>, ty: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
         let result = Expr {
             is_const: expr.is_const,
             kind: expr.kind.clone(),
             value_type: expr.value_type,
-            ty: typ,
+            ty,
             span,
         };
 
@@ -377,10 +377,10 @@ impl<'ir> ExpressionBuilder<'ir> {
         &self,
         op: UnOp,
         inner: ExprP<'ir>,
-        result_typ: TyP<'ir>,
+        result_ty: TyP<'ir>,
         span: Option<Span>,
     ) -> ExprP<'ir> {
-        let result = Expr::rvalue(ExprKind::Unary(op, inner), result_typ, span);
+        let result = Expr::rvalue(ExprKind::Unary(op, inner), result_ty, span);
 
         result.alloc_on(self.ir)
     }
@@ -428,14 +428,14 @@ impl<'ir> ExpressionBuilder<'ir> {
         &self,
         obj: ExprP<'ir>,
         field_id: IrId,
-        typ: TyP<'ir>,
+        ty: TyP<'ir>,
         span: Option<Span>,
     ) -> ExprP<'ir> {
         let expr = Expr {
             kind: ExprKind::Field(obj, field_id),
             value_type: obj.value_type,
             is_const: obj.is_const,
-            ty: typ,
+            ty,
             span,
         };
 

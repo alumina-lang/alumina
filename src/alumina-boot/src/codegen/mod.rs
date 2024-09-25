@@ -109,14 +109,14 @@ where
             .or_insert_with(|| CName::Mangled(self.arena.alloc_str(name), self.counter.increment()))
     }
 
-    pub fn get_type(&'gen self, typ: &'_ Ty<'ir>) -> CName<'gen> {
-        if typ.is_void() {
+    pub fn get_type(&'gen self, ty: &'_ Ty<'ir>) -> CName<'gen> {
+        if ty.is_void() {
             return CName::Native("void");
         }
 
         let map = self.type_map.borrow();
-        *map.get(typ)
-            .unwrap_or_else(|| panic!("type {:?} was not registered", typ))
+        *map.get(ty)
+            .unwrap_or_else(|| panic!("type {:?} was not registered", ty))
     }
 
     pub fn get_type_maybe(&self, typ: TyP<'ir>) -> Option<CName<'gen>> {
