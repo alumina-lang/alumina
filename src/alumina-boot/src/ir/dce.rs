@@ -2,13 +2,13 @@ use crate::common::{AluminaError, CodeErrorBuilder, HashSet};
 use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::const_eval::Value;
 use crate::ir::ExpressionVisitor;
-use crate::ir::{IRItem, IRItemP, Ty, TyP};
+use crate::ir::{Item, ItemP, Ty, TyP};
 
 use super::const_eval::LValue;
 use super::{default_visit_expr, ExprP};
 
 pub struct DeadCodeEliminator<'ir> {
-    alive: HashSet<IRItemP<'ir>>,
+    alive: HashSet<ItemP<'ir>>,
 }
 
 impl<'ir> DeadCodeEliminator<'ir> {
@@ -46,14 +46,14 @@ impl<'ir> DeadCodeEliminator<'ir> {
         Ok(())
     }
 
-    pub fn visit_item(&mut self, item: IRItemP<'ir>) -> Result<(), AluminaError> {
+    pub fn visit_item(&mut self, item: ItemP<'ir>) -> Result<(), AluminaError> {
         match item.get().with_no_span()? {
-            IRItem::Static(s) => {
+            Item::Static(s) => {
                 if s.ty.is_zero_sized() {
                     return Ok(());
                 }
             }
-            IRItem::Const(c) => {
+            Item::Const(c) => {
                 if c.ty.is_zero_sized() {
                     return Ok(());
                 }
@@ -66,12 +66,12 @@ impl<'ir> DeadCodeEliminator<'ir> {
         }
 
         match item.get().with_no_span()? {
-            IRItem::StructLike(s) => {
+            Item::StructLike(s) => {
                 for f in s.fields {
                     self.visit_ty(f.ty)?;
                 }
             }
-            IRItem::Function(f) => {
+            Item::Function(f) => {
                 for p in f.args {
                     self.visit_ty(p.ty)?;
                 }
@@ -89,31 +89,31 @@ impl<'ir> DeadCodeEliminator<'ir> {
                     })
                     .transpose()?;
             }
-            IRItem::Enum(e) => {
+            Item::Enum(e) => {
                 self.visit_ty(e.underlying_type)?;
                 for v in e.members {
                     self.visit_expr(v.value)?;
                 }
             }
-            IRItem::Static(s) => {
+            Item::Static(s) => {
                 self.visit_ty(s.ty)?;
                 s.init.map(|v| self.visit_expr(v)).transpose()?;
             }
-            IRItem::Closure(c) => {
+            Item::Closure(c) => {
                 for f in c.data.fields {
                     self.visit_ty(f.ty)?;
                 }
                 c.function.get().map(|i| self.visit_item(i)).transpose()?;
             }
 
-            IRItem::Const(c) => {
+            Item::Const(c) => {
                 self.visit_ty(c.ty)?;
                 self.visit_expr(c.init)?;
             }
 
             // Should be inlined
-            IRItem::Alias(_) => unreachable!(),
-            IRItem::Protocol(_) => unreachable!(),
+            Item::Alias(_) => unreachable!(),
+            Item::Protocol(_) => unreachable!(),
         }
 
         Ok(())
@@ -130,7 +130,7 @@ impl<'ir> DeadCodeEliminator<'ir> {
         }
     }
 
-    pub fn alive_items(&self) -> &HashSet<IRItemP<'ir>> {
+    pub fn alive_items(&self) -> &HashSet<ItemP<'ir>> {
         &self.alive
     }
 }
@@ -141,15 +141,15 @@ impl<'ir> ExpressionVisitor<'ir> for DeadCodeEliminator<'ir> {
         default_visit_expr(self, expr)
     }
 
-    fn visit_static(&mut self, item: IRItemP<'ir>) -> Result<(), AluminaError> {
+    fn visit_static(&mut self, item: ItemP<'ir>) -> Result<(), AluminaError> {
         self.visit_item(item)
     }
 
-    fn visit_const(&mut self, item: IRItemP<'ir>) -> Result<(), AluminaError> {
+    fn visit_const(&mut self, item: ItemP<'ir>) -> Result<(), AluminaError> {
         self.visit_item(item)
     }
 
-    fn visit_fn(&mut self, item: IRItemP<'ir>) -> Result<(), AluminaError> {
+    fn visit_fn(&mut self, item: ItemP<'ir>) -> Result<(), AluminaError> {
         self.visit_item(item)
     }
 
@@ -158,8 +158,8 @@ impl<'ir> ExpressionVisitor<'ir> for DeadCodeEliminator<'ir> {
         kind: &IntrinsicValueKind<'ir>,
     ) -> Result<(), AluminaError> {
         match kind {
-            IntrinsicValueKind::SizeOfLike(_, typ) | IntrinsicValueKind::Dangling(typ) => {
-                self.visit_ty(typ)
+            IntrinsicValueKind::SizeOfLike(_, ty) | IntrinsicValueKind::Dangling(ty) => {
+                self.visit_ty(ty)
             }
             IntrinsicValueKind::FunctionLike(_)
             | IntrinsicValueKind::ConstLike(_)

@@ -438,7 +438,7 @@ impl<'ast> AstItemMaker<'ast> {
             match item.kind {
                 NamedItemKind::Parameter(id) => {
                     let node = item.node.unwrap();
-                    let typ = TypeVisitor::new(
+                    let ty = TypeVisitor::new(
                         self.global_ctx.clone(),
                         self.ast,
                         scope.clone(),
@@ -447,11 +447,11 @@ impl<'ast> AstItemMaker<'ast> {
                     .visit(node.child_by_field(FieldKind::Type).unwrap())?;
 
                     let span = Span::from_node(scope.file_id(), node);
-                    self.check_self_confusion(typ, Some(span));
+                    self.check_self_confusion(ty, Some(span));
 
                     parameters.push(Parameter {
                         id,
-                        ty: typ,
+                        ty,
                         span: Some(span),
                     });
                 }
@@ -550,7 +550,7 @@ impl<'ast> AstItemMaker<'ast> {
         scope: Scope<'ast, 'src>,
         attributes: &'ast [Attribute],
     ) -> Result<(), AluminaError> {
-        let typ = node
+        let ty = node
             .child_by_field(FieldKind::Type)
             .map(|n| {
                 TypeVisitor::new(
@@ -584,11 +584,11 @@ impl<'ast> AstItemMaker<'ast> {
             return Err(CodeDiagnostic::ExternStaticCannotBeGeneric).with_span_from(&scope, node);
         }
 
-        if typ.is_none() && init.is_none() {
+        if ty.is_none() && init.is_none() {
             return Err(CodeDiagnostic::TypeHintRequired).with_span_from(&scope, node);
         }
 
-        if is_extern && (typ.is_none() || init.is_some()) {
+        if is_extern && (ty.is_none() || init.is_some()) {
             return Err(CodeDiagnostic::ExternStaticMustHaveType).with_span_from(&scope, node);
         }
 
@@ -597,7 +597,7 @@ impl<'ast> AstItemMaker<'ast> {
         let result = Item::StaticOrConst(StaticOrConst {
             name,
             attributes,
-            ty: typ,
+            ty,
             init,
             span: Some(span),
             is_const,

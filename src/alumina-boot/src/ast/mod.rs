@@ -30,7 +30,7 @@ use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};
 
 #[derive(Clone, AstSerializable)]
-pub struct AstMetadata<'ast> {
+pub struct Metadatum<'ast> {
     pub path: Path<'ast>,
     pub name: Path<'ast>,
     pub attributes: Vec<Attribute<'ast>>,
@@ -42,8 +42,8 @@ pub struct AstCtx<'ast> {
     types: RefCell<HashSet<TyP<'ast>>>,
     strings: RefCell<HashSet<&'ast str>>,
     lang_items: RefCell<HashMap<LangItemKind, ItemP<'ast>>>,
-    local_names: RefCell<HashMap<AstId, &'ast str>>,
-    metadata: RefCell<HashMap<ItemP<'ast>, AstMetadata<'ast>>>,
+    local_names: RefCell<HashMap<Id, &'ast str>>,
+    metadata: RefCell<HashMap<ItemP<'ast>, Metadatum<'ast>>>,
 }
 
 impl<'ast> AstCtx<'ast> {
@@ -59,8 +59,8 @@ impl<'ast> AstCtx<'ast> {
         }
     }
 
-    pub fn make_id(&self) -> AstId {
-        AstId {
+    pub fn make_id(&self) -> Id {
+        Id {
             id: self.counter.increment(),
         }
     }
@@ -86,8 +86,8 @@ impl<'ast> AstCtx<'ast> {
         self.lang_items.borrow_mut().insert(kind, item);
     }
 
-    pub fn add_metadata(&'ast self, item: ItemP<'ast>, metadata: AstMetadata<'ast>) {
-        self.metadata.borrow_mut().insert(item, metadata);
+    pub fn add_metadatum(&'ast self, item: ItemP<'ast>, metadatum: Metadatum<'ast>) {
+        self.metadata.borrow_mut().insert(item, metadatum);
     }
 
     pub fn intern_str(&'ast self, name: &'_ str) -> &'ast str {
@@ -101,19 +101,19 @@ impl<'ast> AstCtx<'ast> {
         inner
     }
 
-    pub fn add_local_name(&'ast self, id: AstId, name: &'ast str) {
+    pub fn add_local_name(&'ast self, id: Id, name: &'ast str) {
         self.local_names.borrow_mut().insert(id, name);
     }
 
-    pub fn local_name(&self, id: AstId) -> Option<&'ast str> {
+    pub fn local_name(&self, id: Id) -> Option<&'ast str> {
         self.local_names.borrow().get(&id).copied()
     }
 
-    pub fn metadata(&self, item: ItemP<'ast>) -> Option<AstMetadata<'ast>> {
+    pub fn metadatum(&self, item: ItemP<'ast>) -> Option<Metadatum<'ast>> {
         self.metadata.borrow().get(&item).cloned()
     }
 
-    pub fn metadated<'a>(&'a self) -> Ref<'a, HashMap<ItemP<'ast>, AstMetadata<'ast>>> {
+    pub fn metadata<'a>(&'a self) -> Ref<'a, HashMap<ItemP<'ast>, Metadatum<'ast>>> {
         self.metadata.borrow()
     }
 
@@ -135,7 +135,7 @@ impl<'ast> AstCtx<'ast> {
         })
     }
 
-    pub fn make_item_with(&'ast self, id: AstId) -> ItemP<'ast> {
+    pub fn make_item_with(&'ast self, id: Id) -> ItemP<'ast> {
         self.arena.alloc(ItemCell {
             id,
             contents: OnceCell::new(),
@@ -206,11 +206,11 @@ where
 }
 
 #[derive(PartialEq, Copy, Clone, Eq, Hash)]
-pub struct AstId {
+pub struct Id {
     pub id: usize,
 }
 
-impl<'a> AstSerializable<'a> for AstId {
+impl<'a> AstSerializable<'a> for Id {
     fn serialize<W: Write>(
         &self,
         serializer: &mut AstSerializer<'a, W>,
@@ -222,17 +222,17 @@ impl<'a> AstSerializable<'a> for AstId {
         deserializer: &mut AstDeserializer<'a, R>,
     ) -> crate::ast::serialization::Result<Self> {
         let id = <usize as AstSerializable>::deserialize(deserializer)?;
-        Ok(deserializer.context().map_ast_id(AstId { id }))
+        Ok(deserializer.context().map_ast_id(Id { id }))
     }
 }
 
-impl Display for AstId {
+impl Display for Id {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "${}", self.id)
     }
 }
 
-impl Debug for AstId {
+impl Debug for Id {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         Display::fmt(self, f)
     }
@@ -340,7 +340,7 @@ impl BuiltinType {
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash, AstSerializable)]
 pub enum Ty<'ast> {
-    Placeholder(AstId),
+    Placeholder(Id),
     Item(ItemP<'ast>),
     Builtin(BuiltinType),
     Pointer(TyP<'ast>, bool),
@@ -390,19 +390,7 @@ impl<'ast> Ty<'ast> {
 }
 
 pub type TyP<'ast> = &'ast Ty<'ast>;
-/*
-impl<'ast> AstSerializable<'ast> for TyP<'ast> {
-    fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'ast, W>) -> crate::ast::serialization::Result<()> {
-        (*self).serialize(serializer)
-    }
 
-    fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'ast, R>) -> crate::ast::serialization::Result<Self> {
-        let ty = <Ty<'ast> as AstSerializable>::deserialize(deserializer)?;
-
-        Ok(deserializer.ast.intern_type(ty))
-    }
-}
-*/
 #[derive(Debug, AstSerializable)]
 pub enum Item<'ast> {
     Enum(Enum<'ast>),
@@ -470,7 +458,7 @@ impl<'ast> AstSerializable<'ast> for ItemP<'ast> {
     fn deserialize<R: Read>(
         deserializer: &mut AstDeserializer<'ast, R>,
     ) -> crate::ast::serialization::Result<Self> {
-        let id = AstId::deserialize(deserializer)?;
+        let id = Id::deserialize(deserializer)?;
 
         Ok(deserializer.context().get_cell(id))
     }
@@ -544,7 +532,7 @@ impl<'ast> ItemCell<'ast> {
 /// later.
 /// Items are immutable once they are assigned.
 pub struct ItemCell<'ast> {
-    pub id: AstId,
+    pub id: Id,
     pub contents: OnceCell<Item<'ast>>,
 }
 
@@ -580,7 +568,7 @@ impl Debug for ItemCell<'_> {
 
 #[derive(Debug, Clone, Copy, AstSerializable)]
 pub struct Field<'ast> {
-    pub id: AstId,
+    pub id: Id,
     pub name: &'ast str,
     pub attributes: &'ast [Attribute<'ast>],
     pub ty: TyP<'ast>,
@@ -589,7 +577,7 @@ pub struct Field<'ast> {
 
 #[derive(Debug, Clone, Copy, AstSerializable)]
 pub struct EnumMember<'ast> {
-    pub id: AstId,
+    pub id: Id,
     pub name: &'ast str,
     pub attributes: &'ast [Attribute<'ast>],
     pub value: Option<ExprP<'ast>>,
@@ -636,7 +624,7 @@ pub struct ProtocolBounds<'ast> {
 
 #[derive(Debug, Clone, Copy, AstSerializable)]
 pub struct Placeholder<'ast> {
-    pub id: AstId,
+    pub id: Id,
     pub bounds: ProtocolBounds<'ast>,
     pub span: Option<Span>,
     pub default: Option<TyP<'ast>>,
@@ -688,7 +676,7 @@ pub struct Enum<'ast> {
 
 #[derive(Debug, Clone, Copy, AstSerializable)]
 pub struct Parameter<'ast> {
-    pub id: AstId,
+    pub id: Id,
     pub ty: TyP<'ast>,
     pub span: Option<Span>,
 }
@@ -701,7 +689,7 @@ pub struct Intrinsic {
 
 #[derive(Debug, Clone, Copy, AstSerializable)]
 pub struct MacroParameter {
-    pub id: AstId,
+    pub id: Id,
     pub et_cetera: bool,
     pub span: Option<Span>,
 }
@@ -765,7 +753,7 @@ pub struct StaticOrConst<'ast> {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, AstSerializable)]
 pub struct LetDeclaration<'ast> {
-    pub id: AstId,
+    pub id: Id,
     pub ty: Option<TyP<'ast>>,
     pub value: Option<ExprP<'ast>>,
 }
@@ -887,7 +875,7 @@ pub struct Defered<'ast> {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, AstSerializable)]
 pub struct ClosureBinding<'ast> {
-    pub id: AstId,
+    pub id: Id,
     pub value: ExprP<'ast>,
     pub binding_type: BoundItemType,
     pub span: Option<Span>,
@@ -902,8 +890,8 @@ pub enum FnKind<'ast> {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, AstSerializable)]
 pub enum StaticForLoopVariable<'ast> {
-    Single(AstId),
-    Tuple(&'ast [AstId]),
+    Single(Id),
+    Tuple(&'ast [Id]),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, AstSerializable)]
@@ -924,10 +912,10 @@ pub enum ExprKind<'ast> {
     Unary(UnOp, ExprP<'ast>),
     Assign(ExprP<'ast>, ExprP<'ast>),
     AssignOp(BinOp, ExprP<'ast>, ExprP<'ast>),
-    Local(AstId),
+    Local(Id),
     Static(ItemP<'ast>, Option<&'ast [TyP<'ast>]>),
     Const(ItemP<'ast>, Option<&'ast [TyP<'ast>]>),
-    EnumValue(ItemP<'ast>, AstId),
+    EnumValue(ItemP<'ast>, Id),
     Lit(Lit<'ast>),
     Loop(ExprP<'ast>),
     EtCetera(ExprP<'ast>),
@@ -939,7 +927,7 @@ pub enum ExprKind<'ast> {
     Tuple(&'ast [ExprP<'ast>]),
     Array(&'ast [ExprP<'ast>]),
     Struct(TyP<'ast>, &'ast [FieldInitializer<'ast>]),
-    BoundParam(AstId, AstId, BoundItemType),
+    BoundParam(Id, Id, BoundItemType),
     Field(
         ExprP<'ast>,
         &'ast str,
@@ -1030,5 +1018,5 @@ impl_allocatable!(
     Attribute<'_>,
     CustomAttribute<'_>,
     CustomAttributeValue<'_>,
-    AstId
+    Id
 );

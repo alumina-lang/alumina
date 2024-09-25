@@ -8,7 +8,7 @@ use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::const_eval::Value;
 use crate::ir::layout::Layouter;
 use crate::ir::{
-    Const, Expr, ExprKind, ExprP, Function, IrId, LocalDef, Statement, Static, Ty, ValueType,
+    Const, Expr, ExprKind, ExprP, Function, Id, LocalDef, Statement, Static, Ty, ValueType,
 };
 
 use std::fmt::Write;
@@ -27,7 +27,7 @@ pub struct FunctionWriter<'ir, 'gen> {
 pub fn write_function_signature<'ir, 'gen>(
     ctx: &'gen CodegenCtx<'ir, 'gen>,
     buf: &mut String,
-    id: IrId,
+    id: Id,
     item: &'ir Function<'ir>,
     is_static: bool,
     is_body: bool,
@@ -510,9 +510,9 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 w!(self.fn_bodies, "__builtin_unreachable()");
             }
             ExprKind::Intrinsic(kind) => match kind {
-                IntrinsicValueKind::SizeOfLike(n, typ) => {
-                    self.type_writer.add_type(typ)?;
-                    w!(self.fn_bodies, "{}({})", n, self.ctx.get_type(typ));
+                IntrinsicValueKind::SizeOfLike(n, ty) => {
+                    self.type_writer.add_type(ty)?;
+                    w!(self.fn_bodies, "{}({})", n, self.ctx.get_type(ty));
                 }
                 IntrinsicValueKind::FunctionLike(n) => {
                     w!(self.fn_bodies, "{}", n);
@@ -649,7 +649,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
     pub fn write_function_decl(
         &mut self,
         diag: &DiagnosticsStack,
-        id: IrId,
+        id: Id,
         item: &'ir Function<'ir>,
     ) -> Result<(), AluminaError> {
         let _guard = diag.push_span(item.span);
@@ -696,7 +696,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
     pub fn write_static_decl(
         &mut self,
         diag: &DiagnosticsStack,
-        id: IrId,
+        id: Id,
         item: &'ir Static<'ir>,
     ) -> Result<(), AluminaError> {
         let _guard = diag.push_span(item.span);
@@ -741,7 +741,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
     pub fn write_const_decl(
         &mut self,
         diag: &DiagnosticsStack,
-        id: IrId,
+        id: Id,
         item: &'ir Const<'ir>,
     ) -> Result<(), AluminaError> {
         let _guard = diag.push_span(item.span);
@@ -763,7 +763,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
     pub fn write_const(
         &mut self,
         diag: &DiagnosticsStack,
-        id: IrId,
+        id: Id,
         item: &'ir Const<'ir>,
     ) -> Result<(), AluminaError> {
         let _guard = diag.push_span(item.span);
@@ -789,7 +789,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
     pub fn write_function_body(
         &mut self,
         diag: &DiagnosticsStack,
-        id: IrId,
+        id: Id,
         item: &'ir Function<'ir>,
     ) -> Result<(), AluminaError> {
         let _guard = diag.push_span(item.span);

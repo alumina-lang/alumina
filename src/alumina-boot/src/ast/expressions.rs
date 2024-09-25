@@ -2,9 +2,9 @@ use crate::ast::macros::{MacroExpander, MacroMaker};
 use crate::ast::maker::AstItemMaker;
 use crate::ast::types::TypeVisitor;
 use crate::ast::{
-    AstCtx, AstId, BinOp, BuiltinType, ClosureBinding, Defered, Expr, ExprKind, ExprP,
-    FieldInitializer, FnKind, Function, Item, ItemP, LetDeclaration, Lit, Parameter, Placeholder,
-    Span, Statement, StatementKind, StaticForLoopVariable, Ty, TyP, UnOp,
+    AstCtx, BinOp, BuiltinType, ClosureBinding, Defered, Expr, ExprKind, ExprP, FieldInitializer,
+    FnKind, Function, Id, Item, ItemP, LetDeclaration, Lit, Parameter, Placeholder, Span,
+    Statement, StatementKind, StaticForLoopVariable, Ty, TyP, UnOp,
 };
 use crate::common::{
     AluminaError, ArenaAllocatable, CodeDiagnostic, CodeErrorBuilder, HashSet,
@@ -135,7 +135,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
         &mut self,
         node: tree_sitter::Node<'src>,
     ) -> Result<Vec<Statement<'ast>>, AluminaError> {
-        let typ = node
+        let ty = node
             .child_by_field(FieldKind::Type)
             .map(|n| {
                 TypeVisitor::new(
@@ -154,7 +154,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             .transpose()?;
         let let_decl = LetDeclaration {
             id: value_id,
-            ty: typ,
+            ty,
             value,
         };
         let mut statements = Vec::new();
@@ -863,7 +863,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
     fn visit_type_check_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let lhs = self.visit(node.child_by_field(FieldKind::Value).unwrap())?;
-        let typ = TypeVisitor::new(
+        let ty = TypeVisitor::new(
             self.global_ctx.clone(),
             self.ast,
             self.scope.clone(),
@@ -871,7 +871,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         )
         .visit(node.child_by_field(FieldKind::Type).unwrap())?;
 
-        Ok(ExprKind::TypeCheck(lhs, typ).alloc_with_span_from(self.ast, &self.scope, node))
+        Ok(ExprKind::TypeCheck(lhs, ty).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_turbofish(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -922,7 +922,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
     fn visit_type_cast_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let value = self.visit(node.child_by_field(FieldKind::Value).unwrap())?;
-        let typ = TypeVisitor::new(
+        let ty = TypeVisitor::new(
             self.global_ctx.clone(),
             self.ast,
             self.scope.clone(),
@@ -930,7 +930,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         )
         .visit(node.child_by_field(FieldKind::Type).unwrap())?;
 
-        Ok(ExprKind::Cast(value, typ).alloc_with_span_from(self.ast, &self.scope, node))
+        Ok(ExprKind::Cast(value, ty).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_loop_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -1274,7 +1274,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_struct_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let typ = TypeVisitor::new(
+        let ty = TypeVisitor::new(
             self.global_ctx.clone(),
             self.ast,
             self.scope.clone(),
@@ -1312,7 +1312,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         });
 
         Ok(
-            ExprKind::Struct(typ, field_initializers.alloc_on(self.ast)).alloc_with_span_from(
+            ExprKind::Struct(ty, field_initializers.alloc_on(self.ast)).alloc_with_span_from(
                 self.ast,
                 &self.scope,
                 node,
@@ -1528,10 +1528,10 @@ pub struct LambdaVisitor<'ast, 'src> {
     global_ctx: GlobalCtx,
     code: &'src ParseCtx<'src>,
     scope: Scope<'ast, 'src>,
-    self_param: AstId,
+    self_param: Id,
 
     parameters: Vec<Parameter<'ast>>,
-    bound_values: IndexMap<AstId, (BoundItemType, ExprP<'ast>)>,
+    bound_values: IndexMap<Id, (BoundItemType, ExprP<'ast>)>,
     placeholders: Vec<Placeholder<'ast>>,
     return_type: Option<TyP<'ast>>,
     body: Option<ExprP<'ast>>,
@@ -1805,8 +1805,8 @@ pub fn resolve_name<'ast, 'src>(
         },
         ItemResolution::Defered(ty, name) => {
             let name = name.0.alloc_on(ast);
-            let typ = ast.intern_type(ty);
-            ExprKind::Defered(Defered { ty: typ, name })
+            let ty = ast.intern_type(ty);
+            ExprKind::Defered(Defered { ty, name })
         }
     };
 

@@ -5,8 +5,8 @@ use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::builder::{ExpressionBuilder, TypeBuilder};
 use crate::ir::const_eval::LValue;
 use crate::ir::const_eval::Value;
-use crate::ir::IRItem;
-use crate::ir::{Expr, ExprKind, ExprP, FuncBody, IrCtx, IrId, LocalDef, Statement, Ty, ValueType};
+use crate::ir::Item;
+use crate::ir::{Expr, ExprKind, ExprP, FuncBody, Id, IrCtx, LocalDef, Statement, Ty, ValueType};
 
 // The purpose of ZST elider is to take all reads and writes of zero-sized types and
 // replace them with ExprKind::Void or remove them altogether if the value is not used
@@ -19,7 +19,7 @@ pub struct ZstElider<'ir> {
     ir: &'ir IrCtx<'ir>,
     diag: DiagnosticsStack,
     additional_locals: Vec<LocalDef<'ir>>,
-    used_ids: HashSet<IrId>,
+    used_ids: HashSet<Id>,
 }
 
 impl<'ir> ZstElider<'ir> {
@@ -402,8 +402,8 @@ impl<'ir> ZstElider<'ir> {
                 Value::Struct(fields) => {
                     let struct_like = match expr.ty {
                         Ty::Item(item) => match item.get().unwrap() {
-                            IRItem::Closure(c) => &c.data,
-                            IRItem::StructLike(s) => s,
+                            Item::Closure(c) => &c.data,
+                            Item::StructLike(s) => s,
                             _ => ice!(self.diag, "expected struct-like item"),
                         },
                         _ => ice!(self.diag, "expected struct-like item"),
@@ -495,7 +495,7 @@ impl<'ir> ZstElider<'ir> {
         // in variables, passed as arguments, ... If this happens, we still need to make sure that
         // codegen invokes it correctly.
         if let crate::ir::Ty::Item(item) = result.ty {
-            if let IRItem::Function(_) = item.get().unwrap() {
+            if let Item::Function(_) = item.get().unwrap() {
                 if result.is_void() {
                     return Ok(builder.function(item, expr.span));
                 }
@@ -521,7 +521,7 @@ impl<'ir> ZstElider<'ir> {
             LValue::Field(inner, field) => {
                 let inner_expr = self.elide_zst_lvalue(inner, span);
                 if let Ty::Item(item) = inner_expr.ty {
-                    if let IRItem::StructLike(struct_like) = item.get().unwrap() {
+                    if let Item::StructLike(struct_like) = item.get().unwrap() {
                         let field_type = struct_like
                             .fields
                             .iter()

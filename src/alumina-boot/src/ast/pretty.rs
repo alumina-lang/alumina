@@ -1,8 +1,8 @@
 use crate::{ast::StaticForLoopVariable, name_resolution::scope::BoundItemType};
 
 use super::{
-    AstCtx, AstId, BinOp, BuiltinType, ClosureBinding, ExprKind, ExprP, FnKind, Function, Item,
-    ItemP, Lit, Statement, StatementKind, Ty, TyP, UnOp,
+    AstCtx, BinOp, BuiltinType, ClosureBinding, ExprKind, ExprP, FnKind, Function, Id, Item, ItemP,
+    Lit, Statement, StatementKind, Ty, TyP, UnOp,
 };
 use std::fmt::Write;
 
@@ -216,7 +216,7 @@ impl<'ast> PrettyPrinter<'ast> {
         self.print_expr_full(expr, false, true)
     }
 
-    fn id_to_name(&self, id: AstId) -> String {
+    fn id_to_name(&self, id: Id) -> String {
         self.ast
             .local_name(id)
             .map(str::to_string)
@@ -532,13 +532,13 @@ impl<'ast> PrettyPrinter<'ast> {
             }
             ExprKind::Lit(ref lit) => match lit {
                 Lit::Str(s) => self.print_string_literal(s),
-                Lit::Int(sign, val, typ) => {
+                Lit::Int(sign, val, ty) => {
                     let mut s = String::new();
                     if *sign {
                         s.push('-');
                     }
                     s.push_str(&val.to_string());
-                    if let Some(kind) = typ {
+                    if let Some(kind) = ty {
                         s.push_str(&self.print_builtin_type(*kind));
                     }
                     s
@@ -604,7 +604,7 @@ impl<'ast> PrettyPrinter<'ast> {
                 }
                 format!("[{}]", s)
             }
-            ExprKind::Struct(typ, initializers) => {
+            ExprKind::Struct(ty, initializers) => {
                 let mut s = String::new();
                 for (i, field) in initializers.iter().enumerate() {
                     if i != 0 {
@@ -612,7 +612,7 @@ impl<'ast> PrettyPrinter<'ast> {
                     }
                     s.push_str(&format!("{}: {}", field.name, self.print_expr(field.value)));
                 }
-                format!("{} {{ {} }}", self.print_ty_full(typ, true), s)
+                format!("{} {{ {} }}", self.print_ty_full(ty, true), s)
             }
             ExprKind::BoundParam(_, id, _) => self.id_to_name(id),
             ExprKind::Field(base, field, _, generic_args) => {
@@ -668,13 +668,9 @@ impl<'ast> PrettyPrinter<'ast> {
                     (None, None) => "..".to_string(),
                 }
             }
-            ExprKind::TypeCheck(inner, typ) => {
+            ExprKind::TypeCheck(inner, ty) => {
                 add_parens = true;
-                format!(
-                    "{} is {}",
-                    self.print_expr_parens(inner),
-                    self.print_ty(typ)
-                )
+                format!("{} is {}", self.print_expr_parens(inner), self.print_ty(ty))
             }
             ExprKind::If(cond, then, els) | ExprKind::StaticIf(cond, then, els) => {
                 add_parens = true;
@@ -702,13 +698,9 @@ impl<'ast> PrettyPrinter<'ast> {
                     )
                 }
             }
-            ExprKind::Cast(inner, typ) => {
+            ExprKind::Cast(inner, ty) => {
                 add_parens = true;
-                format!(
-                    "{} as {}",
-                    self.print_expr_parens(inner),
-                    self.print_ty(typ)
-                )
+                format!("{} as {}", self.print_expr_parens(inner), self.print_ty(ty))
             }
             ExprKind::Void => {
                 if braces {

@@ -32,7 +32,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
 
     fn match_slot(
         &mut self,
-        inferred: &mut HashMap<ast::AstId, ir::TyP<'ir>>,
+        inferred: &mut HashMap<ast::Id, ir::TyP<'ir>>,
         src: ast::TyP<'ast>,
         tgt: ir::TyP<'ir>,
     ) -> Result<(), ()> {
@@ -64,7 +64,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                 self.match_slot(inferred, a1, b1)?;
             }
             (ast::Ty::Slice(a1, a_const), ir::Ty::Item(_t)) => {
-                let lang_item_kind = self.mono_ctx.get_lang_type_kind(tgt);
+                let lang_item_kind = self.mono_ctx.lang_type_kind(tgt);
                 if let Some(LangTypeKind::Slice(ir::Ty::Pointer(b1, b_const))) = lang_item_kind {
                     // mut slices coerce into const slices
                     if !a_const && (a_const != b_const) {
@@ -97,7 +97,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                 self.match_slot(inferred, a2, b2)?;
             }
             (ast::Ty::FunctionPointer(a1, a2), ir::Ty::Item(item)) => match item.get() {
-                Ok(ir::IRItem::Function(fun)) => {
+                Ok(ir::Item::Function(fun)) => {
                     for (a, b) in a1.iter().zip(fun.args.iter()) {
                         self.match_slot(inferred, a, b.ty)?;
                     }
@@ -144,15 +144,15 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                 if let Some(LangTypeKind::Dyn(
                     ir::Ty::Tuple(b_protos),
                     ir::Ty::Pointer(_, b_const),
-                )) = self.mono_ctx.get_lang_type_kind(tgt)
+                )) = self.mono_ctx.lang_type_kind(tgt)
                 {
-                    for (a_typ, b_typ) in a_protos.iter().zip(b_protos.iter()) {
-                        let (item, holders) = match a_typ {
+                    for (a_ty, b_ty) in a_protos.iter().zip(b_protos.iter()) {
+                        let (item, holders) = match a_ty {
                             ast::Ty::Generic(ast::Ty::Item(item), holders) => (item, holders),
                             _ => return Err(()),
                         };
 
-                        let proto = match b_typ {
+                        let proto = match b_ty {
                             ir::Ty::Item(proto) => proto,
                             _ => return Err(()),
                         };
@@ -182,7 +182,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
 
     fn match_protocol_bounds(
         &mut self,
-        inferred: &mut HashMap<ast::AstId, ir::TyP<'ir>>,
+        inferred: &mut HashMap<ast::Id, ir::TyP<'ir>>,
         placeholder: &Placeholder<'ast>,
     ) {
         // Matching protocol bounds is quite limited at the moment, it only works for certain
@@ -223,7 +223,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                     Some(LangItemKind::ProtoRangeOf) => {
                         if let [src] = args {
                             if let Some(LangTypeKind::Range(inner)) =
-                                self.mono_ctx.get_lang_type_kind(tgt)
+                                self.mono_ctx.lang_type_kind(tgt)
                             {
                                 let _ = self.match_slot(inferred, src, inner);
                             }
@@ -241,7 +241,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
 
     fn match_callable(
         &mut self,
-        inferred: &mut HashMap<ast::AstId, ir::TyP<'ir>>,
+        inferred: &mut HashMap<ast::Id, ir::TyP<'ir>>,
         tgt: ir::TyP<'ir>,
         ast_args: ast::TyP<'ast>,
         ast_ret: ast::TyP<'ast>,
@@ -253,14 +253,14 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                 let _ = self.match_slot(inferred, ast_ret, b2);
             }
             ir::Ty::Item(item) => match item.get() {
-                Ok(ir::IRItem::Closure(clos)) => {
+                Ok(ir::Item::Closure(clos)) => {
                     if let Ok(fun) = clos.function.get().unwrap().get_function() {
                         let tup = self.types.tuple(fun.args.iter().skip(1).map(|a| a.ty));
                         let _ = self.match_slot(inferred, ast_args, tup);
                         let _ = self.match_slot(inferred, ast_ret, fun.return_type);
                     }
                 }
-                Ok(ir::IRItem::Function(fun)) => {
+                Ok(ir::Item::Function(fun)) => {
                     let tup = self.types.tuple(fun.args.iter().map(|a| a.ty));
                     let _ = self.match_slot(inferred, ast_args, tup);
                     let _ = self.match_slot(inferred, ast_ret, fun.return_type);

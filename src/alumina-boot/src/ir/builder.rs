@@ -13,15 +13,15 @@ impl<'ir> ExpressionBuilder<'ir> {
         Self { ir }
     }
 
-    pub fn local(&self, id: IrId, ty: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
+    pub fn local(&self, id: Id, ty: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
         Expr::lvalue(ExprKind::Local(id), ty, span).alloc_on(self.ir)
     }
 
-    pub fn static_var(&self, item: IRItemP<'ir>, ty: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
+    pub fn static_var(&self, item: ItemP<'ir>, ty: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
         Expr::lvalue(ExprKind::Static(item), ty, span).alloc_on(self.ir)
     }
 
-    pub fn const_var(&self, item: IRItemP<'ir>, ty: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
+    pub fn const_var(&self, item: ItemP<'ir>, ty: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
         Expr::const_lvalue(ExprKind::Const(item), ty, span).alloc_on(self.ir)
     }
 
@@ -143,7 +143,7 @@ impl<'ir> ExpressionBuilder<'ir> {
 
     pub fn r#struct<I>(&self, args: I, ty: TyP<'ir>, span: Option<Span>) -> ExprP<'ir>
     where
-        I: IntoIterator<Item = (IrId, ExprP<'ir>)>,
+        I: IntoIterator<Item = (Id, ExprP<'ir>)>,
         I::IntoIter: ExactSizeIterator,
     {
         let result = Expr::rvalue(
@@ -213,7 +213,7 @@ impl<'ir> ExpressionBuilder<'ir> {
         .alloc_on(self.ir)
     }
 
-    pub fn goto(&self, label: IrId, span: Option<Span>) -> ExprP<'ir> {
+    pub fn goto(&self, label: Id, span: Option<Span>) -> ExprP<'ir> {
         Expr::rvalue(
             ExprKind::Goto(label),
             self.ir.intern_type(Ty::Builtin(BuiltinType::Never)),
@@ -248,7 +248,7 @@ impl<'ir> ExpressionBuilder<'ir> {
         .alloc_on(self.ir)
     }
 
-    pub fn function(&self, item: IRItemP<'ir>, span: Option<Span>) -> ExprP<'ir> {
+    pub fn function(&self, item: ItemP<'ir>, span: Option<Span>) -> ExprP<'ir> {
         Expr::const_lvalue(
             ExprKind::Fn(item),
             self.ir.intern_type(Ty::Item(item)),
@@ -427,7 +427,7 @@ impl<'ir> ExpressionBuilder<'ir> {
     pub fn field(
         &self,
         obj: ExprP<'ir>,
-        field_id: IrId,
+        field_id: Id,
         ty: TyP<'ir>,
         span: Option<Span>,
     ) -> ExprP<'ir> {
@@ -469,7 +469,7 @@ impl<'ir> TypeBuilder<'ir> {
         self.ir.intern_type(Ty::Array(inner, size))
     }
 
-    pub fn named(&self, item: IRItemP<'ir>) -> TyP<'ir> {
+    pub fn named(&self, item: ItemP<'ir>) -> TyP<'ir> {
         self.ir.intern_type(Ty::Item(item))
     }
 

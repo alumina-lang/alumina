@@ -3,16 +3,16 @@ use crate::common::{AluminaError, ArenaAllocatable, CodeDiagnostic, HashMap};
 use crate::diagnostics::DiagnosticsStack;
 use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::builder::ExpressionBuilder;
-use crate::ir::{ExprKind, ExprP, IrCtx, IrId, Statement};
+use crate::ir::{ExprKind, ExprP, Id, IrCtx, Statement};
 
 use super::{Expr, ExpressionVisitor, LocalDef};
 
 struct LocalUsageCounter {
-    usage: HashMap<IrId, usize>,
+    usage: HashMap<Id, usize>,
 }
 
 impl LocalUsageCounter {
-    fn count_usages(expr: ExprP<'_>) -> Result<HashMap<IrId, usize>, AluminaError> {
+    fn count_usages(expr: ExprP<'_>) -> Result<HashMap<Id, usize>, AluminaError> {
         let mut counter = Self {
             usage: HashMap::default(),
         };
@@ -22,7 +22,7 @@ impl LocalUsageCounter {
 }
 
 impl<'ir> ExpressionVisitor<'ir> for LocalUsageCounter {
-    fn visit_local(&mut self, id: IrId) -> Result<(), AluminaError> {
+    fn visit_local(&mut self, id: Id) -> Result<(), AluminaError> {
         *self.usage.entry(id).or_insert(0) += 1;
         Ok(())
     }
@@ -34,7 +34,7 @@ impl<'ir> ExpressionVisitor<'ir> for LocalUsageCounter {
 pub struct IrInliner<'ir> {
     diag: DiagnosticsStack,
     ir: &'ir IrCtx<'ir>,
-    replacements: HashMap<IrId, ExprP<'ir>>,
+    replacements: HashMap<Id, ExprP<'ir>>,
     span: Option<Span>,
 }
 
@@ -54,7 +54,7 @@ impl<'ir> IrInliner<'ir> {
         span: Option<Span>,
     ) -> Result<(ExprP<'ir>, Vec<LocalDef<'ir>>), AluminaError>
     where
-        I: IntoIterator<Item = (IrId, ExprP<'ir>)>,
+        I: IntoIterator<Item = (Id, ExprP<'ir>)>,
     {
         let local_counts = LocalUsageCounter::count_usages(body)?;
         let mut statements = Vec::new();

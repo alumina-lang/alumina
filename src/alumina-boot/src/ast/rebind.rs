@@ -1,16 +1,16 @@
 use crate::ast::{
-    AstCtx, AstId, Bound, Expr, ExprP, FieldInitializer, FnKind, Placeholder, ProtocolBounds,
+    AstCtx, Bound, Expr, ExprP, FieldInitializer, FnKind, Id, Placeholder, ProtocolBounds,
     Statement, TyP,
 };
 use crate::common::{AluminaError, ArenaAllocatable, HashMap};
 
 pub struct Rebinder<'ast> {
     pub ast: &'ast AstCtx<'ast>,
-    pub replacements: HashMap<AstId, TyP<'ast>>,
+    pub replacements: HashMap<Id, TyP<'ast>>,
 }
 
 impl<'ast> Rebinder<'ast> {
-    pub fn new(ast: &'ast AstCtx<'ast>, replacements: HashMap<AstId, TyP<'ast>>) -> Self {
+    pub fn new(ast: &'ast AstCtx<'ast>, replacements: HashMap<Id, TyP<'ast>>) -> Self {
         Self { ast, replacements }
     }
 
@@ -54,7 +54,7 @@ impl<'ast> Rebinder<'ast> {
         use crate::ast::Ty::*;
         let kind = match ty {
             Placeholder(id) => match self.replacements.get(id) {
-                Some(typ) => Tag("dynamic", typ),
+                Some(ty) => Tag("dynamic", ty),
                 None => Placeholder(*id),
             },
             Tag(tag, inner) => Tag(tag, self.visit_ty(inner)?),
@@ -100,8 +100,8 @@ impl<'ast> Rebinder<'ast> {
                     .collect::<Result<Vec<_>, _>>()?
                     .alloc_on(self.ast),
             ),
-            Defered(super::Defered { ty: typ, name }) => Defered(super::Defered {
-                ty: self.visit_ty(typ)?,
+            Defered(super::Defered { ty, name }) => Defered(super::Defered {
+                ty: self.visit_ty(ty)?,
                 name,
             }),
             When(cond, then, els) => When(
@@ -221,7 +221,7 @@ impl<'ast> Rebinder<'ast> {
             StaticFor(id, range, body) => {
                 StaticFor(id, self.visit_expr(range)?, self.visit_expr(body)?)
             }
-            Cast(inner, typ) => Cast(self.visit_expr(inner)?, self.visit_ty(typ)?),
+            Cast(inner, ty) => Cast(self.visit_expr(inner)?, self.visit_ty(ty)?),
             Defered(ref def) => Defered(crate::ast::Defered {
                 ty: self.visit_ty(def.ty)?,
                 name: def.name,

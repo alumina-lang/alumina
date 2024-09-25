@@ -40,8 +40,8 @@ impl<'ir> IrCtx<'ir> {
         }
     }
 
-    pub fn make_id(&self) -> IrId {
-        IrId {
+    pub fn make_id(&self) -> Id {
+        Id {
             id: self.counter.increment(),
         }
     }
@@ -68,8 +68,8 @@ impl<'ir> IrCtx<'ir> {
         inner
     }
 
-    pub fn make_item(&'ir self) -> IRItemP<'ir> {
-        self.arena.alloc(IRItemCell {
+    pub fn make_item(&'ir self) -> ItemP<'ir> {
+        self.arena.alloc(ItemCell {
             id: self.make_id(),
             contents: OnceCell::new(),
         })
@@ -118,17 +118,17 @@ where
 }
 
 #[derive(PartialEq, Copy, Clone, Eq, Hash, PartialOrd, Ord)]
-pub struct IrId {
+pub struct Id {
     pub id: usize,
 }
 
-impl Display for IrId {
+impl Display for Id {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "${}", self.id)
     }
 }
 
-impl Debug for IrId {
+impl Debug for Id {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         Display::fmt(self, f)
     }
@@ -136,7 +136,7 @@ impl Debug for IrId {
 
 #[derive(PartialEq, Eq, Clone, Hash, Copy)]
 pub enum Ty<'ir> {
-    Item(IRItemP<'ir>),
+    Item(ItemP<'ir>),
     Builtin(BuiltinType),
     Pointer(TyP<'ir>, bool),
     Array(TyP<'ir>, usize),
@@ -150,23 +150,23 @@ impl Debug for Ty<'_> {
             Ty::Item(cell) => {
                 let inner = cell.get();
                 match inner {
-                    Ok(IRItem::StructLike(s)) => {
+                    Ok(Item::StructLike(s)) => {
                         write!(f, "{} {{ ", s.name.unwrap_or("(unnamed)"))?;
                         for field in s.fields {
                             write!(f, "{:?} ", field.ty)?;
                         }
                         write!(f, "}}")
                     }
-                    Ok(IRItem::Enum(e)) => {
+                    Ok(Item::Enum(e)) => {
                         write!(f, "{}", e.name.unwrap_or("(unnamed enum)"))
                     }
-                    Ok(IRItem::Protocol(s)) => {
+                    Ok(Item::Protocol(s)) => {
                         write!(f, "{}", s.name.unwrap_or("(unnamed protocol)"))
                     }
-                    Ok(IRItem::Function(s)) => {
+                    Ok(Item::Function(s)) => {
                         write!(f, "{}", s.name.unwrap_or("(unnamed function)"))
                     }
-                    Ok(IRItem::Closure(_)) => {
+                    Ok(Item::Closure(_)) => {
                         write!(f, "(closure)")
                     }
                     _ => write!(f, "ERROR"),
@@ -248,14 +248,11 @@ impl<'ir> Ty<'ir> {
             Ty::Builtin(BuiltinType::Never) => true,
             Ty::Builtin(_) => false,
             Ty::Item(inner) => match inner.get().unwrap() {
-                IRItem::Alias(inner) => inner.is_zero_sized(),
-                IRItem::StructLike(s) => s.fields.iter().all(|f| f.ty.is_zero_sized()),
-                IRItem::Closure(c) => c.data.fields.iter().all(|f| f.ty.is_zero_sized()),
-                IRItem::Enum(e) => e.underlying_type.is_zero_sized(),
-                IRItem::Function(_)
-                | IRItem::Protocol(_)
-                | IRItem::Static(_)
-                | IRItem::Const(_) => true,
+                Item::Alias(inner) => inner.is_zero_sized(),
+                Item::StructLike(s) => s.fields.iter().all(|f| f.ty.is_zero_sized()),
+                Item::Closure(c) => c.data.fields.iter().all(|f| f.ty.is_zero_sized()),
+                Item::Enum(e) => e.underlying_type.is_zero_sized(),
+                Item::Function(_) | Item::Protocol(_) | Item::Static(_) | Item::Const(_) => true,
             },
             Ty::Pointer(_, _) => false,
             Ty::Array(inner, size) => *size == 0 || inner.is_zero_sized(),
@@ -270,7 +267,7 @@ pub type TyP<'ir> = &'ir Ty<'ir>;
 #[derive(Debug, PartialEq, Eq, Clone, Hash, Copy)]
 pub struct Field<'ir> {
     pub name: Option<&'ir str>,
-    pub id: IrId,
+    pub id: Id,
     pub ty: TyP<'ir>,
 }
 
@@ -286,13 +283,13 @@ pub struct StructLike<'ir> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Parameter<'ir> {
-    pub id: IrId,
+    pub id: Id,
     pub ty: TyP<'ir>,
 }
 
 #[derive(Debug, Copy, Clone)]
 pub struct LocalDef<'ir> {
-    pub id: IrId,
+    pub id: Id,
     pub ty: TyP<'ir>,
 }
 
@@ -316,7 +313,7 @@ pub struct Function<'ir> {
 #[derive(Debug)]
 pub struct Closure<'ir> {
     pub data: StructLike<'ir>,
-    pub function: OnceCell<IRItemP<'ir>>,
+    pub function: OnceCell<ItemP<'ir>>,
 }
 
 #[derive(Debug)]
@@ -342,7 +339,7 @@ pub struct VtableLayout<'ir> {
 
 #[derive(Debug)]
 pub struct EnumMember<'ir> {
-    pub id: IrId,
+    pub id: Id,
     pub name: &'ir str,
     pub value: ExprP<'ir>,
 }
@@ -379,7 +376,7 @@ pub struct Const<'ir> {
 
 #[derive(Debug)]
 pub struct StructInit<'ir> {
-    pub field: IrId,
+    pub field: Id,
     pub value: ExprP<'ir>,
 }
 
@@ -390,7 +387,7 @@ pub struct TupleInit<'ir> {
 }
 
 #[derive(Debug)]
-pub enum IRItem<'ir> {
+pub enum Item<'ir> {
     StructLike(StructLike<'ir>),
     Alias(TyP<'ir>),
     Protocol(Protocol<'ir>),
@@ -401,17 +398,17 @@ pub enum IRItem<'ir> {
     Closure(Closure<'ir>),
 }
 
-pub type IRItemP<'ir> = &'ir IRItemCell<'ir>;
+pub type ItemP<'ir> = &'ir ItemCell<'ir>;
 
-impl<'ir> IRItemCell<'ir> {
-    pub fn assign(&self, value: IRItem<'ir>) {
+impl<'ir> ItemCell<'ir> {
+    pub fn assign(&self, value: Item<'ir>) {
         // Panic if we try to assign the same item twice
         self.contents
             .set(value)
             .expect("assigning the same item twice");
     }
 
-    pub fn get(&'ir self) -> Result<&'ir IRItem<'ir>, CodeDiagnostic> {
+    pub fn get(&'ir self) -> Result<&'ir Item<'ir>, CodeDiagnostic> {
         match self.contents.get() {
             Some(item) => Ok(item),
             None => Err(CodeDiagnostic::UnpopulatedItem),
@@ -420,14 +417,14 @@ impl<'ir> IRItemCell<'ir> {
 
     pub fn get_alias(&'ir self) -> Option<TyP<'ir>> {
         match self.contents.get() {
-            Some(IRItem::Alias(ty)) => Some(*ty),
+            Some(Item::Alias(ty)) => Some(*ty),
             _ => None,
         }
     }
 
     pub fn get_function(&'ir self) -> Result<&'ir Function<'ir>, CodeDiagnostic> {
         match self.contents.get() {
-            Some(IRItem::Function(f)) => Ok(f),
+            Some(Item::Function(f)) => Ok(f),
             Some(_) => Err(CodeDiagnostic::InternalError(
                 "function expected".into(),
                 Backtrace::capture().into(),
@@ -438,7 +435,7 @@ impl<'ir> IRItemCell<'ir> {
 
     pub fn get_closure(&'ir self) -> Result<&'ir Closure<'ir>, CodeDiagnostic> {
         match self.contents.get() {
-            Some(IRItem::Closure(c)) => Ok(c),
+            Some(Item::Closure(c)) => Ok(c),
             Some(_) => Err(CodeDiagnostic::InternalError(
                 "closure expected".into(),
                 Backtrace::capture().into(),
@@ -449,7 +446,7 @@ impl<'ir> IRItemCell<'ir> {
 
     pub fn get_protocol(&'ir self) -> Result<&'ir Protocol<'ir>, CodeDiagnostic> {
         match self.contents.get() {
-            Some(IRItem::Protocol(p)) => Ok(p),
+            Some(Item::Protocol(p)) => Ok(p),
             Some(_) => Err(CodeDiagnostic::InternalError(
                 "protocol expected".into(),
                 Backtrace::capture().into(),
@@ -460,7 +457,7 @@ impl<'ir> IRItemCell<'ir> {
 
     pub fn get_struct_like(&'ir self) -> Result<&'ir StructLike<'ir>, CodeDiagnostic> {
         match self.contents.get() {
-            Some(IRItem::StructLike(p)) => Ok(p),
+            Some(Item::StructLike(p)) => Ok(p),
             Some(_) => Err(CodeDiagnostic::InternalError(
                 "struct expected".into(),
                 Backtrace::capture().into(),
@@ -471,7 +468,7 @@ impl<'ir> IRItemCell<'ir> {
 
     pub fn get_enum(&'ir self) -> Result<&'ir Enum<'ir>, CodeDiagnostic> {
         match self.contents.get() {
-            Some(IRItem::Enum(p)) => Ok(p),
+            Some(Item::Enum(p)) => Ok(p),
             Some(_) => Err(CodeDiagnostic::InternalError(
                 "enum expected".into(),
                 Backtrace::capture().into(),
@@ -482,7 +479,7 @@ impl<'ir> IRItemCell<'ir> {
 
     pub fn get_static(&'ir self) -> Result<&'ir Static<'ir>, CodeDiagnostic> {
         match self.contents.get() {
-            Some(IRItem::Static(s)) => Ok(s),
+            Some(Item::Static(s)) => Ok(s),
             Some(_) => Err(CodeDiagnostic::InternalError(
                 "static expected".into(),
                 Backtrace::capture().into(),
@@ -493,7 +490,7 @@ impl<'ir> IRItemCell<'ir> {
 
     pub fn get_const(&'ir self) -> Result<&'ir Const<'ir>, CodeDiagnostic> {
         match self.contents.get() {
-            Some(IRItem::Const(c)) => Ok(c),
+            Some(Item::Const(c)) => Ok(c),
             Some(_) => Err(CodeDiagnostic::InternalError(
                 "const expected".into(),
                 Backtrace::capture().into(),
@@ -504,28 +501,28 @@ impl<'ir> IRItemCell<'ir> {
 
     pub fn attributes(&'ir self) -> &'ir [Attribute<'ir>] {
         match self.contents.get() {
-            Some(IRItem::StructLike(s)) => s.attributes,
-            Some(IRItem::Function(f)) => f.attributes,
-            Some(IRItem::Enum(e)) => e.attributes,
-            Some(IRItem::Protocol(p)) => p.attributes,
-            Some(IRItem::Closure(c)) => c.data.attributes,
-            Some(IRItem::Alias(_)) => &[],
-            Some(IRItem::Static(s)) => s.attributes,
-            Some(IRItem::Const(c)) => c.attributes,
+            Some(Item::StructLike(s)) => s.attributes,
+            Some(Item::Function(f)) => f.attributes,
+            Some(Item::Enum(e)) => e.attributes,
+            Some(Item::Protocol(p)) => p.attributes,
+            Some(Item::Closure(c)) => c.data.attributes,
+            Some(Item::Alias(_)) => &[],
+            Some(Item::Static(s)) => s.attributes,
+            Some(Item::Const(c)) => c.attributes,
             None => &[],
         }
     }
 
     pub fn is_struct_like(&self) -> bool {
-        matches!(self.contents.get(), Some(IRItem::StructLike(_)))
+        matches!(self.contents.get(), Some(Item::StructLike(_)))
     }
 }
-pub struct IRItemCell<'ir> {
-    pub id: IrId,
-    contents: OnceCell<IRItem<'ir>>,
+pub struct ItemCell<'ir> {
+    pub id: Id,
+    contents: OnceCell<Item<'ir>>,
 }
 
-impl Hash for IRItemCell<'_> {
+impl Hash for ItemCell<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.id.hash(state);
     }
@@ -533,15 +530,15 @@ impl Hash for IRItemCell<'_> {
 
 /// Items have reference semantics. Two structs with the same fields
 /// are not considered equal.
-impl PartialEq for IRItemCell<'_> {
+impl PartialEq for ItemCell<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
 }
 
-impl Eq for IRItemCell<'_> {}
+impl Eq for ItemCell<'_> {}
 
-impl Debug for IRItemCell<'_> {
+impl Debug for ItemCell<'_> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         if fmt.alternate() {
             writeln!(fmt, "{} {{", self.id)?;
@@ -558,7 +555,7 @@ impl Debug for IRItemCell<'_> {
 #[derive(Debug, Clone)]
 pub enum Statement<'ir> {
     Expression(ExprP<'ir>),
-    Label(IrId),
+    Label(Id),
 }
 
 impl<'ir> Statement<'ir> {
@@ -576,19 +573,19 @@ pub enum ExprKind<'ir> {
     Binary(BinOp, ExprP<'ir>, ExprP<'ir>),
     AssignOp(BinOp, ExprP<'ir>, ExprP<'ir>),
     Call(ExprP<'ir>, &'ir [ExprP<'ir>]),
-    Fn(IRItemP<'ir>),
+    Fn(ItemP<'ir>),
     Ref(ExprP<'ir>),
     Deref(ExprP<'ir>),
     Return(ExprP<'ir>),
-    Goto(IrId),
+    Goto(Id),
     Unary(UnOp, ExprP<'ir>),
     Assign(ExprP<'ir>, ExprP<'ir>),
     Index(ExprP<'ir>, ExprP<'ir>),
-    Local(IrId),
-    Static(IRItemP<'ir>),
-    Const(IRItemP<'ir>),
+    Local(Id),
+    Static(ItemP<'ir>),
+    Const(ItemP<'ir>),
     Literal(const_eval::Value<'ir>),
-    Field(ExprP<'ir>, IrId),
+    Field(ExprP<'ir>, Id),
     TupleIndex(ExprP<'ir>, usize),
     If(ExprP<'ir>, ExprP<'ir>, ExprP<'ir>, Option<bool>),
     Cast(ExprP<'ir>),
@@ -728,7 +725,7 @@ pub trait ExpressionVisitor<'ir>: Sized {
         }
     }
 
-    fn visit_label(&mut self, _label: IrId) -> Result<(), AluminaError> {
+    fn visit_label(&mut self, _label: Id) -> Result<(), AluminaError> {
         Ok(())
     }
 
@@ -775,7 +772,7 @@ pub trait ExpressionVisitor<'ir>: Sized {
         Ok(())
     }
 
-    fn visit_fn(&mut self, _item: IRItemP<'ir>) -> Result<(), AluminaError> {
+    fn visit_fn(&mut self, _item: ItemP<'ir>) -> Result<(), AluminaError> {
         Ok(())
     }
 
@@ -791,7 +788,7 @@ pub trait ExpressionVisitor<'ir>: Sized {
         self.visit_expr(expr)
     }
 
-    fn visit_goto(&mut self, _label: IrId) -> Result<(), AluminaError> {
+    fn visit_goto(&mut self, _label: Id) -> Result<(), AluminaError> {
         Ok(())
     }
 
@@ -809,15 +806,15 @@ pub trait ExpressionVisitor<'ir>: Sized {
         self.visit_expr(rhs)
     }
 
-    fn visit_local(&mut self, _id: IrId) -> Result<(), AluminaError> {
+    fn visit_local(&mut self, _id: Id) -> Result<(), AluminaError> {
         Ok(())
     }
 
-    fn visit_static(&mut self, _item: IRItemP<'ir>) -> Result<(), AluminaError> {
+    fn visit_static(&mut self, _item: ItemP<'ir>) -> Result<(), AluminaError> {
         Ok(())
     }
 
-    fn visit_const(&mut self, _item: IRItemP<'ir>) -> Result<(), AluminaError> {
+    fn visit_const(&mut self, _item: ItemP<'ir>) -> Result<(), AluminaError> {
         Ok(())
     }
 
@@ -825,7 +822,7 @@ pub trait ExpressionVisitor<'ir>: Sized {
         Ok(())
     }
 
-    fn visit_field(&mut self, expr: ExprP<'ir>, _id: IrId) -> Result<(), AluminaError> {
+    fn visit_field(&mut self, expr: ExprP<'ir>, _id: Id) -> Result<(), AluminaError> {
         self.visit_expr(expr)
     }
 
@@ -938,7 +935,7 @@ impl_allocatable!(
     Statement<'_>,
     Field<'_>,
     Parameter<'_>,
-    IRItemCell<'_>,
+    ItemCell<'_>,
     EnumMember<'_>,
     ProtocolFunction<'_>,
     LocalDef<'_>,
@@ -946,5 +943,5 @@ impl_allocatable!(
     TupleInit<'_>,
     const_eval::Value<'_>,
     const_eval::LValue<'_>,
-    IrId
+    Id
 );

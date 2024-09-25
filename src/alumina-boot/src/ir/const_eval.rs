@@ -6,7 +6,7 @@ use crate::common::{
 use crate::diagnostics::DiagnosticsStack;
 use crate::global_ctx::GlobalCtx;
 use crate::intrinsics::IntrinsicValueKind;
-use crate::ir::{BuiltinType, ExprKind, ExprP, IRItem, IrCtx, IrId, Statement, Ty, TyP, UnOp};
+use crate::ir::{BuiltinType, ExprKind, ExprP, Id, IrCtx, Item, Statement, Ty, TyP, UnOp};
 use std::backtrace::Backtrace;
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -42,8 +42,8 @@ pub enum Value<'ir> {
     Bytes(&'ir [u8], usize),
     Tuple(&'ir [Value<'ir>]),
     Array(&'ir [Value<'ir>]),
-    Struct(&'ir [(IrId, Value<'ir>)]),
-    FunctionPointer(super::IRItemP<'ir>),
+    Struct(&'ir [(Id, Value<'ir>)]),
+    FunctionPointer(super::ItemP<'ir>),
     Pointer(LValue<'ir>, TyP<'ir>),
     #[allow(clippy::enum_variant_names)]
     LValue(LValue<'ir>),
@@ -183,10 +183,10 @@ impl Hash for Value<'_> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LValue<'ir> {
-    Const(IRItemP<'ir>),
-    Variable(IrId),
-    Alloc(IrId),
-    Field(&'ir LValue<'ir>, IrId),
+    Const(ItemP<'ir>),
+    Variable(Id),
+    Alloc(Id),
+    Field(&'ir LValue<'ir>, Id),
     Index(&'ir LValue<'ir>, usize),
     TupleIndex(&'ir LValue<'ir>, usize),
 }
@@ -227,7 +227,7 @@ pub enum ConstEvalErrorKind {
     // These are not errors, but they are used to signal that the evaluation should stop.
     // They are bugs if they leak to the caller
     #[error("ice: non-local jump")]
-    Jump(IrId),
+    Jump(Id),
     #[error("ice: return from a constant expression")]
     Return,
     #[error("ice: stop iteration")]
@@ -276,7 +276,7 @@ macro_rules! bug {
 pub(crate) use numeric_of_kind;
 
 use super::builder::TypeBuilder;
-use super::IRItemP;
+use super::ItemP;
 
 impl<'ir> Value<'ir> {
     fn equals(self, other: Value<'ir>) -> Result<Value<'ir>, ConstEvalErrorKind> {
@@ -754,7 +754,7 @@ impl<'ir> Rem for Value<'ir> {
 }
 
 struct ConstEvalCtxInner<'ir> {
-    variables: HashMap<IrId, Value<'ir>>,
+    variables: HashMap<Id, Value<'ir>>,
     steps_remaining: usize,
 }
 
@@ -767,7 +767,7 @@ pub struct ConstEvalCtx<'ir> {
 }
 
 struct MallocBagInner<'ir> {
-    variables: HashMap<IrId, Value<'ir>>,
+    variables: HashMap<Id, Value<'ir>>,
 }
 
 #[derive(Clone)]
@@ -784,11 +784,11 @@ impl<'ir> MallocBag<'ir> {
         }
     }
 
-    pub fn define(&self, id: IrId, value: Value<'ir>) {
+    pub fn define(&self, id: Id, value: Value<'ir>) {
         self.inner.borrow_mut().variables.insert(id, value);
     }
 
-    pub fn assign(&self, id: IrId, value: Value<'ir>) -> Option<Value<'ir>> {
+    pub fn assign(&self, id: Id, value: Value<'ir>) -> Option<Value<'ir>> {
         let mut inner = self.inner.borrow_mut();
         match inner.variables.entry(id) {
             std::collections::hash_map::Entry::Occupied(mut val) => Some(val.insert(value)),
@@ -796,11 +796,11 @@ impl<'ir> MallocBag<'ir> {
         }
     }
 
-    pub fn free(&self, id: IrId) -> Option<Value<'ir>> {
+    pub fn free(&self, id: Id) -> Option<Value<'ir>> {
         self.inner.borrow_mut().variables.remove(&id)
     }
 
-    pub fn get(&self, id: IrId) -> Option<Value<'ir>> {
+    pub fn get(&self, id: Id) -> Option<Value<'ir>> {
         self.inner.borrow().variables.get(&id).cloned()
     }
 }
@@ -827,22 +827,22 @@ impl<'ir> ConstEvalCtx<'ir> {
         Ok(())
     }
 
-    pub fn define(&self, id: IrId, value: Value<'ir>) {
+    pub fn define(&self, id: Id, value: Value<'ir>) {
         self.inner.borrow_mut().variables.insert(id, value);
     }
 
-    pub fn declare(&self, id: IrId, ty: TyP<'ir>) {
+    pub fn declare(&self, id: Id, ty: TyP<'ir>) {
         self.inner
             .borrow_mut()
             .variables
             .insert(id, make_uninitialized(self.ir, ty));
     }
 
-    pub fn assign(&self, id: IrId, value: Value<'ir>) {
+    pub fn assign(&self, id: Id, value: Value<'ir>) {
         self.inner.borrow_mut().variables.insert(id, value);
     }
 
-    pub fn load_var(&self, id: IrId) -> Value<'ir> {
+    pub fn load_var(&self, id: Id) -> Value<'ir> {
         *self
             .inner
             .borrow_mut()
@@ -857,7 +857,7 @@ pub struct ConstEvaluator<'ir> {
     ctx: ConstEvalCtx<'ir>,
     return_slot: Option<Value<'ir>>,
     remaining_depth: usize,
-    remapped_variables: HashMap<IrId, IrId>,
+    remapped_variables: HashMap<Id, Id>,
     types: TypeBuilder<'ir>,
     diag: DiagnosticsStack,
     codegen: bool,
@@ -872,11 +872,11 @@ impl<'ir> ConstEvaluator<'ir> {
         local_types: I,
     ) -> Self
     where
-        I: IntoIterator<Item = (IrId, TyP<'ir>)>,
+        I: IntoIterator<Item = (Id, TyP<'ir>)>,
     {
         let ctx = ConstEvalCtx::new(global_ctx, ir, malloc_bag);
-        for (id, typ) in local_types {
-            ctx.declare(id, typ);
+        for (id, ty) in local_types {
+            ctx.declare(id, ty);
         }
 
         Self {
@@ -899,14 +899,14 @@ impl<'ir> ConstEvaluator<'ir> {
         local_types: I,
     ) -> Self
     where
-        I: IntoIterator<Item = (IrId, TyP<'ir>)>,
+        I: IntoIterator<Item = (Id, TyP<'ir>)>,
     {
         let mut ret = Self::new(global_ctx, diag, malloc_bag, ir, local_types);
         ret.codegen = true;
         ret
     }
 
-    fn make_child(&self, remapped_variables: HashMap<IrId, IrId>) -> Result<Self, AluminaError> {
+    fn make_child(&self, remapped_variables: HashMap<Id, Id>) -> Result<Self, AluminaError> {
         Ok(Self {
             ir: self.ir,
             ctx: self.ctx.clone(),
@@ -1003,14 +1003,14 @@ impl<'ir> ConstEvaluator<'ir> {
             (Value::F64(a), Ty::Builtin(BuiltinType::F32)) => Ok(Value::F32(a as f32)),
 
             (Value::FunctionPointer(id), Ty::FunctionPointer(..)) => Ok(Value::FunctionPointer(id)),
-            (Value::Pointer(value, original_typ), Ty::Pointer(_, _)) => {
-                Ok(Value::Pointer(value, original_typ))
+            (Value::Pointer(value, original_ty), Ty::Pointer(_, _)) => {
+                Ok(Value::Pointer(value, original_ty))
             }
             _ => unsupported!(self),
         }
     }
 
-    fn field(&mut self, r#struct: Value<'ir>, field: IrId) -> Result<Value<'ir>, AluminaError> {
+    fn field(&mut self, r#struct: Value<'ir>, field: Id) -> Result<Value<'ir>, AluminaError> {
         match r#struct {
             Value::LValue(lv) => Ok(Value::LValue(LValue::Field(lv.alloc_on(self.ir), field))),
             Value::Struct(fields) => Ok(fields
@@ -1064,7 +1064,7 @@ impl<'ir> ConstEvaluator<'ir> {
     }
 
     fn eval_statements(&mut self, statements: &[Statement<'ir>]) -> Result<(), AluminaError> {
-        let label_indexes: HashMap<IrId, usize> = statements
+        let label_indexes: HashMap<Id, usize> = statements
             .iter()
             .enumerate()
             .filter_map(|(i, s)| match s {
@@ -1282,8 +1282,8 @@ impl<'ir> ConstEvaluator<'ir> {
             ExprKind::Deref(value1) => {
                 let value = self.const_eval_rvalue(value1)?;
                 match value {
-                    Value::Pointer(lvalue, original_typ) => {
-                        if expr.ty != original_typ {
+                    Value::Pointer(lvalue, original_ty) => {
+                        if expr.ty != original_ty {
                             Err(ConstEvalErrorKind::IncompatiblePointer).with_backtrace(&self.diag)
                         } else {
                             Ok(Value::LValue(lvalue))
@@ -1832,7 +1832,7 @@ fn make_uninitialized<'ir>(ir: &'ir IrCtx<'ir>, ty: TyP<'ir>) -> Value<'ir> {
             Value::Tuple(ir.arena.alloc_slice_fill_iter(elems))
         }
         Ty::Item(item) => match item.get().unwrap() {
-            IRItem::StructLike(s) => {
+            Item::StructLike(s) => {
                 let fields = s.fields.iter().map(|f| {
                     let value = make_uninitialized(ir, f.ty);
                     (f.id, value)
@@ -1840,7 +1840,7 @@ fn make_uninitialized<'ir>(ir: &'ir IrCtx<'ir>, ty: TyP<'ir>) -> Value<'ir> {
 
                 Value::Struct(ir.arena.alloc_slice_fill_iter(fields))
             }
-            IRItem::Function(_) => Value::FunctionPointer(item),
+            Item::Function(_) => Value::FunctionPointer(item),
             _ => Value::Uninitialized,
         },
         _ => Value::Uninitialized,
@@ -1861,7 +1861,7 @@ pub fn make_zeroed<'ir>(ir: &'ir IrCtx<'ir>, ty: TyP<'ir>) -> Value<'ir> {
             Value::Tuple(ir.arena.alloc_slice_fill_iter(elems))
         }
         Ty::Item(item) => match item.get().unwrap() {
-            IRItem::StructLike(s) => {
+            Item::StructLike(s) => {
                 let fields = s.fields.iter().map(|f| {
                     let value = make_zeroed(ir, f.ty);
                     (f.id, value)
@@ -1869,8 +1869,8 @@ pub fn make_zeroed<'ir>(ir: &'ir IrCtx<'ir>, ty: TyP<'ir>) -> Value<'ir> {
 
                 Value::Struct(ir.arena.alloc_slice_fill_iter(fields))
             }
-            IRItem::Enum(e) => make_zeroed(ir, e.underlying_type),
-            IRItem::Closure(c) => {
+            Item::Enum(e) => make_zeroed(ir, e.underlying_type),
+            Item::Closure(c) => {
                 let fields = c.data.fields.iter().map(|f| (f.id, make_zeroed(ir, f.ty)));
 
                 Value::Struct(ir.arena.alloc_slice_fill_iter(fields))

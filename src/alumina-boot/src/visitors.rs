@@ -2,8 +2,7 @@ use std::path::PathBuf;
 
 use crate::ast::expressions::parse_string_literal;
 use crate::ast::{
-    AstCtx, AstMetadata, Attribute, CustomAttribute, CustomAttributeValue, ItemP, Lit, MacroCtx,
-    Span,
+    AstCtx, Attribute, CustomAttribute, CustomAttributeValue, ItemP, Lit, MacroCtx, Metadatum, Span,
 };
 use crate::common::{
     AluminaError, ArenaAllocatable, CodeDiagnostic, CodeError, Marker, WithSpanDuringParsing,
@@ -306,9 +305,9 @@ impl<'ast, 'src> AttributeVisitor<'ast, 'src> {
 
     fn finalize(&mut self, node: tree_sitter::Node<'src>) -> Result<(), AluminaError> {
         if let Some(item) = self.item {
-            self.ast.add_metadata(
+            self.ast.add_metadatum(
                 item,
-                AstMetadata {
+                Metadatum {
                     attributes: self.attributes.clone(),
                     path: self.scope.path(),
                     name: Path::from(PathSegment(

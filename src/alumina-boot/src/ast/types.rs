@@ -88,8 +88,8 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
                         .with_span_from(&self.scope, node)
                 }
             },
-            ItemResolution::Defered(typ, name) => self.ast.intern_type(Ty::Defered(Defered {
-                ty: self.ast.intern_type(typ),
+            ItemResolution::Defered(ty, name) => self.ast.intern_type(Ty::Defered(Defered {
+                ty: self.ast.intern_type(ty),
                 name: name.0,
             })),
         };

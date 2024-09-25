@@ -1,7 +1,7 @@
 use crate::ast::{Attribute, BuiltinType};
 use crate::common::{CodeDiagnostic, CycleGuardian};
 use crate::global_ctx::GlobalCtx;
-use crate::ir::{IRItem, IRItemP, Ty, TyP};
+use crate::ir::{Item, ItemP, Ty, TyP};
 
 use super::Closure;
 
@@ -66,7 +66,7 @@ type FieldLayout<T> = (Layout, Vec<(Option<T>, Layout)>);
 
 pub struct Layouter<'ir> {
     pointer_width: PointerWidth,
-    cycle_guardian: CycleGuardian<IRItemP<'ir>>,
+    cycle_guardian: CycleGuardian<ItemP<'ir>>,
 }
 
 impl<'ir> Layouter<'ir> {
@@ -179,14 +179,14 @@ impl<'ir> Layouter<'ir> {
         Ok((Layout::new(final_size, align), result))
     }
 
-    pub fn layout_of_item(&self, item: IRItemP<'ir>) -> Result<Layout, CodeDiagnostic> {
+    pub fn layout_of_item(&self, item: ItemP<'ir>) -> Result<Layout, CodeDiagnostic> {
         let _guard = self
             .cycle_guardian
             .guard(item)
             .map_err(|_| CodeDiagnostic::TypeWithInfiniteSize)?;
 
         let ret = match item.get()? {
-            IRItem::StructLike(s) | IRItem::Closure(Closure { data: s, .. }) => {
+            Item::StructLike(s) | Item::Closure(Closure { data: s, .. }) => {
                 let mut custom_align = None;
                 let mut is_packed = false;
 
@@ -208,9 +208,9 @@ impl<'ir> Layouter<'ir> {
                     s.fields.iter().map(|f| f.ty),
                 )?
             }
-            IRItem::Alias(i) => self.layout_of(i)?,
-            IRItem::Enum(e) => self.layout_of(e.underlying_type)?,
-            IRItem::Protocol(_) | IRItem::Function(_) | IRItem::Static(_) | IRItem::Const(_) => {
+            Item::Alias(i) => self.layout_of(i)?,
+            Item::Enum(e) => self.layout_of(e.underlying_type)?,
+            Item::Protocol(_) | Item::Function(_) | Item::Static(_) | Item::Const(_) => {
                 Layout::default_zst()
             }
         };

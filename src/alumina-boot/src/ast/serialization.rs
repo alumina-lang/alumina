@@ -23,7 +23,7 @@ use crate::{
 
 use thiserror::Error;
 
-use super::{lang::LangItemKind, AstId, AstMetadata, Item, ItemP};
+use super::{lang::LangItemKind, Id, Item, ItemP, Metadatum};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -415,9 +415,9 @@ impl<'ast, W: Write> AstSerializer<'ast, W> {
 }
 
 struct DeserializeContextInner<'ast> {
-    ast_id_map: HashMap<AstId, AstId>,
+    ast_id_map: HashMap<Id, Id>,
     file_id_map: HashMap<FileId, FileId>,
-    cell_map: HashMap<AstId, ItemP<'ast>>,
+    cell_map: HashMap<Id, ItemP<'ast>>,
 }
 
 #[derive(Clone)]
@@ -440,7 +440,7 @@ impl<'ast> DeserializeContext<'ast> {
         }
     }
 
-    pub fn map_ast_id(&self, id: crate::ast::AstId) -> crate::ast::AstId {
+    pub fn map_ast_id(&self, id: crate::ast::Id) -> crate::ast::Id {
         let mut inner = self.inner.borrow_mut();
         *inner
             .ast_id_map
@@ -456,7 +456,7 @@ impl<'ast> DeserializeContext<'ast> {
             .or_insert_with(|| self.global_ctx.diag().make_file_id())
     }
 
-    pub fn get_cell(&self, id: crate::ast::AstId) -> &'ast crate::ast::ItemCell<'ast> {
+    pub fn get_cell(&self, id: crate::ast::Id) -> &'ast crate::ast::ItemCell<'ast> {
         let mut inner = self.inner.borrow_mut();
 
         inner
@@ -740,16 +740,16 @@ impl<'ast> AstSaver<'ast> {
             lang_item.id.serialize(&mut serializer)?;
         }
 
-        let test_metadatas = self.ast.metadata.borrow();
-        let test_metadatas: Vec<_> = test_metadatas
+        let metadata = self.ast.metadata.borrow();
+        let metadata: Vec<_> = metadata
             .iter()
             .filter(|(item, _)| defined_ids.contains(&item.id))
             .collect();
 
-        serializer.write_usize(test_metadatas.len())?;
-        for (item, test_metadata) in test_metadatas {
+        serializer.write_usize(metadata.len())?;
+        for (item, metadatum) in metadata {
             item.serialize(&mut serializer)?;
-            test_metadata.serialize(&mut serializer)?;
+            metadatum.serialize(&mut serializer)?;
         }
 
         self.global_ctx
@@ -837,7 +837,7 @@ impl<'ast> AstLoader<'ast> {
 
         let num_items = deserializer.read_usize()?;
         for _ in 0..num_items {
-            let id = AstId::deserialize(&mut deserializer)?;
+            let id = Id::deserialize(&mut deserializer)?;
             let contents = OnceCell::<Item>::deserialize(&mut deserializer)?;
 
             if let Some(contents) = contents.into_inner() {
@@ -847,7 +847,7 @@ impl<'ast> AstLoader<'ast> {
 
         let num_local_names = deserializer.read_usize()?;
         for _ in 0..num_local_names {
-            let id = AstId::deserialize(&mut deserializer)?;
+            let id = Id::deserialize(&mut deserializer)?;
             let name = <&'ast str as AstSerializable<'ast>>::deserialize(&mut deserializer)?;
 
             self.ast.add_local_name(id, name);
@@ -864,18 +864,18 @@ impl<'ast> AstLoader<'ast> {
         let num_lang_items = deserializer.read_usize()?;
         for _ in 0..num_lang_items {
             let kind = LangItemKind::deserialize(&mut deserializer)?;
-            let id = AstId::deserialize(&mut deserializer)?;
+            let id = Id::deserialize(&mut deserializer)?;
 
             self.ast.add_lang_item(kind, self.context.get_cell(id))
         }
 
-        let num_test_metadatas = deserializer.read_usize()?;
-        for _ in 0..num_test_metadatas {
-            let item = AstId::deserialize(&mut deserializer)?;
-            let test_metadata = AstMetadata::deserialize(&mut deserializer)?;
+        let num_metadata = deserializer.read_usize()?;
+        for _ in 0..num_metadata {
+            let item = Id::deserialize(&mut deserializer)?;
+            let metadatum = Metadatum::deserialize(&mut deserializer)?;
 
             self.ast
-                .add_metadata(self.context.get_cell(item), test_metadata);
+                .add_metadatum(self.context.get_cell(item), metadatum);
         }
 
         let overrides: Vec<Override> = Vec::deserialize(&mut deserializer)?;

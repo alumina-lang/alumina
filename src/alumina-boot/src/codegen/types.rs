@@ -1,7 +1,7 @@
 use crate::ast::{Attribute, BuiltinType};
 use crate::codegen::{w, CName, CodegenCtx};
 use crate::common::{AluminaError, CodeErrorBuilder, HashSet};
-use crate::ir::{Closure, IRItem, Ty, TyP};
+use crate::ir::{Closure, Item, Ty, TyP};
 
 use std::cell::RefCell;
 use std::fmt::Write;
@@ -124,7 +124,7 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                 self.needs_body.insert(ty);
             }
             Ty::Item(item) => match item.get().unwrap() {
-                IRItem::StructLike(s) | IRItem::Closure(Closure { data: s, .. }) => {
+                Item::StructLike(s) | Item::Closure(Closure { data: s, .. }) => {
                     if ty.is_zero_sized() {
                         return Ok(());
                     }
@@ -152,7 +152,7 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                         }
                     }
                 }
-                IRItem::Enum(s) if !body_only => {
+                Item::Enum(s) if !body_only => {
                     self.add_type(s.underlying_type, false)?;
                     self.ctx
                         .register_type(ty, self.ctx.get_type(s.underlying_type));
@@ -228,7 +228,7 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                 w!(self.type_bodies, "}};\n");
             }
             Ty::Item(item) => match item.get().unwrap() {
-                IRItem::StructLike(s) | IRItem::Closure(Closure { data: s, .. }) => {
+                Item::StructLike(s) | Item::Closure(Closure { data: s, .. }) => {
                     let name = self.ctx.get_type(ty);
 
                     for f in s.fields.iter().filter(|f| !f.ty.is_zero_sized()) {
