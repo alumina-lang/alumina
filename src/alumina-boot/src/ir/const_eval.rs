@@ -1232,7 +1232,7 @@ impl<'ir> ConstEvaluator<'ir> {
         self.ctx.step().with_backtrace(&self.diag)?;
 
         match &expr.kind {
-            ExprKind::Void => Ok(Value::Void),
+            ExprKind::Nop => Ok(Value::Void),
             ExprKind::Binary(op, lhs_e, rhs_e) => {
                 let lhs = self.const_eval_rvalue(lhs_e)?;
 
@@ -1300,8 +1300,7 @@ impl<'ir> ConstEvaluator<'ir> {
                     _ => unsupported!(self),
                 }
             }
-            ExprKind::Literal(value) => Ok(*value),
-            ExprKind::Const(item) => Ok(Value::LValue(LValue::Const(item))),
+            ExprKind::Lit(value) => Ok(*value),
             ExprKind::Cast(inner) => self.cast(inner, expr.ty),
             ExprKind::If(cond, then, els, _) => {
                 let condv = self.const_eval_rvalue(cond)?;
@@ -1518,7 +1517,11 @@ impl<'ir> ConstEvaluator<'ir> {
                     }
                 }
             },
-            ExprKind::Fn(item) => Ok(Value::FunctionPointer(item)),
+            ExprKind::Item(item) => match item.get() {
+                Ok(Item::Function(_)) => Ok(Value::FunctionPointer(item)),
+                Ok(Item::Const(_)) => Ok(Value::LValue(LValue::Const(item))),
+                _ => unsupported!(self),
+            },
             ExprKind::Return(value) => {
                 self.return_slot = Some(self.const_eval_rvalue(value)?);
                 Err(ConstEvalErrorKind::Return).with_backtrace(&self.diag)
@@ -1580,8 +1583,6 @@ impl<'ir> ConstEvaluator<'ir> {
                 };
                 ret
             }
-
-            ExprKind::Static(_) => unsupported!(self),
             ExprKind::Unreachable => {
                 Err(ConstEvalErrorKind::ToReachTheUnreachableStar).with_backtrace(&self.diag)
             }

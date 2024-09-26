@@ -573,7 +573,6 @@ pub enum ExprKind<'ir> {
     Binary(BinOp, ExprP<'ir>, ExprP<'ir>),
     AssignOp(BinOp, ExprP<'ir>, ExprP<'ir>),
     Call(ExprP<'ir>, &'ir [ExprP<'ir>]),
-    Fn(ItemP<'ir>),
     Ref(ExprP<'ir>),
     Deref(ExprP<'ir>),
     Return(ExprP<'ir>),
@@ -582,23 +581,19 @@ pub enum ExprKind<'ir> {
     Assign(ExprP<'ir>, ExprP<'ir>),
     Index(ExprP<'ir>, ExprP<'ir>),
     Local(Id),
-    Static(ItemP<'ir>),
-    Const(ItemP<'ir>),
-    Literal(const_eval::Value<'ir>),
+    Item(ItemP<'ir>),
+    Lit(const_eval::Value<'ir>),
     Field(ExprP<'ir>, Id),
     TupleIndex(ExprP<'ir>, usize),
     If(ExprP<'ir>, ExprP<'ir>, ExprP<'ir>, Option<bool>),
     Cast(ExprP<'ir>),
     Tag(&'ir str, ExprP<'ir>),
-
     Intrinsic(IntrinsicValueKind<'ir>),
-
     Array(&'ir [ExprP<'ir>]),
     Tuple(&'ir [TupleInit<'ir>]),
     Struct(&'ir [StructInit<'ir>]),
-
     Unreachable,
-    Void,
+    Nop,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash, Copy)]
@@ -655,7 +650,7 @@ impl<'ir> Expr<'ir> {
     }
 
     pub fn is_void(&self) -> bool {
-        matches!(self.kind, ExprKind::Void | ExprKind::Literal(Value::Void))
+        matches!(self.kind, ExprKind::Nop | ExprKind::Lit(Value::Void))
     }
 
     pub fn is_unreachable(&self) -> bool {
@@ -678,12 +673,10 @@ impl<'ir> Expr<'ir> {
             ExprKind::Tuple(inner) => inner.iter().all(|e| e.value.pure()),
             ExprKind::Struct(inner) => inner.iter().all(|e| e.value.pure()),
 
-            ExprKind::Fn(_) => true,
+            ExprKind::Item(_) => true,
             ExprKind::Local(_) => true,
-            ExprKind::Static(_) => true,
-            ExprKind::Const(_) => true,
-            ExprKind::Literal(_) => true,
-            ExprKind::Void => true,
+            ExprKind::Lit(_) => true,
+            ExprKind::Nop => true,
 
             ExprKind::Intrinsic(ref kind) => match kind {
                 IntrinsicValueKind::Transmute(inner) => inner.pure(),
@@ -772,7 +765,7 @@ pub trait ExpressionVisitor<'ir>: Sized {
         Ok(())
     }
 
-    fn visit_fn(&mut self, _item: ItemP<'ir>) -> Result<(), AluminaError> {
+    fn visit_item(&mut self, _item: ItemP<'ir>) -> Result<(), AluminaError> {
         Ok(())
     }
 
@@ -807,14 +800,6 @@ pub trait ExpressionVisitor<'ir>: Sized {
     }
 
     fn visit_local(&mut self, _id: Id) -> Result<(), AluminaError> {
-        Ok(())
-    }
-
-    fn visit_static(&mut self, _item: ItemP<'ir>) -> Result<(), AluminaError> {
-        Ok(())
-    }
-
-    fn visit_const(&mut self, _item: ItemP<'ir>) -> Result<(), AluminaError> {
         Ok(())
     }
 
@@ -901,7 +886,6 @@ pub fn default_visit_expr<'ir, V: ExpressionVisitor<'ir>>(
         ExprKind::Binary(op, a, b) => visitor.visit_binary(*op, a, b),
         ExprKind::AssignOp(op, lhs, rhs) => visitor.visit_assign_op(*op, lhs, rhs),
         ExprKind::Call(callee, args) => visitor.visit_call(callee, args),
-        ExprKind::Fn(item) => visitor.visit_fn(item),
         ExprKind::Ref(inner) => visitor.visit_ref(inner),
         ExprKind::Deref(inner) => visitor.visit_deref(inner),
         ExprKind::Return(expr) => visitor.visit_return(expr),
@@ -910,9 +894,8 @@ pub fn default_visit_expr<'ir, V: ExpressionVisitor<'ir>>(
         ExprKind::Assign(lhs, rhs) => visitor.visit_assign(lhs, rhs),
         ExprKind::Index(lhs, rhs) => visitor.visit_index(lhs, rhs),
         ExprKind::Local(id) => visitor.visit_local(*id),
-        ExprKind::Static(item) => visitor.visit_static(item),
-        ExprKind::Const(item) => visitor.visit_const(item),
-        ExprKind::Literal(value) => visitor.visit_literal(value),
+        ExprKind::Item(item) => visitor.visit_item(item),
+        ExprKind::Lit(value) => visitor.visit_literal(value),
         ExprKind::Field(expr, id) => visitor.visit_field(expr, *id),
         ExprKind::TupleIndex(expr, index) => visitor.visit_tuple_index(expr, *index),
         ExprKind::If(cond, then, els, const_cond) => visitor.visit_if(cond, then, els, *const_cond),
@@ -922,7 +905,7 @@ pub fn default_visit_expr<'ir, V: ExpressionVisitor<'ir>>(
         ExprKind::Tuple(exprs) => visitor.visit_tuple(exprs),
         ExprKind::Struct(exprs) => visitor.visit_struct(exprs),
         ExprKind::Unreachable => visitor.visit_unreachable(),
-        ExprKind::Void => visitor.visit_void(),
+        ExprKind::Nop => visitor.visit_void(),
         ExprKind::Tag(tag, inner) => visitor.visit_tag(tag, inner),
     }
 }

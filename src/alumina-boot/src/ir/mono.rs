@@ -4592,7 +4592,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         I::IntoIter: ExactSizeIterator,
     {
         match callee.kind {
-            ir::ExprKind::Fn(item) => {
+            ir::ExprKind::Item(item) => {
                 let func = item.get_function().with_backtrace(&self.diag)?;
                 if func
                     .attributes

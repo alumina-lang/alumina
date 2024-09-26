@@ -84,10 +84,10 @@ impl<'ir> ZstElider<'ir> {
                 self.used_ids.insert(id);
                 expr
             }
-            ExprKind::Static(_) | ExprKind::Const(_) if expr.ty.is_zero_sized() => {
+            ExprKind::Item(_) if expr.ty.is_zero_sized() => {
                 builder.void(expr.ty, expr.value_type, expr.span)
             }
-            ExprKind::Static(_) | ExprKind::Const(_) => expr,
+            ExprKind::Item(_) => expr,
             ExprKind::Assign(l, r) if l.ty.is_zero_sized() => {
                 let l = self.elide_zst_expr(l)?;
                 let r = self.elide_zst_expr(r)?;
@@ -361,8 +361,7 @@ impl<'ir> ZstElider<'ir> {
             ExprKind::Field(lhs, id) => {
                 builder.field(self.elide_zst_expr(lhs)?, id, expr.ty, expr.span)
             }
-            ExprKind::Fn(_) => expr,
-            ExprKind::Literal(v) => match v {
+            ExprKind::Lit(v) => match v {
                 Value::Array(elems) => {
                     let element_type = match expr.ty {
                         Ty::Array(ty, _) => ty,
@@ -428,6 +427,9 @@ impl<'ir> ZstElider<'ir> {
                         expr.span,
                     )
                 }
+                Value::FunctionPointer(item) => {
+                    builder.cast(builder.function(item, expr.span), expr.ty, expr.span)
+                }
                 Value::Uninitialized if expr.ty.is_zero_sized() => {
                     builder.void(expr.ty, ValueType::RValue, expr.span)
                 }
@@ -436,10 +438,11 @@ impl<'ir> ZstElider<'ir> {
                     self.elide_zst_expr(builder.r#ref(lvalue_expr, expr.span))?
                 }
                 Value::Void => builder.void(expr.ty, ValueType::RValue, expr.span),
+
                 _ => expr,
             },
             ExprKind::Unreachable => expr,
-            ExprKind::Void => expr,
+            ExprKind::Nop => expr,
             ExprKind::Intrinsic(ref kind) => match kind {
                 IntrinsicValueKind::Uninitialized if expr.ty.is_zero_sized() => {
                     builder.void(expr.ty, ValueType::RValue, expr.span)

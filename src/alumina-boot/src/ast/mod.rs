@@ -808,7 +808,7 @@ impl BinOp {
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AstSerializable)]
 pub enum Inline {
-    Inline,
+    Default,
     Never,
     Always,
     DuringMono,
@@ -817,7 +817,7 @@ pub enum Inline {
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AstSerializable)]
 pub enum Diagnostic {
-    MustUse
+    MustUse,
 }
 
 #[allow(clippy::large_enum_variant)]

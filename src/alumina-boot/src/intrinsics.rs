@@ -43,7 +43,7 @@ pub enum IntrinsicKind {
     StopIteration,
     ModulePath,
     HasAttribute,
-    ValueOf
+    ValueOf,
 }
 
 pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {

@@ -40,7 +40,10 @@ pub fn write_function_signature<'ir, 'gen>(
         "__attribute__((always_inline)) inline ".to_string()
     } else if item.attributes.contains(&Attribute::Inline(Inline::Never)) {
         "__attribute__((noinline)) ".to_string()
-    } else if item.attributes.contains(&Attribute::Inline(Inline::Inline)) {
+    } else if item
+        .attributes
+        .contains(&Attribute::Inline(Inline::Default))
+    {
         is_inline = true;
         "inline ".to_string()
     } else if item.attributes.contains(&Attribute::StaticConstructor) {
@@ -404,7 +407,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             ExprKind::Local(id) => {
                 w!(self.fn_bodies, "{}", self.ctx.get_name(*id));
             }
-            ExprKind::Static(item) | ExprKind::Const(item) | ExprKind::Fn(item) => {
+            ExprKind::Item(item) => {
                 w!(self.fn_bodies, "{}", self.ctx.get_name(item.id));
             }
             ExprKind::Block(stmts, ret) => {
@@ -431,17 +434,9 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                     w!(self.fn_bodies, "}})");
                 }
             }
-            ExprKind::Literal(v) => match v {
+            ExprKind::Lit(v) => match v {
                 Value::Bytes(val, offset) => {
                     self.write_string_literal(&val[*offset..]);
-                }
-                Value::FunctionPointer(item) => {
-                    w!(
-                        self.fn_bodies,
-                        "({}){}",
-                        self.ctx.get_type(expr.ty),
-                        self.ctx.get_name(item.id)
-                    );
                 }
                 _ => {
                     self.type_writer.add_type(expr.ty)?;
@@ -633,7 +628,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             ExprKind::Tag(_tag, value) => {
                 self.write_expr(diag, value, false)?;
             }
-            ExprKind::Void => {}
+            ExprKind::Nop => {}
         }
 
         if bare_block {

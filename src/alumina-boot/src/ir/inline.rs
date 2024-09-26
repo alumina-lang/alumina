@@ -225,12 +225,7 @@ impl<'ir> IrInliner<'ir> {
                 }
                 .alloc_on(self.ir),
             },
-            ExprKind::Fn(_)
-            | ExprKind::Static(_)
-            | ExprKind::Const(_)
-            | ExprKind::Literal(_)
-            | ExprKind::Unreachable
-            | ExprKind::Void => {
+            ExprKind::Item(_) | ExprKind::Lit(_) | ExprKind::Unreachable | ExprKind::Nop => {
                 // Just replace span
                 Expr {
                     is_const: expr.is_const,

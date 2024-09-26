@@ -2,7 +2,8 @@ use std::path::PathBuf;
 
 use crate::ast::expressions::parse_string_literal;
 use crate::ast::{
-    AstCtx, Attribute, CustomAttribute, CustomAttributeValue, Diagnostic, Inline, ItemP, Lit, MacroCtx, Metadatum, Span
+    AstCtx, Attribute, CustomAttribute, CustomAttributeValue, Diagnostic, Inline, ItemP, Lit,
+    MacroCtx, Metadatum, Span,
 };
 use crate::common::{
     AluminaError, ArenaAllocatable, CodeDiagnostic, CodeError, Marker, WithSpanDuringParsing,
@@ -533,7 +534,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     Some("always") => Inline::Always,
                     Some("never") => Inline::Never,
                     Some("ir") => Inline::DuringMono,
-                    None => Inline::Inline,
+                    None => Inline::Default,
                     _ => {
                         return Err(CodeDiagnostic::InvalidAttribute)
                             .with_span_from(&self.scope, node)
@@ -603,7 +604,8 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
             }
             "diag::must_use" => {
                 check_duplicate!(Attribute::Diagnostic(Diagnostic::MustUse));
-                self.attributes.push(Attribute::Diagnostic(Diagnostic::MustUse));
+                self.attributes
+                    .push(Attribute::Diagnostic(Diagnostic::MustUse));
             }
             "diag::hide_from_backtrace" => {
                 let enclosing_span = Span::from_node(self.scope.file_id(), self.applies_to_node);

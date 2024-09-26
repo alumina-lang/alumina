@@ -18,16 +18,14 @@ impl<'ir> ExpressionBuilder<'ir> {
     }
 
     pub fn static_var(&self, item: ItemP<'ir>, ty: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
-        Expr::lvalue(ExprKind::Static(item), ty, span).alloc_on(self.ir)
+        Expr::lvalue(ExprKind::Item(item), ty, span).alloc_on(self.ir)
     }
 
     pub fn const_var(&self, item: ItemP<'ir>, ty: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
-        Expr::const_lvalue(ExprKind::Const(item), ty, span).alloc_on(self.ir)
+        Expr::const_lvalue(ExprKind::Item(item), ty, span).alloc_on(self.ir)
     }
 
-    #[allow(clippy::only_used_in_recursion)]
     fn fill_block(
-        &self,
         target: &mut Vec<Statement<'ir>>,
         iter: impl IntoIterator<Item = Statement<'ir>>,
     ) -> Result<(), ExprP<'ir>> {
@@ -56,7 +54,7 @@ impl<'ir> ExpressionBuilder<'ir> {
                     kind: Block(stmts, ret),
                     ..
                 })) => {
-                    self.fill_block(target, stmts.iter().cloned())?;
+                    Self::fill_block(target, stmts.iter().cloned())?;
                     target.push(Expression(ret))
                 }
                 Some(Expression(expr)) if expr.pure() => {}
@@ -76,7 +74,7 @@ impl<'ir> ExpressionBuilder<'ir> {
     ) -> ExprP<'ir> {
         let mut merged = Vec::new();
 
-        let ret = match self.fill_block(&mut merged, statements) {
+        let ret = match Self::fill_block(&mut merged, statements) {
             Ok(()) => ret,
             Err(expr) => expr,
         };
@@ -239,7 +237,7 @@ impl<'ir> ExpressionBuilder<'ir> {
 
     pub fn void(&self, ty: TyP<'ir>, value_type: ValueType, span: Option<Span>) -> ExprP<'ir> {
         Expr {
-            kind: ExprKind::Void,
+            kind: ExprKind::Nop,
             value_type,
             is_const: true,
             ty,
@@ -250,7 +248,7 @@ impl<'ir> ExpressionBuilder<'ir> {
 
     pub fn function(&self, item: ItemP<'ir>, span: Option<Span>) -> ExprP<'ir> {
         Expr::const_lvalue(
-            ExprKind::Fn(item),
+            ExprKind::Item(item),
             self.ir.intern_type(Ty::Item(item)),
             span,
         )
@@ -306,7 +304,7 @@ impl<'ir> ExpressionBuilder<'ir> {
 
     pub fn literal(&self, val: Value<'ir>, ty: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
         let expr = Expr {
-            kind: ExprKind::Literal(val),
+            kind: ExprKind::Lit(val),
             value_type: ValueType::RValue,
             is_const: true,
             ty,

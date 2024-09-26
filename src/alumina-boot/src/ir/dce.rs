@@ -113,7 +113,7 @@ impl<'ir> DeadCodeEliminator<'ir> {
 
             // Should be inlined
             Item::Alias(_) => unreachable!(),
-            Item::Protocol(_) => {},
+            Item::Protocol(_) => {}
         }
 
         Ok(())
@@ -141,15 +141,7 @@ impl<'ir> ExpressionVisitor<'ir> for DeadCodeEliminator<'ir> {
         default_visit_expr(self, expr)
     }
 
-    fn visit_static(&mut self, item: ItemP<'ir>) -> Result<(), AluminaError> {
-        self.visit_item(item)
-    }
-
-    fn visit_const(&mut self, item: ItemP<'ir>) -> Result<(), AluminaError> {
-        self.visit_item(item)
-    }
-
-    fn visit_fn(&mut self, item: ItemP<'ir>) -> Result<(), AluminaError> {
+    fn visit_item(&mut self, item: ItemP<'ir>) -> Result<(), AluminaError> {
         self.visit_item(item)
     }
 
