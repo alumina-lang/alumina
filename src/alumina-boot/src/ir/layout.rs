@@ -209,7 +209,7 @@ impl<'ir> Layouter<'ir> {
                 )?
             }
             Item::Alias(i) => self.layout_of(i)?,
-            Item::Enum(e) => self.layout_of(e.underlying_type)?,
+            Item::Enum(e) => self.layout_of(e.underlying_ty)?,
             Item::Protocol(_) | Item::Function(_) | Item::Static(_) | Item::Const(_) => {
                 Layout::default_zst()
             }

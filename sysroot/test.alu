@@ -1,3 +1,6 @@
+#![cfg(all(test, not(custom_test_framework)))]
+#![cfg_attr(not(test_std), diag::hide_from_backtrace)]
+
 //! Minimal unit test runner
 //!
 //! When `--cfg test` is provided as an argument to the compiler, this module will override
@@ -48,339 +51,336 @@
 //! `--cfg custom_test_framework` and use the test support glue in [std::runtime] to get the test
 //! cases.
 
-#[cfg(all(test, not(custom_test_framework)))]
-{
-    /// Test case metadata
-    struct TestCaseMeta {
-        path: &[u8],
-        name: &[u8],
-        test: fn(),
+/// Test case metadata
+struct TestCaseMeta {
+    path: &[u8],
+    name: &[u8],
+    test: fn(),
 
-        /// Whether this test is expected to fail
-        should_fail: bool,
-        // Whether this test is ignored
-        ignore: bool
+    /// Whether this test is expected to fail
+    should_fail: bool,
+    // Whether this test is ignored
+    ignore: bool
+}
+
+/// List of test cases
+const TEST_CASES = {
+    use std::typing::type_of;
+    use std::intrinsics::{attributed, has_attribute};
+
+    const cases = attributed::<()>("test");
+
+    let ret: [TestCaseMeta; cases.len()];
+    for const idx in 0usize..cases.len() {
+        let desc = cases.(idx);
+        ret[idx] = TestCaseMeta {
+            path: desc.module_path().unwrap_or(""),
+            name: desc.name().unwrap_or(""),
+            test: desc.as_fn(),
+            should_fail: has_attribute::<type_of<typeof(desc)>>("test::should_fail"),
+            ignore: has_attribute::<type_of<typeof(desc)>>("test::ignore")
+        };
+    }
+    ret
+};
+
+use std::process::{Stdio, Forked, ExitStatus};
+use std::collections::Vector;
+use std::cmp::sort_by_key;
+use std::string::{split, StringBuf};
+use std::time::{Instant, Duration};
+
+/// Holder for the results of a test case.
+struct TestResult {
+    test: TestCaseMeta,
+    duration: Duration,
+    success: bool,
+    stdout: StringBuf,
+    stderr: StringBuf,
+    status: ExitStatus
+}
+
+impl TestResult {
+    fn free(self: &mut TestResult) {
+        self.stdout.free();
+        self.stderr.free();
+    }
+}
+
+/// Run a single test case in a forked process and collect output.
+fn run(test: &TestCaseMeta) -> TestResult {
+    let start_time = Instant::now();
+    let child = Forked::new()
+        .stdin(Stdio::Null)
+        .stdout(Stdio::Piped)
+        .stderr(Stdio::Piped)
+        .spawn()
+        .unwrap();
+
+    if child.is_none() {
+        test.test();
+        if test.should_fail {
+            eprintln!("note: test function completed successfully")
+        }
+        process::exit(0);
     }
 
-    /// List of test cases
-    const TEST_CASES = {
-        use std::typing::type_of;
-        use std::intrinsics::{attributed, has_attribute};
+    let child = child.unwrap();
+    let output = child.wait_with_output().unwrap();
+    let end_time = Instant::now();
 
-        const cases = attributed::<()>("test");
+    defer output.free();
 
-        let ret: [TestCaseMeta; cases.len()];
-        for const idx in 0usize..cases.len() {
-            let desc = cases.(idx);
-            ret[idx] = TestCaseMeta {
-                path: desc.module_path().unwrap_or(""),
-                name: desc.name().unwrap_or(""),
-                test: desc.as_fn(),
-                should_fail: has_attribute::<type_of<typeof(desc)>>("test::should_fail"),
-                ignore: has_attribute::<type_of<typeof(desc)>>("test::ignore")
-            };
-        }
-        ret
-    };
-
-    use std::process::{Stdio, Forked, ExitStatus};
-    use std::collections::Vector;
-    use std::cmp::sort_by_key;
-    use std::string::{split, StringBuf};
-    use std::time::{Instant, Duration};
-
-    /// Holder for the results of a test case.
-    struct TestResult {
-        test: TestCaseMeta,
-        duration: Duration,
-        success: bool,
-        stdout: StringBuf,
-        stderr: StringBuf,
-        status: ExitStatus
+    TestResult {
+        test: *test,
+        duration: end_time.duration_since(&start_time),
+        success: test.should_fail ^ (output.status.success()),
+        stdout: output.stdout.move(),
+        stderr: output.stderr.move(),
+        status: output.status
     }
+}
 
-    impl TestResult {
-        fn free(self: &mut TestResult) {
-            self.stdout.free();
-            self.stderr.free();
+/// Command line arguments for the test runner.
+struct Args {
+    prefix: Option<&[u8]>,
+    filter: Option<&[u8]>,
+    timings: bool,
+}
+
+impl Args {
+    fn default() -> Args {
+        Args {
+            prefix: Option::none(),
+            filter: Option::none(),
+            timings: false
         }
     }
+}
 
-    /// Run a single test case in a forked process and collect output.
-    fn run(test: &TestCaseMeta) -> TestResult {
-        let start_time = Instant::now();
-        let child = Forked::new()
-            .stdin(Stdio::Null)
-            .stdout(Stdio::Piped)
-            .stderr(Stdio::Piped)
-            .spawn()
-            .unwrap();
+fn print_help_string(args: &[&[u8]]) -> ! {
+    eprintln!("usage: {} [--prefix <PREFIX>] [--filter <FILTER>] [--timings]", args[0]);
+    process::exit(1);
+}
 
-        if child.is_none() {
-            test.test();
-            if test.should_fail {
-                eprintln!("note: test function completed successfully")
-            }
-            process::exit(0);
-        }
-
-        let child = child.unwrap();
-        let output = child.wait_with_output().unwrap();
-        let end_time = Instant::now();
-
-        defer output.free();
-
-        TestResult {
-            test: *test,
-            duration: end_time.duration_since(&start_time),
-            success: test.should_fail ^ (output.status.success()),
-            stdout: output.stdout.move(),
-            stderr: output.stderr.move(),
-            status: output.status
-        }
+/// Parse command line arguments.
+fn parse_args(args: &[&[u8]]) -> Args {
+    enum State {
+        Normal,
+        Prefix,
+        Filter
     }
 
-    /// Command line arguments for the test runner.
-    struct Args {
-        prefix: Option<&[u8]>,
-        filter: Option<&[u8]>,
-        timings: bool,
+    let state = State::Normal;
+    let res = Args::default();
+
+    if args.len() == 0 {
+        return res;
     }
 
-    impl Args {
-        fn default() -> Args {
-            Args {
-                prefix: Option::none(),
-                filter: Option::none(),
-                timings: false
-            }
-        }
-    }
-
-    fn print_help_string(args: &[&[u8]]) -> ! {
-        eprintln!("usage: {} [--prefix <PREFIX>] [--filter <FILTER>] [--timings]", args[0]);
-        process::exit(1);
-    }
-
-    /// Parse command line arguments.
-    fn parse_args(args: &[&[u8]]) -> Args {
-        enum State {
-            Normal,
-            Prefix,
-            Filter
-        }
-
-        let state = State::Normal;
-        let res = Args::default();
-
-        if args.len() == 0 {
-            return res;
-        }
-
-        for arg in args[1..] {
-            state = switch state {
-                State::Normal => switch arg {
-                    "--prefix", "-p" => State::Prefix,
-                    "--filter", "-f" => State::Filter,
-                    "--timings" => {
-                        res.timings = true;
-                        State::Normal
-                    },
-                    _ => print_help_string(args)
-                },
-                State::Prefix => {
-                    res.prefix = Option::some(arg);
+    for arg in args[1..] {
+        state = switch state {
+            State::Normal => switch arg {
+                "--prefix", "-p" => State::Prefix,
+                "--filter", "-f" => State::Filter,
+                "--timings" => {
+                    res.timings = true;
                     State::Normal
                 },
-                State::Filter => {
-                    res.filter = Option::some(arg);
-                    State::Normal
-                },
-                _ => unreachable!()
-            };
-        }
-
-        if state != State::Normal {
-            print_help_string(args);
-        }
-
-        res
+                _ => print_help_string(args)
+            },
+            State::Prefix => {
+                res.prefix = Option::some(arg);
+                State::Normal
+            },
+            State::Filter => {
+                res.filter = Option::some(arg);
+                State::Normal
+            },
+            _ => unreachable!()
+        };
     }
 
-    /// Filter tests based on user-provided criteria (e.g. path prefix).
-    fn filter_tests(args: Args) -> (Vector<TestCaseMeta>, usize) {
-        use string::{starts_with, contains};
-
-        let test_cases: Vector<TestCaseMeta> = Vector::new();
-        defer test_cases.free();
-
-        for test in TEST_CASES {
-            if args.prefix.is_some() && !test.path[2..].starts_with(args.prefix.unwrap()) {
-                continue
-            }
-
-            if args.filter.is_some() && !test.name.contains(args.filter.unwrap()) {
-                continue
-            }
-
-            test_cases.push(test);
-        }
-
-        test_cases
-            .as_slice_mut()
-            .sort_by_key(|m: &TestCaseMeta| -> (&[u8], &[u8]) {
-                (m.path, m.name)
-            });
-
-        let filtered_count = TEST_CASES.len() - test_cases.len();
-
-        (test_cases.move(), filtered_count)
+    if state != State::Normal {
+        print_help_string(args);
     }
 
-    /// Test runner entrypoint.
-    #[test_main]
-    fn main(args: &[&[u8]]) -> i32 {
-        use std::process::env;
+    res
+}
 
-        let args = parse_args(args);
-        let start_time = Instant::now();
+/// Filter tests based on user-provided criteria (e.g. path prefix).
+fn filter_tests(args: Args) -> (Vector<TestCaseMeta>, usize) {
+    use string::{starts_with, contains};
 
-        // https://bixense.com/clicolors/
-        let colors = (
-            env().get("CLICOLOR").unwrap_or("1") != "0"
-                && libc::isatty(libc::STDERR_FILENO) != 0
-            ) || env().get("CLICOLOR_FORCE").unwrap_or("0") != "0";
+    let test_cases: Vector<TestCaseMeta> = Vector::new();
+    defer test_cases.free();
 
-        let results: Vector<TestResult> = Vector::new();
-        defer results.free_all();
-
-        let num_failed = 0;
-        let num_passed = 0;
-        let num_ignored = 0;
-
-        let (test_cases, filtered_count) = filter_tests(args);
-        defer test_cases.free();
-
-        eprintln!("running {} tests ({} filtered out)", test_cases.len(), filtered_count);
-        for test in test_cases {
-            eprint!("test {}::{} ... ", test.path[2..], test.name);
-            #[allow(warnings)]
-            if test.ignore {
-                if colors {
-                    eprintln!("\x1b[0;33mignored\x1b[0m.");
-                } else {
-                    eprintln!("ignored.");
-                }
-                num_ignored += 1;
-                continue;
-            }
-            let result = test.run();
-            results.push(result);
-
-            let message = if result.success {
-                num_passed += 1;
-                if colors {
-                    "\x1b[0;32mok\x1b[0m"
-                } else {
-                    "ok"
-                }
-            } else {
-                num_failed += 1;
-                if colors {
-                    "\x1b[0;31mFAILED\x1b[0m"
-                } else {
-                    "FAILED"
-                }
-            };
-
-            if args.timings {
-                eprintln!("{} [{}].", message, result.duration);
-            } else {
-                eprintln!("{}.", message);
-            }
+    for test in TEST_CASES {
+        if args.prefix.is_some() && !test.path[2..].starts_with(args.prefix.unwrap()) {
+            continue
         }
 
-        let end_time = Instant::now();
-        let elapsed = end_time.duration_since(&start_time);
+        if args.filter.is_some() && !test.name.contains(args.filter.unwrap()) {
+            continue
+        }
 
-        if num_failed > 0 {
-            eprintln!("");
-            eprintln!("failures:");
-            eprintln!("");
-            for result in results {
-                if !result.success {
-                    if result.status.code().is_some() {
-                        eprintln!("{}::{} exited with code {}", result.test.path[2..], result.test.name, result.status.code().unwrap());
-                        eprintln!("");
-                    } else if result.status.signal().is_some() {
-                        eprintln!("{}::{} was killed by signal {}", result.test.path[2..], result.test.name, result.status.signal().unwrap());
-                        eprintln!("");
-                    }
-                    if result.stdout.len() > 0 {
-                        eprintln!("---- {}::{} stdout ----", result.test.path[2..], result.test.name);
-                        eprintln!("{}", result.stdout[..]);
-                        eprintln!("");
-                    }
-                    if result.stderr.len() > 0 {
-                        eprintln!("---- {}::{} stderr ----", result.test.path[2..], result.test.name);
-                        eprintln!("{}", result.stderr[..]);
-                        eprintln!("");
-                    }
-                }
-            }
+        test_cases.push(test);
+    }
+
+    test_cases
+        .as_slice_mut()
+        .sort_by_key(|m: &TestCaseMeta| -> (&[u8], &[u8]) {
+            (m.path, m.name)
+        });
+
+    let filtered_count = TEST_CASES.len() - test_cases.len();
+
+    (test_cases.move(), filtered_count)
+}
+
+/// Test runner entrypoint.
+#[test_main]
+fn main(args: &[&[u8]]) -> i32 {
+    use std::process::env;
+
+    let args = parse_args(args);
+    let start_time = Instant::now();
+
+    // https://bixense.com/clicolors/
+    let colors = (
+        env().get("CLICOLOR").unwrap_or("1") != "0"
+            && libc::isatty(libc::STDERR_FILENO) != 0
+        ) || env().get("CLICOLOR_FORCE").unwrap_or("0") != "0";
+
+    let results: Vector<TestResult> = Vector::new();
+    defer results.free_all();
+
+    let num_failed = 0;
+    let num_passed = 0;
+    let num_ignored = 0;
+
+    let (test_cases, filtered_count) = filter_tests(args);
+    defer test_cases.free();
+
+    eprintln!("running {} tests ({} filtered out)", test_cases.len(), filtered_count);
+    for test in test_cases {
+        eprint!("test {}::{} ... ", test.path[2..], test.name);
+        #[allow(warnings)]
+        if test.ignore {
             if colors {
-                eprintln!("test result: \x1b[0;31mFAILED\x1b[0m. {} passed; {} failed; {} ignored; finished in {}",
-                    num_passed,
-                    num_failed,
-                    num_ignored,
-                    elapsed
-                );
+                eprintln!("\x1b[0;33mignored\x1b[0m.");
             } else {
-                eprintln!("test result: FAILED. {} passed; {} failed; {} ignored; finished in {}",
-                    num_passed,
-                    num_failed,
-                    num_ignored,
-                    elapsed
-                );
+                eprintln!("ignored.");
             }
-            1
+            num_ignored += 1;
+            continue;
+        }
+        let result = test.run();
+        results.push(result);
+
+        let message = if result.success {
+            num_passed += 1;
+            if colors {
+                "\x1b[0;32mok\x1b[0m"
+            } else {
+                "ok"
+            }
         } else {
-            eprintln!("");
+            num_failed += 1;
             if colors {
-                eprintln!("test result: \x1b[0;32mok\x1b[0m. {} passed; {} failed; {} ignored; finished in {}",
-                    num_passed,
-                    num_failed,
-                    num_ignored,
-                    elapsed
-                );
+                "\x1b[0;31mFAILED\x1b[0m"
             } else {
-                eprintln!("test result: ok. {} passed; {} failed; {} ignored; finished in {}",
-                    num_passed,
-                    num_failed,
-                    num_ignored,
-                    elapsed
-                );
+                "FAILED"
             }
-            0
+        };
+
+        if args.timings {
+            eprintln!("{} [{}].", message, result.duration);
+        } else {
+            eprintln!("{}.", message);
         }
     }
 
+    let end_time = Instant::now();
+    let elapsed = end_time.duration_since(&start_time);
 
-    /// Quis testabitur ipsos testes
-    #[cfg(test_std)]
-    mod tests {
-        #[test]
-        fn regular_test() {
+    if num_failed > 0 {
+        eprintln!("");
+        eprintln!("failures:");
+        eprintln!("");
+        for result in results {
+            if !result.success {
+                if result.status.code().is_some() {
+                    eprintln!("{}::{} exited with code {}", result.test.path[2..], result.test.name, result.status.code().unwrap());
+                    eprintln!("");
+                } else if result.status.signal().is_some() {
+                    eprintln!("{}::{} was killed by signal {}", result.test.path[2..], result.test.name, result.status.signal().unwrap());
+                    eprintln!("");
+                }
+                if result.stdout.len() > 0 {
+                    eprintln!("---- {}::{} stdout ----", result.test.path[2..], result.test.name);
+                    eprintln!("{}", result.stdout[..]);
+                    eprintln!("");
+                }
+                if result.stderr.len() > 0 {
+                    eprintln!("---- {}::{} stderr ----", result.test.path[2..], result.test.name);
+                    eprintln!("{}", result.stderr[..]);
+                    eprintln!("");
+                }
+            }
         }
-
-        #[test]
-        #[test::ignore]
-        fn ignored_test() {}
-
-        #[test]
-        #[test::should_fail]
-        fn should_fail_test() {
-            panic!("oops")
+        if colors {
+            eprintln!("test result: \x1b[0;31mFAILED\x1b[0m. {} passed; {} failed; {} ignored; finished in {}",
+                num_passed,
+                num_failed,
+                num_ignored,
+                elapsed
+            );
+        } else {
+            eprintln!("test result: FAILED. {} passed; {} failed; {} ignored; finished in {}",
+                num_passed,
+                num_failed,
+                num_ignored,
+                elapsed
+            );
         }
+        1
+    } else {
+        eprintln!("");
+        if colors {
+            eprintln!("test result: \x1b[0;32mok\x1b[0m. {} passed; {} failed; {} ignored; finished in {}",
+                num_passed,
+                num_failed,
+                num_ignored,
+                elapsed
+            );
+        } else {
+            eprintln!("test result: ok. {} passed; {} failed; {} ignored; finished in {}",
+                num_passed,
+                num_failed,
+                num_ignored,
+                elapsed
+            );
+        }
+        0
+    }
+}
+
+
+/// Quis testabitur ipsos testes
+#[cfg(test_std)]
+mod tests {
+    #[test]
+    fn regular_test() {
+    }
+
+    #[test]
+    #[test::ignore]
+    fn ignored_test() {}
+
+    #[test]
+    #[test::should_fail]
+    fn should_fail_test() {
+        panic!("oops")
     }
 }

@@ -1441,21 +1441,26 @@ type pointer_with_mut_of<T, Ptr: Pointer>;
 #[lang(typeop_array_with_length_of)]
 type array_with_length_of<T, Arr: Array>;
 
-/// Backing type of an `enum`.
+/// Backing type of an `enum` or a `const`/`static` type.
 ///
 /// ## Example
 /// ```
 /// use std::typing::matches;
-/// use std::builtins::enum_type_of;
+/// use std::builtins::underlying_type_of;
 ///
 /// enum Foo { A, B, C }
 /// enum Bar { A = 0usize, B, C }
 ///
-/// assert!(matches::<enum_type_of<Foo>, i32>());
-/// assert!(matches::<enum_type_of<Bar>, usize>());
+/// const FOO: i32 = 42;
+/// static BAR: usize = 42;
+///
+/// assert!(matches::<underlying_type_of<Foo>, i32>());
+/// assert!(matches::<underlying_type_of<Bar>, usize>());
+/// assert!(matches::<underlying_type_of<FOO>, i32>());
+/// assert!(matches::<underlying_type_of<BAR>, usize>());
 /// ```
-#[lang(typeop_enum_type_of)]
-type enum_type_of<T: Enum>;
+#[lang(typeop_underlying_type_of)]
+type underlying_type_of<T: Enum | Static | Const>;
 
 
 /// Make a function pointer type from a tuple of arguments and the return type.
@@ -2068,7 +2073,11 @@ mod internal {
         /// ```
         #[inline]
         fn rotate_left(self: Self, n: usize) -> Self {
-            (self << n) | (self >> ((8 * mem::size_of::<Self>()) - n))
+            if n == 0 {
+                self
+            } else {
+                (self << n) | (self >> ((8 * mem::size_of::<Self>()) - n))
+            }
         }
 
         /// Rotates the bits to the right by `n` bits.
@@ -2078,7 +2087,11 @@ mod internal {
         /// ```
         #[inline]
         fn rotate_right(self: Self, n: usize) -> Self {
-            (self >> n) | (self << ((8 * mem::size_of::<Self>()) - n))
+            if n == 0 {
+                self
+            } else {
+                (self >> n) | (self << ((8 * mem::size_of::<Self>()) - n))
+            }
         }
     }
 

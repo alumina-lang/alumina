@@ -48,6 +48,7 @@ struct DiagnosticContextInner {
     file_map: HashMap<FileId, PathBuf>,
     messages: IndexSet<(Level, CodeError)>,
     location_overrides: HashMap<FileId, Vec<LocationOverride>>,
+    hidden_spans: HashSet<Span>,
     overrides: Vec<Override>,
     counter: usize,
 }
@@ -214,6 +215,7 @@ impl DiagnosticContext {
                 file_map: HashMap::default(),
                 messages: Default::default(),
                 location_overrides: Default::default(),
+                hidden_spans: Default::default(),
                 overrides: Default::default(),
                 counter: 0,
             })),
@@ -238,6 +240,10 @@ impl DiagnosticContext {
 
     pub fn add_override(&self, r#override: Override) {
         self.inner.borrow_mut().overrides.push(r#override);
+    }
+
+    pub fn add_hidden_span(&self, span: Span) {
+        self.inner.borrow_mut().hidden_spans.insert(span);
     }
 
     pub fn add_location_override(&self, span: Span, new_file: PathBuf, new_line: usize) {
@@ -459,6 +465,9 @@ impl DiagnosticContext {
 
             for marker in filtered_frames {
                 let Marker::Span(span) = marker else { continue };
+                if inner.hidden_spans.iter().any(|s| s.contains(&span)) {
+                    continue;
+                }
                 let span = self.map_span(span);
 
                 if let Some(file_name) = inner.file_map.get(&span.file) {
@@ -552,6 +561,9 @@ impl DiagnosticContext {
             let mut backtrace = vec![];
             for marker in filtered_frames {
                 let Marker::Span(span) = marker else { continue };
+                if inner.hidden_spans.iter().any(|s| s.contains(&span)) {
+                    continue;
+                }
                 let span = self.map_span(span);
 
                 if let Some(file_name) = inner.file_map.get(&span.file) {

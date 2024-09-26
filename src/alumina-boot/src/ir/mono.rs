@@ -120,19 +120,16 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
             Attribute::Cold => Attribute::Cold,
             Attribute::TestMain => Attribute::TestMain,
             Attribute::Main => Attribute::Main,
-            Attribute::Inline => Attribute::Inline,
+            Attribute::Inline(k) => Attribute::Inline(*k),
             Attribute::Align(i) => Attribute::Align(*i),
             Attribute::Packed(i) => Attribute::Packed(*i),
             Attribute::TupleCall => Attribute::TupleCall,
             Attribute::ConstOnly => Attribute::ConstOnly,
             Attribute::NoConst => Attribute::NoConst,
-            Attribute::MustUse => Attribute::MustUse,
+            Attribute::Diagnostic(k) => Attribute::Diagnostic(*k),
             Attribute::Transparent => Attribute::Transparent,
-            Attribute::NoInline => Attribute::NoInline,
             Attribute::ThreadLocal => Attribute::ThreadLocal,
             Attribute::Builtin => Attribute::Builtin,
-            Attribute::AlwaysInline => Attribute::AlwaysInline,
-            Attribute::InlineDuringMono => Attribute::InlineDuringMono,
             Attribute::Intrinsic => Attribute::Intrinsic,
             Attribute::StaticConstructor => Attribute::StaticConstructor,
             Attribute::LinkName(s) => Attribute::LinkName(s.alloc_on(self.ir)),
@@ -588,7 +585,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
 
         let res = ir::Item::Enum(ir::Enum {
             name: en.name.map(|n| n.alloc_on(child.ctx.ir)),
-            underlying_type: enum_type,
+            underlying_ty: enum_type,
             members: members.alloc_on(child.ctx.ir),
             attributes: en
                 .attributes
@@ -1537,7 +1534,8 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                 let inner = grandchild.ctx.ir.make_item();
                 inner.assign(ir::Item::Function(ir::Function {
                     name: None,
-                    attributes: [ast::Attribute::InlineDuringMono].alloc_on(grandchild.ctx.ir),
+                    attributes: [ast::Attribute::Inline(ast::Inline::DuringMono)]
+                        .alloc_on(grandchild.ctx.ir),
                     args: parameters,
                     varargs: false,
                     span: func.span,
@@ -1551,7 +1549,8 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
 
                 let body = grandchild.lower_function_body(
                     func_body,
-                    func.attributes.contains(&ast::Attribute::InlineDuringMono),
+                    func.attributes
+                        .contains(&ast::Attribute::Inline(ast::Inline::DuringMono)),
                     tuple_args_arg,
                 )?;
                 inner.get_function().unwrap().body.set(body).unwrap();
@@ -1563,7 +1562,8 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
             } else {
                 let body = child.lower_function_body(
                     func_body,
-                    func.attributes.contains(&ast::Attribute::InlineDuringMono),
+                    func.attributes
+                        .contains(&ast::Attribute::Inline(ast::Inline::DuringMono)),
                     tuple_args_arg,
                 )?;
                 item.get_function().unwrap().body.set(body).unwrap();
@@ -2042,17 +2042,38 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
     fn lower_type_for_value(&mut self, ty: ast::TyP<'ast>) -> Result<ir::TyP<'ir>, AluminaError> {
         let ty = self.lower_type_unrestricted(ty)?;
 
-        // Protocols themselves can be used as types in certain blessed scenarios (e.g. intrinsics, `dyn` object),
-        // but they don't work as proper types for values (similar to upcoming extern types).
-        // `let a: Proto;` makes no sense, even though a protocol can be used as a generic parameter to an item to
-        // ensure a unique monomorphized version for each distinct protocol.
+        // Protocols, statics, and named constants can be used as types in the context of reflection
+        // or &dyn pointers, but they do not really make sense as types for actual values. Like named
+        // function types, they are families of unit types, but unlike named function types, there's
+        // nothing useful you can do with them.
+        //
+        // This is just a warning for now, but it might be worth making it an error in the future.
+        //
+        // Consider the following example:
+        // ```
+        // const X: i32 = 42;
+        // let x: X; // What is the type of x?
+        // ```
         if let ir::Ty::Item(item) = ty {
-            if let Ok(ir::Item::Protocol(_)) = item.get() {
-                bail!(
-                    self,
-                    CodeDiagnostic::ProtocolsAreSpecialMkay(self.ctx.type_name(ty).unwrap())
-                );
-            }
+            match item.get() {
+                Ok(
+                    ir::Item::StructLike(_)
+                    | ir::Item::Enum(_)
+                    | ir::Item::Closure(_)
+                    | ir::Item::Function(_),
+                ) => {}
+                Ok(ir::Item::Protocol(_)) => self.diag.warn(
+                    CodeDiagnostic::ProtocolsAreSpecialMkay(self.ctx.type_name(ty).unwrap()),
+                ),
+                Ok(ir::Item::Static(_)) => self
+                    .diag
+                    .warn(CodeDiagnostic::InvalidTypeForValue("statics")),
+                Ok(ir::Item::Const(_)) => self
+                    .diag
+                    .warn(CodeDiagnostic::InvalidTypeForValue("named constants")),
+                Ok(ir::Item::Alias(_)) => unreachable!("aliases should have been expanded by now"),
+                Err(_) => {}
+            };
         }
 
         Ok(ty)
@@ -2205,11 +2226,20 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                     }
                 }
             }
-            Some(LangItemKind::TypeopEnumTypeOf) => {
+            Some(LangItemKind::TypeopUnderlyingTypeOf) => {
                 arg_count!(1);
                 if let ir::Ty::Item(e) = args[0] {
-                    if let Ok(e) = e.get_enum() {
-                        return Ok(Some(e.underlying_type));
+                    match e.get().with_backtrace(&self.diag)? {
+                        ir::Item::Enum(e) => {
+                            return Ok(Some(e.underlying_ty));
+                        }
+                        ir::Item::Const(c) => {
+                            return Ok(Some(c.ty));
+                        }
+                        ir::Item::Static(s) => {
+                            return Ok(Some(s.ty));
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -3234,10 +3264,9 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                 let expr = self.lower_expr(expr, None)?;
 
                 let must_use = match expr.ty {
-                    ir::Ty::Item(item) => match item.get().with_backtrace(&self.diag)? {
-                        ir::Item::StructLike(s) => s.attributes.contains(&ast::Attribute::MustUse),
-                        _ => false,
-                    },
+                    ir::Ty::Item(item) => item
+                        .attributes()
+                        .contains(&ast::Attribute::Diagnostic(ast::Diagnostic::MustUse)),
                     _ => false,
                 };
 
@@ -4508,6 +4537,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
             IntrinsicKind::StopIteration => self.stop_iteration(span),
             IntrinsicKind::ModulePath => self.module_path(generic!(0), span),
             IntrinsicKind::HasAttribute => self.has_attribute(generic!(0), arg!(0), span),
+            IntrinsicKind::ValueOf => self.value_of(generic!(0), span),
         }
     }
 
@@ -4564,7 +4594,10 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         match callee.kind {
             ir::ExprKind::Fn(item) => {
                 let func = item.get_function().with_backtrace(&self.diag)?;
-                if func.attributes.contains(&ast::Attribute::InlineDuringMono) {
+                if func
+                    .attributes
+                    .contains(&ast::Attribute::Inline(ast::Inline::DuringMono))
+                {
                     // no silent fallback to a regular function call, since the only thing that can go wrong is that
                     // the callee is not compatible with IR inlining, so this should not lead to surprises
                     let (expr, mut additional_defs) = IrInliner::inline(
@@ -6702,5 +6735,20 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
             self.types.builtin(BuiltinType::Bool),
             span,
         ))
+    }
+
+    fn value_of(
+        &mut self,
+        ty: ir::TyP<'ir>,
+        span: Option<Span>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        match ty {
+            ir::Ty::Item(item) => match item.get().with_backtrace(&self.diag)? {
+                ir::Item::Const(c) => Ok(self.exprs.const_var(item, c.ty, span)),
+                ir::Item::Static(c) => Ok(self.exprs.static_var(item, c.ty, span)),
+                _ => ice!(self.diag, "const or static expected"),
+            },
+            _ => ice!(self.diag, "const or static expected"),
+        }
     }
 }

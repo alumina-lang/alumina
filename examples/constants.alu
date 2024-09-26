@@ -7,15 +7,15 @@ const ARR = [1, 2, 3];
 const EVAL: u32 = 1 + 1;
 
 // Complex expressions with loops and function calls
-const RANDOM_NUMBERS: [i32; 20] = {
+const RANDOM_NUMBERS: [usize; 20] = {
     let rng = std::random::Pcg32 {
         state: 0xa285d44c06ab9542,
         increment: 0x71bc6da31db36d8d,
     };
 
-    let ret: [i32; 20];
+    let ret: [usize; 20];
     (0..20)
-        .map(|&rng, _: i32| -> i32 { rng.next(-10..=10) })
+        .map(|&rng, _: i32| -> usize { rng.next(0usize..=10) })
         .fill_slice(&ret);
 
     ret
@@ -53,9 +53,13 @@ fn main() {
     }
     println!("]");
 
-    // Constants can be used e.g. in array sizes
-    let arr: [i32; RANDOM_NUMBERS[5] as usize];
+    // Constants can be used e.g. in array sizes...
+    let arr: [i32; RANDOM_NUMBERS[5]];
     println!("arr.len() = {}", arr.len());
+
+    // ...or as tuple indices
+    let tup = (1, "a", true);
+    println!("{}", tup.(RANDOM_NUMBERS[5] % 3));
 
     for color in [Color::Red, Color::Green, Color::Blue] {
         println!("{}", (color as i32).hex().zero_pad(6));

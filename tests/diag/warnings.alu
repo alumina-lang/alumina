@@ -23,6 +23,11 @@ fn maybe() -> Result<(),()> {
 {}  // diag: warning(top_level_block_without_attributes): "redundant top level block (no attributes)"
 
 fn main() {
+    let _f: std::builtins::Numeric;  // diag: warning(protocols_are_special_mkay): "protocol is used as a concrete type (did you mean to use `&dyn Numeric`?)"
+    const CONST = 42;
+    static STATIC: i32 = 42;
+    let _f: CONST;  // diag: warning(invalid_type_for_value): "named constants used as a concrete type, this is probably not what you want"
+    let _f: STATIC;  // diag: warning(invalid_type_for_value): "statics used as a concrete type, this is probably not what you want"
     loop { defer {}; break; }  // diag: warning(defer_in_a_loop): "defer inside a loop: this defered statement will only be executed once"
     let f = Foo {};  // diag: warning(uninitialized_field): "field `a` is not initialized"
     let f = Bar { a: 1, b: 2 };  // diag: warning(union_initializer_override): "initializer overrides prior initialization of this union"

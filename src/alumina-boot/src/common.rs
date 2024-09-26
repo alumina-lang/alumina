@@ -275,8 +275,6 @@ pub enum CodeDiagnostic {
     BuiltinProtocolDyn,
     #[error("protocols containing generic functions can only be used as mixins")]
     MixinOnlyProtocol,
-    #[error("protocols cannot be used as concrete types (did you mean to use `&dyn {}`?)", .0)]
-    ProtocolsAreSpecialMkay(String),
     #[error("indirect `dyn` pointers are not supported")]
     IndirectDyn,
     #[error("signature of `{}` is incompatible with virtual dispatch", .0)]
@@ -322,6 +320,10 @@ pub enum CodeDiagnostic {
     TooManyLoopVars(String),
 
     // Warnings
+    #[error("protocol is used as a concrete type (did you mean to use `&dyn {}`?)", .0)]
+    ProtocolsAreSpecialMkay(String),
+    #[error("{} used as a concrete type, this is probably not what you want", .0)]
+    InvalidTypeForValue(&'static str),
     #[error("defer inside a loop: this defered statement will only be executed once")]
     DeferInALoop,
     #[error("duplicate function name {:?} (this function will shadow a previous one)", .0)]

@@ -153,9 +153,9 @@ impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
                     }
                 }
                 Item::Enum(s) if !body_only => {
-                    self.add_type(s.underlying_type, false)?;
+                    self.add_type(s.underlying_ty, false)?;
                     self.ctx
-                        .register_type(ty, self.ctx.get_type(s.underlying_type));
+                        .register_type(ty, self.ctx.get_type(s.underlying_ty));
                 }
                 _ => {}
             },

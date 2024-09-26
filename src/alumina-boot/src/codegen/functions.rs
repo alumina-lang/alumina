@@ -1,4 +1,4 @@
-use crate::ast::{Attribute, BinOp, BuiltinType, Span, UnOp};
+use crate::ast::{Attribute, BinOp, BuiltinType, Inline, Span, UnOp};
 use crate::codegen::elide_zst::ZstElider;
 use crate::codegen::types::TypeWriter;
 use crate::codegen::{w, CName, CodegenCtx};
@@ -35,12 +35,12 @@ pub fn write_function_signature<'ir, 'gen>(
     let name = ctx.get_name(id);
     let mut is_inline = false;
 
-    let mut attributes = if item.attributes.contains(&Attribute::AlwaysInline) {
+    let mut attributes = if item.attributes.contains(&Attribute::Inline(Inline::Always)) {
         is_inline = true;
         "__attribute__((always_inline)) inline ".to_string()
-    } else if item.attributes.contains(&Attribute::NoInline) {
+    } else if item.attributes.contains(&Attribute::Inline(Inline::Never)) {
         "__attribute__((noinline)) ".to_string()
-    } else if item.attributes.contains(&Attribute::Inline) {
+    } else if item.attributes.contains(&Attribute::Inline(Inline::Inline)) {
         is_inline = true;
         "inline ".to_string()
     } else if item.attributes.contains(&Attribute::StaticConstructor) {
@@ -370,9 +370,6 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 }
                 w!(self.fn_bodies, ")");
             }
-            ExprKind::Fn(fun) => {
-                w!(self.fn_bodies, "{}", self.ctx.get_name(fun.id));
-            }
             ExprKind::Ref(inner) => {
                 w!(self.fn_bodies, "(&");
                 self.write_expr(diag, inner, false)?;
@@ -407,7 +404,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             ExprKind::Local(id) => {
                 w!(self.fn_bodies, "{}", self.ctx.get_name(*id));
             }
-            ExprKind::Static(item) | ExprKind::Const(item) => {
+            ExprKind::Static(item) | ExprKind::Const(item) | ExprKind::Fn(item) => {
                 w!(self.fn_bodies, "{}", self.ctx.get_name(item.id));
             }
             ExprKind::Block(stmts, ret) => {

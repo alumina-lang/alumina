@@ -935,7 +935,7 @@ impl<'ir> ConstEvaluator<'ir> {
 
         if let Ty::Item(e) = target {
             if let Ok(e) = e.get_enum() {
-                target = e.underlying_type;
+                target = e.underlying_ty;
             }
         }
 
@@ -1869,7 +1869,7 @@ pub fn make_zeroed<'ir>(ir: &'ir IrCtx<'ir>, ty: TyP<'ir>) -> Value<'ir> {
 
                 Value::Struct(ir.arena.alloc_slice_fill_iter(fields))
             }
-            Item::Enum(e) => make_zeroed(ir, e.underlying_type),
+            Item::Enum(e) => make_zeroed(ir, e.underlying_ty),
             Item::Closure(c) => {
                 let fields = c.data.fields.iter().map(|f| (f.id, make_zeroed(ir, f.ty)));
 

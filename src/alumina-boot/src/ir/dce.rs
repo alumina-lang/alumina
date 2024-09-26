@@ -90,7 +90,7 @@ impl<'ir> DeadCodeEliminator<'ir> {
                     .transpose()?;
             }
             Item::Enum(e) => {
-                self.visit_ty(e.underlying_type)?;
+                self.visit_ty(e.underlying_ty)?;
                 for v in e.members {
                     self.visit_expr(v.value)?;
                 }
@@ -113,7 +113,7 @@ impl<'ir> DeadCodeEliminator<'ir> {
 
             // Should be inlined
             Item::Alias(_) => unreachable!(),
-            Item::Protocol(_) => unreachable!(),
+            Item::Protocol(_) => {},
         }
 
         Ok(())

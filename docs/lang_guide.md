@@ -14,7 +14,7 @@ With regards to syntax, the language is very similar to Rust and in terms of sem
   - [Other function attributes](#other-function-attributes)
 - [Constants](#constants)
 - [Statics](#statics)
-  - [Generic statics](#generic-statics)
+  - [Generic statics and constants](#generic-statics-and-constants)
   - [Thread-local statics](#thread-local-statics)
 - [Types](#types)
   - [Fixed-size arrays](#fixed-size-arrays)
@@ -43,7 +43,7 @@ With regards to syntax, the language is very similar to Rust and in terms of sem
   - [Type coercion](#type-coercion)
   - [Conditional compilation](#conditional-compilation)
   - [`typeof` type](#typeof-type)
-  - [`when` types and expressions](#when-types-and-expressions)
+  - [Reflection and specialization](#reflection-and-specialization)
   - [Unit testing](#unit-testing)
   - [Dyn pointers](#dyn-pointers)
   - [Operator overloading](#operator-overloading)
@@ -385,7 +385,7 @@ For CPU-bound code, coroutines that context-switch often are roughly an order of
     #[tuple_args]
     fn quick_hash<T: Tuple>(args: T) -> u64 {
         let hasher = DefaultHash::new();
-        args.hash(&hasher); // tuples up to certain size implement Hashable
+        args.hash(&hasher); // tuples implement Hashable
         hasher.finish()
     }
 
@@ -409,6 +409,7 @@ let arr: [u32; QUUX];
 Constant evaluation supports many of the language features, including variable assignments, loops, conditionals, function calls, etc. Functions do not have to be specifically marked as `const` or `constexpr` in order to use them in constant expressions. The following are not supported:
 
 - foreign function calls, including `libc` functions
+- coroutines
 - inline assembly and most other compiler intrinsics
 - type punning (via `transmute`, `union` or pointer casts)
     - exception: transmuting integers of same size and floating point numbers to integers and back is supported
@@ -437,7 +438,7 @@ Constant evaluation supports many of the language features, including variable a
 
 Call to `std::runtime::in_const_context` function evaluates to `true` during constant evaluation and `false` during code generation. This can be used to make functions const-compatible (e.g. by using an implementation not relying on foreign functions).
 
-There are also limits on how complex a constant expression can be. The compiler will reject constant expressions that are too complex to evaluate at compile time. The current hard-coded limits are 10000 steps and a maximum recursion depth of 100 per constant expression.
+There are also limits on how complex a constant expression can be. The compiler will reject constant expressions that are too complex to evaluate at compile time. The current hard-coded limits are 100000 steps and a maximum recursion depth of 100 per constant expression.
 
 [^1]: If you can produce UB during const-eval, please file a bug.
 
@@ -493,11 +494,13 @@ fn main() {
 }
 ```
 
-## Generic statics
+## Generic statics and constants
 
-Statics can be generic. This is seldom needed, but can be useful to create associated variables for a family of generic types or functions. Each combination of type parameters is monomorphized to a distinct variable. Generic statics cannot be `extern`.
+Statics and constants can be generic. This is seldom needed, but can be useful to create associated variables for a family of generic types or functions. Each combination of type parameters is monomorphized to a distinct variable. Generic statics cannot be `extern`.
 
 ```rust
+const TYPE_SIZE<T>: usize = std::mem::size_of::<T>();
+
 static CACHE<T, F>: Option<T>; // zero initialized
 
 fn memoized<T, F: Fn() -> T>(f: F) -> T {
@@ -563,7 +566,13 @@ There is also a special syntax for two kinds of types that are not technically b
 - [slices](#slices) (`&[i32]`, `&mut i32`)
 - [dynamic dispatch pointers](#dyn-pointers) (`&dyn Protocol`)
 
-[Protocols](#protocols-and-mixins) themselves are also technically types (can be used as type arguments), but they are not valid types for values.
+[Protocols](#protocols-and-mixins), constants and statics themselves are also technically types (can be used as type arguments and reflection), but they are not valid types for values.
+
+```rust
+const foo: i32 = 1;
+
+let a: foo; // a is zero-sized. This is valid, but not at all useful.
+```
 
 
 ## Fixed-size arrays
@@ -740,7 +749,7 @@ Named types can have attributes.
 - `#[align(n)]` specifies the minimum alignment of the type. Alignment must be a power of two.
 - `#[packed]` on a struct specifies that the type should be packed (no padding between fields).
 - `#[transparent]` on structs and unions with a single field specifies that the type should be treated as if it were the type of the field from the ABI perspective. This is useful for newtypes.
-- `#[must_use]` on a struct or enum specifies that the type must be used in some way. Currently this is used in the standard library on `Result` types to ensure that the user does not forget to handle errors. Raises a warning if the value is not used.
+- `#[diag::must_use]` on a struct or enum specifies that the type must be used in some way. Currently this is used in the standard library on `Result` types to ensure that the user does not forget to handle errors. Raises a warning if the value is not used.
 
 ## Slices
 
@@ -965,7 +974,8 @@ Alumina has the following types of expressions
 - literals (`1`, `"foo"`, `true`, `false`, `null`, ...)
 - block expressions: `{ statements; ret }`
 - function calls ( `expr(arg1, arg2)` )
-- field and tuple index expressions (`expr.field`, `expr.0`, `expr.1`, ...)
+- field expressions (`expr.field`)
+- tuple expressions (`expr.0`, `expr.1`, ..., `expr.(1 + 2)`)
 - array/slice index expressions (`expr[0]`)
 - try operator (`expr?`)
 - unary operations (`-expr`, `~expr`)
@@ -1567,11 +1577,13 @@ let x = [1, 2, 3];
 println!("{}", x.first_element()); // 1
 ```
 
-## `when` types and expressions
+## Reflection and specialization
+
+Alumina has a rich compile-time reflection system that can be used to inspect the types and values at compile time and generate specialized code based on that information. The most common use case is to generate code for different types based on the type parameter of a generic function.
 
 `when` expressions (static `if`) can be used to conditionally compile code that based on a condition that is constant at compile time. Unlike `#[cfg(...)]` attributes which are evaluated very early in the compilation process, `when` expressions run at monomorphization time, which means that the type information is already available.
 
-Unlike `if` expressions, the non-taken branch is not monomorphized, so it can contain code that would not otherwise compile. The most common usage is as a means of generic specialization (different behavior based on the generic parameter).
+Unlike `if` expressions, the non-taken branch is not monomorphized, so it can contain code that would not otherwise type check. The most common usage is as a means of generic specialization (different behavior based on the generic parameter).
 
 ```rust
 use std::typing::{is_same, is_unsigned, is_pointer, is_zero_sized};
@@ -1608,9 +1620,101 @@ let y: ensure_pointer_t<&&u16> = &&5;
 let z: ensure_pointer_t<Option<i32>> = &Some(5);
 ```
 
+`for const` loops can be used to iterate over a range of values at compile time. The loop variable is a constant value, so it can be used in type context or e.g. as a tuple index.
+
+```rust
+let a = ("hello", 1, true);
+
+for const i in 0usize..a.len() {
+    println!("{}", a.(i));
+}
+```
+
+Under the hood, the loop is unrolled and the body is repeated for each value in the range. `break` and `continue` are not supported in `for const` loops.
+
+As a more complete example, consider a function that sets a field on a struct by name (which does not need to be a compile-time constant) using the reflection utilities in [`std::typing`](https://docs.alumina-lang.net/std/typing) module.
+
+```rust
+use std::typing::Type;
+use std::builtins::{Struct, Union};
+
+/// Set a field on an struct by name
+fn set<T: Struct | Union, F>(obj: &mut T, name: &[u8], value: F) {
+    let ty = Type::new::<T>();
+    let value_ty = Type::new::<F>();
+
+    let fields = ty.fields();
+    for const i in 0usize..fields.len() {
+        let field_ty = fields.(i).type();
+
+        if fields.(i).name() == name {
+            when field_ty.is_same_as(value_ty) {
+                *fields.(i).as_mut_ptr(obj) = value;
+                return;
+            } else {
+                panic!(
+                    "expected type {}, got {}",
+                    field_ty.debug_name(),
+                    value_ty.debug_name()
+                );
+            }
+        }
+    }
+
+    panic!("field not found: {}", name);
+}
+
+struct Foo {
+    bar: i32,
+    quux: bool,
+}
+
+let foo: Foo;
+foo.set("bar", 42);
+foo.set("quux", true);
+
+// These would panic at runtime
+// foo.set("bar", true);
+// foo.set("unknown", 42);
+```
+
+The `when` expression is used to select the appropriate branch based on the actual type of the field. Most reflection operations are at zero runtime cost, though they may increase the binary size to include various type metadata, such as field names and attributes.
+
+After monomorphization, the loop is unrolled and the body is repeated for each field in the struct, so with optimizations the above example is mostly equivalent to hand-written:
+
+```rust
+fn set__i32(obj: &mut Foo, name: &[u8], value: i32) {
+    if name == "bar" {
+        obj.bar = value;
+        return;
+    }
+    if name == "quux" {
+        panic!("expected type bool, got i32");
+    }
+    panic!("field not found: {}", name);
+}
+
+fn set__bool(obj: &mut Foo, name: &[u8], value: bool) {
+    if name == "bar" {
+        panic!("expected type i32, got bool");
+    }
+    if name == "quux" {
+        obj.quux = value;
+        return;
+    }
+    panic!("field not found: {}", name);
+}
+
+fn main() {
+    let foo: Foo;
+    set__i32(&mut foo, "bar", 42);
+    set__bool(&mut foo, "quux", true);
+}
+```
+
 ## Unit testing
 
-Alumina has a built-in mini unit test framework. All the methods with `#[test]` attribute will be collected during compilation and run during the test phase. To exclude test methods when the program is compiled normally, use the `#[cfg(test)]` attribute. Like in rust, it is conventional to have the test methods in the same file as the module under test but in a submodule named `tests`.
+Alumina has a built-in minimal unit test framework. All the methods with `#[test]` attribute will be collected during compilation and run during the test phase. To exclude test methods when the program is compiled normally, use the `#[cfg(test)]` attribute. Like in rust, it is conventional to have the test methods in the same file as the module under test but in a submodule named `tests`.
 
 ```rust
 fn add(x: i32, y: i32) -> i32 {

@@ -255,7 +255,7 @@ install: $(ALUMINA_BOOT) $(SYSROOT_FILES)
 alumina-boot: $(ALUMINA_BOOT)
 	ln -sf $(ALUMINA_BOOT) $@
 
-.PHONY: test-std test-examples test-alumina-boot test-libraries test-lang test
+.PHONY: test-std test-alumina-boot test-libraries test-lang test
 
 test-std: alumina-boot $(STDLIB_TESTS)
 	$(STDLIB_TESTS) $(TEST_FLAGS)

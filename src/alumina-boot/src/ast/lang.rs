@@ -69,7 +69,7 @@ pub enum LangItemKind {
     TypeopGenericArgsOf,
     TypeopReplaceGenericArgsOf,
     TypeopFunctionPointerOf,
-    TypeopEnumTypeOf,
+    TypeopUnderlyingTypeOf,
 
     EntrypointGlue,
 
@@ -140,7 +140,7 @@ impl LangItemKind {
                 | LangItemKind::TypeopGenericArgsOf
                 | LangItemKind::TypeopReplaceGenericArgsOf
                 | LangItemKind::TypeopFunctionPointerOf
-                | LangItemKind::TypeopEnumTypeOf
+                | LangItemKind::TypeopUnderlyingTypeOf
         )
     }
 
@@ -245,7 +245,7 @@ impl TryFrom<&str> for LangItemKind {
             "typeop_generic_args_of" => Ok(LangItemKind::TypeopGenericArgsOf),
             "typeop_replace_generic_args_of" => Ok(LangItemKind::TypeopReplaceGenericArgsOf),
             "typeop_function_pointer_of" => Ok(LangItemKind::TypeopFunctionPointerOf),
-            "typeop_enum_type_of" => Ok(LangItemKind::TypeopEnumTypeOf),
+            "typeop_underlying_type_of" => Ok(LangItemKind::TypeopUnderlyingTypeOf),
 
             "entrypoint_glue" => Ok(LangItemKind::EntrypointGlue),
 

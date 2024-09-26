@@ -251,7 +251,7 @@ impl<'ir> Ty<'ir> {
                 Item::Alias(inner) => inner.is_zero_sized(),
                 Item::StructLike(s) => s.fields.iter().all(|f| f.ty.is_zero_sized()),
                 Item::Closure(c) => c.data.fields.iter().all(|f| f.ty.is_zero_sized()),
-                Item::Enum(e) => e.underlying_type.is_zero_sized(),
+                Item::Enum(e) => e.underlying_ty.is_zero_sized(),
                 Item::Function(_) | Item::Protocol(_) | Item::Static(_) | Item::Const(_) => true,
             },
             Ty::Pointer(_, _) => false,
@@ -347,7 +347,7 @@ pub struct EnumMember<'ir> {
 #[derive(Debug)]
 pub struct Enum<'ir> {
     pub name: Option<&'ir str>,
-    pub underlying_type: TyP<'ir>,
+    pub underlying_ty: TyP<'ir>,
     pub members: &'ir [EnumMember<'ir>],
     pub attributes: &'ir [Attribute<'ir>],
     #[allow(dead_code)]

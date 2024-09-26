@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::ast::expressions::parse_string_literal;
 use crate::ast::{
-    AstCtx, Attribute, CustomAttribute, CustomAttributeValue, ItemP, Lit, MacroCtx, Metadatum, Span,
+    AstCtx, Attribute, CustomAttribute, CustomAttributeValue, Diagnostic, Inline, ItemP, Lit, MacroCtx, Metadatum, Span
 };
 use crate::common::{
     AluminaError, ArenaAllocatable, CodeDiagnostic, CodeError, Marker, WithSpanDuringParsing,
@@ -524,23 +524,23 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                 }
             }
             "inline" => {
-                check_duplicate!(
-                    Attribute::Inline | Attribute::AlwaysInline | Attribute::InlineDuringMono
-                );
-                match node
+                check_duplicate!(Attribute::Inline(_));
+                let kind = match node
                     .child_by_field(FieldKind::Arguments)
                     .and_then(|n| n.child_by_field(FieldKind::Argument))
                     .map(|n| self.code.node_text(n))
                 {
-                    Some("always") => self.attributes.push(Attribute::AlwaysInline),
-                    Some("never") => self.attributes.push(Attribute::NoInline),
-                    Some("ir") => self.attributes.push(Attribute::InlineDuringMono),
-                    None => self.attributes.push(Attribute::Inline),
+                    Some("always") => Inline::Always,
+                    Some("never") => Inline::Never,
+                    Some("ir") => Inline::DuringMono,
+                    None => Inline::Inline,
                     _ => {
                         return Err(CodeDiagnostic::InvalidAttribute)
                             .with_span_from(&self.scope, node)
                     }
-                }
+                };
+
+                self.attributes.push(Attribute::Inline(kind));
             }
             "builtin" => {
                 check_duplicate!(Attribute::Builtin);
@@ -601,9 +601,13 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     }
                 }
             }
-            "must_use" => {
-                check_duplicate!(Attribute::MustUse);
-                self.attributes.push(Attribute::MustUse);
+            "diag::must_use" => {
+                check_duplicate!(Attribute::Diagnostic(Diagnostic::MustUse));
+                self.attributes.push(Attribute::Diagnostic(Diagnostic::MustUse));
+            }
+            "diag::hide_from_backtrace" => {
+                let enclosing_span = Span::from_node(self.scope.file_id(), self.applies_to_node);
+                self.global_ctx.diag().add_hidden_span(enclosing_span);
             }
             "lang" => {
                 let lang_type = node

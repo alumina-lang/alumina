@@ -807,24 +807,36 @@ impl BinOp {
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AstSerializable)]
+pub enum Inline {
+    Inline,
+    Never,
+    Always,
+    DuringMono,
+}
+
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AstSerializable)]
+pub enum Diagnostic {
+    MustUse
+}
+
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AstSerializable)]
 pub enum Attribute<'ast> {
     Export,
     Cold,
     TestMain,
     Main,
-    Inline,
+    Inline(Inline),
     Align(usize),
     Packed(usize),
     TupleCall,
     ConstOnly,
     NoConst,
-    MustUse,
+    Diagnostic(Diagnostic),
     Transparent,
-    NoInline,
     ThreadLocal,
     Builtin,
-    AlwaysInline,
-    InlineDuringMono,
     Intrinsic,
     StaticConstructor,
     LinkName(&'ast str),
