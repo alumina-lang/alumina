@@ -601,10 +601,6 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         Ok(ExprKind::Lit(Lit::Null).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
-    fn visit_void_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        Ok(ExprKind::Void.alloc_with_span_from(self.ast, &self.scope, node))
-    }
-
     fn visit_parenthesized_expression(
         &mut self,
         node: tree_sitter::Node<'src>,

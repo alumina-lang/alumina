@@ -43,7 +43,6 @@ enum NodeKind {
     ArrayOf,
     ScopedUseList,
     ArrayExpression,
-    VoidLiteral,
     Attributes,
     MetaArguments,
     TypeCheckExpression,
@@ -176,7 +175,7 @@ enum FieldKind {
     Value = 53u16,
 }
 
-const NODE_KINDS: [NodeKind; 261] = [
+const NODE_KINDS: [NodeKind; 258] = [
     NodeKind::Invalid,
     NodeKind::Identifier,
     NodeKind::DocComment,
@@ -292,8 +291,7 @@ const NODE_KINDS: [NodeKind; 261] = [
     NodeKind::CharLiteral,
     NodeKind::Invalid,
     NodeKind::Invalid,
-    NodeKind::Invalid,
-    NodeKind::Invalid,
+    NodeKind::PtrLiteral,
     NodeKind::MacroIdentifier,
     NodeKind::SourceFile,
     NodeKind::TopLevelAttributes,
@@ -404,8 +402,6 @@ const NODE_KINDS: [NodeKind; 261] = [
     NodeKind::ClosureParameters,
     NodeKind::BoundIdentifier,
     NodeKind::BooleanLiteral,
-    NodeKind::PtrLiteral,
-    NodeKind::VoidLiteral,
     NodeKind::Invalid,
     NodeKind::Invalid,
     NodeKind::Invalid,
@@ -553,9 +549,6 @@ protocol NodeVisitor<Self, ReturnType> {
     }
     fn visit_array_expression(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_array_expression");
-    }
-    fn visit_void_literal(self: &mut Self, _node: Node) -> ReturnType {
-        panic!("unimplemented: visit_void_literal");
     }
     fn visit_attributes(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_attributes");
@@ -822,7 +815,6 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::ArrayOf => self.visit_array_of(node),
             NodeKind::ScopedUseList => self.visit_scoped_use_list(node),
             NodeKind::ArrayExpression => self.visit_array_expression(node),
-            NodeKind::VoidLiteral => self.visit_void_literal(node),
             NodeKind::Attributes => self.visit_attributes(node),
             NodeKind::MetaArguments => self.visit_meta_arguments(node),
             NodeKind::TypeCheckExpression => self.visit_type_check_expression(node),

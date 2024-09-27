@@ -56,7 +56,6 @@ module.exports = grammar({
   word: ($) => $.identifier,
   inline: ($) => [
     $._path,
-    $._non_special_token,
     $._type_identifier,
     $._field_identifier,
     $._expression_ending_with_block,
@@ -542,12 +541,15 @@ module.exports = grammar({
       ),
 
     tuple_expression: ($) =>
-      seq(
-        "(",
-        seq(field("element", $._expression), ","),
-        repeat(seq(field("element", $._expression), ",")),
-        optional(field("element", $._expression)),
-        ")"
+      choice(
+          seq(
+          "(",
+            seq(field("element", $._expression), ","),
+            repeat(seq(field("element", $._expression), ",")),
+            optional(field("element", $._expression)),
+          ")"
+        ),
+        seq("(", ")")
       ),
 
     turbofish: ($) =>
@@ -995,7 +997,6 @@ module.exports = grammar({
         $.integer_literal,
         $.float_literal,
         $.ptr_literal,
-        $.void_literal
       ),
 
     integer_literal: ($) =>
@@ -1092,8 +1093,7 @@ module.exports = grammar({
       ),
 
     boolean_literal: ($) => choice("true", "false"),
-    ptr_literal: ($) => choice("null"),
-    void_literal: ($) => choice("()"),
+    ptr_literal: ($) => "null",
     identifier: ($) => /[_\p{XID_Start}][_\p{XID_Continue}]*/,
     macro_identifier: ($) => /\$[_\p{XID_Start}][_\p{XID_Continue}]*/,
   },
