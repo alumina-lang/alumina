@@ -1,15 +1,18 @@
 use std::path::PathBuf;
 
 use crate::ast::expressions::parse_string_literal;
-use crate::ast::{AstCtx, Attribute, ItemP, MacroCtx, Span, TestMetadata};
+use crate::ast::{
+    AstCtx, Attribute, CustomAttribute, CustomAttributeValue, Diagnostic, Inline, ItemP, Lit,
+    MacroCtx, Metadatum, Span,
+};
 use crate::common::{
     AluminaError, ArenaAllocatable, CodeDiagnostic, CodeError, Marker, WithSpanDuringParsing,
 };
 use crate::diagnostics;
 use crate::global_ctx::GlobalCtx;
-use crate::name_resolution::path::{Path, PathSegment};
-use crate::name_resolution::scope::{NamedItem, NamedItemKind, Scope};
 use crate::parser::{AluminaVisitor, FieldKind, NodeExt, ParseCtx};
+use crate::src::path::{Path, PathSegment};
+use crate::src::scope::{NamedItem, NamedItemKind, Scope};
 
 use strum::VariantNames;
 use tree_sitter::Node;
@@ -266,7 +269,6 @@ pub struct AttributeVisitor<'ast, 'src> {
     attributes: Vec<Attribute<'ast>>,
     applies_to_node: Node<'src>,
     should_skip: bool,
-    test_attributes: Vec<String>,
 }
 
 impl<'ast, 'src> AttributeVisitor<'ast, 'src> {
@@ -288,30 +290,26 @@ impl<'ast, 'src> AttributeVisitor<'ast, 'src> {
             attributes: Vec::new(),
             applies_to_node: node,
             should_skip: false,
-            test_attributes: Vec::new(),
         };
 
         if let Some(node) = node.child_by_field(FieldKind::Attributes) {
             visitor.visit(node)?;
         }
 
-        visitor.finalize(node)?;
-
         if visitor.should_skip {
             Ok(None)
         } else {
+            visitor.finalize(node)?;
             Ok(Some(visitor.attributes.alloc_on(ast)))
         }
     }
 
     fn finalize(&mut self, node: tree_sitter::Node<'src>) -> Result<(), AluminaError> {
-        if !self.test_attributes.is_empty() {
-            self.ast.add_test_metadata(
-                self.item
-                    .ok_or(CodeDiagnostic::CannotBeATest)
-                    .with_span_from(&self.scope, node)?,
-                TestMetadata {
-                    attributes: std::mem::take(&mut self.test_attributes),
+        if let Some(item) = self.item {
+            self.ast.add_metadatum(
+                item,
+                Metadatum {
+                    attributes: self.attributes.clone(),
                     path: self.scope.path(),
                     name: Path::from(PathSegment(
                         self.code
@@ -324,7 +322,6 @@ impl<'ast, 'src> AttributeVisitor<'ast, 'src> {
                     )),
                 },
             );
-            self.attributes.push(Attribute::Test);
         }
 
         Ok(())
@@ -528,23 +525,23 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                 }
             }
             "inline" => {
-                check_duplicate!(
-                    Attribute::Inline | Attribute::AlwaysInline | Attribute::InlineDuringMono
-                );
-                match node
+                check_duplicate!(Attribute::Inline(_));
+                let kind = match node
                     .child_by_field(FieldKind::Arguments)
                     .and_then(|n| n.child_by_field(FieldKind::Argument))
                     .map(|n| self.code.node_text(n))
                 {
-                    Some("always") => self.attributes.push(Attribute::AlwaysInline),
-                    Some("never") => self.attributes.push(Attribute::NoInline),
-                    Some("ir") => self.attributes.push(Attribute::InlineDuringMono),
-                    None => self.attributes.push(Attribute::Inline),
+                    Some("always") => Inline::Always,
+                    Some("never") => Inline::Never,
+                    Some("ir") => Inline::DuringMono,
+                    None => Inline::Default,
                     _ => {
                         return Err(CodeDiagnostic::InvalidAttribute)
                             .with_span_from(&self.scope, node)
                     }
-                }
+                };
+
+                self.attributes.push(Attribute::Inline(kind));
             }
             "builtin" => {
                 check_duplicate!(Attribute::Builtin);
@@ -574,14 +571,6 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
 
                 let bytes = self.code.node_text(link_name).alloc_on(self.ast);
                 self.attributes.push(Attribute::LinkName(bytes));
-            }
-            "test" => {
-                self.test_attributes.push(
-                    node.child_by_field(FieldKind::Arguments)
-                        .map(|s| self.code.node_text(s))
-                        .unwrap_or("")
-                        .to_string(),
-                );
             }
             "cfg" => {
                 let mut cfg_visitor = CfgVisitor::new(self.global_ctx.clone(), self.scope.clone());
@@ -613,9 +602,14 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                     }
                 }
             }
-            "must_use" => {
-                check_duplicate!(Attribute::MustUse);
-                self.attributes.push(Attribute::MustUse);
+            "diag::must_use" => {
+                check_duplicate!(Attribute::Diagnostic(Diagnostic::MustUse));
+                self.attributes
+                    .push(Attribute::Diagnostic(Diagnostic::MustUse));
+            }
+            "diag::hide_from_backtrace" => {
+                let enclosing_span = Span::from_node(self.scope.file_id(), self.applies_to_node);
+                self.global_ctx.diag().add_hidden_span(enclosing_span);
             }
             "lang" => {
                 let lang_type = node
@@ -653,10 +647,24 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                 // Attributes for other tools
             }
             _ => {
-                self.global_ctx.diag().add_warning(CodeError {
-                    kind: CodeDiagnostic::UnknownAttribute(name.to_string()),
-                    backtrace: vec![Marker::Span(span)],
-                });
+                match name {
+                    "test" | "docs" | "obsolete" => {}
+                    _ if name.contains("::") => {}
+                    _ => {
+                        self.global_ctx.diag().add_warning(CodeError {
+                            kind: CodeDiagnostic::UnknownAttribute(name.to_string()),
+                            backtrace: vec![Marker::Span(span)],
+                        });
+                    }
+                }
+
+                let mut visitor = CustomAttributeVisitor::new(self.ast, self.scope.clone());
+                match visitor.visit(node)? {
+                    CustomAttributeValue::Attribute(attr) => {
+                        self.attributes.push(Attribute::Custom(attr))
+                    }
+                    _ => unreachable!(),
+                }
             }
         }
 
@@ -784,5 +792,73 @@ impl<'ast, 'src> AluminaVisitor<'src> for CfgVisitor<'ast, 'src> {
             State::All => Ok(true),
             State::Any => Ok(false),
         }
+    }
+}
+
+pub struct CustomAttributeVisitor<'ast, 'src> {
+    ast: &'ast AstCtx<'ast>,
+    code: &'src ParseCtx<'src>,
+    scope: Scope<'ast, 'src>,
+}
+
+impl<'ast, 'src> CustomAttributeVisitor<'ast, 'src> {
+    pub fn new(ast: &'ast AstCtx<'ast>, scope: Scope<'ast, 'src>) -> Self {
+        CustomAttributeVisitor {
+            ast,
+            code: scope
+                .code()
+                .expect("cannot run on scope without parse context"),
+            scope,
+        }
+    }
+}
+
+impl<'ast, 'src> AluminaVisitor<'src> for CustomAttributeVisitor<'ast, 'src> {
+    type ReturnType = Result<CustomAttributeValue<'ast>, AluminaError>;
+
+    fn visit_meta_item(&mut self, node: Node<'src>) -> Self::ReturnType {
+        let name = self
+            .code
+            .node_text(node.child_by_field(FieldKind::Name).unwrap());
+
+        let mut ret = vec![];
+        if let Some(arguments) = node.child_by_field(FieldKind::Arguments) {
+            let mut cursor = arguments.walk();
+            for arg in arguments.children_by_field(FieldKind::Argument, &mut cursor) {
+                ret.push(self.visit(arg)?);
+            }
+        } else if let Some(value) = node.child_by_field(FieldKind::Value) {
+            ret.push(self.visit(value)?);
+        }
+
+        Ok(CustomAttributeValue::Attribute(CustomAttribute {
+            name: name.alloc_on(self.ast),
+            values: ret.alloc_on(self.ast),
+        }))
+    }
+
+    fn visit_string_literal(&mut self, node: Node<'src>) -> Self::ReturnType {
+        let s =
+            parse_string_literal(self.code.node_text(node)).with_span_from(&self.scope, node)?;
+
+        let s = self.ast.arena.alloc_slice_copy(&s);
+        Ok(CustomAttributeValue::Value(Lit::Str(s)))
+    }
+
+    fn visit_integer_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let s = self.code.node_text(node);
+        let (sign, remainder) = match s.chars().next() {
+            Some('-') => (true, &s[1..]),
+            _ => (false, s),
+        };
+
+        Ok(CustomAttributeValue::Value(Lit::Int(
+            sign,
+            remainder
+                .parse()
+                .map_err(|_| CodeDiagnostic::InvalidAttribute)
+                .with_span_from(&self.scope, node)?,
+            None,
+        )))
     }
 }

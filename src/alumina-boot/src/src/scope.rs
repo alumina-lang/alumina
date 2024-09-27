@@ -1,8 +1,8 @@
-use crate::ast::{AstId, Attribute, ItemP, Span};
+use crate::ast::{Attribute, Id, ItemP, Span};
 use crate::common::{CodeDiagnostic, CodeError, FileId, HashSet, IndexMap, Marker};
 use crate::diagnostics::DiagnosticContext;
-use crate::name_resolution::path::{Path, PathSegment};
 use crate::parser::ParseCtx;
+use crate::src::path::{Path, PathSegment};
 
 use alumina_boot_macros::AstSerializable;
 use indexmap::map::Entry;
@@ -34,14 +34,14 @@ pub enum NamedItemKind<'ast> {
     Module,
     Protocol(ItemP<'ast>),
     Impl,
-    EnumMember(ItemP<'ast>, AstId),
+    EnumMember(ItemP<'ast>, Id),
 
-    Placeholder(AstId),
+    Placeholder(Id),
     Field,
-    Local(AstId),
-    BoundValue(AstId, AstId, BoundItemType),
-    Parameter(AstId),
-    MacroParameter(AstId, bool),
+    Local(Id),
+    BoundValue(Id, Id, BoundItemType),
+    Parameter(Id),
+    MacroParameter(Id, bool),
     Closure(ItemP<'ast>),
     Anonymous,
 }
@@ -119,7 +119,7 @@ impl<'ast, 'src> NamedItem<'ast, 'src> {
         }
     }
 
-    pub fn ast_id(&self) -> Option<AstId> {
+    pub fn ast_id(&self) -> Option<Id> {
         match &self.kind {
             NamedItemKind::Alias(_) => None,
             NamedItemKind::Function(item) => Some(item.id),

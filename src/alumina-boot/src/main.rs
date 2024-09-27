@@ -7,11 +7,9 @@ mod common;
 mod compiler;
 mod diagnostics;
 mod global_ctx;
-mod intrinsics;
 mod ir;
-mod name_resolution;
 mod parser;
-mod utils;
+mod src;
 mod visitors;
 
 use crate::common::{AluminaError, CodeError};
@@ -66,10 +64,6 @@ struct Args {
     /// Compile in debug mode
     #[clap(long, short)]
     debug: bool,
-
-    /// Collect timings
-    #[clap(long)]
-    timings: bool,
 
     /// Whether a library should be output
     #[clap(long)]
@@ -177,7 +171,7 @@ fn run(args: Args) -> Result<(), ()> {
     let diag_ctx = global_ctx.diag();
     let result = compiler.compile(args.ast, files, start_time);
 
-    if args.timings {
+    if global_ctx.has_option("timings") {
         for (stage, duration) in compiler.timings() {
             diag_ctx.add_note(CodeError::freeform(format!(
                 "compiler timings: {:?} took {}ms",

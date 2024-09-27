@@ -2,13 +2,13 @@ use crate::ast::expressions::ExpressionVisitor;
 use crate::ast::format::{format_args, Piece};
 use crate::ast::pretty::PrettyPrinter;
 use crate::ast::{
-    AstCtx, AstId, Attribute, BuiltinMacro, BuiltinMacroKind, Expr, ExprKind, ExprP,
-    FieldInitializer, FnKind, Item, ItemP, Lit, Macro, MacroCtx, MacroParameter, Span, Statement,
+    AstCtx, Attribute, BuiltinMacro, BuiltinMacroKind, Expr, ExprKind, ExprP, FieldInitializer,
+    FnKind, Id, Item, ItemP, Lit, Macro, MacroCtx, MacroParameter, Span, Statement,
 };
 use crate::common::{AluminaError, ArenaAllocatable, CodeDiagnostic, HashMap};
 use crate::global_ctx::GlobalCtx;
-use crate::name_resolution::scope::{NamedItemKind, Scope};
 use crate::parser::{FieldKind, NodeExt};
+use crate::src::scope::{NamedItemKind, Scope};
 
 use once_cell::unsync::OnceCell;
 
@@ -173,9 +173,9 @@ pub struct MacroExpander<'ast> {
     args: Vec<ExprP<'ast>>,
     invocation_span: Option<Span>,
 
-    replacements: HashMap<AstId, ExprP<'ast>>,
-    id_replacements: HashMap<AstId, AstId>,
-    et_cetera_arg: Option<(AstId, Vec<ExprP<'ast>>)>,
+    replacements: HashMap<Id, ExprP<'ast>>,
+    id_replacements: HashMap<Id, Id>,
+    et_cetera_arg: Option<(Id, Vec<ExprP<'ast>>)>,
 
     et_cetera_index: Option<usize>,
 }
@@ -274,42 +274,38 @@ impl<'ast> MacroExpander<'ast> {
         Ok(new_args.alloc_on(self.ast))
     }
 
-    fn visit_typ(&mut self, ty: TyP<'ast>) -> Result<TyP<'ast>, AluminaError> {
+    fn visit_ty(&mut self, ty: TyP<'ast>) -> Result<TyP<'ast>, AluminaError> {
         use crate::ast::Ty::*;
 
         let ret = match ty {
-            Tag(tag, inner) => Tag(tag, self.visit_typ(inner)?),
-            Pointer(inner, a) => Pointer(self.visit_typ(inner)?, *a),
-            Slice(inner, a) => Slice(self.visit_typ(inner)?, *a),
+            Tag(tag, inner) => Tag(tag, self.visit_ty(inner)?),
+            Pointer(inner, a) => Pointer(self.visit_ty(inner)?, *a),
+            Slice(inner, a) => Slice(self.visit_ty(inner)?, *a),
             Dyn(protos, a) => {
                 let elements = protos
                     .iter()
-                    .map(|ty| self.visit_typ(ty))
+                    .map(|ty| self.visit_ty(ty))
                     .collect::<Result<Vec<_>, _>>()?;
 
                 let slice = elements.alloc_on(self.ast);
                 Dyn(slice, *a)
             }
             TypeOf(expr) => TypeOf(self.visit_expr(expr)?),
-            Array(inner, len) => Array(self.visit_typ(inner)?, self.visit_expr(len)?),
+            Array(inner, len) => Array(self.visit_ty(inner)?, self.visit_expr(len)?),
             Tuple(elems) => {
                 let elements = elems
                     .iter()
-                    .map(|ty| self.visit_typ(ty))
+                    .map(|ty| self.visit_ty(ty))
                     .collect::<Result<Vec<_>, _>>()?;
 
                 let slice = elements.alloc_on(self.ast);
                 Tuple(slice)
             }
-            When(cond, a, b) => When(
-                self.visit_expr(cond)?,
-                self.visit_typ(a)?,
-                self.visit_typ(b)?,
-            ),
+            When(cond, a, b) => When(self.visit_expr(cond)?, self.visit_ty(a)?, self.visit_ty(b)?),
             FunctionPointer(args, ret) => {
                 let elements = args
                     .iter()
-                    .map(|ty| self.visit_typ(ty))
+                    .map(|ty| self.visit_ty(ty))
                     .collect::<Result<Vec<_>, _>>()?;
 
                 let slice = elements.alloc_on(self.ast);
@@ -318,7 +314,7 @@ impl<'ast> MacroExpander<'ast> {
             FunctionProtocol(args, ret) => {
                 let elements = args
                     .iter()
-                    .map(|ty| self.visit_typ(ty))
+                    .map(|ty| self.visit_ty(ty))
                     .collect::<Result<Vec<_>, _>>()?;
 
                 let slice = elements.alloc_on(self.ast);
@@ -327,12 +323,12 @@ impl<'ast> MacroExpander<'ast> {
             Generic(item, args) => Generic(
                 item,
                 args.iter()
-                    .map(|e| self.visit_typ(e))
+                    .map(|e| self.visit_ty(e))
                     .collect::<Result<Vec<_>, _>>()?
                     .alloc_on(self.ast),
             ),
-            Defered(super::Defered { typ, name }) => Defered(super::Defered {
-                typ: self.visit_typ(typ)?,
+            Defered(super::Defered { ty, name }) => Defered(super::Defered {
+                ty: self.visit_ty(ty)?,
                 name,
             }),
             Placeholder(_) | Item(_) | Builtin(_) => return Ok(ty),
@@ -438,7 +434,7 @@ impl<'ast> MacroExpander<'ast> {
                     .map(|args| {
                         Ok::<_, AluminaError>(
                             args.iter()
-                                .map(|e| self.visit_typ(e))
+                                .map(|e| self.visit_ty(e))
                                 .collect::<Result<Vec<_>, _>>()?
                                 .alloc_on(self.ast),
                         )
@@ -457,7 +453,7 @@ impl<'ast> MacroExpander<'ast> {
                     })
                     .collect::<Result<_, _>>()?;
 
-                Struct(self.visit_typ(ty)?, inits.alloc_on(self.ast))
+                Struct(self.visit_ty(ty)?, inits.alloc_on(self.ast))
             }
             TupleIndex(inner, idx) => TupleIndex(self.visit_expr(inner)?, idx),
             Index(inner, idx) => Index(self.visit_expr(inner)?, self.visit_expr(idx)?),
@@ -476,14 +472,17 @@ impl<'ast> MacroExpander<'ast> {
                 self.visit_expr(then)?,
                 self.visit_expr(els)?,
             ),
-            TypeCheck(expr, ty) => TypeCheck(self.visit_expr(expr)?, self.visit_typ(ty)?),
-            Cast(inner, ty) => Cast(self.visit_expr(inner)?, self.visit_typ(ty)?),
+            StaticFor(id, range, body) => {
+                StaticFor(id, self.visit_expr(range)?, self.visit_expr(body)?)
+            }
+            TypeCheck(expr, ty) => TypeCheck(self.visit_expr(expr)?, self.visit_ty(ty)?),
+            Cast(inner, ty) => Cast(self.visit_expr(inner)?, self.visit_ty(ty)?),
             Fn(ref kind, generic_args) => {
                 let kind = match kind {
                     FnKind::Normal(_) => *kind,
                     FnKind::Closure(..) => *kind,
                     FnKind::Defered(def) => FnKind::Defered(crate::ast::Defered {
-                        typ: self.visit_typ(def.typ)?,
+                        ty: self.visit_ty(def.ty)?,
                         name: def.name,
                     }),
                 };
@@ -491,7 +490,7 @@ impl<'ast> MacroExpander<'ast> {
                 let generic_args = match generic_args {
                     Some(args) => Some(
                         args.iter()
-                            .map(|e| self.visit_typ(e))
+                            .map(|e| self.visit_ty(e))
                             .collect::<Result<Vec<_>, _>>()?
                             .alloc_on(self.ast),
                     ),
@@ -501,14 +500,14 @@ impl<'ast> MacroExpander<'ast> {
                 Fn(kind, generic_args)
             }
             Defered(ref def) => Defered(crate::ast::Defered {
-                typ: self.visit_typ(def.typ)?,
+                ty: self.visit_ty(def.ty)?,
                 name: def.name,
             }),
             Static(item, generic_args) => {
                 let generic_args = match generic_args {
                     Some(args) => Some(
                         args.iter()
-                            .map(|e| self.visit_typ(e))
+                            .map(|e| self.visit_ty(e))
                             .collect::<Result<Vec<_>, _>>()?
                             .alloc_on(self.ast),
                     ),
@@ -521,7 +520,7 @@ impl<'ast> MacroExpander<'ast> {
                 let generic_args = match generic_args {
                     Some(args) => Some(
                         args.iter()
-                            .map(|e| self.visit_typ(e))
+                            .map(|e| self.visit_ty(e))
                             .collect::<Result<Vec<_>, _>>()?
                             .alloc_on(self.ast),
                     ),
@@ -560,7 +559,7 @@ impl<'ast> MacroExpander<'ast> {
 
                 LetDeclaration(crate::ast::LetDeclaration {
                     id: replacement,
-                    typ: decl.typ.map(|ty| self.visit_typ(ty)).transpose()?,
+                    ty: decl.ty.map(|ty| self.visit_ty(ty)).transpose()?,
                     value: decl.value.map(|v| self.visit_expr(v)).transpose()?,
                 })
             }

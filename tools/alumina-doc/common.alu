@@ -641,12 +641,11 @@ impl DoctestWriter {
         use std::fmt::writeln;
         let fmt = StreamFormatter::new(&self.writer);
 
+        writeln!(&fmt, "#[test]").unwrap();
         if no_run {
-            writeln!(&fmt, "#[test(ignore)]").unwrap();
+            writeln!(&fmt, "#[test::ignore]").unwrap();
         } else if panics {
-            writeln!(&fmt, "#[test(should_fail)]").unwrap();
-        } else {
-            writeln!(&fmt, "#[test]").unwrap();
+            writeln!(&fmt, "#[test::should_fail]").unwrap();
         }
         writeln!(&fmt, "#[location(\"{}\", {})]", filename, line).unwrap();
         writeln!(&fmt, "fn test_{}_{}() {{", name, self.index).unwrap();

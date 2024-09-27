@@ -1,12 +1,11 @@
 use crate::ast::{BuiltinType, Span, UnOp};
 use crate::common::{ice, AluminaError, ArenaAllocatable, CodeDiagnostic, HashMap, HashSet};
 use crate::diagnostics::DiagnosticsStack;
-use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::builder::{ExpressionBuilder, TypeBuilder};
 use crate::ir::const_eval::LValue;
 use crate::ir::const_eval::Value;
-use crate::ir::IRItem;
-use crate::ir::{Expr, ExprKind, ExprP, FuncBody, IrCtx, IrId, LocalDef, Statement, Ty, ValueType};
+use crate::ir::{Expr, ExprKind, ExprP, FuncBody, Id, IrCtx, LocalDef, Statement, Ty, ValueType};
+use crate::ir::{IntrinsicValueKind, Item};
 
 // The purpose of ZST elider is to take all reads and writes of zero-sized types and
 // replace them with ExprKind::Void or remove them altogether if the value is not used
@@ -19,7 +18,7 @@ pub struct ZstElider<'ir> {
     ir: &'ir IrCtx<'ir>,
     diag: DiagnosticsStack,
     additional_locals: Vec<LocalDef<'ir>>,
-    used_ids: HashSet<IrId>,
+    used_ids: HashSet<Id>,
 }
 
 impl<'ir> ZstElider<'ir> {
@@ -64,7 +63,7 @@ impl<'ir> ZstElider<'ir> {
             .iter()
             .copied()
             .chain(self.additional_locals)
-            .filter(|def| self.used_ids.remove(&def.id) && !def.typ.is_zero_sized())
+            .filter(|def| self.used_ids.remove(&def.id) && !def.ty.is_zero_sized())
             .collect::<Vec<_>>();
 
         Ok((local_defs.alloc_on(self.ir), statements.alloc_on(self.ir)))
@@ -84,10 +83,10 @@ impl<'ir> ZstElider<'ir> {
                 self.used_ids.insert(id);
                 expr
             }
-            ExprKind::Static(_) | ExprKind::Const(_) if expr.ty.is_zero_sized() => {
+            ExprKind::Item(_) if expr.ty.is_zero_sized() => {
                 builder.void(expr.ty, expr.value_type, expr.span)
             }
-            ExprKind::Static(_) | ExprKind::Const(_) => expr,
+            ExprKind::Item(_) => expr,
             ExprKind::Assign(l, r) if l.ty.is_zero_sized() => {
                 let l = self.elide_zst_expr(l)?;
                 let r = self.elide_zst_expr(r)?;
@@ -218,7 +217,8 @@ impl<'ir> ZstElider<'ir> {
                             arguments.push(builder.void(arg.ty, arg.value_type, arg.span));
                         } else {
                             let id = self.ir.make_id();
-                            self.additional_locals.push(LocalDef { id, typ: arg.ty });
+                            self.additional_locals.push(LocalDef { id, ty: arg.ty });
+                            self.used_ids.insert(id);
                             let local = builder.local(id, arg.ty, arg.span);
                             statements
                                 .push(Statement::Expression(builder.assign(local, arg, arg.span)));
@@ -360,8 +360,7 @@ impl<'ir> ZstElider<'ir> {
             ExprKind::Field(lhs, id) => {
                 builder.field(self.elide_zst_expr(lhs)?, id, expr.ty, expr.span)
             }
-            ExprKind::Fn(_) => expr,
-            ExprKind::Literal(v) => match v {
+            ExprKind::Lit(v) => match v {
                 Value::Array(elems) => {
                     let element_type = match expr.ty {
                         Ty::Array(ty, _) => ty,
@@ -401,8 +400,8 @@ impl<'ir> ZstElider<'ir> {
                 Value::Struct(fields) => {
                     let struct_like = match expr.ty {
                         Ty::Item(item) => match item.get().unwrap() {
-                            IRItem::Closure(c) => &c.data,
-                            IRItem::StructLike(s) => s,
+                            Item::Closure(c) => &c.data,
+                            Item::StructLike(s) => s,
                             _ => ice!(self.diag, "expected struct-like item"),
                         },
                         _ => ice!(self.diag, "expected struct-like item"),
@@ -427,6 +426,9 @@ impl<'ir> ZstElider<'ir> {
                         expr.span,
                     )
                 }
+                Value::FunctionPointer(item) => {
+                    builder.cast(builder.function(item, expr.span), expr.ty, expr.span)
+                }
                 Value::Uninitialized if expr.ty.is_zero_sized() => {
                     builder.void(expr.ty, ValueType::RValue, expr.span)
                 }
@@ -435,10 +437,11 @@ impl<'ir> ZstElider<'ir> {
                     self.elide_zst_expr(builder.r#ref(lvalue_expr, expr.span))?
                 }
                 Value::Void => builder.void(expr.ty, ValueType::RValue, expr.span),
+
                 _ => expr,
             },
             ExprKind::Unreachable => expr,
-            ExprKind::Void => expr,
+            ExprKind::Nop => expr,
             ExprKind::Intrinsic(ref kind) => match kind {
                 IntrinsicValueKind::Uninitialized if expr.ty.is_zero_sized() => {
                     builder.void(expr.ty, ValueType::RValue, expr.span)
@@ -458,7 +461,9 @@ impl<'ir> ZstElider<'ir> {
                     expr.ty,
                     expr.span,
                 ),
-                IntrinsicValueKind::ConstPanic(_) => builder.unreachable(expr.span),
+                IntrinsicValueKind::StopIteration | IntrinsicValueKind::ConstPanic(_) => {
+                    builder.unreachable(expr.span)
+                }
                 IntrinsicValueKind::ConstAlloc(_, size) => builder.block(
                     [Statement::Expression(self.elide_zst_expr(size)?)],
                     builder.literal(Value::USize(0), expr.ty, expr.span),
@@ -492,7 +497,7 @@ impl<'ir> ZstElider<'ir> {
         // in variables, passed as arguments, ... If this happens, we still need to make sure that
         // codegen invokes it correctly.
         if let crate::ir::Ty::Item(item) = result.ty {
-            if let IRItem::Function(_) = item.get().unwrap() {
+            if let Item::Function(_) = item.get().unwrap() {
                 if result.is_void() {
                     return Ok(builder.function(item, expr.span));
                 }
@@ -512,13 +517,13 @@ impl<'ir> ZstElider<'ir> {
         match value {
             LValue::Const(item) => {
                 let r#const = item.get_const().unwrap();
-                builder.const_var(item, r#const.typ, span)
+                builder.const_var(item, r#const.ty, span)
             }
             LValue::Variable(_) => unreachable!(),
             LValue::Field(inner, field) => {
                 let inner_expr = self.elide_zst_lvalue(inner, span);
                 if let Ty::Item(item) = inner_expr.ty {
-                    if let IRItem::StructLike(struct_like) = item.get().unwrap() {
+                    if let Item::StructLike(struct_like) = item.get().unwrap() {
                         let field_type = struct_like
                             .fields
                             .iter()

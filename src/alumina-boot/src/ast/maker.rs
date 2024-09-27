@@ -1,5 +1,5 @@
 use crate::ast::expressions::ExpressionVisitor;
-use crate::ast::lang::LangItemKind;
+use crate::ast::lang::Lang;
 use crate::ast::macros::MacroMaker;
 use crate::ast::types::TypeVisitor;
 use crate::ast::{
@@ -12,10 +12,10 @@ use crate::common::{
     WithSpanDuringParsing,
 };
 use crate::global_ctx::GlobalCtx;
-use crate::intrinsics::intrinsic_kind;
-use crate::name_resolution::resolver::NameResolver;
-use crate::name_resolution::scope::{NamedItem, NamedItemKind, Scope, ScopeType};
+use crate::ir::mono::intrinsics::intrinsic_kind;
 use crate::parser::{AluminaVisitor, FieldKind, NodeExt, NodeKind};
+use crate::src::resolver::NameResolver;
+use crate::src::scope::{NamedItem, NamedItemKind, Scope, ScopeType};
 
 use once_cell::unsync::OnceCell;
 
@@ -198,7 +198,8 @@ impl<'ast> AstItemMaker<'ast> {
                     fields.push(Field {
                         id: self.ast.make_id(),
                         name: name.unwrap(),
-                        typ: field_type,
+                        attributes: item.attributes,
+                        ty: field_type,
                         span: Some(span),
                     });
                 }
@@ -306,6 +307,7 @@ impl<'ast> AstItemMaker<'ast> {
                     members.push(EnumMember {
                         name: name.unwrap(),
                         id,
+                        attributes: item.attributes,
                         value,
                         span: Some(span),
                     });
@@ -371,10 +373,10 @@ impl<'ast> AstItemMaker<'ast> {
         Ok(())
     }
 
-    fn check_self_confusion(&self, typ: TyP<'ast>, span: Option<Span>) {
-        match typ {
+    fn check_self_confusion(&self, ty: TyP<'ast>, span: Option<Span>) {
+        match ty {
             Ty::Item(item) | Ty::Pointer(Ty::Item(item), _) => {
-                if let Some(LangItemKind::DynSelf) = self.ast.lang_item_kind(item) {
+                if let Some(Lang::DynSelf) = self.ast.lang_item_kind(item) {
                     self.global_ctx.diag().add_warning(CodeError {
                         kind: CodeDiagnostic::SelfConfusion,
                         backtrace: span.map(Marker::Span).into_iter().collect(),
@@ -436,7 +438,7 @@ impl<'ast> AstItemMaker<'ast> {
             match item.kind {
                 NamedItemKind::Parameter(id) => {
                     let node = item.node.unwrap();
-                    let typ = TypeVisitor::new(
+                    let ty = TypeVisitor::new(
                         self.global_ctx.clone(),
                         self.ast,
                         scope.clone(),
@@ -445,11 +447,11 @@ impl<'ast> AstItemMaker<'ast> {
                     .visit(node.child_by_field(FieldKind::Type).unwrap())?;
 
                     let span = Span::from_node(scope.file_id(), node);
-                    self.check_self_confusion(typ, Some(span));
+                    self.check_self_confusion(ty, Some(span));
 
                     parameters.push(Parameter {
                         id,
-                        typ,
+                        ty,
                         span: Some(span),
                     });
                 }
@@ -548,7 +550,7 @@ impl<'ast> AstItemMaker<'ast> {
         scope: Scope<'ast, 'src>,
         attributes: &'ast [Attribute],
     ) -> Result<(), AluminaError> {
-        let typ = node
+        let ty = node
             .child_by_field(FieldKind::Type)
             .map(|n| {
                 TypeVisitor::new(
@@ -582,11 +584,11 @@ impl<'ast> AstItemMaker<'ast> {
             return Err(CodeDiagnostic::ExternStaticCannotBeGeneric).with_span_from(&scope, node);
         }
 
-        if typ.is_none() && init.is_none() {
+        if ty.is_none() && init.is_none() {
             return Err(CodeDiagnostic::TypeHintRequired).with_span_from(&scope, node);
         }
 
-        if is_extern && (typ.is_none() || init.is_some()) {
+        if is_extern && (ty.is_none() || init.is_some()) {
             return Err(CodeDiagnostic::ExternStaticMustHaveType).with_span_from(&scope, node);
         }
 
@@ -595,7 +597,7 @@ impl<'ast> AstItemMaker<'ast> {
         let result = Item::StaticOrConst(StaticOrConst {
             name,
             attributes,
-            typ,
+            ty,
             init,
             span: Some(span),
             is_const,

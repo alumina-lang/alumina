@@ -1,14 +1,14 @@
-use crate::ast::{Attribute, BinOp, BuiltinType, Span, UnOp};
+use crate::ast::{Attribute, BinOp, BuiltinType, Inline, Span, UnOp};
 use crate::codegen::elide_zst::ZstElider;
 use crate::codegen::types::TypeWriter;
 use crate::codegen::{w, CName, CodegenCtx};
 use crate::common::{AluminaError, CodeErrorBuilder};
 use crate::diagnostics::DiagnosticsStack;
-use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::const_eval::Value;
 use crate::ir::layout::Layouter;
 use crate::ir::{
-    Const, Expr, ExprKind, ExprP, Function, IrId, LocalDef, Statement, Static, Ty, ValueType,
+    Const, Expr, ExprKind, ExprP, Function, Id, IntrinsicValueKind, LocalDef, Statement, Static,
+    Ty, ValueType,
 };
 
 use std::fmt::Write;
@@ -27,7 +27,7 @@ pub struct FunctionWriter<'ir, 'gen> {
 pub fn write_function_signature<'ir, 'gen>(
     ctx: &'gen CodegenCtx<'ir, 'gen>,
     buf: &mut String,
-    id: IrId,
+    id: Id,
     item: &'ir Function<'ir>,
     is_static: bool,
     is_body: bool,
@@ -35,12 +35,15 @@ pub fn write_function_signature<'ir, 'gen>(
     let name = ctx.get_name(id);
     let mut is_inline = false;
 
-    let mut attributes = if item.attributes.contains(&Attribute::AlwaysInline) {
+    let mut attributes = if item.attributes.contains(&Attribute::Inline(Inline::Always)) {
         is_inline = true;
         "__attribute__((always_inline)) inline ".to_string()
-    } else if item.attributes.contains(&Attribute::NoInline) {
+    } else if item.attributes.contains(&Attribute::Inline(Inline::Never)) {
         "__attribute__((noinline)) ".to_string()
-    } else if item.attributes.contains(&Attribute::Inline) {
+    } else if item
+        .attributes
+        .contains(&Attribute::Inline(Inline::Default))
+    {
         is_inline = true;
         "inline ".to_string()
     } else if item.attributes.contains(&Attribute::StaticConstructor) {
@@ -269,12 +272,12 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
     }
 
     pub fn write_local_def(&mut self, def: &LocalDef<'ir>) -> Result<(), AluminaError> {
-        self.type_writer.add_type(def.typ)?;
+        self.type_writer.add_type(def.ty)?;
         self.indent();
         w!(
             self.fn_bodies,
             "{} {};\n",
-            self.ctx.get_type(def.typ),
+            self.ctx.get_type(def.ty),
             self.ctx.get_name(def.id)
         );
 
@@ -370,9 +373,6 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 }
                 w!(self.fn_bodies, ")");
             }
-            ExprKind::Fn(fun) => {
-                w!(self.fn_bodies, "{}", self.ctx.get_name(fun.id));
-            }
             ExprKind::Ref(inner) => {
                 w!(self.fn_bodies, "(&");
                 self.write_expr(diag, inner, false)?;
@@ -407,7 +407,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             ExprKind::Local(id) => {
                 w!(self.fn_bodies, "{}", self.ctx.get_name(*id));
             }
-            ExprKind::Static(item) | ExprKind::Const(item) => {
+            ExprKind::Item(item) => {
                 w!(self.fn_bodies, "{}", self.ctx.get_name(item.id));
             }
             ExprKind::Block(stmts, ret) => {
@@ -434,17 +434,9 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                     w!(self.fn_bodies, "}})");
                 }
             }
-            ExprKind::Literal(v) => match v {
+            ExprKind::Lit(v) => match v {
                 Value::Bytes(val, offset) => {
                     self.write_string_literal(&val[*offset..]);
-                }
-                Value::FunctionPointer(item) => {
-                    w!(
-                        self.fn_bodies,
-                        "({}){}",
-                        self.ctx.get_type(expr.ty),
-                        self.ctx.get_name(item.id)
-                    );
                 }
                 _ => {
                     self.type_writer.add_type(expr.ty)?;
@@ -510,9 +502,9 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 w!(self.fn_bodies, "__builtin_unreachable()");
             }
             ExprKind::Intrinsic(kind) => match kind {
-                IntrinsicValueKind::SizeOfLike(n, typ) => {
-                    self.type_writer.add_type(typ)?;
-                    w!(self.fn_bodies, "{}({})", n, self.ctx.get_type(typ));
+                IntrinsicValueKind::SizeOfLike(n, ty) => {
+                    self.type_writer.add_type(ty)?;
+                    w!(self.fn_bodies, "{}({})", n, self.ctx.get_type(ty));
                 }
                 IntrinsicValueKind::FunctionLike(n) => {
                     w!(self.fn_bodies, "{}", n);
@@ -580,6 +572,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                     w!(self.fn_bodies, "({})0", self.ctx.get_type(expr.ty));
                 }
                 IntrinsicValueKind::ConstPanic(_)
+                | IntrinsicValueKind::StopIteration
                 | IntrinsicValueKind::ConstAlloc(_, _)
                 | IntrinsicValueKind::ConstWrite(_, _)
                 | IntrinsicValueKind::ConstFree(_) => {
@@ -635,7 +628,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             ExprKind::Tag(_tag, value) => {
                 self.write_expr(diag, value, false)?;
             }
-            ExprKind::Void => {}
+            ExprKind::Nop => {}
         }
 
         if bare_block {
@@ -648,7 +641,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
     pub fn write_function_decl(
         &mut self,
         diag: &DiagnosticsStack,
-        id: IrId,
+        id: Id,
         item: &'ir Function<'ir>,
     ) -> Result<(), AluminaError> {
         let _guard = diag.push_span(item.span);
@@ -695,11 +688,11 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
     pub fn write_static_decl(
         &mut self,
         diag: &DiagnosticsStack,
-        id: IrId,
+        id: Id,
         item: &'ir Static<'ir>,
     ) -> Result<(), AluminaError> {
         let _guard = diag.push_span(item.span);
-        self.type_writer.add_type(item.typ)?;
+        self.type_writer.add_type(item.ty)?;
 
         let attributes = if item.attributes.contains(&Attribute::ThreadLocal) {
             " __thread"
@@ -714,13 +707,13 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             self.ctx.register_name(id, CName::Mangled(name, id.id));
         }
 
-        if !item.typ.is_zero_sized() {
+        if !item.ty.is_zero_sized() {
             if item.r#extern {
                 w!(
                     self.fn_decls,
                     "\nextern{} {} {};",
                     attributes,
-                    self.ctx.get_type(item.typ),
+                    self.ctx.get_type(item.ty),
                     self.ctx.get_name(id)
                 );
             } else {
@@ -728,7 +721,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                     self.fn_decls,
                     "\nstatic{} {} {};",
                     attributes,
-                    self.ctx.get_type(item.typ),
+                    self.ctx.get_type(item.ty),
                     self.ctx.get_name(id)
                 );
             }
@@ -740,7 +733,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
     pub fn write_const_decl(
         &mut self,
         diag: &DiagnosticsStack,
-        id: IrId,
+        id: Id,
         item: &'ir Const<'ir>,
     ) -> Result<(), AluminaError> {
         let _guard = diag.push_span(item.span);
@@ -748,11 +741,11 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
             self.ctx.register_name(id, CName::Mangled(name, id.id));
         }
 
-        self.type_writer.add_type(item.typ)?;
+        self.type_writer.add_type(item.ty)?;
         w!(
             self.fn_decls,
             "\nconst static {} {};",
-            self.ctx.get_type(item.typ),
+            self.ctx.get_type(item.ty),
             self.ctx.get_name(id)
         );
 
@@ -762,14 +755,14 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
     pub fn write_const(
         &mut self,
         diag: &DiagnosticsStack,
-        id: IrId,
+        id: Id,
         item: &'ir Const<'ir>,
     ) -> Result<(), AluminaError> {
         let _guard = diag.push_span(item.span);
         w!(
             self.fn_bodies,
             "\nconst static {} {} = ",
-            self.ctx.get_type(item.typ),
+            self.ctx.get_type(item.ty),
             self.ctx.get_name(id)
         );
 
@@ -788,7 +781,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
     pub fn write_function_body(
         &mut self,
         diag: &DiagnosticsStack,
-        id: IrId,
+        id: Id,
         item: &'ir Function<'ir>,
     ) -> Result<(), AluminaError> {
         let _guard = diag.push_span(item.span);

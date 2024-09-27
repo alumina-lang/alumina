@@ -1,4 +1,4 @@
-///
+//! Low-level JSON writer
 
 use std::iter::Iterator;
 use std::builtins::{Numeric, FloatingPoint};
@@ -6,7 +6,33 @@ use std::fmt::Formatter;
 
 /// JSON string formatter
 ///
+/// This struct is used to format JSON data into a string. It can be used to write JSON data to a
+/// string buffer, a file, or any other destination that implements the `Formatter` trait.
 ///
+/// The formatter can be used in two modes: pretty and compact. In pretty mode, the formatter will
+/// add newlines and indentation to make the output more human-readable. In compact mode, the output
+/// will be as small as possible.
+///
+/// # Examples
+///
+/// ```
+/// use std::string::StringBuf;
+/// use json::writer::JsonFormatter;
+///
+/// let buf = StringBuf::new();
+/// let formatter = JsonFormatter::new(&buf);
+///
+/// formatter.write_object_start().unwrap();
+/// formatter.write_object_key("hello").unwrap();
+/// formatter.write_array_start().unwrap();
+/// formatter.write_null().unwrap();
+/// formatter.write_number(42).unwrap();
+/// formatter.write_string("world").unwrap();
+/// formatter.write_array_end().unwrap();
+/// formatter.write_object_end().unwrap();
+///
+/// assert_eq!(buf[..] as &[u8], "{\"hello\":[null,42,\"world\"]}");
+/// ```
 struct JsonFormatter<F: Formatter<F>> {
     _fmt: &mut F,
     _pretty: bool,
@@ -31,6 +57,7 @@ macro _wln($self, $args...) {
 }
 
 impl JsonFormatter<F: Formatter<F>> {
+    /// Create a new JSON formatter with compact output
     fn new(fmt: &mut F) -> JsonFormatter<F> {
         JsonFormatter {
             _fmt: fmt,
@@ -43,6 +70,7 @@ impl JsonFormatter<F: Formatter<F>> {
         }
     }
 
+    /// Create a new JSON formatter with pretty output
     fn pretty(fmt: &mut F, indent: usize) -> JsonFormatter<F> {
         let self = JsonFormatter::new(fmt);
         self._pretty = true;
@@ -84,11 +112,16 @@ impl JsonFormatter<F: Formatter<F>> {
         Result::ok(())
     }
 
+    /// Write a floating-point number to the formatter
     #[inline]
     fn write_float(self: &mut JsonFormatter<F>, value: f64) -> Result<()> {
         self.write_number::<F, f64>(value)
     }
 
+    /// Write any number to the formatter
+    ///
+    /// If the number is not representable as a JSON number, an error will be returned.
+    #[inline]
     fn write_number<T: Numeric>(self: &mut JsonFormatter<F>, value: T) -> Result<()> {
         when value is FloatingPoint {
             if !value.is_finite() {
@@ -113,6 +146,7 @@ impl JsonFormatter<F: Formatter<F>> {
         Result::ok(())
     }
 
+    /// Write a boolean to the formatter
     fn write_bool(self: &mut JsonFormatter<F>, value: bool) -> Result<()> {
         self._write_preamble()?;
         _w!(self, "{}", value)?;
@@ -120,6 +154,7 @@ impl JsonFormatter<F: Formatter<F>> {
         Result::ok(())
     }
 
+    /// Write a `null` value to the formatter
     fn write_null(self: &mut JsonFormatter<F>) -> Result<()> {
         self._write_preamble()?;
         _w!(self, "null")?;
@@ -127,6 +162,7 @@ impl JsonFormatter<F: Formatter<F>> {
         Result::ok(())
     }
 
+    /// Write a string to the formatter
     fn write_string(self: &mut JsonFormatter<F>, value: &[u8]) -> Result<()> {
         use std::fmt::hex;
 
@@ -158,6 +194,7 @@ impl JsonFormatter<F: Formatter<F>> {
         Result::ok(())
     }
 
+    /// Write the start of an array to the formatter
     fn write_array_start(self: &mut JsonFormatter<F>) -> Result<()> {
         self._write_preamble()?;
         _w!(self, "[")?;
@@ -166,6 +203,7 @@ impl JsonFormatter<F: Formatter<F>> {
         Result::ok(())
     }
 
+    /// Write the end of an array to the formatter
     fn write_array_end(self: &mut JsonFormatter<F>) -> Result<()> {
         use std::fmt::repeat;
         self._cur_indent -= 2;
@@ -181,6 +219,7 @@ impl JsonFormatter<F: Formatter<F>> {
         Result::ok(())
     }
 
+    /// Write the start of an object to the formatter
     fn write_object_start(self: &mut JsonFormatter<F>) -> Result<()> {
         self._write_preamble()?;
         _w!(self, "{{")?;
@@ -189,6 +228,7 @@ impl JsonFormatter<F: Formatter<F>> {
         Result::ok(())
     }
 
+    /// Write the end of an object to the formatter
     fn write_object_end(self: &mut JsonFormatter<F>) -> Result<()> {
         use std::fmt::repeat;
         self._cur_indent -= 2;
@@ -204,6 +244,7 @@ impl JsonFormatter<F: Formatter<F>> {
         Result::ok(())
     }
 
+    /// Write an object key to the formatter
     #[inline]
     fn write_object_key(self: &mut JsonFormatter<F>, key: &[u8]) -> Result<()> {
         self.write_string(key)?;

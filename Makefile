@@ -16,6 +16,12 @@ else ifdef FAST_DEBUG
 	CARGO_TARGET_DIR = target/release
 	CFLAGS += -g0
 	ALUMINA_FLAGS += --debug
+else ifdef PROFILING
+	BUILD_DIR = $(BUILD_ROOT)/profiling
+	CARGO_FLAGS += --profile profiling
+	CARGO_TARGET_DIR = target/profiling
+	CFLAGS += -g3 -fPIE -rdynamic -O3
+	ALUMINA_FLAGS += --debug
 else ifdef COVERAGE
 	CC ?= clang
 	BUILD_DIR = $(BUILD_ROOT)/coverage
@@ -34,7 +40,7 @@ endif
 
 LDFLAGS ?= -lm
 ifndef STD_BACKTRACE
-	ALUMINA_FLAGS += --cfg use_libbacktrace
+	ALUMINA_FLAGS += --cfg libbacktrace
 	LDFLAGS += -lbacktrace
 endif
 ifndef NO_THREADS
@@ -49,7 +55,7 @@ else
 endif
 
 ifdef TIMINGS
-	ALUMINA_FLAGS += --timings
+	ALUMINA_FLAGS += -Ztimings
 endif
 
 # Convert a list of source files to a list of <module>=<file> pairs. mod.alu files are treated
@@ -255,7 +261,7 @@ install: $(ALUMINA_BOOT) $(SYSROOT_FILES)
 alumina-boot: $(ALUMINA_BOOT)
 	ln -sf $(ALUMINA_BOOT) $@
 
-.PHONY: test-std test-examples test-alumina-boot test-libraries test-lang test
+.PHONY: test-std test-alumina-boot test-libraries test-lang test
 
 test-std: alumina-boot $(STDLIB_TESTS)
 	$(STDLIB_TESTS) $(TEST_FLAGS)
@@ -293,23 +299,17 @@ quick: $(BUILD_DIR)/quick
 BENCH_CMD = ./tools/bench.py -n$(if $(TIMES),$(TIMES),20) $(if $(MARKDOWN),--markdown,)
 
 bench-std: $(ALUMINA_BOOT) $(SYSROOT_FILES)
-	$(BENCH_CMD) $(ALUMINA_BOOT) $(ALUMINA_FLAGS) --sysroot $(SYSROOT) --timings --cfg test --cfg test_std --output /dev/null
+	$(BENCH_CMD) $(ALUMINA_BOOT) $(ALUMINA_FLAGS) --sysroot $(SYSROOT) -Ztimings --cfg test --cfg test_std --output /dev/null
 
 bench-std-cached: $(ALU_TEST_STD_DEPS)
 	@ if [ -z "$(CACHE_AST)" ]; then \
 		echo "ERROR: CACHE_AST=1 is not set"; \
 		exit 1; \
 	fi
-	$(BENCH_CMD) $(ALUMINA_BOOT) $(ALUMINA_FLAGS_TEST_STD) --timings --cfg test --cfg test_std --output /dev/null
+	$(BENCH_CMD) $(ALUMINA_BOOT) $(ALUMINA_FLAGS_TEST_STD) -Ztimings --cfg test --cfg test_std --output /dev/null
 
 bench-std-cc: $(STDLIB_TESTS).c $(MINICORO)
 	$(BENCH_CMD) $(CC) $(CFLAGS) -o/dev/null $^ $(LDFLAGS)
-
-$(BUILD_DIR)/flamegraph.svg: $(ALUMINA_BOOT) $(SYSROOT_FILES)
-	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-		-o $@ -- $(ALUMINA_FLAGS) --sysroot $(SYSROOT) --timings --cfg test --cfg test_std --output /dev/null
-
-flamegraph: $(BUILD_DIR)/flamegraph.svg
 
 ## ------------------------------ Diag tests ----------------------------
 

@@ -23,6 +23,7 @@ Non-exhaustive list of distinguishing features:
 - [Compile-time constant evaluation](./examples/constants.alu) (including loops, function calls, etc.)
 - [Unified call syntax](https://en.wikipedia.org/wiki/Uniform_Function_Call_Syntax) for functions and macros in scope
 - [Defer expressions](./examples/defer_and_move.alu)
+- [Reflection](./examples/reflection.alu)
 
 Alumina is heavily inspired by Rust, especially in terms of syntax and standard library API. Unlike Rust, however, Alumina is not memory-safe and it requires manual memory management.
 
@@ -126,13 +127,14 @@ Finished:
     - [TCP/IP sockets](https://docs.alumina-lang.net/std/net)
     - [random number generation](https://docs.alumina-lang.net/std/random)
     - [unit testing framework](https://docs.alumina-lang.net/test)
+    - [reflection](https://docs.alumina-lang.net/std/typing)
 
 To be done:
 
 - Standard library is only usable on Unixes (tested on Linux, macOS and Android)
 - Compiler driver (something like Rust's `cargo`)
 - A good story for third-party libraries (something like `crates.io` maybe?)
-- Various rough edges and missing features
+- Various rough edges, bugs and missing features
 
 Full list of missing features, open questions, bugs and ideas for the future is in [MISSING.md](./MISSING.md)
 
@@ -173,7 +175,7 @@ Additionally, to compile the tools, such as `alumina-doc`, these prerequisites a
    sudo make install
    # sudo ldconfig
    ```
-  - [`libbacktrace`](https://github.com/ianlancetaylor/libbacktrace/) is an optional dependency for nice stack backtraces on panics. If disabled, pass `STD_BACKTRACE=1` when builting `aluminac` to use the libc's backtrace function instead.
+  - [`libbacktrace`](https://github.com/ianlancetaylor/libbacktrace/) is an optional dependency for nice stack backtraces on panics. If disabled, pass `STD_BACKTRACE=1` when building `aluminac` to use the libc's backtrace function instead.
    ```bash
    git clone https://github.com/ianlancetaylor/libbacktrace
    cd libbacktrace

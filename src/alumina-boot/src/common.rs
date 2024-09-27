@@ -153,7 +153,7 @@ pub enum CodeDiagnostic {
     #[error("cannot reference `{}` in a nested function", .0)]
     CannotReferenceLocal(String),
     #[error("missing lang item: {:?}", .0)]
-    MissingLangItem(LangItemKind),
+    MissingLangItem(Lang),
     #[error("only slices can be range-indexed")]
     RangeIndexNonSlice,
     #[error("internal error: {}", .0)]
@@ -275,8 +275,6 @@ pub enum CodeDiagnostic {
     BuiltinProtocolDyn,
     #[error("protocols containing generic functions can only be used as mixins")]
     MixinOnlyProtocol,
-    #[error("protocols cannot be used as concrete types (did you mean to use `&dyn {}`?)", .0)]
-    ProtocolsAreSpecialMkay(String),
     #[error("indirect `dyn` pointers are not supported")]
     IndirectDyn,
     #[error("signature of `{}` is incompatible with virtual dispatch", .0)]
@@ -318,8 +316,14 @@ pub enum CodeDiagnostic {
     TupleCallArgCount,
     #[error("the argument to a #[tuple_args] function must be a tuple")]
     TupleCallArgType,
+    #[error("too many loop variables (iterator yields {})", .0)]
+    TooManyLoopVars(String),
 
     // Warnings
+    #[error("protocol is used as a concrete type (did you mean to use `&dyn {}`?)", .0)]
+    ProtocolsAreSpecialMkay(String),
+    #[error("{} used as a concrete type, this is probably not what you want", .0)]
+    InvalidTypeForValue(&'static str),
     #[error("defer inside a loop: this defered statement will only be executed once")]
     DeferInALoop,
     #[error("duplicate function name {:?} (this function will shadow a previous one)", .0)]
@@ -536,12 +540,12 @@ macro_rules! impl_allocatable {
 
 pub(crate) use impl_allocatable;
 
-use crate::ast::lang::LangItemKind;
+use crate::ast::lang::Lang;
 use crate::ast::serialization::AstSerializable;
 use crate::ast::Span;
 use crate::diagnostics::DiagnosticsStack;
 use crate::ir::const_eval::ConstEvalErrorKind;
-use crate::name_resolution::scope::Scope;
+use crate::src::scope::Scope;
 
 pub trait Incrementable<T> {
     fn increment(&self) -> T;

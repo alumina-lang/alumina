@@ -1,16 +1,16 @@
 use crate::ast::{
-    AstCtx, AstId, Bound, Expr, ExprP, FieldInitializer, FnKind, Placeholder, ProtocolBounds,
+    AstCtx, Bound, Expr, ExprP, FieldInitializer, FnKind, Id, Placeholder, ProtocolBounds,
     Statement, TyP,
 };
 use crate::common::{AluminaError, ArenaAllocatable, HashMap};
 
 pub struct Rebinder<'ast> {
     pub ast: &'ast AstCtx<'ast>,
-    pub replacements: HashMap<AstId, TyP<'ast>>,
+    pub replacements: HashMap<Id, TyP<'ast>>,
 }
 
 impl<'ast> Rebinder<'ast> {
-    pub fn new(ast: &'ast AstCtx<'ast>, replacements: HashMap<AstId, TyP<'ast>>) -> Self {
+    pub fn new(ast: &'ast AstCtx<'ast>, replacements: HashMap<Id, TyP<'ast>>) -> Self {
         Self { ast, replacements }
     }
 
@@ -20,7 +20,7 @@ impl<'ast> Rebinder<'ast> {
     ) -> Result<Placeholder<'ast>, AluminaError> {
         Ok(Placeholder {
             bounds: self.visit_bounds(&placeholder.bounds)?,
-            default: placeholder.default.map(|d| self.visit_typ(d)).transpose()?,
+            default: placeholder.default.map(|d| self.visit_ty(d)).transpose()?,
             span: placeholder.span,
             id: placeholder.id,
         })
@@ -46,48 +46,48 @@ impl<'ast> Rebinder<'ast> {
         Ok(Bound {
             negated: bound.negated,
             span: bound.span,
-            typ: self.visit_typ(bound.typ)?,
+            ty: self.visit_ty(bound.ty)?,
         })
     }
 
-    pub fn visit_typ(&mut self, typ: TyP<'ast>) -> Result<TyP<'ast>, AluminaError> {
+    pub fn visit_ty(&mut self, ty: TyP<'ast>) -> Result<TyP<'ast>, AluminaError> {
         use crate::ast::Ty::*;
-        let kind = match typ {
+        let kind = match ty {
             Placeholder(id) => match self.replacements.get(id) {
-                Some(typ) => Tag("dynamic", typ),
+                Some(ty) => Tag("dynamic", ty),
                 None => Placeholder(*id),
             },
-            Tag(tag, inner) => Tag(tag, self.visit_typ(inner)?),
-            Pointer(inner, is_const) => Pointer(self.visit_typ(inner)?, *is_const),
-            Slice(inner, is_const) => Slice(self.visit_typ(inner)?, *is_const),
-            Array(inner, len) => Array(self.visit_typ(inner)?, self.visit_expr(len)?),
+            Tag(tag, inner) => Tag(tag, self.visit_ty(inner)?),
+            Pointer(inner, is_const) => Pointer(self.visit_ty(inner)?, *is_const),
+            Slice(inner, is_const) => Slice(self.visit_ty(inner)?, *is_const),
+            Array(inner, len) => Array(self.visit_ty(inner)?, self.visit_expr(len)?),
             Tuple(elems) => Tuple(
                 elems
                     .iter()
-                    .map(|e| self.visit_typ(e))
+                    .map(|e| self.visit_ty(e))
                     .collect::<Result<Vec<_>, _>>()?
                     .alloc_on(self.ast),
             ),
             FunctionPointer(elems, ret) => FunctionPointer(
                 elems
                     .iter()
-                    .map(|e| self.visit_typ(e))
+                    .map(|e| self.visit_ty(e))
                     .collect::<Result<Vec<_>, _>>()?
                     .alloc_on(self.ast),
-                self.visit_typ(ret)?,
+                self.visit_ty(ret)?,
             ),
             FunctionProtocol(elems, ret) => FunctionProtocol(
                 elems
                     .iter()
-                    .map(|e| self.visit_typ(e))
+                    .map(|e| self.visit_ty(e))
                     .collect::<Result<Vec<_>, _>>()?
                     .alloc_on(self.ast),
-                self.visit_typ(ret)?,
+                self.visit_ty(ret)?,
             ),
             Dyn(inner, is_const) => Dyn(
                 inner
                     .iter()
-                    .map(|e| self.visit_typ(e))
+                    .map(|e| self.visit_ty(e))
                     .collect::<Result<Vec<_>, _>>()?
                     .alloc_on(self.ast),
                 *is_const,
@@ -96,20 +96,20 @@ impl<'ast> Rebinder<'ast> {
             Generic(item, args) => Generic(
                 item,
                 args.iter()
-                    .map(|e| self.visit_typ(e))
+                    .map(|e| self.visit_ty(e))
                     .collect::<Result<Vec<_>, _>>()?
                     .alloc_on(self.ast),
             ),
-            Defered(super::Defered { typ, name }) => Defered(super::Defered {
-                typ: self.visit_typ(typ)?,
+            Defered(super::Defered { ty, name }) => Defered(super::Defered {
+                ty: self.visit_ty(ty)?,
                 name,
             }),
             When(cond, then, els) => When(
                 self.visit_expr(cond)?,
-                self.visit_typ(then)?,
-                self.visit_typ(els)?,
+                self.visit_ty(then)?,
+                self.visit_ty(els)?,
             ),
-            Item(_) | Builtin(_) => return Ok(typ),
+            Item(_) | Builtin(_) => return Ok(ty),
         };
 
         Ok(self.ast.intern_type(kind))
@@ -122,7 +122,7 @@ impl<'ast> Rebinder<'ast> {
             Expression(expr) => Expression(self.visit_expr(expr)?),
             LetDeclaration(decl) => LetDeclaration(crate::ast::LetDeclaration {
                 id: decl.id,
-                typ: decl.typ.map(|t| self.visit_typ(t)).transpose()?,
+                ty: decl.ty.map(|t| self.visit_ty(t)).transpose()?,
                 value: decl.value.map(|v| self.visit_expr(v)).transpose()?,
             }),
         };
@@ -183,7 +183,7 @@ impl<'ast> Rebinder<'ast> {
                 let generic_args = match generic_args {
                     Some(args) => Some(
                         args.iter()
-                            .map(|e| self.visit_typ(e))
+                            .map(|e| self.visit_ty(e))
                             .collect::<Result<Vec<_>, _>>()?
                             .alloc_on(self.ast),
                     ),
@@ -218,9 +218,12 @@ impl<'ast> Rebinder<'ast> {
                 self.visit_expr(then)?,
                 self.visit_expr(els)?,
             ),
-            Cast(inner, typ) => Cast(self.visit_expr(inner)?, self.visit_typ(typ)?),
+            StaticFor(id, range, body) => {
+                StaticFor(id, self.visit_expr(range)?, self.visit_expr(body)?)
+            }
+            Cast(inner, ty) => Cast(self.visit_expr(inner)?, self.visit_ty(ty)?),
             Defered(ref def) => Defered(crate::ast::Defered {
-                typ: self.visit_typ(def.typ)?,
+                ty: self.visit_ty(def.ty)?,
                 name: def.name,
             }),
             Fn(ref kind, generic_args) => {
@@ -228,7 +231,7 @@ impl<'ast> Rebinder<'ast> {
                     FnKind::Normal(_) => *kind,
                     FnKind::Closure(..) => *kind,
                     FnKind::Defered(def) => FnKind::Defered(crate::ast::Defered {
-                        typ: self.visit_typ(def.typ)?,
+                        ty: self.visit_ty(def.ty)?,
                         name: def.name,
                     }),
                 };
@@ -236,7 +239,7 @@ impl<'ast> Rebinder<'ast> {
                 let generic_args = match generic_args {
                     Some(args) => Some(
                         args.iter()
-                            .map(|e| self.visit_typ(e))
+                            .map(|e| self.visit_ty(e))
                             .collect::<Result<Vec<_>, _>>()?
                             .alloc_on(self.ast),
                     ),
@@ -249,7 +252,7 @@ impl<'ast> Rebinder<'ast> {
                 let generic_args = match generic_args {
                     Some(args) => Some(
                         args.iter()
-                            .map(|e| self.visit_typ(e))
+                            .map(|e| self.visit_ty(e))
                             .collect::<Result<Vec<_>, _>>()?
                             .alloc_on(self.ast),
                     ),
@@ -262,7 +265,7 @@ impl<'ast> Rebinder<'ast> {
                 let generic_args = match generic_args {
                     Some(args) => Some(
                         args.iter()
-                            .map(|e| self.visit_typ(e))
+                            .map(|e| self.visit_ty(e))
                             .collect::<Result<Vec<_>, _>>()?
                             .alloc_on(self.ast),
                     ),
@@ -276,7 +279,7 @@ impl<'ast> Rebinder<'ast> {
                 self.visit_expr(then)?,
                 self.visit_expr(els)?,
             ),
-            TypeCheck(lhs, rhs) => TypeCheck(self.visit_expr(lhs)?, self.visit_typ(rhs)?),
+            TypeCheck(lhs, rhs) => TypeCheck(self.visit_expr(lhs)?, self.visit_ty(rhs)?),
             Local(_) | BoundParam(_, _, _) | Continue | EnumValue(_, _) | Lit(_) | Void => {
                 expr.kind
             }

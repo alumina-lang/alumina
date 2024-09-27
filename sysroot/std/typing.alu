@@ -75,28 +75,6 @@ struct dyn<Protos, Ptr> {
 #[lang(dyn_self)]
 struct Self {}
 
-/// Returns the names and associated values of enum variants.
-///
-/// ## Example
-/// ```
-/// use std::typing::enum_variants;
-///
-/// enum Foo {
-///     Bar,
-///     Quux,
-/// }
-///
-/// let variants = enum_variants::<Foo>();
-///
-/// assert_eq!(variants.len(), 2);
-/// assert_eq!(variants[0].0, "Bar");
-/// assert_eq!(variants[0].1, Foo::Bar);
-/// assert_eq!(variants[1].0, "Quux");
-/// assert_eq!(variants[1].1, Foo::Quux);
-/// ```
-fn enum_variants<E: builtins::Enum>() -> &[(&[u8], E)] {
-    (internal::ENUM_VARIANTS::<E>)[..]
-}
 
 /// Returns `true` if type T1 matches bound T2.
 ///
@@ -359,8 +337,599 @@ fn is_range_of<T, U>() -> bool {
     matches::<T, builtins::RangeOf<U>>()
 }
 
+/// Type descriptor.
+///
+/// This struct provides compile-time reflection information
+/// about a type (including function types).
+struct Type<T> {}
+
+impl Type<T> {
+    /// Creates a new type descriptor.
+    #[lang(type_descriptor_new)]
+    fn new() -> Type<T> {
+        Type {}
+    }
+
+    /// Returns the base name of a named item.
+    ///
+    /// If the type is not a named type, this will return `Option::none()`.
+    fn name(self: Type<T>) -> Option<&[u8]> {
+        when intrinsics::named_type_name::<T>() is () {
+            Option::none()
+        } else {
+            Option::some(intrinsics::named_type_name::<T>())
+        }
+    }
+
+    /// Returns the module path where the item is defined.
+    ///
+    /// If the type is not a named type or if it is generated internally by the compiler,
+    /// this will return `Option::none()`.
+    fn module_path(self: Type<T>) -> Option<&[u8]> {
+        when intrinsics::module_path::<T>() is () {
+            Option::none()
+        } else {
+            Option::some(intrinsics::module_path::<T>())
+        }
+    }
+
+    /// Returns the pretty name of the type.
+    fn debug_name(self: Type<T>) -> &[u8] {
+        type_name::<T>()
+    }
+
+    /// Returns the unique identifier of the type.
+    fn id(self: Type<T>) -> TypeId {
+        type_id::<T>()
+    }
+
+    /// Creates a new uninitialized value of the type.
+    fn uninitialized(self: Type<T>) -> T {
+        mem::uninitialized()
+    }
+
+    /// Creates a new zero-initialized value of the type.
+    fn zeroed(self: Type<T>) -> T {
+        mem::zeroed()
+    }
+
+    /// Returns the size of the type in bytes.
+    fn size(self: Type<T>) -> usize {
+        mem::size_of::<T>()
+    }
+
+    /// Returns the alignment of the type in bytes.
+    fn align(self: Type<T>) -> usize {
+        mem::align_of::<T>()
+    }
+
+    /// Returns `true` if the descriptor is for the same type as the other descriptor.
+    fn is_same_as<T1>(self: Type<T>, _other: Type<T1>) -> bool {
+        typing::is_same::<T, T1>()
+    }
+
+    /// Returns true if the type is void.
+    fn is_void(self: Type<T>) -> bool {
+        typing::is_void::<T>()
+    }
+
+    /// Returns true if the type is zero-sized.
+    fn is_zero_sized(self: Type<T>) -> bool {
+        typing::is_zero_sized::<T>()
+    }
+
+    /// Returns true if the type is primitive.
+    fn is_primitive(self: Type<T>) -> bool {
+        typing::is_primitive::<T>()
+    }
+
+    /// Returns true if the type is numeric.
+    fn is_numeric(self: Type<T>) -> bool {
+        typing::is_numeric::<T>()
+    }
+
+    /// Returns true if the type is integer.
+    fn is_integer(self: Type<T>) -> bool {
+        typing::is_integer::<T>()
+    }
+
+    /// Returns true if the type is floating point.
+    fn is_floating_point(self: Type<T>) -> bool {
+        typing::is_floating_point::<T>()
+    }
+
+    /// Returns true if the type is signed.
+    fn is_signed(self: Type<T>) -> bool {
+        typing::is_signed::<T>()
+    }
+
+    /// Returns true if the type is unsigned.
+    fn is_unsigned(self: Type<T>) -> bool {
+        typing::is_unsigned::<T>()
+    }
+
+    /// Returns true if the type is `dyn` pointer.
+    fn is_dyn(self: Type<T>) -> bool {
+        typing::is_same_base_as::<T, dyn<(), &()>>()
+    }
+
+    /// Returns true if the type is a slice
+    fn is_slice(self: Type<T>) -> bool {
+        typing::is_same_base_as::<T, &[()]>()
+    }
+
+    /// Returns true if the type is pointer.
+    fn is_pointer(self: Type<T>) -> bool {
+        typing::is_pointer::<T>()
+    }
+
+    /// Returns true if the type is array.
+    fn is_array(self: Type<T>) -> bool {
+        typing::is_array::<T>()
+    }
+
+    /// Returns true if the type is tuple.
+    fn is_tuple(self: Type<T>) -> bool {
+        typing::is_tuple::<T>()
+    }
+
+    /// Returns true if the type is struct.
+    fn is_struct(self: Type<T>) -> bool {
+        typing::is_struct::<T>()
+    }
+
+    /// Returns true if the type is union.
+    fn is_union(self: Type<T>) -> bool {
+        typing::is_union::<T>()
+    }
+
+    /// Returns true if the type is range.
+    fn is_range(self: Type<T>) -> bool {
+        typing::is_range::<T>()
+    }
+
+    /// Returns true if the type is named function.
+    fn is_named_function(self: Type<T>) -> bool {
+        typing::is_named_function::<T>()
+    }
+
+    /// Returns true if the type is function pointer.
+    fn is_function_pointer(self: Type<T>) -> bool {
+        typing::is_function_pointer::<T>()
+    }
+
+    /// Returns true if the type is protocol.
+    fn is_protocol(self: Type<T>) -> bool {
+        typing::is_protocol::<T>()
+    }
+
+    /// Returns the type descriptor of the const pointer to the type.
+    fn ref(self: Type<T>) -> Type<&T> {
+        Type {}
+    }
+
+    /// Returns the type descriptor of the mutable pointer to the type.
+    fn ref_mut(self: Type<T>) -> Type<&mut T> {
+        Type {}
+    }
+}
+
+impl Type<T: builtins::Pointer> {
+    /// Returns the type descriptor of the pointed-to type.
+    fn deref(self: Type<T>) -> Type<builtins::deref_of<T>> {
+        Type {}
+    }
+}
+
+impl Type<T: builtins::Array> {
+    /// Returns the type descriptor of the element type of the array.
+    fn element_type(self: Type<T>) -> Type<builtins::element_of<T>> {
+        Type {}
+    }
+
+}
+
+impl Type<T: builtins::Array | builtins::Tuple> {
+    /// Returns the length of the array or tuple.
+    fn len(self: Type<T>) -> usize {
+        intrinsics::length_of::<T>()
+    }
+}
+
+impl Type<T: builtins::Tuple> {
+    /// Returns a tuple of type descriptors for the elements of the tuple.
+    fn element_types(self: Type<T>) -> tuple_map_of<T, Type<()>> {
+        util::unit()
+    }
+}
+
+impl Type<T: builtins::Struct | builtins::Union> {
+    /// Returns a tuple of field descriptors for the fields of the struct or union
+    ///
+    /// See [Field] for more information.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::typing::Type;
+    ///
+    /// struct Foo {
+    ///     bar: i32,
+    ///     baz: f64,
+    /// }
+    ///
+    /// let typ: Type<Foo> = Type::new();
+    /// let fields = typ.fields();
+    ///
+    /// assert_eq!(fields.0.name(), Option::some("bar"));
+    /// assert_eq!(fields.0.type().debug_name(), "i32");
+    /// assert_eq!(fields.1.name(), Option::some("baz"));
+    /// assert_eq!(fields.1.type().debug_name(), "f64");
+    /// ```
+    fn fields(self: Type<T>) -> typeof(internal::FIELDS::<T>) {
+        internal::FIELDS::<T>
+    }
+}
+
+impl Type<T: builtins::Enum> {
+    /// Returns the names and associated values of enum variants.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::typing::Type;
+    ///
+    /// enum Foo {
+    ///     Bar,
+    ///     Quux,
+    /// }
+    ///
+    /// let desc: Type<Foo> = Type::new();
+    /// let variants = desc.variants();
+    ///
+    /// assert_eq!(variants[0].name(), "Bar");
+    /// assert_eq!(variants[0].value(), Foo::Bar);
+    /// assert_eq!(variants[1].name(), "Quux");
+    /// assert_eq!(variants[1].value(), Foo::Quux);
+    /// ```
+    fn variants(self: Type<T>) -> &[EnumVariant<T>] {
+        (internal::ENUM_VARIANTS::<T>)[..]
+    }
+
+    /// Returns the underlying type of the enum.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::typing::Type;
+    ///
+    /// enum Foo {
+    ///     Bar = 1u8,
+    ///     Quux,
+    /// }
+    ///
+    /// let desc: Type<Foo> = Type::new();
+    /// let underlying = desc.underlying_type();
+    ///
+    /// assert_eq!(underlying.debug_name(), "u8");
+    /// ```
+    fn underlying_type(self: Type<T>) -> Type<builtins::underlying_type_of<T>> {
+        Type {}
+    }
+}
+
+
+impl Type<T: builtins::Const | builtins::Static> {
+    /// Returns the value type of the constant or static.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::typing::Type;
+    ///
+    /// const FOO: i32 = 42;
+    ///
+    /// let desc: Type<FOO> = Type::new();
+    /// let value_type = desc.value_type();
+    ///
+    /// assert_eq!(value_type.debug_name(), "i32");
+    /// ```
+    fn value_type(self: Type<T>) -> Type<builtins::underlying_type_of<T>> {
+        Type {}
+    }
+
+    /// Returns the value of the constant or static.
+    ///
+    /// When used on a static, the return value will not be a constant expression (use [as_ptr] for that).
+    ///
+    /// ## Example
+    /// ```
+    /// use std::typing::Type;
+    ///
+    /// const FOO: i32 = 42;
+    ///
+    /// let desc: Type<FOO> = Type::new();
+    /// let value = desc.value();
+    ///
+    /// assert_eq!(value, 42);
+    /// ```
+    fn value(self: &Type<T>) -> builtins::underlying_type_of<T> {
+        intrinsics::value_of::<T>()
+    }
+
+    /// Returns the pointer to the constant or static.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::typing::Type;
+    ///
+    /// static FOO: i32 = 42;
+    ///
+    /// let desc: Type<FOO> = Type::new();
+    /// let addr = desc.as_ptr();
+    ///
+    /// assert_eq!(*addr, 42);
+    /// ```
+    fn as_ptr(self: Type<T>) -> &builtins::underlying_type_of<T> {
+        &intrinsics::value_of::<T>()
+    }
+}
+
+impl Type<T: builtins::Static> {
+    /// Returns a mutable pointer to the static.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::typing::Type;
+    ///
+    /// static FOO: i32 = 42;
+    ///
+    /// let desc: Type<FOO> = Type::new();
+    /// let addr = desc.as_mut_ptr();
+    ///
+    /// *addr = 1337;
+    /// assert_eq!(FOO, 1337);
+    /// ```
+    fn as_mut_ptr(self: Type<T>) -> &mut builtins::underlying_type_of<T> {
+        &intrinsics::value_of::<T>()
+    }
+}
+
+impl Type<T: builtins::NamedFunction | builtins::FunctionPointer | builtins::Closure> {
+    /// Returns a tuple of type descriptors for the arguments of the function.
+    fn arguments(self: Type<T>) -> tuple_map_of<builtins::arguments_of<T>, Type<()>> {
+        util::unit()
+    }
+
+    /// Returns the type descriptor of the return value of the function.
+    fn return_type(self: Type<T>) -> Type<builtins::return_type_of<T>> {
+        Type {}
+    }
+}
+
+impl Type<T: builtins::Closure> {
+    /// Returns the type descriptor of the underlying function of the closure.
+    ///
+    /// See also [builtins::underlying_function_of].
+    fn underlying_function(self: Type<T>) -> Type<builtins::return_type_of<T>> {
+        Type {}
+    }
+
+    /// Returns the captured field descriptors of the closure.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::typing::Type;
+    ///
+    /// let a = 1;
+    /// let b = true;
+    ///
+    /// let closure = |=a, &b, param: i32| {};
+    ///
+    /// let desc: Type<typeof(closure)> = Type::new();
+    /// let captures = desc.captures();
+    ///
+    /// assert_eq!(captures.len(), 2);
+    /// assert_eq!(captures.0.name(), Option::some("a"));
+    /// assert_eq!(captures.0.type().debug_name(), "i32");
+    /// assert_eq!(captures.1.name(), Option::some("b"));
+    /// assert_eq!(captures.1.type().debug_name(), "&mut bool");
+    /// ```
+    fn captures(self: Type<T>) -> typeof(internal::FIELDS::<T>) {
+        internal::FIELDS::<T>
+    }
+}
+
+
+impl Type<T: builtins::NamedFunction> {
+    /// Invokes the function with the provided arguments as a tuple.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::typing::Type;
+    ///
+    /// fn add(a: i32, b: i32) -> i32 {
+    ///     a + b
+    /// }
+    ///
+    /// let desc: Type<add> = Type::new();
+    /// let args = (1, 2);
+    /// let result = desc.invoke(args);
+    ///
+    /// assert_eq!(result, 3);
+    /// ```
+    fn invoke(self: Type<T>, args: builtins::arguments_of<T>) -> builtins::return_type_of<T> {
+        intrinsics::tuple_invoke(util::unit::<T>(), args)
+    }
+
+    /// Converts the function to a function pointer.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::typing::Type;
+    ///
+    /// fn add(a: i32, b: i32) -> i32 {
+    ///     a + b
+    /// }
+    ///
+    /// let desc: Type<add> = Type::new();
+    /// let fn_ptr: fn(i32, i32) -> i32 = desc.as_fn();
+    ///
+    /// assert_eq!(fn_ptr(1, 2), 3);
+    /// ```
+    fn as_fn(self: Type<T>) -> builtins::function_pointer_of<
+        builtins::arguments_of<T>,
+        builtins::return_type_of<T>
+    > {
+        util::unit::<T>()
+    }
+}
+
+/// Enum variant descriptor.
+///
+/// This struct provides compile-time reflection information
+/// about a variant of an enum.
+///
+/// It is created by calling [Type::variants] on an enum type.
+///
+/// ## Example
+/// ```
+/// use std::typing::Type;
+///
+/// enum Foo {
+///     Bar,
+///     Quux,
+/// }
+///
+/// let desc: Type<Foo> = Type::new();
+/// let variants = desc.variants();
+///
+/// assert_eq!(variants[0].name(), "Bar");
+/// assert_eq!(variants[0].value(), Foo::Bar);
+/// assert_eq!(variants[1].name(), "Quux");
+/// assert_eq!(variants[1].value(), Foo::Quux);
+/// ```
+struct EnumVariant<T> {
+    _name: &[u8],
+    _value: T,
+}
+
+impl EnumVariant<T> {
+    /// Returns the name of the enum variant.
+    fn name(self: &EnumVariant<T>) -> &[u8] {
+        self._name
+    }
+
+    /// Returns the value of the enum variant.
+    fn value(self: &EnumVariant<T>) -> T {
+        self._value
+    }
+}
+
+/// Field descriptor.
+///
+/// This struct provides compile-time reflection information
+/// about a field of a struct or union.
+///
+/// It is created by calling [Type::fields].
+struct Field<StructT, FieldT> {
+    _name: Option<&[u8]>,
+    _offset: usize,
+}
+
+impl Field<StructT, FieldT> {
+    /// Returns the name of the field.
+    fn name(self: &Field<StructT, FieldT>) -> Option<&[u8]> {
+        self._name
+    }
+
+    /// Returns the byte offset of the field in the struct.
+    fn offset(self: &Field<StructT, FieldT>) -> usize {
+        self._offset
+    }
+
+    /// Returns the type descriptor of the field.
+    fn type(self: &Field<StructT, FieldT>) -> Type<FieldT> {
+        Type {}
+    }
+
+    /// Returns the pointer to the field in the struct for the given instance.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::typing::Type;
+    ///
+    /// struct Foo {
+    ///     bar: i32,
+    /// }
+    ///
+    /// let field: Type<Foo> = Type::new();
+    /// let field_desc = field.fields().0;
+    ///
+    /// let foo = Foo { bar: 42 };
+    /// assert_eq!(*field_desc.as_ptr(&foo), 42);
+    /// ```
+    fn as_ptr(self: &Field<StructT, FieldT>, inst: &StructT) -> &FieldT {
+        ((inst as &u8) + self._offset) as &FieldT
+    }
+
+    /// Returns the mutable pointer to the field in the struct for the given instance.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::typing::Type;
+    ///
+    /// struct Foo {
+    ///     bar: i32,
+    /// }
+    ///
+    /// let field: Type<Foo> = Type::new();
+    /// let field_desc = field.fields().0;
+    ///
+    /// let foo = Foo { bar: 42 };
+    /// *field_desc.as_mut_ptr(&foo) = 1337;
+    /// assert_eq!(foo.bar, 1337);
+    /// ```
+    fn as_mut_ptr(self: &Field<StructT, FieldT>, inst: &mut StructT) -> &mut FieldT {
+        ((inst as &mut u8) + self._offset) as &mut FieldT
+    }
+}
+
+/// Apply a generic type to the elements of a tuple.
+///
+/// The generic type `T` must be provided as a specific instantiation (e.g. with T<()>),
+/// and the resulting type is a tuple with the same structure as the input tuple, but with
+/// the elements replaced by `T<_>`.
+///
+/// ## Example
+/// ```
+/// use std::typing::{tuple_map_of, is_same};
+///
+/// assert!(is_same::<
+///     tuple_map_of<(u8, u16, u32), Option<()>>,
+///     (Option<u8>, Option<u16>, Option<u32>)
+/// >());
+/// ```
+type tuple_map_of<Tup: builtins::Tuple, T> = when is_void::<Tup>() {
+    ()
+} else {
+    builtins::tuple_concat_of<
+        (builtins::replace_generic_args_of<T, (builtins::tuple_head_of<Tup>,)>, ),
+        tuple_map_of<builtins::tuple_tail_of<Tup>, T>
+    >
+};
+
+/// Extract the type of the type descriptor ([Type])
+///
+/// ## Example
+/// ```
+/// use std::typing::{Type, type_of};
+///
+/// let _: type_of<Type<u8>> = 42u8;
+/// ```
+type type_of<T: builtins::SameBaseAs<Type<()>>>
+    = builtins::tuple_head_of<builtins::generic_args_of<T>>;
+
+
 #[docs(no_index)]
 mod internal {
+    const FIELDS<E> = intrinsics::fields::<E>();
     const ENUM_VARIANTS<E> = intrinsics::enum_variants::<E>();
     const VTABLE<Protos, T> = intrinsics::vtable::<Protos, T>();
 
@@ -368,8 +937,29 @@ mod internal {
 
     #[lang(enum_variant_new)]
     #[inline(ir)]
-    fn make_enum_variant<E>(name: &[u8], value: E) -> (&[u8], E) {
-        (name, value)
+    fn make_enum_variant<E>(name: &[u8], value: E) -> EnumVariant<E> {
+        EnumVariant {
+            _name: name,
+            _value: value,
+        }
+    }
+
+    #[lang(field_descriptor_new)]
+    #[inline(ir)]
+    fn make_field_desc<StructT, FieldT>(name: &[u8], offset: usize) -> Field<StructT, FieldT> {
+        Field {
+            _name: Option::some(name),
+            _offset: offset,
+        }
+    }
+
+    #[lang(field_descriptor_new_unnamed)]
+    #[inline(ir)]
+    fn make_field_desc_unnamed<StructT, FieldT>(offset: usize) -> Field<StructT, FieldT> {
+        Field {
+            _name: Option::none(),
+            _offset: offset,
+        }
     }
 
     #[lang(dyn_new)]
@@ -540,17 +1130,72 @@ mod tests {
     }
 
     #[test]
-    fn test_enum_variant() {
-        enum Foo {
-            Bar,
-            Quux,
-        }
-        let variants = enum_variants::<Foo>();
-        assert_eq!(variants.len(), 2);
+    fn test_type() {
+        let desc: Type<u8> = Type::new();
+        assert_eq!(desc.debug_name(), "u8");
+        assert_eq!(desc.name(), Option::none());
+        assert_eq!(desc.id(), type_id::<u8>());
+        assert_eq!(desc.size(), mem::size_of::<u8>());
+        assert_eq!(desc.align(), mem::align_of::<u8>());
+        assert!(desc.is_primitive());
+        assert!(desc.is_numeric());
+        assert!(desc.is_integer());
+        assert!(!desc.is_floating_point());
+        assert!(!desc.is_signed());
+        assert!(desc.is_unsigned());
+        assert!(!desc.is_void());
+        assert!(!desc.is_zero_sized());
+        assert!(!desc.is_dyn());
+        assert!(!desc.is_slice());
+        assert!(!desc.is_pointer());
+        assert!(!desc.is_array());
+        assert!(!desc.is_tuple());
+        assert!(!desc.is_struct());
+        assert!(!desc.is_union());
+        assert!(!desc.is_range());
+        assert!(!desc.is_named_function());
+        assert!(!desc.is_function_pointer());
+        assert!(!desc.is_protocol());
+        assert_eq!(desc.ref().debug_name(), "&u8");
+        assert_eq!(desc.ref_mut().debug_name(), "&mut u8");
 
-        assert_eq!(variants[0].0, "Bar");
-        assert_eq!(variants[0].1, Foo::Bar);
-        assert_eq!(variants[1].0, "Quux");
-        assert_eq!(variants[1].1, Foo::Quux);
+        let desc: Type<&u8> = Type::new();
+        assert!(desc.is_pointer());
+        assert_eq!(desc.deref().debug_name(), "u8");
+
+        let desc: Type<[u8; 4]> = Type::new();
+        assert!(desc.is_array());
+        assert_eq!(desc.element_type().debug_name(), "u8");
+        assert_eq!(desc.len(), 4);
+
+        let desc: Type<(u8, u16, u32)> = Type::new();
+        assert!(desc.is_tuple());
+        assert_eq!(desc.len(), 3);
+        assert!(matches::<typeof(desc.element_types()), (Type<u8>, Type<u16>, Type<u32>)>());
+
+        struct Foo {
+            bar: i32,
+            baz: f64,
+        }
+
+        let desc: Type<Foo> = Type::new();
+
+        let fields = desc.fields();
+        assert_eq!(fields.0.name(), Option::some("bar"));
+        assert_eq!(fields.0.type().debug_name(), "i32");
+        assert_eq!(fields.1.name(), Option::some("baz"));
+        assert_eq!(fields.1.type().debug_name(), "f64");
+
+        let inst = desc.uninitialized();
+        *fields.0.as_mut_ptr(&inst) = 42;
+        *fields.1.as_mut_ptr(&inst) = 3.14;
+
+        assert_eq!(inst.bar, 42);
+        assert_eq!(inst.baz, 3.14);
+
+        let inst = desc.zeroed();
+        assert_eq!(*fields.0.as_ptr(&inst), 0);
+        assert_eq!(*fields.1.as_ptr(&inst), 0.0);
+
     }
 }

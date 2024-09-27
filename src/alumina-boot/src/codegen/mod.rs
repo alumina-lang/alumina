@@ -8,7 +8,7 @@ use crate::common::{AluminaError, HashMap, Incrementable};
 use crate::diagnostics::DiagnosticsStack;
 use crate::global_ctx::GlobalCtx;
 use crate::ir::layout::Layouter;
-use crate::ir::{IRItem, IRItemP, IrCtx, IrId, Ty, TyP};
+use crate::ir::{Id, IrCtx, Item, ItemP, Ty, TyP};
 
 use bumpalo::Bump;
 
@@ -22,6 +22,17 @@ macro_rules! w {
 }
 
 pub(crate) use w;
+
+// These are the diagnostics that we suppress in the generated code.
+const DIAGNOSTIC_SUPRESSIONS: &[(&str, &str)] = &[
+    ("clang", "-Wunknown-warning-option"),
+    ("clang", "-Wparentheses-equality"),
+    ("clang", "-Winitializer-overrides"),
+    ("clang", "-Wincompatible-library-redeclaration"),
+    ("clang", "-Wunused-value"),
+    ("clang", "-Wincompatible-pointer-types"),
+    ("GCC", "-Wbuiltin-declaration-mismatch"),
+];
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub enum CName<'gen> {
@@ -50,7 +61,7 @@ pub struct CodegenCtx<'ir, 'gen> {
     pub(super) ir: &'ir IrCtx<'ir>,
     global_ctx: GlobalCtx,
     layouter: Layouter<'ir>,
-    id_map: RefCell<HashMap<IrId, CName<'gen>>>,
+    id_map: RefCell<HashMap<Id, CName<'gen>>>,
     type_map: RefCell<HashMap<TyP<'ir>, CName<'gen>>>,
     counter: Cell<usize>,
     arena: Bump,
@@ -72,45 +83,45 @@ where
         }
     }
 
-    pub fn register_name(&self, id: IrId, name: CName<'gen>) {
+    pub fn register_name(&self, id: Id, name: CName<'gen>) {
         let mut map = self.id_map.borrow_mut();
         if map.insert(id, name).is_some() {
             panic!("name already registered, this is a bug");
         }
     }
 
-    pub fn register_type(&self, typ: TyP<'ir>, name: CName<'gen>) {
+    pub fn register_type(&self, ty: TyP<'ir>, name: CName<'gen>) {
         let mut map = self.type_map.borrow_mut();
-        if map.insert(typ, name).is_some() {
+        if map.insert(ty, name).is_some() {
             panic!("name already registered, this is a bug");
         }
     }
 
-    pub fn get_name(&self, id: IrId) -> CName<'gen> {
+    pub fn get_name(&self, id: Id) -> CName<'gen> {
         let mut map = self.id_map.borrow_mut();
         *map.entry(id)
             .or_insert_with(|| CName::Id(self.counter.increment()))
     }
 
-    pub fn get_name_with_hint(&'gen self, name: &str, id: IrId) -> CName<'gen> {
+    pub fn get_name_with_hint(&'gen self, name: &str, id: Id) -> CName<'gen> {
         let mut map = self.id_map.borrow_mut();
         *map.entry(id)
             .or_insert_with(|| CName::Mangled(self.arena.alloc_str(name), self.counter.increment()))
     }
 
-    pub fn get_type(&'gen self, typ: &'_ Ty<'ir>) -> CName<'gen> {
-        if typ.is_void() {
+    pub fn get_type(&'gen self, ty: &'_ Ty<'ir>) -> CName<'gen> {
+        if ty.is_void() {
             return CName::Native("void");
         }
 
         let map = self.type_map.borrow();
-        *map.get(typ)
-            .unwrap_or_else(|| panic!("type {:?} was not registered", typ))
+        *map.get(ty)
+            .unwrap_or_else(|| panic!("type {:?} was not registered", ty))
     }
 
-    pub fn get_type_maybe(&self, typ: TyP<'ir>) -> Option<CName<'gen>> {
+    pub fn get_type_maybe(&self, ty: TyP<'ir>) -> Option<CName<'gen>> {
         let map = self.type_map.borrow();
-        map.get(typ).copied()
+        map.get(ty).copied()
     }
 
     pub fn make_id(&self) -> usize {
@@ -134,7 +145,7 @@ impl Display for CName<'_> {
 pub fn codegen<'ir>(
     ir_ctx: &'ir IrCtx<'ir>,
     global_ctx: GlobalCtx,
-    items: &[IRItemP<'ir>],
+    items: &[ItemP<'ir>],
 ) -> Result<String, AluminaError> {
     // Empirically, ~600 bytes per item, round it up to 1000 to minimize reallocations
     let size_estimate = 1000 * items.len();
@@ -146,17 +157,17 @@ pub fn codegen<'ir>(
 
     for item in items {
         match item.get().unwrap() {
-            IRItem::Function(f) => function_writer.write_function_decl(&diag, item.id, f)?,
-            IRItem::Static(t) => function_writer.write_static_decl(&diag, item.id, t)?,
-            IRItem::Const(t) => function_writer.write_const_decl(&diag, item.id, t)?,
+            Item::Function(f) => function_writer.write_function_decl(&diag, item.id, f)?,
+            Item::Static(t) => function_writer.write_static_decl(&diag, item.id, t)?,
+            Item::Const(t) => function_writer.write_const_decl(&diag, item.id, t)?,
             _ => {}
         }
     }
 
     for item in items {
         match item.get().unwrap() {
-            IRItem::Function(f) => function_writer.write_function_body(&diag, item.id, f)?,
-            IRItem::Const(t) => function_writer.write_const(&diag, item.id, t)?,
+            Item::Function(f) => function_writer.write_function_body(&diag, item.id, f)?,
+            Item::Const(t) => function_writer.write_const(&diag, item.id, t)?,
             _ => {}
         }
     }
@@ -164,32 +175,9 @@ pub fn codegen<'ir>(
     let mut buf = String::with_capacity(size_estimate);
     writeln!(buf, "#include <stdint.h>").unwrap();
     writeln!(buf, "#include <stddef.h>").unwrap();
-    writeln!(
-        buf,
-        "#pragma clang diagnostic ignored \"-Wunknown-warning-option\""
-    )
-    .unwrap();
-    writeln!(
-        buf,
-        "#pragma clang diagnostic ignored \"-Wparentheses-equality\""
-    )
-    .unwrap();
-    writeln!(
-        buf,
-        "#pragma clang diagnostic ignored \"-Winitializer-overrides\""
-    )
-    .unwrap();
-    writeln!(
-        buf,
-        "#pragma clang diagnostic ignored \"-Wincompatible-library-redeclaration\""
-    )
-    .unwrap();
-    writeln!(buf, "#pragma clang diagnostic ignored \"-Wunused-value\"").unwrap();
-    writeln!(
-        buf,
-        "#pragma GCC diagnostic ignored \"-Wbuiltin-declaration-mismatch\""
-    )
-    .unwrap();
+    for (compiler, flag) in DIAGNOSTIC_SUPRESSIONS {
+        writeln!(buf, "#pragma {} diagnostic ignored \"{}\"", compiler, flag).unwrap();
+    }
     type_writer.write(&mut buf);
     function_writer.write(&mut buf);
 

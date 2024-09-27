@@ -52,10 +52,97 @@ struct PanicInfo {
     args: &[&dyn fmt::Formattable<Self, internal::PanicFormatter>]
 }
 
+/// Catch a panic and return it as a result.
+///
+/// This function will execute the provided closure and return `Result::ok(())` if the closure
+/// completes successfully, or `Result::err(panic_info)` if the closure panics.
+///
+/// This is primarily meant to support unit tests that need to verify that a certain function
+/// panics under certain conditions.
+///
+/// ## Example
+/// ```
+/// use std::panicking::catch_panic;
+///
+/// let result = catch_panic(|| {
+///     panic!("test panic");
+/// });
+///
+/// assert!(result.is_err());
+/// ```
+///
+/// It is *not recommended* to use this function for general
+/// error handling, as Alumina panics do not unwind the stack, which means that any resources
+/// that need to be cleaned up will not be cleaned up.
+///
+/// ```dubious
+/// use std::panicking::catch_panic;
+/// use std::collections::Vector;
+///
+/// let result = catch_panic(|| {
+///     let vec = Vector::from_slice(&[1, 2, 3, 4, 5]); // will never be freed
+///     defer vec.free();
+///
+///     panic!("test panic");
+/// });
+///
+/// assert!(result.is_err());
+/// ```
+#[inline(never)]
+fn catch_panic<T, F: Fn() -> T>(f: F) -> Result<T, PanicInfo> {
+    use internal::{jmp_buf, setjmp, longjmp};
+
+    let ret: Result<T, PanicInfo>;
+    let prev_panic_hook = internal::PANIC_HOOK;
+
+    let buf: jmp_buf;
+    let panic_info: PanicInfo;
+    internal::set_panic_hook.invoke(|&buf, &panic_info, pi: &PanicInfo| {
+            panic_info = *pi;
+            longjmp(&buf, 1);
+        }.as_callback()
+    );
+    let ret = if setjmp(&buf) == 0 {
+        Result::ok(f())
+    } else {
+        Result::err(panic_info)
+    };
+
+    internal::PANIC_HOOK = prev_panic_hook;
+    ret
+}
+
 #[docs(no_index)]
 mod internal {
     use fmt::{Formatter, Formattable};
     use sync::{Atomic, Ordering};
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        type jmp_buf = [libc::intptr_t; 5];
+
+        #[inline(ir)]
+        fn setjmp(buf: &jmp_buf) -> libc::c_int {
+            intrinsics::codegen_func::<libc::c_int>("__builtin_setjmp", &buf[0] as &mut ())
+        }
+
+        #[inline(ir)]
+        fn longjmp(buf: &jmp_buf, arg: libc::c_int) -> ! {
+            intrinsics::codegen_func::<!>("__builtin_longjmp", &buf[0] as &mut (), arg);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // Clang on MacOS aarch64 does not seem to support __builtin_setjmp/__builtin_longjmp yet
+        #[cfg(target_arch = "x86_64")]
+        type jmp_buf = [libc::c_int; ((9 * 2) + 3 + 16)];
+        #[cfg(target_arch = "aarch64")]
+        type jmp_buf = [libc::c_int; ((14 + 8 + 2) * 2)];
+
+        extern "C" fn setjmp(buf: &jmp_buf) -> libc::c_int;
+        extern "C" fn longjmp(buf: &jmp_buf, arg: libc::c_int) -> !;
+    }
 
     // glibc runtime backtrace support
     #[cfg(all(debug, target_env = "gnu", not(no_backtrace), not(target_os = "android")))]
@@ -142,7 +229,7 @@ mod internal {
 
         #[allow(pure_statement)]
         if backtrace {
-            #[cfg(all(debug, use_libbacktrace, not(no_backtrace)))]
+            #[cfg(all(debug, libbacktrace, not(no_backtrace)))]
             {
                 // Preferably use libbacktrace to print a backtrace.
                 use ffi::CString;
@@ -228,7 +315,7 @@ mod internal {
                 }
             }
 
-            #[cfg(all(debug, target_env = "gnu", not(use_libbacktrace), not(no_backtrace), not(target_os = "android")))]
+            #[cfg(all(debug, target_env = "gnu", not(libbacktrace), not(no_backtrace), not(target_os = "android")))]
             {
                 // Fallback use glibc's backtrace
                 let buf: [&mut void; 128];
@@ -314,5 +401,39 @@ mod internal {
                 libc::abort();
             }
         }
+    }
+}
+
+
+#[cfg(all(test, test_std))]
+#[docs(hide)]
+mod tests {
+    #[test]
+    fn test_catch_panic_panic() {
+        let result = catch_panic(|| {
+            panic!("test panic");
+        });
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_catch_panic_no_panic() {
+        let result = catch_panic(|| {});
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_catch_panic_nested() {
+        let result = catch_panic(|| {
+            let result = catch_panic(|| {
+                panic!("test panic");
+            });
+
+            assert!(result.is_err());
+        });
+
+        assert!(result.is_ok());
     }
 }

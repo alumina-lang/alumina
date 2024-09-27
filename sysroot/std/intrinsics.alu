@@ -1,3 +1,6 @@
+
+type __dynamic__ = ();
+
 //! Functions implemented directly in the compiler.
 //!
 //! Functions in this module are not intended for general use, and are usually called by
@@ -33,10 +36,10 @@ extern "intrinsic" fn trap() -> !;
 /// Use [mem::size_of] instead.
 extern "intrinsic" fn size_of<T>() -> usize;
 
-/// Length of a fixed-size array
+/// Length of a fixed-size array or tuple
 ///
-/// Use [std::builtins::array::len] instead.
-extern "intrinsic" fn array_length_of<T: builtins::Array>() -> usize;
+/// Use [std::builtins::array::len] or [std::builtins::tuple::len] instead.
+extern "intrinsic" fn length_of<T: builtins::Array | builtins::Tuple>() -> usize;
 
 /// Unique type identifier
 ///
@@ -47,6 +50,11 @@ extern "intrinsic" fn type_id<T>() -> usize;
 ///
 /// Use [std::typing::type_name] instead.
 extern "intrinsic" fn type_name<T>() -> &[u8];
+
+/// Name of the named type
+///
+/// Use [typing::Type::name] instead.
+extern "intrinsic" fn named_type_name<T>() -> &[u8];
 
 /// Minimum alignment of a type in bytes.
 ///
@@ -59,20 +67,33 @@ extern "intrinsic" fn align_of<T>() -> usize;
 /// from a const initializer.
 extern "intrinsic" fn vtable<Proto, T>() -> [&fn(); 0];
 
-/// Minimal support for unit testing in the compiler.
-///
-/// During AST construction, compiler will collect all the methods with `#[test]` attribute and
-/// make them available via this intrinsic.
-///
-/// Do not use this directly. If implementing a custom test framework, use the
-/// [runtime::internal::TEST_CASES] constant instead to ensure that all test cases have been discovered.
-extern "intrinsic" fn test_cases() -> &[TestCaseMeta];
-
 /// Enum variants
 ///
-/// Do not use directly, use [typing::enum_variants] instead. Meant to be called
+/// Do not use directly, use [typing::Type] instead. Meant to be called
 /// from a const initializer (see [typing::internal::ENUM_VARIANTS]).
 extern "intrinsic" fn enum_variants<T: builtins::Enum>() -> [(&[u8], T); 0];
+
+/// Field descriptors for a struct
+///
+/// Do not use directly, use [typing::Type] instead. Meant to be called
+/// from a const initializer (see [typing::internal::FIELDS]).
+extern "intrinsic" fn fields<T: builtins::Struct | builtins::Union>() -> builtins::Tuple;
+
+/// Find items by attribute name
+///
+/// It returns a tuple of [typing::Type]s for each item found. Generic arguments can be
+/// provided to monomorphize all items with specific type parameters.
+///
+/// There is no stable equivalent in the standard library as the return type is
+/// dependent on the input (deep magic lol).
+extern "intrinsic" fn attributed<Args: builtins::Tuple>(name: &[u8]) -> builtins::Tuple;
+
+/// Value of a constant or static referenced by a type
+///
+/// Use [typing::Type::value] instead.
+///
+/// This intrinsic emits a lvalue.
+extern "intrinsic" fn value_of<T: builtins::Const | builtins::Static>() -> T;
 
 /// Inline assembly
 extern "intrinsic" fn asm(assembly: &[u8]);
@@ -91,6 +112,16 @@ extern "intrinsic" fn zeroed<T>() -> T;
 ///
 /// Use [mem::dangling] instead.
 extern "intrinsic" fn dangling<Ptr: builtins::Pointer>() -> Ptr;
+
+/// Transmute a value from one type to another.
+///
+/// Use [util::transmute] instead.
+extern "intrinsic" fn transmute<T1, T2>(val: T1) -> T2;
+
+/// Cast a pointer into a pointer-to-volatile.
+///
+/// Use [mem::read_volatile] and [mem::write_volatile] instead.
+extern "intrinsic" fn volatile<Ptr: builtins::Pointer>(ptr: Ptr) -> Ptr;
 
 /// Whether we are in constant evaluation context
 ///
@@ -138,16 +169,6 @@ extern "intrinsic" fn const_alloc<T>(size: usize) -> &mut T;
 /// Use [mem::slice::free] in const context instead.
 extern "intrinsic" fn const_free<T>(ptr: &mut T);
 
-/// Transmute a value from one type to another.
-///
-/// Use [util::transmute] instead.
-extern "intrinsic" fn transmute<T1, T2>(val: T1) -> T2;
-
-/// Cast a pointer into a pointer-to-volatile.
-///
-/// Use [mem::read_volatile] and [mem::write_volatile] instead.
-extern "intrinsic" fn volatile<Ptr: builtins::Pointer>(ptr: Ptr) -> Ptr;
-
 /// Identity function.
 ///
 /// Adds a tag to the IR subtree. This has no effect on the generated code, but is generally preserved
@@ -168,24 +189,33 @@ extern "intrinsic" fn volatile<Ptr: builtins::Pointer>(ptr: Ptr) -> Ptr;
 /// No user-facing equivalent.
 extern "intrinsic" fn tag<T>(tag: &[u8], val: T) -> T;
 
-
 /// Invoke a function with arguments passed as a tuple.
 ///
-/// Use [util::invoke] instead.
+/// Use [builtins::callable::invoke] instead.
 extern "intrinsic" fn tuple_invoke<Fun, Args, Ret>(f: Fun, args: Args) -> Ret;
-
 
 /// Tail of a tuple.
 ///
-/// Use [util::tail] instead.
+/// Use [builtins::tuple::tail] instead.
 extern "intrinsic" fn tuple_tail<T: builtins::Tuple>(t: T) -> builtins::tuple_tail_of<T>;
-
 
 /// Concatenate two tuples.
 ///
 /// Use [util::concat] instead.
 extern "intrinsic" fn tuple_concat<T1: builtins::Tuple, T2: builtins::Tuple>(t1: T1, t2: T2) -> builtins::tuple_concat_of<T1, T2>;
 
+/// Stop iteration in a `for const` loop.
+///
+/// No user-facing equivalent.
+extern "intrinsic" fn stop_iteration() -> !;
+
+/// Get the source path of a named item.
+///
+/// Use [std::typing::Type::module_path] instead.
+extern "intrinsic" fn module_path<T>() -> &[u8];
+
+/// Returns true if the named item has the specified attribute.
+extern "intrinsic" fn has_attribute<T>(name: &[u8]) -> bool;
 
 #[cfg(boot)]
 {

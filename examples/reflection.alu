@@ -1,0 +1,46 @@
+use std::typing::Type;
+use std::builtins::{Struct, Union};
+
+/// Set a field on an struct by name
+fn set<T: Struct | Union, F>(obj: &mut T, name: &[u8], value: F) {
+    let ty = Type::new::<T>();
+    let value_ty = Type::new::<F>();
+
+    let fields = ty.fields();
+    for const i in 0usize..fields.len() {
+        let field_ty = fields.(i).type();
+
+        if fields.(i).name() == Option::some(name) {
+            when field_ty.is_same_as(value_ty) {
+                *fields.(i).as_mut_ptr(obj) = value;
+                return;
+            } else {
+                panic!(
+                    "expected type {}, got {}",
+                    field_ty.debug_name(),
+                    value_ty.debug_name()
+                );
+            }
+        }
+    }
+
+    panic!("field not found: {}", name);
+}
+
+struct Foo {
+    bar: i32,
+    quux: bool,
+}
+
+fn main() {
+    let foo: Foo;
+    foo.set("bar", 42);
+    foo.set("quux", true);
+
+    // These would panic at runtime
+    // foo.set("bar", true);
+    // foo.set("unknown", 42);
+
+    println!("bar = {}", foo.bar);
+    println!("quux = {}", foo.quux);
+}

@@ -2,20 +2,20 @@ use crate::ast::macros::{MacroExpander, MacroMaker};
 use crate::ast::maker::AstItemMaker;
 use crate::ast::types::TypeVisitor;
 use crate::ast::{
-    AstCtx, AstId, BinOp, BuiltinType, ClosureBinding, Defered, Expr, ExprKind, ExprP,
-    FieldInitializer, FnKind, Function, Item, ItemP, LetDeclaration, Lit, Parameter, Placeholder,
-    Span, Statement, StatementKind, Ty, TyP, UnOp,
+    AstCtx, BinOp, BuiltinType, ClosureBinding, Defered, Expr, ExprKind, ExprP, FieldInitializer,
+    FnKind, Function, Id, Item, ItemP, LetDeclaration, Lit, Parameter, Placeholder, Span,
+    Statement, StatementKind, StaticForLoopVariable, Ty, TyP, UnOp,
 };
 use crate::common::{
     AluminaError, ArenaAllocatable, CodeDiagnostic, CodeErrorBuilder, HashSet,
     WithSpanDuringParsing,
 };
 use crate::global_ctx::GlobalCtx;
-use crate::name_resolution::pass1::FirstPassVisitor;
-use crate::name_resolution::path::{Path, PathSegment};
-use crate::name_resolution::resolver::{ItemResolution, NameResolver};
-use crate::name_resolution::scope::{BoundItemType, NamedItem, NamedItemKind, Scope, ScopeType};
 use crate::parser::{AluminaVisitor, FieldKind, NodeExt, NodeKind, ParseCtx};
+use crate::src::pass1::FirstPassVisitor;
+use crate::src::path::{Path, PathSegment};
+use crate::src::resolver::{ItemResolution, NameResolver};
+use crate::src::scope::{BoundItemType, NamedItem, NamedItemKind, Scope, ScopeType};
 use crate::visitors::{AttributeVisitor, ScopedPathVisitor};
 
 use crate::common::IndexMap;
@@ -82,16 +82,16 @@ pub struct ExpressionVisitor<'ast, 'src> {
 }
 
 macro_rules! suffixed_literals {
-    ($e:expr, $($suffix:literal => $typ:path),+) => {
+    ($e:expr, $($suffix:literal => $ty:path),+) => {
         match $e {
             $(
-                v if v.ends_with($suffix) => (&v[..v.len() - $suffix.len()], Some($typ)),
+                v if v.ends_with($suffix) => (&v[..v.len() - $suffix.len()], Some($ty)),
             )+
             v => (v, None)
         }
     };
-    ($e:expr, $($suffix:literal => $typ:path,)+) => {
-        suffixed_literals!($e, $($suffix => $typ),+)
+    ($e:expr, $($suffix:literal => $ty:path,)+) => {
+        suffixed_literals!($e, $($suffix => $ty),+)
     };
 }
 
@@ -135,7 +135,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
         &mut self,
         node: tree_sitter::Node<'src>,
     ) -> Result<Vec<Statement<'ast>>, AluminaError> {
-        let typ = node
+        let ty = node
             .child_by_field(FieldKind::Type)
             .map(|n| {
                 TypeVisitor::new(
@@ -154,7 +154,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             .transpose()?;
         let let_decl = LetDeclaration {
             id: value_id,
-            typ,
+            ty,
             value,
         };
         let mut statements = Vec::new();
@@ -191,13 +191,14 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
                         &self.scope,
                         name_node,
                     ),
-                    idx,
+                    ExprKind::Lit(Lit::Int(false, idx as u128, Some(BuiltinType::USize)))
+                        .alloc_with_span_from(self.ast, &self.scope, name_node),
                 )
                 .alloc_with_span_from(self.ast, &self.scope, name_node);
 
                 let elem_decl = LetDeclaration {
                     id: elem_id,
-                    typ: None,
+                    ty: None,
                     value: Some(rhs),
                 };
 
@@ -251,6 +252,7 @@ impl<'ast, 'src> ExpressionVisitor<'ast, 'src> {
             | NodeKind::SwitchExpression
             | NodeKind::WhileExpression
             | NodeKind::LoopExpression
+            | NodeKind::StaticForExpression
             | NodeKind::ForExpression => match statements.pop() {
                 Some(Statement {
                     kind: StatementKind::Expression(expr),
@@ -599,10 +601,6 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         Ok(ExprKind::Lit(Lit::Null).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
-    fn visit_void_literal(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        Ok(ExprKind::Void.alloc_with_span_from(self.ast, &self.scope, node))
-    }
-
     fn visit_parenthesized_expression(
         &mut self,
         node: tree_sitter::Node<'src>,
@@ -799,8 +797,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
                 ExprKind::Field(value, field_value.alloc_on(self.ast), unified_fn, None)
             }
-            NodeKind::IntegerLiteral => ExprKind::TupleIndex(value, field_value.parse().unwrap()),
-            _ => unreachable!(),
+
+            _ => ExprKind::TupleIndex(
+                value,
+                self.visit(field.child_by_field(FieldKind::Field).unwrap())?,
+            ),
         };
 
         Ok(result.alloc_with_span_from(self.ast, &self.scope, node))
@@ -858,7 +859,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
     fn visit_type_check_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let lhs = self.visit(node.child_by_field(FieldKind::Value).unwrap())?;
-        let typ = TypeVisitor::new(
+        let ty = TypeVisitor::new(
             self.global_ctx.clone(),
             self.ast,
             self.scope.clone(),
@@ -866,7 +867,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         )
         .visit(node.child_by_field(FieldKind::Type).unwrap())?;
 
-        Ok(ExprKind::TypeCheck(lhs, typ).alloc_with_span_from(self.ast, &self.scope, node))
+        Ok(ExprKind::TypeCheck(lhs, ty).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_turbofish(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -917,7 +918,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
     fn visit_type_cast_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let value = self.visit(node.child_by_field(FieldKind::Value).unwrap())?;
-        let typ = TypeVisitor::new(
+        let ty = TypeVisitor::new(
             self.global_ctx.clone(),
             self.ast,
             self.scope.clone(),
@@ -925,7 +926,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         )
         .visit(node.child_by_field(FieldKind::Type).unwrap())?;
 
-        Ok(ExprKind::Cast(value, typ).alloc_with_span_from(self.ast, &self.scope, node))
+        Ok(ExprKind::Cast(value, ty).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_loop_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -970,6 +971,55 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         Ok(ExprKind::Continue.alloc_with_span_from(self.ast, &self.scope, node))
     }
 
+    fn visit_static_for_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let range = self.visit(node.child_by_field(FieldKind::Value).unwrap())?;
+
+        let body;
+        let loop_var;
+        if let Some(name_node) = node.child_by_field(FieldKind::Name) {
+            let name = self.code.node_text(name_node).alloc_on(self.ast);
+            let id = self.ast.make_id();
+
+            body = with_block_scope!(self, {
+                self.ast.add_local_name(id, name);
+                self.scope
+                    .add_item(
+                        Some(name),
+                        NamedItem::new_default(NamedItemKind::Local(id), name_node, None),
+                    )
+                    .with_span_from(&self.scope, node)?;
+
+                self.visit(node.child_by_field(FieldKind::Body).unwrap())?
+            });
+            loop_var = StaticForLoopVariable::Single(id);
+        } else {
+            body = with_block_scope!(self, {
+                let mut cursor = node.walk();
+                let mut loop_vars = vec![];
+
+                for name_node in node.children_by_field(FieldKind::Element, &mut cursor) {
+                    let name = self.code.node_text(name_node).alloc_on(self.ast);
+                    let elem_id = self.ast.make_id();
+
+                    loop_vars.push(elem_id);
+                    self.ast.add_local_name(elem_id, name);
+                    self.scope
+                        .add_item(
+                            Some(name),
+                            NamedItem::new_default(NamedItemKind::Local(elem_id), name_node, None),
+                        )
+                        .with_span_from(&self.scope, name_node)?;
+                }
+
+                loop_var = StaticForLoopVariable::Tuple(loop_vars.alloc_on(self.ast));
+                self.visit(node.child_by_field(FieldKind::Body).unwrap())?
+            });
+        };
+
+        let result = ExprKind::StaticFor(loop_var, range, body);
+        Ok(result.alloc_with_span_from(self.ast, &self.scope, node))
+    }
+
     fn visit_for_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let iterable_node = node.child_by_field(FieldKind::Value).unwrap();
         let iterable = self.visit(iterable_node)?;
@@ -1008,13 +1058,17 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
                     let rhs = ExprKind::TupleIndex(
                         ExprKind::Local(id).alloc_with_span_from(self.ast, &self.scope, name_node),
-                        idx,
+                        ExprKind::Lit(Lit::Int(false, idx as u128, None)).alloc_with_span_from(
+                            self.ast,
+                            &self.scope,
+                            name_node,
+                        ),
                     )
                     .alloc_with_span_from(self.ast, &self.scope, name_node);
 
                     let elem_decl = LetDeclaration {
                         id: elem_id,
-                        typ: None,
+                        ty: None,
                         value: Some(rhs),
                     };
 
@@ -1066,7 +1120,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             ExprKind::Block(
                 vec![StatementKind::LetDeclaration(LetDeclaration {
                     id,
-                    typ: None,
+                    ty: None,
                     value: Some(
                         ExprKind::Field(
                             ExprKind::Local(iterator_result).alloc_with_span(self.ast, None),
@@ -1089,7 +1143,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             ExprKind::Block(
                 vec![StatementKind::LetDeclaration(LetDeclaration {
                     id: iterator_result,
-                    typ: None,
+                    ty: None,
                     value: Some(
                         ExprKind::Call(
                             ExprKind::Field(
@@ -1114,7 +1168,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         let result = ExprKind::Block(
             vec![StatementKind::LetDeclaration(LetDeclaration {
                 id: iterator,
-                typ: None,
+                ty: None,
                 value: Some(
                     ExprKind::Call(
                         ExprKind::Field(iterable, "iter", unified_fn, None).alloc_with_span_from(
@@ -1173,7 +1227,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         let local = ExprKind::Local(local_id).alloc_with_span_from(self.ast, &self.scope, node);
         let stmts = vec![StatementKind::LetDeclaration(LetDeclaration {
             id: local_id,
-            typ: None,
+            ty: None,
             value: Some(value),
         })
         .alloc_with_span(self.ast, None)];
@@ -1216,7 +1270,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_struct_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        let typ = TypeVisitor::new(
+        let ty = TypeVisitor::new(
             self.global_ctx.clone(),
             self.ast,
             self.scope.clone(),
@@ -1254,7 +1308,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
         });
 
         Ok(
-            ExprKind::Struct(typ, field_initializers.alloc_on(self.ast)).alloc_with_span_from(
+            ExprKind::Struct(ty, field_initializers.alloc_on(self.ast)).alloc_with_span_from(
                 self.ast,
                 &self.scope,
                 node,
@@ -1470,10 +1524,10 @@ pub struct LambdaVisitor<'ast, 'src> {
     global_ctx: GlobalCtx,
     code: &'src ParseCtx<'src>,
     scope: Scope<'ast, 'src>,
-    self_param: AstId,
+    self_param: Id,
 
     parameters: Vec<Parameter<'ast>>,
-    bound_values: IndexMap<AstId, (BoundItemType, ExprP<'ast>)>,
+    bound_values: IndexMap<Id, (BoundItemType, &'ast str, ExprP<'ast>)>,
     placeholders: Vec<Placeholder<'ast>>,
     return_type: Option<TyP<'ast>>,
     body: Option<ExprP<'ast>>,
@@ -1533,7 +1587,7 @@ impl<'ast, 'src> LambdaVisitor<'ast, 'src> {
                 0,
                 Parameter {
                     id: self.self_param,
-                    typ: self.ast.intern_type(Ty::Pointer(placeholder_ty, false)),
+                    ty: self.ast.intern_type(Ty::Pointer(placeholder_ty, false)),
                     span: Some(span),
                 },
             );
@@ -1557,12 +1611,13 @@ impl<'ast, 'src> LambdaVisitor<'ast, 'src> {
 
         let bindings = self
             .bound_values
-            .iter()
-            .map(|(k, (t, v))| super::ClosureBinding {
-                id: *k,
-                value: v,
-                binding_type: *t,
-                span: v.span,
+            .into_iter()
+            .map(|(id, (binding_type, name, value))| super::ClosureBinding {
+                id,
+                value,
+                name,
+                binding_type,
+                span: value.span,
             })
             .collect::<Vec<_>>()
             .alloc_on(self.ast);
@@ -1599,7 +1654,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for LambdaVisitor<'ast, 'src> {
 
         self.parameters.push(Parameter {
             id,
-            typ: field_type,
+            ty: field_type,
             span: Some(span),
         });
 
@@ -1655,6 +1710,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for LambdaVisitor<'ast, 'src> {
             id,
             (
                 bound_type,
+                name,
                 original.alloc_with_span_from(self.ast, &self.scope, node),
             ),
         );
@@ -1747,8 +1803,8 @@ pub fn resolve_name<'ast, 'src>(
         },
         ItemResolution::Defered(ty, name) => {
             let name = name.0.alloc_on(ast);
-            let typ = ast.intern_type(ty);
-            ExprKind::Defered(Defered { typ, name })
+            let ty = ast.intern_type(ty);
+            ExprKind::Defered(Defered { ty, name })
         }
     };
 

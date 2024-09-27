@@ -541,12 +541,24 @@ mod internal {
     /// This is the function that gets passed to `pthread_create` and it is responsible
     /// for setting up the panic handler and storing the return value of the thread.
     fn _run_thread<T, F: Fn() -> T>(arg: &mut void) -> &mut void {
+        use panicking::internal::set_panic_hook;
+
         let handle_func = arg as &mut ThreadHandleFunc<F, T>;
         let handle = &handle_func.inner;
 
         THREAD_INFO = handle.thread_info;
         if handle.catch_panic {
-            std::panicking::internal::set_panic_hook(handle as &mut void, _panic_hook::<T>);
+            set_panic_hook.invoke(|=handle, info: &panicking::PanicInfo| {
+                handle.panicked = true;
+                handle.ret = Result::err(*info);
+
+                if handle.pop() {
+                    // We have been detached, we need to propagate the panic
+                    handle.free();
+                } else {
+                    libc::pthread_exit(null)
+                }
+            }.as_callback());
         }
 
         handle.ret = Result::ok(handle_func.callback());
@@ -555,19 +567,6 @@ mod internal {
         }
 
         null
-    }
-
-    fn _panic_hook<T>(arg: &mut void, info: &panicking::PanicInfo) {
-        let handle = arg as &mut ThreadHandle<T>;
-        handle.panicked = true;
-        handle.ret = Result::err(*info);
-
-        if handle.pop() {
-            // We have been detached, we need to propagate the panic
-            handle.free();
-        } else {
-            libc::pthread_exit(null)
-        }
     }
 }
 
@@ -591,7 +590,8 @@ mod tests {
             .unwrap_err();
     }
 
-    #[test(should_fail)]
+    #[test]
+    #[test::should_fail]
     fn test_spawn_detached() {
         Builder::new()
             .spawn_detached(|| { panic!("hello") })
@@ -600,7 +600,8 @@ mod tests {
         sleep(Duration::from_secs(1));
     }
 
-    #[test(should_fail)]
+    #[test]
+    #[test::should_fail]
     fn test_spawn_no_catch_panic() {
         let _ = Builder::new()
             .catch_panic(false)
@@ -661,7 +662,8 @@ mod tests {
         t.detach();
     }
 
-    #[test(should_fail)]
+    #[test]
+    #[test::should_fail]
     fn test_detach_panic() {
         let t = spawn(|| -> i32 {
             Thread::park();
@@ -675,7 +677,8 @@ mod tests {
         sleep(Duration::from_secs(1));
     }
 
-    #[test(should_fail)]
+    #[test]
+    #[test::should_fail]
     fn test_detach_panic_2() {
         let main_thread = Thread::current();
         let t = spawn(|=main_thread| -> i32 {
@@ -690,7 +693,8 @@ mod tests {
         sleep(Duration::from_secs(1));
     }
 
-    #[test(should_fail)]
+    #[test]
+    #[test::should_fail]
     fn test_detach_panic_3() {
         let main_thread = Thread::current();
         let t = spawn(|=main_thread| -> i32 {
@@ -719,7 +723,8 @@ mod tests {
         assert_eq!(t1, t2);
     }
 
-    #[test(should_fail)]
+    #[test]
+    #[test::should_fail]
     fn test_current_foreign_thread() {
         let id: libc::pthread_t;
         libc::pthread_create(

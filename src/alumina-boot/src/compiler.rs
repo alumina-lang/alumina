@@ -6,11 +6,11 @@ use crate::common::{AluminaError, ArenaAllocatable, CodeDiagnostic, CodeErrorBui
 
 use crate::global_ctx::GlobalCtx;
 use crate::ir::dce::DeadCodeEliminator;
-use crate::ir::mono::{MonoCtx, Monomorphizer};
+use crate::ir::mono::{Mono, MonoCtx};
 use crate::ir::IrCtx;
-use crate::name_resolution::pass1::FirstPassVisitor;
-use crate::name_resolution::scope::{Scope, ScopeType};
 use crate::parser::{AluminaVisitor, ParseCtx};
+use crate::src::pass1::FirstPassVisitor;
+use crate::src::scope::{Scope, ScopeType};
 
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -209,8 +209,8 @@ impl Compiler {
             }
 
             if compile {
-                let mut monomorphizer = Monomorphizer::new(&mut mono_ctx, false, None);
-                roots.insert(monomorphizer.monomorphize_item(item, &[])?);
+                let mut monomorphizer = Mono::new(&mut mono_ctx, false, None);
+                roots.insert(monomorphizer.mono_item(item, &[])?);
             }
         }
 
@@ -229,17 +229,17 @@ impl Compiler {
             };
 
             if let Some(main_candidate) = main_candidate {
-                let mut monomorphizer = Monomorphizer::new(&mut mono_ctx, false, None);
-                let user_main = monomorphizer.monomorphize_item(main_candidate, &[])?;
+                let mut monomorphizer = Mono::new(&mut mono_ctx, false, None);
+                let user_main = monomorphizer.mono_item(main_candidate, &[])?;
 
                 let glue = ast
-                    .lang_item(crate::ast::lang::LangItemKind::EntrypointGlue)
+                    .lang_item(crate::ast::lang::Lang::EntrypointGlue)
                     .with_no_span()?;
-                let mut monomorphizer = Monomorphizer::new(&mut mono_ctx, false, None);
+                let mut monomorphizer = Mono::new(&mut mono_ctx, false, None);
 
                 let main_ty = ir_ctx.intern_type(crate::ir::Ty::Item(user_main));
 
-                roots.insert(monomorphizer.monomorphize_item(glue, [main_ty].alloc_on(&ir_ctx))?);
+                roots.insert(monomorphizer.mono_item(glue, [main_ty].alloc_on(&ir_ctx))?);
             }
         }
 
@@ -251,7 +251,7 @@ impl Compiler {
         }
 
         // Finally generate static initialization code
-        let mut monomorphizer = Monomorphizer::new(&mut mono_ctx, false, None);
+        let mut monomorphizer = Mono::new(&mut mono_ctx, false, None);
         dce.visit_item(monomorphizer.generate_static_constructor(dce.alive_items())?)?;
 
         let items: Vec<_> = dce.alive_items().iter().copied().collect();

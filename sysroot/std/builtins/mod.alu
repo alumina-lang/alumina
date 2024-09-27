@@ -14,33 +14,13 @@ use fmt::{Formatter};
 /// Unit type (`()`)
 ///
 /// Unit type (also called void type) is the return type of expressions that do not return
-/// a value.
-#[lang(builtin_void)]
-struct void {}
-impl void {
-    /// @ cmp::Equatable::equals
-    #[inline(always)]
-    fn equals(_lhs: &void, _rhs: &void) -> bool {
-        true
-    }
-
-    /// @ cmp::Comparable::compare
-    #[inline(always)]
-    fn compare(_lhs: &void, _rhs: &void) -> Ordering {
-        Ordering::Equal
-    }
-
-    /// @ hash::Hashable::hash
-    #[inline(always)]
-    fn hash<H: Hasher<H>>(self: &void, _hasher: &mut H) {
-    }
-
-    mixin Equatable<void>;
-    mixin Comparable<void>;
-}
+/// a value. It is equivalent to a [tuple] with zero elements.
+#[docs(builtin)]
+type void = ();
 
 /// Boolean type
 #[lang(builtin_bool)]
+#[docs(builtin)]
 struct bool {}
 impl bool {
     /// Returns `true`.
@@ -137,12 +117,14 @@ impl bool {
 /// It has a couple of interesting properties, notably it is a bottom type,
 /// which means that values of never type can be coerced into any other type.
 #[lang(builtin_never)]
+#[docs(builtin)]
 struct never {}
 
 /// 8-bit unsigned integer (byte)
 ///
 /// This is also the "character" type, e.g. expression `"hello"[0]` has type `u8`.
 #[lang(builtin_u8)]
+#[docs(builtin)]
 struct u8 {}
 impl u8 {
     mixin internal::BitOps<u8>;
@@ -167,6 +149,7 @@ impl u8 {
 
 /// 16-bit unsigned integer
 #[lang(builtin_u16)]
+#[docs(builtin)]
 struct u16 {}
 impl u16 {
     mixin internal::BitOps<u16>;
@@ -191,6 +174,7 @@ impl u16 {
 
 /// 32-bit unsigned integer
 #[lang(builtin_u32)]
+#[docs(builtin)]
 struct u32 {}
 impl u32 {
     mixin internal::BitOps<u32>;
@@ -215,6 +199,7 @@ impl u32 {
 
 /// 64-bit unsigned integer
 #[lang(builtin_u64)]
+#[docs(builtin)]
 struct u64 {}
 impl u64 {
     mixin internal::BitOps<u64>;
@@ -239,6 +224,7 @@ impl u64 {
 
 /// 128-bit unsigned integer
 #[lang(builtin_u128)]
+#[docs(builtin)]
 struct u128 {}
 impl u128 {
     mixin internal::BitOps<u128>;
@@ -269,6 +255,7 @@ impl u128 {
 /// To help writing portable code, `usize` is a distinct type and not just a type alias.
 /// Conversions from `usize` to the equivalently sized unsigned integer require an explicit cast.
 #[lang(builtin_usize)]
+#[docs(builtin)]
 struct usize {}
 impl usize {
     mixin internal::BitOps<usize>;
@@ -307,6 +294,7 @@ impl usize {
 
 /// Signed 8-bit integer
 #[lang(builtin_i8)]
+#[docs(builtin)]
 struct i8 {}
 impl i8 {
     mixin internal::WithOverflow<i8>;
@@ -330,6 +318,7 @@ impl i8 {
 
 /// Signed 16-bit integer
 #[lang(builtin_i16)]
+#[docs(builtin)]
 struct i16 {}
 impl i16 {
     mixin internal::WithOverflow<i16>;
@@ -353,6 +342,7 @@ impl i16 {
 
 /// Signed 32-bit integer
 #[lang(builtin_i32)]
+#[docs(builtin)]
 struct i32 {}
 impl i32 {
     mixin internal::WithOverflow<i32>;
@@ -376,6 +366,7 @@ impl i32 {
 
 /// Signed 64-bit integer
 #[lang(builtin_i64)]
+#[docs(builtin)]
 struct i64 {}
 impl i64 {
     mixin internal::WithOverflow<i64>;
@@ -399,6 +390,7 @@ impl i64 {
 
 /// Signed 128-bit integer
 #[lang(builtin_i128)]
+#[docs(builtin)]
 struct i128 {}
 impl i128 {
     mixin internal::WithOverflow<i128>;
@@ -422,6 +414,7 @@ impl i128 {
 
 /// Native signed integer (machine word)
 #[lang(builtin_isize)]
+#[docs(builtin)]
 struct isize {}
 impl isize {
     mixin internal::WithOverflow<isize>;
@@ -459,6 +452,7 @@ impl isize {
 
 /// Single precision floating point type
 #[lang(builtin_f32)]
+#[docs(builtin)]
 struct f32 {}
 impl f32 {
     mixin internal::BuiltinComparable<f32>;
@@ -777,6 +771,7 @@ impl f32 {
 
 /// Double precision floating point type
 #[lang(builtin_f64)]
+#[docs(builtin)]
 struct f64 {}
 impl f64 {
     mixin internal::BuiltinComparable<f64>;
@@ -1087,11 +1082,12 @@ impl f64 {
     }
 }
 
-/// Fixed size arrays
+/// Method implementations for fixed size arrays
 ///
 /// Working with slices is often more convenient than working with arrays. See also
 /// [mem::slice] for methods on slices.
 #[lang(builtin_array)]
+#[docs(builtin)]
 struct array {}
 impl array<Arr: builtins::Array> {
     /// @ mem::AsSlice::as_slice
@@ -1135,7 +1131,7 @@ impl array<Arr: builtins::Array> {
     /// ```
     #[inline(ir)]
     fn len(self: &Arr) -> usize {
-        intrinsics::array_length_of::<Arr>()
+        intrinsics::length_of::<Arr>()
     }
 
     /// @ iter::Iterable::iter
@@ -1144,11 +1140,163 @@ impl array<Arr: builtins::Array> {
         self.as_slice().iter()
     }
 
+    /// @ cmp::Equatable::equals
+    #[inline]
     fn equals(lhs: &Arr, rhs: &Arr) -> bool {
         lhs[..] == rhs[..]
     }
 
     mixin cmp::Equatable<Arr>;
+}
+
+/// Method implementations for tuples
+///
+/// Tuples are fixed-size collections of elements of different types. They are often used to
+/// return multiple values from a function or to group values of different types together.
+///
+/// A single-element tuple is represented as `(T,)`, where `T` is the type of the element. An empty
+/// tuple `()` is also known as [void].
+#[lang(builtin_tuple)]
+#[docs(builtin)]
+struct tuple {}
+impl tuple<Tup: Tuple + !()> {
+
+    /// Tail of a tuple
+    ///
+    /// ## Example
+    /// ```
+    /// use std::util::tail;
+    ///
+    /// let tuple = (1, 2, 3);
+    /// let tail = tuple.tail();
+    ///
+    /// assert_eq!(tail, (2, 3));
+    /// ```
+    #[inline(ir)]
+    fn tail(self: Tup) -> builtins::tuple_tail_of<Tup> {
+        intrinsics::tuple_tail(self)
+    }
+}
+
+impl tuple<Tup: Tuple> {
+    /// Returns the number of elements in the tuple.
+    ///
+    /// ## Example
+    /// ```
+    /// let tuple = (1, 2, 3);
+    /// assert_eq!(tuple.len(), 3);
+    /// ```
+    #[inline]
+    fn len(self: &Tup) -> usize {
+        intrinsics::length_of::<Tup>()
+    }
+
+    /// @ cmp::Equatable::equals
+    #[inline]
+    fn equals(lhs: &Tup, rhs: &Tup) -> bool {
+        for const i in 0usize..lhs.len() {
+            if lhs.(i) != rhs.(i) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// @ cmp::Comparable::compare
+    #[inline]
+    fn compare(lhs: &Tup, rhs: &Tup) -> Ordering {
+        for const i in 0usize..lhs.len() {
+            lex_compare!(lhs.(i), rhs.(i));
+        }
+        Ordering::Equal
+    }
+
+    /// @ hash::Hashable::hash
+    #[inline]
+    fn hash<H: Hasher<H>>(lhs: &Tup, h: &mut H) {
+        for const i in 0usize..lhs.len() {
+            lhs.(i).hash(h);
+        }
+    }
+
+    mixin Equatable<Tup>;
+    mixin Comparable<Tup>;
+}
+
+type callback_args_of<Args> = tuple_concat_of<(&mut void, ), Args>;
+type callback_of<Args, Ret> = function_pointer_of<callback_args_of<Args>, Ret>;
+
+/// Method implementations for callable objects (named functions, function pointers, closures)
+#[lang(builtin_callable)]
+#[docs(builtin)]
+struct callable {}
+impl callable {
+    /// Call a function with arguments passed as a tuple.
+    ///
+    /// ## Example
+    /// ```
+    /// fn add(a: i32, b: i32) -> i32 {
+    ///     a + b
+    /// }
+    ///
+    /// let args = (1, 2);
+    /// let result = add.invoke(args);
+    ///
+    /// assert_eq!(result, 3);
+    /// ```
+    #[inline(ir)]
+    fn invoke<Args, Ret, F: Callable<Args, Ret>>(f: F, args: Args) -> Ret {
+        intrinsics::tuple_invoke(f, args)
+    }
+
+    /// Converts a pointer to closure to a C-style state and function pointer pair.
+    ///
+    /// This function is used to pass closures to C functions that expect a function pointer and a
+    /// state pointer, that is passed as the first argument to the function when the callback is
+    /// called.
+    ///
+    /// ## Example
+    /// ```no_test
+    /// use libc::{c_int, c_char};
+    ///
+    /// extern "C" fn sqlite3_exec(
+    ///     db: &mut sqlite3,
+    ///     sql: &c_char,
+    ///     callback: fn(&mut void, c_int, &mut &mut c_char, &mut &mut c_char) -> c_int,
+    ///     state: &mut void, // ⮥
+    ///     errmsg: &mut &mut c_char,
+    /// ) -> libc::c_int;
+    ///
+    /// let db = /* ... */;
+    /// let file = File::open(/* ... */);
+    /// defer file.close();
+    ///
+    /// // Prints the rows of a table to a file that's captured by the closure.
+    /// let print = |&file, num_cols: c_int, values: &mut &mut c_char, _: &mut &mut c_char| {
+    ///     /// ... print values to file ...
+    ///     0
+    /// };
+    ///
+    /// let (state, callback) = print.as_callback();
+    /// sqlite3_exec(
+    ///     &mut db,
+    ///     "SELECT * FROM users\0".as_ptr() as &c_char,
+    ///     callback,
+    ///     state,
+    ///     null
+    /// );
+    /// ```
+    #[inline]
+    fn as_callback<Args, Ret, F: Closure + Callable<Args, Ret>>(f: &mut F) -> (&mut void, callback_of<Args, Ret>) {
+        use underlying_function_of as u;
+
+        (
+            f as &mut void,
+            util::unit::<u<F>>()
+                as function_pointer_of<arguments_of<u<F>>, Ret>
+                as callback_of<Args, Ret>,
+        )
+    }
 }
 
 // The following are "type-operators", pseudo-types, implemented inside the compiler
@@ -1251,7 +1399,7 @@ type tuple_head_of<T: builtins::Tuple>;
 ///
 /// Passing empty tuple ([void]) is a compile-time error.
 ///
-/// See also [util::tail] for a function that returns the tail of a tuple.
+/// See also [builtins::tuple::tail] for a function that returns the tail of a tuple.
 ///
 /// ## Example
 /// ```
@@ -1328,6 +1476,21 @@ type arguments_of<T>;
 #[lang(typeop_generic_args_of)]
 type generic_args_of<T>;
 
+
+/// Type with replaced generic arguments provided by a tuple
+///
+/// ## Example
+/// ```
+/// use std::typing::matches;
+/// use std::builtins::replace_generic_args_of;
+///
+/// let o = Option::some(42);
+///
+/// assert!(matches::<replace_generic_args_of<typeof(o), (bool,)>, Option<bool>>());
+/// ```
+#[lang(typeop_replace_generic_args_of)]
+type replace_generic_args_of<T, Args: Tuple>;
+
 /// Pointer to `T` with same constness as `Ptr`.
 ///
 /// ## Example
@@ -1354,21 +1517,63 @@ type pointer_with_mut_of<T, Ptr: Pointer>;
 #[lang(typeop_array_with_length_of)]
 type array_with_length_of<T, Arr: Array>;
 
-/// Backing type of an `enum`.
+/// Backing type of an `enum` or a `const`/`static` type.
 ///
 /// ## Example
 /// ```
 /// use std::typing::matches;
-/// use std::builtins::enum_type_of;
+/// use std::builtins::underlying_type_of;
 ///
 /// enum Foo { A, B, C }
 /// enum Bar { A = 0usize, B, C }
 ///
-/// assert!(matches::<enum_type_of<Foo>, i32>());
-/// assert!(matches::<enum_type_of<Bar>, usize>());
+/// const FOO: i32 = 42;
+/// static BAR: usize = 42;
+///
+/// assert!(matches::<underlying_type_of<Foo>, i32>());
+/// assert!(matches::<underlying_type_of<Bar>, usize>());
+/// assert!(matches::<underlying_type_of<FOO>, i32>());
+/// assert!(matches::<underlying_type_of<BAR>, usize>());
 /// ```
-#[lang(typeop_enum_type_of)]
-type enum_type_of<T: Enum>;
+#[lang(typeop_underlying_type_of)]
+type underlying_type_of<T: Enum | Static | Const | Closure>;
+
+/// Underlying function of a closure
+///
+/// Underlying function is a regular named function that accepts the closure object as its first
+/// argument by a mutable pointer.
+///
+/// See also [builtins::callable::as_callback] for a function that converts a pointer to a closure
+/// into a C-style void pointer and a function pointer pair.
+///
+/// ## Example
+/// ```
+/// use std::builtins::underlying_function_of;
+///
+/// let a = 1;
+/// let f = |=a, x: i32| -> i32 { x + a };
+///
+/// let g: underlying_function_of<typeof(f)>;
+///
+/// assert_eq!(
+///     f(2),
+///     g(&f, 2)
+/// );
+/// ```
+#[lang(typeop_underlying_function_of)]
+type underlying_function_of<T: Closure>;
+
+/// Make a function pointer type from a tuple of arguments and the return type.
+///
+/// ## Example
+/// ```
+/// use std::typing::matches;
+/// use std::builtins::function_pointer_of;
+///
+/// assert!(matches::<function_pointer_of<(i32, ), i32>, fn(i32) -> i32>());
+/// ```
+#[lang(typeop_function_pointer_of)]
+type function_pointer_of<Args: Tuple, Ret = ()>;
 
 /// Matches zero-sized types (void, named function types, empty structs, empty arrays, ...)
 #[lang(proto_zero_sized)] protocol ZeroSized {}
@@ -1417,6 +1622,15 @@ type enum_type_of<T: Enum>;
 
 /// Function pointers
 #[lang(proto_function_pointer)] protocol FunctionPointer {}
+
+/// Closures
+#[lang(proto_closure)] protocol Closure {}
+
+/// Named constants
+#[lang(proto_const)] protocol Const {}
+
+/// Static variables
+#[lang(proto_static)] protocol Static {}
 
 /// All callable objects (named functions, closures, and function pointers)
 ///
@@ -1959,7 +2173,11 @@ mod internal {
         /// ```
         #[inline]
         fn rotate_left(self: Self, n: usize) -> Self {
-            (self << n) | (self >> ((8 * mem::size_of::<Self>()) - n))
+            if n == 0 {
+                self
+            } else {
+                (self << n) | (self >> ((8 * mem::size_of::<Self>()) - n))
+            }
         }
 
         /// Rotates the bits to the right by `n` bits.
@@ -1969,7 +2187,11 @@ mod internal {
         /// ```
         #[inline]
         fn rotate_right(self: Self, n: usize) -> Self {
-            (self >> n) | (self << ((8 * mem::size_of::<Self>()) - n))
+            if n == 0 {
+                self
+            } else {
+                (self >> n) | (self << ((8 * mem::size_of::<Self>()) - n))
+            }
         }
     }
 

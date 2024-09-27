@@ -8,14 +8,14 @@ pub mod rebind;
 pub mod serialization;
 pub mod types;
 
-use crate::ast::lang::LangItemKind;
+use crate::ast::lang::Lang;
 use crate::common::{
     impl_allocatable, Allocatable, ArenaAllocatable, CodeDiagnostic, FileId, HashMap, HashSet,
     Incrementable,
 };
-use crate::intrinsics::IntrinsicKind;
-use crate::name_resolution::path::{Path, PathSegment};
-use crate::name_resolution::scope::BoundItemType;
+use crate::ir::mono::intrinsics::Intr;
+use crate::src::path::{Path, PathSegment};
+use crate::src::scope::BoundItemType;
 
 use crate::ast::serialization::{AstDeserializer, AstSerializable, AstSerializer};
 
@@ -24,16 +24,16 @@ use alumina_boot_macros::AstSerializable;
 use bumpalo::Bump;
 use once_cell::unsync::OnceCell;
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, Ref, RefCell};
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};
 
 #[derive(Clone, AstSerializable)]
-pub struct TestMetadata<'ast> {
+pub struct Metadatum<'ast> {
     pub path: Path<'ast>,
     pub name: Path<'ast>,
-    pub attributes: Vec<String>,
+    pub attributes: Vec<Attribute<'ast>>,
 }
 
 pub struct AstCtx<'ast> {
@@ -41,9 +41,9 @@ pub struct AstCtx<'ast> {
     pub counter: Cell<usize>,
     types: RefCell<HashSet<TyP<'ast>>>,
     strings: RefCell<HashSet<&'ast str>>,
-    lang_items: RefCell<HashMap<LangItemKind, ItemP<'ast>>>,
-    local_names: RefCell<HashMap<AstId, &'ast str>>,
-    test_metadata: RefCell<HashMap<ItemP<'ast>, TestMetadata<'ast>>>,
+    lang_items: RefCell<HashMap<Lang, ItemP<'ast>>>,
+    local_names: RefCell<HashMap<Id, &'ast str>>,
+    metadata: RefCell<HashMap<ItemP<'ast>, Metadatum<'ast>>>,
 }
 
 impl<'ast> AstCtx<'ast> {
@@ -55,17 +55,17 @@ impl<'ast> AstCtx<'ast> {
             strings: RefCell::new(HashSet::default()),
             lang_items: RefCell::new(HashMap::default()),
             local_names: RefCell::new(HashMap::default()),
-            test_metadata: RefCell::new(HashMap::default()),
+            metadata: RefCell::new(HashMap::default()),
         }
     }
 
-    pub fn make_id(&self) -> AstId {
-        AstId {
+    pub fn make_id(&self) -> Id {
+        Id {
             id: self.counter.increment(),
         }
     }
 
-    pub fn lang_item(&self, kind: LangItemKind) -> Result<ItemP<'ast>, CodeDiagnostic> {
+    pub fn lang_item(&self, kind: Lang) -> Result<ItemP<'ast>, CodeDiagnostic> {
         self.lang_items
             .borrow()
             .get(&kind)
@@ -73,7 +73,7 @@ impl<'ast> AstCtx<'ast> {
             .ok_or(CodeDiagnostic::MissingLangItem(kind))
     }
 
-    pub fn lang_item_kind(&self, item: ItemP<'ast>) -> Option<LangItemKind> {
+    pub fn lang_item_kind(&self, item: ItemP<'ast>) -> Option<Lang> {
         self.lang_items
             .borrow()
             .iter()
@@ -82,12 +82,12 @@ impl<'ast> AstCtx<'ast> {
             .copied()
     }
 
-    pub fn add_lang_item(&self, kind: LangItemKind, item: ItemP<'ast>) {
+    pub fn add_lang_item(&self, kind: Lang, item: ItemP<'ast>) {
         self.lang_items.borrow_mut().insert(kind, item);
     }
 
-    pub fn add_test_metadata(&'ast self, item: ItemP<'ast>, metadata: TestMetadata<'ast>) {
-        self.test_metadata.borrow_mut().insert(item, metadata);
+    pub fn add_metadatum(&'ast self, item: ItemP<'ast>, metadatum: Metadatum<'ast>) {
+        self.metadata.borrow_mut().insert(item, metadatum);
     }
 
     pub fn intern_str(&'ast self, name: &'_ str) -> &'ast str {
@@ -101,16 +101,20 @@ impl<'ast> AstCtx<'ast> {
         inner
     }
 
-    pub fn add_local_name(&'ast self, id: AstId, name: &'ast str) {
+    pub fn add_local_name(&'ast self, id: Id, name: &'ast str) {
         self.local_names.borrow_mut().insert(id, name);
     }
 
-    pub fn local_name(&self, id: AstId) -> Option<&'ast str> {
+    pub fn local_name(&self, id: Id) -> Option<&'ast str> {
         self.local_names.borrow().get(&id).copied()
     }
 
-    pub fn test_metadata(&self, item: ItemP<'ast>) -> Option<TestMetadata<'ast>> {
-        self.test_metadata.borrow().get(&item).cloned()
+    pub fn metadatum(&self, item: ItemP<'ast>) -> Option<Metadatum<'ast>> {
+        self.metadata.borrow().get(&item).cloned()
+    }
+
+    pub fn metadata<'a>(&'a self) -> Ref<'a, HashMap<ItemP<'ast>, Metadatum<'ast>>> {
+        self.metadata.borrow()
     }
 
     pub fn intern_type(&'ast self, ty: Ty<'ast>) -> TyP<'ast> {
@@ -131,7 +135,7 @@ impl<'ast> AstCtx<'ast> {
         })
     }
 
-    pub fn make_item_with(&'ast self, id: AstId) -> ItemP<'ast> {
+    pub fn make_item_with(&'ast self, id: Id) -> ItemP<'ast> {
         self.arena.alloc(ItemCell {
             id,
             contents: OnceCell::new(),
@@ -202,11 +206,11 @@ where
 }
 
 #[derive(PartialEq, Copy, Clone, Eq, Hash)]
-pub struct AstId {
+pub struct Id {
     pub id: usize,
 }
 
-impl<'a> AstSerializable<'a> for AstId {
+impl<'a> AstSerializable<'a> for Id {
     fn serialize<W: Write>(
         &self,
         serializer: &mut AstSerializer<'a, W>,
@@ -218,17 +222,17 @@ impl<'a> AstSerializable<'a> for AstId {
         deserializer: &mut AstDeserializer<'a, R>,
     ) -> crate::ast::serialization::Result<Self> {
         let id = <usize as AstSerializable>::deserialize(deserializer)?;
-        Ok(deserializer.context().map_ast_id(AstId { id }))
+        Ok(deserializer.context().map_ast_id(Id { id }))
     }
 }
 
-impl Display for AstId {
+impl Display for Id {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "${}", self.id)
     }
 }
 
-impl Debug for AstId {
+impl Debug for Id {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         Display::fmt(self, f)
     }
@@ -336,7 +340,7 @@ impl BuiltinType {
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash, AstSerializable)]
 pub enum Ty<'ast> {
-    Placeholder(AstId),
+    Placeholder(Id),
     Item(ItemP<'ast>),
     Builtin(BuiltinType),
     Pointer(TyP<'ast>, bool),
@@ -386,19 +390,7 @@ impl<'ast> Ty<'ast> {
 }
 
 pub type TyP<'ast> = &'ast Ty<'ast>;
-/*
-impl<'ast> AstSerializable<'ast> for TyP<'ast> {
-    fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'ast, W>) -> crate::ast::serialization::Result<()> {
-        (*self).serialize(serializer)
-    }
 
-    fn deserialize<R: Read>(deserializer: &mut AstDeserializer<'ast, R>) -> crate::ast::serialization::Result<Self> {
-        let ty = <Ty<'ast> as AstSerializable>::deserialize(deserializer)?;
-
-        Ok(deserializer.ast.intern_type(ty))
-    }
-}
-*/
 #[derive(Debug, AstSerializable)]
 pub enum Item<'ast> {
     Enum(Enum<'ast>),
@@ -430,7 +422,7 @@ impl<'ast> Item<'ast> {
         self.can_compile()
             && match self {
                 Item::Function(Function { attributes, .. }) => {
-                    attributes.contains(&Attribute::Test) || attributes.contains(&Attribute::Export)
+                    attributes.contains(&Attribute::Export)
                 }
                 _ => false,
             }
@@ -466,7 +458,7 @@ impl<'ast> AstSerializable<'ast> for ItemP<'ast> {
     fn deserialize<R: Read>(
         deserializer: &mut AstDeserializer<'ast, R>,
     ) -> crate::ast::serialization::Result<Self> {
-        let id = AstId::deserialize(deserializer)?;
+        let id = Id::deserialize(deserializer)?;
 
         Ok(deserializer.context().get_cell(id))
     }
@@ -540,7 +532,7 @@ impl<'ast> ItemCell<'ast> {
 /// later.
 /// Items are immutable once they are assigned.
 pub struct ItemCell<'ast> {
-    pub id: AstId,
+    pub id: Id,
     pub contents: OnceCell<Item<'ast>>,
 }
 
@@ -576,16 +568,18 @@ impl Debug for ItemCell<'_> {
 
 #[derive(Debug, Clone, Copy, AstSerializable)]
 pub struct Field<'ast> {
-    pub id: AstId,
+    pub id: Id,
     pub name: &'ast str,
-    pub typ: TyP<'ast>,
+    pub attributes: &'ast [Attribute<'ast>],
+    pub ty: TyP<'ast>,
     pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, Copy, AstSerializable)]
 pub struct EnumMember<'ast> {
-    pub id: AstId,
+    pub id: Id,
     pub name: &'ast str,
+    pub attributes: &'ast [Attribute<'ast>],
     pub value: Option<ExprP<'ast>>,
     pub span: Option<Span>,
 }
@@ -613,7 +607,7 @@ pub struct Mixin<'ast> {
 pub struct Bound<'ast> {
     pub negated: bool,
     pub span: Option<Span>,
-    pub typ: TyP<'ast>,
+    pub ty: TyP<'ast>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AstSerializable)]
@@ -630,7 +624,7 @@ pub struct ProtocolBounds<'ast> {
 
 #[derive(Debug, Clone, Copy, AstSerializable)]
 pub struct Placeholder<'ast> {
-    pub id: AstId,
+    pub id: Id,
     pub bounds: ProtocolBounds<'ast>,
     pub span: Option<Span>,
     pub default: Option<TyP<'ast>>,
@@ -682,20 +676,20 @@ pub struct Enum<'ast> {
 
 #[derive(Debug, Clone, Copy, AstSerializable)]
 pub struct Parameter<'ast> {
-    pub id: AstId,
-    pub typ: TyP<'ast>,
+    pub id: Id,
+    pub ty: TyP<'ast>,
     pub span: Option<Span>,
 }
 
 #[derive(Debug, AstSerializable)]
 pub struct Intrinsic {
-    pub kind: IntrinsicKind,
+    pub kind: Intr,
     pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, Copy, AstSerializable)]
 pub struct MacroParameter {
-    pub id: AstId,
+    pub id: Id,
     pub et_cetera: bool,
     pub span: Option<Span>,
 }
@@ -749,7 +743,7 @@ pub struct StaticOrConst<'ast> {
     pub name: Option<&'ast str>,
     pub attributes: &'ast [Attribute<'ast>],
     pub placeholders: &'ast [Placeholder<'ast>],
-    pub typ: Option<TyP<'ast>>,
+    pub ty: Option<TyP<'ast>>,
     pub init: Option<ExprP<'ast>>,
     pub span: Option<Span>,
     pub is_local: bool,
@@ -759,8 +753,8 @@ pub struct StaticOrConst<'ast> {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, AstSerializable)]
 pub struct LetDeclaration<'ast> {
-    pub id: AstId,
-    pub typ: Option<TyP<'ast>>,
+    pub id: Id,
+    pub ty: Option<TyP<'ast>>,
     pub value: Option<ExprP<'ast>>,
 }
 
@@ -813,61 +807,53 @@ impl BinOp {
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AstSerializable)]
+pub enum Inline {
+    Default,
+    Never,
+    Always,
+    DuringMono,
+}
+
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AstSerializable)]
+pub enum Diagnostic {
+    MustUse,
+}
+
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AstSerializable)]
 pub enum Attribute<'ast> {
     Export,
-    Test,
     Cold,
     TestMain,
     Main,
-    Inline,
+    Inline(Inline),
     Align(usize),
     Packed(usize),
     TupleCall,
     ConstOnly,
     NoConst,
-    MustUse,
+    Diagnostic(Diagnostic),
     Transparent,
-    NoInline,
     ThreadLocal,
     Builtin,
-    AlwaysInline,
-    InlineDuringMono,
     Intrinsic,
     StaticConstructor,
     LinkName(&'ast str),
     Coroutine,
+    Custom(CustomAttribute<'ast>),
 }
 
-impl<'ast> Attribute<'ast> {
-    pub fn realloc_on<'new, F>(&'ast self, f: F) -> Attribute<'new>
-    where
-        F: Fn(&'ast str) -> &'new str,
-    {
-        match self {
-            Attribute::LinkName(s) => Attribute::LinkName(f(s)),
-            Attribute::Export => Attribute::Export,
-            Attribute::Test => Attribute::Test,
-            Attribute::Cold => Attribute::Cold,
-            Attribute::TestMain => Attribute::TestMain,
-            Attribute::Main => Attribute::Main,
-            Attribute::Inline => Attribute::Inline,
-            Attribute::Align(i) => Attribute::Align(*i),
-            Attribute::Packed(i) => Attribute::Packed(*i),
-            Attribute::MustUse => Attribute::MustUse,
-            Attribute::Transparent => Attribute::Transparent,
-            Attribute::NoInline => Attribute::NoInline,
-            Attribute::ThreadLocal => Attribute::ThreadLocal,
-            Attribute::Builtin => Attribute::Builtin,
-            Attribute::AlwaysInline => Attribute::AlwaysInline,
-            Attribute::InlineDuringMono => Attribute::InlineDuringMono,
-            Attribute::Intrinsic => Attribute::Intrinsic,
-            Attribute::StaticConstructor => Attribute::StaticConstructor,
-            Attribute::ConstOnly => Attribute::ConstOnly,
-            Attribute::NoConst => Attribute::NoConst,
-            Attribute::TupleCall => Attribute::TupleCall,
-            Attribute::Coroutine => Attribute::Coroutine,
-        }
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AstSerializable)]
+pub enum CustomAttributeValue<'ast> {
+    Attribute(CustomAttribute<'ast>),
+    Value(Lit<'ast>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AstSerializable)]
+pub struct CustomAttribute<'ast> {
+    pub name: &'ast str,
+    pub values: &'ast [CustomAttributeValue<'ast>],
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, AstSerializable)]
@@ -895,13 +881,14 @@ pub struct FieldInitializer<'ast> {
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash, Copy, AstSerializable)]
 pub struct Defered<'ast> {
-    pub typ: TyP<'ast>,
+    pub ty: TyP<'ast>,
     pub name: &'ast str,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, AstSerializable)]
 pub struct ClosureBinding<'ast> {
-    pub id: AstId,
+    pub id: Id,
+    pub name: &'ast str,
     pub value: ExprP<'ast>,
     pub binding_type: BoundItemType,
     pub span: Option<Span>,
@@ -912,6 +899,12 @@ pub enum FnKind<'ast> {
     Normal(ItemP<'ast>),
     Closure(&'ast [ClosureBinding<'ast>], ItemP<'ast>),
     Defered(Defered<'ast>),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, AstSerializable)]
+pub enum StaticForLoopVariable<'ast> {
+    Single(Id),
+    Tuple(&'ast [Id]),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, AstSerializable)]
@@ -932,10 +925,10 @@ pub enum ExprKind<'ast> {
     Unary(UnOp, ExprP<'ast>),
     Assign(ExprP<'ast>, ExprP<'ast>),
     AssignOp(BinOp, ExprP<'ast>, ExprP<'ast>),
-    Local(AstId),
+    Local(Id),
     Static(ItemP<'ast>, Option<&'ast [TyP<'ast>]>),
     Const(ItemP<'ast>, Option<&'ast [TyP<'ast>]>),
-    EnumValue(ItemP<'ast>, AstId),
+    EnumValue(ItemP<'ast>, Id),
     Lit(Lit<'ast>),
     Loop(ExprP<'ast>),
     EtCetera(ExprP<'ast>),
@@ -947,19 +940,20 @@ pub enum ExprKind<'ast> {
     Tuple(&'ast [ExprP<'ast>]),
     Array(&'ast [ExprP<'ast>]),
     Struct(TyP<'ast>, &'ast [FieldInitializer<'ast>]),
-    BoundParam(AstId, AstId, BoundItemType),
+    BoundParam(Id, Id, BoundItemType),
     Field(
         ExprP<'ast>,
         &'ast str,
         Option<ItemP<'ast>>,
         Option<&'ast [TyP<'ast>]>,
     ),
-    TupleIndex(ExprP<'ast>, usize),
+    TupleIndex(ExprP<'ast>, ExprP<'ast>),
     Index(ExprP<'ast>, ExprP<'ast>),
     Range(Option<ExprP<'ast>>, Option<ExprP<'ast>>, bool),
     If(ExprP<'ast>, ExprP<'ast>, ExprP<'ast>),
     TypeCheck(ExprP<'ast>, TyP<'ast>),
     StaticIf(ExprP<'ast>, ExprP<'ast>, ExprP<'ast>),
+    StaticFor(StaticForLoopVariable<'ast>, ExprP<'ast>, ExprP<'ast>),
     Cast(ExprP<'ast>, TyP<'ast>),
     Tag(&'ast str, ExprP<'ast>),
 
@@ -1035,5 +1029,7 @@ impl_allocatable!(
     EnumMember<'_>,
     Placeholder<'_>,
     Attribute<'_>,
-    AstId
+    CustomAttribute<'_>,
+    CustomAttributeValue<'_>,
+    Id
 );

@@ -4,9 +4,9 @@ use crate::ast::{
 };
 use crate::common::{AluminaError, ArenaAllocatable, CodeDiagnostic, WithSpanDuringParsing};
 use crate::global_ctx::GlobalCtx;
-use crate::name_resolution::resolver::{ItemResolution, NameResolver};
-use crate::name_resolution::scope::{NamedItemKind, Scope};
 use crate::parser::{AluminaVisitor, FieldKind, NodeExt, ParseCtx};
+use crate::src::resolver::{ItemResolution, NameResolver};
+use crate::src::scope::{NamedItemKind, Scope};
 use crate::visitors::ScopedPathVisitor;
 
 use super::MacroCtx;
@@ -57,7 +57,7 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
             bounds.push(Bound {
                 span: Some(Span::from_node(self.scope.file_id(), bound)),
                 negated: bound.child_by_field(FieldKind::Negated).is_some(),
-                typ: self.visit(bound.child_by_field(FieldKind::Type).unwrap())?,
+                ty: self.visit(bound.child_by_field(FieldKind::Type).unwrap())?,
             });
         }
 
@@ -80,14 +80,16 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
                 NamedItemKind::TypeDef(ty) => self.ast.intern_type(Ty::Item(ty)),
                 NamedItemKind::Function(ty) => self.ast.intern_type(Ty::Item(ty)),
                 NamedItemKind::Protocol(ty) => self.ast.intern_type(Ty::Item(ty)),
+                NamedItemKind::Const(ty) => self.ast.intern_type(Ty::Item(ty)),
+                NamedItemKind::Static(ty) => self.ast.intern_type(Ty::Item(ty)),
                 NamedItemKind::Placeholder(ty) => self.ast.intern_type(Ty::Placeholder(ty)),
                 kind => {
                     return Err(CodeDiagnostic::Unexpected(format!("{}", kind)))
                         .with_span_from(&self.scope, node)
                 }
             },
-            ItemResolution::Defered(typ, name) => self.ast.intern_type(Ty::Defered(Defered {
-                typ: self.ast.intern_type(typ),
+            ItemResolution::Defered(ty, name) => self.ast.intern_type(Ty::Defered(Defered {
+                ty: self.ast.intern_type(ty),
                 name: name.0,
             })),
         };

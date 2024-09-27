@@ -6,6 +6,7 @@ use crate::ir::const_eval::ConstEvalErrorKind;
 use alumina_boot_macros::AstSerializable;
 use colored::Colorize;
 
+use std::backtrace::Backtrace;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -47,6 +48,7 @@ struct DiagnosticContextInner {
     file_map: HashMap<FileId, PathBuf>,
     messages: IndexSet<(Level, CodeError)>,
     location_overrides: HashMap<FileId, Vec<LocationOverride>>,
+    hidden_spans: HashSet<Span>,
     overrides: Vec<Override>,
     counter: usize,
 }
@@ -91,6 +93,28 @@ impl DiagnosticsStack {
 
         let new_tail = Rc::clone(tail.parent.as_ref().unwrap());
         *tail = new_tail;
+    }
+
+    pub fn overflow_check(&self) -> Result<(), AluminaError> {
+        // calculate the length of the backtrace
+        let mut tail = self.tail.borrow_mut().clone();
+        let mut len = 0;
+        while let Some(ref parent) = tail.parent {
+            len += 1;
+            tail = parent.clone();
+        }
+
+        if len > 1000 {
+            return Err(AluminaError::CodeErrors(vec![CodeError {
+                kind: CodeDiagnostic::InternalError(
+                    "backtrace overflow".into(),
+                    Backtrace::capture().into(),
+                ),
+                backtrace: self.materialize(),
+            }]));
+        }
+
+        Ok(())
     }
 
     pub fn push(&self, marker: Marker) -> DiagnosticsStackGuard {
@@ -191,6 +215,7 @@ impl DiagnosticContext {
                 file_map: HashMap::default(),
                 messages: Default::default(),
                 location_overrides: Default::default(),
+                hidden_spans: Default::default(),
                 overrides: Default::default(),
                 counter: 0,
             })),
@@ -215,6 +240,10 @@ impl DiagnosticContext {
 
     pub fn add_override(&self, r#override: Override) {
         self.inner.borrow_mut().overrides.push(r#override);
+    }
+
+    pub fn add_hidden_span(&self, span: Span) {
+        self.inner.borrow_mut().hidden_spans.insert(span);
     }
 
     pub fn add_location_override(&self, span: Span, new_file: PathBuf, new_line: usize) {
@@ -436,6 +465,9 @@ impl DiagnosticContext {
 
             for marker in filtered_frames {
                 let Marker::Span(span) = marker else { continue };
+                if inner.hidden_spans.iter().any(|s| s.contains(&span)) {
+                    continue;
+                }
                 let span = self.map_span(span);
 
                 if let Some(file_name) = inner.file_map.get(&span.file) {
@@ -529,6 +561,9 @@ impl DiagnosticContext {
             let mut backtrace = vec![];
             for marker in filtered_frames {
                 let Marker::Span(span) = marker else { continue };
+                if inner.hidden_spans.iter().any(|s| s.contains(&span)) {
+                    continue;
+                }
                 let span = self.map_span(span);
 
                 if let Some(file_name) = inner.file_map.get(&span.file) {
