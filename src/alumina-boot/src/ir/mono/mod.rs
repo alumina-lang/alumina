@@ -1403,10 +1403,12 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
     fn mono_function(
         &mut self,
         item: ir::ItemP<'ir>,
-        func: &ast::Function<'ast>,
-        generic_args: &'ir [ir::TyP<'ir>],
+        key: MonoKey<'ast, 'ir>,
         signature_only: bool,
     ) -> Result<(), AluminaError> {
+        let MonoKey(ast_item, generic_args, _, _) = key.clone();
+        let func = ast_item.get_function();
+
         let _guard = self.diag.push_span(func.span);
 
         let replacements = self.resolve_placeholders(func.placeholders, generic_args)?;
@@ -1545,6 +1547,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                     return_type: child.types.void(),
                     body: OnceCell::new(),
                 }));
+                grandchild.ctx.reverse_map.insert(inner, key);
 
                 grandchild.return_type = Some(grandchild.types.void());
                 grandchild.yield_type = Some(yield_type);
@@ -1908,7 +1911,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                 self.mono_enum(item, en, key.1)?;
             }
             ast::Item::Function(func) => {
-                self.mono_function(item, func, key.1, signature_only)?;
+                self.mono_function(item, key, signature_only)?;
             }
             ast::Item::StructLike(s) => {
                 self.mono_struct(item, s, key.1)?;
@@ -2241,6 +2244,24 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                         }
                         ir::Item::Static(s) => {
                             return Ok(Some(s.ty));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Some(LangItemKind::TypeopUnderlyingFunctionOf) => {
+                arg_count!(1);
+                if let ir::Ty::Item(e) = args[0] {
+                    match e.get().with_backtrace(&self.diag)? {
+                        ir::Item::Closure(e) => {
+                            return Ok(Some(
+                                self.types.named(
+                                    e.function
+                                        .get()
+                                        .ok_or(CodeDiagnostic::UnpopulatedItem)
+                                        .with_backtrace(&self.diag)?,
+                                ),
+                            ))
                         }
                         _ => {}
                     }
@@ -2677,6 +2698,16 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                 .ctx
                 .ast
                 .lang_item(LangItemKind::ImplTuple)
+                .with_backtrace(&self.diag)?,
+            ast::Ty::FunctionPointer(..) => self
+                .ctx
+                .ast
+                .lang_item(LangItemKind::ImplCallable)
+                .with_backtrace(&self.diag)?,
+            ast::Ty::Item(item) if matches!(item.get(), ast::Item::Function(_)) => self
+                .ctx
+                .ast
+                .lang_item(LangItemKind::ImplCallable)
                 .with_backtrace(&self.diag)?,
 
             ast::Ty::Item(item) => item,

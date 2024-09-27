@@ -1082,7 +1082,7 @@ impl f64 {
     }
 }
 
-/// Fixed size arrays
+/// Method implementations for fixed size arrays
 ///
 /// Working with slices is often more convenient than working with arrays. See also
 /// [mem::slice] for methods on slices.
@@ -1149,7 +1149,7 @@ impl array<Arr: builtins::Array> {
     mixin cmp::Equatable<Arr>;
 }
 
-/// Tuples
+/// Method implementations for tuples
 ///
 /// Tuples are fixed-size collections of elements of different types. They are often used to
 /// return multiple values from a function or to group values of different types together.
@@ -1221,6 +1221,46 @@ impl tuple<Tup: Tuple> {
 
     mixin Equatable<Tup>;
     mixin Comparable<Tup>;
+}
+
+type callback_args_of<Args> = tuple_concat_of<(&mut void, ), Args>;
+type callback_of<Args, Ret> = function_pointer_of<callback_args_of<Args>, Ret>;
+
+/// Method implementations for callable objects (named functions, function pointers, closures)
+#[lang(builtin_callable)]
+#[docs(builtin)]
+struct callable {}
+impl callable {
+    /// Call a function with arguments passed as a tuple.
+    ///
+    /// ## Example
+    /// ```
+    /// fn add(a: i32, b: i32) -> i32 {
+    ///     a + b
+    /// }
+    ///
+    /// let args = (1, 2);
+    /// let result = add.invoke(args);
+    ///
+    /// assert_eq!(result, 3);
+    /// ```
+    #[inline(ir)]
+    fn invoke<Args, Ret, F: Callable<Args, Ret>>(f: F, args: Args) -> Ret {
+        intrinsics::tuple_invoke(f, args)
+    }
+
+    /// [non::existent::add_docs]
+    #[inline]
+    fn as_callback<Args, Ret, F: Closure + Callable<Args, Ret>>(f: &mut F) -> (&mut void, callback_of<Args, Ret>) {
+        use underlying_function_of as u;
+
+        (
+            f as &mut void,
+            util::unit::<u<F>>()
+                as function_pointer_of<arguments_of<u<F>>, Ret>
+                as callback_of<Args, Ret>,
+        )
+    }
 }
 
 // The following are "type-operators", pseudo-types, implemented inside the compiler
@@ -1460,8 +1500,13 @@ type array_with_length_of<T, Arr: Array>;
 /// assert!(matches::<underlying_type_of<BAR>, usize>());
 /// ```
 #[lang(typeop_underlying_type_of)]
-type underlying_type_of<T: Enum | Static | Const>;
+type underlying_type_of<T: Enum | Static | Const | Closure>;
 
+/// Underlying function of a closure
+///
+/// [nonexistent::fix::me]
+#[lang(typeop_underlying_function_of)]
+type underlying_function_of<T: Closure>;
 
 /// Make a function pointer type from a tuple of arguments and the return type.
 ///

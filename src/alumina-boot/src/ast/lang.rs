@@ -58,6 +58,7 @@ pub enum LangItemKind {
     ImplBuiltin(BuiltinType),
     ImplTuple,
     ImplArray,
+    ImplCallable,
 
     TypeopTupleHeadOf,
     TypeopTupleTailOf,
@@ -70,6 +71,7 @@ pub enum LangItemKind {
     TypeopReplaceGenericArgsOf,
     TypeopFunctionPointerOf,
     TypeopUnderlyingTypeOf,
+    TypeopUnderlyingFunctionOf,
 
     EntrypointGlue,
 
@@ -227,6 +229,7 @@ impl TryFrom<&str> for LangItemKind {
 
             "builtin_array" => Ok(LangItemKind::ImplArray),
             "builtin_tuple" => Ok(LangItemKind::ImplTuple),
+            "builtin_callable" => Ok(LangItemKind::ImplCallable),
 
             "operator_eq" => Ok(LangItemKind::Operator(BinOp::Eq)),
             "operator_neq" => Ok(LangItemKind::Operator(BinOp::Neq)),
@@ -246,6 +249,7 @@ impl TryFrom<&str> for LangItemKind {
             "typeop_replace_generic_args_of" => Ok(LangItemKind::TypeopReplaceGenericArgsOf),
             "typeop_function_pointer_of" => Ok(LangItemKind::TypeopFunctionPointerOf),
             "typeop_underlying_type_of" => Ok(LangItemKind::TypeopUnderlyingTypeOf),
+            "typeop_underlying_function_of" => Ok(LangItemKind::TypeopUnderlyingFunctionOf),
 
             "entrypoint_glue" => Ok(LangItemKind::EntrypointGlue),
 
