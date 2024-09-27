@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>json::marshal - Alumina Docs</title>
+<link rel="stylesheet" href="/static/styles.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="description" content=" Serialization and deserialization of JSON data into arbitrary types." />
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png" />
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
+<link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
+<link rel="manifest" href="/static/manifest.json" />
+<link rel="mask-icon" href="/static/safari-pinned-tab.svg" color="#5bbad5" />
+<link rel="shortcut icon" href="/static/favicon.ico" />
+<link rel="canonical" href="https://docs.alumina-lang.net/json/marshal/" />
+<meta name="msapplication-TileColor" content="#da532c" />
+<meta name="msapplication-config" content="/static/browserconfig.xml" />
+<meta name="description" content="Documentation for the Alumina standard library" />
+<script src="/static/site.js"></script>
+<script src="/search_index.js" async></script>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500&family=Source+Code+Pro:wght@400;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,700&display=swap" rel="stylesheet">
+</head>
+<body>
+<nav>
+<a href="/">
+<img width="100px" height="100px" class="logo" src="/static/logo.svg" alt="Alumina Docs">
+</a>
+<h1><a class="breadcrumbs" href="/json/">json</a>::<a class="breadcrumbs" href="/json/marshal/">marshal</a></h1>
+</h1>
+<h2>Structs</h2>
+<ul>
+<li>
+<a href="/json/marshal/JsonUnmarshaller.html">JsonUnmarshaller</a>
+</li>
+</ul>
+<h2>Functions</h2>
+<ul>
+<li>
+<a href="/json/marshal/#item.unmarshal">unmarshal</a>
+</li>
+</ul>
+</nav>
+<div class="main-container">
+<div id="search-container">
+<a class="mobile-only" href="/">
+<img width="40px" height="40px" class="logo" src="/static/logo.svg" alt="Alumina Docs">
+</a>
+<input id="search-input" class="search-input" autocomplete="off" spellcheck="false" placeholder="Search the documentation..." type="search"></input>
+</div>
+<div id="search-results"></div>
+<main id="main-content">
+<div class="main-title"><h1>Module <a class="breadcrumbs" href="/json/">json</a>::<a class="breadcrumbs" href="/json/marshal/">marshal</a></h1>
+</h1>
+</div>
+<p>
+Serialization and deserialization of JSON data into arbitrary types.
+</p><p>
+This module provides an alternative to <a class="path-link" href="/json/JsonValue.html">JsonValue</a> for working with JSON data. It allows
+serializing and deserializing JSON data into arbitrary types using compile-time reflection.
+As a motivating example, consider
+</p><p>
+<pre class="with-playground-link"><code class="language-alumina">use json::marshal::unmarshal;
+use std::string::StringBuf;
+
+struct Foo {
+    str: StringBuf,
+    tuple: (i32, bool),
+}
+
+let val = unmarshal::&lt;Foo&gt;("{\"str\":\"hello\",\"tuple\":[42,true]}").unwrap();
+
+assert_eq!(val.str.as_slice(), "hello");
+assert_eq!(val.tuple, (42, true));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20json%3a%3amarshal%3a%3aunmarshal%3b%0a%20%20%20%20use%20std%3a%3astring%3a%3aStringBuf%3b%0a%20%20%20%20%0a%20%20%20%20struct%20Foo%20%7b%0a%20%20%20%20%20%20%20%20str%3a%20StringBuf%2c%0a%20%20%20%20%20%20%20%20tuple%3a%20%28i32%2c%20bool%29%2c%0a%20%20%20%20%7d%0a%20%20%20%20%0a%20%20%20%20let%20val%20%3d%20unmarshal%3a%3a%3cFoo%3e%28%22%7b%5c%22str%5c%22%3a%5c%22hello%5c%22%2c%5c%22tuple%5c%22%3a%5b42%2ctrue%5d%7d%22%29%2eunwrap%28%29%3b%0a%20%20%20%20%0a%20%20%20%20assert%5feq%21%28val%2estr%2eas%5fslice%28%29%2c%20%22hello%22%29%3b%0a%20%20%20%20assert%5feq%21%28val%2etuple%2c%20%2842%2c%20true%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+Currently, the following types are supported: all numeric types, tuples of supported types, fixed-size arrays of supported types,
+<a class="path-link" href="/std/collections/vector/Vector.html">Vector</a>, <a class="path-link" href="/std/collections/hashmap/HashMap.html">HashMap</a>, pointers to any supported type (if not <code class="language-alumina">null</code>, the value is allocated on the heap),
+<a class="path-link" href="/std/option/Option.html">Option</a>, strings (<a class="path-link" href="/std/string/StringBuf.html">StringBuf</a> and <code class="language-alumina">&amp;[u8]</code>) as well as custom structs.
+</p><p>
+Unmarshal API is more dangerous to use than <a class="path-link" href="/json/JsonValue.html">JsonValue</a> because errors during unmarshalling can very easily lead to leaking memory of partially
+deserialized objects. To help prevent memory leaks avoid using raw pointers and slices and prefer using objects that implement 
+<a class="path-link" href="/std/mem/Freeable.html">Freeable</a>and <a class="path-link" href="/std/mem/Movable.html">Movable</a> protocols. Those objects will be automatically freed when an error occurs during unmarshalling.
+</p><p>
+</p>
+<h2 id="Struct">Structs</h2>
+<div class="item-short-table">
+<div class="row" id="item.JsonUnmarshaller">
+<div class="cell-name">
+<a href="/json/marshal/JsonUnmarshaller.html">JsonUnmarshaller</a>
+</div>
+<div class="cell-doc"></div>
+</div>
+</div>
+<h2 id="Function">Functions</h2>
+<ul>
+<li>
+<div class="signature" id="item.unmarshal">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">unmarshal</span>&lt;T&gt;(input: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/json/#item.Result"><span class="identifier-type">Result</span></a>&lt;T&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/marshal.alu#L275-L288"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Convenience function for unmarshalling JSON data into a value of type <code class="language-alumina">T</code>.
+</p><p>
+</p>
+</div>
+</li>
+</ul>
+</main>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.28.0/prism.min.js" integrity="sha512-RDQSW3KoqJMiX0L/UBgwBmH1EmRYp8LBOiLaA8rBHIy+7OGP/7Gxg8vbt8wG4ZYd29P0Fnoq6+LOytCqx3cyoQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="/static/prism-alumina.js"></script>
+</body>
+</html>

@@ -35,6 +35,12 @@
 <a href="/std/panicking/PanicInfo.html">PanicInfo</a>
 </li>
 </ul>
+<h2>Functions</h2>
+<ul>
+<li>
+<a href="/std/panicking/#item.catch_panic">catch_panic</a>
+</li>
+</ul>
 <h2>Macros</h2>
 <ul>
 <li>
@@ -67,6 +73,61 @@ Panic support macros and functions
 <div class="cell-doc"></div>
 </div>
 </div>
+<h2 id="Function">Functions</h2>
+<ul>
+<li>
+<div class="signature" id="item.catch_panic">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">catch_panic</span>&lt;T, F&gt;(f: F) -> <a href="/std/result/Result.html"><span class="identifier-type">Result</span></a>&lt;T, <a href="/std/panicking/PanicInfo.html"><span class="identifier-type">PanicInfo</span></a>&gt;<div class="protocol-bound">
+F: Fn() -> T</div>
+</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/panicking.alu#L91-L113"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Catch a panic and return it as a result.
+</p><p>
+This function will execute the provided closure and return <code class="language-alumina">Result::ok(())</code> if the closure
+completes successfully, or <code class="language-alumina">Result::err(panic_info)</code> if the closure panics.
+</p><p>
+This is primarily meant to support unit tests that need to verify that a certain function
+panics under certain conditions.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::panicking::catch_panic;
+
+let result = catch_panic(|| {
+    panic!("test panic");
+});
+
+assert!(result.is_err());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3apanicking%3a%3acatch%5fpanic%3b%0a%20%20%20%20%0a%20%20%20%20let%20result%20%3d%20catch%5fpanic%28%7c%7c%20%7b%0a%20%20%20%20%20%20%20%20panic%21%28%22test%20panic%22%29%3b%0a%20%20%20%20%7d%29%3b%0a%20%20%20%20%0a%20%20%20%20assert%21%28result%2eis%5ferr%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+It is <i>not recommended</i> to use this function for general
+error handling, as Alumina panics do not unwind the stack, which means that any resources
+that need to be cleaned up will not be cleaned up.
+</p><p>
+<pre class="with-playground-link dubious"><code class="language-alumina">use std::panicking::catch_panic;
+use std::collections::Vector;
+
+let result = catch_panic(|| {
+    let vec = Vector::from_slice(&amp;[1, 2, 3, 4, 5]); // will never be freed
+    defer vec.free();
+
+    panic!("test panic");
+});
+
+assert!(result.is_err());
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3apanicking%3a%3acatch%5fpanic%3b%0a%20%20%20%20use%20std%3a%3acollections%3a%3aVector%3b%0a%20%20%20%20%0a%20%20%20%20let%20result%20%3d%20catch%5fpanic%28%7c%7c%20%7b%0a%20%20%20%20%20%20%20%20let%20vec%20%3d%20Vector%3a%3afrom%5fslice%28%26%5b1%2c%202%2c%203%2c%204%2c%205%5d%29%3b%20%2f%2f%20will%20never%20be%20freed%0a%20%20%20%20%20%20%20%20defer%20vec%2efree%28%29%3b%0a%20%20%20%20%0a%20%20%20%20%20%20%20%20panic%21%28%22test%20panic%22%29%3b%0a%20%20%20%20%7d%29%3b%0a%20%20%20%20%0a%20%20%20%20assert%21%28result%2eis%5ferr%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+</ul>
 <h2 id="Macro">Macros</h2>
 <div class="item-short-table">
 <div class="row" id="item.panic">

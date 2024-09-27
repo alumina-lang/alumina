@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="description" content="" />
+<meta name="description" content=" JSON string formatter" />
 <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png" />
 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
 <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
@@ -87,14 +87,40 @@
 F: <a href="/std/fmt/Formatter.html"><span class="identifier-type">Formatter</span></a>&lt;F&gt;</div>
 </h3>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L10-L18"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L36-L44"/>source</a>
 </div>
 </div>
 <p>
-</p><p>
 JSON string formatter
 </p><p>
+This struct is used to format JSON data into a string. It can be used to write JSON data to a
+string buffer, a file, or any other destination that implements the <code class="language-alumina">Formatter</code> trait.
 </p><p>
+The formatter can be used in two modes: pretty and compact. In pretty mode, the formatter will
+add newlines and indentation to make the output more human-readable. In compact mode, the output
+will be as small as possible.
+</p><p>
+</p>
+<h2> Examples</h2>
+<p>
+</p><p>
+<pre class="with-playground-link"><code class="language-alumina">use std::string::StringBuf;
+use json::writer::JsonFormatter;
+
+let buf = StringBuf::new();
+let formatter = JsonFormatter::new(&amp;buf);
+
+formatter.write_object_start().unwrap();
+formatter.write_object_key("hello").unwrap();
+formatter.write_array_start().unwrap();
+formatter.write_null().unwrap();
+formatter.write_number(42).unwrap();
+formatter.write_string("world").unwrap();
+formatter.write_array_end().unwrap();
+formatter.write_object_end().unwrap();
+
+assert_eq!(buf[..] as &amp;[u8], "{\"hello\":[null,42,\"world\"]}");
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3astring%3a%3aStringBuf%3b%0a%20%20%20%20use%20json%3a%3awriter%3a%3aJsonFormatter%3b%0a%20%20%20%20%0a%20%20%20%20let%20buf%20%3d%20StringBuf%3a%3anew%28%29%3b%0a%20%20%20%20let%20formatter%20%3d%20JsonFormatter%3a%3anew%28%26buf%29%3b%0a%20%20%20%20%0a%20%20%20%20formatter%2ewrite%5fobject%5fstart%28%29%2eunwrap%28%29%3b%0a%20%20%20%20formatter%2ewrite%5fobject%5fkey%28%22hello%22%29%2eunwrap%28%29%3b%0a%20%20%20%20formatter%2ewrite%5farray%5fstart%28%29%2eunwrap%28%29%3b%0a%20%20%20%20formatter%2ewrite%5fnull%28%29%2eunwrap%28%29%3b%0a%20%20%20%20formatter%2ewrite%5fnumber%2842%29%2eunwrap%28%29%3b%0a%20%20%20%20formatter%2ewrite%5fstring%28%22world%22%29%2eunwrap%28%29%3b%0a%20%20%20%20formatter%2ewrite%5farray%5fend%28%29%2eunwrap%28%29%3b%0a%20%20%20%20formatter%2ewrite%5fobject%5fend%28%29%2eunwrap%28%29%3b%0a%20%20%20%20%0a%20%20%20%20assert%5feq%21%28buf%5b%2e%2e%5d%20as%20%26%5bu8%5d%2c%20%22%7b%5c%22hello%5c%22%3a%5bnull%2c42%2c%5c%22world%5c%22%5d%7d%22%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 <h2 id="Method">Methods</h2>
@@ -108,10 +134,14 @@ F: <a href="/std/fmt/Formatter.html"><span class="identifier-type">Formatter</sp
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">new</span>(fmt: &amp;mut F) -> <a href="/json/writer/JsonFormatter.html"><span class="identifier-type">JsonFormatter</span></a>&lt;F&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L34-L44"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L61-L71"/>source</a>
 </div>
 </div>
 <div class="item-doc">
+<p>
+Create a new JSON formatter with compact output
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -119,10 +149,14 @@ F: <a href="/std/fmt/Formatter.html"><span class="identifier-type">Formatter</sp
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">pretty</span>(fmt: &amp;mut F, indent: <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>) -> <a href="/json/writer/JsonFormatter.html"><span class="identifier-type">JsonFormatter</span></a>&lt;F&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L46-L51"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L74-L79"/>source</a>
 </div>
 </div>
 <div class="item-doc">
+<p>
+Create a new JSON formatter with pretty output
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -130,10 +164,14 @@ F: <a href="/std/fmt/Formatter.html"><span class="identifier-type">Formatter</sp
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">write_float</span>(self: &amp;mut <a href="/json/writer/JsonFormatter.html"><span class="identifier-type">JsonFormatter</span></a>&lt;F&gt;, value: <a href="/std/builtins/f64.html"><span class="identifier-type">f64</span></a>) -> <a href="/json/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L87-L90"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L116-L119"/>source</a>
 </div>
 </div>
 <div class="item-doc">
+<p>
+Write a floating-point number to the formatter
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -143,10 +181,16 @@ F: <a href="/std/fmt/Formatter.html"><span class="identifier-type">Formatter</sp
 T: <a href="/std/builtins/Numeric.html"><span class="identifier-type">Numeric</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L92-L114"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L124-L147"/>source</a>
 </div>
 </div>
 <div class="item-doc">
+<p>
+Write any number to the formatter
+</p><p>
+If the number is not representable as a JSON number, an error will be returned.
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -154,10 +198,14 @@ T: <a href="/std/builtins/Numeric.html"><span class="identifier-type">Numeric</s
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">write_bool</span>(self: &amp;mut <a href="/json/writer/JsonFormatter.html"><span class="identifier-type">JsonFormatter</span></a>&lt;F&gt;, value: <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a>) -> <a href="/json/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L116-L121"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L150-L155"/>source</a>
 </div>
 </div>
 <div class="item-doc">
+<p>
+Write a boolean to the formatter
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -165,10 +213,14 @@ T: <a href="/std/builtins/Numeric.html"><span class="identifier-type">Numeric</s
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">write_null</span>(self: &amp;mut <a href="/json/writer/JsonFormatter.html"><span class="identifier-type">JsonFormatter</span></a>&lt;F&gt;) -> <a href="/json/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L123-L128"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L158-L163"/>source</a>
 </div>
 </div>
 <div class="item-doc">
+<p>
+Write a <code class="language-alumina">null</code> value to the formatter
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -176,10 +228,14 @@ T: <a href="/std/builtins/Numeric.html"><span class="identifier-type">Numeric</s
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">write_string</span>(self: &amp;mut <a href="/json/writer/JsonFormatter.html"><span class="identifier-type">JsonFormatter</span></a>&lt;F&gt;, value: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/json/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L130-L159"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L166-L195"/>source</a>
 </div>
 </div>
 <div class="item-doc">
+<p>
+Write a string to the formatter
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -187,10 +243,14 @@ T: <a href="/std/builtins/Numeric.html"><span class="identifier-type">Numeric</s
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">write_array_start</span>(self: &amp;mut <a href="/json/writer/JsonFormatter.html"><span class="identifier-type">JsonFormatter</span></a>&lt;F&gt;) -> <a href="/json/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L161-L167"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L198-L204"/>source</a>
 </div>
 </div>
 <div class="item-doc">
+<p>
+Write the start of an array to the formatter
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -198,10 +258,14 @@ T: <a href="/std/builtins/Numeric.html"><span class="identifier-type">Numeric</s
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">write_array_end</span>(self: &amp;mut <a href="/json/writer/JsonFormatter.html"><span class="identifier-type">JsonFormatter</span></a>&lt;F&gt;) -> <a href="/json/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L169-L182"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L207-L220"/>source</a>
 </div>
 </div>
 <div class="item-doc">
+<p>
+Write the end of an array to the formatter
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -209,10 +273,14 @@ T: <a href="/std/builtins/Numeric.html"><span class="identifier-type">Numeric</s
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">write_object_start</span>(self: &amp;mut <a href="/json/writer/JsonFormatter.html"><span class="identifier-type">JsonFormatter</span></a>&lt;F&gt;) -> <a href="/json/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L184-L190"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L223-L229"/>source</a>
 </div>
 </div>
 <div class="item-doc">
+<p>
+Write the start of an object to the formatter
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -220,10 +288,14 @@ T: <a href="/std/builtins/Numeric.html"><span class="identifier-type">Numeric</s
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">write_object_end</span>(self: &amp;mut <a href="/json/writer/JsonFormatter.html"><span class="identifier-type">JsonFormatter</span></a>&lt;F&gt;) -> <a href="/json/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L192-L205"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L232-L245"/>source</a>
 </div>
 </div>
 <div class="item-doc">
+<p>
+Write the end of an object to the formatter
+</p><p>
+</p>
 </div>
 </li>
 <li>
@@ -231,10 +303,14 @@ T: <a href="/std/builtins/Numeric.html"><span class="identifier-type">Numeric</s
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">write_object_key</span>(self: &amp;mut <a href="/json/writer/JsonFormatter.html"><span class="identifier-type">JsonFormatter</span></a>&lt;F&gt;, key: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/json/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L207-L212"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/writer.alu#L248-L253"/>source</a>
 </div>
 </div>
 <div class="item-doc">
+<p>
+Write an object key to the formatter
+</p><p>
+</p>
 </div>
 </li>
 </ul>
@@ -262,7 +338,7 @@ It: <a href="/std/iter/Iterator.html"><span class="identifier-type">Iterator</sp
 F: Fn(&amp;mut <a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>, T) -> <a href="/json/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/mod.alu#L275-L285"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/mod.alu#L276-L286"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -281,7 +357,7 @@ It: <a href="/std/iter/Iterator.html"><span class="identifier-type">Iterator</sp
 F: Fn(&amp;mut <a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>, T) -> <a href="/json/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/mod.alu#L288-L297"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/libraries/json/mod.alu#L289-L298"/>source</a>
 </div>
 </div>
 <div class="item-doc">
