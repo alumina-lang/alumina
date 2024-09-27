@@ -560,9 +560,9 @@ impl Type<T: builtins::Struct | builtins::Union> {
     /// let typ: Type<Foo> = Type::new();
     /// let fields = typ.fields();
     ///
-    /// assert_eq!(fields.0.name(), "bar");
+    /// assert_eq!(fields.0.name(), Option::some("bar"));
     /// assert_eq!(fields.0.type().debug_name(), "i32");
-    /// assert_eq!(fields.1.name(), "baz");
+    /// assert_eq!(fields.1.name(), Option::some("baz"));
     /// assert_eq!(fields.1.type().debug_name(), "f64");
     /// ```
     fn fields(self: Type<T>) -> typeof(internal::FIELDS::<T>) {
@@ -703,6 +703,40 @@ impl Type<T: builtins::NamedFunction | builtins::FunctionPointer | builtins::Clo
     }
 }
 
+impl Type<T: builtins::Closure> {
+    /// Returns the type descriptor of the underlying function of the closure.
+    ///
+    /// See also [builtins::underlying_function_of].
+    fn underlying_function(self: Type<T>) -> Type<builtins::return_type_of<T>> {
+        Type {}
+    }
+
+    /// Returns the captured field descriptors of the closure.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::typing::Type;
+    ///
+    /// let a = 1;
+    /// let b = true;
+    ///
+    /// let closure = |=a, &b, param: i32| {};
+    ///
+    /// let desc: Type<typeof(closure)> = Type::new();
+    /// let captures = desc.captures();
+    ///
+    /// assert_eq!(captures.len(), 2);
+    /// assert_eq!(captures.0.name(), Option::some("a"));
+    /// assert_eq!(captures.0.type().debug_name(), "i32");
+    /// assert_eq!(captures.1.name(), Option::some("b"));
+    /// assert_eq!(captures.1.type().debug_name(), "&mut bool");
+    /// ```
+    fn captures(self: Type<T>) -> typeof(internal::FIELDS::<T>) {
+        internal::FIELDS::<T>
+    }
+}
+
+
 impl Type<T: builtins::NamedFunction> {
     /// Invokes the function with the provided arguments as a tuple.
     ///
@@ -795,13 +829,13 @@ impl EnumVariant<T> {
 ///
 /// It is created by calling [Type::fields].
 struct Field<StructT, FieldT> {
-    _name: &[u8],
+    _name: Option<&[u8]>,
     _offset: usize,
 }
 
 impl Field<StructT, FieldT> {
     /// Returns the name of the field.
-    fn name(self: &Field<StructT, FieldT>) -> &[u8] {
+    fn name(self: &Field<StructT, FieldT>) -> Option<&[u8]> {
         self._name
     }
 
@@ -914,7 +948,16 @@ mod internal {
     #[inline(ir)]
     fn make_field_desc<StructT, FieldT>(name: &[u8], offset: usize) -> Field<StructT, FieldT> {
         Field {
-            _name: name,
+            _name: Option::some(name),
+            _offset: offset,
+        }
+    }
+
+    #[lang(field_descriptor_new_unnamed)]
+    #[inline(ir)]
+    fn make_field_desc_unnamed<StructT, FieldT>(offset: usize) -> Field<StructT, FieldT> {
+        Field {
+            _name: Option::none(),
             _offset: offset,
         }
     }
@@ -1138,9 +1181,9 @@ mod tests {
         let desc: Type<Foo> = Type::new();
 
         let fields = desc.fields();
-        assert_eq!(fields.0.name(), "bar");
+        assert_eq!(fields.0.name(), Option::some("bar"));
         assert_eq!(fields.0.type().debug_name(), "i32");
-        assert_eq!(fields.1.name(), "baz");
+        assert_eq!(fields.1.name(), Option::some("baz"));
         assert_eq!(fields.1.type().debug_name(), "f64");
 
         let inst = desc.uninitialized();

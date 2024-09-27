@@ -153,7 +153,7 @@ pub enum CodeDiagnostic {
     #[error("cannot reference `{}` in a nested function", .0)]
     CannotReferenceLocal(String),
     #[error("missing lang item: {:?}", .0)]
-    MissingLangItem(LangItemKind),
+    MissingLangItem(Lang),
     #[error("only slices can be range-indexed")]
     RangeIndexNonSlice,
     #[error("internal error: {}", .0)]
@@ -540,7 +540,7 @@ macro_rules! impl_allocatable {
 
 pub(crate) use impl_allocatable;
 
-use crate::ast::lang::LangItemKind;
+use crate::ast::lang::Lang;
 use crate::ast::serialization::AstSerializable;
 use crate::ast::Span;
 use crate::diagnostics::DiagnosticsStack;

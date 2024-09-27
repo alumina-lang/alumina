@@ -233,7 +233,7 @@ impl Compiler {
                 let user_main = monomorphizer.mono_item(main_candidate, &[])?;
 
                 let glue = ast
-                    .lang_item(crate::ast::lang::LangItemKind::EntrypointGlue)
+                    .lang_item(crate::ast::lang::Lang::EntrypointGlue)
                     .with_no_span()?;
                 let mut monomorphizer = Mono::new(&mut mono_ctx, false, None);
 

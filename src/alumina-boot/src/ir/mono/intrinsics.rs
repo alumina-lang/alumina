@@ -1,4 +1,4 @@
-use crate::ast::lang::LangItemKind;
+use crate::ast::lang::Lang;
 use crate::ast::{Attribute, BuiltinType, Span};
 use crate::common::{ice, AluminaError, ArenaAllocatable, CodeDiagnostic, CodeErrorBuilder};
 use crate::ir::const_eval::Value;
@@ -15,7 +15,7 @@ use super::{bail, mismatch, MonoKey};
 use alumina_boot_macros::AstSerializable;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, AstSerializable)]
-pub enum IntrinsicKind {
+pub enum Intr {
     SizeOf,
     AlignOf,
     LengthOf,
@@ -58,48 +58,49 @@ pub enum IntrinsicKind {
     ValueOf,
 }
 
-pub fn intrinsic_kind(name: &str) -> Option<IntrinsicKind> {
+pub fn intrinsic_kind(name: &str) -> Option<Intr> {
+    use Intr::*;
     let ret = match name {
-        "size_of" => IntrinsicKind::SizeOf,
-        "align_of" => IntrinsicKind::AlignOf,
-        "length_of" => IntrinsicKind::LengthOf,
-        "type_id" => IntrinsicKind::TypeId,
-        "type_name" => IntrinsicKind::TypeName,
-        "named_type_name" => IntrinsicKind::NamedTypeName,
-        "trap" => IntrinsicKind::Trap,
-        "transmute" => IntrinsicKind::Transmute,
-        "compile_fail" => IntrinsicKind::CompileFail,
-        "compile_warn" => IntrinsicKind::CompileWarn,
-        "compile_note" => IntrinsicKind::CompileNote,
-        "unreachable" => IntrinsicKind::Unreachable,
-        "attributed" => IntrinsicKind::Attributed,
-        "codegen_func" => IntrinsicKind::CodegenFunc,
-        "codegen_const" => IntrinsicKind::CodegenConst,
-        "codegen_type_func" => IntrinsicKind::CodegenTypeFunc,
-        "volatile" => IntrinsicKind::Volatile,
-        "vtable" => IntrinsicKind::MakeVtable,
-        "enum_variants" => IntrinsicKind::EnumVariants,
-        "asm" => IntrinsicKind::Asm,
-        "uninitialized" => IntrinsicKind::Uninitialized,
-        "dangling" => IntrinsicKind::Dangling,
-        "zeroed" => IntrinsicKind::Zeroed,
-        "in_const_context" => IntrinsicKind::InConstContext,
-        "is_const_evaluable" => IntrinsicKind::IsConstEvaluable,
-        "const_eval" => IntrinsicKind::ConstEval,
-        "const_panic" => IntrinsicKind::ConstPanic,
-        "const_warning" => IntrinsicKind::ConstWarning,
-        "const_note" => IntrinsicKind::ConstNote,
-        "const_alloc" => IntrinsicKind::ConstAlloc,
-        "const_free" => IntrinsicKind::ConstFree,
-        "tag" => IntrinsicKind::Tag,
-        "tuple_invoke" => IntrinsicKind::TupleInvoke,
-        "tuple_tail" => IntrinsicKind::TupleTail,
-        "tuple_concat" => IntrinsicKind::TupleConcat,
-        "fields" => IntrinsicKind::Fields,
-        "stop_iteration" => IntrinsicKind::StopIteration,
-        "module_path" => IntrinsicKind::ModulePath,
-        "has_attribute" => IntrinsicKind::HasAttribute,
-        "value_of" => IntrinsicKind::ValueOf,
+        "size_of" => SizeOf,
+        "align_of" => AlignOf,
+        "length_of" => LengthOf,
+        "type_id" => TypeId,
+        "type_name" => TypeName,
+        "named_type_name" => NamedTypeName,
+        "trap" => Trap,
+        "transmute" => Transmute,
+        "compile_fail" => CompileFail,
+        "compile_warn" => CompileWarn,
+        "compile_note" => CompileNote,
+        "unreachable" => Unreachable,
+        "attributed" => Attributed,
+        "codegen_func" => CodegenFunc,
+        "codegen_const" => CodegenConst,
+        "codegen_type_func" => CodegenTypeFunc,
+        "volatile" => Volatile,
+        "vtable" => MakeVtable,
+        "enum_variants" => EnumVariants,
+        "asm" => Asm,
+        "uninitialized" => Uninitialized,
+        "dangling" => Dangling,
+        "zeroed" => Zeroed,
+        "in_const_context" => InConstContext,
+        "is_const_evaluable" => IsConstEvaluable,
+        "const_eval" => ConstEval,
+        "const_panic" => ConstPanic,
+        "const_warning" => ConstWarning,
+        "const_note" => ConstNote,
+        "const_alloc" => ConstAlloc,
+        "const_free" => ConstFree,
+        "tag" => Tag,
+        "tuple_invoke" => TupleInvoke,
+        "tuple_tail" => TupleTail,
+        "tuple_concat" => TupleConcat,
+        "fields" => Fields,
+        "stop_iteration" => StopIteration,
+        "module_path" => ModulePath,
+        "has_attribute" => HasAttribute,
+        "value_of" => ValueOf,
         _ => return None,
     };
 
@@ -142,9 +143,9 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
                 }
             };
         }
-
+        use Intr::*;
         match callee.kind {
-            IntrinsicKind::MakeVtable => {
+            MakeVtable => {
                 if let ir::Ty::Tuple(inner) = generic!(0) {
                     self.generate_vtable(inner, generic!(1))
                 } else {
@@ -154,69 +155,45 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
                     )
                 }
             }
-            IntrinsicKind::EnumVariants => self.generate_enum_variants(generic!(0)),
-            IntrinsicKind::TypeName => {
-                let ty = generic!(0);
-                let name = self.ctx.type_name(ty)?;
-                Ok(self.string_of(name.as_bytes(), span)?)
-            }
-            IntrinsicKind::NamedTypeName => {
-                let ty = generic!(0);
-                let n = match ty {
-                    ir::Ty::Item(item) => match item.get().with_backtrace(&self.diag)? {
-                        ir::Item::StructLike(s) => s.name,
-                        ir::Item::Protocol(s) => s.name,
-                        ir::Item::Function(s) => s.name,
-                        ir::Item::Enum(s) => s.name,
-                        ir::Item::Static(s) => s.name,
-                        ir::Item::Const(s) => s.name,
-                        _ => None,
-                    },
-                    _ => None,
-                };
-
-                Ok(n.map(|n| self.string_of(n.as_bytes(), span))
-                    .transpose()?
-                    .unwrap_or(self.exprs.void(self.types.void(), ValueType::RValue, span)))
-            }
-            IntrinsicKind::SizeOf => self.size_of(generic!(0), span),
-            IntrinsicKind::AlignOf => self.align_of(generic!(0), span),
-            IntrinsicKind::TypeId => self.type_id(generic!(0), span),
-            IntrinsicKind::LengthOf => self.length_of(generic!(0), span),
-            IntrinsicKind::Trap => self.trap(span),
-            IntrinsicKind::Transmute => self.transmute(generic!(1), arg!(0), span),
-            IntrinsicKind::Volatile => self.volatile(arg!(0), span),
-            IntrinsicKind::CompileFail => self.compile_fail(arg!(0), span),
-            IntrinsicKind::CompileWarn => self.compile_warn(arg!(0), span),
-            IntrinsicKind::CompileNote => self.compile_note(arg!(0), span),
-            IntrinsicKind::Unreachable => self.unreachable(span),
-            IntrinsicKind::Asm => self.asm(arg!(0), span),
-            IntrinsicKind::CodegenFunc => self.codegen_func(arg!(0), &args[1..], generic!(0), span),
-            IntrinsicKind::CodegenConst => self.codegen_const(arg!(0), generic!(0), span),
-            IntrinsicKind::CodegenTypeFunc => {
-                self.codegen_type_func(arg!(0), generic!(0), generic!(1), span)
-            }
-            IntrinsicKind::Uninitialized => self.uninitialized(generic!(0), span),
-            IntrinsicKind::Zeroed => self.zeroed(generic!(0), span),
-            IntrinsicKind::Dangling => self.dangling(generic!(0), span),
-            IntrinsicKind::InConstContext => self.in_const_context(span),
-            IntrinsicKind::ConstEval => self.const_eval(arg!(0), span),
-            IntrinsicKind::ConstPanic => self.const_panic(arg!(0), span),
-            IntrinsicKind::Tag => self.tag(arg!(0), arg!(1), span),
-            IntrinsicKind::ConstWarning => self.const_write(arg!(0), true, span),
-            IntrinsicKind::ConstNote => self.const_write(arg!(0), false, span),
-            IntrinsicKind::ConstAlloc => self.const_alloc(generic!(0), arg!(0), span),
-            IntrinsicKind::ConstFree => self.const_free(arg!(0), span),
-            IntrinsicKind::IsConstEvaluable => self.is_const_evaluable(arg!(0), span),
-            IntrinsicKind::TupleInvoke => self.tuple_invoke(arg!(0), arg!(1), span),
-            IntrinsicKind::TupleTail => self.tuple_tail(arg!(0), span),
-            IntrinsicKind::TupleConcat => self.tuple_concat(arg!(0), arg!(1), span),
-            IntrinsicKind::Fields => self.generate_fields(generic!(0)),
-            IntrinsicKind::Attributed => self.attributed(arg!(0), generic!(0), span),
-            IntrinsicKind::StopIteration => self.stop_iteration(span),
-            IntrinsicKind::ModulePath => self.module_path(generic!(0), span),
-            IntrinsicKind::HasAttribute => self.has_attribute(generic!(0), arg!(0), span),
-            IntrinsicKind::ValueOf => self.value_of(generic!(0), span),
+            EnumVariants => self.intr_enum_variants(generic!(0)),
+            TypeName => self.intr_type_name(generic!(0), span),
+            NamedTypeName => self.intr_named_type_name(generic!(0), span),
+            SizeOf => self.intr_size_of(generic!(0), span),
+            AlignOf => self.intr_align_of(generic!(0), span),
+            TypeId => self.intr_type_id(generic!(0), span),
+            LengthOf => self.intr_length_of(generic!(0), span),
+            Trap => self.intr_trap(span),
+            Transmute => self.intr_transmute(generic!(1), arg!(0), span),
+            Volatile => self.intr_volatile(arg!(0), span),
+            CompileFail => self.intr_compile_fail(arg!(0), span),
+            CompileWarn => self.intr_compile_warn(arg!(0), span),
+            CompileNote => self.intr_compile_note(arg!(0), span),
+            Unreachable => self.intr_unreachable(span),
+            Asm => self.intr_asm(arg!(0), span),
+            CodegenFunc => self.intr_codegen_func(arg!(0), &args[1..], generic!(0), span),
+            CodegenConst => self.intr_codegen_const(arg!(0), generic!(0), span),
+            CodegenTypeFunc => self.intr_codegen_type_func(arg!(0), generic!(0), generic!(1), span),
+            Uninitialized => self.intr_uninitialized(generic!(0), span),
+            Zeroed => self.intr_zeroed(generic!(0), span),
+            Dangling => self.intr_dangling(generic!(0), span),
+            InConstContext => self.intr_in_const_context(span),
+            ConstEval => self.intr_const_eval(arg!(0), span),
+            ConstPanic => self.intr_const_panic(arg!(0), span),
+            Tag => self.intr_tag(arg!(0), arg!(1), span),
+            ConstWarning => self.intr_const_write(arg!(0), true, span),
+            ConstNote => self.intr_const_write(arg!(0), false, span),
+            ConstAlloc => self.intr_const_alloc(generic!(0), arg!(0), span),
+            ConstFree => self.intr_const_free(arg!(0), span),
+            IsConstEvaluable => self.intr_is_const_evaluable(arg!(0), span),
+            TupleInvoke => self.intr_tuple_invoke(arg!(0), arg!(1), span),
+            TupleTail => self.intr_tuple_tail(arg!(0), span),
+            TupleConcat => self.intr_tuple_concat(arg!(0), arg!(1), span),
+            Fields => self.intr_fields(generic!(0)),
+            Attributed => self.intr_attributed(arg!(0), generic!(0), span),
+            StopIteration => self.intr_stop_iteration(span),
+            ModulePath => self.intr_module_path(generic!(0), span),
+            HasAttribute => self.intr_has_attribute(generic!(0), arg!(0), span),
+            ValueOf => self.intr_value_of(generic!(0), span),
         }
     }
 
@@ -241,7 +218,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         }
     }
 
-    fn align_of(
+    fn intr_align_of(
         &self,
         ty: ir::TyP<'ir>,
         span: Option<Span>,
@@ -260,7 +237,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         ))
     }
 
-    fn size_of(
+    fn intr_size_of(
         &self,
         ty: ir::TyP<'ir>,
         span: Option<Span>,
@@ -279,7 +256,39 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         ))
     }
 
-    fn type_id(
+    fn intr_named_type_name(
+        &mut self,
+        ty: ir::TyP<'ir>,
+        span: Option<Span>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let n = match ty {
+            ir::Ty::Item(item) => match item.get().with_backtrace(&self.diag)? {
+                ir::Item::StructLike(s) => s.name,
+                ir::Item::Protocol(s) => s.name,
+                ir::Item::Function(s) => s.name,
+                ir::Item::Enum(s) => s.name,
+                ir::Item::Static(s) => s.name,
+                ir::Item::Const(s) => s.name,
+                _ => None,
+            },
+            _ => None,
+        };
+
+        Ok(n.map(|n| self.string_of(n.as_bytes(), span))
+            .transpose()?
+            .unwrap_or(self.exprs.void(self.types.void(), ValueType::RValue, span)))
+    }
+
+    fn intr_type_name(
+        &mut self,
+        ty: ir::TyP<'ir>,
+        span: Option<Span>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let name = self.ctx.type_name(ty)?;
+        self.string_of(name.as_bytes(), span)
+    }
+
+    fn intr_type_id(
         &self,
         ty: ir::TyP<'ir>,
         span: Option<Span>,
@@ -299,7 +308,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         ))
     }
 
-    fn length_of(
+    fn intr_length_of(
         &self,
         ty: ir::TyP<'ir>,
         span: Option<Span>,
@@ -322,7 +331,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         }
     }
 
-    fn compile_fail(
+    fn intr_compile_fail(
         &self,
         reason: ir::ExprP<'ir>,
         _span: Option<Span>,
@@ -334,7 +343,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
             .err(CodeDiagnostic::UserDefined(reason.to_string())))
     }
 
-    fn compile_warn(
+    fn intr_compile_warn(
         &self,
         reason: ir::ExprP<'ir>,
         span: Option<Span>,
@@ -347,7 +356,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         Ok(self.exprs.void(self.types.void(), ValueType::RValue, span))
     }
 
-    fn compile_note(
+    fn intr_compile_note(
         &self,
         reason: ir::ExprP<'ir>,
         span: Option<Span>,
@@ -360,11 +369,11 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         Ok(self.exprs.void(self.types.void(), ValueType::RValue, span))
     }
 
-    fn unreachable(&self, span: Option<Span>) -> Result<ir::ExprP<'ir>, AluminaError> {
+    fn intr_unreachable(&self, span: Option<Span>) -> Result<ir::ExprP<'ir>, AluminaError> {
         Ok(self.exprs.unreachable(span))
     }
 
-    fn trap(&self, span: Option<Span>) -> Result<ir::ExprP<'ir>, AluminaError> {
+    fn intr_trap(&self, span: Option<Span>) -> Result<ir::ExprP<'ir>, AluminaError> {
         let ret_type = self.types.builtin(BuiltinType::Never);
         let fn_type = self.types.function([], ret_type);
 
@@ -380,7 +389,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         ))
     }
 
-    fn transmute(
+    fn intr_transmute(
         &self,
         to: ir::TyP<'ir>,
         arg: ir::ExprP<'ir>,
@@ -395,7 +404,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         }
     }
 
-    fn volatile(
+    fn intr_volatile(
         &self,
         arg: ir::ExprP<'ir>,
         span: Option<Span>,
@@ -419,7 +428,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
             .codegen_intrinsic(IntrinsicValueKind::Volatile(arg), arg.ty, span))
     }
 
-    fn codegen_func(
+    fn intr_codegen_func(
         &self,
         name: ir::ExprP<'ir>,
         args: &[ir::ExprP<'ir>],
@@ -440,7 +449,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         ))
     }
 
-    fn codegen_type_func(
+    fn intr_codegen_type_func(
         &self,
         name: ir::ExprP<'ir>,
         ty: ir::TyP<'ir>,
@@ -454,7 +463,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
             .codegen_intrinsic(IntrinsicValueKind::SizeOfLike(name, ty), ret_ty, span))
     }
 
-    fn asm(
+    fn intr_asm(
         &self,
         assembly: ir::ExprP<'ir>,
         span: Option<Span>,
@@ -466,7 +475,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
             .codegen_intrinsic(IntrinsicValueKind::Asm(assembly), self.types.void(), span))
     }
 
-    fn codegen_const(
+    fn intr_codegen_const(
         &self,
         name: ir::ExprP<'ir>,
         ret_ty: ir::TyP<'ir>,
@@ -479,7 +488,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
             .codegen_intrinsic(IntrinsicValueKind::ConstLike(name), ret_ty, span))
     }
 
-    fn uninitialized(
+    fn intr_uninitialized(
         &self,
         ret_ty: ir::TyP<'ir>,
         span: Option<Span>,
@@ -489,7 +498,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
             .codegen_intrinsic(IntrinsicValueKind::Uninitialized, ret_ty, span))
     }
 
-    fn zeroed(
+    fn intr_zeroed(
         &self,
         ret_ty: ir::TyP<'ir>,
         span: Option<Span>,
@@ -499,7 +508,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         Ok(self.exprs.literal(val, ret_ty, span))
     }
 
-    fn dangling(
+    fn intr_dangling(
         &self,
         ret_ty: ir::TyP<'ir>,
         span: Option<Span>,
@@ -516,7 +525,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         }
     }
 
-    fn in_const_context(&self, span: Option<Span>) -> Result<ir::ExprP<'ir>, AluminaError> {
+    fn intr_in_const_context(&self, span: Option<Span>) -> Result<ir::ExprP<'ir>, AluminaError> {
         Ok(self.exprs.codegen_intrinsic(
             IntrinsicValueKind::InConstContext,
             self.types.builtin(BuiltinType::Bool),
@@ -524,7 +533,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         ))
     }
 
-    fn const_eval(
+    fn intr_const_eval(
         &mut self,
         expr: ir::ExprP<'ir>,
         span: Option<Span>,
@@ -542,7 +551,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         Ok(self.exprs.literal(val, expr.ty, span))
     }
 
-    fn const_panic(
+    fn intr_const_panic(
         &self,
         reason: ir::ExprP<'ir>,
         span: Option<Span>,
@@ -558,7 +567,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         ))
     }
 
-    fn stop_iteration(&self, span: Option<Span>) -> Result<ir::ExprP<'ir>, AluminaError> {
+    fn intr_stop_iteration(&self, span: Option<Span>) -> Result<ir::ExprP<'ir>, AluminaError> {
         Ok(self.exprs.tag(
             "const_only",
             self.exprs.codegen_intrinsic(
@@ -570,7 +579,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         ))
     }
 
-    fn module_path(
+    fn intr_module_path(
         &mut self,
         ty: ir::TyP<'ir>,
         span: Option<Span>,
@@ -589,7 +598,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
             .unwrap_or(self.exprs.void(self.types.void(), ValueType::RValue, span)))
     }
 
-    fn tag(
+    fn intr_tag(
         &self,
         tag: ir::ExprP<'ir>,
         value: ir::ExprP<'ir>,
@@ -600,7 +609,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         Ok(self.exprs.tag(tag, value, span))
     }
 
-    fn const_write(
+    fn intr_const_write(
         &self,
         reason: ir::ExprP<'ir>,
         warning: bool,
@@ -617,7 +626,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         ))
     }
 
-    fn const_alloc(
+    fn intr_const_alloc(
         &self,
         ty: ir::TyP<'ir>,
         size: ir::ExprP<'ir>,
@@ -634,7 +643,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         ))
     }
 
-    fn const_free(
+    fn intr_const_free(
         &self,
         ptr: ir::ExprP<'ir>,
         span: Option<Span>,
@@ -650,7 +659,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         ))
     }
 
-    fn is_const_evaluable(
+    fn intr_is_const_evaluable(
         &mut self,
         expr: ir::ExprP<'ir>,
         span: Option<Span>,
@@ -687,7 +696,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         }
     }
 
-    fn tuple_invoke(
+    fn intr_tuple_invoke(
         &mut self,
         callee: ir::ExprP<'ir>,
         tuple: ir::ExprP<'ir>,
@@ -771,7 +780,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         Ok(self.exprs.block(stmt, ret, ast_span))
     }
 
-    fn tuple_tail(
+    fn intr_tuple_tail(
         &mut self,
         tuple: ir::ExprP<'ir>,
         ast_span: Option<Span>,
@@ -796,7 +805,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         Ok(self.exprs.block(stmt, ret, ast_span))
     }
 
-    fn tuple_concat(
+    fn intr_tuple_concat(
         &mut self,
         lhs: ir::ExprP<'ir>,
         rhs: ir::ExprP<'ir>,
@@ -936,13 +945,13 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         Ok(ret)
     }
 
-    fn generate_enum_variants(&mut self, ty: ir::TyP<'ir>) -> Result<ir::ExprP<'ir>, AluminaError> {
+    fn intr_enum_variants(&mut self, ty: ir::TyP<'ir>) -> Result<ir::ExprP<'ir>, AluminaError> {
         let e = match ty {
             ir::Ty::Item(item) => item.get_enum().with_backtrace(&self.diag)?,
             _ => ice!(self.diag, "enum expected"),
         };
 
-        let enum_variant_new = self.mono_lang_item(LangItemKind::EnumVariantNew, [ty])?;
+        let enum_variant_new = self.mono_lang_item(Lang::EnumVariantNew, [ty])?;
         let enum_variant_new_func = enum_variant_new.get_function().with_backtrace(&self.diag)?;
 
         let mut exprs = Vec::with_capacity(e.members.len());
@@ -950,21 +959,17 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
             let name = self.string_of(member.name.as_bytes(), None)?;
             let value = self.exprs.cast(member.value, ty, None);
 
-            exprs.push(self.call(
-                self.exprs.function(enum_variant_new, None),
-                [name, value].into_iter(),
-                enum_variant_new_func.return_type,
-                None,
-            )?);
+            exprs.push(self.call_lang_item(Lang::EnumVariantNew, [ty], [name, value], None)?);
         }
 
         self.array_of(enum_variant_new_func.return_type, exprs, None)
     }
 
-    fn generate_fields(&mut self, ty: ir::TyP<'ir>) -> Result<ir::ExprP<'ir>, AluminaError> {
+    fn intr_fields(&mut self, ty: ir::TyP<'ir>) -> Result<ir::ExprP<'ir>, AluminaError> {
         let s = match ty {
             ir::Ty::Item(item) => match item.get().with_backtrace(&self.diag)? {
                 ir::Item::StructLike(s) => s,
+                ir::Item::Closure(c) => &c.data,
                 _ => ice!(self.diag, "struct or union expected"),
             },
             _ => ice!(self.diag, "struct or union expected"),
@@ -1008,7 +1013,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
                 );
 
                 exprs.push(self.call_lang_item(
-                    LangItemKind::FieldDescriptorNew,
+                    Lang::FieldDescriptorNew,
                     [ty, field.ty],
                     [name, offset],
                     None,
@@ -1023,7 +1028,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
             .tuple(exprs.into_iter().enumerate(), ret_ty, None))
     }
 
-    fn attributed(
+    fn intr_attributed(
         &mut self,
         expr: ir::ExprP<'ir>,
         generic_args: ir::TyP<'ir>,
@@ -1055,7 +1060,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         for item in to_monomorphize {
             let item = self.mono_item(item, generic_args)?;
             exprs.push(self.call_lang_item(
-                LangItemKind::TypeDescriptorNew,
+                Lang::TypeDescriptorNew,
                 [self.types.named(item)],
                 [],
                 None,
@@ -1068,7 +1073,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
             .tuple(exprs.into_iter().enumerate(), ret_ty, span))
     }
 
-    fn has_attribute(
+    fn intr_has_attribute(
         &mut self,
         ty: ir::TyP<'ir>,
         expr: ir::ExprP<'ir>,
@@ -1091,7 +1096,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         ))
     }
 
-    fn value_of(
+    fn intr_value_of(
         &mut self,
         ty: ir::TyP<'ir>,
         span: Option<Span>,

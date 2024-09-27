@@ -1,12 +1,12 @@
-use crate::ast::lang::LangItemKind;
+use crate::ast::lang::Lang;
 use crate::ast::rebind::Rebinder;
 use crate::ast::Placeholder;
 use crate::common::HashMap;
-use crate::ir::lang::LangTypeKind;
 use crate::ir::mono::MonoCtx;
 use crate::{ast, ir};
 
 use super::builder::TypeBuilder;
+use super::LangKind;
 
 pub struct TypeInferer<'a, 'ast, 'ir> {
     ast: &'ast ast::AstCtx<'ast>,
@@ -65,7 +65,7 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
             }
             (ast::Ty::Slice(a1, a_const), ir::Ty::Item(_t)) => {
                 let lang_item_kind = self.mono_ctx.lang_type_kind(tgt);
-                if let Some(LangTypeKind::Slice(ir::Ty::Pointer(b1, b_const))) = lang_item_kind {
+                if let Some(LangKind::Slice(ir::Ty::Pointer(b1, b_const))) = lang_item_kind {
                     // mut slices coerce into const slices
                     if !a_const && (a_const != b_const) {
                         return Err(());
@@ -141,10 +141,8 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                 }
             }
             (ast::Ty::Dyn(a_protos, a_const), _) => {
-                if let Some(LangTypeKind::Dyn(
-                    ir::Ty::Tuple(b_protos),
-                    ir::Ty::Pointer(_, b_const),
-                )) = self.mono_ctx.lang_type_kind(tgt)
+                if let Some(LangKind::Dyn(ir::Ty::Tuple(b_protos), ir::Ty::Pointer(_, b_const))) =
+                    self.mono_ctx.lang_type_kind(tgt)
                 {
                     for (a_ty, b_ty) in a_protos.iter().zip(b_protos.iter()) {
                         let (item, holders) = match a_ty {
@@ -206,30 +204,29 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                 };
 
                 match self.ast.lang_item_kind(item) {
-                    Some(LangItemKind::ProtoArrayOf) => {
+                    Some(Lang::ProtoArrayOf) => {
                         if let [src] = args {
                             if let ir::Ty::Array(tgt, _) = tgt {
                                 let _ = self.match_slot(inferred, src, tgt);
                             }
                         }
                     }
-                    Some(LangItemKind::ProtoPointerOf) => {
+                    Some(Lang::ProtoPointerOf) => {
                         if let [src] = args {
                             if let ir::Ty::Pointer(tgt, _) = tgt {
                                 let _ = self.match_slot(inferred, src, tgt);
                             }
                         }
                     }
-                    Some(LangItemKind::ProtoRangeOf) => {
+                    Some(Lang::ProtoRangeOf) => {
                         if let [src] = args {
-                            if let Some(LangTypeKind::Range(inner)) =
-                                self.mono_ctx.lang_type_kind(tgt)
+                            if let Some(LangKind::Range(inner)) = self.mono_ctx.lang_type_kind(tgt)
                             {
                                 let _ = self.match_slot(inferred, src, inner);
                             }
                         }
                     }
-                    Some(LangItemKind::ProtoCallable) => match args {
+                    Some(Lang::ProtoCallable) => match args {
                         [a1, a2] => self.match_callable(inferred, tgt, a1, a2),
                         _ => {}
                     },

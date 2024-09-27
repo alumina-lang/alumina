@@ -3,7 +3,6 @@ pub mod const_eval;
 pub mod dce;
 pub mod infer;
 pub mod inline;
-pub mod lang;
 pub mod layout;
 pub mod mono;
 
@@ -925,6 +924,14 @@ pub fn default_visit_expr<'ir, V: ExpressionVisitor<'ir>>(
         ExprKind::Nop => visitor.visit_void(),
         ExprKind::Tag(tag, inner) => visitor.visit_tag(tag, inner),
     }
+}
+
+pub enum LangKind<'ir> {
+    DynSelf,
+    Slice(TyP<'ir>),
+    Range(TyP<'ir>),
+    Dyn(TyP<'ir>, TyP<'ir>),
+    ProtoCallable(&'ir [TyP<'ir>], TyP<'ir>),
 }
 
 pub type ExprP<'ir> = &'ir Expr<'ir>;

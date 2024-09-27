@@ -1,4 +1,4 @@
-use crate::ast::lang::LangItemKind;
+use crate::ast::lang::Lang;
 use crate::ast::rebind::Rebinder;
 use crate::ast::{Attribute, BuiltinType, Span};
 use crate::common::{
@@ -11,7 +11,6 @@ use crate::ir::builder::{ExpressionBuilder, TypeBuilder};
 use crate::ir::const_eval::{numeric_of_kind, ConstEvalErrorKind, Value};
 use crate::ir::infer::TypeInferer;
 use crate::ir::inline::IrInliner;
-use crate::ir::lang::LangTypeKind;
 use crate::ir::{FuncBody, ItemP, LocalDef, ValueType};
 use crate::src::scope::BoundItemType;
 use crate::{ast, ir};
@@ -25,6 +24,7 @@ use std::rc::Rc;
 
 use super::const_eval::MallocBag;
 use super::layout::Layouter;
+use super::LangKind;
 
 pub mod intrinsics;
 
@@ -162,52 +162,52 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
         }
     }
 
-    pub fn lang_type_kind(&self, ty: ir::TyP<'ir>) -> Option<LangTypeKind<'ir>> {
+    pub fn lang_type_kind(&self, ty: ir::TyP<'ir>) -> Option<LangKind<'ir>> {
         let item = match ty {
             ir::Ty::Item(item) => item,
             _ => return None,
         };
 
         let item = self.reverse_lookup(item);
-        if self.ast.lang_item(LangItemKind::Slice).ok() == Some(item.0) {
-            return Some(LangTypeKind::Slice(item.1[0]));
+        if self.ast.lang_item(Lang::Slice).ok() == Some(item.0) {
+            return Some(LangKind::Slice(item.1[0]));
         }
 
-        if self.ast.lang_item(LangItemKind::RangeFull).ok() == Some(item.0) {
-            return Some(LangTypeKind::Range(item.1[0]));
+        if self.ast.lang_item(Lang::RangeFull).ok() == Some(item.0) {
+            return Some(LangKind::Range(item.1[0]));
         }
 
-        if self.ast.lang_item(LangItemKind::RangeFrom).ok() == Some(item.0) {
-            return Some(LangTypeKind::Range(item.1[0]));
+        if self.ast.lang_item(Lang::RangeFrom).ok() == Some(item.0) {
+            return Some(LangKind::Range(item.1[0]));
         }
 
-        if self.ast.lang_item(LangItemKind::RangeTo).ok() == Some(item.0) {
-            return Some(LangTypeKind::Range(item.1[0]));
+        if self.ast.lang_item(Lang::RangeTo).ok() == Some(item.0) {
+            return Some(LangKind::Range(item.1[0]));
         }
 
-        if self.ast.lang_item(LangItemKind::RangeToInclusive).ok() == Some(item.0) {
-            return Some(LangTypeKind::Range(item.1[0]));
+        if self.ast.lang_item(Lang::RangeToInclusive).ok() == Some(item.0) {
+            return Some(LangKind::Range(item.1[0]));
         }
 
-        if self.ast.lang_item(LangItemKind::Range).ok() == Some(item.0) {
-            return Some(LangTypeKind::Range(item.1[0]));
+        if self.ast.lang_item(Lang::Range).ok() == Some(item.0) {
+            return Some(LangKind::Range(item.1[0]));
         }
 
-        if self.ast.lang_item(LangItemKind::RangeInclusive).ok() == Some(item.0) {
-            return Some(LangTypeKind::Range(item.1[0]));
+        if self.ast.lang_item(Lang::RangeInclusive).ok() == Some(item.0) {
+            return Some(LangKind::Range(item.1[0]));
         }
 
-        if self.ast.lang_item(LangItemKind::Dyn).ok() == Some(item.0) {
-            return Some(LangTypeKind::Dyn(item.1[0], item.1[1]));
+        if self.ast.lang_item(Lang::Dyn).ok() == Some(item.0) {
+            return Some(LangKind::Dyn(item.1[0], item.1[1]));
         }
 
-        if self.ast.lang_item(LangItemKind::DynSelf).ok() == Some(item.0) {
-            return Some(LangTypeKind::DynSelf);
+        if self.ast.lang_item(Lang::DynSelf).ok() == Some(item.0) {
+            return Some(LangKind::DynSelf);
         }
 
-        if self.ast.lang_item(LangItemKind::ProtoCallable).ok() == Some(item.0) {
+        if self.ast.lang_item(Lang::ProtoCallable).ok() == Some(item.0) {
             if let ir::Ty::Tuple(args) = item.1[0] {
-                return Some(LangTypeKind::ProtoCallable(
+                return Some(LangKind::ProtoCallable(
                     args,
                     item.1
                         .get(1)
@@ -231,10 +231,7 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
                 let MonoKey(cell, args, _, _) = self.reverse_lookup(cell);
 
                 match self.lang_type_kind(ty) {
-                    Some(LangTypeKind::Dyn(
-                        ir::Ty::Tuple(protos),
-                        ir::Ty::Pointer(_, is_const),
-                    )) => {
+                    Some(LangKind::Dyn(ir::Ty::Tuple(protos), ir::Ty::Pointer(_, is_const))) => {
                         if *is_const {
                             let _ = write!(f, "&dyn ");
                         } else {
@@ -259,7 +256,7 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
                         return Ok(f);
                     }
 
-                    Some(LangTypeKind::Slice(ir::Ty::Pointer(inner, is_const))) => {
+                    Some(LangKind::Slice(ir::Ty::Pointer(inner, is_const))) => {
                         if *is_const {
                             let _ = write!(f, "&[{}]", self.type_name(inner)?);
                         } else {
@@ -268,7 +265,7 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
                         return Ok(f);
                     }
 
-                    Some(LangTypeKind::ProtoCallable(args, ret)) => {
+                    Some(LangKind::ProtoCallable(args, ret)) => {
                         let _ = write!(f, "Fn(");
                         for (i, arg) in args.iter().enumerate() {
                             if i > 0 {
@@ -951,9 +948,9 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
 
         let MonoKey(ast_item, proto_generic_args, _, _) = self.ctx.reverse_lookup(protocol_item);
         match self.ctx.ast.lang_item_kind(ast_item) {
-            Some(LangItemKind::ProtoAny) => return Ok(BoundCheckResult::Matches),
-            Some(LangItemKind::ProtoNone) => return Ok(BoundCheckResult::DoesNotMatch),
-            Some(LangItemKind::ProtoZeroSized) => {
+            Some(Lang::ProtoAny) => return Ok(BoundCheckResult::Matches),
+            Some(Lang::ProtoNone) => return Ok(BoundCheckResult::DoesNotMatch),
+            Some(Lang::ProtoZeroSized) => {
                 let layout = self.ctx.layouter.layout_of(ty).with_backtrace(&self.diag)?;
                 if layout.is_zero_sized() {
                     return Ok(BoundCheckResult::Matches);
@@ -961,38 +958,38 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                     return Ok(BoundCheckResult::DoesNotMatch);
                 }
             }
-            Some(LangItemKind::ProtoTuple) => match ty {
+            Some(Lang::ProtoTuple) => match ty {
                 ir::Ty::Tuple(_) => return Ok(BoundCheckResult::Matches),
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
-            Some(LangItemKind::ProtoFloatingPoint) => match ty {
+            Some(Lang::ProtoFloatingPoint) => match ty {
                 ir::Ty::Builtin(k) if k.is_float() => return Ok(BoundCheckResult::Matches),
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
-            Some(LangItemKind::ProtoInteger) => match ty {
+            Some(Lang::ProtoInteger) => match ty {
                 ir::Ty::Builtin(k) if k.is_integer() => return Ok(BoundCheckResult::Matches),
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
-            Some(LangItemKind::ProtoNumeric) => match ty {
+            Some(Lang::ProtoNumeric) => match ty {
                 ir::Ty::Builtin(k) if k.is_numeric() => return Ok(BoundCheckResult::Matches),
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
-            Some(LangItemKind::ProtoSigned) => match ty {
+            Some(Lang::ProtoSigned) => match ty {
                 ir::Ty::Builtin(k) if k.is_signed() => return Ok(BoundCheckResult::Matches),
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
-            Some(LangItemKind::ProtoUnsigned) => match ty {
+            Some(Lang::ProtoUnsigned) => match ty {
                 ir::Ty::Builtin(k) if k.is_integer() && !k.is_signed() => {
                     return Ok(BoundCheckResult::Matches)
                 }
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
-            Some(LangItemKind::ProtoPrimitive) => match ty {
+            Some(Lang::ProtoPrimitive) => match ty {
                 ir::Ty::Builtin(_) => return Ok(BoundCheckResult::Matches),
                 ir::Ty::Pointer(_, _) => return Ok(BoundCheckResult::Matches),
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
-            Some(LangItemKind::ProtoStruct) => match ty {
+            Some(Lang::ProtoStruct) => match ty {
                 ir::Ty::Item(item) => match item.get() {
                     Ok(ir::Item::StructLike(s)) if !s.is_union => {
                         return Ok(BoundCheckResult::Matches)
@@ -1001,7 +998,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                 },
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
-            Some(LangItemKind::ProtoUnion) => match ty {
+            Some(Lang::ProtoUnion) => match ty {
                 ir::Ty::Item(item) => match item.get() {
                     Ok(ir::Item::StructLike(s)) if s.is_union => {
                         return Ok(BoundCheckResult::Matches)
@@ -1010,38 +1007,38 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                 },
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
-            Some(LangItemKind::ProtoEnum) => match ty {
+            Some(Lang::ProtoEnum) => match ty {
                 ir::Ty::Item(item) => match item.get() {
                     Ok(ir::Item::Enum(_)) => return Ok(BoundCheckResult::Matches),
                     _ => return Ok(BoundCheckResult::DoesNotMatch),
                 },
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
-            Some(LangItemKind::ProtoPointer) => match ty {
+            Some(Lang::ProtoPointer) => match ty {
                 ir::Ty::Pointer(_, _) => return Ok(BoundCheckResult::Matches),
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
-            Some(LangItemKind::ProtoArray) => match ty {
+            Some(Lang::ProtoArray) => match ty {
                 ir::Ty::Array(_, _) => return Ok(BoundCheckResult::Matches),
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
-            Some(LangItemKind::ProtoRange) => match self.ctx.lang_type_kind(ty) {
-                Some(LangTypeKind::Range(_)) => return Ok(BoundCheckResult::Matches),
+            Some(Lang::ProtoRange) => match self.ctx.lang_type_kind(ty) {
+                Some(LangKind::Range(_)) => return Ok(BoundCheckResult::Matches),
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
-            Some(LangItemKind::ProtoRangeOf) => match self.ctx.lang_type_kind(ty) {
-                Some(LangTypeKind::Range(k)) if k == proto_generic_args[0] => {
+            Some(Lang::ProtoRangeOf) => match self.ctx.lang_type_kind(ty) {
+                Some(LangKind::Range(k)) if k == proto_generic_args[0] => {
                     return Ok(BoundCheckResult::Matches)
                 }
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
-            Some(LangItemKind::ProtoMeta) => match ty {
+            Some(Lang::ProtoMeta) => match ty {
                 ir::Ty::Item(item) if matches!(item.get(), Ok(ir::Item::Protocol(_))) => {
                     return Ok(BoundCheckResult::Matches)
                 }
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
-            Some(LangItemKind::ProtoCallable) => {
+            Some(Lang::ProtoCallable) => {
                 let proto_args = match proto_generic_args[0] {
                     ir::Ty::Tuple(args) => *args,
                     _ => unreachable!(),
@@ -1101,7 +1098,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                 }
                 return Ok(BoundCheckResult::Matches);
             }
-            Some(LangItemKind::ProtoNamedFunction) => match ty {
+            Some(Lang::ProtoNamedFunction) => match ty {
                 ir::Ty::Item(item)
                     if matches!(
                         item.get().with_backtrace(&self.diag)?,
@@ -1112,7 +1109,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                 }
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
-            Some(LangItemKind::ProtoConst) => match ty {
+            Some(Lang::ProtoConst) => match ty {
                 ir::Ty::Item(item)
                     if matches!(item.get().with_backtrace(&self.diag)?, ir::Item::Const(_)) =>
                 {
@@ -1120,7 +1117,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                 }
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
-            Some(LangItemKind::ProtoStatic) => match ty {
+            Some(Lang::ProtoStatic) => match ty {
                 ir::Ty::Item(item)
                     if matches!(item.get().with_backtrace(&self.diag)?, ir::Item::Static(_)) =>
                 {
@@ -1128,11 +1125,11 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                 }
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
-            Some(LangItemKind::ProtoFunctionPointer) => match ty {
+            Some(Lang::ProtoFunctionPointer) => match ty {
                 ir::Ty::FunctionPointer(..) => return Ok(BoundCheckResult::Matches),
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
-            Some(LangItemKind::ProtoClosure) => match ty {
+            Some(Lang::ProtoClosure) => match ty {
                 ir::Ty::Item(item)
                     if matches!(item.get().with_backtrace(&self.diag)?, ir::Item::Closure(_)) =>
                 {
@@ -1140,19 +1137,19 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                 }
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
-            Some(LangItemKind::ProtoArrayOf) => match ty {
+            Some(Lang::ProtoArrayOf) => match ty {
                 ir::Ty::Array(k, _) if *k == proto_generic_args[0] => {
                     return Ok(BoundCheckResult::Matches)
                 }
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
-            Some(LangItemKind::ProtoPointerOf) => match ty {
+            Some(Lang::ProtoPointerOf) => match ty {
                 ir::Ty::Pointer(k, _) if *k == proto_generic_args[0] => {
                     return Ok(BoundCheckResult::Matches)
                 }
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
-            Some(LangItemKind::ProtoSameLayoutAs) => {
+            Some(Lang::ProtoSameLayoutAs) => {
                 let ty_layout = self.ctx.layouter.layout_of(ty).with_backtrace(&self.diag)?;
                 let arg_layout = self
                     .ctx
@@ -1166,7 +1163,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                     return Ok(BoundCheckResult::DoesNotMatch);
                 }
             }
-            Some(LangItemKind::ProtoSameBaseAs) => {
+            Some(Lang::ProtoSameBaseAs) => {
                 let ty_item = match ty {
                     ir::Ty::Item(i) => i,
                     _ => {
@@ -1198,7 +1195,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         };
 
         // `&dyn Proto<...>` always satisfies Proto<...>
-        if let Some(LangTypeKind::Dyn(ir::Ty::Tuple(inner_tys), _)) = self.ctx.lang_type_kind(ty) {
+        if let Some(LangKind::Dyn(ir::Ty::Tuple(inner_tys), _)) = self.ctx.lang_type_kind(ty) {
             for inner_ty in inner_tys.iter() {
                 if let ir::Ty::Item(inner_proto) = inner_ty {
                     let MonoKey(inner_ast, inner_args, ..) = self.ctx.reverse_lookup(inner_proto);
@@ -1500,7 +1497,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
             match return_type {
                 ir::Ty::Item(item) => {
                     let MonoKey(ast_item, args, _, _) = child.ctx.reverse_lookup(item);
-                    if child.ctx.ast.lang_item_kind(ast_item) != Some(LangItemKind::Coroutine) {
+                    if child.ctx.ast.lang_item_kind(ast_item) != Some(Lang::Coroutine) {
                         bail!(self, CodeDiagnostic::CoroutineReturnType);
                     }
 
@@ -1597,7 +1594,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         );
 
         let call = self.call_lang_item(
-            LangItemKind::CoroutineNew,
+            Lang::CoroutineNew,
             [self.types.named(item), tup_type, yield_type, recv_type],
             [tup],
             span,
@@ -1910,7 +1907,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
             ast::Item::Enum(en) => {
                 self.mono_enum(item, en, key.1)?;
             }
-            ast::Item::Function(func) => {
+            ast::Item::Function(_) => {
                 self.mono_function(item, key, signature_only)?;
             }
             ast::Item::StructLike(s) => {
@@ -1994,7 +1991,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
 
     fn mono_lang_item<I>(
         &mut self,
-        kind: LangItemKind,
+        kind: Lang,
         generic_args: I,
     ) -> Result<ir::ItemP<'ir>, AluminaError>
     where
@@ -2008,7 +2005,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
 
     fn call_lang_item<T, I>(
         &mut self,
-        kind: LangItemKind,
+        kind: Lang,
         generic_args: T,
         args: I,
         span: Option<Span>,
@@ -2024,11 +2021,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         self.call(func, args, item.get_function().unwrap().return_type, span)
     }
 
-    fn lang_ty<I>(
-        &mut self,
-        kind: LangItemKind,
-        generic_args: I,
-    ) -> Result<ir::TyP<'ir>, AluminaError>
+    fn lang_ty<I>(&mut self, kind: Lang, generic_args: I) -> Result<ir::TyP<'ir>, AluminaError>
     where
         I: IntoIterator<Item = ir::TyP<'ir>>,
         I::IntoIter: ExactSizeIterator,
@@ -2042,7 +2035,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         inner: ir::TyP<'ir>,
         is_const: bool,
     ) -> Result<ir::TyP<'ir>, AluminaError> {
-        self.lang_ty(LangItemKind::Slice, [self.types.pointer(inner, is_const)])
+        self.lang_ty(Lang::Slice, [self.types.pointer(inner, is_const)])
     }
 
     fn lower_type_for_value(&mut self, ty: ast::TyP<'ast>) -> Result<ir::TyP<'ir>, AluminaError> {
@@ -2100,19 +2093,19 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         }
 
         match self.ctx.ast.lang_item_kind(ast_item) {
-            Some(LangItemKind::TypeopPointerWithMutOf) => {
+            Some(Lang::TypeopPointerWithMutOf) => {
                 arg_count!(2);
                 if let ir::Ty::Pointer(_, is_const) = args[1] {
                     return Ok(Some(self.types.pointer(args[0], *is_const)));
                 }
             }
-            Some(LangItemKind::TypeopArrayWithLengthOf) => {
+            Some(Lang::TypeopArrayWithLengthOf) => {
                 arg_count!(2);
                 if let ir::Ty::Array(_, len) = args[1] {
                     return Ok(Some(self.types.array(args[0], *len)));
                 }
             }
-            Some(LangItemKind::TypeopTupleHeadOf) => {
+            Some(Lang::TypeopTupleHeadOf) => {
                 arg_count!(1);
                 if let ir::Ty::Tuple(tys) = args[0] {
                     if !tys.is_empty() {
@@ -2120,7 +2113,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                     }
                 }
             }
-            Some(LangItemKind::TypeopTupleTailOf) => {
+            Some(Lang::TypeopTupleTailOf) => {
                 arg_count!(1);
                 if let ir::Ty::Tuple(tys) = args[0] {
                     match tys.len() {
@@ -2131,7 +2124,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                 }
                 bail!(self, CodeDiagnostic::InvalidTypeOperator);
             }
-            Some(LangItemKind::TypeopTupleConcatOf) => {
+            Some(Lang::TypeopTupleConcatOf) => {
                 arg_count!(2);
                 if let (ir::Ty::Tuple(a), ir::Ty::Tuple(b)) = (&args[0], &args[1]) {
                     // Cannot use chain because it is not ExactSizeIterator
@@ -2145,7 +2138,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                 }
                 bail!(self, CodeDiagnostic::InvalidTypeOperator);
             }
-            Some(LangItemKind::TypeopGenericArgsOf) => {
+            Some(Lang::TypeopGenericArgsOf) => {
                 arg_count!(1);
                 match args[0] {
                     ir::Ty::Item(cell) => {
@@ -2160,7 +2153,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                 }
                 bail!(self, CodeDiagnostic::InvalidTypeOperator);
             }
-            Some(LangItemKind::TypeopReplaceGenericArgsOf) => {
+            Some(Lang::TypeopReplaceGenericArgsOf) => {
                 arg_count!(2);
                 let types = match args[1] {
                     ir::Ty::Tuple(types) => types,
@@ -2178,7 +2171,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                 }
                 bail!(self, CodeDiagnostic::InvalidTypeOperator);
             }
-            Some(LangItemKind::TypeopReturnTypeOf) => {
+            Some(Lang::TypeopReturnTypeOf) => {
                 arg_count!(1);
                 if let ir::Ty::FunctionPointer(_, ret) = args[0] {
                     return Ok(Some(*ret));
@@ -2202,7 +2195,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                     }
                 }
             }
-            Some(LangItemKind::TypeopArgumentsOf) => {
+            Some(Lang::TypeopArgumentsOf) => {
                 arg_count!(1);
                 if let ir::Ty::FunctionPointer(args, _) = args[0] {
                     return Ok(Some(self.types.tuple(args.iter().copied())));
@@ -2232,7 +2225,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                     }
                 }
             }
-            Some(LangItemKind::TypeopUnderlyingTypeOf) => {
+            Some(Lang::TypeopUnderlyingTypeOf) => {
                 arg_count!(1);
                 if let ir::Ty::Item(e) = args[0] {
                     match e.get().with_backtrace(&self.diag)? {
@@ -2249,7 +2242,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                     }
                 }
             }
-            Some(LangItemKind::TypeopUnderlyingFunctionOf) => {
+            Some(Lang::TypeopUnderlyingFunctionOf) => {
                 arg_count!(1);
                 if let ir::Ty::Item(e) = args[0] {
                     match e.get().with_backtrace(&self.diag)? {
@@ -2267,7 +2260,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                     }
                 }
             }
-            Some(LangItemKind::TypeopFunctionPointerOf) => {
+            Some(Lang::TypeopFunctionPointerOf) => {
                 arg_count!(2);
                 if let ir::Ty::Tuple(tys) = args[0] {
                     return Ok(Some(self.types.function(tys.iter().copied(), args[1])));
@@ -2333,7 +2326,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                     .map(|arg| self.lower_type_for_value(arg))
                     .collect::<Result<Vec<_>, _>>()?;
                 let ret = self.lower_type_for_value(ret)?;
-                self.lang_ty(LangItemKind::ProtoCallable, [self.types.tuple(args), ret])?
+                self.lang_ty(Lang::ProtoCallable, [self.types.tuple(args), ret])?
             }
             ast::Ty::Tuple(items) => {
                 let items = items
@@ -2349,8 +2342,8 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                 ))
             })?,
             ast::Ty::Item(item) => match self.ctx.ast.lang_item_kind(item) {
-                Some(LangItemKind::ImplBuiltin(kind)) => self.types.builtin(kind),
-                Some(LangItemKind::ImplArray | LangItemKind::ImplTuple) => {
+                Some(Lang::ImplBuiltin(kind)) => self.types.builtin(kind),
+                Some(Lang::ImplArray | Lang::ImplTuple) => {
                     bail!(self, CodeDiagnostic::BuiltinTypesAreSpecialMkay);
                 }
                 _ => {
@@ -2430,7 +2423,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
 
                 let ptr_type = self.types.pointer(self.types.void(), is_const);
                 self.create_vtable_layout(key)?;
-                self.lang_ty(LangItemKind::Dyn, [key_ty, ptr_type])?
+                self.lang_ty(Lang::Dyn, [key_ty, ptr_type])?
             }
             ast::Ty::TypeOf(inner) => {
                 let mut child = self.make_tentative_child();
@@ -2483,7 +2476,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
             return Ok(());
         }
 
-        let dyn_self = self.lang_ty(LangItemKind::DynSelf, [])?;
+        let dyn_self = self.lang_ty(Lang::DynSelf, [])?;
         let mut vtable_methods = Vec::new();
 
         for protocol_ty in protocols {
@@ -2687,31 +2680,31 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
             ast::Ty::Builtin(kind) => self
                 .ctx
                 .ast
-                .lang_item(LangItemKind::ImplBuiltin(*kind))
+                .lang_item(Lang::ImplBuiltin(*kind))
                 .with_backtrace(&self.diag)?,
             ast::Ty::Array(_, _) => self
                 .ctx
                 .ast
-                .lang_item(LangItemKind::ImplArray)
+                .lang_item(Lang::ImplArray)
                 .with_backtrace(&self.diag)?,
             ast::Ty::Tuple(_) => self
                 .ctx
                 .ast
-                .lang_item(LangItemKind::ImplTuple)
+                .lang_item(Lang::ImplTuple)
                 .with_backtrace(&self.diag)?,
-            ast::Ty::FunctionPointer(..) => self
+            ast::Ty::Defered(..) | ast::Ty::FunctionPointer(..) => self
                 .ctx
                 .ast
-                .lang_item(LangItemKind::ImplCallable)
+                .lang_item(Lang::ImplCallable)
                 .with_backtrace(&self.diag)?,
             ast::Ty::Item(item) if matches!(item.get(), ast::Item::Function(_)) => self
                 .ctx
                 .ast
-                .lang_item(LangItemKind::ImplCallable)
+                .lang_item(Lang::ImplCallable)
                 .with_backtrace(&self.diag)?,
 
             ast::Ty::Item(item) => item,
-            ast::Ty::Generic(ast::Ty::Item(item), _) => item,
+            ast::Ty::Generic(inner, _) => return self.associated_fns_uncached(inner),
             _ => return Ok(associated_fns),
         };
 
@@ -2816,12 +2809,23 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
 
         match (&lhs_lang, rhs_lang) {
             // &mut [T] -> &[T]
-            (Some(LangTypeKind::Slice(t1_ptr)), Some(LangTypeKind::Slice(t2_ptr))) => {
+            (Some(LangKind::Slice(t1_ptr)), Some(LangKind::Slice(t2_ptr))) => {
+                match (t1_ptr, t2_ptr) {
+                    (ir::Ty::Pointer(t1, true), ir::Ty::Pointer(t2, _)) if t1 == t2 => {
+                        return self.call_lang_item(Lang::SliceConstCoerce, [*t1], [rhs], rhs.span);
+                    }
+                    _ => {}
+                }
+            }
+            // &mut dyn Proto -> &dyn Proto
+            (Some(LangKind::Dyn(t1_proto, t1_ptr)), Some(LangKind::Dyn(t2_proto, t2_ptr)))
+                if *t1_proto == t2_proto =>
+            {
                 match (t1_ptr, t2_ptr) {
                     (ir::Ty::Pointer(t1, true), ir::Ty::Pointer(t2, _)) if t1 == t2 => {
                         return self.call_lang_item(
-                            LangItemKind::SliceConstCoerce,
-                            [*t1],
+                            Lang::DynConstCoerce,
+                            [*t1_proto],
                             [rhs],
                             rhs.span,
                         );
@@ -2829,21 +2833,6 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                     _ => {}
                 }
             }
-            // &mut dyn Proto -> &dyn Proto
-            (
-                Some(LangTypeKind::Dyn(t1_proto, t1_ptr)),
-                Some(LangTypeKind::Dyn(t2_proto, t2_ptr)),
-            ) if *t1_proto == t2_proto => match (t1_ptr, t2_ptr) {
-                (ir::Ty::Pointer(t1, true), ir::Ty::Pointer(t2, _)) if t1 == t2 => {
-                    return self.call_lang_item(
-                        LangItemKind::DynConstCoerce,
-                        [*t1_proto],
-                        [rhs],
-                        rhs.span,
-                    );
-                }
-                _ => {}
-            },
             _ => {}
         }
 
@@ -2852,40 +2841,34 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         // &mut [T; size] -> &mut [T]
         // This coercion should be a lang function when we support const usize generics
         match (&lhs_lang, rhs.ty) {
-            (
-                Some(LangTypeKind::Slice(t1_ptr)),
-                ir::Ty::Pointer(ir::Ty::Array(t2, size), t2_const),
-            ) => match t1_ptr {
-                ir::Ty::Pointer(t1, t1_const) if *t1 == *t2 && (!t2_const || *t1_const) => {
-                    let size_lit = self.exprs.literal(
-                        Value::USize(*size),
-                        self.types.builtin(BuiltinType::USize),
-                        rhs.span,
-                    );
-                    let data = self.exprs.r#ref(
-                        self.exprs
-                            .const_index(self.exprs.deref(rhs, rhs.span), 0, rhs.span),
-                        rhs.span,
-                    );
-                    return self.call_lang_item(
-                        LangItemKind::SliceNew,
-                        [*t1_ptr],
-                        [data, size_lit],
-                        rhs.span,
-                    );
+            (Some(LangKind::Slice(t1_ptr)), ir::Ty::Pointer(ir::Ty::Array(t2, size), t2_const)) => {
+                match t1_ptr {
+                    ir::Ty::Pointer(t1, t1_const) if *t1 == *t2 && (!t2_const || *t1_const) => {
+                        let size_lit = self.exprs.literal(
+                            Value::USize(*size),
+                            self.types.builtin(BuiltinType::USize),
+                            rhs.span,
+                        );
+                        let data = self.exprs.r#ref(
+                            self.exprs
+                                .const_index(self.exprs.deref(rhs, rhs.span), 0, rhs.span),
+                            rhs.span,
+                        );
+                        return self.call_lang_item(
+                            Lang::SliceNew,
+                            [*t1_ptr],
+                            [data, size_lit],
+                            rhs.span,
+                        );
+                    }
+                    _ => {}
                 }
-                _ => {}
-            },
-            (Some(LangTypeKind::Dyn(t1_proto, t1_ptr)), ir::Ty::Pointer(t2, t2_const)) => {
+            }
+            (Some(LangKind::Dyn(t1_proto, t1_ptr)), ir::Ty::Pointer(t2, t2_const)) => {
                 match t1_ptr {
                     ir::Ty::Pointer(_, t1_const) if !t2_const || *t1_const => {
                         let ty: &ir::Ty<'_> = self.types.pointer(t2, *t1_const);
-                        return self.call_lang_item(
-                            LangItemKind::DynNew,
-                            [*t1_proto, ty],
-                            [rhs],
-                            rhs.span,
-                        );
+                        return self.call_lang_item(Lang::DynNew, [*t1_proto, ty], [rhs], rhs.span);
                     }
                     _ => {}
                 }
@@ -3585,8 +3568,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         let type_hint = match type_hint {
             Some(ir::Ty::Pointer(inner, _)) => Some(*inner),
             Some(hint) => {
-                if let Some(LangTypeKind::Slice(ir::Ty::Pointer(ty, _))) =
-                    self.ctx.lang_type_kind(hint)
+                if let Some(LangKind::Slice(ir::Ty::Pointer(ty, _))) = self.ctx.lang_type_kind(hint)
                 {
                     Some(self.types.array(ty, 0))
                 } else {
@@ -3755,7 +3737,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         let lhs = self.r#ref(lhs, ast_span);
         let rhs = self.r#ref(rhs, ast_span);
 
-        self.call_lang_item(LangItemKind::Operator(op), [ty], [lhs, rhs], ast_span)
+        self.call_lang_item(Lang::Operator(op), [ty], [lhs, rhs], ast_span)
     }
 
     fn lower_binary(
@@ -4077,19 +4059,14 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         }
 
         let range_ref = self.r#ref(range, ast_span);
-        let iter = self.call_lang_item(
-            LangItemKind::StaticForIter,
-            [range.ty],
-            [range_ref],
-            ast_span,
-        )?;
+        let iter = self.call_lang_item(Lang::StaticForIter, [range.ty], [range_ref], ast_span)?;
 
         let iter_local = self.make_local(iter.ty, ast_span);
         let assign = self.exprs.assign(iter_local, iter, ast_span);
 
         let iter_ref = self.r#ref(iter_local, ast_span);
         let iter_next =
-            self.call_lang_item(LangItemKind::StaticForNext, [iter.ty], [iter_ref], ast_span)?;
+            self.call_lang_item(Lang::StaticForNext, [iter.ty], [iter_ref], ast_span)?;
 
         let mut evaluator = ir::const_eval::ConstEvaluator::new(
             self.ctx.global_ctx.clone(),
@@ -4272,33 +4249,22 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         match (ty_lang, expr_lang) {
             // &[T] -> &mut [T]
             (
-                Some(LangTypeKind::Slice(ir::Ty::Pointer(t1, _))),
-                Some(LangTypeKind::Slice(ir::Ty::Pointer(t2, _))),
+                Some(LangKind::Slice(ir::Ty::Pointer(t1, _))),
+                Some(LangKind::Slice(ir::Ty::Pointer(t2, _))),
             ) if *t1 == *t2 => {
-                return self.call_lang_item(LangItemKind::SliceConstCast, [*t1], [expr], ast_span);
+                return self.call_lang_item(Lang::SliceConstCast, [*t1], [expr], ast_span);
             }
             // &dyn Proto -> &mut dyn Proto
-            (Some(LangTypeKind::Dyn(t1_proto, _)), Some(LangTypeKind::Dyn(t2_proto, _)))
+            (Some(LangKind::Dyn(t1_proto, _)), Some(LangKind::Dyn(t2_proto, _)))
                 if *t1_proto == *t2_proto =>
             {
-                return self.call_lang_item(
-                    LangItemKind::DynConstCast,
-                    [t1_proto],
-                    [expr],
-                    ast_span,
-                );
+                return self.call_lang_item(Lang::DynConstCast, [t1_proto], [expr], ast_span);
             }
 
             // &dyn Proto -> any pointer (unchecked downcast)
-            (_, Some(LangTypeKind::Dyn(t2_proto, t2_const)))
-                if matches!(ty, ir::Ty::Pointer(_, _)) =>
-            {
-                let call = self.call_lang_item(
-                    LangItemKind::DynData,
-                    [t2_proto, t2_const],
-                    [expr],
-                    ast_span,
-                )?;
+            (_, Some(LangKind::Dyn(t2_proto, t2_const))) if matches!(ty, ir::Ty::Pointer(_, _)) => {
+                let call =
+                    self.call_lang_item(Lang::DynData, [t2_proto, t2_const], [expr], ast_span)?;
                 return Ok(self.exprs.cast(call, ty, ast_span));
             }
             _ => {}
@@ -4499,7 +4465,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
             span,
         );
 
-        self.call_lang_item(LangItemKind::SliceNew, [ptr_type], [data, size], span)
+        self.call_lang_item(Lang::SliceNew, [ptr_type], [data, size], span)
     }
 
     fn call<I>(
@@ -4593,7 +4559,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         let local = self.make_local(canonical, ast_span);
         let tgt = self.autoref(self_arg, canonical, ast_span)?;
         let call = self.call_lang_item(
-            LangItemKind::DynVtableIndex,
+            Lang::DynVtableIndex,
             [key, dyn_ptr],
             [
                 local,
@@ -4621,7 +4587,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         {
             if !*t2_const && *t1_const {
                 let mut_dyn = self
-                    .mono_lang_item(LangItemKind::DynConstCast, [key])?
+                    .mono_lang_item(Lang::DynConstCast, [key])?
                     .get_function()
                     .with_backtrace(&self.diag)?
                     .return_type;
@@ -4631,7 +4597,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         }
 
         let mut args = once(Ok(self.call_lang_item(
-            LangItemKind::DynData,
+            Lang::DynData,
             [key, dyn_ptr],
             [local],
             ast_span,
@@ -4690,7 +4656,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
 
         let canonical = ir_self_arg.ty.canonical_type();
 
-        if let Some(LangTypeKind::Dyn(ir::Ty::Tuple(protocols), dyn_ptr)) =
+        if let Some(LangKind::Dyn(ir::Ty::Tuple(protocols), dyn_ptr)) =
             self.ctx.lang_type_kind(canonical)
         {
             if let Some(result) =
@@ -5027,7 +4993,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                     .map(|(binding, expr)| {
                         Ok(ir::Field {
                             id: self.ctx.map_id(binding.id),
-                            name: None,
+                            name: Some(binding.name.alloc_on(self.ctx.ir)),
                             ty: expr.ty,
                         })
                     })
@@ -5201,7 +5167,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         // We put usize as a hint, lower_range has a special case and will take
         let index = self.lower_expr(index, Some(self.types.builtin(BuiltinType::USize)))?;
         let indexee_hint =
-            if let Some(LangTypeKind::Range(bound_ty)) = self.ctx.lang_type_kind(index.ty) {
+            if let Some(LangKind::Range(bound_ty)) = self.ctx.lang_type_kind(index.ty) {
                 if let ir::Ty::Builtin(BuiltinType::USize) = bound_ty {
                     type_hint
                 } else {
@@ -5230,42 +5196,37 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
             }
         }
 
-        let ptr_ty = if let Some(LangTypeKind::Slice(ptr_ty)) = self.ctx.lang_type_kind(indexee.ty)
-        {
+        let ptr_ty = if let Some(LangKind::Slice(ptr_ty)) = self.ctx.lang_type_kind(indexee.ty) {
             ptr_ty
         } else {
             // Try slicifying the indexee
             let canonical = indexee.ty.canonical_type();
             indexee = self.autoref(indexee, self.types.pointer(canonical, true), ast_span)?;
             indexee = self.call_lang_item(
-                LangItemKind::SliceSlicify,
+                Lang::SliceSlicify,
                 [canonical, indexee.ty],
                 [indexee],
                 ast_span,
             )?;
 
-            if let Some(LangTypeKind::Slice(ptr_ty)) = self.ctx.lang_type_kind(indexee.ty) {
+            if let Some(LangKind::Slice(ptr_ty)) = self.ctx.lang_type_kind(indexee.ty) {
                 ptr_ty
             } else {
                 ice!(self.diag, "slice_slicify did not return a slice");
             }
         };
 
-        if let Some(LangTypeKind::Range(_)) = self.ctx.lang_type_kind(index.ty) {
+        if let Some(LangKind::Range(_)) = self.ctx.lang_type_kind(index.ty) {
             self.call_lang_item(
-                LangItemKind::SliceRangeIndex,
+                Lang::SliceRangeIndex,
                 [ptr_ty, index.ty],
                 [indexee, index],
                 ast_span,
             )
         } else {
             let index = self.try_coerce(self.types.builtin(BuiltinType::USize), index)?;
-            let call = self.call_lang_item(
-                LangItemKind::SliceIndex,
-                [ptr_ty],
-                [indexee, index],
-                ast_span,
-            )?;
+            let call =
+                self.call_lang_item(Lang::SliceIndex, [ptr_ty], [indexee, index], ast_span)?;
             return Ok(self.exprs.deref(call, ast_span));
         }
     }
@@ -5282,7 +5243,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
             // Special case for range indexing
             Some(ir::Ty::Builtin(BuiltinType::USize)) => type_hint,
             Some(ty) => self.ctx.lang_type_kind(ty).and_then(|kind| {
-                if let LangTypeKind::Range(inner) = kind {
+                if let LangKind::Range(inner) = kind {
                     Some(inner)
                 } else {
                     None
@@ -5315,9 +5276,9 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
 
                 self.call_lang_item(
                     if inclusive {
-                        LangItemKind::RangeInclusiveNew
+                        Lang::RangeInclusiveNew
                     } else {
-                        LangItemKind::RangeNew
+                        Lang::RangeNew
                     },
                     [bound_ty],
                     [lower, upper],
@@ -5326,24 +5287,22 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
             }
             (Some(lower), None) => {
                 let lower = self.try_coerce(bound_ty, lower)?;
-                self.call_lang_item(LangItemKind::RangeFromNew, [bound_ty], [lower], ast_span)?
+                self.call_lang_item(Lang::RangeFromNew, [bound_ty], [lower], ast_span)?
             }
             (None, Some(upper)) => {
                 let upper = self.try_coerce(bound_ty, upper)?;
                 self.call_lang_item(
                     if inclusive {
-                        LangItemKind::RangeToInclusiveNew
+                        Lang::RangeToInclusiveNew
                     } else {
-                        LangItemKind::RangeToNew
+                        Lang::RangeToNew
                     },
                     [bound_ty],
                     [upper],
                     ast_span,
                 )?
             }
-            (None, None) => {
-                self.call_lang_item(LangItemKind::RangeFullNew, [bound_ty], [], ast_span)?
-            }
+            (None, None) => self.call_lang_item(Lang::RangeFullNew, [bound_ty], [], ast_span)?,
         };
 
         Ok(result)
@@ -5432,7 +5391,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         let out_ref = self.exprs.r#ref(out, ast_span);
 
         let cond = self.call_lang_item(
-            LangItemKind::CoroutineYield,
+            Lang::CoroutineYield,
             [self.yield_type.unwrap(), self.recv_type.unwrap()],
             [val_ref, out_ref],
             ast_span,

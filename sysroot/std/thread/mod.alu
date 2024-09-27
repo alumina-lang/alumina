@@ -541,12 +541,24 @@ mod internal {
     /// This is the function that gets passed to `pthread_create` and it is responsible
     /// for setting up the panic handler and storing the return value of the thread.
     fn _run_thread<T, F: Fn() -> T>(arg: &mut void) -> &mut void {
+        use panicking::internal::set_panic_hook;
+
         let handle_func = arg as &mut ThreadHandleFunc<F, T>;
         let handle = &handle_func.inner;
 
         THREAD_INFO = handle.thread_info;
         if handle.catch_panic {
-            std::panicking::internal::set_panic_hook(handle as &mut void, _panic_hook::<T>);
+            set_panic_hook.invoke(|=handle, info: &panicking::PanicInfo| {
+                handle.panicked = true;
+                handle.ret = Result::err(*info);
+
+                if handle.pop() {
+                    // We have been detached, we need to propagate the panic
+                    handle.free();
+                } else {
+                    libc::pthread_exit(null)
+                }
+            }.as_callback());
         }
 
         handle.ret = Result::ok(handle_func.callback());
@@ -555,19 +567,6 @@ mod internal {
         }
 
         null
-    }
-
-    fn _panic_hook<T>(arg: &mut void, info: &panicking::PanicInfo) {
-        let handle = arg as &mut ThreadHandle<T>;
-        handle.panicked = true;
-        handle.ret = Result::err(*info);
-
-        if handle.pop() {
-            // We have been detached, we need to propagate the panic
-            handle.free();
-        } else {
-            libc::pthread_exit(null)
-        }
     }
 }
 

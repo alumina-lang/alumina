@@ -23,7 +23,7 @@ use crate::{
 
 use thiserror::Error;
 
-use super::{lang::LangItemKind, Id, Item, ItemP, Metadatum};
+use super::{lang::Lang, Id, Item, ItemP, Metadatum};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -863,7 +863,7 @@ impl<'ast> AstLoader<'ast> {
 
         let num_lang_items = deserializer.read_usize()?;
         for _ in 0..num_lang_items {
-            let kind = LangItemKind::deserialize(&mut deserializer)?;
+            let kind = Lang::deserialize(&mut deserializer)?;
             let id = Id::deserialize(&mut deserializer)?;
 
             self.ast.add_lang_item(kind, self.context.get_cell(id))

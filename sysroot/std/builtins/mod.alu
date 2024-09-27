@@ -1249,7 +1249,43 @@ impl callable {
         intrinsics::tuple_invoke(f, args)
     }
 
-    /// [non::existent::add_docs]
+    /// Converts a pointer to closure to a C-style state and function pointer pair.
+    ///
+    /// This function is used to pass closures to C functions that expect a function pointer and a
+    /// state pointer, that is passed as the first argument to the function when the callback is
+    /// called.
+    ///
+    /// ## Example
+    /// ```no_test
+    /// use libc::{c_int, c_char};
+    ///
+    /// extern "C" fn sqlite3_exec(
+    ///     db: &mut sqlite3,
+    ///     sql: &c_char,
+    ///     callback: fn(&mut void, c_int, &mut &mut c_char, &mut &mut c_char) -> c_int,
+    ///     state: &mut void, // ⮥
+    ///     errmsg: &mut &mut c_char,
+    /// ) -> libc::c_int;
+    ///
+    /// let db = /* ... */;
+    /// let file = File::open(/* ... */);
+    /// defer file.close();
+    ///
+    /// // Prints the rows of a table to a file that's captured by the closure.
+    /// let print = |&file, num_cols: c_int, values: &mut &mut c_char, _: &mut &mut c_char| {
+    ///     /// ... print values to file ...
+    ///     0
+    /// };
+    ///
+    /// let (state, callback) = print.as_callback();
+    /// sqlite3_exec(
+    ///     &mut db,
+    ///     "SELECT * FROM users\0".as_ptr() as &c_char,
+    ///     callback,
+    ///     state,
+    ///     null
+    /// );
+    /// ```
     #[inline]
     fn as_callback<Args, Ret, F: Closure + Callable<Args, Ret>>(f: &mut F) -> (&mut void, callback_of<Args, Ret>) {
         use underlying_function_of as u;
@@ -1504,7 +1540,26 @@ type underlying_type_of<T: Enum | Static | Const | Closure>;
 
 /// Underlying function of a closure
 ///
-/// [nonexistent::fix::me]
+/// Underlying function is a regular named function that accepts the closure object as its first
+/// argument by a mutable pointer.
+///
+/// See also [builtins::callable::as_callback] for a function that converts a pointer to a closure
+/// into a C-style void pointer and a function pointer pair.
+///
+/// ## Example
+/// ```
+/// use std::builtins::underlying_function_of;
+///
+/// let a = 1;
+/// let f = |=a, x: i32| -> i32 { x + a };
+///
+/// let g: underlying_function_of<typeof(f)>;
+///
+/// assert_eq!(
+///     f(2),
+///     g(&f, 2)
+/// );
+/// ```
 #[lang(typeop_underlying_function_of)]
 type underlying_function_of<T: Closure>;
 

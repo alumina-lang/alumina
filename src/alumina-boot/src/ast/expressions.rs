@@ -1527,7 +1527,7 @@ pub struct LambdaVisitor<'ast, 'src> {
     self_param: Id,
 
     parameters: Vec<Parameter<'ast>>,
-    bound_values: IndexMap<Id, (BoundItemType, ExprP<'ast>)>,
+    bound_values: IndexMap<Id, (BoundItemType, &'ast str, ExprP<'ast>)>,
     placeholders: Vec<Placeholder<'ast>>,
     return_type: Option<TyP<'ast>>,
     body: Option<ExprP<'ast>>,
@@ -1611,12 +1611,13 @@ impl<'ast, 'src> LambdaVisitor<'ast, 'src> {
 
         let bindings = self
             .bound_values
-            .iter()
-            .map(|(k, (t, v))| super::ClosureBinding {
-                id: *k,
-                value: v,
-                binding_type: *t,
-                span: v.span,
+            .into_iter()
+            .map(|(id, (binding_type, name, value))| super::ClosureBinding {
+                id,
+                value,
+                name,
+                binding_type,
+                span: value.span,
             })
             .collect::<Vec<_>>()
             .alloc_on(self.ast);
@@ -1709,6 +1710,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for LambdaVisitor<'ast, 'src> {
             id,
             (
                 bound_type,
+                name,
                 original.alloc_with_span_from(self.ast, &self.scope, node),
             ),
         );

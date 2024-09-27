@@ -6,8 +6,6 @@
   - Better error messages for why recursive functions can't be inlined (rather than just "Unpopulated symbol")
 - stack overflow in codegen stage because infinite size recursive structs are not rejected during monomorphization
     - could be a similar issue with protocols, though these are more coservative vis-a-vis recursion
-- Whole ZST and divergence handling might still be buggy, in particular, uninitialized variables of `!` type might be problematic since lowering is quite liberal with making temporary name bindings for various stuff.
-    - It might be fine now, it's been a while since I last ran into a ZST bug
 - if tentative monomorphization fails (e.g. error), but type inference still succeeds, we are left with unpopulated symbols
     - this is now especially an issue with `when` expressions which do tentative mono during proto bound checking
     - This is a big problem, unfortunately there is no easy solution with the current `mono` architecture
@@ -20,7 +18,6 @@
   - Right now there is not even a good error message to say that this is not supported, just a cryptic "unbound placeholder" during mono
 - Recursive local functions lead to stack overflow as mono monomorphizes them over and over again. The local item handling for functions was designed for lambdas that cannot be recursive (without indirection)
 - Macros cannot define local items or use anonymous function. This is quite bad and should be fixed.
-- Promoting all variables to function scope is a bit of a unique feature of Alumina and I like it (comes in quite handy for autoref - can take an address of any rvalue and defer), but it may inhibit some optimizations downstream.
 - `if opt.is_some { opt.inner }` and  `if res.is_ok() { res.unwrap() }` do not spark joy. Full pattern matching is overkill, but this is very common and
   deserves a better idiom.
 - a coherent story for operator overloading
@@ -90,6 +87,8 @@
 - full Hindley-Milner type inference. Global type inference will pretty much require a full rewrite of `mono`, so whis would be a massive project, but it would also be super awesome to have
   - Type inference gaps are a big pain point right now, especially since there are so many places where adding a type hint is not even possible (e.g. when chaining methods).
 - some sort of type-checking of pre-monomorphized functions might be useful. they can have pretty blatant errors inside that would fail to compile no matter what the type parameters are, but you don't know until you actually try to use it.
+- ... (et cetera) as a tuple splat operator (types and expressions)
+- attributes in reflection
 
 ## Tooling
 

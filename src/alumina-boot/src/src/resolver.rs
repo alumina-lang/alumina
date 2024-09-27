@@ -168,7 +168,10 @@ impl<'ast, 'src> NameResolver<'ast, 'src> {
                     ));
                     break;
                 }
-                NamedItemKind::Macro(_) | NamedItemKind::Local(_) | NamedItemKind::Parameter(_) => {
+                NamedItemKind::Macro(_)
+                | NamedItemKind::Local(_)
+                | NamedItemKind::Parameter(_)
+                | NamedItemKind::BoundValue(_, _, _) => {
                     let original_func = self_scope.find_containing_function();
                     let current_func = containing_scope.find_containing_function();
 

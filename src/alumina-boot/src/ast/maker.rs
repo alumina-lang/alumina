@@ -1,5 +1,5 @@
 use crate::ast::expressions::ExpressionVisitor;
-use crate::ast::lang::LangItemKind;
+use crate::ast::lang::Lang;
 use crate::ast::macros::MacroMaker;
 use crate::ast::types::TypeVisitor;
 use crate::ast::{
@@ -376,7 +376,7 @@ impl<'ast> AstItemMaker<'ast> {
     fn check_self_confusion(&self, ty: TyP<'ast>, span: Option<Span>) {
         match ty {
             Ty::Item(item) | Ty::Pointer(Ty::Item(item), _) => {
-                if let Some(LangItemKind::DynSelf) = self.ast.lang_item_kind(item) {
+                if let Some(Lang::DynSelf) = self.ast.lang_item_kind(item) {
                     self.global_ctx.diag().add_warning(CodeError {
                         kind: CodeDiagnostic::SelfConfusion,
                         backtrace: span.map(Marker::Span).into_iter().collect(),

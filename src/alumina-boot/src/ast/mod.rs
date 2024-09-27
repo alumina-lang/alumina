@@ -8,12 +8,12 @@ pub mod rebind;
 pub mod serialization;
 pub mod types;
 
-use crate::ast::lang::LangItemKind;
+use crate::ast::lang::Lang;
 use crate::common::{
     impl_allocatable, Allocatable, ArenaAllocatable, CodeDiagnostic, FileId, HashMap, HashSet,
     Incrementable,
 };
-use crate::ir::mono::intrinsics::IntrinsicKind;
+use crate::ir::mono::intrinsics::Intr;
 use crate::src::path::{Path, PathSegment};
 use crate::src::scope::BoundItemType;
 
@@ -41,7 +41,7 @@ pub struct AstCtx<'ast> {
     pub counter: Cell<usize>,
     types: RefCell<HashSet<TyP<'ast>>>,
     strings: RefCell<HashSet<&'ast str>>,
-    lang_items: RefCell<HashMap<LangItemKind, ItemP<'ast>>>,
+    lang_items: RefCell<HashMap<Lang, ItemP<'ast>>>,
     local_names: RefCell<HashMap<Id, &'ast str>>,
     metadata: RefCell<HashMap<ItemP<'ast>, Metadatum<'ast>>>,
 }
@@ -65,7 +65,7 @@ impl<'ast> AstCtx<'ast> {
         }
     }
 
-    pub fn lang_item(&self, kind: LangItemKind) -> Result<ItemP<'ast>, CodeDiagnostic> {
+    pub fn lang_item(&self, kind: Lang) -> Result<ItemP<'ast>, CodeDiagnostic> {
         self.lang_items
             .borrow()
             .get(&kind)
@@ -73,7 +73,7 @@ impl<'ast> AstCtx<'ast> {
             .ok_or(CodeDiagnostic::MissingLangItem(kind))
     }
 
-    pub fn lang_item_kind(&self, item: ItemP<'ast>) -> Option<LangItemKind> {
+    pub fn lang_item_kind(&self, item: ItemP<'ast>) -> Option<Lang> {
         self.lang_items
             .borrow()
             .iter()
@@ -82,7 +82,7 @@ impl<'ast> AstCtx<'ast> {
             .copied()
     }
 
-    pub fn add_lang_item(&self, kind: LangItemKind, item: ItemP<'ast>) {
+    pub fn add_lang_item(&self, kind: Lang, item: ItemP<'ast>) {
         self.lang_items.borrow_mut().insert(kind, item);
     }
 
@@ -683,7 +683,7 @@ pub struct Parameter<'ast> {
 
 #[derive(Debug, AstSerializable)]
 pub struct Intrinsic {
-    pub kind: IntrinsicKind,
+    pub kind: Intr,
     pub span: Option<Span>,
 }
 
@@ -888,6 +888,7 @@ pub struct Defered<'ast> {
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, AstSerializable)]
 pub struct ClosureBinding<'ast> {
     pub id: Id,
+    pub name: &'ast str,
     pub value: ExprP<'ast>,
     pub binding_type: BoundItemType,
     pub span: Option<Span>,

@@ -35,8 +35,8 @@ enum TSSymbolType {
 }
 
 struct TSInput{
-    payload: &void,
-    read: fn(&void, u32, TSPoint, &mut u32) -> &c_char,
+    payload: &mut void,
+    read: fn(&mut void, u32, TSPoint, &mut u32) -> &c_char,
     encoding: TSInputEncoding
 }
 
@@ -119,17 +119,6 @@ impl TSLanguage {
     }
 }
 
-fn default_read(payload: &void, byte_offset: u32, _point: TSPoint, read_size: &mut u32) -> &c_char {
-    let slice = *(payload as &&[u8]);
-    let remaining = slice[byte_offset as usize..];
-    *read_size = remaining.len() as u32;
-    if remaining.len() > 0 {
-        &remaining[0] as &c_char
-    } else {
-        null
-    }
-}
-
 struct Parser {
     inner: &mut TSParser
 }
@@ -154,9 +143,19 @@ impl Parser {
     }
 
     fn parse(self: &mut Parser, text: &[u8]) -> Tree {
+        let (payload, read) = |=text, byte_offset: u32, _point: TSPoint, read_size: &mut u32| -> &c_char {
+            let remaining = text[byte_offset as usize..];
+            *read_size = remaining.len() as u32;
+            if remaining.len() > 0 {
+                &remaining[0] as &c_char
+            } else {
+                null
+            }
+        }.as_callback();
+
         let input = TSInput {
-            payload: &text as &void,
-            read: default_read,
+            payload: payload,
+            read: read,
             encoding: TSInputEncoding::UTF8
         };
 
