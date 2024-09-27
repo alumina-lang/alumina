@@ -12,10 +12,10 @@ use crate::common::{
     WithSpanDuringParsing,
 };
 use crate::global_ctx::GlobalCtx;
-use crate::intrinsics::intrinsic_kind;
-use crate::name_resolution::resolver::NameResolver;
-use crate::name_resolution::scope::{NamedItem, NamedItemKind, Scope, ScopeType};
+use crate::ir::mono::intrinsics::intrinsic_kind;
 use crate::parser::{AluminaVisitor, FieldKind, NodeExt, NodeKind};
+use crate::src::resolver::NameResolver;
+use crate::src::scope::{NamedItem, NamedItemKind, Scope, ScopeType};
 
 use once_cell::unsync::OnceCell;
 

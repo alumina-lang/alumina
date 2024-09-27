@@ -1,11 +1,10 @@
 use crate::ast::Span;
 use crate::common::{AluminaError, ArenaAllocatable, CodeDiagnostic, HashMap};
 use crate::diagnostics::DiagnosticsStack;
-use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::builder::ExpressionBuilder;
 use crate::ir::{ExprKind, ExprP, Id, IrCtx, Statement};
 
-use super::{Expr, ExpressionVisitor, LocalDef};
+use super::{Expr, ExpressionVisitor, IntrinsicValueKind, LocalDef};
 
 struct LocalUsageCounter {
     usage: HashMap<Id, usize>,

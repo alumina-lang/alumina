@@ -15,7 +15,7 @@ use crate::{
     },
     diagnostics::{DiagnosticsStack, Override},
     global_ctx::GlobalCtx,
-    name_resolution::{
+    src::{
         path::Path,
         scope::{NamedItem, NamedItemKind, Scope, ScopeType},
     },

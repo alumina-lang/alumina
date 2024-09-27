@@ -4,9 +4,9 @@ use crate::ast::{
 };
 use crate::common::{AluminaError, ArenaAllocatable, CodeDiagnostic, WithSpanDuringParsing};
 use crate::global_ctx::GlobalCtx;
-use crate::name_resolution::resolver::{ItemResolution, NameResolver};
-use crate::name_resolution::scope::{NamedItemKind, Scope};
 use crate::parser::{AluminaVisitor, FieldKind, NodeExt, ParseCtx};
+use crate::src::resolver::{ItemResolution, NameResolver};
+use crate::src::scope::{NamedItemKind, Scope};
 use crate::visitors::ScopedPathVisitor;
 
 use super::MacroCtx;

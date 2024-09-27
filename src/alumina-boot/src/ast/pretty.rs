@@ -1,4 +1,4 @@
-use crate::{ast::StaticForLoopVariable, name_resolution::scope::BoundItemType};
+use crate::{ast::StaticForLoopVariable, src::scope::BoundItemType};
 
 use super::{
     AstCtx, BinOp, BuiltinType, ClosureBinding, ExprKind, ExprP, FnKind, Function, Id, Item, ItemP,

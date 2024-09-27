@@ -12,7 +12,6 @@ use crate::common::{
     impl_allocatable, Allocatable, AluminaError, ArenaAllocatable, CodeDiagnostic, HashSet,
     Incrementable,
 };
-use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::const_eval::Value;
 
 use bumpalo::Bump;
@@ -565,6 +564,24 @@ impl<'ir> Statement<'ir> {
             Statement::Label(_) => false,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum IntrinsicValueKind<'ir> {
+    SizeOfLike(&'ir str, TyP<'ir>),
+    Dangling(TyP<'ir>),
+    Asm(&'ir str),
+    FunctionLike(&'ir str),
+    ConstLike(&'ir str),
+    Transmute(ExprP<'ir>),
+    Volatile(ExprP<'ir>),
+    ConstPanic(ExprP<'ir>),
+    ConstWrite(ExprP<'ir>, bool),
+    ConstAlloc(TyP<'ir>, ExprP<'ir>),
+    ConstFree(ExprP<'ir>),
+    Uninitialized,
+    InConstContext,
+    StopIteration,
 }
 
 #[derive(Debug, Clone)]

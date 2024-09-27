@@ -4,9 +4,9 @@ use crate::common::{
     WithSpanDuringParsing,
 };
 use crate::global_ctx::GlobalCtx;
-use crate::name_resolution::path::Path;
-use crate::name_resolution::scope::{NamedItem, NamedItemKind, Scope, ScopeType};
 use crate::parser::{AluminaVisitor, FieldKind, NodeExt, ParseCtx};
+use crate::src::path::Path;
+use crate::src::scope::{NamedItem, NamedItemKind, Scope, ScopeType};
 use crate::visitors::{AttributeVisitor, UseClauseVisitor, VisitorExt};
 
 use std::result::Result;

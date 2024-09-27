@@ -10,9 +10,9 @@ use crate::common::{
 };
 use crate::diagnostics;
 use crate::global_ctx::GlobalCtx;
-use crate::name_resolution::path::{Path, PathSegment};
-use crate::name_resolution::scope::{NamedItem, NamedItemKind, Scope};
 use crate::parser::{AluminaVisitor, FieldKind, NodeExt, ParseCtx};
+use crate::src::path::{Path, PathSegment};
+use crate::src::scope::{NamedItem, NamedItemKind, Scope};
 
 use strum::VariantNames;
 use tree_sitter::Node;

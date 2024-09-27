@@ -1,7 +1,7 @@
 use crate::ast::Ty;
 use crate::common::{CodeDiagnostic, CycleGuardian};
-use crate::name_resolution::path::{Path, PathSegment};
-use crate::name_resolution::scope::{NamedItem, NamedItemKind, Scope, ScopeInner};
+use crate::src::path::{Path, PathSegment};
+use crate::src::scope::{NamedItem, NamedItemKind, Scope, ScopeInner};
 
 pub struct NameResolver<'ast, 'src> {
     cycle_guardian: CycleGuardian<(u32, *const ScopeInner<'ast, 'src>, Path<'ast>)>,

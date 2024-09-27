@@ -13,9 +13,9 @@ use crate::common::{
     impl_allocatable, Allocatable, ArenaAllocatable, CodeDiagnostic, FileId, HashMap, HashSet,
     Incrementable,
 };
-use crate::intrinsics::IntrinsicKind;
-use crate::name_resolution::path::{Path, PathSegment};
-use crate::name_resolution::scope::BoundItemType;
+use crate::ir::mono::intrinsics::IntrinsicKind;
+use crate::src::path::{Path, PathSegment};
+use crate::src::scope::BoundItemType;
 
 use crate::ast::serialization::{AstDeserializer, AstSerializable, AstSerializer};
 

@@ -8,9 +8,9 @@ use crate::global_ctx::GlobalCtx;
 use crate::ir::dce::DeadCodeEliminator;
 use crate::ir::mono::{Mono, MonoCtx};
 use crate::ir::IrCtx;
-use crate::name_resolution::pass1::FirstPassVisitor;
-use crate::name_resolution::scope::{Scope, ScopeType};
 use crate::parser::{AluminaVisitor, ParseCtx};
+use crate::src::pass1::FirstPassVisitor;
+use crate::src::scope::{Scope, ScopeType};
 
 use std::io::{Read, Write};
 use std::path::PathBuf;

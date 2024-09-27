@@ -1,12 +1,11 @@
 use crate::ast::{BuiltinType, Span, UnOp};
 use crate::common::{ice, AluminaError, ArenaAllocatable, CodeDiagnostic, HashMap, HashSet};
 use crate::diagnostics::DiagnosticsStack;
-use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::builder::{ExpressionBuilder, TypeBuilder};
 use crate::ir::const_eval::LValue;
 use crate::ir::const_eval::Value;
-use crate::ir::Item;
 use crate::ir::{Expr, ExprKind, ExprP, FuncBody, Id, IrCtx, LocalDef, Statement, Ty, ValueType};
+use crate::ir::{IntrinsicValueKind, Item};
 
 // The purpose of ZST elider is to take all reads and writes of zero-sized types and
 // replace them with ExprKind::Void or remove them altogether if the value is not used

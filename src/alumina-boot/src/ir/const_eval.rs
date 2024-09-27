@@ -5,7 +5,6 @@ use crate::common::{
 };
 use crate::diagnostics::DiagnosticsStack;
 use crate::global_ctx::GlobalCtx;
-use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::{BuiltinType, ExprKind, ExprP, Id, IrCtx, Item, Statement, Ty, TyP, UnOp};
 use std::backtrace::Backtrace;
 use std::cell::RefCell;
@@ -276,7 +275,7 @@ macro_rules! bug {
 pub(crate) use numeric_of_kind;
 
 use super::builder::TypeBuilder;
-use super::ItemP;
+use super::{IntrinsicValueKind, ItemP};
 
 impl<'ir> Value<'ir> {
     fn equals(self, other: Value<'ir>) -> Result<Value<'ir>, ConstEvalErrorKind> {

@@ -16,6 +16,12 @@ else ifdef FAST_DEBUG
 	CARGO_TARGET_DIR = target/release
 	CFLAGS += -g0
 	ALUMINA_FLAGS += --debug
+else ifdef PROFILING
+	BUILD_DIR = $(BUILD_ROOT)/profiling
+	CARGO_FLAGS += --profile profiling
+	CARGO_TARGET_DIR = target/profiling
+	CFLAGS += -g3 -fPIE -rdynamic -O3
+	ALUMINA_FLAGS += --debug
 else ifdef COVERAGE
 	CC ?= clang
 	BUILD_DIR = $(BUILD_ROOT)/coverage
@@ -304,12 +310,6 @@ bench-std-cached: $(ALU_TEST_STD_DEPS)
 
 bench-std-cc: $(STDLIB_TESTS).c $(MINICORO)
 	$(BENCH_CMD) $(CC) $(CFLAGS) -o/dev/null $^ $(LDFLAGS)
-
-$(BUILD_DIR)/flamegraph.svg: $(ALUMINA_BOOT) $(SYSROOT_FILES)
-	CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph \
-		-o $@ -- $(ALUMINA_FLAGS) --sysroot $(SYSROOT) --timings --cfg test --cfg test_std --output /dev/null
-
-flamegraph: $(BUILD_DIR)/flamegraph.svg
 
 ## ------------------------------ Diag tests ----------------------------
 

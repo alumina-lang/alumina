@@ -4,11 +4,11 @@ use crate::codegen::types::TypeWriter;
 use crate::codegen::{w, CName, CodegenCtx};
 use crate::common::{AluminaError, CodeErrorBuilder};
 use crate::diagnostics::DiagnosticsStack;
-use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::const_eval::Value;
 use crate::ir::layout::Layouter;
 use crate::ir::{
-    Const, Expr, ExprKind, ExprP, Function, Id, LocalDef, Statement, Static, Ty, ValueType,
+    Const, Expr, ExprKind, ExprP, Function, Id, IntrinsicValueKind, LocalDef, Statement, Static,
+    Ty, ValueType,
 };
 
 use std::fmt::Write;

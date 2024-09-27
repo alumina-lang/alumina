@@ -1,11 +1,10 @@
 use crate::common::{AluminaError, CodeErrorBuilder, HashSet};
-use crate::intrinsics::IntrinsicValueKind;
 use crate::ir::const_eval::Value;
 use crate::ir::ExpressionVisitor;
 use crate::ir::{Item, ItemP, Ty, TyP};
 
 use super::const_eval::LValue;
-use super::{default_visit_expr, ExprP};
+use super::{default_visit_expr, ExprP, IntrinsicValueKind};
 
 pub struct DeadCodeEliminator<'ir> {
     alive: HashSet<ItemP<'ir>>,

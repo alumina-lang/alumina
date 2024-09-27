@@ -545,7 +545,7 @@ use crate::ast::serialization::AstSerializable;
 use crate::ast::Span;
 use crate::diagnostics::DiagnosticsStack;
 use crate::ir::const_eval::ConstEvalErrorKind;
-use crate::name_resolution::scope::Scope;
+use crate::src::scope::Scope;
 
 pub trait Incrementable<T> {
     fn increment(&self) -> T;

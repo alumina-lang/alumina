@@ -7,10 +7,9 @@ mod common;
 mod compiler;
 mod diagnostics;
 mod global_ctx;
-mod intrinsics;
 mod ir;
-mod name_resolution;
 mod parser;
+mod src;
 mod utils;
 mod visitors;
 

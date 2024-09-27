@@ -7,8 +7,8 @@ use crate::ast::{
 };
 use crate::common::{AluminaError, ArenaAllocatable, CodeDiagnostic, HashMap};
 use crate::global_ctx::GlobalCtx;
-use crate::name_resolution::scope::{NamedItemKind, Scope};
 use crate::parser::{FieldKind, NodeExt};
+use crate::src::scope::{NamedItemKind, Scope};
 
 use once_cell::unsync::OnceCell;
 

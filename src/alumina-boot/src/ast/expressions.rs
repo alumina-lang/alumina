@@ -11,11 +11,11 @@ use crate::common::{
     WithSpanDuringParsing,
 };
 use crate::global_ctx::GlobalCtx;
-use crate::name_resolution::pass1::FirstPassVisitor;
-use crate::name_resolution::path::{Path, PathSegment};
-use crate::name_resolution::resolver::{ItemResolution, NameResolver};
-use crate::name_resolution::scope::{BoundItemType, NamedItem, NamedItemKind, Scope, ScopeType};
 use crate::parser::{AluminaVisitor, FieldKind, NodeExt, NodeKind, ParseCtx};
+use crate::src::pass1::FirstPassVisitor;
+use crate::src::path::{Path, PathSegment};
+use crate::src::resolver::{ItemResolution, NameResolver};
+use crate::src::scope::{BoundItemType, NamedItem, NamedItemKind, Scope, ScopeType};
 use crate::visitors::{AttributeVisitor, ScopedPathVisitor};
 
 use crate::common::IndexMap;
