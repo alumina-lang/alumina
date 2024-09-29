@@ -927,4 +927,24 @@ fn test_tuple_slicing_types() {
 #[test]
 fn test_tuple_unpack() {
     assert_eq!((1, (2, 3)..., 4, 5), (1, 2, 3, 4, 5));
+    assert_eq!((()...,), ());
+
+    // Test side effects & order of evaluation
+    let counter = 0;
+
+    let a = (1, {
+        assert_eq!(counter, 0);
+        counter += 1;
+        (2, 3)
+    }..., {
+        assert_eq!(counter, 1);
+        counter += 1;
+        (4, 5)
+    }..., {
+        assert_eq!(counter, 2);
+        counter += 1;
+        ()
+    }...);
+
+    assert_eq!(a, (1, 2, 3, 4, 5));
 }

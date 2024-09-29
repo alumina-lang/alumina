@@ -4284,6 +4284,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         let mut lowered = Vec::with_capacity(exprs.len());
 
         for expr in exprs {
+            let _guard = self.diag.push_span(expr.span);
             match expr.kind {
                 ast::ExprKind::EtCetera(inner) => {
                     // type hint is None since we do not know the length beforehand. If
@@ -4331,22 +4332,30 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         let element_types: Vec<_> = lowered.iter().map(|e| e.ty).collect();
         let tuple_type = self.types.tuple(element_types);
 
-        let ret = self
+        // Unpacking produced an empty tuple, but there may have been side effects
+        // in the process, so we need to wrap the tuple in a block. This is slightly
+        // involved because we care about evaluating the expressions in order.
+        let ret = if stmts.is_empty() {
+            self
             .exprs
             .tuple(lowered.into_iter().enumerate(), tuple_type, ast_span)
-            .alloc_on(self.ctx.ir);
+            .alloc_on(self.ctx.ir)
+        } else if let Some(last) = lowered.last_mut() {
+            // Attach the remaining statements after the last tuple element
+            let (expr, stmt) = self.ensure_local(last);
+            stmts.extend(stmt);
 
-        if !stmts.is_empty() {
-            // Unpacking produced an empty tuple, but there may have been side effects
-            // in the process, so we need to wrap the tuple in a block
-
-            let (tuple, assign) = self.ensure_local(ret);
-            stmts.extend(assign);
-
-            Ok(self.exprs.block(stmts, tuple, ast_span))
+            *last = self.exprs.block(stmts, expr, ast_span);
+            self
+                .exprs
+                .tuple(lowered.into_iter().enumerate(), tuple_type, ast_span)
+                .alloc_on(self.ctx.ir)
         } else {
-            Ok(ret)
-        }
+            let ret = self.exprs.void(tuple_type, ir::ValueType::RValue, ast_span);
+            self.exprs.block(stmts, ret, ast_span)
+        };
+
+        Ok(ret)
     }
 
     fn lower_cast(
