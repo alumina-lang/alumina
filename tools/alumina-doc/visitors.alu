@@ -487,12 +487,12 @@ impl TopLevelVisitor {
 }
 
 macro w($writer, $fmt, $args...) {
-    std::fmt::write!($writer, $fmt, $args...)
+    std::fmt::write!($writer, $fmt, $args$...)
         .map_err(alumina_doc::error::Error::from::<std::fmt::Error>)?
 }
 
 macro wln($writer, $fmt, $args...) {
-    std::fmt::writeln!($writer, $fmt, $args...)
+    std::fmt::writeln!($writer, $fmt, $args$...)
         .map_err(alumina_doc::error::Error::from::<std::fmt::Error>)?
 }
 
@@ -648,7 +648,7 @@ impl CodePrinter<W: Writable<W>> {
 
         w!(self.writer, "{}", name);
         if child_by!(node, FieldKind::EtCetera).is_some() {
-            w!(self.writer, "...");
+            w!(self.writer, "<span class=\"token comment\">/* ... */</span>");
         }
 
         Result::ok(())
@@ -657,6 +657,11 @@ impl CodePrinter<W: Writable<W>> {
     fn visit_type_identifier(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         let path = common::Path::from_str(node.text(self.parse_context.source()));
         defer path.free();
+
+        if path.last().unwrap() == "__computed__" {
+            w!(self.writer, "<span class=\"token comment\">/* computed */</span>");
+            return Result::ok(());
+        }
 
         let link = self.link_context.resolve_link(&path);
         defer link.free();
@@ -695,22 +700,28 @@ impl CodePrinter<W: Writable<W>> {
     }
 
     fn visit_type_of(self: &mut CodePrinter<W>, _node: Node) -> Result<()> {
-        w!(self.writer, "<span class=\"keyword\">typeof</span>(...)");
+        w!(self.writer, "<span class=\"keyword\">typeof</span>(<span class=\"token comment\">/* ... */</span>)");
         Result::ok(())
     }
 
     fn visit_when_type(self: &mut CodePrinter<W>, _node: Node) -> Result<()> {
-        w!(self.writer, "<span class=\"keyword-control\">when</span> ...");
+        w!(self.writer, "<span class=\"keyword-control\">when</span> <span class=\"token comment\">/* ... */</span>");
         Result::ok(())
     }
 
     fn visit_pointer_of(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         if child_by!(node, FieldKind::Mut).is_some() {
-            w!(self.writer, "&amp;mut ");
+            w!(self.writer, "&amp;<span class=\"keyword\">mut</span> ");
         } else {
             w!(self.writer, "&amp;");
         }
 
+        self.visit(child_by!(node, FieldKind::Inner).unwrap())?;
+        Result::ok(())
+    }
+
+    fn visit_deref_of(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
+        w!(self.writer, "*");
         self.visit(child_by!(node, FieldKind::Inner).unwrap())?;
         Result::ok(())
     }
@@ -783,6 +794,12 @@ impl CodePrinter<W: Writable<W>> {
         Result::ok(())
     }
 
+    fn visit_et_cetera_of(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
+        self.visit(child_by!(node, FieldKind::Inner).unwrap())?;
+        w!(self.writer, "...");
+
+        Result::ok(())
+    }
 
     fn visit_generic_type(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         self.visit(child_by!(node, FieldKind::Type).unwrap())?;
@@ -809,7 +826,7 @@ impl CodePrinter<W: Writable<W>> {
 
     fn visit_slice_of(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         if child_by!(node, FieldKind::Mut).is_some() {
-            w!(self.writer, "&amp;mut [");
+            w!(self.writer, "&amp;<span class=\"keyword\">mut</span> [");
         } else {
             w!(self.writer, "&amp;[");
         }
@@ -822,9 +839,9 @@ impl CodePrinter<W: Writable<W>> {
 
     fn visit_dyn_of(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         if child_by!(node, FieldKind::Mut).is_some() {
-            w!(self.writer, "&amp;mut dyn ");
+            w!(self.writer, "&amp;<span class=\"keyword\">mut</span> <span class=\"keyword\">dyn</span> ");
         } else {
-            w!(self.writer, "&amp;dyn ");
+            w!(self.writer, "&amp;<span class=\"keyword\">dyn</span> ");
         }
 
         let cursor = node.walk();
@@ -859,7 +876,7 @@ impl CodePrinter<W: Writable<W>> {
     }
 
     fn visit_function_pointer(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
-        w!(self.writer, "fn");
+        w!(self.writer, "<span class=\"keyword\">fn</span>");
         self.visit(child_by!(node, FieldKind::Parameters).unwrap())?;
 
         child_by!(node, FieldKind::ReturnType)
@@ -874,7 +891,7 @@ impl CodePrinter<W: Writable<W>> {
     }
 
     fn visit_function_protocol(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
-        w!(self.writer, "Fn");
+        w!(self.writer, "<span class=\"keyword\">Fn</span>");
         self.visit(child_by!(node, FieldKind::Parameters).unwrap())?;
 
         child_by!(node, FieldKind::ReturnType)
@@ -960,6 +977,34 @@ impl CodePrinter<W: Writable<W>> {
         Result::ok(())
     }
 
+    fn visit_tuple_index_of(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
+        println!("{}", node.text(self.parse_context.source()));
+
+        child_by!(node, FieldKind::Inner)
+            .map(|=self, child: Node| -> Result<()> { self.visit(child) })
+            .transpose()?;
+
+        w!(self.writer, ".");
+
+        self.visit(child_by!(node, FieldKind::Index).unwrap())?;
+
+        Result::ok(())
+    }
+
+
+    fn visit_tuple_index_expression(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
+        let field = child_by!(node, FieldKind::Field).unwrap();
+
+
+        if NODE_KINDS[field.symbol() as usize] == NodeKind::IntegerLiteral {
+            w!(self.writer, "{}", field.text(self.parse_context.source()));
+        } else {
+            w!(self.writer, "(<span class=\"token comment\">/* ... */</span>)");
+        }
+
+        Result::ok(())
+    }
+
     fn visit_const_declaration(self: &mut CodePrinter<W>, node: Node) -> Result<()> {
         w!(self.writer, "<span class=\"keyword\">const</span> <span class=\"identifier-constant\">{}</span>", get_name!(self, node));
         child_by!(node, FieldKind::Type)
@@ -969,7 +1014,7 @@ impl CodePrinter<W: Writable<W>> {
                 Result::ok(())
             })
             .transpose()?;
-        w!(self.writer, " = ...");
+        w!(self.writer, " = <span class=\"token comment\">/* ... */</span>");
         Result::ok(())
     }
 
@@ -986,7 +1031,7 @@ impl CodePrinter<W: Writable<W>> {
 
         child_by!(node, FieldKind::Init)
             .map(|=self, _child: Node| -> Result<()> {
-                w!(self.writer, " = ...");
+                w!(self.writer, " = <span class=\"token comment\">/* ... */</span>");
                 Result::ok(())
             })
             .transpose()?;

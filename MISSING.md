@@ -8,7 +8,7 @@
     - could be a similar issue with protocols, though these are more coservative vis-a-vis recursion
 - if tentative monomorphization fails (e.g. error), but type inference still succeeds, we are left with unpopulated symbols
     - this is now especially an issue with `when` expressions which do tentative mono during proto bound checking
-    - This is a big problem, unfortunately there is no easy solution with the current `mono` architecture
+    - This is a big problem, unfortunately there is no easy solution with the current `mono` architecture.
 - "any/don't care" in protocol bounds. Especially for things like `Hashable` and `Formattable`, it would be great if users didn't need to introduce a new generic parameter for the hasher and formatter (since that complicates type inference).
   - Alternatively, allow pre-monomorphized types to be used as protocol bounds
   - This could be solved by `infer`. It needs to do the same thing as `check_protocol_bounds` - go through all the AST methods of the protocol in the bound and IR method of the type in the slot and
@@ -23,7 +23,6 @@
 - a coherent story for operator overloading
 - `dyn` pointers for certain builtin protocols. Specifically `dyn Callable<...>` would be very useful for being type-erased closures.
 - Fix that damn "local with unknown type" issue. It can happen that compilation will fail with 0 errors and 0 warnings now.
-- make compile_fail take format string and arguments
 - get rid of println! and eprintln! in const-eval, give them separate names
 
 ## Grammar, parsing, AST
@@ -71,8 +70,10 @@
     - Type casts need to be explicit
     - Spaghetti gotos need to be converted to LLVM basic blocks
 - Clean up `mono`. It's a mess.
+  -  It's been slightly cleaned up, and a major rewrite will probably never happen. I'd like to start focusing on the self-hosting compiler instead.
 - Should monomorphization and type checking be separate stages? Can this even be done with the loose duck-typed language?
-- Will the compiler architecture scale to large programs? Is it possible to pre-compile the libraries at least to AST?
+- Will the compiler architecture scale to large programs?
+    - So far it's looking good. Stdlib is ~70k lines of code and it compiles with tests in half a second. With serialized AST it's even faster and the bottleneck is mono, which means that even as stlib grows, small programs will still be fast to compile.
 - AST expression should have a convenience builder, like the one for IR expressions. `expressions.rs` is overly verbose right now, especially with all the span tagging.
 - Most panics should probably use `ice!` macro to report the source span where the compiler panicked
 - Cross-compilation
@@ -87,7 +88,6 @@
 - full Hindley-Milner type inference. Global type inference will pretty much require a full rewrite of `mono`, so whis would be a massive project, but it would also be super awesome to have
   - Type inference gaps are a big pain point right now, especially since there are so many places where adding a type hint is not even possible (e.g. when chaining methods).
 - some sort of type-checking of pre-monomorphized functions might be useful. they can have pretty blatant errors inside that would fail to compile no matter what the type parameters are, but you don't know until you actually try to use it.
-- ... (et cetera) as a tuple splat operator (types and expressions)
 - attributes in reflection
 
 ## Tooling
@@ -101,6 +101,4 @@
 - Name conventions (PascalCase, snake_case, ...)
   - This is settled now. See: Rust.
 - Why "Alumina"?
-  - Because it's another metal oxide, like Rust
-  - Rust begets more Rust until everything is oxidized. Aluminium forms just a thin passivation layer leaving "bare metal" just under the surface.
-  -
+  - Rust begets more Rust until everything is oxidized. Aluminium forms just a thin passivation layer leaving "bare metal" just under the surface (I am really stretching the metaphor here, the real reason is just that it is another metal oxide)

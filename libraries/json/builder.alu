@@ -109,11 +109,11 @@ macro object($val...) {
     use std::collections::HashMap;
     use std::string::StringBuf;
 
-    let object: HashMap<StringBuf, JsonValue> = HashMap::with_capacity(count!($val...));
+    let object: HashMap<StringBuf, JsonValue> = HashMap::with_capacity(count!($val$...));
     {
         let prop = _to_json_propery($val);
         object.insert(prop.0, prop.1);
-    }...;
+    }$...;
 
     JsonValue::object(object)
 }
@@ -138,8 +138,8 @@ macro array($val...) {
     use std::macros::count;
     use std::collections::Vector;
 
-    let array: Vector<JsonValue> = Vector::with_capacity(count!($val...));
-    { array.push(_to_json($val)); }...;
+    let array: Vector<JsonValue> = Vector::with_capacity(count!($val$...));
+    { array.push(_to_json($val)); }$...;
 
     JsonValue::array(array)
 }

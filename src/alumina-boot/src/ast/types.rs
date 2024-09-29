@@ -4,7 +4,7 @@ use crate::ast::{
 };
 use crate::common::{AluminaError, ArenaAllocatable, CodeDiagnostic, WithSpanDuringParsing};
 use crate::global_ctx::GlobalCtx;
-use crate::parser::{AluminaVisitor, FieldKind, NodeExt, ParseCtx};
+use crate::parser::{AluminaVisitor, FieldKind, NodeExt, NodeKind, ParseCtx};
 use crate::src::resolver::{ItemResolution, NameResolver};
 use crate::src::scope::{NamedItemKind, Scope};
 use crate::visitors::ScopedPathVisitor;
@@ -107,7 +107,14 @@ impl<'ast, 'src> TypeVisitor<'ast, 'src> {
             .child_by_field(FieldKind::Parameters)
             .unwrap()
             .children_by_field(FieldKind::Parameter, &mut cursor)
-            .map(|child| self.visit(child))
+            .map(|child| {
+                if child.kind_typed() == NodeKind::EtCeteraOf {
+                    self.visit(child.child_by_field(FieldKind::Inner).unwrap())
+                        .map(|ty| self.ast.intern_type(Ty::EtCetera(ty)))
+                } else {
+                    self.visit(child)
+                }
+            })
             .collect::<Result<Vec<_>, _>>()?;
 
         let type_node = if let Some(return_type_node) = node.child_by_field(FieldKind::ReturnType) {
@@ -158,6 +165,12 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
         Ok(self.ast.intern_type(Ty::Pointer(ty, !is_mut)))
     }
 
+    fn visit_deref_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let ty = self.visit(node.child_by_field(FieldKind::Inner).unwrap())?;
+
+        Ok(self.ast.intern_type(Ty::Deref(ty)))
+    }
+
     fn visit_slice_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let ty = self.visit(node.child_by_field(FieldKind::Inner).unwrap())?;
         let is_mut = node.child_by_field(FieldKind::Mut).is_some();
@@ -196,11 +209,22 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
         let mut cursor = node.walk();
         let elements = node
             .children_by_field(FieldKind::Element, &mut cursor)
-            .map(|child| self.visit(child))
+            .map(|child| {
+                if child.kind_typed() == NodeKind::EtCeteraOf {
+                    self.visit(child.child_by_field(FieldKind::Inner).unwrap())
+                        .map(|ty| self.ast.intern_type(Ty::EtCetera(ty)))
+                } else {
+                    self.visit(child)
+                }
+            })
             .collect::<Result<Vec<_>, _>>()?;
 
         let slice = elements.alloc_on(self.ast);
         Ok(self.ast.intern_type(Ty::Tuple(slice)))
+    }
+
+    fn visit_et_cetera_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        Err(CodeDiagnostic::EtCeteraInUnsupported).with_span_from(&self.scope, node)
     }
 
     fn visit_scoped_type_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -209,6 +233,19 @@ impl<'ast, 'src> AluminaVisitor<'src> for TypeVisitor<'ast, 'src> {
 
     fn visit_type_identifier(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         self.visit_typeref(node)
+    }
+
+    fn visit_tuple_index_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        let inner = self.visit(node.child_by_field(FieldKind::Inner).unwrap())?;
+        let mut visitor = ExpressionVisitor::new(
+            self.ast,
+            self.global_ctx.clone(),
+            self.scope.clone(),
+            self.macro_ctx,
+        );
+        let index = visitor.visit(node.child_by_field(FieldKind::Index).unwrap())?;
+
+        Ok(self.ast.intern_type(Ty::TupleIndex(inner, index)))
     }
 
     fn visit_type_of(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {

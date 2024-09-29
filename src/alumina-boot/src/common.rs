@@ -100,6 +100,12 @@ pub enum CodeDiagnostic {
     GenericParamCountMismatch(usize, usize),
     #[error("only enums and structs can have generic parameters")]
     UnexpectedGenericParams,
+    #[error("... can only be used inside a tuple")]
+    EtCeteraExprInUnsupported,
+    #[error("... can only be used inside a tuple type or fn/Fn type")]
+    EtCeteraInUnsupported,
+    #[error("... can only be used on something that is a tuple")]
+    EtCeteraOnNonTuple,
     #[error("type is recursive without indirection")]
     RecursiveWithoutIndirection,
     #[error("type hint required")]
@@ -188,24 +194,28 @@ pub enum CodeDiagnostic {
     DeferInDefer,
     #[error("cannot yield inside a defered expression")]
     YieldInDefer,
-    #[error("`...` expressions can only be used in macros")]
-    EtCeteraOutsideOfMacro,
+    #[error("`$...` expressions can only be used in macros")]
+    MacroEtCeteraOutsideOfMacro,
     #[error("`$` identifiers can only be used in macros")]
     DollaredOutsideOfMacro,
+    #[error("{} is not a pointer type", .0)]
+    NotAPointer(String),
+    #[error("{} is not a tuple type", .0)]
+    NotATuple(String),
     #[error("this macro does not have any `...` arguments")]
-    NoEtCeteraArgs,
+    NoMacroEtCeteraArgs,
     #[error("macro can have at most one `...` parameter")]
-    MultipleEtCeteras,
+    MultipleMacroEtCeteras,
     #[error("recursive macro calls are not allowed")]
     RecursiveMacroCall,
     #[error("expression is not a macro")]
     NotAMacro,
     #[error("not enough macro arguments, at least {} expected", .0)]
     NotEnoughMacroArguments(usize),
-    #[error("nested `...` expansions are not supported (yet)")]
-    EtCeteraInEtCetera,
-    #[error("`...` expansion is not allowed in this position")]
-    CannotEtCeteraHere,
+    #[error("nested `$...` expansions are not supported (yet)")]
+    MacroEtCeteraInMacroEtCetera,
+    #[error("`$...` expansion is not allowed in this position")]
+    CannotMacroEtCeteraHere,
     #[error("unexpanded macro (hint: append `!` to invoke it)")]
     IsAMacro,
     #[error("cyclic dependency during static initialization")]

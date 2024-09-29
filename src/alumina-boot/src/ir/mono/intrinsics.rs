@@ -49,8 +49,6 @@ pub enum Intr {
     ConstFree,
     Tag,
     TupleInvoke,
-    TupleTail,
-    TupleConcat,
     Fields,
     StopIteration,
     ModulePath,
@@ -94,8 +92,6 @@ pub fn intrinsic_kind(name: &str) -> Option<Intr> {
         "const_free" => ConstFree,
         "tag" => Tag,
         "tuple_invoke" => TupleInvoke,
-        "tuple_tail" => TupleTail,
-        "tuple_concat" => TupleConcat,
         "fields" => Fields,
         "stop_iteration" => StopIteration,
         "module_path" => ModulePath,
@@ -186,8 +182,6 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
             ConstFree => self.intr_const_free(arg!(0), span),
             IsConstEvaluable => self.intr_is_const_evaluable(arg!(0), span),
             TupleInvoke => self.intr_tuple_invoke(arg!(0), arg!(1), span),
-            TupleTail => self.intr_tuple_tail(arg!(0), span),
-            TupleConcat => self.intr_tuple_concat(arg!(0), arg!(1), span),
             Fields => self.intr_fields(generic!(0)),
             Attributed => self.intr_attributed(arg!(0), generic!(0), span),
             StopIteration => self.intr_stop_iteration(span),
@@ -682,20 +676,6 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         ))
     }
 
-    fn ensure_local(
-        &mut self,
-        expr: ir::ExprP<'ir>,
-    ) -> (ir::ExprP<'ir>, Option<ir::Statement<'ir>>) {
-        match expr.kind {
-            ir::ExprKind::Local(_) => (expr, None),
-            _ => {
-                let local = self.make_local(expr.ty, expr.span);
-                let stmt = ir::Statement::Expression(self.exprs.assign(local, expr, None));
-                (local, Some(stmt))
-            }
-        }
-    }
-
     fn intr_tuple_invoke(
         &mut self,
         callee: ir::ExprP<'ir>,
@@ -778,80 +758,6 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
 
         let ret = self.call(callee, args, return_type, ast_span)?;
         Ok(self.exprs.block(stmt, ret, ast_span))
-    }
-
-    fn intr_tuple_tail(
-        &mut self,
-        tuple: ir::ExprP<'ir>,
-        ast_span: Option<Span>,
-    ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let args = match tuple.ty {
-            ir::Ty::Tuple([_, rest @ ..]) => rest,
-            ir::Ty::Tuple(_) => ice!(self.diag, "non-empty tuple expected"),
-            _ => ice!(self.diag, "tuple expected"),
-        };
-
-        let (local_expr, stmt) = self.ensure_local(tuple);
-
-        let ty = self.types.tuple(args.iter().copied());
-        let ret = self.exprs.tuple(
-            (0..args.len())
-                .map(|i| self.exprs.tuple_index(local_expr, i + 1, args[i], ast_span))
-                .enumerate(),
-            ty,
-            ast_span,
-        );
-
-        Ok(self.exprs.block(stmt, ret, ast_span))
-    }
-
-    fn intr_tuple_concat(
-        &mut self,
-        lhs: ir::ExprP<'ir>,
-        rhs: ir::ExprP<'ir>,
-        ast_span: Option<Span>,
-    ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let (lhs_args, rhs_args) = match (lhs.ty, rhs.ty) {
-            (ir::Ty::Tuple(lhs_args), ir::Ty::Tuple(rhs_args)) => (lhs_args, rhs_args),
-            _ => ice!(self.diag, "tuples expected"),
-        };
-
-        let (lhs_local, lhs_stmt) = self.ensure_local(lhs);
-        let (rhs_local, rhs_stmt) = self.ensure_local(rhs);
-
-        // Cannot use chain because it is not ExactSizeIterator
-        let ty = self
-            .types
-            .tuple((0..lhs_args.len() + rhs_args.len()).map(|i| {
-                if i < lhs_args.len() {
-                    lhs_args[i]
-                } else {
-                    rhs_args[i - lhs_args.len()]
-                }
-            }));
-
-        let ret = self.exprs.tuple(
-            (0..lhs_args.len() + rhs_args.len())
-                .map(|i| {
-                    if i < lhs_args.len() {
-                        self.exprs.tuple_index(lhs_local, i, lhs_args[i], ast_span)
-                    } else {
-                        self.exprs.tuple_index(
-                            rhs_local,
-                            i - lhs_args.len(),
-                            rhs_args[i - lhs_args.len()],
-                            ast_span,
-                        )
-                    }
-                })
-                .enumerate(),
-            ty,
-            ast_span,
-        );
-
-        Ok(self
-            .exprs
-            .block(lhs_stmt.into_iter().chain(rhs_stmt), ret, ast_span))
     }
 
     fn generate_vtable(

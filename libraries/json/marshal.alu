@@ -99,7 +99,6 @@ impl JsonUnmarshaller<It: Iterator<It, Result<Token>>> {
     fn unmarshal_optional<T>(self: &mut JsonUnmarshaller<It>, out: &mut T) -> Result<()> {
         use std::typing::{Type, is_same_base_as};
         use std::mem::alloc;
-        use std::builtins::deref_of;
 
         let desc = Type::new::<T>();
         when desc.is_pointer() {
@@ -111,10 +110,10 @@ impl JsonUnmarshaller<It: Iterator<It, Result<Token>>> {
                 return Result::ok(());
             }
 
-            let slot: deref_of<T>;
+            let slot: *T;
             self.unmarshal(&slot)?;
 
-            let mem = alloc::<deref_of<T>>();
+            let mem = alloc::<*T>();
             *mem = slot;
             *out = mem;
         } else when is_same_base_as::<T, Option<()>>() {

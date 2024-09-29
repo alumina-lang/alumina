@@ -344,9 +344,12 @@ pub enum Ty<'ast> {
     Item(ItemP<'ast>),
     Builtin(BuiltinType),
     Pointer(TyP<'ast>, bool),
+    Deref(TyP<'ast>),
     Slice(TyP<'ast>, bool),
     Dyn(&'ast [TyP<'ast>], bool),
     TypeOf(ExprP<'ast>),
+    EtCetera(TyP<'ast>),
+    TupleIndex(TyP<'ast>, ExprP<'ast>),
     Array(TyP<'ast>, ExprP<'ast>),
     Tuple(&'ast [TyP<'ast>]),
     When(ExprP<'ast>, TyP<'ast>, TyP<'ast>),
@@ -385,6 +388,14 @@ impl<'ast> Ty<'ast> {
                 params.iter().any(|s| s.is_dynamic()) || ret.is_dynamic()
             }
             Ty::Generic(base, params) => base.is_dynamic() || params.iter().any(|s| s.is_dynamic()),
+            Ty::EtCetera(inner) => inner.is_dynamic(),
+            Ty::Deref(inner) => inner.is_dynamic(),
+            Ty::TupleIndex(inner, idx) => match idx.kind {
+                ExprKind::Lit(Lit::Int(false, _, None | Some(BuiltinType::USize))) => {
+                    inner.is_dynamic()
+                }
+                _ => true,
+            },
         }
     }
 }
@@ -931,6 +942,7 @@ pub enum ExprKind<'ast> {
     EnumValue(ItemP<'ast>, Id),
     Lit(Lit<'ast>),
     Loop(ExprP<'ast>),
+    EtCeteraMacro(ExprP<'ast>),
     EtCetera(ExprP<'ast>),
     Break(Option<ExprP<'ast>>),
     Return(Option<ExprP<'ast>>),

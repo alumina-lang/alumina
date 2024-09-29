@@ -1,45 +1,43 @@
-use std::builtins::{Tuple, tuple_tail_of};
+use std::builtins::Tuple;
 use std::typing::{type_name, is_void};
 
 // #[tuple_args] attribute is used to make the function receive its arguments as a single tuple
 // instead of multiple arguments.
 #[tuple_args]
 fn print_debug<T: Tuple>(args: T) {
+  // We can use recursion to go through all the elements...
+
   when args.len() == 0 {
     println!("");
   } else when args.len() == 1 {
-    println!("[{}] {}", type_name::<typeof(args.0)>(), args.0);
+    println!("[{}] {}", type_name::<T.0>(), args.0);
   } else {
-    print!("[{}] {}, ", type_name::<typeof(args.0)>(), args.0);
+    print!("[{}] {}, ", type_name::<T.0>(), args.0);
 
     // invoke is the converse of #[tuple_args], it allows us to call a function with a
     // tuple of arguments.
-    (print_debug::<tuple_tail_of<T>>).invoke(args.tail());
+    (print_debug::<T.(1..)>).invoke(args.(1..));
   }
 }
 
 #[tuple_args]
-fn make_array<T: Tuple + !()>(t: T) ->  [typeof(t.0); t.len()] {
-    #[inline(always)]
-    fn tuple_to_array_helper<ElemType, T: Tuple>(t: T, ptr: &mut ElemType) {
-      when !(t is ()) {
-        *ptr = t.0;
-        tuple_to_array_helper::<ElemType, tuple_tail_of<T>>(t.tail(), ptr + 1);
-      }
-    }
+fn make_array<T: Tuple + !()>(t: T) ->  [T.0; t.len()] {
+    // ...but we don't have to, we can use a const loop instead!
 
-    let arr: [typeof(t.0); t.len()];
-    tuple_to_array_helper::<typeof(t.0), T>(t, &arr[0]);
+    let arr: [T.0; t.len()];
+    for const i in 0usize..t.len() {
+      arr[i] = t.(i);
+    }
     arr
 }
 
-const ARR = make_array(1, 2, 3);
 
 fn main() {
-  //print_debug();
-  //print_debug(1);
-  //print_debug(1, "hello");
-  print_debug(1, "hello", true);
+    print_debug();
+    print_debug(1);
+    print_debug(1, "hello");
+    print_debug(1, "hello", true);
 
-  println!("{}, {}, {}", ARR[0], ARR[1], ARR[2]);
+    const ARR = make_array(1, 2, 3);
+    println!("{}, {}, {}", ARR[0], ARR[1], ARR[2]);
 }

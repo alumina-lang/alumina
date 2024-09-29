@@ -1159,24 +1159,6 @@ impl array<Arr: builtins::Array> {
 #[lang(builtin_tuple)]
 #[docs(builtin)]
 struct tuple {}
-impl tuple<Tup: Tuple + !()> {
-
-    /// Tail of a tuple
-    ///
-    /// ## Example
-    /// ```
-    /// use std::util::tail;
-    ///
-    /// let tuple = (1, 2, 3);
-    /// let tail = tuple.tail();
-    ///
-    /// assert_eq!(tail, (2, 3));
-    /// ```
-    #[inline(ir)]
-    fn tail(self: Tup) -> builtins::tuple_tail_of<Tup> {
-        intrinsics::tuple_tail(self)
-    }
-}
 
 impl tuple<Tup: Tuple> {
     /// Returns the number of elements in the tuple.
@@ -1223,9 +1205,6 @@ impl tuple<Tup: Tuple> {
     mixin Comparable<Tup>;
 }
 
-type callback_args_of<Args> = tuple_concat_of<(&mut void, ), Args>;
-type callback_of<Args, Ret> = function_pointer_of<callback_args_of<Args>, Ret>;
-
 /// Method implementations for callable objects (named functions, function pointers, closures)
 #[lang(builtin_callable)]
 #[docs(builtin)]
@@ -1245,7 +1224,7 @@ impl callable {
     /// assert_eq!(result, 3);
     /// ```
     #[inline(ir)]
-    fn invoke<Args, Ret, F: Callable<Args, Ret>>(f: F, args: Args) -> Ret {
+    fn invoke<Args, Ret, F: Fn(Args...) -> Ret>(f: F, args: Args) -> Ret {
         intrinsics::tuple_invoke(f, args)
     }
 
@@ -1287,14 +1266,14 @@ impl callable {
     /// );
     /// ```
     #[inline]
-    fn as_callback<Args, Ret, F: Closure + Callable<Args, Ret>>(f: &mut F) -> (&mut void, callback_of<Args, Ret>) {
+    fn as_callback<Args, Ret, F: Closure + Fn(Args...) -> Ret>(f: &mut F) -> (&mut void, fn(&mut void, Args...) -> Ret) {
         use underlying_function_of as u;
 
         (
             f as &mut void,
             util::unit::<u<F>>()
-                as function_pointer_of<arguments_of<u<F>>, Ret>
-                as callback_of<Args, Ret>,
+                as fn(arguments_of<u<F>>...) -> Ret
+                as fn(&mut void, Args...) -> Ret,
         )
     }
 }
@@ -1370,65 +1349,6 @@ type signed_of<T: Integer> = when typing::is_same::<T, u8>() {
 /// assert!(matches::<element_of<[i32; 3]>, i32>());
 /// ```
 type element_of<T: Array> = typeof({ let t: T; t[0] });
-
-/// Type of the pointed-to value
-///
-/// ## Example
-/// ```
-/// use std::typing::matches;
-/// use std::builtins::deref_of;
-///
-/// assert!(matches::<deref_of<&i32>, i32>());
-/// assert!(matches::<deref_of<&mut i32>, i32>());
-/// ```
-type deref_of<T: Pointer> = typeof({ let t: T; *t });
-
-/// Type of the first element of the provided tuple
-///
-/// ## Example
-/// ```
-/// use std::typing::matches;
-/// use std::builtins::tuple_head_of;
-///
-/// assert!(matches::<tuple_head_of<(i32, u8, ())>, i32>());
-/// ```
-#[lang(typeop_tuple_head_of)]
-type tuple_head_of<T: builtins::Tuple>;
-
-/// Tuple type equivalent to the provided one without the first element.
-///
-/// Passing empty tuple ([void]) is a compile-time error.
-///
-/// See also [builtins::tuple::tail] for a function that returns the tail of a tuple.
-///
-/// ## Example
-/// ```
-/// use std::typing::matches;
-/// use std::builtins::tuple_tail_of;
-///
-/// assert!(matches::<tuple_tail_of<(i32, u8, ())>, (u8, ())>());
-/// assert!(matches::<tuple_tail_of<(i32,)>, ()>());
-/// ```
-#[lang(typeop_tuple_tail_of)]
-type tuple_tail_of<T: builtins::Tuple>;
-
-/// Tuple containing the elements of both provided tuples.
-///
-/// Both types must be tuples or empty tuples ([void]). Passing any other type
-/// is a compile-time error.
-///
-/// See also [util::concat] for a function that concatenates two tuples.
-///
-/// ## Example
-/// ```
-/// use std::typing::matches;
-/// use std::builtins::tuple_concat_of;
-///
-/// assert!(matches::<tuple_concat_of<(u8, u16), (u32, u64)>, (u8, u16, u32, u64)>());
-/// assert!(matches::<tuple_concat_of<(i32,), (u8, u16)>, (i32, u8, u16)>());
-/// ```
-#[lang(typeop_tuple_concat_of)]
-type tuple_concat_of<T1: builtins::Tuple, T2: builtins::Tuple>;
 
 /// Return type of the provided function
 ///
@@ -2331,19 +2251,6 @@ mod tests {
         assert_eq!(0x100u16
             .to_be() | ~ to_be //, that is the question
         (0x1u16), 0xfffeu16);
-    }
-
-    #[test]
-    fn test_deref_of() {
-        use typing::type_id;
-
-        assert_eq!(type_id::<deref_of<&u8>>(), type_id::<u8>());
-        assert_eq!(type_id::<deref_of<&mut u8>>(), type_id::<u8>());
-
-        assert_eq!(type_id::<deref_of<deref_of<&&u8>>>(), type_id::<u8>());
-        assert_eq!(type_id::<deref_of<deref_of<&&mut u8>>>(), type_id::<u8>());
-        assert_eq!(type_id::<deref_of<deref_of<&mut &mut u8>>>(), type_id::<u8>());
-        assert_eq!(type_id::<deref_of<deref_of<&mut &u8>>>(), type_id::<u8>());
     }
 
     #[test]

@@ -175,6 +175,18 @@ impl<'ast> PrettyPrinter<'ast> {
                     format!("{}<{}>", self.print_ty(base), s)
                 }
             }
+            Ty::EtCetera(inner) => format!("{}...", self.print_ty_full(inner, turbofish)),
+            Ty::Deref(inner) => format!("*{}", self.print_ty_full(inner, turbofish)),
+            Ty::TupleIndex(inner, idx) => match idx.kind {
+                ExprKind::Lit(Lit::Int(false, idx, None | Some(BuiltinType::USize))) => {
+                    format!("{}.{}", self.print_ty_full(inner, turbofish), idx)
+                }
+                _ => format!(
+                    "{}.({})",
+                    self.print_ty_full(inner, turbofish),
+                    self.print_expr(idx)
+                ),
+            },
             Ty::Defered(spec) => {
                 format!("{}::{}", self.print_ty_full(spec.ty, turbofish), spec.name)
             }
@@ -709,8 +721,9 @@ impl<'ast> PrettyPrinter<'ast> {
                     "()".to_string()
                 }
             }
+            ExprKind::EtCetera(inner) => format!("{}...", self.print_expr_parens(inner)),
             // Those will never appear in the AST post-macro expansion
-            ExprKind::EtCetera(_) | ExprKind::MacroInvocation(_, _) => unreachable!(),
+            ExprKind::EtCeteraMacro(_) | ExprKind::MacroInvocation(_, _) => unreachable!(),
             ExprKind::Tag(tag, inner) => format!("/* {} */ {}", tag, self.print_expr(inner)),
         };
 

@@ -401,7 +401,7 @@ impl Forked {
         let stderr = ChildStdio::new(false, self._stderr)?;
         defer stderr.close();
 
-        let pid = errno_try!(std::libc::fork());
+        let pid = errno_try!(libc::fork());
         if pid == 0 {
             // If we forked a child thread, we want the panic to
             // abort the whole process.
@@ -517,7 +517,7 @@ impl Command {
         let (fail_rx, fail_tx) = Pipe::anonymous()?;
         defer fail_rx.close();
 
-        let pid = errno_try!(std::libc::fork());
+        let pid = errno_try!(libc::fork());
         if pid == 0 {
             std::panicking::internal::PANIC_HOOK = mem::zeroed();
 

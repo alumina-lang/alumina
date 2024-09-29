@@ -51,7 +51,13 @@ function sepBy(sep, rule) {
 
 module.exports = grammar({
   name: "alumina",
-  extras: ($) => [$.file_doc_comment, $.doc_comment, $.block_comment, $.line_comment, /[\s]+/],
+  extras: ($) => [
+    $.file_doc_comment,
+    $.doc_comment,
+    $.block_comment,
+    $.line_comment,
+    /[\s]+/,
+  ],
 
   word: ($) => $.identifier,
   inline: ($) => [
@@ -224,10 +230,7 @@ module.exports = grammar({
         "type",
         field("name", $.identifier),
         optional(field("type_arguments", $.generic_argument_list)),
-        optional(seq(
-          "=",
-          field("inner", $._type),
-        )),
+        optional(seq("=", field("inner", $._type))),
         ";"
       ),
 
@@ -309,10 +312,15 @@ module.exports = grammar({
     generic_argument: ($) =>
       seq(
         field("placeholder", $.identifier),
-        optional(seq(":", choice(
-          field("all_bounds", sepBy("+", field("bound", $.protocol_bound))),
-          field("any_bounds", sepBy("|", field("bound", $.protocol_bound))),
-        ))),
+        optional(
+          seq(
+            ":",
+            choice(
+              field("all_bounds", sepBy("+", field("bound", $.protocol_bound))),
+              field("any_bounds", sepBy("|", field("bound", $.protocol_bound)))
+            )
+          )
+        ),
         optional(seq("=", field("default", $._type)))
       ),
 
@@ -339,7 +347,25 @@ module.exports = grammar({
       seq("(", sepBy(",", field("parameter", $._type)), optional(","), ")"),
 
     pointer_of: ($) =>
-      seq("&", optional(field("mut", "mut")), field("inner", $._type)),
+      prec.left(
+        PREC.unary,
+        seq("&", optional(field("mut", "mut")), field("inner", $._type))
+      ),
+
+    tuple_index_of: ($) =>
+      prec.left(
+        PREC.field,
+        seq(
+          field("inner", $._type),
+          ".",
+          field("index", $.tuple_index_expression)
+        )
+      ),
+
+    et_cetera_of: ($) =>
+      prec.right(PREC.et_cetera, seq(field("inner", $._type), "...")),
+
+    deref_of: ($) => prec.left(PREC.unary, seq("*", field("inner", $._type))),
 
     slice_of: ($) =>
       seq(
@@ -368,13 +394,7 @@ module.exports = grammar({
       ),
 
     array_of: ($) =>
-      seq(
-        "[",
-        field("inner", $._type),
-        ";",
-        field("size", $._expression),
-        "]"
-      ),
+      seq("[", field("inner", $._type), ";", field("size", $._expression), "]"),
 
     array_expression: ($) =>
       seq(
@@ -419,8 +439,11 @@ module.exports = grammar({
         $.tuple_type,
         $.function_pointer,
         $.function_protocol,
+        $.et_cetera_of,
+        $.tuple_index_of,
+        $.deref_of,
         $.type_of,
-        $.when_type,
+        $.when_type
       ),
 
     type_of: ($) => seq("typeof", "(", field("inner", $._expression), ")"),
@@ -446,7 +469,8 @@ module.exports = grammar({
           field("name", $.identifier),
           seq(
             "(",
-            sepBy(",", field("element", $.identifier)), optional(","),
+            sepBy(",", field("element", $.identifier)),
+            optional(","),
             ")"
           )
         ),
@@ -522,10 +546,10 @@ module.exports = grammar({
       ),
 
     yield_expression: ($) =>
-        choice(
-          prec.left(seq("yield", field("inner", $._expression))),
-          prec(-1, "yield")
-        ),
+      choice(
+        prec.left(seq("yield", field("inner", $._expression))),
+        prec(-1, "yield")
+      ),
 
     defer_expression: ($) =>
       prec.left(seq("defer", field("inner", $._expression))),
@@ -542,11 +566,11 @@ module.exports = grammar({
 
     tuple_expression: ($) =>
       choice(
-          seq(
+        seq(
           "(",
-            seq(field("element", $._expression), ","),
-            repeat(seq(field("element", $._expression), ",")),
-            optional(field("element", $._expression)),
+          seq(field("element", $._expression), ","),
+          repeat(seq(field("element", $._expression), ",")),
+          optional(field("element", $._expression)),
           ")"
         ),
         seq("(", ")")
@@ -658,15 +682,16 @@ module.exports = grammar({
           ".",
           choice(
             field("field", $.identifier),
-            field("field", $.tuple_index_expression),
+            field("field", $.tuple_index_expression)
           )
         )
       ),
 
-    tuple_index_expression: ($) => choice(
-      field("field", $.integer_literal),
-      seq('(', field('field', $._expression), ')')
-    ),
+    tuple_index_expression: ($) =>
+      choice(
+        field("field", $.integer_literal),
+        seq("(", field("field", $._expression), ")")
+      ),
 
     universal_macro_invocation: ($) =>
       prec(
@@ -707,7 +732,10 @@ module.exports = grammar({
             field("upper", $._expression)
           ),
           seq(field("lower", $._expression), ".."),
-          seq(field("inclusive", choice("..", "..=")), field("upper", $._expression)),
+          seq(
+            field("inclusive", choice("..", "..=")),
+            field("upper", $._expression)
+          ),
           ".."
         )
       ),
@@ -734,11 +762,7 @@ module.exports = grammar({
     type_check_expression: ($) =>
       prec(
         PREC.cast,
-        seq(
-          field("value", $._expression),
-          "is",
-          field("type", $._type)
-        )
+        seq(field("value", $._expression), "is", field("type", $._type))
       ),
 
     call_expression: ($) =>
@@ -750,12 +774,15 @@ module.exports = grammar({
         )
       ),
 
-    macro_invocation: ($) => prec.left(1,
-      seq(
-        field("macro", $._expression_except_range),
-        "!",
-        field("arguments", $.macro_arguments)
-      )),
+    macro_invocation: ($) =>
+      prec.left(
+        1,
+        seq(
+          field("macro", $._expression_except_range),
+          "!",
+          field("arguments", $.macro_arguments)
+        )
+      ),
 
     struct_initializer_item: ($) =>
       seq(field("field", $.identifier), ":", field("value", $._expression)),
@@ -872,7 +899,7 @@ module.exports = grammar({
         $.while_expression,
         $.loop_expression,
         $.for_expression,
-        $.static_for_expression,
+        $.static_for_expression
       ),
 
     if_expression: ($) =>
@@ -892,11 +919,7 @@ module.exports = grammar({
         "}",
         "else",
         choice(
-          seq(
-            "{",
-            field("alternative", $._type),
-            "}",
-          ),
+          seq("{", field("alternative", $._type), "}"),
           field("alternative", $.when_type)
         )
       ),
@@ -954,7 +977,13 @@ module.exports = grammar({
     loop_expression: ($) => seq("loop", field("body", $.block)),
 
     et_cetera_expression: ($) =>
-      prec.right(PREC.et_cetera, seq(field("inner", $._expression), "...")),
+      prec.right(
+        PREC.et_cetera,
+        seq(
+          field("inner", $._expression),
+          choice(field("tuple", "..."), field("macro", "$..."))
+        )
+      ),
 
     static_for_expression: ($) =>
       seq(
@@ -964,7 +993,8 @@ module.exports = grammar({
           field("name", $.identifier),
           seq(
             "(",
-              sepBy(",", field("element", $.identifier)), optional(","),
+            sepBy(",", field("element", $.identifier)),
+            optional(","),
             ")"
           )
         ),
@@ -980,7 +1010,8 @@ module.exports = grammar({
           field("name", $.identifier),
           seq(
             "(",
-              sepBy(",", field("element", $.identifier)), optional(","),
+            sepBy(",", field("element", $.identifier)),
+            optional(","),
             ")"
           )
         ),
@@ -996,7 +1027,7 @@ module.exports = grammar({
         $.boolean_literal,
         $.integer_literal,
         $.float_literal,
-        $.ptr_literal,
+        $.ptr_literal
       ),
 
     integer_literal: ($) =>

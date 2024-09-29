@@ -1,5 +1,7 @@
-
-type __dynamic__ = ();
+/// Marker return type for intrinsics where the return type is not expressible or
+/// depends on the arguments (gasp!)
+#[docs(hide)]
+type __computed__ = ();
 
 //! Functions implemented directly in the compiler.
 //!
@@ -65,19 +67,19 @@ extern "intrinsic" fn align_of<T>() -> usize;
 ///
 /// Do not use directly, use coercion to `&dyn Protocol` instead. Meant to be called
 /// from a const initializer.
-extern "intrinsic" fn vtable<Proto, T>() -> [&fn(); 0];
+extern "intrinsic" fn vtable<Proto, T>() -> __computed__;
 
 /// Enum variants
 ///
 /// Do not use directly, use [typing::Type] instead. Meant to be called
 /// from a const initializer (see [typing::internal::ENUM_VARIANTS]).
-extern "intrinsic" fn enum_variants<T: builtins::Enum>() -> [(&[u8], T); 0];
+extern "intrinsic" fn enum_variants<T: builtins::Enum>() -> __computed__;
 
 /// Field descriptors for a struct
 ///
 /// Do not use directly, use [typing::Type] instead. Meant to be called
 /// from a const initializer (see [typing::internal::FIELDS]).
-extern "intrinsic" fn fields<T: builtins::Struct | builtins::Union>() -> builtins::Tuple;
+extern "intrinsic" fn fields<T: builtins::Struct | builtins::Union>() -> __computed__;
 
 /// Find items by attribute name
 ///
@@ -86,7 +88,7 @@ extern "intrinsic" fn fields<T: builtins::Struct | builtins::Union>() -> builtin
 ///
 /// There is no stable equivalent in the standard library as the return type is
 /// dependent on the input (deep magic lol).
-extern "intrinsic" fn attributed<Args: builtins::Tuple>(name: &[u8]) -> builtins::Tuple;
+extern "intrinsic" fn attributed<Args: builtins::Tuple>(name: &[u8]) -> __computed__;
 
 /// Value of a constant or static referenced by a type
 ///
@@ -192,17 +194,7 @@ extern "intrinsic" fn tag<T>(tag: &[u8], val: T) -> T;
 /// Invoke a function with arguments passed as a tuple.
 ///
 /// Use [builtins::callable::invoke] instead.
-extern "intrinsic" fn tuple_invoke<Fun, Args, Ret>(f: Fun, args: Args) -> Ret;
-
-/// Tail of a tuple.
-///
-/// Use [builtins::tuple::tail] instead.
-extern "intrinsic" fn tuple_tail<T: builtins::Tuple>(t: T) -> builtins::tuple_tail_of<T>;
-
-/// Concatenate two tuples.
-///
-/// Use [util::concat] instead.
-extern "intrinsic" fn tuple_concat<T1: builtins::Tuple, T2: builtins::Tuple>(t1: T1, t2: T2) -> builtins::tuple_concat_of<T1, T2>;
+extern "intrinsic" fn tuple_invoke<Fun: Fn(Args, Ret), Args, Ret>(f: Fun, args: Args) -> Ret;
 
 /// Stop iteration in a `for const` loop.
 ///
