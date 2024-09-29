@@ -4336,18 +4336,16 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         // in the process, so we need to wrap the tuple in a block. This is slightly
         // involved because we care about evaluating the expressions in order.
         let ret = if stmts.is_empty() {
-            self
-            .exprs
-            .tuple(lowered.into_iter().enumerate(), tuple_type, ast_span)
-            .alloc_on(self.ctx.ir)
+            self.exprs
+                .tuple(lowered.into_iter().enumerate(), tuple_type, ast_span)
+                .alloc_on(self.ctx.ir)
         } else if let Some(last) = lowered.last_mut() {
             // Attach the remaining statements after the last tuple element
             let (expr, stmt) = self.ensure_local(last);
             stmts.extend(stmt);
 
             *last = self.exprs.block(stmts, expr, ast_span);
-            self
-                .exprs
+            self.exprs
                 .tuple(lowered.into_iter().enumerate(), tuple_type, ast_span)
                 .alloc_on(self.ctx.ir)
         } else {
