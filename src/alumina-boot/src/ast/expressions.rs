@@ -700,7 +700,18 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
         let mut cursor = node.walk();
         for node in node.children_by_field(FieldKind::Element, &mut cursor) {
-            elements.push(self.visit(node)?);
+            if node.kind_typed() == NodeKind::EtCeteraExpression
+                && node.child_by_field(FieldKind::Tuple).is_some()
+            {
+                let value = self.visit(node.child_by_field(FieldKind::Inner).unwrap())?;
+                elements.push(ExprKind::EtCetera(value).alloc_with_span_from(
+                    self.ast,
+                    &self.scope,
+                    node,
+                ));
+            } else {
+                elements.push(self.visit(node)?);
+            }
         }
 
         let result = match elements[..] {
@@ -778,12 +789,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
 
     fn visit_field_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
         let value = self.visit(node.child_by_field(FieldKind::Value).unwrap())?;
-
         let field = node.child_by_field(FieldKind::Field).unwrap();
-        let field_value = self.code.node_text(field).alloc_on(self.ast);
 
         let result = match field.kind_typed() {
             NodeKind::Identifier => {
+                let field_value = self.code.node_text(field).alloc_on(self.ast);
                 let mut resolver = NameResolver::new();
                 let unified_fn = match resolver
                     .resolve_item(self.scope.clone(), PathSegment(field_value).into())
@@ -798,13 +808,14 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                 ExprKind::Field(value, field_value.alloc_on(self.ast), unified_fn, None)
             }
 
-            _ => ExprKind::TupleIndex(
-                value,
-                self.visit(field.child_by_field(FieldKind::Field).unwrap())?,
-            ),
+            _ => ExprKind::TupleIndex(value, self.visit(field)?),
         };
 
         Ok(result.alloc_with_span_from(self.ast, &self.scope, node))
+    }
+
+    fn visit_tuple_index_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
+        self.visit(node.child_by_field(FieldKind::Field).unwrap())
     }
 
     fn visit_index_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -1334,17 +1345,21 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
     }
 
     fn visit_et_cetera_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
-        if !self.macro_ctx.in_a_macro {
-            return Err(CodeDiagnostic::EtCeteraOutsideOfMacro).with_span_from(&self.scope, node);
+        if node.child_by_field(FieldKind::Macro).is_some() {
+            if !self.macro_ctx.in_a_macro {
+                return Err(CodeDiagnostic::MacroEtCeteraOutsideOfMacro)
+                    .with_span_from(&self.scope, node);
+            }
+
+            if !self.macro_ctx.has_et_cetera {
+                return Err(CodeDiagnostic::NoMacroEtCeteraArgs).with_span_from(&self.scope, node);
+            }
+
+            let inner = self.visit(node.child_by_field(FieldKind::Inner).unwrap())?;
+            Ok(ExprKind::EtCeteraMacro(inner).alloc_with_span_from(self.ast, &self.scope, node))
+        } else {
+            Err(CodeDiagnostic::EtCeteraExprInUnsupported).with_span_from(&self.scope, node)
         }
-
-        if !self.macro_ctx.has_et_cetera {
-            return Err(CodeDiagnostic::NoEtCeteraArgs).with_span_from(&self.scope, node);
-        }
-
-        let inner = self.visit(node.child_by_field(FieldKind::Inner).unwrap())?;
-
-        Ok(ExprKind::EtCetera(inner).alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_macro_invocation(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {

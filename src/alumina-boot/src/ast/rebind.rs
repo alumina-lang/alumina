@@ -109,6 +109,9 @@ impl<'ast> Rebinder<'ast> {
                 self.visit_ty(then)?,
                 self.visit_ty(els)?,
             ),
+            EtCetera(inner) => EtCetera(self.visit_ty(inner)?),
+            Deref(inner) => Deref(self.visit_ty(inner)?),
+            TupleIndex(inner, idx) => TupleIndex(self.visit_ty(inner)?, self.visit_expr(idx)?),
             Item(_) | Builtin(_) => return Ok(ty),
         };
 
@@ -157,7 +160,7 @@ impl<'ast> Rebinder<'ast> {
                     .collect::<Result<Vec<_>, _>>()?
                     .alloc_on(self.ast),
             ),
-            Macro(_, _) | MacroInvocation(_, _) | EtCetera(_) => {
+            Macro(_, _) | MacroInvocation(_, _) | EtCeteraMacro(_) => {
                 unreachable!("macros should have been expanded by now")
             }
             Block(statements, ret) => {
@@ -280,6 +283,7 @@ impl<'ast> Rebinder<'ast> {
                 self.visit_expr(els)?,
             ),
             TypeCheck(lhs, rhs) => TypeCheck(self.visit_expr(lhs)?, self.visit_ty(rhs)?),
+            EtCetera(inner) => EtCetera(self.visit_expr(inner)?),
             Local(_) | BoundParam(_, _, _) | Continue | EnumValue(_, _) | Lit(_) | Void => {
                 expr.kind
             }

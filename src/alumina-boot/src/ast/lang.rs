@@ -60,9 +60,6 @@ pub enum Lang {
     ImplArray,
     ImplCallable,
 
-    TypeopTupleHeadOf,
-    TypeopTupleTailOf,
-    TypeopTupleConcatOf,
     TypeopReturnTypeOf,
     TypeopArgumentsOf,
     TypeopPointerWithMutOf,
@@ -133,10 +130,7 @@ impl Lang {
     pub fn is_typeop(&self) -> bool {
         matches!(
             self,
-            Lang::TypeopTupleHeadOf
-                | Lang::TypeopTupleTailOf
-                | Lang::TypeopTupleConcatOf
-                | Lang::TypeopReturnTypeOf
+            Lang::TypeopReturnTypeOf
                 | Lang::TypeopArgumentsOf
                 | Lang::TypeopPointerWithMutOf
                 | Lang::TypeopArrayWithLengthOf
@@ -239,9 +233,6 @@ impl TryFrom<&str> for Lang {
             "operator_gt" => Ok(Lang::Operator(BinOp::Gt)),
             "operator_gte" => Ok(Lang::Operator(BinOp::GEq)),
 
-            "typeop_tuple_head_of" => Ok(Lang::TypeopTupleHeadOf),
-            "typeop_tuple_tail_of" => Ok(Lang::TypeopTupleTailOf),
-            "typeop_tuple_concat_of" => Ok(Lang::TypeopTupleConcatOf),
             "typeop_return_type_of" => Ok(Lang::TypeopReturnTypeOf),
             "typeop_arguments_of" => Ok(Lang::TypeopArgumentsOf),
             "typeop_pointer_with_mut_of" => Ok(Lang::TypeopPointerWithMutOf),

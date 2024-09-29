@@ -122,7 +122,8 @@ impl<'ast> MacroMaker<'ast> {
             match item.kind {
                 NamedItemKind::MacroParameter(id, et_cetera) => {
                     if has_et_cetera && et_cetera {
-                        return Err(CodeDiagnostic::MultipleEtCeteras).with_span_from(&scope, node);
+                        return Err(CodeDiagnostic::MultipleMacroEtCeteras)
+                            .with_span_from(&scope, node);
                     } else if et_cetera {
                         has_et_cetera = true;
                     }
@@ -257,9 +258,9 @@ impl<'ast> MacroExpander<'ast> {
 
         let mut new_args = Vec::new();
         for arg in args {
-            if let super::ExprKind::EtCetera(inner) = arg.kind {
+            if let super::ExprKind::EtCeteraMacro(inner) = arg.kind {
                 if self.et_cetera_index.is_some() {
-                    return Err(CodeDiagnostic::EtCeteraInEtCetera).with_span(arg.span);
+                    return Err(CodeDiagnostic::MacroEtCeteraInMacroEtCetera).with_span(arg.span);
                 }
                 for idx in 0..self.et_cetera_arg.as_ref().unwrap().1.len() {
                     self.et_cetera_index = Some(idx);
@@ -331,6 +332,9 @@ impl<'ast> MacroExpander<'ast> {
                 ty: self.visit_ty(ty)?,
                 name,
             }),
+            EtCetera(inner) => EtCetera(self.visit_ty(inner)?),
+            TupleIndex(inner, idx) => TupleIndex(self.visit_ty(inner)?, self.visit_expr(idx)?),
+            Deref(inner) => Deref(self.visit_ty(inner)?),
             Placeholder(_) | Item(_) | Builtin(_) => return Ok(ty),
         };
 
@@ -372,7 +376,7 @@ impl<'ast> MacroExpander<'ast> {
                     if let Some(index) = self.et_cetera_index {
                         return Ok(self.et_cetera_arg.as_ref().unwrap().1[index]);
                     } else {
-                        return Err(CodeDiagnostic::CannotEtCeteraHere).with_span(expr.span);
+                        return Err(CodeDiagnostic::CannotMacroEtCeteraHere).with_span(expr.span);
                     }
                 } else {
                     let id = match self.id_replacements.get(&id) {
@@ -386,19 +390,20 @@ impl<'ast> MacroExpander<'ast> {
                     Local(id)
                 }
             }
-            EtCetera(_) => {
-                return Err(CodeDiagnostic::CannotEtCeteraHere).with_span(expr.span);
+            EtCeteraMacro(_) => {
+                return Err(CodeDiagnostic::CannotMacroEtCeteraHere).with_span(expr.span);
             }
             Block(statements, ret) => {
                 let mut new_statements = Vec::new();
                 for statement in statements {
                     if let super::StatementKind::Expression(Expr {
-                        kind: super::ExprKind::EtCetera(inner),
+                        kind: super::ExprKind::EtCeteraMacro(inner),
                         span,
                     }) = statement.kind
                     {
                         if self.et_cetera_index.is_some() {
-                            return Err(CodeDiagnostic::EtCeteraInEtCetera).with_span(*span);
+                            return Err(CodeDiagnostic::MacroEtCeteraInMacroEtCetera)
+                                .with_span(*span);
                         }
                         for idx in 0..self.et_cetera_arg.as_ref().unwrap().1.len() {
                             self.et_cetera_index = Some(idx);
@@ -530,6 +535,7 @@ impl<'ast> MacroExpander<'ast> {
                 Const(item, generic_args)
             }
             Tag(tag, inner) => Tag(tag, self.visit_expr(inner)?),
+            EtCetera(inner) => EtCetera(self.visit_expr(inner)?),
             Continue
             | EnumValue(_, _)
             | Macro(_, _ /* bound values are "invisible" and should not be replaced */)

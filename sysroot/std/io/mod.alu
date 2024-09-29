@@ -29,12 +29,12 @@ type Result<T> = std::result::Result<T, Error>;
 /// ```
 macro print($fmt_str, $arg...) {
     if runtime::in_const_context() {
-        let buf = fmt::format!($fmt_str, $arg...).unwrap();
+        let buf = fmt::format!($fmt_str, $arg$...).unwrap();
         intrinsics::const_note(buf[..]);
         buf.free();
     } else {
         let fmt = BufferedWriter::from_slice(&StdioStream::stdout(), &FMT_BUF);
-        fmt::write!(&fmt, $fmt_str, $arg...).unwrap();
+        fmt::write!(&fmt, $fmt_str, $arg$...).unwrap();
         fmt.flush().unwrap();
     }
 }
@@ -47,10 +47,10 @@ macro print($fmt_str, $arg...) {
 /// ```
 macro println($fmt_str, $arg...) {
     if runtime::in_const_context() {
-        print!($fmt_str, $arg...);
+        print!($fmt_str, $arg$...);
     } else {
         let fmt = BufferedWriter::from_slice(&StdioStream::stdout(), &FMT_BUF);
-        fmt::writeln!(&fmt, $fmt_str, $arg...).unwrap();
+        fmt::writeln!(&fmt, $fmt_str, $arg$...).unwrap();
         fmt.flush().unwrap();
     }
 }
@@ -63,12 +63,12 @@ macro println($fmt_str, $arg...) {
 /// ```
 macro eprint($fmt_str, $arg...) {
     if runtime::in_const_context() {
-        let buf = fmt::format!($fmt_str, $arg...).unwrap();
+        let buf = fmt::format!($fmt_str, $arg$...).unwrap();
         intrinsics::const_warning(buf[..]);
         buf.free();
     } else {
         let fmt = BufferedWriter::from_slice(&StdioStream::stderr(), &FMT_BUF);
-        fmt::write!(&fmt, $fmt_str, $arg...).unwrap();
+        fmt::write!(&fmt, $fmt_str, $arg$...).unwrap();
         fmt.flush().unwrap();
     }
 }
@@ -81,10 +81,10 @@ macro eprint($fmt_str, $arg...) {
 /// ```
 macro eprintln($fmt_str, $arg...) {
     if runtime::in_const_context() {
-        eprint!($fmt_str, $arg...);
+        eprint!($fmt_str, $arg$...);
     } else {
         let fmt = BufferedWriter::from_slice(&StdioStream::stderr(), &FMT_BUF);
-        fmt::writeln!(&fmt, $fmt_str, $arg...).unwrap();
+        fmt::writeln!(&fmt, $fmt_str, $arg$...).unwrap();
         fmt.flush().unwrap();
     }
 }

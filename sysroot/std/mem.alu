@@ -392,8 +392,8 @@ impl slice {
 
     /// @ std::iter::IterableRef::iter_ref
     #[inline(always)]
-    fn iter_ref<Ptr: Pointer>(self: slice<Ptr>) -> SliceRefIterator<&builtins::deref_of<Ptr>> {
-        SliceRefIterator { inner: self as slice<&builtins::deref_of<Ptr>> }
+    fn iter_ref<Ptr: Pointer>(self: slice<Ptr>) -> SliceRefIterator<&*Ptr> {
+        SliceRefIterator { inner: self as slice<&*Ptr> }
     }
 
     /// @ std::iter::IterableMut::iter_mut
@@ -514,7 +514,7 @@ struct SliceIterator<Ptr: builtins::Pointer> {
 impl SliceIterator<Ptr: builtins::Pointer> {
     /// @ iter::Iterator::next
     #[inline(always)]
-    fn next(self: &mut SliceIterator<Ptr>) -> Option<builtins::deref_of<Ptr>> {
+    fn next(self: &mut SliceIterator<Ptr>) -> Option<*Ptr> {
         if self.inner.len() > 0 {
             let result = Option::some(*self.inner._ptr);
             self.inner._ptr = self.inner._ptr + 1;
@@ -527,7 +527,7 @@ impl SliceIterator<Ptr: builtins::Pointer> {
 
     /// @ iter::DoubleEndedIterator::next_back
     #[inline(always)]
-    fn next_back(self: &mut SliceIterator<Ptr>) -> Option<builtins::deref_of<Ptr>> {
+    fn next_back(self: &mut SliceIterator<Ptr>) -> Option<*Ptr> {
         if self.inner.len() > 0 {
             let result = Option::some(self.inner[self.inner.len() - 1]);
             self.inner._len -= 1;
@@ -542,10 +542,10 @@ impl SliceIterator<Ptr: builtins::Pointer> {
         Option::some(self.inner.len())
     }
 
-    mixin iter::Iterator<SliceIterator<Ptr>, builtins::deref_of<Ptr>>;
-    mixin iter::IteratorExt<SliceIterator<Ptr>, builtins::deref_of<Ptr>>;
-    mixin iter::DoubleEndedIterator<SliceIterator<Ptr>, builtins::deref_of<Ptr>>;
-    mixin iter::DoubleEndedIteratorExt<SliceIterator<Ptr>, builtins::deref_of<Ptr>>;
+    mixin iter::Iterator<SliceIterator<Ptr>, *Ptr>;
+    mixin iter::IteratorExt<SliceIterator<Ptr>, *Ptr>;
+    mixin iter::DoubleEndedIterator<SliceIterator<Ptr>, *Ptr>;
+    mixin iter::DoubleEndedIteratorExt<SliceIterator<Ptr>, *Ptr>;
 }
 
 /// Iterator over pointers to elements of a slice
@@ -599,7 +599,7 @@ mod internal {
         #[cfg(any(debug, bounds_checks))]
         {
             if !$cond {
-                panic!($msg, $args...);
+                panic!($msg, $args$...);
             }
         }
     }

@@ -18,6 +18,7 @@ With regards to syntax, the language is very similar to Rust and in terms of sem
   - [Thread-local statics](#thread-local-statics)
 - [Types](#types)
   - [Fixed-size arrays](#fixed-size-arrays)
+  - [Tuples](#tuples)
   - [Type aliases](#type-aliases)
   - [Structs and unions](#structs-and-unions)
   - [Enums](#enums)
@@ -595,6 +596,41 @@ fn print_ipv4_addr(a: u8, b: u8, c: u8, d: u8) {
 }
 ```
 
+## Tuples
+
+Tuples are fixed-size collections of values of different types. They are defined using parentheses and a comma-separated list of types. Under the hood, tuples are just structs with unnamed fields.
+
+```rust
+let t: (i32, f64, bool) = (1, 2.0, true);
+```
+
+Tuples can be indexed using the dot syntax. The index can either be an integer literal or a constant expression (in which case it needs parentheses).
+
+```rust
+let x = t.0;
+let y = t.1;
+let z = t.(1 + 1);
+```
+
+Tuples can be unpacked (splatted) into another tuple using the `...` syntax.
+
+```rust
+let t = (1, 2, 3);
+let q = (0, t..., 4);
+
+// q = (0, 1, 2, 3, 4)
+```
+
+Tuples can be sliced using the range index syntax. The range index needs to be a constant expression. This is mostly useful for generic meta-programming (e.g. to handle the first element and recurse on the rest).
+
+```rust
+let t = (1, 2, 3, 4, 5);
+let s = t.(1..3);
+
+// s = (2, 3)
+```
+
+
 ## Type aliases
 
 ```rust
@@ -906,11 +942,11 @@ add!(1, 2);
 1.add!(2);
 ```
 
-Macros can be variadic (accept an arbitrary number of arguments). The extra arguments can be unpacked into expressions where this is meaningful: function arguments, tuple expressions and array expressions.
+Macros can be variadic (accept an arbitrary number of arguments). The extra arguments can be unpacked into expressions with `$...` postfix operator where this is meaningful: function arguments, tuple expressions and array expressions as well as as statements.
 
 ```rust
 macro make_array($a...) {
-    [$a...]
+    [$a$...]
 }
 
 let arr = make_array!(1, 2, 3);
@@ -920,7 +956,7 @@ The placeholder during unpacking can also be in a subexpression.
 
 ```rust
 macro u128_tuple($a...) {
-    (($a as u128)...)
+    (($a as u128)$...)
 }
 
 assert_eq!(
@@ -937,7 +973,7 @@ macro echo($arg) {
 }
 
 macro foreach($f, $arg...) {
-    $f!($arg)...;
+    $f!($arg)$...;
 }
 
 // 1
@@ -975,7 +1011,6 @@ Alumina has the following types of expressions
 - block expressions: `{ statements; ret }`
 - function calls ( `expr(arg1, arg2)` )
 - field expressions (`expr.field`)
-- tuple expressions (`expr.0`, `expr.1`, ..., `expr.(1 + 2)`)
 - array/slice index expressions (`expr[0]`)
 - try operator (`expr?`)
 - unary operations (`-expr`, `~expr`)
@@ -992,13 +1027,17 @@ Alumina has the following types of expressions
 - boolean OR: (`lhs || rhs`)
 - address-of (reference) and dereference (dereference) (`&expr`, `*expr`)
 - [range expressions](https://docs.alumina-lang.net/std/range) (`lower..upper`, `lower..=upper`)
+- tuple index expressions (`expr.0`, `expr.1`, ..., `expr.(1 + 2)`)
+- tuple range index expressions (`expr.(0..2)`, `expr.(1..=2)`, `expr.(..2)`, `expr.(1..)`, `expr.(..)`)
 - assignment (`lhs = rhs`, `lhs += rhs`, ...),
 - closure: `|args| body`
 - loops: (`loop { ... }`, `while cond { ... }`, `for x in range { ... }`)
+- static for loop: `for const x in 0..10 { ... }`
 - struct expressions: `Point { x: 1, y: 2 }`
 - tuple expressions: `(1, 2)`
 - array expressions: `[1, 2, 3]`
 - if: `if cond { body } else { body }`
+- when expressions: `when cond { body } else { body }`
 - switch: `switch expr { ... }`
 - [defer](#defer-expressions): `defer expr`
 - return: `return expr`
@@ -1595,7 +1634,7 @@ fn print_type<T>() {
         println!("some other unsigned type");
     } else when is_pointer::<T>() {
         print!("pointer to ");
-        print_type::<deref_of<T>>(); // this would not compile if T was not a pointer
+        print_type::<*T>(); // this would not compile if T was not a pointer
     } else when !is_zero_sized::<T>() {
         println!("some sized type");
     } else {

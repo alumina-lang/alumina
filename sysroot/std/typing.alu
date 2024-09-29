@@ -516,7 +516,7 @@ impl Type<T> {
 
 impl Type<T: builtins::Pointer> {
     /// Returns the type descriptor of the pointed-to type.
-    fn deref(self: Type<T>) -> Type<builtins::deref_of<T>> {
+    fn deref(self: Type<T>) -> Type<*T> {
         Type {}
     }
 }
@@ -720,7 +720,8 @@ impl Type<T: builtins::Closure> {
     /// let a = 1;
     /// let b = true;
     ///
-    /// let closure = |=a, &b, param: i32| {};
+    /// #[allow(unused_closure_binding)]
+    /// let closure = |=a, &b, _param: i32| {};
     ///
     /// let desc: Type<typeof(closure)> = Type::new();
     /// let captures = desc.captures();
@@ -909,10 +910,10 @@ impl Field<StructT, FieldT> {
 type tuple_map_of<Tup: builtins::Tuple, T> = when is_void::<Tup>() {
     ()
 } else {
-    builtins::tuple_concat_of<
-        (builtins::replace_generic_args_of<T, (builtins::tuple_head_of<Tup>,)>, ),
-        tuple_map_of<builtins::tuple_tail_of<Tup>, T>
-    >
+    (
+        builtins::replace_generic_args_of<T, (Tup.0)>,
+        tuple_map_of<Tup.(1..), T>...
+    )
 };
 
 /// Extract the type of the type descriptor ([Type])
@@ -924,7 +925,7 @@ type tuple_map_of<Tup: builtins::Tuple, T> = when is_void::<Tup>() {
 /// let _: type_of<Type<u8>> = 42u8;
 /// ```
 type type_of<T: builtins::SameBaseAs<Type<()>>>
-    = builtins::tuple_head_of<builtins::generic_args_of<T>>;
+    = builtins::generic_args_of<T>.0;
 
 
 #[docs(no_index)]
@@ -967,7 +968,7 @@ mod internal {
     fn dyn_new<Protos, Ptr>(ptr: Ptr) -> dyn<Protos, void_ptr_of<Ptr>> {
         dyn {
             _ptr: ptr as void_ptr_of<Ptr>,
-            _vtable: &VTABLE::<Protos, builtins::deref_of<Ptr>>[0]
+            _vtable: &VTABLE::<Protos, *Ptr>[0]
         }
     }
 

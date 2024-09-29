@@ -878,23 +878,6 @@ fn test_tuple_args_inference() {
     s.c(1, "hello");
 }
 
-#[test]
-fn test_tuple_tail() {
-    assert_eq!((1, 2, 3).tail(), (2, 3));
-    assert_eq!((1, 2).tail(), (2,));
-    assert_eq!((1,).tail(), ());
-}
-
-#[test]
-fn test_tuple_concat() {
-    use std::util::concat;
-
-    assert_eq!((1, 2).concat((3, 4)), (1, 2, 3, 4));
-    assert_eq!(().concat((3, 4)), (3, 4));
-    assert_eq!((1, 2).concat(()), (1, 2));
-    assert_eq!(().concat(()), ());
-}
-
 
 #[test]
 fn test_coroutine_inference() {
@@ -903,4 +886,45 @@ fn test_coroutine_inference() {
 
     let _gen: Coroutine<i32> = empty(Option::none());
     let _gen = empty(Option::some(12));
+}
+
+
+#[test]
+fn test_tuple_slicing() {
+    let a = (0, 1, 2, 3, 4, 5, 6, 7, 8);
+
+    assert_eq!(a.0, 0);
+    assert_eq!(a.(0), 0);
+    assert_eq!(a.(..), (0, 1, 2, 3, 4, 5, 6, 7, 8));
+    assert_eq!(a.(..5), (0, 1, 2, 3, 4));
+    assert_eq!(a.(5..), (5, 6, 7, 8));
+    assert_eq!(a.(2..5), (2, 3, 4));
+    assert_eq!(a.(2..=5), (2, 3, 4, 5));
+    assert_eq!(a.(..=5), (0, 1, 2, 3, 4, 5));
+}
+
+type types_match<L, R> = when typing::is_same::<L, R>() {
+    ()
+} else {
+    typeof(std::compile_fail!("types do not match"))
+};
+
+#[test]
+fn test_tuple_slicing_types() {
+    type a = (u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
+
+    let _: types_match<a.0, u8>;
+    let _: types_match<a.(0), u8>;
+    let _: types_match<a.(..), (u8, u16, u32, u64, u128, i8, i16, i32, i64, i128)>;
+    let _: types_match<a.(..5), (u8, u16, u32, u64, u128)>;
+    let _: types_match<a.(5..), (i8, i16, i32, i64, i128)>;
+    let _: types_match<a.(2..5), (u32, u64, u128)>;
+    let _: types_match<a.(2..=5), (u32, u64, u128, i8)>;
+    let _: types_match<a.(..=5), (u8, u16, u32, u64, u128, i8)>;
+}
+
+
+#[test]
+fn test_tuple_unpack() {
+    assert_eq!((1, (2, 3)..., 4, 5), (1, 2, 3, 4, 5));
 }

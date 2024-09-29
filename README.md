@@ -11,7 +11,6 @@ Non-exhaustive list of distinguishing features:
 - Limited operator overloading (via `Equatable` and `Comparable` protocols)
 - Block expressions
 - Anonymous functions (including closures)
-- Stackful coroutines
 - Richer type system:
   - strong enums,
   - array slices,
@@ -20,10 +19,11 @@ Non-exhaustive list of distinguishing features:
   - first-class 0-sized types (unit/void, 0-sized arrays, structs with no fields, ...),
   - never type
 - Hygienic expression macros
+- [Stackful coroutines](./examples/coroutines.alu)
 - [Compile-time constant evaluation](./examples/constants.alu) (including loops, function calls, etc.)
 - [Unified call syntax](https://en.wikipedia.org/wiki/Uniform_Function_Call_Syntax) for functions and macros in scope
 - [Defer expressions](./examples/defer_and_move.alu)
-- [Reflection](./examples/reflection.alu)
+- [Ergonomic reflection and meta-programming](./examples/reflection.alu)
 
 Alumina is heavily inspired by Rust, especially in terms of syntax and standard library API. Unlike Rust, however, Alumina is not memory-safe and it requires manual memory management.
 

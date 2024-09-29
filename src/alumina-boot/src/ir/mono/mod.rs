@@ -19,12 +19,13 @@ use once_cell::unsync::OnceCell;
 use std::backtrace::Backtrace;
 
 use std::collections::hash_map::Entry;
-use std::iter::{once, repeat};
+use std::iter::once;
+use std::ops::{Bound, RangeBounds};
 use std::rc::Rc;
 
 use super::const_eval::MallocBag;
 use super::layout::Layouter;
-use super::LangKind;
+use super::{LangKind, RangeKind};
 
 pub mod intrinsics;
 
@@ -81,6 +82,11 @@ enum BoundCheckResult {
     Matches,
     DoesNotMatch,
     DoesNotMatchBecause(String),
+}
+
+enum TupleIndex {
+    Single(usize),
+    Range(Bound<usize>, Bound<usize>),
 }
 
 impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
@@ -174,27 +180,27 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
         }
 
         if self.ast.lang_item(Lang::RangeFull).ok() == Some(item.0) {
-            return Some(LangKind::Range(item.1[0]));
+            return Some(LangKind::Range(item.1[0], RangeKind::RangeFull));
         }
 
         if self.ast.lang_item(Lang::RangeFrom).ok() == Some(item.0) {
-            return Some(LangKind::Range(item.1[0]));
+            return Some(LangKind::Range(item.1[0], RangeKind::RangeFrom));
         }
 
         if self.ast.lang_item(Lang::RangeTo).ok() == Some(item.0) {
-            return Some(LangKind::Range(item.1[0]));
+            return Some(LangKind::Range(item.1[0], RangeKind::RangeTo));
         }
 
         if self.ast.lang_item(Lang::RangeToInclusive).ok() == Some(item.0) {
-            return Some(LangKind::Range(item.1[0]));
+            return Some(LangKind::Range(item.1[0], RangeKind::RangeToInclusive));
         }
 
         if self.ast.lang_item(Lang::Range).ok() == Some(item.0) {
-            return Some(LangKind::Range(item.1[0]));
+            return Some(LangKind::Range(item.1[0], RangeKind::Range));
         }
 
         if self.ast.lang_item(Lang::RangeInclusive).ok() == Some(item.0) {
-            return Some(LangKind::Range(item.1[0]));
+            return Some(LangKind::Range(item.1[0], RangeKind::RangeInclusive));
         }
 
         if self.ast.lang_item(Lang::Dyn).ok() == Some(item.0) {
@@ -1023,11 +1029,11 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
             Some(Lang::ProtoRange) => match self.ctx.lang_type_kind(ty) {
-                Some(LangKind::Range(_)) => return Ok(BoundCheckResult::Matches),
+                Some(LangKind::Range(..)) => return Ok(BoundCheckResult::Matches),
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
             },
             Some(Lang::ProtoRangeOf) => match self.ctx.lang_type_kind(ty) {
-                Some(LangKind::Range(k)) if k == proto_generic_args[0] => {
+                Some(LangKind::Range(k, _)) if k == proto_generic_args[0] => {
                     return Ok(BoundCheckResult::Matches)
                 }
                 _ => return Ok(BoundCheckResult::DoesNotMatch),
@@ -2105,39 +2111,6 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                     return Ok(Some(self.types.array(args[0], *len)));
                 }
             }
-            Some(Lang::TypeopTupleHeadOf) => {
-                arg_count!(1);
-                if let ir::Ty::Tuple(tys) = args[0] {
-                    if !tys.is_empty() {
-                        return Ok(Some(tys[0]));
-                    }
-                }
-            }
-            Some(Lang::TypeopTupleTailOf) => {
-                arg_count!(1);
-                if let ir::Ty::Tuple(tys) = args[0] {
-                    match tys.len() {
-                        0 => {}
-                        1 => return Ok(Some(self.types.void())),
-                        _ => return Ok(Some(self.ctx.ir.intern_type(ir::Ty::Tuple(&tys[1..])))),
-                    }
-                }
-                bail!(self, CodeDiagnostic::InvalidTypeOperator);
-            }
-            Some(Lang::TypeopTupleConcatOf) => {
-                arg_count!(2);
-                if let (ir::Ty::Tuple(a), ir::Ty::Tuple(b)) = (&args[0], &args[1]) {
-                    // Cannot use chain because it is not ExactSizeIterator
-                    return Ok(Some(self.types.tuple((0..a.len() + b.len()).map(|i| {
-                        if i < a.len() {
-                            a[i]
-                        } else {
-                            b[i - a.len()]
-                        }
-                    }))));
-                }
-                bail!(self, CodeDiagnostic::InvalidTypeOperator);
-            }
             Some(Lang::TypeopGenericArgsOf) => {
                 arg_count!(1);
                 match args[0] {
@@ -2273,6 +2246,84 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         Err(self.diag.err(CodeDiagnostic::InvalidTypeOperator))
     }
 
+    fn tuple_index_ranges(&mut self, index: ast::ExprP<'ast>) -> Result<TupleIndex, AluminaError> {
+        let index = self.lower_expr(index, Some(self.types.builtin(BuiltinType::USize)))?;
+        let index_val = ir::const_eval::ConstEvaluator::new(
+            self.ctx.global_ctx.clone(),
+            self.diag.fork(),
+            self.ctx.malloc_bag.clone(),
+            self.ctx.ir,
+            self.local_types.iter().map(|(k, v)| (*k, *v)),
+        )
+        .const_eval(index)?;
+
+        let kind = match (index.ty, self.ctx.lang_type_kind(index.ty)) {
+            (ir::Ty::Builtin(BuiltinType::USize), _) => {
+                if let Value::USize(idx) = index_val {
+                    return Ok(TupleIndex::Single(idx));
+                } else {
+                    return Err(mismatch!(
+                        self,
+                        self.types.builtin(BuiltinType::USize),
+                        index.ty
+                    ));
+                }
+            }
+            (_, Some(LangKind::Range(ir::Ty::Builtin(BuiltinType::USize), kind))) => kind,
+            _ => {
+                return Err(mismatch!(
+                    self,
+                    self.types.builtin(BuiltinType::USize),
+                    index.ty
+                ))
+            }
+        };
+
+        // This extracts the fields from the Range struct. This should be a lang item eventually
+        // but it's a lot of different cases to handle.
+        let fields = {
+            let Value::Struct(fields) = index_val else {
+                return Err(mismatch!(
+                    self,
+                    self.types.builtin(BuiltinType::USize),
+                    index.ty
+                ));
+            };
+            let mut fields = fields.to_vec();
+            // TODO: This is a hack, we rely on the fact that the fields ids are set in order of definition
+            fields.sort_by(|(a, _), (b, _)| a.cmp(b));
+            fields
+        };
+
+        match (kind, &fields[..]) {
+            (RangeKind::Range, [(_, Value::USize(lower)), (_, Value::USize(upper)), ..]) => Ok(
+                TupleIndex::Range(Bound::Included(*lower), Bound::Excluded(*upper)),
+            ),
+            (RangeKind::RangeFrom, [(_, Value::USize(lower), ..)]) => {
+                Ok(TupleIndex::Range(Bound::Included(*lower), Bound::Unbounded))
+            }
+            (RangeKind::RangeTo, [(_, Value::USize(upper), ..)]) => {
+                Ok(TupleIndex::Range(Bound::Unbounded, Bound::Excluded(*upper)))
+            }
+            (RangeKind::RangeFull, []) => Ok(TupleIndex::Range(Bound::Unbounded, Bound::Unbounded)),
+            (
+                RangeKind::RangeInclusive,
+                [(_, Value::USize(lower)), (_, Value::USize(upper)), ..],
+            ) => Ok(TupleIndex::Range(
+                Bound::Included(*lower),
+                Bound::Included(*upper),
+            )),
+            (RangeKind::RangeToInclusive, [(_, Value::USize(upper), ..)]) => {
+                Ok(TupleIndex::Range(Bound::Unbounded, Bound::Included(*upper)))
+            }
+            _ => Err(mismatch!(
+                self,
+                self.types.builtin(BuiltinType::USize),
+                index.ty
+            )),
+        }
+    }
+
     fn lower_type_unrestricted(
         &mut self,
         ty: ast::TyP<'ast>,
@@ -2312,28 +2363,72 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                 let inner = self.lower_type_for_value(inner)?;
                 self.slice_of(inner, is_const)?
             }
-            ast::Ty::FunctionPointer(args, ret) => {
-                let args = args
-                    .iter()
-                    .map(|arg| self.lower_type_for_value(arg))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let ret = self.lower_type_for_value(ret)?;
-                self.types.function(args, ret)
+            ast::Ty::Deref(inner) => {
+                let inner = self.lower_type_for_value(inner)?;
+                match inner {
+                    ir::Ty::Pointer(inner, _) => inner,
+                    _ => bail!(
+                        self,
+                        CodeDiagnostic::NotAPointer(self.ctx.type_name(inner).unwrap())
+                    ),
+                }
             }
-            ast::Ty::FunctionProtocol(args, ret) => {
-                let args = args
-                    .iter()
-                    .map(|arg| self.lower_type_for_value(arg))
-                    .collect::<Result<Vec<_>, _>>()?;
+            ast::Ty::TupleIndex(inner, idx) => {
+                let inner = self.lower_type_for_value(inner)?;
+                let ir::Ty::Tuple(tys) = inner else {
+                    bail!(
+                        self,
+                        CodeDiagnostic::NotATuple(self.ctx.type_name(inner).unwrap())
+                    );
+                };
+
+                match self.tuple_index_ranges(idx)? {
+                    TupleIndex::Single(idx) => tys
+                        .get(idx)
+                        .copied()
+                        .ok_or_else(|| self.diag.err(CodeDiagnostic::TupleIndexOutOfBounds))?,
+                    TupleIndex::Range(start, end) => {
+                        let tys = tys
+                            .get((start, end))
+                            .ok_or_else(|| self.diag.err(CodeDiagnostic::TupleIndexOutOfBounds))?;
+                        self.types.tuple(tys.iter().copied())
+                    }
+                }
+            }
+            ast::Ty::FunctionPointer(args, ret) | ast::Ty::FunctionProtocol(args, ret) => {
+                let mut args_ir = Vec::new();
+                for item in args.iter() {
+                    match item {
+                        ast::Ty::EtCetera(inner) => match self.lower_type_for_value(inner)? {
+                            ir::Ty::Tuple(tys) => args_ir.extend(tys.iter().copied()),
+                            _ => bail!(self, CodeDiagnostic::EtCeteraOnNonTuple),
+                        },
+                        _ => args_ir.push(self.lower_type_for_value(item)?),
+                    }
+                }
                 let ret = self.lower_type_for_value(ret)?;
-                self.lang_ty(Lang::ProtoCallable, [self.types.tuple(args), ret])?
+
+                match ty {
+                    ast::Ty::FunctionPointer(..) => self.types.function(args_ir, ret),
+                    ast::Ty::FunctionProtocol(..) => {
+                        self.lang_ty(Lang::ProtoCallable, [self.types.tuple(args_ir), ret])?
+                    }
+                    _ => unreachable!(),
+                }
             }
             ast::Ty::Tuple(items) => {
-                let items = items
-                    .iter()
-                    .map(|arg| self.lower_type_for_value(arg))
-                    .collect::<Result<Vec<_>, _>>()?;
-                self.types.tuple(items)
+                let mut items_ir = Vec::new();
+                for item in items.iter() {
+                    match item {
+                        ast::Ty::EtCetera(inner) => match self.lower_type_for_value(inner)? {
+                            ir::Ty::Tuple(tys) => items_ir.extend(tys.iter().copied()),
+                            _ => bail!(self, CodeDiagnostic::EtCeteraOnNonTuple),
+                        },
+                        _ => items_ir.push(self.lower_type_for_value(item)?),
+                    }
+                }
+
+                self.types.tuple(items_ir)
             }
             ast::Ty::Placeholder(id) => self.replacements.get(&id).copied().ok_or_else(|| {
                 self.diag.err(CodeDiagnostic::InternalError(
@@ -2439,6 +2534,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                     self.lower_type_unrestricted(els)?
                 }
             }
+            ast::Ty::EtCetera(_) => ice!(self.diag, "et cetera types should have been expanded"),
         };
 
         Ok(result)
@@ -4180,24 +4276,53 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
             Some(ir::Ty::Tuple(elems)) if elems.len() == exprs.len() => {
                 elems.iter().map(|t| Some(*t)).collect()
             }
-            _ => repeat(None).take(exprs.len()).collect(),
+            _ => vec![],
         };
 
-        let lowered = exprs
-            .iter()
-            .zip(type_hints.into_iter())
-            .map(|(expr, hint)| {
-                self.lower_expr(expr, hint).map(|expr| {
-                    if let Some(hint) = hint {
-                        if let Ok(a) = self.try_coerce(hint, expr) {
-                            return a;
-                        }
-                    }
+        let mut index = 0;
+        let mut stmts = Vec::new();
+        let mut lowered = Vec::with_capacity(exprs.len());
 
-                    expr
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        for expr in exprs {
+            match expr.kind {
+                ast::ExprKind::EtCetera(inner) => {
+                    // type hint is None since we do not know the length beforehand. If
+                    // the expression is a tuple expression, we could pull it out, but for now
+                    // we just leave it as None.
+                    let inner = self.lower_expr(inner, None)?;
+                    let ir::Ty::Tuple(types) = inner.ty else {
+                        return Err(mismatch!(self, "tuple", inner.ty));
+                    };
+
+                    let (tup, assign) = self.ensure_local(inner);
+                    stmts.extend(assign);
+
+                    for (i, ty) in types.iter().enumerate() {
+                        let field = self.exprs.tuple_index(tup, i, ty, inner.span);
+                        lowered.push(self.exprs.block(stmts.drain(..), field, inner.span));
+                        index += 1;
+                    }
+                }
+                _ => {
+                    let hint = type_hints.get(index).copied().flatten();
+                    let lowered_expr = self.lower_expr(expr, hint).map(|expr| {
+                        if let Some(hint) = hint {
+                            if let Ok(a) = self.try_coerce(hint, expr) {
+                                return a;
+                            }
+                        }
+
+                        expr
+                    })?;
+                    lowered.push(self.exprs.block(
+                        stmts.drain(..),
+                        lowered_expr,
+                        lowered_expr.span,
+                    ));
+                    index += 1;
+                }
+            }
+        }
 
         if lowered.iter().any(|e| e.diverges()) {
             return Ok(self.exprs.diverges(lowered, ast_span));
@@ -4206,10 +4331,22 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         let element_types: Vec<_> = lowered.iter().map(|e| e.ty).collect();
         let tuple_type = self.types.tuple(element_types);
 
-        Ok(self
+        let ret = self
             .exprs
             .tuple(lowered.into_iter().enumerate(), tuple_type, ast_span)
-            .alloc_on(self.ctx.ir))
+            .alloc_on(self.ctx.ir);
+
+        if !stmts.is_empty() {
+            // Unpacking produced an empty tuple, but there may have been side effects
+            // in the process, so we need to wrap the tuple in a block
+
+            let (tuple, assign) = self.ensure_local(ret);
+            stmts.extend(assign);
+
+            Ok(self.exprs.block(stmts, tuple, ast_span))
+        } else {
+            Ok(ret)
+        }
     }
 
     fn lower_cast(
@@ -5070,6 +5207,20 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         Ok(result)
     }
 
+    pub fn ensure_local(
+        &mut self,
+        expr: ir::ExprP<'ir>,
+    ) -> (ir::ExprP<'ir>, Option<ir::Statement<'ir>>) {
+        match expr.kind {
+            ir::ExprKind::Local(_) => (expr, None),
+            _ => {
+                let local = self.make_local(expr.ty, expr.span);
+                let stmt = ir::Statement::Expression(self.exprs.assign(local, expr, None));
+                (local, Some(stmt))
+            }
+        }
+    }
+
     fn lower_tuple_index(
         &mut self,
         tup: ast::ExprP<'ast>,
@@ -5078,37 +5229,43 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         ast_span: Option<Span>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         let tup = self.lower_expr(tup, None)?;
-        let index = self.lower_expr(index, Some(self.types.builtin(BuiltinType::USize)))?;
-
-        let index = ir::const_eval::ConstEvaluator::new(
-            self.ctx.global_ctx.clone(),
-            self.diag.fork(),
-            self.ctx.malloc_bag.clone(),
-            self.ctx.ir,
-            self.local_types.iter().map(|(k, v)| (*k, *v)),
-        )
-        .const_eval(index)
-        .and_then(|v| match v {
-            Value::USize(v) => Ok(v),
-            _ => Err(mismatch!(
-                self,
-                self.types.builtin(BuiltinType::USize),
-                index.ty
-            )),
-        })?;
+        let index = self.tuple_index_ranges(index)?;
 
         let result = match tup.ty.canonical_type() {
             ir::Ty::Tuple(types) => {
-                if types.len() <= index {
-                    bail!(self, CodeDiagnostic::TupleIndexOutOfBounds);
-                }
-
                 let mut tup = tup;
                 while let ir::Ty::Pointer(_, _) = tup.ty {
                     tup = self.exprs.deref(tup, ast_span);
                 }
 
-                self.exprs.tuple_index(tup, index, types[index], ast_span)
+                match index {
+                    TupleIndex::Single(index) => {
+                        if index >= types.len() {
+                            bail!(self, CodeDiagnostic::TupleIndexOutOfBounds);
+                        }
+                        self.exprs.tuple_index(tup, index, types[index], ast_span)
+                    }
+                    TupleIndex::Range(start, end) => {
+                        types
+                            .get((start, end))
+                            .ok_or_else(|| self.diag.err(CodeDiagnostic::TupleIndexOutOfBounds))?;
+
+                        let (tup, stmt) = self.ensure_local(tup);
+                        let sliced = types
+                            .iter()
+                            .enumerate()
+                            .filter(|(i, _)| (start, end).contains(i))
+                            .map(|(idx, ty)| self.exprs.tuple_index(tup, idx, ty, ast_span))
+                            .collect::<Vec<_>>();
+
+                        let ty = self.types.tuple(sliced.iter().map(|e| e.ty));
+                        let ret = self
+                            .exprs
+                            .tuple(sliced.into_iter().enumerate(), ty, ast_span);
+
+                        self.exprs.block(stmt, ret, ast_span)
+                    }
+                }
             }
             _ => return Err(mismatch!(self, "tuple", tup.ty)),
         };
@@ -5167,7 +5324,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         // We put usize as a hint, lower_range has a special case and will take
         let index = self.lower_expr(index, Some(self.types.builtin(BuiltinType::USize)))?;
         let indexee_hint =
-            if let Some(LangKind::Range(bound_ty)) = self.ctx.lang_type_kind(index.ty) {
+            if let Some(LangKind::Range(bound_ty, _)) = self.ctx.lang_type_kind(index.ty) {
                 if let ir::Ty::Builtin(BuiltinType::USize) = bound_ty {
                     type_hint
                 } else {
@@ -5216,7 +5373,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
             }
         };
 
-        if let Some(LangKind::Range(_)) = self.ctx.lang_type_kind(index.ty) {
+        if let Some(LangKind::Range(_, _)) = self.ctx.lang_type_kind(index.ty) {
             self.call_lang_item(
                 Lang::SliceRangeIndex,
                 [ptr_ty, index.ty],
@@ -5243,7 +5400,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
             // Special case for range indexing
             Some(ir::Ty::Builtin(BuiltinType::USize)) => type_hint,
             Some(ty) => self.ctx.lang_type_kind(ty).and_then(|kind| {
-                if let LangKind::Range(inner) = kind {
+                if let LangKind::Range(inner, _) = kind {
                     Some(inner)
                 } else {
                     None
@@ -5688,7 +5845,8 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                 self.lower_bound_param(*self_arg, *field_id, *bound_type, type_hint, expr.span)
             }
             ast::ExprKind::Tag(tag, inner) => self.lower_tag(tag, inner, type_hint, expr.span),
-            ast::ExprKind::EtCetera(_)
+            ast::ExprKind::EtCetera(_) => Err(self.diag.err(CodeDiagnostic::EtCeteraInUnsupported)),
+            ast::ExprKind::EtCeteraMacro(_)
             | ast::ExprKind::MacroInvocation(_, _)
             | ast::ExprKind::Macro(_, _) => Err(self.diag.err(CodeDiagnostic::IsAMacro)),
         }

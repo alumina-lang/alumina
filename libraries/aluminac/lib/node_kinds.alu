@@ -6,6 +6,7 @@ use tree_sitter::{TSSymbol, Node};
 enum NodeKind {
     Invalid,
     SourceFile,
+    TupleIndexOf,
     UseDeclaration,
     UseWildcard,
     Mixin,
@@ -34,6 +35,7 @@ enum NodeKind {
     MacroDefinition,
     BinaryExpression,
     ProtocolBound,
+    DerefOf,
     StructInitializer,
     Block,
     SliceOf,
@@ -97,6 +99,7 @@ enum NodeKind {
     FunctionProtocol,
     AttributeItem,
     GenericArgumentList,
+    EtCeteraOf,
     ReturnExpression,
     DynOf,
     IfExpression,
@@ -169,13 +172,14 @@ enum FieldKind {
     Right = 47u16,
     Size = 48u16,
     Statements = 49u16,
-    Type = 50u16,
-    TypeArguments = 51u16,
-    Upper = 52u16,
-    Value = 53u16,
+    Tuple = 50u16,
+    Type = 51u16,
+    TypeArguments = 52u16,
+    Upper = 53u16,
+    Value = 54u16,
 }
 
-const NODE_KINDS: [NodeKind; 258] = [
+const NODE_KINDS: [NodeKind; 262] = [
     NodeKind::Invalid,
     NodeKind::Identifier,
     NodeKind::DocComment,
@@ -222,23 +226,23 @@ const NODE_KINDS: [NodeKind; 258] = [
     NodeKind::Invalid,
     NodeKind::Invalid,
     NodeKind::Invalid,
-    NodeKind::Identifier,
-    NodeKind::Identifier,
-    NodeKind::Identifier,
-    NodeKind::Identifier,
-    NodeKind::Identifier,
-    NodeKind::Identifier,
-    NodeKind::Identifier,
-    NodeKind::Identifier,
-    NodeKind::Identifier,
-    NodeKind::Identifier,
-    NodeKind::Identifier,
-    NodeKind::Identifier,
-    NodeKind::Identifier,
-    NodeKind::Identifier,
-    NodeKind::Identifier,
-    NodeKind::Identifier,
     NodeKind::Invalid,
+    NodeKind::Identifier,
+    NodeKind::Identifier,
+    NodeKind::Identifier,
+    NodeKind::Identifier,
+    NodeKind::Identifier,
+    NodeKind::Identifier,
+    NodeKind::Identifier,
+    NodeKind::Identifier,
+    NodeKind::Identifier,
+    NodeKind::Identifier,
+    NodeKind::Identifier,
+    NodeKind::Identifier,
+    NodeKind::Identifier,
+    NodeKind::Identifier,
+    NodeKind::Identifier,
+    NodeKind::Identifier,
     NodeKind::Invalid,
     NodeKind::Invalid,
     NodeKind::Invalid,
@@ -282,6 +286,7 @@ const NODE_KINDS: [NodeKind; 258] = [
     NodeKind::Invalid,
     NodeKind::Invalid,
     NodeKind::ContinueExpression,
+    NodeKind::Invalid,
     NodeKind::Invalid,
     NodeKind::Invalid,
     NodeKind::Invalid,
@@ -330,6 +335,9 @@ const NODE_KINDS: [NodeKind; 258] = [
     NodeKind::ParameterList,
     NodeKind::ParameterTypeList,
     NodeKind::PointerOf,
+    NodeKind::TupleIndexOf,
+    NodeKind::EtCeteraOf,
+    NodeKind::DerefOf,
     NodeKind::SliceOf,
     NodeKind::DynOf,
     NodeKind::ArrayOf,
@@ -439,6 +447,9 @@ protocol NodeVisitor<Self, ReturnType> {
     fn visit_source_file(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_source_file");
     }
+    fn visit_tuple_index_of(self: &mut Self, _node: Node) -> ReturnType {
+        panic!("unimplemented: visit_tuple_index_of");
+    }
     fn visit_use_declaration(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_use_declaration");
     }
@@ -522,6 +533,9 @@ protocol NodeVisitor<Self, ReturnType> {
     }
     fn visit_protocol_bound(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_protocol_bound");
+    }
+    fn visit_deref_of(self: &mut Self, _node: Node) -> ReturnType {
+        panic!("unimplemented: visit_deref_of");
     }
     fn visit_struct_initializer(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_struct_initializer");
@@ -712,6 +726,9 @@ protocol NodeVisitor<Self, ReturnType> {
     fn visit_generic_argument_list(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_generic_argument_list");
     }
+    fn visit_et_cetera_of(self: &mut Self, _node: Node) -> ReturnType {
+        panic!("unimplemented: visit_et_cetera_of");
+    }
     fn visit_return_expression(self: &mut Self, _node: Node) -> ReturnType {
         panic!("unimplemented: visit_return_expression");
     }
@@ -778,6 +795,7 @@ protocol NodeVisitor<Self, ReturnType> {
     fn visit(self: &mut Self, node: Node) -> ReturnType {
         switch NODE_KINDS[node.symbol() as usize] {
             NodeKind::SourceFile => self.visit_source_file(node),
+            NodeKind::TupleIndexOf => self.visit_tuple_index_of(node),
             NodeKind::UseDeclaration => self.visit_use_declaration(node),
             NodeKind::UseWildcard => self.visit_use_wildcard(node),
             NodeKind::Mixin => self.visit_mixin(node),
@@ -806,6 +824,7 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::MacroDefinition => self.visit_macro_definition(node),
             NodeKind::BinaryExpression => self.visit_binary_expression(node),
             NodeKind::ProtocolBound => self.visit_protocol_bound(node),
+            NodeKind::DerefOf => self.visit_deref_of(node),
             NodeKind::StructInitializer => self.visit_struct_initializer(node),
             NodeKind::Block => self.visit_block(node),
             NodeKind::SliceOf => self.visit_slice_of(node),
@@ -869,6 +888,7 @@ protocol NodeVisitor<Self, ReturnType> {
             NodeKind::FunctionProtocol => self.visit_function_protocol(node),
             NodeKind::AttributeItem => self.visit_attribute_item(node),
             NodeKind::GenericArgumentList => self.visit_generic_argument_list(node),
+            NodeKind::EtCeteraOf => self.visit_et_cetera_of(node),
             NodeKind::ReturnExpression => self.visit_return_expression(node),
             NodeKind::DynOf => self.visit_dyn_of(node),
             NodeKind::IfExpression => self.visit_if_expression(node),

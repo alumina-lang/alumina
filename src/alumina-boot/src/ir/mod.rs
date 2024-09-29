@@ -926,10 +926,21 @@ pub fn default_visit_expr<'ir, V: ExpressionVisitor<'ir>>(
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum RangeKind {
+    RangeFull,
+    RangeFrom,
+    RangeTo,
+    RangeToInclusive,
+    Range,
+    RangeInclusive,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum LangKind<'ir> {
     DynSelf,
     Slice(TyP<'ir>),
-    Range(TyP<'ir>),
+    Range(TyP<'ir>, RangeKind),
     Dyn(TyP<'ir>, TyP<'ir>),
     ProtoCallable(&'ir [TyP<'ir>], TyP<'ir>),
 }

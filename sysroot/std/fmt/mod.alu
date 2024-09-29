@@ -88,7 +88,7 @@ protocol Formattable<Self, F: Formatter<F> = NullFormatter> {
 ///     {
 ///         let arg = $arg;
 ///         println!("'{}' {}", arg, type_name::<typeof(arg)>());
-///     }...;
+///     }$...;
 /// }
 ///
 /// // '1' i32
@@ -117,13 +117,13 @@ macro write($fmt, $fmt_str, $arg...) {
     format_args!(
             macros::bind!(internal::static_format_args, fmt),
             $fmt_str,
-            $arg...
+            $arg$...
     )
 }
 
 /// Write a formatted string and a newline into a given formatter.
 macro writeln($fmt, $fmt_str, $arg...) {
-    write!($fmt, concat!($fmt_str, "\n"), $arg...)
+    write!($fmt, concat!($fmt_str, "\n"), $arg$...)
 }
 
 /// Format a string into a `StringBuf`.
@@ -139,7 +139,7 @@ macro writeln($fmt, $fmt_str, $arg...) {
 /// ```
 macro format($fmt_str, $arg...) {
     let buf = string::StringBuf::with_capacity($fmt_str.len());
-    let ret = fmt::write!(&buf, $fmt_str, $arg...);
+    let ret = fmt::write!(&buf, $fmt_str, $arg$...);
     if ret.is_ok() {
         Result::ok::<string::StringBuf, Error>(buf)
     } else {
@@ -163,7 +163,7 @@ macro format($fmt_str, $arg...) {
 /// ```
 macro format_in($buf, $fmt_str, $arg...) {
     let fmt = SliceFormatter::new($buf);
-    let ret = fmt::write!(&fmt, $fmt_str, $arg...);
+    let ret = fmt::write!(&fmt, $fmt_str, $arg$...);
     if ret.is_ok() {
         Result::ok::<&[u8], Error>(fmt.get())
     } else {
@@ -283,7 +283,7 @@ mod internal {
     /// This is the default receiver for standard formattimg macros like [write] and [writeln] and
     /// is used primarily to reduce code size as doing it statically would lead to
     macro dyn_format_args($args...) {
-        [dyn_format_arg(&$args)...]
+        [dyn_format_arg(&$args)$...]
     }
 
     macro fold_result($left, $right) {
@@ -299,7 +299,7 @@ mod internal {
         macros::reduce!(
             fold_result,
             Result::ok::<(), fmt::Error>(()),
-            $arg.fmt($fmt)...
+            $arg.fmt($fmt)$...
         )
     }
 
@@ -559,7 +559,7 @@ mod tests {
     static BUF: [u8; 1024];
 
     macro fmt($args...) {
-        format_in!(&BUF, $args...).unwrap()
+        format_in!(&BUF, $args$...).unwrap()
     }
 
     #[test]

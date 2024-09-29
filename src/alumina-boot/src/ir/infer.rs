@@ -195,6 +195,11 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
             for bound in placeholder.bounds.bounds {
                 let (item, args) = match bound.ty {
                     ast::Ty::Generic(ast::Ty::Item(item), args) => (item, args),
+                    // Special case for Fn(A...) -> B
+                    ast::Ty::FunctionProtocol([ast::Ty::EtCetera(tup)], ret) => {
+                        self.match_callable(inferred, tgt, tup, ret);
+                        continue;
+                    }
                     ast::Ty::FunctionProtocol(args, ret) => {
                         let tup = self.ast.intern_type(ast::Ty::Tuple(args));
                         self.match_callable(inferred, tgt, tup, ret);
@@ -220,7 +225,8 @@ impl<'a, 'ast, 'ir> TypeInferer<'a, 'ast, 'ir> {
                     }
                     Some(Lang::ProtoRangeOf) => {
                         if let [src] = args {
-                            if let Some(LangKind::Range(inner)) = self.mono_ctx.lang_type_kind(tgt)
+                            if let Some(LangKind::Range(inner, _)) =
+                                self.mono_ctx.lang_type_kind(tgt)
                             {
                                 let _ = self.match_slot(inferred, src, inner);
                             }
