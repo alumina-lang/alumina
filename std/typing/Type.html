@@ -665,7 +665,7 @@ Returns the type descriptor of the const pointer to the type.
 <li>
 <div class="signature" id="item.ref_mut">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">ref_mut</span>(self: <a href="/std/typing/Type.html"><span class="identifier-type">Type</span></a>&lt;T&gt;) -> <a href="/std/typing/Type.html"><span class="identifier-type">Type</span></a>&lt;&amp;mut T&gt;</h4>
+<span class="keyword">fn</span> <span class="identifier-function">ref_mut</span>(self: <a href="/std/typing/Type.html"><span class="identifier-type">Type</span></a>&lt;T&gt;) -> <a href="/std/typing/Type.html"><span class="identifier-type">Type</span></a>&lt;&amp;<span class="keyword">mut</span> T&gt;</h4>
 <div class="source-link">
 <a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L512-L514"/>source</a>
 </div>
@@ -686,7 +686,7 @@ T: <a href="/std/builtins/Pointer.html"><span class="identifier-type">Pointer</s
 <li>
 <div class="signature" id="item.deref">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">deref</span>(self: <a href="/std/typing/Type.html"><span class="identifier-type">Type</span></a>&lt;T&gt;) -> <a href="/std/typing/Type.html"><span class="identifier-type">Type</span></a>&lt;<a href="/std/builtins/#item.deref_of"><span class="identifier-type">deref_of</span></a>&lt;T&gt;&gt;</h4>
+<span class="keyword">fn</span> <span class="identifier-function">deref</span>(self: <a href="/std/typing/Type.html"><span class="identifier-type">Type</span></a>&lt;T&gt;) -> <a href="/std/typing/Type.html"><span class="identifier-type">Type</span></a>&lt;*T&gt;</h4>
 <div class="source-link">
 <a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L519-L521"/>source</a>
 </div>
@@ -770,7 +770,7 @@ T: <a href="/std/builtins/Struct.html"><span class="identifier-type">Struct</spa
 <li>
 <div class="signature" id="item.fields">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">fields</span>(self: <a href="/std/typing/Type.html"><span class="identifier-type">Type</span></a>&lt;T&gt;) -> <span class="keyword">typeof</span>(...)</h4>
+<span class="keyword">fn</span> <span class="identifier-function">fields</span>(self: <a href="/std/typing/Type.html"><span class="identifier-type">Type</span></a>&lt;T&gt;) -> <span class="keyword">typeof</span>(<span class="token comment">/* ... */</span>)</h4>
 <div class="source-link">
 <a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L568-L570"/>source</a>
 </div>
@@ -975,7 +975,7 @@ T: <a href="/std/builtins/Static.html"><span class="identifier-type">Static</spa
 <li>
 <div class="signature" id="item.as_mut_ptr">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">as_mut_ptr</span>(self: <a href="/std/typing/Type.html"><span class="identifier-type">Type</span></a>&lt;T&gt;) -> &amp;mut <a href="/std/builtins/#item.underlying_type_of"><span class="identifier-type">underlying_type_of</span></a>&lt;T&gt;</h4>
+<span class="keyword">fn</span> <span class="identifier-function">as_mut_ptr</span>(self: <a href="/std/typing/Type.html"><span class="identifier-type">Type</span></a>&lt;T&gt;) -> &amp;<span class="keyword">mut</span> <a href="/std/builtins/#item.underlying_type_of"><span class="identifier-type">underlying_type_of</span></a>&lt;T&gt;</h4>
 <div class="source-link">
 <a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L689-L691"/>source</a>
 </div>
@@ -1063,9 +1063,9 @@ See also <a class="path-link" href="/std/builtins/#item.underlying_function_of">
 <li>
 <div class="signature" id="item.captures">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">captures</span>(self: <a href="/std/typing/Type.html"><span class="identifier-type">Type</span></a>&lt;T&gt;) -> <span class="keyword">typeof</span>(...)</h4>
+<span class="keyword">fn</span> <span class="identifier-function">captures</span>(self: <a href="/std/typing/Type.html"><span class="identifier-type">Type</span></a>&lt;T&gt;) -> <span class="keyword">typeof</span>(<span class="token comment">/* ... */</span>)</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L734-L736"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L735-L737"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -1080,7 +1080,8 @@ Returns the captured field descriptors of the closure.
 let a = 1;
 let b = true;
 
-let closure = |=a, &amp;b, param: i32| {};
+#[allow(unused_closure_binding)]
+let closure = |=a, &amp;b, _param: i32| {};
 
 let desc: Type&lt;typeof(closure)&gt; = Type::new();
 let captures = desc.captures();
@@ -1090,7 +1091,7 @@ assert_eq!(captures.0.name(), Option::some("a"));
 assert_eq!(captures.0.type().debug_name(), "i32");
 assert_eq!(captures.1.name(), Option::some("b"));
 assert_eq!(captures.1.type().debug_name(), "&amp;mut bool");
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3atyping%3a%3aType%3b%0a%20%20%20%20%0a%20%20%20%20let%20a%20%3d%201%3b%0a%20%20%20%20let%20b%20%3d%20true%3b%0a%20%20%20%20%0a%20%20%20%20let%20closure%20%3d%20%7c%3da%2c%20%26b%2c%20param%3a%20i32%7c%20%7b%7d%3b%0a%20%20%20%20%0a%20%20%20%20let%20desc%3a%20Type%3ctypeof%28closure%29%3e%20%3d%20Type%3a%3anew%28%29%3b%0a%20%20%20%20let%20captures%20%3d%20desc%2ecaptures%28%29%3b%0a%20%20%20%20%0a%20%20%20%20assert%5feq%21%28captures%2elen%28%29%2c%202%29%3b%0a%20%20%20%20assert%5feq%21%28captures%2e0%2ename%28%29%2c%20Option%3a%3asome%28%22a%22%29%29%3b%0a%20%20%20%20assert%5feq%21%28captures%2e0%2etype%28%29%2edebug%5fname%28%29%2c%20%22i32%22%29%3b%0a%20%20%20%20assert%5feq%21%28captures%2e1%2ename%28%29%2c%20Option%3a%3asome%28%22b%22%29%29%3b%0a%20%20%20%20assert%5feq%21%28captures%2e1%2etype%28%29%2edebug%5fname%28%29%2c%20%22%26mut%20bool%22%29%3b%0a%7d%0a">Run this example</a></pre>
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3atyping%3a%3aType%3b%0a%20%20%20%20%0a%20%20%20%20let%20a%20%3d%201%3b%0a%20%20%20%20let%20b%20%3d%20true%3b%0a%20%20%20%20%0a%20%20%20%20%23%5ballow%28unused%5fclosure%5fbinding%29%5d%0a%20%20%20%20let%20closure%20%3d%20%7c%3da%2c%20%26b%2c%20%5fparam%3a%20i32%7c%20%7b%7d%3b%0a%20%20%20%20%0a%20%20%20%20let%20desc%3a%20Type%3ctypeof%28closure%29%3e%20%3d%20Type%3a%3anew%28%29%3b%0a%20%20%20%20let%20captures%20%3d%20desc%2ecaptures%28%29%3b%0a%20%20%20%20%0a%20%20%20%20assert%5feq%21%28captures%2elen%28%29%2c%202%29%3b%0a%20%20%20%20assert%5feq%21%28captures%2e0%2ename%28%29%2c%20Option%3a%3asome%28%22a%22%29%29%3b%0a%20%20%20%20assert%5feq%21%28captures%2e0%2etype%28%29%2edebug%5fname%28%29%2c%20%22i32%22%29%3b%0a%20%20%20%20assert%5feq%21%28captures%2e1%2ename%28%29%2c%20Option%3a%3asome%28%22b%22%29%29%3b%0a%20%20%20%20assert%5feq%21%28captures%2e1%2etype%28%29%2edebug%5fname%28%29%2c%20%22%26mut%20bool%22%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -1106,7 +1107,7 @@ T: <a href="/std/builtins/NamedFunction.html"><span class="identifier-type">Name
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">invoke</span>(self: <a href="/std/typing/Type.html"><span class="identifier-type">Type</span></a>&lt;T&gt;, args: <a href="/std/builtins/#item.arguments_of"><span class="identifier-type">arguments_of</span></a>&lt;T&gt;) -> <a href="/std/builtins/#item.return_type_of"><span class="identifier-type">return_type_of</span></a>&lt;T&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L757-L759"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L758-L760"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -1137,7 +1138,7 @@ assert_eq!(result, 3);
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">as_fn</span>(self: <a href="/std/typing/Type.html"><span class="identifier-type">Type</span></a>&lt;T&gt;) -> <a href="/std/builtins/#item.function_pointer_of"><span class="identifier-type">function_pointer_of</span></a>&lt;<a href="/std/builtins/#item.arguments_of"><span class="identifier-type">arguments_of</span></a>&lt;T&gt;, <a href="/std/builtins/#item.return_type_of"><span class="identifier-type">return_type_of</span></a>&lt;T&gt;&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L776-L781"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/typing.alu#L777-L782"/>source</a>
 </div>
 </div>
 <div class="item-doc">
