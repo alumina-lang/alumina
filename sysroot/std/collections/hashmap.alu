@@ -267,6 +267,7 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     fn _insert(self: &mut HashMap<K, V, H>, item: (K, V), grow: bool) -> Option<V> {
         let initial_index = (hash_of_val::<K, H>(item.0) as usize) % self._buckets.len();
         let index = initial_index;
+        let first_tombstone = Option::none::<usize>();
 
         loop {
             switch self._buckets[index].state {
@@ -274,6 +275,8 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
                     if grow && self.reserve(1) {
                         return self._insert(item, false);
                     }
+
+                    index = first_tombstone.unwrap_or(index);
                     self._length += 1;
                     self._buckets[index].state = State::Occupied;
                     self._buckets[index].item = item;
@@ -282,6 +285,11 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
                 State::Occupied => {
                     if self._buckets[index].item.0 == item.0 {
                         return Option::some(std::mem::replace(&self._buckets[index].item.1, item.1));
+                    }
+                }
+                State::Deleted => {
+                    if first_tombstone.is_none() {
+                        first_tombstone = Option::some(index);
                     }
                 }
             }
