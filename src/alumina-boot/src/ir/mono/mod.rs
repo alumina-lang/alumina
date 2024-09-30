@@ -5352,8 +5352,18 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         // Special case for direct indexing of arrays, this is needed to break potential
         // circular references in the slice implementation. If the indexee is not an array,
         // we will try to coerce it into a slice and then index it.
-        if matches!(indexee.ty, ir::Ty::Array(_, _)) {
+        if let ir::Ty::Array(elem, len) = indexee.ty {
             if let Ok(index) = self.try_coerce(self.types.builtin(BuiltinType::USize), index) {
+                if *len == 0 {
+                    return Ok(self.exprs.deref(
+                        self.exprs.literal(
+                            Value::USize(0),
+                            self.types.pointer(*elem, indexee.is_const),
+                            ast_span,
+                        ),
+                        ast_span,
+                    ));
+                }
                 return Ok(self.exprs.index(indexee, index, ast_span));
             }
         }

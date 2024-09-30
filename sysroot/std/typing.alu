@@ -263,6 +263,22 @@ fn is_union<T>() -> bool {
     matches::<T, builtins::Union>()
 }
 
+/// Returns `true` if T is a closure
+///
+/// See also [builtins::Closure].
+#[inline(ir)]
+fn is_closure<T>() -> bool {
+    matches::<T, builtins::Closure>()
+}
+
+/// Returns `true` if T is an enum.
+///
+/// See also [builtins::Union].
+#[inline(ir)]
+fn is_enum<T>() -> bool {
+    matches::<T, builtins::Enum>()
+}
+
 /// Returns `true` if T is a range.
 ///
 /// See also [builtins::Range] and [is_range_of].
@@ -483,6 +499,11 @@ impl Type<T> {
         typing::is_union::<T>()
     }
 
+    /// Returns true if the type is an enum.
+    fn is_enum(self: Type<T>) -> bool {
+        typing::is_enum::<T>()
+    }
+
     /// Returns true if the type is range.
     fn is_range(self: Type<T>) -> bool {
         typing::is_range::<T>()
@@ -491,6 +512,11 @@ impl Type<T> {
     /// Returns true if the type is named function.
     fn is_named_function(self: Type<T>) -> bool {
         typing::is_named_function::<T>()
+    }
+
+    /// Returns true if the type is a closure.
+    fn is_closure(self: Type<T>) -> bool {
+        typing::is_closure::<T>()
     }
 
     /// Returns true if the type is function pointer.
@@ -518,6 +544,11 @@ impl Type<T: builtins::Pointer> {
     /// Returns the type descriptor of the pointed-to type.
     fn deref(self: Type<T>) -> Type<*T> {
         Type {}
+    }
+
+    /// Returns true if the pointer is mutable.
+    fn is_mut(self: Type<T>) -> bool {
+        matches::<builtins::pointer_with_mut_of<void, T>, &mut ()>()
     }
 }
 

@@ -444,6 +444,16 @@ impl Option<T> {
         }
     }
 
+    /// @ std::fmt::DebugFormattable::debug_fmt
+    fn debug_fmt<F: fmt::Formatter<F>>(self: &Option<T>, formatter: &mut F) -> fmt::Result {
+        use std::fmt::debug;
+        if self.is_some() {
+            fmt::write!(formatter, "some({})", self.unwrap().debug())
+        } else {
+            fmt::write!(formatter, "none")
+        }
+    }
+
     /// @ iter::Iterable::iter
     fn iter(self: &Option<T>) -> iter::OnceIterator<T> {
         iter::OnceIterator { _value: *self }

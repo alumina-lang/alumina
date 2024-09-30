@@ -233,13 +233,8 @@ impl Result<T, E> {
         #[cold]
         #[inline(never)]
         fn unwrap_panic_err(err: E) -> ! {
-            use fmt::Formattable;
-
-            when err is Formattable<E, panicking::internal::PanicFormatter> {
-                panic!("unwrap on an err value: {}", err)
-            } else {
-                panic!("unwrap on an err value")
-            }
+            use fmt::debug;
+            panic!("unwrap on an err value: {}", err.debug())
         }
 
         if self.is_ok() {
@@ -267,13 +262,8 @@ impl Result<T, E> {
         #[cold]
         #[inline(never)]
         fn unwrap_panic_ok(ok: T) -> ! {
-            use fmt::Formattable;
-
-            when ok is Formattable<T, panicking::internal::PanicFormatter> {
-                panic!("unwrap on an ok value: {}", ok)
-            } else {
-                panic!("unwrap on an ok value")
-            }
+            use fmt::debug;
+            panic!("unwrap on an ok value: {}", ok.debug())
         }
 
         if self.is_err() {
@@ -371,6 +361,17 @@ impl Result<T, E> {
             func(self.unwrap())
         } else {
             Result::err(self.unwrap_err())
+        }
+    }
+
+    /// @ std::fmt::DebugFormattable::debug_fmt
+    fn debug_fmt<F: fmt::Formatter<F>>(self: &Result<T, E>, formatter: &mut F) -> fmt::Result {
+        use std::fmt::debug;
+
+        if self.is_ok() {
+            fmt::write!(formatter, "ok({})", self.unwrap().debug())
+        } else {
+            fmt::write!(formatter, "err({})", self.unwrap_err().debug())
         }
     }
 }

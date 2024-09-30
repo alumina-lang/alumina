@@ -441,8 +441,9 @@ impl<'ast, 'src> Scope<'ast, 'src> {
                 }
             }
         }
-
+        dbg!(item);
         Err(CodeDiagnostic::DuplicateName(name.unwrap().into()))
+
     }
 
     pub fn add_star_import(&self, path: Path<'ast>) {

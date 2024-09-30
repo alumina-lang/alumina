@@ -392,6 +392,8 @@ macro unlikely($cond) {
 /// assert_eq!(b, 4);
 /// ```
 macro dbg($value) {
+    use ::std::fmt::debug;
+
     let val = $value;
     let f = panicking::internal::PanicFormatter::new();
     fmt::writeln!(&f,
@@ -400,7 +402,7 @@ macro dbg($value) {
         line!(),
         column!(),
         stringify!($value),
-        val
+        val.debug()
     ).unwrap();
     val
 }
@@ -470,29 +472,18 @@ mod internal {
         #[cold]
         #[inline(never)]
         fn panic_assert_eq(file: &[u8], line: i32, column: i32, lhs: T, rhs: T) -> ! {
+            use std::fmt::debug;
             use panicking::internal::panic_impl;
-            use fmt::Formattable;
 
-            when lhs is Formattable<T, panicking::internal::PanicFormatter> {
-                panic_impl(
-                    file, line, column,
-                    &fmt::format_args!(
-                        fmt::internal::dyn_format_args,
-                        "assertion failed ({} != {}))",
-                        lhs,
-                        rhs
-                    )
+            panic_impl(
+                file, line, column,
+                &fmt::format_args!(
+                    fmt::internal::dyn_format_args,
+                    "assertion failed ({} != {}))",
+                    lhs.debug(),
+                    rhs.debug()
                 )
-            }
-            else {
-                panic_impl(
-                    file, line, column,
-                    &fmt::format_args!(
-                        fmt::internal::dyn_format_args,
-                        "assertion failed (does not equal))",
-                    )
-                )
-            }
+            )
         }
 
         #[allow(constant_condition)]
