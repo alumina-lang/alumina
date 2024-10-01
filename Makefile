@@ -5,14 +5,14 @@ SYSROOT = sysroot
 
 ifdef RELEASE
 	BUILD_DIR = $(BUILD_ROOT)/release
-	CARGO_FLAGS += --release
+	CARGO_FLAGS += --profile release
 	CARGO_TARGET_DIR = target/release
 	CFLAGS += -O3
 else ifdef FAST_DEBUG
 	# Compile in debug mode, but with alumina-boot compiled in release mode.
 	# It is significantly faster.
 	BUILD_DIR = $(BUILD_ROOT)/fast-debug
-	CARGO_FLAGS += --release
+	CARGO_FLAGS += --profile release
 	CARGO_TARGET_DIR = target/release
 	CFLAGS += -g0
 	ALUMINA_FLAGS += --debug
@@ -32,6 +32,7 @@ else ifdef COVERAGE
 	export RUSTFLAGS += -Cinstrument-coverage
 	export LLVM_PROFILE_FILE = $(BUILD_ROOT)/coverage/profiles/%p-%m.profraw
 else
+	CARGO_FLAGS += --profile dev
 	BUILD_DIR = $(BUILD_ROOT)/debug
 	CARGO_TARGET_DIR = target/debug
 	CFLAGS += -g3 -fPIE -rdynamic
@@ -294,7 +295,7 @@ quick: $(BUILD_DIR)/quick
 
 ## ------------------------------ Benchmarking -------------------------
 
-.PHONY: bench-std bench-std-cc flamegraph
+.PHONY: bench-std bench-std-cc flamegraph samply
 
 BENCH_CMD = ./tools/bench.py -n$(if $(TIMES),$(TIMES),20) $(if $(MARKDOWN),--markdown,)
 
@@ -310,6 +311,15 @@ bench-std-cached: $(ALU_TEST_STD_DEPS)
 
 bench-std-cc: $(STDLIB_TESTS).c $(MINICORO)
 	$(BENCH_CMD) $(CC) $(CFLAGS) -o/dev/null $^ $(LDFLAGS)
+
+$(BUILD_DIR)/flamegraph.svg: $(ALUMINA_BOOT) $(SYSROOT_FILES)
+	cargo flamegraph $(CARGO_FLAGS)  \
+		-F 10000 --dev -o $@ -- $(ALUMINA_FLAGS) --sysroot $(SYSROOT) -Ztimings --cfg test --cfg test_std --output /dev/null
+
+flamegraph: $(BUILD_DIR)/flamegraph.svg
+
+samply: $(ALUMINA_BOOT) $(SYSROOT_FILES)
+	samply record -r 10000 --reuse-threads --iteration-count 5  $(ALUMINA_BOOT) $(ALUMINA_FLAGS_TEST_STD) -Ztimings --cfg test --cfg test_std --output /dev/null
 
 ## ------------------------------ Diag tests ----------------------------
 

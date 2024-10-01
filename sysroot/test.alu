@@ -32,7 +32,7 @@
 //!     }
 //!
 //!     #[test]
-//!     #[test::should_fail]
+//!     #[test::should_panic]
 //!     fn test_panic() {
 //!         panic!("oops");
 //!     }
@@ -42,7 +42,7 @@
 //! ## Test attributes
 //!
 //! The following attributes are supported: `#[test::ignore]` to skip execution of a test (useful e.g. to make sure
-//! that a test compiles but is not run), `#[test::should_fail]` to mark a test as expected to fail (e.g. through
+//! that a test compiles but is not run), `#[test::should_panic]` to mark a test as expected to fail (e.g. through
 //! panic).
 //!
 //! ## Custom test frameworks
@@ -58,7 +58,7 @@ struct TestCaseMeta {
     test: fn(),
 
     /// Whether this test is expected to fail
-    should_fail: bool,
+    should_panic: bool,
     // Whether this test is ignored
     ignore: bool
 }
@@ -77,7 +77,7 @@ const TEST_CASES = {
             path: desc.module_path().unwrap_or(""),
             name: desc.name().unwrap_or(""),
             test: desc.as_fn(),
-            should_fail: has_attribute::<type_of<typeof(desc)>>("test::should_fail"),
+            should_panic: has_attribute::<type_of<typeof(desc)>>("test::should_panic"),
             ignore: has_attribute::<type_of<typeof(desc)>>("test::ignore")
         };
     }
@@ -118,9 +118,12 @@ fn run(test: &TestCaseMeta) -> TestResult {
         .unwrap();
 
     if child.is_none() {
-        test.test();
-        if test.should_fail {
-            eprintln!("note: test function completed successfully")
+        if test.should_panic {
+            if panicking::catch_panic(|&test| { test.test() }).is_ok() {
+                panic!("test did not panic as expected");
+            }
+        } else {
+            test.test();
         }
         process::exit(0);
     }
@@ -134,7 +137,7 @@ fn run(test: &TestCaseMeta) -> TestResult {
     TestResult {
         test: *test,
         duration: end_time.duration_since(&start_time),
-        success: test.should_fail ^ (output.status.success()),
+        success: output.status.success(),
         stdout: output.stdout.move(),
         stderr: output.stderr.move(),
         status: output.status
@@ -367,6 +370,38 @@ fn main(args: &[&[u8]]) -> i32 {
 }
 
 
+/// Assert that the inner block abnormally terminates the process.
+///
+/// The inner block is executed in a forked process. If the block runs to completion, the macro will panic.
+///
+/// ## Example
+/// ```bare
+/// use test::assert_terminates;
+///
+/// #[test]
+/// fn test_trap() {
+///     assert_terminates({
+///         std::intrinsics::trap();
+///     });
+/// }
+/// ```
+macro assert_terminates($inner) {
+    use std::process::Forked;
+    let child = Forked::new()
+        .spawn()
+        .unwrap();
+    if child.is_none() {
+        $inner;
+        process::exit(0);
+    }
+    let child = child.unwrap();
+    let output = child.wait().unwrap();
+    if output.success() {
+        panic!("child process ran to completion");
+    }
+}
+
+
 /// Quis testabitur ipsos testes
 #[cfg(test_std)]
 mod tests {
@@ -379,8 +414,8 @@ mod tests {
     fn ignored_test() {}
 
     #[test]
-    #[test::should_fail]
-    fn should_fail_test() {
+    #[test::should_panic]
+    fn should_panic_test() {
         panic!("oops")
     }
 }

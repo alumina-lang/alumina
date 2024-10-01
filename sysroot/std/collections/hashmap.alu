@@ -1,4 +1,4 @@
-use hash::{Hashable, Hasher, DefaultHash, hash_of_val, hash_of};
+use hash::{Hashable, Hasher, DefaultHash, hash_of};
 use option::{Option, try};
 use cmp::Equatable;
 use iter::Iterator;
@@ -265,7 +265,7 @@ impl HashMap<K: Hashable<K, H> + Equatable<K>, V, H: Hasher<H> = DefaultHash> {
     }
 
     fn _insert(self: &mut HashMap<K, V, H>, item: (K, V), grow: bool) -> Option<V> {
-        let initial_index = (hash_of_val::<K, H>(item.0) as usize) % self._buckets.len();
+        let initial_index = (hash_of::<K, H>(&item.0) as usize) % self._buckets.len();
         let index = initial_index;
         let first_tombstone = Option::none::<usize>();
 
@@ -438,19 +438,19 @@ impl HashMap<B: Hashable<B, H> + Equatable<B>, K: mem::Borrowable<K, B>, V, H: H
     /// Retreives the value by given borrowing of a key.
     fn get_borrowed(self: &HashMap<K, V, H>, key: B) -> Option<V> {
         let comparer = |=key, c: &K| -> bool { c.borrow().equals(&key) };
-        Option::some(self._get_slot(hash_of_val::<B, H>(key), comparer)?.item.1)
+        Option::some(self._get_slot(hash_of::<B, H>(&key), comparer)?.item.1)
     }
 
     /// Retreives a pointer to the value by given borrowing of a key.
     fn get_borrowed_ref(self: &HashMap<K, V, H>, key: B) -> Option<&V> {
         let comparer = |=key, c: &K| -> bool { c.borrow().equals(&key) };
-        Option::some(&self._get_slot(hash_of_val::<B, H>(key), comparer)?.item.1 as &V)
+        Option::some(&self._get_slot(hash_of::<B, H>(&key), comparer)?.item.1 as &V)
     }
 
     /// Retreives a mutable pointer to the value by given key.
     fn get_borrowed_mut(self: &mut HashMap<K, V, H>, key: B) -> Option<&mut V> {
         let comparer = |=key, c: &K| -> bool { c.borrow().equals(&key) };
-        Option::some(&self._get_slot(hash_of_val::<B, H>(key), comparer)?.item.1)
+        Option::some(&self._get_slot(hash_of::<B, H>(&key), comparer)?.item.1)
     }
 
     /// Removes the element from the map by given borrowing of a key.
@@ -459,7 +459,7 @@ impl HashMap<B: Hashable<B, H> + Equatable<B>, K: mem::Borrowable<K, B>, V, H: H
     /// returned along with the key. Otherwise, `Option::none()` is returned.
     fn remove_borrowed(self: &mut HashMap<K, V, H>, key: B) -> Option<(K, V)> {
         let comparer = |=key, c: &K| -> bool { c.borrow().equals(&key) };
-        let item = self._get_slot(hash_of_val::<B, H>(key), comparer)?;
+        let item = self._get_slot(hash_of::<B, H>(&key), comparer)?;
         self._length -= 1;
         item.state = State::Deleted;
 

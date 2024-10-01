@@ -1306,7 +1306,7 @@ impl<'ir> ConstEvaluator<'ir> {
 
                 let cond_value = match condv {
                     Value::Bool(b) => b,
-                    _ => bug!(self),
+                    _ => unsupported!(self),
                 };
 
                 if cond_value {

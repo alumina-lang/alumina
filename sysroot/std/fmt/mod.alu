@@ -294,7 +294,7 @@ mod internal {
         [dyn_format_arg(&$args)$...]
     }
 
-    macro fold_result($left, $right) {
+    macro _fold_result($left, $right) {
         let left = $left;
         if left.is_err() {
             left
@@ -303,9 +303,24 @@ mod internal {
         }
     }
 
+    /// Receiver macro for [format_args] that constructs a tuple of the formatting args.
+    macro tuple_format_args($arg...) {
+        (&$arg$...,)
+    }
+
+    fn write_fmt_tuple<T: builtins::Tuple, F: Formatter<F>>(f: &mut F, args: T) -> Result {
+        for const i in 0usize..args.len() {
+            args.(i).fmt(f)?;
+        }
+        Result::ok(())
+    }
+
+    /// Receiver macro for [format_args] that constructs a fold expression chain that writes
+    /// each argument into the formatter and bails early if an error occurs. This is the
+    /// default receiver for [format_args].
     macro static_format_args($fmt, $arg...) {
         macros::reduce!(
-            fold_result,
+            _fold_result,
             Result::ok::<(), fmt::Error>(()),
             $arg.fmt($fmt)$...
         )
@@ -469,23 +484,6 @@ mod internal {
         }
     }
 
-    struct DebugAdapter<T> {
-        _value: T,
-    }
-
-    impl DebugAdapter<T> {
-        fn fmt<F: Formatter<F>>(self: &DebugAdapter<T>, formatter: &mut F) -> Result {
-            let formatter = DebugFormatter { _fmt: formatter, };
-
-            formatter.write(self._value, null)
-        }
-    }
-
-
-    struct DebugFormatter<F: Formatter<F>> {
-        _fmt: &mut F,
-    }
-
     struct StackGuard {
         previous: &StackGuard,
         ptr: &void
@@ -505,10 +503,16 @@ mod internal {
         }
     }
 
-    impl DebugFormatter<F: Formatter<F>> {
-        use builtins::*;
+    struct DebugAdapter<T> {
+        _value: T,
+    }
 
-        fn write<T>(self: &mut DebugFormatter<F>, value: T, stack_guard: &StackGuard) -> Result {
+    impl DebugAdapter<T> {
+        fn fmt<F: Formatter<F>>(self: &DebugAdapter<T>, f: &mut F) -> Result {
+            DebugAdapter::write(self._value, f, null)
+        }
+
+        fn write<F: Formatter<F>>(value: T, f: &mut F, stack_guard: &StackGuard) -> Result {
             let name = runtime::const_eval!(typing::type_name::<T>());
 
             let stack_guard = StackGuard {
@@ -518,106 +522,103 @@ mod internal {
 
             let ty = typing::Type::new::<T>();
             when value is DebugFormattable<T, F> {
-                value.debug_fmt(self._fmt)?;
+                value.debug_fmt(f)?;
             } else when ty.is_numeric() || value is bool {
-                fmt::write!(self._fmt, "{}", value)?;
+                value.fmt(f)?;
             } else when ty.is_pointer() {
                 if value == null {
-                    fmt::write!(self._fmt, "null")?;
+                    f.write_str("null")?;
+                } else when value is &void || value is &mut void {
+                    fmt::write!(f, "0x{}", (value as usize).hex())?;
                 } else if stack_guard.check_recursion(value) {
-                    fmt::write!(self._fmt, "<recursive>")?;
+                    f.write_str("<recursive>")?;
                 } else {
                     #[allow(unnecessary_cast)]
                     stack_guard.ptr = value as &void;
-                    self.write(*value, &stack_guard)?;
+                    DebugAdapter::write(*value, f, &stack_guard)?;
                 }
             } else when ty.is_tuple() {
-                fmt::write!(self._fmt, "(")?;
+                f.write_str("(")?;
                 for const i in 0usize..value.len() {
                     when i != 0 {
-                        fmt::write!(self._fmt, ", ");
+                        f.write_str(", ")?;
                     }
-                    self.write(value.(i), &stack_guard)?;
+                    DebugAdapter::write(value.(i), f, &stack_guard)?;
                 }
-                fmt::write!(self._fmt, ")")?;
+                f.write_str(")")?;
             } else when value is &[u8] || value is &mut [u8] {
-                self._fmt.write_str("\"")?;
+                f.write_str("\"")?;
                 for byte in value {
                     if byte == '\n' {
-                        self._fmt.write_str("\\n")?;
+                        f.write_str("\\n")?;
                     } else if byte == '\r' {
-                        self._fmt.write_str("\\r")?;
+                        f.write_str("\\r")?;
                     } else if byte == '\t' {
-                        self._fmt.write_str("\\t")?;
+                        f.write_str("\\t")?;
                     } else if byte == '\\' {
-                        self._fmt.write_str("\\\\")?;
+                        f.write_str("\\\\")?;
                     } else if byte == '"' {
-                        self._fmt.write_str("\\\"")?;
+                        f.write_str("\\\"")?;
                     } else if byte < 0x20 || byte >= 0x7F {
                         // TODO: Check if it is a valid UTF-8 sequence and print it as a character
-                        fmt::write!(self._fmt, "\\x{}", byte.hex().zero_pad(2))?;
+                        fmt::write!(f, "\\x{}", byte.hex().zero_pad(2))?;
                     } else {
-                        self._fmt.write_byte(byte)?;
+                        f.write_byte(byte)?;
                     }
                 }
-                self._fmt.write_str("\"")?;
+                f.write_str("\"")?;
             } else when ty.is_array() || ty.is_slice() {
                 when ty.is_slice() {
                     if stack_guard.check_recursion(value.as_ptr()) {
-                        fmt::write!(self._fmt, "<recursive>")?;
+                        f.write_str("<recursive>")?;
                         return Result::ok(());
                     }
                     stack_guard.ptr = value.as_ptr() as &void;
                 }
-                fmt::write!(self._fmt, "[")?;
+                f.write_str("[")?;
                 for i in 0usize..value.len() {
                     if i != 0 {
-                        fmt::write!(self._fmt, ", ");
+                        f.write_str(", ")?;
                     }
-                    self.write(value[i], &stack_guard)?;
+                    DebugAdapter::write(value[i], f, &stack_guard)?;
                 }
-                fmt::write!(self._fmt, "]")?;
+                f.write_str("]")?;
             } else when ty.is_union() {
                 // We do not know which field is active, so we cannot print it.
-                fmt::write!(self._fmt, "<union>")?;
-            } else when ty.is_struct() {
-                let fields = ty.fields();
-                fmt::write!(self._fmt, "{} {{ ", ty.name().unwrap_or("<unnamed>"))?;
-                for const i in 0usize..fields.len() {
-                    when i != 0 {
-                        fmt::write!(self._fmt, ", ")?;
-                    }
-                    fmt::write!(self._fmt, "{}: ", fields.(i).name().unwrap_or("<unnamed>"))?;
-                    self.write(*fields.(i).as_ptr(&value), &stack_guard)?;
-                }
-                fmt::write!(self._fmt, " }}")?;
+                f.write_str("<union>")?;
             } else when ty.is_enum() {
                 for variant in ty.variants() {
                     if value == variant.value() {
-                        fmt::write!(self._fmt, "{}::{}", ty.name().unwrap_or("<unnamed>"), variant.name())?;
+                        fmt::write!(f, "{}::{}", ty.name().unwrap_or("<unnamed>"), variant.name())?;
                         return Result::ok(());
                     }
                 }
-                self.write(value as builtins::underlying_type_of<T>, &stack_guard)?;
+                DebugAdapter::write(value as builtins::underlying_type_of<T>, f, &stack_guard)?;
             } else when ty.is_function_pointer() {
                 if (value as &void) == null {
-                    fmt::write!(self._fmt, "null")?;
+                    f.write_str("null")?;
                 } else {
-                    fmt::write!(self._fmt, "<function>")?;
+                    f.write_str("<function>")?;
                 }
-            } else when ty.is_closure() {
-                let fields = ty.captures();
-                fmt::write!(self._fmt, "<closure> {{ ")?;
+            } else when ty.is_closure() || ty.is_struct() {
+                let fields = when ty.is_closure() {
+                    f.write_str("<closure> { ")?;
+                    ty.captures()
+                } else {
+                    fmt::write!(f, "{} {{ ", ty.name().unwrap_or("<unnamed>"))?;
+                    ty.fields()
+                };
+
                 for const i in 0usize..fields.len() {
                     when i != 0 {
-                        fmt::write!(self._fmt, ", ");
+                        f.write_str(", ")?;
                     }
-                    fmt::write!(self._fmt, "{}: ", fields.(i).name().unwrap_or("<unnamed>"))?;
-                    self.write(*fields.(i).as_ptr(&value), &stack_guard)?;
+                    fmt::write!(f, "{}: ", fields.(i).name().unwrap_or("<unnamed>"))?;
+                    DebugAdapter::write(*fields.(i).as_ptr(&value), f, &stack_guard)?;
                 }
-                fmt::write!(self._fmt, " }}")?;
+                f.write_str(" }")?;
             } else {
-                fmt::write!(self._fmt, "{}", ty.name().unwrap_or("<unknown>"))?;
+                fmt::write!(f, "{}", ty.name().unwrap_or("<unknown>"))?;
             }
 
             Result::ok(())
@@ -823,6 +824,55 @@ mod tests {
         };
 
         assert!(FOO);
+    }
+
+    #[test]
+    fn test_debug_formatter() {
+        assert_eq!(fmt!("{}", debug(42)), "42");
+        assert_eq!(fmt!("{}", debug("hello! 👋")), "\"hello! \\xf0\\x9f\\x91\\x8b\"");
+        assert_eq!(fmt!("{}", debug(true)), "true");
+        assert_eq!(fmt!("{}", debug(&true)), "true");
+        assert_eq!(fmt!("{}", debug((1, 2, 3))), "(1, 2, 3)");
+
+        struct Point {
+            x: i32,
+            y: i32
+        }
+
+        assert_eq!(fmt!("{}", debug(Point { x: 1, y: 2 })), "Point { x: 1, y: 2 }");
+        let a = 1;
+        let b = 2;
+        #[allow(unused_closure_binding)]
+        let closure = |=a, &b, _c: i32| {};
+
+        assert_eq!(fmt!("{}", debug(closure)), "<closure> { a: 1, b: 2 }");
+
+        enum Enum {
+            A,
+            B,
+            C
+        }
+
+        assert_eq!(fmt!("{}", debug(Enum::A)), "Enum::A");
+        assert_eq!(fmt!("{}", debug(42 as Enum)), "42");
+
+        union Union {
+            a: i32,
+            b: f32
+        }
+
+        assert_eq!(fmt!("{}", debug(Union { a: 42 })), "<union>");
+
+        let f: test_debug_formatter;
+        assert_eq!(fmt!("{}", debug(f)), "test_debug_formatter");
+
+        struct Custom {}
+        impl Custom {
+            fn debug_fmt<F: Formatter<F>>(self: &Custom, f: &mut F) -> Result {
+                f.write_str("hello")
+            }
+        }
+        assert_eq!(fmt!("{}", debug(Custom {})), "hello");
     }
 }
 

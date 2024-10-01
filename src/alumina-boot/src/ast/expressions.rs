@@ -996,7 +996,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                 self.scope
                     .add_item(
                         Some(name),
-                        NamedItem::new_default(NamedItemKind::Local(id), name_node, None),
+                        NamedItem::new_default(NamedItemKind::ConstLocal(id), name_node, None),
                     )
                     .with_span_from(&self.scope, node)?;
 
@@ -1017,7 +1017,11 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
                     self.scope
                         .add_item(
                             Some(name),
-                            NamedItem::new_default(NamedItemKind::Local(elem_id), name_node, None),
+                            NamedItem::new_default(
+                                NamedItemKind::ConstLocal(elem_id),
+                                name_node,
+                                None,
+                            ),
                         )
                         .with_span_from(&self.scope, name_node)?;
                 }
@@ -1695,7 +1699,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for LambdaVisitor<'ast, 'src> {
             .with_span_from(&self.scope, node)?
         {
             ItemResolution::Item(NamedItem {
-                kind: NamedItemKind::Local(id) | NamedItemKind::Parameter(id),
+                kind:
+                    NamedItemKind::Local(id)
+                    | NamedItemKind::Parameter(id)
+                    | NamedItemKind::ConstLocal(id),
                 ..
             }) => ExprKind::Local(id),
             ItemResolution::Item(NamedItem {
@@ -1792,6 +1799,7 @@ pub fn resolve_name<'ast, 'src>(
             NamedItemKind::Function(fun) => ExprKind::Fn(FnKind::Normal(fun), None),
             NamedItemKind::Method(fun) => ExprKind::Fn(FnKind::Normal(fun), None),
             NamedItemKind::Local(var) => ExprKind::Local(var),
+            NamedItemKind::ConstLocal(var) => ExprKind::Local(var),
             NamedItemKind::BoundValue(self_id, var, bound_type) => {
                 ExprKind::BoundParam(self_id, var, bound_type)
             }

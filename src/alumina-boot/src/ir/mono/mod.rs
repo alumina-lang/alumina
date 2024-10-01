@@ -9,6 +9,7 @@ use crate::diagnostics::DiagnosticsStack;
 use crate::global_ctx::GlobalCtx;
 use crate::ir::builder::{ExpressionBuilder, TypeBuilder};
 use crate::ir::const_eval::{numeric_of_kind, ConstEvalErrorKind, Value};
+use crate::ir::fold::{Folder, IdUsageCounter};
 use crate::ir::infer::TypeInferer;
 use crate::ir::inline::IrInliner;
 use crate::ir::{FuncBody, ItemP, LocalDef, ValueType};
@@ -515,6 +516,13 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
 
         let (valued, non_valued): (Vec<_>, Vec<_>) =
             en.members.iter().copied().partition(|m| m.value.is_some());
+        let mut evaluator = ir::const_eval::ConstEvaluator::new(
+            child.ctx.global_ctx.clone(),
+            child.diag.fork(),
+            child.ctx.malloc_bag.clone(),
+            child.ctx.ir,
+            child.local_types.iter().map(|(k, v)| (*k, *v)),
+        );
 
         for m in valued {
             let _guard = self.diag.push_span(m.span);
@@ -525,15 +533,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                 _ => bail!(self, CodeDiagnostic::InvalidValueForEnumVariant),
             };
 
-            let value = ir::const_eval::ConstEvaluator::new(
-                child.ctx.global_ctx.clone(),
-                child.diag.fork(),
-                child.ctx.malloc_bag.clone(),
-                child.ctx.ir,
-                child.local_types.iter().map(|(k, v)| (*k, *v)),
-            )
-            .const_eval(expr)?;
-
+            let value = evaluator.const_eval(expr)?;
             if !type_hint.get_or_insert(expr.ty).assignable_from(expr.ty) {
                 return Err(mismatch!(self, type_hint.unwrap(), expr.ty));
             }
@@ -549,8 +549,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
             });
         }
 
-        // This monstrosity to populate non-valued members with arbitrary types using
-        // const-eval. It's bad, but it works.
+        // Populate the enum members without values
         let kind = match type_hint.get_or_insert(child.types.builtin(BuiltinType::I32)) {
             ir::Ty::Builtin(k) => *k,
             _ => unreachable!(),
@@ -558,19 +557,15 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         let enum_type = type_hint.unwrap();
 
         let mut counter = numeric_of_kind!(kind, 0);
+        let mut seen = HashSet::default();
         for m in non_valued {
             let next_non_taken = loop {
+                let _guard = self.diag.push_span(m.span);
+
                 if taken_values.insert(counter) {
                     break counter;
                 }
-                counter = ir::const_eval::ConstEvaluator::new(
-                    child.ctx.global_ctx.clone(),
-                    child.diag.fork(),
-                    child.ctx.malloc_bag.clone(),
-                    child.ctx.ir,
-                    child.local_types.iter().map(|(k, v)| (*k, *v)),
-                )
-                .const_eval(
+                counter = evaluator.const_eval(
                     self.exprs.binary(
                         ast::BinOp::Plus,
                         self.exprs.literal(counter, enum_type, m.span),
@@ -580,6 +575,12 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                         m.span,
                     ),
                 )?;
+                // We wrapped around, the enum is full
+                if !seen.insert(counter) {
+                    return Err(self.diag.err(CodeDiagnostic::TooManyEnumVariants(
+                        child.ctx.type_name(enum_type)?,
+                    )));
+                }
             };
 
             members.push(ir::EnumMember {
@@ -2024,7 +2025,12 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
     {
         let item = self.mono_lang_item(kind, generic_args)?;
         let func = self.exprs.function(item, span);
-        self.call(func, args, item.get_function().unwrap().return_type, span)
+        self.call(
+            func,
+            args,
+            item.get_function().with_backtrace(&self.diag)?.return_type,
+            span,
+        )
     }
 
     fn lang_ty<I>(&mut self, kind: Lang, generic_args: I) -> Result<ir::TyP<'ir>, AluminaError>
@@ -2067,9 +2073,13 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                     | ir::Item::Closure(_)
                     | ir::Item::Function(_),
                 ) => {}
-                Ok(ir::Item::Protocol(_)) => self.diag.warn(
-                    CodeDiagnostic::ProtocolsAreSpecialMkay(self.ctx.type_name(ty).unwrap()),
-                ),
+                Ok(ir::Item::Protocol(_)) => {
+                    if !self.tentative {
+                        self.diag.warn(CodeDiagnostic::ProtocolsAreSpecialMkay(
+                            self.ctx.type_name(ty).unwrap(),
+                        ))
+                    }
+                }
                 Ok(ir::Item::Static(_)) => self
                     .diag
                     .warn(CodeDiagnostic::InvalidTypeForValue("statics")),
@@ -2333,7 +2343,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
             ast::Ty::Builtin(kind) => self.types.builtin(kind),
             ast::Ty::Array(inner, len) => {
                 let inner = self.lower_type_for_value(inner)?;
-                let mut child = self.make_tentative_child();
+                let mut child = self.fork(false);
                 let len_expr =
                     child.lower_expr(len, Some(child.types.builtin(BuiltinType::USize)))?;
                 let len = ir::const_eval::ConstEvaluator::new(
@@ -2521,7 +2531,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                 self.lang_ty(Lang::Dyn, [key_ty, ptr_type])?
             }
             ast::Ty::TypeOf(inner) => {
-                let mut child = self.make_tentative_child();
+                let mut child = self.fork(false);
                 let expr = child.lower_expr(inner, None)?;
                 expr.ty
             }
@@ -2834,7 +2844,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         Ok(associated_fns)
     }
 
-    fn make_tentative_child<'b>(&'b mut self) -> Mono<'b, 'ast, 'ir> {
+    fn fork<'b>(&'b mut self, tentative: bool) -> Mono<'b, 'ast, 'ir> {
         let ir = self.ctx.ir;
 
         // this should be some CoW thing, cloning everything here is excessive
@@ -2853,7 +2863,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
             defer_context: self.defer_context.clone(),
             const_replacements: self.const_replacements.clone(),
             current: self.current,
-            tentative: true,
+            tentative,
             diag: self.diag.fork(),
         }
     }
@@ -3014,7 +3024,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         let self_count = self_expr.iter().count();
 
         let arg_types = if let Some(tentative_args) = tentative_args {
-            let mut child = self.make_tentative_child();
+            let mut child = self.fork(true);
             let arg_types = tentative_args
                 .iter()
                 .map(|e| match child.lower_expr(e, None) {
@@ -3172,7 +3182,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         // See notes in try_resolve_function. Same thing, but for struct fields (we match by name instead of position).
 
         let mut tentative_errors = Vec::new();
-        let mut child = self.make_tentative_child();
+        let mut child = self.fork(true);
         let pairs: Vec<_> = r#struct
             .fields
             .iter()
@@ -4040,7 +4050,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         // but also exclude inreachable branches in codegen (so we don't accidentally codegen
         // const-only code)
         let mut const_cond = None;
-        let child = self.make_tentative_child();
+        let child = self.fork(true);
         match ir::const_eval::ConstEvaluator::new(
             child.ctx.global_ctx.clone(),
             child.diag.fork(),
@@ -4083,7 +4093,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
     }
 
     fn static_cond_matches(&mut self, cond: ast::ExprP<'ast>) -> Result<bool, AluminaError> {
-        let mut child = self.make_tentative_child();
+        let mut child = self.fork(false);
         let ir_expr = child.lower_expr(cond, Some(child.types.builtin(BuiltinType::Bool)))?;
         let ret = ir::const_eval::ConstEvaluator::new(
             child.ctx.global_ctx.clone(),
@@ -4207,6 +4217,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         evaluator.const_eval(assign)?;
         let mut stmts = Vec::new();
 
+        let mut existing_defs: HashSet<_> = self.local_defs.iter().copied().collect();
         loop {
             let value = match evaluator.const_eval(iter_next) {
                 Ok(val) => val,
@@ -4238,7 +4249,57 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                 }
             }
 
-            let body = self.lower_expr(body, type_hint)?;
+            let (body, local_defs) = {
+                let mut child = self.fork(false);
+                let body = child.lower_expr(body, type_hint)?;
+
+                (body, child.local_defs)
+            };
+
+            let label_replacements: HashMap<_, _> = IdUsageCounter::count_labels(body)?
+                .into_iter()
+                .filter_map(|(id, count)| (count > 0).then_some((id, self.ctx.ir.make_id())))
+                .collect();
+
+            let local_replacements: HashMap<_, _> = local_defs
+                .into_iter()
+                .filter_map(|def| {
+                    if existing_defs.contains(&def) {
+                        None
+                    } else {
+                        let new_id = self.ctx.ir.make_id();
+                        self.local_defs.push(LocalDef {
+                            id: new_id,
+                            ty: def.ty,
+                        });
+                        existing_defs.insert(LocalDef {
+                            id: new_id,
+                            ty: def.ty,
+                        });
+                        Some((def.id, new_id))
+                    }
+                })
+                .collect();
+
+            let body = Folder::fold(
+                body,
+                self.ctx.ir,
+                |expr| match expr.kind {
+                    ir::ExprKind::Local(id) => Ok(local_replacements
+                        .get(&id)
+                        .copied()
+                        .map(|id| self.exprs.local(id, expr.ty, expr.span))),
+                    _ => Ok(None),
+                },
+                |stmt| match stmt {
+                    ir::Statement::Label(id) => Ok(label_replacements
+                        .get(id)
+                        .copied()
+                        .map(ir::Statement::Label)),
+                    _ => Ok(None),
+                },
+            )?;
+
             stmts.push(body);
 
             if body.diverges() {
@@ -4641,7 +4702,6 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                             .iter()
                             .zip(args.into_iter())
                             .map(|(a, b)| (a.id, b)),
-                        span,
                     )?;
 
                     self.local_defs.append(&mut additional_defs);
@@ -5358,7 +5418,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                     return Ok(self.exprs.deref(
                         self.exprs.literal(
                             Value::USize(0),
-                            self.types.pointer(*elem, indexee.is_const),
+                            self.types.pointer(elem, indexee.is_const),
                             ast_span,
                         ),
                         ast_span,

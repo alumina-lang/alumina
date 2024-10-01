@@ -1513,6 +1513,20 @@ use std::fmt::hex;
 println!("The number is {}", 0xdeadbeef.hex());
 ```
 
+There is a built-in adapter [debug](https://docs.alumina-lang.net/std/builtins/fmt.html#item.debug) that can print most values without them needing to implement the `Formattable` protocol. This is useful for debugging and logging, but may not always be the canonical or most user-friendly output.
+
+```rust
+use std::fmt::debug;
+
+struct Point3D {
+    x: i32,
+    y: i32,
+    z: i32
+}
+
+println!("{}", Point3D { x: 1, y: 2, z: 3 }.debug()); // "Point3D { x: 1, y: 2, z: 3 }"
+```
+
 ## Type coercion
 
 Values of certain types can be coerced to other types without requiring an explicit conversion or cast.
@@ -1686,7 +1700,7 @@ fn set<T: Struct | Union, F>(obj: &mut T, name: &[u8], value: F) {
     for const i in 0usize..fields.len() {
         let field_ty = fields.(i).type();
 
-        if fields.(i).name() == name {
+        if fields.(i).name() == Option::some(name) {
             when field_ty.is_same_as(value_ty) {
                 *fields.(i).as_mut_ptr(obj) = value;
                 return;
@@ -1715,6 +1729,9 @@ foo.set("quux", true);
 // These would panic at runtime
 // foo.set("bar", true);
 // foo.set("unknown", 42);
+
+println!("bar = {}", foo.bar);
+println!("quux = {}", foo.quux);
 ```
 
 The `when` expression is used to select the appropriate branch based on the actual type of the field. Most reflection operations are at zero runtime cost, though they may increase the binary size to include various type metadata, such as field names and attributes.
@@ -1777,7 +1794,7 @@ mod tests {
     }
 
     #[test]
-    #[test::should_fail]
+    #[test::should_panic]
     fn test_panic() {
         panic!("oops");
     }
@@ -1884,6 +1901,36 @@ impl FancyInt {
 
 assert!(FancyInt { inner: 1 } < FancyInt { inner: 2 });
 assert!(FancyInt { inner: 3 } == FancyInt { inner: 3 });
+```
+
+`Equatable` and `Comparable` protocols may be automatically derived for sufficiently simple types (i.e. enums and structs where all fields are `Equatable` or `Comparable`) by using [`DefaultEquatable`](https://docs.alumina-lang.net/std/cmp/DefaultEquatable.html) and [`LexicographicComparable`](https://docs.alumina-lang.net/std/cmp/LexicographicComparable.html) mixins.
+
+For structs the comparison will be field-wise in order of definition.
+
+```rust
+use std::cmp::{DefaultEquatable, LexicographicComparable};
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+impl Point {
+    mixin DefaultEquatable<Point>;
+}
+
+struct Date {
+    year: i32,
+    month: i32,
+    day: i32,
+}
+
+impl Date {
+    mixin LexicographicComparable<Date>;
+}
+
+assert!(Point { x: 1, y: 2 } == Point { x: 1, y: 2 });
+assert!(Date { year: 2021, month: 1, day: 2 } < Date { year: 2021, month: 2, day: 1 });
 ```
 
 # Miscellaneous

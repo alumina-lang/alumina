@@ -1,6 +1,7 @@
 pub mod builder;
 pub mod const_eval;
 pub mod dce;
+pub mod fold;
 pub mod infer;
 pub mod inline;
 pub mod layout;
@@ -285,7 +286,7 @@ pub struct Parameter<'ir> {
     pub ty: TyP<'ir>,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct LocalDef<'ir> {
     pub id: Id,
     pub ty: TyP<'ir>,

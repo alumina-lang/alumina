@@ -250,7 +250,7 @@ pub enum CodeDiagnostic {
     CyclicProtocolBound,
     #[error("multiple `main` functions found")]
     MultipleMainFunctions,
-    #[error("unpopulated item")]
+    #[error("cyclic dependency during type resolution")]
     UnpopulatedItem,
     #[error(
         "generic type parameters cannot be used in this context (did you mean to call a function?)"
@@ -328,6 +328,8 @@ pub enum CodeDiagnostic {
     TupleCallArgType,
     #[error("too many loop variables (iterator yields {})", .0)]
     TooManyLoopVars(String),
+    #[error("too many enum variants for underlying type `{}`", .0)]
+    TooManyEnumVariants(String),
 
     // Warnings
     #[error("protocol is used as a concrete type (did you mean to use `&dyn {}`?)", .0)]

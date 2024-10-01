@@ -1,0 +1,14 @@
+//! exit_code: 1
+fn goo() -> i32 {
+    // This is an error for now - in theory we don't need to mono function bodies while
+    // resolving typeof, but in reality, it could still happen, e.g. when resolving a constant
+    foo()  // diag: error(unpopulated_item): "cyclic dependency during type resolution"
+}
+
+fn foo() -> typeof(goo()) {
+    42
+}
+
+fn main() {
+    foo();
+}

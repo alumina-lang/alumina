@@ -574,6 +574,7 @@ mod internal {
 #[cfg(all(threading, test, test_std))]
 #[docs(hide)]
 mod tests {
+    use test::assert_terminates;
     use time::Duration;
 
     #[test]
@@ -591,23 +592,25 @@ mod tests {
     }
 
     #[test]
-    #[test::should_fail]
     fn test_spawn_detached() {
-        Builder::new()
-            .spawn_detached(|| { panic!("hello") })
-            .unwrap();
+        assert_terminates!({
+            Builder::new()
+                .spawn_detached(|| { panic!("hello") })
+                .unwrap();
 
-        sleep(Duration::from_secs(1));
+            sleep(Duration::from_secs(1));
+        });
     }
 
     #[test]
-    #[test::should_fail]
     fn test_spawn_no_catch_panic() {
-        let _ = Builder::new()
-            .catch_panic(false)
-            .spawn(|| { panic!("hello") })
-            .unwrap()
-            .join();
+        assert_terminates!({
+            let _ = Builder::new()
+                .catch_panic(false)
+                .spawn(|| { panic!("hello") })
+                .unwrap()
+                .join();
+        });
     }
 
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -663,52 +666,55 @@ mod tests {
     }
 
     #[test]
-    #[test::should_fail]
     fn test_detach_panic() {
-        let t = spawn(|| -> i32 {
-            Thread::park();
-            panic!("panic")
-        });
-        t.detach();
-        t.thread().unpark();
+        assert_terminates!({
+            let t = spawn(|| -> i32 {
+                Thread::park();
+                panic!("panic")
+            });
+            t.detach();
+            t.thread().unpark();
 
-        // We will only sleep if the detached process does not in fact terminate
-        // the process when it panics.
-        sleep(Duration::from_secs(1));
+            // We will only sleep if the detached process does not in fact terminate
+            // the process when it panics.
+            sleep(Duration::from_secs(1));
+        });
     }
 
     #[test]
-    #[test::should_fail]
     fn test_detach_panic_2() {
-        let main_thread = Thread::current();
-        let t = spawn(|=main_thread| -> i32 {
-            main_thread.unpark();
-            panic!("panic")
-        });
-        Thread::park();
-        t.detach();
+        assert_terminates!({
+            let main_thread = Thread::current();
+            let t = spawn(|=main_thread| -> i32 {
+                main_thread.unpark();
+                panic!("panic")
+            });
+            Thread::park();
+            t.detach();
 
-        // We will only sleep if the detached process does not in fact terminate
-        // the process when it panics.
-        sleep(Duration::from_secs(1));
+            // We will only sleep if the detached process does not in fact terminate
+            // the process when it panics.
+            sleep(Duration::from_secs(1));
+        });
     }
 
     #[test]
-    #[test::should_fail]
     fn test_detach_panic_3() {
-        let main_thread = Thread::current();
-        let t = spawn(|=main_thread| -> i32 {
-            main_thread.unpark();
+        assert_terminates!({
+            let main_thread = Thread::current();
+            let t = spawn(|=main_thread| -> i32 {
+                main_thread.unpark();
+                Thread::park();
+                panic!("panic")
+            });
             Thread::park();
-            panic!("panic")
-        });
-        Thread::park();
-        t.detach();
-        t.thread().unpark();
+            t.detach();
+            t.thread().unpark();
 
-        // We will only sleep if the detached process does not in fact terminate
-        // the process when it panics.
-        sleep(Duration::from_secs(1));
+            // We will only sleep if the detached process does not in fact terminate
+            // the process when it panics.
+            sleep(Duration::from_secs(1));
+        });
     }
 
     #[test]
@@ -724,18 +730,19 @@ mod tests {
     }
 
     #[test]
-    #[test::should_fail]
     fn test_current_foreign_thread() {
-        let id: libc::pthread_t;
-        libc::pthread_create(
-            &id,
-            null,
-            |_arg: &mut void| -> &mut void {
-                Thread::current(); // panics
+        assert_terminates!({
+            let id: libc::pthread_t;
+            libc::pthread_create(
+                &id,
+                null,
+                |_arg: &mut void| -> &mut void {
+                    Thread::current(); // panics
+                    null
+                },
                 null
-            },
-            null
-        );
-        libc::pthread_join(id, null);
+            );
+            libc::pthread_join(id, null);
+        });
     }
 }

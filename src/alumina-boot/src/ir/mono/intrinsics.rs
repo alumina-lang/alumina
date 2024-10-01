@@ -658,7 +658,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         expr: ir::ExprP<'ir>,
         span: Option<Span>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let child = self.make_tentative_child();
+        let child = self.fork(true);
         let ret = ir::const_eval::ConstEvaluator::new(
             child.ctx.global_ctx.clone(),
             child.diag.fork(),
