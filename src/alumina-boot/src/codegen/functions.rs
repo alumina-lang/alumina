@@ -571,6 +571,11 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 IntrinsicValueKind::InConstContext => {
                     w!(self.fn_bodies, "({})0", self.ctx.get_type(expr.ty));
                 }
+                IntrinsicValueKind::Expect(expr, val) => {
+                    w!(self.fn_bodies, "__builtin_expect(");
+                    self.write_expr(diag, expr, false)?;
+                    w!(self.fn_bodies, ", {})", *val as i32);
+                }
                 IntrinsicValueKind::ConstPanic(_)
                 | IntrinsicValueKind::StopIteration
                 | IntrinsicValueKind::ConstAlloc(_, _)

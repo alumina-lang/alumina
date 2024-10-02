@@ -579,6 +579,7 @@ pub enum IntrinsicValueKind<'ir> {
     ConstWrite(ExprP<'ir>, bool),
     ConstAlloc(TyP<'ir>, ExprP<'ir>),
     ConstFree(ExprP<'ir>),
+    Expect(ExprP<'ir>, bool),
     Uninitialized,
     InConstContext,
     StopIteration,
@@ -698,6 +699,7 @@ impl<'ir> Expr<'ir> {
             ExprKind::Intrinsic(ref kind) => match kind {
                 IntrinsicValueKind::Transmute(inner) => inner.pure(),
                 IntrinsicValueKind::Volatile(inner) => inner.pure(),
+                IntrinsicValueKind::Expect(inner, _) => inner.pure(),
                 IntrinsicValueKind::SizeOfLike(_, _) => true,
                 IntrinsicValueKind::Dangling(_) => true,
                 IntrinsicValueKind::Asm(_) => false,

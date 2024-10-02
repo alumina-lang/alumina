@@ -1946,8 +1946,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
     pub fn generate_static_constructor(
         &mut self,
         alive: &HashSet<ItemP<'ir>>,
-    ) -> Result<ItemP<'ir>, AluminaError> {
-        let item = self.ctx.ir.make_item();
+    ) -> Result<Option<ItemP<'ir>>, AluminaError> {
         self.return_type = Some(self.types.void());
 
         let mut statements = Vec::new();
@@ -1971,6 +1970,10 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
             }
         }
 
+        if statements.is_empty() {
+            return Ok(None);
+        }
+
         let body = self.exprs.block(
             statements,
             self.exprs
@@ -1983,6 +1986,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
             expr: body,
         };
 
+        let item = self.ctx.ir.make_item();
         item.assign(ir::Item::Function(ir::Function {
             name: None,
             attributes: [Attribute::StaticConstructor].alloc_on(self.ctx.ir),
@@ -1993,7 +1997,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
             body: OnceCell::from(function_body),
         }));
 
-        Ok(item)
+        Ok(Some(item))
     }
 
     fn mono_lang_item<I>(

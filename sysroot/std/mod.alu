@@ -271,7 +271,7 @@ macro assume($cond) {
 /// }
 /// ```
 macro likely($cond) {
-    internal::expect($cond, true)
+    intrinsics::expect($cond, true)
 }
 
 /// Hint to the compiler that a particular boolean expression is unlikely to be true.
@@ -289,7 +289,7 @@ macro likely($cond) {
 /// }
 /// ```
 macro unlikely($cond) {
-    internal::expect($cond, false)
+    intrinsics::expect($cond, false)
 }
 
 /// Returns the line in the source code at which the macro was invoked.
@@ -526,11 +526,6 @@ mod internal {
         if lhs == rhs {
             panic_assert_ne(file, line, column, lhs, rhs)
         }
-    }
-
-    #[inline(always)]
-    fn expect(cond: bool, expected: bool) -> bool {
-        intrinsics::codegen_func::<bool>("__builtin_expect", cond, expected)
     }
 }
 

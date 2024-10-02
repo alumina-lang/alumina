@@ -225,6 +225,11 @@ where
                     span: expr.span,
                 }
                 .alloc_on(self.ir),
+                IntrinsicValueKind::Expect(inner, val) => builder.codegen_intrinsic(
+                    IntrinsicValueKind::Expect(self.fold_expr(inner)?, *val),
+                    expr.ty,
+                    expr.span,
+                ),
             },
             ExprKind::Item(_) | ExprKind::Lit(_) | ExprKind::Unreachable | ExprKind::Nop => Expr {
                 is_const: expr.is_const,

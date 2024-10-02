@@ -157,9 +157,9 @@ impl<'ir> ExpressionVisitor<'ir> for DeadCodeEliminator<'ir> {
             | IntrinsicValueKind::InConstContext
             | IntrinsicValueKind::Uninitialized
             | IntrinsicValueKind::Asm(_) => Ok(()),
-            IntrinsicValueKind::Transmute(inner) | IntrinsicValueKind::Volatile(inner) => {
-                self.visit_expr(inner)
-            }
+            IntrinsicValueKind::Transmute(inner)
+            | IntrinsicValueKind::Volatile(inner)
+            | IntrinsicValueKind::Expect(inner, _) => self.visit_expr(inner),
             // These should be unreachable
             IntrinsicValueKind::ConstPanic(_)
             | IntrinsicValueKind::ConstWrite(_, _)
