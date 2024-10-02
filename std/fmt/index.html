@@ -35,6 +35,9 @@
 <a href="/std/fmt/Formatter.html">Formatter</a>
 </li>
 <li>
+<a href="/std/fmt/DebugFormattable.html">DebugFormattable</a>
+</li>
+<li>
 <a href="/std/fmt/Formattable.html">Formattable</a>
 </li>
 </ul>
@@ -55,6 +58,9 @@
 </ul>
 <h2>Functions</h2>
 <ul>
+<li>
+<a href="/std/fmt/#item.debug">debug</a>
+</li>
 <li>
 <a href="/std/fmt/#item.hex">hex</a>
 </li>
@@ -134,6 +140,13 @@ and the convenience standard I/O macros (<a class="path-link" href="/std/io/prin
 <div class="cell-doc">A sink for string formatting operations
 </div>
 </div>
+<div class="row" id="item.DebugFormattable">
+<div class="cell-name">
+<a href="/std/fmt/DebugFormattable.html">DebugFormattable</a>
+</div>
+<div class="cell-doc">Types that implement custom debug formatting.
+</div>
+</div>
 <div class="row" id="item.Formattable">
 <div class="cell-name">
 <a href="/std/fmt/Formattable.html">Formattable</a>
@@ -177,13 +190,43 @@ formatting for types.
 <h2 id="Function">Functions</h2>
 <ul>
 <li>
+<div class="signature" id="item.debug">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">debug</span>&lt;T&gt;(value: T) -> <a href="/std/fmt/internal/DebugAdapter.html"><span class="identifier-type">DebugAdapter</span></a>&lt;T&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/fmt/mod.alu#L645-L647"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Adapter for printing a debug representation of a value.
+</p><p>
+This can print most types without them needing to implment custom formatting.
+Types can override the default behavior by implementing the <a class="path-link" href="/std/fmt/DebugFormattable.html">DebugFormattable</a> protocol,
+but this is only recommended for types that e.g. contain untagged unions or normally
+uninitialized fields.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::fmt::debug;
+
+struct Point { x: i32, y: i32 }
+
+println!("{}", Point { x: 1, y: 2 }.debug()); // prints 'Point { x: 1, y: 2 }'
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3afmt%3a%3adebug%3b%0a%20%20%20%20%0a%20%20%20%20struct%20Point%20%7b%20x%3a%20i32%2c%20y%3a%20i32%20%7d%0a%20%20%20%20%0a%20%20%20%20println%21%28%22%7b%7d%22%2c%20Point%20%7b%20x%3a%201%2c%20y%3a%202%20%7d%2edebug%28%29%29%3b%20%2f%2f%20prints%20%27Point%20%7b%20x%3a%201%2c%20y%3a%202%20%7d%27%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
 <div class="signature" id="item.hex">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">hex</span>&lt;T&gt;(val: T) -> <a href="/std/fmt/internal/NumFormatAdapter.html"><span class="identifier-type">NumFormatAdapter</span></a>&lt;T&gt;<div class="protocol-bound">
 T: <a href="/std/builtins/Integer.html"><span class="identifier-type">Integer</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/fmt/mod.alu#L473-L475"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/fmt/mod.alu#L658-L660"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -208,7 +251,7 @@ println!("{}", 42.hex()); // prints '2a'
 T: <a href="/std/builtins/Integer.html"><span class="identifier-type">Integer</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/fmt/mod.alu#L485-L487"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/fmt/mod.alu#L670-L672"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -233,7 +276,7 @@ println!("{}", 42.bin()); // prints '101010'
 T: <a href="/std/builtins/Integer.html"><span class="identifier-type">Integer</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/fmt/mod.alu#L497-L499"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/fmt/mod.alu#L682-L684"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -258,7 +301,7 @@ println!("{}", 42.oct()); // prints '52'
 T: <a href="/std/builtins/Integer.html"><span class="identifier-type">Integer</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/fmt/mod.alu#L509-L511"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/fmt/mod.alu#L694-L696"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -283,7 +326,7 @@ println!("{}", 42.zero_pad(5)); // prints '00042'
 T: <a href="/std/builtins/FloatingPoint.html"><span class="identifier-type">FloatingPoint</span></a></div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/fmt/mod.alu#L513-L515"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/fmt/mod.alu#L698-L700"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -296,7 +339,7 @@ T: <a href="/std/builtins/FloatingPoint.html"><span class="identifier-type">Floa
 T: <a href="/std/fmt/Formattable.html"><span class="identifier-type">Formattable</span></a>&lt;T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/fmt/mod.alu#L525-L527"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/fmt/mod.alu#L710-L712"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -321,7 +364,7 @@ println!("{}", "ha".repeat(3)); // prints 'hahaha'
 T: <a href="/std/fmt/Formattable.html"><span class="identifier-type">Formattable</span></a>&lt;T&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/fmt/mod.alu#L537-L539"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/fmt/mod.alu#L722-L724"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -344,7 +387,7 @@ println!("{}", "ha".pad_with(5, ' ')); // prints '   ha'
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">char</span>(val: <a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>) -> <a href="/std/fmt/internal/CharAdapter.html"><span class="identifier-type">CharAdapter</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/fmt/mod.alu#L552-L554"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/fmt/mod.alu#L737-L739"/>source</a>
 </div>
 </div>
 <div class="item-doc">

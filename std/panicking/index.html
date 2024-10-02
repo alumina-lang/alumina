@@ -82,18 +82,20 @@ Panic support macros and functions
 F: <span class="keyword">Fn</span>() -> T</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/panicking.alu#L91-L113"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/panicking.alu#L93-L118"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Catch a panic and return it as a result.
 </p><p>
-This function will execute the provided closure and return <code class="language-alumina">Result::ok(())</code> if the closure
-completes successfully, or <code class="language-alumina">Result::err(panic_info)</code> if the closure panics.
+This function will execute the provided closure and return <code class="language-alumina">Result::ok</code> if the closure
+completes successfully, or <code class="language-alumina">Result::err</code> if the closure panics.
 </p><p>
 This is primarily meant to support unit tests that need to verify that a certain function
 panics under certain conditions.
+</p><p>
+<code class="language-alumina">catch_panic</code> only affects the panics occurring on the calling thread.
 </p><p>
 </p>
 <h3> Example</h3>
@@ -107,7 +109,7 @@ let result = catch_panic(|| {
 assert!(result.is_err());
 </code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3apanicking%3a%3acatch%5fpanic%3b%0a%20%20%20%20%0a%20%20%20%20let%20result%20%3d%20catch%5fpanic%28%7c%7c%20%7b%0a%20%20%20%20%20%20%20%20panic%21%28%22test%20panic%22%29%3b%0a%20%20%20%20%7d%29%3b%0a%20%20%20%20%0a%20%20%20%20assert%21%28result%2eis%5ferr%28%29%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
-It is <i>not recommended</i> to use this function for general
+It is <b>not recommended</b> to use this function for general
 error handling, as Alumina panics do not unwind the stack, which means that any resources
 that need to be cleaned up will not be cleaned up.
 </p><p>
