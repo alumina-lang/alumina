@@ -37,6 +37,14 @@ protocol Formatter<Self> {
     }
 }
 
+/// Types that implement custom debug formatting.
+protocol DebugFormattable<Self, F: Formatter<F>> {
+    /// Write the debug representation object into a given formatter.
+    ///
+    /// See [Formattable] for details.
+    fn debug_fmt(self: &Self, f: &mut F) -> Result;
+}
+
 /// Types that can be formatted. This is the standard way to implement custom
 /// formatting for types.
 ///
@@ -286,7 +294,7 @@ mod internal {
         [dyn_format_arg(&$args)$...]
     }
 
-    macro fold_result($left, $right) {
+    macro _fold_result($left, $right) {
         let left = $left;
         if left.is_err() {
             left
@@ -295,9 +303,24 @@ mod internal {
         }
     }
 
+    /// Receiver macro for [format_args] that constructs a tuple of the formatting args.
+    macro tuple_format_args($arg...) {
+        (&$arg$...,)
+    }
+
+    fn write_fmt_tuple<T: builtins::Tuple, F: Formatter<F>>(f: &mut F, args: T) -> Result {
+        for const i in 0usize..args.len() {
+            args.(i).fmt(f)?;
+        }
+        Result::ok(())
+    }
+
+    /// Receiver macro for [format_args] that constructs a fold expression chain that writes
+    /// each argument into the formatter and bails early if an error occurs. This is the
+    /// default receiver for [format_args].
     macro static_format_args($fmt, $arg...) {
         macros::reduce!(
-            fold_result,
+            _fold_result,
             Result::ok::<(), fmt::Error>(()),
             $arg.fmt($fmt)$...
         )
@@ -460,7 +483,169 @@ mod internal {
             fmt.write_byte(self.inner)
         }
     }
+
+    struct StackGuard {
+        previous: &StackGuard,
+        ptr: &void
+    }
+
+    impl StackGuard {
+        fn check_recursion<Ptr: builtins::Pointer>(self: &StackGuard, ptr: Ptr) -> bool {
+            let current = self;
+            while current.ptr != null {
+                #[allow(unnecessary_cast)]
+                if current.ptr == (ptr as &void) {
+                    return true;
+                }
+                current = current.previous;
+            }
+            return false;
+        }
+    }
+
+    struct DebugAdapter<T> {
+        _value: T,
+    }
+
+    impl DebugAdapter<T> {
+        fn fmt<F: Formatter<F>>(self: &DebugAdapter<T>, f: &mut F) -> Result {
+            DebugAdapter::write(self._value, f, null)
+        }
+
+        fn write<F: Formatter<F>>(value: T, f: &mut F, stack_guard: &StackGuard) -> Result {
+            let name = runtime::const_eval!(typing::type_name::<T>());
+
+            let stack_guard = StackGuard {
+                previous: stack_guard,
+                ptr: null
+            };
+
+            let ty = typing::Type::new::<T>();
+            when value is DebugFormattable<T, F> {
+                value.debug_fmt(f)?;
+            } else when ty.is_numeric() || value is bool {
+                value.fmt(f)?;
+            } else when ty.is_pointer() {
+                if value == null {
+                    f.write_str("null")?;
+                } else when value is &void || value is &mut void {
+                    fmt::write!(f, "0x{}", (value as usize).hex())?;
+                } else if stack_guard.check_recursion(value) {
+                    f.write_str("<recursive>")?;
+                } else {
+                    #[allow(unnecessary_cast)]
+                    stack_guard.ptr = value as &void;
+                    DebugAdapter::write(*value, f, &stack_guard)?;
+                }
+            } else when ty.is_tuple() {
+                f.write_str("(")?;
+                for const i in 0usize..value.len() {
+                    when i != 0 {
+                        f.write_str(", ")?;
+                    }
+                    DebugAdapter::write(value.(i), f, &stack_guard)?;
+                }
+                f.write_str(")")?;
+            } else when value is &[u8] || value is &mut [u8] {
+                f.write_str("\"")?;
+                for byte in value {
+                    if byte == '\n' {
+                        f.write_str("\\n")?;
+                    } else if byte == '\r' {
+                        f.write_str("\\r")?;
+                    } else if byte == '\t' {
+                        f.write_str("\\t")?;
+                    } else if byte == '\\' {
+                        f.write_str("\\\\")?;
+                    } else if byte == '"' {
+                        f.write_str("\\\"")?;
+                    } else if byte < 0x20 || byte >= 0x7F {
+                        // TODO: Check if it is a valid UTF-8 sequence and print it as a character
+                        fmt::write!(f, "\\x{}", byte.hex().zero_pad(2))?;
+                    } else {
+                        f.write_byte(byte)?;
+                    }
+                }
+                f.write_str("\"")?;
+            } else when ty.is_array() || ty.is_slice() {
+                when ty.is_slice() {
+                    if stack_guard.check_recursion(value.as_ptr()) {
+                        f.write_str("<recursive>")?;
+                        return Result::ok(());
+                    }
+                    stack_guard.ptr = value.as_ptr() as &void;
+                }
+                f.write_str("[")?;
+                for i in 0usize..value.len() {
+                    if i != 0 {
+                        f.write_str(", ")?;
+                    }
+                    DebugAdapter::write(value[i], f, &stack_guard)?;
+                }
+                f.write_str("]")?;
+            } else when ty.is_union() {
+                // We do not know which field is active, so we cannot print it.
+                f.write_str("<union>")?;
+            } else when ty.is_enum() {
+                for variant in ty.variants() {
+                    if value == variant.value() {
+                        fmt::write!(f, "{}::{}", ty.name().unwrap_or("<unnamed>"), variant.name())?;
+                        return Result::ok(());
+                    }
+                }
+                DebugAdapter::write(value as builtins::underlying_type_of<T>, f, &stack_guard)?;
+            } else when ty.is_function_pointer() {
+                if (value as &void) == null {
+                    f.write_str("null")?;
+                } else {
+                    f.write_str("<function>")?;
+                }
+            } else when ty.is_closure() || ty.is_struct() {
+                let fields = when ty.is_closure() {
+                    f.write_str("<closure> { ")?;
+                    ty.captures()
+                } else {
+                    fmt::write!(f, "{} {{ ", ty.name().unwrap_or("<unnamed>"))?;
+                    ty.fields()
+                };
+
+                for const i in 0usize..fields.len() {
+                    when i != 0 {
+                        f.write_str(", ")?;
+                    }
+                    fmt::write!(f, "{}: ", fields.(i).name().unwrap_or("<unnamed>"))?;
+                    DebugAdapter::write(*fields.(i).as_ptr(&value), f, &stack_guard)?;
+                }
+                f.write_str(" }")?;
+            } else {
+                fmt::write!(f, "{}", ty.name().unwrap_or("<unknown>"))?;
+            }
+
+            Result::ok(())
+        }
+    }
 }
+
+
+/// Adapter for printing a debug representation of a value.
+///
+/// This can print most types without them needing to implment custom formatting.
+/// Types can override the default behavior by implementing the [DebugFormattable] protocol,
+/// but this is only recommended for types that e.g. contain untagged unions or normally
+/// uninitialized fields.
+///
+/// ## Example
+/// ```
+/// use std::fmt::debug;
+///
+/// struct Point { x: i32, y: i32 }
+///
+/// println!("{}", Point { x: 1, y: 2 }.debug()); // prints 'Point { x: 1, y: 2 }'
+/// ```
+fn debug<T>(value: T) -> internal::DebugAdapter<T> {
+    internal::DebugAdapter { _value: value }
+}
+
 
 /// Write value as a hexadecimal number
 ///
@@ -639,6 +824,55 @@ mod tests {
         };
 
         assert!(FOO);
+    }
+
+    #[test]
+    fn test_debug_formatter() {
+        assert_eq!(fmt!("{}", debug(42)), "42");
+        assert_eq!(fmt!("{}", debug("hello! 👋")), "\"hello! \\xf0\\x9f\\x91\\x8b\"");
+        assert_eq!(fmt!("{}", debug(true)), "true");
+        assert_eq!(fmt!("{}", debug(&true)), "true");
+        assert_eq!(fmt!("{}", debug((1, 2, 3))), "(1, 2, 3)");
+
+        struct Point {
+            x: i32,
+            y: i32
+        }
+
+        assert_eq!(fmt!("{}", debug(Point { x: 1, y: 2 })), "Point { x: 1, y: 2 }");
+        let a = 1;
+        let b = 2;
+        #[allow(unused_closure_binding)]
+        let closure = |=a, &b, _c: i32| {};
+
+        assert_eq!(fmt!("{}", debug(closure)), "<closure> { a: 1, b: 2 }");
+
+        enum Enum {
+            A,
+            B,
+            C
+        }
+
+        assert_eq!(fmt!("{}", debug(Enum::A)), "Enum::A");
+        assert_eq!(fmt!("{}", debug(42 as Enum)), "42");
+
+        union Union {
+            a: i32,
+            b: f32
+        }
+
+        assert_eq!(fmt!("{}", debug(Union { a: 42 })), "<union>");
+
+        let f: test_debug_formatter;
+        assert_eq!(fmt!("{}", debug(f)), "test_debug_formatter");
+
+        struct Custom {}
+        impl Custom {
+            fn debug_fmt<F: Formatter<F>>(self: &Custom, f: &mut F) -> Result {
+                f.write_str("hello")
+            }
+        }
+        assert_eq!(fmt!("{}", debug(Custom {})), "hello");
     }
 }
 

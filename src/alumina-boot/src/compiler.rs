@@ -252,7 +252,9 @@ impl Compiler {
 
         // Finally generate static initialization code
         let mut monomorphizer = Mono::new(&mut mono_ctx, false, None);
-        dce.visit_item(monomorphizer.generate_static_constructor(dce.alive_items())?)?;
+        if let Some(item) = monomorphizer.generate_static_constructor(dce.alive_items())? {
+            dce.visit_item(item)?;
+        }
 
         let items: Vec<_> = dce.alive_items().iter().copied().collect();
         timing!(self, cur_time, Stage::Optimizations);

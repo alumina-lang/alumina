@@ -6,7 +6,7 @@ Non-exhaustive list of distinguishing features:
 
 - Module system and 2-pass compilation (no header files and forward declarations needed)
 - Generics (duck-typed, similar to C++ templates but without SFINAE), protocols and mixins
-  - Specialization is possible with [`when` expressions](./examples/when_expression.alu)
+  - Specialization is possible with `when` expressions
   - Opt-in dynamic polymorphism with dynamic dispatch ([`dyn` pointers](./examples/dyn.alu))
 - Limited operator overloading (via `Equatable` and `Comparable` protocols)
 - Block expressions
@@ -23,7 +23,7 @@ Non-exhaustive list of distinguishing features:
 - [Compile-time constant evaluation](./examples/constants.alu) (including loops, function calls, etc.)
 - [Unified call syntax](https://en.wikipedia.org/wiki/Uniform_Function_Call_Syntax) for functions and macros in scope
 - [Defer expressions](./examples/defer_and_move.alu)
-- [Ergonomic reflection and meta-programming](./examples/reflection.alu)
+- [Compile-time reflection and meta-programming](./examples/reflection.alu)
 
 Alumina is heavily inspired by Rust, especially in terms of syntax and standard library API. Unlike Rust, however, Alumina is not memory-safe and it requires manual memory management.
 

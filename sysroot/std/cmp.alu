@@ -5,6 +5,9 @@
 /// Types that implement this protocol can be compared for equality using the `==` and `!=` operators.
 /// Many built-in types implement this protocol, such as primitive types, slices, [Option], etc.
 ///
+/// `Equatable` can be automatically generated for by using [DefaultEquatable] mixin, but if custom equality
+/// comparison is needed, the protocol can be implemented manually.
+///
 /// Method [equals] must be implemented, other methods can be mixed in.
 ///
 /// ## Example
@@ -30,6 +33,76 @@ protocol Equatable<Self> {
     fn equals(lhs: &Self, rhs: &Self) -> bool;
 
     /// Returns `false` if arguments are equal, `true` otherwise
+    #[inline]
+    fn not_equals(lhs: &Self, rhs: &Self) -> bool {
+        !Self::equals(lhs, rhs)
+    }
+}
+
+/// Mixin to provide a default implementation of [Equatable] for a type.
+///
+/// This mixin provides a default implementation of [Equatable::equals] for a type. If the type is a
+/// struct, it will compare each field as with the `==` operator. If the type is an enum, it will
+/// compare the underlying value using the `==` operator.
+///
+/// If any field is not equatable, this will result in a compilation error.
+///
+/// ## Example
+/// ```
+/// struct FullName { first: &[u8], last: &[u8] }
+///
+/// impl FullName {
+///     use std::cmp::DefaultEquatable;
+///     mixin DefaultEquatable<FullName>;
+/// }
+///
+/// assert_eq!(
+///     FullName { first: "John", last: "Doe" },
+///     FullName { first: "John", last: "Doe" }
+/// );
+/// assert_ne!(
+///     FullName { first: "John", last: "Doe" },
+///     FullName { first: "John", last: "Smith" }
+/// );
+/// ```
+protocol DefaultEquatable<Self> {
+    /// @ Equatable::equals
+    fn equals(lhs: &Self, rhs: &Self) -> bool {
+        let ty = typing::Type::new::<Self>();
+
+        when ty.is_struct() {
+            let fields = ty.fields();
+
+            for const i in 0usize..fields.len() {
+                let field_ty = fields.(i).type();
+                let lhs_ptr = fields.(i).as_ptr(lhs);
+                let rhs_ptr = fields.(i).as_ptr(rhs);
+
+                when field_ty.is_pointer() || field_ty.is_function_pointer() {
+                    if *lhs_ptr != *rhs_ptr {
+                        return false;
+                    }
+                } else when *lhs_ptr is Equatable<typeof(*lhs_ptr)> {
+                    if (*lhs_ptr).not_equals(rhs_ptr) {
+                        return false;
+                    }
+                } else {
+                    compile_fail!(
+                        "field {} is not automatically equatable",
+                        ty.fields().(i).name()
+                    );
+                }
+            }
+
+            true
+        } else when ty.is_enum() {
+            lhs == rhs
+        } else {
+            compile_fail!("type cannot be automatically hashed")
+        }
+    }
+
+    /// @ Equatable::not_equals
     #[inline]
     fn not_equals(lhs: &Self, rhs: &Self) -> bool {
         !Self::equals(lhs, rhs)
@@ -127,6 +200,88 @@ protocol Comparable<Self: Equatable<Self>> {
 
     /// Returns `true` if `lhs` greater than or equal `rhs`, `false` otherwise
     #[inline]
+    fn greater_than_or_equal(lhs: &Self, rhs: &Self) -> bool {
+        Self::compare(lhs, rhs) != Ordering::Less
+    }
+}
+
+/// Mixin to provide a default implementation of [Comparable] for a type
+///
+/// This mixin provides a default implementation of [Comparable::compare] for a type. If the type is a
+/// struct, it will compare each field lexicographically in order of declaration. If the type is an
+/// enum, it will compare the underlying value.
+///
+/// If any field is not comparable, this will result in a compilation error.
+///
+/// ## Example
+/// ```
+/// struct FullName { first: &[u8], last: &[u8] }
+///
+/// impl FullName {
+///     use std::cmp::LexicographicComparable;
+///     mixin LexicographicComparable<FullName>;
+/// }
+///
+/// assert!(FullName { first: "John", last: "Malkovich" } < FullName { first: "John", last: "McCain" });
+/// assert!(FullName { first: "John", last: "Doe" } == FullName { first: "John", last: "Doe" });
+/// ```
+protocol LexicographicComparable<Self> {
+    /// @ Comparable::compare
+    fn compare(lhs: &Self, rhs: &Self) -> Ordering {
+        let ty = typing::Type::new::<Self>();
+
+        when ty.is_struct() {
+            let fields = ty.fields();
+
+            for const i in 0usize..fields.len() {
+                let lhs_ptr = fields.(i).as_ptr(lhs);
+                let rhs_ptr = fields.(i).as_ptr(rhs);
+
+                when *lhs_ptr is Comparable<typeof(*lhs_ptr)> {
+                    let cmp = (*lhs_ptr).compare(rhs_ptr);
+                    if cmp != Ordering::Equal {
+                        return cmp;
+                    }
+                } else {
+                    compile_fail!(
+                        "field {} is not automatically comparable",
+                        ty.fields().(i).name()
+                    );
+                }
+            }
+
+            Ordering::Equal
+        } else {
+            compile_fail!("type cannot be lexicographically compared")
+        }
+    }
+
+    /// @ Comparable::equals
+    fn equals(lhs: &Self, rhs: &Self) -> bool {
+        Self::compare(lhs, rhs) == Ordering::Equal
+    }
+
+    /// @ Comparable::not_equals
+    fn not_equals(lhs: &Self, rhs: &Self) -> bool {
+        Self::compare(lhs, rhs) != Ordering::Equal
+    }
+
+    /// @ Comparable::less_than
+    fn less_than(lhs: &Self, rhs: &Self) -> bool {
+        Self::compare(lhs, rhs) == Ordering::Less
+    }
+
+    /// @ Comparable::less_than_or_equal
+    fn less_than_or_equal(lhs: &Self, rhs: &Self) -> bool {
+        Self::compare(lhs, rhs) != Ordering::Greater
+    }
+
+    /// @ Comparable::greater_than
+    fn greater_than(lhs: &Self, rhs: &Self) -> bool {
+        Self::compare(lhs, rhs) == Ordering::Greater
+    }
+
+    /// @ Comparable::greater_than_or_equal
     fn greater_than_or_equal(lhs: &Self, rhs: &Self) -> bool {
         Self::compare(lhs, rhs) != Ordering::Less
     }
@@ -737,5 +892,79 @@ mod tests {
 
         assert_eq!(arr[..].binary_search_by_key(&5, |v: &(i32, i32)| -> i32 { v.0 }), Result::ok(5usize));
         assert_eq!(arr[..].binary_search_by_key(&11, |v: &(i32, i32)| -> i32 { v.0 }), Result::err(9usize));
+    }
+
+    #[test]
+    fn test_default_equatable() {
+        struct Foo {
+            a: i32,
+            b: i32,
+            c: Option<i32>,
+        }
+        impl Foo {
+            mixin DefaultEquatable<Foo>;
+        }
+
+        struct Quux {
+            p1: &i32,
+            p2: fn()
+        }
+        impl Quux {
+            mixin DefaultEquatable<Quux>;
+        }
+
+        enum Bar {
+            A,
+            B,
+            C,
+        }
+
+        impl Bar {
+            mixin DefaultEquatable<Bar>;
+        }
+
+        assert_eq!(
+            Foo { a: 1, b: 2, c: Option::none() },
+            Foo { a: 1, b: 2, c: Option::none() },
+        );
+
+        assert_ne!(
+            Foo { a: 1, b: 2, c: Option::none() },
+            Foo { a: 1, b: 2, c: Option::some(0) },
+        );
+
+
+        assert_eq!(Bar::A, Bar::A);
+        assert_ne!(Bar::A, Bar::B);
+
+        let x = 42;
+        let y = 42;
+
+        let quux1 = Quux { p1: &x, p2: util::unit::<()> };
+        let quux2 = Quux { p1: &y, p2: util::unit::<()> };
+        let quux3 = Quux { p1: &x, p2: mem::uninitialized::<()> };
+
+        assert_eq!(quux1, quux1);
+        assert_ne!(quux1, quux2);
+        assert_ne!(quux1, quux3);
+    }
+
+    #[test]
+    fn test_lexicographic_comparable() {
+        struct Foo {
+            a: i32,
+            b: i32,
+        }
+
+        impl Foo {
+            mixin LexicographicComparable<Foo>;
+        }
+
+        assert!(Foo { a: 1, b: 1 } < Foo { a: 1, b: 2 });
+        assert!(Foo { a: 1, b: 1 } <= Foo { a: 1, b: 1 });
+        assert!(Foo { a: 1, b: 2 } > Foo { a: 1, b: 1 });
+        assert!(Foo { a: 1, b: 2 } >= Foo { a: 1, b: 1 });
+        assert!(Foo { a: 1, b: 1 } == Foo { a: 1, b: 1 });
+        assert!(Foo { a: 1, b: 2 } != Foo { a: 1, b: 3 });
     }
 }

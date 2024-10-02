@@ -1306,7 +1306,7 @@ impl<'ir> ConstEvaluator<'ir> {
 
                 let cond_value = match condv {
                     Value::Bool(b) => b,
-                    _ => bug!(self),
+                    _ => unsupported!(self),
                 };
 
                 if cond_value {
@@ -1515,6 +1515,7 @@ impl<'ir> ConstEvaluator<'ir> {
                         _ => Err(ConstEvalErrorKind::InvalidFree).with_backtrace(&self.diag),
                     }
                 }
+                IntrinsicValueKind::Expect(inner, _) => self.const_eval_rvalue(inner),
             },
             ExprKind::Item(item) => match item.get() {
                 Ok(Item::Function(_)) => Ok(Value::FunctionPointer(item)),

@@ -1,6 +1,7 @@
 pub mod builder;
 pub mod const_eval;
 pub mod dce;
+pub mod fold;
 pub mod infer;
 pub mod inline;
 pub mod layout;
@@ -285,7 +286,7 @@ pub struct Parameter<'ir> {
     pub ty: TyP<'ir>,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct LocalDef<'ir> {
     pub id: Id,
     pub ty: TyP<'ir>,
@@ -578,6 +579,7 @@ pub enum IntrinsicValueKind<'ir> {
     ConstWrite(ExprP<'ir>, bool),
     ConstAlloc(TyP<'ir>, ExprP<'ir>),
     ConstFree(ExprP<'ir>),
+    Expect(ExprP<'ir>, bool),
     Uninitialized,
     InConstContext,
     StopIteration,
@@ -697,6 +699,7 @@ impl<'ir> Expr<'ir> {
             ExprKind::Intrinsic(ref kind) => match kind {
                 IntrinsicValueKind::Transmute(inner) => inner.pure(),
                 IntrinsicValueKind::Volatile(inner) => inner.pure(),
+                IntrinsicValueKind::Expect(inner, _) => inner.pure(),
                 IntrinsicValueKind::SizeOfLike(_, _) => true,
                 IntrinsicValueKind::Dangling(_) => true,
                 IntrinsicValueKind::Asm(_) => false,

@@ -333,7 +333,17 @@ impl<'ir> ZstElider<'ir> {
                 let indexee = self.elide_zst_expr(lhs)?;
                 let index = self.elide_zst_expr(rhs)?;
 
-                if indexee.ty.is_zero_sized() {
+                if !expr.ty.is_zero_sized() && indexee.ty.is_zero_sized() {
+                    // Special case for indexing into a zero-length array of non-ZST elements
+                    builder.block(
+                        [Statement::Expression(indexee), Statement::Expression(index)],
+                        builder.deref(
+                            builder.dangling(types.pointer(expr.ty, expr.is_const), expr.span),
+                            expr.span,
+                        ),
+                        expr.span,
+                    )
+                } else if expr.ty.is_zero_sized() {
                     builder.block(
                         [Statement::Expression(indexee), Statement::Expression(index)],
                         builder.void(expr.ty, expr.value_type, expr.span),

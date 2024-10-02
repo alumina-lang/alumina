@@ -54,6 +54,7 @@ pub enum Intr {
     ModulePath,
     HasAttribute,
     ValueOf,
+    Expect,
 }
 
 pub fn intrinsic_kind(name: &str) -> Option<Intr> {
@@ -97,6 +98,7 @@ pub fn intrinsic_kind(name: &str) -> Option<Intr> {
         "module_path" => ModulePath,
         "has_attribute" => HasAttribute,
         "value_of" => ValueOf,
+        "expect" => Expect,
         _ => return None,
     };
 
@@ -188,6 +190,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
             ModulePath => self.intr_module_path(generic!(0), span),
             HasAttribute => self.intr_has_attribute(generic!(0), arg!(0), span),
             ValueOf => self.intr_value_of(generic!(0), span),
+            Expect => self.intr_expect(arg!(0), arg!(1), span),
         }
     }
 
@@ -658,7 +661,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         expr: ir::ExprP<'ir>,
         span: Option<Span>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
-        let child = self.make_tentative_child();
+        let child = self.fork(true);
         let ret = ir::const_eval::ConstEvaluator::new(
             child.ctx.global_ctx.clone(),
             child.diag.fork(),
@@ -1015,5 +1018,36 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
             },
             _ => ice!(self.diag, "const or static expected"),
         }
+    }
+
+    fn intr_expect(
+        &mut self,
+        expr: ir::ExprP<'ir>,
+        to_be: ir::ExprP<'ir>,
+        span: Option<Span>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let mut evaluator = ir::const_eval::ConstEvaluator::new(
+            self.ctx.global_ctx.clone(),
+            self.diag.fork(),
+            self.ctx.malloc_bag.clone(),
+            self.ctx.ir,
+            [],
+        );
+
+        let r#bool = self.types.builtin(BuiltinType::Bool);
+        if r#bool.assignable_from(expr.ty) {
+            mismatch!(self, r#bool, expr.ty);
+        }
+
+        let to_be = match evaluator.const_eval(to_be)? {
+            Value::Bool(v) => v,
+            _ => ice!(self.diag, "expecting a const boolean"),
+        };
+
+        Ok(self.exprs.codegen_intrinsic(
+            IntrinsicValueKind::Expect(expr, to_be),
+            self.types.builtin(BuiltinType::Bool),
+            span,
+        ))
     }
 }

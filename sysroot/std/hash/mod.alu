@@ -12,7 +12,7 @@
 ///
 /// ## Example
 /// ```
-/// use std::hash::hash_of_val;
+/// use std::hash::hash_of;
 ///
 /// // A bad hash, do not use
 /// struct CountingHash {
@@ -25,9 +25,9 @@
 ///     fn finish(self: &mut CountingHash) -> u64 { self.length as u64 }
 /// }
 ///
-/// assert_eq!(hash_of_val::<&[u8], CountingHash>(""), 0);
-/// assert_eq!(hash_of_val::<&[u8], CountingHash>("a"), 1);
-/// assert_eq!(hash_of_val::<&[u8], CountingHash>("ab"), 2);
+/// assert_eq!(hash_of::<&[u8], CountingHash>(&""), 0);
+/// assert_eq!(hash_of::<&[u8], CountingHash>(&"a"), 1);
+/// assert_eq!(hash_of::<&[u8], CountingHash>(&"ab"), 2);
 /// ```
 protocol Hasher<Self> {
     /// Create a new hasher.
@@ -40,12 +40,8 @@ protocol Hasher<Self> {
 
 /// Types that can be hashed.
 ///
-/// The [Hashable::hash] method can be implemented directly or a default implementation can
-/// be mixed in, in which case the memory representation of the type is used as an input to
-/// the hash function.
-///
-/// This is only recommended if the memory layout of the type does not contain padding, as
-/// the value of the padding bytes may be unpredictable and cause undefined behavior.
+/// The [Hashable::hash] method can be implemented directly or an automatic implementation can be
+/// mixed in using the [DefaultHashable] protocol.
 ///
 /// ## Examples
 /// ### A default implementation
@@ -53,19 +49,19 @@ protocol Hasher<Self> {
 /// struct FancyI32 { a: i32 }
 ///
 /// impl FancyI32 {
-///    use std::hash::{Hashable, Hasher};
+///    use std::hash::{DefaultHashable, Hasher};
 ///
-///    mixin<H: Hasher<H>> Hashable<FancyI32, H>;
+///    mixin<H: Hasher<H>> DefaultHashable<FancyI32, H>;
 /// }
 ///
-/// use std::hash::hash_of_val;
+/// use std::hash::hash_of;
 ///
 /// let x = FancyI32 { a: 1 };
 /// let y = FancyI32 { a: 1 };
 /// let z = FancyI32 { a: 2 };
 ///
-/// assert_eq!(hash_of_val(x), hash_of_val(y));
-/// assert_ne!(hash_of_val(x), hash_of_val(z));
+/// assert_eq!(x.hash_of(), y.hash_of());
+/// assert_ne!(x.hash_of(), z.hash_of());
 /// ```
 /// ### A custom implementation
 /// ```
@@ -81,31 +77,62 @@ protocol Hasher<Self> {
 ///     }
 /// }
 ///
-/// use std::hash::hash_of_val;
+/// use std::hash::hash_of;
 ///
 /// let v1 = Foo { a: 1, b: "foo", extra: 0 };
 /// let v2 = Foo { a: 1, b: "foo", extra: 1 };
 /// let v3 = Foo { a: 1, b: "bar", extra: 0 };
 ///
-/// assert_eq!(hash_of_val(v1), hash_of_val(v2));
-/// assert_ne!(hash_of_val(v1), hash_of_val(v3));
+/// assert_eq!(v1.hash_of(), v2.hash_of());
+/// assert_ne!(v1.hash_of(), v3.hash_of());
 /// ```
 protocol Hashable<Self, H: Hasher<H>> {
     /// Update hasher state with the contents of this object.
     ///
     /// See [Hashable] for details.
     #[inline]
-    fn hash(a: &Self, hasher: &mut H) {
-        use mem::{size_of,slice::from_raw};
-        hasher.write(from_raw(a as &u8, size_of::<Self>()));
-    }
+    fn hash(a: &Self, hasher: &mut H);
 }
 
-/// Calculate the hash of a value.
-fn hash_of_val<T: Hashable<T, H>, H: Hasher<H> = DefaultHash>(val: T) -> u64 {
-    let hasher = H::new();
-    val.hash(&hasher);
-    hasher.finish()
+/// Mixin to provide a default implementation of [Hashable] for a type.
+///
+/// This mixin provides a default implementation of [Hashable::hash] for a type. If the type is a
+/// struct, it will hash each field in order. If the type is an enum, it will hash the underlying
+/// value.
+///
+/// Pointers are hashed by casting them to `usize` and hashing the result. If a field is not
+/// hashable, the program will not compile.
+///
+/// See also [cmp::DefaultEquatable] for a similar mixin for equality comparison.
+protocol DefaultHashable<Self, H: Hasher<H>> {
+    fn hash(self: &Self, hasher: &mut H) {
+        let ty = typing::Type::new::<Self>();
+
+        when ty.is_struct() {
+            let fields = ty.fields();
+
+            for const i in 0usize..fields.len() {
+                let field_ty = fields.(i).type();
+                let field_ptr = fields.(i).as_ptr(self);
+                when field_ty.is_pointer() || field_ty.is_function_pointer() {
+                    // Pointers are always hashable
+                    #[allow(unnecessary_cast)]
+                    (*field_ptr as &void as usize).hash(hasher);
+                } else when *field_ptr is Hashable<typeof(*field_ptr), H> {
+                    field_ptr.hash(hasher);
+                } else {
+                    compile_fail!(
+                        "field {} is not automatically hashable",
+                        ty.fields().(i).name()
+                    );
+                }
+            }
+        } else when ty.is_enum() {
+            (*self as builtins::underlying_type_of<Self>).hash(hasher);
+        } else {
+            compile_fail!("type cannot be automatically hashed")
+        }
+    }
 }
 
 /// Calculate the hash of a value passed by pointer.
@@ -117,3 +144,62 @@ fn hash_of<T: Hashable<T, H>, H: Hasher<H> = DefaultHash>(val: &T) -> u64 {
 
 /// The default hashing algorithm used for hash-based collections if none is specified.
 type DefaultHash = xxhash::Xxh64;
+
+#[cfg(all(test, test_std))]
+#[docs(hide)]
+mod tests {
+    #[test]
+    fn test_default_hasher() {
+        struct Foo {
+            a: i32,
+            b: i32,
+            c: Option<i32>,
+        }
+        impl Foo {
+            mixin<H: Hasher<H>> DefaultHashable<Foo, H>;
+        }
+
+        struct Quux {
+            p1: &i32,
+            p2: fn()
+        }
+        impl Quux {
+            mixin<H: Hasher<H>> DefaultHashable<Quux, H>;
+        }
+
+        enum Bar {
+            A,
+            B,
+            C,
+        }
+
+        impl Bar {
+            mixin<H: Hasher<H>> DefaultHashable<Bar, H>;
+        }
+
+        assert_eq!(
+            hash_of(&Foo { a: 1, b: 2, c: Option::none() }),
+            hash_of(&Foo { a: 1, b: 2, c: Option::none() }),
+        );
+
+        assert_ne!(
+            hash_of(&Foo { a: 1, b: 2, c: Option::none() }),
+            hash_of(&Foo { a: 1, b: 2, c: Option::some(0) }),
+        );
+
+
+        assert_eq!(hash_of(&Bar::A), hash_of(&Bar::A));
+        assert_ne!(hash_of(&Bar::A), hash_of(&Bar::B));
+
+        let x = 42;
+        let y = 42;
+
+        let quux1 = Quux { p1: &x, p2: util::unit::<()> };
+        let quux2 = Quux { p1: &y, p2: util::unit::<()> };
+        let quux3 = Quux { p1: &x, p2: mem::uninitialized::<()> };
+
+        assert_eq!(hash_of(&quux1), hash_of(&quux1));
+        assert_ne!(hash_of(&quux1), hash_of(&quux2));
+        assert_ne!(hash_of(&quux1), hash_of(&quux3));
+    }
+}

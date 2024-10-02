@@ -444,6 +444,16 @@ impl Option<T> {
         }
     }
 
+    /// @ std::fmt::DebugFormattable::debug_fmt
+    fn debug_fmt<F: fmt::Formatter<F>>(self: &Option<T>, formatter: &mut F) -> fmt::Result {
+        use std::fmt::debug;
+        if self.is_some() {
+            fmt::write!(formatter, "some({})", self.unwrap().debug())
+        } else {
+            fmt::write!(formatter, "none")
+        }
+    }
+
     /// @ iter::Iterable::iter
     fn iter(self: &Option<T>) -> iter::OnceIterator<T> {
         iter::OnceIterator { _value: *self }
@@ -647,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    #[test::should_fail]
+    #[test::should_panic]
     fn option_unwrap_none() {
         let opt2 = Option::none::<i32>();
 
@@ -663,16 +673,14 @@ mod tests {
         assert!(opt2.unwrap_or(0) == 0);
     }
 
-    fn hash<T>(value: T) -> u64 {
-        hash::hash_of_val::<T, hash::DefaultHash>(value)
-    }
-
     #[test]
     fn test_hash() {
+        use hash::hash_of;
+
         let opt1: Option<i32> = Option::none();
         let opt2: Option<i32> = Option::some(1337);
 
-        assert_eq!(hash(opt1), hash(()));
-        assert_eq!(hash(opt2), hash(1337i32));
+        assert_eq!(opt1.hash_of(), ().hash_of());
+        assert_eq!(opt2.hash_of(), 1337i32.hash_of());
     }
 }

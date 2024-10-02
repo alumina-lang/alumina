@@ -35,10 +35,10 @@ pub enum NamedItemKind<'ast> {
     Protocol(ItemP<'ast>),
     Impl,
     EnumMember(ItemP<'ast>, Id),
-
     Placeholder(Id),
     Field,
     Local(Id),
+    ConstLocal(Id),
     BoundValue(Id, Id, BoundItemType),
     Parameter(Id),
     MacroParameter(Id, bool),
@@ -54,6 +54,7 @@ impl Display for NamedItemKind<'_> {
             NamedItemKind::Method(..) => write!(f, "method"),
             NamedItemKind::Static(..) => write!(f, "static"),
             NamedItemKind::Const(..) => write!(f, "const"),
+            NamedItemKind::ConstLocal(..) => write!(f, "const local"),
             NamedItemKind::Macro(..) => write!(f, "macro"),
             NamedItemKind::Type(..) => write!(f, "type"),
             NamedItemKind::Mixin => write!(f, "mixin"),
@@ -142,6 +143,7 @@ impl<'ast, 'src> NamedItem<'ast, 'src> {
             NamedItemKind::MacroParameter(id, _) => Some(*id),
             NamedItemKind::Anonymous => None,
             NamedItemKind::Closure(item) => Some(item.id),
+            NamedItemKind::ConstLocal(id) => Some(*id),
         }
     }
 
@@ -168,6 +170,7 @@ impl<'ast, 'src> NamedItem<'ast, 'src> {
             NamedItemKind::MacroParameter(_, _) => None,
             NamedItemKind::Anonymous => None,
             NamedItemKind::Closure(item) => Some(*item),
+            NamedItemKind::ConstLocal(_) => None,
         }
     }
 }
@@ -562,7 +565,9 @@ impl<'ast, 'src> Scope<'ast, 'src> {
             };
 
             let kind = match item.kind {
-                NamedItemKind::Local(_) => CodeDiagnostic::UnusedVariable(name.to_string()),
+                NamedItemKind::Local(_) | NamedItemKind::ConstLocal(_) => {
+                    CodeDiagnostic::UnusedVariable(name.to_string())
+                }
                 NamedItemKind::BoundValue(_, _, _) => {
                     CodeDiagnostic::UnusedClosureBinding(name.to_string())
                 }

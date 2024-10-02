@@ -54,11 +54,13 @@ struct PanicInfo {
 
 /// Catch a panic and return it as a result.
 ///
-/// This function will execute the provided closure and return `Result::ok(())` if the closure
-/// completes successfully, or `Result::err(panic_info)` if the closure panics.
+/// This function will execute the provided closure and return `Result::ok` if the closure
+/// completes successfully, or `Result::err` if the closure panics.
 ///
 /// This is primarily meant to support unit tests that need to verify that a certain function
 /// panics under certain conditions.
+///
+/// `catch_panic` only affects the panics occurring on the calling thread.
 ///
 /// ## Example
 /// ```
@@ -71,7 +73,7 @@ struct PanicInfo {
 /// assert!(result.is_err());
 /// ```
 ///
-/// It is *not recommended* to use this function for general
+/// It is **not recommended** to use this function for general
 /// error handling, as Alumina panics do not unwind the stack, which means that any resources
 /// that need to be cleaned up will not be cleaned up.
 ///
@@ -109,6 +111,9 @@ fn catch_panic<T, F: Fn() -> T>(f: F) -> Result<T, PanicInfo> {
     };
 
     internal::PANIC_HOOK = prev_panic_hook;
+    // Up until this point, if anything else goes wrong after panic hook, the process
+    // will terminate.
+    internal::PANICKING = false;
     ret
 }
 
@@ -410,6 +415,21 @@ mod internal {
 mod tests {
     #[test]
     fn test_catch_panic_panic() {
+        let result = catch_panic(|| {
+            panic!("test panic");
+        });
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_catch_panic_panic_twice() {
+        let result = catch_panic(|| {
+            panic!("test panic");
+        });
+
+        assert!(result.is_err());
+
         let result = catch_panic(|| {
             panic!("test panic");
         });

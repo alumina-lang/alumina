@@ -31,6 +31,7 @@ const DIAGNOSTIC_SUPRESSIONS: &[(&str, &str)] = &[
     ("clang", "-Wincompatible-library-redeclaration"),
     ("clang", "-Wunused-value"),
     ("clang", "-Wincompatible-pointer-types"),
+    ("clang", "-Wnull-dereference"),
     ("GCC", "-Wbuiltin-declaration-mismatch"),
 ];
 
