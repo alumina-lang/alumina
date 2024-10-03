@@ -277,10 +277,10 @@ impl File {
     fn attributes(self: &File) -> Result<FileAttr> {
         let result: FileAttr;
 
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_env = "musl"))]
         errno_try!(libc::fstat(self.fd.value, &result.inner));
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_env = "musl")))]
         errno_try!(libc::fstat64(self.fd.value, &result.inner));
 
         Result::ok(result)
@@ -315,10 +315,10 @@ impl File {
 
     /// @ io::Seekable::seek
     fn seek(self: &mut File, whence: SeekFrom, offset: i64) -> Result<u64> {
-        #[cfg(not(target_os = "macos"))]
-        let ret = errno_try!(libc::lseek64(self.fd.value, offset, whence as libc::c_int));
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_env = "musl"))]
         let ret = errno_try!(libc::lseek(self.fd.value, offset, whence as libc::c_int));
+        #[cfg(not(any(target_os = "macos", target_env = "musl")))]
+        let ret = errno_try!(libc::lseek64(self.fd.value, offset, whence as libc::c_int));
 
         Result::ok(ret as u64)
     }
@@ -364,9 +364,9 @@ impl DirIterator {
         loop {
             *libc::__errno_location() = 0;
 
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_env = "musl"))]
             let ent = libc::readdir(self.inner);
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(not(any(target_os = "macos", target_env = "musl")))]
             let ent = libc::readdir64(self.inner);
 
             if ent == null {
@@ -402,9 +402,9 @@ impl DirIterator {
 
 /// Directory entry
 struct DirEntry {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_env = "musl"))]
     inner: &mut libc::dirent,
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_env = "musl")))]
     inner: &mut libc::dirent64,
 }
 
@@ -537,9 +537,9 @@ impl FileType {
 
 /// File attributes (`stat`)
 struct FileAttr {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_env = "musl"))]
     inner: libc::stat_t,
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_env = "musl")))]
     inner: libc::stat64_t,
 }
 
@@ -551,10 +551,10 @@ impl FileAttr {
 
         let result: FileAttr;
 
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_env = "musl"))]
         errno_try!(libc::stat(path.ptr, &result.inner));
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_env = "musl")))]
         errno_try!(libc::stat64(path.ptr, &result.inner));
 
         Result::ok(result)

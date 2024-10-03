@@ -57,6 +57,37 @@ jobs:
         timeout-minutes: 10
         run: make test -j8
 
+  tests-musl:
+    name: Build and test (base only)
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
+
+      - name: Install Tree-sitter
+        run: npm install -g tree-sitter-cli
+
+      - name: Install libbacktrace
+        run: |
+          git clone https://github.com/ianlancetaylor/libbacktrace
+          cd libbacktrace
+          ./configure
+          make -j8
+          sudo make install
+
+      - name: Run all tests
+        timeout-minutes: 10
+        run: make test -j8
+
   dist-check:
     name: Build and test (full)
     runs-on: ubuntu-latest
