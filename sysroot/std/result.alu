@@ -267,7 +267,11 @@ impl Result<T, E> {
         #[inline(never)]
         fn unwrap_panic_ok(ok: T) -> ! {
             use fmt::debug;
-            panic!("unwrap on an ok value: {}", ok.debug())
+            when ok is fmt::Formattable<T, panicking::internal::PanicFormatter> {
+                panic!("unwrap on an ok value: {}", ok)
+            } else {
+                panic!("unwrap on an ok value: {}", ok.debug())
+            }
         }
 
         if self.is_err() {
