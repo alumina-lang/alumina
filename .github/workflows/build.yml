@@ -65,16 +65,16 @@ jobs:
 
     steps:
       - uses: actions/checkout@v2
+      - name: Set up packages
+        run: apk add --no-cache gcc musl-dev make nodejs npm curl
+
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          components: rustfmt, clippy
+        run:  |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source $HOME/.cargo/env
 
       - name: Install Tree-sitter
-        run: npm install -g tree-sitter-cli
+        run: cargo install tree-sitter-cli
 
       - name: Install libbacktrace
         run: |
