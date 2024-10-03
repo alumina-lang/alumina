@@ -122,7 +122,7 @@ mod internal {
     use fmt::{Formatter, Formattable};
     use sync::{Atomic, Ordering};
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "android")))]
     {
         type jmp_buf = [libc::intptr_t; 5];
 
@@ -136,14 +136,23 @@ mod internal {
             intrinsics::codegen_func::<!>("__builtin_longjmp", &buf[0] as &mut (), arg);
         }
     }
-
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "android"))]
     {
-        // Clang on MacOS aarch64 does not seem to support __builtin_setjmp/__builtin_longjmp yet
-        #[cfg(target_arch = "x86_64")]
-        type jmp_buf = [libc::c_int; ((9 * 2) + 3 + 16)];
-        #[cfg(target_arch = "aarch64")]
-        type jmp_buf = [libc::c_int; ((14 + 8 + 2) * 2)];
+        #[cfg(target_os = "macos")]
+        {
+            // Clang on MacOS aarch64 does not seem to support __builtin_setjmp/__builtin_longjmp yet
+            #[cfg(target_arch = "x86_64")]
+            type jmp_buf = [libc::c_int; ((9 * 2) + 3 + 16)];
+            #[cfg(target_arch = "aarch64")]
+            type jmp_buf = [libc::c_int; ((14 + 8 + 2) * 2)];
+        }
+
+        #[cfg(target_os = "android")]
+        {
+            // https://android.googlesource.com/platform/bionic/+/refs/heads/main/libc/include/setjmp.h
+            #[cfg(target_arch = "aarch64")]
+            type jmp_buf = [libc::c_long; 32];
+        }
 
         extern "C" fn setjmp(buf: &jmp_buf) -> libc::c_int;
         extern "C" fn longjmp(buf: &jmp_buf, arg: libc::c_int) -> !;
