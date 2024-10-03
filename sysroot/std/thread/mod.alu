@@ -613,12 +613,12 @@ mod tests {
         });
     }
 
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
     #[test]
     fn test_spawn_manual_exit() {
         let t = spawn(|| -> i32 {
-            /// call just SYS_exit without SYS_exit_group
-            libc::syscall(60, 0 as libc::c_int);
+            // call just SYS_exit without SYS_exit_group
+            libc::syscall(libc::SYS_exit, 0 as libc::c_int);
             unreachable!()
         });
 
