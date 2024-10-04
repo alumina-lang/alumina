@@ -1,4 +1,3 @@
-#![cfg(all(test, not(custom_test_framework)))]
 #![cfg_attr(not(test_std), diag::hide_from_backtrace)]
 
 //! Minimal unit test runner
@@ -32,54 +31,102 @@
 //!     }
 //!
 //!     #[test]
-//!     #[test::should_panic]
 //!     fn test_panic() {
-//!         panic!("oops");
+//!         test::assert_panics!(panic!("oops"));
 //!     }
 //! }
 //! ```
 //!
 //! ## Test attributes
 //!
-//! The following attributes are supported: `#[test::ignore]` to skip execution of a test (useful e.g. to make sure
-//! that a test compiles but is not run), `#[test::should_panic]` to mark a test as expected to fail (e.g. through
-//! panic).
+//! The following attribute is supported: `#[test::ignore]` to skip execution of a test (useful e.g. to make sure
+//! that a test compiles but is not run). This can be used in combination with `#[cfg_attr(...)]` to conditionally
+//! enable a test only on certain configurations.
+//!
+//! ```bare
+//! #[cfg_attr(not(target_arch = "x86_64"), test::ignore)]
+//! fn test_is_x86_64() {
+//!     assert_eq!(cfg!(target_arch), "x86_64");
+//! }
+//! ```
 //!
 //! ## Custom test frameworks
 //!
 //! Nothing prevents you from writing your own framework, just compile with
-//! `--cfg custom_test_framework` and use the test support glue in [std::runtime] to get the test
+//! `--cfg custom_test_framework`. The [TestCase] and [TEST_CASES] constants are public and can be used to
+//! implement custom test runners, or they can be discovered through reflection in a different way.
 //! cases.
 
 /// Test case metadata
-struct TestCaseMeta {
+struct TestCase {
+    /// The module path of the test case
     path: &[u8],
+    /// The test case name
     name: &[u8],
+    /// The test case function
     test: fn(),
-
-    /// Whether this test is expected to fail
-    should_panic: bool,
-    // Whether this test is ignored
+    /// Whether this test is ignored
     ignore: bool
 }
 
-/// List of test cases
-const TEST_CASES = {
-    use std::typing::type_of;
-    use std::intrinsics::{attributed, has_attribute};
+impl TestCase {
+    /// Create a new test case from a named function
+    fn new<F: std::builtins::NamedFunction + Fn()>() -> TestCase {
+        use std::intrinsics::has_attribute;
 
-    const cases = attributed::<()>("test");
-
-    let ret: [TestCaseMeta; cases.len()];
-    for const idx in 0usize..cases.len() {
-        let desc = cases.(idx);
-        ret[idx] = TestCaseMeta {
+        let desc = std::typing::Type::new::<F>();
+        TestCase {
             path: desc.module_path().unwrap_or(""),
             name: desc.name().unwrap_or(""),
             test: desc.as_fn(),
-            should_panic: has_attribute::<type_of<typeof(desc)>>("test::should_panic"),
-            ignore: has_attribute::<type_of<typeof(desc)>>("test::ignore")
-        };
+            ignore: has_attribute::<F>("test::ignore")
+        }
+    }
+
+    /// Runs the test case in a forked process
+    fn run(test: &TestCase) -> TestResult {
+        let start_time = Instant::now();
+        let child = Forked::new()
+            .stdin(Stdio::Null)
+            .stdout(Stdio::Piped)
+            .stderr(Stdio::Piped)
+            .spawn()
+            .unwrap();
+
+        if child.is_none() {
+            test.test();
+            process::exit(0);
+        }
+
+        let child = child.unwrap();
+        let output = child.wait_with_output().unwrap();
+        let end_time = Instant::now();
+
+        defer output.free();
+
+        TestResult {
+            test: *test,
+            duration: end_time.duration_since(&start_time),
+            success: output.status.success(),
+            stdout: output.stdout.move(),
+            stderr: output.stderr.move(),
+            status: output.status
+        }
+    }
+}
+
+/// List of all discovered test cases
+const TEST_CASES = {
+    use std::typing::type_of;
+    use std::intrinsics::attributed;
+
+    const cases = attributed::<()>("test");
+    let ret: [TestCase; cases.len()];
+    for const idx in 0usize..cases.len() {
+        let desc = cases.(idx);
+        ret[idx] = intrinsics::with_span_of::<type_of<typeof(desc)>>(
+            TestCase::new::<type_of<typeof(desc)>>()
+        );
     }
     ret
 };
@@ -92,158 +139,141 @@ use std::time::{Instant, Duration};
 
 /// Holder for the results of a test case.
 struct TestResult {
-    test: TestCaseMeta,
+    /// The test case metadata
+    test: TestCase,
+    /// The duration of the test case
     duration: Duration,
+    /// Whether the test case succeeded
     success: bool,
+    /// Captured standard output of the test case
     stdout: StringBuf,
+    /// Captured standard error of the test case
     stderr: StringBuf,
+    /// The exit status of the test case process
     status: ExitStatus
 }
 
 impl TestResult {
+    /// @ std::mem::Movable::move
+    fn move(self: TestResult) -> TestResult {
+        TestResult {
+            test: self.test,
+            duration: self.duration,
+            success: self.success,
+            stdout: self.stdout.move(),
+            stderr: self.stderr.move(),
+            status: self.status
+        }
+    }
+
+    /// @ std::mem::Freeable::free
     fn free(self: &mut TestResult) {
         self.stdout.free();
         self.stderr.free();
     }
 }
 
-/// Run a single test case in a forked process and collect output.
-fn run(test: &TestCaseMeta) -> TestResult {
-    let start_time = Instant::now();
-    let child = Forked::new()
-        .stdin(Stdio::Null)
-        .stdout(Stdio::Piped)
-        .stderr(Stdio::Piped)
-        .spawn()
-        .unwrap();
-
-    if child.is_none() {
-        if test.should_panic {
-            if panicking::catch_panic(|&test| { test.test() }).is_ok() {
-                panic!("test did not panic as expected");
-            }
-        } else {
-            test.test();
-        }
-        process::exit(0);
-    }
-
-    let child = child.unwrap();
-    let output = child.wait_with_output().unwrap();
-    let end_time = Instant::now();
-
-    defer output.free();
-
-    TestResult {
-        test: *test,
-        duration: end_time.duration_since(&start_time),
-        success: output.status.success(),
-        stdout: output.stdout.move(),
-        stderr: output.stderr.move(),
-        status: output.status
-    }
-}
-
-/// Command line arguments for the test runner.
-struct Args {
-    prefix: Option<&[u8]>,
-    filter: Option<&[u8]>,
-    timings: bool,
-}
-
-impl Args {
-    fn default() -> Args {
-        Args {
-            prefix: Option::none(),
-            filter: Option::none(),
-            timings: false
-        }
-    }
-}
-
-fn print_help_string(args: &[&[u8]]) -> ! {
-    eprintln!("usage: {} [--prefix <PREFIX>] [--filter <FILTER>] [--timings]", args[0]);
-    process::exit(1);
-}
-
-/// Parse command line arguments.
-fn parse_args(args: &[&[u8]]) -> Args {
-    enum State {
-        Normal,
-        Prefix,
-        Filter
-    }
-
-    let state = State::Normal;
-    let res = Args::default();
-
-    if args.len() == 0 {
-        return res;
-    }
-
-    for arg in args[1..] {
-        state = switch state {
-            State::Normal => switch arg {
-                "--prefix", "-p" => State::Prefix,
-                "--filter", "-f" => State::Filter,
-                "--timings" => {
-                    res.timings = true;
-                    State::Normal
-                },
-                _ => print_help_string(args)
-            },
-            State::Prefix => {
-                res.prefix = Option::some(arg);
-                State::Normal
-            },
-            State::Filter => {
-                res.filter = Option::some(arg);
-                State::Normal
-            },
-            _ => unreachable!()
-        };
-    }
-
-    if state != State::Normal {
-        print_help_string(args);
-    }
-
-    res
-}
-
-/// Filter tests based on user-provided criteria (e.g. path prefix).
-fn filter_tests(args: Args) -> (Vector<TestCaseMeta>, usize) {
-    use string::{starts_with, contains};
-
-    let test_cases: Vector<TestCaseMeta> = Vector::new();
-    defer test_cases.free();
-
-    for test in TEST_CASES {
-        if args.prefix.is_some() && !test.path[2..].starts_with(args.prefix.unwrap()) {
-            continue
-        }
-
-        if args.filter.is_some() && !test.name.contains(args.filter.unwrap()) {
-            continue
-        }
-
-        test_cases.push(test);
-    }
-
-    test_cases
-        .as_slice_mut()
-        .sort_by_key(|m: &TestCaseMeta| -> (&[u8], &[u8]) {
-            (m.path, m.name)
-        });
-
-    let filtered_count = TEST_CASES.len() - test_cases.len();
-
-    (test_cases.move(), filtered_count)
-}
-
 /// Test runner entrypoint.
+#[cfg(all(test, not(custom_test_framework)))]
 #[test_main]
 fn main(args: &[&[u8]]) -> i32 {
+    /// Command line arguments for the test runner.
+    struct Args {
+        prefix: Option<&[u8]>,
+        filter: Option<&[u8]>,
+        timings: bool,
+    }
+
+    impl Args {
+        fn default() -> Args {
+            Args {
+                prefix: Option::none(),
+                filter: Option::none(),
+                timings: false
+            }
+        }
+    }
+
+    fn print_help_string(args: &[&[u8]]) -> ! {
+        eprintln!("usage: {} [--prefix <PREFIX>] [--filter <FILTER>] [--timings]", args[0]);
+        process::exit(1);
+    }
+
+    /// Parse command line arguments.
+    fn parse_args(args: &[&[u8]]) -> Args {
+        enum State {
+            Normal,
+            Prefix,
+            Filter
+        }
+
+        let state = State::Normal;
+        let res = Args::default();
+
+        if args.len() == 0 {
+            return res;
+        }
+
+        for arg in args[1..] {
+            state = switch state {
+                State::Normal => switch arg {
+                    "--prefix", "-p" => State::Prefix,
+                    "--filter", "-f" => State::Filter,
+                    "--timings" => {
+                        res.timings = true;
+                        State::Normal
+                    },
+                    _ => print_help_string(args)
+                },
+                State::Prefix => {
+                    res.prefix = Option::some(arg);
+                    State::Normal
+                },
+                State::Filter => {
+                    res.filter = Option::some(arg);
+                    State::Normal
+                },
+                _ => unreachable!()
+            };
+        }
+
+        if state != State::Normal {
+            print_help_string(args);
+        }
+
+        res
+    }
+
+    /// Filter tests based on user-provided criteria (e.g. path prefix).
+    fn filter_tests(args: Args) -> (Vector<TestCase>, usize) {
+        use string::{starts_with, contains};
+
+        let test_cases: Vector<TestCase> = Vector::new();
+        defer test_cases.free();
+
+        for test in TEST_CASES {
+            if args.prefix.is_some() && !test.path[2..].starts_with(args.prefix.unwrap()) {
+                continue
+            }
+
+            if args.filter.is_some() && !test.name.contains(args.filter.unwrap()) {
+                continue
+            }
+
+            test_cases.push(test);
+        }
+
+        test_cases
+            .as_slice_mut()
+            .sort_by_key(|m: &TestCase| -> (&[u8], &[u8]) {
+                (m.path, m.name)
+            });
+
+        let filtered_count = TEST_CASES.len() - test_cases.len();
+
+        (test_cases.move(), filtered_count)
+    }
+
     use std::process::env;
 
     let args = parse_args(args);
@@ -401,6 +431,53 @@ macro assert_terminates($inner) {
     }
 }
 
+/// Assert that the inner block panics.
+///
+/// If the block does not panic, the macro will.
+///
+/// ## Example
+/// ```bare
+/// use test::assert_panics;
+///
+/// #[test]
+/// fn test_panic() {
+///     assert_panics!({
+///         panic!("oops");
+///     });
+/// }
+/// ```
+macro assert_panics($inner) {
+    use std::panicking::internal::{
+        jmp_buf, setjmp, set_panic_hook, PANIC_HOOK, PANICKING
+    };
+
+    let panicked = false;
+    let prev_panic_hook = PANIC_HOOK;
+
+    let buf: jmp_buf;
+    set_panic_hook(&buf as &mut void, internal::assert_panic_hook);
+    if setjmp(&buf) == 0 {
+        $inner;
+    } else {
+        panicked = true;
+    };
+
+    PANIC_HOOK = prev_panic_hook;
+    PANICKING = false;
+
+    if !panicked {
+        panic!("assertion failed: block did not panic");
+    }
+}
+
+#[docs(no_index)]
+mod internal {
+    #[inline(never)]
+    fn assert_panic_hook(ptr: &mut void, _: &std::panicking::PanicInfo) {
+        use std::panicking::internal::{jmp_buf, longjmp};
+        longjmp(ptr as &mut jmp_buf, 1);
+    }
+}
 
 /// Quis testabitur ipsos testes
 #[cfg(test_std)]
@@ -414,8 +491,9 @@ mod tests {
     fn ignored_test() {}
 
     #[test]
-    #[test::should_panic]
     fn should_panic_test() {
-        panic!("oops")
+        assert_panics!({
+            panic!("oops")
+        });
     }
 }

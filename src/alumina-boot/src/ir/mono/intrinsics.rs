@@ -55,6 +55,7 @@ pub enum Intr {
     HasAttribute,
     ValueOf,
     Expect,
+    WithSpanOf,
 }
 
 pub fn intrinsic_kind(name: &str) -> Option<Intr> {
@@ -99,6 +100,7 @@ pub fn intrinsic_kind(name: &str) -> Option<Intr> {
         "has_attribute" => HasAttribute,
         "value_of" => ValueOf,
         "expect" => Expect,
+        "with_span_of" => WithSpanOf,
         _ => return None,
     };
 
@@ -113,11 +115,35 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
         callee: &ast::Intrinsic,
         generic_args: &[ast::TyP<'ast>],
         args: &[ast::ExprP<'ast>],
+        type_hint: Option<ir::TyP<'ir>>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        use Intr::*;
+
         let generic_args = generic_args
             .iter()
             .map(|e| self.lower_type_unrestricted(e))
             .collect::<Result<Vec<_>, _>>()?;
+
+        macro_rules! generic {
+            ($n:literal) => {
+                match generic_args.get($n) {
+                    Some(arg) => arg,
+                    None => ice!(self.diag, "not enough generic arguments to intrinsic"),
+                }
+            };
+        }
+
+        match callee.kind {
+            // This one is special since it lowers the expression itself
+            WithSpanOf => {
+                let inner_expr = match args.first() {
+                    Some(expr) => expr,
+                    _ => ice!(self.diag, "not enough arguments to intrinsic"),
+                };
+                return self.intr_with_span_of(generic!(0), inner_expr, type_hint);
+            }
+            _ => {}
+        }
 
         let args = args
             .iter()
@@ -132,16 +158,6 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
                 }
             };
         }
-
-        macro_rules! generic {
-            ($n:literal) => {
-                match generic_args.get($n) {
-                    Some(arg) => arg,
-                    None => ice!(self.diag, "not enough generic arguments to intrinsic"),
-                }
-            };
-        }
-        use Intr::*;
         match callee.kind {
             MakeVtable => {
                 if let ir::Ty::Tuple(inner) = generic!(0) {
@@ -191,6 +207,7 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
             HasAttribute => self.intr_has_attribute(generic!(0), arg!(0), span),
             ValueOf => self.intr_value_of(generic!(0), span),
             Expect => self.intr_expect(arg!(0), arg!(1), span),
+            WithSpanOf => unreachable!(),
         }
     }
 
@@ -1049,5 +1066,28 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
             self.types.builtin(BuiltinType::Bool),
             span,
         ))
+    }
+
+    fn intr_with_span_of(
+        &mut self,
+        ty: ir::TyP<'ir>,
+        inner: ast::ExprP<'ast>,
+        type_hint: Option<ir::TyP<'ir>>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        let span = match ty {
+            ir::Ty::Item(item) => match item.get().with_backtrace(&self.diag)? {
+                ir::Item::Function(f) => f.span,
+                ir::Item::Static(s) => s.span,
+                ir::Item::Const(c) => c.span,
+                ir::Item::Protocol(p) => p.span,
+                ir::Item::StructLike(s) => s.span,
+                ir::Item::Enum(e) => e.span,
+                _ => None,
+            },
+            _ => None,
+        };
+
+        let _guard = self.diag.push_span(span);
+        self.lower_expr(inner, type_hint)
     }
 }

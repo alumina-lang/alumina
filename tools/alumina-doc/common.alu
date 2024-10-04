@@ -18,6 +18,10 @@ impl Path {
     use std::cmp::{Comparable, Equatable, Ordering};
     use std::hash::{Hashable, Hasher};
 
+    fn root() -> Path {
+        Path::new(Vector::new())
+    }
+
     fn new(segments: Vector<&[u8]>) -> Path {
         Path { segments: segments }
     }
@@ -614,10 +618,14 @@ impl LinkContext {
         Option::some(link)
     }
 
-    fn resolve_link(self: &LinkContext, path: &Path) -> Option<StringBuf> {
+    fn resolve_link(self: &LinkContext, path: &Path, absolute: bool) -> Option<StringBuf> {
         use std::option::try;
-
-        let item = self.item_bag.resolve(self.path, path, true)?;
+        let current = if absolute {
+            &Path::root() as &Path
+        } else {
+            self.path
+        };
+        let item = self.item_bag.resolve(current, path, true)?;
         self.link_for_item(item, true, false)
     }
 }
@@ -644,14 +652,18 @@ impl DoctestWriter {
         writeln!(&fmt, "#[test]").unwrap();
         if no_run {
             writeln!(&fmt, "#[test::ignore]").unwrap();
-        } else if panics {
-            writeln!(&fmt, "#[test::should_panic]").unwrap();
         }
         writeln!(&fmt, "#[location(\"{}\", {})]", filename, line).unwrap();
-        writeln!(&fmt, "fn test_{}_{}() {{", name, self.index).unwrap();
+        if panics {
+            writeln!(&fmt, "fn test_{}_{}() {{ ::test::assert_panics!({{", name, self.index).unwrap();
+        } else {
+            writeln!(&fmt, "fn test_{}_{}() {{", name, self.index).unwrap();
+        }
         writeln!(&fmt, "{}", source).unwrap();
+        if panics {
+            writeln!(&fmt, "}});").unwrap();
+        }
         writeln!(&fmt, "}}").unwrap();
-
         writeln!(&fmt, "").unwrap();
 
         self.index += 1;

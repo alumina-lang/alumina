@@ -50,7 +50,7 @@ impl PageWriter<T: std::io::Writable<T>> {
 
         for (idx, segment) in item.path.segments.iter().enumerate() {
             let partial_path = Path::new(Vector::from_slice(item.path.as_slice()[..idx + 1]));
-            let link = link_context.resolve_link(&partial_path).unwrap();
+            let link = link_context.resolve_link(&partial_path, true).unwrap();
 
             if idx == 0 {
                 w!(self, "<a class=\"breadcrumbs\" href=\"{}\">{}</a>", link.as_slice(), segment);
@@ -65,7 +65,7 @@ impl PageWriter<T: std::io::Writable<T>> {
         if with_kind {
             wln!(self, "</h1>");
             if item.path != item.defined_in {
-                let link = link_context.resolve_link(&item.defined_in).unwrap();
+                let link = link_context.resolve_link(&item.defined_in, true).unwrap();
                 defer link.free();
                 wln!(self, "<div class=\"defined-in badge\">Re-export from <a href=\"{}\">{}</a></div>", link.as_slice(), item.defined_in);
             }
@@ -315,7 +315,7 @@ impl PageWriter<T: std::io::Writable<T>> {
         wln!(self, "<link rel=\"shortcut icon\" href=\"/static/favicon.ico\" />");
 
         if self.processor.base_domain.is_some() {
-            let link = link_context.resolve_link(&top_level.defined_in).unwrap();
+            let link = link_context.resolve_link(&top_level.defined_in, true).unwrap();
             defer link.free();
             wln!(
                 self,
