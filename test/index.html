@@ -38,29 +38,14 @@
 <h2>Structs</h2>
 <ul>
 <li>
-<a href="/test/TestCaseMeta.html">TestCaseMeta</a>
+<a href="/test/TestCase.html">TestCase</a>
 </li>
 <li>
 <a href="/test/TestResult.html">TestResult</a>
 </li>
-<li>
-<a href="/test/Args.html">Args</a>
-</li>
 </ul>
 <h2>Functions</h2>
 <ul>
-<li>
-<a href="/test/#item.run">run</a>
-</li>
-<li>
-<a href="/test/#item.print_help_string">print_help_string</a>
-</li>
-<li>
-<a href="/test/#item.parse_args">parse_args</a>
-</li>
-<li>
-<a href="/test/#item.filter_tests">filter_tests</a>
-</li>
 <li>
 <a href="/test/#item.main">main</a>
 </li>
@@ -69,6 +54,9 @@
 <ul>
 <li>
 <a href="/test/assert_terminates.html">assert_terminates</a>
+</li>
+<li>
+<a href="/test/assert_panics.html">assert_panics</a>
 </li>
 </ul>
 <h2>Consts</h2>
@@ -123,27 +111,33 @@ mod tests {
     }
 
     #[test]
-    #[test::should_panic]
     fn test_panic() {
-        panic!("oops");
+        test::assert_panics!(panic!("oops"));
     }
 }
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20add%28x%3a%20i32%2c%20y%3a%20i32%29%20%2d%3e%20i32%20%7b%0a%20%20%20%20x%20%2b%20y%0a%7d%0a%0afn%20sub%28x%3a%20i32%2c%20y%3a%20i32%29%20%2d%3e%20i32%20%7b%0a%20%20%20%20x%20%2d%20y%0a%7d%0a%0a%23%5bcfg%28test%29%5d%0amod%20tests%20%7b%0a%20%20%20%20%23%5btest%5d%0a%20%20%20%20fn%20test%5fadd%28%29%20%7b%0a%20%20%20%20%20%20%20%20assert%5feq%21%281%2eadd%282%29%2c%203%29%3b%0a%20%20%20%20%7d%0a%0a%20%20%20%20%23%5btest%5d%0a%20%20%20%20fn%20test%5fsub%28%29%20%7b%0a%20%20%20%20%20%20%20%20assert%5feq%21%281%2esub%282%29%2c%20%2d1%29%3b%0a%20%20%20%20%7d%0a%0a%20%20%20%20%23%5btest%5d%0a%20%20%20%20%23%5btest%3a%3ashould%5fpanic%5d%0a%20%20%20%20fn%20test%5fpanic%28%29%20%7b%0a%20%20%20%20%20%20%20%20panic%21%28%22oops%22%29%3b%0a%20%20%20%20%7d%0a%7d%0a">Run this example</a></pre>
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20add%28x%3a%20i32%2c%20y%3a%20i32%29%20%2d%3e%20i32%20%7b%0a%20%20%20%20x%20%2b%20y%0a%7d%0a%0afn%20sub%28x%3a%20i32%2c%20y%3a%20i32%29%20%2d%3e%20i32%20%7b%0a%20%20%20%20x%20%2d%20y%0a%7d%0a%0a%23%5bcfg%28test%29%5d%0amod%20tests%20%7b%0a%20%20%20%20%23%5btest%5d%0a%20%20%20%20fn%20test%5fadd%28%29%20%7b%0a%20%20%20%20%20%20%20%20assert%5feq%21%281%2eadd%282%29%2c%203%29%3b%0a%20%20%20%20%7d%0a%0a%20%20%20%20%23%5btest%5d%0a%20%20%20%20fn%20test%5fsub%28%29%20%7b%0a%20%20%20%20%20%20%20%20assert%5feq%21%281%2esub%282%29%2c%20%2d1%29%3b%0a%20%20%20%20%7d%0a%0a%20%20%20%20%23%5btest%5d%0a%20%20%20%20fn%20test%5fpanic%28%29%20%7b%0a%20%20%20%20%20%20%20%20test%3a%3aassert%5fpanics%21%28panic%21%28%22oops%22%29%29%3b%0a%20%20%20%20%7d%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 <h3> Test attributes</h3>
 <p>
 </p><p>
-The following attributes are supported: <code class="language-alumina">#[test::ignore]</code> to skip execution of a test (useful e.g. to make sure
-that a test compiles but is not run), <code class="language-alumina">#[test::should_panic]</code> to mark a test as expected to fail (e.g. through
-panic).
+The following attribute is supported: <code class="language-alumina">#[test::ignore]</code> to skip execution of a test (useful e.g. to make sure
+that a test compiles but is not run). This can be used in combination with <code class="language-alumina">#[cfg_attr(...)]</code> to conditionally
+enable a test only on certain configurations.
+</p><p>
+<pre class="with-playground-link"><code class="language-alumina">#[cfg_attr(not(target_arch = "x86_64"), test::ignore)]
+fn test_is_x86_64() {
+    assert_eq!(cfg!(target_arch), "x86_64");
+}
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=%23%5bcfg%5fattr%28not%28target%5farch%20%3d%20%22x86%5f64%22%29%2c%20test%3a%3aignore%29%5d%0afn%20test%5fis%5fx86%5f64%28%29%20%7b%0a%20%20%20%20assert%5feq%21%28cfg%21%28target%5farch%29%2c%20%22x86%5f64%22%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 <h3> Custom test frameworks</h3>
 <p>
 </p><p>
 Nothing prevents you from writing your own framework, just compile with
-<code class="language-alumina">--cfg custom_test_framework</code> and use the test support glue in <a class="path-link" href="/std/runtime/">runtime</a> to get the test
+<code class="language-alumina">--cfg custom_test_framework</code>. The <a class="path-link" href="/test/TestCase.html">TestCase</a> and <a class="path-link" href="/test/#item.TEST_CASES">TEST_CASES</a> constants are public and can be used to
+implement custom test runners, or they can be discovered through reflection in a different way.
 cases.
 </p><p>
 </p>
@@ -160,9 +154,9 @@ cases.
 </div>
 <h2 id="Struct">Structs</h2>
 <div class="item-short-table">
-<div class="row" id="item.TestCaseMeta">
+<div class="row" id="item.TestCase">
 <div class="cell-name">
-<a href="/test/TestCaseMeta.html">TestCaseMeta</a>
+<a href="/test/TestCase.html">TestCase</a>
 </div>
 <div class="cell-doc">Test case metadata
 </div>
@@ -174,78 +168,16 @@ cases.
 <div class="cell-doc">Holder for the results of a test case.
 </div>
 </div>
-<div class="row" id="item.Args">
-<div class="cell-name">
-<a href="/test/Args.html">Args</a>
-</div>
-<div class="cell-doc">Command line arguments for the test runner.
-</div>
-</div>
 </div>
 <h2 id="Function">Functions</h2>
 <ul>
 <li>
-<div class="signature" id="item.run">
-<h4>
-<span class="keyword">fn</span> <span class="identifier-function">run</span>(test: &amp;<a href="/test/TestCaseMeta.html"><span class="identifier-type">TestCaseMeta</span></a>) -> <a href="/test/TestResult.html"><span class="identifier-type">TestResult</span></a></h4>
-<div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/test.alu#L111-L145"/>source</a>
-</div>
-</div>
-<div class="item-doc">
-<p>
-Run a single test case in a forked process and collect output.
-</p><p>
-</p>
-</div>
-</li>
-<li>
-<div class="signature" id="item.print_help_string">
-<h4>
-<span class="keyword">fn</span> <span class="identifier-function">print_help_string</span>(args: &amp;[&amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]]) -> <a href="/std/builtins/never.html"><span class="identifier-type">!</span></a></h4>
-<div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/test.alu#L164-L167"/>source</a>
-</div>
-</div>
-<div class="item-doc">
-</div>
-</li>
-<li>
-<div class="signature" id="item.parse_args">
-<h4>
-<span class="keyword">fn</span> <span class="identifier-function">parse_args</span>(args: &amp;[&amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]]) -> <a href="/test/Args.html"><span class="identifier-type">Args</span></a></h4>
-<div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/test.alu#L170-L212"/>source</a>
-</div>
-</div>
-<div class="item-doc">
-<p>
-Parse command line arguments.
-</p><p>
-</p>
-</div>
-</li>
-<li>
-<div class="signature" id="item.filter_tests">
-<h4>
-<span class="keyword">fn</span> <span class="identifier-function">filter_tests</span>(args: <a href="/test/Args.html"><span class="identifier-type">Args</span></a>) -> (<a href="/std/collections/vector/Vector.html"><span class="identifier-type">Vector</span></a>&lt;<a href="/test/TestCaseMeta.html"><span class="identifier-type">TestCaseMeta</span></a>&gt;, <a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>)</h4>
-<div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/test.alu#L215-L242"/>source</a>
-</div>
-</div>
-<div class="item-doc">
-<p>
-Filter tests based on user-provided criteria (e.g. path prefix).
-</p><p>
-</p>
-</div>
-</li>
-<li>
 <div class="signature" id="item.main">
 <h4>
+<span class="badge">#[cfg]</span>
 <span class="keyword">fn</span> <span class="identifier-function">main</span>(args: &amp;[&amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]]) -> <a href="/std/builtins/i32.html"><span class="identifier-type">i32</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/test.alu#L245-L370"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/test.alu#L177-L400"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -265,6 +197,13 @@ Test runner entrypoint.
 <div class="cell-doc">Assert that the inner block abnormally terminates the process.
 </div>
 </div>
+<div class="row" id="item.assert_panics">
+<div class="cell-name">
+<a href="/test/assert_panics.html">assert_panics</a>
+</div>
+<div class="cell-doc">Assert that the inner block panics.
+</div>
+</div>
 </div>
 <h2 id="Const">Consts</h2>
 <ul>
@@ -273,12 +212,12 @@ Test runner entrypoint.
 <h4>
 <span class="keyword">const</span> <span class="identifier-constant">TEST_CASES</span> = <span class="token comment">/* ... */</span></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/test.alu#L67-L85"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/test.alu#L119-L132"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-List of test cases
+List of all discovered test cases
 </p><p>
 </p>
 </div>
