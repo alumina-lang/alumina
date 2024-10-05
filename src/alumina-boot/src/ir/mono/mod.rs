@@ -5004,6 +5004,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                         intrinsic,
                         generic_args.unwrap_or(&[]),
                         args,
+                        type_hint,
                     );
                 }
 

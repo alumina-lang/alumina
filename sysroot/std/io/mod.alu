@@ -13,13 +13,20 @@
 type Result<T> = std::result::Result<T, Error>;
 
 
-/// Buffer for formatted standard I/O.
+/// Minimum size of the buffer used for convenience I/O macros.
 ///
-/// A single thread local buffer is used for convenience stdio formatting macros. This
-/// buffer has limited a purpose (if you need a larger buffer, use [io::StdioStream] directly).
-/// As many formatters write individual characters, doing a syscall for every one
-/// would be a performance killer.
-#[thread_local] static FMT_BUF: [u8; 256];
+/// Convenience I/O macros such as [print] and [println] use a small buffer to format
+/// the output. This buffer is allocated on the stack and is mostly there to prevent
+/// formatters that write single characters from issuing a lot of syscalls.
+///
+/// The actual buffer size is the maximum of this constant and the length of the format
+/// string plus this constant.
+///
+/// There is no buffering between separate invocations of the macros, i.e. [print] will
+/// flush the buffer after each invocation.
+///
+/// If you require larger buffers, consider using the [BufferedWriter] type directly.
+const FMT_BUF_SIZE = 32usize;
 
 /// Prints a formatted string to standard output.
 ///
@@ -32,8 +39,11 @@ macro print($fmt_str, $arg...) {
         let buf = fmt::format!($fmt_str, $arg$...).unwrap();
         intrinsics::const_note(buf[..]);
         buf.free();
+    } else when macros::count!($arg$...) == 0 {
+        StdioStream::stdout().write_all($fmt_str).unwrap();
     } else {
-        let fmt = BufferedWriter::from_slice(&StdioStream::stdout(), &FMT_BUF);
+        let buf: [u8; cmp::max(FMT_BUF_SIZE, $fmt_str.len() + FMT_BUF_SIZE)];
+        let fmt = BufferedWriter::from_slice(&StdioStream::stdout(), &buf);
         fmt::write!(&fmt, $fmt_str, $arg$...).unwrap();
         fmt.flush().unwrap();
     }
@@ -49,9 +59,7 @@ macro println($fmt_str, $arg...) {
     if runtime::in_const_context() {
         print!($fmt_str, $arg$...);
     } else {
-        let fmt = BufferedWriter::from_slice(&StdioStream::stdout(), &FMT_BUF);
-        fmt::writeln!(&fmt, $fmt_str, $arg$...).unwrap();
-        fmt.flush().unwrap();
+        print!(concat!($fmt_str, "\n"), $arg$...);
     }
 }
 
@@ -66,8 +74,11 @@ macro eprint($fmt_str, $arg...) {
         let buf = fmt::format!($fmt_str, $arg$...).unwrap();
         intrinsics::const_warning(buf[..]);
         buf.free();
+    } else when macros::count!($arg$...) == 0 {
+        StdioStream::stderr().write_all($fmt_str).unwrap();
     } else {
-        let fmt = BufferedWriter::from_slice(&StdioStream::stderr(), &FMT_BUF);
+        let buf: [u8; cmp::max(FMT_BUF_SIZE, $fmt_str.len() + FMT_BUF_SIZE)];
+        let fmt = BufferedWriter::from_slice(&StdioStream::stderr(), &buf);
         fmt::write!(&fmt, $fmt_str, $arg$...).unwrap();
         fmt.flush().unwrap();
     }
@@ -83,9 +94,7 @@ macro eprintln($fmt_str, $arg...) {
     if runtime::in_const_context() {
         eprint!($fmt_str, $arg$...);
     } else {
-        let fmt = BufferedWriter::from_slice(&StdioStream::stderr(), &FMT_BUF);
-        fmt::writeln!(&fmt, $fmt_str, $arg$...).unwrap();
-        fmt.flush().unwrap();
+        eprint!(concat!($fmt_str, "\n"), $arg$...);
     }
 }
 
