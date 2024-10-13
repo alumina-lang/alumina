@@ -742,11 +742,17 @@ impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
                     (&fn_arg_types[..], fun.return_type, callee)
                 }
                 _ => {
-                    bail!(self, CodeDiagnostic::FunctionOrStaticExpectedHere);
+                    bail!(
+                        self,
+                        CodeDiagnostic::NotCallable(self.ctx.type_name(callee.ty)?)
+                    );
                 }
             },
             _ => {
-                bail!(self, CodeDiagnostic::FunctionOrStaticExpectedHere);
+                bail!(
+                    self,
+                    CodeDiagnostic::NotCallable(self.ctx.type_name(callee.ty)?)
+                );
             }
         };
 

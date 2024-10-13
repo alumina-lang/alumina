@@ -4997,6 +4997,8 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
         // as function pointers, but we are also able to call things that cannot be turned into a function
         // pointer, such as methods, UFCS free functions and compiler intrinsics.
         let ast_callee = callee;
+        let mut possible_field_confusion = false;
+
         let callee = match &callee.kind {
             ast::ExprKind::Fn(ast::FnKind::Normal(item), generic_args) => {
                 if let ast::Item::Intrinsic(intrinsic) = item.get() {
@@ -5054,7 +5056,10 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
                     ast_span,
                 )? {
                     Some(result) => return Ok(result),
-                    None => self.lower_expr(callee, None)?,
+                    None => {
+                        possible_field_confusion = true;
+                        self.lower_expr(callee, None)?
+                    }
                 }
             }
             _ => self.lower_expr(callee, None)?,
@@ -5062,6 +5067,24 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
 
         let mut varargs = false;
         let mut self_arg = None;
+
+        macro_rules! not_callable {
+            () => {
+                if possible_field_confusion {
+                    bail!(
+                        self,
+                        CodeDiagnostic::NotCallableFieldConfusion(
+                            self.ctx.type_name(callee.ty).unwrap()
+                        )
+                    );
+                } else {
+                    bail!(
+                        self,
+                        CodeDiagnostic::NotCallable(self.ctx.type_name(callee.ty).unwrap())
+                    );
+                }
+            };
+        }
 
         let fn_arg_types: Vec<_>;
         let (arg_types, return_type, callee) = match callee.ty {
@@ -5088,13 +5111,9 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
 
                     (&fn_arg_types[..], fun.return_type, callee)
                 }
-                _ => {
-                    bail!(self, CodeDiagnostic::FunctionOrStaticExpectedHere);
-                }
+                _ => not_callable!(),
             },
-            _ => {
-                bail!(self, CodeDiagnostic::FunctionOrStaticExpectedHere);
-            }
+            _ => not_callable!(),
         };
 
         if !varargs && (arg_types.len() != args.len()) {

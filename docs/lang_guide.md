@@ -778,6 +778,26 @@ let rotated = Point::rotate_180deg::<f64>(&point);
 // Not `Point::<f64>::rotate_180deg(&point);`
 ```
 
+If the method has the same name as a field, the field has precedence
+
+```rust
+struct Foo {
+    bar: i32
+}
+
+impl Foo {
+    fn bar(self: &Foo) -> i32 {
+        self.bar
+    }
+}
+
+let foo = Foo { bar: 42 };
+println!("{}", foo.bar()); // compile error - i32 is not callable
+
+// Method can be called explicitely using the associated function syntax
+println!("{}", Foo::bar(&foo));
+```
+
 ## Type attributes
 
 Named types can have attributes.
