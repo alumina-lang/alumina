@@ -843,6 +843,7 @@ pub enum Attribute<'ast> {
     Packed(usize),
     TupleCall,
     ConstOnly,
+    ReturnsTwice,
     NoConst,
     Diagnostic(Diagnostic),
     Transparent,

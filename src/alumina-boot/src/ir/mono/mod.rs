@@ -145,6 +145,7 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
             Attribute::LinkName(s) => Attribute::LinkName(s.alloc_on(self.ir)),
             Attribute::Coroutine => Attribute::Coroutine,
             Attribute::Custom(v) => Attribute::Custom(self.map_custom_attribute(v)),
+            Attribute::ReturnsTwice => Attribute::ReturnsTwice,
         }
     }
 

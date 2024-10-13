@@ -551,6 +551,10 @@ impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
                 check_duplicate!(Attribute::Export);
                 self.attributes.push(Attribute::Export);
             }
+            "returns_twice" => {
+                check_duplicate!(Attribute::ReturnsTwice);
+                self.attributes.push(Attribute::ReturnsTwice);
+            }
             "thread_local" => {
                 check_duplicate!(Attribute::ThreadLocal);
                 // We can skip thread-local on programs that are compiled with threads

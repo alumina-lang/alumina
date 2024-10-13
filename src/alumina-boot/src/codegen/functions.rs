@@ -56,6 +56,10 @@ pub fn write_function_signature<'ir, 'gen>(
         attributes = format!("__attribute__((cold)) {}", attributes);
     }
 
+    if item.attributes.contains(&Attribute::ReturnsTwice) {
+        attributes = format!("__attribute__((returns_twice)) {}", attributes);
+    }
+
     if item.return_type.is_never() {
         attributes = format!("_Noreturn {}", attributes);
     }
@@ -311,6 +315,18 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         Ok(())
     }
 
+    fn write_line_directive(&mut self, span: Span, trailing_endline: bool) {
+        if let Some(filename) = self.ctx.global_ctx.diag().get_file_path(span.file) {
+            w!(
+                self.fn_bodies,
+                "\n#line {} {:?}{}",
+                span.line + 1,
+                filename.display(),
+                if trailing_endline { "\n" } else { "" }
+            );
+        }
+    }
+
     pub fn write_expr(
         &mut self,
         diag: &DiagnosticsStack,
@@ -323,23 +339,17 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
 
         if self.debug_info {
             if let Some(span) = expr.span.map(|s| self.ctx.global_ctx.diag().map_span(s)) {
-                let prev_line = self.last_span.map(|s| (s.file, s.line + 1));
-                if prev_line != Some((span.file, span.line + 1)) {
-                    if prev_line == Some((span.file, span.line)) {
+                match self.last_span {
+                    Some(s) if s.file == span.file && s.line == span.line => {}
+                    Some(s) if s.file == span.file && s.line + 1 == span.line => {
                         w!(self.fn_bodies, "\n");
-                    } else if let Some(filename) =
-                        self.ctx.global_ctx.diag().get_file_path(span.file)
-                    {
-                        w!(
-                            self.fn_bodies,
-                            "\n#line {} {:?}\n",
-                            span.line + 1,
-                            filename.display()
-                        );
                     }
-                } else {
-                    self.last_span = None;
+                    _ => self.write_line_directive(span, true),
                 }
+
+                self.last_span = Some(span);
+            } else {
+                self.last_span = None;
             }
         }
 
@@ -764,6 +774,13 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         item: &'ir Const<'ir>,
     ) -> Result<(), AluminaError> {
         let _guard = diag.push_span(item.span);
+
+        if self.debug_info {
+            if let Some(span) = item.span.map(|s| self.ctx.global_ctx.diag().map_span(s)) {
+                self.write_line_directive(span, false);
+            }
+        }
+
         w!(
             self.fn_bodies,
             "\nconst static {} {} = ",
@@ -794,6 +811,12 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
 
         if item.body.get().is_none() {
             return Ok(());
+        }
+
+        if self.debug_info {
+            if let Some(span) = item.span.map(|s| self.ctx.global_ctx.diag().map_span(s)) {
+                self.write_line_directive(span, false);
+            }
         }
 
         write_function_signature(

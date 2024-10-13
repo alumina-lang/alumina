@@ -88,8 +88,8 @@ protocol DefaultEquatable<Self> {
                     }
                 } else {
                     compile_fail!(
-                        "field {} is not automatically equatable",
-                        ty.fields().(i).name()
+                        "field {} of {} is not equated automatically",
+                        ty.fields().(i).name(), ty.debug_name()
                     );
                 }
             }
@@ -98,7 +98,7 @@ protocol DefaultEquatable<Self> {
         } else when ty.is_enum() {
             lhs == rhs
         } else {
-            compile_fail!("type cannot be automatically hashed")
+            compile_fail!("type {} cannot be equated automatically", ty.debug_name());
         }
     }
 
@@ -244,15 +244,15 @@ protocol LexicographicComparable<Self> {
                     }
                 } else {
                     compile_fail!(
-                        "field {} is not automatically comparable",
-                        ty.fields().(i).name()
+                        "field {} of {} cannot be compared automatically",
+                        ty.fields().(i).name(), ty.debug_name()
                     );
                 }
             }
 
             Ordering::Equal
         } else {
-            compile_fail!("type cannot be lexicographically compared")
+            compile_fail!("type {} cannot be compared automatically", ty.debug_name());
         }
     }
 

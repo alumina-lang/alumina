@@ -412,7 +412,7 @@ mod internal {
     // These are in a function instead of a macro so we can typecheck and display a nice
     // error message if the argument is Formattable.
 
-    #[inline(always)]
+    #[inline(ir)]
     fn assume(cond: bool) {
         #[allow(constant_condition)]
         if !cond {
@@ -497,29 +497,18 @@ mod internal {
         #[cold]
         #[inline(never)]
         fn panic_assert_ne(file: &[u8], line: i32, column: i32, lhs: T, rhs: T) -> ! {
+            use std::fmt::debug;
             use panicking::internal::panic_impl;
-            use fmt::Formattable;
 
-            when lhs is Formattable<T, panicking::internal::PanicFormatter> {
-                panic_impl(
-                    file, line, column,
-                    &fmt::format_args!(
-                        fmt::internal::dyn_format_args,
-                        "assertion failed ({} == {}))",
-                        lhs,
-                        rhs
-                    )
+            panic_impl(
+                file, line, column,
+                &fmt::format_args!(
+                    fmt::internal::dyn_format_args,
+                    "assertion failed ({} == {}))",
+                    lhs.debug(),
+                    rhs.debug()
                 )
-            }
-            else {
-                panic_impl(
-                    file, line, column,
-                    &fmt::format_args!(
-                        fmt::internal::dyn_format_args,
-                        "assertion failed (equals))",
-                    )
-                )
-            }
+            )
         }
 
         #[allow(constant_condition)]
