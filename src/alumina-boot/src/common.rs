@@ -142,6 +142,10 @@ pub enum CodeDiagnostic {
     TupleIndexOutOfBounds,
     #[error("function or static expected")]
     FunctionOrStaticExpectedHere,
+    #[error("`{}` is not callable", .0)]
+    NotCallable(String),
+    #[error("`{}` is not callable (hint: fields have precedence over methods, if there is a method with the same name, you can call the it explicitly with `Type::method(...)`)", .0)]
+    NotCallableFieldConfusion(String),
     #[error("unexpected generic arguments (is this a method that needs to be called?)")]
     UnexpectedGenericArgs,
     #[error("could not resolve item `{}`", .0)]
