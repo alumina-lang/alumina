@@ -128,7 +128,7 @@ endif
 ## ----------------------------- Minicoro ------------------------------
 
 $(BUILD_DIR)/minicoro.o: common/minicoro/minicoro.h
-	$(CC) $(CFLAGS) -DMINICORO_IMPL -xc -c $^ -o $@
+	$(CC) $(CFLAGS) -DMINICORO_IMPL -DNDEBUG -xc -c $^ -o $@
 
 ## --------------------------- Stdlib tests ----------------------------
 

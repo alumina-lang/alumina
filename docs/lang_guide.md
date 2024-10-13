@@ -1374,7 +1374,7 @@ impl FancyInt {
 }
 
 fn sum<T: Additive<T>>(slice: &[T]) -> T {
-    let mut result = T::zero();
+    let result = T::zero();
     for item in slice {
         result = result.add(item);
     }
@@ -1794,9 +1794,10 @@ mod tests {
     }
 
     #[test]
-    #[test::should_panic]
     fn test_panic() {
-        panic!("oops");
+        test::assert_panics!({
+            panic!("oops");
+        });
     }
 }
 ```

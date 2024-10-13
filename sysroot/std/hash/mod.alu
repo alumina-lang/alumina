@@ -122,15 +122,15 @@ protocol DefaultHashable<Self, H: Hasher<H>> {
                     field_ptr.hash(hasher);
                 } else {
                     compile_fail!(
-                        "field {} is not automatically hashable",
-                        ty.fields().(i).name()
+                        "field {} of {} cannot be hashed automatically",
+                        ty.fields().(i).name(), ty.debug_name()
                     );
                 }
             }
         } else when ty.is_enum() {
             (*self as builtins::underlying_type_of<Self>).hash(hasher);
         } else {
-            compile_fail!("type cannot be automatically hashed")
+            compile_fail!("type {} cannot be hashed automatically", ty.debug_name());
         }
     }
 }
