@@ -155,7 +155,7 @@ $(LANG_TESTS): $(LANG_TESTS).c $(MINICORO)
 # Compile tree sitter grammar to C. Bootstrap compiler does it by itself in the Cargo
 # build script, but for aluminac, we need to do it in the Makefile.
 $(BUILD_DIR)/src/parser.c: common/grammar.js
-	cd $(BUILD_DIR) && tree-sitter generate --no-bindings $(abspath common/grammar.js)
+	cd common/ && tree-sitter generate -o $(abspath $(BUILD_DIR))/src grammar.js
 
 $(BUILD_DIR)/parser.o: $(BUILD_DIR)/src/parser.c
 	$(CC) $(CFLAGS) -I $(BUILD_DIR)/src -c $(BUILD_DIR)/src/parser.c -o $@ $(LDFLAGS)

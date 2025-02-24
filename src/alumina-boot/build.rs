@@ -282,12 +282,14 @@ fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    let grammar_path = manifest_dir.join("../../common/grammar.js");
+    let common_dir = manifest_dir.join("../../common/");
+    let grammar_path = common_dir.join("grammar.js");
     let result = Command::new("tree-sitter")
-        .current_dir(&out_dir)
+        .current_dir(&common_dir)
         .arg("generate")
-        .arg("--no-bindings")
-        .arg(&grammar_path)
+        .arg("-o")
+        .arg(out_dir.join("src"))
+        .arg("grammar.js")
         .status()
         .unwrap();
 
