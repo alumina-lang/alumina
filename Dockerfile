@@ -17,7 +17,7 @@ RUN mkdir -p /etc/apt/keyrings && \
 RUN cargo install tree-sitter-cli
 
 WORKDIR /alumina/deps
-RUN curl -fsSL https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.24.4.tar.gz | tar -xz
+RUN curl -fsSL https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.25.2.tar.gz | tar -xz
 RUN cd tree-sitter-* && make -j8 && make install && ldconfig
 RUN curl -fsSL https://github.com/ianlancetaylor/libbacktrace/archive/master.tar.gz | tar -xz
 RUN cd libbacktrace-* && ./configure && make -j8 && make install
