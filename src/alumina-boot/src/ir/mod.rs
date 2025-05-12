@@ -557,7 +557,7 @@ pub enum Statement<'ir> {
     Label(Id),
 }
 
-impl<'ir> Statement<'ir> {
+impl Statement<'_> {
     pub fn pure(&self) -> bool {
         match self {
             Statement::Expression(expr) => expr.pure(),

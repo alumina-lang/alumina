@@ -220,7 +220,7 @@ fn generate_visitor(language_info: LanguageInfo) -> String {
             field: FieldKind,
         }
 
-        impl<'tree, 'a> Iterator for ChildrenIterator<'tree, 'a> {
+        impl<'tree> Iterator for ChildrenIterator<'tree, '_> {
             type Item = ::tree_sitter::Node<'tree>;
 
             fn next(&mut self) -> Option<Self::Item> {

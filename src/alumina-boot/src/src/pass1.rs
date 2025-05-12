@@ -154,7 +154,7 @@ macro_rules! parse_attributes {
 
 pub(crate) use parse_attributes;
 
-impl<'ast, 'src> AluminaVisitor<'src> for FirstPassVisitor<'ast, 'src> {
+impl<'src> AluminaVisitor<'src> for FirstPassVisitor<'_, 'src> {
     type ReturnType = Result<(), AluminaError>;
 
     fn visit_source_file(&mut self, node: Node<'src>) -> Self::ReturnType {

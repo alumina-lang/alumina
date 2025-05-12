@@ -170,7 +170,7 @@ impl<'ast, 'src> UseClauseVisitor<'ast, 'src> {
     }
 }
 
-impl<'ast, 'src> AluminaVisitor<'src> for UseClauseVisitor<'ast, 'src> {
+impl<'src> AluminaVisitor<'src> for UseClauseVisitor<'_, 'src> {
     type ReturnType = Result<(), AluminaError>;
 
     fn visit_use_as_clause(&mut self, node: Node<'src>) -> Result<(), AluminaError> {
@@ -328,7 +328,7 @@ impl<'ast, 'src> AttributeVisitor<'ast, 'src> {
     }
 }
 
-impl<'ast, 'src> AluminaVisitor<'src> for AttributeVisitor<'ast, 'src> {
+impl<'src> AluminaVisitor<'src> for AttributeVisitor<'_, 'src> {
     type ReturnType = Result<(), AluminaError>;
 
     fn visit_attributes(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -708,7 +708,7 @@ impl<'ast, 'src> CfgVisitor<'ast, 'src> {
     }
 }
 
-impl<'ast, 'src> AluminaVisitor<'src> for CfgVisitor<'ast, 'src> {
+impl<'src> AluminaVisitor<'src> for CfgVisitor<'_, 'src> {
     type ReturnType = Result<bool, AluminaError>;
 
     fn visit_meta_item(&mut self, node: Node<'src>) -> Self::ReturnType {

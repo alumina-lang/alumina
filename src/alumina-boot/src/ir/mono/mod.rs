@@ -439,7 +439,7 @@ impl<'ast, 'ir> MonoKey<'ast, 'ir> {
     }
 }
 
-impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
+impl<'ast, 'ir> Mono<'_, 'ast, 'ir> {
     pub fn new<'b>(
         mono_ctx: &'b mut MonoCtx<'ast, 'ir>,
         tentative: bool,
@@ -5484,7 +5484,7 @@ impl<'a, 'ast, 'ir> Mono<'a, 'ast, 'ir> {
             let index = self.try_coerce(self.types.builtin(BuiltinType::USize), index)?;
             let call =
                 self.call_lang_item(Lang::SliceIndex, [ptr_ty], [indexee, index], ast_span)?;
-            return Ok(self.exprs.deref(call, ast_span));
+            Ok(self.exprs.deref(call, ast_span))
         }
     }
 

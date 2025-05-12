@@ -415,7 +415,7 @@ pub enum Item<'ast> {
     Intrinsic(Intrinsic),
 }
 
-impl<'ast> Item<'ast> {
+impl Item<'_> {
     pub fn can_compile(&self) -> bool {
         match self {
             Item::Function(Function {

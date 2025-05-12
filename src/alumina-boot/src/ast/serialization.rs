@@ -276,7 +276,7 @@ where
 
 impl<'ast> AstSerializable<'ast> for String {
     fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'ast, W>) -> Result<()> {
-        serializer.write_usize(self.as_bytes().len())?;
+        serializer.write_usize(self.len())?;
         serializer.write_bytes(self.as_bytes())?;
 
         Ok(())
@@ -296,7 +296,7 @@ impl<'ast> AstSerializable<'ast> for PathBuf {
     fn serialize<W: Write>(&self, serializer: &mut AstSerializer<'ast, W>) -> Result<()> {
         let as_slice = self.to_str().unwrap();
 
-        serializer.write_usize(as_slice.as_bytes().len())?;
+        serializer.write_usize(as_slice.len())?;
         serializer.write_bytes(as_slice.as_bytes())?;
 
         Ok(())
@@ -364,7 +364,7 @@ macro_rules! write_varint {
     };
 }
 
-impl<'ast, W: Write> AstSerializer<'ast, W> {
+impl<W: Write> AstSerializer<'_, W> {
     pub fn new(inner: W) -> Self {
         Self {
             inner,

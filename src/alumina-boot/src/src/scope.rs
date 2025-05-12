@@ -258,7 +258,7 @@ impl<'ast, 'src> ScopeInner<'ast, 'src> {
     }
 }
 
-impl<'ast, 'src> Debug for ScopeInner<'ast, 'src> {
+impl Debug for ScopeInner<'_, '_> {
     fn fmt(&self, fmt: &mut Formatter) -> Result<(), std::fmt::Error> {
         let mut builder = fmt.debug_struct(&format!("{:?}Scope({:?})", self.r#type, self.path));
         for (name, items) in &self.items {
@@ -273,19 +273,19 @@ impl<'ast, 'src> Debug for ScopeInner<'ast, 'src> {
 #[derive(Clone)]
 pub struct Scope<'ast, 'src>(pub Rc<RefCell<ScopeInner<'ast, 'src>>>);
 
-impl<'ast, 'src> std::hash::Hash for Scope<'ast, 'src> {
+impl std::hash::Hash for Scope<'_, '_> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         Rc::as_ptr(&self.0).hash(state);
     }
 }
 
-impl<'ast, 'src> PartialEq for Scope<'ast, 'src> {
+impl PartialEq for Scope<'_, '_> {
     fn eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.0, &other.0)
     }
 }
 
-impl<'ast, 'src> Eq for Scope<'ast, 'src> {}
+impl Eq for Scope<'_, '_> {}
 
 impl<'ast, 'src> From<Scope<'ast, 'src>> for Weak<RefCell<ScopeInner<'ast, 'src>>> {
     fn from(scope: Scope<'ast, 'src>) -> Self {
@@ -293,7 +293,7 @@ impl<'ast, 'src> From<Scope<'ast, 'src>> for Weak<RefCell<ScopeInner<'ast, 'src>
     }
 }
 
-impl<'ast, 'src> Debug for Scope<'ast, 'src> {
+impl Debug for Scope<'_, '_> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         self.inner().fmt(fmt)
     }
