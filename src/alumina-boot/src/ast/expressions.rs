@@ -57,7 +57,7 @@ where
     }
 }
 
-impl<'ast, 'src> Spannable<'ast, 'src> for ExprKind<'ast> {
+impl<'ast> Spannable<'ast, '_> for ExprKind<'ast> {
     type ReturnType = ExprP<'ast>;
 
     fn alloc_with_span(self, ast: &'ast AstCtx<'ast>, span: Option<Span>) -> ExprP<'ast> {
@@ -65,7 +65,7 @@ impl<'ast, 'src> Spannable<'ast, 'src> for ExprKind<'ast> {
     }
 }
 
-impl<'ast, 'src> Spannable<'ast, 'src> for StatementKind<'ast> {
+impl<'ast> Spannable<'ast, '_> for StatementKind<'ast> {
     type ReturnType = Statement<'ast>;
 
     fn alloc_with_span(self, _ast: &'ast AstCtx<'ast>, span: Option<Span>) -> Statement<'ast> {
@@ -865,7 +865,7 @@ impl<'ast, 'src> AluminaVisitor<'src> for ExpressionVisitor<'ast, 'src> {
             _ => unreachable!(),
         };
 
-        return Ok(result.alloc_with_span_from(self.ast, &self.scope, node));
+        Ok(result.alloc_with_span_from(self.ast, &self.scope, node))
     }
 
     fn visit_type_check_expression(&mut self, node: tree_sitter::Node<'src>) -> Self::ReturnType {
@@ -1645,7 +1645,7 @@ impl<'ast, 'src> LambdaVisitor<'ast, 'src> {
     }
 }
 
-impl<'ast, 'src> AluminaVisitor<'src> for LambdaVisitor<'ast, 'src> {
+impl<'src> AluminaVisitor<'src> for LambdaVisitor<'_, 'src> {
     type ReturnType = Result<(), AluminaError>;
 
     fn visit_parameter(&mut self, node: tree_sitter::Node<'src>) -> Result<(), AluminaError> {

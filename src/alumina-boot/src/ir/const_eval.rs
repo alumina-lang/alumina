@@ -1455,12 +1455,10 @@ impl<'ir> ConstEvaluator<'ir> {
                 IntrinsicValueKind::ConstPanic(expr) => {
                     let value = self.const_eval_rvalue(expr)?;
                     match self.extract_constant_string_from_slice(&value) {
-                        Some(msg) => {
-                            return Err(CodeDiagnostic::ConstPanic(
-                                std::str::from_utf8(msg).unwrap().to_string(),
-                            ))
-                            .with_backtrace(&self.diag)
-                        }
+                        Some(msg) => Err(CodeDiagnostic::ConstPanic(
+                            std::str::from_utf8(msg).unwrap().to_string(),
+                        ))
+                        .with_backtrace(&self.diag),
                         None => {
                             unsupported!(self);
                         }

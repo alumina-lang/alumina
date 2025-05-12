@@ -108,7 +108,7 @@ pub fn intrinsic_kind(name: &str) -> Option<Intr> {
 }
 
 /// Intrinsic functions
-impl<'a, 'ast, 'ir> super::Mono<'a, 'ast, 'ir> {
+impl<'ast, 'ir> super::Mono<'_, 'ast, 'ir> {
     pub fn lower_intrinsic(
         &mut self,
         span: Option<ast::Span>,

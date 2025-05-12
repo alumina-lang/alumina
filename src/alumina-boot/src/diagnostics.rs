@@ -410,7 +410,7 @@ impl DiagnosticContext {
                     Marker::Span(span) => Some((*level, Some((span.file, span.start)))),
                     _ => None,
                 })
-                .last()
+                .next_back()
                 .unwrap_or((*level, None))
         });
 
@@ -532,7 +532,7 @@ impl DiagnosticContext {
                     Marker::Span(span) => Some((*level, Some((span.file, span.start)))),
                     _ => None,
                 })
-                .last()
+                .next_back()
                 .unwrap_or((*level, None))
         });
 

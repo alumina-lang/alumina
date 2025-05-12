@@ -5,7 +5,7 @@ use alumina_boot_macros::AstSerializable;
 #[derive(Debug, PartialEq, Eq, Hash, Clone, AstSerializable)]
 pub struct PathSegment<'ast>(pub &'ast str);
 
-impl<'ast> Display for PathSegment<'ast> {
+impl Display for PathSegment<'_> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         write!(fmt, "{}", self.0)
     }
@@ -17,7 +17,7 @@ pub struct Path<'ast> {
     pub segments: Vec<PathSegment<'ast>>,
 }
 
-impl<'ast> Display for Path<'ast> {
+impl Display for Path<'_> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         if self.absolute {
             write!(fmt, "::")?;

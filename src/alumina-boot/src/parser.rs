@@ -157,7 +157,7 @@ impl<'a> Iterator for PreorderTraverse<'a> {
     }
 }
 
-impl<'a> FusedIterator for PreorderTraverse<'a> {}
+impl FusedIterator for PreorderTraverse<'_> {}
 
 fn traverse_pre(mut cursor: tree_sitter::TreeCursor<'_>) -> PreorderTraverse<'_> {
     assert!(!cursor.goto_parent());

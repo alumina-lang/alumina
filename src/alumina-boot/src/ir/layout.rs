@@ -112,7 +112,7 @@ impl<'ir> Layouter<'ir> {
             if is_union {
                 size = size.max(field_layout.size);
             } else {
-                size = (size + field_align - 1) / field_align * field_align; // add padding between fields
+                size = size.div_ceil(field_align) * field_align; // add padding between fields
                 size += field_layout.size;
             }
         }
@@ -121,7 +121,7 @@ impl<'ir> Layouter<'ir> {
             align = align.max(custom_align.unwrap_or(1));
         }
 
-        size = (size + align - 1) / align * align; // add padding at the end
+        size = size.div_ceil(align) * align; // add padding at the end
 
         Ok(Layout::new(size, align))
     }
@@ -153,7 +153,7 @@ impl<'ir> Layouter<'ir> {
             if is_union {
                 size = size.max(field_layout.size);
             } else {
-                let padding_size = (size + field_align - 1) / field_align * field_align - size;
+                let padding_size = size.div_ceil(field_align) * field_align - size;
                 if padding_size > 0 {
                     result.push((None, Layout::padding(padding_size)));
                 }
@@ -167,7 +167,7 @@ impl<'ir> Layouter<'ir> {
             align = align.max(custom_align.unwrap_or(1));
         }
 
-        let final_size = (size + align - 1) / align * align;
+        let final_size = size.div_ceil(align) * align;
         if final_size > size {
             if is_union {
                 result.push((None, Layout::padding(final_size)));

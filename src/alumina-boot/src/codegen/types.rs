@@ -48,7 +48,7 @@ impl<'ir, 'gen> TypeWriter<'ir, 'gen> {
     }
 }
 
-impl<'ir, 'gen> TypeWriterInner<'ir, 'gen> {
+impl<'ir> TypeWriterInner<'ir, '_> {
     fn add_type(&mut self, ty: TyP<'ir>, ref_only: bool) -> Result<(), AluminaError> {
         let body_only = match self.ctx.get_type_maybe(ty) {
             Some(_) if ref_only || self.needs_body.contains(ty) => return Ok(()),
