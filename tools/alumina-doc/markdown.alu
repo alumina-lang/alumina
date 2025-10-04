@@ -236,7 +236,13 @@ fn write_docstring<T: std::io::Writable<T>>(
         let path = Path::from_str(doc_comment.trim_prefix("/// @").trim());
         defer path.free();
 
-        let item = link_context.item_bag.resolve(link_context.path, &path, true).unwrap();
+        let maybe_item = link_context.item_bag.resolve(link_context.path, &path, true);
+        if !maybe_item.is_some() {
+            eprintln!("Could not resolve redirect link: {}", path);
+            return Result::err(Error::new());
+        }
+        let item = maybe_item.unwrap();
+
         let link_context = LinkContext::new(link_context.item_bag, &item.defined_in);
 
         return write_docstring(

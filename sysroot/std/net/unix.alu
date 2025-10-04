@@ -1023,6 +1023,888 @@ impl UdpSocket {
     }
 }
 
+/// A Unix domain stream socket
+///
+/// Unix domain sockets provide bidirectional communication between processes
+/// on the same machine using filesystem paths as addresses.
+///
+/// ## Example
+/// ```no_run
+/// use std::net::{UnixStream, UnixAddr};
+/// use std::fs::Path;
+///
+/// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+/// let stream = UnixStream::connect(&addr).unwrap();
+/// defer stream.close();
+///
+/// stream.write_all("Hello!").unwrap();
+/// ```
+struct UnixStream {
+    socket: Socket,
+}
+
+impl UnixStream {
+    /// Creates a Unix stream socket from a raw socket.
+    fn from_socket(socket: Socket) -> UnixStream {
+        UnixStream { socket: socket }
+    }
+
+    /// Connects to a Unix socket at the specified address.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixStream, UnixAddr};
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// let stream = UnixStream::connect(&addr).unwrap();
+    /// defer stream.close();
+    /// ```
+    fn connect(addr: &UnixAddr) -> Result<UnixStream> {
+        let sock = Socket::new(libc::AF_UNIX, libc::SOCK_STREAM)?;
+        defer sock.close();
+
+        errno_try!(libc::connect(
+            sock.fd.value,
+            &addr.inner as &libc::sockaddr,
+            addr.len as libc::socklen_t
+        ));
+
+        Result::ok(from_socket(sock.move()))
+    }
+
+    /// Creates a pair of connected Unix stream sockets.
+    ///
+    /// This is similar to the `socketpair` system call. The two sockets are
+    /// already connected to each other and can communicate bidirectionally.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::net::UnixStream;
+    ///
+    /// let (sock1, sock2) = UnixStream::pair().unwrap();
+    /// defer sock1.close();
+    /// defer sock2.close();
+    ///
+    /// sock1.write_all("Hello from sock1!").unwrap();
+    ///
+    /// let buf: [u8; 128];
+    /// let n = sock2.read(&buf).unwrap();
+    /// assert_eq!(buf[..n] as &[u8], "Hello from sock1!");
+    /// ```
+    fn pair() -> Result<(UnixStream, UnixStream)> {
+        let fds: [libc::c_int; 2] = [0, 0];
+
+        #[cfg(any(target_os = "android", target_os = "linux"))]
+        errno_try!(libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::O_CLOEXEC, 0, &fds[0]));
+
+        #[cfg(not(any(target_os = "android", target_os = "linux")))]
+        {
+            errno_try!(libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, &fds[0]));
+            let fd1 = FileDescriptor::new(fds[0]);
+            let fd2 = FileDescriptor::new(fds[1]);
+            fd1.set_cloexec()?;
+            fd2.set_cloexec()?;
+
+            let sock1 = Socket { fd: fd1 };
+            let sock2 = Socket { fd: fd2 };
+            return Result::ok((from_socket(sock1), from_socket(sock2)));
+        }
+
+        #[cfg(any(target_os = "android", target_os = "linux"))]
+        {
+            let sock1 = Socket { fd: FileDescriptor::new(fds[0]) };
+            let sock2 = Socket { fd: FileDescriptor::new(fds[1]) };
+            Result::ok((from_socket(sock1), from_socket(sock2)))
+        }
+    }
+
+    /// Returns the socket address of the local half of this connection.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixStream, UnixAddr};
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// let stream = UnixStream::connect(&addr).unwrap();
+    /// defer stream.close();
+    ///
+    /// let local = stream.socket_addr().unwrap();
+    /// println!("Local address: {}", local);
+    /// ```
+    fn socket_addr(self: &UnixStream) -> Result<SocketAddr> {
+        self.socket.socket_addr()
+    }
+
+    /// Returns the socket address of the remote half of this connection.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixStream, UnixAddr};
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// let stream = UnixStream::connect(&addr).unwrap();
+    /// defer stream.close();
+    ///
+    /// let peer = stream.peer_addr().unwrap();
+    /// println!("Peer address: {}", peer);
+    /// ```
+    fn peer_addr(self: &UnixStream) -> Result<SocketAddr> {
+        self.socket.peer_addr()
+    }
+
+    /// Shuts down the reading or writing end of the socket or both.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixStream, UnixAddr, Shutdown};
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// let stream = UnixStream::connect(&addr).unwrap();
+    /// defer stream.close();
+    ///
+    /// stream.write_all("Hello!").unwrap();
+    /// stream.shutdown(Shutdown::Write).unwrap();
+    /// ```
+    fn shutdown(self: &UnixStream, how: Shutdown) -> Result<()> {
+        self.socket.shutdown(how)
+    }
+
+    /// Sets the read timeout for the socket.
+    ///
+    /// If the provided duration is `Option::none()`, then read operations will
+    /// block indefinitely. Otherwise, read operations will time out after the
+    /// specified duration.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixStream, UnixAddr};
+    /// use std::fs::Path;
+    /// use std::time::Duration;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// let stream = UnixStream::connect(&addr).unwrap();
+    /// defer stream.close();
+    ///
+    /// stream.set_read_timeout(Option::some(Duration::from_secs(5))).unwrap();
+    /// ```
+    fn set_read_timeout(self: &UnixStream, duration: Option<time::Duration>) -> Result<()> {
+        internal::set_opt_timeval(&self.socket, libc::SOL_SOCKET, libc::SO_RCVTIMEO, duration)
+    }
+
+    /// Gets the read timeout for the socket.
+    ///
+    /// Returns `Option::none()` if reads will block indefinitely.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixStream, UnixAddr};
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// let stream = UnixStream::connect(&addr).unwrap();
+    /// defer stream.close();
+    ///
+    /// let timeout = stream.read_timeout().unwrap();
+    /// if timeout.is_some() {
+    ///     println!("Read timeout: {} seconds", timeout.unwrap().total_secs());
+    /// }
+    /// ```
+    fn read_timeout(self: &UnixStream) -> Result<Option<time::Duration>> {
+        internal::get_opt_timeval(&self.socket, libc::SOL_SOCKET, libc::SO_RCVTIMEO)
+    }
+
+    /// Sets the write timeout for the socket.
+    ///
+    /// If the provided duration is `Option::none()`, then write operations will
+    /// block indefinitely. Otherwise, write operations will time out after the
+    /// specified duration.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixStream, UnixAddr};
+    /// use std::fs::Path;
+    /// use std::time::Duration;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// let stream = UnixStream::connect(&addr).unwrap();
+    /// defer stream.close();
+    ///
+    /// stream.set_write_timeout(Option::some(Duration::from_secs(5))).unwrap();
+    /// ```
+    fn set_write_timeout(self: &UnixStream, duration: Option<time::Duration>) -> Result<()> {
+        internal::set_opt_timeval(&self.socket, libc::SOL_SOCKET, libc::SO_SNDTIMEO, duration)
+    }
+
+    /// Gets the write timeout for the socket.
+    ///
+    /// Returns `Option::none()` if writes will block indefinitely.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixStream, UnixAddr};
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// let stream = UnixStream::connect(&addr).unwrap();
+    /// defer stream.close();
+    ///
+    /// let timeout = stream.write_timeout().unwrap();
+    /// if timeout.is_some() {
+    ///     println!("Write timeout: {} seconds", timeout.unwrap().total_secs());
+    /// }
+    /// ```
+    fn write_timeout(self: &UnixStream) -> Result<Option<time::Duration>> {
+        internal::get_opt_timeval(&self.socket, libc::SOL_SOCKET, libc::SO_SNDTIMEO)
+    }
+
+    /// Sets the socket to non-blocking or blocking mode.
+    ///
+    /// In non-blocking mode, read and write operations will return immediately
+    /// with an error if they would block.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixStream, UnixAddr};
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// let stream = UnixStream::connect(&addr).unwrap();
+    /// defer stream.close();
+    ///
+    /// stream.set_nonblocking(true).unwrap();
+    /// ```
+    fn set_nonblocking(self: &mut UnixStream, nonblocking: bool) -> Result<()> {
+        self.socket.fd.set_nonblocking(nonblocking)
+    }
+
+    /// Closes the socket.
+    fn close(self: &mut UnixStream) -> Result<()> {
+        self.socket.close()
+    }
+
+    /// @ io::AsFileDescriptor::as_fd
+    fn as_fd(self: &UnixStream) -> FileDescriptor {
+        self.socket.as_fd()
+    }
+
+    /// @ io::Readable::read
+    fn read(self: &mut UnixStream, buf: &mut [u8]) -> Result<usize> {
+        self.socket.fd.read(buf)
+    }
+
+    /// @ io::Writable::write
+    fn write(self: &mut UnixStream, buf: &[u8]) -> Result<usize> {
+        self.socket.fd.write(buf)
+    }
+
+    /// @ io::Writable::flush
+    fn flush(self: &mut UnixStream) -> Result<()> {
+        Result::ok(())
+    }
+
+    /// @ mem::Movable::move
+    fn move(self: &mut UnixStream) -> UnixStream {
+        UnixStream { socket: self.socket.move() }
+    }
+
+    mixin FdReadWrite<UnixStream>;
+    mixin io::Readable<UnixStream>;
+    mixin io::Writable<UnixStream>;
+}
+
+/// A Unix domain socket server
+///
+/// After creating a `UnixListener` by binding it to a socket address, it listens
+/// for incoming Unix stream connections. These can be accepted by calling [accept].
+///
+/// ## Example
+/// ```no_run
+/// use std::net::{UnixListener, UnixAddr};
+/// use std::fs::Path;
+///
+/// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+/// let listener = UnixListener::bind(&addr).unwrap();
+/// defer listener.close();
+///
+/// loop {
+///     let (stream, addr) = listener.accept().unwrap();
+///     defer stream.close();
+///
+///     println!("New connection from {}", addr);
+///     // Handle the connection...
+/// }
+/// ```
+struct UnixListener {
+    socket: Socket,
+}
+
+impl UnixListener {
+    /// Creates a Unix listener socket from a raw socket.
+    fn from_socket(socket: Socket) -> UnixListener {
+        UnixListener { socket: socket }
+    }
+
+    /// Creates a Unix listener bound to the specified socket address.
+    ///
+    /// The socket will listen for incoming connections with a default backlog.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixListener, UnixAddr};
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// let listener = UnixListener::bind(&addr).unwrap();
+    /// defer listener.close();
+    /// ```
+    fn bind(addr: &UnixAddr) -> Result<UnixListener> {
+        let sock = Socket::new(libc::AF_UNIX, libc::SOCK_STREAM)?;
+        defer sock.close();
+
+        errno_try!(libc::bind(
+            sock.fd.value,
+            &addr.inner as &libc::sockaddr,
+            addr.len as libc::socklen_t
+        ));
+
+        errno_try!(libc::listen(sock.fd.value, 128));
+
+        Result::ok(from_socket(sock.move()))
+    }
+
+    /// Accepts a new incoming connection.
+    ///
+    /// This function will block until a connection is established. Returns the
+    /// connected stream and the address of the peer.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixListener, UnixAddr};
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// let listener = UnixListener::bind(&addr).unwrap();
+    /// defer listener.close();
+    ///
+    /// let (stream, peer_addr) = listener.accept().unwrap();
+    /// defer stream.close();
+    ///
+    /// println!("Accepted connection from {}", peer_addr);
+    /// ```
+    fn accept(self: &UnixListener) -> Result<(UnixStream, UnixAddr)> {
+        let addr = mem::zeroed::<libc::sockaddr_un>();
+        let len: libc::socklen_t = mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
+
+        let fd = errno_try!(libc::accept(
+            self.socket.fd.value,
+            &addr as &mut libc::sockaddr,
+            &len
+        ));
+
+        let fd = FileDescriptor::new(fd);
+        fd.set_cloexec()?;
+
+        let unix_addr = UnixAddr {
+            inner: addr,
+            len: len as usize
+        };
+
+        Result::ok((UnixStream::from_socket(Socket { fd: fd }), unix_addr))
+    }
+
+    /// Returns the local socket address of this listener.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixListener, UnixAddr};
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// let listener = UnixListener::bind(&addr).unwrap();
+    /// defer listener.close();
+    ///
+    /// let local = listener.socket_addr().unwrap();
+    /// println!("Listening on {}", local);
+    /// ```
+    fn socket_addr(self: &UnixListener) -> Result<SocketAddr> {
+        self.socket.socket_addr()
+    }
+
+    /// Sets the socket to non-blocking or blocking mode.
+    ///
+    /// In non-blocking mode, accept operations will return immediately
+    /// with an error if they would block.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixListener, UnixAddr};
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// let listener = UnixListener::bind(&addr).unwrap();
+    /// defer listener.close();
+    ///
+    /// listener.set_nonblocking(true).unwrap();
+    /// ```
+    fn set_nonblocking(self: &mut UnixListener, nonblocking: bool) -> Result<()> {
+        self.socket.fd.set_nonblocking(nonblocking)
+    }
+
+    /// Closes the socket.
+    ///
+    /// Note: This does not remove the socket file from the filesystem.
+    /// You may need to manually delete it.
+    fn close(self: &mut UnixListener) -> Result<()> {
+        self.socket.close()
+    }
+
+    /// @ io::AsFileDescriptor::as_fd
+    fn as_fd(self: &UnixListener) -> FileDescriptor {
+        self.socket.as_fd()
+    }
+
+    /// @ mem::Movable::move
+    fn move(self: &mut UnixListener) -> UnixListener {
+        UnixListener { socket: self.socket.move() }
+    }
+}
+
+/// A Unix domain datagram socket
+///
+/// Unix datagram sockets provide connectionless, unreliable message delivery
+/// between processes on the same machine.
+///
+/// ## Example
+/// ```no_run
+/// use std::net::{UnixDatagram, UnixAddr};
+/// use std::fs::Path;
+///
+/// let addr = UnixAddr::from_path(Path::new("/tmp/server.sock")).unwrap();
+/// let socket = UnixDatagram::bind(&UnixAddr::unnamed()).unwrap();
+/// defer socket.close();
+///
+/// socket.send_to("Hello!", &addr).unwrap();
+/// ```
+struct UnixDatagram {
+    socket: Socket,
+}
+
+impl UnixDatagram {
+    /// Creates a Unix datagram socket from a raw socket.
+    fn from_socket(socket: Socket) -> UnixDatagram {
+        UnixDatagram { socket: socket }
+    }
+
+    /// Creates an unbound Unix datagram socket.
+    ///
+    /// The socket can be used to send datagrams with [send_to] without binding.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::UnixDatagram;
+    ///
+    /// let socket = UnixDatagram::unbound().unwrap();
+    /// defer socket.close();
+    /// ```
+    fn unbound() -> Result<UnixDatagram> {
+        let sock = Socket::new(libc::AF_UNIX, libc::SOCK_DGRAM)?;
+        Result::ok(from_socket(sock))
+    }
+
+    /// Creates a Unix datagram socket bound to the specified address.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixDatagram, UnixAddr};
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// let socket = UnixDatagram::bind(&addr).unwrap();
+    /// defer socket.close();
+    /// ```
+    fn bind(addr: &UnixAddr) -> Result<UnixDatagram> {
+        let sock = Socket::new(libc::AF_UNIX, libc::SOCK_DGRAM)?;
+        defer sock.close();
+
+        errno_try!(libc::bind(
+            sock.fd.value,
+            &addr.inner as &libc::sockaddr,
+            addr.len as libc::socklen_t
+        ));
+
+        Result::ok(from_socket(sock.move()))
+    }
+
+    /// Creates a pair of connected Unix datagram sockets.
+    ///
+    /// ## Example
+    /// ```
+    /// use std::net::UnixDatagram;
+    ///
+    /// let (sock1, sock2) = UnixDatagram::pair().unwrap();
+    /// defer sock1.close();
+    /// defer sock2.close();
+    ///
+    /// sock1.send("Hello!").unwrap();
+    ///
+    /// let buf: [u8; 128];
+    /// let n = sock2.recv(&buf).unwrap();
+    /// assert_eq!(buf[..n] as &[u8], "Hello!");
+    /// ```
+    fn pair() -> Result<(UnixDatagram, UnixDatagram)> {
+        let fds: [libc::c_int; 2] = [0, 0];
+
+        #[cfg(any(target_os = "android", target_os = "linux"))]
+        errno_try!(libc::socketpair(libc::AF_UNIX, libc::SOCK_DGRAM | libc::O_CLOEXEC, 0, &fds[0]));
+
+        #[cfg(not(any(target_os = "android", target_os = "linux")))]
+        {
+            errno_try!(libc::socketpair(libc::AF_UNIX, libc::SOCK_DGRAM, 0, &fds[0]));
+            let fd1 = FileDescriptor::new(fds[0]);
+            let fd2 = FileDescriptor::new(fds[1]);
+            fd1.set_cloexec()?;
+            fd2.set_cloexec()?;
+
+            let sock1 = Socket { fd: fd1 };
+            let sock2 = Socket { fd: fd2 };
+            return Result::ok((from_socket(sock1), from_socket(sock2)));
+        }
+
+        #[cfg(any(target_os = "android", target_os = "linux"))]
+        {
+            let sock1 = Socket { fd: FileDescriptor::new(fds[0]) };
+            let sock2 = Socket { fd: FileDescriptor::new(fds[1]) };
+            Result::ok((from_socket(sock1), from_socket(sock2)))
+        }
+    }
+
+    /// Connects this socket to a remote address.
+    ///
+    /// After connecting, [send] and [recv] can be used to send and receive
+    /// datagrams to/from the specified address.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixDatagram, UnixAddr};
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/server.sock")).unwrap();
+    /// let socket = UnixDatagram::unbound().unwrap();
+    /// defer socket.close();
+    ///
+    /// socket.connect(&addr).unwrap();
+    /// socket.send("Hello!").unwrap();
+    /// ```
+    fn connect(self: &UnixDatagram, addr: &UnixAddr) -> Result<()> {
+        errno_try!(libc::connect(
+            self.socket.fd.value,
+            &addr.inner as &libc::sockaddr,
+            addr.len as libc::socklen_t
+        ));
+
+        Result::ok(())
+    }
+
+    /// Receives data from the socket.
+    ///
+    /// Returns the number of bytes read and the address from which the data was received.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixDatagram, UnixAddr};
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// let socket = UnixDatagram::bind(&addr).unwrap();
+    /// defer socket.close();
+    ///
+    /// let buf: [u8; 1024];
+    /// let (size, peer) = socket.recv_from(&buf).unwrap();
+    /// println!("Received {} bytes from {}", size, peer);
+    /// ```
+    fn recv_from(self: &UnixDatagram, buf: &mut [u8]) -> Result<(usize, UnixAddr)> {
+        let addr = mem::zeroed::<libc::sockaddr_un>();
+        let len: libc::socklen_t = mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
+
+        let ret = errno_try!(libc::recvfrom(
+            self.socket.fd.value,
+            &buf[0] as &mut void,
+            buf.len(),
+            0,
+            &addr as &mut libc::sockaddr,
+            &len
+        ));
+
+        let unix_addr = UnixAddr {
+            inner: addr,
+            len: len as usize
+        };
+
+        Result::ok((ret as usize, unix_addr))
+    }
+
+    /// Sends data to a particular address.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixDatagram, UnixAddr};
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/server.sock")).unwrap();
+    /// let socket = UnixDatagram::unbound().unwrap();
+    /// defer socket.close();
+    ///
+    /// socket.send_to("Hello!", &addr).unwrap();
+    /// ```
+    fn send_to(self: &UnixDatagram, buf: &[u8], addr: &UnixAddr) -> Result<usize> {
+        let ret = errno_try!(libc::sendto(
+            self.socket.fd.value,
+            &buf[0] as &void,
+            buf.len(),
+            MSG_NOSIGNAL,
+            &addr.inner as &libc::sockaddr,
+            addr.len as libc::socklen_t
+        ));
+
+        Result::ok(ret as usize)
+    }
+
+    /// Receives data from the socket (requires prior [connect]).
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixDatagram, UnixAddr};
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/server.sock")).unwrap();
+    /// let socket = UnixDatagram::unbound().unwrap();
+    /// defer socket.close();
+    ///
+    /// socket.connect(&addr).unwrap();
+    ///
+    /// let buf: [u8; 1024];
+    /// let n = socket.recv(&buf).unwrap();
+    /// ```
+    fn recv(self: &UnixDatagram, buf: &mut [u8]) -> Result<usize> {
+        let ret = errno_try!(libc::recv(
+            self.socket.fd.value,
+            &buf[0] as &mut void,
+            buf.len(),
+            0
+        ));
+
+        Result::ok(ret as usize)
+    }
+
+    /// Sends data to the socket (requires prior [connect]).
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixDatagram, UnixAddr};
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/server.sock")).unwrap();
+    /// let socket = UnixDatagram::unbound().unwrap();
+    /// defer socket.close();
+    ///
+    /// socket.connect(&addr).unwrap();
+    /// socket.send("Hello!").unwrap();
+    /// ```
+    fn send(self: &UnixDatagram, buf: &[u8]) -> Result<usize> {
+        let ret = errno_try!(libc::send(
+            self.socket.fd.value,
+            &buf[0] as &void,
+            buf.len(),
+            MSG_NOSIGNAL
+        ));
+
+        Result::ok(ret as usize)
+    }
+
+    /// Returns the local socket address of this datagram socket.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixDatagram, UnixAddr};
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// let socket = UnixDatagram::bind(&addr).unwrap();
+    /// defer socket.close();
+    ///
+    /// let local = socket.socket_addr().unwrap();
+    /// println!("Bound to {}", local);
+    /// ```
+    fn socket_addr(self: &UnixDatagram) -> Result<SocketAddr> {
+        self.socket.socket_addr()
+    }
+
+    /// Returns the remote socket address this socket is connected to.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixDatagram, UnixAddr};
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/server.sock")).unwrap();
+    /// let socket = UnixDatagram::unbound().unwrap();
+    /// defer socket.close();
+    ///
+    /// socket.connect(&addr).unwrap();
+    /// let peer = socket.peer_addr().unwrap();
+    /// println!("Connected to {}", peer);
+    /// ```
+    fn peer_addr(self: &UnixDatagram) -> Result<SocketAddr> {
+        self.socket.peer_addr()
+    }
+
+    /// Shuts down the reading or writing end of the socket or both.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixDatagram, UnixAddr, Shutdown};
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/server.sock")).unwrap();
+    /// let socket = UnixDatagram::unbound().unwrap();
+    /// defer socket.close();
+    ///
+    /// socket.connect(&addr).unwrap();
+    /// socket.send("Hello!").unwrap();
+    /// socket.shutdown(Shutdown::Write).unwrap();
+    /// ```
+    fn shutdown(self: &UnixDatagram, how: Shutdown) -> Result<()> {
+        self.socket.shutdown(how)
+    }
+
+    /// Sets the read timeout for the socket.
+    ///
+    /// If the provided duration is `Option::none()`, then read operations will
+    /// block indefinitely. Otherwise, read operations will time out after the
+    /// specified duration.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixDatagram, UnixAddr};
+    /// use std::fs::Path;
+    /// use std::time::Duration;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// let socket = UnixDatagram::bind(&addr).unwrap();
+    /// defer socket.close();
+    ///
+    /// socket.set_read_timeout(Option::some(Duration::from_secs(5))).unwrap();
+    /// ```
+    fn set_read_timeout(self: &UnixDatagram, duration: Option<time::Duration>) -> Result<()> {
+        internal::set_opt_timeval(&self.socket, libc::SOL_SOCKET, libc::SO_RCVTIMEO, duration)
+    }
+
+    /// Gets the read timeout for the socket.
+    ///
+    /// Returns `Option::none()` if reads will block indefinitely.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixDatagram, UnixAddr};
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// let socket = UnixDatagram::bind(&addr).unwrap();
+    /// defer socket.close();
+    ///
+    /// let timeout = socket.read_timeout().unwrap();
+    /// if timeout.is_some() {
+    ///     println!("Read timeout: {} seconds", timeout.unwrap().total_secs());
+    /// }
+    /// ```
+    fn read_timeout(self: &UnixDatagram) -> Result<Option<time::Duration>> {
+        internal::get_opt_timeval(&self.socket, libc::SOL_SOCKET, libc::SO_RCVTIMEO)
+    }
+
+    /// Sets the write timeout for the socket.
+    ///
+    /// If the provided duration is `Option::none()`, then write operations will
+    /// block indefinitely. Otherwise, write operations will time out after the
+    /// specified duration.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixDatagram, UnixAddr};
+    /// use std::fs::Path;
+    /// use std::time::Duration;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// let socket = UnixDatagram::bind(&addr).unwrap();
+    /// defer socket.close();
+    ///
+    /// socket.set_write_timeout(Option::some(Duration::from_secs(5))).unwrap();
+    /// ```
+    fn set_write_timeout(self: &UnixDatagram, duration: Option<time::Duration>) -> Result<()> {
+        internal::set_opt_timeval(&self.socket, libc::SOL_SOCKET, libc::SO_SNDTIMEO, duration)
+    }
+
+    /// Gets the write timeout for the socket.
+    ///
+    /// Returns `Option::none()` if writes will block indefinitely.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixDatagram, UnixAddr};
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// let socket = UnixDatagram::bind(&addr).unwrap();
+    /// defer socket.close();
+    ///
+    /// let timeout = socket.write_timeout().unwrap();
+    /// if timeout.is_some() {
+    ///     println!("Write timeout: {} seconds", timeout.unwrap().total_secs());
+    /// }
+    /// ```
+    fn write_timeout(self: &UnixDatagram) -> Result<Option<time::Duration>> {
+        internal::get_opt_timeval(&self.socket, libc::SOL_SOCKET, libc::SO_SNDTIMEO)
+    }
+
+    /// Sets the socket to non-blocking or blocking mode.
+    ///
+    /// In non-blocking mode, read and write operations will return immediately
+    /// with an error if they would block.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{UnixDatagram, UnixAddr};
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// let socket = UnixDatagram::bind(&addr).unwrap();
+    /// defer socket.close();
+    ///
+    /// socket.set_nonblocking(true).unwrap();
+    /// ```
+    fn set_nonblocking(self: &mut UnixDatagram, nonblocking: bool) -> Result<()> {
+        self.socket.fd.set_nonblocking(nonblocking)
+    }
+
+    /// Closes the socket.
+    fn close(self: &mut UnixDatagram) -> Result<()> {
+        self.socket.close()
+    }
+
+    /// @ io::AsFileDescriptor::as_fd
+    fn as_fd(self: &UnixDatagram) -> FileDescriptor {
+        self.socket.as_fd()
+    }
+
+    /// @ mem::Movable::move
+    fn move(self: &mut UnixDatagram) -> UnixDatagram {
+        UnixDatagram { socket: self.socket.move() }
+    }
+}
+
 #[docs(no_index)]
 mod internal {
     fn sockaddr_to_addr(addr: &libc::sockaddr_storage, _len: libc::socklen_t) -> Option<SocketAddr> {
@@ -1035,6 +1917,10 @@ mod internal {
             libc::AF_INET6 => {
                 result.kind = AddrKind::V6;
                 result.inner.v6 = *(addr as &libc::sockaddr_in6);
+            }
+            libc::AF_UNIX => {
+                result.kind = AddrKind::Unix;
+                result.inner.unix = *(addr as &libc::sockaddr_un);
             }
             _ => {
                 return Option::none();
@@ -1511,5 +2397,138 @@ mod tests {
         let buf: [u8; 128];
         let result = socket.recv(&buf);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_unix_stream_pair() {
+        let (sock1, sock2) = UnixStream::pair().unwrap();
+        defer sock1.close().unwrap();
+        defer sock2.close().unwrap();
+
+        sock1.write_all("Hello from sock1!").unwrap();
+
+        let buf: [u8; 128];
+        let n = sock2.read(&buf).unwrap();
+        assert_eq!(buf[..n] as &[u8], "Hello from sock1!");
+
+        sock2.write_all("Hello from sock2!").unwrap();
+
+        let n = sock1.read(&buf).unwrap();
+        assert_eq!(buf[..n] as &[u8], "Hello from sock2!");
+    }
+
+    #[test]
+    fn test_unix_datagram_pair() {
+        let (sock1, sock2) = UnixDatagram::pair().unwrap();
+        defer sock1.close().unwrap();
+        defer sock2.close().unwrap();
+
+        sock1.send("Hello!").unwrap();
+
+        let buf: [u8; 128];
+        let n = sock2.recv(&buf).unwrap();
+        assert_eq!(buf[..n] as &[u8], "Hello!");
+    }
+
+    #[test]
+    fn test_unix_stream_connect() {
+        use io::read_to_end;
+        use fs::{remove_file, Path};
+
+        let path = "/tmp/alumina_test_unix_stream.sock";
+        // Remove the file if it exists from a previous test run
+        remove_file(Path::new(path)).is_ok();
+
+        let addr = UnixAddr::from_path(Path::new(path)).unwrap();
+        let listener = UnixListener::bind(&addr).unwrap();
+        defer {
+            listener.close().unwrap();
+            remove_file(Path::new(path)).is_ok();
+        };
+
+        let local_addr = listener.socket_addr().unwrap().unix_addr().unwrap();
+
+        if fork().is_none() {
+            let socket = UnixStream::connect(&local_addr).unwrap();
+            defer socket.close().unwrap();
+
+            socket.write_all("Hello, world!").unwrap();
+            socket.shutdown(Shutdown::Both).unwrap();
+        } else {
+            let (socket, _) = listener.accept().unwrap();
+            defer socket.close().unwrap();
+
+            let buf = StringBuf::new();
+            socket.read_to_end(&buf).unwrap();
+
+            assert_eq!(buf[..] as &[u8], "Hello, world!");
+        }
+    }
+
+    #[test]
+    fn test_unix_datagram_send_recv() {
+        use fs::{remove_file, Path};
+
+        let path1 = "/tmp/alumina_test_unix_datagram1.sock";
+        let path2 = "/tmp/alumina_test_unix_datagram2.sock";
+
+        // Remove files if they exist from previous test runs
+        remove_file(Path::new(path1)).is_ok();
+        remove_file(Path::new(path2)).is_ok();
+
+        let addr1 = UnixAddr::from_path(Path::new(path1)).unwrap();
+        let addr2 = UnixAddr::from_path(Path::new(path2)).unwrap();
+
+        let peer1 = UnixDatagram::bind(&addr1).unwrap();
+        defer {
+            peer1.close().unwrap();
+            remove_file(Path::new(path1)).is_ok();
+        };
+
+        let peer1_addr = peer1.socket_addr().unwrap().unix_addr().unwrap();
+
+        if fork().is_none() {
+            let peer2 = UnixDatagram::bind(&addr2).unwrap();
+            defer {
+                peer2.close().unwrap();
+                remove_file(Path::new(path2)).is_ok();
+            };
+
+            peer2.send_to("Hello, world!", &peer1_addr).unwrap();
+        } else {
+            let buf: [u8; 128];
+            let (n, _) = peer1.recv_from(&buf).unwrap();
+
+            assert_eq!(buf[..n] as &[u8], "Hello, world!");
+        }
+    }
+
+    #[test]
+    fn test_unix_addr() {
+        use fs::Path;
+
+        let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+        assert!(!addr.is_unnamed());
+        assert_eq!(addr.path().unwrap(), Path::new("/tmp/my.sock"));
+
+        let unnamed = UnixAddr::unnamed();
+        assert!(unnamed.is_unnamed());
+        assert!(unnamed.path().is_none());
+    }
+
+    #[test]
+    fn test_unix_addr_equality() {
+        use fs::Path;
+
+        let addr1 = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+        let addr2 = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+        let addr3 = UnixAddr::from_path(Path::new("/tmp/other.sock")).unwrap();
+
+        assert_eq!(addr1, addr2);
+        assert_ne!(addr1, addr3);
+
+        let unnamed1 = UnixAddr::unnamed();
+        let unnamed2 = UnixAddr::unnamed();
+        assert_eq!(unnamed1, unnamed2);
     }
 }

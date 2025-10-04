@@ -16,6 +16,8 @@ enum AddrKind {
     // -- ChatGPT
     /// IPv4 address (deprecated, use [AddrKind::V6] instead)
     #[obsolete] V4,
+    /// Unix domain socket address
+    Unix,
 }
 
 /// An IPv6 address
@@ -400,7 +402,7 @@ impl IpAddr {
     mixin cmp::Equatable<IpAddr>;
 }
 
-/// Socket address (e.g. IP address and port)
+/// Socket address (e.g. IP address and port, or Unix domain socket path)
 struct SocketAddr {
     kind: AddrKind,
     inner: internal::SocketAddrInner
@@ -447,7 +449,24 @@ impl SocketAddr {
         }
     }
 
-    /// Sets the port number
+    /// Create SocketAddr from a Unix domain socket address.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::{SocketAddr, UnixAddr};
+    /// use std::fs::Path;
+    ///
+    /// let unix_addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// let addr = SocketAddr::unix(unix_addr);
+    /// ```
+    fn unix(addr: UnixAddr) -> SocketAddr {
+        SocketAddr {
+            kind: AddrKind::Unix,
+            inner: internal::SocketAddrInner { unix: addr.inner }
+        }
+    }
+
+    /// Sets the port number (only for IP addresses, panics for Unix addresses)
     fn set_port(self: &mut SocketAddr, port: u16) {
         switch self.kind {
             AddrKind::V6 => {
@@ -456,24 +475,50 @@ impl SocketAddr {
             AddrKind::V4 => {
                 self.inner.v4.sin_port = port.to_be();
             }
+            AddrKind::Unix => {
+                panic!("cannot set port on Unix socket address");
+            }
         }
     }
 
-    /// Returns the port number
-    fn port(self: &SocketAddr) -> u16 {
+    /// Returns the port number for IP addresses.
+    ///
+    /// Returns `Option::none()` for Unix socket addresses.
+    fn port(self: &SocketAddr) -> Option<u16> {
         switch self.kind {
-            AddrKind::V6 => self.inner.v6.sin6_port.from_be(),
-            AddrKind::V4 => self.inner.v4.sin_port.from_be(),
-            _ => unreachable!()
+            AddrKind::V6 => Option::some(self.inner.v6.sin6_port.from_be()),
+            AddrKind::V4 => Option::some(self.inner.v4.sin_port.from_be()),
+            _ => Option::none()
         }
     }
 
-    /// Returns the IP address
-    fn ip(self: &SocketAddr) -> IpAddr {
+    /// Returns the IP address for IP socket addresses.
+    ///
+    /// Returns `Option::none()` for Unix socket addresses.
+    fn ip(self: &SocketAddr) -> Option<IpAddr> {
         switch self.kind {
-            AddrKind::V6 => IpAddr::v6(Ipv6Addr::from_libc(self.inner.v6.sin6_addr)),
-            AddrKind::V4 => IpAddr::v4(Ipv4Addr::from_libc(self.inner.v4.sin_addr)),
-            _ => unreachable!()
+            AddrKind::V6 => Option::some(IpAddr::v6(Ipv6Addr::from_libc(self.inner.v6.sin6_addr))),
+            AddrKind::V4 => Option::some(IpAddr::v4(Ipv4Addr::from_libc(self.inner.v4.sin_addr))),
+            _ => Option::none()
+        }
+    }
+
+    /// Returns the Unix socket address if this is a Unix socket address.
+    ///
+    /// Returns `Option::none()` for IP socket addresses.
+    fn unix_addr(self: &SocketAddr) -> Option<UnixAddr> {
+        switch self.kind {
+            AddrKind::Unix => {
+                // Calculate the actual length by finding the null terminator
+                let ptr = &self.inner.unix.sun_path[0] as &u8;
+                let path_len = libc::strlen(ptr as &libc::c_char);
+                let unix_addr = UnixAddr {
+                    inner: self.inner.unix,
+                    len: 2 + path_len // sun_family + path length
+                };
+                Option::some(unix_addr)
+            }
+            _ => Option::none()
         }
     }
 
@@ -528,28 +573,51 @@ impl SocketAddr {
 
         switch self.kind {
             AddrKind::V6 => {
-                if self.inner.v6.sin6_scope_id != 0 {
-                    write!(f, "[{}%{}]:{}", self.ip(), self.inner.v6.sin6_scope_id, self.port())
+                let ip = self.ip().unwrap();
+                let port = self.port().unwrap();
+                let scope_id = self.inner.v6.sin6_scope_id;
+                if scope_id != 0 {
+                    write!(f, "[{}%{}]:{}", ip, scope_id, port)
                 } else {
-                    write!(f, "[{}]:{}", self.ip(), self.port())
+                    write!(f, "[{}]:{}", ip, port)
                 }
             }
             AddrKind::V4 => {
-                write!(f, "{}:{}", self.ip(), self.port())
+                let ip = self.ip().unwrap();
+                let port = self.port().unwrap();
+                write!(f, "{}:{}", ip, port)
             }
-            _ => unreachable!()
+            _ => {
+                let unix_addr = self.unix_addr().unwrap();
+                write!(f, "{}", unix_addr)
+            }
         }
     }
 
     /// @ cmp::Equatable::equals
     fn equals(self: &SocketAddr, other: &SocketAddr) -> bool {
-        self.ip() == other.ip() && self.port() == other.port()
+        if self.kind != other.kind {
+            return false;
+        }
+
+        switch self.kind {
+            AddrKind::Unix => self.unix_addr().unwrap() == other.unix_addr().unwrap(),
+            _ => self.ip() == other.ip() && self.port() == other.port()
+        }
     }
 
     /// @ hash::Hashable::hash
     fn hash<H: Hasher<H>>(self: &SocketAddr, hasher: &mut H) {
-        self.ip().hash(hasher);
-        self.port().hash(hasher);
+        (self.kind as i32).hash(hasher);
+        switch self.kind {
+            AddrKind::Unix => {
+                self.unix_addr().unwrap().hash(hasher);
+            }
+            _ => {
+                self.ip().unwrap().hash(hasher);
+                self.port().unwrap().hash(hasher);
+            }
+        }
     }
 
     mixin cmp::Equatable<SocketAddr>;
@@ -614,7 +682,196 @@ mod internal {
     union SocketAddrInner {
         v6: libc::sockaddr_in6,
         v4: libc::sockaddr_in,
+        unix: libc::sockaddr_un,
     }
+}
+
+/// A Unix domain socket address
+///
+/// Represents a filesystem path or abstract namespace address for Unix domain sockets.
+///
+/// ## Example
+/// ```no_run
+/// use std::net::UnixAddr;
+/// use std::fs::Path;
+///
+/// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+/// println!("{}", addr);
+/// ```
+struct UnixAddr {
+    inner: libc::sockaddr_un,
+    len: usize,
+}
+
+impl UnixAddr {
+    use hash::Hasher;
+
+    /// Creates a Unix socket address from a filesystem path.
+    ///
+    /// The path must not exceed the system's maximum path length for Unix sockets
+    /// (typically 108 bytes on Linux, 104 on macOS).
+    ///
+    /// Returns `Option::none()` if the path is too long.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::UnixAddr;
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// ```
+    fn from_path(path: fs::Path) -> Option<UnixAddr> {
+        let path = path.as_slice();
+        let addr = mem::zeroed::<libc::sockaddr_un>();
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            if path.len() >= 108 {
+                return Option::none();
+            }
+            addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
+            for i in 0usize..path.len() {
+                addr.sun_path[i] = path[i] as libc::c_char;
+            }
+            let len = 2usize + path.len(); // sun_family + path
+            Option::some(UnixAddr { inner: addr, len: len })
+        }
+
+        #[cfg(any(target_os = "macos"))]
+        {
+            if path.len() >= 104 {
+                return Option::none();
+            }
+            addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
+            for i in 0usize..path.len() {
+                addr.sun_path[i] = path[i] as libc::c_char;
+            }
+            let len = 2usize + path.len(); // sun_len + sun_family + path
+            addr.sun_len = len as u8;
+            Option::some(UnixAddr { inner: addr, len: len })
+        }
+    }
+
+    /// Creates an unnamed Unix socket address.
+    ///
+    /// Unnamed sockets are used for autobind - when you bind a socket without
+    /// specifying a path, the kernel assigns it an abstract address.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::UnixAddr;
+    ///
+    /// let addr = UnixAddr::unnamed();
+    /// ```
+    fn unnamed() -> UnixAddr {
+        let addr = mem::zeroed::<libc::sockaddr_un>();
+        addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
+
+        let len: usize;
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            len = 2; // just sun_family
+        }
+
+        #[cfg(any(target_os = "macos"))]
+        {
+            addr.sun_len = 2u8; // sun_len + sun_family
+            len = 2;
+        }
+
+        UnixAddr { inner: addr, len: len }
+    }
+
+    /// Returns the path of this Unix socket address, if it has one.
+    ///
+    /// Returns `Option::none()` for unnamed or abstract addresses.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::UnixAddr;
+    /// use std::fs::Path;
+    ///
+    /// let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+    /// assert_eq!(addr.path().unwrap(), Path::new("/tmp/my.sock"));
+    /// ```
+    fn path(self: &UnixAddr) -> Option<fs::Path> {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            if self.len <= 2 {
+                return Option::none();
+            }
+            let path_len = self.len - 2; // Subtract sun_family size
+            if path_len == 0 {
+                return Option::none();
+            }
+            let ptr = &self.inner.sun_path[0] as &u8;
+            let bytes = mem::slice::from_raw(ptr, path_len);
+            Option::some(fs::Path::new(bytes))
+        }
+
+        #[cfg(any(target_os = "macos"))]
+        {
+            if self.len <= 2 {
+                return Option::none();
+            }
+            let path_len = self.len - 2; // Subtract sun_len + sun_family size
+            if path_len == 0 {
+                return Option::none();
+            }
+            let ptr = &self.inner.sun_path[0] as &u8;
+            let bytes = mem::slice::from_raw(ptr, path_len);
+            Option::some(fs::Path::new(bytes))
+        }
+    }
+
+    /// Returns true if this is an unnamed socket address.
+    ///
+    /// ## Example
+    /// ```no_run
+    /// use std::net::UnixAddr;
+    ///
+    /// let addr = UnixAddr::unnamed();
+    /// assert!(addr.is_unnamed());
+    /// ```
+    fn is_unnamed(self: &UnixAddr) -> bool {
+        self.len <= 2
+    }
+
+    /// @ fmt::Formattable::fmt
+    fn fmt<F: fmt::Formatter<F>>(self: &UnixAddr, f: &mut F) -> fmt::Result {
+        use fmt::write;
+
+        if self.is_unnamed() {
+            write!(f, "(unnamed)")
+        } else {
+            let path = self.path().unwrap();
+            write!(f, "{}", path)
+        }
+    }
+
+    /// @ cmp::Equatable::equals
+    fn equals(self: &UnixAddr, other: &UnixAddr) -> bool {
+        if self.len != other.len {
+            return false;
+        }
+
+        if self.is_unnamed() {
+            return other.is_unnamed();
+        }
+
+        self.path().unwrap() == other.path().unwrap()
+    }
+
+    /// @ hash::Hashable::hash
+    fn hash<H: Hasher<H>>(self: &UnixAddr, hasher: &mut H) {
+        self.len.hash(hasher);
+        if !self.is_unnamed() {
+            self.path().unwrap().as_slice().hash(hasher);
+        }
+    }
+
+    mixin cmp::Equatable<UnixAddr>;
 }
 
 #[cfg(all(test, test_std))]
@@ -794,5 +1051,102 @@ mod tests {
         fail_sa!("192.168.0.1");
         fail_sa!("[fe80::123:45ff:fe67:89ab%1%10]:22");
         fail_sa!("example.com:22");
+    }
+
+    #[test]
+    fn test_unix_addr_from_path() {
+        use fs::Path;
+
+        let addr = UnixAddr::from_path(Path::new("/tmp/test.sock")).unwrap();
+        assert!(!addr.is_unnamed());
+        assert_eq!(addr.path().unwrap(), Path::new("/tmp/test.sock"));
+    }
+
+    #[test]
+    fn test_unix_addr_unnamed() {
+        let addr = UnixAddr::unnamed();
+        assert!(addr.is_unnamed());
+        assert!(addr.path().is_none());
+    }
+
+    #[test]
+    fn test_unix_addr_equality() {
+        use fs::Path;
+
+        let addr1 = UnixAddr::from_path(Path::new("/tmp/test.sock")).unwrap();
+        let addr2 = UnixAddr::from_path(Path::new("/tmp/test.sock")).unwrap();
+        let addr3 = UnixAddr::from_path(Path::new("/tmp/other.sock")).unwrap();
+
+        assert_eq!(addr1, addr2);
+        assert_ne!(addr1, addr3);
+
+        let unnamed1 = UnixAddr::unnamed();
+        let unnamed2 = UnixAddr::unnamed();
+        assert_eq!(unnamed1, unnamed2);
+    }
+
+    #[test]
+    fn test_unix_addr_hash() {
+        use fs::Path;
+        use hash::hash_of;
+
+        let addr1 = UnixAddr::from_path(Path::new("/tmp/test.sock")).unwrap();
+        let addr2 = UnixAddr::from_path(Path::new("/tmp/test.sock")).unwrap();
+        let addr3 = UnixAddr::from_path(Path::new("/tmp/other.sock")).unwrap();
+
+        assert_eq!(addr1.hash_of(), addr2.hash_of());
+        assert_ne!(addr1.hash_of(), addr3.hash_of());
+    }
+
+    #[test]
+    fn test_socket_addr_unix() {
+        use fs::Path;
+
+        let unix_addr = UnixAddr::from_path(Path::new("/tmp/test.sock")).unwrap();
+        let sock_addr = SocketAddr::unix(unix_addr);
+
+        assert_eq!(sock_addr.kind, AddrKind::Unix);
+        assert!(sock_addr.ip().is_none());
+        assert!(sock_addr.port().is_none());
+
+        let retrieved_unix = sock_addr.unix_addr().unwrap();
+        assert_eq!(retrieved_unix.path().unwrap(), Path::new("/tmp/test.sock"));
+    }
+
+    #[test]
+    fn test_socket_addr_unix_equality() {
+        use fs::Path;
+
+        let unix_addr1 = UnixAddr::from_path(Path::new("/tmp/test.sock")).unwrap();
+        let unix_addr2 = UnixAddr::from_path(Path::new("/tmp/test.sock")).unwrap();
+        let unix_addr3 = UnixAddr::from_path(Path::new("/tmp/other.sock")).unwrap();
+
+        let sock_addr1 = SocketAddr::unix(unix_addr1);
+        let sock_addr2 = SocketAddr::unix(unix_addr2);
+        let sock_addr3 = SocketAddr::unix(unix_addr3);
+
+        assert_eq!(sock_addr1, sock_addr2);
+        assert_ne!(sock_addr1, sock_addr3);
+
+        // Unix socket addresses should not equal IP addresses
+        let ip_addr = SocketAddr::parse("127.0.0.1:80").unwrap();
+        assert_ne!(sock_addr1, ip_addr);
+    }
+
+    #[test]
+    fn test_socket_addr_unix_hash() {
+        use fs::Path;
+        use hash::hash_of;
+
+        let unix_addr1 = UnixAddr::from_path(Path::new("/tmp/test.sock")).unwrap();
+        let unix_addr2 = UnixAddr::from_path(Path::new("/tmp/test.sock")).unwrap();
+        let unix_addr3 = UnixAddr::from_path(Path::new("/tmp/other.sock")).unwrap();
+
+        let sock_addr1 = SocketAddr::unix(unix_addr1);
+        let sock_addr2 = SocketAddr::unix(unix_addr2);
+        let sock_addr3 = SocketAddr::unix(unix_addr3);
+
+        assert_eq!(sock_addr1.hash_of(), sock_addr2.hash_of());
+        assert_ne!(sock_addr1.hash_of(), sock_addr3.hash_of());
     }
 }
