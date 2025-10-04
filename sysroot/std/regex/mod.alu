@@ -132,6 +132,8 @@ impl Regex {
 
         // Build NFA using Thompson construction
         let nfa = Nfa::new();
+        defer nfa.free();
+
         let frag = thompson_construct(&ast, &nfa);
 
         // Set the NFA start state
@@ -139,7 +141,6 @@ impl Regex {
 
         // Convert NFA to DFA
         let dfa = Dfa::from_nfa(&nfa);
-        nfa.free();
 
         Result::ok(Regex {
             _dfa: dfa,
@@ -226,10 +227,10 @@ impl Regex {
             let (end_pos, tag_positions) = result.unwrap();
 
             // Build Captures object
-            let captures = Captures::new(text, self._num_groups);
+            let positions: Vector<(usize, usize)> = Vector::new();
 
             // Set group 0 (full match)
-            captures._positions[0] = Option::some((start_pos, end_pos));
+            positions.push((start_pos, end_pos));
 
             // Set user groups from tag positions
             for group_id in 1usize..self._num_groups {
@@ -237,11 +238,14 @@ impl Regex {
                 let end_tag = 2usize * group_id + 1usize;
                 let group_start = tag_positions[start_tag];
                 let group_end = tag_positions[end_tag];
-                captures._positions[group_id] = Option::some((group_start, group_end));
+                positions.push((group_start, group_end));
             }
 
             tag_positions.free();
-            return Option::some(captures);
+            return Option::some(Captures {
+                _text: text,
+                _positions: positions,
+            });
         }
 
         Option::none()
@@ -270,23 +274,10 @@ struct Captures {
     ///
     /// Group 0 is the full match, groups 1+ are user groups
     /// `positions[i] = (start, end)` for group `i`
-    _positions: Vector<Option<(usize, usize)>>,
+    _positions: Vector<(usize, usize)>,
 }
 
 impl Captures {
-    /// Create a new Captures with the given number of groups
-    fn new(text: &[u8], num_groups: usize) -> Captures {
-        let positions: Vector<Option<(usize, usize)>> = Vector::new();
-        // Initialize with None for all groups
-        for _ in 0usize..num_groups {
-            positions.push(Option::none());
-        }
-        Captures {
-            _text: text,
-            _positions: positions,
-        }
-    }
-
     /// Get the full matched text (capture group 0)
     ///
     /// ## Example
@@ -301,15 +292,7 @@ impl Captures {
     /// assert_eq!(caps.get_match().unwrap(), "123");
     /// ```
     fn get_match(self: &Captures) -> Option<&[u8]> {
-        if self._positions.is_empty() {
-            return Option::none();
-        }
-        let pos = &self._positions[0];
-        if pos.is_none() {
-            return Option::none();
-        }
-        let (start, end) = pos.unwrap();
-        Option::some(self._text[start..end])
+        self.get(0)
     }
 
     /// Get a capture group by index (0 = full match, 1+ = user groups)
@@ -328,14 +311,9 @@ impl Captures {
     /// assert_eq!(caps.get(2).unwrap(), "example");
     /// ```
     fn get(self: &Captures, group: usize) -> Option<&[u8]> {
-        if group >= self._positions.len() {
-            return Option::none();
-        }
-        let pos = &self._positions[group];
-        if pos.is_none() {
-            return Option::none();
-        }
-        let (start, end) = pos.unwrap();
+        use option::try;
+
+        let (start, end) = self._positions.get(group)?;
         Option::some(self._text[start..end])
     }
 
@@ -353,10 +331,7 @@ impl Captures {
     /// assert_eq!(caps.get_pos(1).unwrap(), (3usize, 6usize));
     /// ```
     fn get_pos(self: &Captures, group: usize) -> Option<(usize, usize)> {
-        if group >= self._positions.len() {
-            return Option::none();
-        }
-        self._positions[group]
+        self._positions.get(group)
     }
 
     /// Get the number of capture groups (including group 0 for full match)
