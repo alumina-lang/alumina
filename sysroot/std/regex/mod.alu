@@ -233,12 +233,17 @@ struct NfaTransition {
     to: usize,
     /// Character class for this transition (None = epsilon transition)
     on_chars: Option<IntervalSet>,
+    /// Tags to record when crossing this transition (for captures)
+    /// Tags are indices: even = group start, odd = group end
+    /// Tag 0 = start of capture 0 (full match), tag 1 = end of capture 0, etc.
+    tags: Vector<usize>,
 }
 
 impl NfaTransition {
     fn move(self: &mut NfaTransition) -> NfaTransition {
         let ret = *self;
         self.on_chars = Option::none();
+        self.tags = Vector::new();
         ret
     }
 
@@ -246,6 +251,7 @@ impl NfaTransition {
         if self.on_chars.is_some() {
             self.on_chars.unwrap().free();
         }
+        self.tags.free();
     }
 }
 
@@ -304,6 +310,16 @@ impl Nfa {
         self.states[from].transitions.push(NfaTransition {
             to: to,
             on_chars: Option::none(),
+            tags: Vector::new(),
+        });
+    }
+
+    /// Add an epsilon transition with tags
+    fn add_epsilon_tagged(self: &mut Nfa, from: usize, to: usize, tags: Vector<usize>) {
+        self.states[from].transitions.push(NfaTransition {
+            to: to,
+            on_chars: Option::none(),
+            tags: tags,
         });
     }
 
@@ -312,6 +328,16 @@ impl Nfa {
         self.states[from].transitions.push(NfaTransition {
             to: to,
             on_chars: Option::some(chars),
+            tags: Vector::new(),
+        });
+    }
+
+    /// Add a character transition with tags
+    fn add_transition_tagged(self: &mut Nfa, from: usize, to: usize, chars: IntervalSet, tags: Vector<usize>) {
+        self.states[from].transitions.push(NfaTransition {
+            to: to,
+            on_chars: Option::some(chars),
+            tags: tags,
         });
     }
 
@@ -336,11 +362,12 @@ struct NfaFragment {
 /// Regex AST node types
 /// Using discriminant + union pattern since Alumina doesn't have enums
 struct RegexNode {
-    kind: u8,  // 0=Literal, 1=Concat, 2=Alt, 3=Star, 4=Plus, 5=Question, 6=CharClass, 7=StartAnchor, 8=EndAnchor
+    kind: u8,  // 0=Literal, 1=Concat, 2=Alt, 3=Star, 4=Plus, 5=Question, 6=CharClass, 7=StartAnchor, 8=EndAnchor, 9=Capture
     // Union of possible data
     literal_char: u32,
     char_class: IntervalSet,
     children: Vector<RegexNode>,
+    group_id: usize,  // For capture groups
 }
 
 // Kind constants
@@ -353,6 +380,7 @@ const REGEX_QUESTION: u8 = 5;
 const REGEX_CHAR_CLASS: u8 = 6;
 const REGEX_START_ANCHOR: u8 = 7;
 const REGEX_END_ANCHOR: u8 = 8;
+const REGEX_CAPTURE: u8 = 9;
 
 impl RegexNode {
     fn literal(ch: u32) -> RegexNode {
@@ -361,6 +389,7 @@ impl RegexNode {
             literal_char: ch,
             char_class: IntervalSet::new(),
             children: Vector::new(),
+            group_id: 0,
         }
     }
 
@@ -370,6 +399,7 @@ impl RegexNode {
             literal_char: 0,
             char_class: class,
             children: Vector::new(),
+            group_id: 0,
         }
     }
 
@@ -379,6 +409,7 @@ impl RegexNode {
             literal_char: 0,
             char_class: IntervalSet::new(),
             children: nodes,
+            group_id: 0,
         }
     }
 
@@ -391,6 +422,7 @@ impl RegexNode {
             literal_char: 0,
             char_class: IntervalSet::new(),
             children: children,
+            group_id: 0,
         }
     }
 
@@ -402,6 +434,7 @@ impl RegexNode {
             literal_char: 0,
             char_class: IntervalSet::new(),
             children: children,
+            group_id: 0,
         }
     }
 
@@ -413,6 +446,7 @@ impl RegexNode {
             literal_char: 0,
             char_class: IntervalSet::new(),
             children: children,
+            group_id: 0,
         }
     }
 
@@ -424,6 +458,7 @@ impl RegexNode {
             literal_char: 0,
             char_class: IntervalSet::new(),
             children: children,
+            group_id: 0,
         }
     }
 
@@ -433,6 +468,7 @@ impl RegexNode {
             literal_char: 0,
             char_class: IntervalSet::new(),
             children: Vector::new(),
+            group_id: 0,
         }
     }
 
@@ -442,6 +478,19 @@ impl RegexNode {
             literal_char: 0,
             char_class: IntervalSet::new(),
             children: Vector::new(),
+            group_id: 0,
+        }
+    }
+
+    fn capture(group_id: usize, inner: RegexNode) -> RegexNode {
+        let children: Vector<RegexNode> = Vector::new();
+        children.push(inner);
+        RegexNode {
+            kind: REGEX_CAPTURE,
+            literal_char: 0,
+            char_class: IntervalSet::new(),
+            children: children,
+            group_id: group_id,
         }
     }
 
