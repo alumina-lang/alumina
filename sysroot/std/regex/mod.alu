@@ -7,7 +7,7 @@
 
 use collections::{Vector, HashSet};
 use string::{StringBuf, unicode};
-use cmp::{sort_by_key, sort};
+use cmp::{sort_by_key, sort, max};
 
 /// An interval representing a range of Unicode codepoints [start, end] inclusive
 struct Interval {
@@ -100,7 +100,7 @@ impl IntervalSet {
             // Check if overlapping or adjacent (end + 1 == start means adjacent)
             if next.start <= current.end + 1 {
                 // Merge: extend current to cover both
-                current.end = if next.end > current.end { next.end } else { current.end };
+                current.end = max(next.end, current.end);
             } else {
                 // No overlap: save current and start new
                 merged.push(current);
@@ -823,7 +823,8 @@ impl RegexParser {
         }
         let decoded = unicode::decode_utf8(self.input[self.pos..]);
         if decoded.is_ok() {
-            Option::some(decoded.unwrap().0)
+            let (ch, _) = decoded.unwrap();
+            Option::some(ch)
         } else {
             Option::none()
         }
@@ -835,8 +836,7 @@ impl RegexParser {
         }
         let decoded = unicode::decode_utf8(self.input[self.pos..]);
         if decoded.is_ok() {
-            let ch = decoded.unwrap().0;
-            let len = decoded.unwrap().1;
+            let (ch, len) = decoded.unwrap();
             self.pos += len;
             Option::some(ch)
         } else {
@@ -1689,8 +1689,7 @@ impl Dfa {
                 return last_accept; // Invalid UTF-8
             }
 
-            let ch = decoded.unwrap().0;
-            let bytes = decoded.unwrap().1;
+            let (ch, bytes) = decoded.unwrap();
 
             // Find transition for this character
             let next_state: Option<usize> = Option::none();
@@ -1743,11 +1742,7 @@ impl Dfa {
         // Check if start state is final
         if self.states[state].is_final {
             // Clone tag positions for last_accept
-            let cloned_tags: Vector<usize> = Vector::new();
-            for tag_pos in tag_positions.iter() {
-                cloned_tags.push(tag_pos);
-            }
-            last_accept = Option::some((pos, cloned_tags));
+            last_accept = Option::some((pos, tag_positions.clone()));
         }
 
         while pos < text.len() {
@@ -1758,8 +1753,7 @@ impl Dfa {
                 return last_accept; // Invalid UTF-8
             }
 
-            let ch = decoded.unwrap().0;
-            let bytes = decoded.unwrap().1;
+            let (ch, bytes) = decoded.unwrap();
 
             // Find transition for this character
             let next_trans_idx: Option<usize> = Option::none();
@@ -1798,11 +1792,7 @@ impl Dfa {
                     last_accept.unwrap().1.free();
                 }
                 // Clone tag positions for last_accept
-                let cloned_tags: Vector<usize> = Vector::new();
-                for tag_pos in tag_positions.iter() {
-                    cloned_tags.push(tag_pos);
-                }
-                last_accept = Option::some((pos, cloned_tags));
+                last_accept = Option::some((pos, tag_positions.clone()));
             }
         }
 
