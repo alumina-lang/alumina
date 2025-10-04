@@ -9,6 +9,10 @@ use collections::{Vector, HashSet};
 use string::{StringBuf, unicode};
 use cmp::{sort_by_key, sort, max};
 
+/// Pseudo-characters for anchors (beyond valid Unicode range)
+const START_OF_STRING: u32 = 0x110000;
+const END_OF_STRING: u32 = 0x110001;
+
 /// An interval representing a range of Unicode codepoints [start, end] inclusive
 struct Interval {
     start: u32,
@@ -1123,6 +1127,14 @@ impl RegexParser {
                 // Regular escaped character (e.g., \(, \), \*, \., \\, etc.)
                 Result::ok(RegexNode::literal(esc))
             }
+        } else if ch.unwrap() == '^' {
+            // Start of string anchor
+            self.advance();
+            Result::ok(RegexNode::literal(START_OF_STRING))
+        } else if ch.unwrap() == '$' {
+            // End of string anchor
+            self.advance();
+            Result::ok(RegexNode::literal(END_OF_STRING))
         } else {
             // Literal character
             let literal = self.consume_char();
@@ -1421,7 +1433,8 @@ fn collect_character_classes(nfa: &Nfa, states: &HashSet<usize>) -> Vector<Inter
 
     for interval in all_intervals.iter() {
         boundaries.push(interval.start);
-        if interval.end < 0x10FFFF {
+        // Include boundaries beyond Unicode range for pseudo-characters
+        if interval.end < END_OF_STRING {
             boundaries.push(interval.end + 1);
         }
     }
@@ -1448,7 +1461,7 @@ fn collect_character_classes(nfa: &Nfa, states: &HashSet<usize>) -> Vector<Inter
         let end = if i + 1 < unique_boundaries.len() {
             unique_boundaries[i + 1] - 1
         } else {
-            0x10FFFF
+            END_OF_STRING  // Include pseudo-characters
         };
 
         // Check if this range is covered by any original interval
@@ -1677,6 +1690,16 @@ impl Dfa {
         let pos = start_pos;
         let last_accept: Option<usize> = Option::none();
 
+        // Process START_OF_STRING pseudo-character if at beginning of text
+        if start_pos == 0 {
+            for trans in self.states[state].transitions.iter() {
+                if trans.chars.contains(START_OF_STRING) {
+                    state = trans.to;
+                    break;
+                }
+            }
+        }
+
         // Check if start state is final
         if self.states[state].is_final {
             last_accept = Option::some(pos);
@@ -1713,6 +1736,18 @@ impl Dfa {
             }
         }
 
+        // Process END_OF_STRING pseudo-character at end of input
+        if pos == text.len() {
+            for trans in self.states[state].transitions.iter() {
+                if trans.chars.contains(END_OF_STRING) {
+                    state = trans.to;
+                    if self.states[state].is_final {
+                        return Option::some(pos);
+                    }
+                }
+            }
+        }
+
         // End of input - return last accept or current if accepting
         if self.states[state].is_final {
             Option::some(pos)
@@ -1732,6 +1767,21 @@ impl Dfa {
         let tag_positions: Vector<usize> = Vector::new();
         for _ in 0usize..num_tags {
             tag_positions.push(0);
+        }
+
+        // Process START_OF_STRING pseudo-character if at beginning of text
+        if start_pos == 0 {
+            for i in 0usize..self.states[state].transitions.len() {
+                let trans = &self.states[state].transitions[i];
+                if trans.chars.contains(START_OF_STRING) {
+                    state = trans.to;
+                    // Record tags from this transition
+                    for tag in trans.tags.iter() {
+                        tag_positions[tag] = pos;
+                    }
+                    break;
+                }
+            }
         }
 
         // Record entry tags for the start state
@@ -1796,6 +1846,31 @@ impl Dfa {
             }
         }
 
+        // Process END_OF_STRING pseudo-character at end of input
+        if pos == text.len() {
+            for i in 0usize..self.states[state].transitions.len() {
+                let trans = &self.states[state].transitions[i];
+                if trans.chars.contains(END_OF_STRING) {
+                    state = trans.to;
+                    // Record tags from this transition
+                    for tag in trans.tags.iter() {
+                        tag_positions[tag] = pos;
+                    }
+                    // Record entry tags for destination state
+                    for tag in self.states[state].entry_tags.iter() {
+                        tag_positions[tag] = pos;
+                    }
+                    if self.states[state].is_final {
+                        if last_accept.is_some() {
+                            last_accept.unwrap().1.free();
+                        }
+                        return Option::some((pos, tag_positions));
+                    }
+                    break;
+                }
+            }
+        }
+
         // End of input - return last accept or current if accepting
         if self.states[state].is_final {
             // Free old last_accept if it exists
@@ -1824,43 +1899,14 @@ impl Dfa {
 /// Compiled regular expression that can be used for matching
 struct Regex {
     dfa: Dfa,
-    anchored_start: bool,  // Pattern starts with ^
-    anchored_end: bool,    // Pattern ends with $
     num_groups: usize,     // Number of capture groups (including group 0)
 }
 
 impl Regex {
     /// Compile a regex pattern
     fn compile(pattern: &[u8]) -> Result<Regex, ()> {
-        // Check for anchors and strip them (but not if they're escaped)
-        let anchored_start = pattern.len() > 0 && pattern[0] == '^';
-
-        // Check if end anchor is present and not escaped
-        let anchored_end = if pattern.len() > 0 && pattern[pattern.len() - 1] == '$' {
-            // Count preceding backslashes
-            let num_backslashes = 0usize;
-            let i = pattern.len() - 1;
-            while i > num_backslashes && pattern[i - num_backslashes - 1] == '\\' {
-                num_backslashes += 1;
-            }
-            // If even number of backslashes (including 0), $ is not escaped
-            num_backslashes % 2 == 0
-        } else {
-            false
-        };
-
-        let start_offset = if anchored_start { 1usize } else { 0usize };
-        let end_offset = if anchored_end { pattern.len() - 1 } else { pattern.len() };
-
-        // Get the actual pattern without anchors
-        let actual_pattern = if start_offset < end_offset {
-            pattern[start_offset..end_offset]
-        } else {
-            pattern[0usize..0usize]  // Empty pattern
-        };
-
         // Parse the pattern
-        let parser = RegexParser::new(actual_pattern);
+        let parser = RegexParser::new(pattern);
         let ast = parser.parse();
         if ast.is_err() {
             return Result::err(());
@@ -1884,76 +1930,25 @@ impl Regex {
 
         Result::ok(Regex {
             dfa: dfa,
-            anchored_start: anchored_start,
-            anchored_end: anchored_end,
             num_groups: num_groups,
         })
     }
 
     /// Check if the entire text matches the pattern
     fn is_match(self: &Regex, text: &[u8]) -> bool {
-        if self.anchored_start && self.anchored_end {
-            // Must match entire string exactly
-            let result = self.dfa.match_from(text, 0);
-            result.is_some() && result.unwrap() == text.len()
-        } else if self.anchored_start {
-            // Must match from start
-            let result = self.dfa.match_from(text, 0);
-            result.is_some()
-        } else if self.anchored_end {
-            // Must match at end - try all positions
-            for start_pos in 0usize..text.len() + 1 {
-                let result = self.dfa.match_from(text, start_pos);
-                if result.is_some() && result.unwrap() == text.len() {
-                    return true;
-                }
-            }
-            false
-        } else {
-            // No anchors - match anywhere
-            self.dfa.is_match(text)
-        }
+        self.dfa.is_match(text)
     }
 
     /// Find the first match in the text
     /// Returns (start_pos, end_pos) if found
     fn find(self: &Regex, text: &[u8]) -> Option<(usize, usize)> {
-        if self.anchored_start {
-            // Must start at beginning
-            let result = self.dfa.match_from(text, 0);
-            if result.is_some() {
-                let end = result.unwrap();
-                if !self.anchored_end || end == text.len() {
-                    return Option::some((0, end));
-                }
-            }
-            Option::none()
-        } else if self.anchored_end {
-            // Must end at end
-            for start_pos in 0usize..text.len() + 1 {
-                let result = self.dfa.match_from(text, start_pos);
-                if result.is_some() && result.unwrap() == text.len() {
-                    return Option::some((start_pos, text.len()));
-                }
-            }
-            Option::none()
-        } else {
-            self.dfa.find(text)
-        }
+        self.dfa.find(text)
     }
 
     /// Check if text matches from the beginning
     fn match_from_start(self: &Regex, text: &[u8]) -> bool {
         let result = self.dfa.match_from(text, 0);
-        if result.is_none() {
-            return false;
-        }
-        let end = result.unwrap();
-        if self.anchored_end {
-            end == text.len()
-        } else {
-            end > 0
-        }
+        result.is_some() && result.unwrap() > 0
     }
 
     /// Find first match and return capture groups
@@ -1961,31 +1956,14 @@ impl Regex {
         // Calculate number of tags needed (2 per group: start and end)
         let num_tags = self.num_groups * 2usize;
 
-        // Try matching at each position (respecting anchors)
-        let start_positions: Vector<usize> = Vector::new();
-        defer start_positions.free();
-
-        if self.anchored_start {
-            start_positions.push(0);
-        } else {
-            for i in 0usize..text.len() + 1 {
-                start_positions.push(i);
-            }
-        }
-
-        for start_pos in start_positions.iter() {
+        // Try matching at each position
+        for start_pos in 0usize..text.len() + 1 {
             let result = self.dfa.match_with_captures(text, start_pos, num_tags);
             if result.is_none() {
                 continue;
             }
 
             let (end_pos, tag_positions) = result.unwrap();
-
-            // Check end anchor constraint
-            if self.anchored_end && end_pos != text.len() {
-                tag_positions.free();
-                continue;
-            }
 
             // Build Captures object
             let captures = Captures::new(text, self.num_groups);
