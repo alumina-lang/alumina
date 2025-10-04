@@ -1,0 +1,169 @@
+/// Regular expression matching example
+///
+/// Demonstrates the std::regex module for pattern matching with capture groups.
+/// This example implements a simple log parser that extracts structured data from
+/// log lines using regular expressions.
+
+use std::regex::Regex;
+
+struct LogEntry {
+    timestamp: &[u8],
+    level: &[u8],
+    message: &[u8],
+}
+
+/// Parse a log line like: "[2024-01-15 10:30:45] ERROR: Connection timeout"
+fn parse_log_line(line: &[u8]) -> Option<LogEntry> {
+    use option::try;
+
+    // Pattern: [timestamp] LEVEL: message
+    let re = Regex::compile("\\[(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2})\\] (\\w+): (.+)").unwrap();
+    defer re.free();
+
+    let caps = re.captures(line)?;
+    defer caps.free();
+
+    Option::some(LogEntry {
+        timestamp: caps.get(1).unwrap(),
+        level: caps.get(2).unwrap(),
+        message: caps.get(3).unwrap(),
+    })
+}
+
+/// Extract email components (user, domain, TLD)
+fn parse_email(text: &[u8]) -> Option<(&[u8], &[u8], &[u8])> {
+    use option::try;
+
+    let re = Regex::compile("([a-zA-Z0-9._%+-]+)@([a-zA-Z0-9-]+)\\.([a-zA-Z]{2,})").unwrap();
+    defer re.free();
+
+    let caps = re.captures(text)?;
+    defer caps.free();
+
+    Option::some((
+        caps.get(1).unwrap(),
+        caps.get(2).unwrap(),
+        caps.get(3).unwrap()
+    ))
+}
+
+/// Validate and extract IPv4 address components
+fn parse_ipv4(text: &[u8]) -> Option<[&[u8]; 4]> {
+    use option::try;
+
+    let re = Regex::compile("(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})").unwrap();
+    defer re.free();
+
+    let caps = re.captures(text)?;
+    defer caps.free();
+
+    Option::some([
+        caps.get(1).unwrap(),
+        caps.get(2).unwrap(),
+        caps.get(3).unwrap(),
+        caps.get(4).unwrap()
+    ])
+}
+
+/// Find all words matching a pattern
+fn find_all_matches(text: &[u8], pattern: &[u8]) {
+    let re = Regex::compile(pattern).unwrap();
+    defer re.free();
+
+    let pos = 0usize;
+    while pos < text.len() {
+        let result = re.find(text[pos..]);
+        if result.is_none() {
+            break;
+        }
+
+        let (start, end) = result.unwrap();
+        let match_text = text[pos + start..pos + end];
+        println!("  Found '{}' at position {}", match_text, pos + start);
+        pos = pos + end;
+    }
+}
+
+fn main() {
+    println!("=== Log Line Parsing ===");
+    let log_lines = [
+        "[2024-01-15 10:30:45] ERROR: Connection timeout",
+        "[2024-01-15 10:30:46] INFO: Retrying connection",
+        "[2024-01-15 10:30:47] WARN: High memory usage detected",
+    ];
+
+    for line in log_lines {
+        let entry = parse_log_line(line);
+        if entry.is_some() {
+            let entry = entry.unwrap();
+            println!("Timestamp: {}", entry.timestamp);
+            println!("Level:     {}", entry.level);
+            println!("Message:   {}", entry.message);
+            println!("");
+        }
+    }
+
+    println!("=== Email Parsing ===");
+    let emails = [
+        "Contact us at support@example.com",
+        "Sales: sales@company.co.uk",
+        "Info: info@test.org"
+    ];
+
+    for text in emails {
+        let email = parse_email(text);
+        if email.is_some() {
+            let (user, domain, tld) = email.unwrap();
+            println!("Email: {}@{}.{}", user, domain, tld);
+            println!("  User:   {}", user);
+            println!("  Domain: {}", domain);
+            println!("  TLD:    {}", tld);
+        }
+    }
+
+    println!("\n=== IPv4 Address Parsing ===");
+    let addresses = [
+        "Server at 192.168.1.1",
+        "Gateway: 10.0.0.1",
+        "DNS: 8.8.8.8"
+    ];
+
+    for text in addresses {
+        let addr = parse_ipv4(text);
+        if addr.is_some() {
+            let octets = addr.unwrap();
+            println!("{} -> {}.{}.{}.{}",
+                text,
+                octets[0], octets[1], octets[2], octets[3]
+            );
+        }
+    }
+
+    println!("\n=== Pattern Matching ===");
+    let text = "The quick brown fox jumps over the lazy dog";
+
+    println!("Finding words starting with 't' or 'T':");
+    find_all_matches(text, "[tT]\\w+");
+
+    println!("\nFinding three-letter words:");
+    find_all_matches(text, " \\w{3} ");
+
+    println!("\n=== Validation ===");
+    let url_pattern = Regex::compile("^https?://[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}(/.*)?$").unwrap();
+    defer url_pattern.free();
+
+    let urls = [
+        "https://example.com",
+        "http://test.org/path",
+        "ftp://invalid.com",
+        "not-a-url"
+    ];
+
+    for url in urls {
+        if url_pattern.is_match(url) {
+            println!("✓ Valid URL: {}", url);
+        } else {
+            println!("✗ Invalid URL: {}", url);
+        }
+    }
+}
