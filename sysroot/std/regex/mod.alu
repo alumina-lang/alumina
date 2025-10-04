@@ -88,11 +88,6 @@ use collections::Vector;
 /// A `Regex` is safe to use from multiple contexts, as it contains no mutable state.
 /// Once compiled, it can be used to match against text repeatedly.
 ///
-/// ## Memory Management
-///
-/// `Regex` allocates memory for the internal DFA. Use the `free` method or `defer` to
-/// release this memory when done.
-///
 /// ## Examples
 ///
 /// ```
@@ -106,8 +101,8 @@ use collections::Vector;
 /// assert!(!re.is_match("foobaz"));
 /// ```
 struct Regex {
-    dfa: Dfa,
-    num_groups: usize,     // Number of capture groups (including group 0)
+    _dfa: Dfa,
+    _num_groups: usize,     // Number of capture groups (including group 0)
 }
 
 impl Regex {
@@ -147,8 +142,8 @@ impl Regex {
         nfa.free();
 
         Result::ok(Regex {
-            dfa: dfa,
-            num_groups: num_groups,
+            _dfa: dfa,
+            _num_groups: num_groups,
         })
     }
 
@@ -165,7 +160,7 @@ impl Regex {
     /// assert!(!re.is_match("abc"));
     /// ```
     fn is_match(self: &Regex, text: &[u8]) -> bool {
-        self.dfa.is_match(text)
+        self._dfa.is_match(text)
     }
 
     /// Find the first match in the text
@@ -182,7 +177,7 @@ impl Regex {
     /// assert_eq!(result, Option::some((3usize, 6usize)));
     /// ```
     fn find(self: &Regex, text: &[u8]) -> Option<(usize, usize)> {
-        self.dfa.find(text)
+        self._dfa.find(text)
     }
 
     /// Check if text matches from the beginning
@@ -198,7 +193,7 @@ impl Regex {
     /// assert!(!re.match_from_start("barfoo"));
     /// ```
     fn match_from_start(self: &Regex, text: &[u8]) -> bool {
-        let result = self.dfa.match_from(text, 0);
+        let result = self._dfa.match_from(text, 0);
         result.is_some() && result.unwrap() > 0
     }
 
@@ -219,11 +214,11 @@ impl Regex {
     /// ```
     fn captures(self: &Regex, text: &[u8]) -> Option<Captures> {
         // Calculate number of tags needed (2 per group: start and end)
-        let num_tags = self.num_groups * 2usize;
+        let num_tags = self._num_groups * 2usize;
 
         // Try matching at each position
         for start_pos in 0usize..text.len() + 1 {
-            let result = self.dfa.match_with_captures(text, start_pos, num_tags);
+            let result = self._dfa.match_with_captures(text, start_pos, num_tags);
             if result.is_none() {
                 continue;
             }
@@ -231,18 +226,18 @@ impl Regex {
             let (end_pos, tag_positions) = result.unwrap();
 
             // Build Captures object
-            let captures = Captures::new(text, self.num_groups);
+            let captures = Captures::new(text, self._num_groups);
 
             // Set group 0 (full match)
-            captures.positions[0] = Option::some((start_pos, end_pos));
+            captures._positions[0] = Option::some((start_pos, end_pos));
 
             // Set user groups from tag positions
-            for group_id in 1usize..self.num_groups {
+            for group_id in 1usize..self._num_groups {
                 let start_tag = 2usize * group_id;
                 let end_tag = 2usize * group_id + 1usize;
                 let group_start = tag_positions[start_tag];
                 let group_end = tag_positions[end_tag];
-                captures.positions[group_id] = Option::some((group_start, group_end));
+                captures._positions[group_id] = Option::some((group_start, group_end));
             }
 
             tag_positions.free();
@@ -252,26 +247,30 @@ impl Regex {
         Option::none()
     }
 
+    /// @ mem::Movable::move
     fn move(self: &mut Regex) -> Regex {
         let ret = *self;
-        self.dfa = Dfa::new();
+        self._dfa = Dfa::new();
         ret
     }
 
+    /// @ mem::Freeable::free
     fn free(self: &mut Regex) {
-        self.dfa.free();
+        self._dfa.free();
     }
 }
 
 /// Capture groups from a regex match
+///
 /// Contains the matched text and positions of capture groups
 struct Captures {
     /// The matched text (borrowed)
-    text: &[u8],
+    _text: &[u8],
     /// Start and end positions for each capture group
+    ///
     /// Group 0 is the full match, groups 1+ are user groups
     /// `positions[i] = (start, end)` for group `i`
-    positions: Vector<Option<(usize, usize)>>,
+    _positions: Vector<Option<(usize, usize)>>,
 }
 
 impl Captures {
@@ -283,58 +282,111 @@ impl Captures {
             positions.push(Option::none());
         }
         Captures {
-            text: text,
-            positions: positions,
+            _text: text,
+            _positions: positions,
         }
     }
 
     /// Get the full matched text (capture group 0)
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use std::regex::Regex;
+    ///
+    /// let re = Regex::compile("\\d+").unwrap();
+    /// defer re.free();
+    /// let caps = re.captures("foo 123 bar").unwrap();
+    /// defer caps.free();
+    /// assert_eq!(caps.get_match().unwrap(), "123");
+    /// ```
     fn get_match(self: &Captures) -> Option<&[u8]> {
-        if self.positions.is_empty() {
+        if self._positions.is_empty() {
             return Option::none();
         }
-        let pos = &self.positions[0];
+        let pos = &self._positions[0];
         if pos.is_none() {
             return Option::none();
         }
         let (start, end) = pos.unwrap();
-        Option::some(self.text[start..end])
+        Option::some(self._text[start..end])
     }
 
     /// Get a capture group by index (0 = full match, 1+ = user groups)
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use std::regex::Regex;
+    ///
+    /// let re = Regex::compile("(\\w+)@(\\w+)").unwrap();
+    /// defer re.free();
+    /// let caps = re.captures("user@example.com").unwrap();
+    /// defer caps.free();
+    /// assert_eq!(caps.get(0).unwrap(), "user@example");
+    /// assert_eq!(caps.get(1).unwrap(), "user");
+    /// assert_eq!(caps.get(2).unwrap(), "example");
+    /// ```
     fn get(self: &Captures, group: usize) -> Option<&[u8]> {
-        if group >= self.positions.len() {
+        if group >= self._positions.len() {
             return Option::none();
         }
-        let pos = &self.positions[group];
+        let pos = &self._positions[group];
         if pos.is_none() {
             return Option::none();
         }
         let (start, end) = pos.unwrap();
-        Option::some(self.text[start..end])
+        Option::some(self._text[start..end])
     }
 
     /// Get the start and end positions of a capture group
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use std::regex::Regex;
+    ///
+    /// let re = Regex::compile("(\\d+)").unwrap();
+    /// defer re.free();
+    /// let caps = re.captures("abc123def").unwrap();
+    /// defer caps.free();
+    /// assert_eq!(caps.get_pos(1).unwrap(), (3usize, 6usize));
+    /// ```
     fn get_pos(self: &Captures, group: usize) -> Option<(usize, usize)> {
-        if group >= self.positions.len() {
+        if group >= self._positions.len() {
             return Option::none();
         }
-        self.positions[group]
+        self._positions[group]
     }
 
     /// Get the number of capture groups (including group 0 for full match)
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use std::regex::Regex;
+    ///
+    /// let re = Regex::compile("(\\w+)@(\\w+)").unwrap();
+    /// defer re.free();
+    /// let caps = re.captures("user@example.com").unwrap();
+    /// defer caps.free();
+    /// assert_eq!(caps.len(), 3); // Group 0 (full match) + 2 user groups
+    /// ```
     fn len(self: &Captures) -> usize {
-        self.positions.len()
+        self._positions.len()
     }
 
+    /// @ mem::Movable::move
     fn move(self: &mut Captures) -> Captures {
-        let ret = *self;
-        self.positions = Vector::new();
-        ret
+        Captures {
+            _text: self._text,
+            _positions: self._positions.move(),
+        }
     }
 
+    /// @ mem::Freeable::free
     fn free(self: &mut Captures) {
-        self.positions.free();
+        self._positions.free();
     }
 }
 
@@ -929,7 +981,7 @@ mod tests {
         defer re.free();
 
         // Should only have group 0 (full match), no capture groups
-        assert_eq!(re.num_groups, 1usize);
+        assert_eq!(re._num_groups, 1usize);
 
         let caps = re.captures("abc");
         assert!(caps.is_some());
@@ -949,7 +1001,7 @@ mod tests {
 
         // Should have 3 groups: group 0 (full) + 2 capture groups
         // The (?:-)? is non-capturing
-        assert_eq!(re.num_groups, 3usize);
+        assert_eq!(re._num_groups, 3usize);
 
         let caps = re.captures("123-abc");
         assert!(caps.is_some());
@@ -969,7 +1021,7 @@ mod tests {
         defer re.free();
 
         // Should have 2 groups: group 0 (full) + 1 capture group
-        assert_eq!(re.num_groups, 2usize);
+        assert_eq!(re._num_groups, 2usize);
 
         let caps = re.captures("abc");
         assert!(caps.is_some());
