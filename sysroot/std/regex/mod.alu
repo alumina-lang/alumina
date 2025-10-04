@@ -1011,6 +1011,15 @@ impl RegexParser {
         Result::ok(result)
     }
 
+    /// Parse hex escape sequence: \xHH or \uHHHH
+    fn parse_hex_escape(self: &mut RegexParser, num_digits: usize) -> Result<RegexNode, ()> {
+        let value_result = self.parse_hex_value(num_digits);
+        if value_result.is_err() {
+            return Result::err(());
+        }
+        Result::ok(RegexNode::literal(value_result.unwrap()))
+    }
+
     /// Parse atomic expression: literal, ., [], ()
     fn parse_atom(self: &mut RegexParser) -> Result<RegexNode, ()> {
         let ch = self.peek();
@@ -1098,8 +1107,20 @@ impl RegexParser {
                 Result::ok(RegexNode::char_class(IntervalSet::whitespace_class()))
             } else if esc == 'S' as u32 {
                 Result::ok(RegexNode::char_class(IntervalSet::non_whitespace_class()))
+            } else if esc == 't' as u32 {
+                Result::ok(RegexNode::literal('\t' as u32))
+            } else if esc == 'n' as u32 {
+                Result::ok(RegexNode::literal('\n' as u32))
+            } else if esc == 'r' as u32 {
+                Result::ok(RegexNode::literal('\r' as u32))
+            } else if esc == 'x' as u32 {
+                // Hex escape: \xHH
+                self.parse_hex_escape(2)
+            } else if esc == 'u' as u32 {
+                // Unicode escape: \uHHHH
+                self.parse_hex_escape(4)
             } else {
-                // Regular escaped character (e.g., \(, \), \*, etc.)
+                // Regular escaped character (e.g., \(, \), \*, \., \\, etc.)
                 Result::ok(RegexNode::literal(esc))
             }
         } else {
@@ -1110,6 +1131,89 @@ impl RegexParser {
             }
             Result::ok(RegexNode::literal(literal.unwrap()))
         }
+    }
+
+    /// Parse a single character in a character class (handles escapes)
+    fn parse_class_char(self: &mut RegexParser) -> Result<u32, ()> {
+        if self.peek().is_none() {
+            return Result::err(());
+        }
+
+        if self.peek().unwrap() == '\\' {
+            self.advance();
+            let esc = self.consume_char();
+            if esc.is_none() {
+                return Result::err(());
+            }
+            let esc_ch = esc.unwrap();
+
+            // Handle escape sequences
+            if esc_ch == 't' as u32 {
+                Result::ok('\t' as u32)
+            } else if esc_ch == 'n' as u32 {
+                Result::ok('\n' as u32)
+            } else if esc_ch == 'r' as u32 {
+                Result::ok('\r' as u32)
+            } else if esc_ch == 'x' as u32 {
+                // Hex escape
+                let value_result = self.parse_hex_value(2);
+                if value_result.is_err() {
+                    return Result::err(());
+                }
+                Result::ok(value_result.unwrap())
+            } else if esc_ch == 'u' as u32 {
+                // Unicode escape
+                let value_result = self.parse_hex_value(4);
+                if value_result.is_err() {
+                    return Result::err(());
+                }
+                Result::ok(value_result.unwrap())
+            } else {
+                // Literal escaped character (e.g., \], \-, \\)
+                Result::ok(esc_ch)
+            }
+        } else {
+            let ch = self.consume_char();
+            if ch.is_some() {
+                Result::ok(ch.unwrap())
+            } else {
+                Result::err(())
+            }
+        }
+    }
+
+    /// Parse hex value (helper for parse_hex_escape and parse_class_char)
+    fn parse_hex_value(self: &mut RegexParser, num_digits: usize) -> Result<u32, ()> {
+        let value = 0u32;
+
+        for _ in 0usize..num_digits {
+            if self.pos >= self.input.len() {
+                return Result::err(());
+            }
+
+            let ch = self.input[self.pos];
+            let digit: u32;
+
+            if ch >= '0' && ch <= '9' {
+                digit = (ch - '0') as u32;
+            } else if ch >= 'a' && ch <= 'f' {
+                digit = (ch - 'a') as u32 + 10u32;
+            } else if ch >= 'A' && ch <= 'F' {
+                digit = (ch - 'A') as u32 + 10u32;
+            } else {
+                return Result::err(());
+            }
+
+            value = value * 16u32 + digit;
+            self.pos += 1;
+        }
+
+        // Validate Unicode codepoint range
+        if value > 0x10FFFF {
+            return Result::err(());
+        }
+
+        Result::ok(value)
     }
 
     /// Parse character class: [abc], [a-z], [^abc]
@@ -1138,12 +1242,12 @@ impl RegexParser {
                 break;
             }
 
-            let start_ch = self.consume_char();
-            if start_ch.is_none() {
+            let start_result = self.parse_class_char();
+            if start_result.is_err() {
                 class.free();
                 return Result::err(());
             }
-            let start = start_ch.unwrap();
+            let start = start_result.unwrap();
 
             // Check for range
             if self.peek().is_some() && self.peek().unwrap() == '-' {
@@ -1154,12 +1258,12 @@ impl RegexParser {
                     class.add(start);
                     class.add('-' as u32);
                 } else {
-                    let end_ch = self.consume_char();
-                    if end_ch.is_none() {
+                    let end_result = self.parse_class_char();
+                    if end_result.is_err() {
                         class.free();
                         return Result::err(());
                     }
-                    class.add_interval(start, end_ch.unwrap());
+                    class.add_interval(start, end_result.unwrap());
                 }
             } else {
                 class.add(start);
@@ -1738,9 +1842,22 @@ struct Regex {
 impl Regex {
     /// Compile a regex pattern
     fn compile(pattern: &[u8]) -> Result<Regex, ()> {
-        // Check for anchors and strip them
+        // Check for anchors and strip them (but not if they're escaped)
         let anchored_start = pattern.len() > 0 && pattern[0] == '^';
-        let anchored_end = pattern.len() > 0 && pattern[pattern.len() - 1] == '$';
+
+        // Check if end anchor is present and not escaped
+        let anchored_end = if pattern.len() > 0 && pattern[pattern.len() - 1] == '$' {
+            // Count preceding backslashes
+            let num_backslashes = 0usize;
+            let i = pattern.len() - 1;
+            while i > num_backslashes && pattern[i - num_backslashes - 1] == '\\' {
+                num_backslashes += 1;
+            }
+            // If even number of backslashes (including 0), $ is not escaped
+            num_backslashes % 2 == 0
+        } else {
+            false
+        };
 
         let start_offset = if anchored_start { 1usize } else { 0usize };
         let end_offset = if anchored_end { pattern.len() - 1 } else { pattern.len() };
@@ -2962,6 +3079,138 @@ mod tests {
         assert_eq!(caps2.get(0).unwrap(), "123-xy");
         assert_eq!(caps2.get(1).unwrap(), "123");
         assert_eq!(caps2.get(2).unwrap(), "xy");
+    }
+
+    #[test]
+    fn test_escape_basic() {
+        // Test \t, \n, \r
+        let re = Regex::compile("a\\tb");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+        assert!(re.is_match("a\tb"));
+        assert!(!re.is_match("ab"));
+
+        let re2 = Regex::compile("line1\\nline2");
+        assert!(re2.is_ok());
+        let re2 = re2.unwrap();
+        defer re2.free();
+        assert!(re2.is_match("line1\nline2"));
+        assert!(!re2.is_match("line1line2"));
+
+        let re3 = Regex::compile("car\\rreturn");
+        assert!(re3.is_ok());
+        let re3 = re3.unwrap();
+        defer re3.free();
+        assert!(re3.is_match("car\rreturn"));
+        assert!(!re3.is_match("carreturn"));
+    }
+
+    #[test]
+    fn test_escape_backslash() {
+        // Test escaping backslash itself
+        let re = Regex::compile("a\\\\b");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+        assert!(re.is_match("a\\b"));
+        assert!(!re.is_match("ab"));
+    }
+
+    #[test]
+    fn test_escape_metacharacters() {
+        // Test escaping regex metacharacters
+        let re = Regex::compile("\\(\\)\\[\\]\\{\\}\\*\\+\\?\\.\\|\\^\\$");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+        assert!(re.is_match("()[]{}*+?.|^$"));
+        assert!(!re.is_match("abc"));
+    }
+
+    #[test]
+    fn test_escape_hex() {
+        // Test \xHH escape sequences
+        let re = Regex::compile("\\x41\\x42\\x43");  // ABC
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+        assert!(re.is_match("ABC"));
+        assert!(!re.is_match("abc"));
+
+        // Test lowercase hex digits
+        let re2 = Regex::compile("\\x61\\x62\\x63");  // abc
+        assert!(re2.is_ok());
+        let re2 = re2.unwrap();
+        defer re2.free();
+        assert!(re2.is_match("abc"));
+        assert!(!re2.is_match("ABC"));
+
+        // Test mixed case hex
+        let re3 = Regex::compile("\\x4a\\x4B");  // JK
+        assert!(re3.is_ok());
+        let re3 = re3.unwrap();
+        defer re3.free();
+        assert!(re3.is_match("JK"));
+    }
+
+    #[test]
+    fn test_escape_unicode() {
+        // Test \uHHHH escape sequences
+        let re = Regex::compile("\\u0041\\u0042\\u0043");  // ABC
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+        assert!(re.is_match("ABC"));
+
+        // Test Unicode characters beyond ASCII
+        let re2 = Regex::compile("\\u00E9\\u00E0");  // éà
+        assert!(re2.is_ok());
+        let re2 = re2.unwrap();
+        defer re2.free();
+        assert!(re2.is_match("éà"));
+
+        // Test emoji with Unicode escape (U+1F44D = 👍)
+        // Note: \u only supports 4 hex digits, for higher codepoints use literal or \x sequences
+        let re3 = Regex::compile("\\u03B1\\u03B2");  // αβ (Greek)
+        assert!(re3.is_ok());
+        let re3 = re3.unwrap();
+        defer re3.free();
+        assert!(re3.is_match("αβ"));
+    }
+
+    #[test]
+    fn test_escape_in_char_class() {
+        // Test escape sequences inside character classes
+        let re = Regex::compile("[\\t\\n\\r]");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+        assert!(re.is_match("\t"));
+        assert!(re.is_match("\n"));
+        assert!(re.is_match("\r"));
+        assert!(!re.is_match("a"));
+
+        // Test hex escapes in character class
+        let re2 = Regex::compile("[\\x41-\\x43]");  // [A-C]
+        assert!(re2.is_ok());
+        let re2 = re2.unwrap();
+        defer re2.free();
+        assert!(re2.is_match("A"));
+        assert!(re2.is_match("B"));
+        assert!(re2.is_match("C"));
+        assert!(!re2.is_match("D"));
+    }
+
+    #[test]
+    fn test_escape_mixed() {
+        // Test mixing different escape types
+        let re = Regex::compile("\\x48\\u0065llo\\t\\d+");  // Hello\t followed by digits
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+        assert!(re.is_match("Hello\t123"));
+        assert!(!re.is_match("Hello 123"));
     }
 }
 
