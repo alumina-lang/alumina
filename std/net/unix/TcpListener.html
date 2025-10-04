@@ -53,6 +53,15 @@
 <a href="/std/net/unix/TcpListener.html#item.socket_addr">socket_addr</a>
 </li>
 <li>
+<a href="/std/net/unix/TcpListener.html#item.set_ttl">set_ttl</a>
+</li>
+<li>
+<a href="/std/net/unix/TcpListener.html#item.ttl">ttl</a>
+</li>
+<li>
+<a href="/std/net/unix/TcpListener.html#item.set_nonblocking">set_nonblocking</a>
+</li>
+<li>
 <a href="/std/net/unix/TcpListener.html#item.close">close</a>
 </li>
 <li>
@@ -76,7 +85,7 @@
 <h3>
 <span class="keyword">struct</span> <span class="identifier-type">TcpListener</span> { ... }</h3>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L309-L311"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L527-L529"/>source</a>
 </div>
 </div>
 <p>
@@ -103,7 +112,7 @@ socket: <a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">from_socket</span>(socket: <a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket</span></a>) -> <a href="/std/net/unix/TcpListener.html"><span class="identifier-type">TcpListener</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L315-L317"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L533-L535"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -118,12 +127,28 @@ Create a new TCP listener from a socket.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">bind</span>(addr: &amp;<a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/net/unix/TcpListener.html"><span class="identifier-type">TcpListener</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L320-L338"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L553-L571"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
 Creates a new TCP listener bound to the specified address.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::net::{TcpListener, SocketAddr};
+
+let addr = SocketAddr::parse("[::]:8080").unwrap();
+let listener = TcpListener::bind(&amp;addr).unwrap();
+defer listener.close();
+
+loop {
+    let (stream, peer) = listener.accept().unwrap();
+    defer stream.close();
+    println!("Accepted connection from {}", peer);
+}
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3anet%3a%3a%7bTcpListener%2c%20SocketAddr%7d%3b%0a%20%20%20%20%0a%20%20%20%20let%20addr%20%3d%20SocketAddr%3a%3aparse%28%22%5b%3a%3a%5d%3a8080%22%29%2eunwrap%28%29%3b%0a%20%20%20%20let%20listener%20%3d%20TcpListener%3a%3abind%28%26addr%29%2eunwrap%28%29%3b%0a%20%20%20%20defer%20listener%2eclose%28%29%3b%0a%20%20%20%20%0a%20%20%20%20loop%20%7b%0a%20%20%20%20%20%20%20%20let%20%28stream%2c%20peer%29%20%3d%20listener%2eaccept%28%29%2eunwrap%28%29%3b%0a%20%20%20%20%20%20%20%20defer%20stream%2eclose%28%29%3b%0a%20%20%20%20%20%20%20%20println%21%28%22Accepted%20connection%20from%20%7b%7d%22%2c%20peer%29%3b%0a%20%20%20%20%7d%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </div>
@@ -133,7 +158,7 @@ Creates a new TCP listener bound to the specified address.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">as_fd</span>(self: &amp;<a href="/std/net/unix/TcpListener.html"><span class="identifier-type">TcpListener</span></a>) -> <a href="/std/io/unix/FileDescriptor.html"><span class="identifier-type">FileDescriptor</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L341-L343"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L574-L576"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -144,7 +169,7 @@ Creates a new TCP listener bound to the specified address.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">accept</span>(self: &amp;<a href="/std/net/unix/TcpListener.html"><span class="identifier-type">TcpListener</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;(<a href="/std/net/unix/TcpStream.html"><span class="identifier-type">TcpStream</span></a>, <a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>)&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L349-L380"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L582-L613"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -162,7 +187,7 @@ of the remote peer.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">socket_addr</span>(self: &amp;<a href="/std/net/unix/TcpListener.html"><span class="identifier-type">TcpListener</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L383-L385"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L616-L618"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -173,11 +198,102 @@ Returns the address of the remote peer
 </div>
 </li>
 <li>
+<div class="signature" id="item.set_ttl">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">set_ttl</span>(self: &amp;<a href="/std/net/unix/TcpListener.html"><span class="identifier-type">TcpListener</span></a>, ttl: <a href="/std/builtins/u32.html"><span class="identifier-type">u32</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L636-L638"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Sets the time-to-live (TTL) value for the socket.
+</p><p>
+This value controls the number of hops (routers) that packets can traverse
+before being discarded. Works for both IPv4 and IPv6 sockets.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::net::{TcpListener, SocketAddr};
+
+let addr = SocketAddr::parse("[::]:8080").unwrap();
+let listener = TcpListener::bind(&amp;addr).unwrap();
+defer listener.close();
+
+listener.set_ttl(64).unwrap();
+assert_eq!(listener.ttl().unwrap(), 64);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3anet%3a%3a%7bTcpListener%2c%20SocketAddr%7d%3b%0a%20%20%20%20%0a%20%20%20%20let%20addr%20%3d%20SocketAddr%3a%3aparse%28%22%5b%3a%3a%5d%3a8080%22%29%2eunwrap%28%29%3b%0a%20%20%20%20let%20listener%20%3d%20TcpListener%3a%3abind%28%26addr%29%2eunwrap%28%29%3b%0a%20%20%20%20defer%20listener%2eclose%28%29%3b%0a%20%20%20%20%0a%20%20%20%20listener%2eset%5fttl%2864%29%2eunwrap%28%29%3b%0a%20%20%20%20assert%5feq%21%28listener%2ettl%28%29%2eunwrap%28%29%2c%2064%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.ttl">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">ttl</span>(self: &amp;<a href="/std/net/unix/TcpListener.html"><span class="identifier-type">TcpListener</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/u32.html"><span class="identifier-type">u32</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L655-L657"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Gets the time-to-live (TTL) value for the socket.
+</p><p>
+Works for both IPv4 and IPv6 sockets.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::net::{TcpListener, SocketAddr};
+
+let addr = SocketAddr::parse("[::]:8080").unwrap();
+let listener = TcpListener::bind(&amp;addr).unwrap();
+defer listener.close();
+
+let ttl = listener.ttl().unwrap();
+println!("TTL: {}", ttl);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3anet%3a%3a%7bTcpListener%2c%20SocketAddr%7d%3b%0a%20%20%20%20%0a%20%20%20%20let%20addr%20%3d%20SocketAddr%3a%3aparse%28%22%5b%3a%3a%5d%3a8080%22%29%2eunwrap%28%29%3b%0a%20%20%20%20let%20listener%20%3d%20TcpListener%3a%3abind%28%26addr%29%2eunwrap%28%29%3b%0a%20%20%20%20defer%20listener%2eclose%28%29%3b%0a%20%20%20%20%0a%20%20%20%20let%20ttl%20%3d%20listener%2ettl%28%29%2eunwrap%28%29%3b%0a%20%20%20%20println%21%28%22TTL%3a%20%7b%7d%22%2c%20ttl%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.set_nonblocking">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">set_nonblocking</span>(self: &amp;<span class="keyword">mut</span> <a href="/std/net/unix/TcpListener.html"><span class="identifier-type">TcpListener</span></a>, nonblocking: <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L674-L676"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Sets the socket to non-blocking or blocking mode.
+</p><p>
+In non-blocking mode, accept operations will return immediately
+with an error if they would block.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::net::{TcpListener, SocketAddr};
+
+let addr = SocketAddr::parse("[::]:8080").unwrap();
+let listener = TcpListener::bind(&amp;addr).unwrap();
+defer listener.close();
+
+listener.set_nonblocking(true).unwrap();
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3anet%3a%3a%7bTcpListener%2c%20SocketAddr%7d%3b%0a%20%20%20%20%0a%20%20%20%20let%20addr%20%3d%20SocketAddr%3a%3aparse%28%22%5b%3a%3a%5d%3a8080%22%29%2eunwrap%28%29%3b%0a%20%20%20%20let%20listener%20%3d%20TcpListener%3a%3abind%28%26addr%29%2eunwrap%28%29%3b%0a%20%20%20%20defer%20listener%2eclose%28%29%3b%0a%20%20%20%20%0a%20%20%20%20listener%2eset%5fnonblocking%28true%29%2eunwrap%28%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
 <div class="signature" id="item.close">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">close</span>(self: &amp;<span class="keyword">mut</span> <a href="/std/net/unix/TcpListener.html"><span class="identifier-type">TcpListener</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L388-L390"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L679-L681"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -192,7 +308,7 @@ Closes the socket.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">move</span>(self: &amp;<span class="keyword">mut</span> <a href="/std/net/unix/TcpListener.html"><span class="identifier-type">TcpListener</span></a>) -> <a href="/std/net/unix/TcpStream.html"><span class="identifier-type">TcpStream</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L393-L395"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L684-L686"/>source</a>
 </div>
 </div>
 <div class="item-doc">

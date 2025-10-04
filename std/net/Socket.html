@@ -47,6 +47,12 @@
 <a href="/std/net/Socket.html#item.shutdown">shutdown</a>
 </li>
 <li>
+<a href="/std/net/Socket.html#item.set_reuse_address">set_reuse_address</a>
+</li>
+<li>
+<a href="/std/net/Socket.html#item.set_reuse_port">set_reuse_port</a>
+</li>
+<li>
 <a href="/std/net/Socket.html#item.recv_from_with_flags">recv_from_with_flags</a>
 </li>
 <li>
@@ -86,11 +92,33 @@
 <h3>
 <span class="keyword">struct</span> <span class="identifier-type">Socket</span> { ... }</h3>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L102-L104"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L123-L125"/>source</a>
 </div>
 </div>
 <p>
 A network or local socket
+</p><p>
+This is a low-level socket type that provides direct access to socket options.
+For most use cases, prefer <a class="path-link" href="/std/net/unix/TcpStream.html">TcpStream</a>, <a class="path-link" href="/std/net/unix/TcpListener.html">TcpListener</a>, or <a class="path-link" href="/std/net/unix/UdpSocket.html">UdpSocket</a>.
+</p><p>
+Use <code class="language-alumina">Socket</code> when you need to configure socket options before binding or connecting,
+such as setting SO_REUSEADDR or SO_REUSEPORT.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::net::Socket;
+
+// Create a TCP socket and configure it before binding
+let sock = Socket::new(libc::AF_INET6, libc::SOCK_STREAM).unwrap();
+defer sock.close();
+
+sock.set_reuse_address(true).unwrap();
+sock.set_reuse_port(true).unwrap();
+
+// Now you can use the socket with low-level bind/listen/connect calls
+// or convert it to TcpListener/TcpStream/UdpSocket using from_socket()
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3anet%3a%3aSocket%3b%0a%20%20%20%20%0a%20%20%20%20%2f%2f%20Create%20a%20TCP%20socket%20and%20configure%20it%20before%20binding%0a%20%20%20%20let%20sock%20%3d%20Socket%3a%3anew%28libc%3a%3aAF%5fINET6%2c%20libc%3a%3aSOCK%5fSTREAM%29%2eunwrap%28%29%3b%0a%20%20%20%20defer%20sock%2eclose%28%29%3b%0a%20%20%20%20%0a%20%20%20%20sock%2eset%5freuse%5faddress%28true%29%2eunwrap%28%29%3b%0a%20%20%20%20sock%2eset%5freuse%5fport%28true%29%2eunwrap%28%29%3b%0a%20%20%20%20%0a%20%20%20%20%2f%2f%20Now%20you%20can%20use%20the%20socket%20with%20low%2dlevel%20bind%2flisten%2fconnect%20calls%0a%20%20%20%20%2f%2f%20or%20convert%20it%20to%20TcpListener%2fTcpStream%2fUdpSocket%20using%20from%5fsocket%28%29%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 <h2 id="Field">Fields</h2>
@@ -113,7 +141,7 @@ fd: <a href="/std/io/unix/FileDescriptor.html"><span class="identifier-type">Fil
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">new</span>(family: c_int, type: c_int) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L108-L121"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L129-L142"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -128,7 +156,7 @@ Create a new socket with a given family and type
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">as_fd</span>(self: &amp;<a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket</span></a>) -> <a href="/std/io/unix/FileDescriptor.html"><span class="identifier-type">FileDescriptor</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L124-L126"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L145-L147"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -139,7 +167,7 @@ Create a new socket with a given family and type
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">shutdown</span>(self: &amp;<a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket</span></a>, how: <a href="/std/net/unix/Shutdown.html"><span class="identifier-type">Shutdown</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L129-L132"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L150-L153"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -150,11 +178,47 @@ Shuts down the reading or writing end of the socket or both.
 </div>
 </li>
 <li>
+<div class="signature" id="item.set_reuse_address">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">set_reuse_address</span>(self: &amp;<a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket</span></a>, reuse: <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L159-L161"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Sets the value of the <code class="language-alumina">SO_REUSEADDR</code> option for this socket.
+</p><p>
+This option allows the socket to bind to an address that is in the TIME_WAIT state,
+which is useful when restarting a server to avoid "address already in use" errors.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.set_reuse_port">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">set_reuse_port</span>(self: &amp;<a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket</span></a>, reuse: <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L167-L169"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Sets the value of the <code class="language-alumina">SO_REUSEPORT</code> option for this socket.
+</p><p>
+This option allows multiple sockets to bind to the same address and port,
+enabling load balancing of incoming connections across multiple processes or threads.
+</p><p>
+</p>
+</div>
+</li>
+<li>
 <div class="signature" id="item.recv_from_with_flags">
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">recv_from_with_flags</span>(self: &amp;<a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket</span></a>, buf: &amp;<span class="keyword">mut</span> [<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], flags: c_int) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;(<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>, <a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>)&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L134-L154"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L171-L191"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -165,7 +229,7 @@ Shuts down the reading or writing end of the socket or both.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">recv_with_flags</span>(self: &amp;<a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket</span></a>, buf: &amp;<span class="keyword">mut</span> [<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>], flags: c_int) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L156-L167"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L193-L204"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -176,7 +240,7 @@ Shuts down the reading or writing end of the socket or both.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">read</span>(self: &amp;<a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket</span></a>, buf: &amp;<span class="keyword">mut</span> [<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L170-L172"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L207-L209"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -194,7 +258,7 @@ of the provided buffer.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">peer_addr</span>(self: &amp;<a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L175-L181"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L212-L218"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -209,7 +273,7 @@ Returns the address of the remote peer
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">socket_addr</span>(self: &amp;<a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L184-L190"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L221-L227"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -224,7 +288,7 @@ Returns the address of the remote peer
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">close</span>(self: &amp;<span class="keyword">mut</span> <a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L193-L195"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L230-L232"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -239,7 +303,7 @@ Closes the socket.
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">move</span>(self: &amp;<span class="keyword">mut</span> <a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket</span></a>) -> <a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L198-L200"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L235-L237"/>source</a>
 </div>
 </div>
 <div class="item-doc">
