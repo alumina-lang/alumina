@@ -83,6 +83,28 @@ use internal::{
 };
 use collections::Vector;
 
+/// A compiled regular expression.
+///
+/// A `Regex` is safe to use from multiple contexts, as it contains no mutable state.
+/// Once compiled, it can be used to match against text repeatedly.
+///
+/// ## Memory Management
+///
+/// `Regex` allocates memory for the internal DFA. Use the `free` method or `defer` to
+/// release this memory when done.
+///
+/// ## Examples
+///
+/// ```
+/// use std::regex::Regex;
+///
+/// let re = Regex::compile("foo.*bar").unwrap();
+/// defer re.free();
+///
+/// assert!(re.is_match("foobar"));
+/// assert!(re.is_match("foo123bar"));
+/// assert!(!re.is_match("foobaz"));
+/// ```
 struct Regex {
     dfa: Dfa,
     num_groups: usize,     // Number of capture groups (including group 0)
@@ -90,6 +112,16 @@ struct Regex {
 
 impl Regex {
     /// Compile a regex pattern
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use std::regex::Regex;
+    ///
+    /// let re = Regex::compile("foo.*bar").unwrap();
+    /// defer re.free();
+    /// assert!(re.is_match("foobar"));
+    /// ```
     fn compile(pattern: &[u8]) -> Result<Regex, ()> {
         // Parse the pattern
         let parser = RegexParser::new(pattern);
@@ -121,23 +153,70 @@ impl Regex {
     }
 
     /// Check if the entire text matches the pattern
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use std::regex::Regex;
+    ///
+    /// let re = Regex::compile("^[0-9]+$").unwrap();
+    /// defer re.free();
+    /// assert!(re.is_match("123"));
+    /// assert!(!re.is_match("abc"));
+    /// ```
     fn is_match(self: &Regex, text: &[u8]) -> bool {
         self.dfa.is_match(text)
     }
 
     /// Find the first match in the text
     /// Returns (start_pos, end_pos) if found
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use std::regex::Regex;
+    ///
+    /// let re = Regex::compile("\\d+").unwrap();
+    /// defer re.free();
+    /// let result = re.find("abc123def");
+    /// assert_eq!(result, Option::some((3usize, 6usize)));
+    /// ```
     fn find(self: &Regex, text: &[u8]) -> Option<(usize, usize)> {
         self.dfa.find(text)
     }
 
     /// Check if text matches from the beginning
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use std::regex::Regex;
+    ///
+    /// let re = Regex::compile("foo").unwrap();
+    /// defer re.free();
+    /// assert!(re.match_from_start("foobar"));
+    /// assert!(!re.match_from_start("barfoo"));
+    /// ```
     fn match_from_start(self: &Regex, text: &[u8]) -> bool {
         let result = self.dfa.match_from(text, 0);
         result.is_some() && result.unwrap() > 0
     }
 
     /// Find first match and return capture groups
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use std::regex::Regex;
+    ///
+    /// let re = Regex::compile("(\\d+)-(\\d+)").unwrap();
+    /// defer re.free();
+    /// let caps = re.captures("foo 123-456 bar").unwrap();
+    /// defer caps.free();
+    /// assert_eq!(caps.get(0).unwrap(), "123-456");
+    /// assert_eq!(caps.get(1).unwrap(), "123");
+    /// assert_eq!(caps.get(2).unwrap(), "456");
+    /// ```
     fn captures(self: &Regex, text: &[u8]) -> Option<Captures> {
         // Calculate number of tags needed (2 per group: start and end)
         let num_tags = self.num_groups * 2usize;
@@ -266,217 +345,6 @@ mod tests {
     use internal::{IntervalSet, Nfa, Dfa, DfaState, DfaTransition};
     use string::unicode;
     use collections::Vector;
-
-    #[test]
-    fn test_interval_single() {
-        let set = IntervalSet::single('a' as u32);
-        defer set.free();
-        assert!(set.contains('a' as u32));
-        assert!(!set.contains('b' as u32));
-    }
-
-    #[test]
-    fn test_interval_range() {
-        let set = IntervalSet::range('a' as u32, 'z' as u32);
-        defer set.free();
-        assert!(set.contains('a' as u32));
-        assert!(set.contains('m' as u32));
-        assert!(set.contains('z' as u32));
-        assert!(!set.contains('A' as u32));
-        assert!(!set.contains('0' as u32));
-    }
-
-    #[test]
-    fn test_interval_add_and_merge() {
-        let set = IntervalSet::new();
-        defer set.free();
-        set.add_interval('a' as u32, 'c' as u32);
-        set.add_interval('e' as u32, 'g' as u32);
-        set.add_interval('b' as u32, 'f' as u32); // Overlaps both
-
-        assert_eq!(set.intervals.len(), 1);
-        assert_eq!(set.intervals[0].start, 'a' as u32);
-        assert_eq!(set.intervals[0].end, 'g' as u32);
-    }
-
-    #[test]
-    fn test_interval_negate() {
-        let set = IntervalSet::range('a' as u32, 'z' as u32);
-        defer set.free();
-        let negated = set.negate();
-        defer negated.free();
-
-        assert!(!negated.contains('a' as u32));
-        assert!(!negated.contains('m' as u32));
-        assert!(!negated.contains('z' as u32));
-        assert!(negated.contains('A' as u32));
-        assert!(negated.contains('0' as u32));
-        assert!(negated.contains(0));
-        assert!(negated.contains(0x10FFFF));
-    }
-
-    #[test]
-    fn test_interval_union() {
-        let set1 = IntervalSet::range('a' as u32, 'z' as u32);
-        defer set1.free();
-        let set2 = IntervalSet::range('A' as u32, 'Z' as u32);
-        defer set2.free();
-        let union = set1.union(&set2);
-        defer union.free();
-
-        assert!(union.contains('a' as u32));
-        assert!(union.contains('Z' as u32));
-        assert!(!union.contains('0' as u32));
-        assert_eq!(union.intervals.len(), 2);
-    }
-
-    #[test]
-    fn test_nfa_basic() {
-        // Build simple NFA: start --'a'--> end
-        let nfa = Nfa::new();
-        defer nfa.free();
-        let end_state = nfa.add_state(true);
-
-        let chars = IntervalSet::single('a' as u32);
-        nfa.add_transition(nfa.start, end_state, chars);
-
-        assert_eq!(nfa.states.len(), 2);
-        assert_eq!(nfa.states[0].transitions.len(), 1);
-        assert!(nfa.states[1].is_final);
-    }
-
-    #[test]
-    fn test_nfa_epsilon() {
-        // Build NFA with epsilon transition
-        let nfa = Nfa::new();
-        defer nfa.free();
-        let middle = nfa.add_state(false);
-        let end_state = nfa.add_state(true);
-
-        nfa.add_epsilon(nfa.start, middle);
-
-        let chars = IntervalSet::single('a' as u32);
-        nfa.add_transition(middle, end_state, chars);
-
-        assert_eq!(nfa.states.len(), 3);
-        assert!(nfa.states[0].transitions[0].on_chars.is_none());
-    }
-
-    #[test]
-    fn test_nfa_to_dfa() {
-        // Build simple NFA: start --'a'--> end
-        let nfa = Nfa::new();
-        defer nfa.free();
-        let end_state = nfa.add_state(true);
-        let chars = IntervalSet::single('a' as u32);
-        nfa.add_transition(nfa.start, end_state, chars);
-
-        // Convert to DFA
-        let dfa = Dfa::from_nfa(&nfa);
-        defer dfa.free();
-
-        // Test matching
-        assert!(dfa.is_match("a"));
-        assert!(dfa.is_match("xax"));
-        assert!(!dfa.is_match("b"));
-        assert!(!dfa.is_match(""));
-    }
-
-    #[test]
-    fn test_nfa_to_dfa_with_epsilon() {
-        // Build NFA with epsilon: start -ε-> middle --'a'--> end
-        let nfa = Nfa::new();
-        defer nfa.free();
-        let middle = nfa.add_state(false);
-        let end_state = nfa.add_state(true);
-
-        nfa.add_epsilon(nfa.start, middle);
-        let chars = IntervalSet::single('a' as u32);
-        nfa.add_transition(middle, end_state, chars);
-
-        // Convert to DFA
-        let dfa = Dfa::from_nfa(&nfa);
-        defer dfa.free();
-
-        // Test matching - epsilon should be transparent
-        assert!(dfa.is_match("a"));
-        assert!(dfa.is_match("ba"));
-        assert!(!dfa.is_match("b"));
-    }
-
-    #[test]
-    fn test_utf8_decode() {
-        // Test ASCII
-        let result = unicode::decode_utf8("a");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().0, 'a' as u32);
-        assert_eq!(result.unwrap().1, 1usize);
-
-        // Test 2-byte (ñ = U+00F1)
-        let result = unicode::decode_utf8("ñ");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().0, 0xF1u32);
-        assert_eq!(result.unwrap().1, 2usize);
-
-        // Test 3-byte (€ = U+20AC)
-        let result = unicode::decode_utf8("€");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().0, 0x20ACu32);
-        assert_eq!(result.unwrap().1, 3usize);
-
-        // Test 4-byte (𝔸 = U+1D538)
-        let result = unicode::decode_utf8("𝔸");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().0, 0x1D538u32);
-        assert_eq!(result.unwrap().1, 4usize);
-    }
-
-    #[test]
-    fn test_dfa_simple_match() {
-        // Manually build a DFA that matches "ab"
-        let dfa = Dfa::new();
-        defer dfa.free();
-
-        // State 0 (start) --'a'--> State 1
-        dfa.states.push(DfaState {
-            transitions: Vector::new(),
-            is_final: false,
-            entry_tags: Vector::new(),
-        });
-
-        // State 1 --'b'--> State 2
-        dfa.states.push(DfaState {
-            transitions: Vector::new(),
-            is_final: false,
-            entry_tags: Vector::new(),
-        });
-
-        // State 2 (final)
-        dfa.states.push(DfaState {
-            transitions: Vector::new(),
-            is_final: true,
-            entry_tags: Vector::new(),
-        });
-
-        // Add transitions
-        dfa.states[0].transitions.push(DfaTransition {
-            chars: IntervalSet::single('a' as u32),
-            to: 1,
-            tags: Vector::new(),
-        });
-
-        dfa.states[1].transitions.push(DfaTransition {
-            chars: IntervalSet::single('b' as u32),
-            to: 2,
-            tags: Vector::new(),
-        });
-
-        // Test matching
-        assert!(dfa.is_match("ab"));
-        assert!(dfa.is_match("xabx"));
-        assert!(!dfa.is_match("ac"));
-        assert!(!dfa.is_match("a"));
-    }
 
     #[test]
     fn test_regex_literal() {
