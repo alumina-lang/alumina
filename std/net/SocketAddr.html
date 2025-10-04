@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="description" content=" Socket address (e.g. IP address and port)" />
+<meta name="description" content=" Socket address (e.g. IP address and port, or Unix domain socket path)" />
 <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png" />
 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
 <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
@@ -47,6 +47,9 @@
 <a href="/std/net/SocketAddr.html#item.with_flowinfo_and_scope">with_flowinfo_and_scope</a>
 </li>
 <li>
+<a href="/std/net/SocketAddr.html#item.unix">unix</a>
+</li>
+<li>
 <a href="/std/net/SocketAddr.html#item.set_port">set_port</a>
 </li>
 <li>
@@ -54,6 +57,9 @@
 </li>
 <li>
 <a href="/std/net/SocketAddr.html#item.ip">ip</a>
+</li>
+<li>
+<a href="/std/net/SocketAddr.html#item.unix_addr">unix_addr</a>
 </li>
 <li>
 <a href="/std/net/SocketAddr.html#item.parse">parse</a>
@@ -86,11 +92,11 @@
 <h3>
 <span class="keyword">struct</span> <span class="identifier-type">SocketAddr</span> { ... }</h3>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/address.alu#L404-L407"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/address.alu#L406-L409"/>source</a>
 </div>
 </div>
 <p>
-Socket address (e.g. IP address and port)
+Socket address (e.g. IP address and port, or Unix domain socket path)
 </p><p>
 </p>
 <h2 id="Field">Fields</h2>
@@ -121,7 +127,7 @@ inner: <a href="/std/net/address/internal/SocketAddrInner.html"><span class="ide
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">new</span>(addr: <a href="/std/net/address/IpAddr.html"><span class="identifier-type">IpAddr</span></a>, port: <a href="/std/builtins/u16.html"><span class="identifier-type">u16</span></a>) -> <a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/address.alu#L413-L433"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/address.alu#L415-L435"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -136,7 +142,7 @@ Create SocketAddr from IP address and port
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">with_flowinfo_and_scope</span>(addr: <a href="/std/net/address/Ipv6Addr.html"><span class="identifier-type">Ipv6Addr</span></a>, port: <a href="/std/builtins/u16.html"><span class="identifier-type">u16</span></a>, flowinfo: <a href="/std/builtins/u32.html"><span class="identifier-type">u32</span></a>, scope_id: <a href="/std/builtins/u32.html"><span class="identifier-type">u32</span></a>) -> <a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/address.alu#L436-L448"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/address.alu#L438-L450"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -147,16 +153,41 @@ Create SocketAddr from IPv6 address, port, flow info and scope ID.
 </div>
 </li>
 <li>
-<div class="signature" id="item.set_port">
+<div class="signature" id="item.unix">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">set_port</span>(self: &amp;<span class="keyword">mut</span> <a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>, port: <a href="/std/builtins/u16.html"><span class="identifier-type">u16</span></a>)</h4>
+<span class="keyword">fn</span> <span class="identifier-function">unix</span>(addr: <a href="/std/net/address/UnixAddr.html"><span class="identifier-type">UnixAddr</span></a>) -> <a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/address.alu#L451-L460"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/address.alu#L462-L467"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Sets the port number
+Create SocketAddr from a Unix domain socket address.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::net::{SocketAddr, UnixAddr};
+use std::fs::Path;
+
+let unix_addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+let addr = SocketAddr::unix(unix_addr);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3anet%3a%3a%7bSocketAddr%2c%20UnixAddr%7d%3b%0a%20%20%20%20use%20std%3a%3afs%3a%3aPath%3b%0a%20%20%20%20%0a%20%20%20%20let%20unix%5faddr%20%3d%20UnixAddr%3a%3afrom%5fpath%28Path%3a%3anew%28%22%2ftmp%2fmy%2esock%22%29%29%2eunwrap%28%29%3b%0a%20%20%20%20let%20addr%20%3d%20SocketAddr%3a%3aunix%28unix%5faddr%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.set_port">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">set_port</span>(self: &amp;<span class="keyword">mut</span> <a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>, port: <a href="/std/builtins/u16.html"><span class="identifier-type">u16</span></a>)</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/address.alu#L470-L482"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Sets the port number (only for IP addresses, panics for Unix addresses)
 </p><p>
 </p>
 </div>
@@ -164,14 +195,16 @@ Sets the port number
 <li>
 <div class="signature" id="item.port">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">port</span>(self: &amp;<a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>) -> <a href="/std/builtins/u16.html"><span class="identifier-type">u16</span></a></h4>
+<span class="keyword">fn</span> <span class="identifier-function">port</span>(self: &amp;<a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;<a href="/std/builtins/u16.html"><span class="identifier-type">u16</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/address.alu#L463-L469"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/address.alu#L487-L493"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Returns the port number
+Returns the port number for IP addresses.
+</p><p>
+Returns <code class="language-alumina">Option::none()</code> for Unix socket addresses.
 </p><p>
 </p>
 </div>
@@ -179,14 +212,33 @@ Returns the port number
 <li>
 <div class="signature" id="item.ip">
 <h4>
-<span class="keyword">fn</span> <span class="identifier-function">ip</span>(self: &amp;<a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>) -> <a href="/std/net/address/IpAddr.html"><span class="identifier-type">IpAddr</span></a></h4>
+<span class="keyword">fn</span> <span class="identifier-function">ip</span>(self: &amp;<a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;<a href="/std/net/address/IpAddr.html"><span class="identifier-type">IpAddr</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/address.alu#L472-L478"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/address.alu#L498-L504"/>source</a>
 </div>
 </div>
 <div class="item-doc">
 <p>
-Returns the IP address
+Returns the IP address for IP socket addresses.
+</p><p>
+Returns <code class="language-alumina">Option::none()</code> for Unix socket addresses.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.unix_addr">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">unix_addr</span>(self: &amp;<a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;<a href="/std/net/address/UnixAddr.html"><span class="identifier-type">UnixAddr</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/address.alu#L509-L523"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns the Unix socket address if this is a Unix socket address.
+</p><p>
+Returns <code class="language-alumina">Option::none()</code> for IP socket addresses.
 </p><p>
 </p>
 </div>
@@ -196,7 +248,7 @@ Returns the IP address
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">parse</span>(s: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;<a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>&gt;</h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/address.alu#L481-L523"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/address.alu#L526-L568"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -213,7 +265,7 @@ Parses a socket address from a string.
 F: <a href="/std/fmt/Formatter.html"><span class="identifier-type">Formatter</span></a>&lt;F&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/address.alu#L526-L542"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/address.alu#L571-L595"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -230,7 +282,7 @@ See <a class="path-link" href="/std/fmt/Formattable.html">Formattable</a> for de
 <h4>
 <span class="keyword">fn</span> <span class="identifier-function">equals</span>(self: &amp;<a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>, other: &amp;<a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>) -> <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a></h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/address.alu#L545-L547"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/address.alu#L598-L607"/>source</a>
 </div>
 </div>
 <div class="item-doc">
@@ -249,7 +301,7 @@ See <a class="path-link" href="/std/cmp/Equatable.html">Equatable</a> for detail
 H: <a href="/std/hash/Hasher.html"><span class="identifier-type">Hasher</span></a>&lt;H&gt;</div>
 </h4>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/address.alu#L550-L553"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/address.alu#L610-L621"/>source</a>
 </div>
 </div>
 <div class="item-doc">

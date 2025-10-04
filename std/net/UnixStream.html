@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>std::net::UnixStream - Alumina Docs</title>
+<link rel="stylesheet" href="/static/styles.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="description" content=" A Unix domain stream socket" />
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png" />
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
+<link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
+<link rel="manifest" href="/static/manifest.json" />
+<link rel="mask-icon" href="/static/safari-pinned-tab.svg" color="#5bbad5" />
+<link rel="shortcut icon" href="/static/favicon.ico" />
+<link rel="canonical" href="https://docs.alumina-lang.net/std/net/unix/UnixStream.html" />
+<meta name="msapplication-TileColor" content="#da532c" />
+<meta name="msapplication-config" content="/static/browserconfig.xml" />
+<meta name="description" content="Documentation for the Alumina standard library" />
+<script src="/static/site.js"></script>
+<script src="/search_index.js" async></script>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500&family=Source+Code+Pro:wght@400;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,700&display=swap" rel="stylesheet">
+</head>
+<body>
+<nav>
+<a href="/">
+<img width="100px" height="100px" class="logo" src="/static/logo.svg" alt="Alumina Docs">
+</a>
+<h1><a class="breadcrumbs" href="/std/">std</a>::<a class="breadcrumbs" href="/std/net/">net</a>::<a class="breadcrumbs" href="/std/net/unix/UnixStream.html">UnixStream</a></h1>
+</h1>
+<h2>Fields</h2>
+<ul>
+<li>
+<a href="/std/net/UnixStream.html#item.socket">socket</a>
+</li>
+</ul>
+<h2>Methods</h2>
+<ul>
+<li>
+<a href="/std/net/UnixStream.html#item.from_socket">from_socket</a>
+</li>
+<li>
+<a href="/std/net/UnixStream.html#item.connect">connect</a>
+</li>
+<li>
+<a href="/std/net/UnixStream.html#item.pair">pair</a>
+</li>
+<li>
+<a href="/std/net/UnixStream.html#item.socket_addr">socket_addr</a>
+</li>
+<li>
+<a href="/std/net/UnixStream.html#item.peer_addr">peer_addr</a>
+</li>
+<li>
+<a href="/std/net/UnixStream.html#item.shutdown">shutdown</a>
+</li>
+<li>
+<a href="/std/net/UnixStream.html#item.set_read_timeout">set_read_timeout</a>
+</li>
+<li>
+<a href="/std/net/UnixStream.html#item.read_timeout">read_timeout</a>
+</li>
+<li>
+<a href="/std/net/UnixStream.html#item.set_write_timeout">set_write_timeout</a>
+</li>
+<li>
+<a href="/std/net/UnixStream.html#item.write_timeout">write_timeout</a>
+</li>
+<li>
+<a href="/std/net/UnixStream.html#item.set_nonblocking">set_nonblocking</a>
+</li>
+<li>
+<a href="/std/net/UnixStream.html#item.close">close</a>
+</li>
+<li>
+<a href="/std/net/UnixStream.html#item.as_fd">as_fd</a>
+</li>
+<li>
+<a href="/std/net/UnixStream.html#item.read">read</a>
+</li>
+<li>
+<a href="/std/net/UnixStream.html#item.write">write</a>
+</li>
+<li>
+<a href="/std/net/UnixStream.html#item.flush">flush</a>
+</li>
+<li>
+<a href="/std/net/UnixStream.html#item.move">move</a>
+</li>
+</ul>
+</nav>
+<div class="main-container">
+<div id="search-container">
+<a class="mobile-only" href="/">
+<img width="40px" height="40px" class="logo" src="/static/logo.svg" alt="Alumina Docs">
+</a>
+<input id="search-input" class="search-input" autocomplete="off" spellcheck="false" placeholder="Search the documentation..." type="search"></input>
+</div>
+<div id="search-results"></div>
+<main id="main-content">
+<div class="main-title"><h1>Struct <a class="breadcrumbs" href="/std/">std</a>::<a class="breadcrumbs" href="/std/net/">net</a>::<a class="breadcrumbs" href="/std/net/unix/UnixStream.html">UnixStream</a></h1>
+</h1>
+<div class="defined-in badge">Re-export from <a href="/std/net/unix/UnixStream.html">std::net::unix::UnixStream</a></div>
+</div>
+<div class="signature" data-nosnippet>
+<h3>
+<span class="keyword">struct</span> <span class="identifier-type">UnixStream</span> { ... }</h3>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L1042-L1044"/>source</a>
+</div>
+</div>
+<p>
+A Unix domain stream socket
+</p><p>
+Unix domain sockets provide bidirectional communication between processes
+on the same machine using filesystem paths as addresses.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::net::{UnixStream, UnixAddr};
+use std::fs::Path;
+
+let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+let stream = UnixStream::connect(&amp;addr).unwrap();
+defer stream.close();
+
+stream.write_all("Hello!").unwrap();
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3anet%3a%3a%7bUnixStream%2c%20UnixAddr%7d%3b%0a%20%20%20%20use%20std%3a%3afs%3a%3aPath%3b%0a%20%20%20%20%0a%20%20%20%20let%20addr%20%3d%20UnixAddr%3a%3afrom%5fpath%28Path%3a%3anew%28%22%2ftmp%2fmy%2esock%22%29%29%2eunwrap%28%29%3b%0a%20%20%20%20let%20stream%20%3d%20UnixStream%3a%3aconnect%28%26addr%29%2eunwrap%28%29%3b%0a%20%20%20%20defer%20stream%2eclose%28%29%3b%0a%20%20%20%20%0a%20%20%20%20stream%2ewrite%5fall%28%22Hello%21%22%29%2eunwrap%28%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+<h2 id="Field">Fields</h2>
+<ul>
+<li>
+<div class="signature" id="item.socket">
+<h4>
+socket: <a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket</span></a></h4>
+</div>
+<div class="item-doc">
+</div>
+</li>
+</ul>
+<h2 id="Method">Methods</h2>
+<div class="signature impl-header"><h3>
+<span class="keyword">impl</span> <span class="identifier-type">UnixStream</span> { ... }</h3></div>
+<ul>
+<li>
+<div class="signature" id="item.from_socket">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">from_socket</span>(socket: <a href="/std/net/unix/Socket.html"><span class="identifier-type">Socket</span></a>) -> <a href="/std/net/unix/UnixStream.html"><span class="identifier-type">UnixStream</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L1048-L1050"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Creates a Unix stream socket from a raw socket.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.connect">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">connect</span>(addr: &amp;<a href="/std/net/address/UnixAddr.html"><span class="identifier-type">UnixAddr</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/net/unix/UnixStream.html"><span class="identifier-type">UnixStream</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L1063-L1074"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Connects to a Unix socket at the specified address.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::net::{UnixStream, UnixAddr};
+use std::fs::Path;
+
+let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+let stream = UnixStream::connect(&amp;addr).unwrap();
+defer stream.close();
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3anet%3a%3a%7bUnixStream%2c%20UnixAddr%7d%3b%0a%20%20%20%20use%20std%3a%3afs%3a%3aPath%3b%0a%20%20%20%20%0a%20%20%20%20let%20addr%20%3d%20UnixAddr%3a%3afrom%5fpath%28Path%3a%3anew%28%22%2ftmp%2fmy%2esock%22%29%29%2eunwrap%28%29%3b%0a%20%20%20%20let%20stream%20%3d%20UnixStream%3a%3aconnect%28%26addr%29%2eunwrap%28%29%3b%0a%20%20%20%20defer%20stream%2eclose%28%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.pair">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">pair</span>() -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;(<a href="/std/net/unix/UnixStream.html"><span class="identifier-type">UnixStream</span></a>, <a href="/std/net/unix/UnixStream.html"><span class="identifier-type">UnixStream</span></a>)&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L1095-L1120"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Creates a pair of connected Unix stream sockets.
+</p><p>
+This is similar to the <code class="language-alumina">socketpair</code> system call. The two sockets are
+already connected to each other and can communicate bidirectionally.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::net::UnixStream;
+
+let (sock1, sock2) = UnixStream::pair().unwrap();
+defer sock1.close();
+defer sock2.close();
+
+sock1.write_all("Hello from sock1!").unwrap();
+
+let buf: [u8; 128];
+let n = sock2.read(&amp;buf).unwrap();
+assert_eq!(buf[..n] as &amp;[u8], "Hello from sock1!");
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3anet%3a%3aUnixStream%3b%0a%20%20%20%20%0a%20%20%20%20let%20%28sock1%2c%20sock2%29%20%3d%20UnixStream%3a%3apair%28%29%2eunwrap%28%29%3b%0a%20%20%20%20defer%20sock1%2eclose%28%29%3b%0a%20%20%20%20defer%20sock2%2eclose%28%29%3b%0a%20%20%20%20%0a%20%20%20%20sock1%2ewrite%5fall%28%22Hello%20from%20sock1%21%22%29%2eunwrap%28%29%3b%0a%20%20%20%20%0a%20%20%20%20let%20buf%3a%20%5bu8%3b%20128%5d%3b%0a%20%20%20%20let%20n%20%3d%20sock2%2eread%28%26buf%29%2eunwrap%28%29%3b%0a%20%20%20%20assert%5feq%21%28buf%5b%2e%2en%5d%20as%20%26%5bu8%5d%2c%20%22Hello%20from%20sock1%21%22%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.socket_addr">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">socket_addr</span>(self: &amp;<a href="/std/net/unix/UnixStream.html"><span class="identifier-type">UnixStream</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L1136-L1138"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns the socket address of the local half of this connection.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::net::{UnixStream, UnixAddr};
+use std::fs::Path;
+
+let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+let stream = UnixStream::connect(&amp;addr).unwrap();
+defer stream.close();
+
+let local = stream.socket_addr().unwrap();
+println!("Local address: {}", local);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3anet%3a%3a%7bUnixStream%2c%20UnixAddr%7d%3b%0a%20%20%20%20use%20std%3a%3afs%3a%3aPath%3b%0a%20%20%20%20%0a%20%20%20%20let%20addr%20%3d%20UnixAddr%3a%3afrom%5fpath%28Path%3a%3anew%28%22%2ftmp%2fmy%2esock%22%29%29%2eunwrap%28%29%3b%0a%20%20%20%20let%20stream%20%3d%20UnixStream%3a%3aconnect%28%26addr%29%2eunwrap%28%29%3b%0a%20%20%20%20defer%20stream%2eclose%28%29%3b%0a%20%20%20%20%0a%20%20%20%20let%20local%20%3d%20stream%2esocket%5faddr%28%29%2eunwrap%28%29%3b%0a%20%20%20%20println%21%28%22Local%20address%3a%20%7b%7d%22%2c%20local%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.peer_addr">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">peer_addr</span>(self: &amp;<a href="/std/net/unix/UnixStream.html"><span class="identifier-type">UnixStream</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/net/address/SocketAddr.html"><span class="identifier-type">SocketAddr</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L1154-L1156"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Returns the socket address of the remote half of this connection.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::net::{UnixStream, UnixAddr};
+use std::fs::Path;
+
+let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+let stream = UnixStream::connect(&amp;addr).unwrap();
+defer stream.close();
+
+let peer = stream.peer_addr().unwrap();
+println!("Peer address: {}", peer);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3anet%3a%3a%7bUnixStream%2c%20UnixAddr%7d%3b%0a%20%20%20%20use%20std%3a%3afs%3a%3aPath%3b%0a%20%20%20%20%0a%20%20%20%20let%20addr%20%3d%20UnixAddr%3a%3afrom%5fpath%28Path%3a%3anew%28%22%2ftmp%2fmy%2esock%22%29%29%2eunwrap%28%29%3b%0a%20%20%20%20let%20stream%20%3d%20UnixStream%3a%3aconnect%28%26addr%29%2eunwrap%28%29%3b%0a%20%20%20%20defer%20stream%2eclose%28%29%3b%0a%20%20%20%20%0a%20%20%20%20let%20peer%20%3d%20stream%2epeer%5faddr%28%29%2eunwrap%28%29%3b%0a%20%20%20%20println%21%28%22Peer%20address%3a%20%7b%7d%22%2c%20peer%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.shutdown">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">shutdown</span>(self: &amp;<a href="/std/net/unix/UnixStream.html"><span class="identifier-type">UnixStream</span></a>, how: <a href="/std/net/unix/Shutdown.html"><span class="identifier-type">Shutdown</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L1172-L1174"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Shuts down the reading or writing end of the socket or both.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::net::{UnixStream, UnixAddr, Shutdown};
+use std::fs::Path;
+
+let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+let stream = UnixStream::connect(&amp;addr).unwrap();
+defer stream.close();
+
+stream.write_all("Hello!").unwrap();
+stream.shutdown(Shutdown::Write).unwrap();
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3anet%3a%3a%7bUnixStream%2c%20UnixAddr%2c%20Shutdown%7d%3b%0a%20%20%20%20use%20std%3a%3afs%3a%3aPath%3b%0a%20%20%20%20%0a%20%20%20%20let%20addr%20%3d%20UnixAddr%3a%3afrom%5fpath%28Path%3a%3anew%28%22%2ftmp%2fmy%2esock%22%29%29%2eunwrap%28%29%3b%0a%20%20%20%20let%20stream%20%3d%20UnixStream%3a%3aconnect%28%26addr%29%2eunwrap%28%29%3b%0a%20%20%20%20defer%20stream%2eclose%28%29%3b%0a%20%20%20%20%0a%20%20%20%20stream%2ewrite%5fall%28%22Hello%21%22%29%2eunwrap%28%29%3b%0a%20%20%20%20stream%2eshutdown%28Shutdown%3a%3aWrite%29%2eunwrap%28%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.set_read_timeout">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">set_read_timeout</span>(self: &amp;<a href="/std/net/unix/UnixStream.html"><span class="identifier-type">UnixStream</span></a>, duration: <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;<a href="/std/time/Duration.html"><span class="identifier-type">Duration</span></a>&gt;) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L1194-L1196"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Sets the read timeout for the socket.
+</p><p>
+If the provided duration is <code class="language-alumina">Option::none()</code>, then read operations will
+block indefinitely. Otherwise, read operations will time out after the
+specified duration.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::net::{UnixStream, UnixAddr};
+use std::fs::Path;
+use std::time::Duration;
+
+let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+let stream = UnixStream::connect(&amp;addr).unwrap();
+defer stream.close();
+
+stream.set_read_timeout(Option::some(Duration::from_secs(5))).unwrap();
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3anet%3a%3a%7bUnixStream%2c%20UnixAddr%7d%3b%0a%20%20%20%20use%20std%3a%3afs%3a%3aPath%3b%0a%20%20%20%20use%20std%3a%3atime%3a%3aDuration%3b%0a%20%20%20%20%0a%20%20%20%20let%20addr%20%3d%20UnixAddr%3a%3afrom%5fpath%28Path%3a%3anew%28%22%2ftmp%2fmy%2esock%22%29%29%2eunwrap%28%29%3b%0a%20%20%20%20let%20stream%20%3d%20UnixStream%3a%3aconnect%28%26addr%29%2eunwrap%28%29%3b%0a%20%20%20%20defer%20stream%2eclose%28%29%3b%0a%20%20%20%20%0a%20%20%20%20stream%2eset%5fread%5ftimeout%28Option%3a%3asome%28Duration%3a%3afrom%5fsecs%285%29%29%29%2eunwrap%28%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.read_timeout">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">read_timeout</span>(self: &amp;<a href="/std/net/unix/UnixStream.html"><span class="identifier-type">UnixStream</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;<a href="/std/time/Duration.html"><span class="identifier-type">Duration</span></a>&gt;&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L1216-L1218"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Gets the read timeout for the socket.
+</p><p>
+Returns <code class="language-alumina">Option::none()</code> if reads will block indefinitely.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::net::{UnixStream, UnixAddr};
+use std::fs::Path;
+
+let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+let stream = UnixStream::connect(&amp;addr).unwrap();
+defer stream.close();
+
+let timeout = stream.read_timeout().unwrap();
+if timeout.is_some() {
+    println!("Read timeout: {} seconds", timeout.unwrap().total_secs());
+}
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3anet%3a%3a%7bUnixStream%2c%20UnixAddr%7d%3b%0a%20%20%20%20use%20std%3a%3afs%3a%3aPath%3b%0a%20%20%20%20%0a%20%20%20%20let%20addr%20%3d%20UnixAddr%3a%3afrom%5fpath%28Path%3a%3anew%28%22%2ftmp%2fmy%2esock%22%29%29%2eunwrap%28%29%3b%0a%20%20%20%20let%20stream%20%3d%20UnixStream%3a%3aconnect%28%26addr%29%2eunwrap%28%29%3b%0a%20%20%20%20defer%20stream%2eclose%28%29%3b%0a%20%20%20%20%0a%20%20%20%20let%20timeout%20%3d%20stream%2eread%5ftimeout%28%29%2eunwrap%28%29%3b%0a%20%20%20%20if%20timeout%2eis%5fsome%28%29%20%7b%0a%20%20%20%20%20%20%20%20println%21%28%22Read%20timeout%3a%20%7b%7d%20seconds%22%2c%20timeout%2eunwrap%28%29%2etotal%5fsecs%28%29%29%3b%0a%20%20%20%20%7d%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.set_write_timeout">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">set_write_timeout</span>(self: &amp;<a href="/std/net/unix/UnixStream.html"><span class="identifier-type">UnixStream</span></a>, duration: <a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;<a href="/std/time/Duration.html"><span class="identifier-type">Duration</span></a>&gt;) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L1238-L1240"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Sets the write timeout for the socket.
+</p><p>
+If the provided duration is <code class="language-alumina">Option::none()</code>, then write operations will
+block indefinitely. Otherwise, write operations will time out after the
+specified duration.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::net::{UnixStream, UnixAddr};
+use std::fs::Path;
+use std::time::Duration;
+
+let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+let stream = UnixStream::connect(&amp;addr).unwrap();
+defer stream.close();
+
+stream.set_write_timeout(Option::some(Duration::from_secs(5))).unwrap();
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3anet%3a%3a%7bUnixStream%2c%20UnixAddr%7d%3b%0a%20%20%20%20use%20std%3a%3afs%3a%3aPath%3b%0a%20%20%20%20use%20std%3a%3atime%3a%3aDuration%3b%0a%20%20%20%20%0a%20%20%20%20let%20addr%20%3d%20UnixAddr%3a%3afrom%5fpath%28Path%3a%3anew%28%22%2ftmp%2fmy%2esock%22%29%29%2eunwrap%28%29%3b%0a%20%20%20%20let%20stream%20%3d%20UnixStream%3a%3aconnect%28%26addr%29%2eunwrap%28%29%3b%0a%20%20%20%20defer%20stream%2eclose%28%29%3b%0a%20%20%20%20%0a%20%20%20%20stream%2eset%5fwrite%5ftimeout%28Option%3a%3asome%28Duration%3a%3afrom%5fsecs%285%29%29%29%2eunwrap%28%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.write_timeout">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">write_timeout</span>(self: &amp;<a href="/std/net/unix/UnixStream.html"><span class="identifier-type">UnixStream</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/option/Option.html"><span class="identifier-type">Option</span></a>&lt;<a href="/std/time/Duration.html"><span class="identifier-type">Duration</span></a>&gt;&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L1260-L1262"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Gets the write timeout for the socket.
+</p><p>
+Returns <code class="language-alumina">Option::none()</code> if writes will block indefinitely.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::net::{UnixStream, UnixAddr};
+use std::fs::Path;
+
+let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+let stream = UnixStream::connect(&amp;addr).unwrap();
+defer stream.close();
+
+let timeout = stream.write_timeout().unwrap();
+if timeout.is_some() {
+    println!("Write timeout: {} seconds", timeout.unwrap().total_secs());
+}
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3anet%3a%3a%7bUnixStream%2c%20UnixAddr%7d%3b%0a%20%20%20%20use%20std%3a%3afs%3a%3aPath%3b%0a%20%20%20%20%0a%20%20%20%20let%20addr%20%3d%20UnixAddr%3a%3afrom%5fpath%28Path%3a%3anew%28%22%2ftmp%2fmy%2esock%22%29%29%2eunwrap%28%29%3b%0a%20%20%20%20let%20stream%20%3d%20UnixStream%3a%3aconnect%28%26addr%29%2eunwrap%28%29%3b%0a%20%20%20%20defer%20stream%2eclose%28%29%3b%0a%20%20%20%20%0a%20%20%20%20let%20timeout%20%3d%20stream%2ewrite%5ftimeout%28%29%2eunwrap%28%29%3b%0a%20%20%20%20if%20timeout%2eis%5fsome%28%29%20%7b%0a%20%20%20%20%20%20%20%20println%21%28%22Write%20timeout%3a%20%7b%7d%20seconds%22%2c%20timeout%2eunwrap%28%29%2etotal%5fsecs%28%29%29%3b%0a%20%20%20%20%7d%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.set_nonblocking">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">set_nonblocking</span>(self: &amp;<span class="keyword">mut</span> <a href="/std/net/unix/UnixStream.html"><span class="identifier-type">UnixStream</span></a>, nonblocking: <a href="/std/builtins/bool.html"><span class="identifier-type">bool</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L1280-L1282"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Sets the socket to non-blocking or blocking mode.
+</p><p>
+In non-blocking mode, read and write operations will return immediately
+with an error if they would block.
+</p><p>
+</p>
+<h3> Example</h3>
+<p>
+<pre class="with-playground-link"><code class="language-alumina">use std::net::{UnixStream, UnixAddr};
+use std::fs::Path;
+
+let addr = UnixAddr::from_path(Path::new("/tmp/my.sock")).unwrap();
+let stream = UnixStream::connect(&amp;addr).unwrap();
+defer stream.close();
+
+stream.set_nonblocking(true).unwrap();
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3anet%3a%3a%7bUnixStream%2c%20UnixAddr%7d%3b%0a%20%20%20%20use%20std%3a%3afs%3a%3aPath%3b%0a%20%20%20%20%0a%20%20%20%20let%20addr%20%3d%20UnixAddr%3a%3afrom%5fpath%28Path%3a%3anew%28%22%2ftmp%2fmy%2esock%22%29%29%2eunwrap%28%29%3b%0a%20%20%20%20let%20stream%20%3d%20UnixStream%3a%3aconnect%28%26addr%29%2eunwrap%28%29%3b%0a%20%20%20%20defer%20stream%2eclose%28%29%3b%0a%20%20%20%20%0a%20%20%20%20stream%2eset%5fnonblocking%28true%29%2eunwrap%28%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.close">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">close</span>(self: &amp;<span class="keyword">mut</span> <a href="/std/net/unix/UnixStream.html"><span class="identifier-type">UnixStream</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L1285-L1287"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Closes the socket.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.as_fd">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">as_fd</span>(self: &amp;<a href="/std/net/unix/UnixStream.html"><span class="identifier-type">UnixStream</span></a>) -> <a href="/std/io/unix/FileDescriptor.html"><span class="identifier-type">FileDescriptor</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L1290-L1292"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+</div>
+</li>
+<li>
+<div class="signature" id="item.read">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">read</span>(self: &amp;<span class="keyword">mut</span> <a href="/std/net/unix/UnixStream.html"><span class="identifier-type">UnixStream</span></a>, buf: &amp;<span class="keyword">mut</span> [<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L1295-L1297"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Reads from the stream into a provided buffer.
+</p><p>
+If successful, returns the number of bytes read. This may be less than the size
+of the provided buffer.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.write">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">write</span>(self: &amp;<span class="keyword">mut</span> <a href="/std/net/unix/UnixStream.html"><span class="identifier-type">UnixStream</span></a>, buf: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L1300-L1302"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Write the buffer to the stream.
+</p><p>
+Returns the number of bytes written. This may be less than the size of the buffer.
+See also <a class="path-link" href="/std/io/Writable.html#item.write_all">write_all</a>, which can be used to write the entire buffer.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.flush">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">flush</span>(self: &amp;<span class="keyword">mut</span> <a href="/std/net/unix/UnixStream.html"><span class="identifier-type">UnixStream</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L1305-L1307"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Flush the stream
+</p><p>
+This may be a no-op, depending on the stream.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.move">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">move</span>(self: &amp;<span class="keyword">mut</span> <a href="/std/net/unix/UnixStream.html"><span class="identifier-type">UnixStream</span></a>) -> <a href="/std/net/unix/UnixStream.html"><span class="identifier-type">UnixStream</span></a></h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/net/unix.alu#L1310-L1312"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Creates a copy of the object, leaving an inert object behind.
+</p><p>
+See <a class="path-link" href="/std/mem/Movable.html">Movable</a> for details.
+</p><p>
+</p>
+</div>
+</li>
+</ul>
+<h2 id="Mixin">Mixins</h2>
+<div class="signature impl-header"><h3>
+<span class="keyword">impl</span> <span class="identifier-type">UnixStream</span> { ... }</h3></div>
+<ul>
+<li>
+<div class="signature" id="item.mixin FdReadWrite<UnixStream>;">
+<h4>
+<span class="keyword">mixin</span> <a href="/std/io/unix/FdReadWrite.html"><span class="identifier-type">FdReadWrite</span></a>&lt;<a href="/std/net/unix/UnixStream.html"><span class="identifier-type">UnixStream</span></a>&gt;</h4>
+</div>
+<div class="item-doc">
+</div>
+</li>
+<li>
+<div class="signature" id="item.mixin io::Readable<UnixStream>;">
+<h4>
+<span class="keyword">mixin</span> <a href="/std/io/Readable.html"><span class="identifier-type">Readable</span></a>&lt;<a href="/std/net/unix/UnixStream.html"><span class="identifier-type">UnixStream</span></a>&gt;</h4>
+</div>
+<div class="item-doc">
+</div>
+</li>
+<ul class="mixin-methods">
+<li>
+<div class="signature" id="item.read_exact">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">read_exact</span>(self: &amp;<span class="keyword">mut</span> <a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>, buf: &amp;<span class="keyword">mut</span> [<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/io/mod.alu#L122-L124"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Fills the provided buffer by reading from the stream.
+</p><p>
+If stream had less bytes available than the size of the buffer, this method
+will return an <code class="language-alumina">Error::eof()</code>.
+</p><p>
+</p>
+</div>
+</li>
+<li>
+<div class="signature" id="item.read_to_end">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">read_to_end</span>(self: &amp;<span class="keyword">mut</span> <a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>, buf: &amp;<span class="keyword">mut</span> <a href="/std/string/StringBuf.html"><span class="identifier-type">StringBuf</span></a>) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/usize.html"><span class="identifier-type">usize</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/io/mod.alu#L129-L157"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Reads the entire stream into a <code class="language-alumina">StringBuf</code>.
+</p><p>
+If successful, returns the number of bytes that were read.
+</p><p>
+</p>
+</div>
+</li>
+</ul>
+<li>
+<div class="signature" id="item.mixin io::Writable<UnixStream>;">
+<h4>
+<span class="keyword">mixin</span> <a href="/std/io/Writable.html"><span class="identifier-type">Writable</span></a>&lt;<a href="/std/net/unix/UnixStream.html"><span class="identifier-type">UnixStream</span></a>&gt;</h4>
+</div>
+<div class="item-doc">
+</div>
+</li>
+<ul class="mixin-methods">
+<li>
+<div class="signature" id="item.write_all">
+<h4>
+<span class="keyword">fn</span> <span class="identifier-function">write_all</span>(self: &amp;<span class="keyword">mut</span> <a href="/std/typing/Self.html"><span class="identifier-type">Self</span></a>, buf: &amp;[<a href="/std/builtins/u8.html"><span class="identifier-type">u8</span></a>]) -> <a href="/std/io/#item.Result"><span class="identifier-type">Result</span></a>&lt;<a href="/std/builtins/void.html"><span class="identifier-type">()</span></a>&gt;</h4>
+<div class="source-link">
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/io/mod.alu#L171-L182"/>source</a>
+</div>
+</div>
+<div class="item-doc">
+<p>
+Writes all the bytes in the buffer to the stream.
+</p><p>
+If EOF is reached, returns <code class="language-alumina">Error::eof()</code>.
+</p><p>
+</p>
+</div>
+</li>
+</ul>
+</ul>
+</main>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.28.0/prism.min.js" integrity="sha512-RDQSW3KoqJMiX0L/UBgwBmH1EmRYp8LBOiLaA8rBHIy+7OGP/7Gxg8vbt8wG4ZYd29P0Fnoq6+LOytCqx3cyoQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="/static/prism-alumina.js"></script>
+</body>
+</html>
