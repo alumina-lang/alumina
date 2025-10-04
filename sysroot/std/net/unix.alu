@@ -316,7 +316,7 @@ impl TcpStream {
     /// Sets the time-to-live (TTL) value for the socket.
     ///
     /// This value controls the number of hops (routers) that packets can traverse
-    /// before being discarded.
+    /// before being discarded. Works for both IPv4 and IPv6 sockets.
     ///
     /// ## Example
     /// ```no_run
@@ -330,10 +330,12 @@ impl TcpStream {
     /// assert_eq!(stream.ttl().unwrap(), 64);
     /// ```
     fn set_ttl(self: &TcpStream, ttl: u32) -> Result<()> {
-        internal::set_opt_int(&self.socket, libc::IPPROTO_IP, libc::IP_TTL, ttl as libc::c_int)
+        internal::set_ttl(&self.socket, ttl)
     }
 
     /// Gets the time-to-live (TTL) value for the socket.
+    ///
+    /// Works for both IPv4 and IPv6 sockets.
     ///
     /// ## Example
     /// ```no_run
@@ -347,8 +349,7 @@ impl TcpStream {
     /// println!("TTL: {}", ttl);
     /// ```
     fn ttl(self: &TcpStream) -> Result<u32> {
-        internal::get_opt_int(&self.socket, libc::IPPROTO_IP, libc::IP_TTL)
-            .map(|v: libc::c_int| -> u32 { v as u32 })
+        internal::get_ttl(&self.socket)
     }
 
     /// Sets the value of the `TCP_NODELAY` option for this socket.
@@ -619,7 +620,7 @@ impl TcpListener {
     /// Sets the time-to-live (TTL) value for the socket.
     ///
     /// This value controls the number of hops (routers) that packets can traverse
-    /// before being discarded.
+    /// before being discarded. Works for both IPv4 and IPv6 sockets.
     ///
     /// ## Example
     /// ```no_run
@@ -633,10 +634,12 @@ impl TcpListener {
     /// assert_eq!(listener.ttl().unwrap(), 64);
     /// ```
     fn set_ttl(self: &TcpListener, ttl: u32) -> Result<()> {
-        internal::set_opt_int(&self.socket, libc::IPPROTO_IP, libc::IP_TTL, ttl as libc::c_int)
+        internal::set_ttl(&self.socket, ttl)
     }
 
     /// Gets the time-to-live (TTL) value for the socket.
+    ///
+    /// Works for both IPv4 and IPv6 sockets.
     ///
     /// ## Example
     /// ```no_run
@@ -650,8 +653,7 @@ impl TcpListener {
     /// println!("TTL: {}", ttl);
     /// ```
     fn ttl(self: &TcpListener) -> Result<u32> {
-        internal::get_opt_int(&self.socket, libc::IPPROTO_IP, libc::IP_TTL)
-            .map(|v: libc::c_int| -> u32 { v as u32 })
+        internal::get_ttl(&self.socket)
     }
 
     /// Sets the socket to non-blocking or blocking mode.
@@ -871,7 +873,7 @@ impl UdpSocket {
     /// Sets the time-to-live (TTL) value for the socket.
     ///
     /// This value controls the number of hops (routers) that packets can traverse
-    /// before being discarded.
+    /// before being discarded. Works for both IPv4 and IPv6 sockets.
     ///
     /// ## Example
     /// ```no_run
@@ -885,10 +887,12 @@ impl UdpSocket {
     /// assert_eq!(socket.ttl().unwrap(), 64);
     /// ```
     fn set_ttl(self: &UdpSocket, ttl: u32) -> Result<()> {
-        internal::set_opt_int(&self.socket, libc::IPPROTO_IP, libc::IP_TTL, ttl as libc::c_int)
+        internal::set_ttl(&self.socket, ttl)
     }
 
     /// Gets the time-to-live (TTL) value for the socket.
+    ///
+    /// Works for both IPv4 and IPv6 sockets.
     ///
     /// ## Example
     /// ```no_run
@@ -902,8 +906,7 @@ impl UdpSocket {
     /// println!("TTL: {}", ttl);
     /// ```
     fn ttl(self: &UdpSocket) -> Result<u32> {
-        internal::get_opt_int(&self.socket, libc::IPPROTO_IP, libc::IP_TTL)
-            .map(|v: libc::c_int| -> u32 { v as u32 })
+        internal::get_ttl(&self.socket)
     }
 
     /// Sets the read timeout for the socket.
@@ -1117,6 +1120,27 @@ mod internal {
             Result::ok(Option::some(time::Duration::from_secs(tv.tv_sec).add(&time::Duration::from_nanos(util::cast(tv.tv_usec) * 1000))))
         }
     }
+
+    /// Sets TTL for either IPv4 or IPv6 socket based on socket address family.
+    fn set_ttl(socket: &Socket, ttl: u32) -> Result<()> {
+        let addr = socket.socket_addr()?;
+        switch addr.kind {
+            AddrKind::V4 => set_opt_int(socket, libc::IPPROTO_IP, libc::IP_TTL, ttl as libc::c_int),
+            AddrKind::V6 => set_opt_int(socket, libc::IPPROTO_IPV6, libc::IPV6_UNICAST_HOPS, ttl as libc::c_int),
+            _ => unreachable!()
+        }
+    }
+
+    /// Gets TTL for either IPv4 or IPv6 socket based on socket address family.
+    fn get_ttl(socket: &Socket) -> Result<u32> {
+        let addr = socket.socket_addr()?;
+        let value = switch addr.kind {
+            AddrKind::V4 => get_opt_int(socket, libc::IPPROTO_IP, libc::IP_TTL)?,
+            AddrKind::V6 => get_opt_int(socket, libc::IPPROTO_IPV6, libc::IPV6_UNICAST_HOPS)?,
+            _ => unreachable!()
+        };
+        Result::ok(value as u32)
+    }
 }
 
 #[cfg(all(test, test_std))]
@@ -1328,12 +1352,21 @@ mod tests {
 
     #[test]
     fn test_tcp_listener_ttl() {
+        // Test IPv4
         let addr = SocketAddr::parse("127.0.0.1:0").unwrap();
         let listener = TcpListener::bind(&addr).unwrap();
         defer listener.close();
 
         listener.set_ttl(64).unwrap();
         assert_eq!(listener.ttl().unwrap(), 64);
+
+        // Test IPv6
+        let addr6 = SocketAddr::parse("[::1]:0").unwrap();
+        let listener6 = TcpListener::bind(&addr6).unwrap();
+        defer listener6.close();
+
+        listener6.set_ttl(64).unwrap();
+        assert_eq!(listener6.ttl().unwrap(), 64);
     }
 
     #[test]
@@ -1371,6 +1404,7 @@ mod tests {
 
     #[test]
     fn test_udp_ttl() {
+        // Test IPv4
         let addr = SocketAddr::parse("127.0.0.1:0").unwrap();
         let socket = UdpSocket::bind(&addr).unwrap();
         defer socket.close();
@@ -1380,6 +1414,17 @@ mod tests {
 
         socket.set_ttl(128).unwrap();
         assert_eq!(socket.ttl().unwrap(), 128);
+
+        // Test IPv6
+        let addr6 = SocketAddr::parse("[::1]:0").unwrap();
+        let socket6 = UdpSocket::bind(&addr6).unwrap();
+        defer socket6.close();
+
+        socket6.set_ttl(64).unwrap();
+        assert_eq!(socket6.ttl().unwrap(), 64);
+
+        socket6.set_ttl(128).unwrap();
+        assert_eq!(socket6.ttl().unwrap(), 128);
     }
 
     #[test]
