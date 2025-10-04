@@ -767,13 +767,17 @@ impl UnixAddr {
         let addr = mem::zeroed::<libc::sockaddr_un>();
         addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
 
+        let len: usize;
+
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        let len = 2usize; // just sun_family
+        {
+            len = 2; // just sun_family
+        }
 
         #[cfg(any(target_os = "macos"))]
         {
             addr.sun_len = 2u8; // sun_len + sun_family
-            let len = 2usize;
+            len = 2;
         }
 
         UnixAddr { inner: addr, len: len }
