@@ -227,18 +227,25 @@ impl Regex {
             let (end_pos, tag_positions) = result.unwrap();
 
             // Build Captures object
-            let positions: Vector<(usize, usize)> = Vector::new();
+            let positions: Vector<Option<(usize, usize)>> = Vector::new();
 
             // Set group 0 (full match)
-            positions.push((start_pos, end_pos));
+            positions.push(Option::some((start_pos, end_pos)));
 
             // Set user groups from tag positions
+            // Note: For alternations like (a)|(b), only the matched branch will have valid positions.
+            // Unmatched groups have start > end and should be represented as None.
             for group_id in 1usize..self._num_groups {
                 let start_tag = 2usize * group_id;
                 let end_tag = 2usize * group_id + 1usize;
                 let group_start = tag_positions[start_tag];
                 let group_end = tag_positions[end_tag];
-                positions.push((group_start, group_end));
+                // Only valid positions (start <= end) represent actual matches
+                if group_start <= group_end {
+                    positions.push(Option::some((group_start, group_end)));
+                } else {
+                    positions.push(Option::none());
+                }
             }
 
             tag_positions.free();
@@ -273,8 +280,8 @@ struct Captures {
     /// Start and end positions for each capture group
     ///
     /// Group 0 is the full match, groups 1+ are user groups
-    /// `positions[i] = (start, end)` for group `i`
-    _positions: Vector<(usize, usize)>,
+    /// `positions[i]` is `Option::some((start, end))` if group `i` matched, `Option::none()` otherwise
+    _positions: Vector<Option<(usize, usize)>>,
 }
 
 impl Captures {
@@ -312,8 +319,8 @@ impl Captures {
     /// ```
     fn get(self: &Captures, group: usize) -> Option<&[u8]> {
         use option::try;
-
-        let (start, end) = self._positions.get(group)?;
+        let pos = self._positions.get(group)?;
+        let (start, end) = pos?;
         Option::some(self._text[start..end])
     }
 
@@ -331,7 +338,9 @@ impl Captures {
     /// assert_eq!(caps.get_pos(1).unwrap(), (3usize, 6usize));
     /// ```
     fn get_pos(self: &Captures, group: usize) -> Option<(usize, usize)> {
-        self._positions.get(group)
+        use option::try;
+        let opt_pos = self._positions.get(group)?;
+        opt_pos
     }
 
     /// Get the number of capture groups (including group 0 for full match)
