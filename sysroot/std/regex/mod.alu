@@ -2579,6 +2579,175 @@ mod tests {
     }
 
     #[test]
+    fn test_regex_anchor_in_alternation() {
+        // Anchor at start with grouped alternation
+        let re = Regex::compile("^(foo|bar)");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("foo"));
+        assert!(re.is_match("foobar"));     // Matches ^foo
+        assert!(re.is_match("bar"));         // Matches ^bar
+        assert!(re.is_match("barfoo"));      // Matches ^bar
+        assert!(!re.is_match("xfoo"));       // Requires start
+        assert!(!re.is_match("xbar"));       // Requires start
+
+        // Anchor at end with grouped alternation
+        let re2 = Regex::compile("(foo|bar)$");
+        assert!(re2.is_ok());
+        let re2 = re2.unwrap();
+        defer re2.free();
+
+        assert!(re2.is_match("foo"));
+        assert!(re2.is_match("xfoo"));       // Matches foo$
+        assert!(re2.is_match("bar"));        // Matches bar$
+        assert!(re2.is_match("xbar"));       // Matches bar$
+        assert!(!re2.is_match("foox"));      // Requires end
+        assert!(!re2.is_match("barx"));      // Requires end
+    }
+
+    #[test]
+    fn test_regex_anchor_in_group() {
+        // Anchor inside parentheses
+        let re = Regex::compile("^foo(bar|$)");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("foo"));        // Matches ^foo followed by $
+        assert!(re.is_match("foobar"));     // Matches ^foo followed by bar
+        assert!(!re.is_match("foobaz"));    // Doesn't match bar or $
+        assert!(!re.is_match("barfoo"));    // Doesn't start with foo
+        assert!(!re.is_match("xfoo"));      // Doesn't start with ^
+    }
+
+    #[test]
+    fn test_regex_anchor_multiple_in_pattern() {
+        // Multiple anchors in complex patterns
+        let re = Regex::compile("^(start|$)");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match(""));           // Matches ^$
+        assert!(re.is_match("start"));      // Matches ^start
+        assert!(re.is_match("startx"));     // Matches ^start
+        assert!(!re.is_match("xstart"));    // Doesn't start with start
+
+        // Anchor at end inside group
+        let re2 = Regex::compile("foo(bar$|baz)");
+        assert!(re2.is_ok());
+        let re2 = re2.unwrap();
+        defer re2.free();
+
+        assert!(re2.is_match("foobar"));    // Matches foobar$
+        assert!(re2.is_match("foobaz"));    // Matches foobaz
+        assert!(re2.is_match("xfoobaz"));   // Matches foobaz anywhere
+        assert!(re2.is_match("xfoobar"));   // Matches foobar$ at end
+        assert!(!re2.is_match("foobarx"));  // bar$ requires end of string
+        assert!(re2.is_match("foobazx"));   // Matches foobaz (baz alternative)
+    }
+
+    #[test]
+    fn test_regex_escaped_anchor() {
+        // Escaped anchors should match literal characters
+        let re = Regex::compile("\\^foo");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("^foo"));
+        assert!(!re.is_match("foo"));
+        assert!(re.is_match("x^foo"));      // Can match anywhere
+
+        let re2 = Regex::compile("foo\\$");
+        assert!(re2.is_ok());
+        let re2 = re2.unwrap();
+        defer re2.free();
+
+        assert!(re2.is_match("foo$"));
+        assert!(!re2.is_match("foo"));
+        assert!(re2.is_match("foo$x"));     // Can match anywhere
+    }
+
+    #[test]
+    fn test_regex_anchor_with_quantifiers() {
+        // Anchors with quantifiers
+        let re = Regex::compile("^a+$");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("a"));
+        assert!(re.is_match("aaa"));
+        assert!(!re.is_match(""));
+        assert!(!re.is_match("ab"));
+        assert!(!re.is_match("ba"));
+
+        // Anchor in repetition group
+        let re2 = Regex::compile("(^foo)+");
+        assert!(re2.is_ok());
+        let re2 = re2.unwrap();
+        defer re2.free();
+
+        // Note: (^foo)+ can only match once since ^ only matches at position 0
+        assert!(re2.is_match("foo"));
+        assert!(re2.is_match("foofoo"));    // First foo matches ^foo, but can't repeat ^
+    }
+
+    #[test]
+    fn test_regex_anchor_edge_cases() {
+        // Just anchor
+        let re = Regex::compile("^");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match(""));
+        assert!(re.is_match("anything"));
+
+        let re2 = Regex::compile("$");
+        assert!(re2.is_ok());
+        let re2 = re2.unwrap();
+        defer re2.free();
+
+        assert!(re2.is_match(""));
+        assert!(re2.is_match("anything"));
+
+        // Both anchors only
+        let re3 = Regex::compile("^$");
+        assert!(re3.is_ok());
+        let re3 = re3.unwrap();
+        defer re3.free();
+
+        assert!(re3.is_match(""));
+        assert!(!re3.is_match("x"));
+    }
+
+    #[test]
+    fn test_regex_anchor_with_captures() {
+        // Anchors with capture groups
+        let re = Regex::compile("^(\\w+)@(\\w+)$");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("user@domain");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "user@domain");
+        assert_eq!(caps.get(1).unwrap(), "user");
+        assert_eq!(caps.get(2).unwrap(), "domain");
+
+        // Should not match if not anchored
+        let caps2 = re.captures("prefix user@domain suffix");
+        assert!(caps2.is_none());
+    }
+
+    #[test]
     fn test_regex_simple_capture() {
         let re = Regex::compile("(ab)c");
         assert!(re.is_ok());
