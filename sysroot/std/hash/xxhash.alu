@@ -10,6 +10,64 @@ fn round(acc: u64, input: u64) -> u64 {
     ((acc + (input * PRIME_2)).rotate_left(31)) * PRIME_1
 }
 
+// Helper to read u64 from byte slice at offset (const-friendly)
+#[inline]
+fn read_u64_at(input: &[u8], offset: usize) -> u64 {
+    if std::runtime::in_const_context() {
+        // In const context, build array and use type punning
+        let bytes: [u8; 8] = [
+            input[offset],
+            input[offset + 1],
+            input[offset + 2],
+            input[offset + 3],
+            input[offset + 4],
+            input[offset + 5],
+            input[offset + 6],
+            input[offset + 7],
+        ];
+        intrinsics::transmute::<[u8; 8], u64>(bytes).to_le()
+    } else {
+        (*(&input[offset] as &u64)).to_le()
+    }
+}
+
+// Helper to read u32 from byte slice at offset (const-friendly)
+#[inline]
+fn read_u32_at(input: &[u8], offset: usize) -> u32 {
+    if std::runtime::in_const_context() {
+        let bytes: [u8; 4] = [
+            input[offset],
+            input[offset + 1],
+            input[offset + 2],
+            input[offset + 3],
+        ];
+        (*(&bytes as &u32)).to_le()
+    } else {
+        (*(&input[offset] as &u32)).to_le()
+    }
+}
+
+// Helper to copy bytes into u64 array (const-friendly)
+#[inline]
+fn copy_to_mem(mem: &mut [u64; 4], mem_size: usize, input: &[u8]) {
+    if std::runtime::in_const_context() {
+        // Convert to bytes, copy, convert back
+        let mem_bytes: [u8; 32] = std::intrinsics::transmute::<[u64; 4], [u8; 32]>(*mem);
+        let i = 0usize;
+        loop {
+            if i >= input.len() {
+                break;
+            }
+            mem_bytes[mem_size + i] = input[i];
+            i += 1;
+        }
+        *mem = std::intrinsics::transmute::<[u8; 32], [u64; 4]>(mem_bytes);
+    } else {
+        // At runtime, use pointer arithmetic (in-place)
+        input.copy_to_nonoverlapping((&mem[0] as &mut u8) + mem_size);
+    }
+}
+
 #[inline]
 fn merge_round(acc: u64, val: u64) -> u64 {
     acc ^= round(0, val);
@@ -60,14 +118,14 @@ impl Xxh64 {
         self.total_len += input.len();
 
         if (self.mem_size + input.len()) < CHUNK_SIZE {
-            input.copy_to_nonoverlapping((&self.mem[0] as &mut u8) + self.mem_size);
+            copy_to_mem(&self.mem, self.mem_size, input);
             self.mem_size += input.len();
             return
         }
 
         if self.mem_size > 0 {
             let fill_len = CHUNK_SIZE - self.mem_size;
-            input[0..fill_len].copy_to_nonoverlapping((&self.mem[0] as &mut u8) + self.mem_size);
+            copy_to_mem(&self.mem, self.mem_size, input[0..fill_len]);
 
             self.v1 = round(self.v1, self.mem[0].to_le());
             self.v2 = round(self.v2, self.mem[1].to_le());
@@ -80,14 +138,11 @@ impl Xxh64 {
 
         if input.len() >= CHUNK_SIZE {
             loop {
-                self.v1 = round(self.v1, (*(&input[0] as &u64)).to_le());
-                input = input[8..];
-                self.v2 = round(self.v2, (*(&input[0] as &u64)).to_le());
-                input = input[8..];
-                self.v3 = round(self.v3, (*(&input[0] as &u64)).to_le());
-                input = input[8..];
-                self.v4 = round(self.v4, (*(&input[0] as &u64)).to_le());
-                input = input[8..];
+                self.v1 = round(self.v1, read_u64_at(input, 0));
+                self.v2 = round(self.v2, read_u64_at(input, 8));
+                self.v3 = round(self.v3, read_u64_at(input, 16));
+                self.v4 = round(self.v4, read_u64_at(input, 24));
+                input = input[32..];
 
                 if input.len() < CHUNK_SIZE {
                     break;
@@ -96,7 +151,7 @@ impl Xxh64 {
         }
 
         if input.len() > 0 {
-            input.copy_to_nonoverlapping(&self.mem[0] as &mut u8);
+            copy_to_mem(&self.mem, 0, input);
             self.mem_size = input.len();
         }
     }
@@ -120,23 +175,30 @@ impl Xxh64 {
 
         result = result + (self.total_len as u64);
 
-        let remainder = std::mem::slice::from_raw(&self.mem[0] as &u8, self.mem_size);
+        let remainder = if runtime::in_const_context() {
+            let mem_bytes: [u8; 32] = std::intrinsics::transmute::<[u64; 4], [u8; 32]>(self.mem);
+            mem_bytes[0..self.mem_size] as &[u8]
+        } else {
+            std::mem::slice::from_raw(&self.mem[0] as &u8, self.mem_size)
+        };
+        let offset = 0usize;
 
-        while remainder.len() >= 8 {
-            result ^= round(0, (*(&remainder[0] as &u64)).to_le());
-            remainder = remainder[8..];
+        while (remainder.len() - offset) >= 8 {
+            result ^= round(0, read_u64_at(remainder, offset));
+            offset += 8;
             result = (result.rotate_left(27)) * PRIME_1 + PRIME_4
         }
 
-        if remainder.len() >= 4 {
-            result ^= ((*(&remainder[0] as &u32)).to_le() as u64) * PRIME_1;
-            remainder = remainder[4..];
+        if (remainder.len() - offset) >= 4 {
+            result ^= (read_u32_at(remainder, offset) as u64) * PRIME_1;
+            offset += 4;
             result = (result.rotate_left(23)) * PRIME_2 + PRIME_3;
         }
 
-        for byte in remainder {
-            result ^= (byte as u64) * PRIME_5;
+        while offset < remainder.len() {
+            result ^= (remainder[offset] as u64) * PRIME_5;
             result = (result.rotate_left(11)) * PRIME_1;
+            offset += 1;
         }
 
         avalanche(result)

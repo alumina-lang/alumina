@@ -124,6 +124,10 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
             .expect("reverse lookup failed")
     }
 
+    pub fn malloc_bag(&self) -> &MallocBag<'ir> {
+        &self.malloc_bag
+    }
+
     fn map_attribute(&self, attr: &ast::Attribute<'ast>) -> ast::Attribute<'ir> {
         match attr {
             Attribute::Export => Attribute::Export,
@@ -1895,7 +1899,7 @@ impl<'ast, 'ir> Mono<'_, 'ast, 'ir> {
             }
         });
 
-        let old_item = std::mem::replace(&mut self.current, Some(item));
+        let old_item = self.current.replace(item);
         let ret = self.mono_item_type(key, item, signature_only);
         self.current = old_item;
         ret?;

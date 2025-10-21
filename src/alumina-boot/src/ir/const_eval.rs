@@ -17,7 +17,7 @@ use std::rc::Rc;
 use thiserror::Error;
 
 const MAX_RECURSION_DEPTH: usize = 100;
-const MAX_ITERATIONS: usize = 100000;
+const MAX_ITERATIONS: usize = 1000000;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Value<'ir> {
@@ -890,6 +890,126 @@ impl<'ir> ConstEvaluator<'ir> {
         }
     }
 
+    /// Convert a primitive value to its native-endian byte representation
+    fn value_to_bytes(&self, value: Value<'ir>) -> Result<Vec<u8>, AluminaError> {
+        match value {
+            Value::U8(v) => Ok(vec![v]),
+            Value::U16(v) => Ok(v.to_ne_bytes().to_vec()),
+            Value::U32(v) => Ok(v.to_ne_bytes().to_vec()),
+            Value::U64(v) => Ok(v.to_ne_bytes().to_vec()),
+            Value::U128(v) => Ok(v.to_ne_bytes().to_vec()),
+            Value::USize(v) => Ok(v.to_ne_bytes().to_vec()),
+            Value::I8(v) => Ok((v as u8).to_ne_bytes().to_vec()),
+            Value::I16(v) => Ok((v as u16).to_ne_bytes().to_vec()),
+            Value::I32(v) => Ok((v as u32).to_ne_bytes().to_vec()),
+            Value::I64(v) => Ok((v as u64).to_ne_bytes().to_vec()),
+            Value::I128(v) => Ok((v as u128).to_ne_bytes().to_vec()),
+            Value::ISize(v) => Ok((v as usize).to_ne_bytes().to_vec()),
+            Value::F32(v) => Ok(v.to_bits().to_ne_bytes().to_vec()),
+            Value::F64(v) => Ok(v.to_bits().to_ne_bytes().to_vec()),
+            Value::Bool(v) => Ok(vec![v as u8]),
+            Value::Array(arr) => {
+                let mut bytes = Vec::new();
+                for elem in arr.iter() {
+                    bytes.extend_from_slice(&self.value_to_bytes(*elem)?);
+                }
+                Ok(bytes)
+            }
+            _ => unsupported!(self),
+        }
+    }
+
+    /// Convert bytes to a value of the given type
+    fn bytes_to_value(&self, bytes: &[u8], ty: TyP<'ir>) -> Result<Value<'ir>, AluminaError> {
+        match ty {
+            Ty::Builtin(BuiltinType::U8) if !bytes.is_empty() => Ok(Value::U8(bytes[0])),
+            Ty::Builtin(BuiltinType::U16) if bytes.len() >= 2 => Ok(Value::U16(
+                u16::from_ne_bytes(bytes[0..2].try_into().unwrap()),
+            )),
+            Ty::Builtin(BuiltinType::U32) if bytes.len() >= 4 => Ok(Value::U32(
+                u32::from_ne_bytes(bytes[0..4].try_into().unwrap()),
+            )),
+            Ty::Builtin(BuiltinType::U64) if bytes.len() >= 8 => Ok(Value::U64(
+                u64::from_ne_bytes(bytes[0..8].try_into().unwrap()),
+            )),
+            Ty::Builtin(BuiltinType::U128) if bytes.len() >= 16 => Ok(Value::U128(
+                u128::from_ne_bytes(bytes[0..16].try_into().unwrap()),
+            )),
+            Ty::Builtin(BuiltinType::USize) if bytes.len() >= std::mem::size_of::<usize>() => {
+                let size = std::mem::size_of::<usize>();
+                Ok(Value::USize(usize::from_ne_bytes(
+                    bytes[..size].try_into().unwrap(),
+                )))
+            }
+            Ty::Builtin(BuiltinType::I8) if !bytes.is_empty() => Ok(Value::I8(bytes[0] as i8)),
+            Ty::Builtin(BuiltinType::I16) if bytes.len() >= 2 => Ok(Value::I16(
+                i16::from_ne_bytes(bytes[0..2].try_into().unwrap()),
+            )),
+            Ty::Builtin(BuiltinType::I32) if bytes.len() >= 4 => Ok(Value::I32(
+                i32::from_ne_bytes(bytes[0..4].try_into().unwrap()),
+            )),
+            Ty::Builtin(BuiltinType::I64) if bytes.len() >= 8 => Ok(Value::I64(
+                i64::from_ne_bytes(bytes[0..8].try_into().unwrap()),
+            )),
+            Ty::Builtin(BuiltinType::I128) if bytes.len() >= 16 => Ok(Value::I128(
+                i128::from_ne_bytes(bytes[0..16].try_into().unwrap()),
+            )),
+            Ty::Builtin(BuiltinType::ISize) if bytes.len() >= std::mem::size_of::<isize>() => {
+                let size = std::mem::size_of::<isize>();
+                Ok(Value::ISize(isize::from_ne_bytes(
+                    bytes[..size].try_into().unwrap(),
+                )))
+            }
+            Ty::Builtin(BuiltinType::F32) if bytes.len() >= 4 => Ok(Value::F32(f32::from_bits(
+                u32::from_ne_bytes(bytes[0..4].try_into().unwrap()),
+            ))),
+            Ty::Builtin(BuiltinType::F64) if bytes.len() >= 8 => Ok(Value::F64(f64::from_bits(
+                u64::from_ne_bytes(bytes[0..8].try_into().unwrap()),
+            ))),
+            Ty::Builtin(BuiltinType::Bool) if !bytes.is_empty() => Ok(Value::Bool(bytes[0] != 0)),
+            Ty::Array(elem_ty, len) => {
+                let elem_size = self.size_of_type(elem_ty)?;
+                if bytes.len() < elem_size * len {
+                    unsupported!(self)
+                } else {
+                    let mut values = Vec::with_capacity(*len);
+                    for i in 0..*len {
+                        let start = i * elem_size;
+                        let end = start + elem_size;
+                        values.push(self.bytes_to_value(&bytes[start..end], elem_ty)?);
+                    }
+                    Ok(Value::Array(self.ir.arena.alloc_slice_fill_iter(values)))
+                }
+            }
+            _ => unsupported!(self),
+        }
+    }
+
+    /// Get the size in bytes of a type (for primitive types and arrays of primitives)
+    fn size_of_type(&self, ty: TyP<'ir>) -> Result<usize, AluminaError> {
+        match ty {
+            Ty::Builtin(BuiltinType::U8)
+            | Ty::Builtin(BuiltinType::I8)
+            | Ty::Builtin(BuiltinType::Bool) => Ok(1),
+            Ty::Builtin(BuiltinType::U16) | Ty::Builtin(BuiltinType::I16) => Ok(2),
+            Ty::Builtin(BuiltinType::U32)
+            | Ty::Builtin(BuiltinType::I32)
+            | Ty::Builtin(BuiltinType::F32) => Ok(4),
+            Ty::Builtin(BuiltinType::U64)
+            | Ty::Builtin(BuiltinType::I64)
+            | Ty::Builtin(BuiltinType::F64) => Ok(8),
+            Ty::Builtin(BuiltinType::U128) | Ty::Builtin(BuiltinType::I128) => Ok(16),
+            Ty::Builtin(BuiltinType::USize) | Ty::Builtin(BuiltinType::ISize) => {
+                Ok(std::mem::size_of::<usize>())
+            }
+            Ty::Array(elem_ty, len) => {
+                let elem_size = self.size_of_type(elem_ty)?;
+                Ok(elem_size * len)
+            }
+            _ => unsupported!(self),
+        }
+    }
+
     pub fn for_codegen<I>(
         global_ctx: GlobalCtx,
         diag: DiagnosticsStack,
@@ -1389,59 +1509,9 @@ impl<'ir> ConstEvaluator<'ir> {
                 IntrinsicValueKind::Volatile(inner) => self.const_eval_defered(inner),
                 IntrinsicValueKind::SizeOfLike(_, _) => unsupported!(self),
                 IntrinsicValueKind::Transmute(inner) => {
-                    let inner = self.const_eval_rvalue(inner)?;
-
-                    // Very limited transmutations
-                    match (inner, expr.ty) {
-                        (Value::U8(a), Ty::Builtin(BuiltinType::I8)) => Ok(Value::I8(a as i8)),
-                        (Value::U16(a), Ty::Builtin(BuiltinType::I16)) => Ok(Value::I16(a as i16)),
-                        (Value::U32(a), Ty::Builtin(BuiltinType::I32)) => Ok(Value::I32(a as i32)),
-                        (Value::U64(a), Ty::Builtin(BuiltinType::I64)) => Ok(Value::I64(a as i64)),
-                        (Value::U128(a), Ty::Builtin(BuiltinType::I128)) => {
-                            Ok(Value::I128(a as i128))
-                        }
-                        (Value::USize(a), Ty::Builtin(BuiltinType::ISize)) => {
-                            Ok(Value::ISize(a as isize))
-                        }
-
-                        (Value::I8(a), Ty::Builtin(BuiltinType::U8)) => Ok(Value::U8(a as u8)),
-                        (Value::I16(a), Ty::Builtin(BuiltinType::U16)) => Ok(Value::U16(a as u16)),
-                        (Value::I32(a), Ty::Builtin(BuiltinType::U32)) => Ok(Value::U32(a as u32)),
-                        (Value::I64(a), Ty::Builtin(BuiltinType::U64)) => Ok(Value::U64(a as u64)),
-                        (Value::I128(a), Ty::Builtin(BuiltinType::U128)) => {
-                            Ok(Value::U128(a as u128))
-                        }
-                        (Value::ISize(a), Ty::Builtin(BuiltinType::USize)) => {
-                            Ok(Value::USize(a as usize))
-                        }
-
-                        (Value::F64(a), Ty::Builtin(BuiltinType::U64)) => {
-                            Ok(Value::U64(a.to_bits()))
-                        }
-                        (Value::F64(a), Ty::Builtin(BuiltinType::I64)) => {
-                            Ok(Value::I64(a.to_bits() as i64))
-                        }
-                        (Value::F32(a), Ty::Builtin(BuiltinType::U32)) => {
-                            Ok(Value::U32(a.to_bits()))
-                        }
-                        (Value::F32(a), Ty::Builtin(BuiltinType::I32)) => {
-                            Ok(Value::I32(a.to_bits() as i32))
-                        }
-
-                        (Value::U64(a), Ty::Builtin(BuiltinType::F64)) => {
-                            Ok(Value::F64(f64::from_bits(a)))
-                        }
-                        (Value::I64(a), Ty::Builtin(BuiltinType::F64)) => {
-                            Ok(Value::F64(f64::from_bits(a as u64)))
-                        }
-                        (Value::U32(a), Ty::Builtin(BuiltinType::F32)) => {
-                            Ok(Value::F32(f32::from_bits(a)))
-                        }
-                        (Value::I32(a), Ty::Builtin(BuiltinType::F32)) => {
-                            Ok(Value::F32(f32::from_bits(a as u32)))
-                        }
-                        _ => unsupported!(self),
-                    }
+                    let inner_value = self.const_eval_rvalue(inner)?;
+                    let bytes = self.value_to_bytes(inner_value)?;
+                    self.bytes_to_value(&bytes, expr.ty)
                 }
                 IntrinsicValueKind::Asm(_) => unsupported!(self),
                 IntrinsicValueKind::FunctionLike(_) => unsupported!(self),

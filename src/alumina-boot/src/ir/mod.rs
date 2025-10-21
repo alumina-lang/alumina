@@ -1,3 +1,4 @@
+pub mod bake;
 pub mod builder;
 pub mod const_eval;
 pub mod dce;

@@ -510,6 +510,7 @@ impl SocketAddr {
         switch self.kind {
             AddrKind::Unix => {
                 // Calculate the actual length by finding the null terminator
+                #[allow(unnecessary_cast)]
                 let ptr = &self.inner.unix.sun_path[0] as &u8;
                 let path_len = libc::strlen(ptr as &libc::c_char);
                 let unix_addr = UnixAddr {
@@ -805,6 +806,7 @@ impl UnixAddr {
             if path_len == 0 {
                 return Option::none();
             }
+            #[allow(unnecessary_cast)]
             let ptr = &self.inner.sun_path[0] as &u8;
             let bytes = mem::slice::from_raw(ptr, path_len);
             Option::some(fs::Path::new(bytes))
