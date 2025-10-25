@@ -217,14 +217,28 @@ impl Regex {
         // Calculate number of tags needed (2 per group: start and end)
         let num_tags = self._num_groups * 2usize;
 
-        // Try matching at each position
-        for start_pos in 0usize..text.len() + 1 {
-            let result = self._dfa.match_with_captures(text, start_pos, num_tags);
-            if result.is_none() {
-                continue;
-            }
+        // Try matching at each position using helper to avoid loop variable issues
+        self._captures_search(text, 0, num_tags)
+    }
 
-            let (end_pos, tag_positions) = result.unwrap();
+    /// Helper to search for captures starting from a given position
+    #[inline(never)]
+    fn _captures_search(self: &Regex, text: &[u8], start_pos: usize, num_tags: usize) -> Option<Captures> {
+        if start_pos > text.len() {
+            return Option::none();
+        }
+
+        // Allocate fresh tag_positions for this search attempt
+        let tag_positions: Vector<usize> = Vector::new();
+        for _ in 0usize..num_tags {
+            tag_positions.push(0);
+        }
+        defer tag_positions.free();
+
+        let result = self._dfa.match_with_captures(text, start_pos, &tag_positions);
+
+        if result.is_some() {
+            let end_pos = result.unwrap();
 
             // Build Captures object
             let positions: Vector<Option<(usize, usize)>> = Vector::new();
@@ -233,14 +247,11 @@ impl Regex {
             positions.push(Option::some((start_pos, end_pos)));
 
             // Set user groups from tag positions
-            // Note: For alternations like (a)|(b), only the matched branch will have valid positions.
-            // Unmatched groups have start > end and should be represented as None.
             for group_id in 1usize..self._num_groups {
                 let start_tag = 2usize * group_id;
                 let end_tag = 2usize * group_id + 1usize;
                 let group_start = tag_positions[start_tag];
                 let group_end = tag_positions[end_tag];
-                // Only valid positions (start <= end) represent actual matches
                 if group_start <= group_end {
                     positions.push(Option::some((group_start, group_end)));
                 } else {
@@ -248,14 +259,14 @@ impl Regex {
                 }
             }
 
-            tag_positions.free();
             return Option::some(Captures {
                 _text: text,
                 _positions: positions,
             });
         }
 
-        Option::none()
+        // Try next position
+        self._captures_search(text, start_pos + 1usize, num_tags)
     }
 
     /// @ mem::Movable::move
@@ -1445,6 +1456,271 @@ mod tests {
         defer re.free();
         assert!(re.is_match("Hello\t123"));
         assert!(!re.is_match("Hello 123"));
+    }
+
+    #[test]
+    fn test_regex_empty_capture() {
+        // Test empty capture group
+        let re = Regex::compile("()");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        // Group 0 (full match) and group 1 (empty) should both be ""
+        assert_eq!(caps.get(0).unwrap(), "");
+        assert_eq!(caps.get(1).unwrap(), "");
+    }
+
+    #[test]
+    fn test_regex_optional_capture_match() {
+        // Test optional capture that matches
+        let re = Regex::compile("(a)?");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("a");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "a");
+        assert_eq!(caps.get(1).unwrap(), "a");
+    }
+
+    #[test]
+    fn test_regex_optional_capture_nomatch() {
+        // Test optional capture that doesn't match (should still have positions)
+        let re = Regex::compile("(a)?b");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("b");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        // Full match is "b", but group 1 didn't match (was optional)
+        assert_eq!(caps.get(0).unwrap(), "b");
+        // Optional group that didn't match - get() should return none for it
+        assert!(caps.get(1).is_none() || caps.get(1).unwrap() == "");
+    }
+
+    #[test]
+    fn test_regex_capture_alternation_left() {
+        // Test capture in alternation, left branch matches
+        let re = Regex::compile("(a|b)");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("a");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "a");
+        assert_eq!(caps.get(1).unwrap(), "a");
+    }
+
+    #[test]
+    fn test_regex_capture_alternation_right() {
+        // Test capture in alternation, right branch matches
+        let re = Regex::compile("(a|b)");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("b");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "b");
+        assert_eq!(caps.get(1).unwrap(), "b");
+    }
+
+    #[test]
+    fn test_regex_quantified_capture_star() {
+        // Test quantified capture with * - simpler case first
+        let re = Regex::compile("(a)*b");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("aaab");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "aaab");
+        // For repeated captures, typically the last iteration is recorded
+        // But we only care that it works without crashing
+    }
+
+    #[test]
+    fn test_regex_quantified_capture_plus() {
+        // Test quantified capture with + - simpler case first
+        let re = Regex::compile("(a)+b");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("aaab");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "aaab");
+        // For repeated captures, the behavior varies by engine
+        // We just want it to not crash
+    }
+
+    #[test]
+    fn test_regex_nested_capture() {
+        // Test nested capture groups
+        let re = Regex::compile("((a)(b))");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("ab");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "ab");  // Full match
+        assert_eq!(caps.get(1).unwrap(), "ab");  // Group 1: ((a)(b))
+        assert_eq!(caps.get(2).unwrap(), "a");   // Group 2: (a)
+        assert_eq!(caps.get(3).unwrap(), "b");   // Group 3: (b)
+    }
+
+    #[test]
+    fn test_regex_capture_zero_length() {
+        // Test captures at zero-length positions (anchors)
+        let re = Regex::compile("^(\\w+)");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("hello");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "hello");
+        assert_eq!(caps.get(1).unwrap(), "hello");
+
+        // Check positions: should start at 0
+        let pos = caps.get_pos(1).unwrap();
+        assert_eq!(pos.0, 0usize);
+        assert_eq!(pos.1, 5usize);
+    }
+
+    #[test]
+    fn test_regex_multiple_captures_positions() {
+        // Test multiple captures with position checking
+        let re = Regex::compile("(\\w+)-(\\d+)");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("abc-123");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "abc-123");
+        assert_eq!(caps.get(1).unwrap(), "abc");
+        assert_eq!(caps.get(2).unwrap(), "123");
+
+        // Check positions
+        let pos1 = caps.get_pos(1).unwrap();
+        assert_eq!(pos1.0, 0usize);
+        assert_eq!(pos1.1, 3usize);
+
+        let pos2 = caps.get_pos(2).unwrap();
+        assert_eq!(pos2.0, 4usize);
+        assert_eq!(pos2.1, 7usize);
+    }
+
+    #[test]
+    fn test_regex_capture_with_optional() {
+        // Test capture inside optional group
+        let re = Regex::compile("(a(b))?c");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        // Case 1: optional part matches
+        let caps = re.captures("abc");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "abc");
+        assert_eq!(caps.get(1).unwrap(), "ab");
+        assert_eq!(caps.get(2).unwrap(), "b");
+
+        // Case 2: optional part doesn't match
+        let caps2 = re.captures("c");
+        assert!(caps2.is_some());
+        let caps2 = caps2.unwrap();
+        defer caps2.free();
+
+        assert_eq!(caps2.get(0).unwrap(), "c");
+        // Groups 1 and 2 didn't match (were inside optional)
+        assert!(caps2.get(1).is_none() || caps2.get(1).unwrap() == "");
+    }
+
+    #[test]
+    fn test_regex_capture_quantified_in_alternation() {
+        // Test quantified capture inside alternation
+        let re = Regex::compile("(a+|b+)");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("aaa");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "aaa");
+        assert_eq!(caps.get(1).unwrap(), "aaa");
+    }
+
+    #[test]
+    fn test_regex_capture_empty_star() {
+        // Test capture with * that could match empty
+        let re = Regex::compile("a(b*)c");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        // Case with empty capture
+        let caps = re.captures("ac");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "ac");
+        assert_eq!(caps.get(1).unwrap(), "");  // Empty capture
+
+        // Case with non-empty capture
+        let caps2 = re.captures("abbbc");
+        assert!(caps2.is_some());
+        let caps2 = caps2.unwrap();
+        defer caps2.free();
+
+        assert_eq!(caps2.get(0).unwrap(), "abbbc");
+        assert_eq!(caps2.get(1).unwrap(), "bbb");
     }
 }
 

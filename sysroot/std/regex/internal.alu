@@ -1686,71 +1686,76 @@ impl Dfa {
         Option::none()
     }
 
-    /// Try to match starting from a specific position
-    fn match_from(self: &Dfa, text: &[u8], start_pos: usize) -> Option<usize> {
-        let state = self.start;
-        let pos = start_pos;
-        let last_accept: Option<usize> = Option::none();
+    /// Process START_OF_STRING anchor
+    fn _process_start(self: &Dfa, state: usize, start_pos: usize) -> usize {
+        if start_pos != 0 {
+            return state;
+        }
 
-        // Process START_OF_STRING pseudo-character if at beginning of text
-        if start_pos == 0 {
-            for trans in self.states[state].transitions.iter() {
-                if trans.chars.contains(START_OF_STRING) {
-                    state = trans.to;
-                    break;
-                }
+        for trans in self.states[state].transitions.iter() {
+            if trans.chars.contains(START_OF_STRING) {
+                return trans.to;
             }
         }
+        state
+    }
 
-        // Check if start state is final
-        if self.states[state].is_final {
-            last_accept = Option::some(pos);
+    /// Process END_OF_STRING anchor
+    fn _process_end(self: &Dfa, state: usize, pos: usize, text_len: usize) -> usize {
+        if pos != text_len {
+            return state;
         }
 
+        for trans in self.states[state].transitions.iter() {
+            if trans.chars.contains(END_OF_STRING) {
+                return trans.to;
+            }
+        }
+        state
+    }
+
+    /// Try to match starting from a specific position
+    fn match_from(self: &Dfa, text: &[u8], start_pos: usize) -> Option<usize> {
+        let state = self._process_start(self.start, start_pos);
+        let pos = start_pos;
+        let last_accept = if self.states[state].is_final {
+            Option::some(pos)
+        } else {
+            Option::none()
+        };
+
         while pos < text.len() {
-            // Decode UTF-8 codepoint
             let decoded = unicode::decode_utf8(text[pos..]);
             if decoded.is_err() {
-                return last_accept; // Invalid UTF-8
+                break;
             }
 
             let (ch, bytes) = decoded.unwrap();
+            let next_state_val = 0usize;
+            let found = false;
 
-            // Find transition for this character
-            let next_state: Option<usize> = Option::none();
             for trans in self.states[state].transitions.iter() {
                 if trans.chars.contains(ch) {
-                    next_state = Option::some(trans.to);
+                    next_state_val = trans.to;
+                    found = true;
                     break;
                 }
             }
 
-            if next_state.is_none() {
-                return last_accept; // No transition found
+            if !found {
+                break;
             }
 
-            state = next_state.unwrap();
+            state = next_state_val;
             pos += bytes;
 
-            // Update last accepting position
             if self.states[state].is_final {
                 last_accept = Option::some(pos);
             }
         }
 
-        // Process END_OF_STRING pseudo-character at end of input
-        if pos == text.len() {
-            for trans in self.states[state].transitions.iter() {
-                if trans.chars.contains(END_OF_STRING) {
-                    state = trans.to;
-                    if self.states[state].is_final {
-                        return Option::some(pos);
-                    }
-                }
-            }
-        }
+        state = self._process_end(state, pos, text.len());
 
-        // End of input - return last accept or current if accepting
         if self.states[state].is_final {
             Option::some(pos)
         } else {
@@ -1758,130 +1763,115 @@ impl Dfa {
         }
     }
 
-    /// Match from a position and track capture groups
-    /// Returns (end_pos, tag_positions) where tag_positions[i] is the byte position when tag i was recorded
-    fn match_with_captures(self: &Dfa, text: &[u8], start_pos: usize, num_tags: usize) -> Option<(usize, Vector<usize>)> {
-        let state = self.start;
-        let pos = start_pos;
-        let last_accept: Option<(usize, Vector<usize>)> = Option::none();
-
-        // Track positions for each tag
-        let tag_positions: Vector<usize> = Vector::new();
-        for _ in 0usize..num_tags {
-            tag_positions.push(0);
+    /// Process START_OF_STRING anchor with tag recording
+    fn _process_start_with_tags(self: &Dfa, state: usize, start_pos: usize, tag_positions: &mut Vector<usize>) -> usize {
+        if start_pos != 0 {
+            return state;
         }
 
-        // Process START_OF_STRING pseudo-character if at beginning of text
-        if start_pos == 0 {
-            for i in 0usize..self.states[state].transitions.len() {
-                let trans = &self.states[state].transitions[i];
-                if trans.chars.contains(START_OF_STRING) {
-                    state = trans.to;
-                    // Record tags from this transition
-                    for tag in trans.tags.iter() {
-                        tag_positions[tag] = pos;
-                    }
-                    break;
+        for trans in self.states[state].transitions.iter() {
+            if trans.chars.contains(START_OF_STRING) {
+                for tag in trans.tags.iter() {
+                    tag_positions[tag] = start_pos;
                 }
+                return trans.to;
             }
         }
+        state
+    }
+
+    /// Process END_OF_STRING anchor with tag recording
+    fn _process_end_with_tags(self: &Dfa, state: usize, pos: usize, text_len: usize, tag_positions: &mut Vector<usize>) -> usize {
+        if pos != text_len {
+            return state;
+        }
+
+        for trans in self.states[state].transitions.iter() {
+            if trans.chars.contains(END_OF_STRING) {
+                for tag in trans.tags.iter() {
+                    tag_positions[tag] = pos;
+                }
+                for tag in self.states[trans.to].entry_tags.iter() {
+                    tag_positions[tag] = pos;
+                }
+                return trans.to;
+            }
+        }
+        state
+    }
+
+    /// Match from a position and track capture groups
+    /// Updates tag_positions vector with tag positions and returns end_pos if match found
+    /// Caller is responsible for freeing tag_positions
+    fn match_with_captures(self: &Dfa, text: &[u8], start_pos: usize, tag_positions: &mut Vector<usize>) -> Option<usize> {
+        // Reinitialize all tag positions to 0 (reuse existing allocation)
+        for i in 0usize..tag_positions.len() {
+            tag_positions[i] = 0;
+        }
+
+        let state = self._process_start_with_tags(self.start, start_pos, tag_positions);
+        let pos = start_pos;
 
         // Record entry tags for the start state
         for tag in self.states[state].entry_tags.iter() {
             tag_positions[tag] = pos;
         }
 
-        // Check if start state is final
-        if self.states[state].is_final {
-            // Clone tag positions for last_accept
-            last_accept = Option::some((pos, tag_positions.clone()));
-        }
+        let last_accept = if self.states[state].is_final {
+            Option::some(pos)
+        } else {
+            Option::none()
+        };
 
         while pos < text.len() {
-            // Decode UTF-8 codepoint
             let decoded = unicode::decode_utf8(text[pos..]);
             if decoded.is_err() {
-                tag_positions.free();
-                return last_accept; // Invalid UTF-8
+                break;
             }
 
             let (ch, bytes) = decoded.unwrap();
 
-            // Find transition for this character
-            let next_trans_idx: Option<usize> = Option::none();
+            let next_trans_idx_val = 0usize;
+            let found_idx = false;
             for i in 0usize..self.states[state].transitions.len() {
                 let trans = &self.states[state].transitions[i];
                 if trans.chars.contains(ch) {
-                    next_trans_idx = Option::some(i);
+                    next_trans_idx_val = i;
+                    found_idx = true;
                     break;
                 }
             }
 
-            if next_trans_idx.is_none() {
-                tag_positions.free();
-                return last_accept; // No transition found
+            if !found_idx {
+                break;
             }
 
-            let trans = &self.states[state].transitions[next_trans_idx.unwrap()];
+            let trans = &self.states[state].transitions[next_trans_idx_val];
 
             state = trans.to;
             pos += bytes;
 
-            // Record tags from this transition (after advancing position)
+            // Record tags from transition (after advancing position)
             for tag in trans.tags.iter() {
                 tag_positions[tag] = pos;
             }
 
-            // Record entry tags for the destination state
+            // Record entry tags for destination state
             for tag in self.states[state].entry_tags.iter() {
                 tag_positions[tag] = pos;
             }
 
             // Update last accepting position
             if self.states[state].is_final {
-                // Free old last_accept if it exists
-                if last_accept.is_some() {
-                    last_accept.unwrap().1.free();
-                }
-                // Clone tag positions for last_accept
-                last_accept = Option::some((pos, tag_positions.clone()));
+                last_accept = Option::some(pos);
             }
         }
 
-        // Process END_OF_STRING pseudo-character at end of input
-        if pos == text.len() {
-            for i in 0usize..self.states[state].transitions.len() {
-                let trans = &self.states[state].transitions[i];
-                if trans.chars.contains(END_OF_STRING) {
-                    state = trans.to;
-                    // Record tags from this transition
-                    for tag in trans.tags.iter() {
-                        tag_positions[tag] = pos;
-                    }
-                    // Record entry tags for destination state
-                    for tag in self.states[state].entry_tags.iter() {
-                        tag_positions[tag] = pos;
-                    }
-                    if self.states[state].is_final {
-                        if last_accept.is_some() {
-                            last_accept.unwrap().1.free();
-                        }
-                        return Option::some((pos, tag_positions));
-                    }
-                    break;
-                }
-            }
-        }
+        state = self._process_end_with_tags(state, pos, text.len(), tag_positions);
 
-        // End of input - return last accept or current if accepting
         if self.states[state].is_final {
-            // Free old last_accept if it exists
-            if last_accept.is_some() {
-                last_accept.unwrap().1.free();
-            }
-            Option::some((pos, tag_positions))
+            Option::some(pos)
         } else {
-            tag_positions.free();
             last_accept
         }
     }
