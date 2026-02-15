@@ -1,9 +1,12 @@
 use crate::ast::{BuiltinType, Span, UnOp};
-use crate::common::{ice, AluminaError, ArenaAllocatable, CodeDiagnostic, HashMap, HashSet};
+use crate::common::{
+    ice, AluminaError, ArenaAllocatable, CodeDiagnostic, CodeErrorBuilder, HashMap, HashSet,
+};
 use crate::diagnostics::DiagnosticsStack;
 use crate::ir::builder::{ExpressionBuilder, TypeBuilder};
 use crate::ir::const_eval::LValue;
 use crate::ir::const_eval::Value;
+use crate::ir::layout::Layouter;
 use crate::ir::{Expr, ExprKind, ExprP, FuncBody, Id, IrCtx, LocalDef, Statement, Ty, ValueType};
 use crate::ir::{IntrinsicValueKind, Item};
 
@@ -16,15 +19,17 @@ use crate::ir::{IntrinsicValueKind, Item};
 // IR is generally not suitable for any further passes.
 pub struct ZstElider<'ir> {
     ir: &'ir IrCtx<'ir>,
+    layouter: Layouter<'ir>,
     diag: DiagnosticsStack,
     additional_locals: Vec<LocalDef<'ir>>,
     used_ids: HashSet<Id>,
 }
 
 impl<'ir> ZstElider<'ir> {
-    pub fn new(diag: DiagnosticsStack, ir: &'ir IrCtx<'ir>) -> Self {
+    pub fn new(diag: DiagnosticsStack, layouter: Layouter<'ir>, ir: &'ir IrCtx<'ir>) -> Self {
         Self {
             ir,
+            layouter,
             diag,
             additional_locals: Vec::new(),
             used_ids: HashSet::default(),
@@ -247,14 +252,18 @@ impl<'ir> ZstElider<'ir> {
             }
             ExprKind::Ref(inner) => {
                 let inner = self.elide_zst_expr(inner)?;
+                let layout = self
+                    .layouter
+                    .layout_of(inner.ty)
+                    .with_backtrace(&self.diag)?;
 
                 if inner.is_void() {
                     // Special case for mutiple pointers to void
-                    builder.dangling(expr.ty, expr.span)
+                    builder.dangling(expr.ty, layout.align, expr.span)
                 } else if inner.ty.is_zero_sized() {
                     builder.block(
                         [Statement::Expression(inner)],
-                        builder.dangling(expr.ty, expr.span),
+                        builder.dangling(expr.ty, layout.align, expr.span),
                         expr.span,
                     )
                 } else {
@@ -335,10 +344,19 @@ impl<'ir> ZstElider<'ir> {
 
                 if !expr.ty.is_zero_sized() && indexee.ty.is_zero_sized() {
                     // Special case for indexing into a zero-length array of non-ZST elements
+                    let layout = self
+                        .layouter
+                        .layout_of(expr.ty)
+                        .with_backtrace(&self.diag)?;
+
                     builder.block(
                         [Statement::Expression(indexee), Statement::Expression(index)],
                         builder.deref(
-                            builder.dangling(types.pointer(expr.ty, expr.is_const), expr.span),
+                            builder.dangling(
+                                types.pointer(expr.ty, expr.is_const),
+                                layout.align,
+                                expr.span,
+                            ),
                             expr.span,
                         ),
                         expr.span,

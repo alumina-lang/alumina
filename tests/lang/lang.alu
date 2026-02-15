@@ -532,18 +532,7 @@ fn test_const_pointer_punning() {
         let b = (&a[0] as &u8);
     }));
 
-    assert!(!is_const_evaluable!({
-        let a = [1, 2, 3];
-        let b = (&a[0] as &u8) + 1;
-    }));
-
-    assert!(!is_const_evaluable!({
-        let a = [1, 2, 3];
-        let b = (&a[0] as &u8) - (&a[0] as &u8);
-    }));
-
-    // Comparison through incompatible pointer type is allowed, just dereferencing
-    // and arithmetic are not
+    // Comparison through type-punned pointers is allowed
     assert!(is_const_evaluable!({
         let a = [1, 2, 3];
         let b = (&a[0] as &u8) == (&a[0] as &u8);
@@ -558,6 +547,263 @@ fn test_const_pointer_punning() {
         let a = [1, 2, 3];
         let b = (&a[0] as &u8 as &i32) + 1;
     }));
+}
+
+#[cfg(nope)]
+#[test]
+fn test_const_type_punning() {
+    // Test reading through type-punned pointer (primitive to array)
+    const BYTES_FROM_U32: [u8; 4] = {
+        let x: u32 = 0x12345678;
+        let ptr = &x as &[u8; 4];
+        *ptr
+    };
+
+    // Verify we can access the array
+    assert_eq!(BYTES_FROM_U32.len(), 4);
+
+    // Test reading individual bytes from u32
+    const BYTE0: u8 = {
+        let x: u32 = 0x12345678;
+        let ptr = &x as &[u8; 4];
+        (*ptr)[0]
+    };
+    assert!(BYTE0 == 0x78 || BYTE0 == 0x12); // Either endianness
+
+    // Test array to primitive (reverse direction)
+    const U32_FROM_BYTES: u32 = {
+        let arr: [u8; 4] = [1, 2, 3, 4];
+        let ptr = &arr as &u32;
+        *ptr
+    };
+    assert!(U32_FROM_BYTES != 0);
+
+    // Test float to int bit pattern
+    const FLOAT_BITS: u32 = {
+        let f: f32 = 1.0;
+        let ptr = &f as &u32;
+        *ptr
+    };
+    assert_eq!(FLOAT_BITS, 1065353216); // 0x3F800000
+
+    // Test int to float
+    const INT_TO_FLOAT: f32 = {
+        let x: u32 = 1065353216;
+        let ptr = &x as &f32;
+        *ptr
+    };
+    assert_eq!(INT_TO_FLOAT, 1.0);
+
+    // Test u64 to f64
+    const U64_TO_F64: f64 = {
+        let x: u64 = 0x3FF0000000000000;
+        let ptr = &x as &f64;
+        *ptr
+    };
+    assert_eq!(U64_TO_F64, 1.0);
+
+    // Test array of different sizes
+    const U16_FROM_BYTES: u16 = {
+        let arr: [u8; 2] = [0x34, 0x12];
+        let ptr = &arr as &u16;
+        *ptr
+    };
+    assert!(U16_FROM_BYTES == 0x1234 || U16_FROM_BYTES == 0x3412);
+
+    // Test i32 to u32
+    const I32_AS_U32: u32 = {
+        let x: i32 = -1;
+        let ptr = &x as &u32;
+        *ptr
+    };
+    assert_eq!(I32_AS_U32, 0xFFFFFFFFu32);
+
+    // Test nested arrays
+    const NESTED_ARRAY: [[u8; 2]; 2] = {
+        let x: u32 = 0x12345678;
+        let ptr = &x as &[[u8; 2]; 2];
+        *ptr
+    };
+    assert_eq!(NESTED_ARRAY.len(), 2);
+    assert_eq!(NESTED_ARRAY[0].len(), 2);
+}
+
+#[cfg(nope)]
+#[test]
+fn test_const_type_punning_pointer_arithmetic() {
+    // Test 1: Basic u64 -> u8 pointer arithmetic
+    const U64_TO_U8_PTR_ARITH: u8 = {
+        let arr: [u64; 1] = [0x0102030405060708];
+        let ptr = &arr[0] as &u8;
+        *(ptr + 1)
+    };
+    {
+        let arr: [u64; 1] = [0x0102030405060708];
+        let ptr = &arr[0] as &u8;
+        assert_eq!(U64_TO_U8_PTR_ARITH, *(ptr + 1));
+    }
+
+    // Test 2: Reading all bytes from u64
+    const U64_BYTES: [u8; 8] = {
+        let arr: [u64; 1] = [0x0102030405060708];
+        let ptr = &arr[0] as &u8;
+        [*ptr, *(ptr + 1), *(ptr + 2), *(ptr + 3), *(ptr + 4), *(ptr + 5), *(ptr + 6), *(ptr + 7)]
+    };
+    {
+        let arr: [u64; 1] = [0x0102030405060708];
+        let ptr = &arr[0] as &u8;
+        assert_eq!(U64_BYTES, [*ptr, *(ptr + 1), *(ptr + 2), *(ptr + 3), *(ptr + 4), *(ptr + 5), *(ptr + 6), *(ptr + 7)]);
+    }
+
+    // Test 3: u32 -> u8 pointer arithmetic
+    const U32_TO_U8_PTR_ARITH: [u8; 4] = {
+        let arr: [u32; 1] = [0x12345678];
+        let ptr = &arr[0] as &u8;
+        [*ptr, *(ptr + 1), *(ptr + 2), *(ptr + 3)]
+    };
+    {
+        let arr: [u32; 1] = [0x12345678];
+        let ptr = &arr[0] as &u8;
+        assert_eq!(U32_TO_U8_PTR_ARITH, [*ptr, *(ptr + 1), *(ptr + 2), *(ptr + 3)]);
+    }
+
+    // Test 4: u16 -> u8 pointer arithmetic
+    const U16_TO_U8_PTR_ARITH: [u8; 2] = {
+        let arr: [u16; 1] = [0x1234];
+        let ptr = &arr[0] as &u8;
+        [*ptr, *(ptr + 1)]
+    };
+    {
+        let arr: [u16; 1] = [0x1234];
+        let ptr = &arr[0] as &u8;
+        assert_eq!(U16_TO_U8_PTR_ARITH, [*ptr, *(ptr + 1)]);
+    }
+
+    // Test 5: Array of u64 -> u8 pointer arithmetic (within single element)
+    const ARRAY_U64_TO_U8: [u8; 4] = {
+        let arr: [u64; 4] = [0x1122334455667788, 0x99AABBCCDDEEFF00, 0, 0];
+        let ptr = &arr[0] as &u8;
+        [*ptr, *(ptr + 1), *(ptr + 2), *(ptr + 3)]
+    };
+    {
+        let arr: [u64; 4] = [0x1122334455667788, 0x99AABBCCDDEEFF00, 0, 0];
+        let ptr = &arr[0] as &u8;
+        assert_eq!(ARRAY_U64_TO_U8, [*ptr, *(ptr + 1), *(ptr + 2), *(ptr + 3)]);
+    }
+
+    // Test 6: u64 -> u32 pointer arithmetic
+    const U64_TO_U32_PTR_ARITH: [u32; 2] = {
+        let arr: [u64; 1] = [0x1122334455667788];
+        let ptr = &arr[0] as &u32;
+        [*ptr, *(ptr + 1)]
+    };
+    {
+        let arr: [u64; 1] = [0x1122334455667788];
+        let ptr = &arr[0] as &u32;
+        assert_eq!(U64_TO_U32_PTR_ARITH, [*ptr, *(ptr + 1)]);
+    }
+
+    // Test 7: u64 -> u16 pointer arithmetic
+    const U64_TO_U16_PTR_ARITH: [u16; 4] = {
+        let arr: [u64; 1] = [0x1122334455667788];
+        let ptr = &arr[0] as &u16;
+        [*ptr, *(ptr + 1), *(ptr + 2), *(ptr + 3)]
+    };
+    {
+        let arr: [u64; 1] = [0x1122334455667788];
+        let ptr = &arr[0] as &u16;
+        assert_eq!(U64_TO_U16_PTR_ARITH, [*ptr, *(ptr + 1), *(ptr + 2), *(ptr + 3)]);
+    }
+
+    // Test 9: Signed integer type punning with pointer arithmetic
+    const I64_TO_U8_PTR_ARITH: [u8; 8] = {
+        let arr: [i64; 1] = [-1];
+        let ptr = &arr[0] as &u8;
+        [*ptr, *(ptr + 1), *(ptr + 2), *(ptr + 3), *(ptr + 4), *(ptr + 5), *(ptr + 6), *(ptr + 7)]
+    };
+    {
+        let arr: [i64; 1] = [-1];
+        let ptr = &arr[0] as &u8;
+        assert_eq!(I64_TO_U8_PTR_ARITH, [*ptr, *(ptr + 1), *(ptr + 2), *(ptr + 3), *(ptr + 4), *(ptr + 5), *(ptr + 6), *(ptr + 7)]);
+    }
+
+    // Test 10: Float type punning with pointer arithmetic
+    const F64_TO_U8_PTR_ARITH: [u8; 8] = {
+        let arr: [f64; 1] = [1.0];
+        let ptr = &arr[0] as &u8;
+        [*ptr, *(ptr + 1), *(ptr + 2), *(ptr + 3), *(ptr + 4), *(ptr + 5), *(ptr + 6), *(ptr + 7)]
+    };
+    {
+        let arr: [f64; 1] = [1.0];
+        let ptr = &arr[0] as &u8;
+        assert_eq!(F64_TO_U8_PTR_ARITH, [*ptr, *(ptr + 1), *(ptr + 2), *(ptr + 3), *(ptr + 4), *(ptr + 5), *(ptr + 6), *(ptr + 7)]);
+    }
+
+    // Test 11: Cast chain u64 -> u32 -> u8
+    const CAST_CHAIN: u8 = {
+        let arr: [u64; 1] = [0x1122334455667788];
+        let ptr1 = &arr[0] as &u32;
+        let ptr2 = ptr1 as &u8;
+        *(ptr2 + 2)
+    };
+    {
+        let arr: [u64; 1] = [0x1122334455667788];
+        let ptr1 = &arr[0] as &u32;
+        let ptr2 = ptr1 as &u8;
+        assert_eq!(CAST_CHAIN, *(ptr2 + 2));
+    }
+}
+
+#[test]
+fn test_const_transmute() {
+    // Test transmute with primitives
+    const U32_TO_I32: i32 = std::intrinsics::transmute::<u32, i32>(0x12345678);
+    assert_eq!(U32_TO_I32, 0x12345678i32);
+
+    // Test float transmute
+    const F32_TO_U32: u32 = std::intrinsics::transmute::<f32, u32>(1.0f32);
+    assert_eq!(F32_TO_U32, 0x3F800000u32);
+
+    const U32_TO_F32: f32 = std::intrinsics::transmute::<u32, f32>(0x3F800000u32);
+    assert_eq!(U32_TO_F32, 1.0f32);
+
+    // Test f64 transmute
+    const F64_TO_U64: u64 = std::intrinsics::transmute::<f64, u64>(1.0f64);
+    assert_eq!(F64_TO_U64, 0x3FF0000000000000u64);
+
+    const U64_TO_F64: f64 = std::intrinsics::transmute::<u64, f64>(0x3FF0000000000000u64);
+    assert_eq!(U64_TO_F64, 1.0f64);
+
+    // Test array to primitive
+    const ARRAY_TO_U32: u32 = {
+        let arr: [u8; 4] = [1, 2, 3, 4];
+        std::intrinsics::transmute::<[u8; 4], u32>(arr)
+    };
+    assert!(ARRAY_TO_U32 != 0);
+
+    // Test primitive to array
+    const U32_TO_ARRAY: [u8; 4] = std::intrinsics::transmute::<u32, [u8; 4]>(0x12345678u32);
+    assert_eq!(U32_TO_ARRAY.len(), 4);
+
+    // Test array to array of different element type
+    const U16_ARRAY_TO_U32_ARRAY: [u32; 2] = {
+        let arr: [u16; 4] = [1, 2, 3, 4];
+        std::intrinsics::transmute::<[u16; 4], [u32; 2]>(arr)
+    };
+    assert_eq!(U16_ARRAY_TO_U32_ARRAY.len(), 2);
+
+    // Test signed/unsigned conversions
+    const I8_TO_U8: u8 = std::intrinsics::transmute::<i8, u8>(-1i8);
+    assert_eq!(I8_TO_U8, 255u8);
+
+    const I16_TO_U16: u16 = std::intrinsics::transmute::<i16, u16>(-1i16);
+    assert_eq!(I16_TO_U16, 65535u16);
+
+    const I32_TO_U32: u32 = std::intrinsics::transmute::<i32, u32>(-1i32);
+    assert_eq!(I32_TO_U32, 0xFFFFFFFFu32);
+
+    const I64_TO_U64: u64 = std::intrinsics::transmute::<i64, u64>(-1i64);
+    assert_eq!(I64_TO_U64, 0xFFFFFFFFFFFFFFFFu64);
 }
 
 #[test]

@@ -56,6 +56,7 @@ pub enum Intr {
     ValueOf,
     Expect,
     WithSpanOf,
+    ConstBake,
 }
 
 pub fn intrinsic_kind(name: &str) -> Option<Intr> {
@@ -101,6 +102,7 @@ pub fn intrinsic_kind(name: &str) -> Option<Intr> {
         "value_of" => ValueOf,
         "expect" => Expect,
         "with_span_of" => WithSpanOf,
+        "const_bake" => ConstBake,
         _ => return None,
     };
 
@@ -207,6 +209,7 @@ impl<'ast, 'ir> super::Mono<'_, 'ast, 'ir> {
             HasAttribute => self.intr_has_attribute(generic!(0), arg!(0), span),
             ValueOf => self.intr_value_of(generic!(0), span),
             Expect => self.intr_expect(arg!(0), arg!(1), span),
+            ConstBake => self.intr_const_bake(arg!(0), span),
             WithSpanOf => unreachable!(),
         }
     }
@@ -528,9 +531,13 @@ impl<'ast, 'ir> super::Mono<'_, 'ast, 'ir> {
         span: Option<Span>,
     ) -> Result<ir::ExprP<'ir>, AluminaError> {
         if let ir::Ty::Pointer(inner, _) = ret_ty {
-            Ok(self
-                .exprs
-                .codegen_intrinsic(IntrinsicValueKind::Dangling(inner), ret_ty, span))
+            let layout = self
+                .ctx
+                .layouter
+                .layout_of(inner)
+                .with_backtrace(&self.diag)?;
+
+            Ok(self.exprs.dangling(ret_ty, layout.align, span))
         } else {
             Err(self.diag.err(CodeDiagnostic::TypeMismatch(
                 "pointer".to_string(),
@@ -1072,6 +1079,16 @@ impl<'ast, 'ir> super::Mono<'_, 'ast, 'ir> {
             self.types.builtin(BuiltinType::Bool),
             span,
         ))
+    }
+
+    fn intr_const_bake(
+        &mut self,
+        expr: ir::ExprP<'ir>,
+        span: Option<Span>,
+    ) -> Result<ir::ExprP<'ir>, AluminaError> {
+        Ok(self
+            .exprs
+            .codegen_intrinsic(IntrinsicValueKind::ConstBake(expr), expr.ty, span))
     }
 
     fn intr_with_span_of(

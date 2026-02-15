@@ -1,0 +1,2109 @@
+#![docs(hide)]
+
+//! Internal implementation details for the regex module.
+//!
+//! This module contains the NFA/DFA construction algorithms and supporting data structures
+//! used by the public Regex API. Users should not depend on these internals as they may
+//! change between versions.
+
+
+use collections::{Vector, HashSet};
+use string::{StringBuf, unicode};
+use cmp::{sort_by_key, sort, max};
+
+/// Pseudo-characters for anchors (beyond valid Unicode range)
+const START_OF_STRING: u32 = 0x110000;
+const END_OF_STRING: u32 = 0x110001;
+
+/// An interval representing a range of Unicode codepoints [start, end] inclusive
+struct Interval {
+    start: u32,
+    end: u32
+}
+
+/// A set of Unicode codepoint intervals (sorted, non-overlapping)
+/// This efficiently represents character classes like [a-zA-Z0-9]
+struct IntervalSet {
+    intervals: Vector<Interval>
+}
+
+impl IntervalSet {
+    /// Create an empty interval set
+    fn new() -> IntervalSet {
+        IntervalSet {
+            intervals: Vector::new()
+        }
+    }
+
+    /// Create a set containing a single codepoint
+    fn single(ch: u32) -> IntervalSet {
+        let set = IntervalSet::new();
+        set.intervals.push(Interval { start: ch, end: ch });
+        set
+    }
+
+    /// Create a set from a range [start, end] inclusive
+    fn range(start: u32, end: u32) -> IntervalSet {
+        let set = IntervalSet::new();
+        set.intervals.push(Interval { start: start, end: end });
+        set
+    }
+
+    /// Check if a codepoint is in the set (binary search)
+    fn contains(self: &IntervalSet, ch: u32) -> bool {
+        let left = 0usize;
+        let right = self.intervals.len();
+
+        while left < right {
+            let mid = left + (right - left) / 2;
+            let interval = &self.intervals[mid];
+
+            if ch < interval.start {
+                right = mid;
+            } else if ch > interval.end {
+                left = mid + 1;
+            } else {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Add an interval to the set (maintains sorted, non-overlapping invariant)
+    fn add_interval(self: &mut IntervalSet, start: u32, end: u32) {
+        if start > end {
+            return; // Invalid interval
+        }
+
+        // Simple implementation: add and normalize
+        // A more efficient implementation would merge during insertion
+        self.intervals.push(Interval { start: start, end: end });
+        self.normalize();
+    }
+
+    /// Add a single codepoint
+    fn add(self: &mut IntervalSet, ch: u32) {
+        self.add_interval(ch, ch);
+    }
+
+    /// Normalize: sort and merge overlapping/adjacent intervals
+    fn normalize(self: &mut IntervalSet) {
+        if self.intervals.len() <= 1 {
+            return;
+        }
+
+        // Sort by start position
+        self.intervals.as_slice_mut().sort_by_key(|interval: &Interval| -> u32 { interval.start });
+
+        // Merge overlapping and adjacent intervals
+        let merged: Vector<Interval> = Vector::new();
+        let current = self.intervals[0];
+
+        for i in 1usize..self.intervals.len() {
+            let next = self.intervals[i];
+
+            // Check if overlapping or adjacent (end + 1 == start means adjacent)
+            if next.start <= current.end + 1 {
+                // Merge: extend current to cover both
+                current.end = max(next.end, current.end);
+            } else {
+                // No overlap: save current and start new
+                merged.push(current);
+                current = next;
+            }
+        }
+        merged.push(current);
+
+        self.intervals = merged;
+    }
+
+    /// Negate the interval set (complement within valid Unicode range)
+    fn negate(self: &IntervalSet) -> IntervalSet {
+        let result = IntervalSet::new();
+
+        if self.intervals.is_empty() {
+            // Empty set negated = all Unicode
+            result.intervals.push(Interval { start: 0, end: 0x10FFFF });
+            return result;
+        }
+
+        let prev_end = 0u32;
+
+        for interval in self.intervals.iter() {
+            if prev_end < interval.start {
+                // Add gap before this interval
+                if interval.start > 0 {
+                    result.intervals.push(Interval {
+                        start: if prev_end == 0 { 0 } else { prev_end + 1 },
+                        end: interval.start - 1
+                    });
+                }
+            }
+            prev_end = interval.end;
+        }
+
+        // Add gap after last interval
+        if prev_end < 0x10FFFF {
+            result.intervals.push(Interval {
+                start: prev_end + 1,
+                end: 0x10FFFF
+            });
+        }
+
+        result
+    }
+
+    /// Union of two interval sets
+    fn union(self: &IntervalSet, other: &IntervalSet) -> IntervalSet {
+        let result = IntervalSet::new();
+
+        // Copy all intervals from both sets
+        for interval in self.intervals.iter() {
+            result.intervals.push(interval);
+        }
+        for interval in other.intervals.iter() {
+            result.intervals.push(interval);
+        }
+
+        result.normalize();
+        result
+    }
+
+    /// Move semantics - transfer ownership leaving empty set behind
+    fn move(self: &mut IntervalSet) -> IntervalSet {
+        let ret = *self;
+        self.intervals = Vector::new();
+        ret
+    }
+
+    /// Free allocated memory
+    fn free(self: &mut IntervalSet) {
+        self.intervals.free();
+    }
+
+    /// Create character class for \d (digits 0-9)
+    fn digit_class() -> IntervalSet {
+        IntervalSet::range('0' as u32, '9' as u32)
+    }
+
+    /// Create character class for \D (non-digits)
+    fn non_digit_class() -> IntervalSet {
+        let digits = IntervalSet::digit_class();
+        defer digits.free();
+        digits.negate()
+    }
+
+    /// Create character class for \w (word characters: a-z, A-Z, 0-9, _)
+    fn word_class() -> IntervalSet {
+        let result = IntervalSet::new();
+        result.add_interval('a' as u32, 'z' as u32);
+        result.add_interval('A' as u32, 'Z' as u32);
+        result.add_interval('0' as u32, '9' as u32);
+        result.add('_' as u32);
+        result
+    }
+
+    /// Create character class for \W (non-word characters)
+    fn non_word_class() -> IntervalSet {
+        let word = IntervalSet::word_class();
+        defer word.free();
+        word.negate()
+    }
+
+    /// Create character class for \s (whitespace: space, tab, newline, carriage return, form feed)
+    fn whitespace_class() -> IntervalSet {
+        let result = IntervalSet::new();
+        result.add(' ' as u32);   // space
+        result.add('\t' as u32);  // tab
+        result.add('\n' as u32);  // newline
+        result.add('\r' as u32);  // carriage return
+        result.add(0x0C);         // form feed
+        result
+    }
+
+    /// Create character class for \S (non-whitespace)
+    fn non_whitespace_class() -> IntervalSet {
+        let ws = IntervalSet::whitespace_class();
+        defer ws.free();
+        ws.negate()
+    }
+}
+
+/// NFA (Nondeterministic Finite Automaton) for regex matching
+/// Uses Thompson construction algorithm
+
+/// Transition type for NFA
+struct NfaTransition {
+    /// Target state
+    to: usize,
+    /// Character class for this transition (None = epsilon transition)
+    on_chars: Option<IntervalSet>,
+    /// Tags to record when crossing this transition (for captures)
+    /// Tags are indices: even = group start, odd = group end
+    /// Tag 0 = start of capture 0 (full match), tag 1 = end of capture 0, etc.
+    tags: Vector<usize>,
+}
+
+impl NfaTransition {
+    fn move(self: &mut NfaTransition) -> NfaTransition {
+        let ret = *self;
+        self.on_chars = Option::none();
+        self.tags = Vector::new();
+        ret
+    }
+
+    fn free(self: &mut NfaTransition) {
+        if self.on_chars.is_some() {
+            self.on_chars.unwrap().free();
+        }
+        self.tags.free();
+    }
+}
+
+/// NFA state
+struct NfaState {
+    transitions: Vector<NfaTransition>,
+    /// Is this an accepting/final state?
+    is_final: bool,
+}
+
+impl NfaState {
+    fn move(self: &mut NfaState) -> NfaState {
+        let ret = *self;
+        self.transitions = Vector::new();
+        ret
+    }
+
+    fn free(self: &mut NfaState) {
+        self.transitions.free_all();
+    }
+}
+
+/// Complete NFA
+struct Nfa {
+    states: Vector<NfaState>,
+    start: usize,
+}
+
+impl Nfa {
+    /// Create a new NFA with a start state
+    fn new() -> Nfa {
+        let states: Vector<NfaState> = Vector::new();
+        states.push(NfaState {
+            transitions: Vector::new(),
+            is_final: false,
+        });
+
+        Nfa {
+            states: states,
+            start: 0,
+        }
+    }
+
+    /// Add a new state and return its index
+    fn add_state(self: &mut Nfa, is_final: bool) -> usize {
+        let idx = self.states.len();
+        self.states.push(NfaState {
+            transitions: Vector::new(),
+            is_final: is_final,
+        });
+        idx
+    }
+
+    /// Add an epsilon transition from state `from` to state `to`
+    fn add_epsilon(self: &mut Nfa, from: usize, to: usize) {
+        self.states[from].transitions.push(NfaTransition {
+            to: to,
+            on_chars: Option::none(),
+            tags: Vector::new(),
+        });
+    }
+
+    /// Add an epsilon transition with tags
+    fn add_epsilon_tagged(self: &mut Nfa, from: usize, to: usize, tags: Vector<usize>) {
+        self.states[from].transitions.push(NfaTransition {
+            to: to,
+            on_chars: Option::none(),
+            tags: tags,
+        });
+    }
+
+    /// Add a character transition from state `from` to state `to`
+    fn add_transition(self: &mut Nfa, from: usize, to: usize, chars: IntervalSet) {
+        self.states[from].transitions.push(NfaTransition {
+            to: to,
+            on_chars: Option::some(chars),
+            tags: Vector::new(),
+        });
+    }
+
+    /// Add a character transition with tags
+    fn add_transition_tagged(self: &mut Nfa, from: usize, to: usize, chars: IntervalSet, tags: Vector<usize>) {
+        self.states[from].transitions.push(NfaTransition {
+            to: to,
+            on_chars: Option::some(chars),
+            tags: tags,
+        });
+    }
+
+    fn move(self: &mut Nfa) -> Nfa {
+        let ret = *self;
+        self.states = Vector::new();
+        ret
+    }
+
+    fn free(self: &mut Nfa) {
+        self.states.free_all();
+    }
+}
+
+/// NFA fragment used during Thompson construction
+/// Represents a partial NFA with designated start and end states
+struct NfaFragment {
+    start: usize,
+    end: usize,
+}
+
+/// Regex AST node types
+/// Using discriminant + union pattern since Alumina doesn't have enums
+struct RegexNode {
+    kind: u8,  // 0=Literal, 1=Concat, 2=Alt, 3=Star, 4=Plus, 5=Question, 6=CharClass, 7=StartAnchor, 8=EndAnchor, 9=Capture, 10=Repeat
+    // Union of possible data
+    literal_char: u32,
+    char_class: IntervalSet,
+    children: Vector<RegexNode>,
+    group_id: usize,  // For capture groups
+    repeat_min: usize,  // For bounded repetition
+    repeat_max: Option<usize>,  // None = unbounded
+}
+
+// Kind constants
+const REGEX_LITERAL: u8 = 0;
+const REGEX_CONCAT: u8 = 1;
+const REGEX_ALT: u8 = 2;
+const REGEX_STAR: u8 = 3;
+const REGEX_PLUS: u8 = 4;
+const REGEX_QUESTION: u8 = 5;
+const REGEX_CHAR_CLASS: u8 = 6;
+const REGEX_START_ANCHOR: u8 = 7;
+const REGEX_END_ANCHOR: u8 = 8;
+const REGEX_CAPTURE: u8 = 9;
+const REGEX_REPEAT: u8 = 10;
+
+impl RegexNode {
+    fn literal(ch: u32) -> RegexNode {
+        RegexNode {
+            kind: REGEX_LITERAL,
+            literal_char: ch,
+            char_class: IntervalSet::new(),
+            children: Vector::new(),
+            group_id: 0,
+            repeat_min: 0,
+            repeat_max: Option::none(),
+        }
+    }
+
+    fn char_class(class: IntervalSet) -> RegexNode {
+        RegexNode {
+            kind: REGEX_CHAR_CLASS,
+            literal_char: 0,
+            char_class: class,
+            children: Vector::new(),
+            group_id: 0,
+            repeat_min: 0,
+            repeat_max: Option::none(),
+        }
+    }
+
+    fn concat(nodes: Vector<RegexNode>) -> RegexNode {
+        RegexNode {
+            kind: REGEX_CONCAT,
+            literal_char: 0,
+            char_class: IntervalSet::new(),
+            children: nodes,
+            group_id: 0,
+            repeat_min: 0,
+            repeat_max: Option::none(),
+        }
+    }
+
+    fn alt(left: RegexNode, right: RegexNode) -> RegexNode {
+        let children: Vector<RegexNode> = Vector::new();
+        children.push(left);
+        children.push(right);
+        RegexNode {
+            kind: REGEX_ALT,
+            literal_char: 0,
+            char_class: IntervalSet::new(),
+            children: children,
+            group_id: 0,
+            repeat_min: 0,
+            repeat_max: Option::none(),
+        }
+    }
+
+    fn star(node: RegexNode) -> RegexNode {
+        let children: Vector<RegexNode> = Vector::new();
+        children.push(node);
+        RegexNode {
+            kind: REGEX_STAR,
+            literal_char: 0,
+            char_class: IntervalSet::new(),
+            children: children,
+            group_id: 0,
+            repeat_min: 0,
+            repeat_max: Option::none(),
+        }
+    }
+
+    fn plus(node: RegexNode) -> RegexNode {
+        let children: Vector<RegexNode> = Vector::new();
+        children.push(node);
+        RegexNode {
+            kind: REGEX_PLUS,
+            literal_char: 0,
+            char_class: IntervalSet::new(),
+            children: children,
+            group_id: 0,
+            repeat_min: 0,
+            repeat_max: Option::none(),
+        }
+    }
+
+    fn question(node: RegexNode) -> RegexNode {
+        let children: Vector<RegexNode> = Vector::new();
+        children.push(node);
+        RegexNode {
+            kind: REGEX_QUESTION,
+            literal_char: 0,
+            char_class: IntervalSet::new(),
+            children: children,
+            group_id: 0,
+            repeat_min: 0,
+            repeat_max: Option::none(),
+        }
+    }
+
+    fn start_anchor() -> RegexNode {
+        RegexNode {
+            kind: REGEX_START_ANCHOR,
+            literal_char: 0,
+            char_class: IntervalSet::new(),
+            children: Vector::new(),
+            group_id: 0,
+            repeat_min: 0,
+            repeat_max: Option::none(),
+        }
+    }
+
+    fn end_anchor() -> RegexNode {
+        RegexNode {
+            kind: REGEX_END_ANCHOR,
+            literal_char: 0,
+            char_class: IntervalSet::new(),
+            children: Vector::new(),
+            group_id: 0,
+            repeat_min: 0,
+            repeat_max: Option::none(),
+        }
+    }
+
+    fn capture(group_id: usize, inner: RegexNode) -> RegexNode {
+        let children: Vector<RegexNode> = Vector::new();
+        children.push(inner);
+        RegexNode {
+            kind: REGEX_CAPTURE,
+            literal_char: 0,
+            char_class: IntervalSet::new(),
+            children: children,
+            group_id: group_id,
+            repeat_min: 0,
+            repeat_max: Option::none(),
+        }
+    }
+
+    fn repeat(node: RegexNode, min: usize, max: Option<usize>) -> RegexNode {
+        let children: Vector<RegexNode> = Vector::new();
+        children.push(node);
+        RegexNode {
+            kind: REGEX_REPEAT,
+            literal_char: 0,
+            char_class: IntervalSet::new(),
+            children: children,
+            group_id: 0,
+            repeat_min: min,
+            repeat_max: max,
+        }
+    }
+
+    fn move(self: &mut RegexNode) -> RegexNode {
+        let ret = *self;
+        self.children = Vector::new();
+        self.char_class = IntervalSet::new();
+        ret
+    }
+
+    fn free(self: &mut RegexNode) {
+        self.children.free_all();
+        self.char_class.free();
+    }
+}
+
+/// Thompson construction: Convert regex AST to NFA
+fn thompson_construct(node: &RegexNode, nfa: &mut Nfa) -> NfaFragment {
+    if node.kind == REGEX_LITERAL {
+        // Create: start --ch--> end
+        let start = nfa.states.len();
+        nfa.add_state(false);
+        let end = nfa.add_state(true);
+
+        let chars = IntervalSet::single(node.literal_char);
+        nfa.add_transition(start, end, chars);
+
+        NfaFragment { start: start, end: end }
+    } else if node.kind == REGEX_CHAR_CLASS {
+        // Create: start --[class]--> end
+        let start = nfa.states.len();
+        nfa.add_state(false);
+        let end = nfa.add_state(true);
+
+        // Clone the character class
+        let chars = IntervalSet::new();
+        for interval in node.char_class.intervals.iter() {
+            chars.intervals.push(interval);
+        }
+        nfa.add_transition(start, end, chars);
+
+        NfaFragment { start: start, end: end }
+    } else if node.kind == REGEX_CONCAT {
+        // Concatenation: connect fragments in sequence
+        if node.children.is_empty() {
+            // Empty concatenation - epsilon transition
+            let start = nfa.states.len();
+            nfa.add_state(false);
+            let end = nfa.add_state(true);
+            nfa.add_epsilon(start, end);
+            return NfaFragment { start: start, end: end };
+        }
+
+        let first_frag = thompson_construct(&node.children[0], nfa);
+        let overall_start = first_frag.start;
+        let prev_end = first_frag.end;
+
+        for i in 1usize..node.children.len() {
+            let frag = thompson_construct(&node.children[i], nfa);
+            // Connect previous end to this start
+            nfa.states[prev_end].is_final = false;
+            nfa.add_epsilon(prev_end, frag.start);
+            prev_end = frag.end;
+        }
+
+        NfaFragment { start: overall_start, end: prev_end }
+    } else if node.kind == REGEX_ALT {
+        // Alternation: start -ε-> (left | right) -ε-> end
+        let left_frag = thompson_construct(&node.children[0], nfa);
+        let right_frag = thompson_construct(&node.children[1], nfa);
+
+        let start = nfa.states.len();
+        nfa.add_state(false);
+        let end = nfa.add_state(true);
+
+        // Connect start to both alternatives
+        nfa.add_epsilon(start, left_frag.start);
+        nfa.add_epsilon(start, right_frag.start);
+
+        // Connect both alternatives to end
+        nfa.states[left_frag.end].is_final = false;
+        nfa.states[right_frag.end].is_final = false;
+        nfa.add_epsilon(left_frag.end, end);
+        nfa.add_epsilon(right_frag.end, end);
+
+        NfaFragment { start: start, end: end }
+    } else if node.kind == REGEX_STAR {
+        // Star: start -ε-> (inner -ε-> start) and start -ε-> end
+        let inner_frag = thompson_construct(&node.children[0], nfa);
+
+        let start = nfa.states.len();
+        nfa.add_state(false);
+        let end = nfa.add_state(true);
+
+        // Connect start to inner and to end (zero occurrences)
+        nfa.add_epsilon(start, inner_frag.start);
+        nfa.add_epsilon(start, end);
+
+        // Connect inner end back to inner start (repeat)
+        nfa.states[inner_frag.end].is_final = false;
+        nfa.add_epsilon(inner_frag.end, inner_frag.start);
+        nfa.add_epsilon(inner_frag.end, end);
+
+        NfaFragment { start: start, end: end }
+    } else if node.kind == REGEX_PLUS {
+        // Plus: same as star but no epsilon from start to end
+        let inner_frag = thompson_construct(&node.children[0], nfa);
+
+        let start = nfa.states.len();
+        nfa.add_state(false);
+        let end = nfa.add_state(true);
+
+        // Connect start to inner (at least one occurrence)
+        nfa.add_epsilon(start, inner_frag.start);
+
+        // Connect inner end back to inner start (repeat) and to end
+        nfa.states[inner_frag.end].is_final = false;
+        nfa.add_epsilon(inner_frag.end, inner_frag.start);
+        nfa.add_epsilon(inner_frag.end, end);
+
+        NfaFragment { start: start, end: end }
+    } else if node.kind == REGEX_QUESTION {
+        // Question: start -ε-> inner -ε-> end, and start -ε-> end
+        let inner_frag = thompson_construct(&node.children[0], nfa);
+
+        let start = nfa.states.len();
+        nfa.add_state(false);
+        let end = nfa.add_state(true);
+
+        // Connect start to inner and to end (optional)
+        nfa.add_epsilon(start, inner_frag.start);
+        nfa.add_epsilon(start, end);
+
+        // Connect inner end to end
+        nfa.states[inner_frag.end].is_final = false;
+        nfa.add_epsilon(inner_frag.end, end);
+
+        NfaFragment { start: start, end: end }
+    } else if node.kind == REGEX_CAPTURE {
+        // Capture group: add tags for start/end boundaries
+        // Tag numbering: group N has start_tag = 2*N, end_tag = 2*N + 1
+        let group_id = node.group_id;
+        let start_tag = 2usize * group_id;
+        let end_tag = 2usize * group_id + 1usize;
+
+        // Build inner fragment
+        let inner_frag = thompson_construct(&node.children[0], nfa);
+
+        // Create wrapper with tagged epsilon transitions
+        let start = nfa.states.len();
+        nfa.add_state(false);
+        let end = nfa.add_state(true);
+
+        // Add epsilon with start tag: start -[tag:start]-> inner_start
+        let start_tags: Vector<usize> = Vector::new();
+        start_tags.push(start_tag);
+        nfa.add_epsilon_tagged(start, inner_frag.start, start_tags);
+
+        // Add epsilon with end tag: inner_end -[tag:end]-> end
+        nfa.states[inner_frag.end].is_final = false;
+        let end_tags: Vector<usize> = Vector::new();
+        end_tags.push(end_tag);
+        nfa.add_epsilon_tagged(inner_frag.end, end, end_tags);
+
+        NfaFragment { start: start, end: end }
+    } else if node.kind == REGEX_REPEAT {
+        // Bounded repetition: {n,m}
+        // Construct as: inner{n} inner?{m-n} (when m is Some)
+        // Or: inner{n} inner* (when m is None, meaning unbounded)
+        let min = node.repeat_min;
+        let max = node.repeat_max;
+
+        let fragments: Vector<NfaFragment> = Vector::new();
+        defer fragments.free();
+
+        // Create min required copies
+        for _ in 0usize..min {
+            let frag = thompson_construct(&node.children[0], nfa);
+            fragments.push(frag);
+        }
+
+        // If there's a max, create (max - min) optional copies
+        if max.is_some() {
+            let max_val = max.unwrap();
+            if max_val > min {
+                for _ in 0usize..(max_val - min) {
+                    let frag = thompson_construct(&node.children[0], nfa);
+                    fragments.push(frag);
+                }
+            }
+        }
+        // Note: for unbounded (max is None), we don't add extra fragments here
+        // Instead, we'll make the last fragment loop back to itself
+
+        if fragments.is_empty() {
+            // {0} or {0,0} - matches empty string
+            let start = nfa.states.len();
+            nfa.add_state(false);
+            let end = nfa.add_state(true);
+            nfa.add_epsilon(start, end);
+            return NfaFragment { start: start, end: end };
+        }
+
+        // Chain all fragments together
+        let start = fragments[0].start;
+
+        // First, connect all required fragments in sequence
+        let num_required = if min < fragments.len() { min } else { fragments.len() };
+        for i in 0usize..(num_required - 1) {
+            nfa.states[fragments[i].end].is_final = false;
+            nfa.add_epsilon(fragments[i].end, fragments[i + 1].start);
+        }
+
+        // If we have optional fragments (when max > min)
+        if fragments.len() > min {
+            // Create a shared end state
+            let final_end = nfa.add_state(true);
+
+            // The last required fragment can either stop here OR continue to optional
+            nfa.states[fragments[min - 1].end].is_final = false;
+            nfa.add_epsilon(fragments[min - 1].end, final_end);  // Can stop after required
+            if min < fragments.len() {
+                nfa.add_epsilon(fragments[min - 1].end, fragments[min].start);  // Or continue to optional
+            }
+
+            // Connect optional fragments, each can skip to the end
+            for i in min..(fragments.len() - 1) {
+                nfa.states[fragments[i].end].is_final = false;
+                nfa.add_epsilon(fragments[i].end, fragments[i + 1].start);  // Continue to next
+                nfa.add_epsilon(fragments[i].end, final_end);  // Or stop here
+            }
+
+            // Last fragment (optional) also points to end
+            nfa.states[fragments[fragments.len() - 1].end].is_final = false;
+            nfa.add_epsilon(fragments[fragments.len() - 1].end, final_end);
+
+            NfaFragment { start: start, end: final_end }
+        } else {
+            // No optional fragments - just return the last required fragment
+            // Handle unbounded case
+            if max.is_none() && !fragments.is_empty() {
+                // Unbounded - make the last required fragment loop back (like star)
+                let last_frag = &fragments[fragments.len() - 1];
+                nfa.add_epsilon(last_frag.end, last_frag.start);
+            }
+
+            NfaFragment { start: start, end: fragments[fragments.len() - 1].end }
+        }
+    } else {
+        // Unknown node type - create empty epsilon transition
+        let start = nfa.states.len();
+        nfa.add_state(false);
+        let end = nfa.add_state(true);
+        nfa.add_epsilon(start, end);
+        NfaFragment { start: start, end: end }
+    }
+}
+
+/// Simple regex parser
+/// Parses a subset of regex syntax: literals, ., *, +, ?, |, (), []
+struct RegexParser {
+    input: &[u8],
+    pos: usize,
+    next_group_id: usize,  // Track next capture group number (0 = full match, 1+ = user groups)
+}
+
+impl RegexParser {
+    fn new(pattern: &[u8]) -> RegexParser {
+        RegexParser {
+            input: pattern,
+            pos: 0,
+            next_group_id: 1,  // Start at 1 (0 is reserved for full match)
+        }
+    }
+
+    fn peek(self: &RegexParser) -> Option<u8> {
+        if self.pos < self.input.len() {
+            Option::some(self.input[self.pos])
+        } else {
+            Option::none()
+        }
+    }
+
+    fn advance(self: &mut RegexParser) {
+        if self.pos < self.input.len() {
+            self.pos += 1;
+        }
+    }
+
+    fn peek_char(self: &RegexParser) -> Option<u32> {
+        if self.pos >= self.input.len() {
+            return Option::none();
+        }
+        let decoded = unicode::decode_utf8(self.input[self.pos..]);
+        if decoded.is_ok() {
+            let (ch, _) = decoded.unwrap();
+            Option::some(ch)
+        } else {
+            Option::none()
+        }
+    }
+
+    fn consume_char(self: &mut RegexParser) -> Option<u32> {
+        if self.pos >= self.input.len() {
+            return Option::none();
+        }
+        let decoded = unicode::decode_utf8(self.input[self.pos..]);
+        if decoded.is_ok() {
+            let (ch, len) = decoded.unwrap();
+            self.pos += len;
+            Option::some(ch)
+        } else {
+            Option::none()
+        }
+    }
+
+    /// Parse full regex
+    fn parse(self: &mut RegexParser) -> Result<RegexNode, ()> {
+        self.parse_alternation()
+    }
+
+    /// Parse alternation (lowest precedence): a|b|c
+    fn parse_alternation(self: &mut RegexParser) -> Result<RegexNode, ()> {
+        let left = self.parse_concatenation();
+        if left.is_err() {
+            return left;
+        }
+        let left = left.unwrap();
+
+        let ch = self.peek();
+        if ch.is_some() && ch.unwrap() == '|' {
+            self.advance();
+            let right = self.parse_alternation();
+            if right.is_err() {
+                left.free();
+                return right;
+            }
+            Result::ok(RegexNode::alt(left, right.unwrap()))
+        } else {
+            Result::ok(left)
+        }
+    }
+
+    /// Parse concatenation: abc
+    fn parse_concatenation(self: &mut RegexParser) -> Result<RegexNode, ()> {
+        let nodes: Vector<RegexNode> = Vector::new();
+
+        loop {
+            let ch = self.peek();
+            if ch.is_none() || ch.unwrap() == '|' || ch.unwrap() == ')' {
+                break;
+            }
+
+            let node = self.parse_postfix();
+            if node.is_err() {
+                nodes.free_all();
+                return node;
+            }
+            nodes.push(node.unwrap());
+        }
+
+        if nodes.is_empty() {
+            // Empty concatenation - matches empty string
+            Result::ok(RegexNode::concat(nodes))
+        } else if nodes.len() == 1 {
+            // Single node - no need for concat wrapper
+            let result = nodes[0].move();
+            nodes.free();
+            Result::ok(result)
+        } else {
+            Result::ok(RegexNode::concat(nodes))
+        }
+    }
+
+    /// Parse postfix operators: *, +, ?
+    fn parse_postfix(self: &mut RegexParser) -> Result<RegexNode, ()> {
+        let base = self.parse_atom();
+        if base.is_err() {
+            return base;
+        }
+        let base = base.unwrap();
+
+        let ch = self.peek();
+        if ch.is_none() {
+            return Result::ok(base);
+        }
+
+        if ch.unwrap() == '*' {
+            self.advance();
+            Result::ok(RegexNode::star(base))
+        } else if ch.unwrap() == '+' {
+            self.advance();
+            Result::ok(RegexNode::plus(base))
+        } else if ch.unwrap() == '?' {
+            self.advance();
+            Result::ok(RegexNode::question(base))
+        } else if ch.unwrap() == '{' {
+            // Bounded repetition: {n}, {n,}, {n,m}
+            self.advance();
+
+            // Parse min count
+            let min_result = self.parse_number();
+            if min_result.is_err() {
+                base.free();
+                return Result::err(());
+            }
+            let min = min_result.unwrap();
+
+            let ch2 = self.peek();
+            if ch2.is_none() {
+                base.free();
+                return Result::err(());
+            }
+
+            if ch2.unwrap() == '}' {
+                // {n} - exact count
+                self.advance();
+                Result::ok(RegexNode::repeat(base, min, Option::some(min)))
+            } else if ch2.unwrap() == ',' {
+                self.advance();
+                let ch3 = self.peek();
+                if ch3.is_none() {
+                    base.free();
+                    return Result::err(());
+                }
+
+                if ch3.unwrap() == '}' {
+                    // {n,} - at least n
+                    self.advance();
+                    Result::ok(RegexNode::repeat(base, min, Option::none()))
+                } else {
+                    // {n,m} - between n and m
+                    let max_result = self.parse_number();
+                    if max_result.is_err() {
+                        base.free();
+                        return Result::err(());
+                    }
+                    let max = max_result.unwrap();
+
+                    if self.peek().is_none() || self.peek().unwrap() != '}' {
+                        base.free();
+                        return Result::err(());
+                    }
+                    self.advance();
+
+                    Result::ok(RegexNode::repeat(base, min, Option::some(max)))
+                }
+            } else {
+                base.free();
+                Result::err(())
+            }
+        } else {
+            Result::ok(base)
+        }
+    }
+
+    /// Parse a decimal number from the input
+    fn parse_number(self: &mut RegexParser) -> Result<usize, ()> {
+        let start_pos = self.pos;
+
+        while self.pos < self.input.len() {
+            let ch = self.input[self.pos];
+            if ch >= '0' && ch <= '9' {
+                self.pos += 1;
+            } else {
+                break;
+            }
+        }
+
+        if self.pos == start_pos {
+            return Result::err(());  // No digits found
+        }
+
+        // Convert to number
+        let result = 0usize;
+        for i in start_pos..self.pos {
+            let digit = (self.input[i] - '0') as usize;
+            result = result * 10usize + digit;
+        }
+
+        Result::ok(result)
+    }
+
+    /// Parse hex escape sequence: \xHH or \uHHHH
+    fn parse_hex_escape(self: &mut RegexParser, num_digits: usize) -> Result<RegexNode, ()> {
+        let value_result = self.parse_hex_value(num_digits);
+        if value_result.is_err() {
+            return Result::err(());
+        }
+        Result::ok(RegexNode::literal(value_result.unwrap()))
+    }
+
+    /// Parse atomic expression: literal, ., [], ()
+    fn parse_atom(self: &mut RegexParser) -> Result<RegexNode, ()> {
+        let ch = self.peek();
+        if ch.is_none() {
+            return Result::err(());
+        }
+
+        if ch.unwrap() == '(' {
+            // Group (capturing or non-capturing)
+            self.advance();
+
+            // Check for non-capturing group (?:...)
+            let is_non_capturing = false;
+            if self.peek().is_some() && self.peek().unwrap() == '?' {
+                self.advance();
+                if self.peek().is_some() && self.peek().unwrap() == ':' {
+                    self.advance();
+                    is_non_capturing = true;
+                } else {
+                    // Invalid syntax after (?
+                    return Result::err(());
+                }
+            }
+
+            // Assign group ID BEFORE parsing inner content (for correct nesting order)
+            let group_id = if !is_non_capturing {
+                let id = self.next_group_id;
+                self.next_group_id += 1;
+                id
+            } else {
+                0  // Placeholder, won't be used
+            };
+
+            let inner = self.parse_alternation();
+            if inner.is_err() {
+                return inner;
+            }
+            let closing = self.peek();
+            if closing.is_none() || closing.unwrap() != ')' {
+                inner.unwrap().free();
+                return Result::err(());
+            }
+            self.advance();
+
+            if is_non_capturing {
+                // Non-capturing group - just return the inner node
+                inner
+            } else {
+                // Capturing group - wrap in capture node with pre-assigned group ID
+                Result::ok(RegexNode::capture(group_id, inner.unwrap()))
+            }
+        } else if ch.unwrap() == '.' {
+            // Any character (except newline)
+            self.advance();
+            let any_char = IntervalSet::new();
+            any_char.add_interval(0, 0x10FFFF);
+            // Remove newline
+            let newline = IntervalSet::single('\n' as u32);
+            defer newline.free();
+            let without_newline = any_char.union(&newline.negate());
+            any_char.free();
+            Result::ok(RegexNode::char_class(without_newline))
+        } else if ch.unwrap() == '[' {
+            // Character class
+            self.parse_char_class()
+        } else if ch.unwrap() == '\\' {
+            // Escape sequence
+            self.advance();
+            let escaped = self.consume_char();
+            if escaped.is_none() {
+                return Result::err(());
+            }
+            let esc = escaped.unwrap();
+
+            // Check for character class escapes
+            if esc == 'd' as u32 {
+                Result::ok(RegexNode::char_class(IntervalSet::digit_class()))
+            } else if esc == 'D' as u32 {
+                Result::ok(RegexNode::char_class(IntervalSet::non_digit_class()))
+            } else if esc == 'w' as u32 {
+                Result::ok(RegexNode::char_class(IntervalSet::word_class()))
+            } else if esc == 'W' as u32 {
+                Result::ok(RegexNode::char_class(IntervalSet::non_word_class()))
+            } else if esc == 's' as u32 {
+                Result::ok(RegexNode::char_class(IntervalSet::whitespace_class()))
+            } else if esc == 'S' as u32 {
+                Result::ok(RegexNode::char_class(IntervalSet::non_whitespace_class()))
+            } else if esc == 't' as u32 {
+                Result::ok(RegexNode::literal('\t' as u32))
+            } else if esc == 'n' as u32 {
+                Result::ok(RegexNode::literal('\n' as u32))
+            } else if esc == 'r' as u32 {
+                Result::ok(RegexNode::literal('\r' as u32))
+            } else if esc == 'x' as u32 {
+                // Hex escape: \xHH
+                self.parse_hex_escape(2)
+            } else if esc == 'u' as u32 {
+                // Unicode escape: \uHHHH
+                self.parse_hex_escape(4)
+            } else {
+                // Regular escaped character (e.g., \(, \), \*, \., \\, etc.)
+                Result::ok(RegexNode::literal(esc))
+            }
+        } else if ch.unwrap() == '^' {
+            // Start of string anchor
+            self.advance();
+            Result::ok(RegexNode::literal(START_OF_STRING))
+        } else if ch.unwrap() == '$' {
+            // End of string anchor
+            self.advance();
+            Result::ok(RegexNode::literal(END_OF_STRING))
+        } else {
+            // Literal character
+            let literal = self.consume_char();
+            if literal.is_none() {
+                return Result::err(());
+            }
+            Result::ok(RegexNode::literal(literal.unwrap()))
+        }
+    }
+
+    /// Parse a single character in a character class (handles escapes)
+    fn parse_class_char(self: &mut RegexParser) -> Result<u32, ()> {
+        if self.peek().is_none() {
+            return Result::err(());
+        }
+
+        if self.peek().unwrap() == '\\' {
+            self.advance();
+            let esc = self.consume_char();
+            if esc.is_none() {
+                return Result::err(());
+            }
+            let esc_ch = esc.unwrap();
+
+            // Handle escape sequences
+            if esc_ch == 't' as u32 {
+                Result::ok('\t' as u32)
+            } else if esc_ch == 'n' as u32 {
+                Result::ok('\n' as u32)
+            } else if esc_ch == 'r' as u32 {
+                Result::ok('\r' as u32)
+            } else if esc_ch == 'x' as u32 {
+                // Hex escape
+                let value_result = self.parse_hex_value(2);
+                if value_result.is_err() {
+                    return Result::err(());
+                }
+                Result::ok(value_result.unwrap())
+            } else if esc_ch == 'u' as u32 {
+                // Unicode escape
+                let value_result = self.parse_hex_value(4);
+                if value_result.is_err() {
+                    return Result::err(());
+                }
+                Result::ok(value_result.unwrap())
+            } else {
+                // Literal escaped character (e.g., \], \-, \\)
+                Result::ok(esc_ch)
+            }
+        } else {
+            let ch = self.consume_char();
+            if ch.is_some() {
+                Result::ok(ch.unwrap())
+            } else {
+                Result::err(())
+            }
+        }
+    }
+
+    /// Parse hex value (helper for parse_hex_escape and parse_class_char)
+    fn parse_hex_value(self: &mut RegexParser, num_digits: usize) -> Result<u32, ()> {
+        let value = 0u32;
+
+        for _ in 0usize..num_digits {
+            if self.pos >= self.input.len() {
+                return Result::err(());
+            }
+
+            let ch = self.input[self.pos];
+            let digit: u32;
+
+            if ch >= '0' && ch <= '9' {
+                digit = (ch - '0') as u32;
+            } else if ch >= 'a' && ch <= 'f' {
+                digit = (ch - 'a') as u32 + 10u32;
+            } else if ch >= 'A' && ch <= 'F' {
+                digit = (ch - 'A') as u32 + 10u32;
+            } else {
+                return Result::err(());
+            }
+
+            value = value * 16u32 + digit;
+            self.pos += 1;
+        }
+
+        // Validate Unicode codepoint range
+        if value > 0x10FFFF {
+            return Result::err(());
+        }
+
+        Result::ok(value)
+    }
+
+    /// Parse character class: [abc], [a-z], [^abc]
+    fn parse_char_class(self: &mut RegexParser) -> Result<RegexNode, ()> {
+        if self.peek().is_none() || self.peek().unwrap() != '[' {
+            return Result::err(());
+        }
+        self.advance();
+
+        let negated = false;
+        if self.peek().is_some() && self.peek().unwrap() == '^' {
+            negated = true;
+            self.advance();
+        }
+
+        let class = IntervalSet::new();
+
+        loop {
+            let ch = self.peek();
+            if ch.is_none() {
+                class.free();
+                return Result::err(());
+            }
+            if ch.unwrap() == ']' {
+                self.advance();
+                break;
+            }
+
+            let start_result = self.parse_class_char();
+            if start_result.is_err() {
+                class.free();
+                return Result::err(());
+            }
+            let start = start_result.unwrap();
+
+            // Check for range
+            if self.peek().is_some() && self.peek().unwrap() == '-' {
+                self.advance();
+                // Check if this is the end of the class
+                if self.peek().is_some() && self.peek().unwrap() == ']' {
+                    // Literal '-'
+                    class.add(start);
+                    class.add('-' as u32);
+                } else {
+                    let end_result = self.parse_class_char();
+                    if end_result.is_err() {
+                        class.free();
+                        return Result::err(());
+                    }
+                    class.add_interval(start, end_result.unwrap());
+                }
+            } else {
+                class.add(start);
+            }
+        }
+
+        if negated {
+            let negated_class = class.negate();
+            class.free();
+            Result::ok(RegexNode::char_class(negated_class))
+        } else {
+            Result::ok(RegexNode::char_class(class))
+        }
+    }
+}
+
+/// Result of epsilon closure computation - states and accumulated tags
+struct EpsilonClosureResult {
+    states: HashSet<usize>,
+    tags: Vector<usize>,
+}
+
+impl EpsilonClosureResult {
+    fn free(self: &mut EpsilonClosureResult) {
+        self.states.free();
+        self.tags.free();
+    }
+}
+
+/// Compute epsilon closure of a set of NFA states
+/// Returns all states reachable via epsilon transitions, plus tags encountered
+fn epsilon_closure(nfa: &Nfa, states: &HashSet<usize>) -> EpsilonClosureResult {
+    let result: HashSet<usize> = HashSet::new();
+    let tags: Vector<usize> = Vector::new();
+    let stack: Vector<usize> = Vector::new();
+    defer stack.free();
+
+    // Start with the input states
+    for state in states.iter() {
+        result.insert(state);
+        stack.push(state);
+    }
+
+    // Process stack: follow epsilon transitions and collect tags
+    while !stack.is_empty() {
+        let current = stack.pop().unwrap();
+
+
+
+        for trans in nfa.states[current].transitions.iter() {
+            if trans.on_chars.is_none() {
+                // Epsilon transition - collect its tags
+                //eprintln!("{}", trans.tags.len());
+                for tag in trans.tags.iter() {
+                    tags.push(tag);
+                }
+
+                if !result.contains(&trans.to) {
+                    result.insert(trans.to);
+                    stack.push(trans.to);
+                }
+            }
+        }
+    }
+
+    EpsilonClosureResult {
+        states: result,
+        tags: tags,
+    }
+}
+
+/// Result of move operation - states and accumulated tags
+struct MoveResult {
+    states: HashSet<usize>,
+    tags: Vector<usize>,
+}
+
+impl MoveResult {
+    fn free(self: &mut MoveResult) {
+        self.states.free();
+        self.tags.free();
+    }
+}
+
+/// Compute the set of NFA states reachable from a set of states on a character
+/// Also collects tags from the transitions taken
+fn move_on_char(nfa: &Nfa, states: &HashSet<usize>, ch: u32) -> MoveResult {
+    let result: HashSet<usize> = HashSet::new();
+    let tags: Vector<usize> = Vector::new();
+
+    for state in states.iter() {
+        for trans in nfa.states[state].transitions.iter() {
+            if trans.on_chars.is_some() {
+                let chars = trans.on_chars.unwrap();
+                if chars.contains(ch) {
+                    result.insert(trans.to);
+                    // Collect tags from this transition
+                    for tag in trans.tags.iter() {
+                        tags.push(tag);
+                    }
+                }
+            }
+        }
+    }
+
+    MoveResult {
+        states: result,
+        tags: tags,
+    }
+}
+
+/// Hash a set of NFA states to use as a key in the state map
+fn hash_state_set(states: &HashSet<usize>) -> u64 {
+    use hash::DefaultHash;
+
+    // Convert to sorted vector for consistent hashing
+    let sorted: Vector<usize> = Vector::new();
+    defer sorted.free();
+
+    for state in states.iter() {
+        sorted.push(state);
+    }
+    sort(sorted.as_slice_mut());
+
+    // Hash the sorted states
+    let hasher = DefaultHash::new();
+    for state in sorted.iter() {
+        state.hash(&hasher);
+    }
+    hasher.finish()
+}
+
+/// Collect all distinct character classes from transitions in a state set
+/// This splits overlapping intervals into non-overlapping character classes
+fn collect_character_classes(nfa: &Nfa, states: &HashSet<usize>) -> Vector<IntervalSet> {
+    // Collect all intervals from all transitions
+    let all_intervals: Vector<Interval> = Vector::new();
+    defer all_intervals.free();
+
+    for state in states.iter() {
+        for trans in nfa.states[state].transitions.iter() {
+            if trans.on_chars.is_some() {
+                let chars = trans.on_chars.unwrap();
+                for interval in chars.intervals.iter() {
+                    all_intervals.push(interval);
+                }
+            }
+        }
+    }
+
+    if all_intervals.is_empty() {
+        return Vector::new();
+    }
+
+    // Collect all boundary points
+    let boundaries: Vector<u32> = Vector::new();
+    defer boundaries.free();
+
+    for interval in all_intervals.iter() {
+        boundaries.push(interval.start);
+        // Include boundaries beyond Unicode range for pseudo-characters
+        if interval.end < END_OF_STRING {
+            boundaries.push(interval.end + 1);
+        }
+    }
+
+    // Sort and deduplicate boundaries
+    sort(boundaries.as_slice_mut());
+    let unique_boundaries: Vector<u32> = Vector::new();
+    defer unique_boundaries.free();
+
+    if !boundaries.is_empty() {
+        unique_boundaries.push(boundaries[0]);
+        for i in 1usize..boundaries.len() {
+            if boundaries[i] != boundaries[i - 1] {
+                unique_boundaries.push(boundaries[i]);
+            }
+        }
+    }
+
+    // Create character classes from boundaries
+    let char_classes: Vector<IntervalSet> = Vector::new();
+
+    for i in 0usize..unique_boundaries.len() {
+        let start = unique_boundaries[i];
+        let end = if i + 1 < unique_boundaries.len() {
+            unique_boundaries[i + 1] - 1
+        } else {
+            END_OF_STRING  // Include pseudo-characters
+        };
+
+        // Check if this range is covered by any original interval
+        let mid = start;
+        let covered = false;
+        for interval in all_intervals.iter() {
+            if mid >= interval.start && mid <= interval.end {
+                covered = true;
+                break;
+            }
+        }
+
+        if covered {
+            let class = IntervalSet::range(start, end);
+            char_classes.push(class);
+        }
+    }
+
+    char_classes
+}
+
+/// DFA (Deterministic Finite Automaton) compiled from NFA
+/// Each state has exactly one transition per character class
+
+/// DFA transition - maps a character class to a destination state
+struct DfaTransition {
+    chars: IntervalSet,
+    to: usize,
+    /// Tags to record when crossing this transition (for captures)
+    tags: Vector<usize>,
+}
+
+impl DfaTransition {
+    fn move(self: &mut DfaTransition) -> DfaTransition {
+        let ret = *self;
+        self.chars = IntervalSet::new();
+        self.tags = Vector::new();
+        ret
+    }
+
+    fn free(self: &mut DfaTransition) {
+        self.chars.free();
+        self.tags.free();
+    }
+}
+
+/// DFA state
+struct DfaState {
+    transitions: Vector<DfaTransition>,
+    is_final: bool,
+    /// Tags to record when entering this state (from epsilon closures)
+    entry_tags: Vector<usize>,
+}
+
+impl DfaState {
+    fn move(self: &mut DfaState) -> DfaState {
+        let ret = *self;
+        self.transitions = Vector::new();
+        self.entry_tags = Vector::new();
+        ret
+    }
+
+    fn free(self: &mut DfaState) {
+        self.transitions.free_all();
+        self.entry_tags.free();
+    }
+}
+
+/// Complete DFA
+struct Dfa {
+    states: Vector<DfaState>,
+    start: usize,
+}
+
+impl Dfa {
+    /// Create empty DFA
+    fn new() -> Dfa {
+        Dfa {
+            states: Vector::new(),
+            start: 0,
+        }
+    }
+
+    /// Convert an NFA to a DFA using subset construction
+    fn from_nfa(nfa: &Nfa) -> Dfa {
+        use collections::HashMap;
+
+        let dfa = Dfa::new();
+
+        // Map from NFA state set to DFA state index
+        let state_map: HashMap<u64, usize> = HashMap::new();
+        defer state_map.free();
+
+        let work_list: Vector<HashSet<usize>> = Vector::new();
+        defer work_list.free_all();
+
+        // Compute initial state (epsilon closure of NFA start state)
+        let start_set: HashSet<usize> = HashSet::new();
+        defer start_set.free();
+
+        start_set.insert(nfa.start);
+        let start_closure_result = epsilon_closure(nfa, &start_set);
+
+        // Check if start state is final
+        let is_start_final = false;
+        for s in start_closure_result.states.iter() {
+            if nfa.states[s].is_final {
+                is_start_final = true;
+                break;
+            }
+        }
+
+        // Add start state to DFA (with entry tags from initial epsilon closure)
+        dfa.states.push(DfaState {
+            transitions: Vector::new(),
+            is_final: is_start_final,
+            entry_tags: start_closure_result.tags.move(),
+        });
+
+        let start_hash = hash_state_set(&start_closure_result.states);
+        state_map.insert(start_hash, 0);
+        work_list.push(start_closure_result.states.move());
+
+        // Process work list
+        while !work_list.is_empty() {
+            let current_set = work_list.pop().unwrap();
+
+            let current_hash = hash_state_set(&current_set);
+            let current_idx = state_map.get(&current_hash).unwrap();
+
+            // Collect all possible character classes from this state set
+            let char_classes = collect_character_classes(nfa, &current_set);
+
+            // For each character class, compute the next state
+            for char_class in char_classes.iter() {
+                // Find a representative character in this class
+                if char_class.intervals.is_empty() {
+                    continue;
+                }
+                let rep_char = char_class.intervals[0].start;
+
+                // Compute next state set and collect tags
+                let move_result = move_on_char(nfa, &current_set, rep_char);
+                let closure_result = epsilon_closure(nfa, &move_result.states);
+
+                // Tags from move go on the transition
+                // Tags from epsilon closure become entry tags for the destination state
+                let trans_tags = move_result.tags.move();
+                let entry_tags_for_dest = closure_result.tags.move();
+                move_result.free();
+
+                if closure_result.states.is_empty() {
+                    closure_result.states.free();
+                    trans_tags.free();
+                    entry_tags_for_dest.free();
+                    continue;
+                }
+
+                // Check if this state set already exists
+                let next_hash = hash_state_set(&closure_result.states);
+                let existing = state_map.get(&next_hash);
+                let next_idx = if existing.is_some() {
+                    // State already exists, free the closure and entry tags
+                    closure_result.states.free();
+                    entry_tags_for_dest.free();
+                    existing.unwrap()
+                } else {
+                    // Create new DFA state with entry tags
+                    let new_idx = dfa.states.len();
+                    let is_final = false;
+                    for s in closure_result.states.iter() {
+                        if nfa.states[s].is_final {
+                            is_final = true;
+                            break;
+                        }
+                    }
+
+                    dfa.states.push(DfaState {
+                        transitions: Vector::new(),
+                        is_final: is_final,
+                        entry_tags: entry_tags_for_dest,
+                    });
+
+                    state_map.insert(next_hash, new_idx);
+                    work_list.push(closure_result.states.move());  // Transfer ownership to work_list
+                    new_idx
+                };
+
+                // Add transition to current DFA state with tags
+                // Note: char_class is being moved here, so we need to avoid reusing it
+                dfa.states[current_idx].transitions.push(DfaTransition {
+                    chars: char_class,
+                    to: next_idx,
+                    tags: trans_tags,
+                });
+            }
+
+            // char_classes elements were moved, just free the vector itself
+            char_classes.free();
+            current_set.free();
+        }
+
+        dfa
+    }
+
+    /// Check if text matches (simple boolean match)
+    fn is_match(self: &Dfa, text: &[u8]) -> bool {
+        self.find(text).is_some()
+    }
+
+    /// Find first match position
+    fn find(self: &Dfa, text: &[u8]) -> Option<(usize, usize)> {
+        // Try starting the match at each position
+        for start_pos in 0usize..text.len() + 1 {
+            let result = self.match_from(text, start_pos);
+            if result.is_some() {
+                return Option::some((start_pos, result.unwrap()));
+            }
+        }
+        Option::none()
+    }
+
+    /// Process START_OF_STRING anchor
+    fn _process_start(self: &Dfa, state: usize, start_pos: usize) -> usize {
+        if start_pos != 0 {
+            return state;
+        }
+
+        for trans in self.states[state].transitions.iter() {
+            if trans.chars.contains(START_OF_STRING) {
+                return trans.to;
+            }
+        }
+        state
+    }
+
+    /// Process END_OF_STRING anchor
+    fn _process_end(self: &Dfa, state: usize, pos: usize, text_len: usize) -> usize {
+        if pos != text_len {
+            return state;
+        }
+
+        for trans in self.states[state].transitions.iter() {
+            if trans.chars.contains(END_OF_STRING) {
+                return trans.to;
+            }
+        }
+        state
+    }
+
+    /// Try to match starting from a specific position
+    fn match_from(self: &Dfa, text: &[u8], start_pos: usize) -> Option<usize> {
+        let state = self._process_start(self.start, start_pos);
+        let pos = start_pos;
+        let last_accept = if self.states[state].is_final {
+            Option::some(pos)
+        } else {
+            Option::none()
+        };
+
+        while pos < text.len() {
+            let decoded = unicode::decode_utf8(text[pos..]);
+            if decoded.is_err() {
+                break;
+            }
+
+            let (ch, bytes) = decoded.unwrap();
+            let next_state_val = 0usize;
+            let found = false;
+
+            for trans in self.states[state].transitions.iter() {
+                if trans.chars.contains(ch) {
+                    next_state_val = trans.to;
+                    found = true;
+                    break;
+                }
+            }
+
+            if !found {
+                break;
+            }
+
+            state = next_state_val;
+            pos += bytes;
+
+            if self.states[state].is_final {
+                last_accept = Option::some(pos);
+            }
+        }
+
+        state = self._process_end(state, pos, text.len());
+
+        if self.states[state].is_final {
+            Option::some(pos)
+        } else {
+            last_accept
+        }
+    }
+
+    /// Process START_OF_STRING anchor with tag recording
+    fn _process_start_with_tags(self: &Dfa, state: usize, start_pos: usize, tag_positions: &mut Vector<usize>) -> usize {
+        if start_pos != 0 {
+            return state;
+        }
+
+        for trans in self.states[state].transitions.iter() {
+            if trans.chars.contains(START_OF_STRING) {
+                for tag in trans.tags.iter() {
+                    tag_positions[tag] = start_pos;
+                }
+                return trans.to;
+            }
+        }
+        state
+    }
+
+    /// Process END_OF_STRING anchor with tag recording
+    fn _process_end_with_tags(self: &Dfa, state: usize, pos: usize, text_len: usize, tag_positions: &mut Vector<usize>) -> usize {
+        if pos != text_len {
+            return state;
+        }
+
+        for trans in self.states[state].transitions.iter() {
+            if trans.chars.contains(END_OF_STRING) {
+                for tag in trans.tags.iter() {
+                    tag_positions[tag] = pos;
+                }
+                for tag in self.states[trans.to].entry_tags.iter() {
+                    tag_positions[tag] = pos;
+                }
+                return trans.to;
+            }
+        }
+        state
+    }
+
+    /// Match from a position and track capture groups
+    /// Updates tag_positions vector with tag positions and returns end_pos if match found
+    /// Caller is responsible for freeing tag_positions
+    fn match_with_captures(self: &Dfa, text: &[u8], start_pos: usize, tag_positions: &mut Vector<usize>) -> Option<usize> {
+        // Reinitialize all tag positions to 0 (reuse existing allocation)
+        for i in 0usize..tag_positions.len() {
+            tag_positions[i] = 0;
+        }
+
+        let state = self._process_start_with_tags(self.start, start_pos, tag_positions);
+        let pos = start_pos;
+
+        // Record entry tags for the start state
+        for tag in self.states[state].entry_tags.iter() {
+            tag_positions[tag] = pos;
+        }
+
+        let last_accept = if self.states[state].is_final {
+            Option::some(pos)
+        } else {
+            Option::none()
+        };
+
+        while pos < text.len() {
+            let decoded = unicode::decode_utf8(text[pos..]);
+            if decoded.is_err() {
+                break;
+            }
+
+            let (ch, bytes) = decoded.unwrap();
+
+            let next_trans_idx_val = 0usize;
+            let found_idx = false;
+            for i in 0usize..self.states[state].transitions.len() {
+                let trans = &self.states[state].transitions[i];
+                if trans.chars.contains(ch) {
+                    next_trans_idx_val = i;
+                    found_idx = true;
+                    break;
+                }
+            }
+
+            if !found_idx {
+                break;
+            }
+
+            let trans = &self.states[state].transitions[next_trans_idx_val];
+
+            state = trans.to;
+            pos += bytes;
+
+            // Record tags from transition (after advancing position)
+            for tag in trans.tags.iter() {
+                tag_positions[tag] = pos;
+            }
+
+            // Record entry tags for destination state
+            for tag in self.states[state].entry_tags.iter() {
+                tag_positions[tag] = pos;
+            }
+
+            // Update last accepting position
+            if self.states[state].is_final {
+                last_accept = Option::some(pos);
+            }
+        }
+
+        state = self._process_end_with_tags(state, pos, text.len(), tag_positions);
+
+        if self.states[state].is_final {
+            Option::some(pos)
+        } else {
+            last_accept
+        }
+    }
+
+    fn move(self: &mut Dfa) -> Dfa {
+        let ret = *self;
+        self.states = Vector::new();
+        ret
+    }
+
+    fn free(self: &mut Dfa) {
+        self.states.free_all();
+    }
+}
+
+#[cfg(all(test, test_std))]
+#[docs(hide)]
+mod tests {
+    use string::unicode;
+    use collections::Vector;
+
+    #[test]
+    fn test_interval_single() {
+        let set = IntervalSet::single('a' as u32);
+        defer set.free();
+        assert!(set.contains('a' as u32));
+        assert!(!set.contains('b' as u32));
+    }
+
+    #[test]
+    fn test_interval_range() {
+        let set = IntervalSet::range('a' as u32, 'z' as u32);
+        defer set.free();
+        assert!(set.contains('a' as u32));
+        assert!(set.contains('m' as u32));
+        assert!(set.contains('z' as u32));
+        assert!(!set.contains('A' as u32));
+        assert!(!set.contains('0' as u32));
+    }
+
+    #[test]
+    fn test_interval_add_and_merge() {
+        let set = IntervalSet::new();
+        defer set.free();
+        set.add_interval('a' as u32, 'c' as u32);
+        set.add_interval('e' as u32, 'g' as u32);
+        set.add_interval('b' as u32, 'f' as u32); // Overlaps both
+
+        assert_eq!(set.intervals.len(), 1);
+        assert_eq!(set.intervals[0].start, 'a' as u32);
+        assert_eq!(set.intervals[0].end, 'g' as u32);
+    }
+
+    #[test]
+    fn test_interval_negate() {
+        let set = IntervalSet::range('a' as u32, 'z' as u32);
+        defer set.free();
+        let negated = set.negate();
+        defer negated.free();
+
+        assert!(!negated.contains('a' as u32));
+        assert!(!negated.contains('m' as u32));
+        assert!(!negated.contains('z' as u32));
+        assert!(negated.contains('A' as u32));
+        assert!(negated.contains('0' as u32));
+        assert!(negated.contains(0));
+        assert!(negated.contains(0x10FFFF));
+    }
+
+    #[test]
+    fn test_interval_union() {
+        let set1 = IntervalSet::range('a' as u32, 'z' as u32);
+        defer set1.free();
+        let set2 = IntervalSet::range('A' as u32, 'Z' as u32);
+        defer set2.free();
+        let union = set1.union(&set2);
+        defer union.free();
+
+        assert!(union.contains('a' as u32));
+        assert!(union.contains('Z' as u32));
+        assert!(!union.contains('0' as u32));
+        assert_eq!(union.intervals.len(), 2);
+    }
+
+    #[test]
+    fn test_nfa_basic() {
+        // Build simple NFA: start --'a'--> end
+        let nfa = Nfa::new();
+        defer nfa.free();
+        let end_state = nfa.add_state(true);
+
+        let chars = IntervalSet::single('a' as u32);
+        nfa.add_transition(nfa.start, end_state, chars);
+
+        assert_eq!(nfa.states.len(), 2);
+        assert_eq!(nfa.states[0].transitions.len(), 1);
+        assert!(nfa.states[1].is_final);
+    }
+
+    #[test]
+    fn test_nfa_epsilon() {
+        // Build NFA with epsilon transition
+        let nfa = Nfa::new();
+        defer nfa.free();
+        let middle = nfa.add_state(false);
+        let end_state = nfa.add_state(true);
+
+        nfa.add_epsilon(nfa.start, middle);
+
+        let chars = IntervalSet::single('a' as u32);
+        nfa.add_transition(middle, end_state, chars);
+
+        assert_eq!(nfa.states.len(), 3);
+        assert!(nfa.states[0].transitions[0].on_chars.is_none());
+    }
+
+    #[test]
+    fn test_nfa_to_dfa() {
+        // Build simple NFA: start --'a'--> end
+        let nfa = Nfa::new();
+        defer nfa.free();
+        let end_state = nfa.add_state(true);
+        let chars = IntervalSet::single('a' as u32);
+        nfa.add_transition(nfa.start, end_state, chars);
+
+        // Convert to DFA
+        let dfa = Dfa::from_nfa(&nfa);
+        defer dfa.free();
+
+        // Test matching
+        assert!(dfa.is_match("a"));
+        assert!(dfa.is_match("xax"));
+        assert!(!dfa.is_match("b"));
+        assert!(!dfa.is_match(""));
+    }
+
+    #[test]
+    fn test_nfa_to_dfa_with_epsilon() {
+        // Build NFA with epsilon: start -ε-> middle --'a'--> end
+        let nfa = Nfa::new();
+        defer nfa.free();
+        let middle = nfa.add_state(false);
+        let end_state = nfa.add_state(true);
+
+        nfa.add_epsilon(nfa.start, middle);
+        let chars = IntervalSet::single('a' as u32);
+        nfa.add_transition(middle, end_state, chars);
+
+        // Convert to DFA
+        let dfa = Dfa::from_nfa(&nfa);
+        defer dfa.free();
+
+        // Test matching - epsilon should be transparent
+        assert!(dfa.is_match("a"));
+        assert!(dfa.is_match("ba"));
+        assert!(!dfa.is_match("b"));
+    }
+
+    #[test]
+    fn test_utf8_decode() {
+        // Test ASCII
+        let result = unicode::decode_utf8("a");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().0, 'a' as u32);
+        assert_eq!(result.unwrap().1, 1usize);
+
+        // Test 2-byte (ñ = U+00F1)
+        let result = unicode::decode_utf8("ñ");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().0, 0xF1u32);
+        assert_eq!(result.unwrap().1, 2usize);
+
+        // Test 3-byte (€ = U+20AC)
+        let result = unicode::decode_utf8("€");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().0, 0x20ACu32);
+        assert_eq!(result.unwrap().1, 3usize);
+
+        // Test 4-byte (𝔸 = U+1D538)
+        let result = unicode::decode_utf8("𝔸");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().0, 0x1D538u32);
+        assert_eq!(result.unwrap().1, 4usize);
+    }
+
+    #[test]
+    fn test_dfa_simple_match() {
+        // Manually build a DFA that matches "ab"
+        let dfa = Dfa::new();
+        defer dfa.free();
+
+        // State 0 (start) --'a'--> State 1
+        dfa.states.push(DfaState {
+            transitions: Vector::new(),
+            is_final: false,
+            entry_tags: Vector::new(),
+        });
+
+        // State 1 --'b'--> State 2
+        dfa.states.push(DfaState {
+            transitions: Vector::new(),
+            is_final: false,
+            entry_tags: Vector::new(),
+        });
+
+        // State 2 (final)
+        dfa.states.push(DfaState {
+            transitions: Vector::new(),
+            is_final: true,
+            entry_tags: Vector::new(),
+        });
+
+        // Add transitions
+        dfa.states[0].transitions.push(DfaTransition {
+            chars: IntervalSet::single('a' as u32),
+            to: 1,
+            tags: Vector::new(),
+        });
+
+        dfa.states[1].transitions.push(DfaTransition {
+            chars: IntervalSet::single('b' as u32),
+            to: 2,
+            tags: Vector::new(),
+        });
+
+        // Test matching
+        assert!(dfa.is_match("ab"));
+        assert!(dfa.is_match("xabx"));
+        assert!(!dfa.is_match("ac"));
+        assert!(!dfa.is_match("a"));
+    }
+}

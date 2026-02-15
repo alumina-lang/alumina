@@ -5,6 +5,7 @@ use crate::common::{
 };
 use crate::diagnostics::DiagnosticsStack;
 use crate::global_ctx::GlobalCtx;
+use crate::ir::bake::ConstBaker;
 use crate::ir::{BuiltinType, ExprKind, ExprP, Id, IrCtx, Item, Statement, Ty, TyP, UnOp};
 use std::backtrace::Backtrace;
 use std::cell::RefCell;
@@ -17,12 +18,13 @@ use std::rc::Rc;
 use thiserror::Error;
 
 const MAX_RECURSION_DEPTH: usize = 100;
-const MAX_ITERATIONS: usize = 100000;
+const MAX_ITERATIONS: usize = 1000000;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Value<'ir> {
     Void,
     Uninitialized,
+    Dangling(usize),
     Bool(bool),
     U8(u8),
     U16(u16),
@@ -53,6 +55,7 @@ impl PartialEq for Value<'_> {
         match (self, other) {
             (Value::Void, Value::Void) => true,
             (Value::Uninitialized, Value::Uninitialized) => true,
+            (Value::Dangling(a), Value::Dangling(b)) => a == b,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::U8(a), Value::U8(b)) => a == b,
             (Value::U16(a), Value::U16(b)) => a == b,
@@ -86,94 +89,98 @@ impl Hash for Value<'_> {
         match self {
             Value::Void => state.write_u8(0),
             Value::Uninitialized => state.write_u8(1),
-            Value::Bool(a) => {
+            Value::Dangling(ty) => {
                 state.write_u8(2);
+                ty.hash(state);
+            }
+            Value::Bool(a) => {
+                state.write_u8(3);
                 state.write_u8(*a as u8);
             }
             Value::U8(a) => {
-                state.write_u8(3);
+                state.write_u8(4);
                 state.write_u8(*a);
             }
             Value::U16(a) => {
-                state.write_u8(4);
+                state.write_u8(5);
                 state.write_u16(*a);
             }
             Value::U32(a) => {
-                state.write_u8(5);
+                state.write_u8(6);
                 state.write_u32(*a);
             }
             Value::U64(a) => {
-                state.write_u8(6);
+                state.write_u8(7);
                 state.write_u64(*a);
             }
             Value::U128(a) => {
-                state.write_u8(7);
+                state.write_u8(8);
                 state.write_u128(*a);
             }
             Value::I8(a) => {
-                state.write_u8(8);
+                state.write_u8(9);
                 state.write_u8(*a as u8);
             }
             Value::I16(a) => {
-                state.write_u8(9);
+                state.write_u8(10);
                 state.write_u16(*a as u16);
             }
             Value::I32(a) => {
-                state.write_u8(10);
+                state.write_u8(11);
                 state.write_u32(*a as u32);
             }
             Value::I64(a) => {
-                state.write_u8(11);
+                state.write_u8(12);
                 state.write_u64(*a as u64);
             }
             Value::I128(a) => {
-                state.write_u8(12);
+                state.write_u8(13);
                 state.write_u128(*a as u128);
             }
             Value::USize(a) => {
-                state.write_u8(13);
+                state.write_u8(14);
                 state.write_usize(*a);
             }
             Value::ISize(a) => {
-                state.write_u8(14);
+                state.write_u8(15);
                 state.write_usize(*a as usize);
             }
             Value::F32(a) => {
-                state.write_u8(15);
+                state.write_u8(16);
                 state.write_u32(a.to_bits());
             }
             Value::F64(a) => {
-                state.write_u8(16);
+                state.write_u8(17);
                 state.write_u64(a.to_bits());
             }
             Value::Bytes(a, a_len) => {
-                state.write_u8(17);
+                state.write_u8(18);
                 a.hash(state);
                 a_len.hash(state);
             }
             Value::Tuple(a) => {
-                state.write_u8(18);
-                a.hash(state);
-            }
-            Value::Array(a) => {
                 state.write_u8(19);
                 a.hash(state);
             }
-            Value::Struct(a) => {
+            Value::Array(a) => {
                 state.write_u8(20);
                 a.hash(state);
             }
-            Value::FunctionPointer(a) => {
+            Value::Struct(a) => {
                 state.write_u8(21);
                 a.hash(state);
             }
-            Value::Pointer(a, ty) => {
+            Value::FunctionPointer(a) => {
                 state.write_u8(22);
+                a.hash(state);
+            }
+            Value::Pointer(a, ty) => {
+                state.write_u8(23);
                 a.hash(state);
                 ty.hash(state);
             }
             Value::LValue(a) => {
-                state.write_u8(23);
+                state.write_u8(24);
                 a.hash(state);
             }
         }
@@ -216,6 +223,8 @@ pub enum ConstEvalErrorKind {
     TooManyIterations,
     #[error("contains pointer to a local variable")]
     LValueLeak,
+    #[error("contains dynamically allocated memory during constant evaluation (hint: use std::runtime::bake to bake the value into rodata)")]
+    AllocLeak,
     #[error("dynamically allocated memory used after being freed")]
     UseAfterFree,
     #[error("invalid pointer used to free memory")]
@@ -766,7 +775,7 @@ pub struct ConstEvalCtx<'ir> {
 }
 
 struct MallocBagInner<'ir> {
-    variables: HashMap<Id, Value<'ir>>,
+    variables: HashMap<Id, (Value<'ir>, TyP<'ir>)>,
 }
 
 #[derive(Clone)]
@@ -783,36 +792,44 @@ impl<'ir> MallocBag<'ir> {
         }
     }
 
-    pub fn define(&self, id: Id, value: Value<'ir>) {
-        self.inner.borrow_mut().variables.insert(id, value);
+    pub fn define(&self, id: Id, value: Value<'ir>, ty: TyP<'ir>) {
+        self.inner.borrow_mut().variables.insert(id, (value, ty));
     }
 
-    pub fn assign(&self, id: Id, value: Value<'ir>) -> Option<Value<'ir>> {
+    pub fn assign(&self, id: Id, value: Value<'ir>) -> Option<(Value<'ir>, TyP<'ir>)> {
         let mut inner = self.inner.borrow_mut();
         match inner.variables.entry(id) {
-            std::collections::hash_map::Entry::Occupied(mut val) => Some(val.insert(value)),
+            std::collections::hash_map::Entry::Occupied(mut val) => {
+                val.get_mut().0 = value;
+                Some(*val.get())
+            }
             std::collections::hash_map::Entry::Vacant(_) => None,
         }
     }
 
-    pub fn free(&self, id: Id) -> Option<Value<'ir>> {
+    pub fn free(&self, id: Id) -> Option<(Value<'ir>, TyP<'ir>)> {
         self.inner.borrow_mut().variables.remove(&id)
     }
 
-    pub fn get(&self, id: Id) -> Option<Value<'ir>> {
+    pub fn get(&self, id: Id) -> Option<(Value<'ir>, TyP<'ir>)> {
         self.inner.borrow().variables.get(&id).cloned()
     }
 }
 
 impl<'ir> ConstEvalCtx<'ir> {
     pub fn new(global_ctx: GlobalCtx, ir: &'ir IrCtx<'ir>, malloc_bag: MallocBag<'ir>) -> Self {
+        let max_iterations = global_ctx
+            .option("const-eval-max-iterations")
+            .and_then(|v| v?.parse().ok())
+            .unwrap_or(MAX_ITERATIONS);
+
         Self {
             global_ctx,
             ir,
             malloc_bag,
             inner: Rc::new(RefCell::new(ConstEvalCtxInner {
                 variables: HashMap::default(),
-                steps_remaining: MAX_ITERATIONS,
+                steps_remaining: max_iterations,
             })),
         }
     }
@@ -881,12 +898,136 @@ impl<'ir> ConstEvaluator<'ir> {
         Self {
             ir,
             return_slot: None,
-            remaining_depth: MAX_RECURSION_DEPTH,
+            remaining_depth: ctx
+                .global_ctx
+                .option("const-eval-max-depth")
+                .and_then(|v| v?.parse().ok())
+                .unwrap_or(MAX_RECURSION_DEPTH),
             remapped_variables: Default::default(),
             diag,
             types: TypeBuilder::new(ir),
             ctx,
             codegen: false,
+        }
+    }
+
+    /// Convert a primitive value to its native-endian byte representation
+    fn value_to_bytes(&self, value: Value<'ir>) -> Result<Vec<u8>, AluminaError> {
+        match value {
+            Value::U8(v) => Ok(vec![v]),
+            Value::U16(v) => Ok(v.to_ne_bytes().to_vec()),
+            Value::U32(v) => Ok(v.to_ne_bytes().to_vec()),
+            Value::U64(v) => Ok(v.to_ne_bytes().to_vec()),
+            Value::U128(v) => Ok(v.to_ne_bytes().to_vec()),
+            Value::USize(v) => Ok(v.to_ne_bytes().to_vec()),
+            Value::I8(v) => Ok((v as u8).to_ne_bytes().to_vec()),
+            Value::I16(v) => Ok((v as u16).to_ne_bytes().to_vec()),
+            Value::I32(v) => Ok((v as u32).to_ne_bytes().to_vec()),
+            Value::I64(v) => Ok((v as u64).to_ne_bytes().to_vec()),
+            Value::I128(v) => Ok((v as u128).to_ne_bytes().to_vec()),
+            Value::ISize(v) => Ok((v as usize).to_ne_bytes().to_vec()),
+            Value::F32(v) => Ok(v.to_bits().to_ne_bytes().to_vec()),
+            Value::F64(v) => Ok(v.to_bits().to_ne_bytes().to_vec()),
+            Value::Bool(v) => Ok(vec![v as u8]),
+            Value::Array(arr) => {
+                let mut bytes = Vec::new();
+                for elem in arr.iter() {
+                    bytes.extend_from_slice(&self.value_to_bytes(*elem)?);
+                }
+                Ok(bytes)
+            }
+            _ => unsupported!(self),
+        }
+    }
+
+    /// Convert bytes to a value of the given type
+    fn bytes_to_value(&self, bytes: &[u8], ty: TyP<'ir>) -> Result<Value<'ir>, AluminaError> {
+        match ty {
+            Ty::Builtin(BuiltinType::U8) if !bytes.is_empty() => Ok(Value::U8(bytes[0])),
+            Ty::Builtin(BuiltinType::U16) if bytes.len() >= 2 => Ok(Value::U16(
+                u16::from_ne_bytes(bytes[0..2].try_into().unwrap()),
+            )),
+            Ty::Builtin(BuiltinType::U32) if bytes.len() >= 4 => Ok(Value::U32(
+                u32::from_ne_bytes(bytes[0..4].try_into().unwrap()),
+            )),
+            Ty::Builtin(BuiltinType::U64) if bytes.len() >= 8 => Ok(Value::U64(
+                u64::from_ne_bytes(bytes[0..8].try_into().unwrap()),
+            )),
+            Ty::Builtin(BuiltinType::U128) if bytes.len() >= 16 => Ok(Value::U128(
+                u128::from_ne_bytes(bytes[0..16].try_into().unwrap()),
+            )),
+            Ty::Builtin(BuiltinType::USize) if bytes.len() >= std::mem::size_of::<usize>() => {
+                let size = std::mem::size_of::<usize>();
+                Ok(Value::USize(usize::from_ne_bytes(
+                    bytes[..size].try_into().unwrap(),
+                )))
+            }
+            Ty::Builtin(BuiltinType::I8) if !bytes.is_empty() => Ok(Value::I8(bytes[0] as i8)),
+            Ty::Builtin(BuiltinType::I16) if bytes.len() >= 2 => Ok(Value::I16(
+                i16::from_ne_bytes(bytes[0..2].try_into().unwrap()),
+            )),
+            Ty::Builtin(BuiltinType::I32) if bytes.len() >= 4 => Ok(Value::I32(
+                i32::from_ne_bytes(bytes[0..4].try_into().unwrap()),
+            )),
+            Ty::Builtin(BuiltinType::I64) if bytes.len() >= 8 => Ok(Value::I64(
+                i64::from_ne_bytes(bytes[0..8].try_into().unwrap()),
+            )),
+            Ty::Builtin(BuiltinType::I128) if bytes.len() >= 16 => Ok(Value::I128(
+                i128::from_ne_bytes(bytes[0..16].try_into().unwrap()),
+            )),
+            Ty::Builtin(BuiltinType::ISize) if bytes.len() >= std::mem::size_of::<isize>() => {
+                let size = std::mem::size_of::<isize>();
+                Ok(Value::ISize(isize::from_ne_bytes(
+                    bytes[..size].try_into().unwrap(),
+                )))
+            }
+            Ty::Builtin(BuiltinType::F32) if bytes.len() >= 4 => Ok(Value::F32(f32::from_bits(
+                u32::from_ne_bytes(bytes[0..4].try_into().unwrap()),
+            ))),
+            Ty::Builtin(BuiltinType::F64) if bytes.len() >= 8 => Ok(Value::F64(f64::from_bits(
+                u64::from_ne_bytes(bytes[0..8].try_into().unwrap()),
+            ))),
+            Ty::Builtin(BuiltinType::Bool) if !bytes.is_empty() => Ok(Value::Bool(bytes[0] != 0)),
+            Ty::Array(elem_ty, len) => {
+                let elem_size = self.size_of_type(elem_ty)?;
+                if bytes.len() < elem_size * len {
+                    unsupported!(self)
+                } else {
+                    let mut values = Vec::with_capacity(*len);
+                    for i in 0..*len {
+                        let start = i * elem_size;
+                        let end = start + elem_size;
+                        values.push(self.bytes_to_value(&bytes[start..end], elem_ty)?);
+                    }
+                    Ok(Value::Array(self.ir.arena.alloc_slice_fill_iter(values)))
+                }
+            }
+            _ => unsupported!(self),
+        }
+    }
+
+    /// Get the size in bytes of a type (for primitive types and arrays of primitives)
+    fn size_of_type(&self, ty: TyP<'ir>) -> Result<usize, AluminaError> {
+        match ty {
+            Ty::Builtin(BuiltinType::U8)
+            | Ty::Builtin(BuiltinType::I8)
+            | Ty::Builtin(BuiltinType::Bool) => Ok(1),
+            Ty::Builtin(BuiltinType::U16) | Ty::Builtin(BuiltinType::I16) => Ok(2),
+            Ty::Builtin(BuiltinType::U32)
+            | Ty::Builtin(BuiltinType::I32)
+            | Ty::Builtin(BuiltinType::F32) => Ok(4),
+            Ty::Builtin(BuiltinType::U64)
+            | Ty::Builtin(BuiltinType::I64)
+            | Ty::Builtin(BuiltinType::F64) => Ok(8),
+            Ty::Builtin(BuiltinType::U128) | Ty::Builtin(BuiltinType::I128) => Ok(16),
+            Ty::Builtin(BuiltinType::USize) | Ty::Builtin(BuiltinType::ISize) => {
+                Ok(std::mem::size_of::<usize>())
+            }
+            Ty::Array(elem_ty, len) => {
+                let elem_size = self.size_of_type(elem_ty)?;
+                Ok(elem_size * len)
+            }
+            _ => unsupported!(self),
         }
     }
 
@@ -1123,7 +1264,8 @@ impl<'ir> ConstEvaluator<'ir> {
                 .malloc_bag
                 .get(id)
                 .ok_or(ConstEvalErrorKind::UseAfterFree)
-                .with_backtrace(&self.diag)?),
+                .with_backtrace(&self.diag)?
+                .0),
             LValue::Field(lvalue, field) => {
                 let base = self.materialize_lvalue(*lvalue)?;
                 self.field(base, field)
@@ -1296,7 +1438,9 @@ impl<'ir> ConstEvaluator<'ir> {
 
                         Ok(Value::U8(arr[off]))
                     }
-                    _ => unsupported!(self),
+                    _ => {
+                        unsupported!(self);
+                    }
                 }
             }
             ExprKind::Lit(value) => Ok(*value),
@@ -1385,63 +1529,12 @@ impl<'ir> ConstEvaluator<'ir> {
             }
             ExprKind::Intrinsic(kind) => match kind {
                 IntrinsicValueKind::Uninitialized => Ok(make_uninitialized(self.ir, expr.ty)),
-                IntrinsicValueKind::Dangling(..) => Ok(Value::Uninitialized),
                 IntrinsicValueKind::Volatile(inner) => self.const_eval_defered(inner),
                 IntrinsicValueKind::SizeOfLike(_, _) => unsupported!(self),
                 IntrinsicValueKind::Transmute(inner) => {
-                    let inner = self.const_eval_rvalue(inner)?;
-
-                    // Very limited transmutations
-                    match (inner, expr.ty) {
-                        (Value::U8(a), Ty::Builtin(BuiltinType::I8)) => Ok(Value::I8(a as i8)),
-                        (Value::U16(a), Ty::Builtin(BuiltinType::I16)) => Ok(Value::I16(a as i16)),
-                        (Value::U32(a), Ty::Builtin(BuiltinType::I32)) => Ok(Value::I32(a as i32)),
-                        (Value::U64(a), Ty::Builtin(BuiltinType::I64)) => Ok(Value::I64(a as i64)),
-                        (Value::U128(a), Ty::Builtin(BuiltinType::I128)) => {
-                            Ok(Value::I128(a as i128))
-                        }
-                        (Value::USize(a), Ty::Builtin(BuiltinType::ISize)) => {
-                            Ok(Value::ISize(a as isize))
-                        }
-
-                        (Value::I8(a), Ty::Builtin(BuiltinType::U8)) => Ok(Value::U8(a as u8)),
-                        (Value::I16(a), Ty::Builtin(BuiltinType::U16)) => Ok(Value::U16(a as u16)),
-                        (Value::I32(a), Ty::Builtin(BuiltinType::U32)) => Ok(Value::U32(a as u32)),
-                        (Value::I64(a), Ty::Builtin(BuiltinType::U64)) => Ok(Value::U64(a as u64)),
-                        (Value::I128(a), Ty::Builtin(BuiltinType::U128)) => {
-                            Ok(Value::U128(a as u128))
-                        }
-                        (Value::ISize(a), Ty::Builtin(BuiltinType::USize)) => {
-                            Ok(Value::USize(a as usize))
-                        }
-
-                        (Value::F64(a), Ty::Builtin(BuiltinType::U64)) => {
-                            Ok(Value::U64(a.to_bits()))
-                        }
-                        (Value::F64(a), Ty::Builtin(BuiltinType::I64)) => {
-                            Ok(Value::I64(a.to_bits() as i64))
-                        }
-                        (Value::F32(a), Ty::Builtin(BuiltinType::U32)) => {
-                            Ok(Value::U32(a.to_bits()))
-                        }
-                        (Value::F32(a), Ty::Builtin(BuiltinType::I32)) => {
-                            Ok(Value::I32(a.to_bits() as i32))
-                        }
-
-                        (Value::U64(a), Ty::Builtin(BuiltinType::F64)) => {
-                            Ok(Value::F64(f64::from_bits(a)))
-                        }
-                        (Value::I64(a), Ty::Builtin(BuiltinType::F64)) => {
-                            Ok(Value::F64(f64::from_bits(a as u64)))
-                        }
-                        (Value::U32(a), Ty::Builtin(BuiltinType::F32)) => {
-                            Ok(Value::F32(f32::from_bits(a)))
-                        }
-                        (Value::I32(a), Ty::Builtin(BuiltinType::F32)) => {
-                            Ok(Value::F32(f32::from_bits(a as u32)))
-                        }
-                        _ => unsupported!(self),
-                    }
+                    let inner_value = self.const_eval_rvalue(inner)?;
+                    let bytes = self.value_to_bytes(inner_value)?;
+                    self.bytes_to_value(&bytes, expr.ty)
                 }
                 IntrinsicValueKind::Asm(_) => unsupported!(self),
                 IntrinsicValueKind::FunctionLike(_) => unsupported!(self),
@@ -1489,8 +1582,9 @@ impl<'ir> ConstEvaluator<'ir> {
                     match size {
                         Value::USize(size) => {
                             let id = self.ir.make_id();
-                            let value = make_uninitialized(self.ir, self.types.array(ty, size));
-                            self.ctx.malloc_bag.define(id, value);
+                            let typ = self.types.array(ty, size);
+                            let value = make_uninitialized(self.ir, typ);
+                            self.ctx.malloc_bag.define(id, value, typ);
 
                             Ok(Value::Pointer(
                                 LValue::Index(LValue::Alloc(id).alloc_on(self.ir), 0),
@@ -1512,6 +1606,11 @@ impl<'ir> ConstEvaluator<'ir> {
 
                         _ => Err(ConstEvalErrorKind::InvalidFree).with_backtrace(&self.diag),
                     }
+                }
+                IntrinsicValueKind::ConstBake(inner) => {
+                    let baker = ConstBaker::new(self.ir, self.ctx.malloc_bag.clone());
+                    let evaled_inner = self.const_eval_rvalue(inner)?;
+                    baker.bake_value(evaled_inner)
                 }
                 IntrinsicValueKind::Expect(inner, _) => self.const_eval_rvalue(inner),
             },
@@ -1676,7 +1775,9 @@ impl<'ir> ConstEvaluator<'ir> {
             (Value::Pointer(LValue::Index(inner, offset), orig), _) => {
                 let arr = match self.materialize_lvalue(*inner)? {
                     Value::Array(arr) => arr,
-                    _ => unsupported!(self),
+                    _ => {
+                        unsupported!(self)
+                    }
                 };
 
                 check_type_match!(orig, lhs_ty);
@@ -1693,6 +1794,9 @@ impl<'ir> ConstEvaluator<'ir> {
                     LValue::Index(inner, new_offset as usize),
                     orig,
                 ));
+            }
+            (Value::Dangling(align), Value::USize(0)) => {
+                return Ok(Value::Dangling(align));
             }
 
             _ => {}
@@ -1809,7 +1913,7 @@ fn check_lvalue_leak(value: &Value<'_>) -> Result<(), ConstEvalErrorKind> {
 fn check_lvalue_leak_lvalue(value: &LValue<'_>) -> Result<(), ConstEvalErrorKind> {
     match value {
         LValue::Const(_) => Ok(()),
-        LValue::Alloc(_) => Err(ConstEvalErrorKind::LValueLeak),
+        LValue::Alloc(_) => Err(ConstEvalErrorKind::AllocLeak),
         LValue::Variable(_) => Err(ConstEvalErrorKind::LValueLeak),
         LValue::Field(inner, _) | LValue::Index(inner, _) | LValue::TupleIndex(inner, _) => {
             check_lvalue_leak_lvalue(inner)

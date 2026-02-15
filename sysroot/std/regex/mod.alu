@@ -1,0 +1,1726 @@
+//! Regular expression matching with DFA-based engine
+//!
+//! This module provides a deterministic finite automaton (DFA) based regular expression
+//! engine with support for Unicode, capture groups, and anchors. The implementation uses
+//! Thompson's NFA construction followed by subset construction to build an efficient DFA.
+//!
+//! ## Supported Features
+//!
+//! - **Literals**: `abc`, Unicode characters
+//! - **Character classes**: `[a-z]`, `[^0-9]`, `[α-ω]`
+//! - **Predefined classes**: `\d` (digits), `\w` (word), `\s` (whitespace), `.` (any except newline)
+//! - **Quantifiers**: `*` (zero or more), `+` (one or more), `?` (zero or one)
+//! - **Bounded repetition**: `{n}`, `{n,}`, `{n,m}`
+//! - **Alternation**: `foo|bar`
+//! - **Grouping**: `(foo)` capturing, `(?:foo)` non-capturing
+//! - **Anchors**: `^` (start of string), `$` (end of string)
+//! - **Escape sequences**: `\t`, `\n`, `\r`, `\xHH`, `\uHHHH`
+//!
+//! ## Limitations
+//!
+//! - No backreferences (this is a regular language engine)
+//! - No lookahead/lookbehind assertions
+//! - No word boundaries (`\b`, `\B`)
+//! - No Unicode property classes
+//!
+//! ## Examples
+//!
+//! ### Basic matching
+//!
+//! ```
+//! use std::regex::Regex;
+//!
+//! let re = Regex::compile("hello").unwrap();
+//! defer re.free();
+//!
+//! assert!(re.is_match("hello world"));
+//! assert!(!re.is_match("goodbye"));
+//! ```
+//!
+//! ### Character classes and quantifiers
+//!
+//! ```
+//! use std::regex::Regex;
+//!
+//! let re = Regex::compile("[0-9]+").unwrap();
+//! defer re.free();
+//!
+//! assert!(re.is_match("123"));
+//! assert!(!re.is_match("abc"));
+//! ```
+//!
+//! ### Capture groups
+//!
+//! ```
+//! use std::regex::Regex;
+//!
+//! let re = Regex::compile("(\\w+)@(\\w+\\.\\w+)").unwrap();
+//! defer re.free();
+//!
+//! let caps = re.captures("user@example.com");
+//! assert!(caps.is_some());
+//! let caps = caps.unwrap();
+//! defer caps.free();
+//!
+//! assert_eq!(caps.get(1).unwrap(), "user");
+//! assert_eq!(caps.get(2).unwrap(), "example.com");
+//! ```
+//!
+//! ### Anchors
+//!
+//! ```
+//! use std::regex::Regex;
+//!
+//! let re = Regex::compile("^start").unwrap();
+//! defer re.free();
+//!
+//! assert!(re.is_match("start of line"));
+//! assert!(!re.is_match("not at start"));
+//! ```
+
+use internal::{
+    RegexParser, thompson_construct, Nfa, Dfa
+};
+use collections::Vector;
+
+/// A compiled regular expression.
+///
+/// A `Regex` is safe to use from multiple contexts, as it contains no mutable state.
+/// Once compiled, it can be used to match against text repeatedly.
+///
+/// ## Examples
+///
+/// ```
+/// use std::regex::Regex;
+///
+/// let re = Regex::compile("foo.*bar").unwrap();
+/// defer re.free();
+///
+/// assert!(re.is_match("foobar"));
+/// assert!(re.is_match("foo123bar"));
+/// assert!(!re.is_match("foobaz"));
+/// ```
+struct Regex {
+    _dfa: Dfa,
+    _num_groups: usize,     // Number of capture groups (including group 0)
+}
+
+impl Regex {
+    /// Compile a regex pattern
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use std::regex::Regex;
+    ///
+    /// let re = Regex::compile("foo.*bar").unwrap();
+    /// defer re.free();
+    /// assert!(re.is_match("foobar"));
+    /// ```
+    fn compile(pattern: &[u8]) -> Result<Regex, ()> {
+        // Parse the pattern
+        let parser = RegexParser::new(pattern);
+        let ast = parser.parse();
+        if ast.is_err() {
+            return Result::err(());
+        }
+        let ast = ast.unwrap();
+        defer ast.free();
+
+        // Capture the number of groups (next_group_id is one past the last group)
+        let num_groups = parser.next_group_id;
+
+        // Build NFA using Thompson construction
+        let nfa = Nfa::new();
+        defer nfa.free();
+
+        let frag = thompson_construct(&ast, &nfa);
+
+        // Set the NFA start state
+        nfa.start = frag.start;
+
+        // Convert NFA to DFA
+        let dfa = Dfa::from_nfa(&nfa);
+
+        Result::ok(Regex {
+            _dfa: dfa,
+            _num_groups: num_groups,
+        })
+    }
+
+    /// Check if the entire text matches the pattern
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use std::regex::Regex;
+    ///
+    /// let re = Regex::compile("^[0-9]+$").unwrap();
+    /// defer re.free();
+    /// assert!(re.is_match("123"));
+    /// assert!(!re.is_match("abc"));
+    /// ```
+    fn is_match(self: &Regex, text: &[u8]) -> bool {
+        self._dfa.is_match(text)
+    }
+
+    /// Find the first match in the text
+    /// Returns (start_pos, end_pos) if found
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use std::regex::Regex;
+    ///
+    /// let re = Regex::compile("\\d+").unwrap();
+    /// defer re.free();
+    /// let result = re.find("abc123def");
+    /// assert_eq!(result, Option::some((3usize, 6usize)));
+    /// ```
+    fn find(self: &Regex, text: &[u8]) -> Option<(usize, usize)> {
+        self._dfa.find(text)
+    }
+
+    /// Check if text matches from the beginning
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use std::regex::Regex;
+    ///
+    /// let re = Regex::compile("foo").unwrap();
+    /// defer re.free();
+    /// assert!(re.match_from_start("foobar"));
+    /// assert!(!re.match_from_start("barfoo"));
+    /// ```
+    fn match_from_start(self: &Regex, text: &[u8]) -> bool {
+        let result = self._dfa.match_from(text, 0);
+        result.is_some() && result.unwrap() > 0
+    }
+
+    /// Find first match and return capture groups
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use std::regex::Regex;
+    ///
+    /// let re = Regex::compile("(\\d+)-(\\d+)").unwrap();
+    /// defer re.free();
+    /// let caps = re.captures("foo 123-456 bar").unwrap();
+    /// defer caps.free();
+    /// assert_eq!(caps.get(0).unwrap(), "123-456");
+    /// assert_eq!(caps.get(1).unwrap(), "123");
+    /// assert_eq!(caps.get(2).unwrap(), "456");
+    /// ```
+    fn captures(self: &Regex, text: &[u8]) -> Option<Captures> {
+        // Calculate number of tags needed (2 per group: start and end)
+        let num_tags = self._num_groups * 2usize;
+
+        // Try matching at each position using helper to avoid loop variable issues
+        self._captures_search(text, 0, num_tags)
+    }
+
+    /// Helper to search for captures starting from a given position
+    #[inline(never)]
+    fn _captures_search(self: &Regex, text: &[u8], start_pos: usize, num_tags: usize) -> Option<Captures> {
+        if start_pos > text.len() {
+            return Option::none();
+        }
+
+        // Allocate fresh tag_positions for this search attempt
+        let tag_positions: Vector<usize> = Vector::new();
+        for _ in 0usize..num_tags {
+            tag_positions.push(0);
+        }
+        defer tag_positions.free();
+
+        let result = self._dfa.match_with_captures(text, start_pos, &tag_positions);
+
+        if result.is_some() {
+            let end_pos = result.unwrap();
+
+            // Build Captures object
+            let positions: Vector<Option<(usize, usize)>> = Vector::new();
+
+            // Set group 0 (full match)
+            positions.push(Option::some((start_pos, end_pos)));
+
+            // Set user groups from tag positions
+            for group_id in 1usize..self._num_groups {
+                let start_tag = 2usize * group_id;
+                let end_tag = 2usize * group_id + 1usize;
+                let group_start = tag_positions[start_tag];
+                let group_end = tag_positions[end_tag];
+                if group_start <= group_end {
+                    positions.push(Option::some((group_start, group_end)));
+                } else {
+                    positions.push(Option::none());
+                }
+            }
+
+            return Option::some(Captures {
+                _text: text,
+                _positions: positions,
+            });
+        }
+
+        // Try next position
+        self._captures_search(text, start_pos + 1usize, num_tags)
+    }
+
+    /// @ mem::Movable::move
+    fn move(self: &mut Regex) -> Regex {
+        let ret = *self;
+        self._dfa = Dfa::new();
+        ret
+    }
+
+    /// @ mem::Freeable::free
+    fn free(self: &mut Regex) {
+        self._dfa.free();
+    }
+}
+
+/// Capture groups from a regex match
+///
+/// Contains the matched text and positions of capture groups
+struct Captures {
+    /// The matched text (borrowed)
+    _text: &[u8],
+    /// Start and end positions for each capture group
+    ///
+    /// Group 0 is the full match, groups 1+ are user groups
+    /// `positions[i]` is `Option::some((start, end))` if group `i` matched, `Option::none()` otherwise
+    _positions: Vector<Option<(usize, usize)>>,
+}
+
+impl Captures {
+    /// Get the full matched text (capture group 0)
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use std::regex::Regex;
+    ///
+    /// let re = Regex::compile("\\d+").unwrap();
+    /// defer re.free();
+    /// let caps = re.captures("foo 123 bar").unwrap();
+    /// defer caps.free();
+    /// assert_eq!(caps.get_match().unwrap(), "123");
+    /// ```
+    fn get_match(self: &Captures) -> Option<&[u8]> {
+        self.get(0)
+    }
+
+    /// Get a capture group by index (0 = full match, 1+ = user groups)
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use std::regex::Regex;
+    ///
+    /// let re = Regex::compile("(\\w+)@(\\w+)").unwrap();
+    /// defer re.free();
+    /// let caps = re.captures("user@example.com").unwrap();
+    /// defer caps.free();
+    /// assert_eq!(caps.get(0).unwrap(), "user@example");
+    /// assert_eq!(caps.get(1).unwrap(), "user");
+    /// assert_eq!(caps.get(2).unwrap(), "example");
+    /// ```
+    fn get(self: &Captures, group: usize) -> Option<&[u8]> {
+        use option::try;
+        let pos = self._positions.get(group)?;
+        let (start, end) = pos?;
+        Option::some(self._text[start..end])
+    }
+
+    /// Get the start and end positions of a capture group
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use std::regex::Regex;
+    ///
+    /// let re = Regex::compile("(\\d+)").unwrap();
+    /// defer re.free();
+    /// let caps = re.captures("abc123def").unwrap();
+    /// defer caps.free();
+    /// assert_eq!(caps.get_pos(1).unwrap(), (3usize, 6usize));
+    /// ```
+    fn get_pos(self: &Captures, group: usize) -> Option<(usize, usize)> {
+        use option::try;
+        let opt_pos = self._positions.get(group)?;
+        opt_pos
+    }
+
+    /// Get the number of capture groups (including group 0 for full match)
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use std::regex::Regex;
+    ///
+    /// let re = Regex::compile("(\\w+)@(\\w+)").unwrap();
+    /// defer re.free();
+    /// let caps = re.captures("user@example.com").unwrap();
+    /// defer caps.free();
+    /// assert_eq!(caps.len(), 3); // Group 0 (full match) + 2 user groups
+    /// ```
+    fn len(self: &Captures) -> usize {
+        self._positions.len()
+    }
+
+    /// @ mem::Movable::move
+    fn move(self: &mut Captures) -> Captures {
+        Captures {
+            _text: self._text,
+            _positions: self._positions.move(),
+        }
+    }
+
+    /// @ mem::Freeable::free
+    fn free(self: &mut Captures) {
+        self._positions.free();
+    }
+}
+
+
+#[cfg(all(test, test_std))]
+#[docs(hide)]
+mod tests {
+    use internal::{IntervalSet, Nfa, Dfa, DfaState, DfaTransition};
+    use string::unicode;
+    use collections::Vector;
+
+    #[test]
+    fn test_regex_literal() {
+        let re = Regex::compile("abc");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("abc"));
+        assert!(re.is_match("xabcy"));
+        assert!(!re.is_match("ab"));
+        assert!(!re.is_match("abx"));
+    }
+
+    #[test]
+    fn test_regex_alternation() {
+        let re = Regex::compile("cat|dog");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("cat"));
+        assert!(re.is_match("dog"));
+        assert!(re.is_match("the cat"));
+        assert!(!re.is_match("bird"));
+    }
+
+    #[test]
+    fn test_regex_star() {
+        let re = Regex::compile("ab*c");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("ac"));       // zero b's
+        assert!(re.is_match("abc"));      // one b
+        assert!(re.is_match("abbc"));     // two b's
+        assert!(re.is_match("abbbbbc"));  // many b's
+        assert!(!re.is_match("ab"));      // no c
+    }
+
+    #[test]
+    fn test_regex_plus() {
+        let re = Regex::compile("ab+c");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(!re.is_match("ac"));      // zero b's - should fail
+        assert!(re.is_match("abc"));      // one b
+        assert!(re.is_match("abbc"));     // two b's
+        assert!(re.is_match("abbbbbc"));  // many b's
+    }
+
+    #[test]
+    fn test_regex_question() {
+        let re = Regex::compile("ab?c");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("ac"));       // zero b's
+        assert!(re.is_match("abc"));      // one b
+        assert!(!re.is_match("abbc"));    // two b's - should fail
+    }
+
+    #[test]
+    fn test_regex_dot() {
+        let re = Regex::compile("a.c");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("abc"));
+        assert!(re.is_match("a-c"));
+        assert!(re.is_match("a c"));
+        assert!(!re.is_match("ac"));      // needs something between
+    }
+
+    #[test]
+    fn test_regex_char_class() {
+        let re = Regex::compile("[abc]");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("a"));
+        assert!(re.is_match("b"));
+        assert!(re.is_match("c"));
+        assert!(!re.is_match("d"));
+    }
+
+    #[test]
+    fn test_regex_char_range() {
+        let re = Regex::compile("[a-z]+");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("hello"));
+        assert!(re.is_match("world"));
+        assert!(!re.is_match("123"));
+        assert!(re.is_match("test123"));  // contains lowercase
+    }
+
+    #[test]
+    fn test_regex_negated_class() {
+        let re = Regex::compile("[^0-9]+");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("abc"));
+        assert!(!re.is_match("123"));
+        assert!(re.is_match("abc123"));   // starts with non-digits
+    }
+
+    #[test]
+    fn test_regex_groups() {
+        let re = Regex::compile("(ab)+");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("ab"));
+        assert!(re.is_match("abab"));
+        assert!(re.is_match("ababab"));
+        assert!(re.is_match("abc"));       // contains "ab"
+        assert!(!re.is_match("a"));
+        assert!(!re.is_match("ba"));       // doesn't contain "ab"
+    }
+
+    #[test]
+    fn test_regex_complex() {
+        let re = Regex::compile("(a|b)*c+");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("c"));
+        assert!(re.is_match("ac"));
+        assert!(re.is_match("bc"));
+        assert!(re.is_match("aaabbbccc"));
+        assert!(!re.is_match("ab"));      // no c
+    }
+
+    #[test]
+    fn test_regex_escape() {
+        let re = Regex::compile("\\(test\\)");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("(test)"));
+        assert!(!re.is_match("test"));
+    }
+
+    #[test]
+    fn test_regex_digit_class() {
+        let re = Regex::compile("\\d+");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("123"));
+        assert!(re.is_match("0"));
+        assert!(re.is_match("abc123"));
+        assert!(!re.is_match("abc"));
+    }
+
+    #[test]
+    fn test_regex_non_digit_class() {
+        let re = Regex::compile("\\D+");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("abc"));
+        assert!(re.is_match("hello"));
+        assert!(!re.is_match("123"));
+        assert!(re.is_match("123abc"));  // contains non-digits
+    }
+
+    #[test]
+    fn test_regex_word_class() {
+        let re = Regex::compile("\\w+");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("hello"));
+        assert!(re.is_match("test_123"));
+        assert!(re.is_match("ABC"));
+        assert!(!re.is_match("!!!"));
+        assert!(re.is_match("hello!!!"));  // contains word chars
+    }
+
+    #[test]
+    fn test_regex_non_word_class() {
+        let re = Regex::compile("\\W+");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("!!!"));
+        assert!(re.is_match("   "));
+        assert!(!re.is_match("hello"));
+        assert!(re.is_match("hello world"));  // contains space
+    }
+
+    #[test]
+    fn test_regex_whitespace_class() {
+        let re = Regex::compile("\\s+");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match(" "));
+        assert!(re.is_match("\t"));
+        assert!(re.is_match("\n"));
+        assert!(re.is_match("   "));
+        assert!(!re.is_match("abc"));
+        assert!(re.is_match("hello world"));  // contains space
+    }
+
+    #[test]
+    fn test_regex_non_whitespace_class() {
+        let re = Regex::compile("\\S+");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("hello"));
+        assert!(re.is_match("123"));
+        assert!(!re.is_match("   "));
+        assert!(re.is_match("   hello"));  // contains non-whitespace
+    }
+
+    #[test]
+    fn test_regex_start_anchor() {
+        let re = Regex::compile("^hello");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("hello"));
+        assert!(re.is_match("hello world"));
+        assert!(!re.is_match("say hello"));
+        assert!(!re.is_match(" hello"));
+    }
+
+    #[test]
+    fn test_regex_end_anchor() {
+        let re = Regex::compile("world$");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("world"));
+        assert!(re.is_match("hello world"));
+        assert!(!re.is_match("world!"));
+        assert!(!re.is_match("world "));
+    }
+
+    #[test]
+    fn test_regex_both_anchors() {
+        let re = Regex::compile("^hello$");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("hello"));
+        assert!(!re.is_match("hello world"));
+        assert!(!re.is_match("say hello"));
+        assert!(!re.is_match(" hello "));
+    }
+
+    #[test]
+    fn test_regex_anchor_with_pattern() {
+        let re = Regex::compile("^\\d+$");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("123"));
+        assert!(re.is_match("0"));
+        assert!(!re.is_match("123abc"));
+        assert!(!re.is_match("abc123"));
+        assert!(!re.is_match(" 123 "));
+    }
+
+    #[test]
+    fn test_regex_anchor_in_alternation() {
+        // Anchor at start with grouped alternation
+        let re = Regex::compile("^(foo|bar)");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("foo"));
+        assert!(re.is_match("foobar"));     // Matches ^foo
+        assert!(re.is_match("bar"));         // Matches ^bar
+        assert!(re.is_match("barfoo"));      // Matches ^bar
+        assert!(!re.is_match("xfoo"));       // Requires start
+        assert!(!re.is_match("xbar"));       // Requires start
+
+        // Anchor at end with grouped alternation
+        let re2 = Regex::compile("(foo|bar)$");
+        assert!(re2.is_ok());
+        let re2 = re2.unwrap();
+        defer re2.free();
+
+        assert!(re2.is_match("foo"));
+        assert!(re2.is_match("xfoo"));       // Matches foo$
+        assert!(re2.is_match("bar"));        // Matches bar$
+        assert!(re2.is_match("xbar"));       // Matches bar$
+        assert!(!re2.is_match("foox"));      // Requires end
+        assert!(!re2.is_match("barx"));      // Requires end
+    }
+
+    #[test]
+    fn test_regex_anchor_in_group() {
+        // Anchor inside parentheses
+        let re = Regex::compile("^foo(bar|$)");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("foo"));        // Matches ^foo followed by $
+        assert!(re.is_match("foobar"));     // Matches ^foo followed by bar
+        assert!(!re.is_match("foobaz"));    // Doesn't match bar or $
+        assert!(!re.is_match("barfoo"));    // Doesn't start with foo
+        assert!(!re.is_match("xfoo"));      // Doesn't start with ^
+    }
+
+    #[test]
+    fn test_regex_anchor_multiple_in_pattern() {
+        // Multiple anchors in complex patterns
+        let re = Regex::compile("^(start|$)");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match(""));           // Matches ^$
+        assert!(re.is_match("start"));      // Matches ^start
+        assert!(re.is_match("startx"));     // Matches ^start
+        assert!(!re.is_match("xstart"));    // Doesn't start with start
+
+        // Anchor at end inside group
+        let re2 = Regex::compile("foo(bar$|baz)");
+        assert!(re2.is_ok());
+        let re2 = re2.unwrap();
+        defer re2.free();
+
+        assert!(re2.is_match("foobar"));    // Matches foobar$
+        assert!(re2.is_match("foobaz"));    // Matches foobaz
+        assert!(re2.is_match("xfoobaz"));   // Matches foobaz anywhere
+        assert!(re2.is_match("xfoobar"));   // Matches foobar$ at end
+        assert!(!re2.is_match("foobarx"));  // bar$ requires end of string
+        assert!(re2.is_match("foobazx"));   // Matches foobaz (baz alternative)
+    }
+
+    #[test]
+    fn test_regex_escaped_anchor() {
+        // Escaped anchors should match literal characters
+        let re = Regex::compile("\\^foo");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("^foo"));
+        assert!(!re.is_match("foo"));
+        assert!(re.is_match("x^foo"));      // Can match anywhere
+
+        let re2 = Regex::compile("foo\\$");
+        assert!(re2.is_ok());
+        let re2 = re2.unwrap();
+        defer re2.free();
+
+        assert!(re2.is_match("foo$"));
+        assert!(!re2.is_match("foo"));
+        assert!(re2.is_match("foo$x"));     // Can match anywhere
+    }
+
+    #[test]
+    fn test_regex_anchor_with_quantifiers() {
+        // Anchors with quantifiers
+        let re = Regex::compile("^a+$");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("a"));
+        assert!(re.is_match("aaa"));
+        assert!(!re.is_match(""));
+        assert!(!re.is_match("ab"));
+        assert!(!re.is_match("ba"));
+
+        // Anchor in repetition group
+        let re2 = Regex::compile("(^foo)+");
+        assert!(re2.is_ok());
+        let re2 = re2.unwrap();
+        defer re2.free();
+
+        // Note: (^foo)+ can only match once since ^ only matches at position 0
+        assert!(re2.is_match("foo"));
+        assert!(re2.is_match("foofoo"));    // First foo matches ^foo, but can't repeat ^
+    }
+
+    #[test]
+    fn test_regex_anchor_edge_cases() {
+        // Just anchor
+        let re = Regex::compile("^");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match(""));
+        assert!(re.is_match("anything"));
+
+        let re2 = Regex::compile("$");
+        assert!(re2.is_ok());
+        let re2 = re2.unwrap();
+        defer re2.free();
+
+        assert!(re2.is_match(""));
+        assert!(re2.is_match("anything"));
+
+        // Both anchors only
+        let re3 = Regex::compile("^$");
+        assert!(re3.is_ok());
+        let re3 = re3.unwrap();
+        defer re3.free();
+
+        assert!(re3.is_match(""));
+        assert!(!re3.is_match("x"));
+    }
+
+    #[test]
+    fn test_regex_anchor_with_captures() {
+        // Anchors with capture groups
+        let re = Regex::compile("^(\\w+)@(\\w+)$");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("user@domain");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "user@domain");
+        assert_eq!(caps.get(1).unwrap(), "user");
+        assert_eq!(caps.get(2).unwrap(), "domain");
+
+        // Should not match if not anchored
+        let caps2 = re.captures("prefix user@domain suffix");
+        assert!(caps2.is_none());
+    }
+
+    #[test]
+    fn test_regex_simple_capture() {
+        let re = Regex::compile("(ab)c");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("abc");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        // Group 0 = full match
+        assert_eq!(caps.get(0).unwrap(), "abc");
+        // Group 1 = (ab)
+        assert_eq!(caps.get(1).unwrap(), "ab");
+    }
+
+    #[test]
+    fn test_regex_multiple_captures() {
+        let re = Regex::compile("(\\d+)-(\\w+)");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("hello 123-abc world");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        // Group 0 = full match
+        assert_eq!(caps.get(0).unwrap(), "123-abc");
+        // Group 1 = \d+
+        assert_eq!(caps.get(1).unwrap(), "123");
+        // Group 2 = \w+
+        assert_eq!(caps.get(2).unwrap(), "abc");
+    }
+
+    #[test]
+    fn test_regex_nested_captures() {
+        let re = Regex::compile("(a(b)c)");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("abc");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        // Group 0 = full match
+        assert_eq!(caps.get(0).unwrap(), "abc");
+        // Group 1 = (a(b)c)
+        assert_eq!(caps.get(1).unwrap(), "abc");
+        // Group 2 = (b)
+        assert_eq!(caps.get(2).unwrap(), "b");
+    }
+
+    #[test]
+    fn test_regex_capture_positions() {
+        let re = Regex::compile("(\\d+)");
+
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("abc123def");
+
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        // Check positions
+        let pos = caps.get_pos(0).unwrap();
+        assert_eq!(pos.0, 3usize); // start at position 3
+        assert_eq!(pos.1, 6usize); // end at position 6
+
+
+        let pos1 = caps.get_pos(1).unwrap();
+        assert_eq!(pos1.0, 3usize);
+        assert_eq!(pos1.1, 6usize);
+    }
+
+    #[test]
+    fn test_regex_capture_with_star() {
+        let re = Regex::compile("(a*)b");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("aaab");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "aaab");
+        assert_eq!(caps.get(1).unwrap(), "aaa");
+    }
+
+    #[test]
+    fn test_regex_capture_num_groups() {
+        let re = Regex::compile("(a)(b)(c)");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("abc");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        // Should have 4 groups: group 0 (full) + 3 capture groups
+        assert_eq!(caps.len(), 4usize);
+        assert_eq!(caps.get(0).unwrap(), "abc");
+        assert_eq!(caps.get(1).unwrap(), "a");
+        assert_eq!(caps.get(2).unwrap(), "b");
+        assert_eq!(caps.get(3).unwrap(), "c");
+    }
+
+    #[test]
+    fn test_regex_non_capturing_group() {
+        let re = Regex::compile("(?:ab)c");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        // Should only have group 0 (full match), no capture groups
+        assert_eq!(re._num_groups, 1usize);
+
+        let caps = re.captures("abc");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.len(), 1usize);
+        assert_eq!(caps.get(0).unwrap(), "abc");
+    }
+
+    #[test]
+    fn test_regex_mixed_groups() {
+        let re = Regex::compile("(\\d+)(?:-)?(\\w+)");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        // Should have 3 groups: group 0 (full) + 2 capture groups
+        // The (?:-)? is non-capturing
+        assert_eq!(re._num_groups, 3usize);
+
+        let caps = re.captures("123-abc");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "123-abc");
+        assert_eq!(caps.get(1).unwrap(), "123");
+        assert_eq!(caps.get(2).unwrap(), "abc");
+    }
+
+    #[test]
+    fn test_regex_nested_non_capturing() {
+        let re = Regex::compile("(a(?:b)c)");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        // Should have 2 groups: group 0 (full) + 1 capture group
+        assert_eq!(re._num_groups, 2usize);
+
+        let caps = re.captures("abc");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "abc");
+        assert_eq!(caps.get(1).unwrap(), "abc");
+    }
+
+    #[test]
+    fn test_regex_unicode_literal() {
+        let re = Regex::compile("café");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("café"));
+        assert!(!re.is_match("cafe"));
+        assert!(re.is_match("I love café!"));
+    }
+
+    #[test]
+    fn test_regex_unicode_emoji() {
+        let re = Regex::compile("hello 🌍");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("hello 🌍"));
+        assert!(!re.is_match("hello world"));
+        assert!(re.is_match("say hello 🌍 please"));
+    }
+
+    #[test]
+    fn test_regex_unicode_char_class() {
+        // Match any of: α, β, γ
+        let re = Regex::compile("[αβγ]");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("α"));
+        assert!(re.is_match("β"));
+        assert!(re.is_match("γ"));
+        assert!(!re.is_match("a"));
+        assert!(!re.is_match("δ"));
+        assert!(re.is_match("test α here"));
+    }
+
+    #[test]
+    fn test_regex_unicode_char_range() {
+        // Match Greek lowercase letters α-ω (U+03B1 to U+03C9)
+        let re = Regex::compile("[α-ω]");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("α"));  // U+03B1 (start of range)
+        assert!(re.is_match("ω"));  // U+03C9 (end of range)
+        assert!(re.is_match("μ"));  // U+03BC (middle of range)
+        assert!(re.is_match("π"));  // U+03C0 (pi)
+        assert!(!re.is_match("a")); // Latin letter
+        assert!(!re.is_match("Α")); // Greek uppercase Alpha (U+0391)
+    }
+
+    #[test]
+    fn test_regex_unicode_mixed_class() {
+        // Mix ASCII and Unicode in character class
+        let re = Regex::compile("[a-z🌍😀]");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("a"));
+        assert!(re.is_match("z"));
+        assert!(re.is_match("m"));
+        assert!(re.is_match("🌍"));
+        assert!(re.is_match("😀"));
+        assert!(!re.is_match("A"));
+        assert!(!re.is_match("0"));
+        assert!(!re.is_match("😎"));
+    }
+
+    #[test]
+    fn test_regex_unicode_capture() {
+        let re = Regex::compile("(\\w+): (\\w+) ([🌍🌎🌏])");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("Hello: world 🌍");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "Hello: world 🌍");
+        assert_eq!(caps.get(1).unwrap(), "Hello");
+        assert_eq!(caps.get(2).unwrap(), "world");
+        assert_eq!(caps.get(3).unwrap(), "🌍");
+    }
+
+    #[test]
+    fn test_regex_unicode_alternation() {
+        let re = Regex::compile("hello|こんにちは|مرحبا");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("hello"));
+        assert!(re.is_match("こんにちは"));  // Japanese
+        assert!(re.is_match("مرحبا"));      // Arabic
+        assert!(!re.is_match("hola"));
+    }
+
+    #[test]
+    fn test_regex_unicode_cyrillic_range() {
+        // Match Cyrillic letters А-Я (U+0410 to U+042F)
+        let re = Regex::compile("[А-Я]+");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("ПРИВЕТ"));  // "HELLO" in Russian
+        assert!(re.is_match("МОСКВА"));  // "MOSCOW" in Russian
+        assert!(!re.is_match("hello"));
+        assert!(!re.is_match("привет")); // lowercase Cyrillic
+    }
+
+    #[test]
+    fn test_regex_unicode_cjk() {
+        // Chinese characters
+        let re = Regex::compile("你好.*世界");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("你好世界"));        // Hello world (Chinese)
+        assert!(re.is_match("你好，世界"));      // Hello, world
+        assert!(re.is_match("你好美丽的世界"));  // Hello beautiful world
+        assert!(!re.is_match("你好"));
+        assert!(!re.is_match("世界"));
+    }
+
+    #[test]
+    fn test_regex_unicode_emoji_range() {
+        // Emojis U+1F600 to U+1F64F (Emoticons)
+        let re = Regex::compile("[😀-🙏]+");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("😀"));  // U+1F600 (grinning face)
+        assert!(re.is_match("😊"));  // U+1F60A (smiling face)
+        assert!(re.is_match("🙏"));  // U+1F64F (folded hands)
+        assert!(re.is_match("😀😊🙏"));  // Multiple emojis
+        assert!(!re.is_match("🌍")); // U+1F30D (outside range)
+    }
+
+    #[test]
+    fn test_regex_unicode_negated_class() {
+        // Match anything except Latin letters
+        let re = Regex::compile("[^a-zA-Z]+");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("123"));
+        assert!(re.is_match("你好"));
+        assert!(re.is_match("🌍"));
+        assert!(re.is_match("!@#"));
+        assert!(!re.is_match("hello"));
+        assert!(!re.is_match("ABC"));
+    }
+
+    #[test]
+    fn test_regex_unicode_dot_matches_multibyte() {
+        // Dot should match any single character including multibyte Unicode
+        let re = Regex::compile("a.c");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("abc"));     // ASCII
+        assert!(re.is_match("aéc"));     // 2-byte UTF-8
+        assert!(re.is_match("a你c"));    // 3-byte UTF-8
+        assert!(re.is_match("a🌍c"));    // 4-byte UTF-8
+        assert!(!re.is_match("ac"));     // No character in middle
+        assert!(!re.is_match("abbc"));   // Two characters in middle
+    }
+
+    #[test]
+    fn test_regex_repeat_exact() {
+        // {n} - exactly n times
+        let re = Regex::compile("a{3}");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("aaa"));
+        assert!(re.is_match("xaaax"));
+        assert!(!re.is_match("aa"));
+        assert!(re.is_match("aaaa"));  // Matches first 3 a's
+        assert!(!re.is_match("a"));
+    }
+
+    #[test]
+    fn test_regex_repeat_at_least() {
+        // {n,} - at least n times
+        let re = Regex::compile("a{2,}");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(!re.is_match("a"));
+        assert!(re.is_match("aa"));
+        assert!(re.is_match("aaa"));
+        assert!(re.is_match("aaaa"));
+        assert!(re.is_match("xaaaax"));
+    }
+
+    #[test]
+    fn test_regex_repeat_range() {
+        // {n,m} - between n and m times
+        let re = Regex::compile("a{2,4}");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(!re.is_match("a"));
+        assert!(re.is_match("aa"));
+        assert!(re.is_match("aaa"));
+        assert!(re.is_match("aaaa"));
+        assert!(re.is_match("aaaaa"));  // Matches first 4
+        assert!(re.is_match("xaaax"));
+    }
+
+    #[test]
+    fn test_regex_repeat_zero() {
+        // {0} - matches empty (degenerate case)
+        let re = Regex::compile("a{0}b");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("b"));
+        assert!(re.is_match("ab"));  // "ab" contains "b"
+        assert!(!re.is_match("a"));
+    }
+
+    #[test]
+    fn test_regex_repeat_complex() {
+        // Repetition on groups
+        let re = Regex::compile("(ab){2}");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("abab"));
+        assert!(re.is_match("xababx"));
+        assert!(!re.is_match("ab"));
+        assert!(re.is_match("ababab"));  // Matches first 2 occurrences
+    }
+
+    #[test]
+    fn test_regex_repeat_with_char_class() {
+        // Repetition on character classes
+        let re = Regex::compile("[0-9]{3}");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        assert!(re.is_match("123"));
+        assert!(re.is_match("999"));
+        assert!(re.is_match("x456x"));
+        assert!(!re.is_match("12"));
+        assert!(re.is_match("1234"));  // Matches first 3 digits
+    }
+
+    #[test]
+    fn test_regex_repeat_captures() {
+        // Test repetition with captures
+        let re = Regex::compile("(\\d{2,3})-([a-z]{2})");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("12-ab");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "12-ab");
+        assert_eq!(caps.get(1).unwrap(), "12");
+        assert_eq!(caps.get(2).unwrap(), "ab");
+
+        let caps2 = re.captures("123-xy");
+        assert!(caps2.is_some());
+        let caps2 = caps2.unwrap();
+        defer caps2.free();
+
+        assert_eq!(caps2.get(0).unwrap(), "123-xy");
+        assert_eq!(caps2.get(1).unwrap(), "123");
+        assert_eq!(caps2.get(2).unwrap(), "xy");
+    }
+
+    #[test]
+    fn test_escape_basic() {
+        // Test \t, \n, \r
+        let re = Regex::compile("a\\tb");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+        assert!(re.is_match("a\tb"));
+        assert!(!re.is_match("ab"));
+
+        let re2 = Regex::compile("line1\\nline2");
+        assert!(re2.is_ok());
+        let re2 = re2.unwrap();
+        defer re2.free();
+        assert!(re2.is_match("line1\nline2"));
+        assert!(!re2.is_match("line1line2"));
+
+        let re3 = Regex::compile("car\\rreturn");
+        assert!(re3.is_ok());
+        let re3 = re3.unwrap();
+        defer re3.free();
+        assert!(re3.is_match("car\rreturn"));
+        assert!(!re3.is_match("carreturn"));
+    }
+
+    #[test]
+    fn test_escape_backslash() {
+        // Test escaping backslash itself
+        let re = Regex::compile("a\\\\b");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+        assert!(re.is_match("a\\b"));
+        assert!(!re.is_match("ab"));
+    }
+
+    #[test]
+    fn test_escape_metacharacters() {
+        // Test escaping regex metacharacters
+        let re = Regex::compile("\\(\\)\\[\\]\\{\\}\\*\\+\\?\\.\\|\\^\\$");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+        assert!(re.is_match("()[]{}*+?.|^$"));
+        assert!(!re.is_match("abc"));
+    }
+
+    #[test]
+    fn test_escape_hex() {
+        // Test \xHH escape sequences
+        let re = Regex::compile("\\x41\\x42\\x43");  // ABC
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+        assert!(re.is_match("ABC"));
+        assert!(!re.is_match("abc"));
+
+        // Test lowercase hex digits
+        let re2 = Regex::compile("\\x61\\x62\\x63");  // abc
+        assert!(re2.is_ok());
+        let re2 = re2.unwrap();
+        defer re2.free();
+        assert!(re2.is_match("abc"));
+        assert!(!re2.is_match("ABC"));
+
+        // Test mixed case hex
+        let re3 = Regex::compile("\\x4a\\x4B");  // JK
+        assert!(re3.is_ok());
+        let re3 = re3.unwrap();
+        defer re3.free();
+        assert!(re3.is_match("JK"));
+    }
+
+    #[test]
+    fn test_escape_unicode() {
+        // Test \uHHHH escape sequences
+        let re = Regex::compile("\\u0041\\u0042\\u0043");  // ABC
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+        assert!(re.is_match("ABC"));
+
+        // Test Unicode characters beyond ASCII
+        let re2 = Regex::compile("\\u00E9\\u00E0");  // éà
+        assert!(re2.is_ok());
+        let re2 = re2.unwrap();
+        defer re2.free();
+        assert!(re2.is_match("éà"));
+
+        // Test emoji with Unicode escape (U+1F44D = 👍)
+        // Note: \u only supports 4 hex digits, for higher codepoints use literal or \x sequences
+        let re3 = Regex::compile("\\u03B1\\u03B2");  // αβ (Greek)
+        assert!(re3.is_ok());
+        let re3 = re3.unwrap();
+        defer re3.free();
+        assert!(re3.is_match("αβ"));
+    }
+
+    #[test]
+    fn test_escape_in_char_class() {
+        // Test escape sequences inside character classes
+        let re = Regex::compile("[\\t\\n\\r]");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+        assert!(re.is_match("\t"));
+        assert!(re.is_match("\n"));
+        assert!(re.is_match("\r"));
+        assert!(!re.is_match("a"));
+
+        // Test hex escapes in character class
+        let re2 = Regex::compile("[\\x41-\\x43]");  // [A-C]
+        assert!(re2.is_ok());
+        let re2 = re2.unwrap();
+        defer re2.free();
+        assert!(re2.is_match("A"));
+        assert!(re2.is_match("B"));
+        assert!(re2.is_match("C"));
+        assert!(!re2.is_match("D"));
+    }
+
+    #[test]
+    fn test_escape_mixed() {
+        // Test mixing different escape types
+        let re = Regex::compile("\\x48\\u0065llo\\t\\d+");  // Hello\t followed by digits
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+        assert!(re.is_match("Hello\t123"));
+        assert!(!re.is_match("Hello 123"));
+    }
+
+    #[test]
+    fn test_regex_empty_capture() {
+        // Test empty capture group
+        let re = Regex::compile("()");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        // Group 0 (full match) and group 1 (empty) should both be ""
+        assert_eq!(caps.get(0).unwrap(), "");
+        assert_eq!(caps.get(1).unwrap(), "");
+    }
+
+    #[test]
+    fn test_regex_optional_capture_match() {
+        // Test optional capture that matches
+        let re = Regex::compile("(a)?");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("a");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "a");
+        assert_eq!(caps.get(1).unwrap(), "a");
+    }
+
+    #[test]
+    fn test_regex_optional_capture_nomatch() {
+        // Test optional capture that doesn't match (should still have positions)
+        let re = Regex::compile("(a)?b");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("b");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        // Full match is "b", but group 1 didn't match (was optional)
+        assert_eq!(caps.get(0).unwrap(), "b");
+        // Optional group that didn't match - get() should return none for it
+        assert!(caps.get(1).is_none() || caps.get(1).unwrap() == "");
+    }
+
+    #[test]
+    fn test_regex_capture_alternation_left() {
+        // Test capture in alternation, left branch matches
+        let re = Regex::compile("(a|b)");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("a");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "a");
+        assert_eq!(caps.get(1).unwrap(), "a");
+    }
+
+    #[test]
+    fn test_regex_capture_alternation_right() {
+        // Test capture in alternation, right branch matches
+        let re = Regex::compile("(a|b)");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("b");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "b");
+        assert_eq!(caps.get(1).unwrap(), "b");
+    }
+
+    #[test]
+    fn test_regex_quantified_capture_star() {
+        // Test quantified capture with * - simpler case first
+        let re = Regex::compile("(a)*b");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("aaab");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "aaab");
+        // For repeated captures, typically the last iteration is recorded
+        // But we only care that it works without crashing
+    }
+
+    #[test]
+    fn test_regex_quantified_capture_plus() {
+        // Test quantified capture with + - simpler case first
+        let re = Regex::compile("(a)+b");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("aaab");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "aaab");
+        // For repeated captures, the behavior varies by engine
+        // We just want it to not crash
+    }
+
+    #[test]
+    fn test_regex_nested_capture() {
+        // Test nested capture groups
+        let re = Regex::compile("((a)(b))");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("ab");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "ab");  // Full match
+        assert_eq!(caps.get(1).unwrap(), "ab");  // Group 1: ((a)(b))
+        assert_eq!(caps.get(2).unwrap(), "a");   // Group 2: (a)
+        assert_eq!(caps.get(3).unwrap(), "b");   // Group 3: (b)
+    }
+
+    #[test]
+    fn test_regex_capture_zero_length() {
+        // Test captures at zero-length positions (anchors)
+        let re = Regex::compile("^(\\w+)");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("hello");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "hello");
+        assert_eq!(caps.get(1).unwrap(), "hello");
+
+        // Check positions: should start at 0
+        let pos = caps.get_pos(1).unwrap();
+        assert_eq!(pos.0, 0usize);
+        assert_eq!(pos.1, 5usize);
+    }
+
+    #[test]
+    fn test_regex_multiple_captures_positions() {
+        // Test multiple captures with position checking
+        let re = Regex::compile("(\\w+)-(\\d+)");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("abc-123");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "abc-123");
+        assert_eq!(caps.get(1).unwrap(), "abc");
+        assert_eq!(caps.get(2).unwrap(), "123");
+
+        // Check positions
+        let pos1 = caps.get_pos(1).unwrap();
+        assert_eq!(pos1.0, 0usize);
+        assert_eq!(pos1.1, 3usize);
+
+        let pos2 = caps.get_pos(2).unwrap();
+        assert_eq!(pos2.0, 4usize);
+        assert_eq!(pos2.1, 7usize);
+    }
+
+    #[test]
+    fn test_regex_capture_with_optional() {
+        // Test capture inside optional group
+        let re = Regex::compile("(a(b))?c");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        // Case 1: optional part matches
+        let caps = re.captures("abc");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "abc");
+        assert_eq!(caps.get(1).unwrap(), "ab");
+        assert_eq!(caps.get(2).unwrap(), "b");
+
+        // Case 2: optional part doesn't match
+        let caps2 = re.captures("c");
+        assert!(caps2.is_some());
+        let caps2 = caps2.unwrap();
+        defer caps2.free();
+
+        assert_eq!(caps2.get(0).unwrap(), "c");
+        // Groups 1 and 2 didn't match (were inside optional)
+        assert!(caps2.get(1).is_none() || caps2.get(1).unwrap() == "");
+    }
+
+    #[test]
+    fn test_regex_capture_quantified_in_alternation() {
+        // Test quantified capture inside alternation
+        let re = Regex::compile("(a+|b+)");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        let caps = re.captures("aaa");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "aaa");
+        assert_eq!(caps.get(1).unwrap(), "aaa");
+    }
+
+    #[test]
+    fn test_regex_capture_empty_star() {
+        // Test capture with * that could match empty
+        let re = Regex::compile("a(b*)c");
+        assert!(re.is_ok());
+        let re = re.unwrap();
+        defer re.free();
+
+        // Case with empty capture
+        let caps = re.captures("ac");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        defer caps.free();
+
+        assert_eq!(caps.get(0).unwrap(), "ac");
+        assert_eq!(caps.get(1).unwrap(), "");  // Empty capture
+
+        // Case with non-empty capture
+        let caps2 = re.captures("abbbc");
+        assert!(caps2.is_some());
+        let caps2 = caps2.unwrap();
+        defer caps2.free();
+
+        assert_eq!(caps2.get(0).unwrap(), "abbbc");
+        assert_eq!(caps2.get(1).unwrap(), "bbb");
+    }
+}
+

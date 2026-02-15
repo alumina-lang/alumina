@@ -1673,7 +1673,12 @@ mod internal {
         #[inline]
         fn hash(self: &Self, hasher: &mut H) {
             use mem::{size_of,slice::from_raw};
-            hasher.write(from_raw(self as &u8, size_of::<Self>()));
+            if runtime::in_const_context() {
+                let arr = intrinsics::transmute::<Self, [u8; size_of::<Self>()]>(*self);
+                hasher.write(&arr);
+            } else {
+                hasher.write(from_raw(self as &u8, size_of::<Self>()));
+            }
         }
     }
 
@@ -1997,6 +2002,27 @@ mod internal {
             use libc::{c_int, c_ulong, c_uint, c_ulonglong};
             use mem::size_of;
 
+            if runtime::in_const_context() {
+                if self == 0 {
+                    return (size_of::<Self>() * 8) as u32;
+                }
+
+                let count = 0u32;
+                let bits = (size_of::<Self>() * 8) as u32;
+                let i = 0u32;
+                loop {
+                    if i >= bits {
+                        break;
+                    }
+                    if (self >> (bits - 1 - i)) & 1 != 0 {
+                        break;
+                    }
+                    count += 1;
+                    i += 1;
+                }
+                return count;
+            }
+
             when self is usize {
                 #[cfg(target_pointer_width = "64")]
                 {
@@ -2045,6 +2071,27 @@ mod internal {
         fn trailing_zeros(self: Self) -> u32 {
             use libc::{c_int, c_ulong, c_uint, c_ulonglong};
             use mem::size_of;
+
+            if runtime::in_const_context() {
+                if self == 0 {
+                    return (size_of::<Self>() * 8) as u32;
+                }
+
+                let count = 0u32;
+                let bits = (size_of::<Self>() * 8) as u32;
+                let i = 0u32;
+                loop {
+                    if i >= bits {
+                        break;
+                    }
+                    if (self >> i) & 1 != 0 {
+                        break;
+                    }
+                    count += 1;
+                    i += 1;
+                }
+                return count;
+            }
 
             when self is usize {
                 #[cfg(target_pointer_width = "64")]

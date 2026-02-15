@@ -2,10 +2,9 @@ use crate::ast::{Attribute, BinOp, BuiltinType, Inline, Span, UnOp};
 use crate::codegen::elide_zst::ZstElider;
 use crate::codegen::types::TypeWriter;
 use crate::codegen::{w, CName, CodegenCtx};
-use crate::common::{AluminaError, CodeErrorBuilder};
+use crate::common::AluminaError;
 use crate::diagnostics::DiagnosticsStack;
 use crate::ir::const_eval::Value;
-use crate::ir::layout::Layouter;
 use crate::ir::{
     Const, Expr, ExprKind, ExprP, Function, Id, IntrinsicValueKind, LocalDef, Statement, Static,
     Ty, ValueType,
@@ -265,6 +264,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 }
             }
             Value::Uninitialized => w!(self.fn_bodies, "{{0}}"),
+            Value::Dangling(align) => w!(self.fn_bodies, "((void*){})", align),
             _ => unimplemented!(),
         }
     }
@@ -566,18 +566,6 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                         self.ctx.get_type(expr.ty)
                     );
                 }
-                IntrinsicValueKind::Dangling(inner) => {
-                    let layout = Layouter::new(self.ctx.global_ctx.clone())
-                        .layout_of(inner)
-                        .with_no_span()?;
-
-                    w!(
-                        self.fn_bodies,
-                        "(({}){})",
-                        self.ctx.get_type(expr.ty),
-                        layout.align
-                    );
-                }
                 IntrinsicValueKind::InConstContext => {
                     w!(self.fn_bodies, "({})0", self.ctx.get_type(expr.ty));
                 }
@@ -590,6 +578,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
                 | IntrinsicValueKind::StopIteration
                 | IntrinsicValueKind::ConstAlloc(_, _)
                 | IntrinsicValueKind::ConstWrite(_, _)
+                | IntrinsicValueKind::ConstBake(_)
                 | IntrinsicValueKind::ConstFree(_) => {
                     unreachable!()
                 }
@@ -789,7 +778,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
         );
 
         self.in_const_init = true;
-        let mut elider = ZstElider::new(diag.clone(), self.ctx.ir);
+        let mut elider = ZstElider::new(diag.clone(), self.ctx.layouter.clone(), self.ctx.ir);
         let optimized = elider.elide_zst_expr(item.init).unwrap();
         let ret = self.write_expr(diag, &optimized, false);
         self.in_const_init = false;
@@ -830,7 +819,7 @@ impl<'ir, 'gen> FunctionWriter<'ir, 'gen> {
 
         let body = item.body.get().unwrap();
 
-        let elider = ZstElider::new(diag.clone(), self.ctx.ir);
+        let elider = ZstElider::new(diag.clone(), self.ctx.layouter.clone(), self.ctx.ir);
         let (local_defs, statements) = elider.elide_zst_func_body(body).unwrap();
 
         w!(self.fn_bodies, "{{\n");

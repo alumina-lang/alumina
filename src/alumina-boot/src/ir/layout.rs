@@ -64,6 +64,7 @@ impl Layout {
 
 type FieldLayout<T> = (Layout, Vec<(Option<T>, Layout)>);
 
+#[derive(Clone)]
 pub struct Layouter<'ir> {
     pointer_width: PointerWidth,
     cycle_guardian: CycleGuardian<ItemP<'ir>>,

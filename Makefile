@@ -7,7 +7,7 @@ ifdef RELEASE
 	BUILD_DIR = $(BUILD_ROOT)/release
 	CARGO_FLAGS += --profile release
 	CARGO_TARGET_DIR = target/release
-	CFLAGS += -O3
+	CFLAGS += -O3 -g
 else ifdef FAST_DEBUG
 	# Compile in debug mode, but with alumina-boot compiled in release mode.
 	# It is significantly faster.
@@ -216,7 +216,7 @@ $(DOCTEST): $(DOCTEST).c $(MINICORO)
 docs: $(BUILD_DIR)/doctest.alu
 
 test-docs: $(DOCTEST)
-	$(DOCTEST) $(TEST_FLAGS) || true
+	$(DOCTEST) $(TEST_FLAGS)
 
 serve-docs:
 	@cd $(BUILD_DIR)/html && python3 -m http.server

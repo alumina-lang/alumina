@@ -274,6 +274,7 @@ fn write_docstring<T: std::io::Writable<T>>(
 
     let in_a_code_block = false;
     let cb_type = CodeBlockType::Default;
+    let in_a_list = false;
 
     let md_state = InlineMarkdownState::default();
     defer md_state.free();
@@ -392,6 +393,10 @@ fn write_docstring<T: std::io::Writable<T>>(
             docline = docline.trim_start();
             if docline.len() == 0 {
                 md_state.reset()?;
+                if in_a_list {
+                    writeln!(writer, "</ul>")?;
+                    in_a_list = false;
+                }
                 if tagline_only {
                     return Result::ok(());
                 } else {
@@ -399,6 +404,10 @@ fn write_docstring<T: std::io::Writable<T>>(
                 }
             } else if docline.starts_with("###") {
                 md_state.reset()?;
+                if in_a_list {
+                    writeln!(writer, "</ul>")?;
+                    in_a_list = false;
+                }
                 writeln!(writer, "</p>")?;
                 writeln!(writer, "<h4>{}</h4>", InlineMarkdown::new(
                     docline.trim_prefix("###"), &md_state,
@@ -408,6 +417,10 @@ fn write_docstring<T: std::io::Writable<T>>(
                 writeln!(writer, "<p>")?;
             } else if docline.starts_with("##") {
                 md_state.reset()?;
+                if in_a_list {
+                    writeln!(writer, "</ul>")?;
+                    in_a_list = false;
+                }
                 writeln!(writer, "</p>")?;
                 writeln!(writer, "<h3>{}</h3>", InlineMarkdown::new(
                     docline.trim_prefix("##"), &md_state,
@@ -417,6 +430,10 @@ fn write_docstring<T: std::io::Writable<T>>(
                 writeln!(writer, "<p>")?;
             } else if docline.starts_with("#!") {
                 md_state.reset()?;
+                if in_a_list {
+                    writeln!(writer, "</ul>")?;
+                    in_a_list = false;
+                }
                 writeln!(writer, "</p>")?;
                 writeln!(writer, "<h1>{}</h1>", InlineMarkdown::new(
                     docline.trim_prefix("#!"), &md_state,
@@ -426,6 +443,10 @@ fn write_docstring<T: std::io::Writable<T>>(
                 writeln!(writer, "<p>")?;
             } else if docline.starts_with("#") {
                 md_state.reset()?;
+                if in_a_list {
+                    writeln!(writer, "</ul>")?;
+                    in_a_list = false;
+                }
                 writeln!(writer, "</p>")?;
                 writeln!(writer, "<h2>{}</h2>", InlineMarkdown::new(
                     docline.trim_prefix("#"), &md_state,
@@ -433,7 +454,24 @@ fn write_docstring<T: std::io::Writable<T>>(
                 ))?;
                 md_state.reset()?;
                 writeln!(writer, "<p>")?;
+            } else if docline.starts_with("- ") || docline.starts_with("* ") {
+                // Unordered list item
+                md_state.reset()?;
+                if !in_a_list {
+                    writeln!(writer, "</p><ul class=\"markdown\">")?;
+                    in_a_list = true;
+                }
+                writeln!(writer, "<li>{}</li>", InlineMarkdown::new(
+                    docline.trim_prefix("-").trim_prefix("*").trim_start(),
+                    &md_state,
+                    link_context
+                ))?;
+                md_state.reset()?;
             } else {
+                if in_a_list {
+                    writeln!(writer, "</ul><p>")?;
+                    in_a_list = false;
+                }
                 writeln!(writer, "{}", InlineMarkdown::new(
                     docline,
                     &md_state,
@@ -455,6 +493,9 @@ fn write_docstring<T: std::io::Writable<T>>(
     }
 
     if !tagline_only {
+        if in_a_list {
+            writeln!(writer, "</ul>")?;
+        }
         writeln!(writer, "</p>")?;
     }
     Result::ok(())

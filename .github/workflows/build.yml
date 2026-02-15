@@ -66,7 +66,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - name: Set up packages
-        run: apk add --no-cache gcc musl-dev make nodejs npm curl git
+        run: apk add --no-cache gcc musl-dev make nodejs npm curl git clang-libclang
 
       - name: Install Rust
         run:  |
@@ -74,7 +74,7 @@ jobs:
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Install Tree-sitter
-        run: cargo install tree-sitter-cli
+        run: RUSTFLAGS=-Ctarget-feature=-crt-static cargo install tree-sitter-cli
 
       - name: Install libbacktrace
         run: |
@@ -107,7 +107,7 @@ jobs:
       - name: Install Tree-sitter (with runtime)
         run: |
           npm install -g tree-sitter-cli
-          curl -fsSL https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.25.4.tar.gz | tar -xz
+          curl -fsSL https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.26.5.tar.gz | tar -xz
           cd tree-sitter-*
           make
           sudo make install
@@ -146,7 +146,7 @@ jobs:
       - name: Install Tree-sitter (with runtime)
         run: |
           npm install -g tree-sitter-cli
-          curl -fsSL https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.25.4.tar.gz | tar -xz
+          curl -fsSL https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.26.5.tar.gz | tar -xz
           cd tree-sitter-*
           make
           sudo make install

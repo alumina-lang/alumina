@@ -245,12 +245,12 @@ impl Compiler {
 
         timing!(self, cur_time, Stage::Mono);
 
+        // Generate static initialization code before baking
         let mut dce = DeadCodeEliminator::new();
-        for item in roots {
+        for item in &roots {
             dce.visit_item(item)?;
         }
 
-        // Finally generate static initialization code
         let mut monomorphizer = Mono::new(&mut mono_ctx, false, None);
         if let Some(item) = monomorphizer.generate_static_constructor(dce.alive_items())? {
             dce.visit_item(item)?;
