@@ -103,6 +103,26 @@ extern "C" fn tgammaf(x: f32) -> f32;
 extern "C" fn trunc(x: f64) -> f64;
 extern "C" fn truncf(x: f32) -> f32;
 
+/// Returns a pointer to the thread-local `errno` value.
+/// Platform-specific: wraps `__errno_location` (Linux), `__error` (macOS), or `__errno` (Android).
+#[cfg(target_os = "linux")]
+#[inline(always)]
+fn errno_location() -> &mut c_int {
+    __errno_location()
+}
+
+#[cfg(target_os = "macos")]
+#[inline(always)]
+fn errno_location() -> &mut c_int {
+    __error()
+}
+
+#[cfg(target_os = "android")]
+#[inline(always)]
+fn errno_location() -> &mut c_int {
+    __errno()
+}
+
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
 use libc::aarch64_apple_darwin::*;
 #[cfg(all(target_arch = "x86_64", target_os = "macos"))]

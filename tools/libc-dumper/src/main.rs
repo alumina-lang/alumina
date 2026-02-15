@@ -247,8 +247,10 @@ fn format_qpath(
                         }
                     }
                 }
+                // Only apply type renames in type context (turbofish=false).
+                // In expression context (turbofish=true), paths refer to values.
                 let base = resolve_primitive(name)
-                    .unwrap_or_else(|| resolve_name(name, renames));
+                    .unwrap_or_else(|| if turbofish { name.to_string() } else { resolve_name(name, renames) });
                 let generic_str = format_segment_generic_args(tcx, renames, seg, turbofish);
                 format!("{}{}", base, generic_str)
             } else {
