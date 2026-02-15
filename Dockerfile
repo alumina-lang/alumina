@@ -3,7 +3,7 @@ FROM ubuntu:24.04 AS environment
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 
-RUN apt-get update && apt-get install -y software-properties-common curl build-essential git ca-certificates gnupg
+RUN apt-get update && apt-get install -y software-properties-common curl build-essential git ca-certificates gnupg libclang-dev
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
