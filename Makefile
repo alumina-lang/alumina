@@ -216,7 +216,7 @@ $(DOCTEST): $(DOCTEST).c $(MINICORO)
 docs: $(BUILD_DIR)/doctest.alu
 
 test-docs: $(DOCTEST)
-	$(DOCTEST) $(TEST_FLAGS) || true
+	$(DOCTEST) $(TEST_FLAGS)
 
 serve-docs:
 	@cd $(BUILD_DIR)/html && python3 -m http.server

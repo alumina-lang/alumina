@@ -502,6 +502,7 @@ where
     }
 }
 
+#[derive(Clone)]
 pub struct CycleGuardian<T: Eq + Hash + Clone> {
     inner: Rc<RefCell<HashSet<T>>>,
 }

@@ -570,7 +570,6 @@ impl Statement<'_> {
 #[derive(Debug, Clone)]
 pub enum IntrinsicValueKind<'ir> {
     SizeOfLike(&'ir str, TyP<'ir>),
-    Dangling(TyP<'ir>),
     Asm(&'ir str),
     FunctionLike(&'ir str),
     ConstLike(&'ir str),
@@ -580,6 +579,7 @@ pub enum IntrinsicValueKind<'ir> {
     ConstWrite(ExprP<'ir>, bool),
     ConstAlloc(TyP<'ir>, ExprP<'ir>),
     ConstFree(ExprP<'ir>),
+    ConstBake(ExprP<'ir>),
     Expect(ExprP<'ir>, bool),
     Uninitialized,
     InConstContext,
@@ -700,9 +700,9 @@ impl<'ir> Expr<'ir> {
             ExprKind::Intrinsic(ref kind) => match kind {
                 IntrinsicValueKind::Transmute(inner) => inner.pure(),
                 IntrinsicValueKind::Volatile(inner) => inner.pure(),
+                IntrinsicValueKind::ConstBake(inner) => inner.pure(),
                 IntrinsicValueKind::Expect(inner, _) => inner.pure(),
                 IntrinsicValueKind::SizeOfLike(_, _) => true,
-                IntrinsicValueKind::Dangling(_) => true,
                 IntrinsicValueKind::Asm(_) => false,
                 IntrinsicValueKind::FunctionLike(_) => false,
                 IntrinsicValueKind::ConstLike(_) => false,

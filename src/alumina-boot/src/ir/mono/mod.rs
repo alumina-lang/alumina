@@ -124,10 +124,6 @@ impl<'ast, 'ir> MonoCtx<'ast, 'ir> {
             .expect("reverse lookup failed")
     }
 
-    pub fn malloc_bag(&self) -> &MallocBag<'ir> {
-        &self.malloc_bag
-    }
-
     fn map_attribute(&self, attr: &ast::Attribute<'ast>) -> ast::Attribute<'ir> {
         match attr {
             Attribute::Export => Attribute::Export,

@@ -49,6 +49,31 @@ macro const_eval($arg) {
     intrinsics::const_eval($arg)
 }
 
+
+/// Bakes dynamic memory allocations into static items during constant evaluation.
+///
+/// ## Example
+/// ```
+/// use std::collections::HashMap;
+/// use std::runtime::const_bake;
+///
+/// const HASH: HashMap<u32, u32> = {
+///     let m: HashMap<u32, u32> = HashMap::new();
+///     m.insert(1, 2);
+///     m.insert(3, 4);
+///     m.const_bake!()
+/// };
+///
+/// // The hashmap is constructed at compile time, and stored in rodata, so this is a simple lookup at runtime.
+/// // Trying to modify the hashmap at runtime is undefined behavior.
+/// assert_eq!(HASH.get(&1).unwrap(), 2);
+/// assert_eq!(HASH.get(&3).unwrap(), 4);
+/// ```
+macro const_bake($arg) {
+    intrinsics::const_bake($arg)
+}
+
+
 /// Coroutine object
 ///
 /// Coroutine object is a reference to a running coroutine, which receives values of type `RecvT` and

@@ -1,0 +1,11 @@
+//! exit_code: 1
+
+fn main() {
+    const FOO: &mut [i32] = {  // diag: error(cannot_const_evaluate): "this expression is not evaluable at compile time (contains dynamically allocated memory during constant evaluation (hint: use std::runtime::bake to bake the value into rodata))"
+        let foo = std::mem::slice::alloc::<i32>(10);
+        foo[0] = 42;
+        foo
+    };
+
+    FOO;
+}

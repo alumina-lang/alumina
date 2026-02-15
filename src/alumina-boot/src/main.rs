@@ -142,7 +142,14 @@ fn run(args: Args) -> Result<(), ()> {
         OutputType::Executable
     };
 
-    let mut global_ctx = GlobalCtx::new(output_type, args.options.clone());
+    let mut options = args.options.clone();
+    if let Ok(env_options) = std::env::var("ALUMINA_OPTIONS") {
+        for opt in env_options.split_whitespace() {
+            options.push(parse_cfg(opt).unwrap());
+        }
+    }
+
+    let mut global_ctx = GlobalCtx::new(output_type, options);
     let mut compiler = Compiler::new(global_ctx.clone());
 
     let mut files = get_sysroot(&args).unwrap();

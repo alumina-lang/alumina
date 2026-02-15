@@ -294,9 +294,9 @@ impl<'ir> ExpressionBuilder<'ir> {
         expr.alloc_on(self.ir)
     }
 
-    pub fn dangling(&self, ty: TyP<'ir>, span: Option<Span>) -> ExprP<'ir> {
-        if let Ty::Pointer(inner, _) = ty {
-            self.codegen_intrinsic(IntrinsicValueKind::Dangling(inner), ty, span)
+    pub fn dangling(&self, ty: TyP<'ir>, align: usize, span: Option<Span>) -> ExprP<'ir> {
+        if let Ty::Pointer(_, _) = ty {
+            self.literal(Value::Dangling(align), ty, span)
         } else {
             unreachable!()
         }

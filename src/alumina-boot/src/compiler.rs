@@ -253,24 +253,6 @@ impl Compiler {
 
         let mut monomorphizer = Mono::new(&mut mono_ctx, false, None);
         if let Some(item) = monomorphizer.generate_static_constructor(dce.alive_items())? {
-            roots.insert(item);
-        }
-
-        // Bake const-time allocations into rodata
-        let baked_roots = {
-            let baker = crate::ir::bake::Baker::new(&ir_ctx, mono_ctx.malloc_bag());
-            let mut baked_roots = HashSet::default();
-            for item in roots {
-                let baked = baker.bake_item(item)?;
-                baked_roots.insert(baked);
-            }
-            baked_roots.extend(baker.baked_items());
-            baked_roots
-        };
-
-        // Run DCE on baked items
-        let mut dce = DeadCodeEliminator::new();
-        for item in baked_roots {
             dce.visit_item(item)?;
         }
 

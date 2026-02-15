@@ -13,6 +13,7 @@ With regards to syntax, the language is very similar to Rust and in terms of sem
     - [Implementation details](#implementation-details)
   - [Other function attributes](#other-function-attributes)
 - [Constants](#constants)
+  - [Dynamic memory allocation in constants](#dynamic-memory-allocation-in-constants)
 - [Statics](#statics)
   - [Generic statics and constants](#generic-statics-and-constants)
   - [Thread-local statics](#thread-local-statics)
@@ -439,9 +440,70 @@ Constant evaluation supports many of the language features, including variable a
 
 Call to `std::runtime::in_const_context` function evaluates to `true` during constant evaluation and `false` during code generation. This can be used to make functions const-compatible (e.g. by using an implementation not relying on foreign functions).
 
-There are also limits on how complex a constant expression can be. The compiler will reject constant expressions that are too complex to evaluate at compile time. The current hard-coded limits are 100000 steps and a maximum recursion depth of 100 per constant expression.
+There are limits on how complex a constant expression can be. The compiler will reject constant expressions that are too complex to evaluate at compile time. The default limits are 10000000 steps and a maximum recursion depth of 100 per constant expression. These can be overridden with `-Z const-eval-max-iterations=N` and `-Z const-eval-max-depth=N` compiler flags or via the `ALUMINA_OPTIONS` environment variable (e.g. `ALUMINA_OPTIONS="const-eval-max-iterations=50000000"`).
 
 [^1]: If you can produce UB during const-eval, please file a bug.
+
+## Dynamic memory allocation in constants
+
+The constant evaluator supports dynamic memory allocation. Standard library functions like `std::mem::slice::alloc` and `std::mem::slice::free` work during constant evaluation (they use `in_const_context` internally to switch between `libc::malloc`/`libc::free` at runtime and a built-in allocator during const eval). This means that standard library collection types like `Vector` and `HashMap` can be used in constant expressions.
+
+However, a constant expression cannot evaluate to a value that contains pointers to dynamically allocated memory — the compiler would not know how to embed such a value into the binary. Any allocations that are reachable from the return value must be *baked* into read-only static data using the `const_bake!` macro. Allocations that are not reachable from the return value (e.g. temporary buffers) can simply be freed or left to leak.
+
+`std::runtime::const_bake!` takes a value containing dynamic allocations and converts them into static data embedded in the binary (rodata). The resulting value is safe to use at runtime, but must not be modified (as the backing memory is read-only).
+
+```rust
+use std::collections::HashMap;
+use std::runtime::const_bake;
+
+const LOOKUP: HashMap<u32, u32> = {
+    let m: HashMap<u32, u32> = HashMap::new();
+    m.insert(1, 2);
+    m.insert(3, 4);
+
+    m.const_bake!()
+};
+
+fn main() {
+    // The hashmap was constructed at compile time and is embedded in rodata.
+    // Lookups work normally, but modification would be undefined behavior.
+    assert_eq!(LOOKUP.get(&1).unwrap(), &2);
+    assert_eq!(LOOKUP.get(&3).unwrap(), &4);
+}
+```
+
+This works with any type that uses dynamic allocation internally, including `Vector`, `HashMap`, and user-defined types. As a more involved example, regular expressions can be compiled at compile time:
+
+```rust
+const REGEX: std::regex::Regex = std::regex::Regex::compile("(.*) => (.*)").unwrap().const_bake!();
+
+fn main() {
+    let caps = REGEX.captures("foo => bar").unwrap();
+    println!("{} => {}", caps.get(1).unwrap(), caps.get(2).unwrap());
+}
+```
+
+If the return value of a constant expression contains pointers to dynamic allocations that were not baked, the compiler will report an error:
+
+```rust
+const BAD: std::collections::Vector<i32> = {
+    let v: std::collections::Vector<i32> = std::collections::Vector::new();
+    v.push(1);
+    v // error: contains dynamically allocated memory
+};
+```
+
+Temporary allocations that are not part of the return value are fine:
+
+```rust
+const OK: i32 = {
+    let v: std::collections::Vector<i32> = std::collections::Vector::new();
+    v.push(42);
+    let result = v[0]; // extract what we need
+    v.free();           // free, or just let it leak — either way is fine
+    result
+};
+```
 
 # Statics
 

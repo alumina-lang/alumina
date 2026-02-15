@@ -210,8 +210,12 @@ where
                     expr.ty,
                     expr.span,
                 ),
+                IntrinsicValueKind::ConstBake(inner) => builder.codegen_intrinsic(
+                    IntrinsicValueKind::ConstBake(self.fold_expr(inner)?),
+                    expr.ty,
+                    expr.span,
+                ),
                 IntrinsicValueKind::SizeOfLike(_, _)
-                | IntrinsicValueKind::Dangling(_)
                 | IntrinsicValueKind::Asm(_)
                 | IntrinsicValueKind::FunctionLike(_)
                 | IntrinsicValueKind::ConstLike(_)

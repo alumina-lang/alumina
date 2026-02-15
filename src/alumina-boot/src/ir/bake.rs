@@ -1,19 +1,19 @@
 use crate::common::{AluminaError, ArenaAllocatable, CodeErrorBuilder, HashMap};
 use crate::ir::const_eval::{LValue, MallocBag, Value};
-use crate::ir::{Const, ExprP, Id, IrCtx, Item, ItemP, Ty};
+use crate::ir::{Const, ExprP, Id, IrCtx, Item, ItemP};
 use once_cell::unsync::OnceCell;
 
 use std::cell::RefCell;
 
 /// Bakes const-time allocations into static const items.
-pub struct Baker<'ir> {
+pub struct ConstBaker<'ir> {
     ir: &'ir IrCtx<'ir>,
     alloc_to_item: RefCell<HashMap<Id, ItemP<'ir>>>,
-    malloc_bag: &'ir MallocBag<'ir>,
+    malloc_bag: MallocBag<'ir>,
 }
 
-impl<'ir> Baker<'ir> {
-    pub fn new(ir: &'ir IrCtx<'ir>, malloc_bag: &'ir MallocBag<'ir>) -> Self {
+impl<'ir> ConstBaker<'ir> {
+    pub fn new(ir: &'ir IrCtx<'ir>, malloc_bag: MallocBag<'ir>) -> Self {
         Self {
             ir,
             alloc_to_item: RefCell::new(HashMap::default()),
@@ -97,7 +97,7 @@ impl<'ir> Baker<'ir> {
         Ok(new_item_cell)
     }
 
-    fn bake_expr(&self, expr: ExprP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
+    pub fn bake_expr(&self, expr: ExprP<'ir>) -> Result<ExprP<'ir>, AluminaError> {
         use crate::ir::{Expr, ExprKind};
 
         let new_kind = match &expr.kind {
@@ -216,7 +216,7 @@ impl<'ir> Baker<'ir> {
         })
     }
 
-    fn bake_value(&self, value: Value<'ir>) -> Result<Value<'ir>, AluminaError> {
+    pub fn bake_value(&self, value: Value<'ir>) -> Result<Value<'ir>, AluminaError> {
         match value {
             Value::Pointer(lvalue, ty) => Ok(Value::Pointer(self.bake_lvalue(lvalue)?, ty)),
             Value::LValue(lvalue) => Ok(Value::LValue(self.bake_lvalue(lvalue)?)),
@@ -254,7 +254,7 @@ impl<'ir> Baker<'ir> {
                     return Ok(LValue::Const(item));
                 }
 
-                let value = self
+                let (value, ty) = self
                     .malloc_bag
                     .get(id)
                     .ok_or_else(|| {
@@ -265,7 +265,6 @@ impl<'ir> Baker<'ir> {
                     })
                     .with_no_span()?;
 
-                let ty = self.infer_type(&value)?;
                 let baked_value = self.bake_value(value)?;
 
                 let name = format!("__const_alloc_{:?}", id);
@@ -303,44 +302,11 @@ impl<'ir> Baker<'ir> {
                 self.bake_lvalue(*inner)?.alloc_on(self.ir),
                 idx,
             )),
-            _ => Ok(lvalue),
-        }
-    }
-
-    fn infer_type(&self, value: &Value<'ir>) -> Result<&'ir Ty<'ir>, AluminaError> {
-        use crate::ast::BuiltinType;
-
-        match value {
-            Value::Uninitialized => Ok(self.ir.intern_type(Ty::Builtin(BuiltinType::Never))),
-            Value::Void => Ok(self.ir.intern_type(Ty::Tuple(&[]))),
-            Value::Bool(_) => Ok(self.ir.intern_type(Ty::Builtin(BuiltinType::Bool))),
-            Value::U8(_) => Ok(self.ir.intern_type(Ty::Builtin(BuiltinType::U8))),
-            Value::U16(_) => Ok(self.ir.intern_type(Ty::Builtin(BuiltinType::U16))),
-            Value::U32(_) => Ok(self.ir.intern_type(Ty::Builtin(BuiltinType::U32))),
-            Value::U64(_) => Ok(self.ir.intern_type(Ty::Builtin(BuiltinType::U64))),
-            Value::U128(_) => Ok(self.ir.intern_type(Ty::Builtin(BuiltinType::U128))),
-            Value::USize(_) => Ok(self.ir.intern_type(Ty::Builtin(BuiltinType::USize))),
-            Value::I8(_) => Ok(self.ir.intern_type(Ty::Builtin(BuiltinType::I8))),
-            Value::I16(_) => Ok(self.ir.intern_type(Ty::Builtin(BuiltinType::I16))),
-            Value::I32(_) => Ok(self.ir.intern_type(Ty::Builtin(BuiltinType::I32))),
-            Value::I64(_) => Ok(self.ir.intern_type(Ty::Builtin(BuiltinType::I64))),
-            Value::I128(_) => Ok(self.ir.intern_type(Ty::Builtin(BuiltinType::I128))),
-            Value::ISize(_) => Ok(self.ir.intern_type(Ty::Builtin(BuiltinType::ISize))),
-            Value::F32(_) => Ok(self.ir.intern_type(Ty::Builtin(BuiltinType::F32))),
-            Value::F64(_) => Ok(self.ir.intern_type(Ty::Builtin(BuiltinType::F64))),
-            Value::Array(values) if !values.is_empty() => {
-                let elem_ty = self.infer_type(&values[0])?;
-                Ok(self.ir.intern_type(Ty::Array(elem_ty, values.len())))
+            LValue::Const(inner) => {
+                let new_inner = self.bake_item(inner)?;
+                Ok(LValue::Const(new_inner))
             }
-            Value::Array(_) => Ok(self.ir.intern_type(Ty::Array(
-                self.ir.intern_type(Ty::Builtin(BuiltinType::U8)),
-                0,
-            ))),
-            _ => Ok(self.ir.intern_type(Ty::Builtin(BuiltinType::Never))),
+            LValue::Variable(_) => unreachable!(),
         }
-    }
-
-    pub fn baked_items(&self) -> Vec<ItemP<'ir>> {
-        self.alloc_to_item.borrow().values().copied().collect()
     }
 }

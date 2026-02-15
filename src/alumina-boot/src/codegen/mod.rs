@@ -33,6 +33,7 @@ const DIAGNOSTIC_SUPRESSIONS: &[(&str, &str)] = &[
     ("clang", "-Wincompatible-pointer-types"),
     ("clang", "-Wnull-dereference"),
     ("GCC", "-Wbuiltin-declaration-mismatch"),
+    ("GCC", "-Wdiscarded-qualifiers"),
 ];
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]

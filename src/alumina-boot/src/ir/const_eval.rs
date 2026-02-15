@@ -5,6 +5,7 @@ use crate::common::{
 };
 use crate::diagnostics::DiagnosticsStack;
 use crate::global_ctx::GlobalCtx;
+use crate::ir::bake::ConstBaker;
 use crate::ir::{BuiltinType, ExprKind, ExprP, Id, IrCtx, Item, Statement, Ty, TyP, UnOp};
 use std::backtrace::Backtrace;
 use std::cell::RefCell;
@@ -23,6 +24,7 @@ const MAX_ITERATIONS: usize = 1000000;
 pub enum Value<'ir> {
     Void,
     Uninitialized,
+    Dangling(usize),
     Bool(bool),
     U8(u8),
     U16(u16),
@@ -53,6 +55,7 @@ impl PartialEq for Value<'_> {
         match (self, other) {
             (Value::Void, Value::Void) => true,
             (Value::Uninitialized, Value::Uninitialized) => true,
+            (Value::Dangling(a), Value::Dangling(b)) => a == b,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::U8(a), Value::U8(b)) => a == b,
             (Value::U16(a), Value::U16(b)) => a == b,
@@ -86,94 +89,98 @@ impl Hash for Value<'_> {
         match self {
             Value::Void => state.write_u8(0),
             Value::Uninitialized => state.write_u8(1),
-            Value::Bool(a) => {
+            Value::Dangling(ty) => {
                 state.write_u8(2);
+                ty.hash(state);
+            }
+            Value::Bool(a) => {
+                state.write_u8(3);
                 state.write_u8(*a as u8);
             }
             Value::U8(a) => {
-                state.write_u8(3);
+                state.write_u8(4);
                 state.write_u8(*a);
             }
             Value::U16(a) => {
-                state.write_u8(4);
+                state.write_u8(5);
                 state.write_u16(*a);
             }
             Value::U32(a) => {
-                state.write_u8(5);
+                state.write_u8(6);
                 state.write_u32(*a);
             }
             Value::U64(a) => {
-                state.write_u8(6);
+                state.write_u8(7);
                 state.write_u64(*a);
             }
             Value::U128(a) => {
-                state.write_u8(7);
+                state.write_u8(8);
                 state.write_u128(*a);
             }
             Value::I8(a) => {
-                state.write_u8(8);
+                state.write_u8(9);
                 state.write_u8(*a as u8);
             }
             Value::I16(a) => {
-                state.write_u8(9);
+                state.write_u8(10);
                 state.write_u16(*a as u16);
             }
             Value::I32(a) => {
-                state.write_u8(10);
+                state.write_u8(11);
                 state.write_u32(*a as u32);
             }
             Value::I64(a) => {
-                state.write_u8(11);
+                state.write_u8(12);
                 state.write_u64(*a as u64);
             }
             Value::I128(a) => {
-                state.write_u8(12);
+                state.write_u8(13);
                 state.write_u128(*a as u128);
             }
             Value::USize(a) => {
-                state.write_u8(13);
+                state.write_u8(14);
                 state.write_usize(*a);
             }
             Value::ISize(a) => {
-                state.write_u8(14);
+                state.write_u8(15);
                 state.write_usize(*a as usize);
             }
             Value::F32(a) => {
-                state.write_u8(15);
+                state.write_u8(16);
                 state.write_u32(a.to_bits());
             }
             Value::F64(a) => {
-                state.write_u8(16);
+                state.write_u8(17);
                 state.write_u64(a.to_bits());
             }
             Value::Bytes(a, a_len) => {
-                state.write_u8(17);
+                state.write_u8(18);
                 a.hash(state);
                 a_len.hash(state);
             }
             Value::Tuple(a) => {
-                state.write_u8(18);
-                a.hash(state);
-            }
-            Value::Array(a) => {
                 state.write_u8(19);
                 a.hash(state);
             }
-            Value::Struct(a) => {
+            Value::Array(a) => {
                 state.write_u8(20);
                 a.hash(state);
             }
-            Value::FunctionPointer(a) => {
+            Value::Struct(a) => {
                 state.write_u8(21);
                 a.hash(state);
             }
-            Value::Pointer(a, ty) => {
+            Value::FunctionPointer(a) => {
                 state.write_u8(22);
+                a.hash(state);
+            }
+            Value::Pointer(a, ty) => {
+                state.write_u8(23);
                 a.hash(state);
                 ty.hash(state);
             }
             Value::LValue(a) => {
-                state.write_u8(23);
+                state.write_u8(24);
                 a.hash(state);
             }
         }
@@ -216,6 +223,8 @@ pub enum ConstEvalErrorKind {
     TooManyIterations,
     #[error("contains pointer to a local variable")]
     LValueLeak,
+    #[error("contains dynamically allocated memory during constant evaluation (hint: use std::runtime::bake to bake the value into rodata)")]
+    AllocLeak,
     #[error("dynamically allocated memory used after being freed")]
     UseAfterFree,
     #[error("invalid pointer used to free memory")]
@@ -766,7 +775,7 @@ pub struct ConstEvalCtx<'ir> {
 }
 
 struct MallocBagInner<'ir> {
-    variables: HashMap<Id, Value<'ir>>,
+    variables: HashMap<Id, (Value<'ir>, TyP<'ir>)>,
 }
 
 #[derive(Clone)]
@@ -783,36 +792,44 @@ impl<'ir> MallocBag<'ir> {
         }
     }
 
-    pub fn define(&self, id: Id, value: Value<'ir>) {
-        self.inner.borrow_mut().variables.insert(id, value);
+    pub fn define(&self, id: Id, value: Value<'ir>, ty: TyP<'ir>) {
+        self.inner.borrow_mut().variables.insert(id, (value, ty));
     }
 
-    pub fn assign(&self, id: Id, value: Value<'ir>) -> Option<Value<'ir>> {
+    pub fn assign(&self, id: Id, value: Value<'ir>) -> Option<(Value<'ir>, TyP<'ir>)> {
         let mut inner = self.inner.borrow_mut();
         match inner.variables.entry(id) {
-            std::collections::hash_map::Entry::Occupied(mut val) => Some(val.insert(value)),
+            std::collections::hash_map::Entry::Occupied(mut val) => {
+                val.get_mut().0 = value;
+                Some(*val.get())
+            }
             std::collections::hash_map::Entry::Vacant(_) => None,
         }
     }
 
-    pub fn free(&self, id: Id) -> Option<Value<'ir>> {
+    pub fn free(&self, id: Id) -> Option<(Value<'ir>, TyP<'ir>)> {
         self.inner.borrow_mut().variables.remove(&id)
     }
 
-    pub fn get(&self, id: Id) -> Option<Value<'ir>> {
+    pub fn get(&self, id: Id) -> Option<(Value<'ir>, TyP<'ir>)> {
         self.inner.borrow().variables.get(&id).cloned()
     }
 }
 
 impl<'ir> ConstEvalCtx<'ir> {
     pub fn new(global_ctx: GlobalCtx, ir: &'ir IrCtx<'ir>, malloc_bag: MallocBag<'ir>) -> Self {
+        let max_iterations = global_ctx
+            .option("const-eval-max-iterations")
+            .and_then(|v| v?.parse().ok())
+            .unwrap_or(MAX_ITERATIONS);
+
         Self {
             global_ctx,
             ir,
             malloc_bag,
             inner: Rc::new(RefCell::new(ConstEvalCtxInner {
                 variables: HashMap::default(),
-                steps_remaining: MAX_ITERATIONS,
+                steps_remaining: max_iterations,
             })),
         }
     }
@@ -881,7 +898,11 @@ impl<'ir> ConstEvaluator<'ir> {
         Self {
             ir,
             return_slot: None,
-            remaining_depth: MAX_RECURSION_DEPTH,
+            remaining_depth: ctx
+                .global_ctx
+                .option("const-eval-max-depth")
+                .and_then(|v| v?.parse().ok())
+                .unwrap_or(MAX_RECURSION_DEPTH),
             remapped_variables: Default::default(),
             diag,
             types: TypeBuilder::new(ir),
@@ -1243,7 +1264,8 @@ impl<'ir> ConstEvaluator<'ir> {
                 .malloc_bag
                 .get(id)
                 .ok_or(ConstEvalErrorKind::UseAfterFree)
-                .with_backtrace(&self.diag)?),
+                .with_backtrace(&self.diag)?
+                .0),
             LValue::Field(lvalue, field) => {
                 let base = self.materialize_lvalue(*lvalue)?;
                 self.field(base, field)
@@ -1416,7 +1438,9 @@ impl<'ir> ConstEvaluator<'ir> {
 
                         Ok(Value::U8(arr[off]))
                     }
-                    _ => unsupported!(self),
+                    _ => {
+                        unsupported!(self);
+                    }
                 }
             }
             ExprKind::Lit(value) => Ok(*value),
@@ -1505,7 +1529,6 @@ impl<'ir> ConstEvaluator<'ir> {
             }
             ExprKind::Intrinsic(kind) => match kind {
                 IntrinsicValueKind::Uninitialized => Ok(make_uninitialized(self.ir, expr.ty)),
-                IntrinsicValueKind::Dangling(..) => Ok(Value::Uninitialized),
                 IntrinsicValueKind::Volatile(inner) => self.const_eval_defered(inner),
                 IntrinsicValueKind::SizeOfLike(_, _) => unsupported!(self),
                 IntrinsicValueKind::Transmute(inner) => {
@@ -1559,8 +1582,9 @@ impl<'ir> ConstEvaluator<'ir> {
                     match size {
                         Value::USize(size) => {
                             let id = self.ir.make_id();
-                            let value = make_uninitialized(self.ir, self.types.array(ty, size));
-                            self.ctx.malloc_bag.define(id, value);
+                            let typ = self.types.array(ty, size);
+                            let value = make_uninitialized(self.ir, typ);
+                            self.ctx.malloc_bag.define(id, value, typ);
 
                             Ok(Value::Pointer(
                                 LValue::Index(LValue::Alloc(id).alloc_on(self.ir), 0),
@@ -1582,6 +1606,11 @@ impl<'ir> ConstEvaluator<'ir> {
 
                         _ => Err(ConstEvalErrorKind::InvalidFree).with_backtrace(&self.diag),
                     }
+                }
+                IntrinsicValueKind::ConstBake(inner) => {
+                    let baker = ConstBaker::new(self.ir, self.ctx.malloc_bag.clone());
+                    let evaled_inner = self.const_eval_rvalue(inner)?;
+                    baker.bake_value(evaled_inner)
                 }
                 IntrinsicValueKind::Expect(inner, _) => self.const_eval_rvalue(inner),
             },
@@ -1746,7 +1775,9 @@ impl<'ir> ConstEvaluator<'ir> {
             (Value::Pointer(LValue::Index(inner, offset), orig), _) => {
                 let arr = match self.materialize_lvalue(*inner)? {
                     Value::Array(arr) => arr,
-                    _ => unsupported!(self),
+                    _ => {
+                        unsupported!(self)
+                    }
                 };
 
                 check_type_match!(orig, lhs_ty);
@@ -1763,6 +1794,9 @@ impl<'ir> ConstEvaluator<'ir> {
                     LValue::Index(inner, new_offset as usize),
                     orig,
                 ));
+            }
+            (Value::Dangling(align), Value::USize(0)) => {
+                return Ok(Value::Dangling(align));
             }
 
             _ => {}
@@ -1879,7 +1913,7 @@ fn check_lvalue_leak(value: &Value<'_>) -> Result<(), ConstEvalErrorKind> {
 fn check_lvalue_leak_lvalue(value: &LValue<'_>) -> Result<(), ConstEvalErrorKind> {
     match value {
         LValue::Const(_) => Ok(()),
-        LValue::Alloc(_) => Err(ConstEvalErrorKind::LValueLeak),
+        LValue::Alloc(_) => Err(ConstEvalErrorKind::AllocLeak),
         LValue::Variable(_) => Err(ConstEvalErrorKind::LValueLeak),
         LValue::Field(inner, _) | LValue::Index(inner, _) | LValue::TupleIndex(inner, _) => {
             check_lvalue_leak_lvalue(inner)

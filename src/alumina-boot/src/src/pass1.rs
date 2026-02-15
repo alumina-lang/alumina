@@ -152,8 +152,6 @@ macro_rules! parse_attributes {
     };
 }
 
-pub(crate) use parse_attributes;
-
 impl<'src> AluminaVisitor<'src> for FirstPassVisitor<'_, 'src> {
     type ReturnType = Result<(), AluminaError>;
 

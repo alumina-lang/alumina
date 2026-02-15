@@ -149,9 +149,7 @@ impl<'ir> ExpressionVisitor<'ir> for DeadCodeEliminator<'ir> {
         kind: &IntrinsicValueKind<'ir>,
     ) -> Result<(), AluminaError> {
         match kind {
-            IntrinsicValueKind::SizeOfLike(_, ty) | IntrinsicValueKind::Dangling(ty) => {
-                self.visit_ty(ty)
-            }
+            IntrinsicValueKind::SizeOfLike(_, ty) => self.visit_ty(ty),
             IntrinsicValueKind::FunctionLike(_)
             | IntrinsicValueKind::ConstLike(_)
             | IntrinsicValueKind::InConstContext
@@ -159,6 +157,7 @@ impl<'ir> ExpressionVisitor<'ir> for DeadCodeEliminator<'ir> {
             | IntrinsicValueKind::Asm(_) => Ok(()),
             IntrinsicValueKind::Transmute(inner)
             | IntrinsicValueKind::Volatile(inner)
+            | IntrinsicValueKind::ConstBake(inner)
             | IntrinsicValueKind::Expect(inner, _) => self.visit_expr(inner),
             // These should be unreachable
             IntrinsicValueKind::ConstPanic(_)
