@@ -259,6 +259,10 @@ fn format_qpath(
         }
         rustc_hir::QPath::TypeRelative(ty, seg) => {
             let ty_str = format_ty(tcx, renames, ty);
+            // Padding::uninit() / MaybeUninit::uninit() → uninitialized
+            if (ty_str == "Padding" || ty_str == "MaybeUninit") && seg.ident.as_str() == "uninit" {
+                return "uninitialized".to_string();
+            }
             let generic_str = format_segment_generic_args(tcx, renames, seg, turbofish);
             format!("{}::{}{}", ty_str, seg.ident, generic_str)
         }
