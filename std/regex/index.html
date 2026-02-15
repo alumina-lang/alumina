@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>std::regex - Alumina Docs</title>
+<link rel="stylesheet" href="/static/styles.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="description" content=" Regular expression matching with DFA-based engine" />
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png" />
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
+<link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
+<link rel="manifest" href="/static/manifest.json" />
+<link rel="mask-icon" href="/static/safari-pinned-tab.svg" color="#5bbad5" />
+<link rel="shortcut icon" href="/static/favicon.ico" />
+<link rel="canonical" href="https://docs.alumina-lang.net/std/regex/" />
+<meta name="msapplication-TileColor" content="#da532c" />
+<meta name="msapplication-config" content="/static/browserconfig.xml" />
+<meta name="description" content="Documentation for the Alumina standard library" />
+<script src="/static/site.js"></script>
+<script src="/search_index.js" async></script>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500&family=Source+Code+Pro:wght@400;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,700&display=swap" rel="stylesheet">
+</head>
+<body>
+<nav>
+<a href="/">
+<img width="100px" height="100px" class="logo" src="/static/logo.svg" alt="Alumina Docs">
+</a>
+<h1><a class="breadcrumbs" href="/std/">std</a>::<a class="breadcrumbs" href="/std/regex/">regex</a></h1>
+</h1>
+<h2>Structs</h2>
+<ul>
+<li>
+<a href="/std/regex/Regex.html">Regex</a>
+</li>
+<li>
+<a href="/std/regex/Captures.html">Captures</a>
+</li>
+</ul>
+</nav>
+<div class="main-container">
+<div id="search-container">
+<a class="mobile-only" href="/">
+<img width="40px" height="40px" class="logo" src="/static/logo.svg" alt="Alumina Docs">
+</a>
+<input id="search-input" class="search-input" autocomplete="off" spellcheck="false" placeholder="Search the documentation..." type="search"></input>
+</div>
+<div id="search-results"></div>
+<main id="main-content">
+<div class="main-title"><h1>Module <a class="breadcrumbs" href="/std/">std</a>::<a class="breadcrumbs" href="/std/regex/">regex</a></h1>
+</h1>
+</div>
+<p>
+Regular expression matching with DFA-based engine
+</p><p>
+This module provides a deterministic finite automaton (DFA) based regular expression
+engine with support for Unicode, capture groups, and anchors. The implementation uses
+Thompson's NFA construction followed by subset construction to build an efficient DFA.
+</p><p>
+</p>
+<h3> Supported Features</h3>
+<p>
+</p><p>
+</p><ul class="markdown">
+<li><b>Literals</b>: <code class="language-alumina">abc</code>, Unicode characters</li>
+<li><b>Character classes</b>: <code class="language-alumina">[a-z]</code>, <code class="language-alumina">[^0-9]</code>, <code class="language-alumina">[α-ω]</code></li>
+<li><b>Predefined classes</b>: <code class="language-alumina">\d</code> (digits), <code class="language-alumina">\w</code> (word), <code class="language-alumina">\s</code> (whitespace), <code class="language-alumina">.</code> (any except newline)</li>
+<li><b>Quantifiers</b>: <code class="language-alumina">*</code> (zero or more), <code class="language-alumina">+</code> (one or more), <code class="language-alumina">?</code> (zero or one)</li>
+<li><b>Bounded repetition</b>: <code class="language-alumina">{n}</code>, <code class="language-alumina">{n,}</code>, <code class="language-alumina">{n,m}</code></li>
+<li><b>Alternation</b>: <code class="language-alumina">foo|bar</code></li>
+<li><b>Grouping</b>: <code class="language-alumina">(foo)</code> capturing, <code class="language-alumina">(?:foo)</code> non-capturing</li>
+<li><b>Anchors</b>: <code class="language-alumina">^</code> (start of string), <code class="language-alumina">$</code> (end of string)</li>
+<li><b>Escape sequences</b>: <code class="language-alumina">\t</code>, <code class="language-alumina">\n</code>, <code class="language-alumina">\r</code>, <code class="language-alumina">\xHH</code>, <code class="language-alumina">\uHHHH</code></li>
+</ul>
+</p><p>
+</p>
+<h3> Limitations</h3>
+<p>
+</p><p>
+</p><ul class="markdown">
+<li>No backreferences (this is a regular language engine)</li>
+<li>No lookahead/lookbehind assertions</li>
+<li>No word boundaries (<code class="language-alumina">\b</code>, <code class="language-alumina">\B</code>)</li>
+<li>No Unicode property classes</li>
+</ul>
+</p><p>
+</p>
+<h3> Examples</h3>
+<p>
+</p><p>
+</p>
+<h4> Basic matching</h4>
+<p>
+</p><p>
+<pre class="with-playground-link"><code class="language-alumina">use std::regex::Regex;
+
+let re = Regex::compile("hello").unwrap();
+defer re.free();
+
+assert!(re.is_match("hello world"));
+assert!(!re.is_match("goodbye"));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3aregex%3a%3aRegex%3b%0a%20%20%20%20%0a%20%20%20%20let%20re%20%3d%20Regex%3a%3acompile%28%22hello%22%29%2eunwrap%28%29%3b%0a%20%20%20%20defer%20re%2efree%28%29%3b%0a%20%20%20%20%0a%20%20%20%20assert%21%28re%2eis%5fmatch%28%22hello%20world%22%29%29%3b%0a%20%20%20%20assert%21%28%21re%2eis%5fmatch%28%22goodbye%22%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+<h4> Character classes and quantifiers</h4>
+<p>
+</p><p>
+<pre class="with-playground-link"><code class="language-alumina">use std::regex::Regex;
+
+let re = Regex::compile("[0-9]+").unwrap();
+defer re.free();
+
+assert!(re.is_match("123"));
+assert!(!re.is_match("abc"));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3aregex%3a%3aRegex%3b%0a%20%20%20%20%0a%20%20%20%20let%20re%20%3d%20Regex%3a%3acompile%28%22%5b0%2d9%5d%2b%22%29%2eunwrap%28%29%3b%0a%20%20%20%20defer%20re%2efree%28%29%3b%0a%20%20%20%20%0a%20%20%20%20assert%21%28re%2eis%5fmatch%28%22123%22%29%29%3b%0a%20%20%20%20assert%21%28%21re%2eis%5fmatch%28%22abc%22%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+<h4> Capture groups</h4>
+<p>
+</p><p>
+<pre class="with-playground-link"><code class="language-alumina">use std::regex::Regex;
+
+let re = Regex::compile("(\\w+)@(\\w+\\.\\w+)").unwrap();
+defer re.free();
+
+let caps = re.captures("user@example.com");
+assert!(caps.is_some());
+let caps = caps.unwrap();
+defer caps.free();
+
+assert_eq!(caps.get(1).unwrap(), "user");
+assert_eq!(caps.get(2).unwrap(), "example.com");
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3aregex%3a%3aRegex%3b%0a%20%20%20%20%0a%20%20%20%20let%20re%20%3d%20Regex%3a%3acompile%28%22%28%5c%5cw%2b%29%40%28%5c%5cw%2b%5c%5c%2e%5c%5cw%2b%29%22%29%2eunwrap%28%29%3b%0a%20%20%20%20defer%20re%2efree%28%29%3b%0a%20%20%20%20%0a%20%20%20%20let%20caps%20%3d%20re%2ecaptures%28%22user%40example%2ecom%22%29%3b%0a%20%20%20%20assert%21%28caps%2eis%5fsome%28%29%29%3b%0a%20%20%20%20let%20caps%20%3d%20caps%2eunwrap%28%29%3b%0a%20%20%20%20defer%20caps%2efree%28%29%3b%0a%20%20%20%20%0a%20%20%20%20assert%5feq%21%28caps%2eget%281%29%2eunwrap%28%29%2c%20%22user%22%29%3b%0a%20%20%20%20assert%5feq%21%28caps%2eget%282%29%2eunwrap%28%29%2c%20%22example%2ecom%22%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+<h4> Anchors</h4>
+<p>
+</p><p>
+<pre class="with-playground-link"><code class="language-alumina">use std::regex::Regex;
+
+let re = Regex::compile("^start").unwrap();
+defer re.free();
+
+assert!(re.is_match("start of line"));
+assert!(!re.is_match("not at start"));
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3aregex%3a%3aRegex%3b%0a%20%20%20%20%0a%20%20%20%20let%20re%20%3d%20Regex%3a%3acompile%28%22%5estart%22%29%2eunwrap%28%29%3b%0a%20%20%20%20defer%20re%2efree%28%29%3b%0a%20%20%20%20%0a%20%20%20%20assert%21%28re%2eis%5fmatch%28%22start%20of%20line%22%29%29%3b%0a%20%20%20%20assert%21%28%21re%2eis%5fmatch%28%22not%20at%20start%22%29%29%3b%0a%7d%0a">Run this example</a></pre>
+</p><p>
+</p>
+<h2 id="Struct">Structs</h2>
+<div class="item-short-table">
+<div class="row" id="item.Regex">
+<div class="cell-name">
+<a href="/std/regex/Regex.html">Regex</a>
+</div>
+<div class="cell-doc">A compiled regular expression.
+</div>
+</div>
+<div class="row" id="item.Captures">
+<div class="cell-name">
+<a href="/std/regex/Captures.html">Captures</a>
+</div>
+<div class="cell-doc">Capture groups from a regex match
+</div>
+</div>
+</div>
+</main>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.28.0/prism.min.js" integrity="sha512-RDQSW3KoqJMiX0L/UBgwBmH1EmRYp8LBOiLaA8rBHIy+7OGP/7Gxg8vbt8wG4ZYd29P0Fnoq6+LOytCqx3cyoQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="/static/prism-alumina.js"></script>
+</body>
+</html>

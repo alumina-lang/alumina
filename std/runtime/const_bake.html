@@ -2,19 +2,19 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>std::runtime::const_eval - Alumina Docs</title>
+<title>std::runtime::const_bake - Alumina Docs</title>
 <link rel="stylesheet" href="/static/styles.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="description" content=" Forces the evaluation of the argument at compile time." />
+<meta name="description" content=" Bakes dynamic memory allocations into static items during constant evaluation." />
 <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png" />
 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png" />
 <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png" />
 <link rel="manifest" href="/static/manifest.json" />
 <link rel="mask-icon" href="/static/safari-pinned-tab.svg" color="#5bbad5" />
 <link rel="shortcut icon" href="/static/favicon.ico" />
-<link rel="canonical" href="https://docs.alumina-lang.net/std/runtime/const_eval.html" />
+<link rel="canonical" href="https://docs.alumina-lang.net/std/runtime/const_bake.html" />
 <meta name="msapplication-TileColor" content="#da532c" />
 <meta name="msapplication-config" content="/static/browserconfig.xml" />
 <meta name="description" content="Documentation for the Alumina standard library" />
@@ -78,31 +78,37 @@
 </div>
 <div id="search-results"></div>
 <main id="main-content">
-<div class="main-title"><h1>Macro <a class="breadcrumbs" href="/std/">std</a>::<a class="breadcrumbs" href="/std/runtime/">runtime</a>::<a class="breadcrumbs" href="/std/runtime/const_eval.html">const_eval</a></h1>
+<div class="main-title"><h1>Macro <a class="breadcrumbs" href="/std/">std</a>::<a class="breadcrumbs" href="/std/runtime/">runtime</a>::<a class="breadcrumbs" href="/std/runtime/const_bake.html">const_bake</a></h1>
 </h1>
 </div>
 <div class="signature" data-nosnippet>
 <h3>
-<span class="keyword">macro</span> <span class="identifier-function">const_eval</span>($arg) { ... }</h3>
+<span class="keyword">macro</span> <span class="identifier-function">const_bake</span>($arg) { ... }</h3>
 <div class="source-link">
-<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/runtime/mod.alu#L48-L50"/>source</a>
+<a href="https://github.com/alumina-lang/alumina/blob/master/sysroot/std/runtime/mod.alu#L72-L74"/>source</a>
 </div>
 </div>
 <p>
-Forces the evaluation of the argument at compile time.
+Bakes dynamic memory allocations into static items during constant evaluation.
 </p><p>
 </p>
 <h3> Example</h3>
 <p>
-<pre class="with-playground-link"><code class="language-alumina">use std::runtime::const_eval;
+<pre class="with-playground-link"><code class="language-alumina">use std::collections::HashMap;
+use std::runtime::const_bake;
 
-assert_eq!(const_eval!(1 + 1), 2);
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3aruntime%3a%3aconst%5feval%3b%0a%20%20%20%20%0a%20%20%20%20assert%5feq%21%28const%5feval%21%281%20%2b%201%29%2c%202%29%3b%0a%7d%0a">Run this example</a></pre>
-<pre class="with-playground-link panics"><code class="language-alumina">use std::runtime::const_eval;
-use libc::abort;
+const HASH: HashMap&lt;u32, u32&gt; = {
+    let m: HashMap&lt;u32, u32&gt; = HashMap::new();
+    m.insert(1, 2);
+    m.insert(3, 4);
+    m.const_bake!()
+};
 
-const_eval!(abort()); // compile error
-</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3aruntime%3a%3aconst%5feval%3b%0a%20%20%20%20use%20libc%3a%3aabort%3b%0a%20%20%20%20%0a%20%20%20%20const%5feval%21%28abort%28%29%29%3b%20%2f%2f%20compile%20error%0a%7d%0a">Run this example</a></pre>
+// The hashmap is constructed at compile time, and stored in rodata, so this is a simple lookup at runtime.
+// Trying to modify the hashmap at runtime is undefined behavior.
+assert_eq!(HASH.get(&amp;1).unwrap(), 2);
+assert_eq!(HASH.get(&amp;3).unwrap(), 4);
+</code><a class="playground-link" target="_blank" href="https://play.alumina-lang.net/?q=fn%20main%28%29%20%7b%0a%20%20%20%20use%20std%3a%3acollections%3a%3aHashMap%3b%0a%20%20%20%20use%20std%3a%3aruntime%3a%3aconst%5fbake%3b%0a%20%20%20%20%0a%20%20%20%20const%20HASH%3a%20HashMap%3cu32%2c%20u32%3e%20%3d%20%7b%0a%20%20%20%20%20%20%20%20let%20m%3a%20HashMap%3cu32%2c%20u32%3e%20%3d%20HashMap%3a%3anew%28%29%3b%0a%20%20%20%20%20%20%20%20m%2einsert%281%2c%202%29%3b%0a%20%20%20%20%20%20%20%20m%2einsert%283%2c%204%29%3b%0a%20%20%20%20%20%20%20%20m%2econst%5fbake%21%28%29%0a%20%20%20%20%7d%3b%0a%20%20%20%20%0a%20%20%20%20%2f%2f%20The%20hashmap%20is%20constructed%20at%20compile%20time%2c%20and%20stored%20in%20rodata%2c%20so%20this%20is%20a%20simple%20lookup%20at%20runtime%2e%0a%20%20%20%20%2f%2f%20Trying%20to%20modify%20the%20hashmap%20at%20runtime%20is%20undefined%20behavior%2e%0a%20%20%20%20assert%5feq%21%28HASH%2eget%28%261%29%2eunwrap%28%29%2c%202%29%3b%0a%20%20%20%20assert%5feq%21%28HASH%2eget%28%263%29%2eunwrap%28%29%2c%204%29%3b%0a%7d%0a">Run this example</a></pre>
 </p><p>
 </p>
 </main>
