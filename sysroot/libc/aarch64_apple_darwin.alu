@@ -1,5 +1,173 @@
 #![cfg(all(target_arch = "aarch64", target_os = "macos"))]
 
+#![allow(unused_parameter)]
+use libc::helpers::*;
+
+extern "C" fn pthread_attr_getinheritsched(attr: &pthread_attr_t, inheritsched: &mut c_int) -> c_int;
+extern "C" fn pthread_attr_getschedparam(attr: &pthread_attr_t, param: &mut sched_param) -> c_int;
+extern "C" fn pthread_attr_getschedpolicy(attr: &pthread_attr_t, policy: &mut c_int) -> c_int;
+extern "C" fn pthread_attr_setinheritsched(attr: &mut pthread_attr_t, inheritsched: c_int) -> c_int;
+extern "C" fn pthread_attr_setschedparam(attr: &mut pthread_attr_t, param: &sched_param) -> c_int;
+extern "C" fn pthread_attr_setschedpolicy(attr: &mut pthread_attr_t, policy: c_int) -> c_int;
+extern "C" fn pthread_condattr_getpshared(attr: &pthread_condattr_t, pshared: &mut c_int) -> c_int;
+extern "C" fn pthread_condattr_setpshared(attr: &mut pthread_condattr_t, pshared: c_int) -> c_int;
+extern "C" fn pthread_getschedparam(native: pthread_t, policy: &mut c_int, param: &mut sched_param) -> c_int;
+extern "C" fn pthread_mutexattr_getpshared(attr: &pthread_mutexattr_t, pshared: &mut c_int) -> c_int;
+extern "C" fn pthread_mutexattr_setpshared(attr: &mut pthread_mutexattr_t, pshared: c_int) -> c_int;
+extern "C" fn pthread_rwlockattr_getpshared(attr: &pthread_rwlockattr_t, val: &mut c_int) -> c_int;
+extern "C" fn pthread_rwlockattr_setpshared(attr: &mut pthread_rwlockattr_t, val: c_int) -> c_int;
+extern "C" fn pthread_once(once_control: &mut pthread_once_t, init_routine: fn()) -> c_int;
+extern "C" fn pthread_setschedparam(native: pthread_t, policy: c_int, param: &sched_param) -> c_int;
+const STDIN_FILENO: c_int = 0;
+const STDOUT_FILENO: c_int = 1;
+const STDERR_FILENO: c_int = 2;
+const PTHREAD_INTROSPECTION_THREAD_CREATE: c_uint = 1;
+const PTHREAD_INTROSPECTION_THREAD_START: c_uint = 2;
+const PTHREAD_INTROSPECTION_THREAD_TERMINATE: c_uint = 3;
+const PTHREAD_INTROSPECTION_THREAD_DESTROY: c_uint = 4;
+type pthread_introspection_hook_t = fn(c_uint, pthread_t, &mut c_void, size_t);
+extern "C" fn pthread_introspection_hook_install(hook: pthread_introspection_hook_t) -> pthread_introspection_hook_t;
+extern "C" fn pthread_introspection_setspecific_np(thread: pthread_t, key: pthread_key_t, value: &c_void) -> c_int;
+extern "C" fn pthread_introspection_getspecific_np(thread: pthread_t, key: pthread_key_t) -> &mut c_void;
+const PTHREAD_CREATE_JOINABLE: c_int = 1;
+const PTHREAD_CREATE_DETACHED: c_int = 2;
+const PTHREAD_INHERIT_SCHED: c_int = 1;
+const PTHREAD_EXPLICIT_SCHED: c_int = 2;
+const PTHREAD_CANCEL_ENABLE: c_int = 1;
+const PTHREAD_CANCEL_DISABLE: c_int = 0;
+const PTHREAD_CANCEL_DEFERRED: c_int = 2;
+const PTHREAD_CANCEL_ASYNCHRONOUS: c_int = 0;
+const PTHREAD_CANCELED: &mut c_void = (1 as &mut c_void);
+const PTHREAD_SCOPE_SYSTEM: c_int = 1;
+const PTHREAD_SCOPE_PROCESS: c_int = 2;
+const PTHREAD_PROCESS_SHARED: c_int = 1;
+const PTHREAD_PROCESS_PRIVATE: c_int = 2;
+const PTHREAD_PRIO_NONE: c_int = 0;
+const PTHREAD_PRIO_INHERIT: c_int = 1;
+const PTHREAD_PRIO_PROTECT: c_int = 2;
+const PTHREAD_MUTEX_NORMAL: c_int = 0;
+const PTHREAD_MUTEX_ERRORCHECK: c_int = 1;
+const PTHREAD_MUTEX_RECURSIVE: c_int = 2;
+const PTHREAD_MUTEX_DEFAULT: c_int = 0;
+const PTHREAD_RWLOCK_INITIALIZER: pthread_rwlock_t = pthread_rwlock_t { __sig: _PTHREAD_RWLOCK_SIG_init, __opaque: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] };
+const PTHREAD_MUTEX_INITIALIZER: pthread_mutex_t = pthread_mutex_t { __sig: _PTHREAD_MUTEX_SIG_init, __opaque: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] };
+const PTHREAD_COND_INITIALIZER: pthread_cond_t = pthread_cond_t { __sig: _PTHREAD_COND_SIG_init, __opaque: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] };
+const PTHREAD_ONCE_INIT: pthread_once_t = pthread_once_t { __sig: _PTHREAD_ONCE_SIG_INIT, __opaque: [0, 0, 0, 0, 0, 0, 0, 0] };
+const _PTHREAD_MUTEX_SIG_init: c_long = 850045863;
+const _PTHREAD_COND_SIG_init: c_long = 1018212795;
+const _PTHREAD_ONCE_SIG_INIT: c_long = 816954554;
+const _PTHREAD_RWLOCK_SIG_init: c_long = 766030772;
+const SCHED_OTHER: c_int = 1;
+const SCHED_FIFO: c_int = 4;
+const SCHED_RR: c_int = 2;
+extern "C" fn pthread_create_from_mach_thread(thread: &mut pthread_t, attr: &pthread_attr_t, f: fn(&mut c_void) -> &mut c_void, value: &mut c_void) -> c_int;
+extern "C" fn pthread_attr_set_qos_class_np(attr: &mut pthread_attr_t, class: qos_class_t, priority: c_int) -> c_int;
+extern "C" fn pthread_attr_get_qos_class_np(attr: &mut pthread_attr_t, class: &mut qos_class_t, priority: &mut c_int) -> c_int;
+extern "C" fn pthread_set_qos_class_self_np(class: qos_class_t, priority: c_int) -> c_int;
+extern "C" fn pthread_get_qos_class_np(thread: pthread_t, class: &mut qos_class_t, priority: &mut c_int) -> c_int;
+struct sched_param {
+    sched_priority: c_int,
+    __opaque: [c_char; 4],
+}
+extern "C" fn posix_spawnattr_set_qos_class_np(attr: &mut posix_spawnattr_t, qos_class: qos_class_t) -> c_int;
+extern "C" fn posix_spawnattr_get_qos_class_np(attr: &posix_spawnattr_t, qos_class: &mut qos_class_t) -> c_int;
+extern "C" fn pthread_stack_frame_decode_np(frame_addr: uintptr_t, return_addr: &mut uintptr_t) -> uintptr_t;
+const __PTHREAD_SIZE__: usize = 8176;
+const __PTHREAD_ATTR_SIZE__: usize = 56;
+const __PTHREAD_MUTEXATTR_SIZE__: usize = 8;
+const __PTHREAD_MUTEX_SIZE__: usize = 56;
+const __PTHREAD_CONDATTR_SIZE__: usize = 8;
+const __PTHREAD_COND_SIZE__: usize = 40;
+const __PTHREAD_ONCE_SIZE__: usize = 8;
+const __PTHREAD_RWLOCK_SIZE__: usize = 192;
+const __PTHREAD_RWLOCKATTR_SIZE__: usize = 16;
+struct pthread_attr_t {
+    __sig: c_long,
+    __opaque: [c_char; 56],
+}
+struct pthread_cond_t {
+    __sig: c_long,
+    __opaque: [u8; 40],
+}
+struct pthread_condattr_t {
+    __sig: c_long,
+    __opaque: [u8; 8],
+}
+struct pthread_mutex_t {
+    __sig: c_long,
+    __opaque: [u8; 56],
+}
+struct pthread_mutexattr_t {
+    __sig: c_long,
+    __opaque: [u8; 8],
+}
+struct pthread_once_t {
+    __sig: c_long,
+    __opaque: [c_char; 8],
+}
+struct pthread_rwlock_t {
+    __sig: c_long,
+    __opaque: [u8; 192],
+}
+struct pthread_rwlockattr_t {
+    __sig: c_long,
+    __opaque: [u8; 16],
+}
+type pthread_key_t = c_ulong;
+type qos_class_t = u32;
+const QOS_CLASS_USER_INTERACTIVE: qos_class_t = 33;
+const QOS_CLASS_USER_INITIATED: qos_class_t = 25;
+const QOS_CLASS_DEFAULT: qos_class_t = 21;
+const QOS_CLASS_UTILITY: qos_class_t = 17;
+const QOS_CLASS_BACKGROUND: qos_class_t = 9;
+const QOS_CLASS_UNSPECIFIED: qos_class_t = 0;
+struct __darwin_mcontext64 {
+    __es: __darwin_arm_exception_state64,
+    __ss: __darwin_arm_thread_state64,
+    __ns: __darwin_arm_neon_state64,
+}
+type mcontext_t = &mut __darwin_mcontext64;
+struct __darwin_arm_exception_state64 {
+    __far: u64,
+    __esr: u32,
+    __exception: u32,
+}
+struct __darwin_arm_thread_state64 {
+    __x: [u64; 29],
+    __fp: u64,
+    __lr: u64,
+    __sp: u64,
+    __pc: u64,
+    __cpsr: u32,
+    __pad: u32,
+}
+struct __darwin_arm_neon_state64 {
+    __v: [__uint128_t; 32],
+    __fpsr: u32,
+    __fpcr: u32,
+}
+struct __darwin_ucontext {
+    uc_onstack: c_int,
+    uc_sigmask: sigset_t,
+    uc_stack: stack_t,
+    uc_link: &mut ucontext_t,
+    uc_mcsize: usize,
+    uc_mcontext: mcontext_t,
+}
+type ucontext_t = __darwin_ucontext;
+type c_schar = i8;
+type c_uchar = u8;
+type c_short = i16;
+type c_ushort = u16;
+type c_longlong = i64;
+type c_ulonglong = u64;
+type c_float = f32;
+type c_double = f64;
+type c_char = i8;
+type c_int = i32;
+type c_uint = u32;
+type c_long = i64;
+type c_ulong = u64;
 type int8_t = i8;
 type int16_t = i16;
 type int32_t = i32;
@@ -8,22 +176,8 @@ type uint8_t = u8;
 type uint16_t = u16;
 type uint32_t = u32;
 type uint64_t = u64;
-type __int128 = i128;
-type __uint128 = u128;
 type __int128_t = i128;
 type __uint128_t = u128;
-const _SIZE_128: usize = 16;
-const _ALIGN_128: usize = 16;
-type c_schar = i8;
-type c_uchar = u8;
-type c_short = i16;
-type c_ushort = u16;
-type c_int = i32;
-type c_uint = u32;
-type c_float = f32;
-type c_double = f64;
-type c_longlong = i64;
-type c_ulonglong = u64;
 type intmax_t = i64;
 type uintmax_t = u64;
 type size_t = usize;
@@ -56,7 +210,6 @@ struct timeval {
 }
 struct timespec {
     tv_sec: time_t,
-
     tv_nsec: c_long,
 }
 struct rlimit {
@@ -83,7 +236,6 @@ struct rusage {
 }
 struct ipv6_mreq {
     ipv6mr_multiaddr: in6_addr,
-
     ipv6mr_interface: c_uint,
 }
 struct hostent {
@@ -112,9 +264,6 @@ struct linger {
     l_onoff: c_int,
     l_linger: c_int,
 }
-struct sigval {
-    sival_ptr: &mut c_void,
-}
 struct itimerval {
     it_interval: timeval,
     it_value: timeval,
@@ -136,11 +285,19 @@ struct protoent {
     p_aliases: &mut &mut c_char,
     p_proto: c_int,
 }
+#[align(4)]
+struct in6_addr {
+    s6_addr: [u8; 16],
+}
+union sigval {
+    sival_int: c_int,
+    sival_ptr: &mut c_void,
+}
 const INT_MIN: c_int = -2147483648;
 const INT_MAX: c_int = 2147483647;
-const SIG_DFL: sighandler_t = 0 as sighandler_t;
-const SIG_IGN: sighandler_t = 1 as sighandler_t;
-const SIG_ERR: sighandler_t = !0 as sighandler_t;
+const SIG_DFL: sighandler_t = 0;
+const SIG_IGN: sighandler_t = 1;
+const SIG_ERR: sighandler_t = 18446744073709551615;
 const DT_UNKNOWN: u8 = 0;
 const DT_FIFO: u8 = 1;
 const DT_CHR: u8 = 2;
@@ -149,15 +306,15 @@ const DT_BLK: u8 = 6;
 const DT_REG: u8 = 8;
 const DT_LNK: u8 = 10;
 const DT_SOCK: u8 = 12;
-const FD_CLOEXEC: c_int = 0x1;
+const FD_CLOEXEC: c_int = 1;
 const USRQUOTA: c_int = 0;
 const GRPQUOTA: c_int = 1;
 const SIGIOT: c_int = 6;
-const S_ISUID: mode_t = 0x800;
-const S_ISGID: mode_t = 0x400;
-const S_ISVTX: mode_t = 0x200;
+const S_ISUID: mode_t = 2048;
+const S_ISGID: mode_t = 1024;
+const S_ISVTX: mode_t = 512;
 const IF_NAMESIZE: size_t = 16;
-const IFNAMSIZ: size_t = IF_NAMESIZE;
+const IFNAMSIZ: size_t = 16;
 const LOG_EMERG: c_int = 0;
 const LOG_ALERT: c_int = 1;
 const LOG_CRIT: c_int = 2;
@@ -167,29 +324,29 @@ const LOG_NOTICE: c_int = 5;
 const LOG_INFO: c_int = 6;
 const LOG_DEBUG: c_int = 7;
 const LOG_KERN: c_int = 0;
-const LOG_USER: c_int = 1 << 3;
-const LOG_MAIL: c_int = 2 << 3;
-const LOG_DAEMON: c_int = 3 << 3;
-const LOG_AUTH: c_int = 4 << 3;
-const LOG_SYSLOG: c_int = 5 << 3;
-const LOG_LPR: c_int = 6 << 3;
-const LOG_NEWS: c_int = 7 << 3;
-const LOG_UUCP: c_int = 8 << 3;
-const LOG_LOCAL0: c_int = 16 << 3;
-const LOG_LOCAL1: c_int = 17 << 3;
-const LOG_LOCAL2: c_int = 18 << 3;
-const LOG_LOCAL3: c_int = 19 << 3;
-const LOG_LOCAL4: c_int = 20 << 3;
-const LOG_LOCAL5: c_int = 21 << 3;
-const LOG_LOCAL6: c_int = 22 << 3;
-const LOG_LOCAL7: c_int = 23 << 3;
-const LOG_PID: c_int = 0x01;
-const LOG_CONS: c_int = 0x02;
-const LOG_ODELAY: c_int = 0x04;
-const LOG_NDELAY: c_int = 0x08;
-const LOG_NOWAIT: c_int = 0x10;
+const LOG_USER: c_int = 8;
+const LOG_MAIL: c_int = 16;
+const LOG_DAEMON: c_int = 24;
+const LOG_AUTH: c_int = 32;
+const LOG_SYSLOG: c_int = 40;
+const LOG_LPR: c_int = 48;
+const LOG_NEWS: c_int = 56;
+const LOG_UUCP: c_int = 64;
+const LOG_LOCAL0: c_int = 128;
+const LOG_LOCAL1: c_int = 136;
+const LOG_LOCAL2: c_int = 144;
+const LOG_LOCAL3: c_int = 152;
+const LOG_LOCAL4: c_int = 160;
+const LOG_LOCAL5: c_int = 168;
+const LOG_LOCAL6: c_int = 176;
+const LOG_LOCAL7: c_int = 184;
+const LOG_PID: c_int = 1;
+const LOG_CONS: c_int = 2;
+const LOG_ODELAY: c_int = 4;
+const LOG_NDELAY: c_int = 8;
+const LOG_NOWAIT: c_int = 16;
 const LOG_PRIMASK: c_int = 7;
-const LOG_FACMASK: c_int = 0x3f8;
+const LOG_FACMASK: c_int = 1016;
 const PRIO_MIN: c_int = -20;
 const PRIO_MAX: c_int = 20;
 const IPPROTO_ICMP: c_int = 1;
@@ -202,14 +359,23 @@ const INADDR_LOOPBACK: in_addr_t = 2130706433;
 const INADDR_ANY: in_addr_t = 0;
 const INADDR_BROADCAST: in_addr_t = 4294967295;
 const INADDR_NONE: in_addr_t = 4294967295;
+const IN6ADDR_LOOPBACK_INIT: in6_addr = in6_addr { s6_addr: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1] };
+const IN6ADDR_ANY_INIT: in6_addr = in6_addr { s6_addr: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] };
 const ARPOP_REQUEST: u16 = 1;
 const ARPOP_REPLY: u16 = 2;
-const ATF_COM: c_int = 0x02;
-const ATF_PERM: c_int = 0x04;
-const ATF_PUBL: c_int = 0x08;
-const ATF_USETRAILERS: c_int = 0x10;
-enum FILE {}
+const ATF_COM: c_int = 2;
+const ATF_PERM: c_int = 4;
+const ATF_PUBL: c_int = 8;
+const ATF_USETRAILERS: c_int = 16;
+const FNM_PERIOD: c_int = 4;
+const FNM_NOMATCH: c_int = 1;
+const FNM_CASEFOLD: c_int = 16;
+const FNM_PATHNAME: c_int = 2;
+const FNM_NOESCAPE: c_int = 1;
+extern "C" static in6addr_loopback: in6_addr;
+extern "C" static in6addr_any: in6_addr;
 enum fpos_t {}
+enum FILE {}
 extern "C" fn isalnum(c: c_int) -> c_int;
 extern "C" fn isalpha(c: c_int) -> c_int;
 extern "C" fn iscntrl(c: c_int) -> c_int;
@@ -306,6 +472,7 @@ extern "C" fn memcmp(cx: &c_void, ct: &c_void, n: size_t) -> c_int;
 extern "C" fn memcpy(dest: &mut c_void, src: &c_void, n: size_t) -> &mut c_void;
 extern "C" fn memmove(dest: &mut c_void, src: &c_void, n: size_t) -> &mut c_void;
 extern "C" fn memset(dest: &mut c_void, c: c_int, n: size_t) -> &mut c_void;
+extern "C" fn memccpy(dest: &mut c_void, src: &c_void, c: c_int, n: size_t) -> &mut c_void;
 extern "C" fn getpwnam(name: &c_char) -> &mut passwd;
 extern "C" fn getpwuid(uid: uid_t) -> &mut passwd;
 extern "C" fn fprintf(stream: &mut FILE, format: &c_char, ...) -> c_int;
@@ -343,8 +510,8 @@ extern "C" fn readdir(dirp: &mut DIR) -> &mut dirent;
 extern "C" fn closedir(dirp: &mut DIR) -> c_int;
 extern "C" fn rewinddir(dirp: &mut DIR);
 extern "C" fn fchmodat(dirfd: c_int, pathname: &c_char, mode: mode_t, flags: c_int) -> c_int;
-extern "C" fn fchown(fd: c_int, owner: uid_t, group: gid_t) -> c_int;
-extern "C" fn fchownat(dirfd: c_int, pathname: &c_char, owner: uid_t, group: gid_t, flags: c_int) -> c_int;
+extern "C" fn fchown(fd: c_int, owner: uid_t, group_: gid_t) -> c_int;
+extern "C" fn fchownat(dirfd: c_int, pathname: &c_char, owner: uid_t, group_: gid_t, flags: c_int) -> c_int;
 extern "C" fn fstatat(dirfd: c_int, pathname: &c_char, buf: &mut stat_t, flags: c_int) -> c_int;
 extern "C" fn linkat(olddirfd: c_int, oldpath: &c_char, newdirfd: c_int, newpath: &c_char, flags: c_int) -> c_int;
 extern "C" fn renameat(olddirfd: c_int, oldpath: &c_char, newdirfd: c_int, newpath: &c_char) -> c_int;
@@ -362,9 +529,9 @@ extern "C" fn dup2(src: c_int, dst: c_int) -> c_int;
 extern "C" fn execl(path: &c_char, arg0: &c_char, ...) -> c_int;
 extern "C" fn execle(path: &c_char, arg0: &c_char, ...) -> c_int;
 extern "C" fn execlp(file: &c_char, arg0: &c_char, ...) -> c_int;
-extern "C" fn execv(prog: &c_char, argv: &&c_char) -> c_int;
-extern "C" fn execve(prog: &c_char, argv: &&c_char, envp: &&c_char) -> c_int;
-extern "C" fn execvp(c: &c_char, argv: &&c_char) -> c_int;
+extern "C" fn execv(prog: &c_char, argv: &&mut c_char) -> c_int;
+extern "C" fn execve(prog: &c_char, argv: &&mut c_char, envp: &&mut c_char) -> c_int;
+extern "C" fn execvp(c: &c_char, argv: &&mut c_char) -> c_int;
 extern "C" fn fork() -> pid_t;
 extern "C" fn fpathconf(filedes: c_int, name: c_int) -> c_long;
 extern "C" fn getcwd(buf: &mut c_char, size: size_t) -> &mut c_char;
@@ -385,6 +552,7 @@ extern "C" fn lseek(fd: c_int, offset: off_t, whence: c_int) -> off_t;
 extern "C" fn pathconf(path: &c_char, name: c_int) -> c_long;
 extern "C" fn pipe(fds: &mut c_int) -> c_int;
 extern "C" fn posix_memalign(memptr: &mut &mut c_void, align: size_t, size: size_t) -> c_int;
+extern "C" fn aligned_alloc(alignment: size_t, size: size_t) -> &mut c_void;
 extern "C" fn read(fd: c_int, buf: &mut c_void, count: size_t) -> ssize_t;
 extern "C" fn rmdir(path: &c_char) -> c_int;
 extern "C" fn seteuid(uid: uid_t) -> c_int;
@@ -428,15 +596,15 @@ extern "C" fn truncate(path: &c_char, length: off_t) -> c_int;
 extern "C" fn ftruncate(fd: c_int, length: off_t) -> c_int;
 extern "C" fn signal(signum: c_int, handler: sighandler_t) -> sighandler_t;
 extern "C" fn getrusage(resource: c_int, usage: &mut rusage) -> c_int;
-#[link_name("_realpath$DARWIN_EXTSN")]
 extern "C" fn realpath(pathname: &c_char, resolved: &mut c_char) -> &mut c_char;
-extern "C" fn flock(fd: c_int, operation: c_int) -> c_int;
 extern "C" fn times(buf: &mut tms) -> clock_t;
 extern "C" fn pthread_self() -> pthread_t;
+extern "C" fn pthread_equal(t1: pthread_t, t2: pthread_t) -> c_int;
 extern "C" fn pthread_join(native: pthread_t, value: &mut &mut c_void) -> c_int;
 extern "C" fn pthread_exit(value: &mut c_void) -> !;
 extern "C" fn pthread_attr_init(attr: &mut pthread_attr_t) -> c_int;
 extern "C" fn pthread_attr_destroy(attr: &mut pthread_attr_t) -> c_int;
+extern "C" fn pthread_attr_getstacksize(attr: &pthread_attr_t, stacksize: &mut size_t) -> c_int;
 extern "C" fn pthread_attr_setstacksize(attr: &mut pthread_attr_t, stack_size: size_t) -> c_int;
 extern "C" fn pthread_attr_setdetachstate(attr: &mut pthread_attr_t, state: c_int) -> c_int;
 extern "C" fn pthread_detach(thread: pthread_t) -> c_int;
@@ -481,7 +649,6 @@ extern "C" fn getaddrinfo(node: &c_char, service: &c_char, hints: &addrinfo, res
 extern "C" fn freeaddrinfo(res: &mut addrinfo);
 extern "C" fn hstrerror(errcode: c_int) -> &c_char;
 extern "C" fn gai_strerror(errcode: c_int) -> &c_char;
-#[link_name("_res_9_init")]
 extern "C" fn res_init() -> c_int;
 extern "C" fn gmtime_r(time_p: &time_t, result: &mut tm) -> &mut tm;
 extern "C" fn localtime_r(time_p: &time_t, result: &mut tm) -> &mut tm;
@@ -542,7 +709,6 @@ extern "C" fn tmpnam(ptr: &mut c_char) -> &mut c_char;
 extern "C" fn openlog(ident: &c_char, logopt: c_int, facility: c_int);
 extern "C" fn closelog();
 extern "C" fn setlogmask(maskpri: c_int) -> c_int;
-#[link_name("_syslog$DARWIN_EXTSN")]
 extern "C" fn syslog(priority: c_int, message: &c_char, ...);
 extern "C" fn nice(incr: c_int) -> c_int;
 extern "C" fn grantpt(fd: c_int) -> c_int;
@@ -552,9 +718,27 @@ extern "C" fn unlockpt(fd: c_int) -> c_int;
 extern "C" fn strcasestr(cs: &c_char, ct: &c_char) -> &mut c_char;
 extern "C" fn getline(lineptr: &mut &mut c_char, n: &mut size_t, stream: &mut FILE) -> ssize_t;
 extern "C" fn lockf(fd: c_int, cmd: c_int, len: off_t) -> c_int;
+#[inline(always)]
+fn htonl(hostlong: u32) -> u32 {
+    u32::to_be(hostlong)
+}
+#[inline(always)]
+fn htons(hostshort: u16) -> u16 {
+    u16::to_be(hostshort)
+}
+#[inline(always)]
+fn ntohl(netlong: u32) -> u32 {
+    u32::from_be(netlong)
+}
+#[inline(always)]
+fn ntohs(netshort: u16) -> u16 {
+    u16::from_be(netshort)
+}
 extern "C" fn adjtime(delta: &timeval, olddelta: &mut timeval) -> c_int;
 extern "C" fn stpncpy(dst: &mut c_char, src: &c_char, n: size_t) -> &mut c_char;
+extern "C" fn confstr(name: c_int, buf: &mut c_char, len: size_t) -> size_t;
 extern "C" fn dladdr(addr: &c_void, info: &mut Dl_info) -> c_int;
+extern "C" fn flock(fd: c_int, operation: c_int) -> c_int;
 extern "C" fn open_wmemstream(ptr: &mut &mut wchar_t, sizeloc: &mut size_t) -> &mut FILE;
 extern "C" fn getsid(pid: pid_t) -> pid_t;
 extern "C" fn pause() -> c_int;
@@ -571,6 +755,7 @@ extern "C" fn readlink(path: &c_char, buf: &mut c_char, bufsz: size_t) -> ssize_
 extern "C" fn pselect(nfds: c_int, readfds: &mut fd_set, writefds: &mut fd_set, errorfds: &mut fd_set, timeout: &timespec, sigmask: &sigset_t) -> c_int;
 extern "C" fn cfmakeraw(termios_: &mut termios);
 extern "C" fn cfsetspeed(termios_: &mut termios, speed: speed_t) -> c_int;
+extern "C" fn fnmatch(pattern: &c_char, name: &c_char, flags: c_int) -> c_int;
 type off_t = i64;
 type useconds_t = u32;
 type blkcnt_t = i64;
@@ -614,20 +799,7 @@ struct ifaddrs {
     ifa_data: &mut c_void,
 }
 struct fd_set {
-    fds_bits: [i32; FD_SETSIZE / 32],
-}
-struct tm {
-    tm_sec: c_int,
-    tm_min: c_int,
-    tm_hour: c_int,
-    tm_mday: c_int,
-    tm_mon: c_int,
-    tm_year: c_int,
-    tm_wday: c_int,
-    tm_yday: c_int,
-    tm_isdst: c_int,
-    tm_gmtoff: c_long,
-    tm_zone: &mut c_char,
+    fds_bits: [i32; 32],
 }
 struct msghdr {
     msg_name: &mut c_void,
@@ -673,13 +845,9 @@ struct sockaddr_un {
 }
 struct utsname {
     sysname: [c_char; 256],
-
     nodename: [c_char; 256],
-
     release: [c_char; 256],
-
     version: [c_char; 256],
-
     machine: [c_char; 256],
 }
 const LC_ALL: c_int = 0;
@@ -689,23 +857,23 @@ const LC_MONETARY: c_int = 3;
 const LC_NUMERIC: c_int = 4;
 const LC_TIME: c_int = 5;
 const LC_MESSAGES: c_int = 6;
-const FIOCLEX: c_ulong = 0x20006601;
-const FIONCLEX: c_ulong = 0x20006602;
-const FIONREAD: c_ulong = 0x4004667f;
-const FIONBIO: c_ulong = 0x8004667e;
-const FIOASYNC: c_ulong = 0x8004667d;
-const FIOSETOWN: c_ulong = 0x8004667c;
-const FIOGETOWN: c_ulong = 0x4004667b;
+const FIOCLEX: c_ulong = 536897025;
+const FIONCLEX: c_ulong = 536897026;
+const FIONREAD: c_ulong = 1074030207;
+const FIONBIO: c_ulong = 2147772030;
+const FIOASYNC: c_ulong = 2147772029;
+const FIOSETOWN: c_ulong = 2147772028;
+const FIOGETOWN: c_ulong = 1074030203;
 const PATH_MAX: c_int = 1024;
-const MAXPATHLEN: c_int = PATH_MAX;
+const MAXPATHLEN: c_int = 1024;
 const IOV_MAX: c_int = 1024;
-const SA_ONSTACK: c_int = 0x0001;
-const SA_SIGINFO: c_int = 0x0040;
-const SA_RESTART: c_int = 0x0002;
-const SA_RESETHAND: c_int = 0x0004;
-const SA_NOCLDSTOP: c_int = 0x0008;
-const SA_NODEFER: c_int = 0x0010;
-const SA_NOCLDWAIT: c_int = 0x0020;
+const SA_ONSTACK: c_int = 1;
+const SA_SIGINFO: c_int = 64;
+const SA_RESTART: c_int = 2;
+const SA_RESETHAND: c_int = 4;
+const SA_NOCLDSTOP: c_int = 8;
+const SA_NODEFER: c_int = 16;
+const SA_NOCLDWAIT: c_int = 32;
 const SS_ONSTACK: c_int = 1;
 const SS_DISABLE: c_int = 4;
 const SIGCHLD: c_int = 20;
@@ -727,8 +895,8 @@ const SIGPROF: c_int = 27;
 const SIGWINCH: c_int = 28;
 const SIGINFO: c_int = 29;
 const SIG_SETMASK: c_int = 3;
-const SIG_BLOCK: c_int = 0x1;
-const SIG_UNBLOCK: c_int = 0x2;
+const SIG_BLOCK: c_int = 1;
+const SIG_UNBLOCK: c_int = 2;
 const IP_TOS: c_int = 3;
 const IP_MULTICAST_IF: c_int = 9;
 const IP_MULTICAST_TTL: c_int = 10;
@@ -738,15 +906,16 @@ const IPV6_MULTICAST_IF: c_int = 9;
 const IPV6_MULTICAST_HOPS: c_int = 10;
 const IPV6_MULTICAST_LOOP: c_int = 11;
 const IPV6_V6ONLY: c_int = 27;
-const IPTOS_ECN_NOTECT: u8 = 0x00;
-const IPTOS_ECN_MASK: u8 = 0x03;
-const IPTOS_ECN_ECT1: u8 = 0x01;
-const IPTOS_ECN_ECT0: u8 = 0x02;
-const IPTOS_ECN_CE: u8 = 0x03;
+const IPV6_DONTFRAG: c_int = 62;
+const IPTOS_ECN_NOTECT: u8 = 0;
+const IPTOS_ECN_MASK: u8 = 3;
+const IPTOS_ECN_ECT1: u8 = 1;
+const IPTOS_ECN_ECT0: u8 = 2;
+const IPTOS_ECN_CE: u8 = 3;
 const ST_RDONLY: c_ulong = 1;
-const SCM_RIGHTS: c_int = 0x01;
+const SCM_RIGHTS: c_int = 1;
 const NCCS: usize = 20;
-const O_ACCMODE: c_int = 0x3;
+const O_ACCMODE: c_int = 3;
 const O_RDONLY: c_int = 0;
 const O_WRONLY: c_int = 1;
 const O_RDWR: c_int = 2;
@@ -754,31 +923,31 @@ const O_APPEND: c_int = 8;
 const O_CREAT: c_int = 512;
 const O_TRUNC: c_int = 1024;
 const O_EXCL: c_int = 2048;
-const O_ASYNC: c_int = 0x40;
-const O_SYNC: c_int = 0x80;
-const O_NONBLOCK: c_int = 0x4;
-const O_NOFOLLOW: c_int = 0x100;
-const O_SHLOCK: c_int = 0x10;
-const O_EXLOCK: c_int = 0x20;
-const O_FSYNC: c_int = O_SYNC;
-const O_NDELAY: c_int = O_NONBLOCK;
+const O_ASYNC: c_int = 64;
+const O_SYNC: c_int = 128;
+const O_NONBLOCK: c_int = 4;
+const O_NOFOLLOW: c_int = 256;
+const O_SHLOCK: c_int = 16;
+const O_EXLOCK: c_int = 32;
+const O_FSYNC: c_int = 128;
+const O_NDELAY: c_int = 4;
 const F_GETOWN: c_int = 5;
 const F_SETOWN: c_int = 6;
 const F_RDLCK: c_short = 1;
 const F_UNLCK: c_short = 2;
 const F_WRLCK: c_short = 3;
-const MNT_RDONLY: c_int = 0x00000001;
-const MNT_SYNCHRONOUS: c_int = 0x00000002;
-const MNT_NOEXEC: c_int = 0x00000004;
-const MNT_NOSUID: c_int = 0x00000008;
-const MNT_ASYNC: c_int = 0x00000040;
-const MNT_EXPORTED: c_int = 0x00000100;
-const MNT_UPDATE: c_int = 0x00010000;
-const MNT_RELOAD: c_int = 0x00040000;
-const MNT_FORCE: c_int = 0x00080000;
-const Q_SYNC: c_int = 0x600;
-const Q_QUOTAON: c_int = 0x100;
-const Q_QUOTAOFF: c_int = 0x200;
+const MNT_RDONLY: c_int = 1;
+const MNT_SYNCHRONOUS: c_int = 2;
+const MNT_NOEXEC: c_int = 4;
+const MNT_NOSUID: c_int = 8;
+const MNT_ASYNC: c_int = 64;
+const MNT_EXPORTED: c_int = 256;
+const MNT_UPDATE: c_int = 65536;
+const MNT_RELOAD: c_int = 262144;
+const MNT_FORCE: c_int = 524288;
+const Q_SYNC: c_int = 1536;
+const Q_QUOTAON: c_int = 256;
+const Q_QUOTAOFF: c_int = 512;
 const TCIOFF: c_int = 3;
 const TCION: c_int = 4;
 const TCOOFF: c_int = 1;
@@ -807,65 +976,65 @@ const VDISCARD: usize = 15;
 const VMIN: usize = 16;
 const VTIME: usize = 17;
 const VSTATUS: usize = 18;
-const _POSIX_VDISABLE: cc_t = 0xff;
-const IGNBRK: tcflag_t = 0x00000001;
-const BRKINT: tcflag_t = 0x00000002;
-const IGNPAR: tcflag_t = 0x00000004;
-const PARMRK: tcflag_t = 0x00000008;
-const INPCK: tcflag_t = 0x00000010;
-const ISTRIP: tcflag_t = 0x00000020;
-const INLCR: tcflag_t = 0x00000040;
-const IGNCR: tcflag_t = 0x00000080;
-const ICRNL: tcflag_t = 0x00000100;
-const IXON: tcflag_t = 0x00000200;
-const IXOFF: tcflag_t = 0x00000400;
-const IXANY: tcflag_t = 0x00000800;
-const IMAXBEL: tcflag_t = 0x00002000;
-const OPOST: tcflag_t = 0x1;
-const ONLCR: tcflag_t = 0x2;
-const OXTABS: tcflag_t = 0x4;
-const ONOEOT: tcflag_t = 0x8;
-const CIGNORE: tcflag_t = 0x00000001;
-const CSIZE: tcflag_t = 0x00000300;
-const CS5: tcflag_t = 0x00000000;
-const CS6: tcflag_t = 0x00000100;
-const CS7: tcflag_t = 0x00000200;
-const CS8: tcflag_t = 0x00000300;
-const CSTOPB: tcflag_t = 0x00000400;
-const CREAD: tcflag_t = 0x00000800;
-const PARENB: tcflag_t = 0x00001000;
-const PARODD: tcflag_t = 0x00002000;
-const HUPCL: tcflag_t = 0x00004000;
-const CLOCAL: tcflag_t = 0x00008000;
-const ECHOKE: tcflag_t = 0x00000001;
-const ECHOE: tcflag_t = 0x00000002;
-const ECHOK: tcflag_t = 0x00000004;
-const ECHO: tcflag_t = 0x00000008;
-const ECHONL: tcflag_t = 0x00000010;
-const ECHOPRT: tcflag_t = 0x00000020;
-const ECHOCTL: tcflag_t = 0x00000040;
-const ISIG: tcflag_t = 0x00000080;
-const ICANON: tcflag_t = 0x00000100;
-const ALTWERASE: tcflag_t = 0x00000200;
-const IEXTEN: tcflag_t = 0x00000400;
-const EXTPROC: tcflag_t = 0x00000800;
-const TOSTOP: tcflag_t = 0x00400000;
-const FLUSHO: tcflag_t = 0x00800000;
-const NOKERNINFO: tcflag_t = 0x02000000;
-const PENDIN: tcflag_t = 0x20000000;
-const NOFLSH: tcflag_t = 0x80000000;
-const MDMBUF: tcflag_t = 0x00100000;
-const WNOHANG: c_int = 0x00000001;
-const WUNTRACED: c_int = 0x00000002;
-const RTLD_LAZY: c_int = 0x1;
-const RTLD_NOW: c_int = 0x2;
-const RTLD_NEXT: &mut c_void = -1isize as &mut c_void;
-const RTLD_DEFAULT: &mut c_void = -2isize as &mut c_void;
-const RTLD_SELF: &mut c_void = -3isize as &mut c_void;
-const LOG_CRON: c_int = 9 << 3;
-const LOG_AUTHPRIV: c_int = 10 << 3;
-const LOG_FTP: c_int = 11 << 3;
-const LOG_PERROR: c_int = 0x20;
+const _POSIX_VDISABLE: cc_t = 255;
+const IGNBRK: tcflag_t = 1;
+const BRKINT: tcflag_t = 2;
+const IGNPAR: tcflag_t = 4;
+const PARMRK: tcflag_t = 8;
+const INPCK: tcflag_t = 16;
+const ISTRIP: tcflag_t = 32;
+const INLCR: tcflag_t = 64;
+const IGNCR: tcflag_t = 128;
+const ICRNL: tcflag_t = 256;
+const IXON: tcflag_t = 512;
+const IXOFF: tcflag_t = 1024;
+const IXANY: tcflag_t = 2048;
+const IMAXBEL: tcflag_t = 8192;
+const OPOST: tcflag_t = 1;
+const ONLCR: tcflag_t = 2;
+const OXTABS: tcflag_t = 4;
+const ONOEOT: tcflag_t = 8;
+const CIGNORE: tcflag_t = 1;
+const CSIZE: tcflag_t = 768;
+const CS5: tcflag_t = 0;
+const CS6: tcflag_t = 256;
+const CS7: tcflag_t = 512;
+const CS8: tcflag_t = 768;
+const CSTOPB: tcflag_t = 1024;
+const CREAD: tcflag_t = 2048;
+const PARENB: tcflag_t = 4096;
+const PARODD: tcflag_t = 8192;
+const HUPCL: tcflag_t = 16384;
+const CLOCAL: tcflag_t = 32768;
+const ECHOKE: tcflag_t = 1;
+const ECHOE: tcflag_t = 2;
+const ECHOK: tcflag_t = 4;
+const ECHO: tcflag_t = 8;
+const ECHONL: tcflag_t = 16;
+const ECHOPRT: tcflag_t = 32;
+const ECHOCTL: tcflag_t = 64;
+const ISIG: tcflag_t = 128;
+const ICANON: tcflag_t = 256;
+const ALTWERASE: tcflag_t = 512;
+const IEXTEN: tcflag_t = 1024;
+const EXTPROC: tcflag_t = 2048;
+const TOSTOP: tcflag_t = 4194304;
+const FLUSHO: tcflag_t = 8388608;
+const NOKERNINFO: tcflag_t = 33554432;
+const PENDIN: tcflag_t = 536870912;
+const NOFLSH: tcflag_t = 2147483648;
+const MDMBUF: tcflag_t = 1048576;
+const WNOHANG: c_int = 1;
+const WUNTRACED: c_int = 2;
+const RTLD_LAZY: c_int = 1;
+const RTLD_NOW: c_int = 2;
+const RTLD_NEXT: &mut c_void = (-(1) as &mut c_void);
+const RTLD_DEFAULT: &mut c_void = (-(2) as &mut c_void);
+const RTLD_SELF: &mut c_void = (-(3) as &mut c_void);
+const LOG_CRON: c_int = 72;
+const LOG_AUTHPRIV: c_int = 80;
+const LOG_FTP: c_int = 88;
+const LOG_PERROR: c_int = 32;
 const TCP_NODELAY: c_int = 1;
 const TCP_MAXSEG: c_int = 2;
 const PIPE_BUF: usize = 512;
@@ -878,37 +1047,37 @@ const CLD_DUMPED: c_int = 3;
 const CLD_TRAPPED: c_int = 4;
 const CLD_STOPPED: c_int = 5;
 const CLD_CONTINUED: c_int = 6;
-const POLLIN: c_short = 0x1;
-const POLLPRI: c_short = 0x2;
-const POLLOUT: c_short = 0x4;
-const POLLERR: c_short = 0x8;
-const POLLHUP: c_short = 0x10;
-const POLLNVAL: c_short = 0x20;
-const POLLRDNORM: c_short = 0x040;
-const POLLWRNORM: c_short = 0x004;
-const POLLRDBAND: c_short = 0x080;
-const POLLWRBAND: c_short = 0x100;
-const BIOCGBLEN: c_ulong = 0x40044266;
-const BIOCSBLEN: c_ulong = 0xc0044266;
-const BIOCFLUSH: c_uint = 0x20004268;
-const BIOCPROMISC: c_uint = 0x20004269;
-const BIOCGDLT: c_ulong = 0x4004426a;
-const BIOCGETIF: c_ulong = 0x4020426b;
-const BIOCSETIF: c_ulong = 0x8020426c;
-const BIOCGSTATS: c_ulong = 0x4008426f;
-const BIOCIMMEDIATE: c_ulong = 0x80044270;
-const BIOCVERSION: c_ulong = 0x40044271;
-const BIOCGHDRCMPLT: c_ulong = 0x40044274;
-const BIOCSHDRCMPLT: c_ulong = 0x80044275;
-const SIOCGIFADDR: c_ulong = 0xc0206921;
-const REG_BASIC: c_int = 0o0000;
-const REG_EXTENDED: c_int = 0o0001;
-const REG_ICASE: c_int = 0o0002;
-const REG_NOSUB: c_int = 0o0004;
-const REG_NEWLINE: c_int = 0o0010;
-const REG_NOSPEC: c_int = 0o0020;
-const REG_PEND: c_int = 0o0040;
-const REG_DUMP: c_int = 0o0200;
+const POLLIN: c_short = 1;
+const POLLPRI: c_short = 2;
+const POLLOUT: c_short = 4;
+const POLLERR: c_short = 8;
+const POLLHUP: c_short = 16;
+const POLLNVAL: c_short = 32;
+const POLLRDNORM: c_short = 64;
+const POLLWRNORM: c_short = 4;
+const POLLRDBAND: c_short = 128;
+const POLLWRBAND: c_short = 256;
+const BIOCGBLEN: c_ulong = 1074020966;
+const BIOCSBLEN: c_ulong = 3221504614;
+const BIOCFLUSH: c_uint = 536887912;
+const BIOCPROMISC: c_uint = 536887913;
+const BIOCGDLT: c_ulong = 1074020970;
+const BIOCGETIF: c_ulong = 1075855979;
+const BIOCSETIF: c_ulong = 2149597804;
+const BIOCGSTATS: c_ulong = 1074283119;
+const BIOCIMMEDIATE: c_ulong = 2147762800;
+const BIOCVERSION: c_ulong = 1074020977;
+const BIOCGHDRCMPLT: c_ulong = 1074020980;
+const BIOCSHDRCMPLT: c_ulong = 2147762805;
+const SIOCGIFADDR: c_ulong = 3223349537;
+const REG_BASIC: c_int = 0;
+const REG_EXTENDED: c_int = 1;
+const REG_ICASE: c_int = 2;
+const REG_NOSUB: c_int = 4;
+const REG_NEWLINE: c_int = 8;
+const REG_NOSPEC: c_int = 16;
+const REG_PEND: c_int = 32;
+const REG_DUMP: c_int = 128;
 const REG_NOMATCH: c_int = 1;
 const REG_BADPAT: c_int = 2;
 const REG_ECOLLATE: c_int = 3;
@@ -926,74 +1095,102 @@ const REG_EMPTY: c_int = 14;
 const REG_ASSERT: c_int = 15;
 const REG_INVARG: c_int = 16;
 const REG_ATOI: c_int = 255;
-const REG_ITOA: c_int = 0o0400;
-const REG_NOTBOL: c_int = 0o00001;
-const REG_NOTEOL: c_int = 0o00002;
-const REG_STARTEND: c_int = 0o00004;
-const REG_TRACE: c_int = 0o00400;
-const REG_LARGE: c_int = 0o01000;
-const REG_BACKR: c_int = 0o02000;
-const TIOCCBRK: c_uint = 0x2000747a;
-const TIOCSBRK: c_uint = 0x2000747b;
+const REG_ITOA: c_int = 256;
+const REG_NOTBOL: c_int = 1;
+const REG_NOTEOL: c_int = 2;
+const REG_STARTEND: c_int = 4;
+const REG_TRACE: c_int = 256;
+const REG_LARGE: c_int = 512;
+const REG_BACKR: c_int = 1024;
+const TIOCCBRK: c_uint = 536900730;
+const TIOCSBRK: c_uint = 536900731;
 const PRIO_PROCESS: c_int = 0;
 const PRIO_PGRP: c_int = 1;
 const PRIO_USER: c_int = 2;
 const ITIMER_REAL: c_int = 0;
 const ITIMER_VIRTUAL: c_int = 1;
 const ITIMER_PROF: c_int = 2;
-#[inline]
+const RTF_UP: c_int = 1;
+const RTF_GATEWAY: c_int = 2;
+const RTF_HOST: c_int = 4;
+const RTF_REJECT: c_int = 8;
+const RTF_DYNAMIC: c_int = 16;
+const RTF_MODIFIED: c_int = 32;
+const RTF_DONE: c_int = 64;
+const RTF_STATIC: c_int = 2048;
+const RTF_BLACKHOLE: c_int = 4096;
+const RTF_PROTO2: c_int = 16384;
+const RTF_PROTO1: c_int = 32768;
+const RTM_ADD: c_int = 1;
+const RTM_DELETE: c_int = 2;
+const RTM_CHANGE: c_int = 3;
+const RTM_GET: c_int = 4;
+const RTM_LOSING: c_int = 5;
+const RTM_REDIRECT: c_int = 6;
+const RTM_MISS: c_int = 7;
+const RTA_DST: c_int = 1;
+const RTA_GATEWAY: c_int = 2;
+const RTA_NETMASK: c_int = 4;
+const RTA_GENMASK: c_int = 8;
+const RTA_IFP: c_int = 16;
+const RTA_IFA: c_int = 32;
+const RTA_AUTHOR: c_int = 64;
+const RTA_BRD: c_int = 128;
+const RTAX_DST: c_int = 0;
+const RTAX_GATEWAY: c_int = 1;
+const RTAX_NETMASK: c_int = 2;
+const RTAX_GENMASK: c_int = 3;
+const RTAX_IFP: c_int = 4;
+const RTAX_IFA: c_int = 5;
+const RTAX_AUTHOR: c_int = 6;
+const RTAX_BRD: c_int = 7;
+#[inline(always)]
 fn CMSG_FIRSTHDR(mhdr: &msghdr) -> &mut cmsghdr {
-    if (*mhdr).msg_controllen as usize >= std::mem::size_of::<cmsghdr>() {
-        (*mhdr).msg_control as &mut cmsghdr
-    } else {
-        0 as &mut cmsghdr
-    }
+    compile_fail!("unsupported")
 }
-#[inline]
+#[inline(always)]
 fn FD_CLR(fd: c_int, set: &mut fd_set) -> () {
-    let bits = std::mem::size_of::<typeof((*set).fds_bits[0])>() * 8;
-    let fd = fd as usize;
-    (*set).fds_bits[fd / bits] &= !(1 << (fd % bits));
+    let bits = (size_of_val(&*(set).fds_bits[0]) * 8);
+    let fd = (fd as usize);
+    *(set).fds_bits[(fd / bits)] &= !((1 << (fd % bits)));
     return;
 }
-#[inline]
+#[inline(always)]
 fn FD_ISSET(fd: c_int, set: &fd_set) -> bool {
-    let bits = std::mem::size_of::<typeof((*set).fds_bits[0])>() * 8;
-    let fd = fd as usize;
-    return ((*set).fds_bits[fd / bits] & (1 << (fd % bits))) != 0;
+    let bits = (size_of_val(&*(set).fds_bits[0]) * 8);
+    let fd = (fd as usize);
+    return ((*(set).fds_bits[(fd / bits)] & (1 << (fd % bits))) != 0);
 }
-#[inline]
+#[inline(always)]
 fn FD_SET(fd: c_int, set: &mut fd_set) -> () {
-    let bits = std::mem::size_of::<typeof((*set).fds_bits[0])>() * 8;
-    let fd = fd as usize;
-    (*set).fds_bits[fd / bits] |= 1 << (fd % bits);
+    let bits = (size_of_val(&*(set).fds_bits[0]) * 8);
+    let fd = (fd as usize);
+    *(set).fds_bits[(fd / bits)] |= (1 << (fd % bits));
     return;
 }
-#[inline]
+#[inline(always)]
 fn FD_ZERO(set: &mut fd_set) -> () {
-    for slot in (*set).fds_bits.iter_mut() {
-        *slot = 0;
-    }
+    compile_fail!("unsupported")
 }
-#[inline]
+#[inline(always)]
 fn WTERMSIG(status: c_int) -> c_int {
-    status & 0o177
+    (status & 127)
 }
-#[inline]
+#[inline(always)]
 fn WIFEXITED(status: c_int) -> bool {
-    (status & 0o177) == 0
+    ((status & 127) == 0)
 }
-#[inline]
+#[inline(always)]
 fn WEXITSTATUS(status: c_int) -> c_int {
-    status >> 8
+    ((status >> 8) & 255)
 }
-#[inline]
+#[inline(always)]
 fn WCOREDUMP(status: c_int) -> bool {
-    (status & 0o200) != 0
+    ((status & 128) != 0)
 }
-#[inline]
+#[inline(always)]
 fn QCMD(cmd: c_int, type_: c_int) -> c_int {
-    (cmd << 8) | (type_ & 0x00ff)
+    ((cmd << 8) | (type_ & 255))
 }
 extern "C" fn getrlimit(resource: c_int, rlim: &mut rlimit) -> c_int;
 extern "C" fn setrlimit(resource: c_int, rlim: &rlimit) -> c_int;
@@ -1009,7 +1206,6 @@ extern "C" fn setlogin(name: &c_char) -> c_int;
 extern "C" fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
 extern "C" fn kqueue() -> c_int;
 extern "C" fn unmount(target: &c_char, arg: c_int) -> c_int;
-extern "C" fn syscall(num: c_int, ...) -> c_int;
 extern "C" fn getpwent() -> &mut passwd;
 extern "C" fn setpwent();
 extern "C" fn endpwent();
@@ -1041,6 +1237,7 @@ extern "C" fn recvmsg(fd: c_int, msg: &mut msghdr, flags: c_int) -> ssize_t;
 extern "C" fn sync();
 extern "C" fn getgrgid_r(gid: gid_t, grp: &mut group, buf: &mut c_char, buflen: size_t, result: &mut &mut group) -> c_int;
 extern "C" fn sigaltstack(ss: &stack_t, oss: &mut stack_t) -> c_int;
+extern "C" fn sigsuspend(mask: &sigset_t) -> c_int;
 extern "C" fn sem_close(sem: &mut sem_t) -> c_int;
 extern "C" fn getdtablesize() -> c_int;
 extern "C" fn getgrnam_r(name: &c_char, grp: &mut group, buf: &mut c_char, buflen: size_t, result: &mut &mut group) -> c_int;
@@ -1081,7 +1278,11 @@ extern "C" fn srand48(seed: c_long);
 extern "C" fn seed48(xseed: &mut c_ushort) -> &mut c_ushort;
 extern "C" fn lcong48(p: &mut c_ushort);
 extern "C" fn getopt_long(argc: c_int, argv: &&mut c_char, optstring: &c_char, longopts: &option, longindex: &mut c_int) -> c_int;
-type c_char = i8;
+extern "C" fn strftime(buf: &mut c_char, maxsize: size_t, format: &c_char, timeptr: &tm) -> size_t;
+extern "C" fn strftime_l(buf: &mut c_char, maxsize: size_t, format: &c_char, timeptr: &tm, locale: locale_t) -> size_t;
+extern "C" fn devname(dev: dev_t, mode_t_: mode_t) -> &mut c_char;
+extern "C" fn issetugid() -> c_int;
+extern "C" fn syscall(num: c_int, ...) -> c_int;
 type wchar_t = i32;
 type clock_t = c_ulong;
 type time_t = c_long;
@@ -1092,7 +1293,6 @@ type mode_t = u16;
 type nlink_t = u16;
 type blksize_t = i32;
 type rlim_t = u64;
-type pthread_key_t = c_ulong;
 type sigset_t = u32;
 type clockid_t = c_uint;
 type fsblkcnt_t = c_uint;
@@ -1117,6 +1317,8 @@ type rusage_info_t = &mut c_void;
 type vm_offset_t = uintptr_t;
 type vm_size_t = uintptr_t;
 type vm_address_t = vm_offset_t;
+type quad_t = i64;
+type u_quad_t = u64;
 type posix_spawnattr_t = &mut c_void;
 type posix_spawn_file_actions_t = &mut c_void;
 type key_t = c_int;
@@ -1133,6 +1335,7 @@ type thread_inspect_t = mach_port_t;
 type thread_act_t = mach_port_t;
 type thread_act_array_t = &mut thread_act_t;
 type policy_t = c_int;
+type mach_error_t = kern_return_t;
 type mach_vm_address_t = u64;
 type mach_vm_offset_t = u64;
 type mach_vm_size_t = u64;
@@ -1145,6 +1348,8 @@ type vm_prot_t = c_int;
 type ledger_t = mach_port_t;
 type ledger_array_t = &mut ledger_t;
 type iconv_t = &mut c_void;
+type host_cpu_load_info_t = &mut host_cpu_load_info;
+type host_cpu_load_info_data_t = host_cpu_load_info;
 type processor_cpu_load_info_t = &mut processor_cpu_load_info;
 type processor_cpu_load_info_data_t = processor_cpu_load_info;
 type processor_basic_info_t = &mut processor_basic_info;
@@ -1187,8 +1392,10 @@ type thread_latency_qos_policy_data_t = thread_latency_qos_policy;
 type thread_latency_qos_policy_t = &mut thread_latency_qos_policy;
 type thread_throughput_qos_policy_data_t = thread_throughput_qos_policy;
 type thread_throughput_qos_policy_t = &mut thread_throughput_qos_policy;
-type pthread_introspection_hook_t = fn(c_uint, pthread_t, &mut c_void, size_t);
 type pthread_jit_write_callback_t = fn(&mut c_void) -> c_int;
+type os_clockid_t = u32;
+type os_sync_wait_on_address_flags_t = u32;
+type os_sync_wake_by_address_flags_t = u32;
 type os_unfair_lock = os_unfair_lock_s;
 type os_unfair_lock_t = &mut os_unfair_lock;
 type os_log_t = &mut c_void;
@@ -1207,51 +1414,41 @@ type CCCryptorStatus = i32;
 type CCRNGStatus = CCCryptorStatus;
 type copyfile_state_t = &mut c_void;
 type copyfile_flags_t = u32;
+type copyfile_callback_t = fn(c_int, c_int, copyfile_state_t, &c_char, &c_char, &mut c_void) -> c_int;
 type attrgroup_t = u32;
 type vol_capabilities_set_t = [u32; 4];
-type mach_timebase_info_data_t = mach_timebase_info_t;
 enum timezone {}
-enum qos_class_t {
-    QOS_CLASS_USER_INTERACTIVE = 0x21u32,
-    QOS_CLASS_USER_INITIATED = 0x19,
-    QOS_CLASS_DEFAULT = 0x15,
-    QOS_CLASS_UTILITY = 0x11,
-    QOS_CLASS_BACKGROUND = 0x09,
-    QOS_CLASS_UNSPECIFIED = 0x00,
-}
-enum sysdir_search_path_directory_t {
-    SYSDIR_DIRECTORY_APPLICATION = 1u32,
-    SYSDIR_DIRECTORY_DEMO_APPLICATION = 2,
-    SYSDIR_DIRECTORY_DEVELOPER_APPLICATION = 3,
-    SYSDIR_DIRECTORY_ADMIN_APPLICATION = 4,
-    SYSDIR_DIRECTORY_LIBRARY = 5,
-    SYSDIR_DIRECTORY_DEVELOPER = 6,
-    SYSDIR_DIRECTORY_USER = 7,
-    SYSDIR_DIRECTORY_DOCUMENTATION = 8,
-    SYSDIR_DIRECTORY_DOCUMENT = 9,
-    SYSDIR_DIRECTORY_CORESERVICE = 10,
-    SYSDIR_DIRECTORY_AUTOSAVED_INFORMATION = 11,
-    SYSDIR_DIRECTORY_DESKTOP = 12,
-    SYSDIR_DIRECTORY_CACHES = 13,
-    SYSDIR_DIRECTORY_APPLICATION_SUPPORT = 14,
-    SYSDIR_DIRECTORY_DOWNLOADS = 15,
-    SYSDIR_DIRECTORY_INPUT_METHODS = 16,
-    SYSDIR_DIRECTORY_MOVIES = 17,
-    SYSDIR_DIRECTORY_MUSIC = 18,
-    SYSDIR_DIRECTORY_PICTURES = 19,
-    SYSDIR_DIRECTORY_PRINTER_DESCRIPTION = 20,
-    SYSDIR_DIRECTORY_SHARED_PUBLIC = 21,
-    SYSDIR_DIRECTORY_PREFERENCE_PANES = 22,
-    SYSDIR_DIRECTORY_ALL_APPLICATIONS = 100,
-    SYSDIR_DIRECTORY_ALL_LIBRARIES = 101,
-}
-enum sysdir_search_path_domain_mask_t {
-    SYSDIR_DOMAIN_MASK_USER = (1u32 << 0),
-    SYSDIR_DOMAIN_MASK_LOCAL = (1 << 1),
-    SYSDIR_DOMAIN_MASK_NETWORK = (1 << 2),
-    SYSDIR_DOMAIN_MASK_SYSTEM = (1 << 3),
-    SYSDIR_DOMAIN_MASK_ALL = 0x0ffff,
-}
+type sysdir_search_path_directory_t = u32;
+const SYSDIR_DIRECTORY_APPLICATION: sysdir_search_path_directory_t = 1;
+const SYSDIR_DIRECTORY_DEMO_APPLICATION: sysdir_search_path_directory_t = 2;
+const SYSDIR_DIRECTORY_DEVELOPER_APPLICATION: sysdir_search_path_directory_t = 3;
+const SYSDIR_DIRECTORY_ADMIN_APPLICATION: sysdir_search_path_directory_t = 4;
+const SYSDIR_DIRECTORY_LIBRARY: sysdir_search_path_directory_t = 5;
+const SYSDIR_DIRECTORY_DEVELOPER: sysdir_search_path_directory_t = 6;
+const SYSDIR_DIRECTORY_USER: sysdir_search_path_directory_t = 7;
+const SYSDIR_DIRECTORY_DOCUMENTATION: sysdir_search_path_directory_t = 8;
+const SYSDIR_DIRECTORY_DOCUMENT: sysdir_search_path_directory_t = 9;
+const SYSDIR_DIRECTORY_CORESERVICE: sysdir_search_path_directory_t = 10;
+const SYSDIR_DIRECTORY_AUTOSAVED_INFORMATION: sysdir_search_path_directory_t = 11;
+const SYSDIR_DIRECTORY_DESKTOP: sysdir_search_path_directory_t = 12;
+const SYSDIR_DIRECTORY_CACHES: sysdir_search_path_directory_t = 13;
+const SYSDIR_DIRECTORY_APPLICATION_SUPPORT: sysdir_search_path_directory_t = 14;
+const SYSDIR_DIRECTORY_DOWNLOADS: sysdir_search_path_directory_t = 15;
+const SYSDIR_DIRECTORY_INPUT_METHODS: sysdir_search_path_directory_t = 16;
+const SYSDIR_DIRECTORY_MOVIES: sysdir_search_path_directory_t = 17;
+const SYSDIR_DIRECTORY_MUSIC: sysdir_search_path_directory_t = 18;
+const SYSDIR_DIRECTORY_PICTURES: sysdir_search_path_directory_t = 19;
+const SYSDIR_DIRECTORY_PRINTER_DESCRIPTION: sysdir_search_path_directory_t = 20;
+const SYSDIR_DIRECTORY_SHARED_PUBLIC: sysdir_search_path_directory_t = 21;
+const SYSDIR_DIRECTORY_PREFERENCE_PANES: sysdir_search_path_directory_t = 22;
+const SYSDIR_DIRECTORY_ALL_APPLICATIONS: sysdir_search_path_directory_t = 100;
+const SYSDIR_DIRECTORY_ALL_LIBRARIES: sysdir_search_path_directory_t = 101;
+type sysdir_search_path_domain_mask_t = u32;
+const SYSDIR_DOMAIN_MASK_USER: sysdir_search_path_domain_mask_t = 1;
+const SYSDIR_DOMAIN_MASK_LOCAL: sysdir_search_path_domain_mask_t = 2;
+const SYSDIR_DOMAIN_MASK_NETWORK: sysdir_search_path_domain_mask_t = 4;
+const SYSDIR_DOMAIN_MASK_SYSTEM: sysdir_search_path_domain_mask_t = 8;
+const SYSDIR_DOMAIN_MASK_ALL: sysdir_search_path_domain_mask_t = 65535;
 struct ip_mreq {
     imr_multiaddr: in_addr,
     imr_interface: in_addr,
@@ -1288,6 +1485,19 @@ struct glob_t {
     __unused7: &mut c_void,
     __unused8: &mut c_void,
 }
+struct tm {
+    tm_sec: c_int,
+    tm_min: c_int,
+    tm_hour: c_int,
+    tm_mday: c_int,
+    tm_mon: c_int,
+    tm_year: c_int,
+    tm_wday: c_int,
+    tm_yday: c_int,
+    tm_isdst: c_int,
+    tm_gmtoff: c_long,
+    tm_zone: &mut c_char,
+}
 struct addrinfo {
     ai_flags: c_int,
     ai_family: c_int,
@@ -1297,10 +1507,6 @@ struct addrinfo {
     ai_canonname: &mut c_char,
     ai_addr: &mut sockaddr,
     ai_next: &mut addrinfo,
-}
-struct mach_timebase_info_t {
-    numer: u32,
-    denom: u32,
 }
 struct stat_t {
     st_dev: dev_t,
@@ -1325,18 +1531,6 @@ struct stat_t {
     st_gen: u32,
     st_lspare: i32,
     st_qspare: [i64; 2],
-}
-struct pthread_mutexattr_t {
-    __sig: c_long,
-    __opaque: [u8; 8],
-}
-struct pthread_condattr_t {
-    __sig: c_long,
-    __opaque: [u8; __PTHREAD_CONDATTR_SIZE__],
-}
-struct pthread_rwlockattr_t {
-    __sig: c_long,
-    __opaque: [u8; __PTHREAD_RWLOCKATTR_SIZE__],
 }
 struct siginfo_t {
     si_signo: c_int,
@@ -1364,6 +1558,22 @@ struct fstore_t {
     fst_offset: off_t,
     fst_length: off_t,
     fst_bytesalloc: off_t,
+}
+struct fpunchhole_t {
+    fp_flags: c_uint,
+    reserved: c_uint,
+    fp_offset: off_t,
+    fp_length: off_t,
+}
+struct ftrimactivefile_t {
+    fta_offset: off_t,
+    fta_length: off_t,
+}
+struct fspecread_t {
+    fsr_flags: c_uint,
+    reserved: c_uint,
+    fsr_offset: off_t,
+    fsr_length: off_t,
 }
 struct radvisory {
     ra_offset: off_t,
@@ -1462,8 +1672,7 @@ struct rt_metrics {
     rmx_rtt: u32,
     rmx_rttvar: u32,
     rmx_pksent: u32,
-    rmx_state: u32,
-    rmx_filler: [u32; 3],
+    rmx_filler: [u32; 4],
 }
 struct rt_msghdr {
     rtm_msglen: c_ushort,
@@ -1498,7 +1707,7 @@ struct termios {
     c_oflag: tcflag_t,
     c_cflag: tcflag_t,
     c_lflag: tcflag_t,
-    c_cc: [cc_t; NCCS],
+    c_cc: [cc_t; 20],
     c_ispeed: speed_t,
     c_ospeed: speed_t,
 }
@@ -1574,7 +1783,7 @@ struct proc_bsdinfo {
     pbi_svuid: uid_t,
     pbi_svgid: gid_t,
     rfu_1: u32,
-    pbi_comm: [c_char; MAXCOMLEN],
+    pbi_comm: [c_char; 16],
     pbi_name: [c_char; 32],
     pbi_nfiles: u32,
     pbi_pgid: u32,
@@ -1601,25 +1810,6 @@ struct xucred {
     cr_uid: uid_t,
     cr_ngroups: c_short,
     cr_groups: [gid_t; 16],
-}
-struct mach_header {
-    magic: u32,
-    cputype: cpu_type_t,
-    cpusubtype: cpu_subtype_t,
-    filetype: u32,
-    ncmds: u32,
-    sizeofcmds: u32,
-    flags: u32,
-}
-struct mach_header_64 {
-    magic: u32,
-    cputype: cpu_type_t,
-    cpusubtype: cpu_subtype_t,
-    filetype: u32,
-    ncmds: u32,
-    sizeofcmds: u32,
-    flags: u32,
-    reserved: u32,
 }
 struct segment_command {
     cmd: u32,
@@ -1793,10 +1983,6 @@ struct vm_range_t {
     address: vm_address_t,
     size: vm_size_t,
 }
-struct sched_param {
-    sched_priority: c_int,
-    __opaque: [c_char; 4],
-}
 struct vinfo_stat {
     vst_dev: u32,
     vst_mode: u16,
@@ -1828,7 +2014,7 @@ struct vnode_info {
 }
 struct vnode_info_path {
     vip_vi: vnode_info,
-    vip_path: [[c_char; 32]; 32],
+    vip_path: [c_char; 1024],
 }
 struct proc_vnodepathinfo {
     pvi_cdir: vnode_info_path,
@@ -2008,7 +2194,156 @@ struct vol_attributes_attr_t {
     validattr: attribute_set_t,
     nativeattr: attribute_set_t,
 }
-#[packed(4)]
+#[align(8)]
+struct tcp_connection_info {
+    tcpi_state: u8,
+    tcpi_snd_wscale: u8,
+    tcpi_rcv_wscale: u8,
+    __pad1: u8,
+    tcpi_options: u32,
+    tcpi_flags: u32,
+    tcpi_rto: u32,
+    tcpi_maxseg: u32,
+    tcpi_snd_ssthresh: u32,
+    tcpi_snd_cwnd: u32,
+    tcpi_snd_wnd: u32,
+    tcpi_snd_sbbytes: u32,
+    tcpi_rcv_wnd: u32,
+    tcpi_rttcur: u32,
+    tcpi_srtt: u32,
+    tcpi_rttvar: u32,
+    tcpi_tfo_cookie_req: u32,
+    tcpi_tfo_cookie_rcv: u32,
+    tcpi_tfo_syn_loss: u32,
+    tcpi_tfo_syn_data_sent: u32,
+    tcpi_tfo_syn_data_acked: u32,
+    tcpi_tfo_syn_data_rcv: u32,
+    tcpi_tfo_cookie_req_rcv: u32,
+    tcpi_tfo_cookie_sent: u32,
+    tcpi_tfo_cookie_invalid: u32,
+    tcpi_tfo_cookie_wrong: u32,
+    tcpi_tfo_no_cookie_rcv: u32,
+    tcpi_tfo_heuristics_disable: u32,
+    tcpi_tfo_send_blackhole: u32,
+    tcpi_tfo_recv_blackhole: u32,
+    tcpi_tfo_onebyte_proxy: u32,
+    __pad2: u32,
+    tcpi_txpackets: u64,
+    tcpi_txbytes: u64,
+    tcpi_txretransmitbytes: u64,
+    tcpi_rxpackets: u64,
+    tcpi_rxbytes: u64,
+    tcpi_rxoutoforderbytes: u64,
+    tcpi_rxretransmitpackets: u64,
+}
+struct in6_addrlifetime {
+    ia6t_expire: time_t,
+    ia6t_preferred: time_t,
+    ia6t_vltime: u32,
+    ia6t_pltime: u32,
+}
+struct in6_ifstat {
+    ifs6_in_receive: u_quad_t,
+    ifs6_in_hdrerr: u_quad_t,
+    ifs6_in_toobig: u_quad_t,
+    ifs6_in_noroute: u_quad_t,
+    ifs6_in_addrerr: u_quad_t,
+    ifs6_in_protounknown: u_quad_t,
+    ifs6_in_truncated: u_quad_t,
+    ifs6_in_discard: u_quad_t,
+    ifs6_in_deliver: u_quad_t,
+    ifs6_out_forward: u_quad_t,
+    ifs6_out_request: u_quad_t,
+    ifs6_out_discard: u_quad_t,
+    ifs6_out_fragok: u_quad_t,
+    ifs6_out_fragfail: u_quad_t,
+    ifs6_out_fragcreat: u_quad_t,
+    ifs6_reass_reqd: u_quad_t,
+    ifs6_reass_ok: u_quad_t,
+    ifs6_atmfrag_rcvd: u_quad_t,
+    ifs6_reass_fail: u_quad_t,
+    ifs6_in_mcast: u_quad_t,
+    ifs6_out_mcast: u_quad_t,
+    ifs6_cantfoward_icmp6: u_quad_t,
+    ifs6_addr_expiry_cnt: u_quad_t,
+    ifs6_pfx_expiry_cnt: u_quad_t,
+    ifs6_defrtr_expiry_cnt: u_quad_t,
+}
+struct icmp6_ifstat {
+    ifs6_in_msg: u_quad_t,
+    ifs6_in_error: u_quad_t,
+    ifs6_in_dstunreach: u_quad_t,
+    ifs6_in_adminprohib: u_quad_t,
+    ifs6_in_timeexceed: u_quad_t,
+    ifs6_in_paramprob: u_quad_t,
+    ifs6_in_pkttoobig: u_quad_t,
+    ifs6_in_echo: u_quad_t,
+    ifs6_in_echoreply: u_quad_t,
+    ifs6_in_routersolicit: u_quad_t,
+    ifs6_in_routeradvert: u_quad_t,
+    ifs6_in_neighborsolicit: u_quad_t,
+    ifs6_in_neighboradvert: u_quad_t,
+    ifs6_in_redirect: u_quad_t,
+    ifs6_in_mldquery: u_quad_t,
+    ifs6_in_mldreport: u_quad_t,
+    ifs6_in_mlddone: u_quad_t,
+    ifs6_out_msg: u_quad_t,
+    ifs6_out_error: u_quad_t,
+    ifs6_out_dstunreach: u_quad_t,
+    ifs6_out_adminprohib: u_quad_t,
+    ifs6_out_timeexceed: u_quad_t,
+    ifs6_out_paramprob: u_quad_t,
+    ifs6_out_pkttoobig: u_quad_t,
+    ifs6_out_echo: u_quad_t,
+    ifs6_out_echoreply: u_quad_t,
+    ifs6_out_routersolicit: u_quad_t,
+    ifs6_out_routeradvert: u_quad_t,
+    ifs6_out_neighborsolicit: u_quad_t,
+    ifs6_out_neighboradvert: u_quad_t,
+    ifs6_out_redirect: u_quad_t,
+    ifs6_out_mldquery: u_quad_t,
+    ifs6_out_mldreport: u_quad_t,
+    ifs6_out_mlddone: u_quad_t,
+}
+struct host_cpu_load_info {
+    cpu_ticks: [natural_t; 4],
+}
+struct ifmibdata {
+    ifmd_name: [c_char; 16],
+    ifmd_pcount: c_uint,
+    ifmd_flags: c_uint,
+    ifmd_snd_len: c_uint,
+    ifmd_snd_maxlen: c_uint,
+    ifmd_snd_drops: c_uint,
+    ifmd_filler: [c_uint; 4],
+    ifmd_data: if_data64,
+}
+struct ifs_iso_8802_3 {
+    dot3StatsAlignmentErrors: u32,
+    dot3StatsFCSErrors: u32,
+    dot3StatsSingleCollisionFrames: u32,
+    dot3StatsMultipleCollisionFrames: u32,
+    dot3StatsSQETestErrors: u32,
+    dot3StatsDeferredTransmissions: u32,
+    dot3StatsLateCollisions: u32,
+    dot3StatsExcessiveCollisions: u32,
+    dot3StatsInternalMacTransmitErrors: u32,
+    dot3StatsCarrierSenseErrors: u32,
+    dot3StatsFrameTooLongs: u32,
+    dot3StatsInternalMacReceiveErrors: u32,
+    dot3StatsEtherChipSet: u32,
+    dot3StatsMissedFrames: u32,
+    dot3StatsCollFrequencies: [u32; 16],
+    dot3Compliance: u32,
+}
+struct ctl_info {
+    ctl_id: u32,
+    ctl_name: [c_char; 96],
+}
+struct proc_fdinfo {
+    proc_fd: i32,
+    proc_fdtype: u32,
+}
 struct kevent_t {
     ident: uintptr_t,
     filter: i16,
@@ -2017,7 +2352,6 @@ struct kevent_t {
     data: intptr_t,
     udata: &mut c_void,
 }
-#[packed(4)]
 struct semid_ds {
     sem_perm: ipc_perm,
     sem_base: i32,
@@ -2028,7 +2362,6 @@ struct semid_ds {
     sem_pad2: i32,
     sem_pad3: [i32; 4],
 }
-#[packed(4)]
 struct shmid_ds {
     shm_perm: ipc_perm,
     shm_segsz: size_t,
@@ -2051,7 +2384,7 @@ struct proc_threadinfo {
     pth_curpri: i32,
     pth_priority: i32,
     pth_maxpriority: i32,
-    pth_name: [c_char; MAXTHREADNAMESIZE],
+    pth_name: [c_char; 64],
 }
 struct statfs_t {
     f_bsize: u32,
@@ -2080,18 +2413,6 @@ struct dirent {
     d_type: u8,
     d_name: [c_char; 1024],
 }
-struct pthread_rwlock_t {
-    __sig: c_long,
-    __opaque: [u8; __PTHREAD_RWLOCK_SIZE__],
-}
-struct pthread_mutex_t {
-    __sig: c_long,
-    __opaque: [u8; __PTHREAD_MUTEX_SIZE__],
-}
-struct pthread_cond_t {
-    __sig: c_long,
-    __opaque: [u8; __PTHREAD_COND_SIZE__],
-}
 struct sockaddr_storage {
     ss_len: u8,
     ss_family: sa_family_t,
@@ -2100,13 +2421,13 @@ struct sockaddr_storage {
     __ss_pad2: [u8; 112],
 }
 struct utmpx {
-    ut_user: [c_char; _UTX_USERSIZE],
-    ut_id: [c_char; _UTX_IDSIZE],
-    ut_line: [c_char; _UTX_LINESIZE],
+    ut_user: [c_char; 256],
+    ut_id: [c_char; 4],
+    ut_line: [c_char; 32],
     ut_pid: pid_t,
     ut_type: c_short,
     ut_tv: timeval,
-    ut_host: [c_char; _UTX_HOSTSIZE],
+    ut_host: [c_char; 256],
     ut_pad: [u32; 16],
 }
 struct sigevent {
@@ -2117,7 +2438,7 @@ struct sigevent {
     sigev_notify_attributes: &mut pthread_attr_t,
 }
 struct processor_cpu_load_info {
-    cpu_ticks: [c_uint; CPU_STATE_MAX as usize],
+    cpu_ticks: [c_uint; 4],
 }
 struct processor_basic_info {
     cpu_type: cpu_type_t,
@@ -2166,9 +2487,8 @@ struct thread_extended_info {
     pth_curpri: i32,
     pth_priority: i32,
     pth_maxpriority: i32,
-    pth_name: [c_char; MAXTHREADNAMESIZE],
+    pth_name: [c_char; 64],
 }
-#[packed(4)]
 struct if_data64 {
     ifi_type: c_uchar,
     ifi_typelen: c_uchar,
@@ -2194,10 +2514,8 @@ struct if_data64 {
     ifi_noproto: u64,
     ifi_recvtiming: u32,
     ifi_xmittiming: u32,
-
     ifi_lastchange: timeval32,
 }
-#[packed(4)]
 struct if_msghdr2 {
     ifm_msglen: c_ushort,
     ifm_version: c_uchar,
@@ -2211,7 +2529,6 @@ struct if_msghdr2 {
     ifm_timer: c_int,
     ifm_data: if_data64,
 }
-#[packed(8)]
 struct vm_statistics64 {
     free_count: natural_t,
     active_count: natural_t,
@@ -2238,7 +2555,6 @@ struct vm_statistics64 {
     internal_page_count: natural_t,
     total_uncompressed_pages_in_compressor: u64,
 }
-#[packed(4)]
 struct mach_task_basic_info {
     virtual_size: mach_vm_size_t,
     resident_size: mach_vm_size_t,
@@ -2248,7 +2564,6 @@ struct mach_task_basic_info {
     policy: policy_t,
     suspend_count: integer_t,
 }
-#[packed(4)]
 struct log2phys {
     l2p_flags: c_uint,
     l2p_contigbytes: off_t,
@@ -2257,32 +2572,73 @@ struct log2phys {
 struct os_unfair_lock_s {
     _os_unfair_lock_opaque: u32,
 }
-impl siginfo_t {
-    fn si_addr(self: &siginfo_t) -> &mut c_void {
-        self.si_addr
-    }
-    fn si_value(self: &siginfo_t) -> sigval {
-        struct siginfo_timer {
-            _si_signo: c_int,
-            _si_errno: c_int,
-            _si_code: c_int,
-            _si_pid: pid_t,
-            _si_uid: uid_t,
-            _si_status: c_int,
-            _si_addr: &mut c_void,
-            si_value: sigval,
-        }
-        (*(self as &siginfo_t as &siginfo_timer)).si_value
-    }
-    fn si_pid(self: &siginfo_t) -> pid_t {
-        self.si_pid
-    }
-    fn si_uid(self: &siginfo_t) -> uid_t {
-        self.si_uid
-    }
-    fn si_status(self: &siginfo_t) -> c_int {
-        self.si_status
-    }
+struct sockaddr_vm {
+    svm_len: c_uchar,
+    svm_family: sa_family_t,
+    svm_reserved1: c_ushort,
+    svm_port: c_uint,
+    svm_cid: c_uint,
+}
+struct ifdevmtu {
+    ifdm_current: c_int,
+    ifdm_min: c_int,
+    ifdm_max: c_int,
+}
+struct ifkpi {
+    ifk_module_id: c_uint,
+    ifk_type: c_uint,
+    ifk_data: __c_anonymous_ifk_data,
+}
+struct ifreq {
+    ifr_name: [c_char; 16],
+    ifr_ifru: __c_anonymous_ifr_ifru,
+}
+struct in6_ifreq {
+    ifr_name: [c_char; 16],
+    ifr_ifru: __c_anonymous_ifr_ifru6,
+}
+struct ifconf {
+    ifc_len: c_int,
+    ifc_ifcu: __c_anonymous_ifc_ifcu,
+}
+union __c_anonymous_ifk_data {
+    ifk_ptr: &mut c_void,
+    ifk_value: c_int,
+}
+union __c_anonymous_ifr_ifru {
+    ifru_addr: sockaddr,
+    ifru_dstaddr: sockaddr,
+    ifru_broadaddr: sockaddr,
+    ifru_flags: c_short,
+    ifru_metrics: c_int,
+    ifru_mtu: c_int,
+    ifru_phys: c_int,
+    ifru_media: c_int,
+    ifru_intval: c_int,
+    ifru_data: &mut c_char,
+    ifru_devmtu: ifdevmtu,
+    ifru_kpi: ifkpi,
+    ifru_wake_flags: u32,
+    ifru_route_refcnt: u32,
+    ifru_cap: [c_int; 2],
+    ifru_functional_type: u32,
+}
+union __c_anonymous_ifc_ifcu {
+    ifcu_buf: &mut c_char,
+    ifcu_req: &mut ifreq,
+}
+union __c_anonymous_ifr_ifru6 {
+    ifru_addr: sockaddr_in6,
+    ifru_dstaddr: sockaddr_in6,
+    ifru_flags: c_int,
+    ifru_flags6: c_int,
+    ifru_metrics: c_int,
+    ifru_intval: c_int,
+    ifru_data: &mut c_char,
+    ifru_lifetime: in6_addrlifetime,
+    ifru_stat: in6_ifstat,
+    ifru_icmp6stat: icmp6_ifstat,
+    ifru_scope_id: [u32; 16],
 }
 union semun {
     val: c_int,
@@ -2305,13 +2661,13 @@ const DEAD_PROCESS: c_short = 8;
 const ACCOUNTING: c_short = 9;
 const SIGNATURE: c_short = 10;
 const SHUTDOWN_TIME: c_short = 11;
-const LC_COLLATE_MASK: c_int = 1 << 0;
-const LC_CTYPE_MASK: c_int = 1 << 1;
-const LC_MESSAGES_MASK: c_int = 1 << 2;
-const LC_MONETARY_MASK: c_int = 1 << 3;
-const LC_NUMERIC_MASK: c_int = 1 << 4;
-const LC_TIME_MASK: c_int = 1 << 5;
-const LC_ALL_MASK: c_int = LC_COLLATE_MASK | LC_CTYPE_MASK | LC_MESSAGES_MASK | LC_MONETARY_MASK | LC_NUMERIC_MASK | LC_TIME_MASK;
+const LC_COLLATE_MASK: c_int = 1;
+const LC_CTYPE_MASK: c_int = 2;
+const LC_MESSAGES_MASK: c_int = 4;
+const LC_MONETARY_MASK: c_int = 8;
+const LC_NUMERIC_MASK: c_int = 16;
+const LC_TIME_MASK: c_int = 32;
+const LC_ALL_MASK: c_int = 63;
 const CODESET: nl_item = 0;
 const D_T_FMT: nl_item = 1;
 const D_FMT: nl_item = 2;
@@ -2404,13 +2760,33 @@ const _PC_PIPE_BUF: c_int = 6;
 const _PC_CHOWN_RESTRICTED: c_int = 7;
 const _PC_NO_TRUNC: c_int = 8;
 const _PC_VDISABLE: c_int = 9;
-const O_EVTONLY: c_int = 0x00008000;
-const O_NOCTTY: c_int = 0x00020000;
-const O_DIRECTORY: c_int = 0x00100000;
-const O_SYMLINK: c_int = 0x00200000;
-const O_DSYNC: c_int = 0x00400000;
-const O_CLOEXEC: c_int = 0x01000000;
-const O_NOFOLLOW_ANY: c_int = 0x20000000;
+const _PC_NAME_CHARS_MAX: c_int = 10;
+const _PC_CASE_SENSITIVE: c_int = 11;
+const _PC_CASE_PRESERVING: c_int = 12;
+const _PC_EXTENDED_SECURITY_NP: c_int = 13;
+const _PC_AUTH_OPAQUE_NP: c_int = 14;
+const _PC_2_SYMLINKS: c_int = 15;
+const _PC_ALLOC_SIZE_MIN: c_int = 16;
+const _PC_ASYNC_IO: c_int = 17;
+const _PC_FILESIZEBITS: c_int = 18;
+const _PC_PRIO_IO: c_int = 19;
+const _PC_REC_INCR_XFER_SIZE: c_int = 20;
+const _PC_REC_MAX_XFER_SIZE: c_int = 21;
+const _PC_REC_MIN_XFER_SIZE: c_int = 22;
+const _PC_REC_XFER_ALIGN: c_int = 23;
+const _PC_SYMLINK_MAX: c_int = 24;
+const _PC_SYNC_IO: c_int = 25;
+const _PC_XATTR_SIZE_BITS: c_int = 26;
+const _PC_MIN_HOLE_SIZE: c_int = 27;
+const O_EVTONLY: c_int = 32768;
+const O_NOCTTY: c_int = 131072;
+const O_DIRECTORY: c_int = 1048576;
+const O_SYMLINK: c_int = 2097152;
+const O_DSYNC: c_int = 4194304;
+const O_CLOEXEC: c_int = 16777216;
+const O_NOFOLLOW_ANY: c_int = 536870912;
+const O_EXEC: c_int = 1073741824;
+const O_SEARCH: c_int = 1074790400;
 const S_IFIFO: mode_t = 4096;
 const S_IFCHR: mode_t = 8192;
 const S_IFBLK: mode_t = 24576;
@@ -2438,9 +2814,6 @@ const F_OK: c_int = 0;
 const R_OK: c_int = 4;
 const W_OK: c_int = 2;
 const X_OK: c_int = 1;
-const STDIN_FILENO: c_int = 0;
-const STDOUT_FILENO: c_int = 1;
-const STDERR_FILENO: c_int = 2;
 const F_LOCK: c_int = 1;
 const F_TEST: c_int = 3;
 const F_TLOCK: c_int = 2;
@@ -2482,12 +2855,12 @@ const PT_ATTACHEXC: c_int = 14;
 const PT_FORCEQUOTA: c_int = 30;
 const PT_DENY_ATTACH: c_int = 31;
 const PT_FIRSTMACH: c_int = 32;
-const MAP_FILE: c_int = 0x0000;
-const MAP_SHARED: c_int = 0x0001;
-const MAP_PRIVATE: c_int = 0x0002;
-const MAP_FIXED: c_int = 0x0010;
-const MAP_ANON: c_int = 0x1000;
-const MAP_ANONYMOUS: c_int = MAP_ANON;
+const MAP_FILE: c_int = 0;
+const MAP_SHARED: c_int = 1;
+const MAP_PRIVATE: c_int = 2;
+const MAP_FIXED: c_int = 16;
+const MAP_ANON: c_int = 4096;
+const MAP_ANONYMOUS: c_int = 4096;
 const CPU_STATE_USER: c_int = 0;
 const CPU_STATE_SYSTEM: c_int = 1;
 const CPU_STATE_IDLE: c_int = 2;
@@ -2495,106 +2868,18 @@ const CPU_STATE_NICE: c_int = 3;
 const CPU_STATE_MAX: c_int = 4;
 const PROCESSOR_BASIC_INFO: c_int = 1;
 const PROCESSOR_CPU_LOAD_INFO: c_int = 2;
-const PROCESSOR_PM_REGS_INFO: c_int = 0x10000001;
-const PROCESSOR_TEMPERATURE: c_int = 0x10000002;
+const PROCESSOR_PM_REGS_INFO: c_int = 268435457;
+const PROCESSOR_TEMPERATURE: c_int = 268435458;
 const PROCESSOR_SET_LOAD_INFO: c_int = 4;
 const PROCESSOR_SET_BASIC_INFO: c_int = 5;
-const VM_FLAGS_FIXED: c_int = 0x0000;
-const VM_FLAGS_ANYWHERE: c_int = 0x0001;
-const VM_FLAGS_PURGABLE: c_int = 0x0002;
-const VM_FLAGS_RANDOM_ADDR: c_int = 0x0008;
-const VM_FLAGS_NO_CACHE: c_int = 0x0010;
-const VM_FLAGS_RESILIENT_CODESIGN: c_int = 0x0020;
-const VM_FLAGS_RESILIENT_MEDIA: c_int = 0x0040;
-const VM_FLAGS_OVERWRITE: c_int = 0x4000;
-const VM_FLAGS_SUPERPAGE_MASK: c_int = 0x70000;
-const VM_FLAGS_RETURN_DATA_ADDR: c_int = 0x100000;
-const VM_FLAGS_RETURN_4K_DATA_ADDR: c_int = 0x800000;
-const VM_FLAGS_ALIAS_MASK: c_int = 0xFF000000;
-const VM_FLAGS_USER_ALLOCATE: c_int = 0xff07401f;
-const VM_FLAGS_USER_MAP: c_int = 0xff97401f;
-const VM_FLAGS_USER_REMAP: c_int = VM_FLAGS_FIXED | VM_FLAGS_ANYWHERE | VM_FLAGS_RANDOM_ADDR | VM_FLAGS_OVERWRITE | VM_FLAGS_RETURN_DATA_ADDR | VM_FLAGS_RESILIENT_CODESIGN;
-const VM_FLAGS_SUPERPAGE_SHIFT: c_int = 16;
-const SUPERPAGE_NONE: c_int = 0;
-const SUPERPAGE_SIZE_ANY: c_int = 1;
-const VM_FLAGS_SUPERPAGE_NONE: c_int = SUPERPAGE_NONE << VM_FLAGS_SUPERPAGE_SHIFT;
-const VM_FLAGS_SUPERPAGE_SIZE_ANY: c_int = SUPERPAGE_SIZE_ANY << VM_FLAGS_SUPERPAGE_SHIFT;
-const SUPERPAGE_SIZE_2MB: c_int = 2;
-const VM_FLAGS_SUPERPAGE_SIZE_2MB: c_int = SUPERPAGE_SIZE_2MB << VM_FLAGS_SUPERPAGE_SHIFT;
-const VM_MEMORY_MALLOC: c_int = 1;
-const VM_MEMORY_MALLOC_SMALL: c_int = 2;
-const VM_MEMORY_MALLOC_LARGE: c_int = 3;
-const VM_MEMORY_MALLOC_HUGE: c_int = 4;
-const VM_MEMORY_SBRK: c_int = 5;
-const VM_MEMORY_REALLOC: c_int = 6;
-const VM_MEMORY_MALLOC_TINY: c_int = 7;
-const VM_MEMORY_MALLOC_LARGE_REUSABLE: c_int = 8;
-const VM_MEMORY_MALLOC_LARGE_REUSED: c_int = 9;
-const VM_MEMORY_ANALYSIS_TOOL: c_int = 10;
-const VM_MEMORY_MALLOC_NANO: c_int = 11;
-const VM_MEMORY_MACH_MSG: c_int = 20;
-const VM_MEMORY_IOKIT: c_int = 21;
-const VM_MEMORY_STACK: c_int = 30;
-const VM_MEMORY_GUARD: c_int = 31;
-const VM_MEMORY_SHARED_PMAP: c_int = 32;
-const VM_MEMORY_DYLIB: c_int = 33;
-const VM_MEMORY_OBJC_DISPATCHERS: c_int = 34;
-const VM_MEMORY_UNSHARED_PMAP: c_int = 35;
-const VM_MEMORY_APPKIT: c_int = 40;
-const VM_MEMORY_FOUNDATION: c_int = 41;
-const VM_MEMORY_COREGRAPHICS: c_int = 42;
-const VM_MEMORY_CORESERVICES: c_int = 43;
-const VM_MEMORY_CARBON: c_int = VM_MEMORY_CORESERVICES;
-const VM_MEMORY_JAVA: c_int = 44;
-const VM_MEMORY_COREDATA: c_int = 45;
-const VM_MEMORY_COREDATA_OBJECTIDS: c_int = 46;
-const VM_MEMORY_ATS: c_int = 50;
-const VM_MEMORY_LAYERKIT: c_int = 51;
-const VM_MEMORY_CGIMAGE: c_int = 52;
-const VM_MEMORY_TCMALLOC: c_int = 53;
-const VM_MEMORY_COREGRAPHICS_DATA: c_int = 54;
-const VM_MEMORY_COREGRAPHICS_SHARED: c_int = 55;
-const VM_MEMORY_COREGRAPHICS_FRAMEBUFFERS: c_int = 56;
-const VM_MEMORY_COREGRAPHICS_BACKINGSTORES: c_int = 57;
-const VM_MEMORY_COREGRAPHICS_XALLOC: c_int = 58;
-const VM_MEMORY_COREGRAPHICS_MISC: c_int = VM_MEMORY_COREGRAPHICS;
-const VM_MEMORY_DYLD: c_int = 60;
-const VM_MEMORY_DYLD_MALLOC: c_int = 61;
-const VM_MEMORY_SQLITE: c_int = 62;
-const VM_MEMORY_JAVASCRIPT_CORE: c_int = 63;
-const VM_MEMORY_JAVASCRIPT_JIT_EXECUTABLE_ALLOCATOR: c_int = 64;
-const VM_MEMORY_JAVASCRIPT_JIT_REGISTER_FILE: c_int = 65;
-const VM_MEMORY_GLSL: c_int = 66;
-const VM_MEMORY_OPENCL: c_int = 67;
-const VM_MEMORY_COREIMAGE: c_int = 68;
-const VM_MEMORY_WEBCORE_PURGEABLE_BUFFERS: c_int = 69;
-const VM_MEMORY_IMAGEIO: c_int = 70;
-const VM_MEMORY_COREPROFILE: c_int = 71;
-const VM_MEMORY_ASSETSD: c_int = 72;
-const VM_MEMORY_OS_ALLOC_ONCE: c_int = 73;
-const VM_MEMORY_LIBDISPATCH: c_int = 74;
-const VM_MEMORY_ACCELERATE: c_int = 75;
-const VM_MEMORY_COREUI: c_int = 76;
-const VM_MEMORY_COREUIFILE: c_int = 77;
-const VM_MEMORY_GENEALOGY: c_int = 78;
-const VM_MEMORY_RAWCAMERA: c_int = 79;
-const VM_MEMORY_CORPSEINFO: c_int = 80;
-const VM_MEMORY_ASL: c_int = 81;
-const VM_MEMORY_SWIFT_RUNTIME: c_int = 82;
-const VM_MEMORY_SWIFT_METADATA: c_int = 83;
-const VM_MEMORY_DHMM: c_int = 84;
-const VM_MEMORY_SCENEKIT: c_int = 86;
-const VM_MEMORY_SKYWALK: c_int = 87;
-const VM_MEMORY_APPLICATION_SPECIFIC_1: c_int = 240;
-const VM_MEMORY_APPLICATION_SPECIFIC_16: c_int = 255;
-const MAP_FAILED: &mut c_void = !0 as &mut c_void;
-const MCL_CURRENT: c_int = 0x0001;
-const MCL_FUTURE: c_int = 0x0002;
-const MS_ASYNC: c_int = 0x0001;
-const MS_INVALIDATE: c_int = 0x0002;
-const MS_SYNC: c_int = 0x0010;
-const MS_KILLPAGES: c_int = 0x0004;
-const MS_DEACTIVATE: c_int = 0x0008;
+const MAP_FAILED: &mut c_void = (!(0) as &mut c_void);
+const MCL_CURRENT: c_int = 1;
+const MCL_FUTURE: c_int = 2;
+const MS_ASYNC: c_int = 1;
+const MS_INVALIDATE: c_int = 2;
+const MS_SYNC: c_int = 16;
+const MS_KILLPAGES: c_int = 4;
+const MS_DEACTIVATE: c_int = 8;
 const EPERM: c_int = 1;
 const ENOENT: c_int = 2;
 const ESRCH: c_int = 3;
@@ -2630,7 +2915,7 @@ const EPIPE: c_int = 32;
 const EDOM: c_int = 33;
 const ERANGE: c_int = 34;
 const EAGAIN: c_int = 35;
-const EWOULDBLOCK: c_int = EAGAIN;
+const EWOULDBLOCK: c_int = 35;
 const EINPROGRESS: c_int = 36;
 const EALREADY: c_int = 37;
 const ENOTSOCK: c_int = 38;
@@ -2733,88 +3018,96 @@ const F_GLOBAL_NOCACHE: c_int = 55;
 const F_NODIRECT: c_int = 62;
 const F_LOG2PHYS_EXT: c_int = 65;
 const F_BARRIERFSYNC: c_int = 85;
+const F_OFD_SETLK: c_int = 90;
+const F_OFD_SETLKW: c_int = 91;
+const F_OFD_GETLK: c_int = 92;
+const F_PUNCHHOLE: c_int = 99;
+const F_TRIM_ACTIVE_FILE: c_int = 100;
+const F_SPECULATIVE_READ: c_int = 101;
 const F_GETPATH_NOFIRMLINK: c_int = 102;
-const F_ALLOCATECONTIG: c_uint = 0x02;
-const F_ALLOCATEALL: c_uint = 0x04;
+const F_TRANSFEREXTENTS: c_int = 110;
+const F_ALLOCATECONTIG: c_uint = 2;
+const F_ALLOCATEALL: c_uint = 4;
+const F_ALLOCATEPERSIST: c_uint = 8;
 const F_PEOFPOSMODE: c_int = 3;
 const F_VOLPOSMODE: c_int = 4;
 const AT_FDCWD: c_int = -2;
-const AT_EACCESS: c_int = 0x0010;
-const AT_SYMLINK_NOFOLLOW: c_int = 0x0020;
-const AT_SYMLINK_FOLLOW: c_int = 0x0040;
-const AT_REMOVEDIR: c_int = 0x0080;
-const PTHREAD_INTROSPECTION_THREAD_CREATE: c_uint = 1;
-const PTHREAD_INTROSPECTION_THREAD_START: c_uint = 2;
-const PTHREAD_INTROSPECTION_THREAD_TERMINATE: c_uint = 3;
-const PTHREAD_INTROSPECTION_THREAD_DESTROY: c_uint = 4;
-const TIOCMODG: c_ulong = 0x40047403;
-const TIOCMODS: c_ulong = 0x80047404;
-const TIOCM_LE: c_int = 0x1;
-const TIOCM_DTR: c_int = 0x2;
-const TIOCM_RTS: c_int = 0x4;
-const TIOCM_ST: c_int = 0x8;
-const TIOCM_SR: c_int = 0x10;
-const TIOCM_CTS: c_int = 0x20;
-const TIOCM_CAR: c_int = 0x40;
-const TIOCM_CD: c_int = 0x40;
-const TIOCM_RNG: c_int = 0x80;
-const TIOCM_RI: c_int = 0x80;
-const TIOCM_DSR: c_int = 0x100;
-const TIOCEXCL: c_int = 0x2000740d;
-const TIOCNXCL: c_int = 0x2000740e;
-const TIOCFLUSH: c_ulong = 0x80047410;
-const TIOCGETD: c_ulong = 0x4004741a;
-const TIOCSETD: c_ulong = 0x8004741b;
-const TIOCIXON: c_uint = 0x20007481;
-const TIOCIXOFF: c_uint = 0x20007480;
-const TIOCSDTR: c_uint = 0x20007479;
-const TIOCCDTR: c_uint = 0x20007478;
-const TIOCGPGRP: c_ulong = 0x40047477;
-const TIOCSPGRP: c_ulong = 0x80047476;
-const TIOCOUTQ: c_ulong = 0x40047473;
-const TIOCSTI: c_ulong = 0x80017472;
-const TIOCNOTTY: c_uint = 0x20007471;
-const TIOCPKT: c_ulong = 0x80047470;
-const TIOCPKT_DATA: c_int = 0x0;
-const TIOCPKT_FLUSHREAD: c_int = 0x1;
-const TIOCPKT_FLUSHWRITE: c_int = 0x2;
-const TIOCPKT_STOP: c_int = 0x4;
-const TIOCPKT_START: c_int = 0x8;
-const TIOCPKT_NOSTOP: c_int = 0x10;
-const TIOCPKT_DOSTOP: c_int = 0x20;
-const TIOCPKT_IOCTL: c_int = 0x40;
-const TIOCSTOP: c_uint = 0x2000746f;
-const TIOCSTART: c_uint = 0x2000746e;
-const TIOCMSET: c_ulong = 0x8004746d;
-const TIOCMBIS: c_ulong = 0x8004746c;
-const TIOCMBIC: c_ulong = 0x8004746b;
-const TIOCMGET: c_ulong = 0x4004746a;
-const TIOCREMOTE: c_ulong = 0x80047469;
-const TIOCGWINSZ: c_ulong = 0x40087468;
-const TIOCSWINSZ: c_ulong = 0x80087467;
-const TIOCUCNTL: c_ulong = 0x80047466;
-const TIOCSTAT: c_uint = 0x20007465;
-const TIOCSCONS: c_uint = 0x20007463;
-const TIOCCONS: c_ulong = 0x80047462;
-const TIOCSCTTY: c_uint = 0x20007461;
-const TIOCEXT: c_ulong = 0x80047460;
-const TIOCSIG: c_uint = 0x2000745f;
-const TIOCDRAIN: c_uint = 0x2000745e;
-const TIOCMSDTRWAIT: c_ulong = 0x8004745b;
-const TIOCMGDTRWAIT: c_ulong = 0x4004745a;
-const TIOCSDRAINWAIT: c_ulong = 0x80047457;
-const TIOCGDRAINWAIT: c_ulong = 0x40047456;
-const TIOCDSIMICROCODE: c_uint = 0x20007455;
-const TIOCPTYGRANT: c_uint = 0x20007454;
-const TIOCPTYGNAME: c_uint = 0x40807453;
-const TIOCPTYUNLK: c_uint = 0x20007452;
-const BIOCGRSIG: c_ulong = 0x40044272;
-const BIOCSRSIG: c_ulong = 0x80044273;
-const BIOCSDLT: c_ulong = 0x80044278;
-const BIOCGSEESENT: c_ulong = 0x40044276;
-const BIOCSSEESENT: c_ulong = 0x80044277;
-const BIOCGDLTLIST: c_ulong = 0xc00c4279;
-const FIODTYPE: c_ulong = 0x4004667a;
+const AT_EACCESS: c_int = 16;
+const AT_SYMLINK_NOFOLLOW: c_int = 32;
+const AT_SYMLINK_FOLLOW: c_int = 64;
+const AT_REMOVEDIR: c_int = 128;
+const TIOCMODG: c_ulong = 1074033667;
+const TIOCMODS: c_ulong = 2147775492;
+const TIOCM_LE: c_int = 1;
+const TIOCM_DTR: c_int = 2;
+const TIOCM_RTS: c_int = 4;
+const TIOCM_ST: c_int = 8;
+const TIOCM_SR: c_int = 16;
+const TIOCM_CTS: c_int = 32;
+const TIOCM_CAR: c_int = 64;
+const TIOCM_CD: c_int = 64;
+const TIOCM_RNG: c_int = 128;
+const TIOCM_RI: c_int = 128;
+const TIOCM_DSR: c_int = 256;
+const TIOCEXCL: c_int = 536900621;
+const TIOCNXCL: c_int = 536900622;
+const TIOCFLUSH: c_ulong = 2147775504;
+const TIOCGETD: c_ulong = 1074033690;
+const TIOCSETD: c_ulong = 2147775515;
+const TIOCIXON: c_uint = 536900737;
+const TIOCIXOFF: c_uint = 536900736;
+const TIOCSDTR: c_uint = 536900729;
+const TIOCCDTR: c_uint = 536900728;
+const TIOCGPGRP: c_ulong = 1074033783;
+const TIOCSPGRP: c_ulong = 2147775606;
+const TIOCOUTQ: c_ulong = 1074033779;
+const TIOCSTI: c_ulong = 2147578994;
+const TIOCNOTTY: c_uint = 536900721;
+const TIOCPKT: c_ulong = 2147775600;
+const TIOCPKT_DATA: c_int = 0;
+const TIOCPKT_FLUSHREAD: c_int = 1;
+const TIOCPKT_FLUSHWRITE: c_int = 2;
+const TIOCPKT_STOP: c_int = 4;
+const TIOCPKT_START: c_int = 8;
+const TIOCPKT_NOSTOP: c_int = 16;
+const TIOCPKT_DOSTOP: c_int = 32;
+const TIOCPKT_IOCTL: c_int = 64;
+const TIOCSTOP: c_uint = 536900719;
+const TIOCSTART: c_uint = 536900718;
+const TIOCMSET: c_ulong = 2147775597;
+const TIOCMBIS: c_ulong = 2147775596;
+const TIOCMBIC: c_ulong = 2147775595;
+const TIOCMGET: c_ulong = 1074033770;
+const TIOCREMOTE: c_ulong = 2147775593;
+const TIOCGWINSZ: c_ulong = 1074295912;
+const TIOCSWINSZ: c_ulong = 2148037735;
+const TIOCUCNTL: c_ulong = 2147775590;
+const TIOCSTAT: c_uint = 536900709;
+const TIOCSCONS: c_uint = 536900707;
+const TIOCCONS: c_ulong = 2147775586;
+const TIOCSCTTY: c_uint = 536900705;
+const TIOCEXT: c_ulong = 2147775584;
+const TIOCSIG: c_uint = 536900703;
+const TIOCDRAIN: c_uint = 536900702;
+const TIOCMSDTRWAIT: c_ulong = 2147775579;
+const TIOCMGDTRWAIT: c_ulong = 1074033754;
+const TIOCSDRAINWAIT: c_ulong = 2147775575;
+const TIOCGDRAINWAIT: c_ulong = 1074033750;
+const TIOCDSIMICROCODE: c_uint = 536900693;
+const TIOCPTYGRANT: c_uint = 536900692;
+const TIOCPTYGNAME: c_uint = 1082160211;
+const TIOCPTYUNLK: c_uint = 536900690;
+const TIOCGETA: c_ulong = 1078490131;
+const TIOCSETA: c_ulong = 2152231956;
+const TIOCSETAW: c_ulong = 2152231957;
+const TIOCSETAF: c_ulong = 2152231958;
+const BIOCGRSIG: c_ulong = 1074020978;
+const BIOCSRSIG: c_ulong = 2147762803;
+const BIOCSDLT: c_ulong = 2147762808;
+const BIOCGSEESENT: c_ulong = 1074020982;
+const BIOCSSEESENT: c_ulong = 2147762807;
+const BIOCGDLTLIST: c_ulong = 3222028921;
+const FIODTYPE: c_ulong = 1074030202;
 const B0: speed_t = 0;
 const B50: speed_t = 50;
 const B75: speed_t = 75;
@@ -2841,13 +3134,13 @@ const B230400: speed_t = 230400;
 const EXTA: speed_t = 19200;
 const EXTB: speed_t = 38400;
 const SIGTRAP: c_int = 5;
-const GLOB_APPEND: c_int = 0x0001;
-const GLOB_DOOFFS: c_int = 0x0002;
-const GLOB_ERR: c_int = 0x0004;
-const GLOB_MARK: c_int = 0x0008;
-const GLOB_NOCHECK: c_int = 0x0010;
-const GLOB_NOSORT: c_int = 0x0020;
-const GLOB_NOESCAPE: c_int = 0x2000;
+const GLOB_APPEND: c_int = 1;
+const GLOB_DOOFFS: c_int = 2;
+const GLOB_ERR: c_int = 4;
+const GLOB_MARK: c_int = 8;
+const GLOB_NOCHECK: c_int = 16;
+const GLOB_NOSORT: c_int = 32;
+const GLOB_NOESCAPE: c_int = 8192;
 const GLOB_NOSPACE: c_int = -1;
 const GLOB_ABORTED: c_int = -2;
 const GLOB_NOMATCH: c_int = -3;
@@ -2885,10 +3178,6 @@ const _SC_XOPEN_UNIX: c_int = 115;
 const _SC_XOPEN_VERSION: c_int = 116;
 const _SC_XOPEN_XCU_VERSION: c_int = 121;
 const _SC_PHYS_PAGES: c_int = 200;
-const PTHREAD_PROCESS_PRIVATE: c_int = 2;
-const PTHREAD_PROCESS_SHARED: c_int = 1;
-const PTHREAD_CREATE_JOINABLE: c_int = 1;
-const PTHREAD_CREATE_DETACHED: c_int = 2;
 const PTHREAD_STACK_MIN: size_t = 16384;
 const RLIMIT_CPU: c_int = 0;
 const RLIMIT_FSIZE: c_int = 1;
@@ -2896,13 +3185,13 @@ const RLIMIT_DATA: c_int = 2;
 const RLIMIT_STACK: c_int = 3;
 const RLIMIT_CORE: c_int = 4;
 const RLIMIT_AS: c_int = 5;
-const RLIMIT_RSS: c_int = RLIMIT_AS;
+const RLIMIT_RSS: c_int = 5;
 const RLIMIT_MEMLOCK: c_int = 6;
 const RLIMIT_NPROC: c_int = 7;
 const RLIMIT_NOFILE: c_int = 8;
 const RLIM_NLIMITS: c_int = 9;
-const _RLIMIT_POSIX_FLAG: c_int = 0x1000;
-const RLIM_INFINITY: rlim_t = 0x7fffffffffffffff;
+const _RLIMIT_POSIX_FLAG: c_int = 4096;
+const RLIM_INFINITY: rlim_t = 9223372036854775807;
 const RUSAGE_SELF: c_int = 0;
 const RUSAGE_CHILDREN: c_int = -1;
 const MADV_NORMAL: c_int = 0;
@@ -2915,12 +3204,13 @@ const MADV_ZERO_WIRED_PAGES: c_int = 6;
 const MADV_FREE_REUSABLE: c_int = 7;
 const MADV_FREE_REUSE: c_int = 8;
 const MADV_CAN_REUSE: c_int = 9;
-const MINCORE_INCORE: c_int = 0x1;
-const MINCORE_REFERENCED: c_int = 0x2;
-const MINCORE_MODIFIED: c_int = 0x4;
-const MINCORE_REFERENCED_OTHER: c_int = 0x8;
-const MINCORE_MODIFIED_OTHER: c_int = 0x10;
-const CTLIOCGINFO: c_ulong = 0xc0644e03;
+const MADV_ZERO: c_int = 11;
+const MINCORE_INCORE: c_int = 1;
+const MINCORE_REFERENCED: c_int = 2;
+const MINCORE_MODIFIED: c_int = 4;
+const MINCORE_REFERENCED_OTHER: c_int = 8;
+const MINCORE_MODIFIED_OTHER: c_int = 16;
+const CTLIOCGINFO: c_ulong = 3227799043;
 const IPPROTO_HOPOPTS: c_int = 0;
 const IPPROTO_IGMP: c_int = 2;
 const IPPROTO_GGP: c_int = 3;
@@ -3023,14 +3313,14 @@ const IPPROTO_MAX: c_int = 256;
 const IPPROTO_DONE: c_int = 257;
 const AF_UNSPEC: c_int = 0;
 const AF_LOCAL: c_int = 1;
-const AF_UNIX: c_int = AF_LOCAL;
+const AF_UNIX: c_int = 1;
 const AF_INET: c_int = 2;
 const AF_IMPLINK: c_int = 3;
 const AF_PUP: c_int = 4;
 const AF_CHAOS: c_int = 5;
 const AF_NS: c_int = 6;
 const AF_ISO: c_int = 7;
-const AF_OSI: c_int = AF_ISO;
+const AF_OSI: c_int = 7;
 const AF_ECMA: c_int = 8;
 const AF_DATAKIT: c_int = 9;
 const AF_CCITT: c_int = 10;
@@ -3051,53 +3341,57 @@ const AF_SIP: c_int = 24;
 const pseudo_AF_PIP: c_int = 25;
 const AF_NDRV: c_int = 27;
 const AF_ISDN: c_int = 28;
-const AF_E164: c_int = AF_ISDN;
+const AF_E164: c_int = 28;
 const pseudo_AF_KEY: c_int = 29;
 const AF_INET6: c_int = 30;
 const AF_NATM: c_int = 31;
-const AF_SYSTEM: c_int = 32;
+const AF_SYSTEM: c_uchar = 32;
 const AF_NETBIOS: c_int = 33;
 const AF_PPP: c_int = 34;
 const pseudo_AF_HDRCMPLT: c_int = 35;
-const AF_SYS_CONTROL: c_int = 2;
+const AF_IEEE80211: c_int = 37;
+const AF_UTUN: c_int = 38;
+const AF_VSOCK: c_int = 40;
+const AF_SYS_CONTROL: u16 = 2;
 const SYSPROTO_EVENT: c_int = 1;
 const SYSPROTO_CONTROL: c_int = 2;
-const PF_UNSPEC: c_int = AF_UNSPEC;
-const PF_LOCAL: c_int = AF_LOCAL;
-const PF_UNIX: c_int = PF_LOCAL;
-const PF_INET: c_int = AF_INET;
-const PF_IMPLINK: c_int = AF_IMPLINK;
-const PF_PUP: c_int = AF_PUP;
-const PF_CHAOS: c_int = AF_CHAOS;
-const PF_NS: c_int = AF_NS;
-const PF_ISO: c_int = AF_ISO;
-const PF_OSI: c_int = AF_ISO;
-const PF_ECMA: c_int = AF_ECMA;
-const PF_DATAKIT: c_int = AF_DATAKIT;
-const PF_CCITT: c_int = AF_CCITT;
-const PF_SNA: c_int = AF_SNA;
-const PF_DECnet: c_int = AF_DECnet;
-const PF_DLI: c_int = AF_DLI;
-const PF_LAT: c_int = AF_LAT;
-const PF_HYLINK: c_int = AF_HYLINK;
-const PF_APPLETALK: c_int = AF_APPLETALK;
-const PF_ROUTE: c_int = AF_ROUTE;
-const PF_LINK: c_int = AF_LINK;
-const PF_XTP: c_int = pseudo_AF_XTP;
-const PF_COIP: c_int = AF_COIP;
-const PF_CNT: c_int = AF_CNT;
-const PF_SIP: c_int = AF_SIP;
-const PF_IPX: c_int = AF_IPX;
-const PF_RTIP: c_int = pseudo_AF_RTIP;
-const PF_PIP: c_int = pseudo_AF_PIP;
-const PF_NDRV: c_int = AF_NDRV;
-const PF_ISDN: c_int = AF_ISDN;
-const PF_KEY: c_int = pseudo_AF_KEY;
-const PF_INET6: c_int = AF_INET6;
-const PF_NATM: c_int = AF_NATM;
-const PF_SYSTEM: c_int = AF_SYSTEM;
-const PF_NETBIOS: c_int = AF_NETBIOS;
-const PF_PPP: c_int = AF_PPP;
+const PF_UNSPEC: c_int = 0;
+const PF_LOCAL: c_int = 1;
+const PF_UNIX: c_int = 1;
+const PF_INET: c_int = 2;
+const PF_IMPLINK: c_int = 3;
+const PF_PUP: c_int = 4;
+const PF_CHAOS: c_int = 5;
+const PF_NS: c_int = 6;
+const PF_ISO: c_int = 7;
+const PF_OSI: c_int = 7;
+const PF_ECMA: c_int = 8;
+const PF_DATAKIT: c_int = 9;
+const PF_CCITT: c_int = 10;
+const PF_SNA: c_int = 11;
+const PF_DECnet: c_int = 12;
+const PF_DLI: c_int = 13;
+const PF_LAT: c_int = 14;
+const PF_HYLINK: c_int = 15;
+const PF_APPLETALK: c_int = 16;
+const PF_ROUTE: c_int = 17;
+const PF_LINK: c_int = 18;
+const PF_XTP: c_int = 19;
+const PF_COIP: c_int = 20;
+const PF_CNT: c_int = 21;
+const PF_SIP: c_int = 24;
+const PF_IPX: c_int = 23;
+const PF_RTIP: c_int = 22;
+const PF_PIP: c_int = 25;
+const PF_NDRV: c_int = 27;
+const PF_ISDN: c_int = 28;
+const PF_KEY: c_int = 29;
+const PF_INET6: c_int = 30;
+const PF_NATM: c_int = 31;
+const PF_SYSTEM: c_int = 32;
+const PF_NETBIOS: c_int = 33;
+const PF_PPP: c_int = 34;
+const PF_VSOCK: c_int = 40;
 const NET_RT_DUMP: c_int = 1;
 const NET_RT_FLAGS: c_int = 2;
 const NET_RT_IFLIST: c_int = 3;
@@ -3114,6 +3408,7 @@ const IP_RECVDSTADDR: c_int = 7;
 const IP_ADD_MEMBERSHIP: c_int = 12;
 const IP_DROP_MEMBERSHIP: c_int = 13;
 const IP_RECVIF: c_int = 20;
+const IP_RECVTTL: c_int = 24;
 const IP_BOUND_IF: c_int = 25;
 const IP_PKTINFO: c_int = 26;
 const IP_RECVTOS: c_int = 27;
@@ -3123,10 +3418,10 @@ const IPV6_LEAVE_GROUP: c_int = 13;
 const IPV6_CHECKSUM: c_int = 26;
 const IPV6_RECVTCLASS: c_int = 35;
 const IPV6_TCLASS: c_int = 36;
+const IPV6_RECVHOPLIMIT: c_int = 37;
 const IPV6_PKTINFO: c_int = 46;
 const IPV6_HOPLIMIT: c_int = 47;
 const IPV6_RECVPKTINFO: c_int = 61;
-const IPV6_DONTFRAG: c_int = 62;
 const IP_ADD_SOURCE_MEMBERSHIP: c_int = 70;
 const IP_DROP_SOURCE_MEMBERSHIP: c_int = 71;
 const IP_BLOCK_SOURCE: c_int = 72;
@@ -3134,106 +3429,111 @@ const IP_UNBLOCK_SOURCE: c_int = 73;
 const IPV6_BOUND_IF: c_int = 125;
 const TCP_NOPUSH: c_int = 4;
 const TCP_NOOPT: c_int = 8;
-const TCP_KEEPALIVE: c_int = 0x10;
-const TCP_KEEPINTVL: c_int = 0x101;
-const TCP_KEEPCNT: c_int = 0x102;
-const TCP_FASTOPEN: c_int = 0x105;
+const TCP_KEEPALIVE: c_int = 16;
+const TCP_KEEPINTVL: c_int = 257;
+const TCP_KEEPCNT: c_int = 258;
+const TCP_FASTOPEN: c_int = 261;
+const TCP_CONNECTION_INFO: c_int = 262;
 const SOL_LOCAL: c_int = 0;
-const LOCAL_PEERCRED: c_int = 0x001;
-const LOCAL_PEERPID: c_int = 0x002;
-const LOCAL_PEEREPID: c_int = 0x003;
-const LOCAL_PEERUUID: c_int = 0x004;
-const LOCAL_PEEREUUID: c_int = 0x005;
-const SOL_SOCKET: c_int = 0xffff;
-const SO_DEBUG: c_int = 0x01;
-const SO_ACCEPTCONN: c_int = 0x0002;
-const SO_REUSEADDR: c_int = 0x0004;
-const SO_KEEPALIVE: c_int = 0x0008;
-const SO_DONTROUTE: c_int = 0x0010;
-const SO_BROADCAST: c_int = 0x0020;
-const SO_USELOOPBACK: c_int = 0x0040;
-const SO_LINGER: c_int = 0x0080;
-const SO_OOBINLINE: c_int = 0x0100;
-const SO_REUSEPORT: c_int = 0x0200;
-const SO_TIMESTAMP: c_int = 0x0400;
-const SO_TIMESTAMP_MONOTONIC: c_int = 0x0800;
-const SO_DONTTRUNC: c_int = 0x2000;
-const SO_WANTMORE: c_int = 0x4000;
-const SO_WANTOOBFLAG: c_int = 0x8000;
-const SO_SNDBUF: c_int = 0x1001;
-const SO_RCVBUF: c_int = 0x1002;
-const SO_SNDLOWAT: c_int = 0x1003;
-const SO_RCVLOWAT: c_int = 0x1004;
-const SO_SNDTIMEO: c_int = 0x1005;
-const SO_RCVTIMEO: c_int = 0x1006;
-const SO_ERROR: c_int = 0x1007;
-const SO_TYPE: c_int = 0x1008;
-const SO_LABEL: c_int = 0x1010;
-const SO_PEERLABEL: c_int = 0x1011;
-const SO_NREAD: c_int = 0x1020;
-const SO_NKE: c_int = 0x1021;
-const SO_NOSIGPIPE: c_int = 0x1022;
-const SO_NOADDRERR: c_int = 0x1023;
-const SO_NWRITE: c_int = 0x1024;
-const SO_REUSESHAREUID: c_int = 0x1025;
-const SO_NOTIFYCONFLICT: c_int = 0x1026;
-const SO_LINGER_SEC: c_int = 0x1080;
-const SO_RANDOMPORT: c_int = 0x1082;
-const SO_NP_EXTENSIONS: c_int = 0x1083;
-const MSG_OOB: c_int = 0x1;
-const MSG_PEEK: c_int = 0x2;
-const MSG_DONTROUTE: c_int = 0x4;
-const MSG_EOR: c_int = 0x8;
-const MSG_TRUNC: c_int = 0x10;
-const MSG_CTRUNC: c_int = 0x20;
-const MSG_WAITALL: c_int = 0x40;
-const MSG_DONTWAIT: c_int = 0x80;
-const MSG_EOF: c_int = 0x100;
-const MSG_FLUSH: c_int = 0x400;
-const MSG_HOLD: c_int = 0x800;
-const MSG_SEND: c_int = 0x1000;
-const MSG_HAVEMORE: c_int = 0x2000;
-const MSG_RCVMORE: c_int = 0x4000;
-const SCM_TIMESTAMP: c_int = 0x02;
-const SCM_CREDS: c_int = 0x03;
-const IFF_UP: c_int = 0x1;
-const IFF_BROADCAST: c_int = 0x2;
-const IFF_DEBUG: c_int = 0x4;
-const IFF_LOOPBACK: c_int = 0x8;
-const IFF_POINTOPOINT: c_int = 0x10;
-const IFF_NOTRAILERS: c_int = 0x20;
-const IFF_RUNNING: c_int = 0x40;
-const IFF_NOARP: c_int = 0x80;
-const IFF_PROMISC: c_int = 0x100;
-const IFF_ALLMULTI: c_int = 0x200;
-const IFF_OACTIVE: c_int = 0x400;
-const IFF_SIMPLEX: c_int = 0x800;
-const IFF_LINK0: c_int = 0x1000;
-const IFF_LINK1: c_int = 0x2000;
-const IFF_LINK2: c_int = 0x4000;
-const IFF_ALTPHYS: c_int = IFF_LINK2;
-const IFF_MULTICAST: c_int = 0x8000;
+const LOCAL_PEERCRED: c_int = 1;
+const LOCAL_PEERPID: c_int = 2;
+const LOCAL_PEEREPID: c_int = 3;
+const LOCAL_PEERUUID: c_int = 4;
+const LOCAL_PEEREUUID: c_int = 5;
+const LOCAL_PEERTOKEN: c_int = 6;
+const SOL_SOCKET: c_int = 65535;
+const SO_DEBUG: c_int = 1;
+const SO_ACCEPTCONN: c_int = 2;
+const SO_REUSEADDR: c_int = 4;
+const SO_KEEPALIVE: c_int = 8;
+const SO_DONTROUTE: c_int = 16;
+const SO_BROADCAST: c_int = 32;
+const SO_USELOOPBACK: c_int = 64;
+const SO_LINGER: c_int = 128;
+const SO_OOBINLINE: c_int = 256;
+const SO_REUSEPORT: c_int = 512;
+const SO_TIMESTAMP: c_int = 1024;
+const SO_TIMESTAMP_MONOTONIC: c_int = 2048;
+const SO_DONTTRUNC: c_int = 8192;
+const SO_WANTMORE: c_int = 16384;
+const SO_WANTOOBFLAG: c_int = 32768;
+const SO_SNDBUF: c_int = 4097;
+const SO_RCVBUF: c_int = 4098;
+const SO_SNDLOWAT: c_int = 4099;
+const SO_RCVLOWAT: c_int = 4100;
+const SO_SNDTIMEO: c_int = 4101;
+const SO_RCVTIMEO: c_int = 4102;
+const SO_ERROR: c_int = 4103;
+const SO_TYPE: c_int = 4104;
+const SO_LABEL: c_int = 4112;
+const SO_PEERLABEL: c_int = 4113;
+const SO_NREAD: c_int = 4128;
+const SO_NKE: c_int = 4129;
+const SO_NOSIGPIPE: c_int = 4130;
+const SO_NOADDRERR: c_int = 4131;
+const SO_NWRITE: c_int = 4132;
+const SO_REUSESHAREUID: c_int = 4133;
+const SO_NOTIFYCONFLICT: c_int = 4134;
+const SO_LINGER_SEC: c_int = 4224;
+const SO_RANDOMPORT: c_int = 4226;
+const SO_NP_EXTENSIONS: c_int = 4227;
+const MSG_OOB: c_int = 1;
+const MSG_PEEK: c_int = 2;
+const MSG_DONTROUTE: c_int = 4;
+const MSG_EOR: c_int = 8;
+const MSG_TRUNC: c_int = 16;
+const MSG_CTRUNC: c_int = 32;
+const MSG_WAITALL: c_int = 64;
+const MSG_DONTWAIT: c_int = 128;
+const MSG_EOF: c_int = 256;
+const MSG_FLUSH: c_int = 1024;
+const MSG_HOLD: c_int = 2048;
+const MSG_SEND: c_int = 4096;
+const MSG_HAVEMORE: c_int = 8192;
+const MSG_RCVMORE: c_int = 16384;
+const MSG_NEEDSA: c_int = 65536;
+const MSG_NOSIGNAL: c_int = 524288;
+const SCM_TIMESTAMP: c_int = 2;
+const SCM_CREDS: c_int = 3;
+const IFF_UP: c_int = 1;
+const IFF_BROADCAST: c_int = 2;
+const IFF_DEBUG: c_int = 4;
+const IFF_LOOPBACK: c_int = 8;
+const IFF_POINTOPOINT: c_int = 16;
+const IFF_NOTRAILERS: c_int = 32;
+const IFF_RUNNING: c_int = 64;
+const IFF_NOARP: c_int = 128;
+const IFF_PROMISC: c_int = 256;
+const IFF_ALLMULTI: c_int = 512;
+const IFF_OACTIVE: c_int = 1024;
+const IFF_SIMPLEX: c_int = 2048;
+const IFF_LINK0: c_int = 4096;
+const IFF_LINK1: c_int = 8192;
+const IFF_LINK2: c_int = 16384;
+const IFF_ALTPHYS: c_int = 16384;
+const IFF_MULTICAST: c_int = 32768;
+const SCOPE6_ID_MAX: size_t = 16;
 const SHUT_RD: c_int = 0;
 const SHUT_WR: c_int = 1;
 const SHUT_RDWR: c_int = 2;
 const SAE_ASSOCID_ANY: sae_associd_t = 0;
-const SAE_ASSOCID_ALL: sae_associd_t = 0xffffffff;
+const SAE_ASSOCID_ALL: sae_associd_t = 4294967295;
 const SAE_CONNID_ANY: sae_connid_t = 0;
-const SAE_CONNID_ALL: sae_connid_t = 0xffffffff;
-const CONNECT_RESUME_ON_READ_WRITE: c_uint = 0x1;
-const CONNECT_DATA_IDEMPOTENT: c_uint = 0x2;
-const CONNECT_DATA_AUTHENTICATED: c_uint = 0x4;
+const SAE_CONNID_ALL: sae_connid_t = 4294967295;
+const CONNECT_RESUME_ON_READ_WRITE: c_uint = 1;
+const CONNECT_DATA_IDEMPOTENT: c_uint = 2;
+const CONNECT_DATA_AUTHENTICATED: c_uint = 4;
 const LOCK_SH: c_int = 1;
 const LOCK_EX: c_int = 2;
 const LOCK_NB: c_int = 4;
 const LOCK_UN: c_int = 8;
-const MAP_COPY: c_int = 0x0002;
-const MAP_RENAME: c_int = 0x0020;
-const MAP_NORESERVE: c_int = 0x0040;
-const MAP_NOEXTEND: c_int = 0x0100;
-const MAP_HASSEMAPHORE: c_int = 0x0200;
-const MAP_NOCACHE: c_int = 0x0400;
-const MAP_JIT: c_int = 0x0800;
+const MAP_COPY: c_int = 2;
+const MAP_RENAME: c_int = 32;
+const MAP_NORESERVE: c_int = 64;
+const MAP_NOEXTEND: c_int = 256;
+const MAP_HASSEMAPHORE: c_int = 512;
+const MAP_NOCACHE: c_int = 1024;
+const MAP_JIT: c_int = 2048;
 const _SC_ARG_MAX: c_int = 1;
 const _SC_CHILD_MAX: c_int = 2;
 const _SC_CLK_TCK: c_int = 3;
@@ -3322,7 +3622,7 @@ const _SC_V6_LPBIG_OFFBIG: c_int = 106;
 const _SC_IPV6: c_int = 118;
 const _SC_RAW_SOCKETS: c_int = 119;
 const _SC_SYMLOOP_MAX: c_int = 120;
-const _SC_PAGE_SIZE: c_int = _SC_PAGESIZE;
+const _SC_PAGE_SIZE: c_int = 29;
 const _SC_XOPEN_STREAMS: c_int = 114;
 const _SC_XBS5_ILP32_OFF32: c_int = 122;
 const _SC_XBS5_ILP32_OFFBIG: c_int = 123;
@@ -3338,32 +3638,19 @@ const _CS_PATH: c_int = 1;
 const _CS_DARWIN_USER_DIR: c_int = 65536;
 const _CS_DARWIN_USER_TEMP_DIR: c_int = 65537;
 const _CS_DARWIN_USER_CACHE_DIR: c_int = 65538;
-const PTHREAD_MUTEX_NORMAL: c_int = 0;
-const PTHREAD_MUTEX_ERRORCHECK: c_int = 1;
-const PTHREAD_MUTEX_RECURSIVE: c_int = 2;
-const PTHREAD_MUTEX_DEFAULT: c_int = PTHREAD_MUTEX_NORMAL;
-const _PTHREAD_MUTEX_SIG_init: c_long = 0x32AAABA7;
-const _PTHREAD_COND_SIG_init: c_long = 0x3CB0B1BB;
-const _PTHREAD_RWLOCK_SIG_init: c_long = 0x2DA8B3B4;
-const PTHREAD_MUTEX_INITIALIZER: pthread_mutex_t = pthread_mutex_t { __sig: _PTHREAD_MUTEX_SIG_init, __opaque: std::mem::zeroed() };
-const PTHREAD_COND_INITIALIZER: pthread_cond_t = pthread_cond_t { __sig: _PTHREAD_COND_SIG_init, __opaque: std::mem::zeroed() };
-const PTHREAD_RWLOCK_INITIALIZER: pthread_rwlock_t = pthread_rwlock_t { __sig: _PTHREAD_RWLOCK_SIG_init, __opaque: std::mem::zeroed() };
 const OS_UNFAIR_LOCK_INIT: os_unfair_lock = os_unfair_lock { _os_unfair_lock_opaque: 0 };
-const OS_LOG_TYPE_DEFAULT: os_log_type_t = 0x00;
-const OS_LOG_TYPE_INFO: os_log_type_t = 0x01;
-const OS_LOG_TYPE_DEBUG: os_log_type_t = 0x02;
-const OS_LOG_TYPE_ERROR: os_log_type_t = 0x10;
-const OS_LOG_TYPE_FAULT: os_log_type_t = 0x11;
-const OS_SIGNPOST_EVENT: os_signpost_type_t = 0x00;
-const OS_SIGNPOST_INTERVAL_BEGIN: os_signpost_type_t = 0x01;
-const OS_SIGNPOST_INTERVAL_END: os_signpost_type_t = 0x02;
+const OS_LOG_TYPE_DEFAULT: os_log_type_t = 0;
+const OS_LOG_TYPE_INFO: os_log_type_t = 1;
+const OS_LOG_TYPE_DEBUG: os_log_type_t = 2;
+const OS_LOG_TYPE_ERROR: os_log_type_t = 16;
+const OS_LOG_TYPE_FAULT: os_log_type_t = 17;
+const OS_SIGNPOST_EVENT: os_signpost_type_t = 0;
+const OS_SIGNPOST_INTERVAL_BEGIN: os_signpost_type_t = 1;
+const OS_SIGNPOST_INTERVAL_END: os_signpost_type_t = 2;
 const MINSIGSTKSZ: size_t = 32768;
 const SIGSTKSZ: size_t = 131072;
-const FD_SETSIZE: usize = 1024;
+const FD_SETSIZE: c_int = 1024;
 const ST_NOSUID: c_ulong = 2;
-const SCHED_OTHER: c_int = 1;
-const SCHED_FIFO: c_int = 4;
-const SCHED_RR: c_int = 2;
 const EVFILT_READ: i16 = -1;
 const EVFILT_WRITE: i16 = -2;
 const EVFILT_AIO: i16 = -3;
@@ -3375,136 +3662,139 @@ const EVFILT_MACHPORT: i16 = -8;
 const EVFILT_FS: i16 = -9;
 const EVFILT_USER: i16 = -10;
 const EVFILT_VM: i16 = -12;
-const EV_ADD: u16 = 0x1;
-const EV_DELETE: u16 = 0x2;
-const EV_ENABLE: u16 = 0x4;
-const EV_DISABLE: u16 = 0x8;
-const EV_ONESHOT: u16 = 0x10;
-const EV_CLEAR: u16 = 0x20;
-const EV_RECEIPT: u16 = 0x40;
-const EV_DISPATCH: u16 = 0x80;
-const EV_FLAG0: u16 = 0x1000;
-const EV_POLL: u16 = 0x1000;
-const EV_FLAG1: u16 = 0x2000;
-const EV_OOBAND: u16 = 0x2000;
-const EV_ERROR: u16 = 0x4000;
-const EV_EOF: u16 = 0x8000;
-const EV_SYSFLAGS: u16 = 0xf000;
-const NOTE_TRIGGER: u32 = 0x01000000;
-const NOTE_FFNOP: u32 = 0x00000000;
-const NOTE_FFAND: u32 = 0x40000000;
-const NOTE_FFOR: u32 = 0x80000000;
-const NOTE_FFCOPY: u32 = 0xc0000000;
-const NOTE_FFCTRLMASK: u32 = 0xc0000000;
-const NOTE_FFLAGSMASK: u32 = 0x00ffffff;
-const NOTE_LOWAT: u32 = 0x00000001;
-const NOTE_DELETE: u32 = 0x00000001;
-const NOTE_WRITE: u32 = 0x00000002;
-const NOTE_EXTEND: u32 = 0x00000004;
-const NOTE_ATTRIB: u32 = 0x00000008;
-const NOTE_LINK: u32 = 0x00000010;
-const NOTE_RENAME: u32 = 0x00000020;
-const NOTE_REVOKE: u32 = 0x00000040;
-const NOTE_NONE: u32 = 0x00000080;
-const NOTE_EXIT: u32 = 0x80000000;
-const NOTE_FORK: u32 = 0x40000000;
-const NOTE_EXEC: u32 = 0x20000000;
-const NOTE_REAP: u32 = 0x10000000;
-const NOTE_SIGNAL: u32 = 0x08000000;
-const NOTE_EXITSTATUS: u32 = 0x04000000;
-const NOTE_EXIT_DETAIL: u32 = 0x02000000;
-const NOTE_PDATAMASK: u32 = 0x000fffff;
-const NOTE_PCTRLMASK: u32 = 0xfff00000;
-const NOTE_EXIT_REPARENTED: u32 = 0x00080000;
-const NOTE_EXIT_DETAIL_MASK: u32 = 0x00070000;
-const NOTE_EXIT_DECRYPTFAIL: u32 = 0x00010000;
-const NOTE_EXIT_MEMORY: u32 = 0x00020000;
-const NOTE_EXIT_CSERROR: u32 = 0x00040000;
-const NOTE_VM_PRESSURE: u32 = 0x80000000;
-const NOTE_VM_PRESSURE_TERMINATE: u32 = 0x40000000;
-const NOTE_VM_PRESSURE_SUDDEN_TERMINATE: u32 = 0x20000000;
-const NOTE_VM_ERROR: u32 = 0x10000000;
-const NOTE_SECONDS: u32 = 0x00000001;
-const NOTE_USECONDS: u32 = 0x00000002;
-const NOTE_NSECONDS: u32 = 0x00000004;
-const NOTE_ABSOLUTE: u32 = 0x00000008;
-const NOTE_LEEWAY: u32 = 0x00000010;
-const NOTE_CRITICAL: u32 = 0x00000020;
-const NOTE_BACKGROUND: u32 = 0x00000040;
-const NOTE_TRACK: u32 = 0x00000001;
-const NOTE_TRACKERR: u32 = 0x00000002;
-const NOTE_CHILD: u32 = 0x00000004;
-const OCRNL: tcflag_t = 0x00000010;
-const ONOCR: tcflag_t = 0x00000020;
-const ONLRET: tcflag_t = 0x00000040;
-const OFILL: tcflag_t = 0x00000080;
-const NLDLY: tcflag_t = 0x00000300;
-const TABDLY: tcflag_t = 0x00000c04;
-const CRDLY: tcflag_t = 0x00003000;
-const FFDLY: tcflag_t = 0x00004000;
-const BSDLY: tcflag_t = 0x00008000;
-const VTDLY: tcflag_t = 0x00010000;
-const OFDEL: tcflag_t = 0x00020000;
-const NL0: tcflag_t = 0x00000000;
-const NL1: tcflag_t = 0x00000100;
-const TAB0: tcflag_t = 0x00000000;
-const TAB1: tcflag_t = 0x00000400;
-const TAB2: tcflag_t = 0x00000800;
-const CR0: tcflag_t = 0x00000000;
-const CR1: tcflag_t = 0x00001000;
-const CR2: tcflag_t = 0x00002000;
-const CR3: tcflag_t = 0x00003000;
-const FF0: tcflag_t = 0x00000000;
-const FF1: tcflag_t = 0x00004000;
-const BS0: tcflag_t = 0x00000000;
-const BS1: tcflag_t = 0x00008000;
-const TAB3: tcflag_t = 0x00000004;
-const VT0: tcflag_t = 0x00000000;
-const VT1: tcflag_t = 0x00010000;
-const IUTF8: tcflag_t = 0x00004000;
-const CRTSCTS: tcflag_t = 0x00030000;
+const EV_ADD: u16 = 1;
+const EV_DELETE: u16 = 2;
+const EV_ENABLE: u16 = 4;
+const EV_DISABLE: u16 = 8;
+const EV_ONESHOT: u16 = 16;
+const EV_CLEAR: u16 = 32;
+const EV_RECEIPT: u16 = 64;
+const EV_DISPATCH: u16 = 128;
+const EV_FLAG0: u16 = 4096;
+const EV_POLL: u16 = 4096;
+const EV_FLAG1: u16 = 8192;
+const EV_OOBAND: u16 = 8192;
+const EV_ERROR: u16 = 16384;
+const EV_EOF: u16 = 32768;
+const EV_SYSFLAGS: u16 = 61440;
+const NOTE_TRIGGER: u32 = 16777216;
+const NOTE_FFNOP: u32 = 0;
+const NOTE_FFAND: u32 = 1073741824;
+const NOTE_FFOR: u32 = 2147483648;
+const NOTE_FFCOPY: u32 = 3221225472;
+const NOTE_FFCTRLMASK: u32 = 3221225472;
+const NOTE_FFLAGSMASK: u32 = 16777215;
+const NOTE_LOWAT: u32 = 1;
+const NOTE_DELETE: u32 = 1;
+const NOTE_WRITE: u32 = 2;
+const NOTE_EXTEND: u32 = 4;
+const NOTE_ATTRIB: u32 = 8;
+const NOTE_LINK: u32 = 16;
+const NOTE_RENAME: u32 = 32;
+const NOTE_REVOKE: u32 = 64;
+const NOTE_NONE: u32 = 128;
+const NOTE_EXIT: u32 = 2147483648;
+const NOTE_FORK: u32 = 1073741824;
+const NOTE_EXEC: u32 = 536870912;
+const NOTE_REAP: u32 = 268435456;
+const NOTE_SIGNAL: u32 = 134217728;
+const NOTE_EXITSTATUS: u32 = 67108864;
+const NOTE_EXIT_DETAIL: u32 = 33554432;
+const NOTE_PDATAMASK: u32 = 1048575;
+const NOTE_PCTRLMASK: u32 = 4293918720;
+const NOTE_EXIT_REPARENTED: u32 = 524288;
+const NOTE_EXIT_DETAIL_MASK: u32 = 458752;
+const NOTE_EXIT_DECRYPTFAIL: u32 = 65536;
+const NOTE_EXIT_MEMORY: u32 = 131072;
+const NOTE_EXIT_CSERROR: u32 = 262144;
+const NOTE_VM_PRESSURE: u32 = 2147483648;
+const NOTE_VM_PRESSURE_TERMINATE: u32 = 1073741824;
+const NOTE_VM_PRESSURE_SUDDEN_TERMINATE: u32 = 536870912;
+const NOTE_VM_ERROR: u32 = 268435456;
+const NOTE_SECONDS: u32 = 1;
+const NOTE_USECONDS: u32 = 2;
+const NOTE_NSECONDS: u32 = 4;
+const NOTE_ABSOLUTE: u32 = 8;
+const NOTE_LEEWAY: u32 = 16;
+const NOTE_CRITICAL: u32 = 32;
+const NOTE_BACKGROUND: u32 = 64;
+const NOTE_MACH_CONTINUOUS_TIME: u32 = 128;
+const NOTE_MACHTIME: u32 = 256;
+const NOTE_TRACK: u32 = 1;
+const NOTE_TRACKERR: u32 = 2;
+const NOTE_CHILD: u32 = 4;
+const OCRNL: tcflag_t = 16;
+const ONOCR: tcflag_t = 32;
+const ONLRET: tcflag_t = 64;
+const OFILL: tcflag_t = 128;
+const NLDLY: tcflag_t = 768;
+const TABDLY: tcflag_t = 3076;
+const CRDLY: tcflag_t = 12288;
+const FFDLY: tcflag_t = 16384;
+const BSDLY: tcflag_t = 32768;
+const VTDLY: tcflag_t = 65536;
+const OFDEL: tcflag_t = 131072;
+const NL0: tcflag_t = 0;
+const NL1: tcflag_t = 256;
+const TAB0: tcflag_t = 0;
+const TAB1: tcflag_t = 1024;
+const TAB2: tcflag_t = 2048;
+const CR0: tcflag_t = 0;
+const CR1: tcflag_t = 4096;
+const CR2: tcflag_t = 8192;
+const CR3: tcflag_t = 12288;
+const FF0: tcflag_t = 0;
+const FF1: tcflag_t = 16384;
+const BS0: tcflag_t = 0;
+const BS1: tcflag_t = 32768;
+const TAB3: tcflag_t = 4;
+const VT0: tcflag_t = 0;
+const VT1: tcflag_t = 65536;
+const IUTF8: tcflag_t = 16384;
+const CRTSCTS: tcflag_t = 196608;
 const NI_MAXHOST: socklen_t = 1025;
 const NI_MAXSERV: socklen_t = 32;
-const NI_NOFQDN: c_int = 0x00000001;
-const NI_NUMERICHOST: c_int = 0x00000002;
-const NI_NAMEREQD: c_int = 0x00000004;
-const NI_NUMERICSERV: c_int = 0x00000008;
-const NI_NUMERICSCOPE: c_int = 0x00000100;
-const NI_DGRAM: c_int = 0x00000010;
-const Q_GETQUOTA: c_int = 0x300;
-const Q_SETQUOTA: c_int = 0x400;
-const RENAME_SWAP: c_uint = 0x00000002;
-const RENAME_EXCL: c_uint = 0x00000004;
-const RTLD_LOCAL: c_int = 0x4;
-const RTLD_FIRST: c_int = 0x100;
-const RTLD_NODELETE: c_int = 0x80;
-const RTLD_NOLOAD: c_int = 0x10;
-const RTLD_GLOBAL: c_int = 0x8;
-const _WSTOPPED: c_int = 0o177;
-const LOG_NETINFO: c_int = 12 << 3;
-const LOG_REMOTEAUTH: c_int = 13 << 3;
-const LOG_INSTALL: c_int = 14 << 3;
-const LOG_RAS: c_int = 15 << 3;
-const LOG_LAUNCHD: c_int = 24 << 3;
+const NI_NOFQDN: c_int = 1;
+const NI_NUMERICHOST: c_int = 2;
+const NI_NAMEREQD: c_int = 4;
+const NI_NUMERICSERV: c_int = 8;
+const NI_NUMERICSCOPE: c_int = 256;
+const NI_DGRAM: c_int = 16;
+const Q_GETQUOTA: c_int = 768;
+const Q_SETQUOTA: c_int = 1024;
+const RENAME_SWAP: c_uint = 2;
+const RENAME_EXCL: c_uint = 4;
+const RTLD_LOCAL: c_int = 4;
+const RTLD_FIRST: c_int = 256;
+const RTLD_NODELETE: c_int = 128;
+const RTLD_NOLOAD: c_int = 16;
+const RTLD_GLOBAL: c_int = 8;
+const RTLD_MAIN_ONLY: &mut c_void = (-(5) as &mut c_void);
+const _WSTOPPED: c_int = 127;
+const LOG_NETINFO: c_int = 96;
+const LOG_REMOTEAUTH: c_int = 104;
+const LOG_INSTALL: c_int = 112;
+const LOG_RAS: c_int = 120;
+const LOG_LAUNCHD: c_int = 192;
 const LOG_NFACILITIES: c_int = 25;
-const CTLTYPE: c_int = 0xf;
+const CTLTYPE: c_int = 15;
 const CTLTYPE_NODE: c_int = 1;
 const CTLTYPE_INT: c_int = 2;
 const CTLTYPE_STRING: c_int = 3;
 const CTLTYPE_QUAD: c_int = 4;
 const CTLTYPE_OPAQUE: c_int = 5;
-const CTLTYPE_STRUCT: c_int = CTLTYPE_OPAQUE;
-const CTLFLAG_RD: c_int = 0x80000000;
-const CTLFLAG_WR: c_int = 0x40000000;
-const CTLFLAG_RW: c_int = CTLFLAG_RD | CTLFLAG_WR;
-const CTLFLAG_NOLOCK: c_int = 0x20000000;
-const CTLFLAG_ANYBODY: c_int = 0x10000000;
-const CTLFLAG_SECURE: c_int = 0x08000000;
-const CTLFLAG_MASKED: c_int = 0x04000000;
-const CTLFLAG_NOAUTO: c_int = 0x02000000;
-const CTLFLAG_KERN: c_int = 0x01000000;
-const CTLFLAG_LOCKED: c_int = 0x00800000;
-const CTLFLAG_OID2: c_int = 0x00400000;
+const CTLTYPE_STRUCT: c_int = 5;
+const CTLFLAG_RD: c_int = -2147483648;
+const CTLFLAG_WR: c_int = 1073741824;
+const CTLFLAG_RW: c_int = -1073741824;
+const CTLFLAG_NOLOCK: c_int = 536870912;
+const CTLFLAG_ANYBODY: c_int = 268435456;
+const CTLFLAG_SECURE: c_int = 134217728;
+const CTLFLAG_MASKED: c_int = 67108864;
+const CTLFLAG_NOAUTO: c_int = 33554432;
+const CTLFLAG_KERN: c_int = 16777216;
+const CTLFLAG_LOCKED: c_int = 8388608;
+const CTLFLAG_OID2: c_int = 4194304;
 const CTL_UNSPEC: c_int = 0;
 const CTL_KERN: c_int = 1;
 const CTL_VM: c_int = 2;
@@ -3537,7 +3827,7 @@ const KERN_JOB_CONTROL: c_int = 19;
 const KERN_SAVED_IDS: c_int = 20;
 const KERN_BOOTTIME: c_int = 21;
 const KERN_NISDOMAINNAME: c_int = 22;
-const KERN_DOMAINNAME: c_int = KERN_NISDOMAINNAME;
+const KERN_DOMAINNAME: c_int = 22;
 const KERN_MAXPARTITIONS: c_int = 23;
 const KERN_KDEBUG: c_int = 24;
 const KERN_UPDATEINTERVAL: c_int = 25;
@@ -3558,9 +3848,9 @@ const KERN_NETBOOT: c_int = 40;
 const KERN_SYSV: c_int = 42;
 const KERN_AFFINITY: c_int = 43;
 const KERN_TRANSLATE: c_int = 44;
-const KERN_CLASSIC: c_int = KERN_TRANSLATE;
+const KERN_CLASSIC: c_int = 44;
 const KERN_EXEC: c_int = 45;
-const KERN_CLASSICHANDLER: c_int = KERN_EXEC;
+const KERN_CLASSICHANDLER: c_int = 45;
 const KERN_AIOMAX: c_int = 46;
 const KERN_AIOPROCMAX: c_int = 47;
 const KERN_AIOTHREADS: c_int = 48;
@@ -3693,10 +3983,10 @@ const VM_LOADAVG: c_int = 2;
 const VM_MACHFACTOR: c_int = 4;
 const VM_SWAPUSAGE: c_int = 5;
 const VM_MAXID: c_int = 6;
-const VM_PROT_NONE: vm_prot_t = 0x00;
-const VM_PROT_READ: vm_prot_t = 0x01;
-const VM_PROT_WRITE: vm_prot_t = 0x02;
-const VM_PROT_EXECUTE: vm_prot_t = 0x04;
+const VM_PROT_NONE: vm_prot_t = 0;
+const VM_PROT_READ: vm_prot_t = 1;
+const VM_PROT_WRITE: vm_prot_t = 2;
+const VM_PROT_EXECUTE: vm_prot_t = 4;
 const MEMORY_OBJECT_NULL: memory_object_t = 0;
 const HW_MACHINE: c_int = 1;
 const HW_MODEL: c_int = 2;
@@ -3752,20 +4042,20 @@ const CTL_DEBUG_VALUE: c_int = 1;
 const CTL_DEBUG_MAXID: c_int = 20;
 const PRIO_DARWIN_THREAD: c_int = 3;
 const PRIO_DARWIN_PROCESS: c_int = 4;
-const PRIO_DARWIN_BG: c_int = 0x1000;
-const PRIO_DARWIN_NONUI: c_int = 0x1001;
-const SEM_FAILED: &mut sem_t = -1isize as &mut sem_t;
-const AI_PASSIVE: c_int = 0x00000001;
-const AI_CANONNAME: c_int = 0x00000002;
-const AI_NUMERICHOST: c_int = 0x00000004;
-const AI_NUMERICSERV: c_int = 0x00001000;
-const AI_MASK: c_int = AI_PASSIVE | AI_CANONNAME | AI_NUMERICHOST | AI_NUMERICSERV | AI_ADDRCONFIG;
-const AI_ALL: c_int = 0x00000100;
-const AI_V4MAPPED_CFG: c_int = 0x00000200;
-const AI_ADDRCONFIG: c_int = 0x00000400;
-const AI_V4MAPPED: c_int = 0x00000800;
-const AI_DEFAULT: c_int = AI_V4MAPPED_CFG | AI_ADDRCONFIG;
-const AI_UNUSABLE: c_int = 0x10000000;
+const PRIO_DARWIN_BG: c_int = 4096;
+const PRIO_DARWIN_NONUI: c_int = 4097;
+const SEM_FAILED: &mut sem_t = (-(1) as &mut sem_t);
+const AI_PASSIVE: c_int = 1;
+const AI_CANONNAME: c_int = 2;
+const AI_NUMERICHOST: c_int = 4;
+const AI_NUMERICSERV: c_int = 4096;
+const AI_MASK: c_int = 5127;
+const AI_ALL: c_int = 256;
+const AI_V4MAPPED_CFG: c_int = 512;
+const AI_ADDRCONFIG: c_int = 1024;
+const AI_V4MAPPED: c_int = 2048;
+const AI_DEFAULT: c_int = 1536;
+const AI_UNUSABLE: c_int = 268435456;
 const SIGEV_NONE: c_int = 0;
 const SIGEV_SIGNAL: c_int = 1;
 const SIGEV_THREAD: c_int = 3;
@@ -3778,96 +4068,62 @@ const LIO_WRITE: c_int = 2;
 const LIO_READ: c_int = 1;
 const LIO_WAIT: c_int = 2;
 const LIO_NOWAIT: c_int = 1;
-const WEXITED: c_int = 0x00000004;
-const WSTOPPED: c_int = 0x00000008;
-const WCONTINUED: c_int = 0x00000010;
-const WNOWAIT: c_int = 0x00000020;
+const WEXITED: c_int = 4;
+const WSTOPPED: c_int = 8;
+const WCONTINUED: c_int = 16;
+const WNOWAIT: c_int = 32;
 const P_ALL: idtype_t = 0;
 const P_PID: idtype_t = 1;
 const P_PGID: idtype_t = 2;
 const UTIME_OMIT: c_long = -2;
 const UTIME_NOW: c_long = -1;
-const XATTR_NOFOLLOW: c_int = 0x0001;
-const XATTR_CREATE: c_int = 0x0002;
-const XATTR_REPLACE: c_int = 0x0004;
-const XATTR_NOSECURITY: c_int = 0x0008;
-const XATTR_NODEFAULT: c_int = 0x0010;
-const XATTR_SHOWCOMPRESSION: c_int = 0x0020;
-const NET_RT_IFLIST2: c_int = 0x0006;
-const RTF_UP: c_int = 0x1;
-const RTF_GATEWAY: c_int = 0x2;
-const RTF_HOST: c_int = 0x4;
-const RTF_REJECT: c_int = 0x8;
-const RTF_DYNAMIC: c_int = 0x10;
-const RTF_MODIFIED: c_int = 0x20;
-const RTF_DONE: c_int = 0x40;
-const RTF_DELCLONE: c_int = 0x80;
-const RTF_CLONING: c_int = 0x100;
-const RTF_XRESOLVE: c_int = 0x200;
-const RTF_LLINFO: c_int = 0x400;
-const RTF_STATIC: c_int = 0x800;
-const RTF_BLACKHOLE: c_int = 0x1000;
-const RTF_NOIFREF: c_int = 0x2000;
-const RTF_PROTO2: c_int = 0x4000;
-const RTF_PROTO1: c_int = 0x8000;
-const RTF_PRCLONING: c_int = 0x10000;
-const RTF_WASCLONED: c_int = 0x20000;
-const RTF_PROTO3: c_int = 0x40000;
-const RTF_PINNED: c_int = 0x100000;
-const RTF_LOCAL: c_int = 0x200000;
-const RTF_BROADCAST: c_int = 0x400000;
-const RTF_MULTICAST: c_int = 0x800000;
-const RTF_IFSCOPE: c_int = 0x1000000;
-const RTF_CONDEMNED: c_int = 0x2000000;
-const RTF_IFREF: c_int = 0x4000000;
-const RTF_PROXY: c_int = 0x8000000;
-const RTF_ROUTER: c_int = 0x10000000;
-const RTF_DEAD: c_int = 0x20000000;
-const RTF_GLOBAL: c_int = 0x40000000;
+const XATTR_NOFOLLOW: c_int = 1;
+const XATTR_CREATE: c_int = 2;
+const XATTR_REPLACE: c_int = 4;
+const XATTR_NOSECURITY: c_int = 8;
+const XATTR_NODEFAULT: c_int = 16;
+const XATTR_SHOWCOMPRESSION: c_int = 32;
+const NET_RT_IFLIST2: c_int = 6;
+const RTF_DELCLONE: c_int = 128;
+const RTF_CLONING: c_int = 256;
+const RTF_XRESOLVE: c_int = 512;
+const RTF_LLINFO: c_int = 1024;
+const RTF_NOIFREF: c_int = 8192;
+const RTF_PRCLONING: c_int = 65536;
+const RTF_WASCLONED: c_int = 131072;
+const RTF_PROTO3: c_int = 262144;
+const RTF_PINNED: c_int = 1048576;
+const RTF_LOCAL: c_int = 2097152;
+const RTF_BROADCAST: c_int = 4194304;
+const RTF_MULTICAST: c_int = 8388608;
+const RTF_IFSCOPE: c_int = 16777216;
+const RTF_CONDEMNED: c_int = 33554432;
+const RTF_IFREF: c_int = 67108864;
+const RTF_PROXY: c_int = 134217728;
+const RTF_ROUTER: c_int = 268435456;
+const RTF_DEAD: c_int = 536870912;
+const RTF_GLOBAL: c_int = 1073741824;
 const RTM_VERSION: c_int = 5;
-const RTM_ADD: c_int = 0x1;
-const RTM_DELETE: c_int = 0x2;
-const RTM_CHANGE: c_int = 0x3;
-const RTM_GET: c_int = 0x4;
-const RTM_LOSING: c_int = 0x5;
-const RTM_REDIRECT: c_int = 0x6;
-const RTM_MISS: c_int = 0x7;
-const RTM_LOCK: c_int = 0x8;
-const RTM_OLDADD: c_int = 0x9;
-const RTM_OLDDEL: c_int = 0xa;
-const RTM_RESOLVE: c_int = 0xb;
-const RTM_NEWADDR: c_int = 0xc;
-const RTM_DELADDR: c_int = 0xd;
-const RTM_IFINFO: c_int = 0xe;
-const RTM_NEWMADDR: c_int = 0xf;
-const RTM_DELMADDR: c_int = 0x10;
-const RTM_IFINFO2: c_int = 0x12;
-const RTM_NEWMADDR2: c_int = 0x13;
-const RTM_GET2: c_int = 0x14;
-const RTV_MTU: c_int = 0x1;
-const RTV_HOPCOUNT: c_int = 0x2;
-const RTV_EXPIRE: c_int = 0x4;
-const RTV_RPIPE: c_int = 0x8;
-const RTV_SPIPE: c_int = 0x10;
-const RTV_SSTHRESH: c_int = 0x20;
-const RTV_RTT: c_int = 0x40;
-const RTV_RTTVAR: c_int = 0x80;
-const RTA_DST: c_int = 0x1;
-const RTA_GATEWAY: c_int = 0x2;
-const RTA_NETMASK: c_int = 0x4;
-const RTA_GENMASK: c_int = 0x8;
-const RTA_IFP: c_int = 0x10;
-const RTA_IFA: c_int = 0x20;
-const RTA_AUTHOR: c_int = 0x40;
-const RTA_BRD: c_int = 0x80;
-const RTAX_DST: c_int = 0;
-const RTAX_GATEWAY: c_int = 1;
-const RTAX_NETMASK: c_int = 2;
-const RTAX_GENMASK: c_int = 3;
-const RTAX_IFP: c_int = 4;
-const RTAX_IFA: c_int = 5;
-const RTAX_AUTHOR: c_int = 6;
-const RTAX_BRD: c_int = 7;
+const RTM_LOCK: c_int = 8;
+const RTM_OLDADD: c_int = 9;
+const RTM_OLDDEL: c_int = 10;
+const RTM_RESOLVE: c_int = 11;
+const RTM_NEWADDR: c_int = 12;
+const RTM_DELADDR: c_int = 13;
+const RTM_IFINFO: c_int = 14;
+const RTM_NEWMADDR: c_int = 15;
+const RTM_DELMADDR: c_int = 16;
+const RTM_IFINFO2: c_int = 18;
+const RTM_NEWMADDR2: c_int = 19;
+const RTM_GET2: c_int = 20;
+const RTV_MTU: c_int = 1;
+const RTV_HOPCOUNT: c_int = 2;
+const RTV_EXPIRE: c_int = 4;
+const RTV_RPIPE: c_int = 8;
+const RTV_SPIPE: c_int = 16;
+const RTV_SSTHRESH: c_int = 32;
+const RTV_RTT: c_int = 64;
+const RTV_RTTVAR: c_int = 128;
 const RTAX_MAX: c_int = 8;
 const KERN_PROCARGS2: c_int = 49;
 const PROC_PIDTASKALLINFO: c_int = 2;
@@ -3876,16 +4132,29 @@ const PROC_PIDTASKINFO: c_int = 4;
 const PROC_PIDTHREADINFO: c_int = 5;
 const PROC_PIDVNODEPATHINFO: c_int = 9;
 const PROC_PIDPATHINFO_MAXSIZE: c_int = 4096;
-const PROC_CSM_ALL: c_uint = 0x0001;
-const PROC_CSM_NOSMT: c_uint = 0x0002;
-const PROC_CSM_TECS: c_uint = 0x0004;
+const PROC_PIDLISTFDS: c_int = 1;
+const PROC_PIDLISTFD_SIZE: c_int = 8;
+const PROX_FDTYPE_ATALK: c_int = 0;
+const PROX_FDTYPE_VNODE: c_int = 1;
+const PROX_FDTYPE_SOCKET: c_int = 2;
+const PROX_FDTYPE_PSHM: c_int = 3;
+const PROX_FDTYPE_PSEM: c_int = 4;
+const PROX_FDTYPE_KQUEUE: c_int = 5;
+const PROX_FDTYPE_PIPE: c_int = 6;
+const PROX_FDTYPE_FSEVENTS: c_int = 7;
+const PROX_FDTYPE_NETPOLICY: c_int = 9;
+const PROX_FDTYPE_CHANNEL: c_int = 10;
+const PROX_FDTYPE_NEXUS: c_int = 11;
+const PROC_CSM_ALL: c_uint = 1;
+const PROC_CSM_NOSMT: c_uint = 2;
+const PROC_CSM_TECS: c_uint = 4;
 const MAXCOMLEN: usize = 16;
 const MAXTHREADNAMESIZE: usize = 64;
 const XUCRED_VERSION: c_uint = 0;
-const LC_SEGMENT: u32 = 0x1;
-const LC_SEGMENT_64: u32 = 0x19;
-const MH_MAGIC: u32 = 0xfeedface;
-const MH_MAGIC_64: u32 = 0xfeedfacf;
+const LC_SEGMENT: u32 = 1;
+const LC_SEGMENT_64: u32 = 25;
+const MH_MAGIC: u32 = 4277009102;
+const MH_MAGIC_64: u32 = 4277009103;
 const UTUN_OPT_FLAGS: c_int = 1;
 const UTUN_OPT_IFNAME: c_int = 2;
 const DLT_NULL: c_uint = 0;
@@ -3903,42 +4172,42 @@ const DLT_ATM_RFC1483: c_uint = 11;
 const DLT_RAW: c_uint = 12;
 const DLT_LOOP: c_uint = 108;
 const BPF_ALIGNMENT: c_int = 4;
-const MNT_NODEV: c_int = 0x00000010;
-const MNT_UNION: c_int = 0x00000020;
-const MNT_CPROTECT: c_int = 0x00000080;
-const MNT_QUARANTINE: c_int = 0x00000400;
-const MNT_LOCAL: c_int = 0x00001000;
-const MNT_QUOTA: c_int = 0x00002000;
-const MNT_ROOTFS: c_int = 0x00004000;
-const MNT_DOVOLFS: c_int = 0x00008000;
-const MNT_DONTBROWSE: c_int = 0x00100000;
-const MNT_IGNORE_OWNERSHIP: c_int = 0x00200000;
-const MNT_AUTOMOUNTED: c_int = 0x00400000;
-const MNT_JOURNALED: c_int = 0x00800000;
-const MNT_NOUSERXATTR: c_int = 0x01000000;
-const MNT_DEFWRITE: c_int = 0x02000000;
-const MNT_MULTILABEL: c_int = 0x04000000;
-const MNT_NOATIME: c_int = 0x10000000;
-const MNT_SNAPSHOT: c_int = 0x40000000;
-const MNT_NOBLOCK: c_int = 0x00020000;
-const POSIX_SPAWN_RESETIDS: c_int = 0x01;
-const POSIX_SPAWN_SETPGROUP: c_int = 0x02;
-const POSIX_SPAWN_SETSIGDEF: c_int = 0x04;
-const POSIX_SPAWN_SETSIGMASK: c_int = 0x08;
-const POSIX_SPAWN_SETEXEC: c_int = 0x40;
-const POSIX_SPAWN_START_SUSPENDED: c_int = 0x80;
-const POSIX_SPAWN_CLOEXEC_DEFAULT: c_int = 0x4000;
-const IPC_CREAT: c_int = 0x200;
-const IPC_EXCL: c_int = 0x400;
-const IPC_NOWAIT: c_int = 0x800;
+const MNT_NODEV: c_int = 16;
+const MNT_UNION: c_int = 32;
+const MNT_CPROTECT: c_int = 128;
+const MNT_QUARANTINE: c_int = 1024;
+const MNT_LOCAL: c_int = 4096;
+const MNT_QUOTA: c_int = 8192;
+const MNT_ROOTFS: c_int = 16384;
+const MNT_DOVOLFS: c_int = 32768;
+const MNT_DONTBROWSE: c_int = 1048576;
+const MNT_IGNORE_OWNERSHIP: c_int = 2097152;
+const MNT_AUTOMOUNTED: c_int = 4194304;
+const MNT_JOURNALED: c_int = 8388608;
+const MNT_NOUSERXATTR: c_int = 16777216;
+const MNT_DEFWRITE: c_int = 33554432;
+const MNT_MULTILABEL: c_int = 67108864;
+const MNT_NOATIME: c_int = 268435456;
+const MNT_SNAPSHOT: c_int = 1073741824;
+const MNT_NOBLOCK: c_int = 131072;
+const POSIX_SPAWN_RESETIDS: c_short = 1;
+const POSIX_SPAWN_SETPGROUP: c_short = 2;
+const POSIX_SPAWN_SETSIGDEF: c_short = 4;
+const POSIX_SPAWN_SETSIGMASK: c_short = 8;
+const POSIX_SPAWN_SETEXEC: c_short = 64;
+const POSIX_SPAWN_START_SUSPENDED: c_short = 128;
+const POSIX_SPAWN_CLOEXEC_DEFAULT: c_short = 16384;
+const IPC_CREAT: c_int = 512;
+const IPC_EXCL: c_int = 1024;
+const IPC_NOWAIT: c_int = 2048;
 const IPC_PRIVATE: key_t = 0;
 const IPC_RMID: c_int = 0;
 const IPC_SET: c_int = 1;
 const IPC_STAT: c_int = 2;
-const IPC_R: c_int = 0x100;
-const IPC_W: c_int = 0x80;
-const IPC_M: c_int = 0x1000;
-const SEM_UNDO: c_int = 0o10000;
+const IPC_R: c_int = 256;
+const IPC_W: c_int = 128;
+const IPC_M: c_int = 4096;
+const SEM_UNDO: c_int = 4096;
 const GETNCNT: c_int = 3;
 const GETPID: c_int = 4;
 const GETVAL: c_int = 5;
@@ -3946,23 +4215,23 @@ const GETALL: c_int = 6;
 const GETZCNT: c_int = 7;
 const SETVAL: c_int = 8;
 const SETALL: c_int = 9;
-const SHM_RDONLY: c_int = 0x1000;
-const SHM_RND: c_int = 0x2000;
-const SHMLBA: c_int = 16 * 1024;
-const SHM_R: c_int = IPC_R;
-const SHM_W: c_int = IPC_W;
-const UF_SETTABLE: c_uint = 0x0000ffff;
-const UF_NODUMP: c_uint = 0x00000001;
-const UF_IMMUTABLE: c_uint = 0x00000002;
-const UF_APPEND: c_uint = 0x00000004;
-const UF_OPAQUE: c_uint = 0x00000008;
-const UF_COMPRESSED: c_uint = 0x00000020;
-const UF_TRACKED: c_uint = 0x00000040;
-const SF_SETTABLE: c_uint = 0xffff0000;
-const SF_ARCHIVED: c_uint = 0x00010000;
-const SF_IMMUTABLE: c_uint = 0x00020000;
-const SF_APPEND: c_uint = 0x00040000;
-const UF_HIDDEN: c_uint = 0x00008000;
+const SHM_RDONLY: c_int = 4096;
+const SHM_RND: c_int = 8192;
+const SHMLBA: c_int = 16384;
+const SHM_R: c_int = 256;
+const SHM_W: c_int = 128;
+const UF_SETTABLE: c_uint = 65535;
+const UF_NODUMP: c_uint = 1;
+const UF_IMMUTABLE: c_uint = 2;
+const UF_APPEND: c_uint = 4;
+const UF_OPAQUE: c_uint = 8;
+const UF_COMPRESSED: c_uint = 32;
+const UF_TRACKED: c_uint = 64;
+const SF_SETTABLE: c_uint = 1073676288;
+const SF_ARCHIVED: c_uint = 65536;
+const SF_IMMUTABLE: c_uint = 131072;
+const SF_APPEND: c_uint = 262144;
+const UF_HIDDEN: c_uint = 32768;
 const NTP_API: c_int = 4;
 const MAXPHASE: c_long = 500000000;
 const MAXFREQ: c_long = 500000;
@@ -3971,35 +4240,35 @@ const MAXSEC: c_int = 2048;
 const NANOSECOND: c_long = 1000000000;
 const SCALE_PPM: c_int = 65;
 const MAXTC: c_int = 10;
-const MOD_OFFSET: c_uint = 0x0001;
-const MOD_FREQUENCY: c_uint = 0x0002;
-const MOD_MAXERROR: c_uint = 0x0004;
-const MOD_ESTERROR: c_uint = 0x0008;
-const MOD_STATUS: c_uint = 0x0010;
-const MOD_TIMECONST: c_uint = 0x0020;
-const MOD_PPSMAX: c_uint = 0x0040;
-const MOD_TAI: c_uint = 0x0080;
-const MOD_MICRO: c_uint = 0x1000;
-const MOD_NANO: c_uint = 0x2000;
-const MOD_CLKB: c_uint = 0x4000;
-const MOD_CLKA: c_uint = 0x8000;
-const STA_PLL: c_int = 0x0001;
-const STA_PPSFREQ: c_int = 0x0002;
-const STA_PPSTIME: c_int = 0x0004;
-const STA_FLL: c_int = 0x0008;
-const STA_INS: c_int = 0x0010;
-const STA_DEL: c_int = 0x0020;
-const STA_UNSYNC: c_int = 0x0040;
-const STA_FREQHOLD: c_int = 0x0080;
-const STA_PPSSIGNAL: c_int = 0x0100;
-const STA_PPSJITTER: c_int = 0x0200;
-const STA_PPSWANDER: c_int = 0x0400;
-const STA_PPSERROR: c_int = 0x0800;
-const STA_CLOCKERR: c_int = 0x1000;
-const STA_NANO: c_int = 0x2000;
-const STA_MODE: c_int = 0x4000;
-const STA_CLK: c_int = 0x8000;
-const STA_RONLY: c_int = STA_PPSSIGNAL | STA_PPSJITTER | STA_PPSWANDER | STA_PPSERROR | STA_CLOCKERR | STA_NANO | STA_MODE | STA_CLK;
+const MOD_OFFSET: c_uint = 1;
+const MOD_FREQUENCY: c_uint = 2;
+const MOD_MAXERROR: c_uint = 4;
+const MOD_ESTERROR: c_uint = 8;
+const MOD_STATUS: c_uint = 16;
+const MOD_TIMECONST: c_uint = 32;
+const MOD_PPSMAX: c_uint = 64;
+const MOD_TAI: c_uint = 128;
+const MOD_MICRO: c_uint = 4096;
+const MOD_NANO: c_uint = 8192;
+const MOD_CLKB: c_uint = 16384;
+const MOD_CLKA: c_uint = 32768;
+const STA_PLL: c_int = 1;
+const STA_PPSFREQ: c_int = 2;
+const STA_PPSTIME: c_int = 4;
+const STA_FLL: c_int = 8;
+const STA_INS: c_int = 16;
+const STA_DEL: c_int = 32;
+const STA_UNSYNC: c_int = 64;
+const STA_FREQHOLD: c_int = 128;
+const STA_PPSSIGNAL: c_int = 256;
+const STA_PPSJITTER: c_int = 512;
+const STA_PPSWANDER: c_int = 1024;
+const STA_PPSERROR: c_int = 2048;
+const STA_CLOCKERR: c_int = 4096;
+const STA_NANO: c_int = 8192;
+const STA_MODE: c_int = 16384;
+const STA_CLK: c_int = 32768;
+const STA_RONLY: c_int = 65280;
 const TIME_OK: c_int = 0;
 const TIME_INS: c_int = 1;
 const TIME_DEL: c_int = 2;
@@ -4016,7 +4285,7 @@ const THREAD_PRECEDENCE_POLICY: c_int = 3;
 const THREAD_AFFINITY_POLICY: c_int = 4;
 const THREAD_AFFINITY_TAG_NULL: c_int = 0;
 const THREAD_BACKGROUND_POLICY: c_int = 5;
-const THREAD_BACKGROUND_POLICY_DARWIN_BG: c_int = 0x1000;
+const THREAD_BACKGROUND_POLICY_DARWIN_BG: c_int = 4096;
 const THREAD_LATENCY_QOS_POLICY: c_int = 7;
 const THREAD_THROUGHPUT_QOS_POLICY: c_int = 8;
 const TH_STATE_RUNNING: c_int = 1;
@@ -4024,9 +4293,9 @@ const TH_STATE_STOPPED: c_int = 2;
 const TH_STATE_WAITING: c_int = 3;
 const TH_STATE_UNINTERRUPTIBLE: c_int = 4;
 const TH_STATE_HALTED: c_int = 5;
-const TH_FLAGS_SWAPPED: c_int = 0x1;
-const TH_FLAGS_IDLE: c_int = 0x2;
-const TH_FLAGS_GLOBAL_FORCED_IDLE: c_int = 0x4;
+const TH_FLAGS_SWAPPED: c_int = 1;
+const TH_FLAGS_IDLE: c_int = 2;
+const TH_FLAGS_GLOBAL_FORCED_IDLE: c_int = 4;
 const THREAD_BASIC_INFO: c_int = 3;
 const THREAD_IDENTIFIER_INFO: c_int = 4;
 const THREAD_EXTENDED_INFO: c_int = 5;
@@ -4049,17 +4318,17 @@ const HOST_CPU_LOAD_INFO: i32 = 3;
 const HOST_VM_INFO64: i32 = 4;
 const HOST_EXTMOD_INFO64: i32 = 5;
 const HOST_EXPIRED_TASK_INFO: i32 = 6;
-const VM_PAGE_QUERY_PAGE_PRESENT: i32 = 0x1;
-const VM_PAGE_QUERY_PAGE_FICTITIOUS: i32 = 0x2;
-const VM_PAGE_QUERY_PAGE_REF: i32 = 0x4;
-const VM_PAGE_QUERY_PAGE_DIRTY: i32 = 0x8;
-const VM_PAGE_QUERY_PAGE_PAGED_OUT: i32 = 0x10;
-const VM_PAGE_QUERY_PAGE_COPIED: i32 = 0x20;
-const VM_PAGE_QUERY_PAGE_SPECULATIVE: i32 = 0x40;
-const VM_PAGE_QUERY_PAGE_EXTERNAL: i32 = 0x80;
-const VM_PAGE_QUERY_PAGE_CS_VALIDATED: i32 = 0x100;
-const VM_PAGE_QUERY_PAGE_CS_TAINTED: i32 = 0x200;
-const VM_PAGE_QUERY_PAGE_CS_NX: i32 = 0x400;
+const VM_PAGE_QUERY_PAGE_PRESENT: i32 = 1;
+const VM_PAGE_QUERY_PAGE_FICTITIOUS: i32 = 2;
+const VM_PAGE_QUERY_PAGE_REF: i32 = 4;
+const VM_PAGE_QUERY_PAGE_DIRTY: i32 = 8;
+const VM_PAGE_QUERY_PAGE_PAGED_OUT: i32 = 16;
+const VM_PAGE_QUERY_PAGE_COPIED: i32 = 32;
+const VM_PAGE_QUERY_PAGE_SPECULATIVE: i32 = 64;
+const VM_PAGE_QUERY_PAGE_EXTERNAL: i32 = 128;
+const VM_PAGE_QUERY_PAGE_CS_VALIDATED: i32 = 256;
+const VM_PAGE_QUERY_PAGE_CS_TAINTED: i32 = 512;
+const VM_PAGE_QUERY_PAGE_CS_NX: i32 = 1024;
 const TASK_THREAD_TIMES_INFO: u32 = 3;
 const HOST_CPU_LOAD_INFO_COUNT: u32 = 4;
 const MACH_TASK_BASIC_INFO: u32 = 20;
@@ -4069,28 +4338,28 @@ const RUSAGE_INFO_V1: c_int = 1;
 const RUSAGE_INFO_V2: c_int = 2;
 const RUSAGE_INFO_V3: c_int = 3;
 const RUSAGE_INFO_V4: c_int = 4;
-const COPYFILE_ACL: copyfile_flags_t = 1 << 0;
-const COPYFILE_STAT: copyfile_flags_t = 1 << 1;
-const COPYFILE_XATTR: copyfile_flags_t = 1 << 2;
-const COPYFILE_DATA: copyfile_flags_t = 1 << 3;
-const COPYFILE_SECURITY: copyfile_flags_t = COPYFILE_STAT | COPYFILE_ACL;
-const COPYFILE_METADATA: copyfile_flags_t = COPYFILE_SECURITY | COPYFILE_XATTR;
-const COPYFILE_RECURSIVE: copyfile_flags_t = 1 << 15;
-const COPYFILE_CHECK: copyfile_flags_t = 1 << 16;
-const COPYFILE_EXCL: copyfile_flags_t = 1 << 17;
-const COPYFILE_NOFOLLOW_SRC: copyfile_flags_t = 1 << 18;
-const COPYFILE_NOFOLLOW_DST: copyfile_flags_t = 1 << 19;
-const COPYFILE_MOVE: copyfile_flags_t = 1 << 20;
-const COPYFILE_UNLINK: copyfile_flags_t = 1 << 21;
-const COPYFILE_NOFOLLOW: copyfile_flags_t = COPYFILE_NOFOLLOW_SRC | COPYFILE_NOFOLLOW_DST;
-const COPYFILE_PACK: copyfile_flags_t = 1 << 22;
-const COPYFILE_UNPACK: copyfile_flags_t = 1 << 23;
-const COPYFILE_CLONE: copyfile_flags_t = 1 << 24;
-const COPYFILE_CLONE_FORCE: copyfile_flags_t = 1 << 25;
-const COPYFILE_RUN_IN_PLACE: copyfile_flags_t = 1 << 26;
-const COPYFILE_DATA_SPARSE: copyfile_flags_t = 1 << 27;
-const COPYFILE_PRESERVE_DST_TRACKED: copyfile_flags_t = 1 << 28;
-const COPYFILE_VERBOSE: copyfile_flags_t = 1 << 30;
+const COPYFILE_ACL: copyfile_flags_t = 1;
+const COPYFILE_STAT: copyfile_flags_t = 2;
+const COPYFILE_XATTR: copyfile_flags_t = 4;
+const COPYFILE_DATA: copyfile_flags_t = 8;
+const COPYFILE_SECURITY: copyfile_flags_t = 3;
+const COPYFILE_METADATA: copyfile_flags_t = 7;
+const COPYFILE_RECURSIVE: copyfile_flags_t = 32768;
+const COPYFILE_CHECK: copyfile_flags_t = 65536;
+const COPYFILE_EXCL: copyfile_flags_t = 131072;
+const COPYFILE_NOFOLLOW_SRC: copyfile_flags_t = 262144;
+const COPYFILE_NOFOLLOW_DST: copyfile_flags_t = 524288;
+const COPYFILE_MOVE: copyfile_flags_t = 1048576;
+const COPYFILE_UNLINK: copyfile_flags_t = 2097152;
+const COPYFILE_NOFOLLOW: copyfile_flags_t = 786432;
+const COPYFILE_PACK: copyfile_flags_t = 4194304;
+const COPYFILE_UNPACK: copyfile_flags_t = 8388608;
+const COPYFILE_CLONE: copyfile_flags_t = 16777216;
+const COPYFILE_CLONE_FORCE: copyfile_flags_t = 33554432;
+const COPYFILE_RUN_IN_PLACE: copyfile_flags_t = 67108864;
+const COPYFILE_DATA_SPARSE: copyfile_flags_t = 134217728;
+const COPYFILE_PRESERVE_DST_TRACKED: copyfile_flags_t = 268435456;
+const COPYFILE_VERBOSE: copyfile_flags_t = 1073741824;
 const COPYFILE_RECURSE_ERROR: c_int = 0;
 const COPYFILE_RECURSE_FILE: c_int = 1;
 const COPYFILE_RECURSE_DIR: c_int = 2;
@@ -4104,226 +4373,251 @@ const COPYFILE_PROGRESS: c_int = 4;
 const COPYFILE_CONTINUE: c_int = 0;
 const COPYFILE_SKIP: c_int = 1;
 const COPYFILE_QUIT: c_int = 2;
+const COPYFILE_STATE_SRC_FD: c_int = 1;
+const COPYFILE_STATE_SRC_FILENAME: c_int = 2;
+const COPYFILE_STATE_DST_FD: c_int = 3;
+const COPYFILE_STATE_DST_FILENAME: c_int = 4;
+const COPYFILE_STATE_QUARANTINE: c_int = 5;
+const COPYFILE_STATE_STATUS_CB: c_int = 6;
+const COPYFILE_STATE_STATUS_CTX: c_int = 7;
+const COPYFILE_STATE_COPIED: c_int = 8;
+const COPYFILE_STATE_XATTRNAME: c_int = 9;
+const COPYFILE_STATE_WAS_CLONED: c_int = 10;
+const COPYFILE_STATE_SRC_BSIZE: c_int = 11;
+const COPYFILE_STATE_DST_BSIZE: c_int = 12;
+const COPYFILE_STATE_BSIZE: c_int = 13;
 const ATTR_BIT_MAP_COUNT: c_ushort = 5;
-const FSOPT_NOFOLLOW: u32 = 0x1;
-const FSOPT_NOFOLLOW_ANY: u32 = 0x800;
-const FSOPT_REPORT_FULLSIZE: u32 = 0x4;
-const FSOPT_PACK_INVAL_ATTRS: u32 = 0x8;
-const FSOPT_ATTR_CMN_EXTENDED: u32 = 0x20;
-const FSOPT_RETURN_REALDEV: u32 = 0x200;
-const ATTR_CMN_NAME: attrgroup_t = 0x00000001;
-const ATTR_CMN_DEVID: attrgroup_t = 0x00000002;
-const ATTR_CMN_FSID: attrgroup_t = 0x00000004;
-const ATTR_CMN_OBJTYPE: attrgroup_t = 0x00000008;
-const ATTR_CMN_OBJTAG: attrgroup_t = 0x00000010;
-const ATTR_CMN_OBJID: attrgroup_t = 0x00000020;
-const ATTR_CMN_OBJPERMANENTID: attrgroup_t = 0x00000040;
-const ATTR_CMN_PAROBJID: attrgroup_t = 0x00000080;
-const ATTR_CMN_SCRIPT: attrgroup_t = 0x00000100;
-const ATTR_CMN_CRTIME: attrgroup_t = 0x00000200;
-const ATTR_CMN_MODTIME: attrgroup_t = 0x00000400;
-const ATTR_CMN_CHGTIME: attrgroup_t = 0x00000800;
-const ATTR_CMN_ACCTIME: attrgroup_t = 0x00001000;
-const ATTR_CMN_BKUPTIME: attrgroup_t = 0x00002000;
-const ATTR_CMN_FNDRINFO: attrgroup_t = 0x00004000;
-const ATTR_CMN_OWNERID: attrgroup_t = 0x00008000;
-const ATTR_CMN_GRPID: attrgroup_t = 0x00010000;
-const ATTR_CMN_ACCESSMASK: attrgroup_t = 0x00020000;
-const ATTR_CMN_FLAGS: attrgroup_t = 0x00040000;
-const ATTR_CMN_GEN_COUNT: attrgroup_t = 0x00080000;
-const ATTR_CMN_DOCUMENT_ID: attrgroup_t = 0x00100000;
-const ATTR_CMN_USERACCESS: attrgroup_t = 0x00200000;
-const ATTR_CMN_EXTENDED_SECURITY: attrgroup_t = 0x00400000;
-const ATTR_CMN_UUID: attrgroup_t = 0x00800000;
-const ATTR_CMN_GRPUUID: attrgroup_t = 0x01000000;
-const ATTR_CMN_FILEID: attrgroup_t = 0x02000000;
-const ATTR_CMN_PARENTID: attrgroup_t = 0x04000000;
-const ATTR_CMN_FULLPATH: attrgroup_t = 0x08000000;
-const ATTR_CMN_ADDEDTIME: attrgroup_t = 0x10000000;
-const ATTR_CMN_DATA_PROTECT_FLAGS: attrgroup_t = 0x40000000;
-const ATTR_CMN_RETURNED_ATTRS: attrgroup_t = 0x80000000;
-const ATTR_VOL_FSTYPE: attrgroup_t = 0x00000001;
-const ATTR_VOL_SIGNATURE: attrgroup_t = 0x00000002;
-const ATTR_VOL_SIZE: attrgroup_t = 0x00000004;
-const ATTR_VOL_SPACEFREE: attrgroup_t = 0x00000008;
-const ATTR_VOL_SPACEAVAIL: attrgroup_t = 0x00000010;
-const ATTR_VOL_MINALLOCATION: attrgroup_t = 0x00000020;
-const ATTR_VOL_ALLOCATIONCLUMP: attrgroup_t = 0x00000040;
-const ATTR_VOL_IOBLOCKSIZE: attrgroup_t = 0x00000080;
-const ATTR_VOL_OBJCOUNT: attrgroup_t = 0x00000100;
-const ATTR_VOL_FILECOUNT: attrgroup_t = 0x00000200;
-const ATTR_VOL_DIRCOUNT: attrgroup_t = 0x00000400;
-const ATTR_VOL_MAXOBJCOUNT: attrgroup_t = 0x00000800;
-const ATTR_VOL_MOUNTPOINT: attrgroup_t = 0x00001000;
-const ATTR_VOL_NAME: attrgroup_t = 0x00002000;
-const ATTR_VOL_MOUNTFLAGS: attrgroup_t = 0x00004000;
-const ATTR_VOL_MOUNTEDDEVICE: attrgroup_t = 0x00008000;
-const ATTR_VOL_ENCODINGSUSED: attrgroup_t = 0x00010000;
-const ATTR_VOL_CAPABILITIES: attrgroup_t = 0x00020000;
-const ATTR_VOL_UUID: attrgroup_t = 0x00040000;
-const ATTR_VOL_SPACEUSED: attrgroup_t = 0x00800000;
-const ATTR_VOL_QUOTA_SIZE: attrgroup_t = 0x10000000;
-const ATTR_VOL_RESERVED_SIZE: attrgroup_t = 0x20000000;
-const ATTR_VOL_ATTRIBUTES: attrgroup_t = 0x40000000;
-const ATTR_VOL_INFO: attrgroup_t = 0x80000000;
-const ATTR_DIR_LINKCOUNT: attrgroup_t = 0x00000001;
-const ATTR_DIR_ENTRYCOUNT: attrgroup_t = 0x00000002;
-const ATTR_DIR_MOUNTSTATUS: attrgroup_t = 0x00000004;
-const ATTR_DIR_ALLOCSIZE: attrgroup_t = 0x00000008;
-const ATTR_DIR_IOBLOCKSIZE: attrgroup_t = 0x00000010;
-const ATTR_DIR_DATALENGTH: attrgroup_t = 0x00000020;
-const ATTR_FILE_LINKCOUNT: attrgroup_t = 0x00000001;
-const ATTR_FILE_TOTALSIZE: attrgroup_t = 0x00000002;
-const ATTR_FILE_ALLOCSIZE: attrgroup_t = 0x00000004;
-const ATTR_FILE_IOBLOCKSIZE: attrgroup_t = 0x00000008;
-const ATTR_FILE_DEVTYPE: attrgroup_t = 0x00000020;
-const ATTR_FILE_FORKCOUNT: attrgroup_t = 0x00000080;
-const ATTR_FILE_FORKLIST: attrgroup_t = 0x00000100;
-const ATTR_FILE_DATALENGTH: attrgroup_t = 0x00000200;
-const ATTR_FILE_DATAALLOCSIZE: attrgroup_t = 0x00000400;
-const ATTR_FILE_RSRCLENGTH: attrgroup_t = 0x00001000;
-const ATTR_FILE_RSRCALLOCSIZE: attrgroup_t = 0x00002000;
-const ATTR_CMNEXT_RELPATH: attrgroup_t = 0x00000004;
-const ATTR_CMNEXT_PRIVATESIZE: attrgroup_t = 0x00000008;
-const ATTR_CMNEXT_LINKID: attrgroup_t = 0x00000010;
-const ATTR_CMNEXT_NOFIRMLINKPATH: attrgroup_t = 0x00000020;
-const ATTR_CMNEXT_REALDEVID: attrgroup_t = 0x00000040;
-const ATTR_CMNEXT_REALFSID: attrgroup_t = 0x00000080;
-const ATTR_CMNEXT_CLONEID: attrgroup_t = 0x00000100;
-const ATTR_CMNEXT_EXT_FLAGS: attrgroup_t = 0x00000200;
-const ATTR_CMNEXT_RECURSIVE_GENCOUNT: attrgroup_t = 0x00000400;
-const DIR_MNTSTATUS_MNTPOINT: u32 = 0x1;
+const FSOPT_NOFOLLOW: u32 = 1;
+const FSOPT_NOFOLLOW_ANY: u32 = 2048;
+const FSOPT_REPORT_FULLSIZE: u32 = 4;
+const FSOPT_PACK_INVAL_ATTRS: u32 = 8;
+const FSOPT_ATTR_CMN_EXTENDED: u32 = 32;
+const FSOPT_RETURN_REALDEV: u32 = 512;
+const ATTR_CMN_NAME: attrgroup_t = 1;
+const ATTR_CMN_DEVID: attrgroup_t = 2;
+const ATTR_CMN_FSID: attrgroup_t = 4;
+const ATTR_CMN_OBJTYPE: attrgroup_t = 8;
+const ATTR_CMN_OBJTAG: attrgroup_t = 16;
+const ATTR_CMN_OBJID: attrgroup_t = 32;
+const ATTR_CMN_OBJPERMANENTID: attrgroup_t = 64;
+const ATTR_CMN_PAROBJID: attrgroup_t = 128;
+const ATTR_CMN_SCRIPT: attrgroup_t = 256;
+const ATTR_CMN_CRTIME: attrgroup_t = 512;
+const ATTR_CMN_MODTIME: attrgroup_t = 1024;
+const ATTR_CMN_CHGTIME: attrgroup_t = 2048;
+const ATTR_CMN_ACCTIME: attrgroup_t = 4096;
+const ATTR_CMN_BKUPTIME: attrgroup_t = 8192;
+const ATTR_CMN_FNDRINFO: attrgroup_t = 16384;
+const ATTR_CMN_OWNERID: attrgroup_t = 32768;
+const ATTR_CMN_GRPID: attrgroup_t = 65536;
+const ATTR_CMN_ACCESSMASK: attrgroup_t = 131072;
+const ATTR_CMN_FLAGS: attrgroup_t = 262144;
+const ATTR_CMN_GEN_COUNT: attrgroup_t = 524288;
+const ATTR_CMN_DOCUMENT_ID: attrgroup_t = 1048576;
+const ATTR_CMN_USERACCESS: attrgroup_t = 2097152;
+const ATTR_CMN_EXTENDED_SECURITY: attrgroup_t = 4194304;
+const ATTR_CMN_UUID: attrgroup_t = 8388608;
+const ATTR_CMN_GRPUUID: attrgroup_t = 16777216;
+const ATTR_CMN_FILEID: attrgroup_t = 33554432;
+const ATTR_CMN_PARENTID: attrgroup_t = 67108864;
+const ATTR_CMN_FULLPATH: attrgroup_t = 134217728;
+const ATTR_CMN_ADDEDTIME: attrgroup_t = 268435456;
+const ATTR_CMN_DATA_PROTECT_FLAGS: attrgroup_t = 1073741824;
+const ATTR_CMN_RETURNED_ATTRS: attrgroup_t = 2147483648;
+const ATTR_VOL_FSTYPE: attrgroup_t = 1;
+const ATTR_VOL_SIGNATURE: attrgroup_t = 2;
+const ATTR_VOL_SIZE: attrgroup_t = 4;
+const ATTR_VOL_SPACEFREE: attrgroup_t = 8;
+const ATTR_VOL_SPACEAVAIL: attrgroup_t = 16;
+const ATTR_VOL_MINALLOCATION: attrgroup_t = 32;
+const ATTR_VOL_ALLOCATIONCLUMP: attrgroup_t = 64;
+const ATTR_VOL_IOBLOCKSIZE: attrgroup_t = 128;
+const ATTR_VOL_OBJCOUNT: attrgroup_t = 256;
+const ATTR_VOL_FILECOUNT: attrgroup_t = 512;
+const ATTR_VOL_DIRCOUNT: attrgroup_t = 1024;
+const ATTR_VOL_MAXOBJCOUNT: attrgroup_t = 2048;
+const ATTR_VOL_MOUNTPOINT: attrgroup_t = 4096;
+const ATTR_VOL_NAME: attrgroup_t = 8192;
+const ATTR_VOL_MOUNTFLAGS: attrgroup_t = 16384;
+const ATTR_VOL_MOUNTEDDEVICE: attrgroup_t = 32768;
+const ATTR_VOL_ENCODINGSUSED: attrgroup_t = 65536;
+const ATTR_VOL_CAPABILITIES: attrgroup_t = 131072;
+const ATTR_VOL_UUID: attrgroup_t = 262144;
+const ATTR_VOL_SPACEUSED: attrgroup_t = 8388608;
+const ATTR_VOL_QUOTA_SIZE: attrgroup_t = 268435456;
+const ATTR_VOL_RESERVED_SIZE: attrgroup_t = 536870912;
+const ATTR_VOL_ATTRIBUTES: attrgroup_t = 1073741824;
+const ATTR_VOL_INFO: attrgroup_t = 2147483648;
+const ATTR_DIR_LINKCOUNT: attrgroup_t = 1;
+const ATTR_DIR_ENTRYCOUNT: attrgroup_t = 2;
+const ATTR_DIR_MOUNTSTATUS: attrgroup_t = 4;
+const ATTR_DIR_ALLOCSIZE: attrgroup_t = 8;
+const ATTR_DIR_IOBLOCKSIZE: attrgroup_t = 16;
+const ATTR_DIR_DATALENGTH: attrgroup_t = 32;
+const ATTR_FILE_LINKCOUNT: attrgroup_t = 1;
+const ATTR_FILE_TOTALSIZE: attrgroup_t = 2;
+const ATTR_FILE_ALLOCSIZE: attrgroup_t = 4;
+const ATTR_FILE_IOBLOCKSIZE: attrgroup_t = 8;
+const ATTR_FILE_DEVTYPE: attrgroup_t = 32;
+const ATTR_FILE_FORKCOUNT: attrgroup_t = 128;
+const ATTR_FILE_FORKLIST: attrgroup_t = 256;
+const ATTR_FILE_DATALENGTH: attrgroup_t = 512;
+const ATTR_FILE_DATAALLOCSIZE: attrgroup_t = 1024;
+const ATTR_FILE_RSRCLENGTH: attrgroup_t = 4096;
+const ATTR_FILE_RSRCALLOCSIZE: attrgroup_t = 8192;
+const ATTR_CMNEXT_RELPATH: attrgroup_t = 4;
+const ATTR_CMNEXT_PRIVATESIZE: attrgroup_t = 8;
+const ATTR_CMNEXT_LINKID: attrgroup_t = 16;
+const ATTR_CMNEXT_NOFIRMLINKPATH: attrgroup_t = 32;
+const ATTR_CMNEXT_REALDEVID: attrgroup_t = 64;
+const ATTR_CMNEXT_REALFSID: attrgroup_t = 128;
+const ATTR_CMNEXT_CLONEID: attrgroup_t = 256;
+const ATTR_CMNEXT_EXT_FLAGS: attrgroup_t = 512;
+const ATTR_CMNEXT_RECURSIVE_GENCOUNT: attrgroup_t = 1024;
+const DIR_MNTSTATUS_MNTPOINT: u32 = 1;
 const VOL_CAPABILITIES_FORMAT: usize = 0;
 const VOL_CAPABILITIES_INTERFACES: usize = 1;
-const VOL_CAP_FMT_PERSISTENTOBJECTIDS: attrgroup_t = 0x00000001;
-const VOL_CAP_FMT_SYMBOLICLINKS: attrgroup_t = 0x00000002;
-const VOL_CAP_FMT_HARDLINKS: attrgroup_t = 0x00000004;
-const VOL_CAP_FMT_JOURNAL: attrgroup_t = 0x00000008;
-const VOL_CAP_FMT_JOURNAL_ACTIVE: attrgroup_t = 0x00000010;
-const VOL_CAP_FMT_NO_ROOT_TIMES: attrgroup_t = 0x00000020;
-const VOL_CAP_FMT_SPARSE_FILES: attrgroup_t = 0x00000040;
-const VOL_CAP_FMT_ZERO_RUNS: attrgroup_t = 0x00000080;
-const VOL_CAP_FMT_CASE_SENSITIVE: attrgroup_t = 0x00000100;
-const VOL_CAP_FMT_CASE_PRESERVING: attrgroup_t = 0x00000200;
-const VOL_CAP_FMT_FAST_STATFS: attrgroup_t = 0x00000400;
-const VOL_CAP_FMT_2TB_FILESIZE: attrgroup_t = 0x00000800;
-const VOL_CAP_FMT_OPENDENYMODES: attrgroup_t = 0x00001000;
-const VOL_CAP_FMT_HIDDEN_FILES: attrgroup_t = 0x00002000;
-const VOL_CAP_FMT_PATH_FROM_ID: attrgroup_t = 0x00004000;
-const VOL_CAP_FMT_NO_VOLUME_SIZES: attrgroup_t = 0x00008000;
-const VOL_CAP_FMT_DECMPFS_COMPRESSION: attrgroup_t = 0x00010000;
-const VOL_CAP_FMT_64BIT_OBJECT_IDS: attrgroup_t = 0x00020000;
-const VOL_CAP_FMT_DIR_HARDLINKS: attrgroup_t = 0x00040000;
-const VOL_CAP_FMT_DOCUMENT_ID: attrgroup_t = 0x00080000;
-const VOL_CAP_FMT_WRITE_GENERATION_COUNT: attrgroup_t = 0x00100000;
-const VOL_CAP_FMT_NO_IMMUTABLE_FILES: attrgroup_t = 0x00200000;
-const VOL_CAP_FMT_NO_PERMISSIONS: attrgroup_t = 0x00400000;
-const VOL_CAP_FMT_SHARED_SPACE: attrgroup_t = 0x00800000;
-const VOL_CAP_FMT_VOL_GROUPS: attrgroup_t = 0x01000000;
-const VOL_CAP_FMT_SEALED: attrgroup_t = 0x02000000;
-const VOL_CAP_INT_SEARCHFS: attrgroup_t = 0x00000001;
-const VOL_CAP_INT_ATTRLIST: attrgroup_t = 0x00000002;
-const VOL_CAP_INT_NFSEXPORT: attrgroup_t = 0x00000004;
-const VOL_CAP_INT_READDIRATTR: attrgroup_t = 0x00000008;
-const VOL_CAP_INT_EXCHANGEDATA: attrgroup_t = 0x00000010;
-const VOL_CAP_INT_COPYFILE: attrgroup_t = 0x00000020;
-const VOL_CAP_INT_ALLOCATE: attrgroup_t = 0x00000040;
-const VOL_CAP_INT_VOL_RENAME: attrgroup_t = 0x00000080;
-const VOL_CAP_INT_ADVLOCK: attrgroup_t = 0x00000100;
-const VOL_CAP_INT_FLOCK: attrgroup_t = 0x00000200;
-const VOL_CAP_INT_EXTENDED_SECURITY: attrgroup_t = 0x00000400;
-const VOL_CAP_INT_USERACCESS: attrgroup_t = 0x00000800;
-const VOL_CAP_INT_MANLOCK: attrgroup_t = 0x00001000;
-const VOL_CAP_INT_NAMEDSTREAMS: attrgroup_t = 0x00002000;
-const VOL_CAP_INT_EXTENDED_ATTR: attrgroup_t = 0x00004000;
-const VOL_CAP_INT_CLONE: attrgroup_t = 0x00010000;
-const VOL_CAP_INT_SNAPSHOT: attrgroup_t = 0x00020000;
-const VOL_CAP_INT_RENAME_SWAP: attrgroup_t = 0x00040000;
-const VOL_CAP_INT_RENAME_EXCL: attrgroup_t = 0x00080000;
-const VOL_CAP_INT_RENAME_OPENFAIL: attrgroup_t = 0x00100000;
+const VOL_CAP_FMT_PERSISTENTOBJECTIDS: attrgroup_t = 1;
+const VOL_CAP_FMT_SYMBOLICLINKS: attrgroup_t = 2;
+const VOL_CAP_FMT_HARDLINKS: attrgroup_t = 4;
+const VOL_CAP_FMT_JOURNAL: attrgroup_t = 8;
+const VOL_CAP_FMT_JOURNAL_ACTIVE: attrgroup_t = 16;
+const VOL_CAP_FMT_NO_ROOT_TIMES: attrgroup_t = 32;
+const VOL_CAP_FMT_SPARSE_FILES: attrgroup_t = 64;
+const VOL_CAP_FMT_ZERO_RUNS: attrgroup_t = 128;
+const VOL_CAP_FMT_CASE_SENSITIVE: attrgroup_t = 256;
+const VOL_CAP_FMT_CASE_PRESERVING: attrgroup_t = 512;
+const VOL_CAP_FMT_FAST_STATFS: attrgroup_t = 1024;
+const VOL_CAP_FMT_2TB_FILESIZE: attrgroup_t = 2048;
+const VOL_CAP_FMT_OPENDENYMODES: attrgroup_t = 4096;
+const VOL_CAP_FMT_HIDDEN_FILES: attrgroup_t = 8192;
+const VOL_CAP_FMT_PATH_FROM_ID: attrgroup_t = 16384;
+const VOL_CAP_FMT_NO_VOLUME_SIZES: attrgroup_t = 32768;
+const VOL_CAP_FMT_DECMPFS_COMPRESSION: attrgroup_t = 65536;
+const VOL_CAP_FMT_64BIT_OBJECT_IDS: attrgroup_t = 131072;
+const VOL_CAP_FMT_DIR_HARDLINKS: attrgroup_t = 262144;
+const VOL_CAP_FMT_DOCUMENT_ID: attrgroup_t = 524288;
+const VOL_CAP_FMT_WRITE_GENERATION_COUNT: attrgroup_t = 1048576;
+const VOL_CAP_FMT_NO_IMMUTABLE_FILES: attrgroup_t = 2097152;
+const VOL_CAP_FMT_NO_PERMISSIONS: attrgroup_t = 4194304;
+const VOL_CAP_FMT_SHARED_SPACE: attrgroup_t = 8388608;
+const VOL_CAP_FMT_VOL_GROUPS: attrgroup_t = 16777216;
+const VOL_CAP_FMT_SEALED: attrgroup_t = 33554432;
+const VOL_CAP_INT_SEARCHFS: attrgroup_t = 1;
+const VOL_CAP_INT_ATTRLIST: attrgroup_t = 2;
+const VOL_CAP_INT_NFSEXPORT: attrgroup_t = 4;
+const VOL_CAP_INT_READDIRATTR: attrgroup_t = 8;
+const VOL_CAP_INT_EXCHANGEDATA: attrgroup_t = 16;
+const VOL_CAP_INT_COPYFILE: attrgroup_t = 32;
+const VOL_CAP_INT_ALLOCATE: attrgroup_t = 64;
+const VOL_CAP_INT_VOL_RENAME: attrgroup_t = 128;
+const VOL_CAP_INT_ADVLOCK: attrgroup_t = 256;
+const VOL_CAP_INT_FLOCK: attrgroup_t = 512;
+const VOL_CAP_INT_EXTENDED_SECURITY: attrgroup_t = 1024;
+const VOL_CAP_INT_USERACCESS: attrgroup_t = 2048;
+const VOL_CAP_INT_MANLOCK: attrgroup_t = 4096;
+const VOL_CAP_INT_NAMEDSTREAMS: attrgroup_t = 8192;
+const VOL_CAP_INT_EXTENDED_ATTR: attrgroup_t = 16384;
+const VOL_CAP_INT_CLONE: attrgroup_t = 65536;
+const VOL_CAP_INT_SNAPSHOT: attrgroup_t = 131072;
+const VOL_CAP_INT_RENAME_SWAP: attrgroup_t = 262144;
+const VOL_CAP_INT_RENAME_EXCL: attrgroup_t = 524288;
+const VOL_CAP_INT_RENAME_OPENFAIL: attrgroup_t = 1048576;
+const OS_CLOCK_MACH_ABSOLUTE_TIME: os_clockid_t = 32;
+const OS_SYNC_WAIT_ON_ADDRESS_NONE: os_sync_wait_on_address_flags_t = 0;
+const OS_SYNC_WAIT_ON_ADDRESS_SHARED: os_sync_wait_on_address_flags_t = 1;
+const OS_SYNC_WAKE_BY_ADDRESS_NONE: os_sync_wake_by_address_flags_t = 0;
+const OS_SYNC_WAKE_BY_ADDRESS_SHARED: os_sync_wake_by_address_flags_t = 1;
 const SIDL: u32 = 1;
 const SRUN: u32 = 2;
 const SSLEEP: u32 = 3;
 const SSTOP: u32 = 4;
 const SZOMB: u32 = 5;
+const VMADDR_CID_ANY: c_uint = 4294967295;
+const VMADDR_CID_HYPERVISOR: c_uint = 0;
+const VMADDR_CID_RESERVED: c_uint = 1;
+const VMADDR_CID_HOST: c_uint = 2;
+const VMADDR_PORT_ANY: c_uint = 4294967295;
+#[inline(always)]
 fn __DARWIN_ALIGN32(p: usize) -> usize {
-    const __DARWIN_ALIGNBYTES32: usize = std::mem::size_of::<u32>() - 1;
-    p + __DARWIN_ALIGNBYTES32 & !__DARWIN_ALIGNBYTES32
+    compile_fail!("unsupported")
 }
-const THREAD_EXTENDED_POLICY_COUNT: mach_msg_type_number_t = (std::mem::size_of::<thread_extended_policy_data_t>() / std::mem::size_of::<integer_t>()) as mach_msg_type_number_t;
-const THREAD_TIME_CONSTRAINT_POLICY_COUNT: mach_msg_type_number_t = (std::mem::size_of::<thread_time_constraint_policy_data_t>() / std::mem::size_of::<integer_t>()) as mach_msg_type_number_t;
-const THREAD_PRECEDENCE_POLICY_COUNT: mach_msg_type_number_t = (std::mem::size_of::<thread_precedence_policy_data_t>() / std::mem::size_of::<integer_t>()) as mach_msg_type_number_t;
-const THREAD_AFFINITY_POLICY_COUNT: mach_msg_type_number_t = (std::mem::size_of::<thread_affinity_policy_data_t>() / std::mem::size_of::<integer_t>()) as mach_msg_type_number_t;
-const THREAD_BACKGROUND_POLICY_COUNT: mach_msg_type_number_t = (std::mem::size_of::<thread_background_policy_data_t>() / std::mem::size_of::<integer_t>()) as mach_msg_type_number_t;
-const THREAD_LATENCY_QOS_POLICY_COUNT: mach_msg_type_number_t = (std::mem::size_of::<thread_latency_qos_policy_data_t>() / std::mem::size_of::<integer_t>()) as mach_msg_type_number_t;
-const THREAD_THROUGHPUT_QOS_POLICY_COUNT: mach_msg_type_number_t = (std::mem::size_of::<thread_throughput_qos_policy_data_t>() / std::mem::size_of::<integer_t>()) as mach_msg_type_number_t;
-const THREAD_BASIC_INFO_COUNT: mach_msg_type_number_t = (std::mem::size_of::<thread_basic_info_data_t>() / std::mem::size_of::<integer_t>()) as mach_msg_type_number_t;
-const THREAD_IDENTIFIER_INFO_COUNT: mach_msg_type_number_t = (std::mem::size_of::<thread_identifier_info_data_t>() / std::mem::size_of::<integer_t>()) as mach_msg_type_number_t;
-const THREAD_EXTENDED_INFO_COUNT: mach_msg_type_number_t = (std::mem::size_of::<thread_extended_info_data_t>() / std::mem::size_of::<integer_t>()) as mach_msg_type_number_t;
-const TASK_THREAD_TIMES_INFO_COUNT: u32 = (std::mem::size_of::<task_thread_times_info_data_t>() / std::mem::size_of::<natural_t>()) as u32;
-const MACH_TASK_BASIC_INFO_COUNT: u32 = (std::mem::size_of::<mach_task_basic_info_data_t>() / std::mem::size_of::<natural_t>()) as u32;
-const HOST_VM_INFO64_COUNT: mach_msg_type_number_t = (std::mem::size_of::<vm_statistics64_data_t>() / std::mem::size_of::<integer_t>()) as mach_msg_type_number_t;
-#[inline]
+const THREAD_EXTENDED_POLICY_COUNT: mach_msg_type_number_t = 1;
+const THREAD_TIME_CONSTRAINT_POLICY_COUNT: mach_msg_type_number_t = 4;
+const THREAD_PRECEDENCE_POLICY_COUNT: mach_msg_type_number_t = 1;
+const THREAD_AFFINITY_POLICY_COUNT: mach_msg_type_number_t = 1;
+const THREAD_BACKGROUND_POLICY_COUNT: mach_msg_type_number_t = 1;
+const THREAD_LATENCY_QOS_POLICY_COUNT: mach_msg_type_number_t = 1;
+const THREAD_THROUGHPUT_QOS_POLICY_COUNT: mach_msg_type_number_t = 1;
+const THREAD_BASIC_INFO_COUNT: mach_msg_type_number_t = 10;
+const THREAD_IDENTIFIER_INFO_COUNT: mach_msg_type_number_t = 6;
+const THREAD_EXTENDED_INFO_COUNT: mach_msg_type_number_t = 28;
+const TASK_THREAD_TIMES_INFO_COUNT: u32 = 4;
+const MACH_TASK_BASIC_INFO_COUNT: u32 = 12;
+const HOST_VM_INFO64_COUNT: mach_msg_type_number_t = 38;
+const IFMIB_SYSTEM: c_int = 1;
+const IFMIB_IFDATA: c_int = 2;
+const IFMIB_IFALLDATA: c_int = 3;
+const IFDATA_GENERAL: c_int = 1;
+const IFDATA_LINKSPECIFIC: c_int = 2;
+const IFDATA_ADDRS: c_int = 3;
+const IFDATA_MULTIADDRS: c_int = 4;
+const IFMIB_IFCOUNT: c_int = 1;
+const NETLINK_GENERIC: c_int = 0;
+const DOT3COMPLIANCE_STATS: c_int = 1;
+const DOT3COMPLIANCE_COLLS: c_int = 2;
+const MAX_KCTL_NAME: usize = 96;
+#[inline(always)]
 fn CMSG_NXTHDR(mhdr: &msghdr, cmsg: &cmsghdr) -> &mut cmsghdr {
-    if cmsg.is_null() {
-        return CMSG_FIRSTHDR(mhdr);
-        let cmsg_len = (*cmsg).cmsg_len as usize;
-        let next = cmsg as usize + __DARWIN_ALIGN32(cmsg_len as usize);
-        let max = (*mhdr).msg_control as usize + (*mhdr).msg_controllen as usize;
-        if next + __DARWIN_ALIGN32(std::mem::size_of::<cmsghdr>()) > max {
-            0 as &mut cmsghdr
-        } else {
-            next as &mut cmsghdr
-        }
-    }
+    compile_fail!("unsupported")
 }
-#[inline]
+#[inline(always)]
 fn CMSG_DATA(cmsg: &cmsghdr) -> &mut c_uchar {
-    (cmsg as &mut c_uchar).offset(__DARWIN_ALIGN32(std::mem::size_of::<cmsghdr>()) as isize)
+    compile_fail!("unsupported")
 }
-#[inline]
+#[inline(always)]
 fn CMSG_SPACE(length: c_uint) -> c_uint {
-    (__DARWIN_ALIGN32(std::mem::size_of::<cmsghdr>()) + __DARWIN_ALIGN32(length as usize)) as c_uint
+    ((__DARWIN_ALIGN32(size_of::<cmsghdr>()) + __DARWIN_ALIGN32((length as usize))) as c_uint)
 }
-#[inline]
+#[inline(always)]
 fn CMSG_LEN(length: c_uint) -> c_uint {
-    (__DARWIN_ALIGN32(std::mem::size_of::<cmsghdr>()) + length as usize) as c_uint
+    ((__DARWIN_ALIGN32(size_of::<cmsghdr>()) + (length as usize)) as c_uint)
 }
-#[inline]
+#[inline(always)]
 fn VM_MAKE_TAG(id: u8) -> u32 {
-    (id as u32) << 24u32
+    ((id as u32) << 24)
 }
-#[inline]
-fn major(dev: dev_t) -> i32 {
-    (dev >> 24) & 0xff
-}
-#[inline]
-fn minor(dev: dev_t) -> i32 {
-    dev & 0xffffff
-}
-#[inline]
-fn makedev(major: i32, minor: i32) -> dev_t {
-    (major << 24) | minor
-}
-#[inline]
+#[inline(always)]
 fn WSTOPSIG(status: c_int) -> c_int {
-    status >> 8
+    (status >> 8)
 }
-#[inline]
+#[inline(always)]
 fn _WSTATUS(status: c_int) -> c_int {
-    status & 0x7f
+    (status & 127)
 }
-#[inline]
+#[inline(always)]
 fn WIFCONTINUED(status: c_int) -> bool {
-    _WSTATUS(status) == _WSTOPPED && WSTOPSIG(status) == 0x13
+    ((_WSTATUS(status) == _WSTOPPED) && (WSTOPSIG(status) == 19))
 }
-#[inline]
+#[inline(always)]
 fn WIFSIGNALED(status: c_int) -> bool {
-    _WSTATUS(status) != _WSTOPPED && _WSTATUS(status) != 0
+    ((_WSTATUS(status) != _WSTOPPED) && (_WSTATUS(status) != 0))
 }
-#[inline]
+#[inline(always)]
 fn WIFSTOPPED(status: c_int) -> bool {
-    _WSTATUS(status) == _WSTOPPED && WSTOPSIG(status) != 0x13
+    ((_WSTATUS(status) == _WSTOPPED) && (WSTOPSIG(status) != 19))
+}
+#[inline(always)]
+fn makedev(major: u32, minor: u32) -> dev_t {
+    (((major << 24) | minor) as dev_t)
+}
+#[inline(always)]
+fn major(dev: u32) -> i32 {
+    (((dev >> 24) & 255) as i32)
+}
+#[inline(always)]
+fn minor(dev: u32) -> i32 {
+    ((dev & 16777215) as i32)
 }
 extern "C" fn setgrent();
 extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int;
@@ -4340,7 +4634,6 @@ extern "C" fn chflags(path: &c_char, flags: c_uint) -> c_int;
 extern "C" fn fchflags(fd: c_int, flags: c_uint) -> c_int;
 extern "C" fn clock_getres(clk_id: clockid_t, tp: &mut timespec) -> c_int;
 extern "C" fn clock_gettime(clk_id: clockid_t, tp: &mut timespec) -> c_int;
-extern "C" fn confstr(name: c_int, buf: &mut c_char, len: size_t) -> size_t;
 extern "C" fn lio_listio(mode: c_int, aiocb_list: &&mut aiocb, nitems: c_int, sevp: &mut sigevent) -> c_int;
 extern "C" fn dirfd(dirp: &mut DIR) -> c_int;
 extern "C" fn lutimes(file: &c_char, times: &timeval) -> c_int;
@@ -4355,11 +4648,10 @@ extern "C" fn utmpxname(file: &c_char) -> c_int;
 extern "C" fn asctime(tm_: &tm) -> &mut c_char;
 extern "C" fn ctime(clock: &time_t) -> &mut c_char;
 extern "C" fn getdate(datestr: &c_char) -> &mut tm;
-extern "C" fn strftime(buf: &mut c_char, maxsize: size_t, format: &c_char, timeptr: &tm) -> size_t;
 extern "C" fn strptime(buf: &c_char, format: &c_char, timeptr: &mut tm) -> &mut c_char;
 extern "C" fn asctime_r(tm_: &tm, result: &mut c_char) -> &mut c_char;
 extern "C" fn ctime_r(clock: &time_t, result: &mut c_char) -> &mut c_char;
-extern "C" fn getnameinfo(sa: &sockaddr, salen: socklen_t, host: &mut c_char, hostlen: socklen_t, serv: &mut c_char, sevlen: socklen_t, flags: c_int) -> c_int;
+extern "C" fn getnameinfo(sa: &sockaddr, salen: socklen_t, host: &mut c_char, hostlen: socklen_t, serv: &mut c_char, servlen: socklen_t, flags: c_int) -> c_int;
 extern "C" fn mincore(addr: &c_void, len: size_t, vec: &mut c_char) -> c_int;
 extern "C" fn sysctlnametomib(name: &c_char, mibp: &mut c_int, sizep: &mut size_t) -> c_int;
 extern "C" fn mprotect(addr: &mut c_void, len: size_t, prot: c_int) -> c_int;
@@ -4374,42 +4666,30 @@ extern "C" fn shmctl(shmid: c_int, cmd: c_int, buf: &mut shmid_ds) -> c_int;
 extern "C" fn shmget(key: key_t, size: size_t, shmflg: c_int) -> c_int;
 extern "C" fn sysctl(name: &mut c_int, namelen: c_uint, oldp: &mut c_void, oldlenp: &mut size_t, newp: &mut c_void, newlen: size_t) -> c_int;
 extern "C" fn sysctlbyname(name: &c_char, oldp: &mut c_void, oldlenp: &mut size_t, newp: &mut c_void, newlen: size_t) -> c_int;
-extern "C" fn mach_absolute_time() -> u64;
-extern "C" fn mach_timebase_info(info: &mut mach_timebase_info_t) -> c_int;
-extern "C" fn mach_host_self() -> mach_port_t;
-extern "C" fn mach_thread_self() -> mach_port_t;
+extern "C" fn pthread_cond_timedwait_relative_np(cond: &mut pthread_cond_t, lock: &mut pthread_mutex_t, timeout: &timespec) -> c_int;
+extern "C" fn pthread_attr_getscope(attr: &pthread_attr_t, contentionscope: &mut c_int) -> c_int;
+extern "C" fn pthread_attr_getstackaddr(attr: &pthread_attr_t, stackaddr: &mut &mut c_void) -> c_int;
+extern "C" fn pthread_attr_getdetachstate(attr: &pthread_attr_t, detachstate: &mut c_int) -> c_int;
+extern "C" fn pthread_attr_setscope(attr: &mut pthread_attr_t, contentionscope: c_int) -> c_int;
+extern "C" fn pthread_attr_setstackaddr(attr: &mut pthread_attr_t, stackaddr: &mut c_void) -> c_int;
 extern "C" fn pthread_setname_np(name: &c_char) -> c_int;
 extern "C" fn pthread_getname_np(thread: pthread_t, name: &mut c_char, len: size_t) -> c_int;
 extern "C" fn pthread_mach_thread_np(thread: pthread_t) -> mach_port_t;
 extern "C" fn pthread_from_mach_thread_np(port: mach_port_t) -> pthread_t;
-extern "C" fn pthread_create_from_mach_thread(thread: &mut pthread_t, attr: &pthread_attr_t, f: fn(&mut c_void) -> &mut c_void, value: &mut c_void) -> c_int;
-extern "C" fn pthread_stack_frame_decode_np(frame_addr: uintptr_t, return_addr: &mut uintptr_t) -> uintptr_t;
 extern "C" fn pthread_get_stackaddr_np(thread: pthread_t) -> &mut c_void;
 extern "C" fn pthread_get_stacksize_np(thread: pthread_t) -> size_t;
-extern "C" fn pthread_condattr_setpshared(attr: &mut pthread_condattr_t, pshared: c_int) -> c_int;
-extern "C" fn pthread_condattr_getpshared(attr: &pthread_condattr_t, pshared: &mut c_int) -> c_int;
 extern "C" fn pthread_main_np() -> c_int;
-extern "C" fn pthread_mutexattr_setpshared(attr: &mut pthread_mutexattr_t, pshared: c_int) -> c_int;
-extern "C" fn pthread_mutexattr_getpshared(attr: &pthread_mutexattr_t, pshared: &mut c_int) -> c_int;
-extern "C" fn pthread_rwlockattr_getpshared(attr: &pthread_rwlockattr_t, val: &mut c_int) -> c_int;
-extern "C" fn pthread_rwlockattr_setpshared(attr: &mut pthread_rwlockattr_t, val: c_int) -> c_int;
 extern "C" fn pthread_threadid_np(thread: pthread_t, thread_id: &mut u64) -> c_int;
-extern "C" fn pthread_attr_set_qos_class_np(attr: &mut pthread_attr_t, class: qos_class_t, priority: c_int) -> c_int;
-extern "C" fn pthread_attr_get_qos_class_np(attr: &mut pthread_attr_t, class: &mut qos_class_t, priority: &mut c_int) -> c_int;
-extern "C" fn pthread_set_qos_class_self_np(class: qos_class_t, priority: c_int) -> c_int;
-extern "C" fn pthread_get_qos_class_np(thread: pthread_t, class: &mut qos_class_t, priority: &mut c_int) -> c_int;
-extern "C" fn pthread_attr_getschedparam(attr: &pthread_attr_t, param: &mut sched_param) -> c_int;
-extern "C" fn pthread_attr_setschedparam(attr: &mut pthread_attr_t, param: &sched_param) -> c_int;
-extern "C" fn pthread_getschedparam(thread: pthread_t, policy: &mut c_int, param: &mut sched_param) -> c_int;
-extern "C" fn pthread_setschedparam(thread: pthread_t, policy: c_int, param: &sched_param) -> c_int;
-extern "C" fn pthread_introspection_hook_install(hook: pthread_introspection_hook_t) -> pthread_introspection_hook_t;
-extern "C" fn pthread_introspection_setspecific_np(thread: pthread_t, key: pthread_key_t, value: &c_void) -> c_int;
-extern "C" fn pthread_introspection_getspecific_np(thread: pthread_t, key: pthread_key_t) -> &mut c_void;
 extern "C" fn pthread_jit_write_protect_np(enabled: c_int);
 extern "C" fn pthread_jit_write_protect_supported_np() -> c_int;
 extern "C" fn pthread_jit_write_with_callback_np(callback: pthread_jit_write_callback_t, ctx: &mut c_void) -> c_int;
 extern "C" fn pthread_jit_write_freeze_callbacks_np();
 extern "C" fn pthread_cpu_number_np(cpu_number_out: &mut size_t) -> c_int;
+extern "C" fn os_sync_wait_on_address(addr: &mut c_void, value: u64, size: size_t, flags: os_sync_wait_on_address_flags_t) -> c_int;
+extern "C" fn os_sync_wait_on_address_with_deadline(addr: &mut c_void, value: u64, size: size_t, flags: os_sync_wait_on_address_flags_t, clockid: os_clockid_t, deadline: u64) -> c_int;
+extern "C" fn os_sync_wait_on_address_with_timeout(addr: &mut c_void, value: u64, size: size_t, flags: os_sync_wait_on_address_flags_t, clockid: os_clockid_t, timeout_ns: u64) -> c_int;
+extern "C" fn os_sync_wake_by_address_any(addr: &mut c_void, size: size_t, flags: os_sync_wake_by_address_flags_t) -> c_int;
+extern "C" fn os_sync_wake_by_address_all(addr: &mut c_void, size: size_t, flags: os_sync_wake_by_address_flags_t) -> c_int;
 extern "C" fn os_unfair_lock_lock(lock: os_unfair_lock_t);
 extern "C" fn os_unfair_lock_trylock(lock: os_unfair_lock_t) -> bool;
 extern "C" fn os_unfair_lock_unlock(lock: os_unfair_lock_t);
@@ -4424,7 +4704,6 @@ extern "C" fn thread_policy_set(thread: thread_t, flavor: thread_policy_flavor_t
 extern "C" fn thread_policy_get(thread: thread_t, flavor: thread_policy_flavor_t, policy_info: thread_policy_t, count: &mut mach_msg_type_number_t, get_default: &mut boolean_t) -> kern_return_t;
 extern "C" fn thread_info(target_act: thread_inspect_t, flavor: thread_flavor_t, thread_info_out: thread_info_t, thread_info_outCnt: &mut mach_msg_type_number_t) -> kern_return_t;
 extern "C" fn __error() -> &mut c_int;
-#[inline] fn __errno_location() -> &mut c_int { __error() }
 extern "C" fn backtrace(buf: &mut &mut c_void, sz: c_int) -> c_int;
 extern "C" fn backtrace_symbols(addrs: &&mut c_void, sz: c_int) -> &mut &mut c_char;
 extern "C" fn backtrace_symbols_fd(addrs: &&mut c_void, sz: c_int, fd: c_int);
@@ -4474,10 +4753,6 @@ extern "C" fn waitid(idtype: idtype_t, id: id_t, infop: &mut siginfo_t, options:
 extern "C" fn brk(addr: &c_void) -> &mut c_void;
 extern "C" fn sbrk(increment: c_int) -> &mut c_void;
 extern "C" fn settimeofday(tv: &timeval, tz: &timezone) -> c_int;
-extern "C" fn _dyld_image_count() -> u32;
-extern "C" fn _dyld_get_image_header(image_index: u32) -> &mach_header;
-extern "C" fn _dyld_get_image_vmaddr_slide(image_index: u32) -> intptr_t;
-extern "C" fn _dyld_get_image_name(image_index: u32) -> &c_char;
 extern "C" fn posix_spawn(pid: &mut pid_t, path: &c_char, file_actions: &posix_spawn_file_actions_t, attrp: &posix_spawnattr_t, argv: &&mut c_char, envp: &&mut c_char) -> c_int;
 extern "C" fn posix_spawnp(pid: &mut pid_t, file: &c_char, file_actions: &posix_spawn_file_actions_t, attrp: &posix_spawnattr_t, argv: &&mut c_char, envp: &&mut c_char) -> c_int;
 extern "C" fn posix_spawnattr_init(attr: &mut posix_spawnattr_t) -> c_int;
@@ -4492,8 +4767,8 @@ extern "C" fn posix_spawnattr_getpgroup(attr: &posix_spawnattr_t, flags: &mut pi
 extern "C" fn posix_spawnattr_setpgroup(attr: &mut posix_spawnattr_t, flags: pid_t) -> c_int;
 extern "C" fn posix_spawnattr_setarchpref_np(attr: &mut posix_spawnattr_t, count: size_t, pref: &mut cpu_type_t, subpref: &mut cpu_subtype_t, ocount: &mut size_t) -> c_int;
 extern "C" fn posix_spawnattr_getarchpref_np(attr: &posix_spawnattr_t, count: size_t, pref: &mut cpu_type_t, subpref: &mut cpu_subtype_t, ocount: &mut size_t) -> c_int;
-extern "C" fn posix_spawnattr_set_qos_class_np(attr: &mut posix_spawnattr_t, qos_class: qos_class_t) -> c_int;
-extern "C" fn posix_spawnattr_get_qos_class_np(attr: &posix_spawnattr_t, qos_class: &mut qos_class_t) -> c_int;
+extern "C" fn posix_spawnattr_getbinpref_np(attr: &posix_spawnattr_t, count: size_t, pref: &mut cpu_type_t, ocount: &mut size_t) -> c_int;
+extern "C" fn posix_spawnattr_setbinpref_np(attr: &mut posix_spawnattr_t, count: size_t, pref: &mut cpu_type_t, ocount: &mut size_t) -> c_int;
 extern "C" fn posix_spawn_file_actions_init(actions: &mut posix_spawn_file_actions_t) -> c_int;
 extern "C" fn posix_spawn_file_actions_destroy(actions: &mut posix_spawn_file_actions_t) -> c_int;
 extern "C" fn posix_spawn_file_actions_addopen(actions: &mut posix_spawn_file_actions_t, fd: c_int, path: &c_char, oflag: c_int, mode: mode_t) -> c_int;
@@ -4511,6 +4786,11 @@ extern "C" fn clonefileat(src_dirfd: c_int, src: &c_char, dst_dirfd: c_int, dst:
 extern "C" fn fclonefileat(srcfd: c_int, dst_dirfd: c_int, dst: &c_char, flags: u32) -> c_int;
 extern "C" fn copyfile(from: &c_char, to: &c_char, state: copyfile_state_t, flags: copyfile_flags_t) -> c_int;
 extern "C" fn fcopyfile(from: c_int, to: c_int, state: copyfile_state_t, flags: copyfile_flags_t) -> c_int;
+extern "C" fn copyfile_state_free(s: copyfile_state_t) -> c_int;
+extern "C" fn copyfile_state_alloc() -> copyfile_state_t;
+extern "C" fn copyfile_state_get(s: copyfile_state_t, flags: u32, dst: &mut c_void) -> c_int;
+extern "C" fn copyfile_state_set(s: copyfile_state_t, flags: u32, src: &c_void) -> c_int;
+extern "C" fn mach_error_string(error_value: mach_error_t) -> &mut c_char;
 extern "C" fn memset_s(s: &mut c_void, smax: size_t, c: c_int, n: size_t) -> c_int;
 extern "C" fn memset_pattern4(b: &mut c_void, pattern4: &c_void, len: size_t);
 extern "C" fn memset_pattern8(b: &mut c_void, pattern8: &c_void, len: size_t);
@@ -4541,7 +4821,7 @@ extern "C" fn proc_pidpath(pid: c_int, buffer: &mut c_void, buffersize: u32) -> 
 extern "C" fn proc_name(pid: c_int, buffer: &mut c_void, buffersize: u32) -> c_int;
 extern "C" fn proc_regionfilename(pid: c_int, address: u64, buffer: &mut c_void, buffersize: u32) -> c_int;
 extern "C" fn proc_kmsgbuf(buffer: &mut c_void, buffersize: u32) -> c_int;
-extern "C" fn proc_libversion(major: &mut c_int, mintor: &mut c_int) -> c_int;
+extern "C" fn proc_libversion(major: &mut c_int, minor: &mut c_int) -> c_int;
 extern "C" fn proc_pid_rusage(pid: c_int, flavor: c_int, buffer: &mut rusage_info_t) -> c_int;
 extern "C" fn proc_set_no_smt() -> c_int;
 extern "C" fn proc_setthread_no_smt() -> c_int;
@@ -4552,13 +4832,14 @@ extern "C" fn gethostid() -> c_long;
 extern "C" fn sethostid(hostid: c_long);
 extern "C" fn CCRandomGenerateBytes(bytes: &mut c_void, size: size_t) -> CCRNGStatus;
 extern "C" fn getentropy(buf: &mut c_void, buflen: size_t) -> c_int;
-extern "C" fn _NSGetExecutablePath(buf: &mut c_char, bufsize: &mut u32) -> c_int;
+extern "C" fn _NSGetArgv() -> &mut &mut &mut c_char;
+extern "C" fn _NSGetArgc() -> &mut c_int;
 extern "C" fn _NSGetEnviron() -> &mut &mut &mut c_char;
-extern "C" fn mach_vm_map(target_task: vm_map_t, address: &mut mach_vm_address_t, size: mach_vm_size_t, mask: mach_vm_offset_t, flags: c_int, object: mem_entry_name_port_t, offset: memory_object_offset_t, copy: boolean_t, cur_protection: vm_prot_t, max_protection: vm_prot_t, inheritance: vm_inherit_t) -> kern_return_t;
+extern "C" fn _NSGetProgname() -> &mut &mut c_char;
+extern "C" fn vm_allocate(target_task: vm_map_t, address: &mut vm_address_t, size: vm_size_t, flags: c_int) -> kern_return_t;
 extern "C" fn vm_deallocate(target_task: vm_map_t, address: vm_address_t, size: vm_size_t) -> kern_return_t;
 extern "C" fn host_statistics64(host_priv: host_t, flavor: host_flavor_t, host_info64_out: host_info64_t, host_info64_outCnt: &mut mach_msg_type_number_t) -> kern_return_t;
 extern "C" fn host_processor_info(host: host_t, flavor: processor_flavor_t, out_processor_count: &mut natural_t, out_processor_info: &mut processor_info_array_t, out_processor_infoCnt: &mut mach_msg_type_number_t) -> kern_return_t;
-extern "C" static mach_task_self_: mach_port_t;
 extern "C" fn task_for_pid(host: mach_port_t, pid: pid_t, task: &mut mach_port_t) -> kern_return_t;
 extern "C" fn task_info(host: mach_port_t, flavor: task_flavor_t, task_info_out: task_info_t, task_info_count: &mut mach_msg_type_number_t) -> kern_return_t;
 extern "C" fn task_create(target_task: task_t, ledgers: ledger_array_t, ledgersCnt: mach_msg_type_number_t, inherit_memory: boolean_t, child_task: &mut task_t) -> kern_return_t;
@@ -4579,17 +4860,14 @@ extern "C" fn malloc_size(ptr: &c_void) -> size_t;
 extern "C" fn malloc_good_size(size: size_t) -> size_t;
 extern "C" fn dirname(path: &mut c_char) -> &mut c_char;
 extern "C" fn basename(path: &mut c_char) -> &mut c_char;
-extern "C" fn mach_task_self() -> mach_port_t {
-    mach_task_self_
-}
+extern "C" fn mkfifoat(dirfd: c_int, pathname: &c_char, mode: mode_t) -> c_int;
+extern "C" fn mknodat(dirfd: c_int, pathname: &c_char, mode: mode_t, dev: dev_t) -> c_int;
+extern "C" fn freadlink(fd: c_int, buf: &mut c_char, size: size_t) -> c_int;
+extern "C" fn execvP(file: &c_char, search_path: &c_char, argv: &&mut c_char) -> c_int;
+extern "C" fn qsort_r(base: &mut c_void, num: size_t, size: size_t, arg: &mut c_void, compar: fn(&mut c_void, &c_void, &c_void) -> c_int);
 extern "C" fn clock_settime(clock_id: clockid_t, tp: &timespec) -> c_int;
 extern "C" fn memmem(haystack: &c_void, haystacklen: size_t, needle: &c_void, needlelen: size_t) -> &mut c_void;
 extern "C" fn task_set_info(target_task: task_t, flavor: task_flavor_t, task_info_in: task_info_t, task_info_inCnt: mach_msg_type_number_t) -> kern_return_t;
-extern "C" fn iconv_open(tocode: &c_char, fromcode: &c_char) -> iconv_t;
-extern "C" fn iconv(cd: iconv_t, inbuf: &mut &mut c_char, inbytesleft: &mut size_t, outbuf: &mut &mut c_char, outbytesleft: &mut size_t) -> size_t;
-extern "C" fn iconv_close(cd: iconv_t) -> c_int;
-type c_long = i64;
-type c_ulong = u64;
 struct timeval32 {
     tv_sec: i32,
     tv_usec: i32,
@@ -4631,70 +4909,30 @@ struct bpf_hdr {
     bh_datalen: u32,
     bh_hdrlen: c_ushort,
 }
-struct pthread_attr_t {
-    __sig: c_long,
-    __opaque: [c_char; 56],
-}
 const NET_RT_MAXID: c_int = 11;
-const __PTHREAD_MUTEX_SIZE__: usize = 56;
-const __PTHREAD_COND_SIZE__: usize = 40;
-const __PTHREAD_CONDATTR_SIZE__: usize = 8;
-const __PTHREAD_RWLOCK_SIZE__: usize = 192;
-const __PTHREAD_RWLOCKATTR_SIZE__: usize = 16;
-const TIOCTIMESTAMP: c_ulong = 0x40107459;
-const TIOCDCDTIMESTAMP: c_ulong = 0x40107458;
-const BIOCSETF: c_ulong = 0x80104267;
-const BIOCSRTIMEOUT: c_ulong = 0x8010426d;
-const BIOCGRTIMEOUT: c_ulong = 0x4010426e;
-const BIOCSETFNR: c_ulong = 0x8010427e;
+const TIOCTIMESTAMP: c_ulong = 1074820185;
+const TIOCDCDTIMESTAMP: c_ulong = 1074820184;
+const BIOCSETF: c_ulong = 2148549223;
+const BIOCSRTIMEOUT: c_ulong = 2148549229;
+const BIOCGRTIMEOUT: c_ulong = 1074807406;
+const BIOCSETFNR: c_ulong = 2148549246;
 extern "C" fn exchangedata(path1: &c_char, path2: &c_char, options: c_uint) -> c_int;
 type boolean_t = c_int;
 struct malloc_zone_t {
     __private: [uintptr_t; 18],
 }
-type mcontext_t = &mut __darwin_mcontext64;
 struct max_align_t {
     priv_: f64,
 }
-struct ucontext_t {
-    uc_onstack: c_int,
-    uc_sigmask: sigset_t,
-    uc_stack: stack_t,
-    uc_link: &mut ucontext_t,
-    uc_mcsize: usize,
-    uc_mcontext: mcontext_t,
-    __mcontext_data: __darwin_mcontext64,
+struct siginfo_timer {
+    _si_signo: c_int,
+    _si_errno: c_int,
+    _si_code: c_int,
+    _si_pid: pid_t,
+    _si_uid: uid_t,
+    _si_status: c_int,
+    _si_addr: &mut c_void,
+    si_value: sigval,
 }
-struct __darwin_mcontext64 {
-    __es: __darwin_arm_exception_state64,
-    __ss: __darwin_arm_thread_state64,
-    __ns: __darwin_arm_neon_state64,
-}
-struct __darwin_arm_exception_state64 {
-    __far: u64,
-    __esr: u32,
-    __exception: u32,
-}
-struct __darwin_arm_thread_state64 {
-    __x: [u64; 29],
-    __fp: u64,
-    __lr: u64,
-    __sp: u64,
-    __pc: u64,
-    __cpsr: u32,
-    __pad: u32,
-}
-struct __darwin_arm_neon_state64 {
-    __v: [__uint128_t; 32],
-    __fpsr: u32,
-    __fpcr: u32,
-}
-struct ctl_info {
-    ctl_id: u32,
-    ctl_name: [c_char; MAX_KCTL_NAME],
-}
-const MAX_KCTL_NAME: usize = 96;
-#[align(4)]
-struct in6_addr {
-    s6_addr: [u8; 16],
-}
+const __DARWIN_ALIGNBYTES32: usize = 3;
+type CEnumRepr = c_uint;
