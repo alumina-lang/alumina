@@ -1,10 +1,11 @@
 //! "FFI" interfaces to libc.
 //!
-//! Target-specific interfaces are in submodules of this module and they are conditionally `*`-imported,
-//! so e.g. `libc::pause()` can be used instead of `libc::x86_64_unknown_linux_gnu::pause()` and it will
-//! select the appropriate target.
+//! Bindings are auto-generated from [Rust's libc crate](https://github.com/rust-lang/libc)
+//! using `tools/libc-bindgen`. Common items have no `#[cfg]` guard; platform-specific items
+//! are guarded with appropriate `#[cfg(...)]` attributes.
 //!
-//! Mostly copied/adapted from [Rust's libc crate](https://github.com/rust-lang/libc).
+//! Everything from `libc::bindings` is `*`-imported, so use e.g. `libc::write` rather than
+//! `libc::bindings::write`.
 
 type c_void = void;
 
@@ -103,24 +104,24 @@ extern "C" fn tgammaf(x: f32) -> f32;
 extern "C" fn trunc(x: f64) -> f64;
 extern "C" fn truncf(x: f32) -> f32;
 
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-use libc::aarch64_apple_darwin::*;
-#[cfg(all(target_arch = "x86_64", target_os = "macos"))]
-use libc::x86_64_apple_darwin::*;
-#[cfg(all(target_arch = "aarch64", target_os = "android"))]
-use libc::aarch64_linux_android::*;
+/// Returns a pointer to the thread-local `errno` value.
+/// Platform-specific: wraps `__errno_location` (Linux), `__error` (macOS), or `__errno` (Android).
+#[cfg(target_os = "linux")]
+#[inline(always)]
+fn errno_location() -> &mut c_int {
+    __errno_location()
+}
 
-#[cfg(target_env = "musl")]
-{
-    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
-    use libc::aarch64_unknown_linux_musl::*;
-    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-    use libc::x86_64_unknown_linux_musl::*;
+#[cfg(target_os = "macos")]
+#[inline(always)]
+fn errno_location() -> &mut c_int {
+    __error()
 }
-#[cfg(target_env = "gnu")]
-{
-    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
-    use libc::aarch64_unknown_linux_gnu::*;
-    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-    use libc::x86_64_unknown_linux_gnu::*;
+
+#[cfg(target_os = "android")]
+#[inline(always)]
+fn errno_location() -> &mut c_int {
+    __errno()
 }
+
+use libc::bindings::*;

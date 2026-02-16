@@ -131,7 +131,7 @@ Finished:
 
 To be done:
 
-- Standard library is only usable on Unixes (tested on Linux, macOS and Android)
+- Standard library is only usable on Unixes (tested on x86_64/aarch64/riscv64 Linux, macOS and Android)
 - Compiler driver (something like Rust's `cargo`)
 - A good story for third-party libraries (something like `crates.io` maybe?)
 - Various rough edges, bugs and missing features
@@ -243,7 +243,7 @@ make test-docs
 Standard library contributions are especially welcome! Ideas for contribution:
 
 - Better / more performant algorithms and collections (sorting, HashMap, ...)
-- Port the standard library to other platforms (e.g. Windows) or libc implementations (on Linux only glibc is supported, musl would be very nice to have)
+- Port the standard library to other platforms (e.g. Windows) or libc implementations
 - Unix domain socket support
 - More test cases and documentation / example code for existing functionality
 
