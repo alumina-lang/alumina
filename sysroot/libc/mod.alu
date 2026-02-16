@@ -1,11 +1,11 @@
 //! "FFI" interfaces to libc.
 //!
-//! Target-specific interfaces are in submodules of this module and they are conditionally `*`-imported,
-//! so e.g. `libc::pause()` can be used instead of `libc::x86_64_unknown_linux_gnu::pause()` and it will
-//! select the appropriate target.
+//! Bindings are auto-generated from [Rust's libc crate](https://github.com/rust-lang/libc)
+//! using `tools/libc-bindgen`. Common items have no `#[cfg]` guard; platform-specific items
+//! are guarded with appropriate `#[cfg(...)]` attributes.
 //!
-//! Target-specific bindings are auto-generated from [Rust's libc crate](https://github.com/rust-lang/libc)
-//! using `tools/libc-bindgen`.
+//! Everything from `libc::bindings` is `*`-imported, so use e.g. `libc::write` rather than
+//! `libc::bindings::write`.
 
 type c_void = void;
 
@@ -124,28 +124,4 @@ fn errno_location() -> &mut c_int {
     __errno()
 }
 
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-use libc::aarch64_apple_darwin::*;
-#[cfg(all(target_arch = "x86_64", target_os = "macos"))]
-use libc::x86_64_apple_darwin::*;
-#[cfg(all(target_arch = "aarch64", target_os = "android"))]
-use libc::aarch64_linux_android::*;
-
-#[cfg(target_env = "musl")]
-{
-    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
-    use libc::aarch64_unknown_linux_musl::*;
-    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-    use libc::x86_64_unknown_linux_musl::*;
-    #[cfg(all(target_arch = "riscv64", target_os = "linux"))]
-    use libc::riscv64gc_unknown_linux_musl::*;
-}
-#[cfg(target_env = "gnu")]
-{
-    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
-    use libc::aarch64_unknown_linux_gnu::*;
-    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-    use libc::x86_64_unknown_linux_gnu::*;
-    #[cfg(all(target_arch = "riscv64", target_os = "linux"))]
-    use libc::riscv64gc_unknown_linux_gnu::*;
-}
+use libc::bindings::*;

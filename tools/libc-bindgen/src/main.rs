@@ -8,20 +8,59 @@ extern crate rustc_middle;
 extern crate rustc_session;
 extern crate rustc_span;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fmt::Write as FmtWrite;
 use std::fs;
-use std::io::{self, Write};
 use std::path::PathBuf;
 
 use clap::Parser;
-use rustc_driver::{Compilation, run_compiler};
+use rustc_driver::{run_compiler, Compilation};
 use rustc_hir::def_id::DefId;
 use rustc_interface::interface::Compiler;
 use rustc_middle::mir::ConstValue;
 use rustc_middle::ty::TyCtxt;
 
-struct AluDumper {
-    output: Box<dyn Write + Send>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum ItemKind {
+    TypeAlias,
+    Enum,
+    Struct,
+    Union,
+    Const,
+    ExternFn,
+    ExternStatic,
+    Fn,
+}
+
+#[derive(Debug, Clone)]
+struct CollectedItem {
+    name: String,
+    kind: ItemKind,
+    /// Full .alu text for the item (no cfg guard, no trailing newline).
+    text: String,
+}
+
+#[derive(Debug, Clone)]
+struct TargetInfo {
+    arch: String,
+    os: String,
+    env: String,
+}
+
+impl TargetInfo {
+    fn get_prop(&self, prop: &str) -> &str {
+        match prop {
+            "target_arch" => &self.arch,
+            "target_os" => &self.os,
+            "target_env" => &self.env,
+            _ => unreachable!(),
+        }
+    }
+}
+
+struct ItemCollector {
+    items: Vec<CollectedItem>,
+    target_info: Option<TargetInfo>,
 }
 
 /// Names that conflict between value and type namespaces get renamed with _t suffix.
@@ -44,15 +83,15 @@ fn collect_names(
     value_names: &mut HashSet<String>,
     type_names: &mut HashSet<String>,
 ) {
-    use rustc_hir::ItemKind;
+    use rustc_hir::ItemKind as HIRItemKind;
     match &item.kind {
-        ItemKind::Mod(_ident, module) => {
+        HIRItemKind::Mod(_ident, module) => {
             for &item_id in module.item_ids {
                 let child = tcx.hir_item(item_id);
                 collect_names(tcx, seen, child, value_names, type_names);
             }
         }
-        ItemKind::ForeignMod { abi: _, items } => {
+        HIRItemKind::ForeignMod { abi: _, items } => {
             for &foreign_item_id in *items {
                 let foreign_item = tcx.hir_foreign_item(foreign_item_id);
                 let def_id = foreign_item.owner_id.def_id.to_def_id();
@@ -77,26 +116,26 @@ fn collect_names(
                 return;
             }
             match &item.kind {
-                ItemKind::TyAlias(ident, ..) => {
+                HIRItemKind::TyAlias(ident, ..) => {
                     type_names.insert(ident.as_str().to_string());
                 }
-                ItemKind::Struct(ident, ..) => {
+                HIRItemKind::Struct(ident, ..) => {
                     if ident.as_str() != "Padding" {
                         type_names.insert(ident.as_str().to_string());
                     }
                 }
-                ItemKind::Union(ident, ..) => {
+                HIRItemKind::Union(ident, ..) => {
                     type_names.insert(ident.as_str().to_string());
                 }
-                ItemKind::Enum(ident, _, enum_def) => {
+                HIRItemKind::Enum(ident, _, enum_def) => {
                     if enum_def.variants.is_empty() {
                         type_names.insert(ident.as_str().to_string());
                     }
                 }
-                ItemKind::Const(ident, ..) => {
+                HIRItemKind::Const(ident, ..) => {
                     value_names.insert(ident.as_str().to_string());
                 }
-                ItemKind::Fn { ident, .. } => {
+                HIRItemKind::Fn { ident, .. } => {
                     value_names.insert(ident.as_str().to_string());
                 }
                 _ => {}
@@ -144,12 +183,16 @@ fn format_ty(tcx: TyCtxt<'_>, renames: &Renames, ty: &rustc_hir::Ty) -> String {
         }
         TyKind::FnPtr(fn_ptr_ty) => {
             let decl = fn_ptr_ty.decl;
-            let params: Vec<String> = decl.inputs.iter().map(|t| format_ty(tcx, renames, t)).collect();
+            let params: Vec<String> = decl
+                .inputs
+                .iter()
+                .map(|t| format_ty(tcx, renames, t))
+                .collect();
             let ret = format_fn_ret(tcx, renames, &decl.output);
             format!("fn({}){}", params.join(", "), ret)
         }
         TyKind::Never => "!".to_string(),
-        TyKind::Tup(tys) if tys.is_empty() => "()".to_string(),
+        TyKind::Tup([]) => "()".to_string(),
         TyKind::Tup(tys) => {
             let parts: Vec<String> = tys.iter().map(|t| format_ty(tcx, renames, t)).collect();
             format!("({})", parts.join(", "))
@@ -160,7 +203,11 @@ fn format_ty(tcx: TyCtxt<'_>, renames: &Renames, ty: &rustc_hir::Ty) -> String {
 }
 
 /// Format a Ty<'_, AmbigArg> (from generic args in path segments).
-fn format_ambig_ty(tcx: TyCtxt<'_>, renames: &Renames, ty: &rustc_hir::Ty<'_, rustc_hir::AmbigArg>) -> String {
+fn format_ambig_ty(
+    tcx: TyCtxt<'_>,
+    renames: &Renames,
+    ty: &rustc_hir::Ty<'_, rustc_hir::AmbigArg>,
+) -> String {
     use rustc_hir::TyKind;
     match &ty.kind {
         TyKind::Ptr(mt) | TyKind::Ref(_, mt) => {
@@ -178,12 +225,16 @@ fn format_ambig_ty(tcx: TyCtxt<'_>, renames: &Renames, ty: &rustc_hir::Ty<'_, ru
         }
         TyKind::FnPtr(fn_ptr_ty) => {
             let decl = fn_ptr_ty.decl;
-            let params: Vec<String> = decl.inputs.iter().map(|t| format_ty(tcx, renames, t)).collect();
+            let params: Vec<String> = decl
+                .inputs
+                .iter()
+                .map(|t| format_ty(tcx, renames, t))
+                .collect();
             let ret = format_fn_ret(tcx, renames, &decl.output);
             format!("fn({}){}", params.join(", "), ret)
         }
         TyKind::Never => "!".to_string(),
-        TyKind::Tup(tys) if tys.is_empty() => "()".to_string(),
+        TyKind::Tup([]) => "()".to_string(),
         TyKind::Tup(tys) => {
             let parts: Vec<String> = tys.iter().map(|t| format_ty(tcx, renames, t)).collect();
             format!("({})", parts.join(", "))
@@ -249,8 +300,13 @@ fn format_qpath(
                 }
                 // Only apply type renames in type context (turbofish=false).
                 // In expression context (turbofish=true), paths refer to values.
-                let base = resolve_primitive(name)
-                    .unwrap_or_else(|| if turbofish { name.to_string() } else { resolve_name(name, renames) });
+                let base = resolve_primitive(name).unwrap_or_else(|| {
+                    if turbofish {
+                        name.to_string()
+                    } else {
+                        resolve_name(name, renames)
+                    }
+                });
                 let generic_str = format_segment_generic_args(tcx, renames, seg, turbofish);
                 format!("{}{}", base, generic_str)
             } else {
@@ -269,7 +325,6 @@ fn format_qpath(
     }
 }
 
-/// Map Rust primitive names to .alu names (most are the same).
 /// Check if a HIR type contains any inferred (`_`) parts.
 fn ty_contains_infer(ty: &rustc_hir::Ty) -> bool {
     use rustc_hir::TyKind;
@@ -284,8 +339,8 @@ fn ty_contains_infer(ty: &rustc_hir::Ty) -> bool {
 
 fn resolve_primitive(name: &str) -> Option<String> {
     match name {
-        "i8" | "i16" | "i32" | "i64" | "i128" | "u8" | "u16" | "u32" | "u64" | "u128"
-        | "f32" | "f64" | "bool" | "usize" | "isize" => Some(name.to_string()),
+        "i8" | "i16" | "i32" | "i64" | "i128" | "u8" | "u16" | "u32" | "u64" | "u128" | "f32"
+        | "f64" | "bool" | "usize" | "isize" => Some(name.to_string()),
         _ => None,
     }
 }
@@ -317,9 +372,13 @@ fn format_const_arg(tcx: TyCtxt<'_>, renames: &Renames, c: &rustc_hir::ConstArg)
 }
 
 /// Try to format an anonymous const expression from its HIR body.
-fn format_anon_const_expr(tcx: TyCtxt<'_>, renames: &Renames, anon: &rustc_hir::AnonConst) -> String {
+fn format_anon_const_expr(
+    tcx: TyCtxt<'_>,
+    renames: &Renames,
+    anon: &rustc_hir::AnonConst,
+) -> String {
     let body = tcx.hir_body(anon.body);
-    format_expr(tcx, renames, &body.value)
+    format_expr(tcx, renames, body.value)
 }
 
 /// Format a HIR expression as .alu syntax (for const expressions in array lengths etc.).
@@ -385,7 +444,11 @@ fn try_format_expr(
             if ty_contains_infer(ty) {
                 Ok(format!("std::util::cast({})", inner_str))
             } else {
-                Ok(format!("({} as {})", inner_str, format_ty(tcx, renames, ty)))
+                Ok(format!(
+                    "({} as {})",
+                    inner_str,
+                    format_ty(tcx, renames, ty)
+                ))
             }
         }
         ExprKind::Path(qpath) => Ok(format_qpath(tcx, renames, qpath, true)),
@@ -411,7 +474,10 @@ fn try_format_expr(
             let then_str = try_format_expr(tcx, renames, all_type_names, then_expr)?;
             if let Some(else_expr) = else_opt {
                 let else_str = try_format_expr(tcx, renames, all_type_names, else_expr)?;
-                Ok(format!("if {} {{ {} }} else {{ {} }}", cond_str, then_str, else_str))
+                Ok(format!(
+                    "if {} {{ {} }} else {{ {} }}",
+                    cond_str, then_str, else_str
+                ))
             } else {
                 Ok(format!("if {} {{ {} }}", cond_str, then_str))
             }
@@ -641,95 +707,30 @@ fn format_scalar(
     }
 }
 
-/// Emit the .alu cfg header line.
-fn emit_cfg_header(out: &mut impl Write, tcx: TyCtxt<'_>) -> io::Result<()> {
-    let target = &tcx.sess.target;
-    let arch = target.arch.to_string();
-    let os = target.os.to_string();
-    let env = target.env.to_string();
-
-    if !env.is_empty() {
-        writeln!(
-            out,
-            "#![cfg(all(target_env = \"{}\", target_arch = \"{}\", target_os = \"{}\"))]",
-            env, arch, os
-        )?;
-    } else {
-        writeln!(
-            out,
-            "#![cfg(all(target_arch = \"{}\", target_os = \"{}\"))]",
-            arch, os
-        )?;
-    }
-    Ok(())
-}
-
-impl rustc_driver::Callbacks for AluDumper {
-    fn after_analysis(&mut self, _compiler: &Compiler, tcx: TyCtxt<'_>) -> Compilation {
-        let mut out = io::BufWriter::new(&mut self.output);
-
-        let target = tcx.sess.opts.target_triple.tuple();
-        writeln!(out, "// Auto-generated libc bindings for {} by tools/libc-hir-dump. Do not edit.", target).unwrap();
-        emit_cfg_header(&mut out, tcx).unwrap();
-        writeln!(out).unwrap();
-        writeln!(out, "#![allow(unused_parameter)]").unwrap();
-        writeln!(out, "use libc::prelude::*;").unwrap();
-        writeln!(out).unwrap();
-
-        // Pass 1: collect all names to detect conflicts
-        let mut value_names = HashSet::new();
-        let mut type_names = HashSet::new();
-        let mut seen = HashSet::new();
-        for id in tcx.hir_free_items() {
-            let item = tcx.hir_item(id);
-            collect_names(tcx, &mut seen, item, &mut value_names, &mut type_names);
-        }
-        let renames = build_renames(&value_names, &type_names);
-        if !renames.is_empty() {
-            eprintln!(
-                "Note: renamed {} types to avoid name conflicts: {:?}",
-                renames.len(),
-                renames
-            );
-        }
-        let all_type_names = build_all_type_names(&type_names, &renames);
-
-        // Pass 2: emit items
-        let mut seen = HashSet::new();
-        for id in tcx.hir_free_items() {
-            let item = tcx.hir_item(id);
-            emit_item(&mut out, tcx, &renames, &all_type_names, &mut seen, item);
-        }
-
-        out.flush().unwrap();
-        Compilation::Stop
-    }
-}
-
-fn emit_item(
-    out: &mut impl Write,
+fn collect_item(
     tcx: TyCtxt<'_>,
     renames: &Renames,
     all_type_names: &HashSet<String>,
     seen: &mut HashSet<DefId>,
     item: &rustc_hir::Item,
+    out: &mut Vec<CollectedItem>,
 ) {
-    use rustc_hir::ItemKind;
+    use rustc_hir::ItemKind as HIRItemKind;
 
-    if let ItemKind::Mod(_ident, module) = &item.kind {
+    if let HIRItemKind::Mod(_ident, module) = &item.kind {
         for &item_id in module.item_ids {
             let child = tcx.hir_item(item_id);
-            emit_item(out, tcx, renames, all_type_names, seen, child);
+            collect_item(tcx, renames, all_type_names, seen, child, out);
         }
         return;
     }
 
-    if let ItemKind::ForeignMod { abi: _, items } = &item.kind {
+    if let HIRItemKind::ForeignMod { abi: _, items } = &item.kind {
         for &foreign_item_id in *items {
             let foreign_item = tcx.hir_foreign_item(foreign_item_id);
             let def_id = foreign_item.owner_id.def_id.to_def_id();
             if seen.insert(def_id) {
-                emit_foreign_item(out, tcx, renames, all_type_names, foreign_item);
+                collect_foreign_item(tcx, renames, all_type_names, foreign_item, out);
             }
         }
         return;
@@ -741,64 +742,81 @@ fn emit_item(
     }
 
     match &item.kind {
-        ItemKind::TyAlias(ident, _generics, ty) => {
+        HIRItemKind::TyAlias(ident, _generics, ty) => {
             let name = resolve_name(ident.as_str(), renames);
             let ty_str = format_ty(tcx, renames, ty);
-            writeln!(out, "type {} = {};", name, ty_str).unwrap();
+            out.push(CollectedItem {
+                name: name.clone(),
+                kind: ItemKind::TypeAlias,
+                text: format!("type {} = {};", name, ty_str),
+            });
         }
-        ItemKind::Struct(ident, _generics, variant_data) => {
+        HIRItemKind::Struct(ident, _generics, variant_data) => {
             if ident.as_str() == "Padding" {
                 return;
             }
             let name = resolve_name(ident.as_str(), renames);
-            emit_align_attr(out, tcx, def_id);
-            emit_struct_or_union(out, tcx, renames, all_type_names, "struct", &name, variant_data);
+            let align_attr = format_align_attr(tcx, def_id);
+            let body =
+                format_struct_or_union(tcx, renames, all_type_names, "struct", &name, variant_data);
+            out.push(CollectedItem {
+                name: name.clone(),
+                kind: ItemKind::Struct,
+                text: format!("{}{}", align_attr, body),
+            });
         }
-        ItemKind::Union(ident, _generics, variant_data) => {
+        HIRItemKind::Union(ident, _generics, variant_data) => {
             let name = resolve_name(ident.as_str(), renames);
-            emit_align_attr(out, tcx, def_id);
-            emit_struct_or_union(out, tcx, renames, all_type_names, "union", &name, variant_data);
+            let align_attr = format_align_attr(tcx, def_id);
+            let body =
+                format_struct_or_union(tcx, renames, all_type_names, "union", &name, variant_data);
+            out.push(CollectedItem {
+                name: name.clone(),
+                kind: ItemKind::Union,
+                text: format!("{}{}", align_attr, body),
+            });
         }
-        ItemKind::Enum(ident, _generics, enum_def) => {
+        HIRItemKind::Enum(ident, _generics, enum_def) => {
             if enum_def.variants.is_empty() {
                 let name = resolve_name(ident.as_str(), renames);
-                writeln!(out, "enum {} {{}}", name).unwrap();
+                out.push(CollectedItem {
+                    name: name.clone(),
+                    kind: ItemKind::Enum,
+                    text: format!("enum {} {{}}", name),
+                });
             }
         }
-        ItemKind::Const(ident, _generics, ty, rhs) => {
+        HIRItemKind::Const(ident, _generics, ty, rhs) => {
+            let name = ident.as_str().to_string();
             let ty_str = format_ty(tcx, renames, ty);
-            if let Some(val) = eval_const(tcx, def_id) {
-                writeln!(out, "const {}: {} = {};", ident, ty_str, val).unwrap();
+            let text = if let Some(val) = eval_const(tcx, def_id) {
+                format!("const {}: {} = {};", name, ty_str, val)
             } else if let rustc_hir::ConstItemRhs::Body(body_id) = rhs {
-                // Try to format the HIR body (for struct/array initializers)
                 let body = tcx.hir_body(*body_id);
-                if let Ok(expr_str) =
-                    try_format_expr(tcx, renames, all_type_names, &body.value)
-                {
-                    writeln!(out, "const {}: {} = {};", ident, ty_str, expr_str).unwrap();
+                if let Ok(expr_str) = try_format_expr(tcx, renames, all_type_names, body.value) {
+                    format!("const {}: {} = {};", name, ty_str, expr_str)
                 } else {
-                    writeln!(
-                        out,
-                        "// const {}: {} = /* could not evaluate */;",
-                        ident, ty_str
-                    )
-                    .unwrap();
+                    format!("// const {}: {} = /* could not evaluate */;", name, ty_str)
                 }
             } else {
-                writeln!(
-                    out,
-                    "// const {}: {} = /* could not evaluate */;",
-                    ident, ty_str
-                )
-                .unwrap();
-            }
+                format!("// const {}: {} = /* could not evaluate */;", name, ty_str)
+            };
+            out.push(CollectedItem {
+                name,
+                kind: ItemKind::Const,
+                text,
+            });
         }
-        ItemKind::Fn { ident, sig, generics, body, .. } => {
-            let name = ident.as_str();
+        HIRItemKind::Fn {
+            ident,
+            sig,
+            generics,
+            body,
+            ..
+        } => {
+            let name = ident.as_str().to_string();
             let body = tcx.hir_body(*body);
             let decl = sig.decl;
-            writeln!(out, "#[inline(always)]").unwrap();
-            // Format generic type parameters
             let generic_params: Vec<String> = generics
                 .params
                 .iter()
@@ -821,8 +839,7 @@ fn emit_item(
                 .zip(body.params.iter())
                 .map(|(ty, param)| {
                     let ty_str = format_ty(tcx, renames, ty);
-                    let param_name = try_format_pat(param.pat)
-                        .unwrap_or_else(|_| "_".to_string());
+                    let param_name = try_format_pat(param.pat).unwrap_or_else(|_| "_".to_string());
                     let param_name = if all_type_names.contains(param_name.as_str()) {
                         format!("{}_", param_name)
                     } else {
@@ -832,47 +849,55 @@ fn emit_item(
                 })
                 .collect();
             let ret = format_fn_ret(tcx, renames, &decl.output);
-            match try_format_fn_body(tcx, renames, all_type_names, &body.value) {
+            let text = match try_format_fn_body(tcx, renames, all_type_names, body.value) {
                 Ok(body_str) => {
-                    writeln!(out, "fn {}{}({}){} {{", name, generics_str, params.join(", "), ret).unwrap();
-                    writeln!(out, "{}", body_str).unwrap();
-                    writeln!(out, "}}").unwrap();
+                    format!(
+                        "#[inline(always)]\nfn {}{}({}){} {{\n{}\n}}",
+                        name,
+                        generics_str,
+                        params.join(", "),
+                        ret,
+                        body_str
+                    )
                 }
                 Err(()) => {
-                    writeln!(out, "fn {}{}({}){} {{", name, generics_str, params.join(", "), ret).unwrap();
-                    writeln!(out, "    compile_fail!(\"unsupported\")").unwrap();
-                    writeln!(out, "}}").unwrap();
+                    format!("#[inline(always)]\nfn {}{}({}){} {{\n    compile_fail!(\"unsupported\")\n}}", name, generics_str, params.join(", "), ret)
                 }
-            }
+            };
+            out.push(CollectedItem {
+                name,
+                kind: ItemKind::Fn,
+                text,
+            });
         }
         _ => {}
     }
 }
 
-fn emit_align_attr(out: &mut impl Write, tcx: TyCtxt<'_>, def_id: DefId) {
+fn format_align_attr(tcx: TyCtxt<'_>, def_id: DefId) -> String {
     let adt_def = tcx.adt_def(def_id);
     let repr = adt_def.repr();
     if let Some(align) = repr.align {
-        writeln!(out, "#[align({})]", align.bytes()).unwrap();
+        format!("#[align({})]\n", align.bytes())
+    } else {
+        String::new()
     }
 }
 
-fn emit_struct_or_union(
-    out: &mut impl Write,
+fn format_struct_or_union(
     tcx: TyCtxt<'_>,
     renames: &Renames,
     all_type_names: &HashSet<String>,
     keyword: &str,
     name: &str,
     variant_data: &rustc_hir::VariantData,
-) {
+) -> String {
     let fields: Vec<_> = variant_data.fields().iter().collect();
     if fields.is_empty() {
-        writeln!(out, "{} {} {{}}", keyword, name).unwrap();
-        return;
+        return format!("{} {} {{}}", keyword, name);
     }
 
-    writeln!(out, "{} {} {{", keyword, name).unwrap();
+    let mut s = format!("{} {} {{\n", keyword, name);
     for field in &fields {
         let field_name = field.ident.as_str();
         let field_name = if all_type_names.contains(field_name) {
@@ -881,20 +906,22 @@ fn emit_struct_or_union(
             field_name.to_string()
         };
         let ty_str = format_ty(tcx, renames, field.ty);
-        writeln!(out, "    {}: {},", field_name, ty_str).unwrap();
+        writeln!(s, "    {}: {},", field_name, ty_str).unwrap();
     }
-    writeln!(out, "}}").unwrap();
+    s.push('}');
+    s
 }
 
-fn emit_foreign_item(
-    out: &mut impl Write,
+fn collect_foreign_item(
     tcx: TyCtxt<'_>,
     renames: &Renames,
     all_type_names: &HashSet<String>,
     item: &rustc_hir::ForeignItem,
+    out: &mut Vec<CollectedItem>,
 ) {
     match &item.kind {
         rustc_hir::ForeignItemKind::Fn(sig, param_idents, _generics) => {
+            let name = item.ident.as_str().to_string();
             let decl = sig.decl;
             let params: Vec<String> = decl
                 .inputs
@@ -903,11 +930,11 @@ fn emit_foreign_item(
                 .map(|(ty, ident)| {
                     let ty_str = format_ty(tcx, renames, ty);
                     if let Some(ident) = ident {
-                        let name = ident.as_str();
-                        let param_name = if all_type_names.contains(name) {
-                            format!("{}_", name)
+                        let pname = ident.as_str();
+                        let param_name = if all_type_names.contains(pname) {
+                            format!("{}_", pname)
                         } else {
-                            name.to_string()
+                            pname.to_string()
                         };
                         format!("{}: {}", param_name, ty_str)
                     } else {
@@ -921,31 +948,339 @@ fn emit_foreign_item(
             } else {
                 params.join(", ")
             };
-            writeln!(
-                out,
-                "extern \"C\" fn {}({}){};",
-                item.ident,
-                params_str,
-                ret
-            )
-            .unwrap();
+            out.push(CollectedItem {
+                name: name.clone(),
+                kind: ItemKind::ExternFn,
+                text: format!("extern \"C\" fn {}({}){};", name, params_str, ret),
+            });
         }
         rustc_hir::ForeignItemKind::Static(ty, mutbl, _safety) => {
+            let name = item.ident.as_str().to_string();
             let ty_str = format_ty(tcx, renames, ty);
-            match mutbl {
+            let text = match mutbl {
                 rustc_hir::Mutability::Mut => {
-                    writeln!(out, "extern \"C\" static mut {}: {};", item.ident, ty_str).unwrap();
+                    format!("extern \"C\" static mut {}: {};", name, ty_str)
                 }
                 rustc_hir::Mutability::Not => {
-                    writeln!(out, "extern \"C\" static {}: {};", item.ident, ty_str).unwrap();
+                    format!("extern \"C\" static {}: {};", name, ty_str)
                 }
-            }
+            };
+            out.push(CollectedItem {
+                name,
+                kind: ItemKind::ExternStatic,
+                text,
+            });
         }
         rustc_hir::ForeignItemKind::Type => {
             let name = resolve_name(item.ident.as_str(), renames);
-            writeln!(out, "enum {} {{}}", name).unwrap();
+            out.push(CollectedItem {
+                name: name.clone(),
+                kind: ItemKind::Enum,
+                text: format!("enum {} {{}}", name),
+            });
         }
     }
+}
+
+impl rustc_driver::Callbacks for ItemCollector {
+    fn after_analysis(&mut self, _compiler: &Compiler, tcx: TyCtxt<'_>) -> Compilation {
+        let target = &tcx.sess.target;
+        self.target_info = Some(TargetInfo {
+            arch: target.arch.to_string(),
+            os: target.os.to_string(),
+            env: target.env.to_string(),
+        });
+
+        // Pass 1: collect all names to detect conflicts
+        let mut value_names = HashSet::new();
+        let mut type_names = HashSet::new();
+        let mut seen = HashSet::new();
+        for id in tcx.hir_free_items() {
+            let item = tcx.hir_item(id);
+            collect_names(tcx, &mut seen, item, &mut value_names, &mut type_names);
+        }
+        let renames = build_renames(&value_names, &type_names);
+        if !renames.is_empty() {
+            eprintln!(
+                "Note: renamed {} types to avoid name conflicts: {:?}",
+                renames.len(),
+                renames
+            );
+        }
+        let all_type_names = build_all_type_names(&type_names, &renames);
+
+        // Pass 2: collect items
+        let mut seen = HashSet::new();
+        for id in tcx.hir_free_items() {
+            let item = tcx.hir_item(id);
+            collect_item(
+                tcx,
+                &renames,
+                &all_type_names,
+                &mut seen,
+                item,
+                &mut self.items,
+            );
+        }
+
+        Compilation::Stop
+    }
+}
+
+/// Build a minimal cfg expression for a set of target indices.
+/// Returns None if all targets are covered (no cfg needed).
+fn simplify_cfg(target_indices: &[usize], all_targets: &[TargetInfo]) -> Option<String> {
+    let n = all_targets.len();
+    if target_indices.len() == n {
+        return None; // all targets
+    }
+
+    let idx_set: HashSet<usize> = target_indices.iter().copied().collect();
+    let complement: Vec<usize> = (0..n).filter(|i| !idx_set.contains(i)).collect();
+    let sorted_indices: Vec<usize> = target_indices.to_vec();
+
+    let props = ["target_arch", "target_os", "target_env"];
+
+    // Try single property match
+    for prop in &props {
+        let values: HashSet<&str> = target_indices
+            .iter()
+            .map(|&i| all_targets[i].get_prop(prop))
+            .collect();
+        for val in &values {
+            if val.is_empty() {
+                continue;
+            }
+            let matching: Vec<usize> = (0..n)
+                .filter(|&i| all_targets[i].get_prop(prop) == *val)
+                .collect();
+            if matching == sorted_indices {
+                return Some(format!("{} = \"{}\"", prop, val));
+            }
+        }
+    }
+
+    // Try negated single property
+    for prop in &props {
+        let comp_values: HashSet<&str> = complement
+            .iter()
+            .map(|&i| all_targets[i].get_prop(prop))
+            .collect();
+        for val in &comp_values {
+            if val.is_empty() {
+                continue;
+            }
+            let excluded: Vec<usize> = (0..n)
+                .filter(|&i| all_targets[i].get_prop(prop) == *val)
+                .collect();
+            if excluded == complement {
+                return Some(format!("not({} = \"{}\")", prop, val));
+            }
+        }
+    }
+
+    // Try disjunction of same-property values (e.g., any(target_arch = "x", target_arch = "y"))
+    for prop in &props {
+        let values: HashSet<&str> = target_indices
+            .iter()
+            .map(|&i| all_targets[i].get_prop(prop))
+            .collect();
+        let matching: HashSet<usize> = (0..n)
+            .filter(|&i| {
+                let v = all_targets[i].get_prop(prop);
+                !v.is_empty() && values.contains(v)
+            })
+            .collect();
+        if matching == idx_set && values.len() > 1 {
+            let mut vals: Vec<&str> = values.into_iter().collect();
+            vals.sort();
+            let parts: Vec<String> = vals
+                .iter()
+                .map(|v| format!("{} = \"{}\"", prop, v))
+                .collect();
+            return Some(format!("any({})", parts.join(", ")));
+        }
+    }
+
+    // Try two-property conjunction (all(prop1 = "v1", prop2 = "v2"))
+    for i in 0..props.len() {
+        for j in (i + 1)..props.len() {
+            let pairs: HashSet<(&str, &str)> = target_indices
+                .iter()
+                .map(|&idx| {
+                    (
+                        all_targets[idx].get_prop(props[i]),
+                        all_targets[idx].get_prop(props[j]),
+                    )
+                })
+                .collect();
+            for &(v1, v2) in &pairs {
+                if v1.is_empty() || v2.is_empty() {
+                    continue;
+                }
+                let matching: Vec<usize> = (0..n)
+                    .filter(|&idx| {
+                        all_targets[idx].get_prop(props[i]) == v1
+                            && all_targets[idx].get_prop(props[j]) == v2
+                    })
+                    .collect();
+                if matching == sorted_indices {
+                    return Some(format!(
+                        "all({} = \"{}\", {} = \"{}\")",
+                        props[i], v1, props[j], v2
+                    ));
+                }
+            }
+        }
+    }
+
+    // Fallback: enumerate with any(all(...), ...)
+    let mut clauses: Vec<String> = Vec::new();
+    for &idx in target_indices {
+        let t = &all_targets[idx];
+        let mut parts = Vec::new();
+        parts.push(format!("target_arch = \"{}\"", t.arch));
+        parts.push(format!("target_os = \"{}\"", t.os));
+        if !t.env.is_empty() {
+            parts.push(format!("target_env = \"{}\"", t.env));
+        }
+        if parts.len() == 1 {
+            clauses.push(parts.into_iter().next().unwrap());
+        } else {
+            clauses.push(format!("all({})", parts.join(", ")));
+        }
+    }
+    if clauses.len() == 1 {
+        Some(clauses.into_iter().next().unwrap())
+    } else {
+        Some(format!("any({})", clauses.join(", ")))
+    }
+}
+
+/// Variant text + which target indices have this exact text.
+struct MergedVariant {
+    text: String,
+    target_indices: Vec<usize>,
+}
+
+/// Merge items from all targets into a single output.
+fn merge_items(per_target_items: &[Vec<CollectedItem>], all_targets: &[TargetInfo]) -> String {
+    // Build map: (kind, name) -> list of (text, target_indices)
+    let mut map: BTreeMap<(ItemKind, String), Vec<MergedVariant>> = BTreeMap::new();
+
+    for (target_idx, items) in per_target_items.iter().enumerate() {
+        for item in items {
+            let key = (item.kind, item.name.clone());
+            let variants = map.entry(key).or_default();
+            // Check if we already have this exact text
+            if let Some(v) = variants.iter_mut().find(|v| v.text == item.text) {
+                v.target_indices.push(target_idx);
+            } else {
+                variants.push(MergedVariant {
+                    text: item.text.clone(),
+                    target_indices: vec![target_idx],
+                });
+            }
+        }
+    }
+
+    // Group by kind for output
+    let mut output = String::new();
+    writeln!(output, "#![allow(unused_parameter)]").unwrap();
+    writeln!(output, "//! Platform-specific libc bindings.").unwrap();
+    writeln!(output).unwrap();
+    writeln!(output, "// Auto-generated. Do not edit.").unwrap();
+    writeln!(output, "use libc::prelude::*;").unwrap();
+
+    let kind_order = [
+        ItemKind::TypeAlias,
+        ItemKind::Enum,
+        ItemKind::Struct,
+        ItemKind::Union,
+        ItemKind::Const,
+        ItemKind::ExternFn,
+        ItemKind::ExternStatic,
+        ItemKind::Fn,
+    ];
+
+    // Collect (cfg, text) pairs in output order, with None entries as section breaks
+    // We use a special sentinel to represent section breaks between kind groups.
+    enum OutputItem {
+        SectionBreak,
+        Item { cfg: Option<String>, text: String },
+    }
+
+    let mut items: Vec<OutputItem> = Vec::new();
+
+    for kind in &kind_order {
+        let entries: Vec<_> = map.iter().filter(|((k, _), _)| k == kind).collect();
+
+        if entries.is_empty() {
+            continue;
+        }
+
+        items.push(OutputItem::SectionBreak);
+
+        for ((_, _name), variants) in entries {
+            for variant in variants {
+                let cfg = simplify_cfg(&variant.target_indices, all_targets);
+                items.push(OutputItem::Item {
+                    cfg,
+                    text: variant.text.clone(),
+                });
+            }
+        }
+    }
+
+    // Emit items, grouping consecutive items with the same cfg into blocks
+    let mut i = 0;
+    while i < items.len() {
+        match &items[i] {
+            OutputItem::SectionBreak => {
+                writeln!(output).unwrap();
+                i += 1;
+            }
+            OutputItem::Item {
+                cfg: None,
+                ref text,
+            } => {
+                writeln!(output, "{}", text).unwrap();
+                i += 1;
+            }
+            OutputItem::Item {
+                cfg: Some(cfg_str),
+                ref text,
+            } => {
+                // Find the run of consecutive Item entries with the same cfg
+                let mut j = i + 1;
+                while j < items.len() {
+                    match &items[j] {
+                        OutputItem::Item { cfg: Some(c), .. } if c == cfg_str => j += 1,
+                        _ => break,
+                    }
+                }
+                let count = j - i;
+                if count == 1 {
+                    writeln!(output, "#[cfg({})]", cfg_str).unwrap();
+                    writeln!(output, "{}", text).unwrap();
+                } else {
+                    writeln!(output, "#[cfg({})]", cfg_str).unwrap();
+                    writeln!(output, "{{").unwrap();
+                    for item in &items[i..j] {
+                        if let OutputItem::Item { text: ref t, .. } = item {
+                            for line in t.lines() {
+                                writeln!(output, "    {}", line).unwrap();
+                            }
+                        }
+                    }
+                    writeln!(output, "}}").unwrap();
+                }
+                i = j;
+            }
+        }
+    }
+
+    output
 }
 
 /// Generate Alumina libc bindings (.alu) from the Rust libc crate.
@@ -963,25 +1298,24 @@ struct Args {
     target: Vec<String>,
 }
 
-fn target_to_filename(target: &str) -> String {
-    format!("{}.alu", target.replace('-', "_"))
-}
 
 fn main() {
     let args = Args::parse();
 
     fs::create_dir_all(&args.output).unwrap_or_else(|e| {
-        eprintln!("Cannot create output directory {}: {}", args.output.display(), e);
+        eprintln!(
+            "Cannot create output directory {}: {}",
+            args.output.display(),
+            e
+        );
         std::process::exit(1);
     });
 
-    for target in &args.target {
-        let output_path = args.output.join(target_to_filename(target));
-        eprintln!("Generating {} ...", output_path.display());
+    let mut all_targets: Vec<TargetInfo> = Vec::new();
+    let mut per_target_items: Vec<Vec<CollectedItem>> = Vec::new();
 
-        let file = fs::File::create(&output_path).unwrap_or_else(|e| {
-            panic!("Cannot create {}: {}", output_path.display(), e);
-        });
+    for target in &args.target {
+        eprintln!("Collecting items for {} ...", target);
 
         let compiler_args: Vec<String> = vec![
             "libc-dumper".to_string(),
@@ -991,10 +1325,28 @@ fn main() {
             target.clone(),
         ];
 
-        let mut dumper = AluDumper {
-            output: Box::new(file),
+        let mut collector = ItemCollector {
+            items: Vec::new(),
+            target_info: None,
         };
 
-        run_compiler(&compiler_args, &mut dumper);
+        run_compiler(&compiler_args, &mut collector);
+
+        all_targets.push(collector.target_info.expect("target info not set"));
+        per_target_items.push(collector.items);
     }
+
+    eprintln!("Merging items across {} targets ...", all_targets.len());
+    let merged = merge_items(&per_target_items, &all_targets);
+
+    let output_path = args.output.join("bindings.alu");
+    eprintln!("Writing {} ...", output_path.display());
+    fs::write(&output_path, &merged).unwrap_or_else(|e| {
+        panic!("Cannot write {}: {}", output_path.display(), e);
+    });
+
+    eprintln!(
+        "Done. Generated merged bindings in {}",
+        output_path.display()
+    );
 }
