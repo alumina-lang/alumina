@@ -244,8 +244,8 @@ examples: $(patsubst examples/%.alu,$(BUILD_DIR)/examples/%,$(EXAMPLES))
 
 ## ----------------------- Libc binding generation ----------------------
 
-.PHONY: generate-libc
-generate-libc:
+.PHONY: libc-bindgen
+libc-bindgen:
 	./tools/libc-bindgen/generate.sh
 
 ## ------------------------------ Various ------------------------------
