@@ -642,33 +642,23 @@ fn format_scalar(
 }
 
 /// Emit the .alu cfg header line.
-fn emit_cfg_header(out: &mut impl Write, target: &str) -> io::Result<()> {
-    let parts: Vec<&str> = target.split('-').collect();
-    let (arch, os, env) = match parts.as_slice() {
-        [arch, _vendor, os, env] => (*arch, *os, Some(*env)),
-        [arch, _vendor, os] => (*arch, *os, None),
-        [arch, os] => (*arch, *os, None),
-        _ => ("unknown", "unknown", None),
-    };
+fn emit_cfg_header(out: &mut impl Write, tcx: TyCtxt<'_>) -> io::Result<()> {
+    let target = &tcx.sess.target;
+    let arch = target.arch.to_string();
+    let os = target.os.to_string();
+    let env = target.env.to_string();
 
-    let target_os = match os {
-        "linux" => "linux",
-        "darwin" | "macos" => "macos",
-        "android" => "android",
-        other => other,
-    };
-
-    if let Some(env) = env {
+    if !env.is_empty() {
         writeln!(
             out,
             "#![cfg(all(target_env = \"{}\", target_arch = \"{}\", target_os = \"{}\"))]",
-            env, arch, target_os
+            env, arch, os
         )?;
     } else {
         writeln!(
             out,
             "#![cfg(all(target_arch = \"{}\", target_os = \"{}\"))]",
-            arch, target_os
+            arch, os
         )?;
     }
     Ok(())
@@ -678,11 +668,12 @@ impl rustc_driver::Callbacks for AluDumper {
     fn after_analysis(&mut self, _compiler: &Compiler, tcx: TyCtxt<'_>) -> Compilation {
         let mut out = io::BufWriter::new(&mut self.output);
 
-        let target = tcx.sess.opts.target_triple.tuple().to_string();
-        emit_cfg_header(&mut out, &target).unwrap();
+        let target = tcx.sess.opts.target_triple.tuple();
+        writeln!(out, "// Auto-generated libc bindings for {} by tools/libc-hir-dump. Do not edit.", target).unwrap();
+        emit_cfg_header(&mut out, tcx).unwrap();
         writeln!(out).unwrap();
         writeln!(out, "#![allow(unused_parameter)]").unwrap();
-        writeln!(out, "use libc::helpers::*;").unwrap();
+        writeln!(out, "use libc::prelude::*;").unwrap();
         writeln!(out).unwrap();
 
         // Pass 1: collect all names to detect conflicts

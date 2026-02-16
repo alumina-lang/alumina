@@ -242,6 +242,12 @@ $(BUILD_DIR)/examples/%: $(BUILD_DIR)/examples/%.c $(MINICORO)
 
 examples: $(patsubst examples/%.alu,$(BUILD_DIR)/examples/%,$(EXAMPLES))
 
+## ----------------------- Libc binding generation ----------------------
+
+.PHONY: generate-libc
+generate-libc:
+	./tools/libc-bindgen/generate.sh
+
 ## ------------------------------ Various ------------------------------
 
 .PHONY: clean clean-all all install
