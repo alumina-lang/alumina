@@ -73,6 +73,24 @@ fn test_ir_inline_nested() {
 }
 
 #[test]
+fn test_ir_inline_defer() {
+    fn inc(p: &mut i32) {
+        *p = *p + 1;
+    }
+
+    #[inline(ir)]
+    fn add_with_defer(p: &mut i32, val: i32) {
+        defer inc(p);
+        *p += val;
+    }
+
+    let x: i32 = 0;
+    add_with_defer(&x, 10);
+    // body does *p += val (x=10), then defer does inc(p) (x=11)
+    assert_eq!(x, 11);
+}
+
+#[test]
 fn test_ir_inline_multiple_calls() {
     #[inline(ir)]
     fn abs(x: i32) -> i32 {

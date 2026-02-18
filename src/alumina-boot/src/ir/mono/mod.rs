@@ -1558,10 +1558,7 @@ impl<'ast, 'ir> Mono<'_, 'ast, 'ir> {
                 grandchild.yield_type = Some(yield_type);
                 grandchild.recv_type = Some(recv_type);
 
-                let body = grandchild.lower_function_body(
-                    func_body,
-                    tuple_args_arg,
-                )?;
+                let body = grandchild.lower_function_body(func_body, tuple_args_arg)?;
                 inner.get_function().unwrap().body.set(body).unwrap();
 
                 let body = child
@@ -1569,10 +1566,7 @@ impl<'ast, 'ir> Mono<'_, 'ast, 'ir> {
 
                 item.get_function().unwrap().body.set(body).unwrap();
             } else {
-                let body = child.lower_function_body(
-                    func_body,
-                    tuple_args_arg,
-                )?;
+                let body = child.lower_function_body(func_body, tuple_args_arg)?;
                 item.get_function().unwrap().body.set(body).unwrap();
             }
         }
@@ -4683,9 +4677,10 @@ impl<'ast, 'ir> Mono<'_, 'ast, 'ir> {
                 {
                     // no silent fallback to a regular function call, since the only thing that can go wrong is that
                     // the callee is not compatible with IR inlining, so this should not lead to surprises
-                    let func_body = func.body
-                            .get()
-                            .ok_or_else(|| self.diag.err(CodeDiagnostic::UnpopulatedItem))?;
+                    let func_body = func
+                        .body
+                        .get()
+                        .ok_or_else(|| self.diag.err(CodeDiagnostic::UnpopulatedItem))?;
                     let (expr, mut additional_defs) = IrInliner::inline(
                         self.ctx.ir,
                         func_body.expr,
