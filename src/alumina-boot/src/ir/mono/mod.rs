@@ -1558,12 +1558,7 @@ impl<'ast, 'ir> Mono<'_, 'ast, 'ir> {
                 grandchild.yield_type = Some(yield_type);
                 grandchild.recv_type = Some(recv_type);
 
-                let body = grandchild.lower_function_body(
-                    func_body,
-                    func.attributes
-                        .contains(&ast::Attribute::Inline(ast::Inline::DuringMono)),
-                    tuple_args_arg,
-                )?;
+                let body = grandchild.lower_function_body(func_body, tuple_args_arg)?;
                 inner.get_function().unwrap().body.set(body).unwrap();
 
                 let body = child
@@ -1571,12 +1566,7 @@ impl<'ast, 'ir> Mono<'_, 'ast, 'ir> {
 
                 item.get_function().unwrap().body.set(body).unwrap();
             } else {
-                let body = child.lower_function_body(
-                    func_body,
-                    func.attributes
-                        .contains(&ast::Attribute::Inline(ast::Inline::DuringMono)),
-                    tuple_args_arg,
-                )?;
+                let body = child.lower_function_body(func_body, tuple_args_arg)?;
                 item.get_function().unwrap().body.set(body).unwrap();
             }
         }
@@ -1731,7 +1721,6 @@ impl<'ast, 'ir> Mono<'_, 'ast, 'ir> {
     fn lower_function_body(
         mut self,
         expr: ast::ExprP<'ast>,
-        is_ir_inline: bool,
         tuple_args_args: Option<(ir::Parameter<'ir>, &[ir::Parameter<'ir>])>,
     ) -> Result<ir::FuncBody<'ir>, AluminaError> {
         let return_type = self.return_type.unwrap();
@@ -1761,14 +1750,6 @@ impl<'ast, 'ir> Mono<'_, 'ast, 'ir> {
         };
 
         let body = self.try_coerce(return_type, body)?;
-        if is_ir_inline {
-            if self.defer_context.is_some() {
-                bail!(self, CodeDiagnostic::IrInlineFlowControl);
-            }
-            if !self.local_defs.is_empty() {
-                bail!(self, CodeDiagnostic::IrInlineLocalDefs);
-            }
-        };
 
         let body = if self.defer_context.is_some() {
             let mut statements = Vec::new();
@@ -4696,13 +4677,15 @@ impl<'ast, 'ir> Mono<'_, 'ast, 'ir> {
                 {
                     // no silent fallback to a regular function call, since the only thing that can go wrong is that
                     // the callee is not compatible with IR inlining, so this should not lead to surprises
+                    let func_body = func
+                        .body
+                        .get()
+                        .ok_or_else(|| self.diag.err(CodeDiagnostic::UnpopulatedItem))?;
                     let (expr, mut additional_defs) = IrInliner::inline(
-                        self.diag.fork(),
                         self.ctx.ir,
-                        func.body
-                            .get()
-                            .ok_or_else(|| self.diag.err(CodeDiagnostic::UnpopulatedItem))?
-                            .expr,
+                        func_body.expr,
+                        func_body.local_defs,
+                        func.return_type,
                         func.args
                             .iter()
                             .zip(args.into_iter())

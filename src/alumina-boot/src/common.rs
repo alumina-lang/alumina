@@ -307,13 +307,6 @@ pub enum CodeDiagnostic {
     FloatOutOfRange(String, String),
     #[error("`#[align(...)]` cannot be used together with `#[packed]`")]
     AlignAndPacked,
-    // IR inlining is very restricitve at the moment, these may eventually be removed
-    #[error("cannot IR-inline functions that use variables")]
-    IrInlineLocalDefs,
-    #[error("cannot IR-inline functions that use flow control")]
-    IrInlineFlowControl,
-    #[error("cannot IR-inline functions that can return early")]
-    IrInlineEarlyReturn,
     #[error("cannot define new items in a macro body (yet)")]
     MacrosCannotDefineItems,
     #[error("anonymous functions are not supported in a macro body (yet)")]

@@ -4,10 +4,10 @@
 
 - Make IR inlining better
   - Better error messages for why recursive functions can't be inlined (rather than just "Unpopulated symbol")
-- stack overflow in codegen stage because infinite size recursive structs are not rejected during monomorphization
-    - could be a similar issue with protocols, though these are more coservative vis-a-vis recursion
-- if tentative monomorphization fails (e.g. error), but type inference still succeeds, we are left with unpopulated symbols
-    - this is now especially an issue with `when` expressions which do tentative mono during proto bound checking
+- Stack overflow in codegen stage because infinite size recursive structs are not rejected during monomorphization
+    - Could be a similar issue with protocols, though these are more conservative vis-a-vis recursion
+- If tentative monomorphization fails (e.g. error), but type inference still succeeds, we are left with unpopulated symbols
+    - This is now especially an issue with `when` expressions which do tentative mono during proto bound checking
     - This is a big problem, unfortunately there is no easy solution with the current `mono` architecture.
 - "any/don't care" in protocol bounds. Especially for things like `Hashable` and `Formattable`, it would be great if users didn't need to introduce a new generic parameter for the hasher and formatter (since that complicates type inference).
   - Alternatively, allow pre-monomorphized types to be used as protocol bounds
@@ -17,27 +17,22 @@
 - Local items (functions, structs defined in linear scopes) that bind ambient generic parameters
   - Right now there is not even a good error message to say that this is not supported, just a cryptic "unbound placeholder" during mono
 - Recursive local functions lead to stack overflow as mono monomorphizes them over and over again. The local item handling for functions was designed for lambdas that cannot be recursive (without indirection)
-- Macros cannot define local items or use anonymous function. This is quite bad and should be fixed.
+- Macros cannot define local items or use anonymous functions. This is quite bad and should be fixed.
 - `if opt.is_some { opt.inner }` and  `if res.is_ok() { res.unwrap() }` do not spark joy. Full pattern matching is overkill, but this is very common and
   deserves a better idiom.
-- a coherent story for operator overloading
-- `dyn` pointers for certain builtin protocols. Specifically `dyn Callable<...>` would be very useful for being type-erased closures.
+- Arithmetic operator overloading (comparison operators work via `Equatable`/`Comparable`, but `+`, `-`, `*`, `/` etc. are not overloadable for custom types)
+- `dyn Callable<...>` for type-erased closures. General `dyn` pointers work, but builtin protocols like `Callable` cannot be used with `dyn`.
 - Fix that damn "local with unknown type" issue. It can happen that compilation will fail with 0 errors and 0 warnings now.
-- get rid of println! and eprintln! in const-eval, give them separate names
 
 ## Grammar, parsing, AST
 
 - Switch is a bit cumbersome at the moment / improve?
-- macros could be more expressive (esp. accept type parameters) - but this needs a nice-looking syntax.
+- Macros could be more expressive (esp. accept type parameters) - but this needs a nice-looking syntax.
 
 ## Std library
 
-
-- proper float parsing that can handle all the edge cases (curront one will reject numbers with a lot of digits)
 - extras, nice to have:
-  - date/time???? this is a big can of worms
-    - durations/monotonic timer are implemented
-  - regexes? probably not, maybe a PCRE wrapper outside stdlib
+  - date/time (durations/monotonic timer are implemented, but no calendar/timezone support)
   - JSON? Some sort of Serde-like generic serialization/deserialization would be nice to have built-in
   - vectored I/O?
 
@@ -55,7 +50,7 @@
   - Allocating collections and not freeing them - this would be pretty great to have if I can figure out a way to do it without false positives and in a generic enough fashion
     - OTOH, this is a bit of a slippery slope. Do I need to invent whole ownership system for this? If so, it's not happening, Alumina is not C++ or Rust even though it doesn't try very hard to not look like them.
 - Add more specific spans to compile errors. It's pretty good right now, but could be better.
-- do not panic on cyclic/recursive protocol bounds (figure out which ones are appropriate), but rather give a meaningful error message
+- Do not panic on cyclic/recursive protocol bounds (figure out which ones are appropriate), but rather give a meaningful error message
 
 ## Compiler architecture
 
@@ -75,30 +70,23 @@
 - Will the compiler architecture scale to large programs?
     - So far it's looking good. Stdlib is ~70k lines of code and it compiles with tests in half a second. With serialized AST it's even faster and the bottleneck is mono, which means that even as stlib grows, small programs will still be fast to compile.
 - AST expression should have a convenience builder, like the one for IR expressions. `expressions.rs` is overly verbose right now, especially with all the span tagging.
-- Most panics should probably use `ice!` macro to report the source span where the compiler panicked
+- Broader adoption of `ice!` macro for panics to report the source span where the compiler panicked (currently used in mono/intrinsics, but most panics elsewhere still use plain `unwrap`/`unreachable!`)
 - Cross-compilation
-  - Should be easy enough, as generated C code has almost no platform dependencies. This is more of a concern for the standard library to ensure `cfg` attributes are sprinkled around appropriately.
-    - const eval needs to adjust usizes etc. to the target platform
+  - Generated C code has minimal platform dependencies, and stdlib `cfg` coverage has improved (x86_64, aarch64, riscv64).
+  - Const eval still needs to adjust usizes etc. to the target platform rather than using the host platform's values.
 
 ## Exploratory
 
-- tagged unions
+- Tagged unions
   - I miss them quite a lot from Rust. They are not hard, but need a good syntax for `match`
-- ability to monkey-patch in a nice way without linker tricks
-- full Hindley-Milner type inference. Global type inference will pretty much require a full rewrite of `mono`, so whis would be a massive project, but it would also be super awesome to have
+- Ability to monkey-patch in a nice way without linker tricks
+- Full Hindley-Milner type inference. Global type inference will pretty much require a full rewrite of `mono`, so this would be a massive project, but it would also be super awesome to have
   - Type inference gaps are a big pain point right now, especially since there are so many places where adding a type hint is not even possible (e.g. when chaining methods).
-- some sort of type-checking of pre-monomorphized functions might be useful. they can have pretty blatant errors inside that would fail to compile no matter what the type parameters are, but you don't know until you actually try to use it.
-- attributes in reflection
+- Some sort of type-checking of pre-monomorphized functions might be useful. They can have pretty blatant errors inside that would fail to compile no matter what the type parameters are, but you don't know until you actually try to use it.
+- Attributes in reflection (currently only `has_attribute` bool check exists, no full attribute value access or enumeration)
 
 ## Tooling
 
-- a compiler driver (i.e. Cargo)
-- integrated codegen (a la `go generate` or procedural macros)
-- a REPL. Totally doable with const-eval.
-
-## Bikeshedding
-
-- Name conventions (PascalCase, snake_case, ...)
-  - This is settled now. See: Rust.
-- Why "Alumina"?
-  - Rust begets more Rust until everything is oxidized. Aluminium forms just a thin passivation layer leaving "bare metal" just under the surface (I am really stretching the metaphor here, the real reason is just that it is another metal oxide)
+- A compiler driver (i.e. Cargo)
+- Integrated codegen (a la `go generate` or procedural macros)
+- A REPL. Totally doable with const-eval.

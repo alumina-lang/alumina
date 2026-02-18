@@ -552,7 +552,7 @@ module.exports = grammar({
       ),
 
     defer_expression: ($) =>
-      prec.left(seq("defer", field("inner", $._expression))),
+      prec.left(PREC.closure, seq("defer", field("inner", $._expression))),
 
     arguments: ($) =>
       seq("(", sepBy(",", field("inner", $._expression)), optional(","), ")"),

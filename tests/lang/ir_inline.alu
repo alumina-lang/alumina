@@ -1,0 +1,107 @@
+//! Tests for generalized IR inlining.
+
+#[test]
+fn test_ir_inline_local_vars() {
+    #[inline(ir)]
+    fn sum_squares(a: i32, b: i32) -> i32 {
+        let x = a * a;
+        let y = b * b;
+        x + y
+    }
+
+    assert_eq!(sum_squares(3, 4), 25);
+}
+
+#[test]
+fn test_ir_inline_early_return() {
+    #[inline(ir)]
+    fn clamp(x: i32, lo: i32, hi: i32) -> i32 {
+        if x < lo { return lo; }
+        if x > hi { return hi; }
+        x
+    }
+
+    assert_eq!(clamp(5, 0, 10), 5);
+    assert_eq!(clamp(-1, 0, 10), 0);
+    assert_eq!(clamp(15, 0, 10), 10);
+}
+
+#[test]
+fn test_ir_inline_loop_break() {
+    #[inline(ir)]
+    fn first_factor(n: i32) -> i32 {
+        let i = 2;
+        loop {
+            if i * i > n { break n; }
+            if n % i == 0 { break i; }
+            i += 1;
+        }
+    }
+
+    assert_eq!(first_factor(15), 3);
+    assert_eq!(first_factor(7), 7);
+    assert_eq!(first_factor(4), 2);
+}
+
+#[test]
+fn test_ir_inline_void_return() {
+    let x = 0;
+
+    #[inline(ir)]
+    fn inc(p: &mut i32) {
+        *p += 1;
+    }
+
+    inc(&x);
+    inc(&x);
+    assert_eq!(x, 2);
+}
+
+#[test]
+fn test_ir_inline_nested() {
+    #[inline(ir)]
+    fn double(x: i32) -> i32 {
+        x + x
+    }
+
+    #[inline(ir)]
+    fn quadruple(x: i32) -> i32 {
+        double(double(x))
+    }
+
+    assert_eq!(quadruple(3), 12);
+}
+
+#[test]
+fn test_ir_inline_defer() {
+    fn inc(p: &mut i32) {
+        *p = *p + 1;
+    }
+
+    #[inline(ir)]
+    fn add_with_defer(p: &mut i32, val: i32) {
+        defer inc(p);
+        *p += val;
+    }
+
+    let x: i32 = 0;
+    add_with_defer(&x, 10);
+    // body does *p += val (x=10), then defer does inc(p) (x=11)
+    assert_eq!(x, 11);
+}
+
+#[test]
+fn test_ir_inline_multiple_calls() {
+    #[inline(ir)]
+    fn abs(x: i32) -> i32 {
+        if x < 0 { return -x; }
+        x
+    }
+
+    // Multiple calls to the same inlined function should work
+    // (each gets fresh IDs)
+    assert_eq!(abs(5), 5);
+    assert_eq!(abs(-3), 3);
+    assert_eq!(abs(0), 0);
+    assert_eq!(abs(5) + abs(-3), 8);
+}
