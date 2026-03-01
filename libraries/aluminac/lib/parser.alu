@@ -992,7 +992,13 @@ impl Pass2 {
                 let placeholder = child_by!(arg, FieldKind::Placeholder);
                 if !placeholder.is_null() {
                     let name = self.ctx.intern_str(self.ctx.node_text(placeholder.unwrap()));
-                    let id = self.ctx.next_id();
+                    // Reuse the ID from Pass1's scope registration
+                    let resolved = self.ctx.scopes.resolve(scope_idx, name);
+                    let id = if resolved.is_some() && resolved.unwrap().kind.tag == scope::NIK_GENERIC_PARAM {
+                        resolved.unwrap().kind.id
+                    } else {
+                        self.ctx.next_id()
+                    };
 
                     // Parse bounds
                     let bounds = self.parse_generic_bounds(arg, scope_idx);
@@ -1934,13 +1940,19 @@ impl ExprParser {
             return self.alloc_void(span);
         }
 
-        // Check for turbofish calls like zeroed::<T>() or std::mem::zeroed::<T>()
+        // Check for turbofish calls like zeroed::<T>() or identity::<i32>()
         let func_node = func.unwrap();
         let func_kind = NODE_KINDS[func_node.symbol() as usize];
         if func_kind == NodeKind::Turbofish || func_kind == NodeKind::GenericTypeWithTurbofish {
             let result = self.try_parse_intrinsic_call(func_node, span);
             if result.tag != EXPR_VOID {
+                // Intrinsic call (e.g., zeroed::<T>())
                 return self.ctx.alloc_expr(result);
+            }
+            // Non-intrinsic turbofish: parse as generic call with type args
+            let turbofish_result = self.parse_turbofish_call(node, func_node, span);
+            if turbofish_result.tag != EXPR_VOID {
+                return self.ctx.alloc_expr(turbofish_result);
             }
         }
 
@@ -1989,6 +2001,44 @@ impl ExprParser {
         }
 
         Expr::void_expr()
+    }
+
+    fn parse_turbofish_call(self: &ExprParser, call_node: Node, func_node: Node, span: Span) -> Expr {
+        // Parse the function path from the turbofish
+        let path_node = child_by!(func_node, FieldKind::Function);
+        let path_node2 = if path_node.is_null() { child_by!(func_node, FieldKind::Type) } else { path_node };
+        let type_args_node = child_by!(func_node, FieldKind::TypeArguments);
+
+        if path_node2.is_null() {
+            return Expr::void_expr();
+        }
+
+        // Resolve the function
+        let callee = self.parse_expr(path_node2.unwrap());
+
+        // Parse type arguments
+        let pass2 = Pass2 { ctx: self.ctx };
+        let type_args = if !type_args_node.is_null() {
+            pass2.parse_type_args(type_args_node.unwrap(), self.scope_idx)
+        } else {
+            let empty: &[&Ty] = &[];
+            empty
+        };
+
+        // Parse call arguments from the outer call node
+        let args_node = child_by!(call_node, FieldKind::Arguments);
+        let args = if !args_node.is_null() {
+            self.parse_arg_list(args_node.unwrap())
+        } else {
+            let empty: &[&Expr] = &[];
+            empty
+        };
+
+        let e = self.make_expr(EXPR_CALL, span);
+        e.lhs = callee;
+        e.args = args;
+        e.type_args = type_args;
+        e
     }
 
     fn parse_arg_list(self: &ExprParser, node: Node) -> &[&Expr] {

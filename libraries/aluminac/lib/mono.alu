@@ -1438,6 +1438,40 @@ impl Mono {
                 // Fall through to normal field access (function pointer in struct field)
             }
 
+            // Check for turbofish generic calls: func::<T>(args)
+            if expr.type_args.len() > 0 && expr.lhs.tag == EXPR_FN_REF {
+                // Resolve type args
+                let resolved_type_args = self.ctx.arena.alloc_slice::<&IrTy>(expr.type_args.len());
+                for i in 0usize..expr.type_args.len() {
+                    resolved_type_args[i] = self.resolve_type(expr.type_args[i]);
+                }
+
+                // Monomorphize the function with type args
+                let fn_def = self.ctx.fn_defs.get(&expr.lhs.id._value);
+                if fn_def.is_some() {
+                    let def = fn_def.unwrap();
+                    let fn_idx = self.mono_function(def, resolved_type_args);
+                    let ir_fn = &self.ctx.ir_functions[fn_idx];
+
+                    // Lower arguments
+                    let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args.len());
+                    for i in 0usize..expr.args.len() {
+                        ir_args[i] = self.lower_expr(expr.args[i]);
+                    }
+
+                    let fn_ref = IrFnRef {
+                        id: ir_fn.id,
+                        mangled_name: ir_fn.mangled_name,
+                    };
+
+                    let result = IrExpr::void_expr(ir_fn.return_type);
+                    result.tag = IR_CALL;
+                    result.call_target = IrCallTarget { tag: CALL_DIRECT, fn_ref: fn_ref, callee: std::mem::zeroed::<&IrExpr>() };
+                    result.items = ir_args;
+                    return self.ctx.arena.alloc(result);
+                }
+            }
+
             let ir_callee = self.lower_expr(expr.lhs);
             let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args.len());
             for i in 0usize..expr.args.len() {
