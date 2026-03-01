@@ -1518,7 +1518,7 @@ impl Pass2 {
             Option::none()
         };
 
-        let value_node = child_by!(node, FieldKind::Value);
+        let value_node = child_by!(node, FieldKind::Init);
         let init: Option<&Expr> = if !value_node.is_null() {
             let expr_parser = ExprParser::new(self.ctx, pending.scope_idx);
             Option::some(expr_parser.parse_expr(value_node.unwrap()))
@@ -2483,11 +2483,28 @@ impl ExprParser {
         if !params_node.is_null() {
             let cursor = params_node.unwrap().walk();
             defer cursor.free();
+            let pass2 = Pass2 { ctx: self.ctx };
             for child in params_node.unwrap().children(&cursor) {
                 if child.is_named() {
                     let kind = NODE_KINDS[child.symbol() as usize];
                     let id = self.ctx.next_id();
-                    let name = self.ctx.intern_str(self.ctx.node_text(child));
+
+                    // Handle Parameter nodes (name: type) vs simple identifiers
+                    let name: &[u8] = "";
+                    let ty: Option<&Ty> = Option::none();
+
+                    if kind as i32 == NodeKind::Parameter as i32 {
+                        let name_node = child_by!(child, FieldKind::Name);
+                        let type_node = child_by!(child, FieldKind::Type);
+                        if !name_node.is_null() {
+                            name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
+                        }
+                        if !type_node.is_null() {
+                            ty = Option::some(pass2.parse_type(type_node.unwrap(), self.scope_idx));
+                        }
+                    } else {
+                        name = self.ctx.intern_str(self.ctx.node_text(child));
+                    }
 
                     // Register lambda param in scope
                     self.ctx.scopes.add_item(self.scope_idx, NamedItem {
@@ -2499,7 +2516,7 @@ impl ExprParser {
                     params.push(LambdaParam {
                         id: id,
                         name: name,
-                        ty: Option::none(),
+                        ty: ty,
                     });
                 }
             }
@@ -2681,18 +2698,25 @@ fn parse_int_with_suffix(text: &[u8]) -> (u64, Option<BuiltinType>) {
     let value: u64 = 0;
     let base: u64 = 10;
     let i: usize = 0;
+    let negative: bool = false;
+
+    // Check for leading negative sign
+    if text.len() > 0 && text[0] == '-' as u8 {
+        negative = true;
+        i = 1;
+    }
 
     // Check for hex/octal/binary prefix
-    if text.len() >= 2 && text[0] == '0' as u8 {
-        if text[1] == 'x' as u8 || text[1] == 'X' as u8 {
+    if text.len() >= i + 2 && text[i] == '0' as u8 {
+        if text[i + 1] == 'x' as u8 || text[i + 1] == 'X' as u8 {
             base = 16;
-            i = 2;
-        } else if text[1] == 'o' as u8 || text[1] == 'O' as u8 {
+            i = i + 2;
+        } else if text[i + 1] == 'o' as u8 || text[i + 1] == 'O' as u8 {
             base = 8;
-            i = 2;
-        } else if text[1] == 'b' as u8 || text[1] == 'B' as u8 {
+            i = i + 2;
+        } else if text[i + 1] == 'b' as u8 || text[i + 1] == 'B' as u8 {
             base = 2;
-            i = 2;
+            i = i + 2;
         }
     }
 
@@ -2720,6 +2744,10 @@ fn parse_int_with_suffix(text: &[u8]) -> (u64, Option<BuiltinType>) {
     } else {
         Option::none()
     };
+
+    if negative {
+        value = (0u64 - value);
+    }
 
     (value, suffix)
 }

@@ -425,6 +425,27 @@ impl CodegenCtx {
         global
     }
 
+    fn gen_const_init(self: &mut CodegenCtx, expr: &IrExpr) -> LLVMValueRef {
+        if expr.tag == IR_INT_LIT {
+            let ty = self.llvm_type(expr.ty);
+            LLVMConstInt(ty, expr.int_val, 1i32)
+        } else if expr.tag == IR_FLOAT_LIT {
+            let ty = self.llvm_type(expr.ty);
+            LLVMConstReal(ty, expr.float_val)
+        } else if expr.tag == IR_BOOL_LIT {
+            LLVMConstInt(self.i1_type, if expr.bool_val { 1u64 } else { 0u64 }, 0i32)
+        } else if expr.tag == IR_NULL_LIT {
+            let ty = self.llvm_type(expr.ty);
+            LLVMConstNull(ty)
+        } else if expr.tag == IR_ZEROED {
+            let ty = self.llvm_type(expr.ty);
+            LLVMConstNull(ty)
+        } else {
+            // Cannot evaluate as constant - return null pointer as sentinel
+            std::mem::zeroed::<LLVMValueRef>()
+        }
+    }
+
     fn get_or_create_string(self: &mut CodegenCtx, text: &[u8]) -> LLVMValueRef {
         let hash = self.name_hash(text);
         let cached = self.string_cache.get(&hash);
@@ -745,7 +766,7 @@ impl FnCodegen {
     fn gen_expr(self: &mut FnCodegen, expr: &IrExpr) -> LLVMValueRef {
         if expr.tag == IR_INT_LIT {
             let ty = self.ctx.llvm_type(expr.ty);
-            LLVMConstInt(ty, expr.int_val, 0i32)
+            LLVMConstInt(ty, expr.int_val, 1i32)
         } else if expr.tag == IR_FLOAT_LIT {
             let ty = self.ctx.llvm_type(expr.ty);
             LLVMConstReal(ty, expr.float_val)
@@ -1654,8 +1675,15 @@ fn generate(
     // Phase 5: Initialize globals with constant values
     for i in 0usize..unit.globals.len() {
         if unit.globals[i].init.is_some() && !unit.globals[i].is_extern {
-            // TODO: evaluate constant initializers
-            // For now, globals are zero-initialized
+            let init_expr = unit.globals[i].init.unwrap();
+            let const_val = ctx.gen_const_init(init_expr);
+            if (const_val as usize) != 0 {
+                let hash = ctx.name_hash(unit.globals[i].mangled_name);
+                let global = ctx.global_decls.get(&hash);
+                if global.is_some() {
+                    LLVMSetInitializer(global.unwrap(), const_val);
+                }
+            }
         }
     }
 

@@ -514,7 +514,7 @@ impl Mono {
     fn lower_expr(self: &mut Mono, expr: &Expr) -> &IrExpr {
         if expr.tag == EXPR_INT_LIT || expr.tag == EXPR_FLOAT_LIT || expr.tag == EXPR_BOOL_LIT || expr.tag == EXPR_STRING_LIT || expr.tag == EXPR_NULL_LIT || expr.tag == EXPR_CHAR_LIT {
             self.lower_literal(expr)
-        } else if expr.tag == EXPR_LOCAL || expr.tag == EXPR_PARAM || expr.tag == EXPR_FN_REF || expr.tag == EXPR_ENUM_REF {
+        } else if expr.tag == EXPR_LOCAL || expr.tag == EXPR_PARAM || expr.tag == EXPR_FN_REF || expr.tag == EXPR_ENUM_REF || expr.tag == EXPR_STATIC_REF {
             self.lower_variable(expr)
         } else if expr.tag == EXPR_BINARY || expr.tag == EXPR_UNARY || expr.tag == EXPR_ASSIGN {
             self.lower_binop(expr)
@@ -552,6 +552,8 @@ impl Mono {
             result.tag = IR_ARRAY_LIT;
             result.items = ir_elems;
             self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_LAMBDA {
+            self.lower_lambda(expr)
         } else if expr.tag == EXPR_VOID {
             let result = IrExpr::void_expr(self.ctx.void_ty);
             self.ctx.arena.alloc(result)
@@ -661,6 +663,33 @@ impl Mono {
                 let result = IrExpr::void_expr(self.ctx.void_ty);
                 result.tag = IR_NULL_LIT;
                 self.ctx.arena.alloc(result)
+            }
+        } else if expr.tag == EXPR_STATIC_REF {
+            // Look up the static/const definition
+            let sd = self.ctx.static_defs.get(&expr.id._value);
+            if sd.is_some() {
+                let def = sd.unwrap();
+                if def.is_const && def.init.is_some() {
+                    // For consts, inline the initializer expression
+                    self.lower_expr(def.init.unwrap())
+                } else {
+                    // For statics, emit a global reference
+                    let ty = if def.ty.is_some() {
+                        self.resolve_type(def.ty.unwrap())
+                    } else {
+                        self.ctx.void_ty
+                    };
+                    let result = IrExpr::void_expr(ty);
+                    result.tag = IR_GLOBAL_REF;
+                    result.global_ref = IrGlobalRef {
+                        id: def.id,
+                        mangled_name: def.name,
+                    };
+                    self.ctx.arena.alloc(result)
+                }
+            } else {
+                let r = IrExpr::void_expr(self.ctx.void_ty);
+                self.ctx.arena.alloc(r)
             }
         } else if expr.tag == EXPR_ENUM_REF {
             // Look up enum and variant
@@ -1312,6 +1341,92 @@ impl Mono {
     }
 
     // Lower call expressions: EXPR_CALL, EXPR_STRUCT_LIT
+    fn lower_lambda(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        // Create an anonymous function for the lambda
+        let lambda_id = self.ctx.id_gen.next_id();
+        let mangled = self.ctx.mangle_name("lambda");
+
+        // Resolve parameter types
+        let params = self.ctx.arena.alloc_slice::<IrParam>(expr.lambda_params.len());
+        let param_types = self.ctx.arena.alloc_slice::<&IrTy>(expr.lambda_params.len());
+
+        // Save current mono state
+        let saved_local_types = self.local_types;
+        let saved_local_defs = self.local_defs;
+        let saved_return_type = self.return_type;
+        self.local_types = HashMap::new();
+        self.local_defs = Vector::new();
+
+        for i in 0usize..expr.lambda_params.len() {
+            let lp = &expr.lambda_params[i];
+            let param_ty = if lp.ty.is_some() {
+                self.resolve_type(lp.ty.unwrap())
+            } else {
+                self.ctx.void_ty
+            };
+            params[i] = IrParam {
+                id: lp.id,
+                ty: param_ty,
+                name: lp.name,
+            };
+            param_types[i] = param_ty;
+            self.local_types.insert(lp.id._value, param_ty);
+        }
+
+        // Resolve return type
+        let ret_ty = if expr.opt_ty.is_some() {
+            self.resolve_type(expr.opt_ty.unwrap())
+        } else {
+            self.ctx.void_ty
+        };
+        self.return_type = ret_ty;
+
+        // Reserve index
+        let idx = self.ctx.ir_functions.len();
+        let placeholder = IrFunction {
+            id: lambda_id,
+            name: "lambda",
+            mangled_name: mangled,
+            params: params,
+            return_type: ret_ty,
+            body: Option::none(),
+            local_defs: &[],
+            attributes: &[],
+            is_variadic: false,
+            abi: Option::none(),
+        };
+        self.ctx.ir_functions.push(placeholder);
+
+        // Lower body
+        let body = self.lower_expr(expr.lhs);
+
+        // Collect local defs
+        let local_defs_slice = self.ctx.arena.alloc_slice::<IrLocalDef>(self.local_defs.len());
+        for i in 0usize..self.local_defs.len() {
+            local_defs_slice[i] = self.local_defs[i];
+        }
+
+        self.ctx.ir_functions[idx].body = Option::some(body);
+        self.ctx.ir_functions[idx].local_defs = local_defs_slice;
+
+        // Restore mono state
+        self.local_types.free();
+        self.local_defs.free();
+        self.local_types = saved_local_types;
+        self.local_defs = saved_local_defs;
+        self.return_type = saved_return_type;
+
+        // Build function pointer type and return reference
+        let fn_ty = self.ctx.make_fn_ptr_ty(param_types, ret_ty);
+        let result = IrExpr::void_expr(fn_ty);
+        result.tag = IR_FN_REF;
+        result.fn_ref = IrFnRef {
+            id: lambda_id,
+            mangled_name: mangled,
+        };
+        self.ctx.arena.alloc(result)
+    }
+
     fn lower_call(self: &mut Mono, expr: &Expr) -> &IrExpr {
         if expr.tag == EXPR_CALL {
             // Check for method call: obj.method(args)
