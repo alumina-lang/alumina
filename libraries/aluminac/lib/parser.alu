@@ -306,7 +306,13 @@ impl Pass1 {
         for child in node.children(&cursor) {
             let kind = NODE_KINDS[child.symbol() as usize];
             if kind == NodeKind::AttributeItem {
-                let name_node = child_by!(child, FieldKind::Name);
+                // attribute_item -> inner: meta_item -> name, arguments
+                let inner_node = child_by!(child, FieldKind::Inner);
+                if inner_node.is_null() {
+                    continue;
+                }
+                let meta = inner_node.unwrap();
+                let name_node = child_by!(meta, FieldKind::Name);
                 if !name_node.is_null() {
                     let name = self.ctx.node_text(name_node.unwrap());
                     if name == "inline" {
@@ -318,22 +324,20 @@ impl Pass1 {
                     } else if name == "test" {
                         attrs.push(Attribute::test());
                     } else if name == "cfg" {
-                        let args_node = child_by!(child, FieldKind::Arguments);
+                        let args_node = child_by!(meta, FieldKind::Arguments);
                         if !args_node.is_null() {
                             let cfg_name = self.ctx.node_text(args_node.unwrap());
-                            // Check cfg - if not matching, skip this item
-                            // (simplified: just store the attribute)
                             attrs.push(Attribute::cfg(self.ctx.intern_str(cfg_name)));
                         }
                     } else if name == "align" {
-                        let args_node = child_by!(child, FieldKind::Arguments);
+                        let args_node = child_by!(meta, FieldKind::Arguments);
                         if !args_node.is_null() {
                             let val_text = self.ctx.node_text(args_node.unwrap());
                             let val = parse_usize(val_text);
                             attrs.push(Attribute::align(val));
                         }
                     } else if name == "link_name" {
-                        let args_node = child_by!(child, FieldKind::Arguments);
+                        let args_node = child_by!(meta, FieldKind::Arguments);
                         if !args_node.is_null() {
                             let link_name = self.ctx.node_text(args_node.unwrap());
                             // Strip quotes if present
@@ -344,9 +348,13 @@ impl Pass1 {
                             }
                         }
                     } else if name == "lang" {
-                        let args_node = child_by!(child, FieldKind::Arguments);
+                        let args_node = child_by!(meta, FieldKind::Arguments);
                         if !args_node.is_null() {
                             let lang_name = self.ctx.node_text(args_node.unwrap());
+                            // Strip parentheses: "(slice_new)" -> "slice_new"
+                            if lang_name.len() >= 2 && lang_name[0] == '(' as u8 && lang_name[lang_name.len() - 1] == ')' as u8 {
+                                lang_name = lang_name[1..lang_name.len() - 1];
+                            }
                             attrs.push(Attribute::lang(self.ctx.intern_str(lang_name)));
                         }
                     }
@@ -2413,7 +2421,7 @@ impl ExprParser {
     }
 
     fn parse_break(self: &ExprParser, node: Node, span: Span) -> &Expr {
-        let value = child_by!(node, FieldKind::Value);
+        let value = child_by!(node, FieldKind::Inner);
         let e = self.make_expr(EXPR_BREAK, span);
         if !value.is_null() {
             e.opt_expr = Option::some(self.parse_expr(value.unwrap()));
@@ -2422,7 +2430,7 @@ impl ExprParser {
     }
 
     fn parse_return(self: &ExprParser, node: Node, span: Span) -> &Expr {
-        let value = child_by!(node, FieldKind::Value);
+        let value = child_by!(node, FieldKind::Inner);
         let e = self.make_expr(EXPR_RETURN, span);
         if !value.is_null() {
             e.opt_expr = Option::some(self.parse_expr(value.unwrap()));
@@ -2688,7 +2696,7 @@ impl ExprParser {
     }
 
     fn parse_defer(self: &ExprParser, node: Node, span: Span) -> &Expr {
-        let inner = child_by!(node, FieldKind::Value);
+        let inner = child_by!(node, FieldKind::Inner);
         if inner.is_null() {
             return self.alloc_void(span);
         }

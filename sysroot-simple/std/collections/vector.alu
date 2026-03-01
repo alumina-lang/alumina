@@ -1,0 +1,59 @@
+// Simplified Vector for self-hosted compiler bootstrap
+// Uses slice-based layout matching the real stdlib Vector
+
+struct Vector<T> {
+    _data: &mut [T],
+    _length: usize,
+}
+
+impl Vector<T> {
+    fn new() -> Vector<T> {
+        Vector::<T> {
+            _data: std::mem::slice_empty::<T>(),
+            _length: 0usize,
+        }
+    }
+
+    fn len(self: &Vector<T>) -> usize {
+        self._length
+    }
+
+    fn is_empty(self: &Vector<T>) -> bool {
+        self._length == 0usize
+    }
+
+    fn push(self: &mut Vector<T>, value: T) {
+        self.reserve(1usize);
+        self._data[self._length] = value;
+        self._length = self._length + 1usize;
+    }
+
+    fn pop(self: &mut Vector<T>) -> std::option::Option<T> {
+        if self._length == 0usize {
+            return std::option::Option::none::<T>();
+        }
+        self._length = self._length - 1usize;
+        std::option::Option::some::<T>(self._data[self._length])
+    }
+
+    fn reserve(self: &mut Vector<T>, additional: usize) {
+        let capacity = self._data.len();
+        if self._length + additional > capacity {
+            let new_cap = std::cmp::max(capacity * 2usize, self._length + additional);
+            if new_cap < 4usize {
+                let new_cap = 4usize;
+            }
+            if capacity == 0usize {
+                self._data = std::mem::slice_alloc::<T>(new_cap);
+            } else {
+                self._data = std::mem::slice_realloc::<T>(self._data, new_cap);
+            }
+        }
+    }
+
+    fn free(self: &mut Vector<T>) {
+        std::mem::slice_free::<T>(self._data);
+        self._data = std::mem::slice_empty::<T>();
+        self._length = 0usize;
+    }
+}

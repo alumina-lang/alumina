@@ -1,0 +1,52 @@
+// Simplified memory operations for self-hosted compiler bootstrap
+
+extern "C" fn malloc(size: usize) -> &mut void;
+extern "C" fn realloc(ptr: &mut void, size: usize) -> &mut void;
+extern "C" fn free(ptr: &mut void);
+extern "C" fn memcpy(dest: &mut void, src: &void, n: usize) -> &mut void;
+extern "C" fn memcmp(a: &void, b: &void, n: usize) -> i32;
+
+fn zeroed<T>() -> T {
+    let val: T;
+    val
+}
+
+fn size_of<T>() -> usize {
+    let arr: [T; 1];
+    &arr[1] as &void as usize - &arr[0] as &void as usize
+}
+
+// Slice construction from raw parts
+// #[lang(slice_new)] tells the compiler to treat this as an intrinsic
+#[lang(slice_new)]
+fn slice_from_raw<T>(ptr: &mut T, len: usize) -> &mut [T] {
+    // This is handled by the compiler as an intrinsic
+    // It constructs a fat pointer (ptr, len)
+    zeroed::<&mut [T]>()
+}
+
+#[lang(slice_new)]
+fn slice_from_raw_const<T>(ptr: &T, len: usize) -> &[T] {
+    zeroed::<&[T]>()
+}
+
+fn slice_empty<T>() -> &mut [T] {
+    slice_from_raw::<T>(zeroed::<&mut T>(), 0usize)
+}
+
+fn slice_alloc<T>(len: usize) -> &mut [T] {
+    let ptr = malloc(len * size_of::<T>()) as &mut T;
+    slice_from_raw::<T>(ptr, len)
+}
+
+fn slice_realloc<T>(data: &mut [T], new_len: usize) -> &mut [T] {
+    let old_ptr = &data[0] as &mut void;
+    let new_ptr = realloc(old_ptr, new_len * size_of::<T>()) as &mut T;
+    slice_from_raw::<T>(new_ptr, new_len)
+}
+
+fn slice_free<T>(data: &mut [T]) {
+    if data.len() > 0usize {
+        free(&data[0] as &mut void);
+    }
+}

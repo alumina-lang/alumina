@@ -110,12 +110,12 @@ impl MonoCtx {
         for i in 0usize..self.items.len() {
             if self.items[i].tag == ITEM_FUNCTION {
                 self.fn_defs.insert(self.items[i].fn_def.id._value, &self.items[i].fn_def);
-                // Detect lang items (disabled for debugging)
-                // for attr in self.items[i].fn_def.attributes {
-                //     if attr.tag == ATTR_LANG && attr.str_val == "slice_new" {
-                //         self.slice_new_fn_id = self.items[i].fn_def.id._value;
-                //     }
-                // }
+                // Detect lang items
+                for attr in self.items[i].fn_def.attributes {
+                    if attr.tag == ATTR_LANG && attr.str_val == "slice_new" {
+                        self.slice_new_fn_id = self.items[i].fn_def.id._value;
+                    }
+                }
             } else if self.items[i].tag == ITEM_STRUCT {
                 self.struct_defs.insert(self.items[i].struct_def.id._value, &self.items[i].struct_def);
             } else if self.items[i].tag == ITEM_ENUM {
@@ -1031,15 +1031,17 @@ impl Mono {
             result.tag = IR_CONTINUE;
             self.ctx.arena.alloc(result)
         } else if expr.tag == EXPR_RETURN {
-            let ir_val: Option<&IrExpr> = if expr.opt_expr.is_some() {
-                Option::some(self.lower_expr_coerced(expr.opt_expr.unwrap(), self.return_type))
+            if expr.opt_expr.is_some() {
+                let ir_val = self.lower_expr_coerced(expr.opt_expr.unwrap(), self.return_type);
+                let result = IrExpr::void_expr(self.ctx.never_ty);
+                result.tag = IR_RETURN;
+                result.opt_expr = Option::some(ir_val);
+                self.ctx.arena.alloc(result)
             } else {
-                Option::none()
-            };
-            let result = IrExpr::void_expr(self.ctx.never_ty);
-            result.tag = IR_RETURN;
-            result.opt_expr = ir_val;
-            self.ctx.arena.alloc(result)
+                let result = IrExpr::void_expr(self.ctx.never_ty);
+                result.tag = IR_RETURN;
+                self.ctx.arena.alloc(result)
+            }
         } else {
             let r = IrExpr::void_expr(self.ctx.void_ty);
             self.ctx.arena.alloc(r)
@@ -1295,11 +1297,11 @@ impl Mono {
         // Handle slice built-in methods
         let slice_ty = ir_obj.ty;
         let is_ptr_to_slice = false;
-        if false && slice_ty.tag == IRTY_POINTER && self.is_slice_ty(slice_ty.inner) {
+        if slice_ty.tag == IRTY_POINTER && self.is_slice_ty(slice_ty.inner) {
             slice_ty = slice_ty.inner;
             is_ptr_to_slice = true;
         }
-        if false && self.is_slice_ty(slice_ty) {
+        if self.is_slice_ty(slice_ty) {
             if method_name == "len" {
                 // slice.len() -> extract field 1 (the length)
                 let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
@@ -1565,29 +1567,6 @@ impl Mono {
                 // Fall through to normal field access (function pointer in struct field)
             }
 
-            // Check for lang item intrinsics
-            if false && expr.lhs.tag == EXPR_FN_REF && expr.lhs.id._value == self.ctx.slice_new_fn_id && self.ctx.slice_new_fn_id != 0 {
-                // #[lang(slice_new)] - construct a slice from (ptr, len)
-                // Lower args first
-                let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args.len());
-                for i in 0usize..expr.args.len() {
-                    ir_args[i] = self.lower_expr(expr.args[i]);
-                }
-                if ir_args.len() >= 2 {
-                    // Build IRTY_SLICE type from the pointer arg type
-                    // ptr type is &T or &mut T → extract element type and constness
-                    let ptr_ty = ir_args[0].ty;
-                    let elem_ty = if ptr_ty.tag == IRTY_POINTER { ptr_ty.inner } else { self.ctx.void_ty };
-                    let is_const = if ptr_ty.tag == IRTY_POINTER { ptr_ty.is_const } else { false };
-                    let slice_ty = self.ctx.make_slice_ty(elem_ty, is_const);
-
-                    let result = IrExpr::void_expr(slice_ty);
-                    result.tag = IR_TUPLE_LIT;
-                    result.items = ir_args;
-                    return self.ctx.arena.alloc(result);
-                }
-            }
-
             // Check for turbofish generic calls: func::<T>(args)
             if expr.type_args.len() > 0 && expr.lhs.tag == EXPR_FN_REF {
                 // Resolve type args
@@ -1596,10 +1575,42 @@ impl Mono {
                     resolved_type_args[i] = self.resolve_type(expr.type_args[i]);
                 }
 
-                // Monomorphize the function with type args
+                // Look up the function definition
                 let fn_def = self.ctx.fn_defs.get(&expr.lhs.id._value);
                 if fn_def.is_some() {
                     let def = fn_def.unwrap();
+
+                    // Check for #[lang(slice_new)] intrinsic
+                    let is_slice_new = false;
+                    for attr in def.attributes {
+                        if attr.tag == ATTR_LANG && attr.str_val == "slice_new" {
+                            is_slice_new = true;
+                        }
+                    }
+
+                    if is_slice_new && expr.args.len() == 2 {
+                        // #[lang(slice_new)] intrinsic: construct slice from (ptr, len)
+                        let ir_ptr = self.lower_expr(expr.args[0]);
+                        let ir_len = self.lower_expr(expr.args[1]);
+
+                        // Build slice type: (ptr_to_T, usize) tuple
+                        let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
+                        let elem_types = self.ctx.arena.alloc_slice::<&IrTy>(2);
+                        elem_types[0] = ir_ptr.ty;  // The pointer type from the argument
+                        elem_types[1] = usize_ty;
+                        let slice_ty = self.ctx.make_tuple_ty(elem_types);
+
+                        let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+                        items[0] = ir_ptr;
+                        items[1] = ir_len;
+
+                        let result = IrExpr::void_expr(slice_ty);
+                        result.tag = IR_TUPLE_LIT;
+                        result.items = items;
+                        return self.ctx.arena.alloc(result);
+                    }
+
+                    // Monomorphize the function with type args
                     let fn_idx = self.mono_function(def, resolved_type_args);
                     let ir_fn = &self.ctx.ir_functions[fn_idx];
 
