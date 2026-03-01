@@ -681,8 +681,8 @@ struct FnCodegen {
     break_bb: Option<LLVMBasicBlockRef>,
     continue_bb: Option<LLVMBasicBlockRef>,
 
-    // Defer stack
-    defer_stack: std::collections::Vector<LLVMValueRef>,
+    // Defer stack: stores IR expressions to execute at scope exit
+    defer_stack: std::collections::Vector<&IrExpr>,
 
     // Temp counter for naming
     temp_counter: usize,
@@ -769,6 +769,8 @@ impl FnCodegen {
             let current_bb = LLVMGetInsertBlock(self.ctx.builder);
             let terminator = LLVMGetBasicBlockTerminator(current_bb);
             if (terminator as usize) == 0 {
+                // Generate deferred expressions before implicit return
+                self.gen_defers();
                 if self.ir_fn.return_type.is_void() || self.ir_fn.return_type.is_never() {
                     LLVMBuildRetVoid(self.ctx.builder);
                 } else {
@@ -777,6 +779,15 @@ impl FnCodegen {
             }
         } else {
             LLVMBuildRetVoid(self.ctx.builder);
+        }
+    }
+
+    fn gen_defers(self: &mut FnCodegen) {
+        // Generate deferred expressions in reverse order
+        let i = self.defer_stack.len();
+        while i > 0usize {
+            i = i - 1usize;
+            self.gen_expr(self.defer_stack._data[i]);
         }
     }
 
@@ -965,6 +976,8 @@ impl FnCodegen {
             }
             LLVMGetUndef(self.ctx.void_type)
         } else if expr.tag == IR_RETURN {
+            // Generate deferred expressions before returning
+            self.gen_defers();
             if expr.opt_expr.is_some() {
                 let ret_val = self.gen_expr(expr.opt_expr.unwrap());
                 LLVMBuildRet(self.ctx.builder, ret_val);
@@ -1039,9 +1052,8 @@ impl FnCodegen {
         } else if expr.tag == IR_SWITCH {
             self.gen_switch(expr.lhs, expr.switch_arms, expr.ty)
         } else if expr.tag == IR_DEFER {
-            // TODO: implement defer properly
-            // For now, just generate the expression inline
-            self.gen_expr(expr.lhs);
+            // Push the deferred expression onto the stack for later execution
+            self.defer_stack.push(expr.lhs);
             LLVMGetUndef(self.ctx.void_type)
         } else if expr.tag == IR_MEMCPY {
             // IR_MEMCPY: lhs=dest, rhs=src, cond=len (in elements), ir_ty=elem type
