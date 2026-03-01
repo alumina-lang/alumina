@@ -1,0 +1,132 @@
+// Simplified HashMap for self-hosted compiler bootstrap
+// Uses linear scan (association list) instead of hashing
+// Avoids need for Hashable/Equatable protocol bounds
+// Performance is O(n) per lookup but correct for all key types
+
+struct HashMap<K, V> {
+    _keys: &mut [K],
+    _values: &mut [V],
+    _states: &mut [u8],  // 0=vacant, 1=occupied
+    _length: usize,
+    _capacity: usize,
+}
+
+impl HashMap<K, V> {
+    fn new() -> HashMap<K, V> {
+        HashMap::<K, V> {
+            _keys: std::mem::slice_empty::<K>(),
+            _values: std::mem::slice_empty::<V>(),
+            _states: std::mem::slice_empty::<u8>(),
+            _length: 0usize,
+            _capacity: 0usize,
+        }
+    }
+
+    fn len(self: &HashMap<K, V>) -> usize {
+        self._length
+    }
+
+    fn is_empty(self: &HashMap<K, V>) -> bool {
+        self._length == 0usize
+    }
+
+    fn _grow(self: &mut HashMap<K, V>) {
+        let new_cap = if self._capacity == 0usize { 16usize } else { self._capacity * 2usize };
+        let new_keys = std::mem::slice_alloc::<K>(new_cap);
+        let new_values = std::mem::slice_alloc::<V>(new_cap);
+        let new_states = std::mem::slice_alloc::<u8>(new_cap);
+
+        // Zero new states
+        let i = 0usize;
+        while i < new_cap {
+            new_states[i] = 0u8;
+            i = i + 1usize;
+        }
+
+        // Copy existing entries
+        let j = 0usize;
+        while j < self._capacity {
+            if self._states[j] == 1u8 {
+                new_keys[j] = self._keys[j];
+                new_values[j] = self._values[j];
+                new_states[j] = 1u8;
+            }
+            j = j + 1usize;
+        }
+
+        if self._capacity > 0usize {
+            std::mem::slice_free::<K>(self._keys);
+            std::mem::slice_free::<V>(self._values);
+            std::mem::slice_free::<u8>(self._states);
+        }
+        self._keys = new_keys;
+        self._values = new_values;
+        self._states = new_states;
+        self._capacity = new_cap;
+    }
+
+    fn insert(self: &mut HashMap<K, V>, key: K, value: V) {
+        // Check if key already exists
+        let i = 0usize;
+        while i < self._capacity {
+            if self._states[i] == 1u8 && self._keys[i] == key {
+                self._values[i] = value;
+                return;
+            }
+            i = i + 1usize;
+        }
+
+        // Need to add new entry
+        if self._length >= self._capacity {
+            self._grow();
+        }
+
+        // Find first vacant slot
+        let j = 0usize;
+        while j < self._capacity {
+            if self._states[j] == 0u8 {
+                self._keys[j] = key;
+                self._values[j] = value;
+                self._states[j] = 1u8;
+                self._length = self._length + 1usize;
+                return;
+            }
+            j = j + 1usize;
+        }
+    }
+
+    fn get(self: &HashMap<K, V>, key: &K) -> std::option::Option<V> {
+        let i = 0usize;
+        while i < self._capacity {
+            if self._states[i] == 1u8 && self._keys[i] == *key {
+                return std::option::Option::some::<V>(self._values[i]);
+            }
+            i = i + 1usize;
+        }
+        std::option::Option::none::<V>()
+    }
+
+    fn contains_key(self: &HashMap<K, V>, key: &K) -> bool {
+        let i = 0usize;
+        while i < self._capacity {
+            if self._states[i] == 1u8 && self._keys[i] == *key {
+                return true;
+            }
+            i = i + 1usize;
+        }
+        false
+    }
+
+    fn free(self: &mut HashMap<K, V>) {
+        if self._capacity > 0usize {
+            std::mem::slice_free::<K>(self._keys);
+            std::mem::slice_free::<V>(self._values);
+            std::mem::slice_free::<u8>(self._states);
+        }
+        self._keys = std::mem::slice_empty::<K>();
+        self._values = std::mem::slice_empty::<V>();
+        self._states = std::mem::slice_empty::<u8>();
+        self._length = 0usize;
+        self._capacity = 0usize;
+    }
+}

@@ -1219,7 +1219,8 @@ impl FnCodegen {
                 else { LLVMBuildLShr(self.ctx.builder, lhs_val, rhs_val, n) }
             },
             BinOp::Eq => {
-                let is_slice = lhs.ty.tag == IRTY_SLICE;
+                let is_slice = lhs.ty.tag == IRTY_SLICE ||
+                    (lhs.ty.tag == IRTY_TUPLE && lhs.ty.elems.len() == 2usize && lhs.ty.elems[0].tag == IRTY_POINTER);
                 if is_slice {
                     self.gen_slice_eq(lhs_val, rhs_val, lhs.ty)
                 } else if is_float { LLVMBuildFCmp(self.ctx.builder, LLVMRealPredicate::OEQ, lhs_val, rhs_val, n) }
@@ -1227,7 +1228,8 @@ impl FnCodegen {
                 else { LLVMBuildICmp(self.ctx.builder, LLVMIntPredicate::EQ, lhs_val, rhs_val, n) }
             },
             BinOp::Ne => {
-                let is_slice = lhs.ty.tag == IRTY_SLICE;
+                let is_slice = lhs.ty.tag == IRTY_SLICE ||
+                    (lhs.ty.tag == IRTY_TUPLE && lhs.ty.elems.len() == 2usize && lhs.ty.elems[0].tag == IRTY_POINTER);
                 if is_slice {
                     let eq = self.gen_slice_eq(lhs_val, rhs_val, lhs.ty);
                     LLVMBuildNot(self.ctx.builder, eq, n)

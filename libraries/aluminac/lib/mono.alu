@@ -1593,12 +1593,14 @@ impl Mono {
                         let ir_ptr = self.lower_expr(expr.args[0]);
                         let ir_len = self.lower_expr(expr.args[1]);
 
-                        // Build slice type: (ptr_to_T, usize) tuple
-                        let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
-                        let elem_types = self.ctx.arena.alloc_slice::<&IrTy>(2);
-                        elem_types[0] = ir_ptr.ty;  // The pointer type from the argument
-                        elem_types[1] = usize_ty;
-                        let slice_ty = self.ctx.make_tuple_ty(elem_types);
+                        // Build proper IRTY_SLICE type from the pointer's element type
+                        let elem_ty = if ir_ptr.ty.tag == IRTY_POINTER {
+                            ir_ptr.ty.inner
+                        } else {
+                            self.ctx.intern_builtin_ty(BuiltinType::U8)
+                        };
+                        let is_const = ir_ptr.ty.is_const;
+                        let slice_ty = self.ctx.make_slice_ty(elem_ty, is_const);
 
                         let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
                         items[0] = ir_ptr;
