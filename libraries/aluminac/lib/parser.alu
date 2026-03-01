@@ -1,0 +1,2717 @@
+// Parser: converts tree-sitter parse tree to AST
+//
+// Two-pass approach:
+// Pass 1: Walk the tree to build scopes and register all named items
+// Pass 2: Walk again to fill in function bodies, type definitions, etc.
+
+use ast::*;
+use scope::*;
+use diagnostics::DiagnosticContext;
+use arena::Arena;
+use node_kinds::{NodeKind, FieldKind, NODE_KINDS, NodeVisitor};
+use common::{child_by, children_by, NodeVisitorExt};
+use tree_sitter::{Node, TSFieldId, TSTreeCursor};
+
+use std::collections::{HashMap, Vector};
+use std::option::Option;
+use std::result::Result;
+
+struct ParseError {
+    message: &[u8],
+    span: Span,
+}
+
+struct ParseContext {
+    arena: &mut Arena,
+    scopes: &mut ScopeArena,
+    id_gen: &mut IdGen,
+    diag: &mut DiagnosticContext,
+    source: &[u8],
+    file_id: u32,
+    cfg_flags: &[&[u8]],
+
+    // Items collected during pass 1, processed in pass 2
+    pending_functions: Vector<PendingFunction>,
+    pending_structs: Vector<PendingStruct>,
+    pending_enums: Vector<PendingEnum>,
+    pending_protocols: Vector<PendingProtocol>,
+    pending_type_aliases: Vector<PendingTypeAlias>,
+    pending_statics: Vector<PendingStatic>,
+    pending_impls: Vector<PendingImpl>,
+    pending_macros: Vector<PendingMacro>,
+
+    // Items ready for compilation
+    items: Vector<Item>,
+}
+
+struct PendingFunction {
+    node_start: u32,
+    node_end: u32,
+    scope_idx: u32,
+    id: Id,
+    name: &[u8],
+    attributes: &[Attribute],
+    is_method: bool,
+}
+
+struct PendingStruct {
+    node_start: u32,
+    node_end: u32,
+    scope_idx: u32,
+    id: Id,
+    name: &[u8],
+    attributes: &[Attribute],
+    is_union: bool,
+}
+
+struct PendingEnum {
+    node_start: u32,
+    node_end: u32,
+    scope_idx: u32,
+    id: Id,
+    name: &[u8],
+    attributes: &[Attribute],
+}
+
+struct PendingProtocol {
+    node_start: u32,
+    node_end: u32,
+    scope_idx: u32,
+    id: Id,
+    name: &[u8],
+    attributes: &[Attribute],
+}
+
+struct PendingTypeAlias {
+    node_start: u32,
+    node_end: u32,
+    scope_idx: u32,
+    id: Id,
+    name: &[u8],
+}
+
+struct PendingStatic {
+    node_start: u32,
+    node_end: u32,
+    scope_idx: u32,
+    id: Id,
+    name: &[u8],
+    attributes: &[Attribute],
+    is_const: bool,
+}
+
+struct PendingImpl {
+    node_start: u32,
+    node_end: u32,
+    scope_idx: u32,
+    target_type_scope: u32,
+}
+
+struct PendingMacro {
+    node_start: u32,
+    node_end: u32,
+    scope_idx: u32,
+    id: Id,
+    name: &[u8],
+}
+
+impl ParseContext {
+    fn new(
+        arena: &mut Arena,
+        scopes: &mut ScopeArena,
+        id_gen: &mut IdGen,
+        diag: &mut DiagnosticContext,
+        source: &[u8],
+        file_id: u32,
+        cfg_flags: &[&[u8]],
+    ) -> ParseContext {
+        ParseContext {
+            arena: arena,
+            scopes: scopes,
+            id_gen: id_gen,
+            diag: diag,
+            source: source,
+            file_id: file_id,
+            cfg_flags: cfg_flags,
+            pending_functions: Vector::new(),
+            pending_structs: Vector::new(),
+            pending_enums: Vector::new(),
+            pending_protocols: Vector::new(),
+            pending_type_aliases: Vector::new(),
+            pending_statics: Vector::new(),
+            pending_impls: Vector::new(),
+            pending_macros: Vector::new(),
+            items: Vector::new(),
+        }
+    }
+
+    fn node_text(self: &ParseContext, node: Node) -> &[u8] {
+        self.source[node.start_byte() as usize..node.end_byte() as usize]
+    }
+
+    fn make_span(self: &ParseContext, node: Node) -> Span {
+        Span {
+            file_id: self.file_id,
+            start: node.start_byte() as u32,
+            end: node.end_byte() as u32,
+        }
+    }
+
+    fn next_id(self: &mut ParseContext) -> Id {
+        self.id_gen.next_id()
+    }
+
+    fn alloc_ty(self: &mut ParseContext, ty: Ty) -> &Ty {
+        self.arena.alloc(ty) as &Ty
+    }
+
+    fn alloc_expr(self: &mut ParseContext, e: Expr) -> &Expr {
+        self.arena.alloc(e) as &Expr
+    }
+
+    fn intern_str(self: &mut ParseContext, s: &[u8]) -> &[u8] {
+        let buf = self.arena.alloc_slice::<u8>(s.len());
+        s.copy_to_nonoverlapping(&buf[0]);
+        buf
+    }
+
+    fn has_cfg(self: &ParseContext, flag: &[u8]) -> bool {
+        for f in self.cfg_flags {
+            if (*f) == flag {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn error(self: &mut ParseContext, node: Node, message: &[u8]) {
+        self.diag.error(self.make_span(node), message);
+    }
+
+    fn free(self: &mut ParseContext) {
+        self.pending_functions.free();
+        self.pending_structs.free();
+        self.pending_enums.free();
+        self.pending_protocols.free();
+        self.pending_type_aliases.free();
+        self.pending_statics.free();
+        self.pending_impls.free();
+        self.pending_macros.free();
+        self.items.free();
+    }
+}
+
+// ============================================================
+// Pass 1: Scope building
+// ============================================================
+
+struct Pass1 {
+    ctx: &mut ParseContext,
+    current_scope: u32,
+    in_container: bool,   // inside struct/enum/protocol/impl
+    current_enum_id: Option<Id>,
+}
+
+impl Pass1 {
+    fn new(ctx: &mut ParseContext, root_scope: u32) -> Pass1 {
+        Pass1 {
+            ctx: ctx,
+            current_scope: root_scope,
+            in_container: false,
+            current_enum_id: Option::none(),
+        }
+    }
+
+    fn run(self: &mut Pass1, root: Node) {
+        self.visit_node(root);
+    }
+
+    fn visit_node(self: &mut Pass1, node: Node) {
+        let kind = NODE_KINDS[node.symbol() as usize];
+        switch kind {
+            NodeKind::SourceFile => self.visit_source_file_p1(node),
+            NodeKind::ModDefinition => self.visit_mod_p1(node),
+            NodeKind::FunctionDefinition => self.visit_function_p1(node),
+            NodeKind::StructDefinition => self.visit_struct_p1(node),
+            NodeKind::EnumDefinition => self.visit_enum_p1(node),
+            NodeKind::EnumItem => self.visit_enum_item_p1(node),
+            NodeKind::ProtocolDefinition => self.visit_protocol_p1(node),
+            NodeKind::TypeDefinition => self.visit_type_def_p1(node),
+            NodeKind::ImplBlock => self.visit_impl_p1(node),
+            NodeKind::UseDeclaration => self.visit_use_p1(node),
+            NodeKind::StaticDeclaration => self.visit_static_p1(node),
+            NodeKind::ConstDeclaration => self.visit_const_p1(node),
+            NodeKind::MacroDefinition => self.visit_macro_def_p1(node),
+            NodeKind::StructField => self.visit_struct_field_p1(node),
+            NodeKind::Parameter => self.visit_parameter_p1(node),
+            NodeKind::GenericArgumentList => self.visit_generic_args_p1(node),
+            NodeKind::ParameterList => self.visit_parameter_list_p1(node),
+            NodeKind::MacroParameterList => self.visit_macro_param_list_p1(node),
+            NodeKind::MacroParameter => self.visit_macro_param_p1(node),
+            NodeKind::TopLevelBlock => self.visit_top_level_block_p1(node),
+            NodeKind::TopLevelAttributes => {},
+            NodeKind::Mixin => self.visit_mixin_p1(node),
+            NodeKind::DocComment => {},
+            NodeKind::FileDocComment => {},
+            NodeKind::LineComment => {},
+            NodeKind::BlockComment => {},
+            _ => {
+                // For unknown nodes, visit children
+                self.visit_children(node);
+            },
+        }
+    }
+
+    fn visit_children(self: &mut Pass1, node: Node) {
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in node.children(&cursor) {
+            self.visit_node(child);
+        }
+    }
+
+    fn visit_children_by_field(self: &mut Pass1, node: Node, field: FieldKind) {
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, field, &cursor) {
+            self.visit_node(child);
+        }
+    }
+
+    fn get_name(self: &mut Pass1, node: Node) -> &[u8] {
+        let name_node = child_by!(node, FieldKind::Name);
+        if name_node.is_null() {
+            return "";
+        }
+        self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()))
+    }
+
+    fn parse_attributes(self: &mut Pass1, node: Node) -> &[Attribute] {
+        let attr_node = child_by!(node, FieldKind::Attributes);
+        if attr_node.is_null() {
+            return &[];
+        }
+        self.parse_attribute_list(attr_node.unwrap())
+    }
+
+    fn parse_attribute_list(self: &mut Pass1, node: Node) -> &[Attribute] {
+        let attrs: Vector<Attribute> = Vector::new();
+        defer attrs.free();
+
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in node.children(&cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::AttributeItem {
+                let name_node = child_by!(child, FieldKind::Name);
+                if !name_node.is_null() {
+                    let name = self.ctx.node_text(name_node.unwrap());
+                    if name == "inline" {
+                        attrs.push(Attribute::inline_attr());
+                    } else if name == "cold" {
+                        attrs.push(Attribute::cold());
+                    } else if name == "export" {
+                        attrs.push(Attribute::export());
+                    } else if name == "test" {
+                        attrs.push(Attribute::test());
+                    } else if name == "cfg" {
+                        let args_node = child_by!(child, FieldKind::Arguments);
+                        if !args_node.is_null() {
+                            let cfg_name = self.ctx.node_text(args_node.unwrap());
+                            // Check cfg - if not matching, skip this item
+                            // (simplified: just store the attribute)
+                            attrs.push(Attribute::cfg(self.ctx.intern_str(cfg_name)));
+                        }
+                    } else if name == "align" {
+                        let args_node = child_by!(child, FieldKind::Arguments);
+                        if !args_node.is_null() {
+                            let val_text = self.ctx.node_text(args_node.unwrap());
+                            let val = parse_usize(val_text);
+                            attrs.push(Attribute::align(val));
+                        }
+                    } else if name == "link_name" {
+                        let args_node = child_by!(child, FieldKind::Arguments);
+                        if !args_node.is_null() {
+                            let link_name = self.ctx.node_text(args_node.unwrap());
+                            // Strip quotes if present
+                            if link_name.len() >= 2 && link_name[0] == '"' as u8 {
+                                attrs.push(Attribute::extern_attr(
+                                    self.ctx.intern_str(link_name[1..link_name.len()-1])
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if attrs.len() == 0 {
+            return &[];
+        }
+        let result = self.ctx.arena.alloc_slice::<Attribute>(attrs.len());
+        for i in 0usize..attrs.len() {
+            result[i] = attrs[i];
+        }
+        result
+    }
+
+    fn visit_source_file_p1(self: &mut Pass1, node: Node) {
+        self.visit_children_by_field(node, FieldKind::Body);
+    }
+
+    fn visit_top_level_block_p1(self: &mut Pass1, node: Node) {
+        // Check cfg attributes on top-level blocks
+        let attr_node = child_by!(node, FieldKind::Attributes);
+        if !attr_node.is_null() {
+            // For now, process all top-level blocks
+            // TODO: evaluate cfg conditions
+        }
+        self.visit_children_by_field(node, FieldKind::Items);
+    }
+
+    fn visit_mod_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let child_scope = self.ctx.scopes.create_scope(ScopeKind::Module, Option::some(self.current_scope));
+
+        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+            name: name,
+            kind: NamedItemKind::module(child_scope),
+            span: self.ctx.make_span(node),
+        });
+
+        let prev = self.current_scope;
+        self.current_scope = child_scope;
+        self.visit_children_by_field(node, FieldKind::Body);
+        self.current_scope = prev;
+    }
+
+    fn visit_function_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let attributes = self.parse_attributes(node);
+        let child_scope = self.ctx.scopes.create_scope(ScopeKind::Function, Option::some(self.current_scope));
+
+        let item_kind = if self.in_container {
+            NamedItemKind::method(id, id) // simplified: both type and fn ids are the same
+        } else {
+            NamedItemKind::function(id)
+        };
+
+        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+            name: name,
+            kind: item_kind,
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_functions.push(PendingFunction {
+            node_start: node.start_byte() as u32,
+            node_end: node.end_byte() as u32,
+            scope_idx: child_scope,
+            id: id,
+            name: name,
+            attributes: attributes,
+            is_method: self.in_container,
+        });
+
+        // Visit generic params and parameters in child scope
+        let prev = self.current_scope;
+        self.current_scope = child_scope;
+
+        let type_args = child_by!(node, FieldKind::TypeArguments);
+        if !type_args.is_null() {
+            self.visit_node(type_args.unwrap());
+        }
+        self.visit_children_by_field(node, FieldKind::Parameters);
+
+        self.current_scope = prev;
+    }
+
+    fn visit_struct_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let attributes = self.parse_attributes(node);
+
+        // Check if it's a union
+        let kind_node = child_by!(node, FieldKind::Kind);
+        let is_union = !kind_node.is_null() && self.ctx.node_text(kind_node.unwrap()) == "union";
+
+        let child_scope = self.ctx.scopes.create_scope(ScopeKind::Module, Option::some(self.current_scope));
+
+        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+            name: name,
+            kind: NamedItemKind::struct_kind_with_scope(id, child_scope),
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_structs.push(PendingStruct {
+            node_start: node.start_byte() as u32,
+            node_end: node.end_byte() as u32,
+            scope_idx: child_scope,
+            id: id,
+            name: name,
+            attributes: attributes,
+            is_union: is_union,
+        });
+
+        let prev = self.current_scope;
+        self.current_scope = child_scope;
+
+        let type_args = child_by!(node, FieldKind::TypeArguments);
+        if !type_args.is_null() {
+            self.visit_node(type_args.unwrap());
+        }
+        self.visit_children_by_field(node, FieldKind::Body);
+
+        self.current_scope = prev;
+    }
+
+    fn visit_enum_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let attributes = self.parse_attributes(node);
+
+        let child_scope = self.ctx.scopes.create_scope(ScopeKind::Module, Option::some(self.current_scope));
+
+        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+            name: name,
+            kind: NamedItemKind::enum_kind_with_scope(id, child_scope),
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_enums.push(PendingEnum {
+            node_start: node.start_byte() as u32,
+            node_end: node.end_byte() as u32,
+            scope_idx: child_scope,
+            id: id,
+            name: name,
+            attributes: attributes,
+        });
+
+        let prev = self.current_scope;
+        let prev_enum = self.current_enum_id;
+        self.current_scope = child_scope;
+        self.current_enum_id = Option::some(id);
+        self.visit_children_by_field(node, FieldKind::Body);
+        self.current_scope = prev;
+        self.current_enum_id = prev_enum;
+    }
+
+    fn visit_enum_item_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let variant_id = self.ctx.next_id();
+
+        if self.current_enum_id.is_some() {
+            self.ctx.scopes.add_item(self.current_scope, NamedItem {
+                name: name,
+                kind: NamedItemKind::enum_variant(self.current_enum_id.unwrap(), variant_id),
+                span: self.ctx.make_span(node),
+            });
+        }
+    }
+
+    fn visit_struct_field_p1(self: &mut Pass1, node: Node) {
+        // Fields are collected during pass 2
+    }
+
+    fn visit_protocol_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let attributes = self.parse_attributes(node);
+        let child_scope = self.ctx.scopes.create_scope(ScopeKind::Protocol, Option::some(self.current_scope));
+
+        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+            name: name,
+            kind: NamedItemKind::protocol(id),
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_protocols.push(PendingProtocol {
+            node_start: node.start_byte() as u32,
+            node_end: node.end_byte() as u32,
+            scope_idx: child_scope,
+            id: id,
+            name: name,
+            attributes: attributes,
+        });
+
+        let prev = self.current_scope;
+        let prev_container = self.in_container;
+        self.current_scope = child_scope;
+        self.in_container = true;
+
+        let type_args = child_by!(node, FieldKind::TypeArguments);
+        if !type_args.is_null() {
+            self.visit_node(type_args.unwrap());
+        }
+        self.visit_children_by_field(node, FieldKind::Body);
+
+        self.current_scope = prev;
+        self.in_container = prev_container;
+    }
+
+    fn visit_impl_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+
+        // Try to resolve the type to find its scope
+        let resolved = self.ctx.scopes.resolve(self.current_scope, name);
+        let child_scope = if resolved.is_some() {
+            let item = resolved.unwrap();
+            if (item.kind.tag == scope::NIK_STRUCT || item.kind.tag == scope::NIK_ENUM) && item.kind.scope_idx != 0 {
+                // Use the type's existing scope
+                item.kind.scope_idx
+            } else {
+                self.ctx.scopes.create_scope(ScopeKind::Impl, Option::some(self.current_scope))
+            }
+        } else {
+            self.ctx.scopes.create_scope(ScopeKind::Impl, Option::some(self.current_scope))
+        };
+
+        self.ctx.pending_impls.push(PendingImpl {
+            node_start: node.start_byte() as u32,
+            node_end: node.end_byte() as u32,
+            scope_idx: child_scope,
+            target_type_scope: self.current_scope,
+        });
+
+        let prev = self.current_scope;
+        let prev_container = self.in_container;
+        self.current_scope = child_scope;
+        self.in_container = true;
+
+        let type_args = child_by!(node, FieldKind::TypeArguments);
+        if !type_args.is_null() {
+            self.visit_node(type_args.unwrap());
+        }
+        self.visit_children_by_field(node, FieldKind::Body);
+
+        self.current_scope = prev;
+        self.in_container = prev_container;
+    }
+
+    fn visit_type_def_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let child_scope = self.ctx.scopes.create_scope(ScopeKind::Function, Option::some(self.current_scope));
+
+        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+            name: name,
+            kind: NamedItemKind::type_alias(id),
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_type_aliases.push(PendingTypeAlias {
+            node_start: node.start_byte() as u32,
+            node_end: node.end_byte() as u32,
+            scope_idx: child_scope,
+            id: id,
+            name: name,
+        });
+
+        let prev = self.current_scope;
+        self.current_scope = child_scope;
+        let type_args = child_by!(node, FieldKind::TypeArguments);
+        if !type_args.is_null() {
+            self.visit_node(type_args.unwrap());
+        }
+        self.current_scope = prev;
+    }
+
+    fn visit_use_p1(self: &mut Pass1, node: Node) {
+        let arg = child_by!(node, FieldKind::Argument);
+        if arg.is_null() {
+            return;
+        }
+        self.process_use(arg.unwrap(), &[]);
+    }
+
+    fn process_use(self: &mut Pass1, node: Node, prefix: &[&[u8]]) {
+        let kind = NODE_KINDS[node.symbol() as usize];
+        switch kind {
+            NodeKind::ScopedIdentifier => {
+                // use a::b::c; - import c from path a::b
+                let segments = self.collect_path_segments(node);
+                if segments.len() > 0 {
+                    let name = segments[segments.len() - 1];
+                    self.ctx.scopes.add_item(self.current_scope, NamedItem {
+                        name: name,
+                        kind: NamedItemKind::use_alias(self.current_scope, segments),
+                        span: self.ctx.make_span(node),
+                    });
+                }
+            },
+            NodeKind::Identifier => {
+                let name = self.ctx.intern_str(self.ctx.node_text(node));
+                let full_path = self.ctx.arena.alloc_slice::<&[u8]>(prefix.len() + 1);
+                for i in 0usize..prefix.len() {
+                    full_path[i] = prefix[i];
+                }
+                full_path[prefix.len()] = name;
+                self.ctx.scopes.add_item(self.current_scope, NamedItem {
+                    name: name,
+                    kind: NamedItemKind::use_alias(self.current_scope, full_path),
+                    span: self.ctx.make_span(node),
+                });
+            },
+            NodeKind::UseWildcard => {
+                // use a::*; - star import
+                let path_node = child_by!(node, FieldKind::Path);
+                if !path_node.is_null() {
+                    let _segments = self.collect_path_segments(path_node.unwrap());
+                    // TODO: resolve the module scope and add star import
+                }
+            },
+            NodeKind::UseAsClause => {
+                let path_node = child_by!(node, FieldKind::Path);
+                let alias_node = child_by!(node, FieldKind::Alias);
+                if !path_node.is_null() && !alias_node.is_null() {
+                    let segments = self.collect_path_segments(path_node.unwrap());
+                    let alias = self.ctx.intern_str(self.ctx.node_text(alias_node.unwrap()));
+                    self.ctx.scopes.add_item(self.current_scope, NamedItem {
+                        name: alias,
+                        kind: NamedItemKind::use_alias(self.current_scope, segments),
+                        span: self.ctx.make_span(node),
+                    });
+                }
+            },
+            NodeKind::ScopedUseList => {
+                let path_node = child_by!(node, FieldKind::Path);
+                let new_prefix = if !path_node.is_null() {
+                    self.collect_path_segments(path_node.unwrap())
+                } else {
+                    prefix
+                };
+                let list_node = child_by!(node, FieldKind::List);
+                if !list_node.is_null() {
+                    let cursor = list_node.unwrap().walk();
+                    defer cursor.free();
+                    for child in list_node.unwrap().children(&cursor) {
+                        if child.is_named() {
+                            self.process_use(child, new_prefix);
+                        }
+                    }
+                }
+            },
+            NodeKind::UseList => {
+                let cursor = node.walk();
+                defer cursor.free();
+                for child in node.children(&cursor) {
+                    if child.is_named() {
+                        self.process_use(child, prefix);
+                    }
+                }
+            },
+            _ => {},
+        }
+    }
+
+    fn collect_path_segments(self: &mut Pass1, node: Node) -> &[&[u8]] {
+        let segments: Vector<&[u8]> = Vector::new();
+        defer segments.free();
+        self.collect_path_segments_inner(node, &segments);
+        let result = self.ctx.arena.alloc_slice::<&[u8]>(segments.len());
+        for i in 0usize..segments.len() {
+            result[i] = segments[i];
+        }
+        result
+    }
+
+    fn collect_path_segments_inner(self: &mut Pass1, node: Node, segments: &mut Vector<&[u8]>) {
+        let kind = NODE_KINDS[node.symbol() as usize];
+        switch kind {
+            NodeKind::Identifier => {
+                segments.push(self.ctx.intern_str(self.ctx.node_text(node)));
+            },
+            NodeKind::TypeIdentifier => {
+                segments.push(self.ctx.intern_str(self.ctx.node_text(node)));
+            },
+            NodeKind::ScopedIdentifier => {
+                let path = child_by!(node, FieldKind::Path);
+                if !path.is_null() {
+                    self.collect_path_segments_inner(path.unwrap(), segments);
+                }
+                let name = child_by!(node, FieldKind::Name);
+                if !name.is_null() {
+                    segments.push(self.ctx.intern_str(self.ctx.node_text(name.unwrap())));
+                }
+            },
+            NodeKind::ScopedTypeIdentifier => {
+                let path = child_by!(node, FieldKind::Path);
+                if !path.is_null() {
+                    self.collect_path_segments_inner(path.unwrap(), segments);
+                }
+                let name = child_by!(node, FieldKind::Name);
+                if !name.is_null() {
+                    segments.push(self.ctx.intern_str(self.ctx.node_text(name.unwrap())));
+                }
+            },
+            _ => {
+                segments.push(self.ctx.intern_str(self.ctx.node_text(node)));
+            },
+        }
+    }
+
+    fn visit_static_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let attributes = self.parse_attributes(node);
+
+        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+            name: name,
+            kind: NamedItemKind::static_kind(id),
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_statics.push(PendingStatic {
+            node_start: node.start_byte() as u32,
+            node_end: node.end_byte() as u32,
+            scope_idx: self.current_scope,
+            id: id,
+            name: name,
+            attributes: attributes,
+            is_const: false,
+        });
+    }
+
+    fn visit_const_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let attributes = self.parse_attributes(node);
+
+        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+            name: name,
+            kind: NamedItemKind::const_kind(id),
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_statics.push(PendingStatic {
+            node_start: node.start_byte() as u32,
+            node_end: node.end_byte() as u32,
+            scope_idx: self.current_scope,
+            id: id,
+            name: name,
+            attributes: attributes,
+            is_const: true,
+        });
+    }
+
+    fn visit_macro_def_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        let child_scope = self.ctx.scopes.create_scope(ScopeKind::Function, Option::some(self.current_scope));
+
+        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+            name: name,
+            kind: NamedItemKind::macro_kind(id),
+            span: self.ctx.make_span(node),
+        });
+
+        self.ctx.pending_macros.push(PendingMacro {
+            node_start: node.start_byte() as u32,
+            node_end: node.end_byte() as u32,
+            scope_idx: child_scope,
+            id: id,
+            name: name,
+        });
+
+        let prev = self.current_scope;
+        self.current_scope = child_scope;
+        self.visit_children_by_field(node, FieldKind::Parameters);
+        self.current_scope = prev;
+    }
+
+    fn visit_generic_args_p1(self: &mut Pass1, node: Node) {
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Argument, &cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::GenericArgument {
+                let placeholder = child_by!(child, FieldKind::Placeholder);
+                if !placeholder.is_null() {
+                    let name = self.ctx.intern_str(self.ctx.node_text(placeholder.unwrap()));
+                    let id = self.ctx.next_id();
+                    self.ctx.scopes.add_item(self.current_scope, NamedItem {
+                        name: name,
+                        kind: NamedItemKind::generic_param(id),
+                        span: self.ctx.make_span(child),
+                    });
+                }
+            }
+        }
+    }
+
+    fn visit_parameter_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+            name: name,
+            kind: NamedItemKind::param(id),
+            span: self.ctx.make_span(node),
+        });
+    }
+
+    fn visit_parameter_list_p1(self: &mut Pass1, node: Node) {
+        self.visit_children_by_field(node, FieldKind::Parameter);
+    }
+
+    fn visit_macro_param_list_p1(self: &mut Pass1, node: Node) {
+        self.visit_children_by_field(node, FieldKind::Parameter);
+    }
+
+    fn visit_macro_param_p1(self: &mut Pass1, node: Node) {
+        let name = self.get_name(node);
+        let id = self.ctx.next_id();
+        self.ctx.scopes.add_item(self.current_scope, NamedItem {
+            name: name,
+            kind: NamedItemKind::param(id),
+            span: self.ctx.make_span(node),
+        });
+    }
+
+    fn visit_mixin_p1(self: &mut Pass1, node: Node) {
+        // Mixins are handled during pass 2
+    }
+}
+
+// ============================================================
+// Pass 2: AST construction
+// ============================================================
+
+struct Pass2 {
+    ctx: &mut ParseContext,
+}
+
+impl Pass2 {
+    fn new(ctx: &mut ParseContext) -> Pass2 {
+        Pass2 { ctx: ctx }
+    }
+
+    fn run(self: &mut Pass2, root: Node) {
+        // Process all pending items
+        // For each pending function, re-find the node and parse the body
+        // We store byte offsets and walk the tree to find matching nodes
+
+        self.process_functions(root);
+        self.process_structs(root);
+        self.process_enums(root);
+        self.process_statics(root);
+    }
+
+    fn find_node_at(self: &Pass2, root: Node, start: u32, end: u32) -> Node {
+        // Find a node by its byte range
+        let cursor = root.walk();
+        defer cursor.free();
+        // Try to navigate to the right position
+        if cursor.goto_first_child_for_byte(start as usize).is_some() {
+            let node = cursor.node();
+            if node.start_byte() as u32 == start && node.end_byte() as u32 == end {
+                return node;
+            }
+            // Try children
+            return self.find_node_at(node, start, end);
+        }
+        root
+    }
+
+    fn process_functions(self: &mut Pass2, root: Node) {
+        for i in 0usize..self.ctx.pending_functions.len() {
+            let pending = &self.ctx.pending_functions[i];
+            let node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_function(node, pending);
+        }
+    }
+
+    fn build_function(self: &mut Pass2, node: Node, pending: &PendingFunction) {
+        // Parse generic parameters
+        let generic_params = self.parse_generic_params(node, pending.scope_idx);
+
+        // Parse parameters
+        let params = self.parse_fn_params(node, pending.scope_idx);
+
+        // Parse return type
+        let return_type = self.parse_return_type(node, pending.scope_idx);
+
+        // Parse ABI
+        let abi_node = child_by!(node, FieldKind::Extern);
+        let abi: Option<&[u8]> = if !abi_node.is_null() {
+            let abi_text = self.ctx.node_text(abi_node.unwrap());
+            if abi_text.len() >= 2 && abi_text[0] == '"' as u8 {
+                Option::some(self.ctx.intern_str(abi_text[1..abi_text.len()-1]))
+            } else {
+                Option::some("C")
+            }
+        } else {
+            Option::none()
+        };
+
+        // Check variadic
+        let is_variadic = false; // TODO: check for ... in params
+
+        // Parse body
+        let body_node = child_by!(node, FieldKind::Body);
+        let body: Option<&Expr> = if !body_node.is_null() {
+            let expr_parser = ExprParser::new(self.ctx, pending.scope_idx);
+            Option::some(expr_parser.parse_expr(body_node.unwrap()))
+        } else {
+            Option::none()
+        };
+
+        let fn_def = FnDef {
+            id: pending.id,
+            name: pending.name,
+            generic_params: generic_params,
+            params: params,
+            return_type: return_type,
+            body: body,
+            attributes: pending.attributes,
+            is_variadic: is_variadic,
+            abi: abi,
+        };
+
+        let item = std::mem::zeroed::<Item>();
+        item.tag = ITEM_FUNCTION;
+        item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
+        item.fn_def = fn_def;
+        self.ctx.items.push(item);
+    }
+
+    fn parse_generic_params(self: &mut Pass2, node: Node, scope_idx: u32) -> &[GenericParam] {
+        let type_args = child_by!(node, FieldKind::TypeArguments);
+        if type_args.is_null() {
+            return &[];
+        }
+
+        let params: Vector<GenericParam> = Vector::new();
+        defer params.free();
+
+        let cursor = type_args.unwrap().walk();
+        defer cursor.free();
+        for arg in children_by!(type_args.unwrap(), FieldKind::Argument, &cursor) {
+            let kind = NODE_KINDS[arg.symbol() as usize];
+            if kind == NodeKind::GenericArgument {
+                let placeholder = child_by!(arg, FieldKind::Placeholder);
+                if !placeholder.is_null() {
+                    let name = self.ctx.intern_str(self.ctx.node_text(placeholder.unwrap()));
+                    let id = self.ctx.next_id();
+
+                    // Parse bounds
+                    let bounds = self.parse_generic_bounds(arg, scope_idx);
+
+                    // Parse default
+                    let default_node = child_by!(arg, FieldKind::Default);
+                    let default_ty: Option<&Ty> = if !default_node.is_null() {
+                        Option::some(self.parse_type(default_node.unwrap(), scope_idx))
+                    } else {
+                        Option::none()
+                    };
+
+                    params.push(GenericParam {
+                        id: id,
+                        name: name,
+                        bounds: bounds,
+                        default_ty: default_ty,
+                    });
+                }
+            }
+        }
+
+        if params.len() == 0 {
+            return &[];
+        }
+        let result = self.ctx.arena.alloc_slice::<GenericParam>(params.len());
+        for i in 0usize..params.len() {
+            result[i] = params[i];
+        }
+        result
+    }
+
+    fn parse_generic_bounds(self: &mut Pass2, node: Node, scope_idx: u32) -> &[&Ty] {
+        let bound_node = child_by!(node, FieldKind::Bound);
+        if bound_node.is_null() {
+            return &[];
+        }
+
+        let bounds: Vector<&Ty> = Vector::new();
+        defer bounds.free();
+
+        // A bound can be a single protocol or multiple with +
+        let cursor = bound_node.unwrap().walk();
+        defer cursor.free();
+        for child in bound_node.unwrap().children(&cursor) {
+            if child.is_named() {
+                bounds.push(self.parse_type(child, scope_idx));
+            }
+        }
+
+        if bounds.len() == 0 {
+            // Single bound
+            bounds.push(self.parse_type(bound_node.unwrap(), scope_idx));
+        }
+
+        let result = self.ctx.arena.alloc_slice::<&Ty>(bounds.len());
+        for i in 0usize..bounds.len() {
+            result[i] = bounds[i];
+        }
+        result
+    }
+
+    fn parse_fn_params(self: &mut Pass2, node: Node, scope_idx: u32) -> &[FnParam] {
+        let params_node = child_by!(node, FieldKind::Parameters);
+        if params_node.is_null() {
+            return &[];
+        }
+
+        let params: Vector<FnParam> = Vector::new();
+        defer params.free();
+
+        let cursor = params_node.unwrap().walk();
+        defer cursor.free();
+        for param in children_by!(params_node.unwrap(), FieldKind::Parameter, &cursor) {
+            let name = self.ctx.intern_str(self.ctx.node_text(child_by!(param, FieldKind::Name).unwrap()));
+            let type_node = child_by!(param, FieldKind::Type);
+            let ty = if !type_node.is_null() {
+                self.parse_type(type_node.unwrap(), scope_idx)
+            } else {
+                self.ctx.alloc_ty(Ty::unresolved())
+            };
+
+            // Look up the param ID from scope (registered in Pass1)
+            let scope_item = self.ctx.scopes.resolve(scope_idx, name);
+            let param_id = if scope_item.is_some() {
+                scope_item.unwrap().kind.id
+            } else {
+                self.ctx.next_id()
+            };
+
+            params.push(FnParam {
+                id: param_id,
+                name: name,
+                ty: ty,
+            });
+        }
+
+        let result = self.ctx.arena.alloc_slice::<FnParam>(params.len());
+        for i in 0usize..params.len() {
+            result[i] = params[i];
+        }
+        result
+    }
+
+    fn parse_return_type(self: &mut Pass2, node: Node, scope_idx: u32) -> &Ty {
+        let ret_node = child_by!(node, FieldKind::ReturnType);
+        if ret_node.is_null() {
+            return self.ctx.alloc_ty(Ty::void_ty());
+        }
+        self.parse_type(ret_node.unwrap(), scope_idx)
+    }
+
+    fn parse_type(self: &mut Pass2, node: Node, scope_idx: u32) -> &Ty {
+        let kind = NODE_KINDS[node.symbol() as usize];
+        switch kind {
+            NodeKind::PrimitiveType => {
+                let text = self.ctx.node_text(node);
+                let builtin = parse_builtin_type(text);
+                if builtin.is_some() {
+                    return self.ctx.alloc_ty(Ty::builtin_ty(builtin.unwrap()));
+                }
+                // Unknown primitive
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+            NodeKind::TypeIdentifier => {
+                let name = self.ctx.node_text(node);
+                // Try to resolve as builtin first
+                let builtin = parse_builtin_type(name);
+                if builtin.is_some() {
+                    return self.ctx.alloc_ty(Ty::builtin_ty(builtin.unwrap()));
+                }
+                // Look up in scope
+                let resolved = self.ctx.scopes.resolve(scope_idx, name);
+                if resolved.is_some() {
+                    let item = resolved.unwrap();
+                    if item.kind.tag == scope::NIK_STRUCT {
+                        let id = item.kind.id;
+                        return self.ctx.alloc_ty(Ty::named(id));
+                    } else if item.kind.tag == scope::NIK_ENUM {
+                        let id = item.kind.id;
+                        return self.ctx.alloc_ty(Ty::named(id));
+                    } else if item.kind.tag == scope::NIK_PROTOCOL {
+                        let id = item.kind.id;
+                        return self.ctx.alloc_ty(Ty::named(id));
+                    } else if item.kind.tag == scope::NIK_TYPE_ALIAS {
+                        let id = item.kind.id;
+                        return self.ctx.alloc_ty(Ty::named(id));
+                    } else if item.kind.tag == scope::NIK_GENERIC_PARAM {
+                        let id = item.kind.id;
+                        return self.ctx.alloc_ty(Ty::placeholder(id));
+                    } else if item.kind.tag == scope::NIK_BUILTIN_TYPE {
+                        let bt = item.kind.builtin;
+                        return self.ctx.alloc_ty(Ty::builtin_ty(bt));
+                    }
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+            NodeKind::PointerOf => {
+                let inner = child_by!(node, FieldKind::Inner);
+                let is_mut = !child_by!(node, FieldKind::Mut).is_null();
+                if !inner.is_null() {
+                    let inner_ty = self.parse_type(inner.unwrap(), scope_idx);
+                    return self.ctx.alloc_ty(Ty::pointer_ty(inner_ty, !is_mut));
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+            NodeKind::SliceOf => {
+                let inner = child_by!(node, FieldKind::Inner);
+                let is_mut = !child_by!(node, FieldKind::Mut).is_null();
+                if !inner.is_null() {
+                    let inner_ty = self.parse_type(inner.unwrap(), scope_idx);
+                    return self.ctx.alloc_ty(Ty::slice_ty(inner_ty, !is_mut));
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+            NodeKind::ArrayOf => {
+                let inner = child_by!(node, FieldKind::Inner);
+                let size_node = child_by!(node, FieldKind::Size);
+                if !inner.is_null() && !size_node.is_null() {
+                    let inner_ty = self.parse_type(inner.unwrap(), scope_idx);
+                    let size_text = self.ctx.node_text(size_node.unwrap());
+                    let size = parse_usize(size_text);
+                    return self.ctx.alloc_ty(Ty::array_ty(inner_ty, size));
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+            NodeKind::TupleType => {
+                let elems: Vector<&Ty> = Vector::new();
+                defer elems.free();
+                let cursor = node.walk();
+                defer cursor.free();
+                for child in children_by!(node, FieldKind::Element, &cursor) {
+                    elems.push(self.parse_type(child, scope_idx));
+                }
+                let result = self.ctx.arena.alloc_slice::<&Ty>(elems.len());
+                for i in 0usize..elems.len() {
+                    result[i] = elems[i];
+                }
+                self.ctx.alloc_ty(Ty::tuple_ty(result))
+            },
+            NodeKind::NeverType => {
+                self.ctx.alloc_ty(Ty::never_ty())
+            },
+            NodeKind::FunctionPointer => {
+                let params_node = child_by!(node, FieldKind::Parameters);
+                let ret_node = child_by!(node, FieldKind::ReturnType);
+
+                let param_types: Vector<&Ty> = Vector::new();
+                defer param_types.free();
+                if !params_node.is_null() {
+                    let cursor = params_node.unwrap().walk();
+                    defer cursor.free();
+                    for child in params_node.unwrap().children(&cursor) {
+                        if child.is_named() {
+                            param_types.push(self.parse_type(child, scope_idx));
+                        }
+                    }
+                }
+                let ret: &Ty = if !ret_node.is_null() {
+                    self.parse_type(ret_node.unwrap(), scope_idx)
+                } else {
+                    self.ctx.alloc_ty(Ty::void_ty()) as &Ty
+                };
+
+                let params = self.ctx.arena.alloc_slice::<&Ty>(param_types.len());
+                for i in 0usize..param_types.len() {
+                    params[i] = param_types[i];
+                }
+                self.ctx.alloc_ty(Ty::fn_pointer_ty(params, ret))
+            },
+            NodeKind::GenericType => {
+                let base_node = child_by!(node, FieldKind::Type);
+                let args_node = child_by!(node, FieldKind::TypeArguments);
+                if !base_node.is_null() && !args_node.is_null() {
+                    let base = self.parse_type(base_node.unwrap(), scope_idx);
+                    let type_args = self.parse_type_args(args_node.unwrap(), scope_idx);
+                    return self.ctx.alloc_ty(Ty::generic_ty(base, type_args));
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+            NodeKind::ScopedTypeIdentifier => {
+                // Qualified type like std::io::File
+                let segments = self.collect_type_path_segments(node);
+                let resolved = self.ctx.scopes.resolve_path(scope_idx, segments);
+                if resolved.is_some() {
+                    let item = resolved.unwrap();
+                    if item.kind.tag == scope::NIK_STRUCT {
+                        let id = item.kind.id;
+                        return self.ctx.alloc_ty(Ty::named(id));
+                    } else if item.kind.tag == scope::NIK_ENUM {
+                        let id = item.kind.id;
+                        return self.ctx.alloc_ty(Ty::named(id));
+                    } else if item.kind.tag == scope::NIK_PROTOCOL {
+                        let id = item.kind.id;
+                        return self.ctx.alloc_ty(Ty::named(id));
+                    } else if item.kind.tag == scope::NIK_TYPE_ALIAS {
+                        let id = item.kind.id;
+                        return self.ctx.alloc_ty(Ty::named(id));
+                    }
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+            NodeKind::TypeOf => {
+                // typeof(expr)
+                let inner = child_by!(node, FieldKind::Inner);
+                if !inner.is_null() {
+                    let expr_parser = ExprParser::new(self.ctx, scope_idx);
+                    let expr = expr_parser.parse_expr(inner.unwrap());
+                    let ty = Ty {
+                        tag: TY_TYPEOF,
+                        builtin: BuiltinType::Void,
+                        id: Id { _value: 0 },
+                        inner: std::mem::zeroed::<&Ty>(),
+                        is_const: false,
+                        array_size: 0,
+                        elems: &[],
+                        ret_ty: std::mem::zeroed::<&Ty>(),
+                        typeof_expr: expr,
+                    };
+                    return self.ctx.alloc_ty(ty);
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+            _ => {
+                // Fall back: try treating as identifier
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
+        }
+    }
+
+    fn parse_type_args(self: &mut Pass2, node: Node, scope_idx: u32) -> &[&Ty] {
+        let args: Vector<&Ty> = Vector::new();
+        defer args.free();
+
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in node.children(&cursor) {
+            if child.is_named() {
+                args.push(self.parse_type(child, scope_idx));
+            }
+        }
+
+        let result = self.ctx.arena.alloc_slice::<&Ty>(args.len());
+        for i in 0usize..args.len() {
+            result[i] = args[i];
+        }
+        result
+    }
+
+    fn collect_type_path_segments(self: &mut Pass2, node: Node) -> &[&[u8]] {
+        let segments: Vector<&[u8]> = Vector::new();
+        defer segments.free();
+        self.collect_type_path_inner(node, &segments);
+        let result = self.ctx.arena.alloc_slice::<&[u8]>(segments.len());
+        for i in 0usize..segments.len() {
+            result[i] = segments[i];
+        }
+        result
+    }
+
+    fn collect_type_path_inner(self: &mut Pass2, node: Node, segments: &mut Vector<&[u8]>) {
+        let kind = NODE_KINDS[node.symbol() as usize];
+        switch kind {
+            NodeKind::Identifier => {
+                segments.push(self.ctx.intern_str(self.ctx.node_text(node)));
+            },
+            NodeKind::TypeIdentifier => {
+                segments.push(self.ctx.intern_str(self.ctx.node_text(node)));
+            },
+            NodeKind::ScopedTypeIdentifier => {
+                let path = child_by!(node, FieldKind::Path);
+                if !path.is_null() {
+                    self.collect_type_path_inner(path.unwrap(), segments);
+                }
+                let name = child_by!(node, FieldKind::Name);
+                if !name.is_null() {
+                    segments.push(self.ctx.intern_str(self.ctx.node_text(name.unwrap())));
+                }
+            },
+            NodeKind::ScopedIdentifier => {
+                let path = child_by!(node, FieldKind::Path);
+                if !path.is_null() {
+                    self.collect_type_path_inner(path.unwrap(), segments);
+                }
+                let name = child_by!(node, FieldKind::Name);
+                if !name.is_null() {
+                    segments.push(self.ctx.intern_str(self.ctx.node_text(name.unwrap())));
+                }
+            },
+            _ => {
+                segments.push(self.ctx.intern_str(self.ctx.node_text(node)));
+            },
+        }
+    }
+
+    fn process_structs(self: &mut Pass2, root: Node) {
+        for i in 0usize..self.ctx.pending_structs.len() {
+            let pending = &self.ctx.pending_structs[i];
+            let node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_struct(node, pending);
+        }
+    }
+
+    fn build_struct(self: &mut Pass2, node: Node, pending: &PendingStruct) {
+        let generic_params = self.parse_generic_params(node, pending.scope_idx);
+
+        // Parse fields
+        let fields: Vector<StructField> = Vector::new();
+        defer fields.free();
+
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Body, &cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::StructField {
+                let name = self.ctx.intern_str(self.ctx.node_text(child_by!(child, FieldKind::Name).unwrap()));
+                let type_node = child_by!(child, FieldKind::Type);
+                let ty = if !type_node.is_null() {
+                    self.parse_type(type_node.unwrap(), pending.scope_idx)
+                } else {
+                    self.ctx.alloc_ty(Ty::unresolved())
+                };
+                fields.push(StructField {
+                    id: self.ctx.next_id(),
+                    name: name,
+                    ty: ty,
+                });
+            }
+        }
+
+        let fields_slice = self.ctx.arena.alloc_slice::<StructField>(fields.len());
+        for i in 0usize..fields.len() {
+            fields_slice[i] = fields[i];
+        }
+
+        let item = std::mem::zeroed::<Item>();
+        item.tag = ITEM_STRUCT;
+        item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
+        item.struct_def = StructDef {
+            id: pending.id,
+            name: pending.name,
+            generic_params: generic_params,
+            fields: fields_slice,
+            attributes: pending.attributes,
+            is_union: pending.is_union,
+        };
+        self.ctx.items.push(item);
+    }
+
+    fn process_enums(self: &mut Pass2, root: Node) {
+        for i in 0usize..self.ctx.pending_enums.len() {
+            let pending = &self.ctx.pending_enums[i];
+            let node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_enum(node, pending);
+        }
+    }
+
+    fn build_enum(self: &mut Pass2, node: Node, pending: &PendingEnum) {
+        let variants: Vector<EnumVariant> = Vector::new();
+        defer variants.free();
+
+        // Check for underlying type
+        let type_node = child_by!(node, FieldKind::Type);
+        let underlying: Option<&Ty> = if !type_node.is_null() {
+            Option::some(self.parse_type(type_node.unwrap(), pending.scope_idx))
+        } else {
+            Option::none()
+        };
+
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Body, &cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::EnumItem {
+                let name = self.ctx.intern_str(self.ctx.node_text(child_by!(child, FieldKind::Name).unwrap()));
+                let value_node = child_by!(child, FieldKind::Value);
+                let value: Option<&Expr> = if !value_node.is_null() {
+                    let expr_parser = ExprParser::new(self.ctx, pending.scope_idx);
+                    Option::some(expr_parser.parse_expr(value_node.unwrap()))
+                } else {
+                    Option::none()
+                };
+                // Look up the variant ID from scope (registered in pass1)
+                let scope_item = self.ctx.scopes.resolve(pending.scope_idx, name);
+                let variant_id = if scope_item.is_some() && scope_item.unwrap().kind.tag == scope::NIK_ENUM_VARIANT {
+                    scope_item.unwrap().kind.id2
+                } else {
+                    self.ctx.next_id()
+                };
+                variants.push(EnumVariant {
+                    id: variant_id,
+                    name: name,
+                    value: value,
+                });
+            }
+        }
+
+        let variants_slice = self.ctx.arena.alloc_slice::<EnumVariant>(variants.len());
+        for i in 0usize..variants.len() {
+            variants_slice[i] = variants[i];
+        }
+
+        let item = std::mem::zeroed::<Item>();
+        item.tag = ITEM_ENUM;
+        item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
+        item.enum_def = EnumDef {
+            id: pending.id,
+            name: pending.name,
+            underlying_type: underlying,
+            variants: variants_slice,
+            attributes: pending.attributes,
+        };
+        self.ctx.items.push(item);
+    }
+
+    fn process_statics(self: &mut Pass2, root: Node) {
+        for i in 0usize..self.ctx.pending_statics.len() {
+            let pending = &self.ctx.pending_statics[i];
+            let node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_static(node, pending);
+        }
+    }
+
+    fn build_static(self: &mut Pass2, node: Node, pending: &PendingStatic) {
+        let type_node = child_by!(node, FieldKind::Type);
+        let ty: Option<&Ty> = if !type_node.is_null() {
+            Option::some(self.parse_type(type_node.unwrap(), pending.scope_idx))
+        } else {
+            Option::none()
+        };
+
+        let value_node = child_by!(node, FieldKind::Value);
+        let init: Option<&Expr> = if !value_node.is_null() {
+            let expr_parser = ExprParser::new(self.ctx, pending.scope_idx);
+            Option::some(expr_parser.parse_expr(value_node.unwrap()))
+        } else {
+            Option::none()
+        };
+
+        let item = std::mem::zeroed::<Item>();
+        item.tag = ITEM_STATIC;
+        item.span = Span { file_id: self.ctx.file_id, start: node.start_byte() as u32, end: node.end_byte() as u32 };
+        item.static_def = StaticDef {
+            id: pending.id,
+            name: pending.name,
+            ty: ty,
+            init: init,
+            attributes: pending.attributes,
+            is_const: pending.is_const,
+        };
+        self.ctx.items.push(item);
+    }
+}
+
+// ============================================================
+// Expression parser
+// ============================================================
+
+struct ExprParser {
+    ctx: &mut ParseContext,
+    scope_idx: u32,
+}
+
+impl ExprParser {
+    fn new(ctx: &mut ParseContext, scope_idx: u32) -> ExprParser {
+        ExprParser { ctx: ctx, scope_idx: scope_idx }
+    }
+
+    fn make_expr(self: &ExprParser, tag: i32, span: Span) -> Expr {
+        let e = Expr::void_expr();
+        e.tag = tag;
+        e.span = span;
+        e
+    }
+
+    fn alloc_void(self: &ExprParser, span: Span) -> &Expr {
+        let e = Expr::void_expr();
+        e.span = span;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_expr(self: &ExprParser, node: Node) -> &Expr {
+        let kind = NODE_KINDS[node.symbol() as usize];
+        let span = self.ctx.make_span(node);
+
+        switch kind {
+            NodeKind::Block => self.parse_block(node, span),
+            NodeKind::IntegerLiteral => self.parse_int_literal(node, span),
+            NodeKind::FloatLiteral => self.parse_float_literal(node, span),
+            NodeKind::BooleanLiteral => self.parse_bool_literal(node, span),
+            NodeKind::StringLiteral => self.parse_string_literal(node, span),
+            NodeKind::CharLiteral => self.parse_char_literal(node, span),
+            NodeKind::PtrLiteral => {
+                let e = self.make_expr(EXPR_NULL_LIT, span);
+                self.ctx.alloc_expr(e)
+            },
+            NodeKind::Identifier => self.parse_identifier(node, span),
+            NodeKind::ScopedIdentifier => self.parse_scoped_identifier(node, span),
+            NodeKind::BinaryExpression => self.parse_binary(node, span),
+            NodeKind::UnaryExpression => self.parse_unary(node, span),
+            NodeKind::AssignmentExpression => self.parse_assignment(node, span),
+            NodeKind::CompoundAssignmentExpr => self.parse_compound_assignment(node, span),
+            NodeKind::CallExpression => self.parse_call(node, span),
+            NodeKind::FieldExpression => self.parse_field(node, span),
+            NodeKind::TupleIndexExpression => self.parse_tuple_index(node, span),
+            NodeKind::IndexExpression => self.parse_index(node, span),
+            NodeKind::ReferenceExpression => self.parse_ref(node, span),
+            NodeKind::DereferenceExpression => self.parse_deref(node, span),
+            NodeKind::TypeCastExpression => self.parse_cast(node, span),
+            NodeKind::TypeCheckExpression => self.parse_type_check(node, span),
+            NodeKind::IfExpression => self.parse_if(node, span),
+            NodeKind::SwitchExpression => self.parse_switch(node, span),
+            NodeKind::WhileExpression => self.parse_while(node, span),
+            NodeKind::ForExpression => self.parse_for(node, span),
+            NodeKind::LoopExpression => self.parse_loop(node, span),
+            NodeKind::BreakExpression => self.parse_break(node, span),
+            NodeKind::ContinueExpression => {
+                let e = self.make_expr(EXPR_CONTINUE, span);
+                self.ctx.alloc_expr(e)
+            },
+            NodeKind::ReturnExpression => self.parse_return(node, span),
+            NodeKind::LetDeclaration => self.parse_let(node, span),
+            NodeKind::StructExpression => self.parse_struct_lit(node, span),
+            NodeKind::TupleExpression => self.parse_tuple_lit(node, span),
+            NodeKind::ArrayExpression => self.parse_array_lit(node, span),
+            NodeKind::LambdaExpression => self.parse_lambda(node, span),
+            NodeKind::DeferExpression => self.parse_defer(node, span),
+            NodeKind::TryExpression => self.parse_try(node, span),
+            NodeKind::RangeExpression => self.parse_range(node, span),
+            NodeKind::ParenthesizedExpression => {
+                let inner = child_by!(node, FieldKind::Inner);
+                if !inner.is_null() {
+                    return self.parse_expr(inner.unwrap());
+                }
+                self.alloc_void(span)
+            },
+            NodeKind::ExpressionStatement => {
+                let cursor = node.walk();
+                defer cursor.free();
+                for child in node.children(&cursor) {
+                    if child.is_named() {
+                        return self.parse_expr(child);
+                    }
+                }
+                self.alloc_void(span)
+            },
+            NodeKind::Statement => {
+                let cursor = node.walk();
+                defer cursor.free();
+                for child in node.children(&cursor) {
+                    if child.is_named() {
+                        return self.parse_expr(child);
+                    }
+                }
+                self.alloc_void(span)
+            },
+            NodeKind::MacroInvocation => self.parse_macro_invocation(node, span),
+            NodeKind::UniversalMacroInvocation => self.parse_universal_macro(node, span),
+            NodeKind::StaticForExpression => self.parse_static_for(node, span),
+            NodeKind::EtCeteraExpression => self.parse_et_cetera(node, span),
+            NodeKind::EmptyStatement => self.alloc_void(span),
+            NodeKind::LineComment => self.alloc_void(span),
+            NodeKind::BlockComment => self.alloc_void(span),
+            NodeKind::DocComment => self.alloc_void(span),
+            _ => {
+                // For unhandled nodes, try to parse children
+                self.alloc_void(span)
+            },
+        }
+    }
+
+    fn parse_block(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let stmts: Vector<&Expr> = Vector::new();
+        defer stmts.free();
+
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Statements, &cursor) {
+            if child.is_named() {
+                let expr = self.parse_expr(child);
+                stmts.push(expr);
+            }
+        }
+
+        // Also check for a result expression
+        let result_node = child_by!(node, FieldKind::Result);
+        if !result_node.is_null() {
+            stmts.push(self.parse_expr(result_node.unwrap()));
+        }
+
+        let result = self.ctx.arena.alloc_slice::<&Expr>(stmts.len());
+        for i in 0usize..stmts.len() {
+            result[i] = stmts[i];
+        }
+
+        let e = self.make_expr(EXPR_BLOCK, span);
+        e.args = result;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_int_literal(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let text = self.ctx.node_text(node);
+        let (value, suffix) = parse_int_with_suffix(text);
+        let e = self.make_expr(EXPR_INT_LIT, span);
+        e.int_val = value;
+        e.type_suffix = suffix;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_float_literal(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let text = self.ctx.node_text(node);
+        let value = parse_float(text);
+        let e = self.make_expr(EXPR_FLOAT_LIT, span);
+        e.float_val = value;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_bool_literal(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let text = self.ctx.node_text(node);
+        let e = self.make_expr(EXPR_BOOL_LIT, span);
+        e.bool_val = text == "true";
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_string_literal(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let text = self.ctx.node_text(node);
+        // Strip quotes and handle escape sequences
+        let content = if text.len() >= 2 {
+            unescape_string(text[1..text.len()-1], self.ctx.arena)
+        } else {
+            ""
+        };
+        let e = self.make_expr(EXPR_STRING_LIT, span);
+        e.str_val = content;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_char_literal(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let text = self.ctx.node_text(node);
+        // Strip quotes
+        let ch: u32 = if text.len() >= 3 {
+            if text[1] == '\\' as u8 && text.len() >= 4 {
+                // Escape sequence
+                switch text[2] {
+                    'n' as u8 => '\n' as u32,
+                    'r' as u8 => '\r' as u32,
+                    't' as u8 => '\t' as u32,
+                    '\\' as u8 => '\\' as u32,
+                    '\'' as u8 => '\'' as u32,
+                    '0' as u8 => 0u32,
+                    _ => text[2] as u32,
+                }
+            } else {
+                text[1] as u32
+            }
+        } else {
+            0u32
+        };
+        let e = self.make_expr(EXPR_CHAR_LIT, span);
+        e.int_val = ch as u64;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_identifier(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let name = self.ctx.node_text(node);
+        let resolved = self.ctx.scopes.resolve(self.scope_idx, name);
+        if resolved.is_some() {
+            let item = resolved.unwrap();
+            if item.kind.tag == scope::NIK_LOCAL {
+                let id = item.kind.id;
+                let e = self.make_expr(EXPR_LOCAL, span);
+                e.id = id;
+                return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NIK_PARAM {
+                let id = item.kind.id;
+                let e = self.make_expr(EXPR_PARAM, span);
+                e.id = id;
+                return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NIK_FUNCTION {
+                let id = item.kind.id;
+                let e = self.make_expr(EXPR_FN_REF, span);
+                e.id = id;
+                return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NIK_STATIC {
+                let id = item.kind.id;
+                let e = self.make_expr(EXPR_STATIC_REF, span);
+                e.id = id;
+                return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NIK_CONST {
+                let id = item.kind.id;
+                let e = self.make_expr(EXPR_STATIC_REF, span);
+                e.id = id;
+                return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NIK_ENUM_VARIANT {
+                let enum_id = item.kind.id;
+                let variant_id = item.kind.id2;
+                let e = self.make_expr(EXPR_ENUM_REF, span);
+                e.id = enum_id;
+                e.id2 = variant_id;
+                return self.ctx.alloc_expr(e);
+            } else {
+                let e = self.make_expr(EXPR_LOCAL, span);
+                e.id = Id { _value: 0 };
+                return self.ctx.alloc_expr(e);
+            }
+        } else {
+            // Unresolved - may be resolved later during monomorphization
+            let e = self.make_expr(EXPR_LOCAL, span);
+            e.id = Id { _value: 0 };
+            self.ctx.alloc_expr(e)
+        }
+    }
+
+    fn parse_scoped_identifier(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let pass2 = Pass2 { ctx: self.ctx };
+        let segments = pass2.collect_type_path_segments(node);
+        let resolved = self.ctx.scopes.resolve_path(self.scope_idx, segments);
+        if resolved.is_some() {
+            let item = resolved.unwrap();
+            if item.kind.tag == scope::NIK_FUNCTION {
+                let id = item.kind.id;
+                let e = self.make_expr(EXPR_FN_REF, span);
+                e.id = id;
+                return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NIK_METHOD {
+                let fn_id = item.kind.id2;
+                let e = self.make_expr(EXPR_FN_REF, span);
+                e.id = fn_id;
+                return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NIK_STATIC {
+                let id = item.kind.id;
+                let e = self.make_expr(EXPR_STATIC_REF, span);
+                e.id = id;
+                return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NIK_CONST {
+                let id = item.kind.id;
+                let e = self.make_expr(EXPR_STATIC_REF, span);
+                e.id = id;
+                return self.ctx.alloc_expr(e);
+            } else if item.kind.tag == scope::NIK_ENUM_VARIANT {
+                let enum_id = item.kind.id;
+                let variant_id = item.kind.id2;
+                let e = self.make_expr(EXPR_ENUM_REF, span);
+                e.id = enum_id;
+                e.id2 = variant_id;
+                return self.ctx.alloc_expr(e);
+            } else {
+                let e = self.make_expr(EXPR_LOCAL, span);
+                e.id = Id { _value: 0 };
+                return self.ctx.alloc_expr(e);
+            }
+        } else {
+            let e = self.make_expr(EXPR_LOCAL, span);
+            e.id = Id { _value: 0 };
+            self.ctx.alloc_expr(e)
+        }
+    }
+
+    fn parse_binary(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let left = child_by!(node, FieldKind::Left);
+        let right = child_by!(node, FieldKind::Right);
+        let op_node = child_by!(node, FieldKind::Operator);
+
+        if left.is_null() || right.is_null() || op_node.is_null() {
+            return self.alloc_void(span);
+        }
+
+        let op_text = self.ctx.node_text(op_node.unwrap());
+        let op = parse_binop(op_text);
+
+        let lhs = self.parse_expr(left.unwrap());
+        let rhs = self.parse_expr(right.unwrap());
+
+        let e = self.make_expr(EXPR_BINARY, span);
+        e.bin_op = op;
+        e.lhs = lhs;
+        e.rhs = rhs;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_unary(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let operand_node = child_by!(node, FieldKind::Value);
+        let op_node = child_by!(node, FieldKind::Operator);
+
+        if operand_node.is_null() || op_node.is_null() {
+            return self.alloc_void(span);
+        }
+
+        let op_text = self.ctx.node_text(op_node.unwrap());
+        let op = if op_text == "-" { UnOp::Neg }
+                 else if op_text == "!" { UnOp::Not }
+                 else if op_text == "~" { UnOp::BitNot }
+                 else { UnOp::Neg };
+
+        let operand = self.parse_expr(operand_node.unwrap());
+
+        let e = self.make_expr(EXPR_UNARY, span);
+        e.un_op = op;
+        e.lhs = operand;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_assignment(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let left = child_by!(node, FieldKind::Left);
+        let right = child_by!(node, FieldKind::Right);
+        if left.is_null() || right.is_null() {
+            return self.alloc_void(span);
+        }
+        let lhs = self.parse_expr(left.unwrap());
+        let rhs = self.parse_expr(right.unwrap());
+
+        let e = self.make_expr(EXPR_ASSIGN, span);
+        e.assign_op = AssignOp::Assign;
+        e.lhs = lhs;
+        e.rhs = rhs;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_compound_assignment(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let left = child_by!(node, FieldKind::Left);
+        let right = child_by!(node, FieldKind::Right);
+        let op_node = child_by!(node, FieldKind::Operator);
+        if left.is_null() || right.is_null() || op_node.is_null() {
+            return self.alloc_void(span);
+        }
+
+        let op_text = self.ctx.node_text(op_node.unwrap());
+        let op = parse_assign_op(op_text);
+
+        let lhs = self.parse_expr(left.unwrap());
+        let rhs = self.parse_expr(right.unwrap());
+
+        let e = self.make_expr(EXPR_ASSIGN, span);
+        e.assign_op = op;
+        e.lhs = lhs;
+        e.rhs = rhs;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_call(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let func = child_by!(node, FieldKind::Function);
+        let args_node = child_by!(node, FieldKind::Arguments);
+
+        if func.is_null() {
+            return self.alloc_void(span);
+        }
+
+        let callee = self.parse_expr(func.unwrap());
+        let args = if !args_node.is_null() {
+            self.parse_arg_list(args_node.unwrap())
+        } else {
+            let empty: &[&Expr] = &[];
+            empty
+        };
+
+        let e = self.make_expr(EXPR_CALL, span);
+        e.lhs = callee;
+        e.args = args;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_arg_list(self: &ExprParser, node: Node) -> &[&Expr] {
+        let args: Vector<&Expr> = Vector::new();
+        defer args.free();
+
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in node.children(&cursor) {
+            if child.is_named() {
+                let kind = NODE_KINDS[child.symbol() as usize];
+                if kind != NodeKind::LineComment && kind != NodeKind::BlockComment {
+                    args.push(self.parse_expr(child));
+                }
+            }
+        }
+
+        let result = self.ctx.arena.alloc_slice::<&Expr>(args.len());
+        for i in 0usize..args.len() {
+            result[i] = args[i];
+        }
+        result
+    }
+
+    fn parse_field(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let obj = child_by!(node, FieldKind::Value);
+        let field = child_by!(node, FieldKind::Field);
+        if obj.is_null() || field.is_null() {
+            return self.alloc_void(span);
+        }
+        let obj_expr = self.parse_expr(obj.unwrap());
+        let field_name = self.ctx.intern_str(self.ctx.node_text(field.unwrap()));
+
+        let e = self.make_expr(EXPR_FIELD_ACCESS, span);
+        e.lhs = obj_expr;
+        e.str_val = field_name;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_tuple_index(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let obj = child_by!(node, FieldKind::Value);
+        let index = child_by!(node, FieldKind::Index);
+        if obj.is_null() || index.is_null() {
+            return self.alloc_void(span);
+        }
+        let obj_expr = self.parse_expr(obj.unwrap());
+        let idx_text = self.ctx.node_text(index.unwrap());
+        let idx = parse_usize(idx_text);
+
+        let e = self.make_expr(EXPR_TUPLE_INDEX, span);
+        e.lhs = obj_expr;
+        e.index_val = idx;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_index(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let obj = child_by!(node, FieldKind::Value);
+        let index = child_by!(node, FieldKind::Index);
+        if obj.is_null() || index.is_null() {
+            return self.alloc_void(span);
+        }
+        let obj_expr = self.parse_expr(obj.unwrap());
+        let idx_expr = self.parse_expr(index.unwrap());
+
+        let e = self.make_expr(EXPR_INDEX, span);
+        e.lhs = obj_expr;
+        e.rhs = idx_expr;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_ref(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let inner = child_by!(node, FieldKind::Value);
+        let is_mut = !child_by!(node, FieldKind::Mut).is_null();
+        if inner.is_null() {
+            return self.alloc_void(span);
+        }
+
+        let e = self.make_expr(EXPR_REF, span);
+        e.lhs = self.parse_expr(inner.unwrap());
+        e.flag = is_mut;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_deref(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let inner = child_by!(node, FieldKind::Value);
+        if inner.is_null() {
+            return self.alloc_void(span);
+        }
+
+        let e = self.make_expr(EXPR_DEREF, span);
+        e.lhs = self.parse_expr(inner.unwrap());
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_cast(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let value = child_by!(node, FieldKind::Value);
+        let type_node = child_by!(node, FieldKind::Type);
+        if value.is_null() || type_node.is_null() {
+            return self.alloc_void(span);
+        }
+
+        let pass2 = Pass2 { ctx: self.ctx };
+        let ty = pass2.parse_type(type_node.unwrap(), self.scope_idx);
+
+        let e = self.make_expr(EXPR_CAST, span);
+        e.lhs = self.parse_expr(value.unwrap());
+        e.ty = ty;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_type_check(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let value = child_by!(node, FieldKind::Value);
+        let type_node = child_by!(node, FieldKind::Type);
+        if value.is_null() || type_node.is_null() {
+            return self.alloc_void(span);
+        }
+
+        let pass2 = Pass2 { ctx: self.ctx };
+        let ty = pass2.parse_type(type_node.unwrap(), self.scope_idx);
+
+        let e = self.make_expr(EXPR_TYPE_CHECK, span);
+        e.lhs = self.parse_expr(value.unwrap());
+        e.ty = ty;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_if(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let cond = child_by!(node, FieldKind::Condition);
+        let then_node = child_by!(node, FieldKind::Consequence);
+        let else_node = child_by!(node, FieldKind::Alternative);
+
+        if cond.is_null() || then_node.is_null() {
+            return self.alloc_void(span);
+        }
+
+        let cond_expr = self.parse_expr(cond.unwrap());
+        let then_expr = self.parse_expr(then_node.unwrap());
+        let else_expr: Option<&Expr> = if !else_node.is_null() {
+            // Else clause wraps its content
+            let inner = child_by!(else_node.unwrap(), FieldKind::Inner);
+            if !inner.is_null() {
+                Option::some(self.parse_expr(inner.unwrap()))
+            } else {
+                // Direct else body
+                Option::some(self.parse_expr(else_node.unwrap()))
+            }
+        } else {
+            Option::none()
+        };
+
+        let e = self.make_expr(EXPR_IF, span);
+        e.cond = cond_expr;
+        e.lhs = then_expr;
+        e.opt_expr = else_expr;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_switch(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let value = child_by!(node, FieldKind::Value);
+        if value.is_null() {
+            return self.alloc_void(span);
+        }
+
+        let value_expr = self.parse_expr(value.unwrap());
+        let arms: Vector<SwitchArm> = Vector::new();
+        defer arms.free();
+
+        let body = child_by!(node, FieldKind::Body);
+        if !body.is_null() {
+            let cursor = body.unwrap().walk();
+            defer cursor.free();
+            for child in children_by!(body.unwrap(), FieldKind::Arm, &cursor) {
+                let kind = NODE_KINDS[child.symbol() as usize];
+                if kind == NodeKind::SwitchArm {
+                    let pattern_node = child_by!(child, FieldKind::Pattern);
+                    let body_node = child_by!(child, FieldKind::Value);
+
+                    let patterns: Vector<&Expr> = Vector::new();
+                    defer patterns.free();
+
+                    if !pattern_node.is_null() {
+                        // Check for wildcard/default pattern "_"
+                        let pat_text = self.ctx.node_text(pattern_node.unwrap());
+                        let is_wildcard = pat_text.len() == 1 && pat_text[0] == '_';
+                        if !is_wildcard {
+                            // Parse pattern values
+                            let cursor2 = pattern_node.unwrap().walk();
+                            defer cursor2.free();
+                            for pat_child in pattern_node.unwrap().children(&cursor2) {
+                                if pat_child.is_named() {
+                                    patterns.push(self.parse_expr(pat_child));
+                                }
+                            }
+                            // If pattern node itself is a value
+                            if patterns.len() == 0 {
+                                patterns.push(self.parse_expr(pattern_node.unwrap()));
+                            }
+                        }
+                    }
+
+                    let body_expr = if !body_node.is_null() {
+                        self.parse_expr(body_node.unwrap())
+                    } else {
+                        self.alloc_void(Span::empty())
+                    };
+
+                    let pat_slice = self.ctx.arena.alloc_slice::<&Expr>(patterns.len());
+                    for i in 0usize..patterns.len() {
+                        pat_slice[i] = patterns[i];
+                    }
+
+                    arms.push(SwitchArm {
+                        pattern: pat_slice,
+                        body: body_expr,
+                    });
+                }
+            }
+        }
+
+        let arms_slice = self.ctx.arena.alloc_slice::<SwitchArm>(arms.len());
+        for i in 0usize..arms.len() {
+            arms_slice[i] = arms[i];
+        }
+
+        let e = self.make_expr(EXPR_SWITCH, span);
+        e.lhs = value_expr;
+        e.switch_arms = arms_slice;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_while(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let cond = child_by!(node, FieldKind::Condition);
+        let body = child_by!(node, FieldKind::Body);
+        if cond.is_null() || body.is_null() {
+            return self.alloc_void(span);
+        }
+
+        let e = self.make_expr(EXPR_WHILE, span);
+        e.cond = self.parse_expr(cond.unwrap());
+        e.lhs = self.parse_expr(body.unwrap());
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_for(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let pattern = child_by!(node, FieldKind::Pattern);
+        let iter_node = child_by!(node, FieldKind::Value);
+        let body = child_by!(node, FieldKind::Body);
+
+        if pattern.is_null() || iter_node.is_null() || body.is_null() {
+            return self.alloc_void(span);
+        }
+
+        let var_id = self.ctx.next_id();
+        let var_name = self.ctx.intern_str(self.ctx.node_text(pattern.unwrap()));
+
+        // Register the loop variable in scope
+        self.ctx.scopes.add_item(self.scope_idx, NamedItem {
+            name: var_name,
+            kind: NamedItemKind::local(var_id),
+            span: self.ctx.make_span(pattern.unwrap()),
+        });
+
+        let e = self.make_expr(EXPR_FOR, span);
+        e.id = var_id;
+        e.lhs = self.parse_expr(iter_node.unwrap());
+        e.rhs = self.parse_expr(body.unwrap());
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_loop(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let body = child_by!(node, FieldKind::Body);
+        if body.is_null() {
+            return self.alloc_void(span);
+        }
+
+        let e = self.make_expr(EXPR_LOOP, span);
+        e.lhs = self.parse_expr(body.unwrap());
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_break(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let value = child_by!(node, FieldKind::Value);
+        let e = self.make_expr(EXPR_BREAK, span);
+        if !value.is_null() {
+            e.opt_expr = Option::some(self.parse_expr(value.unwrap()));
+        }
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_return(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let value = child_by!(node, FieldKind::Value);
+        let e = self.make_expr(EXPR_RETURN, span);
+        if !value.is_null() {
+            e.opt_expr = Option::some(self.parse_expr(value.unwrap()));
+        }
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_let(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let name_node = child_by!(node, FieldKind::Name);
+        let type_node = child_by!(node, FieldKind::Type);
+        let value_node = child_by!(node, FieldKind::Value);
+
+        if name_node.is_null() {
+            return self.alloc_void(span);
+        }
+
+        let var_id = self.ctx.next_id();
+        let var_name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
+
+        // Register in scope
+        self.ctx.scopes.add_item(self.scope_idx, NamedItem {
+            name: var_name,
+            kind: NamedItemKind::local(var_id),
+            span: self.ctx.make_span(name_node.unwrap()),
+        });
+
+        let pass2 = Pass2 { ctx: self.ctx };
+        let ty: Option<&Ty> = if !type_node.is_null() {
+            Option::some(pass2.parse_type(type_node.unwrap(), self.scope_idx))
+        } else {
+            Option::none()
+        };
+
+        let init: Option<&Expr> = if !value_node.is_null() {
+            Option::some(self.parse_expr(value_node.unwrap()))
+        } else {
+            Option::none()
+        };
+
+        let e = self.make_expr(EXPR_LET, span);
+        e.id = var_id;
+        e.opt_ty = ty;
+        e.opt_expr = init;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_struct_lit(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let type_node = child_by!(node, FieldKind::Name);
+        let init_node = child_by!(node, FieldKind::Arguments);
+
+        if type_node.is_null() {
+            return self.alloc_void(span);
+        }
+
+        let pass2 = Pass2 { ctx: self.ctx };
+        let ty = pass2.parse_type(type_node.unwrap(), self.scope_idx);
+
+        let fields: Vector<FieldInit> = Vector::new();
+        defer fields.free();
+
+        if !init_node.is_null() {
+            let cursor = init_node.unwrap().walk();
+            defer cursor.free();
+            for child in init_node.unwrap().children(&cursor) {
+                let kind = NODE_KINDS[child.symbol() as usize];
+                if kind == NodeKind::StructInitializerItem {
+                    let name_node = child_by!(child, FieldKind::Field);
+                    let value_node = child_by!(child, FieldKind::Value);
+                    if !name_node.is_null() && !value_node.is_null() {
+                        fields.push(FieldInit {
+                            name: self.ctx.intern_str(self.ctx.node_text(name_node.unwrap())),
+                            value: self.parse_expr(value_node.unwrap()),
+                        });
+                    }
+                }
+            }
+        }
+
+        let fields_slice = self.ctx.arena.alloc_slice::<FieldInit>(fields.len());
+        for i in 0usize..fields.len() {
+            fields_slice[i] = fields[i];
+        }
+
+        let e = self.make_expr(EXPR_STRUCT_LIT, span);
+        e.ty = ty;
+        e.field_inits = fields_slice;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_tuple_lit(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let elems: Vector<&Expr> = Vector::new();
+        defer elems.free();
+
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Element, &cursor) {
+            elems.push(self.parse_expr(child));
+        }
+
+        let result = self.ctx.arena.alloc_slice::<&Expr>(elems.len());
+        for i in 0usize..elems.len() {
+            result[i] = elems[i];
+        }
+
+        let e = self.make_expr(EXPR_TUPLE_LIT, span);
+        e.args = result;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_array_lit(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let elems: Vector<&Expr> = Vector::new();
+        defer elems.free();
+
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Element, &cursor) {
+            elems.push(self.parse_expr(child));
+        }
+
+        let result = self.ctx.arena.alloc_slice::<&Expr>(elems.len());
+        for i in 0usize..elems.len() {
+            result[i] = elems[i];
+        }
+
+        let e = self.make_expr(EXPR_ARRAY_LIT, span);
+        e.args = result;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_lambda(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let params_node = child_by!(node, FieldKind::Parameters);
+        let body_node = child_by!(node, FieldKind::Body);
+
+        if body_node.is_null() {
+            return self.alloc_void(span);
+        }
+
+        let params: Vector<LambdaParam> = Vector::new();
+        defer params.free();
+
+        if !params_node.is_null() {
+            let cursor = params_node.unwrap().walk();
+            defer cursor.free();
+            for child in params_node.unwrap().children(&cursor) {
+                if child.is_named() {
+                    let kind = NODE_KINDS[child.symbol() as usize];
+                    let id = self.ctx.next_id();
+                    let name = self.ctx.intern_str(self.ctx.node_text(child));
+
+                    // Register lambda param in scope
+                    self.ctx.scopes.add_item(self.scope_idx, NamedItem {
+                        name: name,
+                        kind: NamedItemKind::local(id),
+                        span: self.ctx.make_span(child),
+                    });
+
+                    params.push(LambdaParam {
+                        id: id,
+                        name: name,
+                        ty: Option::none(),
+                    });
+                }
+            }
+        }
+
+        let pass2 = Pass2 { ctx: self.ctx };
+        let ret_node = child_by!(node, FieldKind::ReturnType);
+        let ret_ty: Option<&Ty> = if !ret_node.is_null() {
+            Option::some(pass2.parse_type(ret_node.unwrap(), self.scope_idx))
+        } else {
+            Option::none()
+        };
+
+        let body = self.parse_expr(body_node.unwrap());
+
+        let params_slice = self.ctx.arena.alloc_slice::<LambdaParam>(params.len());
+        for i in 0usize..params.len() {
+            params_slice[i] = params[i];
+        }
+
+        let e = self.make_expr(EXPR_LAMBDA, span);
+        e.lambda_params = params_slice;
+        e.opt_ty = ret_ty;
+        e.lhs = body;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_defer(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let inner = child_by!(node, FieldKind::Value);
+        if inner.is_null() {
+            return self.alloc_void(span);
+        }
+
+        let e = self.make_expr(EXPR_DEFER, span);
+        e.lhs = self.parse_expr(inner.unwrap());
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_try(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let inner = child_by!(node, FieldKind::Value);
+        if inner.is_null() {
+            return self.alloc_void(span);
+        }
+
+        let e = self.make_expr(EXPR_TRY, span);
+        e.lhs = self.parse_expr(inner.unwrap());
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_range(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let lower = child_by!(node, FieldKind::Lower);
+        let upper = child_by!(node, FieldKind::Upper);
+        let inclusive_node = child_by!(node, FieldKind::Inclusive);
+
+        let e = self.make_expr(EXPR_RANGE, span);
+        e.flag = !inclusive_node.is_null();
+
+        if !lower.is_null() {
+            e.lhs = self.parse_expr(lower.unwrap());
+        }
+        if !upper.is_null() {
+            e.rhs = self.parse_expr(upper.unwrap());
+        }
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_macro_invocation(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let name_node = child_by!(node, FieldKind::Macro);
+        let args_node = child_by!(node, FieldKind::Arguments);
+
+        if name_node.is_null() {
+            return self.alloc_void(span);
+        }
+
+        let name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
+        let args = if !args_node.is_null() {
+            self.parse_arg_list(args_node.unwrap())
+        } else {
+            let empty: &[&Expr] = &[];
+            empty
+        };
+
+        let e = self.make_expr(EXPR_MACRO_INVOCATION, span);
+        e.str_val = name;
+        e.args = args;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_universal_macro(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        // obj.macro!(args)
+        let value = child_by!(node, FieldKind::Value);
+        let macro_node = child_by!(node, FieldKind::Macro);
+        let args_node = child_by!(node, FieldKind::Arguments);
+
+        if value.is_null() || macro_node.is_null() {
+            return self.alloc_void(span);
+        }
+
+        let obj = self.parse_expr(value.unwrap());
+        let name = self.ctx.intern_str(self.ctx.node_text(macro_node.unwrap()));
+
+        let all_args: Vector<&Expr> = Vector::new();
+        defer all_args.free();
+        all_args.push(obj);
+
+        if !args_node.is_null() {
+            let extra_args = self.parse_arg_list(args_node.unwrap());
+            for i in 0usize..extra_args.len() {
+                all_args.push(extra_args[i]);
+            }
+        }
+
+        let result = self.ctx.arena.alloc_slice::<&Expr>(all_args.len());
+        for i in 0usize..all_args.len() {
+            result[i] = all_args[i];
+        }
+
+        let e = self.make_expr(EXPR_MACRO_INVOCATION, span);
+        e.str_val = name;
+        e.args = result;
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_static_for(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let pattern = child_by!(node, FieldKind::Pattern);
+        let iter_node = child_by!(node, FieldKind::Value);
+        let body = child_by!(node, FieldKind::Body);
+
+        if pattern.is_null() || iter_node.is_null() || body.is_null() {
+            return self.alloc_void(span);
+        }
+
+        let var_id = self.ctx.next_id();
+
+        let e = self.make_expr(EXPR_STATIC_FOR, span);
+        e.id = var_id;
+        e.lhs = self.parse_expr(iter_node.unwrap());
+        e.rhs = self.parse_expr(body.unwrap());
+        self.ctx.alloc_expr(e)
+    }
+
+    fn parse_et_cetera(self: &ExprParser, node: Node, span: Span) -> &Expr {
+        let inner = child_by!(node, FieldKind::Value);
+        if inner.is_null() {
+            return self.alloc_void(span);
+        }
+
+        let e = self.make_expr(EXPR_ET_CETERA, span);
+        e.lhs = self.parse_expr(inner.unwrap());
+        self.ctx.alloc_expr(e)
+    }
+}
+
+// ============================================================
+// Utility functions
+// ============================================================
+
+fn parse_usize(text: &[u8]) -> usize {
+    let result: usize = 0;
+    for i in 0usize..text.len() {
+        let c = text[i];
+        if c >= '0' as u8 && c <= '9' as u8 {
+            result = result * 10 + (c - '0' as u8) as usize;
+        } else if c == '_' as u8 {
+            // Skip underscores in numeric literals
+        } else {
+            break;
+        }
+    }
+    result
+}
+
+fn parse_int_with_suffix(text: &[u8]) -> (u64, Option<BuiltinType>) {
+    let value: u64 = 0;
+    let base: u64 = 10;
+    let i: usize = 0;
+
+    // Check for hex/octal/binary prefix
+    if text.len() >= 2 && text[0] == '0' as u8 {
+        if text[1] == 'x' as u8 || text[1] == 'X' as u8 {
+            base = 16;
+            i = 2;
+        } else if text[1] == 'o' as u8 || text[1] == 'O' as u8 {
+            base = 8;
+            i = 2;
+        } else if text[1] == 'b' as u8 || text[1] == 'B' as u8 {
+            base = 2;
+            i = 2;
+        }
+    }
+
+    let suffix_start: usize = text.len();
+    while i < text.len() {
+        let c = text[i];
+        if c == '_' as u8 {
+            i = i + 1;
+        } else if base == 16 && ((c >= 'a' as u8 && c <= 'f' as u8) || (c >= 'A' as u8 && c <= 'F' as u8)) {
+            let digit: u64 = if c >= 'a' as u8 { (c - 'a' as u8 + 10) as u64 } else { (c - 'A' as u8 + 10) as u64 };
+            value = value * base + digit;
+            i = i + 1;
+        } else if c >= '0' as u8 && c <= '9' as u8 {
+            value = value * base + (c - '0' as u8) as u64;
+            i = i + 1;
+        } else {
+            suffix_start = i;
+            break;
+        }
+    }
+
+    let suffix = if suffix_start < text.len() {
+        let suffix_text = text[suffix_start..];
+        parse_builtin_type(suffix_text)
+    } else {
+        Option::none()
+    };
+
+    (value, suffix)
+}
+
+fn parse_float(text: &[u8]) -> f64 {
+    // Simple float parser - we'll use libc strtod for accuracy
+    let cstr = std::ffi::CString::from_slice(text);
+    defer cstr.free();
+
+    let end: &mut libc::c_char = null;
+    libc::strtod(cstr.ptr, &end)
+}
+
+fn parse_binop(text: &[u8]) -> BinOp {
+    if text == "+" { BinOp::Add }
+    else if text == "-" { BinOp::Sub }
+    else if text == "*" { BinOp::Mul }
+    else if text == "/" { BinOp::Div }
+    else if text == "%" { BinOp::Rem }
+    else if text == "&" { BinOp::BitAnd }
+    else if text == "|" { BinOp::BitOr }
+    else if text == "^" { BinOp::BitXor }
+    else if text == "<<" { BinOp::Shl }
+    else if text == ">>" { BinOp::Shr }
+    else if text == "==" { BinOp::Eq }
+    else if text == "!=" { BinOp::Ne }
+    else if text == "<" { BinOp::Lt }
+    else if text == "<=" { BinOp::Le }
+    else if text == ">" { BinOp::Gt }
+    else if text == ">=" { BinOp::Ge }
+    else if text == "&&" { BinOp::And }
+    else if text == "||" { BinOp::Or }
+    else { BinOp::Add }
+}
+
+fn parse_assign_op(text: &[u8]) -> AssignOp {
+    if text == "+=" { AssignOp::AddAssign }
+    else if text == "-=" { AssignOp::SubAssign }
+    else if text == "*=" { AssignOp::MulAssign }
+    else if text == "/=" { AssignOp::DivAssign }
+    else if text == "%=" { AssignOp::RemAssign }
+    else if text == "&=" { AssignOp::BitAndAssign }
+    else if text == "|=" { AssignOp::BitOrAssign }
+    else if text == "^=" { AssignOp::BitXorAssign }
+    else if text == "<<=" { AssignOp::ShlAssign }
+    else if text == ">>=" { AssignOp::ShrAssign }
+    else { AssignOp::Assign }
+}
+
+fn unescape_string(text: &[u8], arena: &mut Arena) -> &[u8] {
+    // Count output length first
+    let out_len: usize = 0;
+    let i: usize = 0;
+    while i < text.len() {
+        if text[i] == '\\' as u8 && i + 1 < text.len() {
+            i = i + 2;
+            if text[i - 1] == 'x' as u8 && i + 1 < text.len() {
+                i = i + 2;  // \xNN
+            }
+        } else {
+            i = i + 1;
+        }
+        out_len = out_len + 1;
+    }
+
+    let buf = arena.alloc_slice::<u8>(out_len);
+    let j: usize = 0;
+    i = 0;
+    while i < text.len() {
+        if text[i] == '\\' as u8 && i + 1 < text.len() {
+            switch text[i + 1] {
+                'n' as u8 => { buf[j] = '\n' as u8; },
+                'r' as u8 => { buf[j] = '\r' as u8; },
+                't' as u8 => { buf[j] = '\t' as u8; },
+                '\\' as u8 => { buf[j] = '\\' as u8; },
+                '"' as u8 => { buf[j] = '"' as u8; },
+                '0' as u8 => { buf[j] = 0u8; },
+                'x' as u8 => {
+                    if i + 3 < text.len() {
+                        let hi = hex_digit(text[i + 2]);
+                        let lo = hex_digit(text[i + 3]);
+                        buf[j] = ((hi << 4) | lo) as u8;
+                        i = i + 2;
+                    }
+                },
+                _ => { buf[j] = text[i + 1]; },
+            }
+            i = i + 2;
+        } else {
+            buf[j] = text[i];
+            i = i + 1;
+        }
+        j = j + 1;
+    }
+
+    buf[0..j]
+}
+
+fn hex_digit(c: u8) -> u8 {
+    if c >= '0' as u8 && c <= '9' as u8 { c - '0' as u8 }
+    else if c >= 'a' as u8 && c <= 'f' as u8 { c - 'a' as u8 + 10 }
+    else if c >= 'A' as u8 && c <= 'F' as u8 { c - 'A' as u8 + 10 }
+    else { 0u8 }
+}
+
+// ============================================================
+// Main entry point for parsing
+// ============================================================
+
+fn parse_file(
+    root: Node,
+    source: &[u8],
+    file_id: u32,
+    arena: &mut Arena,
+    scopes: &mut ScopeArena,
+    id_gen: &mut IdGen,
+    diag: &mut DiagnosticContext,
+    root_scope: u32,
+    cfg_flags: &[&[u8]],
+) -> &[Item] {
+    let ctx = ParseContext::new(arena, scopes, id_gen, diag, source, file_id, cfg_flags);
+    defer ctx.free();
+
+    // Pass 1: build scopes
+    let pass1 = Pass1::new(&ctx, root_scope);
+    pass1.run(root);
+
+    // Pass 2: construct AST
+    let pass2 = Pass2::new(&ctx);
+    pass2.run(root);
+
+    // Copy items to arena
+    let items = arena.alloc_slice::<Item>(ctx.items.len());
+    for i in 0usize..ctx.items.len() {
+        items[i] = ctx.items[i];
+    }
+    items
+}

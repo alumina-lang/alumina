@@ -1,0 +1,892 @@
+// AST and IR data structures for the self-hosted Alumina compiler
+//
+// Since Alumina enums don't support data payloads (like Rust enums),
+// we use a tag + data pointer pattern for discriminated unions.
+// The tag is an integer constant, data is a &void pointer cast as needed.
+
+use arena::Arena;
+use std::collections::{HashMap, HashSet};
+
+// Unique identifier for AST/IR items
+struct Id {
+    _value: usize,
+}
+
+impl Id {
+    fn equals(self: &Id, other: &Id) -> bool {
+        self._value == other._value
+    }
+    fn hash(self: &Id) -> u64 {
+        self._value as u64
+    }
+}
+
+struct IdGen {
+    next: usize,
+}
+
+impl IdGen {
+    fn new() -> IdGen {
+        IdGen { next: 0 }
+    }
+    fn next_id(self: &mut IdGen) -> Id {
+        let id = Id { _value: self.next };
+        self.next = self.next + 1;
+        id
+    }
+}
+
+// === Builtin types ===
+enum BuiltinType {
+    Void = 0i32,
+    Bool = 1i32,
+    U8 = 2i32,
+    U16 = 3i32,
+    U32 = 4i32,
+    U64 = 5i32,
+    U128 = 6i32,
+    USize = 7i32,
+    I8 = 8i32,
+    I16 = 9i32,
+    I32 = 10i32,
+    I64 = 11i32,
+    I128 = 12i32,
+    ISize = 13i32,
+    F32 = 14i32,
+    F64 = 15i32,
+    Never = 16i32,
+}
+
+impl BuiltinType {
+    fn is_integer(self: &BuiltinType) -> bool {
+        let v = *self as i32;
+        (v >= 2i32 && v <= 13i32) // U8..ISize
+    }
+
+    fn is_signed(self: &BuiltinType) -> bool {
+        let v = *self as i32;
+        (v >= 8i32 && v <= 13i32) // I8..ISize
+    }
+
+    fn is_float(self: &BuiltinType) -> bool {
+        let v = *self as i32;
+        v == 14i32 || v == 15i32 // F32, F64
+    }
+
+    fn is_numeric(self: &BuiltinType) -> bool {
+        self.is_integer() || self.is_float()
+    }
+
+    fn bit_width(self: &BuiltinType) -> u32 {
+        switch *self {
+            BuiltinType::Bool => 1,
+            BuiltinType::U8 => 8,
+            BuiltinType::I8 => 8,
+            BuiltinType::U16 => 16,
+            BuiltinType::I16 => 16,
+            BuiltinType::U32 => 32,
+            BuiltinType::I32 => 32,
+            BuiltinType::F32 => 32,
+            BuiltinType::U64 => 64,
+            BuiltinType::I64 => 64,
+            BuiltinType::F64 => 64,
+            BuiltinType::U128 => 128,
+            BuiltinType::I128 => 128,
+            BuiltinType::USize => 64,
+            BuiltinType::ISize => 64,
+            _ => 0,
+        }
+    }
+}
+
+fn parse_builtin_type(name: &[u8]) -> Option<BuiltinType> {
+    use std::option::Option;
+    if name == "void" { Option::some(BuiltinType::Void) }
+    else if name == "bool" { Option::some(BuiltinType::Bool) }
+    else if name == "u8" { Option::some(BuiltinType::U8) }
+    else if name == "u16" { Option::some(BuiltinType::U16) }
+    else if name == "u32" { Option::some(BuiltinType::U32) }
+    else if name == "u64" { Option::some(BuiltinType::U64) }
+    else if name == "u128" { Option::some(BuiltinType::U128) }
+    else if name == "usize" { Option::some(BuiltinType::USize) }
+    else if name == "i8" { Option::some(BuiltinType::I8) }
+    else if name == "i16" { Option::some(BuiltinType::I16) }
+    else if name == "i32" { Option::some(BuiltinType::I32) }
+    else if name == "i64" { Option::some(BuiltinType::I64) }
+    else if name == "i128" { Option::some(BuiltinType::I128) }
+    else if name == "isize" { Option::some(BuiltinType::ISize) }
+    else if name == "f32" { Option::some(BuiltinType::F32) }
+    else if name == "f64" { Option::some(BuiltinType::F64) }
+    else { Option::none() }
+}
+
+// === AST-level types ===
+// Discriminated union using tag + struct
+
+// Ty tags
+const TY_PLACEHOLDER: i32 = 0i32;
+const TY_NAMED: i32 = 1i32;
+const TY_BUILTIN: i32 = 2i32;
+const TY_POINTER: i32 = 3i32;
+const TY_SLICE: i32 = 4i32;
+const TY_ARRAY: i32 = 5i32;
+const TY_TUPLE: i32 = 6i32;
+const TY_FN_POINTER: i32 = 7i32;
+const TY_GENERIC: i32 = 8i32;
+const TY_TYPEOF: i32 = 9i32;
+const TY_NEVER: i32 = 10i32;
+const TY_UNRESOLVED: i32 = 11i32;
+
+struct Ty {
+    tag: i32,
+    // Data fields reused depending on tag:
+    builtin: BuiltinType,      // TY_BUILTIN
+    id: Id,                     // TY_PLACEHOLDER, TY_NAMED
+    inner: &Ty,                 // TY_POINTER, TY_SLICE, TY_ARRAY, TY_GENERIC base
+    is_const: bool,             // TY_POINTER, TY_SLICE
+    array_size: usize,          // TY_ARRAY
+    elems: &[&Ty],              // TY_TUPLE, TY_FN_POINTER params, TY_GENERIC args
+    ret_ty: &Ty,                // TY_FN_POINTER return type
+    typeof_expr: &Expr,         // TY_TYPEOF
+}
+
+impl Ty {
+    fn placeholder(id: Id) -> Ty {
+        Ty { tag: TY_PLACEHOLDER, builtin: BuiltinType::Void, id: id,
+             inner: std::mem::zeroed::<&Ty>(), is_const: false, array_size: 0,
+             elems: &[], ret_ty: std::mem::zeroed::<&Ty>(),
+             typeof_expr: std::mem::zeroed::<&Expr>() }
+    }
+    fn named(id: Id) -> Ty {
+        Ty { tag: TY_NAMED, builtin: BuiltinType::Void, id: id,
+             inner: std::mem::zeroed::<&Ty>(), is_const: false, array_size: 0,
+             elems: &[], ret_ty: std::mem::zeroed::<&Ty>(),
+             typeof_expr: std::mem::zeroed::<&Expr>() }
+    }
+    fn builtin_ty(bt: BuiltinType) -> Ty {
+        Ty { tag: TY_BUILTIN, builtin: bt, id: Id { _value: 0 },
+             inner: std::mem::zeroed::<&Ty>(), is_const: false, array_size: 0,
+             elems: &[], ret_ty: std::mem::zeroed::<&Ty>(),
+             typeof_expr: std::mem::zeroed::<&Expr>() }
+    }
+    fn pointer_ty(pointee: &Ty, is_const: bool) -> Ty {
+        Ty { tag: TY_POINTER, builtin: BuiltinType::Void, id: Id { _value: 0 },
+             inner: pointee, is_const: is_const, array_size: 0,
+             elems: &[], ret_ty: std::mem::zeroed::<&Ty>(),
+             typeof_expr: std::mem::zeroed::<&Expr>() }
+    }
+    fn slice_ty(elem: &Ty, is_const: bool) -> Ty {
+        Ty { tag: TY_SLICE, builtin: BuiltinType::Void, id: Id { _value: 0 },
+             inner: elem, is_const: is_const, array_size: 0,
+             elems: &[], ret_ty: std::mem::zeroed::<&Ty>(),
+             typeof_expr: std::mem::zeroed::<&Expr>() }
+    }
+    fn array_ty(elem: &Ty, size: usize) -> Ty {
+        Ty { tag: TY_ARRAY, builtin: BuiltinType::Void, id: Id { _value: 0 },
+             inner: elem, is_const: false, array_size: size,
+             elems: &[], ret_ty: std::mem::zeroed::<&Ty>(),
+             typeof_expr: std::mem::zeroed::<&Expr>() }
+    }
+    fn tuple_ty(elems: &[&Ty]) -> Ty {
+        Ty { tag: TY_TUPLE, builtin: BuiltinType::Void, id: Id { _value: 0 },
+             inner: std::mem::zeroed::<&Ty>(), is_const: false, array_size: 0,
+             elems: elems, ret_ty: std::mem::zeroed::<&Ty>(),
+             typeof_expr: std::mem::zeroed::<&Expr>() }
+    }
+    fn fn_pointer_ty(params: &[&Ty], ret: &Ty) -> Ty {
+        Ty { tag: TY_FN_POINTER, builtin: BuiltinType::Void, id: Id { _value: 0 },
+             inner: std::mem::zeroed::<&Ty>(), is_const: false, array_size: 0,
+             elems: params, ret_ty: ret,
+             typeof_expr: std::mem::zeroed::<&Expr>() }
+    }
+    fn generic_ty(base: &Ty, args: &[&Ty]) -> Ty {
+        Ty { tag: TY_GENERIC, builtin: BuiltinType::Void, id: Id { _value: 0 },
+             inner: base, is_const: false, array_size: 0,
+             elems: args, ret_ty: std::mem::zeroed::<&Ty>(),
+             typeof_expr: std::mem::zeroed::<&Expr>() }
+    }
+    fn never_ty() -> Ty {
+        Ty { tag: TY_NEVER, builtin: BuiltinType::Never, id: Id { _value: 0 },
+             inner: std::mem::zeroed::<&Ty>(), is_const: false, array_size: 0,
+             elems: &[], ret_ty: std::mem::zeroed::<&Ty>(),
+             typeof_expr: std::mem::zeroed::<&Expr>() }
+    }
+    fn unresolved() -> Ty {
+        Ty { tag: TY_UNRESOLVED, builtin: BuiltinType::Void, id: Id { _value: 0 },
+             inner: std::mem::zeroed::<&Ty>(), is_const: false, array_size: 0,
+             elems: &[], ret_ty: std::mem::zeroed::<&Ty>(),
+             typeof_expr: std::mem::zeroed::<&Expr>() }
+    }
+    fn void_ty() -> Ty {
+        Ty::builtin_ty(BuiltinType::Void)
+    }
+}
+
+// Reference to an item (function, struct, enum, etc.)
+struct ItemRef {
+    id: Id,
+}
+
+// === AST Expressions ===
+
+enum BinOp {
+    Add = 0i32,
+    Sub = 1i32,
+    Mul = 2i32,
+    Div = 3i32,
+    Rem = 4i32,
+    BitAnd = 5i32,
+    BitOr = 6i32,
+    BitXor = 7i32,
+    Shl = 8i32,
+    Shr = 9i32,
+    Eq = 10i32,
+    Ne = 11i32,
+    Lt = 12i32,
+    Le = 13i32,
+    Gt = 14i32,
+    Ge = 15i32,
+    And = 16i32,
+    Or = 17i32,
+}
+
+enum UnOp {
+    Neg = 0i32,
+    Not = 1i32,
+    BitNot = 2i32,
+}
+
+enum AssignOp {
+    Assign = 0i32,
+    AddAssign = 1i32,
+    SubAssign = 2i32,
+    MulAssign = 3i32,
+    DivAssign = 4i32,
+    RemAssign = 5i32,
+    BitAndAssign = 6i32,
+    BitOrAssign = 7i32,
+    BitXorAssign = 8i32,
+    ShlAssign = 9i32,
+    ShrAssign = 10i32,
+}
+
+struct FieldInit {
+    name: &[u8],
+    value: &Expr,
+}
+
+struct SwitchArm {
+    pattern: &[&Expr],
+    body: &Expr,
+}
+
+// Expression tags
+const EXPR_INT_LIT: i32 = 0i32;
+const EXPR_FLOAT_LIT: i32 = 1i32;
+const EXPR_BOOL_LIT: i32 = 2i32;
+const EXPR_STRING_LIT: i32 = 3i32;
+const EXPR_CHAR_LIT: i32 = 4i32;
+const EXPR_NULL_LIT: i32 = 5i32;
+const EXPR_LOCAL: i32 = 6i32;
+const EXPR_PARAM: i32 = 7i32;
+const EXPR_STATIC_REF: i32 = 8i32;
+const EXPR_FN_REF: i32 = 9i32;
+const EXPR_ENUM_REF: i32 = 10i32;
+const EXPR_BLOCK: i32 = 11i32;
+const EXPR_BINARY: i32 = 12i32;
+const EXPR_UNARY: i32 = 13i32;
+const EXPR_ASSIGN: i32 = 14i32;
+const EXPR_CALL: i32 = 15i32;
+const EXPR_METHOD_CALL: i32 = 16i32;
+const EXPR_FIELD_ACCESS: i32 = 17i32;
+const EXPR_TUPLE_INDEX: i32 = 18i32;
+const EXPR_INDEX: i32 = 19i32;
+const EXPR_REF: i32 = 20i32;
+const EXPR_DEREF: i32 = 21i32;
+const EXPR_CAST: i32 = 22i32;
+const EXPR_TYPE_CHECK: i32 = 23i32;
+const EXPR_IF: i32 = 24i32;
+const EXPR_WHEN: i32 = 25i32;
+const EXPR_SWITCH: i32 = 26i32;
+const EXPR_WHILE: i32 = 27i32;
+const EXPR_FOR: i32 = 28i32;
+const EXPR_LOOP: i32 = 29i32;
+const EXPR_BREAK: i32 = 30i32;
+const EXPR_CONTINUE: i32 = 31i32;
+const EXPR_RETURN: i32 = 32i32;
+const EXPR_LET: i32 = 33i32;
+const EXPR_STRUCT_LIT: i32 = 34i32;
+const EXPR_TUPLE_LIT: i32 = 35i32;
+const EXPR_ARRAY_LIT: i32 = 36i32;
+const EXPR_LAMBDA: i32 = 37i32;
+const EXPR_DEFER: i32 = 38i32;
+const EXPR_TRY: i32 = 39i32;
+const EXPR_RANGE: i32 = 40i32;
+const EXPR_VOID: i32 = 41i32;
+const EXPR_MACRO_INVOCATION: i32 = 42i32;
+const EXPR_STATIC_FOR: i32 = 43i32;
+const EXPR_ET_CETERA: i32 = 44i32;
+
+// Expression struct - flat with multiple fields reused per tag
+struct Expr {
+    tag: i32,
+    span: Span,
+    // Numeric data
+    int_val: u64,
+    float_val: f64,
+    bool_val: bool,
+    // String data
+    str_val: &[u8],
+    // Id data
+    id: Id,
+    id2: Id,  // secondary id (e.g. enum variant id)
+    // Operator
+    bin_op: BinOp,
+    un_op: UnOp,
+    assign_op: AssignOp,
+    // Type data
+    ty: &Ty,
+    // Optional type suffix for literals
+    type_suffix: Option<BuiltinType>,
+    // Sub-expressions
+    lhs: &Expr,
+    rhs: &Expr,
+    cond: &Expr,
+    // Expression lists
+    args: &[&Expr],
+    // Field inits (struct lit)
+    field_inits: &[FieldInit],
+    // Switch arms
+    switch_arms: &[SwitchArm],
+    // Type args for method calls
+    type_args: &[&Ty],
+    // Bool flag (is_mut for Ref, inclusive for Range)
+    flag: bool,
+    // Optional expression (else branch, break value, etc)
+    opt_expr: Option<&Expr>,
+    // Optional type
+    opt_ty: Option<&Ty>,
+    // Tuple index
+    index_val: usize,
+    // Lambda params
+    lambda_params: &[LambdaParam],
+}
+
+impl Expr {
+    fn void_expr() -> Expr {
+        Expr {
+            tag: EXPR_VOID, span: Span::empty(),
+            int_val: 0, float_val: 0.0, bool_val: false, str_val: "",
+            id: Id { _value: 0 }, id2: Id { _value: 0 },
+            bin_op: BinOp::Add, un_op: UnOp::Neg, assign_op: AssignOp::Assign,
+            ty: std::mem::zeroed::<&Ty>(), type_suffix: Option::none(),
+            lhs: std::mem::zeroed::<&Expr>(), rhs: std::mem::zeroed::<&Expr>(),
+            cond: std::mem::zeroed::<&Expr>(),
+            args: &[], field_inits: &[], switch_arms: &[], type_args: &[],
+            flag: false, opt_expr: Option::none(), opt_ty: Option::none(),
+            index_val: 0, lambda_params: &[],
+        }
+    }
+}
+
+struct LambdaParam {
+    id: Id,
+    name: &[u8],
+    ty: Option<&Ty>,
+}
+
+struct Span {
+    file_id: u32,
+    start: u32,
+    end: u32,
+}
+
+impl Span {
+    fn empty() -> Span {
+        Span { file_id: 0, start: 0, end: 0 }
+    }
+}
+
+// === AST Items ===
+
+struct FnParam {
+    id: Id,
+    name: &[u8],
+    ty: &Ty,
+}
+
+struct GenericParam {
+    id: Id,
+    name: &[u8],
+    bounds: &[&Ty],
+    default_ty: Option<&Ty>,
+}
+
+// Attribute tags
+const ATTR_EXPORT: i32 = 0i32;
+const ATTR_INLINE: i32 = 1i32;
+const ATTR_ALWAYS_INLINE: i32 = 2i32;
+const ATTR_COLD: i32 = 3i32;
+const ATTR_ALIGN: i32 = 4i32;
+const ATTR_EXTERN: i32 = 5i32;
+const ATTR_CFG: i32 = 6i32;
+const ATTR_NO_RETURN: i32 = 7i32;
+const ATTR_THREAD_LOCAL: i32 = 8i32;
+const ATTR_TEST: i32 = 9i32;
+const ATTR_MAIN: i32 = 10i32;
+const ATTR_STATIC_CTOR: i32 = 11i32;
+
+struct Attribute {
+    tag: i32,
+    str_val: &[u8],     // for ATTR_EXTERN, ATTR_CFG
+    int_val: usize,     // for ATTR_ALIGN
+}
+
+impl Attribute {
+    fn export() -> Attribute { Attribute { tag: ATTR_EXPORT, str_val: "", int_val: 0 } }
+    fn inline_attr() -> Attribute { Attribute { tag: ATTR_INLINE, str_val: "", int_val: 0 } }
+    fn always_inline() -> Attribute { Attribute { tag: ATTR_ALWAYS_INLINE, str_val: "", int_val: 0 } }
+    fn cold() -> Attribute { Attribute { tag: ATTR_COLD, str_val: "", int_val: 0 } }
+    fn align(n: usize) -> Attribute { Attribute { tag: ATTR_ALIGN, str_val: "", int_val: n } }
+    fn extern_attr(abi: &[u8]) -> Attribute { Attribute { tag: ATTR_EXTERN, str_val: abi, int_val: 0 } }
+    fn cfg(val: &[u8]) -> Attribute { Attribute { tag: ATTR_CFG, str_val: val, int_val: 0 } }
+    fn no_return() -> Attribute { Attribute { tag: ATTR_NO_RETURN, str_val: "", int_val: 0 } }
+    fn thread_local() -> Attribute { Attribute { tag: ATTR_THREAD_LOCAL, str_val: "", int_val: 0 } }
+    fn test() -> Attribute { Attribute { tag: ATTR_TEST, str_val: "", int_val: 0 } }
+    fn main_attr() -> Attribute { Attribute { tag: ATTR_MAIN, str_val: "", int_val: 0 } }
+    fn static_ctor() -> Attribute { Attribute { tag: ATTR_STATIC_CTOR, str_val: "", int_val: 0 } }
+}
+
+struct FnDef {
+    id: Id,
+    name: &[u8],
+    generic_params: &[GenericParam],
+    params: &[FnParam],
+    return_type: &Ty,
+    body: Option<&Expr>,
+    attributes: &[Attribute],
+    is_variadic: bool,
+    abi: Option<&[u8]>,
+}
+
+struct StructField {
+    id: Id,
+    name: &[u8],
+    ty: &Ty,
+}
+
+struct StructDef {
+    id: Id,
+    name: &[u8],
+    generic_params: &[GenericParam],
+    fields: &[StructField],
+    attributes: &[Attribute],
+    is_union: bool,
+}
+
+struct EnumVariant {
+    id: Id,
+    name: &[u8],
+    value: Option<&Expr>,
+}
+
+struct EnumDef {
+    id: Id,
+    name: &[u8],
+    underlying_type: Option<&Ty>,
+    variants: &[EnumVariant],
+    attributes: &[Attribute],
+}
+
+struct TypeAlias {
+    id: Id,
+    name: &[u8],
+    generic_params: &[GenericParam],
+    target: &Ty,
+}
+
+struct ProtocolDef {
+    id: Id,
+    name: &[u8],
+    generic_params: &[GenericParam],
+    methods: &[FnDef],
+    mixins: &[&Ty],
+}
+
+struct ImplDef {
+    target_type: &Ty,
+    methods: &[FnDef],
+    generic_params: &[GenericParam],
+}
+
+struct StaticDef {
+    id: Id,
+    name: &[u8],
+    ty: Option<&Ty>,
+    init: Option<&Expr>,
+    attributes: &[Attribute],
+    is_const: bool,
+}
+
+struct MacroDef {
+    id: Id,
+    name: &[u8],
+    params: &[&[u8]],
+    is_variadic: bool,
+}
+
+struct UseDef {
+    path: &[&[u8]],
+    alias: Option<&[u8]>,
+    is_wildcard: bool,
+}
+
+struct ModuleDef {
+    name: &[u8],
+    items: &[Item],
+}
+
+// Item tags
+const ITEM_FUNCTION: i32 = 0i32;
+const ITEM_STRUCT: i32 = 1i32;
+const ITEM_ENUM: i32 = 2i32;
+const ITEM_TYPE_ALIAS: i32 = 3i32;
+const ITEM_PROTOCOL: i32 = 4i32;
+const ITEM_IMPL: i32 = 5i32;
+const ITEM_STATIC: i32 = 6i32;
+const ITEM_MACRO: i32 = 7i32;
+const ITEM_USE: i32 = 8i32;
+const ITEM_MODULE: i32 = 9i32;
+
+struct Item {
+    tag: i32,
+    span: Span,
+    fn_def: FnDef,
+    struct_def: StructDef,
+    enum_def: EnumDef,
+    type_alias: TypeAlias,
+    protocol_def: ProtocolDef,
+    impl_def: ImplDef,
+    static_def: StaticDef,
+    macro_def: MacroDef,
+    use_def: UseDef,
+    module_def: ModuleDef,
+}
+
+// === IR (Monomorphized) types ===
+
+// IrTy tags
+const IRTY_BUILTIN: i32 = 0i32;
+const IRTY_POINTER: i32 = 1i32;
+const IRTY_ARRAY: i32 = 2i32;
+const IRTY_TUPLE: i32 = 3i32;
+const IRTY_FN_POINTER: i32 = 4i32;
+const IRTY_STRUCT: i32 = 5i32;
+const IRTY_ENUM: i32 = 6i32;
+const IRTY_VOID: i32 = 7i32;
+const IRTY_NEVER: i32 = 8i32;
+
+struct IrTy {
+    tag: i32,
+    builtin: BuiltinType,
+    inner: &IrTy,              // pointer pointee, array elem
+    is_const: bool,             // pointer
+    array_size: usize,          // array
+    elems: &[&IrTy],           // tuple, fn pointer params
+    ret_ty: &IrTy,             // fn pointer return
+    struct_ref: IrStructRef,    // struct
+    enum_ref: IrEnumRef,        // enum
+}
+
+impl IrTy {
+    fn mk_builtin(bt: BuiltinType) -> IrTy {
+        IrTy { tag: IRTY_BUILTIN, builtin: bt,
+               inner: std::mem::zeroed::<&IrTy>(), is_const: false, array_size: 0,
+               elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
+               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty() }
+    }
+    fn mk_pointer(pointee: &IrTy, is_const: bool) -> IrTy {
+        IrTy { tag: IRTY_POINTER, builtin: BuiltinType::Void,
+               inner: pointee, is_const: is_const, array_size: 0,
+               elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
+               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty() }
+    }
+    fn mk_array(elem: &IrTy, size: usize) -> IrTy {
+        IrTy { tag: IRTY_ARRAY, builtin: BuiltinType::Void,
+               inner: elem, is_const: false, array_size: size,
+               elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
+               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty() }
+    }
+    fn mk_tuple(elems: &[&IrTy]) -> IrTy {
+        IrTy { tag: IRTY_TUPLE, builtin: BuiltinType::Void,
+               inner: std::mem::zeroed::<&IrTy>(), is_const: false, array_size: 0,
+               elems: elems, ret_ty: std::mem::zeroed::<&IrTy>(),
+               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty() }
+    }
+    fn mk_fn_pointer(params: &[&IrTy], ret: &IrTy) -> IrTy {
+        IrTy { tag: IRTY_FN_POINTER, builtin: BuiltinType::Void,
+               inner: std::mem::zeroed::<&IrTy>(), is_const: false, array_size: 0,
+               elems: params, ret_ty: ret,
+               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty() }
+    }
+    fn mk_struct(s: IrStructRef) -> IrTy {
+        IrTy { tag: IRTY_STRUCT, builtin: BuiltinType::Void,
+               inner: std::mem::zeroed::<&IrTy>(), is_const: false, array_size: 0,
+               elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
+               struct_ref: s, enum_ref: IrEnumRef::empty() }
+    }
+    fn mk_enum(e: IrEnumRef) -> IrTy {
+        IrTy { tag: IRTY_ENUM, builtin: BuiltinType::Void,
+               inner: std::mem::zeroed::<&IrTy>(), is_const: false, array_size: 0,
+               elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
+               struct_ref: IrStructRef::empty(), enum_ref: e }
+    }
+    fn mk_void() -> IrTy {
+        IrTy { tag: IRTY_VOID, builtin: BuiltinType::Void,
+               inner: std::mem::zeroed::<&IrTy>(), is_const: false, array_size: 0,
+               elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
+               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty() }
+    }
+    fn mk_never() -> IrTy {
+        IrTy { tag: IRTY_NEVER, builtin: BuiltinType::Never,
+               inner: std::mem::zeroed::<&IrTy>(), is_const: false, array_size: 0,
+               elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
+               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty() }
+    }
+
+    fn is_void(self: &IrTy) -> bool {
+        self.tag == IRTY_VOID || (self.tag == IRTY_BUILTIN && self.builtin as i32 == BuiltinType::Void as i32)
+    }
+    fn is_never(self: &IrTy) -> bool {
+        self.tag == IRTY_NEVER || (self.tag == IRTY_BUILTIN && self.builtin as i32 == BuiltinType::Never as i32)
+    }
+    fn is_zero_sized(self: &IrTy) -> bool {
+        if self.tag == IRTY_VOID { return true; }
+        if self.tag == IRTY_BUILTIN && self.builtin as i32 == BuiltinType::Void as i32 { return true; }
+        if self.tag == IRTY_TUPLE {
+            for i in 0usize..self.elems.len() {
+                if !self.elems[i].is_zero_sized() { return false; }
+            }
+            return true;
+        }
+        if self.tag == IRTY_ARRAY {
+            return self.array_size == 0 || self.inner.is_zero_sized();
+        }
+        if self.tag == IRTY_STRUCT {
+            return self.struct_ref.is_zero_sized;
+        }
+        false
+    }
+}
+
+struct IrStructRef {
+    id: Id,
+    name: &[u8],
+    fields: &[IrField],
+    is_union: bool,
+    is_zero_sized: bool,
+    scope_idx: u32,  // scope index for method resolution (0 = no methods)
+}
+
+impl IrStructRef {
+    fn empty() -> IrStructRef {
+        IrStructRef { id: Id { _value: 0 }, name: "", fields: &[],
+                       is_union: false, is_zero_sized: true, scope_idx: 0 }
+    }
+}
+
+struct IrField {
+    name: &[u8],
+    ty: &IrTy,
+}
+
+struct IrEnumRef {
+    id: Id,
+    name: &[u8],
+    underlying: &IrTy,
+    variants: &[IrEnumVariant],
+}
+
+impl IrEnumRef {
+    fn empty() -> IrEnumRef {
+        IrEnumRef { id: Id { _value: 0 }, name: "",
+                     underlying: std::mem::zeroed::<&IrTy>(), variants: &[] }
+    }
+}
+
+struct IrEnumVariant {
+    name: &[u8],
+    value: u64,
+}
+
+// === IR Expressions ===
+
+// IrExpr tags
+const IR_INT_LIT: i32 = 0i32;
+const IR_FLOAT_LIT: i32 = 1i32;
+const IR_BOOL_LIT: i32 = 2i32;
+const IR_STRING_LIT: i32 = 3i32;
+const IR_NULL_LIT: i32 = 4i32;
+const IR_LOCAL: i32 = 5i32;
+const IR_PARAM: i32 = 6i32;
+const IR_FN_REF: i32 = 7i32;
+const IR_GLOBAL_REF: i32 = 8i32;
+const IR_BLOCK: i32 = 9i32;
+const IR_BINARY: i32 = 10i32;
+const IR_UNARY: i32 = 11i32;
+const IR_ASSIGN: i32 = 12i32;
+const IR_CALL: i32 = 13i32;
+const IR_FIELD_ACCESS: i32 = 14i32;
+const IR_INDEX: i32 = 15i32;
+const IR_REF: i32 = 16i32;
+const IR_DEREF: i32 = 17i32;
+const IR_CAST: i32 = 18i32;
+const IR_IF: i32 = 19i32;
+const IR_SWITCH: i32 = 20i32;
+const IR_WHILE: i32 = 21i32;
+const IR_LOOP: i32 = 22i32;
+const IR_BREAK: i32 = 23i32;
+const IR_CONTINUE: i32 = 24i32;
+const IR_RETURN: i32 = 25i32;
+const IR_LET: i32 = 26i32;
+const IR_STRUCT_LIT: i32 = 27i32;
+const IR_TUPLE_LIT: i32 = 28i32;
+const IR_ARRAY_LIT: i32 = 29i32;
+const IR_DEFER: i32 = 30i32;
+const IR_VOID: i32 = 31i32;
+
+// Call target tags
+const CALL_DIRECT: i32 = 0i32;
+const CALL_INDIRECT: i32 = 1i32;
+
+struct IrCallTarget {
+    tag: i32,
+    fn_ref: IrFnRef,       // for CALL_DIRECT
+    callee: &IrExpr,        // for CALL_INDIRECT
+}
+
+struct IrSwitchArm {
+    values: &[u64],
+    body: &IrExpr,
+    is_default: bool,
+}
+
+struct IrExpr {
+    tag: i32,
+    ty: &IrTy,
+    // Numeric data
+    int_val: u64,
+    float_val: f64,
+    bool_val: bool,
+    str_val: &[u8],
+    // Id
+    id: Id,
+    // Operator
+    bin_op: BinOp,
+    un_op: UnOp,
+    // Sub-expressions
+    lhs: &IrExpr,
+    rhs: &IrExpr,
+    cond: &IrExpr,
+    // Expression array
+    items: &[&IrExpr],
+    // Call target
+    call_target: IrCallTarget,
+    // Field index
+    field_idx: u32,
+    // IR type for casts and lets
+    ir_ty: &IrTy,
+    // Optional expression
+    opt_expr: Option<&IrExpr>,
+    // Switch arms
+    switch_arms: &[IrSwitchArm],
+    // Param index
+    param_idx: u32,
+    // Fn/Global ref
+    fn_ref: IrFnRef,
+    global_ref: IrGlobalRef,
+}
+
+impl IrExpr {
+    fn void_expr(void_ty: &IrTy) -> IrExpr {
+        IrExpr {
+            tag: IR_VOID, ty: void_ty,
+            int_val: 0, float_val: 0.0, bool_val: false, str_val: "",
+            id: Id { _value: 0 },
+            bin_op: BinOp::Add, un_op: UnOp::Neg,
+            lhs: std::mem::zeroed::<&IrExpr>(), rhs: std::mem::zeroed::<&IrExpr>(),
+            cond: std::mem::zeroed::<&IrExpr>(),
+            items: &[], call_target: IrCallTarget { tag: 0, fn_ref: IrFnRef::empty(), callee: std::mem::zeroed::<&IrExpr>() },
+            field_idx: 0, ir_ty: void_ty, opt_expr: Option::none(),
+            switch_arms: &[], param_idx: 0,
+            fn_ref: IrFnRef::empty(), global_ref: IrGlobalRef::empty(),
+        }
+    }
+}
+
+struct IrFnRef {
+    id: Id,
+    mangled_name: &[u8],
+}
+
+impl IrFnRef {
+    fn empty() -> IrFnRef {
+        IrFnRef { id: Id { _value: 0 }, mangled_name: "" }
+    }
+}
+
+struct IrGlobalRef {
+    id: Id,
+    mangled_name: &[u8],
+}
+
+impl IrGlobalRef {
+    fn empty() -> IrGlobalRef {
+        IrGlobalRef { id: Id { _value: 0 }, mangled_name: "" }
+    }
+}
+
+struct IrLocalDef {
+    id: Id,
+    ty: &IrTy,
+    name: &[u8],
+}
+
+struct IrFunction {
+    id: Id,
+    name: &[u8],
+    mangled_name: &[u8],
+    params: &[IrParam],
+    return_type: &IrTy,
+    body: Option<&IrExpr>,
+    local_defs: &[IrLocalDef],
+    attributes: &[Attribute],
+    is_variadic: bool,
+    abi: Option<&[u8]>,
+}
+
+struct IrParam {
+    id: Id,
+    ty: &IrTy,
+    name: &[u8],
+}
+
+struct IrGlobal {
+    id: Id,
+    name: &[u8],
+    mangled_name: &[u8],
+    ty: &IrTy,
+    init: Option<&IrExpr>,
+    is_const: bool,
+    is_extern: bool,
+    attributes: &[Attribute],
+}
+
+// === Compilation unit ===
+
+struct CompilationUnit {
+    functions: &mut [IrFunction],
+    globals: &mut [IrGlobal],
+    structs: &mut [IrStructRef],
+    enums: &mut [IrEnumRef],
+}

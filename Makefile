@@ -182,6 +182,24 @@ $(LIBRARIES_TESTS).c: $(ALU_TEST_DEPS) $(ALU_LIBRARIES)
 $(LIBRARIES_TESTS): $(LIBRARIES_TESTS).c $(MINICORO)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -ltree-sitter
 
+## ----------------------- Self-hosted compiler (aluminac) ---------------
+
+ALUMINAC = $(BUILD_DIR)/aluminac
+ALUMINAC_SOURCES = $(shell find libraries/aluminac/ -type f -name '*.alu')
+
+ALUMINAC_ALU_LIBRARIES = $(filter-out libraries/aluminac/lib/compiler.alu,$(ALU_LIBRARIES))
+
+$(ALUMINAC).c: $(ALU_DEPS) $(ALU_LIBRARIES) libraries/aluminac/lib/node_kinds.alu
+	$(ALUMINA_BOOT) $(ALUMINA_FLAGS_COMMON) --cfg boot --output $@ \
+		$(call alumina_modules,$(ALUMINAC_ALU_LIBRARIES),libraries/,/) \
+		main=libraries/aluminac/lib/compiler.alu
+
+$(ALUMINAC): $(ALUMINAC).c $(BUILD_DIR)/parser.o $(MINICORO)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -ltree-sitter $$(llvm-config-14 --ldflags --libs --system-libs)
+
+.PHONY: aluminac
+aluminac: $(ALUMINAC)
+
 ## --------------------------------Tools -------------------------------
 
 ALUMINA_DOC = $(BUILD_DIR)/alumina-doc

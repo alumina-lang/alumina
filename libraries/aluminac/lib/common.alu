@@ -3,8 +3,23 @@ use std::typing::matches;
 use tree_sitter::{Node, TSFieldId};
 use node_kinds::{FieldKind};
 
+/// A nullable node wrapper that provides is_null() for Option<Node>.
+struct NullableNode {
+    inner: Option<Node>,
+}
+
+impl NullableNode {
+    fn is_null(self: &NullableNode) -> bool {
+        self.inner.is_none()
+    }
+
+    fn unwrap(self: &NullableNode) -> Node {
+        self.inner.unwrap()
+    }
+}
+
 macro child_by($node, $field) {
-    $node.child_by_field_id($field as TSFieldId)
+    NullableNode { inner: $node.child_by_field_id($field as TSFieldId) }
 }
 
 macro children_by($node, $field, $cursor) {

@@ -1,0 +1,1390 @@
+// Monomorphization engine for the self-hosted Alumina compiler
+//
+// Takes polymorphic AST items and produces concrete IR with all generics resolved.
+// This is the core of the compiler - where type inference, generic substitution,
+// and lowering all happen.
+
+use ast::*;
+use scope::*;
+use diagnostics::DiagnosticContext;
+use arena::Arena;
+use std::collections::{HashMap, Vector};
+use std::option::Option;
+
+// Key for memoizing monomorphized items
+struct MonoKey {
+    item_id: Id,
+    type_args: &[&IrTy],
+}
+
+// Context shared across all monomorphization
+struct MonoCtx {
+    arena: &mut Arena,
+    scopes: &ScopeArena,
+    id_gen: &mut IdGen,
+    diag: &mut DiagnosticContext,
+
+    // Source items from parsing
+    items: &[Item],
+
+    // Lookup tables built from parsed items
+    fn_defs: HashMap<usize, &FnDef>,       // id -> FnDef
+    struct_defs: HashMap<usize, &StructDef>,
+    enum_defs: HashMap<usize, &EnumDef>,
+    type_aliases: HashMap<usize, &TypeAlias>,
+    protocol_defs: HashMap<usize, &ProtocolDef>,
+    static_defs: HashMap<usize, &StaticDef>,
+
+    // Monomorphized output
+    ir_functions: Vector<IrFunction>,
+    ir_globals: Vector<IrGlobal>,
+    ir_structs: Vector<IrStructRef>,
+    ir_enums: Vector<IrEnumRef>,
+
+    // Monomorphization cache: maps (item_id, type_args_hash) -> index in output
+    fn_cache: HashMap<u64, usize>,
+    struct_cache: HashMap<u64, usize>,
+    enum_cache: HashMap<u64, usize>,
+
+    // Name mangling counter
+    mangle_counter: usize,
+
+    // Void and never types (canonical instances)
+    void_ty: &IrTy,
+    never_ty: &IrTy,
+    bool_ty: &IrTy,
+
+    // Pointer size
+    pointer_size: usize,
+
+    // Map from struct/enum AST id -> scope_idx for method lookup
+    struct_scopes: HashMap<usize, u32>,
+}
+
+impl MonoCtx {
+    fn new(
+        arena: &mut Arena,
+        scopes: &ScopeArena,
+        id_gen: &mut IdGen,
+        diag: &mut DiagnosticContext,
+        items: &[Item],
+    ) -> MonoCtx {
+        let void_ty = arena.alloc(IrTy::mk_void());
+        let never_ty = arena.alloc(IrTy::mk_never());
+        let bool_ty = arena.alloc(IrTy::mk_builtin(BuiltinType::Bool));
+
+        let ctx = MonoCtx {
+            arena: arena,
+            scopes: scopes,
+            id_gen: id_gen,
+            diag: diag,
+            items: items,
+            fn_defs: HashMap::new(),
+            struct_defs: HashMap::new(),
+            enum_defs: HashMap::new(),
+            type_aliases: HashMap::new(),
+            protocol_defs: HashMap::new(),
+            static_defs: HashMap::new(),
+            ir_functions: Vector::new(),
+            ir_globals: Vector::new(),
+            ir_structs: Vector::new(),
+            ir_enums: Vector::new(),
+            fn_cache: HashMap::new(),
+            struct_cache: HashMap::new(),
+            enum_cache: HashMap::new(),
+            mangle_counter: 0,
+            void_ty: void_ty,
+            never_ty: never_ty,
+            bool_ty: bool_ty,
+            pointer_size: 8, // assume 64-bit
+            struct_scopes: HashMap::new(),
+        };
+
+        // Build lookup tables
+        ctx.build_lookup_tables();
+        ctx
+    }
+
+    fn build_lookup_tables(self: &mut MonoCtx) {
+        // Use index-based iteration to get stable pointers into the slice
+        for i in 0usize..self.items.len() {
+            if self.items[i].tag == ITEM_FUNCTION {
+                self.fn_defs.insert(self.items[i].fn_def.id._value, &self.items[i].fn_def);
+            } else if self.items[i].tag == ITEM_STRUCT {
+                self.struct_defs.insert(self.items[i].struct_def.id._value, &self.items[i].struct_def);
+                // Look up the struct's scope for method resolution
+                let resolved = self.scopes.resolve(0, self.items[i].struct_def.name);
+                if resolved.is_some() {
+                    let ri = resolved.unwrap();
+                    if ri.kind.tag == NIK_STRUCT && ri.kind.scope_idx != 0 {
+                        self.struct_scopes.insert(self.items[i].struct_def.id._value, ri.kind.scope_idx);
+                    }
+                }
+            } else if self.items[i].tag == ITEM_ENUM {
+                self.enum_defs.insert(self.items[i].enum_def.id._value, &self.items[i].enum_def);
+            } else if self.items[i].tag == ITEM_TYPE_ALIAS {
+                self.type_aliases.insert(self.items[i].type_alias.id._value, &self.items[i].type_alias);
+            } else if self.items[i].tag == ITEM_PROTOCOL {
+                self.protocol_defs.insert(self.items[i].protocol_def.id._value, &self.items[i].protocol_def);
+            } else if self.items[i].tag == ITEM_STATIC {
+                self.static_defs.insert(self.items[i].static_def.id._value, &self.items[i].static_def);
+            }
+        }
+    }
+
+    fn mangle_name(self: &mut MonoCtx, base: &[u8]) -> &[u8] {
+        self.mangle_counter = self.mangle_counter + 1;
+        // Create mangled name: _AL<base><counter>
+        let counter_str = format_usize(self.mangle_counter, self.arena);
+        let total_len = 3usize + base.len() + counter_str.len();
+        let buf = self.arena.alloc_slice::<u8>(total_len);
+        buf[0] = '_' as u8;
+        buf[1] = 'A' as u8;
+        buf[2] = 'L' as u8;
+        base.copy_to_nonoverlapping(&buf[3]);
+        counter_str.copy_to_nonoverlapping(&buf[3 + base.len()]);
+        buf
+    }
+
+    fn intern_builtin_ty(self: &mut MonoCtx, bt: BuiltinType) -> &IrTy {
+        switch bt {
+            BuiltinType::Void => self.void_ty,
+            BuiltinType::Never => self.never_ty,
+            BuiltinType::Bool => self.bool_ty,
+            _ => self.arena.alloc(IrTy::mk_builtin(bt)),
+        }
+    }
+
+    fn make_ptr_ty(self: &mut MonoCtx, pointee: &IrTy, is_const: bool) -> &IrTy {
+        self.arena.alloc(IrTy::mk_pointer(pointee, is_const))
+    }
+
+    fn make_array_ty(self: &mut MonoCtx, elem: &IrTy, size: usize) -> &IrTy {
+        self.arena.alloc(IrTy::mk_array(elem, size))
+    }
+
+    fn make_tuple_ty(self: &mut MonoCtx, elems: &[&IrTy]) -> &IrTy {
+        if elems.len() == 0 {
+            return self.void_ty;
+        }
+        self.arena.alloc(IrTy::mk_tuple(elems))
+    }
+
+    fn make_fn_ptr_ty(self: &mut MonoCtx, params: &[&IrTy], ret: &IrTy) -> &IrTy {
+        self.arena.alloc(IrTy::mk_fn_pointer(params, ret))
+    }
+
+    fn free(self: &mut MonoCtx) {
+        self.fn_defs.free();
+        self.struct_defs.free();
+        self.enum_defs.free();
+        self.type_aliases.free();
+        self.protocol_defs.free();
+        self.static_defs.free();
+        self.ir_functions.free();
+        self.ir_globals.free();
+        self.ir_structs.free();
+        self.ir_enums.free();
+        self.fn_cache.free();
+        self.struct_cache.free();
+        self.enum_cache.free();
+        self.struct_scopes.free();
+    }
+}
+
+// Per-function monomorphization state
+struct Mono {
+    ctx: &mut MonoCtx,
+    // Generic type parameter substitutions
+    type_map: HashMap<usize, &IrTy>,   // placeholder id -> concrete type
+    // Local variable types
+    local_types: HashMap<usize, &IrTy>,
+    // Local variable defs accumulated during lowering
+    local_defs: Vector<IrLocalDef>,
+    // Return type of the current function
+    return_type: &IrTy,
+}
+
+impl Mono {
+    fn new(ctx: &mut MonoCtx) -> Mono {
+        Mono {
+            ctx: ctx,
+            type_map: HashMap::new(),
+            local_types: HashMap::new(),
+            local_defs: Vector::new(),
+            return_type: ctx.void_ty,
+        }
+    }
+
+    fn with_substitutions(ctx: &mut MonoCtx, type_map: HashMap<usize, &IrTy>) -> Mono {
+        Mono {
+            ctx: ctx,
+            type_map: type_map,
+            local_types: HashMap::new(),
+            local_defs: Vector::new(),
+            return_type: ctx.void_ty,
+        }
+    }
+
+    // Resolve an AST type to a concrete IR type
+    fn resolve_type(self: &mut Mono, ty: &Ty) -> &IrTy {
+        if ty.tag == TY_BUILTIN {
+            self.ctx.intern_builtin_ty(ty.builtin)
+        } else if ty.tag == TY_PLACEHOLDER {
+            let resolved = self.type_map.get(&ty.id._value);
+            if resolved.is_some() {
+                resolved.unwrap()
+            } else {
+                // Unresolved placeholder - error
+                self.ctx.diag.error(Span::empty(), "unresolved generic type parameter");
+                self.ctx.void_ty
+            }
+        } else if ty.tag == TY_POINTER {
+            let inner_ty = self.resolve_type(ty.inner);
+            self.ctx.make_ptr_ty(inner_ty, ty.is_const)
+        } else if ty.tag == TY_SLICE {
+            // Slices are fat pointers: struct { data: &T, len: usize }
+            let inner_ty = self.resolve_type(ty.inner);
+            let data_ty = self.ctx.make_ptr_ty(inner_ty, ty.is_const);
+            let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
+            let fields = self.ctx.arena.alloc_slice::<&IrTy>(2);
+            fields[0] = data_ty;
+            fields[1] = usize_ty;
+            self.ctx.make_tuple_ty(fields)
+        } else if ty.tag == TY_ARRAY {
+            let inner_ty = self.resolve_type(ty.inner);
+            self.ctx.make_array_ty(inner_ty, ty.array_size)
+        } else if ty.tag == TY_TUPLE {
+            let resolved = self.ctx.arena.alloc_slice::<&IrTy>(ty.elems.len());
+            for i in 0usize..ty.elems.len() {
+                resolved[i] = self.resolve_type(ty.elems[i]);
+            }
+            self.ctx.make_tuple_ty(resolved)
+        } else if ty.tag == TY_FN_POINTER {
+            let resolved_params = self.ctx.arena.alloc_slice::<&IrTy>(ty.elems.len());
+            for i in 0usize..ty.elems.len() {
+                resolved_params[i] = self.resolve_type(ty.elems[i]);
+            }
+            let resolved_ret = self.resolve_type(ty.ret_ty);
+            self.ctx.make_fn_ptr_ty(resolved_params, resolved_ret)
+        } else if ty.tag == TY_NAMED {
+            let item_ref = ItemRef { id: ty.id };
+            self.resolve_named_type(item_ref, &[])
+        } else if ty.tag == TY_GENERIC {
+            // Resolve the base type with generic arguments
+            let resolved_args = self.ctx.arena.alloc_slice::<&IrTy>(ty.elems.len());
+            for i in 0usize..ty.elems.len() {
+                resolved_args[i] = self.resolve_type(ty.elems[i]);
+            }
+            if ty.inner.tag == TY_NAMED {
+                let item_ref = ItemRef { id: ty.inner.id };
+                self.resolve_named_type(item_ref, resolved_args)
+            } else {
+                let base_ty = self.resolve_type(ty.inner);
+                base_ty
+            }
+        } else if ty.tag == TY_NEVER {
+            self.ctx.never_ty
+        } else if ty.tag == TY_UNRESOLVED {
+            self.ctx.diag.error(Span::empty(), "unresolved type");
+            self.ctx.void_ty
+        } else {
+            self.ctx.void_ty
+        }
+    }
+
+    fn resolve_named_type(self: &mut Mono, item_ref: ItemRef, type_args: &[&IrTy]) -> &IrTy {
+        // Check if it's a struct
+        let struct_def = self.ctx.struct_defs.get(&item_ref.id._value);
+        if struct_def.is_some() {
+            return self.mono_struct(struct_def.unwrap(), type_args);
+        }
+
+        // Check if it's an enum
+        let enum_def = self.ctx.enum_defs.get(&item_ref.id._value);
+        if enum_def.is_some() {
+            return self.mono_enum(enum_def.unwrap(), type_args);
+        }
+
+        // Check if it's a type alias
+        let ta = self.ctx.type_aliases.get(&item_ref.id._value);
+        if ta.is_some() {
+            let alias = ta.unwrap();
+            // Set up type parameter substitution
+            if alias.generic_params.len() > 0 && type_args.len() > 0 {
+                for i in 0usize..std::cmp::min(alias.generic_params.len(), type_args.len()) {
+                    self.type_map.insert(alias.generic_params[i].id._value, type_args[i]);
+                }
+            }
+            return self.resolve_type(alias.target);
+        }
+
+        self.ctx.void_ty
+    }
+
+    fn mono_struct(self: &mut Mono, def: &StructDef, type_args: &[&IrTy]) -> &IrTy {
+        // Check cache
+        let cache_key = hash_mono_key(def.id, type_args);
+        let cached = self.ctx.struct_cache.get(&cache_key);
+        if cached.is_some() {
+            let idx = cached.unwrap();
+            return self.ctx.arena.alloc(IrTy::mk_struct(self.ctx.ir_structs[idx]));
+        }
+
+        // Set up generic substitution
+        if def.generic_params.len() > 0 && type_args.len() > 0 {
+            for i in 0usize..std::cmp::min(def.generic_params.len(), type_args.len()) {
+                self.type_map.insert(def.generic_params[i].id._value, type_args[i]);
+            }
+        }
+
+        // Resolve field types
+        let fields = self.ctx.arena.alloc_slice::<IrField>(def.fields.len());
+        let is_zst = true;
+        for i in 0usize..def.fields.len() {
+            let field_ty = self.resolve_type(def.fields[i].ty);
+            fields[i] = IrField {
+                name: def.fields[i].name,
+                ty: field_ty,
+            };
+            if !field_ty.is_zero_sized() {
+                is_zst = false;
+            }
+        }
+
+        if def.fields.len() == 0 {
+            is_zst = true;
+        }
+
+        let mangled = self.ctx.mangle_name(def.name);
+
+        // Look up the struct's scope for method resolution
+        let s_scope = self.ctx.struct_scopes.get(&def.id._value);
+        let scope_idx = if s_scope.is_some() { s_scope.unwrap() } else { 0u32 };
+
+        let ir_struct = IrStructRef {
+            id: def.id,
+            name: def.name,
+            fields: fields,
+            is_union: def.is_union,
+            is_zero_sized: is_zst,
+            scope_idx: scope_idx,
+        };
+
+        let idx = self.ctx.ir_structs.len();
+        self.ctx.ir_structs.push(ir_struct);
+        self.ctx.struct_cache.insert(cache_key, idx);
+
+        self.ctx.arena.alloc(IrTy::mk_struct(self.ctx.ir_structs[idx]))
+    }
+
+    fn mono_enum(self: &mut Mono, def: &EnumDef, type_args: &[&IrTy]) -> &IrTy {
+        let cache_key = hash_mono_key(def.id, type_args);
+        let cached = self.ctx.enum_cache.get(&cache_key);
+        if cached.is_some() {
+            let idx = cached.unwrap();
+            return self.ctx.arena.alloc(IrTy::mk_enum(self.ctx.ir_enums[idx]));
+        }
+
+        // Determine underlying type
+        let underlying = if def.underlying_type.is_some() {
+            self.resolve_type(def.underlying_type.unwrap())
+        } else {
+            self.ctx.intern_builtin_ty(BuiltinType::I32)
+        };
+
+        // Resolve variant values
+        let variants = self.ctx.arena.alloc_slice::<IrEnumVariant>(def.variants.len());
+        let next_val: u64 = 0;
+        for i in 0usize..def.variants.len() {
+            let val = if def.variants[i].value.is_some() {
+                // TODO: evaluate const expression
+                next_val
+            } else {
+                next_val
+            };
+            variants[i] = IrEnumVariant {
+                name: def.variants[i].name,
+                value: val,
+            };
+            next_val = val + 1;
+        }
+
+        let mangled = self.ctx.mangle_name(def.name);
+
+        let ir_enum = IrEnumRef {
+            id: def.id,
+            name: def.name,
+            underlying: underlying,
+            variants: variants,
+        };
+
+        let idx = self.ctx.ir_enums.len();
+        self.ctx.ir_enums.push(ir_enum);
+        self.ctx.enum_cache.insert(cache_key, idx);
+
+        self.ctx.arena.alloc(IrTy::mk_enum(self.ctx.ir_enums[idx]))
+    }
+
+    fn mono_function(self: &mut Mono, def: &FnDef, type_args: &[&IrTy]) -> usize {
+        let cache_key = hash_mono_key(def.id, type_args);
+        let cached = self.ctx.fn_cache.get(&cache_key);
+        if cached.is_some() {
+            return cached.unwrap();
+        }
+
+        // Set up generic substitution
+        if def.generic_params.len() > 0 && type_args.len() > 0 {
+            for i in 0usize..std::cmp::min(def.generic_params.len(), type_args.len()) {
+                self.type_map.insert(def.generic_params[i].id._value, type_args[i]);
+            }
+        }
+
+        // Resolve parameter types
+        let params = self.ctx.arena.alloc_slice::<IrParam>(def.params.len());
+        for i in 0usize..def.params.len() {
+            let param_ty = self.resolve_type(def.params[i].ty);
+            params[i] = IrParam {
+                id: def.params[i].id,
+                ty: param_ty,
+                name: def.params[i].name,
+            };
+            self.local_types.insert(def.params[i].id._value, param_ty);
+        }
+
+        // Resolve return type
+        self.return_type = self.resolve_type(def.return_type);
+
+        // Determine mangled name
+        let mangled = if def.abi.is_some() {
+            // Extern functions keep their name
+            def.name
+        } else {
+            // Check for export or main attribute
+            let keep_name = false;
+            for attr in def.attributes {
+                if attr.tag == ATTR_EXPORT {
+                    keep_name = true;
+                } else if attr.tag == ATTR_MAIN {
+                    keep_name = true;
+                }
+            }
+            if keep_name { def.name } else { self.ctx.mangle_name(def.name) }
+        };
+
+        // Reserve index and cache it BEFORE lowering the body
+        // to handle recursive functions
+        let idx = self.ctx.ir_functions.len();
+        let placeholder = IrFunction {
+            id: def.id,
+            name: def.name,
+            mangled_name: mangled,
+            params: params,
+            return_type: self.return_type,
+            body: Option::none(),
+            local_defs: &[],
+            attributes: def.attributes,
+            is_variadic: def.is_variadic,
+            abi: def.abi,
+        };
+        self.ctx.ir_functions.push(placeholder);
+        self.ctx.fn_cache.insert(cache_key, idx);
+
+        // Lower body (may recursively call mono_function)
+        let body: Option<&IrExpr> = if def.body.is_some() {
+            Option::some(self.lower_expr(def.body.unwrap()))
+        } else {
+            Option::none()
+        };
+
+        // Collect local defs
+        let local_defs_slice = self.ctx.arena.alloc_slice::<IrLocalDef>(self.local_defs.len());
+        for i in 0usize..self.local_defs.len() {
+            local_defs_slice[i] = self.local_defs[i];
+        }
+
+        // Update the placeholder with the actual body and local defs
+        self.ctx.ir_functions[idx].body = body;
+        self.ctx.ir_functions[idx].local_defs = local_defs_slice;
+
+        idx
+    }
+
+    // Lower an AST expression to IR (dispatcher)
+    fn lower_expr(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        if expr.tag == EXPR_INT_LIT || expr.tag == EXPR_FLOAT_LIT || expr.tag == EXPR_BOOL_LIT || expr.tag == EXPR_STRING_LIT || expr.tag == EXPR_NULL_LIT || expr.tag == EXPR_CHAR_LIT {
+            self.lower_literal(expr)
+        } else if expr.tag == EXPR_LOCAL || expr.tag == EXPR_PARAM || expr.tag == EXPR_FN_REF || expr.tag == EXPR_ENUM_REF {
+            self.lower_variable(expr)
+        } else if expr.tag == EXPR_BINARY || expr.tag == EXPR_UNARY || expr.tag == EXPR_ASSIGN {
+            self.lower_binop(expr)
+        } else if expr.tag == EXPR_IF || expr.tag == EXPR_WHILE || expr.tag == EXPR_LOOP || expr.tag == EXPR_FOR || expr.tag == EXPR_SWITCH || expr.tag == EXPR_BREAK || expr.tag == EXPR_CONTINUE || expr.tag == EXPR_RETURN {
+            self.lower_control_flow(expr)
+        } else if expr.tag == EXPR_REF || expr.tag == EXPR_DEREF || expr.tag == EXPR_FIELD_ACCESS || expr.tag == EXPR_TUPLE_INDEX || expr.tag == EXPR_INDEX || expr.tag == EXPR_CAST || expr.tag == EXPR_TYPE_CHECK {
+            self.lower_memory(expr)
+        } else if expr.tag == EXPR_CALL || expr.tag == EXPR_STRUCT_LIT {
+            self.lower_call(expr)
+        } else if expr.tag == EXPR_BLOCK || expr.tag == EXPR_LET || expr.tag == EXPR_DEFER {
+            self.lower_block(expr)
+        } else if expr.tag == EXPR_TUPLE_LIT {
+            let ir_elems = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args.len());
+            let elem_types = self.ctx.arena.alloc_slice::<&IrTy>(expr.args.len());
+            for i in 0usize..expr.args.len() {
+                ir_elems[i] = self.lower_expr(expr.args[i]);
+                elem_types[i] = ir_elems[i].ty;
+            }
+            let tuple_ty = self.ctx.make_tuple_ty(elem_types);
+            let result = IrExpr::void_expr(tuple_ty);
+            result.tag = IR_TUPLE_LIT;
+            result.items = ir_elems;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_ARRAY_LIT {
+            let ir_elems = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args.len());
+            let elem_ty = self.ctx.void_ty;
+            for i in 0usize..expr.args.len() {
+                ir_elems[i] = self.lower_expr(expr.args[i]);
+                if i == 0 {
+                    elem_ty = ir_elems[i].ty;
+                }
+            }
+            let arr_ty = self.ctx.make_array_ty(elem_ty, expr.args.len());
+            let result = IrExpr::void_expr(arr_ty);
+            result.tag = IR_ARRAY_LIT;
+            result.items = ir_elems;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_VOID {
+            let result = IrExpr::void_expr(self.ctx.void_ty);
+            self.ctx.arena.alloc(result)
+        } else {
+            // Unhandled expression kind
+            let r = IrExpr::void_expr(self.ctx.void_ty);
+            self.ctx.arena.alloc(r)
+        }
+    }
+
+    // Lower literal expressions: EXPR_INT_LIT, EXPR_FLOAT_LIT, EXPR_BOOL_LIT, EXPR_STRING_LIT, EXPR_NULL_LIT, EXPR_CHAR_LIT
+    fn lower_literal(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        if expr.tag == EXPR_INT_LIT {
+            let ty = if expr.type_suffix.is_some() {
+                self.ctx.intern_builtin_ty(expr.type_suffix.unwrap())
+            } else {
+                self.ctx.intern_builtin_ty(BuiltinType::I32) // default int type
+            };
+            let result = IrExpr::void_expr(ty);
+            result.tag = IR_INT_LIT;
+            result.int_val = expr.int_val;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_FLOAT_LIT {
+            let ty = if expr.type_suffix.is_some() {
+                self.ctx.intern_builtin_ty(expr.type_suffix.unwrap())
+            } else {
+                self.ctx.intern_builtin_ty(BuiltinType::F64)
+            };
+            let result = IrExpr::void_expr(ty);
+            result.tag = IR_FLOAT_LIT;
+            result.float_val = expr.float_val;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_BOOL_LIT {
+            let result = IrExpr::void_expr(self.ctx.bool_ty);
+            result.tag = IR_BOOL_LIT;
+            result.bool_val = expr.bool_val;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_STRING_LIT {
+            // String literals are &[u8] - pointer + length
+            let u8_ty = self.ctx.intern_builtin_ty(BuiltinType::U8);
+            let slice_ty = self.ctx.make_ptr_ty(u8_ty, true);
+            let result = IrExpr::void_expr(slice_ty);
+            result.tag = IR_STRING_LIT;
+            result.str_val = expr.str_val;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_NULL_LIT {
+            let void_ty = self.ctx.void_ty;
+            let ptr_ty = self.ctx.make_ptr_ty(void_ty, false);
+            let result = IrExpr::void_expr(ptr_ty);
+            result.tag = IR_NULL_LIT;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_CHAR_LIT {
+            let result = IrExpr::void_expr(self.ctx.intern_builtin_ty(BuiltinType::U32));
+            result.tag = IR_INT_LIT;
+            result.int_val = expr.int_val;
+            self.ctx.arena.alloc(result)
+        } else {
+            let r = IrExpr::void_expr(self.ctx.void_ty);
+            self.ctx.arena.alloc(r)
+        }
+    }
+
+    // Lower variable references: EXPR_LOCAL, EXPR_PARAM, EXPR_FN_REF
+    fn lower_variable(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        if expr.tag == EXPR_LOCAL {
+            let ty = self.local_types.get(&expr.id._value);
+            let local_ty = if ty.is_some() { ty.unwrap() } else { self.ctx.void_ty };
+            let result = IrExpr::void_expr(local_ty);
+            result.tag = IR_LOCAL;
+            result.id = expr.id;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_PARAM {
+            let ty = self.local_types.get(&expr.id._value);
+            let param_ty = if ty.is_some() { ty.unwrap() } else { self.ctx.void_ty };
+            let result = IrExpr::void_expr(param_ty);
+            result.tag = IR_LOCAL; // params and locals share namespace in IR
+            result.id = expr.id;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_FN_REF {
+            // Look up the function and get its type
+            let fn_def = self.ctx.fn_defs.get(&expr.id._value);
+            if fn_def.is_some() {
+                let def = fn_def.unwrap();
+                let fn_idx = self.mono_function(def, &[]);
+                let ir_fn = &self.ctx.ir_functions[fn_idx];
+
+                // Build function pointer type
+                let param_types = self.ctx.arena.alloc_slice::<&IrTy>(ir_fn.params.len());
+                for i in 0usize..ir_fn.params.len() {
+                    param_types[i] = ir_fn.params[i].ty;
+                }
+                let fn_ty = self.ctx.make_fn_ptr_ty(param_types, ir_fn.return_type);
+
+                let result = IrExpr::void_expr(fn_ty);
+                result.tag = IR_FN_REF;
+                result.fn_ref = IrFnRef {
+                    id: ir_fn.id,
+                    mangled_name: ir_fn.mangled_name,
+                };
+                self.ctx.arena.alloc(result)
+            } else {
+                let result = IrExpr::void_expr(self.ctx.void_ty);
+                result.tag = IR_NULL_LIT;
+                self.ctx.arena.alloc(result)
+            }
+        } else if expr.tag == EXPR_ENUM_REF {
+            // Look up enum and variant
+            let enum_def = self.ctx.enum_defs.get(&expr.id._value);
+            if enum_def.is_some() {
+                let def = enum_def.unwrap();
+                let enum_ty = self.mono_enum(def, &[]);
+                // Find variant value by matching variant id
+                let variant_val: u64 = 0;
+                for i in 0usize..def.variants.len() {
+                    if def.variants[i].id._value == expr.id2._value {
+                        // Use the monomorphized variant value from IrEnumRef
+                        variant_val = enum_ty.enum_ref.variants[i].value;
+                        break;
+                    }
+                }
+                // Use the underlying type for the literal
+                let underlying = enum_ty.enum_ref.underlying;
+                let result = IrExpr::void_expr(enum_ty);
+                result.tag = IR_INT_LIT;
+                result.int_val = variant_val;
+                self.ctx.arena.alloc(result)
+            } else {
+                let r = IrExpr::void_expr(self.ctx.void_ty);
+                self.ctx.arena.alloc(r)
+            }
+        } else {
+            let r = IrExpr::void_expr(self.ctx.void_ty);
+            self.ctx.arena.alloc(r)
+        }
+    }
+
+    // Lower binary/unary/assignment ops: EXPR_BINARY, EXPR_UNARY, EXPR_ASSIGN, EXPR_COMPOUND_ASSIGN
+    fn lower_binop(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        if expr.tag == EXPR_BINARY {
+            let ir_lhs = self.lower_expr(expr.lhs);
+            let ir_rhs = self.lower_expr(expr.rhs);
+            let result_ty = switch expr.bin_op {
+                BinOp::Eq => self.ctx.bool_ty,
+                BinOp::Ne => self.ctx.bool_ty,
+                BinOp::Lt => self.ctx.bool_ty,
+                BinOp::Le => self.ctx.bool_ty,
+                BinOp::Gt => self.ctx.bool_ty,
+                BinOp::Ge => self.ctx.bool_ty,
+                BinOp::And => self.ctx.bool_ty,
+                BinOp::Or => self.ctx.bool_ty,
+                _ => ir_lhs.ty,
+            };
+            let result = IrExpr::void_expr(result_ty);
+            result.tag = IR_BINARY;
+            result.bin_op = expr.bin_op;
+            result.lhs = ir_lhs;
+            result.rhs = ir_rhs;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_UNARY {
+            let ir_operand = self.lower_expr(expr.lhs);
+            let result_ty = switch expr.un_op {
+                UnOp::Not => self.ctx.bool_ty,
+                _ => ir_operand.ty,
+            };
+            let result = IrExpr::void_expr(result_ty);
+            result.tag = IR_UNARY;
+            result.un_op = expr.un_op;
+            result.lhs = ir_operand;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_ASSIGN {
+            let ir_lhs = self.lower_expr(expr.lhs);
+            let ir_rhs = self.lower_expr(expr.rhs);
+            // For compound assignment, desugar to binary + assign
+            if expr.assign_op as i32 != AssignOp::Assign as i32 {
+                let bin_op = switch expr.assign_op {
+                    AssignOp::AddAssign => BinOp::Add,
+                    AssignOp::SubAssign => BinOp::Sub,
+                    AssignOp::MulAssign => BinOp::Mul,
+                    AssignOp::DivAssign => BinOp::Div,
+                    AssignOp::RemAssign => BinOp::Rem,
+                    AssignOp::BitAndAssign => BinOp::BitAnd,
+                    AssignOp::BitOrAssign => BinOp::BitOr,
+                    AssignOp::BitXorAssign => BinOp::BitXor,
+                    AssignOp::ShlAssign => BinOp::Shl,
+                    AssignOp::ShrAssign => BinOp::Shr,
+                    _ => BinOp::Add,
+                };
+                let binop_result = IrExpr::void_expr(ir_lhs.ty);
+                binop_result.tag = IR_BINARY;
+                binop_result.bin_op = bin_op;
+                binop_result.lhs = ir_lhs;
+                binop_result.rhs = ir_rhs;
+                let binop_expr = self.ctx.arena.alloc(binop_result);
+
+                let assign_result = IrExpr::void_expr(self.ctx.void_ty);
+                assign_result.tag = IR_ASSIGN;
+                assign_result.lhs = ir_lhs;
+                assign_result.rhs = binop_expr;
+                return self.ctx.arena.alloc(assign_result);
+            }
+            let result = IrExpr::void_expr(self.ctx.void_ty);
+            result.tag = IR_ASSIGN;
+            result.lhs = ir_lhs;
+            result.rhs = ir_rhs;
+            self.ctx.arena.alloc(result)
+        } else {
+            let r = IrExpr::void_expr(self.ctx.void_ty);
+            self.ctx.arena.alloc(r)
+        }
+    }
+
+    // Lower control flow: EXPR_IF, EXPR_WHILE, EXPR_LOOP, EXPR_FOR, EXPR_SWITCH, EXPR_BREAK, EXPR_CONTINUE, EXPR_RETURN
+    fn lower_control_flow(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        if expr.tag == EXPR_IF {
+            let ir_cond = self.lower_expr(expr.cond);
+            let ir_then = self.lower_expr(expr.lhs);
+            let ir_else: Option<&IrExpr> = if expr.opt_expr.is_some() {
+                Option::some(self.lower_expr(expr.opt_expr.unwrap()))
+            } else {
+                Option::none()
+            };
+            let result_ty = ir_then.ty;
+            let result = IrExpr::void_expr(result_ty);
+            result.tag = IR_IF;
+            result.cond = ir_cond;
+            result.lhs = ir_then;
+            result.opt_expr = ir_else;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_WHILE {
+            let ir_cond = self.lower_expr(expr.cond);
+            let ir_body = self.lower_expr(expr.lhs);
+            let result = IrExpr::void_expr(self.ctx.void_ty);
+            result.tag = IR_WHILE;
+            result.cond = ir_cond;
+            result.lhs = ir_body;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_LOOP {
+            let ir_body = self.lower_expr(expr.lhs);
+            let result = IrExpr::void_expr(self.ctx.void_ty);
+            result.tag = IR_LOOP;
+            result.lhs = ir_body;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_SWITCH {
+            let ir_value = self.lower_expr(expr.lhs);
+            let ir_arms = self.ctx.arena.alloc_slice::<IrSwitchArm>(expr.switch_arms.len());
+            for i in 0usize..expr.switch_arms.len() {
+                let values = self.ctx.arena.alloc_slice::<u64>(expr.switch_arms[i].pattern.len());
+                for j in 0usize..expr.switch_arms[i].pattern.len() {
+                    let pat_expr = self.lower_expr(expr.switch_arms[i].pattern[j]);
+                    if pat_expr.tag == IR_INT_LIT {
+                        values[j] = pat_expr.int_val;
+                    } else {
+                        values[j] = 0;
+                    }
+                }
+                ir_arms[i] = IrSwitchArm {
+                    values: values,
+                    body: self.lower_expr(expr.switch_arms[i].body),
+                    is_default: expr.switch_arms[i].pattern.len() == 0,
+                };
+            }
+            let result_ty = if expr.switch_arms.len() > 0 { ir_arms[0].body.ty } else { self.ctx.void_ty };
+            let result = IrExpr::void_expr(result_ty);
+            result.tag = IR_SWITCH;
+            result.lhs = ir_value;
+            result.switch_arms = ir_arms;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_BREAK {
+            let ir_val: Option<&IrExpr> = if expr.opt_expr.is_some() {
+                Option::some(self.lower_expr(expr.opt_expr.unwrap()))
+            } else {
+                Option::none()
+            };
+            let result = IrExpr::void_expr(self.ctx.never_ty);
+            result.tag = IR_BREAK;
+            result.opt_expr = ir_val;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_CONTINUE {
+            let result = IrExpr::void_expr(self.ctx.never_ty);
+            result.tag = IR_CONTINUE;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_RETURN {
+            let ir_val: Option<&IrExpr> = if expr.opt_expr.is_some() {
+                Option::some(self.lower_expr(expr.opt_expr.unwrap()))
+            } else {
+                Option::none()
+            };
+            let result = IrExpr::void_expr(self.ctx.never_ty);
+            result.tag = IR_RETURN;
+            result.opt_expr = ir_val;
+            self.ctx.arena.alloc(result)
+        } else {
+            let r = IrExpr::void_expr(self.ctx.void_ty);
+            self.ctx.arena.alloc(r)
+        }
+    }
+
+    // Lower memory operations: EXPR_REF, EXPR_DEREF, EXPR_FIELD_ACCESS, EXPR_TUPLE_INDEX, EXPR_INDEX, EXPR_CAST, EXPR_TYPE_CHECK
+    fn lower_memory(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        if expr.tag == EXPR_REF {
+            let ir_inner = self.lower_expr(expr.lhs);
+            let ptr_ty = self.ctx.make_ptr_ty(ir_inner.ty, !expr.flag);
+            let result = IrExpr::void_expr(ptr_ty);
+            result.tag = IR_REF;
+            result.lhs = ir_inner;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_DEREF {
+            let ir_inner = self.lower_expr(expr.lhs);
+            let pointee_ty = if ir_inner.ty.tag == IRTY_POINTER {
+                ir_inner.ty.inner
+            } else {
+                self.ctx.void_ty
+            };
+            let result = IrExpr::void_expr(pointee_ty);
+            result.tag = IR_DEREF;
+            result.lhs = ir_inner;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_FIELD_ACCESS {
+            let ir_obj = self.lower_expr(expr.lhs);
+            // Auto-deref through pointers for field access
+            let actual_obj = ir_obj;
+            loop {
+                if actual_obj.ty.tag != IRTY_POINTER {
+                    break;
+                }
+                let deref_ty = actual_obj.ty.inner;
+                let deref_expr = IrExpr::void_expr(deref_ty);
+                deref_expr.tag = IR_DEREF;
+                deref_expr.lhs = actual_obj;
+                actual_obj = self.ctx.arena.alloc(deref_expr);
+            }
+            // Find field index on the dereferenced struct type
+            let (field_idx, field_ty) = self.resolve_field(actual_obj.ty, expr.str_val);
+            let result = IrExpr::void_expr(field_ty);
+            result.tag = IR_FIELD_ACCESS;
+            result.lhs = actual_obj;
+            result.field_idx = field_idx;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_TUPLE_INDEX {
+            let ir_obj = self.lower_expr(expr.lhs);
+            let elem_ty = if ir_obj.ty.tag == IRTY_TUPLE {
+                if expr.index_val < ir_obj.ty.elems.len() { ir_obj.ty.elems[expr.index_val] } else { self.ctx.void_ty }
+            } else {
+                self.ctx.void_ty
+            };
+            let result = IrExpr::void_expr(elem_ty);
+            result.tag = IR_FIELD_ACCESS;
+            result.lhs = ir_obj;
+            result.field_idx = expr.index_val as u32;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_INDEX {
+            let ir_base = self.lower_expr(expr.lhs);
+            let ir_index = self.lower_expr(expr.rhs);
+
+            // Handle slice indexing: extract data pointer, then index
+            if self.is_slice_ty(ir_base.ty) {
+                let elem_ty = self.slice_elem_ty(ir_base.ty);
+                // Extract the data pointer (field 0 of the fat pointer tuple)
+                let data_ptr_ty = ir_base.ty.elems[0];
+                let data_ptr = IrExpr::void_expr(data_ptr_ty);
+                data_ptr.tag = IR_FIELD_ACCESS;
+                data_ptr.lhs = ir_base;
+                data_ptr.field_idx = 0u32;
+                let data_ptr_ref = self.ctx.arena.alloc(data_ptr);
+                // Index into the data pointer
+                let result = IrExpr::void_expr(elem_ty);
+                result.tag = IR_INDEX;
+                result.lhs = data_ptr_ref;
+                result.rhs = ir_index;
+                return self.ctx.arena.alloc(result);
+            }
+
+            let elem_ty = if ir_base.ty.tag == IRTY_ARRAY {
+                ir_base.ty.inner
+            } else if ir_base.ty.tag == IRTY_POINTER {
+                ir_base.ty.inner
+            } else {
+                self.ctx.void_ty
+            };
+            let result = IrExpr::void_expr(elem_ty);
+            result.tag = IR_INDEX;
+            result.lhs = ir_base;
+            result.rhs = ir_index;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_CAST {
+            let ir_inner = self.lower_expr(expr.lhs);
+            let ir_ty = self.resolve_type(expr.ty);
+            let result = IrExpr::void_expr(ir_ty);
+            result.tag = IR_CAST;
+            result.lhs = ir_inner;
+            result.ir_ty = ir_ty;
+            self.ctx.arena.alloc(result)
+        } else {
+            let r = IrExpr::void_expr(self.ctx.void_ty);
+            self.ctx.arena.alloc(r)
+        }
+    }
+
+    // Coerce a value to a target type (e.g., pointer-to-array → slice)
+    fn coerce_to_type(self: &mut Mono, val: &IrExpr, target_ty: &IrTy) -> &IrExpr {
+        // Coerce &[T; N] to &[T] (pointer to array → slice fat pointer)
+        if self.is_slice_ty(target_ty) && val.ty.tag == IRTY_POINTER && val.ty.inner.tag == IRTY_ARRAY {
+            let array_ty = val.ty.inner;
+            let elem_ty = array_ty.inner;
+            let usize_ty = self.ctx.intern_builtin_ty(BuiltinType::USize);
+
+            // Data pointer: cast the array pointer to element pointer
+            let data_ptr_ty = self.ctx.make_ptr_ty(elem_ty, false);
+            let data_ptr = IrExpr::void_expr(data_ptr_ty);
+            data_ptr.tag = IR_CAST;
+            data_ptr.lhs = val;
+            data_ptr.ir_ty = data_ptr_ty;
+            let data_ptr_ref = self.ctx.arena.alloc(data_ptr);
+
+            // Length: array size as usize literal
+            let len_expr = IrExpr::void_expr(usize_ty);
+            len_expr.tag = IR_INT_LIT;
+            len_expr.int_val = array_ty.array_size as u64;
+            let len_ref = self.ctx.arena.alloc(len_expr);
+
+            // Build tuple {data_ptr, len}
+            let items = self.ctx.arena.alloc_slice::<&IrExpr>(2);
+            items[0] = data_ptr_ref;
+            items[1] = len_ref;
+            let tuple_result = IrExpr::void_expr(target_ty);
+            tuple_result.tag = IR_TUPLE_LIT;
+            tuple_result.items = items;
+            return self.ctx.arena.alloc(tuple_result);
+        }
+        // No coercion needed
+        val
+    }
+
+    // Check if a type is a slice (fat pointer tuple: {ptr, usize})
+    fn is_slice_ty(self: &Mono, ty: &IrTy) -> bool {
+        if ty.tag == IRTY_TUPLE && ty.elems.len() == 2 {
+            ty.elems[0].tag == IRTY_POINTER
+        } else {
+            false
+        }
+    }
+
+    // Get the element type of a slice
+    fn slice_elem_ty(self: &Mono, ty: &IrTy) -> &IrTy {
+        // Slice is {&T, usize}, so elem type is the pointer's inner type
+        ty.elems[0].inner
+    }
+
+    // Get the struct type from an IrTy, auto-dereffing through pointers
+    fn get_struct_ty(self: &Mono, ty: &IrTy) -> Option<&IrTy> {
+        if ty.tag == IRTY_STRUCT {
+            Option::some(ty)
+        } else if ty.tag == IRTY_POINTER {
+            self.get_struct_ty(ty.inner)
+        } else {
+            Option::none()
+        }
+    }
+
+    // Try to resolve a method call: obj.method(args) -> Type::method(&obj, args)
+    fn try_lower_method_call(self: &mut Mono, expr: &Expr) -> Option<&IrExpr> {
+        // expr is EXPR_CALL, expr.lhs is EXPR_FIELD_ACCESS
+        let field_expr = expr.lhs;
+        let ir_obj = self.lower_expr(field_expr.lhs);
+        let method_name = field_expr.str_val;
+
+        // Handle slice built-in methods
+        if self.is_slice_ty(ir_obj.ty) {
+            if method_name == "len" {
+                // slice.len() -> extract field 1 (the length)
+                let usize_ty = ir_obj.ty.elems[1];
+                let result = IrExpr::void_expr(usize_ty);
+                result.tag = IR_FIELD_ACCESS;
+                result.lhs = ir_obj;
+                result.field_idx = 1u32;
+                let allocated: &IrExpr = self.ctx.arena.alloc(result) as &IrExpr;
+                return Option::some(allocated);
+            }
+            // Other slice methods could go here (e.g., as_ptr)
+            return Option::none();
+        }
+
+        // Get the struct type (auto-deref)
+        let struct_ty_opt = self.get_struct_ty(ir_obj.ty);
+        if struct_ty_opt.is_none() {
+            return Option::none();
+        }
+        let struct_ty = struct_ty_opt.unwrap();
+        let scope_idx = struct_ty.struct_ref.scope_idx;
+        if scope_idx == 0 {
+            return Option::none();
+        }
+
+        // Look up method in struct's scope
+        let method_item = self.ctx.scopes.get(scope_idx).items.get(&method_name);
+        if method_item.is_none() {
+            return Option::none();
+        }
+        let item = method_item.unwrap();
+
+        // Get the function id
+        let fn_id = if item.kind.tag == NIK_FUNCTION {
+            item.kind.id
+        } else if item.kind.tag == NIK_METHOD {
+            item.kind.id2
+        } else {
+            return Option::none();
+        };
+
+        // Look up the FnDef
+        let fn_def = self.ctx.fn_defs.get(&fn_id._value);
+        if fn_def.is_none() {
+            return Option::none();
+        }
+        let def = fn_def.unwrap();
+
+        // Monomorphize the method
+        let fn_idx = self.mono_function(def, &[]);
+        let ir_fn = &self.ctx.ir_functions[fn_idx];
+
+        // Build args: &obj as first arg, then the call args
+        let total_args = 1usize + expr.args.len();
+        let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(total_args);
+
+        // First arg is &obj (take reference if obj is not already a pointer)
+        if ir_obj.ty.tag == IRTY_POINTER {
+            ir_args[0] = ir_obj;
+        } else {
+            let ref_ty = self.ctx.arena.alloc(IrTy::mk_pointer(ir_obj.ty, false));
+            let ref_expr = IrExpr::void_expr(ref_ty);
+            ref_expr.tag = IR_REF;
+            ref_expr.lhs = ir_obj;
+            ir_args[0] = self.ctx.arena.alloc(ref_expr);
+        }
+
+        // Rest of the args
+        for i in 0usize..expr.args.len() {
+            ir_args[1 + i] = self.lower_expr(expr.args[i]);
+        }
+
+        // Build direct call
+        let ret_ty = ir_fn.return_type;
+        let result = IrExpr::void_expr(ret_ty);
+        result.tag = IR_CALL;
+        result.call_target = IrCallTarget {
+            tag: CALL_DIRECT,
+            fn_ref: IrFnRef { id: ir_fn.id, mangled_name: ir_fn.mangled_name },
+            callee: std::mem::zeroed::<&IrExpr>(),
+        };
+        result.items = ir_args;
+        let allocated: &IrExpr = self.ctx.arena.alloc(result) as &IrExpr;
+        Option::some(allocated)
+    }
+
+    // Lower call expressions: EXPR_CALL, EXPR_STRUCT_LIT
+    fn lower_call(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        if expr.tag == EXPR_CALL {
+            // Check for method call: obj.method(args)
+            if expr.lhs.tag == EXPR_FIELD_ACCESS {
+                let method_result = self.try_lower_method_call(expr);
+                if method_result.is_some() {
+                    return method_result.unwrap();
+                }
+                // Fall through to normal field access (function pointer in struct field)
+            }
+
+            let ir_callee = self.lower_expr(expr.lhs);
+            let ir_args = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args.len());
+            for i in 0usize..expr.args.len() {
+                ir_args[i] = self.lower_expr(expr.args[i]);
+            }
+
+            // Determine return type from callee
+            let ret_ty = if ir_callee.ty.tag == IRTY_FN_POINTER {
+                ir_callee.ty.ret_ty
+            } else {
+                self.ctx.void_ty
+            };
+
+            let result = IrExpr::void_expr(ret_ty);
+            result.tag = IR_CALL;
+            result.call_target = IrCallTarget { tag: CALL_INDIRECT, fn_ref: IrFnRef::empty(), callee: ir_callee };
+            result.items = ir_args;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_STRUCT_LIT {
+            let ir_ty = self.resolve_type(expr.ty);
+            let ir_fields = self.ctx.arena.alloc_slice::<&IrExpr>(expr.field_inits.len());
+            for i in 0usize..expr.field_inits.len() {
+                ir_fields[i] = self.lower_expr(expr.field_inits[i].value);
+            }
+            let result = IrExpr::void_expr(ir_ty);
+            result.tag = IR_STRUCT_LIT;
+            result.ir_ty = ir_ty;
+            result.items = ir_fields;
+            self.ctx.arena.alloc(result)
+        } else {
+            let r = IrExpr::void_expr(self.ctx.void_ty);
+            self.ctx.arena.alloc(r)
+        }
+    }
+
+    // Lower block-like expressions: EXPR_BLOCK, EXPR_LET, EXPR_DEFER
+    fn lower_block(self: &mut Mono, expr: &Expr) -> &IrExpr {
+        if expr.tag == EXPR_BLOCK {
+            let ir_stmts = self.ctx.arena.alloc_slice::<&IrExpr>(expr.args.len());
+            let result_ty = self.ctx.void_ty;
+            for i in 0usize..expr.args.len() {
+                ir_stmts[i] = self.lower_expr(expr.args[i]);
+                if i == expr.args.len() - 1 {
+                    result_ty = ir_stmts[i].ty;
+                }
+            }
+            let result = IrExpr::void_expr(result_ty);
+            result.tag = IR_BLOCK;
+            result.items = ir_stmts;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_LET {
+            let var_ty = if expr.opt_ty.is_some() {
+                self.resolve_type(expr.opt_ty.unwrap())
+            } else if expr.opt_expr.is_some() {
+                let ir_init = self.lower_expr(expr.opt_expr.unwrap());
+                let inferred = ir_init.ty;
+                self.local_types.insert(expr.id._value, inferred);
+                self.local_defs.push(IrLocalDef {
+                    id: expr.id,
+                    ty: inferred,
+                    name: "",
+                });
+                let result = IrExpr::void_expr(self.ctx.void_ty);
+                result.tag = IR_LET;
+                result.id = expr.id;
+                result.ir_ty = inferred;
+                result.opt_expr = Option::some(ir_init);
+                return self.ctx.arena.alloc(result);
+            } else {
+                self.ctx.void_ty
+            };
+
+            self.local_types.insert(expr.id._value, var_ty);
+            self.local_defs.push(IrLocalDef {
+                id: expr.id,
+                ty: var_ty,
+                name: "",
+            });
+
+            let ir_init: Option<&IrExpr> = if expr.opt_expr.is_some() {
+                let init_val = self.lower_expr(expr.opt_expr.unwrap());
+                // Coerce pointer-to-array to slice if needed
+                Option::some(self.coerce_to_type(init_val, var_ty))
+            } else {
+                Option::none()
+            };
+
+            let result = IrExpr::void_expr(self.ctx.void_ty);
+            result.tag = IR_LET;
+            result.id = expr.id;
+            result.ir_ty = var_ty;
+            result.opt_expr = ir_init;
+            self.ctx.arena.alloc(result)
+        } else if expr.tag == EXPR_DEFER {
+            let ir_inner = self.lower_expr(expr.lhs);
+            let result = IrExpr::void_expr(self.ctx.void_ty);
+            result.tag = IR_DEFER;
+            result.lhs = ir_inner;
+            self.ctx.arena.alloc(result)
+        } else {
+            let r = IrExpr::void_expr(self.ctx.void_ty);
+            self.ctx.arena.alloc(r)
+        }
+    }
+
+    fn resolve_field(self: &mut Mono, ty: &IrTy, field_name: &[u8]) -> (u32, &IrTy) {
+        if ty.tag == IRTY_STRUCT {
+            for i in 0usize..ty.struct_ref.fields.len() {
+                if ty.struct_ref.fields[i].name == field_name {
+                    return (i as u32, ty.struct_ref.fields[i].ty);
+                }
+            }
+            (0u32, self.ctx.void_ty)
+        } else if ty.tag == IRTY_POINTER {
+            // Auto-deref
+            self.resolve_field(ty.inner, field_name)
+        } else {
+            (0u32, self.ctx.void_ty)
+        }
+    }
+
+    fn free(self: &mut Mono) {
+        self.type_map.free();
+        self.local_types.free();
+        self.local_defs.free();
+    }
+}
+
+// ============================================================
+// Top-level monomorphization entry point
+// ============================================================
+
+fn monomorphize(
+    arena: &mut Arena,
+    scopes: &ScopeArena,
+    id_gen: &mut IdGen,
+    diag: &mut DiagnosticContext,
+    items: &[Item],
+) -> CompilationUnit {
+    let ctx = MonoCtx::new(arena, scopes, id_gen, diag, items);
+
+    // Find all root items (exported functions, main, statics)
+    for item in items {
+        if item.tag == ITEM_FUNCTION {
+            let fn_def = &item.fn_def;
+            let is_root = false;
+            for attr in fn_def.attributes {
+                if attr.tag == ATTR_EXPORT {
+                    is_root = true;
+                } else if attr.tag == ATTR_MAIN {
+                    is_root = true;
+                } else if attr.tag == ATTR_TEST {
+                    is_root = true;
+                }
+            }
+            // Extern functions without body are declarations
+            if fn_def.abi.is_some() && fn_def.body.is_none() {
+                is_root = false; // Don't monomorphize extern declarations
+            }
+            // Non-generic functions are always roots (simplified)
+            if fn_def.generic_params.len() == 0 && fn_def.body.is_some() {
+                is_root = true;
+            }
+            if is_root {
+                let mono = Mono::new(&ctx);
+                mono.mono_function(fn_def, &[]);
+                mono.free();
+            }
+        } else if item.tag == ITEM_STATIC {
+            // Process statics
+            let sd = &item.static_def;
+            let mono = Mono::new(&ctx);
+            let ty = if sd.ty.is_some() {
+                mono.resolve_type(sd.ty.unwrap())
+            } else {
+                ctx.void_ty
+            };
+
+            let init: Option<&IrExpr> = if sd.init.is_some() {
+                Option::some(mono.lower_expr(sd.init.unwrap()))
+            } else {
+                Option::none()
+            };
+
+            let is_extern = false;
+            for attr in sd.attributes {
+                if attr.tag == ATTR_EXTERN {
+                    is_extern = true;
+                }
+            }
+
+            ctx.ir_globals.push(IrGlobal {
+                id: sd.id,
+                name: sd.name,
+                mangled_name: sd.name,
+                ty: ty,
+                init: init,
+                is_const: sd.is_const,
+                is_extern: is_extern,
+                attributes: sd.attributes,
+            });
+            mono.free();
+        }
+    }
+
+    // Build compilation unit
+    let fns = arena.alloc_slice::<IrFunction>(ctx.ir_functions.len());
+    for i in 0usize..ctx.ir_functions.len() {
+        fns[i] = ctx.ir_functions[i];
+    }
+    let globals = arena.alloc_slice::<IrGlobal>(ctx.ir_globals.len());
+    for i in 0usize..ctx.ir_globals.len() {
+        globals[i] = ctx.ir_globals[i];
+    }
+    let structs = arena.alloc_slice::<IrStructRef>(ctx.ir_structs.len());
+    for i in 0usize..ctx.ir_structs.len() {
+        structs[i] = ctx.ir_structs[i];
+    }
+    let enums = arena.alloc_slice::<IrEnumRef>(ctx.ir_enums.len());
+    for i in 0usize..ctx.ir_enums.len() {
+        enums[i] = ctx.ir_enums[i];
+    }
+
+    ctx.free();
+
+    CompilationUnit {
+        functions: fns,
+        globals: globals,
+        structs: structs,
+        enums: enums,
+    }
+}
+
+// ============================================================
+// Helper functions
+// ============================================================
+
+fn hash_mono_key(id: Id, type_args: &[&IrTy]) -> u64 {
+    let h: u64 = id._value as u64;
+    for arg in type_args {
+        h = h * 31 + (arg as &void as usize) as u64;
+    }
+    h
+}
+
+fn format_usize(n: usize, arena: &mut Arena) -> &[u8] {
+    if n == 0 {
+        let buf = arena.alloc_slice::<u8>(1);
+        buf[0] = '0' as u8;
+        return buf;
+    }
+
+    // Count digits
+    let temp = n;
+    let digits: usize = 0;
+    while temp > 0 {
+        digits = digits + 1;
+        temp = temp / 10;
+    }
+
+    let buf = arena.alloc_slice::<u8>(digits);
+    temp = n;
+    let i = digits;
+    while temp > 0 {
+        i = i - 1;
+        buf[i] = ('0' as u8) + (temp % 10) as u8;
+        temp = temp / 10;
+    }
+    buf
+}

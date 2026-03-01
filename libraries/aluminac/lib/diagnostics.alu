@@ -1,0 +1,139 @@
+// Diagnostics and error reporting for the self-hosted compiler
+
+use ast::Span;
+use std::fmt::{Formatter, write};
+
+enum DiagLevel {
+    Error,
+    Warning,
+    Note,
+}
+
+struct Diagnostic {
+    level: DiagLevel,
+    message: &[u8],
+    span: Span,
+}
+
+struct SourceFile {
+    path: &[u8],
+    contents: &[u8],
+    // Line start offsets for line number lookup
+    line_starts: &[u32],
+}
+
+impl SourceFile {
+    fn line_col(self: &SourceFile, offset: u32) -> (u32, u32) {
+        // Binary search for line number
+        let lo: usize = 0;
+        let hi: usize = self.line_starts.len();
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if self.line_starts[mid] <= offset {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        let line = lo as u32; // 1-based
+        let col = offset - self.line_starts[lo - 1] + 1; // 1-based
+        (line, col)
+    }
+}
+
+fn compute_line_starts(contents: &[u8], arena: &mut arena::Arena) -> &[u32] {
+    // Count lines first
+    let count: usize = 1;
+    for i in 0usize..contents.len() {
+        if contents[i] == '\n' as u8 {
+            count = count + 1;
+        }
+    }
+    let starts = arena.alloc_slice::<u32>(count);
+    starts[0] = 0;
+    let idx: usize = 1;
+    for i in 0usize..contents.len() {
+        if contents[i] == '\n' as u8 {
+            if idx < count {
+                starts[idx] = (i + 1) as u32;
+                idx = idx + 1;
+            }
+        }
+    }
+    starts[0..idx]
+}
+
+struct DiagnosticContext {
+    files: std::collections::Vector<SourceFile>,
+    errors: std::collections::Vector<Diagnostic>,
+    has_errors: bool,
+}
+
+impl DiagnosticContext {
+    fn new() -> DiagnosticContext {
+        DiagnosticContext {
+            files: std::collections::Vector::new(),
+            errors: std::collections::Vector::new(),
+            has_errors: false,
+        }
+    }
+
+    fn add_file(self: &mut DiagnosticContext, path: &[u8], contents: &[u8], arena: &mut arena::Arena) -> u32 {
+        let id = self.files.len() as u32;
+        let line_starts = compute_line_starts(contents, arena);
+        self.files.push(SourceFile {
+            path: path,
+            contents: contents,
+            line_starts: line_starts,
+        });
+        id
+    }
+
+    fn error(self: &mut DiagnosticContext, span: Span, message: &[u8]) {
+        self.has_errors = true;
+        self.errors.push(Diagnostic {
+            level: DiagLevel::Error,
+            message: message,
+            span: span,
+        });
+    }
+
+    fn warning(self: &mut DiagnosticContext, span: Span, message: &[u8]) {
+        self.errors.push(Diagnostic {
+            level: DiagLevel::Warning,
+            message: message,
+            span: span,
+        });
+    }
+
+    fn emit_all(self: &DiagnosticContext) {
+        for diag in self.errors.iter() {
+            let level_str: &[u8] = switch diag.level {
+                DiagLevel::Error => "error",
+                DiagLevel::Warning => "warning",
+                DiagLevel::Note => "note",
+                _ => "unknown",
+            };
+
+            if diag.span.file_id < self.files.len() as u32 {
+                let file = &self.files[diag.span.file_id as usize];
+                let (line, col) = file.line_col(diag.span.start);
+                std::io::eprintln!(
+                    "{}: {} at {}:{}:{}",
+                    level_str,
+                    diag.message,
+                    file.path,
+                    line,
+                    col
+                );
+            } else {
+                std::io::eprintln!("{}: {}", level_str, diag.message);
+            }
+        }
+    }
+
+    fn free(self: &mut DiagnosticContext) {
+        self.files.free();
+        self.errors.free();
+    }
+}
