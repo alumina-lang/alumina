@@ -52,6 +52,7 @@ struct PendingFunction {
     name: &[u8],
     attributes: &[Attribute],
     is_method: bool,
+    impl_generic_param_ids: &[Id],
 }
 
 struct PendingStruct {
@@ -210,6 +211,7 @@ struct Pass1 {
     current_scope: u32,
     in_container: bool,   // inside struct/enum/protocol/impl
     current_enum_id: Option<Id>,
+    impl_generic_param_ids: &[Id],
 }
 
 impl Pass1 {
@@ -219,6 +221,7 @@ impl Pass1 {
             current_scope: root_scope,
             in_container: false,
             current_enum_id: Option::none(),
+            impl_generic_param_ids: &[],
         }
     }
 
@@ -340,6 +343,12 @@ impl Pass1 {
                                 ));
                             }
                         }
+                    } else if name == "lang" {
+                        let args_node = child_by!(child, FieldKind::Arguments);
+                        if !args_node.is_null() {
+                            let lang_name = self.ctx.node_text(args_node.unwrap());
+                            attrs.push(Attribute::lang(self.ctx.intern_str(lang_name)));
+                        }
                     }
                 }
             }
@@ -411,6 +420,7 @@ impl Pass1 {
             name: name,
             attributes: attributes,
             is_method: self.in_container,
+            impl_generic_param_ids: self.impl_generic_param_ids,
         });
 
         // Visit generic params and parameters in child scope
@@ -575,17 +585,24 @@ impl Pass1 {
 
         let prev = self.current_scope;
         let prev_container = self.in_container;
+        let prev_impl_gp = self.impl_generic_param_ids;
         self.current_scope = child_scope;
         self.in_container = true;
 
         let type_args = child_by!(node, FieldKind::TypeArguments);
         if !type_args.is_null() {
+            // Visit to register generic params in scope
             self.visit_node(type_args.unwrap());
+            // Collect the IDs of the generic params we just registered
+            self.impl_generic_param_ids = self.collect_generic_param_ids(type_args.unwrap());
+        } else {
+            self.impl_generic_param_ids = &[];
         }
         self.visit_children_by_field(node, FieldKind::Body);
 
         self.current_scope = prev;
         self.in_container = prev_container;
+        self.impl_generic_param_ids = prev_impl_gp;
     }
 
     fn visit_type_def_p1(self: &mut Pass1, node: Node) {
@@ -839,6 +856,36 @@ impl Pass1 {
         }
     }
 
+    fn collect_generic_param_ids(self: &mut Pass1, type_args_node: Node) -> &[Id] {
+        let ids: Vector<Id> = Vector::new();
+        defer ids.free();
+
+        let cursor = type_args_node.walk();
+        defer cursor.free();
+        for child in children_by!(type_args_node, FieldKind::Argument, &cursor) {
+            let kind = NODE_KINDS[child.symbol() as usize];
+            if kind == NodeKind::GenericArgument {
+                let placeholder = child_by!(child, FieldKind::Placeholder);
+                if !placeholder.is_null() {
+                    let name = self.ctx.intern_str(self.ctx.node_text(placeholder.unwrap()));
+                    let resolved = self.ctx.scopes.resolve(self.current_scope, name);
+                    if resolved.is_some() && resolved.unwrap().kind.tag == scope::NIK_GENERIC_PARAM {
+                        ids.push(resolved.unwrap().kind.id);
+                    }
+                }
+            }
+        }
+
+        if ids.len() == 0 {
+            return &[];
+        }
+        let result = self.ctx.arena.alloc_slice::<Id>(ids.len());
+        for i in 0usize..ids.len() {
+            result[i] = ids[i];
+        }
+        result
+    }
+
     fn visit_parameter_p1(self: &mut Pass1, node: Node) {
         let name = self.get_name(node);
         let id = self.ctx.next_id();
@@ -923,7 +970,28 @@ impl Pass2 {
 
     fn build_function(self: &mut Pass2, node: Node, pending: &PendingFunction) {
         // Parse generic parameters
-        let generic_params = self.parse_generic_params(node, pending.scope_idx);
+        let fn_generic_params = self.parse_generic_params(node, pending.scope_idx);
+
+        // Prepend impl generic params if this is a method in a generic impl
+        let generic_params = if pending.impl_generic_param_ids.len() > 0 {
+            let impl_count = pending.impl_generic_param_ids.len();
+            let total = impl_count + fn_generic_params.len();
+            let combined = self.ctx.arena.alloc_slice::<GenericParam>(total);
+            for i in 0usize..impl_count {
+                combined[i] = GenericParam {
+                    id: pending.impl_generic_param_ids[i],
+                    name: "_impl_generic",
+                    bounds: &[],
+                    default_ty: Option::none(),
+                };
+            }
+            for i in 0usize..fn_generic_params.len() {
+                combined[impl_count + i] = fn_generic_params[i];
+            }
+            combined as &[GenericParam]
+        } else {
+            fn_generic_params
+        };
 
         // Parse parameters
         let params = self.parse_fn_params(node, pending.scope_idx);
@@ -956,6 +1024,18 @@ impl Pass2 {
             Option::none()
         };
 
+        // Tag "main" functions with ATTR_MAIN
+        let attributes = if pending.name == "main" && body.is_some() {
+            let new_attrs = self.ctx.arena.alloc_slice::<Attribute>(pending.attributes.len() + 1);
+            for ai in 0usize..pending.attributes.len() {
+                new_attrs[ai] = pending.attributes[ai];
+            }
+            new_attrs[pending.attributes.len()] = Attribute::main_attr();
+            new_attrs as &[Attribute]
+        } else {
+            pending.attributes
+        };
+
         let fn_def = FnDef {
             id: pending.id,
             name: pending.name,
@@ -963,7 +1043,7 @@ impl Pass2 {
             params: params,
             return_type: return_type,
             body: body,
-            attributes: pending.attributes,
+            attributes: attributes,
             is_variadic: is_variadic,
             abi: abi,
         };
@@ -1261,6 +1341,17 @@ impl Pass2 {
                 }
                 self.ctx.alloc_ty(Ty::unresolved())
             },
+            NodeKind::GenericTypeWithTurbofish => {
+                // Pair::<A, B> syntax - same as GenericType but with ::
+                let base_node = child_by!(node, FieldKind::Type);
+                let args_node = child_by!(node, FieldKind::TypeArguments);
+                if !base_node.is_null() && !args_node.is_null() {
+                    let base = self.parse_type(base_node.unwrap(), scope_idx);
+                    let type_args = self.parse_type_args(args_node.unwrap(), scope_idx);
+                    return self.ctx.alloc_ty(Ty::generic_ty(base, type_args));
+                }
+                self.ctx.alloc_ty(Ty::unresolved())
+            },
             NodeKind::TypeOf => {
                 // typeof(expr)
                 let inner = child_by!(node, FieldKind::Inner);
@@ -1404,6 +1495,7 @@ impl Pass2 {
             fields: fields_slice,
             attributes: pending.attributes,
             is_union: pending.is_union,
+            scope_idx: pending.scope_idx,
         };
         self.ctx.items.push(item);
     }
@@ -1470,6 +1562,7 @@ impl Pass2 {
             underlying_type: underlying,
             variants: variants_slice,
             attributes: pending.attributes,
+            scope_idx: pending.scope_idx,
         };
         self.ctx.items.push(item);
     }

@@ -46,6 +46,9 @@ struct CodegenCtx {
     f32_type: LLVMTypeRef,
     f64_type: LLVMTypeRef,
     ptr_type: LLVMTypeRef,  // i8*
+    isize_type: LLVMTypeRef,  // i64 on 64-bit
+    memcmp_fn_type: LLVMTypeRef,
+    memcpy_fn_type: LLVMTypeRef,
 
     // Pointer size in bytes
     pointer_size: u32,
@@ -139,6 +142,9 @@ impl CodegenCtx {
             f32_type: f32_type,
             f64_type: f64_type,
             ptr_type: ptr_type,
+            isize_type: i64_type,  // TODO: use pointer size to pick correct width
+            memcmp_fn_type: std::mem::zeroed::<LLVMTypeRef>(),
+            memcpy_fn_type: std::mem::zeroed::<LLVMTypeRef>(),
             pointer_size: pointer_size,
         }
     }
@@ -177,6 +183,17 @@ impl CodegenCtx {
                 &llvm_elems[0],
                 ty.elems.len() as u32,
                 0i32 // not packed
+            )
+        } else if ty.tag == IRTY_SLICE {
+            // Slice fat pointer: { data_ptr, usize }
+            let llvm_elems = self.arena.alloc_slice::<LLVMTypeRef>(2);
+            llvm_elems[0] = self.ptr_type;
+            llvm_elems[1] = self.builtin_to_llvm(BuiltinType::USize);
+            LLVMStructTypeInContext(
+                self.context,
+                &llvm_elems[0],
+                2u32,
+                0i32
             )
         } else if ty.tag == IRTY_FN_POINTER {
             // Function pointers are just i8* in LLVM
@@ -893,6 +910,25 @@ impl FnCodegen {
                     &indices[0], 1, self.temp_cname()
                 );
                 LLVMBuildLoad2(self.ctx.builder, elem_ty, elem_ptr, self.temp_cname())
+            } else if expr.lhs.ty.tag == IRTY_SLICE {
+                // Slice indexing: extract data pointer (field 0), then GEP
+                let slice_llvm = self.ctx.llvm_type(expr.lhs.ty);
+                let slice_alloca = LLVMBuildAlloca(self.ctx.builder, slice_llvm, self.temp_cname());
+                LLVMBuildStore(self.ctx.builder, base_val, slice_alloca);
+                let ptr_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, slice_alloca, 0u32, self.temp_cname());
+                let data_ptr = LLVMBuildLoad2(self.ctx.builder, self.ctx.ptr_type, ptr_ptr, self.temp_cname());
+                let typed_ptr = LLVMBuildBitCast(
+                    self.ctx.builder, data_ptr,
+                    LLVMPointerType(elem_ty, 0),
+                    self.temp_cname()
+                );
+                let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(1);
+                indices[0] = index_val;
+                let elem_ptr = LLVMBuildInBoundsGEP2(
+                    self.ctx.builder, elem_ty, typed_ptr,
+                    &indices[0], 1, self.temp_cname()
+                );
+                LLVMBuildLoad2(self.ctx.builder, elem_ty, elem_ptr, self.temp_cname())
             } else {
                 LLVMGetUndef(elem_ty)
             }
@@ -1007,6 +1043,23 @@ impl FnCodegen {
             // For now, just generate the expression inline
             self.gen_expr(expr.lhs);
             LLVMGetUndef(self.ctx.void_type)
+        } else if expr.tag == IR_MEMCPY {
+            // IR_MEMCPY: lhs=dest, rhs=src, cond=len (in elements), ir_ty=elem type
+            let dest_val = self.gen_expr(expr.lhs);
+            let src_val = self.gen_expr(expr.rhs);
+            let len_val = self.gen_expr(expr.cond);
+            let elem_llvm = self.ctx.llvm_type(expr.ir_ty);
+            let elem_size = LLVMSizeOf(elem_llvm);
+            let byte_len = LLVMBuildMul(self.ctx.builder, len_val, elem_size, self.temp_cname());
+            // Declare or get memcpy
+            let memcpy_fn = self.get_or_declare_memcpy();
+            let args = self.ctx.arena.alloc_slice::<LLVMValueRef>(3);
+            args[0] = dest_val;
+            args[1] = src_val;
+            args[2] = byte_len;
+            let memcpy_fn_ty = self.ctx.memcpy_fn_type;
+            LLVMBuildCall2(self.ctx.builder, memcpy_fn_ty, memcpy_fn, &args[0], 3u32, self.temp_cname());
+            LLVMGetUndef(self.ctx.void_type)
         } else if expr.tag == IR_VOID {
             LLVMGetUndef(self.ctx.void_type)
         } else {
@@ -1035,8 +1088,11 @@ impl FnCodegen {
         } else if expr.tag == IR_FIELD_ACCESS {
             let obj_ptr = self.gen_lvalue(expr.lhs);
             let obj_ty = self.ctx.llvm_type(expr.lhs.ty);
+            // Bitcast to correct pointer type for GEP
+            let obj_ptr_ty = LLVMPointerType(obj_ty, 0);
+            let typed_ptr = LLVMBuildBitCast(self.ctx.builder, obj_ptr, obj_ptr_ty, self.temp_cname());
             LLVMBuildStructGEP2(
-                self.ctx.builder, obj_ty, obj_ptr, expr.field_idx,
+                self.ctx.builder, obj_ty, typed_ptr, expr.field_idx,
                 self.temp_cname()
             )
         } else if expr.tag == IR_INDEX {
@@ -1058,6 +1114,26 @@ impl FnCodegen {
                 indices[0] = index_val;
                 LLVMBuildInBoundsGEP2(
                     self.ctx.builder, elem_ty, base_val,
+                    &indices[0], 1, self.temp_cname()
+                )
+            } else if expr.lhs.ty.tag == IRTY_SLICE {
+                // Slice lvalue indexing: extract data pointer, then GEP
+                let base_val = self.gen_expr(expr.lhs);
+                let slice_llvm = self.ctx.llvm_type(expr.lhs.ty);
+                let elem_ty = self.ctx.llvm_type(expr.lhs.ty.inner);
+                let slice_alloca = LLVMBuildAlloca(self.ctx.builder, slice_llvm, self.temp_cname());
+                LLVMBuildStore(self.ctx.builder, base_val, slice_alloca);
+                let ptr_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, slice_alloca, 0u32, self.temp_cname());
+                let data_ptr = LLVMBuildLoad2(self.ctx.builder, self.ctx.ptr_type, ptr_ptr, self.temp_cname());
+                let typed_ptr = LLVMBuildBitCast(
+                    self.ctx.builder, data_ptr,
+                    LLVMPointerType(elem_ty, 0),
+                    self.temp_cname()
+                );
+                let indices = self.ctx.arena.alloc_slice::<LLVMValueRef>(1);
+                indices[0] = index_val;
+                LLVMBuildInBoundsGEP2(
+                    self.ctx.builder, elem_ty, typed_ptr,
                     &indices[0], 1, self.temp_cname()
                 )
             } else {
@@ -1143,12 +1219,19 @@ impl FnCodegen {
                 else { LLVMBuildLShr(self.ctx.builder, lhs_val, rhs_val, n) }
             },
             BinOp::Eq => {
-                if is_float { LLVMBuildFCmp(self.ctx.builder, LLVMRealPredicate::OEQ, lhs_val, rhs_val, n) }
+                let is_slice = lhs.ty.tag == IRTY_SLICE;
+                if is_slice {
+                    self.gen_slice_eq(lhs_val, rhs_val, lhs.ty)
+                } else if is_float { LLVMBuildFCmp(self.ctx.builder, LLVMRealPredicate::OEQ, lhs_val, rhs_val, n) }
                 else if is_ptr { LLVMBuildICmp(self.ctx.builder, LLVMIntPredicate::EQ, lhs_val, rhs_val, n) }
                 else { LLVMBuildICmp(self.ctx.builder, LLVMIntPredicate::EQ, lhs_val, rhs_val, n) }
             },
             BinOp::Ne => {
-                if is_float { LLVMBuildFCmp(self.ctx.builder, LLVMRealPredicate::ONE, lhs_val, rhs_val, n) }
+                let is_slice = lhs.ty.tag == IRTY_SLICE;
+                if is_slice {
+                    let eq = self.gen_slice_eq(lhs_val, rhs_val, lhs.ty);
+                    LLVMBuildNot(self.ctx.builder, eq, n)
+                } else if is_float { LLVMBuildFCmp(self.ctx.builder, LLVMRealPredicate::ONE, lhs_val, rhs_val, n) }
                 else { LLVMBuildICmp(self.ctx.builder, LLVMIntPredicate::NE, lhs_val, rhs_val, n) }
             },
             BinOp::Lt => {
@@ -1173,6 +1256,95 @@ impl FnCodegen {
             },
             _ => LLVMGetUndef(self.ctx.llvm_type(result_ty)),
         }
+    }
+
+    fn gen_slice_eq(self: &mut FnCodegen, lhs_val: LLVMValueRef, rhs_val: LLVMValueRef, slice_ty: &IrTy) -> LLVMValueRef {
+        let n = self.temp_cname();
+        let slice_llvm = self.ctx.llvm_type(slice_ty);
+
+        // Store both slices to allocas so we can GEP into them
+        let lhs_alloca = LLVMBuildAlloca(self.ctx.builder, slice_llvm, self.temp_cname());
+        LLVMBuildStore(self.ctx.builder, lhs_val, lhs_alloca);
+        let rhs_alloca = LLVMBuildAlloca(self.ctx.builder, slice_llvm, self.temp_cname());
+        LLVMBuildStore(self.ctx.builder, rhs_val, rhs_alloca);
+
+        // Extract ptr and len from both
+        let lhs_ptr_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, lhs_alloca, 0u32, self.temp_cname());
+        let lhs_ptr = LLVMBuildLoad2(self.ctx.builder, self.ctx.ptr_type, lhs_ptr_ptr, self.temp_cname());
+        let lhs_len_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, lhs_alloca, 1u32, self.temp_cname());
+        let lhs_len = LLVMBuildLoad2(self.ctx.builder, self.ctx.isize_type, lhs_len_ptr, self.temp_cname());
+
+        let rhs_ptr_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, rhs_alloca, 0u32, self.temp_cname());
+        let rhs_ptr = LLVMBuildLoad2(self.ctx.builder, self.ctx.ptr_type, rhs_ptr_ptr, self.temp_cname());
+        let rhs_len_ptr = LLVMBuildStructGEP2(self.ctx.builder, slice_llvm, rhs_alloca, 1u32, self.temp_cname());
+        let rhs_len = LLVMBuildLoad2(self.ctx.builder, self.ctx.isize_type, rhs_len_ptr, self.temp_cname());
+
+        // Compare lengths
+        let len_eq = LLVMBuildICmp(self.ctx.builder, LLVMIntPredicate::EQ, lhs_len, rhs_len, self.temp_cname());
+
+        // Create basic blocks for the memcmp path
+        let memcmp_bb = LLVMAppendBasicBlockInContext(
+            self.ctx.context, self.llvm_fn, &"slice_eq.memcmp\0"[0] as &libc::c_char
+        );
+        let merge_bb = LLVMAppendBasicBlockInContext(
+            self.ctx.context, self.llvm_fn, &"slice_eq.merge\0"[0] as &libc::c_char
+        );
+
+        let current_bb = LLVMGetInsertBlock(self.ctx.builder);
+        LLVMBuildCondBr(self.ctx.builder, len_eq, memcmp_bb, merge_bb);
+
+        // memcmp path
+        LLVMPositionBuilderAtEnd(self.ctx.builder, memcmp_bb);
+
+        // Declare memcmp if not already declared
+        let memcmp_fn = self.get_or_declare_memcmp();
+        let memcmp_args: [LLVMValueRef; 3] = [lhs_ptr, rhs_ptr, lhs_len];
+        let memcmp_result = LLVMBuildCall2(
+            self.ctx.builder,
+            self.ctx.memcmp_fn_type,
+            memcmp_fn,
+            &memcmp_args[0],
+            3u32,
+            self.temp_cname()
+        );
+        let data_eq = LLVMBuildICmp(
+            self.ctx.builder, LLVMIntPredicate::EQ,
+            memcmp_result,
+            LLVMConstInt(self.ctx.i32_type, 0u64, 0i32),
+            self.temp_cname()
+        );
+        let memcmp_end_bb = LLVMGetInsertBlock(self.ctx.builder);
+        LLVMBuildBr(self.ctx.builder, merge_bb);
+
+        // Merge
+        LLVMPositionBuilderAtEnd(self.ctx.builder, merge_bb);
+        let phi = LLVMBuildPhi(self.ctx.builder, self.ctx.i1_type, n);
+        let vals: [LLVMValueRef; 2] = [LLVMConstInt(self.ctx.i1_type, 0u64, 0i32), data_eq];
+        let blocks: [LLVMBasicBlockRef; 2] = [current_bb, memcmp_end_bb];
+        LLVMAddIncoming(phi, &vals[0], &blocks[0], 2u32);
+        phi
+    }
+
+    fn get_or_declare_memcmp(self: &mut FnCodegen) -> LLVMValueRef {
+        let existing = LLVMGetNamedFunction(self.ctx.module, &"memcmp\0"[0] as &libc::c_char);
+        if existing as &void as usize != 0 {
+            return existing;
+        }
+        // Declare: i32 memcmp(i8*, i8*, i64)
+        let param_types: [LLVMTypeRef; 3] = [self.ctx.ptr_type, self.ctx.ptr_type, self.ctx.isize_type];
+        self.ctx.memcmp_fn_type = LLVMFunctionType(self.ctx.i32_type, &param_types[0], 3u32, 0i32);
+        LLVMAddFunction(self.ctx.module, &"memcmp\0"[0] as &libc::c_char, self.ctx.memcmp_fn_type)
+    }
+
+    fn get_or_declare_memcpy(self: &mut FnCodegen) -> LLVMValueRef {
+        let existing = LLVMGetNamedFunction(self.ctx.module, &"memcpy\0"[0] as &libc::c_char);
+        if existing as &void as usize != 0 {
+            return existing;
+        }
+        // Declare: void* memcpy(void*, void*, size_t)
+        let param_types: [LLVMTypeRef; 3] = [self.ctx.ptr_type, self.ctx.ptr_type, self.ctx.isize_type];
+        self.ctx.memcpy_fn_type = LLVMFunctionType(self.ctx.ptr_type, &param_types[0], 3u32, 0i32);
+        LLVMAddFunction(self.ctx.module, &"memcpy\0"[0] as &libc::c_char, self.ctx.memcpy_fn_type)
     }
 
     fn gen_logical_and(self: &mut FnCodegen, lhs: &IrExpr, rhs: &IrExpr) -> LLVMValueRef {

@@ -13,6 +13,8 @@ use aluminac::lib::diagnostics::DiagnosticContext;
 use tree_sitter::{Parser, TSLanguage};
 use std::collections::Vector;
 use std::option::Option;
+use std::string::StringBuf;
+use std::fs::{Path, PathBuf, FileType, read_directory};
 
 extern "C" fn tree_sitter_alumina() -> &TSLanguage;
 
@@ -123,6 +125,153 @@ impl Compiler {
 
         let contents = buf[0..(read_bytes as usize)];
         self.add_source(path, contents, module_path);
+        true
+    }
+
+    /// Load all .alu files from the sysroot directory recursively.
+    /// Each file gets a module path derived from its relative path within sysroot.
+    /// e.g. sysroot/std/mem.alu -> "std::mem", sysroot/std/mod.alu -> "std"
+    fn load_sysroot(self: &mut Compiler) -> bool {
+        let sysroot = self.options.sysroot;
+        if sysroot.len() == 0 {
+            return true;
+        }
+
+        // Use a stack for iterative directory traversal
+        // Each entry is (directory_path, module_prefix)
+        // module_prefix is like "" for root, "std" for std/, "std::collections" etc.
+        let dir_stack: Vector<(PathBuf, StringBuf)> = Vector::new();
+        defer dir_stack.free();
+
+        let root_path = PathBuf::from_str(sysroot);
+        let root_prefix = StringBuf::new();
+        dir_stack.push((root_path, root_prefix));
+
+        while dir_stack.len() > 0 {
+            let entry_pair = dir_stack.pop().unwrap();
+            let dir_path = entry_pair.0;
+            let mod_prefix = entry_pair.1;
+
+            let dir_iter_result = read_directory(dir_path.as_path());
+            if dir_iter_result.is_err() {
+                std::io::eprintln!("error: cannot open sysroot directory");
+                dir_path.free();
+                mod_prefix.free();
+                return false;
+            }
+            let dir_iter = dir_iter_result.unwrap();
+
+            loop {
+                let entry_opt = dir_iter.next();
+                if entry_opt.is_none() {
+                    break;
+                }
+                let entry_result = entry_opt.unwrap();
+                if entry_result.is_err() {
+                    continue;
+                }
+                let entry = entry_result.unwrap();
+                let name = entry.name();
+
+                // Skip . and ..
+                if name == "." || name == ".." {
+                    continue;
+                }
+
+                if entry.file_type() == FileType::Directory {
+                    // Build child path and module prefix
+                    let child_path = PathBuf::from_path(dir_path.as_path());
+                    child_path.push(Path::new(name));
+
+                    let child_prefix = StringBuf::new();
+                    if mod_prefix.len() > 0 {
+                        child_prefix.extend_from_slice(mod_prefix.as_slice());
+                        child_prefix.extend_from_slice("::");
+                    }
+                    child_prefix.extend_from_slice(name);
+
+                    dir_stack.push((child_path, child_prefix));
+                } else if name.len() > 4 && name[name.len() - 4..] == ".alu" {
+                    // Skip test.alu in the sysroot root
+                    if name == "test.alu" && mod_prefix.len() == 0 {
+                        continue;
+                    }
+
+                    // Build full file path
+                    let file_path = PathBuf::from_path(dir_path.as_path());
+                    file_path.push(Path::new(name));
+
+                    // Build module path: strip .alu suffix, handle "mod" specially
+                    let stem = name[0..name.len() - 4]; // strip ".alu"
+                    let module_path = StringBuf::new();
+
+                    if stem == "mod" {
+                        // mod.alu -> just the directory's module prefix
+                        if mod_prefix.len() > 0 {
+                            module_path.extend_from_slice(mod_prefix.as_slice());
+                        }
+                        // root mod.alu has empty module_path (maps to root scope)
+                    } else {
+                        if mod_prefix.len() > 0 {
+                            module_path.extend_from_slice(mod_prefix.as_slice());
+                            module_path.extend_from_slice("::");
+                        }
+                        module_path.extend_from_slice(stem);
+                    }
+
+                    // Read the file using std::fs
+                    let file_path_slice = file_path.inner.as_slice();
+                    let read_result = std::fs::File::read_to_string(file_path.as_path());
+                    if read_result.is_err() {
+                        std::io::eprintln!("error: cannot read sysroot file");
+                        file_path.free();
+                        module_path.free();
+                        continue;
+                    }
+                    let file_contents = read_result.unwrap();
+
+                    // Copy path and contents into arena for lifetime management
+                    let path_copy: &[u8] = if file_path_slice.len() > 0 {
+                        let p = self.arena.alloc_slice::<u8>(file_path_slice.len());
+                        file_path_slice.copy_to_nonoverlapping(&p[0]);
+                        p as &[u8]
+                    } else {
+                        ""
+                    };
+
+                    let contents_copy: &[u8] = if file_contents.len() > 0 {
+                        let c = self.arena.alloc_slice::<u8>(file_contents.len());
+                        file_contents.as_slice().copy_to_nonoverlapping(&c[0]);
+                        c as &[u8]
+                    } else {
+                        ""
+                    };
+
+                    let mod_path_copy: &[u8] = if module_path.len() > 0 {
+                        let m = self.arena.alloc_slice::<u8>(module_path.len());
+                        module_path.as_slice().copy_to_nonoverlapping(&m[0]);
+                        m as &[u8]
+                    } else {
+                        ""
+                    };
+
+                    self.add_source(
+                        path_copy as &[u8],
+                        contents_copy as &[u8],
+                        mod_path_copy as &[u8],
+                    );
+
+                    file_path.free();
+                    file_contents.free();
+                    module_path.free();
+                }
+            }
+
+            dir_iter.close();
+            dir_path.free();
+            mod_prefix.free();
+        }
+
         true
     }
 
@@ -513,6 +662,13 @@ fn main(args: &[&[u8]]) -> i32 {
     }
 
     let compiler = Compiler::new(options);
+
+    // Load sysroot files first (they go into module scopes like "std::mem", etc.)
+    if !compiler.load_sysroot() {
+        files.free();
+        compiler.free();
+        return 1i32;
+    }
 
     for i in 0usize..files.len() {
         if !compiler.add_source_file(files[i].file_path, files[i].module_path) {

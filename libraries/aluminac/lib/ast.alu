@@ -436,10 +436,12 @@ const ATTR_THREAD_LOCAL: i32 = 8i32;
 const ATTR_TEST: i32 = 9i32;
 const ATTR_MAIN: i32 = 10i32;
 const ATTR_STATIC_CTOR: i32 = 11i32;
+const ATTR_LANG: i32 = 12i32;
+const ATTR_INLINE_IR: i32 = 13i32;
 
 struct Attribute {
     tag: i32,
-    str_val: &[u8],     // for ATTR_EXTERN, ATTR_CFG
+    str_val: &[u8],     // for ATTR_EXTERN, ATTR_CFG, ATTR_LANG
     int_val: usize,     // for ATTR_ALIGN
 }
 
@@ -456,6 +458,8 @@ impl Attribute {
     fn test() -> Attribute { Attribute { tag: ATTR_TEST, str_val: "", int_val: 0 } }
     fn main_attr() -> Attribute { Attribute { tag: ATTR_MAIN, str_val: "", int_val: 0 } }
     fn static_ctor() -> Attribute { Attribute { tag: ATTR_STATIC_CTOR, str_val: "", int_val: 0 } }
+    fn lang(name: &[u8]) -> Attribute { Attribute { tag: ATTR_LANG, str_val: name, int_val: 0 } }
+    fn inline_ir() -> Attribute { Attribute { tag: ATTR_INLINE_IR, str_val: "", int_val: 0 } }
 }
 
 struct FnDef {
@@ -483,6 +487,7 @@ struct StructDef {
     fields: &[StructField],
     attributes: &[Attribute],
     is_union: bool,
+    scope_idx: u32,
 }
 
 struct EnumVariant {
@@ -497,6 +502,7 @@ struct EnumDef {
     underlying_type: Option<&Ty>,
     variants: &[EnumVariant],
     attributes: &[Attribute],
+    scope_idx: u32,
 }
 
 struct TypeAlias {
@@ -586,6 +592,7 @@ const IRTY_STRUCT: i32 = 5i32;
 const IRTY_ENUM: i32 = 6i32;
 const IRTY_VOID: i32 = 7i32;
 const IRTY_NEVER: i32 = 8i32;
+const IRTY_SLICE: i32 = 9i32;  // fat pointer: (data_ptr, len) - tracks element type
 
 struct IrTy {
     tag: i32,
@@ -654,6 +661,12 @@ impl IrTy {
                elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
                struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty() }
     }
+    fn mk_slice(elem: &IrTy, is_const: bool) -> IrTy {
+        IrTy { tag: IRTY_SLICE, builtin: BuiltinType::Void,
+               inner: elem, is_const: is_const, array_size: 0,
+               elems: &[], ret_ty: std::mem::zeroed::<&IrTy>(),
+               struct_ref: IrStructRef::empty(), enum_ref: IrEnumRef::empty() }
+    }
 
     fn is_void(self: &IrTy) -> bool {
         self.tag == IRTY_VOID || (self.tag == IRTY_BUILTIN && self.builtin as i32 == BuiltinType::Void as i32)
@@ -687,12 +700,13 @@ struct IrStructRef {
     is_union: bool,
     is_zero_sized: bool,
     scope_idx: u32,  // scope index for method resolution (0 = no methods)
+    type_args: &[&IrTy],  // type args used to instantiate this struct (for method dispatch)
 }
 
 impl IrStructRef {
     fn empty() -> IrStructRef {
         IrStructRef { id: Id { _value: 0 }, name: "", fields: &[],
-                       is_union: false, is_zero_sized: true, scope_idx: 0 }
+                       is_union: false, is_zero_sized: true, scope_idx: 0, type_args: &[] }
     }
 }
 
@@ -706,12 +720,13 @@ struct IrEnumRef {
     name: &[u8],
     underlying: &IrTy,
     variants: &[IrEnumVariant],
+    scope_idx: u32,
 }
 
 impl IrEnumRef {
     fn empty() -> IrEnumRef {
         IrEnumRef { id: Id { _value: 0 }, name: "",
-                     underlying: std::mem::zeroed::<&IrTy>(), variants: &[] }
+                     underlying: std::mem::zeroed::<&IrTy>(), variants: &[], scope_idx: 0 }
     }
 }
 
@@ -756,6 +771,7 @@ const IR_ARRAY_LIT: i32 = 29i32;
 const IR_DEFER: i32 = 30i32;
 const IR_VOID: i32 = 31i32;
 const IR_ZEROED: i32 = 32i32;
+const IR_MEMCPY: i32 = 33i32;
 
 // Call target tags
 const CALL_DIRECT: i32 = 0i32;

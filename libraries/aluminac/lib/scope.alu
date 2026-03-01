@@ -264,6 +264,14 @@ impl ScopeArena {
         }
     }
 
+    // Follow use aliases to their target
+    fn follow_use_alias(self: &ScopeArena, item: NamedItem) -> Option<NamedItem> {
+        if item.kind.tag == NIK_USE_ALIAS {
+            return self.resolve_path(item.kind.scope_idx, item.kind.path_segments);
+        }
+        Option::some(item)
+    }
+
     // Resolve a path within a specific module scope (no parent lookup)
     fn resolve_in_module(self: &ScopeArena, scope_idx: u32, segments: &[&[u8]]) -> Option<NamedItem> {
         if segments.len() == 0 {
@@ -278,10 +286,12 @@ impl ScopeArena {
                 let found = self.get(import_idx).items.get(&segments[0]);
                 if found.is_some() {
                     if segments.len() == 1 {
-                        return found;
+                        // Follow use aliases before returning
+                        return self.follow_use_alias(found.unwrap());
                     }
-                    if found.unwrap().kind.tag == NIK_MODULE {
-                        return self.resolve_in_module(found.unwrap().kind.scope_idx, segments[1..]);
+                    let resolved = self.follow_use_alias(found.unwrap());
+                    if resolved.is_some() && resolved.unwrap().kind.tag == NIK_MODULE {
+                        return self.resolve_in_module(resolved.unwrap().kind.scope_idx, segments[1..]);
                     } else {
                         return Option::none();
                     }
@@ -291,11 +301,23 @@ impl ScopeArena {
         }
 
         if segments.len() == 1 {
-            return found;
+            // Follow use aliases before returning
+            return self.follow_use_alias(found.unwrap());
         }
 
-        if found.unwrap().kind.tag == NIK_MODULE {
-            self.resolve_in_module(found.unwrap().kind.scope_idx, segments[1..])
+        let resolved = self.follow_use_alias(found.unwrap());
+        if resolved.is_some() {
+            let ritem = resolved.unwrap();
+            if ritem.kind.tag == NIK_MODULE {
+                self.resolve_in_module(ritem.kind.scope_idx, segments[1..])
+            } else if ritem.kind.tag == NIK_STRUCT && ritem.kind.scope_idx != 0 {
+                // Look up methods in struct's associated scope
+                self.resolve_in_module(ritem.kind.scope_idx, segments[1..])
+            } else if ritem.kind.tag == NIK_ENUM && ritem.kind.scope_idx != 0 {
+                self.resolve_in_module(ritem.kind.scope_idx, segments[1..])
+            } else {
+                Option::none()
+            }
         } else {
             Option::none()
         }
