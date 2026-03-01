@@ -1,0 +1,62 @@
+// Test: arena allocator pattern used in the compiler
+
+extern "C" fn malloc(size: usize) -> &mut void;
+extern "C" fn free(ptr: &mut void);
+
+struct Arena {
+    _data: &mut [u8],
+    _offset: usize,
+}
+
+impl Arena {
+    fn new(size: usize) -> Arena {
+        let data = std::mem::slice_alloc::<u8>(size);
+        Arena {
+            _data: data,
+            _offset: 0usize,
+        }
+    }
+
+    fn alloc<T>(self: &mut Arena, value: T) -> &mut T {
+        let size = std::mem::size_of::<T>();
+        // Align to 8 bytes
+        let aligned = (self._offset + 7usize) / 8usize * 8usize;
+        self._offset = aligned + size;
+        let ptr = &self._data[aligned] as &mut T;
+        *ptr = value;
+        ptr
+    }
+
+    fn alloc_slice<T>(self: &mut Arena, len: usize) -> &mut [T] {
+        let elem_size = std::mem::size_of::<T>();
+        let total = elem_size * len;
+        let aligned = (self._offset + 7usize) / 8usize * 8usize;
+        self._offset = aligned + total;
+        let ptr = &self._data[aligned] as &mut T;
+        std::mem::slice_from_raw::<T>(ptr, len)
+    }
+
+    fn free(self: &mut Arena) {
+        std::mem::slice_free::<u8>(self._data);
+    }
+}
+
+fn main() -> i32 {
+    let arena = Arena::new(4096usize);
+    defer arena.free();
+
+    let x = arena.alloc::<i32>(42i32);
+    let y = arena.alloc::<i32>(100i32);
+
+    let slice = arena.alloc_slice::<i32>(3usize);
+    slice[0] = 1i32;
+    slice[1] = 2i32;
+    slice[2] = 3i32;
+
+    let result = *x + *y + slice[0] + slice[1] + slice[2];
+    if result == 148i32 {
+        1i32
+    } else {
+        0i32
+    }
+}

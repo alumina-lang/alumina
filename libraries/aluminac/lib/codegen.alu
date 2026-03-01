@@ -166,7 +166,13 @@ impl CodegenCtx {
         if ty.tag == IRTY_BUILTIN {
             self.builtin_to_llvm(ty.builtin)
         } else if ty.tag == IRTY_POINTER {
-            self.ptr_type
+            let inner_ty = self.llvm_type(ty.inner);
+            // LLVM doesn't support void*, use i8* instead
+            if inner_ty == self.void_type {
+                self.ptr_type
+            } else {
+                LLVMPointerType(inner_ty, 0)
+            }
         } else if ty.tag == IRTY_ARRAY {
             let elem_ty = self.llvm_type(ty.inner);
             LLVMArrayType(elem_ty, ty.array_size as u32)
@@ -187,7 +193,8 @@ impl CodegenCtx {
         } else if ty.tag == IRTY_SLICE {
             // Slice fat pointer: { data_ptr, usize }
             let llvm_elems = self.arena.alloc_slice::<LLVMTypeRef>(2);
-            llvm_elems[0] = self.ptr_type;
+            let inner_llvm = self.llvm_type(ty.inner);
+            llvm_elems[0] = LLVMPointerType(inner_llvm, 0);
             llvm_elems[1] = self.builtin_to_llvm(BuiltinType::USize);
             LLVMStructTypeInContext(
                 self.context,
@@ -945,8 +952,8 @@ impl FnCodegen {
             }
         } else if expr.tag == IR_REF {
             let ptr = self.gen_lvalue(expr.lhs);
-            // Bitcast to generic pointer type for uniform pointer representation
-            LLVMBuildBitCast(self.ctx.builder, ptr, self.ctx.ptr_type, self.temp_cname())
+            let target_ty = self.ctx.llvm_type(expr.ty);
+            LLVMBuildBitCast(self.ctx.builder, ptr, target_ty, self.temp_cname())
         } else if expr.tag == IR_DEREF {
             let ptr_val = self.gen_expr(expr.lhs);
             let result_ty = self.ctx.llvm_type(expr.ty);

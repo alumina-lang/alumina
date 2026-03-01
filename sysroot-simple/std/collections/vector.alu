@@ -41,7 +41,7 @@ impl Vector<T> {
         if self._length + additional > capacity {
             let new_cap = std::cmp::max(capacity * 2usize, self._length + additional);
             if new_cap < 4usize {
-                let new_cap = 4usize;
+                new_cap = 4usize;
             }
             if capacity == 0usize {
                 self._data = std::mem::slice_alloc::<T>(new_cap);
@@ -49,6 +49,10 @@ impl Vector<T> {
                 self._data = std::mem::slice_realloc::<T>(self._data, new_cap);
             }
         }
+    }
+
+    fn get(self: &Vector<T>, index: usize) -> T {
+        self._data[index]
     }
 
     fn free(self: &mut Vector<T>) {

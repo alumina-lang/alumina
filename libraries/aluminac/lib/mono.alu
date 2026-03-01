@@ -446,6 +446,13 @@ impl Mono {
             return cached.unwrap();
         }
 
+        // Save state for nested mono_function calls
+        let prev_return_type = self.return_type;
+        let prev_local_types = self.local_types;
+        let prev_local_defs = self.local_defs;
+        self.local_types = HashMap::new();
+        self.local_defs = Vector::new();
+
         // Set up generic substitution
         if def.generic_params.len() > 0 && type_args.len() > 0 {
             for i in 0usize..std::cmp::min(def.generic_params.len(), type_args.len()) {
@@ -520,6 +527,10 @@ impl Mono {
         self.ctx.ir_functions[idx].body = body;
         self.ctx.ir_functions[idx].local_defs = local_defs_slice;
 
+        // Restore saved state
+        self.return_type = prev_return_type;
+        self.local_types = prev_local_types;
+        self.local_defs = prev_local_defs;
         self.current_fn_name = prev_fn_name;
         idx
     }
@@ -1431,8 +1442,39 @@ impl Mono {
         }
         let def = fn_def.unwrap();
 
-        // Monomorphize the method with type args (for generic impls)
-        let fn_idx = self.mono_function(def, method_type_args);
+        // Combine struct type args with method turbofish type args
+        // e.g. for Container<i32>.transform::<String>(), struct args=[i32], turbofish=[String]
+        // The function's generic_params are [K, V], so combined = [i32, String]
+        let combined_type_args = method_type_args;
+        if expr.type_args.len() > 0 {
+            let resolved_turbofish = self.ctx.arena.alloc_slice::<&IrTy>(expr.type_args.len());
+            let i = 0usize;
+            while i < expr.type_args.len() {
+                resolved_turbofish[i] = self.resolve_type(expr.type_args[i]);
+                i = i + 1usize;
+            }
+            if method_type_args.len() > 0 {
+                // Combine: struct type args first, then turbofish type args
+                let total = method_type_args.len() + expr.type_args.len();
+                let merged = self.ctx.arena.alloc_slice::<&IrTy>(total);
+                let j = 0usize;
+                while j < method_type_args.len() {
+                    merged[j] = method_type_args[j];
+                    j = j + 1usize;
+                }
+                let k = 0usize;
+                while k < expr.type_args.len() {
+                    merged[method_type_args.len() + k] = resolved_turbofish[k];
+                    k = k + 1usize;
+                }
+                combined_type_args = merged;
+            } else {
+                combined_type_args = resolved_turbofish;
+            }
+        }
+
+        // Monomorphize the method with type args (for generic impls + turbofish)
+        let fn_idx = self.mono_function(def, combined_type_args);
         let ir_fn = &self.ctx.ir_functions[fn_idx];
 
         // Build args: &obj as first arg, then the call args
