@@ -893,6 +893,7 @@ impl Pass2 {
         self.process_functions(root);
         self.process_structs(root);
         self.process_enums(root);
+        self.process_type_aliases(root);
         self.process_statics(root);
     }
 
@@ -1467,6 +1468,40 @@ impl Pass2 {
         self.ctx.items.push(item);
     }
 
+    fn process_type_aliases(self: &mut Pass2, root: Node) {
+        for i in 0usize..self.ctx.pending_type_aliases.len() {
+            let pending = &self.ctx.pending_type_aliases[i];
+            let node = self.find_node_at(root, pending.node_start, pending.node_end);
+            self.build_type_alias(node, pending);
+        }
+    }
+
+    fn build_type_alias(self: &mut Pass2, node: Node, pending: &PendingTypeAlias) {
+        let generic_params = self.parse_generic_params(node, pending.scope_idx);
+
+        let inner_node = child_by!(node, FieldKind::Inner);
+        let target = if !inner_node.is_null() {
+            self.parse_type(inner_node.unwrap(), pending.scope_idx)
+        } else {
+            // Opaque type alias (no = ...) - treat as void
+            let ty = Ty::void_ty();
+            self.ctx.arena.alloc(ty) as &Ty
+        };
+
+        let alias = TypeAlias {
+            id: pending.id,
+            name: pending.name,
+            generic_params: generic_params,
+            target: target,
+        };
+
+        let item = std::mem::zeroed::<Item>();
+        item.tag = ITEM_TYPE_ALIAS;
+        item.span = Span { file_id: self.ctx.file_id, start: pending.node_start, end: pending.node_end };
+        item.type_alias = alias;
+        self.ctx.items.push(item);
+    }
+
     fn process_statics(self: &mut Pass2, root: Node) {
         for i in 0usize..self.ctx.pending_statics.len() {
             let pending = &self.ctx.pending_statics[i];
@@ -1899,7 +1934,17 @@ impl ExprParser {
             return self.alloc_void(span);
         }
 
-        let callee = self.parse_expr(func.unwrap());
+        // Check for turbofish calls like zeroed::<T>() or std::mem::zeroed::<T>()
+        let func_node = func.unwrap();
+        let func_kind = NODE_KINDS[func_node.symbol() as usize];
+        if func_kind == NodeKind::Turbofish || func_kind == NodeKind::GenericTypeWithTurbofish {
+            let result = self.try_parse_intrinsic_call(func_node, span);
+            if result.tag != EXPR_VOID {
+                return self.ctx.alloc_expr(result);
+            }
+        }
+
+        let callee = self.parse_expr(func_node);
         let args = if !args_node.is_null() {
             self.parse_arg_list(args_node.unwrap())
         } else {
@@ -1911,6 +1956,39 @@ impl ExprParser {
         e.lhs = callee;
         e.args = args;
         self.ctx.alloc_expr(e)
+    }
+
+    fn try_parse_intrinsic_call(self: &ExprParser, func_node: Node, span: Span) -> Expr {
+        // Turbofish has field("function", ...) and field("type_arguments", ...)
+        // GenericTypeWithTurbofish has field("type", ...) and field("type_arguments", ...)
+        let path_node = child_by!(func_node, FieldKind::Function);
+        let path_node2 = if path_node.is_null() { child_by!(func_node, FieldKind::Type) } else { path_node };
+        let type_args_node = child_by!(func_node, FieldKind::TypeArguments);
+
+        if path_node2.is_null() || type_args_node.is_null() {
+            return Expr::void_expr();
+        }
+
+        // Get the function path text
+        let pass2 = Pass2 { ctx: self.ctx };
+        let segments = pass2.collect_type_path_segments(path_node2.unwrap());
+        if segments.len() == 0 {
+            return Expr::void_expr();
+        }
+
+        let last_seg = segments[segments.len() - 1];
+
+        // Check for std::mem::zeroed::<T>()
+        if last_seg == "zeroed" {
+            let type_args = pass2.parse_type_args(type_args_node.unwrap(), self.scope_idx);
+            if type_args.len() >= 1 {
+                let e = self.make_expr(EXPR_ZEROED, span);
+                e.ty = type_args[0];
+                return e;
+            }
+        }
+
+        Expr::void_expr()
     }
 
     fn parse_arg_list(self: &ExprParser, node: Node) -> &[&Expr] {
@@ -2155,22 +2233,22 @@ impl ExprParser {
     }
 
     fn parse_for(self: &ExprParser, node: Node, span: Span) -> &Expr {
-        let pattern = child_by!(node, FieldKind::Pattern);
+        let name_node = child_by!(node, FieldKind::Name);
         let iter_node = child_by!(node, FieldKind::Value);
         let body = child_by!(node, FieldKind::Body);
 
-        if pattern.is_null() || iter_node.is_null() || body.is_null() {
+        if name_node.is_null() || iter_node.is_null() || body.is_null() {
             return self.alloc_void(span);
         }
 
         let var_id = self.ctx.next_id();
-        let var_name = self.ctx.intern_str(self.ctx.node_text(pattern.unwrap()));
+        let var_name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
 
         // Register the loop variable in scope
         self.ctx.scopes.add_item(self.scope_idx, NamedItem {
             name: var_name,
             kind: NamedItemKind::local(var_id),
-            span: self.ctx.make_span(pattern.unwrap()),
+            span: self.ctx.make_span(name_node.unwrap()),
         });
 
         let e = self.make_expr(EXPR_FOR, span);
@@ -2214,38 +2292,98 @@ impl ExprParser {
         let type_node = child_by!(node, FieldKind::Type);
         let value_node = child_by!(node, FieldKind::Value);
 
-        if name_node.is_null() {
+        if !name_node.is_null() {
+            // Simple let: let x = expr;
+            let var_id = self.ctx.next_id();
+            let var_name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
+
+            // Register in scope
+            self.ctx.scopes.add_item(self.scope_idx, NamedItem {
+                name: var_name,
+                kind: NamedItemKind::local(var_id),
+                span: self.ctx.make_span(name_node.unwrap()),
+            });
+
+            let pass2 = Pass2 { ctx: self.ctx };
+            let ty: Option<&Ty> = if !type_node.is_null() {
+                Option::some(pass2.parse_type(type_node.unwrap(), self.scope_idx))
+            } else {
+                Option::none()
+            };
+
+            let init: Option<&Expr> = if !value_node.is_null() {
+                Option::some(self.parse_expr(value_node.unwrap()))
+            } else {
+                Option::none()
+            };
+
+            let e = self.make_expr(EXPR_LET, span);
+            e.id = var_id;
+            e.opt_ty = ty;
+            e.opt_expr = init;
+            return self.ctx.alloc_expr(e);
+        }
+
+        // Tuple destructuring: let (a, b) = expr;
+        let elements: Vector<Node> = Vector::new();
+        defer elements.free();
+        let cursor = node.walk();
+        defer cursor.free();
+        for child in children_by!(node, FieldKind::Element, &cursor) {
+            elements.push(child);
+        }
+
+        if elements.len() == 0 || value_node.is_null() {
             return self.alloc_void(span);
         }
 
-        let var_id = self.ctx.next_id();
-        let var_name = self.ctx.intern_str(self.ctx.node_text(name_node.unwrap()));
+        // Desugar: let (a, b) = expr;
+        // Into: { let _tmp = expr; let a = _tmp.0; let b = _tmp.1; }
+        let tmp_id = self.ctx.next_id();
+        let init_expr = self.parse_expr(value_node.unwrap());
 
-        // Register in scope
-        self.ctx.scopes.add_item(self.scope_idx, NamedItem {
-            name: var_name,
-            kind: NamedItemKind::local(var_id),
-            span: self.ctx.make_span(name_node.unwrap()),
-        });
+        // let _tmp = expr
+        let tmp_let = self.make_expr(EXPR_LET, span);
+        tmp_let.id = tmp_id;
+        tmp_let.opt_expr = Option::some(init_expr);
+        let ir_tmp_let = self.ctx.alloc_expr(tmp_let);
 
-        let pass2 = Pass2 { ctx: self.ctx };
-        let ty: Option<&Ty> = if !type_node.is_null() {
-            Option::some(pass2.parse_type(type_node.unwrap(), self.scope_idx))
-        } else {
-            Option::none()
-        };
+        // Build block: _tmp_let, then each element let
+        let stmts = self.ctx.arena.alloc_slice::<&Expr>(elements.len() + 1);
+        stmts[0] = ir_tmp_let;
 
-        let init: Option<&Expr> = if !value_node.is_null() {
-            Option::some(self.parse_expr(value_node.unwrap()))
-        } else {
-            Option::none()
-        };
+        for i in 0usize..elements.len() {
+            let elem_node = elements[i];
+            let elem_id = self.ctx.next_id();
+            let elem_name = self.ctx.intern_str(self.ctx.node_text(elem_node));
 
-        let e = self.make_expr(EXPR_LET, span);
-        e.id = var_id;
-        e.opt_ty = ty;
-        e.opt_expr = init;
-        self.ctx.alloc_expr(e)
+            self.ctx.scopes.add_item(self.scope_idx, NamedItem {
+                name: elem_name,
+                kind: NamedItemKind::local(elem_id),
+                span: self.ctx.make_span(elem_node),
+            });
+
+            // _tmp reference
+            let tmp_ref = self.make_expr(EXPR_LOCAL, span);
+            tmp_ref.id = tmp_id;
+            let ir_tmp_ref = self.ctx.alloc_expr(tmp_ref);
+
+            // _tmp.i (tuple index)
+            let idx_expr = self.make_expr(EXPR_TUPLE_INDEX, span);
+            idx_expr.lhs = ir_tmp_ref;
+            idx_expr.index_val = i;
+            let ir_idx = self.ctx.alloc_expr(idx_expr);
+
+            // let elem = _tmp.i
+            let elem_let = self.make_expr(EXPR_LET, span);
+            elem_let.id = elem_id;
+            elem_let.opt_expr = Option::some(ir_idx);
+            stmts[i + 1] = self.ctx.alloc_expr(elem_let);
+        }
+
+        let block = self.make_expr(EXPR_BLOCK, span);
+        block.args = stmts;
+        self.ctx.alloc_expr(block)
     }
 
     fn parse_struct_lit(self: &ExprParser, node: Node, span: Span) -> &Expr {
@@ -2417,7 +2555,12 @@ impl ExprParser {
         let inclusive_node = child_by!(node, FieldKind::Inclusive);
 
         let e = self.make_expr(EXPR_RANGE, span);
-        e.flag = !inclusive_node.is_null();
+        e.flag = if !inclusive_node.is_null() {
+            let text = self.ctx.node_text(inclusive_node.unwrap());
+            text.len() == 3  // "..=" is 3 bytes, ".." is 2 bytes
+        } else {
+            false
+        };
 
         if !lower.is_null() {
             e.lhs = self.parse_expr(lower.unwrap());

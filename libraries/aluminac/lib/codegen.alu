@@ -763,6 +763,9 @@ impl FnCodegen {
             LLVMConstStructInContext(self.ctx.context, &fields[0], 2, 0i32)
         } else if expr.tag == IR_NULL_LIT {
             LLVMConstPointerNull(self.ctx.ptr_type)
+        } else if expr.tag == IR_ZEROED {
+            let llvm_ty = self.ctx.llvm_type(expr.ty);
+            LLVMConstNull(llvm_ty)
         } else if expr.tag == IR_LOCAL {
             let alloca = self.locals.get(&expr.id._value);
             if alloca.is_some() {
